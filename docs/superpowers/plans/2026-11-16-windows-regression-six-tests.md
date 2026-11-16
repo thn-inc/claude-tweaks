@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node `node:test`, git CLI.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-16T092428-record-5694/work/5694-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-16T094458-record-5694/work/5694-spec.md` (re-materialized after the record's plan-review Decision on Deliverable 2: Reading A, revert command read from one constant)
 
 Scope keywords: `git apply -R --unidiff-zero`
 
@@ -23,7 +23,7 @@ Scope keywords: `git apply -R --unidiff-zero`
 ## Decisions (state each in the PR body — AC4.1)
 
 - **D1 (acceptance-packet EBUSY): test.** Probed on macOS with a `child_process` spy preloaded around the Decision 2 test (Node 22 and 26): its only child processes are three synchronous `git` calls (`init`, `commit` in the template, `ls-files -z -- <runDir>` from `archiveRunDir`), none with a cwd under `pipelines/archive`; the `spawnTokenPass` stub (`tests/helpers/stub-token-pass.js`) holds, so no `timing-at-close.js` child starts. No `opendir`/`watch` exists under `plugin/bin`. So no handle this code leaves explains a deterministic EBUSY; the cleanup itself is the defect: `fs.rmSync` without `maxRetries` fails on the first EBUSY Windows reports for a directory something briefly holds. `archiveRunDir` and the gather are unchanged. If the proof run still shows this failure, the cause is outside the cleanup and is investigated then — never claimed fixed.
-- **D2 (memory-write CRLF): shipped code.** `git apply` writes through `core.autocrlf` even outside a repository (probed: `git -c core.autocrlf=true apply -R --unidiff-zero p.patch` in a non-repo dir wrote `a\r\nb\r\n`; with a later `-c core.autocrlf=false` it wrote `a\nb\n`). The human-facing instruction at `plugin/bin/console-resolve.js:687` is the defect: on a Windows machine with Git's default `core.autocrlf=true`, following it restores CRLF bytes, not the prior file. User-visible effect: the printed command becomes `git -c core.autocrlf=false apply -R --unidiff-zero {patch}`. `plugin/bin/lib/console/memory-write.js` holds no instruction text (only the diff builder) and is unchanged — `Waived plugin/bin/lib/console/memory-write.js: Task 2 Step 1 reads it; the printed instruction lives in console-resolve.js`.
+- **D2 (memory-write CRLF): shipped code.** `git apply` writes through `core.autocrlf` even outside a repository (probed: `git -c core.autocrlf=true apply -R --unidiff-zero p.patch` in a non-repo dir wrote `a\r\nb\r\n`; with a later `-c core.autocrlf=false` it wrote `a\nb\n`). The human-facing instruction at `plugin/bin/console-resolve.js:687` is the defect: on a Windows machine with Git's default `core.autocrlf=true`, following it restores CRLF bytes, not the prior file. User-visible effect: the printed command becomes `git -c core.autocrlf=false apply -R --unidiff-zero {patch}`. Per the record's Decision (Reading A), the command lives in one constant, `MEMORY_REVERT_COMMAND`, exported by `plugin/bin/lib/console/memory-write.js` (the module that builds the diff the command reverses, and which `console-resolve.js` already imports); `console-resolve.js` interpolates it into the entry head, and the test's `revert` helper runs that same constant, so the two cannot drift. `plugin/bin/console-resolve.js` is outside the record's Key Files list and is named in the PR body per the Decision's rule.
 - **D3 (timing EISDIR/EPERM): test.** `rename` onto a directory is `EISDIR` on POSIX and `EPERM` on Windows; the CLI maps either to exit 2 correctly. `Waived plugin/bin/phase-timing.js: Task 3 Step 1 reads its catch-to-exit-2 mapping`. `Waived plugin/bin/lib/timing/run-timing.js: Task 3 Step 1 reads its tmp-file rename`.
 - **D4 (drive letter): test; contract = the cwd passed in is returned as given (unresolved).** `resolveGitCommand`/`gitTargets` resolve only a `-C` value, a `cd` target, and a lost cwd's stand-in (`plugin/bin/lib/hooks/git-command.js:1150,1159,1228,1287`); a known cwd passes through unchanged, which every neighbouring pin already asserts (`hooks-git-command.test.js:293` `'/repo'`, and the skill row quoted above). The three tests expecting `path.resolve` of the base cwd are wrong. `Waived plugin/bin/lib/hooks/git-command.js: Task 4 reads lines 1215-1230; the code is the contract and is unchanged`.
 - **D5 (wd-ambiguous): test.** Match the event by its parsed `matched` value.
@@ -54,21 +54,21 @@ Scope keywords: `git apply -R --unidiff-zero`
 ### Task 2: memory-write revert instruction ignores autocrlf (D2)
 
 **Files:**
-- Modify: `plugin/bin/console-resolve.js:61` (header comment) and `:687` (the `head` text)
-- Modify: `tests/bin-lib/console/memory-write.test.js:61-65` (`revert`), `:255-260` (head test)
-- Waived `plugin/bin/lib/console/memory-write.js`: read only in Step 1 (Decision D2); it holds no instruction text
+- Modify: `plugin/bin/lib/console/memory-write.js` (add and export `MEMORY_REVERT_COMMAND`; update the line-28 comment)
+- Modify: `plugin/bin/console-resolve.js:61` (header comment), `:98` (import), and `:687` (the `head` text)
+- Modify: `tests/bin-lib/console/memory-write.test.js:17` (import), `:61-65` (`revert`), `:255-260` (head test)
 
 **Interfaces:**
-- Produces: the entry head now contains the literal `git -c core.autocrlf=false apply -R --unidiff-zero {patch}`.
+- Produces: `MEMORY_REVERT_COMMAND` (string, `'git -c core.autocrlf=false apply -R --unidiff-zero'`) exported from `plugin/bin/lib/console/memory-write.js`; the entry head contains `${MEMORY_REVERT_COMMAND} {patch}`.
 
-- [ ] **Step 1: Write the failing test.** Rewrite `revert(fx, text)` so it runs exactly the command the entry head prints, under a git config that turns autocrlf on the way a Windows install does:
-  - Find the head line (`- AUTO … Memory write …`), extract the command with `/run (git .+?) \{patch\} from the memory directory/`, split it on single spaces, assert the first token is `git`, and append the patch path.
+- [ ] **Step 1: Write the failing test.** Rewrite `revert(fx, text)` so it runs the one constant, under a git config that turns autocrlf on the way a Windows install does:
+  - Import `MEMORY_REVERT_COMMAND` beside `wholeFileDiff` on line 17. In `revert`, split it on single spaces, assert the first token is `git`, and run the rest with the patch path appended.
   - Write `fx.root/autocrlf.gitconfig` containing `[core]\n\tautocrlf = true\n`; run with `env: { ...process.env, GIT_CONFIG_GLOBAL: thatFile, GIT_CONFIG_NOSYSTEM: '1' }`, `cwd: fx.memoryDir`, `windowsHide: true`.
-  - In the head test, replace the `'git apply -R --unidiff-zero'` part with `'git -c core.autocrlf=false apply -R --unidiff-zero {patch}'`; rename it `'the entry head tells the reader how to reverse: strip the indent, git apply -R with autocrlf off, from the memory directory'`.
+  - In the head test, replace the `'git apply -R --unidiff-zero'` part with `` `${MEMORY_REVERT_COMMAND} {patch}` ``, and add one literal assertion that the head includes `'git -c core.autocrlf=false apply -R --unidiff-zero {patch}'` (pins the constant's value, so emptying it fails); rename it `'the entry head tells the reader how to reverse: strip the indent, git apply -R with autocrlf off, from the memory directory'`.
   The AC4.2 test (`'AC4.2: applying the reverse diff restores the prior content (trailing newline, none, and a create)'`) keeps its assertions unchanged; it now covers AC1.1 for this file.
-- [ ] **Step 2:** Run `node --test tests/bin-lib/console/memory-write.test.js` — Expected: FAIL in the AC4.2 test (restored `a\r\nb\r\n`, expected `a\nb\n`) and in the head test.
-- [ ] **Step 3:** In `console-resolve.js:687`, change `then run git apply -R --unidiff-zero {patch} from the memory directory` to `then run git -c core.autocrlf=false apply -R --unidiff-zero {patch} from the memory directory`; update the line-61 comment's `(reverse with \`git apply -R\`)` to `(reverse with \`git -c core.autocrlf=false apply -R\`)`.
-- [ ] **Step 4:** Run `node --test tests/bin-lib/console/memory-write.test.js` — Expected: PASS. Then `git grep -n -F "unidiff-zero" -- plugin` — Expected: only `console-resolve.js:687`.
+- [ ] **Step 2:** Run `node --test tests/bin-lib/console/memory-write.test.js` — Expected: FAIL (the import is `undefined`, so `revert` throws; the head test fails).
+- [ ] **Step 3:** In `memory-write.js`, add `const MEMORY_REVERT_COMMAND = 'git -c core.autocrlf=false apply -R --unidiff-zero';` with a comment: the reverse of a memory write; `core.autocrlf=false` because `git apply` writes through autocrlf even outside a repository, so a Windows default would restore CRLF bytes (#5694). Export it. In `console-resolve.js`, import it on line 98 and change line 687's `then run git apply -R --unidiff-zero {patch} from the memory directory` to `` then run ${MEMORY_REVERT_COMMAND} {patch} from the memory directory ``; update the line-61 comment's `(reverse with \`git apply -R\`)` to `(reverse with \`git -c core.autocrlf=false apply -R\`)`.
+- [ ] **Step 4:** Run `node --test tests/bin-lib/console/memory-write.test.js` — Expected: PASS. Then `git grep -n -F "unidiff-zero" -- plugin` — Expected: the constant in `memory-write.js` and its line-28 comment only (no literal left in `console-resolve.js`). Revert the `core.autocrlf=false` part of the constant once and confirm the AC4.2 test goes red (restored `a\r\nb\r\n`), then restore it.
 - [ ] **Step 5:** Commit `Print the memory-write revert command with autocrlf off — refs #5694`.
 
 ### Task 3: timing CLI accepts the platform's rename error (D3)
