@@ -79,13 +79,17 @@ function partitionGrantComments(comments) {
   return { bodies, skippedUntrusted };
 }
 
-// hasPendingLabel/hasMergeLabel: booleans from a fresh `gh issue view
+// hasBuildLabel/hasPendingLabel/hasMergeLabel: booleans (hasBuildLabel must be
+// exactly `true` — an omitted or non-boolean value fails closed) from a fresh `gh issue view
 // --json labels` read. pendingSince: Date | null — normally
 // extractPendingGrantedAt's return value. vetoWindowHours: the resolved
 // grant-veto-window-hours policy value (DEFAULT_VETO_WINDOW_HOURS when absent
 // or invalid). now: Date | epoch-ms (injected clock for tests).
 //
 // Returns { mature, state, reason, ageHours?, windowHours? }. `state` is one of:
+//   'no-build-grant'     — no auto:build label; a merge grant (auto:merge or
+//                          auto:merge-pending) counts only together with a live
+//                          auto:build, so nothing matures (fail closed).
 //   'already-mature'     — auto:merge is already present; nothing to do.
 //   'not-pending'        — no auto:merge-pending label (never granted, or a
 //                          human vetoed it — both read identically here).
@@ -95,7 +99,8 @@ function partitionGrantComments(comments) {
 //                          veto window.
 //   'matured'            — pending, timestamped, and past the veto window —
 //                          the caller should promote it now.
-function evaluateMaturation({ hasPendingLabel, hasMergeLabel, pendingSince, vetoWindowHours, now } = {}) {
+function evaluateMaturation({ hasBuildLabel, hasPendingLabel, hasMergeLabel, pendingSince, vetoWindowHours, now } = {}) {
+  if (hasBuildLabel !== true) return { mature: false, state: 'no-build-grant', reason: 'no auto:build label present — a merge grant counts only together with a live auto:build' };
   if (hasMergeLabel === true) {
     return { mature: true, state: 'already-mature', reason: 'auto:merge already present' };
   }
