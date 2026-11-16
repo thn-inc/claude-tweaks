@@ -2,8 +2,9 @@
 // writes into a linked worktree's own git admin dir
 // (`{gitdir}/claude-tweaks-holds/{key}.json`) to record that it is standing in
 // that worktree, so a reaper running in another session can see the presence.
-// Every function here is best-effort and never throws: a failure returns the
-// empty value (false / null / [] / 0) and the caller carries on.
+// Every function here is best-effort and never throws: a write or clear failure
+// returns the empty value (false / null / 0), but readHolds fails closed — what
+// it could not look at comes back as one unverifiable entry, never as no holds.
 //
 // Requires nothing from worktree-reap.js or context.js (the liveness predicate
 // there requires this module; the reverse would be a cycle).
@@ -14,9 +15,18 @@ const { safeReal, nearestExistingDir } = require('./worktree-detect');
 const { isPathContained } = require('../shared-primitives');
 
 const HOLD_DIR_NAME = 'claude-tweaks-holds';
-const SAFE_PART = /^[A-Za-z0-9_-]+$/;
+// A key part never contains `__` (the key's separator), so one part layout cannot
+// be read as another's.
+const SAFE_PART = /^[A-Za-z0-9-]+(?:_[A-Za-z0-9-]+)*$/;
 
 function isPid(n) { return Number.isInteger(n) && n > 0; }
+
+// A whole key: `__`-joined parts, each a safe part (no path separator, no `..`).
+function isKey(key) {
+  return typeof key === 'string' && key.split('__').every((p) => SAFE_PART.test(p));
+}
+
+function unverifiable() { return [{ key: null, hold: null }]; }
 
 function holdKey({ sessionId, agentId, pid } = {}) {
   try {
@@ -30,8 +40,33 @@ function holdKey({ sessionId, agentId, pid } = {}) {
   }
 }
 
-// The nearest `.git` at or above `p`: a FILE means a linked worktree (return its
-// directory); a directory, an unreadable entry, or none means null.
+// Where `wtPath`'s hold dir is: { dir } for a linked worktree; { none: true } for a
+// checkout with no hold dir (no .git, a .git directory, no gitdir line, or a gitdir not
+// directly under a `worktrees` dir — a submodule's `.git/modules/<name>`);
+// { unverifiable: true } when the .git entry exists but cannot be read.
+function locate(wtPath) {
+  try {
+    const gitPath = path.join(wtPath, '.git');
+    let st;
+    try {
+      st = fs.statSync(gitPath);
+    } catch (e) {
+      return e && e.code === 'ENOENT' ? { none: true } : { unverifiable: true };
+    }
+    if (!st.isFile()) return { none: true };
+    const m = /^gitdir:\s*(.+?)\s*$/m.exec(fs.readFileSync(gitPath, 'utf8'));
+    if (!m) return { none: true };
+    const admin = path.resolve(wtPath, m[1]);
+    if (path.basename(path.dirname(admin)) !== 'worktrees') return { none: true };
+    return { dir: path.join(admin, HOLD_DIR_NAME) };
+  } catch {
+    return { unverifiable: true };
+  }
+}
+
+// The nearest `.git` at or above `p`: a FILE pointing into a `worktrees` admin dir means
+// a linked worktree (return its directory); a directory, a submodule file, an unreadable
+// entry, or none means null.
 function worktreeRootOf(p) {
   try {
     let dir = nearestExistingDir(p);
@@ -42,7 +77,7 @@ function worktreeRootOf(p) {
       } catch (e) {
         if (!e || e.code !== 'ENOENT') return null;
       }
-      if (st) return st.isFile() ? safeReal(dir) : null;
+      if (st) return st.isFile() && locate(dir).dir ? safeReal(dir) : null;
       const parent = path.dirname(dir);
       if (parent === dir) return null;
       dir = parent;
@@ -54,23 +89,17 @@ function worktreeRootOf(p) {
 }
 
 function holdDirOf(wtPath) {
-  try {
-    const gitPath = path.join(wtPath, '.git');
-    if (!fs.statSync(gitPath).isFile()) return null;
-    const m = /^gitdir:\s*(.+?)\s*$/m.exec(fs.readFileSync(gitPath, 'utf8'));
-    if (!m) return null;
-    return path.join(path.resolve(wtPath, m[1]), HOLD_DIR_NAME);
-  } catch {
-    return null;
-  }
+  return locate(wtPath).dir || null;
 }
 
 function writeHold(wtPath, { key, block, agentId } = {}) {
   try {
-    if (typeof key !== 'string' || !SAFE_PART.test(key.replace(/__/g, '_'))) return false;
+    if (!isKey(key)) return false;
     const dir = holdDirOf(wtPath);
     if (!dir) return false;
-    fs.mkdirSync(dir, { recursive: true });
+    // Create the last level only: a pruned admin dir must not be resurrected.
+    if (!fs.statSync(path.dirname(dir)).isDirectory()) return false;
+    try { fs.mkdirSync(dir); } catch (e) { if (!e || e.code !== 'EEXIST') throw e; }
     const file = path.join(dir, `${key}.json`);
     const tmp = `${file}.tmp-${process.pid}`;
     const body = { ...block, agentId: agentId || null, worktree: wtPath, key };
@@ -87,23 +116,33 @@ function writeHold(wtPath, { key, block, agentId } = {}) {
   }
 }
 
+// [] only when the worktree has no hold dir. Anything that could not be looked at is one
+// unverifiable entry ({ key: null, hold: null }), so a caller never reads "could not
+// look" as "no holds".
 function readHolds(wtPath) {
   try {
-    const dir = holdDirOf(wtPath);
-    if (!dir) return [];
+    const loc = locate(wtPath);
+    if (loc.unverifiable) return unverifiable();
+    if (!loc.dir) return [];
+    let names;
+    try {
+      names = fs.readdirSync(loc.dir).sort();
+    } catch (e) {
+      return e && e.code === 'ENOENT' ? [] : unverifiable();
+    }
     const out = [];
-    for (const name of fs.readdirSync(dir).sort()) {
+    for (const name of names) {
       if (!name.endsWith('.json')) continue;
       let hold = null;
       try {
-        const parsed = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
+        const parsed = JSON.parse(fs.readFileSync(path.join(loc.dir, name), 'utf8'));
         if (parsed && typeof parsed === 'object') hold = parsed;
       } catch { /* unreadable or unparseable: hold stays null */ }
       out.push({ key: name.slice(0, -'.json'.length), hold });
     }
     return out;
   } catch {
-    return [];
+    return unverifiable();
   }
 }
 
@@ -138,7 +177,7 @@ function removeMatching(mainRoot, { except, matches }) {
 
 function clearHolds(mainRoot, { key, except } = {}) {
   try {
-    if (typeof key !== 'string' || !SAFE_PART.test(key.replace(/__/g, '_'))) return 0;
+    if (!isKey(key)) return 0;
     return removeMatching(mainRoot, { except, matches: (name) => name === `${key}.json` });
   } catch {
     return 0;
@@ -148,10 +187,12 @@ function clearHolds(mainRoot, { key, except } = {}) {
 function clearSessionHolds(mainRoot, { sessionId, pid } = {}) {
   try {
     if (typeof sessionId !== 'string' || !SAFE_PART.test(sessionId) || !isPid(pid)) return 0;
-    const prefix = `${sessionId}__`;
-    const suffix = `__${pid}.json`;
     return removeMatching(mainRoot, {
-      matches: (name) => name.length > prefix.length + suffix.length && name.startsWith(prefix) && name.endsWith(suffix),
+      matches: (name) => {
+        if (!name.endsWith('.json')) return false;
+        const parts = name.slice(0, -'.json'.length).split('__');
+        return parts.length === 3 && parts[0] === sessionId && parts[2] === String(pid);
+      },
     });
   } catch {
     return 0;
