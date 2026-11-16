@@ -54,6 +54,15 @@ test('--run missing, a missing value, and an unknown flag exit 2 with usage on s
   }
 });
 
+test('--run --help: a flag in place of the run dir is a missing value, exit 2', async () => {
+  for (const argv of [['--run', '--help'], ['--run', '--bogus']]) {
+    const r = await runCli(CLI, argv, { env: {} });
+    assert.equal(r.code, 2, JSON.stringify(argv));
+    assert.equal(r.stdout, '');
+    assert.match(r.stderr, /--run requires a <run-dir> argument/);
+  }
+});
+
 test('--help prints usage and exits 0 (log-decision.js convention)', async () => {
   const r = await runCli(CLI, ['--help']);
   assert.equal(r.code, 0);

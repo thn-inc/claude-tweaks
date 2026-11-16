@@ -23,7 +23,8 @@ function parseArgs(argv) {
     if (a === '--help' || a === '-h') o.help = true;
     else if (a === '--run') {
       const v = argv[++i];
-      if (v === undefined || v === '') return { error: '--run requires a <run-dir> argument' };
+      // A flag in place of the value (`--run --help`) is a missing value, not a run dir named "--help".
+      if (v === undefined || v === '' || v.startsWith('--')) return { error: '--run requires a <run-dir> argument' };
       o.run = v;
     } else return { error: `unknown argument: ${a}` };
   }
@@ -45,6 +46,8 @@ async function run(argv, deps = {}) {
   if (o.help) { deps.stdout(USAGE); return 0; }
   if (!o.run) { deps.stderr(`timing-at-close.js: --run <run-dir> is required\n${USAGE}`); return 2; }
   const runDir = resolveAgainst(deps.cwd(), o.run);
+  // lstat, deliberately: a symlinked run dir exits 3 too. The token pass is spawned with the
+  // archive's real directory, so a link here is never followed into wherever it points.
   if (lstatType(runDir).type !== 'directory') {
     deps.stderr(`timing-at-close.js: run dir does not exist or is not a directory: ${o.run}\n`);
     return 3;
