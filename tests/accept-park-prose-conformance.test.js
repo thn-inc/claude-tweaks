@@ -544,7 +544,7 @@ function pinLocalVerdict(text) {
   need(rec !== -1 && s3 !== -1 && s4 !== -1, 'Accept and merge must record approval, then Step 3 alone with human-approved, then Step 4');
   need(rec < s3 && s3 < s4, 'Accept and merge must order approval, Step 3, Step 4');
   need(merge.includes('`parked` then exits 5') && merge.includes(HEAD_RECHECK), 'Accept and merge must say parked then exits 5 and re-check the head');
-  need(merge.includes('reenter-check --worktree {worktree} --expect-head {head}` must exit 0') && merge.includes('`Accept and merge` withheld this round')
+  need(merge.includes('reenter-check --worktree "{worktree}" --expect-head {head}` must exit 0') && merge.includes('`Accept and merge` withheld this round')
     && merge.includes('the checks are re-run by Step 2.5 on a later merge') && merge.includes('never in this round'),
     'Accept and merge must run reenter-check --expect-head at merge time and withhold itself this round on a move');
   need(merge.includes('or any `reenter-check` exit other than 0, say'), 'Accept and merge must withhold itself this round on any reenter-check exit other than 0');

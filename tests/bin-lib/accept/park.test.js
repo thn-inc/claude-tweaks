@@ -111,9 +111,11 @@ test('CRLF bodies keep their line endings', () => {
   assert.equal(parkStateOf(out).parked, true);
 });
 
-test('park-head is not read as a deploy ref', () => {
-  const body = parked();
-  assert.equal(refreshPacket(body, { ref: 'abc1234', text: 'x' }).body, body);
+test('a parked packet holding a stored ref is not refreshed by a source with another ref', () => {
+  // The stored `ref:` is what lets refreshPacket reach its park guard; without one it returns early.
+  const body = parked().replace(/^park-base: .*$/m, (line) => `${line}\nref: aaa1111`);
+  assert.match(body, /^ref: aaa1111$/m);
+  assert.equal(refreshPacket(body, { ref: 'bbb2222', text: 'target: dev' }).body, body);
 });
 
 test('rejects a bad head sha and a packet with no Deploy status section', () => {

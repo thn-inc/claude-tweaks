@@ -3460,7 +3460,7 @@ test('decide failing closed never merges', async () => {
 });
 
 test('AC6.2: a dev resolution merges exactly as today', async () => {
-  const h = mergeHarness({ decide: decideReply([{ record: 7, consulted: true, park: false, target: 'dev', reason: 'no-risk-flags' }]) });
+  const h = mergeHarness({ decide: decideReply([{ record: 7, consulted: true, park: false, target: 'dev', reason: 'policy' }]) });
   const r = await merge(CTX, h.deps);
   assert.deepEqual(pick(r), { outcome: 'merged', reason: null, mergeCommit: MERGE_SHA, postMerge: POST_MERGE_STUB });
   assert.equal(h.calls.filter(isMergeCall).length, 1);

@@ -109,7 +109,7 @@ overlay applied to another's merge.
 `$MERGE_VERIFICATION` empty or not one of the three values (an invalid `policy.yml` value prints an
 empty `--values` line — `invalid: true`, never silently re-derived; or a resolver error) → treat it
 as `wait` for this merge and log `AUTO … Step 2.5: lever unresolved ("{raw}") — proceeding as wait`.
-Never as `off`.
+Never as `off`: an unreadable lever must not skip the wait.
 
 **Read state first — never parse stderr first.** Before any merge attempt, regardless of value, resolve this step's scratch paths (`_shared/session-tmp-root.md`)
 and substitute the printed `PR_CHECKS`/`PR_RUNS`/`PARK_COMMENT`/`PR_READY`/`GATE_START` literals for `{pr-checks-path}`/`{pr-runs-path}`/`{park-comment-path}`/`{pr-ready-path}`/`{gate-start-path}`

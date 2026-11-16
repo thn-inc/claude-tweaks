@@ -7,7 +7,7 @@ Under control mode a record whose acceptance target resolves `local` is not merg
 3. **Park.** `park:true`:
 
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" park --run "$PIPELINE_RUN_DIR" --record {every record whose decision parks} --claimed {every record of the run} --pr {pr} --head {headRefOid} --worktree {path} --worktree-mode {remove|caller}
+   node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" park --run "$PIPELINE_RUN_DIR" --record {every record whose decision parks} --claimed {every record of the run} --pr {pr} --head {headRefOid} --worktree "{path}" --worktree-mode {remove|caller}
    ```
 
    `park` writes `target: local`, `reason: awaiting-local-acceptance`, `park-head: {head}` and `park-base: {the PR's base oid}` into each parked record's packet Deploy status section; `/claude-tweaks:accept` counts a different PR head or base, or a missing `park-base:`, as moved. `--worktree-mode caller` when this session stands in that worktree, then `ExitWorktree` with `remove` as the last act. A non-zero `park` exit: report `pending-review` / `park-failed`. Exit 0: report `pending-review` / `awaiting-local-acceptance` with the PR URL; this run's park succeeded.

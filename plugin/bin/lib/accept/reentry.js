@@ -10,20 +10,16 @@ const path = require('path');
 const { lstatType, canonicalRealpath } = require('../path-guard');
 const { parseWorktreeList, findWorktreeEntry } = require('../hooks/worktree-reap');
 
-const HEX_RE = /^[0-9a-f]{7,64}$/;
+const { HEAD_SHA_RE: HEX_RE } = require('./park');
+
 const ACCEPT_DIR_RE = /^accept-[0-9]+$/;
 const POSITIVE_RE = /^[1-9][0-9]*$/;
 
 const worktreePathOf = (repoRoot, record) => path.join(repoRoot, '.claude', 'worktrees', `accept-${record}`);
 
-// The canonical path git lists: the path's own realpath, else its parent's plus the leaf (a
-// deleted directory), else as given.
-function canonicalOf(p, realpath) {
-  const own = realpath(p);
-  if (own) return own;
-  const parent = realpath(path.dirname(p));
-  return parent ? path.join(parent, path.basename(p)) : p;
-}
+// The canonical path git lists, by the one rule the park's own worktree removal uses (settle.js's
+// canonicalWorktreePath). Required at the call so the lib loads settle only when it is consulted.
+const canonicalOf = (p, realpath) => require('../driver/settle').canonicalWorktreePath(p, realpath, path);
 
 const isListed = (git, repoRoot, worktree, realpath) => findWorktreeEntry(
   parseWorktreeList(git(['-C', repoRoot, 'worktree', 'list', '--porcelain'])), canonicalOf(worktree, realpath),

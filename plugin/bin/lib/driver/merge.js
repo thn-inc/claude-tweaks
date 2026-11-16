@@ -993,15 +993,25 @@ function acceptParkCli(s, args, timeout = CLI_TIMEOUT_MS) {
 
 const exitWords = (r) => `exit ${r.code === null || r.code === undefined ? 'none (timed out or failed to start)' : r.code}`;
 
+// A run directory an archive may have moved: follow it into the archive, or fall back to stdout-only
+// events when neither exists. -> null when it stayed in place, else the note naming where it went.
+// The caller rebinds the event sink.
+function followRunDir(s) {
+  const { ctx, deps } = s;
+  if (isDirectory(deps, s.runDir)) return null;
+  const archive = path.join(ctx.mainCheckout, '.claude-tweaks', 'pipelines', 'archive', path.basename(s.runDir));
+  if (isDirectory(deps, archive)) {
+    s.runDir = archive;
+    return 'run directory followed into the archive';
+  }
+  s.eventsStdoutOnly = true;
+  return 'run directory and its archive are missing or unreadable; events go to stdout only';
+}
+
 // The park's archive (its step 3) may have moved the run directory: follow it as reconcile does,
 // so the stop event lands in the archive and nothing recreates the old path.
 function followParkedRunDir(s) {
-  const { ctx, deps } = s;
-  if (isDirectory(deps, s.runDir)) return;
-  const archive = path.join(ctx.mainCheckout, '.claude-tweaks', 'pipelines', 'archive', path.basename(s.runDir));
-  if (isDirectory(deps, archive)) s.runDir = archive;
-  else s.eventsStdoutOnly = true;
-  if (typeof deps.rebindEvents === 'function') deps.rebindEvents(s.eventsStdoutOnly ? null : s.runDir);
+  if (followRunDir(s) !== null && typeof s.deps.rebindEvents === 'function') s.deps.rebindEvents(s.eventsStdoutOnly ? null : s.runDir);
 }
 
 // Ports `_shared/pr-first-merge.md` Step 2.9, the local acceptance park (control mode, #4615), as
@@ -1352,17 +1362,7 @@ function reconcile(s) {
     return postFail(s, 'merge-reconcile', 'reconcile',
       r.code === null || r.code === undefined ? 'reconcile did not finish (timed out or killed)' : `reconcile exited ${r.code}`);
   }
-  let where = 'run directory kept in place';
-  if (!isDirectory(deps, s.runDir)) {
-    const archive = path.join(ctx.mainCheckout, '.claude-tweaks', 'pipelines', 'archive', path.basename(s.runDir));
-    if (isDirectory(deps, archive)) {
-      s.runDir = archive;
-      where = 'run directory followed into the archive';
-    } else {
-      s.eventsStdoutOnly = true;
-      where = 'run directory and its archive are missing or unreadable; events go to stdout only';
-    }
-  }
+  const where = followRunDir(s) ?? 'run directory kept in place';
   // Before the reconcile event, so it lands where the rest of the run writes (or on stdout alone).
   deps.rebindEvents(s.eventsStdoutOnly ? null : s.runDir);
   emit(s, 'merge-reconcile', 'ok', where);
