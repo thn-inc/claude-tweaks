@@ -32,7 +32,7 @@ const REASON_KINDS = Object.freeze({
 });
 
 const ROUTED_KINDS = Object.freeze(['check', 'story']);
-const OPTIONAL_TEXT_FIELDS = Object.freeze(['reason', 'text', 'url', 'command', 'label', 'url_or_path', 'archive_path', 'failure']);
+const OPTIONAL_TEXT_FIELDS = Object.freeze(['reason', 'text', 'url', 'command', 'label', 'url_or_path', 'archive_path', 'failure', 'origin', 'summary', 'evidenceRef', 'suggestedResolution']);
 const isObject = (value) => value !== null && typeof value === 'object';
 
 class SchemaError extends Error {

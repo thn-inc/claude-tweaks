@@ -89,7 +89,7 @@ negative stories and failures only, and a routine pass never renders there. A `r
 
 **The facts document** is `{ schemaVersion, record, surface, allowedHosts, partial[], refused[], facts[] }`.
 A fact is `{ id, kind, status, reason?, source }` plus the optional render fields `text`, `url`,
-`command`, `label`, `negative`, `live`, `target`, `url_or_path`, `archive_path`, `captions`, `failure`, `redactions` and `exposure`, plus `unconfirmed` on a `flag` fact (carried only when `true`).
+`command`, `label`, `negative`, `live`, `target`, `url_or_path`, `archive_path`, `captions`, `failure`, `redactions` and `exposure`, plus `unconfirmed` on a `flag` fact (carried only when `true`), plus `origin`, `summary`, `evidenceRef` and `suggestedResolution` on a `decision` fact (the Decision facts table below).
 
 **Fact kinds:** `change`, `check`, `story`, `finding`, `link`, `recording`, `flag`, `decision`, `deploy`, `proof`.
 

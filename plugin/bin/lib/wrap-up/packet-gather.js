@@ -466,6 +466,19 @@ function passThroughFacts(kind, source, entries, { status = 'passed', reason } =
   }));
 }
 
+// A decision entry keeps the fields a control-mode console writes (#4620); an entry with only { id, text } yields
+// exactly the pass-through fact. An absent or non-string field stays absent.
+const DECISION_ENTRY_FIELDS = Object.freeze(['origin', 'summary', 'evidenceRef', 'suggestedResolution']);
+function decisionFacts(entries) {
+  const base = passThroughFacts('decision', 'decision-items', entries);
+  return base.map((fact, i) => {
+    const entry = entries[i];
+    const extra = {};
+    for (const field of DECISION_ENTRY_FIELDS) if (typeof entry[field] === 'string') extra[field] = entry[field];
+    return { ...fact, ...extra };
+  });
+}
+
 const PROOF_NOT_RUN_REASON = 'planned in the plan, not yet run';
 
 // A recording's free strings as a narrator may read them, with the sum of what went from them.
@@ -543,7 +556,7 @@ function gatherPacketFacts(inputs) {
     ...(inputs.recording ? [recordingFact(inputs.recording, inputs.recordingPath)] : []),
     ...passThroughFacts('flag', 'flags', inputs.flags),
     ...passThroughFacts('proof', 'proofs', inputs.proofs, { status: 'not-run', reason: PROOF_NOT_RUN_REASON }),
-    ...passThroughFacts('decision', 'decision-items', inputs.decisions),
+    ...decisionFacts(inputs.decisions),
   ];
 
   const byId = new Map();
