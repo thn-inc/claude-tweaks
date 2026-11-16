@@ -41,9 +41,9 @@ function holdKey({ sessionId, agentId, pid } = {}) {
 }
 
 // Where `wtPath`'s hold dir is: { dir } for a linked worktree; { none: true } for a
-// checkout with no hold dir (no .git, a .git directory, no gitdir line, or a gitdir not
-// directly under a `worktrees` dir — a submodule's `.git/modules/<name>`);
-// { unverifiable: true } when the .git entry exists but cannot be read.
+// checkout with no hold dir (no .git, a .git directory, or a gitdir not directly under a
+// `worktrees` dir — a submodule's `.git/modules/<name>`); { unverifiable: true } when the
+// .git entry exists but cannot be read or names no gitdir.
 function locate(wtPath) {
   try {
     const gitPath = path.join(wtPath, '.git');
@@ -55,7 +55,8 @@ function locate(wtPath) {
     }
     if (!st.isFile()) return { none: true };
     const m = /^gitdir:\s*(.+?)\s*$/m.exec(fs.readFileSync(gitPath, 'utf8'));
-    if (!m) return { none: true };
+    // A .git file that names no gitdir: holds may live somewhere we cannot locate.
+    if (!m) return { unverifiable: true };
     const admin = path.resolve(wtPath, m[1]);
     if (path.basename(path.dirname(admin)) !== 'worktrees') return { none: true };
     return { dir: path.join(admin, HOLD_DIR_NAME) };
@@ -97,8 +98,8 @@ function writeHold(wtPath, { key, block, agentId } = {}) {
     if (!isKey(key)) return false;
     const dir = holdDirOf(wtPath);
     if (!dir) return false;
-    // Create the last level only: a pruned admin dir must not be resurrected.
-    if (!fs.statSync(path.dirname(dir)).isDirectory()) return false;
+    // Create the last level only: a pruned or non-directory admin dir fails here (ENOENT /
+    // ENOTDIR) and is never resurrected.
     try { fs.mkdirSync(dir); } catch (e) { if (!e || e.code !== 'EEXIST') throw e; }
     const file = path.join(dir, `${key}.json`);
     const tmp = `${file}.tmp-${process.pid}`;
@@ -192,7 +193,7 @@ function clearSessionHolds(mainRoot, { sessionId, pid } = {}) {
       matches: (name) => {
         if (!name.endsWith('.json')) return false;
         const parts = name.slice(0, -'.json'.length).split('__');
-        return parts.length === 3 && parts[0] === sessionId && parts[2] === String(pid);
+        return parts.length === 3 && parts[0] === sessionId && SAFE_PART.test(parts[1]) && parts[2] === String(pid);
       },
     });
   } catch {

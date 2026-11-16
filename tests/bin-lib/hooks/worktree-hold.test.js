@@ -103,11 +103,11 @@ test('clearSessionHolds: a file of another shape (extra segment) is not matched'
   const odd = path.join(holdDirOf(a), 's1__x__main__42.json');
   assert.ok(writeHold(a, { key: 's1__main__42', block: BLOCK }));
   const trailing = path.join(holdDirOf(a), 's1__main__42__extra.json');
-  fs.writeFileSync(odd, '{}');
-  fs.writeFileSync(trailing, '{}');
+  const emptyMiddle = path.join(holdDirOf(a), 's1____42.json');
+  const oddMiddle = path.join(holdDirOf(a), 's1___x__42.json');
+  for (const f of [odd, trailing, emptyMiddle, oddMiddle]) fs.writeFileSync(f, '{}');
   assert.strictEqual(clearSessionHolds(main, { sessionId: 's1', pid: 42 }), 1);
-  assert.ok(fs.existsSync(odd));
-  assert.ok(fs.existsSync(trailing));
+  for (const f of [odd, trailing, emptyMiddle, oddMiddle]) assert.ok(fs.existsSync(f), f);
 });
 
 test('writeHold: rejects keys carrying a path separator or dot-dot', () => {
@@ -129,23 +129,29 @@ test('writeHold: a pruned admin dir is not recreated', () => {
 test('submodule-shaped .git file (gitdir under modules/) is not a worktree', () => {
   const main = gitRepo();
   const sub = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-hold-sub-'));
-  fs.mkdirSync(path.join(main, '.git', 'modules', 'sub'), { recursive: true });
-  fs.writeFileSync(path.join(sub, '.git'), `gitdir: ${path.join(main, '.git', 'modules', 'sub')}\n`);
-  const subReal = fs.realpathSync(sub);
-  assert.strictEqual(holdDirOf(subReal), null);
-  assert.strictEqual(worktreeRootOf(subReal), null);
-  assert.strictEqual(writeHold(subReal, { key: 's1__main__42', block: BLOCK }), false);
-  assert.deepStrictEqual(readHolds(subReal), []);
-  fs.rmSync(sub, { recursive: true, force: true });
+  try {
+    fs.mkdirSync(path.join(main, '.git', 'modules', 'sub'), { recursive: true });
+    fs.writeFileSync(path.join(sub, '.git'), `gitdir: ${path.join(main, '.git', 'modules', 'sub')}\n`);
+    const subReal = fs.realpathSync(sub);
+    assert.strictEqual(holdDirOf(subReal), null);
+    assert.strictEqual(worktreeRootOf(subReal), null);
+    assert.strictEqual(writeHold(subReal, { key: 's1__main__42', block: BLOCK }), false);
+    assert.deepStrictEqual(readHolds(subReal), []);
+  } finally {
+    fs.rmSync(sub, { recursive: true, force: true });
+  }
 });
 
 test('holdDirOf: a relative gitdir resolves against the worktree', () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-hold-rel-')));
-  const wt = path.join(root, 'wt');
-  fs.mkdirSync(wt);
-  fs.writeFileSync(path.join(wt, '.git'), 'gitdir: ../admin/worktrees/w\n');
-  assert.strictEqual(holdDirOf(wt), path.join(root, 'admin', 'worktrees', 'w', 'claude-tweaks-holds'));
-  fs.rmSync(root, { recursive: true, force: true });
+  try {
+    const wt = path.join(root, 'wt');
+    fs.mkdirSync(wt);
+    fs.writeFileSync(path.join(wt, '.git'), 'gitdir: ../admin/worktrees/w\n');
+    assert.strictEqual(holdDirOf(wt), path.join(root, 'admin', 'worktrees', 'w', 'claude-tweaks-holds'));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('readHolds: a worktree with no hold dir reads as []', () => {
@@ -153,6 +159,27 @@ test('readHolds: a worktree with no hold dir reads as []', () => {
   const wt = harnessWorktreeOf(main, 'wt-nohold');
   assert.deepStrictEqual(readHolds(wt), []);
   assert.deepStrictEqual(readHolds(main), []);
+});
+
+test('readHolds: a dir with no .git, and a path that does not exist, read as [] (never held forever)', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-hold-nogit-')));
+  try {
+    assert.deepStrictEqual(readHolds(root), []);
+    assert.deepStrictEqual(readHolds(path.join(root, 'gone')), []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('readHolds: a .git file with no gitdir line fails closed; holdDirOf is null', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-hold-nolinegit-')));
+  try {
+    fs.writeFileSync(path.join(root, '.git'), 'not a gitdir line\n');
+    assert.strictEqual(holdDirOf(root), null);
+    assert.deepStrictEqual(readHolds(root), [{ key: null, hold: null }]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('readHolds: an unreadable hold dir fails closed as one unverifiable entry', chmodDenialSkip('root ignores mode 000'), () => {
@@ -179,7 +206,7 @@ test('readHolds: a worktree whose .git cannot even be stat-ed fails closed', chm
   }
 });
 
-test('readHolds: a .git file that cannot be read fails closed',chmodDenialSkip('root ignores mode 000'), () => {
+test('readHolds: a .git file that cannot be read fails closed', chmodDenialSkip('root ignores mode 000'), () => {
   const main = gitRepo();
   const wt = harnessWorktreeOf(main, 'wt-gitdenied');
   const gitFile = path.join(wt, '.git');
