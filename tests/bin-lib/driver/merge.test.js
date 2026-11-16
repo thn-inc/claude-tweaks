@@ -3523,7 +3523,7 @@ test('AC1.1, AC1.2: auto:merge without auto:build stops not-authorized at merge-
 test('AC2.1, AC2.2: auto:build removed before the pre-merge read stops not-authorized at merge-call with no merge call', async () => {
   const h = mergeHarness({ labels: seq(AUTO_MERGE, [{ name: 'auto:merge' }]) });
   const r = await merge(CTX, h.deps);
-  assert.equal(r.reason, 'not-authorized');
+  assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'not-authorized', mergeCommit: null, postMerge: null });
   assert.equal(r.detail, 'record lacks auto:build at the pre-merge read');
   noMerge(h);
   assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-call', 'stop']);
