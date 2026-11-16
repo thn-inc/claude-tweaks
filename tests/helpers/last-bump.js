@@ -20,7 +20,7 @@ function assertLastBump(file) {
   assert.equal(
     hits.length,
     1,
-    `${where}: expected exactly one "// Last bump: {old} -> {new}, #{record}" line, found ${hits.length}`
+    `${where}: expected exactly one "// Last bump: {old} -> {new}, #{record}" line, found ${hits.length}${hits.length ? ` (at ${hits.map(i => `${where}:${i + 1}`).join(', ')})` : ''}`
   );
   const idx = hits[0];
   const lineNo = idx + 1;
