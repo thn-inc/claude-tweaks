@@ -39,3 +39,14 @@ test('prependSection: before the first version heading, blank-line separated; a 
   assert.strictEqual(prependSection(null, section), '# Changelog\n\n' + section);
   assert.strictEqual(prependSection('# Changelog\n\n## v6.70.0 — old grammar\n\nBody.\n', section), '# Changelog\n\n' + section + '\n## v6.70.0 — old grammar\n\nBody.\n');
 });
+
+test('AC12.1: prependSection over a footer-bearing file leaves the footer byte-identical and still the last section', () => {
+  const footer = '## Older releases\n\nFull file up to v1.2.0: commit ' + sha('a') + '\n\nNewest release removed: v1.0.0\n\n    git show ' + sha('a') + ':CHANGELOG.md\n';
+  const section = '## 1.3.0 (2026-09-12)\n\n\n### Bug Fixes\n\n* b\n';
+  const body = '# Changelog\n\n## [1.2.0](u) (2026-01-01)\n\n\n### Features\n\n* old\n';
+  const out = prependSection(`${body}\n${footer}`, section);
+  assert.strictEqual(out, `# Changelog\n\n${section}\n## [1.2.0](u) (2026-01-01)\n\n\n### Features\n\n* old\n\n${footer}`);
+  assert.ok(out.endsWith(footer), 'the footer is still the last section, byte-identical');
+  // A footer with no version section above it: the new section goes above the footer, never after it.
+  assert.strictEqual(prependSection(`# Changelog\n\n${footer}`, section), `# Changelog\n\n${section}\n${footer}`);
+});
