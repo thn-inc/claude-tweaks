@@ -9,7 +9,8 @@ const { DECISION_STATUSES } = require('../log-decision/append.js');
 
 // The leading dash is optional: archived logs carry status-led lines without it.
 const STATUS_ALT = DECISION_STATUSES.join('|');
-const KIND_RE = new RegExp(`^(?:-\\s+)?(${STATUS_ALT})\\b`);
+// Whitespace must follow the status: `AUTO-merge was declined` is prose, not an entry.
+const KIND_RE = new RegExp(`^(?:-\\s+)?(${STATUS_ALT})(?=\\s)`);
 const CLOCK_RE = new RegExp(
   `^(?:-\\s+)?(?:${STATUS_ALT})\\s+(?:(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z)|(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)(?=\\s|$)`,
 );

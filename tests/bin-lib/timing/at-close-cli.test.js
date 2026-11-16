@@ -8,6 +8,7 @@ const { runCli, spawnCli } = require('../../helpers/run-cli');
 const { gitRepo, linkedWorktreeOf } = require('../../helpers/git-fixtures');
 const { readTiming, pickTokens } = require('../../helpers/close-timing');
 const transcript = require('../../../plugin/bin/lib/timing/transcript');
+const stepYield = require('../../../plugin/bin/lib/timing/step-yield');
 const ctxLib = require('../../../plugin/bin/lib/hooks/context');
 const { closeRunState } = require('../../../plugin/bin/lib/hooks/close-run-state');
 
@@ -121,12 +122,12 @@ test('AC6.1: the token pass rewrites step-yield.json whole beside the timing.jso
     assert.equal(r.code, 0);
     const y = JSON.parse(fs.readFileSync(file, 'utf8'));
     assert.equal(Object.hasOwn(y, 'stale'), false);
-    assert.equal(y.schemaVersion, 1);
+    assert.equal(y.schemaVersion, stepYield.SCHEMA_VERSION);
     assert.ok(y.steps.length > 0);
     // A second pass keeps timing.json and still leaves a whole yield.
     fs.writeFileSync(file, '{"stale":true');
     assert.equal((await runCli(CLI, ['--run', runDir], { env: { CLAUDE_CONFIG_DIR: cfg }, cwd: root })).code, 0);
-    assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).schemaVersion, 1);
+    assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).schemaVersion, stepYield.SCHEMA_VERSION);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

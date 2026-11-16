@@ -224,6 +224,34 @@ test('duplicateQuestionText: two events with the same text join two different as
   assert.deepEqual(qs.map((q) => q.askedAt), [at(200).toISOString(), at(700).toISOString()]);
 });
 
+test('an asked question with no recorded answer is emitted, placed by its ask time, with waitedMinutes null', () => {
+  const dir = buildRun();
+  const timing = JSON.parse(fs.readFileSync(path.join(dir, 'timing.json'), 'utf8'));
+  timing.questions.push(
+    { id: 'toolu_orphan', askTs: at(900).toISOString(), questions: ['Proceed with the plan?', 'Second?'] },
+    { id: 'toolu_late', askTs: at(1700).toISOString(), answerTs: at(1750).toISOString(), questions: ['Answered but no event?'] },
+  );
+  fs.writeFileSync(path.join(dir, 'timing.json'), JSON.stringify(timing));
+  const y = derive(dir);
+  assert.deepEqual(step(y, 'test').questions, [
+    { question: 'Proceed with the plan? / Second?', askedAt: at(900).toISOString(), answeredAt: null, waitedMinutes: null, askSource: 'transcript' },
+  ]);
+  assert.deepEqual(step(y, 'review').questions.map((q) => [q.question, q.askSource, q.answeredAt, q.waitedMinutes]), [
+    ['Merge now?', 'toolUseId', at(1500).toISOString(), 3.5],
+    ['Answered but no event?', 'transcript', at(1750).toISOString(), null],
+  ]);
+  // every transcript ask is emitted exactly once: two orphans plus the joined one
+  assert.equal(y.steps.reduce((n, s) => n + s.questions.length, 0) + y.unattributed.questions.length, 3);
+});
+
+test('an unanswered ask whose time no span holds lands in unattributed', () => {
+  const dir = buildRun();
+  const timing = JSON.parse(fs.readFileSync(path.join(dir, 'timing.json'), 'utf8'));
+  timing.questions.push({ id: 'toolu_far', askTs: at(9000).toISOString(), questions: ['Much later?'] });
+  fs.writeFileSync(path.join(dir, 'timing.json'), JSON.stringify(timing));
+  assert.deepEqual(derive(dir).unattributed.questions.map((q) => q.question), ['Much later?']);
+});
+
 test('judgeNoneUnparseable: a judge: none line parseTiebreakLine rejects counts outcome none and verdict unsettled, not unparsed', () => {
   const line = `- STAGED ${hms(at(1250))} — Tiebreak tiebreak:0123456789ab: lens "3b" finding plugin/b.js:20 dropped: judge: none. Severity: medium.`;
   const y = derive(buildRun({ lines: [line] }));
@@ -349,6 +377,46 @@ test('AC9.2: every attribution equals phaseAt over the derivePhases rows', () =>
   assert.equal(phaseAt(phases, at(1199).getTime()), 'test');
 });
 
+// ---- the instant a span ends on ----
+const MERGE_EVENTS = [
+  [0, 'skill_invoked', { skill: 'claude-tweaks:build' }], [600, 'skill_invoked', { skill: 'claude-tweaks:wrap-up' }],
+  [700, 'commit', { action: 'push' }], [900, 'commit', { action: 'merge' }], [1000, 'close-run', {}],
+];
+
+test('the merge commit lands in the merge step: an instant that ends a span is that span\'s', () => {
+  const y = derive(buildRun({ events: MERGE_EVENTS, lines: [entry(900, 'AUTO', 'merge', 'merged at the span end')] }));
+  assert.deepEqual(step(y, 'merge').commits, { merge: 1, push: 1 });
+  assert.equal(step(y, 'merge').events.commit, 2, 'the push at its start and the merge commit at its end');
+  assert.equal(step(y, 'merge').decisions.AUTO, 1, 'a decision line at the span end takes the span too');
+  assert.deepEqual(y.unattributed.commits, {});
+});
+
+test('an instant ending two nested spans goes to the innermost; one ending no span stays unattributed', () => {
+  const events = [[0, 'skill_invoked', { skill: 'claude-tweaks:flow' }], [60, 'skill_invoked', { skill: 'claude-tweaks:build' }], [600, 'commit', { action: 'at-end' }], [600, 'close-run', {}]];
+  const y = derive(buildRun({ events, lines: null }));
+  assert.equal(step(y, 'build').commits['at-end'], 1, 'build [60,600] is inside call-1 [0,600]: the innermost wins');
+  assert.equal(step(y, 'call-1').commits['at-end'], undefined);
+  const after = derive(buildRun({ events: [...events.slice(0, 2), [600, 'close-run', {}], [601, 'commit', { action: 'after' }]], lines: null }));
+  assert.equal(after.unattributed.commits.after, 1);
+});
+
+test('a verify event at a span end counts in that step\'s events.verify, as derivePhases counted it in verify[]', () => {
+  const events = [[0, 'skill_invoked', { skill: 'claude-tweaks:build' }], [200, 'skill_invoked', { skill: 'claude-tweaks:review' }], [400, 'verify', { pass: true }], [400, 'close-run', {}]];
+  const y = derive(buildRun({ events, lines: null }));
+  assert.equal(step(y, 'review').verify.runs, 1);
+  assert.equal(step(y, 'review').events.verify, 1);
+  assert.equal(y.unattributed.events.verify, undefined);
+  assert.equal(y.unattributed.verify.runs, 0);
+});
+
+test('events.verify equals verify.runs in every bucket, including a verify on the instant two spans meet', () => {
+  const events = [[0, 'skill_invoked', { skill: 'claude-tweaks:build' }], [200, 'skill_invoked', { skill: 'claude-tweaks:review' }], [400, 'verify', { pass: true }],
+    [400, 'skill_invoked', { skill: 'claude-tweaks:wrap-up' }], [1500, 'verify', { pass: false }], [2000, 'close-run', {}], [3000, 'verify', {}]];
+  const y = derive(buildRun({ events, lines: null }));
+  for (const b of [...y.steps, y.unattributed]) assert.equal(b.events.verify || 0, b.verify.runs, b.phase || 'unattributed');
+  assert.equal(step(y, 'review').verify.runs, 1, 'derivePhases\' closed interval: the shorter review span takes it');
+});
+
 test('crossesMidnight: lines either side of local midnight land on the right days', () => {
   const t = (h, m, s, day = 12) => new Date(2026, 10, day, h, m, s);
   const events = [
@@ -365,6 +433,24 @@ test('crossesMidnight: lines either side of local midnight land on the right day
   assert.equal(step(y, 'build').decisions.SKIP, 1);
   assert.equal(step(y, 'test').decisions.SKIP, 1);
   assert.equal(y.unattributed.decisions.SKIP, 0);
+});
+
+test('an ISO-clock line resets nothing in the section cursor: a later local clock still places after the last local line', () => {
+  const t = (d, h, m, s = 0) => new Date(2026, 10, d, h, m, s);
+  const dir = tmpRun('iso-cursor');
+  const events = [[t(12, 8, 0), 'skill_invoked', { skill: 'claude-tweaks:build' }], [t(12, 20, 0), 'skill_invoked', { skill: 'claude-tweaks:test' }],
+    [t(13, 6, 0), 'skill_invoked', { skill: 'claude-tweaks:review' }], [t(13, 23, 0), 'close-run', {}]];
+  for (const [when, type, data] of events) atClock(when, () => appendEvent(dir, type, data));
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ createdAt: t(12, 8, 0).toISOString(), updatedAt: t(13, 23, 30).toISOString() }));
+  const local = (when, text) => formatEntry({ status: 'SKIP', now: when, step: 'timing', text, reversibility: 'n/a' });
+  const iso = `- SKIP ${t(12, 21, 0).toISOString()} — timing: an ISO-clock line stamped late on day 12. Reversibility: n/a.`;
+  // local 09:00 d12 (build); ISO 21:00 d12 (test, placed as stamped); local 10:00: the cursor is
+  // still 09:00 d12 (the ISO line moved nothing), so 10:00 lands on d12 (build), not d13 (review).
+  fs.writeFileSync(path.join(dir, 'decisions.md'), [local(t(12, 9, 0), 'first'), iso, local(t(12, 10, 0), 'third')].join('\n') + '\n');
+  const y = derive(dir);
+  assert.equal(step(y, 'build').decisions.SKIP, 2);
+  assert.equal(step(y, 'test').decisions.SKIP, 1, 'the ISO line is placed as stamped');
+  assert.equal(step(y, 'review').decisions.SKIP, 0);
 });
 
 test('noEvents: no events.jsonl gives no steps and every decision line unattributed, no throw', () => {

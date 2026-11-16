@@ -47,7 +47,7 @@ const bucketKeys = (prefix) => [
   key(`${prefix}.decisions.<status>`, 'number'),
   key(`${prefix}.events.<type>`, 'number'),
   key(`${prefix}.questions[].question`, 'string'), key(`${prefix}.questions[].askedAt`, 'string', true),
-  key(`${prefix}.questions[].answeredAt`, 'string'), key(`${prefix}.questions[].waitedMinutes`, 'number', true),
+  key(`${prefix}.questions[].answeredAt`, 'string', true), key(`${prefix}.questions[].waitedMinutes`, 'number', true),
   key(`${prefix}.questions[].askSource`, 'string', true),
   key(`${prefix}.findings`, 'object', true),
   key(`${prefix}.findings.raised`, 'number'), key(`${prefix}.findings.both`, 'number'),
@@ -265,32 +265,54 @@ function deriveStepYield(runDir, { now = new Date() } = {}) {
 
   const buckets = new Map(rows.map((r) => [r.phase, newBucket()]));
   const unattributed = newBucket();
+  // The step an instant belongs to: phaseAt's half-open [start, end) rule, and when no span holds
+  // the instant but it is exactly where a span ends (the merge commit ends the merge span),
+  // the innermost span ending there (shortest, ties to the later start).
+  const placeAt = (t) => {
+    const name = phaseAt(rows, t);
+    if (name !== null) return name;
+    let best = null;
+    for (const r of rows) {
+      for (const s of Array.isArray(r.spans) ? r.spans : [r]) {
+        const start = Date.parse(s.start);
+        if (Date.parse(s.end) !== t || !Number.isFinite(start)) continue;
+        if (!best || (t - start) < (t - best.start) || ((t - start) === (t - best.start) && start > best.start)) best = { phase: r.phase, start };
+      }
+    }
+    return best ? best.phase : null;
+  };
   const bucketFor = (t) => {
-    const name = t === null ? null : phaseAt(rows, t);
+    const name = t === null ? null : placeAt(t);
     return name === null ? unattributed : buckets.get(name);
   };
 
-  // verify: each row's own verify[] (derive.js's attribution); a verify event no row took is unattributed.
-  const taken = new Map();
+  // verify: each row's own verify[] (derive.js's attribution); a verify event no row took is
+  // unattributed. `verifyOwner` queues each event's owning step by its ts, so a verify event's
+  // `events` count follows the same attribution as its `verify` count and the two never disagree.
+  const verifyOwner = new Map();
   for (const r of rows) {
     const b = buckets.get(r.phase);
     for (const v of r.verify) {
       b.verify.runs += 1;
       b.verify[v.pass === true ? 'pass' : v.pass === false ? 'fail' : 'unknown'] += 1;
-      taken.set(v.at, (taken.get(v.at) || 0) + 1);
+      if (!verifyOwner.has(v.at)) verifyOwner.set(v.at, []);
+      verifyOwner.get(v.at).push(b);
     }
   }
+  const ownerOf = new Map();
   for (const { ev } of events) {
     if (ev.type !== 'verify') continue;
-    if (taken.get(ev.ts) > 0) { taken.set(ev.ts, taken.get(ev.ts) - 1); continue; }
+    const queue = verifyOwner.get(ev.ts);
+    if (queue && queue.length) { ownerOf.set(ev, queue.shift()); continue; }
     unattributed.verify.runs += 1;
     unattributed.verify[ev.pass === true ? 'pass' : ev.pass === false ? 'fail' : 'unknown'] += 1;
+    ownerOf.set(ev, unattributed);
   }
 
   // events and commits
   const asks = [];
   for (const { ev, t } of events) {
-    const b = bucketFor(t);
+    const b = ev.type === 'verify' ? ownerOf.get(ev) : bucketFor(t);
     bump(b.events, ev.type);
     if (ev.type === 'commit') bump(b.commits, typeof ev.action === 'string' ? ev.action : 'unknown');
     if (ev.type === 'ask-user-question') asks.push({ ev, t });
@@ -300,7 +322,10 @@ function deriveStepYield(runDir, { now = new Date() } = {}) {
   // join first for every event, then the question-text join over what is left.
   const transcriptAsks = (timing && Array.isArray(timing.questions) ? timing.questions : [])
     .filter((q) => q && typeof q === 'object' && Number.isFinite(Date.parse(q.askTs)))
-    .map((q) => ({ id: q.id, askMs: Date.parse(q.askTs), askTs: q.askTs, first: sourceStrings(q.questions)[0] }));
+    .map((q) => ({
+      id: q.id, askMs: Date.parse(q.askTs), askTs: q.askTs, first: sourceStrings(q.questions)[0],
+      text: sourceStrings(q.questions).join(' / '), answerTs: typeof q.answerTs === 'string' && Number.isFinite(Date.parse(q.answerTs)) ? q.answerTs : null,
+    }));
   const used = new Set();
   const joined = new Map();
   const texts = new Map(asks.map(({ ev }) => [ev, (Array.isArray(ev.questions) ? ev.questions : []).map((q) => (q && typeof q.question === 'string' ? q.question : null)).filter((q) => q !== null)]));
@@ -328,6 +353,15 @@ function deriveStepYield(runDir, { now = new Date() } = {}) {
     b.questions.push({
       question: texts.get(ev).join(' / '), askedAt: j ? j.ask.askTs : null, answeredAt: ev.ts,
       waitedMinutes: waited, askSource: j ? j.source : null,
+    });
+  }
+  // A transcript ask no event answered is still an asked question: placed by its ask time, with
+  // the transcript's own answer time when it has one, and no wait (the event that times the
+  // answer is missing).
+  for (const q of transcriptAsks) {
+    if (used.has(q)) continue;
+    bucketFor(q.askMs).questions.push({
+      question: q.text, askedAt: q.askTs, answeredAt: q.answerTs, waitedMinutes: null, askSource: 'transcript',
     });
   }
 

@@ -23,6 +23,13 @@ test('classifyDecisionLine reads every status, with or without the leading dash'
   assert.strictEqual(classifyDecisionLine('- FUTURE-STATUS 00:00:00 — x').kind, 'other');
 });
 
+test('a status must be followed by whitespace: prose that merely starts with a status word is not an entry', () => {
+  for (const line of ['AUTO-merge was declined for this record', '- SKIP-ahead notes', 'AUTOMATIC retry', '- AUTO-merge 10:00:00 — x', 'STAGED.']) {
+    assert.strictEqual(classifyDecisionLine(line).kind, 'other', line);
+  }
+  assert.strictEqual(classifyDecisionLine('- AUTO\t10:00:00 — x').kind, 'AUTO');
+});
+
 test('entryClock reads HH:MM:SS, HH:MM, and ISO times after the status token', () => {
   assert.deepStrictEqual(entryClock('- AUTO 08:26:01 — x: y.'), { h: 8, m: 26, s: 1 });
   assert.deepStrictEqual(entryClock('- AUTO 21:57 — Backlog refine: s'), { h: 21, m: 57, s: 0 });

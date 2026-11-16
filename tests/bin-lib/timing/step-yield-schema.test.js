@@ -9,15 +9,60 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
-const { KEY_PATHS, SCHEMA_VERSION } = require('../../../plugin/bin/lib/timing/step-yield');
+const os = require('os');
+const { KEY_PATHS, SCHEMA_VERSION, deriveStepYield } = require('../../../plugin/bin/lib/timing/step-yield');
 const { PAIR_FORMS } = require('../../../plugin/bin/lib/timing/pair-lines');
-const { DECISION_STATUSES } = require('../../../plugin/bin/lib/log-decision/append');
+const { DECISION_STATUSES, formatEntry, hms } = require('../../../plugin/bin/lib/log-decision/append');
+const { appendEvent } = require('../../../plugin/bin/lib/hooks/context');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
 const DOC = fs.readFileSync(path.join(ROOT, 'docs', 'reference', 'step-yield.md'), 'utf8');
 const FIX = path.join(ROOT, 'tests', 'fixtures', 'step-yield');
 const GOLDEN = JSON.parse(fs.readFileSync(path.join(FIX, 'key-paths.golden.json'), 'utf8'));
-const OUTPUT = JSON.parse(fs.readFileSync(path.join(FIX, 'review-run.expected.json'), 'utf8'));
+
+// A live deriveStepYield over a run built here, so the key walk sees what the function emits, not a
+// committed copy of an earlier output. It reaches every bucket-level path of both a step and
+// `unattributed`: commits, a joined and an orphan question, findings, unparsed samples, and the
+// top-level unparsed (a malformed event line).
+const BASE = Date.UTC(2026, 10, 12, 9, 0, 0);
+const at = (sec) => new Date(BASE + sec * 1000);
+function atClock(when, fn) {
+  const Real = Date;
+  class Frozen extends Real {
+    constructor(...args) { if (args.length === 0) super(when.getTime()); else super(...args); }
+    static now() { return when.getTime(); }
+  }
+  global.Date = Frozen;
+  try { return fn(); } finally { global.Date = Real; }
+}
+function liveYield() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-step-yield-schema-'));
+  const events = [
+    [0, 'skill_invoked', { skill: 'claude-tweaks:build' }], [60, 'commit', { action: 'push' }],
+    [600, 'skill_invoked', { skill: 'claude-tweaks:test' }], [660, 'verify', { mode: 'full', pass: true, durationMs: 1000, suitesRun: [] }],
+    [1200, 'skill_invoked', { skill: 'claude-tweaks:review' }],
+    [1500, 'ask-user-question', { toolUseId: 'toolu_q1', questions: [{ header: 'Merge', question: 'Merge now?', options: [] }], response: 'yes' }],
+    [2400, 'skill_invoked', { skill: 'claude-tweaks:wrap-up' }], [2700, 'close-run', {}],
+    [5000, 'commit', { action: 'after-close' }], [5100, 'verify', { pass: false }],
+  ];
+  for (const [sec, type, data] of events) atClock(at(sec), () => appendEvent(dir, type, data));
+  fs.appendFileSync(path.join(dir, 'events.jsonl'), '{broken\n');
+  const line = (sec, status, step, text) => formatEntry({ status, now: at(sec), step, text, reversibility: 'high' });
+  fs.writeFileSync(path.join(dir, 'decisions.md'), [
+    line(1210, 'AUTO', 'Reproduction', 'lens "3a" finding plugin/a.js:10 reproduced. Confirmed.'),
+    line(1220, 'STAGED', 'Reproduction', 'lens "3b" finding plugin/b.js:20 not reproduced. Staged to Review Console as low-confidence.'),
+    `- AUTO ${hms(at(1280))} — Reproduction: lens "3a" mystery shape.`,
+    // three hours past the run window: no local day places it, so it is unattributed
+    line(1210 + 3 * 3600, 'AUTO', 'Reproduction', 'lens "3a" finding plugin/far.js:1 reproduced. Confirmed.'),
+    `- AUTO ${hms(at(1300 + 3 * 3600))} — Reproduction: lens "3a" far mystery shape.`,
+  ].join('\n') + '\n');
+  fs.copyFileSync(path.join(FIX, 'review-run', 'run-state.json'), path.join(dir, 'run-state.json'));
+  const timing = JSON.parse(fs.readFileSync(path.join(FIX, 'review-run', 'timing.json'), 'utf8'));
+  timing.questions.push({ id: 'toolu_orphan', askTs: at(9000).toISOString(), questions: ['Asked after the run?'] });
+  fs.writeFileSync(path.join(dir, 'timing.json'), JSON.stringify(timing));
+  return deriveStepYield(dir, { now: at(3000) });
+}
+const OUTPUT = liveYield();
 
 // Concrete output -> the set of KEY_PATHS-style leaf paths: the keys under a map-valued
 // field (commits, events, decisions, byVerdict, byOutcome, byLens) become their pattern.
@@ -43,9 +88,12 @@ function undocumentedPaths(output, keyPaths) {
   return [...paths(output)].filter((p) => !known.has(p));
 }
 
+// The golden is always diffed: a SCHEMA_VERSION bump does not switch the comparison off, it
+// obliges whoever bumps it to regenerate the golden (and so the diff is what they review).
+const BUMPED = 'SCHEMA_VERSION changed: regenerate the golden and note the change in docs/reference/step-yield.md';
 function goldenDiff(keyPaths, schemaVersion, golden) {
-  if (schemaVersion !== golden.schemaVersion) return null;
-  try { assert.deepStrictEqual(JSON.parse(JSON.stringify(keyPaths)), golden.keyPaths); return null; } catch (e) { return e; }
+  try { assert.deepStrictEqual(JSON.parse(JSON.stringify(keyPaths)), golden.keyPaths); } catch (e) { return e; }
+  return schemaVersion === golden.schemaVersion ? null : new Error(BUMPED);
 }
 
 test('AC8.1: step-yield.md names every key path', () => {
@@ -74,6 +122,12 @@ test('AC8.2: a key the function emits that the doc does not name fails', () => {
   assert.ok(walked.has('steps[].decisions.<status>'));
   assert.ok(walked.has('steps[].commits.<action>'));
   assert.ok(walked.has('steps[].findings.byLens.<lens>.tiebreak.byOutcome.<outcome>'));
+  // The live run reaches the unattributed bucket's own paths and both unparsed sample lists.
+  for (const p of ['unattributed.commits.<action>', 'unattributed.questions[].question', 'unattributed.questions[].askedAt', 'unattributed.questions[].answeredAt',
+    'unattributed.questions[].waitedMinutes', 'unattributed.questions[].askSource', 'unattributed.findings.raised', 'unattributed.findings.byLens.<lens>.one',
+    'unattributed.unparsed.samples[]', 'steps[].unparsed.samples[]', 'unparsed.samples[]', 'steps[].questions[].waitedMinutes', 'steps[].tokens.input']) {
+    assert.ok(walked.has(p), `the live fixture run does not reach ${p}`);
+  }
   // Every status key the output carries is a DECISION_STATUSES entry, and all of them are present.
   const statusKeys = Object.keys(OUTPUT.steps[0].decisions).sort();
   assert.deepEqual(statusKeys, [...DECISION_STATUSES].sort());
@@ -91,6 +145,7 @@ test('AC8.3: golden key paths and nullability', () => {
   assert.equal(typeof GOLDEN.schemaVersion, 'number');
   const diff = goldenDiff(KEY_PATHS, SCHEMA_VERSION, GOLDEN);
   assert.equal(diff, null, 'a key was removed or its type/nullability changed: bump SCHEMA_VERSION and note it in docs/reference/step-yield.md');
+  assert.equal(GOLDEN.schemaVersion, SCHEMA_VERSION, BUMPED);
 });
 
 test('AC8.3 go-red: a KEY_PATHS copy with one entry removed or retyped fails the golden comparison', () => {
@@ -98,6 +153,10 @@ test('AC8.3 go-red: a KEY_PATHS copy with one entry removed or retyped fails the
   assert.notEqual(goldenDiff(removed, SCHEMA_VERSION, GOLDEN), null);
   const retyped = KEY_PATHS.map((k, i) => (i === 0 ? { ...k, nullable: !k.nullable } : k));
   assert.notEqual(goldenDiff(retyped, SCHEMA_VERSION, GOLDEN), null);
-  // A schemaVersion bump is the sanctioned way to change the shape.
-  assert.equal(goldenDiff(removed, SCHEMA_VERSION + 1, GOLDEN), null);
+  // A schemaVersion bump does not switch the comparison off: the same removal still fails after one,
+  // and a bump with an unregenerated golden fails on its own.
+  assert.notEqual(goldenDiff(removed, SCHEMA_VERSION + 1, GOLDEN), null);
+  assert.notEqual(goldenDiff(retyped, SCHEMA_VERSION + 1, GOLDEN), null);
+  const stale = goldenDiff(KEY_PATHS, SCHEMA_VERSION + 1, GOLDEN);
+  assert.match(String(stale && stale.message), /SCHEMA_VERSION changed: regenerate the golden/);
 });

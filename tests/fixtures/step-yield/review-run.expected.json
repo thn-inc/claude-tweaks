@@ -70,7 +70,7 @@
       "commits": {},
       "verify": { "runs": 0, "pass": 0, "fail": 0, "unknown": 0 },
       "decisions": { "AUTO": 0, "STAGED": 0, "KEPT-PROMPT": 0, "SCANNED": 0, "REFUSED": 0, "SKIP": 0, "FAILED": 0 },
-      "events": { "skill_invoked": 1 },
+      "events": { "close-run": 1, "skill_invoked": 1 },
       "questions": [], "findings": null, "unparsed": { "count": 0, "samples": [] }
     }
   ],
@@ -78,7 +78,7 @@
     "commits": {},
     "verify": { "runs": 0, "pass": 0, "fail": 0, "unknown": 0 },
     "decisions": { "AUTO": 0, "STAGED": 0, "KEPT-PROMPT": 0, "SCANNED": 0, "REFUSED": 0, "SKIP": 0, "FAILED": 0 },
-    "events": { "close-run": 1 },
+    "events": {},
     "questions": [], "findings": null, "unparsed": { "count": 0, "samples": [] }
   },
   "unparsed": { "count": 0, "samples": [] }
