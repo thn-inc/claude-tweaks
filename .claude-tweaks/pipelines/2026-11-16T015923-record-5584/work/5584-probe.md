@@ -32,3 +32,15 @@ Gating outcome: (a) is accepted; (g) and (h) are refused by the markers part. Pa
 ## Launch-line rows (Decided 2026-11-16 follow-up)
 
 Every key of the (c) and (i) prompt rows, ids and times aside, has the same presence and value as the (a) row: `cwd`, `entrypoint: "cli"`, `gitBranch`, `isSidechain: false`, `origin: {kind: "human"}`, `parentUuid` set, `turnOrigin: "human"`, `turnPosition`, `type`, `userType: "external"`, `version`. `turnPosition` is `{promptIndex: 1, turnIndex: 1}` for (c), the same as a first typed prompt; (i) has index 2, the same as a second typed prompt. No field separates a launch-line command from a typed one, so the transcript cannot tell a launch line from a typed line; condition 4 is then the only refusal for a launcher.
+
+## Part 2 — through the shipped hook (Task 13)
+
+Captured 2026-11-16 10:01–10:13Z on Claude Code **2.1.325** (`claude --version`; the transcripts' `version` field agrees), at branch commit `418be37f26`. Same pty harness and `env -i` set as Part 1, but the claude argv carries `--plugin-dir <worktree>/plugin` and no `--settings` scratch hook: the pointer `dispatch-prompts.json` was written by the worktree plugin's `user-prompt-submit` hook. After each case: `node tools/typed-command-probe.js --session <id> --record 3 --config-dir <account config dir> --tmpdir "$TMPDIR"`. Marker fields only (the tool prints no message text):
+
+| Case | `pointer` | Candidate rows for the pointer's `promptId` (`turnOrigin` / `originKind` / `promptSource` / `isMeta`; notable keys) | `answer` |
+|---|---|---|---|
+| (a) typed at an idle prompt | `ok: true`, written 10:01:07.340Z | `human` / `human` / null / null; plus the `isMeta: true` `turnCompanion` row | `typed` (same `promptId`) |
+| (g) `ScheduleWakeup` prompt holding the line | `ok: true`, written 10:07:00.217Z | `scheduled` / null / null / null; keys `wakeupSource`, `scheduledTaskId`, `scheduledFireId`, `queuePriority`, `queueSkipAttachments`; plus the `isMeta: true` `turnCompanion` row | `none`, reason `not-typed` |
+| (h) `cc-router hub send <pid> "<line>"` | `ok: true`, written 10:12:07.670Z | `peer` / `peer` / `system` / `true`; keys `queueSkipSlashCommands`, `queueSkipAttachments`; plus an `isMeta: true` row | `none`, reason `not-typed` |
+
+Gating outcome: `typed`, `not-typed`, `not-typed`, as Task 13 requires. The hook wrote a pointer in all three cases (it records any prompt naming the dispatch command); the transcript check is what refuses (g) and (h). The `isMeta: true` companion rows pass the probe's candidate filter (`isCandidateRow`) and fail the markers part on `isMeta`; in (a) the accepted row is the `human` one.
