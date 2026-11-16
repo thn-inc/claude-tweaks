@@ -2,12 +2,12 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
-| 1 | build | SDD ruling — sed without -i stays read; sed script scanner removed: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
-| 2 | build | SDD ruling — curl request bodies and non-GET methods count as write: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
-| 3 | build | SDD ruling — less with a log-file flag counts as write: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
-| 4 | build | SDD ruling — relative path command words are unknown: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | — |
-| 5 | build | SDD ruling — gate-fragments planted mis-parse case kept in blank mode: ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | open | — |
-| 6 | build | SDD ruling — Task 5 measurement had no separate task review: ratify or reverse at the Review Console (staged/sdd-ruling-6.md) | open | — |
+| 1 | build | SDD ruling — sed without -i stays read; sed script scanner removed: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | accepted | ratified at Review Console — sed without -i stays read per Deliverable 2's decision (plan review settled Reading A); a sed w/W/e script is left to AC9's spot check |
+| 2 | build | SDD ruling — curl request bodies and non-GET methods count as write: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | accepted | ratified at Review Console — curl with a request body or a non-GET/HEAD method is write, matching the gh api remote-mutation rule; cost if wrong is some curl calls counting as write |
+| 3 | build | SDD ruling — less with a log-file flag counts as write: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | accepted | ratified at Review Console — less with a log-file flag is write under the never-read rule; no material cost |
+| 4 | build | SDD ruling — relative path command words are unknown: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | accepted | ratified at Review Console — a relative path command word is unknown, not judged by basename; a few ./ls-style rows move to unknown |
+| 5 | build | SDD ruling — gate-fragments planted mis-parse case kept in blank mode: ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | accepted | ratified at Review Console — the planted mis-parse case stays in blank mode while the scan uses keep mode; it proves a non-ok verdict becomes an offender |
+| 6 | build | SDD ruling — Task 5 measurement had no separate task review: ratify or reverse at the Review Console (staged/sdd-ruling-6.md) | accepted | ratified at Review Console — Task 5 produced no diff to review; the controller checked the arithmetic and the whole-branch review saw the evidence file |
 | 7 | build | SDD ruling — git -C $W with an unquoted computed value still classifies read: ratify or reverse at the Review Console (staged/sdd-ruling-7.md) | open | — |
 | 8 | build | SDD ruling — git -- stop misreads -- given as an option value: ratify or reverse at the Review Console (staged/sdd-ruling-8.md) | open | — |
 | 9 | build/skill | [skill: NEW - shell-effect-allowlist] tools/guard-refusals/effect.js establishes a read-direction allowlist for judging whether a shell command only reads (unlisted word unknown, write flags per word, computed arguments unknown, wrapper and keyword transparency); no project skill covers classifying command effect, and the review rounds found the same leak classes (operator-adjacent tokens, computed arguments, value-taking option clusters) twice | observation | — |
@@ -33,3 +33,5 @@
 | 29 | review | Test Quality at tools/guard-refusals/effect.js:91: GH_READ/GH_WRITE entries unpinned (tiebreak: drop) | accepted | Not fixed: tiebreak found every GH_READ entry read-only and a missing GH_WRITE entry shows as unknown, the safe direction. |
 | 30 | review | Test Quality at tests/guard-refusals/effect.test.js:190: duplicate NEVER_READ rows (tiebreak: drop) | accepted | Not fixed: tiebreak found the repeats sit in one array and fail together; redundant assertions only. |
 | 31 | review | Convention at tools/guard-refusals/effect.js:235 and :797, Security at :38 -f, :74 -z: refuted or declined by tiebreak | accepted | Refuted by tiebreak: tokenize builds on lexShell (one lexer); sed -f is Reading A; the gate catch at :797 was hardened anyway with :796. rg -z runs fixed decompressors and writes nothing. |
+| 32 | wrap-up | pr — PR #5611 — this run's own pr-first PR; disposition is Phase 4's merge decision | observation | — |
+| 33 | wrap-up | suite — residue suite probe skipped via --no-suite; suite state is the runner stamp at f4c0f0cf3d plus PR CI on 7ae7e4f97 | observation | — |
