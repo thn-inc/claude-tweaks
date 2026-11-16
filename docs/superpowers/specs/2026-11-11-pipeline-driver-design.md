@@ -77,7 +77,7 @@ The driver lane uses the express gates with one difference. A record with no cer
 
 **Authorization and record state.** The express gate checks neither, because dispatch's queue pull filters first. The driver has no queue pull in front of it when a record is named, so it applies these itself, on the record's live labels and state, for every entry point:
 
-- the record carries `auto:build`. Naming a record on the command line is not authorization; a human who wants an ungranted record driven grants it first;
+- the record carries `auto:build`, or a command a person typed named it (#5584, decision 0.2 of `docs/superpowers/specs/2026-11-15-process-efficiency-design.md`). A record given in `drive.js`'s own arguments is named; one `--budget` picked is not. Naming stands in for the label only when the record carries `ready` and none of `bot:blocked`, `bot:parked` or `parked`, and the one rule (`resolveBuildAuthority`, `bin/lib/issues/build-authority.js`) answers `typed`: at a terminal outside a session, or inside an attended local session whose transcript shows a person typed the `/claude-tweaks:dispatch` line naming it. A run a hub, a routine, a schedule or another session starts still needs the label. It writes no label and never implies `auto:merge`;
 - it has no open blocker, is not parked or blocked, and has no open PR. These use the shared helpers `.claude/skills/blocker-surface-parity` lists, so the verdicts match dispatch's.
 
 Over the 484 records open on 2026-11-11 the prose gates accept 14 and the driver gates accept 73, of which 23 carry `auto:build`.
@@ -256,7 +256,7 @@ Each came out of a record's red-team pass and is written into the record named.
 5. The driver has no prose contract under `_shared/` and no prose-pinning tests.
 6. The policy key `express-driver` with values `off` (default), `split` and `on`; `split` sends even-numbered records to the driver so the prose lane and standard path keep receiving like records for comparison.
 7. The driver commits; the implementer has no git write access.
-8. The driver requires `auto:build` on every record, including one a human names on the command line.
+8. The driver requires `auto:build` on every record except one a person named in a typed command, where the build-authority rule answering `typed` stands in for it for that run only (#5584; `docs/driver.md`'s Build authority). It never stands in for `auto:merge`.
 9. A standalone run that escalates discards its partial work: it releases the claim and removes the worktree and branch, and the standard path starts fresh.
 10. A standalone `blocked` run labels the record `bot:blocked`, releases the claim and leaves the draft PR open; Settle's failure judgment and PR-closing tombstone are not carried over.
 11. In Phase 2 the merge is driver code and the two judgments are read-only workers; no model holds merge rights.

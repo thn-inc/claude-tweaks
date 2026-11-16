@@ -24,6 +24,31 @@ Exit codes:
 | 1 | The policy, or the run's repository or integration branch, cannot be resolved; no further record is attempted. With `--budget`, also a failed queue pull. |
 | 2 | Malformed invocation (no record reference, a non-numeric one; with `--budget`, a bad or repeated value, or a named record beside it), `gh` or `git` absent, or an internal error. |
 
+## Build authority
+
+Admission refuses a record without `auto:build` (`record lacks auto:build`) unless a typed command stands in for the label (#5584). The rule is `resolveBuildAuthority` in `plugin/bin/lib/issues/build-authority.js`; it answers `label`, `typed` or `none`, and admission lifts the grant refusal only on `typed`. A typed command stands in for `auto:build` for that run only. It writes no label, never implies `auto:merge` (the merge step stops `not-authorized` for a record without it, so the run ends `pending-review`), and lifts no other gate: a parked, blocked or unready record is still refused.
+
+The rule's states, first match wins (the same table heads `build-authority.js`):
+
+| State | Answer |
+|---|---|
+| `labels` is not an array | `none` (`labels-unreadable`) |
+| labels carry `auto:build` | `label`; nothing else is read |
+| the command did not name the record | `none` (`not-named`) |
+| named, labels lack `ready` | `none` (`not-ready`) |
+| named, labels carry `bot:blocked`, `bot:parked` or `parked` | `none` (`held`) |
+| named, `ready`, inside a Claude Code session, every session condition holds | `typed` |
+| named, `ready`, outside a Claude Code session, every terminal condition holds | `typed` |
+| anything else | `none`, each failed condition named |
+
+Inside a session means `CLAUDECODE` or `CLAUDE_CODE_SESSION_ID` is set. Session conditions: `CLAUDE_CODE_ENTRYPOINT` is exactly `cli`; `CLAUDE_CODE_SESSION_ATTENDED` is exactly `1`; `CLAUDE_CODE_REMOTE` and `CC_HUB_RUN` are unset or empty; when `CC_POSTURE` or `CC_LAUNCHED_BY` is set, `CC_LAUNCHED_BY` is exactly `user`; and the transcript check (`readTypedCommand`, `plugin/bin/lib/issues/typed-command.js`) finds that a person typed a `/claude-tweaks:dispatch` line naming the record within the last 30 minutes. Terminal conditions: stdin is a terminal, `CI` is unset or empty, and the `CLAUDE_CODE_REMOTE`, `CC_HUB_RUN` and launcher conditions above; no transcript is read. What the check reads and the probe behind it are in `docs/hooks.md`'s "Typed dispatch command"; the reason words and remedies are in `plugin/skills/dispatch/queue-pull-notes.md`'s Typed command section.
+
+The rule has three callers, and none restates it: the queue pull's named path (`plugin/bin/lib/dispatch/queue-pull.js`, `--named`), resume (`plugin/bin/dispatch-resume.js`) and this driver's admission step (`plugin/bin/lib/driver/steps.js`). A new caller calls `resolveBuildAuthority` and never reads the pointer or the transcript itself. The queue pull and resume always pass stdin as not a terminal, so only `drive.js` can take the terminal path.
+
+In the driver a record is named only when it is one of `drive.js`'s own record arguments; a record the `--budget` loop picked never is, so it needs the label. `drive.js #N` typed by a person at a terminal outside any session is the second way to `typed`. Run by the model inside a session, it takes the session conditions and so needs the transcript check for that record: a Bash child of a session has `CLAUDECODE` and `CLAUDE_CODE_SESSION_ID` set and stdin not a terminal. A launcher must not give `drive.js` a terminal on stdin unless a person is at it: a job runner that does, and sets none of the variables above, reads as a person. It must leave stdin a pipe or set `CC_HUB_RUN`.
+
+The `admission` event line carries `authority` (`label`, `typed` or `none`). When admission refuses the grant and the answer is `none` with reason words, the stop's detail is the unchanged refusal text followed by `; typed command not accepted: ` and the words joined with `, `, as the queue pull's line joins them (for example `record lacks auto:build; typed command not accepted: not-named`). An answer with no reason words, or a stop that does not include the grant refusal, adds nothing.
+
 ## Picking records: `--budget`
 
 `--budget <n|all>` picks the records itself instead of taking names. The loop is `plugin/bin/lib/driver/budget.js`'s `runBudget`; the queue-pull module and ranking are `plugin/bin/lib/dispatch/queue-pull.js`'s.
@@ -63,7 +88,7 @@ What the queue pull itself writes, accepted as dispatch has it: the target-missi
 
 One JSON object per line on stdout and, once the run directory exists, in `{run-dir}/driver-events.jsonl`.
 
-A step line: `ts`, `run` (the run id, `null` before the run directory exists), `record`, `step`, `status` (`ok`, `fail`, `stop`), `ms`, any extra fields the step adds (the worker step adds `usage`, `turns`, `denials` and, when the last turn crossed the spend ceiling, `spendOverrun`; the `review` step adds `returned`, `reproduced`, `discarded`, `usage`, `denials`, `costUsd` and `turns`), and `detail` when there is one. A step that is skipped (the `review` step with policy `express-driver-review` off, or beyond-express on a record inside the express bounds) writes no line at all. `step` is one of: `policy`, `fetch`, `eligibility`, `admission`, `claim`, `run-dir`, `worktree`, `worker`, `commit`, `test`, `check`, `review`, `push`, `pr`, `record-pr`, `set-config`, `summary`, `ci`, `merge`; the merge step's own sub-step events are `merge-entry`, `merge-supplier`, `merge-check`, `merge-acceptance`, `merge-closing-links`, `merge-compose`, `merge-ready`, `merge-gate`, `merge-watch`, `merge-park`, `merge-conflict`, `merge-call`, `merge-confirm`, `merge-post-merge`, `merge-release-status`, `merge-reconcile`, `merge-teardown`, `merge-delete-branch` and `merge-close-run`; a settle call uses one of the `settle-*` names below.
+A step line: `ts`, `run` (the run id, `null` before the run directory exists), `record`, `step`, `status` (`ok`, `fail`, `stop`), `ms`, any extra fields the step adds (the `admission` step adds `authority`, see "Build authority"; the worker step adds `usage`, `turns`, `denials` and, when the last turn crossed the spend ceiling, `spendOverrun`; the `review` step adds `returned`, `reproduced`, `discarded`, `usage`, `denials`, `costUsd` and `turns`), and `detail` when there is one. A step that is skipped (the `review` step with policy `express-driver-review` off, or beyond-express on a record inside the express bounds) writes no line at all. `step` is one of: `policy`, `fetch`, `eligibility`, `admission`, `claim`, `run-dir`, `worktree`, `worker`, `commit`, `test`, `check`, `review`, `push`, `pr`, `record-pr`, `set-config`, `summary`, `ci`, `merge`; the merge step's own sub-step events are `merge-entry`, `merge-supplier`, `merge-check`, `merge-acceptance`, `merge-closing-links`, `merge-compose`, `merge-ready`, `merge-gate`, `merge-watch`, `merge-park`, `merge-conflict`, `merge-call`, `merge-confirm`, `merge-post-merge`, `merge-release-status`, `merge-reconcile`, `merge-teardown`, `merge-delete-branch` and `merge-close-run`; a settle call uses one of the `settle-*` names below.
 
 The final line (`step: "final"`) adds:
 
