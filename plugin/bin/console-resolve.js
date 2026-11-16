@@ -232,7 +232,7 @@ function readPolicy({ execFile, cwd, runDir, strict = false }) {
 // #4621: what the resolver needs to route a wrap-up upstream-feedback item by repo ownership, read from git
 // only (never `gh`, and never the authenticated account): the `origin` remote's owner, and `owned-owners`
 // from the BASE branch's policy.yml — `origin/{branch}`, so a change in the branch under review cannot widen
-// it. The base branch is the resolved `integration-branch` policy value, else `origin/HEAD`, else `main`.
+// it. The base branch is `origin/HEAD`'s, else `main`.
 // Called lazily (only when an upstream item would file) and never throws: every failed read becomes a note,
 // `{condition} → fallback: {what the resolver does instead}`, that the caller logs as a SKIP line. A bad
 // `owned-owners` entry is ignored on its own (ownedOwnersList), never the whole list.
@@ -240,7 +240,7 @@ const NOTE_TEXT_MAX = 160;
 const oneLineNote = (value) => { const s = String(value).replace(/\s+/g, ' ').trim(); return s.length > NOTE_TEXT_MAX ? `${s.slice(0, NOTE_TEXT_MAX)}…` : s; };
 const failureText = (err) => oneLineNote(err && (err.stderr || err.message) ? (err.stderr || err.message) : err);
 
-function readUpstreamOwnership({ execFile, cwd, runDir }) {
+function readUpstreamOwnership({ execFile, cwd }) {
   const notes = [];
   const note = (condition, fallback) => { notes.push(`${condition} → fallback: ${fallback}`); };
   const git = (args) => String(execFile('git', args, { cwd }));
@@ -252,25 +252,20 @@ function readUpstreamOwnership({ execFile, cwd, runDir }) {
     note(`the origin remote could not be read (${failureText(err)})`, 'targets held');
   }
 
-  let branch = null;
+  // Never the checkout's own `integration-branch` policy value or run config: a PR controls both, so it could
+  // pick the branch whose policy decides ownership (task-review ruling).
+  let branch = 'main';
   try {
-    const { result } = resolvePolicyConfig({ git, readFile: (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } }, runDir, keys: ['integration-branch'], cwd });
-    const entry = result['integration-branch'];
-    if (entry && entry.error === undefined && typeof entry.value === 'string' && entry.value !== '') branch = entry.value;
-  } catch { branch = null; }
-  if (branch === null) {
-    try {
-      const head = git(['rev-parse', '--abbrev-ref', 'origin/HEAD']).trim().replace(/^origin\//, '');
-      if (head !== '' && head !== 'HEAD') branch = head;
-    } catch { branch = null; }
-  }
-  if (branch === null) branch = 'main';
+    const head = git(['rev-parse', '--abbrev-ref', 'origin/HEAD']).trim().replace(/^origin\//, '');
+    if (head !== '' && head !== 'HEAD') branch = head;
+  } catch { branch = 'main'; }
 
   let ownedOwners = [];
   const policyRef = `origin/${branch}:.claude-tweaks/policy.yml`;
   try {
     const value = parseFlatLines(git(['show', policyRef]))['owned-owners'];
-    if (value !== undefined) {
+    // The literal `[]` is the schema's empty list, not an entry.
+    if (value !== undefined && value !== '[]') {
       const list = ownedOwnersList(value);
       ownedOwners = list.owners;
       for (const entry of list.ignored) note(`the owned-owners entry ${JSON.stringify(oneLineNote(entry))} is not a valid owner`, 'the entry ignored');
@@ -844,7 +839,7 @@ async function run(argv, deps = {}) {
   // One read per run, and only if resolveAll asks (a control-mode upstream item that would file); its notes are logged below.
   let upstreamRead = null;
   const upstreamOwnership = () => {
-    if (upstreamRead === null) upstreamRead = readUpstreamOwnership({ execFile, cwd: cwd(), runDir });
+    if (upstreamRead === null) upstreamRead = readUpstreamOwnership({ execFile, cwd: cwd() });
     return upstreamRead;
   };
   const resolverDeps = {

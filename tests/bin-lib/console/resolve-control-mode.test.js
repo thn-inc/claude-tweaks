@@ -191,20 +191,24 @@ test('#4621: upstreamOwnership is called once however many upstream items there 
 
 test('#4621 AC6.1 / AC8.3: without controlMode every upstream item stays filed on the stance reason, with no facts and no ownership read', () => {
   const dir = fixture({ staged: UPSTREAM_STAGED() });
-  const throwing = () => { throw new Error('upstreamOwnership must not be called outside control mode'); };
+  let calls = 0;
+  const counting = () => { calls += 1; return OWNED_THN(); };
   const stance = SECTION_STANCES[SECTIONS.UPSTREAM];
   for (const extra of [{}, { controlMode: false }, { controlMode: 'on' }]) {
-    const r = run(dir, { ...extra, deps: deps({ upstreamOwnership: throwing }) });
+    const r = run(dir, { ...extra, deps: deps({ upstreamOwnership: counting }) });
     assert.deepStrictEqual(r.items.map((i) => [i.resolution, i.reason]), [1, 2, 3].map(() => [stance.resolution, stance.reason]));
     assert.deepStrictEqual(r.decisionFacts, []);
   }
+  assert.strictEqual(calls, 0, 'upstreamOwnership is never called outside control mode');
 });
 
 test('#4621: a hand-off draft stays carried from pending under control mode, with no ownership read', () => {
-  const throwing = () => { throw new Error('upstreamOwnership must not be called for a hand-off draft'); };
-  const r = run(fixture({ staged: { 'upstream-draft-1.md': upstreamFile('thn-inc/claude-tweaks') } }), { controlMode: true, deps: deps({ upstreamOwnership: throwing }) });
+  let calls = 0;
+  const counting = () => { calls += 1; return OWNED_THN(); };
+  const r = run(fixture({ staged: { 'upstream-draft-1.md': upstreamFile('thn-inc/claude-tweaks') } }), withOwnership(counting));
   const it = byId(r)['upstream-draft-1.md'];
   assert.strictEqual(it.resolution, 'carried');
   assert.strictEqual(it.carriedFrom, 'pending');
   assert.ok(!it.reason.includes('held:'), it.reason);
+  assert.strictEqual(calls, 0, 'a hand-off draft never reads ownership');
 });

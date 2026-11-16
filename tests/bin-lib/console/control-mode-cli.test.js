@@ -773,22 +773,39 @@ test('#4621: owned-owners counts only from the base branch — the same line in 
   assert.strictEqual(resolutions(onBase)['wrap-up-upstream-2.md'], 'filed');
 });
 
-test('#4621: the base branch is the integration-branch policy value when set, origin/HEAD otherwise, main last', async () => {
-  const set = upstreamFixture({ policyExtra: `${CM}integration-branch: dev\n` });
-  const viaPolicy = await resolveWith(set, ownershipAnswers({ 'git show origin/dev:.claude-tweaks/policy.yml': 'owned-owners: obra\n' }));
-  assert.strictEqual(viaPolicy.code, 0, viaPolicy.err);
-  assert.strictEqual(resolutions(set)['wrap-up-upstream-2.md'], 'filed');
-  assert.ok(!viaPolicy.calls.some((c) => c.join(' ') === 'git rev-parse --abbrev-ref origin/HEAD'), 'a policy value is not second-guessed');
+const NO_OBRA = 'control-mode: on\n';
+const OBRA = 'owned-owners: obra\n';
 
+test('#4621: the base branch is origin/HEAD\'s when it resolves, main when it does not', async () => {
+  // origin/HEAD names trunk: only trunk's policy carries obra, main's does not.
   const head = upstreamFixture();
-  const viaHead = await resolveWith(head, ownershipAnswers({ 'git rev-parse --abbrev-ref origin/HEAD': 'origin/trunk\n', 'git show origin/trunk:.claude-tweaks/policy.yml': 'owned-owners: obra\n' }));
+  const viaHead = await resolveWith(head, ownershipAnswers({ 'git rev-parse --abbrev-ref origin/HEAD': 'origin/trunk\n', 'git show origin/trunk:.claude-tweaks/policy.yml': OBRA, [BASE_POLICY_KEY]: NO_OBRA }));
   assert.strictEqual(viaHead.code, 0, viaHead.err);
   assert.strictEqual(resolutions(head)['wrap-up-upstream-2.md'], 'filed');
+  assert.ok(viaHead.calls.some((c) => c.join(' ') === 'git show origin/trunk:.claude-tweaks/policy.yml'));
 
+  // origin/HEAD does not resolve: main is read, and only main carries obra.
   const last = upstreamFixture();
-  const viaDefault = await resolveWith(last, ownershipAnswers({ 'git rev-parse --abbrev-ref origin/HEAD': new Error('no origin/HEAD') }));
+  const viaDefault = await resolveWith(last, ownershipAnswers({ 'git rev-parse --abbrev-ref origin/HEAD': new Error('no origin/HEAD'), [BASE_POLICY_KEY]: OBRA }));
   assert.strictEqual(viaDefault.code, 0, viaDefault.err);
   assert.strictEqual(resolutions(last)['wrap-up-upstream-2.md'], 'filed');
+  assert.ok(viaDefault.calls.some((c) => c.join(' ') === BASE_POLICY_KEY));
+});
+
+test('#4621: a checkout integration-branch (policy or run config) never picks the branch whose policy decides ownership', async () => {
+  const fx = upstreamFixture({ policyExtra: `${CM}integration-branch: evil\n`, runConfig: 'integration-branch: evil\n' });
+  const r = await resolveWith(fx, ownershipAnswers({ 'git show origin/evil:.claude-tweaks/policy.yml': OBRA, [BASE_POLICY_KEY]: NO_OBRA }));
+  assert.strictEqual(r.code, 0, r.err);
+  assert.deepStrictEqual(resolutions(fx), { 'wrap-up-upstream-1.md': 'filed', 'wrap-up-upstream-2.md': 'carried', 'wrap-up-upstream-3.md': 'carried' });
+  assert.ok(!r.calls.some((c) => c.join(' ').includes('origin/evil')), JSON.stringify(r.calls));
+});
+
+test('#4621: a base-branch owned-owners of [] is the empty list — nothing owned, nothing logged', async () => {
+  const fx = upstreamFixture();
+  const r = await resolveWith(fx, ownershipAnswers({ [BASE_POLICY_KEY]: 'owned-owners: []\n' }));
+  assert.strictEqual(r.code, 0, r.err);
+  assert.deepStrictEqual(resolutions(fx), { 'wrap-up-upstream-1.md': 'filed', 'wrap-up-upstream-2.md': 'carried', 'wrap-up-upstream-3.md': 'carried' });
+  assert.strictEqual(ownershipSkips(fx).length, 0, decisionsOf(fx));
 });
 
 test('#4621 Review Focus 3: an unreadable base-branch policy files owner-owned targets, holds the rest, and logs one SKIP naming it', async () => {

@@ -1005,10 +1005,11 @@ function routeUpstreamItems(items, { snapshot, deps, runDir, facts }) {
     const staged = parseStagedUpstream(typeof text === 'string' ? text : '');
     const verdict = upstreamFilingRoute({ permissions, targetRepo: staged.targetRepo, ownerContext, ownedOwners });
     if (verdict.route === 'file') return { ...it, reason: `control mode: owned target ${verdict.targetRepo} — filed with no prompt` };
-    if (verdict.route !== 'hold') return it;
-    const fact = upstreamDecisionFact({ id: it.id, targetRepo: staged.targetRepo, title: staged.title, body: staged.body, reason: verdict.reason, runDir, staged: true });
+    // Only `file` files: any other verdict holds (reason `external` when it names none), so an unexpected one fails closed.
+    const reason = verdict.reason || 'external';
+    const fact = upstreamDecisionFact({ id: it.id, targetRepo: staged.targetRepo, title: staged.title, body: staged.body, reason, runDir, staged: true });
     facts.push(fact);
-    return { ...it, resolution: CARRIED_RESOLUTION, carriedFrom: 'filed', reason: `carried to the acceptance packet as ${fact.id} — held: ${verdict.reason}` };
+    return { ...it, resolution: CARRIED_RESOLUTION, carriedFrom: 'filed', reason: `carried to the acceptance packet as ${fact.id} — held: ${reason}` };
   });
 }
 
