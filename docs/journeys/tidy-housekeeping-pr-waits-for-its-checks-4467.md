@@ -17,7 +17,7 @@ files:
 
 ### 1. Screen the composed body — `closing-links.js --mode screen`
 - **URL:** none (local; the body file under the session tmp root)
-- **Action:** Before `gh pr create`, tidy runs `node "${CLAUDE_PLUGIN_ROOT}/bin/closing-links.js" --mode screen --body-file "{body-path}"`. A summary phrase such as `closed #12 (stale)` becomes `closed issue #12 (stale)`, which GitHub does not link. The CLI prints `{"action":"neutralized",...}` (or `clean`, leaving the file byte-identical).
+- **Action:** Tidy resolves the body file's path once (`session-tmp-resolve.js --value pr-early-body-{run-id}.md`) and pastes it as `{pr-early-body-path}` into both calls. Then, before `gh pr create --body-file "{pr-early-body-path}"`, it runs `node "${CLAUDE_PLUGIN_ROOT}/bin/closing-links.js" --mode screen --body-file "{pr-early-body-path}"`. A summary phrase such as `closed #12 (stale)` becomes `closed issue #12 (stale)`, which GitHub does not link. The CLI prints `{"action":"neutralized",...}` (or `clean`, leaving the file byte-identical).
 - **Should feel:** Invisible. The summary still reads naturally.
 - **Should understand:** GitHub links every closing-keyword phrase anywhere in a PR body. A housekeeping PR closes no record, so every phrase is neutralized.
 - **Red flags:** The screen exits non-zero but a PR opens anyway, or the commit merges locally via the `local-merge` fall-through. A failed screen must report `PR NOT opened — closing-keyword screen failed ({reason}); branch {branch} pushed` and merge nothing.
@@ -31,11 +31,11 @@ files:
 
 ### 3. Run the merge-verification gate before arming — `pr-first-merge.md` Step 2.5
 - **URL:** `https://github.com/{owner}/{repo}/pull/{n}/checks`
-- **Action:** Tidy resolves `merge-verification` and reads the PR's state and head runs. With checks pending and `mergeStateStatus` not `BLOCKED` (no required checks), arming would merge immediately, so the gate runs its bounded watch instead (up to 15 minutes, polling `gh pr checks`). Green → Step 3's merge fence merges the PR. Red, or still pending at the bound → the PR stays open and unarmed, with the reason logged. With required checks configured (`BLOCKED`), it arms `--auto` and the forge holds the merge.
+- **Action:** Tidy resolves `merge-verification` and reads the PR's state and head runs. With checks pending and `mergeStateStatus` not `BLOCKED` (no required checks), arming would merge immediately, so the gate runs its bounded watch instead (up to 15 minutes, polling `gh pr checks`). Green → Step 3's merge fence merges the PR. Red, or still pending at the bound → the PR stays open and unarmed, with the reason logged. With required checks configured (`BLOCKED`), it arms `--auto` and the forge holds the merge. A conflicting PR (any Conflict path route) also stays unarmed, with the stop reason reported verbatim. Each gate pass still records its `ci-gate` event in the run's `events.jsonl`. A `merged` outcome runs no post-merge step: tidy reports the merge and exits its worktree, and reconcile's `remote-prune` removes the merged branch later.
 - **Should feel:** Like a build run's merge — the same gate, the same outcomes.
 - **Should understand:** Under an explicit `merge-verification: off`, tidy merges as every other merge site does under `off`. That is the maintainer's opt-out, not a tidy special case.
-- **Red flags:** `mergedAt` earlier than a check's completion on a repo without required checks while `merge-verification` is not `off`; or a `bot:parked` label appearing anywhere (a housekeeping PR has no record to park).
+- **Red flags:** `mergedAt` earlier than a check's completion on a repo without required checks while `merge-verification` is not `off`; a `bot:parked` label appearing anywhere (a housekeeping PR has no record to park); or a ready-and-comment degrade on a PR that was never a draft.
 
 ## Origin
 
-Record #4467 (tidy step-7-5: the housekeeping PR merges immediately when the repo has no required checks, and its body is not screened for closing keywords).
+Record #4467 (tidy step-7-5: the housekeeping PR merges immediately when the repo has no required checks, and its body is not screened for closing keywords). Updated by resumed run 2026-11-16T020459-record-4467, which named the body file and added the Conflict-path, `ci-gate` record and post-merge rules.
