@@ -326,16 +326,22 @@ async function runD1() {
 
 // The one fault pool of a process: the rows and bases of the `transports` it is asked for (both by
 // default) and D1, started by the first call. Each parity file runs in its own process now, so the
-// file's own `before` is the only caller and its `transports` the whole decision.
+// file's own `before` is the only caller and its `transports` the whole decision. A second call with
+// a different `transports` throws rather than silently handing back the first pool.
 let faultPool = null;
+let faultPoolTransports = null;
 function runFaultPool(transports = ['gh', 'files']) {
+  const key = transports.join();
+  if (faultPool && key !== faultPoolTransports) {
+    throw new Error(`runFaultPool: the pool already runs transports [${faultPoolTransports}], asked for [${key}]`);
+  }
   if (!faultPool) {
     const configs = faultConfigs(transports);
-    const reused = configs.filter((c) => PAIR_MEMO.has(c.name)).length;
     const t0 = Date.now();
     // D1 first: its two pulls run one after the other, so it starts before the single-pull pairs.
     faultPool = runAll([{ name: 'D1', run: runD1 }, ...pairJobs(configs)], POOL)
-      .then((R) => ({ R, pairs: configs.length - reused, reused, ms: Date.now() - t0 }));
+      .then((R) => ({ R, pairs: configs.length, ms: Date.now() - t0 }));
+    faultPoolTransports = key;
   }
   return faultPool;
 }
@@ -345,7 +351,8 @@ function runFaultPool(transports = ['gh', 'files']) {
 // the file's last test, and the fault pool's D1 sandboxes after them.
 function registerParityCleanup() {
   after(async () => {
-    const settled = await Promise.allSettled([...PAIR_MEMO.values()].map((m) => m.pair));    cleanupPairs(settled.filter((s) => s.status === 'fulfilled').map((s) => s.value));
+    const settled = await Promise.allSettled([...PAIR_MEMO.values()].map((m) => m.pair));
+    cleanupPairs(settled.filter((s) => s.status === 'fulfilled').map((s) => s.value));
   });
   after(async () => {
     if (!faultPool) return;
