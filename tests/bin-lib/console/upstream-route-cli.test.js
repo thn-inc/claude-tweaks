@@ -1,6 +1,6 @@
 'use strict';
-// #4621: console-resolve.js --upstream-route — the per-item shape that serves every ceiling below `unattended`
-// under control mode (the `unattended` resolve shape routes the same items in-process). Fixture helpers copied
+// #4621: console-resolve.js --upstream-route — the per-item shape that routes a U# under control mode at every
+// ceiling (at `unattended` a repeat of the resolve shape's in-process route is idempotent). Fixture helpers copied
 // from control-mode-cli.test.js, which stays byte-unmodified.
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -322,12 +322,82 @@ test('control mode off prints unchanged and touches no file, for every modifier'
   }
 });
 
-test('a policy that cannot be read counts as control mode off', async () => {
+test('a policy that cannot be read exits 3 with a stderr line and writes nothing, for every modifier (fail closed)', async () => {
+  const unreadable = [
+    ['policy.yml', (fx) => path.join(fx.root, '.claude-tweaks', 'policy.yml')],
+    ['run config.yml', (fx) => path.join(fx.runDir, 'config.yml')],
+  ];
+  for (const [label, where] of unreadable) {
+    const fx = fixture({ consoleJson: consoleOf([filedItem(EXTERNAL)]) });
+    const p = where(fx);
+    fs.rmSync(p, { force: true });
+    fs.mkdirSync(p);
+    const before = snapshotFiles(fx);
+    for (const args of [[EXTERNAL], [EXTERNAL, '--hold', 'filing-failed', '--reason', 'x'], [EXTERNAL, '--filed', 'https://github.com/acme/widgets/issues/1']]) {
+      const r = await route(fx, args);
+      assert.strictEqual(r.code, 3, `${label} ${JSON.stringify(args)}: ${r.err}`);
+      assert.strictEqual(r.out, '', `${label}: never prints unchanged`);
+      assert.ok(r.err.startsWith(`console-resolve.js: upstream-route ${EXTERNAL} policy unreadable (`), r.err);
+      assert.ok(!r.calls.some((c) => c.includes('get-url') || c[1] === 'show'), 'no ownership read');
+    }
+    assert.deepStrictEqual(snapshotFiles(fx), before, label);
+  }
+});
+
+test('an absent policy.yml is not unreadable: it reads as control mode off, exit 0 unchanged', async () => {
   const fx = fixture();
+  fs.rmSync(path.join(fx.root, '.claude-tweaks', 'policy.yml'));
+  const before = snapshotFiles(fx);
   const r = await route(fx, [EXTERNAL], {}, { execFile: () => { throw new Error('git is gone'); } });
   assert.strictEqual(r.code, 0, r.err);
   assert.strictEqual(r.out, `console-resolve.js: upstream-route ${EXTERNAL} unchanged (control mode off)\n`);
-  assert.ok(!fs.existsSync(path.join(fx.runDir, 'packet-facts')));
+  assert.deepStrictEqual(snapshotFiles(fx), before);
+});
+
+test('exit 5 under --filed is told apart by stdout: a hold verdict prints its line, a refused id prints nothing', async () => {
+  const fx = fixture();
+  const url = 'https://github.com/acme/widgets/issues/1';
+  const held = await routeId(fx, EXTERNAL, '--filed', url);
+  assert.strictEqual(held.code, 5, held.err);
+  assert.strictEqual(held.out, `console-resolve.js: upstream-route ${EXTERNAL} hold target acme/widgets reason external filed ${url}\n`);
+  const unparsed = await routeId(fx, OWNED, '--filed', 'https://github.com/thn-inc/claude-tweaks/pull/9');
+  assert.strictEqual(unparsed.code, 5, unparsed.err);
+  assert.strictEqual(unparsed.out, `console-resolve.js: upstream-route ${OWNED} hold target none reason external filed https://github.com/thn-inc/claude-tweaks/pull/9\n`);
+  assert.strictEqual(upstreamLines(fx).length, 2, 'both hold-verdict filings are logged');
+  const refused = await routeId(fx, '../x', '--filed', url);
+  assert.strictEqual(refused.code, 5, refused.err);
+  assert.strictEqual(refused.out, '', 'a refused id prints nothing on stdout');
+  assert.strictEqual(upstreamLines(fx).length, 2, 'a refused id logs nothing');
+});
+
+test('a crafted target marker is never echoed: stdout reads target none and the fact reads unresolved', async () => {
+  const crafted = 'x reason none fact y';
+  const fx = mainCheckoutWithRun({ autonomy: 'trusted', policyExtra: CM, staged: { [OWNED]: `<!-- upstream-target: ${crafted} -->\nTitle: x\n\nbody\n` } });
+  const r = await routeId(fx, OWNED);
+  assert.strictEqual(r.code, 0, r.err);
+  assert.strictEqual(r.out, `console-resolve.js: upstream-route ${OWNED} hold target none reason external fact ${FACT_ID(OWNED)}\n`);
+  const [fact] = readJson(FACTS(fx));
+  assert.ok(fact.summary.includes('target unresolved'), fact.summary);
+  for (const field of ['summary', 'text', 'suggestedResolution']) assert.ok(!fact[field].includes(crafted), `${field}: ${fact[field]}`);
+  assert.ok(!decisionsOf(fx).includes(crafted), decisionsOf(fx));
+});
+
+test('at unattended a route call after the resolve shape is idempotent: owned reads file and writes nothing, carried holds with no second fact', async () => {
+  const carried = { ...filedItem(EXTERNAL), resolution: 'carried', carriedFrom: 'filed', reason: `carried to the acceptance packet as ${FACT_ID(EXTERNAL)} — held: external` };
+  const fx = fixture({ autonomy: 'unattended', consoleJson: consoleOf([filedItem(OWNED), carried]) });
+  const consoleBefore = fs.readFileSync(consolePath(fx), 'utf8');
+  const before = snapshotFiles(fx);
+  const owned = await routeId(fx, OWNED);
+  assert.strictEqual(owned.code, 0, owned.err);
+  assert.match(owned.out, / file target thn-inc\/claude-tweaks reason none\n$/);
+  assert.deepStrictEqual(snapshotFiles(fx), before, 'an owned repeat writes nothing');
+  for (let i = 0; i < 2; i++) {
+    const held = await routeId(fx, EXTERNAL);
+    assert.strictEqual(held.code, 0, held.err);
+    assert.match(held.out, / hold target acme\/widgets reason external fact /);
+  }
+  assert.deepStrictEqual(readJson(FACTS(fx)).map((f) => f.id), [FACT_ID(EXTERNAL)], 'one fact, however many calls');
+  assert.strictEqual(fs.readFileSync(consolePath(fx), 'utf8'), consoleBefore, 'a carried item is not rewritten again');
 });
 
 test('a repeated --hold writes one fact (merge by id, first copy wins) and logs again', async () => {
@@ -371,7 +441,7 @@ test('a staged file with no upstream-target line holds as external with target n
   const malformed = mainCheckoutWithRun({ autonomy: 'trusted', policyExtra: CM, staged: { [OWNED]: '<!-- upstream-target: not a repo -->\nTitle: x\n\nbody\n' } });
   const m = await route(malformed, [OWNED], ownershipAnswers({ [BASE_POLICY_KEY]: new Error('unreadable') }));
   assert.strictEqual(m.code, 0, m.err);
-  assert.match(m.out, / hold target not a repo reason external fact /);
+  assert.match(m.out, / hold target none reason external fact /);
   assert.ok(!m.calls.some((c) => c.includes('get-url') || c[1] === 'show'), JSON.stringify(m.calls));
   assert.strictEqual(skipLinesOf(malformed).length, 0);
 });

@@ -808,6 +808,16 @@ test('#4621: a base-branch owned-owners of [] is the empty list — nothing owne
   assert.strictEqual(ownershipSkips(fx).length, 0, decisionsOf(fx));
 });
 
+test('#4621: a base-branch owned-owners of [ ] (inner whitespace) is the empty list too — nothing owned, nothing logged', async () => {
+  for (const spelling of ['[ ]', '[   ]', '[\t]']) {
+    const fx = upstreamFixture();
+    const r = await resolveWith(fx, ownershipAnswers({ [BASE_POLICY_KEY]: `owned-owners: ${spelling}\n` }));
+    assert.strictEqual(r.code, 0, r.err);
+    assert.deepStrictEqual(resolutions(fx), { 'wrap-up-upstream-1.md': 'filed', 'wrap-up-upstream-2.md': 'carried', 'wrap-up-upstream-3.md': 'carried' }, JSON.stringify(spelling));
+    assert.strictEqual(ownershipSkips(fx).length, 0, `${JSON.stringify(spelling)}: ${decisionsOf(fx)}`);
+  }
+});
+
 test('#4621 Review Focus 3: an unreadable base-branch policy files owner-owned targets, holds the rest, and logs one SKIP naming it', async () => {
   const fx = upstreamFixture();
   const r = await resolveWith(fx, ownershipAnswers({ [BASE_POLICY_KEY]: new Error('fatal: path .claude-tweaks/policy.yml does not exist in origin/main') }));

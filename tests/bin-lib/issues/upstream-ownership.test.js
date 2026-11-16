@@ -290,3 +290,41 @@ test('AC4.2: a held item becomes one packet decision fact', () => {
   });
   assert.ok(owner.suggestedResolution.startsWith('file the draft at '));
 });
+
+const FACT_RUN_DIR = '/repo/.claude-tweaks/pipelines/2026-11-16T10-00-00Z-upstream';
+const factFor = (over) => upstreamDecisionFact({
+  id: 'wrap-up-upstream-5.md', targetRepo: 'thn-inc/x', title: 'Leaky title', body: 'leaky body text', reason: 'external', detail: null, runDir: FACT_RUN_DIR, staged: true, ...over,
+});
+
+test('a scrub-hit fact carries the draft by evidenceRef only: neither its title nor its body is inline', () => {
+  const scrub = factFor({ reason: 'scrub-hit', detail: 'internal path' });
+  for (const field of ['summary', 'text', 'suggestedResolution']) {
+    assert.ok(!scrub[field].includes('leaky body text'), `${field}: ${scrub[field]}`);
+    assert.ok(!scrub[field].includes('Leaky title'), `${field}: ${scrub[field]}`);
+  }
+  assert.strictEqual(scrub.text, scrub.summary);
+  assert.strictEqual(scrub.summary, 'Upstream feedback wrap-up-upstream-5.md held, not filed (scrub-hit): target thn-inc/x — internal path');
+  assert.ok(scrub.suggestedResolution.includes(scrub.evidenceRef), scrub.suggestedResolution);
+  // Every other reason keeps the draft inline, filing-failed included.
+  for (const reason of ['external', 'filing-failed', 'owner-unresolved']) {
+    const fact = factFor({ reason });
+    assert.ok(fact.summary.includes('draft "Leaky title"'), `${reason}: ${fact.summary}`);
+    assert.ok(fact.text.endsWith(' — draft: leaky body text'), `${reason}: ${fact.text}`);
+  }
+});
+
+test('upstreamDecisionFact refuses a reason outside HOLD_REASONS', () => {
+  for (const reason of ['bogus', '', undefined, null, 'External', 'scrub-hit ']) {
+    assert.throws(() => factFor({ reason }), RangeError, JSON.stringify(reason));
+  }
+  for (const reason of HOLD_REASONS) assert.doesNotThrow(() => factFor({ reason }), reason);
+});
+
+test('a target outside the owner/name grammar is never echoed into the fact', () => {
+  for (const targetRepo of ['x reason none fact y', 'not a repo', 'a/b/c', ' thn-inc/x', 'thn-inc/x\nfact y']) {
+    const fact = factFor({ targetRepo });
+    assert.ok(fact.summary.includes('target unresolved'), `${JSON.stringify(targetRepo)}: ${fact.summary}`);
+    assert.ok(fact.suggestedResolution.endsWith(' into its upstream repo yourself, or decline'), fact.suggestedResolution);
+    for (const field of ['summary', 'text', 'suggestedResolution']) assert.ok(!fact[field].includes(targetRepo.trim()), `${field}: ${fact[field]}`);
+  }
+});

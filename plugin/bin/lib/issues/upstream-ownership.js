@@ -167,15 +167,21 @@ const collapse = (s) => s.replace(WHITESPACE_RUN_RE, ' ').trim();
 // A held item -> one packet decision fact (_shared/acceptance-packet.md's Decision
 // facts table, plus `text`). id, kind, origin and evidenceRef come from decisionFactFor;
 // summary names the target, the draft title and the hold reason; text adds the draft body.
+// `reason` is one of HOLD_REASONS (anything else throws). A target outside the owner/name
+// grammar is never echoed: it reads `unresolved`. A `scrub-hit` draft failed the scrub, so
+// it is carried by evidenceRef only — neither its title nor its body is inline.
 function upstreamDecisionFact({ id, targetRepo, title, body, reason, detail, runDir, staged }) {
+  if (!HOLD_REASONS.includes(reason)) throw new RangeError(`upstreamDecisionFact: reason must be one of ${HOLD_REASONS.join(', ')} (got ${String(reason)})`);
   const { SECTIONS } = require('../console/resolve');
   const base = decisionFactFor({ id, section: SECTIONS.UPSTREAM, resolution: 'filed', reason: '' }, { runDir, staged });
+  const repo = parseTargetRepo(targetRepo) === null ? null : targetRepo;
+  const inline = reason !== 'scrub-hit';
   const summary = collapse(
-    `Upstream feedback ${id} held, not filed (${reason}): target ${targetRepo ?? 'unresolved'}`
-    + (title ? `; draft "${title}"` : '')
+    `Upstream feedback ${id} held, not filed (${reason}): target ${repo ?? 'unresolved'}`
+    + (inline && title ? `; draft "${title}"` : '')
     + (detail ? ` — ${detail}` : ''),
   );
-  const text = collapse(summary + (body ? ` — draft: ${body}` : ''));
+  const text = collapse(summary + (inline && body ? ` — draft: ${body}` : ''));
   const prefix = FIX_FIRST_REASONS.has(reason) ? 'fix the cause, then ' : '';
   return {
     id: base.id,
@@ -183,7 +189,7 @@ function upstreamDecisionFact({ id, targetRepo, title, body, reason, detail, run
     origin: base.origin,
     summary,
     evidenceRef: base.evidenceRef,
-    suggestedResolution: `${prefix}file the draft at ${base.evidenceRef} into ${targetRepo ?? 'its upstream repo'} yourself, or decline`,
+    suggestedResolution: `${prefix}file the draft at ${base.evidenceRef} into ${repo ?? 'its upstream repo'} yourself, or decline`,
     text,
   };
 }
