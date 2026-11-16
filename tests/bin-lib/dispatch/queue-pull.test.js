@@ -57,6 +57,7 @@ const path = require('node:path');
 const { spawnSync, execFileSync } = require('node:child_process');
 
 const { readText } = require('../../helpers/read-skill');
+const { chmodDenialSkip } = require('../../helpers/root');
 const { treeEntryWithContinuations } = require('../../helpers/plugin-structure-entry');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures');
 const {
@@ -4024,7 +4025,7 @@ test('#5584: a failed AUTO-line write does not admit the record (fail closed), p
   assert.deepEqual(r.state.typedNumbers, new Set());
 });
 
-test('#5584 review: a failed queue-file write after the AUTO line un-admits the record, prints a second not-admitted line and writes a corrective decisions line', { skip: typeof process.getuid === 'function' && process.getuid() === 0 && 'root ignores a read-only mode' }, () => {
+test('#5584 review: a failed queue-file write after the AUTO line un-admits the record, prints a second not-admitted line and writes a corrective decisions line', chmodDenialSkip('root bypasses mode bits'), () => {
   const texts = [];
   const r = pull4(withNamedView(S1(), [ungranted(12)]), {
     env: TYPED_ENV,
