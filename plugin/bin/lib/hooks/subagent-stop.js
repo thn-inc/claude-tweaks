@@ -150,6 +150,7 @@
 const fs = require('fs');
 const ctxLib = require('./context');
 const contractRetries = require('./contract-retries');
+const { envTmpdir } = require('../session-tmp');
 
 // The reply's last non-empty line must read exactly this — trimmed,
 // case-sensitive, one of the four contract words.
@@ -578,7 +579,8 @@ function recordStop(ctx, out, memo) {
     memo.last ??= lastAssistantText(transcriptPath);
     if (!('pending' in memo)) memo.pending = typeof memo.last.text === 'string' ? countPendingDispatches(memo.last.lines, memo.last.replyIndex) : null;
     const blocked = Boolean(out && out.json && out.json.decision === 'block');
-    marker.appendStop(sessionId, { agentId, at: Math.floor(Date.now() / 1000), blocked, pending: memo.pending });
+    // The temp dir comes from the context's env (#5377), which is os.tmpdir() for a real hook process, where wait-for.js reads.
+    marker.appendStop(sessionId, { agentId, at: Math.floor(Date.now() / 1000), blocked, pending: memo.pending }, { tmpDir: envTmpdir(ctx.env) });
   } catch { /* the marker never changes the hook's answer */ }
 }
 

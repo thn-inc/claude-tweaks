@@ -28,7 +28,7 @@ files:
   - `cwd` and `env` are required (`runHookCli: cwd is required`, `runHookCli: env is required`). `env` is the whole environment the event sees, not merged over `process.env`.
   - `hookEnv(overrides)` is a clean git environment with `PIPELINE_RUN_DIR: ''` and `CT_HOOKS_TEST_MODE: '1'`, under the test's own keys.
   - The event tail hands the event module `{ input, runDir, runState, ownedRun, cwd, env, homeDir, spawn }`, and each event's `run` starts with `ctxLib.requireEnv(ctx)`.
-  - Temp and home paths follow the passed env: the ad-hoc worktree marker and the SubagentStop retry counter land under the env's `TMPDIR` (`TEMP` on Windows), and `session-start` writes under the env's `HOME`. A test that looks for one of those files sets the variable to a directory in its own fixture and removes it afterwards.
+  - Temp and home paths follow the passed env: the ad-hoc worktree marker, the SubagentStop retry counter and the SubagentStop stop marker land under the env's `TMPDIR` (`TEMP` on Windows), and `session-start` writes under the env's `HOME`. A test that looks for one of those files sets the variable to a directory in its own fixture and removes it afterwards.
 - **Red flags:**
   - `hook context has no env`. A test that builds a context by hand and calls an event module's `run` directly left out `env`. Add it at the file's shared context builder.
   - `hook context has no homeDir`. A hand-built `session-start` context needs `homeDir` (a function) as well.
