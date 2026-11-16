@@ -77,6 +77,12 @@ test('the captured (a) store prints the pointer entry, the candidate markers and
   assert.ok(!text.includes('skill expansion elided'), 'no content-block text either');
 });
 
+test('a tool-result row of the same prompt id is not a candidate', (t) => {
+  const toolResult = { ...fixture('a')[0], message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok' }] } };
+  const store = storeOf(t, [...fixture('a'), toolResult], { promptId: ID.a, at: fixture('a')[0].timestamp });
+  assert.equal(probe(store).out.candidates.length, 2);
+});
+
 test('the captured (g) store prints not-typed with the scheduled row\'s markers, never its text', (t) => {
   const store = storeOf(t, fixture('g'), { promptId: ID.g, at: fixture('g')[0].timestamp });
   const { text, out } = probe(store);
