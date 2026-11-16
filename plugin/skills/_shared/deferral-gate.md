@@ -44,7 +44,7 @@ Never use these to leave an item open, defer it, or file it:
 
 ## `Defer-reason:` vocabulary
 
-An item that fails fix-now carries exactly one of these values. The list is closed — the same six values, in the same order, are `DEFER_REASONS` in `bin/lib/issues/record.js`:
+An item that fails fix-now carries exactly one of these values. The list is closed — the same seven values, in the same order, are `DEFER_REASONS` in `bin/lib/issues/record.js`:
 
 ```
 tangential — a new capability or idea the finding suggests, not a fix to the current work (Capture, never Defer)
@@ -53,6 +53,7 @@ pre-existing-outside-diff — a defect in a file this build's diff does not touc
 genuinely-larger — the fix expands scope past the fix-now criteria (long rebuild, >10 unrelated tests, spans unrelated systems)
 blocked-external — the fix waits on external state (third-party data, prod traffic, approvals)
 blocked-dependency — the fix waits on functionality not yet built
+needs-verification — the finding is unverified; the filed task is the bounded check that settles it (a builder verifies at the integration-branch tip, then fixes or closes)
 ```
 
 ### Floor mapping
@@ -65,12 +66,13 @@ blocked-dependency — the fix waits on functionality not yet built
 | `needs-human-decision` | yes |
 | `blocked-dependency` | yes |
 | `genuinely-larger` | yes |
+| `needs-verification` | yes |
 | `tangential` | no |
 | `pre-existing-outside-diff` | no |
 
 ### Deriving the value from the criteria
 
-A producer that derives the value from the Fix-now criteria, rather than judging it directly, stamps the value of the first criterion that fails, in the list order above: not localized → `genuinely-larger`; needs functionality not yet built → `blocked-dependency`; needs a product/design decision → `needs-human-decision`; needs external state → `blocked-external`; materially expands scope → `genuinely-larger`. The derivation never reaches `tangential` or `pre-existing-outside-diff`, since neither is a criterion's value. When every criterion holds — the item would have been fix-now, and only a closed fix wave stops it — stamp `needs-human-decision`: scheduling work no fix wave can take any more is a human call. When the item carries too little to judge a criterion, stamp `needs-human-decision` too, and say in the proposal's Current State that the criteria could not be evaluated: the all-hold stamp is never a silent fallthrough.
+A producer that derives the value from the Fix-now criteria, rather than judging it directly, stamps the value of the first criterion that fails, in the list order above: not localized → `genuinely-larger`; needs functionality not yet built → `blocked-dependency`; needs a product/design decision → `needs-human-decision`; needs external state → `blocked-external`; materially expands scope → `genuinely-larger`. The derivation never reaches `tangential` or `pre-existing-outside-diff`, since neither is a criterion's value, and it never produces `needs-verification` either: only the Review Console's can't-tell filing stamps that value. When every criterion holds — the item would have been fix-now, and only a closed fix wave stops it — stamp `needs-human-decision`: scheduling work no fix wave can take any more is a human call. When the item carries too little to judge a criterion, stamp `needs-human-decision` too, and say in the proposal's Current State that the criteria could not be evaluated: the all-hold stamp is never a silent fallthrough.
 
 ## The hard gate
 
