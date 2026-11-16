@@ -57,6 +57,7 @@ const path = require('node:path');
 const { spawnSync, execFileSync } = require('node:child_process');
 
 const { readText } = require('../../helpers/read-skill');
+const { treeEntryWithContinuations } = require('../../helpers/plugin-structure-entry');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures');
 const {
   REPO, SCRIPT_MD, MCP_MD, MCP_TARGETS_FIRST_LINE, MCP_EXCLUSIONS_FIRST_LINE, FENCE_FIRST_LINE, RUN_DIR_NAME,
@@ -2668,10 +2669,7 @@ test('#5227 CLI process: the real binary runs --help, rejects a bad flag and pul
 test('AC10.1: docs/plugin-structure.md names queue-pull.js in the command reference and the plugin/bin/lib/dispatch/ entry', () => {
   const lines = readText(path.join(REPO, 'docs', 'plugin-structure.md')).split('\n');
   assert.ok(lines.some((l) => l.startsWith('node plugin/bin/queue-pull.js')), 'a command-reference line');
-  // The entry may continue on indented lines; join them so the phrases it names stay findable.
-  const start = lines.findIndex((l) => l.startsWith('plugin/bin/lib/dispatch/'));
-  let entry = start < 0 ? undefined : lines[start];
-  for (let i = start + 1; entry && i < lines.length && /^ +\S/.test(lines[i]); i++) entry += ' ' + lines[i].trim();
+  const entry = treeEntryWithContinuations(readText(path.join(REPO, 'docs', 'plugin-structure.md')), 'plugin/bin/lib/dispatch/');
   assert.ok(entry, 'the module entry exists');
   assert.ok(entry.includes('queue-pull.js'), 'the module entry names queue-pull.js');
   assert.ok(entry.includes('; queue-pull.js (#5227'), 'the module has its own entry in the list, not only a mention');

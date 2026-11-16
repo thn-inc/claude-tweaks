@@ -69,8 +69,7 @@ test('AC3.1: external citations name test/flake-handling.md (#4059)', () => {
 });
 
 test('docs/plugin-structure.md names flaky.js and the count stamp\'s flakyHits (#1925)', () => {
-  // Whitespace-collapsed: the tree entry's `flaky.js` and its `(#1925` sit on adjacent continuation lines.
-  const text = read('docs/plugin-structure.md').replace(/\s+/g, ' ');
+  const text = read('docs/plugin-structure.md');
   assert.ok(text.includes('flaky.js (#1925'));
   assert.ok(text.includes('flakyHits'));
   assert.ok(text.includes('extractFailingFiles'));

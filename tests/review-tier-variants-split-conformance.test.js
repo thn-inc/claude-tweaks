@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
 const { readText } = require('./helpers/read-skill');
+const { rowWithContinuations } = require('./helpers/plugin-structure-entry');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => readText(path.join(ROOT, rel));
@@ -15,16 +16,6 @@ const read = (rel) => readText(path.join(ROOT, rel));
 // "read X now" split that every run follows).
 
 const lineStartingWith = (text, prefix) => text.split('\n').find((line) => line.startsWith(prefix)) || '';
-
-// A table row plus its continuation rows (`| | | …`), as one string.
-const rowWithContinuations = (text, prefix) => {
-  const lines = text.split('\n');
-  const i = lines.findIndex((line) => line.startsWith(prefix));
-  if (i < 0) return '';
-  let row = lines[i].replace(/ \|$/, '');
-  for (let j = i + 1; j < lines.length && lines[j].startsWith('| | | '); j++) row += ' ' + lines[j].slice(6).replace(/ \|$/, '');
-  return row + ' |';
-};
 
 const POINTERS = [
   ['**Tier variants (`low`, `xhigh`, `max`).**',

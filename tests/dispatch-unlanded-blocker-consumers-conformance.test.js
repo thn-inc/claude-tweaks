@@ -12,6 +12,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { rowWithContinuations } = require('./helpers/plugin-structure-entry');
 const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith, sectionOf } = require('./helpers/conformance-asserts');
 const { NATIVE_MISSING_CAUSE, malformedRecords } = require('../plugin/bin/lib/dispatch/unlanded-blockers');
 
@@ -24,15 +25,6 @@ const PLUGIN_STRUCTURE = readText(path.join(ROOT, 'docs', 'plugin-structure.md')
 
 const collapse = (s) => s.replace(/\s+/g, ' ');
 
-// A table row plus its continuation rows (`| | | …`), as one string.
-const rowWithContinuations = (text, prefix) => {
-  const lines = text.split('\n');
-  const i = lines.findIndex((line) => line.startsWith(prefix));
-  if (i < 0) return '';
-  let row = lines[i].replace(/ \|$/, '');
-  for (let j = i + 1; j < lines.length && lines[j].startsWith('| | | '); j++) row += ' ' + lines[j].slice(6).replace(/ \|$/, '');
-  return row + ' |';
-};
 
 // Each marker must exist before the order is checked, so a reworded marker fails as missing, not as
 // a vacuous pass.
