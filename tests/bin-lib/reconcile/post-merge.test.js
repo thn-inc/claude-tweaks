@@ -1418,6 +1418,71 @@ test('AC4.1 #4549 end to end: a Fixes record Step 4.0 could not close (closeFail
   assert.match(marker.action, /0 parent\(s\) closed; skipped #100 \(sibling-unsettled\)\./);
 });
 
+// #4251: a merged PR #11 whose Fixes block names #101 and one `Refs #N — kept open` line per `refs` entry.
+// The refs are also sidebar-linked (closingIssuesReferences), so the armed merge closes them `closedAtOffsetMs`
+// after mergedAt until an `issue reopen N` call; #101 closes 2 s after the merge. Any other gh call throws.
+function refsWorld({ refs, closedAtOffsetMs, parent }) {
+  const mergedAt = new Date(NOW - 60 * 60 * 1000).toISOString();
+  const repository = { name: 'w', owner: { login: 'acme' } };
+  const calls = [];
+  const reopened = new Set();
+  const refLines = refs.map((n) => `Refs #${n} — kept open`).join('\n');
+  const gh = (args, input) => {
+    const key = args.join(' ');
+    calls.push({ key, input });
+    if (key === 'pr view 11 --json state,mergedAt,body,closingIssuesReferences,url,mergeCommit,baseRefName') {
+      return JSON.stringify({
+        state: 'MERGED', mergedAt, url: 'https://github.com/acme/w/pull/11', mergeCommit: { oid: 'abcdef1' }, baseRefName: 'main',
+        body: `<!-- claude-tweaks-run: 2026-10-30T090000-spec-101 -->\n\n<!-- fixes-start -->\nFixes #101\n${refLines}\n<!-- fixes-end -->\n`,
+        closingIssuesReferences: [101, ...refs].map((number) => ({ number, repository })),
+      });
+    }
+    if (key === 'api repos/{owner}/{repo}/commits/abcdef1 --jq .commit.message') return 'fix (#11)\n\nFixes #101\n';
+    if (key === 'repo view github.com/acme/w --json defaultBranchRef -q .defaultBranchRef.name') return 'main\n';
+    let m = /^issue view (\d+) --json state,closedAt$/.exec(key);
+    if (m) {
+      const n = Number(m[1]);
+      if (n === 101) return JSON.stringify({ state: 'CLOSED', closedAt: new Date(Date.parse(mergedAt) + 2000).toISOString() });
+      if (refs.includes(n)) {
+        return JSON.stringify(reopened.has(n)
+          ? { state: 'OPEN', closedAt: null }
+          : { state: 'CLOSED', closedAt: new Date(Date.parse(mergedAt) + closedAtOffsetMs).toISOString() });
+      }
+    }
+    m = /^issue reopen (\d+) --comment /.exec(key);
+    if (m && refs.includes(Number(m[1]))) { reopened.add(Number(m[1])); return ''; }
+    if (args[0] === 'api' && args[1] === 'graphql') {
+      if (args[3].startsWith('query={ __type')) return JSON.stringify({ data: { __type: { fields: [{ name: 'subIssues' }] } } });
+      const n = Number(/i(\d+):/.exec(args[3])[1]);
+      return JSON.stringify({ data: { repository: { [`i${n}`]: { number: n, parent: parent ? { number: parent } : null } } } });
+    }
+    throw new Error(`unexpected gh call: ${key}`);
+  };
+  return { gh, calls, mergedAt };
+}
+
+test('AC1.1 #4251 end to end: an armed merge closed a kept-open Refs record through a sidebar link — the late Step 4.0 reopens it and logs it, then writes the marker', async () => {
+  const { root, dir } = e2eCheckout();
+  const world = refsWorld({ refs: [103], closedAtOffsetMs: 2000, parent: null });
+  const r = await e2ePass(root, world);
+  assert.deepEqual(r.entries.map((e) => [e.runDir, e.pr, e.action, e.closingLinks, e.parentsClosed]), [[dir, 11, 'ran', 'reopened', 0]]);
+  assert.ok(world.calls.some((c) => /^issue reopen 103 --comment /.test(c.key)), 'the Refs record is reopened');
+  assert.match(decisionsOf(dir), /^- AUTO \d{2}:\d{2}:\d{2} — Closing links: reopened #103 after PR #11's merge closed it/m);
+  assert.equal(entriesOf(dir).at(-1).location, MARKER_STEP, 'the marker is written last');
+  const before = world.calls.length;
+  assert.deepEqual(await e2ePass(root, world), { entries: [], deferred: [] });
+  assert.equal(world.calls.length, before, 'a second pass makes no gh call');
+});
+
+test('AC2.1 #4251 end to end: a run whose fixes span has no Refs record makes no gh issue call', async () => {
+  const { root, dir } = e2eCheckout();
+  const world = refsWorld({ refs: [], closedAtOffsetMs: 2000, parent: null });
+  const r = await e2ePass(root, world);
+  assert.deepEqual(r.entries.map((e) => [e.action, e.closingLinks]), [['ran', 'nothing-closed']]);
+  assert.deepEqual(world.calls.filter((c) => /^issue /.test(c.key)).map((c) => c.key), []);
+  assert.equal(entriesOf(dir).at(-1).location, MARKER_STEP);
+});
+
 // postMergeOne (#4692): the one guarded single-run path merge mode's already-merged route drives.
 const oneArgs = (root, dir, { prs, links, close, takeClaimFn, extra = {} } = {}) => ({
   runDir: dir,
