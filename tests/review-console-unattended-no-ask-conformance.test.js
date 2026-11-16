@@ -184,7 +184,7 @@ function everyOutcomeRun() {
 function fakeExec(root) {
   return (cmd, args) => {
     if (cmd === 'git' && args[0] === 'rev-parse') return `${root}\n`;
-    if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ labels: [{ name: 'auto:merge' }], comments: [] });
+    if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ labels: [{ name: 'auto:build' }, { name: 'auto:merge' }], comments: [] });
     if (cmd === 'git' && args[0] === 'apply') return '';
     throw new Error(`unexpected exec: ${cmd} ${args.join(' ')}`);
   };

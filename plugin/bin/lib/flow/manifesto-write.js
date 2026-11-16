@@ -87,7 +87,8 @@ function checkRecords(records) {
 
 // manifesto.md's Merge authorization row: the `pre-authorize-merge` token is
 // refused on a dispatch-bound run (run-state.json `dispatched: true` — a
-// dispatched record's merge authority is its `auto:merge` label) and on a
+// dispatched record's merge authority is its `auto:merge` label together with
+// a live `auto:build`) and on a
 // multi-record run (its consolidated console owns the merge decision).
 // -> null (no token, or the token applies) | 'dispatch-bound' | 'multi-record'.
 function mergeAuthorizationRefusal({ preAuthorizeMerge, dispatched, records }) {
