@@ -1,0 +1,378 @@
+'use strict';
+// tests/bin-lib/ci-audit/gather-cli.test.js — #5757: ci-audit.js's `gather` verb. Every side effect
+// is a fake dep: a runner answering the runs list and per-run jobs reads with forge-shaped JSON,
+// a workflow-files reader, the origin read and the host pin, a fixed `now` and an optional clock.
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { run } = require('../../../plugin/bin/ci-audit');
+
+const NOW = new Date('2026-11-16T18:00:00Z');
+const REPO = 'thn-inc/claude-tweaks';
+
+const BUILD_YML = [
+  'name: build', 'on: push', 'jobs:',
+  '  lint:', '    runs-on: x', '    timeout-minutes: 10', '    steps:',
+  '      - uses: actions/checkout@v4', '      - name: Lint', '        run: npm run lint',
+  '  test:', '    needs: lint', '    runs-on: x', '    steps:',
+  '      - uses: actions/checkout@v4', '      - name: Test', '        run: npm test', '',
+].join('\n');
+const SHARD_YML = [
+  'on: push', 'jobs:', '  shard:', '    strategy:', '      matrix:', '        n: [1, 2]',
+  '    steps:', '      - name: Test', '        run: npm test', '',
+].join('\n');
+const TABBED_YML = 'on: push\njobs:\n\tslow:\n\t\truns-on: x\n';
+
+const BUILD = '.github/workflows/build.yml';
+const SHARD = '.github/workflows/shard.yml';
+const TABBED = '.github/workflows/tabbed.yml';
+
+const runRow = (id, path, createdAt, over = {}) => ({ id, path, status: 'completed', conclusion: 'success', created_at: createdAt, ...over });
+// A job: created, started, completed, and the command step's start (steps before it are setup).
+function job(name, created, started, completed, commandStep, commandAt) {
+  const steps = [{ name: 'Set up job', number: 1, started_at: started, completed_at: started }];
+  if (commandStep) steps.push({ name: commandStep, number: 2, started_at: commandAt, completed_at: completed });
+  return { name, created_at: created, started_at: started, completed_at: completed, conclusion: 'success', steps };
+}
+const jobsBody = (jobs) => ({ total_count: jobs.length, jobs });
+
+// Two runs of the two-job build workflow. Hand-computed phases (seconds):
+//   run 101 lint: waiting 10, setup 10, running 40  | test: waiting 30, setup 20, running 120
+//   run 102 lint: waiting 20, setup 15, running 60  | test: waiting 10, setup 30, running 60
+const BUILD_RUNS = [runRow(101, BUILD, '2026-11-15T10:00:00Z'), runRow(102, BUILD, '2026-11-15T12:00:00Z')];
+const BUILD_JOBS = {
+  101: jobsBody([
+    job('lint', '2026-11-15T10:00:00Z', '2026-11-15T10:00:10Z', '2026-11-15T10:01:00Z', 'Lint', '2026-11-15T10:00:20Z'),
+    job('test', '2026-11-15T10:01:00Z', '2026-11-15T10:01:30Z', '2026-11-15T10:03:50Z', 'Test', '2026-11-15T10:01:50Z'),
+  ]),
+  102: jobsBody([
+    job('lint', '2026-11-15T12:00:00Z', '2026-11-15T12:00:20Z', '2026-11-15T12:01:35Z', 'Lint', '2026-11-15T12:00:35Z'),
+    job('test', '2026-11-15T12:01:35Z', '2026-11-15T12:01:45Z', '2026-11-15T12:03:15Z', 'Test', '2026-11-15T12:02:15Z'),
+  ]),
+};
+
+const isRunsList = (args) => args[0] === 'api' && /^repos\/[^/]+\/[^/]+\/actions\/runs$/.test(args[3]);
+const jobsRunId = (args) => {
+  const m = args[0] === 'api' ? /^repos\/[^/]+\/[^/]+\/actions\/runs\/(\d+)\/jobs$/.exec(args[3]) : null;
+  return m ? Number(m[1]) : null;
+};
+const argVal = (args, key) => args.find((a) => a.startsWith(`${key}=`)).slice(key.length + 1);
+
+function fakeRunner({ runs = [], jobs = {}, runsError = null } = {}) {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (calls.length > 200) throw new Error('call ceiling');
+    if (isRunsList(args)) {
+      if (runsError) throw runsError;
+      if (Number(argVal(args, 'page')) > 1) return JSON.stringify({ total_count: 0, workflow_runs: [] });
+      const [from, to] = argVal(args, 'created').split('..').map(Date.parse);
+      const inRange = runs.filter((r) => Date.parse(r.created_at) >= from && Date.parse(r.created_at) <= to);
+      return JSON.stringify({ total_count: inRange.length, workflow_runs: inRange });
+    }
+    const id = jobsRunId(args);
+    if (id !== null && Object.prototype.hasOwnProperty.call(jobs, id)) {
+      if (jobs[id] instanceof Error) throw jobs[id];
+      return JSON.stringify(jobs[id]);
+    }
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+  return { runner, calls };
+}
+
+const files = (entries) => () => ({ ok: true, workflows: entries });
+
+function gather(argv, { fake = fakeRunner(), workflows = files([{ file: BUILD, text: BUILD_YML }]), ...over } = {}) {
+  let out = '';
+  let err = '';
+  const pins = [];
+  const roots = [];
+  const deps = {
+    runner: fake.runner,
+    readWorkflowFiles: (root) => { roots.push(root); return workflows(root); },
+    remoteUrl: () => 'https://github.com/thn-inc/claude-tweaks.git',
+    pinHost: (spec) => { pins.push(spec); return null; },
+    cwd: () => '/checkout',
+    now: NOW,
+    clock: null,
+    stdout: (s) => { out += s; },
+    stderr: (s) => { err += s; },
+    ...over,
+  };
+  const code = run(argv, deps);
+  const lines = out.split('\n').filter((l) => l !== '');
+  return { code, out, err, lines, report: lines.length === 1 ? JSON.parse(lines[0]) : null, pins, roots, calls: fake.calls };
+}
+
+const buildFake = () => fakeRunner({ runs: BUILD_RUNS, jobs: BUILD_JOBS });
+
+test('AC1.1: two runs of a two-job workflow give the hand-computed per-job phase figures', () => {
+  const r = gather(['gather', '--repo', REPO, '--days', '7'], { fake: buildFake() });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.lines.length, 1);
+  const [lint, tst] = r.report.jobs;
+  assert.deepEqual([lint.workflow, lint.job, lint.runs], [BUILD, 'lint', 2]);
+  // Nearest rank over two values: p50 is the smaller, p90 the larger.
+  assert.deepEqual(lint.waiting, { p50Ms: 10000, p90Ms: 20000, n: 2 });
+  assert.deepEqual(lint.setup, { p50Ms: 10000, p90Ms: 15000, n: 2 });
+  assert.deepEqual(lint.running, { p50Ms: 40000, p90Ms: 60000, n: 2 });
+  assert.deepEqual([tst.job, tst.runs], ['test', 2]);
+  assert.deepEqual(tst.waiting, { p50Ms: 10000, p90Ms: 30000, n: 2 });
+  assert.deepEqual(tst.setup, { p50Ms: 20000, p90Ms: 30000, n: 2 });
+  assert.deepEqual(tst.running, { p50Ms: 60000, p90Ms: 120000, n: 2 });
+  // Totals: lint 60 s and 95 s (p50 60 s), test 170 s and 100 s (p50 100 s); the path is lint → test.
+  assert.deepEqual(r.report.criticalPaths, [{ workflow: BUILD, pathMs: 160000, sumMs: 160000, chain: ['lint', 'test'] }]);
+  assert.deepEqual(r.report.workflows, [{ file: BUILD, unparsed: [] }]);
+  assert.deepEqual(r.report.window, { days: 7, from: '2026-11-09', maxRuns: 20, workflow: null, sampledRuns: 2 });
+  assert.equal(r.report.excluded, 0);
+  assert.deepEqual(r.report.breaches, []); // two runs sit below the default minimum sample
+  assert.equal(r.report.noData, null);
+  assert.deepEqual(r.report.failures, []);
+  assert.deepEqual(r.report.truncated, []);
+  assert.deepEqual(r.report.unsampled, { skipped: 0, outsideWorkflows: 0, noWorkflowPath: 0 });
+  assert.deepEqual(Object.keys(r.report), [
+    'definitions', 'window', 'workflows', 'jobs', 'criticalPaths', 'shardSkews', 'repeatedSteps', 'overlaps',
+    'breaches', 'excluded', 'truncated', 'failures', 'unsampled', 'noData',
+  ]);
+  assert.equal(r.err, '');
+  assert.deepEqual(r.pins, [{ owner: 'thn-inc', repo: 'claude-tweaks' }]);
+});
+
+test('AC1.2: definitions holds all three phase definitions verbatim', () => {
+  const r = gather(['gather', '--repo', REPO], { fake: buildFake() });
+  assert.deepEqual(r.report.definitions, {
+    waiting: 'job started − job created',
+    setup: 'job started → start of the first step the workflow file declares as a command (steps with no declaration count as setup when they precede it)',
+    running: 'that boundary → job completed',
+  });
+});
+
+test('AC2.1: a runner that always throws ENOENT exits 3 with failures naming the CLI absent', () => {
+  const fake = { calls: [], runner: () => { throw Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' }); } };
+  const r = gather(['gather', '--repo', REPO], { fake });
+  assert.equal(r.code, 3);
+  assert.equal(r.report.failures.length, 1);
+  assert.match(r.report.failures[0], /not installed or not on PATH/);
+  assert.deepEqual(r.report.jobs, []);
+});
+
+test('AC2.1: every runs read failing exits 2 with the failure in the report', () => {
+  const fake = fakeRunner({ runsError: Object.assign(new Error('boom'), { stderr: 'HTTP 502: Bad Gateway' }) });
+  const r = gather(['gather', '--repo', REPO, '--days', '7'], { fake });
+  assert.equal(r.code, 2);
+  assert.ok(r.report.failures.length >= 1);
+  assert.ok(r.report.failures.every((f) => /HTTP 502/.test(f)), r.report.failures.join('\n'));
+  assert.equal(r.err, '');
+});
+
+test('AC2.2: neither failed read prints an empty or clean report', () => {
+  const absent = gather(['gather', '--repo', REPO], { fake: { calls: [], runner: () => { throw Object.assign(new Error('x'), { code: 'ENOENT' }); } } });
+  const failed = gather(['gather', '--repo', REPO], { fake: fakeRunner({ runsError: Object.assign(new Error('boom'), { stderr: 'HTTP 502' }) }) });
+  for (const r of [absent, failed]) {
+    assert.notEqual(r.code, 0);
+    assert.equal(r.lines.length, 1);
+    assert.ok(r.report.failures.length > 0);
+  }
+});
+
+test('AC2.2: a succeeded read with zero completed runs exits 0 with noData.reason saying why, jobs []', () => {
+  const fake = fakeRunner({
+    runs: [
+      runRow(201, BUILD, '2026-11-15T10:00:00Z', { conclusion: 'skipped' }),
+      runRow(202, 'dynamic/dependabot/dependabot-updates', '2026-11-15T11:00:00Z'),
+      runRow(203, 'dynamic/pages/pages-build', '2026-11-15T11:30:00Z'),
+      runRow(204, '', '2026-11-15T12:00:00Z'),
+    ],
+  });
+  const r = gather(['gather', '--repo', REPO, '--days', '7'], { fake });
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.report.jobs, []);
+  assert.deepEqual(r.report.unsampled, { skipped: 1, outsideWorkflows: 2, noWorkflowPath: 1 });
+  assert.equal(r.report.noData.reason,
+    'no completed run was sampled in the 7-day window: 1 run did no work (skipped); '
+    + '2 runs came from outside the workflow-files directory; 1 run had no workflow path');
+  assert.deepEqual(r.report.failures, ['1 run carries no workflow path — excluded']);
+});
+
+test('AC2.2: a read whose every job is excluded exits 0 with noData.reason', () => {
+  const broken = jobsBody([{ name: 'lint', created_at: '2026-11-15T10:00:10Z', started_at: '2026-11-15T10:00:00Z', completed_at: null, steps: [] }]);
+  const fake = fakeRunner({ runs: [BUILD_RUNS[0]], jobs: { 101: broken } });
+  const r = gather(['gather', '--repo', REPO, '--days', '7'], { fake });
+  assert.equal(r.code, 0);
+  assert.deepEqual(r.report.jobs, []);
+  assert.equal(r.report.excluded, 1);
+  assert.equal(r.report.noData.reason, 'the 1 sampled run gave no job with phases: 1 job excluded (a missing or out-of-order instant)');
+});
+
+test('AC2.2: every jobs read failing exits 2 with each failure in the report', () => {
+  const e = () => Object.assign(new Error('x'), { stderr: 'HTTP 500: Server Error' });
+  const fake = fakeRunner({ runs: BUILD_RUNS, jobs: { 101: e(), 102: e() } });
+  const r = gather(['gather', '--repo', REPO, '--days', '7'], { fake });
+  assert.equal(r.code, 2);
+  assert.deepEqual(r.report.jobs, []);
+  assert.equal(r.report.failures.length, 2);
+  assert.match(r.report.failures.join('\n'), /run 101[\s\S]*run 102|run 102[\s\S]*run 101/);
+  assert.equal(r.report.noData, null);
+});
+
+test('usage errors exit 2 with one stderr line, nothing on stdout and no read', () => {
+  const cases = [
+    ['gather', '--bogus'],
+    ['gather', '--days', '0'],
+    ['gather', '--days', 'x'],
+    ['gather', '--days', '401'],
+    ['gather', '--runs', '2.5'],
+    ['gather', '--runs', '31'],
+    ['gather', '--min-sample', '0'],
+    ['gather', '--min-sample', '-1'],
+    ['gather', '--thresholds', 'nope=1'],
+    ['gather', '--repo', 'not-a-slug'],
+    ['gather', '--workflow'],
+    ['gather', '--repo', REPO, '--root', '/elsewhere'],
+    [],
+    ['scatter'],
+  ];
+  for (const argv of cases) {
+    const fake = fakeRunner();
+    const r = gather(argv, { fake });
+    assert.equal(r.code, 2, argv.join(' '));
+    assert.equal(r.out, '', argv.join(' '));
+    assert.equal(r.err.split('\n').filter(Boolean).length, 1, `${argv.join(' ')}: ${r.err}`);
+    assert.equal(fake.calls.length, 0, argv.join(' '));
+  }
+});
+
+test('--repo and --root together are refused, naming both', () => {
+  const r = gather(['gather', '--root', '/elsewhere', '--repo', REPO]);
+  assert.equal(r.code, 2);
+  assert.match(r.err, /--repo and --root/);
+});
+
+test('--runs 1 samples only the newest run', () => {
+  const r = gather(['gather', '--repo', REPO, '--days', '7', '--runs', '1'], { fake: buildFake() });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.report.window.maxRuns, 1);
+  assert.equal(r.report.jobs[0].runs, 1);
+});
+
+// One run of a two-shard matrix: shard totals 10 s and 50 s, so the skew ratio is 50 ÷ 10 = 5.
+const SHARD_FAKE = () => fakeRunner({
+  runs: [runRow(301, SHARD, '2026-11-15T10:00:00Z')],
+  jobs: {
+    301: jobsBody([
+      job('shard (1)', '2026-11-15T10:00:00Z', '2026-11-15T10:00:00Z', '2026-11-15T10:00:10Z', 'Test', '2026-11-15T10:00:00Z'),
+      job('shard (2)', '2026-11-15T10:00:00Z', '2026-11-15T10:00:00Z', '2026-11-15T10:00:50Z', 'Test', '2026-11-15T10:00:00Z'),
+    ]),
+  },
+});
+
+test('--thresholds shard-skew=9 changes breaches for the same fixture', () => {
+  const opts = { workflows: files([{ file: SHARD, text: SHARD_YML }]) };
+  const base = gather(['gather', '--repo', REPO, '--days', '7', '--min-sample', '1'], { fake: SHARD_FAKE(), ...opts });
+  const high = gather(['gather', '--repo', REPO, '--days', '7', '--min-sample', '1', '--thresholds', 'shard-skew=9'], { fake: SHARD_FAKE(), ...opts });
+  assert.equal(base.code, 0, base.err);
+  assert.deepEqual(base.report.shardSkews, [{ workflow: SHARD, family: 'shard', ratio: 5, slowest: 'shard (2)', shards: 2 }]);
+  assert.deepEqual(base.report.breaches.filter((b) => b.check === 'shard-skew'), [
+    { check: 'shard-skew', workflow: SHARD, job: 'shard', metric: 'shardSkewRatio', value: 5, threshold: 2 },
+  ]);
+  assert.deepEqual(high.report.breaches.filter((b) => b.check === 'shard-skew'), []);
+});
+
+test('--min-sample above the run count suppresses every breach', () => {
+  const opts = { workflows: files([{ file: SHARD, text: SHARD_YML }]) };
+  const r = gather(['gather', '--repo', REPO, '--days', '7', '--min-sample', '2'], { fake: SHARD_FAKE(), ...opts });
+  assert.deepEqual(r.report.breaches, []);
+});
+
+test('an unparsed or unreadable workflow appears in workflows[].unparsed and never in breaches', () => {
+  // A job that waited 50 s of 60 s would cross queue-wait if its workflow were judged.
+  const fake = fakeRunner({
+    runs: [runRow(401, TABBED, '2026-11-15T10:00:00Z')],
+    jobs: { 401: jobsBody([job('slow', '2026-11-15T10:00:00Z', '2026-11-15T10:00:50Z', '2026-11-15T10:01:00Z', null, null)]) },
+  });
+  const workflows = files([
+    { file: '.github/workflows/gone.yml', unreadable: 'unreadable: EACCES' },
+    { file: TABBED, text: TABBED_YML },
+  ]);
+  const r = gather(['gather', '--repo', REPO, '--days', '7', '--min-sample', '1'], { fake, workflows });
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.report.workflows, [
+    { file: '.github/workflows/gone.yml', unparsed: ['unreadable: EACCES'] },
+    { file: TABBED, unparsed: ['tab indentation in jobs:'] },
+  ]);
+  assert.equal(r.report.jobs.length, 1);
+  assert.deepEqual(r.report.breaches, []);
+});
+
+test('a workflow-files read that fails is a failure line, never a silent empty set', () => {
+  const r = gather(['gather', '--repo', REPO, '--days', '7'], {
+    fake: buildFake(), workflows: () => ({ ok: false, workflows: [], error: 'not a directory' }),
+  });
+  assert.equal(r.code, 0);
+  assert.deepEqual(r.report.failures, ['workflow files: not a directory']);
+  assert.deepEqual(r.report.workflows, []);
+});
+
+test('a truncated window names its truncated ranges in truncated', () => {
+  let t = 0;
+  const fake = fakeRunner({ runs: [runRow(101, BUILD, '2026-11-16T10:00:00Z')], jobs: { 101: BUILD_JOBS[101] } });
+  const runner = (args) => {
+    const out = fake.runner(args);
+    if (isRunsList(args)) t = 530000; // the first range used up the runs read's share of the deadline
+    return out;
+  };
+  const r = gather(['gather', '--repo', REPO, '--days', '7', '--runs', '2'], { fake: { runner, calls: [] }, clock: () => t });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.report.truncated.length, 1);
+  assert.match(r.report.truncated[0], /^runs 2026-11-09\.\.2026-11-15: budget/);
+  assert.equal(r.report.jobs.length, 2);
+});
+
+test('a zero-run read inside a truncated window says the window was truncated', () => {
+  let t = 0;
+  const fake = fakeRunner({ runs: [] });
+  const runner = (args) => {
+    const out = fake.runner(args);
+    if (isRunsList(args)) t = 530000;
+    return out;
+  };
+  const r = gather(['gather', '--repo', REPO, '--days', '7', '--runs', '2'], { fake: { runner, calls: [] }, clock: () => t });
+  assert.equal(r.code, 0);
+  assert.equal(r.report.noData.reason, 'no completed run was sampled in the 7-day window — the window was truncated (see truncated)');
+});
+
+test('without --repo the origin names the repository; --root is read for origin and workflow files', () => {
+  const remotes = [];
+  const r = gather(['gather', '--root', '/other', '--days', '7'], {
+    fake: buildFake(), remoteUrl: (root) => { remotes.push(root); return 'git@github.com:thn-inc/claude-tweaks.git'; },
+  });
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(remotes, ['/other']);
+  assert.deepEqual(r.roots, ['/other']);
+  assert.deepEqual(r.pins, [{ host: 'github.com', owner: 'thn-inc', repo: 'claude-tweaks' }]);
+  const here = gather(['gather', '--days', '7'], { fake: buildFake() });
+  assert.deepEqual(here.roots, ['/checkout']);
+});
+
+test('an unreadable or unusable origin is a usage-path error: exit 2, stderr, nothing on stdout', () => {
+  const thrown = gather(['gather'], { remoteUrl: () => { throw new Error('no origin'); } });
+  const junk = gather(['gather'], { remoteUrl: () => 'not a url' });
+  for (const r of [thrown, junk]) {
+    assert.equal(r.code, 2);
+    assert.equal(r.out, '');
+    assert.equal(r.err.split('\n').filter(Boolean).length, 1, r.err);
+    assert.equal(r.calls.length, 0);
+  }
+});
+
+test('a host pin that throws is exit 2 with nothing on stdout', () => {
+  const r = gather(['gather', '--repo', REPO], { pinHost: () => { throw new Error('bad config'); } });
+  assert.equal(r.code, 2);
+  assert.equal(r.out, '');
+  assert.match(r.err, /bad config/);
+});
+
+test('--help prints usage and exits 0', () => {
+  const r = gather(['--help']);
+  assert.equal(r.code, 0);
+  assert.match(r.out, /^usage: ci-audit\.js gather/);
+});
