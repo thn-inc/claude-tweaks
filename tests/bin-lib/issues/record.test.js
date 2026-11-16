@@ -890,10 +890,10 @@ test('parseRecordFacets: shaped:headless alongside an unrelated third label fami
 
 // --- Defer-reason vocabulary (_shared/deferral-gate.md, #620) ---
 
-test('DEFER_REASONS is the frozen six-value closed vocabulary, in contract order', () => {
+test('DEFER_REASONS is the frozen seven-value closed vocabulary, in contract order', () => {
   assert.deepStrictEqual([...DEFER_REASONS], [
     'tangential', 'needs-human-decision', 'pre-existing-outside-diff',
-    'genuinely-larger', 'blocked-external', 'blocked-dependency',
+    'genuinely-larger', 'blocked-external', 'blocked-dependency', 'needs-verification',
   ]);
   assert.ok(Object.isFrozen(DEFER_REASONS));
 });

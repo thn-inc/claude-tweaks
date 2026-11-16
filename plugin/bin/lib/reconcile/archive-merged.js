@@ -33,7 +33,9 @@ const { closeRunState } = require('../hooks/close-run-state');
 const { checkRunIntegrity, fallbackBranch, worktreeListStdout, mergedEvidence } = require('../hooks/run-integrity');
 const { readManifest, readDeferredClosures, readSingleRecordDeferredClosure } = require('../flow/manifest');
 const { checkRunTiebreakCoverage } = require('../tiebreak');
-const { readRunResidue, FILING_PENDING_RESOLUTION, FILING_LOG_REMEDY, filingRerunCommand } = require('../console/residue');
+const {
+  readRunResidue, FILING_PENDING_RESOLUTION, FILING_LOG_REMEDY, consoleRerunCommand, DIGEST_PENDING_RESOLUTION, digestLogRemedy,
+} = require('../console/residue');
 
 // #4178: every call here addresses `root` via `-C`; an inherited GIT_DIR /
 // GIT_WORK_TREE / GIT_INDEX_FILE / GIT_COMMON_DIR would silently override that
@@ -535,7 +537,7 @@ const TIEBREAK_COVERAGE_HINT = "re-run the review step's findings writer for thi
 // #4171: an auto-merge path renders no console, so a can't-tell finding the run held is
 // lost at archive time unless it was filed. `coverage.unfiledCantTell` names the unfiled ones.
 // `{run-dir}` is a placeholder; archive-run substitutes the real run dir before printing.
-const CANT_TELL_UNFILED_HINT = "file the run's can't-tell findings — an auto-merge path (the wrap-up short-circuit or the dispatch bundle Auto-merge gate) rendered no console to file them — through wrap-up/review-console.md's Can't-tell filings (console-filings.js --run \"{run-dir}\"; a spec-N/-prefixed id is filed and logged with --run \"{run-dir}/spec-N\", its own decisions.md), logging each as '{item} filed as #{n} (work-fingerprint {fp})', or write a resolved console.json";
+const CANT_TELL_UNFILED_HINT = "file the run's can't-tell findings — an auto-merge path (the wrap-up short-circuit or the dispatch bundle Auto-merge gate) rendered no console to file them — through wrap-up/review-console.md's Can't-tell filings (console-filings.js --run \"{run-dir}\"; a spec-N/-prefixed id is filed and logged with --run \"{run-dir}/spec-N\", its own decisions.md), logging each as '{item} filed as #{n} (work-fingerprint {fp})', or, for a drop-recommended one, '{item} digested (work-fingerprint {fp})' once its digest entry is posted, or write a resolved console.json";
 
 // `{ action: 'archive' }` unless the run's findings artifact is present and
 // either unreadable/malformed or lists a finding with no verdict line, or (#4171)
@@ -647,27 +649,59 @@ function consoleAckRemedy(runDir) {
   return `review them, then run console-residue.js --ack --run "${runDir}"`;
 }
 
-// #4170: the remedy for a planned can't-tell filing that has no record — the paste-ready
-// `console-filings.js --only` re-run, one per unacknowledged console holding a `filing-pending`
-// item. '' when no such item is open.
-function filingRerunRemedy(runDir) {
-  const { consoles } = readRunResidue(runDir);
-  const commands = consoles.filter((c) => !c.acknowledged).flatMap((c) => {
-    const ids = c.items.filter((i) => i.resolution === FILING_PENDING_RESOLUTION && typeof i.id === 'string').map((i) => i.id);
-    return ids.length > 0 ? [filingRerunCommand({ consoleDir: path.dirname(c.path), ids })] : [];
-  });
+// The dirs of the unacknowledged consoles holding an item of `resolution`. The re-run command depends on no item id
+// (residue.js's consoleRerunCommand), so an item with no usable id still gets its remedy.
+function pendingConsoleDirs(consoles, resolution) {
+  return consoles.filter((c) => !c.acknowledged && c.items.some((i) => i.resolution === resolution))
+    .map((c) => path.dirname(c.path));
+}
+
+function filingRemedyOf(consoles) {
+  const commands = pendingConsoleDirs(consoles, FILING_PENDING_RESOLUTION).map((consoleDir) => consoleRerunCommand({ consoleDir }));
   if (commands.length === 0) return '';
   return `re-run the planned filing(s): ${commands.join('; ')}, then ${FILING_LOG_REMEDY}`;
 }
 
+function digestRemedyOf(consoles, alsoRerun) {
+  const dirs = pendingConsoleDirs(consoles, DIGEST_PENDING_RESOLUTION);
+  if (dirs.length === 0) return '';
+  const commands = dirs.filter((d) => !alsoRerun.includes(d)).map((consoleDir) => consoleRerunCommand({ consoleDir }));
+  const logRemedy = digestLogRemedy({ consoleDir: dirs.length > 1 ? "{that console's dir}" : dirs[0] });
+  if (commands.length === 0) return `the same re-run also settles the planned digest entries, then ${logRemedy}`;
+  return `re-run the planned digest entries: ${commands.join('; ')}${commands.length < dirs.length ? ' (the re-run above also settles the others)' : ''}, then ${logRemedy}`;
+}
+
+// #4170: the remedy for a planned can't-tell filing that has no record — the paste-ready
+// `console-filings.js` re-run (default selection, no `--only`), one per unacknowledged console holding a
+// `filing-pending` item. '' when no such item is open.
+function filingRerunRemedy(runDir) {
+  return filingRemedyOf(readRunResidue(runDir).consoles);
+}
+
+// #4679: the digest twin — the same paste-ready `console-filings.js` re-run (it plans digest entries too), one per
+// unacknowledged console holding a `digest-pending` item, then the digest log remedy. '' when no such item is open.
+// `alsoRerun` is the dirs whose re-run the caller already names (a console holding both kinds): they are
+// pointed at, not repeated.
+function digestRerunRemedy(runDir, alsoRerun = []) {
+  return digestRemedyOf(readRunResidue(runDir).consoles, alsoRerun);
+}
+
+// The re-run remedies for a run's open console items, each console's one command named once: the digest remedy
+// leaves out the re-run of a console the filing remedy already names. One read of the run's consoles.
+function rerunRemedies(runDir) {
+  const { consoles } = readRunResidue(runDir);
+  return [filingRemedyOf(consoles), digestRemedyOf(consoles, pendingConsoleDirs(consoles, FILING_PENDING_RESOLUTION))].filter(Boolean);
+}
+
 // The recovery line for a console-residue skip: name the open items, the
-// unreadable console.json files to repair, or both when both block.
+// unreadable console.json files to repair, or both when both block. The re-run remedies are additions to each
+// other (a console can hold both kinds); only the ack is the alternative.
 function consoleResidueHint(runDir) {
   const { names, unreadable } = consoleResidue(runDir);
   const parts = [];
   if (names.length > 0) {
-    const rerun = filingRerunRemedy(runDir);
-    parts.push(`unresolved: ${names.join(', ')} — ${rerun ? `${rerun}; or ` : ''}${consoleAckRemedy(runDir)}`);
+    const reruns = rerunRemedies(runDir);
+    parts.push(`unresolved: ${names.join(', ')} — ${reruns.length ? `${reruns.join('; ')}; or ` : ''}${consoleAckRemedy(runDir)}`);
   }
   if (unreadable.length > 0) parts.push(`repair or remove ${unreadable.join(', ')}`);
   return parts.join('; ');
@@ -2837,7 +2871,7 @@ function archiveMerged({
 }
 
 module.exports = {
-  archiveMerged, countOwnerlessNonClean, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, consoleResidueHint, archiveRunDir, readArchiveCommit, archiveCommitLine, pinnedGit, listSpecDirs,
+  archiveMerged, countOwnerlessNonClean, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, digestRerunRemedy, rerunRemedies, consoleResidueHint, archiveRunDir, readArchiveCommit, archiveCommitLine, pinnedGit, listSpecDirs,
   isStaleDir, classifyRunDir,
   isOrphanedMint, isAdHocStandaloneMint, isAdHocIntrinsicSkip, ADHOC_INTRINSIC_STUCK_REASONS, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
   localHasMerge, lastOwnEventMs, ownEventRecency, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,
