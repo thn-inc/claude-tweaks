@@ -225,7 +225,7 @@ test('a row whose path is empty or holds a control character is skipped, not a f
   assert.deepStrictEqual(parseLensReply(`${good}| high | :12 | x | y |\n\nSTATUS: DONE`), result({ findings: [PLAIN_FINDINGS[0]], skipped: 1 }));
   assert.deepStrictEqual(parseLensReply(`${good}| high |  :12 | x | y |\n\nSTATUS: DONE`), result({ findings: [PLAIN_FINDINGS[0]], skipped: 1 }));
   assert.deepStrictEqual(parseLensReply(`${good}| high | src/x\ry.js:3 | x | y |\n\nSTATUS: DONE`), result({ findings: [PLAIN_FINDINGS[0]], skipped: 1 }));
-  for (const bad of ['\x7f', '\t', '\x01', '\x00']) {
+  for (const bad of ['\x7f', '\t', '\x01', '\x00', '\u0085', '\u2028', '\u2029']) {
     assert.deepStrictEqual(parseLensReply(`${good}| high | src/x${bad}y.js:3 | x | y |\n\nSTATUS: DONE`), result({ findings: [PLAIN_FINDINGS[0]], skipped: 1 }), JSON.stringify(bad));
   }
   assert.deepStrictEqual(parseLensReply(`${HEADER}| high | :12 | x | y |\n\nSTATUS: DONE`), result({ parse: 'unparseable', skipped: 1 }));

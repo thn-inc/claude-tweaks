@@ -41,7 +41,8 @@ const EVIDENCE_COL = 3;
 // No header row: cells are taken in BRIEF_HEADER order.
 const DEFAULT_COLUMNS = [SEVERITY_COL, LOCATION_COL, FINDING_COL, EVIDENCE_COL];
 
-const CONTROL_CHAR_RE = /[\u0000-\u001f\u007f]/;
+// C0 controls, DEL, and the Unicode line ends NEL, LS and PS (a multiline `^`/`$` reader sees them as line breaks).
+const CONTROL_CHAR_RE = /[\u0000-\u001f\u007f\u0085\u2028\u2029]/;
 const SEPARATOR_CELL_RE = /^:?-+:?$/;
 const OVERFLOW_RE = /^\+\s*(\d+)\s+more$/i;
 const NO_FINDINGS = 'No findings.';
