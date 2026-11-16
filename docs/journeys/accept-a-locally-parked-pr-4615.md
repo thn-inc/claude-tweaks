@@ -29,8 +29,8 @@ In every case the recreated `accept-{N}` worktree has been removed, and the reco
 ## Steps
 
 ### 1. The run stops before merge and parks
-- **URL:** `node plugin/bin/accept-park.js decide --run {run-dir} --record {n}` then `accept-park.js park --run {run-dir} --record {n} --pr {pr} --head {sha}`
-- **Action:** Nothing. Just before `gh pr merge` (`pr-first-merge.md` Step 2.9), the pipeline resolves the target. On `local` it does the following, in this order:
+- **URL:** `node plugin/bin/accept-park.js decide --run {run-dir} --record {n} --head {sha}` then `accept-park.js park --run {run-dir} --record {n} --pr {pr} --head {sha}`
+- **Action:** Nothing. Just before `gh pr merge` (`pr-first-merge.md` Step 2.9), the pipeline resolves the target; the diff tripwire can make it `local` when the branch crosses a risk category nobody flagged (or could not run), and then the packet's Deploy status carries its `tripwire…` lines. On `local` it does the following, in this order:
   1. Posts the acceptance packet and applies `accept:pending`.
   2. Writes `target: local`, `reason: awaiting-local-acceptance`, `park-head:` and `park-base:` into the packet's Deploy status section.
   3. Archives the run directory.

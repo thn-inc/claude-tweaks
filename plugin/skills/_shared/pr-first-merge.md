@@ -292,11 +292,11 @@ never suggest bypassing protection.
 
 ## Step 2.9: Local acceptance park (control mode)
 
-Before Step 3, for each `Fixes` record: `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" parked --record {n} --run "$PIPELINE_RUN_DIR"`, then `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" decide --run "$PIPELINE_RUN_DIR" --record {n}[,{m}…]`; `--run` follows Step 2.5's per-merged-run rule. Unless `parked` exits 5 and `decide` exits 0 with `park:false`: never run Step 3; report `pending-review` and read `_shared/local-acceptance-park.md`.
+Before Step 3, for each `Fixes` record: `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" parked --record {n} --run "$PIPELINE_RUN_DIR"`, then `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" decide --run "$PIPELINE_RUN_DIR" --record {n}[,{m}…] --head {headRefOid} [--classification {file}]`; `--run` follows Step 2.5's per-merged-run rule; classify first per `_shared/tripwire-classification.md`. Unless `parked` exits 5 and `decide` exits 0 with `park:false`: never run Step 3; report `pending-review` and read `_shared/local-acceptance-park.md`.
 
 ## Step 3: Attempt auto-merge, degrading on specific failure signatures
 
-No fence below runs until Step 2.9 lets the merge through (`parked` exit 5, `decide` exit 0 with `park:false`), whichever Step 2.5 route led here; tidy's record-linked arm runs both without `--run`. Exempt: a caller with no `Fixes` record (tidy's housekeeping arm) or one running Step 3 alone behind its own `parked` guard (dispatch close-out, `/claude-tweaks:accept`).
+No fence below runs until Step 2.9 lets the merge through, whichever Step 2.5 route led here. Exempt: a caller with no `Fixes` record (tidy's housekeeping arm) or one running Step 3 alone behind its own `parked` guard (dispatch close-out, `/claude-tweaks:accept`).
 
 **Creation-time caller:** tidy's Step 7.5 arm runs Step 2.5, then these fences where it routes; Red path, Conflict path and ready+comment degrades become leave-unarmed + report (`tidy/step-7-5-worktree-always.md`).
 

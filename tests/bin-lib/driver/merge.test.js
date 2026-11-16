@@ -3365,7 +3365,7 @@ test('AC3.7: a local control-mode target parks instead of merging', async () => 
   const r = await merge(CTX, h.deps);
   assert.deepEqual([r.outcome, r.reason], ['pending-review', 'awaiting-local-acceptance']);
   assert.equal(h.calls.filter(isMergeCall).length, 0, 'no pr merge call');
-  assert.deepEqual(parkCalls(h, 'decide')[0].args.slice(1), ['decide', '--run', CTX.runDir, '--record', '7', '--repo', 'o/r']);
+  assert.deepEqual(parkCalls(h, 'decide')[0].args.slice(1), ['decide', '--run', CTX.runDir, '--record', '7', '--head', CTX.head, '--repo', 'o/r']);
   const [p] = parkCalls(h, 'park');
   assert.equal(flagOf(p, '--head'), CTX.head, 'the head the gate read');
   // The park's own bound: the sum of its steps' bounds (5 CLI calls, the archive's reconcile bound, two git calls).

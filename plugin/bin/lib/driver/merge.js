@@ -1037,7 +1037,7 @@ function acceptPark(s) {
       `record #${record} park state unreadable (accept-park.js parked exit 6); no park this run; not merged`);
   }
   if (parked.code !== 5) return stop(s, 'merge-accept-park', 'supplier-failed', `accept-park.js parked ${exitWords(parked)}; not merged`);
-  const decided = acceptParkCli(s, ['decide', '--run', s.runDir, '--record', record, ...repo]);
+  const decided = acceptParkCli(s, ['decide', '--run', s.runDir, '--record', record, '--head', ctx.head, ...repo]);
   if (decided.code !== 0) return stop(s, 'merge-accept-park', 'supplier-failed', `accept-park.js decide ${exitWords(decided)}; not merged`);
   // decide prints exactly one decision per --record: anything else is unusable, never a no-park.
   const d = parseJson(String(decided.stdout).trim());
