@@ -20,7 +20,7 @@ const { ownEventRecency } = require('../run-liveness/probes');
 const { VERDICT_STEPS, verdictMarker } = require('../dispatch/merge-verdict');
 const { readWorkBackend } = require('../work-backend');
 const {
-  iterRunDirsWithState, writeRunState, readRunState, isAdHocRunDir,
+  iterRunDirsWithState, writeRunState, readRunState, isAdHocRunDir, priorWorktree,
 } = require('../hooks/context');
 const { resolvePrState, resolvePrStateByNumber, resolveIssueStateByNumber } = require('./pr-state');
 const {
@@ -1781,9 +1781,9 @@ function archiveRunDir(root, runDir, { env } = {}) {
   // run-state.json moved above, so finalize the terminal state at its new
   // (archived) location, not the original runDir — writeRunState reads and
   // preserves whatever state already moved there.
-  const priorWorktree = require('../hooks/context').priorWorktree(preMoveState);
-  const result = writeRunState(archiveDir, priorWorktree
-    ? { status: 'clean', worktree: null, worktreeAtClose: priorWorktree }
+  const wtAtClose = priorWorktree(preMoveState);
+  const result = writeRunState(archiveDir, wtAtClose
+    ? { status: 'clean', worktree: null, worktreeAtClose: wtAtClose }
     : { status: 'clean', worktree: null });
   if (!result) return refuseAfterMarker('close-failed');
 
@@ -1836,17 +1836,11 @@ function archiveRunDir(root, runDir, { env } = {}) {
     try {
       const timing = require('../timing/at-close');
       timing.writePhaseTimingSync(archiveDir);
-      timing.spawnTokenPass(archiveDir);
+      timing.spawnTokenPass(archiveDir, { env });
     } catch (err) {
-      try {
-        // Same one SKIP line as at-close.js's logTimingSkip — keep the two in
-        // sync; this catch must not depend on at-close having loaded.
-        const { appendEntry, formatEntry } = require('../log-decision/append');
-        appendEntry({ runDir: archiveDir, section: '/wrap-up', entry: formatEntry({
-          status: 'SKIP', now: Date.now(), step: 'timing at close',
-          text: `condition: timing at close failed (${(err && err.message) || String(err)}) → fallback: no timing.json written`,
-        }) });
-      } catch { /* a failed trace line never fails the archive */ }
+      // The shared fallback writer needs only log-decision/append.js, so this catch
+      // does not depend on at-close having loaded.
+      try { require('../log-decision/timing-skip').logTimingFailure(archiveDir, 'timing at close failed', err); } catch { /* a failed trace line never fails the archive */ }
     }
   }
 

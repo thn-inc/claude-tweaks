@@ -530,10 +530,56 @@ test('spawnTokenPass with spawn stubbed to record → argv ends with ["--run", r
     assert.equal(opts.detached, true);
     assert.equal(opts.windowsHide, true);
     assert.equal(opts.stdio, 'ignore');
-    assert.equal(typeof errorListener, 'function');
-    assert.doesNotThrow(() => errorListener(new Error('late')));
+    // No env given: the child inherits this process's environment.
+    assert.equal(Object.hasOwn(opts, 'env'), false);
     assert.equal(unrefed, true);
     assert.deepStrictEqual(skipLines(root), []);
+    // AC11: an 'error' emitted after the spawn returned (ENOENT/EACCES) is the could-not-start SKIP.
+    assert.equal(typeof errorListener, 'function');
+    assert.doesNotThrow(() => errorListener(new Error('late')));
+    const skips = skipLines(root);
+    assert.equal(skips.length, 1);
+    assert.match(skips[0], /background token pass could not start \(late\) → fallback: timing\.json keeps its phase rows without token totals/);
+  } finally {
+    childProcess.spawn = real;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('spawnTokenPass passes the caller\'s env to the child', () => {
+  const root = tmpRoot();
+  const real = childProcess.spawn;
+  const seen = [];
+  try {
+    childProcess.spawn = (cmd, args, opts) => { seen.push(opts); return { on() {}, unref() {} }; };
+    const env = { CLAUDE_CONFIG_DIR: path.join(root, 'cfg'), PATH: '' };
+    assert.equal(spawnTokenPass(root, { env }).spawned, true);
+    assert.equal(seen[0].env, env);
+    assert.equal(seen[0].windowsHide, true);
+  } finally {
+    childProcess.spawn = real;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('spawnTokenPass: a spawn that fails asynchronously (an emitted ENOENT) logs one could-not-start SKIP', async () => {
+  const root = tmpRoot();
+  const real = childProcess.spawn;
+  const { EventEmitter } = require('events');
+  try {
+    childProcess.spawn = () => {
+      const child = new EventEmitter();
+      child.unref = () => {};
+      setImmediate(() => child.emit('error', Object.assign(new Error('spawn node ENOENT'), { code: 'ENOENT' })));
+      return child;
+    };
+    const r = spawnTokenPass(root);
+    assert.equal(r.spawned, true);
+    assert.deepStrictEqual(skipLines(root), []);
+    await new Promise((res) => setImmediate(res));
+    const skips = skipLines(root);
+    assert.equal(skips.length, 1);
+    assert.match(skips[0], /background token pass could not start \(spawn node ENOENT\)/);
   } finally {
     childProcess.spawn = real;
     fs.rmSync(root, { recursive: true, force: true });

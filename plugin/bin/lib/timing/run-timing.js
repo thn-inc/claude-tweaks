@@ -13,6 +13,7 @@ const { derivePhases, joinTokens, countGuardEvents, aggregateDispatches } = requ
 const { subagentsDirFor, readDispatches } = require('./transcript');
 const { readManifest } = require('../flow/manifest');
 const { resolveAgainst } = require('../health-core/io');
+const { priorWorktree } = require('../run-state-worktree');
 
 function readEvents(file) {
   let text;
@@ -144,8 +145,7 @@ async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, dea
 
   const read = readUsageImpl || ((p, o) => require('./transcript').readUsage(p, o));
   // A closed run has worktree null; worktreeAtClose keeps the path (#3023).
-  const usable = (v) => (typeof v === 'string' && v ? v : null);
-  const worktree = runState ? usable(runState.worktree) || usable(runState.worktreeAtClose) : null;
+  const worktree = priorWorktree(runState);
   const at = cwd === undefined ? process.cwd() : cwd;
   const hit = () => ({ ok: true, timing, out, tokens: null, guard: null, notes: outNotes, deadlineHit: true });
   const transcripts = [];

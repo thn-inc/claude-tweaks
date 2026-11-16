@@ -14,6 +14,8 @@ const processProbe = require('../run-liveness/process-probe');
 const { HEARTBEAT_THROTTLE_MS } = require('../run-liveness/constants');
 const { probeOwnerPid } = require('../run-liveness/owner-pid-probe');
 const { claudePid } = processProbe;
+// #5555: re-exported — the one worktree-precedence rule lives in the leaf.
+const { priorWorktree } = require('../run-state-worktree');
 
 function readStdin() {
   try { return fs.readFileSync(0, 'utf8'); } catch { return ''; }
@@ -24,14 +26,6 @@ function parseInput(raw) {
     const v = JSON.parse(raw);
     return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
   } catch { return {}; }
-}
-
-// #5555: the worktree a run was bound to — its live `worktree`, else the
-// `worktreeAtClose` a close kept — as a non-empty string, else null.
-function priorWorktree(state) {
-  const usable = (v) => (typeof v === 'string' && v ? v : null);
-  const rs = state && typeof state === 'object' ? state : {};
-  return usable(rs.worktree) || usable(rs.worktreeAtClose);
 }
 
 function readRunState(runDir) {

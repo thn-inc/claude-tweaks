@@ -183,12 +183,14 @@ test('reconcile-background: an abandoned interrupted run owned by CLAUDE_TWEAKS_
 // absent, as it was before this fix), behavior is unchanged — the other two
 // gates (24h staleness + shipped-unclosed evidence) still govern alone and
 // this same shape of run is still archived.
-test('reconcile-background: the same abandoned interrupted run IS archived when CLAUDE_TWEAKS_SESSION_ID is unset (control — unchanged fallback behavior, #1687 AC2)', () => {
+test('reconcile-background: the same abandoned interrupted run IS archived when CLAUDE_TWEAKS_SESSION_ID is unset (control — unchanged fallback behavior, #1687 AC2)', (t) => {
   const runId = '2026-08-01T090000-record-1687-noown';
   const { root, runDir } = fixtureAbandonedShippedRun({ runId, ownerSessionId: 'sess-1687-someone-else' });
 
   // #5555: the archive starts a detached token pass; point its transcript lookup at an empty fixture dir.
-  const env = { ...process.env, CLAUDE_CONFIG_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-cfg-')) };
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-cfg-'));
+  t.after(() => fs.rmSync(cfgDir, { recursive: true, force: true }));
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: cfgDir };
   delete env.CLAUDE_TWEAKS_SESSION_ID;
   execFileSync('node', [HOOKS, 'reconcile-background'], { cwd: root, encoding: 'utf8', env });
 

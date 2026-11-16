@@ -4027,3 +4027,15 @@ test('a late events.jsonl line landing before the straggler sweep is in the inli
   assert.equal(fs.existsSync(fx.runDir), false);
   T.assertPhaseRows(T.readTiming(fx.archiveDir));
 });
+
+test('archiveRunDir hands its env option to the token pass', async () => {
+  const fx = plainRun('2026-11-16T100000-spec-5555-env', { status: 'active', worktree: '/gone/wt-env' });
+  const env = { ...process.env, CT_5555_ENV_MARK: '1' };
+  const seen = [];
+  const result = await T.withStub(atClose, 'spawnTokenPass', (runDir, opts) => { seen.push({ runDir, opts }); return { spawned: true, reason: 'stubbed' }; },
+    () => archiveRunDir(fx.root, fx.runDir, { env }));
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].runDir, fx.archiveDir);
+  assert.equal(seen[0].opts.env, env);
+});

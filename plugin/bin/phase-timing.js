@@ -63,6 +63,7 @@ const path = require('path');
 const { TIERS, ROLE_PATTERNS, latestCiGatePerPr } = require('./lib/timing/derive');
 const { locateTranscripts } = require('./lib/timing/transcript');
 const { derivePhaseTiming, deriveTiming, writeTimingFile } = require('./lib/timing/run-timing');
+const { priorWorktree } = require('./lib/run-state-worktree');
 const { TURN_CLASSES, CEREMONY_CLASSES } = require('./lib/timing/turn-class');
 const { checkBudgets, defaultGh } = require('./lib/timing/budget');
 
@@ -250,8 +251,7 @@ function resolveTranscripts(o, runState, deps) {
   const notes = [];
   if (o.autoTranscript) {
     // A closed run has worktree null; worktreeAtClose keeps its path (#5555).
-    const usable = (v) => (typeof v === 'string' && v ? v : null);
-    const worktree = runState ? usable(runState.worktree) || usable(runState.worktreeAtClose) : null;
+    const worktree = priorWorktree(runState);
     const sessionId = runState && typeof runState.sessionId === 'string' ? runState.sessionId : null;
     if (!worktree && !sessionId) {
       notes.push('tokens: transcript not found (no worktree or sessionId in run-state.json)');

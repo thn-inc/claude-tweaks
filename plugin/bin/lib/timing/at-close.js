@@ -17,6 +17,8 @@ const os = require('os');
 const path = require('path');
 const { lstatType } = require('../path-guard');
 const { derivePhaseTiming, deriveTiming, hasTokenTotals, writeTimingFile } = require('./run-timing');
+const { priorWorktree } = require('../run-state-worktree');
+const timingSkip = require('../log-decision/timing-skip');
 
 // The one time bound on a close's transcript reads (ms).
 const TIMING_BOUND_MS = 60000;
@@ -24,14 +26,14 @@ const TIMING_BOUND_MS = 60000;
 const PHASE_ONLY = 'timing.json phase rows written without token totals';
 const NOTHING_WRITTEN = 'no timing.json written';
 
-const errText = (err) => (err && err.message ? err.message : String(err));
+const { errText } = timingSkip;
 
 // runState, { env, homeDir } -> { paths, reason }. At most the one own path.
 // homeDir (a function) is called only when env has no CLAUDE_CONFIG_DIR.
 function ownTranscripts(runState, { env = {}, homeDir = os.homedir } = {}) {
   try {
     const rs = runState && typeof runState === 'object' ? runState : {};
-    const worktree = require('../hooks/context').priorWorktree(rs);
+    const worktree = priorWorktree(rs);
     if (!worktree) return { paths: [], reason: 'no worktree or worktreeAtClose in run-state.json' };
     const sid = rs.sessionId;
     if (typeof sid !== 'string') return { paths: [], reason: 'no sessionId in run-state.json' };
@@ -57,12 +59,9 @@ function isSpecChildDir(runDir) {
 }
 
 // One SKIP line in runDir's decisions.md; a run dir that is not a directory gets none.
+// (log-decision/timing-skip.js, shared with the closing paths' own fallback catch.)
 function logTimingSkip(runDir, text) {
-  try {
-    if (lstatType(runDir).type !== 'directory') return;
-    const { appendEntry, formatEntry } = require('../log-decision/append');
-    appendEntry({ runDir, section: '/wrap-up', entry: formatEntry({ status: 'SKIP', now: Date.now(), step: 'timing at close', text }) });
-  } catch { /* a failed trace line never fails the close */ }
+  timingSkip.logTimingSkip(runDir, text);
 }
 
 function readExisting(runDir) {
@@ -156,18 +155,21 @@ async function writeTimingAtCloseSafe(runDir, opts) {
   }
 }
 
-// runDir -> { spawned, reason }: starts bin/timing-at-close.js detached, so a
-// close never waits on a transcript read.
-function spawnTokenPass(runDir) {
+// runDir, { env } -> { spawned, reason }: starts bin/timing-at-close.js detached, so a
+// close never waits on a transcript read. env (optional) is the child's environment;
+// without it the child inherits this process's. A spawn that fails asynchronously
+// (ENOENT/EACCES are emitted, not thrown) logs the same SKIP from its 'error' listener.
+function spawnTokenPass(runDir, { env } = {}) {
+  const cannotStart = (reason) => logTimingSkip(runDir, `condition: background token pass could not start (${reason}) → fallback: timing.json keeps its phase rows without token totals`);
   try {
     const cli = path.join(__dirname, '..', '..', 'timing-at-close.js');
-    const child = require('child_process').spawn(process.execPath, [cli, '--run', runDir], { detached: true, stdio: 'ignore', windowsHide: true });
-    child.on('error', () => {});
+    const child = require('child_process').spawn(process.execPath, [cli, '--run', runDir], { detached: true, stdio: 'ignore', windowsHide: true, ...(env ? { env } : {}) });
+    child.on('error', (err) => cannotStart(errText(err)));
     child.unref();
     return { spawned: true, reason: 'started' };
   } catch (err) {
     const reason = errText(err);
-    logTimingSkip(runDir, `condition: background token pass could not start (${reason}) → fallback: timing.json keeps its phase rows without token totals`);
+    cannotStart(reason);
     return { spawned: false, reason };
   }
 }
