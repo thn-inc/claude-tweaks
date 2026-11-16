@@ -432,6 +432,44 @@ test('characterization: the resolve shape with a relative --run resolves the sam
   assert.ok(fs.existsSync(path.join(fx.runDir, 'console.json')));
 });
 
+test('AC4c: --ceiling reports trusted with control mode on as explicit and not granted', async () => {
+  const fx = mainCheckoutWithRun({ autonomy: 'trusted', policyExtra: CM });
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--ceiling'], b.d), 0, b.err());
+  assert.strictEqual(b.out(), 'console-resolve.js: ceiling trusted consoleAutoResolve false control-mode on source explicit\n');
+});
+
+test('--ceiling: a directory where policy.yml should be is unreadable, exit 3, never supervised', async () => {
+  const fx = mainCheckoutWithRun({ writePolicy: false });
+  fs.mkdirSync(path.join(fx.root, '.claude-tweaks', 'policy.yml'));
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--ceiling'], b.d), 3);
+  assert.strictEqual(b.out(), '');
+  assert.match(b.err(), /console-resolve\.js: ceiling unreadable \(.*EISDIR.*\)/);
+});
+
+test('--ceiling: a directory where the run config.yml should be is unreadable too, exit 3', async () => {
+  const fx = controlFixture();
+  fs.mkdirSync(path.join(fx.runDir, 'config.yml'));
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--ceiling'], b.d), 3);
+  assert.strictEqual(b.out(), '');
+  assert.match(b.err(), /ceiling unreadable/);
+});
+
+test('--ceiling: an absent policy.yml (ENOENT) is not unreadable: exit 0, source default', async () => {
+  const fx = mainCheckoutWithRun({ writePolicy: false });
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--ceiling'], b.d), 0, b.err());
+  assert.strictEqual(b.out(), 'console-resolve.js: ceiling supervised consoleAutoResolve false control-mode off source default\n');
+});
+
+test('the resolve shape keeps its tolerant read: a directory where policy.yml should be still reads as default (exit 4)', async () => {
+  const fx = mainCheckoutWithRun({ writePolicy: false, staged: STAGED });
+  fs.mkdirSync(path.join(fx.root, '.claude-tweaks', 'policy.yml'));
+  assert.strictEqual(await run(resolveArgs(fx), baseDeps(fx, []).d), 4);
+});
+
 test('--ceiling: a relative --run resolves against deps.cwd()', async () => {
   const fx = controlFixture();
   assert.notStrictEqual(process.cwd(), fx.root);

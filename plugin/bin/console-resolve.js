@@ -155,10 +155,24 @@ function defaultExecFile(cmd, args, opts = {}) {
 // One call, all keys — a run that widened `grant-veto-window-hours` must not
 // have evaluateMaturation fall back to its own 24h default the way this CLI's
 // first cut did.
-function readPolicy({ execFile, cwd, runDir }) {
+//
+// `strict` (the `--ceiling` query only): an absent file (ENOENT/ENOTDIR) still reads as unset, but any
+// other read failure, or an `autonomy`/`control-mode` entry carrying an `error`, throws — a policy that
+// cannot be read must never print as `supervised`. The other shapes keep the tolerant read.
+function readPolicy({ execFile, cwd, runDir, strict = false }) {
   const git = (args) => execFile('git', args, { cwd });
-  const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
+  const readFile = (p) => {
+    try { return fs.readFileSync(p, 'utf8'); } catch (err) {
+      if (strict && !(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))) throw err;
+      return null;
+    }
+  };
   const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['autonomy', 'control-mode', 'grant-veto-window-hours', 'merge-sensitive-paths'] });
+  if (strict) {
+    for (const key of ['autonomy', 'control-mode']) {
+      if (result[key] && result[key].error !== undefined) throw new Error(`${key} policy entry is unreadable: ${result[key].error}`);
+    }
+  }
   const valueOf = (key) => { const entry = result[key]; return entry && entry.error === undefined ? entry.value : null; };
   const raw = valueOf('grant-veto-window-hours');
   const veto = raw === null || raw === undefined ? NaN : Number(raw);
@@ -484,7 +498,7 @@ function checkRepair(o, runDir, { stdout, stderr, execFile, cwd }) {
 // read that throws is exit 3 with its own line, never a `supervised` guess.
 function ceilingQuery(runDir, { stdout, stderr, execFile, cwd }) {
   let policy;
-  try { policy = readPolicy({ execFile, cwd: cwd(), runDir }); } catch (err) {
+  try { policy = readPolicy({ execFile, cwd: cwd(), runDir, strict: true }); } catch (err) {
     stderr(`console-resolve.js: ceiling unreadable (${err && err.message ? err.message : err})\n`);
     return 3;
   }
