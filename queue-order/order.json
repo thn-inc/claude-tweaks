@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-16T15:22:39.352Z",
+  "computedAt": "2026-11-16T15:23:54.726Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -870,7 +870,7 @@
       },
       {
         "number": 3758,
-        "updatedAt": "2026-11-16T12:23:32Z",
+        "updatedAt": "2026-11-16T15:23:26Z",
         "state": "OPEN"
       },
       {
@@ -8820,7 +8820,7 @@
         "number": 3758,
         "state": "OPEN",
         "title": "Dispatch contract doesn't name or detect an Agent/Task-tool-less sandbox",
-        "updatedAt": "2026-11-16T12:23:32Z",
+        "updatedAt": "2026-11-16T15:23:26Z",
         "facets": {
           "origin": null,
           "risk": "medium",
