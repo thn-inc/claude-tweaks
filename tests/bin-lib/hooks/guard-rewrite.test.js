@@ -343,6 +343,14 @@ test("node-eval-separator inserts -- before \"$A\" and leaves an existing -- alo
   assert.strictEqual(rw(`node --no-warnings -e ${script} "$A"`), null, 'narrow shape only');
 });
 
+test('node-eval-separator reads node after a separator, never as a >& or <& redirection target', () => {
+  for (const sep of ['&', '&&', '|', '|&', '||']) {
+    assert.deepStrictEqual(rw(`ls ${sep} node -e '1' "$A"`), { command: `ls ${sep} node -e '1' -- "$A"`, applied: ['node-eval-separator'] }, sep);
+  }
+  assert.strictEqual(rw(`echo x >& node -e '1' "$A"`), null, 'writes to a file named node');
+  assert.strictEqual(rw(`echo x <& node -e '1' "$A"`), null);
+});
+
 test('quote-escaped-space double-quotes ls /a/Code\\ Workspaces/b', () => {
   assert.deepStrictEqual(rw('ls /a/Code\\ Workspaces/b'), { command: 'ls "/a/Code Workspaces/b"', applied: ['quote-escaped-space'] });
   assert.deepStrictEqual(rw('ls /a/Code\\ Workspaces/b /c/d\\ e 2>&1'), { command: 'ls "/a/Code Workspaces/b" "/c/d e" 2>&1', applied: ['quote-escaped-space'] });
@@ -464,6 +472,8 @@ test('drop-git-C-cwd keeps a -C that is the subcommand\'s own option', () => {
 test('drop-git-C-cwd leaves a git that is the target of a >& or <& redirection', () => {
   assert.strictEqual(rw('echo x >& git -C . log'), null);
   assert.strictEqual(rw('echo x 2>&git -C . log'), null);
+  assert.strictEqual(rw('echo x <& git -C . log'), null);
+  assert.deepStrictEqual(rw('echo x >& git -C . log; git -C . log'), { command: 'echo x >& git -C . log; git log', applied: ['drop-git-C-cwd'] }, 'only the target is skipped; a later git call still rewrites');
   assert.deepStrictEqual(rw('ls |& git -C . log'), { command: 'ls |& git log', applied: ['drop-git-C-cwd'] }, '|& is a pipe, not a redirection');
 });
 

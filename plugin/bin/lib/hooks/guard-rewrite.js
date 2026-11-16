@@ -591,11 +591,20 @@ function shippedUnder(root, s, at, { pathImpl, lstat }) {
 const NODE_EVAL = /node[ \t]+(?:-e|-p|--eval|--print)[ \t]+/g;
 const SEGMENT_END = /[;&|\n)]/;
 
+// True when s[p] is an unquoted command separator: `;`, `&`, `|` (`|&` is a pipe), a newline or
+// `(`. The `&` of a `>&`/`<&` redirection is not one: the word after it is the redirection's target.
+function separatorAt(s, kind, p) {
+  if (kind[p] !== TOP) return false;
+  const c = s[p];
+  if (c === '&') return s[p - 1] !== '>' && s[p - 1] !== '<';
+  return c === ';' || c === '|' || c === '\n' || c === '(';
+}
+
 function atCommandStart(s, kind, i) {
   let p = i - 1;
   while (p >= 0 && (s[p] === ' ' || s[p] === '\t')) p -= 1;
   if (p < 0) return true;
-  return kind[p] === TOP && (s[p] === ';' || s[p] === '&' || s[p] === '|' || s[p] === '\n' || s[p] === '(');
+  return separatorAt(s, kind, p);
 }
 
 // Rule 3: `node -e '<s>' "$A"` → `node -e '<s>' -- "$A"`. The guard accepts a
@@ -734,14 +743,6 @@ function hasCWord(s, kind, from, end) {
   return false;
 }
 
-// True when the `&` atCommandStart accepted before i belongs to a `>&`/`<&` redirection, so the
-// word at i is that redirection's target (`echo x >& git -C . log` writes to a file named git).
-function afterFdRedirect(s, i) {
-  let p = i - 1;
-  while (p >= 0 && (s[p] === ' ' || s[p] === '\t')) p -= 1;
-  return s[p] === '&' && (s[p - 1] === '>' || s[p - 1] === '<');
-}
-
 // Rule 6: `git -C . <read>` and `git -C <the cwd> <read>` → `git <read>`: git runs in the directory
 // it is already in. A `.` is the shell's directory wherever the `git` sits. A literal must spell the
 // cwd (spellsCwd) on the text's first command with no `cd`/`pushd`/`popd` word anywhere, because a
@@ -759,7 +760,6 @@ function dropGitCCwd(s, ctx) {
     // atCommandStart implies a word start: only blanks sit between `i` and an unquoted separator.
     if (kind[i] !== TOP || !atCommandStart(s, kind, i)) continue;
     if (i + 3 >= n || !WORD_BREAK.test(s[i + 3])) continue;
-    if (afterFdRedirect(s, i)) return null;
     GIT_C.lastIndex = i + 3;
     const m = GIT_C.exec(s);
     if (!m) {
