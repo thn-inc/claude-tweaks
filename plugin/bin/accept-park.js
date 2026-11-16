@@ -42,6 +42,18 @@
 //     over the record's labels and packet comment. Exit 0 parked, 5 not-parked, 6 unknown (a
 //     record or policy read failure, or gh absent), 2 malformed invocation, 3 --run refused (as
 //     decide). A caller treats 0 and 6 alike: do not merge, close or reap.
+//   reenter --record <n> --pr <n> [--repo owner/name]
+//     /accept's re-entry: bin/lib/accept/reentry.js adds `.claude/worktrees/accept-<n>` under the
+//     main checkout from the PR branch's tip (never an existing directory). One JSON line:
+//     { worktree, headRefName, prHead, parkHead, moved, head } — parkHead is the packet's
+//     `park-head:` (an unreadable or absent packet is null, so moved). Exit 0 entered; 1 a git or
+//     gh failure (including a PR view that will not read); 2 malformed invocation; 4 gh absent,
+//     before any write; 7 stale directory (nothing touched).
+//   reenter-check --worktree <path> --expect-head <sha>
+//     One JSON line { ok, head, dirty }. Exit 0 ok (HEAD is the expected commit, no tracked file
+//     modified); 8 modified (HEAD moved or a tracked file differs); 1 a git failure; 2 malformed.
+//   reenter-remove --worktree <path>
+//     One JSON line { removed } (false: git no longer lists it). Exit 0; 1 a git failure; 2 malformed.
 'use strict';
 
 const path = require('path');
@@ -58,6 +70,12 @@ const USAGE = [
   '  decide: exit 0 printed; 1 policy or record read failure; 2 malformed; 3 --run refused',
   '  park:   exit 0 parked; 1 park-failed; 2 malformed or unresolvable repo; 3 --run refused; 4 gh absent',
   '  parked: exit 0 parked; 5 not-parked (control mode off included); 6 unknown; 2 malformed; 3 --run refused',
+  '       accept-park.js reenter --record <n> --pr <n> [--repo owner/name]',
+  '       accept-park.js reenter-check --worktree <path> --expect-head <sha>',
+  '       accept-park.js reenter-remove --worktree <path>',
+  '  reenter: exit 0 entered; 1 git or gh failure; 2 malformed; 4 gh absent; 7 stale directory',
+  '  reenter-check: exit 0 ok; 8 modified; 1 git failure; 2 malformed',
+  '  reenter-remove: exit 0 removed or already gone; 1 git failure; 2 malformed',
   '',
 ].join('\n');
 
@@ -65,6 +83,9 @@ const VERBS = Object.freeze({
   decide: { required: ['--run', '--record'], optional: ['--repo'] },
   park: { required: ['--run', '--record', '--pr', '--head', '--worktree'], optional: ['--claimed', '--worktree-mode', '--repo'] },
   parked: { required: ['--record'], optional: ['--run', '--repo'] },
+  reenter: { required: ['--record', '--pr'], optional: ['--repo'] },
+  'reenter-check': { required: ['--worktree', '--expect-head'], optional: [] },
+  'reenter-remove': { required: ['--worktree'], optional: [] },
 });
 const RECORD_LIST_RE = /^[1-9][0-9]*(?:,[1-9][0-9]*)*$/;
 const POSITIVE_RE = /^[1-9][0-9]*$/;
@@ -112,6 +133,9 @@ function parseArgs(argv) {
     } else if (flag === '--head') {
       if (!require('./lib/accept/park').HEAD_SHA_RE.test(value)) return { error: `--head must be 7-64 lowercase hex, got: ${value}` };
       opts.head = value;
+    } else if (flag === '--expect-head') {
+      if (!require('./lib/accept/park').HEAD_SHA_RE.test(value)) return { error: `--expect-head must be 7-64 lowercase hex, got: ${value}` };
+      opts.expectHead = value;
     } else if (flag === '--worktree-mode') {
       if (!WORKTREE_MODES.includes(value)) return { error: `--worktree-mode must be one of ${WORKTREE_MODES.join('|')}, got: ${value}` };
       opts.worktreeMode = value;
@@ -121,7 +145,7 @@ function parseArgs(argv) {
   }
   const missing = required.find((flag) => !Object.hasOwn(opts, flagKey(flag)));
   if (missing) return { error: `${missing} is required` };
-  if (verb === 'parked' && opts.record.length !== 1) return { error: 'parked takes one --record' };
+  if ((verb === 'parked' || verb === 'reenter') && opts.record.length !== 1) return { error: `${verb} takes one --record` };
   return { verb, opts };
 }
 
@@ -527,7 +551,86 @@ function validRepo(repo) {
   return spec !== null && !['.', '..'].includes(spec.owner) && !['.', '..'].includes(spec.repo);
 }
 
-const HANDLERS = Object.freeze({ decide: runDecide, park: runParkVerb, parked: runParked });
+// ---- reenter, reenter-check, reenter-remove ----
+
+const REENTER_EXIT = Object.freeze({ staleDir: 7, modified: 8 });
+
+// reentry.js hands its git runner the whole argv, `-C <dir>` included.
+const reentryGit = (deps, ctx) => (args) => deps.git(args, { cwd: ctx.mainRoot(), env: deps.env });
+
+// The packet's park-head for the record, null when the packet is absent or will not read.
+function parkHeadOf(record, deps, ctx) {
+  const { readPacket } = require('./lib/wrap-up/packet-gather');
+  const { parkStateOf } = require('./lib/accept/park');
+  try {
+    const view = JSON.parse(ctx.ghIssue(['issue', 'view', String(record), '--json', 'comments']));
+    if (!Array.isArray(view.comments)) throw new Error('comments is not a list');
+    const read = readPacket(view.comments);
+    if (read.status !== 'found') throw new Error(`the packet is ${read.status}`);
+    return parkStateOf(read.comment.body).headSha;
+  } catch (err) {
+    deps.stderr(`accept-park.js: could not read #${record}'s park head (${messageOf(err)}) — the PR counts as moved\n`);
+    return null;
+  }
+}
+
+function runReenter(opts, deps, ctx) {
+  const { reenter } = require('./lib/accept/reentry');
+  const [record] = opts.record;
+  const repoRoot = ctx.mainRoot();
+  if (!repoRoot) {
+    deps.stderr('accept-park.js: could not find the main checkout\n');
+    return 1;
+  }
+  if (!ctx.ghAvailable()) {
+    deps.stderr('accept-park.js: gh is absent — nothing entered; follow _shared/github-write-transport.md\'s MCP path\n');
+    return 4;
+  }
+  try {
+    const result = reenter({
+      record, pr: opts.pr, repoRoot, parkHead: parkHeadOf(record, deps, ctx),
+      git: reentryGit(deps, ctx), gh: (args) => ctx.ghIssue(args),
+    });
+    printJson(deps, result);
+    return 0;
+  } catch (err) {
+    deps.stderr(`accept-park.js: reenter: ${messageOf(err)}\n`);
+    return err.code === 'stale-dir' ? REENTER_EXIT.staleDir : 1;
+  }
+}
+
+function runReenterCheck(opts, deps, ctx) {
+  const { reenterCheck } = require('./lib/accept/reentry');
+  try {
+    const result = reenterCheck({ worktree: ctx.absolute(opts.worktree), expectHead: opts.expectHead, git: reentryGit(deps, ctx) });
+    printJson(deps, result);
+    return result.ok ? 0 : REENTER_EXIT.modified;
+  } catch (err) {
+    deps.stderr(`accept-park.js: reenter-check: ${messageOf(err)}\n`);
+    return 1;
+  }
+}
+
+function runReenterRemove(opts, deps, ctx) {
+  const { reenterRemove } = require('./lib/accept/reentry');
+  const repoRoot = ctx.mainRoot();
+  if (!repoRoot) {
+    deps.stderr('accept-park.js: could not find the main checkout\n');
+    return 1;
+  }
+  try {
+    printJson(deps, reenterRemove({ worktree: ctx.absolute(opts.worktree), repoRoot, git: reentryGit(deps, ctx), realpath: deps.realpath }));
+    return 0;
+  } catch (err) {
+    deps.stderr(`accept-park.js: reenter-remove: ${messageOf(err)}\n`);
+    return 1;
+  }
+}
+
+const HANDLERS = Object.freeze({
+  decide: runDecide, park: runParkVerb, parked: runParked,
+  reenter: runReenter, 'reenter-check': runReenterCheck, 'reenter-remove': runReenterRemove,
+});
 
 async function run(argv, overrides = {}) {
   const deps = { ...realDeps, ...overrides };
@@ -547,7 +650,9 @@ async function run(argv, overrides = {}) {
   } catch (err) {
     // An unexpected throw fails closed: decide and park on 1 (no merge), parked on unknown.
     deps.stderr(`accept-park.js: ${parsed.verb}: ${messageOf(err)}\n`);
-    return parsed.verb === 'parked' ? PARKED_EXIT.unknown : 1;
+    if (parsed.verb !== 'parked') return 1;
+    deps.stdout('unknown\n');
+    return PARKED_EXIT.unknown;
   }
 }
 

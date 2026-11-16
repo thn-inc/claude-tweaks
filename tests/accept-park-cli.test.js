@@ -552,9 +552,136 @@ test('an unexpected throw fails closed: parked unknown, decide 1', async () => {
   const boom = () => { throw new Error('probe exploded'); };
   const parked = await call(w, ['parked', '--record', '7'], { ghAvailable: boom });
   assert.equal(parked.code, 6);
+  assert.equal(parked.stdout, 'unknown\n');
   assert.match(parked.stderr, /probe exploded/);
   const decide = await call(w, ['decide', '--run', w.state.runDir, '--record', '7'], { ghAvailable: boom });
   assert.equal(decide.code, 1);
+});
+
+// ---- reenter, reenter-check, reenter-remove ----
+
+const TIP = 'f'.repeat(40);
+
+// A fake gh/git over the world's records: `pr view`, plus the reentry git calls recorded.
+function reentryWorld(extra = {}) {
+  const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+  const baseGh = w.deps.gh;
+  const ghCalls = [];
+  const gh = (args) => {
+    if (args[0] === 'pr') {
+      ghCalls.push(args);
+      if (extra.prFails) throw new Error('HTTP 404: no pull request');
+      return JSON.stringify({ headRefName: 'feat/x', headRefOid: TIP });
+    }
+    return baseGh(args);
+  };
+  const gitCalls = [];
+  const git = (args, opts) => {
+    gitCalls.push({ args, opts });
+    const rest = args.slice(2);
+    if (rest[0] === 'rev-parse') return `${extra.head ?? TIP}\n`;
+    if (rest.includes('status')) return extra.porcelain ?? '';
+    if (rest.join(' ') === 'worktree list --porcelain') return extra.listed ?? '';
+    return '';
+  };
+  w.deps.gh = gh;
+  w.deps.git = git;
+  return { w, ghCalls, gitCalls };
+}
+
+test('reenter prints the re-entry result with the packet park head, and fences its git operands', async () => {
+  const { w, ghCalls, gitCalls } = reentryWorld();
+  const res = await call(w, ['reenter', '--record', '7', '--pr', '12']);
+  assert.equal(res.code, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.worktree, path.join(w.state.root, '.claude', 'worktrees', 'accept-7'));
+  assert.equal(out.headRefName, 'feat/x');
+  assert.equal(out.prHead, TIP);
+  assert.equal(out.head, TIP);
+  assert.equal(out.parkHead, null, 'the fixture packet carries no park-head, so the PR counts as moved');
+  assert.equal(out.moved, true);
+  assert.deepEqual(ghCalls, [['pr', 'view', '12', '--json', 'headRefName,headRefOid']]);
+  assert.deepEqual(gitCalls[0].args, ['-C', w.state.root, 'fetch', '--end-of-options', 'origin', 'feat/x']);
+  assert.equal(gitCalls[0].opts.cwd, w.state.root);
+});
+
+test('reenter reads a parked packet head and reports an unmoved PR', async () => {
+  const { w, ghCalls } = reentryWorld();
+  const { writeParkDeployStatus } = require('../plugin/bin/lib/accept/park');
+  w.state.records[7].comments[0].body = writeParkDeployStatus(PACKET, { headSha: TIP }).body;
+  const res = await call(w, ['reenter', '--record', '7', '--pr', '12', '--repo', 'o/r']);
+  assert.equal(res.code, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.parkHead, TIP);
+  assert.equal(out.moved, false);
+  assert.deepEqual(ghCalls, [['pr', 'view', '12', '--json', 'headRefName,headRefOid', '--repo', 'o/r']]);
+});
+
+test('reenter: a stale directory exits 7 and touches nothing', async () => {
+  const { w, gitCalls, ghCalls } = reentryWorld();
+  fs.mkdirSync(path.join(w.state.root, '.claude', 'worktrees', 'accept-7'), { recursive: true });
+  const res = await call(w, ['reenter', '--record', '7', '--pr', '12']);
+  assert.equal(res.code, 7);
+  assert.equal(res.stdout, '');
+  assert.match(res.stderr, /stale accept directory/);
+  assert.equal(gitCalls.length + ghCalls.length, 0);
+});
+
+test('reenter: a PR view failure exits 1; gh absent exits 4 before any call', async () => {
+  const failing = reentryWorld({ prFails: true });
+  const res = await call(failing.w, ['reenter', '--record', '7', '--pr', '12']);
+  assert.equal(res.code, 1);
+  assert.equal(res.stdout, '');
+  assert.equal(failing.gitCalls.length, 0);
+  const absent = reentryWorld();
+  const none = await call(absent.w, ['reenter', '--record', '7', '--pr', '12'], { ghAvailable: () => false });
+  assert.equal(none.code, 4);
+  assert.equal(absent.gitCalls.length + absent.ghCalls.length, 0);
+});
+
+test('reenter-check: exit 0 when HEAD matches and the tree is clean, 8 when modified or moved', async () => {
+  const clean = reentryWorld();
+  const wt = path.join(clean.w.state.root, 'wt-x');
+  const ok = await call(clean.w, ['reenter-check', '--worktree', wt, '--expect-head', TIP]);
+  assert.equal(ok.code, 0, ok.stderr);
+  assert.deepEqual(JSON.parse(ok.stdout), { ok: true, head: TIP, dirty: [] });
+  assert.deepEqual(clean.gitCalls[0].args.slice(0, 2), ['-C', wt]);
+
+  const dirty = reentryWorld({ porcelain: ' M a.txt\n' });
+  const bad = await call(dirty.w, ['reenter-check', '--worktree', wt, '--expect-head', TIP]);
+  assert.equal(bad.code, 8);
+  assert.deepEqual(JSON.parse(bad.stdout), { ok: false, head: TIP, dirty: ['a.txt'] });
+
+  const moved = reentryWorld({ head: 'a'.repeat(40) });
+  assert.equal((await call(moved.w, ['reenter-check', '--worktree', wt, '--expect-head', TIP])).code, 8);
+
+  const broken = reentryWorld();
+  broken.w.deps.git = () => { throw new Error('fatal: not a git repository'); };
+  const failed = await call(broken.w, ['reenter-check', '--worktree', wt, '--expect-head', TIP]);
+  assert.equal(failed.code, 1);
+  assert.equal(failed.stdout, '');
+});
+
+test('reenter-remove removes a listed worktree, reports an unlisted one, and exits 1 on a git failure', async () => {
+  const wt = path.join(os.tmpdir(), 'accept-gone-wt');
+  const listed = reentryWorld({ listed: `worktree ${wt}\nHEAD ${TIP}\ndetached\n\n` });
+  const res = await call(listed.w, ['reenter-remove', '--worktree', wt], { realpath: (p) => p });
+  assert.equal(res.code, 0, res.stderr);
+  assert.deepEqual(JSON.parse(res.stdout), { removed: true });
+  assert.deepEqual(listed.gitCalls.at(-1).args, ['-C', listed.w.state.root, 'worktree', 'remove', '--force', '--end-of-options', wt]);
+
+  const gone = reentryWorld({ listed: '' });
+  const none = await call(gone.w, ['reenter-remove', '--worktree', wt], { realpath: (p) => p });
+  assert.equal(none.code, 0);
+  assert.deepEqual(JSON.parse(none.stdout), { removed: false });
+
+  const failing = reentryWorld({ listed: `worktree ${wt}\n\n` });
+  failing.w.deps.git = (args) => {
+    if (args.includes('remove')) throw new Error('fatal: cannot remove');
+    return `worktree ${wt}\n\n`;
+  };
+  const failed = await call(failing.w, ['reenter-remove', '--worktree', wt], { realpath: (p) => p });
+  assert.equal(failed.code, 1);
 });
 
 // ---- invocation ----
@@ -582,6 +709,16 @@ test('malformed invocations exit 2', async () => {
     ['parked', '--record', '7,8'],
     ['parked', '--record', '7', '--run'],
     ['parked', '--record', '7', '--head', HEAD],
+    ['reenter', '--record', '7'],
+    ['reenter', '--pr', '12'],
+    ['reenter', '--record', '7,8', '--pr', '12'],
+    ['reenter', '--record', '7', '--pr', 'x'],
+    ['reenter-check', '--worktree', '/w'],
+    ['reenter-check', '--expect-head', HEAD],
+    ['reenter-check', '--worktree', '/w', '--expect-head', 'NOTHEX'],
+    ['reenter-check', '--worktree', '-x', '--expect-head', HEAD],
+    ['reenter-remove'],
+    ['reenter-remove', '--worktree', '/w', '--repo', 'o/r'],
     ['decide', '--run', run, '--record', '7', 'constructor', 'x'],
   ];
   for (const argv of argvs) {
