@@ -9,15 +9,39 @@
 // It is a pointer, not a proof: the hook cannot tell who sent a prompt, so a
 // scheduled or delivered line writes it too, and anything in the session can
 // write the file by hand. Authority comes only from the transcript row the
-// pointer's prompt id names, checked by the reader Task 4 adds here; that
-// reader requires `../timing/transcript` lazily, inside the function, never
-// at load, so the hook that loads this file for `writePointer` stays cheap.
+// pointer's prompt id names, checked by readTypedCommand below; it requires
+// `../timing/transcript` and `./build-authority` lazily, inside the function,
+// never at load, so the hook that loads this file for `writePointer` stays cheap.
+//
+// Two concurrent writes are last-rename-wins: each rewrites the whole file
+// from its own read, so one write's entries can drop the other's. A prompt
+// hook runs once per prompt, in order, so this does not arise in practice.
 //
 // The reader treats the file as untrusted: lstat first, a regular file of at
 // most POINTER_MAX_BYTES only, never followed through a link. Each refusal
 // carries its own reason word (`no-pointer`, `pointer-unreadable`,
 // `pointer-other-session`, `no-session-id`), so "absent" never reads like
 // "could not read".
+//
+// readTypedCommand({ number, env, now, tmpdir, homeDir, fsImpl, readRows })
+// -> { answer: 'typed', promptId } | { answer: 'none', reason }. The steps run
+// in order and the first that fails is the answer:
+//
+//   | Step | Requirement                                                     | Reason when it fails        |
+//   |------|-----------------------------------------------------------------|-----------------------------|
+//   | 1    | env.CLAUDE_CODE_SESSION_ID is 1-64 chars of [A-Za-z0-9-]          | no-session-id               |
+//   | 2-4  | readPointer finds this session's entry for the record           | its own reason word         |
+//   | 5    | the entry's `at` is not later than now nor older than the bound | expired                     |
+//   | 6    | locateTranscripts by session id alone (no cwd) finds exactly one | no-transcript               |
+//   |      | file, named <sessionId>.jsonl                                   |                             |
+//   | 7    | the file reads to its end                                       | transcript-unreadable       |
+//   | 8    | at least one candidate row (isCandidateRow)                     | no-prompt-row               |
+//   | 9    | a candidate passes markers, command and time                    | expired / other-command /   |
+//   |      |                                                                 | not-typed                   |
+//
+// Step 9's reason: `expired` when a candidate passed markers and command,
+// else `other-command` when one passed markers, else `not-typed`. The command,
+// record and time are read from the row, never from the pointer.
 'use strict';
 
 const fs = require('fs');
@@ -114,7 +138,12 @@ function writePointer({ sessionId, promptId, numbers, now, tmpdir = os.tmpdir(),
 // the session id; a malformed one answers no-session-id before any fs call.
 function readPointer({ sessionId, number, tmpdir = os.tmpdir(), fsImpl = fs } = {}) {
   if (!isWellFormedId(sessionId)) return { ok: false, reason: 'no-session-id' };
-  const file = path.join(sessionTmpRoot(sessionId, { tmpdir }), POINTER_FILE);
+  let file;
+  try {
+    file = path.join(sessionTmpRoot(sessionId, { tmpdir }), POINTER_FILE);
+  } catch {
+    return { ok: false, reason: 'pointer-unreadable' };
+  }
   const read = readPointerFile(file, fsImpl);
   if (read.status === 'absent') return { ok: false, reason: 'no-pointer' };
   if (read.status !== 'ok') return { ok: false, reason: 'pointer-unreadable' };
@@ -128,6 +157,109 @@ function readPointer({ sessionId, number, tmpdir = os.tmpdir(), fsImpl = fs } = 
   return { ok: true, promptId: entry.promptId, at: entry.at };
 }
 
+const COMMAND_HEAD = '<command-message>claude-tweaks:dispatch</command-message>\n'
+  + '<command-name>/claude-tweaks:dispatch</command-name>\n<command-args>';
+const COMMAND_TAIL = '</command-args>';
+const DISPATCH_LINE = '/claude-tweaks:dispatch ';
+const SCHEDULE_KEYS = ['scheduledTaskId', 'scheduledFireId', 'wakeupSource', 'queueSkipSlashCommands'];
+
+const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+
+// A line of this prompt and session on the main thread, written as the user,
+// that is not a tool result.
+function isCandidateRow(row, { sessionId, promptId } = {}) {
+  if (!isPlainObject(row) || row.type !== 'user') return false;
+  if (row.promptId !== promptId || row.sessionId !== sessionId || row.isSidechain === true) return false;
+  const msg = row.message;
+  if (!isPlainObject(msg) || msg.role !== 'user') return false;
+  return !(Array.isArray(msg.content) && msg.content.some((b) => isPlainObject(b) && b.type === 'tool_result'));
+}
+
+// The transcript marks the row as typed by a person.
+function rowMarkersPass(row) {
+  if (!isPlainObject(row)) return false;
+  if (row.turnOrigin !== 'human') return false;
+  if (!isPlainObject(row.origin) || row.origin.kind !== 'human') return false;
+  if (hasOwn(row, 'isMeta') && row.isMeta !== false) return false;
+  if (hasOwn(row, 'promptSource') && row.promptSource !== 'typed') return false;
+  return !SCHEDULE_KEYS.some((k) => hasOwn(row, k));
+}
+
+// The row's content is, whole, the dispatch command form with one line of
+// arguments, and those arguments name `number`. Prefix/suffix checks, no
+// regex, so a huge content string costs one pass.
+function rowCommandNames(row, number) {
+  if (!isPlainObject(row) || !isPlainObject(row.message)) return false;
+  const content = row.message.content;
+  if (typeof content !== 'string') return false;
+  if (content.length < COMMAND_HEAD.length + COMMAND_TAIL.length) return false;
+  if (!content.startsWith(COMMAND_HEAD) || !content.endsWith(COMMAND_TAIL)) return false;
+  const args = content.slice(COMMAND_HEAD.length, content.length - COMMAND_TAIL.length);
+  if (args.includes('\n')) return false;
+  const { parseTypedDispatch } = require('./build-authority');
+  const numbers = parseTypedDispatch(DISPATCH_LINE + args);
+  return Array.isArray(numbers) && numbers.includes(number);
+}
+
+function withinBound(ms, nowMs) {
+  return Number.isFinite(ms) && Number.isFinite(nowMs) && ms <= nowMs && nowMs - ms <= TYPED_DISPATCH_MAX_AGE_MS;
+}
+
+const none = (reason) => ({ answer: 'none', reason });
+
+// The proof of typing for one record. The table in the header is the order.
+// The transcript is found by the session id alone, never by a working
+// directory or a path from the pointer.
+function readTypedCommand({ number, env, now, tmpdir = os.tmpdir(), homeDir = os.homedir(), fsImpl = fs, readRows } = {}) {
+  const nowMs = new Date(now).getTime();
+  const sessionId = isPlainObject(env) ? env.CLAUDE_CODE_SESSION_ID : undefined;
+  if (!isWellFormedId(sessionId)) return none('no-session-id');
+
+  const pointer = readPointer({ sessionId, number, tmpdir, fsImpl });
+  if (!pointer.ok) return none(pointer.reason);
+  const { promptId } = pointer;
+  if (!withinBound(Date.parse(pointer.at), nowMs)) return none('expired');
+
+  const transcript = require('../timing/transcript');
+  const configDir = typeof env.CLAUDE_CONFIG_DIR === 'string' && env.CLAUDE_CONFIG_DIR !== ''
+    ? env.CLAUDE_CONFIG_DIR
+    : path.join(homeDir, '.claude');
+  let found;
+  try {
+    found = transcript.locateTranscripts({ sessionId, configDir, homeDir, fsImpl });
+  } catch {
+    return none('no-transcript');
+  }
+  if (!Array.isArray(found) || found.length !== 1 || path.basename(found[0].path) !== `${sessionId}.jsonl`) {
+    return none('no-transcript');
+  }
+
+  let rows;
+  try {
+    rows = (readRows || transcript.readPromptRows)(found[0].path, promptId, { fsImpl });
+  } catch {
+    return none('transcript-unreadable');
+  }
+  if (!Array.isArray(rows)) return none('transcript-unreadable');
+
+  const candidates = rows.filter((row) => isCandidateRow(row, { sessionId, promptId }));
+  if (candidates.length === 0) return none('no-prompt-row');
+
+  let markersAndCommand = false;
+  let markers = false;
+  for (const row of candidates) {
+    if (!rowMarkersPass(row)) continue;
+    markers = true;
+    if (!rowCommandNames(row, number)) continue;
+    markersAndCommand = true;
+    if (typeof row.timestamp === 'string' && withinBound(Date.parse(row.timestamp), nowMs)) {
+      return { answer: 'typed', promptId };
+    }
+  }
+  if (markersAndCommand) return none('expired');
+  return none(markers ? 'other-command' : 'not-typed');
+}
+
 module.exports = {
   POINTER_FILE,
   TYPED_DISPATCH_MAX_AGE_MS,
@@ -135,4 +267,8 @@ module.exports = {
   isWellFormedId,
   writePointer,
   readPointer,
+  isCandidateRow,
+  rowMarkersPass,
+  rowCommandNames,
+  readTypedCommand,
 };
