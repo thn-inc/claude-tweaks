@@ -126,13 +126,19 @@ async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal
   for (const dir of dirs) {
     const r = await bounded(deadlineAt, signal, (sig) => readDispatches(dir, sig ? { window, signal: sig } : { window }));
     if (r.hit) return null;
+    reasons.push(...r.value.dirNotes);
     if (r.value.notFound) { reasons.push(r.value.notFound); continue; }
     found += 1;
     items.push(...r.value.items);
     excludedOutsideWindow += r.value.excludedOutsideWindow;
   }
   if (found === 0) return { notFound: reasons.length ? reasons.join('; ') : 'no transcript resolved' };
-  const agg = aggregateDispatches(items);
+  // A direct (non-workflow) item keeps its pre-workflow shape: both keys null -> dropped.
+  const agg = aggregateDispatches(items.map((d) => {
+    if (d.workflowRunId !== null || d.workflowPhase !== null) return d;
+    const { workflowRunId: _run, workflowPhase: _phase, ...direct } = d;
+    return direct;
+  }));
   const out = { scope: window ? 'run-window' : 'whole-session', items: agg.items, byTier: agg.byTier, byRole: agg.byRole, excludedOutsideWindow };
   // A dir that yielded nothing beside one that did is still named, not dropped.
   if (reasons.length) out.notFoundDirs = reasons;
@@ -208,11 +214,13 @@ async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, dea
     }
     rows = rows.concat(kept);
   }
-  const tokens = joinTokens(out.phases, rows);
-  tokens.totals.rows = rows.length;
-  const guard = countGuardEvents(events);
+  // Computed before the join: each workflow agent's start places it in a phase's subagents.
   const dispatches = await collectDispatches(transcriptPaths, events, at, clip ? { deadlineAt, window: clip } : { deadlineAt });
   if (dispatches === null) return hit();
+  const workflowStarts = (dispatches.items || []).filter((d) => d.workflowRunId != null && d.startTs).map((d) => d.startTs);
+  const tokens = joinTokens(out.phases, rows, workflowStarts);
+  tokens.totals.rows = rows.length;
+  const guard = countGuardEvents(events);
 
   timing.phases = tokens.phases;
   timing.unattributed = tokens.unattributed;

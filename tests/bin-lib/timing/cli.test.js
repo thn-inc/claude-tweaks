@@ -229,7 +229,7 @@ test('#1929 whole-branch review fix 2: a --transcript file whose stat succeeds b
 // these runs carry their own two-event events.jsonl covering it; record-1535's
 // 2026-09 events sit outside every fixture dispatch (used once, on purpose).
 const SUBFIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'subagents-session');
-const SUB_EVENTS = '{"ts":"2026-10-17T09:58:00.000Z","type":"skill_invoked","skill":"claude-tweaks:build"}\n{"ts":"2026-10-17T10:10:00.000Z","type":"session-end"}\n';
+const SUB_EVENTS = readText(path.join(SUBFIX, '..', 'subagents-events.jsonl'));
 
 // -> { dir, home, slugDir, transcript, env }: a run dir over the fixture's
 // events, and a tmp HOME holding a copy of the fixture session at the slug of
@@ -689,6 +689,77 @@ test('AC9.1: a relative --transcript resolves against the injected cwd, for its 
   assert.ok(t.transcripts[0].rows > 0, JSON.stringify(t.transcripts));
   assert.equal(t.transcripts[0].note, undefined);
   assert.equal(t.dispatches.items.length, 3);
+});
+
+// --- #5597 workflow agents in timing.json ------------------------------------
+function addWorkflowAgent(s, runId, id, { rows = true } = {}) {
+  const dir = path.join(s.slugDir, 'sess-1', 'subagents', 'workflows', runId);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `agent-${id}.meta.json`), JSON.stringify({ description: 'lens 3b A', model: 'sonnet', workflowPhase: 'review' }));
+  const line = (type, ts, message) => JSON.stringify({ type, agentId: id, isSidechain: true, timestamp: ts, message: { role: type, ...message } });
+  fs.writeFileSync(path.join(dir, `agent-${id}.jsonl`), rows ? [
+    line('user', '2026-10-17T10:05:00.000Z', { content: [{ type: 'text', text: 'x' }] }),
+    line('assistant', '2026-10-17T10:05:05.000Z', { id: 'wm1', model: 'claude-sonnet-5-5', content: [{ type: 'text', text: 'x' }], usage: { input_tokens: 1, output_tokens: 2, cache_read_input_tokens: 3, cache_creation_input_tokens: 4 } }),
+  ].join('\n') + '\n' : '');
+  return dir;
+}
+
+async function baselineSubagents() {
+  const base = subagentRun();
+  const r = await runAuto(base);
+  assert.equal(r.status, 0, r.stderr);
+  return readTiming(base.dir).totals.subagents;
+}
+
+async function baselineTiming() {
+  const base = subagentRun();
+  const r = await runAuto(base);
+  assert.equal(r.status, 0, r.stderr);
+  return readTiming(base.dir);
+}
+
+test('#5597 AC9.4: a workflow agent whose transcript has no timestamped row is in dispatches with its note and in no count', async () => {
+  const baseTotal = await baselineSubagents();
+  const s = subagentRun();
+  addWorkflowAgent(s, 'r1', 'w0', { rows: false });
+  const r = await runAuto(s);
+  assert.equal(r.status, 0, r.stderr);
+  const t = readTiming(s.dir);
+  const w0 = t.dispatches.items.find((i) => i.agentId === 'w0');
+  assert.equal(w0.notFound, 'transcript has no usage rows');
+  assert.equal(t.totals.subagents, baseTotal);
+});
+
+test('#5597: workflow agents count in their phase subagents and in dispatches end to end', async () => {
+  const base = await baselineTiming();
+  const baseTotal = base.totals.subagents;
+  const s = subagentRun();
+  addWorkflowAgent(s, 'r1', 'w1');
+  const r = await runAuto(s);
+  assert.equal(r.status, 0, r.stderr);
+  const t = readTiming(s.dir);
+  assert.equal(t.totals.subagents, baseTotal + 1);
+  // The fixture agent starts at 10:05, inside the build phase (09:58-10:10).
+  const phaseOf = (tj, name) => tj.phases.find((p) => p.phase === name);
+  assert.equal(phaseOf(t, 'build').subagents, phaseOf(base, 'build').subagents + 1);
+  assert.equal(t.unattributed.subagents, base.unattributed.subagents);
+  assert.equal(t.dispatches.items.find((i) => i.agentId === 'w1').workflowRunId, 'r1');
+  const direct = t.dispatches.items.find((i) => i.agentId === 'a1');
+  assert.equal('workflowRunId' in direct, false);
+  assert.equal('workflowPhase' in direct, false);
+});
+
+test('#5597: a run directory problem appears in notFoundDirs', async () => {
+  const s = subagentRun();
+  const sub = path.join(s.slugDir, 'sess-1', 'subagents');
+  fs.mkdirSync(path.join(sub, 'workflows', 'r2'), { recursive: true });
+  const r = await runAuto(s);
+  assert.equal(r.status, 0, r.stderr);
+  // collectDispatches canonicalises the subagents dir (realpath), so build the expectation from the same root.
+  const msg = `no agent-* transcripts in ${path.join(fs.realpathSync(sub), 'workflows', 'r2')}`;
+  const dirs = readTiming(s.dir).dispatches.notFoundDirs;
+  assert.ok(dirs && dirs.includes(msg), JSON.stringify(dirs));
+  assert.ok(r.stdout.includes(`dispatches: subagent transcripts not found (${msg})`), r.stdout);
 });
 
 // A run dir whose run-state.json names a worktree and session, plus the session's transcript
