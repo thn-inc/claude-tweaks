@@ -52,9 +52,9 @@
 // unparseable-remote fallback off (`{ loose: false }`, #5109): a host the gate
 // refuses (an SSH alias, an unknown name) is the failure `unknown-host: {refusal}`,
 // the refusal also on stderr, with no claim read and no `gh` call (#4794), and a remote
-// the gate cannot read (the cloud sandbox proxy remote) is exit 3, not a github.com guess. The open-PR
-// listing and the PR-url match share one host (resolveRepoTarget, one result):
-// the typed `--repo` host, else an exported non-empty GH_HOST, else the origin's
+// the gate cannot read (the cloud sandbox proxy remote) is exit 3, not a github.com
+// guess. The open-PR listing and the PR-url match share one host (resolveRepoTarget,
+// one result): the typed `--repo` host, else an exported non-empty GH_HOST, else the origin's
 // host, else github.com. A bare `--repo owner/name` is github.com unless a non-empty GH_HOST is exported.
 // Exit codes (a CLI-specific vocabulary — verdicts are data on stdout, so the
 // codes only cover what stops a verdict being reached; no JSON on 1-3):
