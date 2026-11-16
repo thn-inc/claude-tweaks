@@ -19,8 +19,13 @@
 //                        docs/journeys/ condition switched off; journeysWrongSkipsWithoutJourneyGuard counts
 //                        those that changed a file under docs/journeys/.
 //
+// Cost: a fixed handful of git processes whatever the window holds. One `git log --name-only` gives the
+// commits and their changed files; `git cat-file --batch-check` maps every commit to its CLAUDE.md blob and
+// docs/journeys tree id; each unique blob is read once (`cat-file --batch`) and each unique journeys tree is
+// listed and parsed only when a rule asks for the journeys (decide's loadJourneys is lazy).
+//
 // Exit codes: 0 success; 2 malformed invocation or a ref that does not resolve.
-// Seam: replay({ repo, ref, since, until, execImpl }) — execImpl(args) returns git's stdout as a string.
+// Seam: replay({ repo, ref, since, until, execImpl }) — execImpl(args, { input, latin1 }) returns git's stdout.
 
 const { execFileSync } = require('node:child_process');
 const {
@@ -41,8 +46,9 @@ function gitEnv() {
 
 function defaultExec(repo) {
   const env = gitEnv();
-  return (args) => execFileSync('git', args, {
-    cwd: repo, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, maxBuffer: 256 * 1024 * 1024,
+  return (args, { input, latin1 } = {}) => execFileSync('git', args, {
+    cwd: repo, env, encoding: latin1 ? 'latin1' : 'utf8', input, stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true, maxBuffer: 1024 * 1024 * 1024,
   });
 }
 
@@ -52,58 +58,98 @@ function splitNul(out) {
   return parts;
 }
 
-function tryExec(exec, args) {
-  try {
-    return exec(args);
-  } catch {
-    return null;
-  }
-}
-
 function resolveRef(exec, ref) {
   const candidates = ref ? [ref] : ['origin/main', 'main'];
   for (const c of candidates) {
-    if (tryExec(exec, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${c}^{commit}`]) !== null) return c;
+    try {
+      exec(['rev-parse', '--verify', '--quiet', '--end-of-options', `${c}^{commit}`]);
+      return c;
+    } catch { /* try the next candidate */ }
   }
   throw new Error(`ref ${candidates.join(' or ')} does not resolve`);
 }
 
+// [{ sha, files }] for the work commits, from one `git log --name-only -z`. A record is
+// `\x01<sha>\0<subject>\0\n<file>\0<file>\0…`; a merge shows its diff against its first parent.
 function workCommits(exec, ref, since, until) {
-  const parts = splitNul(exec([
-    'log', '--first-parent', '--format=%H%x00%s', '-z', `--since=${since}`, `--until=${until}`, '--end-of-options', ref,
-  ]));
+  const out = exec([
+    'log', '--first-parent', '-m', '--name-only', '-z', '--format=%x01%H%x00%s',
+    `--since=${since}`, `--until=${until}`, '--end-of-options', ref,
+  ]);
   const commits = [];
-  for (let i = 0; i + 1 < parts.length; i += 2) {
-    if (!NOT_WORK.some((re) => re.test(parts[i + 1]))) commits.push(parts[i]);
+  for (const block of out.split('\x01').slice(1)) {
+    const [sha, subject, ...rest] = block.split('\0');
+    if (NOT_WORK.some((re) => re.test(subject))) continue;
+    if (rest.length > 0) rest[0] = rest[0].replace(/^\n/, '');
+    commits.push({ sha, files: rest.filter((f) => f !== '') });
   }
   return commits;
 }
 
-function changedFiles(exec, sha) {
-  return splitNul(exec([
-    'diff-tree', '--no-commit-id', '--name-only', '-r', '-z', '-m', '--first-parent', '--root', '--end-of-options', sha,
-  ]));
+// Object ids for `<sha>:<path>` specs, one `cat-file --batch-check` process; null where the path is absent
+// or is not an object of `wantType` (a symlinked docs/journeys reads as no journeys).
+function objectIds(exec, specs, wantType) {
+  if (specs.length === 0) return [];
+  const lines = exec(['cat-file', '--batch-check=%(objectname) %(objecttype)'], { input: `${specs.join('\n')}\n` })
+    .split('\n');
+  return specs.map((_, i) => {
+    const [id, type] = (lines[i] || '').split(' ');
+    return type === wantType && /^[0-9a-f]{40,64}$/.test(id) ? id : null;
+  });
 }
 
-// Top-level docs/journeys/*.md at `sha`, parsed; `{ error }` when one cannot be read or parsed.
-function journeysAt(exec, sha) {
-  const listed = tryExec(exec, ['ls-tree', '-z', '--name-only', '--end-of-options', sha, '--', 'docs/journeys/']);
-  if (listed === null) return { journeys: [] };
-  const journeys = [];
-  for (const p of splitNul(listed).filter((f) => f.split('/').length === 3 && f.endsWith('.md')).sort()) {
-    const text = tryExec(exec, ['show', `${sha}:${p}`]);
-    if (text === null) return { error: `journey ${p} could not be read` };
-    const parsed = parseJourneyText(text);
-    if (parsed.error) return { error: `journey ${p}: ${parsed.error}` };
-    journeys.push({ name: p.slice('docs/journeys/'.length, -'.md'.length), files: parsed.files });
+// Texts of blobs by id, one `cat-file --batch` process. latin1 keeps one char per byte so the size header
+// indexes the stream; the text is decoded to utf8 afterwards.
+function readBlobs(exec, ids) {
+  const texts = new Map();
+  if (ids.length === 0) return texts;
+  const out = exec(['cat-file', '--batch'], { input: `${ids.join('\n')}\n`, latin1: true });
+  let pos = 0;
+  for (const id of ids) {
+    const eol = out.indexOf('\n', pos);
+    const [, type, size] = out.slice(pos, eol).split(' ');
+    if (type === 'missing') { pos = eol + 1; continue; }
+    const start = eol + 1;
+    texts.set(id, Buffer.from(out.slice(start, start + Number(size)), 'latin1').toString('utf8'));
+    pos = start + Number(size) + 1;
   }
-  return { journeys };
+  return texts;
+}
+
+// The journeys of one docs/journeys tree (top-level .md only), cached by tree id; blobs parsed once each.
+function makeJourneyLoader(exec) {
+  const byTree = new Map();
+  const byBlob = new Map();
+  const stats = { treeReads: 0 };
+  function load(treeId) {
+    if (treeId === null) return { journeys: [] };
+    if (byTree.has(treeId)) return byTree.get(treeId);
+    stats.treeReads += 1;
+    const entries = splitNul(exec(['ls-tree', '-z', '--end-of-options', treeId]))
+      .map((e) => /^\d+ blob ([0-9a-f]+)\t(.+)$/.exec(e))
+      .filter((m) => m && m[2].endsWith('.md'))
+      .map((m) => ({ id: m[1], name: m[2] }))
+      .sort((a, b) => (a.name < b.name ? -1 : 1));
+    const missing = [...new Set(entries.map((e) => e.id).filter((id) => !byBlob.has(id)))];
+    const texts = readBlobs(exec, missing);
+    for (const id of missing) byBlob.set(id, texts.has(id) ? parseJourneyText(texts.get(id)) : { error: 'unreadable' });
+    let result = { journeys: [] };
+    for (const e of entries) {
+      const parsed = byBlob.get(e.id);
+      if (parsed.error) { result = { error: `journey ${e.name}: ${parsed.error}` }; break; }
+      result.journeys.push({ name: e.name.slice(0, -'.md'.length), files: parsed.files });
+    }
+    byTree.set(treeId, result);
+    return result;
+  }
+  return { load, stats };
 }
 
 // The journeys rule with its docs/journeys/ condition off: would the no-surface and `files:` conditions
-// alone skip this commit?
-function skipsWithoutJourneyGuard(files, loaded) {
+// alone skip this commit? Reads the journeys only when every changed file is in the no-surface set.
+function skipsWithoutJourneyGuard(files, loadJourneys) {
   if (files.length === 0 || !files.every((f) => inNoSurfaceSet(f))) return false;
+  const loaded = loadJourneys();
   if (!loaded.journeys) return false;
   for (const j of loaded.journeys) {
     for (const entry of Array.isArray(j.files) ? j.files : []) {
@@ -121,6 +167,12 @@ function replay({ repo = process.cwd(), ref, since, until, execImpl } = {}) {
   const resolvedRef = resolveRef(exec, ref);
   const commits = workCommits(exec, resolvedRef, sinceDate, untilDate);
 
+  const claudeIds = objectIds(exec, commits.map((c) => `${c.sha}:CLAUDE.md`), 'blob');
+  const treeIds = objectIds(exec, commits.map((c) => `${c.sha}:docs/journeys`), 'tree');
+  const claudeTexts = readBlobs(exec, [...new Set(claudeIds.filter((id) => id !== null))]);
+  const flagByBlob = new Map();
+  const journeyLoader = makeJourneyLoader(exec);
+
   const keys = [];
   for (const skill of SKILLS) {
     if (skill === 'design-wrapper') WRAPPER_MODES.forEach((m) => keys.push({ skill, mode: m, label: `${skill} ${m}` }));
@@ -131,22 +183,21 @@ function replay({ repo = process.cwd(), ref, since, until, execImpl } = {}) {
   let guardOffSkips = 0;
   let guardOffWrong = 0;
 
-  for (const sha of commits) {
-    const files = changedFiles(exec, sha);
-    const claudeMd = tryExec(exec, ['show', `${sha}:CLAUDE.md`]);
-    const designIntegration = claudeMd === null ? null : readDesignIntegrationFlag(claudeMd);
-    const loaded = journeysAt(exec, sha);
-    const loadJourneys = () => loaded;
+  commits.forEach(({ files }, i) => {
+    const blobId = claudeIds[i];
+    if (blobId !== null && !flagByBlob.has(blobId)) flagByBlob.set(blobId, readDesignIntegrationFlag(claudeTexts.get(blobId) || ''));
+    const designIntegration = blobId === null ? null : flagByBlob.get(blobId);
+    const loadJourneys = () => journeyLoader.load(treeIds[i]);
     for (const k of keys) {
       const r = decide({ skill: k.skill, mode: k.mode, files, designIntegration, loadJourneys });
       results[k.label][r.decision] += 1;
       if (k.skill === 'journeys' && r.decision === 'skip' && files.some(isJourneyPath)) journeysWrongSkips += 1;
     }
-    if (skipsWithoutJourneyGuard(files, loaded)) {
+    if (skipsWithoutJourneyGuard(files, loadJourneys)) {
       guardOffSkips += 1;
       if (files.some(isJourneyPath)) guardOffWrong += 1;
     }
-  }
+  });
 
   return {
     ref: resolvedRef,

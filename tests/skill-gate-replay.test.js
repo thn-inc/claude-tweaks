@@ -49,3 +49,55 @@ test('AC15.1: three work commits give one journeys skip, two proceeds, wrong-ski
   ]);
   for (const v of Object.values(r.results)) assert.equal(v.skip + v.proceed, 3);
 });
+
+test('a test file a journey lists in files: proceeds, and is not a guard-off skip', { timeout: FIXTURE_TIMEOUT_MS * 4 }, (t) => {
+  const repo = gitRepo();
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(repo, 'docs/journeys'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'docs/journeys/j.md'), '---\nfiles:\n  - tests/listed.test.js\n---\n# j\n');
+  git(repo, 'add', '--', 'docs/journeys/j.md');
+  git(repo, 'commit', '--amend', '-q', '-m', '[reconcile] init');
+  commit(repo, 'Touch the listed test', { 'tests/listed.test.js': 'x\n' });
+  commit(repo, 'Touch an unlisted test', { 'tests/other.test.js': 'x\n' });
+
+  const r = replay({ repo, ref: 'HEAD', since: '2000-01-01', until: '2099-12-31' });
+  assert.equal(r.commits, 2);
+  assert.deepEqual(r.results.journeys, { skip: 1, proceed: 1 });
+  assert.equal(r.journeysSkipsWithoutJourneyGuard, 1);
+});
+
+test("each commit's own CLAUDE.md design-integration flag reaches the design-wrapper rules", { timeout: FIXTURE_TIMEOUT_MS * 4 }, (t) => {
+  const repo = gitRepo();
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  git(repo, 'commit', '--allow-empty', '--amend', '-q', '-m', '[reconcile] init');
+  commit(repo, 'Touch a UI file, no flag', { 'app/page.tsx': 'x\n' });
+  commit(repo, 'Enable design integration', { 'CLAUDE.md': '## Design integration\n\ndesign-integration: enabled\n' });
+  commit(repo, 'Touch a UI file, flag on', { 'app/other.tsx': 'x\n' });
+
+  const r = replay({ repo, ref: 'HEAD', since: '2000-01-01', until: '2099-12-31' });
+  assert.equal(r.commits, 3);
+  // Only the third commit changes a UI file under an enabled flag; the first has none, the second no UI file.
+  assert.deepEqual(r.results['design-wrapper test'], { skip: 2, proceed: 1 });
+});
+
+test('journeys are read lazily: a commit with a UI file never lists docs/journeys', { timeout: FIXTURE_TIMEOUT_MS * 4 }, (t) => {
+  const repo = gitRepo();
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(repo, 'docs/journeys'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'docs/journeys/j.md'), '---\nfiles:\n  - src/x.js\n---\n# j\n');
+  git(repo, 'add', '--', 'docs/journeys/j.md');
+  git(repo, 'commit', '--amend', '-q', '-m', '[reconcile] init');
+  commit(repo, 'Touch a UI file', { 'app/page.tsx': 'x\n' });
+
+  const calls = [];
+  const execImpl = (args, { input, latin1 } = {}) => {
+    calls.push(args[0]);
+    return fixtureGit(['-C', repo, ...args], { env: ENV, input, encoding: latin1 ? 'latin1' : 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+  };
+  const r = replay({ repo, ref: 'HEAD', since: '2000-01-01', until: '2099-12-31', execImpl });
+  assert.equal(r.commits, 1);
+  // app/page.tsx is outside the no-surface set (journeys proceeds) and a UI trigger (visual-review proceeds).
+  assert.equal(r.results.journeys.proceed, 1);
+  assert.equal(r.results['visual-review'].proceed, 1);
+  assert.equal(calls.includes('ls-tree'), false);
+});
