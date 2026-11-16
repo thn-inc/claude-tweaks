@@ -29,7 +29,7 @@
 
 const { execFileSync } = require('node:child_process');
 const {
-  decide, SKILLS, WRAPPER_MODES, isJourneyPath, inNoSurfaceSet, journeyEntryMatch, parseJourneyText,
+  decide, SKILLS, WRAPPER_MODES, isJourneyPath, inNoSurfaceSet, journeyEntryMatch, pathShapeProblem, parseJourneyText,
 } = require('../plugin/bin/lib/skill-gate');
 const { readDesignIntegrationFlag } = require('../plugin/bin/lib/design-detect');
 
@@ -73,7 +73,7 @@ function resolveRef(exec, ref) {
 // `\x01<sha>\0<subject>\0\n<file>\0<file>\0…`; a merge shows its diff against its first parent.
 function workCommits(exec, ref, since, until) {
   const out = exec([
-    'log', '--first-parent', '-m', '--name-only', '-z', '--format=%x01%H%x00%s',
+    '-c', 'log.showRoot=true', 'log', '--first-parent', '-m', '--name-only', '-z', '--format=%x01%H%x00%s',
     `--since=${since}`, `--until=${until}`, '--end-of-options', ref,
   ]);
   const commits = [];
@@ -126,10 +126,17 @@ function makeJourneyLoader(exec) {
     if (byTree.has(treeId)) return byTree.get(treeId);
     stats.treeReads += 1;
     const entries = splitNul(exec(['ls-tree', '-z', '--end-of-options', treeId]))
-      .map((e) => /^\d+ blob ([0-9a-f]+)\t(.+)$/.exec(e))
-      .filter((m) => m && m[2].endsWith('.md'))
-      .map((m) => ({ id: m[1], name: m[2] }))
+      .map((e) => /^(\d+) blob ([0-9a-f]+)\t(.+)$/.exec(e))
+      .filter((m) => m && m[3].endsWith('.md'))
+      .map((m) => ({ mode: m[1], id: m[2], name: m[3] }))
       .sort((a, b) => (a.name < b.name ? -1 : 1));
+    // A symlinked journey is never read (the shipped gate's rule): its commit's verdict is cannot tell.
+    const link = entries.find((e) => e.mode === '120000');
+    if (link) {
+      const result = { error: `journey ${link.name} is a symlink` };
+      byTree.set(treeId, result);
+      return result;
+    }
     const missing = [...new Set(entries.map((e) => e.id).filter((id) => !byBlob.has(id)))];
     const texts = readBlobs(exec, missing);
     for (const id of missing) byBlob.set(id, texts.has(id) ? parseJourneyText(texts.get(id)) : { error: 'unreadable' });
@@ -148,7 +155,8 @@ function makeJourneyLoader(exec) {
 // The journeys rule with its docs/journeys/ condition off: would the no-surface and `files:` conditions
 // alone skip this commit? Reads the journeys only when every changed file is in the no-surface set.
 function skipsWithoutJourneyGuard(files, loadJourneys) {
-  if (files.length === 0 || !files.every((f) => inNoSurfaceSet(f))) return false;
+  if (files.length === 0 || files.some((f) => pathShapeProblem(f) !== null)) return false;
+  if (!files.every((f) => inNoSurfaceSet(f))) return false;
   const loaded = loadJourneys();
   if (!loaded.journeys) return false;
   for (const j of loaded.journeys) {

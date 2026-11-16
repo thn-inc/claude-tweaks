@@ -80,6 +80,59 @@ test("each commit's own CLAUDE.md design-integration flag reaches the design-wra
   assert.deepEqual(r.results['design-wrapper test'], { skip: 2, proceed: 1 });
 });
 
+test('a path with a shape problem is not a guard-off skip', { timeout: FIXTURE_TIMEOUT_MS * 4 }, (t) => {
+  const repo = gitRepo();
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  git(repo, 'commit', '--allow-empty', '--amend', '-q', '-m', '[reconcile] init');
+  commit(repo, 'Add a test with a percent sign', { 'tests/100%.test.js': 'x\n' });
+
+  const r = replay({ repo, ref: 'HEAD', since: '2000-01-01', until: '2099-12-31' });
+  assert.deepEqual(r.results.journeys, { skip: 0, proceed: 1 });
+  assert.equal(r.journeysSkipsWithoutJourneyGuard, 0);
+});
+
+test('a symlinked journey is never read: that commit proceeds as cannot tell', { timeout: FIXTURE_TIMEOUT_MS * 4 }, (t) => {
+  const repo = gitRepo();
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const blob = git(repo, 'hash-object', '-w', '--stdin').trim();
+  git(repo, 'update-index', '--add', '--cacheinfo', `120000,${blob},docs/journeys/link.md`);
+  git(repo, 'commit', '--amend', '-q', '-m', '[reconcile] init');
+  commit(repo, 'Add a test', { 'tests/a.test.js': 'x\n' });
+
+  const r = replay({ repo, ref: 'HEAD', since: '2000-01-01', until: '2099-12-31' });
+  assert.equal(r.commits, 1);
+  assert.deepEqual(r.results.journeys, { skip: 0, proceed: 1 });
+  assert.equal(r.journeysSkipsWithoutJourneyGuard, 0);
+});
+
+test('a root commit inside the window counts its files, whatever log.showRoot says', { timeout: FIXTURE_TIMEOUT_MS * 4 }, (t) => {
+  const repo = gitRepo();
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  git(repo, 'config', 'log.showRoot', 'false');
+  git(repo, 'checkout', '-q', '--orphan', 'rooted');
+  commit(repo, 'Root with a test', { 'tests/r.test.js': 'x\n' });
+
+  const r = replay({ repo, ref: 'HEAD', since: '2000-01-01', until: '2099-12-31' });
+  assert.equal(r.commits, 1);
+  assert.deepEqual(r.results.journeys, { skip: 1, proceed: 0 });
+});
+
+test("a merge commit's files come from its first-parent diff only", { timeout: FIXTURE_TIMEOUT_MS * 4 }, (t) => {
+  const repo = gitRepo();
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  git(repo, 'commit', '--allow-empty', '--amend', '-q', '-m', '[reconcile] init');
+  git(repo, 'checkout', '-q', '-b', 'side');
+  commit(repo, 'Side work', { 'tests/side.test.js': 'x\n' });
+  git(repo, 'checkout', '-q', '-');
+  commit(repo, 'Main work', { 'tests/a.test.js': 'x\n' });
+  git(repo, 'merge', '--no-ff', '-q', '-m', 'Merge side', 'side');
+
+  const r = replay({ repo, ref: 'HEAD', since: '2000-01-01', until: '2099-12-31' });
+  // --first-parent walks the merge and "Main work"; the merge's first-parent diff is tests/side.test.js.
+  assert.equal(r.commits, 2);
+  assert.deepEqual(r.results.journeys, { skip: 2, proceed: 0 });
+});
+
 test('journeys are read lazily: a commit with a UI file never lists docs/journeys', { timeout: FIXTURE_TIMEOUT_MS * 4 }, (t) => {
   const repo = gitRepo();
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
