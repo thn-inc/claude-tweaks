@@ -8,7 +8,7 @@ const os = require('os');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
-const { resolveAll, CARRIED_RESOLUTION, CARRY_FROM } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'resolve'));
+const { resolveAll, CARRIED_RESOLUTION, CARRY_FROM, SDD_RULING_REASONS } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'resolve'));
 const { UNRESOLVED_RESOLUTIONS } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'residue'));
 const { resolveTiebreak } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'tiebreak'));
 const { formatEntry } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'log-decision', 'append'));
@@ -42,6 +42,7 @@ const BASIC = () => fixture({ staged: { 'skills-1.md': 'x', 'wrap-up-skill-1.md'
 test('#4620 AC1.1: control mode resolves the policy item and carries the contested finding', () => {
   const r = run(BASIC(), { controlMode: true });
   const by = byId(r);
+  assert.strictEqual(by['skills-1.md'].resolution, 'approve');
   assert.strictEqual(by['wrap-up-skill-1.md'].resolution, 'approve');
   assert.strictEqual(by['review-contested-1.md'].resolution, 'carried');
   assert.strictEqual(by['review-contested-1.md'].carriedFrom, 'keep-staged');
@@ -58,6 +59,7 @@ test('#4620 AC7.1: a needs-human-decision sdd ruling is carried, never applied',
   const it = byId(r)['sdd-ruling-1.md'];
   assert.strictEqual(it.resolution, 'carried');
   assert.strictEqual(it.carriedFrom, 'pending');
+  assert.ok(it.reason.includes(SDD_RULING_REASONS.NEEDS_HUMAN_DECISION), `reason names the needs-human-decision hold: ${it.reason}`);
   assert.strictEqual(r.decisionFacts[0].origin, 'console');
   assert.ok(!r.items.some((i) => i.resolution === 'apply'));
 });
