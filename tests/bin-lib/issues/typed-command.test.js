@@ -574,8 +574,18 @@ for (const bad of ['..', '../x', 'a/b', 'a/', 'a%2fb', '', 'x'.repeat(65)]) {
   });
 }
 
-test('AC4: the pointer\'s own refusal passes through as the check\'s reason', (t) => {
+test('AC4: the pointer\'s own refusals pass through as the check\'s reason', (t) => {
   assert.deepStrictEqual(check(ctxOf(t, fixture('a'))), none('no-pointer'));
+  const other = ctxOf(t, fixture('a'));
+  plant(other.tmpdir, valid({ 3: { promptId: ID.a, at: AT_A } }, 'test-session-0002'), T_SESSION);
+  assert.deepStrictEqual(check(other), none('pointer-other-session'));
+  const broken = ctxOf(t, fixture('a'));
+  plant(broken.tmpdir, '{"v":1,', T_SESSION);
+  assert.deepStrictEqual(check(broken), none('pointer-unreadable'));
+});
+
+test('AC18.4: (a) with a timestamp that is not a string answers expired', (t) => {
+  assert.deepStrictEqual(scenario(t, [aRow({ timestamp: [AT_A] })]), none('expired'));
 });
 
 // --- the exported row helpers
@@ -615,7 +625,14 @@ test('rowCommandNames reads the whole three-tag form and the record list', () =>
   assert.strictEqual(rowCommandNames(row('#12,#3'), 3), true);
   assert.strictEqual(rowCommandNames(row(''), 3), false);
   const whole = COMMAND('claude-tweaks:dispatch', '#3');
-  for (const content of [` ${whole}`, `${whole}\n`, `x${whole}`, `${whole} `, whole.replace(/\n/g, '\r\n')]) {
+  // Same-length head and tail changes keep the argument slice at '#3', so only
+  // the whole-prefix and whole-suffix checks refuse them.
+  const sameLength = [
+    whole.replace('<command-message>claude-tweaks:dispatch', '<command-message>claude-tweaks:dispatcx'),
+    whole.replace('<command-name>/claude-tweaks:dispatch', '<command-name>/claude-tweaks:flowxxxx'),
+    whole.replace('</command-args>', '</command-argz>'),
+  ];
+  for (const content of [...sameLength, ` ${whole}`, `${whole}\n`, `x${whole}`, `${whole} `, whole.replace(/\n/g, '\r\n')]) {
     assert.strictEqual(rowCommandNames(aRow({ message: { role: 'user', content } }), 3), false, JSON.stringify(content));
   }
   assert.strictEqual(rowCommandNames(aRow({ message: { role: 'user', content: [{ type: 'text', text: whole }] } }), 3), false);
