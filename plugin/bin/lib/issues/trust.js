@@ -4,6 +4,8 @@
 // (provenance x risk band) and tallies outcome signals per cell so a later
 // phase can decide which classes of work have earned more autonomy. This
 // module acts on nothing — it computes and returns rows for display only.
+// Each row also carries `revocationOnly`, the grading under which an acceptance
+// approval earns no trust (#4626, ADR 0035) — the expand half; `verdict` is unchanged.
 // Was docs/superpowers/plans/2026-08-07-supervised-trust-table.md — deleted (d83f0720).
 const { resolveProvenance, issueAuthorTrust } = require('./provenance.js');
 const { ownOriginLine } = require('./record.js');
@@ -333,6 +335,18 @@ function inEvaluationWindow(record, clock, windowDays) {
   return Number.isFinite(closedAtMs) && clock - closedAtMs <= windowDays * MS_PER_DAY;
 }
 
+// A record's outcome from evidence other than an acceptance verdict:
+// 'good' (merged and unreverted past the window), 'bad' (a discovered revert,
+// #268, or a correctness/ambiguous failed-attempt marker from dispatch's Settle
+// step, settle-and-merge.md Step 6.5), else 'unknown'.
+function operationalOutcomeOf(record, gitLog, clock, windowDays) {
+  const operational = resolveOperationalOutcome(record, gitLog, clock, windowDays);
+  if (operational.known && operational.grade === 'good') return 'good';
+  if (operational.known && operational.grade === 'bad') return 'bad';
+  if (hasNegativeEvidenceMarker(record.comments)) return 'bad';
+  return 'unknown';
+}
+
 function trustRows(records, gitLog, now, policy) {
   const all = Array.isArray(records) ? records : [];
   // One author-trust verdict per record, shared by the cell and follow-up loops.
@@ -377,6 +391,11 @@ function trustRows(records, gitLog, now, policy) {
         operationalGood: 0,
         negativeEvidence: 0,
         undispositioned: 0,
+        // Of `approved`, each record's operational outcome — internal inputs to
+        // `revocationOnly`, stripped from the row.
+        approvedOperationalGood: 0,
+        approvedNegativeEvidence: 0,
+        approvedUndispositioned: 0,
         notPlanned: 0,
         followUps: 0,
         // Distinct record numbers a corrective follow-up names, and the earliest
@@ -399,6 +418,12 @@ function trustRows(records, gitLog, now, policy) {
     if (disposition === 'approved') {
       cell.approved += 1;
       if (approvalProvenance(record.labels) === 'batch') cell.approvedBatch += 1;
+      // The verdict above counts the approval itself. Beside it, the approved
+      // record's own operational outcome feeds `revocationOnly` (see the row map).
+      const approvedOutcome = operationalOutcomeOf(record, gitLog, clock, windowDays);
+      if (approvedOutcome === 'good') cell.approvedOperationalGood += 1;
+      else if (approvedOutcome === 'bad') cell.approvedNegativeEvidence += 1;
+      else cell.approvedUndispositioned += 1;
     } else if (disposition === 'changes-requested') {
       cell.changesRequested += 1;
     } else if (disposition === 'none') {
@@ -409,21 +434,10 @@ function trustRows(records, gitLog, now, policy) {
       // changes-requested, or pending below) keeps that verdict as its own
       // disposition — an earlier failed attempt on the way to an eventual
       // approval is not read as contradicting that approval.
-      const operational = resolveOperationalOutcome(record, gitLog, clock, windowDays);
-      if (operational.known && operational.grade === 'good') {
-        cell.operationalGood += 1;
-      } else if (operational.known && operational.grade === 'bad') {
-        // A discovered revert (#268) — negative evidence, not "undiscoverable".
-        cell.negativeEvidence += 1;
-      } else if (hasNegativeEvidenceMarker(record.comments)) {
-        // A correctness/ambiguous-classified failed attempt somewhere in this
-        // record's history (dispatch's Settle step, see settle-and-merge.md
-        // Step 6.5) — negative evidence for the record's class even though
-        // the record itself eventually closed with no acceptance disposition.
-        cell.negativeEvidence += 1;
-      } else {
-        cell.undispositioned += 1;
-      }
+      const outcome = operationalOutcomeOf(record, gitLog, clock, windowDays);
+      if (outcome === 'good') cell.operationalGood += 1;
+      else if (outcome === 'bad') cell.negativeEvidence += 1;
+      else cell.undispositioned += 1;
     } else {
       // 'pending' — an outstanding, unresolved human-review request. It IS an
       // acceptance disposition, so it must never reach the operational path above
@@ -449,7 +463,10 @@ function trustRows(records, gitLog, now, policy) {
     }
   }
 
-  const rows = Array.from(cells.values()).map(({ followUpTargets, declinedNumbers, oldestClosedAtMs, ...cell }) => {
+  const rows = Array.from(cells.values()).map(({
+    followUpTargets, declinedNumbers, oldestClosedAtMs,
+    approvedOperationalGood, approvedNegativeEvidence, approvedUndispositioned, ...cell
+  }) => {
     // The rate counts records that drew a follow-up, not follow-ups: three
     // corrections to one record are one record's worth of rework.
     const followUpRecords = followUpTargets.size;
@@ -512,9 +529,44 @@ function trustRows(records, gitLog, now, policy) {
       mixedReasons = MIXED_REASON_ORDER.filter((reason) => failing[reason]);
       verdict = mixedReasons.length === 0 ? 'clean' : 'mixed';
     }
+    // #4626 / ADR 0035: acceptance verdicts are a revocation input only — a
+    // changes-requested verdict still pins a cell below 'clean', but an approval
+    // earns no trust by itself; an approved record counts only through its own
+    // operational outcome. `revocationOnly` is the expand half: it sits beside
+    // `verdict` (which autonomy.js and grant-gate.js still act on) until the
+    // contract step makes it `verdict`. Same floors and ungradable pin as
+    // `verdict`; no 'batch-only' reason, since an approval carries no weight here.
+    const roGood = cell.operationalGood + approvedOperationalGood;
+    const roNegative = cell.negativeEvidence + approvedNegativeEvidence;
+    const roUndispositioned = cell.undispositioned + approvedUndispositioned;
+    const roDispositioned = cell.changesRequested + roGood + roNegative;
+    let roVerdict = 'insufficient-evidence';
+    let roMixedReasons = [];
+    if (
+      cell.kind !== UNGRADABLE_KIND &&
+      cell.total >= MIN_SAMPLES &&
+      roDispositioned >= MIN_VERDICTS
+    ) {
+      const roFailing = {
+        'changes-requested': cell.changesRequested !== 0,
+        'follow-up-rate': followUpRecords * 100 > followUpRateMaxPercent * shipped,
+        'negative-evidence': roNegative !== 0,
+      };
+      roMixedReasons = MIXED_REASON_ORDER.filter((reason) => roFailing[reason]);
+      roVerdict = roMixedReasons.length === 0 ? 'clean' : 'mixed';
+    }
+    const revocationOnly = {
+      operationalGood: roGood,
+      negativeEvidence: roNegative,
+      undispositioned: roUndispositioned,
+      dispositioned: roDispositioned,
+      coverage: cell.total === 0 ? 0 : roDispositioned / cell.total,
+      verdict: roVerdict,
+      mixedReasons: roMixedReasons,
+    };
     return {
       ...cell, followUpRecords, followUpRate, dispositioned, coverage, batchOnly, verdict,
-      mixedReasons, evaluationWindowDays, followUpRateMaxPercent, oldestClosedAt,
+      mixedReasons, evaluationWindowDays, followUpRateMaxPercent, oldestClosedAt, revocationOnly,
     };
   });
 
