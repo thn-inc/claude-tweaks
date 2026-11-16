@@ -243,7 +243,7 @@ A `correctness`- or `ambiguous`-classified failure revokes `auto:merge` before t
 
 ## Auto-merge gate (`auto:merge` or matured `auto:merge-pending` groups only)
 
-Because a bundle shares one branch/worktree, the merge decision is necessarily group-wide even though blast radius is attributed per record below: **every member of the group must carry `auto:build` and `auto:merge`, the latter already or via a matured `auto:merge-pending`** (see Authorization below) for the gate to apply at all — a group with even one `auto:build`-only member falls back to the normal pending-review path for the whole group; mixed grants inside one bundle are never split at merge time, and a group with even one still-pending member falls back the same way (the *slowest* member's veto window governs the whole group, as its review verdict already does below).
+Because a bundle shares one branch/worktree, the merge decision is group-wide even though blast radius is attributed per record below: **every member of the group must carry `auto:build` and `auto:merge`, the latter already or via a matured `auto:merge-pending`** (see Authorization below) for the gate to apply — a group with even one `auto:build`-only member falls back to the normal pending-review path for the whole group; mixed grants inside one bundle are never split at merge time, and a group with even one still-pending, not-yet-matured member falls back the same way (the *slowest* member's veto window governs the whole group, as its review verdict already does below).
 
 When a qualifying group's `/flow` run reaches `/wrap-up`'s Review Console, check two layers before presenting it for approval — but first, a live-drain overlap hold (refs #1985):
 
