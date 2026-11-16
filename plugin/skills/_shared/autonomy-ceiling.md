@@ -378,7 +378,8 @@ real run treated a low-risk, well-scoped, `ready` record as license to run a ful
 lifecycle on its own judgment. An eval scenario was written because of that incident, though what
 it could actually assert was narrower — the grant path was untestable in its sandbox (no live
 `gh`, network blocked), so it pinned the `local-files` boundary rather than the grant invariant
-itself. It was deleted with the eval harness. The incident is the evidence.
+itself; `docs/decisions/0035-evals-harness-and-benchmark-workflow-deleted.md` removed it. The
+incident is the evidence.
 
 So reaching the top tier is **not by itself** an amendment of that invariant. Machine-originated
 grants need a second, explicit opt-in beyond setting `autonomy: unattended`
