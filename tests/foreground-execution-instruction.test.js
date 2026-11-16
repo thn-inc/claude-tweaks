@@ -108,7 +108,7 @@ const SHARED_RULE = [
 // and item 7's / the handoff template's `{plugin-root}`.
 const WAIT_FOR_FACTS = [
   [/`node\s+"(?:\$\{CLAUDE_PLUGIN_ROOT\}|\{plugin-root\})\/bin\/wait-for\.js"\s+agents\s+--ids\s+\{ids\}\s+--max-seconds\s+150`,\s+20\s+minutes\s+per\s+wave\s+of\s+children/, 'the wait-for.js agents invocation with its 20-minute window per wave'],
-  [/`\{ids\}`\s+are\s+the\s+agent\s+ids\s+of\s+the\s+children\s+whose\s+notification\s+has\s+not\s+arrived,\s+comma-separated/, '{ids} are the outstanding children, comma-separated'],
+  [/`\{ids\}`\s+are\s+the\s+agent\s+ids\s+of\s+the\s+children\s+whose\s+notification\s+has\s+not\s+arrived\s+and\s+that\s+no\s+call\s+has\s+reported,\s+comma-separated/, '{ids} are the children whose notification has not arrived and that no call has reported, comma-separated'],
   [/foreground\s+Bash\s+call\s+with\s+no\s+`timeout`\s+parameter:\s+the\s+command\s+returns\s+within\s+150\s+seconds,\s+under\s+the\s+180-second\s+ceiling/, 'a foreground call with no timeout parameter, returning under the 180-second ceiling'],
   [/Exit\s+0\s+means\s+a\s+listed\s+child\s+stopped:\s+its\s+notification\s+is\s+in\s+hand\s+or\s+arrives\s+next;\s+call\s+again\s+while\s+any\s+child\s+is\s+outstanding/, 'exit 0 means a listed child stopped'],
   [/Exit\s+3\s+with\s+`"bound":"call"`\s+means\s+call\s+again/, 'exit 3 with a call bound means call again'],
@@ -357,8 +357,11 @@ test('AC3: REQUIRED holds on the handoff template paragraph (#5601)', () => {
 // AC7.1: the multi-spec wave prompt copies items 1, 6 and 7 of the Context pack and no template clause.
 const MULTISPEC = path.join(PLUGIN, 'skills', 'flow', 'multispec-parallel-waves.md');
 const MULTISPEC_PACK = /`\{context-pack\}` is `dispatch\/task-prompt\.md`'s Context pack items 1 \(the literal plugin root\), 6 \(the worktree shell constraint\) and 7 \(async-wait discipline, with its `INTERIM_STATUS` rule\)/;
+// Item 7 carries `{plugin-root}` in its wait-for.js line, so the orchestrator resolves it there as in item 1 (#5604).
+const MULTISPEC_RESOLVES_ROOT = /`\{plugin-root\}` resolved to this session's own plugin root wherever it appears in them \(item 1, and item 7's `wait-for\.js` line\)/;
 const multispecPackGaps = (p) => [
   ...(MULTISPEC_PACK.test(p) ? [] : ['names items 1, 6 and 7']),
+  ...(MULTISPEC_RESOLVES_ROOT.test(p) ? [] : ['resolves {plugin-root} in items 1 and 7']),
   ...(/template's Foreground execution clause/i.test(p) ? ['no template clause'] : []),
 ];
 function multispecPackParagraph(text) {
@@ -376,6 +379,12 @@ test('AC7.1: multispec-parallel-waves.md inlines items 1, 6 and 7 and no templat
   const dropped = paragraph.replace(' and 7 (async-wait discipline, with its `INTERIM_STATUS` rule)', '');
   assert.notEqual(dropped, paragraph);
   assert.deepEqual(multispecPackGaps(dropped), ['names items 1, 6 and 7']);
+  const stripped = paragraph.replace(MULTISPEC_RESOLVES_ROOT, '');
+  assert.notEqual(stripped, paragraph);
+  assert.deepEqual(multispecPackGaps(stripped), ['resolves {plugin-root} in items 1 and 7']);
+  const itemOneOnly = paragraph.replace(MULTISPEC_RESOLVES_ROOT, "item 1 resolved to this session's own plugin root");
+  assert.notEqual(itemOneOnly, paragraph);
+  assert.deepEqual(multispecPackGaps(itemOneOnly), ['resolves {plugin-root} in items 1 and 7']);
 });
 
 // #5601: a dispatched agent's prompt states the foreground-wait rule once, through Context pack item 7;
@@ -891,6 +900,7 @@ const BOUNDED_POLLING = [
   [/wait-for\.js\s+ci\s+--pr/, 'a pull request wait is `wait-for.js ci --pr`'],
   [/wait-for\.js\s+ci\s+--run/, 'a workflow run wait is `wait-for.js ci --run`'],
   [/wait-for\.js\s+pid\b/, 'a local process wait is `wait-for.js pid`'],
+  [/`--max-seconds\s+150`;\s+a\s+`ci`\s+call\s+may\s+run\s+20\s+s\s+past\s+it/, 'a ci call may run 20 s past --max-seconds'],
   [/3\s+with\s+`"bound":"deadline"`\s+means\s+the\s+bound\s+is\s+exhausted/, 'exit 3 with a deadline bound means the bound is exhausted'],
   [/on\s+exit\s+2\s+call\s+it\s+once\s+more,\s+which\s+joins\s+the\s+failed\s+call's\s+window,\s+and\s+a\s+second\s+exit\s+2\s+ends\s+the\s+wait\s+unresolved/, 'a first exit 2 is retried once and a second ends the wait unresolved'],
   [/the\s+cap,\s+interval\s+and\s+logging\s+rules\s+below\s+are\s+for\s+any\s+other\s+condition/, 'the cap, interval and logging rules are for any other condition'],
@@ -912,6 +922,7 @@ function skillFiles(root) {
   });
 }
 const backtickSleepHits = (files) => files.filter(([, text]) => /`sleep \d/.test(text)).map(([file]) => file);
+const sleep30Count = (text) => (text.match(/sleep 30/g) || []).length;
 const PR_FIRST_MERGE = path.join(PLUGIN, 'skills', '_shared', 'pr-first-merge.md');
 
 test('AC3.1 AC3.2: no file under plugin/skills puts a backtick directly before sleep and a digit (#5604)', () => {
@@ -920,7 +931,10 @@ test('AC3.1 AC3.2: no file under plugin/skills puts a backtick directly before s
   assert.deepEqual(backtickSleepHits(files), []);
   const merge = files.find(([file]) => file === PR_FIRST_MERGE);
   assert.ok(merge, 'pr-first-merge.md is not among the swept files');
-  assert.match(merge[1], /sleep 30/, 'the unmatched anchor (a bare sleep 30 in a code block) is gone, so the sweep proves nothing about it');
+  assert.equal(sleep30Count(merge[1]), 2, 'the unmatched anchors (two bare sleep 30 lines in code blocks) are not both there, so the sweep proves nothing about them');
+  const oneGone = merge[1].replace('sleep 30', 'true');
+  assert.notEqual(oneGone, merge[1]);
+  assert.equal(sleep30Count(oneGone), 1, 'dropping one bare sleep 30 must move the count off two');
 });
 
 test('AC3.3: the backtick-sleep sweep goes red on a fixture copy carrying such text (#5604)', () => {

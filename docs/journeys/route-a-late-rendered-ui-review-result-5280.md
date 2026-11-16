@@ -10,7 +10,7 @@ files:
 
 # Route a Late Rendered-UI Review Result
 
-**Persona:** a maintainer whose `/claude-tweaks:review` of a web-facing record runs visual-review (Step 6) or design-wrapper review (Step 6.5) as a nested agent, and that agent is still browsing when the dispatching agent's 20-minute `wait-for.js` wait bound (20 minutes) expires.
+**Persona:** a maintainer whose `/claude-tweaks:review` of a web-facing record runs visual-review (Step 6) or design-wrapper review (Step 6.5) as a nested agent, and that agent is still browsing when the dispatching agent's 20-minute `wait-for.js` wait bound expires.
 **Goal:** real rendered-UI findings are never silently dropped. A visual review that is still taking screenshots gets time to finish, one that ran out of time never counts as a passed visual check, and whatever it finds late still reaches a human.
 **Entry point:** a review whose visual-review page or journey agent (or design-wrapper Step 3.7/3.8 critic) is outstanding at the first 20-minute bound.
 **Success state:** a still-progressing visual review finishes within up to 3 windows (60 minutes) and reports normally. A unit that had to be self-judged is shown as an explicit decline of the rendered-UI check, and its late findings appear either as `staged/visual-review-late-{n}.md` under Pending review at the Wrap-Up Review Console, or as `LATE_FINDING:` lines in the agent's reply when the run is no longer active.

@@ -87,57 +87,55 @@ still in flight, so a progress note rides alongside a tool call or is skipped (#
 run the project's test command and every other long-running command in the foreground, as a
 normal call with a large explicit timeout and its output redirected to a file if it's long —
 never with `run_in_background` — and never end the turn waiting on a background run you
-started (#1965). A nested `Agent` call launches async, and its completion notification reaches you only
-while your turn is alive (when the call instead returns the child's own reply, that child has
+started (#1965). A nested `Agent` call launches async, and its completion notification reaches you
+only while your turn is alive (when the call instead returns the child's own reply, that child has
 reported and needs no wait): keep your turn alive with bounded foreground waits —
-`node "{plugin-root}/bin/wait-for.js" agents --ids {ids} --max-seconds 150`, 20 minutes per
-wave of children (the set launched together), stopping as soon as every child's
-`<task-notification>` has arrived, never reading or tailing a running child's `output_file` —
-until every child you launched has reported, and never end your turn with one outstanding.
-`{ids}` are the agent ids
-of the children whose notification has not arrived, comma-separated. Make each call a
-foreground Bash call with no `timeout` parameter: the command returns within 150 seconds, under
-the 180-second ceiling a dispatched agent's foreground call has (#5602). Exit 0 means a listed
-child stopped: its notification is in hand or arrives next; call again while any child is
-outstanding. Exit 3 with `"bound":"call"` means call again. Exit 3 with `"bound":"deadline"`
-means the 20-minute window is over: the bound has expired, and when the rule below grants
-another window, the next call is that window. Exit 2 is a failed wait call. The command's
-output line is the wait's log line, so write no separate one. With no `Agent` tool
-(`ToolSearch` finds none, deferred or otherwise), or a child still silent when the bound
-expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
-child is abandoned and no longer counts as outstanding, so your final reply still ends with
-`STATUS: {WORD}`. For a `/claude-tweaks:review` lens unit, log that downgrade as the single-read
-coverage line, and carry its caveat, from `review/step3-tier-variants.md`'s partner-died
-paragraph. Ignore a late result; if a late notification re-wakes you after your final
-reply, repeat your whole final reply unchanged — the dispatcher keeps only your latest reply, so
-a bare `STATUS:` line would replace the report. A child that reports a failure (a `failed`
-notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so it is not
-outstanding: handle it per the dispatching skill's own status handling where one exists
-(`superpowers:subagent-driven-development`'s BLOCKED handling), otherwise judge that unit
-yourself. Self-judging is for a read-only unit (a lens, a single read, a judge); a
+`node "{plugin-root}/bin/wait-for.js" agents --ids {ids} --max-seconds 150`, 20 minutes per wave of
+children (the set launched together), stopping as soon as every child's `<task-notification>` has
+arrived, never reading or tailing a running child's `output_file` — until every child you launched
+has reported, and never end your turn with one outstanding. `{ids}` are the agent ids of the
+children whose notification has not arrived and that no call has reported, comma-separated. Make
+each call a foreground Bash call with no `timeout` parameter: the command returns within 150
+seconds, under the 180-second ceiling a dispatched agent's foreground call has (#5602). Exit 0 means
+a listed child stopped: its notification is in hand or arrives next; call again while any child is
+outstanding. Exit 3 with `"bound":"call"` means call again. Exit 3 with `"bound":"deadline"` means
+the 20-minute window is over: the bound has expired, and when the rule below grants another window,
+the next call is that window. Exit 2 is a failed wait call. The command's output line is the wait's
+log line, so write no separate one. With no `Agent` tool (`ToolSearch` finds none, deferred or
+otherwise), or a child still silent when the bound expires, judge that unit yourself, log the
+downgrade, and mark its findings `unconfirmed`; that child is abandoned and no longer counts as
+outstanding, so your final reply still ends with `STATUS: {WORD}`. For a `/claude-tweaks:review`
+lens unit, log that downgrade as the single-read coverage line, and carry its caveat, from
+`review/step3-tier-variants.md`'s partner-died paragraph. Ignore a late result; if a late
+notification re-wakes you after your final reply, repeat your whole final reply unchanged — the
+dispatcher keeps only your latest reply, so a bare `STATUS:` line would replace the report. A child
+that reports a failure (a `failed` notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply)
+has reported, so it is not outstanding: handle it per the dispatching skill's own status handling
+where one exists (`superpowers:subagent-driven-development`'s BLOCKED handling), otherwise judge
+that unit yourself. Self-judging is for a read-only unit (a lens, a single read, a judge); a
 write-capable child (one that edits files) still silent at the bound is never redone in-session,
-because an abandoned child keeps running and may still write — stop, and end with
-`STATUS: BLOCKED` naming that child and its unit. Before that stop, probe the worktree its prompt
-names, read-only: `git -C "{child-worktree}" rev-parse HEAD`, `git -C "{child-worktree}"
---no-optional-locks status --porcelain` and `git -C "{child-worktree}" --no-optional-locks diff HEAD`
-piped to `git hash-object --stdin` (a `fatal:` line fails the probe), against the previous probe (taken right after launching the wave, then at
-each bound; lacking one, the first bound's probe sets it and grants a window). Per wave, while any
-child shows a change, log one wait line and grant one more 20-minute window; stop when a whole window
-passes with no change, or at a ceiling of 3 windows (60 minutes) per wave, naming which fired (`no
-progress for one window` or `ceiling reached while progressing`) and every unchanged child. Children
-sharing a worktree progress together; a child whose prompt names no worktree counts as unchanged. A
-failed wait call counts as no wait but ends its window, and the probe runs as at any bound; a failed probe command counts
-as no change, never retried in another form. Read-only units keep the first-bound self-judge.
-Exception: a rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory
-changes; stage its late result (`_shared/rendered-ui-units.md`). A wait
-call that is blocked or fails is not a wait and does not move the window's deadline; never retry
-it in another form (a `sleep` of any length, or a longer, wrapped or backgrounded call): treat
-every child still outstanding as silent at the bound. The full rule is in
-`subagent-dispatch-core.md`'s Foreground Execution
-Discipline section. Give any agent you dispatch this same instruction, whether it is a nested
-Task/Agent call or a `superpowers:subagent-driven-development` or review-lens fan-out. **Mark every
-interim reply (#2714):** if a turn ends anyway while a keep-alive wait is still in progress, with a
-child outstanding — the keep-alive rule's failure path — make that reply's last non-empty line
+because an abandoned child keeps running and may still write — stop, and end with `STATUS: BLOCKED`
+naming that child and its unit. Before that stop, probe the worktree its prompt names, read-only:
+`git -C "{child-worktree}" rev-parse HEAD`, `git -C "{child-worktree}" --no-optional-locks status
+--porcelain` and `git -C "{child-worktree}" --no-optional-locks diff HEAD` piped to `git hash-object
+--stdin` (a `fatal:` line fails the probe), against the previous probe (taken right after launching
+the wave, then at each bound; lacking one, the first bound's probe sets it and grants a window). Per
+wave, while any child shows a change, log one wait line and grant one more 20-minute window; stop
+when a whole window passes with no change, or at a ceiling of 3 windows (60 minutes) per wave,
+naming which fired (`no progress for one window` or `ceiling reached while progressing`) and every
+unchanged child. Children sharing a worktree progress together; a child whose prompt names no
+worktree counts as unchanged. A failed wait call counts as no wait but ends its window, and the
+probe runs as at any bound; a failed probe command counts as no change, never retried in another
+form. Read-only units keep the first-bound self-judge. Exception: a rendered-UI unit (review Step
+6/6.5) gets more windows while its artifact directory changes; stage its late result
+(`_shared/rendered-ui-units.md`). A wait call that is blocked or fails is not a wait and does not
+move the window's deadline; never retry it in another form (a `sleep` of any length, or a longer,
+wrapped or backgrounded call): treat every child still outstanding as silent at the bound. The full
+rule is in `subagent-dispatch-core.md`'s Foreground Execution Discipline section. Give any agent you
+dispatch this same instruction, whether it is a nested Task/Agent call or a
+`superpowers:subagent-driven-development` or review-lens fan-out. **Mark every interim reply
+(#2714):** if a turn ends anyway while a keep-alive wait is still in progress, with a child
+outstanding — the keep-alive rule's failure path — make that reply's last non-empty line
 `INTERIM_STATUS: {one-line progress note}`, never `STATUS: {WORD}`, which is reserved for your
 genuine final reply (an abandoned child is not outstanding; that reply is final and ends with
 `STATUS: {WORD}`). An unmarked interim reply is graded by the `SubagentStop` hook as a final reply

@@ -10,7 +10,7 @@ files:
 
 **Persona:** a maintainer whose `/claude-tweaks:dispatch` Task call (or a `/claude-tweaks:flow` context-handoff child) is building a multi-file record, where the dispatched agent waits on a nested implementer that edits files in a worktree.
 **Goal:** the wait does not end the run while the implementer is visibly working. A slow but live implementer finishes its task; only a stalled one stops the run.
-**Entry point:** a dispatched build whose `superpowers:subagent-driven-development` implementer is still running when the dispatched agent's 20-minute `wait-for.js` wait bound (20 minutes) expires.
+**Entry point:** a dispatched build whose `superpowers:subagent-driven-development` implementer is still running when the dispatched agent's 20-minute `wait-for.js` wait bound expires.
 **Success state:** a progressing implementer gets more 20-minute windows (up to 3 per wave, 60 minutes) and reports normally. A stalled one stops the run with `STATUS: BLOCKED`, naming `no progress for one window` or `ceiling reached while progressing` and every child that showed no change.
 
 ## Steps
