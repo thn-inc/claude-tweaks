@@ -330,7 +330,7 @@ Several pasted values come from text the plugin did not write — the record bod
 - `--local-base-url` — the dev URL `_shared/dev-url-detection.md` resolves, on UI surfaces and `app-route`/`rendered-page` plans, omitted when none resolves.
 - `--flags` and `--proofs` — `{FLAGS}` and `{PROOFS}` from the Risk facts call above, always.
 
-Pass no `--scope` (the CLI reads the default verify-scope declaration itself, Decision Q6), no expected-checks list, and no QA-stamp flag (the CLI reads the QA pass stamp from the checkout's git dir or the snapshot itself, Decision Q13). `--dev-base-url`, `--deploy` and `--decision-items` are filled by the dev-target and control-mode records, and none is passed here; `--flags` and `--proofs` come from the Risk facts call above.
+Pass no `--scope` (the CLI reads the default verify-scope declaration itself, Decision Q6), no expected-checks list, and no QA-stamp flag (the CLI reads the QA pass stamp from the checkout's git dir or the snapshot itself, Decision Q13). `--dev-base-url`, `--deploy` and `--decision-items` are filled by the dev-target and control-mode records, and none is passed here; `--flags` and `--proofs` come from the Risk facts call above. Under control mode the Review Console writes its carried decisions to `{run-dir}/packet-facts/decisions.json`, and `gather` reads that file itself whenever `--run` is passed with no `--decision-items`; a file it cannot read is stated as partial, never shown as no decisions.
 
 Gather non-zero: report it in the summary and log it, post nothing, apply no label.
 

@@ -148,6 +148,11 @@ const NO_KEPT_FLAGS = 'not applicable: no kept risk flags';
 const FLAGS_NOT_READ = 'risk flags not read: the --flags input did not read, so kept flags are unknown';
 // A pass carries a reason only when it needs one: a verify run adjudicated to a pass.
 const rowLine = (fact) => `- ${idSpan(fact.id)} — ${fact.status === 'passed' && !fact.reason?.trim() ? 'passed' : statusWithReason(fact)}`;
+// A control-mode decision fact carries what the person can do about it (#4620); one without the field renders as before.
+const decideSuffix = (fact) => {
+  const text = typeof fact.suggestedResolution === 'string' ? screenedInline(fact.suggestedResolution, WITHHELD_TEXT) : '';
+  return text === '' ? '' : ` — decide: ${text}`;
+};
 const factText = (fact) => screenedInline(fact.text ?? '', WITHHELD_TEXT) || idSpan(fact.id);
 
 // Decision Q3's row placement: every check/story fact lands in exactly one place.
@@ -367,7 +372,7 @@ const SECTION_BODIES = Object.freeze({
   ),
   'risk-proofs': riskProofsBody,
   // No decisions omits the section, heading included.
-  decisions: ({ ofKind }) => ofKind('decision').map((fact) => item(`- ${factText(fact)}`)),
+  decisions: ({ ofKind }) => ofKind('decision').map((fact) => item(`- ${factText(fact)}${decideSuffix(fact)}`)),
   // The bare `ref: {sha}` line is what accept-entry.js's refreshPacket reads as the stored
   // ref (REF_LINE_RE), so it carries no list marker or code span.
   deploy: ({ deploy }) => [

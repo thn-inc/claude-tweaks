@@ -181,7 +181,7 @@ test('the chunked snippet tokenizer can go red on an injected unknown flag (#300
 });
 
 test('agents never write the stamp: no redirect into claude-tweaks-verify-pass remains, and the foreground rule is stated (#1921 AC6)', () => {
-  assert.ok(!/>\s*"?\$\(git rev-parse --git-dir\)\/claude-tweaks-verify-pass/.test(DOC), 'a write into the bare stamp file remains');
+  assert.ok(!/>\s*"?\$\(git rev-parse --git-dir\)\/claude-tweaks-verify-pass/.test(DOC), 'a redirect into the stamp file remains');
   assert.ok(!/git rev-parse HEAD > /.test(DOC), 'the agent-side stamp write command remains');
   assert.ok(DOC.includes('run_in_background'), 'the foreground rule must name run_in_background');
 });

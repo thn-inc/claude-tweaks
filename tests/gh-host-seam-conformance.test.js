@@ -301,7 +301,7 @@ test('AC3.1: every gh spawn under plugin/bin/ routes through ghOptions', () => {
 // then splits one record across two hosts on a GHE origin (found in #4505's review), so the roster
 // is pinned here.
 const PIN_WIRED = ['accept-entry.js', 'acceptance-packet.js', 'activity-gather.js', 'ci-health.js', 'fetch-sub-issues.js', 'lib/compose-subject.js', 'lib/number-list-cli.js', 'link-records.js',
-  'list-claims.js', 'materialize.js', 'preflight-records.js', 'release-claim.js', 'repair-claim.js', 'resolved-refusal.js'];
+  'list-claims.js', 'materialize.js', 'preflight-records.js', 'release-claim.js', 'remote-branch-collision.js', 'repair-claim.js', 'resolved-refusal.js'];
 
 test('review (#4505): every CLI that pins its explicit --repo host keeps both halves of the wiring, and no unlisted CLI wires it', () => {
   for (const rel of PIN_WIRED) {

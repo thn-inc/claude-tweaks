@@ -20,6 +20,7 @@ const {
 const { redactOrWithhold } = require('../walkthrough/redact');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { SECTIONS: CONSOLE_SECTIONS, decisionLineHash } = require('../console/resolve');
+const { DECISION_RENDER_FIELDS } = require('../console/decision-facts');
 
 // The text is read up to a line terminator (`.` stops at one) and trimmed after, and
 // what follows it must be whitespace. A trailing `\s*$` in the pattern is quadratic on a
@@ -470,6 +471,18 @@ function passThroughFacts(kind, source, entries, { status = 'passed', reason } =
   }));
 }
 
+// A decision entry keeps the fields a control-mode console writes (#4620); an entry with only { id, text } yields
+// exactly the pass-through fact. An absent or non-string field stays absent.
+function decisionFacts(entries) {
+  const base = passThroughFacts('decision', 'decision-items', entries);
+  return base.map((fact, i) => {
+    const entry = entries[i];
+    const extra = {};
+    for (const field of DECISION_RENDER_FIELDS) if (typeof entry[field] === 'string') extra[field] = entry[field];
+    return { ...fact, ...extra };
+  });
+}
+
 const PROOF_NOT_RUN_REASON = 'planned in the plan, not yet run';
 
 // A recording's free strings as a narrator may read them, with the sum of what went from them.
@@ -547,7 +560,7 @@ function gatherPacketFacts(inputs) {
     ...(inputs.recording ? [recordingFact(inputs.recording, inputs.recordingPath)] : []),
     ...passThroughFacts('flag', 'flags', inputs.flags),
     ...passThroughFacts('proof', 'proofs', inputs.proofs, { status: 'not-run', reason: PROOF_NOT_RUN_REASON }),
-    ...passThroughFacts('decision', 'decision-items', inputs.decisions),
+    ...decisionFacts(inputs.decisions),
   ];
 
   const byId = new Map();
@@ -614,5 +627,6 @@ module.exports = {
   storiesFromQaStamp,
   redactedRecordingStrings,
   gatherPacketFacts,
+  decisionFacts,
   readPacket,
 };

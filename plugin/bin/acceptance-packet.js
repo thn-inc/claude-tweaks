@@ -41,6 +41,7 @@ const os = require('os');
 const path = require('path');
 const { writeFileAtomic } = require('./lib/atomic-write');
 const { findingItems } = require('./lib/console/resolve');
+const { DECISION_RENDER_FIELDS } = require('./lib/console/decision-facts');
 const { readRecord, writeRecord } = require('./lib/issues/local-store');
 const {
   parseRepo, ghAvailable, ghOptions, injectedGhDeps, pinExplicitRepoHost,
@@ -119,6 +120,7 @@ const DEFAULT_STORIES_DIR = 'stories';
 const STORY_FILE_RE = /\.ya?ml$/;
 const LOG_LINE_RE = /^([0-9a-f]+)\t(.*)$/;
 const GH_ABSENT = "gh absent — follow _shared/acceptance-packet.md's MCP path";
+const RUN_DECISIONS_NOT_READ = (runDir) => `could not read ${runDir}/packet-facts/decisions.json — carried decisions not shown`;
 const FINDINGS_NOT_READ = 'review findings not read — low-confidence findings not listed';
 const RECORDING_NOT_READ = 'manifest recording entry not read — treated as absent';
 const ENCODER_FAILED = NOT_RUN_REASON.ENCODER_FAILED;
@@ -612,6 +614,8 @@ const isEntryList = (value) => Array.isArray(value) && value.every((entry) => (
   isObject(entry) && typeof entry.id === 'string' && entry.id !== ''
   && ['text', 'url', 'command', 'label'].every((field) => optionalString(entry[field]))
 ));
+const isDecisionEntryList = (value) => isEntryList(value)
+  && value.every((entry) => DECISION_RENDER_FIELDS.every((field) => optionalString(entry[field])));
 const isFlagEntryList = (value) => isEntryList(value)
   && value.every((entry) => entry.unconfirmed === undefined || typeof entry.unconfirmed === 'boolean');
 // A present `ref` is the deployed commit's sha; anything else fails the whole file (#4613).
@@ -640,6 +644,25 @@ function gatherToFile(opts, deps) {
     const value = readJsonOrNull(deps, file);
     if (isValid(value)) return value;
     notes.push(notReadNote(flag));
+    return undefined;
+  };
+  // Under control mode the Review Console writes its carried decisions here (#4620). Absent is a run with none;
+  // a file that will not read is stated as partial, never shown as no decisions.
+  const readRunDecisions = () => {
+    const file = path.join(runDir, 'packet-facts', 'decisions.json');
+    let text;
+    try {
+      text = deps.readFile(file);
+    } catch (err) {
+      if (isAbsentError(err)) return undefined;
+      notes.push(RUN_DECISIONS_NOT_READ(runDir));
+      return undefined;
+    }
+    try {
+      const value = JSON.parse(text);
+      if (isDecisionEntryList(value)) return value;
+    } catch { /* falls to the note below */ }
+    notes.push(RUN_DECISIONS_NOT_READ(runDir));
     return undefined;
   };
   const readObject = (file) => {
@@ -674,7 +697,7 @@ function gatherToFile(opts, deps) {
       deploy: optionalJson('--deploy', isDeploy),
       flags: optionalJson('--flags', isFlagEntryList),
       proofs: optionalJson('--proofs', isEntryList),
-      decisions: optionalJson('--decision-items', isEntryList),
+      decisions: opts.decisionItems === undefined && runDir !== null ? readRunDecisions() : optionalJson('--decision-items', isDecisionEntryList),
       decisionsText: runDir === null ? null : readTextOrNull(deps, path.join(runDir, 'decisions.md')),
       lowConfidence: runDir === null ? null : readLowConfidence(runDir, deps, notes),
       storyIndex: readStoryIndex(opts.storiesDir, listsStories, deps, notes),
