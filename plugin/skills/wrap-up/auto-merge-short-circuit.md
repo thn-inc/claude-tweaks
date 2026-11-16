@@ -176,7 +176,9 @@ git -C "$WORKTREE_PATH" commit -m "Wrap-up: delete resolved open items ledger fo
 
 Every other report except `not found` leaves the ledger on disk: commit nothing; the verb logs its `SKIP`, hand-log one where Item 2 says.
 
-**`integration-model: pr-first` only — push this commit now**, its own Bash call: `gh pr merge`
+**Archive the spec header (#3976).** After the ledger commit above and before the push below, under either `integration-model`, as its own Bash call: `node "${CLAUDE_PLUGIN_ROOT}/bin/archive-run-header.js" --run "{run-dir}"`. It `git mv`s the run's tracked `work/` and `spec-{N}/work/` files to `archive/{run-id}/` in one commit on the run branch, so the merge lands the header already archived. It never stops wrap-up: on exit 0 (`moved`, `noop` or `refused`) it has logged its own line — hand-log it via `log-decision.js --text-file` only when the envelope says `logged: false`; on any other exit, log one `SKIP` and continue — reconcile's `archiveRunDir` archives the header after the merge.
+
+**`integration-model: pr-first` only — push these commits now**, its own Bash call: `gh pr merge`
 below merges the PR's remote head, not this worktree's local state, so a commit left unpushed
 here would simply be absent from the merge.
 
@@ -185,8 +187,8 @@ git -C "$WORKTREE_PATH" push origin {branch}
 ```
 
 **`integration-model: local-merge`:** skip the push above —
-`_shared/local-merge-sequence.md` Step 3's merge reads `{branch}` straight out of the worktree's local refs (`git merge --no-ff {branch}`), so this
-commit reaches it without ever touching `origin`.
+`_shared/local-merge-sequence.md` Step 3's merge reads `{branch}` straight out of the worktree's local refs (`git merge --no-ff {branch}`), so these
+commits reach it without ever touching `origin`.
 
 A `not found` report (a record whose build/test/review never appended an item) is not an
 error — skip silently, there is nothing to delete. A ledger file that still carries a non-`open`

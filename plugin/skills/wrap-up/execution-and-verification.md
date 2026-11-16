@@ -46,6 +46,8 @@ work — carries no closing keyword; there was never an issue to close.
 at PR-open time — adding a second, differently-scoped set here would duplicate (and risk
 disagreeing with) that authoritative list. This step's commit is an ordinary commit.
 
+**Archive the spec header (#3976).** `worktree` mode under `integration-model: pr-first`, after the commit above and before the Phase exit call below, as its own Bash call: `node "${CLAUDE_PLUGIN_ROOT}/bin/archive-run-header.js" --run "{run-dir}"`. It `git mv`s the run's tracked `work/` and `spec-{N}/work/` files to `archive/{run-id}/` in one commit on the run branch, so the Phase exit push carries it and the merge lands the header already archived. It never stops wrap-up: on exit 0 (`moved`, `noop` or `refused`) it has logged its own line — hand-log it via `log-decision.js --text-file` only when the envelope says `logged: false`; on any other exit, log one `SKIP` and continue — reconcile's `archiveRunDir` archives the header after the merge. Skip it under `MULTISPEC_REVIEW_DEFER=1`: `flow/multispec-review-console.md`'s Shared teardown step 0 moves every spec's header in one commit.
+
 **Phase exit (any run with a run dir, `_shared/integration-model.md`):** one call pushes this
 commit and flips wrap-up's PR checklist row —
 `node "${CLAUDE_PLUGIN_ROOT}/bin/phase-exit.js" --run "{run-dir}" --phase wrap-up --worktree "{worktree-path}" --fixes {n}[,{m}...]`,
