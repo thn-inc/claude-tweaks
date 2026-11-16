@@ -382,6 +382,14 @@ function graphqlMultivarMutation(text) {
   return /\(\s*\w+\s*:\s*\{/.test(text.slice(m.index + m[0].length));
 }
 
+// `git -C .`: the operand is the bare or quoted dot.
+const GIT_C_DOT = new RegExp(`${CMD}git\\s+-C\\s+(?:\\.|"\\."|'\\.')(?=\\s|$)`, 'm');
+// `git -C <operand>` with an unquoted glob char in a later word of the same
+// simple command; the operand may be quoted, and quoted text is blanked.
+const GIT_C_GLOB = new RegExp(`${CMD}git\\s+-C\\s+(?:"[^"]*"|'[^']*'|\\S+)[^;&|\\n]*[*?[]`, 'm');
+// A git command chained by ; or && onto an unquoted `$?` on one line.
+const GIT_CHAINED_STATUS = new RegExp(`${CMD}git\\s[^\\n]*?(?:;|&&)[^\\n]*\\$\\?`);
+
 const DETECTORS = [
   {
     id: 'complete-token',
@@ -419,6 +427,21 @@ const DETECTORS = [
     id: 'git-var-operand',
     row: "`git -C \"$PWD\" status --short`; `W=\"$(node -e 'console.log(process.cwd())')\"` then `git -C \"$W\" status --short`; `git -C \"$(pwd)\" status --short` (2026-10-25)",
     test: (t) => hasVarOperand(t, 'git', { substitution: true }),
+  },
+  {
+    id: 'git-C-dot',
+    row: '`git -C . rev-parse --short HEAD`',
+    test: (t) => GIT_C_DOT.test(t),
+  },
+  {
+    id: 'git-C-glob',
+    row: '`git -C "<worktree>" grep -c X -- tools/guard-refusals/*.js`',
+    test: (t) => GIT_C_GLOB.test(stripQuoted(t)),
+  },
+  {
+    id: 'git-chained-status',
+    row: '`git merge-base --is-ancestor HEAD HEAD; echo exit=$?`',
+    test: (t) => GIT_CHAINED_STATUS.test(stripQuoted(t)),
   },
   {
     id: 'node-eval-script-var-with-git',
