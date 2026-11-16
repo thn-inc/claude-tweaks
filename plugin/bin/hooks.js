@@ -759,7 +759,8 @@ async function runRecordWorktree(argv, deps) {
     // #3973: the owner block, only with a session id (record-worktree is the adoption
     // path, so it replaces another session's block).
     const result = ctxLib.writeRunState(runDir,
-      ctxLib.patchWithOwnerBlock(patch, deps.env.CLAUDE_CODE_SESSION_ID, { replacesSessionId: true }));
+      ctxLib.patchWithOwnerBlock(patch, deps.env.CLAUDE_CODE_SESSION_ID, { replacesSessionId: true, env: deps.env }),
+      { env: deps.env });
     if (result) {
       deps.stdout(`claude-tweaks: worktree recorded for ${path.basename(runDir)}\n`);
     } else {

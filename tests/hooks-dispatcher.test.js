@@ -231,6 +231,26 @@ test('record-worktree accepts --run before or after the worktree positional', as
   assert.strictEqual(state.worktree, path.resolve('/tmp/wt-2'));
 });
 
+// #5377: the record-worktree verb's run-state write takes its lock wait from the env the call carries. A
+// getter counts reads of the knob made through that env object; it goes in as `deps.env` because runCli
+// copies its `env` option once, which reads the getter for any code. A call that records no worktree takes
+// no lock and gives the baseline of reads made outside the write; the write must read the knob beyond it.
+test('record-worktree reads the run-state lock wait from the passed env', async () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  let knobReads = 0;
+  // No session id: the owner block's `ps` env spread would read the getter too, and mask the lock read.
+  const env = hookEnv({ CLAUDE_CODE_SESSION_ID: '' });
+  Object.defineProperty(env, 'CLAUDE_TWEAKS_LOCK_WAIT_MS', { enumerable: true, get() { knobReads += 1; return '0'; } });
+  const noWrite = await runHookCli(['record-worktree', '--run', run], { cwd: project, env: hookEnv(), deps: { env } });
+  assert.match(noWrite.stdout, /worktree not recorded/);
+  const baseline = knobReads;
+  const result = await runHookCli(['record-worktree', '--run', run, '/tmp/wt-lock'], { cwd: project, env: hookEnv(), deps: { env } });
+  assert.strictEqual(result.code, 0);
+  assert.match(result.stdout, /worktree recorded/);
+  assert.ok(knobReads - baseline > baseline, `the run-state lock read its wait from the passed env (baseline ${baseline}, total ${knobReads})`);
+});
+
 // #1124 review finding: the fix's OTHER guard — rejecting a flag-shaped
 // worktree positional — had no regression test, even though it's the exact
 // shape every observed pre-fix incident hit (originally reproduced with a
@@ -553,9 +573,7 @@ function deadPid() {
 test('AC1.1/AC1.2: record-worktree writes the owner block', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  // real process: the record-worktree verb stamps the owner block from the real process.env (hooks.js's
-  // patchWithOwnerBlock call passes no env), so an injected CLAUDE_PID would not reach it in-process.
-  spawnCli(HOOKS, ['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: hookEnv({ CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(process.pid) }) });
+  await runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(process.pid) } });
   const { owner } = readRunState(run);
   assert.strictEqual(owner.sessionId, 'owner');
   assert.strictEqual(owner.host, os.hostname());
@@ -567,8 +585,7 @@ test('AC1.1/AC1.2: record-worktree writes the owner block', async () => {
   const dead = deadPid();
   const project2 = tmpProject();
   const run2 = path.join(project2, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  // real process: same reason as above.
-  spawnCli(HOOKS, ['record-worktree', '--run', run2, '/tmp/wt-2'], { cwd: project2, env: hookEnv({ CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(dead) }) });
+  await runHook(['record-worktree', '--run', run2, '/tmp/wt-2'], { cwd: project2, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(dead) } });
   const deadOwner = readRunState(run2).owner;
   assert.strictEqual(deadOwner.pid, dead);
   assert.strictEqual(deadOwner.pidStartedAt, null, 'a pid that is gone has no start time');
@@ -611,9 +628,7 @@ test('#3973: the dispatcher refreshes the owner block on a non-session-start eve
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   const env = { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(process.pid) };
-  // real process: the record-worktree verb stamps the owner block from the real process.env (see the AC1.1/AC1.2 test above);
-  // the session-end heartbeat below stays in-process.
-  spawnCli(HOOKS, ['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: hookEnv(env) });
+  await runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env });
   const stale = new Date(Date.now() - 10 * 60_000).toISOString();
   const state = readRunState(run);
   fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ ...state, owner: { ...state.owner, heartbeatAt: stale } }));
