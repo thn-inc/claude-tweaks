@@ -1,0 +1,3 @@
+{"type":"user","message":{"role":"user","content":"Review lens 3a."}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Reading the changed files first."},{"type":"tool_use","name":"Read","input":{}}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"| Severity | Location | Finding |\n|---|---|---|\n| **high** | `src/alpha.js:12` | alpha issue |\n| low | src/pair.js:5 | pair issue |\n| info | src/other.js:1 | unrelated |"}]}}

@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, readCommitScope, readGhTimeoutMs, readEfficiencyCeilings } = require('../plugin/bin/lib/policy');
+const { isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, readCommitScope, readGhTimeoutMs, readEfficiencyCeilings, readChangelogMaxReleases } = require('../plugin/bin/lib/policy');
 
 function tmpRepo() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-policy-'));
@@ -256,4 +256,36 @@ test('#4029: readEfficiencyCeilings: no policy file -> the shipped defaults; 0 p
   const got = readEfficiencyCeilings(repo, 'standard');
   assert.strictEqual(got.procedureKb, 0);
   assert.strictEqual(got.roundTrips, 900, 'a negative value is under min 0 and falls back to the default');
+});
+
+test('AC15.1: changelog-max-releases values -1, 1.5 and abc resolve to 0', () => {
+  for (const v of ['-1', '1.5', 'abc']) {
+    assert.deepStrictEqual(readChangelogMaxReleases(() => `changelog-max-releases: ${v}\n`), { count: 0, error: null });
+  }
+});
+test('changelog-max-releases: absent file and absent key are 0; 50 is 50', () => {
+  assert.deepStrictEqual(readChangelogMaxReleases(() => null), { count: 0, error: null });
+  assert.deepStrictEqual(readChangelogMaxReleases(() => 'git-strategy: worktree\n'), { count: 0, error: null });
+  assert.deepStrictEqual(readChangelogMaxReleases(() => 'changelog-max-releases: 50\n'), { count: 50, error: null });
+});
+test('changelog-max-releases: the schema row is an integer >= 0, default 0, read from policy.yml alone', () => {
+  const row = require('../plugin/bin/lib/policy-schema').POLICY_KEYS.find((k) => k.key === 'changelog-max-releases');
+  assert.strictEqual(row.type, 'integer');
+  assert.strictEqual(row.min, 0);
+  assert.strictEqual(row.default, 0);
+  assert.strictEqual(row.policyOnly, true, 'both engines read policy.yml directly, so a run config must never carry a value for it');
+});
+test('changelog-max-releases: an unreadable policy file is reported, not read as 0 silently', () => {
+  const r = readChangelogMaxReleases(() => { throw new Error('EISDIR: illegal operation on a directory'); });
+  assert.strictEqual(r.count, 0);
+  assert.match(r.error, /EISDIR/);
+});
+test('changelog-max-releases: a non-Error or empty-message throw still yields a non-empty reason', () => {
+  for (const thrown of [new Error(''), 'plain string', undefined, null]) {
+    const r = readChangelogMaxReleases(() => { throw thrown; });
+    assert.strictEqual(r.count, 0);
+    assert.strictEqual(typeof r.error, 'string');
+    assert.ok(r.error.length > 0, `reason for ${String(thrown)}`);
+  }
+  assert.strictEqual(readChangelogMaxReleases(() => { throw 'plain string'; }).error, 'plain string');
 });

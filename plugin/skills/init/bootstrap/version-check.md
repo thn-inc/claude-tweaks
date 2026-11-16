@@ -56,17 +56,20 @@ notice policy" below), so its absence is a silent skip, not an error:
 node -e "
   const fs = require('fs');
   const path = '${CLAUDE_PLUGIN_ROOT}/CHANGELOG.md';
-  if (!fs.existsSync(path)) { console.log(JSON.stringify([])); process.exit(0); }
+  if (!fs.existsSync(path)) { console.log(JSON.stringify({ entries: [], partial: false })); process.exit(0); }
   const { extractChangelogRange } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/changelog.js');
   const changelog = fs.readFileSync(path, 'utf8');
-  console.log(JSON.stringify(extractChangelogRange(changelog, process.argv[1], process.argv[2])));
+  const r = extractChangelogRange(changelog, process.argv[1], process.argv[2]);
+  console.log(JSON.stringify({ entries: r, partial: r.partial }));
 " -- "$MARKER_VERSION" "$INSTALLED_VERSION"
 ```
 
-An empty array means either no entries in range or (the common installed-build case) no
-`CHANGELOG.md` to read — skip the notice silently either way; there is nothing to synthesize.
-Read the returned `{version, title, body}` entries — in the same newest-first order they
-appear in `CHANGELOG.md` — and synthesize the filtered summary described under "Changelog notice policy"
+Both branches print one `{entries, partial}` object. An empty `entries` array means either no
+entries in range or (the common installed-build case) no `CHANGELOG.md` to read — skip the
+notice silently either way; there is nothing to synthesize. `partial` is `true` only when a
+trimmed `CHANGELOG.md` no longer reaches back to the marker's version (see "Changelog notice
+policy"). Read the `entries` array's `{version, title, body}` items — newest-first, as in
+`CHANGELOG.md` — and synthesize the filtered summary described under "Changelog notice policy"
 below.
 
 **Write the marker:**
@@ -94,7 +97,7 @@ change adds other top-level keys to this file, switch to a merge instead of an o
 
 ## Changelog notice policy
 
-**Changelog notice (version-mismatch case only).** Read the plugin's own `CHANGELOG.md` when the "Changelog notice" snippet above found one (not the target project's — the marker records a *plugin* version, so only the plugin's own changelog is meaningful to diff against) and call `bin/lib/changelog.js`'s `extractChangelogRange` for the range between the marker's old version (exclusive) and the installed version (inclusive). Synthesize a short summary limited to entries that change what `/init` offers, writes to CLAUDE.md, or exposes as a scope/config key — omit internal-only entries (bug fixes, refactors with no `/init`-visible behavior change). Present as an informational note, not a gate, ending with a pointer to `/init update --full` (or a narrower scope) if the user wants to act on anything it surfaces. No cap on how large the range is — if it spans an unusually large number of releases, say so explicitly.
+**Changelog notice (version-mismatch case only).** Read the plugin's own `CHANGELOG.md` when the "Changelog notice" snippet above found one (not the target project's — the marker records a *plugin* version, so only the plugin's own changelog is meaningful to diff against) and call `bin/lib/changelog.js`'s `extractChangelogRange` for the range between the marker's old version (exclusive) and the installed version (inclusive). Synthesize a short summary limited to entries that change what `/init` offers, writes to CLAUDE.md, or exposes as a scope/config key — omit internal-only entries (bug fixes, refactors with no `/init`-visible behavior change). Present as an informational note, not a gate, ending with a pointer to `/init update --full` (or a narrower scope) if the user wants to act on anything it surfaces. No cap on how large the range is — if it spans an unusually large number of releases, say so explicitly. When `partial` is `true`, the range reaches below the trimmed file's floor: tell the reader the summary is partial, and point at the footer's `git show {sha}:CHANGELOG.md` for the older notes.
 
 ## When to write the marker
 

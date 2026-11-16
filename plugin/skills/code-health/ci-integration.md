@@ -4,22 +4,32 @@ Lazy-loaded from `SKILL.md`'s CI Integration section — read this only when a c
 
 ## Regression and Risk Gating
 
-Use `status [--fail-on regressed|risk-high]` to integrate code-health state into CI or pre-push hooks.
+Use `status [--fail-on regressed|risk-high]` to gate a local pre-push hook on code-health state. The gate reads the local, git-ignored cache at `.claude-tweaks/code-health/cache.json` under `--root` (or the current directory). Each checkout and each linked worktree has its own cache, so a hook that runs elsewhere passes `--root` naming the checkout the sweep ran in.
 
 ```bash
 # Exit 1 if any regressed entries exist in the cache (a closed issue re-opened)
 node "${CLAUDE_PLUGIN_ROOT}/bin/code-health.js" status --fail-on regressed
 
-# Exit 1 if any open risk-high entries exist in the cache
+# Exit 1 if any open or regressed risk-high entries exist in the cache
 node "${CLAUDE_PLUGIN_ROOT}/bin/code-health.js" status --fail-on risk-high
 ```
 
 Exit-code behavior:
-- `--fail-on regressed` — exits `1` when one or more cache entries have `status: "regressed"`; exits `0` otherwise.
-- `--fail-on risk-high` — exits `1` when one or more open cache entries have `risk: "high"`; exits `0` otherwise.
+- `--fail-on regressed` — exits `1` when one or more cache entries have `status: "regressed"`; exits `0` when the cache is accepted and no entry matches (see exit `2`).
+- `--fail-on risk-high` — exits `1` when one or more open or regressed cache entries have `risk: "high"`; exits `0` when the cache is accepted and no entry matches (see exit `2`).
+- Exit `2` — the gate could not evaluate. This is a setup problem, not a finding. Two causes:
+  - An unrecognized `--fail-on` value prints a usage error.
+  - A cache that is not accepted prints one line to stderr, `status: --fail-on cannot evaluate: {path}: {reason}`, and nothing to stdout. The reason is one of:
+    - `no cache file (no sweep has written one under this root)`
+    - `not a regular file inside the checkout`
+    - `not a readable code-health cache`
 - Without `--fail-on`, `status` always exits `0` and prints a summary table.
 
-Run both checks independently in CI if you want to gate on either condition.
+Run both checks independently if you want to gate on either condition.
+
+Limits:
+- The gate cannot tell a stale cache from a fresh one. It reports whatever the last sweep in that checkout wrote, however long ago.
+- It is not suited to a fresh CI checkout. No sweep has written a cache there, so it exits `2`.
 
 ## Fingerprint Churn
 

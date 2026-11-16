@@ -196,7 +196,8 @@ function permittedGrants(input) {
 // Structured verdicts, per deferral-gate.md's floor mapping: blocked-external <->
 // the external-state group, needs-human-decision <-> the product/design group,
 // blocked-dependency <-> not-yet-built, genuinely-larger <-> scope expansion;
-// tangential and pre-existing-outside-diff map to no group.
+// tangential and pre-existing-outside-diff map to no group; needs-verification
+// maps to a bounded verification task a builder can run (#4679).
 const STRUCTURED_FLOOR = Object.freeze({
   'tangential': false,
   'needs-human-decision': true,
@@ -204,6 +205,7 @@ const STRUCTURED_FLOOR = Object.freeze({
   'genuinely-larger': true,
   'blocked-external': true,
   'blocked-dependency': true,
+  'needs-verification': true,
 });
 
 function clearsFloor(blockerReason) {

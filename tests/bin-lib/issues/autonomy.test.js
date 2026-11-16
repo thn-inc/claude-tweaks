@@ -378,9 +378,11 @@ test('clearsFloor: tangential and pre-existing-outside-diff do not clear the flo
 });
 
 test('clearsFloor: the documented verdict vector for the whole vocabulary, in contract order', () => {
-  const vocab = ['tangential', 'needs-human-decision', 'pre-existing-outside-diff', 'genuinely-larger', 'blocked-external', 'blocked-dependency'];
-  assert.deepStrictEqual(vocab.map(clearsFloor), [false, true, false, true, true, true]);
+  const vocab = ['tangential', 'needs-human-decision', 'pre-existing-outside-diff', 'genuinely-larger', 'blocked-external', 'blocked-dependency', 'needs-verification'];
+  assert.deepStrictEqual(vocab.map(clearsFloor), [false, true, false, true, true, true, true]);
 });
+
+test('clearsFloor: needs-verification clears the floor (#4679)', () => assert.strictEqual(clearsFloor('needs-verification'), true));
 
 test('clearsFloor: a free-prose reason that merely contains a vocabulary word is not the structured value itself', () => {
   // exact-match only: whitespace or case variants, or prose merely mentioning a

@@ -208,7 +208,7 @@ function teardownRun(runDir, opts = {}) {
   let deadOwnerOverride = false;
 
   if (state.status === 'refused-foreign') {
-    const refusal = (verdict) => ({ lines: [`state: refused — run recorded by another session (run-liveness: ${verdict}); teardown-run overrides this only for a --merged teardown of a run whose owner is dead`] });
+    const refusal = (verdict) => ({ lines: [`state: refused — run recorded by another session (run-liveness: ${verdict}); teardown-run overrides this only for a --merged teardown of a run whose owner is dead`], closed: false });
     if (mode !== 'merged') return refusal('not checked');
     const liveness = runLiveness(runDir, opts.liveness);
     if (liveness.verdict !== 'dead') return refusal(liveness.verdict);
@@ -218,8 +218,10 @@ function teardownRun(runDir, opts = {}) {
     lines.push(`owner: session ${owner} is not running (run-liveness: dead) — merged teardown proceeds from this session`);
   }
   if (state.status === 'refused-live-worktree') {
-    return { lines: ['state: refused — run has no recorded owner and its worktree still exists on disk; teardown-run does not override this'] };
+    return { lines: ['state: refused — run has no recorded owner and its worktree still exists on disk; teardown-run does not override this'], closed: false };
   }
+  // #5555: the caller writes timing.json exactly when Step 1's close took effect.
+  const closed = state.status === 'closed' && !!state.writeOk;
 
   // Step 1 (state).
   if (!state.writeOk) {
@@ -242,7 +244,7 @@ function teardownRun(runDir, opts = {}) {
     lines.push('worktree: skipped — could not determine main checkout root from run dir');
     lines.push('branch: skipped — could not determine main checkout root from run dir');
     lines.push('remote ref: skipped — could not determine main checkout root from run dir');
-    return { lines };
+    return { lines, closed };
   }
 
   // Step 3 (worktree removal) — never forced; a locked worktree means either a live session
@@ -343,7 +345,7 @@ function teardownRun(runDir, opts = {}) {
     }
   }
 
-  return { lines };
+  return { lines, closed };
 }
 
 module.exports = { teardownRun, branchOfWorktree, repoSpecOf, defaultGhApiDelete, describeGitFailure, findWorktreeEntry };
