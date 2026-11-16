@@ -3,9 +3,11 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { run } = require('../plugin/bin/backlog-grant-gate');
 
-// The only three gh fetches this CLI makes, keyed by args[3]: the
+// The only gh calls this CLI makes: three fetches keyed by args[3] (the
 // ready-labeled candidate pool, the parent-issue pull, and the historical
-// `--state all` record set. Anything else is an unexpected call and fails
+// `--state all` record set) plus the two author-association enrichment calls
+// (`repo view`, `api graphql`), which run only when a record carries an
+// `Origin:` line. Anything else is an unexpected call and fails
 // the test loudly rather than returning a plausible empty page.
 function stubGh(args) {
   if (['ready', 'parent-issue', 'all'].includes(args[3])) return JSON.stringify([]);

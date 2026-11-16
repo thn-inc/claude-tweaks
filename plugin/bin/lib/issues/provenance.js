@@ -28,7 +28,12 @@
 // claim a side-effect class (`authorTrust`, from issueAuthorTrust below); an
 // untrusted author's line is ignored and the record resolves human. An
 // `unknown` author (no attestation on the payload) fails OPEN to the line, the
-// pre-gate behaviour: absent evidence is not evidence of a forger.
+// pre-gate behaviour: absent evidence is not evidence of a forger. The
+// association is the author's current one, as seen by the fetching token: a
+// former collaborator's old records, or a private org member seen through a
+// token without org visibility, can read CONTRIBUTOR/NONE, so their `Origin:`
+// lines count as untrusted and the record resolves human — the fail-closed
+// direction, accepted.
 //
 // This module reads that axis. It never writes one, and never extends ORIGINS.
 const { ORIGINS } = require('./record.js');

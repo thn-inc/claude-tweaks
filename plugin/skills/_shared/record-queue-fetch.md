@@ -86,7 +86,7 @@ else
 fi
 ```
 
-**Author association (#4577).** The `enrichRecordsFile` line adds each `Origin:` record's `authorAssociation` (`gh issue list --json` has no such field) through aliased GraphQL batches, so `provenance.js`'s `issueAuthorTrust` can ignore an outsider's `Origin:` line. It fails open: a failed batch, an unresolvable repo or an unreadable file leaves the records as fetched and prints one `author-association enrichment incomplete …` line on stderr, and those records keep the pre-#4577 Origin-line behaviour. A fresh snapshot is never re-enriched.
+**Author association (#4577).** The `enrichRecordsFile` line adds each `Origin:` record's `authorAssociation` (`gh issue list --json` has no such field) through aliased GraphQL batches, so `provenance.js`'s `issueAuthorTrust` can ignore an outsider's `Origin:` line. It fails open: a failed batch, an unresolvable repo or an unreadable file leaves the records as fetched and prints one `author-association enrichment incomplete …` line on stderr, and those records keep the pre-#4577 Origin-line behaviour. A fresh snapshot is never re-enriched. The association is the author's current one, as seen by the fetching token: a former collaborator's old records, or a private org member seen through a token without org visibility, can read `CONTRIBUTOR`/`NONE`, so their `Origin:` lines count as untrusted and the record resolves `human:human` — the fail-closed direction, accepted.
 
 The fences quote every `{tmp-*}` placeholder themselves — substitute a bare path or a bare `$VAR`, never a pre-quoted value.
 

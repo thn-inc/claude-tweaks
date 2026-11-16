@@ -173,7 +173,9 @@ test('#4505: resolveSubIssueNumbers (native) sends only the owner/repo calls thr
 
 // --- computeOutlook: the full Step 0 -> Step 2 Phase A pipeline ---
 
-// computeOutlook's three gh fetches, keyed by args[3]. There is deliberately
+// computeOutlook's three gh fetches, keyed by args[3], plus the two
+// author-association enrichment calls (`repo view`, `api graphql`) that run
+// only when a record carries an `Origin:` line. There is deliberately
 // no `--state open` case: the open-issue set the Blocked-by filter reads is
 // derived from the `--state all` rows' own `state` field, never a second fetch.
 function ghRunner({ candidates = [], records = [], parents = [] }) {
