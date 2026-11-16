@@ -70,7 +70,14 @@ The record's Decision paragraph: "Where this record's wording leaves a choice be
 - Create: `tests/bin-lib/pre-review-catchup/fixtures.js`
 - Modify: `tests/bin-lib/pre-review-catchup/cli.test.js:19-45` (`FIVE_LINES`, `fixture()`)
 - Test: `tests/helpers-git-template.test.js`
-- Test (existing `originWithTwoClones` callers, run unchanged): `tests/adopted-branch-collision-snippet-fixture.test.js`, `tests/bin-lib/release-tip/arrived.test.js`, `tests/bin-lib/release-tip/check.test.js`, `tests/bin-lib/release-tip/cli.test.js`, `tests/bin-lib/worktree/remote-branch-collision-cli.test.js`, `tests/bin-lib/worktree/remote-branch-collision.test.js`, `tests/release-as-anchor-conformance.test.js`, `tests/release-review-tree-check-conformance.test.js`
+- Test: `tests/adopted-branch-collision-snippet-fixture.test.js` (existing `originWithTwoClones` caller, run unchanged)
+- Test: `tests/bin-lib/release-tip/arrived.test.js` (existing caller, run unchanged)
+- Test: `tests/bin-lib/release-tip/check.test.js` (existing caller, run unchanged)
+- Test: `tests/bin-lib/release-tip/cli.test.js` (existing caller, run unchanged)
+- Test: `tests/bin-lib/worktree/remote-branch-collision-cli.test.js` (existing caller, run unchanged)
+- Test: `tests/bin-lib/worktree/remote-branch-collision.test.js` (existing caller, run unchanged)
+- Test: `tests/release-as-anchor-conformance.test.js` (existing caller, run unchanged)
+- Test: `tests/release-review-tree-check-conformance.test.js` (existing caller, run unchanged)
 
 **Interfaces:**
 - Produces: `originWithTwoClones(prefix: string, opts?: { key?: string, seed?: (ops: { root, work, other, env, run, commit }) => void })` — without `opts` exactly today's behavior and key; with `seed`, a `TypeError('originWithTwoClones: seed needs a key')` unless `key` is a non-empty string, template key `git-fixtures:origin-two-clones:${key}`, and `seed` runs as the template build's last step with the build's own ops and template-side paths.
