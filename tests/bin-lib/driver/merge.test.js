@@ -11,7 +11,7 @@ const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const {
   merge, parkComment, conflictComment, refusedComment, classifyMergeFailure, REASONS, PREFIXED_REASONS, isReason,
-  MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS, PARK_TIMEOUT_MS,
+  MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS, parkTimeoutMs,
 } = require(path.join(LIB, 'driver', 'merge'));
 const { MERGE_STEP_NAMES } = require(path.join(LIB, 'driver', 'events'));
 const { createJudgments } = require(path.join(LIB, 'driver', 'judgments'));
@@ -3365,8 +3365,8 @@ test('AC3.7: a local control-mode target parks instead of merging', async () => 
   const [p] = parkCalls(h, 'park');
   assert.equal(flagOf(p, '--head'), CTX.head, 'the head the gate read');
   // The park's own bound: the sum of its steps' bounds (5 CLI calls, the archive's reconcile bound, two git calls).
-  assert.equal(PARK_TIMEOUT_MS, 5 * 120000 + RECONCILE_TIMEOUT_MS + 2 * 30000);
-  assert.equal(p.timeout, PARK_TIMEOUT_MS);
+  // The harness carries no gitTimeoutMs, so the budget uses git's 30 s default.
+  assert.equal(p.timeout, 5 * 120000 + RECONCILE_TIMEOUT_MS + 2 * 30000);
   assert.equal(parkCalls(h, 'decide')[0].timeout, 120000, 'decide keeps the ordinary CLI bound');
   assert.deepEqual(['--run', '--record', '--claimed', '--pr', '--repo'].map((f) => flagOf(p, f)), [CTX.runDir, '7', '7', '9', 'o/r']);
   // Step 2.9 sits after the gate (Step 2.5) and before Step 3's pre-merge label read.
@@ -3442,7 +3442,10 @@ test('decide failing closed never merges', async () => {
     { code: 0, stdout: '{"park":true,"decisions":[]}\n', stderr: '' }, new Error('spawn failed'),
     // Another record's decision, an empty no-park and two decisions for one --record are all unusable.
     decideReply([{ ...LOCAL, record: 8 }]), decideReply([{ ...LOCAL, record: 8, park: false }]), decideReply([]),
-    decideReply([{ ...LOCAL, park: false }, { ...LOCAL, park: false }])]) {
+    decideReply([{ ...LOCAL, park: false }, { ...LOCAL, park: false }]),
+    // A top-level no-park over the record's own park (would fail open), and a non-boolean park.
+    { code: 0, stdout: `${JSON.stringify({ park: false, decisions: [LOCAL] })}\n`, stderr: '' },
+    { code: 0, stdout: `${JSON.stringify({ park: 'yes', decisions: [{ ...LOCAL, park: 'yes' }] })}\n`, stderr: '' }]) {
     const h = mergeHarness({ decide: reply });
     const r = await merge(CTX, h.deps);
     assert.deepEqual([r.outcome, r.reason], ['pending-review', 'supplier-failed'], String(reply.stdout || reply.message));
@@ -3458,14 +3461,34 @@ test('AC6.2: a dev resolution merges exactly as today', async () => {
   assert.deepEqual(pick(r), { outcome: 'merged', reason: null, mergeCommit: MERGE_SHA, postMerge: POST_MERGE_STUB });
   assert.equal(h.calls.filter(isMergeCall).length, 1);
   assert.equal(parkCalls(h, 'park').length, 0);
-  assert.ok(h.events.some((e) => e.step === 'merge-accept-park' && e.status === 'ok'));
+  const ok = h.events.find((e) => e.step === 'merge-accept-park' && e.status === 'ok');
+  assert.match(ok.detail, /target resolved/);
+  assert.doesNotMatch(ok.detail, /control mode off/);
 });
 
 test('AC2a.3: control mode off changes nothing', async () => {
-  const h = mergeHarness({ decide: decideReply([{ record: 7, consulted: false, park: false, target: 'dev', reason: 'control-mode-off' }]) });
+  // decide's real control-off shape: consulted false, no target, no reason.
+  const h = mergeHarness({ decide: decideReply([{ record: 7, consulted: false, park: false, target: null, reason: null }]) });
   const r = await merge(CTX, h.deps);
   assert.deepEqual(pick(r), { outcome: 'merged', reason: null, mergeCommit: MERGE_SHA, postMerge: POST_MERGE_STUB });
   assert.equal(parkCalls(h, 'park').length, 0);
+  const ok = h.events.find((e) => e.step === 'merge-accept-park' && e.status === 'ok');
+  assert.match(ok.detail, /control mode off/);
+  assert.doesNotMatch(ok.detail, /target resolved/);
+});
+
+test('the park budget follows the live git bound through deps.gitTimeoutMs', async () => {
+  const BASE = 5 * 120000 + RECONCILE_TIMEOUT_MS;
+  assert.equal(parkTimeoutMs({}), BASE + 2 * 30000, 'no gitTimeoutMs: git\'s 30 s default');
+  assert.equal(parkTimeoutMs({ gitTimeoutMs: () => 120000 }), BASE + 2 * 120000);
+  for (const bad of [() => 0, () => -1, () => 'x', () => NaN, () => { throw new Error('policy unreadable'); }]) {
+    assert.equal(parkTimeoutMs({ gitTimeoutMs: bad }), BASE + 2 * 30000, String(bad));
+  }
+  const h = mergeHarness({ decide: decideReply([LOCAL]), park: parkReply(), deps: { gitTimeoutMs: () => 90000 } });
+  await merge(CTX, h.deps);
+  assert.equal(parkCalls(h, 'park')[0].timeout, BASE + 2 * 90000);
+  // realDeps carries the live bound (shared-primitives' GIT_TIMEOUT_MS getter).
+  assert.equal(realDeps.gitTimeoutMs(), require(path.join(LIB, 'shared-primitives')).GIT_TIMEOUT_MS);
 });
 
 test('the park check runs once when an --auto refusal degrades to the wait row', async () => {

@@ -1029,12 +1029,13 @@ function acceptPark(s) {
   if (!isObject(only) || only.record !== ctx.record || typeof only.park !== 'boolean' || d.park !== only.park) {
     return stop(s, 'merge-accept-park', 'supplier-failed', 'accept-park.js decide printed an unusable decision; not merged');
   }
-  if (!d.park) {
+  // The record's own decision routes; the top-level `park` only has to agree with it (checked above).
+  if (only.park === false) {
     emit(s, 'merge-accept-park', 'ok', `not parked; no local park (${only.consulted === true ? 'target resolved' : 'control mode off'})`);
     return { ok: true };
   }
   const r = acceptParkCli(s, ['park', '--run', s.runDir, '--record', record, '--claimed', record, '--pr', String(ctx.pr),
-    '--head', ctx.head, '--worktree', ctx.worktree, '--worktree-mode', ctx.adopted ? 'caller' : 'remove', ...repo], PARK_TIMEOUT_MS);
+    '--head', ctx.head, '--worktree', ctx.worktree, '--worktree-mode', ctx.adopted ? 'caller' : 'remove', ...repo], parkTimeoutMs(s.deps));
   followParkedRunDir(s);
   const out = parseJson(String(r.stdout).trim());
   const failed = (isObject(out) && Array.isArray(out.steps) ? out.steps : [])
@@ -1179,15 +1180,26 @@ async function confirm(s, unreadDetail = 'merge call exited 0; state unconfirmed
 
 // The reconcile call mirrors, checks the release and archives the run: it gets a long bound.
 const RECONCILE_TIMEOUT_MS = 150000;
-// The local acceptance park's bound (#4615): `accept-park.js park` runs its five steps in one
-// process, and its node children carry no inner timeout, so the bound is the sum of what each
-// step's calls would get as separate calls from here: the packet's gather, render and post (3 x
-// CLI_TIMEOUT_MS), the deploy-status edit and its decision line (1 x CLI_TIMEOUT_MS), close-run +
-// archive-run (RECONCILE_TIMEOUT_MS, the bound the reconcile that archives a merged run gets), the
-// claim release (1 x CLI_TIMEOUT_MS), and the forced worktree removal (`worktree list` + `worktree
-// remove`, 2 x the 30 s git default: PARK_GIT_BOUND_MS). 5 x 120 s + 150 s + 60 s = 810 s.
-const PARK_GIT_BOUND_MS = 2 * 30000;
-const PARK_TIMEOUT_MS = 5 * CLI_TIMEOUT_MS + RECONCILE_TIMEOUT_MS + PARK_GIT_BOUND_MS;
+// The local acceptance park's budget (#4615), a budget and not a true sum: `accept-park.js park`
+// runs its five steps in one process, its node children carry no inner timeout, and its claim
+// release makes several CAS git calls. Each step gets what its calls would get as separate calls
+// from here: the packet's gather, render and post (3 x CLI_TIMEOUT_MS), the deploy-status edit and
+// its decision line (1 x CLI_TIMEOUT_MS), close-run + archive-run (RECONCILE_TIMEOUT_MS, the bound
+// the reconcile that archives a merged run gets), the claim release (1 x CLI_TIMEOUT_MS), and the
+// forced worktree removal (`worktree list` + `worktree remove`, 2 x the live GIT_TIMEOUT_MS the
+// park's own git calls run under, through `deps.gitTimeoutMs`; 30 s, git's default, when the deps
+// carry none or it is unusable). At the defaults: 5 x 120 s + 150 s + 2 x 30 s = 810 s.
+const PARK_GIT_DEFAULT_MS = 30000;
+function parkTimeoutMs(deps) {
+  let git = PARK_GIT_DEFAULT_MS;
+  try {
+    const v = typeof deps.gitTimeoutMs === 'function' ? deps.gitTimeoutMs() : undefined;
+    if (Number.isSafeInteger(v) && v > 0) git = v;
+  } catch {
+    // an unreadable bound keeps the default: the budget is never shorter than git's own default
+  }
+  return 5 * CLI_TIMEOUT_MS + RECONCILE_TIMEOUT_MS + 2 * git;
+}
 const NOT_LOCKED = /not locked/i;
 
 // The ONLY git call site in this module: every git argv is a literal array passed here (the
@@ -1570,5 +1582,5 @@ function isReason(reason) {
 
 module.exports = {
   merge, parkComment, conflictComment, refusedComment, classifyMergeFailure, REASONS, PREFIXED_REASONS, isReason,
-  MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS, PARK_TIMEOUT_MS,
+  MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS, parkTimeoutMs,
 };
