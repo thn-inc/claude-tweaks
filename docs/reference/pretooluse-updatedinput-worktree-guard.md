@@ -95,7 +95,7 @@ Control, without the plugin (`<wt>` is `/Users/…/.claude/worktrees/probe-5588-
 ```
 TOOL_RESULT toolu_0159vAQvWuQomuo5gM4MxxX6 is_error=true: "This session is isolated in the worktree <wt>, but this command points git at a directory computed at runtime (-C .), which can't be verified before it runs. Refusing to run it ..."
 TOOL_RESULT toolu_01JdTUYUC4xK7iZD2RXq59gS is_error=true: "This session is isolated in the worktree <wt>, but this command redirects git through a glob pattern that expands at runtime. Refusing to run it ..."
-TOOL_RESULT toolu_017e3qCDwPbyRAU1Tk93sM3W is_error=true: "This session is isolated in the worktree <wt>, but this command names git in a form too complex to verify that it stays inside the worktree. Refusing to run it — ... Split it into plain, separate commands ..."
+TOOL_RESULT toolu_017e3qCDwPbyRAU1Tk93sM3W is_error=true: "This session is isolated in the worktree <wt>, but this command names git in a form too complex to verify that it stays inside the worktree. Refusing to run it ..."
 ```
 
 - **`git -C . rev-parse --short HEAD`:** refused in the control; with the plugin, `drop-git-C-cwd` rewrote it to `git rev-parse --short HEAD`, which ran.
