@@ -390,6 +390,7 @@ test('issueAuthorTrust classifies a record by its author', () => {
     [{ authorAssociation: 'CONTRIBUTOR', author: { is_bot: true } }, 'trusted'],
     [{ author_association: 'NONE', user: { type: 'Bot' } }, 'trusted'],
     [{ author: { is_bot: true } }, 'trusted'],
+    [{ user: { type: 'Bot' } }, 'trusted'],
     [{}, 'unknown'],
     [{ author: { is_bot: false } }, 'unknown'],
     [null, 'unknown'],
