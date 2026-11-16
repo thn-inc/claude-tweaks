@@ -44,7 +44,7 @@ A log can name any path: a quoted child's temp dir, another checkout, `tests/../
 
 ### A `node --test` file argument is a glob on Node 21 and later
 
-From Node 21, `node --test` reads each file argument as a glob, so the file it runs is whatever the pattern matches, not the file the argument names. In a directory holding `a.test.js` and a literal `[ab].test.js`, `node --test '[ab].test.js'` runs `a.test.js`. With a literal `[c].test.js` and no `c.test.js`, it runs nothing and exits 1 with `Could not find '[c].test.js'`. Node 20, the version CI runs, runs the literal file in both cases (probed on v20.12.0, v21.7.1 and v26.13.1). The log is then evidence about another file, or about none. The argument list reaches the runner with no shell, so quoting does not help: the runner expands the pattern itself.
+From Node 21, `node --test` reads each file argument as a glob, so the file it runs is whatever the pattern matches, not the file the argument names. In a directory holding `a.test.js` and a literal `[ab].test.js`, passing `'[ab].test.js'` to `node --test` runs `a.test.js`. With a literal `[c].test.js` and no `c.test.js`, it runs nothing and exits 1 with `Could not find '[c].test.js'`. Node 20, the version CI runs, runs the literal file in both cases (probed on v20.12.0, v21.7.1 and v26.13.1). The log is then evidence about another file, or about none. The argument list reaches the runner with no shell, so quoting does not help: the runner expands the pattern itself.
 
 A caller that runs `node --test` on a path it does not control refuses, before it spawns, every character that makes a path match anything but itself: `[ ] { } ( ) ! + @`, plus `*`, `?` and `\`. `plugin/bin/lib/driver/review.js`'s `PATH_RULES` does this with its `glob-char` rule, after `reserved-char` (`*` `?`) and `backslash`. Its comment records the probe over every printable ASCII character (#5222).
 
@@ -96,7 +96,7 @@ The baseline base run adds one whole-suite run per failing check, so `.github/wo
 | In an isolated single-file run (the per-file base run or the isolated HEAD rerun): a non-zero cancelled count or a runner-level `ℹ Error:`. In the base run, also a failure whose diagnostic says it timed out or was cancelled (`INCONCLUSIVE_RE`) | Did not finish, or failed outside any test. That run is no evidence: it cannot make the file baseline or flaky. The file is `attributable` unless only the base run failed this way and the isolated HEAD run is clean (flaky); a base run never rescues an isolated HEAD run that did not finish |
 | Nesting that does not close | No evidence |
 | A parent `✖` with no listing left for it (spec), or `failureType: 'subtestsFailed'` (TAP) | Inherited from a child. Not the parent's own failure |
-| A full-run failure that is absent from an isolated run | Not a pass. Only the test's own `✔` in that run counts |
+| A full-run failure that is absent from an isolated run | Not a pass. Only the test's own `✔` in that run counts — except a wholly file-level full-run failure (a killed or timed-out child; spec shows no signal), which names no test: a clean isolated run is then the evidence (#4424) |
 
 ## Project Conventions
 
@@ -113,7 +113,7 @@ The baseline base run adds one whole-suite run per failing check, so `.github/wo
 ## Common Operations
 
 ```bash
-node --test tests/bin-lib/verify/extract.test.js tests/bin-lib/verify/baseline.test.js
+node tools/run-tests.js tests/bin-lib/verify/extract.test.js tests/bin-lib/verify/baseline.test.js
 node --test --test-reporter=tap tests/bin-lib/verify/extract.test.js   # capture the TAP shape of a real run
 ```
 

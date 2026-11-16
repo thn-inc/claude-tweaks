@@ -40,8 +40,7 @@ const ROW_LENGTH_MULTIPLE = 2;
 
 // A median over a handful of rows is set by the outlier itself, so the relative
 // comparison would compare a row against a baseline it defines. Below this many
-// rows the check reports that it has no baseline instead of guessing — the same
-// posture the eval cost check takes with a thin history.
+// rows the check reports that it has no baseline instead of guessing.
 const MIN_ROW_SAMPLE = 20;
 
 // ── Signal 4: skill file size outliers ─────────────────────────────────────

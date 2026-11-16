@@ -55,7 +55,7 @@ const SETTLE_STEP_NAMES = Object.freeze([
 // for the same reason as SETTLE_STEP_NAMES: the pipeline-step list is pinned.
 const MERGE_STEP_NAMES = Object.freeze([
   'merge-entry', 'merge-supplier', 'merge-check', 'merge-acceptance', 'merge-closing-links', 'merge-compose',
-  'merge-overlap', 'merge-ready', 'merge-gate', 'merge-watch', 'merge-park', 'merge-conflict', 'merge-call', 'merge-confirm',
+  'merge-overlap', 'merge-ready', 'merge-gate', 'merge-watch', 'merge-park', 'merge-conflict', 'merge-accept-park', 'merge-call', 'merge-confirm',
   'merge-post-merge', 'merge-release-status', 'merge-reconcile', 'merge-teardown',
   'merge-delete-branch', 'merge-close-run',
 ]);
