@@ -4,7 +4,9 @@
 // control mode off); writeParkDeployStatus / parkStateOf write and read the park's three fields
 // in the acceptance packet's Deploy status section; isParkedForLocalAcceptance is the one
 // predicate over a record's labels plus its packet, failing to 'unknown' when the packet is
-// unreadable. The pending label is read through acceptanceOf, never named here. No I/O.
+// unreadable. The pending label is read through acceptanceOf, never named here. runPark is the
+// ordered park executor over the five steps bin/accept-park.js park injects; it does no I/O of
+// its own, and nothing else here does any.
 'use strict';
 
 const { resolveAcceptanceTarget } = require('./target');
@@ -74,4 +76,37 @@ function isParkedForLocalAcceptance({ labels, packet } = {}) {
   return state.target === 'local' && state.reason === PARK_REASON ? 'parked' : 'not-parked';
 }
 
-module.exports = { PARK_REASON, decideAcceptanceRoute, decideSeries, writeParkDeployStatus, parkStateOf, isParkedForLocalAcceptance };
+// The park, in its pinned order. Steps 1 and 2 put the park state on the record, so a failure
+// there stops the park before the run is archived. Steps 3-5 are cleanup: each runs whatever the
+// one before it did, and a failure there leaves the record parked (label plus packet) and is
+// reported in `steps`. A step is `async () => ({ ok, detail })`; a throw is `ok: false`.
+const PARK_STEPS = Object.freeze([
+  { step: 1, name: 'postPacket' },
+  { step: 2, name: 'writeDeployStatus' },
+  { step: 3, name: 'archiveRun' },
+  { step: 4, name: 'releaseClaim' },
+  { step: 5, name: 'removeWorktree' },
+]);
+const STOPPING_STEPS = new Set([1, 2]);
+
+async function runPark(steps = {}) {
+  const missing = PARK_STEPS.filter(({ name }) => typeof steps[name] !== 'function').map(({ name }) => name);
+  if (missing.length > 0) throw new TypeError(`runPark: missing step functions: ${missing.join(', ')}`);
+  const results = [];
+  for (const { step, name } of PARK_STEPS) {
+    let ok = false;
+    let detail = '';
+    try {
+      const result = await steps[name]();
+      ok = result?.ok === true;
+      detail = typeof result?.detail === 'string' ? result.detail : '';
+    } catch (err) {
+      detail = err && err.message ? err.message : String(err);
+    }
+    results.push({ step, name, ok, detail });
+    if (!ok && STOPPING_STEPS.has(step)) return { outcome: 'park-failed', reason: PARK_REASON, steps: results };
+  }
+  return { outcome: 'parked', reason: PARK_REASON, steps: results };
+}
+
+module.exports = { PARK_REASON, runPark, decideAcceptanceRoute, decideSeries, writeParkDeployStatus, parkStateOf, isParkedForLocalAcceptance };

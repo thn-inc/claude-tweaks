@@ -30,7 +30,7 @@
 const { SECTIONS, WITHHELD_TEXT, DEPLOY_REF_SOURCE, isDeployRef } = require('../wrap-up/packet-contract');
 const { dispositionState, APPROVAL_PROVENANCE_LABEL, APPROVAL_PROVENANCE_LABELS } = require('./acceptance');
 const { LABELS } = require('./record-vocabulary');
-const { TARGET_RE, parkFieldsOf } =require('../accept/park-grammar');
+const { TARGET_RE, parkFieldsOf } = require('../accept/park-grammar');
 const { findCredentialInText } = require('../wrap-up/packet-links');
 
 const PACKET_STATES = Object.freeze(['awaiting-local', 'waiting-for-deploy', 'live-on-dev', 'already-decided', 'no-packet', 'unhandled']);
