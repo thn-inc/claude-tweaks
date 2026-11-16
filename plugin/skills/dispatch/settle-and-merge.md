@@ -1,6 +1,6 @@
 # Dispatch — Settle + Auto-merge Gate
 
-Loaded by `/claude-tweaks:dispatch` Step 6 (a `/flow` HARD-GATE failure) and the Auto-merge gate (a group whose every member carries `auto:merge` or a matured `auto:merge-pending`, reaching `/wrap-up`'s Review Console) — both are conditional branches that don't run on the common clean-pending-review path, so they're kept out of `SKILL.md`'s always-loaded body.
+Loaded by `/claude-tweaks:dispatch` Step 6 (a `/flow` HARD-GATE failure) and the Auto-merge gate (a group whose every member carries `auto:build` with `auto:merge` or a matured `auto:merge-pending`, reaching `/wrap-up`'s Review Console) — both are conditional branches that don't run on the common clean-pending-review path, so they're kept out of `SKILL.md`'s always-loaded body.
 
 **The Auto-merge gate splits across two threads; Settle does not.** Settle (below) runs entirely inside whichever Task call hits the failure, as it always has. The Auto-merge gate's authorization check, content judgment, and acceptance labeling also run inside the second Task call — but its actual merge execution cannot: a Task-tool subagent is cwd-pinned to the worktree it inherited at launch and cannot reach the main checkout (`dispatch/SKILL.md` Step 5's sequential-execution note: "A Task-tool subagent is always launched cwd-pinned to the dispatching session's own worktree"). That final step runs in the *dispatching session's own thread* instead, per **Dispatching-session merge execution** at the end of this file.
 
@@ -243,7 +243,7 @@ A `correctness`- or `ambiguous`-classified failure revokes `auto:merge` before t
 
 ## Auto-merge gate (`auto:merge` or matured `auto:merge-pending` groups only)
 
-Because a bundle shares one branch/worktree, the merge decision is necessarily group-wide even though blast radius is attributed per record below: **every member of the group must carry `auto:merge`, either already or via a matured `auto:merge-pending`** (see Authorization below) for the gate to apply at all — a group with even one `auto:build`-only member falls back to the normal pending-review path for the whole group; mixed grants inside one bundle are never split at merge time, and a group with even one still-pending, not-yet-matured member falls back the same way (the group's *slowest* member's veto window governs the whole group, same as its slowest member's review verdict already does below).
+Because a bundle shares one branch/worktree, the merge decision is necessarily group-wide even though blast radius is attributed per record below: **every member of the group must carry `auto:build` and `auto:merge`, the latter already or via a matured `auto:merge-pending`** (see Authorization below) for the gate to apply at all — a group with even one `auto:build`-only member falls back to the normal pending-review path for the whole group; mixed grants inside one bundle are never split at merge time, and a group with even one still-pending member falls back the same way (the *slowest* member's veto window governs the whole group, as its review verdict already does below).
 
 When a qualifying group's `/flow` run reaches `/wrap-up`'s Review Console, check two layers before presenting it for approval — but first, a live-drain overlap hold (refs #1985):
 
@@ -253,14 +253,14 @@ gate)" section, this skill's directory, and follow it before Authorization/Conte
 
 1. **Authorization** — a two-phase check: evaluate every group member first (fresh labels +
    comments, `evaluateMaturation` per member), act only if every one cleared. A member already
-   carrying `auto:merge` clears immediately (`already-mature`); a `matured` `auto:merge-pending`
+   carrying `auto:merge` with `auto:build` clears (`already-mature`); a `matured` `auto:merge-pending`
    member is promoted — label swap plus the merge-lane circuit breaker's `watched.json` seed,
    the moment merge trust actually activates. Any member `within-veto-window`, `not-pending`
-   (a permanent human veto), or `unknown-age` fails Authorization for the **whole group** —
+   (a permanent human veto), `unknown-age`, or `no-build-grant` (no live `auto:build`) fails Authorization for the **whole group** —
    apply zero promotions this firing, even for another member that independently cleared; mixed
-   grants are never split at merge time, the same rule an `auto:build`-only member already gets.
+   grants are never split at merge time, as for an `auto:build`-only member.
    Evaluation and promotion never interleave (an early promotion has no rollback path if a later
-   member then fails), which is why this is a two-phase check and not a per-member loop. Full
+   member then fails), hence two phases, not a per-member loop. Full
    procedure — the `evaluateMaturation`/promotion code, both phases' log-line shapes, and the
    interleaving hazard in full: `grant-maturation-gate.md` in this skill's directory.
 2. **Content judgment** — for each member of the group, invoke `/claude-tweaks:assess-agent-autonomy` in `merge-check` mode: `Skill(skill: "claude-tweaks:assess-agent-autonomy", args: "merge-check #{n}")`. This weighs the diff's content, `/review`'s findings, and a test-exclusion-aware blast-radius summary (`bin/lib/issues/blast-radius.js`) holistically, replacing the old three independent mechanical checks (scoring eligibility, runtime cleanliness, blast radius) that stood in for one real question — was `docs/superpowers/specs/2026-08-03-mechanical-vs-substantive-merge-judgment-design.md`, deleted `d83f0720`. **Every member's verdict must be `auto-merge`** for the group to proceed — a single `needs-human` verdict anywhere in the group falls the whole group back to the normal pending-review path. That verdict is authoritative all the way down: it survives into the Review Console's Auto-resolution short-circuit, where `consoleAutoResolve`'s default-merge never overrides it (the Needs-human carve-out in `wrap-up/review-console.md` and `flow/multispec-review-console.md`).
