@@ -257,6 +257,60 @@ test('a hook printing more than 1 MiB still reports its real exit status', () =>
   assert.strictEqual(r.code, 0, r.stderr);
 });
 
+// changelog-max-releases (#5563) against a real repository: the trim is its own commit after
+// the tag, so the tag (and the footer's commit) still hold the full file.
+const sectionsOf = (text) => [...text.matchAll(/^## \[?(\d+\.\d+\.\d+)/gm)].map((m) => m[1]);
+function withFourSections(policy) {
+  const root = tagged('1.2.0');
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  const four =['1.2.0', '1.1.0', '1.0.0', '0.9.0'].map((v) => `## [${v}](https://example.test/c/v${v}) (2026-01-01)\n\n\n### Features\n\n* f${v}\n`).join('\n');
+  commit(root, 'docs: seed', { 'CHANGELOG.md': `# Changelog\n\n${four}`, '.claude-tweaks/policy.yml': policy });
+  commit(root, 'fix: one');
+  return root;
+}
+const show = (root, spec) => fixtureGit(['-C', root, 'show', spec]).toString();
+const rev = (root, ref) => fixtureGit(['-C', root, 'rev-parse', ref]).toString().trim();
+
+test('AC3.2 / AC9 (local, real git): key 2 → HEAD is the trim commit over the release commit; the tag and the footer commit hold the untrimmed file', () => {
+  const root = withFourSections('changelog-max-releases: 2\n');
+  const r = runCli(root);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.strictEqual(r.stderr, '');
+  assert.match(r.stdout, /released v1\.2\.1/);
+  assert.strictEqual(fixtureGit(['-C', root, 'log', '-1', '--format=%s']).toString().trim(), 'chore: trim CHANGELOG.md to the newest 2 releases');
+  assert.strictEqual(fixtureGit(['-C', root, 'log', '-1', '--format=%s', 'HEAD~1']).toString().trim(), 'chore(release): v1.2.1');
+  assert.strictEqual(rev(root, 'v1.2.1^{commit}'), rev(root, 'HEAD~1'), 'the tag stays on the release commit');
+  const head = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
+  assert.deepStrictEqual(sectionsOf(head), ['1.2.1', '1.2.0']);
+  assert.match(head, new RegExp(`\\n## Older releases\\n\\nFull file up to v1\\.2\\.1: commit ${rev(root, 'HEAD~1')}\\n`));
+  assert.doesNotMatch(head, /\]\(https:\/\/github\.com/, 'no origin: the footer carries a sha and no link');
+  assert.deepStrictEqual(sectionsOf(show(root, 'v1.2.1:CHANGELOG.md')), ['1.2.1', '1.2.0', '1.1.0', '1.0.0', '0.9.0']);
+  assert.deepStrictEqual(sectionsOf(show(root, `${rev(root, 'HEAD~1')}:CHANGELOG.md`)), ['1.2.1', '1.2.0', '1.1.0', '1.0.0', '0.9.0']);
+  assert.ok(!show(root, 'v1.2.1:CHANGELOG.md').includes('## Older releases'));
+  assert.strictEqual(fixtureGit(['-C', root, 'status', '--porcelain']).toString(), '');
+});
+
+test('AC3.2 (local, real git): with an origin the trim commit is pushed with the branch and the tag still names the release commit', () => {
+  const root = withFourSections('changelog-max-releases: 2\n');
+  const origin = bareOrigin(root);
+  const r = runCli(root);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.strictEqual(r.stderr, '');
+  const headSha = rev(root, 'HEAD');
+  assert.strictEqual(fixtureGit(['-C', origin, 'rev-parse', 'refs/heads/main']).toString().trim(), headSha);
+  assert.strictEqual(fixtureGit(['-C', origin, 'rev-parse', 'refs/tags/v1.2.1^{commit}']).toString().trim(), rev(root, 'HEAD~1'));
+});
+
+test('AC2.1 (local, real git): the key at 0 or absent leaves one release commit and an untrimmed file', () => {
+  for (const policy of ['changelog-max-releases: 0\n', 'integration-branch: main\n']) {
+    const root = withFourSections(policy);
+    const r = runCli(root);
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.strictEqual(fixtureGit(['-C', root, 'log', '-1', '--format=%s']).toString().trim(), 'chore(release): v1.2.1');
+    assert.deepStrictEqual(sectionsOf(fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8')), ['1.2.1', '1.2.0', '1.1.0', '1.0.0', '0.9.0']);
+  }
+});
+
 test('a relative --root resolves against the injected cwd, not the process cwd', () => {
   const root = tagged('1.2.0');
   commit(root, 'fix: one');

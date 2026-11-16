@@ -31,7 +31,8 @@ const { conventionalHistory } = require('./lib/release-local/commits.js');
 const { bumpPart } = require('./lib/release-local/bump.js');
 const manifest = require('./lib/release-local/manifest.js');
 const { renderSection, prependSection, parseGitHubRemote } = require('./lib/release-local/changelog.js');
-const { precheck } = require('./lib/release/precheck.js');
+const { prepareTrim } = require('./lib/changelog-release-trim.js');
+const { precheck } =require('./lib/release/precheck.js');
 const { guardReleasableTree, pushAfterAncestryCheck } = require('./lib/release/run.js');
 const { resolvePolicyKeys } = require('./lib/policy-schema.js');
 const { withIndexLockRetry } = require('./lib/git-retry.js');
@@ -122,6 +123,42 @@ function planLines({ version, part, history, hook, edits, unconventional, releas
     for (const c of unconventional) lines.push(`  ${c.sha.slice(0, 7)} ${c.subject}`);
   }
   return lines;
+}
+
+// `changelog-max-releases` (#5563): after the tag, the trimmed CHANGELOG.md lands in its own
+// commit, so the tag (and the footer's commit) keep the full file. The release commit is not
+// pushed yet, so the ancestry proof reads the local branch only. A trim never changes the
+// release's outcome: any failure puts the file and the index back, prints one line, and the
+// run carries on to the push.
+function trimAfterTag(deps, { policyRaw, branch }) {
+  let original = null;
+  let written = false;
+  try {
+    original = deps.readFile('CHANGELOG.md');
+    const trimmed = prepareTrim({
+      text: original,
+      readPolicy: () => policyRaw,
+      git: deps.git,
+      ancestorRefs: [`refs/heads/${branch}`],
+      stderr: deps.stderr,
+      trim: deps.trimChangelog,
+    });
+    if (!trimmed) return;
+    written = true;
+    deps.writeFile('CHANGELOG.md', trimmed.text);
+    deps.git(['add', '--', 'CHANGELOG.md']);
+    withIndexLockRetry(deps.git)(['commit', '-m', `chore: trim CHANGELOG.md to the newest ${trimmed.count} releases`]);
+  } catch (err) {
+    if (written) {
+      try {
+        deps.writeFile('CHANGELOG.md', original);
+        deps.git(['add', '--', 'CHANGELOG.md']);
+      } catch {
+        // best effort: the failure line below is what the operator needs
+      }
+    }
+    deps.stderr(`changelog trim: failed (${String((err && err.message) || err).split(/\r?\n/)[0]}); file left untrimmed\n`);
+  }
 }
 
 function run(argv, deps = {}) {
@@ -227,6 +264,7 @@ function run(argv, deps = {}) {
     stage = 'committed';
     deps.git(['tag', '-a', `v${version}`, '-m', `v${version}`]);
     stage = 'tagged';
+    trimAfterTag(deps, { policyRaw, branch });
     if (hasOrigin) {
       pushAfterAncestryCheck(deps, { branch, refs: [branch, `v${version}`], remoteBranchExists, onDiverged: `origin/${branch} moved between pre-check and push` });
       stage = 'pushed';
