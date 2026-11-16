@@ -14,6 +14,8 @@ files:
   - plugin/bin/dispatch-unlanded-blockers.js
   - plugin/bin/lib/dispatch/shipped-releases.js
   - plugin/bin/lib/issues/materialize-format.js
+  - plugin/bin/lib/issues/build-authority.js
+  - plugin/skills/dispatch/queue-pull-notes.md
 ---
 
 # Learn Why a Named Record Won't Dispatch
@@ -67,6 +69,13 @@ files:
 - **Should understand:** The release time comes from the record's claim tombstone. A missing or unreadable one never downgrades, so the record is judged exactly as before. Any release after a merge downgrades, whatever its reason: a shaping-only release, or the wrap-up release of a run whose own merge left the record open. That is the safe direction: the record builds, and the build's already-shipped exit finds work that is truly done. A PR that merged after the release and matches the title or covers the Key Files still marks the record `shipped` (#4432).
 - **Red flags:** A record whose only mention merged before its latest claim release reported as `shipped`, or given a Close proposal. A PR merged after the release that matches the title or covers the Key Files no longer excluding the record as `shipped`. The `kept:` line for a record with no release at all.
 
+### 2f. The record carries no `auto:build` label
+- **URL:** `plugin/skills/dispatch/SKILL.md` `#N` bullet; `plugin/skills/dispatch/queue-pull-notes.md` `## Typed command`; `plugin/bin/lib/issues/build-authority.js` `formatAuthorityLine`
+- **Action:** Name an open record that has no `auto:build`. It is outside the pool, so the queue pull judges it on the typed command and prints the line Step 2 shows for it: the admit line when the command was typed (the record then builds — the build-a-record-by-typing-its-dispatch-command-5584 journey), or `#N has no auto:build label — not built: typed command not accepted ({reason words}); {remedy} …`, and dispatch stops for that record.
+- **Should feel:** Specific — "no grant" is no longer the whole answer; the line says which condition failed and how to fix it.
+- **Should understand:** Naming still does not bypass the exclusion passes above; a typed command only stands in for the label.
+- **Red flags:** An ungranted named record reported as "absent from this firing's queue" with no typed-command line; a refusal with no reason word.
+
 ### 3. Name several records at once
 - **URL:** `plugin/skills/dispatch/SKILL.md` `#N[,#M,#O...]` bullet
 - **Action:** Run `/claude-tweaks:dispatch #N,#M` where `#N` is excluded and `#M` is eligible. `#N` appears in the `notFound` report with the same named reason as step 2; `#M`'s group proceeds to Step 4.
@@ -87,3 +96,4 @@ files:
 - Updated during build of #4792: names `unlanded-blocker` (a closed out-of-run blocker whose closing commit never reached the integration branch) and `malformed-blocker` (a blocker declaration that cannot be checked), the sixth and seventh removing exclusions, in Step 1 and the Success state; `dispatch-unlanded-blockers.js` added to `files:`. Wrap-up of #4792: Step 2 quotes both report lines, and Step 1's URL names `dispatch-unlanded-blockers.js`
 - Updated during build of #4432: Step 2e covers a record whose only merged mention predates its latest claim release, which is kept with a `kept:` log line instead of read as `shipped`. `shipped-releases.js` added to `files:`
 - Updated during build of #4350: Step 2's not-spec-shaped line names an `unclosed-fence at line L` entry and routes it to `/claude-tweaks:specify #N`. `materialize-format.js` added to `files:`
+- Updated during build of #5584: Step 2f covers a named record without `auto:build`, judged on the typed command and reported with its reason words and remedy. `build-authority.js` and `queue-pull-notes.md` added to `files:`

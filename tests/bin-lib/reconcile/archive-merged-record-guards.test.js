@@ -11,11 +11,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  archiveRunDir, decideArchive, decideArchiveCore, readConsoleState, isOrphanedMint,
+  archiveRunDir, decideArchiveCore, readConsoleState,
   archiveMerged, prefetchArchivePrStates, ORPHAN_MINT_TTL_MS,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, STRUCTURALLY_STUCK_REASONS,
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, archiveRunCommand, compareWorkTwin,
-  classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
+  classifyRunDir, ADHOC_SUPERSEDED_TTL_MS,
   isClosedSlugStuck, recordNumbersFromSlug, refusal, runRecordSet, inFlightRecords,
   consoleResidue, consoleResidueHint, filingRerunRemedy, digestRerunRemedy,
   unfiledCantTellFindings, CANT_TELL_UNFILED_HINT, countOwnerlessNonClean,
@@ -159,10 +159,10 @@ function residueRunDir(consoleBody, { specBody } = {}) {
 }
 const heldItem = (resolution) => ({ id: 'review-debate-deviation.md', section: 'Contested findings', resolution, reason: 'r' });
 
-test('AC6: readConsoleState: a resolved console holding a keep-staged item reads residue, and decideArchive refuses it', () => {
+test('AC6: readConsoleState: a resolved console holding a keep-staged item reads residue, and decideArchiveCore refuses it', () => {
   const runDir = residueRunDir({ resolved: true, items: [heldItem('keep-staged')] });
   assert.strictEqual(readConsoleState(runDir), 'residue');
-  assert.deepStrictEqual(decideArchive({ state: 'MERGED' }, readConsoleState(runDir)), { action: 'skip', reason: 'console-residue' });
+  assert.deepStrictEqual(decideArchiveCore({ state: 'MERGED' }, readConsoleState(runDir)), { action: 'skip', reason: 'console-residue' });
 });
 test('AC2: readConsoleState: a resolved console holding a pending item reads residue', () => {
   assert.strictEqual(readConsoleState(residueRunDir({ resolved: true, items: [heldItem('pending')] })), 'residue');
@@ -170,7 +170,7 @@ test('AC2: readConsoleState: a resolved console holding a pending item reads res
 test('readConsoleState: an acknowledged residue console reads resolved and archives', () => {
   const runDir = residueRunDir({ resolved: true, residueAcknowledgedAt: '2026-10-24T10:00:00Z', items: [heldItem('keep-staged')] });
   assert.strictEqual(readConsoleState(runDir), 'resolved');
-  assert.deepStrictEqual(decideArchive({ state: 'MERGED' }, readConsoleState(runDir)), { action: 'archive' });
+  assert.deepStrictEqual(decideArchiveCore({ state: 'MERGED' }, readConsoleState(runDir)), { action: 'archive' });
 });
 test('readConsoleState: an unresolved item whose staged file is gone is not residue (missing semantics kept)', () => {
   const runDir = residueRunDir({ resolved: true, items: [heldItem('keep-staged')] });
@@ -1053,7 +1053,7 @@ test('#1854: an auto-resolve console.json ({resolved:true, mode:"auto-resolve", 
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-auto-resolve-'));
   fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true, mode: 'auto-resolve', at: '2026-09-06T12:00:00.000Z', ceiling: 'unattended', items: [], merge: { resolution: 'merge', reason: 'x' } }));
   assert.strictEqual(readConsoleState(runDir), 'resolved');
-  const decision = decideArchive({ state: 'MERGED' }, readConsoleState(runDir));
+  const decision = decideArchiveCore({ state: 'MERGED' }, readConsoleState(runDir));
   assert.notStrictEqual(decision.reason, 'console-never-rendered');
   assert.deepStrictEqual(decision, { action: 'archive' });
 });
@@ -1391,8 +1391,8 @@ test('archiveMerged: split-state run dir archives cleanly on one pass when workt
 });
 
 // --- #1732: classifyRunDir — the single classifier every one of the five
-// lifecycle predicates above (isOrphanedMint, isAbandonedInterrupted,
-// isAdHocStandaloneSuperseded, decideArchive, isStructurallyStuck) now
+// lifecycle detections above (the orphaned-mint, abandoned-interrupted and
+// adhoc-superseded classifications, the merged-PR decision, isStructurallyStuck) now
 // delegates to. These tests exercise the classifier directly, at the level
 // the pre-consolidation predicates' own tests above don't reach: the `kind`
 // value itself, and first-match precedence across multiple simultaneously-
@@ -1416,7 +1416,7 @@ test('classifyRunDir: orphaned-mint for a config.yml-less mint past the grace wi
 // Precedence: an ad-hoc-standalone dir whose worktree is definitively gone
 // is old enough to ALSO satisfy orphaned-mint's own bare mtime threshold
 // (ADHOC_SUPERSEDED_TTL_MS is a strict superset of ORPHAN_MINT_TTL_MS's
-// window) — but isOrphanedMint's own precondition (`!isAdHocStandaloneMint`)
+// window) — but the orphaned-mint classification's own precondition (`!isAdHocStandaloneMint`)
 // exempts it, so classifyRunDir's full-precedence pass must land on
 // 'adhoc-superseded', never 'orphaned-mint', for this exact shape. This is
 // the reachable form of the "first-match order" pin the consolidation's own
@@ -1435,22 +1435,24 @@ test('classifyRunDir: adhoc-superseded takes precedence over orphaned-mint for a
   fs.utimesSync(adhocDir, backdated, backdated);
   const result = classifyRunDir({ dir: adhocDir, state, worktrees: [] });
   assert.equal(result.kind, 'adhoc-superseded');
-  assert.equal(isOrphanedMint(adhocDir), false, 'isOrphanedMint must stay exempt for this same shape');
-  assert.equal(isAdHocStandaloneSuperseded(adhocDir, state, []), true);
+  assert.equal(classifyRunDir({ dir: adhocDir, kinds: ['orphaned-mint'] }).kind, 'none', 'the orphaned-mint classification must stay exempt for this same shape');
+  assert.equal(classifyRunDir({ dir: adhocDir, state, worktrees: [], kinds: ['adhoc-superseded'] }).kind, 'adhoc-superseded');
   fs.rmSync(adhocDir, { recursive: true, force: true });
 });
 
-test('classifyRunDir: merged when decideArchiveCore would archive, carrying no TTL', () => {
-  const prState = { state: 'MERGED', mergeCommit: { oid: 'a'.repeat(40) } };
-  const result = classifyRunDir({ prState, consoleState: 'resolved' });
-  assert.equal(result.kind, 'merged');
-  assert.equal(result.ttlMs, null);
+test('decideArchiveCore: archives a merged PR with a resolved console, and carries the skip reason for gh-absent (AC5)', () => {
+  assert.deepStrictEqual(
+    decideArchiveCore({ state: 'MERGED', mergeCommit: { oid: 'a'.repeat(40) } }, 'resolved'),
+    { action: 'archive' },
+  );
+  assert.deepStrictEqual(decideArchiveCore('gh-absent', 'none'), { action: 'skip', reason: 'gh-absent' });
 });
 
-test('classifyRunDir: none with the skip reason carried in evidence when the merged-PR path would skip', () => {
-  const result = classifyRunDir({ prState: 'gh-absent', consoleState: 'none' });
-  assert.equal(result.kind, 'none');
-  assert.equal(result.evidence.skipReason, 'gh-absent');
+test("AC3: classifyRunDir has no merged kind — a prState reads none, with or without kinds: ['merged']", () => {
+  const none = { kind: 'none', ttlMs: null, evidence: {} };
+  const merged = { state: 'MERGED' };
+  assert.deepStrictEqual(classifyRunDir({ prState: merged, consoleState: 'resolved' }), none);
+  assert.deepStrictEqual(classifyRunDir({ prState: merged, consoleState: 'resolved', kinds: ['merged'] }), none);
 });
 
 test('classifyRunDir: structurally-stuck for a qualifying skip reason past the TTL', () => {

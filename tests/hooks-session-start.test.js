@@ -1080,11 +1080,12 @@ test('SessionStart: a throw while rendering the background summary still leaves 
 
 // #1687: the reconcile-background child had no way to learn the spawning
 // session's id at all — neither argv nor env — so archive-merged.js's
-// ownership gate (isAbandonedInterrupted) was permanently inert on the one
-// path that actually runs the 'archive' check in production. session-start.js
-// now threads ctx.input.session_id into the spawned child's own environment
-// via a dedicated var, never CLAUDE_CODE_SESSION_ID (this file's own header
-// comment documents that one as unreliable for a hook-spawned process).
+// ownership gate (the `abandoned-interrupted` classification) was permanently
+// inert on the one path that actually runs the 'archive' check in production.
+// session-start.js now threads ctx.input.session_id into the spawned child's
+// own environment via a dedicated var, never CLAUDE_CODE_SESSION_ID (this
+// file's own header comment documents that one as unreliable for a
+// hook-spawned process).
 test('SessionStart spawn gate: threads ctx.input.session_id into the background child\'s environment as CLAUDE_TWEAKS_SESSION_ID (#1687)', async () => {
   const cp = require('child_process');
   const originalSpawn = cp.spawn;
