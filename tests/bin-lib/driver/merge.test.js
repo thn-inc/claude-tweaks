@@ -3487,8 +3487,14 @@ test('the park budget follows the live git bound through deps.gitTimeoutMs', asy
   const h = mergeHarness({ decide: decideReply([LOCAL]), park: parkReply(), deps: { gitTimeoutMs: () => 90000 } });
   await merge(CTX, h.deps);
   assert.equal(parkCalls(h, 'park')[0].timeout, BASE + 2 * 90000);
-  // realDeps carries the live bound (shared-primitives' GIT_TIMEOUT_MS getter).
-  assert.equal(realDeps.gitTimeoutMs(), require(path.join(LIB, 'shared-primitives')).GIT_TIMEOUT_MS);
+  // realDeps carries the live bound (shared-primitives' GIT_TIMEOUT_MS getter), not a constant: a
+  // child process with the env override set reads a non-default value through it.
+  const { spawnSync } = require('node:child_process');
+  const child = spawnSync(process.execPath,
+    ['-e', 'process.stdout.write(String(require(process.argv[1]).realDeps.gitTimeoutMs()))', path.join(LIB, 'driver', 'run.js')],
+    { encoding: 'utf8', windowsHide: true, timeout: 30000, env: { ...process.env, CLAUDE_TWEAKS_GIT_TIMEOUT_MS: '45000' } });
+  assert.equal(child.status, 0, child.stderr);
+  assert.equal(child.stdout, '45000');
 });
 
 test('the park check runs once when an --auto refusal degrades to the wait row', async () => {
