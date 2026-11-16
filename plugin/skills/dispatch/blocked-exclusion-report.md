@@ -14,7 +14,10 @@ one line before the rest of this step's own output:
 
 A `blockedBy` entry that is a string — `owner/name#N`, a blocker linked natively or declared by a
 `Blocked by owner/name#N` line, optionally suffixed ` (state unreadable)` when its state could not be read (#4793) —
-renders verbatim, never with a `#` prefix; a number renders as `#N`.
+renders verbatim, never with a `#` prefix; a number renders as `#N`. The string
+`native blockers (state unreadable)` (#5309) is not a dependency: it marks a record excluded
+because the `work-links: native` blockers query failed and the pull failed closed. It renders
+verbatim too, so the line names the failed query rather than an open dependency for that record.
 
 Then read the same file's `reason: 'target-missing'` entries (`records: [number], detail: {path}`
 each, #1983 — `queue-pull-script.md` names this report as their reader) and render one line per

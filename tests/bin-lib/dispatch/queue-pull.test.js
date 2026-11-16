@@ -933,6 +933,22 @@ test('#5309 (c) files: resolve-blockers.js exit 2 (gh absent) keeps the gh-absen
   assert.equal(r.store.written.length, 1, 'the write-back is unchanged on files');
 });
 
+test('#5309 (c2) files: resolve-blockers.js exit 1, a null status and a throw each keep the fallback Warning and write back', () => {
+  const cases = [
+    ['exit 1', { status: 1, stdout: '', stderr: 'bad args\n' }, 'bad args\n'],
+    ['null status', { status: null, stdout: '', stderr: 'killed\n' }, 'killed\n'],
+    ['throw', () => { throw new Error('spawn EACCES'); }, 'spawn EACCES\n'],
+  ];
+  for (const [label, outcome, warned] of cases) {
+    const r = pull(nativeScenario(), { transport: 'files', run: noGhOnFiles, prepare: (own) => nativeFiles(own),
+      spawn: { 'resolve-blockers.js': outcome } });
+    assert.deepEqual(r.errs, [`${NATIVE_WARNING_PREFIX}${warned}`], `${label}: ${r.stderr}`);
+    assert.deepEqual(entriesOf(r, 'blocked'), [], label);
+    assert.deepEqual(groupNumbers(r), [[9001], [9003]], label);
+    assert.equal(r.store.written.length, 1, label);
+  }
+});
+
 test('#5309 (d) files: resolve-blockers.js exit 3 fails closed as on gh', () => {
   const r = pull(nativeScenario(), { transport: 'files', run: noGhOnFiles, prepare: (own) => nativeFiles(own),
     spawn: { 'resolve-blockers.js': { status: 3, stdout: '', stderr: 'gh-fault\n' } } });

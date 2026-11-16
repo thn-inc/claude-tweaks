@@ -173,8 +173,9 @@ codebase could add on its own side.
 On a `gh`-absent transport, `bin/queue-pull.js --transport files` still spawns both CLIs
 (`resolve-blockers.js` under `work-links: native` only), and each fails without `gh` (the pull's
 "Warning: native dependency query failed" / "Warning: linked-PR query failed" lines) and dispatch degrades to "no native filtering" / "no open-PR or shipped-candidate exclusion" for the
-whole firing (on a GraphQL-blocked files run with `gh` present, `resolve-blockers.js` exit 3 instead fails closed: every candidate is excluded as `blocked`, #5309) — every queue-pull candidate is treated as unblocked and PR-free regardless of its
-real state. **Documented, required workaround** — promoting #2051's own recommendation from a
+whole firing — every queue-pull candidate is treated as unblocked and PR-free regardless of its
+real state. (A GraphQL-blocked files run with `gh` present is different: there `resolve-blockers.js`
+exits 3 and the pull fails closed, excluding every candidate as `blocked`, #5309.) **Documented, required workaround** — promoting #2051's own recommendation from a
 one-off firing improvisation to a standing step: before finalizing group selection on a `gh`-absent
 firing, manually verify each surviving top-ranked candidate (not the whole queue — just the
 candidate(s) about to be dispatched) via a per-candidate `mcp__github__issue_read` (`get` method)
