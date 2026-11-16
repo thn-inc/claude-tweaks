@@ -1614,19 +1614,22 @@ test('Important 1: the finding-ids order assertion can go red', () => {
 
 const collapseWhitespace = (s) => s.replace(/\s+/g, ' ');
 const dispatchSection = () => collapseWhitespace(sectionOf(tiebreakText(), '## Dispatch'));
-const TIER_ROUTE = /((?:`[a-z]+`(?:, | and )?)+) findings take the `standard` tier/;
+const TIER_ROUTE = /((?:`[a-z]+`(?:, | and )?)+) findings take the `standard` tier/g;
+const NULL_TO_STANDARD = /null or unknown[^.]*`standard`/;
 const OTHER_SEVERITIES_CAPABLE = 'every other severity, a null or unknown one included, the `capable` tier';
 
-// The problems with the Dispatch section's routing sentence: which severities take the standard tier,
-// and that every other one, a null or unknown one included, takes the capable tier.
+// The problems with the Dispatch section's routing sentences: every sentence that sends severities to the
+// standard tier names only info, none sends a null or unknown severity there, and the section says that
+// every other one, a null or unknown one included, takes the capable tier.
 function tierRoutingProblems(dispatch) {
   const problems = [];
-  const route = TIER_ROUTE.exec(dispatch);
-  if (!route) problems.push('no sentence names the severities that take the standard tier');
-  else {
+  const routes = [...dispatch.matchAll(TIER_ROUTE)];
+  if (routes.length === 0) problems.push('no sentence names the severities that take the standard tier');
+  for (const route of routes) {
     const severities = route[1].match(/`([a-z]+)`/g).map((s) => s.slice(1, -1));
     if (JSON.stringify(severities) !== JSON.stringify(['info'])) problems.push(`the standard tier takes ${severities.join(', ')}, not only info`);
   }
+  if (NULL_TO_STANDARD.test(dispatch)) problems.push('a null or unknown severity is routed to the standard tier');
   if (!dispatch.includes(OTHER_SEVERITIES_CAPABLE)) problems.push('every other severity, a null or unknown one included, is not routed to the capable tier');
   return problems;
 }
@@ -1644,6 +1647,9 @@ test('AC3: the tier-routing assertions can go red', () => {
   assert.deepEqual(tierRoutingProblems(routes('`info`, `low` and `medium` findings take the `standard` tier')), ['the standard tier takes info, low, medium, not only info']);
   assert.deepEqual(tierRoutingProblems(routes('`low` findings take the `standard` tier')), ['the standard tier takes low, not only info']);
   assert.deepEqual(tierRoutingProblems(routes('`info` findings take the `capable` tier')), ['no sentence names the severities that take the standard tier']);
+  // A second routing sentence is read too: the check no longer stops at the first match.
+  assert.deepEqual(tierRoutingProblems(`${dispatch} Also \`medium\` findings take the \`standard\` tier.`), ['the standard tier takes medium, not only info']);
+  assert.deepEqual(tierRoutingProblems(`${dispatch} A null or unknown severity takes the \`standard\` tier.`), ['a null or unknown severity is routed to the standard tier']);
   const noNull = dispatch.replace(', a null or unknown one included,', '');
   assert.notEqual(noNull, dispatch);
   assert.deepEqual(tierRoutingProblems(noNull), ['every other severity, a null or unknown one included, is not routed to the capable tier']);
