@@ -69,7 +69,7 @@ test('ledger-row refuses a carried Resolution naming a fact that is not in the f
   writeDecisionFacts(f.runDir, [{ id: 'decision:console:something-else.md', text: 'x' }]);
   const r = await settle(f);
   assert.equal(r.code, 1, r.stderr);
-  assert.match(r.stderr, /holds no fact with that id/);
+  assert.match(r.stderr, /holds no fact with the id "decision:console:ledger-record-1\.md"/);
   const file = path.join(f.runDir, 'packet-facts', 'decisions.json');
   fs.writeFileSync(file, 'not json');
   const bad = await settle(f);
@@ -79,6 +79,16 @@ test('ledger-row refuses a carried Resolution naming a fact that is not in the f
   const notArray = await settle(f);
   assert.equal(notArray.code, 1, notArray.stderr);
   assert.match(notArray.stderr, /is not a JSON array/);
+  assert.equal(fs.readFileSync(f.ledger, 'utf8'), f.snapshot);
+});
+
+test('a hand-written carried Resolution with trailing punctuation is refused naming the exact id and the file it read', async () => {
+  const f = await fixture();
+  writeDecisionFacts(f.runDir, [{ id: FACT, text: 'x' }]);
+  const r = await runHook(['ledger-row', '--run', f.runDir, '--ledger', f.ledger, '--row', '1', '--status', 'deferred', '--resolution', `${CARRIED}.`], { cwd: f.wt });
+  assert.equal(r.code, 1, r.stderr);
+  assert.ok(r.stderr.includes(`"${FACT}."`), `names the id looked up: ${r.stderr}`);
+  assert.ok(r.stderr.includes(path.join(f.runDir, 'packet-facts', 'decisions.json')), 'names the file it read');
   assert.equal(fs.readFileSync(f.ledger, 'utf8'), f.snapshot);
 });
 

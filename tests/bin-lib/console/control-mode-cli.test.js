@@ -126,10 +126,12 @@ test('AC2.1: a refused ledger-record item under control mode ends with its ledge
   const facts = readJson(FACTS(fx));
   assert.deepStrictEqual(facts.map((f) => f.id), ['decision:console:ledger-record-1.md']);
 
+  const decisionsBefore = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
   const again = await call(ledger);
   assert.strictEqual(again.code, 0, again.err);
   assert.match(again.out, /ledger row #1 already carried/);
   assert.strictEqual(fs.readFileSync(ledger, 'utf8'), text, 'a settled row is left unchanged');
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), decisionsBefore, 'a repeat call that changed nothing logs nothing');
   assert.strictEqual(readJson(FACTS(fx)).length, 1);
 });
 

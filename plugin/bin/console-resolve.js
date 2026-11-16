@@ -336,6 +336,7 @@ function carryItem(o, runDir, { stdout, stderr, now, cwd }) {
   try { writeDecisionFacts(runDir, [fact]); } catch (err) { return carryFailure(stderr, [o.setItem], err); }
 
   let ledgerNote = '';
+  let ledgerChanged = false;
   if (ledger !== null) {
     if (ledger.row === null) {
       ledgerNote = `ledger row #${ledger.alreadyRow} already carried`;
@@ -347,6 +348,7 @@ function carryItem(o, runDir, { stdout, stderr, now, cwd }) {
         return 3;
       }
       ledgerNote = `ledger row #${ledger.row} settled`;
+      ledgerChanged = true;
     }
   }
 
@@ -360,26 +362,28 @@ function carryItem(o, runDir, { stdout, stderr, now, cwd }) {
     return 3;
   }
   if (r.status === 'refused') { stderr(`console-resolve.js: ${r.why} — nothing written\n`); return 5; }
+  // One helper for both paths: appends the AUTO line; returns null, or the message a failed append leaves.
   const logLine = (text) => {
     try {
       appendEntry({ runDir, section: '/wrap-up', entry: formatEntry({ status: 'AUTO', now: now(), step: 'Review Console', text, reversibility: 'n/a' }) });
-      return true;
-    } catch { return false; }
+      return null;
+    } catch (err) { return err && err.message ? err.message : String(err); }
   };
-  if (r.status === 'unchanged') {
-    if (ledgerNote && !logLine(`Console item ${o.setItem} (${r.item.section}): already carried; ${ledgerNote}`)) {
-      stderr(`console-resolve.js: ${ledgerNote} for ${o.setItem}, but the decisions.md entry could not be written\n`);
+  const unchanged = r.status === 'unchanged';
+  // A repeat call that changed neither the item nor the row logs nothing: the report is stdout's.
+  if (!unchanged || ledgerChanged) {
+    const text = unchanged
+      ? `Console item ${o.setItem} (${r.item.section}): already carried; ${ledgerNote}`
+      : `Console item ${o.setItem} (${r.item.section}): rewritten ${r.from} → carried after execution — ${why}${ledgerNote ? `; ${ledgerNote}` : ''}`;
+    const failure = logLine(text);
+    if (failure !== null) {
+      stderr(`console-resolve.js: ${o.setItem} ${unchanged ? 'already carried' : `rewritten ${r.from} → carried in ${consolePath}`}${ledgerNote ? `; ${ledgerNote}` : ''}, but the decisions.md entry could not be written (${failure})\n`);
       return 3;
     }
+  }
+  if (unchanged) {
     stdout(`console-resolve.js: ${o.setItem} already carried${ledgerNote ? `; ${ledgerNote}` : ' — nothing rewritten'}\n`);
     return 0;
-  }
-  const text = `Console item ${o.setItem} (${r.item.section}): rewritten ${r.from} → carried after execution — ${why}${ledgerNote ? `; ${ledgerNote}` : ''}`;
-  try {
-    appendEntry({ runDir, section: '/wrap-up', entry: formatEntry({ status: 'AUTO', now: now(), step: 'Review Console', text, reversibility: 'n/a' }) });
-  } catch (err) {
-    stderr(`console-resolve.js: ${o.setItem} rewritten ${r.from} → carried in ${consolePath}, but the decisions.md entry could not be written (${err && err.message ? err.message : err})\n`);
-    return 3;
   }
   stdout(`console-resolve.js: ${o.setItem} rewritten ${r.from} → carried in ${consolePath}${ledgerNote ? `; ${ledgerNote}` : ''}\n`);
   return 0;

@@ -286,7 +286,7 @@ function carriedFactProblem(text, runDir) {
   let facts;
   try { facts = JSON.parse(raw); } catch { return refuse(`${file} does not parse as JSON`); }
   if (!Array.isArray(facts)) return refuse(`${file} is not a JSON array`);
-  return facts.some((f) => f && f.id === factId) ? null : refuse(`${file} holds no fact with that id`);
+  return facts.some((f) => f && f.id === factId) ? null : refuse(`${file} holds no fact with the id "${factId}" (looked up exactly as written, trailing punctuation included)`);
 }
 
 function checkLedgerStatus(status, resolution, { excludeRecords = [], repo = null, runDir = null } = {}) {
