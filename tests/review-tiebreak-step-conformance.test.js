@@ -522,7 +522,7 @@ test('pointer: the count assertion can go red', () => {
 const underRail = (bytes) => bytes < RAIL_BYTES;
 
 test('AC10.1 step3-lens-dispatch.md stays under the rail', () => {
-  assert.ok(underRail(fs.statSync(STEP3).size), 'step3-lens-dispatch.md must stay under RAIL_BYTES');
+  assert.ok(underRail(Buffer.byteLength(readText(STEP3))), 'step3-lens-dispatch.md must stay under RAIL_BYTES');
 });
 
 test('AC10.1 the rail assertion can go red', () => {

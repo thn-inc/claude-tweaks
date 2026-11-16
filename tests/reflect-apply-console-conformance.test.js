@@ -11,7 +11,6 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 
 const { readText } = require('./helpers/read-skill');
@@ -306,6 +305,6 @@ test('multispec-console-template.md: the Skill updates section renders the stage
 });
 
 test('multispec-review-console.md stays under the Read-limit rail (budgets.js RAIL_BYTES)', () => {
-  const size = fs.statSync(MULTI_CONSOLE_PATH).size;
+  const size = Buffer.byteLength(readText(MULTI_CONSOLE_PATH));
   assert.ok(size < RAIL_BYTES, `multispec-review-console.md is ${size} B, rail ${RAIL_BYTES} B`);
 });

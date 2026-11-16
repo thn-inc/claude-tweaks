@@ -1908,7 +1908,7 @@ test('AC3.1: engine-verify agrees on mixed labels', () => {
   for (const labels of [['demo:pending', 'demo:changes-requested'], ['accept:pending', 'demo:changes-requested'], ['demo:pending', 'accept:changes-requested']]) {
     const row = acceptanceLabelingRow(labels, 'verify-acceptance-outranked-');
     assert.strictEqual(row.result, 'fail', labels.join('+'));
-    assert.match(row.detail, /#900: pending label outranked by a verdict — run \/claude-tweaks:demo #900/, labels.join('+'));
+    assert.match(row.detail, /#900: pending label outranked by a verdict — run \/claude-tweaks:accept #900/, labels.join('+'));
     assert.doesNotMatch(row.detail, /missing demo:pending or accept:pending label/, labels.join('+'));
   }
 
@@ -2333,7 +2333,7 @@ test('#4805 a resolved parent still carrying a pending label fails as outranked,
       const label = `${parentLabels.join('+')} at ${risk}`;
       const { row } = parentGateRow({ records: [900], parentLabels, subIssues: closedSubs3508(risk) });
       assert.strictEqual(row.result, 'fail', `${label}: ${row.detail}`);
-      assert.match(row.detail, /#898: pending label outranked by a verdict — run \/claude-tweaks:demo #898/, label);
+      assert.match(row.detail, /#898: pending label outranked by a verdict — run \/claude-tweaks:accept #898/, label);
       assert.doesNotMatch(row.detail, /already dispositioned/, label);
       assert.doesNotMatch(row.detail, /below oversight floor/, label);
     }

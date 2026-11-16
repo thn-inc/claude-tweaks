@@ -144,6 +144,6 @@ test('every shipped skill has a parseable Anti-Patterns table', () => {
   // row added or removed on purpose). Re-derive it by running this parser on the
   // working tree, never by adding a delta to the old number ([IL-99]). Each bump
   // rewrites the line below; the full history is `git log -L` on the assertion.
-  // Last bump: 422 -> 423, #3898
-  assert.strictEqual(total, 423);
+  // Last bump: 423 -> 426, #4613
+  assert.strictEqual(total, 426);
 });
