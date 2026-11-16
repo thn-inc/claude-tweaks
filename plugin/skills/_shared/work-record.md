@@ -183,8 +183,8 @@ Who may add / remove which labels, per actor — extracted to keep this file lea
 
 Authorization is two stackable human-granted labels (`auto:build`, `auto:merge`), plus a
 machine-only waypoint label, `auto:merge-pending` (never granted directly by a human — see
-below). Their **absence is the default not-authorized state** — no label means no autonomous
-action, ever.
+below). Their **absence is the default not-authorized state**, except where a person's typed
+command stands in for `auto:build` (below).
 
 - `auto:build` — agents may claim and build this record autonomously.
 - **A typed command stands in for `auto:build`, for that run only** (#5584). A
