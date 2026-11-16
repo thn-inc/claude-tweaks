@@ -535,9 +535,11 @@ test('AC3.1 isSpecCommitted on a real repo whose last commit git-mv\'d the heade
   assert.strictEqual(realDeps.isSpecCommitted({ ...args, issue: 1729 }), false, 'other record stays absent');
 });
 
-test('AC9.1/AC9.5 isSpecCommitted stays null when the archived probe times out after a live miss', () => {
+test('AC9.1/AC9.5 isSpecCommitted stays null when an archived cat-file probe times out after a live miss', () => {
   const args = { runDir: RUN_DIR, worktree: os.tmpdir(), issue: 1728 };
+  // rev-parse succeeds, so only the `undetermined` flag can yield null here.
   const exec = (cmd, argv) => {
+    if (argv.includes('rev-parse')) return;
     const spec = argv.find((a) => a.startsWith('HEAD:')) || '';
     if (spec.includes('/archive/')) { const e = new Error('timed out'); e.code = 'ETIMEDOUT'; e.signal = 'SIGTERM'; throw e; }
     throw exitOne();
