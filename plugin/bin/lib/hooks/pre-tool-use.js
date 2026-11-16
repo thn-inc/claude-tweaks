@@ -35,7 +35,7 @@ const { resolveIntegrationBranch, preferRemoteTrackingRef, bareIntegrationName }
 const { runGit, FAILURE } = require('./git-exec');
 const { parseNameStatusZ } = require('../git-z');
 const { detectIntegrationModel, resolvePolicyConfig, HOOK_FORGE_PROBE_TIMEOUT_MS, FORGE_DEGRADE_MEMO_TTL_MS } = require('../policy-schema');
-const { effectiveCeiling, bookkeepingPermissions } =require('../issues/autonomy');
+const { effectiveCeiling, bookkeepingPermissions } = require('../issues/autonomy');
 // toPosix: git always reports/accepts forward-slash paths regardless of
 // platform — used for GATE_COVERAGE's prose-facing rendering and for comparing
 // against `git diff --cached --name-only` output in isPolicyOnlyCommit below.

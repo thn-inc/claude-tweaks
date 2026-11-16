@@ -43,7 +43,7 @@ const { resolveTarget } = require('./lib/stage-item/write');
 const { stackVerdicts } = require('./lib/staged-patch/stack-check');
 const { appendEntry, formatEntry } = require('./lib/log-decision/append');
 const { resolvePolicyConfig } = require('./lib/policy-schema');
-const { effectiveCeiling, bookkeepingPermissions } =require('./lib/issues/autonomy');
+const { effectiveCeiling, bookkeepingPermissions } = require('./lib/issues/autonomy');
 const { extractPendingGrantedAt, partitionGrantComments } = require('./lib/issues/grant-maturation');
 const { writeFileAtomic } = require('./lib/atomic-write');
 const { unresolvedItems, splitMissing, formatResidueLines, consoleResidueItems } = require('./lib/console/residue');
@@ -113,7 +113,7 @@ function defaultExecFile(cmd, args, opts = {}) {
 // The ceiling AND the veto window, resolved in-process with the same precedence
 // resolve-policy.js applies (run config over project policy): `resolvePolicyKeys`
 // already folds config.yml over policy.yml, so the single resolved value is what
-// resolveCeiling sees as runConfig. One call, both keys — a run that widened
+// effectiveCeiling sees as the autonomy entry (it also composes `control-mode`). One call, all keys — a run that widened
 // `grant-veto-window-hours` must not have evaluateMaturation fall back to its
 // own 24h default the way this CLI's first cut did.
 function readPolicy({ execFile, cwd, runDir }) {

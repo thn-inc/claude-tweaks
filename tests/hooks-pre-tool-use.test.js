@@ -1777,6 +1777,9 @@ test('#4620 AC4.10: readConsoleCeiling matches readPolicy() under control mode',
   const first = consoleRun(null);
   withPolicy(repoOfRun(first), policies[0]);
   assert.strictEqual(pre.run(consoleCtx(first, CONSOLE_Q)).json.hookSpecificOutput.permissionDecision, 'deny');
+  const invalid = consoleRun(null);
+  withPolicy(repoOfRun(invalid), 'control-mode: on\nautonomy: supervsed\n');
+  assert.deepStrictEqual(pre.run(consoleCtx(invalid, CONSOLE_Q)), {}, 'an invalid autonomy blocks the implication, so the question is allowed');
 });
 
 test('#3712: a deny logs one gate-denial event for gate review-console-ask', () => {
