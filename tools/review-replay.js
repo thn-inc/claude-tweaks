@@ -3,32 +3,50 @@
 // tools/review-replay.js — replays archived review runs through the tiebreak judge and scores the agreement (#5557).
 //
 //   node tools/review-replay.js baseline --runs <root> [--select <name,...>]
+//   node tools/review-replay.js extract --runs <root> --out <dir> --arm name=<id>,chunk=<n>,profile=<profile>,repeat=<n> ...
 //
 // baseline: reads every archived run directory under <root> and <root>/archive and prints one JSON object
 // { runs, excluded }: per run the recorded verdicts and how they matched the findings, the review head and base, the
 // lens and tiebreak agent cost. A run that cannot be replayed is listed in `excluded` with its reason, never dropped.
 //
+// extract: selects the replayable findings and writes trees, judge prompts per arm, manifest.json, fixture.json and
+// archived-verdicts.json under <dir> (tools/review-replay/extract.js).
+//
 // Exit codes (as tools/driver-merge-check-eval.js): 0 ok; 1 a runtime failure; 2 a malformed invocation; 3 not a clean
 // result (extract shortfall, or score with any notJudged).
 //
-// Seam: run({ argv, deps }) returns the exit code. deps: fs, git(args) -> stdout (throws), log(line), err(line),
-// pluginRoot.
+// Seam: run({ argv, deps }) returns the exit code. deps: fs, git(args) -> stdout (throws), writeTree(head, destDir),
+// log(line), err(line), pluginRoot.
 
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { readRun, listRuns, matchVerdicts } = require('./review-replay/archive.js');
+const { readRun, selectRuns, matchVerdicts } = require('./review-replay/archive.js');
+const { extract } = require('./review-replay/extract.js');
 const { VERDICT_CLASSES } = require('./review-replay/schema.js');
 
-const USAGE = 'usage: node tools/review-replay.js baseline --runs <root> [--select <name,...>]';
-const COMMANDS = new Set(['baseline']);
-const VALUE_FLAGS = new Set(['--runs', '--select']);
+const USAGE = [
+  'usage: node tools/review-replay.js baseline --runs <root> [--select <name,...>]',
+  '       node tools/review-replay.js extract --runs <root> --out <dir> --arm name=<id>,chunk=<n>,profile=<profile>,repeat=<n> [--arm ...]',
+  '               [--select <name,...>] [--min-runs <n>] [--min-findings <n>] [--quota <sev>=<n>,...] [--template <path>] [--dispatch-core <path>]',
+].join('\n');
+const COMMAND_FLAGS = {
+  baseline: new Set(['--runs', '--select']),
+  extract: new Set(['--runs', '--select', '--out', '--min-runs', '--min-findings', '--quota', '--arm', '--template', '--dispatch-core']),
+};
 
 function defaultDeps() {
   const cwd = process.cwd(); // the repo the CLI runs in, captured once
+  const git = (args) => String(execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000, maxBuffer: 256 * 1024 * 1024, windowsHide: true }));
   return {
     fs,
-    git: (args) => String(execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000, maxBuffer: 256 * 1024 * 1024, windowsHide: true })),
+    git,
+    // The tree at `head` without .claude-tweaks, so a replay judge never sees the archived run's own records.
+    writeTree: (head, destDir) => {
+      fs.mkdirSync(destDir, { recursive: true });
+      const archive = execFileSync('git', ['archive', head, '--', '.', ':(exclude).claude-tweaks'], { cwd, maxBuffer: 1 << 30, windowsHide: true });
+      execFileSync('tar', ['-x', '-C', destDir], { input: archive, windowsHide: true });
+    },
     log: (s) => process.stdout.write(`${s}\n`),
     err: (s) => process.stderr.write(`${s}\n`),
     pluginRoot: path.join(__dirname, '..', 'plugin'),
@@ -37,17 +55,18 @@ function defaultDeps() {
 
 function parseArgs(argv) {
   const [command, ...rest] = argv;
-  if (!COMMANDS.has(command)) return { error: command ? `unknown command: ${command}` : 'a command is required' };
+  if (!Object.prototype.hasOwnProperty.call(COMMAND_FLAGS, command)) return { error: command ? `unknown command: ${command}` : 'a command is required' };
   const opts = { command };
   for (let i = 0; i < rest.length; i += 1) {
     const arg = rest[i];
-    if (!VALUE_FLAGS.has(arg)) return { error: `unknown argument: ${arg}` };
+    if (!COMMAND_FLAGS[command].has(arg)) return { error: `unknown argument: ${arg}` };
     const value = rest[i + 1];
     if (value === undefined || value.startsWith('--')) return { error: `${arg} requires a value` };
     i += 1;
-    opts[arg.slice(2)] = value;
+    if (arg === '--arm') opts.arms = [...(opts.arms || []), value];
+    else opts[arg.slice(2)] = value;
   }
-  if (!opts.runs) return { error: 'baseline requires --runs' };
+  if (!opts.runs) return { error: `${command} requires --runs` };
   if (opts.select !== undefined) {
     opts.select = opts.select.split(',').map((s) => s.trim()).filter(Boolean);
     if (opts.select.length === 0) return { error: '--select requires at least one run name' };
@@ -76,16 +95,10 @@ function baselineEntry(r) {
 }
 
 function baseline(opts, deps) {
-  const all = listRuns(opts.runs, deps.fs);
-  let dirs = all;
-  if (opts.select) {
-    const byName = new Map(all.map((d) => [path.basename(d), d]));
-    const missing = opts.select.filter((n) => !byName.has(n));
-    if (missing.length > 0) {
-      deps.err(`review-replay.js: no such run under ${opts.runs}: ${missing.join(', ')}`);
-      return 2;
-    }
-    dirs = opts.select.map((n) => byName.get(n));
+  const { dirs, missing } = selectRuns(opts.runs, opts.select, deps.fs);
+  if (missing.length > 0) {
+    deps.err(`review-replay.js: no such run under ${opts.runs}: ${missing.join(', ')}`);
+    return 2;
   }
   const runs = [];
   const excluded = [];
@@ -106,7 +119,7 @@ async function run({ argv, deps } = {}) {
     return 2;
   }
   try {
-    return baseline(parsed.opts, d);
+    return parsed.opts.command === 'extract' ? extract(parsed.opts, d) : baseline(parsed.opts, d);
   } catch (e) {
     d.err(`review-replay.js: ${errText(e)}`);
     return 1;

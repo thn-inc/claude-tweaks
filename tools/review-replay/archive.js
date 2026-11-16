@@ -270,4 +270,14 @@ function listRuns(root, fs) {
   });
 }
 
-module.exports = { parseDecisions, matchVerdicts, readRun, listRuns };
+// The run directories to read: every run under `root`, or the `select`ed names in the given order. { dirs, missing }
+// where `missing` lists the selected names no run directory has.
+function selectRuns(root, select, fs) {
+  const all = listRuns(root, fs);
+  if (!select) return { dirs: all, missing: [] };
+  const byName = new Map(all.map((d) => [path.basename(d), d]));
+  const missing = select.filter((n) => !byName.has(n));
+  return { dirs: missing.length > 0 ? [] : select.map((n) => byName.get(n)), missing };
+}
+
+module.exports = { parseDecisions, matchVerdicts, readRun, listRuns, selectRuns };

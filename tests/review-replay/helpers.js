@@ -11,12 +11,22 @@ const HEAD_A = 'a'.repeat(40);
 const BASE_A = 'b'.repeat(40);
 const HEAD_C = 'c'.repeat(40);
 
+// The files of the fixture tree, as `git ls-tree -r --name-only` lists them.
+const listTree = (dir, prefix = '') => fs.readdirSync(dir, { withFileTypes: true })
+  .flatMap((e) => (e.isDirectory() ? listTree(path.join(dir, e.name), `${prefix}${e.name}/`) : [`${prefix}${e.name}`]));
+const TREE_FILES = listTree(TREE).sort().join('\n');
+
 // What the fake git answers, keyed by the space-joined args.
 const GIT_TABLE = {
   'log -1 --format=%ct 1111111': '100\n',
   [`rev-parse 1111111^`]: `${HEAD_A}\n`,
   'log -1 --format=%ct 2222222': '200\n',
   [`rev-parse 2222222^`]: `${HEAD_C}\n`,
+  [`cat-file -e ${HEAD_A}^{commit}`]: '',
+  [`cat-file -e ${HEAD_C}^{commit}`]: '',
+  // src/gamma.js is in no tree: the run-a finding that points at it is absent at head.
+  [`ls-tree -r --name-only ${HEAD_A}`]: `${TREE_FILES}\n`,
+  [`ls-tree -r --name-only ${HEAD_C}`]: `${TREE_FILES}\n`,
 };
 
 // Deps for run(): the real fs, a git that answers from a table (and throws on anything else), a writeTree that copies
