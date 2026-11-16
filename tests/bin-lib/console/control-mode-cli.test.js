@@ -673,3 +673,36 @@ test('the Review Console header says control mode whenever control mode carries,
   assert.strictEqual(await run(resolveArgs(off), baseDeps(off, []).d), 0);
   assert.match(fs.readFileSync(path.join(off.runDir, 'decisions.md'), 'utf8'), /at unattended \(console-resolve\.js\)\./);
 });
+
+// Review (#4620): --converge and --memory-write hold the one control-mode gate in code.
+test('--converge and --memory-write refuse with exit 4 and write nothing unless control mode is on with consoleAutoResolve granted', async () => {
+  const memoryDir = (fx) => { const d = path.join(fx.root, 'memory-home'); fs.mkdirSync(d, { recursive: true }); return d; };
+  for (const [label, make] of [
+    ['control mode off', () => mainCheckoutWithRun({ autonomy: 'unattended', staged: STAGED })],
+    ['control mode on, explicit supervised', () => controlFixture({ autonomy: 'supervised' })],
+  ]) {
+    const fx = make();
+    const items = path.join(fx.root, 'residue-items.json');
+    fs.writeFileSync(items, JSON.stringify([{ id: 'insight-1', source: 'insight', text: 't', status: 'open', belowFloor: false }]));
+    const conv = baseDeps(fx, []);
+    assert.strictEqual(await run(['--converge', items, '--run', fx.runDir], conv.d), 4, label);
+    assert.match(conv.err(), /--converge needs control mode on with consoleAutoResolve granted — nothing written/, label);
+    assert.ok(!fs.existsSync(FACTS(fx)), label + ': no decision fact written');
+    const content = path.join(fx.root, 'content.tmp');
+    fs.writeFileSync(content, 'x\n');
+    const mem = baseDeps(fx, []);
+    assert.strictEqual(await run(['--memory-write', 'a.md', '--memory-dir', memoryDir(fx), '--content-file', content, '--run', fx.runDir], mem.d), 4, label);
+    assert.match(mem.err(), /--memory-write needs control mode on/, label);
+    assert.ok(!fs.existsSync(path.join(fx.root, 'memory-home', 'a.md')), label + ': no memory file written');
+  }
+});
+
+test('--converge fails an item whose status is outside the ledger vocabulary instead of dropping it', async () => {
+  const fx = controlFixture();
+  const items = path.join(fx.root, 'residue-items.json');
+  fs.writeFileSync(items, JSON.stringify([{ id: 'ledger-9', source: 'ledger', text: 't', status: 'Open' }]));
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(['--converge', items, '--run', fx.runDir], b.d), EXIT_CARRY_FAILED);
+  assert.deepStrictEqual(JSON.parse(b.out()).failed, ['ledger-9']);
+  assert.match(b.out(), /unrecognized status 'Open'/);
+});

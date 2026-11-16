@@ -26,6 +26,9 @@ function fixture() {
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-09-06T000000-record-7');
   fs.mkdirSync(path.join(runDir, 'staged'), { recursive: true });
   fs.writeFileSync(path.join(runDir, 'decisions.md'), '');
+  // The shape is gated on control mode in code (console-resolve.js controlModeGate).
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'control-mode: on\n');
   const memoryDir = path.join(root, 'memory-home');
   fs.mkdirSync(memoryDir);
   const contentFile = path.join(root, 'content.tmp');

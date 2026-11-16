@@ -48,8 +48,8 @@
 // It reads a JSON array of `{ id, source: ledger|insight, text, status, deferReason?, belowFloor?,
 // filingFailed? }`, ends every item resolved, filed, digested or carried, writes every carried item's
 // decision fact through writeDecisionFacts, logs one AUTO line per item (SKIP for a failed one), and prints `{ items: [{ id,
-// state, proposal?, factId?, error? }], failed: [ids] }` as JSON. It needs no ceiling and takes no
-// other flag (`--dry-run` included). Exit 0 converged, 2 malformed (any other flag, or an unreadable,
+// state, proposal?, factId?, error? }], failed: [ids] }` as JSON. It needs control mode on with consoleAutoResolve
+// granted (exit 4 otherwise, nothing written) and takes no other flag (`--dry-run` included). Exit 0 converged, 2 malformed (any other flag, or an unreadable,
 // unparseable or malformed items file), 3 --run not anchored or the decisions.md entries could not be
 // written (the JSON is printed first), 6 a carried fact could not be written — every carried item
 // then reads `failed`, the JSON is printed, and stderr names each one.
@@ -60,7 +60,8 @@
 // writes the target, then logs one AUTO entry under /wrap-up naming the path, the prior sha256 (`none` on a
 // create) and the whole-file diff (reverse with `git apply -R`); a diff over 20 KiB stores the prior content
 // at `{run}/staged/.memory-prior-{sha12}.md` (dot-prefixed so it never becomes a console item) and the entry
-// names that path instead. It needs no ceiling and takes no other flag. Exit 0 written, 2 malformed (any
+// names that path instead. It needs control mode on with consoleAutoResolve granted (exit 4 otherwise, nothing
+// written) and takes no other flag. Exit 0 written, 2 malformed (any
 // other flag, a missing flag, or an unreadable --content-file), 3 --run not anchored, the target or backup
 // write failed (nothing logged), or the entry could not be written (stderr names the written path), 5 the
 // memory write refused, nothing written (target outside or unresolvable in the memory dir — why
@@ -315,9 +316,29 @@ function carryFailure(stderr, ids, err) {
   return EXIT_CARRY_FAILED;
 }
 
-// Control mode as the policy resolves it; a read that throws counts as off.
+// Control mode as the carry paths use it: on AND consoleAutoResolve granted, the one gate controlModeGate holds
+// for the other shapes (an explicit lower autonomy tier keeps the human-present console, so nothing carries);
+// a read that throws counts as off.
 function controlModeOn({ execFile, cwd, runDir }) {
-  try { return readPolicy({ execFile, cwd: cwd(), runDir }).controlMode === true; } catch { return false; }
+  try {
+    const { ceiling, controlMode } = readPolicy({ execFile, cwd: cwd(), runDir });
+    return controlMode === true && bookkeepingPermissions(ceiling).consoleAutoResolve === true;
+  } catch { return false; }
+}
+
+// #4620 review: `--memory-write` and `--converge` act without a human, so the one control-mode gate the
+// resolve shape uses (control mode on and consoleAutoResolve granted, whatever set the ceiling) is held here
+// in code, not left to the prose that tells the agent when to call them. Exit 4, as the resolve shape's own
+// ceiling refusal; a policy that cannot be read fails closed through the same supervised default.
+function controlModeGate({ shape, runDir, stderr, execFile, cwd }) {
+  let granted = false;
+  try {
+    const { ceiling, controlMode } = readPolicy({ execFile, cwd: cwd(), runDir });
+    granted = controlMode === true && bookkeepingPermissions(ceiling).consoleAutoResolve === true;
+  } catch { granted = false; }
+  if (granted) return null;
+  stderr(`console-resolve.js: ${shape} needs control mode on with consoleAutoResolve granted — nothing written\n`);
+  return 4;
 }
 
 // The one ledger row a carried `ledger-record-*` item settles: the row whose Resolution names `staged/{id}`.
@@ -583,7 +604,7 @@ function readResidueItems(file) {
 
 // #4620: the `--converge` shape — every residue item ends resolved, filed, digested or carried. The carried
 // facts are written in one call; a failed write turns every carried item `failed` and exits 6, so no item is
-// reported carried without its fact. Needs no ceiling: the caller runs it only under control mode.
+// reported carried without its fact. Gated in run() by controlModeGate, not left to the caller.
 function converge(o, runDir, { stdout, stderr, now, cwd }) {
   const file = path.resolve(cwd(), o.converge);
   const { items, problem } = readResidueItems(file);
@@ -703,9 +724,13 @@ async function run(argv, deps = {}) {
     return 3;
   }
   const runDir = target.dir;
-  if (o.memoryWrite !== null) return memoryWrite(o, runDir, { stdout, stderr, now, cwd });
+  if (o.memoryWrite !== null || o.converge !== null) {
+    const refusal = controlModeGate({ shape: o.memoryWrite !== null ? '--memory-write' : '--converge', runDir, stderr, execFile, cwd });
+    if (refusal !== null) return refusal;
+    if (o.memoryWrite !== null) return memoryWrite(o, runDir, { stdout, stderr, now, cwd });
+    return converge(o, runDir, { stdout, stderr, now, cwd });
+  }
   if (o.ceiling) return ceilingQuery(runDir, { stdout, stderr, execFile, cwd });
-  if (o.converge !== null) return converge(o, runDir, { stdout, stderr, now, cwd });
   if (o.setItem !== null) return setItem(o, runDir, { stdout, stderr, now, execFile, cwd });
   if (o.checkRepair !== null) return checkRepair(o, runDir, { stdout, stderr, execFile, cwd });
   const { ceiling, controlMode, ceilingSource, vetoWindowHours, sensitivePaths } = readPolicy({ execFile, cwd: cwd(), runDir });

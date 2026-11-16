@@ -219,11 +219,14 @@ function clearsFloor(blockerReason) {
 // ledger route-remainder held back to 'unattended' (see
 // skills/_shared/autonomy-ceiling.md for what each one does). An unrecognized
 // ceiling falls through to 'supervised' -- same handling as permittedGrants,
-// so a typo denies everything rather than granting it. `merge-authorization`
+// so a typo denies everything rather than granting it. Control mode (#4620) lifts only an *absent*
+// ceiling to 'unattended': a present-but-unrecognized one stays 'supervised' even under it, so a typo never
+// grants. `merge-authorization`
 // is deliberately not a key here and no ceiling sets it (#2734) -- see
 // skills/_shared/autonomy-ceiling.md's "Orthogonal to the ceiling" section for why.
 function bookkeepingPermissions(ceiling, { controlMode } = {}) {
-  const tier = isCeiling(ceiling) ? ceiling : (controlMode === true ? 'unattended' : 'supervised');
+  const absent = ceiling === undefined || ceiling === null;
+  const tier = isCeiling(ceiling) ? ceiling : (controlMode === true && absent ? 'unattended' : 'supervised');
   return {
     ledgerNarrowing: atLeast(tier, 'trusted'),
     queueWriteAutoFile: atLeast(tier, 'trusted'),

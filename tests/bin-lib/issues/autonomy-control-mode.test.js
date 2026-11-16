@@ -74,3 +74,8 @@ test('resolveCeiling: controlMode sits below every explicit source', () => {
   assert.strictEqual(resolveCeiling({ controlMode: 'on' }), 'supervised');
   assert.strictEqual(resolveCeiling({}), 'supervised');
 });
+
+test('an unrecognized ceiling stays supervised under control mode; only an absent one lifts to unattended', () => {
+  assert.deepStrictEqual(bookkeepingPermissions('supervsed', { controlMode: true }), bookkeepingPermissions('supervised'));
+  assert.deepStrictEqual(bookkeepingPermissions(undefined, { controlMode: true }), bookkeepingPermissions('unattended'));
+});

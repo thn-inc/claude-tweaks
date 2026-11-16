@@ -10,6 +10,7 @@ const { deferReasonProblem } = require('./reflect-destination');
 const { specShapedBody, recordPayload, fencedBlock, defuse, LABELS } = require('../issues/record');
 const { fingerprintFromBasis } = require('../health-core/fingerprint');
 const { capWords, oneLine } = require('./finding-filing');
+const { TERMINAL_STATUSES } = require('../wrap-up/ledger-write');
 
 const RESIDUE_STATES = Object.freeze(['resolved', 'filed', 'digested', 'carried']);
 const RESIDUE_FAILED = 'failed';
@@ -68,7 +69,11 @@ function composeResidueProposal(item) {
 // -> [{ id, state, proposal?, fact?, error? }], one entry per item, in input order.
 function convergeResidue(items, { compose, carry }) {
   return items.map((item) => {
-    if (item.status !== 'open') return { id: item.id, state: 'resolved' };
+    // Only the closed ledger vocabulary resolves an item; any other status is a failure naming it, never a silent drop.
+    if (item.status !== 'open') {
+      if (TERMINAL_STATUSES.includes(item.status)) return { id: item.id, state: 'resolved' };
+      return { id: item.id, state: RESIDUE_FAILED, error: `unrecognized status '${item.status}' (expected open or one of ${TERMINAL_STATUSES.join(', ')})` };
+    }
     if (item.belowFloor === true) return { id: item.id, state: 'digested' };
     if (item.filingFailed !== true) {
       let proposal = null;
