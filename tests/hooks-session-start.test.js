@@ -457,7 +457,8 @@ test('worktree-always nudge is absent when policy is off', async () => {
 });
 
 function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8' });
+  // stderr captured: cloning the empty bare origin prints "You appear to have cloned an empty repository" otherwise.
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 // #408 AC1: a session starting in a checkout strictly behind origin gets its

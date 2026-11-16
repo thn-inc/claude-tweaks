@@ -9,6 +9,7 @@ const path = require('path');
 const { checkRunIntegrity, checkBranchLanded, repoRootOf, worktreePathForBranch } = require('../plugin/bin/lib/hooks/run-integrity');
 const { fixtureGit } = require('./helpers/git-fixtures');
 const { hookEnv, runHookCli } = require('./helpers/hook-event');
+const { withBrokenGitDir } = require('./helpers/process-env');
 const { fixtureHomeEnv } = require('./helpers/fixture-home');
 
 function sh(cwd, ...args) {
@@ -527,15 +528,7 @@ test('#5377 SessionStart: the shipped-unclosed verdict is reached through the co
   const { root, runDir } = fixtureRepo();
   sh(root, 'merge', '-q', '--no-edit', 'feat-branch');
   writeEvents(runDir, [EV_BUILD]);
-  const prior = process.env.GIT_DIR;
-  process.env.GIT_DIR = path.join(os.tmpdir(), 'ct-ri5377-no-such-git-dir');
-  let r;
-  try {
-    r = await runSessionStart(root);
-  } finally {
-    if (prior === undefined) delete process.env.GIT_DIR;
-    else process.env.GIT_DIR = prior;
-  }
+  const r = await withBrokenGitDir(() => runSessionStart(root));
   assert.strictEqual(r.code, 0);
   assert.match(JSON.parse(r.stdout).hookSpecificOutput.additionalContext, /appears shipped/);
 });
@@ -622,16 +615,6 @@ test('#3497 checkBranchLanded: no run-state -> landed null, never throws', () =>
 // clean while the real process.env names no repository for the length of the call (restored in
 // `finally`), so a child that inherits instead of using the passed env cannot answer. Each test also
 // runs the same call without `env` as a control: it degrades, which shows the broken GIT_DIR bites.
-function withBrokenGitDir(fn) {
-  const prior = process.env.GIT_DIR;
-  process.env.GIT_DIR = path.join(os.tmpdir(), 'ct-ri5377-no-such-git-dir');
-  try {
-    return fn();
-  } finally {
-    if (prior === undefined) delete process.env.GIT_DIR;
-    else process.env.GIT_DIR = prior;
-  }
-}
 
 test('#5377 checkRunIntegrity opts.env: a merged branch is proven through the worktree list, the integration probe, merge-base and log', () => {
   const { root, runDir } = fixtureRepo();

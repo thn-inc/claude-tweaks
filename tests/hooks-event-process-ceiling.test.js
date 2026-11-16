@@ -35,7 +35,6 @@ const CEILING = 20;
 // Any argv array that names the script, so a `['--require', preload, HOOKS, ...]` site is flagged too.
 const RAW_SPAWN = /(execFileSync|spawnSync|execSync|spawn)\(\s*('node'|"node"|process\.execPath)\s*,\s*\[[^\]]*\b(HOOKS|hooks)\b/g;
 const SPAWN_CLI = /spawnCli\(\s*(HOOKS|hooks)\b/g;
-const LOOP_OPENERS = /\b(for|while)\s*\(|\.(forEach|map)\(/;
 
 function lineOf(text, index) {
   return text.slice(0, index).split('\n').length;
@@ -58,42 +57,55 @@ function spawnCliSites(src) {
   return [...text.matchAll(SPAWN_CLI)].map((m) => lineOf(text, m.index));
 }
 
-// Lines of a `spawnCli(` call that sits inside the body of a for/while/forEach/map. Brace depth is
-// tracked on the stripped text, character by character, so a body that opens and closes on the
-// opener's own line is seen; a loop body opens at the first `{` after its opener.
-function spawnCliInLoopLines(src) {
-  const text = stripComments(src);
-  const lines = text.split('\n');
-  const loopDepths = [];
-  const flagged = [];
+// Index of the bracket that closes the one at `open` (`(`, `{` or `[`), or text.length when unbalanced.
+function closeOf(text, open) {
   let depth = 0;
-  let pendingLoop = false;
-  lines.forEach((line, i) => {
-    const opener = LOOP_OPENERS.exec(line);
-    let openerEnd = -1;
-    if (opener) {
-      pendingLoop = true;
-      openerEnd = opener.index + opener[0].length;
+  for (let i = open; i < text.length; i++) {
+    if ('({['.includes(text[i])) depth += 1;
+    else if (')}]'.includes(text[i]) && --depth === 0) return i;
+  }
+  return text.length;
+}
+
+// [from, to) of the code a for/while/forEach/map runs per iteration, on blank-mode text (string,
+// template and regex bodies blanked, so a brace inside one is not a brace). A for/while body opens after
+// the balanced `)` of its header: a `{` block to its balanced `}`, or a braceless statement to the next
+// top-level `;`. A forEach/map callback is the whole call, from its `(` to its balanced `)`, so an arrow
+// with a destructured parameter, a `function (...)` callback and a body without braces all count.
+function loopRegions(text) {
+  const regions = [];
+  for (const m of text.matchAll(/\b(for|while)\s*\(/g)) {
+    let i = closeOf(text, m.index + m[0].length - 1) + 1;
+    while (i < text.length && /\s/.test(text[i])) i += 1;
+    if (text[i] === '{') {
+      regions.push([i, closeOf(text, i) + 1]);
+      continue;
     }
-    let hit = false;
-    for (let c = 0; c < line.length; c++) {
-      const ch = line[c];
-      if (loopDepths.length && line.startsWith('spawnCli(', c)) hit = true;
-      if (ch === '{') {
-        depth += 1;
-        if (pendingLoop && c >= openerEnd) { loopDepths.push(depth); pendingLoop = false; }
-      } else if (ch === '}') {
-        if (loopDepths.length && loopDepths[loopDepths.length - 1] === depth) loopDepths.pop();
-        depth -= 1;
-      }
+    let end = i;
+    let depth = 0;
+    for (; end < text.length; end++) {
+      const ch = text[end];
+      if ('({['.includes(ch)) depth += 1;
+      else if (')}]'.includes(ch)) { if (depth === 0) break; depth -= 1; } else if (ch === ';' && depth === 0) break;
     }
-    if (pendingLoop && /;\s*$/.test(line) && !/\{/.test(line)) {
-      if (/spawnCli\(/.test(line)) hit = true;
-      pendingLoop = false;
-    }
-    if (hit) flagged.push(i + 1);
-  });
-  return flagged;
+    regions.push([i, end]);
+  }
+  for (const m of text.matchAll(/\.(forEach|map)\(/g)) {
+    const open = m.index + m[0].length - 1;
+    regions.push([open, closeOf(text, open) + 1]);
+  }
+  return regions;
+}
+
+// Lines of a `spawnCli(` call that sits inside the body of a for/while/forEach/map.
+function spawnCliInLoopLines(src) {
+  const text = stripComments(src, { literals: 'blank' });
+  const regions = loopRegions(text);
+  const flagged = new Set();
+  for (const m of text.matchAll(/spawnCli\(/g)) {
+    if (regions.some(([from, to]) => m.index >= from && m.index < to)) flagged.add(lineOf(text, m.index));
+  }
+  return [...flagged].sort((a, b) => a - b);
 }
 
 function read(rel) {
@@ -187,6 +199,44 @@ test('self-test: a loop body with no braces that calls spawnCli is flagged', () 
     "spawnCli(HOOKS, ['session-end']);",
   ].join('\n');
   assert.deepEqual(spawnCliInLoopLines(src), [1]);
+});
+
+test('self-test: a destructured loop header or callback parameter does not open the body early', () => {
+  const src = [
+    'for (const { a } of list) {',
+    '  const x = 1;',
+    "  spawnCli(HOOKS, [a]);",
+    '}',
+    "spawnCli(HOOKS, ['session-end']);",
+    'list.forEach(({ a }) => {',
+    '  const y = 2;',
+    "  spawnCli(HOOKS, [a]);",
+    '});',
+    "spawnCli(HOOKS, ['pre-compact']);",
+  ].join('\n');
+  assert.deepEqual(spawnCliInLoopLines(src), [3, 8]);
+});
+
+test('self-test: a brace inside a string literal is not a loop body or a loop end', () => {
+  const src = [
+    "const open = '{';",
+    "const close = '}';",
+    "for (const a of ['{']) {",
+    "  spawnCli(HOOKS, [a]);",
+    '}',
+    "spawnCli(HOOKS, ['session-end']);",
+  ].join('\n');
+  assert.deepEqual(spawnCliInLoopLines(src), [4]);
+});
+
+test('self-test: a function callback of forEach is a loop body', () => {
+  const src = [
+    'list.forEach(function (a) {',
+    "  spawnCli(HOOKS, [a]);",
+    '});',
+    "spawnCli(HOOKS, ['stop']);",
+  ].join('\n');
+  assert.deepEqual(spawnCliInLoopLines(src), [2]);
 });
 
 test('self-test: a file the comment stripper mis-parses is reported as an offender, not scanned', () => {

@@ -17,20 +17,7 @@ const { checkDispatchPromptGate } = require('../plugin/bin/lib/hooks/dispatch-pr
 const { findLiveClaim, findConflictingSession, findSessionOnWorktree } = require('../plugin/bin/lib/hooks/sibling-sessions');
 const { hookEnv } = require('./helpers/hook-event');
 const { gitRepo } = require('./helpers/git-fixtures');
-
-// Sets process.env keys for the body, restoring the previous values afterwards.
-function withProcessEnv(vars, fn) {
-  const before = {};
-  for (const k of Object.keys(vars)) before[k] = process.env[k];
-  Object.assign(process.env, vars);
-  try {
-    return fn();
-  } finally {
-    for (const k of Object.keys(vars)) {
-      if (before[k] === undefined) delete process.env[k]; else process.env[k] = before[k];
-    }
-  }
-}
+const { withProcessEnv } = require('./helpers/process-env');
 
 const tmp = (label) => fs.mkdtempSync(path.join(os.tmpdir(), `ct-5377-${label}-`));
 

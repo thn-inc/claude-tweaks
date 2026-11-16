@@ -21,6 +21,7 @@ const cp = require('child_process');
 const { execFileSync } = cp;
 const post = require('../plugin/bin/lib/hooks/post-tool-use');
 const { gitRepo, harnessWorktreeOf, cleanGitEnv } = require('./helpers/git-fixtures');
+const { withBrokenGitDir } = require('./helpers/process-env');
 
 // gitRepo() runs a bare `git init`, so the initial branch name depends on the
 // machine's init.defaultBranch — resolve it rather than hardcoding "main".
@@ -422,15 +423,7 @@ test('#5377: the origin/HEAD probe runs under ctx.env, not the process environme
   advance(main, 3);
   const ctx = enterWorktreeCtx(wt, { toolResponse: createdAt(wt, `wt-branch-${path.basename(wt)}`) });
   ctx.env = cleanGitEnv();
-  const prior = process.env.GIT_DIR;
-  process.env.GIT_DIR = path.join(os.tmpdir(), 'ct-ptu5377-no-such-git-dir');
-  let out;
-  try {
-    out = post.run(ctx);
-  } finally {
-    if (prior === undefined) delete process.env.GIT_DIR;
-    else process.env.GIT_DIR = prior;
-  }
+  const out = withBrokenGitDir(() => post.run(ctx));
   assert.ok(out.json && typeof out.json.systemMessage === 'string', 'expected the staleness warning through the clean ctx.env');
   assert.match(out.json.systemMessage, new RegExp(`origin/${base}`));
 });

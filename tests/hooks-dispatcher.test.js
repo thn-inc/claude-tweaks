@@ -901,7 +901,8 @@ test('dispatcher: when guard-rewrite.js throws at require time, deny gates still
     stdin: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git commit -m x' }, cwd: project }),
     cwd: project,
     // NODE_OPTIONS reads a backslash inside quotes as an escape, so the path goes in with forward slashes.
-    env: hookEnv({ NODE_OPTIONS: `--require "${preload.replace(/\\/g, '/')}"` }),
+    // An ambient NODE_OPTIONS (count-node-procs' own preload, CI coverage) stays in front, so this child is still counted.
+    env: hookEnv({ NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require "${preload.replace(/\\/g, '/')}"`].filter(Boolean).join(' ') }),
   });
   assert.strictEqual(code, 0);
   assert.strictEqual(JSON.parse(stdout).hookSpecificOutput.permissionDecision, 'deny');

@@ -10,6 +10,7 @@ const path = require('path');
 const { runHookCli, hookEnv } = require('./helpers/hook-event');
 const { gitRepo, linkedWorktreeOf, fixtureGit, cleanGitEnv } = require('./helpers/git-fixtures');
 const { gitRepoWithCommit } = require('./helpers/pre-tool-use');
+const { withProcessEnv } = require('./helpers/process-env');
 
 const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
 
@@ -21,24 +22,6 @@ function mkRunAt(project, name, worktree) {
   fs.mkdirSync(run, { recursive: true });
   fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'active', worktree }));
   return run;
-}
-
-// Sets process.env keys for the body of fn and restores them afterwards.
-async function withProcessEnv(overrides, fn) {
-  const saved = {};
-  for (const key of Object.keys(overrides)) {
-    saved[key] = Object.prototype.hasOwnProperty.call(process.env, key) ? process.env[key] : undefined;
-    if (overrides[key] === undefined) delete process.env[key];
-    else process.env[key] = overrides[key];
-  }
-  try {
-    return await fn();
-  } finally {
-    for (const key of Object.keys(saved)) {
-      if (saved[key] === undefined) delete process.env[key];
-      else process.env[key] = saved[key];
-    }
-  }
 }
 
 // CLAUDE_PID absent: the owner-pid fallback walks the ancestry with ps, which must run under the injected env too.

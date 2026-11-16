@@ -452,16 +452,7 @@ test('#3497 I1 banner carries no suffix while the parent worktree is locked by a
 // the length of the call (restored in `finally`); the same call without `env` is the control and cannot
 // see the merge.
 const { hookEnv, runHookCli } = require('../../helpers/hook-event');
-function withBrokenGitDir(fn) {
-  const prior = process.env.GIT_DIR;
-  process.env.GIT_DIR = path.join(os.tmpdir(), 'ct-sr5377-no-such-git-dir');
-  try {
-    return fn();
-  } finally {
-    if (prior === undefined) delete process.env.GIT_DIR;
-    else process.env.GIT_DIR = prior;
-  }
-}
+const { withBrokenGitDir } = require('../../helpers/process-env');
 
 test('#5377 collectStaleRuns env: the shipped-unclosed verdict is reached through the passed env', () => {
   const { root } = reentryFixture({ events: [EV_BUILD] });
@@ -557,17 +548,8 @@ test('#5377 check-session-residue verb: the shipped-unclosed verdict is reached 
   fs.mkdirSync(own, { recursive: true });
   fs.writeFileSync(path.join(own, 'decisions.md'), '');
   const env = hookEnv();
-  // The broken GIT_DIR must stay in place until the awaited call settles, so the try/finally is here.
-  const prior = process.env.GIT_DIR;
-  process.env.GIT_DIR = path.join(os.tmpdir(), 'ct-sr5377-no-such-git-dir');
-  let result;
-  try {
-    result = await runHookCli(['check-session-residue', '--run', own], { cwd: root, env });
-  } finally {
-    if (prior === undefined) delete process.env.GIT_DIR;
-    else process.env.GIT_DIR = prior;
-  }
-  const { code, stdout } = result;
+  // The broken GIT_DIR stays in place until the awaited call settles.
+  const { code, stdout } = await withBrokenGitDir(() => runHookCli(['check-session-residue', '--run', own], { cwd: root, env }));
   assert.strictEqual(code, 0);
   assert.match(stdout, /appears shipped/);
 });

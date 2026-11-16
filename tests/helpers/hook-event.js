@@ -13,7 +13,7 @@
 
 const path = require('path');
 const { runCli } = require('./run-cli');
-const { cleanGitEnv } = require('./git-fixtures');
+const gitFixtures = require('./git-fixtures');
 const { withEnvTripwire } = require('./env-tripwire');
 
 const HOOKS = path.resolve(__dirname, '..', '..', 'plugin', 'bin', 'hooks.js');
@@ -27,7 +27,7 @@ const TRIPWIRE_ALLOWED = {
 // The whole environment a hook event sees in a test: a clean git environment with the ambient run dir
 // blanked (#1130) and the gate-denial test mode on (#1337), under the test's own keys.
 function hookEnv(overrides = {}) {
-  return { ...cleanGitEnv(), PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1', ...overrides };
+  return gitFixtures.hookEnv({ CT_HOOKS_TEST_MODE: '1', ...overrides });
 }
 
 async function runHookCli(args, { input, cwd, env, deps = {}, fresh, tripwire } = {}) {
