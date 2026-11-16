@@ -1,9 +1,10 @@
 'use strict';
 // tests/bin-lib/reproduction-log.test.js — #5595: the composer of the seven review reproduction decision-log
 // lines. The expected strings below are written out by hand (copied from the seven templates review step 3 carried
-// before #5595) so a drift in the composer shows as a diff here, and every composed line is read back through the
-// readers that consume it (pair-lines, finding-path, console/resolve's lineKeys and findingKey, console/backfill's
-// splitDecisionLine) and through the console's findingItems.
+// before #5595) so a drift in the composer shows as a diff here. The readers: classifyPairLine and the PAIR_FORMS
+// counters on every form; lineKeys, findingKey, splitDecisionLine (console/backfill) and aggregateReproductionProblem
+// on the STAGED forms (3, 4, 6); readsLocation and parseCoincidence on form 4 only; findingItems over all seven
+// (form 5 makes no console item).
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

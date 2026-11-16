@@ -8,11 +8,13 @@
 //
 // Readers of these lines (a change to a form's wording must keep each one reading it):
 //   - timing/pair-lines.js classifyPairLine — the pair-line counters (#5556), one pattern set per form
-//   - console/finding-path.js (FINDING_LOCATION, readsLocation, parseCoincidence) and console/resolve.js's
-//     findingKey/lineKeys — the `{lens}|{path}:{line}` key a STAGED line is settled by
+//   - console/finding-path.js (readsLocation, parseCoincidence) and console/resolve.js's findingKey/lineKeys —
+//     the `{lens}|{path}:{line}` key a STAGED line is settled by
 //   - console/backfill.js splitDecisionLine (analyseLine) — the legacy line splitter
 //   - log-decision/aggregate-reproduction.js — refuses a STAGED line naming several findings
-// tests/bin-lib/reproduction-log.test.js reads every form back through each of these.
+// tests/bin-lib/reproduction-log.test.js exercises: classifyPairLine and the PAIR_FORMS counters on every form;
+// lineKeys, findingKey, splitDecisionLine and aggregateReproductionProblem on the STAGED forms (3, 4, 6);
+// readsLocation and parseCoincidence on form 4 only; findingItems over all seven (form 5 makes no item).
 'use strict';
 
 const STEP = 'Reproduction';
