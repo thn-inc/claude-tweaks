@@ -1,0 +1,207 @@
+// bin/lib/issues/accept-entry.js — the decisions /claude-tweaks:accept's entries make
+// (#4613): what the automatic entry labels, which state a record's acceptance packet is
+// in, how a stale packet is refreshed, and which labels a verdict adds and removes.
+// bin/accept-entry.js is the CLI the skill prose calls.
+//
+// Refresh rewrites a closed list of fields, REFRESHABLE_FIELDS, and nothing else in a
+// packet body: the Deploy status section, the origin of every http(s) URL in the Test
+// guide section, and the Recording section's link. A packet is stale only when its Deploy
+// status section carries a `ref: {sha}` line and the deploy source names another ref. No
+// deploy-status source exists yet (a later record supplies one), so today every refresh
+// reports its fields `unverified`; a packet written before the `ref:` line existed is
+// `unverified` too, never stale.
+//
+// A field is `refreshed` when its source value is given: devBaseUrl for the Test guide's
+// origins (a Test guide with no URL in it has nothing stale), recordingUrl for the
+// Recording link when the section holds a link to replace. Any other field is `unverified`.
+//
+// Pure: no fs, git or gh.
+'use strict';
+
+const { SECTIONS } = require('../wrap-up/packet-contract');
+const { dispositionState, APPROVAL_PROVENANCE_LABEL, APPROVAL_PROVENANCE_LABELS } = require('./acceptance');
+const { LABELS } = require('./record-vocabulary');
+
+const PACKET_STATES = Object.freeze(['awaiting-local', 'waiting-for-deploy', 'live-on-dev', 'already-decided', 'no-packet', 'unhandled']);
+const REFRESHABLE_FIELDS = Object.freeze(['deploy-status', 'test-guide-base-url', 'recording-link']);
+const VERDICTS = Object.freeze(['approved', 'changes-requested', 'skip']);
+
+const headingOf = (key) => SECTIONS.find((section) => section.key === key).heading;
+const RECORDING = headingOf('recording');
+const TEST_GUIDE = headingOf('test-guide');
+const DEPLOY = headingOf('deploy');
+
+// What packet-render.js writes: the Recording note with nothing recorded, and the suffix on a
+// Test-guide link whose dev deploy is not confirmed live.
+const NOT_RECORDED = 'not recorded';
+const UNVERIFIED_LINK = '(link unverified: deploy not confirmed live)';
+const TARGET_RE = /(?:^|\s)target:[ \t]*([^\s,]+)/;
+const NOT_CONFIRMED_RE = /\bnot confirmed live\b/;
+const CONFIRMED_RE = /\bconfirmed live\b/;
+const REF_LINE_RE = /^ref:[ \t]*(\S+)$/;
+// An origin: scheme, then host and port up to the first character that ends one.
+const ORIGIN_RE = /\bhttps?:\/\/[^\s/?#<>()[\]`'"]+/gi;
+const AUTOLINK_RE = /<https?:\/\/[^\s<>]+>/gi;
+
+const ACCEPT_APPROVED_BATCH = APPROVAL_PROVENANCE_LABELS.find((label) => label !== APPROVAL_PROVENANCE_LABEL);
+const PENDING = Object.freeze([LABELS.DEMO_PENDING, LABELS.ACCEPT_PENDING]);
+const BATCH_MARKERS = Object.freeze([APPROVAL_PROVENANCE_LABEL, ACCEPT_APPROVED_BATCH]);
+
+const namesOf = (labels) => (Array.isArray(labels) ? labels.filter((name) => typeof name === 'string') : []);
+
+function automaticLabelAction(labels) {
+  return dispositionState(namesOf(labels)) === 'none' ? 'apply-pending' : 'none';
+}
+
+// The body's lines, each with its `\r` stripped, plus the eol each carried.
+function splitLines(body) {
+  return body.split('\n').map((raw) => (raw.endsWith('\r') ? { text: raw.slice(0, -1), eol: '\r' } : { text: raw, eol: '' }));
+}
+const joinLines = (lines) => lines.map(({ text, eol }) => `${text}${eol}`).join('\n');
+
+// { start, end } line indexes of a `### {heading}` section's body (start inclusive, end
+// exclusive), ending at the next `### ` heading or the end of the body; null when absent.
+function sectionRange(lines, heading) {
+  const at = lines.findIndex(({ text }) => text.trimEnd() === `### ${heading}`);
+  if (at === -1) return null;
+  let end = at + 1;
+  while (end < lines.length && !lines[end].text.startsWith('### ')) end += 1;
+  return { start: at + 1, end };
+}
+
+function sectionText(lines, heading) {
+  const range = sectionRange(lines, heading);
+  return range === null ? null : lines.slice(range.start, range.end).map(({ text }) => text).join('\n');
+}
+
+const unhandled = (detail, recording = false) => ({
+  state: 'unhandled', recording, verdict: null, message: `accept: unhandled packet state (${detail}) — stopping`,
+});
+
+function recordingOf(lines) {
+  const text = sectionText(lines, RECORDING);
+  return text !== null && text.trim() !== '' && text.trim() !== NOT_RECORDED;
+}
+
+function devState(deployText, guideText) {
+  const guide = guideText ?? '';
+  if (NOT_CONFIRMED_RE.test(deployText) || guide.includes(UNVERIFIED_LINK)) return 'waiting-for-deploy';
+  if (CONFIRMED_RE.test(deployText)) return 'live-on-dev';
+  // Commands-only packets render no links, so a bare `target: dev` is live only with a link.
+  ORIGIN_RE.lastIndex = 0;
+  return ORIGIN_RE.test(guide) ? 'live-on-dev' : 'waiting-for-deploy';
+}
+
+function packetStateOf({ packet, labels } = {}) {
+  const status = packet?.status;
+  const lines = typeof packet?.body === 'string' ? splitLines(packet.body) : [];
+  const recording = status === 'found' ? recordingOf(lines) : false;
+  const disposition = dispositionState(namesOf(labels));
+  if (disposition === 'approved' || disposition === 'changes-requested') {
+    return { state: 'already-decided', recording, verdict: disposition, message: null };
+  }
+  if (status === 'none') return { state: 'no-packet', recording: false, verdict: null, message: null };
+  if (status === 'unreadable') return unhandled('packet comment unreadable: non-current schema');
+  if (status !== 'found') return unhandled('unknown packet status');
+
+  const deployText = sectionText(lines, DEPLOY) ?? '';
+  const target = TARGET_RE.exec(deployText)?.[1] ?? null;
+  let state;
+  if (target === null || target === 'local') state = 'awaiting-local';
+  else if (target === 'dev') state = devState(deployText, sectionText(lines, TEST_GUIDE));
+  else return unhandled(`deploy target: ${target}`, recording);
+  return { state, recording, verdict: null, message: null };
+}
+
+function storedRef(lines, range) {
+  for (const { text } of lines.slice(range.start, range.end)) {
+    const match = REF_LINE_RE.exec(text.trim());
+    if (match) return match[1];
+  }
+  return null;
+}
+
+// The Deploy status body replaced by the source's text and one `ref:` line. Blank lines at
+// either edge of the old body stay, so the bytes around the section do not move.
+function replaceDeploy(lines, range, source) {
+  const eol = lines[range.start - 1].eol;
+  let first = range.start;
+  while (first < range.end && lines[first].text.trim() === '') first += 1;
+  let last = range.end;
+  while (last > first && lines[last - 1].text.trim() === '') last -= 1;
+  const text = source.text.split(/\r?\n/).filter((line) => !REF_LINE_RE.test(line.trim()));
+  const fresh = [...text, `ref: ${source.ref}`].map((line) => ({ text: line, eol }));
+  return [...lines.slice(0, first), ...fresh, ...lines.slice(last)];
+}
+
+function mapSection(lines, heading, fn) {
+  const range = sectionRange(lines, heading);
+  if (range === null) return lines;
+  return lines.map((line, index) => (index >= range.start && index < range.end ? { ...line, text: fn(line.text) } : line));
+}
+
+function refreshPacket(body, source) {
+  const unchangedUnverified = { body, refreshed: [], unverified: [...REFRESHABLE_FIELDS] };
+  if (source === null || source === undefined) return unchangedUnverified;
+  let lines = splitLines(body);
+  const deployRange = sectionRange(lines, DEPLOY);
+  const ref = deployRange === null ? null : storedRef(lines, deployRange);
+  if (ref === null) return unchangedUnverified;
+  if (ref === source.ref) return { body, refreshed: [], unverified: [] };
+
+  const refreshed = ['deploy-status'];
+  lines = replaceDeploy(lines, deployRange, source);
+  if (typeof source.devBaseUrl === 'string' && source.devBaseUrl !== '') {
+    const origin = new URL(source.devBaseUrl).origin;
+    lines = mapSection(lines, TEST_GUIDE, (text) => text.replace(ORIGIN_RE, origin));
+    refreshed.push('test-guide-base-url');
+  }
+  if (typeof source.recordingUrl === 'string' && source.recordingUrl !== '') {
+    const recordingText = sectionText(lines, RECORDING);
+    AUTOLINK_RE.lastIndex = 0;
+    if (recordingText !== null && AUTOLINK_RE.test(recordingText)) {
+      const link = `<${new URL(source.recordingUrl).href}>`;
+      lines = mapSection(lines, RECORDING, (text) => text.replace(AUTOLINK_RE, link));
+      refreshed.push('recording-link');
+    }
+  }
+  return {
+    body: joinLines(lines),
+    refreshed,
+    unverified: REFRESHABLE_FIELDS.filter((field) => !refreshed.includes(field)),
+  };
+}
+
+// The labels each verdict removes when present, in removal order.
+function removalCandidates(verdict, batch) {
+  if (verdict === 'approved') {
+    return [
+      ...PENDING, LABELS.DEMO_CHANGES_REQUESTED, LABELS.ACCEPT_CHANGES_REQUESTED, LABELS.DEMO_APPROVED,
+      ...(batch ? [] : BATCH_MARKERS),
+    ];
+  }
+  return [
+    ...PENDING, LABELS.DEMO_APPROVED, LABELS.ACCEPT_APPROVED, ...BATCH_MARKERS, LABELS.DEMO_CHANGES_REQUESTED,
+  ];
+}
+
+function verdictLabelEdits(labels, verdict, { batch = false } = {}) {
+  if (!VERDICTS.includes(verdict)) throw new TypeError(`unknown verdict: ${verdict}`);
+  if (verdict === 'skip') return { add: [], remove: [] };
+  const present = new Set(namesOf(labels));
+  const add = verdict === 'approved'
+    ? [LABELS.ACCEPT_APPROVED, ...(batch ? [ACCEPT_APPROVED_BATCH] : [])]
+    : [LABELS.ACCEPT_CHANGES_REQUESTED];
+  // `gh issue edit --remove-label` on an absent label fails the whole edit.
+  return { add, remove: removalCandidates(verdict, batch).filter((name) => present.has(name)) };
+}
+
+module.exports = {
+  automaticLabelAction,
+  PACKET_STATES,
+  packetStateOf,
+  REFRESHABLE_FIELDS,
+  refreshPacket,
+  VERDICTS,
+  verdictLabelEdits,
+};

@@ -12,6 +12,7 @@ const { classifyWatchedRecord } = require('../plugin/bin/lib/issues/merge-lane-b
 const { trustRows } = require('../plugin/bin/lib/issues/trust');
 const { runVerify } = require('../plugin/bin/lib/wrap-up/engine-verify');
 const { publishPacket } = require('../plugin/bin/lib/wrap-up/packet-post');
+const { automaticLabelAction } = require('../plugin/bin/lib/issues/accept-entry');
 
 // #4610 expand step: the acceptance verdict labels are read under two spellings,
 // demo:* (legacy) and accept:* (successor), until the contract step removes the
@@ -143,6 +144,11 @@ const DEMO_LABEL_READERS = {
     what: 'the acceptance-labeling closure check',
     run: (labels) => acceptanceLabelingResult(labels),
     expect: { pending: 'pass', approved: 'fail', 'changes-requested': 'fail', none: 'fail' },
+  },
+  'lib/issues/accept-entry.js': {
+    what: "/accept's automatic entry, which labels only a record with no acceptance state",
+    run: (labels) => automaticLabelAction(labels),
+    expect: { pending: 'none', approved: 'none', 'changes-requested': 'none', none: 'apply-pending' },
   },
   'lib/wrap-up/packet-post.js': {
     what: 'the failed-publish clear, which removes a pending label in either spelling',
