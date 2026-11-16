@@ -192,7 +192,7 @@ function readChangelogMaxReleases(readPolicy) {
   try {
     raw = readPolicy();
   } catch (err) {
-    return { count: 0, error: err.message };
+    return { count: 0, error: String((err && err.message) || err) || 'unknown error' };
   }
   if (raw == null) return { count: 0, error: null };
   const key = 'changelog-max-releases';

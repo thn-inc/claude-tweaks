@@ -273,3 +273,12 @@ test('changelog-max-releases: an unreadable policy file is reported, not read as
   assert.strictEqual(r.count, 0);
   assert.match(r.error, /EISDIR/);
 });
+test('changelog-max-releases: a non-Error or empty-message throw still yields a non-empty reason', () => {
+  for (const thrown of [new Error(''), 'plain string', undefined, null]) {
+    const r = readChangelogMaxReleases(() => { throw thrown; });
+    assert.strictEqual(r.count, 0);
+    assert.strictEqual(typeof r.error, 'string');
+    assert.ok(r.error.length > 0, `reason for ${String(thrown)}`);
+  }
+  assert.strictEqual(readChangelogMaxReleases(() => { throw 'plain string'; }).error, 'plain string');
+});

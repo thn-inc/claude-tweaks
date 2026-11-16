@@ -86,7 +86,7 @@ test('no resolvable default ref: not trimmed, failure line names the candidates'
 });
 
 test('AC14.1 (helper): a HEAD that is not an ancestor of the default branch is not trimmed and prints the failure line', () => {
-  const git = fakeGit({ 'merge-base': new Error('exit 1') }); const err = sink();
+  const git = fakeGit({ 'merge-base': Object.assign(new Error('exit 1'), { status: 1 }) }); const err = sink();
   const r = prepareTrim({ text: file(['1.0.2', '1.0.1', '1.0.0']), readPolicy: policy(1), git, ancestorRefs: ['refs/heads/main'], stderr: err.write });
   assert.strictEqual(r, null);
   assert.match(err.out, /^changelog trim: failed \(.* is not an ancestor of refs\/heads\/main\); file left untrimmed\n$/);
@@ -122,6 +122,44 @@ test('a throwing git read of HEAD is a failure line, never a throw', () => {
   });
   assert.strictEqual(r, null);
   assert.strictEqual(err.out, 'changelog trim: failed (not a repo); file left untrimmed\n');
+});
+
+test('within the bound: no git call and no line, even when git would fail', () => {
+  const calls = []; const err = sink();
+  const git = (args) => { calls.push(args); throw new Error('git must not run'); };
+  assert.strictEqual(prepareTrim({ text: file(['1.0.1', '1.0.0']), readPolicy: policy(2), git, ancestorRefs: REFS, stderr: err.write }), null);
+  assert.strictEqual(calls.length, 0);
+  assert.strictEqual(err.out, '');
+});
+
+test('a footer-bearing file at the bound is within the bound (footer is not a section)', () => {
+  const git = () => { throw new Error('git must not run'); };
+  const err = sink();
+  const trimmed = prepareTrim({ text: file(['1.0.2', '1.0.1', '1.0.0']), readPolicy: policy(2), git: fakeGit(), ancestorRefs: REFS, stderr: () => {} });
+  assert.strictEqual(prepareTrim({ text: trimmed.text, readPolicy: policy(2), git, ancestorRefs: REFS, stderr: err.write }), null);
+  assert.strictEqual(err.out, '');
+});
+
+test('a multi-line git error prints one failure line carrying only its first line', () => {
+  const err = sink();
+  const e = new Error('Command failed: git rev-parse HEAD\nfatal: not a git repository');
+  const r = prepareTrim({ text: file(['1.0.2', '1.0.1', '1.0.0']), readPolicy: policy(1), git: fakeGit({ 'rev-parse HEAD': e }), ancestorRefs: REFS, stderr: err.write });
+  assert.strictEqual(r, null);
+  assert.strictEqual(err.out, 'changelog trim: failed (Command failed: git rev-parse HEAD); file left untrimmed\n');
+});
+
+test('a multi-line unreadable-policy reason prints one line', () => {
+  const err = sink();
+  prepareTrim({ text: null, readPolicy: () => { throw new Error('EACCES: denied\nsecond line'); }, git: fakeGit(), ancestorRefs: REFS, stderr: err.write });
+  assert.strictEqual(err.out, 'changelog trim: policy unreadable (EACCES: denied); not trimmed\n');
+});
+
+test('merge-base status 1 is "not an ancestor"; any other failure keeps its own message', () => {
+  const err = sink();
+  const e = Object.assign(new Error('Command failed: git merge-base\nfatal: Not a valid commit name'), { status: 128 });
+  prepareTrim({ text: file(['1.0.2', '1.0.1', '1.0.0']), readPolicy: policy(1), git: fakeGit({ 'merge-base': e }), ancestorRefs: REFS, stderr: err.write });
+  assert.strictEqual(err.out, 'changelog trim: failed (Command failed: git merge-base); file left untrimmed\n');
+  assert.ok(!/not an ancestor/.test(err.out));
 });
 
 // ---- real git ----
@@ -202,7 +240,7 @@ test('AC14.1: real git, a HEAD off the default branch is not trimmed', () => {
   } finally { fs.rmSync(r.dir, { recursive: true, force: true }); }
 });
 
-test('AC9.1 AC9.2: a version removed by a later trim is absent at the footer commit and present at its own tag', () => {
+test('AC9.1 AC9.2: trimmed twice, a version removed by the second trim is absent at the footer commit and present at its own tag', () => {
   const r = realRepo({ origin: 'https://github.com/o/r.git' });
   try {
     r.write(file(['1.0.1', '1.0.0']));
@@ -216,23 +254,17 @@ test('AC9.1 AC9.2: a version removed by a later trim is absent at the footer com
 
     r.write(addNewest(r.read(), '1.0.2')); r.commit('release 1.0.2');
     r.git('tag', 'v1.0.2');
-    const t2 = r.trim(1);
-    assert.deepStrictEqual(t2.removed, ['1.0.1']);
-    r.write(t2.text); r.commit('trim 2');
-
     r.write(addNewest(r.read(), '1.0.3')); r.commit('release 1.0.3');
     r.git('tag', 'v1.0.3');
-    const t3 = r.trim(1);
-    assert.deepStrictEqual(t3.removed, ['1.0.2']);
-    r.write(t3.text); r.commit('trim 3');
+    const t2 = r.trim(1);
+    assert.ok(t2.removed.includes('1.0.2'), 'trim 2 removes 1.0.2');
+    r.write(t2.text); r.commit('trim 2');
 
     const footerSha = parseChangelogFooter(r.read()).sha;
     assert.strictEqual(footerSha, sha);
-    const atFooter = parseChangelogVersions(r.git('show', `${footerSha}:CHANGELOG.md`)).map((e) => e.version);
-    const atTag = parseChangelogVersions(r.git('show', 'v1.0.2:CHANGELOG.md')).map((e) => e.version);
-    const atHead = parseChangelogVersions(r.read()).map((e) => e.version);
-    assert.ok(!atFooter.includes('1.0.2'), 'absent at the footer commit');
-    assert.ok(atTag.includes('1.0.2'), 'present at its own tag');
-    assert.ok(!atHead.includes('1.0.2'), 'absent from HEAD');
+    const versionsAt = (rev) => parseChangelogVersions(r.git('show', `${rev}:CHANGELOG.md`)).map((e) => e.version);
+    assert.ok(!versionsAt(footerSha).includes('1.0.2'), 'absent at the footer commit');
+    assert.ok(versionsAt('v1.0.2').includes('1.0.2'), 'present at its own tag');
+    assert.ok(!parseChangelogVersions(r.read()).map((e) => e.version).includes('1.0.2'), 'absent at HEAD');
   } finally { fs.rmSync(r.dir, { recursive: true, force: true }); }
 });

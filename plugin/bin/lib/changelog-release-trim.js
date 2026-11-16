@@ -8,7 +8,7 @@
 // finishes with the file untrimmed.
 
 const { readChangelogMaxReleases } = require('./policy');
-const { trimChangelog } = require('./changelog');
+const { trimChangelog, parseChangelogVersions } = require('./changelog');
 const { parseGitHubRemote } = require('./release-local/changelog');
 
 function resolveDefaultRef(git, ancestorRefs) {
@@ -23,6 +23,8 @@ function resolveDefaultRef(git, ancestorRefs) {
   throw new Error(`no default branch ref among ${ancestorRefs.join(', ')}`);
 }
 
+const firstLine = (message) => String(message).split(/\r?\n/)[0];
+
 function originUrl(git) {
   try {
     const remote = parseGitHubRemote(git(['remote', 'get-url', 'origin']));
@@ -36,24 +38,28 @@ function originUrl(git) {
 // the bound, unreadable policy, or any failure — the last two print one line to `stderr`).
 function prepareTrim({ text, readPolicy, git, ancestorRefs, stderr, trim = trimChangelog }) {
   const { count, error } = readChangelogMaxReleases(readPolicy);
-  if (error) {
-    stderr(`changelog trim: policy unreadable (${error}); not trimmed\n`);
+  if (error != null) {
+    stderr(`changelog trim: policy unreadable (${firstLine(error)}); not trimmed\n`);
     return null;
   }
   if (count === 0) return null;
   try {
+    // Within the bound the trim would remove nothing: skip every git check, print nothing.
+    if (parseChangelogVersions(text).length <= count) return null;
     const sha = git(['rev-parse', 'HEAD']).trim();
     const ref = resolveDefaultRef(git, ancestorRefs);
     try {
       git(['merge-base', '--is-ancestor', '--end-of-options', sha, ref]);
-    } catch {
-      throw new Error(`${sha} is not an ancestor of ${ref}`);
+    } catch (err) {
+      // --is-ancestor exits 1 for "no" and 128 for a real error.
+      if (err && err.status === 1) throw new Error(`${sha} is not an ancestor of ${ref}`);
+      throw err;
     }
     const result = trim(text, count, { sha, repoUrl: originUrl(git) });
     if (result.text === text) return null;
     return { text: result.text, count, removed: result.removed };
   } catch (err) {
-    stderr(`changelog trim: failed (${err.message}); file left untrimmed\n`);
+    stderr(`changelog trim: failed (${firstLine(err.message)}); file left untrimmed\n`);
     return null;
   }
 }
