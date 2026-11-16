@@ -17,7 +17,7 @@ Exit 0 for either decision; 2 for a malformed invocation (usage on stderr); 3 wh
 
 ## Result handling
 
-- `skip` — do not invoke the skill. Repeat the gate's `reason` verbatim in the caller's own output. `logged: false` (no `--run`): the caller also names the step, the skill and the reason in its own output (standalone: its handoff). `journeys` (a `visual-review` skip) lists the journeys whose `files:` overlap the diff; report them.
+- `skip` — do not invoke the skill. Repeat the gate's `reason` verbatim in the caller's own output. `logged: false` (no `--run`, or the `decisions.md` write failed): the caller also names the step, the skill and the reason in its own output (standalone: its handoff). `journeys` (a `visual-review` skip) lists the journeys whose `files:` overlap the diff; report them.
 - `proceed` — invoke the skill as the step documents. A reason starting `cannot tell: ` is still a proceed: the gate could not decide, wrote one stderr line and logged nothing.
 - Exit 2 or 3, or no JSON on stdout — proceed (the gate failed open by not running) and log one `SKIP` naming the failure.
 
@@ -44,7 +44,7 @@ Test code and pipeline artifacts, which no persona of a journey uses. Matching i
 
 - **`design-wrapper` `test`, `review`, `polish`, `survey`** — the verdict and reason of `evaluate()` (`bin/lib/design-detect`) for the same surface and files. `evaluate()` reads an unrecognised surface as no surface; the gate's own rules below proceed on one (`cannot tell:`).
 - **`design-wrapper` `pre-build`** — the design-integration flag is checked first (`disabled`, or not configured, is `skip`, even beside an unrecognised surface); then `skip` for an absent, `backend` or `infra` surface. An unrecognised surface proceeds. No file sniff.
-- **`visual-review`** — an empty or unresolved file list proceeds (`cannot tell:`), checked before the surface. `skip` only when the surface is absent, `terminal`, `backend` or `infra` and no changed file matches `fileMatchesFrontendPredicate`; the skip also prints `journeys`. `visual-review/SKILL.md` Step 0.5 is the prose twin of this rule; the one difference is that a UI file proceeds here whatever the declared surface.
+- **`visual-review`** — an empty or unresolved file list proceeds (`cannot tell:`), checked before the surface. `skip` only when the surface is absent, `terminal`, `backend` or `infra` and no changed file matches `fileMatchesFrontendPredicate`; the skip also prints `journeys`. `visual-review/SKILL.md` Step 0.5 is the prose twin of this rule; two differences: a UI file proceeds here whatever the declared surface, and an unrecognised declared surface is "not a signal" there while the gate proceeds with `cannot tell:`.
 - **`journeys`** — `skip` only when every changed file is in the no-surface set, none is under `docs/journeys/`, and none is listed in any journey's `files:` (a literal, or an entry whose only wildcard is `*` in its last segment). A `**` or other wildcard entry proceeds.
 
 ## Deliberately not gated

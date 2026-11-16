@@ -129,12 +129,12 @@ test('AC13.2: Step 0.5 names the surfaces the gate\'s visual-review rule uses', 
 });
 
 test('AC13.2 go-red: a surface changed on one side only fails the comparison', () => {
-  const noDesktop = VISUAL.replace('`desktop` is a signal', 'desktop is a signal').replace('`mobile`, or `desktop`', '`mobile`, or desktop');
+  const noDesktop = VISUAL.replace('`mobile`, or `desktop`', '`mobile`, or desktop');
   assert.notEqual(noDesktop, VISUAL);
-  assert.throws(() => assertVisualSurfacesEqual(noDesktop, VISUAL_SIGNAL_SURFACES, VISUAL_NO_SIGNAL_SURFACES), /signal surfaces differ/);
+  assert.throws(() => assertVisualSurfacesEqual(noDesktop, VISUAL_SIGNAL_SURFACES, VISUAL_NO_SIGNAL_SURFACES), /Step 0\.5 signal surfaces differ/);
   const noTerminal = VISUAL.replace('`infra`, `terminal`', '`infra`');
   assert.notEqual(noTerminal, VISUAL);
   assert.throws(() => assertVisualSurfacesEqual(noTerminal, VISUAL_SIGNAL_SURFACES, VISUAL_NO_SIGNAL_SURFACES), /no-signal surfaces differ/);
-  assert.throws(() => assertVisualSurfacesEqual(VISUAL, [...VISUAL_SIGNAL_SURFACES, 'kiosk'], VISUAL_NO_SIGNAL_SURFACES), /signal surfaces differ/);
+  assert.throws(() => assertVisualSurfacesEqual(VISUAL, [...VISUAL_SIGNAL_SURFACES, 'kiosk'], VISUAL_NO_SIGNAL_SURFACES), /Step 0\.5 signal surfaces differ/);
   assert.throws(() => assertVisualSurfacesEqual(VISUAL, VISUAL_SIGNAL_SURFACES, [...VISUAL_NO_SIGNAL_SURFACES, 'kiosk']), /no-signal surfaces differ/);
 });
