@@ -327,7 +327,12 @@ const ZERO_TOKENS = () => ({ input: 0, output: 0, cacheRead: 0, cacheCreate: 0 }
 // tokens. Rows outside every phase land in `unattributed`. Token fields
 // come from assistant rows, round-trips/procedure bytes from user rows;
 // the reader keeps the groups exclusive per row, so sums never double.
-function joinTokens(phases, usageRows) {
+// `subagents` is agents, not calls (#5597): the user rows' `agentCalls` (Agent
+// and Task results; a row without the field falls back to its `dispatch`
+// class count) plus one per `workflowAgentStarts` timestamp (ISO strings, one
+// per workflow agent with a timestamped row) in the bucket whose span holds it.
+// The `dispatch` turn class still counts calls, Workflow included.
+function joinTokens(phases, usageRows, workflowAgentStarts = []) {
   const rows = Array.isArray(usageRows) ? usageRows : [];
   const phaseList = Array.isArray(phases) ? phases : [];
   const spans = phaseList.map((p) => ({
@@ -339,6 +344,7 @@ function joinTokens(phases, usageRows) {
   const bucket = () => ({
     tokens: ZERO_TOKENS(), procedureBytes: 0, toolRoundTrips: 0, rows: 0,
     turnClasses: Object.fromEntries(TURN_CLASSES.map((c) => [c, 0])), modelMix: {}, samples: [],
+    agentCalls: 0, workflowAgents: 0,
   });
   const add = (b, r) => {
     b.tokens.input += Number(r.inputTokens) || 0;
@@ -348,6 +354,7 @@ function joinTokens(phases, usageRows) {
     b.procedureBytes += Number(r.procedureBytes) || 0;
     if (r.toolRoundTrip) b.toolRoundTrips += 1;
     b.rows += 1;
+    b.agentCalls += Number.isFinite(r.agentCalls) ? r.agentCalls : (Number(r.turnClasses && r.turnClasses.dispatch) || 0);
     for (const [cls, n] of Object.entries(r.turnClasses || {})) b.turnClasses[Object.hasOwn(b.turnClasses, cls) ? cls : 'other'] += Number(n) || 0;
     if (r.turnStart) {
       b.samples.push(Number(r.contextTokens) || 0);
@@ -361,32 +368,42 @@ function joinTokens(phases, usageRows) {
     const sorted = b.samples.slice().sort((x, y) => x - y);
     const calls = TURN_CLASSES.reduce((sum, c) => sum + b.turnClasses[c], 0);
     const ceremony = CEREMONY_CLASSES.reduce((sum, c) => sum + b.turnClasses[c], 0);
-    const { samples, ...rest } = b;
+    const { samples, agentCalls, workflowAgents, ...rest } = b;
     return {
       ...rest,
       context: { turns: sorted.length, p50: percentile(sorted, 0.5), p90: percentile(sorted, 0.9) },
-      subagents: b.turnClasses.dispatch,
+      subagents: agentCalls + workflowAgents,
       ceremonyShare: calls ? Math.round((ceremony / calls) * 1000) / 1000 : null,
     };
   };
   for (const s of spans) acc.set(s.phase, bucket());
   const unattributed = bucket();
-  for (const r of rows) {
-    const t = ms(r && r.ts);
-    if (t === null) continue;
+  // The innermost [start, end) span holding t, as the bucket it feeds.
+  const bucketAt = (t) => {
     let best = null;
     for (const s of spans) {
       if (s.start === null || s.end === null || s.source === 'unattributed') continue;
       if (!(t >= s.start && t < s.end)) continue;
       if (!best || (s.end - s.start) < (best.end - best.start) || ((s.end - s.start) === (best.end - best.start) && s.start > best.start)) best = s;
     }
-    add(best ? acc.get(best.phase) : unattributed, r);
+    return best ? acc.get(best.phase) : unattributed;
+  };
+  for (const r of rows) {
+    const t = ms(r && r.ts);
+    if (t === null) continue;
+    add(bucketAt(t), r);
+  }
+  const totalsAcc = bucket();
+  for (const ts of Array.isArray(workflowAgentStarts) ? workflowAgentStarts : []) {
+    const t = ms(ts);
+    if (t === null) continue;
+    bucketAt(t).workflowAgents += 1;
+    totalsAcc.workflowAgents += 1;
   }
   const outPhases = phaseList.map((p) => {
     const { rows: _rows, ...b } = finalize(acc.get(p.phase));
     return { ...p, ...b };
   });
-  const totalsAcc = bucket();
   for (const r of rows) if (ms(r && r.ts) !== null) add(totalsAcc, r);
   const { rows: _totalRows, ...totals } = finalize(totalsAcc);
   return { phases: outPhases, unattributed: finalize(unattributed), totals };

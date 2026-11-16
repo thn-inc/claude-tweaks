@@ -324,11 +324,11 @@ test('the allowlist keeps plain command words rewriting: cd ., ls ., cp a ., fin
     ['P=/x; ls $P/z .', 'P=/x; ls /x/z .'],
     ['P=/x; cp a . && node $P/z.js', 'P=/x; cp a . && node /x/z.js'],
     ['P=/x; find . -name a; node $P/z.js', 'P=/x; find . -name a; node /x/z.js'],
-    ['P=/x; git -C . status; node $P/z.js', 'P=/x; git -C . status; node /x/z.js'],
     ['P=/x; echo a >. ; node $P/z.js', 'P=/x; echo a >. ; node /x/z.js'],
     ['P=/x; node $P/z.js 2>&1 | cat', 'P=/x; node /x/z.js 2>&1 | cat'],
     ['P=/x; X=1 env -i node "$(echo $P)/z.js"', 'P=/x; X=1 env -i node "$(echo /x)/z.js"'],
   ]) assert.deepStrictEqual(rw(command), { command: expected, applied: ['inline-literal-assignment'] }, command);
+  assert.deepStrictEqual(rw('P=/x; git -C . status; node $P/z.js'), { command: 'P=/x; git status; node /x/z.js', applied: ['inline-literal-assignment', 'drop-git-C-cwd'] });
 });
 
 test("node-eval-separator inserts -- before \"$A\" and leaves an existing -- alone", () => {
@@ -341,6 +341,26 @@ test("node-eval-separator inserts -- before \"$A\" and leaves an existing -- alo
   assert.strictEqual(rw(`node -e ${script} a "$A"`), null, 'only the FIRST argument is considered');
   assert.strictEqual(rw(`echo "node -e ${script} $A"`), null, 'inside a quoted string');
   assert.strictEqual(rw(`node --no-warnings -e ${script} "$A"`), null, 'narrow shape only');
+});
+
+test('node-eval-separator reads node after a separator', () => {
+  for (const sep of ['&', '&&', '|', '|&', '||']) {
+    assert.deepStrictEqual(rw(`ls ${sep} node -e '1' "$A"`), { command: `ls ${sep} node -e '1' -- "$A"`, applied: ['node-eval-separator'] }, sep);
+  }
+});
+
+test('node-eval-separator never reads node as a >& redirection target', () => {
+  assert.strictEqual(rw(`echo x >& node -e '1' "$A"`), null, 'writes to a file named node');
+});
+
+test('node-eval-separator never reads node as a <& redirection target', () => {
+  assert.strictEqual(rw(`echo x <& node -e '1' "$A"`), null);
+});
+
+test('node-eval-separator never reads node as an array element: the ( of a=( starts no command', () => {
+  assert.strictEqual(rw(`a=(node -e '1' "$A")`), null);
+  assert.strictEqual(rw(`a+=(node -e '1' "$A")`), null);
+  assert.deepStrictEqual(rw(`(node -e '1' "$A")`), { command: `(node -e '1' -- "$A")`, applied: ['node-eval-separator'] }, 'a subshell ( at a command start still starts one');
 });
 
 test('quote-escaped-space double-quotes ls /a/Code\\ Workspaces/b', () => {
@@ -404,6 +424,315 @@ test('drop-redundant-cd under path.win32 keeps comparing exact spellings: the th
   assert.deepStrictEqual(rewriteForGuard({ command: 'cd "D:\\w\\cwd" && ls x', ...folding }), { command: 'ls x', applied: ['drop-redundant-cd'] }, 'the exact spelling still drops under the folding realpath');
 });
 
+// drop-git-C-cwd. Each decline pin hands the rule an input every other check accepts: the operand
+// spells the cwd and the realpath stub resolves it there, except for the property under test.
+const posix = (command, cwd = '/w/wt', realpath = (p) => path.posix.resolve(p)) => rewriteForGuard({ command, cwd, pluginRoot: ROOT, pathImpl: path.posix, deps: { isLinkedWorktree: () => true, canonicalRealpath: realpath } });
+// A realpath that resolves `spelling` to the cwd, so only the spelling compare can decline it.
+const resolvesToCwd = (spelling) => (p) => (p === spelling ? '/w/wt' : path.posix.resolve(p));
+
+test('AC1.1: drop-git-C-cwd turns git -C . log into git log, and runs after drop-redundant-cd', () => {
+  assert.deepStrictEqual(rw('git -C . log --oneline -3'), { command: 'git log --oneline -3', applied: ['drop-git-C-cwd'] });
+  assert.deepStrictEqual(rw(`cd "${CWD}" && git -C . status --short`), { command: 'git status --short', applied: ['drop-redundant-cd', 'drop-git-C-cwd'] });
+  assert.deepStrictEqual(rw("git -C '.' diff"), { command: 'git diff', applied: ['drop-git-C-cwd'] });
+  assert.deepStrictEqual(rw('git -C "." show'), { command: 'git show', applied: ['drop-git-C-cwd'] });
+  assert.deepStrictEqual(rw('ls | git -C . log'), { command: 'ls | git log', applied: ['drop-git-C-cwd'] }, 'Review Focus 1: after a pipe');
+  assert.deepStrictEqual(rw('git  -C \t .   rev-parse HEAD; git -C . status'), { command: 'git rev-parse HEAD; git status', applied: ['drop-git-C-cwd'] }, 'every qualifying call, one blank left');
+});
+
+test('AC2.1: drop-git-C-cwd drops a literal spelling of the cwd', () => {
+  assert.deepStrictEqual(posix('git -C "/w/wt" grep -n x -- a/*.js'), { command: 'git grep -n x -- a/*.js', applied: ['drop-git-C-cwd'] });
+  assert.deepStrictEqual(posix("git -C '/w/wt' ls-files"), { command: 'git ls-files', applied: ['drop-git-C-cwd'] });
+  assert.deepStrictEqual(posix('git -C /w/wt status'), { command: 'git status', applied: ['drop-git-C-cwd'] });
+});
+
+test('AC2.1: /w/wt/ is rewritten', () => {
+  assert.deepStrictEqual(posix('git -C "/w/wt/" log'), { command: 'git log', applied: ['drop-git-C-cwd'] });
+});
+
+test('AC2.2: drop-git-C-cwd declines git -C "/w/other": not the cwd', () => {
+  assert.strictEqual(posix('git -C "/w/other" log'), null);
+});
+
+test('AC2.2: drop-git-C-cwd declines cd sub && git -C "/w/wt" log', () => {
+  assert.strictEqual(posix('cd sub && git -C "/w/wt" log'), null);
+});
+
+test('AC2.2: drop-git-C-cwd declines a cd word anywhere in the text', () => {
+  assert.strictEqual(posix('git -C "/w/wt" log && cd sub'), null);
+  assert.strictEqual(posix('git -C "/w/wt" log; echo "cd"'), null, 'quoted or not');
+});
+
+test('AC2.2: drop-git-C-cwd declines a pushd word', () => {
+  assert.strictEqual(posix('git -C "/w/wt" log; pushd sub'), null);
+});
+
+test('AC2.2: drop-git-C-cwd declines a popd word', () => {
+  assert.strictEqual(posix('git -C "/w/wt" log; popd'), null);
+});
+
+test('AC2.2: drop-git-C-cwd declines a second -C', () => {
+  // git reads -C only before the subcommand, so a second -C sits where the subcommand word does:
+  // the read allowlist is the check that earns this decline.
+  assert.strictEqual(posix('git -C "/w/wt" -C sub log'), null);
+});
+
+test('drop-git-C-cwd keeps a -C that is the subcommand\'s own option', () => {
+  assert.deepStrictEqual(rw('git -C . grep -C 3 foo'), { command: 'git grep -C 3 foo', applied: ['drop-git-C-cwd'] });
+  assert.deepStrictEqual(posix('git -C "/w/wt" log -C sub'), { command: 'git log -C sub', applied: ['drop-git-C-cwd'] });
+});
+
+test('drop-git-C-cwd leaves a git that is the target of a >& or <& redirection', () => {
+  assert.strictEqual(rw('echo x >& git -C . log'), null);
+  assert.strictEqual(rw('echo x 2>&git -C . log'), null);
+  assert.strictEqual(rw('echo x <& git -C . log'), null);
+  assert.deepStrictEqual(rw('echo x >& git -C . log; git -C . log'), { command: 'echo x >& git -C . log; git log', applied: ['drop-git-C-cwd'] }, 'only the target is skipped; a later git call still rewrites');
+  assert.deepStrictEqual(rw('ls |& git -C . log'), { command: 'ls |& git log', applied: ['drop-git-C-cwd'] }, '|& is a pipe, not a redirection');
+});
+
+test('drop-git-C-cwd leaves a git inside an array literal or a zsh glob group: only a subshell ( starts a command', () => {
+  assert.strictEqual(rw('a=(git -C . log)'), null);
+  assert.strictEqual(rw('a+=(git -C . log)'), null);
+  assert.strictEqual(rw('echo x*(git -C . log)'), null, 'zsh glob group text');
+  assert.deepStrictEqual(rw('(git -C . log)'), { command: '(git log)', applied: ['drop-git-C-cwd'] });
+  assert.deepStrictEqual(rw('ls; ( (git -C . log) )'), { command: 'ls; ( (git log) )', applied: ['drop-git-C-cwd'] }, 'nested subshells at a command start');
+});
+
+test('AC2.2: drop-git-C-cwd declines a -C that is not the first option', () => {
+  assert.strictEqual(posix('git --no-pager -C "/w/wt" log'), null);
+  assert.strictEqual(rw('git -C . log; git --no-pager -C . log'), null, 'the whole command declines, not just that call');
+  assert.deepStrictEqual(rw('git -C . log; git --no-pager a-C -C50 log'), { command: 'git log; git --no-pager a-C -C50 log', applied: ['drop-git-C-cwd'] }, 'a-C and -C50 are not -C words');
+});
+
+test('AC2.2: drop-git-C-cwd declines an operand holding $', () => {
+  assert.strictEqual(posix('git -C "$W" log'), null);
+});
+
+test('AC2.3: drop-git-C-cwd declines /w/wt/.', () => {
+  assert.strictEqual(posix('git -C "/w/wt/." log'), null);
+});
+
+test('AC2.3: drop-git-C-cwd declines /w/wt/sub/..', () => {
+  assert.strictEqual(posix('git -C "/w/wt/sub/.." log'), null);
+});
+
+test('AC2.3: drop-git-C-cwd declines /W/WT', () => {
+  assert.strictEqual(posix('git -C "/W/WT" log', '/w/wt', (p) => path.posix.resolve(p).toLowerCase()), null);
+});
+
+test('AC2.3: drop-git-C-cwd declines /w/wt-evil', () => {
+  assert.strictEqual(posix('git -C "/w/wt-evil" log', '/w/wt', resolvesToCwd('/w/wt-evil')), null);
+});
+
+test('AC2.3: drop-git-C-cwd declines a symlink spelling that resolves to the cwd', () => {
+  assert.strictEqual(posix('git -C "/w/link" log', '/w/wt', resolvesToCwd('/w/link')), null);
+});
+
+test('AC2.3: drop-git-C-cwd leaves the glued -C/w/wt alone', () => {
+  assert.strictEqual(posix('git -C/w/wt log'), null);
+});
+
+test('drop-git-C-cwd declines when the cwd spelling does not resolve', () => {
+  assert.strictEqual(posix('git -C "/w/wt" log', '/w/wt', () => null), null);
+});
+
+test('AC2.4: drop-git-C-cwd declines a write subcommand: git -C "/w/wt" commit -m x', () => {
+  assert.strictEqual(posix('git -C "/w/wt" commit -m x'), null);
+  assert.strictEqual(rw('git -C . commit -m x'), null);
+  assert.strictEqual(rw('git -C . logx'), null, 'the subcommand word must end at a word break');
+});
+
+test('AC2.4: drop-git-C-cwd declines GIT_DIR=x git -C "/w/wt" log', () => {
+  assert.strictEqual(posix('GIT_DIR=x git -C "/w/wt" log'), null);
+  assert.strictEqual(posix('GIT_DIR=x; git -C "/w/wt" log'), null, 'GIT_ anywhere, also where git is the first command');
+  assert.strictEqual(rw('GIT_DIR=x; git -C . log'), null);
+});
+
+test('drop-git-C-cwd declines a literal operand on a command that is not the first: z foo && git -C …', () => {
+  assert.strictEqual(posix('z foo && git -C "/w/wt" log'), null);
+});
+
+test('drop-git-C-cwd declines a literal operand after a word zsh AUTO_CD could run: sub && git -C …', () => {
+  assert.strictEqual(posix('sub && git -C "/w/wt" log'), null);
+});
+
+test('drop-git-C-cwd declines a literal operand after an earlier function call', () => {
+  assert.strictEqual(posix('f() { :; }; f; git -C "/w/wt" log'), null);
+  assert.strictEqual(posix('f() (true); f; git -C "/w/wt" log'), null, 'a function the command-word allowlist accepts');
+});
+
+test('drop-git-C-cwd needs no first-command test for git -C .', () => {
+  assert.deepStrictEqual(rw('ls && git -C . log'), { command: 'ls && git log', applied: ['drop-git-C-cwd'] });
+  assert.deepStrictEqual(rw('cd sub && git -C . log'), { command: 'cd sub && git log', applied: ['drop-git-C-cwd'] });
+});
+
+test('drop-git-C-cwd declines on a glob, ~ or backtick operand and on doubt', () => {
+  assert.strictEqual(posix('git -C "/w/w*" log', '/w/w*'), null, 'a quoted glob character');
+  assert.strictEqual(posix('git -C "/w/w?t" log', '/w/w?t'), null);
+  assert.strictEqual(posix('git -C "/w/[w]t" log', '/w/[w]t'), null);
+  assert.strictEqual(posix("git -C '/w/w`t' log", '/w/w`t'), null, 'a single-quoted backtick');
+  assert.strictEqual(rw('git -C ~ log', { cwd: os.homedir() }), null, 'never ~');
+  assert.strictEqual(rw('git -C . log `id`'), null, 'inDoubt: a backtick');
+  assert.strictEqual(rw('git -C . log <<EOF\nx\nEOF'), null, 'inDoubt: a heredoc');
+});
+
+test('drop-git-C-cwd declines when one of two git -C calls does not qualify', () => {
+  assert.strictEqual(rw('git -C . log; git -C "$W" log'), null); // Review Focus 2
+});
+
+test('drop-git-C-cwd declines when a command word is not plain (source, eval, a computed word)', () => {
+  assert.strictEqual(rw('. ./f; git -C . log'), null);
+  assert.strictEqual(rw('eval x; git -C . log'), null);
+  assert.strictEqual(rw('$G -C . log'), null);
+  assert.strictEqual(rw('$G x; git -C . log'), null);
+});
+
+test('drop-git-C-cwd leaves git reached through env, command, xargs or an assignment prefix', () => {
+  assert.strictEqual(rw('env git -C . log'), null);
+  assert.strictEqual(rw('command git -C . log'), null);
+  assert.strictEqual(rw('xargs git -C . log'), null);
+  assert.strictEqual(rw('X=1 git -C . log'), null);
+  assert.strictEqual(rw('echo "$(git -C . log)"'), null, 'inside a substitution');
+  assert.strictEqual(rw('echo $(git -C . log)'), null, 'inside an unquoted substitution');
+});
+
+test('drop-git-C-cwd skips a longer command word that starts with git', () => {
+  assert.deepStrictEqual(rw('gitk -C . log; git -C . log'), { command: 'gitk -C . log; git log', applied: ['drop-git-C-cwd'] });
+});
+
+test('drop-git-C-cwd runs after the inlining and quoting rules', () => {
+  assert.deepStrictEqual(posix('W=/w/wt; git -C "$W" log'), { command: 'W=/w/wt; git log', applied: ['inline-literal-assignment', 'drop-git-C-cwd'] });
+  assert.deepStrictEqual(posix('git -C /w/my\\ wt log', '/w/my wt'), { command: 'git log', applied: ['quote-escaped-space', 'drop-git-C-cwd'] });
+});
+
+test('drop-git-C-cwd under path.win32 shares drop-redundant-cd residuals', () => {
+  const fixture = win32().opts;
+  const run = (command, opts = fixture) => rewriteForGuard({ command, ...opts });
+  assert.deepStrictEqual(run('git -C "D:\\w\\cwd" log'), { command: 'git log', applied: ['drop-git-C-cwd'] });
+  assert.deepStrictEqual(run('git -C "D:\\w\\cwd/" log'), { command: 'git log', applied: ['drop-git-C-cwd'] }, 'Review Focus 5: a trailing / is tolerated');
+  assert.strictEqual(run('git -C "D:/w/cwd" log'), null, 'residual: a forward-slashed spelling');
+  const msys = { ...fixture, deps: { ...fixture.deps, canonicalRealpath: (p) => path.win32.resolve(p.replace(/^\/([a-z])\//i, (m, d) => `${d.toUpperCase()}:\\`)) } };
+  assert.strictEqual(run('git -C "/d/w/cwd" log', msys), null, 'residual: a /d/ spelling that resolves to the cwd');
+  const folding = { ...fixture, deps: { ...fixture.deps, canonicalRealpath: (p) => path.win32.resolve(p).toLowerCase() } };
+  assert.strictEqual(run('git -C "d:\\w\\cwd" log', folding), null, 'residual: a re-cased drive');
+  assert.deepStrictEqual(run('git -C "D:\\w\\cwd" log', folding), { command: 'git log', applied: ['drop-git-C-cwd'] }, 'the exact spelling still drops under the folding realpath');
+});
+
+// quote-exit-status. Each decline pin names git and holds a `$?` word, and every check but the one
+// its title names accepts it.
+const quoted = (command, expected) => assert.deepStrictEqual(rw(command), { command: expected, applied: ['quote-exit-status'] });
+
+test('AC3.1: quote-exit-status double-quotes exit=$? after a git command', () => {
+  quoted('git merge-base --is-ancestor A B; echo exit=$?', 'git merge-base --is-ancestor A B; echo "exit=$?"');
+  quoted('gh pr view 1 --json n > f; echo rc:$?', 'gh pr view 1 --json n > f; echo "rc:$?"');
+});
+
+test('quote-exit-status quotes every qualifying word, in any simple command', () => {
+  quoted('git status 2>&1; echo a/b:c=$? && echo x.y-$? | cat', 'git status 2>&1; echo "a/b:c=$?" && echo "x.y-$?" | cat');
+  quoted('git log; (echo r=$?)', 'git log; (echo "r=$?")');
+  quoted("git log; echo 'a; b' r=$?", "git log; echo 'a; b' \"r=$?\"");
+  quoted('git log; echo $(true) r=$?', 'git log; echo $(true) "r=$?"'); // the ( of $( starts no command
+  quoted('git log; echo a=$?; X=$?', 'git log; echo "a=$?"; X=$?');
+  assert.deepStrictEqual(rw('git -C . log; echo r=$?'), { command: 'git log; echo "r=$?"', applied: ['drop-git-C-cwd', 'quote-exit-status'] });
+});
+
+test('AC3.2: quote-exit-status leaves a bare $? alone', () => {
+  assert.strictEqual(rw('git log -1; echo $?'), null);
+});
+
+test('AC3.2: quote-exit-status leaves an assignment X=$? alone', () => {
+  assert.strictEqual(rw('git log -1; X=$?'), null);
+});
+
+for (const word of ['export', 'declare', 'local', 'readonly', 'typeset', 'env']) {
+  test(`AC3.2: quote-exit-status leaves rc=$? after ${word} alone`, () => {
+    assert.strictEqual(rw(`git log -1; ${word} rc=$?`), null);
+  });
+}
+
+test('quote-exit-status leaves rc=$? after coproc alone: its command takes assignment prefixes', () => {
+  assert.strictEqual(rw('git log -1; coproc rc=$? cat'), null);
+});
+
+test('AC3.2: quote-exit-status leaves a double-quoted "exit=$?" alone', () => {
+  assert.strictEqual(rw('git log -1; echo "exit=$?"'), null);
+});
+
+test("AC3.2: quote-exit-status leaves a single-quoted 'exit=$?' alone", () => {
+  assert.strictEqual(rw("git log -1; echo 'exit=$?'"), null);
+});
+
+test('AC3.2: quote-exit-status leaves a command that names no git or gh alone', () => {
+  assert.strictEqual(rw('ls f; echo exit=$?'), null);
+});
+
+test('quote-exit-status leaves digit and .github text alone (whole-word git/gh only)', () => {
+  assert.strictEqual(rw('echo digit; echo exit=$?'), null);
+  assert.strictEqual(rw('ls .github; echo exit=$?'), null);
+  assert.strictEqual(rw('ls gh-pages; echo exit=$?'), null);
+});
+
+test('AC3.2: quote-exit-status declines a command holding IFS', () => {
+  assert.strictEqual(rw('IFS=: ; git log -1; echo exit=$?'), null);
+});
+
+test('quote-exit-status leaves a word starting with = alone (zsh =cmd)', () => {
+  assert.strictEqual(rw('git log -1; echo =$?'), null);
+});
+
+test('quote-exit-status leaves a word inside $( … ) alone', () => {
+  assert.strictEqual(rw('x=$(git log -1; echo r=$?)'), null);
+  assert.strictEqual(rw('echo $(git log -1; echo r=$?)'), null);
+});
+
+test('quote-exit-status declines on doubt (a backtick)', () => {
+  assert.strictEqual(rw('git log -1; echo exit=$? `id`'), null);
+});
+
+test('quote-exit-status leaves rc=$? after a keyword prefix alone: then "rc=$?" would be a command', () => {
+  assert.strictEqual(rw('if git log; then rc=$?; fi'), null);
+});
+
+test('quote-exit-status leaves rc=$? after a reserved word alone', () => {
+  assert.strictEqual(rw('git log; while false; do rc=$?; done'), null);
+  assert.strictEqual(rw('git log; time rc=$?'), null);
+});
+
+test('quote-exit-status leaves rc=$? after { alone (not a plain command word)', () => {
+  assert.strictEqual(rw('git log; { rc=$?; }'), null);
+});
+
+test('quote-exit-status leaves rc=$? after a { anywhere in its command alone: function g { rc=$?; }', () => {
+  assert.strictEqual(rw('git log; function g { rc=$?; }'), null);
+});
+
+test('quote-exit-status leaves rc=$? after a redirection alone', () => {
+  assert.strictEqual(rw('git log; 2>/dev/null rc=$?'), null);
+});
+
+test('quote-exit-status leaves rc=$? after a 2>&1 alone: the & of >& does not start a command', () => {
+  assert.strictEqual(rw('git log; 2>&1 rc=$?'), null);
+});
+
+test('quote-exit-status leaves rc=$? after an array assignment alone: a ) ends the scan', () => {
+  assert.strictEqual(rw('git log; arr=(x) rc=$?'), null);
+});
+
+test('quote-exit-status: a top-level ) ends the simple command, so the command word after an array assignment judges its arguments', () => {
+  assert.deepStrictEqual(rw('git log; arr=(x) echo rc=$?'), { command: 'git log; arr=(x) echo "rc=$?"', applied: ['quote-exit-status'] });
+});
+
+test('quote-exit-status leaves rc=$? after X=$( … ) alone: an assignment prefix, not a command word', () => {
+  assert.strictEqual(rw('X=$(git log) rc=$?'), null);
+});
+
+test('quote-exit-status leaves a word that does not start at a word break alone', () => {
+  assert.strictEqual(rw('git log; echo $HOME/r=$?'), null);
+});
+
+test('quote-exit-status leaves a word that continues past $? alone', () => {
+  assert.strictEqual(rw('git log; echo r=$?x'), null);
+});
+
 test('returns null outside a linked worktree', () => {
   // The default detector, no injected deps: a plain dir, a main checkout, a linked worktree.
   const command = 'P=/x/y; node $P/z.js';
@@ -444,6 +773,9 @@ fs.mkdirSync(STUB);
 const printArgv = `exec "${process.execPath}" -e 'console.log(JSON.stringify(process.argv.slice(1)))' -- "$@"\n`;
 fs.writeFileSync(path.join(STUB, 'ls'), `#!/bin/sh\n${printArgv}`, { mode: 0o755 });
 fs.writeFileSync(path.join(STUB, 'node'), `#!/bin/sh\ncase "$1" in -e|-p|--eval|--print) exec "${process.execPath}" "$@";; esac\n${printArgv}`, { mode: 0o755 });
+// git stub: honours leading -C <dir> by cd-ing there, then prints [$PWD, ...argv] as JSON, so a
+// dropped -C that changes the directory shows up in stdout.
+fs.writeFileSync(path.join(STUB, 'git'), `#!/bin/sh\nwhile [ "$1" = "-C" ]; do cd "$2" || exit 1; shift 2; done\nexec "${process.execPath}" -e 'console.log(JSON.stringify([process.env.PWD, ...process.argv.slice(1)]))' -- "$@"\n`, { mode: 0o755 });
 const EVAL = "'console.log(JSON.stringify(process.argv.slice(1)))'";
 const POSITIVE = [
   { rule: 'inline-literal-assignment', command: 'P=/x/y; node $P/z.js' },
@@ -458,6 +790,12 @@ const POSITIVE = [
   { rule: 'node-eval-separator', command: `node -e ${EVAL} "$HOME"` },
   { rule: 'quote-escaped-space', command: 'ls /a/Code\\ Workspaces/b /c/d\\ e' },
   { rule: 'drop-redundant-cd', command: `cd "${CWD}" && pwd && ls x` },
+  { rule: 'drop-git-C-cwd', command: 'git -C . log --oneline -3' },
+  // a/x.js exists, so zsh's nomatch error does not fail the original.
+  { rule: 'drop-git-C-cwd', command: `git -C "${CWD}" grep -n x -- a/*.js` },
+  { rule: 'drop-git-C-cwd', command: `git -C '${CWD}/' status --short` },
+  { rule: 'quote-exit-status', command: 'git merge-base --is-ancestor A B; echo exit=$?' },
+  { rule: 'quote-exit-status', command: 'git status; echo a/b:c=$?' },
 ];
 const SHELLS = ['bash', 'zsh'].filter((sh) => spawnSync(sh, ['-c', 'exit 0'], { windowsHide: true }).status === 0);
 
@@ -492,6 +830,8 @@ test('every positive case is argv-identical under bash and zsh', { skip: process
 fs.writeFileSync(path.join(CWD, 'setp'), 'P=/evald\n');
 fs.writeFileSync(path.join(CWD, '.env'), 'export NODE_ENV=production\n');
 fs.writeFileSync(path.join(CWD, 'f'), 'P=/sourced\n');
+fs.mkdirSync(path.join(CWD, 'a'));
+fs.writeFileSync(path.join(CWD, 'a', 'x.js'), '');
 const MUST_DECLINE = [
   { command: 'NODE_ENV=development; source .env; echo "$NODE_ENV"', naive: 'NODE_ENV=development; source .env; echo "development"' },
   { command: 'NODE_ENV=development; set -a; . ./.env; set +a; echo "$NODE_ENV"', naive: 'NODE_ENV=development; set -a; . ./.env; set +a; echo "development"' },
@@ -553,6 +893,25 @@ test('must-decline cases: code run from the command text reassigns at runtime, s
   }
 });
 
+// drop-git-C-cwd (AC4): a drop that changes where git runs prints a different $PWD, under both shells.
+test('drop-git-C-cwd must-decline cases: the naive drop prints a different directory under bash and zsh', { skip: process.platform === 'win32' || !SHELLS.includes('bash') }, () => {
+  fs.mkdirSync(path.join(CWD, 'sub'), { recursive: true });
+  for (const { command, naive } of [
+    { command: 'git -C sub log', naive: 'git log' },
+    { command: `git -C "${CWD}/sub" log`, naive: 'git log' },
+    { command: `cd sub && git -C "${CWD}" log`, naive: 'cd sub && git log' },
+    // An array literal, not a git call: the naive drop changes the element count (4 → 2).
+    { command: 'a=(git -C . log); echo ${#a[@]}', naive: 'a=(git log); echo ${#a[@]}' },
+  ]) {
+    assert.strictEqual(rw(command), null, command);
+    for (const shell of SHELLS) {
+      const original = runIn(shell, command, {});
+      assert.strictEqual(original.status, 0, `${shell}: ${command}\n${original.stderr}`);
+      assert.notStrictEqual(runIn(shell, naive, {}).stdout, original.stdout, `${shell}: the naive drop must differ for ${command}`);
+    }
+  }
+});
+
 // Fix wave 2, property-style: a deterministic PRNG draws short commands from a
 // small grammar mixing safe statements with runners (`.`, source, eval, trap,
 // an expansion as the command word), redirections, the four list operators and
@@ -575,6 +934,8 @@ const GRAMMAR = {
   safe: [
     'echo $P/z', 'echo "$P/z"', 'echo ${P}/b', '/bin/echo $P/e', 'true', 'false', 'cd . && echo $P/c', 'echo "$Q"', '[ -n "$P" ] && echo $P/t',
     '[ $N -eq 5 ] 2>/dev/null || echo $P/q', 'if true; then echo $P/i; fi',
+    // The git rules: a stubbed git prints its directory and argv.
+    'git -C . log', 'git -C . status; echo st=$?', `git -C "${CWD}" log`, 'git log; echo exit=$?',
   ],
   risky: [
     '. ./f', 'source ./f', 'eval "$(cat setp)"', 'trap "$(cat setp)" DEBUG', '$(echo .) ./f', '"$(echo .)" ./f', '$SRC ./f',
@@ -584,6 +945,8 @@ const GRAMMAR = {
     'repeat 1 . ./f', 'repeat 1 do . ./f; done', 'if [[ -n x ]] . ./f', '[[ $(echo XP=5 | cut -c2-) -eq 5 ]]', '[[ $N -eq 5 ]]',
     'echo $[$(echo XP=5 | cut -c2-)]', '(( N ))', 'let N', 'echo $(( $N ))', 'case a in a) . ./f;; esac', '{ . ./f; }',
     'for i in a; do . ./f; done', 'while false; do :; done', 'g() { . ./f; }; g', 'shift $N',
+    // The git rules' bail shapes.
+    'git -C . -C sub log', 'cd sub && git -C . log', 'git -C "$P" log', 'export rc=$?', 'echo =$?', 'git log; rc=$?', 'if true; then rc=$?; fi', '{ rc=$?; }',
   ],
   redirect: ['', '', '', ' 2>/dev/null', ' 2>&1', ' >/dev/null'],
   join: ['; ', ' && ', ' || ', ' | ', '\n'],
@@ -605,7 +968,7 @@ test('property: every rewrite of a randomly drawn command keeps stdout, stderr a
   let rewritten = 0;
   let declined = 0;
   // N=P=5: any arithmetic evaluation of $N assigns P (fix wave 3).
-  const env = { PATH: process.env.PATH, HOME: process.env.HOME || os.homedir(), SRC: '.', N: 'P=5' };
+  const env = { PATH: `${STUB}${path.delimiter}${process.env.PATH}`, HOME: process.env.HOME || os.homedir(), SRC: '.', N: 'P=5' };
   for (let n = 0; n < 300; n += 1) {
     const command = drawCommand(rand);
     const out = rw(command);
@@ -618,7 +981,9 @@ test('property: every rewrite of a randomly drawn command keeps stdout, stderr a
       const args = (c) => (shell === 'zsh' ? ['-f', '-c', c] : ['-c', c]);
       const run = (c) => {
         const r = spawnSync(shell, args(c), { cwd: CWD, env, encoding: 'utf8', windowsHide: true });
-        return { stdout: r.stdout, stderr: r.stderr, status: r.status };
+        // bash echoes the offending source line after a syntax error: that echo is the command text itself,
+        // so it differs for any rewrite (the diagnostic above it, and the status, still must match).
+        return { stdout: r.stdout, stderr: r.stderr.replace(/^(bash: -c: line \d+: )`.*'$/gm, '$1<source echo>'), status: r.status };
       };
       assert.deepStrictEqual(run(out.command), run(command), `${shell}: ${JSON.stringify(command)}\n→ ${JSON.stringify(out.command)}`);
     }
@@ -737,4 +1102,57 @@ test('property: a backslash-spelled double-quoted cd drops only when the shell l
   t.diagnostic(`rewritten=${rewritten} declined=${declined} shells=${SHELLS.join(',')}`);
   assert.ok(rewritten >= 30, `only ${rewritten} rewrites`);
   assert.ok(declined >= 30, `only ${declined} declines`);
+});
+
+// ── Write-target invariance (AC5) ────────────────────────────────────────────
+// The write gate reads the command text, so a rewrite must leave gitTargets,
+// fileWriteTargets and mkdirTargets exactly as they were.
+const { gitTargets, fileWriteTargets, mkdirTargets } = require('../../../plugin/bin/lib/hooks/git-command');
+const WRITE_CASES = [ // one writing command per rule that can write; families: the target lists it must fill
+  { rule: 'drop-redundant-cd', families: ['git', 'write', 'mkdir'], command: `cd "${CWD}" && git commit -m x && mkdir d && echo a > f` },
+  { rule: 'inline-literal-assignment', families: ['write'], command: 'P=/x; echo a > $P/f' },
+  { rule: 'plugin-root-placeholder', families: ['write'], command: 'node "${CLAUDE_PLUGIN_ROOT}/bin/x.js" > out.txt' },
+  { rule: 'node-eval-separator', families: ['write'], command: `node -e ${EVAL} "$A" > out.txt` },
+  { rule: 'quote-escaped-space', families: ['write'], command: 'echo a > /a/b\\ c' },
+  { rule: 'quote-exit-status', families: ['git', 'write'], command: 'git commit -m x; echo exit=$? > log.txt' },
+];
+function targetsOf(command) { return { git: gitTargets(command, CWD), write: fileWriteTargets(command, CWD), mkdir: mkdirTargets(command, CWD) }; }
+function assertSameTargets(rewrite, cases = [...POSITIVE, ...WRITE_CASES]) {
+  for (const { command } of cases) {
+    const out = rewrite(command);
+    assert.ok(out, command);
+    assert.deepStrictEqual(targetsOf(out.command), targetsOf(command), command);
+  }
+}
+test('AC5.1, AC5.2: every rewrite keeps gitTargets, fileWriteTargets and mkdirTargets equal', () => {
+  for (const { rule, command, families } of WRITE_CASES) {
+    assert.deepStrictEqual(rw(command).applied, [rule], command);
+    const t = targetsOf(command);
+    for (const family of families) assert.ok(t[family].length > 0, `vacuous: no ${family} targets for ${command}`);
+  }
+  assertSameTargets(rw);
+});
+test('AC5.3: assertSameTargets goes red for a stub rule that drops a real cd sub &&', () => {
+  fs.mkdirSync(path.join(CWD, 'sub'), { recursive: true });
+  const dropCase = 'cd sub && git commit -m x';
+  const stub = (c) => (c === dropCase ? { command: c.replace('cd sub && ', ''), applied: ['stub'] } : rw(c));
+  assert.throws(() => assertSameTargets(stub, [{ command: dropCase }, ...WRITE_CASES]),
+    (e) => e instanceof assert.AssertionError && e.message.includes(dropCase));
+});
+
+// ── AC8: a rewrite carries no permission decision ────────────────────────────
+const { guardRewriteOutput } = require('../../../plugin/bin/lib/hooks/guard-rewrite');
+test('AC8.1: guardRewriteOutput carries no permissionDecision for either new rule', () => {
+  for (const command of ['git -C . log', 'git status; echo exit=$?']) {
+    const out = guardRewriteOutput({ tool_name: 'Bash', cwd: CWD, tool_input: { command, description: 'd' } }, (o) => rewriteForGuard({ ...o, deps: linked }));
+    assert.ok(out, command);
+    assert.deepStrictEqual(Object.keys(out).sort(), ['hookEventName', 'updatedInput']);
+    assert.strictEqual(out.updatedInput.description, 'd');
+    assert.notStrictEqual(out.updatedInput.command, command);
+  }
+});
+test('AC8.2: guardRewriteOutput returns null outside a linked worktree for either new rule', () => {
+  for (const command of ['git -C . log', 'git status; echo exit=$?']) {
+    assert.strictEqual(guardRewriteOutput({ tool_name: 'Bash', cwd: CWD, tool_input: { command } }, (o) => rewriteForGuard(o)), null, command);
+  }
 });

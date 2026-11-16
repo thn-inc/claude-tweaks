@@ -16,6 +16,8 @@ const {
 } = require('./sdd-ruling');
 const { REFERENCE_REPAIR_REASONS, referenceRepairHoldReason, referenceFindingsByFile, readableGlobs } = require('./reference-repair');
 const { planFilings } = require('./finding-filing');
+const { UNRESOLVED_RESOLUTIONS } = require('./residue');
+const { decisionFactFor } = require('./decision-facts');
 const { FINDING_PATH_CLASS, FINDING_LENS_CLASS, FINDING_PATH, FINDING_LOCATION, FINDING_LENS, parseCoincidence } = require('./finding-path');
 const { FINDINGS_ARTIFACT, VERDICT_LINE_END } = require('../tiebreak');
 const { parseCategory, isApplicableReflect, parseReflectDestination, deferReasonProblem } = require('./reflect-destination');
@@ -965,18 +967,31 @@ function runIdOf(runDir) {
   return /^spec-\d+$/.test(base) ? `${path.basename(path.dirname(runDir))}/${base}` : base;
 }
 
-function resolveAll({ runDir, policy, deps }) {
+// Control mode (#4620): an item a human must decide is carried into the acceptance packet as a
+// decision fact instead of being left unresolved. refused (no Defer-reason) is a gate rejection the
+// packet carries too; stale patches and filed can't-tell items are not (re-derived / already filed).
+const CARRIED_RESOLUTION = 'carried';
+const CARRY_FROM = Object.freeze([...UNRESOLVED_RESOLUTIONS, 'refused']);
+
+function resolveAll({ runDir, policy, deps, controlMode }) {
   if (policy !== 'console-auto') throw new RangeError(`unsupported policy: ${policy} (expected console-auto)`);
   const snapshot = readSnapshot({ runDir, deps });
   const stagedIds = new Set(snapshot.staged.map((s) => s.name));
   const items = [...stagedItems(snapshot), ...engineItems(snapshot, stagedIds), ...coordinationItems(snapshot, stagedIds)]
     .map((it) => (it.tiebreak ? { ...it, resolution: 'filed', reason: UNATTENDED_FILED_REASON } : it));
+  const decisionFacts = [];
+  const resolved = controlMode === true ? items.map((it) => {
+    if (!CARRY_FROM.includes(it.resolution)) return it;
+    const fact = decisionFactFor(it, { runDir, staged: stagedIds.has(it.id) });
+    decisionFacts.push(fact);
+    return { ...it, resolution: CARRIED_RESOLUTION, carriedFrom: it.resolution, reason: `carried to the acceptance packet as ${fact.id} — ${it.reason}` };
+  }) : items;
   const sections = { cleanup: { ...SECTION_STANCES[SECTIONS.CLEANUP] } };
   const merge = mergeResolution(snapshot, deps);
-  const filings = planFilings({ items, findings: snapshot.findings, runId: runIdOf(runDir) });
-  const result = { ceiling: 'unattended', items, sections, merge, droppedByTiebreak: droppedByTiebreak(snapshot.decisions), filings, snapshot };
+  const filings = planFilings({ items: resolved, findings: snapshot.findings, runId: runIdOf(runDir) });
+  const result = { ceiling: 'unattended', items: resolved, sections, merge, droppedByTiebreak: droppedByTiebreak(snapshot.decisions), filings, snapshot, decisionFacts };
   result.table = renderTable(result);
   return result;
 }
 
-module.exports = { decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction, RATIFY_FILES_RECORD_REASON, REFERENCE_REPAIR_REASONS, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };
+module.exports = { CARRIED_RESOLUTION, CARRY_FROM, decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction, RATIFY_FILES_RECORD_REASON, REFERENCE_REPAIR_REASONS, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };
