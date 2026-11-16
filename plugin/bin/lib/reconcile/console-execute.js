@@ -404,7 +404,13 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
             // passed over names them, so the withhold is not mistaken for "nobody
             // ever granted" -- the planted comment is what the operator should see.
             const passedOver = Array.isArray(grant.skippedUntrusted) ? grant.skippedUntrusted : [];
-            mergeGrantGap = { member: n, reason: passedOver.length ? `${mat.reason} — ${passedOver.join('; ')}` : mat.reason };
+            // A member with no merge grant at all names the missing merge grant, as
+            // console/resolve.js does: naming auto:build first would send the operator
+            // to a second withhold.
+            const labels = grant.labels || [];
+            const noGrant = mat.state === 'no-build-grant' && !labels.includes('auto:merge') && !labels.includes('auto:merge-pending');
+            const base = noGrant ? 'no auto:merge or auto:merge-pending label present' : mat.reason;
+            mergeGrantGap = { member: n, reason: passedOver.length ? `${base} — ${passedOver.join('; ')}` : base };
             break;
           }
         }

@@ -207,8 +207,8 @@ digested lines are logged. A CLI entry's `item` is a console item id: the row pa
 whose `findingItem` equals it, named by that row's own `id`. The steps this leaves out — the digest-comments fetch and `--digest-comments`, posting `digestFile`, the per-entry digested log line — are `wrap-up/review-console.md`'s "Can't-tell filings" paragraph, run per console dir.
 
 **Second narrower exception (#1802):** the same `isMergeRow: true` item is also **not**
-floor-clearing when a live re-fetch shows any group member currently lacking both `auto:merge`
-and a matured `auto:merge-pending` — unlike `mergeCheckVerdict` above, this fact needs no
+floor-clearing when a live re-fetch shows any group member currently lacking a live `auto:build`,
+or lacking both `auto:merge` and a matured `auto:merge-pending` — unlike `mergeCheckVerdict` above, this fact needs no
 persisted snapshot, since it is directly observable current label state rather than an LLM
 judgment computed once at render time. **Deriving group membership in a foreign session:** the
 executing session did not necessarily render this console, so it cannot rely on the original
@@ -256,7 +256,7 @@ comment-edit history a human's own ticks would leave, flagged in the reply comme
 `decisions.md` as `AUTO`, never presented as if a human ticked it. The Resolve box is ticked only
 when every item in the console is floor-clearing; a console with a genuinely non-floor item —
 today, exactly the `isMergeRow: true` item under either exception above (a persisted `needs-human`
-verdict, or a live-refetched member lacking `auto:merge`) and a ruling row named in
+verdict, or a live-refetched member lacking `auto:build` or a merge grant) and a ruling row named in
 `rulingGateGaps` — gets its floor items ticked and executed, but each such item and Resolve stay
 unticked and the console stays pending for a human. Log one `AUTO {time} — Console execution: auto-resolved {item}
 on PR #{n}. Reversibility: {…}.` line per item actually resolved, per
