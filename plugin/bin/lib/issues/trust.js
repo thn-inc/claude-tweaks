@@ -75,8 +75,8 @@ function riskBand(labels) {
 // Capture-then-normalize, same strategy as provenance.js's own TRAILING_SOURCE:
 // take the whole line first, then extract '#N' from the captured text, rather
 // than hard-anchoring '#(\d+)' straight to the line's end. A single
-// hard-anchored pattern breaks on any trailing punctuation after the digits (e.g. "from #7." never matches "from #7$"),
-// which silently drops a real Origin-line variant and undercounts followUps
+// hard-anchored pattern breaks on any trailing punctuation after the digits
+// (e.g. "from #7." never matches "from #7$"), which silently drops a real Origin-line variant and undercounts followUps
 // — a negative signal, so undercounting it can falsely flip a cell's verdict
 // from 'mixed' to 'clean'. Trailing punctuation is stripped before the '#N'
 // match is attempted; the digits themselves are never touched, so '#71'
