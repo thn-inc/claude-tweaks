@@ -311,8 +311,8 @@ gh pr merge {pr-number} --repo {owner}/{repo} --auto --squash -t {title-arg} --b
 `{tag}` is `auto-merge` for the dispatch/headless path (`dispatch/settle-and-merge.md`'s Auto-merge
 gate), `fast-lane` for the interactive single-record short-circuit triggered by live
 `auto:merge` and `auto:build` labels, or `manifesto-authorized` for the same short-circuit
-triggered by the `merge-authorization` Manifesto lever with no label present (`wrap-up/review-console.md`,
-`wrap-up/manifesto-authorized-merge.md`) — `/help`'s
+triggered by the `merge-authorization` Manifesto lever with no label present
+(`wrap-up/review-console.md`, `wrap-up/manifesto-authorized-merge.md`) — `/help`'s
 auto-merged-this-week metric (`_shared/github-pr-scan-triage.md` `triage-queue` item 3) keys on all
 three. `{issue-list}` is the record numbers — the manifest's `complete` specs only for a bundle
 (#2015; rest release via their own `never-started:`/`abandoned:` reason). `human-approved`:
