@@ -84,6 +84,7 @@ test('AC4.2: no-build-grant when auto:merge-pending is past its window without a
   const result = evaluateMaturation({ hasBuildLabel: false, hasPendingLabel: true, hasMergeLabel: false, pendingSince, vetoWindowHours: 24, now: NOW });
   assert.strictEqual(result.mature, false);
   assert.strictEqual(result.state, 'no-build-grant');
+  assert.match(result.reason, /auto:build/);
 });
 
 test('AC4.3: no-build-grant when the build-label input is omitted or not true', () => {
@@ -92,6 +93,7 @@ test('AC4.3: no-build-grant when the build-label input is omitted or not true', 
     const result = evaluateMaturation(input);
     assert.strictEqual(result.mature, false);
     assert.strictEqual(result.state, 'no-build-grant');
+    assert.match(result.reason, /auto:build/);
   }
 });
 
