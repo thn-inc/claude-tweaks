@@ -269,7 +269,27 @@ function isIncompleteDeferral(resolution, excludeRecords) {
 // The rules a status/Resolution pair owes before a row is written — the sanctioned writer's half of
 // _shared/ledger-format.md's Resolution-text requirements. `incompleteDeferral` marks a `deferred`
 // row that carries only a valid `Defer-reason:`: accepted, but settleRow may later resolve it.
-function checkLedgerStatus(status, resolution, { excludeRecords = [], repo = null } = {}) {
+// #4620: a Resolution claiming `carried to the acceptance packet as decision:{id}` is accepted only when
+// that fact exists in the run's packet-facts/decisions.json — the claim is otherwise a way around the
+// deferral gate. null when it does not claim, or the fact is there; else the refusal text.
+function carriedFactProblem(text, runDir) {
+  const match = wrapUpPack().LEDGER_CARRIED_RE.exec(text);
+  if (!match) return null;
+  const factId = match[0].slice(match[0].indexOf('decision:'));
+  const refuse = (why) => `status 'deferred' names the carried decision fact ${factId}, but ${why}`;
+  if (!runDir) return refuse('no run directory resolved to check packet-facts/decisions.json against');
+  const file = path.join(runDir, 'packet-facts', 'decisions.json');
+  let raw;
+  try { raw = fs.readFileSync(file, 'utf8'); } catch (err) {
+    return refuse(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR') ? `${file} does not exist` : `${file} could not be read (${err && err.message})`);
+  }
+  let facts;
+  try { facts = JSON.parse(raw); } catch { return refuse(`${file} does not parse as JSON`); }
+  if (!Array.isArray(facts)) return refuse(`${file} is not a JSON array`);
+  return facts.some((f) => f && f.id === factId) ? null : refuse(`${file} holds no fact with that id`);
+}
+
+function checkLedgerStatus(status, resolution, { excludeRecords = [], repo = null, runDir = null } = {}) {
   const text = String(resolution ?? '');
   const ok = { refusal: null, incompleteDeferral: false };
   if (!LEDGER_STATUSES.includes(status)) {
@@ -277,6 +297,8 @@ function checkLedgerStatus(status, resolution, { excludeRecords = [], repo = nul
   }
   if (status === 'fixed') return { ...ok, refusal: checkFixed(text, repo) };
   if (status === 'deferred') {
+    const carriedProblem = carriedFactProblem(text, runDir);
+    if (carriedProblem) return { ...ok, refusal: carriedProblem };
     if (!isIncompleteDeferral(text, excludeRecords)) return ok;
     if (wrapUpPack().hasValidDeferReason(text)) return { refusal: null, incompleteDeferral: true };
     return {

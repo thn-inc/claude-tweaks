@@ -545,7 +545,8 @@ function parseLedger(text, { excludeRecords = [] } = {}) {
       const item = cells[2] || '';
       const resolution = cells.slice(4).join('|');
       const reasonLivesElsewhere = LEDGER_DEFERRED_STAGED_RE.test(item) || LEDGER_DEFERRED_STAGED_RE.test(resolution)
-        || LEDGER_SDD_RULING_ITEM_RE.test(item) || namesRecordReference(resolution, excludeRecords);
+        || LEDGER_SDD_RULING_ITEM_RE.test(item) || namesRecordReference(resolution, excludeRecords)
+        || LEDGER_CARRIED_RE.test(resolution); // #4620: the reason lives in the carried decision fact
       if (!reasonLivesElsewhere && !hasValidDeferReason(resolution)) missingDeferReasonItems.push(cells[0]);
     }
   }

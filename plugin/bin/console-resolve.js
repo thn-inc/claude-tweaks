@@ -9,7 +9,8 @@
 // resolved ceiling (never resolve a console at supervised/trusted), 5 a
 // console.json this process must not clobber — one already rendered on the PR
 // and awaiting a human, or one that will not parse (fail closed); never under
-// `--dry-run`, which writes nothing and so has nothing to clobber. A console.json
+// `--dry-run`, which writes nothing and so has nothing to clobber, 6 (control mode) the carried
+// decision facts could not be written — nothing else is written then. A console.json
 // already carrying `resolved: true` is not an error, in either shape: it
 // re-renders and exits 0.
 //
@@ -19,7 +20,7 @@
 // It needs no ceiling (it only records what already happened). Exit 0 rewrote or
 // already there, 2 malformed, 3 --run not anchored or the write failed, 5 refused
 // (no console.json, not this CLI's shape, unknown/duplicate id, resolution not
-// rewritable). `--resolution pending` rewrites one stored item `approve` → `pending` (#4636): a
+// rewritable), 6 (control mode) the carried fact could not be written. `--resolution pending` rewrites one stored item `approve` → `pending` (#4636): a
 // Reference-repairs row whose staged diff no longer applies at Phase 4 (`reference-repair-stale`).
 //
 // Third shape (#4636): `--run <dir> --check-repair <file> [--full]` re-runs the reference-repair
@@ -44,7 +45,9 @@
 // `keep-staged`/`pending` as `carried`; `--resolution carried` is the one route for a failed or
 // refused `ledger-record-*` or Queue-write item, and `--ledger <path>` (a `--set-item` modifier only)
 // settles the one ledger row naming `staged/{id}` `deferred` with `carried to the acceptance packet as
-// {factId}` — exit 5 when no row names it, 3 when the settle throws. Exit 6: the facts could not be written.
+// {factId}` — exit 5 when no row names it or the ledger path is refused (resolveLedgerPath's confinement: a
+// ledger.md or *-ledger.md under the run or worktree), 3 when the settle throws. `carried` and `--ledger` need
+// control mode and a ledger-record-* id: otherwise exit 2. Exit 6: the facts could not be written.
 'use strict';
 
 const fs = require('fs');
@@ -62,7 +65,7 @@ const { unresolvedItems, splitMissing, formatResidueLines, consoleResidueItems }
 const { REWRITE_FROM, CARRY_REWRITE_FROM, REWRITE_TARGETS, REWRITE_ONLY_IN, rewriteItemResolution } = require('./lib/console/item-resolution');
 const { decisionFactFor } = require('./lib/console/decision-facts');
 const { withLock } = require('./lib/file-lock');
-const { parseLedgerTable } = require('./lib/wrap-up/ledger-write');
+const { parseLedgerTable, resolveLedgerPath } = require('./lib/wrap-up/ledger-write');
 const { ledgerRowCells } = require('./lib/wrap-up/ledger-cells');
 const { settleRow } = require('./lib/stage-item/ledger');
 const { ghOptions } = require('./lib/repo-resolve');
@@ -73,7 +76,7 @@ const { REFERENCE_REPAIR_REASONS, stagedDiffPaths, referenceRepairFloorHits, ref
 const EXIT_CARRY_FAILED = 6;
 
 const USAGE = 'usage: console-resolve.js --run <dir> --policy console-auto [--dry-run] [--json]  (exit 6: carried decision facts could not be written)\n'
-  + '       console-resolve.js --run <dir> --set-item <id> --resolution keep-staged|pending|carried --reason <text> [--ledger <path>]\n'
+  + '       console-resolve.js --run <dir> --set-item <id> --resolution keep-staged|pending|carried --reason <text> [--ledger <path>]  (carried and --ledger: control mode only, --ledger on a ledger-record-* id, else exit 2; exit 5 refused incl. a refused ledger path; exit 6 carried fact could not be written)\n'
   + '       console-resolve.js --run <dir> --check-repair <file> [--full]';
 
 class UsageError extends Error {}
@@ -118,7 +121,7 @@ function parseArgs(argv) {
     if (out.setItem === '') throw new UsageError('--set-item requires a non-empty id');
     if (!out.resolution || !out.reason) throw new UsageError('--set-item requires --resolution and --reason (both non-empty)');
     if (out.ledger === '') throw new UsageError('--ledger requires a non-empty path');
-    if (!REWRITE_TARGETS.includes(out.resolution)) throw new UsageError(`--resolution must be one of ${REWRITE_TARGETS.join(', ')} (got ${out.resolution})`);
+    if (!REWRITE_TARGETS.includes(out.resolution)) throw new UsageError(`--resolution must be one of ${Object.keys(REWRITE_FROM).join(', ')} (got ${out.resolution})`);
     return out;
   }
   if (out.resolution !== null || out.reason !== null) throw new UsageError('--resolution and --reason require --set-item');
@@ -301,7 +304,14 @@ function carryItem(o, runDir, { stdout, stderr, now, cwd }) {
   // The ledger row is located (read-only) before anything is written, so a refusal leaves no orphan fact.
   let ledger = null;
   if (o.ledger !== null && o.setItem.startsWith('ledger-record-')) {
-    const ledgerPath = path.resolve(cwd(), o.ledger);
+    // The same confinement every other ledger writer applies (hooks.js ledger-row): a ledger.md or *-ledger.md
+    // file under the run directory or the worktree. A refused path is exit 5, with nothing written.
+    const resolved = resolveLedgerPath({ runDir, worktree: cwd(), explicit: path.resolve(cwd(), o.ledger) });
+    if (!resolved.ok) {
+      stderr(`console-resolve.js: ledger ${resolved.reason}${resolved.detail ? ` (${resolved.detail})` : ''}: ${o.ledger} — nothing written\n`);
+      return 5;
+    }
+    const ledgerPath = resolved.path;
     let text;
     try { text = fs.readFileSync(ledgerPath, 'utf8'); } catch (err) {
       stderr(`console-resolve.js: could not read ledger ${ledgerPath}: ${err && err.message ? err.message : err} — nothing written\n`);
@@ -350,11 +360,21 @@ function carryItem(o, runDir, { stdout, stderr, now, cwd }) {
     return 3;
   }
   if (r.status === 'refused') { stderr(`console-resolve.js: ${r.why} — nothing written\n`); return 5; }
+  const logLine = (text) => {
+    try {
+      appendEntry({ runDir, section: '/wrap-up', entry: formatEntry({ status: 'AUTO', now: now(), step: 'Review Console', text, reversibility: 'n/a' }) });
+      return true;
+    } catch { return false; }
+  };
   if (r.status === 'unchanged') {
+    if (ledgerNote && !logLine(`Console item ${o.setItem} (${r.item.section}): already carried; ${ledgerNote}`)) {
+      stderr(`console-resolve.js: ${ledgerNote} for ${o.setItem}, but the decisions.md entry could not be written\n`);
+      return 3;
+    }
     stdout(`console-resolve.js: ${o.setItem} already carried${ledgerNote ? `; ${ledgerNote}` : ' — nothing rewritten'}\n`);
     return 0;
   }
-  const text = `Console item ${o.setItem} (${r.item.section}): rewritten ${r.from} → carried after execution — ${why}`;
+  const text = `Console item ${o.setItem} (${r.item.section}): rewritten ${r.from} → carried after execution — ${why}${ledgerNote ? `; ${ledgerNote}` : ''}`;
   try {
     appendEntry({ runDir, section: '/wrap-up', entry: formatEntry({ status: 'AUTO', now: now(), step: 'Review Console', text, reversibility: 'n/a' }) });
   } catch (err) {
@@ -369,10 +389,20 @@ function carryItem(o, runDir, { stdout, stderr, now, cwd }) {
 // already there, 3 the write threw, 5 refused, 6 (control mode) the carried fact could not be written. Runs
 // before the ceiling check: it only records what happened.
 function setItem(o, runDir, { stdout, stderr, now, execFile, cwd }) {
-  if (o.resolution === 'carried' || ((o.resolution === 'keep-staged' || o.resolution === 'pending') && controlModeOn({ execFile, cwd, runDir }))) {
+  const usage = (message) => { stderr(`console-resolve.js: ${message}\n${USAGE}\n`); return 2; };
+  const carryable = o.resolution === 'carried' || o.resolution === 'keep-staged' || o.resolution === 'pending';
+  const controlMode = carryable && controlModeOn({ execFile, cwd, runDir });
+  // `carried` is control mode's resolution: with it off the value is refused as it was before this record.
+  if (o.resolution === 'carried' && !controlMode) return usage(`--resolution must be one of ${Object.keys(REWRITE_FROM).join(', ')} (got carried)`);
+  if (o.ledger !== null) {
+    if (!o.setItem.startsWith('ledger-record-')) return usage(`--ledger applies only to a ledger-record-* item (got ${o.setItem})`);
+    if (!controlMode) return usage('--ledger applies only to a carried item, which needs control mode');
+  }
+  if (controlMode) {
     const code = carryItem(o, runDir, { stdout, stderr, now, cwd });
     if (code !== null) return code;
   }
+  if (o.ledger !== null) { stderr(`console-resolve.js: item ${o.setItem} cannot be carried (it is not a rewritable item) — --ledger not applied, nothing written\n`); return 5; }
   const consolePath = path.join(runDir, 'console.json');
   const at = new Date(now()).toISOString();
   let r;

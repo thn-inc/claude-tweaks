@@ -55,6 +55,9 @@ test('parseLedger reports the carried row as neither open nor deferred-unstaged'
   assert.strictEqual(parsed.open, 0);
   assert.strictEqual(parsed.deferredUnstaged, 0);
   assert.deepStrictEqual(parsed.deferredUnstagedItems, []);
+  assert.strictEqual(parsed.missingDeferReason, 0, 'a carried build row keeps its reason in the decision fact');
+  const bare = pack.parseLedger(`${HEAD}| 1 | build | x | deferred | carried to the acceptance packet as nothing |\n`);
+  assert.strictEqual(bare.missingDeferReason, 1, 'a carried text with no decision: id is not a reason');
 });
 
 test('a carried text with no decision: id is still unstaged', () => {

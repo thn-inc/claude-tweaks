@@ -119,6 +119,7 @@ test('AC2.1: a refused ledger-record item under control mode ends with its ledge
   const hit = await call(ledger);
   assert.strictEqual(hit.code, 0, hit.err);
   assert.match(hit.out, /already carried; ledger row #1 settled/);
+  assert.match(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), /^- AUTO .*Console item ledger-record-1\.md \(.*\): already carried; ledger row #1 settled/m);
   const text = fs.readFileSync(ledger, 'utf8');
   assert.match(text, /\| 1 \| build \| a finding \| deferred \| carried to the acceptance packet as decision:console:ledger-record-1\.md \|/);
   assert.ok(!text.includes('staged/'), 'no stale pointer');
@@ -133,7 +134,7 @@ test('AC2.1: a refused ledger-record item under control mode ends with its ledge
 });
 
 test('AC2.1: a failed Queue-write create is carried, never reopened', async () => {
-  const fx = mainCheckoutWithRun({ consoleJson: consoleOf([leftover()]) });
+  const fx = controlFixture({ consoleJson: consoleOf([leftover()]) });
   const b = baseDeps(fx, []);
   assert.strictEqual(await run(['--run', fx.runDir, '--set-item', 'leftover-1.md', '--resolution', 'carried', '--reason', 'gh issue create failed'], b.d), 0, b.err());
   assert.strictEqual(cj(fx).items[0].resolution, 'carried');
@@ -143,7 +144,7 @@ test('AC2.1: a failed Queue-write create is carried, never reopened', async () =
 });
 
 test('--set-item carried on an item that is not rewritable is refused with nothing written', async () => {
-  const fx = mainCheckoutWithRun({ consoleJson: consoleOf([leftover('dismissed')]) });
+  const fx = controlFixture({ consoleJson: consoleOf([leftover('dismissed')]) });
   const b = baseDeps(fx, []);
   assert.strictEqual(await run(['--run', fx.runDir, '--set-item', 'leftover-1.md', '--resolution', 'carried', '--reason', 'x'], b.d), 5);
   assert.ok(!fs.existsSync(path.join(fx.runDir, 'packet-facts')), 'no orphan fact');
@@ -157,14 +158,77 @@ test('--ledger is accepted only with --set-item', async () => {
   assert.match(b.err(), /--ledger requires --set-item/);
 });
 
+const LEDGER_HEAD = '# Open Items — x\n\n| # | Phase | Item | Status | Resolution |\n|---|-------|------|--------|------------|\n';
+const ledgerItem = (resolution = 'apply') => ({ id: 'ledger-record-1.md', section: 'Queue writes', resolution, reason: 'queue write' });
+const setItemArgs = (fx, id, resolution, ...more) => ['--run', fx.runDir, '--set-item', id, '--resolution', resolution, '--reason', 'why', ...more];
+
+test('a rewritten ledger-record item settles its row and the AUTO line says so', async () => {
+  const fx = controlFixture({ consoleJson: consoleOf([ledgerItem()]) });
+  const ledger = path.join(fx.root, 'ledger.md');
+  fs.writeFileSync(ledger, LEDGER_HEAD);
+  appendRow({ runDir: fx.runDir, ledgerPath: ledger, phase: 'build', item: 'a finding', status: 'deferred', resolution: '→ backlog, staged/ledger-record-1.md' });
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(setItemArgs(fx, 'ledger-record-1.md', 'carried', '--ledger', ledger), b.d), 0, b.err());
+  assert.match(b.out(), /rewritten apply → carried in .*; ledger row #1 settled/);
+  assert.match(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), /rewritten apply → carried after execution — .*; ledger row #1 settled\. Reversibility: n\/a\./);
+  assert.strictEqual(cj(fx).items[0].resolution, 'carried');
+});
+
+test('--ledger names a path that must clear the ledger containment guard: refused paths exit 5 and write nothing', async () => {
+  const fx = controlFixture({ consoleJson: consoleOf([ledgerItem()]) });
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-cm-outside-')));
+  const outsideLedger = path.join(outside, 'ledger.md');
+  fs.writeFileSync(outsideLedger, `${LEDGER_HEAD}| 1 | build | a finding | deferred | → backlog, staged/ledger-record-1.md |\n`);
+  const notALedger = path.join(fx.root, 'notes.md');
+  fs.writeFileSync(notALedger, `${LEDGER_HEAD}| 1 | build | a finding | deferred | → backlog, staged/ledger-record-1.md |\n`);
+  for (const [label, target, pattern] of [['outside the run and worktree', outsideLedger, /outside the run directory and worktree/], ['not a ledger name', notALedger, /not a ledger file name/], ['missing', path.join(fx.root, 'absent-ledger.md'), /not-found/]]) {
+    const before = fs.existsSync(target) ? fs.readFileSync(target, 'utf8') : null;
+    const b = baseDeps(fx, []);
+    assert.strictEqual(await run(setItemArgs(fx, 'ledger-record-1.md', 'carried', '--ledger', target), b.d), 5, `${label}: ${b.err()}`);
+    assert.match(b.err(), pattern, label);
+    assert.match(b.err(), /nothing written/);
+    if (before !== null) assert.strictEqual(fs.readFileSync(target, 'utf8'), before, `${label}: ledger untouched`);
+    assert.ok(!fs.existsSync(path.join(fx.runDir, 'packet-facts')), `${label}: no fact`);
+    assert.strictEqual(cj(fx).items[0].resolution, 'apply', `${label}: item unchanged`);
+  }
+});
+
+test('--ledger exits 2 when it cannot apply: a non ledger-record id, or control mode off', async () => {
+  const fx = controlFixture({ consoleJson: consoleOf([leftover()]) });
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(setItemArgs(fx, 'leftover-1.md', 'carried', '--ledger', 'ledger.md'), b.d), 2);
+  assert.match(b.err(), /--ledger applies only to a ledger-record-\* item/);
+  assert.strictEqual(cj(fx).items[0].resolution, 'apply');
+
+  const off = mainCheckoutWithRun({ consoleJson: consoleOf([ledgerItem()]) });
+  const ob = baseDeps(off, []);
+  assert.strictEqual(await run(setItemArgs(off, 'ledger-record-1.md', 'keep-staged', '--ledger', 'ledger.md'), ob.d), 2);
+  assert.match(ob.err(), /--ledger applies only to a carried item/);
+  assert.strictEqual(cj(off).items[0].resolution, 'apply', 'nothing rewritten');
+});
+
+test('--resolution carried is gated on control mode: off, it exits 2 exactly as an unknown value did', async () => {
+  const off = mainCheckoutWithRun({ consoleJson: consoleOf([leftover()]) });
+  const b = baseDeps(off, []);
+  assert.strictEqual(await run(setItemArgs(off, 'leftover-1.md', 'carried'), b.d), 2);
+  assert.match(b.err(), /--resolution must be one of keep-staged, pending \(got carried\)/);
+  assert.strictEqual(cj(off).items[0].resolution, 'apply');
+  assert.ok(!fs.existsSync(path.join(off.runDir, 'packet-facts')));
+  const on = controlFixture({ consoleJson: consoleOf([leftover()]) });
+  assert.strictEqual(await run(setItemArgs(on, 'leftover-1.md', 'carried'), baseDeps(on, []).d), 0);
+  assert.strictEqual(cj(on).items[0].resolution, 'carried');
+});
+
 test('AC4.6: a forced carry failure exits 6, names every item, writes no console.json', async () => {
-  const fx = controlFixture();
+  const fx = controlFixture({ staged: { ...STAGED, 'review-contested-2.md': 'second' } });
   fs.mkdirSync(path.join(fx.runDir, 'packet-facts'), { recursive: true });
   fs.writeFileSync(FACTS(fx), 'not json');
   const { d, err } = baseDeps(fx, []);
   assert.strictEqual(await run(resolveArgs(fx), d), 6);
   assert.strictEqual(EXIT_CARRY_FAILED, 6);
-  assert.match(err(), /could not carry 1 item\(s\).*review-contested-1\.md/);
+  assert.match(err(), /could not carry 2 item\(s\)/);
+  assert.match(err(), /review-contested-1\.md/);
+  assert.match(err(), /review-contested-2\.md/);
   assert.ok(!fs.existsSync(path.join(fx.runDir, 'console.json')), 'no console.json');
   assert.strictEqual(fs.readFileSync(FACTS(fx), 'utf8'), 'not json', 'the facts file is unchanged');
   assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), '', 'no decisions block');
@@ -271,7 +335,7 @@ test('a carry fact-write failure from --set-item exits 6 and leaves the stored i
 test('a failed can\'t-tell filing rewritten carried is no longer filing-pending', async () => {
   const item = { id: 'tiebreak:abc', section: 'Contested findings', resolution: 'filed', reason: 'filed' };
   const filings = [{ item: 'tiebreak:abc', fingerprint: 'consolefinding-0123abcd', title: 't' }];
-  const fx = mainCheckoutWithRun({ consoleJson: consoleOf([item], { filings }) });
+  const fx = controlFixture({ consoleJson: consoleOf([item], { filings }) });
   assert.deepStrictEqual(consoleResidueItems(cj(fx), '').map((i) => i.resolution), ['filing-pending']);
   const b = baseDeps(fx, []);
   assert.strictEqual(await run(['--run', fx.runDir, '--set-item', 'tiebreak:abc', '--resolution', 'carried', '--reason', 'gh issue create failed'], b.d), 0, b.err());
