@@ -34,7 +34,7 @@ test('SessionStart in a linked worktree stamps a main-thread hold', () => withPi
   const a = harnessWorktreeOf(main, 'wire-start');
   const nodePathHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-hold-wire-'));
   await sessionStart.run({ input: { session_id: 's1' }, runDir: null, runState: null, cwd: a, superpowersDeps: NO_INSTALL, nodePathHome });
-  assert.deepStrictEqual(keys(a), [`s1__main__${process.pid}`]);
+  assert.deepStrictEqual(keys(a), [`s1__home__${process.pid}`]);
 }));
 
 test('SessionEnd releases the session\'s holds even when it owns no run dir', () => withPid(() => {

@@ -232,11 +232,36 @@ test('clearSessionHolds: removes this session+pid only', () => {
 test('stampHoldForCwd: a resumed session in a worktree re-stamps with its current pid', () => {
   const main = gitRepo();
   const a = harnessWorktreeOf(main, 'wt-resume');
-  assert.ok(writeHold(a, { key: 's1__main__1', block: BLOCK }));
+  assert.ok(writeHold(a, { key: 's1__home__1', block: BLOCK }));
   fs.mkdirSync(path.join(a, 'sub'));
   const out = stampHoldForCwd({ cwd: path.join(a, 'sub'), sessionId: 's1', env: { CLAUDE_PID: String(process.pid) }, ownerBlock });
   assert.strictEqual(out, 'stamped');
-  assert.ok(readHolds(a).some((h) => h.key === `s1__main__${process.pid}`));
+  const holds = readHolds(a);
+  assert.ok(holds.some((h) => h.key === `s1__home__${process.pid}`));
+  assert.strictEqual(holds.find((h) => h.key === `s1__home__${process.pid}`).hold.agentId, null);
+});
+
+test('releaseSessionHolds clears the home hold too', () => {
+  const main = gitRepo();
+  const a = harnessWorktreeOf(main, 'wt-home-rel');
+  assert.strictEqual(stampHoldForCwd({ cwd: a, sessionId: 's1', env: { CLAUDE_PID: '42' }, ownerBlock }), 'stamped');
+  assert.deepStrictEqual(readHolds(a).map((h) => h.key), ['s1__home__42']);
+  assert.strictEqual(releaseSessionHolds({ cwd: a, sessionId: 's1', env: { CLAUDE_PID: '42' } }), 1);
+  assert.deepStrictEqual(readHolds(a), []);
+});
+
+test('releaseAgentHolds: the default pid source is process-probe\'s resolveOwnerPid', () => {
+  const main = gitRepo();
+  const a = harnessWorktreeOf(main, 'wt-agent-default');
+  assert.ok(writeHold(a, { key: 's1__ag1__88', block: BLOCK, agentId: 'ag1' }));
+  const real = processProbe.resolveOwnerPid;
+  processProbe.resolveOwnerPid = () => ({ pid: 88, pidSource: 'ancestry' });
+  try {
+    assert.strictEqual(releaseAgentHolds({ cwd: a, sessionId: 's1', agentId: 'ag1', env: {} }), 1);
+  } finally {
+    processProbe.resolveOwnerPid = real;
+  }
+  assert.deepStrictEqual(readHolds(a), []);
 });
 
 test('releaseSessionHolds: clears only this pid\'s holds (a nested claude -p ending leaves the parent\'s)', () => {

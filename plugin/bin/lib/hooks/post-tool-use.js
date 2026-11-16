@@ -1,4 +1,4 @@
-// bin/lib/hooks/post-tool-use.js — E2: commit breadcrumbs (log tier) + closing-keyword check (warn tier) + design-doc capture nudge (warn tier) + EnterWorktree staleness backstop (warn tier) + post-teardown re-anchor backstop (warn tier, see checkPostTeardownReanchor below) + ad-hoc-session run-dir stamping (log tier, see stampAdHocRunDir below) + skill-invocation ledger (log tier, see ./skill-invocation.js) + AskUserQuestion ledger (log tier, see logAskUserQuestion below).
+// bin/lib/hooks/post-tool-use.js — E2: commit breadcrumbs (log tier) + closing-keyword check (warn tier) + design-doc capture nudge (warn tier) + EnterWorktree staleness backstop (warn tier) + post-teardown re-anchor backstop (warn tier, see checkPostTeardownReanchor below) + worktree hold stamp/clear on EnterWorktree/ExitWorktree (log tier, see ./worktree-hold.js) + ad-hoc-session run-dir stamping (log tier, see stampAdHocRunDir below) + skill-invocation ledger (log tier, see ./skill-invocation.js) + AskUserQuestion ledger (log tier, see logAskUserQuestion below).
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -769,20 +769,22 @@ function run(ctx) {
   const designDocNudge = checkDesignDocWrite(ctx);
   if (designDocNudge) return designDocNudge;
 
+  // Worktree hold (#4960, log tier): record that this session now stands in the entered
+  // worktree (or has left it) so the reapers skip it. No early return lies between here and
+  // the run-dir stamp below, and it runs ahead of the warn-tier checks that do return, so a
+  // later failure or returned nudge cannot skip it; never changes this hook's answer.
+  try {
+    holdLib.syncHoldForToolUse(ctx.input, {
+      cwd: ctx.cwd, env: process.env, ownerBlock: ctxLib.ownerBlock, resolveEnteredPath: () => resolveCreatedWorktreePath(ctx),
+    });
+  } catch { /* log tier: never break a session */ }
+
   // Ad-hoc-session run-dir stamping (log tier, side effect only — no
   // message). Runs before the staleness check below so a formal pipeline's
   // own record-worktree call (should one race this same EnterWorktree
   // event some other way) is never shadowed; in practice the two never
   // compete, since stampAdHocRunDir no-ops the instant ctx.ownedRun.dir is
   // already set.
-  // Worktree hold (#4960, log tier): record that this session now stands in the entered
-  // worktree (or has left it) so the reapers skip it. Before the ad-hoc stamp, which is
-  // one of several things that can fail; never changes this hook's answer.
-  try {
-    holdLib.syncHoldForToolUse(ctx.input, {
-      cwd: ctx.cwd, env: process.env, ownerBlock: ctxLib.ownerBlock, resolveEnteredPath: () => resolveCreatedWorktreePath(ctx),
-    });
-  } catch { /* log tier: never break a session */ }
   stampAdHocRunDir(ctx);
 
   // Windows core.longpaths proactive nudge (#1782, warn tier) — before the

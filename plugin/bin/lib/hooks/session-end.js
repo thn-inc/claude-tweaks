@@ -1,4 +1,4 @@
-// bin/lib/hooks/session-end.js — A2: mark the active run interrupted at session end.
+// bin/lib/hooks/session-end.js — A2: mark the active run interrupted at session end + release the session's worktree holds (log tier, #4960).
 'use strict';
 const ctxLib = require('./context');
 const holdLib = require('./worktree-hold');

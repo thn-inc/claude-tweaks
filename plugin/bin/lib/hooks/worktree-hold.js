@@ -209,11 +209,12 @@ function clearSessionHolds(mainRoot, { sessionId, pid } = {}) {
 
 // Stamps `{sessionId, agentId}`'s hold in the worktree containing `where`, then clears the
 // same key from every other worktree so the hold follows the session.
-function stampHold({ where, sessionId, agentId, env, ownerBlock }) {
+// `keyAgent` is the key's agent part when it differs from the block's `agentId`.
+function stampHold({ where, sessionId, agentId, keyAgent = agentId, env, ownerBlock }) {
   const wt = worktreeRootOf(where);
   if (!wt) return 'skipped';
   const block = ownerBlock({ sessionId, env });
-  const key = holdKey({ sessionId, agentId, pid: block && block.pid });
+  const key = holdKey({ sessionId, agentId: keyAgent, pid: block && block.pid });
   if (!key) return 'skipped';
   if (!writeHold(wt, { key, block, agentId })) return 'skipped';
   const mainRoot = mainCheckoutRoot(wt);
@@ -231,7 +232,7 @@ function syncHoldForToolUse(input, { cwd, env, ownerBlock, resolveEnteredPath } 
     }
     if (tool === 'ExitWorktree') {
       const key = holdKey({
-        sessionId: input.session_id, agentId: input.agent_id, pid: ownerBlock({ sessionId: input.session_id, env }).pid,
+        sessionId: input.session_id, agentId: input.agent_id, pid: processProbe.resolveOwnerPid(env).pid,
       });
       const mainRoot = key && mainCheckoutRoot(cwd);
       if (!mainRoot) return 'skipped';
@@ -244,10 +245,12 @@ function syncHoldForToolUse(input, { cwd, env, ownerBlock, resolveEnteredPath } 
   }
 }
 
-// SessionStart: a main-thread hold for the worktree the session starts (or resumes) in.
+// SessionStart: a "home" hold for the worktree the session starts (or resumes) in. Its own key
+// (`home`, never `main`) so EnterWorktree's move and ExitWorktree's clear leave it: the session
+// returns to its launch directory on exit, and a session standing in A with no hold is #4960.
 function stampHoldForCwd({ cwd, sessionId, env, ownerBlock } = {}) {
   try {
-    return stampHold({ where: cwd, sessionId, agentId: undefined, env, ownerBlock });
+    return stampHold({ where: cwd, sessionId, agentId: undefined, keyAgent: 'home', env, ownerBlock });
   } catch {
     return 'skipped';
   }

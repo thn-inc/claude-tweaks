@@ -8,6 +8,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const post = require('../plugin/bin/lib/hooks/post-tool-use');
 const hold = require('../plugin/bin/lib/hooks/worktree-hold');
+const { ownerBlock } = require('../plugin/bin/lib/hooks/context');
 const { gitRepo, harnessWorktreeOf } = require('./helpers/git-fixtures');
 
 function enterCtx(wt, input = {}) {
@@ -95,8 +96,32 @@ test('a hold-write failure never changes post-tool-use\'s outcome', () => withPi
   const main = gitRepo();
   const a = harnessWorktreeOf(main, 'hold-a');
   const holdDir = hold.holdDirOf(a);
+  const clean = post.run(enterCtx(a));
+  assert.strictEqual(hold.readHolds(a).length, 1);
+  fs.rmSync(holdDir, { recursive: true });
   fs.writeFileSync(holdDir, 'not a directory');
   const out = post.run(enterCtx(a));
-  assert.ok(!out || !('error' in out));
+  assert.deepStrictEqual(out, clean);
   assert.ok(fs.statSync(holdDir).isFile());
+}));
+
+test('ExitWorktree from inside the worktree being exited clears its hold', () => withPid(() => {
+  const main = gitRepo();
+  const a = harnessWorktreeOf(main, 'hold-a');
+  post.run(enterCtx(a));
+  assert.strictEqual(hold.readHolds(a).length, 1);
+  post.run({ input: { tool_name: 'ExitWorktree', cwd: a, session_id: 's1' }, cwd: a });
+  assert.deepStrictEqual(hold.readHolds(a), []);
+}));
+
+test('a session started in worktree A keeps its hold on A across EnterWorktree B and ExitWorktree', () => withPid(() => {
+  const main = gitRepo();
+  const a = harnessWorktreeOf(main, 'hold-a');
+  const b = harnessWorktreeOf(main, 'hold-b');
+  assert.strictEqual(hold.stampHoldForCwd({ cwd: a, sessionId: 's1', env: process.env, ownerBlock: ownerBlock }), 'stamped');
+  post.run(enterCtx(b));
+  assert.deepStrictEqual(keys(b), [`s1__main__${process.pid}`]);
+  post.run({ input: { tool_name: 'ExitWorktree', cwd: b, session_id: 's1' }, cwd: b });
+  assert.deepStrictEqual(hold.readHolds(b), []);
+  assert.ok(keys(a).includes(`s1__home__${process.pid}`));
 }));
