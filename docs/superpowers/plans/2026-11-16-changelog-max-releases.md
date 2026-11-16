@@ -8,14 +8,15 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, git CLI through injected `deps.git` runners.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-15T231126-record-5563/work/5563-spec.md` (record #5563)
+**Spec:** `.claude-tweaks/pipelines/2026-11-16T000512-record-5563/work/5563-spec.md` (record #5563; includes the plan-review Q1 decision of 2026-11-16 — the `Newest release removed:` footer line and the partial rule)
 
 **Scope keywords:** changelog-max-releases, prependSection, applyToChangelogEntry, extractChangelogRange, parseChangelogVersions, Older releases
 
 ## Global Constraints
 
 - Key: `changelog-max-releases`, `type: 'integer'`, `min: 0`, `default: 0`, `tier: 'advanced'`, `category: 'housekeeping'`. `0` means never trim. `-1`, `1.5`, `abc` resolve to `0` (AC15).
-- Footer heading is exactly `## Older releases` (HEADER_RE must not match it). Its record line is exactly `Full file up to v{version}: commit {full sha}`.
+- Footer heading is exactly `## Older releases` (HEADER_RE must not match it). Its record line is exactly `Full file up to v{version}: commit {full sha}` and never changes after the first trim. Its second line is exactly `Newest release removed: v{version}`, rewritten by every trim that removes a section (spec, plan review Q1).
+- Partial rule (spec, plan review Q1): `extractChangelogRange(...).partial` is `true` only when the file carries a footer and `compareVersions(oldVersion, newestRemoved) < 0`; `false` otherwise, including `oldVersion === newestRemoved`.
 - Unreadable-policy line, exactly: `changelog trim: policy unreadable ({reason}); not trimmed`
 - Failure line, exactly: `changelog trim: failed ({reason}); file left untrimmed`
 - Trim-only commit subject, exactly: `chore: trim CHANGELOG.md to the newest {n} releases`. A commit carrying Highlights keeps `docs(changelog): append Highlights for {tag}`.
@@ -35,7 +36,7 @@ Governing project skills (quoted verbatim):
 
 ## Review Focus
 
-1. A file that already carries a footer and is still within the bound (key lowered or count unchanged) must come back byte-identical — no second footer, no re-written sha (AC8 test covers the third trim; Task 2 adds the within-bound-with-footer case).
+1. A file that already carries a footer and is still within the bound (key lowered or count unchanged) must come back byte-identical — no second footer, no re-written sha, no re-written `Newest release removed:` line (AC8 test covers the third trim; Task 2 adds the within-bound-with-footer case). A later trim that removes sections rewrites only the `Newest release removed:` line; every other footer byte stays.
 2. A CHANGELOG whose header contains a stray `## ` line before the first release heading — header stays byte-identical (Task 2 AC10 test covers header placement).
 3. A file with no release sections at all, or fewer than `count`, never gains a footer (Task 2 test `trimChangelog leaves a file within the bound unchanged`).
 4. `release-notes-publish.js` with no Highlights to add *and* nothing to trim must still make no commit and no push (Task 4 test).
@@ -105,12 +106,14 @@ Expected: PASS
 **Interfaces:**
 - Produces (all exported from `plugin/bin/lib/changelog.js`):
   - `FOOTER_HEADING = '## Older releases'`
-  - `parseChangelogFooter(text: string) -> { index: number, sha: string, version: string, repoUrl: string | null } | null` — `index` is the offset of the `## Older releases` line (multiline `^…$`); returns `null` unless that heading **and** a `Full file up to v(\d+\.\d+\.\d+): commit ([0-9a-f]{40}|[0-9a-f]{64})` line under it are both present. `repoUrl` is read back from the footer's permanent-link line when present.
-  - `renderChangelogFooter({ version, sha, repoUrl }) -> string` — exactly:
+  - `parseChangelogFooter(text: string) -> { index: number, sha: string, version: string, newestRemoved: string | null, repoUrl: string | null } | null` — `index` is the offset of the `## Older releases` line (multiline `^…$`); returns `null` unless that heading **and** a `Full file up to v(\d+\.\d+\.\d+): commit ([0-9a-f]{40}|[0-9a-f]{64})` line under it are both present. `newestRemoved` is read from a `Newest release removed: v(\d+\.\d+\.\d+)` line under the heading (`null` when that line is absent). `repoUrl` is read back from the footer's permanent-link line when present.
+  - `renderChangelogFooter({ version, sha, newestRemoved, repoUrl }) -> string` — exactly:
     ```
     ## Older releases
 
     Full file up to v{version}: commit {sha}
+
+    Newest release removed: v{newestRemoved}
 
         git show {sha}:CHANGELOG.md
 
@@ -122,9 +125,9 @@ Expected: PASS
     - [All releases]({repoUrl}/releases)
     ```
     ending with one `\n`.
-  - `trimChangelog(text: string, count: number, { sha, repoUrl }?: { sha?: string, repoUrl?: string | null }) -> { text: string, removed: string[] }` — `count` must be an integer ≥ 1 (else throw `TypeError`). Sections = HEADER_RE matches in file order, the last one ending at the footer's `index` when a footer exists. Within the bound → `{ text, removed: [] }` unchanged (no footer added). Otherwise: header + the first `count` sections' text verbatim (from heading start to the next section's heading, trailing whitespace normalised to exactly `\n\n`) + footer. Footer = the existing footer text **byte-identical** when present (its sha never changes), else `renderChangelogFooter({ version: <first section's version>, sha, repoUrl: repoUrl ?? null })` — throw `Error('trimChangelog: a first trim needs a commit sha')` when no footer and no `sha`. `removed` = versions of the dropped sections in file order.
+  - `trimChangelog(text: string, count: number, { sha, repoUrl }?: { sha?: string, repoUrl?: string | null }) -> { text: string, removed: string[] }` — `count` must be an integer ≥ 1 (else throw `TypeError`). Sections = HEADER_RE matches in file order, the last one ending at the footer's `index` when a footer exists. Within the bound → `{ text, removed: [] }` unchanged (no footer added). Otherwise: header + the first `count` sections' text verbatim (from heading start to the next section's heading, trailing whitespace normalised to exactly `\n\n`) + footer. Footer = the existing footer text with only its `Newest release removed: v…` line replaced by `removed[0]` (every other byte, the sha line included, unchanged; insert the line after the record line if an existing footer lacks it), else `renderChangelogFooter({ version: <first section's version>, sha, newestRemoved: removed[0], repoUrl: repoUrl ?? null })` — throw `Error('trimChangelog: a first trim needs a commit sha')` when no footer and no `sha`. `removed` = versions of the dropped sections in file order, so `removed[0]` is the newest removed.
   - `parseChangelogVersions` — unchanged shape; the last section's body now ends at the footer's `index` when a footer exists (AC11).
-  - `extractChangelogRange` — unchanged array return; additionally sets a **non-enumerable** boolean property `partial` (via `Object.defineProperty`) on the returned array: `true` when a footer exists and `compareVersions(oldVersion, floor) < 0`, where `floor` is the oldest retained section's version (minimum by `compareVersions`); else `false`. Non-enumerable so existing `deepStrictEqual(range, [])` assertions still hold.
+  - `extractChangelogRange` — unchanged array return; additionally sets a **non-enumerable** boolean property `partial` (via `Object.defineProperty`) on the returned array: `true` when a footer exists with a non-null `newestRemoved` and `compareVersions(oldVersion, newestRemoved) < 0`; else `false` (including `oldVersion` equal to `newestRemoved`, and a footer-less file). This is the plan-review Q1 rule; the release probe's floor (Task 6) stays the oldest retained section. Non-enumerable so existing `deepStrictEqual(range, [])` assertions still hold.
 
 - [ ] **Step 1: Write the failing tests** (build fixtures programmatically: `sixty()` returns `{ text, header, versions }` — a `# Changelog\n\nintro prose\n\n` header, then 60 sections newest first cycling the three heading forms `## v1.0.N — title N`, `## [1.0.N](https://github.com/o/r/compare/v1.0.M...v1.0.N) (2026-01-01)` and `## 1.0.N (2026-01-01)`, each with a `### Features` body):
 
@@ -150,9 +153,14 @@ test('AC11.1: the body extractChangelogRange returns for the oldest retained sec
   const range = extractChangelogRange(t, '0.0.1', '9.9.9');
   assert.doesNotMatch(range[range.length - 1].body, /Older releases|Full file up to/);
 });
-test('AC6.1 AC6.2: a range starting below the floor returns the sections it has and partial: true', () => {
-  // trimmed fixture; oldVersion below the oldest retained → range.length === sections in range present, range.partial === true
-  // oldVersion at/above floor → range.partial === false; a footer-less file → range.partial === false
+test('AC6.1 AC6.2: a range starting below the newest removed version is partial; one starting at it is not', () => {
+  // trimmed fixture (60 → 50); newestRemoved = versions[50]
+  // oldVersion below newestRemoved → returns the sections it has, range.partial === true
+  // oldVersion === newestRemoved → range.partial === false; a footer-less file → range.partial === false
+  // parseChangelogFooter(trimmed).newestRemoved === versions[50]
+});
+test('a later trim rewrites only the Newest release removed line', () => {
+  // trim 60 → 50, then 50 → 40 on its own output: sha and record line unchanged, newestRemoved === versions[40]
 });
 test('AC15.2: count 1 keeps one section and the footer', () => {
   const r = trimChangelog(sixty().text, 1, { sha: 'b'.repeat(40) });
