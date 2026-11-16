@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ `node:test`, git CLI, `tests/helpers/git-template.js` (`fromTemplate`, `fromTemplateSet`, `disableReceiveAutoGc`).
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-16T160606-record-5769/work/5769-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-16T183940-record-5769/work/5769-spec.md` (resume run; the record body now carries a **Decision** paragraph that settles the two plan-review questions of run 2026-11-16T160606 — see "Decisions applied" below)
 
 Scope keywords: makeRepoWithOrigin, makeBareOriginAndClone, makeBranchlessOriginAndClone, originWithTwoClones
 
@@ -21,6 +21,13 @@ Scope keywords: makeRepoWithOrigin, makeBareOriginAndClone, makeBranchlessOrigin
 - Governing skill `windows-checkout-test-parity`, quoted verbatim: "| Rewriting a file git created inside a copied or linked worktree (its `.git` pointer file) with `fs.writeFileSync` | Git for Windows marks `.git` hidden (`core.hideDotFiles=dotGitOnly`), `fs.cpSync` keeps the attribute, and recreating a hidden file fails with `EPERM` on win32 only. Open the existing file `r+`, `ftruncateSync` it to 0, then" — no fixtures module writes a git-created file itself; `git-template.js`'s `rewriteTemplatePaths` already does this.
 - Governing skill `skill-prose-conformance-tests` names `tests/helpers/git-fixtures.js`, but its rules govern skill-prose suites; none of these files is one, so its rules do not apply beyond reusing the shared helper (Task 2 extends it rather than adding a second builder).
 - Commit messages: `{Verb} {what} — {detail}`, body ends with `refs #5769`, never `closes`/`fixes`.
+
+## Decisions applied
+
+The record's Decision paragraph: "Where this record's wording leaves a choice between a literal reading and its aim (fewer git processes, with coverage kept), take the aim, say so in the PR body, and do not stop to ask." Applied to the two open questions:
+
+- **AC1 target basis.** Pass means the HEAD total is at most 1,725 **and** at most 60% of the before count re-taken at the merge base (AC2). Today both give 1,725 (the merge-base re-take at `e5f52db` was 2,875); if main moves the before count, the stricter bound governs and the PR body states both numbers and which one governed.
+- **AC3 and `writeBlob`'s assertion.** The `fixture setup: claim #N must write cleanly` assertion stays in each of the four tests (coverage kept): `makeRegistryWithClaims` records every write's result instead of asserting, and each test asserts `write.ok` per claim from those recorded results with the same message. The PR body says so.
 
 ## Review Focus
 
@@ -46,11 +53,11 @@ Scope keywords: makeRepoWithOrigin, makeBareOriginAndClone, makeBranchlessOrigin
   - `makeBareOriginAndClone(): { root: string, originDir: string, cloneDir: string }` — key `claims-git-cas:registry`, prefix `claims-git-cas-`; the original steps (bare `origin.git` + `disableReceiveAutoGc`, clone `clone`, config, seed `README.md`, push `main`, push `main:claims-registry`).
   - `makeBranchlessOriginAndClone(): { root, originDir, cloneDir }` — key `claims-git-cas:branchless`, prefix `claims-git-cas-branchless-`; same minus the registry push.
   - `makeDecoyOriginAndClone(): { root, originDir, cloneDir }` — registry state plus the concurrent-fetch test's decoy steps (checkout `-b decoy`, `decoy.txt` = `decoy\n`, commit `decoy`, push `decoy`, checkout `main`).
-  - `makeRegistryWithClaims(claims: Array<[number, string]>): { root, originDir, cloneDir, tip: string }` — registry state plus one `writeClaimBlobGit` per entry in order (message `Claim #{n}`, lease from a fresh `readClaimBlobGit`), `tip` = the last write's `commitSha`; template key `claims-git-cas:claims:${JSON.stringify(claims)}`, tip remembered in a module-level Map set as the build's last statement.
+  - `makeRegistryWithClaims(claims: Array<[number, string]>): { root, originDir, cloneDir, tip: string, writes: Array<{ issueNumber: number, ok: boolean }> }` — registry state plus one `writeClaimBlobGit` per entry in order (message `Claim #{n}`, lease from a fresh `readClaimBlobGit`), `tip` = the last write's `commitSha`, `writes` = each write's `{ issueNumber, ok }` in order; the builder never asserts or throws on `!ok` (the tests assert, see "Decisions applied"); template key `claims-git-cas:claims:${JSON.stringify(claims)}`, `{ tip, writes }` remembered in a module-level Map set as the build's last statement.
 
 - [ ] **Step 1: Write the failing spawn tests** in `tests/helpers-git-template.test.js`, after the reconcile block, one per builder, named `AC4.1: claims-git-cas {builder}: a second call starts no git process` — same body as the existing `builders` loop (warm-up call, then a traced second call, `assert.deepStrictEqual(fs.readdirSync(trace), [])`), dirs to clean = `[r.root]`. For `makeRegistryWithClaims` use `[[1, '{"runId":"r1"}']]` and also assert `second.tip === first.tip`.
 - [ ] **Step 2: Run** `node --test tests/helpers-git-template.test.js` — Expected: FAIL, `Cannot find module './bin-lib/issues/claims-git-cas-fixtures'`.
-- [ ] **Step 3: Implement the module** with the four builders above (its own `setupGit`/`realRunner` copies, `PIPE_ALL` stdio), then migrate the test file: its `makeBareOriginAndClone`/`makeBranchlessOriginAndClone` become wrappers that call the module and push `root` onto `fixtureRoots`; the concurrent-fetch test takes `makeDecoyOriginAndClone()` in place of its decoy lines; the tests `readClaimBlobsGitBatch: returns identical…`, `…with issueNumbers omitted, discovers…`, `…embedded newlines…` and `…exactly 2 subprocess invocations…` take `makeRegistryWithClaims([...])` with their exact numbers and contents in place of their `writeBlob` loops and use the returned `tip`. `writeBlob` and the `defaultRunner` test (#2852) stay as they are.
+- [ ] **Step 3: Implement the module** with the four builders above (its own `setupGit`/`realRunner` copies, `PIPE_ALL` stdio), then migrate the test file: its `makeBareOriginAndClone`/`makeBranchlessOriginAndClone` become wrappers that call the module and push `root` onto `fixtureRoots`; the concurrent-fetch test takes `makeDecoyOriginAndClone()` in place of its decoy lines; the tests `readClaimBlobsGitBatch: returns identical…`, `…with issueNumbers omitted, discovers…`, `…embedded newlines…` and `…exactly 2 subprocess invocations…` take `makeRegistryWithClaims([...])` with their exact numbers and contents in place of their `writeBlob` loops, then assert, for each recorded write, `assert.equal(w.ok, true, \`fixture setup: claim #${w.issueNumber} must write cleanly\`)` (the same assertion and message `writeBlob` ran) before using the returned `tip`. `writeBlob` and the `defaultRunner` test (#2852) stay as they are.
 - [ ] **Step 4: Run** `node --test tests/helpers-git-template.test.js` and `node --test tests/bin-lib/issues/claims-git-cas.test.js` — Expected: both PASS; the claims file still reports 33 tests (`# tests 33`), 0 fail.
 - [ ] **Step 5: Commit** `git add tests/bin-lib/issues/claims-git-cas-fixtures.js tests/bin-lib/issues/claims-git-cas.test.js tests/helpers-git-template.test.js` then `git commit -m "Build claims-git-cas test fixtures from templates — origin, clone, registry and seeded claims built once per process" -m "refs #5769"`.
 
@@ -109,7 +116,7 @@ Scope keywords: makeRepoWithOrigin, makeBareOriginAndClone, makeBranchlessOrigin
 **Files:** none committed.
 
 - [ ] **Step 1: AC2.1** — extract the merge base (`git merge-base HEAD origin/main`) with `git archive` into a scratch dir, then run the scratch counter (`count-git.js`) against it and against HEAD back to back: each file alone and the three together, each run `GIT_TRACE2_EVENT=<absolute empty dir> CT_TEST_CONCURRENCY=6 node tools/run-tests.js --files-from <list>`, counting one trace2 file per process, split top-level vs child and by subcommand.
-- [ ] **Step 2: AC1.1 / AC1.2** — total at HEAD ≤ 1,725; otherwise name the shortfall, attributing it to fixture setup or to git run by the code under test.
+- [ ] **Step 2: AC1.1 / AC1.2** — total at HEAD ≤ 1,725 and ≤ 60% of Step 1's merge-base total (the stricter governs, per "Decisions applied"; the PR body states both numbers); otherwise name the shortfall, attributing it to fixture setup or to git run by the code under test.
 - [ ] **Step 3: AC3.1 / AC3.2** — for each file, the TAP test-name list (`node --test --test-reporter=tap <file>`, `ok N - name` lines) at the merge base and at HEAD is identical and all pass; `git diff <merge-base> HEAD -- <file>` shows no removed `assert` line and no changed test option.
 - [ ] **Step 4: Evidence** — write each run's output to `$PIPELINE_RUN_DIR/evidence/git-counts.txt` and `$PIPELINE_RUN_DIR/evidence/test-names.txt` (plain Bash redirect, `mkdir -p` first) and log one `AC evidence` decision per criterion; put the before/after table with the subcommand split in the PR body (Deliverable 5).
 - [ ] **Step 5: AC5.1** — the full suite passes through `/claude-tweaks:test`; the Windows regression job is dispatched on the PR head and its result recorded.
