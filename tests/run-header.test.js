@@ -62,11 +62,11 @@ test('headerPathspecs: trailing wildcard on the spec-* pathspecs', () => {
 
 test('archivedRunDir: run dir and per-spec child dir under pipelines', () => {
   assert.equal(
-    archivedRunDir('/m/.claude-tweaks/pipelines/2026-11-16T020801-record-1'),
+    archivedRunDir('/m/.claude-tweaks/pipelines/2026-11-16T020801-record-1', path.posix),
     '/m/.claude-tweaks/pipelines/archive/2026-11-16T020801-record-1',
   );
   assert.equal(
-    archivedRunDir('/m/.claude-tweaks/pipelines/2026-11-16T020801-record-1/spec-4'),
+    archivedRunDir('/m/.claude-tweaks/pipelines/2026-11-16T020801-record-1/spec-4', path.posix),
     '/m/.claude-tweaks/pipelines/archive/2026-11-16T020801-record-1/spec-4',
   );
 });
