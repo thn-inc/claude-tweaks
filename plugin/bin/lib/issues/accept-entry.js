@@ -270,10 +270,14 @@ function verdictLabelEdits(labels, verdict, { batch = false } = {}) {
 
 module.exports = {
   automaticLabelAction,
+  DEPLOY,
+  joinLines,
   PACKET_STATES,
   packetStateOf,
   REFRESHABLE_FIELDS,
   refreshPacket,
+  sectionRange,
+  splitLines,
   VERDICTS,
   verdictLabelEdits,
 };
