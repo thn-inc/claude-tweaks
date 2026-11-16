@@ -46,6 +46,7 @@ const WRITE_WORDS = {
     long: ['--data', '--data-ascii', '--data-binary', '--data-raw', '--data-urlencode', '--json', '--form', '--form-string', '--upload-file', '--output', '--remote-name', '--remote-name-all', '--dump-header', '--cookie-jar', '--trace', '--trace-ascii', '--stderr', '--libcurl', '--etag-save', '--hsts', '--alt-svc', '--config'],
   },
   less: { short: 'oO', long: ['--log-file', '--LOG-FILE'] },
+  file: { short: 'C', long: ['--compile'] },
   sort: { short: 'o', long: ['--output', '--compress-program'] },
   rm: { any: true },
   mv: { any: true },
@@ -78,7 +79,7 @@ const GIT_READ = [
   'status', 'log', 'diff', 'show', 'rev-parse', 'rev-list', 'ls-files', 'ls-tree', 'ls-remote', 'cat-file', 'merge-base', 'describe', 'blame',
   'grep', 'shortlog', 'for-each-ref', 'show-ref', 'count-objects', 'var', 'check-ignore', 'name-rev', 'cherry', 'whatchanged',
 ];
-// Every member of GATE_COVERAGE.gitActions must be here (the AC3 test pins it).
+// Every member of GATE_COVERAGE.gitActions must be here (the classifyByTables test pins it).
 const GIT_WRITE = [
   'commit', 'push', 'mv', 'rm', 'update-ref', 'apply', 'fetch', 'pull', 'merge', 'rebase', 'reset', 'checkout', 'switch', 'restore', 'add',
   'clean', 'am', 'cherry-pick', 'revert', 'gc', 'prune', 'init', 'clone', 'notes', 'submodule', 'update-index', 'write-tree', 'read-tree',
@@ -113,7 +114,7 @@ const HEADER_WORDS = new Set(['for', 'case', 'select']);
 const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh', 'fish', 'pwsh']);
 
 // An environment variable that makes a "reader" run a program or load code.
-const HAZARD_ENV = /^(?:PATH|LD_\w+|DYLD_\w+|BASH_ENV|ENV|IFS|PAGER|EDITOR|VISUAL|SHELL|GIT_(?:PAGER|EDITOR|SEQUENCE_EDITOR|EXTERNAL_DIFF|SSH|SSH_COMMAND|ASKPASS|EXEC_PATH|PROXY_COMMAND|CONFIG_\w+))$/;
+const HAZARD_ENV = /^(?:PATH|LD_\w+|DYLD_\w+|BASH_ENV|ENV|IFS|PAGER|EDITOR|VISUAL|SHELL|LESSOPEN|LESSCLOSE|RIPGREP_CONFIG_PATH|CURL_HOME|GIT_(?:PAGER|EDITOR|SEQUENCE_EDITOR|EXTERNAL_DIFF|SSH|SSH_COMMAND|ASKPASS|EXEC_PATH|PROXY_COMMAND|CONFIG_\w+))$/;
 const ASSIGN = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=/;
 
 const READ = { effect: 'read', why: 'readers only' };
@@ -415,19 +416,41 @@ const WRAPPERS = {
   },
 };
 
+// Single-dash curl options that take a value (the rest of the cluster, or the next word).
+const CURL_VALUE_SHORT = 'AbcCdDeEFHKmoPQrRtTuUwxyYz';
+
 // curl with a request method other than GET/HEAD (-X, --request, --request=,
 // -XPOST, a cluster ending in X) mutates the remote: a write, as `gh api` is.
 function curlMutates(words, from) {
+  // `-w '%output{f}'` (curl 8.3+) writes a file.
+  for (let k = from; k < words.length; k++) if (words[k].t.includes('%output{')) return true;
   for (let k = from; k < words.length; k++) {
     const a = words[k].t;
     let method = null;
     if (a === '--request') method = k + 1 < words.length ? words[k + 1] : { t: '', dyn: true };
     else if (a.startsWith('--request=')) method = { t: a.slice('--request='.length), dyn: words[k].dyn };
     else if (a.length > 1 && a[0] === '-' && a[1] !== '-') {
-      const x = a.indexOf('X', 1);
-      if (x !== -1) method = x + 1 < a.length ? { t: a.slice(x + 1), dyn: words[k].dyn } : (words[k + 1] || { t: '', dyn: true });
+      // Scan the cluster letter by letter: a letter that takes a value ends it.
+      for (let m = 1; m < a.length; m++) {
+        if (a[m] === 'X') {
+          method = m + 1 < a.length ? { t: a.slice(m + 1), dyn: words[k].dyn } : (words[k + 1] || { t: '', dyn: true });
+          break;
+        }
+        if (CURL_VALUE_SHORT.includes(a[m])) break;
+      }
     }
-    if (method && (method.dyn || !['GET', 'HEAD'].includes(method.t.toUpperCase()))) return true;
+    // curl sends the method as typed: only literal GET and HEAD are reads.
+    if (method && (method.dyn || !['GET', 'HEAD'].includes(method.t))) return true;
+  }
+  return false;
+}
+
+// A computed argument that starts with an expansion could itself be the write
+// flag (`sed "$OPTS" …`, `rg $FLAGS x`): the never-read rule wins over precision.
+function computedArg(words, from) {
+  for (let k = from; k < words.length; k++) {
+    const w = words[k];
+    if (w.dyn && (w.t[0] === '$' || w.t[0] === SENT)) return true;
   }
   return false;
 }
@@ -458,6 +481,7 @@ const GIT_VALUE_FLAGS = new Set(['--git-dir', '--work-tree', '--namespace']);
 // can set one).
 const GIT_PROGRAM_KEY = /^(?:core\.|alias\.|include\.|includeif\.)|\.(?:pager|editor|command|cmd|program|helper|textconv|smudge|clean|process|driver|external|sshcommand|path)$/;
 
+const GIT_CONFIG_WRITE_LONG = ['--unset', '--unset-all', '--add', '--replace-all', '--edit', '--rename-section', '--remove-section'];
 const BRANCH_WRITE_SHORT = 'dDmMcCuf';
 const BRANCH_WRITE_LONG = ['--delete', '--move', '--copy', '--set-upstream-to', '--unset-upstream', '--edit-description', '--force'];
 const GIT_LIST_FLAGS = ['--list', '-l', '--show-current', '--contains', '--no-contains', '--merged', '--no-merged', '--points-at'];
@@ -542,7 +566,12 @@ function judgeGit(words, from) {
       let operands = 0;
       for (let m = rest; m < words.length; m++) {
         const a = words[m].t;
-        if (['--unset', '--unset-all', '--add', '--replace-all', '--edit', '-e', '--rename-section', '--remove-section', 'set', 'unset', 'edit'].includes(a)) return write('git config');
+        if (['-e', 'set', 'unset', 'edit'].includes(a)) return write('git config');
+        if (a[0] === '-' && a[1] === '-') {
+          const eq = a.indexOf('=');
+          const name = eq === -1 ? a : a.slice(0, eq);
+          if (name.length >= 4 && GIT_CONFIG_WRITE_LONG.some((l) => l.startsWith(name))) return write('git config');
+        }
         if (a[0] !== '-' || a === '-') operands++;
       }
       return operands >= 2 ? write('git config') : READ;
@@ -659,6 +688,7 @@ function judgeWords(words, start) {
     const entry = Object.hasOwn(WRITE_WORDS, base) ? WRITE_WORDS[base] : null;
     if (entry && hitsWrite(entry, words, s + 1)) return write(`write word: ${base}`);
     if (base === 'curl' && curlMutates(words, s + 1)) return write('write word: curl');
+    if (entry && !entry.any && computedArg(words, s + 1)) return unknown('computed argument');
     if (base === 'export') {
       for (let k = s + 1; k < words.length; k++) {
         const m = ASSIGN.exec(words[k].t);
@@ -668,6 +698,7 @@ function judgeWords(words, start) {
     if (base === 'git') return judgeGit(words, s + 1);
     if (base === 'gh') return judgeGh(words, s + 1);
     if (READER_SET.has(base)) {
+      if (Object.hasOwn(RUNS_PROGRAM, base) && computedArg(words, s + 1)) return unknown('computed argument');
       if (Object.hasOwn(RUNS_PROGRAM, base) && words.slice(s + 1).some((x) => RUNS_PROGRAM[base].includes(x.t.split('=')[0]))) return unknown(`${base} runs a program`);
       return READ;
     }
@@ -692,6 +723,7 @@ function classifyText(text, depth) {
   // for-of walks entries pushed during the loop: a `for f do …` body is queued.
   const commands = tokenize(outer);
   for (const cmd of commands) {
+    if (casePattern && cmd.words[0] && cmd.words[0].t === 'esac') casePattern = false;
     if (casePattern && (cmd.term === ')' || cmd.term === '|')) {
       if (cmd.term === ')') casePattern = false;
       continue;
@@ -744,13 +776,15 @@ function gateWrite(command) {
 
 function classifyEffect(command) {
   if (typeof command !== 'string' || command.trim() === '') return unknown('empty');
+  // The scan first: the write gate is the slow half, and only the `why` differs.
+  const scanned = classifyText(command, 0);
+  if (scanned.effect === 'write') return scanned;
   const gated = gateWrite(command);
-  if (gated) return write(gated);
-  return classifyText(command, 0);
+  return gated ? write(gated) : scanned;
 }
 
 // The word tables alone, without step 1's gate: lets a test prove each table
 // member writes on its own rather than being masked by git-command.js.
 const classifyByTables = (command) => classifyText(command, 0);
 
-module.exports = { classifyEffect, classifyByTables,WRITE_WORDS, READERS, GIT_READ, GH_READ, GIT_WRITE, GH_WRITE };
+module.exports = { classifyEffect, classifyByTables, WRITE_WORDS, READERS, GIT_READ, GH_READ, GIT_WRITE, GH_WRITE };

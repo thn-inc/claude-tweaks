@@ -28,6 +28,7 @@ const MINIMAL = {
   curl: 'curl -o f https://x',
   sort: 'sort -o f g',
   less: 'less -o f x',
+  file: 'file -C x',
 };
 
 test('AC3: every WRITE_SHAPES, WRITE_WORDS and GATE_COVERAGE.gitActions member has a minimal writing case that is write', () => {
@@ -198,6 +199,51 @@ const NEVER_READ = [
   ['echo $(( $(rm x) ))', 'write'],
   ['case x in a) rm y ;; esac', 'write'],
   ['case x in a) ls ;; b) cat f ;; esac', 'read'],
+  // A computed argument to a reader with a write flag could be that flag.
+  ['sed "$OPTS" s/a/b/ f', 'unknown'],
+  ['sed $OPTS s/a/b/ f', 'unknown'],
+  ['sed -n "${a}p" f', 'unknown'],
+  ['sed -n "x${a}p" f', 'read'],
+  ['curl $ARGS https://x', 'unknown'],
+  ['curl "https://$h/x"', 'read'],
+  ['find . $ACTION', 'unknown'],
+  ['sort $O f', 'unknown'],
+  ['less $L f', 'unknown'],
+  ['rg $FLAGS x', 'unknown'],
+  ['rg "$(echo --pre=x)" y', 'unknown'],
+  ['rg x f', 'read'],
+  ['ls $X', 'read'],
+  ['cat "$f"', 'read'],
+  // esac | must not hide a later writer.
+  ['case a in a) ls;; esac | gh pr merge 1 | cat', 'write'],
+  ['case a in a) ls;; esac | rm x | cat', 'write'],
+  ['case a in a) ls;; esac | cat', 'read'],
+  // git config write flags match by unique-prefix abbreviation.
+  ['git config --unset-a foo.a', 'write'],
+  ['git config --remove bar', 'write'],
+  ['git config --ed', 'write'],
+  ['git config --get a.b', 'read'],
+  // Hazard environment variables that run a program from a reader.
+  ["LESSOPEN='|rm x %s' less f", 'unknown'],
+  ["LESSCLOSE='rm x' less f", 'unknown'],
+  ['RIPGREP_CONFIG_PATH=/x rg y', 'unknown'],
+  ['CURL_HOME=/x curl https://x', 'unknown'],
+  ['file -C x', 'write'],
+  ['file --compile x', 'write'],
+  ['file x', 'read'],
+  // curl -w %output{…} writes a file (curl 8.3+).
+  ["curl -w '%output{f}' https://x", 'write'],
+  ["curl --write-out '%output{f}' https://x", 'write'],
+  ["curl -sw '%output{f}' https://x", 'write'],
+  ["curl -w '%{http_code}' https://x", 'read'],
+  // -X counts only where X is an option letter, and the method compares as curl sends it.
+  ['curl -uXav:pw https://x', 'read'],
+  ['curl -sX POST https://x', 'write'],
+  ['curl -sXPOST https://x', 'write'],
+  ['curl -sHXa:b -X POST https://x', 'write'],
+  ['curl -X get https://x', 'write'],
+  ['curl --request=head https://x', 'write'],
+  ['curl -X GET https://x', 'read'],
 ];
 
 test('shapes that could write are never read', () => {
