@@ -12,6 +12,10 @@
 // from phases[].verify[].durationMs instead) and no totals.ceremonyShare (null). --json prints the same
 // summary as JSON instead of Markdown.
 //
+// It also reports review-phase skill-file reads per file (#4359): the summed phases[].procedureFiles
+// of each run's reached review phase, as a median per run (over the runs that carry the data, a
+// missing file counted as 0) and a total.
+//
 // --archive defaults to {main checkout}/.claude-tweaks/pipelines/archive, where the main checkout is
 // the dirname of `git rev-parse --path-format=absolute --git-common-dir` — the same archive from any
 // worktree. The tool only reads.
@@ -91,6 +95,27 @@ function verifyMinutesOf(timing) {
   return seen ? Math.round(ms / 6000) / 10 : null;
 }
 
+const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+// The per-file procedure reads of every reached review phase, summed: a phases[] row with phase
+// 'review', a non-null start and a source other than 'unattributed' (derive.js emits a span-less
+// review row for a run that never reached review). null when no reached review row carries a
+// procedureFiles object — an older timing.json, or a run that stopped before review.
+function reviewFilesOf(timing) {
+  if (!Array.isArray(timing.phases)) return null;
+  let files = null;
+  for (const p of timing.phases) {
+    if (!p || p.phase !== 'review' || p.start == null || p.source === 'unattributed') continue;
+    if (!isPlainObject(p.procedureFiles)) continue;
+    files = files || {};
+    for (const [key, count] of Object.entries(p.procedureFiles)) {
+      const n = num(count);
+      if (n !== null) files[key] = (files[key] || 0) + n;
+    }
+  }
+  return files;
+}
+
 const isMissing = (e) => e && (e.code === 'ENOENT' || e.code === 'ENOTDIR');
 
 function profileOf(runDir, fsImpl) {
@@ -137,6 +162,7 @@ function collectRuns(archiveDir, fsImpl) {
       procedureKb: bytes === null ? null : Math.round((bytes / 1024) * 10) / 10,
       verifyMinutes: verifyMinutesOf(t),
       ceremonyShare: num(totals.ceremonyShare),
+      reviewFiles: reviewFilesOf(t),
     });
   }
   return { runs, skipped };
@@ -163,11 +189,25 @@ function groupBy(runs, keyOf) {
   return out;
 }
 
+// Per-file review reads over the runs that carry them: a run missing a key read that file 0 times.
+// Files sort by total descending, then by key.
+function reviewFileReads(runs) {
+  const withData = runs.filter((r) => isPlainObject(r.reviewFiles));
+  const keys = new Set(withData.flatMap((r) => Object.keys(r.reviewFiles)));
+  const rows = [...keys].map((key) => {
+    const counts = withData.map((r) => r.reviewFiles[key] || 0);
+    return [key, { median: median(counts), total: counts.reduce((a, b) => a + b, 0) }];
+  });
+  rows.sort((a, b) => b[1].total - a[1].total || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return { runs: withData.length, files: Object.fromEntries(rows) };
+}
+
 function summarize(runs) {
   return {
     overall: group(runs),
     byProfile: groupBy(runs, (r) => r.profile || NO_PROFILE),
     byWeek: groupBy(runs, (r) => r.week || NO_WEEK),
+    reviewFileReads: reviewFileReads(runs),
   };
 }
 
@@ -180,6 +220,13 @@ function table(label, groups) {
     const m = g.medians;
     lines.push(`| ${key} | ${g.runs} | ${fmt(m.minutes)} | ${fmt(m.roundTrips)} | ${fmt(m.procedureKb)} | ${fmt(m.verifyMinutes)} | ${fmtShare(m.ceremonyShare)} |`);
   }
+  return lines.join('\n');
+}
+
+function reviewFilesTable(reads) {
+  if (!reads.runs) return 'no run carries per-file read data';
+  const lines = ['| File | Median reads/run | Total reads |', '|---|---|---|'];
+  for (const [key, f] of Object.entries(reads.files)) lines.push(`| ${key} | ${fmt(f.median)} | ${f.total} |`);
   return lines.join('\n');
 }
 
@@ -196,6 +243,12 @@ function renderMarkdown(summary, roundTripRuns, skipped) {
     '## By week',
     '',
     table('Week', summary.byWeek),
+    '',
+    '## Review-phase skill-file reads',
+    '',
+    `runs with per-file data: ${summary.reviewFileReads.runs}`,
+    '',
+    reviewFilesTable(summary.reviewFileReads),
   ].join('\n');
 }
 
@@ -255,7 +308,7 @@ function run({ argv, deps: given = {} }) {
   return 0;
 }
 
-module.exports = { run, collectRuns, median, summarize, isoWeek };
+module.exports = { run, collectRuns, median, summarize, isoWeek, reviewFilesOf };
 
 if (require.main === module) {
   process.exitCode = run({ argv: process.argv.slice(2) });
