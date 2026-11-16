@@ -60,7 +60,7 @@ This needs its own remedy, not simply "same as section 5 above." Settle's own ow
 (`settle-and-merge.md`) states it "runs inside whichever of them handles the outcome being
 settled … the second (`review,polish,wrap-up`) on any path that reaches wrap-up." A second call
 whose status line is missing or malformed is, by the same evidence section 2's check relies on,
-one that backgrounded `/flow` or yielded outside the Foreground execution clause — exactly the
+one that backgrounded `/flow` or yielded outside `task-prompt.md`'s Context pack item 7 — exactly the
 shape of a call that may never have reached wrap-up, and therefore may never have run Settle
 either. Unlike the first-call case in section 5 (where Settle's non-run is certain — a `build,test`
 HARD-GATE is always settled inside that same call, so a first call producing no report also never

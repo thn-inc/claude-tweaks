@@ -36,9 +36,11 @@ calls — plus one standing instruction (item 7) that needs no resolution, only 
 
 7. **Async-wait discipline** — you are a subagent, not a top-level session. Once your turn ends you
    cannot count on being re-woken: a reply that ends without a tool call ends your turn, whatever is
-   still in flight, so a progress note rides alongside a tool call or is skipped (#3266). Run a long
-   command (e.g. the full test suite) as a normal foreground call with a large explicit timeout
-   (#1965). A nested `Agent` call launches async, and its completion notification reaches you only
+   still in flight, so a progress note rides alongside a tool call or is skipped (#3266). Always
+   run the project's test command and every other long-running command in the foreground, as a
+   normal call with a large explicit timeout and its output redirected to a file if it's long —
+   never with `run_in_background` — and never end the turn waiting on a background run you
+   started (#1965). A nested `Agent` call launches async, and its completion notification reaches you only
    while your turn is alive (when the call instead returns the child's own reply, that child has
    reported and needs no wait): keep your turn alive with bounded foreground waits — repeated
    `sleep 20` Bash calls, at most 60 (20 minutes) per wave of children (the set launched
@@ -150,46 +152,6 @@ Bundle (2+ issues) -> run
 once, comma-joined. Stop after the test gate -- do not proceed to review, polish, or wrap-up;
 a separate Task call handles those. If you reference any of these issue numbers in an
 intermediate commit message, write "refs #N" -- never "closes #N" or "fixes #N".
-
-Foreground execution (required): run the project's test command and every other long-running command in the
-foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
-Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
-count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
-`Agent` call (a lens-dispatch fan-out, a reproduction pair) launches async, and its completion
-notification reaches you only while this turn is alive (when the call instead returns the child's
-own reply, that child has reported and needs no wait): keep the turn alive with bounded
-foreground waits -- repeated `sleep 20` Bash calls, at most 60 (20 minutes) per wave of children
-(the set launched together), each wait logged as one line (what you wait on, the iteration against
-the bound, how many children are still pending), stopping as soon as every child's
-`<task-notification>` has arrived, never reading or tailing a running child's `output_file` --
-until every child has reported, and never end this turn with one child outstanding. With no `Agent`
-tool (`ToolSearch` finds none, deferred or otherwise), or a child still silent when the bound
-expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
-child is abandoned and no longer counts as outstanding, so your final reply still ends with its
-usual `STATUS:` line. Ignore that child's result if it arrives later; if a late notification
-re-wakes you after your final reply, repeat your whole final reply unchanged -- the dispatcher keeps
-only your latest reply, so a bare `STATUS:` line would replace the report. A child that reports a
-failure (a `failed` notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so
-it is not outstanding: handle it per the dispatching skill's own status handling where one exists,
-otherwise judge that unit yourself. Self-judging is for a read-only unit (a lens, a single read, a
-judge); a write-capable child (one that edits files) still silent at the bound is never redone
-in-session, because an abandoned child keeps running and may still write -- stop, and end with
-`STATUS: BLOCKED` naming that child and its unit. Before that stop, probe the worktree its prompt
-names, read-only: `git -C "{child-worktree}" rev-parse HEAD`, `git -C "{child-worktree}"
---no-optional-locks status --porcelain` and `git -C "{child-worktree}" --no-optional-locks diff HEAD`
-piped to `git hash-object --stdin` (a `fatal:` line fails the probe), against the previous probe (taken right after launching the wave, then at
-each bound; lacking one, the first bound's probe sets it and grants a window). Per wave, while any
-child shows a change, log one wait line and grant one more 60-wait window; stop when a whole window
-passes with no change, or at a ceiling of 3 windows (60 minutes) per wave, naming which fired (`no
-progress for one window` or `ceiling reached while progressing`) and every unchanged child. Children
-sharing a worktree progress together; a child whose prompt names no worktree counts as unchanged. A
-failed wait call counts as no wait but ends its window, and the probe runs as at any bound; a failed probe command counts
-as no change, never retried in another form. Read-only units keep the first-bound self-judge.
-Exception: a rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory
-changes; stage its late result (`_shared/rendered-ui-units.md`). A wait
-call that is blocked or fails is not a wait and never counts toward the bound; never retry it in
-another form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as
-silent at the bound. A reply that ends without a tool call ends the turn.
 
 {context-pack}
 
@@ -305,7 +267,7 @@ pipeline's own steps still select their own models as usual. Resolve via
 `resolve-profile.js`'s JSON), an expected outcome the Context pack's per-group log line records.
 The later diff-size cap never applies: this invocation passes no `--diff-facts`.
 
-The Foreground execution clause above is backed by a mechanical check, not prose alone (#2429):
+Context pack item 7 is backed by a mechanical check, not prose alone (#2429):
 `sequential-execution.md`'s "The loop" section verifies this call's `STATUS:` line against the
 required pattern the moment the call returns, and treats a missing or malformed one as evidence
 of backgrounded/yielded execution.
@@ -313,14 +275,14 @@ of backgrounded/yielded execution.
 This call's own `decisions.md` writes (`log-decision.js`, called throughout `/flow`'s steps) are
 also what `sequential-execution.md`'s Heartbeat section (#2427) points a "still waiting?" user at
 for a long-running call like this one — a passive read of this group's run directory, never a
-reason to relax the Foreground execution clause above or have this call check in mid-turn.
+reason to relax Context pack item 7 or have this call check in mid-turn.
 
-The Foreground execution clause's nested-`Agent` rule (#2533, reworked in #3078) is restated in
-each template, because each template is inlined verbatim into a `Task()` prompt whose agent never
-sees the core file. `_shared/subagent-dispatch-core.md`'s Foreground Execution Discipline is the
-one definition of that rule, its keep-alive bound and its `unconfirmed` fallback.
-`_shared/dispatch-waiting.md` describes a top-level dispatcher waiting on its own children, not
-this agent, so it is not the basis for the clause.
+Context pack item 7 carries the nested-`Agent` rule (#2533, reworked in #3078) into each template
+through its `{context-pack}` placeholder, because each template is inlined verbatim into a
+`Task()` prompt whose agent never sees the core file. `_shared/subagent-dispatch-core.md`'s
+Foreground Execution Discipline is the one definition of that rule, its keep-alive bound and its
+`unconfirmed` fallback. `_shared/dispatch-waiting.md` describes a top-level dispatcher waiting on
+its own children, not this agent, so it is not the basis for item 7.
 
 ## Second call — review,polish,wrap-up (gated on the first call)
 
@@ -342,46 +304,6 @@ the command line is what makes this call resume that exact run rather than start
 _shared/run-dir-resolution.md's resolution order step 1 (the env var, its documented preferred
 path) feeding flow/SKILL.md Step 3's adopt-if-set branch. You need no other input about what
 the prior call did or found.
-
-Foreground execution (required): run the project's test command and every other long-running command in the
-foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
-Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
-count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
-`Agent` call (a lens-dispatch fan-out, a reproduction pair) launches async, and its completion
-notification reaches you only while this turn is alive (when the call instead returns the child's
-own reply, that child has reported and needs no wait): keep the turn alive with bounded
-foreground waits -- repeated `sleep 20` Bash calls, at most 60 (20 minutes) per wave of children
-(the set launched together), each wait logged as one line (what you wait on, the iteration against
-the bound, how many children are still pending), stopping as soon as every child's
-`<task-notification>` has arrived, never reading or tailing a running child's `output_file` --
-until every child has reported, and never end this turn with one child outstanding. With no `Agent`
-tool (`ToolSearch` finds none, deferred or otherwise), or a child still silent when the bound
-expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
-child is abandoned and no longer counts as outstanding, so your final reply still ends with its
-usual `STATUS:` line. Ignore that child's result if it arrives later; if a late notification
-re-wakes you after your final reply, repeat your whole final reply unchanged -- the dispatcher keeps
-only your latest reply, so a bare `STATUS:` line would replace the report. A child that reports a
-failure (a `failed` notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so
-it is not outstanding: handle it per the dispatching skill's own status handling where one exists,
-otherwise judge that unit yourself. Self-judging is for a read-only unit (a lens, a single read, a
-judge); a write-capable child (one that edits files) still silent at the bound is never redone
-in-session, because an abandoned child keeps running and may still write -- stop, and end with
-`STATUS: BLOCKED` naming that child and its unit. Before that stop, probe the worktree its prompt
-names, read-only: `git -C "{child-worktree}" rev-parse HEAD`, `git -C "{child-worktree}"
---no-optional-locks status --porcelain` and `git -C "{child-worktree}" --no-optional-locks diff HEAD`
-piped to `git hash-object --stdin` (a `fatal:` line fails the probe), against the previous probe (taken right after launching the wave, then at
-each bound; lacking one, the first bound's probe sets it and grants a window). Per wave, while any
-child shows a change, log one wait line and grant one more 60-wait window; stop when a whole window
-passes with no change, or at a ceiling of 3 windows (60 minutes) per wave, naming which fired (`no
-progress for one window` or `ceiling reached while progressing`) and every unchanged child. Children
-sharing a worktree progress together; a child whose prompt names no worktree counts as unchanged. A
-failed wait call counts as no wait but ends its window, and the probe runs as at any bound; a failed probe command counts
-as no change, never retried in another form. Read-only units keep the first-bound self-judge.
-Exception: a rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory
-changes; stage its late result (`_shared/rendered-ui-units.md`). A wait
-call that is blocked or fails is not a wait and never counts toward the bound; never retry it in
-another form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as
-silent at the bound. A reply that ends without a tool call ends the turn.
 
 {context-pack}
 

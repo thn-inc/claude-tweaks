@@ -56,5 +56,5 @@ files:
   - a late result that flips the review's verdict.
 
 ## Origin
-- Created during the build of #5280. A review's visual-review or design-wrapper unit that outlived the 20-minute keep-alive bound was self-judged and its late result ignored, so real rendered-UI findings were dropped. The rule lives in `_shared/rendered-ui-units.md`; `_shared/subagent-dispatch-core.md` and its six inlined copies carry a one-sentence exception pointing at it.
+- Created during the build of #5280. A review's visual-review or design-wrapper unit that outlived the 20-minute keep-alive bound was self-judged and its late result ignored, so real rendered-UI findings were dropped. The rule lives in `_shared/rendered-ui-units.md`; `_shared/subagent-dispatch-core.md` and its inlined copies (two since #5601: item 7 and the handoff template) carry a one-sentence exception pointing at it.
 - Related journeys: `keep-waiting-on-a-progressing-implementer-4557.md` (the same progress windows for write-capable children), `keep-a-second-reader-in-a-dispatched-review-3078.md` (the 60-wait bound for read-only lens children, unchanged here), `get-a-visual-review-recommendation-only-for-a-ui-surface-2927.md` (when visual review is recommended at all).

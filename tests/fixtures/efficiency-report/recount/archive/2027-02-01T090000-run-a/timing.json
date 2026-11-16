@@ -1,0 +1,5 @@
+{
+  "phases": [],
+  "totals": { "minutes": 10 },
+  "transcripts": [{ "path": "transcripts/a.jsonl", "rows": 4 }]
+}
