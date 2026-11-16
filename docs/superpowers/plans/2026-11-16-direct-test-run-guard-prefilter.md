@@ -10,6 +10,8 @@
 
 **Spec:** `.claude-tweaks/pipelines/2026-11-16T193722-spec-5794/work/5794-spec.md` (record #5794)
 
+**Amended after the whole-branch review (commit 550e984a6a):** the node-start branch no longer uses `command exec node` with a here-document. It pipes the line to node, so every path ends in `exit 0` whatever node returns (with the exec, a guard file node could not load ended the hook with status 1). The Architecture paragraph, the Global Constraint on `command exec` and Task 1's sh text below describe the earlier form; `tools/direct-test-run-guard.sh` is the current text.
+
 ## Global Constraints
 
 - The registered hook command is exactly (one line): `d="$CLAUDE_PROJECT_DIR/tools/direct-test-run-guard"; [ -r "$d.sh" ] && command . "$d.sh"; node "$d.js"; exit 0`
