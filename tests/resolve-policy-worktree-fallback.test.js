@@ -9,6 +9,7 @@ const path = require('node:path');
 
 const { gitRepo, fixtureGit, linkedWorktreeOf, cleanGitEnv } = require('./helpers/git-fixtures');
 const { runCliSync } = require('./helpers/run-cli');
+const { readText } = require('./helpers/read-skill');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
 
@@ -103,4 +104,15 @@ test('warningLines: an in-process caller gets the note first in both modes, and 
   for (const values of [true, false]) {
     assert.ok(!warningLines(mk('checkout'), { values }).some((line) => line.includes('note —')));
   }
+});
+
+// F2: /help policy's apply path must not write a worktree-local policy.yml when the worktree
+// reads the main checkout's file — the new file would win outright and hide every other key.
+test('help/policy.md apply path: the worktree-fallback branch names the resolve-policy note and forbids a worktree-local write', () => {
+  const md = readText(path.join(__dirname, '..', 'plugin', 'skills', 'help', 'policy.md'));
+  const branch = md.slice(md.indexOf('**Worktree-fallback branch'), md.indexOf('**If section 3 yielded zero'));
+  assert.ok(branch.length > 0, 'the worktree-fallback branch must exist before the zero-recommendation paragraph');
+  assert.match(branch, /resolve-policy: note — \{root\} has no \.claude-tweaks\/policy\.yml; read the main checkout's \{policyPath\}/);
+  assert.match(branch, /never write a worktree-local `\.claude-tweaks\/policy\.yml`/);
+  assert.match(md, /\| Writing a worktree-local policy\.yml when the worktree reads the main checkout's file \|/);
 });
