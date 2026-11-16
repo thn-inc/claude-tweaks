@@ -1,12 +1,12 @@
 # Design Pre-Build — lazy-loading Impeccable references and project design context
 
-Common Step 1.7 of `/claude-tweaks:build`. Loaded only when the build is in record mode with a surface routed to pre-build (`web`, `mobile`, `desktop`, or `terminal`) and the plan is non-trivial.
+Common Step 1.7 of `/claude-tweaks:build`. Loaded only when SKILL.md's skill-load gate (`_shared/skill-load-gate.md`, `--mode pre-build`) proceeds, the build is in record mode, and the plan is non-trivial.
 
 ## Purpose
 
 Before dispatching implementation, invoke the design wrapper to lazy-load Impeccable's reference files plus any project-specific design context (root `PRODUCT.md` from `/impeccable:impeccable init`, root `DESIGN.md` from `/impeccable:impeccable document`). The wrapper handles its own detection (non-frontend specs skip cleanly) and availability checks (no Impeccable installed → skip cleanly).
 
-**Surface source:** `surface` (the gate condition SKILL.md's Common Step 1.7 checks before invoking this file's procedure) comes from the materialized header's `surface:` field — lifted from the record body's `Surface:` metadata line per `skills/flow/materialize.md`'s Surface / Design-intent / Ui-stack / Design-seed lift rule. `design-intent` lifts from the same header/body source but is consumed downstream by `/claude-tweaks:design-wrapper polish`, not by this pre-build gate.
+**Surface source:** `surface` (the `--surface` SKILL.md's Common Step 1.7 passes to the skill-load gate before invoking this file's procedure) comes from the materialized header's `surface:` field — lifted from the record body's `Surface:` metadata line per `skills/flow/materialize.md`'s Surface / Design-intent / Ui-stack / Design-seed lift rule. `design-intent` lifts from the same header/body source but is consumed downstream by `/claude-tweaks:design-wrapper polish`, not by this pre-build gate.
 
 ## Skip this step entirely when
 
@@ -15,12 +15,12 @@ Before dispatching implementation, invoke the design wrapper to lazy-load Impecc
 
 ## On skip (write the trace)
 
-When this step is skipped for any reason above — surface not routed to pre-build (`surface` outside `web`/`mobile`/`desktop`/`terminal`, checked by SKILL.md's own Common Step 1.7 gate before this file is even loaded), design mode with no record, or a trivial plan — write one `SKIP` entry per `_shared/auto-decision-log.md`'s degrade-trace rule:
+When this step is skipped for any reason above — design mode with no record, or a trivial plan — write one `SKIP` entry per `_shared/auto-decision-log.md`'s degrade-trace rule (the skill-load gate's own `skip`, decided before this file is even loaded, is logged by the gate itself):
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP \
   --section "/build" --step "Common Step 1.7 (skipped)" \
-  --text "condition: {surface not routed | design mode, no record | trivial plan} → fallback: no design pre-load" --reversibility n/a
+  --text "condition: {design mode, no record | trivial plan} → fallback: no design pre-load" --reversibility n/a
 ```
 
 Standalone `/build` (no run dir): list the skip in the Step 7 handoff instead (`handoff-template.md`'s inline-skip listing).

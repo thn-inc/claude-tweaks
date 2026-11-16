@@ -42,20 +42,6 @@ When `/build` receives `{result: "ok", loaded: [...], context_size: <n>}` from `
 
 ## Caller-side pre-check (skip the `Skill()` load when the wrapper would no-op)
 
-Before invoking `/claude-tweaks:design-wrapper <mode> ...`, run the same deterministic detection the wrapper runs internally as its own Universal preconditions Step 1 (`design-wrapper/SKILL.md`) — its code twin is a standalone CLI, so a caller can reach the same verdict without paying for `design-wrapper/SKILL.md` (~40KB) plus mode sub-file load when the answer is already "no-op":
+The invocation, the `skip`/`proceed` handling and the rules for when the wrapper is skipped live in `_shared/skill-load-gate.md` (`bin/skill-gate.js`) — callers cite that file, not this one. `bin/design-detect.js` stays the wrapper's own Layers 1-3 twin, used by the wrapper's own preconditions (`design-wrapper/SKILL.md`). Where a caller passes `--surface`, it finds the value this way:
 
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/design-detect.js" --mode <mode> --files "<comma-joined changed files>" [--surface <value>]
-```
-
-- `--mode` — the same mode the caller is about to invoke (`test`, `review`, `pre-build`, ...).
-- `--files` — the caller's own already-resolved changed-file list (`git diff --name-only`, comma-joined) — never a fresh resolution just for this check.
 - `--surface` — the record's materialized header `surface:` field (`flow/materialize.md`), when exactly one record is in scope (read from the frontmatter of `$PIPELINE_RUN_DIR/work/*-spec.md` when present — a `current-branch` run — else of the worktree mirror `{worktree}/.claude-tweaks/pipelines/{run-id}/work/*-spec.md`, where `{worktree}` is `run-state.json`'s `worktree` (else `worktreeAtClose`; a per-spec `spec-{N}/` run dir takes it from the parent run's `run-state.json`) and `{run-id}` is the run dir's path after its `.claude-tweaks/pipelines/` segment — a worktree run commits the header only on its branch, so the main-checkout run dir holds none until merge). Omit when no single record is resolvable (a multi-record run scoped to more than one spec, or a standalone invocation with no active pipeline run) — the CLI degrades to a `null` surface exactly as the wrapper's own Layer 2 does when no `Surface:` line exists, and Layer 1/Layer 3 still apply. Never approximate a surface value by other means (label text, file-path guessing) — omitting the flag is the only correct way to say "unknown."
-- Omit `--design-integration`/`--claude-md` — the CLI reads this project's own `CLAUDE.md` by default, the same file the wrapper's own Layer 1 reads.
-
-The CLI prints one JSON line:
-
-- `{"decision": "skip", "reason": "..."}` — skip the `Skill(claude-tweaks:design-wrapper)` call entirely. Report the skip in the caller's own output using the CLI's `reason` string verbatim — the same wire vocabulary the wrapper's own `{skipped: reason}` return already uses (see "Return shapes" above), so a caller's result-handling table needs no separate branch for a pre-check skip vs. a wrapper-returned skip.
-- `{"decision": "proceed", ...}` — invoke the wrapper as documented; the pre-check has proven detection would not have skipped, but the wrapper's own mode-specific procedure (availability check, CLI/LLM dispatch) still runs as normal.
-
-This pre-check reproduces the wrapper's Layers 1-3 exactly — it is the wrapper's own code (`bin/lib/design-detect`), not an approximation — so it can never diverge from what the wrapper would have decided. It never changes behavior for a case it doesn't skip; it only removes the wrapper's own `design-wrapper/SKILL.md` (and mode sub-file) load for the cases the wrapper would have no-opped on anyway.
