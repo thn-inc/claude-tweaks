@@ -24,7 +24,7 @@ const { mainCheckoutRoot, safeReal } = require('../hooks/worktree-detect');
 const { parseWorktreeList, isWorktreeLocked, holdVerdict, HARNESS_WORKTREE_DIR, QUIET_SKIP_REASONS } = require('../hooks/worktree-reap');
 const { isPathContained } = require('../shared-primitives');
 const { resolvePrState } = require('./pr-state');
-const { findRunByWorktreePath, appendEvent } = require('../hooks/context');
+const { findRunByWorktreePath, iterRunDirsWithState, readRunState, isAdHocRunDir, priorWorktree, RUN_ID_RE, appendEvent } = require('../hooks/context');
 const { release: releasePortsDefault } = require('../ports/registry');
 const { trackResidue, beginCacheBatch, commitCacheBatch } = require('./cache');
 const { escalateResidue, capDirtyFiles, residueRepoOf } = require('./escalate-residue');
@@ -54,10 +54,31 @@ function logReapEvent(runDir, type, data) {
 // silently found nothing every time).
 // skipAdHoc (#2783): an `-adhoc-standalone` twin, minted after /flow's formal
 // run, sorts newer and would otherwise take the formal run's reap trail.
+// #4960: then closed (clean) runs, then the archive — the same reconcile pass
+// archives a merged run before it reaps the worktree, so the owning run is
+// usually already clean or archived by now. Newest run id wins within a tier.
+function recordedMatches(state, real) {
+  const recorded = priorWorktree(state);
+  return typeof recorded === 'string' && recorded !== '' && (safeReal(recorded) || recorded) === real;
+}
+
 function resolveOwningRunDir(root, real) {
   try {
-    const found = findRunByWorktreePath(root, real, { skipAdHoc: true });
-    return found ? found.runDir : null;
+    const live = findRunByWorktreePath(root, real, { skipAdHoc: true });
+    if (live) return live.runDir;
+    for (const { dir, state } of iterRunDirsWithState(root, { status: 'clean' })) {
+      if (isAdHocRunDir(dir)) continue;
+      if (recordedMatches(state, real)) return dir;
+    }
+    const archiveBase = path.join(root, '.claude-tweaks', 'pipelines', 'archive');
+    let names;
+    try { names = fs.readdirSync(archiveBase); } catch { return null; }
+    for (const name of names.filter((n) => RUN_ID_RE.test(n)).sort().reverse()) {
+      const dir = path.join(archiveBase, name);
+      if (isAdHocRunDir(dir)) continue;
+      if (recordedMatches(readRunState(dir), real)) return dir;
+    }
+    return null;
   } catch { return null; }
 }
 
@@ -315,5 +336,5 @@ function reapMerged({
 }
 
 module.exports = {
-  reapMerged, prefetchReapPrStates, decideReap, isOwnCwd, trackReapResidue, attemptLongPathRemoval, longPathRemovalTarget, gitCommittedToRemoval,
+  reapMerged, resolveOwningRunDir, prefetchReapPrStates, decideReap, isOwnCwd, trackReapResidue, attemptLongPathRemoval, longPathRemovalTarget, gitCommittedToRemoval,
 };
