@@ -14,7 +14,9 @@
 const fs = require('fs');
 const path = require('path');
 const { SHADOW_DUP_RE, SECTIONS, runIdOf } = require('./resolve');
-const { composeFindingProposal, findingFingerprint, fingerprintMap } = require('./finding-filing');
+const {
+  composeFindingProposal, findingFingerprint, fingerprintMap, areaOfPath,
+} = require('./finding-filing');
 const { composeShadowDupProposal } = require('./shadow-dup-proposal');
 const { digestTextOf, targetOf } = require('./staged-digest-text');
 const { REFLECT_NO_DESTINATION, isApplicableReflect, parseReflectDestination } = require('./reflect-destination');
@@ -52,16 +54,6 @@ const squash = (s) => String(s).replace(/\s+/g, ' ').trim();
 // A digest entry field is one line and can never spell a marker (record.js's defuse): the entry's
 // own fingerprint marker must be the only one on its line.
 const oneLine = (s) => defuse(squash(s));
-
-// A path under plugin/skills/{s}/ -> s; plugin/bin/lib/{m}/ -> m; any other plugin/bin/ file -> bin;
-// else the path's first segment (tests, docs).
-function areaOfPath(p) {
-  const segs = String(p).replace(/\\/g, '/').replace(/^\.\//, '').split('/').filter(Boolean);
-  let area = segs[0] || 'console';
-  if (segs[0] === 'plugin' && segs[1] === 'skills') area = segs.length > 3 ? segs[2] : 'skills';
-  else if (segs[0] === 'plugin' && segs[1] === 'bin') area = segs[2] === 'lib' && segs.length > 4 ? segs[3] : 'bin';
-  return area.toLowerCase();
-}
 
 // An item that names a location (a finding, or a no-claim item standing for a located finding) takes
 // its area from that path. No path to read an area from: a reflect staged finding is `reflect`,

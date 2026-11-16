@@ -31,7 +31,7 @@ const ENTRY_LINE = /^- \[[^\]]+\] /;
 const TRAILING_MARK = /\s*(→ (?:expired|#?\d+))((?:\s*<!--(?:(?!-->).)*-->)*)\s*$/;
 const RUN_ID_DATE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})(\d{2})(?:-|$)/;
 // The markers a dedup or sweep reads. A fixed list: the container's comments also hold agent-claim markers.
-const DEDUP_MARKER = /<!-- (?:materiality-fingerprint|consolebackfill-item): \S+? -->/g;
+const DEDUP_MARKER = /<!-- (?:materiality-fingerprint|consolebackfill-item|console-finding): \S+? -->/g;
 const FIRST_SEEN_MARKER = new RegExp(`<!-- ${MATERIALITY_FIRST_SEEN_PREFIX}: (\\S+?) -->`, 'g');
 const FIRST_SEEN_STRIP = new RegExp(`\\s*<!-- ${MATERIALITY_FIRST_SEEN_PREFIX}: \\S+? -->`, 'g');
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
