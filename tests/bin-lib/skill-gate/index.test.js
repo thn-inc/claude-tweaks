@@ -290,3 +290,143 @@ test('unknown skill or wrapper mode throws', () => {
   assert.throws(() => decide({ skill: 'design-wrapper', mode: 'live', files: [] }));
   assert.throws(() => decide({ skill: 'design-wrapper', files: [] }));
 });
+
+// --- journey entries not in canonical path shape ---
+
+test('a journey files: entry not in canonical shape is unmatchable: journeys proceeds naming it', () => {
+  for (const entry of ['./tests/a.test.js', '/tests/a.test.js', 'tests/a.test.js/', 'tests//a.test.js', 'tests\\a.test.js']) {
+    assert.equal(gate.journeyEntryMatch(entry, 'tests/a.test.js'), 'unmatchable', entry);
+  }
+  const r = decide({
+    skill: 'journeys',
+    files: ['tests/a.test.js'],
+    loadJourneys: journeysOf([{ name: 'j', files: ['./tests/a.test.js'] }]),
+  });
+  assertRuleProceed(r);
+  assert.ok(r.reason.includes('./tests/a.test.js'), r.reason);
+  assert.ok(r.reason.includes('j'), r.reason);
+});
+
+// --- parseJourneyText / readJourneys (IO layer) ---
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+function journeyRoot(files) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-gate-j-'));
+  for (const [rel, text] of Object.entries(files)) {
+    const p = path.join(root, 'docs', 'journeys', rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, text);
+  }
+  return root;
+}
+
+test('parseJourneyText: no frontmatter, no files key, list, quotes, CRLF', () => {
+  assert.deepEqual(gate.parseJourneyText('# J\n'), { files: null });
+  assert.deepEqual(gate.parseJourneyText('---\nname: x\n---\n# J\n'), { files: null });
+  assert.deepEqual(gate.parseJourneyText('---\nfiles:\n  - a.js\n  - src/*.js\n---\n'), { files: ['a.js', 'src/*.js'] });
+  assert.deepEqual(gate.parseJourneyText('---\nfiles:\n  - "a.js"\n  - \'b.js\'\n---\n'), { files: ['a.js', 'b.js'] });
+  assert.deepEqual(gate.parseJourneyText('---\nfiles:\n---\n'), { files: [] });
+  const lf = '---\nfiles:\n  - a.js\n---\n# J\n';
+  assert.deepEqual(gate.parseJourneyText(lf.replace(/\n/g, '\r\n')), gate.parseJourneyText(lf));
+});
+
+test('parseJourneyText: a fence that never closes and an inline files: value are errors', () => {
+  assert.ok(gate.parseJourneyText('---\nfiles:\n').error);
+  assert.ok(gate.parseJourneyText('---\nfiles:\n  - a.js\n').error);
+  assert.ok(gate.parseJourneyText('---\nfiles: [a.js]\n---\n').error);
+  assert.ok(gate.parseJourneyText('---\nfiles: a.js\n---\n').error);
+});
+
+test('readJourneys: a missing docs/journeys is no journeys', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-gate-j-'));
+  assert.deepEqual(gate.readJourneys(root), { journeys: [] });
+});
+
+test('readJourneys: reads top-level .md only, sorted, with files lists and nulls', () => {
+  const root = journeyRoot({
+    'b.md': '# B\n',
+    'a.md': '---\nfiles:\n  - "x.js"\n---\n',
+    'notes.txt': 'ignored',
+    'sub/y.md': '---\nfiles:\n  - y.js\n---\n',
+  });
+  assert.deepEqual(gate.readJourneys(root), {
+    journeys: [{ name: 'a', files: ['x.js'] }, { name: 'b', files: null }],
+  });
+});
+
+test('readJourneys: a CRLF copy reads the same as LF', () => {
+  const lf = '---\nfiles:\n  - a.js\n---\n# J\n';
+  const a = gate.readJourneys(journeyRoot({ 'j.md': lf }));
+  const b = gate.readJourneys(journeyRoot({ 'j.md': lf.replace(/\n/g, '\r\n') }));
+  assert.deepEqual(b, a);
+  assert.deepEqual(a, { journeys: [{ name: 'j', files: ['a.js'] }] });
+});
+
+test('readJourneys: inline files: value and an unclosed fence are errors naming the file', () => {
+  for (const text of ['---\nfiles: [a.js]\n---\n', '---\nfiles:\n']) {
+    const r = gate.readJourneys(journeyRoot({ 'bad.md': text }));
+    assert.ok(r.error && r.error.includes('bad.md'), JSON.stringify(r));
+  }
+});
+
+test('readJourneys: a readdir error other than ENOENT is an error; ENOENT is not', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-gate-j-'));
+  const failing = (code) => ({ ...fs, readdirSync: () => { throw Object.assign(new Error(code), { code }); } });
+  assert.ok(gate.readJourneys(root, { fsImpl: failing('EACCES') }).error);
+  assert.ok(gate.readJourneys(root, { fsImpl: failing('ENOTDIR') }).error);
+  assert.deepEqual(gate.readJourneys(root, { fsImpl: failing('ENOENT') }), { journeys: [] });
+});
+
+test('readJourneys: a read failure on one file is an error', () => {
+  const root = journeyRoot({ 'a.md': '# A\n' });
+  const fsImpl = { ...fs, readFileSync: () => { throw Object.assign(new Error('EIO'), { code: 'EIO' }); } };
+  assert.ok(gate.readJourneys(root, { fsImpl }).error);
+});
+
+test('readJourneys: a symlink inside the checkout is read; outside and dangling are errors', (t) => {
+  const root = journeyRoot({});
+  const inside = path.join(root, 'shared.md');
+  fs.writeFileSync(inside, '---\nfiles:\n  - a.js\n---\n');
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-gate-out-'));
+  const outside = path.join(outsideDir, 'o.md');
+  fs.writeFileSync(outside, '---\nfiles:\n  - a.js\n---\n');
+  const dir = path.join(root, 'docs', 'journeys');
+  fs.mkdirSync(dir, { recursive: true });
+  try {
+    fs.symlinkSync(inside, path.join(dir, 'in.md'));
+  } catch (e) {
+    if (e.code === 'EPERM' && process.platform === 'win32') { t.skip('symlink creation needs privilege'); return; }
+    throw e;
+  }
+  assert.deepEqual(gate.readJourneys(root), { journeys: [{ name: 'in', files: ['a.js'] }] });
+  fs.symlinkSync(outside, path.join(dir, 'out.md'));
+  assert.match(gate.readJourneys(root).error, /outside the checkout/);
+  fs.rmSync(path.join(dir, 'out.md'));
+  fs.symlinkSync(path.join(root, 'missing.md'), path.join(dir, 'dang.md'));
+  assert.match(gate.readJourneys(root).error, /dangling symlink/);
+});
+
+// --- gate() ---
+
+test('gate: an unresolvable base is cannot tell; a throwing rule is cannot tell, on one line', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-gate-g-'));
+  const execFails = () => { throw new Error('fatal: not a git repository\nsecond line'); };
+  const a = gate.gate({ skill: 'journeys', integrationBranch: 'main', root, execImpl: execFails });
+  assertCannotTell(a);
+  assert.ok(!/\s{2,}|\n/.test(a.reason), a.reason);
+  const b = gate.gate({ skill: 'journeys', files: ['a.js'], root, decideImpl: () => { throw new Error('boom\nx'); } });
+  assertCannotTell(b);
+  assert.ok(b.reason.includes('boom x'), b.reason);
+});
+
+test('gate: files given are passed through; journeys load lazily from root', () => {
+  const root = journeyRoot({ 'j.md': '---\nfiles:\n  - tests/a.test.js\n---\n' });
+  const r = gate.gate({ skill: 'journeys', files: ['tests/a.test.js'], root });
+  assertRuleProceed(r);
+  assert.ok(r.reason.includes('journey j'), r.reason);
+  const none = gate.gate({ skill: 'journeys', files: ['tests/b.test.js'], root });
+  assert.equal(none.decision, 'skip');
+});

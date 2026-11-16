@@ -11,12 +11,18 @@
 // reached never starts with that prefix. design-detect's SKIP_REASONS are a
 // wire contract and pass through verbatim.
 'use strict';
+const fs = require('fs');
+const path = require('path');
+const { execFileSync } = require('child_process');
 const {
   evaluate,
   layer1,
   fileMatchesFrontendPredicate,
   SKIP_REASONS,
 } = require('../design-detect');
+const { lstatType, resolveLeaf, canonicalRealpath, isAncestorOrSelf } = require('../path-guard');
+const { splitFrontmatterFence, parseFrontmatterListField } = require('../health-core/frontmatter-list');
+const { resolveBase, changedFiles } = require('../verify/changed-files');
 
 const SKILLS = ['journeys', 'visual-review', 'design-wrapper'];
 const WRAPPER_MODES = ['pre-build', 'test', 'review', 'polish', 'survey'];
@@ -96,6 +102,9 @@ function isJourneyPath(file) {
 // other wildcard is one the gate cannot match.
 function journeyEntryMatch(entry, file) {
   if (typeof entry !== 'string') return 'unmatchable';
+  // An entry not in git's canonical repo-relative shape (`./a.js`, a leading /)
+  // can never equal a changed path: the gate cannot match it, so it says so.
+  if (pathShapeProblem(entry) !== null) return 'unmatchable';
   if (entry.includes('?') || entry.includes('[') || entry.includes('**')) return 'unmatchable';
   const cut = entry.lastIndexOf('/');
   const dir = entry.slice(0, cut + 1);
@@ -218,7 +227,104 @@ function decide({ skill, mode, surface, files, designIntegration, loadJourneys }
   throw new Error(`skill-gate: unknown skill "${skill}"`);
 }
 
+// --- IO layer: journey reads and the changed-file resolution ---
+
+// The `files:` list of one journey file's text. Pure. `{ files: null }` when
+// the file has no frontmatter or no `files:` key (a journey that lists
+// nothing); `{ error }` when the frontmatter never closes or `files:` carries
+// an inline value (`files: [a.js]`) the list reader would silently read as
+// empty. CRLF reads as LF; surrounding quotes are stripped from each item.
+function parseJourneyText(text) {
+  const lines = String(text).split(/\r?\n/);
+  if (lines[0] !== '---') return { files: null };
+  const fence = splitFrontmatterFence(String(text));
+  if (!fence) return { error: 'frontmatter never closes' };
+  if (fence.frontmatter.some((l) => /^files:\s*\S/.test(l))) {
+    return { error: 'files: has an inline value; the gate reads only the block list form' };
+  }
+  if (!fence.frontmatter.some((l) => /^files:\s*$/.test(l))) return { files: null };
+  const items = parseFrontmatterListField(String(text), 'files');
+  return { files: items.map((i) => i.replace(/^(["'])(.*)\1$/, '$2')) };
+}
+
+const GIT_TIMEOUT_MS = 30000;
+
+function errMessage(e) {
+  return (e && e.message) || String(e);
+}
+
+// Top-level `docs/journeys/*.md` only, sorted by name. A missing directory is
+// no journeys; every other read problem is an error the caller turns into a
+// cannot-tell. A symlinked entry is read only when it resolves inside `root`.
+function readJourneys(root, { fsImpl = fs } = {}) {
+  const dir = path.join(root, 'docs', 'journeys');
+  let names;
+  try {
+    names = fsImpl.readdirSync(dir);
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { journeys: [] };
+    return { error: `docs/journeys could not be read: ${errMessage(e)}` };
+  }
+  const journeys = [];
+  for (const entry of names.filter((n) => n.endsWith('.md')).sort()) {
+    const file = path.join(dir, entry);
+    const leaf = lstatType(file, { fsImpl });
+    if (leaf.type === 'symlink') {
+      const resolved = resolveLeaf(file, { fsImpl });
+      if (resolved.state === 'dangling') return { error: `journey ${entry} is a dangling symlink` };
+      if (resolved.state !== 'resolved') return { error: `journey ${entry} could not be resolved (${resolved.state})` };
+      const rootReal = canonicalRealpath(root, { fsImpl });
+      if (rootReal === null || !isAncestorOrSelf(rootReal, resolved.path)) {
+        return { error: `journey ${entry} is a symlink that resolves outside the checkout` };
+      }
+    }
+    let text;
+    try {
+      text = fsImpl.readFileSync(file, 'utf8');
+    } catch (e) {
+      return { error: `journey ${entry} could not be read: ${errMessage(e)}` };
+    }
+    const parsed = parseJourneyText(text);
+    if (parsed.error) return { error: `journey ${entry}: ${parsed.error}` };
+    journeys.push({ name: entry.slice(0, -'.md'.length), files: parsed.files });
+  }
+  return { journeys };
+}
+
+// Resolves the changed files when only a branch was given, runs the rules,
+// and turns any throw into a cannot-tell proceed. The reason is collapsed to
+// one line: the CLI writes it to stderr as exactly one line.
+function gate({
+  skill, mode, surface, files, integrationBranch, root, designIntegration,
+  env, execImpl, decideImpl = decide, fsImpl,
+}) {
+  const exec = execImpl || ((cmd, args, opts) => execFileSync(cmd, args, { ...opts, cwd: root, env, timeout: GIT_TIMEOUT_MS, windowsHide: true }));
+  let list = files;
+  if (list == null && integrationBranch) {
+    try {
+      const base = resolveBase({ integrationBranch, requireNonDegenerate: true, execImpl: exec });
+      list = changedFiles({ base, execImpl: exec }).files;
+    } catch (e) {
+      list = { error: `cannot resolve the changed files: ${errMessage(e)}` };
+    }
+  }
+  let result;
+  try {
+    result = decideImpl({
+      skill, mode, surface, files: list, designIntegration,
+      loadJourneys: () => readJourneys(root, { fsImpl }),
+    });
+  } catch (e) {
+    return cannotTell(`gate error: ${errMessage(e)}`.replace(/\s+/g, ' '));
+  }
+  if (result && result.cannotTell) return { ...result, reason: result.reason.replace(/\s+/g, ' ').trim() };
+  return result;
+}
+
 module.exports = {
+  parseJourneyText,
+  readJourneys,
+  gate,
   SKILLS,
   WRAPPER_MODES,
   CANNOT_TELL,
