@@ -49,7 +49,7 @@ function assertBullet(text) {
   assert.match(sec, /before any STAGED write for it/);
   assert.match(sec, /not a bare token match/);
   assert.match(sec, /ambiguous hit/);
-  assert.match(sec, /put its entry in the hold file/);
+  assert.match(sec, /put the finding's entry in the hold file \(a `BLOCKED`\/`NEEDS_CONTEXT` reason has none\)/);
   assert.match(sec, /`\{kind: "absence-refuted", path, symbol, command, foundAt: \{path, line\}\}`/);
   assert.match(sec, /log-reproduction-judgment "\{path-J\}" --lens "\{lens\}" --run "\$PIPELINE_RUN_DIR"/);
   assert.match(sec, /before any STAGED write for it \(the `--only unconfirmed` call\)/);
@@ -73,15 +73,21 @@ test('AC1.1: an unpaired absence claim is ground-truth-checked and a refuted one
 
 test('AC1.1 go-red: dropping the hold-file outcome fails the same assertions', () => {
   const live = read();
-  const mutated = live.replace('put its entry in the hold file', 'stage it');
+  const mutated = live.replace("put the finding's entry in the hold file", 'stage it');
   assert.notEqual(mutated, live);
-  assert.throws(() => assertBullet(mutated), /put its entry in the hold file/);
+  assert.throws(() => assertBullet(mutated), /put the finding/);
 });
 
-test('AC1.1: the refuted claim\'s line, from its composer, says refuted by ground-truth check and not staged', () => {
-  const entry = absenceRefuted({ lens: '3a', path: 'src/a.js', symbol: 'checkExpiry', command: 'grep -n checkExpiry src/a.js', foundAt: { path: 'src/a.js', line: 12 } });
-  assert.equal(formatEntry({ ...entry, now: new Date(2026, 0, 1, 10, 0, 0) }),
-    '- AUTO 10:00:00 — Reproduction: lens "3a" absence claim src/a.js:checkExpiry refuted by ground-truth check (grep -n checkExpiry src/a.js found it at src/a.js:12). Not staged. Reversibility: high.');
+// The line's wording is pinned once, in tests/bin-lib/reproduction-log.test.js; this rule needs only that the
+// refuted claim is an AUTO line that stages nothing and names where the check found the construct.
+test('AC1.1: the refuted claim\'s line, from its composer, is an AUTO line that stages nothing', () => {
+  const entry = absenceRefuted({ lens: '3a', path: 'src/a.js', symbol: 'checkExpiry', command: 'grep -n checkExpiry src/a.js', foundAt: { path: 'src/b.js', line: 12 } });
+  const line = formatEntry({ ...entry, now: new Date(2026, 0, 1, 10, 0, 0) });
+  assert.equal(entry.status, 'AUTO');
+  assert.match(line, / Not staged\. /);
+  assert.doesNotMatch(line, /Staged to Review Console/);
+  assert.match(line, /src\/a\.js:checkExpiry /);
+  assert.match(line, /found it at src\/b\.js:12\)/);
 });
 
 test('placement: note after Scratch path, bullet between only-one and vacuity bullets, both outside Calibration', () => {

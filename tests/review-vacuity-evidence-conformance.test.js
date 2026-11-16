@@ -59,11 +59,15 @@ test('the Reproduction dispatch section downgrades an unevidenced lens 3f vacuit
   assert.match(bullet, /Reading source alone never lifts this downgrade: the only way back/);
   assert.match(bullet, /`\{kind: "vacuity-reconfirmed", path, line, command, output\}`/);
   assert.match(bullet, /log only one you executed/);
+  // The wording is pinned once (tests/bin-lib/reproduction-log.test.js); this rule needs the downgrade to stage
+  // the finding as low-confidence, and the re-confirm to be an AUTO Confirmed line carrying the command and output.
   const at = new Date(2026, 0, 1, 10, 0, 0);
-  assert.equal(formatEntry({ ...vacuityDowngraded({ path: 't.js', line: 5 }), now: at }),
-    '- STAGED 10:00:00 — Reproduction: lens "3f" vacuity finding t.js:5 downgraded to unconfirmed — reproduction agreement overridden, no execution evidence. Staged to Review Console as low-confidence. Reversibility: high.');
-  assert.equal(formatEntry({ ...vacuityReconfirmed({ path: 't.js', line: 5, command: 'node --test t.js', output: '1 failing' }), now: at }),
-    '- AUTO 10:00:00 — Reproduction: lens "3f" vacuity finding t.js:5 re-confirmed by executed run: node --test t.js → 1 failing. Confirmed. Reversibility: high.');
+  const down = vacuityDowngraded({ path: 't.js', line: 5 });
+  assert.equal(down.status, 'STAGED');
+  assert.match(formatEntry({ ...down, now: at }), /lens "3f" vacuity finding t\.js:5 downgraded to unconfirmed[^\n]* Staged to Review Console as low-confidence\./);
+  const up = vacuityReconfirmed({ path: 't.js', line: 5, command: 'node --test t.js', output: '1 failing' });
+  assert.equal(up.status, 'AUTO');
+  assert.match(formatEntry({ ...up, now: at }), /lens "3f" vacuity finding t\.js:5 [^\n]*node --test t\.js → 1 failing\. Confirmed\./);
   const onlyOne = lines.findIndex((l) => /^> - Findings present in only one agent's output/.test(l));
   assert.ok(onlyOne !== -1 && onlyOne < idx, 'the downgrade bullet must follow the reproduction bullets');
 });

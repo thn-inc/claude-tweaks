@@ -143,7 +143,7 @@ test('AC1.2 go-red: dropping the --hold call from step 4 fails the kept-staged a
   assert.throws(() => assertKeepsStaged(mutated, read('review', 'step3-lens-dispatch.md')), /--only unconfirmed --hold/);
 });
 
-test('the only-one-agent bullet stays a single line (decisionLogPattern pin)', () => {
+test('the only-one-agent bullet stays a single line (the line-scoped At `medium` pins above read one line)', () => {
   const dispatch = read('review', 'step3-lens-dispatch.md');
   assert.equal(dispatch.split('\n').filter((l) => l.includes('Findings present in only one')).length, 1);
 });

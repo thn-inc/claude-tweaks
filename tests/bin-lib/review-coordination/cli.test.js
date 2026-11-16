@@ -1102,12 +1102,16 @@ const REPRO_B = [
   { path: 'src/b.js', line: 21, severity: 'low', text: 'unhandled rejection in request handler' },
   { path: 'src/d.js', line: 41, severity: 'low', text: 'zulu yankee xray whiskey' },
 ];
-// The four lines (forms 1, 2, 3, 4) the fixture pair owes, written out by hand.
+// The four lines (forms 1, 2, 3, 4) the fixture pair owes, as [status, text]. They come from the composer, the one
+// home of the forms (#5595; tests/bin-lib/reproduction-log.test.js pins its wording): this file pins which findings
+// and forms the CLI writes, in what order, not the wording.
+const rl = require('../../../plugin/bin/lib/reproduction-log');
+const st = (e) => [e.status, e.text];
 const REPRO_TEXT = [
-  ['AUTO', 'lens "security" finding src/a.js:10 reproduced. Confirmed.'],
-  ['AUTO', 'lens "security" finding src/b.js:20 reproduced, severity contested (took the lower of the two). Confirmed.'],
-  ['STAGED', 'lens "security" finding src/c.js:30 not reproduced. Staged to Review Console as low-confidence.'],
-  ['STAGED', 'lens "security" findings src/d.js:40 / src/d.js:41 share a location but not substance; both staged unconfirmed.'],
+  st(rl.reproduced({ lens: 'security', path: 'src/a.js', line: 10 })),
+  st(rl.reproduced({ lens: 'security', path: 'src/b.js', line: 20, severityContested: true })),
+  st(rl.notReproduced({ lens: 'security', path: 'src/c.js', line: 30 })),
+  st(rl.coincidence({ lens: 'security', path: 'src/d.js', lineA: 40, lineB: 41 })),
 ];
 const reproLine = ([status, text]) => formatEntry({ status, now: TB_NOW, step: 'Reproduction', text, reversibility: 'high' });
 
@@ -1185,7 +1189,7 @@ test('AC4.2/AC4.3: one coincidence side held leaves the other as form 3 with nea
   const res = reproRun(inp, ['--lens', 'security', '--run', inp.runDir, '--only', 'unconfirmed', '--hold', holdFile(inp, 'hold.json', [lonely, dA])]);
   assert.strictEqual(res.code, 0, res.err);
   const printed = JSON.parse(res.out);
-  const expected = 'lens "security" finding src/d.js:41 not reproduced. Staged to Review Console as low-confidence.';
+  const expected = rl.notReproduced({ lens: 'security', path: 'src/d.js', line: 41 }).text;
   assert.deepStrictEqual(printed.entries.map((e) => e.text), [expected]);
   assert.deepStrictEqual(printed.unconfirmed[2].nearLocation, dB.nearLocation);
   assert.strictEqual(decisionsOf(inp.runDir), `## /review\n${reproLine(['STAGED', expected])}\n`);
@@ -1204,7 +1208,7 @@ test('Review Focus 4: an unconfirmed finding with no line gets form 3 on the bar
   const { deps, out } = tbDeps(inp.main);
   assert.strictEqual(run(['categorise-reproduction', a, b, '--lens', 'security', '--run', inp.runDir, '--only', 'unconfirmed'], deps), 0);
   const printed = JSON.parse(out.join(''));
-  assert.deepStrictEqual(printed.entries.map((e) => e.text), ['lens "security" finding x.js not reproduced. Staged to Review Console as low-confidence.']);
+  assert.deepStrictEqual(printed.entries.map((e) => e.text), [rl.notReproduced({ lens: 'security', path: 'x.js' }).text]);
   assert.deepStrictEqual(printed.unlocated.map((f) => f.path), ['x.js']);
 });
 
@@ -1344,11 +1348,15 @@ test('--help names categorise-reproduction\'s --run form', () => {
 const ABSENCE = { kind: 'absence-refuted', path: 'src/a.js', symbol: 'checkExpiry', command: 'grep -n checkExpiry src', foundAt: { path: 'src/b.js', line: 12 } };
 const DOWNGRADE = { kind: 'vacuity-downgraded', path: 'src/v.js', line: 7 };
 const RECONFIRM = { kind: 'vacuity-reconfirmed', path: 'src/v.js', line: 7, command: 'npm test', output: '3 passing' };
-// The three lines (forms 5, 6, 7) written out by hand.
+// The three lines (forms 5, 6, 7) as [status, text], from the composer (see REPRO_TEXT); the kind's fields minus
+// `kind`, plus the --lens, are what the CLI must hand it.
+const { kind: _a, ...absenceFields } = ABSENCE;
+const { kind: _d, ...downgradeFields } = DOWNGRADE;
+const { kind: _r, ...reconfirmFields } = RECONFIRM;
 const JUDGED_TEXT = {
-  'absence-refuted': ['AUTO', 'lens "security" absence claim src/a.js:checkExpiry refuted by ground-truth check (grep -n checkExpiry src found it at src/b.js:12). Not staged.'],
-  'vacuity-downgraded': ['STAGED', 'lens "3f" vacuity finding src/v.js:7 downgraded to unconfirmed — reproduction agreement overridden, no execution evidence. Staged to Review Console as low-confidence.'],
-  'vacuity-reconfirmed': ['AUTO', 'lens "3f" vacuity finding src/v.js:7 re-confirmed by executed run: npm test → 3 passing. Confirmed.'],
+  'absence-refuted': st(rl.absenceRefuted({ ...absenceFields, lens: 'security' })),
+  'vacuity-downgraded': st(rl.vacuityDowngraded(downgradeFields)),
+  'vacuity-reconfirmed': st(rl.vacuityReconfirmed(reconfirmFields)),
 };
 
 function judgeInputs(t) {
@@ -1470,15 +1478,15 @@ test('AC8.4: vacuity-downgraded with no form 1/2 line for that lens and location
   const wrongForm = judgeInputs(t);
   fs.writeFileSync(path.join(wrongForm.runDir, 'decisions.md'), [
     '## /review',
-    reproLine(['STAGED', 'lens "3f" finding src/v.js:7 not reproduced. Staged to Review Console as low-confidence.']),
+    reproLine(st(rl.notReproduced({ lens: '3f', path: 'src/v.js', line: 7 }))),
     '## /wrap-up',
-    reproLine(['AUTO', 'lens "3f" finding src/v.js:7 reproduced. Confirmed.']),
+    reproLine(st(rl.reproduced({ lens: '3f', path: 'src/v.js', line: 7 }))),
     '',
   ].join('\n'));
   assert.strictEqual(judgeRun(wrongForm, DOWNGRADE, base(wrongForm)).code, 2);
   // a severity-contested form 2 line counts
   const contested = judgeInputs(t);
-  fs.writeFileSync(path.join(contested.runDir, 'decisions.md'), `## /review\n${reproLine(['AUTO', 'lens "3f" finding src/v.js:7 reproduced, severity contested (took the lower of the two). Confirmed.'])}\n`);
+  fs.writeFileSync(path.join(contested.runDir, 'decisions.md'), `## /review\n${reproLine(st(rl.reproduced({ lens: '3f', path: 'src/v.js', line: 7, severityContested: true })))}\n`);
   assert.strictEqual(judgeRun(contested, DOWNGRADE, base(contested)).code, 0);
 });
 
@@ -1545,7 +1553,7 @@ test('Review Focus 5: an output holding an arrow and 500 characters is written v
   const res = judgeRun(inp, { ...RECONFIRM, output }, ['--lens', '3f', '--run', inp.runDir]);
   assert.strictEqual(res.code, 0, res.err);
   assert.ok(JSON.parse(res.out).entries[0].text.includes(`npm test → ${output}`));
-  assert.ok(decisionsOf(inp.runDir).includes(`re-confirmed by executed run: npm test → ${output}. Confirmed.`));
+  assert.ok(decisionsOf(inp.runDir).includes(rl.vacuityReconfirmed({ ...reconfirmFields, output }).text));
 });
 
 test('AC8.1/AC8.2/AC8.3: form 1 then form 6 is an open low-confidence item; one tiebreak verdict settles it, and settles two form 6 lines', (t) => {

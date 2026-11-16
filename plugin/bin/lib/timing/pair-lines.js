@@ -20,9 +20,9 @@
 //     direct-verification override, a "no findings" notice, a Review Console
 //     disposition of an already-staged finding). They are not pinned to prose.
 //
-// Phase 6 of docs/superpowers/specs/2026-11-15-process-efficiency-design.md
-// moves the pair-line write into `categorise-reproduction`; this reader and its
-// test then follow that writer.
+// Phase 6 of docs/superpowers/specs/2026-11-15-process-efficiency-design.md moved
+// the pair-line write into code (#5595): reproduction-log.js composes the seven forms
+// and this reader's test pins each PAIR_FORMS template to that composer.
 //
 // Counters per form (the "Pair lines" section of docs/reference/step-yield.md):
 // `both` = findings both reviewers reported, `one` = findings one reviewer

@@ -16,7 +16,6 @@ const rl = require('../../../plugin/bin/lib/reproduction-log');
 const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
 
 const SKILL_DIR = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'review');
-const SKILL = path.join(SKILL_DIR, 'step3-lens-dispatch.md');
 const TIER = path.join(SKILL_DIR, 'step3-tier-variants.md');
 const COVERAGE_PHRASES = ['session limit twice', 'unavailable', 'timed out'];
 const RULE = 'pair-line patterns are additive: add a pattern for the new wording, never replace one, so archived runs keep parsing';
@@ -356,8 +355,8 @@ test('legacy forms: ids are distinct from the prose-pinned forms, and an elevati
 });
 
 // --- Producer pin: the composer writes seven pair forms, step3-tier-variants.md's template the eighth. ---
-// Since #5595 plugin/bin/lib/reproduction-log.js is the only home of the seven forms (step3-lens-dispatch.md
-// names the calls and carries no template). Each composed line must match exactly one PAIR_FORMS pattern, and
+// Since #5595 plugin/bin/lib/reproduction-log.js is the only home of the seven forms (that step3-lens-dispatch.md
+// carries no template is tests/review-reproduction-call-conformance.test.js's AC10.1). Each composed line must match exactly one PAIR_FORMS pattern, and
 // its action must equal that form's `template` filled with the same values: the composer↔PAIR_FORMS twin pin.
 
 const FILL = [
@@ -412,8 +411,7 @@ test('AC3.3: every composed pair line matches exactly one form and equals its PA
   assert.deepEqual(matched.sort(), PAIR_FORMS.map((f) => f.id).filter((id) => id !== 'single-read-coverage').sort());
 });
 
-test('AC3.3: step3-lens-dispatch.md carries no pair template; step3-tier-variants.md carries the eighth', () => {
-  assert.deepEqual(liveTemplates(SKILL), [], `step3-lens-dispatch.md holds a pair template again: the composer is the only home of the seven forms — ${RULE}`);
+test('AC3.3: step3-tier-variants.md carries the eighth pair template', () => {
   const tier = liveTemplates(TIER);
   assert.equal(tier.length, 1, `step3-tier-variants.md holds ${tier.length} pair templates, expected 1 (single-read-coverage) — ${RULE}`);
   assert.equal(PAIR_FORMS.find((f) => f.id === 'single-read-coverage').template, tier[0], `form single-read-coverage template text drifted from the prose — ${RULE}`);
