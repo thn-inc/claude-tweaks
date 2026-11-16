@@ -3,6 +3,7 @@ files:
   - plugin/bin/console-resolve.js
   - plugin/bin/lib/issues/upstream-ownership.js
   - plugin/bin/lib/console/resolve.js
+  - plugin/bin/lib/console/decision-facts.js
   - plugin/bin/lib/issues/autonomy.js
   - plugin/skills/wrap-up/upstream-feedback.md
   - plugin/skills/wrap-up/review-console.md
@@ -56,12 +57,15 @@ files:
     - lookalikes such as `thn-inc-evil` and malformed names are external;
     - an invalid `owned-owners` entry is ignored and logged as a `SKIP` line;
     - a cloud or Routine proxy origin is `owner-unresolved`, so items hold there.
+  - A staged draft's header may name only `/claude-tweaks:feedback`'s filing target, `thn-inc/claude-tweaks`. A header naming any other repo holds `external`, even when its owner is owned, because the issue would not land there. `--filed` judges the repo its URL names instead.
   - With control mode off the CLI prints `unchanged (control mode off)` and writes nothing, and the old causal-tag default decides.
   - An unreadable policy exits 3 and writes nothing.
+  - Any other failed read is logged as a `SKIP` line (step `Upstream ownership`) that names its fallback, never silently: an unresolved `origin/HEAD` reads the base branch as `main`, and an unreadable staged draft holds `external` with no target.
   - An explicit uncheck or untick declines an owned item. An explicit check never files a held one.
 - **Red flags:**
   - a different `gh` login changing a verdict;
   - an external item filed at `unattended`;
+  - a staged header naming any repo but `thn-inc/claude-tweaks` routed `file`;
   - the PR's own `owned-owners` edit granting itself auto-filing.
 
 ### 3. (Wrap-up agent) File an owned item and log it
@@ -87,6 +91,8 @@ files:
   - `{why}` is a short phrase the agent writes, with any `'` written as `'\''`.
   - A scrub-hit fact points to the staged draft by path. A failed-scrub draft never goes inline into the packet comment.
   - A repeated `--hold` writes no second fact.
+  - The `{why}` phrase goes into the `decisions.md` line. A scrub-hit fact carries neither the phrase nor the draft title, so no scanner detail reaches the packet.
+  - A `console.json` that exists but cannot be read exits 5 after the fact has landed, and the console item stays unchanged.
 - **Red flags:**
   - a filing retry loop;
   - a mid-run question under control mode;
