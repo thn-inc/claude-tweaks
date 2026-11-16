@@ -449,6 +449,51 @@ test('#4359: an agent transcript passed as --transcript is not counted again as 
   assert.deepEqual(t.phases.find((x) => x.phase === 'review').procedureFiles, { 'skills/review/SKILL.md': 1 });
 });
 
+test('#4359 I1: a context-bundle Read by a dispatch reaches timing.json under its context/ key, apart from skill files', async () => {
+  const s = subagentRun({ events: SPAN_EVENTS });
+  const sub = path.join(s.slugDir, 'sess-1', 'subagents');
+  const bundle = '/Users/x/Code/repo/.claude-tweaks/pipelines/2026-10-17T095800-record-1/context/lens-child.md';
+  fs.writeFileSync(path.join(sub, 'agent-x.meta.json'), JSON.stringify({ description: 'Review lens 3a', model: 'sonnet' }));
+  fs.writeFileSync(path.join(sub, 'agent-x.jsonl'), readLine('x', '2026-10-17T10:05:00.000Z', 'mx1', bundle) + readLine('x', '2026-10-17T10:06:00.000Z', 'mx2', SKILL_A));
+  const r = await run(['--run', s.dir, '--json', '--transcript', s.transcript]);
+  assert.equal(r.status, 0, r.stderr);
+  const t = readTiming(s.dir);
+  assert.deepEqual(t.phases.find((x) => x.phase === 'review').procedureFiles, { 'context/lens-child.md': 1, 'skills/review/SKILL.md': 1 });
+});
+
+test('#4359 M4: timing.json dispatch items carry neither procedureFileRows nor transcriptPath, and per-row attribution still holds', async () => {
+  const s = subagentRun({ events: SPAN_EVENTS });
+  const sub = path.join(s.slugDir, 'sess-1', 'subagents');
+  fs.writeFileSync(path.join(sub, 'agent-x.meta.json'), JSON.stringify({ description: 'Implement Task 9', model: 'sonnet' }));
+  fs.writeFileSync(path.join(sub, 'agent-x.jsonl'), readLine('x', '2026-10-17T10:00:00.000Z', 'mx1', SKILL_A) + readLine('x', '2026-10-17T10:05:00.000Z', 'mx2', SKILL_B));
+  const r = await run(['--run', s.dir, '--json', '--transcript', s.transcript]);
+  assert.equal(r.status, 0, r.stderr);
+  for (const t of [readTiming(s.dir), JSON.parse(r.stdout)]) {
+    assert.ok(t.dispatches.items.length > 0);
+    for (const item of t.dispatches.items) {
+      assert.ok(!Object.hasOwn(item, 'procedureFileRows'), `${item.agentId} carries procedureFileRows`);
+      assert.ok(!Object.hasOwn(item, 'transcriptPath'), `${item.agentId} carries transcriptPath`);
+    }
+    assert.deepEqual(t.dispatches.items.find((i) => i.agentId === 'x').procedureFiles, { 'skills/review/SKILL.md': 1, 'skills/review/lenses.md': 1 });
+    const p = Object.fromEntries(t.phases.map((x) => [x.phase, x]));
+    assert.deepEqual(p.build.procedureFiles, { 'skills/review/SKILL.md': 1 });
+    assert.deepEqual(p.review.procedureFiles, { 'skills/review/lenses.md': 1 });
+  }
+});
+
+test('#4359 T2-2: a dispatch\'s reads key against the run\'s worktree, as the main rows do', async () => {
+  const s = subagentRun({ events: SPAN_EVENTS });
+  // a worktree under a skills/ directory: only the worktree-relative key is right
+  const wt = '/Users/x/skills/wt';
+  fs.writeFileSync(path.join(s.dir, 'run-state.json'), JSON.stringify({ worktree: wt, sessionId: 'sess-1', status: 'active' }));
+  const sub = path.join(s.slugDir, 'sess-1', 'subagents');
+  fs.writeFileSync(path.join(sub, 'agent-x.meta.json'), JSON.stringify({ description: 'Implement Task 9', model: 'sonnet' }));
+  fs.writeFileSync(path.join(sub, 'agent-x.jsonl'), readLine('x', '2026-10-17T10:05:00.000Z', 'mx1', `${wt}/plugin/skills/review/x.md`));
+  const r = await run(['--run', s.dir, '--json', '--transcript', s.transcript]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(readTiming(s.dir).phases.find((x) => x.phase === 'review').procedureFiles, { 'skills/review/x.md': 1 });
+});
+
 test('#4359: buildTiming returns what run() writes, and writes nothing', async () => {
   const { buildTiming } = require(CLI);
   const src = path.join(__dirname, '..', '..', 'fixtures', 'efficiency-report', 'recount');

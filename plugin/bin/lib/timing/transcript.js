@@ -27,7 +27,7 @@ const path = require('path');
 const readline = require('readline');
 const { lstatType, resolveLeaf, canonicalRealpath, isAncestorOrSelf } = require('../path-guard');
 const { isPathContained } = require('../shared-primitives');
-const { isProcedurePath, classifyToolCall, procedureFileKey, bashProcedureFiles } = require('./turn-class');
+const { isProcedurePath, classifyToolCall, readFileKey, bashProcedureFiles } = require('./turn-class');
 
 const TRANSCRIPT_SLUG_RULE = 'replace every character not in [A-Za-z0-9-] with "-" (observed: "/", " ", and "." all become "-")';
 
@@ -133,10 +133,10 @@ function resultText(content) {
 // turnStart (true on the first assistant row of each message.id and on any
 // assistant row without a string id), and contextTokens (inputTokens +
 // cacheRead + cacheCreate on turnStart rows, taken after the stream closes so
-// it reflects the per-id max; 0 elsewhere). procedureFiles ({ [skills/… key]:
-// count }, {} when none) is counted on the assistant row holding the tool_use:
-// a Read adds 1 to procedureFileKey(file_path), a Bash 1 per bashProcedureFiles
-// entry (#4359).
+// it reflects the per-id max; 0 elsewhere). procedureFiles ({ [skills/… or
+// context/… key]: count }, {} when none) is counted on the assistant row
+// holding the tool_use: a Read adds 1 to readFileKey(file_path), a Bash 1 per
+// bashProcedureFiles entry (#4359).
 // Rejects when the file cannot be opened, with the real stat failure's
 // code (ENOENT/EACCES/...; EUNKNOWN if the error carries none), with
 // EISDIR when the path resolves but names a directory, or — if `stat`
@@ -180,7 +180,7 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
           if (typeof b.id === 'string') toolUses.set(b.id, { name: b.name, input: b.input });
           if (b.name === 'Read' && b.input && isProcedurePath(b.input.file_path, worktree)) procedureReads.add(b.id);
           let keys = [];
-          if (b.name === 'Read' && b.input) keys = [procedureFileKey(b.input.file_path, worktree)].filter(Boolean);
+          if (b.name === 'Read' && b.input) keys = [readFileKey(b.input.file_path, worktree)].filter(Boolean);
           else if (b.name === 'Bash' && b.input) keys = bashProcedureFiles(b.input.command, worktree);
           for (const k of keys) row.procedureFiles[k] = (row.procedureFiles[k] || 0) + 1;
         }
@@ -259,7 +259,8 @@ function transcriptModelOf(rows) {
   return models.find((m) => /^claude-/.test(m)) || models[0] || null;
 }
 
-// subagentsDir, { fsImpl?, window? } -> Promise<{ items, notFound, excludedOutsideWindow }>.
+// subagentsDir, { fsImpl?, window?, worktree? } -> Promise<{ items, notFound, excludedOutsideWindow }>.
+// worktree is passed to readUsage, so a subagent's reads key as a main row's do.
 // One Dispatch per agent-{id}; meta and transcript are paired by id. Token
 // totals come from readUsage, so its message.id dedupe is the one in force.
 // window = { start, end } (epoch ms, inclusive): rows outside it are dropped
@@ -272,7 +273,7 @@ function transcriptModelOf(rows) {
 // rows is notFound 'transcript has no usage rows' (numbers null), decided
 // before clipping. A symlinked subagents/ directory is never followed, and one
 // with no agent-* files is notFound rather than an empty table. Never throws.
-async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {}) {
+async function readDispatches(subagentsDir, { fsImpl = fs, window = null, worktree = null } = {}) {
   // Absent or unreadable falls through: readdirSync below names the code.
   if (lstatType(subagentsDir, { fsImpl }).type === 'symlink') {
     return { items: [], notFound: `subagents/ directory is a symlink (not followed) at ${subagentsDir}`, excludedOutsideWindow: 0 };
@@ -333,7 +334,7 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
       fail(`transcript not readable (${skipped.get(jsonlName)})`);
     } else {
       try {
-        rows = await readUsage(d.transcriptPath, { fsImpl });
+        rows = await readUsage(d.transcriptPath, { fsImpl, worktree });
       } catch (err) {
         fail(`transcript not readable (${(err && err.code) || 'EUNKNOWN'})`);
       }

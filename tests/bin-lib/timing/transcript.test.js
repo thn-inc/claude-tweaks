@@ -306,6 +306,37 @@ test('readUsage counts per-file procedure reads on the tool_use row', async () =
   assert.deepEqual(rows[2].procedureFiles, {});
 });
 
+test('#4359 I1: readUsage counts a Read and a sed of a context bundle under context/, adding no procedure bytes', async () => {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pfiles-')), 's.jsonl');
+  const bundle = '/main/.claude-tweaks/pipelines/2026-11-16T000452-record-4359/context/review-code-mode.md';
+  fs.writeFileSync(f, [
+    JSON.stringify({ type: 'assistant', timestamp: '2026-11-16T10:00:00.000Z', message: { id: 'm1', role: 'assistant', content: [
+      { type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: bundle } },
+      { type: 'tool_use', id: 'b1', name: 'Bash', input: { command: `sed -n "1,80p" ${bundle}` } },
+    ], usage: {} } }),
+    JSON.stringify({ type: 'user', timestamp: '2026-11-16T10:00:01.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'r1', content: 'x'.repeat(50) }] } }),
+  ].join('\n') + '\n');
+  const rows = await readUsage(f, { worktree: '/main/.claude/worktrees/wt' });
+  assert.deepEqual(rows[0].procedureFiles, { 'context/review-code-mode.md': 2 });
+  assert.equal(rows[1].procedureBytes, 0, 'a bundle Read is not a skill-file read');
+  assert.deepEqual(rows[1].turnClasses, { read: 1 });
+});
+
+test('#4359 T2-1: a timestamp-less api-request-blob row carrying a skill Read adds no procedure read', async () => {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pfiles-')), 's.jsonl');
+  const read = (id) => ({ type: 'tool_use', id, name: 'Read', input: { file_path: 'plugin/skills/review/code-mode-steps.md' } });
+  fs.writeFileSync(f, [
+    JSON.stringify({ type: 'assistant', timestamp: '2026-11-16T10:00:00.000Z', message: { id: 'm1', role: 'assistant', content: [read('r1')], usage: {} } }),
+    // the replayed request blob repeats r1's tool_use id, with no timestamp
+    JSON.stringify({ type: 'api-request-blob', message: { id: 'm1', role: 'assistant', content: [read('r1')], usage: {} } }),
+  ].join('\n') + '\n');
+  const rows = await readUsage(f, {});
+  assert.equal(rows.length, 1);
+  const total = {};
+  for (const r of rows) for (const [k, n] of Object.entries(r.procedureFiles)) total[k] = (total[k] || 0) + n;
+  assert.deepEqual(total, { 'skills/review/code-mode-steps.md': 1 });
+});
+
 test('#1929: readUsage on a missing file rejects with a code the CLI can name', async () => {
   await assert.rejects(readUsage(path.join(os.tmpdir(), 'ct-no-such-transcript.jsonl'), {}), (err) => err.code === 'ENOENT');
 });
@@ -470,6 +501,15 @@ test('readDispatches: a dispatch with no procedure reads carries {} and [], an u
     { ts: '2026-11-16T10:00:03.000Z', procedureFiles: { 'skills/_shared/c.md': 1 } },
     { ts: '2026-11-16T10:00:07.000Z', procedureFiles: { 'skills/_shared/d.md': 1 } },
   ]);
+});
+
+test('#4359 T2-2: readDispatches keys a subagent\'s reads against the worktree it is given', async () => {
+  const dir = tmpSubagents();
+  // a worktree under a skills/ directory: only the worktree-relative key is right
+  const wt = '/home/u/skills/wt';
+  fs.writeFileSync(path.join(dir, 'agent-w1.jsonl'), readLine('2026-11-16T10:00:00.000Z', 'mw1', `${wt}/plugin/skills/review/x.md`) + '\n');
+  assert.deepEqual((await readDispatches(dir, { worktree: wt })).items[0].procedureFiles, { 'skills/review/x.md': 1 });
+  assert.deepEqual((await readDispatches(dir)).items[0].procedureFiles, { 'skills/wt/plugin/skills/review/x.md': 1 });
 });
 
 test('AC4.1: no subagents/ directory reports notFound, no items', async () => {

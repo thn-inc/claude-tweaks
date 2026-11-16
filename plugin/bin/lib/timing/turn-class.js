@@ -11,6 +11,7 @@
 const path = require('path');
 const { isAncestorOrSelf } = require('../path-guard');
 const { toPosix, relativeDisplayId } = require('../shared-primitives');
+const { stripHeredocBodies } = require('../hooks/git-command');
 
 const TURN_CLASSES = Object.freeze(['edit', 'read', 'explore', 'procedure', 'bookkeeping', 'orientation', 'verify', 'guard-refusal', 'dispatch', 'other']);
 // The classes whose turns are process overhead rather than the work itself.
@@ -58,6 +59,25 @@ function procedureFileKey(filePath, worktree, pathImpl = path) {
   return p.slice(p[at] === '/' ? at + 1 : at);
 }
 
+// A composed bundle a pipeline step reads instead of its skill sources
+// (`.claude-tweaks/pipelines/<run-id>/context/<name>.md`, a nested spec-N run
+// dir included) -> `context/<name>.md`; any other path -> null (#4359). Never a
+// `skills/` key and never isProcedurePath: a bundle read is not a skill-file
+// read, but it is counted, so reads that moved from a source to its bundle
+// stay visible.
+const CONTEXT_BUNDLE_RE = /(?:^|\/)\.claude-tweaks\/pipelines\/(?:[^/]+\/)+context\/([^/]+\.md)$/;
+function contextBundleKey(filePath, worktree, pathImpl = path) {
+  if (typeof filePath !== 'string' || !filePath) return null;
+  const m = CONTEXT_BUNDLE_RE.exec(normalizedPath(filePath, worktree, pathImpl));
+  return m ? `context/${m[1]}` : null;
+}
+
+// The per-file read key a Read or a Bash read path counts under: its
+// procedureFileKey, else its contextBundleKey, else null.
+function readFileKey(filePath, worktree, pathImpl = path) {
+  return procedureFileKey(filePath, worktree, pathImpl) || contextBundleKey(filePath, worktree, pathImpl);
+}
+
 // Quote-aware split of a shell command on && || ; | so a quoted "a && b" (a
 // commit message, say) stays inside its segment. Not a shell parser: it only
 // has to find where one command ends and the next begins.
@@ -88,11 +108,19 @@ function splitSegments(command) {
 }
 
 // Whitespace tokens with surrounding quotes removed ("a b" -> a b).
+const TOKEN_RE = /"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g;
 function tokenize(segment) {
+  return tokenizeMarked(segment).map((t) => t.text);
+}
+
+// tokenize's tokens as { text, quoted }: quoted is true for a token that was
+// one quoted string, whose `>`, `<` or glob character is literal, never an
+// operator. Only bashProcedureFiles reads the mark.
+function tokenizeMarked(segment) {
   const tokens = [];
-  const re = /"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g;
+  const re = new RegExp(TOKEN_RE.source, 'g');
   let m;
-  while ((m = re.exec(segment)) !== null) tokens.push(m[1] ?? m[2] ?? m[3]);
+  while ((m = re.exec(segment)) !== null) tokens.push({ text: m[1] ?? m[2] ?? m[3], quoted: m[3] === undefined });
   return tokens;
 }
 
@@ -198,6 +226,9 @@ const READ_HEADS = new Set(['cat', 'head', 'tail', 'sed', 'awk', 'grep', 'rg', '
 const PATTERN_HEADS = new Set(['grep', 'rg', 'ugrep']);
 const PATTERN_FLAG_RE = /^(?:-[A-Za-z]*[ef]|--regexp|--file)$/; // value is the next token
 const PATTERN_FLAG_ATTACHED_RE = /^(?:-[ef].|--regexp=|--file=)/;
+// Their other flags whose value is the next token (context and max-count: a
+// number that must not take the pattern slot); `-A3` and `--context=3` carry it attached.
+const PATTERN_HEAD_VALUE_FLAG_RE = /^(?:-[A-Za-z]*[ABCm]|--max-count|--context|--after-context|--before-context)$/;
 // An output redirect (`>`, `>>`, `2>`, `&>`, `>|`, …); group 1 is an attached target.
 const OUT_REDIRECT_RE = /^(?:\d+|&)?>>?\|?(.*)$/;
 // Leading wrappers that run the real command: `timeout [flags] <duration>` and
@@ -220,29 +251,38 @@ function stripWrappers(tokens) {
   }
 }
 
+// Heredoc bodies are data, not commands, so they are stripped first (the write
+// gate's own stripper; on any failure it returns the command unchanged). Each
+// path token yields its readFileKey: a skill file's `skills/…` key or a
+// composed bundle's `context/…` key.
 function bashProcedureFiles(command, worktree, pathImpl = path) {
   if (typeof command !== 'string' || !command.trim()) return [];
+  const { outer } = stripHeredocBodies(command);
   const keys = [];
-  for (const segment of splitSegments(stripPrefixes(command)).map(stripPrefixes).filter(Boolean)) {
-    const tokens = stripWrappers(tokenize(segment));
-    const head = (tokens[0] || '').replace(/^.*\//, '');
+  for (const segment of splitSegments(stripPrefixes(outer)).map(stripPrefixes).filter(Boolean)) {
+    const marked = tokenizeMarked(segment);
+    const unwrapped = stripWrappers(marked.map((t) => t.text));
+    const tokens = marked.slice(marked.length - unwrapped.length);
+    const head = ((tokens[0] && tokens[0].text) || '').replace(/^.*\//, '');
     if (!READ_HEADS.has(head)) continue;
     // grep permutes its arguments: a pattern flag anywhere means no operand is the pattern.
     const patternHead = PATTERN_HEADS.has(head);
-    let patternPending = patternHead && !tokens.slice(1).some((t) => PATTERN_FLAG_RE.test(t) || PATTERN_FLAG_ATTACHED_RE.test(t));
+    let patternPending = patternHead && !tokens.slice(1).some(({ text }) => PATTERN_FLAG_RE.test(text) || PATTERN_FLAG_ATTACHED_RE.test(text));
     for (let i = 1; i < tokens.length; i++) {
-      let t = tokens[i];
-      const redirect = OUT_REDIRECT_RE.exec(t);
+      let { text: t } = tokens[i];
+      const { quoted } = tokens[i];
+      const redirect = quoted ? null : OUT_REDIRECT_RE.exec(t);
       if (redirect) { if (!redirect[1]) i++; continue; }
-      if (t.startsWith('<') && !t.startsWith('<<')) t = t.slice(1); // input redirect: still a read
+      if (!quoted && t.startsWith('<') && !t.startsWith('<<')) t = t.slice(1); // input redirect: still a read
       if (!t) continue;
       if (t.startsWith('-')) {
-        if (patternHead && PATTERN_FLAG_RE.test(t)) i++; // its value is a pattern or pattern file
+        // its value is a pattern, a pattern file, or a count
+        if (patternHead && (PATTERN_FLAG_RE.test(t) || PATTERN_HEAD_VALUE_FLAG_RE.test(t))) i++;
         continue;
       }
       if (patternPending) { patternPending = false; continue; }
-      if (/[*?[]/.test(t)) continue;
-      const key = procedureFileKey(t, worktree, pathImpl);
+      if (!quoted && /[*?[]/.test(t)) continue;
+      const key = readFileKey(t, worktree, pathImpl);
       if (key) keys.push(key);
     }
   }
@@ -266,4 +306,4 @@ function classifyToolCall({ name, input, isError, resultText, worktree } = {}) {
   }
 }
 
-module.exports = { TURN_CLASSES, CEREMONY_CLASSES, classifyToolCall, classifyBash, isProcedurePath, procedureFileKey, bashProcedureFiles };
+module.exports = { TURN_CLASSES, CEREMONY_CLASSES, classifyToolCall, classifyBash, isProcedurePath, procedureFileKey, contextBundleKey, readFileKey, bashProcedureFiles };

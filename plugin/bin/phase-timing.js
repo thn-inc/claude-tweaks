@@ -269,8 +269,10 @@ function renderCiGate(ciGate) {
 // ends, so its ts would stretch the window over the idle gap (derive.js's
 // endOfRun rule, #1928). Subagents dirs are deduped by fs.realpathSync (path.resolve when
 // the dir does not resolve) so a transcript passed twice, or reached through a
-// symlinked alias, is not double-counted. -> the timing.json `dispatches` value.
-async function collectDispatches(paths, events, cwd) {
+// symlinked alias, is not double-counted. worktree (the run's, or null) reaches
+// readUsage, so a subagent's reads key as the main rows do. -> the timing.json
+// `dispatches` value, before stripInternalFields.
+async function collectDispatches(paths, events, cwd, worktree = null) {
   const stamps = events.filter((e) => !(e && e.type === 'worktree-reaped')).map((e) => Date.parse(e && e.ts)).filter(Number.isFinite);
   // reduce, not Math.min(...stamps): a spread of a very large array can throw RangeError.
   const window = stamps.length
@@ -288,7 +290,7 @@ async function collectDispatches(paths, events, cwd) {
   let excludedOutsideWindow = 0;
   let found = 0;
   for (const dir of dirs) {
-    const r = await readDispatches(dir, { window });
+    const r = await readDispatches(dir, { window, worktree });
     if (r.notFound) { reasons.push(r.notFound); continue; }
     found += 1;
     items.push(...r.items);
@@ -317,6 +319,13 @@ function dispatchFileReads(dispatches, paths, cwd) {
     reads.push(...item.procedureFileRows);
   }
   return reads;
+}
+
+// The dispatches value as timing.json carries it: each item without
+// procedureFileRows and transcriptPath, which only dispatchFileReads reads.
+function stripInternalFields(dispatches) {
+  if (!dispatches || !Array.isArray(dispatches.items)) return dispatches;
+  return { ...dispatches, items: dispatches.items.map(({ procedureFileRows: _rows, transcriptPath: _path, ...item }) => item) };
 }
 
 // Resolve the transcript list: explicit --transcript paths, plus the
@@ -367,7 +376,7 @@ async function deriveTiming({ runDir, events, runState, paths, notes, wantTokens
       notes.push(`tokens: transcript not found (${reason})`);
     }
   }
-  const dispatches = wantTokens ? await collectDispatches(paths, events, cwd) : null;
+  const dispatches = wantTokens ? await collectDispatches(paths, events, cwd, worktree) : null;
   const tokens = wantTokens ? joinTokens(out.phases, rows, { dispatchFileReads: dispatchFileReads(dispatches, paths, cwd) }) : null;
   if (tokens) tokens.totals.rows = rows.length;
   const guard = wantTokens ? countGuardEvents(events) : null;
@@ -384,7 +393,7 @@ async function deriveTiming({ runDir, events, runState, paths, notes, wantTokens
     timing.totals.guard = guard;
     timing.transcripts = transcripts;
     if (notes.length) timing.notes = notes;
-    timing.dispatches = dispatches;
+    timing.dispatches = stripInternalFields(dispatches);
   }
   return { out, tokens, guard, timing };
 }

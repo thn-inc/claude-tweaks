@@ -327,11 +327,14 @@ const ZERO_TOKENS = () => ({ input: 0, output: 0, cacheRead: 0, cacheCreate: 0 }
 // tokens. Rows outside every phase land in `unattributed`. Token fields
 // come from assistant rows, round-trips/procedure bytes from user rows;
 // the reader keeps the groups exclusive per row, so sums never double.
-// Every bucket also carries procedureFiles ({ [skills/… key]: count }, keys
-// ascending, #4359): the rows' own counts plus each dispatchFileReads entry
-// ({ ts, procedureFiles }, one per subagent row that read a skill file), which
-// joins the phase containing its ts by the same rule and adds to
-// procedureFiles only — never to rows, tokens or round trips.
+// Every bucket also carries procedureFiles ({ [skills/… or context/… key]:
+// count }, keys ascending, #4359): the rows' own counts plus each
+// dispatchFileReads entry ({ ts, procedureFiles }, one per subagent row that
+// read a skill file or a composed bundle), which joins the phase containing its
+// ts by the same rule and adds to procedureFiles only — never to rows, tokens
+// or round trips. An entry whose ts does not parse is dropped; in production
+// none arrives, since readDispatches books an untimed row to the dispatch's
+// startTs, which is always parseable.
 function joinTokens(phases, usageRows, { dispatchFileReads = [] } = {}) {
   const rows = Array.isArray(usageRows) ? usageRows : [];
   const fileReads = Array.isArray(dispatchFileReads) ? dispatchFileReads : [];

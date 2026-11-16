@@ -14,7 +14,8 @@
 //
 // It also reports review-phase skill-file reads per file (#4359): the summed phases[].procedureFiles
 // of each run's reached review phase, as a median per run (over the runs that carry the data, a
-// missing file counted as 0) and a total.
+// missing file counted as 0) and a total. A file is a skill file (`skills/…` key) or a run's composed
+// bundle (`context/<name>.md` key), so reads that moved from a source to its bundle stay counted.
 //
 // --recount (#4359) instead rebuilds each run's timing from the transcripts its timing.json lists
 // (phase-timing.js buildTiming) and prints per-file skill-file reads per run over all phases — median

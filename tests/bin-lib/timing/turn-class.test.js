@@ -2,7 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
-const { TURN_CLASSES, CEREMONY_CLASSES, classifyToolCall, classifyBash, isProcedurePath, procedureFileKey, bashProcedureFiles } = require('../../../plugin/bin/lib/timing/turn-class');
+const { TURN_CLASSES, CEREMONY_CLASSES, classifyToolCall, classifyBash, isProcedurePath, procedureFileKey, contextBundleKey, readFileKey, bashProcedureFiles } = require('../../../plugin/bin/lib/timing/turn-class');
 const transcript = require('../../../plugin/bin/lib/timing/transcript');
 
 const bash = (command, extra = {}) => ({ name: 'Bash', input: { command }, ...extra });
@@ -186,4 +186,61 @@ test('turn-class: bashProcedureFiles sees through timeout and xargs wrappers', (
   assert.deepEqual(bashProcedureFiles('ls | xargs -n 1 -0 grep -l x plugin/skills/x.md', null), ['skills/x.md']);
   assert.deepEqual(bashProcedureFiles('timeout 5 xargs cat plugin/skills/x.md', null), ['skills/x.md']);
   assert.deepEqual(bashProcedureFiles('timeout 5 node plugin/skills/x.md', null), []);
+});
+
+// #4359 I1: a composed bundle read counts under context/<name>.md, never under skills/.
+test('turn-class: contextBundleKey keys a run context bundle, absolute or repo-relative', () => {
+  assert.equal(contextBundleKey('/r/.claude-tweaks/pipelines/2026-11-16T000452-record-1/context/review-code-mode.md', '/r/.claude/worktrees/wt'), 'context/review-code-mode.md');
+  assert.equal(contextBundleKey('.claude-tweaks/pipelines/run-a/context/lens-child.md', null), 'context/lens-child.md');
+  assert.equal(contextBundleKey('/r/.claude-tweaks/pipelines/run-a/spec-2/context/merge.md', null), 'context/merge.md');
+  assert.equal(contextBundleKey('C:\\r\\.claude-tweaks\\pipelines\\run-a\\context\\x.md', null, path.win32), 'context/x.md');
+});
+
+test('turn-class: contextBundleKey is null off a run context dir, and a bundle is never a skill-file read', () => {
+  assert.equal(contextBundleKey('/r/.claude-tweaks/pipelines/run-a/work/4359-spec.md', null), null);
+  assert.equal(contextBundleKey('/r/.claude-tweaks/pipelines/run-a/decisions.md', null), null);
+  assert.equal(contextBundleKey('/r/.claude-tweaks/pipelines/context/x.md', null), null, 'no run-id segment');
+  assert.equal(contextBundleKey('/r/other/run-a/context/x.md', null), null);
+  assert.equal(contextBundleKey('/r/.claude-tweaks/pipelines/run-a/context/x.json', null), null);
+  assert.equal(contextBundleKey('', null), null);
+  const bundle = '/r/.claude-tweaks/pipelines/run-a/context/review-code-mode.md';
+  assert.equal(isProcedurePath(bundle, null), false);
+  assert.equal(procedureFileKey(bundle, null), null);
+  assert.equal(readFileKey(bundle, null), 'context/review-code-mode.md');
+  assert.equal(readFileKey('plugin/skills/review/x.md', null), 'skills/review/x.md');
+  assert.equal(readFileKey('src/a.js', null), null);
+});
+
+test('turn-class: bashProcedureFiles counts a sed or cat of a context bundle under its context/ key', () => {
+  assert.deepEqual(bashProcedureFiles('sed -n "1,80p" "/U/Code Workspaces/r/.claude-tweaks/pipelines/run-a/context/review-code-mode.md"', null), ['context/review-code-mode.md']);
+  assert.deepEqual(bashProcedureFiles('cat .claude-tweaks/pipelines/run-a/context/lens-child.md plugin/skills/review/x.md', null), ['context/lens-child.md', 'skills/review/x.md']);
+  assert.deepEqual(bashProcedureFiles('cat .claude-tweaks/pipelines/run-a/events.jsonl', null), []);
+});
+
+// #4359 T1-1: a grep-family flag that takes a value never lets the value take the pattern slot.
+test('turn-class: bashProcedureFiles skips the value of -A/-B/-C/-m and their long forms', () => {
+  for (const flag of ['-A 3', '-B 3', '-C 3', '-m 1', '-nC 2', '--max-count 1', '--context 2', '--after-context 2', '--before-context 2']) {
+    assert.deepEqual(bashProcedureFiles(`grep ${flag} plugin/skills/p.md plugin/skills/a/x.md`, null), ['skills/a/x.md'], flag);
+  }
+  // attached values consume nothing more
+  for (const flag of ['-A3', '--context=2', '--max-count=1']) {
+    assert.deepEqual(bashProcedureFiles(`rg ${flag} plugin/skills/p.md plugin/skills/a/x.md`, null), ['skills/a/x.md'], flag);
+  }
+});
+
+// #4359 T1-2: a quoted operator character is literal text.
+test('turn-class: bashProcedureFiles reads a quoted >, >>, < or glob character as a literal', () => {
+  assert.deepEqual(bashProcedureFiles('grep -n ">" plugin/skills/a.md plugin/skills/b.md', null), ['skills/a.md', 'skills/b.md']);
+  assert.deepEqual(bashProcedureFiles("grep '>>' plugin/skills/a.md", null), ['skills/a.md']);
+  assert.deepEqual(bashProcedureFiles('grep "<" plugin/skills/a.md', null), ['skills/a.md']);
+  assert.deepEqual(bashProcedureFiles('cat "plugin/skills/[x].md"', null), ['skills/[x].md']);
+  // the unquoted forms stay operators
+  assert.deepEqual(bashProcedureFiles('grep -n x plugin/skills/a.md > plugin/skills/b.md', null), ['skills/a.md']);
+  assert.deepEqual(classifyBash('grep -n ">" a b'), 'explore');
+});
+
+// #4359 T1-4: a heredoc body is data, never a command.
+test('turn-class: bashProcedureFiles counts no read named inside a heredoc body', () => {
+  assert.deepEqual(bashProcedureFiles('cat <<EOF > /tmp/x\nsed -n 1p plugin/skills/review/SKILL.md\nEOF', null), []);
+  assert.deepEqual(bashProcedureFiles("cat <<'EOF' > /tmp/x\ncat plugin/skills/review/SKILL.md\nEOF\ncat plugin/skills/a.md", null), ['skills/a.md']);
 });

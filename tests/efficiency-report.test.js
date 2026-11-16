@@ -280,6 +280,22 @@ test('#4359: --recount counts all-phase reads per run, leaving out unattributed'
   }
 });
 
+test('#4359 I1: --recount counts a composed-bundle read under its context/ key, beside the skill files', async () => {
+  const { root, archive } = recountTree();
+  try {
+    const bundle = '/main/.claude-tweaks/pipelines/2027-02-01T090000-run-a/context/review-code-mode.md';
+    fs.appendFileSync(path.join(root, 'transcripts', 'a.jsonl'), `${JSON.stringify({ type: 'assistant', timestamp: '2027-02-01T09:05:00.000Z', message: { id: 'ctx1', role: 'assistant', model: 'claude-sonnet-5-5', content: [{ type: 'tool_use', id: 'tu-ctx1', name: 'Bash', input: { command: `sed -n "1,80p" ${bundle}` } }], usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } })}\n`);
+    const { code, out, errs } = await runCli(['--archive', archive, '--recount', '--json'], { cwd: root });
+    assert.strictEqual(code, 0, errs);
+    const r = JSON.parse(out).recount;
+    assert.deepStrictEqual(r.perRun[0], { run: '2027-02-01T090000-run-a', reads: { 'context/review-code-mode.md': 1, 'skills/review/code-mode-steps.md': 3 } });
+    const md = await runCli(['--archive', archive, '--recount'], { cwd: root });
+    assert.ok(md.out.split('\n').includes('| context/review-code-mode.md | 0.5 | 0.5 | 1 |'), md.out);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('#4359: --recount writes nothing into the archive', async () => {
   const { root, archive } = recountTree();
   try {
