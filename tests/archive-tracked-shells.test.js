@@ -47,7 +47,7 @@ function makeFixture() {
 
 function pipelines(root) { return path.join(root, '.claude-tweaks', 'pipelines'); }
 
-// twin: 'identical' | 'absent' | 'differs'. Commits the live work/{n}-spec.md (and the archive
+// twin: 'identical' | 'absent' | 'differs' | 'differs-same-length'. Commits the live work/{n}-spec.md (and the archive
 // twin's work/ unless 'absent'), pushes, and writes the gitignored archive run-state.
 function addShell(root, id, { twin = 'identical', clean = true, push = true } = {}) {
   seq += 1;
@@ -60,7 +60,7 @@ function addShell(root, id, { twin = 'identical', clean = true, push = true } = 
   const twinWork = path.join(pipelines(root), 'archive', id, 'work');
   if (twin !== 'absent') {
     fs.mkdirSync(twinWork, { recursive: true });
-    fs.writeFileSync(path.join(twinWork, file), twin === 'differs' ? `other ${n}\n` : `spec ${n}\n`);
+    fs.writeFileSync(path.join(twinWork, file), twin === 'differs' ? `other ${n}\n` : twin === 'differs-same-length' ? `spac ${n}\n` : `spec ${n}\n`);
     add.push(path.join('.claude-tweaks', 'pipelines', 'archive', id, 'work', file));
   }
   git(root, 'add', '--', ...add);
@@ -199,6 +199,15 @@ test('AC4.2: differing twin is left in place, named with its differing path, exi
   assert.deepEqual(r.envelope.deleted.map((m) => m.runId), [good.id]);
   const tree = git(root, 'ls-tree', '-r', '--name-only', BRANCH).split('\n');
   assert.ok(tree.includes(`.claude-tweaks/pipelines/${bad.id}/work/${bad.file}`));
+});
+
+test('AC4.2b: a twin whose bytes differ at the same length is left in place, never deleted on a size match', () => {
+  const { root } = makeFixture();
+  const bad = addShell(root, '2026-11-06T000002-record-3', { twin: 'differs-same-length' });
+  const r = call(root, ['--root', root, '--no-pr']);
+  assert.equal(r.code, 1);
+  assert.deepEqual(r.envelope.conflicts, [{ runId: bad.id, reason: 'work-twin-conflict', differing: [bad.file] }]);
+  assert.deepEqual(r.envelope.deleted, []);
 });
 
 test('unknown flag exits 2 with usage and prints no envelope', () => {
@@ -792,7 +801,7 @@ test('AC7.5: a failure after the scratch worktree exists removes it and leaves n
   addShell(root, '2026-11-19T000000-record-1', { twin: 'absent' });
   const fake = fakeGh({ failCreate: true });
   const r = call(root, ['--root', root], { ghFake: fake.gh });
-  assert.equal(r.code, 1);
+  assert.equal(r.code, 2);
   assert.equal(fs.existsSync(worktreeDir(root)), false);
   assert.equal(git(root, 'ls-remote', 'origin', `refs/heads/${BRANCH}`), '');
 });
@@ -814,7 +823,7 @@ test('a failed create whose read-back also fails keeps the branch: the PR is unc
   addShell(root, '2026-11-19T300000-record-1', { twin: 'absent' });
   const fake = fakeGh({ failCreate: true, failOpenList: true });
   const r = call(root, ['--root', root], { ghFake: fake.gh });
-  assert.equal(r.code, 1);
+  assert.equal(r.code, 2);
   assert.notEqual(git(root, 'ls-remote', 'origin', `refs/heads/${BRANCH}`), '');
   assert.ok(r.envelope.notes.some((n) => /unconfirmed/.test(n)));
 });
@@ -839,7 +848,7 @@ test('a push-then-create recovery titles the PR by the archived headers on the b
   const { root } = makeFixture();
   addShell(root, '2026-11-19T500000-record-1', { twin: 'absent' });
   const fake = fakeGh({ failCreate: true });
-  assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 1);
+  assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 2);
   // The crash left the branch on the remote with no PR; run again with nothing new to archive.
   git(root, 'push', '-q', 'origin', `refs/heads/${BRANCH}:refs/heads/${BRANCH}`);
   const again = fakeGh();
@@ -887,7 +896,7 @@ test('a create failure on a branch the call did not create leaves the remote bra
   addShell(root, '2026-11-19T100001-record-2', { twin: 'absent' });
   const broken = fakeGh({ failCreate: true }); // the read-back confirms no PR, so only createdRemote protects the branch
   const r = call(root, ['--root', root], { ghFake: broken.gh });
-  assert.equal(r.code, 1);
+  assert.equal(r.code, 2);
   assert.notEqual(git(root, 'ls-remote', 'origin', `refs/heads/${BRANCH}`), '');
 });
 

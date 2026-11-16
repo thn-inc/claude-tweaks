@@ -485,7 +485,7 @@ function archiveInWorktree(root, shells, integration, deps, envelope, opts, prog
       else if (printed) pr = { number: Number(printed[2]), url: printed[1] };
       if (!pr) {
         const confirmedNone = created.failure && Array.isArray(rows) && rows.length === 0;
-        deps.stderr(`archive-tracked-shells: no pull request for ${BRANCH}: ${firstLine(created.failure ? created.stderr : back.stderr) || 'the open-PR read-back was empty'}\n`);
+        const noPrMessage = `no pull request for ${BRANCH}: ${firstLine(created.failure ? created.stderr : back.stderr) || 'the open-PR read-back was empty'}`;
         // The branch goes only when this run pushed it and the create failed with no open PR to show for
         // it: after a successful or unconfirmed create the PR may exist, and deleting its head closes it.
         if (createdRemote && confirmedNone) {
@@ -494,7 +494,9 @@ function archiveInWorktree(root, shells, integration, deps, envelope, opts, prog
         } else if (createdRemote) {
           envelope.notes.push(`kept the remote branch ${BRANCH}: whether its PR exists is unconfirmed`);
         }
-        return { code: 1, branch: BRANCH };
+        // A gh failure is an operational failure (exit 2, the header's contract), never exit 1, which
+        // means a shell was left behind; the envelope still prints, with the branch and this error.
+        return refuse(noPrMessage, BRANCH);
       }
     }
     if (pr) {
