@@ -8,7 +8,7 @@ const os = require('os');
 const path = require('path');
 const { Readable } = require('stream');
 const { runCli } = require('../../helpers/run-cli');
-const { derivePhaseTiming, deriveTiming, collectDispatches, hasTokenTotals, writeTimingFile } = require('../../../plugin/bin/lib/timing/run-timing');
+const { derivePhaseTiming, deriveTiming, collectDispatches, hasTokenTotals, writeTimingFile, runWindow } = require('../../../plugin/bin/lib/timing/run-timing');
 const { readUsage, readDispatches } =require('../../../plugin/bin/lib/timing/transcript');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'phase-timing.js');
@@ -291,54 +291,72 @@ test('deriveTiming uses a given base instead of reading the run directory again'
   }
 });
 
-// A run dir with events at 10:00 and 10:10 and a main transcript holding a row
-// before, inside and after that window (each with its own usage).
-function windowFixture() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-run-timing-'));
+// A run created at 09:55 (its run id, UTC), with events at 10:00 and 10:10 and
+// closed at 10:30 (run-state updatedAt), and a main transcript holding one row
+// per region: before creation (another run's), pre-flight, in the event span,
+// after the last event but before the close, and after the close.
+function lifetimeFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-run-timing-'));
+  const dir = path.join(root, '2020-01-06T095500-record-1');
+  fs.mkdirSync(dir);
   fs.writeFileSync(path.join(dir, 'events.jsonl'), [
-    { skill: 'claude-tweaks:build', ts: '2026-11-16T10:00:00.000Z', type: 'skill_invoked' },
-    { skill: 'claude-tweaks:test', ts: '2026-11-16T10:10:00.000Z', type: 'skill_invoked' },
+    { skill: 'claude-tweaks:build', ts: '2020-01-06T10:00:00.000Z', type: 'skill_invoked' },
+    { skill: 'claude-tweaks:wrap-up', ts: '2020-01-06T10:10:00.000Z', type: 'skill_invoked' },
     // worktree-reaped fires hours later and never stretches the window.
-    { ts: '2026-11-16T15:00:00.000Z', type: 'worktree-reaped' },
+    { ts: '2020-01-06T15:00:00.000Z', type: 'worktree-reaped' },
   ].map((e) => JSON.stringify(e)).join('\n') + '\n');
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ status: 'clean', worktree: null, updatedAt: '2020-01-06T10:30:00.000Z' }));
   const line = (id, ts, n) => JSON.stringify({ timestamp: ts, message: { role: 'assistant', id, model: 'claude-test', content: [], usage: { input_tokens: n, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } });
-  const transcript = path.join(dir, 'main.jsonl');
+  const transcript = path.join(root, 'main.jsonl');
   fs.writeFileSync(transcript, [
-    line('m0', '2026-11-16T09:59:00.000Z', 1000),
-    line('m1', '2026-11-16T10:05:00.000Z', 7),
-    line('m2', '2026-11-16T10:10:00.000Z', 3),
-    line('m3', '2026-11-16T12:00:00.000Z', 50000),
+    line('m0', '2020-01-06T09:50:00.000Z', 1000), // before creation: another run's
+    line('m1', '2020-01-06T09:57:00.000Z', 1), // pre-flight, before the first event
+    line('m2', '2020-01-06T10:05:00.000Z', 2),
+    line('m3', '2020-01-06T10:20:00.000Z', 4), // after the last event, before the close
+    line('m4', '2020-01-06T12:00:00.000Z', 50000), // after the close
   ].join('\n') + '\n');
-  return { dir, transcript };
+  return { root, dir, transcript };
 }
 
-test('deriveTiming clipToEventWindow: only main-transcript rows inside the run\'s event window count; the default is unclipped', async () => {
-  const { dir, transcript } = windowFixture();
+test('deriveTiming clipToRunWindow: rows from run creation through close count — pre-flight and after the last event included; the default is unclipped', async () => {
+  const { root, dir, transcript } = lifetimeFixture();
   try {
-    const clipped = await deriveTiming(dir, { transcriptPaths: [transcript], cwd: dir, clipToEventWindow: true });
+    const clipped = await deriveTiming(dir, { transcriptPaths: [transcript], cwd: dir, clipToRunWindow: true });
     assert.equal(clipped.ok, true);
-    assert.equal(clipped.timing.totals.tokens.input, 10);
-    assert.equal(clipped.timing.transcripts[0].rows, 2);
+    assert.equal(clipped.timing.totals.tokens.input, 7);
+    assert.equal(clipped.timing.transcripts[0].rows, 3);
     const whole = await deriveTiming(dir, { transcriptPaths: [transcript], cwd: dir });
-    assert.equal(whole.timing.totals.tokens.input, 51010);
-    assert.equal(whole.timing.transcripts[0].rows, 4);
+    assert.equal(whole.timing.totals.tokens.input, 51007);
+    assert.equal(whole.timing.transcripts[0].rows, 5);
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('deriveTiming clipToEventWindow: no row in the window → zero rows and a note naming the window; no event ts → no clipping', async () => {
-  const { dir, transcript } = windowFixture();
+test('runWindow: run id or an earlier createdAt starts it, updatedAt ends it; without them the event span; nothing bounding it → null', () => {
+  const { root, dir } = lifetimeFixture();
   try {
-    fs.writeFileSync(path.join(dir, 'events.jsonl'), JSON.stringify({ skill: 'claude-tweaks:build', ts: '2026-11-16T13:00:00.000Z', type: 'skill_invoked' }) + '\n');
-    const none = await deriveTiming(dir, { transcriptPaths: [transcript], cwd: dir, clipToEventWindow: true });
+    const ev = [{ ts: '2020-01-06T10:00:00.000Z' }, { ts: '2020-01-06T10:10:00.000Z' }];
+    const at = (iso) => Date.parse(iso);
+    assert.deepStrictEqual(runWindow(dir, ev, { updatedAt: '2020-01-06T10:30:00.000Z' }), { start: at('2020-01-06T09:55:00Z'), end: at('2020-01-06T10:30:00.000Z') });
+    assert.deepStrictEqual(runWindow(dir, ev, { createdAt: '2020-01-06T09:40:00.000Z', updatedAt: '2020-01-06T10:30:00.000Z' }).start, at('2020-01-06T09:40:00.000Z'));
+    const plain = path.join(root, 'not-a-run-id');
+    assert.deepStrictEqual(runWindow(plain, ev, {}), { start: at('2020-01-06T10:00:00.000Z'), end: at('2020-01-06T10:10:00.000Z') });
+    assert.equal(runWindow(plain, [{ type: 'x' }], null), null);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('deriveTiming clipToRunWindow: no row in the lifetime → zero rows and a note naming it', async () => {
+  const { root, dir, transcript } = lifetimeFixture();
+  try {
+    fs.writeFileSync(transcript, JSON.stringify({ timestamp: '2026-11-16T09:00:00.000Z', message: { role: 'assistant', id: 'x', model: 'claude-test', content: [], usage: { input_tokens: 9, output_tokens: 0 } } }) + '\n');
+    const none = await deriveTiming(dir, { transcriptPaths: [transcript], cwd: dir, clipToRunWindow: true });
     assert.equal(none.timing.totals.tokens.input, 0);
     assert.equal(none.timing.transcripts[0].rows, 0);
-    assert.ok(none.notes.some((n) => /no usage rows in the run's event window/.test(n)), JSON.stringify(none.notes));
-    fs.writeFileSync(path.join(dir, 'events.jsonl'), JSON.stringify({ skill: 'claude-tweaks:build', type: 'skill_invoked' }) + '\n');
-    const unstamped = await deriveTiming(dir, { transcriptPaths: [transcript], cwd: dir, clipToEventWindow: true });
-    assert.equal(unstamped.timing.totals.tokens.input, 51010);
+    assert.ok(none.notes.some((n) => /no usage rows in the run's lifetime/.test(n)), JSON.stringify(none.notes));
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });

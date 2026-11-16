@@ -80,14 +80,38 @@ function eventWindow(events) {
     : null;
 }
 
+// runDir, events, runState -> the run's own lifetime { start, end } (epoch ms,
+// inclusive), or null when nothing bounds it. start: the earliest of the run id's
+// timestamp (UTC, run-integrity.js's runStartIso), run-state createdAt and the
+// first event ts; end: the later of run-state updatedAt — stamped by every
+// writeRunState, so after a close it is the close's own write, never the moment a
+// later background pass starts — and the last event ts. A run's events are sparse
+// (nothing is written after its wrap-up skill_invoked, and pre-flight turns come
+// before the first event), so the event span alone drops most of a run's calls.
+function runWindow(runDir, events, runState) {
+  const rs = runState && typeof runState === 'object' ? runState : {};
+  const ev = eventWindow(events);
+  const ms = (v) => (typeof v === 'string' ? Date.parse(v) : NaN);
+  // Lazy: only the at-close writer clips, so phase-timing.js never loads run-integrity.js.
+  const idIso = require('../hooks/run-integrity').runStartIso(runDir);
+  const starts = [ms(idIso), ms(rs.createdAt), ev ? ev.start : NaN].filter(Number.isFinite);
+  const ends = [ms(rs.updatedAt), ev ? ev.end : NaN].filter(Number.isFinite);
+  if (!starts.length && !ends.length) return null;
+  return {
+    start: starts.length ? starts.reduce((a, b) => Math.min(a, b)) : -Infinity,
+    end: ends.length ? ends.reduce((a, b) => Math.max(a, b)) : Infinity,
+  };
+}
+
 // paths: the resolved transcript paths; events: parsed events.jsonl rows. The
-// window is eventWindow's (no event with a ts -> the whole session). Subagents dirs are deduped by fs.realpathSync (path.resolve when
+// window is eventWindow's (no event with a ts -> the whole session), or the given
+// { window } (deriveTiming's run window when it clips). Subagents dirs are deduped by fs.realpathSync (path.resolve when
 // the dir does not resolve) so a transcript passed twice, or reached through a
 // symlinked alias, is not double-counted. -> the timing.json `dispatches` value.
 // { deadlineAt, signal } (both optional): past the deadline, or once the signal
 // aborts, reading stops and the result is null (not a dispatches value).
-async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal = null } = {}) {
-  const window = eventWindow(events);
+async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal = null, window: given } = {}) {
+  const window = given === undefined ? eventWindow(events) : given;
   // A symlinked subagents/ leaf keeps its own path, so readDispatches sees the
   // link and refuses it instead of reading wherever it points.
   const canonical = (p) => {
@@ -140,12 +164,13 @@ function derivePhaseTiming(runDir) {
 // (no token keys at all) and deadlineHit true. `base` (a derivePhaseTiming
 // result the caller already holds, e.g. to resolve transcripts from its
 // runState) is used instead of reading the run directory a second time.
-// clipToEventWindow (default false; only the at-close writer passes true): the
-// main transcripts' usage rows are kept only inside eventWindow(events) before
-// they are joined, so two runs sharing one session transcript never count each
-// other's calls (#5555); a row with no parseable ts is dropped, and no event
-// with a ts means no clipping. phase-timing.js never passes it.
-async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, deadlineAt = null, readUsageImpl, wantTokens, base: given, clipToEventWindow = false } = {}) {
+// clipToRunWindow (default false; only the at-close writer passes true): the
+// transcripts' usage rows, and the dispatches, are kept only inside
+// runWindow(runDir, events, runState) — the run's creation through its close —
+// so a run counts all of its own calls and none of another run sharing its
+// session transcript (#5555); a row with no parseable ts is dropped, and nothing
+// bounding the run means no clipping. phase-timing.js never passes it.
+async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, deadlineAt = null, readUsageImpl, wantTokens, base: given, clipToRunWindow = false } = {}) {
   const base = given || derivePhaseTiming(runDir);
   if (!base.ok) return base;
   const { timing, out, events, runState } = base;
@@ -159,7 +184,7 @@ async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, dea
   const at = cwd === undefined ? process.cwd() : cwd;
   const hit = () => ({ ok: true, timing, out, tokens: null, guard: null, notes: outNotes, deadlineHit: true });
   const transcripts = [];
-  const clip = clipToEventWindow ? eventWindow(events) : null;
+  const clip = clipToRunWindow ? runWindow(runDir, events, runState) : null;
   const inClip = (row) => { const ms = Date.parse(row && row.ts); return ms >= clip.start && ms <= clip.end; };
   let rows = [];
   for (const p of transcriptPaths) {
@@ -175,7 +200,7 @@ async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, dea
     if (r.hit) return hit();
     const kept = clip ? r.value.filter(inClip) : r.value;
     if (kept.length === 0) {
-      const note = r.value.length ? `transcript had no usage rows in the run's event window (${p})` : `transcript had no usage rows (${p})`;
+      const note = r.value.length ? `transcript had no usage rows in the run's lifetime (${p})` : `transcript had no usage rows (${p})`;
       transcripts.push({ path: p, rows: 0, note });
       outNotes.push(`tokens: ${note}`);
     } else {
@@ -186,7 +211,7 @@ async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, dea
   const tokens = joinTokens(out.phases, rows);
   tokens.totals.rows = rows.length;
   const guard = countGuardEvents(events);
-  const dispatches = await collectDispatches(transcriptPaths, events, at, { deadlineAt });
+  const dispatches = await collectDispatches(transcriptPaths, events, at, clip ? { deadlineAt, window: clip } : { deadlineAt });
   if (dispatches === null) return hit();
 
   timing.phases = tokens.phases;
@@ -233,4 +258,4 @@ function writeTimingFile(runDir, timing) {
   return timingPath;
 }
 
-module.exports = { readEvents, derivePhaseTiming, deriveTiming, collectDispatches, hasTokenTotals, writeTimingFile };
+module.exports = { readEvents, runWindow, derivePhaseTiming, deriveTiming, collectDispatches, hasTokenTotals, writeTimingFile };

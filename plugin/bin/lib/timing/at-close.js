@@ -9,8 +9,8 @@
 // dispatch session (one session id, two worktrees) never read each other's.
 // A timing.json that already has token totals is kept byte-identical; a
 // spec-N child of a multi-record run is never written (the parent's file
-// covers the whole run). Token rows are clipped to the run's event window, so
-// two runs of one session transcript never share them. The read-check-write runs
+// covers the whole run). Token rows are clipped to the run's own lifetime
+// (creation through close), so two runs of one session transcript never share them. The read-check-write runs
 // under the run dir's .timing.lock; a run dir a concurrent archive moved away is
 // followed to its archive twin, never recreated. Nothing here throws: a failure
 // is one SKIP line in the run's decisions.md (_shared/auto-decision-log.md's
@@ -94,43 +94,47 @@ const LOCK_NAME = '.timing.lock';
 // (a token pass, a second closer) never has its file overwritten between the
 // check and the rename. The lock is waited for only until deadlineAt (never past
 // the time bound); a lock not acquired in time is a SKIP. The lock never creates
-// dir. -> a result, or { vanished, token } when dir is gone (token: the lock this
-// call held when dir went, which a concurrent archive may have carried along).
-function writeIn(dir, timing, skip, deadlineAt) {
-  if (!isDir(dir)) return { vanished: true, token: null };
+// dir. needRunState (the run had a run-state.json when derived): a dir whose
+// run-state.json is gone is being archived — its entries are moving to the twin,
+// and a file written now would strand in it after the straggler sweep — so it
+// counts as vanished. -> a result, or { vanished: true } when dir is gone.
+function writeIn(dir, timing, skip, deadlineAt, needRunState) {
+  if (!isDir(dir)) return { vanished: true };
   const withTokens = hasTokenTotals(timing);
   const waitMs = Math.max(0, Math.floor(Math.min(TIMING_BOUND_MS, deadlineAt - Date.now())));
   const held = acquireLock(path.join(dir, LOCK_NAME), { waitMs, env: {}, createParent: false });
   if (!held) {
-    if (!isDir(dir)) return { vanished: true, token: null };
+    if (!isDir(dir)) return { vanished: true };
     return { status: 'failed', tokens: false, skip: `condition: timing.json lock not acquired within ${waitMs} ms → fallback: ${NOTHING_WRITTEN}` };
   }
   try {
+    if (needRunState && lstatType(path.join(dir, 'run-state.json')).type === 'missing') return { vanished: true };
     // A timing with no token totals never replaces a file that gained them while
     // this call derived (a concurrent token pass).
     if (!withTokens && hasTokenTotals(readExisting(dir))) return { status: 'kept', tokens: true, skip: null };
     try {
       writeTimingFile(dir, timing);
     } catch (err) {
-      if (!isDir(dir)) return { vanished: true, token: held.token };
+      if (!isDir(dir)) return { vanished: true };
       return { status: 'failed', tokens: false, skip: `condition: timing.json write failed (${errText(err)}) → fallback: ${NOTHING_WRITTEN}` };
     }
     return { status: 'written', tokens: withTokens, skip };
   } finally {
     releaseLock(held);
+    // An archive's per-entry move can carry this lock dir to the twin, where the
+    // release above misses it: compare-and-delete it there too (the token is ours alone).
+    releaseLock({ lockPath: path.join(archiveTwin(dir), LOCK_NAME), token: held.token });
   }
 }
 
 // timing, pending skip, deadline -> { dir, result }: dir is where the result's SKIP
 // belongs. A write failure replaces the pending skip. When the run dir vanished
 // (a concurrent archive moved it), the write is retried once at its archive twin.
-function write(runDir, timing, skip, deadlineAt) {
-  const r = writeIn(runDir, timing, skip, deadlineAt);
+function write(runDir, timing, skip, deadlineAt, needRunState) {
+  const r = writeIn(runDir, timing, skip, deadlineAt, needRunState);
   if (!r.vanished) return { dir: runDir, result: r };
   const twin = archiveTwin(runDir);
-  // Our own lock dir, if the archive moved it along, is released at its new path.
-  if (r.token) releaseLock({ lockPath: path.join(twin, LOCK_NAME), token: r.token });
-  const t = writeIn(twin, { ...timing, runDir: twin }, skip, deadlineAt);
+  const t = writeIn(twin, { ...timing, runDir: twin }, skip, deadlineAt, needRunState);
   if (!t.vanished) return { dir: twin, result: t };
   return { dir: twin, result: { status: 'failed', tokens: false, skip: `condition: run dir and its archive twin are gone → fallback: ${NOTHING_WRITTEN}` } };
 }
@@ -147,7 +151,7 @@ function writePhaseTimingSync(runDir) {
   try {
     const p = prepare(runDir);
     if (p.done) result = p.done;
-    else ({ dir, result } = write(runDir, p.base.timing, null, Date.now() + module.exports.TIMING_BOUND_MS));
+    else ({ dir, result } = write(runDir, p.base.timing, null, Date.now() + module.exports.TIMING_BOUND_MS, p.base.runState !== null));
   } catch (err) {
     result = { status: 'failed', tokens: false, skip: `condition: timing at close failed (${errText(err)}) → fallback: ${NOTHING_WRITTEN}` };
   }
@@ -172,7 +176,7 @@ async function writeTimingAtClose(runDir, { tokens = true, env = {}, homeDir = o
       const bound = boundMs ?? module.exports.TIMING_BOUND_MS;
       const deadlineAt = Date.now() + bound;
       const d = await deriveTiming(runDir, {
-        transcriptPaths: own.paths, wantTokens: own.paths.length > 0, cwd: runDir, deadlineAt, base: p.base, clipToEventWindow: true,
+        transcriptPaths: own.paths, wantTokens: own.paths.length > 0, cwd: runDir, deadlineAt, base: p.base, clipToRunWindow: true,
       });
       if (!d.ok) {
         result = { status: 'failed', tokens: false, skip: `condition: timing could not be derived (${d.error}) → fallback: ${NOTHING_WRITTEN}` };
@@ -181,7 +185,7 @@ async function writeTimingAtClose(runDir, { tokens = true, env = {}, homeDir = o
         if (own.reason) skip = `condition: ${own.reason} → fallback: ${PHASE_ONLY}`;
         else if (d.deadlineHit) skip = `condition: transcript read passed the ${bound} ms time bound → fallback: ${PHASE_ONLY}`;
         else if (!hasTokenTotals(d.timing)) skip = `condition: own transcript yielded no token totals (${d.notes.length ? d.notes.join('; ') : 'no usage tokens'}) → fallback: ${PHASE_ONLY}`;
-        ({ dir, result } = write(runDir, d.timing, skip, deadlineAt));
+        ({ dir, result } = write(runDir, d.timing, skip, deadlineAt, p.base.runState !== null));
       }
     }
   } catch (err) {

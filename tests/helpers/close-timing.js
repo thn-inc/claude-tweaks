@@ -21,8 +21,8 @@ function writeEvents(runDir) {
 }
 
 // Two assistant lines with usage under {cfg}/projects/{slug(worktree)}/{sid}.jsonl, stamped
-// inside writeEvents' 10:00..10:10 window by default (the at-close writer clips to the run's
-// event window); `stamps` places them inside another fixture's window.
+// inside writeEvents' 10:00..10:10 span by default (the at-close writer clips to the run's
+// lifetime, which always covers its events); `stamps` places them inside another fixture's.
 function writeTranscript(cfg, worktree, [a, b] = [A, B], sid = SID, [s1, s2] = ['2026-11-16T10:01:00.000Z', '2026-11-16T10:09:00.000Z']) {
   const dir = path.join(cfg, 'projects', transcript.slugForCwd(worktree));
   fs.mkdirSync(dir, { recursive: true });

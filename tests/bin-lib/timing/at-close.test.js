@@ -11,6 +11,8 @@ const transcript = require('../../../plugin/bin/lib/timing/transcript');
 const ctxLib = require('../../../plugin/bin/lib/hooks/context');
 const { closeRunState } = require('../../../plugin/bin/lib/hooks/close-run-state');
 const atClose = require('../../../plugin/bin/lib/timing/at-close');
+const { runCli } = require('../../helpers/run-cli');
+const TIMING_CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'timing-at-close.js');
 
 const { TIMING_BOUND_MS, ownTranscripts, writeTimingAtClose, writePhaseTimingSync, logTimingSkip, spawnTokenPass } = atClose;
 const SID = 'sess-5555';
@@ -382,34 +384,70 @@ test('a token-totals timing.json written mid-call by a concurrent pass is kept b
   }
 });
 
-test('item 3: two runs over one session transcript with disjoint event windows get disjoint totals', async () => {
+// Two runs of one session and worktree, closed one after the other: run-1 created
+// 09:55, events 10:00..10:10, closed 10:30; run-2 created 10:55, events 11:00..11:10,
+// closed 11:30. updatedAt is set as the close's own writeRunState stamps it.
+function sequentialRuns(root) {
+  const wtA = path.join(root, 'wt-a');
+  const mk = (id, [e1, e2], closedAt) => {
+    const runDir = closedRun(root, id, wtA);
+    fs.writeFileSync(path.join(runDir, 'events.jsonl'), [
+      { skill: 'claude-tweaks:build', ts: e1, type: 'skill_invoked' },
+      { skill: 'claude-tweaks:wrap-up', ts: e2, type: 'skill_invoked' },
+    ].map((e) => JSON.stringify(e)).join('\n') + '\n');
+    const rs = JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'));
+    fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ ...rs, updatedAt: closedAt }, null, 2) + '\n');
+    return runDir;
+  };
+  const first = mk('2020-01-06T095500-record-1', ['2020-01-06T10:00:00.000Z', '2020-01-06T10:10:00.000Z'], '2020-01-06T10:30:00.000Z');
+  const second = mk('2020-01-06T105500-record-2', ['2020-01-06T11:00:00.000Z', '2020-01-06T11:10:00.000Z'], '2020-01-06T11:30:00.000Z');
+  return { wtA, first, second };
+}
+
+// One usage row per [stamp, usage] under {cfg}/projects/{slug(wt)}/{SID}.jsonl.
+function writeRows(cfg, wt, rows) {
+  const dir = path.join(cfg, 'projects', transcript.slugForCwd(wt));
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${SID}.jsonl`), rows.map(([ts, u], i) => JSON.stringify({
+    timestamp: ts,
+    message: { role: 'assistant', id: `m${i}`, model: 'claude-test', content: [], usage: { input_tokens: u[0], output_tokens: u[1], cache_read_input_tokens: u[2], cache_creation_input_tokens: u[3] } },
+  })).join('\n') + '\n');
+}
+
+test('item 3: each run counts its own calls from creation through close — after its last event included, another run\'s excluded — and two sequential runs get disjoint totals', async () => {
   const root = tmpRoot();
   try {
     const cfg = path.join(root, 'cfg');
-    const wtA = path.join(root, 'wt-a');
-    const first = closedRun(root, 'run-1', wtA);
-    const second = closedRun(root, 'run-2', wtA);
-    // run-2 ran an hour later, in the same session and worktree.
-    fs.writeFileSync(path.join(second, 'events.jsonl'), [
-      { skill: 'claude-tweaks:build', ts: '2026-11-16T11:00:00.000Z', type: 'skill_invoked' },
-      { skill: 'claude-tweaks:test', ts: '2026-11-16T11:10:00.000Z', type: 'skill_invoked' },
-    ].map((e) => JSON.stringify(e)).join('\n') + '\n');
-    const dir = path.join(cfg, 'projects', transcript.slugForCwd(wtA));
-    fs.mkdirSync(dir, { recursive: true });
-    const line = (id, ts, u) => JSON.stringify({
-      timestamp: ts,
-      message: { role: 'assistant', id, model: 'claude-test', content: [], usage: { input_tokens: u[0], output_tokens: u[1], cache_read_input_tokens: u[2], cache_creation_input_tokens: u[3] } },
-    });
-    fs.writeFileSync(path.join(dir, `${SID}.jsonl`), [
-      line('m1', '2026-11-16T10:05:00.000Z', A),
-      line('m2', '2026-11-16T11:05:00.000Z', B),
-    ].join('\n') + '\n');
+    const { wtA, first, second } = sequentialRuns(root);
+    const C = [100, 0, 0, 0];
+    const D = [200, 0, 0, 0];
+    writeRows(cfg, wtA, [
+      ['2020-01-06T09:50:00.000Z', OTHER], // before run-1 was created: an earlier run's call
+      ['2020-01-06T10:05:00.000Z', A],
+      ['2020-01-06T10:20:00.000Z', C], // after run-1's last event, before its close
+      ['2020-01-06T11:05:00.000Z', B],
+      ['2020-01-06T11:20:00.000Z', D], // after run-2's last event, before its close
+    ]);
     const env = { CLAUDE_CONFIG_DIR: cfg };
     assert.equal((await writeTimingAtClose(first, { env })).status, 'written');
     assert.equal((await writeTimingAtClose(second, { env })).status, 'written');
-    const zero = [0, 0, 0, 0];
-    assert.deepStrictEqual(pickTokens(readTiming(first).totals.tokens), sum(A, zero));
-    assert.deepStrictEqual(pickTokens(readTiming(second).totals.tokens), sum(B, zero));
+    assert.deepStrictEqual(pickTokens(readTiming(first).totals.tokens), sum(A, C));
+    assert.deepStrictEqual(pickTokens(readTiming(second).totals.tokens), sum(B, D));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('item 3: the window ends at run-state updatedAt (the close\'s own write), not at the moment the pass runs', async () => {
+  const root = tmpRoot();
+  try {
+    const cfg = path.join(root, 'cfg');
+    const { wtA, second } = sequentialRuns(root);
+    // A call after run-2's close (11:30) but long before this pass runs (the real now).
+    writeRows(cfg, wtA, [['2020-01-06T11:05:00.000Z', A], ['2020-01-06T11:45:00.000Z', OTHER]]);
+    const r = await runCli(TIMING_CLI, ['--run', second], { env: { CLAUDE_CONFIG_DIR: cfg } });
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepStrictEqual(pickTokens(readTiming(second).totals.tokens), sum(A, [0, 0, 0, 0]));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -484,6 +522,58 @@ test('item 2: a pending SKIP is logged in the archive twin the timing landed in'
     assert.match(skips[0], /200 ms time bound/);
   } finally {
     transcript.readUsage = realRead;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('archive mid-move: run-state.json already moved to the twin, the run dir still there → timing.json goes to the twin, nothing strands in the run dir', async () => {
+  const root = tmpRoot();
+  const realRead = transcript.readUsage;
+  try {
+    const cfg = path.join(root, 'cfg');
+    const wtA = path.join(root, 'wt-a');
+    const { runDir, twin } = pipelinesRun(root, 'run', wtA);
+    writeTranscript(cfg, wtA, [A, B]);
+    transcript.readUsage = async (p, o) => {
+      // archiveRunDir's per-entry loop: everything moved, the dir itself not yet removed.
+      fs.mkdirSync(twin, { recursive: true });
+      for (const name of fs.readdirSync(runDir)) fs.renameSync(path.join(runDir, name), path.join(twin, name));
+      return realRead(p, o);
+    };
+    const r = await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } });
+    assert.deepStrictEqual(r, { status: 'written', tokens: true, skip: null });
+    assert.deepStrictEqual(fs.readdirSync(runDir), [], 'nothing written into the emptied run dir');
+    assert.deepStrictEqual(pickTokens(readTiming(twin).totals.tokens), sum(A, B));
+  } finally {
+    transcript.readUsage = realRead;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a timing lock the archive carried to the twin mid-write is released there, not left as a dead lock dir', async (t) => {
+  const root = tmpRoot();
+  try {
+    const cfg = path.join(root, 'cfg');
+    const wtA = path.join(root, 'wt-a');
+    const { runDir, twin } = pipelinesRun(root, 'run', wtA);
+    writeTranscript(cfg, wtA, [A, B]);
+    const realRename = fs.renameSync;
+    let moved = false;
+    t.mock.method(fs, 'renameSync', (src, dest) => {
+      if (!moved && dest === path.join(runDir, 'timing.json')) {
+        // The archive's per-entry move takes the held lock dir along, just before our rename.
+        moved = true;
+        fs.mkdirSync(twin, { recursive: true });
+        realRename(path.join(runDir, '.timing.lock'), path.join(twin, '.timing.lock'));
+      }
+      return realRename(src, dest);
+    });
+    const r = await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } });
+    assert.equal(moved, true);
+    assert.equal(r.status, 'written');
+    assert.equal(fs.existsSync(path.join(twin, '.timing.lock')), false, 'the carried lock dir is released at the twin');
+    assert.equal(fs.existsSync(path.join(runDir, '.timing.lock')), false);
+  } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
