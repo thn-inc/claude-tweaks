@@ -28,17 +28,23 @@ function defaultMainCheckoutRoot(p) {
   return require('./hooks/worktree-detect').mainCheckoutRoot(p);
 }
 
-function isLinkedWorktreeRoot(root, deps = {}) {
-  const { fsImpl, mainCheckoutRoot = defaultMainCheckoutRoot } = deps;
+// The main checkout root when `root` is a linked worktree (its .git is a file
+// and mainCheckoutRoot resolves), else null. Never throws.
+function linkedMainRoot(root, deps) {
   try {
-    if (typeof root !== 'string') return false;
+    if (typeof root !== 'string') return null;
+    const { fsImpl, mainCheckoutRoot = defaultMainCheckoutRoot } = deps;
     const opts = fsImpl ? { fsImpl } : undefined;
-    if (lstatType(path.join(root, '.git'), opts).type !== 'file') return false;
-    const main =mainCheckoutRoot(root);
-    return typeof main === 'string' && main !== '';
+    if (lstatType(path.join(root, '.git'), opts).type !== 'file') return null;
+    const main = mainCheckoutRoot(root);
+    return typeof main === 'string' && main !== '' ? main : null;
   } catch (_err) {
-    return false;
+    return null;
   }
+}
+
+function isLinkedWorktreeRoot(root, deps = {}) {
+  return linkedMainRoot(root, deps) !== null;
 }
 
 function locatePolicyFile(root, deps = {}) {
@@ -46,12 +52,10 @@ function locatePolicyFile(root, deps = {}) {
   const own = path.join(root, POLICY_REL_PATH);
   const checkout = { path: own, source: 'checkout' };
   try {
-    const { fsImpl, mainCheckoutRoot = defaultMainCheckoutRoot } = deps;
-    const opts = fsImpl ? { fsImpl } : undefined;
+    const opts = deps.fsImpl ? { fsImpl: deps.fsImpl } : undefined;
     if (lstatType(own, opts).type !== 'missing') return checkout;
-    if (!isLinkedWorktreeRoot(root, { fsImpl, mainCheckoutRoot })) return checkout;
-    const main = mainCheckoutRoot(root);
-    if (typeof main !== 'string' || main === '') return checkout;
+    const main = linkedMainRoot(root, deps);
+    if (main === null) return checkout;
     const mainPolicy = path.join(main, POLICY_REL_PATH);
     if (lstatType(mainPolicy, opts).type === 'missing') return checkout;
     return { path: mainPolicy, source: 'main-checkout' };

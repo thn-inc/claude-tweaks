@@ -40,20 +40,20 @@ function stub(result) {
 
 const gitFile = path.join(WT, '.git');
 
-test('AC5.1: worktree file present — returns the worktree\'s own path, source checkout, mainCheckoutRoot never called', () => {
+test('locator seam: worktree file present — returns the worktree\'s own path, source checkout, mainCheckoutRoot never called', () => {
   const mainCheckoutRoot = stub(MAIN);
   const fsImpl = fakeFs(new Map([[gitFile, 'file'], [own, 'file'], [mainPolicy, 'file']]));
   assert.deepStrictEqual(locatePolicyFile(WT, { fsImpl, mainCheckoutRoot }), { path: own, source: 'checkout' });
   assert.strictEqual(mainCheckoutRoot.calls.length, 0);
 });
 
-test('AC5.1: worktree file absent, main present — returns the main checkout\'s path, source main-checkout', () => {
+test('locator seam: worktree file absent, main present — returns the main checkout\'s path, source main-checkout', () => {
   const mainCheckoutRoot = stub(MAIN);
   const fsImpl = fakeFs(new Map([[gitFile, 'file'], [mainPolicy, 'file']]));
   assert.deepStrictEqual(locatePolicyFile(WT, { fsImpl, mainCheckoutRoot }), { path: mainPolicy, source: 'main-checkout' });
 });
 
-test('AC5.1: both absent — returns the worktree\'s own path, source checkout', () => {
+test('locator seam: both absent — returns the worktree\'s own path, source checkout', () => {
   const mainCheckoutRoot = stub(MAIN);
   const fsImpl = fakeFs(new Map([[gitFile, 'file']]));
   assert.deepStrictEqual(locatePolicyFile(WT, { fsImpl, mainCheckoutRoot }), { path: own, source: 'checkout' });
@@ -101,9 +101,15 @@ test('isLinkedWorktreeRoot: true for a .git file with a main root; false for a .
   assert.strictEqual(isLinkedWorktreeRoot(WT, { fsImpl: fakeFs(new Map([[gitFile, 'file']])), mainCheckoutRoot: stub(null) }), false);
 });
 
+test('isLinkedWorktreeRoot: a throwing mainCheckoutRoot seam — false, no throw', () => {
+  const fsImpl = fakeFs(new Map([[gitFile, 'file']]));
+  assert.strictEqual(isLinkedWorktreeRoot(WT, { fsImpl, mainCheckoutRoot: stub(new Error('boom')) }), false);
+});
+
 // Real-fs: a hand-built main repo (.git dir with worktrees/wt) and a worktree whose .git file points at it.
-function realLayout(gitdirFor) {
+function realLayout(t, gitdirFor) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const main = path.join(base, 'main');
   const wt = path.join(base, 'wt');
   fs.mkdirSync(path.join(main, '.git', 'worktrees', 'wt'), { recursive: true });
@@ -114,16 +120,16 @@ function realLayout(gitdirFor) {
   return { main, wt };
 }
 
-test('real fs: absolute gitdir — worktree without policy.yml reads main\'s', () => {
-  const { main, wt } = realLayout((m) => path.join(m, '.git', 'worktrees', 'wt'));
+test('real fs: absolute gitdir — worktree without policy.yml reads main\'s', (t) => {
+  const { main, wt } = realLayout(t, (m) => path.join(m, '.git', 'worktrees', 'wt'));
   assert.deepStrictEqual(locatePolicyFile(wt), {
     path: path.join(fs.realpathSync(main), POLICY_REL_PATH),
     source: 'main-checkout',
   });
 });
 
-test('real fs: relative gitdir (gitdir: ../main/.git/worktrees/wt) — still resolves main\'s', () => {
-  const { main, wt } = realLayout(() => '../main/.git/worktrees/wt');
+test('real fs: relative gitdir (gitdir: ../main/.git/worktrees/wt) — still resolves main\'s', (t) => {
+  const { main, wt } = realLayout(t, () => '../main/.git/worktrees/wt');
   assert.deepStrictEqual(locatePolicyFile(wt), {
     path: path.join(fs.realpathSync(main), POLICY_REL_PATH),
     source: 'main-checkout',
