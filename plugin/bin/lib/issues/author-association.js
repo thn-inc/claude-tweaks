@@ -117,11 +117,8 @@ function enrichRecords(records, { runner = defaultRunner, owner, repo } = {}) {
   if (!Array.isArray(records)) return { records, failedBatches: 0, skipped: 'not-array' };
   const numbers = records.filter(needsAssociation).map((r) => r.number);
   if (integerNumbers(numbers).length === 0) return { records, failedBatches: 0, skipped: null };
-  let target = { owner, repo };
-  if (!owner || !repo) {
-    target = resolveRepo(runner);
-    if (!target) return { records, failedBatches: 0, skipped: 'repo-unresolved' };
-  }
+  const target = owner && repo ? { owner, repo } : resolveRepo(runner);
+  if (!target) return { records, failedBatches: 0, skipped: 'repo-unresolved' };
   const { byNumber, failedBatches } = fetchAuthorAssociations({ numbers, owner: target.owner, repo: target.repo, runner });
   return { records: attachAuthorAssociations(records, byNumber), failedBatches, skipped: null };
 }
