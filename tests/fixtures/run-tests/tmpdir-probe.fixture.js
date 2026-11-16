@@ -25,6 +25,6 @@ function gitConfigEnv() {
 test('records the TMPDIR, slot flag, slot lock and git config env run-tests.js gave this suite', () => {
   fs.writeFileSync(
     process.env.CT_PROBE_OUT,
-    JSON.stringify({ tmpdir: os.tmpdir(), repoInfoStore: process.env.CT_HOOKS_REPO_INFO_STORE, held: process.env.CT_TEST_SUITE_SLOT_HELD, lockPid: slotLockPid(), git: gitConfigEnv() }),
+    JSON.stringify({ tmpdir: os.tmpdir(), repoInfoStore: process.env.CT_HOOKS_REPO_INFO_STORE, held: process.env.CT_TEST_SUITE_SLOT_HELD, lockPid: slotLockPid(), git: gitConfigEnv(), execArgv: process.execArgv }),
   );
 });
