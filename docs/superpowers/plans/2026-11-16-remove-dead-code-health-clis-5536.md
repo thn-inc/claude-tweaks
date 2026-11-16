@@ -177,6 +177,8 @@ Stage only `tests/bin-lib/code-health/validate-finding.test.js`; subject `Pin va
 
 ### Task 4: Delete the frozen v1 payload and the v1 fingerprint branch
 
+**Review risk:** high (decision logic: every `fingerprint()` call now hashes the v2 basis, and that id is the identity dedup decides on)
+
 **Files:**
 - Modify: `plugin/bin/lib/code-health/issue-payload.js` (delete `toIssuePayload` and its export; relabel the `v2:` comment above `toIssuePayloadV2`)
 - Modify: `plugin/bin/lib/code-health/fingerprint.js` (delete the v1 branch, `normalizeSignature` and the `lens`, `signature`, `file` parameters; update the v1/v2 comments; drop `normalizeSignature` from exports)
@@ -192,7 +194,7 @@ Stage only `tests/bin-lib/code-health/validate-finding.test.js`; subject `Pin va
 
 - [ ] **Step 1: Capture the before-state for AC5.2 and AC6 (scratch, uncommitted)**
 
-With a scratch script in the scratchpad (not committed), print `JSON.stringify(toIssuePayloadV2(V2_FINDING, 'abc1234'), null, 2)` where `V2_FINDING` is the fixture object in `issue-payload.test.js` (copy it), to `{run dir}/evidence/payload-v2-before.json`, and the ids `fingerprint({ criterion, areaId, anchor })` returns for the three v2 fixtures in `fingerprint.test.js` (`simplification/src/api/src/api/user.js#getUser`, `dead-code/src/src/util.js:42#trimPath`, `resilience/src/src/http.js#fetch`) to `fingerprints-before.txt`.
+With a scratch script in the scratchpad (not committed), print `JSON.stringify(toIssuePayloadV2(V2_FINDING, 'abc1234'), null, 2)` where `V2_FINDING` is the fixture object in `issue-payload.test.js` (copy it), to `{run dir}/evidence/payload-v2-before.json`, and the ids `fingerprint({ criterion, areaId, anchor })` returns for **every** v2-form call in `fingerprint.test.js` (AC6.1 covers all of them, and the `v1 and v2 forms coexist` test that Step 2 deletes holds one): `simplification`/`src/api`/`src/api/user.js#getUser`, `dead-code`/`src`/`src/util.js:42#trimPath` and `:99#trimPath`, `naming-clarity`/`lib`/`lib/parser.js#parse`, `resilience`/`src`/`src/http.js#fetch`, the `security-logic` variant of that base, and `bad-practice`/`.`/`a.js#TODO x`. Print one `label<TAB>id` line each to `fingerprints-before.txt`; re-derive the list with `git grep -n "criterion:" tests/bin-lib/code-health/fingerprint.test.js` so none is missed.
 
 - [ ] **Step 2: Remove the v1 tests (callers first)**
 
@@ -353,7 +355,7 @@ Run: `npm test -- --full > /private/tmp/claude-501/-Users-thomasholknielsen-Code
 
 - [ ] **Step 4: Name the AC9 test for the PR**
 
-The PR must name the test (AC9.1): record `AC9.1: validateFindingV2 rejects a finding with a missing or blank criterion — the only guard in front of fingerprint() (#5536)` (file `tests/bin-lib/code-health/validate-finding.test.js`) in the build handoff so `_shared/pr-checklist-refresh.md`'s Spec summary refresh carries it into the PR body; and the `FP_RE_LEGACY` condition command with its count (`1`, closed #19) per Task 6.
+The PR must name the test (AC9.1): record `AC9.1: validateFindingV2 rejects a finding with a missing or blank criterion — the only guard in front of fingerprint() (#5536)` (file `tests/bin-lib/code-health/validate-finding.test.js`) and the `FP_RE_LEGACY` condition command with its count (`1`, closed #19) per Task 6 in the build handoff, **and write both into the PR body itself**: `_shared/pr-checklist-refresh.md`'s Spec summary refresh only rewrites after a premise reversal, so it never carries them. Read the live body with `gh pr view 5764 --json body --jq .body` into a scratchpad file, append a short "Verification notes" paragraph naming the test, its file and the `FP_RE_LEGACY` check and count, keep the session link as the last line, apply with `gh pr edit 5764 --body-file {file}`, then read the body back and confirm both strings are present (`AC9.1: validateFindingV2` and `FP_RE_LEGACY`).
 
 ---
 
