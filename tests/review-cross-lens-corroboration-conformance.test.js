@@ -8,6 +8,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
+const { LINE_TOLERANCE_REPRODUCTION } = require('../plugin/bin/lib/coordination');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 // Pinned seam: the #3698 CRLF test reads through readAt, so keep every skill read routed here.
@@ -74,20 +75,29 @@ function assertInputScope(file) {
   assert.doesNotMatch(step, /direct[- ]verification/i, 'input step still names the retired Direct-verification override');
 }
 
+// Since #5595 the deferred lines are written by the pair's Mode 1 call with `--only unconfirmed`, `--hold` only when
+// this pass promoted or the absence check refuted a finding (step 4 names it).
+const DEFERRED_CALL = 'same Mode 1 call (`step3-lens-dispatch.md`) with `--only unconfirmed`, plus `--hold "{path-H}"` when this pass promoted or the absence check refuted a finding';
+
 function assertKeepsStaged(file, dispatch) {
   assert.match(file, /not reproduced/);
+  assert.ok(file.includes(DEFERRED_CALL), 'step 4 does not name the --only unconfirmed --hold call');
   const b = bullet(dispatch);
   assert.ok(b.includes('At `medium`'), 'bullet does not defer its STAGED write at medium');
   assert.ok(b.includes('step3-cross-lens-corroboration.md'), 'bullet does not cite the new file');
 }
 
-const SHARE_LOC_BULLET = '> - Findings at the same location (path exact, line ±2)';
+// The bullet restates the ±2 line tolerance, so its anchor is built from the constant: a changed tolerance makes this red.
+const SHARE_LOC_BULLET = `> - Findings at the same location (path exact, line ±${LINE_TOLERANCE_REPRODUCTION})`;
 
+// One `--only unconfirmed` call writes both the `not reproduced` and the share-a-location lines (#5595), so
+// the share-a-location line waits at `medium` through the only-one-agent bullet's deferral sentence.
 function assertShareLocationDeferred(file, dispatch) {
   const line = dispatch.split('\n').find((l) => l.startsWith(SHARE_LOC_BULLET));
   assert.ok(line, 'share-a-location bullet not found');
-  assert.ok(line.includes('At `medium`'), 'share-a-location bullet does not defer its STAGED write at medium');
-  assert.ok(line.includes('step3-cross-lens-corroboration.md'), 'share-a-location bullet does not cite the new file');
+  assert.ok(line.includes('nearLocation'), 'share-a-location bullet does not name nearLocation');
+  const b = bullet(dispatch);
+  assert.ok(/ At `medium`[^\n]*share-a-location lines[^\n]*step3-cross-lens-corroboration\.md/.test(b), 'the medium deferral does not cover the share-a-location lines');
   assert.match(file, /nearLocation/);
   assert.match(file, /neither side/);
 }
@@ -122,14 +132,21 @@ test('AC1.2: the share-a-location bullet defers its STAGED write at medium; neit
   assertShareLocationDeferred(read('review', 'step3-cross-lens-corroboration.md'), read('review', 'step3-lens-dispatch.md'));
 });
 
-test('AC1.2 go-red: stripping the At `medium` sentence from the share-a-location bullet fails the same assertions', () => {
+test('AC1.2 go-red: stripping the At `medium` sentence from the only-one-agent bullet fails the share-a-location assertions', () => {
   const dispatch = read('review', 'step3-lens-dispatch.md');
-  const mutated = stripAtMedium(dispatch, SHARE_LOC_BULLET);
+  const mutated = stripAtMedium(dispatch, ONLY_ONE_BULLET);
   assert.notEqual(mutated, dispatch, 'mutation did not change the text');
-  assert.throws(() => assertShareLocationDeferred(read('review', 'step3-cross-lens-corroboration.md'), mutated));
+  assert.throws(() => assertShareLocationDeferred(read('review', 'step3-cross-lens-corroboration.md'), mutated), /does not cover the share-a-location lines/);
 });
 
-test('the only-one-agent bullet stays a single line (decisionLogPattern pin)', () => {
+test('AC1.2 go-red: dropping the --hold call from step 4 fails the kept-staged assertions', () => {
+  const file = read('review', 'step3-cross-lens-corroboration.md');
+  const mutated = file.replace(DEFERRED_CALL, 'call');
+  assert.notEqual(mutated, file, 'mutation did not change the text');
+  assert.throws(() => assertKeepsStaged(mutated, read('review', 'step3-lens-dispatch.md')), /--only unconfirmed --hold/);
+});
+
+test('the only-one-agent bullet stays a single line (the line-scoped At `medium` pins above read one line)', () => {
   const dispatch = read('review', 'step3-lens-dispatch.md');
   assert.equal(dispatch.split('\n').filter((l) => l.includes('Findings present in only one')).length, 1);
 });
@@ -179,7 +196,7 @@ test('go-red: re-citing the retired override paragraph, or dropping the vacuity-
   assert.throws(() => assertInputScope(uncited));
 });
 
-test('#3698 AC1.1: on a CRLF checkout both go-red mutations still change the text', (t) => {
+test('#3698 AC1.1: on a CRLF checkout the go-red mutation still changes the text', (t) => {
   const { raw } = crlfCheckoutRead(path.join(SKILLS, 'review', 'step3-lens-dispatch.md'));
   assert.ok(raw.includes('\r\n'), 'CRLF fixture has no CRLF line endings');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-3698-'));
@@ -187,10 +204,7 @@ test('#3698 AC1.1: on a CRLF checkout both go-red mutations still change the tex
   const tmp = path.join(dir, 'step3-lens-dispatch.md');
   fs.writeFileSync(tmp, raw);
   const text = readAt(tmp);
-  for (const [name, prefix] of [
-    ['only-one-agent bullet', ONLY_ONE_BULLET],
-    ['share-a-location bullet', SHARE_LOC_BULLET],
-  ]) {
-    assert.notEqual(stripAtMedium(text, prefix), text, `mutation did not change the text (${name})`);
-  }
+  // One deferral sentence covers both lines since #5595 (the share-a-location bullet carries none of its own).
+  assert.notEqual(stripAtMedium(text, ONLY_ONE_BULLET), text, 'mutation did not change the text (only-one-agent bullet)');
+  assert.throws(() => assertShareLocationDeferred(read('review', 'step3-cross-lens-corroboration.md'), stripAtMedium(text, ONLY_ONE_BULLET)), /does not cover the share-a-location lines/);
 });

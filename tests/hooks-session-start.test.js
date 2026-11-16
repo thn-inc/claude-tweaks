@@ -646,6 +646,24 @@ test('worktree-always nudge is absent when the session is already inside a linke
   assert.match(out.json.hookSpecificOutput.additionalContext, /worktree-always: ON \(matched key: worktree-always\)/);
 });
 
+// #4492 F3: a sibling-placed linked worktree of a project that keeps policy.yml out of git
+// reads main's policy, so the fast-reject must not hide the banner.
+test('worktree-always banner reads ON from a sibling linked worktree when policy.yml is untracked in main', async () => {
+  const project = gitProject();
+  execFileSync('git', ['-C', project, 'commit', '--allow-empty', '-m', 'init', '-q']);
+  withPolicy(project, 'worktree-always: true\n');
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-wt-'));
+  const wt = path.join(parent, 'wt');
+  execFileSync('git', ['-C', project, 'worktree', 'add', '-q', wt, '-b', 'wt-branch-untracked']);
+  try {
+    const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: fs.realpathSync(wt) });
+    assert.ok(out.json, 'main\'s policy is readable from the worktree, so the verdict banner must render');
+    assert.match(out.json.hookSpecificOutput.additionalContext, /worktree-always: ON \(matched key: worktree-always\)/);
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
 // IL-133 verdict-banner coverage: policy.resolveWorktreeAlways drives the banner text
 // directly, so these pin the exact literal line for each alias-resolution outcome.
 

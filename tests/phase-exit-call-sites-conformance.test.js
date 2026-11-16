@@ -159,6 +159,8 @@ const SELF_LOGGING_SOURCES = {
   'console-filings.js': ['plugin/bin/console-filings.js'],
   'reflect-apply.js': ['plugin/bin/reflect-apply.js', 'plugin/bin/lib/console/reflect-apply.js'],
   'review-coordination.js resolve-tiebreak': ['plugin/bin/review-coordination.js'],
+  'review-coordination.js categorise-reproduction --run': ['plugin/bin/review-coordination.js'],
+  'review-coordination.js log-reproduction-judgment': ['plugin/bin/review-coordination.js'],
   'hooks.js delete-ledger': ['plugin/bin/hooks.js'],
   'express-lane.js check': ['plugin/bin/express-lane.js', 'plugin/bin/lib/express/cli.js'],
   'express-lane.js escalate': ['plugin/bin/express-lane.js', 'plugin/bin/lib/express/cli.js'],
