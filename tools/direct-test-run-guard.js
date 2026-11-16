@@ -499,7 +499,7 @@ function judgeRun(seg, run, effCwd, { lead, assignments }, ctx, state, { ledRepe
   const P = ctx.pathImpl;
   const { t } = seg;
   if (!ctx.hasRunner(effCwd)) return null;
-  const words = operandWords(seg, run, ctx);
+  const words = operandWords(seg, run, ctx, state.loops);
   const deny = repeated
     || words.length >= 2
     || (run.sawTest && words.length === 0)
@@ -606,9 +606,13 @@ function homeWord(seg, i, w, ctx) {
   return ctx.pathImpl.join(ctx.homedir, w.slice(1));
 }
 
-// The file words of a run's operands, a `~` word read as the home directory (homeWord).
-function operandWords(seg, run, ctx) {
-  return run.operands.flatMap((i) => seg.wordsOf(i).map((w) => homeWord(seg, i, w, ctx)));
+// The file words of a run's operands, a `~` word read as the home directory (homeWord), and an operand
+// naming a `for` variable over a literal word list read as that list's words (loopPlan's `subst`).
+function operandWords(seg, run, ctx, loops) {
+  const plan = loopPlan(seg, run, loops, false);
+  return run.operands.flatMap((i) => (plan && plan.subst.has(i)
+    ? plan.subst.get(i).map((item) => item.value)
+    : seg.wordsOf(i).map((w) => homeWord(seg, i, w, ctx))));
 }
 
 // A path the guard composed (never typed), quoted so the pasted line runs it as one word: bare when it holds
@@ -828,7 +832,10 @@ function walk(text, cwd, ctx, inherited = { loops: [], dirUnknown: false, typedD
     if (t[lead] === 'for' && seg.bare(lead)) {
       if (!again && opensLoop(k, 'for')) {
         const hasList = t[lead + 2] === 'in';
-        const items = hasList ? t.map((_, i) => i).slice(lead + 3).flatMap((i) => seg.items(i)) : [];
+        // Each list word's value has its unquoted leading `~` read as the home directory (homeWord).
+        const items = hasList
+          ? t.map((_, i) => i).slice(lead + 3).flatMap((i) => seg.items(i).map((item) => ({ ...item, value: homeWord(seg, i, item.value, ctx) })))
+          : [];
         state.loops.push({
           kind: 'for',
           variables: IDENTIFIER_RE.test(t[lead + 1] || '') ? [t[lead + 1]] : [],
@@ -866,7 +873,7 @@ function walk(text, cwd, ctx, inherited = { loops: [], dirUnknown: false, typedD
     if (!run) continue;
     if (ctx.mode === 'detect') {
       // Given the file-system answers (a script's scan), a run outside the runner's reach is no match.
-      if (ctx.hasRunner && segCwd !== null && !placeRun(operandWords(seg, run, ctx), segCwd, ctx)) continue;
+      if (ctx.hasRunner && segCwd !== null && !placeRun(operandWords(seg, run, ctx, state.loops), segCwd, ctx)) continue;
       state.found = true;
       ctx.hits.push(t.slice(prog.at, run.end).map((_, i) => seg.render(prog.at + i)).join(' '));
       continue;

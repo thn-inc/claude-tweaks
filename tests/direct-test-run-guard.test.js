@@ -206,6 +206,11 @@ test('a trailing slash denies even when the path is not a directory', () => {
   assert.equal(classifyCommandOrThrow('node --test tests', { ...opts, isDirectory: () => false }).decision, 'allow');
 });
 
+roundTrip(opts, [
+  'cd scripts && node --test',
+  'bash -lc "node --test tests/a.test.js tests/b.test.js"',
+]);
+
 test('a run whose working directory is under evals/ is allowed with no operand to read', () => {
   // `cd evals && node --test tests/` is also allowed by its operand; this one only by the cwd.
   assert.equal(classifyCommandOrThrow('cd evals && node --test', opts).decision, 'allow');
@@ -218,23 +223,31 @@ test('a redirection target is no file operand, and a clustered -c is a wrapper',
   assert.equal(classifyCommandOrThrow('bash -lc "node --test tests/a.test.js tests/b.test.js"', opts).decision, 'deny');
 });
 
+const PREFIX_TWO = 'node --test tests/a.test.js tests/b.test.js';
+const DENIED_PREFIXES = [
+  'env -i -u HOME --unset=PATH FOO=1 --',
+  '/usr/bin/env',
+  'time -p',
+  'nice -5',
+  'nice --adjustment=3',
+  'nohup',
+  'command -p',
+  'exec -a name -c -l',
+  'timeout -k 5 -s KILL --preserve-status 600',
+  'gtimeout --signal=TERM 10m',
+  'timeout 600 env FOO=1 nice',
+  'sudo -u root -E -n -H',
+  'sudo --',
+];
+roundTrip(opts, [
+  ...DENIED_PREFIXES.map((prefix) => `${prefix} ${PREFIX_TWO}`),
+  'timeout 600 bash -c "node --test tests/a.test.js tests/b.test.js"',
+  'bash +o posix -e -c "node --test tests/a.test.js tests/b.test.js"',
+]);
+
 test('a prefix command is skipped with its own options, and one it cannot model is not', () => {
-  const two = 'node --test tests/a.test.js tests/b.test.js';
-  for (const prefix of [
-    'env -i -u HOME --unset=PATH FOO=1 --',
-    '/usr/bin/env',
-    'time -p',
-    'nice -5',
-    'nice --adjustment=3',
-    'nohup',
-    'command -p',
-    'exec -a name -c -l',
-    'timeout -k 5 -s KILL --preserve-status 600',
-    'gtimeout --signal=TERM 10m',
-    'timeout 600 env FOO=1 nice',
-    'sudo -u root -E -n -H',
-    'sudo --',
-  ]) {
+  const two = PREFIX_TWO;
+  for (const prefix of DENIED_PREFIXES) {
     assert.equal(classifyCommandOrThrow(`${prefix} ${two}`, opts).decision, 'deny', prefix);
   }
   // An option a prefix does not model ends its options: the program is then that option word, never node.
@@ -403,6 +416,8 @@ const MULTI = {
   hasRunner: (d) => ['/repo', '/other', '/my repo'].find((r) => d === r || d.startsWith(`${r}/`)) || null,
 };
 
+roundTrip(opts, ['node --test $(echo x y) tests/a.test.js']);
+
 test('B1: a backtick or $( that is quoted, escaped or a flag value opens no substitution', () => {
   for (const command of [
     "node --test --test-name-pattern='uses `x' tests/a.test.js",
@@ -505,6 +520,8 @@ test('B4: the operands decide the checkout', () => {
   // An expansion is placed by the working directory, as before.
   assert.equal(classifyCommandOrThrow(B4_ROWS[2][0], MULTI).replacement, B4_ROWS[2][1]);
 });
+
+roundTrip(opts, ['node --test evals/x.test.js tests/a.test.js tests/b.test.js']);
 
 test('B5: the evals/ exemption needs every file under evals/', () => {
   assert.equal(classifyCommandOrThrow('node --test evals/x.test.js tests/a.test.js tests/b.test.js', opts).decision, 'deny');
@@ -668,6 +685,30 @@ test('R6: a ~ operand is placed in the home directory', () => {
   assert.deepEqual(classifyCommandOrThrow('node --test ~/x/a.test.js ~/x/b.test.js', HOME_OUT), { decision: 'allow' });
   for (const [command, replacement, o] of R6_DENY_ROWS) assert.equal(classifyCommandOrThrow(command, o).replacement, replacement, command);
   assert.equal(typeof realDeps().homedir, 'string');
+});
+
+// R8: a `for` list word's unquoted leading `~` is the home directory too. HOME_FILES' test files exist only
+// under the home directory, so a `~` the guard left unexpanded reads as a missing file there.
+const HOME_FILES = { ...HOME_IN, isFile: (p) => p.startsWith('/repo/h/') && opts.isFile(p) };
+const R8_FOR = 'for f in ~/x/a.test.js ~/x/b.test.js; do node --test "$f"; done';
+const R8_QUOTED = 'for f in "~/x/a.test.js" "~/x/b.test.js"; do node --test "$f"; done';
+const R8_DENY_ROWS = [
+  ...roundTrip(HOME_FILES, [[R8_FOR, 'node tools/run-tests.js ~/x/a.test.js ~/x/b.test.js', HOME_FILES]]),
+  // A quoted `~` is a literal directory name: placed under the cwd, as typed.
+  ...roundTrip(HOME_OUT, [[R8_QUOTED, 'node tools/run-tests.js "~/x/a.test.js" "~/x/b.test.js"', HOME_OUT]]),
+];
+
+test('R8: a for loop over ~ words outside every checkout is allowed', () => {
+  assert.deepEqual(classifyCommandOrThrow(R8_FOR, HOME_OUT), { decision: 'allow' });
+});
+
+test('R8: a ~ word in a for list is the home directory, and a quoted one is not', () => {
+  for (const [command, replacement, o] of R8_DENY_ROWS) assert.equal(classifyCommandOrThrow(command, o).replacement, replacement, command);
+  // Under HOME_FILES the quoted word names the cwd's `~` directory, where no test file exists.
+  assert.equal(
+    classifyCommandOrThrow(R8_QUOTED, HOME_FILES).reason,
+    reasonFor(REFUSED_PLACEHOLDER, { note: 'The runner refuses the command as typed: ~/x/a.test.js does not exist or is not a file.' }),
+  );
 });
 
 test('R7: a direct test run\'s operand is a test file, not a script to scan', () => {
