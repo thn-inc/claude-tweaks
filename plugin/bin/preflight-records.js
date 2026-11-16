@@ -93,7 +93,6 @@
 'use strict';
 
 const fs = require('fs');
-const path = require('path');
 const { execFileSync } = require('child_process');
 const preflight = require('./lib/preflight-records/preflight-records');
 const {
@@ -106,6 +105,7 @@ const {
 const { planMergeGateSplit } = require('./lib/preflight-records/merge-gate');
 const { planParallelWaves } = require('./lib/preflight-records/waves');
 const { resolvePolicyKeys } = require('./lib/policy-schema');
+const { locatePolicyFile } = require('./lib/policy-file');
 const {
   parseRepo, repoResolutionNote, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
@@ -190,7 +190,7 @@ const realDeps = {
   // pure — the schema default ('body-text') is what a totally unconfigured
   // project resolves to.
   resolveWorkLinks: () => {
-    const policyRaw = readFileSafe(path.join(repoRoot(), '.claude-tweaks', 'policy.yml'));
+    const policyRaw = readFileSafe(locatePolicyFile(repoRoot()).path);
     return resolvePolicyKeys(['work-links'], { policyRaw, runConfigRaw: null })['work-links'].value;
   },
   stdout: (s) => process.stdout.write(s),
