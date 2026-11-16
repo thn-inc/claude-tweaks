@@ -1441,7 +1441,7 @@ test('resolveRunPinnedIntegrationModel forwards opts.timeoutMs to forge detectio
   }
 });
 
-const GATE_CALL_SHAPE = /resolveRunPinnedIntegrationModel\(mainRoot,\s*ctx\.runDir,\s*\{\s*timeoutMs:\s*HOOK_FORGE_PROBE_TIMEOUT_MS,\s*degradeMemoTtlMs:\s*FORGE_DEGRADE_MEMO_TTL_MS,\s*onDegrade,\s*env:\s*ctx\.env\s*\}\)/;
+const GATE_CALL_SHAPE = /resolveRunPinnedIntegrationModel\(mainRoot,\s*ctx\.runDir,\s*\{\s*timeoutMs:\s*HOOK_FORGE_PROBE_TIMEOUT_MS,\s*degradeMemoTtlMs:\s*FORGE_DEGRADE_MEMO_TTL_MS,\s*onDegrade,\s*env:\s*ctx\.env,\s*homeDir:\s*ctx\.homeDir\s*\}\)/;
 
 test('the PreToolUse gate passes HOOK_FORGE_PROBE_TIMEOUT_MS within the 15 s hook budget (#4578 AC8.1, AC12.1, AC12.2)', () => {
   const { HOOK_FORGE_PROBE_TIMEOUT_MS, GIT_REMOTE_PROBE_TIMEOUT_MS, FORGE_PROBE_ATTEMPTS } = require('../plugin/bin/lib/policy-schema');
@@ -1462,7 +1462,7 @@ test('the PreToolUse gate passes HOOK_FORGE_PROBE_TIMEOUT_MS within the 15 s hoo
 });
 
 test('the gate call-shape matcher sees live code only (#4578 go-red self-test)', () => {
-  const live = 'x = o ? o(m, { onDegrade }) : resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS, degradeMemoTtlMs: FORGE_DEGRADE_MEMO_TTL_MS, onDegrade, env: ctx.env });';
+  const live = 'x = o ? o(m, { onDegrade }) : resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS, degradeMemoTtlMs: FORGE_DEGRADE_MEMO_TTL_MS, onDegrade, env: ctx.env, homeDir: ctx.homeDir });';
   const scan = (src) => GATE_CALL_SHAPE.test(stripComments(src, { literals: 'blank' }));
   assert.strictEqual(scan(live), true);
   // The same text only in a line comment, a block comment, or a string: the live call is gone.
