@@ -329,6 +329,26 @@ for (const [name, make, dirsOf] of [
   });
 }
 
+// claims-git-cas fixtures (#5769): same shape — origin, clone, registry and seeded claims built once per process.
+const claimsFixtures = require('./bin-lib/issues/claims-git-cas-fixtures');
+for (const builder of [
+  'makeBareOriginAndClone', 'makeBranchlessOriginAndClone', 'makeDecoyOriginAndClone', 'makeRegistryWithClaims',
+]) {
+  test(`AC4.1: claims-git-cas ${builder}: a second call starts no git process`, () => {
+    const make = () => claimsFixtures[builder]();
+    const first = make();
+    scratch.push(first.root);
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(second.root);
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+    if (builder === 'makeRegistryWithClaims') {
+      assert.strictEqual(second.tipAfter.get(44), first.tipAfter.get(44));
+      assert.strictEqual(git(second.cloneDir, ['rev-parse', 'origin/claims-registry']), second.tipAfter.get(44));
+    }
+  });
+}
+
 test('pairedFixture copies point at their own origin and sync through it', () => {
   const a = reconcileFixtures.pairedFixture();
   const b = reconcileFixtures.pairedFixture();
