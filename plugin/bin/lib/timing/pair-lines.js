@@ -37,42 +37,58 @@ const { DECISION_STATUSES } = require('../log-decision/append');
 // action text alone also classifies.
 const HEAD = `(?:- (?:${DECISION_STATUSES.join('|')}) \\d{2}:\\d{2}:\\d{2} — (?:[^\\n]*?: )?)?`;
 const LENS = 'lens "([^"]*)"';
+// A path may hold spaces, but never the start of a verdict: `a.js:1 not reproduced; … b.js:2` is two findings.
+const PATH_STRICT = '((?:(?!\\s(?:not )?reproduced\\b)[^\\n])+)';
 const TAIL = ' Reversibility: [a-z/]+\\.$';
 
 // Loose wording (see the header): the label before the body, the tail after it.
-const HEAD_LOOSE = `(?:- (?:${DECISION_STATUSES.join('|')})(?: \\d{2}:\\d{2}:\\d{2})? — )?(?:(?:(?!Review Console:)[^\\n])*? )?`;
+const NO_CONSOLE = '(?:(?!Review Console:)[^\\n])*?';
+const STATUS_HEAD = `(?:- (?:${DECISION_STATUSES.join('|')})(?: \\d{2}:\\d{2}:\\d{2})? — )?`;
+const HEAD_LOOSE = `${STATUS_HEAD}(?:${NO_CONSOLE} )?`;
 const TAIL_LOOSE = '(?: Stage path: \\S+\\.)?(?: Reversibility: [a-z/]+\\.)+$';
-const LENS_LOOSE = 'lens "?([^" ]+)"?';
-// Free wording: the agent adds its own commentary around the sentence that carries the
-// verdict. The pattern pins the head and the verdict phrase and takes the rest of the line
-// as commentary, so it is the one place a pair pattern is not whole-input anchored.
-const HEAD_FREE = `(?:- (?:${DECISION_STATUSES.join('|')})(?: \\d{2}:\\d{2}:\\d{2})? — )?(?:(?:(?!Review Console:)[^\\n])*? )?`;
-// A lens id may carry a label (`3b (Security)`) but never a colon or a comma: those mark a
-// list of findings (`lens 3a findings a.js:1, …`), which is not one lens.
-const LENS_FREE = 'lens "?([^":,]{1,30}?)"?:?';
-const NOTE_FREE = '(?: \\(.*?\\))?';
-const REST = '[^\\n]*$';
-const AT = '(.+?):(\\d+)(?:-\\d+)?';
-// The earliest archived lines name a file with no line number.
-const AT_OPT = '(.+?)(?::(\\d+)(?:-\\d+)?)?';
+// A lens id is one token (`3a`, `convention`); a label may follow it (`3b (Security)`,
+// `3c Error handling`) and is dropped. A colon, a comma, a slash or `and` after the id means
+// the line names several lenses or findings, which is not one pair line.
+const LENS_LOOSE = 'lens "?([\\w-]+)(?: \\(?[A-Z][A-Za-z ]{0,24}\\)?)?"?';
+const LENS_FREE = 'lens "?([\\w-]+)(?: \\(?[A-Z][A-Za-z ]{0,24}\\)?)?"?:?';
+// Free wording: the agent adds commentary around the sentence that carries the verdict. A free
+// pattern pins the head, ONE location (`path:line`, no whitespace) and ONE verdict, needs a
+// delimiter plus content after the verdict, and refuses a second verdict, a second finding or
+// a nested Reproduction line in the commentary (parse-signal-discipline item 6).
+const HEAD_FREE = HEAD_LOOSE;
+const NOT_COMMENTARY = '(?!\\b(?:not )?reproduced\\b|elevated via|Reproduction:|\\b[Ff]indings?\\b)';
+const TEMPER = `(?:${NOT_COMMENTARY}[^\\n])*`;
+const SOME_CONTENT = '(?=[^\\n]*[A-Za-z0-9])';
+// `. Confirmed.` may carry commentary (`Confirmed. Fixed in 746e2b5a0.`) but not just the writer's own tail.
+const AFTER_VERDICT = `(?:(?:;|,|\\s—|\\s\\()${SOME_CONTENT}|\\.(?= (?!Reversibility:)${SOME_CONTENT}))${TEMPER}$`;
+const AFTER_VERDICT_DOT = `(?:[.;,]|\\s—|\\s\\()${SOME_CONTENT}${TEMPER}$`;
+// A note is one parenthesis (one nested level allowed) that holds no second verdict.
+const NOTE_FREE = `(?: \\((?:(?!\\b(?:not )?reproduced\\b)(?:[^()\\n]|\\([^()\\n]*\\)))*\\))`;
+const NOTE_OPT = `${NOTE_FREE}?`;
+const LOC = '(\\S+?):(\\d+)(?:-\\d+)?';
 const TAG = '(?: #?\\w+:)?';
-const NOTE = '(?: \\([^)]*\\))?';
+const NOTE = '(?: \\([^()\\n]*\\))?';
+// A review-marked line longer than this is not tried against any loose, free or legacy
+// pattern (the longest real one is 1,355 characters): it counts as unparsed.
+const LEGACY_LINE_MAX = 2000;
 
 // bodies: the template's own patterns (strict). looseBodies: extra bodies read with the
 // loose head and tail; defaults to each strict body that names a quoted lens, with the
-// lens, tag and Reproduction prefix loosened.
+// lens, path, tag and Reproduction prefix loosened. freeBodies: commentary-bearing bodies
+// that end in their own delimiter rule.
 function form(id, counts, template, bodies, groups, looseBodies, freeBodies = []) {
   const loose = looseBodies || bodies.filter((b) => b.includes(LENS))
-    .map((b) => b.split(LENS).join(LENS_LOOSE).replace('Reproduction: ', `Reproduction:${TAG} `));
+    .map((b) => b.split(LENS).join(LENS_LOOSE).split(PATH_STRICT).join('(\\S+?)').replace('Reproduction: ', `Reproduction:${TAG} `));
   return Object.freeze({
     id,
     counts: Object.freeze(counts),
     template,
     groups, // capture-group order → { lens, path, line } indexes (null = absent)
+    strict: bodies.length,
     pattern: Object.freeze([
       ...bodies.map((b) => new RegExp(`^${HEAD}${b}${TAIL}`)),
       ...loose.map((b) => new RegExp(`^${HEAD_LOOSE}${b}${TAIL_LOOSE}`)),
-      ...freeBodies.map((b) => new RegExp(`^${HEAD_FREE}${b}${REST}`)),
+      ...freeBodies.map((b) => new RegExp(`^${HEAD_FREE}${b}`)),
     ]),
   });
 }
@@ -80,24 +96,25 @@ function form(id, counts, template, bodies, groups, looseBodies, freeBodies = []
 const PAIR_FORMS = Object.freeze([
   form('reproduced', { both: 1, one: 0, relabel: 0 },
     'Reproduction: lens "{lens}" finding {path}:{line} reproduced. Confirmed. Reversibility: high.',
-    [`Reproduction: ${LENS} finding (.+):(\\d+) reproduced\\. Confirmed\\.`], { lens: 1, path: 2, line: 3 },
-    [`Reproduction:${TAG} ${LENS_LOOSE} finding (.+):(\\d+)${NOTE} reproduced\\. Confirmed\\.`],
-    [`Reproduction:${TAG} ${LENS_FREE} finding ${AT}(?: \\(.*?\\)) reproduced${NOTE_FREE}\\. Confirmed`,
-      `Reproduction:${TAG} ${LENS_FREE} finding ${AT}${NOTE_FREE} reproduced(?: \\(.*?\\))?(?:\\.|,) Confirmed(?:;|,| —| \\()`,
-      `Reproduction:${TAG} ${LENS_FREE} finding ${AT}${NOTE_FREE} reproduced(?: \\(.*?\\))\\. Confirmed`,
-      `Reproduction:${TAG} ${LENS_FREE} finding ${AT}${NOTE_FREE} reproduced by both agents[^\\n]*?\\. Confirmed`]),
+    [`Reproduction: ${LENS} finding ${PATH_STRICT}:(\\d+) reproduced\\. Confirmed\\.`], { lens: 1, path: 2, line: 3 },
+    [`Reproduction:${TAG} ${LENS_LOOSE} finding ${LOC}${NOTE_OPT} reproduced${NOTE_OPT}\\. Confirmed\\.`],
+    [`Reproduction:${TAG} ${LENS_FREE} finding ${LOC}${NOTE_OPT} reproduced${NOTE_OPT}[.,] Confirmed${AFTER_VERDICT}`,
+      `Reproduction:${TAG} ${LENS_FREE} finding ${LOC}${NOTE_OPT} reproduced by both agents(?: at \\w+)?[.,] Confirmed${AFTER_VERDICT_DOT}`]),
   form('reproduced-severity-contested', { both: 1, one: 0, relabel: 0 },
     'Reproduction: lens "{lens}" finding {path}:{line} reproduced, severity contested (took the lower of the two). Confirmed. Reversibility: high.',
-    [`Reproduction: ${LENS} finding (.+):(\\d+) reproduced, severity contested \\(took the lower of the two\\)\\. Confirmed\\.`], { lens: 1, path: 2, line: 3 },
-    undefined,
-    [`Reproduction:${TAG} ${LENS_FREE} finding ${AT}${NOTE_FREE} reproduced, severity contested \\(.*?\\)\\. Confirmed`]),
+    [`Reproduction: ${LENS} finding ${PATH_STRICT}:(\\d+) reproduced, severity contested \\(took the lower of the two\\)\\. Confirmed\\.`], { lens: 1, path: 2, line: 3 },
+    [`Reproduction:${TAG} ${LENS_LOOSE} finding ${LOC} reproduced, severity contested${NOTE_FREE}\\. Confirmed\\.`],
+    [`Reproduction:${TAG} ${LENS_FREE} finding ${LOC}${NOTE_OPT} reproduced, severity contested${NOTE_FREE}[.,] Confirmed${AFTER_VERDICT}`]),
   form('not-reproduced', { both: 0, one: 1, relabel: 0 },
     'Reproduction: lens "{lens}" finding {path}:{line} not reproduced. Staged to Review Console as low-confidence. Reversibility: high.',
-    [`Reproduction: ${LENS} finding (.+):(\\d+) not reproduced\\. Staged to Review Console as low-confidence\\.`], { lens: 1, path: 2, line: 3 },
-    [`Reproduction:${TAG} ${LENS_LOOSE} finding (.+):(\\d+)${NOTE} not reproduced\\. Staged to Review Console as low-confidence\\.`],
-    [`Reproduction:${TAG} ${LENS_FREE} finding ${AT}(?: \\(.*?\\)) not reproduced${NOTE_FREE}[.;]`,
-      `Reproduction:${TAG} ${LENS_FREE} finding ${AT_OPT}${NOTE_FREE} not reproduced(?: \\(.*?\\)|;)`,
-      `Reproduction:${TAG} ${LENS_FREE} finding ${AT} not reproduced\\. Staged to Review Console as low-confidence(?: \\(|;|,)`]),
+    [`Reproduction: ${LENS} finding ${PATH_STRICT}:(\\d+) not reproduced\\. Staged to Review Console as low-confidence\\.`], { lens: 1, path: 2, line: 3 },
+    [`Reproduction:${TAG} ${LENS_LOOSE} finding ${LOC}${NOTE_OPT} not reproduced\\. Staged to Review Console as low-confidence\\.`],
+    [`Reproduction:${TAG} ${LENS_FREE} finding ${LOC}${NOTE_OPT} not reproduced(?:;|${NOTE_FREE})${SOME_CONTENT}${TEMPER}$`,
+      `Reproduction:${TAG} ${LENS_FREE} finding ${LOC} not reproduced\\. Staged to Review Console as low-confidence(?:;|,|${NOTE_FREE})${SOME_CONTENT}${TEMPER}$`,
+      // commentary after the whole sentence (the writer's tail may follow it)
+      `Reproduction:${TAG} ${LENS_FREE} finding ${LOC}${NOTE_OPT} not reproduced\\. Staged to Review Console as low-confidence\\.(?= (?!Reversibility:)${SOME_CONTENT})${TEMPER}$`,
+      // the whole sentence with no Reversibility tail
+      `Reproduction:${TAG} ${LENS_FREE} finding ${LOC}${NOTE_OPT} not reproduced\\. Staged to Review Console as low-confidence\\.$`]),
   form('absence-refuted', { both: 0, one: 1, relabel: 0 },
     'Reproduction: lens "{lens}" absence claim {path}:{symbol} refuted by ground-truth check ({command} found it at {path}:{line}). Not staged. Reversibility: high.',
     [`Reproduction: ${LENS} absence claim (.+):([^\\s:]+) refuted by ground-truth check \\(.+ found it at .+:\\d+\\)\\. Not staged\\.`], { lens: 1, path: 2, line: null }),
@@ -118,34 +135,34 @@ const PAIR_FORMS = Object.freeze([
 // Line shapes no current template produces, read so an archive's counts and its unparsed
 // share stay honest. Each is additive and pinned by a real archived line in pair-lines.test.js
 // (not to prose: nothing live produces them).
-//   direct-verification-elevated — a finding the controller confirmed by reading the source,
-//     of 267 archived lines only 23 sit beside a not-reproduced line for the same
-//     location, so each counts as one reviewer's finding (those 23 count twice, as
-//     vacuity-reconfirmed does).
+//   direct-verification-elevated — a finding the controller confirmed by reading the source.
+//     Under Decision 3 it changes the confidence of a finding a pair line already counted, so
+//     it is a relabel: it adds to no finding count. One location, one verdict.
 //   no-findings — a lens whose both agents returned nothing; counts no finding.
 //   console-disposition — the Review Console's keep-staged restatement of an already-staged
 //     finding; counts no finding (the finding's own not-reproduced line did).
 function legacy(id, counts, template, body, groups, head = HEAD_LOOSE, rest = TAIL_LOOSE) {
   return Object.freeze({
-    id, counts: Object.freeze(counts), template, groups,
+    id, counts: Object.freeze(counts), template, groups, strict: 0,
     pattern: Object.freeze([new RegExp(`^${head}${body}${rest}`)]),
   });
 }
 
+const ELEVATED_END = `(?:[.;,:]|\\s—)${SOME_CONTENT}(?:(?!\\b(?:not )?reproduced\\b|elevated via|Reproduction:)[^\\n])*$`;
 const LEGACY_FORMS = Object.freeze([
-  legacy('direct-verification-elevated', { both: 0, one: 1, relabel: 0 },
+  legacy('direct-verification-elevated', { both: 0, one: 0, relabel: 1 },
     'Reproduction: [lens "{lens}"] finding {path}:{line} elevated via direct-verification override ({how}). Confirmed.',
-    `Reproduction:${TAG} (?:${LENS_FREE} )?(?:finding )?(.+?):(\\d+)(?:-\\d+)?${NOTE_FREE} elevated via direct-verification override`,
-    { lens: 1, path: 2, line: 3 }, HEAD_FREE, REST),
+    `Reproduction:${TAG} (?:${LENS_FREE} )?(?:finding )?${LOC}${NOTE_OPT} elevated via direct-verification override(?: \\((?:(?!Reproduction:)[^\\n])*?\\))?`,
+    { lens: 1, path: 2, line: 3 }, HEAD_FREE, ELEVATED_END),
   legacy('no-findings', { both: 0, one: 0, relabel: 0 },
     'Reproduction: lens "{lens}" both agents returned No findings.',
-    `Reproduction:${TAG} ${LENS_LOOSE}(?: and lens "?[^" ]+"?)?(?: —)? both agents returned No findings\\.`,
+    `Reproduction:${TAG} ${LENS_LOOSE}(?: —)? both agents returned No findings\\.`,
     { lens: 1, path: null, line: null }),
   legacy('console-disposition', { both: 0, one: 0, relabel: 0 },
     'Review Console: Console item decision:{status} {time} — … (Low-confidence findings): keep-staged — …',
-    'Review Console: Console item decision:[A-Z-]+ \\d{2}:\\d{2}:\\d{2} — .*\\(Low-confidence findings\\): keep-staged — .*?\\.',
+    'Review Console: Console item decision:[A-Z-]+ \\d{2}:\\d{2}:\\d{2} — [^\\n]*?\\(Low-confidence findings\\): keep-staged — [^\\n]*?\\.',
     { lens: null, path: null, line: null },
-    `(?:- (?:${DECISION_STATUSES.join('|')}) \\d{2}:\\d{2}:\\d{2} — )?`),
+    `${STATUS_HEAD}`),
 ]);
 
 const ALL_FORMS = Object.freeze([...PAIR_FORMS, ...LEGACY_FORMS]);
@@ -167,9 +184,11 @@ function isReviewMarkedLine(line) {
 // null here — parseTiebreakLine owns it.
 function classifyPairLine(line) {
   const s = String(line);
+  const long = s.length > LEGACY_LINE_MAX;
   for (const f of ALL_FORMS) {
-    for (const re of f.pattern) {
-      const m = re.exec(s);
+    for (let i = long ? f.strict : 0; i < f.pattern.length; i++) {
+      if (long && i >= f.strict) break;
+      const m = f.pattern[i].exec(s);
       if (!m) continue;
       return {
         form: f.id,

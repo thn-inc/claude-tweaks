@@ -133,21 +133,30 @@ const LEGACY_CASES = [
   ['not reproduced, handed to the tiebreak',
     `- STAGED 11:56:40 — Step 3 reproduction: Reproduction: lens "3e" finding plugin/bin/lib/hooks/run-dir-resolve.js:333 not reproduced; handed to the tiebreak. ${RH}`,
     { form: 'not-reproduced', lens: '3e', path: 'plugin/bin/lib/hooks/run-dir-resolve.js', line: 333 }],
-  ['no status time (the earliest archived shape)',
-    `- STAGED — Reproduction: lens "3b (Security)" finding skills/review/SKILL.md (Per-Candidate Refutation Pass template) not reproduced (1 of 2 agents). Staged to Review Console as low-confidence. ${RH}`,
-    { form: 'not-reproduced', lens: '3b (Security)', path: 'skills/review/SKILL.md', line: null }],
-  ['reproduced by both agents, then more findings in the same line',
-    `- AUTO 23:18:14 — log-decision: Reproduction: lens 3b finding record.js:384 (lone CR / line separators pass the single-line guard) reproduced by both agents. Confirmed. Lens 3f findings harness-health.js:286 (repoRoot wiring untested) and record.test.js:1200 (non-discriminating test, severity contested - took lower) and conformance test AC6.1 precision reproduced. Confirmed. ${RH}`,
-    { form: 'reproduced', lens: '3b', path: 'record.js', line: 384 }],
+  ['no status time (the earliest archived shape), with a location',
+    `- STAGED — Reproduction: lens "3b (Security)" finding skills/review/SKILL.md:53 (Per-Candidate Refutation Pass template) not reproduced (1 of 2 agents). Staged to Review Console as low-confidence. ${RH}`,
+    { form: 'not-reproduced', lens: '3b', path: 'skills/review/SKILL.md', line: 53 }],
+  ['a lens label is dropped and the leading id keys the lens',
+    `- AUTO 00:04:18 — spec #1921 — Reproduction: lens "3b Security" finding plugin/bin/verify.js:53 reproduced. Confirmed. ${RH}`,
+    { form: 'reproduced', lens: '3b', path: 'plugin/bin/verify.js', line: 53 }],
+  ['reproduced by both agents',
+    `- AUTO 23:50:57 — log-decision: Reproduction: lens 3a finding plugin/skills/flow/x.md:9 (SKIP-instruction restated across consumer skills) reproduced by both agents. Confirmed, then accepted as intentional. ${RH}`,
+    { form: 'reproduced', lens: '3a', path: 'plugin/skills/flow/x.md', line: 9 }],
+  ['not reproduced, staged, then controller commentary before the tail',
+    '- STAGED 13:40:15 — spec #3278 — Step 3 reproduction: Reproduction: lens "3a" finding plugin/skills/flow/claim-targets.md:371 not reproduced. Staged to Review Console as low-confidence. Controller read: the prose quotes the persisted ABORT_REASON literal (never-started: file-overlap group partial claim) accurately; renaming the literal is a contract change, out of scope. Reversibility: high.',
+    { form: 'not-reproduced', lens: '3a', path: 'plugin/skills/flow/claim-targets.md', line: 371 }],
+  ['not reproduced, staged, no Reversibility tail',
+    '- STAGED 13:40:20 — spec #3278 — Step 3 reproduction: Reproduction: lens "3f" finding tests/bin-lib/dispatch/in-flight-neighbours.test.js:84 not reproduced. Staged to Review Console as low-confidence.',
+    { form: 'not-reproduced', lens: '3f', path: 'tests/bin-lib/dispatch/in-flight-neighbours.test.js', line: 84 }],
+  ['severity contested, then a dash and commentary',
+    `- AUTO 14:38:09 — Step 3: Reproduction: lens "3f" finding tests/specify-near-duplicate-prose.test.js:263 reproduced, severity contested (took the lower of the two). Confirmed — vacuity-type claim carries execution evidence from both agents (guard deleted in scratch copy, test stayed green; assert-message echo probe). ${RH}`,
+    { form: 'reproduced-severity-contested', lens: '3f', path: 'tests/specify-near-duplicate-prose.test.js', line: 263 }],
   ['direct-verification override',
     `- AUTO 18:38:30 — Step 3 reproduction: Reproduction: lens "3c" finding plugin/bin/lib/timing/transcript.js:250 elevated via direct-verification override (source read independently). Confirmed. ${RH}`,
     { form: 'direct-verification-elevated', lens: '3c', path: 'plugin/bin/lib/timing/transcript.js', line: 250 }],
   ['direct-verification override with no lens and a severity word',
     `- AUTO 22:53:51 — Reproduction: #4169: plugin/bin/lib/issues/record-payload.js:104 elevated via direct-verification override (executed probe / source read). Confirmed medium. ${RH}`,
     { form: 'direct-verification-elevated', lens: null, path: 'plugin/bin/lib/issues/record-payload.js', line: 104 }],
-  ['no-findings notice, two lenses',
-    '- AUTO 06:40:39 — log-decision: Reproduction: lens "3b" and lens "3c" both agents returned No findings. Reversibility: n/a.',
-    { form: 'no-findings', lens: '3b', path: null, line: null }],
   ['no-findings notice with a dash',
     `- AUTO 20:33:18 — Reproduction: lens "3b" — both agents returned No findings. ${RH}`,
     { form: 'no-findings', lens: '3b', path: null, line: null }],
@@ -161,6 +170,46 @@ for (const [label, line, want] of LEGACY_CASES) {
     assert.deepEqual(classifyPairLine(line), want);
   });
 }
+
+// Fix round 1 (#5556): each commentary-bearing body is whole-input anchored on one location and one verdict.
+const A = '- AUTO 10:00:00 — Reproduction: lens "3a" finding a.js:1';
+const NEGATIVES = [
+  // [label, line] — a truncated copy of a free body, or a compound line naming a second finding or verdict
+  ['reproduced, note then bare Confirmed (truncated)', `${A} (x) reproduced. Confirmed`],
+  ['reproduced, note then Confirmed. (truncated)', `${A} (B) reproduced. Confirmed.`],
+  ['reproduced with a delimiter and nothing after it', `${A} reproduced. Confirmed;`],
+  ['reproduced by both agents (truncated)', `${A} reproduced by both agents. Confirmed`],
+  ['reproduced by both agents, Confirmed. only', `${A} reproduced by both agents. Confirmed.`],
+  ['severity contested with a note (truncated)', `${A} reproduced, severity contested (x). Confirmed`],
+  ['not reproduced; (truncated)', `${A} not reproduced;`],
+  ['not reproduced with a note (truncated)', `${A} not reproduced (1 of 2 agents)`],
+  ['not reproduced, staged, then a parenthesis (truncated)', `${A} not reproduced. Staged to Review Console as low-confidence (x)`],
+  ['severity contested, dash, nothing after (truncated)', `${A} reproduced, severity contested (x). Confirmed —`],
+  ['not reproduced, staged, commentary naming a second verdict', `${A} not reproduced. Staged to Review Console as low-confidence. Also b.js:2 reproduced. ${RH}`],
+  ['elevated (truncated)', `${A} elevated via direct-verification override`],
+  ['elevated, note only (truncated)', `${A} elevated via direct-verification override (source read)`],
+  ['two findings, a not-reproduced then a reproduced one', `${A} not reproduced; lens "3b" finding b.js:2 reproduced. Confirmed. ${RH}`],
+  ['a location that is not a location', `${A.replace('a.js:1', 'unrelated prose with no location')} not reproduced (n/a). ${RH}`],
+  ['was not reproduced; reproduced by agent B', `${A} was not reproduced; reproduced by agent B. Confirmed. ${RH}`],
+  ['reproduced note then a second finding', `${A} reproduced; lens "3b" finding b.js:2 not reproduced; both noted. Confirmed; ${RH}`],
+  ['commentary after Confirmed naming another finding', `${A} reproduced. Confirmed; also finding b.js:2 reproduced. ${RH}`],
+  ['elevated naming a count of findings', '- AUTO 10:00:00 — Reproduction: lens "3a" 3 findings a.js:1, b.js:2 and c.js:3 elevated via direct-verification override (source read). Confirmed.'],
+  ['elevated with a second verdict', `${A} elevated via direct-verification override (x); b.js:2 not reproduced. ${RH}`],
+  ['two lenses in one label', '- AUTO 10:00:00 — Reproduction: lens "3a and 3b" finding a.js:1 reproduced. Confirmed; both ran. Reversibility: high.'],
+];
+for (const [label, line] of NEGATIVES) {
+  test(`legacy wording: refused — ${label}`, () => {
+    assert.equal(classifyPairLine(line), null, line);
+  });
+}
+
+test('legacy wording: a review-marked line over 2000 characters is read only by the pinned templates', () => {
+  const pad = ' x'.repeat(1100);
+  const legacyLine = `- AUTO 10:00:00 — Step 3: Reproduction: lens "3a" finding a.js:1 reproduced (note${pad}). Confirmed. Reversibility: high.`;
+  assert.ok(legacyLine.length > 2000);
+  assert.equal(classifyPairLine(legacyLine), null);
+  assert.deepEqual(classifyPairLine(`- AUTO 10:00:00 — Reproduction: lens "3a" finding a.js:1 reproduced. Confirmed. ${R}`), { form: 'reproduced', lens: '3a', path: 'a.js', line: 1 });
+});
 
 test('legacy wording: a console disposition is never read as the pair line it restates', () => {
   const restated = '- AUTO 20:08:06 — Review Console: Console item decision:STAGED 19:19:02 — Reproduction: lens "3a" finding plugin/x.js:12 not reproduced. Staged to Review Console as low-confidence. Reversibility: high.';
@@ -185,7 +234,7 @@ test('legacy forms: ids are distinct from the prose-pinned forms, counts follow 
   assert.deepEqual(ALL_FORMS.map((f) => f.id), [...PAIR_FORMS, ...LEGACY_FORMS].map((f) => f.id));
   assert.equal(new Set(ALL_FORMS.map((f) => f.id)).size, ALL_FORMS.length);
   assert.deepEqual(Object.fromEntries(LEGACY_FORMS.map((f) => [f.id, [f.counts.both, f.counts.one, f.counts.relabel]])), {
-    'direct-verification-elevated': [0, 1, 0],
+    'direct-verification-elevated': [0, 0, 1],
     'no-findings': [0, 0, 0],
     'console-disposition': [0, 0, 0],
   });

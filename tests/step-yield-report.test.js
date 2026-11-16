@@ -149,6 +149,22 @@ test('the report writes nothing under the root', () => {
   assert.deepEqual(treeSnapshot(root), before);
 });
 
+test('a present but corrupt step-yield.json derives instead and is counted, never read as absent', () => {
+  const root = setup();
+  const bad = path.join(root, 'archive', '2026-11-09T090000-record-3');
+  fs.mkdirSync(bad, { recursive: true });
+  fs.writeFileSync(path.join(bad, 'step-yield.json'), '{ not json');
+  const wrong = path.join(root, 'archive', '2026-11-09T090000-record-4');
+  fs.mkdirSync(wrong, { recursive: true });
+  fs.writeFileSync(path.join(wrong, 'step-yield.json'), JSON.stringify({ steps: 'nope' }));
+  const s = JSON.parse(runCli([root, '--json']).out);
+  assert.equal(s.runsFileUnreadable, 2);
+  assert.equal(s.runsReadFromFile, 1, 'only the valid precomputed file counts as read');
+  assert.match(runCli([root]).out, /step-yield\.json present but unreadable or not a yield \(derived instead\) 2/);
+  // an absent file is not counted
+  assert.equal(JSON.parse(runCli([setup(), '--json']).out).runsFileUnreadable, 0);
+});
+
 test('no root exits 2; a root that does not exist scans nothing', () => {
   const none = runCli([]);
   assert.equal(none.code, 2);
