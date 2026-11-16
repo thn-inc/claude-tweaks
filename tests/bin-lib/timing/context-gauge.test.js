@@ -637,7 +637,7 @@ test('resolveTargetRecords: live work/8 and archived work/7 in one root merge; a
   assert.deepStrictEqual(resolveTargetRecords({ runDir: two.runDir, worktree: two.wt, gitRoot: two.root }), ['#5']);
 });
 
-test('AC9.4 resolveTargetRecords: an unreadable archived base is absent', () => {
+test('guard: resolveTargetRecords — an unreadable archived base is absent', () => {
   const fx = runFixture({ spec: 'none', worktree: false });
   const archivedBase = path.dirname(archivedOf(fx.runDir));
   putHeader(archivedOf(fx.runDir), 9);

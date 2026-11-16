@@ -279,8 +279,9 @@ const verdictOffenders = (pairs) => pairs
   .map(([mode, v]) => `${mode}: ${STRIPPER_VERDICT_MESSAGES[v]}`);
 
 // An `archive` path segment over the literal mask: bounded by NUL (a delimiter or
-// code), `/` or `\` on both sides.
-const ARCHIVE_SEGMENT_RE = /(?:^|[\0/\\])archive(?=[\0/\\]|$)/gm;
+// code), `/` or `\` on both sides — or `pipelines/archive` whatever follows it
+// (prose after it, a trailing `.`), AC8's second clause.
+const ARCHIVE_SEGMENT_RE = /(?:^|[\0/\\])archive(?=[\0/\\]|$)|pipelines[/\\]archive/gm;
 const RUN_HEADER_REQUIRE_RE = /\brequire\(\s*(['"])[^'"\n]*\/run-header(?:\.js)?\1\s*\)/;
 
 // Literal text only: a keep-mode character where blank mode differs from it, NUL
@@ -382,10 +383,13 @@ test('AC8.1 reader scan self-test: archive literals flag by exact line, comments
     'const i = `${p}/archive/${id}`;',
     "const j = 'run the archive step';",
     "const k = 'archived/x';",
+    "const l = 'no header under pipelines/archive or live';",
+    'const m = `see .claude-tweaks/pipelines/archive.`;',
   ].join('\n');
   const out = scanReader(src);
   // Not: 3 comment, 7 'archived', 8 identifier, 12 word in prose, 13 longer segment.
-  assert.deepEqual(out.lines, [2, 4, 5, 6, 9, 10, 11]);
+  // 14 and 15: `pipelines/archive` followed by prose or a `.` still flags.
+  assert.deepEqual(out.lines, [2, 4, 5, 6, 9, 10, 11, 14, 15]);
   assert.deepEqual(out.verdicts, []);
   assert.equal(out.requiresRunHeader, true);
   assert.equal(scanReader("const x = require('./lib/run-header.js');").requiresRunHeader, true);
