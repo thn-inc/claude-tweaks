@@ -154,15 +154,18 @@ function readInput(deps, flag, file) {
   }
 }
 
+function readJsonInput(deps, flag, file) {
+  const text = readInput(deps, flag, file);
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    throw new InputError(`${flag} ${file} is not JSON (${messageOf(err)})`);
+  }
+}
+
 // `gh issue view --json labels` output ({labels:[{name}]}) or a bare name array.
 function labelsFromJson(deps, file) {
-  let value;
-  try {
-    value = JSON.parse(readInput(deps, '--labels-json', file));
-  } catch (err) {
-    if (err instanceof InputError) throw err;
-    throw new InputError(`--labels-json ${file} is not JSON (${messageOf(err)})`);
-  }
+  const value = readJsonInput(deps, '--labels-json', file);
   const entries = isObject(value) ? value.labels : value;
   if (!Array.isArray(entries)) throw new InputError(`--labels-json ${file} holds no label list`);
   return entries.map((entry) => {
@@ -245,13 +248,7 @@ const optionalString = (value) => value === undefined || typeof value === 'strin
 
 function deploySource(deps, file) {
   if (file === undefined) return null;
-  let value;
-  try {
-    value = JSON.parse(readInput(deps, '--deploy-json', file));
-  } catch (err) {
-    if (err instanceof InputError) throw err;
-    throw new InputError(`--deploy-json ${file} is not JSON (${messageOf(err)})`);
-  }
+  const value = readJsonInput(deps, '--deploy-json', file);
   const valid = isObject(value) && isDeployRef(value.ref) && typeof value.text === 'string'
     && optionalString(value.devBaseUrl) && optionalString(value.recordingUrl);
   if (!valid) throw new InputError(`--deploy-json ${file} needs a ref (a lowercase hex sha, 7-64 characters) and string text, and string devBaseUrl / recordingUrl when present`);
