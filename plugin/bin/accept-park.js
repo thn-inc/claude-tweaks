@@ -19,8 +19,8 @@
 //     64 hex, fetched by oid when absent; --base, else integration-branch, else origin/HEAD's
 //     branch, fetched first) read once through ctx.git, then each record's declared flags checked
 //     against risk-path-globs and the agent's --classification (lib/accept/tripwire.js). A crossed
-//     category nobody flagged is appended to the record body (addTripwireRiskFlags, one `gh issue
-//     edit --body-file`; a failed write is a stderr line and the decision stays local through the
+//     category nobody flagged is appended to the record body, read again right before the edit
+//     (addTripwireRiskFlags, one `gh issue edit --body-file`; a failed write is a stderr line and the decision stays local through the
 //     newFlags); a tripwire that could not run parks with reason `tripwire`. Each consulted
 //     record's decision gains `tripwire: { …, appendFailed, lines }`; with --run, `lines` is also
 //     written to {run}/packet-facts/tripwire-{n}.json, and a failed write exits 1 (decision printed).
@@ -205,8 +205,14 @@ const realDeps = {
     }, injectedGhDeps({ env, stderr, homeDir })));
   },
   git: (args, { cwd, env } = {}) => {
-    const { GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
-    return execFileSync('git', args, { cwd, env, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS });
+    const { GIT_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
+    return execFileSync('git', args, {
+      cwd, env, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES,
+    });
+  },
+  // A synchronous pause (the git-retry.js trick), injectable so a test never waits.
+  sleep: (ms) => {
+    try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch { /* best-effort */ }
   },
   remoteUrl: ({ cwd, env } = {}) => execFileSync('git', ['remote', 'get-url', 'origin'], {
     cwd, env, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
@@ -305,12 +311,34 @@ function keptRiskFlags(parsed) {
   return null;
 }
 
-// A failed call's first line: git's and gh's own stderr when they carry it, else the message.
-const failureText = (err) => firstLine(err?.stderr) || firstLine(messageOf(err)) || 'unknown error';
+// A failed call's first line: git's and gh's own stderr when they carry it, else its exit status.
+// Never err.message: execFileSync puts the whole argv there, the main checkout's path included.
+function failureText(err) {
+  const said = firstLine(err?.stderr);
+  if (said) return said;
+  if (Number.isInteger(err?.status)) return `exit ${err.status}`;
+  if (typeof err?.signal === 'string') return `signal ${err.signal}`;
+  return typeof err?.code === 'string' ? err.code : 'unknown error';
+}
+
+// A sibling session's fetch in the shared main checkout can hold the ref's lock. One retry,
+// after a pause, before the failure stands.
+const REF_LOCK_RE = /cannot lock ref|unable to create '[^']*\.lock'/i;
+const REF_LOCK_RETRY_MS = 1000;
+function fetchRef({ ctx, deps }, ref) {
+  const argv = ['fetch', '--no-tags', 'origin', ref];
+  try {
+    return ctx.git(argv);
+  } catch (err) {
+    if (!REF_LOCK_RE.test(String(err?.stderr ?? ''))) throw err;
+    deps.sleep(REF_LOCK_RETRY_MS);
+    return ctx.git(argv);
+  }
+}
 
 // The branch's changed paths, read once per decide call: { changedPaths, diffError }, the paths
 // null with the failed step named when any step fails (the tripwire then could not run).
-function readBranchDiff({ opts, ctx, integrationBranch }) {
+function readBranchDiff({ opts, ctx, deps, integrationBranch }) {
   const { parseNameStatus } = require('./lib/accept/tripwire');
   const fail = (diffError) => ({ changedPaths: null, diffError });
   if (opts.head === undefined) return fail('no --head given');
@@ -325,7 +353,7 @@ function readBranchDiff({ opts, ctx, integrationBranch }) {
   if (!hasHead()) {
     // GitHub serves a reachable commit by oid: how a sweep run from the main checkout reaches a PR head it never fetched.
     try {
-      ctx.git(['fetch', '--no-tags', 'origin', opts.head]);
+      fetchRef({ ctx, deps }, opts.head);
     } catch {
       // the second check below decides
     }
@@ -346,7 +374,7 @@ function readBranchDiff({ opts, ctx, integrationBranch }) {
     if (!REF_NAME_RE.test(name) || name.startsWith('-')) return fail(`integration branch name unusable: ${name}`);
     // A stale origin/{name} would widen the diff with paths already merged.
     try {
-      ctx.git(['fetch', '--no-tags', 'origin', name]);
+      fetchRef({ ctx, deps }, name);
     } catch (err) {
       return fail(`git fetch of ${name} failed: ${failureText(err)}`);
     }
@@ -356,9 +384,11 @@ function readBranchDiff({ opts, ctx, integrationBranch }) {
   try {
     mergeBase = firstLine(ctx.git(['merge-base', '--end-of-options', base, opts.head]));
   } catch (err) {
-    return fail(`git merge-base failed: ${failureText(err)}`);
+    // merge-base exits 1 and says nothing when the two commits share no history.
+    const reason = err?.status === 1 && !firstLine(err?.stderr) ? 'no merge base' : failureText(err);
+    return fail(`git merge-base failed: ${reason}`);
   }
-  if (mergeBase === '') return fail('git merge-base failed: no merge base');
+  if (!FULL_OID_RE.test(mergeBase)) return fail('git merge-base failed: it printed no commit');
   let raw;
   try {
     raw = ctx.git(['diff', '--name-status', '-z', '-M', '--no-color', '--no-ext-diff', '--end-of-options', `${mergeBase}..${opts.head}`]);
@@ -381,12 +411,17 @@ function readClassification(opts, deps, ctx) {
   }
 }
 
-// Writes the crossed flags into the record body; returns the failure's first line, or undefined.
-function appendTripwireFlags({ record, body, newFlags, extraCategories, deps, ctx }) {
+// Writes the crossed flags into the record body, read again right before the edit so a body edit
+// (a flag included) made since the first read is kept; returns the failure's first line, or undefined.
+function appendTripwireFlags({ record, newFlags, extraCategories, deps, ctx }) {
   const { addTripwireRiskFlags } = require('./lib/issues/record');
   const file = deps.tmpPath(`accept-park-${record}-${process.pid}-tripwire.md`, deps.env);
   try {
-    deps.writeFile(file, addTripwireRiskFlags(body, newFlags, { extraCategories }));
+    const { body } = JSON.parse(ctx.ghIssue(['issue', 'view', String(record), '--json', 'body']));
+    if (typeof body !== 'string') throw new Error('the issue view has no body');
+    const next = addTripwireRiskFlags(body, newFlags, { extraCategories });
+    if (next === body) return undefined;
+    deps.writeFile(file, next);
     ctx.ghIssue(['issue', 'edit', String(record), '--body-file', file]);
     return undefined;
   } catch (err) {
@@ -444,7 +479,8 @@ function runDecide(opts, deps, ctx) {
   if (target.invalid) policyDefault = null;
   else if (target.source === 'default') policyDefault = undefined;
   // Gated by the control-mode result above (the run's config.yml over policy.yml), never by readRiskPolicy,
-  // which gates on policy.yml alone. Both risk keys and integration-branch are policy-only.
+  // which gates on policy.yml alone. The two risk keys resolve from policy.yml only; integration-branch
+  // takes the run's config.yml over policy.yml.
   const tripwirePolicy = resolvePolicyKeys(['risk-categories', 'risk-path-globs', 'integration-branch'], { policyRaw, runConfigRaw });
   const categoryValue = tripwirePolicy['risk-categories'].value;
   const extraCategories = Array.isArray(categoryValue) ? categoryValue : String(categoryValue).split(',').map((slug) => slug.trim()).filter(Boolean);
@@ -457,11 +493,8 @@ function runDecide(opts, deps, ctx) {
   const integrationBranch = typeof branchValue === 'string' && branchValue.trim() !== '' ? branchValue.trim() : null;
   const agentClassification = readClassification(opts, deps, ctx);
 
-  let diff = null;
-  const branchDiff = () => {
-    if (diff === null) diff = readBranchDiff({ opts, ctx, integrationBranch });
-    return diff;
-  };
+  // Read once, before any record body: the window from a body's read to its edit holds no git call.
+  const { changedPaths, diffError } = readBranchDiff({ opts, ctx, deps, integrationBranch });
 
   const available = ctx.ghAvailable();
   const unread = [];
@@ -481,7 +514,6 @@ function runDecide(opts, deps, ctx) {
       return { record, input: { controlMode: true, keptRiskFlags: null, policyDefault } };
     }
     const declaredFlags = keptRiskFlags(parseRiskFlags(body, { extraCategories }));
-    const { changedPaths, diffError } = branchDiff();
     const result = evaluateTripwire({
       changedPaths,
       diffError,
@@ -493,7 +525,7 @@ function runDecide(opts, deps, ctx) {
       categories,
     });
     const appendFailure = result.newFlags.length > 0
-      ? appendTripwireFlags({ record, body, newFlags: result.newFlags, extraCategories, deps, ctx })
+      ? appendTripwireFlags({ record, newFlags: result.newFlags, extraCategories, deps, ctx })
       : undefined;
     tripwires.set(record, {
       ...result,
@@ -651,12 +683,14 @@ function parkSteps({ opts, deps, ctx, runDir, repoSpec, log }) {
       if (isAbsentError(err)) return [];
       throw new Error(`tripwire lines unreadable: ${messageOf(err)}`);
     }
-    let lines;
+    let facts;
     try {
-      lines = JSON.parse(text)?.lines;
+      facts = JSON.parse(text);
     } catch (err) {
       throw new Error(`tripwire lines unreadable: ${messageOf(err)}`);
     }
+    if (facts?.record !== n) throw new Error(`tripwire lines unreadable: the file is for record ${JSON.stringify(facts?.record ?? null)}, not #${n}`);
+    const lines = facts.lines;
     if (!Array.isArray(lines) || !lines.every((line) => typeof line === 'string')) throw new Error('tripwire lines unreadable: lines is not a list of strings');
     return lines;
   };
