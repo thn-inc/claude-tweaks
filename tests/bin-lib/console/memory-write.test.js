@@ -178,22 +178,30 @@ test('a directory as the target is refused (exit 5) and logs nothing', async () 
 
 test('a missing parent directory is refused with its own why (parent-missing), exit 5, nothing written', async () => {
   const fx = fixture();
-  const r = await write(fx, 'no-such-dir/x.md', 'x\n');
-  assert.strictEqual(r.code, 5, r.err);
-  assert.match(r.err, /memory write refused \(parent-missing\) — nothing written/);
-  assert.strictEqual(fs.existsSync(path.join(fx.memoryDir, 'no-such-dir')), false);
+  for (const target of ['no-such-dir/x.md', 'a/b/x.md']) {
+    const r = await write(fx, target, 'x\n');
+    assert.strictEqual(r.code, 5, `${target}: ${r.err}`);
+    assert.match(r.err, /memory write refused \(parent-missing\) — nothing written/, target);
+  }
+  assert.deepStrictEqual(fs.readdirSync(fx.memoryDir), []);
   assert.strictEqual(decisions(fx), '');
 });
 
 test('a missing parent outside the memory dir stays outside-memory-dir (never parent-missing)', async () => {
   const fx = fixture();
-  for (const target of ['../nope/x.md', path.join(fx.root, 'elsewhere', 'nope', 'x.md'), 'in/../../nope/x.md']) {
+  const outside = path.join(fx.root, 'outside-dir');
+  fs.mkdirSync(outside);
+  fs.symlinkSync(outside, path.join(fx.memoryDir, 'link'), process.platform === 'win32' ? 'junction' : 'dir');
+  fs.symlinkSync(path.join(fx.root, 'gone-dir'), path.join(fx.memoryDir, 'dl'));
+  for (const target of ['../nope/x.md', path.join(fx.root, 'elsewhere', 'nope', 'x.md'), 'link/nope/x.md', 'dl/nope/x.md']) {
     const r = await write(fx, target, 'x\n');
     assert.strictEqual(r.code, 5, `${target}: ${r.err}`);
     assert.match(r.err, /memory write refused \(outside-memory-dir\) — nothing written/, target);
   }
   assert.strictEqual(fs.existsSync(path.join(fx.root, 'nope')), false);
   assert.strictEqual(fs.existsSync(path.join(fx.root, 'elsewhere')), false);
+  assert.deepStrictEqual(fs.readdirSync(outside), []);
+  assert.strictEqual(fs.existsSync(path.join(fx.root, 'gone-dir')), false);
 });
 
 test('a symlink inside the memory dir pointing at a directory inside it is refused, nothing written', async () => {
