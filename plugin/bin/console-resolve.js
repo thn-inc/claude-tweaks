@@ -58,7 +58,7 @@
 // automatic, revertable memory write (lib/console/memory-write.js), the Review Console's step 8 under control
 // mode. The target must resolve inside --memory-dir (symlinks followed; a create needs its parent to exist). It
 // writes the target, then logs one AUTO entry under /wrap-up naming the path, the prior sha256 (`none` on a
-// create) and the whole-file diff (reverse with `git -c core.autocrlf=false apply -R`); a diff over 20 KiB stores the prior content
+// create) and the whole-file diff (reverse with `MEMORY_REVERT_COMMAND`); a diff over 20 KiB stores the prior content
 // at `{run}/staged/.memory-prior-{sha12}.md` (dot-prefixed so it never becomes a console item) and the entry
 // names that path instead. It needs control mode on with consoleAutoResolve granted (exit 4 otherwise, nothing
 // written) and takes no other flag. Exit 0 written, 2 malformed (any

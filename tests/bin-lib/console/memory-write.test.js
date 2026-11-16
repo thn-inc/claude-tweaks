@@ -58,7 +58,7 @@ function diffOf(text) {
   return `${out.join('\n')}\n`;
 }
 
-function revert(fx, text) {
+function revert(fx, text, ceiling) {
   const patch = path.join(fx.root, 'revert.patch');
   fs.writeFileSync(patch, diffOf(text));
   // Run the one constant the CLI prints, under the autocrlf a Windows install sets: `git apply` writes
@@ -67,7 +67,7 @@ function revert(fx, text) {
   fs.writeFileSync(gitconfig, '[core]\n\tautocrlf = true\n');
   const [bin, ...args] = MEMORY_REVERT_COMMAND.split(' ');
   assert.strictEqual(bin, 'git');
-  execFileSync(bin, [...args, patch], { cwd: fx.memoryDir, env: { ...process.env, GIT_CONFIG_GLOBAL: gitconfig, GIT_CONFIG_NOSYSTEM: '1' }, windowsHide: true });
+  execFileSync(bin, [...args, patch], { cwd: fx.memoryDir, env: { ...process.env, GIT_CONFIG_GLOBAL: gitconfig, GIT_CONFIG_NOSYSTEM: '1', ...(ceiling ? { GIT_CEILING_DIRECTORIES: ceiling } : {}) }, windowsHide: true });
 }
 
 test('wholeFileDiff: header, ranges and no-newline markers', () => {
@@ -110,6 +110,18 @@ test('AC4.2: applying the reverse diff restores the prior content (trailing newl
   assert.strictEqual((await write(fx, 'new.md', 'hello\n')).code, 0);
   revert(fx, decisions(fx));
   assert.strictEqual(fs.existsSync(path.join(fx.memoryDir, 'new.md')), false);
+});
+
+test('AC4.2: the reverse diff also restores the prior content from a memory directory outside any git repository', async (t) => {
+  const fx = fixture();
+  // The real memory directory sits outside any repository; the ceiling stops git discovering one above os.tmpdir().
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'memory-outside-')));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  fx.memoryDir = outside;
+  fs.writeFileSync(path.join(outside, 'note.md'), 'a\nb\n');
+  assert.strictEqual((await write(fx, 'note.md', 'a\nc\n')).code, 0);
+  revert(fx, decisions(fx), path.dirname(outside));
+  assert.strictEqual(fs.readFileSync(path.join(outside, 'note.md'), 'utf8'), 'a\nb\n');
 });
 
 const BIG = `${'x'.repeat(100)}\n`.repeat(250);
