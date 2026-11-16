@@ -4,6 +4,8 @@ Directory layout, the per-skill sub-file table, and the full command reference f
 
 Extracted from [CLAUDE.md](../CLAUDE.md) so the always-loaded file stays lean — every dispatched subagent inherits `CLAUDE.md` in its system prompt, so bytes there are paid per agent, not per session. `CLAUDE.md`'s own `## Structure` section keeps the orientation summary and points here for the detail.
 
+Keep every line of this file at or under 4000 characters: git merges by line, so a long entry that concurrent PRs each extend conflicts every time (#5049). Wrap a longer entry onto continuation lines, each starting at an entry name — `| | | ` rows under a sub-file table row, indented lines under a Structure-tree entry, `{spaces}# ` lines under a Commands-block command. A test that looks up an entry reads it with its continuations through `tests/helpers/plugin-structure-entry.js`, never by its first line alone.
+
 ## Structure
 
 ```
