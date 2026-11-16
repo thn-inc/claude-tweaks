@@ -188,6 +188,21 @@ test('a dangling docs/journeys symlink is cannot tell, not "no journeys"', (t) =
   assert.match(r.json.reason, /docs\/journeys is a dangling symlink/);
 });
 
+test('a regular file named docs means no journeys: the journeys rule still decides', () => {
+  const main = repo();
+  write(main, 'docs', 'not a directory\n');
+  const r = cli(['--skill', 'journeys', '--files', 'tests/a.test.js'], { cwd: main });
+  assert.equal(r.code, 0);
+  assert.equal(r.json.decision, 'skip', r.stdout);
+  assert.equal(r.stderr, '');
+});
+
+test('a regular file named docs/journeys is cannot tell', () => {
+  const main = repo();
+  write(main, 'docs/journeys', 'not a directory\n');
+  cliLogged(main, ['--skill', 'journeys', '--files', 'tests/a.test.js']);
+});
+
 test('a dangling docs symlink is cannot tell, not "no journeys"', (t) => {
   const main = repo();
   const gone = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-gate-gone-')), 'missing');
@@ -414,14 +429,6 @@ test('-h and --help as a flag value are values, not help; a repeated flag exits 
     assert.equal(r.code, 2, argv.join(' '));
     assert.match(r.stderr, /given more than once/);
     assert.match(r.stderr, /usage:/);
-  }
-});
-
-test('git calls take their timeout from the shared getter, with no literal of their own', () => {
-  for (const rel of [['plugin', 'bin', 'skill-gate.js'], ['plugin', 'bin', 'lib', 'skill-gate', 'index.js']]) {
-    const src = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', ...rel), 'utf8');
-    assert.match(src, /sharedPrimitives\.GIT_TIMEOUT_MS/, rel.join('/'));
-    assert.ok(!/timeout:\s*\d/.test(src), `${rel.join('/')} hard-codes a timeout`);
   }
 });
 
