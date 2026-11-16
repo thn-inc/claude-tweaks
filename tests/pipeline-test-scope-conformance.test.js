@@ -143,6 +143,28 @@ const TASK_PROMPT = path.join(PLUGIN, 'skills', 'dispatch', 'task-prompt.md');
 const EXPRESS_PROMPT = path.join(PLUGIN, 'skills', 'dispatch', 'express-prompt.md');
 const NPM_TEST_SPAN = /\bnpm test\b/;
 const PROJECT_TEST_CMD = /run the project's test command and every other long-running command/;
+// Context pack item 7 of task-prompt.md, whitespace-squashed: it carries the project-test-command sentence (#5601).
+function item7Squashed() {
+  const text = readText(TASK_PROMPT);
+  const start = text.indexOf('7. **Async-wait discipline**');
+  assert.notEqual(start, -1, 'task-prompt.md lost its item 7 "Async-wait discipline" heading');
+  const end = text.indexOf('\n8. ', start);
+  assert.notEqual(end, -1, 'task-prompt.md: no "8. " item follows item 7');
+  return text.slice(start, end).replace(/\s+/g, ' ');
+}
+const projectTestCmdCount = (s) => s.split(PROJECT_TEST_CMD).length - 1;
+
+test("AC3.3: task-prompt.md item 7 names the project's test command exactly once (#5601)", () => {
+  assert.equal(projectTestCmdCount(item7Squashed()), 1);
+});
+
+test("AC3.3: stripping item 7's project-test-command sentence drops the count to zero (#5601)", () => {
+  const item7 = item7Squashed();
+  const stripped = item7.replace(PROJECT_TEST_CMD, '');
+  assert.notEqual(stripped, item7);
+  assert.equal(projectTestCmdCount(stripped), 0);
+});
+
 // Frozen pre-change bytes (the replaced Foreground paragraph head) — the checks' go-red control.
 const PRE_CHANGE_FOREGROUND = 'Foreground execution (required): run `npm test` and every other long-running command in the\nforeground of this turn';
 
@@ -160,11 +182,26 @@ const foregroundParagraphs = (file) => readText(file).split(/\n\s*\n/)
   .filter((p) => p.startsWith('Foreground execution (required):'))
   .map((p) => p.replace(/\s+/g, ' '));
 
-test("every dispatch prompt Foreground paragraph names the project's test command (#5117)", () => {
+test('AC2.1: neither dispatch prompt file holds a Foreground paragraph (#5601)', () => {
   for (const file of [TASK_PROMPT, EXPRESS_PROMPT]) {
-    const paras = foregroundParagraphs(file);
-    assert.equal(paras.length, 2, `${path.basename(file)} Foreground paragraph count`);
-    for (const p of paras) assert.match(p, PROJECT_TEST_CMD);
+    assert.equal(foregroundParagraphs(file).length, 0, `${path.basename(file)} Foreground paragraph count`);
+  }
+});
+
+test("AC1.4: both rendered prompts carry item 7's project-test-command sentence (#5601)", () => {
+  const { renderTaskPrompt } = require('../plugin/bin/lib/dispatch/task-prompt');
+  const text = readText(TASK_PROMPT);
+  for (const call of ['first', 'second']) {
+    const prompt = renderTaskPrompt(text, {
+      call,
+      issues: [5601],
+      runDir: '/tmp/x y/.claude-tweaks/pipelines/2026-11-16T000000-record-5601',
+      pluginRoot: '/p/root',
+      policyValues: 'autonomy=unattended, integration-model=pr-first',
+      selectedAt: '2026-11-16T00:00:00.000Z',
+      effortLine: '[Effort: high — apply high-level reasoning depth to this task.]',
+    });
+    assert.match(prompt.replace(/\s+/g, ' '), PROJECT_TEST_CMD, `${call} call`);
   }
 });
 
