@@ -347,4 +347,4 @@ function scanStore({ projectsDir, match = null, since, until, fs: fsImpl = fs })
   return { files: files.length, unreadable, calls: calls.size, refusals, rows, referencedRuns: [...referenced].sort() };
 }
 
-module.exports = { scanStore, classifyGuard, GATE_FRAGMENTS };
+module.exports = { scanStore, eachLine, listCandidates, classifyGuard, GATE_FRAGMENTS };
