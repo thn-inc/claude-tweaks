@@ -36,7 +36,7 @@ files:
 - **URL:** no command — say "show advanced" in chat
 - **Action:** Ask to see the advanced-tier levers still on default.
 - **Should feel:** A free follow-up, not a new decision — no confirmation, no new question.
-- **Should understand:** This expands in-conversation from the same held snapshot; it never triggers a new `AskUserQuestion` — the mode has exactly one, reserved for the apply step below. The control-mode levers listed here (`control-mode`, the deploy/dev/acceptance keys, `trusted-authors`, `risk-categories`, `risk-path-globs`) show summaries opening "Not yet used". Setting them today changes nothing, until the #4608 record that wires each one lands (#4816).
+- **Should understand:** This expands in-conversation from the same held snapshot; it never triggers a new `AskUserQuestion` — the mode has exactly one, reserved for the apply step below. The levers listed here (the deploy, dev and acceptance keys and `trusted-authors`) show summaries opening "Not yet used". Setting them today changes nothing, until the #4608 record that wires each one lands (#4816).
 - **Red flags:** A second `AskUserQuestion` call firing here; a control-mode lever presented as if setting it changes behavior today.
 
 ### 4. Answer the one apply question — `AskUserQuestion`
