@@ -106,7 +106,7 @@ test('decisionFactFor: a spec-3 run dir names the parent run in evidenceRef', ()
   assert.strictEqual(f.evidenceRef, '.claude-tweaks/pipelines/2026-11-16T000749-multi/spec-3/staged/x.patch');
 });
 
-test('decisionFactFor: POSIX separators even when the run dir uses backslashes in its base name handling', () => {
+test('decisionFactFor: a plain run dir yields an evidenceRef with no backslash', () => {
   const f = decisionFactFor({ id: 'a', section: 'Pending review', resolution: 'pending', reason: 'r' }, { runDir: path.join('/r', 'run-1'), staged: false });
   assert.ok(!f.evidenceRef.includes('\\'));
 });
