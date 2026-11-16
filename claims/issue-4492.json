@@ -1,6 +1,7 @@
 {
-  "released": true,
-  "runId": "2026-10-30T124153-record-4492",
-  "reason": "failed: build-dispatch-unavailable",
-  "releasedAt": "2026-10-30T12:55:00.127Z"
+  "runId": "2026-11-16T094830-record-4492",
+  "sessionId": "b30605b8-64ad-4cb3-857f-7753207b8f74",
+  "claimedAt": "2026-11-16T09:50:54.867Z",
+  "ttlHours": 72,
+  "host": "Thomass-MacBook-Pro-3376.local"
 }
