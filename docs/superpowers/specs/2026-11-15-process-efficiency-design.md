@@ -122,6 +122,14 @@ No new records. Raise priority and order these.
 
 **1.3 Reword the maturity paragraph.** One new record, per decision 0.1: the `CLAUDE.md` paragraph that begins "Established codebase" states the limited stance. It stays inside the file's line budget.
 
+## Phase 1: Specified
+
+Records: unit 1.2 as #5584, unit 1.3 as #5585 (merged 2026-11-16). No parent: the two units are independent.
+
+- #5584 tells a typed command from a started run by a record the prompt hook writes when a person types the command, plus the session's environment. It fails closed. A session launched through `cc` carries no marker of who launched it, so until thn-inc/claude-user-config#50 ships, the label stays required in every such session.
+- The label check is not in `claim-targets.js`. It is in the queue pull, the dispatch skill's two named-form bullets, the driver's admission and `dispatch resume`'s verdict.
+- `CLAUDE.md` has no line-count test. `tests/claude-md-budget.test.js` bounds bytes; #5585 was written to that bound.
+
 ## Phase 2 — Tiebreak cost
 
 ## Phase 2: Specified
@@ -136,6 +144,17 @@ Files: `plugin/skills/review/step3-tiebreak.md`, `step3-routing.md`, `plugin/bin
 
 ## Phase 3 — Guard: reads are never refused
 
+## Phase 3: Specified
+
+Records: parent #5586; #5587 (the tool reports which guard refused each command and whether it only reads), #5588 (two rewrite rules applied before the harness guard reads a command), #5589 (a CLI for the adopted-branch check, whose skill snippet produced 346 refusals), #5590 (replay, the shapes the plugin cannot fix, and the re-read of #4990 and #4931; blocked by the other three).
+
+The premise below was wrong, and the records are written to what was measured on 2026-11-16 over 30 days:
+
+- "The guard" is Claude Code's own worktree-isolation guard, which the plugin cannot change: 12,770 of 13,202 refusals (96.7%). The plugin's gates refused 432, and 4 of their 314 worktree-always Bash denials were reads. No record edits the plugin's scanner, so nothing here waits for #4448.
+- What the plugin can do for a harness refusal is rewrite a refused read shape into an accepted one in PreToolUse (#5588), or stop its own skill text from producing the shape (#5589).
+- Two classes stay refused: reads of another checkout (876 in 30 days) and long read-only chains. #5590 records them. An issue for the Claude Code tracker is drafted and not filed.
+- Unit 3.1's "95% of refusals keyed by shape" cannot be met: the shape detectors leave 64% unclassified. #5587 keys the table on guard, reason and effect.
+
 **3.1 Classify the refusals.** `tools/guard-refusals.js` (#4028) already reads transcripts and counts refused commands by reason and by detector shape. This unit adds what it lacks: for each shape, whether the command writes. Done when the table covers at least 95% of refusals in a 30-day window.
 
 **3.2 Admit read-only shapes.** For each shape in the table that only reads, the scanner admits it. A shape the scanner cannot prove read-only stays refused. Every change passes the differential run in `.claude/skills/shell-scanner-bash-differential`. Done when a replay of the window's refused commands shows no read-only command refused and no write newly admitted.
@@ -143,6 +162,17 @@ Files: `plugin/skills/review/step3-tiebreak.md`, `step3-routing.md`, `plugin/bin
 The existing records that teach callers to avoid refused shapes (#4990, #4931) stay open until 3.2 lands, then are re-read: each is closed or narrowed.
 
 ## Phase 4 — Waits and skill gating
+
+## Phase 4: Specified
+
+Records: parent #5600; unit 4.1 as #5601 (the wait rule stated once, in the context pack), #5602 (`wait-for.js`) and #5604 (the prompts name it; blocked by #5601 and #5602); unit 4.2 as #5605.
+
+What the measurement changed, 2026-11-16 over 30 days:
+
+- 96.5% of sleep-led calls in subagents (52,132 of 54,034) are the keep-alive wait on a nested child agent, which the plugin's own prompts instruct. CI, a background verify and a sibling agent together are under 2%. So the wait command's first target is a child agent's stop.
+- Whether a waiting process can see a child's stop was not observed. #5602 opens with a probe and stops if the answer is no; #5604 then returns to shaping.
+- #5601 removes the duplicated block itself (the audit design's unit 5.1), so unit 4.1 no longer waits for that design. #4831 asks for part of the same removal.
+- Three of the seven call sites in unit 4.2 already check before loading. `/claude-tweaks:journeys` wrote a journey file in 79% of its loads; the gate skips it only for diffs confined to tests and pipeline bookkeeping (8% of merged work commits). The saving is modest.
 
 **4.1 A blocking wait.** The record first lists what subagents poll for (CI checks, a background verify, a sibling agent) from the transcripts. Each target gets a foreground command that returns when the state changes or a bound passes, and the prompts name it. Done when a 30-day replay of new transcripts shows `sleep`-led Bash calls in subagents under 0.5% of their Bash calls.
 
@@ -164,6 +194,17 @@ Records: parent #5554, unit 5.1 as #5555, unit 5.2 as #5556 (blocked by #5555), 
 
 ## Phase 6 — Review fan-out as a plugin workflow
 
+## Phase 6: Specified
+
+Records: parent #5594; #5595 (the pair lines are written by `categorise-reproduction`; blocked by #5541, #4359 and #5556), #5596 (probes of what a plugin-shipped workflow can do), #5597 (workflow agents counted in `timing.json`), #5598 (one call settles a review's lens replies; blocked by #5595), #5599 (the workflow path behind a policy key; blocked by all of them).
+
+- A dispatched build agent and a driver worker have no Workflow tool. Most reviews run inside one, so the present Task dispatch stays as a permanent fallback. The removal condition is for the policy key, not for the dispatch.
+- For the same reason #5596 and #5599 are built by a top-level session (`/claude-tweaks:flow`), not through `/claude-tweaks:dispatch`.
+- The script returns each reviewer's reply as text and a shipped parser reads it. A schema would make a workflow agent answer through a structured-output call, which contradicts the brief's table-then-status block.
+- There are seven pair-line forms, not six.
+- Workflow agents' transcripts sit one level below where the timing reader looks; without #5597 the workflow path would look cheaper than it is.
+- Not verified: starting a plugin-shipped workflow by name. #5596 probes it first and ends blocked if it fails.
+
 One workflow script in `plugin/workflows/` runs the lens reviewers for a review: the composed brief unchanged, both reviewers of each pair, model and effort per lens as today. The script returns each reviewer's findings as structured output. Pairing, the ground-truth checks and the decision-log lines stay in the existing CLIs, called after the workflow returns, because a script cannot require a module. One of those is not in a CLI today: the per-finding pair lines (`Reproduction: … reproduced. Confirmed.` and five more forms) are written by the reviewing session from templates in `step3-lens-dispatch.md`. This phase moves that write into `review-coordination.js categorise-reproduction`, the way `resolve-tiebreak --run` already logs its own line. `/claude-tweaks:review` Step 3 names the workflow; that is the opt-in the tool requires.
 
 Done when, over at least 20 reviews run both ways, the workflow path's confirmed findings are no fewer and the main session's tokens for Step 3 are lower, both read from the 5.2 artifact.
@@ -171,6 +212,14 @@ Done when, over at least 20 reviews run both ways, the workflow path's confirmed
 If decision 0.1 keeps `established`, this phase ships beside the present dispatch behind a policy key, with a recorded removal condition.
 
 ## Phase 7 — Run graph for the standard lane
+
+## Phase 7: Specified
+
+Record: #5580 (blocked by #5556). No parent. The driver's Phase 4 (#5221) closed on 2026-11-15 and is not a blocker.
+
+- The HARD-GATEs are not a never-skip set today: three sit inside steps the ceremony roster lets the fast lane skip. The design doc must say, per gate, whether its step is in every graph.
+- Of the 100 most recent closed runs, 92 are standard. A lane with fewer than 20 runs in the archive (driver has 3) gets no rule from the numbers.
+- Any rule that gives a record fewer steps than today sits behind a policy value whose default reproduces today's graph.
 
 A design, not a build: one record whose deliverable is a design doc that extends the driver design to the standard lane.
 
