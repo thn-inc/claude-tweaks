@@ -264,7 +264,7 @@ on PR #{n}. Reversibility: {…}.` line per item actually resolved, per
 further line naming which exception fired: `AUTO {time} — Console execution: withheld branch-finish/merge on PR #{n} — persisted
 mergeCheckVerdict: needs-human. Reversibility: n/a (declined to act).` for the first exception, or
 `AUTO {time} — Console execution: withheld branch-finish/merge on PR #{n} — member #{m} lacks
-auto:merge. Reversibility: n/a (declined to act).` for the second (#1802) — naming the specific
+auto:build or a merge grant. Reversibility: n/a (declined to act).` for the second (#1802) — naming the specific
 member `{m}` whose live labels lacked the grant. For a gap whose `member` is null
 (`grant-context-missing`, `members-unresolved`) the line takes the null-member form instead:
 `AUTO {time} — Console execution: withheld branch-finish/merge on PR #{n} — {reason}. Reversibility: n/a (declined to act).`
