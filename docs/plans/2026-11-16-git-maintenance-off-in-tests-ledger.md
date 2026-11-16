@@ -2,3 +2,6 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | build | SDD ruling — T3 may reimplement gitFixtureConfigEnv over appendGitConfigEnv: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
+| 2 | build | SDD ruling — T4 (measurement) is reviewed on its evidence files and PR body, not a code diff: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
+| 3 | build | SDD ruling — Widen the inherited-template copy to the whole template minus config: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
