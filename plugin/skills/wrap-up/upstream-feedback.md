@@ -22,8 +22,10 @@ STAGED {time} — Upstream feedback row: upstream {defect|gap} report proposed f
 The stage file holds the fully drafted **and already scrubbed** body. Scrubbing happens at staging
 time, not at filing time — the approver reads what will actually be published, and a body scrubbed
 later is a body nobody approved. With control mode off the stage file holds that body alone, as
-before. Under control mode (`node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --ceiling --run "$PIPELINE_RUN_DIR"`
-prints `control-mode on`) it opens with a header, in the layout `bin/lib/issues/upstream-ownership.js`'s
+before. Under control mode (`node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --ceiling --run "{ABS_RUN_DIR}"`
+prints `control-mode on`; `{ABS_RUN_DIR}` is the anchored run dir, substituted per `curation-engine.md`'s
+section 4) it opens with a header. A failed call, or any output other than `control-mode on`, writes
+no header: the body alone, as with control mode off. The header layout is the one `bin/lib/issues/upstream-ownership.js`'s
 `parseStagedUpstream` reads (`thn-inc/claude-tweaks` is `/claude-tweaks:feedback`'s fixed filing
 target; the two header lines are never part of the filed body):
 
@@ -36,7 +38,9 @@ Title: {title}
 
 **Causal-verdict tag (#2551).** When the learning being staged carries a `CAUSAL: systemic`
 verdict from reflect's Near-misses chain-walk (`full-mode.md`'s Near-misses Chain Walk section),
-prepend a `**Causal:** systemic` line to the staged draft body, before the drafted content —
+prepend a `**Causal:** systemic` line to the staged draft body, before the drafted content and
+after the header block and its blank line when there is one (before the header, `parseStagedUpstream`
+finds no header and the item is held) —
 `review-console.md`'s Step 9 reads this line to decide the item's "Approve all" default (below).
 Omit the line entirely when the learning carries no causal verdict (most D5 findings won't —
 the chain-walk is Near-misses-specific), the same omit-when-absent convention `SKILL.md`'s own

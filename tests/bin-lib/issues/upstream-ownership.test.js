@@ -243,6 +243,14 @@ test('parseStagedUpstream: a target-marker first body line after the blank separ
     { targetRepo: 'a/b', title: 'Real', body: '<!-- upstream-target: a/b -->\nmore' });
 });
 
+test('parseStagedUpstream: a Causal tag after the header block is body text; before the header it hides the header', () => {
+  const after = '<!-- upstream-target: thn-inc/x -->\nTitle: T\n\n**Causal:** systemic\nThe draft.';
+  assert.deepStrictEqual(parseStagedUpstream(after), { targetRepo: 'thn-inc/x', title: 'T', body: '**Causal:** systemic\nThe draft.' });
+  // Prepended ahead of the header, the tag is the first non-blank line, so no header block is read and the item holds.
+  const before = '**Causal:** systemic\n<!-- upstream-target: thn-inc/x -->\nTitle: T\n\nThe draft.';
+  assert.deepStrictEqual(parseStagedUpstream(before), { targetRepo: null, title: null, body: before });
+});
+
 test('ownedOwnersList: an element with no string form is ignored, never thrown on', () => {
   const { proxy, revoke } = Proxy.revocable({}, {});
   revoke();

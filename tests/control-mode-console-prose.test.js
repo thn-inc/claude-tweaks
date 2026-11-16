@@ -568,6 +568,36 @@ test('#4621 go-red: the Control mode section naming no capability, or the retire
   assert.deepStrictEqual(controlModeSectionProblems(AUTONOMY_CEILING.replace(section, `${section}\n${NO_CAPABILITY_CLAIM}`)), ['the Control mode section still says control mode adds no capability of its own']);
 });
 
+// The staging check runs inside curation-engine.md's dispatched judge, whose shell has no $PIPELINE_RUN_DIR: it must name
+// {ABS_RUN_DIR}, and curation-engine.md must substitute that placeholder alongside {ABS_STAGE_DIR}.
+const CURATION_ENGINE = readText(path.join(__dirname, '..', 'plugin', 'skills', 'wrap-up', 'curation-engine.md'));
+const flat = (text) => text.replace(/\s+/g, ' ');
+const STAGING_CHECK = '--ceiling --run "{ABS_RUN_DIR}"';
+const STAGING_CHECK_UNSET = '--ceiling --run "$PIPELINE_RUN_DIR"';
+
+function absRunDirProblems(engine, upstream) {
+  const problems = [];
+  const e = flat(engine);
+  if (!e.includes('with `{ABS_STAGE_DIR}` and `{ABS_RUN_DIR}` substituted')) problems.push('the fan-out dispatch does not substitute {ABS_RUN_DIR}');
+  if (!e.includes('The controller replaces `{ABS_STAGE_DIR}`, and `{ABS_RUN_DIR}` (the anchored absolute run dir')) problems.push('the substitution sentence does not define {ABS_RUN_DIR}');
+  const u = flat(upstream);
+  if (!u.includes(STAGING_CHECK)) problems.push('the staging check does not run against {ABS_RUN_DIR}');
+  if (u.includes(STAGING_CHECK_UNSET)) problems.push('the staging check still runs against $PIPELINE_RUN_DIR');
+  if (!u.includes('A failed call, or any output other than `control-mode on`, writes no header')) problems.push('the staging check does not fail closed to no header');
+  return problems;
+}
+
+test('#4621: the staging check names {ABS_RUN_DIR}, which curation-engine.md substitutes', () => {
+  assert.deepStrictEqual(absRunDirProblems(CURATION_ENGINE, UPSTREAM_FEEDBACK), []);
+});
+
+test('#4621 go-red: each {ABS_RUN_DIR} claim is caught on its own', () => {
+  assert.deepStrictEqual(absRunDirProblems(CURATION_ENGINE.replace(' and `{ABS_RUN_DIR}` substituted', ' substituted'), UPSTREAM_FEEDBACK), ['the fan-out dispatch does not substitute {ABS_RUN_DIR}']);
+  assert.deepStrictEqual(absRunDirProblems(CURATION_ENGINE.replace('`{ABS_STAGE_DIR}`, and `{ABS_RUN_DIR}` (the anchored absolute run dir', '`{ABS_STAGE_DIR}`'), UPSTREAM_FEEDBACK), ['the substitution sentence does not define {ABS_RUN_DIR}']);
+  assert.deepStrictEqual(absRunDirProblems(CURATION_ENGINE, UPSTREAM_FEEDBACK.replace(STAGING_CHECK, STAGING_CHECK_UNSET)), ['the staging check does not run against {ABS_RUN_DIR}', 'the staging check still runs against $PIPELINE_RUN_DIR']);
+  assert.deepStrictEqual(absRunDirProblems(CURATION_ENGINE, UPSTREAM_FEEDBACK.replace('A failed call', 'A call')), ['the staging check does not fail closed to no header']);
+});
+
 // Code twin: the staged layout the prose documents parses to a target, a title and a body through parseStagedUpstream.
 function stagedLayoutProblems(text) {
   const m = /```\n(<!-- upstream-target:[\s\S]*?)\n```/.exec(text);

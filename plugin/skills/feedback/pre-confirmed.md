@@ -13,7 +13,9 @@ it rendered and got approval for (the approved snapshot) — not just a path ref
 filing, two checks run, always in this order. Under control mode only, the staged draft opens
 with a header — a `<!-- upstream-target: … -->` line and a `Title: …` line, ending at the blank
 line (`wrap-up/upstream-feedback.md` Step 2): the title becomes the drafts file's `title`, and
-neither line goes into `body`. A draft with no header is filed exactly as before.
+neither line goes into `body`. A draft with no header is filed exactly as before. Each `--hold`
+call below passes `--run` the run dir that owns the staged file — the parent of its `staged/`
+directory, so an item under `spec-{N}/staged/` is held against `spec-{N}`, never the parent run.
 
 1. **Scrub rerun (unconditional)** — Step 6's scrub always reruns first, on the current on-disk
    staged content, as a defense-in-depth safety net before publishing — regardless of whether the
@@ -23,7 +25,7 @@ neither line goes into `body`. A draft with no header is filed exactly as before
    treat it exactly like a Step 6 stop anywhere else in a batch: drop this one item (report why)
    and continue processing the rest of the chunk — it never aborts sibling items. Under control
    mode this stop also runs the `--hold scrub-hit` call of `wrap-up/review-console.md`'s step 9
-   for the item, its `{why}` a short phrase you write (not pasted tool output), any `'` in it
+   for the item against that owning run dir, its `{why}` a short phrase you write (not pasted tool output), any `'` in it
    written `'\''`.
 2. **Drift check** — if `staged/wrap-up-upstream-{N}.md` no longer exists, treat this as "already
    filed" (see Step 8's cleanup-on-success below) and skip this item without re-filing or
@@ -34,7 +36,8 @@ neither line goes into `body`. A draft with no header is filed exactly as before
    so the human approves exactly what would be filed. This fallback is per-item — it never aborts
    sibling items in the same batch. Under control mode a mismatch never falls back to
    `AskUserQuestion`: file nothing for the item and run the `--hold scrub-hit` call of
-   `wrap-up/review-console.md`'s step 9 with `{why}` `scrub changed the approved draft`.
+   `wrap-up/review-console.md`'s step 9 against that owning run dir, with `{why}` `scrub changed the
+   approved draft`.
 
 When the drift check finds no mismatch, skip the `AskUserQuestion` call for that item and file the
 post-scrub content directly.
