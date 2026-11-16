@@ -6,7 +6,7 @@ short-circuit, `wrap-up/merge-mode.md`, `flow/worktree-merge.md`'s reconciliatio
 `release/execute.md` Step 5.
 
 **The shape:** ready → merge-verification gate (Step 2.5: state read; red parks; pending waits or
-arms only when the forge holds it) → `gh pr merge --auto` (arm) → degrade to immediate merge →
+arms only when the forge holds it) → local acceptance park (Step 2.9) → `gh pr merge --auto` (arm) → degrade to immediate merge →
 degrade to ready+comment. `gh pr merge` needs no local checkout, so the same cwd-pinned Task call that
 already holds authorization, `merge-check`, and acceptance labeling runs the merge itself — no
 `close-run`-before-merge relief, branch-switch guard, push-from-worktree rule or scratch-worktree
@@ -39,8 +39,7 @@ Before marking the PR ready, confirm Phase 2's curation-engine apply work has ac
 
 Skip this guard entirely when `$PIPELINE_RUN_DIR/engine-state.json` does not exist — Phase 2 had
 nothing open (every registry row closed), or the run took `curation-engine.md` section 6's prose
-fallback (which writes no `engine-state.json` and commits inline, in the same single thread that
-reaches this step). Otherwise:
+fallback (which writes no `engine-state.json`). Otherwise:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-engine.js" render --run-dir "$PIPELINE_RUN_DIR" --section trace --strict >/dev/null
@@ -53,7 +52,7 @@ this procedure before Step 2, log `AUTO {time} — Curation-apply completeness g
 unrecorded in engine-state.json — Phase 2 has not finished; merge blocked.`, and surface it to
 this run's caller the same way any other HARD-GATE failure here is surfaced (no merge attempted,
 no PR undrafted). Re-running Phase 2's own Step 2 (`wrap-up-engine.js record`) for the missing
-row(s) is the remedy.
+row(s) is the remedy, never run here.
 
 ## Step 2: Mark the PR ready
 
@@ -150,7 +149,7 @@ Classify from the three reads, in this order:
 
 - The command failed, or its output is not parseable JSON with those five fields → report
   (`pending-review`, reason `state-read-failed`) and stop — never merge on a state this gate could
-  not read (the same posture the bounded watch takes for an unknown `gh pr checks` exit). A read
+  not read. A read
   failure is not "no CI".
 - `state` not `OPEN` → report (`pending-review`, reason `pr-not-open`) and stop; never merge — and
   never *park* — a closed or already-merged PR, whatever stale conclusions its rollup still carries.
@@ -295,9 +294,11 @@ never suggest bypassing protection.
 
 ## Step 2.9: Local acceptance park (control mode)
 
-Run `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" parked`, then `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" decide`, before Step 3. Read `_shared/local-acceptance-park.md` only when `parked` exits 0/6 or `decide` prints `park:true`: a park ends `pending-review` / `awaiting-local-acceptance`, and Step 3 never runs.
+Before Step 3: `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" parked --record {n}`, then `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" decide --run "$PIPELINE_RUN_DIR" --record {n}[,{m}…]`. Read `_shared/local-acceptance-park.md` unless `parked` exits 5 and `decide` exits 0 with `park:false`.
 
 ## Step 3: Attempt auto-merge, degrading on specific failure signatures
+
+No fence below runs until Step 2.9 has run, whichever Step 2.5 route led here (a caller citing Step 3 alone carries its own `parked` guard).
 
 **Creation-time caller:** tidy's Step 7.5 arm runs Step 2.5, then these fences where it routes; Red path, Conflict path and ready+comment degrades become leave-unarmed + report (`tidy/step-7-5-worktree-always.md`).
 

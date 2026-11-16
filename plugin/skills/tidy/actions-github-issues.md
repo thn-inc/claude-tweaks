@@ -88,7 +88,7 @@ When judging `statusCheckRollup`, use the same non-blocking conclusion set
 check treats a job whose own `if:` condition is false, e.g. a default-branch-only cleanup job,
 as a permanent regression); do not re-derive it.
 
-**Parked for local acceptance — record-linked flavor only, first.** Run `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" parked --record {n}` on each `Fixes` record, adding `--run "{run-dir}"` (this tidy run's directory) when the sweep has one. Exit 0 or 6 (`unknown`) — hold, not armed: never run Step 3, never run the labeling guard below. Report `Held (not armed): PR #{n} — parked awaiting local acceptance`, and recommend `/claude-tweaks:accept #{record}`.
+**Parked for local acceptance — record-linked flavor only, first.** Run `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" parked --record {n}` on each `Fixes` record, never with `--run` (the repo-root policy is the sweep's authority). Any exit but 5 (0, 6 `unknown`, or an error) — hold, not armed: never run Step 3, never run the labeling guard below. Report `Held (not armed): PR #{n} — parked awaiting local acceptance`, and recommend `/claude-tweaks:accept #{record}`.
 
 **Acceptance labeling — record-linked flavor only, before Step 3.** Green says nothing about whether
 acceptance labeling (`demo:pending`, the Try it walkthrough) landed, and the merge closes every `Fixes`
