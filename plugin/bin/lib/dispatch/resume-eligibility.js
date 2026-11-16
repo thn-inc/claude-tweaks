@@ -17,6 +17,7 @@ const { classifyClaimBlob } = require('../issues/claims');
 const { RUN_ID_SHAPE } = require('../issues/claim-store');
 const { parseEntry } = require('../log-decision/append');
 const { HARNESS_WORKTREE_DIR } = require('../hooks/worktree-reap');
+const { REMEDIES } = require('../issues/build-authority');
 
 // The vocabulary has one home. `concurrent-resume` and `stale-bound-run` are produced only by
 // bin/dispatch-resume.js's run-dir scan (one this pure function cannot make).
@@ -346,8 +347,14 @@ function resumeEligibility(input) {
   if (labelList.includes('bot:blocked') || authority === 'none') {
     const words = Array.isArray(authorityReasons) ? authorityReasons.filter((w) => typeof w === 'string' && w !== '') : [];
     const notAccepted = words.length > 0 ? ` (typed command not accepted: ${words.join(', ')})` : '';
-    const why = labelList.includes('bot:blocked') ? 'carries bot:blocked' : `lacks auto:build${notAccepted}`;
-    return refuse('not-granted', `#${n} ${why} — re-grant it with /claude-tweaks:backlog refine #${n}, then run ${resumeCmd}`);
+    if (labelList.includes('bot:blocked')) {
+      return refuse('not-granted', `#${n} carries bot:blocked — re-grant it with /claude-tweaks:backlog refine #${n}, then run ${resumeCmd}`);
+    }
+    // With reason words, the first word's remedy (the table the queue pull's line uses); without, the grant.
+    const remedy = Object.hasOwn(REMEDIES, words[0])
+      ? REMEDIES[words[0]].split('#N').join(`#${n}`)
+      : `re-grant it with /claude-tweaks:backlog refine #${n}`;
+    return refuse('not-granted', `#${n} lacks auto:build${notAccepted} — ${remedy}, then run ${resumeCmd}`);
   }
   if (labelList.includes('bot:in-progress') && claimState !== 'stale') {
     return refuse('label-drift', `#${n} carries bot:in-progress without a stale claim — remove that label (gh issue edit ${n} --remove-label bot:in-progress), then run ${resumeCmd}`);

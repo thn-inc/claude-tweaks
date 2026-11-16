@@ -696,7 +696,7 @@ test('#5584 AC10: an ungranted record whose typed command is refused -> not-gran
   const r = exec(env);
   assert.equal(r.code, 3);
   assert.equal(r.json.reason, 'not-granted');
-  assert.equal(r.json.line, `#${N} lacks auto:build (typed command not accepted: expired) — re-grant it with /claude-tweaks:backlog refine #${N}, then run /claude-tweaks:dispatch resume #${N}`);
+  assert.equal(r.json.line, `#${N} lacks auto:build (typed command not accepted: expired) — grant it with /claude-tweaks:backlog refine #${N}, or type the command again, then run /claude-tweaks:dispatch resume #${N}`);
 });
 
 test('#5584 AC10: a granted record never reads the typed command', () => {
@@ -711,8 +711,10 @@ test('#5584 AC15: bot:blocked, bot:parked and parked refuse with an accepted typ
     const r = exec(env);
     assert.equal(r.code, 3, held);
     assert.equal(r.json.reason, 'not-granted', held);
-    const why = held === 'bot:blocked' ? 'carries bot:blocked' : 'lacks auto:build (typed command not accepted: held)';
-    assert.equal(r.json.line, `#${N} ${why} — re-grant it with /claude-tweaks:backlog refine #${N}, then run /claude-tweaks:dispatch resume #${N}`, held);
+    const line = held === 'bot:blocked'
+      ? `#${N} carries bot:blocked — re-grant it with /claude-tweaks:backlog refine #${N}, then run /claude-tweaks:dispatch resume #${N}`
+      : `#${N} lacks auto:build (typed command not accepted: held) — clear bot:blocked, bot:parked or parked on #${N} once its trigger has fired, then type the command again, then run /claude-tweaks:dispatch resume #${N}`;
+    assert.equal(r.json.line, line, held);
     assert.equal(env.calls.typed.length, 0, held);
   }
 });
@@ -721,7 +723,7 @@ test('#5584 AC15: a record without ready is refused with an accepted typed comma
   const env = typedEnv(['type:task']);
   const r = exec(env);
   assert.equal(r.json.reason, 'not-granted');
-  assert.match(r.json.line, /\(typed command not accepted: not-ready\)/);
+  assert.equal(r.json.line, `#${N} lacks auto:build (typed command not accepted: not-ready) — run /claude-tweaks:specify #${N}, then run /claude-tweaks:dispatch resume #${N}`);
 });
 
 test('the issue read is one gh issue view with the labels,state,body field list', () => {
