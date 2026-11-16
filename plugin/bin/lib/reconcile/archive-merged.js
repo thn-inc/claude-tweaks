@@ -1435,6 +1435,11 @@ function archiveRunDir(root, runDir, { env } = {}) {
     return archiveCommit ? { ...refusal(reason, extra), commit: archiveCommit } : refusal(reason, extra);
   }
 
+  // #5555: the run's state before the move — the status decides whether this
+  // close owes a timing.json (a run close-run already closed has one), and the
+  // worktree it names is kept as worktreeAtClose for the token pass.
+  const preMoveState = readRunState(runDir) || {};
+
   const specDirs = listSpecDirs(runDir);
 
   // Every git-tracked work/ subtree — the top-level one (single-spec
@@ -1776,8 +1781,30 @@ function archiveRunDir(root, runDir, { env } = {}) {
   // run-state.json moved above, so finalize the terminal state at its new
   // (archived) location, not the original runDir — writeRunState reads and
   // preserves whatever state already moved there.
-  const result = writeRunState(archiveDir, { status: 'clean', worktree: null });
+  const usablePath = (v) => (typeof v === 'string' && v ? v : null);
+  const priorWorktree = usablePath(preMoveState.worktree) || usablePath(preMoveState.worktreeAtClose);
+  const result = writeRunState(archiveDir, priorWorktree
+    ? { status: 'clean', worktree: null, worktreeAtClose: priorWorktree }
+    : { status: 'clean', worktree: null });
   if (!result) return refuseAfterMarker('close-failed');
+
+  // #5555: phase rows inline (no transcript read), token totals in a detached
+  // pass. A run already clean was closed by close-run, which wrote its own.
+  if (preMoveState.status !== 'clean') {
+    try {
+      const timing = require('../timing/at-close');
+      timing.writePhaseTimingSync(archiveDir);
+      timing.spawnTokenPass(archiveDir);
+    } catch (err) {
+      try {
+        const { appendEntry, formatEntry } = require('../log-decision/append');
+        appendEntry({ runDir: archiveDir, section: '/wrap-up', entry: formatEntry({
+          status: 'SKIP', now: Date.now(), step: 'timing at close',
+          text: `condition: timing at close failed (${(err && err.message) || String(err)}) → fallback: no timing.json written`,
+        }) });
+      } catch { /* a failed trace line never fails the archive */ }
+    }
+  }
 
   // Late-write guard (#990 — reproduced live during #893's own wrap-up even
   // with #902's dynamic enumeration already in place): the top-level
