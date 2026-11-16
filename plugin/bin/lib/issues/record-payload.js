@@ -257,7 +257,8 @@ function isRepoRelativeKeyFilePath(filePath) {
 // needs:definition variant, rendering `## Open Question` in place of Acceptance
 // Criteria so a needs-you record never carries placeholder AC. Provenance lines
 // (Origin:, then Defer-reason: — validated against DEFER_REASONS) render between
-// header and `## Current State`, where ownOriginLine (above) reads them. footer: a string replaces the default health-suite sentence, null omits
+// header and `## Current State`, where ownOriginLine (above) reads them. footer: a
+// string replaces the default health-suite sentence, null omits
 // it; exhaust producers pass `_Filed by \`{producer}\` via specShapedBody._` — the
 // machine-visible marker _shared/work-record.md's born-shaped matrix rows key on.
 // header is the slot for producer-specific leading lines (e.g. `Trigger: {condition}`)
