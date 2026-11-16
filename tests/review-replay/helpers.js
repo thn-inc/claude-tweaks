@@ -33,15 +33,28 @@ const GIT_TABLE = {
   [`ls-tree -r --name-only ${HEAD_C}`]: `${TREE_FILES}\n`,
 };
 
-// Deps for run(): the real fs, a git that answers from a table (and throws on anything else), a writeTree that copies
-// the fixture tree, and captured log and err lines.
+// run-bad's decisions.md is a plain file the deps' fs refuses to read, as a permission-denied file would be. A directory
+// in its place would break every repo-wide scan that reads tests/**/*.md.
+const UNREADABLE = path.join(ARCHIVE, 'run-bad', 'decisions.md');
+const depsFs = {
+  ...fs,
+  readFileSync: (file, ...rest) => {
+    if (path.resolve(String(file)) === UNREADABLE) {
+      throw Object.assign(new Error(`EACCES: permission denied, open '${file}'`), { code: 'EACCES' });
+    }
+    return fs.readFileSync(file, ...rest);
+  },
+};
+
+// Deps for run(): the real fs (bar run-bad's decisions.md), a git that answers from a table (and throws on anything
+// else), a writeTree that copies the fixture tree, and captured log and err lines.
 function makeDeps({ gitTable, ...overrides } = {}) {
   const logs = [];
   const errs = [];
   const gitCalls = [];
   const table = { ...GIT_TABLE, ...(gitTable || {}) };
   const deps = {
-    fs,
+    fs: depsFs,
     git: (args) => {
       const key = args.join(' ');
       gitCalls.push(key);

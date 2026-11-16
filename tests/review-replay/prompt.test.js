@@ -2,7 +2,6 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
 
 const { loadTemplate, disciplineLines, fillFinding, buildPrompt, CHUNK_HEADER_RE } =
@@ -10,8 +9,10 @@ const { loadTemplate, disciplineLines, fillFinding, buildPrompt, CHUNK_HEADER_RE
 const { stripTree } = require('../../tools/review-replay/score.js');
 const { toPosix } = require('../../tools/review-replay/schema.js');
 
-const TIEBREAK = fs.readFileSync(path.join(__dirname, '..', '..', 'plugin', 'skills', 'review', 'step3-tiebreak.md'), 'utf8');
-const CORE = fs.readFileSync(path.join(__dirname, '..', '..', 'plugin', 'skills', '_shared', 'subagent-dispatch-core.md'), 'utf8');
+const { readText } = require('../helpers/read-skill.js');
+
+const TIEBREAK = readText(path.join(__dirname, '..', '..', 'plugin', 'skills', 'review', 'step3-tiebreak.md'));
+const CORE = readText(path.join(__dirname, '..', '..', 'plugin', 'skills', '_shared', 'subagent-dispatch-core.md'));
 
 const DISCIPLINE = { readOnly: 'READ-ONLY REVIEW: test line one', shell: 'SHELL DISCIPLINE: test line two' };
 const CTX = { treeRoot: path.join(path.sep, 'tmp', 'tree'), base: 'bbbb', head: 'cccc', discipline: DISCIPLINE };
