@@ -85,8 +85,10 @@ Claude-Session: https://claude.ai/code/session_016yg3zo6eTU9wd41H4Npjd5"
 
 ### Task 3: Split `queue-pull.test.js` over one helper module
 
+**Review risk:** high — it moves module-level shared state (`PAIR_MEMO`, the fault-pool promise) and the two top-level `after` cleanup hooks (at `queue-pull.test.js:2730` and `:3287`) across module boundaries, and the `before` hooks race to start the pool.
+
 **Files:**
-- Modify: `tests/bin-lib/dispatch/queue-pull.test.js` (keeps everything before line 2812, i.e. all non-parity tests, importing the helpers)
+- Modify: `tests/bin-lib/dispatch/queue-pull.test.js` (keeps everything before line 2812 and the `#5230` in-process tests after the last describe, lines 3528-3734, i.e. all non-parity tests, importing the helpers)
 - Create: `tests/bin-lib/dispatch/queue-pull-helpers.js` (the module-level definitions the parity blocks share: `POOL`, `PARITY_S1`, `ALL_REASONS`, `MATRIX`, `EXTRA`, `FAULTS`, `FILES_FAULTS`, `PAIR_MEMO`, `pairJobs`, `runFaultPool`, `runD1`, `assertEveryJobRan`, `sides`, `groupedIn`, `exclusionsIn`, the scenario builders `S1`/`S2`/`SPortable`, and whatever else the four blocks and the kept tests both reference; find them by grepping each block's identifiers)
 - Create: `tests/bin-lib/dispatch/queue-pull-parity-ac1.test.js`, `queue-pull-parity-ac5.test.js`, `queue-pull-parity-ac4.test.js`, `queue-pull-parity-ac7.test.js` (one per `describe`, with the block's own trailing real-writer tests that sit between blocks following the block they follow in the original file)
 
@@ -99,10 +101,12 @@ Other test files only mention `queue-pull.test.js` in comments naming tests that
 - Produces: the same set of tests, same names, spread over five files.
 
 - [ ] **Step 1: Extract helpers.** Move the shared definitions into `queue-pull-helpers.js` and export them; the original file and each new file import what they use. Module-level state that must stay one instance per process (`PAIR_MEMO`, the fault pool promise) stays in the helper module. Header comment of the original (lines 1-50) stays on the helper module and is trimmed in the original to a pointer.
-- [ ] **Step 2: Move the four `describe` blocks** (and the top-level tests between and after them) into the four new files unchanged, keeping `{ skip: oracleSkip(), timeout: 600_000 }` on every block. A top-level test that pins a list `plugin/bin/lib/dispatch/queue-pull.js` names (its line 1154 comment says `queue-pull.test.js` pins it) stays in `queue-pull.test.js`.
+- [ ] **Step 2: Move the four `describe` blocks** (and the top-level tests that sit between them, lines 2812-3527) into the four new files unchanged, each test following the block it follows in the original, keeping `{ skip: oracleSkip(), timeout: 600_000 }` on every block. The `#5230` in-process tests after the last describe (lines 3528-3734) stay in `queue-pull.test.js`; other test files' comments name them there.
+
+  Decide per file what its fault pool runs, because each file is now its own process and the shared `PAIR_MEMO` and one-pool promise no longer span them: the AC1 and AC5 files run their own matrix pairs; the AC4 file runs the fault pool plus its own copies of the matrix bases it used to reuse from the AC1 matrix (`S1-gh-miss`, `S1-gh-hit`, `S2-gh-miss`, and the files bases); the AC7 file (`runFaultPool()` at `:3416`) runs only the files rows, the files bases and D1 that its assertions read, never the gh fault rows. State the choice per file in a header comment. A top-level test that pins a list `plugin/bin/lib/dispatch/queue-pull.js` names (its line 1154 comment says `queue-pull.test.js` pins it) stays in `queue-pull.test.js`.
 - [ ] **Step 3: Verify the count is equal**
 
-Run: `node --test --test-reporter=spec tests/bin-lib/dispatch/queue-pull*.test.js > <scratchpad>/qp-split.txt 2>&1; echo exit $?`
+Run: `node --test --test-reporter=spec tests/bin-lib/dispatch/queue-pull.test.js tests/bin-lib/dispatch/queue-pull-parity-ac1.test.js tests/bin-lib/dispatch/queue-pull-parity-ac5.test.js tests/bin-lib/dispatch/queue-pull-parity-ac4.test.js tests/bin-lib/dispatch/queue-pull-parity-ac7.test.js > <scratchpad>/qp-split.txt 2>&1; echo exit $?` (the five files by name, never a glob: `queue-pull-shims.test.js` would join it)
 Expected: exit 0, and the `ℹ tests`, `ℹ pass` and `ℹ skipped` totals equal Task 1's `N`. Also run `git diff --stat -M origin/main -- tests/bin-lib/dispatch/` and confirm no test body changed beyond the move.
 - [ ] **Step 4: Prove every moved block still skips without the oracle.** Statically: `git grep -n "^describe(" -- tests/bin-lib/dispatch/queue-pull-parity-*.test.js` prints four lines, and every one of them contains `skip: oracleSkip()` and `timeout: 600_000`.
 - [ ] **Step 5: Commit**
@@ -131,6 +135,7 @@ Claude-Session: https://claude.ai/code/session_016yg3zo6eTU9wd41H4Npjd5"
 
 ```bash
 git add docs/journeys/select-the-dispatch-queue-with-the-queue-pull-cli-5227.md docs/journeys/ci-test-gate.md plugin/bin/lib/dispatch/queue-pull.js docs/plugin-structure.md
+# plus any test file whose comment Step 1 repointed, added by explicit path
 git commit -m "Repoint the queue-pull test references and document the shard guards
 
 Refs #5756
@@ -159,10 +164,10 @@ Expected: exit 0 and `recorded test durations to tools/test-durations.json` in t
 Run: `node --test tests/run-tests-shard.test.js`
 Expected: PASS. If the ceiling test names a file, apply the follow-up below before continuing.
 
-**Follow-up when a file is still over the ceiling (known candidate: `queue-pull-parity-ac4.test.js`, which pools the gh and files fault rows).** Split its fault pool by family (the `FAULTS` rows in one file, `FILES_FAULTS` rows in another), keeping any assertion that needs both families in the file that runs the smaller pool, re-run Task 3 Step 3 for the test-count equality, re-run Step 1, and repeat until the ceiling test passes. If a file cannot get under the ceiling without dropping a test, stop with status NEEDS_CONTEXT naming the file and its time: never raise the ceiling.
+**Follow-up when a file is still over the ceiling (known candidates: `queue-pull-parity-ac4.test.js`, which pools the gh and files fault rows, and `queue-pull-parity-ac7.test.js`).** Decided at plan review (spec `## Plan Review Clarifications`): the ceiling stays. Split the file's fault pool by family (the `FAULTS` rows in one file, `FILES_FAULTS` rows in another). AC4.2 (`:3344`, iterates `[FAULTS, FILES_FAULTS]`) and AC4.3 (`:3371`, iterates `[...FAULTS, ...FILES_FAULTS]`) become one test per family, with identical assertions; those two tests' names and the total count change by exactly that, so re-run Task 3 Step 3 and expect `N` plus the number of extra family tests, stating the delta in the report. Re-run Step 1 and repeat until the ceiling test passes. If a file cannot get under the ceiling without dropping an assertion, stop with status NEEDS_CONTEXT naming the file and its time: never raise the ceiling.
 - [ ] **Step 4: Check the balance** — no shard prints `unmeasured`, and the estimates are within 10% of their mean:
 
-Run: `node -e "const r=require('./tools/run-tests.js'),fs=require('fs');const d=r.readDurations(fs.readFileSync('tools/test-durations.json','utf8'));const f=r.listTestFiles();const s=r.assignShards(f,d,4);const m=s.reduce((a,x)=>a+x.ms,0)/4;console.log(JSON.stringify(s.map(x=>({n:x.files.length,ms:Math.round(x.ms),unmeasured:x.unmeasured}))),'mean',Math.round(m),'maxOverMean',(Math.max(...s.map(x=>x.ms))/m).toFixed(3))"`
+Run: `node -e "const r=require('./tools/run-tests.js'),fs=require('fs');const d=r.readDurations(fs.readFileSync('tools/test-durations.json','utf8'));const f=r.listTestFiles().map((x)=>require('path').relative(process.cwd(),x));const s=r.assignShards(f,d,4);const m=s.reduce((a,x)=>a+x.ms,0)/4;console.log(JSON.stringify(s.map(x=>({n:x.files.length,ms:Math.round(x.ms),unmeasured:x.unmeasured}))),'mean',Math.round(m),'maxOverMean',(Math.max(...s.map(x=>x.ms))/m).toFixed(3))"`
 Expected: every `unmeasured` is `0` and `maxOverMean` is at most `1.100`.
 - [ ] **Step 5: Commit**
 
