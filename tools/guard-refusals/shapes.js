@@ -390,7 +390,7 @@ const GIT_C_GLOB = new RegExp(`${CMD}git\\s+-C\\s+(?:"[^"]*"|'[^']*'|\\S+)[^;&|\
 // A git command chained by ; && or || onto `$?` on one line: unquoted, or a
 // double-quoted word that is exactly "$?" ("exit=$?" runs).
 const GIT_CHAINED_STATUS = new RegExp(`${CMD}git\\s[^\\n]*?(?:;|&&|\\|\\|)[^\\n]*\\$\\?`);
-const GIT_CHAINED_QUOTED_STATUS = new RegExp(`${CMD}git\\s[^\\n]*?(?:;|&&|\\|\\|)[^\\n]*(?<=^|\\s)"\\$\\?"(?=\\s|$)`, 'm');
+const GIT_CHAINED_QUOTED_STATUS = new RegExp(`${CMD}git\\s[^\\n]*?(?:;|&&|\\|\\|)[^\\n]*"\\$\\?"`);
 
 const DETECTORS = [
   {
