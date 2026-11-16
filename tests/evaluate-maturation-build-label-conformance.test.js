@@ -16,7 +16,8 @@ const { readText } = require('./helpers/read-skill');
 //
 // A "site" is any call of evaluateMaturation: `evaluateMaturation(`, with whitespace
 // before the paren or optional chaining (`evaluateMaturation?.(`) also matched. The
-// definition (`function evaluateMaturation(...)`) and prose are not sites. A site whose
+// definition (`function evaluateMaturation(...)`) and prose outside a fence are not
+// sites; a call-shaped mention inside a fence is judged like a call (fail closed). A site whose
 // first argument is not an object literal (a variable) cannot be read, so it is an
 // offender (fail closed). For an object literal, the call's own text, from its `{` to the matching `}`, must hold a top-level
 // `hasBuildLabel:` property whose value text contains `includes('auto:build')`, so
@@ -308,5 +309,17 @@ test('AC6.1 go-red: a tilde fence is read, and a CRLF copy gives the same verdic
   const lf = mdScan(md, 'tilde.md');
   assert.equal(lf.sites, 1);
   assert.match(lf.offenders[0], /^tilde\.md:2: /);
-  assert.equal(mdScan(md.replace(/\n/g, '\r\n'), 'tilde-crlf.md').offenders.length, 1);
+  const crlf = mdScan(md.replace(/\n/g, '\r\n'), 'tilde-crlf.md');
+  assert.equal(crlf.sites, 1);
+  assert.deepEqual(crlf.offenders, [
+    "tilde-crlf.md:2: evaluateMaturation call does not pass hasBuildLabel: <labels>.includes('auto:build')",
+  ]);
+});
+
+test('AC6.1 go-red: a call whose braces never balance is an offender at its line', () => {
+  // Raw markdown is not compiled, so an unterminated object reaches the matcher.
+  const md = ['```bash', 'evaluateMaturation({ hasMergeLabel: true', '```', ''].join('\n');
+  const r = mdScan(md, 'open.md');
+  assert.equal(r.sites, 1);
+  assert.deepEqual(r.offenders, ['open.md:2: evaluateMaturation({ call whose braces never balance']);
 });
