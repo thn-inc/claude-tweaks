@@ -22,10 +22,15 @@ const bump = (map, key, by = 1) => {
   map[key] = (map[key] || 0) + by;
 };
 const tally = () => ({ agree: 0, n: 0 });
-const tallyInto = (map, key, agree) => {
-  const t = map[key] || (map[key] = tally());
+const add = (t, agree) => {
   t.n += 1;
   if (agree) t.agree += 1;
+};
+const tallyInto = (map, key, agree) => add(map[key] || (map[key] = tally()), agree);
+const emptyCost = () => ({ agents: 0, requests: 0, output: 0, cacheRead: 0, cacheCreate: 0, seconds: 0 });
+const addCost = (c, t) => {
+  c.agents += 1;
+  for (const k of ['requests', 'output', 'cacheRead', 'cacheCreate', 'seconds']) c[k] += t[k];
 };
 
 // remove when #5540 has landed and tiebreak.js exports a chunk splitter
@@ -162,6 +167,7 @@ function readJournal(fsImpl, file) {
 function identifyAgents(fsImpl, dir, started, slots) {
   let unidentified = 0;
   const costs = [];
+  const unidentifiedCost = emptyCost();
   for (const agentId of started) {
     const file = path.join(dir, `agent-${agentId}.jsonl`);
     const text = fsImpl.existsSync(file) ? fsImpl.readFileSync(file, 'utf8') : null;
@@ -169,12 +175,13 @@ function identifyAgents(fsImpl, dir, started, slots) {
     const slot = parsed ? slots.get(armLabel(parsed.arm, parsed.repeat, parsed.name)) : undefined;
     if (!slot) {
       unidentified += 1;
+      addCost(unidentifiedCost, text === null ? emptyCost() : transcriptCost(text));
       continue;
     }
     slot.agents.push(agentId);
     costs.push({ arm: slot.arm.name, cost: transcriptCost(text) });
   }
-  return { unidentified, costs };
+  return { unidentified, costs, unidentifiedCost };
 }
 
 function stripTree(text, treeRoot) {
@@ -197,6 +204,19 @@ function score(opts, deps) {
     return 2;
   }
 
+  // An unreadable tree would make every evidence check fail, which settles as cant-tell: refuse instead of scoring it.
+  const badTrees = fixture.runs.filter((r) => {
+    try {
+      return !fsImpl.statSync(r.tree).isDirectory();
+    } catch {
+      return true;
+    }
+  });
+  if (badTrees.length > 0) {
+    deps.err(`review-replay.js: source tree missing or not a directory: ${badTrees.map((r) => `${r.run} (${r.tree})`).join(', ')}`);
+    return 1;
+  }
+
   const runs = new Map(fixture.runs.map((r) => [r.run, r]));
   const slots = new Map();
   for (const arm of manifest.arms) {
@@ -205,7 +225,18 @@ function score(opts, deps) {
     }
   }
   const { started, results } = readJournal(fsImpl, path.join(opts.transcripts, JOURNAL_FILE));
-  const { unidentified, costs } = identifyAgents(fsImpl, opts.transcripts, started, slots);
+  const { unidentified, costs, unidentifiedCost } = identifyAgents(fsImpl, opts.transcripts, started, slots);
+  // An unidentified agent cannot be tied to a prompt, so the reason `unidentified-agent` goes to the first N prompts (in
+  // manifest order) that have no identified agent, N being the number of unidentified agents; any other prompt without
+  // an identified agent was never started, or started with no reply, and is `no-reply`.
+  let unidentifiedLeft = unidentified;
+  for (const slot of slots.values()) {
+    slot.noReply = 'no-reply';
+    if (slot.agents.length === 0 && unidentifiedLeft > 0) {
+      slot.noReply = 'unidentified-agent';
+      unidentifiedLeft -= 1;
+    }
+  }
   for (const slot of slots.values()) {
     for (const agentId of slot.agents) if (results.has(agentId)) slot.reply = results.get(agentId);
   }
@@ -221,16 +252,12 @@ function score(opts, deps) {
       total: tally(),
       byClass: Object.fromEntries(VERDICT_CLASSES.map((c) => [c, tally()])),
       bySeverity: {},
-      vsReference: tally(),
-      cost: { agents: 0, requests: 0, output: 0, cacheRead: 0, cacheCreate: 0, seconds: 0 },
+      vsReference: arm.name === reference ? null : tally(),
+      cost: emptyCost(),
     };
     verdictsByArm[arm.name] = new Map();
   }
-  for (const { arm, cost } of costs) {
-    const c = arms[arm].cost;
-    c.agents += 1;
-    for (const k of ['requests', 'output', 'cacheRead', 'cacheCreate', 'seconds']) c[k] += cost[k];
-  }
+  for (const { arm, cost } of costs) addCost(arms[arm].cost, cost);
 
   for (const slot of slots.values()) {
     const a = arms[slot.arm.name];
@@ -241,9 +268,8 @@ function score(opts, deps) {
     for (const id of ids) {
       const finding = run.findings.find((f) => f.id === id);
       const key = `${slot.prompt.run}/${id}`;
-      const noReason = slot.agents.length === 0 && unidentified > 0 ? 'unidentified-agent' : 'no-reply';
       let settled;
-      if (text === null) settled = { verdict: null, reason: noReason };
+      if (text === null) settled = { verdict: null, reason: slot.noReply };
       else if (sections && sections.get(id) === null) settled = { verdict: null, reason: 'chunk-split' };
       else settled = settleReply(finding, sections ? sections.get(id) : text, run.tree);
       if (settled.verdict === null) {
@@ -256,10 +282,8 @@ function score(opts, deps) {
       const agree = settled.verdict === want;
       a.judged += 1;
       if (settled.verdict === 'cant-tell') a.cantTell += 1;
-      a.total.n += 1;
-      if (agree) a.total.agree += 1;
-      a.byClass[want].n += 1;
-      if (agree) a.byClass[want].agree += 1;
+      add(a.total, agree);
+      tallyInto(a.byClass, want, agree);
       tallyInto(a.bySeverity, finding.severity, agree);
       verdictsByArm[slot.arm.name].set(`${key}|${slot.repeat}`, settled.verdict);
     }
@@ -267,17 +291,14 @@ function score(opts, deps) {
 
   const ref = verdictsByArm[reference];
   for (const arm of manifest.arms) {
-    for (const [k, v] of verdictsByArm[arm.name]) {
-      if (!ref.has(k)) continue;
-      arms[arm.name].vsReference.n += 1;
-      if (ref.get(k) === v) arms[arm.name].vsReference.agree += 1;
-    }
+    if (arm.name === reference) continue;
+    for (const [k, v] of verdictsByArm[arm.name]) if (ref.has(k)) add(arms[arm.name].vsReference, ref.get(k) === v);
   }
 
   const baseline = { agents: 0, out: 0, cc: 0, cr: 0, seconds: 0 };
   for (const r of fixture.runs) for (const k of Object.keys(baseline)) baseline[k] += r.baselineTiebreak[k];
   deps.log(JSON.stringify({
-    findings: fixture.totals.findings, reference, counts: fixture.counts, baseline, unidentifiedAgents: unidentified, arms,
+    findings: fixture.totals.findings, reference, counts: fixture.counts, baseline, unidentifiedAgents: unidentified, unidentifiedCost, arms,
   }, null, 2));
   return Object.values(arms).some((a) => a.notJudged > 0) ? EXIT_NOT_CLEAN : 0;
 }

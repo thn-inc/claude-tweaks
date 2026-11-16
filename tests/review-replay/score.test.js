@@ -42,15 +42,13 @@ async function setup() {
     body.push(f.quote);
     fs.writeFileSync(path.join(out, 'trees', f.run, f.file), `${body.join('\n')}\n`);
   }
-  const manifest = JSON.parse(fs.readFileSync(path.join(out, 'manifest.json'), 'utf8'));
-  const promptFor = (arm, name) => manifest.arms.find((a) => a.name === arm).prompts.find((p) => p.name === name);
   const jsonl = (file, entries) => fs.writeFileSync(file, `${entries.map((e) => JSON.stringify(e)).join('\n')}\n`);
 
   // An agent's transcript: the identity prompt first, then assistant messages [id, output, cacheRead, cacheCreate], each
   // preceded by a streamed partial of the same id carrying a smaller output count.
-  function agent(agentId, label, { messages = [], seconds = 0, identity = true, prompt } = {}) {
+  function agent(agentId, label, { messages = [], seconds = 0, identity = true } = {}) {
     const t0 = Date.parse('2026-01-01T00:00:00Z');
-    const text = prompt === undefined ? `Replay judge ${label}.\n\nThe finding follows.` : prompt;
+    const text = `Replay judge ${label}.\n\nThe finding follows.`;
     const entries = [{ type: 'user', timestamp: new Date(t0).toISOString(), message: { role: 'user', content: identity ? text : 'no identity here' } }];
     messages.forEach(([id, o, cr, cc], i) => {
       const at = new Date(t0 + (i + 1) * seconds * 1000 / Math.max(messages.length, 1)).toISOString();
@@ -69,7 +67,7 @@ async function setup() {
     return { code, deps: d, json: d.logs.length > 0 ? JSON.parse(d.logs.join('\n')) : null };
   };
   const tree = (name) => path.join(out, 'trees', name);
-  return { root, out, transcripts, promptFor, agent, journal, score, tree, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
+  return { root, out, transcripts, agent, journal, score, tree, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
 
 const MSGS_ONE = [['m1', 10, 100, 1000], ['m2', 5, 200, 0]];
@@ -115,7 +113,7 @@ test('AC3.1/AC3.2: score prints agreement in total, per verdict class and per se
       total: { agree: 3, n: 4 },
       byClass: { confirmed: { agree: 2, n: 2 }, refuted: { agree: 1, n: 2 }, 'cant-tell': { agree: 0, n: 0 } },
       bySeverity: { medium: { agree: 1, n: 1 }, low: { agree: 0, n: 1 }, high: { agree: 1, n: 1 }, unknown: { agree: 1, n: 1 } },
-      vsReference: { agree: 4, n: 4 },
+      vsReference: null,
       cost: { agents: 4, requests: 8, output: 60, cacheRead: 1200, cacheCreate: 4000, seconds: 40 },
     });
     assert.deepEqual(r.json.arms.eight, {
@@ -141,7 +139,7 @@ test('--reference picks the arm every other arm is compared to, and an unknown a
     const r = await s.score(['--reference', 'eight']);
     assert.equal(r.code, 0);
     assert.equal(r.json.reference, 'eight');
-    assert.deepEqual(r.json.arms.eight.vsReference, { agree: 4, n: 4 });
+    assert.equal(r.json.arms.eight.vsReference, null, 'the reference arm has nothing to compare to');
     assert.deepEqual(r.json.arms.one.vsReference, { agree: 1, n: 4 });
     const bad = await s.score(['--reference', 'nope']);
     assert.equal(bad.code, 2);
@@ -163,7 +161,7 @@ test('AC4.1: a results file missing one judge\'s reply leaves that judge\'s find
     assert.deepEqual(r.json.arms.one.notJudgedByReason, { 'no-reply': 1 });
     assert.deepEqual(r.json.arms.one.total, { agree: 3, n: 3 });
     assert.equal(r.json.arms.eight.notJudged, 0);
-    assert.deepEqual(r.json.arms.one.vsReference, { agree: 3, n: 3 });
+    assert.equal(r.json.arms.one.vsReference, null);
     assert.deepEqual(r.json.arms.eight.vsReference, { agree: 1, n: 3 });
   } finally {
     s.cleanup();
@@ -267,6 +265,23 @@ test('an agent whose transcript carries no Replay judge identity line is counted
     assert.deepEqual(r.json.arms.one.notJudgedByReason, { 'unidentified-agent': 1 });
     assert.equal(r.json.arms.one.judged, 3);
     assert.equal(r.json.arms.one.cost.agents, 3, 'an unidentified agent belongs to no arm\'s cost');
+    assert.deepEqual(r.json.unidentifiedCost, { agents: 1, requests: 2, output: 15, cacheRead: 300, cacheCreate: 1000, seconds: 10 });
+  } finally {
+    s.cleanup();
+  }
+});
+
+test('unidentified-agent goes to at most as many prompts as there are unidentified agents; a never-started prompt beyond that is no-reply', async () => {
+  const s = await setup();
+  try {
+    fullSet(s, {
+      'ag-3': { label: armLabel('one', 1, 'run-b--0'), reply: reply('b1', 'confirmed'), messages: MSGS_ONE, seconds: 10, identity: false },
+      'ag-4': null,
+    });
+    const r = await s.score();
+    assert.equal(r.code, 3);
+    assert.equal(r.json.unidentifiedAgents, 1);
+    assert.deepEqual(r.json.arms.one.notJudgedByReason, { 'unidentified-agent': 1, 'no-reply': 1 });
   } finally {
     s.cleanup();
   }
@@ -284,6 +299,43 @@ test('a started agent with no transcript file, or an identity label that names n
     assert.equal(r.code, 3);
     assert.equal(r.json.unidentifiedAgents, 2);
     assert.deepEqual(r.json.arms.one.notJudgedByReason, { 'unidentified-agent': 2 });
+    assert.deepEqual(r.json.unidentifiedCost, { agents: 2, requests: 2, output: 15, cacheRead: 300, cacheCreate: 1000, seconds: 10 }, 'a missing transcript adds an agent and no tokens');
+  } finally {
+    s.cleanup();
+  }
+});
+
+test('an unreadable source tree exits 1 naming the run, instead of settling every reply as cant-tell', async () => {
+  const s = await setup();
+  try {
+    fullSet(s);
+    fs.rmSync(s.tree('run-b'), { recursive: true });
+    const r = await s.score();
+    assert.equal(r.code, 1);
+    assert.equal(r.deps.logs.length, 0);
+    assert.match(r.deps.errs.join('\n'), /source tree missing or not a directory: run-b \(/);
+    assert.ok(r.deps.errs.join('\n').includes(s.tree('run-b')));
+  } finally {
+    s.cleanup();
+  }
+});
+
+test('an archived cant-tell finding in the replayable set is tallied under byClass cant-tell', async () => {
+  const s = await setup();
+  try {
+    fullSet(s, { 'ag-1': { label: armLabel('one', 1, 'run-a--0'), reply: reply('a1', 'cant-tell'), messages: MSGS_ONE, seconds: 10 } });
+    const file = path.join(s.out, 'archived-verdicts.json');
+    const archived = JSON.parse(fs.readFileSync(file, 'utf8'));
+    archived.verdicts['run-a/aaaaaaaaaaa1'] = 'cant-tell';
+    fs.writeFileSync(file, JSON.stringify(archived));
+    const r = await s.score();
+    assert.equal(r.code, 0);
+    // one: a1 cant-tell=cant-tell agree; a2 confirmed vs refuted no; b1 agree; b2 agree.
+    assert.deepEqual(r.json.arms.one.byClass, { confirmed: { agree: 1, n: 1 }, refuted: { agree: 1, n: 2 }, 'cant-tell': { agree: 1, n: 1 } });
+    assert.deepEqual(r.json.arms.one.total, { agree: 3, n: 4 });
+    // eight: a1 confirmed vs cant-tell no; a2 agree; b1 refuted vs confirmed no; b2 cant-tell vs refuted no.
+    assert.deepEqual(r.json.arms.eight.byClass, { confirmed: { agree: 0, n: 1 }, refuted: { agree: 1, n: 2 }, 'cant-tell': { agree: 0, n: 1 } });
+    assert.deepEqual(r.json.arms.eight.total, { agree: 1, n: 4 });
   } finally {
     s.cleanup();
   }
