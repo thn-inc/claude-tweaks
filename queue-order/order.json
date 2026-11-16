@@ -1,11 +1,11 @@
 {
-  "computedAt": "2026-11-16T09:26:48.866Z",
+  "computedAt": "2026-11-16T09:43:25.424Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
       {
         "number": 5694,
-        "updatedAt": "2026-11-16T09:15:00Z",
+        "updatedAt": "2026-11-16T09:42:01Z",
         "state": "OPEN"
       },
       {
@@ -196,11 +196,6 @@
       {
         "number": 4829,
         "updatedAt": "2026-11-02T10:17:38Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4828,
-        "updatedAt": "2026-11-16T09:25:25Z",
         "state": "OPEN"
       },
       {
@@ -396,11 +391,6 @@
       {
         "number": 4521,
         "updatedAt": "2026-10-30T04:28:48Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4502,
-        "updatedAt": "2026-11-16T09:09:11Z",
         "state": "OPEN"
       },
       {
@@ -982,7 +972,7 @@
         "number": 5694,
         "state": "OPEN",
         "title": "Windows regression: six test files failing on main with no record (five new after #5573, #4620, #4448)",
-        "updatedAt": "2026-11-16T09:15:00Z",
+        "updatedAt": "2026-11-16T09:42:01Z",
         "facets": {
           "origin": "capture",
           "risk": "low",
@@ -1995,96 +1985,6 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n**Related:** #4826, #3995, #3835, #4831, #4881, #3646, #4493, #4672, #4765, #4827, #4906, #4910, #4946, #4725, #4764, #4790\n\n## Current State\n\nThe post-merge Windows check on commit 7e570e7f4 (PR #4698) reports `tests/review-tiebreak-step-conformance.test.js` newly failing on one test: `AC10.1 step3-lens-dispatch.md stays under the rail` (`step3-lens-dispatch.md must stay under RAIL_BYTES`).\n\nThe test measures the wrong bytes on Windows. `tests/review-tiebreak-step-conformance.test.js:547` asserts `underRail(fs.statSync(STEP3).size)`, the file's raw on-disk size. Under a `core.autocrlf` Windows checkout every LF becomes CRLF, so `plugin/skills/review/step3-lens-dispatch.md` (52,386 bytes and 251 lines committed) measures 52,637 bytes on disk, over the 52,500-byte `RAIL_BYTES` (`plugin/bin/lib/skill-audit/budgets.js`). The same suite's AC8.2 test (line 526) already measures `Buffer.byteLength(readText(STEP3))`; `readText` (`tests/helpers/read-skill.js:31`) normalizes `\\r\\n` to `\\n`, and AC8.2 passes on the same Windows run. The rail is about the committed content's size, so the LF-normalized measure is the correct one.\n\nThe same raw-size pattern exists at `tests/reflect-apply-console-conformance.test.js:309` (`fs.statSync(MULTI_CONSOLE_PATH).size` against `RAIL_BYTES` for `plugin/skills/flow/multispec-review-console.md`). It does not fail today (51,535 bytes plus 252 lines measures 51,787 on a CRLF checkout), but it goes red on Windows the moment that file grows within one byte per line of the rail.\n\n#4826 (in flight) restores headroom in `step3-lens-dispatch.md` itself; that would hide this failure without fixing the measurement, and the next file to approach the rail would reproduce it.\n\n## Deliverables\n\n- In `tests/review-tiebreak-step-conformance.test.js`'s AC10.1 test, measure `Buffer.byteLength(readText(STEP3))` instead of `fs.statSync(STEP3).size`, matching AC8.2 in the same file.\n- In `tests/reflect-apply-console-conformance.test.js`'s Read-limit rail test, measure `Buffer.byteLength(readText(MULTI_CONSOLE_PATH))` the same way (import `readText` from `tests/helpers/read-skill.js` if the file does not already).\n\n**Decision rule for any further gap (author, 2026-11-16).** Where this record leaves a choice between readings and no Decision above settles it, the build does not stop for it. It takes the reading that, in this order: keeps a run on the previous plugin release working; puts the rule in code and not in skill prose; stays inside this record's Key Files. It states the choice in the PR body. A criterion that can only be observed after a merge or a release is met by filing one parked measurement record through `/claude-tweaks:capture` that carries the check and its bound.\n\n## Acceptance Criteria\n\n- `git grep -n \"statSync(STEP3).size\\|statSync(MULTI_CONSOLE_PATH).size\" -- tests` prints nothing.\n- Both suites pass on the Windows CI job and on Linux/macOS with `step3-lens-dispatch.md` unchanged at its current size.\n- A temporary edit that makes the measured text exactly `RAIL_BYTES` long still turns each rail test red (the existing go-red self-checks at lines 551-553 keep passing).\n\n## Release Note\n\nNo user-visible change — fixes a test-only Windows failure in two skill-file size checks.\n\n## Technical Approach\n\nSwap the raw on-disk size for the LF-normalized byte length the house helper already provides. `readText` is the single CRLF-safe read path the suites use for skill text, so the rail compares committed content on every platform.\n\n### Key Files\n\n- `tests/review-tiebreak-step-conformance.test.js` — AC10.1 measures normalized bytes\n- `tests/reflect-apply-console-conformance.test.js` — Read-limit rail test measures normalized bytes\n\n## Gotchas\n\n- Do not fix this by trimming `step3-lens-dispatch.md`: that is #4826's scope, and trimming alone leaves the raw-size measurement wrong for the next file.\n- `plugin/bin/lib/skill-audit/budgets.js` stays the single source of `RAIL_BYTES`; neither test should hard-code a CRLF allowance.\n\n## Original request\n\nWindows regression: 1 test file(s) newly failing after 7e570e7f4\n\n**Related:** #4826\n\nThe post-merge Windows check failed on commit 7e570e7f464e173e34c566342262f46526b81dfb (compared against 7e561d151).\n\n**Merged PR:** #4698 (https://github.com/thn-inc/claude-tweaks/pull/4698)\n\n**Run:** https://github.com/thn-inc/claude-tweaks/actions/runs/41288998479\n\n### Newly failing test files\n- `tests/review-tiebreak-step-conformance.test.js`\n\n### Failure excerpts\n\n#### `tests/review-tiebreak-step-conformance.test.js`\n\n_Excerpts for the 1 test(s) the baseline adjudication attributed as new._\n\n```\nnot ok 18893 - AC10.1 step3-lens-dispatch.md stays under the rail\n  ---\n  duration_ms: 1.0588\n  type: 'test'\n  location: 'D:\\\\a\\\\claude-tweaks\\\\claude-tweaks\\\\tests\\\\review-tiebreak-step-conformance.test.js:546:1'\n  failureType: 'testCodeFailure'\n  error: 'step3-lens-dispatch.md must stay under RAIL_BYTES'\n  code: 'ERR_ASSERTION'\n  name: 'AssertionError'\n  expected: true\n  actual: false\n  operator: '=='\n```\n\n_Filed by .github/workflows/windows-regression.yml — failures were compared against the push's base commit (verify.js --baseline). Shape it with /claude-tweaks:specify before building._\n",
-        "createdAt": "2026-11-01T09:49:08Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4828,
-        "state": "OPEN",
-        "title": "Windows regression: 1 test file(s) newly failing after 7e570e7f4",
-        "updatedAt": "2026-11-16T09:25:25Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
         "body": "Origin: tidy run 2026-10-31T204035-sweep-standalone\n\nDefer-reason: tangential\n\n## Current State\n\n`bin/residue.js` gave `remedy: auto` to all 39 worktree findings, though reconcile skips 35 as pr-open and 3 as pr-closed-unmerged. Only the Step 4.5 PR-state override keeps them from routing to removal, so any consumer reading the field alone would remove live work.\n\n## Deliverables\n\n- Have the worktree probe report a remedy that reflects PR state, or stop calling these auto.\n\n## Acceptance Criteria\n\n- A test reproduces the behavior above and passes after the change.\n\n## Release Note\n\nStop residue reports marking worktrees with open PRs as safe to remove automatically.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/residue.js` — modify\n\n_Filed by `capture` via specShapedBody._",
         "createdAt": "2026-11-01T07:37:28Z",
         "labels": [
@@ -2788,6 +2688,84 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": true
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: infra\n\n## Overview\n\n**Trusted-origin provenance chain.** Control mode will authorize merges (and the fix-forward record's `auto:build`) for a record whose **origin is trusted** and that carries no kept risk flag; a record of untrusted origin never auto-merges and parks at `pending-review` as today. This record builds the trust computation. The risk it controls: code no human intended reaching dev with nobody in the chain. Issue text is untrusted input that can steer an agent; provenance, not volume of automation, separates \"the maintainer started this\" from \"someone else's text started this\".\n\n**Trusted origin, defined (maintainer decision):**\n\n- A **root** record is trusted when its **GitHub author** is a trusted principal: the repo owner, plus logins in the policy key `trusted-authors`. Read from GitHub's author field, **never from body text**.\n- A **derived** record (sub-issue, agent-filed follow-up, fix-forward) is trusted **only if its whole ancestry back to a root is trusted**. **An untrusted root taints every descendant**, even when the descendants were filed by the maintainer's own account, which is the account agents run as.\n- Provenance is **recorded at creation** as a machine marker naming the parent, and **verified by walking the GitHub-side links** (sub-issue parent; an `Origin:` reference corroborated by the referenced record's author). It is never asserted from an editable body line alone. A record whose chain **cannot be verified counts as untrusted** (fail closed).\n- Externally authored issues **never become trusted through later edits, labels or comments** by a trusted principal. The maintainer makes one trusted by brainstorming or specifying it interactively, which creates a trusted root that supersedes the external one.\n\n**Contract decisions this record pins:**\n\n- **Marker grammar.** The creation marker is exactly `<!-- provenance: parent={ref} -->` on its own line, where `{ref}` is `#N` (same repo) or `owner/name#N` (cross-repo); anything else (empty, `parent=abc`, extra attributes, a second marker, a marker inside a fenced block or quote) is malformed, so the record is untrusted.\n- **Three signals must agree for a derived record.** (a) the marker's parent, (b) the GitHub-native sub-issue parent link, and (c) when an `Origin:` line is present, the referenced record's author matches. The **native sub-issue link is mandatory**: a marker plus a corroborating `Origin:` line with **no native link is untrusted** (an author match alone is never sufficient, because the maintainer's account is the account agents run as). Where the marker, the link and `Origin:` name different parents, the record is untrusted with reason `provenance-disagreement`.\n- **Link actor and re-parenting.** The classifier reads the *current* native parent at evaluation time. A link added or changed after creation (re-parenting) is honored only when the current parent chain is itself trusted; it cannot rescue an untrusted root. A record whose parent link was changed after creation to a different parent than the marker names is `provenance-disagreement` (untrusted).\n- **Time of evaluation.** The classifier is a pure function of the state fetched at call time, with no caching across calls. Consumers re-run it at the merge decision, not only at build start, so a later re-parent or edit is seen. The result carries `evaluatedAt`.\n- **Inputs.** `policy` supplies `repoOwner` (the repository owner, from the `origin` remote via `parseRepo`, never `gh auth` state) and `trusted-authors` (a list of logins). An absent or malformed `trusted-authors` (non-list, non-string or empty entries) reads as owner-only. If `repoOwner` cannot be resolved, every root is untrusted. When the repository owner is an organization, \"repo owner\" means the org login and org-owned authorship is evaluated by the listed logins only: an issue authored by a human org `MEMBER` or `COLLABORATOR` who is not the owner login or listed in `trusted-authors` is an untrusted root (association never makes a root trusted).\n- **Unmarked agent-filed roots.** A record with no marker and no native parent is a root and is judged by its author; an agent-filed issue whose author is the maintainer's account but whose origin was an outsider's text is not detectable here, which is why specs/children must carry the marker and why the merge consumer requires the chain (a root filed by an agent without a marker is treated as a root authored by that account, and the decision record names this residual in the consumer, #4623). A ghost author (deleted account), a transferred issue or one whose author field is absent is untrusted.\n- **Supersede.** A trusted root that supersedes an external one references it with a non-tainting `Supersedes: #N` line (the reference is informational; the classifier never follows it for trust). Taint flows only through parent links.\n- **Depth cap and reasons.** Depth cap is 10 (a cap hit is untrusted). `reason` is one of an enumerated set: `trusted-root`, `trusted-chain`, `untrusted-author`, `untrusted-ancestor`, `marker-malformed`, `link-missing`, `provenance-disagreement`, `parent-unreadable`, `cross-repo-parent`, `cycle`, `depth-cap`, `author-absent`, `owner-unresolved`. `linkKind` in the chain is one of `native`, `marker`, `origin`.\n\n**Builder requirement: negative tests for every laundering path** — (1) external root to agent-filed child; (2) external root to maintainer-filed child; (3) an editable `Origin:` line pointing at a trusted record; (4) a broken or unverifiable chain; plus (5) a re-parent after creation; (6) a marker with no native link; (7) a collaborator or member who is not listed.\n\n## Non-Goals\n\n- Not the merge authorization itself (separate record consumes this classifier) and not control-mode wiring.\n- Not changing the existing trust-table machinery's grading (the earned-autonomy classes); this is a different question (who may start work) from \"how well has this class performed\".\n- Not deciding whether `trust.js` should stop reading acceptance verdicts.\n- Not removing the `Origin:` line convention; it remains a pointer that must be corroborated.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #4577 | Provenance and trust read an Origin: line from any issue author, so an outsider can forge a record's trust class | open (Blocked by; companion; its author-association fetch in the record snapshot is reused here) |\n| #4502 | Decide whether a quoted Origin: line may set a record's provenance | open (Blocked by; companion; its ruling on quoted `Origin:` lines feeds the laundering test list) |\n| #4609 | Add control-mode policy keys | open (Blocked by; supplies `trusted-authors`) |\n\n## Current State\n\n- Existing classifier: `plugin/bin/lib/issues/provenance.js` (106 lines) resolves a record to `producer` (a `by:*` label), `side-effect` (an `Origin: {context}` body line, anchored `^Origin:` multiline regex) or `human` (neither); it never writes the axis and never extends `ORIGINS`.\n- Existing author-trust rule for comments: `plugin/bin/lib/issues/comment-trust.js` — trust only on GitHub-attested `authorAssociation` (`OWNER`, `MEMBER`, `COLLABORATOR`), fail closed, no viewer lookup.\n- Record snapshot: `plugin/bin/lib/issues/record-snapshot.js` (the session-scoped queue snapshot; per #4577 it needs to carry issue author association).\n- Companion #4577 documents that in public repos anyone can write an `Origin:` line, and that every one of this repo's 2,847 records was authored by the owner or an installed app (no observed case here; the exposure is other public repos using the plugin).\n- Policy key `trusted-authors` is added by the policy-keys record (#4609, a prerequisite above).\n\n## Deliverables\n\n- [ ] A pure module (location: `plugin/bin/lib/issues/`, builder's naming) with `classifyOrigin({ record, fetchers, policy })` returning `{ trusted: boolean, reason, chain: [...] }` implementing the rules above, fail closed on every unreadable step.\n- [ ] Root rule: trusted iff the record's GitHub author login equals the repo owner or is in `trusted-authors`; author read from the API author field, never body text; an installed-app author is not a trusted principal unless explicitly listed.\n- [ ] Derived rule: walks the chain through the native sub-issue link (mandatory) corroborated by the marker and, when present, an `Origin:` reference whose referenced record's *author* matches; every ancestor must be trusted; depth cap 10 with a cycle guard; a cap or cycle is untrusted; the three-signal agreement and `provenance-disagreement` rules in the contract decisions.\n- [ ] A creation-time provenance marker written by record-creating skills (specify decomposition, the verdict handler's fix-forward, the health sweeps) naming the parent; verified against the native link, so a forged marker with no matching link is untrusted; the marker grammar is pinned above and the sanctioned writer is one shared helper the record-creating skills call.\n- [ ] Rule for later edits: label, comment or body edits by a trusted principal on an externally authored root do not change its classification (the classifier reads the creator, not the editor).\n- [ ] Negative tests for each laundering path (list above), plus unreadable-author, missing-parent, deleted-parent, cross-repo parent, and cycle cases.\n\n## Acceptance Criteria\n\n1. Root authored by the repo owner: trusted. Root authored by an outsider (association `NONE`): untrusted. Root authored by a login in `trusted-authors`: trusted.\n2. External root, then an agent-filed child whose body says `Origin: from #root`: **untrusted** (taint propagates).\n3. External root, then a child filed by the maintainer's own account (the account agents run as), linked as sub-issue of the external root: **untrusted**.\n4. A maintainer-authored record whose editable `Origin:` line points at a trusted record but which has no corroborating GitHub-side link (not a sub-issue, referenced record's author does not match): **untrusted**.\n5. A record whose parent cannot be fetched (deleted, inaccessible, API error), whose creation marker is malformed (for example `parent=abc` or an empty value), or whose chain exceeds the depth cap or loops: **untrusted**, with the reason stated. A record whose author field is absent or empty is untrusted.\n5b. A record carrying a marker and an `Origin:` line naming a trusted parent but with **no native sub-issue link** is untrusted (`link-missing`); a record whose marker, link and `Origin:` name different parents is untrusted (`provenance-disagreement`); a record re-parented after creation under an untrusted root is untrusted.\n5c. A `MEMBER` or `COLLABORATOR` root not listed in `trusted-authors` is untrusted (org-owned repo case included); an absent, non-list or malformed `trusted-authors` behaves as owner-only; an unresolved `repoOwner` makes every root untrusted; a ghost or transferred issue is untrusted; a cross-repo parent in the same owner is trusted only when the fetch succeeds and the chain is trusted, otherwise `cross-repo-parent` or `parent-unreadable`.\n5d. A trusted root that supersedes an external root by a `Supersedes: #N` line does not make descendants of the external root trusted, and the superseding root's own descendants trace to it, not the external one.\n5e. A chain at depth 10 is evaluated, at depth 11 returns `depth-cap`; every `reason` value above has at least one test.\n5a. Login comparison is exact and case-insensitive: `Thn-Inc` equals `thn-inc`, while a lookalike (`thn-inc-evil`, `thn-incx`) and a `[bot]`-suffixed app login are untrusted unless that exact login is listed in `trusted-authors`.\n6. A trusted principal labelling or commenting on an externally authored issue leaves it untrusted; the classifier's input does not include editor identity.\n7. A maintainer-authored sub-issue of a maintainer-authored parent whose creation marker matches the sub-issue link: **trusted**.\n8. Re-running the classifier after the fixture changes (re-parent, edit) returns the new verdict (no stale cache), and the result carries `evaluatedAt`.\n9. `npm test` passes, including a conformance test that the classifier never reads body text to decide a root's trust.\n\n## Release Note\n\nAdded a trusted-origin check that traces a work item back to who started it, treating anything descended from an outsider's issue as untrusted.\n\n## Technical Approach\n\nA pure classifier with injected fetchers so the whole laundering matrix is table-testable without network. Two independent facts must agree for a derived record: the creation marker (what the creator claimed) and the GitHub-side link (what GitHub says), and the parent's own trust. Any disagreement, absence or error is untrusted. Reuse `comment-trust.js`'s association set for \"attested\" and extend it with the policy list only for roots.\n\n### Data / API Surface\n\n- Output: `{ trusted: boolean, reason: <enumerated>, chain: [{ number, author, linkKind: 'native' | 'marker' | 'origin' }], evaluatedAt }`.\n- Input `policy`: `{ repoOwner, 'trusted-authors': string[] }`.\n- Marker: `<!-- provenance: parent={ref} -->` (grammar above), written at creation, verified, never trusted.\n- Fetchers: `getIssue(ref) -> { author, authorAssociation, parent, state }`, injected; `ref` may be cross-repo.\n\n### Key Files\n\n- `plugin/bin/lib/issues/provenance.js` — extend or compose; keep the existing three-state axis intact\n- `plugin/bin/lib/issues/comment-trust.js` — shared association rule\n- `plugin/bin/lib/issues/record-snapshot.js` — carry author and association in the snapshot (shared with #4577)\n- `plugin/bin/lib/issues/trust.js` — read only; its `Origin:` handling is the thing #4577 hardens\n- `plugin/skills/_shared/work-record.md` — document the provenance marker and trusted-origin definition\n- `plugin/skills/_shared/untrusted-record-content.md` — cite, do not restate\n- `tests/bin-lib/issues/trusted-origin.test.js` — new; classifier suite with the laundering matrix\n\n## Gotchas\n\n- The maintainer's own account is the account agents run as, so author alone cannot distinguish an agent-filed child from a hand-filed one; that is exactly why the root decides and taint propagates down.\n- Do not let an `authorAssociation` of `MEMBER`/`COLLABORATOR` alone make a root trusted: the maintainer's decision names the repo owner plus `trusted-authors`; collaborators are not roots unless listed.\n- Cross-repo parents: a parent in another repo is untrusted unless its owner is the same owner and the fetch succeeds and its own chain is trusted; state the choice in a test.\n- Open record #4058 (a not-started review finding) overlaps this record's Key Files per the decomposition's file-overlap scan; it is Related, not a blocker. Read it before building.\n- Companion records #4577 and #4502 decide the narrow `Origin:` questions; do not re-decide them here, build on their rulings.\n\n**Related:** #4058\n\n\n<!-- work-fingerprint: human-in-control-acceptance:trusted-origin-provenance-chain -->\nwork-fingerprint: human-in-control-acceptance:trusted-origin-provenance-chain",
+        "createdAt": "2026-10-30T11:46:52Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
+            "name": "size:high",
+            "description": "Scoring: large change — consider decomposition before building",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMTcg",
+            "name": "risk:high",
+            "description": "Scoring: high blast radius — human review required",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 4622,
+        "state": "OPEN",
+        "title": "Trusted-origin provenance chain",
+        "updatedAt": "2026-11-13T03:09:39Z",
+        "facets": {
+          "origin": null,
+          "risk": "high",
+          "size": "high",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
         }
       }
     ],
@@ -11859,12 +11837,6 @@
       "blockedBy": [
         4614,
         4622
-      ]
-    },
-    {
-      "number": 4622,
-      "blockedBy": [
-        4502
       ]
     },
     {
