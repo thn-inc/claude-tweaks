@@ -10,7 +10,7 @@ const path = require('path');
 const { lstatType, canonicalRealpath } = require('../path-guard');
 const { parseWorktreeList, findWorktreeEntry } = require('../hooks/worktree-reap');
 
-const { HEAD_SHA_RE: HEX_RE } = require('./park');
+const { HEAD_SHA_RE } = require('./park');
 
 const ACCEPT_DIR_RE = /^accept-[0-9]+$/;
 const POSITIVE_RE = /^[1-9][0-9]*$/;
@@ -49,8 +49,8 @@ function reenter({ record, pr, repoRoot, parkHead = null, parkBase = null, git, 
   const view = JSON.parse(gh(['pr', 'view', String(pr), '--json', 'headRefName,headRefOid,baseRefOid']));
   const { headRefName, headRefOid: prHead, baseRefOid: prBase } = view;
   if (typeof headRefName !== 'string' || !headRefName.trim() || /[\r\n]/.test(headRefName)) throw new Error(`reenter: PR #${pr} has no usable headRefName`);
-  if (typeof prHead !== 'string' || !HEX_RE.test(prHead)) throw new Error(`reenter: PR #${pr} has no usable headRefOid`);
-  if (typeof prBase !== 'string' || !HEX_RE.test(prBase)) throw new Error(`reenter: PR #${pr} has no usable baseRefOid`);
+  if (typeof prHead !== 'string' || !HEAD_SHA_RE.test(prHead)) throw new Error(`reenter: PR #${pr} has no usable headRefOid`);
+  if (typeof prBase !== 'string' || !HEAD_SHA_RE.test(prBase)) throw new Error(`reenter: PR #${pr} has no usable baseRefOid`);
 
   git(['-C', repoRoot, 'fetch', '--end-of-options', 'origin', headRefName]);
   const parkFull = resolveParkHead(git, repoRoot, parkHead);
@@ -65,7 +65,7 @@ function reenter({ record, pr, repoRoot, parkHead = null, parkBase = null, git, 
     } catch { /* best effort: the original failure is the one reported */ }
     throw err;
   }
-  const baseKept = typeof parkBase === 'string' && HEX_RE.test(parkBase) && parkBase === prBase;
+  const baseKept = typeof parkBase === 'string' && HEAD_SHA_RE.test(parkBase) && parkBase === prBase;
   return {
     worktree, headRefName, prHead, prBase,
     parkHead: typeof parkHead === 'string' && parkHead ? parkHead : null,
@@ -77,10 +77,10 @@ function reenter({ record, pr, repoRoot, parkHead = null, parkBase = null, git, 
 
 // The park head as a full lowercase commit oid, null when absent, malformed or not a commit here.
 function resolveParkHead(git, repoRoot, parkHead) {
-  if (typeof parkHead !== 'string' || !HEX_RE.test(parkHead)) return null;
+  if (typeof parkHead !== 'string' || !HEAD_SHA_RE.test(parkHead)) return null;
   try {
     const oid = git(['-C', repoRoot, 'rev-parse', '--verify', '--end-of-options', `${parkHead}^{commit}`]).trim().toLowerCase();
-    return HEX_RE.test(oid) ? oid : null;
+    return HEAD_SHA_RE.test(oid) ? oid : null;
   } catch {
     return null;
   }
