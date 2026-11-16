@@ -1,8 +1,8 @@
 // bin/lib/accept/tripwire.js
 // Pure: the diff tripwire (#4619) — does the branch's diff cross an invisible-risk
 // category nobody flagged? Two signals: the changed paths against `risk-path-globs`
-// (through isSensitivePath, both sides lowercased and the path normalized), then the
-// agent's classification. Monotonic: the tripwire may add a flag, never remove one —
+// (through isSensitivePath, both sides normalized and lowercased; a glob using `{`, `[` or `?`,
+// which that matcher reads literally, gets a note), then the agent's classification. Monotonic: the tripwire may add a flag, never remove one —
 // `flags` is always `declaredFlags` followed by the newly crossed categories, so it is
 // a superset of the declared flags on every input. Fail toward caution: an unread diff,
 // unread declared flags, a malformed glob map or a malformed classification is
@@ -31,6 +31,16 @@ function normalizeRepoPath(p) {
   return path.posix.normalize(slashed).replace(/\/+$/, '').toLowerCase();
 }
 
+// A risk-path glob in the shape a normalized path takes: `/` separators, no leading `./` or
+// `/`, lowercase, and a trailing `/` read as `dir/**`.
+function normalizeGlob(glob) {
+  const slashed = glob.replace(/\\/g, '/').replace(/^(?:\.\/|\/)+/, '').toLowerCase();
+  return slashed.endsWith('/') ? `${slashed}**` : slashed;
+}
+
+// isSensitivePath matches these characters literally, so a glob using them as syntax never matches.
+const UNSUPPORTED_GLOB_RE = /[{[?]/;
+
 // `git diff --name-status -z` -> the paths it names (both sides of a rename or copy), or
 // null when any record has an unrecognised status or the wrong path count.
 function parseNameStatus(raw) {
@@ -48,6 +58,7 @@ const REMOVAL_COMMENT_RE = /^Risk flag ([a-z0-9-]+) removed by the maintainer du
 
 // Trusted comment bodies -> every slug a whole removal line names, first-seen order.
 function removalLogSlugs(texts) {
+  if (!Array.isArray(texts)) return [];
   const slugs = [];
   for (const text of texts) {
     if (typeof text !== 'string') continue;
@@ -109,6 +120,10 @@ function evaluateTripwire({
   } else {
     for (const category of categories) {
       if (!Object.hasOwn(globMap, category)) continue;
+      for (const glob of globMap[category].filter((g) => UNSUPPORTED_GLOB_RE.test(g))) {
+        const note = `risk-path-globs glob uses unsupported syntax ({, [ or ?) and never matches: ${inertEvidence(glob)}`;
+        if (!notes.includes(note)) notes.push(note);
+      }
       const hit = firstGlobHit(changedPaths, globMap[category]);
       if (hit) crossings.push({ category, via: 'glob', evidence: inertEvidence(`${hit.glob}: ${hit.path}`), path: hit.path });
     }
@@ -141,7 +156,7 @@ function evaluateTripwire({
 
 // The first (path, glob) pair that matches, paths in diff order, or null.
 function firstGlobHit(changedPaths, globList) {
-  const lowered = globList.map((glob) => glob.toLowerCase());
+  const lowered = globList.map(normalizeGlob);
   for (const p of changedPaths) {
     const normalized = normalizeRepoPath(p);
     const i = lowered.findIndex((glob) => isSensitivePath(normalized, [glob]));
@@ -166,7 +181,7 @@ function tripwireLines(result, { appendFailure } = {}) {
     }
     for (const note of result.notes) lines.push(`tripwire: ${note}`);
   }
-  if (appendFailure !== undefined) {
+  if (typeof appendFailure === 'string' && appendFailure !== '') {
     lines.push(`tripwire: the flag write failed (${inertEvidence(appendFailure)}), so this run is local`);
   }
   return lines.map(neutralizeTarget);

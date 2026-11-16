@@ -204,6 +204,38 @@ test('AC8.2: ./migrations/x.sql, app/../migrations/x.sql and Migrations/x.sql cr
   assert.deepStrictEqual(run({ changedPaths: ['migrations/x.sql'], globs: { migrations: ['Migrations/**'] } }).newFlags, ['migrations'], 'globs are lowercased too');
 });
 
+test('a risk-path glob is normalized like a path: ./x/**, /x/** and x/ each cross migrations', async (t) => {
+  for (const glob of ['./migrations/**', '/migrations/**', 'migrations/', 'Migrations\\**']) {
+    await t.test(glob, () => {
+      const result = run({ changedPaths: ['migrations/001.sql'], globs: { migrations: [glob] } });
+      assert.deepStrictEqual(result.newFlags, ['migrations']);
+      assert.strictEqual(result.crossed[0].evidence, inertEvidence(`${glob}: migrations/001.sql`), 'evidence names the glob as configured');
+      assert.deepStrictEqual(run({ changedPaths: ['docs/migrations.md'], globs: { migrations: [glob] } }).newFlags, []);
+    });
+  }
+});
+
+test('a glob using {, [ or ? gets a note naming it as unsupported syntax', () => {
+  const globs = { migrations: ['db/{a,b}/**', 'db/[0-9]*.sql', 'db/?.sql', 'migrations/**'], auth: ['db/{a,b}/**'] };
+  const result = run({ changedPaths: ['db/a/x.sql'], globs });
+  assert.strictEqual(result.status, 'ok');
+  assert.deepStrictEqual(result.newFlags, [], 'the matcher reads the syntax literally');
+  const notes = ['db/{a,b}/**', 'db/[0-9]*.sql', 'db/?.sql']
+    .map((glob) => `risk-path-globs glob uses unsupported syntax ({, [ or ?) and never matches: ${inertEvidence(glob)}`);
+  assert.deepStrictEqual(result.notes, notes, 'one note per glob, once');
+  assert.ok(tripwireLines(result).includes(`tripwire: ${notes[0]}`));
+  assert.deepStrictEqual(run({ changedPaths: ['migrations/x.sql'] }).notes, [], 'a plain glob gets no note');
+});
+
+test('tripwireLines prints the flag-write failure only for a non-empty string', () => {
+  const result = run({ changedPaths: ['migrations/001.sql'] });
+  const base = tripwireLines(result);
+  for (const appendFailure of [undefined, null, '', 7]) {
+    assert.deepStrictEqual(tripwireLines(result, { appendFailure }), base, String(appendFailure));
+  }
+  assert.deepStrictEqual(tripwireLines(result, { appendFailure: 'gh failed' }), [...base, 'tripwire: the flag write failed (gh failed), so this run is local']);
+});
+
 test('AC8.3: docs/migrations-notes.md and src/migrations-readme.md do not cross migrations/**', () => {
   for (const p of ['docs/migrations-notes.md', 'src/migrations-readme.md', '../migrations/x.sql']) {
     assert.deepStrictEqual(run({ changedPaths: [p] }).newFlags, [], p);
@@ -304,6 +336,9 @@ test('removalLogSlugs reads only whole removal lines', () => {
   assert.deepStrictEqual(removalLogSlugs(['Risk flag Auth removed by the maintainer during shaping']), []);
   assert.deepStrictEqual(removalLogSlugs(['see: Risk flag auth removed by the maintainer during shaping']), []);
   assert.ok(REMOVAL_COMMENT_RE.test('Risk flag public-contract removed by the maintainer during shaping'));
+  for (const texts of [undefined, null, 7, 'Risk flag auth removed by the maintainer during shaping', {}]) {
+    assert.deepStrictEqual(removalLogSlugs(texts), [], String(texts));
+  }
 });
 
 test('the removal comment text is exactly what removalLogSlugs reads', () => {
