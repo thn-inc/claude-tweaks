@@ -12,6 +12,10 @@
 // extract: selects the replayable findings and writes trees, judge prompts per arm, manifest.json, fixture.json and
 // archived-verdicts.json under <dir> (tools/review-replay/extract.js).
 //
+// score: settles every replay judge's reply through plugin/bin/lib/tiebreak.js and prints the agreement with the archived
+// verdicts and the cost per arm as one JSON object (tools/review-replay/score.js); --transcripts is the workflow's
+// directory holding journal.jsonl and agent-{id}.jsonl.
+//
 // Exit codes (as tools/driver-merge-check-eval.js): 0 ok; 1 a runtime failure; 2 a malformed invocation; 3 not a clean
 // result (extract shortfall, or score with any notJudged).
 //
@@ -23,16 +27,19 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { readRun, selectRuns, matchVerdicts } = require('./review-replay/archive.js');
 const { extract } = require('./review-replay/extract.js');
+const { score } = require('./review-replay/score.js');
 const { VERDICT_CLASSES } = require('./review-replay/schema.js');
 
 const USAGE = [
   'usage: node tools/review-replay.js baseline --runs <root> [--select <name,...>]',
   '       node tools/review-replay.js extract --runs <root> --out <dir> --arm name=<id>,chunk=<n>,profile=<profile>,repeat=<n> [--arm ...]',
   '               [--select <name,...>] [--min-runs <n>] [--min-findings <n>] [--quota <sev>=<n>,...] [--template <path>] [--dispatch-core <path>]',
+  '       node tools/review-replay.js score --out <extract dir> --transcripts <workflow dir> [--reference <arm>]',
 ].join('\n');
 const COMMAND_FLAGS = {
   baseline: new Set(['--runs', '--select']),
   extract: new Set(['--runs', '--select', '--out', '--min-runs', '--min-findings', '--quota', '--arm', '--template', '--dispatch-core']),
+  score: new Set(['--out', '--transcripts', '--reference']),
 };
 
 function defaultDeps() {
@@ -66,7 +73,8 @@ function parseArgs(argv) {
     if (arg === '--arm') opts.arms = [...(opts.arms || []), value];
     else opts[arg.slice(2)] = value;
   }
-  if (!opts.runs) return { error: `${command} requires --runs` };
+  const required = command === 'score' ? ['out', 'transcripts'] : ['runs'];
+  for (const key of required) if (!opts[key]) return { error: `${command} requires --${key}` };
   if (opts.select !== undefined) {
     opts.select = opts.select.split(',').map((s) => s.trim()).filter(Boolean);
     if (opts.select.length === 0) return { error: '--select requires at least one run name' };
@@ -119,7 +127,9 @@ async function run({ argv, deps } = {}) {
     return 2;
   }
   try {
-    return parsed.opts.command === 'extract' ? extract(parsed.opts, d) : baseline(parsed.opts, d);
+    const { command } = parsed.opts;
+    if (command === 'extract') return extract(parsed.opts, d);
+    return command === 'score' ? score(parsed.opts, d) : baseline(parsed.opts, d);
   } catch (e) {
     d.err(`review-replay.js: ${errText(e)}`);
     return 1;
