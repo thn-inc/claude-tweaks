@@ -36,7 +36,7 @@ The merge (`_shared/pr-first-merge.md`, `gh pr merge`) executes today at `review
 
 ## Waivers
 
-Waived AC3.1 (after half only, record Decision Q1, Reading B): the "before" evidence is gathered at build time and quoted in the PR body (Task 6). The "after" check needs a released build carrying this change; it is carried by the follow-up measurement record #4644 (filed by this record's earlier attempt; Task 6 corrects its stale version bound rather than filing a duplicate). This record closes when its PR merges.
+Waived AC3.1: after half only (record Decision Q1, Reading B). The "before" evidence is gathered at build time and quoted in the PR body (Task 6). The "after" check needs a released build carrying this change; it is carried by the follow-up measurement record #4644 (filed by this record's earlier attempt; Task 6 corrects its stale version bound rather than filing a duplicate). This record closes when its PR merges.
 Waived _shared/pr-first-merge.md: read only — its procedure moves call site, its text is unchanged.
 
 ## Resume amendment (2026-11-16, run 2026-11-16T000501-record-3813)
@@ -55,7 +55,7 @@ Tasks 1-4 landed in the earlier attempt (528c06c2d, 480a77ac7, 265dd8b28, 9cc6c0
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `node --test tests/wrap-up-branch-finish-after-execution.test.js`
-Expected: FAIL (old "normally runs" sentence still present)
+Expected: FAIL after Step 1 (old "normally runs" sentence still present)
 
 - [ ] **Step 3: Edit the sentence** — e.g. "This branch bypasses both places item 2 (Open items ledger) normally runs — `review-console.md`'s "On approval" step 13 (Ledger close-out) under `pr-first`, Phase 4's execution step under `local-merge` — so re-implement it here, ...". Keep the rest of the paragraph byte-identical. Run `grep -rn "normally runs" tests/` first and keep any existing pin on this paragraph green.
 - [ ] **Step 4: Run** `node --test tests/wrap-up-branch-finish-after-execution.test.js tests/wrap-up-ledger-delete-before-merge.test.js` and any test file that greps `auto-merge-short-circuit.md` (`git grep -l "auto-merge-short-circuit" tests/`) — Expected: PASS
