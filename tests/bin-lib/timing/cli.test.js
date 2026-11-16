@@ -66,10 +66,10 @@ test('AC8.1: --markdown on a fixture run prints the table and exits 0 (script en
 // A real process, to prove the entry's .catch maps a rejection to exit 2.
 test('AC8.1: a rejected run exits 2 with the phase-timing.js: line (script entry)', () => {
   const dir = tmpRun(true);
-  fs.mkdirSync(path.join(dir, 'timing.json')); // the timing.json write throws EISDIR
+  fs.mkdirSync(path.join(dir, 'timing.json')); // the timing.json rename throws EISDIR (POSIX) or EPERM (win32)
   const r = spawnCli(CLI, ['--run', dir, '--markdown'], { env: { ...process.env } });
   assert.equal(r.code, 2);
-  assert.match(r.stderr, /^phase-timing\.js: EISDIR/);
+  assert.match(r.stderr, process.platform === 'win32' ? /^phase-timing\.js: EPERM/ : /^phase-timing\.js: EISDIR/);
 });
 
 test('#2550: an events file with only session-end collapses to a one-line summary instead of a 12-row all-unattributed table, and exits 0', async () => {
