@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { gitRepo, linkedWorktreeOf, fixtureGit } = require('../helpers/git-fixtures');
 const { POLICY_REL_PATH, isLinkedWorktreeRoot, locatePolicyFile } = require('../../plugin/bin/lib/policy-file');
 
 const WT = path.join(path.sep, 'proj', 'wt');
@@ -12,8 +13,12 @@ const own = path.join(WT, POLICY_REL_PATH);
 const mainPolicy = path.join(MAIN, POLICY_REL_PATH);
 
 // An fsImpl whose lstatSync answers from a Map of path -> 'file' | 'dir' | 'symlink' | Error.
+// readFileSync answers the worktree's `.git` file (a direct child of MAIN/.git/worktrees);
+// realpathSync is the identity.
 function fakeFs(entries) {
   return {
+    readFileSync: () => `gitdir: ${path.join(MAIN, '.git', 'worktrees', 'wt')}\n`,
+    realpathSync: (p) => p,
     lstatSync(p) {
       const v = entries.get(p);
       if (v === undefined) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
@@ -134,4 +139,28 @@ test('real fs: relative gitdir (gitdir: ../main/.git/worktrees/wt) — still res
     path: path.join(fs.realpathSync(main), POLICY_REL_PATH),
     source: 'main-checkout',
   });
+});
+
+// Real git: a submodule initialized inside a linked worktree has a .git file naming
+// <main>/.git/worktrees/<wt>/modules/<name> — not a linked worktree, and its own policy wins.
+test('real git: a submodule inside a linked worktree is not a linked worktree; the worktree itself still falls back', (t) => {
+  const main = gitRepo();
+  const subSrc = gitRepo();
+  t.after(() => { fs.rmSync(main, { recursive: true, force: true }); fs.rmSync(subSrc, { recursive: true, force: true }); });
+  fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(main, POLICY_REL_PATH), 'worktree-always: true\nintegration-branch: develop\n');
+  fs.writeFileSync(path.join(main, '.gitignore'), '.claude-tweaks/\n');
+  fixtureGit(['-C', main, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', subSrc, 'sub']);
+  fixtureGit(['-C', main, 'add', '.gitignore', '.gitmodules', 'sub']);
+  fixtureGit(['-C', main, 'commit', '-q', '-m', 'add sub']);
+  const wt = linkedWorktreeOf(main);
+  t.after(() => fs.rmSync(path.dirname(wt), { recursive: true, force: true }));
+  fixtureGit(['-C', wt, '-c', 'protocol.file.allow=always', 'submodule', 'update', '--init', '-q']);
+  const sub = path.join(wt, 'sub');
+  assert.ok(fs.statSync(path.join(sub, '.git')).isFile());
+  assert.match(fs.readFileSync(path.join(sub, '.git'), 'utf8'), /worktrees[\\/][^\\/]+[\\/]modules/);
+  assert.deepStrictEqual(locatePolicyFile(sub), { path: path.join(sub, POLICY_REL_PATH), source: 'checkout' });
+  assert.strictEqual(isLinkedWorktreeRoot(sub), false);
+  assert.deepStrictEqual(locatePolicyFile(wt), { path: path.join(main, POLICY_REL_PATH), source: 'main-checkout' });
+  assert.strictEqual(isLinkedWorktreeRoot(wt), true);
 });

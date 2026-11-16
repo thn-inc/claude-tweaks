@@ -11,6 +11,14 @@
 // worktree-detect.js's `mainCheckoutRoot`, and this module reuses that same
 // function rather than a second detector.
 //
+// Deliberate divergence from `mainCheckoutRoot`: that function accepts any
+// `gitdir:` containing `/.git/worktrees/`, which also matches a submodule
+// initialized inside a linked worktree (`<main>/.git/worktrees/<wt>/modules/
+// <name>`) and would hand back the superproject. This locator additionally
+// requires the root's admin dir to sit exactly one level under
+// `<main>/.git/worktrees/`, so a submodule keeps its own policy and is not a
+// linked worktree. `mainCheckoutRoot` itself is unchanged.
+//
 // Accepted divergence: a layout whose worktree admin dir is not under
 // `.git/worktrees/` (a `--separate-git-dir` main repo) resolves no main
 // checkout, so it gets no fallback — today's behavior.
@@ -18,8 +26,9 @@
 // Contract: `root` is a checkout top level. Never throws; any lookup failure
 // returns the root's own path with source `checkout`. The returned `path` is a
 // native fs path (never `toPosix`'d).
+const fs = require('fs');
 const path = require('path');
-const { lstatType } = require('./path-guard');
+const { lstatType, canonicalRealpath } = require('./path-guard');
 
 const POLICY_REL_PATH = path.join('.claude-tweaks', 'policy.yml');
 
@@ -28,8 +37,22 @@ function defaultMainCheckoutRoot(p) {
   return require('./hooks/worktree-detect').mainCheckoutRoot(p);
 }
 
-// The main checkout root when `root` is a linked worktree (its .git is a file
-// and mainCheckoutRoot resolves), else null. Never throws.
+// True when `root`'s `.git` file names an admin dir exactly one level under
+// `<main>/.git/worktrees/` (a linked worktree, not a submodule's modules dir).
+function adminDirIsWorktreeOf(root, main, fsImpl) {
+  const raw = fsImpl.readFileSync(path.join(root, '.git'), 'utf8');
+  const m = /^gitdir:\s*(.+?)\s*$/m.exec(raw);
+  if (!m) return false;
+  const admin = path.resolve(root, m[1]);
+  const opts = { fsImpl };
+  const parent = canonicalRealpath(path.dirname(admin), opts);
+  const expected = canonicalRealpath(path.join(main, '.git', 'worktrees'), opts);
+  return parent !== null && expected !== null && parent === expected;
+}
+
+// The main checkout root when `root` is a linked worktree (its .git is a file,
+// mainCheckoutRoot resolves, and its admin dir is a direct child of the main
+// checkout's .git/worktrees), else null. Never throws.
 function linkedMainRoot(root, deps) {
   try {
     if (typeof root !== 'string') return null;
@@ -37,7 +60,8 @@ function linkedMainRoot(root, deps) {
     const opts = fsImpl ? { fsImpl } : undefined;
     if (lstatType(path.join(root, '.git'), opts).type !== 'file') return null;
     const main = mainCheckoutRoot(root);
-    return typeof main === 'string' && main !== '' ? main : null;
+    if (typeof main !== 'string' || main === '') return null;
+    return adminDirIsWorktreeOf(root, main, fsImpl || fs) ? main : null;
   } catch (_err) {
     return null;
   }
