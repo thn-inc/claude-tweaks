@@ -1,39 +1,5 @@
 [
   {
-    "runId": "2026-11-14T14:05:41.526Z",
-    "runAt": "2026-11-14T14:05:42.117Z",
-    "fingerprints": []
-  },
-  {
-    "runId": "2026-11-14T21:08:27.006Z",
-    "runAt": "2026-11-14T21:08:27.673Z",
-    "fingerprints": [
-      "harnesshealth-e2fe56ff"
-    ]
-  },
-  {
-    "runId": "2026-11-14T21:08:32.268Z",
-    "runAt": "2026-11-14T21:08:32.938Z",
-    "fingerprints": [
-      "harnesshealth-75b813da"
-    ]
-  },
-  {
-    "runId": "2026-11-14T22:24:59.033Z",
-    "runAt": "2026-11-14T22:24:59.797Z",
-    "fingerprints": [
-      "harnesshealth-4b30074b",
-      "harnesshealth-7d74031b"
-    ]
-  },
-  {
-    "runId": "2026-11-14T22:25:01.308Z",
-    "runAt": "2026-11-14T22:25:02.041Z",
-    "fingerprints": [
-      "harnesshealth-b389d332"
-    ]
-  },
-  {
     "runId": "2026-11-14T22:25:03.447Z",
     "runAt": "2026-11-14T22:25:04.225Z",
     "fingerprints": []
@@ -488,6 +454,33 @@
   {
     "runId": "2026-11-16T09:03:09.711Z",
     "runAt": "2026-11-16T09:03:10.307Z",
+    "fingerprints": []
+  },
+  {
+    "runId": "2026-11-16T09:52:20.263Z",
+    "runAt": "2026-11-16T09:52:21.189Z",
+    "fingerprints": [
+      "harnesshealth-f43cf158"
+    ]
+  },
+  {
+    "runId": "2026-11-16T09:52:23.008Z",
+    "runAt": "2026-11-16T09:52:24.003Z",
+    "fingerprints": []
+  },
+  {
+    "runId": "2026-11-16T09:52:25.666Z",
+    "runAt": "2026-11-16T09:52:26.419Z",
+    "fingerprints": []
+  },
+  {
+    "runId": "2026-11-16T09:52:27.982Z",
+    "runAt": "2026-11-16T09:52:28.640Z",
+    "fingerprints": []
+  },
+  {
+    "runId": "2026-11-16T09:52:30.224Z",
+    "runAt": "2026-11-16T09:52:30.882Z",
     "fingerprints": []
   }
 ]
