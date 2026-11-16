@@ -2,6 +2,7 @@
 files:
   - plugin/bin/lib/issues/provenance.js
   - plugin/bin/lib/issues/trust.js
+  - plugin/bin/lib/issues/record-payload.js
   - plugin/bin/lib/issues/author-association.js
   - plugin/bin/lib/issues/record-snapshot.js
   - plugin/bin/lib/backlog-grant-gate/backlog-grant-gate.js
@@ -46,6 +47,14 @@ files:
   The association is the author's current one, as the fetching token sees it. A former collaborator's old records, or a private org member seen through a token without org visibility, can read `CONTRIBUTOR` and fall into `human:human`. That is the accepted fail-closed direction.
 - **Red flags:** A silent degrade with no stderr line. A trust table built from a half-written snapshot. The whole fetch aborting.
 
+### 4. Read the trust table after a human-filed record absorbs a capture — `ownOriginLine`
+- **URL:** the same trust-table consumers as step 2, after `/claude-tweaks:capture`'s absorb route appended `## Absorbed: {date} — {title}` holding `Origin: demo changes-requested from #7` to a record the maintainer filed by hand (no `Origin:` line of its own)
+- **Action:** Render the table.
+- **Should feel:** Unremarkable. The absorbing record stays in `human:human`, and #7's follow-up count is unchanged. A record whose `Origin:` line is only quoted inside a fenced code block reads the same way.
+- **Should understand:** A record's provenance comes from its own `Origin:` line only. `record-payload.js`'s `ownOriginLine` is the one reader, shared by `provenance.js` and `trust.js`, so the class and the follow-up always come from the same line. A line inside a fenced block never counts. A line under a `## Absorbed:` heading never counts, up to the next `## ` heading. A line under `## Original request` still counts, because it is the record's own earlier text. A bare own `Origin:` line still reads as `unstructured:empty-origin` and hides any later line.
+- **Red flags:** The absorbing record moving into the capture's side-effect class. #7 gaining a follow-up from absorbed or fenced text. A record whose only `Origin:` line sits under `## Original request` dropping into `human:human`.
+
 ## Origin
 - Created during build of #4577 (provenance and trust ignore an `Origin:` line from an author outside the repository)
-- Related specs: #4577, #4502 (where the gap was found), #3358 (the same trust rule for marker comments)
+- Updated during build of #4502 (step 4: provenance and follow-ups read only the record's own `Origin:` line, never fenced or absorbed text)
+- Related specs: #4577, #4502, #3358 (the same trust rule for marker comments)
