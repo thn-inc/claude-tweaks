@@ -645,7 +645,7 @@ test('a create failure on a branch the call did not create leaves the remote bra
   assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
   fake.prs.length = 0; // the PR is gone: the branch is on the remote with no PR
   addShell(root, '2026-11-19T100001-record-2', { twin: 'absent' });
-  const broken = fakeGh({ failCreate: true, failOpenList: true });
+  const broken = fakeGh({ failCreate: true }); // the read-back confirms no PR, so only createdRemote protects the branch
   const r = call(root, ['--root', root], { ghFake: broken.gh });
   assert.equal(r.code, 1);
   assert.notEqual(git(root, 'ls-remote', 'origin', `refs/heads/${BRANCH}`), '');

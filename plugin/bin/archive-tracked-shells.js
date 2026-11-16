@@ -303,7 +303,7 @@ function archiveInWorktree(root, shells, integration, deps, envelope, opts) {
     const countAhead = (ref) => {
       const res = g(['rev-list', '--count', '--no-merges', `${ref}..HEAD`, `^${originRef}`], wt);
       const n = Number((res.stdout || '').trim());
-      if (res.failure || !Number.isInteger(n)) throw new Error(`git rev-list --count ${ref}..HEAD failed: ${res.stderr || res.failure}`);
+      if (res.failure || !Number.isInteger(n)) throw new Error(`git rev-list --count --no-merges ${ref}..HEAD ^${originRef} failed: ${res.stderr || res.failure}`);
       return n;
     };
     // New work for the integration branch (decides whether a PR is needed) and for the remote
@@ -323,12 +323,12 @@ function archiveInWorktree(root, shells, integration, deps, envelope, opts) {
       const created = gh(['pr', 'create', '--base', integration, '--head', BRANCH, '--title', title, '--body-file', '-'], prBody(envelope, already));
       // A successful create prints the new PR's URL: that is the PR, whatever the read-back says. The
       // read-back settles the other cases: a create that errored after it landed still has its PR.
-      const printed = created.failure ? null : /\/pull\/(\d+)\s*$/.exec(String(created.stdout || '').trim());
+      const printed = created.failure ? null : /(\S+\/pull\/(\d+))\s*$/.exec(String(created.stdout || '').trim());
       const back = gh(['pr', 'list', '--head', BRANCH, '--state', 'open', '--json', 'number,url']);
       let rows = null;
       if (!back.failure) { try { rows = JSON.parse(back.stdout || '[]'); } catch { rows = null; } }
       if (Array.isArray(rows) && rows.length > 0) pr = { number: rows[0].number, url: rows[0].url };
-      else if (printed) pr = { number: Number(printed[1]), url: String(created.stdout).trim() };
+      else if (printed) pr = { number: Number(printed[2]), url: printed[1] };
       if (!pr) {
         const confirmedNone = created.failure && Array.isArray(rows) && rows.length === 0;
         deps.stderr(`archive-tracked-shells: no pull request for ${BRANCH}: ${firstLine(created.failure ? created.stderr : back.stderr) || 'the open-PR read-back was empty'}\n`);
