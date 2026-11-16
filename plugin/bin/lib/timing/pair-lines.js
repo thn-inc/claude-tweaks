@@ -119,7 +119,9 @@ const PAIR_FORMS = Object.freeze([
     [`Reproduction:${TAG} ${LENS_FREE} finding ${LOC}${NOTE_OPT} reproduced, severity contested${NOTE_FREE}[.,] Confirmed${AFTER_VERDICT}`]),
   form('not-reproduced', { both: 0, one: 1, relabel: 0 },
     'Reproduction: lens "{lens}" finding {path}:{line} not reproduced. Staged to Review Console as low-confidence. Reversibility: high.',
-    [`Reproduction: ${LENS} finding ${PATH_STRICT}:(\\d+) not reproduced\\. Staged to Review Console as low-confidence\\.`], { lens: 1, path: 2, line: 3 },
+    [`Reproduction: ${LENS} finding ${PATH_STRICT}:(\\d+) not reproduced\\. Staged to Review Console as low-confidence\\.`,
+      // A finding with no line (reproduction-log.js writes `finding {path} not reproduced.`, #5595): line null.
+      `Reproduction: ${LENS} finding ${PATH_STRICT}(?<!:\\d+) not reproduced\\. Staged to Review Console as low-confidence\\.`], { lens: 1, path: 2, line: 3 },
     [`Reproduction:${TAG} ${LENS_LOOSE} finding ${LOC}${NOTE_OPT} not reproduced\\. Staged to Review Console as low-confidence\\.`],
     [`Reproduction:${TAG} ${LENS_FREE} finding ${LOC}${NOTE_OPT} not reproduced(?:;|${NOTE_FREE})${SOME_CONTENT}${TEMPER}$`,
       `Reproduction:${TAG} ${LENS_FREE} finding ${LOC} not reproduced\\. Staged to Review Console as low-confidence(?:;|,|${NOTE_FREE})${SOME_CONTENT}${TEMPER}$`,

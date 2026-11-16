@@ -44,6 +44,15 @@ for (const [id, line, want] of CASES) {
   });
 }
 
+test('#5595: an unlocated not-reproduced line (no :line) classifies with line null; a located one keeps its line', () => {
+  const unlocated = L('STAGED', `Reproduction: lens "3c" finding plugin/x.js not reproduced. Staged to Review Console as low-confidence. ${R}`);
+  assert.deepEqual(classifyPairLine(unlocated), { form: 'not-reproduced', lens: '3c', path: 'plugin/x.js', line: null });
+  assert.deepEqual(classifyPairLine(unlocated.replace('plugin/x.js', 'docs/a b.md')), { form: 'not-reproduced', lens: '3c', path: 'docs/a b.md', line: null });
+  assert.deepEqual(classifyPairLine(unlocated.replace('plugin/x.js', 'plugin/x.js:12')), { form: 'not-reproduced', lens: '3c', path: 'plugin/x.js', line: 12 });
+  // A path ending in `:{digits}` is never read as unlocated, so a located line that fails its own pattern is no pair line.
+  assert.equal(classifyPairLine(unlocated.replace('plugin/x.js', 'plugin/x.js:12').replace(' Reversibility: high.', ' Reversibility: high. extra')), null);
+});
+
 test('AC3.2: a path containing a space still parses', () => {
   const r = classifyPairLine(L('AUTO', `Reproduction: lens "3a" finding docs/a b.md:4 reproduced. Confirmed. ${R}`));
   assert.deepEqual(r, { form: 'reproduced', lens: '3a', path: 'docs/a b.md', line: 4 });
