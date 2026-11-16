@@ -314,7 +314,8 @@ test('the kind and status vocabularies are the constants', () => {
 });
 
 test('the section→kind table holds exactly SECTION_KINDS', () => {
-  const rows = tableRows(sectionOf(CONTRACT, '## Facts and claims'));
+  // The section→kind table only: the `### Decision facts` subsection has its own table (decision-facts.test.js).
+  const rows = tableRows(sectionOf(CONTRACT, '## Facts and claims').split('\n### ')[0]);
   const parsed = rows.map(([section, kinds]) => [
     section.replace(/`/g, ''),
     [...kinds.matchAll(/`([^`]+)`/g)].map((match) => match[1]),
