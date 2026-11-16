@@ -91,7 +91,7 @@ files:
 - **Action:** at `autonomy: unattended` the console renders in full with every row stamped `AUTO-RESOLVED` and asks nothing. A can't-tell finding the tiebreak recommended `drop` for resolves `digested`; every other one resolves `filed`. `console-filings.js` dedups the filings against `gh issue list --state all` and the digest entries against the digest's comments, writes the proposals, and each is filed as a `needs-verification` task (no `needs:definition` label) asking for quoted evidence at the integration-branch tip; the skill posts the digest entries as one comment on the open `digest` issue.
 - **Should feel:** finished. The operator comes back to records in `/claude-tweaks:backlog attention`, not a console waiting on them.
 - **Should understand:**
-  - `console.json` records `filings` and `droppedByTiebreak` next to the items.
+  - `console.json` records `filings`, `digests` and `droppedByTiebreak` next to the items; a digest entry with no digested line in `decisions.md` reads as `digest-pending` residue.
   - A filing that fails (non-zero exit) is carried into the run's `Needs a human` block with the re-run command. Once the run is archived, that command takes the `archive/{run-id}` copy.
   - Below `unattended` no human means no resolution: nothing is filed or dropped, and the console stays pending.
 - **Red flags:**
