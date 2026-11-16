@@ -110,3 +110,5 @@ Accepted divergence, not tracked by the signature: the win32 system config (it l
 - `cwd()`, `env` and `stdin()` are `process.cwd()`, `process.env` and the stdin the early prefilter already read (or `ctxLib.readStdin()` when it did not run).
 
 Event modules under `bin/lib/hooks/` still read process globals directly until #5377; `run` hands them only the parsed input, the resolved run and the `cwd`.
+
+The `reconcile` verb hands `deps.env` to `reconcile()` (#5376), which applies it only to the git children of its no-repo/no-remote gate (the integration-branch resolve and `origin-head.js`'s `origin/HEAD` repair); every check past that gate still inherits `process.env` until #5606. An in-process `reconcile` test that needs its injected environment honored therefore stays on a no-remote fixture, as `tests/reconcile-dispatch.test.js` does.
