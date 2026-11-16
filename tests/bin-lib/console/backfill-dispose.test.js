@@ -830,12 +830,15 @@ test('planBatch: a drop item whose consolefinding marker a trusted comment holds
   const fp = findingFingerprint({ lens: '3a', path: 'plugin/skills/review/SKILL.md', claim: item.claimText });
   const url = 'https://x/issues/1426#issuecomment-9';
   const held = [{ body: `- some other line ${consoleFindingMarker(fp)}`, authorAssociation: 'OWNER', url }];
-  const out = plan({ workList: workList([item]), verdicts: { [item.itemId]: consoleDropV }, digestComments: held });
-  assert.deepStrictEqual(out.file, []);
-  assert.deepStrictEqual(out.digest.lines, []);
-  assert.deepStrictEqual(out.digest.duplicates, [item.itemId]);
-  assert.strictEqual(out.entries[0].outcome, 'digested');
-  assert.strictEqual(out.entries[0].ref, url);
+  for (const verdicts of [{ [item.itemId]: consoleDropV }, {}]) {
+    const out = plan({ workList: workList([item]), verdicts, digestComments: held });
+    assert.deepStrictEqual(out.file, [], JSON.stringify(verdicts));
+    assert.deepStrictEqual(out.digest.lines, []);
+    assert.deepStrictEqual(out.digest.duplicates, [item.itemId]);
+    assert.deepStrictEqual(out.awaitingVerdict, []);
+    assert.strictEqual(out.entries[0].outcome, 'digested');
+    assert.strictEqual(out.entries[0].ref, url);
+  }
   const stranger = plan({ workList: workList([item]), verdicts: { [item.itemId]: consoleDropV }, digestComments: [{ ...held[0], authorAssociation: 'NONE' }] });
   assert.strictEqual(stranger.digest.lines.length, 1, 'an untrusted comment holds nothing');
 });

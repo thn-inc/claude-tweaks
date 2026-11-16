@@ -356,7 +356,7 @@ function filedRecordOf(item, fp, known, markers) {
 const commentRef = (comment) => (comment && typeof comment.url === 'string' && comment.url ? comment.url : null);
 
 // The trusted digest comment already holding this digest line — by its materiality fingerprint, or, for
-// a finding, by its item marker — or null. A string (a local-files body) is single-writer and trusted.
+// a finding, by its item marker or its console-finding marker — or null. A string (a local-files body) is single-writer and trusted.
 function heldDigestComment(digestComments, digest, item) {
   const isFinding = Boolean(item) && item.kind === 'finding';
   const claimFp = isFinding ? prefiledFingerprint(item) : null;
@@ -414,7 +414,7 @@ function planBatch({ workList, verdicts, existingIssues, digestComments, limit =
           continue;
         }
         // Likewise a finding whose digest line a trusted comment already carries (digested by an interrupted
-        // run), by fingerprint or by item marker. The fingerprint does not depend on the verdict (findingDigest).
+        // run), by fingerprint, item marker, or console-finding marker. The fingerprint does not depend on the verdict (findingDigest).
         if (item.finding && typeof item.claimText === 'string' && item.claimText.trim()) {
           const prefiledDigest = findingDigest(item, DIGEST_REASONS.CANT_TELL, runIdOf(item.consoleDir));
           const held = heldDigestComment(digestComments, prefiledDigest, item);
