@@ -191,6 +191,9 @@ const WRITER_REF = /\b(?:addRiskFlags|addTripwireRiskFlags|carryTripwireFlags|ap
 
 function writerImports(raw) {
   const keep = stripComments(raw);
+  // A mis-parse is an offender, never a clean file (the same verdict scanSource applies).
+  const verdict = stripperVerdict(raw, stripComments(raw, { literals: 'blank' }));
+  if (verdict !== 'ok') return [[1, `stripper-${verdict}`]];
   const offenders = [];
   for (const [re, reason] of [[WRITER_REQUIRE, 'writer-require'], [WRITER_REF, 'writer-ref']]) {
     for (const m of keep.matchAll(re)) offenders.push([lineAt(keep, m.index), reason]);
@@ -207,6 +210,11 @@ test('no accept lib module imports or names a risk-flag writer', () => {
     for (const [line, reason] of writerImports(readText(file))) offenders.push(`${rel}:${line} ${reason}`);
   }
   assert.deepStrictEqual(offenders, []);
+});
+
+test('a planted mis-parse is an offender for the writer-import scan too', () => {
+  assert.deepStrictEqual(writerImports("if (b) /'/.test(b);\nconst c = 'x';\nfunction dropFlags() {}\n"), [[1, 'stripper-misparsed']]);
+  assert.deepStrictEqual(writerImports("if (b) /'/.test(b);\nconst c = 'x';\nnot valid((("), [[1, 'stripper-unparseable']]);
 });
 
 test('a planted writer require or adder reference is flagged, a comment is not', () => {
