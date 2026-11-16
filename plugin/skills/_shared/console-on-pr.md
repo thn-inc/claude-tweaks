@@ -247,3 +247,5 @@ run cleanly. No blocking wait, no `AskUserQuestion`. Log to `decisions.md`:
 
 `AUTO {time} — Console-on-PR: rendered {N} items ({M} sections) to PR #{number}, comment
 {comment-id}. Reversibility: high (comment is editable/re-renderable).`
+
+A Step 2.9 park (`_shared/pr-first-merge.md`) ends the run `pending-review` / `awaiting-local-acceptance`: the console is not a stop under control mode, and the durable state is the pending label plus the packet. No timeout, no nagging.
