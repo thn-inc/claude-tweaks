@@ -314,6 +314,43 @@ test('AC4.1 close-run: writeTimingAtClose stubbed to throw → stdout and exit c
   }
 });
 
+const stepYield = require('../../../plugin/bin/lib/timing/step-yield');
+
+test('AC6.1: close-run leaves step-yield.json', async () => {
+  const fx = closeFixture();
+  try {
+    T.writeTranscript(fx.cfg, fx.wt);
+    const r = await closeRun(fx);
+    assert.strictEqual(r.code, 0);
+    const y = JSON.parse(fs.readFileSync(path.join(fx.runDir, stepYield.STEP_YIELD_FILE), 'utf8'));
+    assert.strictEqual(y.schemaVersion, stepYield.SCHEMA_VERSION);
+    assert.ok(y.steps.some((s) => s.phase === 'build'));
+    assert.deepStrictEqual(T.skipLines(fx.runDir), []);
+  } finally {
+    cleanup(fx);
+  }
+});
+
+test('AC6.2: close-run with the yield function stubbed to throw → stdout and exit code unchanged, one SKIP line', async () => {
+  const base = closeFixture();
+  const thrown = closeFixture();
+  try {
+    T.writeTranscript(base.cfg, base.wt);
+    T.writeTranscript(thrown.cfg, thrown.wt);
+    const expected = await closeRun(base);
+    const actual = await T.withStub(stepYield, 'deriveStepYield', () => { throw new Error('boom yield'); }, () => closeRun(thrown));
+    assert.strictEqual(actual.code, expected.code);
+    assert.strictEqual(actual.stdout, expected.stdout);
+    const skips = T.skipLines(thrown.runDir).filter((l) => l.includes('step yield could not be written'));
+    assert.strictEqual(skips.length, 1, JSON.stringify(T.skipLines(thrown.runDir)));
+    assert.strictEqual(T.skipLines(thrown.runDir).length, 1);
+    assert.strictEqual(fs.existsSync(path.join(thrown.runDir, stepYield.STEP_YIELD_FILE)), false);
+  } finally {
+    cleanup(base);
+    cleanup(thrown);
+  }
+});
+
 test('close-run: a close whose run-state.json cannot be written reports it and writes no timing.json (the file is written only after the state change succeeds)', async () => {
   const fx = closeFixture();
   try {
