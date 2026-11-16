@@ -1823,7 +1823,7 @@ test('#5227 shipped: a hooks.js resolve-run-dir spawn that throws prints nothing
 
   const first = hooksThrowingAt(1);
   const r1 = pull4(FULL(), { spawn: first.spawn });
-  assert.ok(r1.errs.includes('queue-pull: hooks.js: spawn EMFILE\n'), 'the target-missing call leaves its stderr on the terminal (fence 385)');
+  assert.ok(r1.errs.includes('queue-pull: hooks.js: spawn EMFILE\n'), 'the target-missing call leaves its stderr on the terminal (fence 384)');
 });
 
 test('#5227 target-missing: an empty first run-dir answer still calls log-decision and stage-item with --run "" (the fence does not guard it)', () => {
