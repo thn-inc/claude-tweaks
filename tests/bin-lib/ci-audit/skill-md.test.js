@@ -66,8 +66,12 @@ test('resolves the thresholds policy key and passes a non-empty value to gather 
   assert.ok(body.includes('node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values ci-health-thresholds'));
   assert.ok(body.includes('${CI_HEALTH_THRESHOLDS:+--thresholds "$CI_HEALTH_THRESHOLDS"}'), 'gather must receive a non-empty value only');
   assert.ok(
-    body.includes('report "`ci-health-thresholds` is invalid, so the checklist defaults are in force this run" — never apply defaults silently'),
-    'an invalid value must be reported as defaults in force, never silent',
+    body.includes('a `resolve-policy.js` that fails (a non-zero exit inside this call, visible only as its stderr line) leaves the value empty as well'),
+    'a failing resolver must be named, not only an invalid value',
+  );
+  assert.ok(
+    body.includes('report "`ci-health-thresholds` could not be applied (invalid, or the resolver failed), so the checklist defaults are in force this run", quoting that line in a fenced block — never apply defaults silently'),
+    'an invalid value or a failed resolver must be reported as defaults in force, never silent',
   );
 });
 
@@ -89,10 +93,37 @@ test('reports noData as "no runs sampled" and an unavailable read as unavailable
   assert.ok(body.includes('_shared/github-write-transport.md'), 'the unavailability convention is cited, not restated');
 });
 
-test('--dry-run prints each payload and makes no forge write, writes no state and files nothing', () => {
+test('--dry-run prints each payload and makes no forge write, writes no state and files nothing, stated before any write', () => {
   const body = read();
   assert.ok(body.includes('${DRY_RUN:+--dry-run}'), 'validate-findings marks dry-run payloads');
-  assert.ok(body.includes('In `--dry-run` mode, print each payload this step would file or reopen, make no forge write, write no cursor, cache or digest, and file nothing.'));
+  const rule = body.indexOf('In `--dry-run` mode, print each payload this step would file or reopen, make no forge write, write no cursor, cache or digest, and file nothing.');
+  assert.ok(rule !== -1, 'the dry-run rule is missing');
+  assert.ok(body.includes('the label bootstrap, the materiality and cap digests, the reopens, the creates and the recent-commit comment are all skipped'));
+  const file = body.search(/^\*\*Step \d+ — FILE\b/m);
+  const firstWrite = body.indexOf('**Materiality floor, before the cap digest.**');
+  const bootstrap = body.indexOf('Before the first write (never under `--dry-run`), bootstrap only');
+  assert.ok(file !== -1 && firstWrite !== -1 && bootstrap !== -1, `anchors missing: ${file}, ${firstWrite}, ${bootstrap}`);
+  assert.ok(file < rule && rule < firstWrite && rule < bootstrap, 'the dry-run rule must open the FILE step, before every write');
+});
+
+test('the title reaches the create call as data, never typed into a command line', () => {
+  const body = read();
+  assert.ok(body.includes('every title holds backtick code spans, so neither is ever typed into a command line'));
+  assert.ok(body.includes('`CI_HEALTH_TITLE="$(cat "$CI_HEALTH_TITLE_FILE")"`, passed as the double-quoted `"$CI_HEALTH_TITLE"`'));
+  assert.ok(body.includes('the Create row\'s body-file form (`--body-file`)'));
+  assert.ok(!/--title "<payload\.title>"/.test(body), 'no interpolated title placeholder');
+});
+
+test('a --budget share names workflows by index, never by file name', () => {
+  const body = read();
+  assert.ok(body.includes('Judge only the workflows at these positions (0-based) of the report\'s `workflows` array: <<< this agent\'s share, as a JSON array of integer indexes >>>'));
+  assert.ok(body.includes('named by index and never by file name'));
+});
+
+test('a window where nothing reached minSample or parsed reports "nothing judged", never "no findings"', () => {
+  const body = read();
+  assert.ok(body.includes('nothing can be judged: skip to Step 7 and report "nothing judged", naming why'));
+  assert.ok(body.includes('with no such job it reports "nothing judged", naming why, never "no findings"'));
 });
 
 test('states that the sweep keeps no cursor, cache or retry queue', () => {
