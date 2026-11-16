@@ -24,6 +24,7 @@ const { machineGrantOutlook } = require('../issues/backlog');
 const { fetchNativeSubIssues } = require('../issues/native-dependencies');
 const { probeSchemaStrict } = require('../issues/capabilities-probe');
 const recordSnapshot = require('../issues/record-snapshot');
+const { enrichRecords, ghTimeoutFor, warningLine } = require('../issues/author-association');
 const { foreignBlockerBlocks } = require('../issues/record-dependencies');
 const { bodyForeignBlockers } = require('../issues/cross-repo-states');
 
@@ -78,13 +79,28 @@ function filterCandidates(issues, openNumbers, foreignByRecord) {
 // the trust-table fragment itself all read through, so one continuous
 // session pulling the whole issue set independently per skill invocation
 // doesn't burn a round-trip per call for identical data), else fetch live via
-// `UNION_FIELDS` and write the snapshot back for the next reader.
-function fetchAllRecords({ limit, runner, sessionId, ttlSeconds, now = Date.now() }) {
+// `UNION_FIELDS`, enrich the Origin records with their author's association
+// (#4577 — a live fetch only, never a cached snapshot), and write the snapshot
+// back for the next reader, a degraded enrichment included: the snapshot lives
+// for its TTL, so a transient failure leaves the gap in place for the same
+// window and only this first call prints the warning. owner/repo are
+// deliberately not passed to the enrichment: `--repo` addresses the native
+// calls while this list reads cwd's repo, so enrichRecords resolves the repo
+// with `repo view` on this same runner. A degraded enrichment fails open and
+// warns once on `stderr`.
+function fetchAllRecords({
+  limit, runner, sessionId, ttlSeconds, now = Date.now(), stderr = (s) => process.stderr.write(s),
+}) {
   const snapPath = recordSnapshot.snapshotPath(sessionId);
   if (snapPath && recordSnapshot.isFresh(snapPath, ttlSeconds, now)) {
     return recordSnapshot.readSnapshot(snapPath);
   }
-  const records = jsonOut(runner, ['issue', 'list', '--state', 'all', '--json', recordSnapshot.UNION_FIELDS, '--limit', String(limit)]);
+  const listed = jsonOut(runner, ['issue', 'list', '--state', 'all', '--json', recordSnapshot.UNION_FIELDS, '--limit', String(limit)]);
+  const bounded = (args) => runner(args, { timeout: ghTimeoutFor(args) });
+  const enriched = enrichRecords(listed, { runner: bounded });
+  const { records } = enriched;
+  const warning = warningLine(enriched);
+  if (warning) stderr(warning);
   if (snapPath) recordSnapshot.writeSnapshot(snapPath, records);
   return records;
 }
@@ -204,7 +220,7 @@ function computeOutlook(policy, fetch) {
   }
 
   const {
-    limit, workLinks, integrationBranch, owner, repo, host, runner, nativeRunner, gitRunner, probeFn, sessionId, ttlSeconds, foreignDeps,
+    limit, workLinks, integrationBranch, owner, repo, host, runner, nativeRunner, gitRunner, probeFn, sessionId, ttlSeconds, foreignDeps, stderr,
   } = fetch;
 
   // One `--state all` fetch (session-cached) supplies both this run's
@@ -212,7 +228,9 @@ function computeOutlook(policy, fetch) {
   // record set trustRows grades — the same single-fetch shape refine-headless.md
   // originally derived openNumbers from, never a second bare `--state open`
   // call of its own.
-  const allRecords = fetchAllRecords({ limit, runner, sessionId, ttlSeconds });
+  const allRecords = fetchAllRecords({
+    limit, runner, sessionId, ttlSeconds, stderr,
+  });
   const openNumbers = new Set(allRecords.filter((r) => r.state === 'OPEN').map((r) => r.number));
 
   const readyIssues = fetchReadyCandidates({ limit, runner });

@@ -44,7 +44,9 @@ function writtenTiming() {
 }
 
 // The subagents-session fixture under --auto-transcript (#5597 AC8): the base
-// commit's timing.json, with the tmp home path replaced by <HOME>.
+// commit's timing.json, with the tmp home path replaced by <HOME>. #4359 later added one
+// field to it, an empty `procedureFiles` object on every phase, the unattributed bucket and
+// the totals (no file reads in this fixture); the golden carries those 15 lines and nothing else new.
 const SUBFIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'subagents-session');
 const SUB_GOLDEN = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'subagents-golden-timing.json');
 const SUB_EVENTS = readText(path.join(SUBFIX, '..', 'subagents-events.jsonl'));

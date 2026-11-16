@@ -482,6 +482,19 @@ test('#1308: teardownTargets() resolves `env git worktree remove <path>` to the 
   assert.strictEqual(bare[0].source, 'bash');
 });
 
+// #4448: the git lead is read through the same command-word reader as the write shapes, so an
+// appending assignment, sudo and the `time` keyword (all run the git, per bash 3.2, bash 5, zsh and
+// sudo(8)) no longer hide a worktree removal from teardownTargets.
+test('#4448: teardownTargets reads a git worktree remove behind x+=1, sudo or time', () => {
+  for (const prefix of ['x+=1 ', 'sudo ', 'time ']) {
+    const targets = preToolUse.teardownTargets({ input: { tool_name: 'Bash', tool_input: { command: `${prefix}git worktree remove /abs/wt` } }, cwd: '/wt' });
+    assert.deepStrictEqual(targets, [{ path: path.resolve('/abs/wt'), source: 'bash' }], prefix);
+  }
+  // A quoted assignment name is the command word (exit 127 in bash 3.2, 5 and zsh): no git runs.
+  const quoted = preToolUse.teardownTargets({ input: { tool_name: 'Bash', tool_input: { command: '"x"=1 git worktree remove /abs/wt' } }, cwd: '/wt' });
+  assert.deepStrictEqual(quoted, []);
+});
+
 // IMPORTANT 4 (whole-branch review): teardownTargets must track `cd` across
 // shell segments (via git-command.js's forEachCommandSegment), not just
 // inspect each segment against the ORIGINAL cwd — otherwise `cd <dir> && git

@@ -1,5 +1,9 @@
 'use strict';
 
+// Test tooling, not plugin code: a parser for the corpus-wide conformance
+// suite under tests/. It lives in tests/helpers/ so the installed plugin does
+// not ship it (#5538).
+//
 // Parser for `AskUserQuestion` option `description` fields authored in skill
 // prose, per docs/skill-authoring.md's "Decisions" bullet: a description
 // states the consequence of choosing an option, in one clause — never the
