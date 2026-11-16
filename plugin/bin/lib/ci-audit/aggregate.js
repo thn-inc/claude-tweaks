@@ -3,7 +3,8 @@
 // `needs`, matrix shard skew, step names declared in several jobs, and which job pairs ever ran
 // at the same time. Pure: no spawns, no I/O, no knowledge of where the runs came from. It takes
 // normalized runs — { id, workflow, conclusion, createdAt, jobs: NormJob[] } — and the workflow
-// facts readWorkflowFacts gives, keyed by the same `workflow` string the runs carry.
+// facts readWorkflowFacts gives, keyed by the same `workflow` string the runs carry. matchJob and
+// usableJobs are exported so the checks map run jobs to workflow jobs by this same rule.
 //
 // Rules:
 //  - A run job matches a workflow job by exact `name`, else, when the run job's name ends in
@@ -13,7 +14,8 @@
 //    gives no critical path and no repeated steps.
 //  - A job with no phases (splitJobPhases returns null: a missing, backwards or unparseable
 //    instant) counts once in `excluded` and contributes to no figure, overlap included.
-//  - A job's total per run is waiting + setup + running; the critical path weighs each workflow
+//  - A job's total per run is waiting + setup + running (its row's `total` gives their
+//    percentiles); the critical path weighs each workflow
 //    job by its p50 total — a matrix job by its slowest shard — and is the heaviest chain over
 //    `needs`. A cycle in `needs` leaves the workflow out; a need naming no job is ignored.
 //    `sumMs` adds every weighed job of the workflow.
@@ -165,6 +167,7 @@ function aggregate(runs, factsByWorkflow) {
     waiting: stat(a.waiting),
     setup: stat(a.setup),
     running: stat(a.running),
+    total: stat(a.totals),
     slowestSteps: [...a.steps.entries()]
       .map(([name, ds]) => ({ name, p50Ms: percentile(ds, 50), n: ds.length }))
       .sort((m, n) => n.p50Ms - m.p50Ms || byText(m.name, n.name))
@@ -233,4 +236,4 @@ function aggregate(runs, factsByWorkflow) {
   return { jobs, excluded, criticalPaths, shardSkews, repeatedSteps, overlaps };
 }
 
-module.exports = { aggregate };
+module.exports = { aggregate, matchJob, usableJobs };

@@ -11,8 +11,9 @@ const { aggregate } = require('../../../plugin/bin/lib/ci-audit/aggregate');
 const W = 'workflows/ci.yml';
 const S = 1000;
 const st = (p50s, n, p90s = p50s) => ({ p50Ms: p50s === null ? null : p50s * S, p90Ms: p90s === null ? null : p90s * S, n });
-// An aggregate job row; seconds in, ms out. setupN defaults to runs.
-function row(job, runs, waiting, setup, running, { workflow = W, runningP90 = running, setupN = runs } = {}) {
+// An aggregate job row; seconds in, ms out. setupN defaults to runs; total (the p50 of per-run
+// totals) defaults to the sum of the phase p50s.
+function row(job, runs, waiting, setup, running, { workflow = W, runningP90 = running, setupN = runs, total = waiting + (setup || 0) + running } = {}) {
   return {
     workflow,
     job,
@@ -20,6 +21,7 @@ function row(job, runs, waiting, setup, running, { workflow = W, runningP90 = ru
     waiting: st(waiting, runs),
     setup: setup === null ? st(null, 0) : st(setup, setupN),
     running: st(running, runs, runningP90),
+    total: st(total, runs),
     slowestSteps: [],
   };
 }
@@ -229,4 +231,62 @@ test('evaluate orders breaches by check, then workflow, then job, and tolerates 
   ]);
   assert.deepEqual(evaluate(agg(), {}, {}, 5), []);
   assert.deepEqual(evaluate(null, null), []);
+});
+
+// ---- review fixes ----
+test('critical-path-pole skips a path of fewer than two jobs', () => {
+  const f = { [W]: facts([fj('build'), fj('test', { needs: ['build'] })]) };
+  const one = [{ workflow: W, pathMs: 120 * S, sumMs: 120 * S, chain: ['build'] }];
+  const two = [{ workflow: W, pathMs: 200 * S, sumMs: 200 * S, chain: ['build', 'test'] }];
+  const jobs = [row('build', 5, 0, 20, 100), row('test', 5, 0, 10, 70)];
+  assert.deepEqual(only(evaluate(agg({ jobs, criticalPaths: one }), f, {}, 5), 'critical-path-pole'), []);
+  assert.deepEqual(only(evaluate(agg({ jobs, criticalPaths: two }), f, {}, 5), 'critical-path-pole').map((b) => b.value), [0.6]);
+});
+
+test('critical-path-pole divides the job total p50, not the sum of its phase p50s', () => {
+  const f = { [W]: facts([fj('build'), fj('test', { needs: ['build'] })]) };
+  const cp = [{ workflow: W, pathMs: 200 * S, sumMs: 200 * S, chain: ['build', 'test'] }];
+  // phase p50s sum to 120 (0.6 of the path) but the per-run totals p50 is 90 (0.45)
+  const jobs = [row('build', 5, 0, 20, 100, { total: 90 }), row('test', 5, 0, 10, 70)];
+  assert.deepEqual(only(evaluate(agg({ jobs, criticalPaths: cp }), f, {}, 5), 'critical-path-pole'), []);
+  const over = [row('build', 5, 0, 20, 60, { total: 110 }), row('test', 5, 0, 10, 70)];
+  assert.deepEqual(only(evaluate(agg({ jobs: over, criticalPaths: cp }), f, {}, 5), 'critical-path-pole').map((b) => b.value), [0.55]);
+});
+
+test('critical-path-pole gives no breach for an unparsed workflow, with or without a path entry', () => {
+  const cp = [{ workflow: W, pathMs: 200 * S, sumMs: 200 * S, chain: ['build', 'test'] }];
+  const jobs = [row('build', 5, 0, 20, 100), row('test', 5, 0, 10, 70)];
+  const bad = { [W]: facts([fj('build'), fj('test', { needs: ['build'] })], { unparsed: ['tab indentation in jobs:'] }) };
+  assert.deepEqual(only(evaluate(agg({ jobs, criticalPaths: cp }), bad, {}, 5), 'critical-path-pole'), []);
+  const real = aggregate(serialRuns(5), { [W]: { ...SERIAL_FACTS(), unparsed: ['tab indentation in jobs:'] } });
+  assert.deepEqual(real.criticalPaths, []);
+  assert.deepEqual(only(evaluate(real, bad, {}, 5), 'critical-path-pole'), []);
+});
+
+test('repeated-work counts a matrix holder once however many shards reach minSample', () => {
+  const step = { name: 'Install', kind: 'command' };
+  const f = (ids) => ({ [W]: facts([fj('a', { matrix: true, steps: [step] }), ...ids.map((id) => fj(id, { steps: [step] }))]) });
+  const shards = [row('a (x)', 5, 0, 0, 10), row('a (y)', 5, 0, 0, 10), row('b', 5, 0, 0, 10), row('c', 5, 0, 0, 10)];
+  assert.deepEqual(only(evaluate(agg({ jobs: shards, repeatedSteps: [{ name: 'Install', jobs: ['a', 'b'] }] }), f(['b']), {}, 5), 'repeated-work'), []);
+  assert.deepEqual(only(evaluate(agg({ jobs: shards, repeatedSteps: [{ name: 'Install', jobs: ['a', 'b', 'c'] }] }), f(['b', 'c']), {}, 5), 'repeated-work').map((b) => b.value), [3]);
+});
+
+test('evaluate falls back to minSample 5 for a non-positive-integer minSample', () => {
+  const f = { [W]: facts([]) };
+  const four = agg({ jobs: [row('a', 4, 50, 10, 40)] });
+  const five = agg({ jobs: [row('a', 5, 50, 10, 40)] });
+  for (const bad of ['3', 0, 2.5, -1, NaN, null]) {
+    assert.deepEqual(only(evaluate(four, f, {}, bad), 'queue-wait'), [], String(bad));
+    assert.equal(only(evaluate(five, f, {}, bad), 'queue-wait').length, 1, String(bad));
+  }
+  assert.equal(only(evaluate(four, f, {}, 4), 'queue-wait').length, 1);
+});
+
+test('evaluate keeps the default for a non-number or non-positive threshold override', () => {
+  const f = { [W]: facts([]) };
+  const a = agg({ jobs: [row('a', 5, 50, 10, 40)] });
+  for (const bad of ['0.6', 0, -1, NaN, Infinity, null]) {
+    assert.deepEqual(only(evaluate(a, f, { 'queue-wait': bad }, 5), 'queue-wait').map((b) => b.threshold), [0.4], String(bad));
+  }
+  assert.deepEqual(only(evaluate(a, f, { 'queue-wait': 0.3 }, 5), 'queue-wait').map((b) => b.threshold), [0.3]);
 });

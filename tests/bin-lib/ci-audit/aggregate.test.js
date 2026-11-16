@@ -4,7 +4,7 @@
 // ever ran at the same time, and the jobs left out for unusable timestamps.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { aggregate } = require('../../../plugin/bin/lib/ci-audit/aggregate');
+const { aggregate, matchJob, usableJobs } = require('../../../plugin/bin/lib/ci-audit/aggregate');
 
 // Seconds after a fixed base instant, as ISO-8601.
 const BASE = Date.parse('2026-11-16T00:00:00Z');
@@ -65,6 +65,9 @@ test('aggregate gives exact per-phase percentiles and run counts per job', () =>
   assert.deepEqual(t.waiting, stat(10, 15, 3));
   assert.deepEqual(t.setup, stat(10, 15, 3));
   assert.deepEqual(t.running, stat(80, 95, 3));
+  // total: percentiles of each run's waiting+setup+running — build 100, 140, 85; test 100, 120, 90
+  assert.deepEqual(b.total, stat(100, 140, 3));
+  assert.deepEqual(t.total, stat(100, 120, 3));
   assert.deepEqual(agg.jobs.map((j) => j.job), ['build', 'docs', 'test']);
 });
 
@@ -181,4 +184,17 @@ test('aggregate tolerates no runs and missing facts', () => {
   const agg = aggregate([run(60, 'constructor', [job('a', 0, 1, 10, [['Install', 1, 10]])])], {});
   assert.deepEqual(agg.jobs[0].setup, stat(null, null, 0));
   assert.deepEqual(agg.criticalPaths, []);
+});
+
+test('matchJob maps a run job by exact name, else a matrix base name, and gives null when ambiguous', () => {
+  const jobs = [fj('lint'), fj('unit', { matrix: true }), fj('pack'), fj('twin-a', { name: 'twin' }), fj('twin-b', { name: 'twin' })];
+  assert.equal(matchJob('lint', jobs).id, 'lint');
+  assert.equal(matchJob('unit (node 20, linux)', jobs).id, 'unit');
+  assert.equal(matchJob('pack (a)', jobs), null); // base name holds no matrix
+  assert.equal(matchJob('twin', jobs), null); // two workflow jobs share the name
+  assert.equal(matchJob('other', jobs), null);
+  assert.equal(matchJob('lint', null), null);
+  assert.deepEqual(usableJobs({ [W]: facts([fj('a')]) }, W).map((j) => j.id), ['a']);
+  assert.equal(usableJobs({ [W]: facts([fj('a')], ['tab indentation in jobs:']) }, W), null);
+  assert.equal(usableJobs({}, W), null);
 });

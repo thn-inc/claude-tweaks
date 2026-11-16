@@ -14,32 +14,38 @@
 //    them (`missing-concurrency=1` is ok:false) like any unknown id.
 //  - A ratio check fires when its value is strictly above the threshold — a value exactly at it
 //    gives no breach. repeated-work is a count and fires at or above its threshold (3 jobs).
+//  - evaluate falls back to the default for an override that is not a finite number above 0, and
+//    to minSample 5 for a minSample that is not a positive integer; the CLI validates user input.
 //
 // Rules:
-//  - A job's total is the sum of its phase p50s (waiting + setup + running; a missing setup
-//    figure counts 0). queue-wait is waiting p50 ÷ total, setup-dominance setup p50 ÷ total.
+//  - queue-wait is waiting p50 ÷ the sum of the phase p50s (waiting + setup + running; a missing
+//    setup figure counts 0), setup-dominance setup p50 ÷ that sum.
 //  - No check fires for a job below minSample runs (default 5; `runs` equals the waiting and
 //    running n). setup-dominance also needs setup.n ≥ minSample, since setup can be missing on
 //    some runs.
 //  - A workflow whose facts carry any `unparsed` reason, or that has no facts, is skipped by every
-//    check that reads facts: missing-timeout, missing-concurrency, serial-independent-jobs and
-//    repeated-work. Its `concurrencyDeclared: false` may only mean its region was not read.
-//  - A run job maps to a workflow job as the aggregate matches them: an exact, unique `name`, else
-//    the part before one of its ` (` naming a single workflow job that declares a matrix.
-//  - critical-path-pole: for each critical path, a chain job (a workflow job name) whose heaviest
-//    shard total among its run jobs at minSample exceeds the threshold share of `pathMs`.
+//    check that reads facts: missing-timeout, missing-concurrency, serial-independent-jobs,
+//    repeated-work and critical-path-pole. Its `concurrencyDeclared: false` may only mean its
+//    concurrency region was not read.
+//  - A run job maps to a workflow job by the aggregate's own matchJob, and a workflow's facts are
+//    trusted by its usableJobs.
+//  - critical-path-pole: for each critical path of two or more jobs, a chain job (a workflow job
+//    name) whose heaviest `total.p50Ms` (the p50 of per-run totals, the statistic `pathMs` is
+//    built from) among its run jobs at minSample exceeds the threshold share of `pathMs`.
 //  - serial-independent-jobs: an `overlaps` entry with everOverlapped false (a missing pair is no
 //    evidence), both run jobs at minSample, mapped to two different workflow jobs with no `needs`
 //    path in either direction. job is the two run job names joined by ' + '.
 //  - shard-skew: a shardSkews entry whose ratio exceeds the threshold, every shard of the family
 //    at minSample.
 //  - repeated-work: a repeatedSteps entry counted over the holder jobs in parsed workflows that
-//    declare the step and have a run job at minSample.
+//    declare the step and have a run job at minSample; a matrix job counts once, not per shard.
 //  - missing-timeout: a run job at minSample mapped to a workflow job with timeoutDeclared false,
 //    running p90 ÷ p50 above the threshold.
 //  - missing-concurrency: a parsed workflow with concurrencyDeclared false and a run job at
 //    minSample.
 'use strict';
+
+const { matchJob, usableJobs } = require('./aggregate');
 
 const CHECK_IDS = [
   'queue-wait',
@@ -85,30 +91,6 @@ function parseThresholds(text) {
   return { ok: true, values };
 }
 
-// The facts' jobs when the workflow is parsed, else null.
-function parsedJobs(factsByWorkflow, workflow) {
-  if (!own(factsByWorkflow, workflow)) return null;
-  const facts = factsByWorkflow[workflow];
-  if (!facts || !Array.isArray(facts.jobs) || !Array.isArray(facts.unparsed) || facts.unparsed.length > 0) return null;
-  return facts.jobs.filter((j) => j && typeof j.id === 'string' && typeof j.name === 'string');
-}
-
-// The workflow job a run job's name maps to, or null.
-function workflowJobOf(name, wfJobs) {
-  if (wfJobs === null || typeof name !== 'string') return null;
-  const exact = wfJobs.filter((j) => j.name === name);
-  if (exact.length > 0) return exact.length === 1 ? exact[0] : null;
-  if (!name.endsWith(')')) return null;
-  for (let i = name.lastIndexOf(' ('); i > 0; i = name.lastIndexOf(' (', i - 1)) {
-    const base = name.slice(0, i);
-    if (wfJobs.some((j) => j.name === base)) {
-      const hits = wfJobs.filter((j) => j.name === base && j.matrix === true);
-      return hits.length === 1 ? hits[0] : null;
-    }
-  }
-  return null;
-}
-
 const enough = (s, minSample) => !!s && num(s.n) && s.n >= minSample && num(s.p50Ms);
 const sampled = (j, minSample) => num(j.runs) && j.runs >= minSample && !!j.waiting && num(j.waiting.p50Ms) && !!j.running && num(j.running.p50Ms);
 const totalMs = (j) => j.waiting.p50Ms + (j.setup && num(j.setup.p50Ms) ? j.setup.p50Ms : 0) + j.running.p50Ms;
@@ -132,9 +114,9 @@ function evaluate(agg, factsByWorkflow, thresholds, minSample) {
   const facts = factsByWorkflow && typeof factsByWorkflow === 'object' ? factsByWorkflow : {};
   const limits = { ...DEFAULTS };
   if (thresholds && typeof thresholds === 'object') {
-    for (const id of Object.keys(DEFAULTS)) if (own(thresholds, id) && num(thresholds[id])) limits[id] = thresholds[id];
+    for (const id of Object.keys(DEFAULTS)) if (own(thresholds, id) && num(thresholds[id]) && thresholds[id] > 0) limits[id] = thresholds[id];
   }
-  const floor = num(minSample) ? minSample : DEFAULT_MIN_SAMPLE;
+  const floor = Number.isInteger(minSample) && minSample > 0 ? minSample : DEFAULT_MIN_SAMPLE;
   const list = (k) => (Array.isArray(a[k]) ? a[k].filter((x) => x && typeof x === 'object') : []);
   const jobs = list('jobs').filter((j) => typeof j.workflow === 'string' && typeof j.job === 'string');
   const eligible = jobs.filter((j) => sampled(j, floor));
@@ -142,7 +124,7 @@ function evaluate(agg, factsByWorkflow, thresholds, minSample) {
   const findEligible = (wf, name) => eligible.find((j) => j.workflow === wf && j.job === name);
   const jobsCache = new Map();
   const wfJobsOf = (wf) => {
-    if (!jobsCache.has(wf)) jobsCache.set(wf, parsedJobs(facts, wf));
+    if (!jobsCache.has(wf)) jobsCache.set(wf, usableJobs(facts, wf));
     return jobsCache.get(wf);
   };
   const out = [];
@@ -162,6 +144,7 @@ function evaluate(agg, factsByWorkflow, thresholds, minSample) {
 
   for (const cp of list('criticalPaths')) {
     if (typeof cp.workflow !== 'string' || !num(cp.pathMs) || !(cp.pathMs > 0) || !Array.isArray(cp.chain)) continue;
+    if (cp.chain.length < 2) continue; // no job dominates a path of one
     const wfJobs = wfJobsOf(cp.workflow);
     if (wfJobs === null) continue;
     for (const name of cp.chain) {
@@ -169,8 +152,9 @@ function evaluate(agg, factsByWorkflow, thresholds, minSample) {
       if (named.length !== 1) continue;
       let heaviest = null;
       for (const j of eligibleIn(cp.workflow)) {
-        if (workflowJobOf(j.job, wfJobs) !== named[0]) continue;
-        const t = totalMs(j);
+        if (matchJob(j.job, wfJobs) !== named[0]) continue;
+        if (!j.total || !num(j.total.p50Ms)) continue; // total.n equals runs, already at minSample
+        const t = j.total.p50Ms;
         if (heaviest === null || t > heaviest) heaviest = t;
       }
       if (heaviest === null) continue;
@@ -183,8 +167,8 @@ function evaluate(agg, factsByWorkflow, thresholds, minSample) {
     if (o.everOverlapped !== false || typeof o.workflow !== 'string') continue;
     const wfJobs = wfJobsOf(o.workflow);
     if (wfJobs === null || !findEligible(o.workflow, o.a) || !findEligible(o.workflow, o.b)) continue;
-    const x = workflowJobOf(o.a, wfJobs);
-    const y = workflowJobOf(o.b, wfJobs);
+    const x = matchJob(o.a, wfJobs);
+    const y = matchJob(o.b, wfJobs);
     if (x === null || y === null) continue;
     // A job reaches itself, so two shards of one workflow job never fire.
     const byId = new Map(wfJobs.map((w) => [w.id, w]));
@@ -207,7 +191,7 @@ function evaluate(agg, factsByWorkflow, thresholds, minSample) {
       if (wfJobs === null) continue;
       for (const w of wfJobs) {
         if (!(Array.isArray(w.steps) && w.steps.some((st) => st && st.name === r.name))) continue;
-        if (eligibleIn(wf).some((j) => workflowJobOf(j.job, wfJobs) === w)) holders++;
+        if (eligibleIn(wf).some((j) => matchJob(j.job, wfJobs) === w)) holders++;
       }
     }
     if (holders >= limits['repeated-work']) breach('repeated-work', null, null, 'jobsDeclaringStep', holders, { step: r.name });
@@ -215,7 +199,7 @@ function evaluate(agg, factsByWorkflow, thresholds, minSample) {
 
   for (const j of eligible) {
     const wfJobs = wfJobsOf(j.workflow);
-    const w = workflowJobOf(j.job, wfJobs);
+    const w = matchJob(j.job, wfJobs);
     if (w === null || w.timeoutDeclared !== false || !num(j.running.p90Ms) || !(j.running.p50Ms > 0)) continue;
     const spread = j.running.p90Ms / j.running.p50Ms;
     if (spread > limits['missing-timeout']) breach('missing-timeout', j.workflow, j.job, 'runningP90ToP50', spread);
