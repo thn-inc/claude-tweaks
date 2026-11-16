@@ -63,6 +63,8 @@ function isPlainObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
 
+const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+
 // file -> { status: 'absent' } | { status: 'unreadable' } | { status: 'ok', value }.
 // Only ENOENT on the lstat is absent; any other error, a non-regular file
 // (a link included) or an oversize file is unreadable. The open carries
@@ -151,7 +153,7 @@ function readPointer({ sessionId, number, tmpdir = os.tmpdir(), fsImpl = fs } = 
   const { value } = read;
   if (value.sessionId !== sessionId) return { ok: false, reason: 'pointer-other-session' };
   const key = String(number);
-  if (!Object.prototype.hasOwnProperty.call(value.records, key)) return { ok: false, reason: 'no-pointer' };
+  if (!hasOwn(value.records, key)) return { ok: false, reason: 'no-pointer' };
   const entry = value.records[key];
   if (!isPlainObject(entry) || !isWellFormedId(entry.promptId)) return { ok: false, reason: 'pointer-unreadable' };
   if (typeof entry.at !== 'string' || Number.isNaN(Date.parse(entry.at))) return { ok: false, reason: 'pointer-unreadable' };
@@ -163,8 +165,6 @@ const COMMAND_HEAD = '<command-message>claude-tweaks:dispatch</command-message>\
 const COMMAND_TAIL = '</command-args>';
 const DISPATCH_LINE = '/claude-tweaks:dispatch ';
 const SCHEDULE_KEYS = ['scheduledTaskId', 'scheduledFireId', 'wakeupSource', 'queueSkipSlashCommands'];
-
-const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
 // A line of this prompt and session on the main thread, written as the user,
 // that is not a tool result.
