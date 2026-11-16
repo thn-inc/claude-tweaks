@@ -331,15 +331,8 @@ const realDeps = {
   env: process.env,
 };
 
-// Removal condition: delete once no file under plugin/, tests/, tools/, perf/ or evals/
-// imports it — callers use run(argv, deps) instead. Returns the exit code; never sets
-// process.exitCode.
-function main(argv) {
-  return run(argv, realDeps);
-}
-
 module.exports = {
-  parseArgs, main, run, realDeps,
+  parseArgs, run, realDeps,
 };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
