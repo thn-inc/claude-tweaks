@@ -524,9 +524,11 @@ function primitiveCopies() {
     'context-handoff.md template': handoffWaitParagraph(readText(HANDOFF)),
   };
 }
-const countOfSquashed = (text, needle) => countOf(text.replace(/\s+/g, ' '), needle);
-const statesInvocationOnce = (text) => countOfSquashed(text, INVOCATION_NEEDLE) === 1
-  && /--max-seconds\s+150`,\s+20\s+minutes\s+per\s+wave/.test(text);
+const statesInvocationOnce = (text) => {
+  const squashed = text.replace(/\s+/g, ' ');
+  return countOf(squashed, INVOCATION_NEEDLE) === 1
+    && /--max-seconds\s+150`,\s+20\s+minutes\s+per\s+wave/.test(squashed);
+};
 const mismatchedPrimitiveCopies = (copies) => Object.entries(copies)
   .filter(([, text]) => !statesInvocationOnce(text))
   .map(([name]) => name);
