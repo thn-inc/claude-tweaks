@@ -313,6 +313,31 @@ function postureView(R, family) {
   return view;
 }
 
+// AC4.2's body, shared by the gh and files families' one test each: every PASSES failOpen equals the
+// strictest posture observed across that pass's fault fixtures (stop if any stops, else open), read from
+// postureView(pool.R, family). `t` is the calling test's context.
+function assertFailOpenPostures(pool, family, t) {
+  const R = postureView(pool.R, family);
+  const strictest = (side) => {
+    const out = {};
+    for (const rows of [FAULTS, FILES_FAULTS]) {
+      for (const row of rows.filter((x) => x.pass !== '(stop)')) {
+        const p = posture(R[row.id][side]);
+        out[row.pass] = out[row.pass] === 'stop' || p === 'stop' ? 'stop' : 'open';
+      }
+    }
+    return out;
+  };
+  const observed = strictest('oracle');
+  assert.deepEqual(strictest('module'), observed, 'the module\'s exits give the same postures');
+  for (const id of Object.keys(observed)) assert.ok(PASSES.some((p) => p.id === id), `fault rows name a registry id: ${id}`);
+  for (const p of PASSES) assert.equal(p.failOpen, observed[p.id] || 'n/a', `${p.id} (${p.reason || p.kind})`);
+  // PF6: neighbour-in-flight is open on gh and stop on files; the stricter value wins.
+  assert.equal(posture(R['F-inflight'].oracle), 'open');
+  assert.equal(posture(R['files-inFlightRaw-missing'].oracle), 'stop');
+  t.diagnostic(`postures: ${JSON.stringify(observed)}`);
+}
+
 // A row's default base, and the fault pool's bases: the matrix configs themselves (one
 // definition of each base), the live-dependency scenario the matrix does not run, and S1-gh-hit,
 // F-depfresh's un-faulted warm control on the same miss origin.
@@ -600,8 +625,7 @@ module.exports = {
   runFaultPool,
   FAULT_EXPECT,
   FILES_EXPECT,
-  posture,
-  postureView,
+  assertFailOpenPostures,
   inOwnTmp,
   EXPRESS_OFF,
   pull,

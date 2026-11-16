@@ -12,11 +12,10 @@ const { test, describe, before } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { oracleSkip, reported } = require('./queue-pull-oracle');
-const { WEAK_PR_FILES, FAULTS, FILES_FAULTS } = require('./queue-pull-fixtures');
-const { PASSES } = require('../../../plugin/bin/lib/dispatch/queue-pull');
+const { WEAK_PR_FILES, FAULTS } = require('./queue-pull-fixtures');
 const {
   HIT_MESSAGE, POOL, assertEveryJobRan, sides, stopMapped, exclusionsIn, groupedIn, registerParityCleanup, faultComparison, FOREIGN_UNREADABLE,
-  assertFaultRow, runFaultPool, FAULT_EXPECT, posture, postureView,
+  assertFaultRow, runFaultPool, FAULT_EXPECT, assertFailOpenPostures,
 } = require('./queue-pull-helpers');
 
 registerParityCleanup();
@@ -71,25 +70,7 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
   });
 
   test('AC4.2 [gh]: each PASSES failOpen equals the strictest posture observed across that pass\'s fault fixtures (stop if any stops, else open; n/a with no fetch)', (t) => {
-    const R = postureView(pool.R, 'gh');
-    const strictest = (side) => {
-      const out = {};
-      for (const rows of [FAULTS, FILES_FAULTS]) {
-        for (const row of rows.filter((x) => x.pass !== '(stop)')) {
-          const p = posture(R[row.id][side]);
-          out[row.pass] = out[row.pass] === 'stop' || p === 'stop' ? 'stop' : 'open';
-        }
-      }
-      return out;
-    };
-    const observed = strictest('oracle');
-    assert.deepEqual(strictest('module'), observed, 'the module\'s exits give the same postures');
-    for (const id of Object.keys(observed)) assert.ok(PASSES.some((p) => p.id === id), `fault rows name a registry id: ${id}`);
-    for (const p of PASSES) assert.equal(p.failOpen, observed[p.id] || 'n/a', `${p.id} (${p.reason || p.kind})`);
-    // PF6: neighbour-in-flight is open on gh and stop on files; the stricter value wins.
-    assert.equal(posture(R['F-inflight'].oracle), 'open');
-    assert.equal(posture(R['files-inFlightRaw-missing'].oracle), 'stop');
-    t.diagnostic(`postures: ${JSON.stringify(observed)}`);
+    assertFailOpenPostures(pool, 'gh', t);
   });
 
   test('AC4.3 [gh]: F-corrupt and F-groups stop the pull on both sides (oracle exit 1, CLI exit 4)', () => {
