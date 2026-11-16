@@ -37,7 +37,8 @@
 //   | 7    | the file reads to its end                                       | transcript-unreadable       |
 //   | 8    | at least one candidate row (isCandidateRow)                     | no-prompt-row               |
 //   | 9    | a candidate passes markers, command and time                    | expired / other-command /   |
-//   |      |                                                                 | not-typed                   |
+//   |      | (command: the row's ARGS hold no line terminator and no         | not-typed                   |
+//   |      | surrounding whitespace, else other-command)                     |                             |
 //
 // Step 9's reason: `expired` when a candidate passed markers and command,
 // else `other-command` when one passed markers, else `not-typed`. The command,
