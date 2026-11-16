@@ -214,7 +214,7 @@ The two risk keys keep their full rows here (`tests/risk-flags-refine-prose.test
 | Key | Canonical home | Owner skill(s) | Default | Meaning |
 |---|---|---|---|---|
 | `risk-categories` | `policy.yml` | `risk-flags.js`, `plan-audit.js` | `[]` | Extra lowercase slugs |
-| `risk-path-globs` | `policy.yml`, block | `risk-flags.js` | `{}` | Slug to glob list, indented: `slug: [a, b,]` (one trailing comma; may span lines) or `slug:` then `- a` lines. A slug is built-in or from `risk-categories`; a glob is a string (quote `{a,b}`, `k: v`; a quoted one is literal, no escapes). Rejected whole: a respelled key line, a column-0 row, quoted keys, `slug : [a]`, doubled-quote escapes. Read it only through the resolver, never `resolveValue`: `null` with `invalid` means malformed, never unset |
+| `risk-path-globs` | `policy.yml`, block | `risk-flags.js` | `{}` | Slug to glob list, indented: `slug: [a, b,]` (one trailing comma; may span lines) or `slug:` then `- a` lines. A slug is built-in or from `risk-categories`; a glob is a string (quote `{a,b}`, `k: v`; a quoted one is literal, no escapes). Rejected whole: a respelled key line, a column-0 row, quoted keys, `slug : [a]`, doubled-quote escapes. Read it only through the resolver, never `resolveValue` (contract: `_shared/policy-schema-coverage.md`): `null` with `invalid` means malformed, never unset |
 
 ## Additional levers
 
