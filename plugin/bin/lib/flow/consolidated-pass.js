@@ -68,6 +68,7 @@ function parentLiveDetail(runDir, runState, opts, deps) {
 }
 
 // opts.cache      — passed through to checkBranchLanded.
+// opts.env        — optional (#5377): the environment checkBranchLanded's git children run in.
 // opts.online     — true only from the review-console skill: lets a squash-
 //                   merged PR prove "landed" that offline merge evidence reads
 //                   as unmerged. SessionStart never sets it.
@@ -142,7 +143,7 @@ function checkPassReentry(runDir, opts = {}) {
 
   let landed = null;
   try {
-    const result = landedCheck(runDir, { cache: opts.cache });
+    const result = landedCheck(runDir, opts.env ? { cache: opts.cache, env: opts.env } : { cache: opts.cache });
     landed = result ? result.landed : null;
   } catch { landed = null; }
 

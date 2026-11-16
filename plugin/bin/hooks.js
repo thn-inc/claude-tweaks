@@ -1700,7 +1700,7 @@ async function runCheckSessionResidue(argv, deps) {
     return 0;
   }
   const root = pluginRoot(deps.env);
-  const staleEntries = sessionResidue.collectStaleRuns(deps.cwd(), { exclude: runDir, pluginRoot: root });
+  const staleEntries = sessionResidue.collectStaleRuns(deps.cwd(), { exclude: runDir, pluginRoot: root, env: deps.env });
   const approvableEntries = sessionResidue.collectApprovableStandalone(deps.cwd(), { exclude: runDir });
   const { runs: consoleEntries, more: moreConsoles } = sessionResidue.scanUnresolvedConsoles(deps.cwd(), { exclude: runDir, pluginRoot: root });
   if (!staleEntries.length && !approvableEntries.length && !consoleEntries.length) {

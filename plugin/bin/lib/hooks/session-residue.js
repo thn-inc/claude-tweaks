@@ -53,7 +53,9 @@ function sameDir(a, b) {
 // dirs are skipped (#2783): they hold only friction events, nothing to resume
 // or close, and EnterWorktree mints one per session — newest first, they
 // would fill MAX_REPORTED ahead of a genuinely interrupted run.
-function collectStaleRuns(cwd, { cache, exclude, pluginRoot } = {}) {
+// `env` (optional, #5377) is the environment the integrity check's git children run in; absent, the inherited one.
+function collectStaleRuns(cwd, { cache, exclude, pluginRoot, env } = {}) {
+  const envOpt = env ? { env } : {};
   const root = pluginRoot || '${CLAUDE_PLUGIN_ROOT}';
   const stale = [];
   for (const entry of ctxLib.iterRunDirsWithState(cwd)) {
@@ -68,7 +70,7 @@ function collectStaleRuns(cwd, { cache, exclude, pluginRoot } = {}) {
     const prSuffix = state && state.pr && state.pr.url ? ` — PR ${state.pr.url}` : '';
     const base = `- ${path.basename(dir)} (status: ${(state && state.status) || 'unknown'})${prSuffix}`;
     try {
-      const verdict = runIntegrity.checkRunIntegrity(dir, { cache });
+      const verdict = runIntegrity.checkRunIntegrity(dir, { cache, ...envOpt });
       if (verdict.state === 'shipped-unclosed') {
         const how = verdict.evidence.merged === 'cherry' ? 'squash/rebase-equivalent' : 'merged';
         return {
@@ -91,7 +93,7 @@ function collectStaleRuns(cwd, { cache, exclude, pluginRoot } = {}) {
     // The record-reference grammar drops the sigil under `local-files`
     // (_shared/record-batch-input.md), and an unreadable or unknown backend keeps `#`.
     try {
-      const pass = passReentry.checkPassReentry(dir, { cache });
+      const pass = passReentry.checkPassReentry(dir, { cache, ...envOpt });
       // Manifest ids are other sessions' file content headed for a command line:
       // a non-integer id suppresses the suffix. The full dir is named so the
       // pasted command never falls back to the most-recent-slug heuristic.

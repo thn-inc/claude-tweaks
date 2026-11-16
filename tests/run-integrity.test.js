@@ -8,8 +8,7 @@ const os = require('os');
 const path = require('path');
 const { checkRunIntegrity, checkBranchLanded, repoRootOf, worktreePathForBranch } = require('../plugin/bin/lib/hooks/run-integrity');
 const { fixtureGit } = require('./helpers/git-fixtures');
-const { spawnCli } = require('./helpers/run-cli');
-const { hookEnv, runHookCli, HOOKS } = require('./helpers/hook-event');
+const { hookEnv, runHookCli } = require('./helpers/hook-event');
 const { fixtureHomeEnv } = require('./helpers/fixture-home');
 
 function sh(cwd, ...args) {
@@ -474,19 +473,22 @@ test('clean status is a VALID run-state shape but NOT in the non-terminal set ->
   assert.strictEqual(checkRunIntegrity(runDir).state, 'in-progress');
 });
 
-// real process: run-integrity.js's git calls (reached through session-residue) take no env, which trips the env tripwire in-process under Node 20
-function runSessionStart(cwd) {
-  const { code, stdout } = spawnCli(HOOKS, ['session-start'], {
-    stdin: JSON.stringify({ cwd }), cwd, env: { ...process.env, PIPELINE_RUN_DIR: '' },
+// #5377: session-start runs in-process through runHookCli. It starts a detached background child
+// (fakeSpawn: no real one) and reads the home dir (a fixture home, not the machine's).
+const SESSION_START_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ri-home-'));
+const fakeSpawn = () => ({ on() {}, unref() {} });
+async function runSessionStart(cwd) {
+  const { code, stdout } = await runHookCli(['session-start'], {
+    input: JSON.stringify({ cwd }), cwd, env: fixtureHomeEnv(SESSION_START_HOME, hookEnv()), deps: { spawn: fakeSpawn },
   });
   return { code, stdout };
 }
 
-test('SessionStart: shipped-unclosed run line names both remediations (AC1 message half)', () => {
+test('SessionStart: shipped-unclosed run line names both remediations (AC1 message half)', async () => {
   const { root, runDir } = fixtureRepo();
   sh(root, 'merge', '-q', '--no-edit', 'feat-branch');
   writeEvents(runDir, [EV_BUILD]);
-  const r = runSessionStart(root);
+  const r = await runSessionStart(root);
   assert.strictEqual(r.code, 0);
   const ctxOut = JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
   assert.match(ctxOut, /appears shipped/);
@@ -494,13 +496,13 @@ test('SessionStart: shipped-unclosed run line names both remediations (AC1 messa
   assert.match(ctxOut, /close-run --run "/);
 });
 
-test('#1672 AC1: SessionStart renders the shipped-unclosed hint for a torn-down-worktree run', () => {
+test('#1672 AC1: SessionStart renders the shipped-unclosed hint for a torn-down-worktree run', async () => {
   const { root, wt, runDir } = fixtureTornDownRepo();
   writeRunState(runDir, {
     status: 'active', worktree: wt,
     pr: { number: 7, url: 'https://example.test/pr/7', branch: 'feat-branch' },
   });
-  const r = runSessionStart(root);
+  const r = await runSessionStart(root);
   assert.strictEqual(r.code, 0);
   const ctxOut = JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
   assert.match(ctxOut, /appears shipped/);
@@ -508,10 +510,10 @@ test('#1672 AC1: SessionStart renders the shipped-unclosed hint for a torn-down-
   assert.match(ctxOut, /close-run --run "/);
 });
 
-test('SessionStart: genuinely in-progress run line is byte-identical to the pre-change format (AC6 half)', () => {
+test('SessionStart: genuinely in-progress run line is byte-identical to the pre-change format (AC6 half)', async () => {
   const { runDir, root } = fixtureRepo(); // unmerged branch -> in-progress
   writeEvents(runDir, [EV_BUILD]);
-  const r = runSessionStart(root);
+  const r = await runSessionStart(root);
   assert.strictEqual(r.code, 0);
   const ctxOut = JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
   const base = path.basename(runDir);
@@ -519,16 +521,31 @@ test('SessionStart: genuinely in-progress run line is byte-identical to the pre-
   assert.ok(!ctxOut.includes('appears shipped'), 'in-progress run must not carry the new text');
 });
 
+// #5377: session-start hands its context env to the integrity check. The context env is clean while the
+// real process.env names no repository for the whole awaited call (restored in `finally`).
+test('#5377 SessionStart: the shipped-unclosed verdict is reached through the context env', async () => {
+  const { root, runDir } = fixtureRepo();
+  sh(root, 'merge', '-q', '--no-edit', 'feat-branch');
+  writeEvents(runDir, [EV_BUILD]);
+  const prior = process.env.GIT_DIR;
+  process.env.GIT_DIR = path.join(os.tmpdir(), 'ct-ri5377-no-such-git-dir');
+  let r;
+  try {
+    r = await runSessionStart(root);
+  } finally {
+    if (prior === undefined) delete process.env.GIT_DIR;
+    else process.env.GIT_DIR = prior;
+  }
+  assert.strictEqual(r.code, 0);
+  assert.match(JSON.parse(r.stdout).hookSpecificOutput.additionalContext, /appears shipped/);
+});
+
 // #5377: AC9.1 — an event call takes its cwd and env from the injected values, not from the runner's
 // own process. The payload carries no `cwd`. The injected cwd is the fixture repo, which is not
 // process.cwd(): only it puts the fixture's run line in the context. The injected HOME is a fresh
 // directory: only the injected env makes session-start save its node path there.
-const fakeSpawn = () => ({ on() {}, unref() {} }); // session-start's detached background child: no real one
 test('AC9.1: run-integrity — an event call uses the injected cwd or env', async () => {
   const { runDir, root } = fixtureRepo();
-  // A run with no recorded worktree: checkRunIntegrity answers without a git call, so the run-integrity.js
-  // git calls that keep the SessionStart tests on a real process (runSessionStart) are not reached.
-  writeRunState(runDir, { status: 'active' });
   writeEvents(runDir, [EV_BUILD]);
   assert.notStrictEqual(fs.realpathSync(root), fs.realpathSync(process.cwd()), 'precondition: the fixture repo is not the runner cwd');
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ri-home9-'));
@@ -599,4 +616,107 @@ test('#3497 checkBranchLanded: no run-state -> landed null, never throws', () =>
   const r = checkBranchLanded(dir);
   assert.strictEqual(r.landed, null);
   assert.deepStrictEqual(r.evidence, { branch: null, merged: null });
+});
+
+// #5377: every git child run-integrity.js starts runs in the env the caller passes. The passed env is
+// clean while the real process.env names no repository for the length of the call (restored in
+// `finally`), so a child that inherits instead of using the passed env cannot answer. Each test also
+// runs the same call without `env` as a control: it degrades, which shows the broken GIT_DIR bites.
+function withBrokenGitDir(fn) {
+  const prior = process.env.GIT_DIR;
+  process.env.GIT_DIR = path.join(os.tmpdir(), 'ct-ri5377-no-such-git-dir');
+  try {
+    return fn();
+  } finally {
+    if (prior === undefined) delete process.env.GIT_DIR;
+    else process.env.GIT_DIR = prior;
+  }
+}
+
+test('#5377 checkRunIntegrity opts.env: a merged branch is proven through the worktree list, the integration probe, merge-base and log', () => {
+  const { root, runDir } = fixtureRepo();
+  sh(root, 'merge', '-q', '--no-edit', 'feat-branch');
+  writeEvents(runDir, [EV_BUILD]);
+  const env = hookEnv();
+  const r = withBrokenGitDir(() => checkRunIntegrity(runDir, { env }));
+  assert.strictEqual(r.state, 'shipped-unclosed');
+  assert.strictEqual(r.evidence.branch, 'feat-branch');
+  assert.strictEqual(r.evidence.merged, 'ancestor');
+  assert.strictEqual(withBrokenGitDir(() => checkRunIntegrity(runDir)).state, 'in-progress', 'control: without env the broken GIT_DIR is seen');
+});
+
+test('#5377 checkRunIntegrity opts.env: the recorded-branch fallback checks the ref in the passed env', () => {
+  const { wt, runDir } = fixtureTornDownRepo();
+  writeRunState(runDir, {
+    status: 'active', worktree: wt,
+    pr: { number: 7, url: 'https://example.test/pr/7', branch: 'feat-branch' },
+  });
+  const env = hookEnv();
+  const r = withBrokenGitDir(() => checkRunIntegrity(runDir, { env }));
+  assert.strictEqual(r.state, 'shipped-unclosed');
+  assert.strictEqual(r.evidence.branch, 'feat-branch');
+  assert.strictEqual(withBrokenGitDir(() => checkRunIntegrity(runDir)).state, 'in-progress', 'control: without env the broken GIT_DIR is seen');
+});
+
+test('#5377 checkRunIntegrity opts.env: the decisions.md branch is checked in the passed env', () => {
+  const { wt, runDir } = fixtureTornDownRepo();
+  writeRunState(runDir, { status: 'active', worktree: wt }); // no pr stamp, so only the decisions.md source can name the branch
+  fs.writeFileSync(path.join(runDir, 'decisions.md'),
+    '- AUTO 09:05:00 — PR-early run lifecycle: pushed feat-branch to origin. Reversibility: high.\n');
+  const env = hookEnv();
+  const r = withBrokenGitDir(() => checkRunIntegrity(runDir, { env }));
+  assert.strictEqual(r.state, 'shipped-unclosed');
+  assert.strictEqual(r.evidence.branch, 'feat-branch');
+  assert.strictEqual(withBrokenGitDir(() => checkRunIntegrity(runDir)).state, 'in-progress', 'control: without env the broken GIT_DIR is seen');
+});
+
+test('#5377 checkRunIntegrity opts.env: the remote-tracking integration ref is probed in the passed env', () => {
+  // The branch is merged into origin/trunk but local trunk was reset behind it: only a probe that finds
+  // refs/remotes/origin/trunk compares against the merged side.
+  const { runDir } = fixtureRemoteTrackingIntegrationRepo();
+  const root = repoRootOf(runDir);
+  sh(root, 'checkout', '-q', '-b', 'feat-branch');
+  fs.writeFileSync(path.join(root, 'b.txt'), 'feature\n');
+  sh(root, 'add', 'b.txt');
+  datedSh(root, AFTER_RUN_START, 'commit', '-q', '-m', 'feature work');
+  sh(root, 'checkout', '-q', 'trunk');
+  datedSh(root, AFTER_RUN_START, 'merge', '-q', '--no-ff', '--no-edit', 'feat-branch');
+  sh(root, 'push', '-q', 'origin', 'trunk');
+  sh(root, 'reset', '-q', '--hard', 'HEAD~1');
+  writeRunState(runDir, { status: 'active', pr: { number: 7, url: 'https://example.test/pr/7', branch: 'feat-branch' } });
+  writeEvents(runDir, [EV_BUILD]);
+  const env = hookEnv();
+  const r = withBrokenGitDir(() => checkRunIntegrity(runDir, { env }));
+  assert.strictEqual(r.state, 'shipped-unclosed');
+  assert.strictEqual(r.evidence.merged, 'ancestor');
+});
+
+test('#5377 checkRunIntegrity opts.env: a squash merge is proven through git cherry in the passed env', () => {
+  const { root, runDir } = fixtureRepo();
+  sh(root, 'merge', '-q', '--squash', 'feat-branch');
+  sh(root, 'commit', '-q', '-m', 'squash: feature work');
+  writeEvents(runDir, [EV_BUILD_FALLBACK]);
+  const env = hookEnv();
+  const r = withBrokenGitDir(() => checkRunIntegrity(runDir, { env }));
+  assert.strictEqual(r.state, 'shipped-unclosed');
+  assert.strictEqual(r.evidence.merged, 'cherry');
+  assert.strictEqual(withBrokenGitDir(() => checkRunIntegrity(runDir)).state, 'in-progress', 'control: without env the broken GIT_DIR is seen');
+});
+
+test('#5377 checkBranchLanded opts.env: landed is answered in the passed env', () => {
+  const { root, runDir } = fixtureRepo();
+  sh(root, 'merge', '-q', '--no-edit', 'feat-branch');
+  const env = hookEnv();
+  assert.strictEqual(withBrokenGitDir(() => checkBranchLanded(runDir, { env })).landed, true);
+  assert.strictEqual(withBrokenGitDir(() => checkBranchLanded(runDir)).landed, null, 'control: without env the broken GIT_DIR is seen');
+});
+
+test('#5377 worktreePathForBranch env: the worktree list runs in the passed env', () => {
+  const root = basicRepo();
+  const wt = path.join(root, '.claude', 'worktrees', 'feat');
+  execFileSync('git', ['worktree', 'add', '-q', '-b', 'feat-branch', wt], { cwd: root });
+  const env = hookEnv();
+  const found = withBrokenGitDir(() => worktreePathForBranch(root, 'feat-branch', undefined, env));
+  assert.ok(found && found.replace(/\\/g, '/').endsWith('/.claude/worktrees/feat'), String(found));
+  assert.strictEqual(withBrokenGitDir(() => worktreePathForBranch(root, 'feat-branch')), null, 'control: without env the broken GIT_DIR is seen');
 });

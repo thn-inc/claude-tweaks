@@ -188,7 +188,7 @@ async function run(ctx) {
     // ordering: the reaper removes merged worktrees, which breaks branch
     // derivation for the integrity check session-residue.js runs internally.
     const pluginRoot = pluginRootEnv || '${CLAUDE_PLUGIN_ROOT}';
-    const staleEntries = sessionResidue.collectStaleRuns(ctx.cwd, { cache, pluginRoot });
+    const staleEntries = sessionResidue.collectStaleRuns(ctx.cwd, { cache, pluginRoot, env });
     if (staleEntries.length) {
       const lines = staleEntries.map((e) => e.line);
       // #803: the banner previously had no designated consumer — a session could

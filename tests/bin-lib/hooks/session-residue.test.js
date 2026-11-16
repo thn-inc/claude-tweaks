@@ -446,3 +446,80 @@ test('#3497 I1 banner carries no suffix while the parent worktree is locked by a
   assert.ok(entries[0].line.startsWith('- 2026-08-01T090000-spec-11-12 (status: active)'), entries[0].line);
   assert.doesNotMatch(entries[0].line, /review-console/);
 });
+
+// #5377: collectStaleRuns and the check-session-residue verb run the integrity check's git children in
+// the env the caller passes. The passed env is clean while the real process.env names no repository for
+// the length of the call (restored in `finally`); the same call without `env` is the control and cannot
+// see the merge.
+const { hookEnv, runHookCli } = require('../../helpers/hook-event');
+function withBrokenGitDir(fn) {
+  const prior = process.env.GIT_DIR;
+  process.env.GIT_DIR = path.join(os.tmpdir(), 'ct-sr5377-no-such-git-dir');
+  try {
+    return fn();
+  } finally {
+    if (prior === undefined) delete process.env.GIT_DIR;
+    else process.env.GIT_DIR = prior;
+  }
+}
+
+test('#5377 collectStaleRuns env: the shipped-unclosed verdict is reached through the passed env', () => {
+  const { root } = reentryFixture({ events: [EV_BUILD] });
+  reentryGit(root, 'merge', '-q', '--no-edit', 'feat-branch');
+  const env = hookEnv();
+  const withEnv = withBrokenGitDir(() => residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks', env }));
+  assert.match(withEnv[0].line, /appears shipped/);
+  const control = withBrokenGitDir(() => residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' }));
+  assert.doesNotMatch(control[0].line, /appears shipped/, 'control: without env the broken GIT_DIR is seen');
+});
+
+// checkPassReentry's liveness probes start git children of their own (not threaded here), so the landed
+// check's options are read through an injected spy, with the caller's own session id skipping liveness.
+test('#5377 checkPassReentry env: checkBranchLanded gets the passed env, and exactly { cache } when none is passed', () => {
+  const { runDir } = reentryFixture();
+  const stateFile = path.join(runDir, 'run-state.json');
+  fs.writeFileSync(stateFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(stateFile, 'utf8')), sessionId: 'S-5377' }));
+  const passReentry = require('../../../plugin/bin/lib/flow/consolidated-pass');
+  const seen = [];
+  const deps = { checkBranchLanded: (_dir, opts) => { seen.push(opts); return { landed: false }; } };
+  const env = hookEnv();
+  assert.strictEqual(passReentry.checkPassReentry(runDir, { env, sessionId: 'S-5377', deps }).eligible, true);
+  assert.strictEqual(passReentry.checkPassReentry(runDir, { sessionId: 'S-5377', deps }).eligible, true);
+  assert.strictEqual(seen[0].env, env);
+  assert.deepStrictEqual(Object.keys(seen[1]), ['cache']);
+});
+
+// A recorded worktree that no longer exists skips the liveness probes, so the landed check is what decides.
+test('#5377 collectStaleRuns env: the re-entry check reads landed through the passed env', () => {
+  const { root, wt, runDir } = reentryFixture();
+  reentryGit(root, 'worktree', 'remove', '--force', wt);
+  const stateFile = path.join(runDir, 'run-state.json');
+  fs.writeFileSync(stateFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(stateFile, 'utf8')), pr: { number: 7, url: 'https://example.test/pr/7', branch: 'feat-branch' } }));
+  const env = hookEnv();
+  const withEnv = withBrokenGitDir(() => residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks', env }));
+  assert.ok(withEnv[0].line.endsWith(reentrySuffix(runDir)), withEnv[0].line);
+  const control = withBrokenGitDir(() => residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' }));
+  assert.doesNotMatch(control[0].line, /review-console/, 'control: without env the broken GIT_DIR is seen');
+});
+
+test('#5377 check-session-residue verb: the shipped-unclosed verdict is reached through the verb env', async () => {
+  const { root } = reentryFixture({ events: [EV_BUILD] });
+  reentryGit(root, 'merge', '-q', '--no-edit', 'feat-branch');
+  const own = path.join(root, '.claude-tweaks', 'pipelines', '2026-08-02T090000-own');
+  fs.mkdirSync(own, { recursive: true });
+  fs.writeFileSync(path.join(own, 'decisions.md'), '');
+  const env = hookEnv();
+  // The broken GIT_DIR must stay in place until the awaited call settles, so the try/finally is here.
+  const prior = process.env.GIT_DIR;
+  process.env.GIT_DIR = path.join(os.tmpdir(), 'ct-sr5377-no-such-git-dir');
+  let result;
+  try {
+    result = await runHookCli(['check-session-residue', '--run', own], { cwd: root, env });
+  } finally {
+    if (prior === undefined) delete process.env.GIT_DIR;
+    else process.env.GIT_DIR = prior;
+  }
+  const { code, stdout } = result;
+  assert.strictEqual(code, 0);
+  assert.match(stdout, /appears shipped/);
+});
