@@ -562,6 +562,17 @@ test('an unreadable policy with a Highlights block: Highlights committed, unread
   assert.ok(state.files['CHANGELOG.md'].includes('### Highlights'));
 });
 
+// The text reaches prepareTrim (a string with zero parsable sections) only when a Highlights block is
+// applied to a `## ` heading the version parser does not count, so the unreadable line must not
+// depend on the section count.
+test('an unreadable policy over a CHANGELOG with no release sections still prints the unreadable line, exit 0', () => {
+  const { deps, state } = trimDeps({ readPolicy: () => { throw new Error('EACCES: permission denied'); }, changelog: '# Changelog\n\n## Unreleased\n\n* soon\n' });
+  assert.strictEqual(run([], deps), 0);
+  assert.strictEqual(state.err, 'changelog trim: policy unreadable (EACCES: permission denied); not trimmed\n');
+  assert.ok(state.files['CHANGELOG.md'].includes('### Highlights'));
+  assert.ok(state.git.includes('commit -m docs(changelog): append Highlights for v1.3.0'));
+});
+
 test('within the bound no git call is made and no branch is resolved', () => {
   const { deps, state } = trimDeps({ policy: 'changelog-max-releases: 9\n', commitBodies: ['fix: a\n\nno footer'] });
   const base = deps.git;
