@@ -51,8 +51,8 @@ Stage vocabulary is exactly these three words — **backlog** (absence of stage 
 | **Stage** | backlog (no label) \| `parked` \| `ready` | Labels — backlog is the absence of stage labels |
 | **Authorization** | `auto:build`, `auto:merge`, `auto:merge-pending` | Labels — human-granted, except `auto:merge-pending` (machine-only waypoint, see Grant semantics) — absence of all three is the default not-authorized state |
 | **Bot state** | `bot:in-progress`, `bot:blocked`, `bot:parked` | Labels — machinery-owned visibility layer. `bot:blocked` = hit the retry ceiling, or a plan-review question awaits a human answer (`build/plan-review.md`) — grants revoked either way; `bot:parked` = merge-verification gate parked it on a red/timed-out PR check (grants stay intact) — the two never overlap on one record |
-| **Acceptance** | `demo:pending` \| `demo:approved` \| `demo:changes-requested`, read alongside their `accept:pending` \| `accept:approved` \| `accept:changes-requested` twins — or no label | Labels — both spellings are read, most-conservative-wins (Acceptance semantics below); every writer still adds `demo:*` until the accept-skill record (#4613) switches them — except the pipeline driver, which already writes `accept:pending` (the permission matrix's Driver row) — and the contract step (#4625) removes `demo:*`. `demo:pending` is written by every skill the permission matrix below grants it to (more than one, and the matrix is the list; do not restate a single writer here), resolved to `demo:approved`/`demo:changes-requested` by `/claude-tweaks:demo` alone; independent of Stage and of the issue's own open/closed state |
-| **Acceptance provenance** | `demo:approved-batch` (or its `accept:approved-batch` twin) — a modifier, always stacked alongside the approved label, never on its own | Label — written only when `/claude-tweaks:demo` resolves the verdict via a `#N,#M` batch invocation rather than a dedicated single-record session (both run the same per-item walkthrough — this distinguishes invocation shape, not whether one happened); absent means single-record-backed (including every `demo:approved` label applied before this modifier existed). Sole consumer: `bin/lib/issues/trust.js`'s coverage/verdict computation, via `bin/lib/issues/acceptance.js`'s `approvalProvenance` |
+| **Acceptance** | `demo:pending` \| `demo:approved` \| `demo:changes-requested`, read alongside their `accept:pending` \| `accept:approved` \| `accept:changes-requested` twins — or no label | Labels — both spellings are read, most-conservative-wins (Acceptance semantics below); `/claude-tweaks:accept` writes `accept:*` only, removing a present `demo:*` twin (the permission matrix's `/accept` row), and so does the pipeline driver's `accept:pending` (its Driver row); every other writer still adds `demo:pending` until its own switch, and the contract step (#4625) removes `demo:*`. A pending label is written by every actor the permission matrix below grants it to (more than one, and the matrix is the list; do not restate a single writer here), resolved to `accept:approved`/`accept:changes-requested` by `/claude-tweaks:accept` alone; independent of Stage and of the issue's own open/closed state |
+| **Acceptance provenance** | `demo:approved-batch` (or its `accept:approved-batch` twin) — a modifier, always stacked alongside the approved label, never on its own | Label — written (as `accept:approved-batch`) only when `/claude-tweaks:accept` resolves the verdict via a `#N,#M` batch invocation rather than a dedicated single-record session (both run the same per-item walkthrough — this distinguishes invocation shape, not whether one happened); absent means single-record-backed (including every `demo:approved` label applied before this modifier existed). Sole consumer: `bin/lib/issues/trust.js`'s coverage/verdict computation, via `bin/lib/issues/acceptance.js`'s `approvalProvenance` |
 
 **Origin axis, the two no-label cases:** a human filing directly on GitHub carries no `by:*`
 label (absence = human-filed). Records created as side effects of other skills (e.g.
@@ -236,14 +236,15 @@ The Acceptance axis records whether a human has actually verified a built record
 was asked — distinct from tests passing (`/claude-tweaks:test`) and code-quality review passing
 (`/claude-tweaks:review`), both of which gate *before* this axis is ever set.
 
-- `/claude-tweaks:wrap-up` applies `demo:pending` once build+test+review are done, above the
-  oversight floor, and posts an acceptance packet (`_shared/acceptance-packet.md`; an issue comment, or
+- `/claude-tweaks:wrap-up` applies a pending label once build+test+review are done, above the
+  oversight floor — `accept:pending` through `/accept`'s automatic entry for a record with no
+  resolvable parent, `demo:pending` on a parent through the Parent-Gate Procedure — and posts an acceptance packet (`_shared/acceptance-packet.md`; an issue comment, or
   — on the `local-files` driver, which has no comment mechanism regardless of `work-links` (`#205`:
   that key governs dependency/parent-child expression under `github-issues` only, and doesn't apply
   here) — a delimited block in the record body) with what
   changed, how to test it, and what could not be tested; a decomposition parent's gate still posts the
   legacy Verification Brief. This happens **regardless of merge timing** — an
-  `auto:merge`'d record still gets `demo:pending` on its now-closed issue, enabling retrospective
+  `auto:merge`'d record still gets its pending label on its now-closed issue, enabling retrospective
   sign-off. Two headless paths perform the identical write without passing through wrap-up's
   Phase 4 execution step: wrap-up's own auto-merge short-circuit (`wrap-up/review-console.md`) and
   `/claude-tweaks:dispatch`'s group auto-merge gate (`dispatch/settle-and-merge.md`), both by
@@ -260,10 +261,10 @@ was asked — distinct from tests passing (`/claude-tweaks:test`) and code-quali
   `tidy/step-1-records.md`'s Shape 7 under `local-files` — the first queries the
   `parent-issue` label, which no local record carries, and its file is skipped entirely whenever
   `gh` is absent, so the local sweep cannot live there.
-- `/claude-tweaks:demo` is the sole consumer: it walks the human through one `demo:pending`
-  record's brief at a time (open or closed) — a bare `#N`, or an explicit `#N,#M` list taken in
-  list order, never a backlog sweep — and resolves the label to `demo:approved` or
-  `demo:changes-requested` — `/claude-tweaks:help` (Stage 4.7) is the sole discovery surface for
+- `/claude-tweaks:accept` is the sole consumer: it walks the human through one pending record's
+  brief at a time (open or closed) — a bare `#N`, or an explicit `#N,#M` list taken in
+  list order, never a backlog sweep — and resolves the label to `accept:approved` or
+  `accept:changes-requested` — `/claude-tweaks:help` (Stage 4.7) is the sole discovery surface for
   which records are outstanding. On the latter, it files a linked follow-up backlog record.
 - Mutual exclusion is no longer guaranteed by construction: with `demo:*` and `accept:*` both
   read, a record can carry labels from both vocabularies, or two resolutions, at once. Every
@@ -489,8 +490,8 @@ dispatch/auto-merge/fetch/staleness/promise-register thresholds the Consumers be
 | `/backlog` | `refine` mode is the human gate — grants `auto:build`/`auto:merge` over the `ready` queue, and suggests `priority:*`/`**Related:**` (human-confirmed); its headless posture (`--source routine\|sweep`, or the deprecated `grant` alias) is the one machine-grant path — see Grant semantics above and `backlog/refine-headless.md`. `overview` mode is read-only — distribution views plus a "what to build next" recommendation. |
 | `/dispatch` | Queue consumer — selects authorized records, mints the run directory, hands off to `/flow` (which claims its own named targets at Step 2.8), settles (release / revoke / report); also files `by:dispatch`-labeled backlog records when its own headless `next` firing hits a Preflight failure with nobody present to see it (`skills/dispatch/SKILL.md`'s Preflight, "Headless self-report") |
 | `/flow`, `/build` | Executors — materialize the record into `{run-dir}/work/{n}-spec.md` and build it |
-| `/wrap-up` | Closes the loop — carrier commit (close-via-merge), claim release, leftover records; posts the acceptance packet, with `demo:pending` above the oversight floor (a decomposition parent's gate: `demo:pending` + the Verification Brief) |
-| `/demo` | Resolves the Acceptance axis — `demo:pending` → `demo:approved`/`demo:changes-requested`; files a linked follow-up backlog record on changes-requested |
+| `/wrap-up` | Closes the loop — carrier commit (close-via-merge), claim release, leftover records; posts the acceptance packet through `/accept`'s automatic entry, which applies `accept:pending` above the oversight floor (a decomposition parent's gate, through the Parent-Gate Procedure: `demo:pending` + the Verification Brief) |
+| `/accept` | Resolves the Acceptance axis — a pending label of either spelling → `accept:approved`/`accept:changes-requested`, removing the `demo:*` twin; its automatic entry applies `accept:pending`; files a linked follow-up backlog record on changes-requested |
 | `/tidy` | Hygiene — stale backlog records, parked-trigger wakes, unsynced local records, `bot:blocked` / `bot:parked` surfacing; also the two acceptance backstops, each of which is a `github-pr-scan-acceptance.md` scope under `github-issues` and a Step 1 shape (`tidy/step-1-records.md`) under `local-files` — `acceptance-gap` surfaces closed records with no disposition and mutates nothing, while `parent-gate` surfaces complete-but-un-gated parent issues and carries the `Open parent gate` action, which applies `demo:pending` to the parent and attaches its Verification Brief above the oversight floor (below it, closes the parent) |
 | `/help` | Dashboard — live counts by stage / grants / bot state / acceptance |
 | `/init` | Provisions the system — `work-backend` flag, label bootstrap, capability probes (`work-types`, `work-links`) |

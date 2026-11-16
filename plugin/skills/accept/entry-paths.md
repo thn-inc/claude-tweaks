@@ -1,6 +1,6 @@
-# Demo Step 1 — Entry Paths
+# Accept Step 1 — Entry Paths
 
-Referenced by `skills/demo/SKILL.md` Step 1. `$ARGUMENTS` already selected which path runs before
+Referenced by `skills/accept/SKILL.md` Step 1. `$ARGUMENTS` already selected which path runs before
 this file is read — load only the branch that matches (no-arguments vs. `#N` given), never both. For a `#N[,#M...]` list, the `#N` branch is entered once per ref, in list order — each entry is a fresh, independent lookup.
 
 ## No arguments: session-recall
@@ -35,7 +35,7 @@ Observation plan` / `### Try it`):
   here for the Observation plan schema.
 - **Try it** — compose the block from recall per `_shared/try-it.md` (its Sources and Rules; the Entry point from the Observation plan just composed). When the omission rule above dropped that plan, take the Entry point from what recall says shipped; when recall cannot name one there either, omit the Try it block by the same rule — an invented entry point is the same unconfident guess — and say so in one plain line where the block would render.
 
-This path has no fetch step — there is no comment or record body to read from. A fresh `/claude-tweaks:demo`
+This path has no fetch step — there is no comment or record body to read from. A fresh `/claude-tweaks:accept`
 session with no memory of any unrecorded work naturally finds nothing here; that's expected, not
 a bug (session-recall never discovers *other* sessions' unrecorded work). Report "Nothing
 awaiting sign-off." and stop — do not call `AskUserQuestion` — when recall finds nothing.
@@ -50,26 +50,33 @@ never carry the `risk:*`/`size:*` data a pre-fill would need.
 **`work-backend: github-issues`:**
 
 ```bash
-gh issue view {n} --json number,title,body,labels,url,state
+gh issue view {n} --json number,title,body,labels,url,state > "{RECORD}"
 ```
+
+A non-zero exit — no such record, the wrong repo, a failed read — means this `#N` does not resolve:
+report it as an error and stop this ref. It never falls back to session recall, which needs a record
+that resolved.
 
 **Read the acceptance packet first** (`_shared/acceptance-packet.md`'s Reader rules), whatever the
 record's labels: a below-floor record with no parent carries a packet and no pending label (Decision
-Q5). Fetch every comment (`gh issue view {n} --json comments`) and take the earliest trusted comment by
+Q5). Run `SKILL.md`'s packet read (`accept-entry.js read`, never a hand fetch of the comments): it
+takes the earliest trusted comment by
 `createdAt` whose first line is exactly an acceptance-packet marker of any version — trusted per
-`_shared/pr-run-comments.md`'s Trusted authors, each untrusted one named in that section's skip notice, one
+`_shared/pr-run-comments.md`'s Trusted authors, each untrusted one (its `skipped` list) named in that section's skip notice, one
 line above the verdict — matching `readPacket`. Read it if that line is `<!-- acceptance-packet: v1 -->`.
 That comment is what Step 2 renders: its Test guide stands in for the Try it block and
-its `### Observation plan` appendix is the plan Step 2 walks; go straight to Step 2 with it. A first line
+its `### Observation plan` appendix is the plan Step 2 walks; route it by `SKILL.md`'s packet-state table, then go to Step 2 with it. A first line
 naming another schema version (`<!-- acceptance-packet: v2 -->`) makes it an `unreadable` packet, even
 with a v1 comment later:
-report it by that version and stop this ref, since a legacy brief beside it never stands in. A failed read states so in
-one plain line above the verdict and falls through only to the label check and the closing-commit recovery below, never to the legacy brief forms, which read the same comments. Only when no trusted packet exists does the lookup fall back to the
-legacy forms below, unchanged: a decomposition parent's brief, and runs from before the packet.
+report it by that version and stop this ref (the table's `unhandled` row), since a legacy brief beside it never stands in. A failed read states so in
+one plain line above the verdict and falls through only to the label check and the closing-commit recovery below, never to the legacy brief forms, which read the same comments, and never to a packet build, which could overwrite a packet the read missed. Only when no trusted packet exists does the lookup fall back to the
+legacy forms below, unchanged: a decomposition parent's brief, and runs from before the packet. With
+none of those, the closing-commit recovery below builds a packet.
 
 If the labels just fetched carry a pending acceptance label in either spelling
 (`_shared/work-record.md`), even one a verdict outranks so the acceptance facet reads otherwise
-(a re-run on a rejected record leaves exactly that, and its fresh brief is the one to show), fetch
+(a re-run on a rejected record leaves exactly that, and its fresh brief is the one to show — `state`
+reads changes-requested beside a pending label as awaiting re-acceptance, never `already-decided`), fetch
 its Verification Brief: the last issue
 comment **containing** `## Verification Brief`. Fetch every comment (`gh issue view {n} --json
 comments`) and take the last one carrying that heading — test the heading, never assume the
@@ -152,7 +159,9 @@ warning. Here a false positive silently returns the *wrong* commit, so the ancho
 and new. The keyword vocabulary itself is unchanged and still mirrors `ISSUE_REF_SOURCE`
 (`bin/lib/issue-branch-tracking.js`) so the two can't drift on which keywords GitHub recognizes.
 
-**Found** — one command reads both halves of the brief:
+**Found** — build the packet from it with `SKILL.md`'s **No-packet build** (`--base "{sha}^" --head
+"{sha}"`), and walk that. Compose the brief in this session, as below, only when the packet read
+above failed or the build fails. One command reads both halves of the brief:
 
 ```bash
 git show --name-only --first-parent --format='%H%n%s%n%n%b' {sha}
