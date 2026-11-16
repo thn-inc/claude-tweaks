@@ -280,8 +280,8 @@ function scanStore({ projectsDir, match = null, since, until, fs: fsImpl = fs })
                 tool: block.name,
                 command: raw.slice(0, COMMAND_CAP),
                 truncated: raw.length > COMMAND_CAP,
-                cwd: entry.cwd ?? null,
-                ts: entry.timestamp ?? null,
+                cwd: typeof entry.cwd === 'string' ? entry.cwd : null,
+                ts: typeof entry.timestamp === 'string' ? entry.timestamp : null,
                 runId: run,
                 file,
               };

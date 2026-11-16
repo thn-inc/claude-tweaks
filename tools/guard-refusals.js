@@ -38,9 +38,11 @@
 //               cd-shared or other-worktree-cwd: the command reached another checkout) or shape (any other reason:
 //               the guard could not verify a command that only reads)
 //   byRewrite   harness-command Bash rows: one count per rewriter rule id that changes the command, `unchanged`
-//               when no rule does, `no-cwd` when the row records no working directory. `rewrite` is the rules in
-//               THIS checkout's guard-rewrite.js applied to the stored text (filesystem probes stubbed); it says
-//               what the rules would change today, never that the hook ran in that session.
+//               when no rule does, `no-cwd` when the row records no absolute working directory (missing or
+//               relative), `truncated` when the stored command was cut at the scan's cap. `rewrite` is the rules
+//               in THIS checkout's guard-rewrite.js applied to the stored text (worktree and realpath probes
+//               stubbed; the plugin-root probe reads this checkout); it says what the rules would change today,
+//               never that the hook ran in that session.
 //
 // Exit codes: 0 success; 2 malformed invocation, a missing --projects-dir / --skills-root, or a
 // --projects-dir / --skills-root that exists but cannot be read, up front or mid-scan.
@@ -122,8 +124,8 @@ const round2 = (n) => Math.round(n * 100) / 100;
 // Reasons that mean the command reached a checkout other than the worktree (not a shape the scanner could not read).
 const OTHER_CHECKOUT_REASONS = new Set(['git-redirect-shared', 'cd-shared', 'other-worktree-cwd']);
 const FILE_TOOLS = new Set(['Write', 'Edit', 'NotebookEdit']);
-// The rewriter's own filesystem probes are stubbed: the verdict is "the rules in this checkout change this
-// text", never a claim about the session's disk.
+// The rewriter's worktree and realpath probes are stubbed (its plugin-root probe still reads this checkout):
+// the verdict is "the rules in this checkout change this text", never a claim about the session's disk.
 const REWRITE_DEPS = { isLinkedWorktree: () => true, canonicalRealpath: (p) => p.replace(/\/+$/, '') || p };
 
 function rowEffect(r) {
@@ -132,9 +134,10 @@ function rowEffect(r) {
   return { effect: 'unknown', why: `${r.tool} tool` };
 }
 
-// null without a cwd; the applied rule ids at this checkout's HEAD otherwise ([] when nothing changes).
+// null for a truncated command or without an absolute cwd; the applied rule ids at this checkout's HEAD
+// otherwise ([] when nothing changes). An exception caught inside a rule still reads as [].
 function rewriteRules(r) {
-  if (typeof r.cwd !== 'string') return null;
+  if (r.truncated || typeof r.cwd !== 'string' || !path.posix.isAbsolute(r.cwd)) return null;
   const res = rewriteForGuard({ command: r.command, cwd: r.cwd, deps: REWRITE_DEPS });
   return res ? res.applied : [];
 }
@@ -157,7 +160,7 @@ function summarize({ window, scan, index }) {
   const byReadClass = { 'other-checkout': 0, shape: 0 };
   const byRewrite = {};
   const rowByUse = new Map();
-  const rows = (scan.rows || []).map((r) => {
+  const rows = (scan.rows).map((r) => {
     const { effect, why } = rowEffect(r);
     const readClass = r.guard === 'harness-command' && effect === 'read'
       ? (OTHER_CHECKOUT_REASONS.has(r.reason) ? 'other-checkout' : 'shape')
@@ -167,7 +170,7 @@ function summarize({ window, scan, index }) {
     bump(byEffect, effect);
     if (readClass) bump(byReadClass, readClass);
     if (r.guard === 'harness-command' && r.tool === 'Bash') {
-      if (rewrite === null) bump(byRewrite, 'no-cwd');
+      if (rewrite === null) bump(byRewrite, r.truncated ? 'truncated' : 'no-cwd');
       else if (!rewrite.length) bump(byRewrite, 'unchanged');
       else for (const id of rewrite) bump(byRewrite, id);
     }
@@ -180,7 +183,7 @@ function summarize({ window, scan, index }) {
     return row;
   });
   const refusals = scan.refusals.map((r) => {
-    const row = rowByUse.get(r.toolUseId) || {};
+    const row = rowByUse.get(r.toolUseId);
     const shapes = detectShapes(r.command, { placeholders: false }); // a transcript holds what the guard saw
     const fences = traceFence(r.command, index);
     bump(byReason, r.reason);

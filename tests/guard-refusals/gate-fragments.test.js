@@ -12,7 +12,9 @@ const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('.
 // text (comments blanked to spaces, string literals kept), so a fragment that survives only in a
 // comment fails. Recall limits: a deny message built from two literals joined across a `+` is only
 // seen when the fragment sits inside one literal, which is how every fragment here was chosen; a
-// fragment is matched as a substring, so a fragment that also occurs in unrelated code passes.
+// fragment is matched as a substring, so a fragment that also occurs in unrelated code passes. The
+// stripper-verdict oracle cannot see a mis-parse whose stripped text still compiles (one that keeps a
+// comment's text), so in keep mode a fragment surviving only in a comment could pass.
 
 const GATE_FILES = [
   path.join(__dirname, '..', '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'),

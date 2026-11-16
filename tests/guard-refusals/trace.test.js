@@ -74,6 +74,8 @@ const CASES = [
   ['subshell', 'uses a subshell, so it is too complex to verify that it stays inside the worktree'],
   ['arithmetic', 'evaluates a value computed at runtime arithmetically, which can run commands, so it cannot be shown not to be git'],
   ['other-worktree-cwd', 'runs in a working directory (/tmp/wt-b) that is in a different worktree'],
+  // A clause that matches an existing pattern and a new one keeps the existing id (new patterns are appended last).
+  ['gh-text', 'runs gh with the text "x" and uses a subshell inside a construct too complex to verify, so what it runs cannot be shown not to be git'],
   ['other', 'does something no named clause describes in a plain command'],
 ];
 

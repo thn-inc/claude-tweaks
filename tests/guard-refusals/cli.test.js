@@ -13,6 +13,10 @@ const { copyStore, WINDOW } = require('../helpers/guard-refusals-store');
 const CLI = path.join(__dirname, '..', '..', 'tools', 'guard-refusals.js');
 const UNTIL = '2026-10-25T00:00:00Z'; // the fixture files are stamped 2026-10-20T12:00Z; its runs started 10-16 to 10-24
 
+// One exit listener removes every scratch directory the helpers below make.
+const SCRATCH_DIRS = [];
+process.on('exit', () => { for (const d of SCRATCH_DIRS) fs.rmSync(d, { recursive: true, force: true }); });
+
 function capture() {
   const out = [];
   const err = [];
@@ -23,7 +27,7 @@ function capture() {
 // a real trace to count.
 function skillsRootFor(command) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-refusals-cli-skills-'));
-  process.on('exit', () => fs.rmSync(dir, { recursive: true, force: true }));
+  SCRATCH_DIRS.push(dir);
   fs.writeFileSync(path.join(dir, 'F.md'), `# F\n\n\`\`\`bash\n${command.split('\n')[0]}\n\`\`\`\n`);
   return dir;
 }
@@ -111,7 +115,7 @@ test('CLI honors --since-days, --match and --until, and rejects malformed argume
 
 test('CLI defaults --projects-dir to $CLAUDE_CONFIG_DIR/projects, else ~/.claude/projects', () => {
   const config = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-refusals-config-'));
-  process.on('exit', () => fs.rmSync(config, { recursive: true, force: true }));
+  SCRATCH_DIRS.push(config);
   const projects = path.join(config, 'projects');
   fs.cpSync(copyStore(), projects, { recursive: true, preserveTimestamps: true });
   const viaEnv = capture();
@@ -120,7 +124,7 @@ test('CLI defaults --projects-dir to $CLAUDE_CONFIG_DIR/projects, else ~/.claude
 
   const viaHome = capture();
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-refusals-home-'));
-  process.on('exit', () => fs.rmSync(home, { recursive: true, force: true }));
+  SCRATCH_DIRS.push(home);
   assert.equal(run({ argv: ['--until', UNTIL, '--json'], deps: { ...viaHome.deps, env: {}, homedir: () => home } }), 2, 'no <home>/.claude/projects here');
   assert.match(viaHome.err.join('\n'), /\.claude[\\/]projects is not a directory/);
 });
@@ -190,7 +194,7 @@ const WORKTREE_ALWAYS = 'PreToolUse:Bash hook error: claude-tweaks: this project
 
 function writeStore(entries) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-refusals-cli-rows-'));
-  process.on('exit', () => fs.rmSync(dir, { recursive: true, force: true }));
+  SCRATCH_DIRS.push(dir);
   const slug = path.join(dir, '-Users-me-guards');
   fs.mkdirSync(slug, { recursive: true });
   const file = path.join(slug, 's1.jsonl');
@@ -271,6 +275,19 @@ test('a truncated Bash row is unknown with why truncated, never read', () => {
   assert.equal(row.why, 'truncated');
   assert.equal(row.readClass, null);
   assert.equal(out.refusals[0].effect, 'unknown');
+});
+
+test('a truncated row or one with a non-absolute cwd is not counted as unchanged', () => {
+  const out = scanJson([
+    use('t_long', 'Bash', { command: `ls /a\\ b/c ${'a'.repeat(20000)}` }), result('t_long', HARNESS_BASH),
+    use('t_rel', 'Bash', { command: 'ls /a\\ b/c' }, 'wt/relative'), result('t_rel', HARNESS_BASH),
+    use('t_ok', 'Bash', { command: 'ls /a/b' }), result('t_ok', HARNESS_BASH),
+  ]);
+  const byId = Object.fromEntries(out.rows.map((r) => [r.toolUseId, r]));
+  assert.equal(byId.t_long.rewrite, null);
+  assert.equal(byId.t_rel.rewrite, null);
+  assert.deepEqual(byId.t_ok.rewrite, []);
+  assert.deepEqual(out.byRewrite, { 'no-cwd': 1, truncated: 1, unchanged: 1 });
 });
 
 test('readClass is other-checkout for a read refused for reaching another checkout, shape otherwise', () => {
