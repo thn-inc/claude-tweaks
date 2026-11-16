@@ -104,8 +104,9 @@ test('isJudgeNone: the marker counts before the first Evidence clause, never ins
 
 // A line that repeats a delimiter must be read in time linear in its length: three unanchored groups
 // in a strict pattern made a 22 KB line take seconds (a strict pattern is also tried on a line past
-// the loose-pattern cap).
-test('repeated-delimiter lines of a strict pattern classify in well under a second (absence-refuted, coincidence)', () => {
+// the loose-pattern cap). The clock lives in perf/pair-lines-linearity.test.js (a wall-clock budget
+// flakes under load in tests/); this test pins the verdicts.
+test('repeated-delimiter lines of a strict pattern read as no pair line, and the real lines still parse', () => {
   const lines = [
     `Reproduction: lens "3a" absence claim ${'a:b refuted by ground-truth check (x found it at y:1). '.repeat(400)}`,
     `Reproduction: lens "3a" absence claim a:b refuted by ground-truth check (${'x found it at y:1). '.repeat(400)}`,
@@ -113,12 +114,7 @@ test('repeated-delimiter lines of a strict pattern classify in well under a seco
     `Reproduction: lens "3a" findings ${'a:1 / '.repeat(400)}share a location but not substance; both staged unconfirmed.`,
     `Reproduction: lens "3f" vacuity finding ${'a:1 re-confirmed by executed run: x → y. Confirmed. '.repeat(400)}`,
   ];
-  for (const line of lines) {
-    const started = Date.now();
-    assert.equal(classifyPairLine(line), null);
-    const took = Date.now() - started;
-    assert.ok(took < 250, `${line.slice(0, 60)}… (${line.length} chars) took ${took} ms`);
-  }
+  for (const line of lines) assert.equal(classifyPairLine(line), null, `${line.slice(0, 60)}… (${line.length} chars)`);
   // The tightened groups still read the real line.
   assert.deepEqual(classifyPairLine('- AUTO 10:00:00 — Reproduction: lens "3d" absence claim a b/x.js:foo refuted by ground-truth check (grep -n foo "a b/x.js" found it at a b/x.js:40). Not staged. Reversibility: high.'),
     { form: 'absence-refuted', lens: '3d', path: 'a b/x.js', line: null });
