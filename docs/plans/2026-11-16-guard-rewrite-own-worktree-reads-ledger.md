@@ -20,3 +20,4 @@
 | 16 | build | SDD ruling — re-review out-of-scope — the `CMD`/`CMD_POSITION` lookbehind in tools/guard-refusals/sh...: ratify or reverse at the Review Console (staged/sdd-ruling-13.md) | open | — |
 | 17 | build | SDD ruling — the PR-body finding is settled at phase exit by appending a proofs section to PR #5619'...: ratify or reverse at the Review Console (staged/sdd-ruling-14.md) | open | — |
 | 18 | build | SDD ruling — the cd/pushd/popd must-decline pins in Task 1 put the `cd`/`pushd`/`popd` word AFTER th...: ratify or reverse at the Review Console (staged/sdd-ruling-15.md) | open | — |
+| 19 | build/skill | regex-scan-linearity extends: replacing a backtracking regex with a per-line scan must bound every indexOf/lastIndexOf to the line (an unbounded lastIndexOf from the line end searched to text start, quadratic on multi-line text, 24c205dc5), and its perf file needs a many-lines case beside the one-long-line case | open | — |
