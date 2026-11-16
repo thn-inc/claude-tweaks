@@ -42,6 +42,8 @@ Waived AC5.1: covered by the `/claude-tweaks:test` full suite and the PR's Windo
 
 ### Task 1: Template the capture helper's `fixture()`
 
+**Review risk:** high
+
 **Files:**
 - Modify: `tests/helpers/learned-skills-capture.js:13-60`
 - Test: `tests/helpers-git-template.test.js`
@@ -73,7 +75,7 @@ Expected: FAIL (the trace dir is not empty), once `sh()` reads `process.env` at 
 
 - [ ] **Step 3: Implement.** In `learned-skills-capture.js`:
   - Build the git env per `sh()` call from the current `process.env` (keep `ENV` exported with the same keys for existing importers).
-  - Memoize `hostAutocrlf` once per process. Run it against a throwaway dir, or against the first template build's repo before it pins a value.
+  - Memoize `hostAutocrlf` once per process. Resolve it against a throwaway `git init` dir before building the key, because the key needs the resolved `eol`.
   - `fixture()` resolves `eol`, then `fromTemplate(JSON.stringify([eol, extraFiles]), build, { prefix: 'ls-capture-', realpath: true })`. `build(dir)` runs today's init, config, write, add, commit, rm, checkout and run-dir mkdir, and records `rev-parse HEAD` in a module `Map` keyed the same way.
   - Drop `.git/hooks` in the build (as `scenario()` does).
   - The copy path registers `t.after` cleanup, re-creates `runDir` if needed, and returns the cached `mergeBase`.
@@ -91,6 +93,8 @@ git commit -m "Template the learned-skills capture fixture — one build per arg
 ```
 
 ### Task 2: Template `land.test.js`'s fixture and drop state-arranging clones and pushes
+
+**Review risk:** high
 
 **Files:**
 - Create: `tests/helpers/learned-skills-land.js`
@@ -123,7 +127,10 @@ Run: `node --test --test-name-pattern="learned-skills land fixture" tests/helper
 Expected: FAIL with `Cannot find module './helpers/learned-skills-land'`
 
 - [ ] **Step 3: Implement.**
-  - Move `fixture`, `sh`, `write`, `read` and the constants from `land.test.js` into `learned-skills-land.js`. `land.test.js` keeps its `process.env` identity assignment at the top, ahead of the require.
+  - Move `fixture`, `sh`, `write`, `read` and the constants from `land.test.js` into `learned-skills-land.js`.
+    - The helper's own `sh` passes an explicit env: `process.env` read at call time, plus `GIT_AUTHOR_*`/`GIT_COMMITTER_*` = `t`/`t@example.test`, so the build does not depend on which test file loads it.
+    - `land.test.js` keeps its `process.env` identity assignment at the top, ahead of the require, because `land()`'s plumbing inherits it.
+    - The build `fs.realpathSync`s `dirs.root` before its first git call, as today's fixture does. The manifest rewrite and the run-dir walk use that realpath spelling, falling back to the raw `dirs.root` spelling.
   - Build through `fromTemplateSet(key, build, { root: { prefix: 'ls-land-', realpath: true } })`, with `key = JSON.stringify([capturedTargets, autocrlf || '', originConflict])`. The build runs today's steps inside `dirs.root`, calls `disableReceiveAutoGc(origin)`, and for `originConflict` clones, commits and pushes once, then deletes the clone dir.
   - After the copy, rewrite each manifest entry's `patch` from the template root to the copy root (same relative path) and write `manifest.json` back.
   - Then walk every file under the copied `runDir` and throw if any holds the template root string. That covers `decisions.md` and patch files: rewrite it, or show it does not exist.
@@ -154,8 +161,10 @@ git commit -m "Template the learned-skills land fixture and drop state-arranging
 - Consumes: Task 1's `fixture`.
 - Produces: no new exports; `registerMatrix` behavior unchanged.
 
-- [ ] **Step 1: Trace one matrix file.** `GIT_TRACE2_EVENT=<abs empty dir> node --test tests/bin-lib/learned-skills/capture-matrix-tracked.test.js`, then group `start` events by argv.
-  - Use the trace2 `child_start` and stack information to attribute each git call either to helper code (`faultyDeps`, `breaches`, `scenario`, `status`, `diffOf`) or to `capture()`.
+- [ ] **Step 1: Instrument and trace.**
+  - Use trace2 (`GIT_TRACE2_EVENT=<abs empty dir>`) only for totals.
+  - Attribute calls with a scratch, uncommitted wrapper. It records argv and the caller (`new Error().stack`) for each call, per combination, around the helper's `sh` and around `faultyDeps().git`'s `realDeps.git` passthrough (which is what `capture()` calls). For `land()`, wrap `deps().git` in `land.test.js`.
+  - Run it over `land.test.js` and one matrix file per kind: `capture-matrix-tracked.test.js`, `capture-matrix-untracked.test.js`, `capture-matrix-joined.test.js`.
   - List every helper read-only call made twice for one combination with no state change between.
 
 - [ ] **Step 2: Remove each listed helper repeat** by reusing the first result in the helper. Never change `plugin/bin/lib/learned-skills/`. The `apply --check -R` passthrough in `faultyDeps` stays real (its comment says why).
@@ -181,9 +190,12 @@ If Step 1 finds no helper repeat, make no commit and report the trace grouping a
 **Files:** none committed. Results go into the PR body.
 
 - [ ] **Step 1:** Write the list file: every `tests/bin-lib/learned-skills/*.test.js`, one per line.
-- [ ] **Step 2:** Before count. `git archive` the merge-base into a scratch dir, then run `GIT_TRACE2_EVENT=<abs empty dir A> CT_TEST_CONCURRENCY=6 node tools/run-tests.js --files-from <list>` there.
-- [ ] **Step 3:** After count. Run the same at HEAD with dir B, immediately after Step 2.
-- [ ] **Step 4:** Attribute processes to test files and count per file.
+- [ ] **Step 2:** Before count.
+  - `git archive` the merge-base into a scratch dir.
+  - For each file, run its own one-line list with its own empty trace dir: `GIT_TRACE2_EVENT=<abs empty dir> CT_TEST_CONCURRENCY=6 node tools/run-tests.js --files-from <one-file list>`.
+  - Also do one empty-list baseline run, which measures the runner's own git calls.
+- [ ] **Step 3:** After count. Do the same at HEAD, back to back with Step 2.
+- [ ] **Step 4:** Count per file (each trace file holding a `start` event is one process), minus the runner baseline.
   - AC1.1: `land.test.js` must be ≤ 1,730.
   - AC1.2: otherwise name the shortfall and attribute it to fixture setup or to `capture()`/`land()` git.
   - AC2.1: the counting method, before at the merge base and after at HEAD, back to back.
