@@ -387,8 +387,10 @@ const GIT_C_DOT = new RegExp(`${CMD}git\\s+-C\\s+(?:\\.|"\\."|'\\.')(?=\\s|$)`, 
 // `git -C <operand>` with an unquoted glob char in a later word of the same
 // simple command; the operand may be quoted, and quoted text is blanked.
 const GIT_C_GLOB = new RegExp(`${CMD}git\\s+-C\\s+(?:"[^"]*"|'[^']*'|\\S+)[^;&|\\n]*[*?[]`, 'm');
-// A git command chained by ; or && onto an unquoted `$?` on one line.
-const GIT_CHAINED_STATUS = new RegExp(`${CMD}git\\s[^\\n]*?(?:;|&&)[^\\n]*\\$\\?`);
+// A git command chained by ; && or || onto `$?` on one line: unquoted, or a
+// double-quoted word that is exactly "$?" ("exit=$?" runs).
+const GIT_CHAINED_STATUS = new RegExp(`${CMD}git\\s[^\\n]*?(?:;|&&|\\|\\|)[^\\n]*\\$\\?`);
+const GIT_CHAINED_QUOTED_STATUS = new RegExp(`${CMD}git\\s[^\\n]*?(?:;|&&|\\|\\|)[^\\n]*(?<=^|\\s)"\\$\\?"(?=\\s|$)`, 'm');
 
 const DETECTORS = [
   {
@@ -441,7 +443,7 @@ const DETECTORS = [
   {
     id: 'git-chained-status',
     row: '`git merge-base --is-ancestor HEAD HEAD; echo exit=$?`',
-    test: (t) => GIT_CHAINED_STATUS.test(stripQuoted(t)),
+    test: (t) => GIT_CHAINED_STATUS.test(stripQuoted(t)) || GIT_CHAINED_QUOTED_STATUS.test(stripSingle(t)),
   },
   {
     id: 'node-eval-script-var-with-git',

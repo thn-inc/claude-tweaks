@@ -406,3 +406,16 @@ test('github-url-with-var: a quoted reference to a literally assigned name is no
   assert.deepStrictEqual(detectShapes('U=https://github.com/o/r; echo "$U"'), []);
   assert.deepStrictEqual(detectShapes('U=https://github.com/o/r; echo $U'), ['github-url-with-var']);
 });
+
+// #5588: a git command chained by ; && or || onto $? on one line. A quoted word
+// that is exactly "$?" is refused too (live probe); "exit=$?" runs.
+test('git-chained-status: unquoted and bare quoted $? after ; && ||, but not "exit=$?" or a literal', () => {
+  for (const op of [';', '&&', '||']) {
+    assert.deepStrictEqual(detectShapes(`git status ${op} echo $?`), ['git-chained-status'], op);
+    assert.deepStrictEqual(detectShapes(`git status ${op} echo "$?"`), ['git-chained-status'], op);
+  }
+  assert.deepStrictEqual(detectShapes('git status; echo "exit=$?"'), []);
+  assert.deepStrictEqual(detectShapes('git status; echo "a $? b"'), []);
+  assert.deepStrictEqual(detectShapes("git status; echo '$?'"), []);
+  assert.deepStrictEqual(detectShapes('digit status; echo "$?"'), []);
+});
