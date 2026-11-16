@@ -32,6 +32,7 @@ const fs = require('fs');
 const path = require('path');
 const { lstatType } = require('../path-guard');
 const { isPathContained } = require('../shared-primitives');
+const { listHeaderDirs } = require('../run-header');
 const { readManifest } = require('../flow/manifest');
 const { formatRecordSteps } = require('../flow/record-steps');
 const { locateTranscripts, subagentsDirFor, readUsage } = require('./transcript');
@@ -283,14 +284,19 @@ function numberedEntries(dir, re, wantType, fsImpl) {
 }
 
 // { runDir, worktree?, gitRoot?, fsImpl?, manifest? } -> ['#N', ...] | null.
-// A multi-spec run's records are its spec-{N}/ subdirectories, in the order
-// of manifest.yml's specs list (lib/flow/manifest.js) when the run has one —
-// a spec dir the manifest does not list goes after, ascending — else
-// ascending. A single-record run's are its work/{n}-spec.md names, and that
-// spec is committed inside the worktree at the run dir's path relative to the
-// main checkout — so the worktree copy (run-state.json's `worktree`) is read
-// first, the run dir's own work/ second. `manifest` is the parsed manifest
-// (readManifest's shape); undefined reads {runDir}/manifest.yml.
+// Each root is read at its live location and at its archived one (a header
+// moves there after wrap-up), through lib/run-header.js's listHeaderDirs.
+// A multi-spec run's records are its spec-{N}/ subdirectories, live or
+// archived, in the order of manifest.yml's specs list (lib/flow/manifest.js)
+// when the run has one — a spec dir the manifest does not list goes after,
+// ascending — else ascending. A single-record run's are its {n}-spec.md
+// header names, and that spec is committed inside the worktree at the run
+// dir's path relative to the main checkout — so the worktree copy
+// (run-state.json's `worktree`) is read first, the run dir second, root by
+// root: within a root the live and archived headers merge by record, and the
+// first root holding any header answers. `manifest` is the parsed manifest
+// (readManifest's shape); undefined reads {runDir}/manifest.yml, which stays
+// at the live run dir.
 function resolveTargetRecords({ runDir, worktree = null, gitRoot = null, fsImpl = fs, manifest } = {}) {
   const roots = [];
   if (typeof worktree === 'string' && worktree && gitRoot && isPathContained(runDir, gitRoot)) {
@@ -298,7 +304,13 @@ function resolveTargetRecords({ runDir, worktree = null, gitRoot = null, fsImpl 
   }
   roots.push(runDir);
   const format = (nums) => [...new Set(nums)].sort((a, b) => a - b).map((n) => `#${n}`);
-  const specDirs = roots.flatMap((r) => numberedEntries(r, /^spec-([1-9]\d*)$/, 'directory', fsImpl));
+  // Header dirs per root, live and archived (lib/run-header.js); an unreadable base lists as empty.
+  // The lstat filter below keeps the old rule that a `spec-N` symlink or file is not a spec dir.
+  const readdir = (d) => { try { return fsImpl.readdirSync(d); } catch { return []; } };
+  const dirsByRoot = roots.map((r) => listHeaderDirs([r], { readdir }));
+  const specDirs = dirsByRoot.flat()
+    .filter((e) => e.specN !== null && lstatType(path.dirname(e.dir), { fsImpl }).type === 'directory')
+    .map((e) => e.specN);
   if (specDirs.length) {
     const m = manifest === undefined ? readManifest(runDir) : manifest;
     const listed = m && m.multispec && Array.isArray(m.multispec.specs) ? m.multispec.specs.map((s) => Number(s.id)) : [];
@@ -307,8 +319,10 @@ function resolveTargetRecords({ runDir, worktree = null, gitRoot = null, fsImpl 
     const rest = format(specDirs.filter((n) => !ordered.includes(n)));
     return [...ordered.map((n) => `#${n}`), ...rest];
   }
-  for (const r of roots) {
-    const specs = numberedEntries(path.join(r, 'work'), /^([1-9]\d*)-spec\.md$/, 'file', fsImpl);
+  // Within a root the live and archived flat headers merge by record; roots keep first-non-empty order.
+  for (const entries of dirsByRoot) {
+    const specs = entries.filter((e) => e.specDir === null)
+      .flatMap((e) => numberedEntries(e.dir, /^([1-9]\d*)-spec\.md$/, 'file', fsImpl));
     if (specs.length) return format(specs);
   }
   return null;
