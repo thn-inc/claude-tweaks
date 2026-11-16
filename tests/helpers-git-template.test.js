@@ -349,6 +349,45 @@ for (const builder of [
   });
 }
 
+// pre-review-catchup fixtures (#5769): originWithTwoClones seeded in its template, one variant per shared setup shape.
+const catchupFixtures = require('./bin-lib/pre-review-catchup/fixtures');
+for (const shape of [undefined, ...catchupFixtures.CATCHUP_SHAPES]) {
+  test(`AC4.1: pre-review-catchup catchupFixture${shape ? ` ${shape}` : ''}: a second call starts no git process`, () => {
+    const make = () => catchupFixtures.catchupFixture(shape);
+    scratch.push(make().root);
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(second.root);
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+
+test('AC4.1: originWithTwoClones with a seed and no key throws', () => {
+  assert.throws(() => gitFixtures.originWithTwoClones('ct-gt-otc-', { seed: () => {} }), /seed needs a key/);
+});
+
+test('a catchupFixture copy is on feat with origin/main equal to main in work and other', () => {
+  const f = catchupFixtures.catchupFixture();
+  scratch.push(f.root);
+  assert.strictEqual(git(f.work, ['symbolic-ref', '--short', 'HEAD']), 'feat');
+  const main = git(f.work, ['rev-parse', 'main']);
+  assert.strictEqual(git(f.work, ['rev-parse', 'origin/main']), main);
+  assert.strictEqual(git(f.other, ['rev-parse', 'origin/main']), main);
+  assert.strictEqual(git(f.other, ['rev-parse', 'main']), main);
+  assert.strictEqual(f.head(), git(f.work, ['rev-parse', 'HEAD']));
+});
+
+test('a catchupFixture shape copy holds the shape setup: a feat edit in work, an unfetched upstream commit on origin only when the shape pushes', () => {
+  for (const shape of catchupFixtures.CATCHUP_SHAPES) {
+    const f = catchupFixtures.catchupFixture(shape);
+    scratch.push(f.root);
+    assert.strictEqual(git(f.work, ['rev-list', '--count', 'main..HEAD']), '1', shape);
+    git(f.work, ['fetch', '-q', 'origin']);
+    const upstream = git(f.work, ['rev-list', '--count', 'main..origin/main']);
+    assert.strictEqual(upstream, shape === 'feat-edit-only' ? '0' : '1', shape);
+  }
+});
+
 test('pairedFixture copies point at their own origin and sync through it', () => {
   const a = reconcileFixtures.pairedFixture();
   const b = reconcileFixtures.pairedFixture();
