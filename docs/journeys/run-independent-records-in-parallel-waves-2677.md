@@ -37,7 +37,7 @@ files:
 - **Action:** First, serially in the shared worktree, the orchestrator runs the wave's boundary freshness check, scaffolds and materializes each member's spec, and moves each member to `running`. It then dispatches one `Agent` per member in a single message, each with `isolation: "worktree"`. The harness roots each **member agent** in its own `.claude/worktrees/agent-{id}` on branch `worktree-agent-{id}`, based at the shared branch's tip. Each member runs `/claude-tweaks:build` then `/claude-tweaks:test` under `MULTISPEC_PARALLEL_WAVE=1`.
 - **Should feel:** Like real parallelism — the wave's wall-clock is bounded by its slowest member, not their sum.
 - **Should understand:** Under the marker, members never restamp the run's worktree, never open a PR or push, and never flip PR checklist rows. Each returns a fixed `MEMBER`/`OUTCOME`/`BRANCH`/`HEAD`/`LEDGER` block plus a trailing `STATUS:` line.
-- **Red flags:** A member whose toplevel is the shared worktree, which must return `blocked` and run sequentially instead. Commits from two members landing in the shared worktree's index. A member calling `spec-status` itself.
+- **Red flags:** A member whose toplevel is the shared worktree, which must return `blocked` and run sequentially instead. Commits from two members landing in the shared worktree's index. A member calling `spec-status` itself. A member prompt whose `wait-for.js` line still reads `{plugin-root}`, because every wait on the member's own children then fails as a failed call.
 
 ### 4. Merge back one member at a time
 - **URL:** `plugin/skills/flow/multispec-parallel-waves.md` "Procedure, per wave", step 3 and "Ledger fold"
@@ -65,3 +65,4 @@ files:
 - Evidence: the controller's concurrency repro (`spec-2677/decisions.md`, "AC2 concurrency repro"). Two isolated agents dispatched in one message overlapped by 5.58s on branches from the shared tip, and their branches merged cleanly.
 - Related: `run-a-batch-whose-record-needs-a-merged-prerequisite-2733.md` (the merge-state gate whose `kept` set the waves are intersected with).
 - Updated during #3351's build (run 2026-10-17T095806-spec-3351): step 2's fallback now covers exit 1 only; exit 2 and a `--waves` cycle stop at Step 3 (`multispec-preflight-failure.md`, `handle-a-failed-multispec-preflight-3351.md`).
+- Updated during #5604's build (run 2026-11-16T155352-record-5604): the member prompt's copied Context pack item 7 now carries a `wait-for.js` line, and the orchestrator fills `{plugin-root}` wherever it appears in the copied items, not only in item 1.
