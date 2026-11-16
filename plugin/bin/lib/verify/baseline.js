@@ -4,9 +4,9 @@
 // failing test files: at the base commit in a scratch detached worktree, and
 // — for files existing at base but not proven failing there — once more in
 // isolation at HEAD. A file failing at base is baseline; one passing in
-// isolation at HEAD is flaky (a file the full run killed outright included);
-// the rest, including every file absent at base,
-// are attributable. Fails closed: anything not classified with evidence (no
+// isolation at HEAD is flaky (a file whose full-run failure is wholly
+// file-level — killed or timed out — included); the rest, including every
+// file absent at base, are attributable. Fails closed: anything not classified with evidence (no
 // extractable file, a failing entry naming no test file, a fail-fast skip, a
 // spawn error, a base run with no numeric exit) is never "fails at base" — a
 // base run counts only when its own log names the file as failing with every

@@ -683,6 +683,23 @@ test('mixed file-level + test-level: a kill beside a real test failure in the sa
   assert.deepStrictEqual(r.flakyPassed, []);
 });
 
+test('mixed file-level + test-level (TAP): a kill beside a real test failure in the same file keeps the per-test rule — attributable (#4424)', async () => {
+  const second = ['not ok 2 - works', '  ---', '  duration_ms: 1', "  type: 'test'", `  location: '/repo/${R}:9:3'`, "  failureType: 'testCodeFailure'",
+    "  error: 'AssertionError'", "  code: 'ERR_ASSERTION'", '  ...'].join('\n');
+  const head = KILLED_TAP.replace('1..1', `${second}\n1..2`).replace('# tests 1', '# tests 2').replace('# fail 1', '# fail 2');
+  const r = await killedCase({ head });
+  assert.deepStrictEqual(r.attributable, [R]);
+  assert.deepStrictEqual(r.flakyPassed, []);
+});
+
+test('a killed file whose first isolated run fails uncovered but whose retry runs clean is baseline-flaky via the retry (#4424)', async () => {
+  const r = await killedCase({ isolatedCode: 1, isolatedLog: NAMED({ fails: [['x']] }), retryCode: 0, retryLog: PASS_LOG });
+  assert.strictEqual(r.verdict, 'pass');
+  assert.deepStrictEqual(r.flakyPassed, [R]);
+  assert.deepStrictEqual(r.attributable, []);
+  assert.match(r.flakyLogs[R], /tests-isolated-retry-tests\+r\.test\.js\.log$/);
+});
+
 test('isolated cancelled / all-skipped: a killed file is flaky only when its isolated run passes every accounting guard (#4424)', async () => {
   const cancelled = ['✔ x (1ms)', 'ℹ tests 2', 'ℹ pass 1', 'ℹ fail 0', 'ℹ cancelled 1'].join('\n');
   const allSkipped = ['ℹ tests 1', 'ℹ pass 0', 'ℹ fail 0', 'ℹ cancelled 0'].join('\n');
