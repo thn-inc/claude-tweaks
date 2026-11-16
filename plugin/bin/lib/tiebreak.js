@@ -377,23 +377,30 @@ function splitChunkReply(replyText, ids) {
   let current = null;
   for (const line of lines) {
     const header = CHUNK_HEADER_RE.exec(line);
-    if (header) {
-      const id = header[1].toLowerCase();
-      if (wanted.has(id)) {
-        if (!found.has(id)) found.set(id, []);
-        current = [];
-        found.get(id).push(current);
-      } else current = null;
-    } else if (current) current.push(line);
+    if (!header) {
+      if (current) current.push(line);
+      continue;
+    }
+    const id = header[1].toLowerCase();
+    if (!wanted.has(id)) {
+      current = null;
+      continue;
+    }
+    if (!found.has(id)) found.set(id, []);
+    current = [];
+    found.get(id).push(current);
   }
 
   const blocks = new Map();
   for (const id of ids) {
-    const key = id.toLowerCase();
-    const occurrences = found.get(key) || [];
-    if (occurrences.length === 0) blocks.set(id, { state: 'missing', text: '' });
-    else if (occurrences.length > 1) blocks.set(id, { state: 'duplicate', text: '' });
-    else blocks.set(id, { state: 'ok', text: [...occurrences[0], ...(status === null ? [] : [status])].join('\n') });
+    const occurrences = found.get(id.toLowerCase()) || [];
+    if (occurrences.length === 0) {
+      blocks.set(id, { state: 'missing', text: '' });
+    } else if (occurrences.length > 1) {
+      blocks.set(id, { state: 'duplicate', text: '' });
+    } else {
+      blocks.set(id, { state: 'ok', text: [...occurrences[0], ...(status === null ? [] : [status])].join('\n') });
+    }
   }
   return { status, blocks };
 }
