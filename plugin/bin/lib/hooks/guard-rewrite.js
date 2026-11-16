@@ -5,8 +5,8 @@
 // known from the text: a literal assigned and then referenced, the plugin-root
 // placeholder, `node -e '<s>' "$A"` without `--`, a backslash-escaped space, a
 // `cd` into the directory the shell is already in, a `git -C` naming that
-// directory, an unquoted `exit=$?` after a git or gh call. This module rewrites those,
-// and the hook hands the result back as `hookSpecificOutput.updatedInput`.
+// directory, an unquoted `exit=$?` after a git or gh call. This module rewrites
+// those, and the hook hands the result back as `hookSpecificOutput.updatedInput`.
 //
 // Measured premise (Claude Code 2.1.302): updatedInput is applied BEFORE the
 // guard, and the guard re-checks the rewritten command. A rewrite therefore
@@ -35,8 +35,9 @@
 //     quote, glob, tilde, brace or `$` but its final `$?`) expands the same
 //     quoted and unquoted: `$?` is digits, and with no `IFS` in the text it is
 //     not split. Only an argument is quoted: an assignment word (`rc=$?`, or one
-//     after a reserved word, `then`, a redirection, a `{`, a declaring word or
-//     coproc) would become a command.
+//     after a reserved word, `then`, a redirection or a `{`) would become a
+//     command. The rule also declines after a declaring word, conservatively,
+//     and after `coproc`, where quoting changes meaning.
 // Residual risk the text cannot show: a function or alias from the user's
 // shell snapshot that sets an uppercase variable at runtime (`nvm use`, `conda
 // activate`, a zsh `chpwd` hook) between an assignment and its reference: a
