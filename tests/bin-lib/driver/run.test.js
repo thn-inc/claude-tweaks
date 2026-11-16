@@ -6701,7 +6701,7 @@ test('#5232 AC1.1: checkRecord prints no verdict for a stop before the reasons a
 });
 
 // #5584 on #5232's route: `drive.js --check #N` names its record on the command line, as `drive.js #N` does.
-async function typedCheck({ labels = TYPED_LABELS, env = {}, tty, readTypedCommand } = {}) {
+async function typedCheck({ labels = TYPED_LABELS, env = {}, tty, readTypedCommand, deps = {} } = {}) {
   const typedCalls = [];
   const h = harness({
     script: [typedIssue(labels), REAL_ADMISSION],
@@ -6709,6 +6709,7 @@ async function typedCheck({ labels = TYPED_LABELS, env = {}, tty, readTypedComma
       env,
       ...(tty === undefined ? {} : { stdinIsTTY: tty }),
       ...(readTypedCommand ? { readTypedCommand: (opts) => { typedCalls.push(opts); return readTypedCommand(opts); } } : {}),
+      ...deps,
     },
   });
   assert.equal(await run(['--check', '#7'], h.deps), 0);
@@ -6738,6 +6739,9 @@ test('(#5584) --check on a refused typed command stays refused and carries the t
   // A refusal that is not the grant refusal adds no words, as the stop detail adds none.
   const held = await typedCheck({ labels: [...TYPED_LABELS, 'auto:build', 'bot:blocked'], tty: false });
   assert.deepStrictEqual(held.verdict, { record: 7, admitted: false, reasons: [ADMISSION_REASONS.blocked] });
+  // An answer of none with words, refused by admission for another reason only: no words either.
+  const other = await typedCheck({ tty: false, deps: { evaluateAdmission: () => ({ admitted: false, reasons: ['express-driver is off'] }) } });
+  assert.deepStrictEqual(other.verdict, { record: 7, admitted: false, reasons: ['express-driver is off'] });
 });
 
 test('(#5584) --check on a labelled record is unchanged and never reads the typed command', async () => {
