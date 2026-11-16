@@ -35,7 +35,7 @@ const { resolveIntegrationBranch, preferRemoteTrackingRef, bareIntegrationName }
 const { runGit, FAILURE } = require('./git-exec');
 const { parseNameStatusZ } = require('../git-z');
 const { detectIntegrationModel, resolvePolicyConfig, HOOK_FORGE_PROBE_TIMEOUT_MS, FORGE_DEGRADE_MEMO_TTL_MS } = require('../policy-schema');
-const { resolveCeiling, bookkeepingPermissions } = require('../issues/autonomy');
+const { effectiveCeiling, bookkeepingPermissions } =require('../issues/autonomy');
 // toPosix: git always reports/accepts forward-slash paths regardless of
 // platform — used for GATE_COVERAGE's prose-facing rendering and for comparing
 // against `git diff --cached --name-only` output in isPolicyOnlyCommit below.
@@ -828,8 +828,9 @@ function checkPipelineShadowGuard(ctx, deps = {}) {
 // pinned against the console prose by tests/review-console-header-conformance.test.js.
 const REVIEW_CONSOLE_HEADER = 'Review Console';
 
-// Same fold console-resolve.js's readPolicy() applies (parity pinned by a test):
-// config.yml over policy.yml via resolvePolicyConfig, then resolveCeiling. Unlike
+// Same fold console-resolve.js's readPolicy() applies — both call effectiveCeiling,
+// the shared fold (parity also pinned by a test): config.yml over policy.yml via
+// resolvePolicyConfig, then effectiveCeiling (control mode composes there). Unlike
 // that CLI, a git failure throws here instead of letting resolvePolicyConfig guess
 // process.cwd() — the gate then fails open rather than reading some other
 // checkout's policy.yml.
@@ -838,9 +839,8 @@ function readConsoleCeiling(runDir, cwd) {
   if (top.failure) throw new Error(top.failure);
   const git = () => top.stdout;
   const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
-  const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['autonomy'] });
-  const entry = result.autonomy;
-  return resolveCeiling({ runConfig: entry && entry.error === undefined ? entry.value : null });
+  const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['autonomy', 'control-mode'] });
+  return effectiveCeiling({ autonomyEntry: result.autonomy, controlModeEntry: result['control-mode'] }).ceiling;
 }
 
 function checkReviewConsoleAskGate(ctx, deps = {}) {

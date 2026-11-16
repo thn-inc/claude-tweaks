@@ -43,7 +43,7 @@ const { resolveTarget } = require('./lib/stage-item/write');
 const { stackVerdicts } = require('./lib/staged-patch/stack-check');
 const { appendEntry, formatEntry } = require('./lib/log-decision/append');
 const { resolvePolicyConfig } = require('./lib/policy-schema');
-const { resolveCeiling, bookkeepingPermissions } = require('./lib/issues/autonomy');
+const { effectiveCeiling, bookkeepingPermissions } =require('./lib/issues/autonomy');
 const { extractPendingGrantedAt, partitionGrantComments } = require('./lib/issues/grant-maturation');
 const { writeFileAtomic } = require('./lib/atomic-write');
 const { unresolvedItems, splitMissing, formatResidueLines, consoleResidueItems } = require('./lib/console/residue');
@@ -119,14 +119,15 @@ function defaultExecFile(cmd, args, opts = {}) {
 function readPolicy({ execFile, cwd, runDir }) {
   const git = (args) => execFile('git', args, { cwd });
   const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
-  const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['autonomy', 'grant-veto-window-hours', 'merge-sensitive-paths'] });
+  const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['autonomy', 'control-mode', 'grant-veto-window-hours', 'merge-sensitive-paths'] });
   const valueOf = (key) => { const entry = result[key]; return entry && entry.error === undefined ? entry.value : null; };
   const raw = valueOf('grant-veto-window-hours');
   const veto = raw === null || raw === undefined ? NaN : Number(raw);
   // An unreadable `merge-sensitive-paths` is null, never []: the reference-repair floor holds on it (#4636).
   const sensitiveEntry = result['merge-sensitive-paths'];
   const sensitivePaths = sensitiveEntry && sensitiveEntry.error === undefined ? sensitivePathsOf(sensitiveEntry) : null;
-  return { ceiling: resolveCeiling({ runConfig: valueOf('autonomy') }), vetoWindowHours: Number.isFinite(veto) ? veto : undefined, sensitivePaths };
+  const { ceiling, controlMode, source: ceilingSource } = effectiveCeiling({ autonomyEntry: result.autonomy, controlModeEntry: result['control-mode'] });
+  return { ceiling, controlMode, ceilingSource, vetoWindowHours: Number.isFinite(veto) ? veto : undefined, sensitivePaths };
 }
 
 // Live grants per member — the Authorization read is never a snapshot
