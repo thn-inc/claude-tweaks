@@ -54,12 +54,17 @@ function orDash(value) {
   return value === null || value === undefined || value === '' ? '—' : value;
 }
 
+function filedAsCell(row) {
+  if (row.filedAs !== null) return `#${row.filedAs}`;
+  return row.digested ? 'digest' : '—';
+}
+
 function renderSection(section, rows) {
   const lines = [`#### ${section}`, '', '| Item | Path:Line | Severity | Lens | Recommendation | Filed as |', '|---|---|---|---|---|---|'];
   for (const r of rows) {
     const t = r.tiebreak;
     const where = t ? `${t.path}:${t.line}` : null;
-    lines.push(`| ${cell(r.id)} | ${cell(orDash(where))} | ${cell(orDash(t && t.severity))} | ${cell(orDash(t && t.lens))} | ${cell(orDash(t && t.recommendation))} | ${r.filedAs !== null ? `#${r.filedAs}` : r.digested ? 'digest' : '—'} |`);
+    lines.push(`| ${cell(r.id)} | ${cell(orDash(where))} | ${cell(orDash(t && t.severity))} | ${cell(orDash(t && t.lens))} | ${cell(orDash(t && t.recommendation))} | ${filedAsCell(r)} |`);
   }
   return lines;
 }

@@ -181,8 +181,7 @@ function readRunResidue(runDir, { readFile = defaultReadFile, readdir = defaultR
     // Valid JSON that is not an object (`null`, a number) is a malformed console, not "no residue".
     if (!parsed || typeof parsed !== 'object') { unreadable.push(p); continue; }
     let decisions = '';
-    const planned = (list) => Array.isArray(list) && list.length > 0;
-    if (planned(parsed.filings) || planned(parsed.digests)) {
+    if ([parsed.filings, parsed.digests].some((list) => Array.isArray(list) && list.length > 0)) {
       try { decisions = readFile(path.join(path.dirname(p), 'decisions.md')); } catch { decisions = ''; }
     }
     const { items, missing } = splitMissing(consoleResidueItems(parsed, decisions), path.dirname(p), exists);
@@ -226,6 +225,12 @@ function digestLogRemedy({ consoleDir, pluginRoot }) {
     + " (no `--spec`), hand-logging a held entry with the text '{item} already digested (work-fingerprint {fp})'";
 }
 
+function pendingKindOf(resolution) {
+  if (resolution === FILING_PENDING_RESOLUTION) return 'filing';
+  if (resolution === DIGEST_PENDING_RESOLUTION) return 'digest';
+  return null;
+}
+
 // One item line plus its pointer: a `cat` of the staged file, or for a
 // `decision:` item (no staged file — it lives in decisions.md) a `see` line.
 // An item without a usable id is still listed, as `(no id)`, but gets no
@@ -243,7 +248,7 @@ function itemLines(item, consoleDir, pluginRoot, printed = { rerun: false, kinds
   }
   const staged = path.join(consoleDir, 'staged', item.id);
   if (fs.existsSync(staged)) lines.push(`    cat "${staged}"`);
-  const kind = item.resolution === FILING_PENDING_RESOLUTION ? 'filing' : item.resolution === DIGEST_PENDING_RESOLUTION ? 'digest' : null;
+  const kind = pendingKindOf(item.resolution);
   if (kind) {
     const first = !printed.rerun;
     if (first) lines.push(`    re-run ${kind}: ${consoleRerunCommand({ consoleDir, pluginRoot })}`);

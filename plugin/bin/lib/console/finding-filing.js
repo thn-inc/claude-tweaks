@@ -78,6 +78,26 @@ function areaOfPath(p) {
   return area.toLowerCase();
 }
 
+// The Deliverables text and the Acceptance Criteria / Open Question field for one proposal shape.
+function taskSections({ verification, confirmed, where }) {
+  if (verification) {
+    return {
+      deliverables: `- [ ] at the integration-branch tip, quote the code at \`${where}\` and state whether the finding holds; fix it if it does, or close this record with that quoted evidence if it does not`,
+      field: { acceptanceCriteria: `- [ ] the record quotes the code at \`${where}\` as it reads at the integration-branch tip\n- [ ] the finding is fixed there, or this record is closed with that quoted evidence showing it does not hold` },
+    };
+  }
+  if (confirmed) {
+    return {
+      deliverables: '- [ ] fix the finding at the cited location',
+      field: { acceptanceCriteria: `- [ ] the finding no longer holds at \`${where}\`, or this record is closed with evidence that it never did` },
+    };
+  }
+  return {
+    deliverables: '- [ ] decide whether the finding holds at the cited location; fix it if it does, or close this record if it does not',
+    field: { openQuestion: `Does this finding hold at \`${where}\`?` },
+  };
+}
+
 // { item, finding, runId, verdict?, staged?, unattended? } -> { fingerprint, title, proposal, claimMissing }
 // `item` is a console item carrying `tiebreak`; `finding` is the review-findings.json entry whose
 // `id` equals item.tiebreak.id, or null. With no entry the claim is `tiebreak:{id}` and
@@ -126,6 +146,7 @@ function composeFindingProposal({
   const claimLines = claimMissing
     ? [`Review lens \`${oneLine(t.lens)}\` reported a finding at \`${where}\`${severityNote}. Its claim text is unavailable: the run's review-findings.json has no entry for \`${defuse(`tiebreak:${t.id}`)}\`, so only the verdict line in the run's decisions.md names it.`]
     : [`Review lens \`${oneLine(t.lens)}\` reported a finding at \`${where}\`${severityNote}. The claim follows.`, fencedBlock(defuse(hasStagedTitle ? staged.title : claim))];
+  const sections = taskSections({ verification, confirmed, where });
   const body = recordPayload({
     title,
     type: 'task',
@@ -140,16 +161,8 @@ function composeFindingProposal({
           ? `The tiebreak confirmed it on ${oneLine(verdict.mainSha)}: ${citation(verdict.evidence.path, verdict.evidence.line)} \`${oneLine(verdict.evidence.quote)}\`.`
           : `The tiebreak could not settle it: can't-tell (${oneLine(t.reason)}). Recommendation: ${oneLine(t.recommendation || 'none')}. Run: ${oneLine(runId)}.`,
       ],
-      deliverables: verification
-        ? `- [ ] at the integration-branch tip, quote the code at \`${where}\` and state whether the finding holds; fix it if it does, or close this record with that quoted evidence if it does not`
-        : confirmed
-          ? '- [ ] fix the finding at the cited location'
-          : '- [ ] decide whether the finding holds at the cited location; fix it if it does, or close this record if it does not',
-      ...(verification
-        ? { acceptanceCriteria: `- [ ] the record quotes the code at \`${where}\` as it reads at the integration-branch tip\n- [ ] the finding is fixed there, or this record is closed with that quoted evidence showing it does not hold` }
-        : confirmed
-          ? { acceptanceCriteria: `- [ ] the finding no longer holds at \`${where}\`, or this record is closed with evidence that it never did` }
-          : { openQuestion: `Does this finding hold at \`${where}\`?` }),
+      deliverables: sections.deliverables,
+      ...sections.field,
       releaseNote: 'No user-visible change.',
       filedBy: 'review-console',
       footer: '_Filed by `review-console` via specShapedBody._',
