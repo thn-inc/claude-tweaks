@@ -25,6 +25,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const readline = require('readline');
+const { StringDecoder } = require('string_decoder');
 const { lstatType, resolveLeaf, canonicalRealpath, isAncestorOrSelf } = require('../path-guard');
 const { isPathContained } = require('../shared-primitives');
 const { isProcedurePath, classifyToolCall } = require('./turn-class');
@@ -213,6 +214,49 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
   return rows;
 }
 
+// path, promptId, { fsImpl?, chunkBytes? } -> rows (#5584). Synchronous: the
+// parsed lines whose promptId equals promptId exactly, in file order. Reads in
+// chunkBytes chunks, never the whole file at once, so a 100 MB transcript or a
+// line holding a huge message costs one line of memory at most. Only a line
+// containing promptId as a substring is parsed; a line that does not parse is
+// skipped. Stat failures throw as statTranscriptOrThrow does (ENOENT, EISDIR,
+// ...); a read failure after the stat propagates with its own code.
+function readPromptRows(filePath, promptId, { fsImpl = fs, chunkBytes = 65536 } = {}) {
+  statTranscriptOrThrow(fsImpl, filePath);
+  const rows = [];
+  const take = (line) => {
+    if (!line.includes(promptId)) return;
+    let entry;
+    try { entry = JSON.parse(line); } catch { return; }
+    if (entry && entry.promptId === promptId) rows.push(entry);
+  };
+  const fd = fsImpl.openSync(filePath, 'r');
+  try {
+    const buf = Buffer.alloc(chunkBytes);
+    const decoder = new StringDecoder('utf8'); // holds a multi-byte character split across chunks
+    let carry = '';
+    let pos = 0;
+    for (;;) {
+      const n = fsImpl.readSync(fd, buf, 0, chunkBytes, pos);
+      if (n === 0) break;
+      pos += n;
+      const text = decoder.write(buf.subarray(0, n));
+      let start = 0;
+      let nl;
+      while ((nl = text.indexOf('\n', start)) !== -1) {
+        take(carry + text.slice(start, nl));
+        carry = '';
+        start = nl + 1;
+      }
+      carry += text.slice(start);
+    }
+    take(carry + decoder.end());
+  } finally {
+    fsImpl.closeSync(fd);
+  }
+  return rows;
+}
+
 // transcriptPath -> the session's {sessionId}/subagents directory: the sibling
 // directory for a main transcript, or the containing directory for a
 // subagent's own agent-{id}.jsonl (what /dispatch passes via --transcript),
@@ -372,4 +416,4 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
   return { items: built.map((x) => x.d), notFound: null, excludedOutsideWindow };
 }
 
-module.exports = { TRANSCRIPT_SLUG_RULE, slugForCwd, locateTranscripts, readUsage, isProcedurePath, resultBytes, statTranscriptOrThrow, subagentsDirFor, readDispatches };
+module.exports = { TRANSCRIPT_SLUG_RULE, slugForCwd, locateTranscripts, readUsage, readPromptRows, isProcedurePath, resultBytes, statTranscriptOrThrow, subagentsDirFor, readDispatches };
