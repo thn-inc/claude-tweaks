@@ -5,7 +5,8 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
-const { DECISION_FACT_KIND, DECISION_ORIGINS, DECISION_FACT_FIELDS, decisionFactFor, decisionOrigin } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'decision-facts'));
+const { DECISION_FACT_KIND, DECISION_ORIGINS, DECISION_FACT_FIELDS, decisionFactFor, decisionOrigin, settleOpenDecisions } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'decision-facts'));
+const { validateShaped } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'compose-record', 'compose'));
 
 // Live prose read: the table is the schema's single owner and the module is its code twin [IL-80 carve-out].
 const PACKET = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', '_shared', 'acceptance-packet.md'), 'utf8');
@@ -116,4 +117,57 @@ test('suggestedResolution: refused and any other resolution', () => {
   const mk = (resolution) => decisionFactFor({ id: 'a', section: 'Queue writes', resolution, reason: 'r' }, { runDir, staged: false }).suggestedResolution;
   assert.strictEqual(mk('refused'), 'supply a Defer-reason, or decline');
   assert.strictEqual(mk('weird'), 'decide, then apply or decline');
+});
+
+const PACKET_FACTS = { facts: [
+  // The ids gather really produces: `:` is a safe character in encodeFactKey, so it is not escaped.
+  { id: 'decision:review:review-contested-1.md', kind: 'decision', status: 'passed', source: 'decision-items', text: 'Contested findings: review-contested-1.md — debate inconclusive' },
+  { id: 'decision:console:sdd-ruling-2.md', kind: 'decision', status: 'passed', source: 'decision-items', text: 'Pending review: sdd-ruling-2.md — sdd-ruling-needs-human-decision' },
+  { id: 'change:a.js', kind: 'change', status: 'passed', source: 'git' },
+] };
+
+test('AC4.8: settleOpenDecisions files one spec-shaped record per decision in an approved packet', () => {
+  const plans = settleOpenDecisions(PACKET_FACTS);
+  assert.deepStrictEqual(plans.map((p) => p.factId), ['decision:review:review-contested-1.md', 'decision:console:sdd-ruling-2.md']);
+  for (const p of plans) {
+    const body = p.proposal.split('\n\n').slice(1).join('\n\n');
+    assert.deepStrictEqual(validateShaped(body), { ok: true, gaps: [] });
+    assert.match(p.proposal, /^Defer-reason: needs-human-decision$/m);
+    assert.match(p.proposal, /^Type: task$/m);
+    assert.match(p.proposal, /^Labels: needs:definition$/m);
+    assert.ok(p.proposal.startsWith(`Title: ${p.title}\n`));
+    assert.match(p.title, /^Packet decision left open: /);
+  }
+});
+
+test('AC4.8: a decision carrying a stray answer field is still filed — no answer predicate', () => {
+  assert.strictEqual(settleOpenDecisions([{ ...PACKET_FACTS.facts[1], answer: 'drop it' }]).length, 1);
+});
+
+test('AC4.8: settleOpenDecisions files nothing when the packet holds no decision', () => {
+  assert.deepStrictEqual(settleOpenDecisions({ facts: [PACKET_FACTS.facts[2]] }), []);
+  assert.deepStrictEqual(settleOpenDecisions([]), []);
+  assert.deepStrictEqual(settleOpenDecisions(null), []);
+  assert.deepStrictEqual(settleOpenDecisions('x'), []);
+  assert.deepStrictEqual(settleOpenDecisions({ facts: 'x' }), []);
+});
+
+test('AC4.9: an unanswered decision never blocks a merge — plans only, no gating field', () => {
+  for (const p of settleOpenDecisions(PACKET_FACTS)) assert.deepStrictEqual(Object.keys(p).sort(), ['factId', 'fingerprint', 'proposal', 'title']);
+});
+
+test('settleOpenDecisions is stable: the same fact id gives the same fingerprint, distinct ids differ', () => {
+  const a = settleOpenDecisions(PACKET_FACTS);
+  const b = settleOpenDecisions(PACKET_FACTS);
+  assert.deepStrictEqual(a.map((p) => p.fingerprint), b.map((p) => p.fingerprint));
+  assert.match(a[0].fingerprint, /^packetdecision-/);
+  assert.notStrictEqual(a[0].fingerprint, a[1].fingerprint);
+});
+
+test('settleOpenDecisions: a long one-line title is capped at a word boundary and the text is fenced', () => {
+  const text = `Pending review: ${'word '.repeat(40)}end\nsecond line`;
+  const [p] = settleOpenDecisions([{ id: 'decision:console:x', kind: 'decision', text }]);
+  const claim = p.title.slice('Packet decision left open: '.length);
+  assert.ok(claim.length <= 80 && claim.endsWith('…') && !claim.includes('\n'));
+  assert.ok(p.proposal.includes('second line'));
 });
