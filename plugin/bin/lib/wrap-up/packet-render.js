@@ -374,10 +374,11 @@ const SECTION_BODIES = Object.freeze({
   // No decisions omits the section, heading included.
   decisions: ({ ofKind }) => ofKind('decision').map((fact) => item(`- ${factText(fact)}${decideSuffix(fact)}`)),
   // The bare `ref: {sha}` line is what accept-entry.js's refreshPacket reads as the stored
-  // ref (REF_LINE_RE), so it carries no list marker or code span.
+  // ref (REF_LINE_RE), so it carries no list marker or code span. The blank line above it
+  // makes it its own paragraph; refreshPacket writes the same layout.
   deploy: ({ deploy }) => [
     note(screenedInline(deploy?.text ?? '', WITHHELD_TEXT) || `target: ${screenedInline(deploy?.target ?? 'local', WITHHELD_TEXT)}`),
-    ...(typeof deploy?.ref === 'string' && deploy.ref !== '' ? [note(`ref: ${screenedInline(deploy.ref, WITHHELD_TEXT)}`)] : []),
+    ...(typeof deploy?.ref === 'string' && deploy.ref !== '' ? [note(''), note(`ref: ${screenedInline(deploy.ref, WITHHELD_TEXT)}`)] : []),
   ],
 });
 

@@ -454,9 +454,10 @@ test('AC2.5: render emits the stored ref', () => {
   assert.deepEqual(sectionLines(withRef, 'Deploy status'), ['target: dev, confirmed live', 'ref: 0123abc']);
   const lines = withRef.split('\n');
   const at = lines.indexOf('### Deploy status');
-  assert.deepEqual(lines.slice(at + 1, at + 3), ['target: dev, confirmed live', 'ref: 0123abc']);
+  // A blank line between them, so GitHub renders the ref as its own paragraph.
+  assert.deepEqual(lines.slice(at + 1, at + 4), ['target: dev, confirmed live', '', 'ref: 0123abc']);
   const withoutRef = render([fact('deploy:status', 'passed', deploy)]).markdown;
-  assert.equal(withRef, withoutRef.replace('target: dev, confirmed live', 'target: dev, confirmed live\nref: 0123abc'));
+  assert.equal(withRef, withoutRef.replace('target: dev, confirmed live', 'target: dev, confirmed live\n\nref: 0123abc'));
   assert.deepEqual(sectionLines(withoutRef, 'Deploy status'), ['target: dev, confirmed live']);
 });
 
@@ -469,6 +470,9 @@ test('AC2.7: render output round-trips through refresh', () => {
   assert.ok(result.refreshed.length > 0);
   assert.ok(result.refreshed.includes('deploy-status'));
   assert.deepEqual(sectionLines(result.body, 'Deploy status'), ['target: dev, confirmed live', 'ref: bbb2222']);
+  // The refreshed section keeps the rendered layout: text, a blank line, the ref line.
+  const at = result.body.split('\n').indexOf('### Deploy status');
+  assert.deepEqual(result.body.split('\n').slice(at + 1, at + 4), ['target: dev, confirmed live', '', 'ref: bbb2222']);
   // A packet rendered with no ref has no stored value, so it refreshes as unverified.
   const { markdown: old } = render([fact('deploy:status', 'passed', { target: 'dev', live: false, text: 'target: dev, not confirmed live' })]);
   const oldResult = refreshPacket(old, { ref: 'bbb2222', text: 'target: dev, confirmed live' });

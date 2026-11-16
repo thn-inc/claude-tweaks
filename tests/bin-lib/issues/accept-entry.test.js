@@ -383,6 +383,20 @@ test('a refresh keeps the poster footer and text a human appended below the pack
   assert.deepEqual(sectionOf(body, 'Deploy status').split('\n---\n')[0].split('\n').filter(Boolean), ['target: dev, confirmed live', 'ref: bbb2222']);
 });
 
+test('a packet in the earlier adjacent layout (no blank line before ref:) still reads its stored ref', () => {
+  const human = '\n\nA reviewer note.\n';
+  const current = `${rendered([devDeploy('aaa1111')], { poster: 'the bot' })}${human}`;
+  assert.ok(current.includes('target: dev, not confirmed live\n\nref: aaa1111\n'));
+  const adjacent = current.replace('target: dev, not confirmed live\n\nref: aaa1111', 'target: dev, not confirmed live\nref: aaa1111');
+  assert.notEqual(adjacent, current);
+  assert.deepEqual(refreshPacket(adjacent, { ...FRESH, ref: 'aaa1111' }), { body: adjacent, refreshed: [], unverified: [] });
+  const { body, refreshed } = refreshPacket(adjacent, FRESH);
+  assert.deepEqual(refreshed, ['deploy-status']);
+  // Refreshed into the current layout, with the footer and the human tail untouched.
+  assert.ok(body.includes('### Deploy status\ntarget: dev, confirmed live\n\nref: bbb2222\n'), body);
+  assert.equal(body.slice(body.indexOf('\n---\n')), adjacent.slice(adjacent.indexOf('\n---\n')));
+});
+
 test('a refresh with no poster keeps text a human appended after the ref line', () => {
   const human = '\n\nA reviewer note added below the packet.\n';
   const packetText = rendered([devDeploy('aaa1111')]);

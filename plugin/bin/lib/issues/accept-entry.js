@@ -173,13 +173,16 @@ function sameCommit(stored, ref) {
 // The Deploy status field replaced by the source's text and one `ref:` line. The renderer
 // writes the stored ref line last, so the field runs from the section's first non-blank line
 // through it: whatever follows it (a human's text, the poster footer) and the blank lines
-// before the field stay, so the bytes around it do not move.
+// before the field stay, so the bytes around it do not move. It is written in packet-render.js's
+// layout, the ref line a paragraph of its own under a blank line, whichever layout it replaces
+// (an earlier render put the ref line directly under the text).
 function replaceDeploy(lines, range, refIndex, source) {
   const eol = lines[range.start - 1].eol;
   let first = range.start;
   while (first < refIndex && lines[first].text.trim() === '') first += 1;
   const text = source.text.split(/\r?\n/).filter((line) => !REF_LINE_RE.test(line.trim()));
-  const fresh = [...text, `ref: ${source.ref}`].map((line) => ({ text: line, eol }));
+  while (text.length > 0 && text.at(-1).trim() === '') text.pop();
+  const fresh = [...(text.length > 0 ? [...text, ''] : []), `ref: ${source.ref}`].map((line) => ({ text: line, eol }));
   return [...lines.slice(0, first), ...fresh, ...lines.slice(refIndex + 1)];
 }
 
