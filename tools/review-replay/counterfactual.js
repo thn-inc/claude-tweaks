@@ -122,8 +122,8 @@ function lensPairs(r, files, fs) {
     pair[a.side] = { rows: parsed ? parsed.rows : null, skipped: parsed ? parsed.skipped : 0 };
     by.set(a.lens, pair);
   }
-  const entries = [...by.entries()];
-  return { pairs: entries.filter(([, pair]) => pair.A && pair.B), unpaired: entries.filter(([, pair]) => !(pair.A && pair.B)).length, extra };
+  const pairs = [...by.entries()].filter(([, pair]) => pair.A && pair.B);
+  return { pairs, unpaired: by.size - pairs.length, extra };
 }
 
 function counterfactual(opts, deps) {

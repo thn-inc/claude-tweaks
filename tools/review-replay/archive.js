@@ -8,9 +8,9 @@ const { split } = require('./util.js');
 // Every marker is matched from the start of the line with no double quote before it: the resolver quotes source text
 // ("{quote}") after its own words, so a quoted line that reads like a verdict is never one.
 const BEFORE_QUOTE = '^[^"]*?';
-const CONSOLE_ITEM = /^[^"]*?Console item/;
+const CONSOLE_ITEM = new RegExp(`${BEFORE_QUOTE}Console item`);
 const LOCATION = '"([^"]+)" finding (\\S+):(\\d+)';
-const TIEBREAK_ID = /^[^"]*?\bTiebreak tiebreak:([0-9a-f]{12}):/;
+const TIEBREAK_ID = new RegExp(`${BEFORE_QUOTE}\\bTiebreak tiebreak:([0-9a-f]{12}):`);
 const PAIR_RE = new RegExp(`${BEFORE_QUOTE}Reproduction: lens ${LOCATION} reproduced\\b`);
 const NOT_REPRODUCED_RE = new RegExp(`${BEFORE_QUOTE}lens ${LOCATION} not reproduced`);
 const CONFIRMED_RE = new RegExp(`${BEFORE_QUOTE}lens ${LOCATION} confirmed by tiebreak(?::([0-9a-f]{12}))?`);
