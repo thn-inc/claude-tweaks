@@ -298,7 +298,7 @@ never suggest bypassing protection.
 
 ## Step 3: Attempt auto-merge, degrading on specific failure signatures
 
-**Creation-time caller:** `tidy/SKILL.md`'s Step 7.5 `pr-first` branch invokes only this step's initial compose + `gh pr merge --auto` fences at PR-creation time, with the degrade chain below replaced by leave-unarmed + report — see that step's own text for the full routing.
+**Creation-time caller:** tidy's Step 7.5 arm runs Step 2.5, then these fences where it routes; Red path, Conflict path and ready+comment degrades become leave-unarmed + report (`tidy/step-7-5-worktree-always.md`).
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --keep-open {keep-open} --pr {pr-number} --out-dir "{subject-dir}"

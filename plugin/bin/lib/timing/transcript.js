@@ -133,7 +133,13 @@ function resultText(content) {
   return '';
 }
 
-// path, { fsImpl?, worktree? } -> Promise<rows>. Streams line by line;
+function abortError() {
+  const e = new Error('transcript read aborted');
+  e.code = 'ABORT_ERR';
+  return e;
+}
+
+// path, { fsImpl?, worktree?, signal? } -> Promise<rows>. Streams line by line;
 // malformed lines (bad JSON, no timestamp, no message.role) are skipped.
 // Every row also carries (#4029): turnClasses ({ [class]: count }, sparse — a
 // user row counts its tool_result blocks by class, an assistant row is {}),
@@ -152,7 +158,12 @@ function resultText(content) {
 // succeeds but the subsequent read fails (e.g. a mode-000 file, or a
 // mid-file I/O error) — with whatever code the stream/readline error
 // carries.
-async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
+// `signal` (an AbortSignal, optional): when it aborts — or is already aborted —
+// the readline is closed, the stream destroyed and the promise rejects with an
+// Error whose code is 'ABORT_ERR' (#5555), so a deadline-bound caller never
+// leaves a stream open. Without it nothing changes.
+async function readUsage(filePath, { fsImpl = fs, worktree = null, signal = null } = {}) {
+  if (signal && signal.aborted) throw abortError();
   statTranscriptOrThrow(fsImpl, filePath);
   const rows = [];
   const procedureReads = new Set(); // tool_use ids of Reads on procedure files
@@ -166,9 +177,15 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
   const firstRowById = new Map();
   const stream = fsImpl.createReadStream(filePath, { encoding: 'utf8' });
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+  let onAbort = null;
   await new Promise((resolve, reject) => {
     stream.on('error', reject);
     rl.on('error', reject);
+    if (signal) {
+      // reject first: rl.close() emits 'close' synchronously, which would resolve.
+      onAbort = () => { reject(abortError()); rl.close(); stream.destroy(); };
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
     rl.on('line', (line) => {
       if (!line.trim()) return;
       let entry;
@@ -226,7 +243,7 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
       rows.push(row);
     });
     rl.on('close', resolve);
-  });
+  }).finally(() => { if (onAbort) signal.removeEventListener('abort', onAbort); });
   // After the stream closes, so a turn's first row holds the per-id max.
   for (const r of rows) if (r.turnStart) r.contextTokens = r.inputTokens + r.cacheRead + r.cacheCreate;
   return rows;
@@ -298,7 +315,7 @@ function transcriptModelOf(rows) {
 // workflow directory that is a symlink, cannot be read, or holds no agent
 // files — and a run file whose agentCount disagrees with the agents found — is
 // one dirNotes string (always present, [] when none). Never throws.
-async function readDispatches(subagentsDir, { fsImpl = fs, window = null, worktree = null } = {}) {
+async function readDispatches(subagentsDir, { fsImpl = fs, window = null, worktree = null, signal = null } = {}) {
   // Absent or unreadable falls through: readdirSync below names the code.
   if (lstatType(subagentsDir, { fsImpl }).type === 'symlink') {
     return { items: [], notFound: `subagents/ directory is a symlink (not followed) at ${subagentsDir}`, excludedOutsideWindow: 0, dirNotes: [] };
@@ -313,10 +330,10 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null, worktr
       : `subagents/ directory not readable (${code}) at ${subagentsDir}`;
     return { items: [], notFound, excludedOutsideWindow: 0, dirNotes: [] };
   }
-  const scans = [await scanAgentDir(subagentsDir, names, { fsImpl, window, worktree, workflowRunId: null })];
+  const scans = [await scanAgentDir(subagentsDir, names, { fsImpl, window, worktree, signal, workflowRunId: null })];
   const dirNotes = [];
   // Decided on the listing already taken: no workflows entry, no extra fs call.
-  if (names.includes('workflows')) await scanWorkflows(subagentsDir, { fsImpl, window, worktree, scans, dirNotes });
+  if (names.includes('workflows')) await scanWorkflows(subagentsDir, { fsImpl, window, worktree, signal, scans, dirNotes });
   if (!scans.some((s) => s.ids > 0)) return { items: [], notFound: `no agent-* transcripts in ${subagentsDir}`, excludedOutsideWindow: 0, dirNotes };
   const built = [].concat(...scans.map((s) => s.built));
   built.sort((a, b) => {
@@ -333,7 +350,7 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null, worktr
 // Scans subagents/workflows/ (the caller saw it listed): every run directory
 // in it goes through scanAgentDir, pushing onto scans; every problem is a
 // dirNotes string. Nothing symlinked is followed; plain files are ignored.
-async function scanWorkflows(subagentsDir, { fsImpl, window, worktree, scans, dirNotes }) {
+async function scanWorkflows(subagentsDir, { fsImpl, window, worktree, signal, scans, dirNotes }) {
   const wfDir = path.join(subagentsDir, 'workflows');
   const wt = lstatType(wfDir, { fsImpl });
   if (wt.type === 'symlink') { dirNotes.push(`workflows/ directory is a symlink (not followed) at ${wfDir}`); return; }
@@ -359,7 +376,7 @@ async function scanWorkflows(subagentsDir, { fsImpl, window, worktree, scans, di
       dirNotes.push(`workflow run directory not readable (${(err && err.code) || 'EUNKNOWN'}) at ${runPath}`);
       continue;
     }
-    const scan = await scanAgentDir(runPath, runNames, { fsImpl, window, worktree, workflowRunId: runId });
+    const scan = await scanAgentDir(runPath, runNames, { fsImpl, window, worktree, signal, workflowRunId: runId });
     if (scan.ids === 0) { dirNotes.push(`no agent-* transcripts in ${runPath}`); continue; }
     scans.push(scan);
     // Cross-check against the run file Claude Code writes beside the session's
@@ -374,9 +391,9 @@ async function scanWorkflows(subagentsDir, { fsImpl, window, worktree, scans, di
   }
 }
 
-// dir, names (its listing), { fsImpl, window, worktree, workflowRunId } ->
+// dir, names (its listing), { fsImpl, window, worktree, signal, workflowRunId } ->
 // Promise<{ built: [{ d, startMs }], ids: number, excluded: number }>.
-async function scanAgentDir(dir, names, { fsImpl, window, worktree, workflowRunId }) {
+async function scanAgentDir(dir, names, { fsImpl, window, worktree, signal = null, workflowRunId }) {
   // A symlinked agent file could point outside the projects root, so it is
   // never followed (the lstat twin of locateTranscripts' realpath containment,
   // IL-150), and an entry lstat cannot prove regular is treated the same way
@@ -424,7 +441,7 @@ async function scanAgentDir(dir, names, { fsImpl, window, worktree, workflowRunI
       fail(`transcript not readable (${skipped.get(jsonlName)})`);
     } else {
       try {
-        rows = await readUsage(d.transcriptPath, { fsImpl, worktree });
+        rows = await readUsage(d.transcriptPath, { fsImpl, worktree, signal });
       } catch (err) {
         fail(`transcript not readable (${(err && err.code) || 'EUNKNOWN'})`);
       }
