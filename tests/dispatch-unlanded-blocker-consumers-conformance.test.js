@@ -25,7 +25,6 @@ const PLUGIN_STRUCTURE = readText(path.join(ROOT, 'docs', 'plugin-structure.md')
 
 const collapse = (s) => s.replace(/\s+/g, ' ');
 
-
 // Each marker must exist before the order is checked, so a reworded marker fails as missing, not as
 // a vacuous pass.
 function requireOrder(text, markers) {
