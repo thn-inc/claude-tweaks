@@ -21,12 +21,11 @@ may legitimately already be on `origin` — this run's own earlier push. The dis
 a remote tip contained in local `HEAD` is this branch's own history and the push fast-forwards it;
 a remote tip not contained in `HEAD` would reject the push.
 
-**Procedure**, via `plugin/bin/lib/worktree/remote-branch-collision.js`'s
-`classifyRemoteBranch({ branch })` (unit-tested,
-`tests/bin-lib/worktree/remote-branch-collision.test.js`), with `{branch}` the adopted worktree's
+**Procedure**, via `plugin/bin/remote-branch-collision.js`, the CLI over
+`plugin/bin/lib/worktree/remote-branch-collision.js`'s `checkAdoptedBranch({ branch, repo, records })`
+(unit-tested, `tests/bin-lib/worktree/remote-branch-collision.test.js` and
+`tests/bin-lib/worktree/remote-branch-collision-cli.test.js`), with `{branch}` the adopted worktree's
 actual current branch (`git branch --show-current`) — never a name this run would have minted.
-
-The heredoc delimiter is unquoted so `${CLAUDE_PLUGIN_ROOT}` expands — keep the body free of any other `$` or unescaped backtick, per `bin/node-eval-file.js`'s header.
 
 Resolve its two inputs first, from the worktree, each as its own plain call — the worktree guard
 refuses `git` inside `$(...)` (`_shared/scratch-worktree.md` §7). `{branch}` is what the first
@@ -41,32 +40,18 @@ git branch --show-current
 gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null
 ```
 
-Then run the check from the worktree as one command, both values pasted in literally — the module
-has no CLI of its own, and a hand-rolled multi-line `node -e` silently no-ops on Windows Git Bash
-(`bin/node-eval-file.js`'s header), which would read as a clean result:
+Then run the check from the worktree as one plain command, all three values pasted in literally — an
+empty `{repo}` or `{records}` stays `""`:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "{branch}" "{repo}" "{records}" <<NODE_EVAL_EOF
-const m = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/worktree/remote-branch-collision.js');
-const [branch, repo, recordList] = process.argv.slice(1);
-const r = m.classifyRemoteBranch({ branch });
-const out = { state: r.state, reason: r.reason || null, remoteSha: r.remoteSha || null };
-if (r.state === 'foreign' || (r.state === 'unreachable' && r.remoteSha)) {
-  const reason = r.state === 'foreign' ? null : r.reason;
-  const prLookup = repo ? m.findPrsForBranch({ branch, repo }) : null;
-  const records = String(recordList || '').split(',').map(Number).filter(Number.isInteger);
-  const prior = r.state === 'foreign' ? m.findPriorAttemptPr({ remoteSha: r.remoteSha, prLookup, records, repo }) : null;
-  if (prior) { out.state = 'prior-attempt'; out.pr = prior; }
-  else out.card = m.formatStopCard({ branch, remoteSha: r.remoteSha, prLookup, reason });
-}
-console.log(JSON.stringify(out));
-NODE_EVAL_EOF
+node "${CLAUDE_PLUGIN_ROOT}/bin/remote-branch-collision.js" --branch "{branch}" --repo "{repo}" --records "{records}"
 ```
 
 `{records}` is this run's record numbers, comma-joined (`3887`, or `3887,3890` for a bundle) — the
 targets the run was invoked with.
 
-It prints one JSON line. No output, or output that does not parse, is not a result: re-run once,
+It prints one JSON line. Exit 2, with a usage line on stderr, is a malformed call: correct the call,
+never re-run it unchanged. No output, or output that does not parse, is not a result: re-run once,
 then treat it as `unreachable` with reason `no-output` (item 3). Branch on `state`:
 
 1. `absent` — no such branch on `origin`. Nothing to do; the push creates it.
