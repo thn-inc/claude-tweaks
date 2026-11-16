@@ -17,7 +17,7 @@ const { classifyClaimBlob } = require('../issues/claims');
 const { RUN_ID_SHAPE } = require('../issues/claim-store');
 const { parseEntry } = require('../log-decision/append');
 const { HARNESS_WORKTREE_DIR } = require('../hooks/worktree-reap');
-const { REMEDIES } = require('../issues/build-authority');
+const { remedyFor } = require('../issues/build-authority');
 
 // The vocabulary has one home. `concurrent-resume` and `stale-bound-run` are produced only by
 // bin/dispatch-resume.js's run-dir scan (one this pure function cannot make).
@@ -351,9 +351,7 @@ function resumeEligibility(input) {
       return refuse('not-granted', `#${n} carries bot:blocked — re-grant it with /claude-tweaks:backlog refine #${n}, then run ${resumeCmd}`);
     }
     // With reason words, the first word's remedy (the table the queue pull's line uses); without, the grant.
-    const remedy = Object.hasOwn(REMEDIES, words[0])
-      ? REMEDIES[words[0]].split('#N').join(`#${n}`)
-      : `re-grant it with /claude-tweaks:backlog refine #${n}`;
+    const remedy = remedyFor(words, n, `re-grant it with /claude-tweaks:backlog refine #${n}`);
     return refuse('not-granted', `#${n} lacks auto:build${notAccepted} — ${remedy}, then run ${resumeCmd}`);
   }
   if (labelList.includes('bot:in-progress') && claimState !== 'stale') {

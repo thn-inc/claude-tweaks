@@ -360,7 +360,9 @@ function makeContext(options = {}, deps = {}) {
 //     filter would drop it);
 //   - `typed`, AUTO line written to options.runDir's decisions.md: the admit line, and the record is
 //     admitted (only once that line is written);
-//   - `typed`, AUTO write failed: the not-admitted line (the cause goes to stderr).
+//   - `typed`, AUTO write failed: the not-admitted line (the cause goes to stderr);
+//   - `typed` and admitted, but the queue-file write that makes it real failed: a second not-admitted
+//     line and a corrective decisions.md line, and the record leaves state.typedNumbers.
 // Nothing here writes a label. Under the files transport nothing is fetched: one line per named
 // number says the label is required.
 function admitNamed(ctx, queueFile) {
@@ -393,6 +395,8 @@ function admitNamed(ctx, queueFile) {
         named: true,
         env,
         typedCommand: () => deps.readTypedCommand({ number, env, now: deps.now(), tmpdir: ctx.options.tmpdir || envTmpdir(env) }),
+        // Never the terminal route: only drive.js is run with a person at a terminal, so outside a
+        // session the pull answers none (not-a-terminal) by design (build-authority.js header).
         stdinIsTTY: false,
       });
     }
@@ -419,7 +423,17 @@ function admitNamed(ctx, queueFile) {
       : formatAuthorityLine(number, result);
     deps.stdout(`${line}\n`);
   }
-  if (admitted.length > 0) put(ctx, queueFile, JSON.stringify([...pool.value, ...admitted]));
+  if (admitted.length === 0) return;
+  // The admit line and AUTO line above were written before this write: a failed write must not leave
+  // a record reported admitted that never reaches the queue, so each is un-admitted and says so.
+  if (put(ctx, queueFile, JSON.stringify([...pool.value, ...admitted])).ok) return;
+  for (const raw of admitted) {
+    state.typedNumbers.delete(raw.number);
+    deps.stdout(`#${raw.number} not admitted: the queue file could not be written\n`);
+    step(ctx, `named #${raw.number} rollback`, () => deps.appendDecision({
+      runDir: ctx.options.runDir, text: `#${raw.number} not admitted after all: the queue file could not be written`, now: deps.now(),
+    }));
+  }
 }
 
 // One named record as `gh issue view` returns it, or null when the fetch failed or its answer is not

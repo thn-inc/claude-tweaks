@@ -160,6 +160,10 @@ function readPointer({ sessionId, number, tmpdir = os.tmpdir(), fsImpl = fs } = 
   return { ok: true, promptId: entry.promptId, at: entry.at };
 }
 
+// The command form, the human markers below and SCHEDULE_KEYS are observed rows, not a documented
+// Claude Code contract: docs/hooks.md ("The typed-dispatch pointer", the probe table, the transcript
+// fields) holds the evidence and tools/typed-command-probe.js re-runs it after a Claude Code upgrade.
+// A drift refuses every typed dispatch (not-typed / other-command), never widens it.
 const COMMAND_HEAD = '<command-message>claude-tweaks:dispatch</command-message>\n'
   + '<command-name>/claude-tweaks:dispatch</command-name>\n<command-args>';
 const COMMAND_TAIL = '</command-args>';
@@ -176,7 +180,9 @@ function isCandidateRow(row, { sessionId, promptId } = {}) {
   return !(Array.isArray(msg.content) && msg.content.some((b) => isPlainObject(b) && b.type === 'tool_result'));
 }
 
-// The transcript marks the row as typed by a person.
+// The transcript marks the row as typed by a person. `isMeta` and `promptSource` may be absent because
+// the typed command row (probe case (a)) carries neither; a present wrong value refuses. The scheduled
+// (g) and delivered (h) rows carry SCHEDULE_KEYS, so a version that marked one human is still refused.
 function rowMarkersPass(row) {
   if (!isPlainObject(row)) return false;
   if (row.turnOrigin !== 'human') return false;
@@ -239,7 +245,8 @@ function readTypedCommand({ number, env, now, tmpdir = os.tmpdir(), homeDir = os
 
   let rows;
   try {
-    rows = (readRows || transcript.readPromptRows)(found[0].path, promptId, { fsImpl });
+    // `keep` drops the turn's tool-result rows while reading, so they are never held (they share the prompt id).
+    rows = (readRows || transcript.readPromptRows)(found[0].path, promptId, { fsImpl, keep: (row) => isCandidateRow(row, { sessionId, promptId }) });
   } catch {
     return none('transcript-unreadable');
   }

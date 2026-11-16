@@ -36,7 +36,11 @@
 //   5. the transcript check (`typedCommand`) answers typed   (its own reason
 //      word, else not-typed) — asked only when 1-4 all hold, at most once.
 // Terminal conditions (no session, so no transcript is read): stdin is a
-// terminal (not-a-terminal), CI unset or empty (ci), conditions 3 and 4.
+// terminal (not-a-terminal), CI unset or empty (ci), conditions 3 and 4. A
+// terminal on stdin is the only sign of a person left when there is no session
+// to read a transcript from, and only drive.js is run this way: the queue pull
+// and resume pass stdinIsTTY false, so outside a session they answer none.
+// Conditions 3 and 4 still apply: a hub's or a launcher's run is not a person's.
 //
 // Every comparison is exact string equality: an unset, empty, other-case,
 // trailing-space or trailing-newline value fails its condition. A value no
@@ -166,6 +170,14 @@ function resolveBuildAuthority({ labels, named, env, typedCommand, stdinIsTTY } 
   return inSession ? readTypedAnswer(typedCommand) : { authority: 'typed', reasons: [] };
 }
 
+// The remedy for a refusal's first reason word, `#N` replaced with the record number. With no word, or
+// one the table does not list, `fallback` (already naming the record) is the remedy: the queue pull
+// falls back to the grant, resume to a re-grant, which is why the fallback is the caller's.
+function remedyFor(words, number, fallback) {
+  const first = Array.isArray(words) ? words[0] : undefined;
+  return Object.hasOwn(REMEDIES, first) ? REMEDIES[first].split('#N').join(`#${number}`) : fallback;
+}
+
 // The one line a caller prints for a named record without the label; null for
 // a `label` answer, which prints nothing. A `none` answer with no reason words
 // prints the fixed line with the grant remedy, never an empty `()`.
@@ -174,9 +186,9 @@ function formatAuthorityLine(number, { authority, reasons } = {}) {
   const head = `#${number} has no auto:build label — `;
   if (authority === 'typed') return `${head}built on the typed /claude-tweaks:dispatch command`;
   const words = Array.isArray(reasons) ? reasons : [];
-  const remedy = (Object.hasOwn(REMEDIES, words[0]) ? REMEDIES[words[0]] : GRANT_REMEDY).split('#N').join(`#${number}`);
+  const remedy = remedyFor(words, number, GRANT_REMEDY.split('#N').join(`#${number}`));
   const named = words.length > 0 ? ` (${words.join(', ')})` : '';
   return `${head}not built: typed command not accepted${named}; ${remedy} (a typed command with any other argument records nothing)`;
 }
 
-module.exports = { REASONS, REMEDIES, parseTypedDispatch, resolveBuildAuthority, formatAuthorityLine };
+module.exports = { REASONS, REMEDIES, parseTypedDispatch, resolveBuildAuthority, formatAuthorityLine, remedyFor };

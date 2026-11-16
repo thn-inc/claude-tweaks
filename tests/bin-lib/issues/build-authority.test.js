@@ -7,6 +7,7 @@ const {
   parseTypedDispatch,
   resolveBuildAuthority,
   formatAuthorityLine,
+  remedyFor,
 } = require('../../../plugin/bin/lib/issues/build-authority');
 
 // A person's interactive session: every condition 1-4 holds.
@@ -370,4 +371,12 @@ test('formatAuthorityLine: none names the reasons and the first reason\'s remedy
     formatAuthorityLine(9, { authority: 'none', reasons: ['no-pointer'] }),
     '#9 has no auto:build label — not built: typed command not accepted (no-pointer); grant it with /claude-tweaks:backlog refine #9, or type the command again (a typed command with any other argument records nothing)',
   );
+});
+
+test('remedyFor: the first reason word names the remedy with the record number, else the caller falls back (an unknown or empty list, a non-array)', () => {
+  assert.strictEqual(remedyFor(['not-ready', 'ci'], 12, 'FALLBACK'), 'run /claude-tweaks:specify #12');
+  assert.strictEqual(remedyFor(['bogus'], 12, 'FALLBACK'), 'FALLBACK');
+  assert.strictEqual(remedyFor([], 12, 'FALLBACK'), 'FALLBACK');
+  assert.strictEqual(remedyFor(undefined, 12, 'FALLBACK'), 'FALLBACK');
+  assert.strictEqual(remedyFor(['__proto__'], 12, 'FALLBACK'), 'FALLBACK');
 });

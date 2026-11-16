@@ -775,6 +775,17 @@ test('#5584: readPromptRows returns only rows whose promptId matches', () => {
   assert.equal(rows[1].isMeta, true);
 });
 
+test('#5584 review: readPromptRows keep drops the rows it rejects before they are returned, and keeps the default of every matching row', () => {
+  const toolResult = { ...promptRow('test-prompt-0001'), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'x'.repeat(2000) }] } };
+  const f = promptTranscript([JSON.stringify(promptRow('test-prompt-0001')), JSON.stringify(toolResult), JSON.stringify(promptRow('test-prompt-0002'))]);
+  const asked = [];
+  const kept = readPromptRows(f, 'test-prompt-0001', { keep: (r) => { asked.push(r.promptId); return typeof r.message.content === 'string'; } });
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0].message.content, TYPED_CONTENT);
+  assert.deepEqual(asked, ['test-prompt-0001', 'test-prompt-0001'], 'keep sees only rows of the asked prompt id');
+  assert.equal(readPromptRows(f, 'test-prompt-0001').length, 2);
+});
+
 test('#5584: readPromptRows skips lines that do not parse', () => {
   const whole = JSON.stringify(promptRow('test-prompt-0001'));
   const f = promptTranscript([whole.slice(0, Math.floor(whole.length / 2)), whole]);

@@ -250,21 +250,24 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null, signal = null
   return rows;
 }
 
-// path, promptId, { fsImpl?, chunkBytes? } -> rows (#5584). Synchronous: the
-// parsed lines whose promptId equals promptId exactly, in file order. Reads in
-// chunkBytes chunks, never the whole file at once, so a 100 MB transcript or a
-// line holding a huge message costs one line of memory at most. Only a line
-// containing promptId as a substring is parsed; a line that does not parse is
-// skipped. Stat failures throw as statTranscriptOrThrow does (ENOENT, EISDIR,
-// ...); a read failure after the stat propagates with its own code.
-function readPromptRows(filePath, promptId, { fsImpl = fs, chunkBytes = 65536 } = {}) {
+// path, promptId, { fsImpl?, chunkBytes?, keep? } -> rows (#5584). Synchronous:
+// the parsed lines whose promptId equals promptId exactly (and, with `keep`, for
+// which keep(row) is true), in file order. Reads in chunkBytes chunks, never the
+// whole file at once, so a 100 MB transcript or a line holding a huge message
+// costs one line of memory at most plus the rows returned: a prompt id is shared
+// by every tool-result row of its turn, so a caller that wants only some rows
+// passes `keep` and the rest are never retained. Only a line containing
+// promptId as a substring is parsed; a line that does not parse is skipped. Stat
+// failures throw as statTranscriptOrThrow does (ENOENT, EISDIR, ...); a read
+// failure after the stat propagates with its own code.
+function readPromptRows(filePath, promptId, { fsImpl = fs, chunkBytes = 65536, keep = () => true } = {}) {
   statTranscriptOrThrow(fsImpl, filePath);
   const rows = [];
   const take = (line) => {
     if (!line.includes(promptId)) return;
     let entry;
     try { entry = JSON.parse(line); } catch { return; }
-    if (entry && entry.promptId === promptId) rows.push(entry);
+    if (entry && entry.promptId === promptId && keep(entry)) rows.push(entry);
   };
   const fd = fsImpl.openSync(filePath, 'r');
   try {

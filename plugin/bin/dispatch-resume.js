@@ -649,6 +649,7 @@ function runVerdict(ctx) {
     named: true,
     env: deps.env,
     typedCommand: () => deps.readTypedCommand({ number: issue, env: deps.env, now: new Date(deps.now()), tmpdir: envTmpdir(deps.env) }),
+    // Never the terminal route (only drive.js is run at a terminal): outside a session this answers none.
     stdinIsTTY: false,
   });
 

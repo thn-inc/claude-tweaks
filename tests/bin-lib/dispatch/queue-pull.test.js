@@ -4024,6 +4024,30 @@ test('#5584: a failed AUTO-line write does not admit the record (fail closed), p
   assert.deepEqual(r.state.typedNumbers, new Set());
 });
 
+test('#5584 review: a failed queue-file write after the AUTO line un-admits the record, prints a second not-admitted line and writes a corrective decisions line', { skip: typeof process.getuid === 'function' && process.getuid() === 0 && 'root ignores a read-only mode' }, () => {
+  const texts = [];
+  const r = pull4(withNamedView(S1(), [ungranted(12)]), {
+    env: TYPED_ENV,
+    prepare: () => ({ named: [12], runDir: null }),
+    deps: {
+      readTypedCommand: () => ({ answer: 'typed', promptId: 'p-1' }),
+      // The first (admission) AUTO write also makes the queue file read-only, so the write after the loop fails.
+      appendDecision: ({ text }) => {
+        texts.push(text);
+        if (texts.length === 1) fs.chmodSync(sessionPaths('qp-t3')['dispatch-queue-raw.json'], 0o444);
+      },
+    },
+  });
+  assert.ok(!inGroups(r, 12));
+  assert.deepEqual(r.state.typedNumbers, new Set());
+  assert.match(r.stderr, /queue-pull: write dispatch-queue-raw\.json:/);
+  const out = r.cap.stdout.join('');
+  assert.ok(out.includes(ADMIT_LINE(12)), out);
+  assert.ok(out.endsWith('#12 not admitted: the queue file could not be written\n'), out);
+  assert.equal(texts.length, 2);
+  assert.equal(texts[1], '#12 not admitted after all: the queue file could not be written');
+});
+
 test('#5584 fix 1: a typed record carrying bot:in-progress is refused before admission: one claimed line, no AUTO line', () => {
   const r = pullNamed(withNamedView(S1(), [ungranted(12, { labels: ['ready', 'bot:in-progress'] })]), { typedFor: [12], decisions: PRIOR_DECISIONS });
   assert.ok(!inGroups(r, 12));
