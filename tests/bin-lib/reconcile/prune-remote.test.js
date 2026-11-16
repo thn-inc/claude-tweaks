@@ -5,6 +5,7 @@ const { decideRemotePrune, pruneRemote } = require('../../../plugin/bin/lib/reco
 const { readText } = require('../../helpers/read-skill');
 const { STUB_SKIP, installStub } = require('../../helpers/path-stub');
 const { gateOriginRepo } = require('../../../plugin/bin/lib/repo-resolve');
+const { pruneRemoteFixture, git } = require('./prune-remote-fixtures');
 
 // The delete bar is deliberately stricter than archive-branches' local -D:
 // a pushed deletion is unrecoverable from this checkout once origin GCs the
@@ -50,10 +51,6 @@ const os = require('os');
 const path = require('path');
 const { defaultRefExists } = require('../../../plugin/bin/lib/reconcile/prune-remote');
 
-function git(cwd, ...args) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-}
-
 // Screen-then-confirm (#1082): every pre-existing test below injects only
 // `resolvePr` (the confirm step). Without an injected screen, the default
 // resolvePrStatesBulk would run for real: the origin read (repoTargetOf)
@@ -64,19 +61,9 @@ function git(cwd, ...args) {
 const permissiveScreen = (root, branches) => new Map(branches.map((b) => [b, { number: 99, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]));
 
 // A clone wired to a real bare origin — push --delete must actually land.
+// Built once per process from a template and copied per call (prune-remote-fixtures.js, #5769).
 function makeRepoWithOrigin() {
-  const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'prune-remote-origin-'));
-  git(origin, 'init', '--bare', '-b', 'main');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prune-remote-'));
-  git(dir, 'init', '-b', 'main');
-  git(dir, 'config', 'user.email', 't@t');
-  git(dir, 'config', 'user.name', 't');
-  fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
-  git(dir, 'add', 'a.txt');
-  git(dir, 'commit', '-m', 'init');
-  git(dir, 'remote', 'add', 'origin', origin);
-  git(dir, 'push', '-u', 'origin', 'main');
-  return dir;
+  return pruneRemoteFixture('base').dir;
 }
 
 // Two independently prunable remote branches (both cherry-equivalent + MERGED),
@@ -84,31 +71,11 @@ function makeRepoWithOrigin() {
 // looped over 'build/b1' and 'build/b2' — the batch-push tests need at least
 // two candidates in the same `pruneRemote()` pass to observe batching.
 function buildTwoPrunableBranchesFixture() {
-  const dir = makeRepoWithOrigin();
-  for (const name of ['build/b1', 'build/b2']) {
-    const file = `${name.replace('/', '-')}.txt`;
-    git(dir, 'checkout', '-b', name);
-    fs.writeFileSync(path.join(dir, file), `${name}\n`);
-    git(dir, 'add', file);
-    git(dir, 'commit', '-m', `change ${name}`);
-    git(dir, 'push', 'origin', name);
-    git(dir, 'checkout', 'main');
-    git(dir, 'cherry-pick', name); // merged in substance (squash-merge shape)
-    git(dir, 'branch', '-D', name); // local branch already disposed; remote lingers
-  }
-  return { root: dir, integration: 'main' };
+  return { root: pruneRemoteFixture('two-prunable').dir, integration: 'main' };
 }
 
 test('pruneRemote: squash-merged remote build/* branch is deleted on origin; dry-run only reports', () => {
-  const dir = makeRepoWithOrigin();
-  git(dir, 'checkout', '-b', 'build/merged');
-  fs.writeFileSync(path.join(dir, 'b.txt'), 'b\n');
-  git(dir, 'add', 'b.txt');
-  git(dir, 'commit', '-m', 'change');
-  git(dir, 'push', 'origin', 'build/merged');
-  git(dir, 'checkout', 'main');
-  git(dir, 'cherry-pick', 'build/merged'); // merged in substance (squash-merge shape)
-  git(dir, 'branch', '-D', 'build/merged'); // local branch already disposed; remote lingers
+  const dir = pruneRemoteFixture('merged').dir;
 
   const dry = pruneRemote({ cwd: dir, integration: 'main', dryRun: true, resolvePr: () => ({ number: 1, state: 'MERGED' }), resolvePrBulk: permissiveScreen });
   assert.strictEqual(dry.entries.find((e) => e.name === 'build/merged').action, 'delete');
@@ -128,16 +95,8 @@ test('pruneRemote: squash-merged remote build/* branch is deleted on origin; dry
 // the delete destroys commits this checkout never saw. Deleting the fetch call
 // makes this test fail with the branch actually gone from origin.
 test('pruneRemote: refreshes origin before judging — a branch advanced from another clone is not deleted on stale evidence', () => {
-  const dir = makeRepoWithOrigin();
+  const dir = pruneRemoteFixture('stale').dir; // this clone's snapshot IS cherry-equivalent…
   const originUrl = git(dir, 'remote', 'get-url', 'origin').trim();
-  git(dir, 'checkout', '-b', 'build/stale');
-  fs.writeFileSync(path.join(dir, 'h.txt'), 'h\n');
-  git(dir, 'add', 'h.txt');
-  git(dir, 'commit', '-m', 'merged part');
-  git(dir, 'push', 'origin', 'build/stale');
-  git(dir, 'checkout', 'main');
-  git(dir, 'cherry-pick', 'build/stale'); // this clone's snapshot IS cherry-equivalent…
-  git(dir, 'branch', '-D', 'build/stale');
 
   // …but another machine pushes a further commit to the same remote branch.
   const other = fs.mkdtempSync(path.join(os.tmpdir(), 'prune-remote-clone2-'));
@@ -160,21 +119,7 @@ test('pruneRemote: refreshes origin before judging — a branch advanced from an
 });
 
 test('pruneRemote: unmerged remote branch and non-namespace remote branch are never deleted', () => {
-  const dir = makeRepoWithOrigin();
-  git(dir, 'checkout', '-b', 'build/unmerged');
-  fs.writeFileSync(path.join(dir, 'c.txt'), 'c\n');
-  git(dir, 'add', 'c.txt');
-  git(dir, 'commit', '-m', 'unmerged');
-  git(dir, 'push', 'origin', 'build/unmerged');
-  git(dir, 'checkout', 'main');
-  git(dir, 'branch', '-D', 'build/unmerged');
-  git(dir, 'checkout', '-b', 'feature/out-of-scope');
-  fs.writeFileSync(path.join(dir, 'd.txt'), 'd\n');
-  git(dir, 'add', 'd.txt');
-  git(dir, 'commit', '-m', 'oos');
-  git(dir, 'push', 'origin', 'feature/out-of-scope');
-  git(dir, 'checkout', 'main');
-  git(dir, 'branch', '-D', 'feature/out-of-scope');
+  const dir = pruneRemoteFixture('unmerged-and-out-of-scope').dir;
 
   const r = pruneRemote({ cwd: dir, integration: 'main', dryRun: false, resolvePr: () => ({ number: 1, state: 'MERGED' }), resolvePrBulk: permissiveScreen });
   assert.strictEqual(r.entries.find((e) => e.name === 'build/unmerged').reason, 'not-proven-merged');
@@ -188,21 +133,7 @@ test('pruneRemote: unmerged remote branch and non-namespace remote branch are ne
 // neither branch commit, so `git cherry` reads it as unmerged. The confirm's
 // mergeCommit oid is what proves it.
 function buildSquashMergedFixture() {
-  const dir = makeRepoWithOrigin();
-  git(dir, 'checkout', '-b', 'build/squashed');
-  fs.writeFileSync(path.join(dir, 's1.txt'), 's1\n');
-  git(dir, 'add', 's1.txt');
-  git(dir, 'commit', '-m', 'first');
-  fs.writeFileSync(path.join(dir, 's2.txt'), 's2\n');
-  git(dir, 'add', 's2.txt');
-  git(dir, 'commit', '-m', 'second');
-  git(dir, 'push', 'origin', 'build/squashed');
-  git(dir, 'checkout', 'main');
-  const preSquash = git(dir, 'rev-parse', 'HEAD').trim();
-  git(dir, 'merge', '--squash', 'build/squashed');
-  git(dir, 'commit', '-m', 'feat: squashed (#2251)');
-  const squash = git(dir, 'rev-parse', 'HEAD').trim();
-  git(dir, 'branch', '-D', 'build/squashed'); // local branch disposed; remote lingers
+  const { dir, preSquash, squash } = pruneRemoteFixture('squashed');
   return { dir, preSquash, squash };
 }
 const mergedVia = (oid) => ({ number: 1, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', mergeCommit: { oid } });
@@ -274,13 +205,7 @@ test('pruneRemote: integration branch is excluded even when it sits inside the p
   // entries. (A namespaced branch that IS the checked-out branch would
   // accidentally be protected by the live-worktree guard instead, since
   // the primary worktree's own branch always self-matches that check.)
-  const dir = makeRepoWithOrigin();
-  git(dir, 'checkout', '-b', 'build/trunk');
-  fs.writeFileSync(path.join(dir, 'g.txt'), 'g\n');
-  git(dir, 'add', 'g.txt');
-  git(dir, 'commit', '-m', 'trunk');
-  git(dir, 'push', 'origin', 'build/trunk');
-  git(dir, 'checkout', 'main'); // build/trunk stays as a local ref but is no longer attached to any worktree
+  const dir = pruneRemoteFixture('trunk').dir; // build/trunk stays as a local ref but is no longer attached to any worktree
 
   const r = pruneRemote({ cwd: dir, integration: 'build/trunk', dryRun: false, resolvePr: () => ({ number: 1, state: 'MERGED' }), resolvePrBulk: permissiveScreen });
   assert.strictEqual(r.entries.find((e) => e.name === 'build/trunk'), undefined);
@@ -288,16 +213,7 @@ test('pruneRemote: integration branch is excluded even when it sits inside the p
 });
 
 test('pruneRemote: origin/HEAD symbolic ref is never a candidate, alongside a real deletable branch', () => {
-  const dir = makeRepoWithOrigin();
-  git(dir, 'remote', 'set-head', 'origin', 'main'); // creates the symbolic refs/remotes/origin/HEAD ref
-  git(dir, 'checkout', '-b', 'build/merged2');
-  fs.writeFileSync(path.join(dir, 'f.txt'), 'f\n');
-  git(dir, 'add', 'f.txt');
-  git(dir, 'commit', '-m', 'change2');
-  git(dir, 'push', 'origin', 'build/merged2');
-  git(dir, 'checkout', 'main');
-  git(dir, 'cherry-pick', 'build/merged2');
-  git(dir, 'branch', '-D', 'build/merged2');
+  const dir = pruneRemoteFixture('origin-head').dir; // has the symbolic refs/remotes/origin/HEAD ref
 
   const r = pruneRemote({ cwd: dir, integration: 'main', dryRun: false, resolvePr: () => ({ number: 1, state: 'MERGED' }), resolvePrBulk: permissiveScreen });
   assert.strictEqual(r.entries.find((e) => e.name === 'build/merged2').action, 'delete');
@@ -324,16 +240,7 @@ test('pruneRemote: skipFetch=true never calls fetch, trusts already-fetched refs
 });
 
 test('pruneRemote: branch attached to a live worktree is silently out of scope', () => {
-  const dir = makeRepoWithOrigin();
-  git(dir, 'checkout', '-b', 'build/wt');
-  fs.writeFileSync(path.join(dir, 'e.txt'), 'e\n');
-  git(dir, 'add', 'e.txt');
-  git(dir, 'commit', '-m', 'wt');
-  git(dir, 'push', 'origin', 'build/wt');
-  git(dir, 'checkout', 'main');
-  git(dir, 'cherry-pick', 'build/wt'); // even cherry-equivalent…
-  const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'prune-remote-wt-'));
-  git(dir, 'worktree', 'add', path.join(wt, 'w'), 'build/wt'); // …but attached to a live worktree
+  const dir = pruneRemoteFixture('worktree').dir; // even cherry-equivalent, but attached to a live worktree
 
   const r = pruneRemote({ cwd: dir, integration: 'main', dryRun: false, resolvePr: () => ({ number: 1, state: 'MERGED' }), resolvePrBulk: permissiveScreen });
   assert.strictEqual(r.entries.find((e) => e.name === 'build/wt'), undefined);
@@ -401,18 +308,15 @@ test('pruneRemote: a failed batch push falls back to per-branch deletes, one bad
 // Review finding: the per-branch fallback's own push can fail because the
 // branch was ALREADY gone (deleted by the batch despite its own nonzero
 // exit, or by a concurrent reconcile pass) — that must read as a completed
-// delete, not delete-failed. build/b1 is deleted on origin out-of-band, by a
-// SECOND clone (deleting via `root`'s own git auto-prunes its local tracking
-// ref immediately, defeating the repro — a second clone's delete does not),
-// before pruneRemote ever runs; skipFetch: true means root's stale local
-// tracking ref still makes b1 look like a normal candidate, so only the
-// fallback push itself exposes that it's gone.
+// delete, not delete-failed. build/b1 is deleted on origin out-of-band, by an
+// update-ref on the origin itself (the 'b1-deleted' fixture; deleting via
+// `root`'s own git would auto-prune its local tracking ref immediately,
+// defeating the repro), before pruneRemote ever runs; skipFetch: true means
+// root's stale local tracking ref still makes b1 look like a normal
+// candidate, so only the fallback push itself exposes that it's gone.
 test('pruneRemote: batch fails; a branch already deleted before the fallback push is reported delete, not delete-failed', () => {
-  const { root, integration } = buildTwoPrunableBranchesFixture();
-  const originUrl = git(root, 'remote', 'get-url', 'origin').trim();
-  const other = fs.mkdtempSync(path.join(os.tmpdir(), 'prune-remote-clone3-'));
-  git(other, 'clone', originUrl, 'c');
-  git(path.join(other, 'c'), 'push', 'origin', '--delete', 'build/b1');
+  const root = pruneRemoteFixture('b1-deleted').dir;
+  const integration = 'main';
   const wrapper = installPushWrapper(true); // batch push fails without touching origin; single-branch pushes hit real git
   let result;
   try {
@@ -533,15 +437,7 @@ test('index: pr-first repo with a working remote actually reaches the remote-pru
 });
 
 test('pruneRemote passes preferOpen to its PR resolver (destructive tie-break wiring, #664)', () => {
-  const dir = makeRepoWithOrigin();
-  git(dir, 'checkout', '-b', 'build/reused');
-  fs.writeFileSync(path.join(dir, 'r.txt'), 'r\n');
-  git(dir, 'add', 'r.txt');
-  git(dir, 'commit', '-m', 'change');
-  git(dir, 'push', 'origin', 'build/reused');
-  git(dir, 'checkout', 'main');
-  git(dir, 'cherry-pick', 'build/reused'); // cherry-equivalent (squash-merge shape)
-  git(dir, 'branch', '-D', 'build/reused');
+  const dir = pruneRemoteFixture('reused').dir; // cherry-equivalent (squash-merge shape)
 
   const seenOpts = [];
   const resolvePr = (root, branch, opts) => { seenOpts.push(opts); return null; };
@@ -551,15 +447,7 @@ test('pruneRemote passes preferOpen to its PR resolver (destructive tie-break wi
 });
 
 test('#570 scenario: cherry-equivalent branch with MERGED + newer OPEN PR is skipped pr-open, ref survives on origin', () => {
-  const dir = makeRepoWithOrigin();
-  git(dir, 'checkout', '-b', 'build/reused');
-  fs.writeFileSync(path.join(dir, 'r.txt'), 'r\n');
-  git(dir, 'add', 'r.txt');
-  git(dir, 'commit', '-m', 'change');
-  git(dir, 'push', 'origin', 'build/reused');
-  git(dir, 'checkout', 'main');
-  git(dir, 'cherry-pick', 'build/reused');
-  git(dir, 'branch', '-D', 'build/reused');
+  const dir = pruneRemoteFixture('reused').dir;
 
   // Contract-mimicking fake: with preferOpen the OPEN PR governs (Task 1's
   // real behavior); without it the MERGED one would — which is exactly the
@@ -579,16 +467,7 @@ test('#570 scenario: cherry-equivalent branch with MERGED + newer OPEN PR is ski
 
 // Shared fixture: one in-scope, cherry-equivalent remote branch (squash-merge shape).
 function buildScreenFixture() {
-  const dir = makeRepoWithOrigin();
-  git(dir, 'checkout', '-b', 'build/screened');
-  fs.writeFileSync(path.join(dir, 's.txt'), 's\n');
-  git(dir, 'add', 's.txt');
-  git(dir, 'commit', '-m', 'change');
-  git(dir, 'push', 'origin', 'build/screened');
-  git(dir, 'checkout', 'main');
-  git(dir, 'cherry-pick', 'build/screened');
-  git(dir, 'branch', '-D', 'build/screened');
-  return dir;
+  return pruneRemoteFixture('screened').dir;
 }
 const MERGED_PR = { number: 20, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' };
 const OPEN_PR = { number: 21, state: 'OPEN', mergedAt: null, updatedAt: '2026-02-01T00:00:00Z' };

@@ -73,12 +73,7 @@ At `/review`'s `medium` tier only, the `unconfirmed` findings of *different* len
 
 ### Decision-log entry format
 
-Per `auto-decision-log.md` schema:
-
-```
-- AUTO {HH:MM:SS} — /review reproduction: confirmed {N} findings, staged {M} unconfirmed. Reversibility: high (commit / stage path).
-- STAGED {HH:MM:SS} — /review reproduction: lens "{lens}" finding {path}:{line} surfaced by one agent only. Stage path: staged/review-unconfirmed-{n}.md.
-```
+`/review`'s reproduction lines are not restated here. `bin/lib/reproduction-log.js` composes them, one per finding and one per coincidence, and `review-coordination.js categorise-reproduction --run` (plus `log-reproduction-judgment` for a judged line) writes them under `decisions.md`'s `## /review` (`review/step3-lens-dispatch.md`, #5595); a caller never types one.
 
 `lens "{lens}"` with `{path}:{line}` is the finding key a later tiebreak verdict supersedes the line and its staged file by (`review/step3-tiebreak.md`).
 
