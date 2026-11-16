@@ -23,7 +23,7 @@ const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 // The env is the complete environment the verb sees: the ambient one minus the four repo-pointing git variables.
 const hookEnv = (env = {}) => ({ ...cleanGitEnv(), PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1', CLAUDE_CODE_SESSION_ID: 'cpr-test', ...env });
 
-async function runHook(args, { cwd, env = {} } = {}) {
+function runHook(args, { cwd, env = {} } = {}) {
   return runCli(HOOKS, args, { cwd, env: hookEnv(env) });
 }
 

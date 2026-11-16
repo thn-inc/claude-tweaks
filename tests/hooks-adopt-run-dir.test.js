@@ -20,10 +20,10 @@ const { runCli, spawnCli } = require('./helpers/run-cli');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
-async function runHook(args, { input = '', cwd, env = {} } = {}) {
-  return runCli(HOOKS, args, {
-    stdin: input, cwd, env: { ...cleanGitEnv(), PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1', ...env },
-  });
+const adoptEnv = () => ({ ...cleanGitEnv(), PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' });
+
+function runHook(args, { input = '', cwd, env = {} } = {}) {
+  return runCli(HOOKS, args, { stdin: input, cwd, env: { ...adoptEnv(), ...env } });
 }
 
 // A run dir under `main`'s own .claude-tweaks/pipelines/ — the anchored,
@@ -213,8 +213,6 @@ test('AC10.1: a relative --worktree resolves against the injected cwd', async ()
   assert.deepStrictEqual(r, { code: 0, stdout: 'copied: decisions.md\n', stderr: '' });
   assert.strictEqual(fs.readFileSync(path.join(destDirFor(wt, runId), 'decisions.md'), 'utf8'), '- AUTO 00:00:00 — one\n');
 });
-
-const adoptEnv = () => ({ ...cleanGitEnv(), PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' });
 
 // real process: the script entry (shebang, process.argv, the exit code) of the adopt-run-dir success path (AC5.1),
 // twinned with the same copy in-process.

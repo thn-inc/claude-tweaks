@@ -19,7 +19,7 @@ function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' });
 }
 
-async function runHook(args, { cwd } = {}) {
+function runHook(args, { cwd } = {}) {
   return runInProcess(args, { cwd });
 }
 

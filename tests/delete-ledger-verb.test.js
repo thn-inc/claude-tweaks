@@ -173,7 +173,7 @@ test('delete-ledger --help prints usage and does nothing', async () => {
 // Characterization (#4026 Task 8, written before the verb logged anything):
 // every report's exact stdout, exit code and empty stderr — the self-logging
 // change must leave all three untouched.
-async function runHookFull(args, { cwd, env = {} } = {}) {
+function runHookFull(args, { cwd, env = {} } = {}) {
   return runInProcess(args, { cwd, env });
 }
 

@@ -40,9 +40,9 @@ function git(args) {
 }
 
 async function recordWorktree(project, runDir, { dispatch = true, session = 'S' } = {}) {
-  const args = ['--run', runDir, '/tmp/wt-4589'];
+  const args = ['record-worktree', '--run', runDir, '/tmp/wt-4589'];
   if (dispatch) args.push('--dispatch');
-  const res = await runCli(HOOKS, ['record-worktree', ...args], {
+  const res = await runCli(HOOKS, args, {
     cwd: project,
     env: { ...cleanGitEnv(), CLAUDE_CODE_SESSION_ID: session, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' },
   });

@@ -28,12 +28,11 @@ function ghStubEnv(binDir) {
 }
 
 // Runs the verb in-process (#5376); the script entry has its own tests below.
-async function runHook(args, { cwd, env } = {}) {
-  const r = await runCli(HOOKS, args, {
+function runHook(args, { cwd, env } = {}) {
+  return runCli(HOOKS, args, {
     cwd: cwd || fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-console-cli-')),
     env: hookEnv(env),
   });
-  return { code: r.code, stdout: r.stdout, stderr: r.stderr };
 }
 
 test('resolve-console --help prints usage and exits 0, no --run required', async () => {

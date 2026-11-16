@@ -17,9 +17,8 @@ const { runCli } = require('./helpers/run-cli');
 
 const HOOKS_JS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
-async function run(args, cwd, env) {
-  const r = await runCli(HOOKS_JS, ['resolve-run-dir', ...args], { cwd, env: { ...cleanGitEnv(), ...env } });
-  return { code: r.code, stdout: r.stdout, stderr: r.stderr };
+function run(args, cwd, env) {
+  return runCli(HOOKS_JS, ['resolve-run-dir', ...args], { cwd, env: { ...cleanGitEnv(), ...env } });
 }
 
 function mkRunDir(main, name) {
