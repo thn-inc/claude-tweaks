@@ -66,6 +66,7 @@ const { readManifest } = require('./lib/flow/manifest');
 const { TURN_CLASSES, CEREMONY_CLASSES } = require('./lib/timing/turn-class');
 const { checkBudgets, defaultGh } = require('./lib/timing/budget');
 const { resolveAgainst } = require('./lib/health-core/io');
+const { canonicalRealpath } = require('./lib/path-guard');
 
 const USAGE = 'usage: phase-timing.js --run <dir> [--json] [--markdown] [--transcript <path> ...] [--auto-transcript] [--check-budgets]\n';
 
@@ -268,8 +269,10 @@ function renderCiGate(ciGate) {
 // ends, so its ts would stretch the window over the idle gap (derive.js's
 // endOfRun rule, #1928). Subagents dirs are deduped by fs.realpathSync (path.resolve when
 // the dir does not resolve) so a transcript passed twice, or reached through a
-// symlinked alias, is not double-counted. -> the timing.json `dispatches` value.
-async function collectDispatches(paths, events, cwd) {
+// symlinked alias, is not double-counted. worktree (the run's, or null) reaches
+// readUsage, so a subagent's reads key as the main rows do. -> the timing.json
+// `dispatches` value, before stripInternalFields.
+async function collectDispatches(paths, events, cwd, worktree = null) {
   const stamps = events.filter((e) => !(e && e.type === 'worktree-reaped')).map((e) => Date.parse(e && e.ts)).filter(Number.isFinite);
   // reduce, not Math.min(...stamps): a spread of a very large array can throw RangeError.
   const window = stamps.length
@@ -287,7 +290,7 @@ async function collectDispatches(paths, events, cwd) {
   let excludedOutsideWindow = 0;
   let found = 0;
   for (const dir of dirs) {
-    const r = await readDispatches(dir, { window });
+    const r = await readDispatches(dir, { window, worktree });
     reasons.push(...r.dirNotes);
     if (r.notFound) { reasons.push(r.notFound); continue; }
     found += 1;
@@ -305,6 +308,30 @@ async function collectDispatches(paths, events, cwd) {
   // A dir that yielded nothing beside one that did is still named, not dropped.
   if (reasons.length) out.notFoundDirs = reasons;
   return out;
+}
+
+// (dispatches, transcript paths, cwd) -> joinTokens' dispatchFileReads (#4359):
+// every item's procedureFileRows, in item order. An item whose transcript is
+// one of the run's own --transcript paths (realpath on both sides, path.resolve
+// when that fails) is skipped: its reads are already main rows.
+function dispatchFileReads(dispatches, paths, cwd) {
+  if (!dispatches || !Array.isArray(dispatches.items)) return [];
+  const real = (p) => { const abs = path.resolve(cwd, p); return canonicalRealpath(abs) || abs; };
+  const own = new Set(paths.map(real));
+  const reads = [];
+  for (const item of dispatches.items) {
+    if (!Array.isArray(item.procedureFileRows)) continue;
+    if (typeof item.transcriptPath === 'string' && own.has(real(item.transcriptPath))) continue;
+    reads.push(...item.procedureFileRows);
+  }
+  return reads;
+}
+
+// The dispatches value as timing.json carries it: each item without
+// procedureFileRows and transcriptPath, which only dispatchFileReads reads.
+function stripInternalFields(dispatches) {
+  if (!dispatches || !Array.isArray(dispatches.items)) return dispatches;
+  return { ...dispatches, items: dispatches.items.map(({ procedureFileRows: _rows, transcriptPath: _path, ...item }) => item) };
 }
 
 // Resolve the transcript list: explicit --transcript paths, plus the
@@ -331,6 +358,69 @@ function resolveTranscripts(o, runState, deps) {
   return { paths, notes };
 }
 
+// The transcript-reading half of run(), writing nothing: events -> phases,
+// then (wantTokens) each path's usage rows, the dispatches and the token join.
+// notes is appended to. -> { out, tokens, guard, timing }.
+async function deriveTiming({ runDir, events, runState, paths, notes, wantTokens, cwd, worktree }) {
+  const out = derivePhases({ events, manifest: readManifest(runDir), runState });
+  const transcripts = [];
+  let rows = [];
+  for (const p of paths) {
+    try {
+      const r = await readUsage(resolveAgainst(cwd, p), { worktree });
+      if (r.length === 0) {
+        const note = `transcript had no usage rows (${p})`;
+        transcripts.push({ path: p, rows: 0, note });
+        notes.push(`tokens: ${note}`);
+      } else {
+        transcripts.push({ path: p, rows: r.length });
+      }
+      rows = rows.concat(r);
+    } catch (err) {
+      const reason = `${err && err.code ? err.code : 'unreadable'}: ${p}`;
+      transcripts.push({ path: p, rows: 0, note: `transcript not found (${reason})` });
+      notes.push(`tokens: transcript not found (${reason})`);
+    }
+  }
+  // Computed before the join: each workflow agent's start places it in a phase's subagents (#5597).
+  const dispatches = wantTokens ? await collectDispatches(paths, events, cwd, worktree) : null;
+  const workflowStarts = ((dispatches && dispatches.items) || []).filter((d) => d.workflowRunId != null && d.startTs).map((d) => d.startTs);
+  const tokens = wantTokens ? joinTokens(out.phases, rows, workflowStarts, { dispatchFileReads: dispatchFileReads(dispatches, paths, cwd) }) : null;
+  if (tokens) tokens.totals.rows = rows.length;
+  const guard = wantTokens ? countGuardEvents(events) : null;
+
+  const timing = { runDir, generatedAt: new Date().toISOString(), phases: tokens ? tokens.phases : out.phases, totals: { ...out.totals } };
+  if (out.ciGate) timing.ciGate = out.ciGate;
+  if (tokens) {
+    timing.unattributed = tokens.unattributed;
+    timing.totals.tokens = tokens.totals.tokens;
+    timing.totals.procedureBytes = tokens.totals.procedureBytes;
+    timing.totals.procedureFiles = tokens.totals.procedureFiles;
+    timing.totals.toolRoundTrips = tokens.totals.toolRoundTrips;
+    for (const k of ['turnClasses', 'context', 'modelMix', 'subagents', 'ceremonyShare']) timing.totals[k] = tokens.totals[k];
+    timing.totals.guard = guard;
+    timing.transcripts = transcripts;
+    if (notes.length) timing.notes = notes;
+    timing.dispatches = stripInternalFields(dispatches);
+  }
+  return { out, tokens, guard, timing };
+}
+
+// #4359: a run's timing for an explicit transcript `paths` list, as run()
+// would build it, writing nothing (efficiency-report.js --recount reads
+// archived runs with it). worktree left undefined reads run-state.json's, as
+// run() does. An unreadable events.jsonl throws an error whose code is
+// EVENTS_UNREADABLE.
+const EVENTS_UNREADABLE = 'EVENTS_UNREADABLE';
+async function buildTiming({ runDir, paths, cwd = process.cwd(), worktree }) {
+  const events = readEvents(path.join(runDir, 'events.jsonl'));
+  if (!events.ok) throw Object.assign(new Error(`events.jsonl unreadable (${events.error})`), { code: EVENTS_UNREADABLE });
+  const runState = readJsonOrNull(path.join(runDir, 'run-state.json'));
+  const wt = worktree !== undefined ? worktree : (runState && runState.worktree ? runState.worktree : null);
+  const r = await deriveTiming({ runDir, events: events.events, runState, paths, notes: [], wantTokens: true, cwd, worktree: wt });
+  return r.timing;
+}
+
 async function run(argv, deps) {
   const o = parseArgs(argv);
   if (!o) { deps.stderr(USAGE); return 2; }
@@ -346,49 +436,11 @@ async function run(argv, deps) {
   const events = readEvents(path.join(runDir, 'events.jsonl'));
   if (!events.ok) { deps.stderr(`phase-timing.js: events.jsonl unreadable (${events.error})\n`); return 2; }
   const runState = readJsonOrNull(path.join(runDir, 'run-state.json'));
-  const out = derivePhases({ events: events.events, manifest: readManifest(runDir), runState });
 
   const wantTokens = o.transcripts.length > 0 || o.autoTranscript;
   const { paths, notes } = wantTokens ? resolveTranscripts(o, runState, deps) : { paths: [], notes: [] };
-  const transcripts = [];
-  let rows = [];
-  for (const p of paths) {
-    try {
-      const r = await readUsage(resolveAgainst(cwd, p), { worktree: runState && runState.worktree ? runState.worktree : null });
-      if (r.length === 0) {
-        const note = `transcript had no usage rows (${p})`;
-        transcripts.push({ path: p, rows: 0, note });
-        notes.push(`tokens: ${note}`);
-      } else {
-        transcripts.push({ path: p, rows: r.length });
-      }
-      rows = rows.concat(r);
-    } catch (err) {
-      const reason = `${err && err.code ? err.code : 'unreadable'}: ${p}`;
-      transcripts.push({ path: p, rows: 0, note: `transcript not found (${reason})` });
-      notes.push(`tokens: transcript not found (${reason})`);
-    }
-  }
-  // Computed before the join: each workflow agent's start places it in a phase's subagents.
-  const dispatches = wantTokens ? await collectDispatches(paths, events.events, cwd) : null;
-  const workflowStarts = ((dispatches && dispatches.items) || []).filter((d) => d.workflowRunId != null && d.startTs).map((d) => d.startTs);
-  const tokens = wantTokens ? joinTokens(out.phases, rows, workflowStarts) : null;
-  if (tokens) tokens.totals.rows = rows.length;
-  const guard = wantTokens ? countGuardEvents(events.events) : null;
-
-  const timing = { runDir, generatedAt: new Date().toISOString(), phases: tokens ? tokens.phases : out.phases, totals: { ...out.totals } };
-  if (out.ciGate) timing.ciGate = out.ciGate;
-  if (tokens) {
-    timing.unattributed = tokens.unattributed;
-    timing.totals.tokens = tokens.totals.tokens;
-    timing.totals.procedureBytes = tokens.totals.procedureBytes;
-    timing.totals.toolRoundTrips = tokens.totals.toolRoundTrips;
-    for (const k of ['turnClasses', 'context', 'modelMix', 'subagents', 'ceremonyShare']) timing.totals[k] = tokens.totals[k];
-    timing.totals.guard = guard;
-    timing.transcripts = transcripts;
-    if (notes.length) timing.notes = notes;
-    timing.dispatches = dispatches;
-  }
+  const worktree = runState && runState.worktree ? runState.worktree : null;
+  const { out, tokens, guard, timing } = await deriveTiming({ runDir, events: events.events, runState, paths, notes, wantTokens, cwd, worktree });
   // #4029: the efficiency-budget check. A transcript that yielded no rows leaves
   // the transcript-backed totals out, so they read as unmeasured, never as 0 -> ok.
   let budgetLine = null;
@@ -427,7 +479,7 @@ const realDeps = {
 // Kept for callers that import it. Removal condition: no file under plugin/, tests/, tools/, perf/ or evals/ calls main.
 async function main(argv) { return run(argv, realDeps); }
 
-module.exports = { run, realDeps, main, parseArgs, renderMarkdown, renderDispatches, renderCiGate };
+module.exports = { run, buildTiming, EVENTS_UNREADABLE, realDeps, main, parseArgs, renderMarkdown, renderDispatches, renderCiGate };
 if (require.main === module) {
   run(process.argv.slice(2), realDeps).then((code) => { process.exitCode = code; }).catch((err) => {
     process.stderr.write(`phase-timing.js: ${err && err.message}\n`);
