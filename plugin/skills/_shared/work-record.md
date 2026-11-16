@@ -183,10 +183,20 @@ Who may add / remove which labels, per actor — extracted to keep this file lea
 
 Authorization is two stackable human-granted labels (`auto:build`, `auto:merge`), plus a
 machine-only waypoint label, `auto:merge-pending` (never granted directly by a human — see
-below). Their **absence is the default not-authorized state** — no label means no autonomous
-action, ever.
+below). Their **absence is the default not-authorized state**, except where a person's typed
+command stands in for `auto:build` (below).
 
 - `auto:build` — agents may claim and build this record autonomously.
+- **A typed command stands in for `auto:build`, for that run only** (#5584). A
+  `/claude-tweaks:dispatch #N` (or `#N,#M`, or `resume #N`) line a person types into an
+  attended local session builds a `ready` record that carries none of `bot:blocked`,
+  `bot:parked` or `parked`, with no grant; so does `drive.js #N` typed at a terminal. A
+  routine, a hub, a scheduled prompt or a message from another session still needs the label.
+  It writes no label and never implies `auto:merge`. The one rule is `resolveBuildAuthority`
+  (`bin/lib/issues/build-authority.js`, whose header carries its states, conditions and
+  callers); its reason words are in `dispatch/queue-pull-notes.md`'s Typed command. So a
+  record being built may carry no `auto:*` label: a reader of a claimed record reads its live
+  labels and removes only the grant labels present.
 - `auto:merge` — a completely clean autonomous run may merge without waiting for a live
   review. **Additive on `auto:build`:** the gate always grants `auto:build` when granting
   `auto:merge`. Dispatch queries `auto:build` only; `auto:merge` **alone is inert** — no

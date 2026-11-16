@@ -7,6 +7,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawnSync } = require('child_process');
 const { fixtureGit } = require('./helpers/git-fixtures');
 const {
   fromTemplate,
@@ -368,6 +369,112 @@ for (const [name, make, dirsOf] of [
     assert.deepStrictEqual(fs.readdirSync(trace), []);
   });
 }
+
+// claims-git-cas fixtures (#5769): same shape — origin, clone, registry and seeded claims built once per process.
+const claimsFixtures = require('./bin-lib/issues/claims-git-cas-fixtures');
+for (const builder of [
+  'makeBareOriginAndClone', 'makeBranchlessOriginAndClone', 'makeDecoyOriginAndClone', 'makeRegistryWithClaims',
+]) {
+  test(`AC4.1: claims-git-cas ${builder}: a second call starts no git process`, () => {
+    const make = () => claimsFixtures[builder]();
+    const first = make();
+    scratch.push(first.root);
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(second.root);
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+    if (builder === 'makeRegistryWithClaims') {
+      assert.strictEqual(git(first.cloneDir, ['rev-parse', 'origin/claims-registry']), first.tipAfter.get(44));
+      assert.strictEqual(git(second.cloneDir, ['rev-parse', 'origin/claims-registry']), first.tipAfter.get(44));
+    }
+  });
+}
+
+// pre-review-catchup fixtures (#5769): originWithTwoClones seeded in its template, one variant per shared setup shape.
+const catchupFixtures = require('./bin-lib/pre-review-catchup/fixtures');
+for (const shape of [undefined, ...catchupFixtures.CATCHUP_SHAPES]) {
+  test(`AC4.1: pre-review-catchup catchupFixture${shape ? ` ${shape}` : ''}: a second call starts no git process`, () => {
+    const make = () => catchupFixtures.catchupFixture(shape);
+    scratch.push(make().root);
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(second.root);
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+
+// prune-remote fixtures (#5769): origin, repo and pushed branches built once per process, one variant per setup.
+const pruneFixtures = require('./bin-lib/reconcile/prune-remote-fixtures');
+for (const name of pruneFixtures.PRUNE_REMOTE_FIXTURES) {
+  test(`AC4.1: prune-remote ${name}: a second call starts no git process`, () => {
+    const make = () => pruneFixtures.pruneRemoteFixture(name);
+    const dirsOf = (r) => [r.dir, r.origin, r.wt].filter(Boolean);
+    scratch.push(...dirsOf(make()));
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(...dirsOf(second));
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+
+test('a prune-remote squashed copy holds the squash commit on main over preSquash', () => {
+  const f = pruneFixtures.pruneRemoteFixture('squashed');
+  scratch.push(f.dir, f.origin);
+  assert.strictEqual(git(f.dir, ['rev-parse', 'main']), f.squash);
+  assert.strictEqual(git(f.dir, ['rev-parse', 'main~1']), f.preSquash);
+});
+
+test('a prune-remote b1-deleted copy lacks build/b1 on the origin but keeps its stale tracking ref', () => {
+  const f = pruneFixtures.pruneRemoteFixture('b1-deleted');
+  scratch.push(f.dir, f.origin);
+  const onOrigin = (ref) => spawnSync('git', ['-C', f.origin, 'show-ref', '--verify', '--quiet', ref], { env: gitEnv() }).status;
+  assert.notStrictEqual(onOrigin('refs/heads/build/b1'), 0);
+  assert.strictEqual(onOrigin('refs/heads/build/b2'), 0);
+  assert.strictEqual(git(f.dir, ['rev-parse', '--verify', 'refs/remotes/origin/build/b1']).length, 40);
+});
+
+test('AC4.1: originWithTwoClones with a seed and no key throws', () => {
+  assert.throws(() => gitFixtures.originWithTwoClones('ct-gt-otc-', { seed: () => {} }), /seed needs a key/);
+});
+
+test('catchupFixture rejects an unknown shape, inherited object keys included', () => {
+  for (const shape of ['no-such-shape', 'constructor', '__proto__']) {
+    assert.throws(() => catchupFixtures.catchupFixture(shape), /unknown shape/, shape);
+  }
+});
+
+test('a catchupFixture copy is on feat with origin/main equal to main in work and other', () => {
+  const f = catchupFixtures.catchupFixture();
+  scratch.push(f.root);
+  assert.strictEqual(git(f.work, ['symbolic-ref', '--short', 'HEAD']), 'feat');
+  const main = git(f.work, ['rev-parse', 'main']);
+  assert.strictEqual(git(f.work, ['rev-parse', 'origin/main']), main);
+  assert.strictEqual(git(f.other, ['rev-parse', 'origin/main']), main);
+  assert.strictEqual(git(f.other, ['rev-parse', 'main']), main);
+  assert.strictEqual(f.head(), git(f.work, ['rev-parse', 'HEAD']));
+});
+
+test('a catchupFixture shape copy holds the shape setup: a feat edit in work, an unfetched upstream commit on origin only when the shape pushes', () => {
+  for (const shape of catchupFixtures.CATCHUP_SHAPES) {
+    const f = catchupFixtures.catchupFixture(shape);
+    scratch.push(f.root);
+    assert.strictEqual(git(f.work, ['rev-list', '--count', 'main..HEAD']), '1', shape);
+    // The file content each shape's setup leaves: work's own edit, and upstream's pushed edit as `other` last saw origin.
+    const line = (text, n) => text.split('\n')[n - 1];
+    const workA = fs.readFileSync(path.join(f.work, 'a.txt'), 'utf8');
+    const upstreamA = () => git(f.other, ['show', 'origin/main:a.txt']);
+    if (shape === 'conflicting-edit') {
+      assert.strictEqual(line(workA, 3), 'FEAT', shape);
+      assert.strictEqual(line(upstreamA(), 3), 'UPSTREAM', shape);
+    } else {
+      assert.strictEqual(line(workA, 1), 'F1', shape);
+      if (shape === 'feat-edit-overlapping-upstream') assert.strictEqual(line(upstreamA(), 5), 'O5', shape);
+    }
+    git(f.work, ['fetch', '-q', 'origin']);
+    const upstream = git(f.work, ['rev-list', '--count', 'main..origin/main']);
+    assert.strictEqual(upstream, shape === 'feat-edit-only' ? '0' : '1', shape);
+  }
+});
 
 test('pairedFixture copies point at their own origin and sync through it', () => {
   const a = reconcileFixtures.pairedFixture();
