@@ -1356,6 +1356,22 @@ test('AC5: at unattended N can\'t-tell items including a drop recommendation pla
   assert.ok(result.digests.every((d) => d.line.includes('tiebreak-cant-tell') && /^consolefinding-[0-9a-f]{8}$/.test(d.fingerprint)));
 });
 
+test('two can\'t-tell items sharing a fingerprint, one file and one drop, resolve both filed with no digest entry (#4679)', () => {
+  const same = { path: 'src/same.js', claim: 'same claim' };
+  const fFile = tbFinding({ ...same, line: 4 });
+  const fDrop = tbFinding({ ...same, line: 40 });
+  const vFile = tbVerdict(fFile, { recommendation: 'file' });
+  const vDrop = tbVerdict(fDrop, { recommendation: 'drop' });
+  const decisions = [tbStaged(fFile), tbStaged(fDrop), vFile.entry, vDrop.entry].join('\n');
+  const runDir = fixture({ decisions: `${decisions}\n`, headers: [7] });
+  fs.writeFileSync(path.join(runDir, 'review-findings.json'), JSON.stringify([[fFile, vFile], [fDrop, vDrop]].map(([f, v]) => ({ id: v.r.id, lens: f.lens, path: f.path, line: f.line, claim: f.claim, reporterSeverity: f.reporterSeverity, kind: f.kind }))));
+  const result = resolveAll({ runDir, policy: 'console-auto', deps: deps() });
+  const tb = result.items.filter((i) => i.tiebreak);
+  assert.deepStrictEqual(tb.map((i) => i.resolution), ['filed', 'filed'], 'the record wins over the digest line');
+  assert.strictEqual(result.filings.length, 1);
+  assert.deepStrictEqual(result.digests, []);
+});
+
 test('AC1 (#4679): one medium can\'t-tell drop and one medium can\'t-tell file item → a digest entry and a filing', () => {
   const fDrop = tbFinding({ path: 'src/drop.js', claim: 'drop claim' });
   const fFile = tbFinding({ path: 'src/file.js', claim: 'file claim' });

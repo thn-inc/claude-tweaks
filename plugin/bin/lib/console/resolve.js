@@ -974,7 +974,7 @@ function resolveAll({ runDir, policy, deps }) {
   if (policy !== 'console-auto') throw new RangeError(`unsupported policy: ${policy} (expected console-auto)`);
   const snapshot = readSnapshot({ runDir, deps });
   const stagedIds = new Set(snapshot.staged.map((s) => s.name));
-  const items = [...stagedItems(snapshot), ...engineItems(snapshot, stagedIds), ...coordinationItems(snapshot, stagedIds)]
+  let items = [...stagedItems(snapshot), ...engineItems(snapshot, stagedIds), ...coordinationItems(snapshot, stagedIds)]
     .map((it) => {
       if (!it.tiebreak) return it;
       return it.tiebreak.recommendation === 'drop'
@@ -985,7 +985,15 @@ function resolveAll({ runDir, policy, deps }) {
   const merge = mergeResolution(snapshot, deps);
   const runId = runIdOf(runDir);
   const filings = planFilings({ items, findings: snapshot.findings, runId, unattended: true });
-  const digests = planDigests({ items, findings: snapshot.findings, runId });
+  // A finding filed and digested in one batch (two items sharing a fingerprint, `file` and `drop`): the record
+  // wins, as an existing record wins over a digest line — the digested twin resolves `filed` and plans no digest.
+  const filedFingerprints = new Set(filings.map((p) => p.fingerprint));
+  const planned = planDigests({ items, findings: snapshot.findings, runId });
+  const shadowed = new Set(planned.filter((d) => filedFingerprints.has(d.fingerprint)).map((d) => d.item));
+  const digests = planned.filter((d) => !shadowed.has(d.item));
+  if (shadowed.size > 0) {
+    items = items.map((it) => (shadowed.has(it.id) ? { ...it, resolution: 'filed', reason: UNATTENDED_FILED_REASON } : it));
+  }
   const result = { ceiling: 'unattended', items, sections, merge, droppedByTiebreak: droppedByTiebreak(snapshot.decisions), filings, digests, snapshot };
   result.table = renderTable(result);
   return result;

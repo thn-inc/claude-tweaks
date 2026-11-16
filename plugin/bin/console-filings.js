@@ -188,7 +188,9 @@ function run(argv, overrides = {}) {
   const planned = planFilings({
     items: routed, findings, runId, ...(only ? {} : { unattended: true }),
   });
-  const digestPlanned = only ? [] : planDigests({ items: routed, findings, runId });
+  // A finding filed and digested in one batch (two items sharing a fingerprint, `file` and `drop`): the record wins.
+  const plannedFingerprints = new Set(planned.map((p) => p.fingerprint));
+  const digestPlanned = only ? [] : planDigests({ items: routed, findings, runId }).filter((d) => !plannedFingerprints.has(d.fingerprint));
 
   const known = fingerprintMap(rows);
   const result = {

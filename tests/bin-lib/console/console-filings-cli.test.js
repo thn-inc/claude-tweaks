@@ -490,6 +490,26 @@ test('default selection digests a drop item and files a file item (#4679)', () =
   assert.match(proposal, /## Acceptance Criteria/);
 });
 
+test('default selection: two items sharing a fingerprint, one file and one drop, plan a filing and no digest line (#4679)', () => {
+  const f = fixture();
+  const claim = 'The guard runs after the read';
+  const findings = [{ id: '00000000000a', line: 4 }, { id: '00000000000b', line: 40 }].map((x) => ({
+    ...x, lens: '3a', path: 'src/same.js', claim, reporterSeverity: 'medium', kind: 'unconfirmed',
+  }));
+  const lines = findings.map((x, i) => verdictLine({ id: x.id, file: x.path, line: x.line, recommendation: i === 0 ? 'file' : 'drop' }));
+  fs.writeFileSync(path.join(f.runDir, 'decisions.md'), `${lines.join('\n')}\n`);
+  fs.writeFileSync(path.join(f.runDir, 'review-findings.json'), JSON.stringify(findings));
+  noRecords(f);
+  const { deps, out } = fakeDeps(f.main);
+  assert.equal(run(argvOf(f), deps), 0);
+  const result = JSON.parse(out.join(''));
+  assert.equal(result.file.length, 1);
+  assert.deepEqual(result.digest, []);
+  assert.deepEqual(result.digestDeduped, []);
+  assert.equal(result.digestFile, null);
+  assert.equal(fs.existsSync(path.join(f.outDir, 'console-digest.md')), false);
+});
+
 test('a selection with no drop item writes no digest file (#4679)', () => {
   const f = fixture();
   const { ids } = seed(f, { n: 3 });
