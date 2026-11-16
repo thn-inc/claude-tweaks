@@ -2,6 +2,7 @@
 files:
   - tools/run-tests.js
   - tools/direct-test-run-guard.js
+  - tools/direct-test-run-guard.sh
   - .claude/settings.json
   - tests/direct-test-run-guard.test.js
   - tests/run-tests-isolation.test.js
@@ -22,7 +23,7 @@ files:
 - **Should feel:** Untouched. The run starts at once, with no warning and no added output.
 - **Should understand:**
   - One literal test file outside a loop is allowed. It is the documented way to re-run a failing file in isolation.
-  - The hook still ran. `.claude/settings.json` registers `tools/direct-test-run-guard.js` for every Bash call; it costs one short node start and exits 0 on every path.
+  - The hook still ran. `.claude/settings.json` registers the guard for every Bash call, behind a sh prefilter (`tools/direct-test-run-guard.sh`): a call that names node, as this one does, costs one short node start, a call whose fragments all start with a plain command name (`ls`, `git status`) ends in the hook's own shell, and every path exits 0.
 - **Red flags:**
   - A single-file run denied, or any line printed for an allowed call.
   - A command that has nothing to do with node (`ls`, `git -C … status`) being slowed noticeably or blocked.
