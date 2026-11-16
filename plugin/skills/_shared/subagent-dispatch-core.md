@@ -130,18 +130,18 @@ cannot block for however long it takes either. The compliant shape is a **bounde
 loop run with real foreground tool calls**. For a pull request's checks, a workflow run or a local
 process it is `wait-for.js` (`wait-for.js ci --pr {n}`, `wait-for.js ci --run {id}`,
 `wait-for.js pid --pid {pid}`), called as the `agents` form above (foreground, no `timeout`,
-`--max-seconds 150`; a `ci` call may run 20 s past it): 0 means read the result, 3 with `"bound":"call"` means call again, and 3 with
-`"bound":"deadline"` means the bound is exhausted (below); on exit 2 call it once more, which joins
-the failed call's window, and a second exit 2 ends the wait unresolved. Its bound is its 20-minute
-window and its output line is its log line; the cap, interval and logging rules below are for any
-other condition (a deploy, a log line), whose repeated `Bash` calls (or a `Monitor` watch over a
-polling script) check it on a fixed interval, never a backgrounded watcher left to report back on
-its own. Cap the loop to a fixed iteration count rather than leaving it open-ended;
-`release/execute.md`'s re-render poll already uses 20-second intervals for up to 15 attempts (5
-minutes) and is a reasonable default to copy rather than re-derive. When the bound is exhausted
-without the condition resolving, that is a **re-arm**, not a failure: run the same bounded loop
-again as an explicit new attempt and say so, rather than silently extending the original wait or
-escalating to backgrounding instead.
+`--max-seconds 150`; a `ci` call may run 20 s past it): 0 means read the result, 3 with
+`"bound":"call"` means call again, and 3 with `"bound":"deadline"` means the bound is exhausted
+(below); on exit 2 call it once more, which joins the failed call's window, and a second exit 2
+ends the wait unresolved. Its bound is its 20-minute window and its output line is its log line;
+the cap, interval and logging rules below are for any other condition (a deploy, a log line),
+whose repeated `Bash` calls (or a `Monitor` watch over a polling script) check it on a fixed
+interval, never a backgrounded watcher left to report back on its own. Cap the loop to a fixed
+iteration count rather than leaving it open-ended; `release/execute.md`'s re-render poll already
+uses 20-second intervals for up to 15 attempts (5 minutes) and is a reasonable default to copy
+rather than re-derive. When the bound is exhausted without the condition resolving, that is a
+**re-arm**, not a failure: run the same bounded loop again as an explicit new attempt and say so,
+rather than silently extending the original wait or escalating to backgrounding instead.
 
 Log every iteration: name what's being waited on, the iteration number against the bound, and
 the current status, in one line — e.g. "Polling CI run {id}: attempt 4/15, status=in_progress".
