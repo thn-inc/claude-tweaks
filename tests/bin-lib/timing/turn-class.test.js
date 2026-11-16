@@ -143,3 +143,41 @@ test('turn-class: bashProcedureFiles counts each skill path a read command names
   assert.deepEqual(bashProcedureFiles('git show HEAD:plugin/skills/review/code-mode-steps.md', null), []);
   assert.deepEqual(bashProcedureFiles('node plugin/bin/x.js plugin/skills/a.md', null), []);
 });
+
+test('turn-class: bashProcedureFiles skips output-redirect targets and counts input redirects', () => {
+  assert.deepEqual(bashProcedureFiles('cat > plugin/skills/a/new.md <<EOF', null), []);
+  assert.deepEqual(bashProcedureFiles('cat plugin/skills/a/x.md >> plugin/skills/a/y.md', null), ['skills/a/x.md']);
+  assert.deepEqual(bashProcedureFiles('grep -n x plugin/skills/a/x.md 2> plugin/skills/a/err.md', null), ['skills/a/x.md']);
+  assert.deepEqual(bashProcedureFiles('cat plugin/skills/a/x.md &> plugin/skills/a/y.md', null), ['skills/a/x.md']);
+  assert.deepEqual(bashProcedureFiles('cat a.txt >plugin/skills/x.md 2>&1', null), []);
+  assert.deepEqual(bashProcedureFiles('cat < plugin/skills/a/x.md', null), ['skills/a/x.md']);
+  assert.deepEqual(bashProcedureFiles('wc -l <plugin/skills/a/x.md', null), ['skills/a/x.md']);
+});
+
+test('turn-class: bashProcedureFiles skips glob tokens', () => {
+  assert.deepEqual(bashProcedureFiles('cat plugin/skills/review/*.md', null), []);
+  assert.deepEqual(bashProcedureFiles('cat plugin/skills/review/step?.md plugin/skills/[ab]/x.md plugin/skills/a/x.md', null), ['skills/a/x.md']);
+});
+
+test('turn-class: bashProcedureFiles never counts a grep/rg/ugrep pattern as a path', () => {
+  assert.deepEqual(bashProcedureFiles('grep -n "Step 3" plugin/skills/review/x.md', null), ['skills/review/x.md']);
+  assert.deepEqual(bashProcedureFiles('grep "skills/x.md" file.txt', null), []);
+  assert.deepEqual(bashProcedureFiles('rg plugin/skills/x.md plugin/skills/y.md', null), ['skills/y.md']);
+  assert.deepEqual(bashProcedureFiles('grep -e plugin/skills/x.md foo.txt', null), []);
+  assert.deepEqual(bashProcedureFiles('grep -e x plugin/skills/a/x.md', null), ['skills/a/x.md']);
+  assert.deepEqual(bashProcedureFiles('ugrep --regexp skills/p.md plugin/skills/a/x.md', null), ['skills/a/x.md']);
+  assert.deepEqual(bashProcedureFiles('grep -f plugin/skills/pats.md plugin/skills/a/x.md', null), ['skills/a/x.md']);
+  assert.deepEqual(bashProcedureFiles('grep --file=plugin/skills/pats.md plugin/skills/a/x.md', null), ['skills/a/x.md']);
+  assert.deepEqual(bashProcedureFiles('grep -ne x plugin/skills/a/x.md', null), ['skills/a/x.md']);
+  // a non-grep head has no pattern slot: cat's first operand is a path
+  assert.deepEqual(bashProcedureFiles('cat plugin/skills/a/x.md', null), ['skills/a/x.md']);
+});
+
+test('turn-class: bashProcedureFiles sees through timeout and xargs wrappers', () => {
+  assert.deepEqual(bashProcedureFiles('timeout 5 cat plugin/skills/x.md', null), ['skills/x.md']);
+  assert.deepEqual(bashProcedureFiles('timeout -s KILL --preserve-status 5s cat plugin/skills/x.md', null), ['skills/x.md']);
+  assert.deepEqual(bashProcedureFiles('xargs cat plugin/skills/x.md', null), ['skills/x.md']);
+  assert.deepEqual(bashProcedureFiles('ls | xargs -n 1 -0 grep -l x plugin/skills/x.md', null), ['skills/x.md']);
+  assert.deepEqual(bashProcedureFiles('timeout 5 xargs cat plugin/skills/x.md', null), ['skills/x.md']);
+  assert.deepEqual(bashProcedureFiles('timeout 5 node plugin/skills/x.md', null), []);
+});

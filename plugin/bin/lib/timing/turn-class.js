@@ -193,14 +193,55 @@ function classifyBash(command) {
 // names, one entry per path token, in order (#4359). Only READ_HEADS read a
 // file's text; `git show HEAD:…` or a node script's argument is not a read.
 const READ_HEADS = new Set(['cat', 'head', 'tail', 'sed', 'awk', 'grep', 'rg', 'ugrep', 'wc']);
+// Heads whose first operand is a pattern, not a file — unless a pattern flag
+// (-e/--regexp/-f/--file, as its own token or attached) supplied it.
+const PATTERN_HEADS = new Set(['grep', 'rg', 'ugrep']);
+const PATTERN_FLAG_RE = /^(?:-[A-Za-z]*[ef]|--regexp|--file)$/; // value is the next token
+const PATTERN_FLAG_ATTACHED_RE = /^(?:-[ef].|--regexp=|--file=)/;
+// An output redirect (`>`, `>>`, `2>`, `&>`, `>|`, …); group 1 is an attached target.
+const OUT_REDIRECT_RE = /^(?:\d+|&)?>>?\|?(.*)$/;
+// Leading wrappers that run the real command: `timeout [flags] <duration>` and
+// `xargs [flags]`. The sets name each one's flags that take a separate value.
+const WRAPPER_VALUE_FLAGS = {
+  timeout: new Set(['-s', '-k', '--signal', '--kill-after']),
+  xargs: new Set(['-I', '-n', '-L', '-P', '-d', '-s', '-E', '-a']),
+};
+
+function stripWrappers(tokens) {
+  let t = tokens;
+  for (;;) {
+    const head = (t[0] || '').replace(/^.*\//, '');
+    const valueFlags = WRAPPER_VALUE_FLAGS[head];
+    if (!valueFlags) return t;
+    let i = 1;
+    while (i < t.length && t[i].startsWith('-')) i += valueFlags.has(t[i]) ? 2 : 1;
+    if (head === 'timeout') i += 1; // the duration
+    t = t.slice(i);
+  }
+}
+
 function bashProcedureFiles(command, worktree, pathImpl = path) {
   if (typeof command !== 'string' || !command.trim()) return [];
   const keys = [];
   for (const segment of splitSegments(stripPrefixes(command)).map(stripPrefixes).filter(Boolean)) {
-    const tokens = tokenize(segment);
-    if (!READ_HEADS.has((tokens[0] || '').replace(/^.*\//, ''))) continue;
-    for (const t of tokens.slice(1)) {
-      if (t.startsWith('-')) continue;
+    const tokens = stripWrappers(tokenize(segment));
+    const head = (tokens[0] || '').replace(/^.*\//, '');
+    if (!READ_HEADS.has(head)) continue;
+    let patternPending = PATTERN_HEADS.has(head);
+    for (let i = 1; i < tokens.length; i++) {
+      let t = tokens[i];
+      const redirect = OUT_REDIRECT_RE.exec(t);
+      if (redirect) { if (!redirect[1]) i++; continue; }
+      if (t.startsWith('<') && !t.startsWith('<<')) t = t.slice(1); // input redirect: still a read
+      if (!t) continue;
+      if (t.startsWith('-')) {
+        if (!patternPending) continue;
+        if (PATTERN_FLAG_RE.test(t)) { patternPending = false; i++; }
+        else if (PATTERN_FLAG_ATTACHED_RE.test(t)) patternPending = false;
+        continue;
+      }
+      if (patternPending) { patternPending = false; continue; }
+      if (/[*?[]/.test(t)) continue;
       const key = procedureFileKey(t, worktree, pathImpl);
       if (key) keys.push(key);
     }
