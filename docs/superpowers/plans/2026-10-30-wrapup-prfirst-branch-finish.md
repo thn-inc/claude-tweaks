@@ -8,7 +8,7 @@
 
 **Tech Stack:** Markdown skill prose; `node --test` conformance suites reading prose via `tests/helpers/read-skill.js`'s `readText`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-30T152231-record-3813/work/3813-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-16T000501-record-3813/work/3813-spec.md` (re-materialized for the resumed run; the earlier attempt's copy is `.claude-tweaks/pipelines/2026-10-30T152231-record-3813/work/3813-spec.md`)
 
 **Scope keywords:** step 13, pr-first-merge.md, Branch finish
 
@@ -36,9 +36,38 @@ The merge (`_shared/pr-first-merge.md`, `gh pr merge`) executes today at `review
 
 ## Waivers
 
-Waived AC3.1: a real `pr-first` "Approve all + merge" run's PR commit list can only be quoted once a wrap-up runs on a plugin build carrying this change; the "before" evidence is gathered at build time and the "after" check is carried as an `ops` ledger row for the post-release run.
+Waived AC3.1 (after half only, record Decision Q1, Reading B): the "before" evidence is gathered at build time and quoted in the PR body (Task 6). The "after" check needs a released build carrying this change; it is carried by the follow-up measurement record #4644 (filed by this record's earlier attempt; Task 6 corrects its stale version bound rather than filing a duplicate). This record closes when its PR merges.
 Waived _shared/pr-first-merge.md: read only — its procedure moves call site, its text is unchanged.
-Waived plugin/skills/wrap-up/auto-merge-short-circuit.md: read only — it bypasses the execution step and runs its own pre-merge ledger delete; it cites no "step 13", so nothing there changes (Task 1's test pins that the Branch finish names it as a skip).
+
+## Resume amendment (2026-11-16, run 2026-11-16T000501-record-3813)
+
+Tasks 1-4 landed in the earlier attempt (528c06c2d, 480a77ac7, 265dd8b28, 9cc6c0334) and were carried through the main catch-up merge 6dce842fe. The record body has since gained two plan-review Decisions; Tasks 5 and 6 implement them. Tasks 1-4 are not re-run.
+
+---
+
+### Task 5: Reword the auto-merge short-circuit's item-2 note (record Decision Q2, Reading B)
+
+**Files:**
+- Modify: `plugin/skills/wrap-up/auto-merge-short-circuit.md` (the `**Ledger deletion (\`cleanup-procedures.md\` item 2) — before the merge (#939).**` paragraph's second sentence, lines ~140-142)
+- Test: `tests/wrap-up-branch-finish-after-execution.test.js` (add one pin + one go-red control)
+
+- [ ] **Step 1: Write the failing test (covers Deliverable 4 as decided)** — add `assertShortCircuitItem2Placement(text)` that, on the whitespace-normalized `wrap-up/auto-merge-short-circuit.md`, takes the `**Ledger deletion (` paragraph and asserts it (a) no longer contains `which is where item 2 (Open items ledger) normally runs`, (b) names `review-console.md` "On approval" step 13 (the Ledger close-out) as where item 2 runs under `pr-first`, and (c) names Phase 4's execution step as where item 2 runs under `local-merge`. Live text passes; go-red control: re-inserting the old sentence (string replace of the new sentence back to `which is where item 2 (Open items ledger) normally runs`) throws.
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `node --test tests/wrap-up-branch-finish-after-execution.test.js`
+Expected: FAIL (old "normally runs" sentence still present)
+
+- [ ] **Step 3: Edit the sentence** — e.g. "This branch bypasses both places item 2 (Open items ledger) normally runs — `review-console.md`'s "On approval" step 13 (Ledger close-out) under `pr-first`, Phase 4's execution step under `local-merge` — so re-implement it here, ...". Keep the rest of the paragraph byte-identical. Run `grep -rn "normally runs" tests/` first and keep any existing pin on this paragraph green.
+- [ ] **Step 4: Run** `node --test tests/wrap-up-branch-finish-after-execution.test.js tests/wrap-up-ledger-delete-before-merge.test.js` and any test file that greps `auto-merge-short-circuit.md` (`git grep -l "auto-merge-short-circuit" tests/`) — Expected: PASS
+- [ ] **Step 5: Commit** — `Name both item-2 placements in the auto-merge short-circuit note — refs #3813`
+
+### Task 6: AC3 evidence (record Decision Q1, Reading B) — orchestrator-run, no code
+
+No repository file changes; run by the orchestrating session, not an implementer subagent (forge writes only).
+
+- [ ] **Step 1:** Gather the "before" evidence: one real pre-fix `pr-first` single-record run (2026-10-20 or later) whose console merged the PR and whose Phase 4 execution step then committed or pushed on the merged branch — quote the PR's commit list (`gh pr view {N} --json commits,mergeCommit`) and the post-merge commit. If no qualifying run exists, say so in the PR body with the closest candidates; the decision rule's parked measurement record then carries both halves.
+- [ ] **Step 2:** Correct #4644's version bound ("6.158.0 or later" is wrong — 6.170.0 does not carry this fix): name "the first release whose changelog includes PR #4641" instead, in its Deliverables and Gotchas.
+- [ ] **Step 3:** Record both in the PR body's notes (`### Decisions taken`), naming #4644 as the after-check record.
 
 ---
 
