@@ -114,8 +114,9 @@ function defaultExecFile(cmd, args, opts = {}) {
 // resolve-policy.js applies (run config over project policy): `resolvePolicyKeys`
 // already folds config.yml over policy.yml, so the single resolved value is what
 // effectiveCeiling sees as the autonomy entry (it also composes `control-mode`).
-// One call, all keys — a run that widened `grant-veto-window-hours` must not have evaluateMaturation fall back to its
-// own 24h default the way this CLI's first cut did.
+// One call, all keys — a run that widened `grant-veto-window-hours` must not
+// have evaluateMaturation fall back to its own 24h default the way this CLI's
+// first cut did.
 function readPolicy({ execFile, cwd, runDir }) {
   const git = (args) => execFile('git', args, { cwd });
   const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
