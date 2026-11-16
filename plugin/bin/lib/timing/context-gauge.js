@@ -32,6 +32,7 @@ const fs = require('fs');
 const path = require('path');
 const { lstatType } = require('../path-guard');
 const { isPathContained } = require('../shared-primitives');
+const { listHeaderDirs } = require('../run-header');
 const { readManifest } = require('../flow/manifest');
 const { formatRecordSteps } = require('../flow/record-steps');
 const { locateTranscripts, subagentsDirFor, readUsage } = require('./transcript');
@@ -298,7 +299,12 @@ function resolveTargetRecords({ runDir, worktree = null, gitRoot = null, fsImpl 
   }
   roots.push(runDir);
   const format = (nums) => [...new Set(nums)].sort((a, b) => a - b).map((n) => `#${n}`);
-  const specDirs = roots.flatMap((r) => numberedEntries(r, /^spec-([1-9]\d*)$/, 'directory', fsImpl));
+  // Header dirs per root, live and archived (lib/run-header.js); an unreadable base lists as empty.
+  const readdir = (d) => { try { return fsImpl.readdirSync(d); } catch { return []; } };
+  const dirsByRoot = roots.map((r) => listHeaderDirs([r], { readdir }));
+  const specDirs = dirsByRoot.flat()
+    .filter((e) => e.specN !== null && lstatType(path.dirname(e.dir), { fsImpl }).type === 'directory')
+    .map((e) => e.specN);
   if (specDirs.length) {
     const m = manifest === undefined ? readManifest(runDir) : manifest;
     const listed = m && m.multispec && Array.isArray(m.multispec.specs) ? m.multispec.specs.map((s) => Number(s.id)) : [];
@@ -307,8 +313,10 @@ function resolveTargetRecords({ runDir, worktree = null, gitRoot = null, fsImpl 
     const rest = format(specDirs.filter((n) => !ordered.includes(n)));
     return [...ordered.map((n) => `#${n}`), ...rest];
   }
-  for (const r of roots) {
-    const specs = numberedEntries(path.join(r, 'work'), /^([1-9]\d*)-spec\.md$/, 'file', fsImpl);
+  // Within a root the live and archived flat headers merge by record; roots keep first-non-empty order.
+  for (const entries of dirsByRoot) {
+    const specs = entries.filter((e) => e.specDir === null)
+      .flatMap((e) => numberedEntries(e.dir, /^([1-9]\d*)-spec\.md$/, 'file', fsImpl));
     if (specs.length) return format(specs);
   }
   return null;
