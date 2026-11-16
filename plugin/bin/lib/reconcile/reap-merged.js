@@ -37,11 +37,16 @@ const { readPorcelainStatus } = require('../residue/probes/worktrees');
 // had ownedRun context); moving it to the detached reconcile-background
 // subcommand (#820 D8) dropped that trail entirely (review finding). Never
 // blocks or fails the reap itself — a run this worktree can't be joined to
-// (archived run dir, no run-state.json) simply gets no event, same as
-// before this fix.
+// (no run-state.json, or no run recording this path) simply gets no event. A
+// closed or archived run is joined for the reap event only (#4960).
 function logReapEvent(runDir, type, data) {
   if (!runDir) return;
   try { appendEvent(runDir, type, data); } catch { /* best-effort */ }
+}
+
+function recordedMatches(state, real) {
+  const recorded = priorWorktree(state);
+  return recorded != null && (safeReal(recorded) || recorded) === real;
 }
 
 // Resolves the owning run dir BEFORE any removal — findRunByWorktreePath
@@ -54,31 +59,34 @@ function logReapEvent(runDir, type, data) {
 // silently found nothing every time).
 // skipAdHoc (#2783): an `-adhoc-standalone` twin, minted after /flow's formal
 // run, sorts newer and would otherwise take the formal run's reap trail.
-// #4960: then closed (clean) runs, then the archive — the same reconcile pass
-// archives a merged run before it reaps the worktree, so the owning run is
-// usually already clean or archived by now. Newest run id wins within a tier.
-function recordedMatches(state, real) {
-  const recorded = priorWorktree(state);
-  return typeof recorded === 'string' && recorded !== '' && (safeReal(recorded) || recorded) === real;
-}
-
-function resolveOwningRunDir(root, real) {
+// #4960: `includeClosed` (the worktree-reaped call only) also searches closed
+// (clean) and archived runs — the same reconcile pass archives a merged run
+// before it reaps the worktree, so the owning run is usually already closed by
+// now. Worktree paths repeat per record, so the NEWEST run id across both
+// tiers wins. Skip events keep the live-only lookup: a closed run would
+// otherwise take an unbounded skip line per pass and every pass would scan the
+// whole archive.
+function resolveOwningRunDir(root, real, { includeClosed = false } = {}) {
   try {
     const live = findRunByWorktreePath(root, real, { skipAdHoc: true });
     if (live) return live.runDir;
+    if (!includeClosed) return null;
+    let clean = null;
     for (const { dir, state } of iterRunDirsWithState(root, { status: 'clean' })) {
       if (isAdHocRunDir(dir)) continue;
-      if (recordedMatches(state, real)) return dir;
+      if (recordedMatches(state, real)) { clean = dir; break; }
     }
+    let archived = null;
     const archiveBase = path.join(root, '.claude-tweaks', 'pipelines', 'archive');
-    let names;
-    try { names = fs.readdirSync(archiveBase); } catch { return null; }
+    let names = [];
+    try { names = fs.readdirSync(archiveBase); } catch { /* no archive dir */ }
     for (const name of names.filter((n) => RUN_ID_RE.test(n)).sort().reverse()) {
       const dir = path.join(archiveBase, name);
       if (isAdHocRunDir(dir)) continue;
-      if (recordedMatches(readRunState(dir), real)) return dir;
+      if (recordedMatches(readRunState(dir), real)) { archived = dir; break; }
     }
-    return null;
+    if (clean && archived) return path.basename(clean) > path.basename(archived) ? clean : archived;
+    return clean || archived;
   } catch { return null; }
 }
 
@@ -280,7 +288,7 @@ function reapMerged({
     if (dryRun) { reaped.push(real); continue; }
 
     // Resolved before removal — see resolveOwningRunDir's own header comment.
-    const owningRunDir = resolveOwningRunDir(root, real);
+    const owningRunDir = resolveOwningRunDir(root, real, { includeClosed: true });
     const rm = runGit(['worktree', 'remove', real], root);
     if (rm.failure) {
       // #2566 — before escalating, try the long-path fallback: it succeeds
