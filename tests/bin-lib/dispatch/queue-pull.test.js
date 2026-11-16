@@ -3634,7 +3634,6 @@ describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600
       // The cold base also prints its own gh-absent Warnings (linked PRs, unlanded blockers): count the file's only.
       const warnings = reported(r.stderr).filter((l) => l.includes('/dispatch-dep-freshness.json is not a JSON array'));
       assert.equal(warnings.length, 1, `cold wrapper ${side}: one Warning naming the file`);
-      assert.ok(warnings[0].includes('/dispatch-dep-freshness.json is not a JSON array'), `cold wrapper ${side}: names the file`);
       assert.equal(r.orderBlob, null, `cold wrapper ${side}: the write-back cannot read the wrapper and persists nothing`);
       assert.deepEqual(groupedIn(r), groupedIn(R['S1-files-miss'].oracle), `cold wrapper ${side}: the pull itself is the base's`);
     }
