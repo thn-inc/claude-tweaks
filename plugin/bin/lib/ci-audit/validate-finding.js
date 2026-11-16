@@ -24,7 +24,10 @@
 // gather is allowed (the judge may see a lead the mechanical pass missed) when every figure resolves.
 //
 // Other rules:
-//  - `check` is one of checks.js's CHECK_IDS; `workflow` one of `workflows[].file`.
+//  - `check` is one of checks.js's CHECK_IDS; `workflow` one of `workflows[].file`, except for
+//    repeated-work, whose workflow must be null: the gather counts a repeated step across every
+//    workflow (its breach has workflow null), so a named workflow would be the judge's free choice
+//    and would mint a second fingerprint for the same step.
 //  - `job`, when set, is a gathered name of that workflow: a `jobs[].job`, a critical-path `chain`
 //    entry, a shard `family`, or the job of a breach of the finding's check there (the
 //    serial-independent-jobs pair `a + b`). repeated-work names its `step` (a `repeatedSteps[].name`)
@@ -34,7 +37,8 @@
 //    cut), and neither may carry credential-shaped text (findCredentialInText; the match is never
 //    echoed). No checked string — claim, remedy, check, workflow, job, step, an evidence job — may carry a
 //    control character or line break (C0, C1, U+2028, U+2029): every one is single-line text.
-//  - Error text quotes every untrusted name through JSON.stringify, so a stderr line stays one line.
+//  - Error text quotes every untrusted name through JSON.stringify, so a stderr line stays one line,
+//    and withholds a name that looks like a credential (findCredentialInText) instead of echoing it.
 'use strict';
 
 const { CHECK_IDS } = require('./checks');
@@ -66,7 +70,8 @@ const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\p{Zl}\p{Zp}]/u;
 
 const own = (obj, key) => obj !== null && typeof obj === 'object' && Object.prototype.hasOwnProperty.call(obj, key);
 const num = (v) => typeof v === 'number' && Number.isFinite(v);
-const q = (v) => JSON.stringify(v);
+const q = (v) => (typeof v === 'string' && findCredentialInText(v) !== null
+  ? '(a name that looks like a credential, withheld)' : JSON.stringify(v));
 const list = (g, key) => (Array.isArray(g[key]) ? g[key].filter((x) => x && typeof x === 'object') : []);
 
 // The figure a metric names, or { error } when it does not resolve.
@@ -88,7 +93,10 @@ function resolve(ev, f, g) {
     if (job !== null && !(Array.isArray(cp.chain) && cp.chain.includes(job))) {
       return { error: `${metric}: job ${q(job)} is not on the critical path of workflow ${q(wf)}` };
     }
-    return { value: cp[metric.split('.')[1]], subject: job === null ? `workflow ${q(wf)}` : `job ${q(job)}` };
+    const subject = job === null ? `workflow ${q(wf)}` : `job ${q(job)}`;
+    const value = cp[metric.split('.')[1]];
+    if (!num(value)) return { error: `${metric} of ${subject} has no gathered figure` };
+    return { value, subject };
   }
   if (METRICS.shardSkew.includes(metric)) {
     const s = list(g, 'shardSkews').find((x) => x.workflow === wf && x.family === job);
@@ -172,12 +180,17 @@ function validateFinding(finding, gather) {
     return { ok: false, errors: ['the gather sampled no runs (noData), so no finding can be validated'] };
   }
   const f = finding;
-  const errors = requireNonEmptyStrings(f, ['check', 'workflow', 'claim', 'remedy']);
+  const workflowFree = f.check === 'repeated-work';
+  const errors = requireNonEmptyStrings(f, workflowFree ? ['check', 'claim', 'remedy'] : ['check', 'workflow', 'claim', 'remedy']);
   errors.push(...textErrors(f));
   if (errors.length > 0) return { ok: false, errors };
 
   if (!CHECK_IDS.includes(f.check)) errors.push(`check: ${q(f.check)} is not one of ${CHECK_IDS.join('|')}`);
-  if (!list(g, 'workflows').some((w) => w.file === f.workflow)) errors.push(`workflow: ${q(f.workflow)} is not a gathered workflow file`);
+  if (workflowFree) {
+    if (f.workflow !== null) errors.push('workflow: must be null for repeated-work (the step spans every workflow)');
+  } else if (!list(g, 'workflows').some((w) => w.file === f.workflow)) {
+    errors.push(`workflow: ${q(f.workflow)} is not a gathered workflow file`);
+  }
   if (errors.length > 0) return { ok: false, errors };
 
   const step = own(f, 'step') ? f.step : null;

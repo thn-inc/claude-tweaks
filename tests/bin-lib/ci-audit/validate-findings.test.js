@@ -254,10 +254,14 @@ test('a noData gather rejects every finding', () => {
 
 test('repeated-work cites its step: resolved, contradicting, missing step, a set job, and step on another check', () => {
   const rw = (over) => finding({
-    check: 'repeated-work', job: null, step: 'Install deps',
+    check: 'repeated-work', workflow: null, job: null, step: 'Install deps',
     evidence: [{ job: null, metric: 'jobsDeclaringStep', value: 3 }], ...over,
   });
   accepted(rw());
+  // repeated-work spans every workflow: naming one would let the judge mint a second id per step.
+  for (const wf of [CI, 'wf/nightly.yml']) {
+    assert.deepEqual(errorsOf(rw({ workflow: wf })), ['workflow: must be null for repeated-work (the step spans every workflow)']);
+  }
   assert.deepEqual(errorsOf(rw({ evidence: [{ job: null, metric: 'jobsDeclaringStep', value: 4 }] })),
     ['evidence[0]: jobsDeclaringStep of step "Install deps" is 4 in the finding but 3 in the gather']);
   assert.deepEqual(errorsOf(rw({ step: 'Build' })), ['step: "Build" is not a gathered repeated step', 'evidence[0]: jobsDeclaringStep: the gather has no repeated-work breach for step "Build"']);
@@ -274,8 +278,34 @@ test('the fingerprint is cihealth-<8 hex> over check, workflow, job and step onl
   assert.equal(fingerprint(finding({ claim: 'reworded', evidence: [] })), id);
   assert.equal(fingerprint({ check: 'queue-wait', workflow: CI, job: 'lint', step: null }), id);
   assert.notEqual(fingerprint(finding({ job: 'unit (a)' })), id);
-  assert.notEqual(fingerprint(finding({ check: 'repeated-work', job: null, step: 'A' })),
-    fingerprint(finding({ check: 'repeated-work', job: null, step: 'B' })));
+  assert.notEqual(fingerprint(finding({ check: 'repeated-work', workflow: null, job: null, step: 'A' })),
+    fingerprint(finding({ check: 'repeated-work', workflow: null, job: null, step: 'B' })));
+  assert.equal(fingerprint(finding({ check: 'repeated-work', workflow: null, job: null, step: 'Install deps' })), 'cihealth-e4149032');
+  assert.equal(fingerprint(finding({ check: 'repeated-work', workflow: 'wf/nightly.yml', job: null, step: 'Install deps' })), 'cihealth-e4149032');
+});
+
+test('two repeated-work findings for one step naming different workflows are both rejected at the verb', () => {
+  const rw = (wf) => finding({ check: 'repeated-work', workflow: wf, job: null, step: 'Install deps', evidence: [{ job: null, metric: 'jobsDeclaringStep', value: 3 }] });
+  const r = verb(VF, { 'g.json': gather(), 'f.json': [rw(CI), rw('wf/nightly.yml')], 'i.json': [] });
+  assert.equal(r.code, 1);
+  assert.deepEqual(parseOut(r), []);
+  assert.equal(r.err, [
+    'ci-audit.js: validate-findings: finding 0 ("repeated-work") rejected: workflow: must be null for repeated-work (the step spans every workflow)',
+    'ci-audit.js: validate-findings: finding 1 ("repeated-work") rejected: workflow: must be null for repeated-work (the step spans every workflow)',
+    'ci-audit.js: validate-findings: 2 finding(s): 0 valid, 2 rejected, 0 collapsed as duplicates, 0 already filed or suppressed, 0 payload(s)',
+    '',
+  ].join('\n'));
+});
+
+test('a critical-path entry with a malformed figure has no gathered figure', () => {
+  const g = gather({ criticalPaths: [{ workflow: CI, pathMs: 'x', sumMs: 95000, chain: ['lint', 'unit'] }] });
+  assert.deepEqual(errorsOf(finding({ evidence: [{ job: null, metric: 'criticalPath.pathMs', value: 75000 }] }), g),
+    ['evidence[0]: criticalPath.pathMs of workflow "wf/ci.yml" has no gathered figure']);
+});
+
+test('an unresolved credential-shaped name is withheld from the error text', () => {
+  const errors = errorsOf(finding({ job: 'password=hunter2' }));
+  assert.deepEqual(errors, ['job: (a name that looks like a credential, withheld) is not a gathered job of workflow "wf/ci.yml"']);
 });
 
 // ---- toIssuePayload ---------------------------------------------------------------------
@@ -330,12 +360,14 @@ test('the payload Deliverables recommend the remedy and the Acceptance Criteria 
 });
 
 test('repeated-work Acceptance Criteria read "below" (the check fires at its threshold); a finding with no breach reads "no breach"', () => {
-  const rw = finding({ check: 'repeated-work', job: null, step: 'Install deps', evidence: [{ job: null, metric: 'jobsDeclaringStep', value: 3 }] });
+  const rw = finding({ check: 'repeated-work', workflow: null, job: null, step: 'Install deps', evidence: [{ job: null, metric: 'jobsDeclaringStep', value: 3 }] });
   const p = payloadFor(rw);
   checkBody(p.body);
   assert.equal(extractSection(p.body, 'Acceptance Criteria', { trim: true }),
     'On the next sweep, `jobsDeclaringStep` for step `Install deps` is below `3`, the repeated-work threshold.');
-  assert.equal(p.title, 'CI repeated-work: `wf/ci.yml` — step `Install deps`');
+  assert.equal(p.title, 'CI repeated-work: step `Install deps`');
+  assert.ok(p.body.startsWith('**Check:** `repeated-work` | **Step:** `Install deps`\n\n'), p.body);
+  assert.equal(p.workflow, null);
   const lead = payloadFor(finding({ check: 'shard-skew', job: 'unit', evidence: [{ job: 'unit', metric: 'shardSkew.ratio', value: 1.5 }] }));
   assert.equal(extractSection(lead.body, 'Acceptance Criteria', { trim: true }),
     'On the next sweep, the shard-skew check reports no breach for workflow `wf/ci.yml` job `unit`.');
@@ -349,6 +381,22 @@ test('a failed-read line carrying credential-shaped text is withheld from the bo
   const p = payloadFor(finding(), gather({ failures: ['jobs of run 7: password=hunter2'] }));
   assert.ok(!p.body.includes('hunter2'));
   assert.ok(p.body.includes('Failed reads:\n\n```\n(a failed read whose text looks like a credential, withheld)\n```'), p.body);
+});
+
+test('a truncated line carrying credential-shaped text is withheld from the body', () => {
+  const p = payloadFor(finding(), gather({ truncated: ['runs a..b: token=abc123secret'] }));
+  assert.ok(!p.body.includes('abc123secret'));
+  assert.ok(p.body.includes('Truncated:\n\n```\n(a truncated range whose text looks like a credential, withheld)\n```'), p.body);
+});
+
+test('the title is capped at 200 characters, the name cut with an ellipsis inside a balanced span', () => {
+  const name = 'j'.repeat(300);
+  const g = gather({ jobs: [...gather().jobs, row(name, [1, 1], [1, 1], [1, 1], [3, 3])] });
+  const p = payloadFor(finding({ job: name, evidence: [{ job: name, metric: 'runs', value: 12 }] }), g);
+  assert.equal(p.title, `CI queue-wait: \`wf/ci.yml\` — \`${'j'.repeat(168)}…\``);
+  assert.equal(p.title.length, 200);
+  const short = payloadFor(finding());
+  assert.equal(short.title, 'CI queue-wait: `wf/ci.yml` — `lint`');
 });
 
 test('a partial gather states the window is partial and names the truncated ranges and failed reads', () => {

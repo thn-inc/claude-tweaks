@@ -23,7 +23,9 @@
 // Untrusted text — every workflow, job and step name, the claim, the remedy, the gather's
 // truncation and failure lines — renders only inside a code span (codeSpan) or a fenced block
 // (fencedBlock), each sized past the text's longest backtick run, and is first defused so it
-// cannot spell a fingerprint marker. A failure line carrying credential-shaped text is withheld.
+// cannot spell a fingerprint marker. A truncation or failure line carrying credential-shaped text
+// is withheld. A repeated-work finding has workflow null (the step spans every workflow), so its
+// header and title name the step and no workflow. The title is capped at TITLE_CAP characters.
 'use strict';
 
 const { recordPayload, specShapedBody, fencedBlock, defuse } = require('../issues/record');
@@ -33,6 +35,7 @@ const { DEFAULTS } = require('./checks');
 
 const RELEASE_NOTE = 'No user-visible change — CI timing finding.';
 const ORIGIN = 'ci-health';
+const TITLE_CAP = 200;
 
 const span = (v) => codeSpan(defuse(String(v)));
 const block = (v) => fencedBlock(defuse(v));
@@ -59,9 +62,10 @@ function currentState(f, g) {
     'The finding, as the judge wrote it:',
     block(f.claim),
   ];
-  const truncated = strings(g.truncated);
-  const failures = strings(g.failures).map((line) => (findCredentialInText(line) === null
-    ? line : '(a failed read whose text looks like a credential, withheld)'));
+  const screened = (lines, what) => strings(lines).map((line) => (findCredentialInText(line) === null
+    ? line : `(${what} whose text looks like a credential, withheld)`));
+  const truncated = screened(g.truncated, 'a truncated range');
+  const failures = screened(g.failures, 'a failed read');
   if (truncated.length > 0 || failures.length > 0) {
     parts.push(`The window is partial: the read stopped short, so these figures cover only part of it.${truncated.length > 0 ? ' Truncated:' : ''}`);
     if (truncated.length > 0) parts.push(block(truncated.join('\n')));
@@ -83,10 +87,32 @@ function acceptanceCriteria(f, g) {
   return `On the next sweep, ${span(b.metric)} for ${subject} is ${cmp} ${span(b.threshold)}, the ${f.check} threshold.`;
 }
 
+// `CI <check>: <names>`, at most TITLE_CAP characters. Names are cut last first (step or job, then
+// workflow) to whole code points plus an ellipsis, inside their own code span, so the check id
+// prefix and the span's backticks stay intact.
+function titleOf(f) {
+  const segments = [];
+  if (f.workflow !== null) segments.push([' ', f.workflow]);
+  if (f.job !== null) segments.push([' — ', f.job]);
+  if (f.step !== null) segments.push([segments.length === 0 ? ' step ' : ' — step ', f.step]);
+  const texts = segments.map(([, t]) => String(t));
+  const render = () => `CI ${f.check}:${segments.map(([lead], i) => lead + span(texts[i])).join('')}`;
+  for (let i = segments.length - 1; i >= 0 && render().length > TITLE_CAP; i--) {
+    const points = [...String(segments[i][1])];
+    let keep = points.length;
+    while (keep > 0 && render().length > TITLE_CAP) {
+      keep = Math.max(0, keep - (render().length - TITLE_CAP) - (texts[i] === segments[i][1] ? 1 : 0));
+      texts[i] = `${points.slice(0, keep).join('')}…`;
+    }
+  }
+  return render();
+}
+
 function toIssuePayload(finding, gather, verifiedAsOf) {
-  const f = { ...finding, job: finding.job ?? null, step: finding.step ?? null };
+  const f = { ...finding, workflow: finding.workflow ?? null, job: finding.job ?? null, step: finding.step ?? null };
   const g = gather && typeof gather === 'object' ? gather : {};
-  const header = `**Check:** ${span(f.check)} | **Workflow:** ${span(f.workflow)}`
+  const header = `**Check:** ${span(f.check)}`
+    + (f.workflow === null ? '' : ` | **Workflow:** ${span(f.workflow)}`)
     + (f.job === null ? '' : ` | **Job:** ${span(f.job)}`)
     + (f.step === null ? '' : ` | **Step:** ${span(f.step)}`);
   const body = specShapedBody({
@@ -98,9 +124,7 @@ function toIssuePayload(finding, gather, verifiedAsOf) {
     filedBy: '/claude-tweaks:ci-health',
     verifiedAsOf: verifiedAsOf || undefined,
   });
-  const title = `CI ${f.check}: ${span(f.workflow)}`
-    + (f.job === null ? '' : ` — ${span(f.job)}`)
-    + (f.step === null ? '' : ` — step ${span(f.step)}`);
+  const title = titleOf(f);
   const payload = recordPayload({
     title, body, type: 'task', origin: ORIGIN, risk: 'low', size: 'low', ready: true, fingerprint: f.id,
   });
