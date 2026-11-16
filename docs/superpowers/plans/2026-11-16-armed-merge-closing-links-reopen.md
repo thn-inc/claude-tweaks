@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 20 (CI), `node --test`, no external deps.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-16T155111-record-4251/work/4251-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-16T190414-record-4251/work/4251-spec.md` (rescoped by the record's Reading A decision; this plan already implements it)
 
 **Scope keywords:** Development-sidebar, gap tracked in the run's ledger
 
