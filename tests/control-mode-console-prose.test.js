@@ -582,6 +582,7 @@ function absRunDirProblems(engine, upstream) {
   if (!e.includes('with `{ABS_STAGE_DIR}` and `{ABS_RUN_DIR}` substituted')) problems.push('the fan-out dispatch does not substitute {ABS_RUN_DIR}');
   if (!e.includes('The controller replaces `{ABS_STAGE_DIR}`, and `{ABS_RUN_DIR}` (the anchored absolute run dir')) problems.push('the substitution sentence does not define {ABS_RUN_DIR}');
   const u = flat(upstream);
+  if (!e.includes('A judge run in the main thread reads `{ABS_RUN_DIR}` as the same anchored run dir')) problems.push('the main-thread judge does not read {ABS_RUN_DIR} as the anchored run dir');
   if (!u.includes(STAGING_CHECK)) problems.push('the staging check does not run against {ABS_RUN_DIR}');
   if (u.includes(STAGING_CHECK_UNSET)) problems.push('the staging check still runs against $PIPELINE_RUN_DIR');
   if (!u.includes('A failed call, or any output other than `control-mode on`, writes no header')) problems.push('the staging check does not fail closed to no header');
@@ -595,6 +596,7 @@ test('#4621: the staging check names {ABS_RUN_DIR}, which curation-engine.md sub
 test('#4621 go-red: each {ABS_RUN_DIR} claim is caught on its own', () => {
   assert.deepStrictEqual(absRunDirProblems(CURATION_ENGINE.replace(' and `{ABS_RUN_DIR}` substituted', ' substituted'), UPSTREAM_FEEDBACK), ['the fan-out dispatch does not substitute {ABS_RUN_DIR}']);
   assert.deepStrictEqual(absRunDirProblems(CURATION_ENGINE.replace('`{ABS_STAGE_DIR}`, and `{ABS_RUN_DIR}` (the anchored absolute run dir', '`{ABS_STAGE_DIR}`'), UPSTREAM_FEEDBACK), ['the substitution sentence does not define {ABS_RUN_DIR}']);
+  assert.deepStrictEqual(absRunDirProblems(CURATION_ENGINE.replace('A judge run in the main thread reads `{ABS_RUN_DIR}` as the same anchored run dir', 'A judge run in the main thread reads the run dir'), UPSTREAM_FEEDBACK), ['the main-thread judge does not read {ABS_RUN_DIR} as the anchored run dir']);
   assert.deepStrictEqual(absRunDirProblems(CURATION_ENGINE, UPSTREAM_FEEDBACK.replace(STAGING_CHECK, STAGING_CHECK_UNSET)), ['the staging check does not run against {ABS_RUN_DIR}', 'the staging check still runs against $PIPELINE_RUN_DIR']);
   assert.deepStrictEqual(absRunDirProblems(CURATION_ENGINE, UPSTREAM_FEEDBACK.replace('A failed call', 'A call')), ['the staging check does not fail closed to no header']);
 });
