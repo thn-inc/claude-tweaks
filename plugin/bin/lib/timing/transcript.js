@@ -27,7 +27,7 @@ const path = require('path');
 const readline = require('readline');
 const { lstatType, resolveLeaf, canonicalRealpath, isAncestorOrSelf } = require('../path-guard');
 const { isPathContained } = require('../shared-primitives');
-const { isProcedurePath, classifyToolCall } = require('./turn-class');
+const { isProcedurePath, classifyToolCall, procedureFileKey, bashProcedureFiles } = require('./turn-class');
 
 const TRANSCRIPT_SLUG_RULE = 'replace every character not in [A-Za-z0-9-] with "-" (observed: "/", " ", and "." all become "-")';
 
@@ -133,7 +133,10 @@ function resultText(content) {
 // turnStart (true on the first assistant row of each message.id and on any
 // assistant row without a string id), and contextTokens (inputTokens +
 // cacheRead + cacheCreate on turnStart rows, taken after the stream closes so
-// it reflects the per-id max; 0 elsewhere).
+// it reflects the per-id max; 0 elsewhere). procedureFiles ({ [skills/… key]:
+// count }, {} when none) is counted on the assistant row holding the tool_use:
+// a Read adds 1 to procedureFileKey(file_path), a Bash 1 per bashProcedureFiles
+// entry (#4359).
 // Rejects when the file cannot be opened, with the real stat failure's
 // code (ENOENT/EACCES/...; EUNKNOWN if the error carries none), with
 // EISDIR when the path resolves but names a directory, or — if `stat`
@@ -164,7 +167,7 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
       const msg = entry && entry.message;
       if (!entry || typeof entry.timestamp !== 'string' || !msg || typeof msg.role !== 'string') return;
       const content = Array.isArray(msg.content) ? msg.content : [];
-      const row = { ts: entry.timestamp, role: msg.role, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, toolRoundTrip: false, procedureBytes: 0, model: null, turnClasses: {}, turnStart: false, contextTokens: 0 };
+      const row = { ts: entry.timestamp, role: msg.role, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, toolRoundTrip: false, procedureBytes: 0, model: null, turnClasses: {}, turnStart: false, contextTokens: 0, procedureFiles: {} };
       if (msg.role === 'assistant') {
         row.model = typeof msg.model === 'string' ? msg.model : null;
         const u = msg.usage || {};
@@ -176,6 +179,10 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
           if (!b || b.type !== 'tool_use') continue;
           if (typeof b.id === 'string') toolUses.set(b.id, { name: b.name, input: b.input });
           if (b.name === 'Read' && b.input && isProcedurePath(b.input.file_path, worktree)) procedureReads.add(b.id);
+          let keys = [];
+          if (b.name === 'Read' && b.input) keys = [procedureFileKey(b.input.file_path, worktree)].filter(Boolean);
+          else if (b.name === 'Bash' && b.input) keys = bashProcedureFiles(b.input.command, worktree);
+          for (const k of keys) row.procedureFiles[k] = (row.procedureFiles[k] || 0) + 1;
         }
         row.turnStart = true;
         if (typeof msg.id === 'string') {
@@ -313,6 +320,8 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
       parentAgentId: meta ? strOrNull(meta.parentAgentId) : null,
       spawnDepth: meta ? numOrNull(meta.spawnDepth) : null,
       startTs: null, endTs: null, wallClockMs: null, tokens: null,
+      procedureFiles: null, procedureFileRows: null,
+      transcriptPath: path.join(subagentsDir, jsonlName),
       notFound: metaReason,
     };
     // A transcript failure keeps the meta reason ahead of it, so an orphan
@@ -324,7 +333,7 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
       fail(`transcript not readable (${skipped.get(jsonlName)})`);
     } else {
       try {
-        rows = await readUsage(path.join(subagentsDir, jsonlName), { fsImpl });
+        rows = await readUsage(d.transcriptPath, { fsImpl });
       } catch (err) {
         fail(`transcript not readable (${(err && err.code) || 'EUNKNOWN'})`);
       }
@@ -357,6 +366,17 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
         d.tokens.output += r.outputTokens;
         d.tokens.cacheRead += r.cacheRead;
         d.tokens.cacheCreate += r.cacheCreate;
+      }
+      // Per-file procedure reads over the same kept rows, plus one entry per
+      // reading row in transcript order (keptRows puts untimed rows last, so
+      // walk `timed` instead); an untimed row books to the dispatch's start.
+      d.procedureFiles = {};
+      d.procedureFileRows = [];
+      const keptSet = new Set(keptRows);
+      for (const { r, ms } of timed) {
+        if (!keptSet.has(r) || Object.keys(r.procedureFiles).length === 0) continue;
+        for (const [k, n] of Object.entries(r.procedureFiles)) d.procedureFiles[k] = (d.procedureFiles[k] || 0) + n;
+        d.procedureFileRows.push({ ts: Number.isFinite(ms) ? r.ts : d.startTs, procedureFiles: { ...r.procedureFiles } });
       }
       d.transcriptModel = transcriptModelOf(keptRows);
     }
