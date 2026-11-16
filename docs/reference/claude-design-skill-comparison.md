@@ -3,6 +3,9 @@
 Decision record for #2690. Read this if revisiting whether `design-wrapper` should route
 any mode to Anthropic's native `/design` skill instead of (or alongside) Impeccable.
 
+Moved here from `plugin/skills/design-wrapper/` (#5550). A bare file name below, such as
+`impeccable-cli.md`, names a file in that directory.
+
 ## What this record asked
 
 Anthropic (via the official ClaudeDevs account) announced a native `/design` skill
