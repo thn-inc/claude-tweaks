@@ -35,6 +35,22 @@
 
 Each line is pinned by a test in Task 1 (1-4, 6) or Task 2 (5).
 
+## Spec coverage
+
+| AC clause | Where |
+|---|---|
+| AC1.1 traced run shows zero maintenance in the table's non-sibling files | Task 4 Steps 1-3 |
+| AC1.2 any that remain are listed in the PR body with the reason | Task 4 Steps 4-5 |
+| AC2.1 before/after maintenance and git process counts in the PR body | Task 4 Steps 2 and 5 (before reused from the first attempt's same-machine trace, said in the PR body) |
+| AC3.1 the Deliverable 4 test fails when the fix is reverted | Task 2 Step 4 |
+| AC3.2 the PR body quotes that red output | Task 4 Step 5 |
+| AC4.1 every touched test file keeps its pre-existing tests, all passing | Task 1 Step 4, Task 2 Step 3, Task 3 Step 4 (runs), Task 4 Step 5 (per-file counts before/after in the PR body) |
+| AC4.2 no test deleted, skipped, renamed, merged or loosened; concurrency unchanged | Global Constraints; Task 4 Step 5 (counts); the whole-branch review reads the diff for it |
+| AC5.1 the full suite and the Windows regression job pass | `/build` Common Step 5 (full verify) and the PR's CI, including the Windows job |
+
+Waived tests/helpers/git-template.js: read, not edited — `disableReceiveAutoGc` and `withMaintenanceOff` stay as they are; the runner's template closes the receive side for every bare origin, including the ones the builders make (record decision (b)).
+Waived tests/helpers/git-fixtures.js: read, not edited — `originWithTwoClones` keeps its `disableReceiveAutoGc` call; no shared-builder change is needed once the template is the central mechanism (record decision (b)).
+
 ---
 
 ### Task 1: Runner-written git template directory
