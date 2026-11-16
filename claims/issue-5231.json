@@ -1,7 +1,6 @@
 {
+  "released": true,
   "runId": "2026-11-16T153402-record-5231",
-  "sessionId": "f9f1955f-aabc-4a56-9d94-d7761d2c0e9f",
-  "claimedAt": "2026-11-16T15:37:23.834Z",
-  "ttlHours": 72,
-  "host": "Thomass-MacBook-Pro-3376.local"
+  "reason": "abandoned: removal gate not met (no maintainer drain-count comment; 16 open queue-pull bugs)",
+  "releasedAt": "2026-11-16T15:44:00.477Z"
 }
