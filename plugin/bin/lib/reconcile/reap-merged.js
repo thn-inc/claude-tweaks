@@ -24,7 +24,8 @@ const { mainCheckoutRoot, safeReal } = require('../hooks/worktree-detect');
 const { parseWorktreeList, isWorktreeLocked, holdVerdict, HARNESS_WORKTREE_DIR, QUIET_SKIP_REASONS } = require('../hooks/worktree-reap');
 const { isPathContained } = require('../shared-primitives');
 const { resolvePrState } = require('./pr-state');
-const { findRunByWorktreePath, iterRunDirsWithState, readRunState, isAdHocRunDir, priorWorktree, RUN_ID_RE, appendEvent } = require('../hooks/context');
+const { canonicalRealpath } = require('../path-guard');
+const { findRunByWorktreePath, worktreeMatches, iterRunDirsWithState, readRunState, isAdHocRunDir, priorWorktree, RUN_ID_RE, appendEvent } = require('../hooks/context');
 const { release: releasePortsDefault } = require('../ports/registry');
 const { trackResidue, beginCacheBatch, commitCacheBatch } = require('./cache');
 const { escalateResidue, capDirtyFiles, residueRepoOf } = require('./escalate-residue');
@@ -44,9 +45,12 @@ function logReapEvent(runDir, type, data) {
   try { appendEvent(runDir, type, data); } catch { /* best-effort */ }
 }
 
-function recordedMatches(state, real) {
-  const recorded = priorWorktree(state);
-  return recorded != null && (safeReal(recorded) || recorded) === real;
+// The closed and archived tiers compare through the same canonicalizer as the live tier
+// (context.js's worktreeMatches: path-guard's .native canonicalRealpath, #3769), so a case-only
+// mismatch on a case-insensitive volume joins on every tier.
+function recordedMatches(state, real, canonical) {
+  const target = canonical(real) || real;
+  return worktreeMatches({ worktree: priorWorktree(state) }, target, real, canonical);
 }
 
 // Resolves the owning run dir BEFORE any removal — findRunByWorktreePath
@@ -66,24 +70,29 @@ function recordedMatches(state, real) {
 // tiers wins. Skip events keep the live-only lookup: a closed run would
 // otherwise take an unbounded skip line per pass and every pass would scan the
 // whole archive.
-function resolveOwningRunDir(root, real, { includeClosed = false } = {}) {
+function resolveOwningRunDir(root, real, { includeClosed = false, fsImpl } = {}) {
   try {
-    const live = findRunByWorktreePath(root, real, { skipAdHoc: true });
+    const live = findRunByWorktreePath(root, real, { skipAdHoc: true, fsImpl });
     if (live) return live.runDir;
     if (!includeClosed) return null;
+    const canonical = (p) => canonicalRealpath(p, { fsImpl });
     let clean = null;
     for (const { dir, state } of iterRunDirsWithState(root, { status: 'clean' })) {
       if (isAdHocRunDir(dir)) continue;
-      if (recordedMatches(state, real)) { clean = dir; break; }
+      if (recordedMatches(state, real, canonical)) { clean = dir; break; }
     }
     let archived = null;
     const archiveBase = path.join(root, '.claude-tweaks', 'pipelines', 'archive');
     let names = [];
     try { names = fs.readdirSync(archiveBase); } catch { /* no archive dir */ }
     for (const name of names.filter((n) => RUN_ID_RE.test(n)).sort().reverse()) {
+      // Newest first: once the clean tier matched, an archived name at or below its basename can
+      // never win the comparison below, so stop reading. Only the no-match full scan stays; it
+      // runs once per reap, in the background.
+      if (clean && name <= path.basename(clean)) break;
       const dir = path.join(archiveBase, name);
       if (isAdHocRunDir(dir)) continue;
-      if (recordedMatches(readRunState(dir), real)) { archived = dir; break; }
+      if (recordedMatches(readRunState(dir), real, canonical)) { archived = dir; break; }
     }
     if (clean && archived) return path.basename(clean) > path.basename(archived) ? clean : archived;
     return clean || archived;
@@ -260,7 +269,7 @@ function reapMerged({
     // worktree the caller is standing in is never a reap candidate (#644).
     if (isOwnCwd(here, real)) { skipped.push({ path: real, reason: 'own-cwd' }); continue; }
     if (isWorktreeLocked(real, { cwd: root })) { skipped.push({ path: real, reason: 'in-use' }); continue; }
-    // A live session in another process, read from its hold (#4960). 'held' is quiet like 'in-use';
+    // A live session in another process, read from its hold (#4960). 'held' writes no event, like 'in-use' (the SessionStart banner may still list it);
     // a hold that cannot be verified keeps the worktree and is logged, so a stuck one surfaces.
     const held = holdVerdict(real);
     if (held === 'held') { skipped.push({ path: real, reason: 'held' }); continue; }

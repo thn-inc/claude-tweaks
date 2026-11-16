@@ -5,8 +5,11 @@ const holdLib = require('./worktree-hold');
 
 function run(ctx) {
   // #4960: drop this session's worktree holds first — a session with no run dir still held a worktree.
+  // Not on `/clear`: SessionEnd(reason: clear) is followed by a SessionStart in the same process, which
+  // stamps only the current cwd — releasing here would drop the launch worktree's hold. The process
+  // lives on and pid liveness frees the holds at exit; over-holding is the safe direction.
   try {
-    holdLib.releaseSessionHolds({ cwd: ctx.cwd, sessionId: ctx.input.session_id, env: process.env });
+    if (!(ctx.input && ctx.input.reason === 'clear')) holdLib.releaseSessionHolds({ cwd: ctx.cwd, sessionId: ctx.input.session_id, env: process.env });
   } catch { /* log tier: never break a session */ }
   // Scoped to a run this session may write to, NOT ctx.runDir (#62). When every
   // non-terminal run belongs to another session there is nothing here to record.

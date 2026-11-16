@@ -26,6 +26,7 @@ const { release: releasePortsDefault } = require('../ports/registry');
 const { isPathContained } = require('../shared-primitives');
 const { readHolds } = require('./worktree-hold');
 const { pidStartTime } = require('../run-liveness/process-probe');
+const { probeOwnerPid } = require('../run-liveness/owner-pid-probe');
 
 const PID_RE = /\(pid\s+(\d+)\b/;
 
@@ -436,26 +437,23 @@ function isWorktreeLocked(wtPath, { cwd } = {}) {
 }
 
 // Is a session standing in this worktree right now, per the hold files in its git admin dir
-// (worktree-hold.js)? Per hold: unreadable, from another host, or without a usable pid is
-// UNVERIFIABLE; a pid that is gone, or alive with a start time differing from the recorded one
-// (a recycled pid), is dead; anything else is live. Any live hold -> 'held' (the verified reason
-// wins over an unverifiable neighbour); else any unverifiable one -> 'unverifiable'; else 'free'.
-// A start time that cannot be read now never frees a hold. Never throws: an error reads
-// 'unverifiable', so the worktree is kept.
+// (worktree-hold.js)? Each hold is judged by probeOwnerPid (#4153's single owner-pid judge):
+// positive, alive-no-start-time and start-time-unavailable are LIVE (a live pid whose start time
+// cannot be compared, e.g. win32, stays held); gone and pid-reused are dead; every other answer
+// (unreadable hold, other-host — inverted from run-liveness on purpose — no-pid, invalid start
+// time, a probe error) is UNVERIFIABLE. Any live hold -> 'held' (the verified reason wins over an
+// unverifiable neighbour); else any unverifiable one -> 'unverifiable'; else 'free'.
+// Never throws: an error reads 'unverifiable', so the worktree is kept.
 function holdVerdict(wtPath, { hostname = os.hostname, isAlive = isPidAlive, startTime = pidStartTime } = {}) {
   try {
     let unverifiable = false;
     for (const { hold } of readHolds(wtPath)) {
-      if (hold === null || hold.host !== hostname() || !Number.isInteger(hold.pid) || hold.pid <= 0) {
-        unverifiable = true;
-        continue;
-      }
-      if (!isAlive(hold.pid)) continue;
-      if (typeof hold.pidStartedAt === 'string' && hold.pidStartedAt !== '') {
-        const current = startTime(hold.pid);
-        if (typeof current === 'string' && current !== '' && current !== hold.pidStartedAt) continue;
-      }
-      return 'held';
+      // An empty start time is as unreadable as null: it must never read as a recycled pid.
+      const current = (pid) => { const t = startTime(pid); return t === '' ? null : t; };
+      const { result, detail } = probeOwnerPid(hold, { hostname, pidAlive: isAlive, pidStartTime: current });
+      if (result === 'positive' || detail === 'alive-no-start-time' || detail === 'start-time-unavailable') return 'held';
+      if (detail === 'gone' || detail === 'pid-reused') continue;
+      unverifiable = true;
     }
     return unverifiable ? 'unverifiable' : 'free';
   } catch {

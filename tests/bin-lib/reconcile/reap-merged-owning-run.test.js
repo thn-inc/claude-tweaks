@@ -10,6 +10,7 @@ const { reapMerged, resolveOwningRunDir } = require('../../../plugin/bin/lib/rec
 const { writeRunState } = require('../../../plugin/bin/lib/hooks/context');
 const { closeRunState } = require('../../../plugin/bin/lib/hooks/close-run-state');
 const { createPrStateResolver } = require('../../../plugin/bin/lib/reconcile/pr-state-cache');
+const { caseInsensitiveFs } = require('../../helpers/case-insensitive-fs');
 
 function git(cwd, ...args) {
   return cp.execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
@@ -147,6 +148,46 @@ test('resolveOwningRunDir: skips ad-hoc clean and archived dirs, unreadable stat
   fs.mkdirSync(valid, { recursive: true });
   writeRunState(valid, { status: 'clean', worktree: null, worktreeAtClose: wtPath });
   assert.equal(resolveOwningRunDir(root, wtPath, closed), valid);
+});
+
+// The injected fake models a case-insensitive volume, as teardown-gate.test.js's #3769 tests do: the
+// recorded and target spellings exist only in the fake, so only a path-guard-canonical compare joins them.
+const POSIX_ONLY = process.platform === 'win32' && 'posix-only case-insensitive fake: path.resolve/join rewrite its literal paths on win32';
+
+test('resolveOwningRunDir: a recorded path differing only in letter case matches in the clean and archived tiers (#3769 canonicalizer)', { skip: POSIX_ONLY }, () => {
+  const { root, runDir } = buildReapableFixture();
+  const canonicalPath = '/virtual-volume/Worktrees/Issue-1';
+  const fsImpl = caseInsensitiveFs({ '/virtual-volume': 'dir', '/virtual-volume/Worktrees': 'dir', [canonicalPath]: 'dir' });
+  const misCased = '/virtual-volume/worktrees/issue-1';
+  const opts = { includeClosed: true, fsImpl };
+  fs.rmSync(runDir, { recursive: true, force: true });
+  const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
+  const archived = path.join(pipelines, 'archive', '2025-01-01T000000-case');
+  fs.mkdirSync(archived, { recursive: true });
+  writeRunState(archived, { status: 'clean', worktree: null, worktreeAtClose: misCased });
+  assert.equal(resolveOwningRunDir(root, canonicalPath, opts), archived, 'archived tier');
+  const clean = path.join(pipelines, '2026-01-01T000000-case-clean');
+  fs.mkdirSync(clean, { recursive: true });
+  writeRunState(clean, { status: 'clean', worktree: null, worktreeAtClose: misCased });
+  assert.equal(resolveOwningRunDir(root, canonicalPath, opts), clean, 'clean tier');
+  assert.equal(resolveOwningRunDir(root, '/virtual-volume/Worktrees/Other', opts), null, 'a different path still misses');
+});
+
+test('resolveOwningRunDir: a clean match stops the archive walk at the first archived run that sorts at or below it', (t) => {
+  const { root, wtPath, runDir } = buildReapableFixture();
+  closeFixtureRun(runDir, wtPath);
+  const archiveBase = path.join(root, '.claude-tweaks', 'pipelines', 'archive');
+  for (const name of ['2025-01-01T000000-old-a', '2025-06-01T000000-old-b']) {
+    fs.mkdirSync(path.join(archiveBase, name), { recursive: true });
+    writeRunState(path.join(archiveBase, name), { status: 'clean', worktree: null, worktreeAtClose: wtPath });
+  }
+  const read = [];
+  const realRead = fs.readFileSync;
+  t.mock.method(fs, 'readFileSync', (...args) => { read.push(String(args[0])); return realRead.apply(fs, args); });
+  assert.equal(resolveOwningRunDir(root, wtPath, { includeClosed: true }), runDir);
+  // (The clean tier's own archive-twin probe of the newest run's name is not a walk read.)
+  const archivedReads = read.filter((p) => p.startsWith(path.join(archiveBase, '2025-')));
+  assert.deepEqual(archivedReads, [], 'nothing under an older archived name can win, so none is read');
 });
 
 test('resolveOwningRunDir: a recorded path spelled through a symlink matches the canonical worktree path', (t) => {

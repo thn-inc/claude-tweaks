@@ -35,8 +35,15 @@ test('AC4.1: sequential-execution.md states the recovery sequence', () => {
 
 test('AC4.1: sequential-execution.md warns against a plain cd', () => {
   const s = section(SEQUENTIAL, /worktree disappears/i);
-  assert.match(s, /plain `cd`/);
+  assert.match(s, /Never a plain `cd`/);
   assert.match(s, /refus/);
+});
+
+test('AC4.1: the recovery creates the next group\'s worktree before entering it, and names the no-group-left case', () => {
+  const s = section(SEQUENTIAL, /worktree disappears/i);
+  assert.match(s, /create the next group's worktree per "Creating\s+the group's worktree"/);
+  assert.match(s, /stay in the original checkout after `ExitWorktree\(action: "keep"\)`/);
+  assert.ok(s.indexOf('create the next group') < s.indexOf('EnterWorktree(path'), 'create precedes enter');
 });
 
 test('SKILL.md Step 5\'s reap statement names the session hold', () => {

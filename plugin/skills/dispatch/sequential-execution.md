@@ -51,8 +51,9 @@ A cwd-pinned dispatching session (above) runs the same `git worktree add` and sk
 
 Symptom: `Working directory … was deleted; shell cwd recovered`, then `gh` and `git` fail with
 `not a git repository`. The session is still isolated in the deleted path, so recover in this
-order: `ExitWorktree(action: "keep")` first, then `EnterWorktree(path: …)` into the next group's
-already-created worktree. Never a plain `cd` into another worktree or the main checkout — the
+order: `ExitWorktree(action: "keep")` first, then create the next group's worktree per "Creating
+the group's worktree" (it usually does not exist yet) and `EnterWorktree(path: …)` into it. With
+no group left, stay in the original checkout after `ExitWorktree(action: "keep")`. Never a plain `cd` into another worktree or the main checkout — the
 session stays isolated in the deleted worktree, so the harness refuses every command. A live
 session's worktree hold (#4960) keeps the reapers off a worktree it stands in, so this is the
 fallback, not the expected path.
