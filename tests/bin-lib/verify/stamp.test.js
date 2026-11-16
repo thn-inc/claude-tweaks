@@ -167,7 +167,9 @@ test('AC3.1: readStamp returns null for a directory holding only a bare-SHA file
   assert.strictEqual(readStamp('/g', fakeFs({ [path.join('/g', LEFTOVER_BARE)]: `${SHA}\n` })), null);
 });
 
-// #1922 review finding (low): the JSON branch enforces SHA_RE on sha and (when present) fullSha — fail toward absence rather than trusting an arbitrary JSON string.
+// #1922 review finding (low): the JSON branch enforces SHA_RE on sha and
+// (when present) fullSha — fail toward absence rather than trusting an
+// arbitrary JSON string.
 test('readStamp returns null when the JSON sha is not a 40-hex SHA', () => {
   const fsImpl = fakeFs({
     [path.join('/g', STAMP_JSON_NAME)]: JSON.stringify({ sha: 'not-a-sha', scope: 'full' }),

@@ -82,10 +82,10 @@ function writeStamp(gitDir, stamp, deps = {}) {
 
 // anchorOf(stamp): the canonical sha of the stamp's own anchor — fullSha when
 // it is a string, else its sha (a stamp with no fullSha) — or null when the
-// stamp is missing or its sha isn't a string. Shared by changed-files.js's usableAnchor (which
-// then checks the result is still an ancestor of HEAD) and scope.js's
-// selectScope, so this derivation is written once (review hindsight, ledger
-// item 14, refs #1922).
+// stamp is missing or its sha isn't a string. Shared by changed-files.js's
+// usableAnchor (which then checks the result is still an ancestor of HEAD)
+// and scope.js's selectScope, so this derivation is written once (review
+// hindsight, ledger item 14, refs #1922).
 function anchorOf(stamp) {
   if (!stamp || typeof stamp.sha !== 'string') return null;
   return typeof stamp.fullSha === 'string' ? stamp.fullSha : stamp.sha;

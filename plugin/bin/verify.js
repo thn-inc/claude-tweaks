@@ -1466,7 +1466,8 @@ async function main() {
   }
   // An explicit --git-dir redirects logs and the count stamp only; the pass
   // stamp keys on the invoking cwd's HEAD, which may not be that repo's.
-  // #3757: a moved tree (treeMoved above) writes no pass stamp — the checks cannot be credited to either snapshot.
+  // #3757: a moved tree (treeMoved above) writes no pass stamp — the checks
+  // cannot be credited to either snapshot.
   if (
     effectivePass && fullSet && !parsed.noStamp && gitDir && git.sha && !parsed.gitDir
     && !unchangedHeadNoop && !emptyNonNoneRun && !treeMoved
