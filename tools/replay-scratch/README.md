@@ -4,12 +4,13 @@ Scratch scripts from the 2026-11-15 session behind `docs/superpowers/specs/2026-
 
 | File | What it does | Input |
 |---|---|---|
-| `review-yield.js` | Counts, per archived review, findings raised by both reviewers, by one, and each tiebreak outcome | One or more `.claude-tweaks/pipelines` roots |
 | `baseline.js` | Per archived run: recorded verdicts, lens and tiebreak agent cost from `timing.json`, and the commit the review examined | The repository path, then run directories; one JSON line per run |
 | `counterfactual.js` | Reads each lens reviewer's own table from its transcript and reports what one reviewer alone would have raised | The `baseline.js` output file |
 | `prep-tiebreak.js` | Extracts the reviewed tree and writes tiebreak inputs (no verdicts) and the archived verdicts separately | Repository, baseline file, output directory, chunk size, run names |
 | `tiebreak-replay.workflow.js` | Workflow script: one judge per chunk, plus a one-judge-per-finding control arm | `args`: the output directory and the run list |
 | `score-tiebreak.js` | Compares replay verdicts with archived ones and totals tokens per arm | The output directory and the workflow's transcript directory |
+
+The review-yield counts these scripts first produced now come from `tools/step-yield-report.js` (tested; `review-yield.js` is retired).
 
 Order: `baseline.js`, then `prep-tiebreak.js`, then run the workflow, then `score-tiebreak.js`.
 
