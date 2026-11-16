@@ -761,6 +761,30 @@ test('finding-ids exits 2 with one stderr line for an empty, oversize, repeated,
   assert.strictEqual(unreadable.out, '');
 });
 
+test('finding-ids refuses a single entry object through its own array guard, not the entry checks', (t) => {
+  const d = tmpDir(t);
+  const { findings } = chunkInputs(d);
+  const file = writeText(d, 'single.json', JSON.stringify(findings[0]));
+  const res = findingIdsRun([file], d);
+  assert.strictEqual(res.code, 2);
+  assert.strictEqual(res.out, '');
+  assert.strictEqual(res.err, `review-coordination.js: ${file} must hold a JSON array of tiebreak entries\n`);
+});
+
+test('the chunk form exits 2 for an unreadable reply file with one stderr line and appends nothing under --run', (t) => {
+  const d = tmpDir(t);
+  const { root, chunkFile } = chunkInputs(d);
+  const { main, runDir } = anchoredRunDir(t);
+  const missing = path.join(d, 'no-such-reply.txt');
+  const res = chunkRun([chunkFile, missing, '--root', root, '--run', runDir], main);
+  assert.strictEqual(res.code, 2);
+  assert.strictEqual(res.out, '');
+  const lines = res.err.split('\n').filter(Boolean);
+  assert.strictEqual(lines.length, 1);
+  assert.match(lines[0], /^review-coordination\.js: cannot read .*no-such-reply\.txt/);
+  assert.ok(!fs.existsSync(path.join(runDir, 'decisions.md')), 'no verdict line is appended');
+});
+
 test('finding-ids exits 2 through the usage message on a wrong arity', (t) => {
   const d = tmpDir(t);
   const { chunkFile } = chunkInputs(d);
