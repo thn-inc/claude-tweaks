@@ -82,6 +82,35 @@ function assertArmPlanReviewGaps(text) {
   assert.ok(arm.includes(ARM_CI_GATE), "Step 2.5's ci-gate records still run (Reading A)");
 }
 
+const HINT_ROUTE = 'only when the route was `false` → no action';
+const HINT_NEVER = 'never after a Step 2.5 or Step 3 stop';
+const MERGED_OFF = '`PR #{n} opened and merged (merge-verification: off)`';
+const CALLER_DEGRADES = 'ready+comment degrades become leave-unarmed';
+const HINT_ROUTE_MSG = 'the manual --auto hint is printed only on the `false` route';
+const HINT_NEVER_MSG = 'the manual --auto hint is never printed after a Step 2.5 or Step 3 stop';
+const MERGED_OFF_MSG = 'a merge under `off` is not reported as "after its checks passed"';
+const CALLER_DEGRADES_MSG = 'Creation-time caller must limit leave-unarmed to the ready+comment degrades';
+
+function occurrences(text, lit) {
+  return text.split(lit).length - 1;
+}
+
+// The Unarmed report's `gh pr merge {n} --auto` hint is itself the blind merge on a repo with no
+// required checks, so it must not follow a red-check or timeout stop (final review, #4467).
+function assertUnarmedHintGated(text) {
+  const arm = armParagraph(text);
+  const unarmed = arm.indexOf('Unarmed: `PR #{n} opened, NOT armed');
+  const hint = arm.indexOf('`gh pr merge {n} --auto`');
+  assert.ok(unarmed !== -1 && hint !== -1 && unarmed < hint, 'the Unarmed report line and its --auto hint must both be in the arm paragraph');
+  const between = arm.slice(unarmed, hint);
+  assert.ok(occurrences(between, HINT_ROUTE) === 1, HINT_ROUTE_MSG);
+  assert.ok(occurrences(between, HINT_NEVER) === 1, HINT_NEVER_MSG);
+}
+
+function assertMergedReportNamesOff(text) {
+  assert.ok(occurrences(armParagraph(text), MERGED_OFF) === 1, MERGED_OFF_MSG);
+}
+
 function creationCallerLine(text) {
   const s = text.indexOf(CREATION_CALLER);
   assert.notEqual(s, -1, 'Creation-time caller line missing');
@@ -90,6 +119,17 @@ function creationCallerLine(text) {
 
 function assertCreationCallerCitesStep25(text) {
   assert.ok(creationCallerLine(text).includes('Step 2.5'), 'Creation-time caller must name Step 2.5');
+}
+
+function assertCreationCallerLimitsDegrades(text) {
+  assert.ok(occurrences(creationCallerLine(text), CALLER_DEGRADES) === 1, CALLER_DEGRADES_MSG);
+}
+
+// A control that changed nothing proves nothing: require the doctored text to differ, and the
+// throw to carry the message of the assertion it was built for.
+function expectRed(original, doctored, check, message) {
+  assert.notEqual(doctored, original, `control changed nothing: ${message}`);
+  assert.throws(() => check(doctored), { message });
 }
 
 function cut(text, start, end) {
@@ -118,6 +158,25 @@ test('AC1.1: the creation-time arm runs the merge-verification gate before Step 
 
 test('AC1.1: the arm leaves Conflict path routes unarmed, reports reasons verbatim, skips post-merge steps and records ci-gate (plan review 2026-11-16)', () => {
   assertArmPlanReviewGaps(STEP75);
+});
+
+test('AC1.1: the Unarmed report offers the manual --auto arm only on the `false` route, never after a gate stop', () => {
+  assertUnarmedHintGated(STEP75);
+});
+
+test('AC1.1: a merge under merge-verification off is reported as such, and the caller line limits leave-unarmed to ready+comment degrades', () => {
+  assertMergedReportNamesOff(STEP75);
+  assertCreationCallerLimitsDegrades(PR_FIRST);
+});
+
+test('go-red controls: the report-line asserts fail with their own clause removed or moved', () => {
+  expectRed(STEP75, STEP75.replace(HINT_ROUTE, 'X'), assertUnarmedHintGated, HINT_ROUTE_MSG);
+  expectRed(STEP75, STEP75.replace(HINT_NEVER, 'X'), assertUnarmedHintGated, HINT_NEVER_MSG);
+  // Move-out: the clause stays in the arm paragraph but leaves the Unarmed report's own span.
+  const moved = STEP75.replace(HINT_NEVER, 'X').replace(ARM_ANCHOR, `${ARM_ANCHOR} ${HINT_NEVER}`);
+  expectRed(STEP75, moved, assertUnarmedHintGated, HINT_NEVER_MSG);
+  expectRed(STEP75, STEP75.replace(MERGED_OFF, 'X'), assertMergedReportNamesOff, MERGED_OFF_MSG);
+  expectRed(PR_FIRST, PR_FIRST.replace(CALLER_DEGRADES, 'degrades become leave-unarmed'), assertCreationCallerLimitsDegrades, CALLER_DEGRADES_MSG);
 });
 
 test('go-red controls: each assert fails with its block removed', () => {
