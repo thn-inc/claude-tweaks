@@ -310,3 +310,9 @@ test('defaultRunner bounds api graphql by GH_BATCH_TIMEOUT_MS and repo view by G
   assert.equal(runnerTimeout(['api', 'graphql', '-f', 'query=q', '-f', 'owner=o', '-f', 'repo=r']), 30000);
   assert.equal(runnerTimeout(['repo', 'view', '--json', 'owner,name']), 10000);
 });
+
+test('hasOriginLine ignores fenced and absorbed Origin lines (#4502)', () => {
+  assert.equal(hasOriginLine('```\nOrigin: quoted\n```'), false);
+  assert.equal(hasOriginLine('## Absorbed: d — x\nOrigin: absorbed'), false);
+  assert.equal(hasOriginLine('## Original request\nOrigin: own'), true);
+});
