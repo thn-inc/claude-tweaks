@@ -67,7 +67,10 @@
 - **Explicit ceiling = a non-default, non-invalid `autonomy` entry.** An `invalid: true` autonomy entry blocks the control-mode implication and resolves `supervised` (Review Focus 1). This refines the controller's `entry.source !== 'default'` rule, per `policy-key-addition`'s "Key such a guard on `invalid`".
 - **One shared helper, `effectiveCeiling`, in `autonomy.js`.** Both ceiling readers call it, so the parity they must keep is structural. `readConsoleCeiling` keeps returning a plain ceiling string (no return-shape widening). `readPolicy` gains `controlMode` and `ceilingSource` fields; the only test reading it compares `.ceiling` (`tests/hooks-pre-tool-use.test.js:1747`).
 - **The carry set is `pending`, `keep-staged` and `refused`.** `refused` (no Defer-reason) is a gate rejection, and the spec carries those into the packet. `stale` patches and `filed` can't-tell items are not carried: the first is re-derived and the second already files.
-- **`UNRESOLVED_RESOLUTIONS` is unchanged.** `carried` is terminal. So a control-mode console leaves no console residue, and `archive-merged.js`'s `readConsoleState` (via `console/residue.js`'s `readRunResidue`) archives it. That is how archived-run residue converges: new runs never leave any. Runs archived before control mode keep their residue; that is out of scope.
+- **`UNRESOLVED_RESOLUTIONS` is unchanged.** `carried` is terminal. So a control-mode console leaves no console residue. The existing reconcile check is the wiring: `plugin/bin/lib/reconcile/archive-merged.js`'s `readConsoleState`, which `archiveMerged` and `hooks.js archive-run`'s `console-residue` refusal both read, delegates to `console/residue.js`'s `readRunResidue`, and Task 5 pins that it reads `'resolved'` for a console with `carried` items. That is how archived-run residue converges: new runs never leave any. Runs already archived before control mode keep their residue; that is out of scope.
+- **Every decision fact in an approved packet is open.** No answer producer exists, so `settleOpenDecisions` has no `answer` predicate: an approve files all of them, and nothing is silently ratified. This is the reading the spec's Decision rule selects.
+- **One route for a failed or refused `ledger-record-*` or Queue-write item:** `--set-item {id} --resolution carried [--ledger …]`. With `--ledger`, the call settles the ledger row `deferred` with `carried to the acceptance packet as {factId}`. This needs two narrow shared-module edits: `pack.js`'s `LEDGER_CARRIED_RE` counts that text as a complete deferral, and `settleRow` permits exactly a staged-pointer `deferred` → carried transition, which it refuses today.
+- **Decision facts keep the spec's fields in the packet.** A decision-specific gather mapping copies them, and the renderer shows `suggestedResolution`. A decision without the field renders today's line.
 - **Ledger residue converges through `console-resolve.js --converge`, called from `_shared/ledger-format.md`'s Phase 2 under control mode.** This is a prose edit outside Key Files. AC2's "zero unresolved ledger residue rows" cannot be met without it: `ledgerRouteRemainder` routes only floor-clearing items, and every other item falls to the per-item drill.
 - **The other prose sites that read `bookkeepingPermissions(ceiling)` stay unedited:** `summary-template.md`, `auto-merge-short-circuit.md` ("as `review-console.md`'s Auto-resolution short-circuit does"), `multispec-review-console.md`, `nothing-left-behind.md`, `leftover-routing.md` and `ledger-narrowing-auto-file.md`. Each says to resolve the ceiling per `_shared/autonomy-ceiling.md`'s precedence ladder, or the way `review-console.md` does. Task 10 adds the control-mode rung to that ladder and names `console-resolve.js --ceiling` as its query. #4624 composes the rest of the implied set.
 - **Record filing authorization is `queueWriteAutoFile`.** It is the record-filing capability, `trusted`+, and therefore included at `unattended` (`_shared/autonomy-ceiling.md`'s Bookkeeping capabilities table). `ledgerRouteRemainder` is ledger routing, not filing.
@@ -88,7 +91,9 @@
 | `plugin/bin/lib/console/residue.js` | `pendingFilings` skips a `carried` item | 5 |
 | `plugin/bin/lib/console/item-resolution.js` | `REWRITE_FROM.carried` | 5 |
 | `plugin/bin/console-resolve.js` | facts sink, exit 6, `--set-item` carry, `--ceiling`, `--converge`, `--memory-write` | 1, 5, 6, 8, 9 |
+| `plugin/bin/lib/stage-item/ledger.js`, `plugin/bin/lib/wrap-up/pack.js` | staged-pointer → carried ledger row transition; carried text counts as a complete deferral | 5 |
 | `plugin/bin/acceptance-packet.js` | gather reads `{runDir}/packet-facts/decisions.json` | 7 |
+| `plugin/bin/lib/wrap-up/packet-gather.js`, `packet-validate.js`, `packet-render.js` | decision facts keep origin/summary/evidenceRef/suggestedResolution; render shows suggestedResolution | 7 |
 | `plugin/bin/lib/console/residue-convergence.js` (new) | `convergeResidue` | 8 |
 | `plugin/bin/lib/console/memory-write.js` (new) | `planMemoryWrite`, `wholeFileDiff` | 9 |
 | `plugin/bin/lib/policy-schema.js` | drop the `control-mode` marker | 10 |
@@ -214,7 +219,7 @@ A control-mode run's Review Console writes one entry per item it could not resol
 | `evidenceRef` | a repo-relative path: the item's `staged/` file, else the run's `decisions.md` |
 | `suggestedResolution` | what the reader is asked to decide |
 
-`settleOpenDecisions(packetFacts)` (same module) files each decision still open when an `approved` verdict arrives, so an accept never silently ratifies one, and never blocks a merge. The verdict handler (#4614) calls it.
+`settleOpenDecisions(packetFacts)` (same module) files every decision the packet lists when an `approved` verdict arrives, so an accept never silently ratifies one, and never blocks a merge. The verdict handler (#4614) calls it.
 ```
 
 - [ ] **Step 1: Write the failing tests**
@@ -286,26 +291,32 @@ git commit -m "Add the decision-fact schema and its code twin — Decisions left
 
 **Interfaces:**
 - Consumes: `fingerprintFromBasis` (`../health-core/fingerprint`), and `specShapedBody`, `recordPayload`, `fencedBlock`, `defuse`, `LABELS` (`../issues/record`), as `finding-filing.js`'s `composeFindingProposal` does.
-- Produces: `settleOpenDecisions(packetFacts) -> Array<{ factId, fingerprint, title, proposal }>`. `packetFacts` is a facts document `{ facts: [...] }` or a bare array; anything else returns `[]`. A fact is open when `kind === 'decision'` and it has no non-empty string `answer`. `fingerprint` = `fingerprintFromBasis('packetdecision', [fact.id])`. `title` = `` `Packet decision left open: ${capped one-line text}` `` (80-char cap, word boundary). `proposal` = a `Title:`/`Type: task`/`Labels: needs:definition`/`Defer-reason: needs-human-decision` header plus the `recordPayload`/`specShapedBody` body: `currentState` quotes the fact `text` in a fenced block, with `deliverables`, `acceptanceCriteria`, `releaseNote: 'No user-visible change.'` and `filedBy: 'acceptance-packet'`. Pure: no I/O. The return carries no merge-gating field.
+- Produces: `settleOpenDecisions(packetFacts) -> Array<{ factId, fingerprint, title, proposal }>`. `packetFacts` is a facts document `{ facts: [...] }` or a bare array; anything else returns `[]`. Every `kind === 'decision'` fact counts as open: nothing produces an answer today, so there is no `answer` predicate, and an approve files every decision listed (nothing is silently ratified). `fingerprint` = `fingerprintFromBasis('packetdecision', [fact.id])`. `title` = `` `Packet decision left open: ${capped one-line text}` `` (80-char cap, word boundary). `proposal` = a `Title:`/`Type: task`/`Labels: needs:definition`/`Defer-reason: needs-human-decision` header plus the `recordPayload`/`specShapedBody` body: `currentState` quotes the fact `text` in a fenced block, with `deliverables`, `acceptanceCriteria`, `releaseNote: 'No user-visible change.'` and `filedBy: 'acceptance-packet'`. Pure: no I/O. The return carries no merge-gating field.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```js
 const { validateShaped } = require('../../../plugin/bin/lib/compose-record/compose');
 const facts = { facts: [
-  { id: 'decision:review%3Areview-contested-1.md', kind: 'decision', status: 'passed', source: 'decision-items', text: 'Contested findings: review-contested-1.md — debate inconclusive' },
-  { id: 'decision:console%3Asdd-ruling-2.md', kind: 'decision', status: 'passed', source: 'decision-items', text: 'Pending review: sdd-ruling-2.md — sdd-ruling-needs-human-decision', answer: 'drop it' },
+  // The ids gather really produces: `:` is a safe character in encodeFactKey, so it is not escaped.
+  { id: 'decision:review:review-contested-1.md', kind: 'decision', status: 'passed', source: 'decision-items', text: 'Contested findings: review-contested-1.md — debate inconclusive' },
+  { id: 'decision:console:sdd-ruling-2.md', kind: 'decision', status: 'passed', source: 'decision-items', text: 'Pending review: sdd-ruling-2.md — sdd-ruling-needs-human-decision' },
   { id: 'change:a.js', kind: 'change', status: 'passed', source: 'git' },
 ] };
-test('AC4.8: settleOpenDecisions files one spec-shaped record per still-open decision', () => {
+test('AC4.8: settleOpenDecisions files one spec-shaped record per decision in an approved packet', () => {
   const plans = settleOpenDecisions(facts);
-  assert.deepStrictEqual(plans.map((p) => p.factId), ['decision:review%3Areview-contested-1.md']);
-  const body = plans[0].proposal.split('\n\n').slice(1).join('\n\n');
-  assert.deepStrictEqual(validateShaped(body), { ok: true, gaps: [] });
-  assert.match(plans[0].proposal, /^Defer-reason: needs-human-decision$/m);
+  assert.deepStrictEqual(plans.map((p) => p.factId), ['decision:review:review-contested-1.md', 'decision:console:sdd-ruling-2.md']);
+  for (const p of plans) {
+    const body = p.proposal.split('\n\n').slice(1).join('\n\n');
+    assert.deepStrictEqual(validateShaped(body), { ok: true, gaps: [] });
+    assert.match(p.proposal, /^Defer-reason: needs-human-decision$/m);
+  }
 });
-test('AC4.8: settleOpenDecisions files nothing when no decision is open', () => {
-  assert.deepStrictEqual(settleOpenDecisions({ facts: [facts.facts[1], facts.facts[2]] }), []);
+test('AC4.8: a decision carrying a stray answer field is still filed — no answer predicate', () => {
+  assert.strictEqual(settleOpenDecisions([{ ...facts.facts[1], answer: 'drop it' }]).length, 1);
+});
+test('AC4.8: settleOpenDecisions files nothing when the packet holds no decision', () => {
+  assert.deepStrictEqual(settleOpenDecisions({ facts: [facts.facts[2]] }), []);
   assert.deepStrictEqual(settleOpenDecisions([]), []);
   assert.deepStrictEqual(settleOpenDecisions(null), []);
 });
@@ -384,6 +395,15 @@ git commit -m "Carry undecidable console items under control mode — resolveAll
 - Modify: `plugin/bin/console-resolve.js` (header comment, `USAGE`, the resolve path at L322-370, `nothingToRevert`, `setItem`)
 - Modify: `plugin/bin/lib/console/item-resolution.js:24` (`REWRITE_FROM`)
 - Modify: `plugin/bin/lib/console/residue.js` (`pendingFilings`)
+- Modify: `plugin/bin/lib/stage-item/ledger.js` (`settleRow`: the staged-pointer → carried transition)
+- Modify: `plugin/bin/lib/wrap-up/pack.js` (`LEDGER_CARRIED_RE`, `isDeferredUnstaged`)
+- Consumes (no edit): `plugin/bin/lib/reconcile/archive-merged.js` (`readConsoleState`, test only)
+- Test: `tests/bin-lib/console/ledger-carry.test.js` (new). Cases:
+  - `settleRow` moves a staged-pointer `deferred` row to the carried text.
+  - It still refuses that row → any other `deferred` text, and → `fixed`.
+  - `parseLedger` reports the carried row as neither open nor deferred-unstaged.
+  - A carried text with no `decision:` id is still unstaged.
+  - Each guard gets its own red-on-deletion case.
 - Test: `tests/bin-lib/console/control-mode-cli.test.js` (new; copy `cli.test.js`'s `mainCheckoutWithRun`/`fakeExec`/`baseDeps` helpers verbatim, then pass `policyExtra: 'control-mode: on\n'` with `autonomy: null` so no explicit autonomy is written; if the helper cannot omit `autonomy`, add a `writeAutonomy` option to the copy)
 
 **Interfaces:**
@@ -391,12 +411,24 @@ git commit -m "Carry undecidable console items under control mode — resolveAll
 - Produces: `EXIT_CARRY_FAILED = 6` (exported). `writeDecisionFacts(runDir, facts) -> { path, added: number }`: it reads `{runDir}/packet-facts/decisions.json` directly (ENOENT/ENOTDIR = empty; unparseable or not an array → throw, never overwrite), merges by `id` (the first copy wins), creates `packet-facts/` with `mkdirSync({ recursive: true })`, and writes through `writeFileAtomic` under `withLock(path.join(runDir, 'packet-facts', '.decisions.lock'))`. Exported for Task 8.
 - Resolve path under control mode, not `--dry-run`: call `writeDecisionFacts` **before** the decisions block and `console.json`. On a throw, print `console-resolve.js: could not carry {n} item(s) to the acceptance packet ({message}) — {id}, {id}, …` to stderr, naming every carried item id, write nothing else, and return 6. On success, the header line says `at unattended (control mode)` when `ceilingSource === 'control-mode'`, and each carried item's line is the existing per-item line, whose reason already names the fact id. `nothingToRevert` gains `'carried'` (reversibility `n/a`). `console.json` records `controlMode: true` and `decisionFacts: <count>` only when control mode is on, so off-mode JSON stays byte-identical. Under `--dry-run`, nothing is written and `--json` carries `decisionFacts` (the array).
 - `--set-item` under control mode (read through `readPolicy`; a read that throws counts as off): a requested `keep-staged` or `pending` rewrite is stored as `carried`, and its fact is written through `writeDecisionFacts` first. A fact-write failure returns 6 and leaves the stored item unchanged. `REWRITE_FROM` gains `carried: ['apply', 'approve', 'filed']` (`filed` covers a can't-tell filing whose create failed). `--resolution carried` is accepted explicitly too.
+- **The one route for a failed or refused `ledger-record-*` or Queue-write item under control mode** is `--set-item {id} --resolution carried --reason {why} [--ledger {ledger path}]`. `--ledger` is accepted only with `--set-item` (else exit 2). For a `ledger-record-*` id with `--ledger` given, the call:
+  1. Writes the fact.
+  2. Finds the one ledger row whose Resolution cell names `staged/{id}`, and settles it through `settleRow({ status: 'deferred', resolution: 'carried to the acceptance packet as {factId}' })`. The row never goes back to `open`, and never keeps the stale `staged/` pointer.
+
+  Verified at authoring: today's `settleRow` refuses this transition. A `deferred` row naming `staged/…` is terminal, because `isDeferredUnstaged` is false for it. A carried resolution would also read as an incomplete deferral, since it names neither a `staged/` path nor a record. Two narrow edits make the transition legal:
+  - **`plugin/bin/lib/wrap-up/pack.js`:** export `LEDGER_CARRIED_RE = /\bcarried to the acceptance packet as decision:\S+/`, and make `isDeferredUnstaged` return false when it matches, so a carried row counts as a complete deferral, like a record reference.
+  - **`plugin/bin/lib/stage-item/ledger.js`'s `settleRow`:** allow exactly `deferred` (resolution matching `LEDGER_DEFERRED_STAGED_RE`) → `deferred` with a resolution matching `LEDGER_CARRIED_RE`, the way the refused-proposal reopen is allowed. Every other terminal guard stays as it is.
+  3. Only then rewrites the stored console item.
+
+  No row naming `staged/{id}` → exit 5 (`no ledger row names staged/{id}`), nothing rewritten. A `settleRow` throw → exit 3, the console item unchanged (the fact write is idempotent by id). A stored item that is **already** `carried` (resolveAll carried it at resolve time) still runs steps 1–2, and its exit 0 reports `already carried; ledger row #{N} settled`. A row already reading the carried text is left as it is. That is how a resolve-time carry of a refused `ledger-record-*` reaches its ledger row: the prose (Task 11) runs this call once per carried `ledger-record-*` item.
 - `pendingFilings(consoleJson, decisions)` skips an entry whose console item resolution is `carried`. `UNRESOLVED_RESOLUTIONS` stays exactly `pending`/`keep-staged`.
 
 - [ ] **Step 1: Write the failing tests** (`tests/bin-lib/console/control-mode-cli.test.js`)
 
 - `'AC1.1: control mode resolves and logs the policy item, carries the contested finding, prints no Needs a human block'`. Fixture: staged `skills-1.md` and `review-contested-1.md`, policy `control-mode: on`. Exit 0. `console.json` items: `skills-1.md` `approve`, `review-contested-1.md` `carried`. `decisions.md` holds one `Console item skills-1.md (Skill updates): approve` line and one `Console item review-contested-1.md (Contested findings): carried — carried to the acceptance packet as decision:review:review-contested-1.md` line. `packet-facts/decisions.json` parses to one entry with that id and a `text` field. Stdout has no `Needs a human`.
-- `'AC2.1: a control-mode console leaves zero console residue and archives'`. After the run above, `readRunResidue(runDir).consoles` is `[]` (`plugin/bin/lib/console/residue.js`). That is the predicate `archive-merged.js`'s `readConsoleState` reads.
+- `'AC2.1: a control-mode console.json with carried items passes the archival reconcile check as having no open items'`. After the run above, `readConsoleState(runDir)` from `plugin/bin/lib/reconcile/archive-merged.js` returns `'resolved'`, not `'residue'`. That is the function `archiveMerged`'s decision and `hooks.js archive-run`'s `console-residue` refusal both read (docs/reconcile-checks.md, "Console residue (#3949)"). `readRunResidue(runDir).consoles` (`console/residue.js`, the predicate it delegates to) is `[]`. Control: the same fixture resolved with control mode off reads `'residue'`, because the contested item is `keep-staged`.
+- `'AC2.1: a refused ledger-record item under control mode ends with its ledger row deferred to the packet'`. Build the fixture's ledger with the real `appendRow`/`settleRow` writers (`plugin/bin/lib/stage-item/ledger.js`; a real-writer fixture). One row, `deferred`, Resolution `→ backlog, staged/ledger-record-1.md`. Add a staged `ledger-record-1.md` and a `REFUSED` decisions line naming it. Run the resolve (the item reads `carried`), then `--set-item ledger-record-1.md --resolution carried --reason 'refused: no Defer-reason' --ledger {ledger}`. Assert exit 0. The row's Status is `deferred` and its Resolution is `carried to the acceptance packet as decision:console:ledger-record-1.md`, with no `staged/` left in it. `decisions.json` holds that one fact. Controls: `--ledger` naming a ledger with no matching row exits 5 with the ledger byte-identical. A row already settled is left unchanged on a second call.
+- `'AC2.1: a failed Queue-write create is carried, never reopened'`. A stored `leftover-1.md` at `apply` → `--set-item leftover-1.md --resolution carried --reason 'gh issue create failed'` → stored `carried`, one fact, no ledger touched.
 - `'AC4.6: a forced carry failure exits 6, names every item, writes no console.json'`. Pre-create `packet-facts/decisions.json` holding `not json`. Exit 6; stderr matches `/could not carry 1 item\(s\).*review-contested-1\.md/`; `console.json` absent; the facts file is unchanged.
 - `'a re-run never doubles a fact'`. Run, delete `console.json`, run again: `decisions.json` still holds one entry.
 - `'AC5.1: control mode off writes no packet-facts file and an identical console.json'`. Same fixture without `control-mode`: no `packet-facts` directory, `console.json` has no `controlMode` key, and exit 4 when no autonomy is set (the existing supervised default).
@@ -413,7 +445,7 @@ Expected: FAIL (exit 4, or no `packet-facts` file)
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `node --test tests/bin-lib/console/control-mode-cli.test.js tests/bin-lib/console/cli.test.js tests/bin-lib/console/item-resolution.test.js tests/bin-lib/console/residue.test.js tests/bin-lib/console/residue-cli.test.js tests/review-console-unattended-no-ask-conformance.test.js tests/path-guard-conformance.test.js`
+Run: `node --test tests/bin-lib/console/control-mode-cli.test.js tests/bin-lib/console/ledger-carry.test.js tests/bin-lib/console/cli.test.js tests/bin-lib/console/item-resolution.test.js tests/bin-lib/console/residue.test.js tests/bin-lib/console/residue-cli.test.js tests/bin-lib/wrap-up/pack.test.js tests/hooks-ledger-row.test.js tests/review-console-unattended-no-ask-conformance.test.js tests/path-guard-conformance.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Real-input probe (Real-input probe and Independent-count checks).** Pick one archived run with console residue: `node plugin/bin/console-residue.js --all` lists them, from the main checkout. Run `resolveAll({ runDir: '<that archive dir>', policy: 'console-auto', deps: <console-resolve's resolverDeps with readGrants stubbed to {}> , controlMode: true })` through a scratchpad `node` script (never committed). Print `items.filter(i => i.resolution === 'carried').length` and `decisionFacts.length`. Reconcile both against an independent count: the `pending`/`keep-staged` items `console-residue.js --run <dir>` lists for the same dir, plus any `refused` items in its `console.json`. Record the three numbers in the run's `decisions.md` per the AC-evidence persistence check (`--step "AC evidence"`, full output under `$PIPELINE_RUN_DIR/evidence/carry-probe.txt`).
@@ -421,13 +453,14 @@ Expected: PASS
 - [ ] **Step 6: Commit**
 
 ```bash
-git add plugin/bin/console-resolve.js plugin/bin/lib/console/item-resolution.js plugin/bin/lib/console/residue.js tests/bin-lib/console/control-mode-cli.test.js
+git add plugin/bin/console-resolve.js plugin/bin/lib/console/item-resolution.js plugin/bin/lib/console/residue.js plugin/bin/lib/stage-item/ledger.js plugin/bin/lib/wrap-up/pack.js tests/bin-lib/console/control-mode-cli.test.js tests/bin-lib/console/ledger-carry.test.js
 git commit -m "Write carried decisions to packet-facts/decisions.json — exit 6 on a failed carry, refs #4620"
 ```
 
 ### Task 6: The effective-ceiling query and the pre-check switch
 
 **Role:** integration
+**Review risk:** high (decides whether the console stops for a human)
 
 **Files:**
 - Modify: `plugin/bin/console-resolve.js` (`parseArgs`, `run`, `USAGE`, header)
@@ -476,18 +509,27 @@ git commit -m "Add console-resolve.js --ceiling — the effective ceiling the co
 **Role:** integration
 
 **Files:**
-- Modify: `plugin/bin/acceptance-packet.js` (`gatherToFile`, around L674)
+- Modify: `plugin/bin/acceptance-packet.js` (`gatherToFile`, around L674; a decision-specific `isDecisionEntryList` for `--decision-items` and the run-dir file)
+- Modify: `plugin/bin/lib/wrap-up/packet-gather.js:546` (replace `passThroughFacts('decision', …)` with `decisionFacts(entries)`)
+- Modify: `plugin/bin/lib/wrap-up/packet-validate.js:35` (`OPTIONAL_TEXT_FIELDS` gains the four decision fields)
+- Modify: `plugin/bin/lib/wrap-up/packet-render.js:370` (the `decisions` renderer shows `suggestedResolution`)
+- Modify: `plugin/skills/_shared/acceptance-packet.md:91-92` (the facts-document sentence lists the four decision fields as optional render fields)
 - Modify: `plugin/skills/wrap-up/verification-brief.md:329` (add one sentence **after** the pinned sentence; do not edit the pinned sentence, `tests/acceptance-packet-wrap-up-conformance.test.js:894`)
 - Test: `tests/control-mode-packet-gather.test.js` (new)
 
 **Interfaces:**
-- Consumes: the `decisions.json` that Task 5's `writeDecisionFacts` writes.
-- Produces: in `gatherToFile`, when `opts.decisionItems === undefined` and `runDir !== null`, read `{runDir}/packet-facts/decisions.json` directly. ENOENT/ENOTDIR → `undefined` (section omitted, as today). Any other read error, a parse error, or a value failing `isEntryList` → `undefined`, plus a partial note `could not read {runDir}/packet-facts/decisions.json — carried decisions not shown`. A named `--decision-items` file still wins and keeps its existing `notReadNote` behavior.
+- Consumes: the `decisions.json` that Task 5's `writeDecisionFacts` writes; `DECISION_FACT_FIELDS` (Task 2).
+- Produces: `decisionFacts(entries)` in `packet-gather.js`. Same id encoding and `status: 'passed'`/`source: 'decision-items'` as `passThroughFacts('decision', 'decision-items', …)` today. It also copies each of `origin`, `summary`, `evidenceRef` and `suggestedResolution` that is a string onto the fact; absent fields stay absent. An entry carrying only `{ id, text }` therefore yields exactly today's fact, which keeps `tests/bin-lib/wrap-up/packet-gather.test.js:1029` green unmodified. `passThroughFacts` itself is unchanged for its other kinds.
+- Produces: `OPTIONAL_TEXT_FIELDS` gains `origin`, `summary`, `evidenceRef` and `suggestedResolution` (string-typed when present). `isDecisionEntryList` = `isEntryList` plus those four as optional strings; `--decision-items` uses it too.
+- Produces: the `decisions` renderer prints `- {text}`, then ` — decide: {suggestedResolution}` when that field is present. Both pass through `screenedInline` (`_shared/acceptance-packet.md`'s `## Untrusted content`: decision text renders). A fact without the field renders today's line byte for byte.
+- Produces: in `gatherToFile`, when `opts.decisionItems === undefined` and `runDir !== null`, read `{runDir}/packet-facts/decisions.json` directly. ENOENT/ENOTDIR → `undefined` (section omitted, as today). Any other read error, a parse error, or a value failing `isDecisionEntryList` → `undefined`, plus a partial note `could not read {runDir}/packet-facts/decisions.json — carried decisions not shown`. A named `--decision-items` file still wins and keeps its existing `notReadNote` behavior.
 - Prose sentence to add: "Under control mode the Review Console writes its carried decisions to `{run-dir}/packet-facts/decisions.json`, and `gather` reads that file itself whenever `--run` is passed with no `--decision-items`; a file it cannot read is stated as partial, never shown as no decisions."
 
 - [ ] **Step 1: Write the failing tests**
 
-- `'AC1.1: a contested finding carried by console-resolve.js appears under Decisions left for you'`. Build the run with the real `console-resolve.js` `run()` (Task 5's fixture shape; real-writer fixture), then call `acceptance-packet.js`'s `run(['gather', '--record', '7', '--out', out, '--run', runDir], deps)`. Assert exit 0, and that `facts.facts` holds one `kind: 'decision'` fact with `source: 'decision-items'` and `text` starting `Contested findings: review-contested-1.md`. Then `render` it and assert the output holds a `Decisions left for you` heading followed by that text.
+- `'AC1.1: a contested finding carried by console-resolve.js appears under Decisions left for you'`. Build the run with the real `console-resolve.js` `run()` (Task 5's fixture shape; real-writer fixture), then call `acceptance-packet.js`'s `run(['gather', '--record', '7', '--out', out, '--run', runDir], deps)`. Assert exit 0. `facts.facts` holds exactly one `kind: 'decision'` fact, with id `decision:review:review-contested-1.md` (`:` is a safe character in `encodeFactKey`), `source: 'decision-items'`, `origin: 'review'`, `evidenceRef` ending `/staged/review-contested-1.md`, `suggestedResolution: 'decide whether the finding holds; fix it or decline'`, and `text` starting `Contested findings: review-contested-1.md`. `validateFactsShape(facts).errors` is `[]`. Then `render` it and assert that the line under the `Decisions left for you` heading is that text followed by ` — decide: decide whether the finding holds; fix it or decline`.
+- `'a decision fact without suggestedResolution renders today\'s line unchanged'`, via `packet-render.js` directly.
+- `'acceptance-packet.md lists each decision field as an optional render field, and OPTIONAL_TEXT_FIELDS carries each'`. Iterate the four fields against both, with a mutated-copy control that drops `suggestedResolution` from the prose.
 - `'AC4.5: a carried coordination item with spaces and # in its id renders one line'`. Hand-write `decisions.json` with id `decision:review:decision:- STAGED 09:59:00 — x#ab12cd34` and text `t`. The gathered id matches `/^decision:[A-Za-z0-9._\/#:@%-]+$/`, and the render has exactly one line `t` under the heading.
 - `'an unreadable decisions.json is stated as partial, never silence'`. File content `{`: `partial` includes the could-not-read note, and no decision fact exists. Go-red: making the reader return `undefined` silently fails the partial assertion.
 - `'AC5.1: no decisions.json omits the section and adds no partial note'`.
@@ -503,13 +545,13 @@ Expected: FAIL (no decision fact)
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `node --test tests/control-mode-packet-gather.test.js tests/acceptance-packet-cli.test.js tests/acceptance-packet-wrap-up-conformance.test.js tests/bin-lib/wrap-up/packet-gather.test.js`
+Run: `node --test tests/control-mode-packet-gather.test.js tests/acceptance-packet-cli.test.js tests/acceptance-packet-wrap-up-conformance.test.js tests/acceptance-packet-contract-conformance.test.js tests/bin-lib/wrap-up/packet-gather.test.js tests/bin-lib/wrap-up/packet-render.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/acceptance-packet.js plugin/skills/wrap-up/verification-brief.md tests/control-mode-packet-gather.test.js
+git add plugin/bin/acceptance-packet.js plugin/bin/lib/wrap-up/packet-gather.js plugin/bin/lib/wrap-up/packet-validate.js plugin/bin/lib/wrap-up/packet-render.js plugin/skills/_shared/acceptance-packet.md plugin/skills/wrap-up/verification-brief.md tests/control-mode-packet-gather.test.js
 git commit -m "Read carried decisions into the acceptance packet — gather defaults to the run's decisions.json, refs #4620"
 ```
 
@@ -546,8 +588,8 @@ git commit -m "Read carried decisions into the acceptance packet — gather defa
   - `digested`: append the digest entry per `_shared/materiality-floor.md`, and write the row `deferred` (`→ digest`).
   - `carried`: write the row `deferred` with Resolution `carried to the acceptance packet as {factId}`.
 
-  A failed stage or create re-runs `--converge` with that item's `filingFailed: true`. Exit 6, or any `failed` entry, stops with `flow/failure-cards.md`'s Generic gate failure card naming each item, never a question.
-- `review-console.md` step 10 sentence: under control mode, a row the `refused-proposals.md` check refuses, or whose create fails, is not left refused. Converge it with `--converge`, as `source: 'insight'`, through the same call and per-state handling `_shared/ledger-format.md`'s control-mode paragraph gives.
+  The `carried` row text matches Task 5's `LEDGER_CARRIED_RE`, so `pack.js` counts it as a complete deferral. Once a `filed` item is staged, it is a `ledger-record-*` console item. If the console later refuses it, or its create fails, it takes the one route Task 5 defines (`--set-item {id} --resolution carried --ledger …`), never `--converge` again. `filingFailed: true` is reserved for an item whose stage-item write itself failed before any staged file existed, which only `--converge` can still see. Exit 6, or any `failed` entry, stops with `flow/failure-cards.md`'s Generic gate failure card naming each item, never a question.
+- `review-console.md` step 10 sentence: under control mode, a row the `refused-proposals.md` check refuses, or whose create fails, is not left refused. Converge it with `--converge`, as `source: 'insight'` with `filingFailed: true` for a failed create, through the same call and per-state handling `_shared/ledger-format.md`'s control-mode paragraph gives. An insights row is a row inside one staged file, not a console item, so `--set-item` cannot reach it.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -577,7 +619,7 @@ test('AC3.1 go-red: a proposal failing the shape check is never filed', () => {
   assert.strictEqual(bad.state, 'carried');
 });
 test('AC4.5: a gate rejection (unknown Defer-reason) carries the item as a decision fact', () => { /* deferReason 'because' → carried with fact */ });
-test('AC4.5: a filing failure carries the item', () => { /* filingFailed: true on items[2] → carried */ });
+test('AC4.5: a stage or create failure seen by --converge (filingFailed) carries the item', () => { /* filingFailed: true on items[2] → carried */ });
 test('AC4.6: a failed carry reports failed with the error, never drops the item', () => {
   const out = convergeResidue([items[3]], { compose: composeResidueProposal, carry: () => { throw new Error('disk full'); } });
   assert.deepStrictEqual(out, [{ id: 'insight-4', state: 'failed', error: 'disk full' }]);
@@ -632,7 +674,7 @@ git commit -m "Converge run-end residue under control mode — every item ends r
 - Produces: `MEMORY_DIFF_CAP_BYTES = 20 * 1024`.
 - Produces: `wholeFileDiff(name, oldText /* string|null */, newText) -> string`, a single-hunk unified diff. The header is `--- a/{name}` (`--- /dev/null` on create), then `+++ b/{name}`, then `@@ -1,{oldLines} +1,{newLines} @@` (`-0,0` on create). Every old line is prefixed `-` and every new line `+`. A side with no trailing newline is followed by `\ No newline at end of file`.
 - Produces: `planMemoryWrite({ memoryDir, target, content, priorText }) -> { ok: true, path, priorHash, diff, overCap } | { ok: false, why }`. `target` must resolve inside `memoryDir` (`resolveWithin`, symlinks followed); otherwise `{ ok: false, why: 'outside-memory-dir' }`. `priorHash` = sha256 hex of `priorText`, or `'none'` when `priorText === null`. `overCap` = `Buffer.byteLength(diff) > MEMORY_DIFF_CAP_BYTES`. Pure: the caller reads and writes.
-- Produces the shape `console-resolve.js --run <dir> --memory-write <target> --memory-dir <dir> --content-file <file>` (anchored `--run`, no ceiling grant). It reads the prior target directly (ENOENT → `null`) and plans the write. On `ok: false` it prints `console-resolve.js: memory write refused ({why}) — nothing written` and exits 5. Otherwise it writes the target with `writeFileAtomic`. When `overCap`, it writes the prior content to `{runDir}/staged/memory-prior-{sha12}.md` first, and the entry names that path in place of the diff. Then one `AUTO` entry under `/wrap-up`, step `Memory write`: `Memory write {path}: prior sha256 {priorHash}; diff (reverse with git apply -R):` followed by the diff as an indented block, written with `formatEntry` plus a `--text`-equivalent string, reversibility `high`. Exit 0. A failed target write exits 3 and writes no entry. A failed entry exits 3 with stderr naming the written path.
+- Produces the shape `console-resolve.js --run <dir> --memory-write <target> --memory-dir <dir> --content-file <file>` (anchored `--run`, no ceiling grant). It reads the prior target directly (ENOENT → `null`) and plans the write. On `ok: false` it prints `console-resolve.js: memory write refused ({why}) — nothing written` and exits 5. Otherwise it writes the target with `writeFileAtomic`. When `overCap`, it writes the prior content to `{runDir}/staged/.memory-prior-{sha12}.md` first, and the entry names that path in place of the diff. The name is dot-prefixed because `resolve.js`'s `readRunFiles` drops `staged/` names starting with `.` (L340), so the backup never becomes a console item. Then one `AUTO` entry under `/wrap-up`, step `Memory write`: `Memory write {path}: prior sha256 {priorHash}; diff (reverse with git apply -R):` followed by the diff as an indented block, written with `formatEntry` plus a `--text`-equivalent string, reversibility `high`. Exit 0. A failed target write exits 3 and writes no entry. A failed entry exits 3 with stderr naming the written path.
 - `review-console.md` step 8 sentence: under control mode each `M#` Apply writes through `node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --run "$PIPELINE_RUN_DIR" --memory-write "{file}" --memory-dir "{memory dir}" --content-file "{temp file}"`, then the `MEMORY.md` index line the same way. There is no approval step. Exit 5 stops with the generic failure card. No `AskUserQuestion` word in this sentence.
 
 - [ ] **Step 1: Write the failing tests**
@@ -640,7 +682,8 @@ git commit -m "Converge run-end residue under control mode — every item ends r
 - `'AC4.1: a memory write logs the path, the prior hash and the old-to-new diff'`. Prior `a\nb\n` → new `a\nc\n`. `decisions.md` holds `Memory write {path}: prior sha256 {sha256('a\nb\n')}`, plus a diff containing `-b` and `+c`.
 - `'AC4.1: a create logs prior sha256 none and a /dev/null diff'`.
 - `'AC4.2: applying the reverse diff restores the prior content'`. Extract the diff from the entry, write it to a temp file, run `git apply -R --unidiff-zero {patch}` with `cwd` the memory dir (`execFileSync('git', …, { windowsHide: true })`), and assert the file equals `a\nb\n`. Repeat for a no-trailing-newline prior. For the create case, reverse-applying removes the file.
-- `'AC4.2: an over-cap diff stores the prior content under staged/ and names it'`.
+- `'AC4.2: an over-cap diff stores the prior content under staged/ and names it'`. The stored path is `staged/.memory-prior-{sha12}.md`, and the entry names it.
+- `'an over-cap backup never becomes a console item'`. After the over-cap write, call `resolveAll({ runDir, policy: 'console-auto', deps })` over the same run dir, then remove the backup and call it again. The two `items` arrays are deep-equal (no extra item), and no item id contains `memory-prior`. Go-red: renaming the backup without the leading dot yields one extra `pending` (unmapped-prefix) item.
 - `'AC4.3: no approval prompt — the CLI source names no AskUserQuestion'`. `console-resolve.js` and `memory-write.js` sources do not include `AskUserQuestion`.
 - `'AC4.4: a write outside the memory dir is refused and writes nothing'`. Cases: `../escape.md`, an absolute path elsewhere, and a symlink inside the memory dir pointing out. Each exits 5; no file is created and `decisions.md` is unchanged.
 - Prose: `'review-console.md step 8 routes control-mode memory writes through --memory-write'`, with a mutated-copy control.
@@ -757,7 +800,7 @@ Control-mode paragraph (no `AskUserQuestion` word; about 900 B). It must state e
 - **Trigger and resolution.** Under control mode (`--ceiling` printing `control-mode on` with `source control-mode`), the same call resolves every policy-resolvable item as above.
 - **The carry.** Every item it would have left `pending`, `keep-staged` or `refused` resolves `carried` instead: a `decision` fact in `{run-dir}/packet-facts/decisions.json` that the acceptance packet's Decisions left for you section renders (`_shared/acceptance-packet.md`'s Decision facts).
 - **No residue.** The CLI then prints no Needs a human block, and nothing reaches the run's final stop as console residue.
-- **Failed creates.** A Queue-write or can't-tell create that fails at execution is rewritten with `console-resolve.js --run "{item-run-dir}" --set-item {id} --resolution carried --reason '{why}'` rather than `keep-staged`.
+- **The one route for failed or refused items.** A Queue-write, `ledger-record-*` or can't-tell item that resolve carried, or whose create fails at execution, takes `console-resolve.js --run "{item-run-dir}" --set-item {id} --resolution carried --reason '{why}'` rather than `keep-staged`. A `ledger-record-*` item adds `--ledger "{ledger path}"` (this run's ledger, `pack.ledger`'s `value.files`), and that call settles its ledger row `deferred` with `carried to the acceptance packet as {factId}`. Run it once for every carried `ledger-record-*` item right after the resolve, and on any failed create. Exit 5 or 3 stops with the Generic gate failure card.
 - **Exit 6.** Stop with `flow/failure-cards.md`'s Generic gate failure card naming each item stderr lists.
 - **Unchanged.** `#3944`'s tiebreak still runs first.
 - **Off mode.** Outside control mode none of this applies.
@@ -770,6 +813,7 @@ Appendix bullet: "`carried` — execute **nothing** at the console: the item's d
 - `'AC2.1: under control mode no console item reaches the final stop as residue'`. The section holds `prints no Needs a human block`.
 - `'AC7.1: a needs-human-decision ruling is carried, not applied'`. The section's carry sentence names `pending` (the resolution `sdd-ruling-needs-human-decision` takes).
 - `'AC6.1: exit 6 stops with the generic failure card'`, in both review-console.md and the appendix.
+- `'AC2.1: the one route for a failed or refused item settles a ledger-record row through --set-item --ledger'`. The section holds `--resolution carried`, `--ledger "{ledger path}"` and `carried to the acceptance packet as {factId}`, and never pairs `keep-staged` with that route.
 - `'the appendix mapping routes carried to execute nothing'`. Model it on `droppedRoute` in `tests/review-console-unattended-no-ask-conformance.test.js`.
 - `'carried is pinned code-to-prose'`. `require(resolve.js).CARRIED_RESOLUTION` appears as `` `carried` `` in the mapping bullet, and every entry of `CARRY_FROM` appears in the review-console carry sentence (iterate the export; non-empty floor).
 
