@@ -32,7 +32,7 @@ const HANDOFF = path.join(PLUGIN, 'skills', 'flow', 'context-handoff.md');
 // build/dispatch.md's instruction about the dispatches SDD composes.
 const REQUIRED = [
   [/never\s+with\s+`run_in_background`/i, 'never background a long-running command'],
-  [/never\s+end\s+(?:this|the)\s+turn\s+waiting\s+on\s+a\s+background/i,"never end the turn waiting on a background run or a child agent's notification"],
+  [/never\s+end\s+(?:this|the)\s+turn\s+waiting\s+on\s+a\s+background/i, "never end the turn waiting on a background run or a child agent's notification"],
 ];
 
 function fencedBlocks(text) {

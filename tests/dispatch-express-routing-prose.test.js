@@ -6,8 +6,8 @@
 // clean-room-facing parts (context pack, status line, model profile, OUTCOME vocabulary) are
 // pinned per block, and whose express-call working-directory and no-stash paragraphs equal
 // task-prompt.md's first call's after whitespace normalization (the foreground-wait rule is not
-// restated in a template: Context pack item 7 carries it once, #5601). All of it is new prose in this change, so every go-red control
-// mutates the live text in memory (skill-prose-conformance-tests).
+// restated in a template: Context pack item 7 carries it once, #5601). All of it is new prose in
+// this change, so every go-red control mutates the live text in memory (skill-prose-conformance-tests).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
