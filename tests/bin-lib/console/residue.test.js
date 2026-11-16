@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'residue');
-const { UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, unresolvedItems, splitMissing, readRunResidue, formatResidueLines, consoleResidueItems, filingRerunCommand } = require(MOD);
+const { UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, unresolvedItems, splitMissing, readRunResidue, formatResidueLines, consoleResidueItems, filingRerunCommand, DIGESTED_LINE_RE, digestedFindings, pendingDigests, DIGEST_PENDING_RESOLUTION, digestRerunCommand } = require(MOD);
 
 // The items of the real archived #2821 console.json (#3370): 9 items, four of
 // them unresolved — copied verbatim, including the `skills:undefined` ids.
@@ -514,4 +514,84 @@ test('a console with one filed and one unfiled planned filing reports only the u
   fs.writeFileSync(path.join(dir, 'decisions.md'), `## /wrap-up\n${FILED_LINE}\n`);
   const { consoles } = readRunResidue(dir);
   assert.deepStrictEqual(consoles.map((c) => c.items.map((i) => [i.id, i.resolution])), [[['tiebreak:bbbbbbbbbbbb', 'filing-pending']]]);
+});
+
+// #4679: a planned can't-tell digest entry (`console.json#digests`) with no `AUTO … digested (work-fingerprint …)`
+// line in decisions.md has not reached the materiality digest; it reads as `digest-pending`, derived at read time.
+const DIGESTED_LINE = '- AUTO 10:00:00 — Queue write: tiebreak:bbbbbbbbbbbb digested (work-fingerprint consolefinding-4567ef01). Reversibility: n/a.';
+function plannedDigestConsole(dir, decisions) {
+  fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({
+    resolved: true,
+    mode: 'auto-resolve',
+    items: [{ id: 'tiebreak:bbbbbbbbbbbb', section: 'Low-confidence findings', resolution: 'digested', reason: 'r' }],
+    digests: [{ item: 'tiebreak:bbbbbbbbbbbb', fingerprint: 'consolefinding-4567ef01' }],
+  }));
+  if (decisions !== null) fs.writeFileSync(path.join(dir, 'decisions.md'), decisions);
+}
+
+test('DIGESTED_LINE_RE anchors on - AUTO (#4679)', () => {
+  assert.ok(DIGESTED_LINE_RE.test(DIGESTED_LINE));
+  assert.ok(DIGESTED_LINE_RE.test(DIGESTED_LINE.replace('digested (', 'already digested (')));
+  assert.ok(!DIGESTED_LINE_RE.test(DIGESTED_LINE.replace('- AUTO ', '- STAGED ')));
+  assert.ok(!DIGESTED_LINE_RE.test(DIGESTED_LINE.replace('- AUTO ', '- SKIP ')));
+  const forged = DIGESTED_LINE.replace('- AUTO ', '- STAGED ').replace('4567ef01', '89abcdef');
+  assert.deepStrictEqual([...digestedFindings(`${DIGESTED_LINE}\n${forged}\n`)], ['consolefinding-4567ef01']);
+});
+
+test('pendingDigests: console.json without digests yields none (#4679)', () => {
+  assert.deepStrictEqual(pendingDigests(CONSOLE_2821, ''), []);
+  assert.deepStrictEqual(pendingDigests(null, ''), []);
+});
+
+test('pendingDigests: a digests entry with no digested line is digest-pending (#4679)', () => {
+  const dir = tmpRun();
+  plannedDigestConsole(dir, '## /wrap-up\n');
+  const [c] = readRunResidue(dir).consoles;
+  assert.deepStrictEqual(c.items.map((i) => [i.id, i.resolution, i.section]), [['tiebreak:bbbbbbbbbbbb', DIGEST_PENDING_RESOLUTION, 'Low-confidence findings']]);
+  assert.deepStrictEqual(c.missing, []);
+  assert.strictEqual(DIGEST_PENDING_RESOLUTION, 'digest-pending');
+  assert.strictEqual(c.items[0].reason, "planned can't-tell digest entry has no digested line in decisions.md");
+  // An absent decisions.md fails closed.
+  const dir2 = tmpRun();
+  plannedDigestConsole(dir2, null);
+  assert.deepStrictEqual(readRunResidue(dir2).consoles.map((x) => x.items.map((i) => i.resolution)), [[DIGEST_PENDING_RESOLUTION]]);
+});
+
+test('a digested or already-digested AUTO line clears it (#4679)', () => {
+  for (const line of [DIGESTED_LINE, DIGESTED_LINE.replace('digested (', 'already digested (')]) {
+    const dir = tmpRun();
+    plannedDigestConsole(dir, `## /wrap-up\n${line}\n`);
+    assert.deepStrictEqual(readRunResidue(dir).consoles, [], line);
+  }
+  for (const word of ['SKIP', 'STAGED']) {
+    const dir = tmpRun();
+    plannedDigestConsole(dir, `${DIGESTED_LINE.replace('- AUTO ', `- ${word} `)}\n`);
+    assert.deepStrictEqual(readRunResidue(dir).consoles.map((c) => c.items.map((i) => i.resolution)), [[DIGEST_PENDING_RESOLUTION]], word);
+  }
+});
+
+test('splitMissing never classifies a digest-pending item missing (#4679)', () => {
+  const items = [{ id: 'wrap-up-docs-9.md', section: 'Queue writes', resolution: DIGEST_PENDING_RESOLUTION, reason: 'r' }];
+  const { items: kept, missing } = splitMissing(items, tmpRun(), () => false);
+  assert.deepStrictEqual(kept.map((i) => i.id), ['wrap-up-docs-9.md']);
+  assert.deepStrictEqual(missing, []);
+});
+
+test('formatResidueLines names the digest re-run for a digest-pending item (#4679)', () => {
+  const dir = tmpRun();
+  plannedDigestConsole(dir, '');
+  const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' });
+  const cmd = `node "/p/bin/console-filings.js" --run "${dir}" --existing <issues.json> --out-dir <dir> --digest-comments <comments.json>`;
+  assert.strictEqual(digestRerunCommand({ consoleDir: dir, pluginRoot: '/p' }), cmd);
+  assert.ok(lines.includes(`    re-run digest: ${cmd}`), lines.join('\n'));
+  assert.ok(!lines.some((l) => l.includes('--only')), 'the digest re-run names no --only');
+});
+
+test('a console with both a pending filing and a pending digest reports both (#4679)', () => {
+  const dir = tmpRun();
+  plannedFilingConsole(dir, '');
+  const cj = JSON.parse(fs.readFileSync(path.join(dir, 'console.json'), 'utf8'));
+  cj.digests = [{ item: 'tiebreak:bbbbbbbbbbbb', fingerprint: 'consolefinding-4567ef01' }];
+  fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify(cj));
+  assert.deepStrictEqual(readRunResidue(dir).consoles.map((c) => c.items.map((i) => [i.id, i.resolution])), [[['tiebreak:aaaaaaaaaaaa', 'filing-pending'], ['tiebreak:bbbbbbbbbbbb', 'digest-pending']]]);
 });

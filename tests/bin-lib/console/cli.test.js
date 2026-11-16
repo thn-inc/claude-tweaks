@@ -128,7 +128,7 @@ test('console.json and --json carry filings as {item, fingerprint, title} with n
   const { formatEntry } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'log-decision', 'append'));
   const tbNow = new Date(2026, 9, 24, 10, 0, 0);
   const finding = { lens: '3a', path: 'src/a.js', line: 9, claim: 'claim one', reporterSeverity: 'medium', kind: 'unconfirmed' };
-  const r = resolveTiebreak(finding, 'Verdict: cant-tell\nSeverity: medium\nRecommendation: drop\nSTATUS: DONE', { readFile: () => '', now: tbNow });
+  const r = resolveTiebreak(finding, 'Verdict: cant-tell\nSeverity: medium\nRecommendation: file\nSTATUS: DONE', { readFile: () => '', now: tbNow });
   const entry = formatEntry({ status: r.logStatus, now: tbNow, step: r.logStep, text: r.logText, reversibility: 'high' });
   const fx = mainCheckoutWithRun({ decisions: `${entry}\n` });
   const json = baseDeps(fx, []);
@@ -142,9 +142,35 @@ test('console.json and --json carry filings as {item, fingerprint, title} with n
   assert.ok(!json.out().includes('work-fingerprint'), 'no proposal text in --json');
   assert.ok(!JSON.stringify(cj).includes('work-fingerprint'), 'no proposal text in console.json');
   assert.deepStrictEqual(cj.items.map((i) => i.resolution), ['filed']);
+  assert.deepStrictEqual(cj.digests, [], 'a file recommendation plans no digest entry');
   const none = mainCheckoutWithRun({ staged: THREE });
   assert.strictEqual(await run(['--run', none.runDir, '--policy', 'console-auto'], baseDeps(none, []).d), 0);
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(none.runDir, 'console.json'), 'utf8')).filings, [], 'always written');
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(none.runDir, 'console.json'), 'utf8')).digests, [], 'always written');
+});
+
+test('a drop-recommended can\'t-tell item digests: console.json and --json carry digests as {item, fingerprint}, no filing, reversibility n/a (#4679)', async () => {
+  const { resolveTiebreak } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'tiebreak'));
+  const { formatEntry } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'log-decision', 'append'));
+  const tbNow = new Date(2026, 9, 24, 10, 0, 0);
+  const finding = { lens: '3a', path: 'src/a.js', line: 9, claim: 'claim one', reporterSeverity: 'medium', kind: 'unconfirmed' };
+  const r = resolveTiebreak(finding, 'Verdict: cant-tell\nSeverity: medium\nRecommendation: drop\nSTATUS: DONE', { readFile: () => '', now: tbNow });
+  const entry = formatEntry({ status: r.logStatus, now: tbNow, step: r.logStep, text: r.logText, reversibility: 'high' });
+  const fx = mainCheckoutWithRun({ decisions: `${entry}\n` });
+  const json = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto', '--json'], json.d), 0);
+  const cj = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'));
+  assert.deepStrictEqual(cj.items.map((i) => i.resolution), ['digested']);
+  assert.deepStrictEqual(cj.filings, []);
+  assert.strictEqual(cj.digests.length, 1);
+  assert.deepStrictEqual(Object.keys(cj.digests[0]).sort(), ['fingerprint', 'item']);
+  assert.strictEqual(cj.digests[0].item, `tiebreak:${r.id}`);
+  assert.match(cj.digests[0].fingerprint, /^consolefinding-[0-9a-f]{8}$/);
+  assert.deepStrictEqual(JSON.parse(json.out()).digests, cj.digests, '--json prints the same');
+  assert.ok(!json.out().includes('<!-- console-finding'), 'no digest line text in --json');
+  assert.ok(!JSON.stringify(cj).includes('<!-- console-finding'), 'no digest line text in console.json');
+  const decisions = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
+  assert.match(decisions, /Console item tiebreak:[0-9a-f]+ \(Low-confidence findings\): digested — .*Reversibility: n\/a\.$/m);
 });
 
 // grant-veto-window-hours only reaches evaluateMaturation if the CLI resolves
@@ -658,7 +684,7 @@ test('AC3.1: a console whose can\'t-tell filings never ran reports the planned f
   const { formatEntry, appendEntry } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'log-decision', 'append'));
   const tbNow = new Date(2026, 9, 24, 10, 0, 0);
   const finding = { lens: '3a', path: 'src/a.js', line: 9, claim: 'claim one', reporterSeverity: 'medium', kind: 'unconfirmed' };
-  const r = resolveTiebreak(finding, 'Verdict: cant-tell\nSeverity: medium\nRecommendation: drop\nSTATUS: DONE', { readFile: () => '', now: tbNow });
+  const r = resolveTiebreak(finding, 'Verdict: cant-tell\nSeverity: medium\nRecommendation: file\nSTATUS: DONE', { readFile: () => '', now: tbNow });
   const entry = formatEntry({ status: r.logStatus, now: tbNow, step: r.logStep, text: r.logText, reversibility: 'high' });
   const fx = mainCheckoutWithRun({ decisions: `${entry}\n` });
   const first = baseDeps(fx, []);
