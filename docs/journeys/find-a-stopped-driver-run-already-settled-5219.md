@@ -71,12 +71,12 @@ files:
 - **Action:** a calling skill passes `--no-settle` and settles the stop itself from the final line.
 - **Should feel:** complete. The caller never has to re-derive the classification.
 - **Should understand:**
-  - No settle call runs.
+  - No settle call runs. The one exception is `--run` (dispatch's driver route): a pre-push stop still runs `settle-escalate` alone, so the escalation line reaches the caller's run directory. A failed escalate reads `blocked`.
   - `settle` reads `left-to-caller` only when the stop's row has calls, and `none` otherwise.
   - `settleRow` and `outcome` name what the driver would have done.
   - `stop` carries the class, step, `pushed`, `created`, a closed-set `reason` and `checkLogged`.
 - **Red flags:**
-  - Any `settle-*` line under `--no-settle`.
+  - Any `settle-*` line under `--no-settle`, other than `settle-escalate` on a pre-push stop under `--run`.
   - `left-to-caller` for a row with nothing to do.
   - `outcome` disagreeing with `settleRow`.
 

@@ -12,7 +12,7 @@ Only automatable skills can be included in the pipeline:
 | `stories` | `/claude-tweaks:stories` | Autonomous — browses app, generates YAML stories. Auto-triggered when build produces UI file changes (unless `no-stories`). |
 | `test` | `/claude-tweaks:test` | Mechanical pass/fail gate — types, lint, tests, QA story validation. Sets `TEST_PASSED=true` on pass. |
 | `review` | `/claude-tweaks:review` | Code review, simplification, visual browser review with idea generation (when browser available) — produces a verdict. Gates on `TEST_PASSED`. |
-| `polish` | `/claude-tweaks:design-wrapper polish <spec>` | Invokes Impeccable polish + clarify + harden (the refinement set) plus suggestion-driven commands, each dispatched when an audit finding's own `suggestion` names it. Modifies code. Followed by re-verify (`/test skip-qa`) only when polish modified code — see the polish-phase decision tree below. Gates on review verdict PASS. Skipped on non-frontend specs (wrapper detection) and, since #1926, under `ceremony-profile: fast-lane` — read from the run's `config.yml` before invoking the wrapper, logged `SKIP {time} — polish skipped: fast-lane. Reversibility: n/a.` written with `log-decision.js --status SKIP --section "/flow"` per `_shared/auto-decision-log.md`'s Degrade-trace rule (roster tag `polish`, `_shared/ceremony-profile.md`; `/claude-tweaks:test`'s Design CLI gate and `/claude-tweaks:review` Step 6.5 still run). |
+| `polish` | `/claude-tweaks:design-wrapper polish <spec>` | Invokes Impeccable polish + clarify + harden (the refinement set) plus suggestion-driven commands, each dispatched when an audit finding's own `suggestion` names it. Modifies code. Followed by re-verify (`/test skip-qa`) only when polish modified code — see the polish-phase decision tree below. Gates on review verdict PASS. Skipped on non-frontend specs (skill-load gate) and, since #1926, under `ceremony-profile: fast-lane` — read from the run's `config.yml` before invoking the wrapper, logged `SKIP {time} — polish skipped: fast-lane. Reversibility: n/a.` written with `log-decision.js --status SKIP --section "/flow"` per `_shared/auto-decision-log.md`'s Degrade-trace rule (roster tag `polish`, `_shared/ceremony-profile.md`; `/claude-tweaks:test`'s Design CLI gate and `/claude-tweaks:review` Step 6.5 still run). |
 | `wrap-up` | `/claude-tweaks:wrap-up` | Reflection, cleanup, knowledge routing — produces actionable summary |
 
 **Not allowed in flow:** `capture`, `specify`, `init`, `tidy`, `help`, `browse` — these require interactive decision-making or are utility skills.
@@ -185,12 +185,17 @@ Each step has a gate that determines whether to proceed to the next step.
 
 ### Polish-phase decision tree
 
-This is the canonical rendering of the polish-phase branch logic. The gate-behavior row for `polish` (above) and the Step 4 polish-execution prose in SKILL.md both point here.
+This is the canonical rendering of the polish-phase branch logic. The gate-behavior row for `polish` (above) and the Step 4 polish-execution prose in SKILL.md both point here. The first branch is the skill-load gate, run per `_shared/skill-load-gate.md` with `--skill design-wrapper --mode polish`, `--integration-branch {ref}` (`_shared/integration-branch.md`), `--surface` where that file finds one, and `--run "$PIPELINE_RUN_DIR" --section "/flow" --step "polish"`. On `skip`, do not invoke the wrapper.
 
 ```
 Polish phase entry (after review PASS, no-polish not set, ceremony-profile not fast-lane — a fast-lane run logs the polish SKIP, removes the polish PR row, and proceeds to wrap-up)
     │
     ▼
+Gate (_shared/skill-load-gate.md, --skill design-wrapper --mode polish)
+    │
+    ├─ skip                            → Note skip, proceed to wrap-up (no re-verify)
+    │
+    ▼ proceed
 Invoke /claude-tweaks:design-wrapper polish <spec>
     │
     ├─ {skipped: ...}                  → Note skip in summary, proceed to wrap-up (no re-verify)

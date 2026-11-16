@@ -78,6 +78,15 @@ reporter.
   "nothing to report" (`[IL-146]`'s silent-fallback shape). Note the reporting posture:
   `composedErrors` never gates `ok`, which stays keyed off `composed`/`breaches` — the fix shape's
   step 2 says *surface it*, not *block on it*.
+- **Validate every line a skip depends on; never reuse a lenient list reader on the skip side (#5605).**
+  `plugin/bin/lib/skill-gate/index.js`'s `parseJourneyText` first read a journey's `files:` list
+  through `health-core/frontmatter-list.js`, whose contract is "no list means no declared domain":
+  an inline comment stayed in the item, a blank or comment line ended the list early, and a BOM
+  fence read as no frontmatter, each giving a shorter list with no error. For the gate, a shorter list
+  is a wrong `skip` (a journey that did list the file looked as if it did not). The fix walks every
+  line of the list itself and turns anything the reader would drop into a parse error, which the gate
+  fails open as `cannot tell:`. Per-task and whole-branch reviews passed the lenient read; only a
+  fresh reader checking the reader against the rule's closed set caught it.
 
 ## The fix shape
 
@@ -323,7 +332,7 @@ When mechanizing a prose heuristic into a deterministic check:
     blanks comments to spaces before its callers' scans count tokens. Its
     callers, by test-file stem: `accept-label-reader`, `backfill-cli`, `below-floor-parent-close`, `cli`, `cli-entry`, `exit-code`, `gate-fragments`, `gh-host-seam`, `git-status-optional-locks`,
     `hooks-harness-refusal`, `hooks-pre-tool-use`, `markdown-blocks`, `merge`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit-call-sites`, `porcelain-cwd-compare`, `post-merge`,
-    `precondition`, `raw-markdown-read`, `recording-no-embed`, `release-notes`, `risk-flags-writer`, `run`, `run-header`, `run-liveness-callers`, `settle`, `staged-id-producers`, `statusline-no-shell`, `subprocess-timing`, `trust-policy-keys`, `wall-clock-budget`,
+    `precondition`, `raw-markdown-read`, `recording-no-embed`, `release-notes`, `risk-flags-writer`, `run`, `run-header`, `run-liveness-callers`, `settle`, `staged-id-producers`, `statusline-no-shell`, `subprocess-timing`, `timeout-source`, `trust-policy-keys`, `wall-clock-budget`,
     `windows-hide-spawn` and `wrap-up-learned-skills-pr`.
     `tests/strip-comments-callers-twin.test.js` pins this list and the helper header's to the
     tree. It models regex literals (#3585); its residual
