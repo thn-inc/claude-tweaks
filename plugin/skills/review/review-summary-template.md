@@ -125,6 +125,7 @@ Possible QA statuses (the four canonical values from qa-reporting.md's Status de
 - {If completed with QA data: note QA data enrichment — caveats surfaced, page inventories consumed, findings confirmed/resolved}
 - {If recommended: `/claude-tweaks:visual-review journey:{name}` or `/claude-tweaks:visual-review {url}`}
 - {If skipped because `/claude-tweaks:visual-review` found no frontend surface: its reason (`Surface: {value}` or no UI trigger file in the diff) and the journeys whose `files:` overlapped the diff, copied from its suppressed line}
+- {If skipped because Step 6's skill-load gate returned `skip`: the gate's `reason`, verbatim, and its `journeys` names}
 
 ### Design Quality (from /claude-tweaks:design-wrapper review)
 

@@ -23,11 +23,12 @@ const {
   writePolicyViaSeedAndPull,
 } = require('./helpers/reconcile-fixtures');
 
-// Every non-dry reconcile() pass prunes the declined-learning store (#1399), and that store resolves
-// from process.cwd() to the main checkout (#4360). The in-process passes below pass `cwd: <fixture>`,
-// which does not move process.cwd(), so left real they would lock and rewrite the maintainer's own
-// store whenever the suite runs from a linked worktree. Stub the prune for the whole file; node --test
-// gives each file its own process, and the #4180 prune test (tests/reconcile-archive-residue.test.js) installs its own counting stub on top.
+// Every non-dry reconcile() pass prunes the declined-learning store (#1399). The prune now anchors at
+// the pass's own cwd (#5376), but before that it resolved from process.cwd() to the main checkout
+// (#4360), which `cwd: <fixture>` does not move, and a regression to it would lock and rewrite the
+// maintainer's own store whenever the suite runs from a linked worktree. Stub the prune for the whole
+// file; node --test gives each file its own process, and the #4180 prune test
+// (tests/reconcile-archive-residue.test.js) installs its own counting stub on top.
 require('../plugin/bin/lib/declined-learning/store').pruneDeclines = () => 0;
 
 test('AC2 (#3630): dispatch-style checks release,archive,reap sees the asynchronously merged commit at archive time', async () => {

@@ -197,9 +197,14 @@ later — it exists solely to close the specific correctness gap #1294 found; do
 into a broader test or pre-implement #347's predicate here (Related, not merged scope, same as
 `_shared/console-on-pr.md`'s own note on #347).
 
-**A finding row is floor-clearing and is ticked whatever its pre-tick** (#3949): at `unattended`
-every can't-tell item files, its recommendation notwithstanding (`_shared/autonomy-ceiling.md`'s
-`consoleAutoResolve` row), so this wiring never drops one — it files it per Execution routing above.
+**A finding row is floor-clearing and is ticked whatever its pre-tick** (#3949, #4679): at `unattended`
+a `drop`-recommended can't-tell item is digested (`tiebreak-cant-tell`, deduplicated by its
+`console-finding` marker) and every other one files as a `needs-verification` task
+(`_shared/autonomy-ceiling.md`'s `consoleAutoResolve` row). The wiring runs `console-filings.js`
+with no `--only` for the run's finding rows, ticks the rows that come back under `file`/`deduped`,
+and passes the rows under `digest`/`digestDeduped` to `resolve-console --digested`, once their
+digested lines are logged. A CLI entry's `item` is a console item id: the row passed is the one
+whose `findingItem` equals it, named by that row's own `id`. The steps this leaves out — the digest-comments fetch and `--digest-comments`, posting `digestFile`, the per-entry digested log line — are `wrap-up/review-console.md`'s "Can't-tell filings" paragraph, run per console dir.
 
 **Second narrower exception (#1802):** the same `isMergeRow: true` item is also **not**
 floor-clearing when a live re-fetch shows any group member currently lacking both `auto:merge`

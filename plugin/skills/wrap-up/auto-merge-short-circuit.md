@@ -105,7 +105,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --sta
 
 `{text-file}` holds one line, `#{n} merge-check verdict not confirmed in decisions.md (latest: {latest}{detail}) — treated as needs-human, Review Console renders normally`, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — `{detail}` can carry an error message, so it never passes through shell quoting.
 
-**Can't-tell findings — before acceptance labeling (#4171).** This branch renders no console, so nothing else files a can't-tell Low-confidence/Contested finding before the merge closes the record and reconcile archives the run. List them: `node "${CLAUDE_PLUGIN_ROOT}/bin/console-filings.js" --run "$PIPELINE_RUN_DIR" --list` — rows with `cantTell: true`; none means continue below unchanged. Otherwise resolve the ceiling as `review-console.md`'s Auto-resolution short-circuit does and check `bookkeepingPermissions(ceiling).consoleAutoResolve`. Granted: file every can't-tell item now, whatever the tiebreak recommended, through `review-console.md`'s "Can't-tell filings" with `{item-run-dir}` = `$PIPELINE_RUN_DIR` — it logs each created record as `{item} filed as #{number} (work-fingerprint {fingerprint})` and each deduped one as `{item} already filed as #{number} (…)`, the lines `archive-run` and reconcile read (`cant-tell-unfiled`) — then continue below. Not granted, or any non-zero `console-filings.js` exit or failed create: do not merge — log the refusal, then go to "Any layer fails" below; the rendered console carries the rows, and at `unattended` its own Can't-tell filings dedups anything this call already filed.
+**Can't-tell findings — before acceptance labeling (#4171).** This branch renders no console, so nothing else files a can't-tell Low-confidence/Contested finding before the merge closes the record and reconcile archives the run. List them: `node "${CLAUDE_PLUGIN_ROOT}/bin/console-filings.js" --run "$PIPELINE_RUN_DIR" --list` — rows with `cantTell: true`; none means continue below unchanged. Otherwise resolve the ceiling as `review-console.md`'s Auto-resolution short-circuit does and check `bookkeepingPermissions(ceiling).consoleAutoResolve`. Granted: settle every can't-tell item now — a `drop`-recommended one is digested, every other one filed as a `needs-verification` task — through `review-console.md`'s "Can't-tell filings" with `{item-run-dir}` = `$PIPELINE_RUN_DIR` — it logs each created record as `{item} filed as #{number} (work-fingerprint {fingerprint})` and each deduped one as `{item} already filed as #{number} (…)`, and each digest entry as `{item} digested (work-fingerprint {fingerprint})` or `{item} already digested (…)`, the lines `archive-run` and reconcile read (`cant-tell-unfiled`) — then continue below. Not granted, or any non-zero `console-filings.js` exit, failed create or failed digest post: do not merge — log the refusal, then go to "Any layer fails" below; the rendered console carries the rows, and at `unattended` its own Can't-tell filings dedups anything this call already filed.
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --step "Auto-merge short-circuit" --reversibility n/a --text-file "{text-file}"
@@ -121,8 +121,8 @@ execution would. This short-circuit closes exactly one record, so pass that reco
 reads. That file owns the routing: a record with a resolvable parent goes to its
 Parent-Gate Procedure (the parent gets the one gate; this sub-issue gets none), and
 everything else goes through its Steps 1-4 — bootstrap, observation-plan authoring, the Step 2.5
-safety-net gate, gathering, posting the acceptance packet, then `demo:pending`; below the oversight
-floor it skips the bootstrap and the safety-net gate and posts the packet with no label. Do not apply `demo:pending` to this record
+safety-net gate, gathering, then handing the packet to `/accept`'s automatic entry, which posts it and applies `accept:pending`; below the oversight
+floor it skips the bootstrap and the safety-net gate and posts the packet with no label. Do not apply a pending label to this record
 independently of that routing: an `auto:merge`'d sub-issue is exactly the population
 whose below-floor parent the reconciler's `post-merge` check closes first, with
 `_shared/github-pr-scan-acceptance.md`'s `parent-gate` backstop scope as the last resort.
@@ -176,7 +176,15 @@ git -C "$WORKTREE_PATH" commit -m "Wrap-up: delete resolved open items ledger fo
 
 Every other report except `not found` leaves the ledger on disk: commit nothing; the verb logs its `SKIP`, hand-log one where Item 2 says.
 
-**`integration-model: pr-first` only — push this commit now**, its own Bash call: `gh pr merge`
+**Archive the spec header (#3976).** After the ledger commit above and before the push below, under
+either `integration-model`, as its own Bash call:
+`node "${CLAUDE_PLUGIN_ROOT}/bin/archive-run-header.js" --run "{run-dir}"`. It `git mv`s the run's
+tracked `work/` and `spec-{N}/work/` files to `archive/{run-id}/` in one commit on the run branch, so
+the merge lands the header already archived. It never stops wrap-up: it logs its own line
+(`_shared/auto-decision-log.md`'s **CLIs that log their own entries**); on any exit other than 0, log
+one `SKIP` and continue — reconcile's `archiveRunDir` archives the header after the merge.
+
+**`integration-model: pr-first` only — push these commits now**, its own Bash call: `gh pr merge`
 below merges the PR's remote head, not this worktree's local state, so a commit left unpushed
 here would simply be absent from the merge.
 
@@ -185,8 +193,8 @@ git -C "$WORKTREE_PATH" push origin {branch}
 ```
 
 **`integration-model: local-merge`:** skip the push above —
-`_shared/local-merge-sequence.md` Step 3's merge reads `{branch}` straight out of the worktree's local refs (`git merge --no-ff {branch}`), so this
-commit reaches it without ever touching `origin`.
+`_shared/local-merge-sequence.md` Step 3's merge reads `{branch}` straight out of the worktree's local refs (`git merge --no-ff {branch}`), so these
+commits reach it without ever touching `origin`.
 
 A `not found` report (a record whose build/test/review never appended an item) is not an
 error — skip silently, there is nothing to delete. A ledger file that still carries a non-`open`

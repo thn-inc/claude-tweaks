@@ -26,11 +26,11 @@ files:
 # Settle Every Review Finding at the Review Console
 
 **Persona:** an operator who finishes a `/claude-tweaks:flow` or `/claude-tweaks:wrap-up` run and meets its Review Console: at a terminal, on the PR comment under `pr-first`, or not at all, because the run resolved itself at `autonomy: unattended`. Until now, Low-confidence and Contested findings sat there as `keep-staged`, with no default and nothing applying them. They were left behind in every finished run.
-**Goal:** every review finding reaches a final outcome before the run closes: filed as a backlog record, or dropped. A finding nobody could settle is never quietly kept, and never quietly dropped.
+**Goal:** every review finding reaches a final outcome before the run closes: filed as a backlog record, digested, or dropped. A finding nobody could settle is never quietly kept, and never quietly dropped.
 **Entry point:** the Wrap-Up Review Console, reached by `/claude-tweaks:wrap-up` (or `/claude-tweaks:flow`'s consolidated multi-spec console) after `/claude-tweaks:review`'s tiebreak (Step 3.7) has logged a verdict line for every open finding.
 **Success state:**
 - The console shows no `pending` or `keep-staged` finding from this run.
-- Each can't-tell finding is either a `needs:definition` backlog record (deduplicated by its `work-fingerprint`) or dropped by a human.
+- Each can't-tell finding is either a backlog record (deduplicated by its `work-fingerprint`), dropped by a human, or, at `unattended`, digested when the tiebreak recommended `drop` (deduplicated by its `console-finding` marker).
 - High and critical refuted findings are listed read-only, so nothing dropped on evidence is invisible.
 - The run archives, or it is refused with a named reason.
 
@@ -88,10 +88,10 @@ files:
 
 ### 4. An unattended run settles itself
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --run {run-dir} --policy console-auto`, then `console-filings.js` (review-console.md's Auto-resolution short-circuit)
-- **Action:** at `autonomy: unattended` the console renders in full with every row stamped `AUTO-RESOLVED` and asks nothing. Every can't-tell finding resolves `filed`, whatever its recommendation. `console-filings.js` dedups them against `gh issue list --state all` and writes the proposals, and each is filed as a `needs:definition` task with `Defer-reason: needs-human-decision`.
+- **Action:** at `autonomy: unattended` the console renders in full with every row stamped `AUTO-RESOLVED` and asks nothing. A can't-tell finding the tiebreak recommended `drop` for resolves `digested`; every other one resolves `filed`. `console-filings.js` dedups the filings against `gh issue list --state all` and the digest entries against the digest's comments, writes the proposals, and each is filed as a `needs-verification` task (no `needs:definition` label) asking for quoted evidence at the integration-branch tip; the skill posts the digest entries as one comment on the open `digest` issue.
 - **Should feel:** finished. The operator comes back to records in `/claude-tweaks:backlog attention`, not a console waiting on them.
 - **Should understand:**
-  - `console.json` records `filings` and `droppedByTiebreak` next to the items.
+  - `console.json` records `filings`, `digests` and `droppedByTiebreak` next to the items; a digest entry with no digested line in `decisions.md` reads as `digest-pending` residue.
   - A filing that fails (non-zero exit) is carried into the run's `Needs a human` block with the re-run command. Once the run is archived, that command takes the `archive/{run-id}` copy.
   - Below `unattended` no human means no resolution: nothing is filed or dropped, and the console stays pending.
 - **Red flags:**
@@ -148,6 +148,7 @@ files:
 - Updated during the build of #4632: a finding at a path holding a space now settles only on its own verdict (step 1). Before this, `a dir/x.ts:3` and `b dir/x.ts:3` keyed from the last space, so one verdict settled both. The tiebreak also reads evidence at such a path, so the finding can be confirmed or dropped rather than always landing as can't-tell.
 - Updated during the build of #4631: the console backfill (`bin/console-backfill.js`) now records a split finding's whole path under the same widened class, while keeping each item's id on its old location key so a re-run never files a second record (step 6).
 - Updated during the build of #4581: `log-decision.js` refuses an aggregate reproduction line, the improvised shape that left keep-staged residue with shortened locations, and the coincidence line now keys a multi-word quoted lens and matches in any case (step 1).
+- Updated during the build of #4679. When the console resolves unattended, a can't-tell item the tiebreak recommended dropping is digested (`digests` in console.json, with `digest-pending` residue until its digested line is logged). The other can't-tell items file as verification tasks with `Defer-reason: needs-verification`. The reconciler records a digested PR finding row with `resolve-console --digested`. Human-present Approve-all is unchanged.
 - Related journeys:
   - `get-a-verdict-on-every-unverified-review-finding-3947.md`: how each finding gets the verdict this console acts on.
   - `clear-an-archive-refusal-for-an-untiebroken-finding-3945.md`: the archive refusal for a finding with no verdict line at all.

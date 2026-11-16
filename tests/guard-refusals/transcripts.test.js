@@ -211,3 +211,113 @@ test('scanStore attributes a call to the last run id when one input names severa
   assert.equal(scan.refusals.find((r) => r.toolUseId === 'toolu_01VKBRmA6qouLJf1MV2XJgsH').runId, '2026-10-19T210000-record-9999');
   assert.ok(scan.referencedRuns.includes('2026-10-19T185709-record-3498') && scan.referencedRuns.includes('2026-10-19T210000-record-9999'));
 });
+
+// ---- #5587: the guard of each row. Hand-written fixtures, never transcript content. ----
+
+const { ISOLATION_CLAUSE } = require('../../plugin/bin/lib/hooks/harness-refusal');
+const { classifyGuard, GATE_FRAGMENTS } = require('../../tools/guard-refusals/transcripts');
+const { HARNESS_BASH, HARNESS_FILE, WORKTREE_ALWAYS, writeStore, use, result } = require('../helpers/guard-refusals-store');
+
+test('AC1: one refusal of each guard kind yields one guards count each and no row for printed skill text', () => {
+  const dir = writeStore([
+    use('t_hb', 'Bash', { command: 'git status; echo $(x)' }), result('t_hb', HARNESS_BASH),
+    use('t_hm', 'Monitor', { command: 'tail -f x' }), result('t_hm', HARNESS_BASH),
+    use('t_hw', 'Write', { file_path: '/main/x.md' }), result('t_hw', HARNESS_FILE),
+    use('t_wa', 'Bash', { command: 'git commit -m x' }), result('t_wa', WORKTREE_ALWAYS),
+    use('t_bs', 'Write', { file_path: '/wt/y.md' }), result('t_bs', 'PreToolUse:Write hook error: claude-tweaks: this project resolves integration-model: pr-first and the branch is unpushed.'),
+    use('t_td', 'ExitWorktree', {}), result('t_td', 'claude-tweaks teardown gate: worktree /wt is still assigned to a run.'),
+    use('t_pr', 'Bash', { command: 'cat x' }), result('t_pr', 'Exit code 1\ncat: x: claude-tweaks: no such skill'),
+  ]);
+  const scan = scanStore({ projectsDir: dir, ...WINDOW });
+  const tally = {};
+  for (const r of scan.rows) tally[r.guard] = (tally[r.guard] || 0) + 1;
+  assert.deepEqual(tally, { 'harness-command': 2, 'harness-file': 1, 'plugin:worktree-always': 1, 'plugin:bookkeeping-stamps': 1, 'plugin:teardown': 1 });
+  assert.ok(!scan.rows.some((r) => r.toolUseId === 't_pr'));
+  assert.equal(scan.refusals.length, 1);
+  assert.equal(scan.refusals[0].toolUseId, 't_hb');
+  assert.equal(scan.calls, 5);
+  const row = scan.rows.find((r) => r.toolUseId === 't_hm');
+  assert.deepEqual(
+    { tool: row.tool, command: row.command, cwd: row.cwd, ts: row.ts, truncated: row.truncated, line: row.line, reason: typeof row.reason },
+    { tool: 'Monitor', command: 'tail -f x', cwd: '/wt', ts: '2026-10-20T11:00:00.000Z', truncated: false, line: 4, reason: 'string' },
+  );
+  assert.equal(scan.rows.find((r) => r.toolUseId === 't_wa').reason, null);
+  assert.equal(scan.rows.find((r) => r.toolUseId === 't_hw').command, '/main/x.md');
+});
+
+test('classifyGuard: a claude-tweaks denial with no known fragment is plugin:other; a harness clause without a tail is no row', () => {
+  assert.equal(classifyGuard('claude-tweaks: something no table row names'), 'plugin:other');
+  assert.equal(classifyGuard('PreToolUse:Bash hook error: claude-tweaks: something else'), 'plugin:other');
+  assert.equal(classifyGuard(`This session${ISOLATION_CLAUSE}/wt.`), null);
+  assert.equal(classifyGuard('Exit code 1\nclaude-tweaks: this project requires an isolated worktree for x'), null);
+  assert.equal(classifyGuard('mentions claude-tweaks: mid-line'), null);
+  assert.equal(classifyGuard(''), null);
+  assert.equal(classifyGuard(HARNESS_BASH), 'harness-command');
+  assert.equal(classifyGuard(HARNESS_FILE), 'harness-file');
+  // Ordered first match: a teardown text that also holds a later gate's fragment is teardown.
+  assert.equal(classifyGuard('claude-tweaks teardown gate: the command has changed directory more ways than the hook follows'), 'plugin:teardown');
+  assert.equal(classifyGuard('claude-tweaks: the command has changed directory more ways than the hook follows'), 'plugin:pipeline-shadow');
+  for (const [gate, fragments] of GATE_FRAGMENTS) for (const f of fragments) assert.equal(classifyGuard(`claude-tweaks: ${f}`), `plugin:${gate}`);
+});
+
+test('array-shaped tool_result content: a plugin denial and a harness refusal in text blocks are both rows', () => {
+  const dir = writeStore([
+    use('t_a', 'Bash', { command: 'git commit' }), result('t_a', [{ type: 'text', text: WORKTREE_ALWAYS }]),
+    use('t_b', 'Bash', { command: 'echo $(x)' }), result('t_b', [{ type: 'text', text: 'Exit code 1' }, { type: 'text', text: HARNESS_BASH }]),
+  ]);
+  const scan = scanStore({ projectsDir: dir, ...WINDOW });
+  const guards = Object.fromEntries(scan.rows.map((r) => [r.toolUseId, r.guard]));
+  assert.deepEqual(guards, { t_a: 'plugin:worktree-always', t_b: 'harness-command' });
+  assert.deepEqual(scan.refusals.map((r) => r.toolUseId), ['t_b']);
+});
+
+test('a guarded result whose call is not in the store is no row', () => {
+  const dir = writeStore([result('t_orphan', HARNESS_BASH), result('t_orphan2', WORKTREE_ALWAYS)]);
+  const scan = scanStore({ projectsDir: dir, ...WINDOW });
+  assert.deepEqual(scan.rows, []);
+  assert.deepEqual(scan.refusals, []);
+});
+
+test('a command longer than COMMAND_CAP is stored cut and marked truncated', () => {
+  const dir = writeStore([
+    use('t_long', 'Bash', { command: `ls ${'a'.repeat(20000)}; rm x` }), result('t_long', HARNESS_BASH),
+    use('t_short', 'Bash', { command: 'ls' }), result('t_short', HARNESS_BASH),
+  ]);
+  const scan = scanStore({ projectsDir: dir, ...WINDOW });
+  const long = scan.rows.find((r) => r.toolUseId === 't_long');
+  assert.equal(long.truncated, true);
+  assert.equal(long.command.length, 20000);
+  assert.ok(!long.command.includes('rm x'));
+  assert.equal(scan.rows.find((r) => r.toolUseId === 't_short').truncated, false);
+  assert.equal(scan.refusals.find((r) => r.toolUseId === 't_long').command.length, 20000);
+});
+
+test('a non-string cwd or timestamp on the call entry is stored as null', () => {
+  const entry = use('t_odd', 'Bash', { command: 'ls' });
+  entry.cwd = 5;
+  entry.timestamp = { at: 1 };
+  const scan = scanStore({ projectsDir: writeStore([entry, result('t_odd', HARNESS_BASH)]), ...WINDOW });
+  const row = scan.rows.find((r) => r.toolUseId === 't_odd');
+  assert.equal(row.cwd, null);
+  assert.equal(row.ts, null);
+  assert.equal(scan.refusals.find((r) => r.toolUseId === 't_odd').cwd, null);
+});
+
+test('the first guarded result per tool_use id is the row, and an earlier unguarded one does not block it', () => {
+  const dir = writeStore([
+    use('t_f', 'Bash', { command: 'x' }), result('t_f', 'Exit code 2\nboom'), result('t_f', WORKTREE_ALWAYS), result('t_f', HARNESS_BASH),
+  ]);
+  const scan = scanStore({ projectsDir: dir, ...WINDOW });
+  assert.deepEqual(scan.rows.map((r) => [r.toolUseId, r.guard, r.line]), [['t_f', 'plugin:worktree-always', 3]]);
+  assert.deepEqual(scan.refusals, []);
+});
+
+test('scanStore keeps the existing refusals list and adds guard, cwd and ts to each', () => {
+  const scan = scanStore({ projectsDir: copyStore(), ...WINDOW });
+  assert.equal(scan.refusals.length, 8);
+  for (const r of scan.refusals) {
+    assert.equal(r.guard, 'harness-command');
+    assert.ok('cwd' in r && 'ts' in r);
+  }
+  assert.equal(scan.rows.filter((r) => r.guard === 'harness-command' && (r.tool === 'Bash' || r.tool === 'Write')).length, 8);
+});

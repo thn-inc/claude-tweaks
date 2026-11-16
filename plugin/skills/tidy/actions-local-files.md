@@ -38,7 +38,7 @@ parent's `facets.acceptance` fresh, then re-run **Evaluate the gate** — never 
 own snapshot, since `/tidy`'s Step 6 approval is never instantaneous with its Step 1 scan and a
 concurrent `/claude-tweaks:wrap-up` may already have gated the same parent. If the re-verified
 gate no longer reads `due` (already gated, or a sub-issue reopened), this is a silent no-op — skip it,
-don't error, and don't recommend `/claude-tweaks:demo {id}` for it in the applied report either.
+don't error, and don't recommend `/claude-tweaks:accept {id}` for it in the applied report either.
 
 If it still reads `due` and **Evaluate the gate** reads `exceeds: false` (below the oversight
 floor), run that procedure's **Close the parent below the floor** instead of composing a brief: it
@@ -75,13 +75,13 @@ Keeping both drivers on the same tier is also what keeps `[parent-gate]` one fin
 behavior rather than two that diverge by store.
 
 This action never sets `acceptance: approved` or `acceptance: changes-requested` — those stay
-exclusively `/claude-tweaks:demo`'s job, applied only after an explicit human verdict. Opening
+exclusively `/claude-tweaks:accept`'s job, applied only after an explicit human verdict. Opening
 the gate is the precondition for that verdict, not the verdict itself, which is why the
-above-floor recommendation still ends with `/claude-tweaks:demo {id}` even once the gate is open.
+above-floor recommendation still ends with `/claude-tweaks:accept {id}` even once the gate is open.
 
 **What this does not cover.** Only decomposition parents. The sibling backstop — `acceptance-gap`,
 closed records with no disposition that are *not* decomposed sub-issues — is a scan, not an action: it has a
 `local-files` twin (`step-1-records.md`'s **Shape 8**; Shape 7 prints the same row for a hand-closed parent), but that shape recommends
-`/claude-tweaks:demo {id}` and mutates nothing, so no `## acceptance-gap` section belongs in this
+`/claude-tweaks:accept {id}` and mutates nothing, so no `## acceptance-gap` section belongs in this
 file or in `actions-github-issues.md`. Approving one of its rows executes no procedure here;
-the disposition itself is `/claude-tweaks:demo`'s, applied only after a human verdict.
+the disposition itself is `/claude-tweaks:accept`'s, applied only after a human verdict.

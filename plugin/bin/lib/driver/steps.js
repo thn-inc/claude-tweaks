@@ -205,6 +205,12 @@ const policyStep = defineStep(STEP.policy, STOP_CLASSES.REFUSED, async (ctx, dep
     }
     const { ref, why } = resolveIntegrationRef(resolved, mainRoot, deps);
     if (!ref) return fatal(`integration branch unresolvable: ${why}`);
+    // Under --run (#5232) adopt.js cannot see the integration branch, so the check lives here, before
+    // the claim and any write: pushStep would otherwise push an adopted worktree on the integration
+    // branch itself, with no PR or review. Only `ref`, a validated name, goes in the detail.
+    if (shared.adopted && shared.adopted.branch === ref) {
+      return fatal(`adopted worktree is on the integration branch ${ref}: nothing to build or push`);
+    }
     shared.policy = resolved;
     shared.mainRoot = mainRoot;
     shared.repo = repo;
@@ -279,8 +285,11 @@ const eligibilityStep = defineStep(STEP.eligibility, STOP_CLASSES.REFUSED, async
     const reasons = [...((verdict && verdict.reasons) || [])];
     const reviewer = reviewerGateReason({ labels: ctx.issue.labels, keyFiles: ctx.keyFiles, bounds, reviewerOn: ctx.reviewer && ctx.reviewer.on });
     if (reviewer) reasons.push(reviewer);
-    return { status: 'stop', detail: reasons.join('; ') || 'not eligible' };
+    // A refusal always carries a reason: a verdict with none reads as the stop detail's own fallback.
+    ctx.eligibilityReasons = reasons.length > 0 ? reasons : ['not eligible'];
+    return { status: 'stop', detail: ctx.eligibilityReasons.join('; ') };
   }
+  ctx.eligibilityReasons = [];
   return { status: 'ok' };
 });
 
@@ -323,9 +332,12 @@ const admissionStep = defineStep(STEP.admission, STOP_CLASSES.REFUSED, async (ct
     bounds: laneBounds(policy),
     reviewerOn: ctx.reviewer ? ctx.reviewer.on : undefined,
   });
+  const admissionReasons = verdict && Array.isArray(verdict.reasons) ? verdict.reasons : [];
   if (!verdict || verdict.admitted !== true) {
-    return { status: 'stop', detail: ((verdict && verdict.reasons) || []).join('; ') || 'not admitted' };
+    ctx.admissionReasons = admissionReasons.length > 0 ? admissionReasons : ['not admitted'];
+    return { status: 'stop', detail: ctx.admissionReasons.join('; ') };
   }
+  ctx.admissionReasons = admissionReasons;
   return { status: 'ok' };
 });
 
@@ -347,12 +359,14 @@ function firstEnvelopeKey(stdout) {
 
 // Ports express-lane.md step 1 (claim). The run id is derived here, before the run
 // directory exists, from the same timestamp function the mint uses; the run-dir step
-// mints with the same Date, so the two names agree. Runs in the main checkout.
+// mints with the same Date, so the two names agree. Runs in the main checkout. Under --run the
+// run directory already exists (dispatch minted it), so the run id is its basename: the claim,
+// the claim log and the run directory name one run (spec #5232, Technical Approach "Adopting the run").
 const claimStep = defineStep(STEP.claim, STOP_CLASSES.CLAIM, async (ctx, deps) => {
   const n = ctx.record;
-  const { mainRoot } = ctx.shared;
+  const { mainRoot, adopted } = ctx.shared;
   ctx.claimDate = deps.date();
-  ctx.runId = `${formatTimestamp(ctx.claimDate)}-drive-${n}`;
+  ctx.runId = adopted ? adopted.runId : `${formatTimestamp(ctx.claimDate)}-drive-${n}`;
   const r = deps.node(binScript('claim-targets.js'),
     ['--run-id', ctx.runId, '--targets', String(n), '--steps', 'build,test'],
     { cwd: mainRoot, timeout: CLI_TIMEOUT_MS, env: deps.env });
@@ -386,11 +400,14 @@ const claimStep = defineStep(STEP.claim, STOP_CLASSES.CLAIM, async (ctx, deps) =
 });
 
 // Ports express-lane.md step 1's run-dir mint and Step 2.8 claim log. The class is `claim`
-// until the directory exists; once it does, a failed claim-log write is `pre-push`.
+// until the directory exists; once it does, a failed claim-log write is `pre-push`. Under --run
+// nothing is minted: the adopted directory (dispatch's, already checked by adopt.js) is the run's.
 const runDirStep = defineStep(STEP.runDir, STOP_CLASSES.CLAIM, async (ctx, deps) => {
   const n = ctx.record;
-  const { mainRoot } = ctx.shared;
-  const minted = deps.resolveRunDir({ cwd: mainRoot, env: {}, specSlug: `drive-${n}`, create: true, now: ctx.claimDate });
+  const { mainRoot, adopted } = ctx.shared;
+  const minted = adopted
+    ? { ok: true, path: adopted.runDir }
+    : deps.resolveRunDir({ cwd: mainRoot, env: {}, specSlug: `drive-${n}`, create: true, now: ctx.claimDate });
   if (!minted || minted.ok !== true || typeof minted.path !== 'string' || !minted.path) {
     return { status: 'fail', detail: `run directory not minted: ${(minted && minted.message) || 'no result'}` };
   }
@@ -451,11 +468,36 @@ function findLeftovers(ctx, deps, wt, branch) {
   return leftovers;
 }
 
+// The worktree's checks before the worker: a core.ignoreStat refusal, then the index-flag baseline.
+function worktreeBaseline(ctx, deps) {
+  const refused = ignoreStatStop(deps, ctx.wt);
+  if (refused) return refused;
+  const flags = readIndexFlags(deps, ctx.wt);
+  if (flags === null) return { status: 'fail', detail: INDEX_FLAGS_BASELINE_UNREADABLE };
+  ctx.indexFlags = flags;
+  return { status: 'ok' };
+}
+
+// Under --run (spec #5232, Technical Approach "Adopting the run"): dispatch created the worktree and
+// entered it, and bound it to the run (record-worktree, its only bind before the call), so the step
+// takes the worktree and branch adopt.js read and creates, locks, records and checks for leftovers of
+// nothing. `ctx.created` stays all false: this run created neither, so the stop object says so. The
+// catch-up merge and the checks before the worker run as for a created worktree.
+function adoptedWorktree(ctx, deps, adopted) {
+  const { ref } = ctx.shared;
+  ctx.wt = adopted.wt;
+  ctx.branch = adopted.branch;
+  gitIn(deps, ctx.wt, ['fetch', '--end-of-options', 'origin', ref]);
+  gitIn(deps, ctx.wt, ['merge', '--end-of-options', `origin/${ref}`]);
+  return worktreeBaseline(ctx, deps);
+}
+
 // Ports /flow's worktree-first ordering: the worktree exists before the first write that
 // belongs to it. A leftover from an earlier run of the same record refuses here.
 const worktreeStep = defineStep(STEP.worktree, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
   const n = ctx.record;
-  const { mainRoot, ref } = ctx.shared;
+  const { mainRoot, ref, adopted } = ctx.shared;
+  if (adopted) return adoptedWorktree(ctx, deps, adopted);
   const branch = `drive-record-${n}`;
   const wt = path.join(mainRoot, '.claude', 'worktrees', branch);
   const leftovers = findLeftovers(ctx, deps, wt, branch);
@@ -493,12 +535,7 @@ const worktreeStep = defineStep(STEP.worktree, STOP_CLASSES.PRE_PUSH, async (ctx
   if (stamped.code !== 0 || !String(stamped.stdout).split(/\r?\n/).some((l) => l.trim() === recorded)) {
     return { status: 'fail', detail: `worktree not recorded in the run state: ${firstLine(stamped.stdout) || firstLine(stamped.stderr) || 'no output'}` };
   }
-  const refused = ignoreStatStop(deps, wt);
-  if (refused) return refused;
-  const flags = readIndexFlags(deps, wt);
-  if (flags === null) return { status: 'fail', detail: INDEX_FLAGS_BASELINE_UNREADABLE };
-  ctx.indexFlags = flags;
-  return { status: 'ok' };
+  return worktreeBaseline(ctx, deps);
 });
 
 // The implementer's prompt. It goes to the worker's standard input, never its argv. The
@@ -1259,6 +1296,8 @@ const mergeStep = defineStep(STEP.merge, STOP_CLASSES.NONE, async (ctx, deps) =>
     record: ctx.record, pr: ctx.pr.number, repo: ctx.shared.ghRepo, branch: ctx.branch, base: ctx.shared.ref,
     head: ctx.check.head, runDir: ctx.runDir, runRoot: ctx.shared.mainRoot, mainCheckout: ctx.shared.mainRoot,
     worktree: ctx.wt, summaryLogged: ctx.summaryLogged,
+    inFlightPrsFile: ctx.shared.inFlightPrsFile || null, nearDupPairsFile: ctx.shared.nearDupPairsFile || null,
+    adopted: Boolean(ctx.shared.adopted),
   };
   const mdeps = {
     ...deps,
@@ -1290,8 +1329,12 @@ const STEPS = Object.freeze([
   testStep, checkStep, reviewStep, pushStep, prStep, recordPrStep, setConfigStep, summaryStep, ciStep, mergeStep,
 ]);
 
+// The read-only head of STEPS: the steps that decide whether a record is admitted, none of which writes.
+// `drive.js --check` (run.js's checkRecord) walks exactly these.
+const CHECK_STEPS = Object.freeze([policyStep, fetchStep, eligibilityStep, admissionStep]);
+
 module.exports = {
-  STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
+  STEPS, CHECK_STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
   VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop,
   testTreeStop, TEST_TREE_UNREADABLE,
 };
