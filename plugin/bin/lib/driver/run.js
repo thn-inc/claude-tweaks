@@ -146,9 +146,11 @@ function newShared() {
   return { policy: null, ref: null, mainRoot: null, repo: null, ghRepo: null, fatal: false, activeWorker: null, current: null, interrupted: false, settle: true };
 }
 
-function newCtx(record, shared) {
+// `named` (#5584): the record was given on drive.js's command line, so a typed command may stand in
+// for its `auto:build` grant at admission; a record the --budget loop picked never is.
+function newCtx(record, shared, { named = false } = {}) {
   return {
-    record, runId: null, runDir: null, wt: null, indexFlags: null, branch: null, claimed: false, claimExit: null,
+    record, named: named === true, runId: null, runDir: null, wt: null, indexFlags: null, branch: null, claimed: false, claimExit: null,
     created: { worktree: false, branch: false }, pushed: false, configWritten: false,
     pr: null, ci: null, ciWaitStartedAt: null, pushedAt: null, checkLogged: undefined, worker: null,
     summaryLogged: false, merge: null, events: null, eventsStdoutOnly: false, reviewer: null,
@@ -305,9 +307,9 @@ async function settleStop(ctx, stop, record, shared, sink, deps) {
 
 // One record through the table; resolves to `{ final, ctx }` — the final event (null when an
 // interrupt landed before its first step) and the record's context. `steps` is a test seam.
-async function driveWithCtx(record, shared, deps, steps) {
+async function driveWithCtx(record, shared, deps, steps, { named = false } = {}) {
   const sink = createEventSink({ stdout: deps.stdout, appendFile: deps.appendFile });
-  const ctx = newCtx(record, shared);
+  const ctx = newCtx(record, shared, { named });
   // The writer a step uses to emit sub-step lines (before its own result line) and to follow the
   // run directory when it moves; rebind(null) goes stdout-only.
   ctx.events = {
@@ -387,8 +389,8 @@ async function driveWithCtx(record, shared, deps, steps) {
 // One record through the table; resolves to its final event (null when an interrupt landed
 // before its first step) plus the claim facts the budget loop counts from: whether the claim
 // was obtained and its run dir minted, and the claim step's exit code.
-async function driveRecord(record, shared, deps, steps = STEPS) {
-  const { final, ctx } = await driveWithCtx(record, shared, deps, steps);
+async function driveRecord(record, shared, deps, steps = STEPS, { named = false } = {}) {
+  const { final, ctx } = await driveWithCtx(record, shared, deps, steps, { named });
   return {
     final,
     outcome: final ? final.outcome : null,
@@ -466,7 +468,7 @@ async function run(argv, deps) {
       return await runBudget(parsed.budget, shared, deps, { driveOne: (n) => driveRecord(n, shared, deps) });
     }
     for (const record of parsed.records) {
-      await driveRecord(record, shared, deps);
+      await driveRecord(record, shared, deps, STEPS, { named: true });
       // A signal queued during the record's last synchronous call is delivered only when the
       // event loop turns; without this turn the unsubscribe below would drop it (exit 0).
       await yieldToEventLoop();
@@ -515,6 +517,12 @@ const realDeps = {
   resolvePolicyCore: (opts, coreDeps) => require('../../resolve-policy').resolvePolicy(opts, coreDeps),
   evaluateRecordEligibility: (issue, opts) => require('../express/eligibility').evaluateRecordEligibility(issue, opts),
   evaluateAdmission: (input) => require('./admission').evaluateAdmission(input),
+  // The build grant at admission (#5584): the one rule, the transcript check it asks inside a
+  // session, and whether stdin is a terminal (the rule's outside-a-session condition). The terminal
+  // test is a getter, so requiring this module never opens process.stdin.
+  resolveBuildAuthority: require('../issues/build-authority').resolveBuildAuthority,
+  readTypedCommand: (opts) => require('../issues/typed-command').readTypedCommand(opts),
+  get stdinIsTTY() { return process.stdin.isTTY === true; },
   // The record's one reviewer answer (#5224), asked by the eligibility step.
   reviewRequired: (opts) => require('./review').reviewRequired(opts),
   fetchNativeDependencies: (opts) => require('../issues/native-dependencies').fetchNativeDependencies(opts),

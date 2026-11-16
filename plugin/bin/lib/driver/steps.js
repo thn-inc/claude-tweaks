@@ -89,9 +89,12 @@ const { merge } = require('./merge');
 const { sensitivePathsOf } = require('../express/policy');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
 const { reviewRecord, treeDelta } = require('./review');
-const { reviewerGateReason } = require('./admission');
+const { reviewerGateReason, ADMISSION_REASONS } = require('./admission');
 const { claimLogText, CLAIM_LOG_SECTION, CLAIM_LOG_STEP } = require('../log-decision/claim-log');
 const { readClaimExit } = require('./claim-exit');
+const buildAuthority = require('../issues/build-authority');
+const typedCommand = require('../issues/typed-command');
+const { envTmpdir } = require('../session-tmp');
 
 // The worker's test command and the full verify invocation's `--cmd tests=…` value.
 const TEST_COMMAND = 'npm test';
@@ -311,6 +314,20 @@ const admissionStep = defineStep(STEP.admission, STOP_CLASSES.REFUSED, async (ct
     const { openPR } = linkedEntry;
     openLinkedPRs = openPR === null || openPR === undefined ? [] : [openPR];
   }
+  // The build grant (#5584): `auto:build`, or a typed command that named this record. Only a record
+  // in drive.js's own arguments is named (ctx.named); under --budget it never is. A deps set without
+  // the three members (older fakes) gets the modules' own rule and check, and no terminal.
+  const env = deps.env || {};
+  const resolve = deps.resolveBuildAuthority || buildAuthority.resolveBuildAuthority;
+  const readTyped = deps.readTypedCommand || typedCommand.readTypedCommand;
+  const auth = resolve({
+    number: n,
+    labels: ctx.issue.labels,
+    named: ctx.named === true,
+    env,
+    typedCommand: () => readTyped({ number: n, env, now: deps.date(), tmpdir: envTmpdir(env) }),
+    stdinIsTTY: deps.stdinIsTTY === true,
+  });
   const verdict = deps.evaluateAdmission({
     number: n,
     state: ctx.issue.state,
@@ -322,11 +339,18 @@ const admissionStep = defineStep(STEP.admission, STOP_CLASSES.REFUSED, async (ct
     keyFiles: ctx.keyFiles,
     bounds: laneBounds(policy),
     reviewerOn: ctx.reviewer ? ctx.reviewer.on : undefined,
+    buildAuthority: auth.authority,
   });
+  const extra = { authority: auth.authority };
   if (!verdict || verdict.admitted !== true) {
-    return { status: 'stop', detail: ((verdict && verdict.reasons) || []).join('; ') || 'not admitted' };
+    const reasons = (verdict && verdict.reasons) || [];
+    let detail = reasons.join('; ') || 'not admitted';
+    if (auth.authority === 'none' && reasons.includes(ADMISSION_REASONS.noBuildGrant)) {
+      detail += `; typed command not accepted: ${auth.reasons.join(',')}`;
+    }
+    return { status: 'stop', detail, extra };
   }
-  return { status: 'ok' };
+  return { status: 'ok', extra };
 });
 
 // A plugin/bin CLI of this plugin, run under the driver's own Node via deps.node.
