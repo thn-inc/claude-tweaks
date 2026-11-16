@@ -289,7 +289,12 @@ bothIgnoreRules('a failing pre-commit hook restores an identical twin and an unt
   const res = mv(r);
 
   assert.equal(res.reason, 'commit-failed', JSON.stringify(res));
-  // By index and disk, not `status` output: the narrowed .gitignore hides the untracked destination from it.
+  // The whole tree, exactly: the untracked destination is the only thing not tracked, shown as `??` under
+  // the current .gitignore and `!!` under the narrowed one; anything else a revert left behind would be listed.
+  assert.equal(
+    r.git('status', '--porcelain', '--untracked-files=all', '--ignored'),
+    `${rules.narrowed ? '!!' : '??'} ${ARCH}/work/9-note.md`,
+  );
   assert.equal(r.exitsClean('diff', '--cached', '--quiet'), true, 'nothing staged');
   assert.equal(r.exitsClean('diff', '--quiet'), true, 'no tracked file modified or deleted');
   assert.equal(r.git('ls-files', '--', `${ARCH}/work/9-note.md`), '', 'the destination is still untracked');
@@ -523,6 +528,43 @@ test('a commit failure whose unwind also fails is a partial-revert refusal', () 
   assert.equal(res.outcome, 'refused');
   assert.equal(res.reason, 'commit-failed-partial-revert');
   assert.match(res.detail, /did not finish/);
+});
+
+test('a tracked identical twin with an unstaged edit on the archived copy refuses dirty-index, naming it', () => {
+  const r = makeRepo();
+  r.track(`${LIVE}/work/7-spec.md`, 'same\n');
+  r.track(`${ARCH}/work/7-spec.md`, 'same\n');
+  r.commit('identical twin');
+  r.write(`${ARCH}/work/7-spec.md`, 'same\nedited archived copy\n');
+  const head = r.head();
+
+  const res = mv(r);
+
+  assert.equal(res.outcome, 'refused');
+  assert.equal(res.reason, 'dirty-index');
+  assert.ok(res.detail.includes(`${ARCH}/work/7-spec.md`), res.detail);
+  assert.equal(r.head(), head);
+  assert.equal(r.exitsClean('diff', '--cached', '--quiet'), true, 'nothing staged');
+  assert.equal(fs.readFileSync(path.join(r.dir, ARCH, 'work', '7-spec.md'), 'utf8'), 'same\nedited archived copy\n', 'the edit is untouched');
+  assert.deepEqual(r.tree(`${LIVE}/`), [`${LIVE}/work/7-spec.md`]);
+});
+
+test('a destination that is not a regular file refuses archived-copy-differs before any mutation', () => {
+  const r = makeRepo();
+  r.track(`${LIVE}/work/7-spec.md`, 'spec\n');
+  r.commit('materialize');
+  fs.mkdirSync(path.join(r.dir, ARCH, 'work', '7-spec.md'), { recursive: true }); // a directory where the file would land
+  const head = r.head();
+
+  const res = mv(r);
+
+  assert.equal(res.outcome, 'refused');
+  assert.equal(res.reason, 'archived-copy-differs');
+  assert.match(res.detail, /not a regular file/);
+  assert.equal(r.head(), head);
+  assert.equal(r.exitsClean('diff', '--cached', '--quiet'), true, 'nothing staged');
+  assert.deepEqual(r.tree(`${LIVE}/`), [`${LIVE}/work/7-spec.md`]);
+  assert.equal(fs.statSync(path.join(r.dir, ARCH, 'work', '7-spec.md')).isDirectory(), true, 'the directory is untouched');
 });
 
 test('a pre-existing archive directory survives a reverted move', () => {

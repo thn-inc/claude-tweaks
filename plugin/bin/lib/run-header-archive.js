@@ -140,21 +140,27 @@ function archiveRunHeader({ worktree, runId, specDir = null, env, git = runGit }
   if (tracked.failure) return refused('git-failed', failDetail(tracked));
   const trackedDest = new Set(splitNul(tracked.stdout));
   const plan = [];
+  // The commit takes working-tree content (--only) for every path it names, so an unstaged edit to
+  // a source or to a tracked destination would ride along into the move commit.
+  const unstagedRefusal = (rel) => {
+    const edited = g(['diff', '--quiet', '--', lit(rel)]);
+    if (!edited.failure) return null;
+    return edited.failure === 'git-error' && edited.exitCode === 1
+      ? refused('dirty-index', `${rel} has unstaged changes`)
+      : refused('git-failed', failDetail(edited));
+  };
   for (const src of live) {
     const dest = archivedDir + src.slice(liveDir.length);
-    // The commit takes working-tree content (--only), so an unstaged edit to a moved file would ride along.
-    const edited = g(['diff', '--quiet', '--', lit(src)]);
-    if (edited.failure) {
-      return edited.failure === 'git-error' && edited.exitCode === 1
-        ? refused('dirty-index', `${src} has unstaged changes`)
-        : refused('git-failed', failDetail(edited));
-    }
+    const srcEdited = unstagedRefusal(src);
+    if (srcEdited) return srcEdited;
     const srcBlob = g(['rev-parse', `:${src}`]);
     if (srcBlob.failure) return refused('git-failed', failDetail(srcBlob));
     if (trackedDest.has(dest)) {
       const destBlob = g(['rev-parse', `:${dest}`]);
       if (destBlob.failure) return refused('git-failed', failDetail(destBlob));
       if (destBlob.stdout !== srcBlob.stdout) return refused('archived-copy-differs', `${dest} is tracked with different bytes`);
+      const destEdited = unstagedRefusal(dest); // the commit pathspec carries dest too
+      if (destEdited) return destEdited;
       plan.push({ op: 'rm', src, dest });
       continue;
     }
