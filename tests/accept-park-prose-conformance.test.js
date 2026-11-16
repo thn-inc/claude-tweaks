@@ -635,7 +635,9 @@ function pinGraph(text) {
     const s = sectionOf(text, `## ${name}`);
     need(s.includes('`bin/accept-park.js`'), `## ${name} must carry a bin/accept-park.js row`);
   }
-  need(sectionOf(text, '## accept').includes('`_shared/pr-first-merge.md`'), 'the accept row must name pr-first-merge.md');
+  // The row itself, not the section: the tripwire-classification row names pr-first-merge.md too.
+  const row = sectionOf(text, '## accept').split('\n').find((l) => l.startsWith('| `bin/accept-park.js` |')) || '';
+  need(row.includes('`_shared/pr-first-merge.md`'), 'the accept row must name pr-first-merge.md');
 }
 
 test('skill-graph names the accept-park.js edges on the accept, dispatch and tidy sections', () => {
