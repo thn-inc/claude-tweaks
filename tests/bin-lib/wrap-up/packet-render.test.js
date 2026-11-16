@@ -164,6 +164,19 @@ test('AC2d truncation', () => {
   assert.equal(kept + result.truncated, 3000);
 });
 
+test('truncation counts the deploy ref line and never drops it', () => {
+  // Deploy status is the longest section here, so a droppable ref line would go first.
+  const claims = Array.from({ length: 200 }, () => claim('what-changed', 'x'.repeat(40), ['change:a']));
+  const text = `target: dev, confirmed live ${'d'.repeat(55000)}`;
+  const ref = 'f'.repeat(64);
+  const result = render([fact('change:a', 'passed'), fact('deploy:status', 'passed', { text, ref })], claims);
+  assert.ok(result.truncated > 0);
+  assert.ok(result.markdown.length <= 60000, `chars ${result.markdown.length}`);
+  assert.deepEqual(sectionLines(result.markdown, 'Deploy status'), [text, `ref: ${ref}`]);
+  // Every omitted item is a What changed claim, never the ref line.
+  assert.equal(sectionLines(result.markdown, 'What changed').length + result.truncated, claims.length);
+});
+
 test('truncation drops from the longest section and spares the marker, notes and poster', () => {
   const claims = Array.from({ length: 3000 }, () => claim('what-changed', 'x'.repeat(40), ['change:a']));
   const { markdown, truncated } = render(
@@ -175,7 +188,7 @@ test('truncation drops from the longest section and spares the marker, notes and
   assert.equal(markdown.split('\n')[0], PACKET_MARKER);
   assert.ok(markdown.includes('> partial gather: verify report not found'));
   assert.deepEqual(rowsIn(markdown, "Couldn't test"), ['- `check:lint` — skipped: fail-fast']);
-  assert.ok(markdown.endsWith('_Posted by the bot. Resolve with `/claude-tweaks:demo`._'));
+  assert.ok(markdown.endsWith('_Posted by the bot. Resolve with `/claude-tweaks:accept`._'));
   assert.ok(markdown.length <= 60000);
 });
 
@@ -378,7 +391,7 @@ test('an observation-plan line cannot hide later text', () => {
     '\\~~~',
     'see `https://evil.example`',
   ]);
-  assert.ok(markdown.endsWith('_Posted by bot. Resolve with `/claude-tweaks:demo`._'));
+  assert.ok(markdown.endsWith('_Posted by bot. Resolve with `/claude-tweaks:accept`._'));
 });
 
 test('the observation plan comes after every section and is absent when blank', () => {
@@ -433,6 +446,38 @@ test('Deploy status reads target: local with no deploy fact', () => {
 test('a deploy fact with no text states its own target', () => {
   const { markdown } = render([fact('deploy:status', 'passed', { target: 'dev', live: true })]);
   assert.deepEqual(sectionLines(markdown, 'Deploy status'), ['target: dev']);
+});
+
+test('AC2.5: render emits the stored ref', () => {
+  const deploy = { target: 'dev', live: true, text: 'target: dev, confirmed live' };
+  const withRef = render([fact('deploy:status', 'passed', { ...deploy, ref: '0123abc' })]).markdown;
+  assert.deepEqual(sectionLines(withRef, 'Deploy status'), ['target: dev, confirmed live', 'ref: 0123abc']);
+  const lines = withRef.split('\n');
+  const at = lines.indexOf('### Deploy status');
+  // A blank line between them, so GitHub renders the ref as its own paragraph.
+  assert.deepEqual(lines.slice(at + 1, at + 4), ['target: dev, confirmed live', '', 'ref: 0123abc']);
+  const withoutRef = render([fact('deploy:status', 'passed', deploy)]).markdown;
+  assert.equal(withRef, withoutRef.replace('target: dev, confirmed live', 'target: dev, confirmed live\n\nref: 0123abc'));
+  assert.deepEqual(sectionLines(withoutRef, 'Deploy status'), ['target: dev, confirmed live']);
+});
+
+test('AC2.7: render output round-trips through refresh', () => {
+  const { refreshPacket, REFRESHABLE_FIELDS } = require('../../../plugin/bin/lib/issues/accept-entry');
+  const { markdown } = render([fact('deploy:status', 'passed', {
+    target: 'dev', live: false, text: 'target: dev, not confirmed live', ref: 'aaa1111',
+  })]);
+  const result = refreshPacket(markdown, { ref: 'bbb2222', text: 'target: dev, confirmed live' });
+  assert.ok(result.refreshed.length > 0);
+  assert.ok(result.refreshed.includes('deploy-status'));
+  assert.deepEqual(sectionLines(result.body, 'Deploy status'), ['target: dev, confirmed live', 'ref: bbb2222']);
+  // The refreshed section keeps the rendered layout: text, a blank line, the ref line.
+  const at = result.body.split('\n').indexOf('### Deploy status');
+  assert.deepEqual(result.body.split('\n').slice(at + 1, at + 4), ['target: dev, confirmed live', '', 'ref: bbb2222']);
+  // A packet rendered with no ref has no stored value, so it refreshes as unverified.
+  const { markdown: old } = render([fact('deploy:status', 'passed', { target: 'dev', live: false, text: 'target: dev, not confirmed live' })]);
+  const oldResult = refreshPacket(old, { ref: 'bbb2222', text: 'target: dev, confirmed live' });
+  assert.deepEqual(oldResult.refreshed, []);
+  assert.deepEqual(oldResult.unverified, [...REFRESHABLE_FIELDS]);
 });
 
 test('a decision or recording with blank text falls back to its id', () => {
@@ -626,6 +671,14 @@ test('a moved claim withholds the reason of the fact that moved it', () => {
   );
   assert.ok(sectionLines(markdown, 'Tried to break').includes(`- It works (moved: cites \`story:s\` — failed: ${WITHHELD_REASON})`));
   assert.ok(!markdown.includes(SECRET));
+});
+
+test('a credential-shaped deploy ref is withheld and never reads back as a stored ref', () => {
+  const { refreshPacket } = require('../../../plugin/bin/lib/issues/accept-entry');
+  const { markdown } = render([fact('deploy:status', 'passed', { text: 'target: dev, confirmed live', ref: `token=${SECRET}` })]);
+  assert.ok(!markdown.includes(SECRET));
+  assert.deepEqual(sectionLines(markdown, 'Deploy status'), ['target: dev, confirmed live', `ref: ${WITHHELD_TEXT}`]);
+  assert.deepEqual(refreshPacket(markdown, { ref: 'bbb2222', text: 'target: dev, confirmed live' }).refreshed, []);
 });
 
 test('decision, deploy, refused and partial free text are screened too, and recording text is redacted', () => {
@@ -1030,7 +1083,7 @@ test('the poster closes the packet, inline', () => {
   const { markdown } = render([], [], { options: { poster: 'a\n<b>' } });
   const lines = markdown.split('\n');
   assert.equal(lines.at(-2), '---');
-  assert.equal(lines.at(-1), '_Posted by a \\<b>. Resolve with `/claude-tweaks:demo`._');
+  assert.equal(lines.at(-1), '_Posted by a \\<b>. Resolve with `/claude-tweaks:accept`._');
   assert.equal(lines.at(-3), '');
   assert.ok(!render([]).markdown.includes('Posted by'));
   assert.ok(!render([], [], { options: { poster: '  ' } }).markdown.includes('Posted by'));

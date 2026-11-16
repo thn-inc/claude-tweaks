@@ -346,9 +346,9 @@ days ago) · follow-up rate ≤ {followUpRateMaxPercent}%`. `{evaluationWindowDa
 `{followUpRateMaxPercent}` come from the rows (every row carries the same two values), and `{N}` is
 the whole days between now and the minimum `oldestClosedAt` across the rows.
 
-| Provenance | Risk | Total | Approved | Approved (Batch) | Changes Requested | Operational | Negative Evidence | Undispositioned | Coverage | Not Planned | Follow-ups | Follow-up rate | Verdict |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| {provenance} | {band} | {total} | {approved} | {approvedBatch} | {changesRequested} | {operationalGood} | {negativeEvidence} | {undispositioned} | {coverage} | {notPlanned} | {followUps} | {followUpRate}% | {verdict} |
+| Provenance | Risk | Total | Approved | Approved (Batch) | Changes Requested | Operational | Negative Evidence | Undispositioned | Coverage | Not Planned | Follow-ups | Follow-up rate | Verdict | Verdict (revocation-only) |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| {provenance} | {band} | {total} | {approved} | {approvedBatch} | {changesRequested} | {operationalGood} | {negativeEvidence} | {undispositioned} | {coverage} | {notPlanned} | {followUps} | {followUpRate}% | {verdict} | {revocationOnly.verdict} |
 
 Render `{coverage}` as a percentage with no decimals (`row.coverage`, e.g. `0.125` renders `13%`).
 Render `{followUpRate}` as `followUpRatePercent(row)` (`bin/lib/issues/trust.js`) with a `%` suffix —
@@ -382,11 +382,11 @@ holds, superseding the pre-#268 formula that summed only the first three into `d
 non-zero cell here reads `mixed` even when `Changes Requested` is `0` and the follow-up rate is
 under the threshold — the same zero tolerance a `changes-requested` disposition has.
 
-**Approved (Batch) is the subset of Approved that was sign-off via a `/claude-tweaks:demo`
+**Approved (Batch) is the subset of Approved that was sign-off via a `/claude-tweaks:accept`
 `#N,#M` batch invocation rather than a dedicated single-record session** — a legitimate,
 deliberately cheap path (`_shared/work-record.md`'s Acceptance provenance row), distinguished by
 the `-batch` provenance label `bin/lib/issues/acceptance.js`'s `approvalProvenance` reads back.
-Both invocation shapes run the same per-item walkthrough (`skills/demo/SKILL.md` Step 2) — the
+Both invocation shapes run the same per-item walkthrough (`skills/accept/SKILL.md` Step 2) — the
 marker distinguishes a rapid multi-item pass from a single-record session, not whether a
 walkthrough happened. A pre-existing approved label with no marker reads as single-record-backed,
 so this column is `0` for every cell graded before the signal existed. **A cell whose Approved
@@ -402,6 +402,13 @@ them together the same way Coverage and Not Planned are read together below.
 believed. A cell needs `trust.js`'s `MIN_VERDICTS` real dispositions before it grades at all, so
 a graded cell is never resting on one lucky record — but a `clean` verdict at 12% coverage and
 one at 90% are different claims, and only this column distinguishes them.
+
+**Verdict (revocation-only) is ADR 0035's expand step** (`docs/decisions/0035-acceptance-verdicts-are-a-revocation-input-only.md`).
+It renders `row.revocationOnly.verdict`: what Verdict becomes once an approval stops counting as
+positive evidence. An approved record is graded on its own operational outcome instead. A
+changes-requested verdict still counts as a disposition, and a cell that clears the `MIN_SAMPLES`
+and `MIN_VERDICTS` floors reads `mixed` while it holds one. Verdict stays the column consumers act on until the
+contract step.
 
 **Not Planned is counted and rendered, and is deliberately not a verdict input.** A record closed
 `NOT_PLANNED` was declined before any work happened, so there is no work product for the class to

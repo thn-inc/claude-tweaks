@@ -225,6 +225,8 @@ function clearsFloor(blockerReason) {
 // grants. `merge-authorization`
 // is deliberately not a key here and no ceiling sets it (#2734) -- see
 // skills/_shared/autonomy-ceiling.md's "Orthogonal to the ceiling" section for why.
+// Control mode alone grants `ownedUpstreamFiling` at any ceiling, and it authorizes
+// filing into an owned repo only (#4621).
 function bookkeepingPermissions(ceiling, { controlMode } = {}) {
   const absent = ceiling === undefined || ceiling === null;
   const tier = isCeiling(ceiling) ? ceiling : (controlMode === true && absent ? 'unattended' : 'supervised');
@@ -235,6 +237,7 @@ function bookkeepingPermissions(ceiling, { controlMode } = {}) {
     consoleAutoResolve: atLeast(tier, 'unattended'),
     refineAutoApply: atLeast(tier, 'unattended'),
     ledgerRouteRemainder: atLeast(tier, 'unattended'),
+    ownedUpstreamFiling: controlMode === true,
   };
 }
 

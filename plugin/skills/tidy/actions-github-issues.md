@@ -36,7 +36,7 @@ using the **parent-side** entry shape that section documents (`$PARENT_NUM` is a
 and the parent's labels fresh, and re-run **Evaluate the gate** — do not reuse the scan's own
 snapshot, since time has passed since Step 4.8 ran). If the re-verified gate no longer reads
 `due` (another process already gated the parent, or a sub-issue reopened), this is a silent no-op —
-skip it, don't error, and don't recommend `/claude-tweaks:demo #{n}` for it in the applied-report
+skip it, don't error, and don't recommend `/claude-tweaks:accept #{n}` for it in the applied-report
 either. If it still reads `due` and **Evaluate the gate** reads `exceeds: false` (below the
 oversight floor), run that procedure's **Close the parent below the floor** instead of composing a
 brief: it comments and closes the parent, writes no `demo:*` label, and a parent already closed is
@@ -59,9 +59,9 @@ closes the parent and asserts every sub-issue is complete. `_shared/auto-mode-co
 Never-reversible list states that exception's scope.
 
 This action never applies `demo:approved` or `demo:changes-requested` — those two labels stay
-exclusively `/claude-tweaks:demo`'s job, applied only after an explicit human verdict. Opening
+exclusively `/claude-tweaks:accept`'s job, applied only after an explicit human verdict. Opening
 the gate is the precondition for that verdict, not the verdict itself, which is why
-an above-floor recommendation still ends with `/claude-tweaks:demo #{n}` even once the gate is
+an above-floor recommendation still ends with `/claude-tweaks:accept #{n}` even once the gate is
 open. The below-floor close has no verdict to await, so its row does not end with it.
 
 ## Arm ready PR
@@ -103,7 +103,7 @@ contract's not-landed outcome (`verify.json missing`, `acceptance-labeling: {res
 `_shared/pr-first-merge.md` Step 1 before it merges. When no run dir resolved, close-out stops on the same
 missing run dir (whatever `{reason}` reports), so the recommendation instead names running that command from the checkout that holds
 run `{run-id}` when a validated marker names one, or, when none does, a human acceptance pass via
-`/claude-tweaks:demo #{record}` before merging by hand. Never put an unvalidated marker value or a
+`/claude-tweaks:accept #{record}` before merging by hand. Never put an unvalidated marker value or a
 `verify.json` string that is not a bare word into the report or the logged text. Log the hold to this
 tidy run's `decisions.md` whenever the run has one (`_shared/auto-decision-log.md`'s degrade-trace
 `SKIP` — the arm was not performed, and the hold stays open for a human), with `{command}` the

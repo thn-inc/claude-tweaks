@@ -235,3 +235,20 @@ test('#1410: the event lands in an older, worktree-compatible sibling run instea
   assert.strictEqual(events[0].attribution, 'fallback');
   assert.ok(!fs.existsSync(path.join(foreignRun, 'events.jsonl')), "the foreign sibling's run must never receive this session's event");
 });
+
+test('#5556: the event carries toolUseId from the hook input, null when absent or not a string', () => {
+  const toolInput = { questions: [{ question: 'Q?', header: 'H', options: [{ label: 'a' }] }] };
+  const withId = makeRunDir();
+  const noId = makeRunDir();
+  const badId = makeRunDir();
+  const ctxWith = askCtx({ toolInput, toolResponse: 'r', ownedRun: { dir: withId } });
+  ctxWith.input.tool_use_id = 'toolu_q1';
+  post.run(ctxWith);
+  post.run(askCtx({ toolInput, toolResponse: 'r', ownedRun: { dir: noId } }));
+  const ctxBad = askCtx({ toolInput, toolResponse: 'r', ownedRun: { dir: badId } });
+  ctxBad.input.tool_use_id = 42;
+  post.run(ctxBad);
+  assert.strictEqual(readEvents(withId).find((e) => e.type === 'ask-user-question').toolUseId, 'toolu_q1');
+  assert.strictEqual(readEvents(noId).find((e) => e.type === 'ask-user-question').toolUseId, null);
+  assert.strictEqual(readEvents(badId).find((e) => e.type === 'ask-user-question').toolUseId, null);
+});

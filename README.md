@@ -83,9 +83,9 @@ a way to wrap an existing marketplace plugin instead of requiring a rewrite.
                            (deletes ledger, design caches, and plans only under
                             superpowers-plans-retention: prune-after-wrapup;
                             legacy spec file deleted too — a record-mode build's materialized file
-                            stays on the branch as committed audit trail instead;
+                            is archived on the branch at wrap-up (`archive/{run-id}/`) instead;
                             posts an acceptance packet on the record, with
-                            demo:pending above the oversight floor — or, for a
+                            accept:pending above the oversight floor — or, for a
                             sub-issue of a /specify decomposition, demo:pending +
                             a Verification Brief on the parent once the last
                             sub-issue closes; record mode only)
@@ -93,7 +93,7 @@ a way to wrap an existing marketplace plugin instead of requiring a rewrite.
   release ──────────────►  Tag + Release      (on demand, suggested when unreleased commits exist, or the train)
      │  drives release-please (pr-first) or bin/release-local.js (local-merge); pre-bump whole-branch review, one console
      │
-  ┈┈ /claude-tweaks:demo resolves demo:pending → approved/changes-requested (utility skill, no fixed position — run anytime, resolves one item per ref: a specific #N, a #N,#M list one at a time, or this session's own unrecorded work via session-recall) ┈┈
+  ┈┈ /claude-tweaks:accept resolves accept:pending (demo:pending on a decomposition parent) → accept:approved/accept:changes-requested (utility skill, no fixed position — run anytime, resolves one item per ref: a specific #N, a #N,#M list one at a time, or this session's own unrecorded work via session-recall) ┈┈
      │
   ┈┈ /claude-tweaks:routine fleet status aggregates routine health + weekly counters, fleet off pauses (utility skill, no fixed position — run anytime) ┈┈
 ```
@@ -130,7 +130,7 @@ See `plugin/skills/_shared/work-record.md` for the full axis contract (Type, Ori
 
 ## Skills
 
-claude-tweaks ships a full set of skills spanning the plan phase (capture, specify), the automated pipeline (build, test, review, wrap-up), standalone component skills (challenge, reflect, simplify, deepen, journeys, visual-review, visualize, assess-agent-autonomy, feedback), and utility skills (flow, help, tidy, demo, code-health, backlog, dispatch, sweep, and more). Each is invoked as `/claude-tweaks:{name}` and most work both standalone and as part of the automated `/claude-tweaks:flow` pipeline.
+claude-tweaks ships a full set of skills spanning the plan phase (capture, specify), the automated pipeline (build, test, review, wrap-up), standalone component skills (challenge, reflect, simplify, deepen, journeys, visual-review, visualize, assess-agent-autonomy, feedback), and utility skills (flow, help, tidy, accept, code-health, backlog, dispatch, sweep, and more). Each is invoked as `/claude-tweaks:{name}` and most work both standalone and as part of the automated `/claude-tweaks:flow` pipeline.
 
 See [docs/getting-started.md](docs/getting-started.md) for the full skill reference,
 [docs/plugin-structure.md](docs/plugin-structure.md) for the directory layout, per-skill sub-file

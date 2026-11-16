@@ -199,7 +199,7 @@ const POLICY_KEYS = [
   { key: 'dev-test-account', type: 'string', allowWhitespace: true, closedQuote: true, summary: "Not yet used; control mode only: the vault entry name of the dedicated test account the smoke check signs in with; pairs with dev-base-url.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'deploy-wait-seconds', type: 'integer', min: 0, default: 900, summary: "Not yet used; control mode only: how long to wait for a deploy to go live; 0 skips the wait. Pairs with a live signal.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'deploy-poll-seconds', type: 'integer', min: 1, default: 30, summary: "Not yet used; control mode only: how often the live signal is polled while waiting; pairs with deploy-wait-seconds.", category: 'pipeline-behavior', tier: 'advanced' },
-  { key: 'owned-owners', type: 'list', default: [], element: 'login', policyOnly: true, summary: "Not yet used; control mode only, from base-branch policy: orgs and users, beside the repo owner, whose repos are owned. Pairs with nothing.", category: 'autonomy-trust', tier: 'advanced' },
+  { key: 'owned-owners', type: 'list', default: [], element: 'login', policyOnly: true, summary: "Control mode only, from base-branch policy: orgs and users, beside the repo owner, whose repos are owned. Pairs with nothing.", category: 'autonomy-trust', tier: 'advanced' },
   { key: 'trusted-authors', type: 'list', default: [], element: 'login', policyOnly: true, summary: "Not yet used; control mode only, from base-branch policy: GitHub logins trusted as record roots, beside the repo owner. Pairs with nothing.", category: 'autonomy-trust', tier: 'advanced' },
   { key: 'trust-revert-window-days', type: 'integer', min: 1, default: 14, summary: "Sets how many days a closed record must age before its outcome counts as proven-good evidence toward earned trust.", category: 'autonomy-trust', tier: 'advanced' },
   { key: 'trust-evaluation-window-days', type: 'integer', min: 1, default: 30, summary: "Sets how many days back a closed record still counts toward its class's trust verdict.", category: 'autonomy-trust', tier: 'advanced' },
@@ -210,7 +210,7 @@ const POLICY_KEYS = [
   { key: 'grant-origination-enabled', type: 'boolean', default: false, summary: "A separate, deliberate opt-in a human must set before the pipeline is ever allowed to originate its own grants.", category: 'autonomy-trust', tier: 'core' },
   // Shared floors read by bin/lib/issues/oversight-floor.js's exceedsOversightFloor
   // — the point past which a machine-originated grant (grant-gate.js gate 5) or a
-  // /claude-tweaks:demo binary-gate check is denied and a human review is
+  // /claude-tweaks:accept binary-gate check is denied and a human review is
   // required. 'always' is the reserved unconditional-deny opt-out value. Not
   // prefixed 'demo-' or 'grant-': more than one consumer reads the same pair. #366.
   { key: 'risk-floor', type: 'enum', values: ['low', 'medium', 'high', 'always'], default: 'high', summary: "The risk tier at which machine-originated grants and demo fast-paths stop and require human review.", category: 'autonomy-trust', tier: 'core' },
