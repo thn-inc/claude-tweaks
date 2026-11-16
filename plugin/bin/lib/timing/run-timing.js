@@ -68,21 +68,26 @@ async function bounded(deadlineAt, outer, work) {
   }
 }
 
+// events -> the run's event window { start, end } (epoch ms, inclusive): the
+// earliest..latest event ts, leaving out worktree-reaped — it fires hours after
+// the session ends, so its ts would stretch the window over the idle gap
+// (derive.js's endOfRun rule, #1928). No event with a ts -> null (no window).
+function eventWindow(events) {
+  const stamps = events.filter((e) => !(e && e.type === 'worktree-reaped')).map((e) => Date.parse(e && e.ts)).filter(Number.isFinite);
+  // reduce, not Math.min(...stamps): a spread of a very large array can throw RangeError.
+  return stamps.length
+    ? { start: stamps.reduce((a, b) => Math.min(a, b)), end: stamps.reduce((a, b) => Math.max(a, b)) }
+    : null;
+}
+
 // paths: the resolved transcript paths; events: parsed events.jsonl rows. The
-// window is the earliest..latest event ts (no event with a ts -> the whole
-// session), leaving out worktree-reaped: it fires hours after the session
-// ends, so its ts would stretch the window over the idle gap (derive.js's
-// endOfRun rule, #1928). Subagents dirs are deduped by fs.realpathSync (path.resolve when
+// window is eventWindow's (no event with a ts -> the whole session). Subagents dirs are deduped by fs.realpathSync (path.resolve when
 // the dir does not resolve) so a transcript passed twice, or reached through a
 // symlinked alias, is not double-counted. -> the timing.json `dispatches` value.
 // { deadlineAt, signal } (both optional): past the deadline, or once the signal
 // aborts, reading stops and the result is null (not a dispatches value).
 async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal = null } = {}) {
-  const stamps = events.filter((e) => !(e && e.type === 'worktree-reaped')).map((e) => Date.parse(e && e.ts)).filter(Number.isFinite);
-  // reduce, not Math.min(...stamps): a spread of a very large array can throw RangeError.
-  const window = stamps.length
-    ? { start: stamps.reduce((a, b) => Math.min(a, b)), end: stamps.reduce((a, b) => Math.max(a, b)) }
-    : null;
+  const window = eventWindow(events);
   // A symlinked subagents/ leaf keeps its own path, so readDispatches sees the
   // link and refuses it instead of reading wherever it points.
   const canonical = (p) => {
@@ -135,7 +140,12 @@ function derivePhaseTiming(runDir) {
 // (no token keys at all) and deadlineHit true. `base` (a derivePhaseTiming
 // result the caller already holds, e.g. to resolve transcripts from its
 // runState) is used instead of reading the run directory a second time.
-async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, deadlineAt = null, readUsageImpl, wantTokens, base: given } = {}) {
+// clipToEventWindow (default false; only the at-close writer passes true): the
+// main transcripts' usage rows are kept only inside eventWindow(events) before
+// they are joined, so two runs sharing one session transcript never count each
+// other's calls (#5555); a row with no parseable ts is dropped, and no event
+// with a ts means no clipping. phase-timing.js never passes it.
+async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, deadlineAt = null, readUsageImpl, wantTokens, base: given, clipToEventWindow = false } = {}) {
   const base = given || derivePhaseTiming(runDir);
   if (!base.ok) return base;
   const { timing, out, events, runState } = base;
@@ -149,6 +159,8 @@ async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, dea
   const at = cwd === undefined ? process.cwd() : cwd;
   const hit = () => ({ ok: true, timing, out, tokens: null, guard: null, notes: outNotes, deadlineHit: true });
   const transcripts = [];
+  const clip = clipToEventWindow ? eventWindow(events) : null;
+  const inClip = (row) => { const ms = Date.parse(row && row.ts); return ms >= clip.start && ms <= clip.end; };
   let rows = [];
   for (const p of transcriptPaths) {
     let r;
@@ -161,14 +173,15 @@ async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, dea
       continue;
     }
     if (r.hit) return hit();
-    if (r.value.length === 0) {
-      const note = `transcript had no usage rows (${p})`;
+    const kept = clip ? r.value.filter(inClip) : r.value;
+    if (kept.length === 0) {
+      const note = r.value.length ? `transcript had no usage rows in the run's event window (${p})` : `transcript had no usage rows (${p})`;
       transcripts.push({ path: p, rows: 0, note });
       outNotes.push(`tokens: ${note}`);
     } else {
-      transcripts.push({ path: p, rows: r.value.length });
+      transcripts.push({ path: p, rows: kept.length });
     }
-    rows = rows.concat(r.value);
+    rows = rows.concat(kept);
   }
   const tokens = joinTokens(out.phases, rows);
   tokens.totals.rows = rows.length;

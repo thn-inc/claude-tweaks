@@ -168,7 +168,7 @@ async function writeTimingAtClose(runDir, { tokens = true, env = {}, homeDir = o
       const bound = boundMs ?? module.exports.TIMING_BOUND_MS;
       const deadlineAt = Date.now() + bound;
       const d = await deriveTiming(runDir, {
-        transcriptPaths: own.paths, wantTokens: own.paths.length > 0, cwd: runDir, deadlineAt, base: p.base,
+        transcriptPaths: own.paths, wantTokens: own.paths.length > 0, cwd: runDir, deadlineAt, base: p.base, clipToEventWindow: true,
       });
       if (!d.ok) {
         result = { status: 'failed', tokens: false, skip: `condition: timing could not be derived (${d.error}) → fallback: ${NOTHING_WRITTEN}` };

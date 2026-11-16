@@ -45,7 +45,8 @@ function writeTranscript(cfg, worktree, [a, b], sid = SID) {
     message: { role: 'assistant', id, model: 'claude-test', content: [], usage: { input_tokens: u[0], output_tokens: u[1], cache_read_input_tokens: u[2], cache_creation_input_tokens: u[3] } },
   });
   const file = path.join(dir, `${sid}.jsonl`);
-  fs.writeFileSync(file, [line('m1', '2026-11-16T10:01:00.000Z', a), line('m2', '2026-11-16T10:11:00.000Z', b)].join('\n') + '\n');
+  // Both rows inside writeEvents' 10:00..10:10 window (the at-close writer clips to it).
+  fs.writeFileSync(file, [line('m1', '2026-11-16T10:01:00.000Z', a), line('m2', '2026-11-16T10:09:00.000Z', b)].join('\n') + '\n');
   return file;
 }
 
@@ -377,6 +378,39 @@ test('a token-totals timing.json written mid-call by a concurrent pass is kept b
     assert.deepStrictEqual(skipLines(runDir), []);
   } finally {
     transcript.readUsage = realRead;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('item 3: two runs over one session transcript with disjoint event windows get disjoint totals', async () => {
+  const root = tmpRoot();
+  try {
+    const cfg = path.join(root, 'cfg');
+    const wtA = path.join(root, 'wt-a');
+    const first = closedRun(root, 'run-1', wtA);
+    const second = closedRun(root, 'run-2', wtA);
+    // run-2 ran an hour later, in the same session and worktree.
+    fs.writeFileSync(path.join(second, 'events.jsonl'), [
+      { skill: 'claude-tweaks:build', ts: '2026-11-16T11:00:00.000Z', type: 'skill_invoked' },
+      { skill: 'claude-tweaks:test', ts: '2026-11-16T11:10:00.000Z', type: 'skill_invoked' },
+    ].map((e) => JSON.stringify(e)).join('\n') + '\n');
+    const dir = path.join(cfg, 'projects', transcript.slugForCwd(wtA));
+    fs.mkdirSync(dir, { recursive: true });
+    const line = (id, ts, u) => JSON.stringify({
+      timestamp: ts,
+      message: { role: 'assistant', id, model: 'claude-test', content: [], usage: { input_tokens: u[0], output_tokens: u[1], cache_read_input_tokens: u[2], cache_creation_input_tokens: u[3] } },
+    });
+    fs.writeFileSync(path.join(dir, `${SID}.jsonl`), [
+      line('m1', '2026-11-16T10:05:00.000Z', A),
+      line('m2', '2026-11-16T11:05:00.000Z', B),
+    ].join('\n') + '\n');
+    const env = { CLAUDE_CONFIG_DIR: cfg };
+    assert.equal((await writeTimingAtClose(first, { env })).status, 'written');
+    assert.equal((await writeTimingAtClose(second, { env })).status, 'written');
+    const zero = [0, 0, 0, 0];
+    assert.deepStrictEqual(pickTokens(readTiming(first).totals.tokens), sum(A, zero));
+    assert.deepStrictEqual(pickTokens(readTiming(second).totals.tokens), sum(B, zero));
+  } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

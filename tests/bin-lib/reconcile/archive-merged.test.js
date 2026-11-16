@@ -3868,7 +3868,8 @@ test('AC1.1/AC1.3 reconciler: an abandoned-interrupted run archived by archiveMe
   spawnCalls.length = 0;
   const fx = timingFixture('2026-08-01T090000-spec-5555-abandoned');
   const cfg = path.join(fx.root, 'cfg');
-  T.writeTranscript(cfg, fx.wt);
+  // Inside the fixture's 09:05..09:15 event window (the token pass clips to it).
+  T.writeTranscript(cfg, fx.wt, [T.A, T.B], T.SID, ['2020-01-01T09:06:00.000Z', '2020-01-01T09:14:00.000Z']);
   assert.equal(archivedState(fx.runDir).worktreeAtClose, undefined, 'the fixture starts with no worktreeAtClose');
 
   const result = archiveAbandoned(fx);

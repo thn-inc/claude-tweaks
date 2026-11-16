@@ -36,7 +36,8 @@ function writeTranscript(cfg, worktree) {
   });
   fs.writeFileSync(path.join(dir, `${SID}.jsonl`), [
     line('m1', '2026-11-16T10:01:00.000Z', [10, 20, 30, 40]),
-    line('m2', '2026-11-16T10:11:00.000Z', [1, 2, 3, 4]),
+    // Inside the run's 10:00..10:10 event window (the writer clips to it).
+    line('m2', '2026-11-16T10:09:00.000Z', [1, 2, 3, 4]),
   ].join('\n') + '\n');
 }
 

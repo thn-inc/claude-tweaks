@@ -20,15 +20,17 @@ function writeEvents(runDir) {
   ].map((e) => JSON.stringify(e)).join('\n') + '\n');
 }
 
-// Two assistant lines with usage under {cfg}/projects/{slug(worktree)}/{sid}.jsonl.
-function writeTranscript(cfg, worktree, [a, b] = [A, B], sid = SID) {
+// Two assistant lines with usage under {cfg}/projects/{slug(worktree)}/{sid}.jsonl, stamped
+// inside writeEvents' 10:00..10:10 window by default (the at-close writer clips to the run's
+// event window); `stamps` places them inside another fixture's window.
+function writeTranscript(cfg, worktree, [a, b] = [A, B], sid = SID, [s1, s2] = ['2026-11-16T10:01:00.000Z', '2026-11-16T10:09:00.000Z']) {
   const dir = path.join(cfg, 'projects', transcript.slugForCwd(worktree));
   fs.mkdirSync(dir, { recursive: true });
   const line = (id, ts, u) => JSON.stringify({
     timestamp: ts,
     message: { role: 'assistant', id, model: 'claude-test', content: [], usage: { input_tokens: u[0], output_tokens: u[1], cache_read_input_tokens: u[2], cache_creation_input_tokens: u[3] } },
   });
-  fs.writeFileSync(path.join(dir, `${sid}.jsonl`), [line('m1', '2026-11-16T10:01:00.000Z', a), line('m2', '2026-11-16T10:11:00.000Z', b)].join('\n') + '\n');
+  fs.writeFileSync(path.join(dir, `${sid}.jsonl`), [line('m1', s1, a), line('m2', s2, b)].join('\n') + '\n');
 }
 
 const sum = (a, b) => ({ input: a[0] + b[0], output: a[1] + b[1], cacheRead: a[2] + b[2], cacheCreate: a[3] + b[3] });
