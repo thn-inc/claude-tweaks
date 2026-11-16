@@ -215,7 +215,7 @@ function cmdValidateFindings(args, ctx) {
       ctx.stderr(`[code-health] validate-findings: dropped "${v.value.title}" — ${floorResult.reason}\n`);
       continue;
     }
-    // 2. Fingerprint via v2 form, then compute risk (severity x likelihood — deterministic, not judged).
+    // 2. Fingerprint from criterion + areaId + anchor, then compute risk (severity x likelihood — deterministic, not judged).
     const id = fingerprint({ criterion: v.value.criterion, areaId: v.value.areaId, anchor: v.value.anchor });
     const risk = computeRisk(v.value.severity, v.value.likelihood);
     survivors.push({ ...v.value, id, risk });
