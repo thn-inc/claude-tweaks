@@ -24,8 +24,9 @@
 //   | named, ready, outside a session, every terminal condition     | typed                          |
 //   | anything else                                                 | none, each failed condition    |
 //
-// Inside a session: `CLAUDECODE` or `CLAUDE_CODE_SESSION_ID` is a non-empty
-// string. Session conditions, each failure named:
+// Inside a session: `CLAUDECODE` or `CLAUDE_CODE_SESSION_ID` is set (any value
+// but unset or empty, the same set-test the conditions use, so an odd value
+// takes the stricter session path). Session conditions, each failure named:
 //   1. CLAUDE_CODE_ENTRYPOINT is exactly `cli`               (entrypoint)
 //   2. CLAUDE_CODE_SESSION_ATTENDED is exactly `1`           (not-attended)
 //   3. CLAUDE_CODE_REMOTE unset or empty                     (remote)
@@ -57,6 +58,8 @@ const REMEDIES = Object.freeze(Object.fromEntries(REASONS.map((word) => {
   if (word === 'not-ready') return [word, 'run /claude-tweaks:specify #N'];
   if (word === 'launcher') return [word, 'the launcher must export CC_LAUNCHED_BY=user (thn-inc/claude-user-config#50)'];
   if (word === 'expired' || word === 'no-pointer') return [word, RETYPE_REMEDY];
+  if (word === 'held') return [word, 'clear bot:blocked, bot:parked or parked on #N once its trigger has fired, then type the command again'];
+  if (word === 'labels-unreadable') return [word, "re-run once the record's labels can be read"];
   return [word, GRANT_REMEDY];
 })));
 
@@ -119,10 +122,16 @@ function launcherFails(env) {
 
 // The transcript check's answer: `typed` only when it is an object whose
 // `answer` is exactly 'typed'; any other answer is none, with its `reason` when
-// that is a known reason word, else not-typed. A thrown error propagates: the
-// caller sees it, it is never read as a refusal or an acceptance.
+// that is a known reason word, else not-typed. A thunk that throws answers none
+// with transcript-unreadable, so one record's failed read cannot abort a
+// caller's drain and is never read as an acceptance.
 function readTypedAnswer(typedCommand) {
-  const ans = typeof typedCommand === 'function' ? typedCommand() : typedCommand;
+  let ans;
+  try {
+    ans = typeof typedCommand === 'function' ? typedCommand() : typedCommand;
+  } catch {
+    return { authority: 'none', reasons: ['transcript-unreadable'] };
+  }
   if (ans !== null && typeof ans === 'object' && ans.answer === 'typed') return { authority: 'typed', reasons: [] };
   const reason = ans !== null && typeof ans === 'object' && REASONS.includes(ans.reason) ? ans.reason : 'not-typed';
   return { authority: 'none', reasons: [reason] };
@@ -141,8 +150,7 @@ function resolveBuildAuthority({ labels, named, env, typedCommand, stdinIsTTY } 
   }
 
   const e = env !== null && typeof env === 'object' ? env : {};
-  const inSession = (typeof e.CLAUDECODE === 'string' && e.CLAUDECODE !== '')
-    || (typeof e.CLAUDE_CODE_SESSION_ID === 'string' && e.CLAUDE_CODE_SESSION_ID !== '');
+  const inSession = isSet(e.CLAUDECODE) || isSet(e.CLAUDE_CODE_SESSION_ID);
   const failed = [];
   if (inSession) {
     if (e.CLAUDE_CODE_ENTRYPOINT !== 'cli') failed.push('entrypoint');
@@ -158,13 +166,17 @@ function resolveBuildAuthority({ labels, named, env, typedCommand, stdinIsTTY } 
   return inSession ? readTypedAnswer(typedCommand) : { authority: 'typed', reasons: [] };
 }
 
-// The one line a caller prints for a named record without the label.
+// The one line a caller prints for a named record without the label; null for
+// a `label` answer, which prints nothing. A `none` answer with no reason words
+// prints the fixed line with the grant remedy, never an empty `()`.
 function formatAuthorityLine(number, { authority, reasons } = {}) {
+  if (authority === 'label') return null;
   const head = `#${number} has no auto:build label — `;
   if (authority === 'typed') return `${head}built on the typed /claude-tweaks:dispatch command`;
   const words = Array.isArray(reasons) ? reasons : [];
   const remedy = (Object.hasOwn(REMEDIES, words[0]) ? REMEDIES[words[0]] : GRANT_REMEDY).split('#N').join(`#${number}`);
-  return `${head}not built: typed command not accepted (${words.join(', ')}); ${remedy} (a typed command with any other argument records nothing)`;
+  const named = words.length > 0 ? ` (${words.join(', ')})` : '';
+  return `${head}not built: typed command not accepted${named}; ${remedy} (a typed command with any other argument records nothing)`;
 }
 
 module.exports = { REASONS, REMEDIES, parseTypedDispatch, resolveBuildAuthority, formatAuthorityLine };

@@ -55,7 +55,9 @@ test('REMEDIES has one sentence per reason word, frozen', () => {
   assert.strictEqual(REMEDIES['not-named'], 'grant it with /claude-tweaks:backlog refine #N');
   assert.strictEqual(REMEDIES.expired, 'grant it with /claude-tweaks:backlog refine #N, or type the command again');
   assert.strictEqual(REMEDIES['no-pointer'], 'grant it with /claude-tweaks:backlog refine #N, or type the command again');
-  for (const word of REASONS.filter((w) => !['not-ready', 'launcher', 'expired', 'no-pointer'].includes(w))) {
+  assert.strictEqual(REMEDIES.held, 'clear bot:blocked, bot:parked or parked on #N once its trigger has fired, then type the command again');
+  assert.strictEqual(REMEDIES['labels-unreadable'], "re-run once the record's labels can be read");
+  for (const word of REASONS.filter((w) => !['not-ready', 'launcher', 'expired', 'no-pointer', 'held', 'labels-unreadable'].includes(w))) {
     assert.strictEqual(REMEDIES[word], 'grant it with /claude-tweaks:backlog refine #N', word);
   }
 });
@@ -115,6 +117,23 @@ test('AC3 row 6: either session variable alone marks a session', () => {
     assert.deepStrictEqual(resolve({ env, typedCommand: tc, stdinIsTTY: true }), { authority: 'none', reasons: ['no-pointer'] });
     assert.strictEqual(tc.calls, 1);
   }
+});
+
+test('AC3 row 6: a non-string session variable still takes the session path, never the terminal path', () => {
+  for (const env of [{ CLAUDECODE: 1 }, { CLAUDE_CODE_SESSION_ID: 7 }, { CLAUDECODE: true }]) {
+    const tc = counter({ answer: 'typed' });
+    assert.deepStrictEqual(resolve({ env, stdinIsTTY: true, typedCommand: tc }), { authority: 'none', reasons: ['entrypoint', 'not-attended'] });
+    assert.strictEqual(tc.calls, 0);
+    const full = { ...env, CLAUDE_CODE_ENTRYPOINT: 'cli', CLAUDE_CODE_SESSION_ATTENDED: '1' };
+    const tc2 = counter({ answer: 'none', reason: 'no-pointer' });
+    assert.deepStrictEqual(resolve({ env: full, stdinIsTTY: true, typedCommand: tc2 }), { authority: 'none', reasons: ['no-pointer'] });
+    assert.strictEqual(tc2.calls, 1);
+  }
+});
+
+test('AC3 condition 5: a typedCommand thunk that throws answers none (transcript-unreadable), never propagates', () => {
+  const thrower = () => { throw new Error('EIO'); };
+  assert.deepStrictEqual(resolve({ typedCommand: thrower }), { authority: 'none', reasons: ['transcript-unreadable'] });
 });
 
 test('AC3 row 7: named, ready, outside a session, terminal conditions hold -> typed, no transcript read', () => {
@@ -252,6 +271,7 @@ test('AC3 condition 5: typedCommand thunk is not called when the record is not n
 test('AC2 grammar: parseTypedDispatch accepts a record list and resume #N', () => {
   assert.deepStrictEqual(parseTypedDispatch('/claude-tweaks:dispatch #12'), [12]);
   assert.deepStrictEqual(parseTypedDispatch('/claude-tweaks:dispatch #12,#13'), [12, 13]);
+  assert.deepStrictEqual(parseTypedDispatch('/claude-tweaks:dispatch #12,#12'), [12, 12]);
   assert.deepStrictEqual(parseTypedDispatch('/claude-tweaks:dispatch #12, #13'), [12, 13]);
   assert.deepStrictEqual(parseTypedDispatch('/claude-tweaks:dispatch 12'), [12]);
   assert.deepStrictEqual(parseTypedDispatch('/claude-tweaks:dispatch resume #12'), [12]);
@@ -303,6 +323,28 @@ test('AC2 grammar: parseTypedDispatch rejects every other form', () => {
 });
 
 // ---- formatAuthorityLine ----
+
+test('formatAuthorityLine: label prints nothing (null)', () => {
+  assert.strictEqual(formatAuthorityLine(12, { authority: 'label', reasons: [] }), null);
+});
+
+test('formatAuthorityLine: none with empty or missing reasons prints the fixed fallback, never ()', () => {
+  const fallback = '#12 has no auto:build label — not built: typed command not accepted; grant it with /claude-tweaks:backlog refine #12 (a typed command with any other argument records nothing)';
+  assert.strictEqual(formatAuthorityLine(12, { authority: 'none', reasons: [] }), fallback);
+  assert.strictEqual(formatAuthorityLine(12, { authority: 'none' }), fallback);
+  assert.strictEqual(formatAuthorityLine(12, { authority: 'none', reasons: 'held' }), fallback);
+});
+
+test('formatAuthorityLine: held and labels-unreadable carry their actionable remedies', () => {
+  assert.strictEqual(
+    formatAuthorityLine(12, { authority: 'none', reasons: ['held'] }),
+    '#12 has no auto:build label — not built: typed command not accepted (held); clear bot:blocked, bot:parked or parked on #12 once its trigger has fired, then type the command again (a typed command with any other argument records nothing)',
+  );
+  assert.strictEqual(
+    formatAuthorityLine(12, { authority: 'none', reasons: ['labels-unreadable'] }),
+    "#12 has no auto:build label — not built: typed command not accepted (labels-unreadable); re-run once the record's labels can be read (a typed command with any other argument records nothing)",
+  );
+});
 
 test('formatAuthorityLine: typed', () => {
   assert.strictEqual(
