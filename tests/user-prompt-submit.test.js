@@ -158,3 +158,194 @@ test('missing or non-string prompt, and garbage stdin, exit 0 with empty stdout'
     assert.strictEqual(r.stdout, '');
   }
 });
+
+// ---- #5584: the second writer — typed dispatch prompts into the pointer file ----
+const upsModule = require('../plugin/bin/lib/hooks/user-prompt-submit');
+const { sessionTmpRoot } = require('../plugin/bin/lib/session-tmp');
+
+const SID = 'test-session-0001';
+const NOW = new Date('2026-11-16T03:00:00.000Z');
+const FIXTURES = path.join(__dirname, 'fixtures', 'typed-command');
+
+function tmpRoot() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ups-tmp-'));
+}
+
+function pointerFile(tmpdir, sessionId = SID) {
+  return path.join(sessionTmpRoot(sessionId, { tmpdir }), 'dispatch-prompts.json');
+}
+
+function readPointerJson(tmpdir, sessionId = SID) {
+  const p = pointerFile(tmpdir, sessionId);
+  try { fs.lstatSync(p); } catch { return null; }
+  return JSON.parse(fs.readFileSync(p, 'utf8'));
+}
+
+function dispatchInput(prompt, overrides = {}) {
+  return { hook_event_name: 'UserPromptSubmit', session_id: SID, prompt_id: 'p-1', prompt, ...overrides };
+}
+
+function entries(numbers, promptId, at = NOW.toISOString()) {
+  return Object.fromEntries(numbers.map((n) => [String(n), { promptId, at }]));
+}
+
+// The real dispatcher, TMPDIR pointed at a temp dir; asserts the never-break contract.
+function submitDispatch(tmpdir, payload, cwd = HOOK_SANDBOX) {
+  const r = runHook(['user-prompt-submit'], {
+    input: JSON.stringify({ cwd, ...payload }), cwd, env: { TMPDIR: tmpdir },
+  });
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(r.stdout, '');
+  return r;
+}
+
+test('AC2.1: the three writing lines record the named numbers with the payload prompt id', () => {
+  const cases = [
+    ['/claude-tweaks:dispatch #12', [12]],
+    ['/claude-tweaks:dispatch #12,#13', [12, 13]],
+    ['/claude-tweaks:dispatch resume #12', [12]],
+  ];
+  for (const [prompt, numbers] of cases) {
+    const tmpdir = tmpRoot();
+    assert.strictEqual(upsModule.recordTypedDispatch(dispatchInput(prompt), { now: NOW, tmpdir }), true, prompt);
+    assert.deepStrictEqual(readPointerJson(tmpdir), { v: 1, sessionId: SID, records: entries(numbers, 'p-1') }, prompt);
+  }
+});
+
+test('AC2.1: the real dispatcher writes the three lines with empty stdout and exit 0', () => {
+  const cases = [
+    ['/claude-tweaks:dispatch #12', ['12']],
+    ['/claude-tweaks:dispatch #12,#13', ['12', '13']],
+    ['/claude-tweaks:dispatch resume #12', ['12']],
+  ];
+  for (const [prompt, keys] of cases) {
+    const tmpdir = tmpRoot();
+    submitDispatch(tmpdir, dispatchInput(prompt, { prompt_id: 'p-hook' }));
+    const ptr = readPointerJson(tmpdir);
+    assert.ok(ptr, `${prompt} must write the pointer`);
+    assert.strictEqual(ptr.sessionId, SID);
+    assert.deepStrictEqual(Object.keys(ptr.records).sort(), keys, prompt);
+    for (const k of keys) {
+      assert.strictEqual(ptr.records[k].promptId, 'p-hook');
+      assert.match(ptr.records[k].at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    }
+  }
+});
+
+test('AC2.2: the eleven non-writing prompts and payloads write nothing', () => {
+  const without = (key) => {
+    const i = dispatchInput('/claude-tweaks:dispatch #12');
+    delete i[key];
+    return i;
+  };
+  const cases = [
+    ['bare command', dispatchInput('/claude-tweaks:dispatch')],
+    ['next', dispatchInput('/claude-tweaks:dispatch next')],
+    ['--budget 2', dispatchInput('/claude-tweaks:dispatch --budget 2')],
+    ['#12 --budget 2', dispatchInput('/claude-tweaks:dispatch #12 --budget 2')],
+    ['close-out #12', dispatchInput('/claude-tweaks:dispatch close-out #12')],
+    ['leading space', dispatchInput(' /claude-tweaks:dispatch #12')],
+    ['command on the second line', dispatchInput('please build\n/claude-tweaks:dispatch #12')],
+    ['no prompt_id', without('prompt_id')],
+    ['empty prompt_id', dispatchInput('/claude-tweaks:dispatch #12', { prompt_id: '' })],
+    ['prompt_id with a slash', dispatchInput('/claude-tweaks:dispatch #12', { prompt_id: 'p/1' })],
+    ['no session_id', without('session_id')],
+  ];
+  assert.strictEqual(cases.length, 11);
+  for (const [label, input] of cases) {
+    const tmpdir = tmpRoot();
+    assert.strictEqual(upsModule.recordTypedDispatch(input, { now: NOW, tmpdir }), false, label);
+    assert.deepStrictEqual(fs.readdirSync(tmpdir), [], `${label} must write nothing`);
+    submitDispatch(tmpdir, input);
+    assert.deepStrictEqual(fs.readdirSync(tmpdir).filter((n) => n.startsWith('ct-session-')), [],
+      `${label} must write nothing through the dispatcher`);
+  }
+});
+
+test('AC2.3: a project with no run directory still writes the pointer', () => {
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ups-bare-'));
+  const tmpdir = tmpRoot();
+  submitDispatch(tmpdir, dispatchInput('/claude-tweaks:dispatch #12'), bare);
+  assert.strictEqual(readPointerJson(tmpdir).records['12'].promptId, 'p-1');
+  assert.strictEqual(fs.existsSync(path.join(bare, '.claude-tweaks')), false);
+});
+
+test('AC2.3: an owned run gets both the skill_invoked event and the pointer', () => {
+  const { dir, run } = projectWithRun({ sessionId: SID });
+  const tmpdir = tmpRoot();
+  submitDispatch(tmpdir, dispatchInput('/claude-tweaks:dispatch #12'), dir);
+  assert.strictEqual(readPointerJson(tmpdir).records['12'].promptId, 'p-1');
+  const events = readEvents(run);
+  assert.strictEqual(events.length, 1);
+  assert.strictEqual(events[0].skill, 'claude-tweaks:dispatch');
+});
+
+test('AC2.4: an unwritable temp directory throws nothing and the dispatcher exits 0 silently', () => {
+  const tmpdir = tmpRoot();
+  // A file where the session root directory should be.
+  fs.writeFileSync(sessionTmpRoot(SID, { tmpdir }), 'not a directory');
+  const input = dispatchInput('/claude-tweaks:dispatch #12');
+  assert.strictEqual(upsModule.recordTypedDispatch(input, { now: NOW, tmpdir }), false);
+  submitDispatch(tmpdir, input);
+  assert.strictEqual(fs.readFileSync(sessionTmpRoot(SID, { tmpdir }), 'utf8'), 'not a directory');
+});
+
+test('AC2.4: a throwing writer never stops run or the skill_invoked writer', () => {
+  const { run } = projectWithRun({ sessionId: SID });
+  const input = {
+    prompt: '/claude-tweaks:dispatch #12',
+    get session_id() { throw new Error('boom'); },
+  };
+  assert.deepStrictEqual(upsModule.run({ input, ownedRun: { dir: run } }), {});
+  const events = readEvents(run);
+  assert.strictEqual(events.length, 1);
+  assert.strictEqual(events[0].skill, 'claude-tweaks:dispatch');
+});
+
+test('AC2.5: payloads built from the captured (g) and (h) rows write the same entry shape (a) writes', () => {
+  for (const letter of ['a', 'g', 'h']) {
+    const rows = JSON.parse(fs.readFileSync(path.join(FIXTURES, `captured-${letter}.json`), 'utf8'));
+    const { promptId, sessionId } = rows[0];
+    const tmpdir = tmpRoot();
+    const input = dispatchInput('/claude-tweaks:dispatch #3', { session_id: sessionId, prompt_id: promptId });
+    assert.strictEqual(upsModule.recordTypedDispatch(input, { now: NOW, tmpdir }), true, letter);
+    assert.deepStrictEqual(readPointerJson(tmpdir, sessionId),
+      { v: 1, sessionId, records: entries([3], promptId) }, letter);
+  }
+});
+
+test('AC2.6: a non-string prompt writes nothing', () => {
+  const prompts = [undefined, null, 42, ['/claude-tweaks:dispatch #12'], { toString: () => '/claude-tweaks:dispatch #12' }];
+  for (const prompt of prompts) {
+    const tmpdir = tmpRoot();
+    assert.strictEqual(upsModule.recordTypedDispatch(dispatchInput(prompt), { now: NOW, tmpdir }), false);
+    assert.deepStrictEqual(fs.readdirSync(tmpdir), []);
+  }
+  assert.strictEqual(upsModule.recordTypedDispatch(null, { now: NOW, tmpdir: tmpRoot() }), false);
+});
+
+test('AC2.7: only a dispatch first line loads build-authority.js, typed-command.js or grouping.js', () => {
+  const tmpdir = tmpRoot();
+  const hookPath = path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'user-prompt-submit.js');
+  const script = `
+    const path = require('path');
+    const ups = require(${JSON.stringify(hookPath)});
+    const prompt = require('fs').readFileSync(0, 'utf8');
+    const out = ups.run({ input: { prompt, session_id: 'probe-session', prompt_id: 'p-1' } });
+    const keys = Object.keys(require.cache);
+    const has = (file) => keys.some((k) => k.endsWith(path.join('issues', file)));
+    process.stdout.write(JSON.stringify({ out,
+      ba: has('build-authority.js'), tc: has('typed-command.js'), gr: has('grouping.js') }));
+  `;
+  const probe = (prompt) => JSON.parse(execFileSync('node', ['-e', script], {
+    input: prompt, encoding: 'utf8', env: { ...process.env, TMPDIR: tmpdir }, windowsHide: true,
+  }));
+  const huge = `${'x'.repeat(2 * 1024 * 1024)}\n/claude-tweaks:dispatch #12`;
+  for (const prompt of ['/claude-tweaks:help', '/claude-tweaks:dispatchx #12', huge]) {
+    assert.deepStrictEqual(probe(prompt), { out: {}, ba: false, tc: false, gr: false }, prompt.slice(0, 40));
+  }
+  assert.deepStrictEqual(fs.readdirSync(tmpdir), []);
+  // Control: the dispatch line does load them, so the absences above are real.
+  assert.deepStrictEqual(probe('/claude-tweaks:dispatch #12'), { out: {}, ba: true, tc: true, gr: true });
+  assert.strictEqual(readPointerJson(tmpdir, 'probe-session').records['12'].promptId, 'p-1');
+});
