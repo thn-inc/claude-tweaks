@@ -70,6 +70,7 @@ test('ledger-row refuses a carried Resolution naming a fact that is not in the f
   const r = await settle(f);
   assert.equal(r.code, 1, r.stderr);
   assert.match(r.stderr, /holds no fact with the id "decision:console:ledger-record-1\.md"/);
+  assert.doesNotMatch(r.stderr, /trailing punctuation/, 'a plain missing id carries no punctuation hint');
   const file = path.join(f.runDir, 'packet-facts', 'decisions.json');
   fs.writeFileSync(file, 'not json');
   const bad = await settle(f);
@@ -89,6 +90,7 @@ test('a hand-written carried Resolution with trailing punctuation is refused nam
   assert.equal(r.code, 1, r.stderr);
   assert.ok(r.stderr.includes(`"${FACT}."`), `names the id looked up: ${r.stderr}`);
   assert.ok(r.stderr.includes(path.join(f.runDir, 'packet-facts', 'decisions.json')), 'names the file it read');
+  assert.match(r.stderr, /looked up exactly as written, trailing punctuation included/);
   assert.equal(fs.readFileSync(f.ledger, 'utf8'), f.snapshot);
 });
 
