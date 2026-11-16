@@ -9,14 +9,10 @@
 
 const { resolveAcceptanceTarget } = require('./target');
 const { acceptanceOf, normalizeLabelNames } = require('../issues/record-vocabulary');
+const { PARK_REASON, REASON_LINE_RE, HEAD_LINE_RE, parkFieldsOf } = require('./park-grammar');
 const { DEPLOY, joinLines, sectionRange, splitLines } = require('../issues/accept-entry');
 
-const PARK_REASON = 'awaiting-local-acceptance';
-
 const HEAD_SHA_RE = /^[0-9a-f]{7,64}$/;
-const TARGET_LINE_RE = /^target:[ \t]*(\S+)$/;
-const REASON_LINE_RE = /^reason:[ \t]*(\S+)$/;
-const HEAD_LINE_RE = /^park-head:[ \t]*(\S+)$/;
 // The write replaces any `target:` line, a renderer's `target: dev, confirmed live` included.
 const ANY_TARGET_LINE_RE = /^target:/;
 const PARK_LINE_RES = [ANY_TARGET_LINE_RE, REASON_LINE_RE, HEAD_LINE_RE];
@@ -35,14 +31,6 @@ function decideSeries(records) {
   return { park: decisions.some((decision) => decision.park), decisions };
 }
 
-const firstMatch = (texts, re) => {
-  for (const text of texts) {
-    const match = re.exec(text);
-    if (match) return match[1];
-  }
-  return null;
-};
-
 function parkStateOf(packetBody) {
   const none = { parked: false, target: null, reason: null, headSha: null };
   if (typeof packetBody !== 'string') return none;
@@ -50,9 +38,7 @@ function parkStateOf(packetBody) {
   const range = sectionRange(lines, DEPLOY);
   if (range === null) return none;
   const texts = lines.slice(range.start, range.end).map(({ text }) => text.trim());
-  const target = firstMatch(texts, TARGET_LINE_RE);
-  const reason = firstMatch(texts, REASON_LINE_RE);
-  return { parked: target === 'local' && reason === PARK_REASON, target, reason, headSha: firstMatch(texts, HEAD_LINE_RE) };
+  return parkFieldsOf(texts);
 }
 
 // Inside the Deploy status section only: exactly one 'target: local', `reason:` and `park-head:`
@@ -69,6 +55,8 @@ function writeParkDeployStatus(packetBody, { headSha } = {}) {
   const firstTarget = lines.findIndex((line, index) => index >= range.start && index < range.end && ANY_TARGET_LINE_RE.test(line.text.trim()));
   const at = firstTarget === -1 ? range.start : firstTarget;
   const fresh = ['target: local', `reason: ${PARK_REASON}`, `park-head: ${headSha}`].map((text) => ({ text, eol }));
+  // No target line to replace: the group goes under the heading, a blank line before any text there.
+  if (firstTarget === -1 && at < range.end && lines[at].text.trim() !== '') fresh.push({ text: '', eol });
   const out = [];
   lines.forEach((line, index) => {
     if (index === at) out.push(...fresh);
@@ -83,6 +71,7 @@ function writeParkDeployStatus(packetBody, { headSha } = {}) {
 function isParkedForLocalAcceptance({ labels, packet } = {}) {
   const status = packet?.status;
   if (status !== 'found' && status !== 'none') return 'unknown';
+  if (status === 'found' && typeof packet.body !== 'string') return 'unknown';
   if (acceptanceOf(normalizeLabelNames(labels)) !== 'pending') return 'not-parked';
   const state = parkStateOf(packet.body);
   return state.target === 'local' && state.reason === PARK_REASON ? 'parked' : 'not-parked';

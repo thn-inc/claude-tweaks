@@ -30,6 +30,7 @@
 const { SECTIONS, WITHHELD_TEXT, DEPLOY_REF_SOURCE, isDeployRef } = require('../wrap-up/packet-contract');
 const { dispositionState, APPROVAL_PROVENANCE_LABEL, APPROVAL_PROVENANCE_LABELS } = require('./acceptance');
 const { LABELS } = require('./record-vocabulary');
+const { parkFieldsOf } = require('../accept/park-grammar');
 const { findCredentialInText } = require('../wrap-up/packet-links');
 
 const PACKET_STATES = Object.freeze(['awaiting-local', 'waiting-for-deploy', 'live-on-dev', 'already-decided', 'no-packet', 'unhandled']);
@@ -207,6 +208,10 @@ function refreshPacket(body, source) {
   const deployRange = sectionRange(lines, DEPLOY);
   const stored = deployRange === null ? null : storedRef(lines, deployRange);
   if (stored === null) return unchangedUnverified;
+  // A packet parked for local acceptance (#4615) is not stale: its deploy source says nothing
+  // about a check run in the worktree, and a refresh would erase the park fields.
+  const deployTexts = lines.slice(deployRange.start, deployRange.end).map(({ text }) => text.trim());
+  if (parkFieldsOf(deployTexts).parked) return unchangedUnverified;
   if (sameCommit(stored.ref, source.ref)) return { body, refreshed: [], unverified: [] };
 
   // The renderer screens the same field; text that ends the section early or carries a credential

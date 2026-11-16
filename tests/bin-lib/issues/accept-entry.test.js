@@ -478,3 +478,26 @@ test('deploy text that ends the section or carries a credential is refused', () 
   assert.throws(() => refreshPacket(stalePacket(), { ...SOURCE, text: 'target: dev\n### Next' }), TypeError);
   assert.throws(() => refreshPacket(stalePacket(), { ...SOURCE, text: 'token=ghp_abcdefghijklmnopqrstuvwxyz0123456789' }), TypeError);
 });
+
+test('characterization: an unparked packet with a stale ref still refreshes its Deploy status', () => {
+  const body = packet({ deploy: ['target: dev, confirmed live', '', 'ref: deadbeef'] });
+  const result = refreshPacket(body, { ref: '1234567abc', text: 'target: dev, confirmed live' });
+  assert.deepEqual(result.refreshed, ['deploy-status']);
+  assert.match(result.body, /^ref: 1234567abc$/m);
+  assert.doesNotMatch(result.body, /deadbeef/);
+});
+
+test('a packet parked for local acceptance is left alone by a refresh, its Deploy status unverified', () => {
+  const body = packet({
+    deploy: ['target: local', 'reason: awaiting-local-acceptance', 'park-head: abc1234', '', 'ref: deadbeef'],
+  });
+  const result = refreshPacket(body, { ref: '1234567abc', text: 'target: dev, confirmed live' });
+  assert.equal(result.body, body);
+  assert.deepEqual(result.refreshed, []);
+  assert.deepEqual(result.unverified, [...REFRESHABLE_FIELDS]);
+});
+
+test('a target: local packet without the park reason still refreshes', () => {
+  const body = packet({ deploy: ['target: local', 'park-head: abc1234', '', 'ref: deadbeef'] });
+  assert.deepEqual(refreshPacket(body, { ref: '1234567abc', text: 'target: dev, confirmed live' }).refreshed, ['deploy-status']);
+});

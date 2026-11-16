@@ -163,3 +163,37 @@ test('parked predicate: no packet -> not-parked; unreadable or malformed -> unkn
   assert.equal(isParkedForLocalAcceptance({ labels: ['accept:pending'] }), 'unknown');
   assert.equal(isParkedForLocalAcceptance(), 'unknown');
 });
+
+test('a refresh of a parked packet that keeps a ref: line leaves it parked', () => {
+  const withRef = rendered([deployFact('dev', 'target: dev, confirmed live', { ref: 'deadbeef' })]);
+  const written = writeParkDeployStatus(withRef, { headSha: HEAD }).body;
+  const result = refreshPacket(written, { ref: '1234567abc', text: 'target: dev, confirmed live' });
+  assert.deepEqual(result.refreshed, []);
+  assert.equal(result.body, written);
+  assert.equal(isParkedForLocalAcceptance({ labels: ['accept:pending'], packet: found(result.body) }), 'parked');
+  assert.equal(packetStateOf({ packet: found(result.body), labels: ['accept:pending'] }).state, 'awaiting-local');
+});
+
+test('parked predicate: a found packet without a string body is unknown', () => {
+  assert.equal(isParkedForLocalAcceptance({ labels: ['accept:pending'], packet: { status: 'found' } }), 'unknown');
+  assert.equal(isParkedForLocalAcceptance({ labels: ['accept:pending'], packet: { status: 'found', body: 7 } }), 'unknown');
+});
+
+test('parkStateOf reads the target token as packetStateOf does: `target: local, note` is local', () => {
+  const body = parked().replace('target: local', 'target: local, note');
+  assert.equal(parkStateOf(body).target, 'local');
+  assert.equal(isParkedForLocalAcceptance({ labels: ['accept:pending'], packet: found(body) }), 'parked');
+  assert.equal(packetStateOf({ packet: found(body), labels: [] }).state, 'awaiting-local');
+});
+
+test('with no target line the park group is separated from the text under it by a blank line', () => {
+  const body = '### Deploy status\nsome deploy note\n\n### Next\nx\n';
+  const out = writeParkDeployStatus(body, { headSha: HEAD }).body;
+  assert.equal(out, `### Deploy status\ntarget: local\nreason: ${PARK_REASON}\npark-head: ${HEAD}\n\nsome deploy note\n\n### Next\nx\n`);
+  assert.equal(writeParkDeployStatus(out, { headSha: HEAD }).changed, false);
+});
+
+test('with an empty Deploy status section no stray blank line is added', () => {
+  const out = writeParkDeployStatus('### Deploy status\n', { headSha: HEAD }).body;
+  assert.equal(out, `### Deploy status\ntarget: local\nreason: ${PARK_REASON}\npark-head: ${HEAD}\n`);
+});
