@@ -4,6 +4,7 @@
 // (step3-lens-dispatch.md, step3-debate-and-refutation.md). Replaces the multi-line
 // `node -e` invocations the harness worktree guard refuses (refs #887).
 //   node bin/review-coordination.js categorise-reproduction <agentA.json> <agentB.json> [--lens <lens> --run <dir> --only confirmed|unconfirmed [--hold <file>]]
+//   node bin/review-coordination.js log-reproduction-judgment <judgment.json> --lens <lens> --run <dir>
 //   node bin/review-coordination.js detect-overlap <findings-by-lens.json>
 //   node bin/review-coordination.js corroborate-cross-lens <unconfirmed-by-lens.json>
 //   node bin/review-coordination.js resolve-debate <verdictA> <verdictB>
@@ -67,10 +68,20 @@
 // a lens token plus an optional suffix, never a `"` or line break. Every refusal (a flag combination, a lens,
 // a hold file, a finding path with a line break) exits 2 before the run dir is anchored and writes nothing.
 // Without --run the output, exit codes and argument check are unchanged. Calling it twice appends twice.
+// A value flag given twice (--lens a --lens b) exits 2 rather than keeping the last value.
+// log-reproduction-judgment (#5595) appends one of the three judged reproduction lines (lib/reproduction-log.js's
+// forms 5 to 7) under decisions.md's `## /review`, from a one-object JSON file: {kind: "absence-refuted", path,
+// symbol, command, foundAt: {path, line}}, {kind: "vacuity-downgraded", path, line} or {kind: "vacuity-reconfirmed",
+// path, line, command, output}. Any other kind exits 2. It prints {entries: [entry], logged}, `logged` as above. It
+// formats what the session reports: it does not check that the command ran or that the output is real, the trust a
+// hand-written line carried. A vacuity kind needs a --lens whose leading token is `3f`; vacuity-downgraded also needs
+// an earlier form 1 or 2 line (a reproduced pair line) for that lens and location under `## /review`, so the
+// downgrade is always the later line and stays an open console item until a tiebreak verdict settles it. Every
+// refusal exits 2 before the run dir is anchored and writes nothing.
 // Exit 0 ok; 2 malformed invocation (a blank resolve-tiebreak --run included) or unreadable/invalid input (check-coverage:
-// also a run dir that does not exist); 3 run dir unanchored (write-findings,
-// check-coverage, resolve-tiebreak --run), or missing (write-findings,
-// resolve-tiebreak --run).
+// also a run dir that does not exist); 3 run dir unanchored (write-findings, check-coverage, resolve-tiebreak --run,
+// categorise-reproduction --run, log-reproduction-judgment), or missing (write-findings, resolve-tiebreak --run,
+// categorise-reproduction --run, log-reproduction-judgment).
 'use strict';
 
 const fs = require('node:fs');
@@ -91,10 +102,12 @@ const { resolveTarget } = require('./lib/stage-item/write');
 const { writeArtifact } = require('./lib/run-artifact/write');
 const { formatEntry, appendEntry, appendEntries } = require('./lib/log-decision/append');
 const { FINDING_LENS_CLASS } = require('./lib/console/finding-path');
-const { pairEntries, holdKey } = require('./lib/reproduction-log');
+const { pairEntries, holdKey, absenceRefuted, vacuityDowngraded, vacuityReconfirmed, JUDGMENT_KINDS } = require('./lib/reproduction-log');
+const { classifyPairLine } = require('./lib/timing/pair-lines');
 
 const USAGE =
   'usage: review-coordination.js categorise-reproduction <agentA.json> <agentB.json> [--lens <lens> --run <dir> --only confirmed|unconfirmed [--hold <file>]]\n' +
+  '       review-coordination.js log-reproduction-judgment <judgment.json> --lens <lens> --run <dir>\n' +
   '       review-coordination.js detect-overlap <findings-by-lens.json>\n' +
   '       review-coordination.js corroborate-cross-lens <unconfirmed-by-lens.json>\n' +
   '       review-coordination.js resolve-debate <verdictA> <verdictB>\n' +
@@ -171,6 +184,30 @@ function appendVerdict(result, anchoredDir, now, deps) {
 
 const REPRODUCTION_FLAGS = ['--lens', '--run', '--only', '--hold'];
 
+// Splits rest into { flags, positional } for a verb whose value flags are `names`; a trailing bare flag, a blank
+// value (an unset $PIPELINE_RUN_DIR expands to "") or a flag given twice is a usage error: { exitCode: 2 }.
+function parseValueFlags(rest, names, deps) {
+  const flags = {};
+  const positional = [];
+  for (let i = 0; i < rest.length; i++) {
+    if (!names.includes(rest[i])) {
+      positional.push(rest[i]);
+      continue;
+    }
+    if (i + 1 >= rest.length || rest[i + 1].trim() === '') {
+      deps.stderr(`review-coordination.js: ${rest[i]} needs a value\n` + USAGE);
+      return { exitCode: 2 };
+    }
+    const name = rest[i].slice(2);
+    if (flags[name] !== undefined) {
+      deps.stderr(`review-coordination.js: ${rest[i]} given more than once\n` + USAGE);
+      return { exitCode: 2 };
+    }
+    flags[name] = rest[++i];
+  }
+  return { flags, positional };
+}
+
 // A lens is the token class finding lines read (console/finding-path.js's FINDING_LENS_CLASS) plus an
 // optional suffix such as ` (Security)`; never a `"` or a line break, which would end the quoted lens
 // in the line or split the line. Returns the refusal text, or null for a usable lens.
@@ -210,7 +247,8 @@ function appendDecisionEntries(entries, anchoredDir, deps) {
     deps.appendDecisions({ runDir: anchoredDir, items: entries.map((e) => ({ section: e.section, entry: formatEntry({ ...e, now }) })) });
     return true;
   } catch (err) {
-    deps.stderr(`review-coordination.js: could not append the decisions.md entries (${(err && err.message) || err})\n`);
+    const message = String((err && err.message) || err).replace(/[\r\n]+/g, ' ');
+    deps.stderr(`review-coordination.js: could not append the decisions.md entries (${message})\n`);
     return false;
   }
 }
@@ -286,6 +324,82 @@ function resolveTiebreakChunkCommand(findings, positional, root, runDir, tier, d
   return 0;
 }
 
+// The judged lines' closed field rules (#5595): each kind's single-line string fields, whole-number lines and shape.
+const isText = (v) => typeof v === 'string' && v.trim() !== '' && !/[\r\n]/.test(v);
+const isLineNumber = (v) => typeof v === 'number' && Number.isInteger(v) && v >= 1;
+const JUDGMENT_FIELDS = {
+  'absence-refuted': { text: ['path', 'symbol', 'command'], compose: absenceRefuted },
+  'vacuity-downgraded': { text: ['path'], lines: ['line'], compose: vacuityDowngraded },
+  'vacuity-reconfirmed': { text: ['path', 'command', 'output'], lines: ['line'], compose: vacuityReconfirmed },
+};
+const LENS_TOKEN_RE = new RegExp(`^[${FINDING_LENS_CLASS}]+`);
+const leadingToken = (lens) => { const m = LENS_TOKEN_RE.exec(lens); return m ? m[0] : null; };
+
+// The refusal text for a judgment object's fields, or null.
+function judgmentProblem(j, rule) {
+  for (const k of rule.text) if (!isText(j[k])) return `${k} must be a non-empty single-line string, got ${JSON.stringify(j[k])}`;
+  for (const k of rule.lines || []) if (!isLineNumber(j[k])) return `${k} must be a whole number of 1 or more, got ${JSON.stringify(j[k])}`;
+  if (j.kind === 'absence-refuted') {
+    const at = j.foundAt;
+    if (!at || typeof at !== 'object' || Array.isArray(at)) return `foundAt must be {path, line}, got ${JSON.stringify(at)}`;
+    if (!isText(at.path)) return `foundAt.path must be a non-empty single-line string, got ${JSON.stringify(at.path)}`;
+    if (!isLineNumber(at.line)) return `foundAt.line must be a whole number of 1 or more, got ${JSON.stringify(at.line)}`;
+  }
+  return null;
+}
+
+// True when decisions.md's `## /review` section holds a form 1 or 2 line for lens 3f at file:line.
+function holdsReproducedLine(text, file, line) {
+  let inReview = false;
+  for (const raw of text.split('\n')) {
+    if (/^## /.test(raw)) { inReview = raw === '## /review'; continue; }
+    if (!inReview || !raw.startsWith('- ')) continue;
+    const m = classifyPairLine(raw);
+    if (m && (m.form === 'reproduced' || m.form === 'reproduced-severity-contested')
+      && leadingToken(m.lens || '') === '3f' && m.path === file && m.line === line) return true;
+  }
+  return false;
+}
+
+// log-reproduction-judgment <judgment.json> --lens <lens> --run <dir> (#5595); every refusal precedes the anchoring and any write.
+function logReproductionJudgment(rest, deps) {
+  const parsed = parseValueFlags(rest, ['--lens', '--run'], deps);
+  if (parsed.exitCode !== undefined) return parsed.exitCode;
+  const { flags, positional } = parsed;
+  const refuse = (message) => { deps.stderr(`review-coordination.js: ${message}\n`); return 2; };
+  if (positional.length !== 1) return refuse('log-reproduction-judgment takes exactly 1 JSON file path\n' + USAGE.trimEnd());
+  if (flags.lens === undefined || flags.run === undefined) return refuse('log-reproduction-judgment needs --lens and --run\n' + USAGE.trimEnd());
+  const lensRefusal = lensProblem(flags.lens);
+  if (lensRefusal) return refuse(lensRefusal);
+  const input = readJson(positional[0], deps);
+  if (input.failed) return 2;
+  const j = input.value;
+  if (!j || typeof j !== 'object' || Array.isArray(j)) return refuse(`${positional[0]} must hold one JSON object`);
+  if (!JUDGMENT_KINDS.includes(j.kind)) return refuse(`unknown judgment kind "${j.kind}" — expected one of ${JUDGMENT_KINDS.join(', ')}`);
+  const rule = JUDGMENT_FIELDS[j.kind];
+  const problem = judgmentProblem(j, rule);
+  if (problem) return refuse(`${j.kind}: ${problem}`);
+  const vacuity = j.kind !== 'absence-refuted';
+  if (vacuity && leadingToken(flags.lens) !== '3f') return refuse(`${j.kind} is a lens 3f line, --lens must start with 3f, got ${JSON.stringify(flags.lens)}`);
+  const anchored = anchorRunDir(flags.run, deps, 3);
+  if (anchored.exitCode !== undefined) return anchored.exitCode;
+  if (j.kind === 'vacuity-downgraded') {
+    let text = '';
+    try {
+      text = fs.readFileSync(path.join(anchored.dir, 'decisions.md'), 'utf8');
+    } catch (err) {
+      if (!err || err.code !== 'ENOENT') return refuse(`cannot read decisions.md: ${(err && err.message) || err}`);
+    }
+    if (!holdsReproducedLine(text, j.path, j.line)) {
+      return refuse(`vacuity-downgraded needs an earlier reproduced line (form 1 or 2) for lens 3f at ${j.path}:${j.line} under ## /review in decisions.md; write it with categorise-reproduction --run --only confirmed first`);
+    }
+  }
+  const composed = { ...rule.compose({ lens: flags.lens, ...j }), section: '/review' };
+  const logged = appendDecisionEntries([composed], anchored.dir, deps);
+  deps.stdout(JSON.stringify({ entries: [composed], logged }) + '\n');
+  return 0;
+}
+
 function run(argv, overrides = {}) {
   const deps = { ...realDeps, ...overrides };
   const [command, ...rest] = argv;
@@ -294,18 +408,9 @@ function run(argv, overrides = {}) {
     return 0;
   }
   if (command === 'categorise-reproduction') {
-    const flags = {};
-    const positional = [];
-    for (let i = 0; i < rest.length; i++) {
-      if (REPRODUCTION_FLAGS.includes(rest[i])) {
-        // A trailing bare flag or a blank value (an unset $PIPELINE_RUN_DIR expands to "") is a usage error.
-        if (i + 1 >= rest.length || rest[i + 1].trim() === '') {
-          deps.stderr(`review-coordination.js: ${rest[i]} needs a value\n` + USAGE);
-          return 2;
-        }
-        flags[rest[i].slice(2)] = rest[++i];
-      } else positional.push(rest[i]);
-    }
+    const parsed = parseValueFlags(rest, REPRODUCTION_FLAGS, deps);
+    if (parsed.exitCode !== undefined) return parsed.exitCode;
+    const { flags, positional } = parsed;
     if (positional.length !== 2) {
       deps.stderr('review-coordination.js: categorise-reproduction takes exactly 2 JSON file paths\n' + USAGE);
       return 2;
@@ -371,6 +476,7 @@ function run(argv, overrides = {}) {
     deps.stdout(JSON.stringify({ ...result, entries: sectioned, unlocated, logged }) + '\n');
     return 0;
   }
+  if (command === 'log-reproduction-judgment') return logReproductionJudgment(rest, deps);
   if (command === 'detect-overlap') {
     if (rest.length !== 1) {
       deps.stderr('review-coordination.js: detect-overlap takes exactly 1 JSON file path\n' + USAGE);

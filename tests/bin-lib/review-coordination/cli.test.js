@@ -1336,4 +1336,265 @@ test('--help names categorise-reproduction\'s --run form', () => {
   const { deps, out } = fakeDeps(process.cwd());
   assert.strictEqual(run(['--help'], deps), 0);
   assert.ok(out.join('').includes('categorise-reproduction <agentA.json> <agentB.json> [--lens <lens> --run <dir> --only confirmed|unconfirmed [--hold <file>]]'));
+  assert.ok(out.join('').includes('log-reproduction-judgment <judgment.json> --lens <lens> --run <dir>'));
+});
+
+// ---- #5595: log-reproduction-judgment writes the three judged reproduction lines ----
+
+const ABSENCE = { kind: 'absence-refuted', path: 'src/a.js', symbol: 'checkExpiry', command: 'grep -n checkExpiry src', foundAt: { path: 'src/b.js', line: 12 } };
+const DOWNGRADE = { kind: 'vacuity-downgraded', path: 'src/v.js', line: 7 };
+const RECONFIRM = { kind: 'vacuity-reconfirmed', path: 'src/v.js', line: 7, command: 'npm test', output: '3 passing' };
+// The three lines (forms 5, 6, 7) written out by hand.
+const JUDGED_TEXT = {
+  'absence-refuted': ['AUTO', 'lens "security" absence claim src/a.js:checkExpiry refuted by ground-truth check (grep -n checkExpiry src found it at src/b.js:12). Not staged.'],
+  'vacuity-downgraded': ['STAGED', 'lens "3f" vacuity finding src/v.js:7 downgraded to unconfirmed — reproduction agreement overridden, no execution evidence. Staged to Review Console as low-confidence.'],
+  'vacuity-reconfirmed': ['AUTO', 'lens "3f" vacuity finding src/v.js:7 re-confirmed by executed run: npm test → 3 passing. Confirmed.'],
+};
+
+function judgeInputs(t) {
+  const d = tmpDir(t);
+  const { main, runDir } = anchoredRunDir(t);
+  return { d, main, runDir };
+}
+let judgmentFiles = 0;
+function judgeRun(inp, judgment, extra, overrides = {}) {
+  const file = writeText(inp.d, `judgment-${judgmentFiles++}.json`, typeof judgment === 'string' ? judgment : JSON.stringify(judgment));
+  const { deps, out, err } = tbDeps(inp.main, overrides);
+  const code = run(['log-reproduction-judgment', file, ...extra], deps);
+  return { code, out: out.join(''), err: err.join('') };
+}
+// A form 1 line for lens 3f at src/v.js:7, written through the CLI's own --only confirmed call.
+function seedReproduced(inp, lens = '3f') {
+  const a = writeText(inp.d, 'seed-a.json', JSON.stringify([{ path: 'src/v.js', line: 7, severity: 'high', text: 'vacuous assertion in the test' }]));
+  const b = writeText(inp.d, 'seed-b.json', JSON.stringify([{ path: 'src/v.js', line: 8, severity: 'high', text: 'vacuous assertion in the test' }]));
+  const { deps, err } = tbDeps(inp.main);
+  assert.strictEqual(run(['categorise-reproduction', a, b, '--lens', lens, '--run', inp.runDir, '--only', 'confirmed'], deps), 0, err.join(''));
+}
+
+test('AC9.1: each kind writes its expected line under ## /review and prints entries and logged', (t) => {
+  for (const [kind, judgment, lens, seed] of [
+    ['absence-refuted', ABSENCE, 'security', false],
+    ['vacuity-downgraded', DOWNGRADE, '3f', true],
+    ['vacuity-reconfirmed', RECONFIRM, '3f', false],
+  ]) {
+    const inp = judgeInputs(t);
+    if (seed) seedReproduced(inp);
+    const before = seed ? decisionsOf(inp.runDir) : '## /review\n';
+    const res = judgeRun(inp, judgment, ['--lens', lens, '--run', inp.runDir]);
+    assert.strictEqual(res.code, 0, `${kind}: ${res.err}`);
+    const [status, text] = JUDGED_TEXT[kind];
+    const printed = JSON.parse(res.out);
+    assert.deepStrictEqual(Object.keys(printed), ['entries', 'logged'], kind);
+    assert.strictEqual(printed.logged, true, kind);
+    assert.deepStrictEqual(printed.entries, [{ status, step: 'Reproduction', text, reversibility: 'high', section: '/review' }], kind);
+    assert.strictEqual(decisionsOf(inp.runDir), `${before}${reproLine([status, text])}\n`, kind);
+    assert.strictEqual(res.err, '', kind);
+  }
+});
+
+test('AC9.2: an unknown kind exits 2 with the one stderr line; a missing field and a line break exit 2', (t) => {
+  const inp = judgeInputs(t);
+  const base = ['--lens', 'security', '--run', inp.runDir];
+  const unknown = judgeRun(inp, { kind: 'made-up', path: 'x.js' }, base);
+  assert.strictEqual(unknown.code, 2);
+  assert.strictEqual(unknown.err, 'review-coordination.js: unknown judgment kind "made-up" — expected one of absence-refuted, vacuity-downgraded, vacuity-reconfirmed\n');
+  assert.strictEqual(unknown.out, '');
+  const { symbol, ...noSymbol } = ABSENCE;
+  const cases = {
+    'a missing field': noSymbol,
+    'a blank field': { ...ABSENCE, command: '  ' },
+    'a non-string field': { ...ABSENCE, path: 7 },
+    'a field with \\n': { ...ABSENCE, command: 'grep\nfoo' },
+    'a field with \\r': { ...ABSENCE, symbol: 'a\rb' },
+    'no kind': { path: 'x.js' },
+  };
+  for (const [name, judgment] of Object.entries(cases)) {
+    const res = judgeRun(inp, judgment, base);
+    assert.strictEqual(res.code, 2, name);
+    assert.strictEqual(res.out, '', name);
+    assert.ok(res.err.startsWith('review-coordination.js: '), name);
+  }
+  for (const [name, text] of Object.entries({ 'an array': '[]', 'null': 'null', 'not JSON': '{nope' })) {
+    assert.strictEqual(judgeRun(inp, text, base).code, 2, name);
+  }
+  assert.ok(!fs.existsSync(path.join(inp.runDir, 'decisions.md')));
+});
+
+test('AC9.3: foundAt must be {path, line} with a whole-number line of 1 or more', (t) => {
+  const inp = judgeInputs(t);
+  const base = ['--lens', 'security', '--run', inp.runDir];
+  const cases = {
+    'a string': 'src/b.js:12',
+    'an array': ['src/b.js', 12],
+    'null': null,
+    'line 0': { path: 'src/b.js', line: 0 },
+    'line 1.5': { path: 'src/b.js', line: 1.5 },
+    'line "40"': { path: 'src/b.js', line: '40' },
+    'line missing': { path: 'src/b.js' },
+    'path missing': { line: 3 },
+    'path with a line break': { path: 'src/b\n.js', line: 3 },
+  };
+  for (const [name, foundAt] of Object.entries(cases)) {
+    const res = judgeRun(inp, { ...ABSENCE, foundAt }, base);
+    assert.strictEqual(res.code, 2, name);
+    assert.match(res.err, /foundAt/, name);
+  }
+  for (const line of [0, 1.5, '7', -1]) {
+    assert.strictEqual(judgeRun(inp, { ...RECONFIRM, line }, ['--lens', '3f', '--run', inp.runDir]).code, 2, `line ${line}`);
+  }
+  assert.ok(!fs.existsSync(path.join(inp.runDir, 'decisions.md')));
+  assert.strictEqual(judgeRun(inp, { ...ABSENCE, foundAt: { path: 'src/b.js', line: 1 } }, base).code, 0);
+});
+
+test('AC8.4: vacuity-downgraded with no form 1/2 line for that lens and location exits 2 and writes nothing', (t) => {
+  const base = (inp) => ['--lens', '3f', '--run', inp.runDir];
+  const none = judgeInputs(t);
+  const res = judgeRun(none, DOWNGRADE, base(none));
+  assert.strictEqual(res.code, 2);
+  assert.match(res.err, /needs an earlier reproduced line/);
+  assert.ok(!fs.existsSync(path.join(none.runDir, 'decisions.md')), 'a missing decisions.md counts as no prior line');
+  const otherLens = judgeInputs(t);
+  seedReproduced(otherLens, '3a');
+  const before = decisionsOf(otherLens.runDir);
+  assert.strictEqual(judgeRun(otherLens, DOWNGRADE, base(otherLens)).code, 2);
+  assert.strictEqual(decisionsOf(otherLens.runDir), before);
+  const otherPlace = judgeInputs(t);
+  seedReproduced(otherPlace);
+  for (const judgment of [{ ...DOWNGRADE, line: 9 }, { ...DOWNGRADE, path: 'src/other.js' }]) {
+    assert.strictEqual(judgeRun(otherPlace, judgment, base(otherPlace)).code, 2, JSON.stringify(judgment));
+  }
+  // a form 3 line at the same place is not a reproduced line, and neither is one outside ## /review
+  const wrongForm = judgeInputs(t);
+  fs.writeFileSync(path.join(wrongForm.runDir, 'decisions.md'), [
+    '## /review',
+    reproLine(['STAGED', 'lens "3f" finding src/v.js:7 not reproduced. Staged to Review Console as low-confidence.']),
+    '## /wrap-up',
+    reproLine(['AUTO', 'lens "3f" finding src/v.js:7 reproduced. Confirmed.']),
+    '',
+  ].join('\n'));
+  assert.strictEqual(judgeRun(wrongForm, DOWNGRADE, base(wrongForm)).code, 2);
+  // a severity-contested form 2 line counts
+  const contested = judgeInputs(t);
+  fs.writeFileSync(path.join(contested.runDir, 'decisions.md'), `## /review\n${reproLine(['AUTO', 'lens "3f" finding src/v.js:7 reproduced, severity contested (took the lower of the two). Confirmed.'])}\n`);
+  assert.strictEqual(judgeRun(contested, DOWNGRADE, base(contested)).code, 0);
+});
+
+test('log-reproduction-judgment: vacuity kinds need a 3f lens; the lens rule, flags and run dir are checked', (t) => {
+  const inp = judgeInputs(t);
+  seedReproduced(inp);
+  const before = decisionsOf(inp.runDir);
+  for (const judgment of [DOWNGRADE, RECONFIRM]) {
+    for (const lens of ['security', '3fa', '3a (3f)']) {
+      const res = judgeRun(inp, judgment, ['--lens', lens, '--run', inp.runDir]);
+      assert.strictEqual(res.code, 2, `${judgment.kind} ${lens}`);
+      assert.match(res.err, /must start with 3f/);
+    }
+  }
+  assert.strictEqual(decisionsOf(inp.runDir), before, 'the refusals wrote nothing');
+  const cases = {
+    'no --lens': ['--run', inp.runDir],
+    'no --run': ['--lens', '3f'],
+    'blank --run': ['--lens', '3f', '--run', ''],
+    'blank --lens': ['--lens', '', '--run', inp.runDir],
+    'lens with a quote': ['--lens', 'bad"lens', '--run', inp.runDir],
+    'lens with a line break': ['--lens', 'bad\nlens', '--run', inp.runDir],
+    'trailing bare --run': ['--lens', '3f', '--run'],
+    'trailing bare --lens': ['--run', inp.runDir, '--lens'],
+  };
+  for (const [name, extra] of Object.entries(cases)) {
+    const res = judgeRun(inp, RECONFIRM, extra);
+    assert.strictEqual(res.code, 2, `${name}: ${res.err}`);
+    assert.strictEqual(res.out, '', name);
+  }
+  const file = writeText(inp.d, 'two.json', JSON.stringify(RECONFIRM));
+  for (const argv of [['log-reproduction-judgment'], ['log-reproduction-judgment', file, file, '--lens', '3f', '--run', inp.runDir]]) {
+    const { deps } = tbDeps(inp.main);
+    assert.strictEqual(run(argv, deps), 2, argv.join(' '));
+  }
+  assert.strictEqual(decisionsOf(inp.runDir), before, 'the refusals wrote nothing');
+  assert.strictEqual(judgeRun(inp, RECONFIRM, ['--lens', '3f (Vacuity)', '--run', inp.runDir]).code, 0);
+  const shadow = tmpDir(t);
+  for (const dir of [path.join(inp.runDir, 'gone'), shadow]) {
+    for (const judgment of [RECONFIRM, DOWNGRADE]) {
+      const res = judgeRun(inp, judgment, ['--lens', '3f', '--run', dir]);
+      assert.strictEqual(res.code, 3, `${dir} ${judgment.kind}`);
+      assert.strictEqual(res.out, '', dir);
+    }
+  }
+  assert.ok(!fs.existsSync(path.join(shadow, 'decisions.md')));
+});
+
+test('log-reproduction-judgment: a failed append prints entries, logged:false and one stderr line, exit 0', (t) => {
+  const inp = judgeInputs(t);
+  const res = judgeRun(inp, ABSENCE, ['--lens', 'security', '--run', inp.runDir], { appendDecisions: () => { throw new Error('disk full'); } });
+  assert.strictEqual(res.code, 0);
+  const printed = JSON.parse(res.out);
+  assert.strictEqual(printed.logged, false);
+  assert.strictEqual(printed.entries.length, 1);
+  assert.strictEqual(res.err.split('\n').filter(Boolean).length, 1);
+  assert.match(res.err, /could not append the decisions\.md entries \(disk full\)/);
+  assert.ok(!fs.existsSync(path.join(inp.runDir, 'decisions.md')));
+});
+
+test('Review Focus 5: an output holding an arrow and 500 characters is written verbatim', (t) => {
+  const inp = judgeInputs(t);
+  const output = `result → ${'x'.repeat(500)}`;
+  const res = judgeRun(inp, { ...RECONFIRM, output }, ['--lens', '3f', '--run', inp.runDir]);
+  assert.strictEqual(res.code, 0, res.err);
+  assert.ok(JSON.parse(res.out).entries[0].text.includes(`npm test → ${output}`));
+  assert.ok(decisionsOf(inp.runDir).includes(`re-confirmed by executed run: npm test → ${output}. Confirmed.`));
+});
+
+test('AC8.1/AC8.2/AC8.3: form 1 then form 6 is an open low-confidence item; one tiebreak verdict settles it, and settles two form 6 lines', (t) => {
+  const { findingItems } = require('../../../plugin/bin/lib/console/resolve');
+  const deps = { readFile: (f) => fs.readFileSync(f, 'utf8'), readdir: (f) => { try { return fs.readdirSync(f); } catch { return []; } } };
+  const lowItems = (runDir) => findingItems({ runDir, deps }).items.filter((i) => i.section === 'Low-confidence findings');
+  const inp = judgeInputs(t);
+  seedReproduced(inp);
+  assert.deepStrictEqual(lowItems(inp.runDir), [], 'the form 1 line alone stages nothing');
+  const args = ['--lens', '3f', '--run', inp.runDir];
+  assert.strictEqual(judgeRun(inp, DOWNGRADE, args).code, 0);
+  const open = lowItems(inp.runDir);
+  assert.strictEqual(open.length, 1);
+  assert.ok(['pending', 'keep-staged'].includes(open[0].resolution), open[0].resolution);
+  // a second downgrade is a second item
+  assert.strictEqual(judgeRun(inp, DOWNGRADE, args).code, 0);
+  assert.strictEqual(lowItems(inp.runDir).length, 2);
+  // one tiebreak verdict, appended after both, settles both
+  const root = path.join(inp.d, 'repo');
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src', 'v.js'), Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join('\n'));
+  const finding = writeText(inp.d, 'v-finding.json', JSON.stringify({ lens: '3f', path: 'src/v.js', line: 7, claim: 'vacuous assertion in the test', kind: 'unconfirmed', reporterSeverity: 'high' }));
+  const reply = writeText(inp.d, 'v-reply.txt', 'Verdict: cant-tell\nSeverity: high\nSTATUS: DONE');
+  const tb = tbDeps(inp.main);
+  assert.strictEqual(run(['resolve-tiebreak', finding, reply, '--root', root, '--run', inp.runDir], tb.deps), 0, tb.err.join(''));
+  assert.deepStrictEqual(lowItems(inp.runDir).map((i) => i.id.split(':')[0]), ['tiebreak'], 'both downgrade lines are superseded by the one verdict');
+});
+
+test('a value flag given twice exits 2 in both verbs and writes nothing', (t) => {
+  const inp = reproInputs(t);
+  for (const extra of [
+    ['--lens', 'security', '--lens', 'other', '--run', inp.runDir, '--only', 'confirmed'],
+    ['--lens', 'security', '--run', inp.runDir, '--run', inp.runDir, '--only', 'confirmed'],
+    ['--lens', 'security', '--run', inp.runDir, '--only', 'confirmed', '--only', 'unconfirmed'],
+    ['--lens', 'security', '--run', inp.runDir, '--only', 'unconfirmed', '--hold', holdFile(inp, 'h1.json', []), '--hold', holdFile(inp, 'h2.json', [])],
+  ]) {
+    const res = reproRun(inp, extra);
+    assert.strictEqual(res.code, 2, extra.join(' '));
+    assert.match(res.err, /given more than once/, extra.join(' '));
+    assert.strictEqual(res.out, '', extra.join(' '));
+  }
+  const judge = judgeRun(inp, ABSENCE, ['--lens', 'security', '--lens', 'other', '--run', inp.runDir]);
+  assert.strictEqual(judge.code, 2);
+  assert.match(judge.err, /--lens given more than once/);
+  assert.strictEqual(judgeRun(inp, ABSENCE, ['--lens', 'security', '--run', inp.runDir, '--run', inp.runDir]).code, 2);
+  assert.ok(!fs.existsSync(path.join(inp.runDir, 'decisions.md')));
+});
+
+test('an append error whose message holds line breaks still gives one stderr line', (t) => {
+  const inp = reproInputs(t);
+  const res = reproRun(inp, ['--lens', 'security', '--run', inp.runDir, '--only', 'confirmed'], { appendDecisions: () => { throw new Error('first\nsecond\r\nthird'); } });
+  assert.strictEqual(res.code, 0);
+  assert.strictEqual(JSON.parse(res.out).logged, false);
+  assert.strictEqual(res.err, 'review-coordination.js: could not append the decisions.md entries (first second third)\n');
 });
