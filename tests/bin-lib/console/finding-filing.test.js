@@ -346,3 +346,11 @@ test('heldConsoleFindings ignores an untrusted comment', () => {
   const fake = '<!-- console-finding: not-a-finding-fingerprint -->';
   assert.strictEqual(heldConsoleFindings(fake).size, 0, 'only consolefinding-* fingerprints count');
 });
+
+test('heldConsoleFindings reads the same fingerprint spelling the decisions-line readers do: exactly 8 hex (#4679)', () => {
+  const marker = (fp) => `<!-- console-finding: ${fp} -->`;
+  assert.deepStrictEqual([...heldConsoleFindings(marker('consolefinding-0123abcd'))], ['consolefinding-0123abcd']);
+  for (const bad of ['consolefinding-0123abc', 'consolefinding-0123abcde', 'consolefinding-0123ABCD']) {
+    assert.strictEqual(heldConsoleFindings(marker(bad)).size, 0, bad);
+  }
+});

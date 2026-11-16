@@ -17,6 +17,7 @@
 const { fingerprintFromBasis, normalizeText } = require('../health-core/fingerprint');
 const { materialityEntryLine } = require('../health-core/materiality-digest');
 const { isTrustedComment } = require('../issues/comment-trust');
+const { CONSOLE_FINDING_FP } = require('./residue');
 const {
   specShapedBody, recordPayload, fencedBlock, defuse, LABELS, extractFingerprint, checkFingerprint, recordFingerprint,
 } = require('../issues/record');
@@ -230,7 +231,7 @@ function planDigests({ items, findings, runId }) {
 // comment objects, either association spelling), or in the whole string when it is a local-files body.
 // Anything else holds none.
 function heldConsoleFindings(digestComments) {
-  const marker = new RegExp(`<!-- ${CONSOLE_FINDING_PREFIX}: (consolefinding-[0-9a-f]+) -->`, 'g');
+  const marker = new RegExp(`<!-- ${CONSOLE_FINDING_PREFIX}: (${CONSOLE_FINDING_FP}) -->`, 'g');
   let texts = [];
   if (typeof digestComments === 'string') texts = [digestComments];
   else if (Array.isArray(digestComments)) texts = digestComments.filter((c) => isTrustedComment(c) && typeof c.body === 'string').map((c) => c.body);

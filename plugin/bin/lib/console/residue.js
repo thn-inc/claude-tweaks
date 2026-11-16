@@ -33,15 +33,20 @@ const FILING_PENDING_RESOLUTION = 'filing-pending';
 // digested line in decisions.md has not reached the materiality digest. Derived at read time, never stored.
 const DIGEST_PENDING_RESOLUTION = 'digest-pending';
 
+// The one spelling of a can't-tell finding fingerprint (`consolefinding-{8 hex}`, finding-filing.js's
+// findingFingerprint): the two AUTO-line patterns below and finding-filing.js's marker reader all build on it. It
+// lives here because this module is a leaf (fs/path only) that finding-filing.js can require without a cycle.
+const CONSOLE_FINDING_FP = 'consolefinding-[0-9a-f]{8}';
+
 // An AUTO line recording a created or deduped filing. Anchored on `^- AUTO `: the same phrase in a
 // STAGED/SKIP line (or quoted prose) is not evidence a record exists.
-const FILED_LINE_RE = /^- AUTO .*?(?:already )?filed as #(\d+) \(work-fingerprint (consolefinding-[0-9a-f]{8})\)/;
+const FILED_LINE_RE = new RegExp(`^- AUTO .*?(?:already )?filed as #(\\d+) \\(work-fingerprint (${CONSOLE_FINDING_FP})\\)`);
 
 // An AUTO line recording a digested or deduped can't-tell digest entry (#4679). Stricter than FILED_LINE_RE: it
 // is anchored on the Queue-write step and a whitespace-free item token, exactly the shape log-decision.js's
 // formatEntry writes (`- AUTO {hms} — Queue write: {item} digested (work-fingerprint …)`), so negative wording
 // (`not digested`, `undigested`) or another step's line is never evidence.
-const DIGESTED_LINE_RE = /^- AUTO \S+ — Queue write: \S+ (?:already )?digested \(work-fingerprint (consolefinding-[0-9a-f]{8})\)/;
+const DIGESTED_LINE_RE = new RegExp(`^- AUTO \\S+ — Queue write: \\S+ (?:already )?digested \\(work-fingerprint (${CONSOLE_FINDING_FP})\\)`);
 
 // decisions.md text -> Map<fingerprint, record number>; the first line for a fingerprint wins.
 function filedRecords(decisions) {
@@ -284,7 +289,7 @@ function formatResidueLines({ dir, consoles, missingOnly = [] }, { pluginRoot, m
 }
 
 module.exports = {
-  UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, DIGEST_PENDING_RESOLUTION, FILED_LINE_RE, DIGESTED_LINE_RE,
+  CONSOLE_FINDING_FP, UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, DIGEST_PENDING_RESOLUTION, FILED_LINE_RE, DIGESTED_LINE_RE,
   FILING_LOG_REMEDY, digestLogRemedy,
   filedRecords, digestedFindings, unresolvedItems, pendingFilings, pendingDigests, consoleResidueItems, splitMissing, filingRerunCommand, digestRerunCommand,
   readRunResidue, formatResidueLines,
