@@ -53,6 +53,7 @@ files:
 - **Action:** **Wrap-up agent** writes every still-`open` ledger row (`ledger-{N}`) and every refused or failed reflection insight (`insight-{row}`) to a JSON file with its `deferReason` and `belowFloor`, runs `--converge` before writing any `carried` row, and acts on each printed `state`: `filed` stages the printed proposal, `digested` appends the digest entry and writes the row `accepted`, `carried` writes the row `deferred` naming the fact id.
 - **Should feel:** finite. One call, one state per item, and an AUTO line per item in `decisions.md` (SKIP for a failed one).
 - **Should understand:**
+  - `--converge` and `--memory-write` hold the same gate as the resolve call in code: with control mode off or `consoleAutoResolve` not granted they exit 4 and write nothing.
   - The four terminal states are `resolved`, `filed`, `digested` and `carried`.
   - An insight writes no ledger row; a carried insight needs nothing more.
   - A staged `filed` item that later fails to create takes `--set-item … carried --ledger`, never `--converge` again.
@@ -64,7 +65,7 @@ files:
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --memory-write "{file}" --memory-dir "{memory dir}" --content-file "{temp file}" --run "$PIPELINE_RUN_DIR"`
 - **Action:** each `M#` Apply writes the memory file, then `MEMORY.md` with the whole current index plus the new line.
 - **Should feel:** reversible. The `decisions.md` entry logs the path, the prior sha256 and a whole-file diff the maintainer can revert from.
-- **Should understand:** writes outside the memory directory, through a symlinked parent, or to a missing parent outside it are refused with exit 3 naming the path.
+- **Should understand:** writes outside the memory directory, through a symlinked parent, or to a missing parent outside it are refused with exit 5 naming the path; exit 3 is an unreadable target or a failed write.
 - **Red flags:**
   - a `MEMORY.md` write holding only the one new line
   - a memory write with no logged prior hash
