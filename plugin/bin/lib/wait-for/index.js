@@ -12,7 +12,10 @@
 // re-issued call cannot extend the wait past the window's deadline. A window is
 // closed `deadline` by the call that hits its deadline, and `done` by an `agents`
 // call whose every listed id was reported; the next call opens a new one, numbered
-// 1 + the session's earlier deadline-closed windows of the same target and key.
+// 1 + the session's earlier windows of the same target and key whose first close
+// was `deadline`. The call bound and `elapsedSeconds` are measured on
+// deps.monotonicNow(); the window's openedAt/deadline and the deadline check use
+// the epoch deps.now().
 //
 // Files: only the two marker-owned files of ./marker.js (the session's stops and
 // waits files in the OS temp dir), never a transcript. `agents` reads stops and
@@ -140,12 +143,13 @@ function resolveWindow(opts, key, { sessionId, tmpDir, start }) {
     .filter((w) => (opts.target === 'agents' ? opts.ids.every((id) => w.ids.includes(id)) : w.key === key));
   if (joinable.length) return joinable[joinable.length - 1];
 
-  const deadlineClosed = new Set(
-    waits
-      .filter((w) => w.kind === 'close' && w.reason === 'deadline')
-      .map((w) => w.window)
-      .filter((id) => opens.has(id) && opens.get(id).target === opts.target && opens.get(id).key === key),
-  );
+  // A window counts toward `n` only when its first close is `deadline`: a joiner still
+  // running after a sibling closed the window `done` appends a later deadline close.
+  const firstClose = new Map();
+  for (const w of waits) if (w.kind === 'close' && !firstClose.has(w.window)) firstClose.set(w.window, w.reason);
+  const deadlineClosed = [...firstClose]
+    .filter(([id, reason]) => reason === 'deadline' && opens.has(id))
+    .filter(([id]) => opens.get(id).target === opts.target && opens.get(id).key === key);
   const openedAt = Math.floor(start / 1000);
   const record = {
     kind: 'open',
@@ -155,7 +159,7 @@ function resolveWindow(opts, key, { sessionId, tmpDir, start }) {
     ...(opts.target === 'agents' ? { ids: key.split(',') } : {}),
     openedAt,
     deadline: openedAt + opts.windowSeconds,
-    n: 1 + deadlineClosed.size,
+    n: 1 + deadlineClosed.length,
   };
   appendWait(sessionId, record, { tmpDir });
   return record;
@@ -186,7 +190,10 @@ async function run(argv, deps) {
     const start = deps.now();
     const key = target.key(opts);
     const win = resolveWindow(opts, key, { sessionId, tmpDir, start });
-    const callEnd = start + opts.maxSeconds * 1000;
+    // The call bound runs on the monotonic clock, so a wall-clock step cannot hold a
+    // call past --max-seconds; the window deadline is an epoch shared across calls.
+    const monoStart = deps.monotonicNow();
+    const callEnd = monoStart + opts.maxSeconds * 1000;
     const deadlineMs = win.deadline * 1000;
     const ctx = { opts, sessionId, tmpDir, window: win.window, deps };
     const print = (res, bound) => {
@@ -194,7 +201,7 @@ async function run(argv, deps) {
         target: opts.target,
         state: res.state,
         changed: res.changed,
-        elapsedSeconds: Math.round((deps.now() - start) / 1000),
+        elapsedSeconds: Math.round((deps.monotonicNow() - monoStart) / 1000),
         deadlineEpoch: win.deadline,
         window: win.n,
         ...(bound ? { bound } : {}),
@@ -210,16 +217,17 @@ async function run(argv, deps) {
         return 0;
       }
       const t = deps.now();
+      const m = deps.monotonicNow();
       if (t >= deadlineMs) {
         appendWait(sessionId, { kind: 'close', window: win.window, reason: 'deadline', at: Math.floor(t / 1000) }, { tmpDir });
         print(res, 'deadline');
         return 3;
       }
-      if (t >= callEnd) {
+      if (m >= callEnd) {
         print(res, 'call');
         return 3;
       }
-      await deps.sleep(Math.min(POLL_MS[opts.target], Math.min(deadlineMs, callEnd) - t));
+      await deps.sleep(Math.min(POLL_MS[opts.target], deadlineMs - t, callEnd - m));
     }
   } catch (err) {
     deps.stderr(`wait-for.js: ${err && err.message ? err.message : err}\n`);

@@ -13,10 +13,12 @@
 'use strict';
 
 const os = require('os');
+const { performance } = require('perf_hooks');
 const lib = require('./lib/wait-for');
 
 const realDeps = {
   now: () => Date.now(),
+  monotonicNow: () => performance.now(),
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   tmpDir: () => os.tmpdir(),
   env: process.env,

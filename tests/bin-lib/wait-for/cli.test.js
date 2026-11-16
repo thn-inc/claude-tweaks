@@ -11,7 +11,7 @@ const { appendStop, appendWait, stopsPath } = require('../../../plugin/bin/lib/w
 
 const CLI = path.resolve(__dirname, '../../../plugin/bin/wait-for.js');
 const MARKER_JS = path.resolve(__dirname, '../../../plugin/bin/lib/wait-for/marker.js');
-const { USAGE } = require('../../../plugin/bin/lib/wait-for/index');
+const { USAGE, TARGETS } = require('../../../plugin/bin/lib/wait-for/index');
 
 const T = Date.parse('2026-11-16T00:00:00Z');
 const SID = 'sess-1';
@@ -25,13 +25,18 @@ function tmp(t) {
 }
 
 // A fake clock: sleep(ms) records ms, advances the clock, then calls onSleep with the
-// number of sleeps so far. Bounded: the 1,001st sleep throws.
+// number of sleeps so far. Bounded: the 1,001st sleep throws. `now` (epoch) and
+// `monotonicNow` advance together; stepEpoch(ms) moves only the epoch, as a wall-clock
+// step does.
 function clock(startMs, onSleep = () => {}) {
   let t = startMs;
+  let epochOffset = 0;
   const sleeps = [];
   return {
     sleeps,
-    now: () => t,
+    now: () => t + epochOffset,
+    monotonicNow: () => t,
+    stepEpoch: (ms) => { epochOffset += ms; },
     advance: (ms) => { t += ms; },
     sleep: async (ms) => {
       if (sleeps.length >= 1000) throw new Error('fake sleep called more than 1000 times');
@@ -43,7 +48,7 @@ function clock(startMs, onSleep = () => {}) {
 }
 
 async function call(argv, { c, dir, env = ENV }) {
-  const res = await runCli(CLI, argv, { env, deps: { now: c.now, sleep: c.sleep, tmpDir: () => dir } });
+  const res = await runCli(CLI, argv, { env, deps: { now: c.now, monotonicNow: c.monotonicNow, sleep: c.sleep, tmpDir: () => dir } });
   const out = res.stdout ? JSON.parse(res.stdout) : null;
   return { ...res, out };
 }
@@ -139,11 +144,52 @@ test('AC4.4: a call after an open window\'s deadline exits 3 after one poll and 
   assert.equal(r1.out.bound, 'call');
   c.advance(120000);
   const before = c.sleeps.length;
-  const r2 = await call(argv, { c, dir });
+  // Count polls by wrapping the agents target's poll for this one call.
+  const poll = TARGETS.agents.poll;
+  let polls = 0;
+  TARGETS.agents.poll = (ctx) => { polls += 1; return poll(ctx); };
+  let r2;
+  try {
+    r2 = await call(argv, { c, dir });
+  } finally {
+    TARGETS.agents.poll = poll;
+  }
   assert.equal(r2.code, 3, r2.stderr);
   assert.equal(r2.out.bound, 'deadline');
   assert.equal(r2.out.deadlineEpoch, T / 1000 + 60);
   assert.equal(c.sleeps.length - before, 0);
+  assert.equal(polls, 1);
+});
+
+test('the last sleep before a bound is clamped to the time left', async (t) => {
+  const dir = tmp(t);
+  // Starts half a second past T: openedAt floors to T/1000, so the deadline is 59.5 s away.
+  const c = clock(T + 500);
+  const r = await call(['agents', '--ids', 'a', '--window-seconds', '60'], { c, dir });
+  assert.equal(r.code, 3, r.stderr);
+  assert.equal(r.out.bound, 'deadline');
+  assert.deepEqual(c.sleeps, [...new Array(59).fill(1000), 500]);
+});
+
+test('a backward wall-clock step does not extend the call bound', async (t) => {
+  const dir = tmp(t);
+  const c = clock(T, (n) => { if (n === 3) c.stepEpoch(-3600 * 1000); });
+  const r = await call(['agents', '--ids', 'a', '--max-seconds', '10'], { c, dir });
+  assert.equal(r.code, 3, r.stderr);
+  assert.equal(r.out.bound, 'call');
+  assert.equal(r.out.elapsedSeconds, 10);
+  assert.deepEqual(c.sleeps, new Array(10).fill(1000));
+});
+
+test('a window closed done and later deadline does not count toward window', async (t) => {
+  const dir = tmp(t);
+  const w = 'agents:a,b:1';
+  appendWait(SID, { kind: 'open', window: w, target: 'agents', key: 'a,b', ids: ['a', 'b'], openedAt: 0, deadline: 60, n: 1 }, { tmpDir: dir });
+  appendWait(SID, { kind: 'close', window: w, reason: 'done', at: 10 }, { tmpDir: dir });
+  appendWait(SID, { kind: 'close', window: w, reason: 'deadline', at: 60 }, { tmpDir: dir });
+  const r = await call(['agents', '--ids', 'a,b', '--max-seconds', '1'], { c: clock(T), dir });
+  assert.equal(r.code, 3, r.stderr);
+  assert.equal(r.out.window, 1);
 });
 
 test('AC4.5: a call listing an id outside the open window opens a new window 1', async (t) => {
@@ -159,7 +205,7 @@ test('AC4.5: a call listing an id outside the open window opens a new window 1',
   assert.equal(r3.out.deadlineEpoch, r1.out.deadlineEpoch);
 });
 
-test('two sessions\' siblings: a window for a,b is not joined by a call for c', async (t) => {
+test('two sibling subagents of one root session: a window for a,b is not joined by a call for c', async (t) => {
   const dir = tmp(t);
   const c = clock(T);
   const r1 = await call(['agents', '--ids', 'a,b', '--max-seconds', '5'], { c, dir });
