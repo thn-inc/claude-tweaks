@@ -217,9 +217,13 @@ function carryParagraph(text) {
   return end === -1 ? s.slice(start) : s.slice(start, end);
 }
 
-// The paragraph's first sentence (after its bold lead-in) is the carry sentence.
+// The carry sentence runs from the bold lead-in to the next sentence's anchor, not to the first '. '.
+const CARRY_END = ' The CLI then prints no Needs a human block';
 function carrySentence(text) {
-  return carryParagraph(text).slice(CONTROL_MARKER.length).split('. ')[0];
+  const p = carryParagraph(text);
+  const end = p.indexOf(CARRY_END);
+  assert.notStrictEqual(end, -1, `carry sentence anchor not found: ${CARRY_END}`);
+  return p.slice(CONTROL_MARKER.length, end);
 }
 
 function claimProblems(text, claims) {
@@ -257,7 +261,7 @@ test('AC7.1: a needs-human-decision ruling is carried, not applied', () => {
   assert.ok(sentence.includes('`pending`'), 'the carry sentence does not name `pending`');
   const mutated = REVIEW_CONSOLE.replace('`pending`, `keep-staged` or `refused` resolves `carried`', '`keep-staged` or `refused` resolves `carried`');
   assert.notStrictEqual(mutated, REVIEW_CONSOLE);
-  assert.ok(!carrySentence(mutated).includes('`pending`'),'control: without `pending` the check goes red');
+  assert.ok(!carrySentence(mutated).includes('`pending`'), 'control: without `pending` the check goes red');
 });
 
 const EXIT6 = "exit code 6 (a carry write failed) → stop with `flow/failure-cards.md`'s Generic gate failure card";
@@ -273,6 +277,7 @@ const ROUTE_CLAIMS = [
   ['--resolution carried', 'the carried route does not use --resolution carried'],
   ['--ledger "{ledger path}"', 'the carried route does not pass --ledger "{ledger path}" for a ledger-record item'],
   ['carried to the acceptance packet as {factId}', 'the carried route does not settle the ledger row with the fact id'],
+  ['Exit 2, 3, 5 or 6 from that call stops with', 'the carried route does not send exits 2, 3, 5 and 6 from its call to the failure card'],
 ];
 test('AC2.1: the one route for a failed or refused item settles a ledger-record row through --set-item --ledger', () => {
   assert.deepStrictEqual(claimProblems(REVIEW_CONSOLE, ROUTE_CLAIMS), []);
