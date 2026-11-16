@@ -14,6 +14,8 @@ Every record body opens with a short metadata block — plain body-metadata line
 
 `Risk-flags:` and `Risk-flags-unconfirmed:` are written only through `bin/risk-flags.js`: `/claude-tweaks:specify`'s Risk flags step settles them (`shaping-mode-stamping.md`'s `### Risk flags`), and `/claude-tweaks:backlog refine` confirms them with its `confirm` verb (`backlog/refine-risk-flags.md`); never hand-edit either line. The grammar is `Risk-flags: migrations, auth` (comma-separated lowercase slugs from the built-ins `migrations`, `auth`, `public-contract` and `irreversible-side-effect`, plus the policy `risk-categories`) or `Risk-flags: none` (classified, nothing flagged). No line means an unclassified legacy record, read as no flags; a line that is malformed or names an unknown slug reads as unknown, which is all four built-in categories flagged, never as no flags. `Risk-flags-unconfirmed: true` marks a set a headless run kept with no human to confirm it. Each kept flag needs a plan step carrying `Proof(<slug>): <text>`, at least 20 characters and more than the category's name (`/claude-tweaks:build`'s plan audit, Check G). A removal does not persist: a flag the classifier detects again on a later shaping is re-added and asked about again. These flags are not the `risk:low|medium|high` labels, the scoring axis (`## Facets`), which is a different axis.
 
+`Acceptance-target:` is written only by `/claude-tweaks:specify`'s interactive path (`shaping-mode-stamping.md`'s `### Metadata block`), never under `--chained` or `next`. The grammar is exactly `Acceptance-target: local`, once, in the preamble. No line means no per-item override: the policy default applies. Any other form (a duplicate, a variant spelling, `dev`, another value) reads invalid and resolves to `local`. `parseAcceptanceTarget` is the one reader.
+
 ````markdown
 Surface: {web | mobile | desktop | backend | infra | terminal}
 Design-intent: {one or more of bold | quiet | minimal | delightful | onboarding, comma-separated — or none alone}
@@ -23,6 +25,7 @@ Visual-reference: {path to an accepted shape-time scaffold file — omitted when
 Parent: {#N — decomposition-mode sub-issues under work-links: body-text only, and only when Step 2.6 kept a parent; omitted otherwise (a collapsed decomposition, native links, work-backend: local-files, and Shaping mode)}
 Risk-flags: {comma-separated slugs, or none — settled by /specify's Risk flags step, confirmed by /backlog refine}
 Risk-flags-unconfirmed: {true — headless-kept flags awaiting a human; omitted otherwise}
+Acceptance-target: {local — the human chose to accept this item locally; written by /specify's interactive path only, omitted otherwise}
 
 ## Overview
 
