@@ -1,5 +1,6 @@
 'use strict';
 const { test } = require('node:test');
+require('../../helpers/stub-token-pass').installTokenPassStub();
 const assert = require('node:assert/strict');
 const cp = require('child_process');
 // Destructured at require time, so this binding is a snapshot of the REAL

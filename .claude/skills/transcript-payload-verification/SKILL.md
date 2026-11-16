@@ -268,12 +268,40 @@ re-wake behavior: interactive 2.1.302 holds a dispatched agent open and re-wakes
 `Monitor` watch it started reports, headless (`claude -p`) 2.1.302 and later runs a nested `Agent` call
 synchronously, and headless 2.1.299 and older never re-wakes it for a nested child. The contract had stated
 "never re-woken" as universal, and every restatement had to be qualified once the interactive cell
-contradicted it (`tests/foreground-execution-instruction.test.js` now pins six claim sites). A `claude -p`
+contradicted it (`tests/foreground-execution-instruction.test.js` now pins five claim sites). A `claude -p`
 probe, the throwaway-hook recipe above included, measures headless only. When
 contract prose states harness behavior, measure each launch mode and version it will run under, record each
 cell's result beside the claim with its version (`plugin/skills/_shared/subagent-dispatch-core.md`'s
 "Measured on Claude Code (#3722)" sentence), and word the rule itself as only what holds in every cell — there,
 "cannot count on being re-woken".
+
+## Writing a probe up as a `docs/reference` document
+
+Three probe write-ups share one shape: `docs/reference/pretooluse-updatedinput-worktree-guard.md`
+(#4028), `docs/reference/pretooluse-agent-tool-probe.md` (#4589) and
+`docs/reference/workflow-tool-probe.md` (#5596). The last is the fullest; copy its parts.
+
+- **A scope block first.** The CLI version from `claude --version` and from each child's `init`
+  event, the date, the platform, the config root, the permission mode each `init` event reported
+  (#5596's `dontAsk` came from user settings, not a flag), every launch mode measured, and each
+  probe not run with the reason it could not be.
+- **Throwaway tooling in scratch, evidence in the run directory.** The probe plugin and launcher
+  live in the session's scratchpad and are never committed. Copy the raw captures into the run
+  directory's `evidence/` before the worktree or scratch is torn down, and quote the lines each row
+  rests on in an "Observed output" section, which is the permanent copy. Give the full command
+  line, the removed environment variables, the working directory and every prompt, so a probe
+  re-runs from the document alone.
+- **One Results row per probe**, naming its launch mode, the captures and run count it rests on,
+  the CLI version, the date, a Result from a closed vocabulary, the observed value, and what it
+  means for each record that reads it. Descriptive text stays out of the Result cell: #5596's
+  reviews sent seven cells back for it.
+- **An interactive measurement is the building session's own transcript.** A `claude -p` child
+  cannot measure an interactive session. Quote the building session's transcript rows by file and
+  line, and label every row resting on them as one interactive run.
+- **A "Depended on by" list** names each record and the rows it reads, with a re-run rule keyed to
+  the CLI version (#5596 re-runs a read row when the installed minor version differs).
+- **A result that contradicts a dependent record's text** is posted as a comment on that record,
+  quoting the row, and the PR lists the comments posted (#5596's AC7).
 
 ## When to use
 

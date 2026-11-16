@@ -13,6 +13,7 @@ const { evaluateBudgets, budgetProposal } = require('../../../plugin/bin/lib/tim
 const { renderMarkdown } = require('../../../plugin/bin/phase-timing');
 const { parseManifestYaml } = require('../../../plugin/bin/lib/flow/manifest');
 const { readText } = require('../../helpers/read-skill');
+const { fixtureHomeEnv } = require('../../helpers/fixture-home');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'phase-timing.js');
 const FIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'record-1535');
@@ -42,6 +43,44 @@ function writtenTiming() {
   }
 }
 
+// The subagents-session fixture under --auto-transcript (#5597 AC8): the base
+// commit's timing.json, with the tmp home path replaced by <HOME>. #4359 later added one
+// field to it, an empty `procedureFiles` object on every phase, the unattributed bucket and
+// the totals (no file reads in this fixture); the golden carries those 15 lines and nothing else new.
+const SUBFIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'subagents-session');
+const SUB_GOLDEN = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'subagents-golden-timing.json');
+const SUB_EVENTS = readText(path.join(SUBFIX, '..', 'subagents-events.jsonl'));
+
+function normalizeSubagents(timing, home) {
+  // The CLI may print the home's realpath (macOS: /var -> /private/var), so replace it first.
+  const homes = [fs.realpathSync(home), home].sort((a, b) => b.length - a.length);
+  let s = normalizeTiming(timing);
+  for (const h of homes) s = s.split(JSON.stringify(h).slice(1, -1)).join('<HOME>').split(h).join('<HOME>');
+  // A <HOME>-rooted path string uses the platform separator (serialized: \\ on Windows); compare with /.
+  s = s.replace(/<HOME>[^"]*/g, (m) => m.split('\\\\').join('/'));
+  // An un-normalized machine path must fail loudly, not silently mismatch the golden.
+  for (const h of homes) assert.ok(!s.includes(h) && !s.includes(JSON.stringify(h).slice(1, -1)), `normalized timing still contains ${h}`);
+  return s;
+}
+
+function subagentsTiming() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-golden-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-golden-home-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'events.jsonl'), SUB_EVENTS);
+    const slugDir = path.join(home, '.claude', 'projects', '-Users-x-Code-repo--claude-worktrees-wt');
+    fs.mkdirSync(slugDir, { recursive: true });
+    fs.cpSync(SUBFIX, slugDir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ worktree: '/Users/x/Code/repo/.claude/worktrees/wt', sessionId: 'sess-1', status: 'active' }));
+    const r = spawnSync(process.execPath, [CLI, '--run', dir, '--markdown', '--auto-transcript'], { encoding: 'utf8', env: fixtureHomeEnv(home) });
+    assert.equal(r.status, 0, r.stderr);
+    return normalizeSubagents(JSON.parse(fs.readFileSync(path.join(dir, 'timing.json'), 'utf8')), home);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
 function fixtureEvents() {
   return readText(path.join(FIX, 'events.jsonl')).trim().split('\n').map((l) => JSON.parse(l));
 }
@@ -51,6 +90,10 @@ function fixtureManifest() {
 
 test('AC6.1 golden: phase-timing.js over record-1535 writes timing.json byte-identical to the pre-#5160 golden (runDir, generatedAt normalized)', () => {
   assert.equal(normalizeTiming(writtenTiming()), readText(GOLDEN));
+});
+
+test('AC8.1: a session with no workflows/ directory writes timing.json byte-identical to the base commit (subagents-session, --auto-transcript)', () => {
+  assert.equal(subagentsTiming(), readText(SUB_GOLDEN));
 });
 
 test('AC6.1 golden go-red: an extra totals.ciWallMinutes or a ciGate key breaks the golden comparison', () => {

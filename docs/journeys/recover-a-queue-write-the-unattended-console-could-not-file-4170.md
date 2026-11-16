@@ -26,6 +26,7 @@ files:
 - **Should understand:**
   - For a Queue write, only `apply` → `keep-staged` is allowed. The CLI's one other rewrite, `--resolution pending`, takes only an `approve`d Reference repairs item whose staged diff stopped applying (`reference-repair-stale`, #4636; `resolve-the-unattended-console-in-one-process-1932.md`) and refuses an item in any other section. The write is atomic and holds `.console.lock`, the same lock `console-residue.js --ack` takes, and it drops a stale `residueAcknowledgedAt`.
   - It runs at any autonomy ceiling, because it only records a failure.
+  - Under control mode (#4620), a requested `keep-staged` or `pending` carries the item into the acceptance packet instead, and the agent passes `--resolution carried` — `carry-undecidable-console-items-into-the-acceptance-packet-4620.md` covers that route.
   - Rewriting an item that is already `keep-staged` prints `already keep-staged — nothing rewritten` and exits 0.
   - Exit 5 naming `no console.json` means a human-present console, so there is nothing to do. Any other exit 5 (an unknown or duplicate `{name}`, an item no longer `apply`) means nothing was recorded: check `{name}` against `console.json` and re-run.
   - Exit 3 after a landed rewrite means only the `decisions.md` entry failed (`… but the decisions.md entry could not be written (…)`).
@@ -70,4 +71,5 @@ files:
 ## Origin
 - Created during the build of #4170 (run `2026-10-25T152441-record-4170`): `console-resolve.js --set-item`, `lib/console/item-resolution.js`, the derived `filing-pending` residue word, and the re-run remedy in the archival refusal.
 - Updated during the build of #4636: `--set-item` gained a second rewrite, `approve` → `pending`, for a Reference repairs item only, so step 1 no longer says `apply` → `keep-staged` is the CLI's only rewrite.
+- Updated during the build of #4620: step 1 notes that control mode carries the item instead of rewriting it `keep-staged`.
 - Related journeys: `review-what-an-unattended-console-left-open-3370.md` covers reading and acking residue in general. `keep-cant-tell-findings-through-a-console-less-auto-merge-4171.md` covers the console-less merge path's `cant-tell-unfiled` guard.
