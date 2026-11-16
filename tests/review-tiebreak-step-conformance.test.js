@@ -9,8 +9,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
-const { missingFactsOf, assertEveryMatchGoesRed, globalOf, lineStartingWith, sectionOf } = require('./helpers/conformance-asserts');
-const { buildFindingsArtifact, resolveTiebreak, checkTiebreakCoverage, findingId } = require('../plugin/bin/lib/tiebreak');
+const { missingFactsOf, assertEachPatternGoesRed, assertEveryMatchGoesRed, globalOf, lineStartingWith, sectionOf } = require('./helpers/conformance-asserts');
+const { buildFindingsArtifact, resolveTiebreak, checkTiebreakCoverage, findingId, CHUNK_MAX } = require('../plugin/bin/lib/tiebreak');
 const { formatEntry } = require('../plugin/bin/lib/log-decision/append');
 const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
 const { categoriseReproduction, findingsMatch, LINE_TOLERANCE_REPRODUCTION_WIDE } = require('../plugin/bin/lib/coordination');
@@ -1320,10 +1320,10 @@ const FAILURE_PATHS = [
   [tiebreakSection('Resolve and act'), /if it still fails, do not act on `outcome`/, 'a second log-decision.js failure blocks acting on the outcome'],
   [tiebreakSection('Resolve and act'), /name the finding in the summary as having no verdict line/, 'the unlogged finding is named in the summary'],
   // A failed dispatch is re-dispatched once before it becomes an empty reply; a dispatched reviewer goes inline.
-  [tiebreakSection('Resolve and act'), /is re-dispatched once as a fresh agent/, 'a failed dispatch is re-dispatched once as a fresh agent'],
+  [tiebreakSection('Resolve and act'), /is re-dispatched once as a fresh chunk agent/, 'a failed chunk dispatch is re-dispatched once as a fresh chunk agent'],
   [tiebreakSection('Resolve and act'), /`BLOCKED`, `NEEDS_CONTEXT`, a session limit/, 'BLOCKED, NEEDS_CONTEXT and a session limit count as failed'],
-  [tiebreakSection('Resolve and act'), /only if that one fails too is it passed as an empty reply file/, 'only a failed re-dispatch becomes an empty reply'],
-  [tiebreakSection('Dispatched reviewer'), /or fails again after `## Resolve and act` step 1's re-dispatch/, 'a dispatched reviewer takes the inline rung for a failed agent too'],
+  [tiebreakSection('Resolve and act'), /A single-finding agent is never re-dispatched: if it fails \(an empty, failed, timed-out, or non-`DONE` reply\), its reply is passed as an empty reply file/, 'a failed single-finding agent is never re-dispatched but becomes an empty reply'],
+  [tiebreakSection('Dispatched reviewer'), /or fails again after its chunk's re-dispatch or its single-finding re-dispatch \(`## Resolve and act`/, 'a dispatched reviewer takes the inline rung for a failed agent too'],
   // The wave wait is bounded, and the fan-out carries its Form B directive.
   [tiebreakSection('Dispatch'), /`step3-lens-dispatch\.md`'s hung single-read agent rule \(its bounded wait and one `SendMessage` nudge\)/, "the wave wait cites the hung single-read agent rule's bound"],
   [tiebreakSection('Dispatch'), /an agent still silent after that is a failed dispatch/, 'an agent silent past the bound is a failed dispatch'],
@@ -1385,4 +1385,214 @@ test('the resolve-tiebreak command check can go red: one shared block, or --run 
   const runEverywhere = live.replace(/(resolve-tiebreak "\{path-F\}" "\{path-R\}" --root "\{checkout under review\}")\n/, '$1 --run "$PIPELINE_RUN_DIR"\n');
   assert.notEqual(runEverywhere, live);
   assert.ok(tiebreakCommandProblems(runEverywhere).includes('no labeled standalone command without --run'));
+});
+
+// ===== #5540: one tiebreak judge per chunk of at most CHUNK_MAX findings =====
+
+// Every fenced block of a section, in order: the single-finding template first, the chunk template second.
+function fencedBlocks(section) {
+  return [...section.matchAll(/```[a-z]*\n([\s\S]*?)\n```/g)].map((m) => m[1]);
+}
+const chunkTemplateOf = (section) => {
+  const blocks = fencedBlocks(section);
+  assert.equal(blocks.length, 2, `## Dispatch must hold the single-finding and the chunk template, found ${blocks.length} fenced blocks`);
+  return blocks[1];
+};
+
+const CHUNKING = [
+  [/chunks of at most \*{0,2}8\b/, 'the entry set is grouped into chunks of at most 8 findings'],
+  [/in entry order/, 'the chunks follow entry order'],
+  [/one fresh agent per chunk/, 'one fresh agent is dispatched per chunk'],
+];
+const chunkingMissing = missingFactsOf(CHUNKING);
+// The number the chunk sentence states, or null when no chunk sentence is present.
+const chunkBound = (text) => {
+  const m = /chunks of at most \*{0,2}(\d+)\b/.exec(text);
+  return m ? Number(m[1]) : null;
+};
+
+test('AC4.1: Dispatch chunks the entry set at the CHUNK_MAX bound', () => {
+  const dispatch = sectionOf(tiebreakText(), '## Dispatch');
+  assert.deepEqual(chunkingMissing(dispatch), [], '## Dispatch must group the entries into chunks and dispatch one agent per chunk');
+  assert.equal(chunkBound(dispatch), CHUNK_MAX, "the chunk sentence's bound must equal tiebreak.js's CHUNK_MAX");
+});
+
+test('AC4.1: the chunking assertions can go red', () => {
+  const dispatch = sectionOf(tiebreakText(), '## Dispatch');
+  assertEachPatternGoesRed(dispatch, CHUNKING, chunkingMissing);
+  const drifted = dispatch.replace(/chunks of at most \*{0,2}8\b/, 'chunks of at most **9**');
+  assert.notEqual(drifted, dispatch, 'anchor text for the chunk bound not found');
+  assert.notEqual(chunkBound(drifted), CHUNK_MAX, 'a bound that drifted from CHUNK_MAX must turn the twin pin red');
+});
+
+// The pre-change opening sentence of ## Dispatch (base 1e346e837), pasted as a literal.
+const PRE_CHUNK_DISPATCH_SENTENCE = 'One agent per entry, in parallel waves of **8**: dispatch a wave in one batch, wait for every agent of the wave to return, then start the next.';
+
+test('AC4.1: the prose reverted to one agent per finding fails', () => {
+  const dispatch = sectionOf(tiebreakText(), '## Dispatch');
+  const start = dispatch.indexOf("Group the entry set's distinct ids");
+  assert.notEqual(start, -1, 'the chunk sentence was not found');
+  const endMarker = 'then start the next.';
+  const end = dispatch.indexOf(endMarker, start);
+  assert.notEqual(end, -1, 'the chunk sentence end was not found');
+  const reverted = dispatch.slice(0, start) + PRE_CHUNK_DISPATCH_SENTENCE + dispatch.slice(end + endMarker.length);
+  assert.notEqual(reverted, dispatch);
+  assert.deepEqual(chunkingMissing(reverted), CHUNKING.map(([, fact]) => fact), 'the one-agent-per-entry text must fail every chunk fact');
+  assert.equal(chunkBound(reverted), null, 'the one-agent-per-entry text states no chunk bound');
+});
+
+const CHUNK_TEMPLATE = [
+  [/^Id: \{id\}$/m, 'each finding block and each reply block opens with an Id: header'],
+  [/^Reply with one block per finding, each opening with its own Id: line copied exactly, then exactly these lines; one status line ends the whole reply:$/m, 'the reply asks for one block per finding, each opening with its Id: line copied exactly'],
+  ...REPLY_FORMAT,
+  [/Judge each finding on its own: one being right or wrong says nothing about the next\./, 'the judge is told to judge each finding on its own'],
+  [/you were deliberately given no account of how any of them was reported/, 'the judge is given no account of how a finding was reported'],
+  [/\[Use: Capable/, 'the model profile line is [Use: Capable'],
+  [/\[\.\.\. READ-ONLY REVIEW line, verbatim from the review-dispatch bundle's Read-only Reviewer Discipline section \.\.\.\]/, 'the READ-ONLY REVIEW placeholder line'],
+  [/SCRATCH: \{ctx-dir\}\/agent-scratch\/\{agent-id\}/, 'the SCRATCH line'],
+];
+const chunkTemplateMissing = missingFactsOf(CHUNK_TEMPLATE);
+const CHUNK_ALLOWLIST_LABELS = ['Diff scope:', 'Id:', 'Finding:', 'Severity:', 'Location:', 'Positions:'];
+
+test('AC4.1: the chunk template carries the id header and the per-finding reply', () => {
+  const template = chunkTemplateOf(sectionOf(tiebreakText(), '## Dispatch'));
+  assert.deepEqual(chunkTemplateMissing(template), [], 'the chunk template must carry every contract element');
+  const input = inputLinesOf(template);
+  assert.deepEqual(labelsOf(input), CHUNK_ALLOWLIST_LABELS, 'the chunk input is the Diff scope line once, then the per-finding allowlist under its Id header');
+  assert.ok(!leaksReporterContent(input), 'the chunk input must not mention evidence or reasoning');
+});
+
+test('AC4.1: the chunk template assertions can go red', () => {
+  const template = chunkTemplateOf(sectionOf(tiebreakText(), '## Dispatch'));
+  assertEveryMatchGoesRed(template, CHUNK_TEMPLATE, chunkTemplateMissing);
+  const input = inputLinesOf(template);
+  assert.notDeepEqual(labelsOf([...input, 'Diff scope: {again}']), CHUNK_ALLOWLIST_LABELS, 'a second Diff scope line must turn the label check red');
+  assert.notDeepEqual(labelsOf(input.filter((line) => !line.startsWith('Id:'))), CHUNK_ALLOWLIST_LABELS, 'a dropped Id header must turn the label check red');
+  assert.ok(leaksReporterContent([...input, "Evidence: {the reporting agent's quote}"]), 'evidence text in the chunk input must turn the leak check red');
+});
+
+// Deliverable 4: the per-chunk failure ladder, then the per-finding one.
+const CHUNK_CALL = /run the chunk call once \(with `--run` in a pipeline run\)/;
+const UNSETTLED_REDISPATCH = /Every id in its `unsettled` list \(reason `missing` or `duplicated`\) gets one single-finding re-dispatch after that call/;
+const CHUNK_LADDER = [
+  [tiebreakSection('Placement'), /sharing a chunk agent with up to seven others/, 'each finding shares a chunk agent with up to seven others'],
+  [tiebreakSection('Dispatch'), /F=review-\{ctx-id\}-tiebreak-chunk-\{c\}\.json R=review-\{ctx-id\}-tiebreak-chunk-\{c\}-reply\.txt/, 'the chunk entries and reply files are session-tmp paths per chunk'],
+  [tiebreakSection('Dispatch'), /a lens 3f vacuity finding's entry carries `vacuity: true`/, 'a lens 3f vacuity entry carries vacuity: true in the chunk file'],
+  [tiebreakSection('Resolve and act'), /For an entry carrying `vacuity: true` the code rewrites its block's `Verdict: confirmed` line to `Verdict: cant-tell`, so the dispatcher never edits a chunk reply/, 'the code, not the dispatcher, rewrites a vacuity entry in a chunk reply'],
+  [tiebreakSection('Dispatch'), /A finding's `\{n\}`, everywhere in this step, is its position from 1 in the de-duplicated entry list the chunks are formed from/, '{n} is defined once, over the de-duplicated entry list'],
+  [tiebreakSection('Dispatch'), /`\(c − 1\) × 8 \+ i \+ 1`/, "a chunk result's per-finding position is (c − 1) × 8 + i + 1"],
+  [tiebreakSection('Dispatch'), /in a pipeline run and standalone alike: `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/review-coordination\.js" finding-ids "\{path-F\}"`/, 'the chunk ids come from one finding-ids call over F, in both modes'],
+  [tiebreakSection('Dispatch'), /with `\{id\}` the entry's `id` from that chunk's `finding-ids` call/, "the chunk template's {id} is the finding-ids output"],
+  [tiebreakSection('Dispatch'), /On exit 2, fix the entry stderr names and re-run it once/, 'a finding-ids exit 2 is fixed and re-run once'],
+  [tiebreakSection('Resolve and act'), /On exit 2, fix the chunk file against stderr and re-run the chunk call once/, 'a chunk-call exit 2 is fixed and re-run once'],
+  [tiebreakSection('Resolve and act'), /any other exit, or a second failure, gives each of the chunk's findings step 2's no-verdict line/, "only a second chunk-call failure gives each finding step 2's no-verdict line"],
+  [tiebreakSection('Resolve and act'), /is re-dispatched once as a fresh chunk agent/, 'a failed chunk reply is re-dispatched once as a fresh chunk agent'],
+  [tiebreakSection('Resolve and act'), /its valid blocks are discarded, not settled/, "a failed chunk reply's valid blocks are discarded, not settled"],
+  [tiebreakSection('Resolve and act'), /one fresh single-finding agent, the finding's third and last judge attempt/, 'a twice-failed chunk sends each finding to one single-finding agent, its last attempt'],
+  [tiebreakSection('Resolve and act'), CHUNK_CALL, 'the chunk call runs once, with --run in a pipeline run'],
+  [tiebreakSection('Resolve and act'), UNSETTLED_REDISPATCH, 'each unsettled id gets one single-finding re-dispatch after the chunk call'],
+  [tiebreakSection('Resolve and act'), /at most three judge attempts/, 'a finding gets at most three judge attempts'],
+  [tiebreakSection('Resolve and act'), /`check-coverage` stays the backstop for an unsettled finding nobody followed up/, 'check-coverage stays the backstop'],
+  [tiebreakSection('Dispatched reviewer'), /Fallback ladder, per chunk first, then per finding:/, "the dispatched reviewer's ladder runs per chunk first, then per finding"],
+  // Final-review fix wave: a dispatched reviewer's timed-out chunk agent has spent its keep-alive bound
+  // (_shared/subagent-dispatch-core.md judges a child silent at the bound in-session), so it is never re-dispatched.
+  [tiebreakSection('Resolve and act'), /except a dispatched reviewer's timed-out chunk agent, which has already spent its keep-alive bound, so each of its findings goes straight to the inline rung, with no chunk re-dispatch\./, "a dispatched reviewer's timed-out chunk goes straight to the inline rung, with no chunk re-dispatch"],
+  [tiebreakSection('Dispatched reviewer'), /times out at that rule's bound as a chunk agent \(it has spent its keep-alive bound, so its chunk is not re-dispatched\)/, "the dispatched reviewer's ladder reads a timed-out chunk's findings inline, with no re-dispatch"],
+  // Final-review fix wave: single-finding follow-ups are capped like chunk agents, so a wave of twice-failed chunks cannot fan out 64 agents.
+  [tiebreakSection('Dispatch'), /Single-finding follow-ups \(`## Resolve and act`'s `unsettled`-id re-dispatches and per-finding fallbacks\) go out the same way: in parallel waves of \*\*8\*\*, each wave under that same wait rule\./, 'single-finding follow-ups go out in waves of 8 under the same wait rule'],
+];
+const chunkLadderMissing = sectionFactsMissing(CHUNK_LADDER);
+
+// The chunk call runs before any unsettled re-dispatch, and no probe call (a chunk call without --run) precedes it.
+function ladderOrderProblems(section) {
+  const problems = [];
+  const call = section.search(CHUNK_CALL);
+  const redispatch = section.search(UNSETTLED_REDISPATCH);
+  if (call === -1) problems.push('the chunk call marker is missing');
+  if (redispatch === -1) problems.push('the unsettled re-dispatch marker is missing');
+  if (call !== -1 && redispatch !== -1 && redispatch < call) problems.push('the unsettled re-dispatch comes before the chunk call');
+  if (/\bprobe call\b/i.test(section)) problems.push('a probe call is named');
+  if (/chunk call[^\n.]*without `--run`/.test(section)) problems.push('a chunk call runs without --run');
+  return problems;
+}
+
+test('Deliverable 4: the per-chunk failure ladder', () => {
+  const texts = liveTexts();
+  for (const [pick, , fact] of CHUNK_LADDER) assert.notEqual(pick(texts), '', `region not found for "${fact}"`);
+  assert.deepEqual(chunkLadderMissing(texts), []);
+  assert.deepEqual(ladderOrderProblems(resolveAndAct()), []);
+});
+
+test('Deliverable 4: the failure-ladder assertions can go red', () => {
+  assertEachSectionFactGoesRed(liveTexts(), CHUNK_LADDER, chunkLadderMissing);
+  const live = resolveAndAct();
+  // Permutation: the unsettled re-dispatch sentence moved above the chunk call, both markers kept.
+  const sentence = /Every id in its `unsettled` list[^\n]*?\(` Mode: inline\.`\)\./.exec(live);
+  assert.ok(sentence, 'the unsettled re-dispatch sentence was not found');
+  const withoutSentence = live.replace(sentence[0], '');
+  const callAt = withoutSentence.search(CHUNK_CALL);
+  assert.notEqual(callAt, -1);
+  const moved = withoutSentence.slice(0, callAt) + sentence[0] + ' ' + withoutSentence.slice(callAt);
+  assert.notEqual(moved, live);
+  assert.deepEqual(ladderOrderProblems(moved), ['the unsettled re-dispatch comes before the chunk call']);
+  const absent = live.replace(CHUNK_CALL, 'run it');
+  assert.notEqual(absent, live);
+  assert.deepEqual(ladderOrderProblems(absent), ['the chunk call marker is missing']);
+  const probed = live.replace(CHUNK_CALL, (m) => `first run a probe call to list the unsettled ids, then ${m}`);
+  assert.deepEqual(ladderOrderProblems(probed), ['a probe call is named']);
+  const noRun = live.replace(CHUNK_CALL, (m) => `run the chunk call once without \`--run\` to list the unsettled ids, then ${m}`);
+  assert.deepEqual(ladderOrderProblems(noRun), ['a chunk call runs without --run']);
+  // The probe check is anchored on the call phrase: a probe script elsewhere in the section is no probe call.
+  assert.deepEqual(ladderOrderProblems(`${live}\nA probe script stays in scratch.`), []);
+});
+
+// {n} is defined once, in ## Dispatch; its stride is CHUNK_MAX, and no other definition survives.
+const nStride = (text) => {
+  const m = /`\(c − 1\) × (\d+) \+ i \+ 1`/.exec(text);
+  return m ? Number(m[1]) : null;
+};
+const RETIRED_N_DEFINITIONS = [/`\{n\}` the entry's position in the set/, /the finding's position in the whole set/];
+const nDefinitionProblems = (text) => {
+  const problems = [];
+  if (nStride(sectionOf(text, '## Dispatch')) !== CHUNK_MAX) problems.push('the {n} stride is not CHUNK_MAX');
+  if ((text.match(/A finding's `\{n\}`, everywhere in this step/g) || []).length !== 1) problems.push('{n} is not defined exactly once');
+  if (RETIRED_N_DEFINITIONS.some((p) => p.test(text))) problems.push('a second {n} definition survives');
+  return problems;
+};
+
+test('Minor 4/7: {n} has one definition and its stride equals CHUNK_MAX', () => {
+  assert.deepEqual(nDefinitionProblems(tiebreakText()), []);
+});
+
+test('Minor 4/7: the {n} assertions can go red', () => {
+  const text = tiebreakText();
+  const drifted = text.replace('`(c − 1) × 8 + i + 1`', '`(c − 1) × 9 + i + 1`');
+  assert.notEqual(drifted, text);
+  assert.deepEqual(nDefinitionProblems(drifted), ['the {n} stride is not CHUNK_MAX']);
+  assert.deepEqual(nDefinitionProblems(text.replace('(`{n}` as `## Dispatch` defines it)', "(`{n}` the entry's position in the set)")), ['a second {n} definition survives']);
+  assert.deepEqual(nDefinitionProblems(`${text}\nA finding's \`{n}\`, everywhere in this step, is something else.`), ['{n} is not defined exactly once']);
+});
+
+// Important 1: F is resolved and written before the finding-ids call that reads it.
+const F_RESOLVE = 'F=review-{ctx-id}-tiebreak-chunk-{c}.json';
+const FINDING_IDS_CALL = 'finding-ids "{path-F}"';
+const findingIdsOrderProblems = (dispatch) => {
+  const f = dispatch.indexOf(F_RESOLVE);
+  const ids = dispatch.indexOf(FINDING_IDS_CALL);
+  if (f === -1 || ids === -1) return ['marker missing'];
+  return ids < f ? ['finding-ids runs before F is resolved'] : [];
+};
+
+test('Important 1: the chunk file is resolved before finding-ids reads it', () => {
+  assert.deepEqual(findingIdsOrderProblems(sectionOf(tiebreakText(), '## Dispatch')), []);
+});
+
+test('Important 1: the finding-ids order assertion can go red', () => {
+  const dispatch = sectionOf(tiebreakText(), '## Dispatch');
+  const call = `\`node "\${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" ${FINDING_IDS_CALL}\``;
+  assert.ok(dispatch.includes(call), 'the finding-ids call anchor was not found');
+  const swapped = dispatch.replace(call, 'it').replace(F_RESOLVE, `${call} ${F_RESOLVE}`);
+  assert.notEqual(swapped, dispatch);
+  assert.deepEqual(findingIdsOrderProblems(swapped), ['finding-ids runs before F is resolved']);
+  assert.deepEqual(findingIdsOrderProblems(dispatch.replaceAll(FINDING_IDS_CALL, 'x')), ['marker missing']);
 });

@@ -269,7 +269,27 @@ function isIncompleteDeferral(resolution, excludeRecords) {
 // The rules a status/Resolution pair owes before a row is written — the sanctioned writer's half of
 // _shared/ledger-format.md's Resolution-text requirements. `incompleteDeferral` marks a `deferred`
 // row that carries only a valid `Defer-reason:`: accepted, but settleRow may later resolve it.
-function checkLedgerStatus(status, resolution, { excludeRecords = [], repo = null } = {}) {
+// #4620: a Resolution claiming `carried to the acceptance packet as decision:{id}` is accepted only when
+// that fact exists in the run's packet-facts/decisions.json — the claim is otherwise a way around the
+// deferral gate. null when it does not claim, or the fact is there; else the refusal text.
+function carriedFactProblem(text, runDir) {
+  const match = wrapUpPack().LEDGER_CARRIED_RE.exec(text);
+  if (!match) return null;
+  const factId = match[0].slice(match[0].indexOf('decision:'));
+  const refuse = (why) => `status 'deferred' names the carried decision fact ${factId}, but ${why}`;
+  if (!runDir) return refuse('no run directory resolved to check packet-facts/decisions.json against');
+  const file = path.join(runDir, 'packet-facts', 'decisions.json');
+  let raw;
+  try { raw = fs.readFileSync(file, 'utf8'); } catch (err) {
+    return refuse(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR') ? `${file} does not exist` : `${file} could not be read (${err && err.message})`);
+  }
+  let facts;
+  try { facts = JSON.parse(raw); } catch { return refuse(`${file} does not parse as JSON`); }
+  if (!Array.isArray(facts)) return refuse(`${file} is not a JSON array`);
+  return facts.some((f) => f && f.id === factId) ? null : refuse(`${file} holds no fact with the id "${factId}"${/[.,;:!?)\]]$/.test(factId) ? ' (looked up exactly as written, trailing punctuation included)' : ''}`);
+}
+
+function checkLedgerStatus(status, resolution, { excludeRecords = [], repo = null, runDir = null } = {}) {
   const text = String(resolution ?? '');
   const ok = { refusal: null, incompleteDeferral: false };
   if (!LEDGER_STATUSES.includes(status)) {
@@ -277,6 +297,8 @@ function checkLedgerStatus(status, resolution, { excludeRecords = [], repo = nul
   }
   if (status === 'fixed') return { ...ok, refusal: checkFixed(text, repo) };
   if (status === 'deferred') {
+    const carriedProblem = carriedFactProblem(text, runDir);
+    if (carriedProblem) return { ...ok, refusal: carriedProblem };
     if (!isIncompleteDeferral(text, excludeRecords)) return ok;
     if (wrapUpPack().hasValidDeferReason(text)) return { refusal: null, incompleteDeferral: true };
     return {
@@ -320,14 +342,17 @@ function settleRow({
     const [, , , currentRaw, currentResolution] = ledgerRowCells(parseLedgerTable(text).rows.get(String(row)));
     const current = (currentRaw || '').toLowerCase();
     const shown = current || '(empty)';
-    const { LEDGER_DEFERRED_STAGED_RE } = wrapUpPack();
+    const { LEDGER_DEFERRED_STAGED_RE, LEDGER_CARRIED_RE } = wrapUpPack();
+    // #4620: the one terminal-to-terminal move — a control-mode console carrying a staged-pointer deferral into the packet.
+    const carriedMove = status === 'deferred' && current === 'deferred' && LEDGER_DEFERRED_STAGED_RE.test(currentResolution)
+      && LEDGER_CARRIED_RE.test(String(resolution || ''));
     if (status === 'open') {
       const refusedReopen = current === 'deferred' && LEDGER_DEFERRED_STAGED_RE.test(currentResolution)
         && String(resolution || '').includes(REFUSED_PROPOSAL_NOTE);
       if (current !== 'open' && !refusedReopen) {
         throw new Error(`row #${row} is ${shown}; only an open row, or a deferred row naming a staged/ path reopened with the note '${REFUSED_PROPOSAL_NOTE}' (the refused-proposal reopen, _shared/ledger-format.md's Resolution-text requirements), can be set to open`);
       }
-    } else if (TERMINAL_STATUSES.includes(current) && !(current === 'deferred' && isIncompleteDeferral(currentResolution, excludeRecords))) {
+    } else if (TERMINAL_STATUSES.includes(current) && !carriedMove && !(current === 'deferred' && isIncompleteDeferral(currentResolution, excludeRecords))) {
       throw new Error(`row #${row} is already ${shown} (terminal) — a wrong resolution gets a new item`);
     }
     writeFileAtomic(ledgerPath, rewritten);

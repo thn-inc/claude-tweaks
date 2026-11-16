@@ -288,13 +288,19 @@ async function collectDispatches(paths, events, cwd) {
   let found = 0;
   for (const dir of dirs) {
     const r = await readDispatches(dir, { window });
+    reasons.push(...r.dirNotes);
     if (r.notFound) { reasons.push(r.notFound); continue; }
     found += 1;
     items.push(...r.items);
     excludedOutsideWindow += r.excludedOutsideWindow;
   }
   if (found === 0) return { notFound: reasons.length ? reasons.join('; ') : 'no transcript resolved' };
-  const agg = aggregateDispatches(items);
+  // A direct (non-workflow) item keeps its pre-workflow shape: both keys null -> dropped.
+  const agg = aggregateDispatches(items.map((d) => {
+    if (d.workflowRunId !== null || d.workflowPhase !== null) return d;
+    const { workflowRunId: _run, workflowPhase: _phase, ...direct } = d;
+    return direct;
+  }));
   const out = { scope: window ? 'run-window' : 'whole-session', items: agg.items, byTier: agg.byTier, byRole: agg.byRole, excludedOutsideWindow };
   // A dir that yielded nothing beside one that did is still named, not dropped.
   if (reasons.length) out.notFoundDirs = reasons;
@@ -363,7 +369,10 @@ async function run(argv, deps) {
       notes.push(`tokens: transcript not found (${reason})`);
     }
   }
-  const tokens = wantTokens ? joinTokens(out.phases, rows) : null;
+  // Computed before the join: each workflow agent's start places it in a phase's subagents.
+  const dispatches = wantTokens ? await collectDispatches(paths, events.events, cwd) : null;
+  const workflowStarts = ((dispatches && dispatches.items) || []).filter((d) => d.workflowRunId != null && d.startTs).map((d) => d.startTs);
+  const tokens = wantTokens ? joinTokens(out.phases, rows, workflowStarts) : null;
   if (tokens) tokens.totals.rows = rows.length;
   const guard = wantTokens ? countGuardEvents(events.events) : null;
 
@@ -378,7 +387,7 @@ async function run(argv, deps) {
     timing.totals.guard = guard;
     timing.transcripts = transcripts;
     if (notes.length) timing.notes = notes;
-    timing.dispatches = await collectDispatches(paths, events.events, cwd);
+    timing.dispatches = dispatches;
   }
   // #4029: the efficiency-budget check. A transcript that yielded no rows leaves
   // the transcript-backed totals out, so they read as unmeasured, never as 0 -> ok.

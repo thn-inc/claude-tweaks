@@ -9,7 +9,8 @@
 // resolved ceiling (never resolve a console at supervised/trusted), 5 a
 // console.json this process must not clobber — one already rendered on the PR
 // and awaiting a human, or one that will not parse (fail closed); never under
-// `--dry-run`, which writes nothing and so has nothing to clobber. A console.json
+// `--dry-run`, which writes nothing and so has nothing to clobber, 6 (control mode) the carried
+// decision facts could not be written — nothing else is written then. A console.json
 // already carrying `resolved: true` is not an error, in either shape: it
 // re-renders and exits 0.
 //
@@ -19,7 +20,7 @@
 // It needs no ceiling (it only records what already happened). Exit 0 rewrote or
 // already there, 2 malformed, 3 --run not anchored or the write failed, 5 refused
 // (no console.json, not this CLI's shape, unknown/duplicate id, resolution not
-// rewritable). `--resolution pending` rewrites one stored item `approve` → `pending` (#4636): a
+// rewritable), 6 (control mode) the carried fact could not be written. `--resolution pending` rewrites one stored item `approve` → `pending` (#4636): a
 // Reference-repairs row whose staged diff no longer applies at Phase 4 (`reference-repair-stale`).
 //
 // Third shape (#4636): `--run <dir> --check-repair <file> [--full]` re-runs the reference-repair
@@ -33,6 +34,52 @@
 // nothing and needs no ceiling. Exit 0 clear, 2 malformed (or `--full` on a file outside staged/),
 // 3 --run not anchored, 5 held, unclassified or unreadable. It takes none of --policy, --dry-run,
 // --json, --set-item.
+//
+// Fourth shape (#4620): `--run <dir> --ceiling` — read-only. Prints one line, `console-resolve.js: ceiling
+// {tier} consoleAutoResolve {true|false} control-mode {on|off} source {cli|explicit|control-mode|invalid-autonomy|default}`,
+// the effective ceiling the Review Console's short-circuit pre-check reads (run config over project policy,
+// control mode under any explicit `autonomy`, exactly as the resolve shape computes it). It takes no other
+// flag, needs no ceiling and writes nothing. Exit 0 printed, 2 malformed (any other flag), 3 --run not
+// anchored, or the policy could not be read (`console-resolve.js: ceiling unreadable ({message})`: an
+// unreadable policy never reads as `supervised`).
+//
+// Fifth shape (#4620): `--run <dir> --converge <items.json>` — run-end residue convergence
+// (lib/console/residue-convergence.js), called from _shared/ledger-format.md's control-mode paragraph.
+// It reads a JSON array of `{ id, source: ledger|insight, text, status, deferReason?, belowFloor?,
+// filingFailed? }`, ends every item resolved, filed, digested or carried, writes every carried item's
+// decision fact through writeDecisionFacts, logs one AUTO line per item (SKIP for a failed one), and prints `{ items: [{ id,
+// state, proposal?, factId?, error? }], failed: [ids] }` as JSON. It needs control mode on with consoleAutoResolve
+// granted (exit 4 otherwise, nothing written) and takes no other flag (`--dry-run` included). Exit 0 converged, 2 malformed (any other flag, or an unreadable,
+// unparseable or malformed items file), 3 --run not anchored or the decisions.md entries could not be
+// written (the JSON is printed first), 6 a carried fact could not be written — every carried item
+// then reads `failed`, the JSON is printed, and stderr names each one.
+//
+// Sixth shape (#4620): `--run <dir> --memory-write <target> --memory-dir <dir> --content-file <file>` — one
+// automatic, revertable memory write (lib/console/memory-write.js), the Review Console's step 8 under control
+// mode. The target must resolve inside --memory-dir (symlinks followed; a create needs its parent to exist). It
+// writes the target, then logs one AUTO entry under /wrap-up naming the path, the prior sha256 (`none` on a
+// create) and the whole-file diff (reverse with `git apply -R`); a diff over 20 KiB stores the prior content
+// at `{run}/staged/.memory-prior-{sha12}.md` (dot-prefixed so it never becomes a console item) and the entry
+// names that path instead. It needs control mode on with consoleAutoResolve granted (exit 4 otherwise, nothing
+// written) and takes no other flag. Exit 0 written, 2 malformed (any
+// other flag, a missing flag, or an unreadable --content-file), 3 --run not anchored, the target or backup
+// write failed (nothing logged), or the entry could not be written (stderr names the written path), 5 the
+// memory write refused, nothing written (target outside or unresolvable in the memory dir — why
+// `outside-memory-dir` or `parent-missing` — or the memory dir unreadable, `memory-dir-unreadable`).
+//
+// Control mode (#4620, `control-mode: on`): the Review Console resolves what policy can and CARRIES
+// every item a human must decide — `pending`, `keep-staged`, `refused` — as a `carried` item whose
+// decision fact lands in `{run}/packet-facts/decisions.json`. This file owns every write of that
+// file (`writeDecisionFacts`): merge by id (first copy wins), under a lock, through an atomic write,
+// and an unreadable existing file is never overwritten. The facts are written BEFORE the decisions
+// block and console.json; a failed write exits 6, names every item it could not carry, and writes
+// nothing else, so no item is ever dropped. Under `--set-item`, control mode stores a requested
+// `keep-staged`/`pending` as `carried`; `--resolution carried` is the one route for a failed or
+// refused `ledger-record-*` or Queue-write item, and `--ledger <path>` (a `--set-item` modifier only)
+// settles the one ledger row naming `staged/{id}` `deferred` with `carried to the acceptance packet as
+// {factId}` — exit 5 when no row names it or the ledger path is refused (resolveLedgerPath's confinement: a
+// ledger.md or *-ledger.md under the run or worktree), 3 when the settle throws. `carried` and `--ledger` need
+// control mode and a ledger-record-* id: otherwise exit 2. Exit 6: the facts could not be written.
 'use strict';
 
 const fs = require('fs');
@@ -43,19 +90,31 @@ const { resolveTarget } = require('./lib/stage-item/write');
 const { stackVerdicts } = require('./lib/staged-patch/stack-check');
 const { appendEntry, formatEntry } = require('./lib/log-decision/append');
 const { resolvePolicyConfig } = require('./lib/policy-schema');
-const { resolveCeiling, bookkeepingPermissions } = require('./lib/issues/autonomy');
+const { effectiveCeiling, bookkeepingPermissions } = require('./lib/issues/autonomy');
 const { extractPendingGrantedAt, partitionGrantComments } = require('./lib/issues/grant-maturation');
 const { writeFileAtomic } = require('./lib/atomic-write');
 const { unresolvedItems, splitMissing, formatResidueLines, consoleResidueItems } = require('./lib/console/residue');
-const { REWRITE_FROM, rewriteItemResolution } = require('./lib/console/item-resolution');
+const { REWRITE_FROM, CARRY_REWRITE_FROM, REWRITE_TARGETS, REWRITE_ONLY_IN, rewriteItemResolution } = require('./lib/console/item-resolution');
+const { planMemoryWrite, resolveMemoryTarget } = require('./lib/console/memory-write');
+const { decisionFactFor } = require('./lib/console/decision-facts');
+const { convergeResidue, composeResidueProposal, RESIDUE_FAILED } = require('./lib/console/residue-convergence');
+const { withLock } = require('./lib/file-lock');
+const { parseLedgerTable, resolveLedgerPath, TERMINAL_STATUSES } = require('./lib/wrap-up/ledger-write');
+const { ledgerRowCells } = require('./lib/wrap-up/ledger-cells');
+const { settleRow } = require('./lib/stage-item/ledger');
 const { ghOptions } = require('./lib/repo-resolve');
 const { sensitivePathsOf } = require('./lib/express/policy');
-const { canonicalRealpath } = require('./lib/path-guard');
+const { canonicalRealpath, lstatType } = require('./lib/path-guard');
 const { REFERENCE_REPAIR_REASONS, stagedDiffPaths, referenceRepairFloorHits, referenceRepairFloorReason, referenceRepairHoldReason, referenceFindingsByFile } = require('./lib/console/reference-repair');
 
-const USAGE = 'usage: console-resolve.js --run <dir> --policy console-auto [--dry-run] [--json]\n'
-  + '       console-resolve.js --run <dir> --set-item <id> --resolution keep-staged|pending --reason <text>\n'
-  + '       console-resolve.js --run <dir> --check-repair <file> [--full]';
+const EXIT_CARRY_FAILED = 6;
+
+const USAGE = 'usage: console-resolve.js --run <dir> --policy console-auto [--dry-run] [--json]  (exit 6: carried decision facts could not be written)\n'
+  + '       console-resolve.js --run <dir> --set-item <id> --resolution keep-staged|pending|carried --reason <text> [--ledger <path>]  (carried and --ledger: control mode only, --ledger on a ledger-record-* id, else exit 2; exit 5 refused incl. a refused ledger path; exit 6 carried fact could not be written)\n'
+  + '       console-resolve.js --run <dir> --check-repair <file> [--full]\n'
+  + '       console-resolve.js --run <dir> --ceiling  (read-only; takes no other flag; exit 3 unanchored or policy unreadable)\n'
+  + '       console-resolve.js --run <dir> --converge <items.json>  (takes no other flag; exit 2 malformed items file, 3 unanchored or decisions.md unwritable, 6 a carried fact could not be written)\n'
+  + '       console-resolve.js --run <dir> --memory-write <target> --memory-dir <dir> --content-file <file>  (takes no other flag; exit 2 malformed or unreadable content file, 3 unanchored or a write failed, 5 memory write refused: target outside or unresolvable in the memory dir, or memory dir unreadable)';
 
 class UsageError extends Error {}
 
@@ -73,8 +132,8 @@ function needsAHumanBlock(unresolved, runDir, consolePath) {
 }
 
 function parseArgs(argv) {
-  const out = { run: null, policy: null, dryRun: false, json: false, setItem: null, resolution: null, reason: null, checkRepair: null, full: false };
-  const valued = { '--run': 'run', '--policy': 'policy', '--set-item': 'setItem', '--resolution': 'resolution', '--reason': 'reason', '--check-repair': 'checkRepair' };
+  const out = { run: null, policy: null, dryRun: false, json: false, setItem: null, resolution: null, reason: null, checkRepair: null, full: false, ledger: null, ceiling: false, converge: null, memoryWrite: null, memoryDir: null, contentFile: null };
+  const valued = { '--memory-write': 'memoryWrite', '--memory-dir': 'memoryDir', '--content-file': 'contentFile', '--run': 'run', '--policy': 'policy', '--set-item': 'setItem', '--resolution': 'resolution', '--reason': 'reason', '--check-repair': 'checkRepair', '--ledger': 'ledger', '--converge': 'converge' };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     if (Object.prototype.hasOwnProperty.call(valued, flag)) {
@@ -85,12 +144,28 @@ function parseArgs(argv) {
     } else if (flag === '--dry-run') out.dryRun = true;
     else if (flag === '--json') out.json = true;
     else if (flag === '--full') out.full = true;
+    else if (flag === '--ceiling') out.ceiling = true;
     else throw new UsageError(`unknown flag: ${flag}`);
   }
   if (!out.run) throw new UsageError('--run <dir> is required');
+  if (out.memoryWrite !== null || out.memoryDir !== null || out.contentFile !== null) {
+    if (out.memoryWrite === null || out.memoryDir === null || out.contentFile === null) throw new UsageError('--memory-write, --memory-dir and --content-file go together');
+    if (out.memoryWrite === '' || out.memoryDir === '' || out.contentFile === '') throw new UsageError('--memory-write, --memory-dir and --content-file require non-empty values');
+    if (out.policy !== null || out.dryRun || out.json || out.setItem !== null || out.resolution !== null || out.reason !== null || out.checkRepair !== null || out.full || out.ledger !== null || out.ceiling || out.converge !== null) throw new UsageError('--memory-write takes no other flag than --run, --memory-dir and --content-file');
+    return out;
+  }
+  if (out.ceiling) {
+    if (out.policy !== null || out.dryRun || out.json || out.setItem !== null || out.resolution !== null || out.reason !== null || out.checkRepair !== null || out.full || out.ledger !== null || out.converge !== null) throw new UsageError('--ceiling takes no other flag than --run');
+    return out;
+  }
+  if (out.converge !== null) {
+    if (out.policy !== null || out.dryRun || out.json || out.setItem !== null || out.resolution !== null || out.reason !== null || out.checkRepair !== null || out.full || out.ledger !== null) throw new UsageError('--converge takes no other flag than --run (--dry-run included)');
+    if (out.converge === '') throw new UsageError('--converge requires a non-empty file');
+    return out;
+  }
   if (out.full && out.checkRepair === null) throw new UsageError('--full requires --check-repair');
   if (out.checkRepair !== null) {
-    if (out.policy !== null || out.dryRun || out.json || out.setItem !== null || out.resolution !== null || out.reason !== null) throw new UsageError('--check-repair takes none of --policy, --dry-run, --json, --set-item, --resolution, --reason');
+    if (out.policy !== null || out.dryRun || out.json || out.setItem !== null || out.resolution !== null || out.reason !== null || out.ledger !== null) throw new UsageError('--check-repair takes none of --policy, --dry-run, --json, --set-item, --resolution, --reason, --ledger');
     if (out.checkRepair === '') throw new UsageError('--check-repair requires a non-empty file');
     return out;
   }
@@ -98,10 +173,12 @@ function parseArgs(argv) {
     if (out.policy !== null || out.dryRun || out.json) throw new UsageError('--set-item takes none of --policy, --dry-run, --json');
     if (out.setItem === '') throw new UsageError('--set-item requires a non-empty id');
     if (!out.resolution || !out.reason) throw new UsageError('--set-item requires --resolution and --reason (both non-empty)');
-    if (!Object.prototype.hasOwnProperty.call(REWRITE_FROM, out.resolution)) throw new UsageError(`--resolution must be one of ${Object.keys(REWRITE_FROM).join(', ')} (got ${out.resolution})`);
+    if (out.ledger === '') throw new UsageError('--ledger requires a non-empty path');
+    if (!REWRITE_TARGETS.includes(out.resolution)) throw new UsageError(`--resolution must be one of ${Object.keys(REWRITE_FROM).join(', ')} (got ${out.resolution})`);
     return out;
   }
   if (out.resolution !== null || out.reason !== null) throw new UsageError('--resolution and --reason require --set-item');
+  if (out.ledger !== null) throw new UsageError('--ledger requires --set-item');
   if (out.policy !== 'console-auto') throw new UsageError(`--policy must be console-auto (got ${out.policy || 'nothing'})`);
   return out;
 }
@@ -113,20 +190,38 @@ function defaultExecFile(cmd, args, opts = {}) {
 // The ceiling AND the veto window, resolved in-process with the same precedence
 // resolve-policy.js applies (run config over project policy): `resolvePolicyKeys`
 // already folds config.yml over policy.yml, so the single resolved value is what
-// resolveCeiling sees as runConfig. One call, both keys — a run that widened
-// `grant-veto-window-hours` must not have evaluateMaturation fall back to its
-// own 24h default the way this CLI's first cut did.
-function readPolicy({ execFile, cwd, runDir }) {
+// effectiveCeiling sees as the autonomy entry (it also composes `control-mode`).
+// One call, all keys — a run that widened `grant-veto-window-hours` must not
+// have evaluateMaturation fall back to its own 24h default the way this CLI's
+// first cut did.
+//
+// `strict` (the `--ceiling` query only): an absent file (ENOENT/ENOTDIR) still reads as unset, but any
+// other read failure, or an `autonomy`/`control-mode` entry carrying an `error`, throws — a policy that
+// cannot be read must never print as `supervised`. The other shapes keep the tolerant read. (The `.error`
+// entry only arises if `autonomy` or `control-mode` is retired or removed from the schema — fail-closed
+// against schema drift.)
+function readPolicy({ execFile, cwd, runDir, strict = false }) {
   const git = (args) => execFile('git', args, { cwd });
-  const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
-  const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['autonomy', 'grant-veto-window-hours', 'merge-sensitive-paths'] });
+  const readFile = (p) => {
+    try { return fs.readFileSync(p, 'utf8'); } catch (err) {
+      if (strict && !(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))) throw err;
+      return null;
+    }
+  };
+  const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['autonomy', 'control-mode', 'grant-veto-window-hours', 'merge-sensitive-paths'] });
+  if (strict) {
+    for (const key of ['autonomy', 'control-mode']) {
+      if (result[key] && result[key].error !== undefined) throw new Error(`${key} policy entry is unreadable: ${result[key].error}`);
+    }
+  }
   const valueOf = (key) => { const entry = result[key]; return entry && entry.error === undefined ? entry.value : null; };
   const raw = valueOf('grant-veto-window-hours');
   const veto = raw === null || raw === undefined ? NaN : Number(raw);
   // An unreadable `merge-sensitive-paths` is null, never []: the reference-repair floor holds on it (#4636).
   const sensitiveEntry = result['merge-sensitive-paths'];
   const sensitivePaths = sensitiveEntry && sensitiveEntry.error === undefined ? sensitivePathsOf(sensitiveEntry) : null;
-  return { ceiling: resolveCeiling({ runConfig: valueOf('autonomy') }), vetoWindowHours: Number.isFinite(veto) ? veto : undefined, sensitivePaths };
+  const { ceiling, controlMode, source: ceilingSource } = effectiveCeiling({ autonomyEntry: result.autonomy, controlModeEntry: result['control-mode'] });
+  return { ceiling, controlMode, ceilingSource, vetoWindowHours: Number.isFinite(veto) ? veto : undefined, sensitivePaths };
 }
 
 // Live grants per member — the Authorization read is never a snapshot
@@ -184,9 +279,233 @@ function ghCheckPrState(execFile, cwd) {
   };
 }
 
+// #4620: the one writer of `{runDir}/packet-facts/decisions.json`. Reads the file directly (ENOENT/ENOTDIR
+// is empty; unparseable or not an array throws — an existing file is never overwritten blind), merges by
+// `id` with the first copy winning, and writes through writeFileAtomic under a fail-closed lock. Throws on
+// any failure so a caller never believes an item was carried when it was not.
+function writeDecisionFacts(runDir, facts) {
+  const dir = path.join(runDir, 'packet-facts');
+  const file = path.join(dir, 'decisions.json');
+  fs.mkdirSync(dir, { recursive: true });
+  return withLock(path.join(dir, '.decisions.lock'), () => {
+    let existing = [];
+    let raw = null;
+    try { raw = fs.readFileSync(file, 'utf8'); } catch (err) {
+      if (!(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))) throw err;
+    }
+    if (raw !== null) {
+      let parsed;
+      try { parsed = JSON.parse(raw); } catch (err) { throw new Error(`${file} does not parse as JSON (${err.message}) — not overwritten`); }
+      if (!Array.isArray(parsed)) throw new Error(`${file} is not a JSON array — not overwritten`);
+      existing = parsed;
+    }
+    const seen = new Set(existing.map((f) => (f && typeof f === 'object' ? f.id : undefined)).filter((id) => id !== undefined));
+    const added = [];
+    for (const fact of facts) {
+      if (seen.has(fact.id)) continue;
+      seen.add(fact.id);
+      added.push(fact);
+    }
+    if (added.length > 0) writeFileAtomic(file, `${JSON.stringify([...existing, ...added], null, 2)}\n`);
+    return { path: file, added: added.length };
+  }, { failClosed: true });
+}
+
+function carryFailure(stderr, ids, err) {
+  stderr(`console-resolve.js: could not carry ${ids.length} item(s) to the acceptance packet (${err && err.message ? err.message : err}) — ${ids.join(', ')}\n`);
+  return EXIT_CARRY_FAILED;
+}
+
+// Control mode as the carry paths use it: on AND consoleAutoResolve granted, the one gate controlModeGate holds
+// for the other shapes (an explicit lower autonomy tier keeps the human-present console, so nothing carries);
+// a read that throws counts as off.
+function controlModeOn({ execFile, cwd, runDir }) {
+  try {
+    const { ceiling, controlMode } = readPolicy({ execFile, cwd: cwd(), runDir });
+    return controlMode === true && bookkeepingPermissions(ceiling).consoleAutoResolve === true;
+  } catch { return false; }
+}
+
+// #4620 review: `--memory-write` and `--converge` act without a human, so the one control-mode gate the
+// resolve shape uses (control mode on and consoleAutoResolve granted, whatever set the ceiling) is held here
+// in code, not left to the prose that tells the agent when to call them. Exit 4, as the resolve shape's own
+// ceiling refusal; a policy that cannot be read fails closed through the same supervised default.
+function controlModeGate({ shape, runDir, stderr, execFile, cwd }) {
+  let granted = false;
+  try {
+    const { ceiling, controlMode } = readPolicy({ execFile, cwd: cwd(), runDir });
+    granted = controlMode === true && bookkeepingPermissions(ceiling).consoleAutoResolve === true;
+  } catch { granted = false; }
+  if (granted) return null;
+  stderr(`console-resolve.js: ${shape} needs control mode on with consoleAutoResolve granted — nothing written\n`);
+  return 4;
+}
+
+// The one ledger row a carried `ledger-record-*` item settles: the row whose Resolution names `staged/{id}`.
+// { rows: [{ number, resolution }] } of the rows naming it, plus `already`: the numbers of rows that
+// already read the carried text for this fact.
+function findCarryRows(ledgerText, id, factId) {
+  const table = parseLedgerTable(ledgerText);
+  const named = new RegExp(`\\bstaged/${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-]|\\.\\w)`);
+  const carriedText = `carried to the acceptance packet as ${factId}`;
+  const rows = [];
+  const already = [];
+  for (const [number, line] of table.rows) {
+    const cells = ledgerRowCells(line);
+    const resolution = cells.slice(4).join('|');
+    if (named.test(resolution)) rows.push({ number, resolution, status: String(cells[3] || '').trim().toLowerCase() });
+    else if (resolution.includes(carriedText)) already.push(number);
+  }
+  return { rows, already };
+}
+
+// `--set-item … carried` (also what a requested keep-staged/pending becomes under control mode): the item's
+// decision fact first, then — for a `ledger-record-*` item with `--ledger` — its ledger row, and only then the
+// stored rewrite. Returns an exit code, or null when the item does not qualify so the plain path refuses or
+// reports it exactly as it always has.
+function carryItem(o, runDir, { stdout, stderr, now, cwd }) {
+  const consolePath = path.join(runDir, 'console.json');
+  let stored = null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(consolePath, 'utf8'));
+    if (parsed && typeof parsed === 'object' && parsed.mode === 'auto-resolve' && Array.isArray(parsed.items)) {
+      const matches = parsed.items.filter((i) => i && i.id === o.setItem);
+      if (matches.length === 1) [stored] = matches;
+    }
+  } catch { stored = null; }
+  if (stored === null) return null;
+  const alreadyCarried = stored.resolution === 'carried';
+  if (!alreadyCarried) {
+    if (o.resolution === 'carried') {
+      if (!CARRY_REWRITE_FROM.includes(stored.resolution)) return null;
+    } else {
+      // A requested keep-staged/pending keeps its own source rules; only a rewrite it would have made becomes a carry.
+      if (stored.resolution === o.resolution || !REWRITE_FROM[o.resolution].includes(stored.resolution)) return null;
+      if (REWRITE_ONLY_IN[o.resolution] && stored.section !== REWRITE_ONLY_IN[o.resolution]) return null;
+    }
+  }
+  const staged = lstatType(path.join(runDir, 'staged', o.setItem)).type === 'file';
+  const fact = decisionFactFor({
+    id: o.setItem, section: stored.section, resolution: alreadyCarried ? (stored.carriedFrom || stored.resolution) : stored.resolution, reason: o.reason,
+  }, { runDir, staged });
+  const carriedText = `carried to the acceptance packet as ${fact.id}`;
+
+  // The ledger row is located (read-only) before anything is written, so a refusal leaves no orphan fact.
+  let ledger = null;
+  if (o.ledger !== null && o.setItem.startsWith('ledger-record-')) {
+    // The same confinement every other ledger writer applies (hooks.js ledger-row): a ledger.md or *-ledger.md
+    // file under the run directory or the worktree. A refused path is exit 5, with nothing written.
+    const resolved = resolveLedgerPath({ runDir, worktree: cwd(), explicit: path.resolve(cwd(), o.ledger) });
+    if (!resolved.ok) {
+      stderr(`console-resolve.js: ledger ${resolved.reason}${resolved.detail ? ` (${resolved.detail})` : ''}: ${o.ledger} — nothing written\n`);
+      return 5;
+    }
+    const ledgerPath = resolved.path;
+    let text;
+    try { text = fs.readFileSync(ledgerPath, 'utf8'); } catch (err) {
+      stderr(`console-resolve.js: could not read ledger ${ledgerPath}: ${err && err.message ? err.message : err} — nothing written\n`);
+      return 3;
+    }
+    let found;
+    try { found = findCarryRows(text, o.setItem, fact.id); } catch (err) {
+      stderr(`console-resolve.js: could not parse ledger ${ledgerPath}: ${err && err.message ? err.message : err} — nothing written\n`);
+      return 3;
+    }
+    if (found.rows.length === 0 && found.already.length === 0) {
+      stderr(`console-resolve.js: no ledger row names staged/${o.setItem} in ${ledgerPath} — nothing written\n`);
+      return 5;
+    }
+    if (found.rows.length > 1) {
+      stderr(`console-resolve.js: ${found.rows.length} ledger rows name staged/${o.setItem} in ${ledgerPath} (#${found.rows.map((r) => r.number).join(', #')}) — nothing written\n`);
+      return 5;
+    }
+    // A row already final in a terminal status the carry cannot settle (settleRow would throw after the fact landed) is refused here;
+    // any other status (open, empty, malformed) falls through to settleRow's own handling.
+    if (found.rows.length === 1 && TERMINAL_STATUSES.includes(found.rows[0].status) && found.rows[0].status !== 'deferred') {
+      stderr(`console-resolve.js: ledger row #${found.rows[0].number} naming staged/${o.setItem} is already ${found.rows[0].status} (terminal) — nothing written\n`);
+      return 5;
+    }
+    ledger = { ledgerPath, row: found.rows.length === 1 ? found.rows[0].number : null, alreadyRow: found.already[0] };
+  }
+
+  try { writeDecisionFacts(runDir, [fact]); } catch (err) { return carryFailure(stderr, [o.setItem], err); }
+
+  let ledgerNote = '';
+  let ledgerChanged = false;
+  if (ledger !== null) {
+    if (ledger.row === null) {
+      ledgerNote = `ledger row #${ledger.alreadyRow} already carried`;
+    } else {
+      try {
+        settleRow({ runDir, ledgerPath: ledger.ledgerPath, row: ledger.row, status: 'deferred', resolution: carriedText });
+      } catch (err) {
+        stderr(`console-resolve.js: could not settle ledger row #${ledger.row} in ${ledger.ledgerPath}: ${err && err.message ? err.message : err} — item ${o.setItem} unchanged\n`);
+        return 3;
+      }
+      ledgerNote = `ledger row #${ledger.row} settled`;
+      ledgerChanged = true;
+    }
+  }
+
+  const at = new Date(now()).toISOString();
+  const why = `${carriedText} — ${o.reason}`;
+  let r;
+  try {
+    r = rewriteItemResolution({ consolePath, id: o.setItem, resolution: 'carried', reason: why, at });
+  } catch (err) {
+    stderr(`console-resolve.js: could not write ${consolePath}: ${err && err.message ? err.message : err}\n`);
+    return 3;
+  }
+  if (r.status === 'refused') {
+    // The fact (and possibly the ledger row) already landed: say so, never "nothing written".
+    stderr(`console-resolve.js: ${r.why} — the decision fact ${fact.id} is in decisions.json${ledgerChanged ? ` and ledger row #${ledger.row} is settled` : ''}; the console item is unchanged\n`);
+    return 5;
+  }
+  // One helper for both paths: appends the AUTO line; returns null, or the message a failed append leaves.
+  const logLine = (text) => {
+    try {
+      appendEntry({ runDir, section: '/wrap-up', entry: formatEntry({ status: 'AUTO', now: now(), step: 'Review Console', text, reversibility: 'n/a' }) });
+      return null;
+    } catch (err) { return err && err.message ? err.message : String(err); }
+  };
+  const unchanged = r.status === 'unchanged';
+  // A repeat call that changed neither the item nor the row logs nothing: the report is stdout's.
+  if (!unchanged || ledgerChanged) {
+    const text = unchanged
+      ? `Console item ${o.setItem} (${r.item.section}): already carried; ${ledgerNote}`
+      : `Console item ${o.setItem} (${r.item.section}): rewritten ${r.from} → carried after execution — ${why}${ledgerNote ? `; ${ledgerNote}` : ''}`;
+    const failure = logLine(text);
+    if (failure !== null) {
+      stderr(`console-resolve.js: ${o.setItem} ${unchanged ? 'already carried' : `rewritten ${r.from} → carried in ${consolePath}`}${ledgerNote ? `; ${ledgerNote}` : ''}, but the decisions.md entry could not be written (${failure})\n`);
+      return 3;
+    }
+  }
+  if (unchanged) {
+    stdout(`console-resolve.js: ${o.setItem} already carried${ledgerNote ? `; ${ledgerNote}` : ' — nothing rewritten'}\n`);
+    return 0;
+  }
+  stdout(`console-resolve.js: ${o.setItem} rewritten ${r.from} → carried in ${consolePath}${ledgerNote ? `; ${ledgerNote}` : ''}\n`);
+  return 0;
+}
+
 // #4170: the `--set-item` shape — one stored item rewritten after its execution failed. Exit 0 rewrote or
-// already there, 3 the write threw, 5 refused. Runs before the ceiling check: it only records what happened.
-function setItem(o, runDir, { stdout, stderr, now }) {
+// already there, 3 the write threw, 5 refused, 6 (control mode) the carried fact could not be written. Runs
+// before the ceiling check: it only records what happened.
+function setItem(o, runDir, { stdout, stderr, now, execFile, cwd }) {
+  const usage = (message) => { stderr(`console-resolve.js: ${message}\n${USAGE}\n`); return 2; };
+  const carryable = o.resolution === 'carried' || o.resolution === 'keep-staged' || o.resolution === 'pending';
+  const controlMode = carryable && controlModeOn({ execFile, cwd, runDir });
+  // `carried` is control mode's resolution: with it off the value is refused as it was before this record.
+  if (o.resolution === 'carried' && !controlMode) return usage(`--resolution must be one of ${Object.keys(REWRITE_FROM).join(', ')} (got carried)`);
+  if (o.ledger !== null) {
+    if (!o.setItem.startsWith('ledger-record-')) return usage(`--ledger applies only to a ledger-record-* item (got ${o.setItem})`);
+    if (!controlMode) return usage('--ledger applies only to a carried item, which needs control mode');
+  }
+  if (controlMode) {
+    const code = carryItem(o, runDir, { stdout, stderr, now, cwd });
+    if (code !== null) return code;
+  }
+  if (o.ledger !== null) { stderr(`console-resolve.js: item ${o.setItem} cannot be carried (it is not a rewritable item) — --ledger not applied, nothing written\n`); return 5; }
   const consolePath = path.join(runDir, 'console.json');
   const at = new Date(now()).toISOString();
   let r;
@@ -246,6 +565,142 @@ function checkRepair(o, runDir, { stdout, stderr, execFile, cwd }) {
   return 5;
 }
 
+// #4620: the `--ceiling` shape — the effective ceiling, read-only. Runs after the anchoring check; a policy
+// read that throws is exit 3 with its own line, never a `supervised` guess.
+function ceilingQuery(runDir, { stdout, stderr, execFile, cwd }) {
+  let policy;
+  try { policy = readPolicy({ execFile, cwd: cwd(), runDir, strict: true }); } catch (err) {
+    stderr(`console-resolve.js: ceiling unreadable (${err && err.message ? err.message : err})\n`);
+    return 3;
+  }
+  const { ceiling, controlMode, ceilingSource } = policy;
+  stdout(`console-resolve.js: ceiling ${ceiling} consoleAutoResolve ${bookkeepingPermissions(ceiling).consoleAutoResolve === true} control-mode ${controlMode === true ? 'on' : 'off'} source ${ceilingSource}\n`);
+  return 0;
+}
+
+// The `--converge` items file: null and a problem when it is not a well-formed array of residue items.
+function readResidueItems(file) {
+  let parsed;
+  try { parsed = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (err) {
+    return { items: null, problem: `${file} could not be read as JSON (${err && err.message ? err.message : err})` };
+  }
+  if (!Array.isArray(parsed)) return { items: null, problem: `${file} is not a JSON array` };
+  const seen = new Set();
+  for (const [i, it] of parsed.entries()) {
+    const bad = (why) => ({ items: null, problem: `${file} item ${i} ${why}` });
+    if (!it || typeof it !== 'object' || Array.isArray(it)) return bad('is not an object');
+    if (typeof it.id !== 'string' || it.id.trim() === '' || /[\r\n]/.test(it.id)) return bad('has no non-empty single-line string id');
+    if (seen.has(it.id)) return bad(`repeats the id ${it.id}`);
+    seen.add(it.id);
+    if (it.source !== 'ledger' && it.source !== 'insight') return bad('has a source other than ledger or insight');
+    if (typeof it.text !== 'string' || it.text.trim() === '') return bad('has no non-empty string text');
+    if (typeof it.status !== 'string' || it.status === '') return bad('has no string status');
+    if (it.deferReason !== undefined && typeof it.deferReason !== 'string') return bad('has a deferReason that is not a string');
+    if (it.belowFloor !== undefined && typeof it.belowFloor !== 'boolean') return bad('has a belowFloor that is not a boolean');
+    if (it.filingFailed !== undefined && typeof it.filingFailed !== 'boolean') return bad('has a filingFailed that is not a boolean');
+  }
+  return { items: parsed, problem: null };
+}
+
+// #4620: the `--converge` shape — every residue item ends resolved, filed, digested or carried. The carried
+// facts are written in one call; a failed write turns every carried item `failed` and exits 6, so no item is
+// reported carried without its fact. Gated in run() by controlModeGate, not left to the caller.
+function converge(o, runDir, { stdout, stderr, now, cwd }) {
+  const file = path.resolve(cwd(), o.converge);
+  const { items, problem } = readResidueItems(file);
+  if (items === null) { stderr(`console-resolve.js: --converge ${problem}\n${USAGE}\n`); return 2; }
+  const sectionOf = (item) => (item.source === 'insight' ? 'Reflection insights' : 'Ledger residue');
+  const carry = (item) => decisionFactFor({ id: item.id, section: sectionOf(item), resolution: 'pending', reason: item.text }, { runDir, staged: false });
+  const results = convergeResidue(items, { compose: composeResidueProposal, carry });
+  const facts = results.filter((r) => r.state === 'carried').map((r) => r.fact);
+  let writeError = null;
+  if (facts.length > 0) {
+    try { writeDecisionFacts(runDir, facts); } catch (err) { writeError = err; }
+  }
+  const out = results.map((r) => {
+    if (r.state === 'carried' && writeError !== null) return { id: r.id, state: RESIDUE_FAILED, error: writeError && writeError.message ? writeError.message : String(writeError) };
+    if (r.state === 'carried') return { id: r.id, state: r.state, factId: r.fact.id };
+    if (r.state === 'filed') return { id: r.id, state: r.state, proposal: r.proposal };
+    if (r.state === RESIDUE_FAILED) return { id: r.id, state: r.state, error: r.error };
+    return { id: r.id, state: r.state };
+  });
+  const failed = out.filter((r) => r.state === RESIDUE_FAILED).map((r) => r.id);
+  stdout(`${JSON.stringify({ items: out, failed }, null, 2)}\n`);
+  const sourceOf = new Map(items.map((it) => [it.id, it.source]));
+  const reversibility = (state) => (state === 'filed' ? 'high' : 'n/a');
+  // A failed item is a degrade, logged `SKIP` in _shared/auto-decision-log.md's Degrade-trace shape (never `AUTO`).
+  const lines = out.map((r) => (r.state === RESIDUE_FAILED
+    ? formatEntry({ status: 'SKIP', now: now(), step: 'Residue convergence (degraded)', text: `condition: Residue ${r.id} (${sourceOf.get(r.id)}) failed — ${r.error} → fallback: not converged; the failure card names it`, reversibility: 'n/a' })
+    : formatEntry({ status: 'AUTO', now: now(), step: 'Residue convergence', text: `Residue ${r.id} (${sourceOf.get(r.id)}): ${r.state}${r.factId ? ` as ${r.factId}` : ''}`, reversibility: reversibility(r.state) })));
+  let logError = null;
+  if (lines.length > 0) {
+    try { appendEntry({ runDir, section: '/wrap-up', entry: lines.join('\n') }); } catch (err) { logError = err; }
+  }
+  if (failed.length > 0) {
+    const why = writeError !== null ? (writeError.message || String(writeError)) : out.filter((r) => r.state === RESIDUE_FAILED).map((r) => `${r.id}: ${r.error}`).join('; ');
+    carryFailure(stderr, failed, { message: why });
+  }
+  if (logError !== null) {
+    stderr(`console-resolve.js: --converge printed ${out.length} item state(s), but the decisions.md entries could not be written (${logError.message || logError})\n`);
+    if (failed.length === 0) return 3;
+  }
+  return failed.length > 0 ? EXIT_CARRY_FAILED : 0;
+}
+
+// #4620: the `--memory-write` shape — one memory file written automatically, with a reversible log entry.
+// Order: resolve (refuse outside the memory dir), read the prior, back it up when the diff is over the cap,
+// write the target, then log. A failed target write logs nothing; a failed log names the written path.
+function memoryWrite(o, runDir, { stdout, stderr, now, cwd }) {
+  const memoryDir = path.resolve(cwd(), o.memoryDir);
+  const refused = (why) => { stderr(`console-resolve.js: memory write refused (${why}) — nothing written\n`); return 5; };
+  const resolved = resolveMemoryTarget({ memoryDir, target: o.memoryWrite });
+  if (!resolved.ok) return refused(resolved.why);
+  let content;
+  try { content = fs.readFileSync(path.resolve(cwd(), o.contentFile), 'utf8'); } catch (err) {
+    stderr(`console-resolve.js: --content-file ${o.contentFile} could not be read (${err && err.message ? err.message : err})\n${USAGE}\n`);
+    return 2;
+  }
+  let priorText = null;
+  try { priorText = fs.readFileSync(resolved.path, 'utf8'); } catch (err) {
+    if (!(err && err.code === 'ENOENT')) {
+      stderr(`console-resolve.js: could not read ${resolved.path} (${err && err.message ? err.message : err}) — nothing written\n`);
+      return 3;
+    }
+  }
+  const plan = planMemoryWrite({ memoryDir, target: o.memoryWrite, content, priorText });
+  if (!plan.ok) return refused(plan.why);
+  let backup = null;
+  let failing = plan.path;
+  try {
+    if (plan.overCap && priorText !== null) {
+      failing = path.join(runDir, 'staged', `.memory-prior-${plan.priorHash.slice(0, 12)}.md`);
+      fs.mkdirSync(path.dirname(failing), { recursive: true });
+      writeFileAtomic(failing, priorText);
+      backup = failing;
+      failing = plan.path;
+    }
+    writeFileAtomic(plan.path, content);
+  } catch (err) {
+    stderr(`console-resolve.js: could not write ${failing} (${err && err.message ? err.message : err}) — no decisions.md entry written\n`);
+    return 3;
+  }
+  const head = `Memory write ${plan.path}: prior sha256 ${plan.priorHash}; to reverse, strip the 4-space indent from the diff below into a patch file, then run git apply -R --unidiff-zero {patch} from the memory directory`;
+  const indented = plan.diff.replace(/\n$/, '').split('\n').map((l) => `    ${l}`).join('\n');
+  let text;
+  let block = '';
+  if (!plan.overCap) { text = head; block = `\n${indented}`; }
+  else if (backup !== null) text = `Memory write ${plan.path}: prior sha256 ${plan.priorHash}; diff over ${Buffer.byteLength(plan.diff)} bytes not inlined, prior content stored at ${backup}`;
+  else text = `Memory write ${plan.path}: prior sha256 none; created, diff over the cap not inlined — reverse by deleting the file`;
+  try {
+    appendEntry({ runDir, section: '/wrap-up', entry: `${formatEntry({ status: 'AUTO', now: now(), step: 'Memory write', text, reversibility: 'high' })}${block}` });
+  } catch (err) {
+    stderr(`console-resolve.js: wrote ${plan.path}, but the decisions.md entry could not be written (${err && err.message ? err.message : err})\n`);
+    return 3;
+  }
+  stdout(`console-resolve.js: wrote ${plan.path} (prior sha256 ${plan.priorHash})\n`);
+  return 0;
+}
+
 async function run(argv, deps = {}) {
   const cwd = deps.cwd || (() => process.cwd());
   const stdout = deps.stdout || ((s) => process.stdout.write(s));
@@ -258,6 +713,8 @@ async function run(argv, deps = {}) {
     stderr(`console-resolve.js: ${err.message}\n${USAGE}\n`);
     return 2;
   }
+  // A relative --run resolves against deps.cwd() (cli-wrapper-contract); read lazily, only when needed.
+  if (!path.isAbsolute(o.run)) o.run = path.resolve(cwd(), o.run);
   let isDir = false;
   try { isDir = fs.statSync(o.run).isDirectory(); } catch { isDir = false; }
   if (!isDir) { stderr(`console-resolve.js: --run ${o.run} is not a directory\n${USAGE}\n`); return 2; }
@@ -267,9 +724,16 @@ async function run(argv, deps = {}) {
     return 3;
   }
   const runDir = target.dir;
-  if (o.setItem !== null) return setItem(o, runDir, { stdout, stderr, now });
+  if (o.memoryWrite !== null || o.converge !== null) {
+    const refusal = controlModeGate({ shape: o.memoryWrite !== null ? '--memory-write' : '--converge', runDir, stderr, execFile, cwd });
+    if (refusal !== null) return refusal;
+    if (o.memoryWrite !== null) return memoryWrite(o, runDir, { stdout, stderr, now, cwd });
+    return converge(o, runDir, { stdout, stderr, now, cwd });
+  }
+  if (o.ceiling) return ceilingQuery(runDir, { stdout, stderr, execFile, cwd });
+  if (o.setItem !== null) return setItem(o, runDir, { stdout, stderr, now, execFile, cwd });
   if (o.checkRepair !== null) return checkRepair(o, runDir, { stdout, stderr, execFile, cwd });
-  const { ceiling, vetoWindowHours, sensitivePaths } = readPolicy({ execFile, cwd: cwd(), runDir });
+  const { ceiling, controlMode, ceilingSource, vetoWindowHours, sensitivePaths } = readPolicy({ execFile, cwd: cwd(), runDir });
   if (!bookkeepingPermissions(ceiling).consoleAutoResolve) {
     stderr(`console-resolve.js: consoleAutoResolve is not granted at ceiling ${ceiling} (unattended only) — nothing written\n`);
     return 4;
@@ -331,17 +795,26 @@ async function run(argv, deps = {}) {
     now,
     ...(deps.resolverDeps || {}),
   };
-  const result = resolveAll({ runDir, policy: o.policy, deps: resolverDeps });
+  const result = resolveAll({ runDir, policy: o.policy, deps: resolverDeps, controlMode: controlMode === true });
   // The proposal text stays in-process (result.filings); console.json and --json carry only the summary.
-  const { snapshot, table, filings, ...rest } = result;
+  const { snapshot, table, filings, decisionFacts, ...rest } = result;
   const filingSummaries = filings.map(({ item, fingerprint, title }) => ({ item, fingerprint, title }));
-  const publicResult = { ...rest, filings: filingSummaries };
+  // Outside control mode nothing changes: the public result carries no decisionFacts key.
+  const publicResult = { ...rest, ...(controlMode === true ? { decisionFacts } : {}), filings: filingSummaries };
   const at = new Date(now()).toISOString();
   if (!o.dryRun) {
-    const header = formatEntry({ status: 'AUTO', now: now(), step: 'Review Console', text: `Console auto-resolved ${result.items.length} item(s) at unattended (console-resolve.js)`, reversibility: 'per item' });
+    // The facts land before the decisions block and console.json: a failed write leaves nothing else behind,
+    // so a carried item is never recorded as carried without its fact.
+    if (decisionFacts.length > 0) {
+      try { writeDecisionFacts(runDir, decisionFacts); } catch (err) {
+        return carryFailure(stderr, result.items.filter((it) => it.resolution === 'carried').map((it) => it.id), err);
+      }
+    }
+    const via = ceilingSource === 'control-mode' || controlMode === true ? 'control mode' : 'console-resolve.js';
+    const header = formatEntry({ status: 'AUTO', now: now(), step: 'Review Console', text: `Console auto-resolved ${result.items.length} item(s) at unattended (${via})`, reversibility: 'per item' });
     // Reversibility uses _shared/auto-decision-log.md's closed vocabulary
     // (high | med | low | n/a) — nothing else is a legal value on a schema line.
-    const nothingToRevert = new Set(['stale', 'keep-staged', 'pending', 'refused', 'dismissed', 'dropped']);
+    const nothingToRevert = new Set(['stale', 'keep-staged', 'pending', 'refused', 'dismissed', 'dropped', 'carried']);
     const reversibilityFor = (resolution) => {
       if (nothingToRevert.has(resolution)) return 'n/a';
       return resolution === 'apply' ? 'med' : 'high';
@@ -355,7 +828,7 @@ async function run(argv, deps = {}) {
       reversibility: reversibilityFor(it.resolution),
     }));
     appendEntry({ runDir, section: '/wrap-up', entry: [header, ...lines].join('\n') });
-    writeFileAtomic(consolePath, `${JSON.stringify({ resolved: true, mode: 'auto-resolve', at, ceiling: 'unattended', items: result.items, merge: result.merge, droppedByTiebreak: result.droppedByTiebreak, filings: filingSummaries }, null, 2)}\n`);
+    writeFileAtomic(consolePath, `${JSON.stringify({ resolved: true, mode: 'auto-resolve', at, ceiling: 'unattended', items: result.items, merge: result.merge, droppedByTiebreak: result.droppedByTiebreak, filings: filingSummaries, ...(controlMode === true ? { controlMode: true, decisionFacts: decisionFacts.length } : {}) }, null, 2)}\n`);
   }
   // #3370: items this console deliberately left pending/keep-staged must survive
   // the run's own final stop. Read-only: nothing here applies or resolves them.
@@ -374,4 +847,4 @@ if (require.main === module) {
   run(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (err) => { process.stderr.write(`console-resolve.js: ${err && err.stack ? err.stack : err}\n`); process.exitCode = 1; });
 }
 
-module.exports = { run, parseArgs, ghReadGrants, readPolicy, checkPatchStack, USAGE };
+module.exports = { run, parseArgs, ghReadGrants, readPolicy, checkPatchStack, writeDecisionFacts, EXIT_CARRY_FAILED, USAGE };

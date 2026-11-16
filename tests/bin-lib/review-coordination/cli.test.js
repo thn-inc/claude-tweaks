@@ -363,7 +363,7 @@ test('check-coverage exits 2 for a run dir that does not exist (#3945 F8)', (t) 
   assert.strictEqual(cli(['check-coverage', file]).code, 2);
 });
 
-test('--help lists the three tiebreak forms', () => {
+test('--help lists the tiebreak forms it has always listed', () => {
   const { deps, out } = fakeDeps(process.cwd());
   assert.strictEqual(run(['--help'], deps), 0);
   const text = out.join('');
@@ -508,4 +508,328 @@ test('--help names resolve-tiebreak\'s --run', () => {
   const { deps, out } = fakeDeps(process.cwd());
   assert.strictEqual(run(['--help'], deps), 0);
   assert.ok(out.join('').includes('resolve-tiebreak <finding.json> <reply-file> [--root <dir>] [--run <dir>]'));
+});
+
+// ---- #5540: resolve-tiebreak's chunk form (one array entries file, one reply of Id blocks) ----
+
+const { CHUNK_MAX } = require('../../../plugin/bin/lib/tiebreak');
+
+// Three findings in three files under a repo root, each with a reply block of a distinct outcome.
+function chunkInputs(d) {
+  const root = path.join(d, 'repo');
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  const findings = ['a', 'b', 'c'].map((n, i) => {
+    fs.writeFileSync(path.join(root, 'src', `${n}.ts`), 'x\ny\nconst ok = 1;\n');
+    return { ...TB_FINDING, path: `src/${n}.ts`, line: 3, claim: `claim ${n}`, reporterSeverity: i === 2 ? 'medium' : 'high' };
+  });
+  const ids = findings.map(findingId);
+  const evidence = (f) => `Evidence: ${f.path}:3 \`const ok = 1;\``;
+  const blocks = [
+    (f) => ['Verdict: confirmed', 'Severity: high', evidence(f), 'Recommendation: file — real'],
+    (f) => ['Verdict: refuted', 'Severity: high', evidence(f), 'Recommendation: drop'],
+    () => ['Verdict: cant-tell', 'Severity: medium'],
+  ];
+  const blockLines = findings.map((f, i) => [`Id: ${ids[i]}`, ...blocks[i](f)]);
+  const replyOf = (lines) => lines.flat().concat('STATUS: DONE').join('\n');
+  const chunkFile = writeText(d, 'chunk.json', JSON.stringify(findings));
+  const replyFile = writeText(d, 'chunk-reply.txt', replyOf(blockLines));
+  return { root, findings, ids, blockLines, replyOf, chunkFile, replyFile };
+}
+
+const chunkRun = (argv, cwd, overrides = {}) => {
+  const { deps, out, err } = tbDeps(cwd, overrides);
+  const code = run(['resolve-tiebreak', ...argv], deps);
+  return { code, out: out.join(''), err: err.join('') };
+};
+
+const verdictLines = (runDir) => fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8').split('\n').filter((l) => l.startsWith('- '));
+
+test('AC1.1: the chunk form prints one result per entry, each equal to the one-finding call', (t) => {
+  const d = tmpDir(t);
+  const { root, findings, blockLines, replyOf, chunkFile, replyFile } = chunkInputs(d);
+  const res = chunkRun([chunkFile, replyFile, '--root', root], d);
+  assert.strictEqual(res.code, 0);
+  assert.strictEqual(res.err, '');
+  const printed = JSON.parse(res.out);
+  assert.strictEqual(printed.chunk, true);
+  assert.deepStrictEqual(printed.unsettled, []);
+  assert.strictEqual(printed.results.length, 3);
+  findings.forEach((finding, i) => {
+    const entry = writeText(d, `entry-${i}.json`, JSON.stringify(finding));
+    const reply = writeText(d, `reply-${i}.txt`, replyOf([blockLines[i].slice(1)]));
+    const legacy = chunkRun([entry, reply, '--root', root], d);
+    assert.strictEqual(legacy.code, 0);
+    const { id, index, ...rest } = printed.results[i];
+    const { id: legacyId, ...legacyRest } = JSON.parse(legacy.out);
+    assert.strictEqual(index, i);
+    assert.strictEqual(id, legacyId);
+    assert.deepStrictEqual(rest, legacyRest);
+  });
+  assert.deepStrictEqual(printed.results.map((r) => r.outcome), ['confirmed', 'drop', 'console']);
+});
+
+test('AC1.2: a one-element array takes the chunk form', (t) => {
+  const d = tmpDir(t);
+  const { root, findings, blockLines, replyOf } = chunkInputs(d);
+  const one = writeText(d, 'one.json', JSON.stringify([findings[0]]));
+  const reply = writeText(d, 'one-reply.txt', replyOf([blockLines[0]]));
+  const res = chunkRun([one, reply, '--root', root], d);
+  assert.strictEqual(res.code, 0);
+  const printed = JSON.parse(res.out);
+  assert.strictEqual(printed.chunk, true);
+  assert.strictEqual(printed.results.length, 1);
+  assert.strictEqual(printed.results[0].outcome, 'confirmed');
+  assert.deepStrictEqual(printed.unsettled, []);
+});
+
+test('AC1.1: chunk --run appends one verdict line per finding, in entry order', (t) => {
+  const d = tmpDir(t);
+  const { root, chunkFile, replyFile } = chunkInputs(d);
+  const { main, runDir } = anchoredRunDir(t);
+  const res = chunkRun([chunkFile, replyFile, '--root', root, '--run', runDir], main);
+  assert.strictEqual(res.code, 0);
+  assert.strictEqual(res.err, '');
+  const { results } = JSON.parse(res.out);
+  assert.ok(results.every((r) => r.logged === true));
+  assert.strictEqual(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), `## /review\n${results.map((r) => `- ${r.logLine}\n`).join('')}`);
+});
+
+test('AC3.1: chunk --run with a missing id and with a repeated id writes no line for that id', (t) => {
+  const d = tmpDir(t);
+  const { root, findings, ids, blockLines, replyOf, chunkFile } = chunkInputs(d);
+  const cases = [
+    ['missing', replyOf([blockLines[0], blockLines[2]])],
+    ['duplicated', replyOf([blockLines[0], blockLines[1], blockLines[1], blockLines[2]])],
+  ];
+  for (const [reason, text] of cases) {
+    const reply = writeText(d, `${reason}.txt`, text);
+    const { main, runDir } = anchoredRunDir(t);
+    const res = chunkRun([chunkFile, reply, '--root', root, '--run', runDir], main);
+    assert.strictEqual(res.code, 0, reason);
+    const printed = JSON.parse(res.out);
+    assert.deepStrictEqual(printed.unsettled, [{ id: ids[1], index: 1, reason }], reason);
+    assert.deepStrictEqual(printed.results.map((r) => r.id), [ids[0], ids[2]], reason);
+    const lines = verdictLines(runDir);
+    assert.strictEqual(lines.length, 2, reason);
+    assert.ok(lines.every((l) => !l.includes(`${findings[1].path}:`)), reason);
+    assert.ok(lines.every((l) => !l.includes(ids[1])), reason);
+  }
+});
+
+test('the chunk form never reads evidence from outside --root: .., absolute, or a symlink out', (t) => {
+  const d = tmpDir(t);
+  const root = path.join(d, 'repo');
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  const outside = path.join(d, 'outside.ts');
+  fs.writeFileSync(outside, 'a\nb\nconst ok = token.exp > now;\n');
+  fs.symlinkSync(outside, path.join(root, 'src', 'link.ts'));
+  const findings = ['../outside.ts', outside, 'src/link.ts'].map((findingPath, i) => ({ ...TB_FINDING, path: findingPath, line: 3, claim: `claim ${i}` }));
+  const reply = findings.map((f) => [`Id: ${findingId(f)}`, 'Verdict: refuted', `Evidence: ${f.path}:3 "const ok = token.exp > now;"`, 'Severity: high', 'Recommendation: drop']).flat().concat('STATUS: DONE').join('\n');
+  const res = chunkRun([writeText(d, 'confined.json', JSON.stringify(findings)), writeText(d, 'confined.txt', reply), '--root', root], d);
+  assert.strictEqual(res.code, 0);
+  const { results } = JSON.parse(res.out);
+  assert.strictEqual(results.length, 3);
+  for (const r of results) {
+    assert.strictEqual(r.reason, 'evidence-unverified', r.id);
+    assert.strictEqual(r.outcome, 'console', r.id);
+  }
+});
+
+test('chunk --run refuses an unanchored or missing run dir with exit 3 and no verdict', (t) => {
+  const d = tmpDir(t);
+  const { root, chunkFile, replyFile } = chunkInputs(d);
+  const { main, runDir } = anchoredRunDir(t);
+  const shadow = tmpDir(t);
+  for (const [dir, why] of [[shadow, /not anchored under the main checkout/], [path.join(runDir, 'gone'), /run dir does not exist/]]) {
+    const res = chunkRun([chunkFile, replyFile, '--root', root, '--run', dir], main);
+    assert.strictEqual(res.code, 3, dir);
+    assert.strictEqual(res.out, '', dir);
+    assert.match(res.err, why, dir);
+  }
+  assert.ok(!fs.existsSync(path.join(shadow, 'decisions.md')));
+});
+
+test('the chunk form exits 2 for a non-boolean vacuity entry', (t) => {
+  const d = tmpDir(t);
+  const { root, findings, replyFile } = chunkInputs(d);
+  const file = writeText(d, 'bad-vacuity.json', JSON.stringify([{ ...findings[0], vacuity: 'yes' }, findings[1]]));
+  const res = chunkRun([file, replyFile, '--root', root], d);
+  assert.strictEqual(res.code, 2);
+  assert.strictEqual(res.out, '');
+  assert.match(res.err, /vacuity must be a boolean/);
+});
+
+test('the chunk form exits 2 for an empty array, a 9-entry array, a repeated id, or one malformed entry, and appends nothing', (t) => {
+  const d = tmpDir(t);
+  const { root, findings, replyFile } = chunkInputs(d);
+  const nine = Array.from({ length: CHUNK_MAX + 1 }, (_, i) => ({ ...TB_FINDING, claim: `claim ${i}` }));
+  const bad = [
+    ['empty', []],
+    ['nine', nine],
+    ['repeated id', [findings[0], findings[1], { ...findings[0] }]],
+    ['malformed entry', [findings[0], { ...findings[1], kind: 'bogus' }]],
+    ['non-object entry', [findings[0], 'a string']],
+  ];
+  for (const [name, entries] of bad) {
+    const file = writeText(d, 'bad-chunk.json', JSON.stringify(entries));
+    const { main, runDir } = anchoredRunDir(t);
+    const res = chunkRun([file, replyFile, '--root', root, '--run', runDir], main);
+    assert.strictEqual(res.code, 2, name);
+    assert.strictEqual(res.out, '', name);
+    assert.strictEqual(res.err.split('\n').filter(Boolean).length, 1, name);
+    assert.ok(!fs.existsSync(path.join(runDir, 'decisions.md')), name);
+  }
+});
+
+test('chunk --run: a failed append marks only that result logged:false and exits 0', (t) => {
+  const d = tmpDir(t);
+  const { root, ids, chunkFile, replyFile } = chunkInputs(d);
+  const { main, runDir } = anchoredRunDir(t);
+  let calls = 0;
+  const appendDecision = (args) => {
+    calls += 1;
+    if (calls === 2) throw new Error('disk full');
+    fs.appendFileSync(path.join(args.runDir, 'decisions.md'), `${args.entry}\n`);
+  };
+  const res = chunkRun([chunkFile, replyFile, '--root', root, '--run', runDir], main, { appendDecision });
+  assert.strictEqual(res.code, 0);
+  const { results } = JSON.parse(res.out);
+  assert.deepStrictEqual(results.map((r) => [r.id, r.logged]), [[ids[0], true], [ids[1], false], [ids[2], true]]);
+  const lines = res.err.split('\n').filter(Boolean);
+  assert.strictEqual(lines.length, 1);
+  assert.match(lines[0], /^review-coordination\.js: could not append the decisions\.md entry .*disk full/);
+});
+
+test('AC5.1, AC5.2: check-coverage and console/resolve.js read a chunk-settled run unchanged', (t) => {
+  const { resolveAll } = require('../../../plugin/bin/lib/console/resolve');
+  const d = tmpDir(t);
+  const { root, findings, blockLines, replyOf, chunkFile, replyFile } = chunkInputs(d);
+  const findingsFile = writeText(d, 'findings.json', JSON.stringify(findings));
+  const prepared = () => {
+    const dirs = anchoredRunDir(t);
+    fs.mkdirSync(path.join(dirs.runDir, 'staged'), { recursive: true });
+    fs.mkdirSync(path.join(dirs.runDir, 'work'), { recursive: true });
+    writeText(path.join(dirs.runDir, 'work'), '7-spec.md', '---\nrecord: 7\n---\n');
+    assert.strictEqual(run(['write-findings', dirs.runDir, findingsFile], fakeDeps(dirs.main).deps), 0);
+    return dirs;
+  };
+  const chunked = prepared();
+  assert.strictEqual(chunkRun([chunkFile, replyFile, '--root', root, '--run', chunked.runDir], chunked.main).code, 0);
+  const legacy = prepared();
+  findings.forEach((finding, i) => {
+    const entry = writeText(d, `legacy-entry-${i}.json`, JSON.stringify(finding));
+    const reply = writeText(d, `legacy-reply-${i}.txt`, replyOf([blockLines[i].slice(1)]));
+    assert.strictEqual(chunkRun([entry, reply, '--root', root, '--run', legacy.runDir], legacy.main).code, 0);
+  });
+  assert.strictEqual(fs.readFileSync(path.join(chunked.runDir, 'decisions.md'), 'utf8'), fs.readFileSync(path.join(legacy.runDir, 'decisions.md'), 'utf8'));
+
+  for (const dirs of [chunked, legacy]) assert.deepStrictEqual(JSON.parse(checkCoverage(dirs.runDir, dirs.main).stdout), { artifactPresent: true, artifactValid: true, missing: [] });
+
+  const resolveDeps = {
+    readFile: (p) => fs.readFileSync(p, 'utf8'),
+    readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
+    gitApplyCheck: () => ({ ok: true }),
+    readGrants: (numbers) => Object.fromEntries(numbers.map((n) => [n, { labels: ['auto:merge'], pendingSince: null }])),
+    now: () => Date.parse('2026-09-06T12:00:00Z'),
+    sensitivePaths: [],
+  };
+  const a = resolveAll({ runDir: chunked.runDir, policy: 'console-auto', deps: resolveDeps });
+  const b = resolveAll({ runDir: legacy.runDir, policy: 'console-auto', deps: resolveDeps });
+  assert.ok(a.items.some((i) => i.tiebreak), 'the can\'t-tell verdict reaches the console as a tiebreak item');
+  const normalize = (r, dirs) => JSON.parse(JSON.stringify(r.items).split(dirs.runDir).join('<run>'));
+  assert.deepStrictEqual(normalize(a, chunked), normalize(b, legacy));
+  assert.deepStrictEqual(a.droppedByTiebreak, b.droppedByTiebreak);
+});
+
+test('the chunk form takes a CHUNK_MAX-entry array: 8 entries and 8 reply blocks exit 0 with 8 results', (t) => {
+  const d = tmpDir(t);
+  const root = path.join(d, 'repo');
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src', 'auth.ts'), 'x\ny\nconst ok = 1;\n');
+  const findings = Array.from({ length: CHUNK_MAX }, (_, i) => ({ ...TB_FINDING, line: 3, claim: `claim ${i}` }));
+  const reply = findings.flatMap((f) => [`Id: ${findingId(f)}`, 'Verdict: refuted', 'Severity: high', 'Evidence: src/auth.ts:3 `const ok = 1;`', 'Recommendation: drop']).concat('STATUS: DONE').join('\n');
+  const res = chunkRun([writeText(d, 'max-chunk.json', JSON.stringify(findings)), writeText(d, 'max-reply.txt', reply), '--root', root], d);
+  assert.strictEqual(res.code, 0, res.err);
+  const printed = JSON.parse(res.out);
+  assert.strictEqual(printed.results.length, CHUNK_MAX);
+  assert.deepStrictEqual(printed.unsettled, []);
+});
+
+// ---- #5540: finding-ids prints the Id: headers a chunk agent is given ----
+
+const findingIdsRun = (argv, cwd) => {
+  const { deps, out, err } = tbDeps(cwd);
+  const code = run(['finding-ids', ...argv], deps);
+  return { code, out: out.join(''), err: err.join('') };
+};
+
+test('finding-ids prints one {index, id} per entry, each id findingId of that entry, and writes nothing', (t) => {
+  const d = tmpDir(t);
+  const { findings, ids, chunkFile } = chunkInputs(d);
+  const before = fs.readdirSync(d).sort();
+  const res = findingIdsRun([chunkFile], d);
+  assert.strictEqual(res.code, 0, res.err);
+  assert.strictEqual(res.err, '');
+  assert.deepStrictEqual(JSON.parse(res.out), { ids: findings.map((f, index) => ({ index, id: findingId(f) })) });
+  assert.deepStrictEqual(JSON.parse(res.out).ids.map((e) => e.id), ids);
+  assert.strictEqual(res.out.split('\n').filter(Boolean).length, 1, 'one JSON line');
+  assert.deepStrictEqual(fs.readdirSync(d).sort(), before, 'finding-ids writes no file');
+});
+
+test('finding-ids exits 2 with one stderr line for an empty, oversize, repeated, malformed or non-array input', (t) => {
+  const d = tmpDir(t);
+  const { findings } = chunkInputs(d);
+  const nine = Array.from({ length: CHUNK_MAX + 1 }, (_, i) => ({ ...TB_FINDING, claim: `claim ${i}` }));
+  const bad = [
+    ['empty', []],
+    ['nine', nine],
+    ['repeated id', [findings[0], { ...findings[0] }]],
+    ['malformed entry', [findings[0], { ...findings[1], kind: 'bogus' }]],
+    ['single object', findings[0]],
+  ];
+  for (const [name, entries] of bad) {
+    const res = findingIdsRun([writeText(d, 'bad-ids.json', JSON.stringify(entries))], d);
+    assert.strictEqual(res.code, 2, name);
+    assert.strictEqual(res.out, '', name);
+    assert.strictEqual(res.err.split('\n').filter(Boolean).length, 1, name);
+  }
+  const unreadable = findingIdsRun([path.join(d, 'no-such.json')], d);
+  assert.strictEqual(unreadable.code, 2);
+  assert.strictEqual(unreadable.out, '');
+});
+
+test('finding-ids refuses a single entry object through its own array guard, not the entry checks', (t) => {
+  const d = tmpDir(t);
+  const { findings } = chunkInputs(d);
+  const file = writeText(d, 'single.json', JSON.stringify(findings[0]));
+  const res = findingIdsRun([file], d);
+  assert.strictEqual(res.code, 2);
+  assert.strictEqual(res.out, '');
+  assert.strictEqual(res.err, `review-coordination.js: ${file} must hold a JSON array of tiebreak entries\n`);
+});
+
+test('the chunk form exits 2 for an unreadable reply file with one stderr line and appends nothing under --run', (t) => {
+  const d = tmpDir(t);
+  const { root, chunkFile } = chunkInputs(d);
+  const { main, runDir } = anchoredRunDir(t);
+  const missing = path.join(d, 'no-such-reply.txt');
+  const res = chunkRun([chunkFile, missing, '--root', root, '--run', runDir], main);
+  assert.strictEqual(res.code, 2);
+  assert.strictEqual(res.out, '');
+  const lines = res.err.split('\n').filter(Boolean);
+  assert.strictEqual(lines.length, 1);
+  assert.match(lines[0], /^review-coordination\.js: cannot read .*no-such-reply\.txt/);
+  assert.ok(!fs.existsSync(path.join(runDir, 'decisions.md')), 'no verdict line is appended');
+});
+
+test('finding-ids exits 2 through the usage message on a wrong arity', (t) => {
+  const d = tmpDir(t);
+  const { chunkFile } = chunkInputs(d);
+  for (const argv of [[], [chunkFile, chunkFile]]) {
+    const res = findingIdsRun(argv, d);
+    assert.strictEqual(res.code, 2, JSON.stringify(argv));
+    assert.strictEqual(res.out, '');
+    assert.match(res.err, /^review-coordination\.js: finding-ids takes exactly 1 JSON file path\n/);
+    assert.ok(res.err.includes('review-coordination.js finding-ids <entries.json>'), 'the usage lists finding-ids');
+  }
 });
