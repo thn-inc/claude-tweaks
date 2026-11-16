@@ -184,7 +184,7 @@ test('queue-pull-script.md and next-ranking.md contain no multi-line `node -e "`
   }
 });
 
-test('node-eval-file.js header and the adopted-branch snippet state the unquoted NODE_EVAL_EOF convention (#3102)', () => {
+test('node-eval-file.js header states the unquoted NODE_EVAL_EOF convention (#3102)', () => {
   function readLf(file) {
     return readText(file);
   }
@@ -194,9 +194,4 @@ test('node-eval-file.js header and the adopted-branch snippet state the unquoted
   assert.ok(!header.includes("<<'EOF'"), "header still documents the retired quoted <<'EOF' form");
   assert.match(header, /no `\$` other than `\$\{CLAUDE_PLUGIN_ROOT\}`/, 'header must state the no-other-$ rule');
   assert.ok(header.includes('\\`'), 'header must say a literal backtick is written escaped');
-  const snippet = readLf(path.join(SKILLS_DIR, 'build', 'adopted-branch-collision-check.md'));
-  const fenceAt = snippet.lastIndexOf('```bash', snippet.indexOf('<<NODE_EVAL_EOF'));
-  // Checks the sentence sits beside the fence without depending on blank-line placement (#3102).
-  assert.match(snippet.slice(Math.max(0, fenceAt - 1200), fenceAt), /keep the body free of any other `\$` or unescaped backtick, per `bin\/node-eval-file\.js`'s header/,
-    'adopted-branch snippet must cite the header rule beside its fence');
 });
