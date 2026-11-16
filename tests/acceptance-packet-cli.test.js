@@ -946,7 +946,8 @@ test('a failed GIF write gives encoder-failed and exit 0', (t) => {
 // A workspace whose checkout is a real git repository, for what only real git can answer.
 function repoWorkspace(t) {
   const root = gitRepo();
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  // Windows reports EBUSY for a directory something still briefly holds after the archive's renames; maxRetries is Node's documented retry for EBUSY/EPERM/ENOTEMPTY (#5694).
+  t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-1');
   fs.mkdirSync(runDir, { recursive: true });
   const gitDir = path.join(root, 'gitdir');
