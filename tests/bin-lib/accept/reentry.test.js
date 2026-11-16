@@ -211,3 +211,21 @@ test('a failed rev-parse after the worktree add removes the worktree it made and
   assert.ok(!f.list().includes('accept-42'), 'no worktree left behind');
   assert.equal(fs.existsSync(path.join(f.clone, '.claude', 'worktrees', 'accept-42')), false);
 });
+
+test('reenter-remove given a symlink alias passes git the canonical path it validated', (t) => {
+  const f = fixture();
+  const { worktree } = enter(f);
+  const alias = path.join(f.base, 'alias-accept-42');
+  try {
+    fs.symlinkSync(worktree, alias, 'dir');
+  } catch (err) {
+    t.skip(`symlinks unavailable: ${err.code}`);
+    return;
+  }
+  const canonical = fs.realpathSync(worktree);
+  const before = f.calls.length;
+  assert.deepEqual(reenterRemove({ worktree: alias, repoRoot: f.clone, git: f.git }), { removed: true });
+  const removal = f.calls.slice(before).find((a) => a.includes('remove'));
+  assert.equal(removal.at(-1), canonical, 'the canonical path, not the alias');
+  assert.ok(!f.list().includes('accept-42'), 'the worktree is gone');
+});

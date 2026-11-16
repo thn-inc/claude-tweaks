@@ -106,8 +106,9 @@ function reenterRemove({ worktree, repoRoot, git, realpath = (p) => canonicalRea
   if (!ACCEPT_DIR_RE.test(path.basename(canonical)) || key(path.dirname(canonical)) !== parent) {
     throw Object.assign(new Error(`reenter-remove: ${worktree} is not an accept-<n> worktree under ${path.join(repoRoot, '.claude', 'worktrees')}`), { code: 'not-accept-worktree' });
   }
-  if (!isListed(git, repoRoot, worktree, realpath)) return { removed: false };
-  git(['-C', repoRoot, 'worktree', 'remove', '--force', '--end-of-options', worktree]);
+  // The path validated above is the path git is given: an alias (a symlink) is never passed through.
+  if (!isListed(git, repoRoot, canonical, realpath)) return { removed: false };
+  git(['-C', repoRoot, 'worktree', 'remove', '--force', '--end-of-options', canonical]);
   return { removed: true };
 }
 
