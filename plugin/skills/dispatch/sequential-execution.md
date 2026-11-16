@@ -47,6 +47,16 @@ headless ride-along check (`_shared/worktree-setup.md`) stops on exactly those c
 A cwd-pinned dispatching session (above) runs the same `git worktree add` and skips only the
 `EnterWorktree`.
 
+## When the group's worktree disappears anyway
+
+Symptom: `Working directory … was deleted; shell cwd recovered`, then `gh` and `git` fail with
+`not a git repository`. The session is still isolated in the deleted path, so recover in this
+order: `ExitWorktree(action: "keep")` first, then `EnterWorktree(path: …)` into the next group's
+already-created worktree. Never a plain `cd` into another worktree or the main checkout — the
+session stays isolated in the deleted worktree, so the harness refuses every command. A live
+session's worktree hold (#4960) keeps the reapers off a worktree it stands in, so this is the
+fallback, not the expected path.
+
 ## The loop
 
 For group N, enter **one** fresh worktree, then run that group's whole dispatch sequence inside it: both of its Task calls (`build,test`, then — gated — `review,polish,wrap-up`; see `two-call-gate.md`) inherit that single cwd, and each reports its own terminal status line (DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED) plus an OUTCOME line. One worktree per group, entered once and torn down once — never one per call.
