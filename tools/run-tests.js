@@ -310,8 +310,8 @@ function durationsCoverageGaps(files, durations, sizeOf) {
 function durationsOverCeiling(durations, ceilingMs = DURATIONS_CEILING_MS) {
   return [...durations]
     .filter(([, ms]) => ms > ceilingMs)
-    .map(([file, ms]) => `${file} ${ms} ms`)
-    .sort(byPath);
+    .sort(([a], [b]) => byPath(a, b))
+    .map(([file, ms]) => `${file} ${ms} ms`);
 }
 
 // Where a `--record-durations <out>` run's reporter writes until the run ends: beside `out`, tagged

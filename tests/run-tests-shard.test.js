@@ -109,6 +109,21 @@ test('durationsOverCeiling names an entry above the ceiling and not one at it', 
   assert.ok(over[0].includes('40001'), over[0]);
 });
 
+test('durationsCoverageGaps returns the gaps sorted, whatever order the files arrive in', () => {
+  const gaps = durationsCoverageGaps(['tests/z.test.js', 'tests/a.test.js'], new Map(), () => 200000);
+  assert.deepStrictEqual(gaps, ['tests/a.test.js', 'tests/z.test.js']);
+});
+
+test('durationsOverCeiling returns the entries sorted by path, whatever order they arrive in', () => {
+  const over = durationsOverCeiling(new Map([['tests/z.test.js', 50000], ['tests/a.test.js', 60000]]));
+  assert.deepStrictEqual(over, ['tests/a.test.js 60000 ms', 'tests/z.test.js 50000 ms']);
+});
+
+test('durationsOverCeiling takes a custom ceiling: 101 ms is over 100, 100 ms is not', () => {
+  const over = durationsOverCeiling(new Map([['tests/over.test.js', 101], ['tests/at.test.js', 100]]), 100);
+  assert.deepStrictEqual(over, ['tests/over.test.js 101 ms']);
+});
+
 test('readDurations reads the files map and rejects any other shape', () => {
   assert.deepStrictEqual([...readDurations('{"files":{"tests/a.test.js":12}}')], [['tests/a.test.js', 12]]);
   for (const bad of ['[]', '{}', '{"files":[]}', '{"files":{"a":"12"}}', '{"files":{"a":-1}}', 'not json']) {
