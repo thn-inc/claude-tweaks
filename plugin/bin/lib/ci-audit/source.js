@@ -182,7 +182,7 @@ function readJobs({ owner, repo, id }, { runner, outOfTime }) {
     const body = parseBody(runner(args, { timeout: CI_HEALTH_GH_TIMEOUT_MS }));
     const page = body && body.jobs;
     if (!Array.isArray(page)) throw new Error(`page ${n}: response has no jobs array`);
-    if (body && Number.isFinite(body.total_count)) total = body.total_count;
+    if (Number.isFinite(body.total_count)) total = body.total_count;
     jobs.push(...page);
     if (page.length < JOBS_PER_PAGE || (total !== null && jobs.length >= total)) return { jobs, cut: null };
     if (total === null) return { jobs, cut: `jobs of run ${id}: ${jobs.length} jobs read, total unknown (no total_count on a full page)` };

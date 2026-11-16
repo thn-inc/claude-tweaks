@@ -109,6 +109,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
+// The argument after the flag at index i when it is a value (not empty, not another flag), else null.
+function flagValue(argv, i) {
+  const v = argv[i + 1];
+  return typeof v === 'string' && v !== '' && !v.startsWith('--') ? v : null;
+}
+
 function parseArgs(argv) {
   if (argv.length === 1 && (argv[0] === '--help' || argv[0] === '-h')) return { help: true };
   if (argv[0] !== 'gather') return { error: argv.length === 0 ? 'missing verb: gather or validate-findings' : `unknown verb: ${JSON.stringify(argv[0])}` };
@@ -120,9 +126,8 @@ function parseArgs(argv) {
     if (seen.has(a)) return { error: `${a} given twice` };
     seen.add(a);
     const next = () => {
-      const v = argv[i + 1];
-      if (typeof v !== 'string' || v === '' || v.startsWith('--')) return null;
-      i += 1;
+      const v = flagValue(argv, i);
+      if (v !== null) i += 1;
       return v;
     };
     if (a === '--days') {
@@ -221,8 +226,8 @@ function parseValidateArgs(argv) {
     seen.add(a);
     if (a === '--dry-run') o.dryRun = true;
     else if (Object.prototype.hasOwnProperty.call(VALUE_FLAGS, a)) {
-      const v = argv[i + 1];
-      if (typeof v !== 'string' || v === '' || v.startsWith('--')) return { error: `${a} requires a file` };
+      const v = flagValue(argv, i);
+      if (v === null) return { error: `${a} requires a file` };
       i += 1;
       o[VALUE_FLAGS[a]] = v;
     } else return { error: `unknown argument: ${JSON.stringify(a)}` };

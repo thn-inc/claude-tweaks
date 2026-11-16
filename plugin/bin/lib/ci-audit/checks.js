@@ -111,6 +111,12 @@ const enough = (s, minSample) => !!s && num(s.n) && s.n >= minSample && num(s.p5
 const sampled = (j, minSample) => num(j.runs) && j.runs >= minSample && !!j.waiting && num(j.waiting.p50Ms) && !!j.running && num(j.running.p50Ms);
 const totalMs = (j) => j.waiting.p50Ms + (j.setup && num(j.setup.p50Ms) ? j.setup.p50Ms : 0) + j.running.p50Ms;
 
+// The one workflow job named `name`, or null when none or several carry it.
+function uniqueByName(wfJobs, name) {
+  const hits = wfJobs.filter((w) => w.name === name);
+  return hits.length === 1 ? hits[0] : null;
+}
+
 // Whether `to` is reachable from `from` over `needs`.
 function reaches(byId, from, to) {
   const seen = new Set();
@@ -176,11 +182,11 @@ function evaluate(agg, factsByWorkflow, thresholds, minSample) {
     const wfJobs = wfJobsOf(cp.workflow);
     if (wfJobs === null) continue;
     for (const name of cp.chain) {
-      const named = wfJobs.filter((w) => w.name === name);
-      if (named.length !== 1) continue;
+      const named = uniqueByName(wfJobs, name);
+      if (named === null) continue;
       let heaviest = null;
       for (const j of eligibleIn(cp.workflow)) {
-        if (matchJob(j.job, wfJobs) !== named[0]) continue;
+        if (matchJob(j.job, wfJobs) !== named) continue;
         if (!j.total || !num(j.total.p50Ms)) continue; // total.n equals runs, already at minSample
         const t = j.total.p50Ms;
         if (heaviest === null || t > heaviest) heaviest = t;
@@ -196,9 +202,8 @@ function evaluate(agg, factsByWorkflow, thresholds, minSample) {
     if (!num(o.sharedRuns) || o.sharedRuns < floor) continue; // a pair seen apart is no evidence
     const wfJobs = wfJobsOf(o.workflow);
     if (wfJobs === null) continue;
-    const named = (n) => { const hits = wfJobs.filter((w) => w.name === n); return hits.length === 1 ? hits[0] : null; };
-    const x = named(o.a);
-    const y = named(o.b);
+    const x = uniqueByName(wfJobs, o.a);
+    const y = uniqueByName(wfJobs, o.b);
     if (x === null || y === null) continue;
     // A job reaches itself, so a pair naming one workflow job twice never fires.
     const byId = new Map(wfJobs.map((w) => [w.id, w]));

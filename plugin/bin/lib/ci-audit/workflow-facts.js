@@ -127,8 +127,7 @@ function readScalar(raw) {
     if (tail !== '' && tail[0] !== '#') return null;
     return { text: out };
   }
-  const cut = commentStart(v);
-  const text = (cut < 0 ? v : v.slice(0, cut)).trimEnd();
+  const text = plainValue(v);
   if (text === '' || text === '~' || text === 'null') return { empty: true };
   if ('|>[]{}!&*@`%'.includes(text[0])) return null;
   return { text };
@@ -355,23 +354,23 @@ function readJobs(lines, start, end) {
     while (i < end) {
       const l = lines[i];
       if (isSkippable(l)) { i++; continue; }
-      const kind = leadSpaces(l);
-      if (kind <= jobIndent) break;
-      if (keyIndent === null) keyIndent = kind;
-      if (kind > keyIndent) { // a deeper line of a key not read here
+      const indent = leadSpaces(l);
+      if (indent <= jobIndent) break;
+      if (keyIndent === null) keyIndent = indent;
+      if (indent > keyIndent) { // a deeper line of a key not read here
         if (open === 'key') open = null;
         i++;
         continue;
       }
       if (tabIndent(l)) fail('tab indentation in jobs:');
-      if (kind < keyIndent) fail('jobs: not read');
+      if (indent < keyIndent) fail('jobs: not read');
       if (DASH.test(l)) {
         if (open === null) fail('jobs: not read');
         open = 'seq';
         i++;
         continue;
       }
-      const jkv = splitKey(l.slice(kind));
+      const jkv = splitKey(l.slice(indent));
       if (jkv === null) fail('jobs: not read');
       const value = plainValue(jkv.rest);
       open = value === '' ? 'key' : null;
