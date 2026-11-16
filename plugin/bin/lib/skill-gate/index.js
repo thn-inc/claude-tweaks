@@ -237,15 +237,15 @@ function decide({ skill, mode, surface, files, designIntegration, loadJourneys }
 // an inline value (`files: [a.js]`) the list reader would silently read as
 // empty. CRLF reads as LF; surrounding quotes are stripped from each item.
 function parseJourneyText(text) {
-  const lines = String(text).split(/\r?\n/);
-  if (lines[0] !== '---') return { files: null };
-  const fence = splitFrontmatterFence(String(text));
+  const source = String(text);
+  if (source.split(/\r?\n/, 1)[0] !== '---') return { files: null };
+  const fence = splitFrontmatterFence(source);
   if (!fence) return { error: 'frontmatter never closes' };
   if (fence.frontmatter.some((l) => /^files:\s*\S/.test(l))) {
     return { error: 'files: has an inline value; the gate reads only the block list form' };
   }
   if (!fence.frontmatter.some((l) => /^files:\s*$/.test(l))) return { files: null };
-  const items = parseFrontmatterListField(String(text), 'files');
+  const items = parseFrontmatterListField(source, 'files');
   return { files: items.map((i) => i.replace(/^(["'])(.*)\1$/, '$2')) };
 }
 
