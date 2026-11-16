@@ -84,7 +84,11 @@ function readOwnerPid(lockPath) {
 // still-in-progress one, the exact unsynchronized-read-modify-write shape
 // this lock exists to prevent. Age is now only the fallback for a lock
 // whose owner pid can't be read at all (see readOwnerPid above).
-function acquireLock(lockPath, { waitMs, env = process.env } = {}) {
+//
+// `opts.createParent: false` (#5555) is for a lock inside a directory that must
+// never be recreated (a run dir a concurrent archive may move away): a missing
+// parent returns null at once instead of being created.
+function acquireLock(lockPath, { waitMs, env = process.env, createParent = true } = {}) {
   const wait = Number.isInteger(waitMs) && waitMs >= 0 ? waitMs : resolveLockWaitMs(env);
   const deadline = Date.now() + wait;
   const parentDir = path.dirname(lockPath);
@@ -96,6 +100,7 @@ function acquireLock(lockPath, { waitMs, env = process.env } = {}) {
       return { lockPath, token };
     } catch (e) {
       if (e && e.code === 'ENOENT') {
+        if (!createParent) return null;
         // The lock's own parent directory doesn't exist yet -- the common
         // bootstrap race on a fresh project's first-ever concurrent write
         // (nothing has run the store's own mkdirSync yet). Create it and
@@ -159,8 +164,8 @@ function releaseLock(held) {
 // sequence) has actually finished, reopening the exact race the lock exists
 // to close.
 function withLock(lockPath, fn, opts = {}) {
-  const { failClosed = false, waitMs, env = process.env } = opts;
-  const held = acquireLock(lockPath, { waitMs, env });
+  const { failClosed = false, waitMs, env = process.env, createParent } = opts;
+  const held = acquireLock(lockPath, { waitMs, env, createParent });
   if (held === null && failClosed) {
     const err = new Error(`could not acquire lock within the configured wait: ${lockPath}`);
     err.code = 'LOCK_TIMEOUT';
