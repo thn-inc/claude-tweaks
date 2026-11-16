@@ -64,7 +64,17 @@ function assertCannotTell(r) {
   assert.equal(r.json.logged, undefined);
 }
 
-const SKIP_FILES = 'tests/a.test.js,.claude-tweaks/pipelines/r/work/1-spec.md';
+// Runs the CLI with the --run/--section/--step triple on an anchored run dir,
+// and asserts a cannot-tell result left decisions.md absent (nothing logged).
+function cliLogged(main, argv, opts = {}) {
+  const runDir = runDirIn(main);
+  const r = cli([...argv, '--run', runDir, '--section', '/build', '--step', 'Common Step 6'], { cwd: main, ...opts });
+  assertCannotTell(r);
+  assert.equal(fs.existsSync(path.join(runDir, 'decisions.md')), false);
+  return r;
+}
+
+const SKIP_FILES ='tests/a.test.js,.claude-tweaks/pipelines/r/work/1-spec.md';
 
 test('AC1.1-AC1.7: test-only diff skips journeys, visual-review and every wrapper mode', () => {
   const main = repo();
@@ -127,7 +137,7 @@ test('AC6.2: an unreadable docs/journeys/ is cannot tell', chmodDenialSkip('root
   write(main, 'docs/journeys/x.md', '# x\n');
   fs.chmodSync(dir, 0o000);
   try {
-    assertCannotTell(cli(['--skill', 'journeys', '--files', 'tests/a.test.js'], { cwd: main }));
+    cliLogged(main, ['--skill', 'journeys', '--files', 'tests/a.test.js']);
   } finally {
     fs.chmodSync(dir, 0o755);
   }
@@ -136,7 +146,7 @@ test('AC6.2: an unreadable docs/journeys/ is cannot tell', chmodDenialSkip('root
 test('AC6.3: a journey whose frontmatter never closes is cannot tell', () => {
   const main = repo();
   write(main, 'docs/journeys/x.md', '---\nfiles:\n');
-  assertCannotTell(cli(['--skill', 'journeys', '--files', 'tests/a.test.js'], { cwd: main }));
+  cliLogged(main, ['--skill', 'journeys', '--files', 'tests/a.test.js']);
 });
 
 function symlinkOrSkip(t, target, linkPath) {
@@ -155,32 +165,54 @@ test('AC6.4: a journey symlink resolving outside the checkout is never read, can
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-gate-out-'));
   const target = write(outside, 'secret.md', '---\nfiles:\n  - plugin/bin/x.js\n---\n');
   if (!symlinkOrSkip(t, target, path.join(main, 'docs', 'journeys', 'x.md'))) return;
-  const r = cli(['--skill', 'journeys', '--files', 'tests/a.test.js'], { cwd: main });
-  assertCannotTell(r);
+  const r = cliLogged(main, ['--skill', 'journeys', '--files', 'tests/a.test.js']);
   assert.match(r.json.reason, /outside/);
+});
+
+test('a docs/journeys directory symlinked outside the checkout is never read, cannot tell', (t) => {
+  const main = repo();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-gate-outdir-'));
+  write(outside, 'x.md', '---\nfiles:\n  - plugin/bin/x.js\n---\n');
+  fs.mkdirSync(path.join(main, 'docs'), { recursive: true });
+  if (!symlinkOrSkip(t, outside, path.join(main, 'docs', 'journeys'))) return;
+  const r = cliLogged(main, ['--skill', 'journeys', '--files', 'tests/a.test.js']);
+  assert.match(r.json.reason, /docs\/journeys resolves outside the checkout/);
+});
+
+test('a docs directory symlinked outside the checkout is never read, cannot tell', (t) => {
+  const main = repo();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-gate-outdocs-'));
+  write(outside, 'journeys/x.md', '---\nfiles:\n  - plugin/bin/x.js\n---\n');
+  if (!symlinkOrSkip(t, outside, path.join(main, 'docs'))) return;
+  const r = cliLogged(main, ['--skill', 'journeys', '--files', 'tests/a.test.js']);
+  assert.match(r.json.reason, /resolves outside the checkout/);
 });
 
 test('AC6.5: a dangling journey symlink is cannot tell', (t) => {
   const main = repo();
   if (!symlinkOrSkip(t, path.join(main, 'nowhere.md'), path.join(main, 'docs', 'journeys', 'x.md'))) return;
-  const r = cli(['--skill', 'journeys', '--files', 'tests/a.test.js'], { cwd: main });
-  assertCannotTell(r);
+  const r = cliLogged(main, ['--skill', 'journeys', '--files', 'tests/a.test.js']);
   assert.match(r.json.reason, /dangling symlink/);
 });
 
 test('AC6.6: a rule that throws is cannot tell', () => {
   const main = repo();
   const boom = (a) => libGate({ ...a, decideImpl: () => { throw new Error('boom'); } });
-  const r = cli(['--skill', 'journeys', '--files', 'tests/a.test.js'], { cwd: main, deps: { gate: boom } });
-  assertCannotTell(r);
+  const r = cliLogged(main, ['--skill', 'journeys', '--files', 'tests/a.test.js'], { deps: { gate: boom } });
   assert.match(r.json.reason, /boom/);
 });
 
 test('a multi-line throw message still gives exactly one stderr line', () => {
   const main = repo();
   const boom = (a) => libGate({ ...a, decideImpl: () => { throw new Error('line one\nline two'); } });
-  const r = cli(['--skill', 'journeys', '--files', 'tests/a.test.js'], { cwd: main, deps: { gate: boom } });
-  assertCannotTell(r);
+  cliLogged(main, ['--skill', 'journeys', '--files', 'tests/a.test.js'], { deps: { gate: boom } });
+});
+
+test('the unresolvable-base reason names the cause once', () => {
+  const main = repo();
+  const r = cliLogged(main, ['--skill', 'journeys', '--integration-branch', 'no-such-branch']);
+  assert.equal(r.json.reason.split('could not be resolved').length, 2, r.json.reason);
+  assert.ok(!r.json.reason.includes('cannot resolve the changed files'), r.json.reason);
 });
 
 test('Review Focus 5: surrounding whitespace and empty entries in --files are trimmed away', () => {
@@ -337,6 +369,36 @@ test('AC12.1/AC12.2: malformed invocations exit 2 with usage', () => {
     assert.match(r.stderr, /usage:/, argv.join(' '));
     assert.equal(r.stdout, '', argv.join(' '));
   }
+});
+
+test('-h and --help as a flag value are values, not help; a repeated flag exits 2', () => {
+  const main = repo();
+  const runDir = runDirIn(main);
+  const asValue = cli(['--skill', 'journeys', '--files', 'tests/a.test.js', '--run', runDir, '--section', '/build', '--step', '-h'], { cwd: main });
+  assert.equal(asValue.code, 0);
+  assert.equal(asValue.json.logged, true);
+  assert.match(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), /— -h \(skipped\):/);
+  const asSurface = cli(['--skill', 'journeys', '--files', 'tests/a.test.js', '--surface', '-h'], { cwd: main });
+  assert.equal(asSurface.code, 0);
+  assert.equal(asSurface.json.decision, 'skip');
+  for (const argv of [
+    ['--skill', 'journeys', '--skill', 'visual-review', '--files', 'a'],
+    ['--skill', 'journeys', '--files', 'a', '--files', 'b'],
+  ]) {
+    const r = cli(argv, { cwd: main });
+    assert.equal(r.code, 2, argv.join(' '));
+    assert.match(r.stderr, /given more than once/);
+    assert.match(r.stderr, /usage:/);
+  }
+});
+
+test('the real repoRoot default and the timeout constant are exposed', () => {
+  const real = require(CLI);
+  const lib = require('../../../plugin/bin/lib/skill-gate');
+  assert.equal(typeof real.realDeps.repoRoot, 'function');
+  assert.equal(typeof lib.GIT_TIMEOUT_MS, 'number');
+  const main = repo();
+  assert.equal(real.realDeps.repoRoot(main, ENV), fs.realpathSync(main));
 });
 
 test('AC12: --help exits 0 with the usage on stdout, before anything else', () => {

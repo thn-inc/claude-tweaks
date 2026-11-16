@@ -265,6 +265,13 @@ function readJourneys(root, { fsImpl = fs } = {}) {
     if (e && e.code === 'ENOENT') return { journeys: [] };
     return { error: `docs/journeys could not be read: ${errMessage(e)}` };
   }
+  // `docs` or `docs/journeys` may itself be a symlink: the directory's real
+  // path must sit inside the checkout before any entry is read.
+  const rootReal = canonicalRealpath(root, { fsImpl });
+  const dirReal = canonicalRealpath(dir, { fsImpl });
+  if (rootReal === null || dirReal === null || !isAncestorOrSelf(rootReal, dirReal)) {
+    return { error: 'docs/journeys resolves outside the checkout' };
+  }
   const journeys = [];
   for (const entry of names.filter((n) => n.endsWith('.md')).sort()) {
     const file = path.join(dir, entry);
@@ -273,8 +280,7 @@ function readJourneys(root, { fsImpl = fs } = {}) {
       const resolved = resolveLeaf(file, { fsImpl });
       if (resolved.state === 'dangling') return { error: `journey ${entry} is a dangling symlink` };
       if (resolved.state !== 'resolved') return { error: `journey ${entry} could not be resolved (${resolved.state})` };
-      const rootReal = canonicalRealpath(root, { fsImpl });
-      if (rootReal === null || !isAncestorOrSelf(rootReal, resolved.path)) {
+      if (!isAncestorOrSelf(rootReal, resolved.path)) {
         return { error: `journey ${entry} is a symlink that resolves outside the checkout` };
       }
     }
@@ -305,7 +311,7 @@ function gate({
       const base = resolveBase({ integrationBranch, requireNonDegenerate: true, execImpl: exec });
       list = changedFiles({ base, execImpl: exec }).files;
     } catch (e) {
-      list = { error: `cannot resolve the changed files: ${errMessage(e)}` };
+      list = { error: errMessage(e) };
     }
   }
   let result;
@@ -322,6 +328,7 @@ function gate({
 }
 
 module.exports = {
+  GIT_TIMEOUT_MS,
   parseJourneyText,
   readJourneys,
   gate,

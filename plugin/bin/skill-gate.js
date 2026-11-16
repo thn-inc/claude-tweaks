@@ -23,7 +23,9 @@
 'use strict';
 
 const { execFileSync } = require('child_process');
-const { SKILLS, WRAPPER_MODES, CANNOT_TELL, gate: libGate } = require('./lib/skill-gate');
+const {
+  SKILLS, WRAPPER_MODES, CANNOT_TELL, GIT_TIMEOUT_MS, gate: libGate,
+} = require('./lib/skill-gate');
 const { readDesignIntegrationFlagFromFile } = require('./lib/design-detect');
 const { resolveTarget, formatEntry, appendEntry } = require('./lib/log-decision/append');
 
@@ -49,6 +51,21 @@ const VALUE_FLAGS = {
   '--step': 'step',
 };
 
+// --help / -h in flag position. A token a value flag consumes is a value, so
+// `--step -h` is a step named -h; a value flag followed by a `--` token has no
+// value (parseArgs rejects it), and that token is read as a flag here.
+function wantsHelp(argv) {
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--help' || a === '-h') return true;
+    if (Object.prototype.hasOwnProperty.call(VALUE_FLAGS, a)) {
+      const v = argv[i + 1];
+      if (v !== undefined && !v.startsWith('--')) i += 1;
+    }
+  }
+  return false;
+}
+
 function parseArgs(argv) {
   const o = {};
   for (let i = 0; i < argv.length; i++) {
@@ -57,6 +74,7 @@ function parseArgs(argv) {
     if (key === null) return { error: `unknown argument: ${a}` };
     const v = argv[i + 1];
     if (v === undefined || v.startsWith('--')) return { error: `${a} needs a value` };
+    if (o[key] !== undefined) return { error: `${a} given more than once` };
     o[key] = v;
     i += 1;
   }
@@ -83,12 +101,6 @@ function skillLabel(o) {
   return o.skill === 'design-wrapper' ? `design-wrapper ${o.mode}` : o.skill;
 }
 
-function defaultRepoRoot(cwd, env) {
-  return String(execFileSync('git', ['rev-parse', '--show-toplevel'], {
-    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, cwd, env, timeout: 30000,
-  })).trim();
-}
-
 const realDeps = {
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
@@ -99,7 +111,10 @@ const realDeps = {
   gate: libGate,
   appendDecision: (args) => appendEntry(args),
   readDesignIntegration: (root) => readDesignIntegrationFlagFromFile(root),
-  repoRoot: undefined,
+  // (cwd, env) -> the checkout's top-level directory; throws outside a git repo.
+  repoRoot: (cwd, env) => String(execFileSync('git', ['rev-parse', '--show-toplevel'], {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, cwd, env, timeout: GIT_TIMEOUT_MS,
+  })).trim(),
 };
 
 function errText(e) {
@@ -109,7 +124,7 @@ function errText(e) {
 function resolveRoot(deps) {
   const cwd = deps.cwd();
   try {
-    const r = deps.repoRoot ? deps.repoRoot() : defaultRepoRoot(cwd, deps.env);
+    const r = deps.repoRoot(cwd, deps.env);
     if (typeof r === 'string' && r) return r;
   } catch { /* not a git repo: fall back to cwd */ }
   return cwd;
@@ -134,7 +149,7 @@ function logSkip(deps, o, reason) {
 }
 
 function run(argv, deps = realDeps) {
-  if (argv.includes('--help') || argv.includes('-h')) { deps.stdout(USAGE); return 0; }
+  if (wantsHelp(argv)) { deps.stdout(USAGE); return 0; }
   const o = parseArgs(argv);
   if (o.error) { deps.stderr(`skill-gate.js: ${o.error}\n${USAGE}`); return 2; }
 
