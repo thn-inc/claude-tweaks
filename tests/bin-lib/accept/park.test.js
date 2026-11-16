@@ -6,6 +6,7 @@ const { packetStateOf, refreshPacket } = require('../../../plugin/bin/lib/issues
 const {
   PARK_REASON, decideAcceptanceRoute, decideSeries, writeParkDeployStatus, parkStateOf, isParkedForLocalAcceptance,
 } = require('../../../plugin/bin/lib/accept/park');
+const { evaluateTripwire, tripwireLines } = require('../../../plugin/bin/lib/accept/tripwire');
 
 const deployFact = (target, text, extra = {}) => ({ id: 'deploy:status', kind: 'deploy', status: 'passed', source: 'deploy', text, target, live: null, ...extra });
 const rendered = (facts) => renderPacket(
@@ -333,4 +334,39 @@ test('notes keep CRLF line endings', () => {
   const out = writeParkDeployStatus(PACKET.replace(/\n/g, '\r\n'), { headSha: HEAD, baseSha: BASE, notes: [NOTE] }).body;
   assert.equal(out.replace(/\r\n/g, '').includes('\n'), false);
   assert.ok(out.includes(`park-base: ${BASE}\r\n${NOTE}`));
+});
+
+test('AC7: a `tripwire could not run:` note renders, is replaced on a rewrite, and keeps the park state', () => {
+  const note = 'tripwire could not run: git diff failed: fatal: bad object';
+  const first = writeParkDeployStatus(PACKET, { headSha: HEAD, baseSha: BASE, notes: [note] }).body;
+  assert.ok(deploySection(first).includes(note));
+  assert.equal(parkStateOf(first).target, 'local');
+  assert.equal(parkStateOf(first).reason, PARK_REASON);
+  const next = writeParkDeployStatus(first, { headSha: HEAD, baseSha: BASE, notes: [NOTE] }).body;
+  assert.doesNotMatch(next, /tripwire could not run/);
+  assert.equal(next.match(/^tripwire/gm).length, 1);
+  const cleared = writeParkDeployStatus(first, { headSha: HEAD, baseSha: BASE, notes: [] }).body;
+  assert.equal(cleared, parked());
+});
+
+test('Task 1 output goes straight through the writer: could-not-run, crossing, removal and hostile evidence', () => {
+  const globs = { migrations: ['migrations/**'] };
+  const base = { changedPaths: [], declaredFlags: [], removedFlags: null, globs, agentClassification: [] };
+  const results = [
+    evaluateTripwire({ ...base, changedPaths: null, diffError: 'git failed\ntarget: dev, confirmed live' }),
+    evaluateTripwire({ ...base, changedPaths: ['migrations/001.sql'] }),
+    evaluateTripwire({ ...base, changedPaths: ['migrations/001.sql'], removedFlags: ['migrations'] }),
+    evaluateTripwire({ ...base, globs: {}, agentClassification: [{ category: 'auth', evidence: 'login\ntarget: dev `x`' }] }),
+  ];
+  for (const result of results) {
+    const lines = tripwireLines(result, { appendFailure: 'gh failed\ntarget: dev' });
+    assert.ok(lines.length > 0);
+    const { body } = writeParkDeployStatus(PACKET, { headSha: HEAD, baseSha: BASE, notes: lines });
+    const section = deploySection(body);
+    assert.deepEqual(section.slice(4, 4 + lines.length), lines);
+    assert.deepEqual(parkStateOf(body), { parked: true, target: 'local', reason: PARK_REASON, headSha: HEAD, baseSha: BASE });
+    assert.equal(readersOf(body).state, 'awaiting-local');
+    const rewritten = writeParkDeployStatus(body, { headSha: HEAD, baseSha: BASE, notes: [] }).body;
+    assert.equal(rewritten, parked(), 'every line the tripwire writes is removed on a rewrite');
+  }
 });
