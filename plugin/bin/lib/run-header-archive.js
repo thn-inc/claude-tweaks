@@ -20,18 +20,24 @@
 //   `work/` stay where they are (a whole-directory `git mv` would take them along).
 //   - noop: nothing is tracked under the live header paths (never materialized, or the
 //     move already happened on this branch).
-//   - refused, with `reason`: `missing-worktree`, `dirty-index` (any staged change — the
-//     commit must contain only the move), `archived-copy-differs` (a destination already
+//   - refused, with `reason`: `missing-worktree`, `dirty-index` (any staged change, or an
+//     unstaged edit to a file about to move — the commit takes working-tree content and
+//     must contain only the move), `archived-copy-differs` (a destination already
 //     holds different bytes, tracked or not), `git-mv-failed`, `commit-failed`,
 //     `git-failed` (a probe git could not answer). Every refusal leaves the worktree and
 //     index as it found them: planning refusals return before any mutation, and a
-//     failure after the first mutation reverts every staged op LIFO.
+//     failure after the first mutation reverts every staged op LIFO and removes the
+//     directories this call created. When that unwind itself fails, the reason is
+//     suffixed `-partial-revert` (`git-mv-failed-partial-revert`,
+//     `commit-failed-partial-revert`, as in archive-merged.js) and `detail` lists what
+//     could not be undone — a caller must not read those as a clean refusal.
 //   A destination byte-identical to its live copy (a resumed move, or an earlier
 //   fallback leaving a twin) is resolved by `git rm` of the live copy (tracked twin) or
 //   `git mv -f` over it (untracked twin), not refused.
-//   The commit names every source and destination path explicitly after `--`; an empty
-//   pathspec would commit the whole index. It takes `env`'s identity and runs its hooks.
-//   Throws a TypeError for a `runId` or `specDir` that is not shaped like one: a
+//   The commit names every source and destination path explicitly after `--`, each as a
+//   `:(literal)` pathspec; an empty pathspec would commit the whole index. It takes `env`'s identity and runs its hooks.
+//   Throws a TypeError for a `runId` (a run-id segment with no glob or path characters) or
+//   `specDir` that is not shaped like one: a
 //   caller bug, never a repo state.
 //
 // pushRunBranch({ worktree, env, git = runGit })
@@ -50,6 +56,7 @@ const { splitNul } = require('./git-z');
 const { runRelDirs } = require('./run-header');
 
 const SPEC_DIR_RE = /^spec-[1-9]\d*$/;
+const SAFE_RUN_ID_RE = /^\d{4}-\d{2}-\d{2}T[0-9A-Za-z._-]+$/;
 // A commit runs the repo's hooks and a push talks to a remote; both may outlast runGit's 10s default.
 const COMMIT_TIMEOUT_MS = 120000;
 const PUSH_TIMEOUT_MS = 120000;
@@ -66,12 +73,21 @@ function failDetail(res) {
   return (res && (res.stderr || res.failureStdout || res.failure)) || 'unknown git failure';
 }
 
+// A run id is a path segment and part of git pathspecs: only characters that are neither a glob
+// metacharacter nor a path separator, so every pathspec built from it names the run and nothing else.
 function validRunId(runId) {
-  return typeof runId === 'string' && RUN_ID_RE.test(runId) && !/[\\/]/.test(runId) && !runId.includes('..');
+  return typeof runId === 'string' && RUN_ID_RE.test(runId) && SAFE_RUN_ID_RE.test(runId) && !runId.includes('..');
+}
+
+// `:(literal)` makes git read a path as itself, not as a glob (a file under work/ may be named `a*.md`).
+// Per path, never the global --literal-pathspecs flag, which also exports GIT_LITERAL_PATHSPECS to hooks.
+function lit(rel) {
+  return `:(literal)${rel}`;
 }
 
 // The `work/` directory above a live header path: `{live}/work` or `{live}/spec-N/work`.
 function workRootOf(rel, liveDir) {
+  if (!rel.startsWith(`${liveDir}/`)) return null;
   const m = /^(spec-[^/]+\/)?work\//.exec(rel.slice(liveDir.length + 1));
   return m ? `${liveDir}/${m[0].slice(0, -1)}` : null;
 }
@@ -102,8 +118,8 @@ function archiveRunHeader({ worktree, runId, specDir = null, env, git = runGit }
   // (2) Tracked files under the live header paths; none means nothing to do.
   const [liveDir, archivedDir] = runRelDirs(runId);
   const specs = specDir
-    ? [`${liveDir}/${specDir}/work`]
-    : [`${liveDir}/work`, `${liveDir}/spec-*/work/*`];
+    ? [lit(`${liveDir}/${specDir}/work`)]
+    : [lit(`${liveDir}/work`), `${liveDir}/spec-*/work/*`]; // the run id is glob-free (validRunId); only `spec-*` is a pattern
   const listed = g(['ls-files', '-z', '--', ...specs], { raw: true });
   if (listed.failure) return refused('git-failed', failDetail(listed));
   // `spec-*` in a pathspec also crosses `/`; keep only `{live}/work/...` and `{live}/spec-X/work/...`.
@@ -120,12 +136,19 @@ function archiveRunHeader({ worktree, runId, specDir = null, env, git = runGit }
   }
 
   // (4) Plan every pair before touching anything.
-  const tracked = g(['ls-files', '-z', '--', archivedDir], { raw: true });
+  const tracked = g(['ls-files', '-z', '--', lit(archivedDir)], { raw: true });
   if (tracked.failure) return refused('git-failed', failDetail(tracked));
   const trackedDest = new Set(splitNul(tracked.stdout));
   const plan = [];
   for (const src of live) {
     const dest = archivedDir + src.slice(liveDir.length);
+    // The commit takes working-tree content (--only), so an unstaged edit to a moved file would ride along.
+    const edited = g(['diff', '--quiet', '--', lit(src)]);
+    if (edited.failure) {
+      return edited.failure === 'git-error' && edited.exitCode === 1
+        ? refused('dirty-index', `${src} has unstaged changes`)
+        : refused('git-failed', failDetail(edited));
+    }
     const srcBlob = g(['rev-parse', `:${src}`]);
     if (srcBlob.failure) return refused('git-failed', failDetail(srcBlob));
     if (trackedDest.has(dest)) {
@@ -148,51 +171,70 @@ function archiveRunHeader({ worktree, runId, specDir = null, env, git = runGit }
     }
   }
 
-  // (5) Mutate, recording each op so a failure can unwind it.
+  // (5) Mutate, recording each op (and each directory this call creates) so a failure can unwind it.
   const done = [];
+  const createdDirs = [];
+  const ensureDir = (relDir) => {
+    const missing = [];
+    for (let d = relDir; d && d !== '.' && lstatType(path.join(worktree, ...d.split('/'))).type === 'missing'; d = path.posix.dirname(d)) missing.push(d);
+    fs.mkdirSync(path.join(worktree, ...relDir.split('/')), { recursive: true });
+    createdDirs.push(...missing); // deepest first
+  };
+  // Returns what could not be undone; an empty list is a clean unwind.
   const revert = () => {
+    const failures = [];
+    const note = (what, res) => { if (res && res.failure) failures.push(`${what}: ${failDetail(res)}`); };
     for (const { op, src, dest } of done.reverse()) {
       try {
         if (op === 'rm') {
-          g(['--literal-pathspecs', 'reset', '-q', '--', src]);
-          g(['--literal-pathspecs', 'checkout', '--', src]);
+          note(`reset ${src}`, g(['reset', '-q', '--', lit(src)]));
+          note(`checkout ${src}`, g(['checkout', '--', lit(src)]));
         } else {
           fs.mkdirSync(path.dirname(path.join(worktree, ...src.split('/'))), { recursive: true });
-          g(['mv', '--', dest, src]);
+          const back = g(['mv', '--', dest, src]);
+          note(`mv ${dest} back`, back);
           // `git mv -f` overwrote an untracked destination holding these same bytes: put it back.
-          if (op === 'mv-force') fs.copyFileSync(path.join(worktree, ...src.split('/')), path.join(worktree, ...dest.split('/')));
+          if (op === 'mv-force' && !back.failure) fs.copyFileSync(path.join(worktree, ...src.split('/')), path.join(worktree, ...dest.split('/')));
         }
-      } catch { /* best effort: keep unwinding the remaining ops */ }
+      } catch (err) {
+        failures.push(`${op} ${src}: ${String(err && err.message)}`);
+      }
     }
+    // Only the directories this call created, deepest first; one a file still sits in stays.
+    for (const d of [...createdDirs].sort((a, b) => b.length - a.length)) {
+      try { fs.rmdirSync(path.join(worktree, ...d.split('/'))); } catch { /* not empty, or already gone */ }
+    }
+    return failures;
+  };
+  // A refusal after the first mutation: honest about whether the unwind finished.
+  const refuseAfterMutation = (reason, detail) => {
+    const failures = revert();
+    return failures.length === 0
+      ? refused(reason, detail)
+      : refused(`${reason}-partial-revert`, `${detail}; the unwind did not finish, check git status — ${failures.join('; ')}`);
   };
   for (const step of plan) {
     let res;
     try {
       if (step.op === 'rm') {
-        res = g(['--literal-pathspecs', 'rm', '-q', '--', step.src]);
+        res = g(['rm', '-q', '--', lit(step.src)]);
       } else {
-        fs.mkdirSync(path.dirname(path.join(worktree, ...step.dest.split('/'))), { recursive: true });
+        ensureDir(path.posix.dirname(step.dest));
         res = g(step.op === 'mv-force' ? ['mv', '-f', '--', step.src, step.dest] : ['mv', '--', step.src, step.dest]);
       }
     } catch (err) {
       res = { failure: 'git-error', stderr: String(err && err.message) };
     }
-    if (res.failure) {
-      revert();
-      return refused('git-mv-failed', `${step.op} ${step.src}: ${failDetail(res)}`);
-    }
+    if (res.failure) return refuseAfterMutation('git-mv-failed', `${step.op} ${step.src}: ${failDetail(res)}`);
     done.push(step);
   }
 
   // (6) One commit, explicit pathspec: every source and destination path.
   const subject = ARCHIVE_HEADER_SUBJECT(runId);
-  const paths = plan.flatMap((s) => [s.src, s.dest]);
-  const committed = g(['--literal-pathspecs', 'commit', '-q', '-m', subject, '--', ...paths], { timeoutMs: COMMIT_TIMEOUT_MS });
-  if (committed.failure) {
-    // (7) Unwind: the staged moves go back, so the branch is as it was.
-    revert();
-    return refused('commit-failed', failDetail(committed));
-  }
+  const paths = plan.flatMap((s) => [lit(s.src), lit(s.dest)]);
+  const committed = g(['commit', '-q', '-m', subject, '--', ...paths], { timeoutMs: COMMIT_TIMEOUT_MS });
+  // (7) A failed commit unwinds: the staged moves go back, so the branch is as it was.
+  if (committed.failure) return refuseAfterMutation('commit-failed', failDetail(committed));
 
   // (8) Report; drop the live dirs the move emptied.
   const moved = live;
@@ -204,13 +246,14 @@ function archiveRunHeader({ worktree, runId, specDir = null, env, git = runGit }
 
 function pushRunBranch({ worktree, env, git = runGit } = {}) {
   const g = (args, opts = {}) => git(args, worktree, { env, ...opts });
-  const head = g(['symbolic-ref', '-q', '--short', 'HEAD']);
+  // The full ref, not --short: a tag named like the branch makes --short print `heads/{branch}`.
+  const head = g(['symbolic-ref', '-q', 'HEAD']);
   if (head.failure) {
     return head.failure === 'git-error' && head.exitCode === 1
       ? { pushed: false, reason: 'detached-head' }
       : { pushed: false, reason: 'push-failed', detail: failDetail(head) };
   }
-  const branch = head.stdout;
+  const branch = head.stdout.startsWith('refs/heads/') ? head.stdout.slice('refs/heads/'.length) : '';
   if (!branch || branch.startsWith('-')) return { pushed: false, reason: 'invalid-branch', branch };
   const pushed = git(['push', '-q', 'origin', `refs/heads/${branch}:refs/heads/${branch}`], worktree, {
     // A credential prompt has no terminal to answer it: fail fast instead of hanging.

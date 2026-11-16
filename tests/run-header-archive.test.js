@@ -9,10 +9,12 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { archiveRunHeader, pushRunBranch, ARCHIVE_HEADER_SUBJECT } = require('../plugin/bin/lib/run-header-archive');
+const { readText } = require('./helpers/read-skill');
 const { committedRepo, cleanGitEnv, originWithTwoClones } = require('./helpers/git-fixtures');
 
 const RUN = '2026-11-16T000000-record-7';
 const P = '.claude-tweaks/pipelines';
+const PIPELINES = path.join('.claude-tweaks', 'pipelines');
 const LIVE = `${P}/${RUN}`;
 const ARCH = `${P}/archive/${RUN}`;
 const REAL_GITIGNORE = path.join(__dirname, '..', '.gitignore');
@@ -32,10 +34,18 @@ test.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: 
 
 // A repo with the real .gitignore committed. `put(rel, content, {force})` writes and
 // `git add`s a file (not committed); `commit(msg)` commits the index.
-function makeRepo() {
+// The .gitignore the repo ships today, or the narrowed form (#3976 Task 5) in which only
+// work/*-spec.md is un-ignored: each `!…/work/**` line becomes `…/work/*` then `!…/work/*-spec.md`.
+function gitignoreText({ narrowed }) {
+  const text = readText(REAL_GITIGNORE);
+  if (!narrowed) return text;
+  return text.replace(/^!(\.claude-tweaks\/pipelines\/.*\/work)\/\*\*$/gm, (_m, work) => `${work}/*\n!${work}/*-spec.md`);
+}
+
+function makeRepo({ narrowed = false } = {}) {
   const { dir, git } = committedRepo({ prefix: 'ct-rha-', branch: 'main' });
   dirs.push(dir);
-  fs.copyFileSync(REAL_GITIGNORE, path.join(dir, '.gitignore'));
+  fs.writeFileSync(path.join(dir, '.gitignore'), gitignoreText({ narrowed }));
   git('add', '.gitignore');
   git('commit', '-q', '-m', 'gitignore');
   const write = (rel, content) => {
@@ -53,6 +63,13 @@ function makeRepo() {
     try { git(...args); return true; } catch { return false; }
   };
   return { dir, git, write, track, commit, head, tree, exitsClean };
+}
+
+// Registers the case twice: under the current .gitignore and under the narrowed one, where every
+// file under work/ but *-spec.md is ignored. A case that tracks or leaves a non-spec file forces it.
+function bothIgnoreRules(name, fn) {
+  test(name, () => fn({ narrowed: false }));
+  test(`${name} (narrowed .gitignore)`, () => fn({ narrowed: true }));
 }
 
 const mv = (r, extra = {}) => archiveRunHeader({ worktree: r.dir, runId: RUN, env: ENV, ...extra });
@@ -188,8 +205,8 @@ test('AC3.1/AC3.2 multi-spec: one move commit relocates work/ and every spec-{N}
   ]);
 });
 
-test('moves every tracked file, not only *-spec.md; untracked files stay', () => {
-  const r = makeRepo();
+bothIgnoreRules('moves every tracked file, not only *-spec.md; untracked files stay', (rules) => {
+  const r = makeRepo(rules);
   r.track(`${LIVE}/work/7-spec.md`, 'spec\n');
   r.track(`${LIVE}/work/prompt-audit-probe.txt`, 'probe\n', { force: true });
   r.commit('materialize');
@@ -255,15 +272,16 @@ test('a failing pre-commit hook reverts the move and refuses', () => {
   assert.deepEqual(r.git('ls-files', '--', `${LIVE}/`).split('\n').filter(Boolean), [`${LIVE}/spec-8/work/8-spec.md`, `${LIVE}/work/7-spec.md`]);
   assert.equal(r.git('ls-files', '--', `${ARCH}/`), '', 'archived path absent from the index');
   assert.equal(r.git('status', '--porcelain'), '', 'nothing staged, nothing dirty');
+  assert.equal(fs.existsSync(path.join(r.dir, PIPELINES, 'archive')), false, 'the archive directories this call created are removed');
   assert.equal(fs.readFileSync(path.join(r.dir, LIVE, 'work', '7-spec.md'), 'utf8'), 'spec\n');
   assert.equal(fs.readFileSync(path.join(r.dir, LIVE, 'spec-8', 'work', '8-spec.md'), 'utf8'), 'eight\n');
 });
 
-test('a failing pre-commit hook restores an identical twin and an untracked destination', () => {
-  const r = makeRepo();
+bothIgnoreRules('a failing pre-commit hook restores an identical twin and an untracked destination', (rules) => {
+  const r = makeRepo(rules);
   r.track(`${LIVE}/work/7-spec.md`, 'same\n');
   r.track(`${ARCH}/work/7-spec.md`, 'same\n'); // identical tracked twin: git rm op
-  r.track(`${LIVE}/work/9-note.md`, 'nine\n');
+  r.track(`${LIVE}/work/9-note.md`, 'nine\n', { force: true });
   r.commit('materialize');
   r.write(`${ARCH}/work/9-note.md`, 'nine\n'); // identical untracked destination: mv-force op
   fs.writeFileSync(path.join(r.dir, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
@@ -271,7 +289,10 @@ test('a failing pre-commit hook restores an identical twin and an untracked dest
   const res = mv(r);
 
   assert.equal(res.reason, 'commit-failed', JSON.stringify(res));
-  assert.equal(r.git('status', '--porcelain', '--untracked-files=all'), `?? ${ARCH}/work/9-note.md`, 'only the untracked destination remains, as before');
+  // By index and disk, not `status` output: the narrowed .gitignore hides the untracked destination from it.
+  assert.equal(r.exitsClean('diff', '--cached', '--quiet'), true, 'nothing staged');
+  assert.equal(r.exitsClean('diff', '--quiet'), true, 'no tracked file modified or deleted');
+  assert.equal(r.git('ls-files', '--', `${ARCH}/work/9-note.md`), '', 'the destination is still untracked');
   assert.equal(fs.readFileSync(path.join(r.dir, ARCH, 'work', '9-note.md'), 'utf8'), 'nine\n');
   assert.equal(fs.readFileSync(path.join(r.dir, LIVE, 'work', '7-spec.md'), 'utf8'), 'same\n');
   assert.equal(fs.readFileSync(path.join(r.dir, LIVE, 'work', '9-note.md'), 'utf8'), 'nine\n');
@@ -300,6 +321,7 @@ test('a failing second git mv reverts the first and refuses with git-mv-failed',
   assert.match(res.detail, /simulated mv failure/);
   assert.equal(r.head(), head);
   assert.equal(r.git('status', '--porcelain'), '', 'the first mv was reverted');
+  assert.equal(fs.existsSync(path.join(r.dir, PIPELINES, 'archive')), false, 'the archive directories the first mv created are removed');
   assert.equal(fs.readFileSync(path.join(r.dir, LIVE, 'work', '7-spec.md'), 'utf8'), 'spec\n');
   assert.equal(fs.readFileSync(path.join(r.dir, LIVE, 'spec-8', 'work', '8-spec.md'), 'utf8'), 'eight\n');
 });
@@ -377,7 +399,141 @@ test('pushRunBranch refuses a branch name that starts with a dash', () => {
   const fx = originWithTwoClones('ct-rha-dash-');
   dirs.push(fx.root);
   const git = (args) => (args[0] === 'symbolic-ref'
-    ? { stdout: '-delete', failure: null, stderr: null }
+    ? { stdout: 'refs/heads/-delete', failure: null, stderr: null }
     : assert.fail(`no other git call may run, got ${args.join(' ')}`));
   assert.deepEqual(pushRunBranch({ worktree: fx.work, env: cleanGitEnv(fx.env), git }), { pushed: false, reason: 'invalid-branch', branch: '-delete' });
+});
+
+test('pushRunBranch pushes the branch even when a tag carries its name', () => {
+  const fx = originWithTwoClones('ct-rha-tag-');
+  dirs.push(fx.root);
+  const env = cleanGitEnv(fx.env);
+  fx.run(fx.work, ['checkout', '-q', '-b', 'feat-x']);
+  fx.commit(fx.work, 'w1');
+  fx.run(fx.work, ['tag', 'feat-x']);
+
+  assert.deepEqual(pushRunBranch({ worktree: fx.work, env }), { pushed: true, branch: 'feat-x' });
+
+  const head = fx.run(fx.work, ['rev-parse', 'HEAD']).trim();
+  assert.match(fx.run(fx.work, ['ls-remote', 'origin', 'refs/heads/feat-x']), new RegExp(`^${head}\\s`));
+  assert.equal(fx.run(fx.work, ['ls-remote', '--tags', 'origin']).trim(), '', 'the tag was not pushed');
+});
+
+test('an unstaged edit to a file about to move refuses dirty-index, naming the path, before any mutation', () => {
+  const r = makeRepo();
+  r.track(`${LIVE}/work/7-spec.md`, 'committed\n');
+  r.commit('materialize');
+  r.write(`${LIVE}/work/7-spec.md`, 'committed\nplus an unstaged edit\n');
+  const head = r.head();
+
+  const res = mv(r);
+
+  assert.equal(res.outcome, 'refused');
+  assert.equal(res.reason, 'dirty-index');
+  assert.ok(res.detail.includes(`${LIVE}/work/7-spec.md`), res.detail);
+  assert.equal(r.head(), head);
+  assert.equal(r.exitsClean('diff', '--cached', '--quiet'), true, 'nothing staged');
+  assert.equal(fs.readFileSync(path.join(r.dir, LIVE, 'work', '7-spec.md'), 'utf8'), 'committed\nplus an unstaged edit\n', 'the edit is untouched');
+  assert.equal(fs.existsSync(path.join(r.dir, PIPELINES, 'archive')), false);
+});
+
+test('an unstaged edit to a file beside the moving ones does not block the move or ride along', () => {
+  const r = makeRepo();
+  r.track(`${LIVE}/work/7-spec.md`, 'spec\n');
+  r.track('docs/other.md', 'other\n');
+  r.commit('materialize');
+  r.write('docs/other.md', 'edited\n');
+
+  assert.equal(mv(r).outcome, 'moved');
+
+  assert.equal(r.git('status', '--porcelain').trim(), 'M docs/other.md', 'the unrelated edit stays unstaged and uncommitted');
+});
+
+test('a hook sees no GIT_LITERAL_PATHSPECS from the move', () => {
+  const r = makeRepo();
+  r.track(`${LIVE}/work/7-spec.md`, 'spec\n');
+  r.commit('materialize');
+  const probe = path.join(r.dir, '.git', 'hook-env-probe');
+  fs.writeFileSync(path.join(r.dir, '.git', 'hooks', 'pre-commit'), `#!/bin/sh\necho "\${GIT_LITERAL_PATHSPECS-unset}" > "${probe}"\n`, { mode: 0o755 });
+
+  assert.equal(mv(r).outcome, 'moved');
+
+  assert.equal(fs.readFileSync(probe, 'utf8').trim(), 'unset');
+});
+
+test('a file name with glob characters is moved as itself (literal pathspecs)', { skip: process.platform === 'win32' && 'a * cannot be in a Windows file name' }, () => {
+  const r = makeRepo();
+  r.track(`${LIVE}/work/s*.md`, 'star\n', { force: true });
+  r.track(`${ARCH}/work/s*.md`, 'star\n', { force: true }); // identical twin: the rm op, which would glob without :(literal)
+  r.track(`${LIVE}/work/sx.md`, 'sx\n', { force: true });
+  r.commit('materialize');
+
+  const res = mv(r);
+
+  assert.equal(res.outcome, 'moved', JSON.stringify(res));
+  assert.deepEqual(r.tree(`${LIVE}/`), []);
+  assert.deepEqual(r.tree(`${ARCH}/`), [`${ARCH}/work/s*.md`, `${ARCH}/work/sx.md`]);
+});
+
+test('a glob-shaped run id throws instead of reaching a pathspec', () => {
+  const r = makeRepo();
+  for (const runId of ['2026-11-16T*', '2026-11-16T[a]', '2026-11-16T?', '2026-11-16T a', '2026-11-16T', 'x2026-11-16T000000-r']) {
+    assert.throws(() => archiveRunHeader({ worktree: r.dir, runId, env: ENV }), TypeError, runId);
+  }
+});
+
+// A runner that really runs git, except for the calls `fail(args, n)` names (n counts that verb's calls).
+function failingRunner(fail) {
+  const { runGit } = require('../plugin/bin/lib/hooks/git-exec');
+  const counts = {};
+  return (args, cwd, opts) => {
+    counts[args[0]] = (counts[args[0]] || 0) + 1;
+    if (fail(args, counts[args[0]])) return { stdout: null, failure: 'git-error', stderr: `simulated ${args[0]} failure`, exitCode: 128, failureStdout: '' };
+    return runGit(args, cwd, opts);
+  };
+}
+
+test('a mv failure whose unwind also fails is a partial-revert refusal naming what is left', () => {
+  const r = makeRepo();
+  r.track(`${LIVE}/work/7-spec.md`, 'spec\n');
+  r.track(`${LIVE}/spec-8/work/8-spec.md`, 'eight\n');
+  r.commit('materialize');
+  // the first mv works, the second fails, and the revert mv (the third) fails too
+  const git = failingRunner((args, n) => args[0] === 'mv' && n >= 2);
+
+  const res = mv(r, { git });
+
+  assert.equal(res.outcome, 'refused');
+  assert.equal(res.reason, 'git-mv-failed-partial-revert');
+  assert.match(res.detail, /simulated mv failure/);
+  assert.match(res.detail, /did not finish/);
+  assert.match(res.detail, /mv \S+ back/);
+  assert.equal(r.git('ls-files', '--', `${ARCH}/`).split('\n').length, 1, 'the first move is still staged, as the detail says');
+});
+
+test('a commit failure whose unwind also fails is a partial-revert refusal', () => {
+  const r = makeRepo();
+  r.track(`${LIVE}/work/7-spec.md`, 'spec\n');
+  r.commit('materialize');
+  fs.writeFileSync(path.join(r.dir, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const git = failingRunner((args, n) => args[0] === 'mv' && n >= 2); // the revert mv
+
+  const res = mv(r, { git });
+
+  assert.equal(res.outcome, 'refused');
+  assert.equal(res.reason, 'commit-failed-partial-revert');
+  assert.match(res.detail, /did not finish/);
+});
+
+test('a pre-existing archive directory survives a reverted move', () => {
+  const r = makeRepo();
+  r.track(`${LIVE}/work/7-spec.md`, 'spec\n');
+  r.commit('materialize');
+  r.write(`${ARCH}/run-state.json`, '{}\n'); // the archive run dir already exists (its gitignored half)
+  fs.writeFileSync(path.join(r.dir, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+
+  assert.equal(mv(r).reason, 'commit-failed');
+
+  assert.equal(fs.readFileSync(path.join(r.dir, ARCH, 'run-state.json'), 'utf8'), '{}\n');
+  assert.equal(fs.existsSync(path.join(r.dir, ARCH, 'work')), false, 'only the work/ this call created is removed');
 });
