@@ -5,7 +5,7 @@
 // overlap-evidence floor) has a fixture on which only that guard decides.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { CHECK_IDS, DEFAULTS, parseThresholds, evaluate } = require('../../../plugin/bin/lib/ci-audit/checks');
+const { CHECK_IDS, DEFAULTS, DEFAULT_MIN_SAMPLE, parseThresholds, evaluate } = require('../../../plugin/bin/lib/ci-audit/checks');
 const { aggregate } = require('../../../plugin/bin/lib/ci-audit/aggregate');
 
 const W = 'workflows/ci.yml';
@@ -68,6 +68,15 @@ test('queue-wait fires above 0.4 of the job total, not at it, and not below minS
   // minSample defaults to 5
   assert.deepEqual(only(evaluate(agg({ jobs: [row('a', 4, 50, 10, 40)] }), f), 'queue-wait'), []);
   assert.equal(only(evaluate(agg({ jobs: [row('a', 5, 50, 10, 40)] }), f), 'queue-wait').length, 1);
+});
+
+test('DEFAULT_MIN_SAMPLE is 5 and is the floor evaluate falls back to', () => {
+  assert.equal(DEFAULT_MIN_SAMPLE, 5);
+  const f = { [W]: facts([]) };
+  for (const fallback of [undefined, null, 0, 2.5]) {
+    assert.deepEqual(only(evaluate(agg({ jobs: [row('a', DEFAULT_MIN_SAMPLE - 1, 50, 10, 40)] }), f, {}, fallback), 'queue-wait'), [], String(fallback));
+    assert.equal(only(evaluate(agg({ jobs: [row('a', DEFAULT_MIN_SAMPLE, 50, 10, 40)] }), f, {}, fallback), 'queue-wait').length, 1, String(fallback));
+  }
 });
 
 // ---- setup-dominance ----

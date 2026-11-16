@@ -91,6 +91,8 @@ function gather(argv, { fake = fakeRunner(), workflows = files([{ file: BUILD, t
     readWorkflowFiles: (root) => { roots.push(root); return workflows(root); },
     remoteUrl: () => 'https://github.com/thn-inc/claude-tweaks.git',
     pinHost: (spec) => { pins.push(spec); return null; },
+    // A fake host environment: no exported host, no host config file, so the gate reads nothing real.
+    gateDeps: { env: {}, homedir: '/nonexistent-home', readFile: () => { throw Object.assign(new Error('absent'), { code: 'ENOENT' }); } },
     cwd: () => '/checkout',
     now: NOW,
     clock: null,
@@ -122,16 +124,18 @@ test('AC1.1: two runs of a two-job workflow give the hand-computed per-job phase
   // Totals: lint 60 s and 95 s (p50 60 s), test 170 s and 100 s (p50 100 s); the path is lint → test.
   assert.deepEqual(r.report.criticalPaths, [{ workflow: BUILD, pathMs: 160000, sumMs: 160000, chain: ['lint', 'test'] }]);
   assert.deepEqual(r.report.workflows, [{ file: BUILD, unparsed: [] }]);
-  assert.deepEqual(r.report.window, { days: 7, from: '2026-11-09', maxRuns: 20, workflow: null, sampledRuns: 2 });
+  assert.deepEqual(r.report.window, { days: 7, from: '2026-11-09', maxRuns: 20, workflow: null, minSample: 5, sampledRuns: 2 });
   assert.equal(r.report.excluded, 0);
   assert.deepEqual(r.report.breaches, []); // two runs sit below the default minimum sample
+  assert.deepEqual(r.report.underSampled, [{ workflow: BUILD, job: 'lint', runs: 2 }, { workflow: BUILD, job: 'test', runs: 2 }]);
+  assert.equal(r.report.droppedBreaches, 0);
   assert.equal(r.report.noData, null);
   assert.deepEqual(r.report.failures, []);
   assert.deepEqual(r.report.truncated, []);
   assert.deepEqual(r.report.unsampled, { skipped: 0, outsideWorkflows: 0, noWorkflowPath: 0 });
   assert.deepEqual(Object.keys(r.report), [
     'definitions', 'window', 'workflows', 'jobs', 'criticalPaths', 'shardSkews', 'repeatedSteps', 'overlaps',
-    'breaches', 'excluded', 'truncated', 'failures', 'unsampled', 'noData',
+    'breaches', 'underSampled', 'droppedBreaches', 'excluded', 'truncated', 'failures', 'unsampled', 'noData',
   ]);
   assert.equal(r.err, '');
   assert.deepEqual(r.pins, [{ owner: 'thn-inc', repo: 'claude-tweaks' }]);
@@ -203,6 +207,14 @@ test('AC2.2: a read whose every job is excluded exits 0 with noData.reason', () 
   assert.equal(r.report.noData.reason, 'the 1 sampled run gave no job with phases: 1 job excluded (a missing or out-of-order instant)');
 });
 
+test('AC2.2: sampled runs that carry no jobs say so, never "0 jobs excluded"', () => {
+  const fake = fakeRunner({ runs: [BUILD_RUNS[0]], jobs: { 101: jobsBody([]) } });
+  const r = gather(['gather', '--repo', REPO, '--days', '7'], { fake });
+  assert.equal(r.code, 0);
+  assert.equal(r.report.excluded, 0);
+  assert.equal(r.report.noData.reason, 'the 1 sampled run had no jobs');
+});
+
 test('AC2.2: every jobs read failing exits 2 with each failure in the report', () => {
   const e = () => Object.assign(new Error('x'), { stderr: 'HTTP 500: Server Error' });
   const fake = fakeRunner({ runs: BUILD_RUNS, jobs: { 101: e(), 102: e() } });
@@ -225,6 +237,10 @@ test('usage errors exit 2 with one stderr line, nothing on stdout and no read', 
     ['gather', '--min-sample', '0'],
     ['gather', '--min-sample', '-1'],
     ['gather', '--thresholds', 'nope=1'],
+    ['gather', '--thresholds'],
+    ['gather', '--thresholds', 'shard-skew=3', '--thresholds', 'queue-wait=0.5'],
+    ['gather', '--days', '7', '--days', '7'],
+    ['gather', '--repo', REPO, '--repo', REPO],
     ['gather', '--repo', 'not-a-slug'],
     ['gather', '--workflow'],
     ['gather', '--repo', REPO, '--root', '/elsewhere'],
@@ -277,10 +293,37 @@ test('--thresholds shard-skew=9 changes breaches for the same fixture', () => {
   assert.deepEqual(high.report.breaches.filter((b) => b.check === 'shard-skew'), []);
 });
 
-test('--min-sample above the run count suppresses every breach', () => {
+test('--min-sample is echoed as applied; a job below it is underSampled with no breach, one at it is judged', () => {
   const opts = { workflows: files([{ file: SHARD, text: SHARD_YML }]) };
-  const r = gather(['gather', '--repo', REPO, '--days', '7', '--min-sample', '2'], { fake: SHARD_FAKE(), ...opts });
-  assert.deepEqual(r.report.breaches, []);
+  const above = gather(['gather', '--repo', REPO, '--days', '7', '--min-sample', '2'], { fake: SHARD_FAKE(), ...opts });
+  assert.equal(above.report.window.minSample, 2);
+  assert.deepEqual(above.report.breaches, []);
+  assert.deepEqual(above.report.underSampled, [{ workflow: SHARD, job: 'shard (1)', runs: 1 }, { workflow: SHARD, job: 'shard (2)', runs: 1 }]);
+  const at = gather(['gather', '--repo', REPO, '--days', '7', '--min-sample', '1'], { fake: SHARD_FAKE(), ...opts });
+  assert.equal(at.report.window.minSample, 1);
+  assert.deepEqual(at.report.underSampled, []);
+  assert.ok(at.report.breaches.length > 0);
+  const absent = gather(['gather', '--repo', REPO, '--days', '7'], { fake: SHARD_FAKE(), ...opts });
+  assert.equal(absent.report.window.minSample, 5);
+});
+
+test('a missing --thresholds value says the flag needs a value', () => {
+  const r = gather(['gather', '--thresholds']);
+  assert.match(r.err, /--thresholds requires a value/);
+});
+
+test('a repeated flag is refused, naming it', () => {
+  const r = gather(['gather', '--thresholds', 'shard-skew=3', '--thresholds', 'queue-wait=0.5']);
+  assert.equal(r.code, 2);
+  assert.match(r.err, /--thresholds given twice/);
+});
+
+test('an injected invalid now is refused by the read: exit 2 with the report, no throw', () => {
+  const r = gather(['gather', '--repo', REPO], { now: new Date('not a date') });
+  assert.equal(r.code, 2);
+  assert.equal(r.lines.length, 1);
+  assert.deepEqual(r.report.failures, ['now must be a valid Date']);
+  assert.equal(r.report.window.from, null);
 });
 
 test('an unparsed or unreadable workflow appears in workflows[].unparsed and never in breaches', () => {
@@ -301,6 +344,7 @@ test('an unparsed or unreadable workflow appears in workflows[].unparsed and nev
   ]);
   assert.equal(r.report.jobs.length, 1);
   assert.deepEqual(r.report.breaches, []);
+  assert.equal(r.report.droppedBreaches, 1); // the queue-wait breach the tabbed workflow would get
 });
 
 test('a workflow-files read that fails is a failure line, never a silent empty set', () => {
@@ -356,12 +400,23 @@ test('without --repo the origin names the repository; --root is read for origin 
 test('an unreadable or unusable origin is a usage-path error: exit 2, stderr, nothing on stdout', () => {
   const thrown = gather(['gather'], { remoteUrl: () => { throw new Error('no origin'); } });
   const junk = gather(['gather'], { remoteUrl: () => 'not a url' });
-  for (const r of [thrown, junk]) {
+  const badSlug = gather(['gather'], { remoteUrl: () => 'https://github.com/-evil/repo.git' });
+  assert.match(badSlug.err, /unusable owner\/name/);
+  const unknownHost = gather(['gather'], { remoteUrl: () => 'https://git.corp.example/o/r.git' });
+  assert.match(unknownHost.err, /not a known/);
+  for (const r of [thrown, junk, badSlug, unknownHost]) {
     assert.equal(r.code, 2);
     assert.equal(r.out, '');
     assert.equal(r.err.split('\n').filter(Boolean).length, 1, r.err);
     assert.equal(r.calls.length, 0);
   }
+});
+
+test('the origin gate reads the injected host environment: a host config key admits an enterprise origin', () => {
+  const gateDeps = { env: {}, homedir: '/nonexistent-home', readFile: () => 'git.corp.example:\n    user: x\n' };
+  const r = gather(['gather', '--days', '7'], { fake: buildFake(), gateDeps, remoteUrl: () => 'https://git.corp.example/o/r.git' });
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.pins, [{ host: 'git.corp.example', owner: 'o', repo: 'r' }]);
 });
 
 test('a host pin that throws is exit 2 with nothing on stdout', () => {

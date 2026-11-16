@@ -216,4 +216,4 @@ function evaluate(agg, factsByWorkflow, thresholds, minSample) {
     || byText(text(m.job), text(n.job)) || byText(text(m.step || null), text(n.step || null)));
 }
 
-module.exports = { CHECK_IDS, DEFAULTS, parseThresholds, evaluate };
+module.exports = { CHECK_IDS, DEFAULTS, DEFAULT_MIN_SAMPLE, parseThresholds, evaluate };

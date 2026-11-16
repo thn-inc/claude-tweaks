@@ -23,18 +23,25 @@
 //                       are read, instead of the current directory. Never with --repo, which would
 //                       name the repository a second way
 //   --min-sample N      the fewest runs a job needs before any check judges it, an integer 1..30
-//                       (default 5)
+//                       (default checks.js's DEFAULT_MIN_SAMPLE, 5)
 //   --thresholds <text> comma-separated `check-id=number` overrides of the checks' thresholds
+//   Each flag at most once: a repeated flag is a usage error, never a silent overwrite.
 // Time budget: the source adapter bounds the whole read at 570 s, so the caller's command timeout
 // must be at least 600000 ms.
 //
 // Output (one JSON line): { definitions, window, workflows: [{file, unparsed}], jobs, criticalPaths,
-// shardSkews, repeatedSteps, overlaps, breaches, excluded, truncated, failures, unsampled, noData }.
-// `workflows` lists every workflow file found, a file that could not be read carrying its reason in
-// `unparsed`; a workflow with any `unparsed` reason is never judged, so none of its breaches is
-// kept. `truncated`, `failures` and `unsampled` render whatever the read's outcome. `noData` is
-// {reason} when the read succeeded but no run was sampled or every job was excluded, else null:
-// an empty sample is never a clean report.
+// shardSkews, repeatedSteps, overlaps, breaches, underSampled, droppedBreaches, excluded, truncated,
+// failures, unsampled, noData }.
+// `window` is {days, from, maxRuns, workflow, minSample, sampledRuns}: `minSample` is the floor
+// actually applied (the flag, else the default, never null) and `from` the window's first UTC day
+// (null when an injected `now` was invalid and the read refused it). `underSampled` lists
+// {workflow, job, runs} for every job with fewer runs than `minSample` (no check judged it), sorted
+// by workflow then job, so too few runs never reads as clean. `workflows` lists every workflow
+// file found, a file that could not be read carrying its reason in `unparsed`; a workflow with any
+// `unparsed` reason is never judged, so its breaches are dropped and counted in `droppedBreaches`.
+// `truncated`, `failures` and `unsampled` render whatever the read's outcome. `noData` is {reason}
+// when the read succeeded but no run was sampled, the sampled runs had no jobs, or every job was
+// excluded, else null: an empty sample is never a clean report.
 // Exit codes:
 //   0 report printed — partial allowed (failures, truncated ranges, noData)
 //   2 malformed invocation, an unusable origin or host pin (one stderr line, nothing on stdout), or
@@ -50,7 +57,7 @@ const { oneLine } = require('./lib/ci-health/render');
 const source = require('./lib/ci-audit/source');
 const { readWorkflowFacts } = require('./lib/ci-audit/workflow-facts');
 const { aggregate } = require('./lib/ci-audit/aggregate');
-const { parseThresholds, evaluate } = require('./lib/ci-audit/checks');
+const { DEFAULT_MIN_SAMPLE, parseThresholds, evaluate } = require('./lib/ci-audit/checks');
 
 const { DEFAULT_MAX_RUNS, MAX_RUNS } = source;
 
@@ -76,8 +83,11 @@ function parseArgs(argv) {
   if (argv[0] !== 'gather') return { error: argv.length === 0 ? 'missing verb: gather' : `unknown verb: ${JSON.stringify(argv[0])}` };
   const o = { days: DEFAULT_DAYS, maxRuns: DEFAULT_MAX_RUNS, workflow: null, repo: null, root: null, minSample: null, thresholds: {} };
   const int = (v, lo, hi) => (v !== null && /^\d+$/.test(v) && Number(v) >= lo && Number(v) <= hi ? Number(v) : null);
+  const seen = new Set();
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
+    if (seen.has(a)) return { error: `${a} given twice` };
+    seen.add(a);
     const next = () => {
       const v = argv[i + 1];
       if (typeof v !== 'string' || v === '' || v.startsWith('--')) return null;
@@ -107,7 +117,8 @@ function parseArgs(argv) {
       o.root = v;
     } else if (a === '--thresholds') {
       const v = next();
-      const parsed = parseThresholds(v === null ? null : v);
+      if (v === null) return { error: '--thresholds requires a value' };
+      const parsed = parseThresholds(v);
       if (!parsed.ok) return { error: `--thresholds: ${parsed.error}` };
       o.thresholds = parsed.values;
     } else return { error: `unknown argument: ${JSON.stringify(a)}` };
@@ -175,7 +186,9 @@ function workflowFacts(listing) {
 function noDataReason(o, read, agg) {
   if (read.runs.length > 0) {
     if (agg.jobs.length > 0) return null;
-    return `the ${plural(read.runs.length, 'sampled run', 'sampled runs')} gave no job with phases: `
+    const runs = plural(read.runs.length, 'sampled run', 'sampled runs');
+    if (read.runs.every((r) => r.jobs.length === 0)) return `the ${runs} had no jobs`;
+    return `the ${runs} gave no job with phases: `
       + `${plural(agg.excluded, 'job', 'jobs')} excluded (a missing or out-of-order instant)`;
   }
   const u = read.unsampled;
@@ -208,18 +221,22 @@ function run(argv, deps = realDeps) {
   const { factsByWorkflow, workflows } = workflowFacts(listing);
 
   const agg = aggregate(read.runs, factsByWorkflow);
+  const minSample = o.minSample === null ? DEFAULT_MIN_SAMPLE : o.minSample;
   const unjudged = new Set(workflows.filter((w) => w.unparsed.length > 0).map((w) => w.file));
-  const breaches = evaluate(agg, factsByWorkflow, o.thresholds, o.minSample)
-    .filter((b) => b.workflow === null || !unjudged.has(b.workflow));
+  const judged = evaluate(agg, factsByWorkflow, o.thresholds, minSample);
+  const breaches = judged.filter((b) => b.workflow === null || !unjudged.has(b.workflow));
   const reason = read.ok ? noDataReason(o, read, agg) : null;
+  // An invalid injected `now` is the adapter's refusal (a failure line); the window has no start.
+  const validNow = now instanceof Date && Number.isFinite(now.getTime());
 
   const report = {
     definitions: DEFINITIONS,
     window: {
       days: o.days,
-      from: new Date(now.getTime() - o.days * DAY_MS).toISOString().slice(0, 10),
+      from: validNow ? new Date(now.getTime() - o.days * DAY_MS).toISOString().slice(0, 10) : null,
       maxRuns: o.maxRuns,
       workflow: o.workflow,
+      minSample,
       sampledRuns: read.runs.length,
     },
     workflows,
@@ -229,6 +246,8 @@ function run(argv, deps = realDeps) {
     repeatedSteps: agg.repeatedSteps,
     overlaps: agg.overlaps,
     breaches,
+    underSampled: agg.jobs.filter((j) => j.runs < minSample).map((j) => ({ workflow: j.workflow, job: j.job, runs: j.runs })),
+    droppedBreaches: judged.length - breaches.length,
     excluded: agg.excluded,
     truncated: read.truncated,
     failures,
