@@ -98,6 +98,7 @@ Expected: PASS
 ### Task 2: Footer, trim and footer-aware parsing in changelog.js
 
 **Role:** judgment
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/changelog.js`
@@ -125,7 +126,7 @@ Expected: PASS
     - [All releases]({repoUrl}/releases)
     ```
     ending with one `\n`.
-  - `trimChangelog(text: string, count: number, { sha, repoUrl }?: { sha?: string, repoUrl?: string | null }) -> { text: string, removed: string[] }` — `count` must be an integer ≥ 1 (else throw `TypeError`). Sections = HEADER_RE matches in file order, the last one ending at the footer's `index` when a footer exists. Within the bound → `{ text, removed: [] }` unchanged (no footer added). Otherwise: header + the first `count` sections' text verbatim (from heading start to the next section's heading, trailing whitespace normalised to exactly `\n\n`) + footer. Footer = the existing footer text with only its `Newest release removed: v…` line replaced by `removed[0]` (every other byte, the sha line included, unchanged; insert the line after the record line if an existing footer lacks it), else `renderChangelogFooter({ version: <first section's version>, sha, newestRemoved: removed[0], repoUrl: repoUrl ?? null })` — throw `Error('trimChangelog: a first trim needs a commit sha')` when no footer and no `sha`. `removed` = versions of the dropped sections in file order, so `removed[0]` is the newest removed.
+  - `trimChangelog(text: string, count: number, { sha, repoUrl }?: { sha?: string, repoUrl?: string | null }) -> { text: string, removed: string[] }` — `count` must be an integer ≥ 1 (else throw `TypeError`). Sections = HEADER_RE matches in file order, the last one ending at the footer's `index` when a footer exists. Within the bound → `{ text, removed: [] }` unchanged (no footer added). Otherwise: header + the first `count` sections' text verbatim (from heading start to the next section's heading, every byte kept — AC1 says byte-identical) + footer; only the gap between the last kept section and the footer is normalised (to exactly one blank line). The AC1 test also compares raw bytes: `r.text.slice(0, parseChangelogFooter(r.text).index)` equals the original text up to the 51st heading with only that final gap allowed to differ. Footer = the existing footer text with only its `Newest release removed: v…` line replaced by `removed[0]` (every other byte, the sha line included, unchanged; insert the line after the record line if an existing footer lacks it), else `renderChangelogFooter({ version: <first section's version>, sha, newestRemoved: removed[0], repoUrl: repoUrl ?? null })` — throw `Error('trimChangelog: a first trim needs a commit sha')` when no footer and no `sha`. `removed` = versions of the dropped sections in file order, so `removed[0]` is the newest removed.
   - `parseChangelogVersions` — unchanged shape; the last section's body now ends at the footer's `index` when a footer exists (AC11).
   - `extractChangelogRange` — unchanged array return; additionally sets a **non-enumerable** boolean property `partial` (via `Object.defineProperty`) on the returned array: `true` when a footer exists with a non-null `newestRemoved` and `compareVersions(oldVersion, newestRemoved) < 0`; else `false` (including `oldVersion` equal to `newestRemoved`, and a footer-less file). This is the plan-review Q1 rule; the release probe's floor (Task 6) stays the oldest retained section. Non-enumerable so existing `deepStrictEqual(range, [])` assertions still hold.
 
@@ -246,13 +247,14 @@ Expected: PASS
 
 **Files:**
 - Modify: `plugin/bin/lib/release-notes-publish.js`
+- Modify: `plugin/bin/release-notes-publish.js` (CLI wrapper: a `readPolicy` dep, defaulted to an fs read of `{root}/.claude-tweaks/policy.yml`)
 - Test: `tests/bin-lib/release-notes-publish.test.js` (add tests; existing expectations untouched — AC2.2)
 
 **Interfaces:**
 - Consumes: `prepareTrim` (Task 3); `resolvePolicyKeys` from `plugin/bin/lib/policy-schema.js` for `integration-branch`.
-- Produces: `run(argv, deps)` gains optional `deps.trimChangelog` (default `changelog.js`'s `trimChangelog`), passed as `prepareTrim`'s `trim`.
+- Produces: `run(argv, deps)` (lib) gains optional `deps.trimChangelog` (default `changelog.js`'s `trimChangelog`), passed as `prepareTrim`'s `trim`, and optional `deps.readPolicy: () => string | null` (may throw; absent → the key reads as `0`). The CLI wrapper `plugin/bin/release-notes-publish.js` supplies `readPolicy` from its **own** injectable `deps.readPolicy`, defaulting to an fs read of `{root}/.claude-tweaks/policy.yml` (ENOENT → `null`) — never through `deps.readFile`, so the CLI test asserting `seen.reads` equals exactly `[CHANGELOG.md]` (tests/bin-lib/release-notes-publish.test.js ~line 268) and the one-release `readFile: fail` test (~line 276) stay green unedited (AC2).
 
-Behavior: restructure `run` so the "fewer than 2 releases" and "no Release-Note: trailers" exits skip only the Highlights work (keep their existing stdout lines verbatim). Then: `changelog = deps.readFile('CHANGELOG.md')`; `highlighted = (pair && block) ? applyToChangelogEntry(changelog, block) : null`; `base = highlighted ?? changelog`; `policyRaw` read lazily via `readPolicy = () => deps.readFile('.claude-tweaks/policy.yml')`; default branch = `integration-branch` from `resolvePolicyKeys(['integration-branch'], { policyRaw })` → else `git symbolic-ref --short refs/remotes/origin/HEAD` stripped of `origin/` → else `main` — these branch reads happen **only when the key is above 0** (resolve the branch lazily inside a thunk, or read the key first); `ancestorRefs = ['refs/remotes/origin/{branch}', 'refs/heads/{branch}']`; `trimmed = prepareTrim({ text: base, … })`. If `changelog` is null skip the trim. Final text = `trimmed?.text ?? highlighted`. When non-null: write, `git add CHANGELOG.md`, commit with the Highlights subject when `highlighted !== null` else `chore: trim CHANGELOG.md to the newest {n} releases`, `git push`, one stdout line. When both null: today's "skipped" line, no commit, no push.
+Behavior: the key is read **first**, through `readChangelogMaxReleases(deps.readPolicy ?? (() => null))`. With the key at `0` (or the policy absent) the run is exactly today's: no extra read, no extra git call, the early exits unchanged. With the key above `0`: restructure `run` so the "fewer than 2 releases" and "no Release-Note: trailers" exits skip only the Highlights work (keep their existing stdout lines verbatim). Then: `changelog = deps.readFile('CHANGELOG.md')` — on the early-exit paths this read happens only when the key is above `0`, and any read or trim error there is caught by the never-throw guard (failure line, exit code unchanged); `highlighted = (pair && block) ? applyToChangelogEntry(changelog, block) : null`; `base = highlighted ?? changelog`; an unreadable policy is reported by `prepareTrim`'s unreadable line (pass `readPolicy` through to it); default branch = `integration-branch` from `resolvePolicyKeys(['integration-branch'], { policyRaw })` → else `git symbolic-ref --short refs/remotes/origin/HEAD` stripped of `origin/` → else `main` — these branch reads happen **only when the key is above 0** (resolve the branch lazily inside a thunk, or read the key first); `ancestorRefs = ['refs/remotes/origin/{branch}', 'refs/heads/{branch}']`; `trimmed = prepareTrim({ text: base, … })`. If `changelog` is null skip the trim. Final text = `trimmed?.text ?? highlighted`. When non-null: write, `git add CHANGELOG.md`, commit with the Highlights subject when `highlighted !== null` else `chore: trim CHANGELOG.md to the newest {n} releases`, `git push`, one stdout line. When both null: today's "skipped" line, no commit, no push.
 
 - [ ] **Step 1: Write the failing tests** (extend `makeDeps` locally in new tests, e.g. a `files['.claude-tweaks/policy.yml']` entry and git keys `rev-parse HEAD`, `rev-parse --verify --quiet --end-of-options refs/remotes/origin/main^{commit}`, `merge-base --is-ancestor --end-of-options <sha> refs/remotes/origin/main`, `remote get-url origin`, `symbolic-ref --short refs/remotes/origin/HEAD`):
 
@@ -277,7 +279,7 @@ Expected: FAIL after Step 1 (new tests: no trim commit / missing footer)
 - [ ] **Step 4: Run to verify they pass**
 
 Run: `node --test tests/bin-lib/release-notes-publish.test.js`
-Expected: PASS (old and new)
+Expected: PASS (old and new — including, unedited, the CLI test asserting `seen.reads` is exactly `[CHANGELOG.md]` and `an absolute --root works when deps.cwd() throws (deleted cwd)`)
 
 - [ ] **Step 5: Commit** — `Trim CHANGELOG.md in release-notes-publish when changelog-max-releases is set — rides the Highlights commit, refs #5563`
 
@@ -373,7 +375,7 @@ Expected: PASS
 - Modify: `docs/releasing.md`
 
 Behavior:
-- `version-check.md`: the snippet prints `JSON.stringify({ entries: r, partial: r.partial })` where `r = extractChangelogRange(…)`; the Changelog notice policy paragraph says: when `partial` is `true`, the range reaches below the trimmed file's floor, so tell the reader the summary is partial and point at the footer's `git show {sha}:CHANGELOG.md` for older notes.
+- `version-check.md`: the snippet prints `JSON.stringify({ entries: r, partial: r.partial })` where `r = extractChangelogRange(…)`, and the missing-file branch prints `{"entries":[],"partial":false}` (one output shape on both branches); the "An empty array means…" paragraph is rewritten to describe the object (empty `entries` → skip silently). The Changelog notice policy paragraph says: when `partial` is `true`, the range reaches below the trimmed file's floor, so tell the reader the summary is partial and point at the footer's `git show {sha}:CHANGELOG.md` for older notes.
 - `docs/releasing.md`: a short section on `changelog-max-releases` — off by default; when set, both engines trim after a release (pr-first in the Highlights commit of `release-notes-publish.js`, local-merge in a separate commit after the tag); the `## Older releases` footer and its two routes to removed notes (the recorded commit, and `git show v<version>:CHANGELOG.md`, without Highlights); a trim never fails a release; opt in only once every session runs this release or newer (an older build reports trimmed versions as missing and its tidy would add them back); after opting in, check the first release-please PR leaves the footer last.
 
 - [ ] **Step 1: Write the failing test** in `tests/changelog.test.js`:
@@ -383,6 +385,7 @@ test('AC6.3: version-check.md prints the partial flag and tells the reader the s
   const text = readText('plugin/skills/init/bootstrap/version-check.md'); // tests/helpers/read-skill
   assert.match(text, /partial: r\.partial/);
   assert.match(text, /summary is partial/);
+  assert.match(text, /entries: \[\], partial: false/); // the missing-file branch prints the same shape
 });
 ```
 
