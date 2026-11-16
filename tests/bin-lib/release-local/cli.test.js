@@ -416,6 +416,7 @@ function trimDeps(o = {}) {
   const inner = made.deps.git;
   made.deps.git = (args) => {
     const key = args.join(' ');
+    if (key === 'reset --soft HEAD~1') { made.state.git.push(key); return ''; }
     if (key === 'rev-parse HEAD' || key.startsWith('rev-parse --verify')) { made.state.git.push(key); return key === 'rev-parse HEAD' ? `${HEAD_SHA}\n` : ''; }
     // Only the trim's own proof (it names HEAD's sha); the push's ancestry check is a different call.
     if (o.notAncestor && key.startsWith('merge-base --is-ancestor') && key.includes(HEAD_SHA)) { made.state.git.push(key); throw Object.assign(new Error('git exited 1'), { status: 1 }); }
@@ -428,7 +429,8 @@ const withKey = (value) => ({ [POLICY_FILE_KEY]: `changelog-max-releases: ${valu
 const FOOTER_AT = (text) => text.indexOf('## Older releases');
 
 test('AC2.1 (local): with the key 0 or absent the released CHANGELOG is byte-identical to base and no extra git call runs', () => {
-  const base = trimDeps();
+  // The base arm is the plain fake runner (no trim wrapper): what the engine did before the key existed.
+  const base = makeDeps({ files: { 'CHANGELOG.md': FOUR_SECTIONS } });
   assert.strictEqual(run([], base.deps), 0);
   for (const files of [withKey(0), withKey('abc'), withKey(-1)]) {
     const t = trimDeps({ files });
@@ -450,7 +452,7 @@ test('AC2.1 (local): a key the file is already within the bound of makes no extr
   assert.deepStrictEqual(t.state.git, base.state.git);
 });
 
-test('AC3.2 (local): key 2 and four sections → the trim lands in its own commit after the tag and before the push; HEAD holds two sections plus the footer', () => {
+test('AC3.2 (local): key 2 and four sections → the trim lands in its own commit after the release push and is pushed separately; HEAD holds two sections plus the footer', () => {
   const base = trimDeps();
   assert.strictEqual(run([], base.deps), 0);
   const { deps, state } = trimDeps({ files: withKey(2) });
@@ -463,12 +465,14 @@ test('AC3.2 (local): key 2 and four sections → the trim lands in its own commi
   assert.ok(text.startsWith(base.state.files['CHANGELOG.md'].slice(0, base.state.files['CHANGELOG.md'].indexOf('## [1.1.0]')).replace(/\s*$/, '')), 'the kept sections are the base bytes');
   const idx = (p) => state.git.findIndex((c) => c.startsWith(p));
   assert.ok(idx('commit -m chore(release): v1.3.0') < idx('tag -a v1.3.0'));
-  assert.ok(idx('tag -a v1.3.0') < idx('rev-parse HEAD'), 'the key is read after the tag');
-  assert.ok(idx('rev-parse HEAD') < idx('commit -m chore: trim CHANGELOG.md to the newest 2 releases'));
-  assert.ok(idx('commit -m chore: trim CHANGELOG.md to the newest 2 releases') < idx('push origin main v1.3.0'), 'the trim commit precedes the push');
+  const trimCommit = 'commit -m chore: trim CHANGELOG.md to the newest 2 releases';
+  assert.ok(idx('push origin main v1.3.0') < idx('rev-parse HEAD'), 'the key is read only after the release push landed');
+  assert.ok(idx('rev-parse HEAD') < idx(trimCommit));
+  assert.deepStrictEqual(state.git.slice(idx(trimCommit) + 1).filter((c) => c.startsWith('push ')), ['push origin main'], 'the trim commit is pushed on its own, without the tag');
   assert.ok(state.git.includes('rev-parse --verify --quiet --end-of-options refs/heads/main^{commit}'), 'the local branch ref is the ancestor target');
-  assert.ok(!state.git.some((c) => c.includes('refs/remotes/')), 'origin is not consulted: the release commit is not pushed yet');
+  assert.ok(!state.git.some((c) => c.includes('refs/remotes/')));
   assert.strictEqual(state.git.filter((c) => c === 'add -- CHANGELOG.md').length, 1);
+  assert.ok(!state.git.some((c) => c.startsWith('reset ')));
   assert.match(state.out, /released v1\.3\.0/);
   assert.strictEqual(state.err, '');
 });
@@ -495,6 +499,53 @@ test('local: the trim commit throwing restores CHANGELOG.md and the index, print
   assert.deepStrictEqual(state.git.slice(failedAt + 1, failedAt + 2), ['add -- CHANGELOG.md'], 'the index goes back to HEAD');
   assert.ok(state.git.some((c) => c.startsWith('push origin main v1.3.0')), 'the push still happens');
   assert.match(state.out, /released v1\.3\.0/);
+});
+
+test('local: the trim push failing drops the trim commit, restores the file and index, prints one line, and the release stays released (exit 0)', () => {
+  const base = trimDeps();
+  assert.strictEqual(run([], base.deps), 0);
+  let pushes = 0;
+  const { deps, state } = trimDeps({ files: withKey(2), gitFail: (k) => k.startsWith('push ') && (pushes += 1) === 2 });
+  assert.strictEqual(run([], deps), 0);
+  assert.strictEqual(state.files['CHANGELOG.md'], base.state.files['CHANGELOG.md']);
+  assert.match(state.err, /^changelog trim: failed \(fatal: push origin main failed\); file left untrimmed\n$/);
+  const idx = (p) => state.git.findIndex((c) => c.startsWith(p));
+  assert.ok(idx('commit -m chore: trim') < idx('reset --soft HEAD~1'), 'the trim commit is dropped');
+  assert.strictEqual(state.git[idx('reset --soft HEAD~1') + 1], 'add -- CHANGELOG.md');
+  assert.match(state.out, /released v1\.3\.0/);
+});
+
+test('local: a failed restore names the index state in the failure line', () => {
+  let adds = 0;
+  const { deps, state } = trimDeps({ files: withKey(2), gitFail: (k) => k.startsWith('commit -m chore: trim') || (k === 'add -- CHANGELOG.md' && (adds += 1) === 2) });
+  assert.strictEqual(run([], deps), 0);
+  assert.match(state.err, /^changelog trim: failed \(fatal: commit -m chore: trim CHANGELOG\.md to the newest 2 releases failed\); the restore also failed, CHANGELOG\.md and the index may still hold the trimmed file\n$/);
+  assert.match(state.out, /released v1\.3\.0/);
+});
+
+test('local: the diverged-origin recovery text is byte-identical to base whatever the key is, and nothing is trimmed', () => {
+  const base = trimDeps();
+  base.deps.git = ((inner) => (args) => { if (args[0] === 'merge-base' && args[1] === '--is-ancestor' && args[2] === 'origin/main') throw new Error('diverged'); return inner(args); })(base.deps.git);
+  assert.strictEqual(run([], base.deps), 1);
+  const keyed = trimDeps({ files: withKey(2) });
+  keyed.deps.git = ((inner) => (args) => { if (args[0] === 'merge-base' && args[1] === '--is-ancestor' && args[2] === 'origin/main') throw new Error('diverged'); return inner(args); })(keyed.deps.git);
+  assert.strictEqual(run([], keyed.deps), 1);
+  assert.match(base.state.err, /git tag -f -a v1\.3\.0/);
+  assert.strictEqual(keyed.state.err, base.state.err);
+  assert.ok(!keyed.state.git.some((c) => c.startsWith('rev-parse') || c.includes('chore: trim')));
+  assert.strictEqual(keyed.state.files['CHANGELOG.md'], base.state.files['CHANGELOG.md']);
+});
+
+test('local: the release-hook runs against the untrimmed release commit; the trim comes after it, and a failed hook means no trim', () => {
+  const files = { ...withKey(2), [POLICY_FILE_KEY]: 'release-hook: "publish"\nchangelog-max-releases: 2\n' };
+  const ok = trimDeps({ files });
+  const runHook = ok.deps.runHook;
+  ok.deps.runHook = (cmd) => { ok.state.git.push('HOOK'); return runHook(cmd); };
+  assert.strictEqual(run([], ok.deps), 0, ok.state.err);
+  assert.ok(ok.state.git.indexOf('HOOK') < ok.state.git.findIndex((c) => c.startsWith('commit -m chore: trim')));
+  const bad = trimDeps({ files, hookExit: 3 });
+  assert.strictEqual(run([], bad.deps), 5);
+  assert.ok(!bad.state.git.some((c) => c.startsWith('commit -m chore: trim')));
 });
 
 test('local: a trim write that fails restores the original text and still releases', () => {

@@ -32,7 +32,7 @@ const { bumpPart } = require('./lib/release-local/bump.js');
 const manifest = require('./lib/release-local/manifest.js');
 const { renderSection, prependSection, parseGitHubRemote } = require('./lib/release-local/changelog.js');
 const { prepareTrim } = require('./lib/changelog-release-trim.js');
-const { precheck } =require('./lib/release/precheck.js');
+const { precheck } = require('./lib/release/precheck.js');
 const { guardReleasableTree, pushAfterAncestryCheck } = require('./lib/release/run.js');
 const { resolvePolicyKeys } = require('./lib/policy-schema.js');
 const { withIndexLockRetry } = require('./lib/git-retry.js');
@@ -125,14 +125,15 @@ function planLines({ version, part, history, hook, edits, unconventional, releas
   return lines;
 }
 
-// `changelog-max-releases` (#5563): after the tag, the trimmed CHANGELOG.md lands in its own
-// commit, so the tag (and the footer's commit) keep the full file. The release commit is not
-// pushed yet, so the ancestry proof reads the local branch only. A trim never changes the
-// release's outcome: any failure puts the file and the index back, prints one line, and the
-// run carries on to the push.
-function trimAfterTag(deps, { policyRaw, branch }) {
+// `changelog-max-releases` (#5563): once the release has fully landed (commit, tag, push and
+// hook), the trimmed CHANGELOG.md goes in its own commit — the tag and the pushed release commit
+// keep the full file the footer points at. The release commit is on the local branch by now, so
+// the ancestry proof reads it. With an origin the trim commit is pushed the way the release was;
+// without one it stays local. A trim never changes the release's outcome: any failure drops its
+// own commit if one landed, puts the file and the index back, and prints one line.
+function trimAfterRelease(deps, { policyRaw, branch, hasOrigin }) {
   let original = null;
-  let written = false;
+  const progress = { written: false, committed: false };
   try {
     original = deps.readFile('CHANGELOG.md');
     const trimmed = prepareTrim({
@@ -144,20 +145,27 @@ function trimAfterTag(deps, { policyRaw, branch }) {
       trim: deps.trimChangelog,
     });
     if (!trimmed) return;
-    written = true;
+    progress.written = true;
     deps.writeFile('CHANGELOG.md', trimmed.text);
     deps.git(['add', '--', 'CHANGELOG.md']);
     withIndexLockRetry(deps.git)(['commit', '-m', `chore: trim CHANGELOG.md to the newest ${trimmed.count} releases`]);
+    progress.committed = true;
+    if (hasOrigin) {
+      pushAfterAncestryCheck(deps, { branch, refs: [branch], onDiverged: `origin/${branch} moved since the release push` });
+    }
   } catch (err) {
-    if (written) {
-      try {
+    let restored = true;
+    try {
+      if (progress.committed) deps.git(['reset', '--soft', 'HEAD~1']);
+      if (progress.written) {
         deps.writeFile('CHANGELOG.md', original);
         deps.git(['add', '--', 'CHANGELOG.md']);
-      } catch {
-        // best effort: the failure line below is what the operator needs
       }
+    } catch {
+      restored = false;
     }
-    deps.stderr(`changelog trim: failed (${String((err && err.message) || err).split(/\r?\n/)[0]}); file left untrimmed\n`);
+    const reason = String((err && err.message) || err).split(/\r?\n/)[0];
+    deps.stderr(`changelog trim: failed (${reason}); ${restored ? 'file left untrimmed' : 'the restore also failed, CHANGELOG.md and the index may still hold the trimmed file'}\n`);
   }
 }
 
@@ -264,7 +272,6 @@ function run(argv, deps = {}) {
     stage = 'committed';
     deps.git(['tag', '-a', `v${version}`, '-m', `v${version}`]);
     stage = 'tagged';
-    trimAfterTag(deps, { policyRaw, branch });
     if (hasOrigin) {
       pushAfterAncestryCheck(deps, { branch, refs: [branch, `v${version}`], remoteBranchExists, onDiverged: `origin/${branch} moved between pre-check and push` });
       stage = 'pushed';
@@ -284,6 +291,7 @@ function run(argv, deps = {}) {
         return 5;
       }
     }
+    trimAfterRelease(deps, { policyRaw, branch, hasOrigin });
     deps.stdout(`released v${version}\n`);
     return 0;
   } catch (err) {

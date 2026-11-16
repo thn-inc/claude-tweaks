@@ -263,7 +263,7 @@ const sectionsOf = (text) => [...text.matchAll(/^## \[?(\d+\.\d+\.\d+)/gm)].map(
 function withFourSections(policy) {
   const root = tagged('1.2.0');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
-  const four =['1.2.0', '1.1.0', '1.0.0', '0.9.0'].map((v) => `## [${v}](https://example.test/c/v${v}) (2026-01-01)\n\n\n### Features\n\n* f${v}\n`).join('\n');
+  const four = ['1.2.0', '1.1.0', '1.0.0', '0.9.0'].map((v) => `## [${v}](https://example.test/c/v${v}) (2026-01-01)\n\n\n### Features\n\n* f${v}\n`).join('\n');
   commit(root, 'docs: seed', { 'CHANGELOG.md': `# Changelog\n\n${four}`, '.claude-tweaks/policy.yml': policy });
   commit(root, 'fix: one');
   return root;
