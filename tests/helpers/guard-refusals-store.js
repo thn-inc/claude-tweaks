@@ -4,6 +4,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { ISOLATION_CLAUSE } = require('../../plugin/bin/lib/hooks/harness-refusal');
 
 const FIXTURE_STORE = path.join(__dirname, '..', 'fixtures', 'guard-refusals', 'store');
 const STORE_MTIME = Date.parse('2026-10-20T12:00:00Z');
@@ -32,8 +33,6 @@ function copyStore() {
 const WINDOW = { since: STORE_MTIME - 1000, until: STORE_MTIME + 1000 };
 
 // #5587: hand-written refusal rows. A store of one session file, removed at exit like copyStore's.
-const { ISOLATION_CLAUSE } = require('../../plugin/bin/lib/hooks/harness-refusal');
-
 const HARNESS_BASH = `This session${ISOLATION_CLAUSE}/wt, but this command is too complex to verify that it stays inside the worktree. Refusing to run it.`;
 const HARNESS_FILE = `This session${ISOLATION_CLAUSE}/wt. Edit the worktree copy of this file instead of the shared-checkout path.`;
 const WORKTREE_ALWAYS = 'PreToolUse:Bash hook error: claude-tweaks: this project requires an isolated worktree for this command.';
