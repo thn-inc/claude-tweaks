@@ -5,6 +5,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { loadIssueIndex } = require('../../../plugin/bin/lib/health-core/issue-index');
+const { decide: coreDecide } = require('../../../plugin/bin/lib/health-core/dedup');
+const { decide: codeHealthDecide } = require('../../../plugin/bin/lib/code-health/dedup');
 
 // Regression: loadIssueIndex used to be duplicated near-verbatim in all
 // four health-suite CLI files (code-health.js, harness-health.js,
@@ -122,4 +124,89 @@ test('the [toolName] prefix parameterizes the bad-file diagnostic (proves the sh
     process.stderr.write = origWrite;
   }
   assert.match(captured, /^\[docs-health\]/);
+});
+
+function load(entries, toolName = 'code-health') {
+  let err = '';
+  const index = loadIssueIndex(tmpFile(JSON.stringify(entries)), toolName, { stderr: (t) => { err += t; } });
+  return { index, err };
+}
+
+test('AC1.1: gh raw shape — uppercase state and label objects normalize, stderr stays quiet', () => {
+  const { index, err } = load([{ number: 7, state: 'CLOSED', labels: [{ name: 'wontfix' }, { name: 'by:code-health' }], fingerprint: 'fp' }]);
+  assert.deepStrictEqual(index, { fp: { number: 7, state: 'closed', labels: ['wontfix', 'by:code-health'] } });
+  assert.strictEqual(err, '');
+});
+
+test('AC2.1: nameless label elements are dropped, the issue is kept, one stderr line reports the count', () => {
+  const { index, err } = load([{ number: 3, state: 'open', labels: ['bug', null, { id: 1 }, 42, { name: 'wontfix' }], fingerprint: 'fp' }]);
+  assert.deepStrictEqual(index, { fp: { number: 3, state: 'open', labels: ['bug', 'wontfix'] } });
+  assert.strictEqual(err, '[code-health] loadIssueIndex: ignored 3 label entries with no name\n');
+});
+
+const STATELESS = [{ number: 1, fingerprint: 'no-state' }, { number: 2, state: 5, fingerprint: 'num-state' }];
+
+test('AC3.1: a missing or non-string state is stored as the empty string', () => {
+  const { index, err } = load(STATELESS);
+  assert.strictEqual(index['no-state'].state, '');
+  assert.strictEqual(index['num-state'].state, '');
+  assert.strictEqual(err, '[code-health] loadIssueIndex: 2 issue entries with no state, treated as not closed\n');
+});
+
+test('AC3.2: both decide() functions skip an entry whose state normalized to the empty string', () => {
+  const { index } = load(STATELESS);
+  for (const fp of ['no-state', 'num-state']) {
+    assert.deepStrictEqual(coreDecide({ id: fp }, index, {}), { action: 'skip', issue: index[fp].number });
+    assert.deepStrictEqual(codeHealthDecide({ id: fp, risk: 'high' }, index, {}), { action: 'skip', issue: index[fp].number });
+  }
+});
+
+test('a mixed-case state is lowercased', () => {
+  const { index } = load([{ number: 4, state: 'Closed', fingerprint: 'fp' }]);
+  assert.strictEqual(index.fp.state, 'closed');
+});
+
+test('nameless labels across several issues are totalled in one stderr line, under the caller\'s tool name', () => {
+  const { index, err } = load([
+    { number: 1, state: 'open', labels: [null, 'x'], fingerprint: 'a' },
+    { number: 2, state: 'open', labels: [{}, 7, { name: 'y' }], fingerprint: 'b' },
+  ], 'docs-health');
+  assert.deepStrictEqual(index.a.labels, ['x']);
+  assert.deepStrictEqual(index.b.labels, ['y']);
+  assert.strictEqual(err, '[docs-health] loadIssueIndex: ignored 3 label entries with no name\n');
+});
+
+test('a label object whose name is not a string is dropped and counted', () => {
+  const { index, err } = load([{ number: 1, state: 'open', labels: [{ name: 5 }, { name: null }, { name: 'ok' }], fingerprint: 'fp' }]);
+  assert.deepStrictEqual(index.fp.labels, ['ok']);
+  assert.strictEqual(err, '[code-health] loadIssueIndex: ignored 2 label entries with no name\n');
+});
+
+test('a non-array labels value is stored as [] and counted once; a null one is stored as [] quietly', () => {
+  const { index, err } = load([
+    { number: 1, state: 'open', labels: 'wontfix', fingerprint: 'str' },
+    { number: 2, state: 'open', labels: null, fingerprint: 'nul' },
+  ]);
+  assert.deepStrictEqual(index.str.labels, []);
+  assert.deepStrictEqual(index.nul.labels, []);
+  assert.strictEqual(err, '[code-health] loadIssueIndex: ignored 1 label entries with no name\n');
+  assert.deepStrictEqual(coreDecide({ id: 'str' }, index, {}), { action: 'skip', issue: 1 });
+});
+
+test('an entry with no fingerprint adds nothing to the ignored count', () => {
+  const { index, err } = load([
+    { number: 1, state: 'open', labels: [null] },
+    { number: 2, state: 'open', labels: ['a'], fingerprint: 'fp' },
+  ]);
+  assert.deepStrictEqual(Object.keys(index), ['fp']);
+  assert.strictEqual(err, '');
+});
+
+test('entries that all carry a string state print nothing about state on stderr', () => {
+  const { index, err } = load([
+    { number: 1, state: 'OPEN', fingerprint: 'a' },
+    { number: 2, state: 'closed', fingerprint: 'b' },
+  ]);
+  assert.deepStrictEqual(Object.keys(index), ['a', 'b']);
+  assert.strictEqual(err, '');
 });
