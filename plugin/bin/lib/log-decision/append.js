@@ -28,6 +28,8 @@ const { withLock } = require('../file-lock');
 const { writeFileAtomic } = require('../atomic-write');
 
 const STATUSES = ['AUTO', 'STAGED', 'KEPT-PROMPT', 'SCANNED', 'REFUSED', 'SKIP'];
+// Read vocabulary: the writer's set plus FAILED, a hand-composed historical status log-decision.js never writes.
+const DECISION_STATUSES = [...STATUSES, 'FAILED'];
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 
@@ -194,5 +196,5 @@ function appendEntries({ runDir, items, createParent }) {
 }
 
 module.exports = {
-  STATUSES, formatEntry, parseEntry, resolveTarget, appendEntry, appendEntries, hms, normalizeSection,
+  STATUSES, DECISION_STATUSES, formatEntry, parseEntry, resolveTarget, appendEntry, appendEntries, hms, normalizeSection,
 };

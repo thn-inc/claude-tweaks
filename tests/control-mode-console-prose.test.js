@@ -388,3 +388,284 @@ test('Minor 1: the flow summary merge row reads the ceiling through console-reso
   assert.deepStrictEqual(summaryProblems(SUMMARY.replace(SUMMARY_NEW, 'the ceiling')), ['the summary row does not read the ceiling through console-resolve.js --ceiling']);
   assert.deepStrictEqual(summaryProblems(`${SUMMARY}\n${SUMMARY_OLD}`), ['the summary row still reads the ceiling through resolve-policy.js --values autonomy']);
 });
+
+// #4621: under control mode a wrap-up upstream-feedback item files only into a repo the project owns. The prose points at
+// the CLI, the capability key and the staged layout, so each pin follows its code twin and is proved red on a mutated copy.
+const AUTONOMY_CEILING = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'autonomy-ceiling.md'));
+const UPSTREAM_FEEDBACK = readText(path.join(__dirname, '..', 'plugin', 'skills', 'wrap-up', 'upstream-feedback.md'));
+const { bookkeepingPermissions } = require(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'issues', 'autonomy'));
+const { parseStagedUpstream, UPSTREAM_FILING_TARGET } = require(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'issues', 'upstream-ownership'));
+const FEEDBACK_SKILL = readText(path.join(__dirname, '..', 'plugin', 'skills', 'feedback', 'SKILL.md'));
+
+function stepNine(text) {
+  const start = text.indexOf('\n9. For `U#` upstream feedback rows');
+  assert.notStrictEqual(start, -1, 'step 9 not found');
+  const end = text.indexOf('\n10. ', start);
+  assert.notStrictEqual(end, -1, 'no step 10 after step 9');
+  return text.slice(start, end);
+}
+
+// Flag-first, like `--ceiling`: console-resolve-conformance.test.js pins exactly one `console-resolve.js" --run`.
+// `'{id}'` and `'{url}'` are single-quoted, as step 7 quotes every staged-derived name.
+const ROUTE_CALL = 'console-resolve.js" --upstream-route \'{id}\' --run "$PIPELINE_RUN_DIR"';
+const STEP_9_CLAIMS = [
+  [ROUTE_CALL, 'step 9 does not route each U# through --upstream-route'],
+  ['with no per-item prompt, causal tag or not', 'step 9 does not file an owned item with no per-item prompt, causal tag or not'],
+  ['console-resolve.js" --upstream-route \'{id}\' --filed \'{url}\' --run "$PIPELINE_RUN_DIR"', 'step 9 does not log an owned filing with --filed'],
+  ['at every tier, `unattended` included', 'step 9 does not route each U# at every tier'],
+  ["--hold filing-failed|scrub-hit --reason '{why}'", 'step 9 does not hold a failed filing or a scrub stop with --hold'],
+  ['this repeat is idempotent', 'step 9 does not say the unattended repeat is idempotent'],
+  ["is declined per step 7's decline rule, owned or not", 'step 9 does not let an explicit uncheck or untick decline an owned item'],
+  ['an explicit check never files a held item', 'step 9 does not keep a checked held item unfiled'],
+  ['With nothing on stdout, the id was refused and nothing was logged', 'step 9 does not tell a refused id from a hold verdict by stdout'],
+  ['not owned or does not parse', 'step 9 does not gloss a --filed URL that does not parse'],
+];
+// The retired readings: the unattended skip that left a reconciler-resolved console unrouted, and ownership overriding a human's choice.
+const STEP_9_RETIRED = [
+  ['Below `unattended`, run', 'step 9 still skips the route call at unattended'],
+  ['Approve all and Override alike', 'step 9 still lets ownership override an explicit choice'],
+];
+
+function stepNineProblems(text) {
+  const s = stepNine(text);
+  return [
+    ...STEP_9_CLAIMS.filter(([needle]) => !s.includes(needle)).map(([, message]) => message),
+    ...STEP_9_RETIRED.filter(([needle]) => s.includes(needle)).map(([, message]) => message),
+  ];
+}
+
+test('#4621: review-console.md step 9 routes each U# by ownership under control mode', () => {
+  assert.deepStrictEqual(stepNineProblems(REVIEW_CONSOLE), []);
+});
+
+for (const [needle, message] of STEP_9_CLAIMS) {
+  test(`#4621 go-red: ${message}`, () => {
+    const s = stepNine(REVIEW_CONSOLE);
+    assert.deepStrictEqual(stepNineProblems(REVIEW_CONSOLE.replace(s, s.split(needle).join('[removed]'))), [message]);
+  });
+}
+
+for (const [needle, message] of STEP_9_RETIRED) {
+  test(`#4621 go-red: ${message}`, () => {
+    const s = stepNine(REVIEW_CONSOLE);
+    assert.deepStrictEqual(stepNineProblems(REVIEW_CONSOLE.replace(s, `${s} ${needle}`)), [message]);
+  });
+}
+
+// Code twin: every `--upstream-route` command step 9 documents parses through console-resolve.js's real parseArgs
+// once its placeholders are filled, so a misspelled or misplaced flag in the prose is a usage error here, not at a run.
+const { parseArgs } = require(path.join(__dirname, '..', 'plugin', 'bin', 'console-resolve'));
+const UPSTREAM_SPAN_RE = /`node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/console-resolve\.js" (--upstream-route [^`]*)`/g;
+const PLACEHOLDERS = [['{id}', 'wrap-up-upstream-1.md'], ['{url}', 'https://github.com/o/r/issues/1'], ['{why}', 'a reason'], ['$PIPELINE_RUN_DIR', '/run']];
+const shellWords = (s) => (s.match(/"[^"]*"|'[^']*'|\S+/g) || []).map((w) => w.replace(/^(["'])(.*)\1$/, '$2'));
+
+function documentedCommandProblems(text) {
+  const spans = [...stepNine(text).matchAll(UPSTREAM_SPAN_RE)].map((m) => m[1]);
+  const problems = [];
+  const shapes = new Set();
+  for (const span of spans) {
+    for (const hold of span.includes('filing-failed|scrub-hit') ? ['filing-failed', 'scrub-hit'] : [null]) {
+      let args = hold === null ? span : span.replace('filing-failed|scrub-hit', hold);
+      for (const [placeholder, value] of PLACEHOLDERS) args = args.split(placeholder).join(value);
+      try {
+        const o = parseArgs(shellWords(args));
+        if (o.upstreamRoute !== 'wrap-up-upstream-1.md') problems.push(`${span}: the id did not parse as the id`);
+        shapes.add(o.hold !== null ? 'hold' : o.filed !== null ? 'filed' : 'route');
+      } catch (err) {
+        problems.push(`${span}: ${err.message}`);
+      }
+    }
+  }
+  for (const shape of ['route', 'filed', 'hold']) if (!shapes.has(shape)) problems.push(`step 9 documents no ${shape} command`);
+  return problems;
+}
+
+test('#4621: every --upstream-route command in step 9 parses through console-resolve.js parseArgs', () => {
+  assert.deepStrictEqual(documentedCommandProblems(REVIEW_CONSOLE), []);
+});
+
+test('#4621 go-red: a misspelled flag, a dropped --reason or a dropped command in step 9 is caught', () => {
+  const s = stepNine(REVIEW_CONSOLE);
+  const misspelled = documentedCommandProblems(REVIEW_CONSOLE.replace(s, s.replace("--filed '{url}'", "--file '{url}'")));
+  assert.ok(misspelled.some((p) => p.includes('unknown flag: --file')), misspelled.join('; '));
+  const noReason = documentedCommandProblems(REVIEW_CONSOLE.replace(s, s.replace(" --reason '{why}'", '')));
+  assert.ok(noReason.some((p) => p.includes('--hold requires --reason')), noReason.join('; '));
+  const noFiled = documentedCommandProblems(REVIEW_CONSOLE.replace(s, s.split("--upstream-route '{id}' --filed").join("--removed '{id}' --filed")));
+  assert.ok(noFiled.includes('step 9 documents no filed command'), noFiled.join('; '));
+});
+
+// The multi-spec console's On approval step 4 routes each U# through step 9's control-mode calls, per spec dir.
+function multispecStepFour(text) {
+  const start = text.indexOf('\n4. For `U#` upstream feedback rows');
+  assert.notStrictEqual(start, -1, 'multispec On approval step 4 not found');
+  const end = text.indexOf('\n4.5. ', start);
+  assert.notStrictEqual(end, -1, 'no step 4.5 after step 4');
+  return text.slice(start, end);
+}
+
+const MULTISPEC_STEP_4_CLAIMS = [
+  ['--upstream-route', 'multispec step 4 does not name --upstream-route'],
+  ['--filed', 'multispec step 4 does not name --filed'],
+  ['`--run "{item-run-dir}"`', 'multispec step 4 does not run the calls on each item\'s own run dir'],
+  ["`wrap-up/review-console.md` step 9's Control mode clause", 'multispec step 4 does not cite review-console.md step 9'],
+];
+
+function multispecStepFourProblems(text) {
+  const s = multispecStepFour(text);
+  return MULTISPEC_STEP_4_CLAIMS.filter(([needle]) => !s.includes(needle)).map(([, message]) => message);
+}
+
+test('#4621: multispec-review-console.md step 4 routes each U# through --upstream-route and --filed', () => {
+  assert.deepStrictEqual(multispecStepFourProblems(MULTISPEC), []);
+});
+
+for (const [needle, message] of MULTISPEC_STEP_4_CLAIMS) {
+  test(`#4621 go-red: ${message}`, () => {
+    const s = multispecStepFour(MULTISPEC);
+    assert.deepStrictEqual(multispecStepFourProblems(MULTISPEC.replace(s, s.split(needle).join('[removed]'))), [message]);
+  });
+}
+
+function sectionOf(text, heading) {
+  const start = text.indexOf(`\n${heading}`);
+  assert.notStrictEqual(start, -1, `heading not found: ${heading}`);
+  const end = text.indexOf('\n## ', start + heading.length + 1);
+  return text.slice(start, end === -1 ? undefined : end);
+}
+
+// Code twin: every key bookkeepingPermissions returns has a row in the capabilities table, `ownedUpstreamFiling` included.
+function capabilityRowProblems(text) {
+  const table = sectionOf(text, '## Bookkeeping capabilities');
+  return Object.keys(bookkeepingPermissions('supervised', { controlMode: true })).filter((key) => !table.includes(`| \`${key}\` |`)).map((key) => `no capability row for ${key}`);
+}
+
+test('#4621: autonomy-ceiling.md has a capabilities row for every bookkeepingPermissions key, ownedUpstreamFiling included', () => {
+  assert.ok(Object.keys(bookkeepingPermissions('supervised', { controlMode: true })).includes('ownedUpstreamFiling'), 'the code twin lost the key');
+  assert.deepStrictEqual(capabilityRowProblems(AUTONOMY_CEILING), []);
+});
+
+test('#4621 go-red: dropping the ownedUpstreamFiling row is caught', () => {
+  const mutated = AUTONOMY_CEILING.replace('| `ownedUpstreamFiling` |', '| `renamed` |');
+  assert.notStrictEqual(mutated, AUTONOMY_CEILING);
+  assert.deepStrictEqual(capabilityRowProblems(mutated), ['no capability row for ownedUpstreamFiling']);
+});
+
+const NO_CAPABILITY_CLAIM = 'adds no capability of its own';
+function controlModeSectionProblems(text) {
+  const s = sectionOf(text, '## Control mode (#4620)');
+  const problems = [];
+  if (!s.includes('ownedUpstreamFiling')) problems.push('the Control mode section does not name ownedUpstreamFiling');
+  if (s.includes(NO_CAPABILITY_CLAIM)) problems.push('the Control mode section still says control mode adds no capability of its own');
+  return problems;
+}
+
+test('#4621: the Control mode section names the one capability control mode adds', () => {
+  assert.deepStrictEqual(controlModeSectionProblems(AUTONOMY_CEILING), []);
+});
+
+test('#4621 go-red: the Control mode section naming no capability, or the retired claim, is caught', () => {
+  const section = sectionOf(AUTONOMY_CEILING, '## Control mode (#4620)');
+  assert.deepStrictEqual(controlModeSectionProblems(AUTONOMY_CEILING.replace(section, section.split('ownedUpstreamFiling').join('[removed]'))), ['the Control mode section does not name ownedUpstreamFiling']);
+  assert.deepStrictEqual(controlModeSectionProblems(AUTONOMY_CEILING.replace(section, `${section}\n${NO_CAPABILITY_CLAIM}`)), ['the Control mode section still says control mode adds no capability of its own']);
+});
+
+// The staging check runs inside curation-engine.md's dispatched judge, whose shell has no $PIPELINE_RUN_DIR: it must name
+// {ABS_RUN_DIR}, and curation-engine.md must substitute that placeholder alongside {ABS_STAGE_DIR}.
+const CURATION_ENGINE = readText(path.join(__dirname, '..', 'plugin', 'skills', 'wrap-up', 'curation-engine.md'));
+const flat = (text) => text.replace(/\s+/g, ' ');
+const STAGING_CHECK = '--ceiling --run "{ABS_RUN_DIR}"';
+const STAGING_CHECK_UNSET = '--ceiling --run "$PIPELINE_RUN_DIR"';
+
+function absRunDirProblems(engine, upstream) {
+  const problems = [];
+  const e = flat(engine);
+  if (!e.includes('with `{ABS_STAGE_DIR}` and `{ABS_RUN_DIR}` substituted')) problems.push('the fan-out dispatch does not substitute {ABS_RUN_DIR}');
+  if (!e.includes('The controller replaces `{ABS_STAGE_DIR}`, and `{ABS_RUN_DIR}` (the anchored absolute run dir')) problems.push('the substitution sentence does not define {ABS_RUN_DIR}');
+  const u = flat(upstream);
+  if (!e.includes('A judge run in the main thread reads `{ABS_RUN_DIR}` as the same anchored run dir')) problems.push('the main-thread judge does not read {ABS_RUN_DIR} as the anchored run dir');
+  if (!u.includes(STAGING_CHECK)) problems.push('the staging check does not run against {ABS_RUN_DIR}');
+  if (u.includes(STAGING_CHECK_UNSET)) problems.push('the staging check still runs against $PIPELINE_RUN_DIR');
+  if (!u.includes('A failed call, or any output other than `control-mode on`, writes no header')) problems.push('the staging check does not fail closed to no header');
+  return problems;
+}
+
+test('#4621: the staging check names {ABS_RUN_DIR}, which curation-engine.md substitutes', () => {
+  assert.deepStrictEqual(absRunDirProblems(CURATION_ENGINE, UPSTREAM_FEEDBACK), []);
+});
+
+test('#4621 go-red: each {ABS_RUN_DIR} claim is caught on its own', () => {
+  assert.deepStrictEqual(absRunDirProblems(CURATION_ENGINE.replace(' and `{ABS_RUN_DIR}` substituted', ' substituted'), UPSTREAM_FEEDBACK), ['the fan-out dispatch does not substitute {ABS_RUN_DIR}']);
+  assert.deepStrictEqual(absRunDirProblems(CURATION_ENGINE.replace('`{ABS_STAGE_DIR}`, and `{ABS_RUN_DIR}` (the anchored absolute run dir', '`{ABS_STAGE_DIR}`'), UPSTREAM_FEEDBACK), ['the substitution sentence does not define {ABS_RUN_DIR}']);
+  assert.deepStrictEqual(absRunDirProblems(CURATION_ENGINE.replace('A judge run in the main thread reads `{ABS_RUN_DIR}` as the same anchored run dir', 'A judge run in the main thread reads the run dir'), UPSTREAM_FEEDBACK), ['the main-thread judge does not read {ABS_RUN_DIR} as the anchored run dir']);
+  assert.deepStrictEqual(absRunDirProblems(CURATION_ENGINE, UPSTREAM_FEEDBACK.replace(STAGING_CHECK, STAGING_CHECK_UNSET)), ['the staging check does not run against {ABS_RUN_DIR}', 'the staging check still runs against $PIPELINE_RUN_DIR']);
+  assert.deepStrictEqual(absRunDirProblems(CURATION_ENGINE, UPSTREAM_FEEDBACK.replace('A failed call', 'A call')), ['the staging check does not fail closed to no header']);
+});
+
+// Code twin: the staged layout the prose documents parses to a target, a title and a body through parseStagedUpstream.
+function stagedLayoutProblems(text) {
+  const m = /```\n(<!-- upstream-target:[\s\S]*?)\n```/.exec(text);
+  if (!m) return ['wrap-up/upstream-feedback.md documents no staged layout block'];
+  const parsed = parseStagedUpstream(m[1].replace('{title}', 'A title').replace('{scrubbed body}', 'A body'));
+  const problems = [];
+  if (parsed.targetRepo !== UPSTREAM_FILING_TARGET) problems.push(`the layout's target parses as ${parsed.targetRepo}`);
+  if (parsed.title !== 'A title') problems.push(`the layout's title parses as ${parsed.title}`);
+  if (parsed.body !== 'A body') problems.push(`the layout's body parses as ${JSON.stringify(parsed.body)}`);
+  return problems;
+}
+
+// Code twin: the route holds a staged header naming any repo but UPSTREAM_FILING_TARGET, so that literal must be the one
+// repo /claude-tweaks:feedback files into — the skill states it once as its only target and passes it as --repo.
+const FEEDBACK_REPO_RE = /file-feedback\.js" --drafts <path> --repo (\S+)/g;
+function filingTargetProblems(feedback) {
+  const problems = [];
+  const repos = [...feedback.matchAll(FEEDBACK_REPO_RE)].map((m) => m[1]);
+  if (repos.length !== 1) problems.push(`feedback/SKILL.md files with ${repos.length} \`--repo\` calls, not one`);
+  else if (repos[0] !== UPSTREAM_FILING_TARGET) problems.push(`feedback/SKILL.md files with --repo ${repos[0]}, not ${UPSTREAM_FILING_TARGET}`);
+  if (!feedback.includes(`This skill **files** against \`${UPSTREAM_FILING_TARGET}\` and nowhere else.`)) problems.push('feedback/SKILL.md no longer names the one filing target');
+  return problems;
+}
+
+test('#4621: UPSTREAM_FILING_TARGET is the repo /claude-tweaks:feedback files into', () => {
+  assert.deepStrictEqual(filingTargetProblems(FEEDBACK_SKILL), []);
+});
+
+test('#4621 go-red: a feedback skill that files elsewhere, twice or into an unstated target is caught', () => {
+  assert.deepStrictEqual(filingTargetProblems(FEEDBACK_SKILL.replace(`--drafts <path> --repo ${UPSTREAM_FILING_TARGET}`, '--drafts <path> --repo acme/widgets')), ['feedback/SKILL.md files with --repo acme/widgets, not thn-inc/claude-tweaks']);
+  assert.deepStrictEqual(filingTargetProblems(`${FEEDBACK_SKILL}\nfile-feedback.js" --drafts <path> --repo ${UPSTREAM_FILING_TARGET}`), ['feedback/SKILL.md files with 2 `--repo` calls, not one']);
+  assert.deepStrictEqual(filingTargetProblems(FEEDBACK_SKILL.replace('and nowhere else.', 'and elsewhere.')), ['feedback/SKILL.md no longer names the one filing target']);
+});
+
+test('#4621: the staged layout in wrap-up/upstream-feedback.md parses through parseStagedUpstream', () => {
+  assert.deepStrictEqual(stagedLayoutProblems(UPSTREAM_FEEDBACK), []);
+});
+
+test('#4621 go-red: a layout whose marker or Title prefix drifts from the parser is caught', () => {
+  const noPrefix = stagedLayoutProblems(UPSTREAM_FEEDBACK.replace('Title: {title}', '{title}'));
+  assert.ok(noPrefix.includes("the layout's title parses as null"), noPrefix.join('; '));
+  assert.deepStrictEqual(stagedLayoutProblems(UPSTREAM_FEEDBACK.replace('<!-- upstream-target:', '<!-- target:')), ['wrap-up/upstream-feedback.md documents no staged layout block']);
+});
+
+// Under control mode /claude-tweaks:feedback --pre-confirmed holds an item rather than asking: a scrub stop, and a drift
+// mismatch that would otherwise fall back to AskUserQuestion, each run step 9's --hold scrub-hit call (#4621).
+const PRE_CONFIRMED = readText(path.join(__dirname, '..', 'plugin', 'skills', 'feedback', 'pre-confirmed.md'));
+const PRE_CONFIRMED_CLAIMS = [
+  ["Under control mode this stop also runs the `--hold scrub-hit` call of `wrap-up/review-console.md`'s step 9 for the item against that owning run dir", 'pre-confirmed.md does not hold a scrub stop with --hold scrub-hit'],
+  ['Under control mode a mismatch never falls back to `AskUserQuestion`: file nothing for the item and run the `--hold scrub-hit` call of `wrap-up/review-console.md`\'s step 9 against that owning run dir, with `{why}` `scrub changed the approved draft`', 'pre-confirmed.md does not hold a drift mismatch with --hold scrub-hit instead of asking'],
+];
+
+function preConfirmedProblems(text) {
+  const t = flat(text);
+  return PRE_CONFIRMED_CLAIMS.filter(([needle]) => !t.includes(flat(needle))).map(([, message]) => message);
+}
+
+test('#4621: feedback/pre-confirmed.md holds a scrub stop and a drift mismatch under control mode', () => {
+  assert.deepStrictEqual(preConfirmedProblems(PRE_CONFIRMED), []);
+});
+
+for (const [needle, message] of PRE_CONFIRMED_CLAIMS) {
+  test(`#4621 go-red: ${message}`, () => {
+    const t = flat(PRE_CONFIRMED);
+    assert.ok(t.includes(flat(needle)), 'the claim must exist to be removed');
+    assert.deepStrictEqual(preConfirmedProblems(t.split(flat(needle)).join('[removed]')), [message]);
+  });
+}

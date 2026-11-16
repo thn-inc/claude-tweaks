@@ -103,41 +103,57 @@ function prepare(runDir) {
 const archiveTwin = (runDir) => path.join(path.dirname(runDir), 'archive', path.basename(runDir));
 const LOCK_NAME = '.timing.lock';
 
-// One read-check-write in dir, under dir's timing lock, so a concurrent writer
-// (a token pass, a second closer) never has its file overwritten between the
-// check and the rename. The lock is waited for only until deadlineAt (never past
-// the time bound); a lock not acquired in time is a SKIP. The lock never creates
-// dir. needRunState (the run had a run-state.json when derived): a dir whose
-// run-state.json is gone is being archived — its entries are moving to the twin,
-// and a file written now would strand in it after the straggler sweep — so it
-// counts as vanished. -> a result, or { vanished: true } when dir is gone.
-function writeIn(dir, timing, skip, deadlineAt, needRunState) {
-  if (!isDir(dir)) return { vanished: true };
-  const withTokens = hasTokenTotals(timing);
-  const waitMs = Math.max(0, Math.floor(Math.min(TIMING_BOUND_MS, deadlineAt - Date.now())));
+const vanished = () => ({ vanished: true });
+
+// The lock protocol both writers share: one read-check-write in dir, under dir's timing lock, so a
+// concurrent writer (a token pass, a second closer) never has its file overwritten between the check
+// and the rename. The lock is waited for only until deadlineAt and never longer than capMs; a lock not
+// acquired in time is onMiss(waitMs)'s result. The lock never creates dir. needRunState (the run had a
+// run-state.json when derived): a dir whose run-state.json is gone is being archived — its entries are
+// moving to the twin, and a file written now would strand in it after the straggler sweep — so it
+// counts as vanished, checked once under the lock before body runs and handed to body as vacated() for
+// a re-check right before its write. -> body's result, or { vanished: true } when dir is gone or vacated.
+function underTimingLock(dir, { deadlineAt, capMs, needRunState, onMiss }, body) {
+  if (!isDir(dir)) return vanished();
+  const waitMs = Math.max(0, Math.floor(Math.min(capMs, deadlineAt - Date.now())));
   const held = acquireLock(path.join(dir, LOCK_NAME), { waitMs, env: {}, createParent: false });
-  if (!held) {
-    if (!isDir(dir)) return { vanished: true };
-    return { status: 'failed', tokens: false, skip: `condition: timing.json lock not acquired within ${waitMs} ms → fallback: ${NOTHING_WRITTEN}` };
-  }
+  if (!held) return isDir(dir) ? onMiss(waitMs) : vanished();
+  const vacated = () => needRunState && lstatType(path.join(dir, 'run-state.json')).type === 'missing';
   try {
-    if (needRunState && lstatType(path.join(dir, 'run-state.json')).type === 'missing') return { vanished: true };
-    // A timing with no token totals never replaces a file that gained them while
-    // this call derived (a concurrent token pass).
-    if (!withTokens && hasTokenTotals(readExisting(dir))) return { status: 'kept', tokens: true, skip: null };
-    try {
-      writeTimingFile(dir, timing);
-    } catch (err) {
-      if (!isDir(dir)) return { vanished: true };
-      return { status: 'failed', tokens: false, skip: `condition: timing.json write failed (${errText(err)}) → fallback: ${NOTHING_WRITTEN}` };
-    }
-    return { status: 'written', tokens: withTokens, skip };
+    if (vacated()) return vanished();
+    return body(vacated);
   } finally {
     releaseLock(held);
     // An archive's per-entry move can carry this lock dir to the twin, where the
     // release above misses it: compare-and-delete it there too (the token is ours alone).
     releaseLock({ lockPath: path.join(archiveTwin(dir), LOCK_NAME), token: held.token });
   }
+}
+
+// fn() is a write into dir. -> null when it succeeded; { vanished: true } when it failed because dir is
+// gone; else onFail(err)'s result (by default the error is rethrown).
+function writeUnlessGone(dir, fn, onFail = (err) => { throw err; }) {
+  try {
+    fn();
+    return null;
+  } catch (err) {
+    return isDir(dir) ? onFail(err) : vanished();
+  }
+}
+
+// timing.json's read-check-write in dir -> a result, or { vanished: true } when dir is gone. A lock not
+// acquired in time is a failed result carrying its SKIP.
+function writeIn(dir, timing, skip, deadlineAt, needRunState) {
+  const withTokens = hasTokenTotals(timing);
+  const onMiss = (waitMs) => ({ status: 'failed', tokens: false, skip: `condition: timing.json lock not acquired within ${waitMs} ms → fallback: ${NOTHING_WRITTEN}` });
+  return underTimingLock(dir, { deadlineAt, capMs: TIMING_BOUND_MS, needRunState, onMiss }, () => {
+    // A timing with no token totals never replaces a file that gained them while
+    // this call derived (a concurrent token pass).
+    if (!withTokens && hasTokenTotals(readExisting(dir))) return { status: 'kept', tokens: true, skip: null };
+    const failed = writeUnlessGone(dir, () => writeTimingFile(dir, timing),
+      (err) => ({ status: 'failed', tokens: false, skip: `condition: timing.json write failed (${errText(err)}) → fallback: ${NOTHING_WRITTEN}` }));
+    return failed || { status: 'written', tokens: withTokens, skip };
+  });
 }
 
 // timing, pending skip, deadline -> { dir, result }: dir is where the result's SKIP
@@ -152,13 +168,81 @@ function write(runDir, timing, skip, deadlineAt, needRunState) {
   return { dir: twin, result: { status: 'failed', tokens: false, skip: `condition: run dir and its archive twin are gone → fallback: ${NOTHING_WRITTEN}` } };
 }
 
-function finish(runDir, result) {
-  if (result.skip) logTimingSkip(runDir, result.skip);
+const NO_YIELD = 'no step-yield.json written';
+const YIELD_GONE = `condition: run dir and its archive twin are gone → fallback: ${NO_YIELD}`;
+const isArchivedDir = (d) => path.basename(path.dirname(d)) === 'archive';
+
+// One derive-and-write of the yield in dir, under dir's timing lock (the one the timing.json write
+// takes), so a yield is never derived from a timing.json that a concurrent token pass is about to
+// replace and then written after it. The lock is waited for PHASE_LOCK_WAIT_MS at most, never past
+// the close deadline; a lock not acquired in time is a skipped result carrying its SKIP text (and
+// bound:true when the wait spent the close's whole bound, which finish names as the bound).
+// -> a result, or { vanished: true } when dir is gone or being vacated.
+function writeYieldIn(dir, deadlineAt, needRunState) {
+  const onMiss = (waitMs) => ({
+    status: 'skipped', skip: `condition: step-yield.json lock not acquired within ${waitMs} ms → fallback: ${NO_YIELD}`, fold: true,
+    ...(Date.now() >= deadlineAt ? { bound: true } : {}),
+  });
+  return underTimingLock(dir, { deadlineAt, capMs: module.exports.PHASE_LOCK_WAIT_MS, needRunState, onMiss }, (vacated) => {
+    const sy = require('./step-yield');
+    const yieldObj = sy.deriveStepYield(dir);
+    if (vacated()) return vanished();
+    return writeUnlessGone(dir, () => sy.writeStepYield(dir, yieldObj)) || { status: 'written', skip: null };
+  });
+}
+
+// dir, { deadlineAt } -> { status: 'written'|'skipped'|'failed', skip, fold? }: step-yield.json, derived
+// whole from the run dir and written temp-then-rename, never into a dir that is not there or being
+// vacated (a run dir gone is retried once at its archive twin, never recreated). A close already
+// past its deadline derives nothing. Never throws. Every failed or skipped result carries its SKIP text
+// in `skip` and fold:true: with logBound (the default) this function logs it as one SKIP line itself;
+// with logBound false the caller (finish) folds it into the close's one SKIP line. step-yield.js is
+// resolved through require at call time so a test can stub it.
+function writeStepYieldSafe(dir, { boundMs = module.exports.TIMING_BOUND_MS, deadlineAt = Date.now() + boundMs, logBound = true } = {}) {
+  let target = isArchivedDir(dir) || isDir(dir) ? dir : archiveTwin(dir);
+  const settle = (r) => {
+    if (logBound) logTimingSkip(target, r.skip);
+    return r;
+  };
+  try {
+    const boundSkip = `condition: close passed the ${boundMs} ms time bound before the step yield was derived → fallback: ${NO_YIELD}`;
+    if (Date.now() >= deadlineAt) return settle({ status: 'failed', skip: boundSkip, fold: true, bound: true });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (!isDir(target)) return settle({ status: 'failed', skip: YIELD_GONE, fold: true });
+      const needRunState = lstatType(path.join(target, 'run-state.json')).type !== 'missing';
+      const r = writeYieldIn(target, deadlineAt, needRunState);
+      if (!r.vanished) return r.fold ? settle(r.bound ? { ...r, skip: boundSkip } : r) : r;
+      // The dir vanished under the write (an archive moved it): follow it once.
+      if (attempt === 0 && !isArchivedDir(target)) { target = archiveTwin(target); continue; }
+      break;
+    }
+    return settle({ status: 'failed', skip: YIELD_GONE, fold: true });
+  } catch (err) {
+    return settle({ status: 'failed', skip: `condition: step yield could not be written (${errText(err)}) → fallback: ${NO_YIELD}`, fold: true });
+  }
+}
+
+// Every result a close settles on ends here: its SKIP, then the step yield — read from the run dir
+// after the timing write, so it sees the fresh timing.json (a kept one included: its persisted
+// questions re-derive the wait times). A spec-N child gets none, like timing.json. deadlineAt is
+// the close's own time bound (TIMING_BOUND_MS from its start): the yield is written inside it.
+function finish(runDir, result, { deadlineAt, boundMs }) {
+  // One close logs at most one timing-family SKIP line. The yield runs first (logBound false) so a
+  // yield that was not written (the bound, a lock miss, a derive or write that threw) is named in
+  // that one line: appended to the timing SKIP, or its own when the timing write logged none. The
+  // bound is appended as the bare `no step-yield.json written` (the timing SKIP already names it);
+  // any other cause is appended whole.
+  const y = result.status !== 'not-top-level' ? module.exports.writeStepYieldSafe(runDir, { deadlineAt, boundMs, logBound: false }) : null;
+  const folded = y && y.fold ? y : null;
+  if (result.skip) logTimingSkip(runDir, folded ? `${result.skip}; ${folded.bound ? NO_YIELD : folded.skip}` : result.skip);
+  else if (folded) logTimingSkip(runDir, folded.skip);
   return result;
 }
 
 // runDir -> { status, skip }: phase rows only, synchronous, no transcript read.
 function writePhaseTimingSync(runDir) {
+  const boundMs = module.exports.TIMING_BOUND_MS;
+  const closeDeadlineAt = Date.now() + boundMs;
   let dir = runDir;
   let result;
   try {
@@ -168,7 +252,7 @@ function writePhaseTimingSync(runDir) {
   } catch (err) {
     result = { status: 'failed', tokens: false, skip: `condition: timing at close failed (${errText(err)}) → fallback: ${NOTHING_WRITTEN}` };
   }
-  finish(dir, result);
+  finish(dir, result, { deadlineAt: closeDeadlineAt, boundMs });
   return { status: result.status, skip: result.skip };
 }
 
@@ -178,6 +262,9 @@ async function writeTimingAtClose(runDir, { tokens = true, env = {}, homeDir = o
     const r = writePhaseTimingSync(runDir);
     return { status: r.status, tokens: false, skip: r.skip };
   }
+  // One deadline for the whole close, the transcript read and the yield alike (the named bound).
+  const closeBoundMs = boundMs ?? module.exports.TIMING_BOUND_MS;
+  const closeDeadlineAt = Date.now() + closeBoundMs;
   let dir = runDir;
   let result;
   let base = null;
@@ -214,7 +301,7 @@ async function writeTimingAtClose(runDir, { tokens = true, env = {}, homeDir = o
       } catch { /* the failed result above stands */ }
     }
   }
-  return finish(dir, result);
+  return finish(dir, result, { deadlineAt: closeDeadlineAt, boundMs: closeBoundMs });
 }
 
 // Same as writeTimingAtClose, and a throw out of it (a stub, a defect) is one SKIP line too: the
@@ -249,4 +336,4 @@ function spawnTokenPass(runDir, { env } = {}) {
   }
 }
 
-module.exports = { TIMING_BOUND_MS, PHASE_LOCK_WAIT_MS, ownTranscripts, isSpecChildDir, writeTimingAtClose, writeTimingAtCloseSafe, writePhaseTimingSync, logTimingSkip, spawnTokenPass };
+module.exports = { TIMING_BOUND_MS, PHASE_LOCK_WAIT_MS, ownTranscripts, isSpecChildDir, writeTimingAtClose, writeTimingAtCloseSafe, writePhaseTimingSync, writeStepYieldSafe, logTimingSkip, spawnTokenPass };
