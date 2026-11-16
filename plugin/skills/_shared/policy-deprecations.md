@@ -88,12 +88,6 @@ Now: migrates at read — identity `migrate`, boolean semantics unchanged, `rena
 
 Removal condition: the shared predicate above, with `{key}` = `worktree.always` — clause (a) additionally waits for the transitional twin line to be deleted from this repo's `policy.yml`, which happens once the **running** build's `plugin.json` version (`${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` — not the install pointer `claude plugin update` moves) is at or above the release that shipped #602. That deletion belongs in a **fresh session** started on such a build — never mid-session after `claude plugin update`, since the running session keeps whatever build it started with regardless of where the install pointer moves; see `docs/incident-log.md` `[IL-133]`.
 
-## Bare-SHA verify stamp twin — claude-tweaks-verify-pass (#1921)
-
-Not a policy key: the file `{git-dir}/claude-tweaks-verify-pass` is the pre-#1921 verification pass stamp (a bare SHA an agent used to write by hand). Since #1921 `bin/verify.js` writes the canonical JSON stamp `{git-dir}/claude-tweaks-verify-pass.json` and, as the expand phase of that contract change, still writes the bare-SHA twin so an installed build running older skill prose (`review/code-mode-steps.md`'s former `cat` read) keeps finding it. `stamp.js`'s `readStamp` also reads the bare file as a `{scope: 'full', legacy: true}` fallback when the JSON is absent.
-
-Removal condition: delete the twin write in `stamp.js`'s `writeStamp`, the legacy read branch in `readStamp`, and this entry at the first minor release after the one that shipped #1921 (resolve via git tags: `git tag -l 'v*' --sort=version:refname`, the first minor bump after #1921's shipping version), once `grep -rn 'claude-tweaks-verify-pass"' plugin/skills` returns no reader of the bare file.
-
 ## Dispatch-call discriminator sessionId fallback — task-call.js (#3711)
 
 Not a policy key: `bin/lib/dispatch/task-call.js`'s `isDispatchTaskCall` compares the caller's session id against `run-state.json`'s `dispatchSessionId`, which `hooks.js record-worktree --dispatch` writes since #3711. A dispatched run-state written by an older build has no `dispatchSessionId` (absent, `undefined`), so it falls back to comparing `sessionId`. Known residual of the fallback: a pre-field dispatched run that a human resumes in a new session re-stamps `sessionId` and reads as a Task call; under `local-merge` it stops at the `ready-to-merge` relay as every run did before #3711 — it fails safe (a missed merge).
