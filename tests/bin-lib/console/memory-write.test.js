@@ -9,6 +9,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const { readText } = require('../../helpers/read-skill');
+const { chmodDenialSkip } = require('../../helpers/root');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
 const CLI = path.join(ROOT, 'plugin', 'bin', 'console-resolve.js');
@@ -225,9 +226,7 @@ test('a dangling symlink target is refused and nothing is created behind it', as
   assert.strictEqual(decisions(fx), '');
 });
 
-const canMakeReadOnly = process.platform !== 'win32' && typeof process.getuid === 'function' && process.getuid() !== 0;
-
-test('a failed target write exits 3, names the path and logs nothing', { skip: !canMakeReadOnly && 'read-only dirs are not enforced on win32 or as root' }, async () => {
+test('a failed target write exits 3, names the path and logs nothing', chmodDenialSkip('root ignores a read-only memory dir'), async () => {
   const fx = fixture();
   fs.writeFileSync(path.join(fx.memoryDir, 'note.md'), 'a\n');
   fs.chmodSync(fx.memoryDir, 0o555);
