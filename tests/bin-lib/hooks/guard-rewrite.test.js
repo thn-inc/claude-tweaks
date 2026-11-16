@@ -717,6 +717,10 @@ test('quote-exit-status leaves rc=$? after an array assignment alone: a ) ends t
   assert.strictEqual(rw('git log; arr=(x) rc=$?'), null);
 });
 
+test('quote-exit-status: a top-level ) ends the simple command, so the command word after an array assignment judges its arguments', () => {
+  assert.deepStrictEqual(rw('git log; arr=(x) echo rc=$?'), { command: 'git log; arr=(x) echo "rc=$?"', applied: ['quote-exit-status'] });
+});
+
 test('quote-exit-status leaves rc=$? after X=$( … ) alone: an assignment prefix, not a command word', () => {
   assert.strictEqual(rw('X=$(git log) rc=$?'), null);
 });
