@@ -109,6 +109,11 @@ test('AC10.1: a --min-findings above the eligible count reports the shortfall, e
     assert.equal(x.deps.errs.length, 1);
     assert.deepEqual(JSON.parse(x.deps.errs[0]), {
       shortfall: { requested: { minFindings: 5 }, available: { runs: 2, findings: 4, bySeverity: { medium: 1, low: 1, high: 1, unknown: 1 } } },
+      excluded: [
+        { run: 'run-a', finding: 'aaaaaaaaaaa3', reason: 'file-absent-at-head' },
+        { run: 'run-bad', reason: 'decisions-unreadable' },
+        { run: 'run-none', reason: 'no-review' },
+      ],
     });
   } finally {
     x.cleanup();
@@ -233,54 +238,91 @@ test('run exclusions: a missing findings artifact, a head not in the clone and a
       return fs.readFileSync(p, enc);
     },
   };
-  const a = await extractInto(['--select', 'run-b'], { deps: makeDeps({ fs: noFindings }) });
-  try {
-    assert.equal(a.code, 0);
-    assert.deepEqual(a.json(schema.FIXTURE_FILE).excluded, [{ run: 'run-b', reason: 'no-findings-artifact' }]);
-  } finally {
-    a.cleanup();
-  }
-  // No eligible run is left, so nothing is replayable: with a request that cannot be met it is a shortfall.
-  const b = await extractInto(['--select', 'run-b', '--min-runs', '1'], { deps: makeDeps({ fs: noFindings }) });
-  try {
-    assert.equal(b.code, 3);
-  } finally {
-    b.cleanup();
-  }
-  const c = await extractInto(['--select', 'run-b'], { deps: makeDeps({ git: (args) => { if (args[0] === 'cat-file') throw new Error('unknown'); return makeDeps().git(args); } }) });
-  try {
-    assert.equal(c.code, 0);
-    assert.deepEqual(c.json(schema.FIXTURE_FILE).excluded, [{ run: 'run-b', reason: 'head-not-in-clone' }]);
-    assert.deepEqual(c.json(schema.FIXTURE_FILE).runs, []);
-  } finally {
-    c.cleanup();
-  }
-  const d = await extractInto(['--select', 'run-a'], { deps: makeDeps({ fs: { ...fs, readFileSync: (p, enc) => { if (String(p).endsWith('manifest.json')) { const e = new Error('gone'); e.code = 'ENOENT'; throw e; } return fs.readFileSync(p, enc); } } }) });
-  try {
-    assert.deepEqual(d.json(schema.FIXTURE_FILE).excluded, [{ run: 'run-a', reason: 'no-recorded-base' }]);
-  } finally {
-    d.cleanup();
-  }
-  const e = await extractInto(['--select', 'run-a'], { deps: makeDeps({ git: () => { throw new Error('unknown'); } }) });
-  try {
-    assert.deepEqual(e.json(schema.FIXTURE_FILE).excluded, [{ run: 'run-a', reason: 'fix-commit-not-in-clone' }]);
-  } finally {
-    e.cleanup();
-  }
+  // Every run excluded leaves nothing to replay: a shortfall (exit 3) that carries the reasons, never a clean empty set.
+  const shortfallOf = async (extra, deps) => {
+    const x = await extractInto(extra, { deps });
+    try {
+      assert.equal(x.code, 3);
+      assert.equal(fs.existsSync(x.out), false, 'nothing is written');
+      assert.equal(x.deps.errs.length, 1);
+      const line = JSON.parse(x.deps.errs[0]);
+      assert.deepEqual(line.shortfall.available, { runs: 0, findings: 0, bySeverity: {} });
+      return line.excluded;
+    } finally {
+      x.cleanup();
+    }
+  };
+  assert.deepEqual(await shortfallOf(['--select', 'run-b'], makeDeps({ fs: noFindings })), [{ run: 'run-b', reason: 'no-findings-artifact' }]);
+  assert.deepEqual(await shortfallOf(['--select', 'run-b', '--min-runs', '1'], makeDeps({ fs: noFindings })), [{ run: 'run-b', reason: 'no-findings-artifact' }]);
+  const noClone = makeDeps({ git: (args) => { if (args[0] === 'cat-file') throw new Error('unknown'); return makeDeps().git(args); } });
+  assert.deepEqual(await shortfallOf(['--select', 'run-b'], noClone), [{ run: 'run-b', reason: 'head-not-in-clone' }]);
+  const noBase = makeDeps({ fs: { ...fs, readFileSync: (p, enc) => { if (String(p).endsWith('manifest.json')) { const e = new Error('gone'); e.code = 'ENOENT'; throw e; } return fs.readFileSync(p, enc); } } });
+  assert.deepEqual(await shortfallOf(['--select', 'run-a'], noBase), [{ run: 'run-a', reason: 'no-recorded-base' }]);
+  assert.deepEqual(await shortfallOf(['--select', 'run-a'], makeDeps({ git: () => { throw new Error('unknown'); } })), [{ run: 'run-a', reason: 'fix-commit-not-in-clone' }]);
 });
 
-test('a run whose findings all lack a verdict or a file is excluded with no-eligible-findings', async () => {
+test('a run whose findings all lack a file is excluded with no-eligible-findings and the replay set is a shortfall', async () => {
   const noFiles = makeDeps({ gitTable: { [`ls-tree -r --name-only ${HEAD_C}`]: 'unrelated.js\n' } });
   const x = await extractInto(['--select', 'run-b'], { deps: noFiles });
   try {
-    assert.equal(x.code, 0);
-    assert.deepEqual(x.json(schema.FIXTURE_FILE).excluded, [
+    assert.equal(x.code, 3);
+    assert.deepEqual(JSON.parse(x.deps.errs[0]).excluded, [
       { run: 'run-b', finding: 'bbbbbbbbbbb1', reason: 'file-absent-at-head' },
       { run: 'run-b', finding: 'bbbbbbbbbbb2', reason: 'file-absent-at-head' },
       { run: 'run-b', reason: 'no-eligible-findings' },
     ]);
+    assert.equal(fs.existsSync(x.out), false);
   } finally {
     x.cleanup();
+  }
+});
+
+test('a failed write leaves --out partial: exit 1, stderr names the path and says to remove it, and a re-run says why it refuses', async () => {
+  const deps = makeDeps({ writeTree: () => { throw new Error('disk full'); } });
+  const x = await extractInto([], { deps });
+  try {
+    assert.equal(x.code, 1);
+    const text = x.deps.errs.join('\n');
+    assert.ok(text.includes('disk full'));
+    assert.ok(text.includes(x.out), 'names the --out path');
+    assert.match(text, /partial; remove it before re-running/);
+    assert.equal(x.deps.logs.length, 0);
+  } finally {
+    x.cleanup();
+  }
+});
+
+test('--select with a repeated run name exits 2 naming it', async () => {
+  const x = await extractInto(['--select', 'run-a,run-a']);
+  try {
+    assert.equal(x.code, 2);
+    assert.match(x.deps.errs.join('\n'), /"run-a" more than once/);
+    assert.equal(fs.existsSync(x.out), false);
+  } finally {
+    x.cleanup();
+  }
+});
+
+test('--quota rejects an unknown or repeated severity with exit 2 and accepts the known ones', async () => {
+  const typo = await extractInto(['--quota', 'hgih=1']);
+  try {
+    assert.equal(typo.code, 2);
+    assert.match(typo.deps.errs.join('\n'), /severity must be one of critical\|high\|medium\|low\|info\|unknown: "hgih"/);
+  } finally {
+    typo.cleanup();
+  }
+  const repeat = await extractInto(['--quota', 'high=1,high=2']);
+  try {
+    assert.equal(repeat.code, 2);
+    assert.match(repeat.deps.errs.join('\n'), /"high" more than once/);
+  } finally {
+    repeat.cleanup();
+  }
+  const ok = await extractInto(['--quota', 'unknown=1,low=1']);
+  try {
+    assert.equal(ok.code, 0, ok.deps.errs.join('\n'));
+  } finally {
+    ok.cleanup();
   }
 });
 

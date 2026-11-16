@@ -18,6 +18,7 @@ const ARM_NAME = /^[A-Za-z0-9._-]+$/;
 const ARM_KEYS_ACCEPTED = new Set(['name', 'chunk', 'profile', 'repeat']);
 const HEAD_REASONS = ['no-fix-commit', 'fix-commit-not-in-clone'];
 const EXIT_SHORTFALL = 3;
+const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info', 'unknown'];
 
 const split = (text) => String(text).split(SPLIT);
 
@@ -55,6 +56,8 @@ function parseQuota(text) {
     const sev = eq === -1 ? '' : part.slice(0, eq);
     const n = eq === -1 ? { error: 'x' } : positiveInt('--quota', part.slice(eq + 1));
     if (!sev || n.error) return { error: `--quota must be <severity>=<n>[,<severity>=<n>...]: "${text}"` };
+    if (!SEVERITIES.includes(sev)) return { error: `--quota severity must be one of ${SEVERITIES.join('|')}: "${sev}"` };
+    if (sev in quota) return { error: `--quota names severity "${sev}" more than once` };
     quota[sev] = n.value;
   }
   return { quota };
@@ -166,6 +169,11 @@ function extract(opts, deps) {
     deps.err(`review-replay.js: --out ${opts.out} must not exist or must be empty`);
     return 2;
   }
+  const dup = (opts.select || []).find((n, i, all) => all.indexOf(n) !== i);
+  if (dup !== undefined) {
+    deps.err(`review-replay.js: --select names run "${dup}" more than once`);
+    return 2;
+  }
   const selected = selectRuns(opts.runs, opts.select, fs);
   if (selected.missing.length > 0) {
     deps.err(`review-replay.js: no such run under ${opts.runs}: ${selected.missing.join(', ')}`);
@@ -199,14 +207,26 @@ function extract(opts, deps) {
 
   const bySeverity = {};
   for (const p of picked) for (const f of p.eligible) bump(bySeverity, f.severity);
-  if (hasRequest && !metRequest(requested, picked)) {
+  // Nothing eligible is a shortfall too, with or without a request: an empty replay set is not a clean result.
+  if (picked.length === 0 || (hasRequest && !metRequest(requested, picked))) {
     const available = { runs: picked.length, findings: picked.reduce((n, p) => n + p.eligible.length, 0), bySeverity };
-    deps.err(JSON.stringify({ shortfall: { requested, available } }));
+    deps.err(JSON.stringify({ shortfall: { requested, available }, excluded }));
     return EXIT_SHORTFALL;
   }
 
   // Selection succeeded: from here on files are written.
   const out = path.resolve(opts.out);
+  try {
+    return writeOutputs({ out, picked, arms, requested, excluded, bySeverity, template, templateText, templatePath, fallbackDiscipline, PROFILES }, deps);
+  } catch (e) {
+    deps.err(`review-replay.js: writing ${out} failed: ${String((e && e.message) || e).split('\n')[0]}\nreview-replay.js: ${out} is now partial; remove it before re-running extract`);
+    return 1;
+  }
+}
+
+function writeOutputs(c, deps) {
+  const { out, picked, arms, requested, excluded, bySeverity, template, templateText, templatePath, fallbackDiscipline, PROFILES } = c;
+  const fs = deps.fs;
   const counts = { fallbackMatched: 0, verdictsWithoutFinding: 0, findingsWithoutVerdict: 0, failedJudgeByReason: {}, disciplineFallbackPrompts: 0 };
   const verdicts = {};
   const fixtureRuns = [];
