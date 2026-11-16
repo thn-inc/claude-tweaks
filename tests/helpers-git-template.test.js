@@ -370,3 +370,15 @@ test('AC3.1: learned-skills capture fixture(): a warm copy starts no git process
   assert.ok(fs.readFileSync(path.join(b.repo, skill), 'utf8').includes('\r\n'));
   if (host !== 'true') assert.ok(!fs.readFileSync(path.join(a.repo, skill), 'utf8').includes('\r\n'));
 });
+
+test('AC3.1: learned-skills land fixture(): a warm copy starts no git process and owns its paths', (t) => {
+  const { fixture, X } = require('./helpers/learned-skills-land');
+  for (const o of [{}, { autocrlf: 'true' }, { capturedTargets: [X] }, { originConflict: true }]) fixture(t, o);
+  const trace = mk('ct-gt-trace-');
+  const f = withEnv('GIT_TRACE2_EVENT', trace, () => fixture(t));
+  withEnv('GIT_TRACE2_EVENT', trace, () => fixture(t, { originConflict: true }));
+  assert.deepStrictEqual(fs.readdirSync(trace), []);
+  const manifest = JSON.parse(fs.readFileSync(path.join(f.runDir, 'learned-skills', 'manifest.json'), 'utf8'));
+  for (const e of manifest) assert.ok(e.patch.startsWith(f.runDir + path.sep), e.patch);
+  assert.strictEqual(git(f.repo, ['remote', 'get-url', 'origin']), f.origin);
+});

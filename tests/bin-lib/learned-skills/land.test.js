@@ -5,9 +5,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
 const { capture, readManifest, realDeps } = require('../../../plugin/bin/lib/learned-skills/learned-skills.js');
 const { land, stage } = require('../../../plugin/bin/lib/learned-skills/land.js');
 const cli = require('../../../plugin/bin/learned-skills-pr.js');
@@ -17,54 +15,7 @@ Object.assign(process.env, {
   GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test',
 });
 
-const X = '.claude/skills/x/SKILL.md';
-const Z = '.claude/skills/z/SKILL.md';
-const BODY = '# s\n\nline one\nline two\nline three\nline four\nline five\nline six\nline seven\n';
-const RUN_ID = '2026-11-13T000000-spec-1';
-const BRANCH = `learned-skills/${RUN_ID}`;
-const NOW = Date.UTC(2026, 10, 13, 12, 0, 0);
-
-function sh(cwd, args) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-}
-function write(repo, rel, text) {
-  fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
-  fs.writeFileSync(path.join(repo, rel), text);
-}
-// A tree file's text with its line endings as git records them (a core.autocrlf=true checkout holds CRLF).
-const read = (repo, rel) => fs.readFileSync(path.join(repo, rel), 'utf8').replace(/\r\n/g, '\n');
-
-// origin (bare) + a clone with main pushed, two skill files, a run dir, and one captured patch per file.
-// autocrlf: 'true' pins core.autocrlf in the clone's config, a Windows checkout on any host. The
-// committed files are checked out again, so the tree holds what a clone writes (CRLF under autocrlf).
-function fixture(t, { capturedTargets = [X, Z], autocrlf } = {}) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ls-land-')));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const origin = path.join(root, 'origin.git');
-  const repo = path.join(root, 'wt');
-  sh(root, ['init', '-q', '--bare', '-b', 'main', origin]);
-  fs.mkdirSync(repo);
-  sh(repo, ['init', '-q', '-b', 'main']);
-  if (autocrlf) sh(repo, ['config', 'core.autocrlf', autocrlf]);
-  sh(repo, ['remote', 'add', 'origin', origin]);
-  write(repo, X, BODY.replace('# s', '# x'));
-  write(repo, Z, BODY.replace('# s', '# z'));
-  sh(repo, ['add', '-A']);
-  sh(repo, ['commit', '-q', '-m', 'base']);
-  for (const rel of [X, Z]) fs.rmSync(path.join(repo, rel));
-  sh(repo, ['checkout', '-q', '--', '.']);
-  sh(repo, ['push', '-q', 'origin', 'main']);
-  const runDir = path.join(repo, '.claude-tweaks', 'pipelines', RUN_ID);
-  fs.mkdirSync(runDir, { recursive: true });
-  const mergeBase = sh(repo, ['rev-parse', 'HEAD']).trim();
-  const f = { root, origin, repo, runDir, mergeBase, mainTip: mergeBase };
-  for (const target of capturedTargets) {
-    write(repo, target, read(repo, target) + `learned: note for ${path.basename(path.dirname(target))}\n`);
-    const res = capture({ runDir, worktree: repo, mergeBase, target, summary: 'adds a note' }, { now: () => NOW });
-    assert.equal(res.route, 'captured');
-  }
-  return f;
-}
+const { fixture, sh, write, read, X, Z, RUN_ID, BRANCH, NOW } = require('../../helpers/learned-skills-land');
 
 // A gh fake. State: the open PR list. Throws on any argv it does not handle.
 function fakeGh({ prs = [], createThrows = null, editThrows = null } = {}) {
@@ -297,13 +248,8 @@ test('resume after a lost manifest write reuses the pushed commits and the open 
 });
 
 test('apply-check failure stages that patch only', (t) => {
-  const f = fixture(t);
-  // Another session changes the same target on origin/main after capture.
-  const other = path.join(f.root, 'other');
-  sh(f.root, ['clone', '-q', f.origin, other]);
-  write(other, X, '# x\n\nline one\nline two\nline three\nline four\nCHANGED five\nCHANGED six\nCHANGED seven\n');
-  sh(other, ['commit', '-q', '-am', 'conflicting change']);
-  sh(other, ['push', '-q', 'origin', 'main']);
+  // Another session changed the same target on origin/main after capture: the fixture's origin carries it.
+  const f = fixture(t, { originConflict: true });
 
   const gh = fakeGh();
   const res = land(landArgs(f), deps(gh.gh).deps);
@@ -841,13 +787,8 @@ const failManifest = (d) => {
 };
 
 test('a re-land after a lost manifest write stages nothing twice', (t) => {
-  const f = fixture(t);
   // X's patch no longer applies to origin/main, so it stages; Z lands.
-  const other = path.join(f.root, 'other');
-  sh(f.root, ['clone', '-q', f.origin, other]);
-  write(other, X, '# x\n\nline one\nline two\nline three\nline four\nCHANGED five\nCHANGED six\nCHANGED seven\n');
-  sh(other, ['commit', '-q', '-am', 'conflicting change']);
-  sh(other, ['push', '-q', 'origin', 'main']);
+  const f = fixture(t, { originConflict: true });
   const gh = fakeGh();
   const first = land(landArgs(f), failManifest(deps(gh.gh).deps));
   assert.equal(first.manifestFailed, true);
@@ -958,9 +899,9 @@ test('a branch commit with a matching entry id but another run id is not reused'
   const gh = fakeGh();
   const first = land(landArgs(f), deps(gh.gh).deps);
   const tree = sh(f.repo, ['rev-parse', `${first.landed[0].commit}^{tree}`]).trim();
-  const foreign = sh(f.repo, ['commit-tree', tree, '-p', f.mainTip, '-m',
+  const foreign = sh(f.origin, ['commit-tree', tree, '-p', f.mainTip, '-m',
     'Add learned skill update\n\nLearned-Skills-Run: 2026-01-01T000000-other-run\nLearned-Skills-Entry: 1\n']).trim();
-  sh(f.repo, ['push', '-q', '-f', 'origin', `${foreign}:refs/heads/${BRANCH}`]);
+  sh(f.origin, ['update-ref', `refs/heads/${BRANCH}`, foreign]);
   loseManifest(f);
   const res = land(landArgs(f), deps(gh.gh).deps);
   assert.deepEqual(res.landed, [], 'the other run\'s commit is not this run\'s');
@@ -974,9 +915,9 @@ test('a same-run commit under another entry id, with an equal patch-id, is not m
   const first = land(landArgs(f), deps(gh.gh).deps);
   const tree = sh(f.repo, ['rev-parse', `${first.landed[0].commit}^{tree}`]).trim();
   // Same diff, same run, but the trailer names entry 99: the entry id is part of the match.
-  const other = sh(f.repo, ['commit-tree', tree, '-p', f.mainTip, '-m',
+  const other = sh(f.origin, ['commit-tree', tree, '-p', f.mainTip, '-m',
     `Add learned skill update\n\nLearned-Skills-Run: ${RUN_ID}\nLearned-Skills-Entry: 99\n`]).trim();
-  sh(f.repo, ['push', '-q', '-f', 'origin', `${other}:refs/heads/${BRANCH}`]);
+  sh(f.origin, ['update-ref', `refs/heads/${BRANCH}`, other]);
   loseManifest(f);
   const res = land(landArgs(f), deps(gh.gh).deps);
   assert.deepEqual(res.landed, []);
@@ -1017,8 +958,8 @@ test('a no-PR branch holding a foreign commit is not reused as a base', (t) => {
   const gh = fakeGh();
   const first = land(landArgs(f), deps(gh.gh).deps);
   const tree = sh(f.repo, ['rev-parse', `${first.landed[0].commit}^{tree}`]).trim();
-  const foreign = sh(f.repo, ['commit-tree', tree, '-p', f.mainTip, '-m', 'someone else\'s commit\n']).trim();
-  sh(f.repo, ['push', '-q', '-f', 'origin', `${foreign}:refs/heads/${BRANCH}`]);
+  const foreign = sh(f.origin, ['commit-tree', tree, '-p', f.mainTip, '-m', 'someone else\'s commit\n']).trim();
+  sh(f.origin, ['update-ref', `refs/heads/${BRANCH}`, foreign]);
   loseManifest(f);
   gh.state.prs = [];
   const res = land(landArgs(f), deps(gh.gh).deps);
