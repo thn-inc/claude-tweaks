@@ -324,11 +324,11 @@ test('the allowlist keeps plain command words rewriting: cd ., ls ., cp a ., fin
     ['P=/x; ls $P/z .', 'P=/x; ls /x/z .'],
     ['P=/x; cp a . && node $P/z.js', 'P=/x; cp a . && node /x/z.js'],
     ['P=/x; find . -name a; node $P/z.js', 'P=/x; find . -name a; node /x/z.js'],
-    ['P=/x; git -C . status; node $P/z.js', 'P=/x; git -C . status; node /x/z.js'],
     ['P=/x; echo a >. ; node $P/z.js', 'P=/x; echo a >. ; node /x/z.js'],
     ['P=/x; node $P/z.js 2>&1 | cat', 'P=/x; node /x/z.js 2>&1 | cat'],
     ['P=/x; X=1 env -i node "$(echo $P)/z.js"', 'P=/x; X=1 env -i node "$(echo /x)/z.js"'],
   ]) assert.deepStrictEqual(rw(command), { command: expected, applied: ['inline-literal-assignment'] }, command);
+  assert.deepStrictEqual(rw('P=/x; git -C . status; node $P/z.js'), { command: 'P=/x; git status; node /x/z.js', applied: ['inline-literal-assignment', 'drop-git-C-cwd'] });
 });
 
 test("node-eval-separator inserts -- before \"$A\" and leaves an existing -- alone", () => {
@@ -402,6 +402,177 @@ test('drop-redundant-cd under path.win32 keeps comparing exact spellings: the th
   const folding = { ...fixture, deps: { ...fixture.deps, canonicalRealpath: (p) => path.win32.resolve(p).toLowerCase() } };
   assert.strictEqual(rewriteForGuard({ command: 'cd "d:\\w\\cwd" && ls x', ...folding }), null, 'residual: a re-cased drive');
   assert.deepStrictEqual(rewriteForGuard({ command: 'cd "D:\\w\\cwd" && ls x', ...folding }), { command: 'ls x', applied: ['drop-redundant-cd'] }, 'the exact spelling still drops under the folding realpath');
+});
+
+// drop-git-C-cwd. Each decline pin hands the rule an input every other check accepts: the operand
+// spells the cwd and the realpath stub resolves it there, except for the property under test.
+const posix = (command, cwd = '/w/wt', realpath = (p) => path.posix.resolve(p)) => rewriteForGuard({ command, cwd, pluginRoot: ROOT, pathImpl: path.posix, deps: { isLinkedWorktree: () => true, canonicalRealpath: realpath } });
+// A realpath that resolves `spelling` to the cwd, so only the spelling compare can decline it.
+const resolvesToCwd = (spelling) => (p) => (p === spelling ? '/w/wt' : path.posix.resolve(p));
+
+test('AC1.1: drop-git-C-cwd turns git -C . log into git log, and runs after drop-redundant-cd', () => {
+  assert.deepStrictEqual(rw('git -C . log --oneline -3'), { command: 'git log --oneline -3', applied: ['drop-git-C-cwd'] });
+  assert.deepStrictEqual(rw(`cd "${CWD}" && git -C . status --short`), { command: 'git status --short', applied: ['drop-redundant-cd', 'drop-git-C-cwd'] });
+  assert.deepStrictEqual(rw("git -C '.' diff"), { command: 'git diff', applied: ['drop-git-C-cwd'] });
+  assert.deepStrictEqual(rw('git -C "." show'), { command: 'git show', applied: ['drop-git-C-cwd'] });
+  assert.deepStrictEqual(rw('ls | git -C . log'), { command: 'ls | git log', applied: ['drop-git-C-cwd'] }, 'Review Focus 1: after a pipe');
+  assert.deepStrictEqual(rw('git  -C \t .   rev-parse HEAD; git -C . status'), { command: 'git rev-parse HEAD; git status', applied: ['drop-git-C-cwd'] }, 'every qualifying call, one blank left');
+});
+
+test('AC2.1: drop-git-C-cwd drops a literal spelling of the cwd', () => {
+  assert.deepStrictEqual(posix('git -C "/w/wt" grep -n x -- a/*.js'), { command: 'git grep -n x -- a/*.js', applied: ['drop-git-C-cwd'] });
+  assert.deepStrictEqual(posix("git -C '/w/wt' ls-files"), { command: 'git ls-files', applied: ['drop-git-C-cwd'] });
+  assert.deepStrictEqual(posix('git -C /w/wt status'), { command: 'git status', applied: ['drop-git-C-cwd'] });
+});
+
+test('AC2.1: /w/wt/ is rewritten', () => {
+  assert.deepStrictEqual(posix('git -C "/w/wt/" log'), { command: 'git log', applied: ['drop-git-C-cwd'] });
+});
+
+test('AC2.2: drop-git-C-cwd declines git -C "/w/other": not the cwd', () => {
+  assert.strictEqual(posix('git -C "/w/other" log'), null);
+});
+
+test('AC2.2: drop-git-C-cwd declines cd sub && git -C "/w/wt" log', () => {
+  assert.strictEqual(posix('cd sub && git -C "/w/wt" log'), null);
+});
+
+test('AC2.2: drop-git-C-cwd declines a cd word anywhere in the text', () => {
+  assert.strictEqual(posix('git -C "/w/wt" log && cd sub'), null);
+  assert.strictEqual(posix('git -C "/w/wt" log; echo "cd"'), null, 'quoted or not');
+});
+
+test('AC2.2: drop-git-C-cwd declines a pushd word', () => {
+  assert.strictEqual(posix('git -C "/w/wt" log; pushd sub'), null);
+});
+
+test('AC2.2: drop-git-C-cwd declines a popd word', () => {
+  assert.strictEqual(posix('git -C "/w/wt" log; popd'), null);
+});
+
+test('AC2.2: drop-git-C-cwd declines a second -C', () => {
+  assert.strictEqual(posix('git -C "/w/wt" -C sub log'), null);
+  assert.strictEqual(posix('git -C "/w/wt" log -C sub'), null, 'a later -C word in the same simple command');
+  assert.deepStrictEqual(rw('git -C . log a-C -C50'), { command: 'git log a-C -C50', applied: ['drop-git-C-cwd'] }, 'a-C and -C50 are not -C words');
+});
+
+test('AC2.2: drop-git-C-cwd declines a -C that is not the first option', () => {
+  assert.strictEqual(posix('git --no-pager -C "/w/wt" log'), null);
+  assert.strictEqual(rw('git -C . log; git --no-pager -C . log'), null, 'the whole command declines, not just that call');
+});
+
+test('AC2.2: drop-git-C-cwd declines an operand holding $', () => {
+  assert.strictEqual(posix('git -C "$W" log'), null);
+});
+
+test('AC2.3: drop-git-C-cwd declines /w/wt/.', () => {
+  assert.strictEqual(posix('git -C "/w/wt/." log'), null);
+});
+
+test('AC2.3: drop-git-C-cwd declines /w/wt/sub/..', () => {
+  assert.strictEqual(posix('git -C "/w/wt/sub/.." log'), null);
+});
+
+test('AC2.3: drop-git-C-cwd declines /W/WT', () => {
+  assert.strictEqual(posix('git -C "/W/WT" log', '/w/wt', (p) => path.posix.resolve(p).toLowerCase()), null);
+});
+
+test('AC2.3: drop-git-C-cwd declines /w/wt-evil', () => {
+  assert.strictEqual(posix('git -C "/w/wt-evil" log', '/w/wt', resolvesToCwd('/w/wt-evil')), null);
+});
+
+test('AC2.3: drop-git-C-cwd declines a symlink spelling that resolves to the cwd', () => {
+  assert.strictEqual(posix('git -C "/w/link" log', '/w/wt', resolvesToCwd('/w/link')), null);
+});
+
+test('AC2.3: drop-git-C-cwd leaves the glued -C/w/wt alone', () => {
+  assert.strictEqual(posix('git -C/w/wt log'), null);
+});
+
+test('drop-git-C-cwd declines when the cwd spelling does not resolve', () => {
+  assert.strictEqual(posix('git -C "/w/wt" log', '/w/wt', () => null), null);
+});
+
+test('AC2.4: drop-git-C-cwd declines a write subcommand: git -C "/w/wt" commit -m x', () => {
+  assert.strictEqual(posix('git -C "/w/wt" commit -m x'), null);
+  assert.strictEqual(rw('git -C . commit -m x'), null);
+  assert.strictEqual(rw('git -C . logx'), null, 'the subcommand word must end at a word break');
+});
+
+test('AC2.4: drop-git-C-cwd declines GIT_DIR=x git -C "/w/wt" log', () => {
+  assert.strictEqual(posix('GIT_DIR=x git -C "/w/wt" log'), null);
+  assert.strictEqual(posix('GIT_DIR=x; git -C "/w/wt" log'), null, 'GIT_ anywhere, also where git is the first command');
+  assert.strictEqual(rw('GIT_DIR=x; git -C . log'), null);
+});
+
+test('drop-git-C-cwd declines a literal operand on a command that is not the first: z foo && git -C …', () => {
+  assert.strictEqual(posix('z foo && git -C "/w/wt" log'), null);
+});
+
+test('drop-git-C-cwd declines a literal operand after a word zsh AUTO_CD could run: sub && git -C …', () => {
+  assert.strictEqual(posix('sub && git -C "/w/wt" log'), null);
+});
+
+test('drop-git-C-cwd declines a literal operand after an earlier function call', () => {
+  assert.strictEqual(posix('f() { :; }; f; git -C "/w/wt" log'), null);
+  assert.strictEqual(posix('f() (true); f; git -C "/w/wt" log'), null, 'a function the command-word allowlist accepts');
+});
+
+test('drop-git-C-cwd needs no first-command test for git -C .', () => {
+  assert.deepStrictEqual(rw('ls && git -C . log'), { command: 'ls && git log', applied: ['drop-git-C-cwd'] });
+  assert.deepStrictEqual(rw('cd sub && git -C . log'), { command: 'cd sub && git log', applied: ['drop-git-C-cwd'] });
+});
+
+test('drop-git-C-cwd declines on a glob, ~ or backtick operand and on doubt', () => {
+  assert.strictEqual(posix('git -C "/w/w*" log', '/w/w*'), null, 'a quoted glob character');
+  assert.strictEqual(posix('git -C "/w/w?t" log', '/w/w?t'), null);
+  assert.strictEqual(posix('git -C "/w/[w]t" log', '/w/[w]t'), null);
+  assert.strictEqual(posix("git -C '/w/w`t' log", '/w/w`t'), null, 'a single-quoted backtick');
+  assert.strictEqual(rw('git -C ~ log', { cwd: os.homedir() }), null, 'never ~');
+  assert.strictEqual(rw('git -C . log `id`'), null, 'inDoubt: a backtick');
+  assert.strictEqual(rw('git -C . log <<EOF\nx\nEOF'), null, 'inDoubt: a heredoc');
+});
+
+test('drop-git-C-cwd declines when one of two git -C calls does not qualify', () => {
+  assert.strictEqual(rw('git -C . log; git -C "$W" log'), null); // Review Focus 2
+});
+
+test('drop-git-C-cwd declines when a command word is not plain (source, eval, a computed word)', () => {
+  assert.strictEqual(rw('. ./f; git -C . log'), null);
+  assert.strictEqual(rw('eval x; git -C . log'), null);
+  assert.strictEqual(rw('$G -C . log'), null);
+  assert.strictEqual(rw('$G x; git -C . log'), null);
+});
+
+test('drop-git-C-cwd leaves git reached through env, command, xargs or an assignment prefix', () => {
+  assert.strictEqual(rw('env git -C . log'), null);
+  assert.strictEqual(rw('command git -C . log'), null);
+  assert.strictEqual(rw('xargs git -C . log'), null);
+  assert.strictEqual(rw('X=1 git -C . log'), null);
+  assert.strictEqual(rw('echo "$(git -C . log)"'), null, 'inside a substitution');
+  assert.strictEqual(rw('echo $(git -C . log)'), null, 'inside an unquoted substitution, where atCommandStart accepts the `(`');
+});
+
+test('drop-git-C-cwd skips a longer command word that starts with git', () => {
+  assert.deepStrictEqual(rw('gitk -C . log; git -C . log'), { command: 'gitk -C . log; git log', applied: ['drop-git-C-cwd'] });
+});
+
+test('drop-git-C-cwd runs after the inlining and quoting rules', () => {
+  assert.deepStrictEqual(posix('W=/w/wt; git -C "$W" log'), { command: 'W=/w/wt; git log', applied: ['inline-literal-assignment', 'drop-git-C-cwd'] });
+  assert.deepStrictEqual(posix('git -C /w/my\\ wt log', '/w/my wt'), { command: 'git log', applied: ['quote-escaped-space', 'drop-git-C-cwd'] });
+});
+
+test('drop-git-C-cwd under path.win32 shares drop-redundant-cd residuals', () => {
+  const fixture = win32().opts;
+  const run = (command, opts = fixture) => rewriteForGuard({ command, ...opts });
+  assert.deepStrictEqual(run('git -C "D:\\w\\cwd" log'), { command: 'git log', applied: ['drop-git-C-cwd'] });
+  assert.deepStrictEqual(run('git -C "D:\\w\\cwd/" log'), { command: 'git log', applied: ['drop-git-C-cwd'] }, 'Review Focus 5: a trailing / is tolerated');
+  assert.strictEqual(run('git -C "D:/w/cwd" log'), null, 'residual: a forward-slashed spelling');
+  const msys = { ...fixture, deps: { ...fixture.deps, canonicalRealpath: (p) => path.win32.resolve(p.replace(/^\/([a-z])\//i, (m, d) => `${d.toUpperCase()}:\\`)) } };
+  assert.strictEqual(run('git -C "/d/w/cwd" log', msys), null, 'residual: a /d/ spelling that resolves to the cwd');
+  const folding = { ...fixture, deps: { ...fixture.deps, canonicalRealpath: (p) => path.win32.resolve(p).toLowerCase() } };
+  assert.strictEqual(run('git -C "d:\\w\\cwd" log', folding), null, 'residual: a re-cased drive');
+  assert.deepStrictEqual(run('git -C "D:\\w\\cwd" log', folding), { command: 'git log', applied: ['drop-git-C-cwd'] }, 'the exact spelling still drops under the folding realpath');
 });
 
 test('returns null outside a linked worktree', () => {
