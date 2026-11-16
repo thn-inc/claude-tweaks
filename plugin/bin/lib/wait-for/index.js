@@ -1,0 +1,240 @@
+'use strict';
+
+// The logic of bin/wait-for.js (#5602): a bounded foreground wait an agent calls
+// instead of polling with `sleep`. One call blocks until its target changes
+// (exit 0) or a bound is hit (exit 3), and prints one JSON line either way.
+//
+// Bounds. The call bound is --max-seconds (default 100, at most 150): 150 s stays
+// under the measured 180-second foreground ceiling (docs/reference/blocking-wait-
+// probe.md), so the caller passes no Bash `timeout`. The window bound is
+// --window-seconds (default 1200, at most 3600), shared across calls: calls with
+// the same target and ids/key join one window in the session's waits file, so a
+// re-issued call cannot extend the wait past the window's deadline. A window is
+// closed `deadline` by the call that hits its deadline, and `done` by an `agents`
+// call whose every listed id was reported; the next call opens a new one, numbered
+// 1 + the session's earlier deadline-closed windows of the same target and key.
+//
+// Files: only the two marker-owned files of ./marker.js (the session's stops and
+// waits files in the OS temp dir), never a transcript. `agents` reads stops and
+// returns each final stop once: it appends a `delivered` record per reported id,
+// and a later call skips stops at or below that index.
+//
+// Exit codes: 0 the target changed; 3 a bound was hit (`bound` is "call" or
+// "deadline"); 2 a malformed invocation, a missing or invalid session id, a marker
+// file refused (a symlink, a non-file), or any unexpected error.
+//
+// Targets are a seam: TARGETS maps a target name to { key(opts), poll(ctx) }, and
+// poll returns { changed, state, extra } where `extra` is merged into the output.
+
+const { readStops, readWaits, appendWait, isFinalStop, SESSION_ID_RE } = require('./marker');
+
+const DEFAULT_MAX_SECONDS = 100;
+const MAX_SECONDS_CAP = 150;
+const DEFAULT_WINDOW_SECONDS = 1200;
+const WINDOW_SECONDS_CAP = 3600;
+const POLL_MS = { agents: 1000, pid: 1000, ci: 30000 };
+
+const USAGE = `usage: wait-for.js agents --ids <a,b> | ci --pr <n> | ci --run <id> | pid --pid <n>
+         [--max-seconds <n>=100 (<=150)] [--window-seconds <n>=1200 (<=3600)] [--session <id>] [--help]
+
+Blocks in the foreground until the target changes or a bound is hit, then prints
+one JSON line. Call it with no Bash timeout: the longest call, --max-seconds 150,
+stays under the measured 180-second foreground ceiling
+(docs/reference/blocking-wait-probe.md).
+  agents --ids <a,b>   returns when a listed subagent id has a final stop (not
+                       blocked, pending 0) not returned to an earlier call
+A verify run and a suite slot are not targets: verify.js waits on both itself.
+
+Calls with the same target and ids (or key) share one window of --window-seconds;
+a call never runs past its window's deadline. Session: --session, else
+CLAUDE_CODE_SESSION_ID ([A-Za-z0-9_-]).
+
+Output keys: target, state, changed, elapsedSeconds, deadlineEpoch, window,
+bound (exit 3 only: "call" or "deadline"), plus the target's own keys
+(agents: reported, pending, stops).
+
+Exit codes: 0 the target changed; 3 a bound was hit; 2 a malformed invocation,
+a missing or invalid session id, a refused marker file, or an unexpected error.
+`;
+
+const POSITIVE_INT = /^[1-9]\d*$/;
+const COMMON_FLAGS = { '--max-seconds': 'maxSeconds', '--window-seconds': 'windowSeconds', '--session': 'session' };
+const TARGET_FLAGS = {
+  agents: { '--ids': 'ids' },
+  ci: { '--pr': 'pr', '--run': 'run' },
+  pid: { '--pid': 'pid' },
+};
+
+function parseArgs(argv) {
+  if (argv.includes('--help') || argv.includes('-h')) return { help: true };
+  const target = argv[0];
+  if (target === undefined) return { error: 'missing target (agents, ci or pid)' };
+  if (!Object.hasOwn(TARGET_FLAGS, target)) return { error: `unknown target: ${target}` };
+  const flags = { ...COMMON_FLAGS, ...TARGET_FLAGS[target] };
+  const raw = {};
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (!Object.hasOwn(flags, a)) return { error: `unknown flag: ${a}` };
+    const v = argv[i + 1];
+    if (v === undefined || v.startsWith('-')) return { error: `${a} needs a value` };
+    if (Object.hasOwn(raw, flags[a])) return { error: `${a} given more than once` };
+    raw[flags[a]] = v;
+    i++;
+  }
+  const opts = { target, maxSeconds: DEFAULT_MAX_SECONDS, windowSeconds: DEFAULT_WINDOW_SECONDS };
+  for (const [name, flag] of [['maxSeconds', '--max-seconds'], ['windowSeconds', '--window-seconds'], ['pr', '--pr'], ['run', '--run'], ['pid', '--pid']]) {
+    if (!Object.hasOwn(raw, name)) continue;
+    if (!POSITIVE_INT.test(raw[name])) return { error: `${flag} must be a positive integer: ${raw[name]}` };
+    opts[name] = name === 'run' ? raw[name] : Number(raw[name]);
+  }
+  if (opts.maxSeconds > MAX_SECONDS_CAP) return { error: `--max-seconds must be at most ${MAX_SECONDS_CAP}` };
+  if (opts.windowSeconds > WINDOW_SECONDS_CAP) return { error: `--window-seconds must be at most ${WINDOW_SECONDS_CAP}` };
+  if (Object.hasOwn(raw, 'session')) opts.session = raw.session;
+  if (target === 'agents') {
+    if (!Object.hasOwn(raw, 'ids')) return { error: 'agents needs --ids' };
+    const ids = raw.ids.split(',');
+    if (ids.some((id) => !SESSION_ID_RE.test(id))) return { error: `--ids must be a comma list of ids matching [A-Za-z0-9_-]: ${raw.ids}` };
+    opts.ids = [...new Set(ids)];
+  } else if (target === 'ci') {
+    if (Object.hasOwn(opts, 'pr') === Object.hasOwn(opts, 'run')) return { error: 'ci needs exactly one of --pr and --run' };
+  } else if (!Object.hasOwn(opts, 'pid')) {
+    return { error: 'pid needs --pid' };
+  }
+  return opts;
+}
+
+const agents = {
+  key: (opts) => [...opts.ids].sort().join(','),
+  poll({ opts, sessionId, tmpDir, window, deps }) {
+    const { stops, count } = readStops(sessionId, { tmpDir });
+    const delivered = {};
+    for (const w of readWaits(sessionId, { tmpDir })) {
+      if (w.kind === 'delivered') delivered[w.agentId] = Math.max(delivered[w.agentId] ?? -1, w.stop);
+    }
+    const newest = {};
+    for (const s of stops) {
+      if (isFinalStop(s) && s.index > (delivered[s.agentId] ?? -1)) newest[s.agentId] = Math.max(newest[s.agentId] ?? -1, s.index);
+    }
+    const reported = opts.ids.filter((id) => Object.hasOwn(newest, id));
+    const pending = opts.ids.filter((id) => !Object.hasOwn(newest, id));
+    if (reported.length === 0) return { changed: false, state: 'pending', extra: { reported, pending, stops: count } };
+    for (const id of reported) appendWait(sessionId, { kind: 'delivered', agentId: id, stop: newest[id] }, { tmpDir });
+    if (pending.length === 0) appendWait(sessionId, { kind: 'close', window, reason: 'done', at: Math.floor(deps.now() / 1000) }, { tmpDir });
+    return { changed: true, state: 'reported', extra: { reported, pending, stops: count } };
+  },
+};
+
+const TARGETS = { agents };
+
+// The open window this call joins, or a new one it appends. -> the open record.
+function resolveWindow(opts, key, { sessionId, tmpDir, start }) {
+  const waits = readWaits(sessionId, { tmpDir });
+  const opens = new Map();
+  const closed = new Set();
+  for (const w of waits) {
+    if (w.kind === 'open') opens.set(w.window, w);
+    else if (w.kind === 'close') closed.add(w.window);
+  }
+  const joinable = [...opens.values()]
+    .filter((w) => !closed.has(w.window) && w.target === opts.target)
+    .filter((w) => (opts.target === 'agents' ? opts.ids.every((id) => w.ids.includes(id)) : w.key === key));
+  if (joinable.length) return joinable[joinable.length - 1];
+
+  const deadlineClosed = new Set(
+    waits
+      .filter((w) => w.kind === 'close' && w.reason === 'deadline')
+      .map((w) => w.window)
+      .filter((id) => opens.has(id) && opens.get(id).target === opts.target && opens.get(id).key === key),
+  );
+  const openedAt = Math.floor(start / 1000);
+  const record = {
+    kind: 'open',
+    window: `${opts.target}:${key}:${start}`,
+    target: opts.target,
+    key,
+    ...(opts.target === 'agents' ? { ids: key.split(',') } : {}),
+    openedAt,
+    deadline: openedAt + opts.windowSeconds,
+    n: 1 + deadlineClosed.size,
+  };
+  appendWait(sessionId, record, { tmpDir });
+  return record;
+}
+
+function usageError(deps, reason) {
+  deps.stderr(`wait-for.js: ${reason}\n${USAGE}`);
+  return 2;
+}
+
+async function run(argv, deps) {
+  try {
+    const opts = parseArgs(argv);
+    if (opts.help) {
+      deps.stdout(USAGE);
+      return 0;
+    }
+    if (opts.error) return usageError(deps, opts.error);
+    const sessionId = opts.session ?? deps.env.CLAUDE_CODE_SESSION_ID;
+    if (opts.session === undefined && !sessionId) {
+      return usageError(deps, 'no session id: CLAUDE_CODE_SESSION_ID is unset and --session was not given');
+    }
+    if (!SESSION_ID_RE.test(sessionId)) return usageError(deps, `session id must match [A-Za-z0-9_-]: ${sessionId}`);
+    if (!Object.hasOwn(TARGETS, opts.target)) return usageError(deps, `target ${opts.target} is not available in this release`);
+
+    const target = TARGETS[opts.target];
+    const tmpDir = deps.tmpDir();
+    const start = deps.now();
+    const key = target.key(opts);
+    const win = resolveWindow(opts, key, { sessionId, tmpDir, start });
+    const callEnd = start + opts.maxSeconds * 1000;
+    const deadlineMs = win.deadline * 1000;
+    const ctx = { opts, sessionId, tmpDir, window: win.window, deps };
+    const print = (res, bound) => {
+      const out = {
+        target: opts.target,
+        state: res.state,
+        changed: res.changed,
+        elapsedSeconds: Math.round((deps.now() - start) / 1000),
+        deadlineEpoch: win.deadline,
+        window: win.n,
+        ...(bound ? { bound } : {}),
+        ...res.extra,
+      };
+      deps.stdout(JSON.stringify(out) + '\n');
+    };
+
+    for (;;) {
+      const res = await target.poll(ctx);
+      if (res.changed) {
+        print(res);
+        return 0;
+      }
+      const t = deps.now();
+      if (t >= deadlineMs) {
+        appendWait(sessionId, { kind: 'close', window: win.window, reason: 'deadline', at: Math.floor(t / 1000) }, { tmpDir });
+        print(res, 'deadline');
+        return 3;
+      }
+      if (t >= callEnd) {
+        print(res, 'call');
+        return 3;
+      }
+      await deps.sleep(Math.min(POLL_MS[opts.target], Math.min(deadlineMs, callEnd) - t));
+    }
+  } catch (err) {
+    deps.stderr(`wait-for.js: ${err && err.message ? err.message : err}\n`);
+    return 2;
+  }
+}
+
+module.exports = {
+  run,
+  parseArgs,
+  USAGE,
+  TARGETS,
+  DEFAULT_MAX_SECONDS,
+  MAX_SECONDS_CAP,
+  DEFAULT_WINDOW_SECONDS,
+  WINDOW_SECONDS_CAP,
+  POLL_MS,
+};
