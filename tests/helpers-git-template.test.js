@@ -7,6 +7,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const { fixtureGit } = require('./helpers/git-fixtures');
 const {
   fromTemplate,
@@ -362,4 +363,10 @@ test('AC3.1: learned-skills capture fixture(): a warm copy starts no git process
   assert.notStrictEqual(a.repo, b.repo);
   assert.ok(fs.statSync(a.runDir).isDirectory());
   assert.strictEqual(a.mergeBase.length, 40);
+  // Which variant is which: { autocrlf: 'true' } is a CRLF checkout; the default follows the host.
+  const skill = '.claude/skills/x/SKILL.md';
+  let host = '';
+  try { host = execFileSync('git', ['config', '--get', 'core.autocrlf'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim(); } catch { /* unset */ }
+  assert.ok(fs.readFileSync(path.join(b.repo, skill), 'utf8').includes('\r\n'));
+  if (host !== 'true') assert.ok(!fs.readFileSync(path.join(a.repo, skill), 'utf8').includes('\r\n'));
 });

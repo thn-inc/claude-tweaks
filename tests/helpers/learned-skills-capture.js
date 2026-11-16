@@ -34,7 +34,7 @@ function write(repo, rel, text) {
 const lf = (text) => text.replace(/\r\n/g, '\n');
 const read = (repo, rel) => lf(fs.readFileSync(path.join(repo, rel), 'utf8'));
 
-// The core.autocrlf the plugin's own git runner sees in this repo, before the fixture sets one: ENV's
+// The core.autocrlf the plugin's own git runner sees in this repo, before the fixture sets one: IDENT's
 // /dev/null config files hide the system and global config from `sh`, and Git for Windows ships
 // `core.autocrlf=true` in its system config. null when unset.
 let hostEol; // undefined until first resolved; null when unset
@@ -51,8 +51,9 @@ function hostAutocrlf() {
 // A repo with one commit holding x/SKILL.md, a run dir under .claude-tweaks/pipelines, a merge base.
 // opts.autocrlf pins core.autocrlf in the repo's own config ('true' builds a Windows checkout on any
 // host); by default the repo pins what the plugin's runner sees, so `sh` and capture agree on it. The
-// committed files are then checked out again, so the tree and the index stat are what a clone writes
-// (CRLF under autocrlf=true), never the LF bytes the fixture wrote.
+// committed files are then checked out again, so the tree holds what a clone writes (CRLF under
+// autocrlf=true), never the LF bytes the fixture wrote. Each copy has a fresh inode and ctime, so its
+// index stat no longer matches the tree and git rehashes the files on first use (git-template.js header).
 // Built once per (resolved autocrlf, extraFiles) and copied per call (#5770): a warm call starts no
 // git process. The resolved autocrlf is part of the key, so the host default and an explicit pin
 // that resolve alike share one build, and 'true' stays a distinct CRLF checkout.
