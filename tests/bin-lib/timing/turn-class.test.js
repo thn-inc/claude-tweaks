@@ -114,3 +114,7 @@ test('turn-class: isProcedurePath moved here and transcript.js re-exports the sa
   assert.equal(isProcedurePath('/repo/src/a.js', '/repo'), false);
   assert.equal(isProcedurePath(undefined), false);
 });
+
+test('AC4 (unit): a Workflow tool call is classed dispatch', () => {
+  assert.equal(classifyToolCall({ name: 'Workflow', input: { script: 'x' } }), 'dispatch');
+});
