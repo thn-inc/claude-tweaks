@@ -46,7 +46,7 @@
 //   - Fixed by #5311: a missing or malformed file fails closed (every unresolved dependency open, one
 //     Warning) — files-verifiedOpenDeps-missing and files-verifiedOpenDeps-malformed keep blocked:9002.
 //     F-depview fails closed too, with one Warning naming the view, since #5311.
-//   - The silent fail-opens (ledger row 6) are F-prview and F-openprs. F-depfresh, F-depfresh-writeback
+//   - The silent fail-open (ledger row 6) is F-prview; F-openprs warns since #5312. F-depfresh, F-depfresh-writeback
 //     and F-depfresh-both print one Warning per failed search since #5310.
 // One module divergence the matrix found and the module fixed (Task 3 carry): on `files` the
 // agent's dependency-freshness file stands where the fence's `gh issue list --search` stands, so
@@ -2083,6 +2083,7 @@ const UNLANDED_STOP = fenceText(/echo "(dispatch: queue-pull stopped -- unlanded
 const IN_FLIGHT_POOL_AUTO = fenceText(/echo "(AUTO — dispatch: neighbour-in-flight pool fetch failed[^"]*)" >&2/);
 const IN_FLIGHT_CAP = fenceText(/echo "(Warning: the bot:in-progress pull for the neighbour-in-flight pass[^"]*)" >&2/);
 const OPEN_PR_CAP = fenceText(/echo "(Warning: the open-PR pull for the cross-PR overlap report[^"]*)" >&2/);
+const OPEN_PR_FAIL = 'Warning: open-PR pull failed — cross-PR overlap not checked this run';
 
 // The canned dispatch-unlanded-blockers.js: for the pipeline fixture's #9012 (a Blocked by line with
 // no valid number) and #9011 (a closed blocker whose commit never landed) it appends the real CLI's
@@ -2412,13 +2413,14 @@ test('#5227 D4: a non-JSON string in the claim map is read as unreadable content
   assert.ok(!r.stderr.includes('neighbour-in-flight'), `no neighbour line of any kind: ${r.stderr}`);
 });
 
-test('#5227 cross-PR: gh pr list feeds detectCrossPRFileOverlap; a failure writes [] silently; files writes [] with no gh call; 100 PRs print the cap Warning', () => {
+test('#5227 cross-PR: gh pr list feeds detectCrossPRFileOverlap; a failure writes [] and prints one Warning naming the fetch (#5312); files writes [] with no gh call; 100 PRs print the cap Warning', () => {
   const r = pull5(PIPE());
   assert.equal(r.ghCalls.filter((a) => a.join() === OPEN_PRS_ARGV.join()).length, 1);
   const overlap = r.json('dispatch-crosspr-overlap.json');
   assert.equal(overlap.length, 1, JSON.stringify(overlap));
   assert.ok(JSON.stringify(overlap).includes('9001') && JSON.stringify(overlap).includes('41'), JSON.stringify(overlap));
   assert.ok(groupNumbers(r).flat().includes(9001), 'informational: nothing leaves the groups');
+  assert.ok(!r.stderr.includes(OPEN_PR_FAIL), 'a successful list prints no failure Warning');
 
   // A PR that already closes the candidate is a re-dispatch guard, not an overlap.
   const closing = pull5(withGh(PIPE(), OPEN_PRS_ARGV, { stdout: JSON.stringify([{ ...OPEN_PR_41, closingIssuesReferences: [{ number: 9001 }] }]) }));
@@ -2427,7 +2429,10 @@ test('#5227 cross-PR: gh pr list feeds detectCrossPRFileOverlap; a failure write
   const failed = pull5(withGh(PIPE(), OPEN_PRS_ARGV, { status: 1, stdout: 'partial' }));
   assert.deepEqual(failed.json('dispatch-crosspr-overlap.json'), []);
   assert.equal(failed.text['dispatch-open-prs.json'], '[]\n');
-  assert.ok(!/cross-PR|open-PR pull|queue-pull:|Warning:/.test(failed.stderr), `the failure is silent: ${failed.stderr}`);
+  // AC1 (#5312): the failed list prints one line naming the fetch, and no step diagnostic beside it.
+  assert.deepEqual(failed.stderr.split('\n').filter((l) => l.startsWith('Warning:')), [OPEN_PR_FAIL]);
+  assert.ok(!/queue-pull:/.test(failed.stderr), `no step diagnostic: ${failed.stderr}`);
+  assert.equal(fenceText(/echo "(Warning: open-PR pull failed[^"]*)" >&2/), OPEN_PR_FAIL, 'the fence prints the same Warning');
 
   const files = filesPull();
   assert.equal(files.thrown, null, String(files.thrown));
@@ -3525,7 +3530,8 @@ const FAULT_EXPECT = {
   'F-claim': { status: 0, stderr: [CLAIM_READ_COMBINED], drops: ['neighbour-in-flight:9013'] },
   'F-claim-stop': { status: 1, stderr: [CLAIM_READ_SHIPPED_ONLY, UNLANDED_STOP], entries: '{corrupt' },
   'F-claim-neighbour-stop': { status: 1, stderr: [CLAIM_READ_SHIPPED_ONLY, STOP_LINE.neighbour], drops: ['neighbour-in-flight:9013'] },
-  'F-openprs': { status: 0, stderr: [], drops: [] },
+  // #5312: the failed open-PR list warns on both sides; the overlap file is still [].
+  'F-openprs': { status: 0, stderr: [OPEN_PR_FAIL], drops: [] },
   'F-writeback': { status: 0, stderr: ['Queue-order cache write-back failed (non-blocking): Command failed: git -C <SCR>/proj push origin '], drops: [] },
   'F-corrupt': { status: 1, stderr: [OPEN_STOP], entries: '{corrupt' },
   'F-groups': { status: 1, stderr: [OPEN_FILTER_WARNING, STOP_LINE.target], entries: ['blocked:9002', 'oversized:9001+9003+9016', 'not-spec-shaped:9004', 'not-spec-shaped:9007'] },

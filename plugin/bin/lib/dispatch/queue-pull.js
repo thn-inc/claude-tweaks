@@ -1204,10 +1204,12 @@ function runNeighbourInFlight(ctx) {
 const OPEN_PRS_ARGV = ['pr', 'list', '--state', 'open', '--json', 'number,files,closingIssuesReferences', '--limit', '100'];
 // fence 628, byte for byte
 const OPEN_PR_CAP_WARNING = 'Warning: the open-PR pull for the cross-PR overlap report (#1579) returned exactly the --limit cap (100) — overlap detection may be missing older open PRs. Informational only; never blocks dispatch.';
+// fence 625's failure branch, byte for byte (#5312)
+const OPEN_PR_FAIL_WARNING = 'Warning: open-PR pull failed — cross-PR overlap not checked this run';
 
 // Fence 621-642, informational. On `files` mcp-transport.md skips the fetch and has the agent write
-// `[]`; the module does the same and makes no gh call. On `gh` the open-PR fetch fails silently
-// (`2>/dev/null || echo '[]'`) and a compute failure is a step error the fence does not stop on.
+// `[]`; the module does the same and makes no gh call. On `gh` a failed open-PR fetch writes [] and
+// prints one Warning (#5312), and a compute failure is a step error the fence does not stop on.
 function runCrossPrOverlap(ctx) {
   const { deps, paths, omit } = ctx;
   const out = paths['dispatch-crosspr-overlap.json'];
@@ -1219,6 +1221,7 @@ function runCrossPrOverlap(ctx) {
   const prsFile = paths['dispatch-open-prs.json'];
   const r = ghRun(ctx, OPEN_PRS_ARGV, { quiet: true });
   put(ctx, prsFile, r.ok ? r.stdout : '[]\n');
+  if (!r.ok) deps.stderr(`${OPEN_PR_FAIL_WARNING}\n`);
   const count = step(ctx, 'open-pr-count', () => readJson(prsFile).length);
   if (count.ok && count.value >= 100) deps.stderr(`${OPEN_PR_CAP_WARNING}\n`);
   if (skip) return;

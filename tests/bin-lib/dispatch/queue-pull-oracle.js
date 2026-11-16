@@ -148,7 +148,7 @@ function filesOracleScript(fence, mcpText) {
     ...mcpFence(MCP_EXCLUSIONS_FIRST_LINE),
   ]);
   replaceSpan(lines, {
-    first: 'gh pr list --state open --json number,files,closingIssuesReferences --limit 100 > "$DISPATCH_OPEN_PRS" 2>/dev/null || echo \'[]\' > "$DISPATCH_OPEN_PRS"',
+    first: 'gh pr list --state open --json number,files,closingIssuesReferences --limit 100 > "$DISPATCH_OPEN_PRS" 2>/dev/null || { echo \'[]\' > "$DISPATCH_OPEN_PRS"; echo "Warning: open-PR pull failed — cross-PR overlap not checked this run" >&2; }',
     through: 'NODE_EVAL_EOF',
     holds: 'detectCrossPRFileOverlap',
   }, ['echo \'[]\' > "$DISPATCH_CROSSPR_OVERLAP"']);

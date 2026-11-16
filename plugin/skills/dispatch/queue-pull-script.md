@@ -621,8 +621,8 @@ fi
 # #1579: cross-PR root-cause overlap report. Runs unconditionally, read-only, never gates eligibility
 # (AC2); SKILL.md Step 3 surfaces its file. A candidate whose key files overlap an UNRELATED open PR
 # (grouping.js's detectCrossPRFileOverlap) is a possible duplicate fix. `--limit 100`: the same
-# truncation posture as the queue pulls (queue-pull-notes.md), one informational signal among several.
-gh pr list --state open --json number,files,closingIssuesReferences --limit 100 > "$DISPATCH_OPEN_PRS" 2>/dev/null || echo '[]' > "$DISPATCH_OPEN_PRS"
+# truncation posture as the queue pulls (queue-pull-notes.md).
+gh pr list --state open --json number,files,closingIssuesReferences --limit 100 > "$DISPATCH_OPEN_PRS" 2>/dev/null || { echo '[]' > "$DISPATCH_OPEN_PRS"; echo "Warning: open-PR pull failed — cross-PR overlap not checked this run" >&2; }
 OPEN_PR_COUNT=$(node -e "console.log(require(process.argv[1]).length)" -- "$DISPATCH_OPEN_PRS")
 if [ "$OPEN_PR_COUNT" -ge 100 ]; then
   echo "Warning: the open-PR pull for the cross-PR overlap report (#1579) returned exactly the --limit cap (100) — overlap detection may be missing older open PRs. Informational only; never blocks dispatch." >&2
