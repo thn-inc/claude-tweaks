@@ -321,3 +321,18 @@ test('RF6: a relayed user message right after a fork boundary that opens the tra
   const entries = [forkBoundary('x', 0), prompt('relayed: ' + QUOTE, 1), reply('ok\nSTATUS: DONE', 2)];
   assert.deepStrictEqual(scanOf(entries), { gate: null, marker: null });
 });
+
+test('RF7: a skipped token line does not end the scan — a later indeterminate shape still nulls the marker', () => {
+  // The prompt quotes the token (skipped), then one launch is left pending; `mid` is what follows it.
+  const head = toLines([prompt(QUOTE, 0), agentCall('toolu_1', 0), launchAck('a1', 'toolu_1', 0)]);
+  const tail = toLines([reply('ok\nSTATUS: DONE', 5)]);
+  const scanWith = (mid) => {
+    const lines = [...head, ...mid, ...tail];
+    return substop.scanPendingDispatches(lines, lines.length - 1);
+  };
+  const idlessLaunch = { type: 'user', timestamp: at(2), message: { role: 'user', content: [{ type: 'text', text: 'launched' }] }, toolUseResult: { isAsync: true, status: 'async_launched' } };
+  assert.deepStrictEqual(scanWith([]), { gate: null, marker: 1 }, 'control: nothing indeterminate after the skip');
+  assert.deepStrictEqual(scanWith(toLines([prompt('relayed: ' + QUOTE, 2)])), { gate: null, marker: null }, 'a relayed message quoting the token');
+  assert.deepStrictEqual(scanWith(['not json']), { gate: null, marker: null }, 'an unparseable line');
+  assert.deepStrictEqual(scanWith(toLines([idlessLaunch])), { gate: null, marker: null }, 'a launch with no ids');
+});

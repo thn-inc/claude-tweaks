@@ -141,8 +141,12 @@
 //    nothing measured says it is wrong, so it stays; the marker only decides
 //    when a wait returns, and a skipped line is never a completion, so the
 //    marker can only move from null to a number, never below the true pending
-//    count. Any other shape still yields null in both counts (#5706). Bounded
-//    by PENDING_DISPATCH_MAX_AGE_MS (60 minutes, mirroring
+//    count. Any other shape still yields null in both counts (#5706). Observed
+//    over 30 days of local subagent transcripts, Claude Code 2.1.283 through
+//    2.1.325 (31,980 final stops; the tally is in #5706's pull request body):
+//    the three skipped shapes are the ones the quoting skills and the agent's
+//    own Agent calls produce, and the tests' fixtures are hand-built from them.
+//    Bounded by PENDING_DISPATCH_MAX_AGE_MS (60 minutes, mirroring
 //    flow/claim-targets.md's liveness default): a launch older than that is
 //    presumed hung and no longer hides a real contract violation. Residual
 //    risk: within those 60 minutes a hung child (one that never reports) still
@@ -602,8 +606,9 @@ function grade(ctx, memo) {
 // type, unreadable transcript included), and can never change that answer:
 // every fault — a marker.js load error, an fs error — is swallowed. Prints
 // nothing, logs nothing. memo carries the transcript read and the one scan
-// grade() already made (memo.pending the gate count, memo.markerPending the
-// marker count this writes); a stop grade() never scanned scans once here.
+// grade() already made — only memo.markerPending, the marker count this
+// writes, crosses over; the gate count stays inside grade(). A stop grade()
+// never scanned scans once here.
 function recordStop(ctx, out, memo) {
   try {
     const { agent_id: agentId, session_id: sessionId, agent_transcript_path: transcriptPath, transcript_path: mainPath } = ctx.input;
@@ -612,7 +617,6 @@ function recordStop(ctx, out, memo) {
     memo.last ??= lastAssistantText(transcriptPath);
     if (!('markerPending' in memo)) {
       const counts = typeof memo.last.text === 'string' ? scanPendingDispatches(memo.last.lines, memo.last.replyIndex) : { gate: null, marker: null };
-      memo.pending = counts.gate;
       memo.markerPending = counts.marker;
     }
     const blocked = Boolean(out && out.json && out.json.decision === 'block');
