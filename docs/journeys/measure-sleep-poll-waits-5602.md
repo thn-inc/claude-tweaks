@@ -40,4 +40,4 @@ files:
 
 "How much of our agents' Bash traffic is a sleep, and what is it waiting for" is one command with a reproducible answer. That answer is the evidence a human uses to re-shape #5602's Deliverables 3-6 against the probe's measured 180 s foreground ceiling.
 
-_Origin: record #5602 (Deliverables 1-2: `docs/reference/blocking-wait-probe.md` and `tools/wait-polls.js`; the probe gate stopped the build before `wait-for.js`), built 2026-11-16. Related: `measure-worktree-guard-refusals-4028.md`, whose transcript walk (`tools/guard-refusals/transcripts.js`) this tool reuses._
+_Origin: record #5602 (Deliverables 1-2: `docs/reference/blocking-wait-probe.md` and `tools/wait-polls.js`; the probe gate stopped the build before `wait-for.js`), built 2026-11-16. Deliverables 3-6 (`plugin/bin/wait-for.js`) then shipped in the same record after the probe-result Decision: `block-on-a-child-agent-ci-or-process-5602.md`. Related: `measure-worktree-guard-refusals-4028.md`, whose transcript walk (`tools/guard-refusals/transcripts.js`) this tool reuses._
