@@ -226,7 +226,7 @@ function repoSpecOfRemote(remote, gateDeps, opts = {}) {
   const gated = gateOriginRepo(url, gateDeps);
   if (gated.refusal) return { refusal: gated.refusal };
   if (gated.spec) return gated.spec;
-  if (opts.loose === false) return null;
+  if ((opts && opts.loose) === false) return null;
   // A remote the gate does not read (a cloud sandbox's `http://local_proxy@127.0.0.1:{port}/git/{owner}/{repo}`
   // proxy remote, a local path, or a `file://` URL) still resolved through a looser trailing
   // `owner/repo` parse before the host was kept; fall back to it, host unknown, so the caller does

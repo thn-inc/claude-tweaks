@@ -10,7 +10,7 @@ const path = require('path');
 const {
   runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoPinnedEnv, repoSpecOf, repoTargetOf,
   repoSpecOfRemote, repoTargetOfRemote,
-} =require('../plugin/bin/lib/hooks/git-exec');
+} = require('../plugin/bin/lib/hooks/git-exec');
 const { gateOriginRepo } = require('../plugin/bin/lib/repo-resolve');
 const { gitRepo, fixtureGit } = require('./helpers/git-fixtures');
 const { splitNul } = require('../plugin/bin/lib/git-z');
@@ -605,6 +605,9 @@ test('AC1.2 (#5109): repoTargetOfRemote is repoTargetOf on a URL; the loose fall
     { owner: 'acme', repo: 'widgets', slug: 'acme/widgets', host: 'acme.ghe.com', ghRepo: 'acme.ghe.com/acme/widgets' });
   assert.deepStrictEqual(repoTargetOfRemote('git@github-work:acme/widgets.git', deps(), { loose: false }),
     { refusal: gateOriginRepo('git@github-work:acme/widgets.git', deps()).refusal });
+  // A null opts is the default (loose), never a throw.
+  assert.deepStrictEqual(repoTargetOfRemote(PROXY, deps(), null), repoTargetOfRemote(PROXY, deps()));
+  assert.deepStrictEqual(repoSpecOfRemote(PROXY, deps(), null), { host: null, owner: 'acme', repo: 'widgets' });
   // Review Focus 5: degenerate remotes are null, never a throw.
   for (const r of [null, undefined, '', '   \n', 'not a url']) {
     assert.strictEqual(repoTargetOfRemote(r, deps()), null, JSON.stringify(r));
