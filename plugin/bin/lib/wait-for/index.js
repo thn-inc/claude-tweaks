@@ -44,8 +44,9 @@ const WINDOW_SECONDS_CAP = 3600;
 const POLL_MS = { agents: 1000, pid: 1000, ci: 30000 };
 // A ci poll starts before the nearer bound and is killed by its own timeout, so a call
 // lasts at most --max-seconds + POLL_GRACE_MS (170 s at the cap, under the 180 s ceiling).
+// The grace is also the floor: a call that joins a window past its deadline still gets one
+// full-grace read, so a slow real read (about 3.4 s) is not killed before it can answer.
 const POLL_GRACE_MS = 20000;
-const MIN_POLL_TIMEOUT_MS = 1000;
 
 const USAGE = `usage: wait-for.js agents --ids <a,b> | ci --pr <n> | ci --run <id> | pid --pid <n>
          [--max-seconds <n>=100 (<=150)] [--window-seconds <n>=1200 (<=3600)] [--session <id>] [--help]
@@ -286,7 +287,7 @@ async function run(argv, deps) {
     for (;;) {
       // The nearer of the two bounds, plus the grace a slow ci read is allowed past it.
       // Whole ms: performance.now() is fractional and a child-process timeout must be an integer.
-      ctx.timeoutMs = Math.max(MIN_POLL_TIMEOUT_MS, Math.floor(Math.min(callEnd - deps.monotonicNow(), deadlineMs - deps.now()) + POLL_GRACE_MS));
+      ctx.timeoutMs = Math.max(POLL_GRACE_MS, Math.floor(Math.min(callEnd - deps.monotonicNow(), deadlineMs - deps.now()) + POLL_GRACE_MS));
       const res = await target.poll(ctx);
       if (res.changed) {
         print(res);

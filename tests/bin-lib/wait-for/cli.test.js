@@ -657,6 +657,26 @@ test('slow ci polls cannot hold a call past --max-seconds + 20 s', async (t) => 
   assert.ok(r.out.readFailures >= 1);
 });
 
+test('a ci call joining an unclosed window past its deadline gets one full-grace read, exits 3 deadline and closes it (#5602)', async (t) => {
+  const dir = tmp(t);
+  const c = clock(T);
+  appendWait(SID, { kind: 'open', window: 'ci:pr:7:1', target: 'ci', key: 'pr:7', openedAt: T / 1000 - 3000, deadline: T / 1000 - 1800, n: 1 }, { tmpDir: dir });
+  // A read that takes 3 s of fake time, like a real pr-checks.js --pr, and is killed below that.
+  const slowRead = (query, { timeoutMs }) => {
+    c.advance(3000);
+    if (timeoutMs < 3000) throw new Error(`spawnSync ETIMEDOUT (timeout ${timeoutMs} ms)`);
+    return { state: 'pending' };
+  };
+  const argv = ['ci', '--pr', '7', '--max-seconds', '10'];
+  const r1 = await callWith(argv, { c, dir, deps: { runner: slowRead, cwd: () => dir } });
+  assert.equal(r1.code, 3, r1.stderr);
+  assert.equal(r1.out.bound, 'deadline');
+  assert.equal(r1.out.window, 1);
+  assert.ok(require('../../../plugin/bin/lib/wait-for/marker').readWaits(SID, { tmpDir: dir }).some((w) => w.kind === 'close' && w.window === 'ci:pr:7:1' && w.reason === 'deadline'), 'the window is closed');
+  const r2 = await callWith(argv, { c, dir, deps: { runner: slowRead, cwd: () => dir } });
+  assert.equal(r2.out.window, 2);
+});
+
 test('a --run read without a conclusion prints conclusion null', async (t) => {
   const dir = tmp(t);
   const { runner } = scripted([{ status: 'completed' }]);
@@ -682,7 +702,7 @@ test('fractional monotonic time: every ci poll timeoutMs is an integer', async (
   assert.equal(r.code, 3, r.stderr);
   assert.ok(optsSeen.length > 1);
   for (const o of optsSeen) assert.ok(Number.isInteger(o.timeoutMs), `timeoutMs ${o.timeoutMs}`);
-  assert.ok(optsSeen.every((o) => o.timeoutMs >= 1000), 'the 1000 ms floor holds after rounding');
+  assert.ok(optsSeen.every((o) => o.timeoutMs >= 20000), 'the 20 s floor holds after rounding');
 });
 
 test('fractional monotonic time through the real runner: execFileSync only ever sees integer timeouts', async (t) => {
