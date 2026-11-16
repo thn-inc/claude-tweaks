@@ -487,3 +487,114 @@ test('--ceiling: a relative --run resolves against deps.cwd()', async () => {
   assert.strictEqual(await run(['--run', path.relative(fx.root, fx.runDir), '--ceiling'], b.d), 0, b.err());
   assert.match(b.out(), /^console-resolve\.js: ceiling unattended /);
 });
+
+// --converge (#4620 Task 8): run-end residue convergence.
+const RESIDUE = [
+  { id: 'ledger-1', source: 'ledger', text: 'fixed already', status: 'fixed' },
+  { id: 'ledger-2', source: 'ledger', text: 'typo in a comment', status: 'open', deferReason: 'tangential', belowFloor: true },
+  { id: 'ledger-3', source: 'ledger', text: 'locked worktree held by a live session', status: 'open', deferReason: 'blocked-external', belowFloor: false },
+  { id: 'insight-4', source: 'insight', text: 'a convention to capture', status: 'open', belowFloor: false },
+];
+const itemsFile = (fx, content) => {
+  const p = path.join(fx.root, 'residue-items.json');
+  fs.writeFileSync(p, typeof content === 'string' ? content : JSON.stringify(content));
+  return p;
+};
+const convergeCall = async (fx, file, ...more) => {
+  const b = baseDeps(fx, []);
+  const code = await run(['--converge', file, '--run', fx.runDir, ...more], b.d);
+  return { code, out: b.out(), err: b.err() };
+};
+
+test('AC4.5: --converge writes carried items to decisions.json and prints each state', async () => {
+  const fx = controlFixture();
+  const r = await convergeCall(fx, itemsFile(fx, RESIDUE));
+  assert.strictEqual(r.code, 0, r.err);
+  const printed = JSON.parse(r.out);
+  assert.deepStrictEqual(printed.items.map((i) => [i.id, i.state]), [['ledger-1', 'resolved'], ['ledger-2', 'digested'], ['ledger-3', 'filed'], ['insight-4', 'carried']]);
+  assert.deepStrictEqual(printed.failed, []);
+  assert.match(printed.items[2].proposal, /^Title: .+\nType: task\nLabels: \S+\nDefer-reason: blocked-external\n\n/);
+  assert.strictEqual(printed.items[3].factId, 'decision:console:insight-4');
+  const facts = readJson(FACTS(fx));
+  assert.deepStrictEqual(facts.map((f) => f.id), ['decision:console:insight-4']);
+  assert.match(facts[0].summary, /^Reflection insights: insight-4 — a convention to capture$/);
+  const decisions = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
+  const lines = decisions.split('\n').filter((l) => /^- AUTO .*Residue /.test(l));
+  assert.strictEqual(lines.length, 4, decisions);
+  assert.match(lines[0], /Residue ledger-1 \(ledger\): resolved.*Reversibility: n\/a\.$/);
+  assert.match(lines[1], /Residue ledger-2 \(ledger\): digested.*Reversibility: n\/a\.$/);
+  assert.match(lines[2], /Residue ledger-3 \(ledger\): filed.*Reversibility: high\.$/);
+  assert.match(lines[3], /Residue insight-4 \(insight\): carried as decision:console:insight-4.*Reversibility: n\/a\.$/);
+  // The carried ledger text the prose writes next is accepted by the ledger writer once the fact exists.
+  const { checkLedgerStatus } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'stage-item', 'ledger'));
+  assert.strictEqual(checkLedgerStatus('deferred', `carried to the acceptance packet as ${printed.items[3].factId}`, { runDir: fx.runDir }).refusal, null);
+  // A re-run adds no second copy of the fact.
+  const again = await convergeCall(fx, itemsFile(fx, RESIDUE));
+  assert.strictEqual(again.code, 0, again.err);
+  assert.strictEqual(readJson(FACTS(fx)).length, 1);
+});
+
+test('AC4.6: --converge with an unwritable decisions.json exits 6, marks the carried items failed and names them', async () => {
+  const fx = controlFixture();
+  fs.mkdirSync(path.dirname(FACTS(fx)), { recursive: true });
+  fs.writeFileSync(FACTS(fx), 'not json');
+  const items = [...RESIDUE, { id: 'ledger-5', source: 'ledger', text: 'an open choice', status: 'open', belowFloor: false }];
+  const r = await convergeCall(fx, itemsFile(fx, items));
+  assert.strictEqual(r.code, EXIT_CARRY_FAILED);
+  const printed = JSON.parse(r.out);
+  assert.deepStrictEqual(printed.items.map((i) => [i.id, i.state]), [['ledger-1', 'resolved'], ['ledger-2', 'digested'], ['ledger-3', 'filed'], ['insight-4', 'failed'], ['ledger-5', 'failed']]);
+  assert.deepStrictEqual(printed.failed, ['insight-4', 'ledger-5']);
+  assert.strictEqual(printed.items[3].factId, undefined);
+  assert.match(r.err, /could not carry 2 item\(s\) to the acceptance packet .*insight-4, ledger-5/);
+  assert.strictEqual(fs.readFileSync(FACTS(fx), 'utf8'), 'not json', 'the unreadable file is never overwritten');
+  assert.match(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), /Residue insight-4 \(insight\): failed/);
+});
+
+test('--converge rejects a malformed items file with exit 2', async () => {
+  const fx = controlFixture();
+  const cases = [
+    'not json',
+    '{"id":"x"}',
+    [null],
+    [{ id: '', source: 'ledger', text: 't', status: 'open' }],
+    [{ id: 'a', source: 'review', text: 't', status: 'open' }],
+    [{ id: 'a', source: 'ledger', text: '', status: 'open' }],
+    [{ id: 'a', source: 'ledger', text: 't' }],
+    [{ id: 'a', source: 'ledger', text: 't', status: 'open', belowFloor: 'yes' }],
+    [{ id: 'a', source: 'ledger', text: 't', status: 'open', deferReason: 3 }],
+    [{ id: 'a', source: 'ledger', text: 't', status: 'open', filingFailed: 1 }],
+    [{ id: 'a', source: 'ledger', text: 't', status: 'open' }, { id: 'a', source: 'insight', text: 'u', status: 'open' }],
+  ];
+  for (const content of cases) {
+    const r = await convergeCall(fx, itemsFile(fx, content));
+    assert.strictEqual(r.code, 2, JSON.stringify(content));
+    assert.strictEqual(r.out, '');
+    assert.match(r.err, /--converge /);
+  }
+  const missing = await convergeCall(fx, path.join(fx.root, 'no-such.json'));
+  assert.strictEqual(missing.code, 2);
+  assert.strictEqual(lstatAbsent(FACTS(fx)), true, 'nothing is written');
+});
+
+test('--converge takes no other flag, --dry-run included', async () => {
+  const fx = controlFixture();
+  const file = itemsFile(fx, RESIDUE);
+  for (const more of [['--dry-run'], ['--json'], ['--policy', 'console-auto'], ['--ceiling'], ['--set-item', 'x']]) {
+    const r = await convergeCall(fx, file, ...more);
+    assert.strictEqual(r.code, 2, more.join(' '));
+    assert.strictEqual(r.out, '');
+  }
+  assert.strictEqual(lstatAbsent(FACTS(fx)), true);
+});
+
+test('--converge: an unanchored --run exits 3 and writes nothing', async () => {
+  const fx = controlFixture();
+  const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-cm-elsewhere-')));
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', elsewhere, '--converge', itemsFile(fx, RESIDUE)], b.d), 3);
+  assert.strictEqual(b.out(), '');
+});
+
+function lstatAbsent(p) {
+  try { fs.lstatSync(p); return false; } catch (err) { return err.code === 'ENOENT'; }
+}

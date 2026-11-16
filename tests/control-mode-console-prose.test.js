@@ -44,3 +44,75 @@ test('AC1.1 go-red: restoring the old command is caught with its own message', (
   const mutated = REVIEW_CONSOLE.replace(HEADING, `${HEADING}\n\n\`${OLD_COMMAND}\``);
   assert.deepStrictEqual(ceilingProblems(mutated), ['the short-circuit pre-check still resolves the ceiling through resolve-policy.js autonomy']);
 });
+
+// #4620 Task 8: run-end residue converges through console-resolve.js --converge under control mode.
+const LEDGER_FORMAT = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'ledger-format.md'));
+const NARROWING = '#### Ledger narrowing';
+const TABLE_INTRO = '\nAfter Phase 1 (and, when the capability';
+
+function narrowingSlice(text) {
+  const start = text.indexOf(NARROWING);
+  assert.notStrictEqual(start, -1, `heading not found: ${NARROWING}`);
+  const end = text.indexOf(TABLE_INTRO, start);
+  assert.notStrictEqual(end, -1, 'the Phase 2 table introduction was not found after the narrowing heading');
+  return text.slice(start, end);
+}
+
+const LEDGER_CLAIMS = [
+  ['--converge "{file}"', 'the narrowing section does not route open items through console-resolve.js --converge'],
+  ['`control-mode on`', 'the narrowing section does not gate the convergence on `control-mode on`'],
+  ['BEFORE writing any `carried` row', 'the narrowing section does not order --converge before any carried row'],
+  ['- `filed`:', 'the narrowing section does not handle the filed state'],
+  ['- `digested`:', 'the narrowing section does not handle the digested state'],
+  ['- `carried`:', 'the narrowing section does not handle the carried state'],
+  ['Generic gate failure', 'the narrowing section does not stop a failed convergence with the Generic gate failure card'],
+];
+
+function convergeProblems(text) {
+  const s = narrowingSlice(text);
+  return LEDGER_CLAIMS.filter(([needle]) => !s.includes(needle)).map(([, message]) => message);
+}
+
+test('AC2.1: ledger-format.md routes every open item through --converge under control mode', () => {
+  assert.deepStrictEqual(convergeProblems(LEDGER_FORMAT), []);
+});
+
+for (const [needle, message] of LEDGER_CLAIMS) {
+  test(`AC2.1 go-red: ${message}`, () => {
+    const s = narrowingSlice(LEDGER_FORMAT);
+    const mutated = LEDGER_FORMAT.replace(s, s.split(needle).join('[removed]'));
+    assert.deepStrictEqual(convergeProblems(mutated), [message]);
+  });
+}
+
+const STEP_10 = '10. **Reflection insights';
+
+function step10Line(text) {
+  const line = text.split('\n').find((l) => l.startsWith(STEP_10));
+  assert.ok(line, `step not found: ${STEP_10}`);
+  return line;
+}
+
+function step10Problems(text) {
+  const line = step10Line(text);
+  const problems = [];
+  if (!line.includes('--converge')) problems.push('step 10 does not converge a refused insight with --converge');
+  if (!line.includes("source: 'insight'")) problems.push("step 10 does not converge a refused insight as source: 'insight'");
+  return problems;
+}
+
+test('AC2.1: review-console.md step 10 converges a refused insight under control mode', () => {
+  assert.deepStrictEqual(step10Problems(REVIEW_CONSOLE), []);
+});
+
+test('AC2.1 go-red: step 10 without --converge is caught with its own message', () => {
+  const line = step10Line(REVIEW_CONSOLE);
+  const mutated = REVIEW_CONSOLE.replace(line, line.split('--converge').join('--set-item'));
+  assert.deepStrictEqual(step10Problems(mutated), ['step 10 does not converge a refused insight with --converge']);
+});
+
+test("AC2.1 go-red: step 10 without source: 'insight' is caught with its own message", () => {
+  const line = step10Line(REVIEW_CONSOLE);
+  const mutated = REVIEW_CONSOLE.replace(line, line.split("source: 'insight'").join("source: 'ledger'"));
+  assert.deepStrictEqual(step10Problems(mutated), ["step 10 does not converge a refused insight as source: 'insight'"]);
+});

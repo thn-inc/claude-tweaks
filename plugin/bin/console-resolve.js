@@ -43,6 +43,17 @@
 // anchored, or the policy could not be read (`console-resolve.js: ceiling unreadable ({message})`: an
 // unreadable policy never reads as `supervised`).
 //
+// Fifth shape (#4620): `--run <dir> --converge <items.json>` — run-end residue convergence
+// (lib/console/residue-convergence.js), called from _shared/ledger-format.md's control-mode paragraph.
+// It reads a JSON array of `{ id, source: ledger|insight, text, status, deferReason?, belowFloor?,
+// filingFailed? }`, ends every item resolved, filed, digested or carried, writes every carried item's
+// decision fact through writeDecisionFacts, logs one AUTO line per item, and prints `{ items: [{ id,
+// state, proposal?, factId?, error? }], failed: [ids] }` as JSON. It needs no ceiling and takes no
+// other flag (`--dry-run` included). Exit 0 converged, 2 malformed (any other flag, or an unreadable,
+// unparseable or malformed items file), 3 --run not anchored or the decisions.md entries could not be
+// written (the JSON is printed first), 6 a carried fact could not be written — every carried item
+// then reads `failed`, the JSON is printed, and stderr names each one.
+//
 // Control mode (#4620, `control-mode: on`): the Review Console resolves what policy can and CARRIES
 // every item a human must decide — `pending`, `keep-staged`, `refused` — as a `carried` item whose
 // decision fact lands in `{run}/packet-facts/decisions.json`. This file owns every write of that
@@ -72,6 +83,7 @@ const { writeFileAtomic } = require('./lib/atomic-write');
 const { unresolvedItems, splitMissing, formatResidueLines, consoleResidueItems } = require('./lib/console/residue');
 const { REWRITE_FROM, CARRY_REWRITE_FROM, REWRITE_TARGETS, REWRITE_ONLY_IN, rewriteItemResolution } = require('./lib/console/item-resolution');
 const { decisionFactFor } = require('./lib/console/decision-facts');
+const { convergeResidue, composeResidueProposal, RESIDUE_FAILED } = require('./lib/console/residue-convergence');
 const { withLock } = require('./lib/file-lock');
 const { parseLedgerTable, resolveLedgerPath } = require('./lib/wrap-up/ledger-write');
 const { ledgerRowCells } = require('./lib/wrap-up/ledger-cells');
@@ -86,7 +98,8 @@ const EXIT_CARRY_FAILED = 6;
 const USAGE = 'usage: console-resolve.js --run <dir> --policy console-auto [--dry-run] [--json]  (exit 6: carried decision facts could not be written)\n'
   + '       console-resolve.js --run <dir> --set-item <id> --resolution keep-staged|pending|carried --reason <text> [--ledger <path>]  (carried and --ledger: control mode only, --ledger on a ledger-record-* id, else exit 2; exit 5 refused incl. a refused ledger path; exit 6 carried fact could not be written)\n'
   + '       console-resolve.js --run <dir> --check-repair <file> [--full]\n'
-  + '       console-resolve.js --run <dir> --ceiling  (read-only; takes no other flag; exit 3 unanchored or policy unreadable)';
+  + '       console-resolve.js --run <dir> --ceiling  (read-only; takes no other flag; exit 3 unanchored or policy unreadable)\n'
+  + '       console-resolve.js --run <dir> --converge <items.json>  (takes no other flag; exit 2 malformed items file, 3 unanchored or decisions.md unwritable, 6 a carried fact could not be written)';
 
 class UsageError extends Error {}
 
@@ -104,8 +117,8 @@ function needsAHumanBlock(unresolved, runDir, consolePath) {
 }
 
 function parseArgs(argv) {
-  const out = { run: null, policy: null, dryRun: false, json: false, setItem: null, resolution: null, reason: null, checkRepair: null, full: false, ledger: null, ceiling: false };
-  const valued = { '--run': 'run', '--policy': 'policy', '--set-item': 'setItem', '--resolution': 'resolution', '--reason': 'reason', '--check-repair': 'checkRepair', '--ledger': 'ledger' };
+  const out = { run: null, policy: null, dryRun: false, json: false, setItem: null, resolution: null, reason: null, checkRepair: null, full: false, ledger: null, ceiling: false, converge: null };
+  const valued = { '--run': 'run', '--policy': 'policy', '--set-item': 'setItem', '--resolution': 'resolution', '--reason': 'reason', '--check-repair': 'checkRepair', '--ledger': 'ledger', '--converge': 'converge' };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     if (Object.prototype.hasOwnProperty.call(valued, flag)) {
@@ -121,7 +134,12 @@ function parseArgs(argv) {
   }
   if (!out.run) throw new UsageError('--run <dir> is required');
   if (out.ceiling) {
-    if (out.policy !== null || out.dryRun || out.json || out.setItem !== null || out.resolution !== null || out.reason !== null || out.checkRepair !== null || out.full || out.ledger !== null) throw new UsageError('--ceiling takes no other flag than --run');
+    if (out.policy !== null || out.dryRun || out.json || out.setItem !== null || out.resolution !== null || out.reason !== null || out.checkRepair !== null || out.full || out.ledger !== null || out.converge !== null) throw new UsageError('--ceiling takes no other flag than --run');
+    return out;
+  }
+  if (out.converge !== null) {
+    if (out.policy !== null || out.dryRun || out.json || out.setItem !== null || out.resolution !== null || out.reason !== null || out.checkRepair !== null || out.full || out.ledger !== null) throw new UsageError('--converge takes no other flag than --run (--dry-run included)');
+    if (out.converge === '') throw new UsageError('--converge requires a non-empty file');
     return out;
   }
   if (out.full && out.checkRepair === null) throw new UsageError('--full requires --check-repair');
@@ -509,6 +527,72 @@ function ceilingQuery(runDir, { stdout, stderr, execFile, cwd }) {
   return 0;
 }
 
+// The `--converge` items file: null and a problem when it is not a well-formed array of residue items.
+function readResidueItems(file) {
+  let parsed;
+  try { parsed = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (err) {
+    return { items: null, problem: `${file} could not be read as JSON (${err && err.message ? err.message : err})` };
+  }
+  if (!Array.isArray(parsed)) return { items: null, problem: `${file} is not a JSON array` };
+  const seen = new Set();
+  for (const [i, it] of parsed.entries()) {
+    const bad = (why) => ({ items: null, problem: `${file} item ${i} ${why}` });
+    if (!it || typeof it !== 'object' || Array.isArray(it)) return bad('is not an object');
+    if (typeof it.id !== 'string' || it.id.trim() === '' || /[\r\n]/.test(it.id)) return bad('has no non-empty single-line string id');
+    if (seen.has(it.id)) return bad(`repeats the id ${it.id}`);
+    seen.add(it.id);
+    if (it.source !== 'ledger' && it.source !== 'insight') return bad('has a source other than ledger or insight');
+    if (typeof it.text !== 'string' || it.text.trim() === '') return bad('has no non-empty string text');
+    if (typeof it.status !== 'string' || it.status === '') return bad('has no string status');
+    if (it.deferReason !== undefined && typeof it.deferReason !== 'string') return bad('has a deferReason that is not a string');
+    if (it.belowFloor !== undefined && typeof it.belowFloor !== 'boolean') return bad('has a belowFloor that is not a boolean');
+    if (it.filingFailed !== undefined && typeof it.filingFailed !== 'boolean') return bad('has a filingFailed that is not a boolean');
+  }
+  return { items: parsed, problem: null };
+}
+
+// #4620: the `--converge` shape — every residue item ends resolved, filed, digested or carried. The carried
+// facts are written in one call; a failed write turns every carried item `failed` and exits 6, so no item is
+// reported carried without its fact. Needs no ceiling: the caller runs it only under control mode.
+function converge(o, runDir, { stdout, stderr, now, cwd }) {
+  const file = path.resolve(cwd(), o.converge);
+  const { items, problem } = readResidueItems(file);
+  if (items === null) { stderr(`console-resolve.js: --converge ${problem}\n${USAGE}\n`); return 2; }
+  const sectionOf = (item) => (item.source === 'insight' ? 'Reflection insights' : 'Ledger residue');
+  const carry = (item) => decisionFactFor({ id: item.id, section: sectionOf(item), resolution: 'pending', reason: item.text }, { runDir, staged: false });
+  const results = convergeResidue(items, { compose: composeResidueProposal, carry });
+  const facts = results.filter((r) => r.state === 'carried').map((r) => r.fact);
+  let writeError = null;
+  if (facts.length > 0) {
+    try { writeDecisionFacts(runDir, facts); } catch (err) { writeError = err; }
+  }
+  const out = results.map((r) => {
+    if (r.state === 'carried' && writeError !== null) return { id: r.id, state: RESIDUE_FAILED, error: writeError && writeError.message ? writeError.message : String(writeError) };
+    if (r.state === 'carried') return { id: r.id, state: r.state, factId: r.fact.id };
+    if (r.state === 'filed') return { id: r.id, state: r.state, proposal: r.proposal };
+    if (r.state === RESIDUE_FAILED) return { id: r.id, state: r.state, error: r.error };
+    return { id: r.id, state: r.state };
+  });
+  const failed = out.filter((r) => r.state === RESIDUE_FAILED).map((r) => r.id);
+  stdout(`${JSON.stringify({ items: out, failed }, null, 2)}\n`);
+  const sourceOf = new Map(items.map((it) => [it.id, it.source]));
+  const reversibility = (state) => (state === 'filed' ? 'high' : 'n/a');
+  const lines = out.map((r) => formatEntry({ status: 'AUTO', now: now(), step: 'Residue convergence', text: `Residue ${r.id} (${sourceOf.get(r.id)}): ${r.state}${r.factId ? ` as ${r.factId}` : ''}${r.error ? ` — ${r.error}` : ''}`, reversibility: reversibility(r.state) }));
+  let logError = null;
+  if (lines.length > 0) {
+    try { appendEntry({ runDir, section: '/wrap-up', entry: lines.join('\n') }); } catch (err) { logError = err; }
+  }
+  if (failed.length > 0) {
+    const why = writeError !== null ? (writeError.message || String(writeError)) : out.filter((r) => r.state === RESIDUE_FAILED).map((r) => `${r.id}: ${r.error}`).join('; ');
+    carryFailure(stderr, failed, { message: why });
+  }
+  if (logError !== null) {
+    stderr(`console-resolve.js: --converge printed ${out.length} item state(s), but the decisions.md entries could not be written (${logError.message || logError})\n`);
+    if (failed.length === 0) return 3;
+  }
+  return failed.length > 0 ? EXIT_CARRY_FAILED : 0;
+}
+
 async function run(argv, deps = {}) {
   const cwd = deps.cwd || (() => process.cwd());
   const stdout = deps.stdout || ((s) => process.stdout.write(s));
@@ -533,6 +617,7 @@ async function run(argv, deps = {}) {
   }
   const runDir = target.dir;
   if (o.ceiling) return ceilingQuery(runDir, { stdout, stderr, execFile, cwd });
+  if (o.converge !== null) return converge(o, runDir, { stdout, stderr, now, cwd });
   if (o.setItem !== null) return setItem(o, runDir, { stdout, stderr, now, execFile, cwd });
   if (o.checkRepair !== null) return checkRepair(o, runDir, { stdout, stderr, execFile, cwd });
   const { ceiling, controlMode, ceilingSource, vetoWindowHours, sensitivePaths } = readPolicy({ execFile, cwd: cwd(), runDir });
