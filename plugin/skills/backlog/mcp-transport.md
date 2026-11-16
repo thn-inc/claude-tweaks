@@ -43,7 +43,8 @@ exported):
    - The historical `--state all` record set (trust rows' input) → the same row, `state: "all"`,
      shaped to `record-snapshot.js`'s `UNION_FIELDS` — `_shared/record-queue-fetch.md`'s
      session-scoped snapshot still applies on this transport; a fresh MCP `list_issues` call reads
-     into that same cache rather than bypassing it.
+     into that same cache rather than bypassing it. Keep `author_association` and `user` from
+     `list_issues` as they arrive: they are what `issueAuthorTrust` reads, and absent means fail open.
    - Sub-issue numbers, only relevant when `work-links: native`: no MCP equivalent exists for the
      native sub-issues API (`_shared/github-write-transport.md`'s PR-scoped gap note is the same
      shape of gap — an uncovered read, not a write). Under `gh`-absent, always take

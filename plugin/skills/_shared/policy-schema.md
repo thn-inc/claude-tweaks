@@ -16,10 +16,6 @@ Carve-outs (which keys skip the `--run` overlay, and the in-process `worktree-al
 
 The `--values` and JSON output formats, the `${CLAUDE_PLUGIN_ROOT}` spelling, the precedence statement, the **Derived-default keys** (Shape A, Shape B) and `--all`: moved to `_shared/policy-schema-read-path.md` (#5216, rail headroom). Cite that file, not this stub.
 
-## `resolveValue` — canonical coercion contract
-
-Moved to `_shared/policy-schema-coverage.md`'s section of the same name (#4847, rail headroom). Cite that file, not this stub.
-
 ## Metadata fields
 
 The three human-facing fields every `POLICY_KEYS` row carries — `summary`, `category` and `tier`: moved to `_shared/policy-schema-read-path.md`'s Metadata fields section (#5216, rail headroom). Cite that file, not this stub. The mapping table below stays here.
@@ -49,25 +45,17 @@ Every key in `POLICY_KEYS` (and every `RENAMED_KEYS` replacement name) is a **fl
 
 | Key | Canonical home | Owner skill(s) | Default | Meaning |
 |---|---|---|---|---|
-| `worktree-always` | `policy.yml` only — no CLAUDE.md path exists | `/claude-tweaks:init`, `/claude-tweaks:build`, `_shared/git-discipline.md`; mechanically enforced by `bin/lib/hooks/pre-tool-use.js` | `false` (unenforced) | Whether covered operations must occur inside a linked git worktree — see the coverage block below for exactly which |
+| `worktree-always` | `policy.yml` only — no CLAUDE.md path exists | `/claude-tweaks:init`, `/claude-tweaks:build`, `_shared/git-discipline.md`; mechanically enforced by `bin/lib/hooks/pre-tool-use.js` | `false` (unenforced) | Whether covered operations must occur inside a linked git worktree — see `_shared/policy-schema-coverage.md` for exactly which |
 | `execution-strategy` | `policy.yml` | `/claude-tweaks:build`, `_shared/git-discipline.md` | `subagent` | `/claude-tweaks:build`'s execution axis, one key with two value classes: `subagent`/`batched` set the default when no argument is passed (an explicit argument still overrides); `subagent-only`/`batched-only` lock the axis — the other value is not offered and a contradicting explicit argument is substituted with an inline notice (see build/SKILL.md's Execution axis paragraph). `execution.always` is a deprecated alias: `migrate` maps `subagent` → `subagent-only` and `batched` → `batched-only`; a malformed value null-migrates to the schema default (`subagent`, unlocked); when both keys are set, the `execution-strategy` line wins (uniform alias rule — the audit/init drift check surfaces the conflict) |
 | `git-strategy` | `policy.yml` | `/claude-tweaks:build`, `/claude-tweaks:flow` | `worktree` | Default value of the Git axis when no argument is passed — matches /claude-tweaks:build's own documented default and /claude-tweaks:flow's intrinsic one. Set current-branch to opt a project out of worktree isolation by default; an explicit argument still wins, and worktree-always overrides both |
-
-### `worktree-always` coverage — canonical
-
-Moved to `_shared/policy-schema-coverage.md` — its "`worktree-always` coverage" and "Teardown gate coverage" sections carry the gate-coverage lists, exemptions, and procedural consequences (split out per #635, ceiling headroom). Cite that file, not this stub.
 
 ## Integration model
 
 | Key | Canonical home | Owner skill(s) | Default | Meaning |
 |---|---|---|---|---|
 | `integration-model` | `policy.yml` | `/claude-tweaks:init` (Step 20 offer) | unset — computed at resolve time by `bin/resolve-policy.js`'s `detectIntegrationModel` (forge detection), never a schema literal | `pr-first`/`local-merge` — which backend a project integrates through. Explicit value validates and wins outright (ordinary enum validation, unconditional); detection runs only when the key is absent. See `_shared/integration-model.md` for the full resolution ladder, run-scoped pinning, and consumer table |
-| `merge-verification` | `policy.yml` (per-run override via the Manifesto's `config.yml`, lever 11) | `/claude-tweaks:flow` Manifesto (lever row); merge-site consumers land in #560 | unset — derived at resolve time by `bin/lib/merge-verification.js` (wired through `bin/resolve-policy.js`), never a schema literal; see the coverage block below | `merge-when-green`/`wait`/`off` — how much CI verification a merge into the integration branch requires. Explicit value validates and wins outright; derivation runs only when the key is absent — an invalid value surfaces as `invalid: true` (an empty `--values` line), never silently overwritten by derivation, exactly as `integration-model` above. `bin/resolve-policy.js` is the only resolution path — there is deliberately no in-process resolver twin (the merge sites read the lever through the CLI, `_shared/pr-first-merge.md` Step 2.5), so no second contract exists to diverge from it. `wait` is explicit-config-only (the ladder never derives it) — it is the runtime fallback merge sites degrade to when `--auto` arming is unavailable, not a default. Read via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --run "$PIPELINE_RUN_DIR" --values merge-verification` |
+| `merge-verification` | `policy.yml` (per-run override via the Manifesto's `config.yml`, lever 11) | `/claude-tweaks:flow` Manifesto (lever row); merge-site consumers land in #560 | unset — derived at resolve time by `bin/lib/merge-verification.js` (wired through `bin/resolve-policy.js`), never a schema literal; see `_shared/policy-schema-coverage.md`'s derivation section | `merge-when-green`/`wait`/`off` — how much CI verification a merge into the integration branch requires. Explicit value validates and wins outright; derivation runs only when the key is absent — an invalid value surfaces as `invalid: true` (an empty `--values` line), never silently overwritten by derivation, exactly as `integration-model` above. `bin/resolve-policy.js` is the only resolution path — there is deliberately no in-process resolver twin (the merge sites read the lever through the CLI, `_shared/pr-first-merge.md` Step 2.5), so no second contract exists to diverge from it. `wait` is explicit-config-only (the ladder never derives it) — it is the runtime fallback merge sites degrade to when `--auto` arming is unavailable, not a default. Read via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --run "$PIPELINE_RUN_DIR" --values merge-verification` |
 | `merge-authorization` | `config.yml` only — the `/flow` `pre-authorize-merge` token or a live Manifesto `confirm`/`hybrid` override answer (lever 13); **never** `.claude-tweaks/policy.yml` (deliberate exclusion, see `_shared/auto-mode-contract.md`'s Bookend Architecture section) | `/claude-tweaks:flow` Manifesto (lever row); `wrap-up/review-console.md`'s Auto-merge short-circuit | `ask` | `ask`/`pre-authorized` — pre-authorizes, for this run only, that the run should merge itself once every HARD-GATE is green and the suite is proven. Read via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --run "$PIPELINE_RUN_DIR" --values merge-authorization`; a `policy.yml` value is silently discarded by the resolver (falls back to `ask`, `source: default`) rather than winning as it would for every other lever — the one deliberate exception to the standard 4-level precedence chain. Its `POLICY_KEYS` row carries `policySourceExcluded: true` (#839), the generic flag both the resolver's discard and `auditPolicy()`'s `sourceExcludedKeys` finding key off — a project owner who sets it in `policy.yml` anyway gets a named, non-silent finding rather than a value that looks effective but never is. Registering a second such lever needs only that flag, no new code. |
-
-### `merge-verification` derivation — canonical
-
-Moved to `_shared/policy-schema-coverage.md` — its "`merge-verification` derivation" section carries the four-branch derivation and code twin (split out per #635, ceiling headroom). Cite that file, not this stub.
 
 ## Project facts
 
@@ -177,7 +165,7 @@ These resolve from `policy.yml`. `/claude-tweaks:init` does not generate them in
 
 ## Model profiles
 
-Registered by #219; the resolver that actually reads these five is `bin/lib/model-profiles/profiles.js` (`resolve()`). Full canonical-home/owner-skill/default/meaning table: `policy-schema-model-profiles.md` (split out per IL-70 — merged branch content pushed this file over its ceiling).
+Registered by #219; the resolver, `bin/lib/model-profiles/profiles.js` (`resolve()`), reads four of these five (`model-stance`, `frontier-run-cap`, `model-ceiling`, `model-profiles`); `research-mode` is unrelated to it. Full canonical-home/owner-skill/default/meaning table: `policy-schema-model-profiles.md` (split out per IL-70 — merged branch content pushed this file over its ceiling).
 
 | Key |
 |---|
@@ -226,7 +214,7 @@ The two risk keys keep their full rows here (`tests/risk-flags-refine-prose.test
 | Key | Canonical home | Owner skill(s) | Default | Meaning |
 |---|---|---|---|---|
 | `risk-categories` | `policy.yml` | `risk-flags.js`, `plan-audit.js` | `[]` | Extra lowercase slugs |
-| `risk-path-globs` | `policy.yml`, block | `risk-flags.js` | `{}` | Slug to glob list, indented: `slug: [a, b,]` (one trailing comma; may span lines) or `slug:` then `- a` lines. A slug is built-in or from `risk-categories`; a glob is a string (quote `{a,b}`, `k: v`; a quoted one is literal, no escapes). Rejected whole: a respelled key line, a column-0 row, quoted keys, `slug : [a]`, doubled-quote escapes. Read it only through the resolver, never `resolveValue`: `null` with `invalid` means malformed, never unset |
+| `risk-path-globs` | `policy.yml`, block | `risk-flags.js` | `{}` | Slug to glob list, indented: `slug: [a, b,]` (one trailing comma; may span lines) or `slug:` then `- a` lines. A slug is built-in or from `risk-categories`; a glob is a string (quote `{a,b}`, `k: v`; a quoted one is literal, no escapes). Rejected whole: a respelled key line, a column-0 row, quoted keys, `slug : [a]`, doubled-quote escapes. Read it only through the resolver, never `resolveValue` (contract: `_shared/policy-schema-coverage.md`): `null` with `invalid` means malformed, never unset |
 
 ## Additional levers
 

@@ -484,16 +484,6 @@ gh pr view {recorded-number} --repo {host}/{owner}/{repo} --json state,isDraft,u
 
   `AUTO {time} — PR-early run lifecycle: recorded PR #{old} no longer open; {reused #{new} | created #{new}}. Reversibility: high.`
 
-## Phase-checklist update and pre-merge title/description refresh — moved
-
-Both moved to `_shared/pr-checklist-refresh.md` (#2002), which now carries the "Phase-checklist
-update (every phase exit)" and "Pre-merge title/description refresh" sections in full — read
-there. They moved out of this file so the two merge-time compose call sites
-(`wrap-up/auto-merge-short-circuit.md`, `wrap-up/review-console.md`) no longer need to compose
-this file's run-start-only Steps 1-4, Root cause, and Resume sections (below and above) just to
-reach that content — this file alone was 30+ KB of the ~57-60 KB the `merge` composed bundle
-measured, most of it never read again after run start.
-
 ## Skip / degrade behavior
 
 | Condition | Behavior |

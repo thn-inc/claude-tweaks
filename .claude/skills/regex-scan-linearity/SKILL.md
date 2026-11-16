@@ -54,6 +54,11 @@ A scan that re-reads the input once per match is the same cost without a regex: 
 - **Unbounded segments retried from every start.** `[A-Za-z0-9-]+\/[^/]+` rescans a long `a-a-` or digit run from each position (`'a-'.repeat(100000)` about 17.5 s, `'1'.repeat(200000)` about 32 s). Fix: bound each segment by the renderer's own limit, owner `{0,38}` after its first character and repo `{1,100}` (GitHub's limits), so every start scans a fixed span.
 - **A later pass that opens a boundary for an earlier one.** `PATH_REF` runs once, after the fixed-point loop, so it cannot eat a rebuilt URL's path. The space it leaves can still open a `\b` before a glued `GH-N`, so one more `GH_REF` pass follows it. When a pass runs outside the loop, check what its replacement text exposes to the patterns that ran before it.
 
+#5588's chained-status detectors (`chainedStatus`, `latestSeparator` and `gitCGlob` in `tools/guard-refusals/shapes.js`) replaced a backtracking regex with a per-line scan and met the hand-scan form of shape 2 (`git x; ` x 2000, about 32 s on the regex; `perf/guard-refusals-chained-status-linearity.test.js`):
+
+- **A `lastIndexOf` or `indexOf` that is not bounded to the line.** Searching back from a line's end with no lower bound walks to the start of the text, so it is quadratic on multi-line input (24c205dc5, `latestSeparator`'s `$?` search). `lastIndexOf`'s second argument is an upper bound on the match start, not a lower bound, so slice the line first (`text.slice(start, end).lastIndexOf(status)`).
+- **A perf file with only a one-long-line case.** The per-task cases all ran one long line, which the unbounded search handles in one pass, so only the whole-branch review's multi-line input exposed it. Put a many-lines case (`'git x\n'.repeat(40000)`) beside the one-long-line case.
+
 ### A cap after the call does not bound the call
 
 A length cap applied to a regex's output (a slice, a truncate, a max-chars) does not bound the regex. #5222's `normalizeEventText` cut reviewer text to `EVENT_TEXT_MAX_CHARS` only after calling `normalizeTitle`, whose `/(?:\s*\.)+\s*$/` is shape 1: 80,000 dots took about 25 s. The commit step ran the same helper on the implementer's unbounded title. The bug got through build and two rounds of review, and only the high-tier reproduction lens caught it.
