@@ -22,7 +22,7 @@ Scope keywords: ORIGIN_LINE, ORIGIN_LINE_RE, hasOriginLine, correctiveFollowUpTa
 - `record-fingerprint.js` is out of scope. Author trust (`authorTrust`) behaviour from #4577 is unchanged.
 - Governing project skill `.claude/skills/record-body-line-addition/SKILL.md`, quoted: "Put the reader in a `plugin/bin/lib/issues/record-*.js` module, re-export it from `record.js`, and have every consumer call it." and "A consumer matching the line with its own regex | Its detection drifts from the reader's". Its "Preamble only" rule does **not** apply here: the spec's human decision keeps `## Original request` counting (170 records hold their only `Origin:` line there), so the reader scans the whole body minus fenced and Absorbed lines.
 - Scope and edit discipline: "Commit tests only where the task asks for them or the repo already keeps tests for this kind of change, sized like the neighboring test files; scratch checks stay scratch. Touch only what the task requires — a pre-existing bug you notice is a follow-up to report, not a fix to fold in, unless the task cannot work without it. Don't reformat or "improve" adjacent code; edit in place rather than rewrite when the result is the same."
-- Decision rule for further gaps (author, 2026-11-16): take the reading that keeps a run on the previous plugin release working, puts the rule in code, stays inside Key Files — in that order — and state the choice in the PR body. Choices this plan makes under it: (a) `hasOriginLine` also reads through `ownOriginLine`, so `author-association.js` selects exactly the records the gate judges (rule in code); (b) the `record.js` re-export (governing skill) is one line outside Key Files.
+- Decision rule for further gaps (author, 2026-11-16): take the reading that keeps a run on the previous plugin release working, puts the rule in code, stays inside Key Files — in that order — and state the choice in the PR body. Choices this plan makes under it: (a) `hasOriginLine` also reads through `ownOriginLine`, so `author-association.js` selects exactly the records the gate judges (rule in code); (b) the `record.js` re-export (governing skill) and the `markdown-blocks.js` callers-list comment are the only edits outside Key Files; (c) an unclosed fence hides every later line, as `unfencedText` already does (#4368).
 
 ## Spec coverage map
 
@@ -46,14 +46,16 @@ Scope keywords: ORIGIN_LINE, ORIGIN_LINE_RE, hasOriginLine, correctiveFollowUpTa
 ### Task 1: `ownOriginLine` reader
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
+- Modify: `plugin/bin/lib/markdown-blocks.js` (header comment only: add `ownOriginLine (record-payload.js, #4502)` to the `fencedLineMask` callers list at `:45-47`)
 - Modify: `plugin/bin/lib/issues/record-payload.js` (require `fencedLineMask` beside `unfencedText`; add `ownOriginLine`; export it; rewrite the "Still fence-blind" sentence at `:32-34`)
 - Modify: `plugin/bin/lib/issues/record.js` (re-export `ownOriginLine` from `./record-payload` in both the destructure at `:30` and `module.exports` at `:52`)
 - Test: `tests/bin-lib/issues/record.test.js` (new cases after the `fence-blind metadata (#4368)` block; import `ownOriginLine` through `record` like its siblings)
 
 **Interfaces:**
-- Produces: `ownOriginLine(body: unknown) -> string | null` — the text after `Origin:` on the first own line, with leading/trailing spaces and tabs trimmed (`''` for a bare `Origin:`), or `null` when no own line exists or `body` is not a string. An own line matches `/^Origin:/` (column 0), is not masked by `fencedLineMask(lines)`, and is not inside an `## Absorbed:` section.
+- Produces: `ownOriginLine(body: unknown) -> string | null` — the text after `Origin:` on the first own line, with leading/trailing spaces and tabs trimmed (`''` for a bare `Origin:`), or `null` when no own line exists or `body` is not a string. An own line matches `/^Origin:/` (column 0), is not masked by `fencedLineMask(lines)` (default options: an unclosed fence hides every later line, the same rule `unfencedText` applies under #4368), and is not inside an `## Absorbed:` section.
 
 - [ ] **Step 1: Write the failing tests** in `tests/bin-lib/issues/record.test.js`:
 
@@ -102,6 +104,10 @@ test('ownOriginLine: a fenced ## line neither ends an Absorbed section nor opens
   assert.strictEqual(ownOriginLine(['```', '## Absorbed: quoted', '```', 'Origin: own'].join('\n')), 'own');
 });
 
+test('ownOriginLine: an unclosed fence hides every later line, ## Original request included (same rule as #4368)', () => {
+  assert.strictEqual(ownOriginLine(['## Current State', '```', 'quoted', '## Original request', 'Origin: own'].join('\n')), null);
+});
+
 test('AC7.1: CRLF and lone-CR bodies resolve the same as LF', () => {
   const lines = ['## Absorbed: d — x', 'Origin: absorbed', '## Original request', 'Origin: own  '];
   for (const eol of ['\n', '\r\n', '\r']) assert.strictEqual(ownOriginLine(lines.join(eol)), 'own', JSON.stringify(eol));
@@ -116,7 +122,7 @@ Expected: FAIL (`ownOriginLine is not a function`)
 
 - [ ] **Step 3: Implement `ownOriginLine(body)` in `record-payload.js`**
 
-Split with `body.split(/\r\n|\r|\n/)` (same line boundaries as `unfencedText`), compute `fencedLineMask(lines)`, walk lines tracking `inAbsorbed`: an unfenced line starting `## ` sets `inAbsorbed = line.startsWith('## Absorbed:')`; fenced lines change nothing and are never read. Return the first unfenced, non-absorbed line matching `/^Origin:[ \t]*(.*?)[ \t]*$/`'s capture. Header comment states the three rules (fence, Absorbed, Original request counts) and cites #4502. Replace the "Still fence-blind …" sentence at `:32-34` with one stating that the `Origin:` readers (`provenance.js`, `trust.js`) read through `ownOriginLine` (#4502) and the work-fingerprint reader is out of that scope (it defuses quoted markers at compose time). Add `ownOriginLine` to `module.exports` and to `record.js`'s re-export (destructure and `module.exports`).
+Split with `body.split(/\r\n|\r|\n/)` (same line boundaries as `unfencedText`), compute `fencedLineMask(lines)`, walk lines tracking `inAbsorbed`: an unfenced line starting `## ` sets `inAbsorbed = line.startsWith('## Absorbed:')`; fenced lines change nothing and are never read. Return the first unfenced, non-absorbed line matching `/^Origin:[ \t]*(.*?)[ \t]*$/`'s capture. Header comment states the three rules (fence, Absorbed, Original request counts) and cites #4502. Replace the "Still fence-blind …" sentence at `:32-34` with one stating that the `Origin:` readers (`provenance.js`, `trust.js`) read through `ownOriginLine` (#4502) and the work-fingerprint reader is out of that scope (it defuses quoted markers at compose time). Add `ownOriginLine` to `module.exports` and to `record.js`'s re-export (destructure and `module.exports`). Add `ownOriginLine (record-payload.js, #4502)` to `markdown-blocks.js`'s `fencedLineMask` callers list (comment only).
 
 - [ ] **Step 4: Run to verify it passes**
 
@@ -126,7 +132,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/issues/record-payload.js plugin/bin/lib/issues/record.js tests/bin-lib/issues/record.test.js
+git add plugin/bin/lib/issues/record-payload.js plugin/bin/lib/issues/record.js plugin/bin/lib/markdown-blocks.js tests/bin-lib/issues/record.test.js
 git commit -m "Add ownOriginLine — a record's own Origin: line, skipping fenced and Absorbed lines (refs #4502)"
 ```
 
