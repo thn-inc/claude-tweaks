@@ -45,7 +45,7 @@ const SECTION_SENTENCES =
 const BULLET_PHRASE =
   'it is committed on the feature branch during the run and, at wrap-up before the merge, `git mv`\'d to `archive/{run-id}/` on the branch (`bin/archive-run-header.js`, #3976), so it reaches the main checkout already archived.';
 const INVARIANT_SENTENCE =
-  'After wrap-up no consumer reads the header from the live path directly: every header reader resolves it through `bin/lib/run-header.js`\'s resolver (#3974) or, like `/tidy`\'s backstop `find`, matches both the live and the archived path — the one accepted exception is `flow/multispec-review-console.md`\'s Shared teardown header capture, which, when resumed after step 0 already moved the headers, falls back to the manifest id and a `SKIP`.';
+  'After wrap-up no consumer reads the header from the live path directly: every header reader resolves it through `bin/lib/run-header.js`\'s resolver (#3974) or, like `/tidy`\'s backstop `find`, matches both the live and the archived path — the one accepted exception is `flow/multispec-review-console.md`\'s Shared teardown header capture, which reads the live path and then the archived one itself, and falls back to the manifest id and a `SKIP` only when both miss.';
 
 // The line on materialize.md that names how materialized files are committed (line 98 pre-change).
 function line98(text) {

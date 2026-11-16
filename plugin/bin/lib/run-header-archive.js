@@ -42,26 +42,24 @@
 //   caller bug, never a repo state; its `code` is ARGS_ERROR_CODE ('ERR_RUN_HEADER_ARGS'). `validRunId(runId)` and `SPEC_DIR_RE` are those two checks,
 //   exported so a CLI refuses a malformed value (bin/archive-run-header.js, exit 2) before the call.
 //
-// pushRunBranch({ worktree, env, git = runGit })
-//   -> { pushed: boolean, branch?, reason?: 'detached-head' | 'invalid-branch' | 'push-failed', detail? }
-//   Pushes `refs/heads/{branch}:refs/heads/{branch}` to `origin` (never force).
+// The move never pushes: the caller's own push (phase-exit.js, or the merge path's own push call)
+// publishes the commit before the merge.
 //
 // `git` is the injectable runner (default hooks/git-exec.js's runGit); every call is
-// `git(args, worktree, { env, ... })`. `env` defaults to the inherited environment.
+// `git(args, worktree, { env: repoPinnedEnv(env), ... })`, so an inherited GIT_DIR, GIT_WORK_TREE or
+// GIT_INDEX_FILE never overrides the worktree (#4178). `env` defaults to the inherited environment.
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { runGit } = require('./hooks/git-exec');
+const { runGit, repoPinnedEnv } = require('./hooks/git-exec');
 const { RUN_ID_RE } = require('./hooks/run-dir-resolve');
 const { lstatType } = require('./path-guard');
 const { splitNul } = require('./git-z');
-const { runRelDirs } = require('./run-header');
+const { runRelDirs, SPEC_DIR_RE } = require('./run-header');
 
-const SPEC_DIR_RE = /^spec-[1-9]\d*$/;
 const SAFE_RUN_ID_RE = /^\d{4}-\d{2}-\d{2}T[0-9A-Za-z._-]+$/;
-// A commit runs the repo's hooks and a push talks to a remote; both may outlast runGit's 10s default.
+// A commit runs the repo's hooks, which may outlast runGit's 10s default.
 const COMMIT_TIMEOUT_MS = 120000;
-const PUSH_TIMEOUT_MS = 120000;
 // The `code` on the TypeError a bad `runId`/`specDir` throws, so a caller tells it from a bug inside the move.
 const ARGS_ERROR_CODE = 'ERR_RUN_HEADER_ARGS';
 
@@ -117,7 +115,8 @@ function archiveRunHeader({ worktree, runId, specDir = null, env, git = runGit }
   if (specDir !== null && !SPEC_DIR_RE.test(String(specDir))) {
     throw argsError(`archiveRunHeader: not a spec dir: ${String(specDir)}`);
   }
-  const g = (args, opts = {}) => git(args, worktree, { env, ...opts });
+  // Pinned: an inherited GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE would override `-C worktree` and could commit elsewhere (#4178).
+  const g = (args, opts = {}) => git(args, worktree, { env: repoPinnedEnv(env), ...opts });
 
   // (1) The worktree must be a directory (or a link to one).
   const wt = typeof worktree === 'string' && worktree ? lstatType(worktree).type : 'missing';
@@ -257,25 +256,4 @@ function archiveRunHeader({ worktree, runId, specDir = null, env, git = runGit }
   return { outcome: 'moved', commit: sha.stdout, moved: live };
 }
 
-function pushRunBranch({ worktree, env, git = runGit } = {}) {
-  const g = (args, opts = {}) => git(args, worktree, { env, ...opts });
-  // The full ref, not --short: a tag named like the branch makes --short print `heads/{branch}`.
-  const head = g(['symbolic-ref', '-q', 'HEAD']);
-  if (head.failure) {
-    return head.failure === 'git-error' && head.exitCode === 1
-      ? { pushed: false, reason: 'detached-head' }
-      : { pushed: false, reason: 'push-failed', detail: failDetail(head) };
-  }
-  const branch = head.stdout.startsWith('refs/heads/') ? head.stdout.slice('refs/heads/'.length) : '';
-  if (!branch || branch.startsWith('-')) return { pushed: false, reason: 'invalid-branch', branch };
-  const pushed = git(['push', '-q', 'origin', `refs/heads/${branch}:refs/heads/${branch}`], worktree, {
-    // A credential prompt has no terminal to answer it: fail fast instead of hanging.
-    env: { ...(env || process.env), GIT_TERMINAL_PROMPT: '0' },
-    timeoutMs: PUSH_TIMEOUT_MS,
-  });
-  return pushed.failure
-    ? { pushed: false, reason: 'push-failed', branch, detail: failDetail(pushed) }
-    : { pushed: true, branch };
-}
-
-module.exports = { ARCHIVE_HEADER_SUBJECT, ARGS_ERROR_CODE, SPEC_DIR_RE, archiveRunHeader, pushRunBranch, validRunId };
+module.exports = { ARCHIVE_HEADER_SUBJECT, ARGS_ERROR_CODE, SPEC_DIR_RE, archiveRunHeader, validRunId };

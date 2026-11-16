@@ -51,9 +51,9 @@ commit above and before the Phase exit call below, as its own Bash call:
 `node "${CLAUDE_PLUGIN_ROOT}/bin/archive-run-header.js" --run "{run-dir}"`. It `git mv`s the run's
 tracked `work/` and `spec-{N}/work/` files to `archive/{run-id}/` in one commit on the run branch, so
 the Phase exit push carries it and the merge lands the header already archived. It never stops
-wrap-up: on exit 0 (`moved`, `noop` or `refused`) it has logged its own line — hand-log it via
-`log-decision.js --text-file` only when the envelope says `logged: false`; on any other exit, log one
-`SKIP` and continue — reconcile's `archiveRunDir` archives the header after the merge. Skip it under
+wrap-up: it logs its own line (`_shared/auto-decision-log.md`'s **CLIs that log their own
+entries**); on any exit other than 0, log one `SKIP` and continue — reconcile's `archiveRunDir`
+archives the header after the merge. Skip it under
 `MULTISPEC_REVIEW_DEFER=1`: `flow/multispec-review-console.md`'s Shared teardown step 0 moves every
 spec's header in one commit.
 

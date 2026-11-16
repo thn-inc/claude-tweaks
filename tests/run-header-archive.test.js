@@ -8,9 +8,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { archiveRunHeader, pushRunBranch, ARCHIVE_HEADER_SUBJECT } = require('../plugin/bin/lib/run-header-archive');
+const { archiveRunHeader, ARCHIVE_HEADER_SUBJECT } = require('../plugin/bin/lib/run-header-archive');
 const { readText } = require('./helpers/read-skill');
-const { committedRepo, cleanGitEnv, originWithTwoClones } = require('./helpers/git-fixtures');
+const { committedRepo, cleanGitEnv } = require('./helpers/git-fixtures');
 
 const RUN = '2026-11-16T000000-record-7';
 const P = '.claude-tweaks/pipelines';
@@ -38,10 +38,16 @@ test.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: 
 // in which only work/*-spec.md is un-ignored: each `!…/work/**` line is `…/work/*` then `!…/work/*-spec.md`.
 // The repo's real file is the narrowed form; the wide variant is derived from it, so both stay covered.
 function gitignoreText({ narrowed }) {
-  const wide = readText(REAL_GITIGNORE)
+  const real = readText(REAL_GITIGNORE);
+  const wide = real
     .replace(/^(\.claude-tweaks\/pipelines\/.*\/work)\/\*\r?\n!\1\/\*-spec\.md$/gm, (_m, work) => `!${work}/**`);
+  // A reflowed narrowing must fail here, not turn the wide control into a second copy of the narrowed rules.
+  assert.notEqual(wide, real, 'the wide variant was derived from the narrowed .gitignore');
+  assert.match(wide, /^!\.claude-tweaks\/pipelines\/\*\/work\/\*\*$/m, 'the wide variant un-ignores everything under work/');
   if (!narrowed) return wide;
-  return wide.replace(/^!(\.claude-tweaks\/pipelines\/.*\/work)\/\*\*$/gm, (_m, work) => `${work}/*\n!${work}/*-spec.md`);
+  const again = wide.replace(/^!(\.claude-tweaks\/pipelines\/.*\/work)\/\*\*$/gm, (_m, work) => `${work}/*\n!${work}/*-spec.md`);
+  assert.equal(again, real, 're-narrowing the wide variant reproduces the real .gitignore');
+  return again;
 }
 
 function makeRepo({ narrowed = false } = {}) {
@@ -364,6 +370,27 @@ test('an argument that is not a run id or a spec dir throws instead of reaching 
   }
 });
 
+test('an inherited GIT_DIR, GIT_WORK_TREE or GIT_INDEX_FILE never redirects the move to another repo (#4178)', () => {
+  const r = makeRepo();
+  r.track(`${LIVE}/work/7-spec.md`, 'spec\n');
+  r.commit('materialize');
+  const decoy = makeRepo();
+  const decoyHead = decoy.head();
+  const hostile = {
+    ...ENV,
+    GIT_DIR: path.join(decoy.dir, '.git'),
+    GIT_WORK_TREE: decoy.dir,
+    GIT_INDEX_FILE: path.join(decoy.dir, '.git', 'index'),
+  };
+
+  const res = archiveRunHeader({ worktree: r.dir, runId: RUN, env: hostile });
+
+  assert.equal(res.outcome, 'moved', 'the move ran in the worktree it was given');
+  assert.deepEqual(r.tree(`${ARCH}/`), [`${ARCH}/work/7-spec.md`]);
+  assert.deepEqual(r.tree(`${LIVE}/`), []);
+  assert.equal(decoy.head(), decoyHead, 'the decoy repo took no commit');
+});
+
 test('AC7.1 the gh-absent bookends check reads the archived-only header as materialized', () => {
   const { realDeps } = require('../plugin/bin/verify-run-bookends.js');
   const r = makeRepo();
@@ -377,57 +404,6 @@ test('AC7.1 the gh-absent bookends check reads the archived-only header as mater
 
   assert.deepEqual(r.tree(`${LIVE}/`), []);
   assert.equal(realDeps.isSpecCommitted(args), true, 'archived-only header');
-});
-
-test('pushRunBranch pushes the current branch; a detached HEAD is refused; a diverged remote is push-failed', () => {
-  const fx = originWithTwoClones('ct-rha-push-');
-  dirs.push(fx.root);
-  const env = cleanGitEnv(fx.env);
-
-  fx.run(fx.work, ['checkout', '-q', '-b', 'feat-x']);
-  fx.commit(fx.work, 'w1');
-  const pushed = pushRunBranch({ worktree: fx.work, env });
-  assert.deepEqual(pushed, { pushed: true, branch: 'feat-x' });
-  const head = fx.run(fx.work, ['rev-parse', 'HEAD']).trim();
-  assert.match(fx.run(fx.work, ['ls-remote', 'origin', 'refs/heads/feat-x']), new RegExp(`^${head}\\s`));
-
-  fx.run(fx.work, ['checkout', '-q', '--detach']);
-  assert.deepEqual(pushRunBranch({ worktree: fx.work, env }), { pushed: false, reason: 'detached-head' });
-
-  fx.run(fx.other, ['checkout', '-q', '-b', 'feat-y']);
-  fx.commit(fx.other, 'o1');
-  fx.run(fx.other, ['push', '-q', 'origin', 'feat-y']);
-  fx.run(fx.work, ['checkout', '-q', '-b', 'feat-y']);
-  fx.commit(fx.work, 'w2');
-  const diverged = pushRunBranch({ worktree: fx.work, env });
-  assert.equal(diverged.pushed, false);
-  assert.equal(diverged.reason, 'push-failed');
-  assert.equal(diverged.branch, 'feat-y');
-  assert.equal(typeof diverged.detail, 'string');
-});
-
-test('pushRunBranch refuses a branch name that starts with a dash', () => {
-  const fx = originWithTwoClones('ct-rha-dash-');
-  dirs.push(fx.root);
-  const git = (args) => (args[0] === 'symbolic-ref'
-    ? { stdout: 'refs/heads/-delete', failure: null, stderr: null }
-    : assert.fail(`no other git call may run, got ${args.join(' ')}`));
-  assert.deepEqual(pushRunBranch({ worktree: fx.work, env: cleanGitEnv(fx.env), git }), { pushed: false, reason: 'invalid-branch', branch: '-delete' });
-});
-
-test('pushRunBranch pushes the branch even when a tag carries its name', () => {
-  const fx = originWithTwoClones('ct-rha-tag-');
-  dirs.push(fx.root);
-  const env = cleanGitEnv(fx.env);
-  fx.run(fx.work, ['checkout', '-q', '-b', 'feat-x']);
-  fx.commit(fx.work, 'w1');
-  fx.run(fx.work, ['tag', 'feat-x']);
-
-  assert.deepEqual(pushRunBranch({ worktree: fx.work, env }), { pushed: true, branch: 'feat-x' });
-
-  const head = fx.run(fx.work, ['rev-parse', 'HEAD']).trim();
-  assert.match(fx.run(fx.work, ['ls-remote', 'origin', 'refs/heads/feat-x']), new RegExp(`^${head}\\s`));
-  assert.equal(fx.run(fx.work, ['ls-remote', '--tags', 'origin']).trim(), '', 'the tag was not pushed');
 });
 
 test('an unstaged edit to a file about to move refuses dirty-index, naming the path, before any mutation', () => {
@@ -519,7 +495,8 @@ test('a mv failure whose unwind also fails is a partial-revert refusal naming wh
   assert.match(res.detail, /simulated mv failure/);
   assert.match(res.detail, /did not finish/);
   assert.match(res.detail, /mv \S+ back/);
-  assert.equal(r.git('ls-files', '--', `${ARCH}/`).split('\n').length, 1, 'the first move is still staged, as the detail says');
+  // ls-files order: spec-8's header moves first; it is the one left staged.
+  assert.deepEqual(r.git('ls-files', '--', `${ARCH}/`).split('\n').filter(Boolean), [`${ARCH}/spec-8/work/8-spec.md`], 'the first move is still staged, as the detail says');
 });
 
 test('a commit failure whose unwind also fails is a partial-revert refusal', () => {

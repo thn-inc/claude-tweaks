@@ -8,11 +8,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 
 const { runCliSync, spawnCli } = require('./helpers/run-cli');
-const { gitRepo, harnessWorktreeOf, originWithTwoClones, fixtureGit, cleanGitEnv, hookEnv } = require('./helpers/git-fixtures');
+const { gitRepo, harnessWorktreeOf, fixtureGit, cleanGitEnv, hookEnv } = require('./helpers/git-fixtures');
 const { writeRunState } = require('../plugin/bin/lib/hooks/context');
 const { ARGS_ERROR_CODE } = require('../plugin/bin/lib/run-header-archive');
 
@@ -36,19 +35,9 @@ const roots = [];
 test.after(() => { for (const d of roots) fs.rmSync(d, { recursive: true, force: true }); });
 
 // A main checkout with one harness worktree (`wt`) and the run dir under the main checkout.
-// `origin: true` builds the repo as the `work` clone of a bare origin, with `other` a second clone.
-function makeFixture({ origin = false, runState = {} } = {}) {
-  let main;
-  let other = null;
-  if (origin) {
-    const o = originWithTwoClones('ct-arh-');
-    roots.push(o.root);
-    main = fs.realpathSync(o.work);
-    other = fs.realpathSync(o.other);
-  } else {
-    main = gitRepo({ branch: 'main' });
-    roots.push(main);
-  }
+function makeFixture({ runState = {} } = {}) {
+  const main = gitRepo({ branch: 'main' });
+  roots.push(main);
   const wt = harnessWorktreeOf(main);
   const git = (dir, ...args) => fixtureGit(['-C', dir, ...args], { env: ENV, encoding: 'utf8' }).trim();
   const pipelines = path.join(main, PIPELINES);
@@ -67,7 +56,7 @@ function makeFixture({ origin = false, runState = {} } = {}) {
   };
   const decisionsFile = path.join(runDir, 'decisions.md');
   return {
-    main, wt, other, runDir, pipelines, git, write, header, decisionsFile,
+    main, wt, runDir, pipelines, git, write, header, decisionsFile,
     head: () => git(wt, 'rev-parse', 'HEAD'),
     tree: (prefix) => git(wt, 'ls-tree', '-r', '--name-only', 'HEAD', prefix).split('\n').filter(Boolean),
     decisions: () => (fs.existsSync(decisionsFile) ? fs.readFileSync(decisionsFile, 'utf8') : ''),
@@ -94,7 +83,7 @@ test('moves, prints the envelope and logs one AUTO line', () => {
   assert.equal(env.logged, true);
   assert.equal(env.commit, f.head());
   assert.deepEqual(env.moved, [`${LIVE}/work/7-spec.md`]);
-  assert.equal(env.push, undefined, 'no --push, no push field');
+  assert.equal(env.push, undefined, 'the CLI never pushes, so the envelope has no push field');
   assert.deepEqual(f.tree(`${LIVE}/`), []);
   assert.deepEqual(f.tree(`${ARCH}/`), [`${ARCH}/work/7-spec.md`]);
   const text = f.decisions();
@@ -193,6 +182,20 @@ test('a recorded worktree that is the main checkout refuses the same way', () =>
   assert.equal(env.reason, 'not-a-linked-worktree');
 });
 
+test('a *-partial-revert refusal logs a SKIP that sends the reader to git status, not the "header left live" fallback', () => {
+  const f = makeFixture();
+  const archiveRunHeader = () => ({ outcome: 'refused', reason: 'git-mv-failed-partial-revert', detail: 'mv back failed', moved: [] });
+
+  const res = cli(f, ['--run', f.runDir], { deps: { archiveRunHeader } });
+
+  assert.equal(res.code, 0, res.stderr);
+  assert.equal(envelope(res).reason, 'git-mv-failed-partial-revert');
+  const lines = f.entries(f.decisions());
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /^- SKIP .* — Archive spec header: condition: git-mv-failed-partial-revert \(mv back failed\) → the unwind did not finish: .*check git status/);
+  assert.doesNotMatch(lines[0], /header left live/, 'a failed unwind is not a clean refusal');
+});
+
 test('--worktree overrides run-state; worktreeAtClose is the fallback after close-run', () => {
   const f = makeFixture({ runState: {} });
   f.header(`${LIVE}/work/7-spec.md`);
@@ -247,47 +250,6 @@ test('a spec-{N} run dir moves only its own header; an archived run dir resolves
   assert.equal(g.entries(fs.readFileSync(path.join(archivedDir, 'decisions.md'), 'utf8')).length, 1);
 });
 
-test('--push pushes the move; a rejected push is a SKIP and outcome stays moved', () => {
-  const f = makeFixture({ origin: true });
-  f.header(`${LIVE}/work/7-spec.md`);
-  const branch = f.git(f.wt, 'symbolic-ref', '--short', 'HEAD');
-
-  const res = cli(f, ['--run', f.runDir, '--push']);
-
-  assert.equal(res.code, 0, res.stderr);
-  const env = envelope(res);
-  assert.equal(env.outcome, 'moved');
-  assert.deepEqual(env.push, { pushed: true });
-  assert.equal(f.git(f.main, 'ls-remote', 'origin', `refs/heads/${branch}`).split('\t')[0], f.head(), 'origin holds the move commit');
-  const lines = f.entries(f.decisions());
-  assert.equal(lines.length, 1);
-  assert.match(lines[0], /^- AUTO .* — Archive spec header: moved 1 file\(s\) to archive\/2026-11-16T000000-record-7\/ in [0-9a-f]{7}, pushed\./);
-
-  // A second run on a branch whose name another clone already pushed with different history.
-  const g = makeFixture({ origin: true });
-  g.header(`${LIVE}/work/7-spec.md`);
-  const gBranch = g.git(g.wt, 'symbolic-ref', '--short', 'HEAD');
-  g.write(g.other, 'rival.txt', 'rival\n');
-  g.git(g.other, 'add', 'rival.txt');
-  g.git(g.other, 'commit', '-q', '-m', 'rival');
-  g.git(g.other, 'push', '-q', 'origin', `HEAD:refs/heads/${gBranch}`);
-
-  const rejected = cli(g, ['--run', g.runDir, '--push']);
-
-  assert.equal(rejected.code, 0, rejected.stderr);
-  const renv = envelope(rejected);
-  assert.equal(renv.outcome, 'moved', 'a rejected push never un-moves');
-  assert.equal(renv.push.pushed, false);
-  assert.equal(renv.push.reason, 'push-failed');
-  assert.ok(renv.push.detail, 'the rejection text reaches the envelope');
-  assert.equal(renv.logged, true);
-  assert.deepEqual(g.tree(`${ARCH}/`), [`${ARCH}/work/7-spec.md`]);
-  const rlines = g.entries(g.decisions());
-  assert.equal(rlines.length, 2);
-  assert.match(rlines[0], /^- AUTO .* — Archive spec header: moved 1 file\(s\) to archive\/2026-11-16T000000-record-7\/ in [0-9a-f]{7}, not pushed\./);
-  assert.match(rlines[1], /^- SKIP .* — Archive spec header: condition: push failed \(push-failed\) \(.+\) → fallback: the merge proceeds without the move; archiveRunDir archives the header after the merge/);
-});
-
 test('a parent --run moves the flat and every spec-{N} header in one commit', () => {
   const f = makeFixture();
   const headers = [`${LIVE}/work/7-spec.md`, `${LIVE}/spec-8/work/8-spec.md`, `${LIVE}/spec-9/work/9-spec.md`];
@@ -317,27 +279,6 @@ test('the move commit runs with the injected env', () => {
   assert.equal(res.code, 0, res.stderr);
   assert.equal(envelope(res).outcome, 'moved');
   assert.equal(f.git(f.wt, 'log', '-1', '--format=%an'), 'ArchiveCliEnvProbe');
-});
-
-test('the push runs with the injected env', () => {
-  const f = makeFixture({ origin: true });
-  f.header(`${LIVE}/work/7-spec.md`);
-  const branch = f.git(f.wt, 'symbolic-ref', '--short', 'HEAD');
-  const second = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-arh-push-')));
-  roots.push(second);
-  fixtureGit(['init', '-q', '--bare', second], { env: ENV });
-  // A push url set only through GIT_CONFIG_*: neither this process nor the repo's own config carries it.
-  // The runner may already export some GIT_CONFIG_* pairs (verify.js does), so the new pair goes after them.
-  const n = Number(process.env.GIT_CONFIG_COUNT || 0);
-  for (let i = 0; i < n; i++) assert.notEqual(process.env[`GIT_CONFIG_KEY_${i}`], 'remote.origin.pushurl');
-  const env = { ...ENV, GIT_CONFIG_COUNT: String(n + 1), [`GIT_CONFIG_KEY_${n}`]: 'remote.origin.pushurl', [`GIT_CONFIG_VALUE_${n}`]: second };
-
-  const res = cli(f, ['--run', f.runDir, '--push'], { env });
-
-  assert.equal(res.code, 0, res.stderr);
-  assert.equal(envelope(res).push.pushed, true);
-  assert.equal(f.git(second, 'rev-parse', `refs/heads/${branch}`), f.head(), 'the push landed at the injected push url');
-  assert.equal(f.git(f.main, 'ls-remote', 'origin', `refs/heads/${branch}`), '', 'and not at origin');
 });
 
 test('the move\'s argument error exits 2 with one stderr line; any other throw, a plain TypeError included, is not swallowed', () => {
@@ -398,12 +339,13 @@ test('malformed invocations exit 2 with nothing on stdout and no git call', () =
   const cases = {
     'trailing bare --run': ['--run'],
     'empty --run': ['--run', ''],
-    '--run followed by a flag': ['--run', '--push'],
+    '--run followed by a flag': ['--run', '--section'],
     '--worktree with an option-shaped value': ['--run', f.runDir, '--worktree', '-x'],
     'trailing bare --worktree': ['--run', f.runDir, '--worktree'],
     '--section with an option-shaped value': ['--run', f.runDir, '--section', '-x'],
     'unknown flag': ['--run', f.runDir, '--force'],
-    'no --run': ['--push'],
+    '--push, which the CLI no longer takes': ['--run', f.runDir, '--push'],
+    'no --run': ['--section', '/wrap-up'],
     'a --run whose basename is not a run id': ['--run', path.join(f.pipelines, 'not-a-run-id')],
     'a glob character in the run id': ['--run', glob],
     'the pipelines/archive dir itself': ['--run', path.join(f.pipelines, 'archive')],

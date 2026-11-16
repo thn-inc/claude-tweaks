@@ -3,29 +3,28 @@
 // The run's `.claude-tweaks/pipelines/{run-id}/work/` (and `spec-{N}/work/`) headers are committed
 // live on the run branch; this moves them to `.claude-tweaks/pipelines/archive/{run-id}/` in one
 // commit before the merge, so the merge lands them already archived. The git work lives in
-// lib/run-header-archive.js (`archiveRunHeader`, `pushRunBranch`); this shell parses args, finds
-// the run branch's worktree, prints the envelope and writes the decisions.md trail.
+// lib/run-header-archive.js (`archiveRunHeader`); this shell parses args, finds the run branch's
+// worktree, prints the envelope and writes the decisions.md trail. It never pushes: the caller's own
+// push (phase-exit.js, or the merge path's push call) publishes the move commit before the merge.
 // reconcile's `archiveRunDir` stays the post-merge fallback for every run this move did not reach.
 //
-//   node bin/archive-run-header.js --run <run-dir> [--worktree <path>] [--push] [--section </skill>] [--help]
+//   node bin/archive-run-header.js --run <run-dir> [--worktree <path>] [--section </skill>] [--help]
 //
 // `--run` is the main checkout's run dir: `{main}/.claude-tweaks/pipelines/{run-id}`, a multi-spec
 // per-spec dir `.../{run-id}/spec-{N}` (only that spec's header moves), or an `archive/{run-id}` dir
 // (the top-level run id is read from the path). The worktree is `--worktree`, else run-state.json's
 // `worktree`, else `worktreeAtClose` (what `hooks.js close-run` leaves), else the parent run dir's
-// `worktreeAtClose`. `--push` pushes the run branch after a move (never forced). `--section` is the
-// decisions.md section the entry lands under (default /wrap-up).
+// `worktreeAtClose`. `--section` is the decisions.md section the entry lands under (default /wrap-up).
 //
 // Prints exactly one JSON line:
-//   {outcome, reason?, detail?, commit?, moved, push?: {pushed, reason?, detail?}, logged, logError?}
+//   {outcome, reason?, detail?, commit?, moved, logged, logError?}
 // outcome moved | noop | refused. `moved` is the POSIX repo-relative live paths moved. `reason` (refused):
 // the library's own (missing-worktree, dirty-index, archived-copy-differs, git-mv-failed, commit-failed,
 // the two *-partial-revert forms, git-failed -- a partial-revert reason is not a clean refusal: `detail`
-// lists what could not be undone) or this CLI's no-worktree / not-a-linked-worktree. `push` is present
-// only with --push on a move; a rejected push leaves the outcome `moved`.
+// lists what could not be undone) or this CLI's no-worktree / not-a-linked-worktree.
 //
 // Self-logging (_shared/auto-decision-log.md's roster): moved -> one AUTO line, a refusal -> one SKIP
-// naming the fallback, a failed push -> a second SKIP, noop -> nothing. `logged` means every line the
+// naming the fallback, noop -> nothing. `logged` means every line the
 // outcome owes is in decisions.md, so a noop (which owes none) reports `logged: true`; it is `false` only
 // when the append failed. That never changes the exit code: `logged: false`, `logError` and one stderr
 // line `could not append the decisions.md entry`; the caller hand-logs only then.
@@ -37,29 +36,29 @@
 // 3 run dir missing or not anchored under the main checkout (a worktree-local shadow --
 //   _shared/pipeline-run-dir.md, [IL-127]); an archive/{run-id} dir in the main checkout is anchored.
 //   Checked before any git call. Same vocabulary as post-merge-run.js (the Sanctioned-writer family).
-// An unexpected exception from the move or the push propagates as exit 1 with nothing logged; the
+// An unexpected exception from the move propagates as exit 1 with nothing logged; the
 // caller's other-exit branch logs the SKIP.
 'use strict';
 
 const path = require('path');
 const {
-  archiveRunHeader, pushRunBranch, validRunId, SPEC_DIR_RE, ARGS_ERROR_CODE,
+  archiveRunHeader, validRunId, SPEC_DIR_RE, ARGS_ERROR_CODE,
 } = require('./lib/run-header-archive');
 const { resolveTarget, formatEntry, appendEntries } = require('./lib/log-decision/append');
-const { readRunStateWithParent, readRunState } = require('./lib/hooks/context');
+const { readRunStateWithParent, readRunState, priorWorktree } = require('./lib/hooks/context');
 const { mainCheckoutRoot, safeReal } = require('./lib/hooks/worktree-detect');
 
 const NAME = 'archive-run-header.js';
 const STEP = 'Archive spec header';
 const DEFAULT_SECTION = '/wrap-up';
 const FALLBACK = "header left live; reconcile's archiveRunDir archives it after the merge";
-const PUSH_FALLBACK = 'the merge proceeds without the move; archiveRunDir archives the header after the merge';
+const PARTIAL_REVERT_TAIL = 'the unwind did not finish: staged renames may remain in the run worktree index; check git status there before any whole-index commit';
 const DETAIL_MAX = 200;
 
-const USAGE = `usage: ${NAME} --run <run-dir> [--worktree <path>] [--push] [--section </skill>] [--help]\n`
+const USAGE = `usage: ${NAME} --run <run-dir> [--worktree <path>] [--section </skill>] [--help]\n`
   + '  moves the run\'s tracked spec header to .claude-tweaks/pipelines/archive/{run-id}/ in one commit on the run branch\n'
-  + '  prints {outcome, reason?, detail?, commit?, moved, push?, logged, logError?}; outcome: moved | noop | refused\n'
-  + `  logs one AUTO (moved) or SKIP (refused, failed push) line under ${DEFAULT_SECTION} unless --section names another; noop logs nothing and reports logged: true\n`
+  + '  prints {outcome, reason?, detail?, commit?, moved, logged, logError?}; outcome: moved | noop | refused\n'
+  + `  logs one AUTO (moved) or SKIP (refused) line under ${DEFAULT_SECTION} unless --section names another; noop logs nothing and reports logged: true\n`
   + '  exit 0 an envelope was printed (every outcome and reason is data)\n'
   + '       2 malformed invocation\n'
   + '       3 run dir missing or not anchored under the main checkout\n';
@@ -67,13 +66,11 @@ const USAGE = `usage: ${NAME} --run <run-dir> [--worktree <path>] [--push] [--se
 const VALUE_FLAGS = { '--run': 'run', '--worktree': 'worktree', '--section': 'section' };
 
 function parseArgs(argv) {
-  const o = { run: null, worktree: null, section: DEFAULT_SECTION, push: false, help: false };
+  const o = { run: null, worktree: null, section: DEFAULT_SECTION, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') {
       o.help = true;
-    } else if (a === '--push') {
-      o.push = true;
     } else if (Object.hasOwn(VALUE_FLAGS, a)) {
       const v = argv[++i];
       // A trailing bare flag reads undefined; a value starting `-` is the next option, or reaches git as one.
@@ -92,7 +89,6 @@ const realDeps = {
   mainRoot: (cwd) => mainCheckoutRoot(cwd),
   now: () => new Date(),
   archiveRunHeader,
-  pushRunBranch,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -120,8 +116,8 @@ function runIdentity(mainRoot, runDir) {
 // (own, then the parent's: close-run does not copy it down).
 function recordedWorktree(runDir) {
   const { state, parentRunDir } = readRunStateWithParent(runDir);
-  const own = state && (state.worktree || state.worktreeAtClose);
-  if (typeof own === 'string' && own) return own;
+  const own = priorWorktree(state);
+  if (own) return own;
   const parent = parentRunDir ? readRunState(parentRunDir) : null;
   const fromParent = parent && parent.worktreeAtClose;
   return typeof fromParent === 'string' && fromParent ? fromParent : null;
@@ -132,26 +128,26 @@ function oneLine(s) {
   return flat.length > DETAIL_MAX ? `${flat.slice(0, DETAIL_MAX)}...` : flat;
 }
 
+// A `*-partial-revert` refusal left staged renames behind (the unwind itself failed), so the header is NOT
+// cleanly "left live": the entry says the tree needs a look instead of promising the fallback.
 function refusedText(reason, detail) {
-  return `condition: ${reason}${detail ? ` (${oneLine(detail)})` : ''} → fallback: ${FALLBACK}`;
+  const tail = reason.endsWith('-partial-revert') ? PARTIAL_REVERT_TAIL : `fallback: ${FALLBACK}`;
+  return `condition: ${reason}${detail ? ` (${oneLine(detail)})` : ''} → ${tail}`;
 }
 
-// The decisions.md entries one result owes: moved -> AUTO (+ a SKIP for a failed push), refused -> SKIP, noop -> none.
-function entriesFor({ result, push, runId, now }) {
+// The decisions.md entries one result owes: moved -> AUTO, refused -> SKIP, noop -> none.
+function entriesFor({ result, runId, now }) {
   const skip = (text) => formatEntry({ status: 'SKIP', now, step: STEP, text });
   if (result.outcome === 'refused') return [skip(refusedText(result.reason, result.detail))];
   if (result.outcome !== 'moved') return [];
   const sha = result.commit ? result.commit.slice(0, 7) : 'an unreadable HEAD';
-  const pushNote = push ? (push.pushed ? ', pushed' : ', not pushed') : '';
-  const entries = [formatEntry({
+  return [formatEntry({
     status: 'AUTO',
     now,
     step: STEP,
-    text: `moved ${result.moved.length} file(s) to archive/${runId}/ in ${sha}${pushNote}`,
+    text: `moved ${result.moved.length} file(s) to archive/${runId}/ in ${sha}`,
     reversibility: 'high (git revert)',
   })];
-  if (push && !push.pushed) entries.push(skip(`condition: push failed (${push.reason})${push.detail ? ` (${oneLine(push.detail)})` : ''} → fallback: ${PUSH_FALLBACK}`));
-  return entries;
 }
 
 function run(argv, overrides = {}) {
@@ -206,7 +202,6 @@ function run(argv, overrides = {}) {
       throw e;
     }
   }
-  const push = o.push && result.outcome === 'moved' ? deps.pushRunBranch({ worktree, env: deps.env }) : null;
 
   // 5. The audit line(s); a failed append is data, never an exit code.
   const body = {
@@ -215,10 +210,9 @@ function run(argv, overrides = {}) {
     ...(result.detail ? { detail: result.detail } : {}),
     ...(result.commit ? { commit: result.commit } : {}),
     moved: result.moved,
-    ...(push ? { push: { pushed: push.pushed, ...(push.reason ? { reason: push.reason } : {}), ...(push.detail ? { detail: push.detail } : {}) } } : {}),
     logged: true,
   };
-  const entries = entriesFor({ result, push, runId, now: deps.now() });
+  const entries = entriesFor({ result, runId, now: deps.now() });
   if (entries.length) {
     try {
       appendEntries({ runDir, items: entries.map((entry) => ({ section: o.section, entry })) });

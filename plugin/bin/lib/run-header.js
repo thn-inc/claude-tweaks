@@ -137,6 +137,6 @@ function listHeaderDirs(runDirs, { readdir = defaultReaddir, pathImpl = path, ne
 }
 
 module.exports = {
-  PIPELINES_REL, runRelDirs, headerRelPaths, headerPathspecs,
+  PIPELINES_REL, SPEC_DIR_RE, runRelDirs, headerRelPaths, headerPathspecs,
   archivedRunDir, headerFileCandidates, listHeaderDirs,
 };

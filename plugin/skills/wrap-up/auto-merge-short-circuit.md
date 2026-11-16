@@ -180,10 +180,9 @@ Every other report except `not found` leaves the ledger on disk: commit nothing;
 either `integration-model`, as its own Bash call:
 `node "${CLAUDE_PLUGIN_ROOT}/bin/archive-run-header.js" --run "{run-dir}"`. It `git mv`s the run's
 tracked `work/` and `spec-{N}/work/` files to `archive/{run-id}/` in one commit on the run branch, so
-the merge lands the header already archived. It never stops wrap-up: on exit 0 (`moved`, `noop` or
-`refused`) it has logged its own line — hand-log it via `log-decision.js --text-file` only when the
-envelope says `logged: false`; on any other exit, log one `SKIP` and continue — reconcile's
-`archiveRunDir` archives the header after the merge.
+the merge lands the header already archived. It never stops wrap-up: it logs its own line
+(`_shared/auto-decision-log.md`'s **CLIs that log their own entries**); on any exit other than 0, log
+one `SKIP` and continue — reconcile's `archiveRunDir` archives the header after the merge.
 
 **`integration-model: pr-first` only — push these commits now**, its own Bash call: `gh pr merge`
 below merges the PR's remote head, not this worktree's local state, so a commit left unpushed

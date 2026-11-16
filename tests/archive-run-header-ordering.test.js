@@ -233,7 +233,7 @@ test('AC2.1 local-merge: the move runs in the "Not yet decided" bullet, before e
     'local-merge-auto-finish.md',
     'finishing-a-development-branch` now',
   ];
-  const bounds = ['## C. Git Worktree', MOVE, '3.6. **Close the pipeline run'];
+  const bounds = ['## C. Git Worktree', MOVE, '**Close the pipeline run'];
   pinOrder('cleanup-procedures-execution.md', text, FROZEN_SECTION_C, [finish, bounds], MOVE);
   // A resumed run whose branch already merged takes the first bullet and never reaches the move.
   assertRelocationGoesRed(text, [finish, bounds], MOVE, (t, s) => t.indexOf('Then check', s), 'cleanup-procedures-execution.md');
@@ -242,7 +242,7 @@ test('AC2.1 local-merge: the move runs in the "Not yet decided" bullet, before e
 // ---- Each call site's own facts, scoped to its paragraph ----
 
 test('every wrap-up call site carries the CLI call and the self-logging contract in its own paragraph', () => {
-  const CONTRACT = [CLI_CALL, '`logged: false`', 'log-decision.js --text-file', '`SKIP`'];
+  const CONTRACT = [CLI_CALL, "`_shared/auto-decision-log.md`'s **CLIs that log their own entries**", 'on any exit other than 0, log one `SKIP` and continue'];
   const sites = [
     ['wrap-up/execution-and-verification.md', toParagraphEnd, [...CONTRACT, 'Skip it under `MULTISPEC_REVIEW_DEFER=1`']],
     ['wrap-up/auto-merge-short-circuit.md', toParagraphEnd, CONTRACT],
@@ -266,7 +266,7 @@ test('the MULTISPEC_REVIEW_DEFER skip list names the archive paragraph it also s
 
 test('AC3.3 multi-spec: one move at Shared teardown step 0, after the header capture, before the shared branch finish', () => {
   const text = read('flow/multispec-review-console.md');
-  const chain = [FROZEN_MS_CAPTURE, '0. **Delete the shared open-items ledger', CLI, '2. **Finish the shared branch.**'];
+  const chain = [FROZEN_MS_CAPTURE, '**Delete the shared open-items ledger', CLI, '**Finish the shared branch.**'];
   pinOrder('flow/multispec-review-console.md', text, FROZEN_MULTISPEC, [chain], CLI);
   assertRelocationGoesRed(text, [chain], ' Last, archive the spec headers', (t, s) => t.indexOf('\n', s), 'flow/multispec-review-console.md');
 
@@ -274,9 +274,8 @@ test('AC3.3 multi-spec: one move at Shared teardown step 0, after the header cap
   // only a non-zero exit logs a SKIP.
   assertFactsPinned(text, ' Last, archive the spec headers', (t, s) => t.indexOf('\n', s), [
     'node "${CLAUDE_PLUGIN_ROOT}/bin/archive-run-header.js" --run "$MULTISPEC_PARENT_DIR"',
-    '`--push` under `pr-first`',
-    '`logged: false` → hand-log it via `log-decision.js --text-file`',
-    'non-zero exit → one `SKIP`',
+    'then push as above',
+    'a non-zero exit → one `SKIP`',
   ], 'multispec step 0');
 
   // The three spans the edit replaced: retired live, carried by the frozen text, replacements the reverse.
