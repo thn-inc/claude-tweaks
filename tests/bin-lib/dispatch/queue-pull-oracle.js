@@ -129,9 +129,9 @@ function filesOracleScript(fence, mcpText) {
     first: 'gh issue list --state open --json number --limit 200 > "$DISPATCH_OPEN_NUMBERS"',
     holds: 'gh issue list --state open',
   }, [agentWrite('dispatch-open-numbers.json', 'DISPATCH_OPEN_NUMBERS')]);
-  for (const v of ['DISPATCH_DEP_NUMBERS', 'DISPATCH_ALL_DEP_NUMBERS']) {
+  for (const [v, consequence, flag] of [['DISPATCH_DEP_NUMBERS', 'used', ''], ['DISPATCH_ALL_DEP_NUMBERS', 'written', ' DEP_FRESH_FAIL=1;']]) {
     replaceSpan(lines, {
-      first: `  gh issue list --search "$(echo "$${v}" | tr ',' ' ' | sed 's/[0-9][0-9]*/#&/g')" --state all --json number,updatedAt,state --limit 500 > "$DISPATCH_DEP_FRESHNESS" 2>/dev/null || echo '[]' > "$DISPATCH_DEP_FRESHNESS"`,
+      first: `  gh issue list --search "$(echo "$${v}" | tr ',' ' ' | sed 's/[0-9][0-9]*/#&/g')" --state all --json number,updatedAt,state --limit 500 > "$DISPATCH_DEP_FRESHNESS" 2>/dev/null || { echo '[]' > "$DISPATCH_DEP_FRESHNESS";${flag} echo "Warning: dependency-freshness search failed — queue-order cache not ${consequence} this run" >&2; }`,
       holds: 'gh issue list --search',
     }, [`  ${agentWrite('dispatch-dep-freshness.json', 'DISPATCH_DEP_FRESHNESS')}`]);
   }

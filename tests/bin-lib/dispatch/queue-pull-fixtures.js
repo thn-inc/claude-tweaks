@@ -637,6 +637,7 @@ const FAULTS = [
   { id: 'F-queue', pass: 'fetch', scenario: () => failGh(P1(), QUEUE_ARGV) },
   { id: 'F-opennum', pass: 'fetch', scenario: () => failGh(P1(), OPEN_NUMBERS_ARGV) },
   { id: 'F-depfresh', pass: 'fetch', warm: true, scenario: () => failGh(P1(), DEP_SEARCH_PIPELINE_HIT) },
+  { id: 'F-depfresh-writeback', pass: 'write-back', scenario: () => failGh(P1(), DEP_SEARCH_PIPELINE) },
   { id: 'F-depview', pass: 'blocked', scenario: () => S1LiveDep({ viewFails: true }) },
   {
     id: 'F-native', pass: 'blocked',

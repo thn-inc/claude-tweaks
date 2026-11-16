@@ -264,12 +264,14 @@ const readArray = (file) => {
   return value;
 };
 
-// The `gh issue list --search "#a #b" --state all ...` dependency-freshness fetch (fence 98, 272):
-// stderr dropped, any failure writes [].
-function fetchDepFreshness(ctx, numbersCsv, file) {
+// The `gh issue list --search "#a #b" --state all ...` dependency-freshness fetch (fence: the cache check and the
+// write-back): a failure writes [] and prints one Warning naming the consequence (#5310).
+function fetchDepFreshness(ctx, numbersCsv, file, consequence) {
   const search = numbersCsv.split(',').join(' ').replace(/[0-9]+/g, '#$&');
   const r = ghRun(ctx, ['issue', 'list', '--search', search, '--state', 'all', '--json', 'number,updatedAt,state', '--limit', '500'], { quiet: true });
   put(ctx, file, r.ok ? r.stdout : '[]');
+  if (!r.ok) ctx.deps.stderr(`Warning: dependency-freshness search failed — queue-order cache not ${consequence} this run\n`);
+  return r.ok;
 }
 
 // On `files` the agent's dependency-freshness file stands where the fence's `gh issue list --search`
@@ -352,6 +354,7 @@ function makeContext(options = {}, deps = {}) {
     depFreshnessInput: null, // files only: the agent's dependency-freshness text, read by the fetch pass
     nativeUnreadable: false, // #5309: the native-blockers query failed closed; every eligible record is excluded
     depUnreadable: false, // #5311: a dependency view or the verified-open-deps file failed closed; nothing is written back
+    depFreshFailed: false, // #5310: the write-back's dependency-freshness search failed; nothing is written back
     standaloneDir: '',
     typedNumbers: new Set(), // #5584: the named records admitted on a typed command (fetch pass)
     integrationBranch: '',
@@ -508,7 +511,7 @@ function runFetch(ctx) {
   put(ctx, depFile, '[]');
   put(ctx, paths['dispatch-fastlane-bundles.json'], '[]');
   if (depNumbers) {
-    if (onGh) fetchDepFreshness(ctx, depNumbers, depFile);
+    if (onGh) fetchDepFreshness(ctx, depNumbers, depFile, 'used'); // its [] is always a miss: the numbers are the persisted signal's extra issues
     else agentDepFreshness(ctx, depFile);
   }
   aliasFile(ctx, 'alias-dep-freshness', depFile);
@@ -755,7 +758,7 @@ function runWriteBack(ctx) {
   }).value || '';
   put(ctx, depFile, '[]');
   if (allDeps) {
-    if (onGh) fetchDepFreshness(ctx, allDeps, depFile);
+    if (onGh) state.depFreshFailed = !fetchDepFreshness(ctx, allDeps, depFile, 'written');
     else agentDepFreshness(ctx, depFile);
   }
   aliasFile(ctx, 'alias-dep-freshness', depFile);
@@ -763,6 +766,7 @@ function runWriteBack(ctx) {
   if (ctx.omit.size > 0) return; // an omitted pass leaves groups the blob would misdescribe
   if (state.nativeUnreadable) return; // #5309: a failed native read is never persisted as a verdict
   if (state.depUnreadable) return; // #5311: nor is a fail-closed dependency verdict
+  if (state.depFreshFailed) return; // #5310: nor a freshness signal missing its dependencies
   if (state.typedNumbers.size > 0) return; // a typed record must not reach a later drain's cache hit (#5584)
   step(ctx, 'write-back', () => {
     const root = rootOf(ctx);

@@ -46,7 +46,8 @@
 //   - Fixed by #5311: a missing or malformed file fails closed (every unresolved dependency open, one
 //     Warning) — files-verifiedOpenDeps-missing and files-verifiedOpenDeps-malformed keep blocked:9002.
 //     F-depview fails closed too, with one Warning naming the view, since #5311.
-//   - The silent fail-opens (ledger row 6) are F-depfresh, F-prview and F-openprs.
+//   - The silent fail-opens (ledger row 6) are F-prview and F-openprs. F-depfresh and F-depfresh-writeback
+//     print one Warning per failed search since #5310.
 // One module divergence the matrix found and the module fixed (Task 3 carry): on `files` the
 // agent's dependency-freshness file stands where the fence's `gh issue list --search` stands, so
 // it is read only when there are dependency numbers to search; otherwise the fence's `echo '[]'`
@@ -3478,6 +3479,8 @@ const CLAIM_READ_COMBINED = 'AUTO — dispatch: claim read failed for #9010 (net
 // #5304: the shipped pass's unreadable claims printed alone, by the fence's flush_shipped_claims at a stop between the passes.
 const CLAIM_READ_SHIPPED_ONLY = 'AUTO — dispatch: shipped-candidate claim read failed for #9010 (network-failure), #9016 (network-failure); release time unknown, no downgrade';
 const NEAR_DUP = 'AUTO — dispatch: near-duplicate candidates across groups: ';
+const DEP_FRESH_USED = 'Warning: dependency-freshness search failed — queue-order cache not used this run';
+const DEP_FRESH_WRITTEN = 'Warning: dependency-freshness search failed — queue-order cache not written this run';
 const FOREIGN_UNREADABLE = 'acme-corp/other#12 (state unreadable)';
 
 // A row's default base, and the fault pool's bases: the matrix configs themselves (so the memo
@@ -3498,7 +3501,9 @@ const FAULT_BASES = [
 const FAULT_EXPECT = {
   'F-queue': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   'F-opennum': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
-  'F-depfresh': { status: 0, stderr: [], drops: [] },
+  'F-depfresh': { status: 0, stderr: [DEP_FRESH_USED], drops: [] },
+  // #5310: the cold write-back search fails; no blob on either side.
+  'F-depfresh-writeback': { status: 0, stderr: [DEP_FRESH_WRITTEN], drops: [], blob: null },
   'F-depview': { status: 0, base: 'gh-livedep', stderr: ['Warning: gh issue view 8000 failed — dependency #8000 treated as open (fail closed) this run'], drops: [], blob: null },
   // #5309: both eligible records are excluded fail-closed (9030 was already blocked, now with the unreadable detail); the unlanded-blocker pass has no candidate left, so it prints nothing.
   // blob: null, both sides, the row's cold origin left no order blob (no write-back); parityView compares the blobs only against each other.
@@ -4604,4 +4609,33 @@ test('#5584 CLI: the header and USAGE name --named and --run', () => {
   const header = readText(CLI_PATH).split('\n').filter((l) => l.startsWith('//')).join('\n');
   assert.match(header, /--named/);
   assert.match(header, /--run/);
+});
+
+// ---- #5310: a failed dependency-freshness search warns, once per failed search -------------------
+const depWarnings = (r) => r.stderr.split('\n').filter((l) => l.startsWith('Warning: dependency-freshness'));
+
+test('AC1.1 (#5310): a failed dep-freshness search on a warm cache prints the line naming it and recomputes rather than cache-hitting', () => {
+  const miss = pull(S1());
+  const blob = miss.store.written[0].blob;
+  const r = pull(failGh(S1(), DEP_SEARCH_8000), { persisted: blob });
+  assert.equal(r.state.cacheHit, false);
+  assert.ok(!r.stderr.includes(HIT_MESSAGE));
+  assert.deepEqual(r.json('dispatch-groups.json'), miss.json('dispatch-groups.json'), 'the recompute reaches the miss\'s groups');
+  // S1's write-back searches the same #8000, so it fails too: one line per failed search, in order.
+  assert.deepEqual(depWarnings(r), [DEP_FRESH_USED, DEP_FRESH_WRITTEN]);
+  assert.equal(r.store.written.length, 0, 'no blob persisted over the incomplete signal');
+  assert.ok(!/queue-pull: /.test(r.stderr), 'no step diagnostic beside the Warnings');
+});
+
+test('#5310: a failed write-back dep-freshness search warns once and persists no queue-order blob', () => {
+  const r = pull(failGh(S1(), DEP_SEARCH_8000));
+  assert.deepEqual(depWarnings(r), [DEP_FRESH_WRITTEN]);
+  assert.equal(r.store.written.length, 0);
+  assert.ok(!/queue-pull: /.test(r.stderr), 'no step diagnostic beside the Warning');
+});
+
+test('#5310 control: the same pulls with the search answered print no dep-freshness Warning and persist the blob', () => {
+  const r = pull(S1());
+  assert.deepEqual(depWarnings(r), []);
+  assert.equal(r.store.written.length, 1);
 });

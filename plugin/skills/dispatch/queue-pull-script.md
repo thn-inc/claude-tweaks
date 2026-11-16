@@ -91,7 +91,7 @@ echo '[]' > "$DISPATCH_DEP_FRESHNESS"
 # Placeholder: the CACHE_HIT block below overwrites it with persisted.bundles (#2066) on a hit.
 echo '[]' > "$DISPATCH_FASTLANE_BUNDLES"
 if [ -n "$DISPATCH_DEP_NUMBERS" ]; then
-  gh issue list --search "$(echo "$DISPATCH_DEP_NUMBERS" | tr ',' ' ' | sed 's/[0-9][0-9]*/#&/g')" --state all --json number,updatedAt,state --limit 500 > "$DISPATCH_DEP_FRESHNESS" 2>/dev/null || echo '[]' > "$DISPATCH_DEP_FRESHNESS"
+  gh issue list --search "$(echo "$DISPATCH_DEP_NUMBERS" | tr ',' ' ' | sed 's/[0-9][0-9]*/#&/g')" --state all --json number,updatedAt,state --limit 500 > "$DISPATCH_DEP_FRESHNESS" 2>/dev/null || { echo '[]' > "$DISPATCH_DEP_FRESHNESS"; echo "Warning: dependency-freshness search failed — queue-order cache not used this run" >&2; }
 fi
 alias_mcp_timestamps "$DISPATCH_DEP_FRESHNESS"
 CACHE_HIT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPATCH_DEP_FRESHNESS" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" "$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values dispatch-group-size-guard)" "$DISPATCH_FASTLANE_BUNDLES" <<NODE_EVAL_EOF
@@ -108,10 +108,7 @@ CACHE_HIT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_
   const current = buildFreshnessSignal([...autoBuild, ...depFreshness]);
   if (!cacheUsable(persisted, current, require('${CLAUDE_PLUGIN_ROOT}/bin/lib/express/queue.js').expressQueuePolicy().grouping)) { console.log('0'); process.exit(0); }
   fs.writeFileSync(process.argv[3], JSON.stringify(persisted.groups));
-  // persisted.excluded is the disk cache's own (unchanged) blocked-only
-  // shape ({number, blockedBy}[]) -- convert to this run's unified
-  // reason:'blocked' entries at the point it's materialized into the
-  // session-scoped file, rather than changing the disk cache's schema.
+  // persisted.excluded keeps the disk cache's {number, blockedBy}[] shape; convert to reason:'blocked' entries here.
   for (const e of persisted.excluded) {
     appendExclusion(process.argv[4], { reason: 'blocked', records: [e.number], detail: { blockedBy: e.blockedBy } });
   }
@@ -256,7 +253,7 @@ if [ "$GROUPING_RC" -ne 0 ]; then
   exit 1
 fi
 
-# #1571: write-back, cache-miss path only; best-effort (AC5). #5309/#5311: skipped after a fail-closed verdict.
+# #1571: write-back, cache-miss path only; best-effort (AC5). #5309-#5311: skipped after a fail-closed verdict or a failed dependency search.
 DISPATCH_ALL_DEP_NUMBERS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE_PRE_DEP" <<NODE_EVAL_EOF
   const { parseDependencies } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
   const eligiblePreDep = require(process.argv[1]);
@@ -265,11 +262,12 @@ DISPATCH_ALL_DEP_NUMBERS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$
 NODE_EVAL_EOF
 )
 echo '[]' > "$DISPATCH_DEP_FRESHNESS"
+DEP_FRESH_FAIL=
 if [ -n "$DISPATCH_ALL_DEP_NUMBERS" ]; then
-  gh issue list --search "$(echo "$DISPATCH_ALL_DEP_NUMBERS" | tr ',' ' ' | sed 's/[0-9][0-9]*/#&/g')" --state all --json number,updatedAt,state --limit 500 > "$DISPATCH_DEP_FRESHNESS" 2>/dev/null || echo '[]' > "$DISPATCH_DEP_FRESHNESS"
+  gh issue list --search "$(echo "$DISPATCH_ALL_DEP_NUMBERS" | tr ',' ' ' | sed 's/[0-9][0-9]*/#&/g')" --state all --json number,updatedAt,state --limit 500 > "$DISPATCH_DEP_FRESHNESS" 2>/dev/null || { echo '[]' > "$DISPATCH_DEP_FRESHNESS"; DEP_FRESH_FAIL=1; echo "Warning: dependency-freshness search failed — queue-order cache not written this run" >&2; }
 fi
 alias_mcp_timestamps "$DISPATCH_DEP_FRESHNESS"
-if [ -z "$NATIVE_UNREADABLE$DEP_UNREADABLE" ]; then
+if [ -z "$NATIVE_UNREADABLE$DEP_UNREADABLE$DEP_FRESH_FAIL" ]; then
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPATCH_DEP_FRESHNESS" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" "$DISPATCH_FASTLANE_BUNDLES" <<NODE_EVAL_EOF
   const { mainCheckoutRoot } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/hooks/worktree-detect.js');
   const path = require('path');
@@ -280,10 +278,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPA
   const depFreshness = require(process.argv[2]);
   if (!Array.isArray(autoBuild) || !Array.isArray(depFreshness)) throw new Error('not a JSON array');
   const groups = require(process.argv[3]);
-  // The disk cache's own 'excluded' field keeps its pre-#1752 shape
-  // ({number, blockedBy}[]) unchanged -- reshape this run's unified
-  // reason:'blocked' entries back into it here, at the one place the two
-  // schemas meet, rather than changing the persisted cache's own format.
+  // The disk cache keeps its pre-#1752 {number, blockedBy}[] 'excluded' shape: reshape the 'blocked' entries here.
   const excluded = readExclusions(process.argv[4])
     .filter((e) => e.reason === 'blocked')
     .map((e) => ({ number: e.records[0], blockedBy: e.detail.blockedBy }));
