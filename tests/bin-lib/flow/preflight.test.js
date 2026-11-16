@@ -865,6 +865,7 @@ test('spec probe: live and archived spec-{N} headers merge by record', async () 
 test('AC9.4 spec probe: an unreadable archived dir is absent', async () => {
   const fx = realMainRoot();
   const archived = archiveBase(fx);
+  seedHeader(archived, 7); // really on disk; only the injected readdir cannot see it
   const readdir = (p) => { if (p.startsWith(archived)) return []; try { return fs.readdirSync(p); } catch { return []; } };
   assert.deepStrictEqual(await probeSpec(fx, { readdir }), { path: null, present: false, record: null, records: [] });
 });

@@ -283,7 +283,7 @@ function buildProbes({ runDirReal, runId, mainRoot, cwd, config, state, deps, ex
       // The run dir's live and archived headers merge by record, the live copy
       // winning a duplicate (listHeaderDirs lists live before archived), so a
       // non-empty live `work/` never hides the archived one (#3974).
-      const headers = (dir) => deps.readdir(dir).filter((n) => /^\d+-spec\.md$/.test(n));
+      const headers = (dir) => deps.readdir(dir).filter((n) => /^\d+-spec\.md$/.test(n)).sort();
       const recordOf = (n) => Number(n.split('-')[0]);
       const dirs = listHeaderDirs([runDirReal], { readdir: deps.readdir });
       const flat = new Map();
