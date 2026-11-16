@@ -35,7 +35,7 @@ capture / code-health / harness-health / journey-health / docs-health   (file re
 
 Not for: granting authorization (`/claude-tweaks:backlog refine`'s job), deriving a spec, or building anything yourself. Dispatch only ever mints, hands off to `/claude-tweaks:flow` (which claims), and settles the result.
 
-**Drain, without a console (refs #1492).** Bare `/dispatch` is the drain: it repeats single-group dispatch up to `--budget` times instead of a human picking a batch. Each group still dispatches and reports on its own (Step 5, Reporting) — no console aggregates outcomes across a firing, the retired design's reason for existing (history: `design-notes.md`).
+**Drain, without a console (refs #1492).** Bare `/dispatch` is the drain: it repeats single-group dispatch up to `--budget` times instead of a human picking a batch. Each group still dispatches and reports on its own (Step 5, Reporting) — no console aggregate (history: `design-notes.md`).
 
 ## Input
 
@@ -76,7 +76,7 @@ Read the project's `work-backend` config key (per `_shared/work-record-config.md
 
 **Headless self-report (bare drain, incl. `next`).** Bare drain fires unattended — the unit a scheduled Routine fires with nobody present to read a stop message (see the Input table above). Before stopping on any Preflight failure (the `work-backend` checks above, or the Detection Ladder below), such a firing files a durable GitHub trace instead: read `_shared/headless-self-report.md` and follow it (caller = `dispatch`), then stop. It never softens the stop — it only leaves a record of it, deduplicated against any existing open report so repeated firings don't re-file.
 
-Skip this entirely for the explicit `#N` / `#N,#M,...` forms — no Routine fires them, and an ungranted record builds only when a person typed one (`queue-pull-notes.md`'s Typed command), so they just report the failing check and stop; self-filing is bare-drain/`next`-only.
+Skip this entirely for the explicit `#N` / `#N,#M,...` forms — no Routine fires them, so they just report the failing check and stop; self-filing is bare-drain/`next`-only.
 
 Before any `gh`/MCP command, run the Detection Ladder from `_shared/forge-detection.md` (checks 1-3:
 GitHub remote exists, `gh` CLI installed, `gh` authenticated + repo reachable). Check 1 and
