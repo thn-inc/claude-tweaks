@@ -10,7 +10,9 @@
 
 **Spec:** `.claude-tweaks/pipelines/2026-11-16T094409-record-4626/work/4626-spec.md`
 
-Scope keywords: approvedBatch, batchOnly, batch-only, Approved (Batch), approvalProvenance
+Scope keywords: approvedBatch, batchOnly, batch-only, Approved (Batch)
+
+Waived plugin/bin/lib/issues/merge-lane-breaker.js: unchanged by design (Non-Goals); Task 1 Step 5 runs its suite to prove AC3.1.
 
 ## Global Constraints
 
@@ -40,7 +42,7 @@ Scope keywords: approvedBatch, batchOnly, batch-only, Approved (Batch), approval
 **Interfaces:**
 - Produces: the `trustRows(records, gitLog, now, policy)` signature is unchanged. Row fields are unchanged except that `batchOnly` is removed. `mixedReasons` is drawn from `['changes-requested', 'follow-up-rate', 'negative-evidence']`. `dispositioned === changesRequested + operationalGood + negativeEvidence`. `approved` and `approvedBatch` are display tallies, and each approved record is also counted in exactly one of `operationalGood`, `negativeEvidence` or `undispositioned`.
 
-- [ ] **Step 1: Write the failing tests.** Add a `// --- #4626: approvals are display-only, never positive evidence ---` block with these cases. They reuse the existing `operationalFixture`, `commitFor`, `sha40`, `NOW`, `RECENT` and `attemptFailedCommentBody` helpers.
+- [ ] **Step 1: Write the failing tests (AC2.1).** Add a `// --- #4626: approvals are display-only, never positive evidence ---` block with these cases. They reuse the existing `operationalFixture`, `commitFor`, `sha40`, `NOW`, `RECENT` and `attemptFailedCommentBody` helpers.
   - `#4626 AC2: a record with only an accept:approved verdict contributes nothing to grading` — `trustRows([{ number: 1, labels: ['by:capture','risk:low','accept:approved'], body:'', state:'CLOSED', closedAt: RECENT }])` → `approved 1`, `undispositioned 1`, `dispositioned 0`, `coverage 0`.
   - `#4626 AC2: MIN_SAMPLES accept:approved records with no operational evidence stay insufficient-evidence` — `MIN_SAMPLES` such records → `approved === MIN_SAMPLES`, `dispositioned 0`, `verdict 'insufficient-evidence'`. Run the same fixture with `demo:approved` and assert the same verdict.
   - `#4626: an approved record is graded on its operational outcome` — `{ ...operationalFixture(1, 20), labels: [...,'accept:approved'] }` with `[commitFor(1)]` → `approved 1`, `operationalGood 1`, `undispositioned 0`.
@@ -61,7 +63,7 @@ Scope keywords: approvedBatch, batchOnly, batch-only, Approved (Batch), approval
   - **Its subject is approval-as-positive-evidence**: `demo-descent still wins over operational evidence when both are present`, `a demo:approved record carrying an earlier failed-attempt marker keeps its approved disposition`, `AC3.2: accept:approved-batch counts as approvedBatch and batchOnly`, `AC3.2: accept:* verdicts land in the same buckets as their demo:* twins`, and the three `#431:` tests. Rewrite each to pin the new rule under the same spelling coverage. Keep the `approvedBatch` tally assertions. Turn the "both are present" and "keeps approved disposition" cases into their #4626 inverses, or delete them where a Step 1 test already pins that inverse. The `demo:*`/`accept:*` twin equality in the AC3.2 bucket test stays.
   - Update `mixedReasons lists every failing input in the fixed order` and `describeMixedReasons renders every reason in order` to the three-reason order.
 
-- [ ] **Step 5: Run and see it pass.**
+- [ ] **Step 5: Run the tests and see them pass (AC2.1, AC3.1).**
   Run: `node --test tests/bin-lib/issues/trust.test.js tests/bin-lib/issues/merge-lane-breaker.test.js tests/bin-lib/issues/grant-sampling.test.js tests/bin-lib/backlog-grant-gate/backlog-grant-gate.test.js tests/backlog-grant-gate-cli.test.js tests/accept-label-reader-conformance.test.js tests/trust-policy-keys-conformance.test.js`
   Expected: PASS, 0 failures. In `merge-lane-breaker.test.js`, `AC2.1: accept:changes-requested trips the breaker exactly as demo:changes-requested does` and the revert-trip cases pass unchanged, which is AC3.
 
@@ -83,7 +85,7 @@ Scope keywords: approvedBatch, batchOnly, batch-only, Approved (Batch), approval
 **Interfaces:**
 - Consumes: Task 1's row semantics (`dispositioned` = changes-requested + operational + negative; `approved`/`approvedBatch` display-only; no `batchOnly`).
 
-- [ ] **Step 1: Re-run the live count on the new code.** Run `node plugin/bin/backlog-grant-gate.js --limit 5000 > {scratch}/grant-gate-after.json` in the foreground (a timeout of at least 600000). Diff each row's `verdict` against the pre-change capture in the run's `decisions.md` Spec Step 3 evidence line (12 graded rows; `human:human|elevated` clean on 58 dispositions, 25 of them approvals). Record which rows changed verdict and why. Expected: no machine-grantable (`producer`/`side-effect`) row gains `clean`.
+- [ ] **Step 1: Verify the live count on the new code (AC1.1).** Run `node plugin/bin/backlog-grant-gate.js --limit 5000 > {scratch}/grant-gate-after.json` in the foreground (a timeout of at least 600000). Diff each row's `verdict` against the pre-change capture in the run's `decisions.md` Spec Step 3 evidence line (12 graded rows; `human:human|elevated` clean on 58 dispositions, 25 of them approvals). Record which rows changed verdict and why. Expected: no machine-grantable (`producer`/`side-effect`) row gains `clean`.
 
 - [ ] **Step 2: Write ADR 0035.** Use ADR 0034's shape (Status accepted, Date 2026-11-16, Context #4626, #4608). Context: the tension, plus the live pre- and post-change counts from Spec Step 3 and Step 1, verbatim numbers. Decision: option 2, stated as "verdicts route work; a rejection is a revocation input, never an approval-as-promotion input". This records the decision against #4608's design intent. Alternatives: keep unchanged (rejected: an approval climbs the autonomy ladder at `unattended`); stop reading verdicts entirely (rejected: drops the strongest negative signal from per-class grading). Consequences: the revert detector and breaker are unchanged; the batch-only rule and its row field are retired; an approved record is now exposed to revert and failure-marker evidence; a Defers line points at the parked measurement record from Step 4.
 
@@ -91,7 +93,7 @@ Scope keywords: approvedBatch, batchOnly, batch-only, Approved (Batch), approval
 
 - [ ] **Step 4: Leave the measurement-record slot.** The implementer does not file records. Write ADR 0035's Defers line as `- **Defers:** parked measurement record (filed by the orchestrator; number added after filing)`. After this task, the `/build` orchestrator files the record through `/claude-tweaks:capture`, with a spec-shaped body and a `Defer-reason:`. The record says: after 30 days (`trust-evaluation-window-days`) on the release that ships this PR, re-run `backlog-grant-gate.js` and confirm that no `producer`/`side-effect` class reads `clean` with `operationalGood + changesRequested + negativeEvidence` under `MIN_VERDICTS`, and that the Spec Step 3 row diff still holds. The orchestrator then edits the number into that line.
 
-- [ ] **Step 5: Verify.**
+- [ ] **Step 5: Verify the full suite (AC4.1).**
   Run: `npm test`
   Expected: PASS, 0 failures, including the prose-pinning conformance suites.
 
