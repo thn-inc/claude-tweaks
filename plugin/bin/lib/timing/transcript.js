@@ -20,6 +20,13 @@
 // renamed files, changed meta keys) must degrade to the not-found path, never
 // throw or guess. If the pinned tests ever go red, Claude Code changed the
 // scheme — re-derive the rule from a fresh observation, do not loosen the test.
+// Agents a workflow script starts sit one layout over (#5597):
+// {sessionId}/subagents/workflows/{runId}/agent-{id}.jsonl + agent-{id}.meta.json
+// (meta adds workflowPhase), with a run file at {sessionId}/workflows/{runId}.json
+// whose agentCount readDispatches cross-checks. That layout was OBSERVED on
+// Claude Code CLI 2.1.325 and is not documented either. Agents a workflow
+// agent starts itself (spawnDepth > 1) are read only when their files sit in
+// the same run directory.
 'use strict';
 const fs = require('fs');
 const os = require('os');
@@ -133,7 +140,9 @@ function resultText(content) {
 // turnStart (true on the first assistant row of each message.id and on any
 // assistant row without a string id), and contextTokens (inputTokens +
 // cacheRead + cacheCreate on turnStart rows, taken after the stream closes so
-// it reflects the per-id max; 0 elsewhere).
+// it reflects the per-id max; 0 elsewhere). User rows also carry agentCalls
+// (#5597): the tool_result blocks classed dispatch whose call was Agent or
+// Task — so a Workflow call counts in turnClasses.dispatch but not here.
 // Rejects when the file cannot be opened, with the real stat failure's
 // code (ENOENT/EACCES/...; EUNKNOWN if the error carries none), with
 // EISDIR when the path resolves but names a directory, or — if `stat`
@@ -195,6 +204,8 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
           }
         }
       } else {
+        // User rows only: an assistant row carries no agentCalls key (#5597).
+        row.agentCalls = 0;
         for (const b of content) {
           if (!b || b.type !== 'tool_result') continue;
           row.toolRoundTrip = true;
@@ -202,6 +213,7 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
           const call = toolUses.get(b.tool_use_id) || {};
           const cls = classifyToolCall({ name: call.name, input: call.input, isError: b.is_error === true, resultText: resultText(b.content), worktree });
           row.turnClasses[cls] = (row.turnClasses[cls] || 0) + 1;
+          if (cls === 'dispatch' && (call.name === 'Agent' || call.name === 'Task')) row.agentCalls += 1;
         }
       }
       rows.push(row);
@@ -216,9 +228,15 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
 // transcriptPath -> the session's {sessionId}/subagents directory: the sibling
 // directory for a main transcript, or the containing directory for a
 // subagent's own agent-{id}.jsonl (what /dispatch passes via --transcript),
-// which already sits in it.
+// which already sits in it, or three levels up for a workflow agent's
+// subagents/workflows/{runId}/agent-{id}.jsonl (#5597).
 function subagentsDirFor(transcriptPath) {
   const p = String(transcriptPath);
+  if (/^agent-.+\.jsonl$/.test(path.basename(p))
+    && path.basename(path.dirname(path.dirname(p))) === 'workflows'
+    && path.basename(path.dirname(path.dirname(path.dirname(p)))) === 'subagents') {
+    return path.dirname(path.dirname(path.dirname(p)));
+  }
   if (path.basename(path.dirname(p)) === 'subagents' && /^agent-.+\.jsonl$/.test(path.basename(p))) return path.dirname(p);
   return path.join(p.replace(/\.jsonl$/, ''), 'subagents');
 }
@@ -252,7 +270,7 @@ function transcriptModelOf(rows) {
   return models.find((m) => /^claude-/.test(m)) || models[0] || null;
 }
 
-// subagentsDir, { fsImpl?, window? } -> Promise<{ items, notFound, excludedOutsideWindow }>.
+// subagentsDir, { fsImpl?, window? } -> Promise<{ items, notFound, excludedOutsideWindow, dirNotes }>.
 // One Dispatch per agent-{id}; meta and transcript are paired by id. Token
 // totals come from readUsage, so its message.id dedupe is the one in force.
 // window = { start, end } (epoch ms, inclusive): rows outside it are dropped
@@ -264,11 +282,18 @@ function transcriptModelOf(rows) {
 // dispatch that has a timed row kept. A readable transcript with no timestamped
 // rows is notFound 'transcript has no usage rows' (numbers null), decided
 // before clipping. A symlinked subagents/ directory is never followed, and one
-// with no agent-* files is notFound rather than an empty table. Never throws.
+// with no agent-* files in it or in any workflow run directory is notFound
+// rather than an empty table. Workflow run directories (subagents/workflows/
+// {runId}/, see the header) are scanned only when the subagents/ listing names
+// a workflows entry; their items carry workflowRunId (the run directory name)
+// and workflowPhase (the meta's, when a string), direct items null for both. A
+// workflow directory that is a symlink, cannot be read, or holds no agent
+// files — and a run file whose agentCount disagrees with the agents found — is
+// one dirNotes string (always present, [] when none). Never throws.
 async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {}) {
   // Absent or unreadable falls through: readdirSync below names the code.
   if (lstatType(subagentsDir, { fsImpl }).type === 'symlink') {
-    return { items: [], notFound: `subagents/ directory is a symlink (not followed) at ${subagentsDir}`, excludedOutsideWindow: 0 };
+    return { items: [], notFound: `subagents/ directory is a symlink (not followed) at ${subagentsDir}`, excludedOutsideWindow: 0, dirNotes: [] };
   }
   let names;
   try {
@@ -278,8 +303,71 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
     const notFound = code === 'ENOENT' || code === 'ENOTDIR'
       ? `no subagents/ directory at ${subagentsDir}`
       : `subagents/ directory not readable (${code}) at ${subagentsDir}`;
-    return { items: [], notFound, excludedOutsideWindow: 0 };
+    return { items: [], notFound, excludedOutsideWindow: 0, dirNotes: [] };
   }
+  const scans = [await scanAgentDir(subagentsDir, names, { fsImpl, window, workflowRunId: null })];
+  const dirNotes = [];
+  // Decided on the listing already taken: no workflows entry, no extra fs call.
+  if (names.includes('workflows')) await scanWorkflows(subagentsDir, { fsImpl, window, scans, dirNotes });
+  if (!scans.some((s) => s.ids > 0)) return { items: [], notFound: `no agent-* transcripts in ${subagentsDir}`, excludedOutsideWindow: 0, dirNotes };
+  const built = [].concat(...scans.map((s) => s.built));
+  built.sort((a, b) => {
+    if (a.startMs === null && b.startMs !== null) return 1;
+    if (b.startMs === null && a.startMs !== null) return -1;
+    if (a.startMs !== b.startMs) return a.startMs - b.startMs;
+    if (a.d.agentId === b.d.agentId) return 0;
+    return a.d.agentId < b.d.agentId ? -1 : 1;
+  });
+  const excludedOutsideWindow = scans.reduce((s, x) => s + x.excluded, 0);
+  return { items: built.map((x) => x.d), notFound: null, excludedOutsideWindow, dirNotes };
+}
+
+// Scans subagents/workflows/ (the caller saw it listed): every run directory
+// in it goes through scanAgentDir, pushing onto scans; every problem is a
+// dirNotes string. Nothing symlinked is followed; plain files are ignored.
+async function scanWorkflows(subagentsDir, { fsImpl, window, scans, dirNotes }) {
+  const wfDir = path.join(subagentsDir, 'workflows');
+  const wt = lstatType(wfDir, { fsImpl });
+  if (wt.type === 'symlink') { dirNotes.push(`workflows/ directory is a symlink (not followed) at ${wfDir}`); return; }
+  if (wt.type === 'missing' || wt.type === 'unreadable') { dirNotes.push(`workflows/ directory not readable (${wt.code}) at ${wfDir}`); return; }
+  if (wt.type !== 'directory') return;
+  let runs;
+  try {
+    runs = fsImpl.readdirSync(wfDir);
+  } catch (err) {
+    dirNotes.push(`workflows/ directory not readable (${(err && err.code) || 'EUNKNOWN'}) at ${wfDir}`);
+    return;
+  }
+  for (const runId of [...runs].sort()) {
+    const runPath = path.join(wfDir, runId);
+    const t = lstatType(runPath, { fsImpl });
+    if (t.type === 'symlink') { dirNotes.push(`workflow run directory is a symlink (not followed) at ${runPath}`); continue; }
+    if (t.type === 'missing' || t.type === 'unreadable') { dirNotes.push(`workflow run directory not readable (${t.code}) at ${runPath}`); continue; }
+    if (t.type !== 'directory') continue;
+    let runNames;
+    try {
+      runNames = fsImpl.readdirSync(runPath);
+    } catch (err) {
+      dirNotes.push(`workflow run directory not readable (${(err && err.code) || 'EUNKNOWN'}) at ${runPath}`);
+      continue;
+    }
+    const scan = await scanAgentDir(runPath, runNames, { fsImpl, window, workflowRunId: runId });
+    if (scan.ids === 0) dirNotes.push(`no agent-* transcripts in ${runPath}`);
+    else scans.push(scan);
+    // Cross-check against the run file Claude Code writes beside the session's
+    // subagents/ directory; any read or parse failure adds nothing.
+    const runFile = path.join(path.dirname(subagentsDir), 'workflows', `${runId}.json`);
+    if (lstatType(runFile, { fsImpl }).type !== 'file') continue;
+    let run = null;
+    try { run = JSON.parse(fsImpl.readFileSync(runFile, 'utf8')); } catch { run = null; }
+    const n = run && typeof run === 'object' && !Array.isArray(run) ? numOrNull(run.agentCount) : null;
+    if (n !== null && n !== scan.ids) dirNotes.push(`workflow run ${runId}: run file agentCount ${n}, ${scan.ids} agent(s) found in ${runPath}`);
+  }
+}
+
+// dir, names (its listing), { fsImpl, window, workflowRunId } ->
+// Promise<{ built: [{ d, startMs }], ids: number, excluded: number }>.
+async function scanAgentDir(dir, names, { fsImpl, window, workflowRunId }) {
   // A symlinked agent file could point outside the projects root, so it is
   // never followed (the lstat twin of locateTranscripts' realpath containment,
   // IL-150), and an entry lstat cannot prove regular is treated the same way
@@ -291,19 +379,18 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
     const m = /^agent-(.+?)(\.meta\.json|\.jsonl)$/.exec(n);
     if (!m) continue;
     ids.add(m[1]);
-    const t = lstatType(path.join(subagentsDir, n), { fsImpl });
+    const t = lstatType(path.join(dir, n), { fsImpl });
     if (t.type === 'symlink') skipped.set(n, 'symlink');
     else if (t.type === 'missing' || t.type === 'unreadable') skipped.set(n, t.code);
   }
-  if (ids.size === 0) return { items: [], notFound: `no agent-* transcripts in ${subagentsDir}`, excludedOutsideWindow: 0 };
   const built = [];
-  let excludedOutsideWindow = 0;
+  let excluded = 0;
   for (const agentId of ids) {
     const metaName = `agent-${agentId}.meta.json`;
     const jsonlName = `agent-${agentId}.jsonl`;
     const { meta, reason: metaReason } = skipped.has(metaName)
       ? { meta: null, reason: `meta not readable (${skipped.get(metaName)})` }
-      : readMeta(fsImpl, path.join(subagentsDir, metaName));
+      : readMeta(fsImpl, path.join(dir, metaName));
     const d = {
       agentId,
       description: meta ? strOrNull(meta.description) : null,
@@ -314,6 +401,8 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
       spawnDepth: meta ? numOrNull(meta.spawnDepth) : null,
       startTs: null, endTs: null, wallClockMs: null, tokens: null,
       notFound: metaReason,
+      workflowRunId: workflowRunId ?? null,
+      workflowPhase: workflowRunId && meta && typeof meta.workflowPhase === 'string' ? meta.workflowPhase : null,
     };
     // A transcript failure keeps the meta reason ahead of it, so an orphan
     // whose transcript is also unusable still says its meta was missing.
@@ -324,7 +413,7 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
       fail(`transcript not readable (${skipped.get(jsonlName)})`);
     } else {
       try {
-        rows = await readUsage(path.join(subagentsDir, jsonlName), { fsImpl });
+        rows = await readUsage(path.join(dir, jsonlName), { fsImpl });
       } catch (err) {
         fail(`transcript not readable (${(err && err.code) || 'EUNKNOWN'})`);
       }
@@ -341,7 +430,7 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
       }
       const kept = window ? stamped.filter((x) => x.ms >= window.start && x.ms <= window.end) : stamped;
       if (window && kept.length === 0) {
-        excludedOutsideWindow += 1;
+        excluded += 1;
         continue;
       }
       const first = kept.reduce((a, b) => (b.ms < a.ms ? b : a));
@@ -362,14 +451,7 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
     }
     built.push({ d, startMs });
   }
-  built.sort((a, b) => {
-    if (a.startMs === null && b.startMs !== null) return 1;
-    if (b.startMs === null && a.startMs !== null) return -1;
-    if (a.startMs !== b.startMs) return a.startMs - b.startMs;
-    if (a.d.agentId === b.d.agentId) return 0;
-    return a.d.agentId < b.d.agentId ? -1 : 1;
-  });
-  return { items: built.map((x) => x.d), notFound: null, excludedOutsideWindow };
+  return { built, ids: ids.size, excluded };
 }
 
 module.exports = { TRANSCRIPT_SLUG_RULE, slugForCwd, locateTranscripts, readUsage, isProcedurePath, resultBytes, statTranscriptOrThrow, subagentsDirFor, readDispatches };
