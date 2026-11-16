@@ -771,8 +771,9 @@ function run(ctx) {
 
   // Worktree hold (#4960, log tier): record that this session now stands in the entered
   // worktree (or has left it) so the reapers skip it. No early return lies between here and
-  // the run-dir stamp below, and it runs ahead of the warn-tier checks that do return, so a
-  // later failure or returned nudge cannot skip it; never changes this hook's answer.
+  // the run-dir stamp below, and the only earlier returns (closing-keyword, design-doc) fire
+  // on Bash/Write calls, so an EnterWorktree/ExitWorktree call always reaches it; it also runs
+  // ahead of the later nudges that return. Never changes this hook's answer.
   try {
     holdLib.syncHoldForToolUse(ctx.input, {
       cwd: ctx.cwd, env: process.env, ownerBlock: ctxLib.ownerBlock, resolveEnteredPath: () => resolveCreatedWorktreePath(ctx),

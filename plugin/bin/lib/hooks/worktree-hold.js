@@ -210,13 +210,15 @@ function clearSessionHolds(mainRoot, { sessionId, pid } = {}) {
 // Stamps `{sessionId, agentId}`'s hold in the worktree containing `where`, then clears the
 // same key from every other worktree so the hold follows the session.
 // `keyAgent` is the key's agent part when it differs from the block's `agentId`.
-function stampHold({ where, sessionId, agentId, keyAgent = agentId, env, ownerBlock }) {
+// `move: false` only adds the hold and leaves the same key where it already is.
+function stampHold({ where, sessionId, agentId, keyAgent = agentId, move = true, env, ownerBlock }) {
   const wt = worktreeRootOf(where);
   if (!wt) return 'skipped';
   const block = ownerBlock({ sessionId, env });
   const key = holdKey({ sessionId, agentId: keyAgent, pid: block && block.pid });
   if (!key) return 'skipped';
   if (!writeHold(wt, { key, block, agentId })) return 'skipped';
+  if (!move) return 'stamped';
   const mainRoot = mainCheckoutRoot(wt);
   if (mainRoot) clearHolds(mainRoot, { key, except: wt });
   return 'stamped';
@@ -248,9 +250,13 @@ function syncHoldForToolUse(input, { cwd, env, ownerBlock, resolveEnteredPath } 
 // SessionStart: a "home" hold for the worktree the session starts (or resumes) in. Its own key
 // (`home`, never `main`) so EnterWorktree's move and ExitWorktree's clear leave it: the session
 // returns to its launch directory on exit, and a session standing in A with no hold is #4960.
+// It only adds, never clears the home key elsewhere: compact/clear/resume re-fire SessionStart
+// mid-session (possibly inside B), and every worktree stood in at a SessionStart stays held
+// until SessionEnd clears them all. A resumed session has a new pid, so the old pid's holds
+// read as dead; clearing the same key elsewhere buys nothing.
 function stampHoldForCwd({ cwd, sessionId, env, ownerBlock } = {}) {
   try {
-    return stampHold({ where: cwd, sessionId, agentId: undefined, keyAgent: 'home', env, ownerBlock });
+    return stampHold({ where: cwd, sessionId, agentId: undefined, keyAgent: 'home', move: false, env, ownerBlock });
   } catch {
     return 'skipped';
   }

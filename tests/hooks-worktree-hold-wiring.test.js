@@ -29,7 +29,7 @@ function withPid(fn) {
 
 const keys = (wt) => hold.readHolds(wt).map((e) => e.key);
 
-test('SessionStart in a linked worktree stamps a main-thread hold', () => withPid(async () => {
+test('SessionStart in a linked worktree stamps a home hold', () => withPid(async () => {
   const main = gitRepo();
   const a = harnessWorktreeOf(main, 'wire-start');
   const nodePathHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-hold-wire-'));

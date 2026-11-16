@@ -114,6 +114,18 @@ test('ExitWorktree from inside the worktree being exited clears its hold', () =>
   assert.deepStrictEqual(hold.readHolds(a), []);
 }));
 
+test('a compact SessionStart inside B keeps the launch worktree A held', () => withPid(() => {
+  const main = gitRepo();
+  const a = harnessWorktreeOf(main, 'hold-a');
+  const b = harnessWorktreeOf(main, 'hold-b');
+  const stamp = (cwd) => hold.stampHoldForCwd({ cwd, sessionId: 's1', env: process.env, ownerBlock });
+  assert.strictEqual(stamp(a), 'stamped');
+  post.run(enterCtx(b));
+  assert.strictEqual(stamp(b), 'stamped');
+  post.run({ input: { tool_name: 'ExitWorktree', cwd: b, session_id: 's1' }, cwd: b });
+  assert.ok(keys(a).includes(`s1__home__${process.pid}`));
+}));
+
 test('a session started in worktree A keeps its hold on A across EnterWorktree B and ExitWorktree', () => withPid(() => {
   const main = gitRepo();
   const a = harnessWorktreeOf(main, 'hold-a');
