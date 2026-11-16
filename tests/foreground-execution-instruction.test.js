@@ -108,12 +108,12 @@ const SHARED_RULE = [
 // and item 7's / the handoff template's `{plugin-root}`.
 const WAIT_FOR_FACTS = [
   [/`node\s+"(?:\$\{CLAUDE_PLUGIN_ROOT\}|\{plugin-root\})\/bin\/wait-for\.js"\s+agents\s+--ids\s+\{ids\}\s+--max-seconds\s+150`,\s+20\s+minutes\s+per\s+wave\s+of\s+children/, 'the wait-for.js agents invocation with its 20-minute window per wave'],
-  [/`\{ids\}`\s+are\s+the\s+agent\s+ids\s+of\s+the\s+children\s+whose\s+notification\s+has\s+not\s+arrived\s+and\s+that\s+no\s+call\s+has\s+reported,\s+comma-separated/, '{ids} are the children whose notification has not arrived and that no call has reported, comma-separated'],
+  [/`\{ids\}`\s+are\s+the\s+agent\s+ids\s+of\s+the\s+children\s+whose\s+notification\s+has\s+not\s+arrived\s+and\s+that\s+no\s+call\s+has\s+reported,\s+comma-separated\s+\(the\s+last\s+call's\s+`pending`\s+list;\s+empty\s+means\s+the\s+wait\s+is\s+over\)/, '{ids} are the children whose notification has not arrived and that no call has reported, taken from the last call pending list'],
   [/foreground\s+Bash\s+call\s+with\s+no\s+`timeout`\s+parameter:\s+the\s+command\s+returns\s+within\s+150\s+seconds,\s+under\s+the\s+180-second\s+ceiling/, 'a foreground call with no timeout parameter, returning under the 180-second ceiling'],
   [/Exit\s+0\s+means\s+a\s+listed\s+child\s+stopped:\s+its\s+notification\s+is\s+in\s+hand\s+or\s+arrives\s+next;\s+call\s+again\s+while\s+any\s+child\s+is\s+outstanding/, 'exit 0 means a listed child stopped'],
   [/Exit\s+3\s+with\s+`"bound":"call"`\s+means\s+call\s+again/, 'exit 3 with a call bound means call again'],
   [/Exit\s+3\s+with\s+`"bound":"deadline"`\s+means\s+the\s+20-minute\s+window\s+is\s+over:[^.]*?the\s+next\s+call\s+is\s+that\s+window/, 'exit 3 with a deadline bound ends the 20-minute window'],
-  [/Exit\s+2\s+is\s+a\s+failed\s+wait\s+call/, 'exit 2 is a failed wait call'],
+  [/Any\s+other\s+exit\s+is\s+a\s+failed\s+wait\s+call/, 'any exit other than 0 and 3 is a failed wait call'],
   [/The\s+command's\s+output\s+line\s+is\s+the\s+wait's\s+log\s+line,\s+so\s+(?:write|the\s+agent\s+writes)\s+no\s+separate\s+one/, "the command's output line is the wait's log line"],
 ];
 const INVOCATION_NEEDLE = '/bin/wait-for.js" agents --ids';
@@ -588,6 +588,7 @@ test('AC5.1: the core invocation line runs against the real CLI and reports a ca
   const run = (cmd) => spawnSync('bash', ['-c', cmd], {
     encoding: 'utf8',
     windowsHide: true,
+    timeout: 30000,
     env: { ...process.env, TMPDIR: dir, TMP: dir, TEMP: dir, CLAUDE_CODE_SESSION_ID: `fixture-5604-${process.pid}` },
   });
   const filled = fill(line[1]);
@@ -903,6 +904,8 @@ const BOUNDED_POLLING = [
   [/wait-for\.js\s+ci\s+--run/, 'a workflow run wait is `wait-for.js ci --run`'],
   [/wait-for\.js\s+pid\b/, 'a local process wait is `wait-for.js pid`'],
   [/`--max-seconds\s+150`;\s+a\s+`ci`\s+call\s+may\s+run\s+20\s+s\s+past\s+it/, 'a ci call may run 20 s past --max-seconds'],
+  [/:\s+0\s+means\s+read\s+the\s+result/, 'exit 0 means read the result'],
+  [/3\s+with\s+`"bound":"call"`\s+means\s+call\s+again/, 'exit 3 with a call bound means call again'],
   [/3\s+with\s+`"bound":"deadline"`\s+means\s+the\s+bound\s+is\s+exhausted/, 'exit 3 with a deadline bound means the bound is exhausted'],
   [/on\s+exit\s+2\s+call\s+it\s+once\s+more,\s+which\s+joins\s+the\s+failed\s+call's\s+window,\s+and\s+a\s+second\s+exit\s+2\s+ends\s+the\s+wait\s+unresolved/, 'a first exit 2 is retried once and a second ends the wait unresolved'],
   [/the\s+cap,\s+interval\s+and\s+logging\s+rules\s+below\s+are\s+for\s+any\s+other\s+condition/, 'the cap, interval and logging rules are for any other condition'],

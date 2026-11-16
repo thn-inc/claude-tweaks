@@ -72,12 +72,12 @@ windows, below), stopping as soon as every child's `<task-notification>` has arr
 or tailing a running child's `output_file` (a failed child's output is retrieved per Failed-agent
 retrieval below) — until every child has reported, and never ends its turn with a child outstanding.
 `{ids}` are the agent ids of the children whose notification has not arrived and that no call has
-reported, comma-separated. Each call is a foreground Bash call with no `timeout` parameter: the
+reported, comma-separated (the last call's `pending` list; empty means the wait is over). Each call is a foreground Bash call with no `timeout` parameter: the
 command returns within 150 seconds, under the 180-second ceiling a dispatched agent's foreground
 call has (#5602). Exit 0 means a listed child stopped: its notification is in hand or arrives next;
 call again while any child is outstanding. Exit 3 with `"bound":"call"` means call again. Exit 3
 with `"bound":"deadline"` means the 20-minute window is over: the bound has expired, and when the
-rule below grants another window, the next call is that window. Exit 2 is a failed wait call. The
+rule below grants another window, the next call is that window. Any other exit is a failed wait call. The
 command's output line is the wait's log line, so the agent writes no separate one. A reply that ends
 without a tool call ends the turn, whatever is still in flight. **Fallback:**
 when no `Agent`/`Task` tool exists (`ToolSearch` finds none, deferred or otherwise — the normal case

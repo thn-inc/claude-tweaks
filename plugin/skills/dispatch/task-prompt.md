@@ -47,13 +47,13 @@ calls — plus one standing instruction (item 7) whose only dispatcher placehold
    of children (the set launched together), stopping as soon as every child's `<task-notification>`
    has arrived, never reading or tailing a running child's `output_file` — until every child you
    launched has reported, and never end your turn with one outstanding. `{ids}` are the agent ids of
-   the children whose notification has not arrived and that no call has reported, comma-separated.
-   Make each call a foreground Bash call with no `timeout` parameter: the command returns within 150
+   the children whose notification has not arrived and that no call has reported, comma-separated
+   (the last call's `pending` list; empty means the wait is over). Make each call a foreground Bash call with no `timeout` parameter: the command returns within 150
    seconds, under the 180-second ceiling a dispatched agent's foreground call has (#5602). Exit 0
    means a listed child stopped: its notification is in hand or arrives next; call again while any
    child is outstanding. Exit 3 with `"bound":"call"` means call again. Exit 3 with
    `"bound":"deadline"` means the 20-minute window is over: the bound has expired, and when the rule
-   below grants another window, the next call is that window. Exit 2 is a failed wait call. The
+   below grants another window, the next call is that window. Any other exit is a failed wait call. The
    command's output line is the wait's log line, so write no separate one. With no `Agent` tool
    (`ToolSearch` finds none, deferred or otherwise), or a child still silent when the bound expires,
    judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that child is

@@ -9,7 +9,7 @@ files:
 
 # Block on a Child Agent, a PR's CI, or a Process Instead of Polling With Sleep
 
-**Persona:** An orchestrating agent: a dispatched subagent, or a context-handoff child, running a claude-tweaks pipeline step. It has launched async `Agent` children, pushed a pull request, or started a background process, and must keep its turn alive until one of them changes state. Before #5604 the keep-alive rule told it to make up to 60 twenty-second sleep calls per wave. A Bash call longer than 180 s is moved to the background in this seat (`docs/reference/blocking-wait-probe.md`). The plugin maintainer reads the same output when debugging a stalled wait.
+**Persona:** An orchestrating agent: a dispatched subagent, or a context-handoff child, running a claude-tweaks pipeline step. It has launched async `Agent` children, pushed a pull request, or started a background process, and must keep its turn alive until one of them changes state. A Bash call longer than 180 s is moved to the background in this seat (`docs/reference/blocking-wait-probe.md`). The plugin maintainer reads the same output when debugging a stalled wait.
 **Goal:** Wait for exactly the thing it is waiting on, a child's final stop, the PR's checks or a process exiting, with one bounded foreground call per wait, and learn which thing changed.
 **Entry point:** `node "<plugin root>/bin/wait-for.js" agents --ids <a,b>` (or `ci --pr <n>`, `ci --run <id>`, `pid --pid <n>`) as a plain Bash call with no `timeout`.
 **Success state:** Exit 0 with one JSON line naming what changed: `reported` ids, the classifier `state`, or `state: "gone"`. Or exit 3 with `bound: "call"` (call again, joining the same window) or `bound: "deadline"` (the wave's window ran out: judge it per the wait rule).
