@@ -81,14 +81,15 @@ one item at a time, repeated in list order (`## Input`). `$ARGUMENTS` selects wh
 runs — read only the matching branch in `entry-paths.md` in this skill's directory: no arguments
 (session-recall) or `#N` given (single-record lookup — entered once per ref for a list).
 
-### The packet's state (`#N` only)
-
-Resolve the session-temp paths as its own call (`_shared/session-tmp-root.md`), and paste each
-printed path where a call below names it:
+For each `#N`, before reading its `entry-paths.md` branch, resolve the session-temp paths as its
+own call (`_shared/session-tmp-root.md`), and paste each printed path where a call in that branch
+or below names it:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" RECORD=accept-record-{n}.json PACKET_FILE=accept-packet-{n}.md REFRESHED=accept-refreshed-{n}.md FACTS=accept-facts-{n}.json NARRATIVE=accept-narrative-{n}.json SPEC=accept-spec-{n}.md BUILT=accept-built-{n}.md
 ```
+
+### The packet's state (`#N` only)
 
 The `#N` branch writes the record's `gh issue view` result to `"{RECORD}"`. The packet is always
 read with this call, as its own Bash call — never by fetching comments and matching the marker by

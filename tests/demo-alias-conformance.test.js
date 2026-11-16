@@ -88,15 +88,14 @@ test('the stub stays small: two steps and no acceptance mechanics', () => {
 });
 
 // AC6: removal condition (a), mechanized. git grep reads tracked files only, the same set the
-// condition's `grep -rFn` is meant to judge. docs/superpowers/plans/ is excluded with docs/plans/
-// (the plan's logged interpretation: it is the repo's dated plan directory).
+// condition's `grep -rFn` is meant to judge. The allowed set is exactly the condition's: a match
+// anywhere else, docs/superpowers/plans/ included, would keep condition (a) from ever holding.
 const AC6_ALLOWED = [
   'plugin/skills/demo/SKILL.md',
   'plugin/skills/demo/deprecated-aliases.md',
   'docs/incident-log.md',
   'docs/decisions/',
   'docs/plans/',
-  'docs/superpowers/plans/',
 ];
 
 function ac6Grep() {
@@ -117,6 +116,13 @@ function ac6Grep() {
 test('AC6.1: no claude-tweaks:demo outside the allowed set', () => {
   const offenders = ac6Grep().filter((line) => !AC6_ALLOWED.some((prefix) => line.startsWith(prefix)));
   assert.deepEqual(offenders, [], `claude-tweaks:demo cited outside the allowed set:\n${offenders.join('\n')}`);
+});
+
+test('AC6.1: the allowed set is exactly the one removal condition (a) names', () => {
+  // (a) names the stub and the alias doc in words, then each other path as a code span.
+  const clause = REMOVAL_CONDITION.slice(REMOVAL_CONDITION.indexOf('finds no match outside'), REMOVAL_CONDITION.indexOf('; (b)'));
+  const named = [...clause.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+  assert.deepEqual(AC6_ALLOWED, [path.relative(ROOT, STUB_PATH).split(path.sep).join('/'), path.relative(ROOT, ALIAS_DOC_PATH).split(path.sep).join('/'), ...named]);
 });
 
 test('AC6.2: the grep is live', () => {

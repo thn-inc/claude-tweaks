@@ -139,7 +139,7 @@ test('#1208 AC1: accept/browser-verdict.md documents lifecycle stop on every exi
 test('CRITICAL gotcha: accept/SKILL.md and browser-verdict.md explicitly state no auto-mode path can reach the browser-verdict step', (t) => {
   assert.match(demoSkill, /No auto-mode path reaches this/);
   assert.match(browserVerdict, /No auto-mode path reaches this/);
-  assert.match(browserVerdict, /never invoked from within an `auto`-mode pipeline/);
+  assert.match(browserVerdict, /automatic entry\s+\(`automatic-entry\.md`, `SKILL\.md`'s `## Component-Skill Contract`\), which never reads this file/);
   const preChange = countAtPreChangeOrSkip(t, PRE_CHANGE_DEMO_SKILL_PATH, 'No auto-mode path reaches this');
   if (!preChange.ok) return;
   assert.strictEqual(

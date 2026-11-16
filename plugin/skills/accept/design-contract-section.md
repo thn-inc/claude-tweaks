@@ -1,4 +1,4 @@
-# Demo Step 2 — The Design Contract Section
+# Accept Step 2 — The Design Contract Section
 
 Referenced by `skills/accept/SKILL.md` Step 2's `### The design contract this was built against`
 subsection. Read only after `../_shared/design-contract.md`'s locate-and-parse procedure has run

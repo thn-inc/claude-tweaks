@@ -1,4 +1,4 @@
-# Demo Step 3 — Filing the Follow-Up Record
+# Accept Step 3 — Filing the Follow-Up Record
 
 Referenced by `skills/accept/verdict-interim.md` (Step 3: both the label-backed and the session-recall
 **Request changes** branches) and `skills/accept/SKILL.md` Step 2's Scope-fork checkpoint ("Capture it"). Read only when a

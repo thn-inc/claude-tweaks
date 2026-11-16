@@ -17,19 +17,19 @@ const SPLITS = [
   {
     skill: 'accept',
     sub: 'browser-verdict.md',
-    heading: '# Demo Step 2 — Browser Verdict',
+    heading: '# Accept Step 2 — Browser Verdict',
     bodyLiteral: 'Compose a single-variant `layout`-scope',
   },
   {
     skill: 'accept',
     sub: 'design-contract-section.md',
-    heading: '# Demo Step 2 — The Design Contract Section',
+    heading: '# Accept Step 2 — The Design Contract Section',
     bodyLiteral: 'five blocks reproduced **verbatim**',
   },
   {
     skill: 'accept',
     sub: 'follow-up-record.md',
-    heading: '# Demo Step 3 — Filing the Follow-Up Record',
+    heading: '# Accept Step 3 — Filing the Follow-Up Record',
     bodyLiteral: 'Never `allocateId`+`writeRecord`',
   },
   {
