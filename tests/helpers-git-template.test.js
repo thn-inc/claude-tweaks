@@ -362,6 +362,27 @@ for (const shape of [undefined, ...catchupFixtures.CATCHUP_SHAPES]) {
   });
 }
 
+// prune-remote fixtures (#5769): origin, repo and pushed branches built once per process, one variant per setup.
+const pruneFixtures = require('./bin-lib/reconcile/prune-remote-fixtures');
+for (const name of pruneFixtures.PRUNE_REMOTE_FIXTURES) {
+  test(`AC4.1: prune-remote ${name}: a second call starts no git process`, () => {
+    const make = () => pruneFixtures.pruneRemoteFixture(name);
+    const dirsOf = (r) => [r.dir, r.origin, r.wt].filter(Boolean);
+    scratch.push(...dirsOf(make()));
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(...dirsOf(second));
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+
+test('a prune-remote squashed copy holds the squash commit on main over preSquash', () => {
+  const f = pruneFixtures.pruneRemoteFixture('squashed');
+  scratch.push(f.dir, f.origin);
+  assert.strictEqual(git(f.dir, ['rev-parse', 'main']), f.squash);
+  assert.strictEqual(git(f.dir, ['rev-parse', 'main~1']), f.preSquash);
+});
+
 test('AC4.1: originWithTwoClones with a seed and no key throws', () => {
   assert.throws(() => gitFixtures.originWithTwoClones('ct-gt-otc-', { seed: () => {} }), /seed needs a key/);
 });
