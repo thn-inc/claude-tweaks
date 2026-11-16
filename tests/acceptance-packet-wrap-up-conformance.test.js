@@ -123,9 +123,10 @@ const exit2 = () => between(step4(), '- **Exit 2**', '- **Exit 4**');
 const exit4 = () => between(step4(), '- **Exit 4**', '`work-backend: local-files`');
 const belowFloor = () => between(brief(), '**`exceeds: false`**', '**`exceeds: true`**');
 
-test('Step 4 names gather, render and post in that order and cites the contract', () => {
+// #4613: the post itself moved to accept/automatic-entry.md, which Step 4 hands the rendered packet.
+test('Step 4 names gather, render and the automatic entry\'s post in that order and cites the contract', () => {
   const body = step4();
-  const at = ['acceptance-packet.js" gather', 'acceptance-packet.js" render', 'acceptance-packet.js" post'].map((literal) => body.indexOf(literal));
+  const at = ['acceptance-packet.js" gather', 'acceptance-packet.js" render', '`accept/automatic-entry.md`'].map((literal) => body.indexOf(literal));
   assert.ok(at.every((index) => index !== -1), `each subcommand is named: ${at}`);
   assert.deepStrictEqual([...at].sort((a, b) => a - b), at, 'gather, then render, then post');
   assert.ok(body.includes('`_shared/acceptance-packet.md`'), 'Step 4 cites the contract');
@@ -284,10 +285,16 @@ test('exit-4 clearing reads first and writes the complete array', () => {
   assert.ok(branch.includes('A failed clearing gets the same needs-human line'));
 });
 
+const LOCAL_BRANCH = '`work-backend: local-files` — the automatic entry runs `local`';
+
 test('the local-files branch runs the local subcommand, --pending above the floor only', () => {
-  const branch = flat(step4().slice(step4().indexOf('`work-backend: local-files` — run')));
-  assert.ok(branch.includes('acceptance-packet.js" local --record-file "{record-file}" --body-file "{PACKET}" --pending'), branch);
+  const branch = flat(step4().slice(step4().indexOf(LOCAL_BRANCH)));
+  assert.ok(branch.includes(LOCAL_BRANCH), branch);
   assert.ok(branch.includes('`--pending` omitted below the floor'), branch);
+  // #4613: the fenced call lives in the automatic entry, with --pending appended only when owed.
+  const auto = read('accept/automatic-entry.md');
+  assert.ok(auto.includes('acceptance-packet.js" local --record-file "{record-file}" --body-file "{PACKET}"'), 'the automatic entry runs local');
+  assert.ok(flat(auto).includes('appending `--pending` only when the label is owed'), 'and appends --pending only when owed');
 });
 
 // ---- fix round 1: what the prose feeds the real CLI ----
@@ -379,7 +386,7 @@ test('the failed-removal line names the stale packet only when there is one', ()
 test('on local-files the record file itself is --spec and {record-file}', () => {
   const spec = between(gatherList(), '- `--spec` —', '- `--report`');
   assert.ok(spec.includes('under `work-backend: local-files` the record file itself'), spec);
-  const local = flat(step4().slice(step4().indexOf('`work-backend: local-files` — run')));
+  const local = flat(step4().slice(step4().indexOf(LOCAL_BRANCH)));
   assert.ok(local.includes('`{record-file}` is the record file itself'), local);
 });
 
@@ -398,7 +405,7 @@ test('a claim citing the Entry point link names its group', () => {
 });
 
 test('{record-file} comes from a listing that holds closed records too', () => {
-  const local = flat(step4().slice(step4().indexOf('`work-backend: local-files` — run')));
+  const local = flat(step4().slice(step4().indexOf(LOCAL_BRANCH)));
   assert.ok(local.includes("combined open+closed `queryRecords('specs', {})` / `queryRecords('specs', { closed: true })` listing"), local);
 });
 
@@ -443,11 +450,11 @@ test('verification-brief.md holds exactly one template, the packet', () => {
   assert.ok(!step4().includes('gh issue comment'), 'the brief posting block is gone');
 });
 
-test('post is named before anything applies demo:pending', () => {
+test('the automatic entry is named before anything applies accept:pending', () => {
   const body = step4();
-  const post = body.indexOf('acceptance-packet.js" post');
+  const post = body.indexOf('`accept/automatic-entry.md`');
   assert.notStrictEqual(post, -1);
-  assert.ok(post < body.indexOf('demo:pending'), 'no earlier sentence applies the label');
+  assert.ok(post < body.indexOf('accept:pending'), 'no earlier sentence applies the label');
   assert.ok(flat(body).includes('`post` posts or edits the packet before it adds the label'));
 });
 
@@ -459,8 +466,8 @@ test('--pr and --label are conditional on the stated rules', () => {
 
 test('below the floor posts the packet without --label (Decision Q5)', () => {
   const bullet = flat(belowFloor());
-  assert.ok(bullet.includes('Step 4 posts the packet without `--label`'), bullet);
-  assert.ok(bullet.includes('no `demo:pending` bootstrap'), bullet);
+  assert.ok(bullet.includes("Step 4's automatic entry posts the packet without `--label`"), bullet);
+  assert.ok(bullet.includes('no acceptance-label bootstrap'), bullet);
   assert.ok(bullet.includes('Step 2.5'), 'skips the safety net');
   assert.ok(bullet.includes('Record the exemption (#2383)'), bullet);
   assert.ok(bullet.includes('`/claude-tweaks:demo #N`'), bullet);
@@ -481,7 +488,7 @@ test('no stale pre-Q5 wording in the Try it and no-parent prose', () => {
     assert.ok(!doc.includes(stale), `gone: ${stale}`);
   }
   const noParent = flat(paragraphAt(brief(), '**No parent resolvable**'));
-  assert.ok(noParent.includes('gets a packet, with `demo:pending` only above the floor'), noParent);
+  assert.ok(noParent.includes('gets a packet, with `accept:pending` only above the floor'), noParent);
 });
 
 test('the Branch paragraph describes a packet on the record', () => {
@@ -505,9 +512,10 @@ test('every Routing call site remains in ## Routing (AC6)', () => {
   // Each row is not enough: the routing must still end in the pending label above the floor.
   const rule = flat(routing);
   assert.ok(rule.includes('run the Parent-Gate Procedure below in place of — not alongside — Steps 1-4'), 'a parent-resolvable record');
-  assert.ok(rule.includes('run the **Oversight-floor gate** below, then Steps 1-4, applying `demo:pending` to the record itself only when the gate says the record clears the floor'), 'any other record');
-  const post = between(step4(), 'acceptance-packet.js" post', '\n```');
-  assert.ok(post.includes('--label demo:pending'), `the post fence applies the pending label: ${post}`);
+  assert.ok(rule.includes("run the **Oversight-floor gate** below, then Steps 1-4, applying `accept:pending` to the record itself (through `/accept`'s automatic entry, Step 4) only when the gate says the record clears the floor"), 'any other record');
+  // #4613: the post fence moved to the automatic entry Step 4 reads, which applies accept:pending.
+  assert.ok(step4().includes('`accept/automatic-entry.md`'), 'Step 4 hands the packet to the automatic entry');
+  assert.ok(flat(read('accept/automatic-entry.md')).includes('Append `--label accept:pending` only when the label is owed'), 'the automatic entry applies the pending label');
   assert.ok(flat(step4()).includes('`--label` omitted below the floor (Decision Q5)'), 'and drops it below the floor');
 });
 
@@ -545,7 +553,7 @@ test('try-it.md names the packet\'s Test guide', () => {
 
 test('the execution prose describes the packet', () => {
   const doc = flat(read('wrap-up/execution-and-verification.md'));
-  assert.ok(doc.includes('posting the acceptance packet'), 'the Acceptance labeling bullet');
+  assert.ok(doc.includes("handing the rendered acceptance packet to `/claude-tweaks:accept`'s automatic entry"), 'the Acceptance labeling bullet');
   assert.ok(!doc.includes('posting the Verification Brief'));
 });
 

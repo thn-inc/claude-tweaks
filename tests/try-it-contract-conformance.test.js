@@ -132,11 +132,12 @@ test('the producer and both summaries name the same session-scoped try-it file',
   }
 });
 
-test('below the floor: no demo:pending, but the walkthrough still reaches the packet', () => {
+test('below the floor: no pending label, but the walkthrough still reaches the packet', () => {
   const doc = read('wrap-up/verification-brief.md');
   const gate = between(doc, '## Oversight-floor gate', '## Step 1:');
   const below = between(gate, '**`exceeds: false`**', '**`exceeds: true`**');
-  assert.match(below, /no `demo:pending`\s+bootstrap/, 'floor still gates the label');
+  // #4613: the no-parent label is accept:pending now, applied by the automatic entry.
+  assert.match(below, /no acceptance-label\s+bootstrap/, 'floor still gates the label');
   assert.match(below, /walkthrough is not skipped: the Try it block composed above feeds the packet's Test guide/);
   assert.match(below, /posts the packet without `--label`/);
   assert.doesNotMatch(below, /\*\*Posting it alone\*\*/, 'the below-floor post is retired');
