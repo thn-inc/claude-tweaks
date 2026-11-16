@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  parseRiskFlags, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha, parseTripwireFlags, addTripwireRiskFlags,
+  parseRiskFlags, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha, parseTripwireFlags, addTripwireRiskFlags, carryTripwireFlags,
   RISK_FLAGS_UNKNOWN, RISK_FLAGS_NONE,
 } = require('../../../plugin/bin/lib/issues/record');
 const { readRecord, writeRecord } = require('../../../plugin/bin/lib/issues/local-store');
@@ -577,4 +577,40 @@ test('removeRiskFlag on a body with no tripwire line is byte-identical to today'
   assert.strictEqual(removeRiskFlag('Risk-flags: auth\n\n## O\n', 'migrations', opts), 'Risk-flags: auth\n\n## O\n');
   assert.strictEqual(removeRiskFlag('Risk-flags: migrations, auth\r\n\r\n## O\r\n', 'auth', opts), 'Risk-flags: migrations\r\n\r\n## O\r\n');
   assert.strictEqual(removeRiskFlag('x\n\n## O\n', 'auth', opts), 'x\n\n## O\n');
+});
+
+test('addTripwireRiskFlags never records a slug the flag line already declares', () => {
+  assert.strictEqual(addTripwireRiskFlags('Risk-flags: auth\n\n## O\n', ['auth', 'migrations']), `Risk-flags: migrations, auth\n${TW} migrations\n\n## O\n`);
+  assert.strictEqual(addTripwireRiskFlags('Risk-flags: auth\n\n## O\n', ['auth']), 'Risk-flags: auth\n\n## O\n', 'nothing new: no line, byte-identical');
+});
+
+test('addTripwireRiskFlags drops a tripwire slug the flag line no longer carries', () => {
+  const body = `Risk-flags: auth\n${TW} migrations, auth\n\n## O\n`;
+  assert.strictEqual(addTripwireRiskFlags(body, ['public-contract']), `Risk-flags: auth, public-contract\n${TW} auth, public-contract\n\n## O\n`);
+});
+
+test('removeRiskFlag drops a slug found only on the tripwire line, and a malformed tripwire line', () => {
+  const opts = { humanConfirmed: true };
+  assert.strictEqual(removeRiskFlag(`Risk-flags: auth\n${TW} migrations, auth\n\n## O\n`, 'migrations', opts), `Risk-flags: auth\n${TW} auth\n\n## O\n`);
+  assert.strictEqual(removeRiskFlag(`Risk-flags: auth\n${TW} migrations\n\n## O\n`, 'migrations', opts), 'Risk-flags: auth\n\n## O\n');
+  assert.strictEqual(removeRiskFlag('Risk-flags: auth\n**Risk-flags-added-by-tripwire:** migrations\n\n## O\n', 'migrations', opts), 'Risk-flags: auth\n\n## O\n');
+  assert.strictEqual(removeRiskFlag(`Risk-flags: migrations, auth\n${TW} auth\n${TW} migrations\n\n## O\n`, 'auth', opts), 'Risk-flags: migrations\n\n## O\n', 'two lines read malformed and go');
+  const untouched = `Risk-flags: auth\n${TW} auth\n\n## O\n`;
+  assert.strictEqual(removeRiskFlag(untouched, 'migrations', opts), untouched, 'neither line names it: byte-identical');
+});
+
+test('removeRiskFlag rewrites the tripwire line in canonical order', () => {
+  const body = `Risk-flags: migrations, auth, irreversible-side-effect\n${TW} irreversible-side-effect, auth, migrations\n\n## O\n`;
+  assert.strictEqual(removeRiskFlag(body, 'migrations', { humanConfirmed: true }), `Risk-flags: auth, irreversible-side-effect\n${TW} auth, irreversible-side-effect\n\n## O\n`);
+});
+
+test('carryTripwireFlags carries the prior body\'s line onto a re-shaped body, minus any slug no longer kept', () => {
+  const prior = `Risk-flags: migrations, auth\n${TW} migrations, auth\n\n## O\n`;
+  assert.strictEqual(carryTripwireFlags('# T\n\nRisk-flags: migrations, auth\nSurface: infra\n\n## O\n', prior),
+    `# T\n\nRisk-flags: migrations, auth\n${TW} migrations, auth\nSurface: infra\n\n## O\n`);
+  assert.strictEqual(carryTripwireFlags('Risk-flags: auth\nRisk-flags-unconfirmed: true\n\n## O\n', prior),
+    `Risk-flags: auth\nRisk-flags-unconfirmed: true\n${TW} auth\n\n## O\n`);
+  assert.strictEqual(carryTripwireFlags('Risk-flags: none\n\n## O\n', prior), 'Risk-flags: none\n\n## O\n');
+  assert.strictEqual(carryTripwireFlags('Risk-flags: auth\n\n## O\n', 'Risk-flags: auth\n\n## O\n'), 'Risk-flags: auth\n\n## O\n', 'no prior line: byte-identical');
+  assert.strictEqual(carryTripwireFlags('Risk-flags: auth\r\n\r\n## O\r\n', prior), `Risk-flags: auth\r\n${TW} auth\r\n\r\n## O\r\n`);
 });

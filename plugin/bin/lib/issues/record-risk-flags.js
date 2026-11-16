@@ -2,7 +2,7 @@
 // Pure: the `Risk-flags:` body line (#4618) — the one reader every consumer shares
 // (parseRiskFlags) and the sanctioned writers (addRiskFlags, removeRiskFlag,
 // confirmRiskFlags, appendRiskProofGotcha) plus, for the diff tripwire (#4619), the
-// `Risk-flags-added-by-tripwire:` line (parseTripwireFlags, addTripwireRiskFlags). A record body, not a facet, carries the
+// `Risk-flags-added-by-tripwire:` line (parseTripwireFlags, addTripwireRiskFlags, carryTripwireFlags). A record body, not a facet, carries the
 // line, so the GitHub and local-files backends read it through the same function.
 // No I/O.
 //
@@ -24,9 +24,10 @@
 // (all four), never "no flags". The writers' repair rewrites such a line in the exact form.
 //
 // `Risk-flags-added-by-tripwire: {slugs}` names the flags the tripwire added beyond what the human
-// declared, directly below the `Risk-flags:` line (and its unconfirmed marker). It is written only by
-// addTripwireRiskFlags, never composed into a body, and parseRiskFlags ignores it: it is not a flag
-// line. Detection is as wide as FLAG_LINE_RE's, so a variant spelling reads malformed, not absent.
+// declared, directly below the `Risk-flags:` line (and its unconfirmed marker), and only flags that
+// line carries. It is written only by addTripwireRiskFlags, carryTripwireFlags (a re-shape carrying
+// it forward) and removeRiskFlag, never composed into a body, and parseRiskFlags ignores it: it is not
+// a flag line. Detection is as wide as FLAG_LINE_RE's, so a variant spelling reads malformed, not absent.
 //
 // Writers only ever widen unless a human decided otherwise: removeRiskFlag and
 // confirmRiskFlags refuse without `humanConfirmed === true`, and refuse again on an
@@ -259,27 +260,49 @@ function addRiskFlags(body, slugs, opts) {
   return editBody(body, (lines) => applyFlagLine(lines, flagLineFor(merged), markerMode));
 }
 
-// body, slugs, { unconfirmed, extraCategories } -> body. addRiskFlags, then exactly one
-// `Risk-flags-added-by-tripwire:` line holding the union of what it already named (a malformed line
-// names none and is rewritten exact) and `slugs`, canonical order, directly below the flag line and
-// its marker; an existing line is rewritten in place. `[]` returns the body unchanged.
+// lines, the flags the flag line carries, slugs to add -> lines with at most one exact
+// `Risk-flags-added-by-tripwire:` line: what it already named (a malformed line names none) that
+// `kept` still carries, plus `added`, canonical order. An existing line is rewritten in place (further
+// ones dropped), a new one goes directly below the flag line and its marker, and an empty set drops
+// the line, so it never names a flag the flag line no longer carries. null: no change.
+function writeTripwireLine(lines, kept, added = []) {
+  const scan = scanPreamble(lines);
+  const named = readTripwireLines(scan.tripwireIdx.map((i) => lines[i])) ?? [];
+  const slugs = canonicalOrder([...named.filter((slug) => kept.includes(slug)), ...added]);
+  const text = slugs.length > 0 ? `Risk-flags-added-by-tripwire: ${slugs.join(', ')}` : null;
+  if (scan.tripwireIdx.length > 0) {
+    const [first, ...rest] = scan.tripwireIdx;
+    if (rest.length === 0 && lines[first] === text) return null;
+    const dropped = new Set(rest);
+    return lines.flatMap((line, i) => (i === first ? (text === null ? [] : [text]) : dropped.has(i) ? [] : [line]));
+  }
+  if (text === null || scan.flagIdx.length === 0) return null;
+  let at = scan.flagIdx[0] + 1;
+  if (at < lines.length && MARKER_LINE_RE.test(lines[at])) at += 1;
+  return [...lines.slice(0, at), text, ...lines.slice(at)];
+}
+
+// body, slugs, { unconfirmed, extraCategories } -> body. addRiskFlags, then the tripwire line
+// (writeTripwireLine) adds every slug the flag line did not already declare: a flag the human
+// declared is never recorded as the tripwire's. `[]` returns the body unchanged.
 function addTripwireRiskFlags(body, slugs, opts) {
+  const { extraCategories = [] } = opts || {};
   assertSlugs('addTripwireRiskFlags', slugs);
   if (slugs.length === 0) return toText(body);
+  const declared = parseRiskFlags(body, { extraCategories }).flags;
   const widenedBody = addRiskFlags(body, slugs, opts);
-  return editBody(widenedBody, (lines) => {
-    const scan = scanPreamble(lines);
-    const existing = readTripwireLines(scan.tripwireIdx.map((i) => lines[i])) ?? [];
-    const text = `Risk-flags-added-by-tripwire: ${canonicalOrder([...existing, ...slugs]).join(', ')}`;
-    if (scan.tripwireIdx.length > 0) {
-      const [first, ...rest] = scan.tripwireIdx;
-      const dropped = new Set(rest);
-      return lines.flatMap((line, i) => (i === first ? [text] : dropped.has(i) ? [] : [line]));
-    }
-    let at = scan.flagIdx[0] + 1;
-    if (at < lines.length && MARKER_LINE_RE.test(lines[at])) at += 1;
-    return [...lines.slice(0, at), text, ...lines.slice(at)];
-  });
+  const kept = parseRiskFlags(widenedBody, { extraCategories }).flags;
+  return editBody(widenedBody, (lines) => writeTripwireLine(lines, kept, slugs.filter((slug) => !declared.includes(slug))));
+}
+
+// body, prior body, { extraCategories } -> body. A re-shape composes a fresh body without the
+// tripwire line: carry the prior body's line forward, keeping only the slugs the body's flag line
+// still carries (as removeRiskFlag does).
+function carryTripwireFlags(body, priorBody, opts) {
+  const { extraCategories = [] } = opts || {};
+  const kept = parseRiskFlags(body, { extraCategories }).flags;
+  const carried = parseTripwireFlags(priorBody).flags.filter((slug) => kept.includes(slug));
+  return editBody(body, (lines) => writeTripwireLine(lines, kept, carried));
 }
 
 function refuseWithoutHuman(name, humanConfirmed) {
@@ -307,29 +330,20 @@ function currentReadableLine(name, body, extraCategories) {
 }
 
 // body, slug, { humanConfirmed, extraCategories } -> body. Drops one flag (`none` when it
-// was the last) and the unconfirmed marker: a human decided the set. A slug the line does
-// not carry returns the body unchanged.
+// was the last) and the unconfirmed marker: a human decided the set. The tripwire line keeps only
+// the flags left (writeTripwireLine), even when the slug was on it alone: a slug neither line
+// carries, beside a readable tripwire line, returns the body unchanged.
 function removeRiskFlag(body, slug, opts) {
   const { humanConfirmed, extraCategories = [] } = opts || {};
   refuseWithoutHuman('removeRiskFlag', humanConfirmed);
   const current = currentReadableLine('removeRiskFlag', body, extraCategories);
   if (typeof slug !== 'string') throw new TypeError(`removeRiskFlag: invalid slug ${JSON.stringify(slug)}`);
-  if (!current.flags.includes(slug)) return toText(body);
   const rest = current.flags.filter((flag) => flag !== slug);
-  return editBody(body, (lines) => dropFromTripwireLine(applyFlagLine(lines, flagLineFor(rest), 'clear'), slug));
-}
-
-// lines, slug -> lines without `slug` on the tripwire line (the line goes when it empties), so that
-// line never names a flag the flag line no longer carries. A missing or malformed line is left as is.
-function dropFromTripwireLine(lines, slug) {
-  const { tripwireIdx } = scanPreamble(lines);
-  const named = readTripwireLines(tripwireIdx.map((i) => lines[i]));
-  if (named === null || !named.includes(slug)) return lines;
-  const rest = named.filter((flag) => flag !== slug);
-  const [at] = tripwireIdx;
-  return rest.length === 0
-    ? lines.filter((_, i) => i !== at)
-    : lines.map((line, i) => (i === at ? `Risk-flags-added-by-tripwire: ${rest.join(', ')}` : line));
+  if (!current.flags.includes(slug)) return editBody(body, (lines) => writeTripwireLine(lines, rest));
+  return editBody(body, (lines) => {
+    const out = applyFlagLine(lines, flagLineFor(rest), 'clear');
+    return writeTripwireLine(out, rest) ?? out;
+  });
 }
 
 // body, { humanConfirmed, extraCategories } -> body without the unconfirmed marker;
@@ -442,5 +456,5 @@ module.exports = {
   // MARKER_LINE_RE is exported for /backlog refine's Step 3.7 pre-filter, so its narrowing
   // detects the same marker lines parseRiskFlags does.
   RISK_FLAGS_NONE, RISK_FLAGS_UNKNOWN, MARKER_LINE_RE, parseRiskFlags, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha,
-  parseTripwireFlags, addTripwireRiskFlags,
+  parseTripwireFlags, addTripwireRiskFlags, carryTripwireFlags,
 };
