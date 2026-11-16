@@ -46,7 +46,7 @@ files:
   - A cd behind `&&`/`||` may or may not run, so the walk keeps every cwd bash could be in and fails closed.
   - A cd in a pipeline element runs in a subshell and does not carry over.
   - An assignment-prefixed cd still runs. A quoted or escaped name (`"x"=1`, `x\=1`) is no assignment: bash runs it as a command that is not found, and the cd after it never runs.
-  - The walk reads past assignment words and the stripped prefixes (`env`, `sudo`, `doas`, `command`, `builtin`, `exec`, `nice`, `nohup`, `time`, `!`), with their options, to the command word. `command -v`/`-V` is a lookup and writes nothing.
+  - The walk reads past assignment words and the stripped prefixes (`env`, `sudo`, `doas`, `command`, `builtin`, `exec`, `nice`, `nohup`, `time`, `!`), with their options, to the command word. `command -v`/`-V` is a lookup and writes nothing. `env -S word` with one plain word runs that word as the command (`env -S git commit -m x`). Under `sudo -i` the command runs from the target user's home, so only an absolute target resolves.
   - Where bash 3.2 and 5 disagree on whether a cd runs (`! time cd`, `! ! cd`, `time -- cd`, `time time cd`), the write is checked under both cwds.
   - `-t` inside a flag cluster, and a glued `-tDIR`, name the target dir.
   - A cp or mv value option after the operands (`-S .bak`, `--suffix .bak`) takes the word after it. GNU coreutils writes the last real operand. macOS's BSD cp and mv stop option parsing at the first operand and write into that last word, a dash word and a `-t` after the first operand included (`cp a b -t d ../main` writes `../main/a` and `../main/b` under BSD). The walk reports both destinations when they differ, and drops the BSD one when an option BSD lacks (`-t`, `-S`, a long option) comes before the first operand.
@@ -94,7 +94,7 @@ files:
   | The command inside `$( … )` or backticks | #4446 |
   | `cd -`, `$OLDPWD`, a symlinked dir or a failing cd | #4450 |
   | Compound-command bodies (including a case or `cd` inside an `if`/`while`/`for` body) and `pushd` | #4244 |
-  | A command behind `env -S`, `sudo -e` or `doas -s`, and the output file of the external `time -o` | #4572 |
+  | A command behind an `env -S` string that is not one plain word, `env -P`, `sudo -e` or `doas -s`, and the output file of the external `time -o` | #4572 |
   | zsh-only forms (redirects, a pipeline's last element, `command cd`, `time -p cd`) | #4455 |
   | A function called after a later cd | #4487 |
 - **Red flags:** A skill or procedure that tells agents to use one of these shapes because the gate misses it.
