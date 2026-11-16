@@ -1461,7 +1461,7 @@ function refsWorld({ refs, sidebar = true }) {
   return { gh, calls, mergedAt };
 }
 
-test('AC1.1 #4251 end to end: an armed merge closed a kept-open Refs record through a sidebar link — the late Step 4.0 reopens it and logs it, then writes the marker', async () => {
+test('AC1.1 #4251 end to end: an armed merge closed a kept-open Refs record that is also sidebar-linked — the late Step 4.0 reopens it and logs it, then writes the marker', async () => {
   const { root, dir } = e2eCheckout();
   const world = refsWorld({ refs: [103] });
   const r = await e2ePass(root, world);
@@ -1475,8 +1475,8 @@ test('AC1.1 #4251 end to end: an armed merge closed a kept-open Refs record thro
 });
 
 // With no sidebar link GitHub would not normally close #103 on merge; the world still reports it CLOSED after mergedAt
-// (a squash-message keyword or another channel) — the reconciler's late run reopens a closed kept-open Refs record
-// whichever channel closed it.
+// (this fixture models no closing channel for it) — the reconciler's late run reopens a closed kept-open Refs record
+// named by the fixes span's Refs line, whichever channel closed it.
 test('AC1.2 #4251 end to end: an armed merge closed a kept-open Refs record that no sidebar link names — the late Step 4.0 reopens it from the fixes span\'s Refs line', async () => {
   const { root, dir } = e2eCheckout();
   const world = refsWorld({ refs: [103], sidebar: false });

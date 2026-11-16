@@ -609,7 +609,7 @@ module only decides when the steps run and records that they did. Tidy's `parent
 unchanged, and every fail-open path below leaves the parent open for it. The late Step 4.0 also
 reopens a kept-open record the merge closed (a fixes-span `Refs` record, or one only a
 Development-sidebar link names), within the 10-minute reopen window after `mergedAt`
-(`CLOSE_WINDOW_MS`, below), so an armed merge leaves no closing channel unchecked (#4251).
+(`CLOSE_WINDOW_MS`, below), so an armed merge leaves no kept-open record closed by either of those two channels (#4251).
 
 - **Population (keyed on the recorded PR, exactly once).** Every top-level run dir, `clean` status
   included (a closed run is the usual armed-auto-merge shape), whose `run-state.json` records a
