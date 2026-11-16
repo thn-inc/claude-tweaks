@@ -818,6 +818,8 @@ test('spawnTokenPass with spawn stubbed to record → argv ends with ["--run", r
     assert.equal(opts.detached, true);
     assert.equal(opts.windowsHide, true);
     assert.equal(opts.stdio, 'ignore');
+    // The child's anchoring check resolves the main checkout from its cwd: the run dir's parent, not this process's.
+    assert.equal(opts.cwd, path.dirname(root));
     // No env given: the child inherits this process's environment.
     assert.equal(Object.hasOwn(opts, 'env'), false);
     assert.equal(unrefed, true);

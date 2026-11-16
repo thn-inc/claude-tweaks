@@ -231,13 +231,14 @@ async function writeTimingAtCloseSafe(runDir, opts) {
 
 // runDir, { env } -> { spawned, reason }: starts bin/timing-at-close.js detached, so a
 // close never waits on a transcript read. env (optional) is the child's environment;
-// without it the child inherits this process's. A spawn that fails asynchronously
+// without it the child inherits this process's. The child starts in the run dir's parent (inside the main checkout, so
+// its anchoring check resolves the main checkout whatever this process's cwd is). A spawn that fails asynchronously
 // (ENOENT/EACCES are emitted, not thrown) logs the same SKIP from its 'error' listener.
 function spawnTokenPass(runDir, { env } = {}) {
   const cannotStart = (reason) => logTimingSkip(runDir, `condition: background token pass could not start (${reason}) → fallback: timing.json keeps its phase rows without token totals`);
   try {
     const cli = path.join(__dirname, '..', '..', 'timing-at-close.js');
-    const child = require('child_process').spawn(process.execPath, [cli, '--run', runDir], { detached: true, stdio: 'ignore', windowsHide: true, ...(env ? { env } : {}) });
+    const child = require('child_process').spawn(process.execPath, [cli, '--run', runDir], { detached: true, stdio: 'ignore', windowsHide: true, cwd: path.dirname(runDir), ...(env ? { env } : {}) });
     child.on('error', (err) => cannotStart(errText(err)));
     child.unref();
     return { spawned: true, reason: 'started' };
