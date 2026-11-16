@@ -11,8 +11,9 @@
 //
 // Body:
 //  - Current State: the window (days, first day, sampled runs, the minimum sample a check needs),
-//    each cited figure, the judge's claim verbatim in a fenced block, and — when the gather has
-//    truncated ranges or failed reads — that the window is partial, naming each.
+//    each cited figure, the judge's claim verbatim in a fenced block, and — only when the gather
+//    has truncated lines (each one a cut that could have changed the sample) or failed reads —
+//    that the sample is partial, naming each.
 //  - Deliverables: the judge's remedy verbatim in a fenced block, as a recommendation to
 //    investigate and apply where it holds; never an instruction to edit a named file.
 //  - Acceptance Criteria: the gather breach's metric back under its threshold on the next sweep
@@ -67,7 +68,7 @@ function currentState(f, g) {
   const truncated = screened(g.truncated, 'a truncated range');
   const failures = screened(g.failures, 'a failed read');
   if (truncated.length > 0 || failures.length > 0) {
-    parts.push(`The window is partial: the read stopped short, so these figures cover only part of it.${truncated.length > 0 ? ' Truncated:' : ''}`);
+    parts.push(`The sample is partial: some reads were cut short or failed, so these figures cover only the runs read.${truncated.length > 0 ? ' Truncated:' : ''}`);
     if (truncated.length > 0) parts.push(block(truncated.join('\n')));
     if (failures.length > 0) parts.push('Failed reads:', block(failures.join('\n')));
   }
@@ -87,9 +88,11 @@ function acceptanceCriteria(f, g) {
   return `On the next sweep, ${span(b.metric)} for ${subject} is ${cmp} ${span(b.threshold)}, the ${f.check} threshold.`;
 }
 
-// `CI <check>: <names>`, at most TITLE_CAP characters. Names are cut last first (step or job, then
-// workflow) to whole code points plus an ellipsis, inside their own code span, so the check id
-// prefix and the span's backticks stay intact.
+// `CI <check>: <names>`, at most TITLE_CAP characters (UTF-16 code units, `.length`). Names are cut
+// last first (step or job, then workflow) to whole code points plus an ellipsis, inside their own
+// code span, so the check id prefix and the span's backticks stay intact. The cut keeps the most
+// code points that fit: a binary search over the kept count, measured in the cap's own unit, so an
+// astral character or a backtick run (which widens the span's fence) never over-cuts.
 function titleOf(f) {
   const segments = [];
   if (f.workflow !== null) segments.push([' ', f.workflow]);
@@ -99,11 +102,14 @@ function titleOf(f) {
   const render = () => `CI ${f.check}:${segments.map(([lead], i) => lead + span(texts[i])).join('')}`;
   for (let i = segments.length - 1; i >= 0 && render().length > TITLE_CAP; i--) {
     const points = [...String(segments[i][1])];
-    let keep = points.length;
-    while (keep > 0 && render().length > TITLE_CAP) {
-      keep = Math.max(0, keep - (render().length - TITLE_CAP) - (texts[i] === segments[i][1] ? 1 : 0));
-      texts[i] = `${points.slice(0, keep).join('')}…`;
+    const fits = (keep) => { texts[i] = `${points.slice(0, keep).join('')}…`; return render().length <= TITLE_CAP; };
+    let lo = 0; // the most code points known to fit (or 0)
+    let hi = points.length - 1; // a cut always drops at least one
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (fits(mid)) lo = mid; else hi = mid - 1;
     }
+    fits(lo);
   }
   return render();
 }

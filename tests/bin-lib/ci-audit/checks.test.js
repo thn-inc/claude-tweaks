@@ -5,7 +5,9 @@
 // overlap-evidence floor) has a fixture on which only that guard decides.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { CHECK_IDS, DEFAULTS, DEFAULT_MIN_SAMPLE, parseThresholds, evaluate } = require('../../../plugin/bin/lib/ci-audit/checks');
+const {
+  CHECK_IDS, DEFAULTS, FLOOR_IDS, DEFAULT_MIN_SAMPLE, parseThresholds, limitsOf, evaluate,
+} = require('../../../plugin/bin/lib/ci-audit/checks');
 const { aggregate } = require('../../../plugin/bin/lib/ci-audit/aggregate');
 
 const W = 'workflows/ci.yml';
@@ -30,7 +32,7 @@ const fj = (id, over = {}) => ({ id, name: id, needs: [], timeoutDeclared: true,
 const facts = (jobs, { concurrencyDeclared = true, unparsed = [] } = {}) => ({ jobs, concurrencyDeclared, unparsed });
 const only = (breaches, check) => breaches.filter((b) => b.check === check);
 
-test('CHECK_IDS is exactly the eight checks; DEFAULTS holds the six numeric thresholds', () => {
+test('CHECK_IDS is exactly the eight checks; DEFAULTS holds the six numeric thresholds and four floors', () => {
   assert.deepEqual(CHECK_IDS, [
     'queue-wait', 'setup-dominance', 'critical-path-pole', 'serial-independent-jobs',
     'shard-skew', 'repeated-work', 'missing-timeout', 'missing-concurrency',
@@ -38,10 +40,16 @@ test('CHECK_IDS is exactly the eight checks; DEFAULTS holds the six numeric thre
   assert.deepEqual(DEFAULTS, {
     'queue-wait': 0.4, 'setup-dominance': 0.4, 'critical-path-pole': 0.5,
     'shard-skew': 2, 'repeated-work': 3, 'missing-timeout': 3,
+    'queue-wait-floor-ms': 30000, 'setup-dominance-floor-ms': 30000,
+    'critical-path-pole-floor-ms': 60000, 'missing-timeout-floor-ms': 300000,
   });
+  assert.deepEqual(FLOOR_IDS, ['queue-wait-floor-ms', 'setup-dominance-floor-ms', 'critical-path-pole-floor-ms', 'missing-timeout-floor-ms']);
+  assert.ok(FLOOR_IDS.every((id) => CHECK_IDS.includes(id.slice(0, -'-floor-ms'.length))), 'each floor belongs to a check');
+  assert.deepEqual(limitsOf({ 'queue-wait-floor-ms': 1000, 'shard-skew': 0 }), { ...DEFAULTS, 'queue-wait-floor-ms': 1000 });
 });
 
 test('parseThresholds reads id=value pairs and refuses unknown ids, non-numbers and fixed checks', () => {
+  assert.deepEqual(parseThresholds('missing-timeout-floor-ms=600000'), { ok: true, values: { 'missing-timeout-floor-ms': 600000 } });
   assert.deepEqual(parseThresholds('shard-skew=3'), { ok: true, values: { 'shard-skew': 3 } });
   assert.deepEqual(parseThresholds(' queue-wait=0.25 , missing-timeout=4 '), { ok: true, values: { 'queue-wait': 0.25, 'missing-timeout': 4 } });
   assert.deepEqual(parseThresholds(''), { ok: true, values: {} });
@@ -94,7 +102,7 @@ test('setup-dominance fires above 0.4, not at it, and not when setup has fewer t
 // ---- critical-path-pole ----
 test('critical-path-pole names the workflow job holding more than half the path', () => {
   const f = { [W]: facts([fj('build'), fj('test', { needs: ['build'] }), fj('unit', { matrix: true })]) };
-  const cp = [{ workflow: W, pathMs: 200 * S, sumMs: 300 * S, chain: ['build', 'test'] }];
+  const cp = [{ workflow: W, pathMs: 200 * S, sumMs: 300 * S, chain: ['build', 'test'], allJobsMatched: true }];
   const jobs = [row('build', 5, 0, 20, 100), row('test', 5, 0, 10, 70)];
   assert.deepEqual(only(evaluate(agg({ jobs, criticalPaths: cp }), f, {}, 5), 'critical-path-pole'),
     [{ check: 'critical-path-pole', workflow: W, job: 'build', metric: 'criticalPathShare', value: 0.6, threshold: 0.5 }]);
@@ -108,7 +116,7 @@ test('critical-path-pole names the workflow job holding more than half the path'
 
 test('critical-path-pole weighs a matrix job by its slowest shard that reaches minSample', () => {
   const f = { [W]: facts([fj('unit', { matrix: true }), fj('pack', { needs: ['unit'] })]) };
-  const cp = [{ workflow: W, pathMs: 200 * S, sumMs: 200 * S, chain: ['unit', 'pack'] }];
+  const cp = [{ workflow: W, pathMs: 200 * S, sumMs: 200 * S, chain: ['unit', 'pack'], allJobsMatched: true }];
   const jobs = [row('unit (a)', 5, 0, 10, 60), row('unit (b)', 5, 0, 10, 100), row('pack', 5, 0, 10, 20)];
   assert.deepEqual(only(evaluate(agg({ jobs, criticalPaths: cp }), f, {}, 5), 'critical-path-pole'),
     [{ check: 'critical-path-pole', workflow: W, job: 'unit', metric: 'criticalPathShare', value: 0.55, threshold: 0.5 }]);
@@ -130,7 +138,7 @@ test('serial-independent-jobs fires for a never-overlapping pair with no needs p
   const f = { [W]: SERIAL_FACTS() };
   const a = aggregate(serialRuns(5), f);
   assert.equal(a.overlaps.length, 6);
-  assert.ok(a.overlaps.every((o) => o.everOverlapped === false));
+  assert.ok(a.overlaps.every((o) => o.sharedRuns === 5));
   // unit–pack (direct), unit–deploy (transitive), lint–deploy, pack–deploy are needs-linked
   assert.deepEqual(only(evaluate(a, f, {}, 5), 'serial-independent-jobs'), [
     { check: 'serial-independent-jobs', workflow: W, job: 'lint + pack', metric: 'overlappingRuns', value: 0, threshold: 0 },
@@ -149,6 +157,18 @@ test('serial-independent-jobs: needs link, overlap, minSample, missing pair and 
   assert.deepEqual(only(evaluate(aggregate(overlapRuns, f), f, {}, 5), 'serial-independent-jobs').map((b) => b.job), ['lint + pack']);
   // minSample alone: four runs
   assert.deepEqual(only(evaluate(aggregate(serialRuns(4), f), f, {}, 5), 'serial-independent-jobs'), []);
+  // shared runs alone: each job ran 5 times, but lint and unit ran together in only one of them
+  // (a job its `if:` skips elsewhere) — one shared run is no evidence the pair is serial
+  const sparse = [
+    ...runsOf(1, () => [rj('lint', 0, 10), rj('unit', 20, 30)]),
+    ...runsOf(4, () => [rj('lint', 0, 10)]),
+    ...runsOf(4, () => [rj('unit', 20, 30)]),
+  ];
+  const sp = aggregate(sparse, f);
+  assert.ok(sp.jobs.every((j) => j.runs === 5));
+  assert.deepEqual(sp.overlaps, [{ workflow: W, a: 'lint', b: 'unit', sharedRuns: 1 }]);
+  assert.deepEqual(only(evaluate(sp, f, {}, 5), 'serial-independent-jobs'), []);
+  assert.equal(only(evaluate(sp, f, {}, 1), 'serial-independent-jobs').length, 1);
   // missing pair alone: five runs each, but lint never shares a run with unit or pack
   const apart = [
     ...runsOf(5, () => [rj('lint', 0, 10), rj('deploy', 60, 70)]),
@@ -166,15 +186,19 @@ test('serial-independent-jobs: needs link, overlap, minSample, missing pair and 
 test('serial-independent-jobs maps matrix shards to their workflow job and skips shard pairs of one job', () => {
   const f = { [W]: facts([fj('unit', { matrix: true }), fj('lint'), fj('pack', { needs: ['unit'] })]) };
   const runs = runsOf(5, () => [rj('unit (a)', 0, 10), rj('unit (b)', 20, 30), rj('pack', 40, 50), rj('lint', 60, 70)]);
+  // one breach per workflow-job pair, named by the workflow jobs, never one per shard
   assert.deepEqual(only(evaluate(aggregate(runs, f), f, {}, 5), 'serial-independent-jobs').map((b) => b.job),
-    ['lint + pack', 'lint + unit (a)', 'lint + unit (b)']);
+    ['lint + pack', 'lint + unit']);
+  // a shard that overlapped lint in one run makes the whole pair not serial
+  const mixed = runsOf(5, () => [rj('unit (a)', 0, 10), rj('unit (b)', 55, 65), rj('pack', 40, 50), rj('lint', 60, 70)]);
+  assert.deepEqual(only(evaluate(aggregate(mixed, f), f, {}, 5), 'serial-independent-jobs').map((b) => b.job), ['lint + pack']);
 });
 
 // ---- shard-skew ----
 test('shard-skew fires above 2, not at it, and not when any shard is below minSample', () => {
   const sk = (ratio) => [{ workflow: W, family: 'unit', ratio, slowest: 'unit (c)', shards: 3 }];
   const shards = (cRuns = 5) => [row('unit (a)', 5, 0, 0, 10), row('unit (b)', 5, 0, 0, 10), row('unit (c)', cRuns, 0, 0, 25)];
-  const f = { [W]: facts([]) };
+  const f = { [W]: facts([fj('unit', { matrix: true })]) };
   assert.deepEqual(only(evaluate(agg({ jobs: shards(), shardSkews: sk(2.5) }), f, {}, 5), 'shard-skew'),
     [{ check: 'shard-skew', workflow: W, job: 'unit', metric: 'shardSkewRatio', value: 2.5, threshold: 2 }]);
   assert.deepEqual(only(evaluate(agg({ jobs: shards(), shardSkews: sk(2) }), f, {}, 5), 'shard-skew'), []);
@@ -210,15 +234,28 @@ test('repeated-work counts holders across workflows', () => {
 // ---- missing-timeout ----
 test('missing-timeout fires on running p90/p50 above 3 for a job with no declared timeout', () => {
   const f = (over = {}, opts) => ({ [W]: facts([fj('a', { timeoutDeclared: false, ...over })], opts) });
-  const r = (runs, p90) => agg({ jobs: [row('a', runs, 0, 0, 10, { runningP90: p90 })] });
-  assert.deepEqual(only(evaluate(r(5, 40), f(), {}, 5), 'missing-timeout'),
-    [{ check: 'missing-timeout', workflow: W, job: 'a', metric: 'runningP90ToP50', value: 4, threshold: 3 }]);
-  assert.deepEqual(only(evaluate(r(5, 30), f(), {}, 5), 'missing-timeout'), []); // exactly 3
-  assert.deepEqual(only(evaluate(r(5, 40), f({ timeoutDeclared: true }), {}, 5), 'missing-timeout'), []);
-  assert.deepEqual(only(evaluate(r(4, 40), f(), {}, 5), 'missing-timeout'), []);
-  assert.deepEqual(only(evaluate(r(5, 40), f({}, { unparsed: ['tab indentation in jobs:'] }), {}, 5), 'missing-timeout'), []);
+  const r = (runs, p90) => agg({ jobs: [row('a', runs, 0, 0, 100, { runningP90: p90 })] });
+  assert.deepEqual(only(evaluate(r(5, 400), f(), {}, 5), 'missing-timeout'),
+    [{ check: 'missing-timeout', workflow: W, job: 'a', worstJob: 'a', metric: 'runningP90ToP50', value: 4, threshold: 3 }]);
+  assert.deepEqual(only(evaluate(r(5, 300), f(), {}, 5), 'missing-timeout'), []); // exactly 3
+  assert.deepEqual(only(evaluate(r(5, 400), f({ timeoutDeclared: true }), {}, 5), 'missing-timeout'), []);
+  assert.deepEqual(only(evaluate(r(4, 400), f(), {}, 5), 'missing-timeout'), []);
+  assert.deepEqual(only(evaluate(r(5, 400), f({}, { unparsed: ['tab indentation in jobs:'] }), {}, 5), 'missing-timeout'), []);
   // a run job matching no workflow job: nothing known about its timeout
-  assert.deepEqual(only(evaluate(r(5, 40), { [W]: facts([fj('other', { timeoutDeclared: false })]) }, {}, 5), 'missing-timeout'), []);
+  assert.deepEqual(only(evaluate(r(5, 400), { [W]: facts([fj('other', { timeoutDeclared: false })]) }, {}, 5), 'missing-timeout'), []);
+});
+
+test('missing-timeout gives one breach per workflow job, its worst qualifying shard as evidence', () => {
+  // A 3-shard matrix with no timeout-minutes is one missing line, so one breach, not three.
+  const f = { [W]: facts([fj('unit', { matrix: true, timeoutDeclared: false })]) };
+  const jobs = [
+    row('unit (a)', 5, 0, 0, 100, { runningP90: 400 }),
+    row('unit (b)', 5, 0, 0, 100, { runningP90: 500 }),
+    row('unit (c)', 5, 0, 0, 100, { runningP90: 450 }),
+  ];
+  assert.deepEqual(only(evaluate(agg({ jobs }), f, {}, 5), 'missing-timeout'), [
+    { check: 'missing-timeout', workflow: W, job: 'unit', worstJob: 'unit (b)', metric: 'runningP90ToP50', value: 5, threshold: 3 },
+  ]);
 });
 
 // ---- missing-concurrency ----
@@ -234,7 +271,7 @@ test('missing-concurrency fires for a parsed workflow with no concurrency and a 
 
 test('evaluate orders breaches by check, then workflow, then job, and tolerates empty input', () => {
   const f = { [W]: facts([fj('a', { timeoutDeclared: false })], { concurrencyDeclared: false }) };
-  const out = evaluate(agg({ jobs: [row('b', 5, 50, 10, 40), row('a', 5, 60, 30, 10, { runningP90: 40 })] }), f, {}, 5);
+  const out = evaluate(agg({ jobs: [row('b', 5, 50, 10, 40), row('a', 5, 600, 30, 100, { runningP90: 400 })] }), f, {}, 5);
   assert.deepEqual(out.map((b) => `${b.check}:${b.job}`), [
     'queue-wait:a', 'queue-wait:b', 'missing-timeout:a', 'missing-concurrency:null',
   ]);
@@ -245,8 +282,8 @@ test('evaluate orders breaches by check, then workflow, then job, and tolerates 
 // ---- review fixes ----
 test('critical-path-pole skips a path of fewer than two jobs', () => {
   const f = { [W]: facts([fj('build'), fj('test', { needs: ['build'] })]) };
-  const one = [{ workflow: W, pathMs: 120 * S, sumMs: 120 * S, chain: ['build'] }];
-  const two = [{ workflow: W, pathMs: 200 * S, sumMs: 200 * S, chain: ['build', 'test'] }];
+  const one = [{ workflow: W, pathMs: 120 * S, sumMs: 120 * S, chain: ['build'], allJobsMatched: true }];
+  const two = [{ workflow: W, pathMs: 200 * S, sumMs: 200 * S, chain: ['build', 'test'], allJobsMatched: true }];
   const jobs = [row('build', 5, 0, 20, 100), row('test', 5, 0, 10, 70)];
   assert.deepEqual(only(evaluate(agg({ jobs, criticalPaths: one }), f, {}, 5), 'critical-path-pole'), []);
   assert.deepEqual(only(evaluate(agg({ jobs, criticalPaths: two }), f, {}, 5), 'critical-path-pole').map((b) => b.value), [0.6]);
@@ -254,7 +291,7 @@ test('critical-path-pole skips a path of fewer than two jobs', () => {
 
 test('critical-path-pole divides the job total p50, not the sum of its phase p50s', () => {
   const f = { [W]: facts([fj('build'), fj('test', { needs: ['build'] })]) };
-  const cp = [{ workflow: W, pathMs: 200 * S, sumMs: 200 * S, chain: ['build', 'test'] }];
+  const cp = [{ workflow: W, pathMs: 200 * S, sumMs: 200 * S, chain: ['build', 'test'], allJobsMatched: true }];
   // phase p50s sum to 120 (0.6 of the path) but the per-run totals p50 is 90 (0.45)
   const jobs = [row('build', 5, 0, 20, 100, { total: 90 }), row('test', 5, 0, 10, 70)];
   assert.deepEqual(only(evaluate(agg({ jobs, criticalPaths: cp }), f, {}, 5), 'critical-path-pole'), []);
@@ -263,7 +300,7 @@ test('critical-path-pole divides the job total p50, not the sum of its phase p50
 });
 
 test('critical-path-pole gives no breach for an unparsed workflow, with or without a path entry', () => {
-  const cp = [{ workflow: W, pathMs: 200 * S, sumMs: 200 * S, chain: ['build', 'test'] }];
+  const cp = [{ workflow: W, pathMs: 200 * S, sumMs: 200 * S, chain: ['build', 'test'], allJobsMatched: true }];
   const jobs = [row('build', 5, 0, 20, 100), row('test', 5, 0, 10, 70)];
   const bad = { [W]: facts([fj('build'), fj('test', { needs: ['build'] })], { unparsed: ['tab indentation in jobs:'] }) };
   assert.deepEqual(only(evaluate(agg({ jobs, criticalPaths: cp }), bad, {}, 5), 'critical-path-pole'), []);
@@ -298,4 +335,45 @@ test('evaluate keeps the default for a non-number or non-positive threshold over
     assert.deepEqual(only(evaluate(a, f, { 'queue-wait': bad }, 5), 'queue-wait').map((b) => b.threshold), [0.4], String(bad));
   }
   assert.deepEqual(only(evaluate(a, f, { 'queue-wait': 0.3 }, 5), 'queue-wait').map((b) => b.threshold), [0.3]);
+});
+
+// ---- absolute floors: a share is no lead when the time it measures is short ----
+test('queue-wait needs waiting p50 at its 30 s floor: 29.999 s gives no breach, 30 s does', () => {
+  const f = { [W]: facts([]) };
+  // waiting 0.444 of a 4.5 s job — the real 2 s lead the floor exists for — gives nothing
+  assert.deepEqual(only(evaluate(agg({ jobs: [row('a', 5, 2, 0.5, 2)] }), f, {}, 5), 'queue-wait'), []);
+  assert.deepEqual(only(evaluate(agg({ jobs: [row('a', 5, 29.999, 10, 20)] }), f, {}, 5), 'queue-wait'), []);
+  assert.deepEqual(only(evaluate(agg({ jobs: [row('a', 5, 30, 10, 20)] }), f, {}, 5), 'queue-wait').map((b) => b.value), [0.5]);
+  // the floor is overridable
+  assert.equal(only(evaluate(agg({ jobs: [row('a', 5, 2, 0.5, 2)] }), f, { 'queue-wait-floor-ms': 1000 }, 5), 'queue-wait').length, 1);
+});
+
+test('setup-dominance needs setup p50 at its 30 s floor', () => {
+  const f = { [W]: facts([]) };
+  assert.deepEqual(only(evaluate(agg({ jobs: [row('a', 5, 1, 29.999, 20)] }), f, {}, 5), 'setup-dominance'), []);
+  assert.equal(only(evaluate(agg({ jobs: [row('a', 5, 1, 30, 20)] }), f, {}, 5), 'setup-dominance').length, 1);
+});
+
+test('critical-path-pole needs the path at its 60 s floor', () => {
+  const f = { [W]: facts([fj('build'), fj('test', { needs: ['build'] })]) };
+  const path = (ms) => [{ workflow: W, pathMs: ms, sumMs: ms, chain: ['build', 'test'], allJobsMatched: true }];
+  const jobs = [row('build', 5, 0, 0, 45), row('test', 5, 0, 0, 14.999)];
+  assert.deepEqual(only(evaluate(agg({ jobs, criticalPaths: path(59999) }), f, {}, 5), 'critical-path-pole'), []);
+  assert.equal(only(evaluate(agg({ jobs, criticalPaths: path(60000) }), f, {}, 5), 'critical-path-pole').length, 1);
+});
+
+test('critical-path-pole skips a path whose workflow has unmatched run jobs', () => {
+  const f = { [W]: facts([fj('build'), fj('test', { needs: ['build'] })]) };
+  const cp = (allJobsMatched) => [{ workflow: W, pathMs: 200 * S, sumMs: 200 * S, chain: ['build', 'test'], allJobsMatched }];
+  const jobs = [row('build', 5, 0, 20, 100), row('test', 5, 0, 10, 70)];
+  assert.deepEqual(only(evaluate(agg({ jobs, criticalPaths: cp(false) }), f, {}, 5), 'critical-path-pole'), []);
+  assert.equal(only(evaluate(agg({ jobs, criticalPaths: cp(true) }), f, {}, 5), 'critical-path-pole').length, 1);
+});
+
+test('missing-timeout needs the shard\'s running p90 at its 300 s floor', () => {
+  const f = { [W]: facts([fj('a', { timeoutDeclared: false })]) };
+  // a ~1 minute job with a wide spread is no runaway risk
+  assert.deepEqual(only(evaluate(agg({ jobs: [row('a', 5, 0, 0, 15, { runningP90: 60 })] }), f, {}, 5), 'missing-timeout'), []);
+  assert.deepEqual(only(evaluate(agg({ jobs: [row('a', 5, 0, 0, 75, { runningP90: 299.999 })] }), f, {}, 5), 'missing-timeout'), []);
+  assert.equal(only(evaluate(agg({ jobs: [row('a', 5, 0, 0, 75, { runningP90: 300 })] }), f, {}, 5), 'missing-timeout').length, 1);
 });

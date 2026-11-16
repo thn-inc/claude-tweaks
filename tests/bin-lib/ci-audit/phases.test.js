@@ -3,7 +3,7 @@
 // waiting / setup / running phase split over the normalized job shape.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { percentile, splitJobPhases } = require('../../../plugin/bin/lib/ci-audit/phases');
+const { percentile, splitJobPhases, nameMatches } = require('../../../plugin/bin/lib/ci-audit/phases');
 
 const T = (mmss) => `2026-11-16T00:${mmss}Z`;
 
@@ -99,14 +99,80 @@ test('splitJobPhases returns null for an unparseable instant', () => {
   assert.equal(splitJobPhases(job({ startedAt: 'not-a-date' }), DECLARED), null);
 });
 
-test('splitJobPhases skips a matching step with no startedAt and uses the next matching command', () => {
+test('splitJobPhases passes over a matched command step the run skipped and uses the next command', () => {
+  const j = job();
+  j.steps[1] = { ...j.steps[1], conclusion: 'skipped', startedAt: T('00:50'), completedAt: T('00:50') };
+  assert.deepEqual(splitJobPhases(j, DECLARED), { waitingMs: 30000, setupMs: 50000, runningMs: 70000 });
+});
+
+test('splitJobPhases gives setup null when the first matched command step has no usable startedAt', () => {
+  // Not skipped, so it ran (or should have): its start is unknown, and setup is never moved onto Test.
   const j = job();
   j.steps[1] = { ...j.steps[1], startedAt: null, completedAt: null };
-  assert.deepEqual(splitJobPhases(j, DECLARED), { waitingMs: 30000, setupMs: 50000, runningMs: 70000 });
+  assert.deepEqual(splitJobPhases(j, DECLARED), { waitingMs: 30000, setupMs: null, runningMs: 120000 });
+});
+
+test('splitJobPhases gives setup null when a declared command before the boundary matches no run step', () => {
+  // `Lint` was declared first but the run data has no such step: never pushed onto Install.
+  const declared = [{ name: 'Lint', kind: 'command' }, ...DECLARED];
+  assert.deepEqual(splitJobPhases(job(), declared), { waitingMs: 30000, setupMs: null, runningMs: 120000 });
+  // …and a declared command with an unknown run name (runName null) likewise.
+  const unknown = [{ name: null, kind: 'command', runName: null }, ...DECLARED];
+  assert.deepEqual(splitJobPhases(job(), unknown), { waitingMs: 30000, setupMs: null, runningMs: 120000 });
+  // An unmatched action before the boundary is harmless: its time is setup either way.
+  const action = [{ name: 'Cache', kind: 'action' }, ...DECLARED];
+  assert.deepEqual(splitJobPhases(job(), action), { waitingMs: 30000, setupMs: 20000, runningMs: 100000 });
+});
+
+test('splitJobPhases matches by runName when the step carries one, and in declaration order', () => {
+  const j = job();
+  j.steps = [
+    { name: 'Set up job', number: 1, startedAt: T('00:30'), completedAt: T('00:40') },
+    { name: 'Run npm ci', number: 2, startedAt: T('00:40'), completedAt: T('01:00') },
+    { name: 'Run npm ci', number: 3, startedAt: T('01:00'), completedAt: T('02:30') },
+  ];
+  const declared = [
+    { name: 'npm ci', kind: 'command', runName: 'Run npm ci' },
+    { name: 'npm ci', kind: 'command', runName: 'Run npm ci' },
+  ];
+  assert.deepEqual(splitJobPhases(j, declared), { waitingMs: 30000, setupMs: 10000, runningMs: 110000 });
+  // the bare declared name does not match the run data's `Run …` name
+  assert.deepEqual(splitJobPhases(j, [{ name: 'npm ci', kind: 'command' }]).setupMs, null);
 });
 
 test('splitJobPhases orders run steps by number before finding the boundary', () => {
   const j = job();
   j.steps = [j.steps[2], j.steps[0], j.steps[1]];
   assert.deepEqual(splitJobPhases(j, DECLARED), { waitingMs: 30000, setupMs: 20000, runningMs: 100000 });
+});
+
+test('a run step without a finite number keeps its own slot while numbered steps sort around it', () => {
+  // Install (no number) sits in slot 0, ahead of the numbered Set up job and Test: it is the boundary.
+  const j = job();
+  j.steps = [{ ...j.steps[1], number: null }, j.steps[2], j.steps[0]];
+  assert.deepEqual(splitJobPhases(j, DECLARED), { waitingMs: 30000, setupMs: 20000, runningMs: 100000 });
+  // Only the slot decides: two run steps named Test, the unnumbered one (00:50) in slot 0 and #3
+  // (01:20). Kept in its slot, the unnumbered one is the first match; moved last, #3 would be.
+  const k = job();
+  k.steps = [{ ...k.steps[2], number: null, startedAt: T('00:50') }, k.steps[2], k.steps[0]];
+  assert.deepEqual(splitJobPhases(k, [{ name: 'Test', kind: 'command' }]), { waitingMs: 30000, setupMs: 20000, runningMs: 100000 });
+});
+
+test('nameMatches: trimmed equality, or a ${{ }} template with each expression one or more characters', () => {
+  assert.equal(nameMatches('Test', 'Test'), true);
+  assert.equal(nameMatches(' Test ', 'Test'), true);
+  assert.equal(nameMatches('Test', 'Tests'), false);
+  const tpl = 'shard ${{ matrix.shard }}/${{ strategy.job-total }}';
+  assert.equal(nameMatches(tpl, 'shard 1/4'), true);
+  assert.equal(nameMatches(tpl, 'shard 12/40'), true);
+  assert.equal(nameMatches(tpl, 'shard /4'), false, 'an expression stands for at least one character');
+  assert.equal(nameMatches(tpl, 'shard 1/'), false);
+  assert.equal(nameMatches(tpl, 'xshard 1/4'), false, 'anchored at the start');
+  assert.equal(nameMatches('Build (${{ matrix.os }})', 'Build (ubuntu)'), true);
+  assert.equal(nameMatches('Build (${{ matrix.os }})', 'Build (ubuntu) extra'), false, 'anchored at the end');
+  assert.equal(nameMatches('${{ matrix.name }}', 'anything'), true);
+  assert.equal(nameMatches('${{ matrix.name }}', ''), false);
+  assert.equal(nameMatches('a ${{ x', 'a ${{ x'), true, 'an unclosed expression is literal text');
+  assert.equal(nameMatches('a ${{ x', 'a b'), false);
+  assert.equal(nameMatches(null, 'x'), false);
 });

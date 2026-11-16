@@ -46,16 +46,16 @@ const EXPECTED_JOBS = [
   {
     id: 'build', name: 'build', needs: [], timeoutDeclared: false, matrix: false,
     steps: [
-      { name: 'Checkout', kind: 'action' },
-      { name: 'Install', kind: 'command' },
-      { name: 'Build', kind: 'command' },
+      { name: 'Checkout', kind: 'action', named: true, value: 'some/checkout@v4' },
+      { name: 'Install', kind: 'command', named: true, value: 'npm ci' },
+      { name: 'Build', kind: 'command', named: true, value: 'npm run build' },
     ],
   },
   {
     id: 'test', name: 'Unit tests', needs: ['build'], timeoutDeclared: true, matrix: true,
     steps: [
-      { name: 'some/setup@v1', kind: 'action' },
-      { name: 'Run tests', kind: 'command' },
+      { name: 'some/setup@v1', kind: 'action', named: false, value: 'some/setup@v1' },
+      { name: 'Run tests', kind: 'command', named: true, value: 'npm test' },
     ],
   },
 ];
@@ -157,28 +157,41 @@ const stepsOf = (stepLines) => {
   return facts.jobs[0].steps;
 };
 
+const cmd = (name, value, named) => ({ name, kind: 'command', named, value });
+const act = (name, value, named = false) => ({ name, kind: 'action', named, value });
+
 test('a step with a name and neither run nor uses is skipped', () => {
   assert.deepEqual(stepsOf(['      - name: Wait', '        if: always()', '      - name: Go', '        run: x']), [
-    { name: 'Go', kind: 'command' },
+    cmd('Go', 'x', true),
   ]);
 });
 
-test('an unnamed step is named by its one-line uses or run value', () => {
+test('an unnamed step carries a derived name: its one-line uses or run value', () => {
   assert.deepEqual(stepsOf(['      - uses: some/setup@v1', '      - run: npm ci # install', "      - run: 'npm test'"]), [
-    { name: 'some/setup@v1', kind: 'action' },
-    { name: 'npm ci', kind: 'command' },
-    { name: 'npm test', kind: 'command' },
+    act('some/setup@v1', 'some/setup@v1'),
+    cmd('npm ci', 'npm ci', false),
+    cmd('npm test', 'npm test', false),
   ]);
 });
 
-test('an unnamed step whose run value spans lines is left out', () => {
+test('an unnamed literal-block step is kept with no name and its first content line as value', () => {
+  // The first content line is read even when it starts with `#`, which inside a block is content.
   assert.deepEqual(stepsOf(['      - run: |', '          npm ci', '          npm test', '      - name: Go', '        run: x']), [
-    { name: 'Go', kind: 'command' },
+    cmd(null, 'npm ci', false), cmd('Go', 'x', true),
   ]);
+  assert.deepEqual(stepsOf(['      - run: |-', '', '          # build', '          make', '      - uses: y']), [
+    cmd(null, '# build', false), act('y', 'y'),
+  ]);
+  // The block ends at the next key: a later deeper line (under `with:`) is not its first line.
+  assert.deepEqual(stepsOf(['      - shell: bash', '        run: |', '        env:', '          A: 1']), [cmd(null, null, false)]);
 });
 
-test('an unnamed step whose plain run value continues on a deeper line is left out', () => {
-  assert.deepEqual(stepsOf(['      - run: npm ci', '          && npm test', '      - uses: y']), [{ name: 'y', kind: 'action' }]);
+test('an unnamed folded block, continued plain value or escaped quoted value has no name and no value', () => {
+  assert.deepEqual(stepsOf(['      - run: >', '          npm ci', '          --silent', '      - uses: y']), [cmd(null, null, false), act('y', 'y')]);
+  assert.deepEqual(stepsOf(['      - run: npm ci', '          && npm test', '      - uses: y']), [cmd(null, null, false), act('y', 'y')]);
+  // A backslash escape in a double-quoted value is not decoded: unknown, never a guessed name, and
+  // the step is still listed (not dropped, not unparsed).
+  assert.deepEqual(stepsOf(['      - run: "echo a\\tb"', '      - name: Go', '        run: x']), [cmd(null, null, false), cmd('Go', 'x', true)]);
 });
 
 test('a job name continued on a deeper line is unparsed', () => {
@@ -193,10 +206,32 @@ test('a step with both run and uses is unparsed', () => {
 });
 
 test('an indentless step list is read', () => {
-  assert.deepEqual(stepsOf(['    - name: A', '      run: x', '    - uses: y']), [
-    { name: 'A', kind: 'command' },
-    { name: 'y', kind: 'action' },
-  ]);
+  assert.deepEqual(stepsOf(['    - name: A', '      run: x', '    - uses: y']), [cmd('A', 'x', true), act('y', 'y')]);
+});
+
+test('steps: [] reads as no steps; any other inline steps value is unparsed', () => {
+  const ok = readWorkflowFacts(lines('on: [push]', 'jobs:', '  a:', '    runs-on: x', '    steps: []'));
+  assert.deepEqual(ok.unparsed, []);
+  assert.deepEqual(ok.jobs[0].steps, []);
+  const bad = readWorkflowFacts(lines('on: [push]', 'jobs:', '  a:', '    runs-on: x', '    steps: x'));
+  assert.deepEqual(bad, { jobs: [], concurrencyDeclared: false, unparsed: ['job a steps not read'] });
+});
+
+test('each remaining jobs-region reason is pinned by an input where only it decides', () => {
+  const reason = (...l) => readWorkflowFacts(lines('on: [push]', ...l)).unparsed;
+  assert.deepEqual(reason('jobs: x'), ['jobs: not read']);
+  assert.deepEqual(reason('jobs:', '  a: x'), ['job a not read']);
+  assert.deepEqual(reason('jobs:', '  a:', '    timeout-minutes:', '    runs-on: x'), ['job a timeout-minutes not read']);
+  assert.deepEqual(reason('jobs:', '  a:', '    runs-on: x', '  b:', '    needs:', '    runs-on: x'), ['job b needs not read']);
+  // an empty flow list is no needs, not a reason
+  const empty = readWorkflowFacts(lines('on: [push]', 'jobs:', '  a:', '    needs: []', '    runs-on: x'));
+  assert.deepEqual([empty.unparsed, empty.jobs[0].needs], [[], []]);
+});
+
+test('a quoted "jobs" key is the jobs region', () => {
+  const facts = readWorkflowFacts(lines('on: [push]', '"jobs":', '  a:', '    runs-on: x'));
+  assert.deepEqual(facts.unparsed, []);
+  assert.deepEqual(facts.jobs.map((j) => j.id), ['a']);
 });
 
 // --- timeout and matrix are job-level only ---
@@ -238,7 +273,8 @@ test('a strategy value the scanner cannot follow is unparsed', () => {
 // --- region reasons outside jobs: and concurrency: are not this reader's ---
 
 test('an anchor outside jobs: and concurrency: does not stop the jobs read', () => {
-  const facts = readWorkflowFacts(lines('env:', '  A: &a 1', 'on: [push]', 'jobs:', '  a:', '    runs-on: x'));
+  // readWorkflowShape reports `anchor or alias in name:` here; only SHAPE_REASONS drops it.
+  const facts = readWorkflowFacts(lines('name: &n CI', 'on: [push]', 'jobs:', '  a:', '    runs-on: x'));
   assert.deepEqual(facts.unparsed, []);
   assert.equal(facts.jobs.length, 1);
 });

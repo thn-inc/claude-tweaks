@@ -17,9 +17,15 @@
 //    `timeout-minutes` or a `matrix` key under a step's `with:` sets neither;
 //  - a step with a `run` key is a `command`, with a `uses` key an `action`; with both it is
 //    unparsed; with neither it is skipped;
-//  - a step's name is its `name:` value; a step with no `name` is named by its `run` or `uses`
-//    value when that value is one line, and is left out of `steps` when it spans lines (a
-//    block scalar or a continued plain value), since any name for it would be a guess.
+//  - every command and action step is listed, in file order, as { name, kind, named, value }:
+//    `named` is whether it has a `name:`; `name` is that value, else — a derived name — its `run`
+//    or `uses` value when that value is one plain or quoted line, else null (a block scalar, a
+//    continued plain value, or a double-quoted value with a backslash escape, which this reader
+//    does not decode: any name for it would be a guess). `value` is the `run`/`uses` value's
+//    first line: the one-line value itself, a literal block's (`|`) first content line, or null
+//    (a folded `>` block, a continued plain value, an escaped quoted value). An unknown name is
+//    never a reason in `unparsed`: the step and its kind are still known;
+//  - `concurrencyDeclared` is trustworthy only when `unparsed` holds no concurrency reason.
 //
 // Linear: one forward pass over the lines with a persistent index, hand scans per line, and no
 // regex that can restart inside a long run.
@@ -225,15 +231,20 @@ function readSteps(lines, i, end, keyIndent, jobId) {
   const steps = [];
   let stepIndent = null;
   let keyCol = null;
-  let cur = null; // {name, run, uses} for the step being read; run/uses: {oneLine, text}
+  let cur = null; // {name, run, uses, pending} for the step being read; run/uses: {oneLine, text, first}
   let last = null; // {key, emptyValue, deeper} for the last key read in this step
   const finish = () => {
     if (cur === null) return;
     if (cur.run && cur.uses) fail(reason);
     const val = cur.run || cur.uses;
     if (val) {
-      const name = cur.name !== null ? cur.name : (val.oneLine ? val.text : null);
-      if (name !== null) steps.push({ name, kind: cur.run ? 'command' : 'action' });
+      const named = cur.name !== null;
+      steps.push({
+        name: named ? cur.name : (val.oneLine ? val.text : null),
+        kind: cur.run ? 'command' : 'action',
+        named,
+        value: val.oneLine ? val.text : val.first,
+      });
     }
     cur = null;
   };
@@ -242,17 +253,25 @@ function readSteps(lines, i, end, keyIndent, jobId) {
     if (kv === null) fail(reason);
     const value = plainValue(kv.rest);
     last = { key: kv.key, emptyValue: value === '', deeper: false, seq: false };
+    cur.pending = null;
     if (kv.key === 'name') {
       const s = readScalar(kv.rest);
       if (s === null || s.empty) fail(reason);
       cur.name = s.text;
     } else if (kv.key === 'run' || kv.key === 'uses') {
       const s = value === '' ? null : readScalar(kv.rest);
-      cur[kv.key] = s && !s.empty ? { oneLine: true, text: s.text } : { oneLine: false, text: null };
+      cur[kv.key] = s && !s.empty ? { oneLine: true, text: s.text, first: null } : { oneLine: false, text: null, first: null };
+      // A literal block (`|`, `|-`, `|2`, …): its first content line is the value's first line.
+      cur.pending = value[0] === '|' ? cur[kv.key] : null;
     }
   };
   for (; i < end; i++) {
     const line = lines[i];
+    // A literal block's first content line, read before the comment skip: `# x` there is content.
+    if (cur !== null && cur.pending && line.trim() !== '' && keyCol !== null && leadSpaces(line) > keyCol) {
+      cur.pending.first = line.trim();
+      cur.pending = null;
+    }
     if (isSkippable(line)) continue;
     const ind = leadSpaces(line);
     const dash = DASH.test(line);
@@ -269,7 +288,7 @@ function readSteps(lines, i, end, keyIndent, jobId) {
     if (ind === stepIndent) {
       if (tabIndent(line)) fail('tab indentation in jobs:');
       finish();
-      cur = { name: null, run: null, uses: null };
+      cur = { name: null, run: null, uses: null, pending: null };
       last = null;
       const after = line.slice(ind + 1);
       let sp = 0;

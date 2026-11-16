@@ -89,16 +89,42 @@ test('aggregate counts a job whose startedAt precedes createdAt in excluded and 
 test('aggregate critical path follows needs over p50 totals; sumMs adds every job', () => {
   const agg = aggregate(W_RUNS, { [W]: W_FACTS });
   // build p50 total of [100, 140, 85] = 100 s; test of [100, 120, 90] = 100 s; docs of [60, 60, 150] = 60 s.
-  assert.deepEqual(agg.criticalPaths, [{ workflow: W, pathMs: 200000, sumMs: 260000, chain: ['build', 'test'] }]);
+  assert.deepEqual(agg.criticalPaths, [{ workflow: W, pathMs: 200000, sumMs: 260000, chain: ['build', 'test'], allJobsMatched: true }]);
 });
 
-test('aggregate overlaps: never-intersecting pair is false, a pair intersecting in one run is true', () => {
+test('aggregate overlaps list only the workflow-job pairs that never intersected, with their shared runs', () => {
+  // build–docs and docs–test intersect in some run; build–test never does (run 4's build is excluded).
   const agg = aggregate(W_RUNS, { [W]: W_FACTS });
-  assert.deepEqual(agg.overlaps, [
-    { workflow: W, a: 'build', b: 'docs', everOverlapped: true },
-    { workflow: W, a: 'build', b: 'test', everOverlapped: false },
-    { workflow: W, a: 'docs', b: 'test', everOverlapped: true },
-  ]);
+  assert.deepEqual(agg.overlaps, [{ workflow: W, a: 'build', b: 'test', sharedRuns: 3 }]);
+  // the shared-run floor: three shared runs are under a floor of 4
+  assert.deepEqual(aggregate(W_RUNS, { [W]: W_FACTS }, { minSample: 4 }).overlaps, []);
+  assert.deepEqual(aggregate(W_RUNS, { [W]: W_FACTS }, { minSample: 3 }).overlaps.length, 1);
+});
+
+test('aggregate overlaps: touching ends (one job ends as the other starts) do not intersect', () => {
+  const X = 'workflows/x.yml';
+  const f = { [X]: facts([fj('a'), fj('b')]) };
+  assert.deepEqual(aggregate([run(1, X, [job('a', 0, 0, 10), job('b', 0, 10, 20)])], f).overlaps, [{ workflow: X, a: 'a', b: 'b', sharedRuns: 1 }]);
+  assert.deepEqual(aggregate([run(1, X, [job('a', 0, 0, 11), job('b', 0, 10, 20)])], f).overlaps, []);
+});
+
+test('aggregate leaves skipped and cancelled jobs out of every figure and counts them in notTimed', () => {
+  // The real shape of a job its `if:` skipped: conclusion skipped, created = started = completed.
+  const X = 'workflows/fix.yml';
+  const f = { [X]: facts([fj('label'), fj('cleanup')]) };
+  const skipped = (s) => ({ ...job('cleanup', s, s, s), conclusion: 'skipped', steps: [] });
+  const cancelled = { ...job('label', 0, 5, 7), conclusion: 'cancelled' };
+  const runs = [
+    run(1, X, [job('label', 0, 5, 40), skipped(0)]),
+    run(2, X, [job('label', 0, 5, 50), skipped(0)]),
+    run(3, X, [cancelled, skipped(0)]),
+  ];
+  const agg = aggregate(runs, f);
+  assert.deepEqual(agg.jobs.map((j) => [j.job, j.runs]), [['label', 2]]);
+  assert.deepEqual(find(agg, X, 'label').total, stat(40, 50, 2)); // no 0 ms or 7 s run drags it down
+  assert.deepEqual(agg.notTimed, { skipped: 3, cancelled: 1 });
+  assert.deepEqual(agg.overlaps, []); // the pair never both ran, so no evidence either way
+  assert.deepEqual(agg.unmatchedJobs, []);
 });
 
 test('aggregate repeatedSteps lists step names declared in two or more jobs, most jobs first', () => {
@@ -123,10 +149,37 @@ test('aggregate shard skew: totals 10,10,10,40 s give ratio 4 with the slowest s
 test('aggregate matches a matrix shard to its workflow job by the part before " ("', () => {
   const agg = aggregate(M_RUNS, { [M]: M_FACTS });
   assert.deepEqual(find(agg, M, 'unit (a)').setup, stat(2, 2, 1));
-  // lint is not a declared job: no step kinds, so no setup figure.
+  // lint is not a declared job: no step kinds, so no setup figure, and it is listed as unmatched.
   assert.deepEqual(find(agg, M, 'lint (x)').setup, stat(null, null, 0));
-  // a matrix job weighs as its slowest shard on the critical path.
-  assert.deepEqual(agg.criticalPaths, [{ workflow: M, pathMs: 40000, sumMs: 40000, chain: ['unit'] }]);
+  assert.deepEqual(agg.unmatchedJobs, [{ workflow: M, job: 'lint (x)' }]);
+  // a matrix job weighs as its slowest shard; the unmatched job may sit on the real path.
+  assert.deepEqual(agg.criticalPaths, [{ workflow: M, pathMs: 40000, sumMs: 40000, chain: ['unit'], allJobsMatched: false }]);
+});
+
+test('aggregate matches a run job to a ${{ }}-named workflow job and builds its shard family from it', () => {
+  // The real shape: `name: shard ${{ matrix.shard }}/${{ strategy.job-total }}` runs as `shard 1/4`.
+  const T = 'workflows/test.yml';
+  const tpl = 'shard ${{ matrix.shard }}/${{ strategy.job-total }}';
+  const tFacts = facts([
+    fj('shard', { name: tpl, matrix: true, steps: [CMD('Install')] }),
+    fj('test', { needs: ['shard'], steps: [CMD('Install')] }),
+  ]);
+  const runs = [run(1, T, [shard('shard 1/2', 100), shard('shard 2/2', 40), job('test', 100, 105, 120, [['Install', 106, 120]])])];
+  const agg = aggregate(runs, { [T]: tFacts });
+  assert.deepEqual(find(agg, T, 'shard 1/2').setup, stat(2, 2, 1));
+  assert.deepEqual(agg.unmatchedJobs, []);
+  assert.deepEqual(agg.shardSkews, [{ workflow: T, family: tpl, ratio: 2.5, slowest: 'shard 1/2', shards: 2 }]);
+  // the path holds the shards (slowest, 100 s) and test (20 s), not test alone
+  assert.deepEqual(agg.criticalPaths, [{ workflow: T, pathMs: 120000, sumMs: 120000, chain: [tpl, 'test'], allJobsMatched: true }]);
+});
+
+test('aggregate gives no shard family to plain jobs whose names only look like shards', () => {
+  const D = 'workflows/deploy.yml';
+  const dFacts = facts([fj('prod', { name: 'deploy (prod)' }), fj('staging', { name: 'deploy (staging)' })]);
+  const runs = [run(1, D, [shard('deploy (prod)', 10), shard('deploy (staging)', 50)])];
+  assert.deepEqual(aggregate(runs, { [D]: dFacts }).shardSkews, []);
+  // with no trustworthy facts the run-data name rule is all there is
+  assert.deepEqual(aggregate(runs, {}).shardSkews.map((s) => s.family), ['deploy']);
 });
 
 test('aggregate does not match a run job by its base name when the workflow job is not a matrix', () => {
@@ -160,33 +213,56 @@ test('aggregate reads no step kinds, path or repeated steps from an unparsed wor
 
 test('aggregate keeps an excluded job out of overlaps', () => {
   const X = 'workflows/x.yml';
+  const f = { [X]: facts([fj('a'), fj('b')]) };
   const runs = [
     run(40, X, [job('a', 0, 1, 10), job('b', 0, 20, 30)]),
     // a: startedAt before createdAt — excluded; its interval would intersect b's.
     run(41, X, [job('a', 10, 5, 50), job('b', 0, 20, 30)]),
   ];
-  const agg = aggregate(runs, {});
+  const agg = aggregate(runs, f);
   assert.equal(agg.excluded, 1);
-  assert.deepEqual(agg.overlaps, [{ workflow: X, a: 'a', b: 'b', everOverlapped: false }]);
+  assert.deepEqual(agg.overlaps, [{ workflow: X, a: 'a', b: 'b', sharedRuns: 1 }]);
 });
 
-test('aggregate overlaps hold only pairs of two jobs seen in the same run', () => {
+test('aggregate overlaps hold only matched pairs of two workflow jobs seen in the same run', () => {
   const X = 'workflows/x.yml';
-  const single = aggregate([run(50, X, [job('a', 0, 1, 10)])], {});
-  assert.deepEqual(single.overlaps, []);
-  const apart = aggregate([run(51, X, [job('a', 0, 1, 10)]), run(52, X, [job('b', 0, 1, 10)])], {});
-  assert.deepEqual(apart.overlaps, []);
+  const f = { [X]: facts([fj('a'), fj('b')]) };
+  assert.deepEqual(aggregate([run(50, X, [job('a', 0, 1, 10)])], f).overlaps, []);
+  assert.deepEqual(aggregate([run(51, X, [job('a', 0, 1, 10)]), run(52, X, [job('b', 0, 1, 10)])], f).overlaps, []);
+  // no trustworthy facts: no workflow jobs to pair
+  assert.deepEqual(aggregate([run(53, X, [job('a', 0, 1, 10), job('b', 0, 20, 30)])], {}).overlaps, []);
+  // two shards of one workflow job are one job, never a pair
+  const m = { [X]: facts([fj('u', { matrix: true })]) };
+  assert.deepEqual(aggregate([run(54, X, [job('u (1)', 0, 1, 10), job('u (2)', 0, 20, 30)])], m).overlaps, []);
 });
 
 test('aggregate tolerates no runs and missing facts', () => {
-  assert.deepEqual(aggregate([], {}), { jobs: [], excluded: 0, criticalPaths: [], shardSkews: [], repeatedSteps: [], overlaps: [] });
-  // a workflow string that names an Object.prototype key is still a workflow with no facts.
-  const agg = aggregate([run(60, 'constructor', [job('a', 0, 1, 10, [['Install', 1, 10]])])], {});
+  assert.deepEqual(aggregate([], {}), {
+    jobs: [], excluded: 0, notTimed: { skipped: 0, cancelled: 0 }, criticalPaths: [], shardSkews: [], repeatedSteps: [], overlaps: [], unmatchedJobs: [],
+  });
+  // facts reached only through the prototype are not this workflow's: own() alone decides.
+  const inherited = Object.create({ [W]: facts([fj('a', { steps: [CMD('Install')] })]) });
+  const agg = aggregate([run(60, W, [job('a', 0, 1, 10, [['Install', 1, 10]])])], inherited);
   assert.deepEqual(agg.jobs[0].setup, stat(null, null, 0));
   assert.deepEqual(agg.criticalPaths, []);
+  assert.deepEqual(aggregate([run(60, W, [job('a', 0, 1, 10, [['Install', 1, 10]])])], { [W]: facts([fj('a', { steps: [CMD('Install')] })]) }).jobs[0].setup.n, 1);
 });
 
-test('matchJob maps a run job by exact name, else a matrix base name, and gives null when ambiguous', () => {
+test('aggregate step durations skip a step with an invalid or reversed instant', () => {
+  const X = 'workflows/x.yml';
+  const j = job('a', 0, 1, 30, [['Good', 1, 11]]);
+  j.steps.push({ name: 'Reversed', number: 2, startedAt: at(20), completedAt: at(15) });
+  j.steps.push({ name: 'Bad', number: 3, startedAt: 'nope', completedAt: at(25) });
+  assert.deepEqual(aggregate([run(70, X, [j])], {}).jobs[0].slowestSteps, [{ name: 'Good', p50Ms: 10000, n: 1 }]);
+});
+
+test('aggregate gives no shard skew when the shards\' median total is zero', () => {
+  const X = 'workflows/x.yml';
+  const zero = (name) => job(name, 0, 0, 0);
+  assert.deepEqual(aggregate([run(80, X, [zero('u (1)'), zero('u (2)'), zero('u (3)')])], {}).shardSkews, []);
+});
+
+test('matchJob maps a run job by exact name, else a matrix base name, else a template, and gives null when ambiguous', () => {
   const jobs = [fj('lint'), fj('unit', { matrix: true }), fj('pack'), fj('twin-a', { name: 'twin' }), fj('twin-b', { name: 'twin' })];
   assert.equal(matchJob('lint', jobs).id, 'lint');
   assert.equal(matchJob('unit (node 20, linux)', jobs).id, 'unit');
@@ -194,6 +270,17 @@ test('matchJob maps a run job by exact name, else a matrix base name, and gives 
   assert.equal(matchJob('twin', jobs), null); // two workflow jobs share the name
   assert.equal(matchJob('other', jobs), null);
   assert.equal(matchJob('lint', null), null);
+  // the base-name walk tries each ` (` from the last: `e2e (a) (b)` reaches the matrix job `e2e (a)`
+  const nested = [fj('e2e', { name: 'e2e (a)', matrix: true })];
+  assert.equal(matchJob('e2e (a) (b)', nested).id, 'e2e');
+  // a base name held by two matrix jobs matches neither
+  assert.equal(matchJob('u (1)', [fj('u1', { name: 'u', matrix: true }), fj('u2', { name: 'u', matrix: true })]), null);
+  // templates: a custom matrix job name, and two templates matching one name
+  const tpl = [fj('build', { name: 'Build (${{ matrix.os }})', matrix: true })];
+  assert.equal(matchJob('Build (ubuntu)', tpl).id, 'build');
+  assert.equal(matchJob('Build ubuntu', tpl), null);
+  const two = [fj('a', { name: 'x ${{ m.a }}' }), fj('b', { name: 'x ${{ m.b }}' })];
+  assert.equal(matchJob('x 1', two), null);
   assert.deepEqual(usableJobs({ [W]: facts([fj('a')]) }, W).map((j) => j.id), ['a']);
   assert.equal(usableJobs({ [W]: facts([fj('a')], ['tab indentation in jobs:']) }, W), null);
   assert.equal(usableJobs({}, W), null);

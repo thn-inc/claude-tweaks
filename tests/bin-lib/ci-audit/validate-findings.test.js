@@ -30,14 +30,14 @@ const row = (job, waiting, setup, running, total) => ({
 function gather(over = {}) {
   return {
     definitions: { waiting: 'w', setup: 's', running: 'r' },
-    window: { days: 30, from: '2026-10-17', maxRuns: 20, workflow: null, minSample: 5, sampledRuns: 12 },
+    window: { days: 30, from: '2026-10-17', maxRuns: 20, workflow: null, minSample: 5, thresholds: {}, sampledRuns: 12 },
     workflows: [{ file: CI, unparsed: [] }, { file: 'wf/nightly.yml', unparsed: [] }],
     jobs: [
       row('lint', [9000, 12000], [2000, 3000], [4000, 5000], [15000, 20000]),
       row('unit (a)', [1000, 2000], [3000, 4000], [56000, 70000], [60000, 76000]),
       row('unit (b)', [1000, 2000], [3000, 4000], [16000, 20000], [20000, 26000]),
     ],
-    criticalPaths: [{ workflow: CI, pathMs: 75000, sumMs: 95000, chain: ['lint', 'unit'] }],
+    criticalPaths: [{ workflow: CI, pathMs: 75000, sumMs: 95000, chain: ['lint', 'unit'], allJobsMatched: true }],
     shardSkews: [{ workflow: CI, family: 'unit', ratio: 1.5, slowest: 'unit (a)', shards: 2 }],
     repeatedSteps: [{ name: 'Install deps', jobs: ['e2e', 'lint', 'unit'] }],
     overlaps: [],
@@ -47,11 +47,13 @@ function gather(over = {}) {
       { check: 'repeated-work', workflow: null, job: null, step: 'Install deps', metric: 'jobsDeclaringStep', value: 3, threshold: 3 },
     ],
     underSampled: [],
+    unmatchedJobs: [],
     droppedBreaches: 0,
     excluded: 0,
+    notTimed: { skipped: 0, cancelled: 0 },
     truncated: [],
     failures: [],
-    unsampled: { skipped: 0, outsideWorkflows: 0, noWorkflowPath: 0 },
+    unsampled: { skipped: 0 },
     noData: null,
     ...over,
   };
@@ -399,13 +401,33 @@ test('the title is capped at 200 characters, the name cut with an ellipsis insid
   assert.equal(short.title, 'CI queue-wait: `wf/ci.yml` — `lint`');
 });
 
-test('a partial gather states the window is partial and names the truncated ranges and failed reads', () => {
-  const p = payloadFor(finding(), gather({ truncated: ['runs 2026-10-17..2026-10-20: cap'], failures: ['jobs of run 7: timed out'] }));
+test('a title cut over astral characters or backticks keeps every code point that fits, never a bare ellipsis', () => {
+  // Each emoji is 2 UTF-16 units: the cut counts in the cap's own unit, so it keeps 84 of them, not 0.
+  const emoji = '😀'.repeat(300);
+  const g1 = gather({ jobs: [...gather().jobs, row(emoji, [1, 1], [1, 1], [1, 1], [3, 3])] });
+  const p1 = payloadFor(finding({ job: emoji, evidence: [{ job: emoji, metric: 'runs', value: 12 }] }), g1);
+  assert.equal(p1.title, `CI queue-wait: \`wf/ci.yml\` — \`${'😀'.repeat(84)}…\``);
+  assert.ok(p1.title.length <= 200 && p1.title.length >= 199, String(p1.title.length));
+  // A long backtick run widens the span's fence: still a balanced span with real text in it.
+  const ticks = `${'a'.repeat(50)}${'`'.repeat(20)}${'b'.repeat(200)}`;
+  const g2 = gather({ jobs: [...gather().jobs, row(ticks, [1, 1], [1, 1], [1, 1], [3, 3])] });
+  const p2 = payloadFor(finding({ job: ticks, evidence: [{ job: ticks, metric: 'runs', value: 12 }] }), g2);
+  assert.ok(p2.title.length <= 200, String(p2.title.length));
+  assert.ok(p2.title.includes('a'.repeat(50)), p2.title);
+  assert.match(p2.title, /…`+$/);
+});
+
+test('a partial gather states the sample is partial and names the truncated lines and failed reads', () => {
+  const p = payloadFor(finding(), gather({ truncated: ['runs of .github/workflows/x.yml: 3 runs in 5 pages (page cap; fewer than 20)'], failures: ['jobs of run 7: timed out'] }));
   checkBody(p.body);
   const cs = extractSection(p.body, 'Current State', { trim: true });
-  assert.ok(cs.includes('The window is partial: the read stopped short, so these figures cover only part of it. Truncated:\n\n```\nruns 2026-10-17..2026-10-20: cap\n```'), cs);
+  assert.ok(cs.includes('The sample is partial: some reads were cut short or failed, so these figures cover only the runs read. Truncated:\n\n```\nruns of .github/workflows/x.yml: 3 runs in 5 pages (page cap; fewer than 20)\n```'), cs);
   assert.ok(cs.includes('Failed reads:\n\n```\njobs of run 7: timed out\n```'), cs);
+  // a complete sample says nothing about partiality — the statement appears only when it is real
   assert.ok(!payloadFor(finding()).body.includes('partial'));
+  const failedOnly = extractSection(payloadFor(finding(), gather({ failures: ['jobs of run 7: timed out'] })).body, 'Current State', { trim: true });
+  assert.ok(failedOnly.includes('The sample is partial: some reads were cut short or failed, so these figures cover only the runs read.\n'), failedOnly);
+  assert.ok(!failedOnly.includes('Truncated:'), failedOnly);
 });
 
 test('a job name carrying backticks, a fence and a fake marker stays inside its span and cannot move the fingerprint', () => {
