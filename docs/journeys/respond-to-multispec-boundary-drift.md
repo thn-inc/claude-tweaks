@@ -4,6 +4,7 @@ files:
   - plugin/skills/flow/multi-spec.md
   - plugin/skills/flow/multispec-batch-curation.md
   - plugin/skills/_shared/auto-mode-contract.md
+  - plugin/bin/lib/flow/manifest.js
 ---
 
 # Respond to Multi-Spec Boundary Drift
@@ -40,3 +41,4 @@ The operator's long batch survives an active `origin/main`: quiet boundaries sta
 
 _Origin: record #1076 (multispec boundary freshness), built 2026-08-20._
 - Updated during build of #2541 ("flow multi-spec: boundary freshness HARD-GATE has no unattended default") — Step 3 gained the `autonomy: unattended` carve-out bullet: a run-modified-only, conflict-free overlap now auto-resolves with no `AskUserQuestion`.
+- Updated during build of #5542 (the manifest's legacy `baseSha` line is no longer written back) — Step 5's Check now says an older manifest loses the line on its next rewrite, where it said the line was kept; `plugin/bin/lib/flow/manifest.js`, whose serializer that sentence describes, joined `files:`.
