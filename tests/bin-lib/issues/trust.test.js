@@ -1392,6 +1392,9 @@ test('#4626: under revocationOnly every record lands in exactly one outcome colu
   assert.equal(r.negativeEvidence, 1);
   assert.equal(r.undispositioned, 2);
   assert.equal(r.dispositioned, 5);
+  // 7 records is below MIN_SAMPLES while 5 dispositions clear MIN_VERDICTS, so only the
+  // cell-size floor keeps this cell ungraded (the revert and changes-requested alone would read mixed).
+  assert.equal(r.verdict, 'insufficient-evidence');
 });
 
 test('#4626: an unstructured cell stays insufficient-evidence under revocationOnly', () => {
