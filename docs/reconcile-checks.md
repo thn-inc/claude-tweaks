@@ -325,7 +325,8 @@ companion re-classify (when the `checkRunIntegrity` gate fails) passes
 wrapper, passes `['structurally-stuck']` for `trackStuckSkip`. The merged-PR decision is
 `decideArchiveCore`, called by `archiveMergedRun` and by the `status: clean` by-number sweep's
 `byNumberRecordSkip`, and is not a classifier kind.
-`adhoc-session-ended` joined the precedence order later (#4179), between `adhoc-superseded` and `structurally-stuck`.
+`adhoc-session-ended` joined the precedence order later (#4179), between `adhoc-superseded` and
+`structurally-stuck`.
 
 The `checkRunIntegrity` shipped-unclosed evidence gate for `abandoned-interrupted` stays
 call-site-only, never folded into the classifier itself (folding it in would misattribute the

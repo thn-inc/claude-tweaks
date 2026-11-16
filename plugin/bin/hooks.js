@@ -289,7 +289,7 @@ function closestVerb(cmd, candidates) {
 // this file's own #280/#1183/#1299 twin check afterward — every later retry
 // reads the stub as "already archived elsewhere" and is refused as a shadow,
 // even long after the claim's own TTL (context.js's ARCHIVE_CLAIM_TTL_MS)
-// would let archive-merged.js's own decideArchiveCore treat it as abandoned and
+// would let archive-merged.js's own archive pass treat it as abandoned and
 // retry. Mirrors that exact staleness rule here so the two callers agree.
 function isLiveArchiveTwin(p) {
   if (!isDirectory(p)) return false;
