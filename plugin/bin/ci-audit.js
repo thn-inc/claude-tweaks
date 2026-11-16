@@ -12,6 +12,7 @@
 //
 // Usage: ci-audit.js gather [--days N] [--runs N] [--workflow <file>] [--repo owner/name | --root <dir>]
 //                           [--min-sample N] [--thresholds <text>]
+//        ci-audit.js validate-findings --gather <file> --findings <file> --issues <file> [--dry-run]
 //        ci-audit.js --help|-h
 //   --days N            window length, an integer 1..400 (default 30), starting at the UTC date
 //                       N days before now
@@ -48,7 +49,29 @@
 //     the run data read failed (no runs page read, or every sampled run's jobs read failed): the
 //     report still goes to stdout so nothing read is lost
 //   3 the forge CLI is absent: the report goes to stdout with the failure naming it
+//
+// validate-findings: the judge's findings (a JSON array, --findings) checked against the gather
+// report they cite (--gather) by lib/ci-audit/validate-finding.js, fingerprinted
+// (lib/ci-audit/fingerprint.js), collapsed within the batch (the first finding per fingerprint
+// wins), deduplicated against the open and closed by:ci-health issues (--issues: a JSON array of
+// {number, state, labels, fingerprint}, read by health-core's loadIssueIndex; `[]` when none exist)
+// through health-core's decide with no local cache, and projected into born-ready payloads
+// (lib/ci-audit/issue-payload.js). An open match is skipped, a `wontfix` match suppressed, a
+// closed match reopened. Emit-only: it reads its three files and nothing else, starts no process
+// and writes no file, whether or not --dry-run is given; the skill files the payloads.
+//   --dry-run  marks each payload `dryRun: true`; nothing else changes
+// Output: one JSON line, an array of {id, check, workflow, job, step, action: file|reopen,
+// reopens: issue number|null, origin, title, body, labels, type[, dryRun]}. stderr carries one line
+// per rejection reason (`finding <index> ("<check>") rejected: <reason>`) and a closing count line.
+// Exit codes:
+//   0 payloads printed (possibly none), no finding rejected
+//   1 at least one finding rejected: the valid ones' payloads still print
+//   2 malformed invocation, or a file that cannot be read or parsed, a --gather that is not a
+//     gather report, or a --findings or --issues that is not a JSON array (one stderr line,
+//     nothing on stdout)
 'use strict';
+
+const fs = require('fs');
 
 const { originUrl, gateOriginRepo, pinExplicitRepoHost } = require('./lib/repo-resolve');
 const { DEFAULT_DAYS, MAX_DAYS } = require('./lib/ci-health/constants');
@@ -57,11 +80,17 @@ const { oneLine } = require('./lib/ci-health/render');
 const source = require('./lib/ci-audit/source');
 const { readWorkflowFacts } = require('./lib/ci-audit/workflow-facts');
 const { aggregate } = require('./lib/ci-audit/aggregate');
-const { DEFAULT_MIN_SAMPLE, parseThresholds, evaluate } = require('./lib/ci-audit/checks');
+const { CHECK_IDS, DEFAULT_MIN_SAMPLE, parseThresholds, evaluate } = require('./lib/ci-audit/checks');
+const { validateFinding } = require('./lib/ci-audit/validate-finding');
+const { fingerprint } = require('./lib/ci-audit/fingerprint');
+const { toIssuePayload } = require('./lib/ci-audit/issue-payload');
+const { loadIssueIndex } = require('./lib/health-core/issue-index');
+const { decide } = require('./lib/health-core/dedup');
 
 const { DEFAULT_MAX_RUNS, MAX_RUNS } = source;
 
 const USAGE = 'usage: ci-audit.js gather [--days N] [--runs N] [--workflow <file>] [--repo owner/name | --root <dir>] [--min-sample N] [--thresholds <text>]\n'
+  + '       ci-audit.js validate-findings --gather <file> --findings <file> --issues <file> [--dry-run]\n'
   + '       ci-audit.js --help|-h\n';
 
 // The phase definitions, verbatim from the plan's Global Constraints and checklist.md.
@@ -80,7 +109,7 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 function parseArgs(argv) {
   if (argv.length === 1 && (argv[0] === '--help' || argv[0] === '-h')) return { help: true };
-  if (argv[0] !== 'gather') return { error: argv.length === 0 ? 'missing verb: gather' : `unknown verb: ${JSON.stringify(argv[0])}` };
+  if (argv[0] !== 'gather') return { error: argv.length === 0 ? 'missing verb: gather or validate-findings' : `unknown verb: ${JSON.stringify(argv[0])}` };
   const o = { days: DEFAULT_DAYS, maxRuns: DEFAULT_MAX_RUNS, workflow: null, repo: null, root: null, minSample: null, thresholds: {} };
   const int = (v, lo, hi) => (v !== null && /^\d+$/.test(v) && Number(v) >= lo && Number(v) <= hi ? Number(v) : null);
   const seen = new Set();
@@ -136,6 +165,7 @@ const realDeps = {
   cwd: () => process.cwd(),
   now: null,
   clock: () => Date.now(),
+  readFile: (file) => fs.readFileSync(file, 'utf8'),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -202,7 +232,100 @@ function noDataReason(o, read, agg) {
     + (read.truncated.length > 0 ? ' — the window was truncated (see truncated)' : '');
 }
 
+const VALUE_FLAGS = { '--gather': 'gather', '--findings': 'findings', '--issues': 'issues' };
+
+function parseValidateArgs(argv) {
+  const o = { gather: null, findings: null, issues: null, dryRun: false };
+  const seen = new Set();
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (seen.has(a)) return { error: `${a} given twice` };
+    seen.add(a);
+    if (a === '--dry-run') o.dryRun = true;
+    else if (Object.prototype.hasOwnProperty.call(VALUE_FLAGS, a)) {
+      const v = argv[i + 1];
+      if (typeof v !== 'string' || v === '' || v.startsWith('--')) return { error: `${a} requires a file` };
+      i += 1;
+      o[VALUE_FLAGS[a]] = v;
+    } else return { error: `unknown argument: ${JSON.stringify(a)}` };
+  }
+  if (o.gather === null) return { error: 'validate-findings requires --gather <file>' };
+  if (o.findings === null) return { error: 'validate-findings requires --findings <file>' };
+  if (o.issues === null) return { error: 'validate-findings requires --issues <file> (an empty JSON array when no by:ci-health issue exists)' };
+  return o;
+}
+
+const isInt = (v) => Number.isInteger(v) && v >= 0;
+const GATHER_LISTS = ['workflows', 'jobs', 'criticalPaths', 'shardSkews', 'repeatedSteps', 'breaches', 'truncated', 'failures'];
+
+// Whether `g` has the gather report's shape where the validator and the payload read it.
+function isGather(g) {
+  if (g === null || typeof g !== 'object' || Array.isArray(g)) return false;
+  if (!GATHER_LISTS.every((k) => Array.isArray(g[k])) || !Object.prototype.hasOwnProperty.call(g, 'noData')) return false;
+  const w = g.window;
+  return w !== null && typeof w === 'object' && isInt(w.days) && w.days > 0 && isInt(w.minSample) && isInt(w.sampledRuns)
+    && (w.from === null || typeof w.from === 'string');
+}
+
+function runValidateFindings(argv, deps) {
+  const fail = (message) => { deps.stderr(`ci-audit.js: ${message} (see --help)\n`); return 2; };
+  const o = parseValidateArgs(argv);
+  if (o.error) return fail(o.error);
+  const read = (flag, file) => {
+    try {
+      return { value: JSON.parse(deps.readFile(file)) };
+    } catch {
+      return { error: `${flag} ${file}: could not read or parse the file` };
+    }
+  };
+  const gather = read('--gather', o.gather);
+  if (gather.error) return fail(gather.error);
+  if (!isGather(gather.value)) return fail(`--gather ${o.gather}: not a gather report`);
+  const inputs = {};
+  for (const [flag, key] of [['--findings', 'findings'], ['--issues', 'issues']]) {
+    const r = read(flag, o[key]);
+    if (r.error) return fail(r.error);
+    if (!Array.isArray(r.value)) return fail(`${flag} ${o[key]}: must hold a JSON array`);
+    inputs[key] = r.value;
+  }
+
+  const say = (line) => deps.stderr(`ci-audit.js: validate-findings: ${line}\n`);
+  const survivors = [];
+  let rejected = 0;
+  inputs.findings.forEach((f, i) => {
+    const v = validateFinding(f, gather.value);
+    if (v.ok) { survivors.push({ ...v.value, id: fingerprint(v.value) }); return; }
+    rejected += 1;
+    const check = f && CHECK_IDS.includes(f.check) ? JSON.stringify(f.check) : 'an unknown check';
+    for (const e of v.errors) say(`finding ${i} (${check}) rejected: ${e}`);
+  });
+
+  const index = loadIssueIndex(o.issues, 'ci-audit', { stderr: deps.stderr, cwd: deps.cwd });
+  const seen = new Set();
+  const payloads = [];
+  let collapsed = 0;
+  let held = 0;
+  for (const finding of survivors) {
+    if (seen.has(finding.id)) { collapsed += 1; continue; }
+    seen.add(finding.id);
+    const decision = decide(finding, index, {});
+    if (decision.action !== 'file' && decision.action !== 'reopen') { held += 1; continue; }
+    const { id, check, workflow, job, step, ...rest } = toIssuePayload(finding, gather.value, null);
+    const payload = {
+      id, check, workflow, job, step, action: decision.action,
+      reopens: decision.action === 'reopen' ? (decision.issue ?? null) : null, ...rest,
+    };
+    if (o.dryRun) payload.dryRun = true;
+    payloads.push(payload);
+  }
+  deps.stdout(`${JSON.stringify(payloads)}\n`);
+  say(`${inputs.findings.length} finding(s): ${survivors.length} valid, ${rejected} rejected, `
+    + `${collapsed} collapsed as duplicates, ${held} already filed or suppressed, ${payloads.length} payload(s)`);
+  return rejected > 0 ? 1 : 0;
+}
+
 function run(argv, deps = realDeps) {
+  if (argv[0] === 'validate-findings') return runValidateFindings(argv, deps);
   const o = parseArgs(argv);
   const fail = (message) => { deps.stderr(`ci-audit.js: ${message}\n`); return 2; };
   if (o.error) return fail(`${o.error} (see --help)`);
