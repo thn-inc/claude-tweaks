@@ -489,17 +489,65 @@ test('#5377 checkPassReentry env: checkBranchLanded gets the passed env, and exa
   assert.deepStrictEqual(Object.keys(seen[1]), ['cache']);
 });
 
-// A recorded worktree that no longer exists skips the liveness probes, so the landed check is what decides.
-test('#5377 collectStaleRuns env: the re-entry check reads landed through the passed env', () => {
+// The recorded worktree is live, so parentLiveDetail runs the liveness probes (worktree lock, last commit)
+// and the landed check, every one of them a git child that must run in the passed env.
+test('#5377 collectStaleRuns env: the re-entry check with a live recorded worktree runs its probes and landed check in the passed env', () => {
   const { root, wt, runDir } = reentryFixture();
-  reentryGit(root, 'worktree', 'remove', '--force', wt);
-  const stateFile = path.join(runDir, 'run-state.json');
-  fs.writeFileSync(stateFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(stateFile, 'utf8')), pr: { number: 7, url: 'https://example.test/pr/7', branch: 'feat-branch' } }));
+  assert.ok(fs.existsSync(wt), 'precondition: the recorded worktree exists');
   const env = hookEnv();
   const withEnv = withBrokenGitDir(() => residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks', env }));
   assert.ok(withEnv[0].line.endsWith(reentrySuffix(runDir)), withEnv[0].line);
   const control = withBrokenGitDir(() => residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' }));
   assert.doesNotMatch(control[0].line, /review-console/, 'control: without env the broken GIT_DIR is seen');
+});
+
+test('#5377 checkResumeFreshness env: an interrupted run with a live worktree is judged stale through the passed env', () => {
+  const { runDir } = reentryFixture();
+  const stateFile = path.join(runDir, 'run-state.json');
+  fs.writeFileSync(stateFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(stateFile, 'utf8')), status: 'interrupted' }));
+  const { checkResumeFreshness } = require('../../../plugin/bin/lib/hooks/resume-freshness');
+  const env = hookEnv();
+  assert.strictEqual(withBrokenGitDir(() => checkResumeFreshness(runDir, { env })).verdict, 'stale');
+  assert.strictEqual(withBrokenGitDir(() => checkResumeFreshness(runDir)).verdict, 'indeterminate', 'control: without env the broken GIT_DIR is seen');
+});
+
+test('#5377 collectStaleRuns env: an interrupted multi-spec run reaches checkResumeFreshness and the landed check through the passed env', () => {
+  const { root, runDir } = reentryFixture();
+  const stateFile = path.join(runDir, 'run-state.json');
+  fs.writeFileSync(stateFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(stateFile, 'utf8')), status: 'interrupted' }));
+  const env = hookEnv();
+  const withEnv = withBrokenGitDir(() => residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks', env }));
+  assert.ok(withEnv[0].line.endsWith(reentrySuffix(runDir)), withEnv[0].line);
+  const control = withBrokenGitDir(() => residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' }));
+  assert.doesNotMatch(control[0].line, /review-console/, 'control: without env the broken GIT_DIR is seen');
+});
+
+test('#5377 lastCommitMs env: an unborn HEAD is recognised through the passed env', () => {
+  const { execFileSync } = require('child_process');
+  const { lastCommitMs } = require('../../../plugin/bin/lib/run-liveness/probes');
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sr5377-unborn-')));
+  execFileSync('git', ['init', '-q', repo], { env: hookEnv() });
+  const env = hookEnv();
+  assert.strictEqual(withBrokenGitDir(() => lastCommitMs(repo, env)), null);
+  assert.throws(() => withBrokenGitDir(() => lastCommitMs(repo)), /could not read the last commit time/, 'control: without env the broken GIT_DIR is seen');
+});
+
+test('#5377 probesFor: no env returns DEFAULT_PROBES itself, an env binds the ps child to it', () => {
+  const cp = require('child_process');
+  const { probesFor, DEFAULT_PROBES } = require('../../../plugin/bin/lib/run-liveness/probes');
+  assert.strictEqual(probesFor(undefined), DEFAULT_PROBES);
+  const real = cp.execFileSync;
+  let seen = null;
+  cp.execFileSync = (file, args, opts) => { seen = opts; return 'Sat Oct 24 08:08:15 2026\n'; };
+  try {
+    assert.strictEqual(probesFor({ SENTINEL_5377: 'ctx-env' }).pidStartTime(process.pid), 'Sat Oct 24 08:08:15 2026');
+  } finally {
+    cp.execFileSync = real;
+  }
+  if (process.platform !== 'win32') {
+    assert.strictEqual(seen.env.SENTINEL_5377, 'ctx-env');
+    assert.strictEqual(seen.env.LC_ALL, 'C');
+  }
 });
 
 test('#5377 check-session-residue verb: the shipped-unclosed verdict is reached through the verb env', async () => {

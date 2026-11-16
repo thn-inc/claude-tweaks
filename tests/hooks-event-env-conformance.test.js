@@ -4,7 +4,8 @@
 // source text keep that true as the file grows:
 //
 //   Scan A: the comment-stripped source names neither `process.env` nor `process.cwd()`.
-//   Scan B: every call to `repoInfo(`, `runGit(` and `writeRunState(` names `env` in its own
+//   Scan B: every call to `repoInfo(`, `runGit(`, `writeRunState(`, `resolveIntegrationBranch(` and
+//           `preferRemoteTrackingRef(` names `env` in its own
 //           arguments (balanced parentheses, so a call spanning lines is read whole): at paren depth 0 of
 //           the call, outside any nested `(...)` and outside an arrow or function body. The braces and
 //           brackets of a plain object or array literal argument (`{ env }`, `{ ...opts, env }`) do not
@@ -40,7 +41,7 @@ const EVENT_MODULES = [
   'plugin/bin/lib/hooks/user-prompt-submit.js',
   'plugin/bin/lib/hooks/session-start.js',
 ];
-const CALL_NAMES = ['repoInfo', 'runGit', 'writeRunState'];
+const CALL_NAMES = ['repoInfo', 'runGit', 'writeRunState', 'resolveIntegrationBranch', 'preferRemoteTrackingRef'];
 
 // A call that legitimately reaches its env under another name goes here, keyed by module path then
 // call name, with the text of its line and the reason. None today.
@@ -48,14 +49,14 @@ const NAMED_EXCEPTIONS = {};
 
 // Calls the module holds today, per call name, per module. A matcher that stops matching drops below.
 const FLOORS = {
-  'plugin/bin/lib/hooks/pre-tool-use.js': { repoInfo: 9, runGit: 11, writeRunState: 5 },
-  'plugin/bin/lib/hooks/post-tool-use.js': { repoInfo: 0, runGit: 5, writeRunState: 1 },
-  'plugin/bin/lib/hooks/post-tool-use-failure.js': { repoInfo: 0, runGit: 0, writeRunState: 0 },
-  'plugin/bin/lib/hooks/session-end.js': { repoInfo: 0, runGit: 0, writeRunState: 1 },
-  'plugin/bin/lib/hooks/pre-compact.js': { repoInfo: 0, runGit: 0, writeRunState: 1 },
-  'plugin/bin/lib/hooks/subagent-stop.js': { repoInfo: 0, runGit: 0, writeRunState: 0 },
-  'plugin/bin/lib/hooks/user-prompt-submit.js': { repoInfo: 0, runGit: 0, writeRunState: 0 },
-  'plugin/bin/lib/hooks/session-start.js': { repoInfo: 1, runGit: 0, writeRunState: 1 },
+  'plugin/bin/lib/hooks/pre-tool-use.js': { repoInfo: 9, runGit: 11, writeRunState: 5, resolveIntegrationBranch: 2, preferRemoteTrackingRef: 1 },
+  'plugin/bin/lib/hooks/post-tool-use.js': { repoInfo: 0, runGit: 5, writeRunState: 1, resolveIntegrationBranch: 1, preferRemoteTrackingRef: 0 },
+  'plugin/bin/lib/hooks/post-tool-use-failure.js': { repoInfo: 0, runGit: 0, writeRunState: 0, resolveIntegrationBranch: 0, preferRemoteTrackingRef: 0 },
+  'plugin/bin/lib/hooks/session-end.js': { repoInfo: 0, runGit: 0, writeRunState: 1, resolveIntegrationBranch: 0, preferRemoteTrackingRef: 0 },
+  'plugin/bin/lib/hooks/pre-compact.js': { repoInfo: 0, runGit: 0, writeRunState: 1, resolveIntegrationBranch: 0, preferRemoteTrackingRef: 0 },
+  'plugin/bin/lib/hooks/subagent-stop.js': { repoInfo: 0, runGit: 0, writeRunState: 0, resolveIntegrationBranch: 0, preferRemoteTrackingRef: 0 },
+  'plugin/bin/lib/hooks/user-prompt-submit.js': { repoInfo: 0, runGit: 0, writeRunState: 0, resolveIntegrationBranch: 0, preferRemoteTrackingRef: 0 },
+  'plugin/bin/lib/hooks/session-start.js': { repoInfo: 1, runGit: 0, writeRunState: 1, resolveIntegrationBranch: 0, preferRemoteTrackingRef: 0 },
 };
 
 function lineOf(src, offset) {
@@ -130,7 +131,7 @@ function scan(raw, rel = 'fixture.js') {
 }
 
 for (const rel of EVENT_MODULES) {
-  test(`${rel}: reads no process.env or process.cwd() and passes env to every repoInfo, runGit and writeRunState call`, () => {
+  test(`${rel}: reads no process.env or process.cwd() and passes env to every repoInfo, runGit, writeRunState, resolveIntegrationBranch and preferRemoteTrackingRef call`, () => {
     const { offenders, sites } = scan(readText(path.join(REPO, rel)), rel);
     assert.deepEqual(offenders, [], `an event module read the process, or a call left out env:\n${offenders.join('\n')}`);
     const floor = FLOORS[rel];
@@ -171,11 +172,26 @@ test('self-test: a planted repoInfo(dir) and runGit(args, cwd) are each flagged 
   ]);
 });
 
+test('self-test: a planted resolveIntegrationBranch(root) and preferRemoteTrackingRef(root, name) are each flagged with their line', () => {
+  const src = 'const a = bareIntegrationName(resolveIntegrationBranch(worktreePath));\nconst b = 1;\nconst r = preferRemoteTrackingRef(root, name);\n';
+  assert.deepEqual(scan(src).offenders, [
+    'fixture.js:1: resolveIntegrationBranch( call does not name env (Scan B)',
+    'fixture.js:3: preferRemoteTrackingRef( call does not name env (Scan B)',
+  ]);
+});
+
+test('self-test: resolveIntegrationBranch and preferRemoteTrackingRef calls that name env are not flagged', () => {
+  const src = 'resolveIntegrationBranch(root, undefined, { env });\nconst r = preferRemoteTrackingRef(root, name, { env: ctx.env });\n';
+  const { offenders, sites } = scan(src);
+  assert.deepEqual(offenders, []);
+  assert.deepEqual([sites.resolveIntegrationBranch, sites.preferRemoteTrackingRef], [1, 1]);
+});
+
 test('self-test: calls that name env are not flagged', () => {
   const src = 'wtDetect.repoInfo(dir, {}, { env });\nrunGit(args, cwd, { env });\nctxLib.writeRunState(d, { a: 1 }, { env: ctx.env });\n';
   const { offenders, sites } = scan(src);
   assert.deepEqual(offenders, []);
-  assert.deepEqual(sites, { repoInfo: 1, runGit: 1, writeRunState: 1 });
+  assert.deepEqual(sites, { repoInfo: 1, runGit: 1, writeRunState: 1, resolveIntegrationBranch: 0, preferRemoteTrackingRef: 0 });
 });
 
 test('self-test: a call spanning several lines with env on a later line is not flagged', () => {

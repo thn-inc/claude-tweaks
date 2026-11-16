@@ -425,7 +425,7 @@ function checkWorktreeStaleness(ctx) {
     // name — `branch` is both the remote-side fetch target below (a remote
     // has no `origin/`-prefixed branches of its own) and re-prefixed with
     // `origin/` again for the rev-list comparison — so normalize immediately.
-    const branch = bareIntegrationName(resolveIntegrationBranch(worktreePath));
+    const branch = bareIntegrationName(resolveIntegrationBranch(worktreePath, undefined, { env: ctx.env }));
     if (!branch) return null; // no integration branch resolved — nothing to compare against
 
     // `--` guards against argument injection: `branch` traces back to
