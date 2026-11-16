@@ -341,6 +341,44 @@ test('a run that locks the scratch worktree after this run read the worktree lis
   }
 });
 
+test('an unlocked scratch worktree git could not remove is left registered, never deleted behind git, exit 2', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-10T000012-record-1');
+  git(root, 'worktree', 'add', '-q', '-b', 'stuck-scratch', worktreeDir(root), 'main');
+  fs.writeFileSync(path.join(worktreeDir(root), 'in-use.txt'), 'x\n');
+  const failingRemove = (args, o) => {
+    if (args[0] === 'worktree' && args[1] === 'remove') return { stdout: '', stderr: 'injected remove failure', failure: 'git-error' };
+    return realDeps.git(args, o);
+  };
+  const r = call(root, ['--root', root, '--no-pr'], { extra: { git: failingRemove } });
+  assert.equal(r.code, 2, r.stderr);
+  assert.match(r.stderr, /could not be removed/);
+  assert.ok(fs.existsSync(path.join(worktreeDir(root), 'in-use.txt')), 'the registered tree is not deleted with rmSync');
+  assert.match(git(root, 'worktree', 'list', '--porcelain'), /branch refs\/heads\/stuck-scratch/);
+});
+
+test('a locked registration that appears between the remove and the add makes the add fail, exit 2, registration kept', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-10T000013-record-1');
+  // Run A (pid 424245) registers and locks the scratch path right after this run's prune, its
+  // directory not yet populated: only a forced add would take it over.
+  let raced = false;
+  const racing = (args, o) => {
+    const res = realDeps.git(args, o);
+    if (!raced && args[0] === 'worktree' && args[1] === 'prune') {
+      raced = true;
+      git(root, 'worktree', 'add', '-q', '--lock', '--reason', 'archive-tracked-shells (pid 424245)', '-b', 'run-a', worktreeDir(root), 'main');
+      fs.rmSync(worktreeDir(root), { recursive: true, force: true });
+    }
+    return res;
+  };
+  const r = call(root, ['--root', root, '--no-pr'], { extra: { git: racing, pid: () => 31339, pidAlive: (pid) => pid === 424245 } });
+  assert.ok(raced, 'the race was staged');
+  assert.equal(r.code, 2, r.stderr);
+  assert.match(r.stderr, /git worktree add failed/);
+  assert.match(git(root, 'worktree', 'list', '--porcelain'), /branch refs\/heads\/run-a\nlocked archive-tracked-shells \(pid 424245\)/);
+});
+
 test('the scratch worktree is created locked with this run\'s pid', () => {
   const { root } = makeFixture();
   addShell(root, '2026-11-10T000004-record-1');
