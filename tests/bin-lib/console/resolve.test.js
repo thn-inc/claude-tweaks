@@ -126,7 +126,7 @@ test('resolveAll resolves one item per section per the short-circuit stances and
   assert.strictEqual(by['wrap-up-reflect-insights.md'].reason, SECTION_STANCES['Reflection insights'].reason);
   assert.deepStrictEqual({ resolution: by['mystery-9.md'].resolution, reason: by['mystery-9.md'].reason }, { resolution: 'pending', reason: 'unmapped-prefix' });
   assert.strictEqual(r.sections.cleanup.resolution, 'approve');
-  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' });
+  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' });
   assert.strictEqual(r.items.length, Object.keys(EVERY_SECTION).length);
   assert.strictEqual(r.ceiling, 'unattended');
 });
@@ -806,7 +806,7 @@ test('a drain-overlap hold whose PR has since merged self-heals: falls through t
     policy: 'console-auto',
     deps: deps({ checkPrState: () => 'MERGED' }),
   });
-  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' });
+  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' });
 });
 
 test('a drain-overlap hold whose PR has since closed self-heals the same as merged (#2299)', () => {
@@ -895,7 +895,7 @@ test('a group held by two distinct overlapping drain PRs falls through to merge 
     deps: deps({ checkPrState: (n) => { calls.push(n); return states[n]; } }),
   });
   assert.deepStrictEqual(calls, [4001, 4002]);
-  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' });
+  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' });
 });
 
 test('the regex matches PR number extraction from drain-pr-overlap.md\'s own Step 6 log-line template, instantiated with concrete values (final review Minor #4 — producer/consumer coupling)', () => {

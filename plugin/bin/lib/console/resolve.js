@@ -471,7 +471,7 @@ function mergeResolution(snapshot, deps) {
       return { resolution: 'leave-open', reason: `#${n} lacks auto:merge and a matured auto:merge-pending (${detail})${passedOver}` };
     }
   }
-  return { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' };
+  return { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' };
 }
 
 // ---- tiebreak verdicts are a finding's final outcome (#3949) ----

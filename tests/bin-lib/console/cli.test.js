@@ -66,7 +66,7 @@ test('unattended: exit 0, one decisions block of items+1 lines, console.json res
   assert.strictEqual(cj.mode, 'auto-resolve');
   assert.strictEqual(cj.ceiling, 'unattended');
   assert.strictEqual(cj.items.length, 3);
-  assert.deepStrictEqual(cj.merge, { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' });
+  assert.deepStrictEqual(cj.merge, { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' });
   const rows = out().split('\n').filter((l) => /AUTO-RESOLVED/.test(l));
   assert.strictEqual(rows.length, 3 + 1, 'one row per item plus the cleanup row');
   // #1932 M2: the closed reversibility vocabulary, and the stage path on every

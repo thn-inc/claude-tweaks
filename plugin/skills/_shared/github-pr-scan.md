@@ -221,7 +221,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
    done
    ```
 
-   Classify each surviving candidate — granted when every linked record carries `auto:merge` **and none carries `bot:blocked` or `bot:parked`** (a housekeeping-marker PR is granted instead by `housekeeping-auto-merge` alone, no record grant needed). The `bot:blocked`/`bot:parked` exclusion is what keeps this sweep from un-parking a deliberately parked run: a record carries `bot:blocked` because dispatch hit its retry ceiling, or `bot:parked` because `_shared/pr-first-merge.md`'s Step 2.5 (Merge-verification gate) took the red path, and both mean a human owes a re-triage before anything arms that PR — a later-green rollup does not retract the park. Re-resolve this fence's session-scoped paths:
+   Classify each surviving candidate — granted when every linked record carries `auto:build` and `auto:merge` **and none carries `bot:blocked` or `bot:parked`** (a housekeeping-marker PR is granted instead by `housekeeping-auto-merge` alone, no record grant needed). The `bot:blocked`/`bot:parked` exclusion is what keeps this sweep from un-parking a deliberately parked run: a record carries `bot:blocked` because dispatch hit its retry ceiling, or `bot:parked` because `_shared/pr-first-merge.md`'s Step 2.5 (Merge-verification gate) took the red path, and both mean a human owes a re-triage before anything arms that PR — a later-green rollup does not retract the park. Re-resolve this fence's session-scoped paths:
 
    ```bash
    PR_SCAN_UNARMED_CANDIDATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-unarmed-candidates.json)"
@@ -246,13 +246,13 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
        } else {
          const linked = (pr.closingIssuesReferences || []).map((i) => i.number);
          granted = linked.length > 0
-           && linked.every((n) => (labelsByIssue.get(n) || []).includes('auto:merge'))
+           && linked.every((n) => (labelsByIssue.get(n) || []).includes('auto:build') && (labelsByIssue.get(n) || []).includes('auto:merge'))
            && !linked.some((n) => (labelsByIssue.get(n) || []).includes('bot:blocked') || (labelsByIssue.get(n) || []).includes('bot:parked'));
        }
        if (granted) {
          console.log('[pr-unarmed] PR #' + pr.number + ': ' + pr.title + ' — green and granted, --auto never armed — arm per _shared/pr-first-merge.md' + armNote);
        } else {
-         console.log('[pr-unarmed] PR #' + pr.number + ': ' + pr.title + ' — green but ungranted — needs auto:merge on every linked record (or housekeeping-auto-merge for a tidy PR) before it can arm' + armNote);
+         console.log('[pr-unarmed] PR #' + pr.number + ': ' + pr.title + ' — green but ungranted — needs auto:build and auto:merge on every linked record (or housekeeping-auto-merge for a tidy PR) before it can arm' + armNote);
        }
      });
    "

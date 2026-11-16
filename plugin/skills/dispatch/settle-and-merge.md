@@ -241,9 +241,9 @@ numbered sequence instead of skipped.
 
 A `correctness`- or `ambiguous`-classified failure revokes `auto:merge` before the next retry, per step 3 above — that record doesn't get another unsupervised shot at auto-merge until a human re-grants it at `/claude-tweaks:backlog refine`. A `transient`-classified failure preserves `auto:merge` — the retry-ceiling counting below still runs unconditionally regardless of classification (an attempt is an attempt), but classification alone no longer determines merge trust.
 
-## Auto-merge gate (`auto:merge` or matured `auto:merge-pending` groups only)
+## Auto-merge gate (`auto:build` with `auto:merge` or matured `auto:merge-pending` groups only)
 
-Because a bundle shares one branch/worktree, the merge decision is group-wide even though blast radius is attributed per record below: **every member of the group must carry `auto:build` and `auto:merge`, the latter already or via a matured `auto:merge-pending`** (see Authorization below) for the gate to apply — a group with even one `auto:build`-only member falls back to the normal pending-review path for the whole group; mixed grants inside one bundle are never split at merge time, and a group with even one still-pending, not-yet-matured member falls back the same way (the *slowest* member's veto window governs the whole group, as its review verdict already does below).
+Because a bundle shares one branch/worktree, the merge decision is group-wide even though blast radius is attributed per record below: **every member of the group must carry `auto:build` and `auto:merge`, the latter already or via a matured `auto:merge-pending`** (see Authorization below) for the gate to apply — a group with one `auto:build`-only member falls back to the normal pending-review path for the whole group; mixed grants inside one bundle are never split at merge time, and a group with one still-pending, not-yet-matured member falls back the same way (the *slowest* member's veto window governs the whole group, as its review verdict does below).
 
 When a qualifying group's `/flow` run reaches `/wrap-up`'s Review Console, check two layers before presenting it for approval — but first, a live-drain overlap hold (refs #1985):
 
