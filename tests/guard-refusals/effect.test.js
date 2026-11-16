@@ -76,9 +76,10 @@ const TABLE = [
   ['cat <<EOF\nrm x\nEOF', 'read'],
   ['node <<EOF\nx\nEOF', 'unknown'],
   ['sed -n p f', 'read'],
-  // Spec decision: sed is write only with -i/--in-place; every other form is read, whatever its script.
-  ["sed -n 'w out' f", 'read'],
-  ['sed -f s.sed f', 'read'],
+  // AC9 remedy: a sed script that writes a file (w, W, s///w) or runs a program (e, s///e) is write, and a
+  // script the classifier cannot read (a script file, an expansion) is unknown. The full table is SED_SCRIPTS.
+  ["sed -n 'w out' f", 'write'],
+  ['sed -f s.sed f', 'unknown'],
   ['sed --in-place s/a/b/ f', 'write'],
   ['find . -name x', 'read'],
   ['find . -exec rm {} \\;', 'write'],
@@ -205,7 +206,8 @@ const NEVER_READ = [
   ['sed "$OPTS" s/a/b/ f', 'unknown'],
   ['sed $OPTS s/a/b/ f', 'unknown'],
   ['sed -n "${a}p" f', 'unknown'],
-  ['sed -n "x${a}p" f', 'read'],
+  // A quoted expansion inside a sed script is still script text the classifier cannot read.
+  ['sed -n "x${a}p" f', 'unknown'],
   ['curl $ARGS https://x', 'unknown'],
   ['curl "https://$h/x"', 'read'],
   ['find . $ACTION', 'unknown'],
@@ -256,7 +258,7 @@ const NEVER_READ = [
   ['rg x$F y', 'unknown'],
   ['less f$L', 'unknown'],
   ['sed s/a/b/`echo x` f', 'unknown'],
-  ['sed -n "x${a}p" f', 'read'],
+  ['less "f$L"', 'read'],
   ['sort "f$O"', 'read'],
   // git read verdicts: a word that starts with an expansion (quoted or not) or holds an unquoted one is computed.
   ['git diff $X', 'unknown'],
@@ -274,6 +276,76 @@ test('a shape that could write or run a program is never read, and shapes that o
   for (const [command, effect] of NEVER_READ) {
     assert.equal(classifyEffect(command).effect, effect, JSON.stringify(command));
   }
+});
+
+// One row per sed script shape. `write`: the script writes a file or runs a program. `unknown`: the script, or
+// which word is the script, cannot be read with confidence. `read`: every command in it only edits the stream.
+const SED_SCRIPTS = [
+  // w and W commands write a file, with or without an address, a block or an earlier command.
+  ["sed 'w out' f", 'write'],
+  ["sed -e 'w out' f", 'write'],
+  ["sed -n 'W out' f", 'write'],
+  ["sed --expression='w out' f", 'write'],
+  ["sed -ne 'w out' f", 'write'],
+  ["sed -n '/x/w out' f", 'write'],
+  ["sed '1,5w out' f", 'write'],
+  ["sed '$!w out' f", 'write'],
+  ["sed 'p;w out' f", 'write'],
+  ["sed 's/x/y/;w out' f", 'write'],
+  ["sed 's/x/y/\nw out' f", 'write'],
+  ["sed -n '/x/{p;w out' -e '}' f", 'write'],
+  // The s command's w flag writes; its e flag and the e command run a program.
+  ["sed 's/a/b/w out' f", 'write'],
+  ["sed 's/a/b/gw out' f", 'write'],
+  ["sed 's/a/b/e' f", 'write'],
+  ["sed '1e date' f", 'write'],
+  ["sed e f", 'write'],
+  // GNU sed takes options after the file; BSD sed takes the first operand as the script. Either can write.
+  ["sed -e p f -e 'w out'", 'write'],
+  ["sed 'w out' f -e p", 'write'],
+  // A script file, a computed script, an option or a script the scanner cannot follow: never read.
+  ['sed --file=s.sed f', 'unknown'],
+  ['sed -nf s.sed f', 'unknown'],
+  ['sed -n "1,${n}p" f', 'unknown'],
+  ["sed 's/a/b' f", 'unknown'],
+  ["sed 'k' f", 'unknown'],
+  ["sed 's/[/]/x/' f", 'unknown'],
+  ['sed -l p f', 'unknown'],
+  ['sed --frob p f', 'unknown'],
+  ['sed f.txt -e p', 'unknown'],
+  // BSD's in-place flag: the write gate already names it, whatever the script scan says of the option.
+  ['sed -I .bak s/a/b/ f', 'write'],
+  // Scripts that only edit the stream, including w and e as data and text that only looks like a command.
+  ['sed -n p f', 'read'],
+  ['sed -n 1,5p f', 'read'],
+  ['sed s/a/b/ f', 'read'],
+  ["sed -e s/a/b/ -e 's/c/d/g' f", 'read'],
+  ['sed --expression=s/a/b/ f', 'read'],
+  ['sed -ne 5p f', 'read'],
+  ["sed -n '/start/,/end/p' f", 'read'],
+  ["sed 's/w/e/' f", 'read'],
+  ["sed 's|/a/w|/b/e|g' f", 'read'],
+  ["sed -n '$p' f", 'read'],
+  ["sed -E 's/(a|b)+/x/g' f", 'read'],
+  ["sed '/^#/d; s/[0-9]*$//' f", 'read'],
+  ["sed -n '2{p;q}' f", 'read'],
+  ["sed 'y/abw/xye/' f", 'read'],
+  ["sed '1a hello; w out' f", 'read'],
+  ["sed '1r other' f", 'read'],
+  ["sed ':a;N;$!ba;s/\\n/ /g' f", 'read'],
+  ["sed 's/a/b/I' f", 'read'],
+  ["sed 's/a/b/2g' f", 'read'],
+  ["sed '\\,^/usr,d' f", 'read'],
+  ["sed 's/a\\/w/b/' f", 'read'],
+  ['sed --version', 'read'],
+];
+
+test('a sed script that writes or runs a program is write, an unreadable one is unknown, and the rest stay read', () => {
+  // Every wrong row at once: one failing row must not hide the others.
+  const wrong = SED_SCRIPTS
+    .map(([command, effect]) => [command, effect, classifyEffect(command).effect])
+    .filter(([, effect, got]) => got !== effect);
+  assert.deepEqual(wrong, []);
 });
 
 // Hand-written, not read from WRITE_WORDS: a flag dropped from the table fails its case below, and a flag added

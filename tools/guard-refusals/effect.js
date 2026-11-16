@@ -11,7 +11,8 @@
 // word nobody listed is `unknown`, never `read`. Every ambiguity therefore
 // resolves away from `read`: an unlisted word, a command word built from `$…`
 // or a glob, a `git -c` setting that can run a program, a quoting the scanner
-// cannot pair up, or a heredoc body that expands a substitution.
+// cannot pair up, a heredoc body that expands a substitution, or a sed script
+// the scan cannot read to its end.
 //
 // The scan is one left-to-right pass per nesting level over the text (lexShell
 // from ./shapes tells quoted, comment and heredoc text from shell structure);
@@ -476,6 +477,138 @@ function hitsWrite(entry, words, from) {
   return false;
 }
 
+// -------- sed scripts
+
+// A sed script is a program: `w file`, `W file` and the `s///w file` flag write a file, and the `e` command
+// and the `s///e` flag run one. So a sed call without -i is `read` only when its script can be read to the end
+// and holds none of them; a script file, a computed script, an option this table does not know and a script
+// the scan cannot follow are `unknown`.
+const SED_BARE_SHORT = 'nErsuza';
+const SED_BARE_LONG = new Set(['--quiet', '--silent', '--regexp-extended', '--separate', '--unbuffered', '--null-data', '--zero-terminated', '--posix', '--debug', '--sandbox', '--follow-symlinks', '--binary', '--help', '--version']);
+const SED_NO_ARG = '=dDgGhHlnNpPxzFqQL';
+const SED_ADDRESS = '0123456789$,~+!{}IM';
+const SED_S_FLAGS = 'gpiImM0123456789';
+
+// 'write', 'unknown' (not readable with confidence) or null (only edits its stream). One forward pass: every
+// branch moves `i` on, and `section` never looks back.
+function sedScriptEffect(text) {
+  const n = text.length;
+  // The index after the delimiter `d` that closes a section opened before `from`, or -1 when it never closes,
+  // holds a raw newline, or (`regex`) holds `d` inside a bracket expression, which sed implementations split
+  // differently.
+  const section = (from, d, regex) => {
+    if (d === undefined || d === '\\' || d === '\n' || d === '[' || d === ']') return -1;
+    let inBracket = false;
+    let literalUntil = 0; // a `]` right after `[` or `[^` is a literal
+    for (let j = from; j < n; j++) {
+      const c = text[j];
+      if (c === '\n') return -1;
+      if (c === '\\') { j++; continue; }
+      if (regex && inBracket) {
+        if (c === d) return -1;
+        if (c === '[' && (text[j + 1] === ':' || text[j + 1] === '.' || text[j + 1] === '=')) {
+          const close = text.indexOf(`${text[j + 1]}]`, j + 2);
+          if (close === -1) return -1;
+          j = close + 1;
+        } else if (c === ']' && j >= literalUntil) inBracket = false;
+        continue;
+      }
+      if (c === d) return j + 1;
+      if (regex && c === '[') { inBracket = true; literalUntil = j + (text[j + 1] === '^' ? 3 : 2); }
+    }
+    return -1;
+  };
+  const lineEnd = (from) => { const nl = text.indexOf('\n', from); return nl === -1 ? n : nl; };
+
+  let i = 0;
+  while (i < n) {
+    const c = text[i];
+    if (c === ' ' || c === '\t' || c === '\r' || c === '\n' || c === ';' || SED_ADDRESS.includes(c) || SED_NO_ARG.includes(c)) { i++; continue; }
+    if (c === 'w' || c === 'W' || c === 'e') return 'write';
+    if (c === '#') { i = lineEnd(i); continue; }
+    if (c === '/' || c === '\\') { // a regex address: /re/ or \cREc
+      const open = c === '/' ? i : i + 1;
+      const end = section(open + 1, text[open], true);
+      if (end === -1) return 'unknown';
+      i = end;
+      continue;
+    }
+    if (c === 's' || c === 'y') {
+      const d = text[i + 1];
+      const mid = section(i + 2, d, c === 's');
+      let end = mid === -1 ? -1 : section(mid, d, false);
+      if (end === -1) return 'unknown';
+      if (c === 's') {
+        while (end < n && SED_S_FLAGS.includes(text[end])) end++;
+        if (text[end] === 'w' || text[end] === 'e') return 'write';
+      }
+      i = end;
+      continue;
+    }
+    if (c === 'a' || c === 'i' || c === 'c') { // text to the end of the line; a backslash carries it over a newline
+      let j = i + 1;
+      while (j < n && text[j] !== '\n') j += text[j] === '\\' ? 2 : 1;
+      i = j;
+      continue;
+    }
+    if (c === 'r' || c === 'R') { i = lineEnd(i); continue; } // a file name to the end of the line
+    if (c === ':' || c === 'b' || c === 't' || c === 'T' || c === 'v') { // a label or version, to `;` or the end of the line
+      let j = i + 1;
+      while (j < n && text[j] !== '\n' && text[j] !== ';') j++;
+      i = j;
+      continue;
+    }
+    return 'unknown';
+  }
+  return null;
+}
+
+// The verdict for `sed` without -i, or null when its script only edits the stream. GNU sed takes options after
+// the first operand and BSD sed takes that operand as the script, so when a script option appears only after
+// the first operand both readings are judged and the worse one wins.
+function judgeSed(words, from) {
+  const given = []; // script words from -e / --expression
+  let firstOperand = null;
+  let optionBeforeOperand = false;
+  let options = true;
+  for (let k = from; k < words.length; k++) {
+    const w = words[k];
+    const a = w.t;
+    if (!options || a.length < 2 || a[0] !== '-') { firstOperand = firstOperand || w; continue; }
+    if (a === '--') { options = false; continue; }
+    let script = null;
+    if (a[1] === '-') {
+      const eq = a.indexOf('=');
+      const name = eq === -1 ? a : a.slice(0, eq);
+      if (name === '--file') return unknown('sed script file');
+      if (name === '--expression') script = eq === -1 ? (words[++k] || null) : { ...w, t: a.slice(eq + 1) };
+      else if (name === '--line-length') { if (eq === -1) k++; continue; } else if (!SED_BARE_LONG.has(a)) return unknown('sed option');
+      else continue;
+    } else {
+      let m = 1;
+      for (; m < a.length && SED_BARE_SHORT.includes(a[m]); m++);
+      if (m === a.length) continue;
+      if (a[m] === 'f') return unknown('sed script file');
+      if (a[m] !== 'e') return unknown('sed option');
+      script = m + 1 < a.length ? { ...w, t: a.slice(m + 1) } : (words[++k] || null);
+    }
+    if (!script) return unknown('sed option');
+    given.push(script);
+    if (!firstOperand) optionBeforeOperand = true;
+  }
+  const readings = [];
+  if (given.length) readings.push(given);
+  if (firstOperand && !optionBeforeOperand) readings.push([firstOperand]);
+  let worst = null;
+  for (const scripts of readings) {
+    if (scripts.some((w) => w.dyn)) { worst = worst || unknown('sed script computed'); continue; }
+    const effect = sedScriptEffect(scripts.map((w) => w.t).join('\n'));
+    if (effect === 'write') return write('sed script writes or runs a program');
+    if (effect === 'unknown') worst = worst || unknown('sed script unreadable');
+  }
+  return worst;
+}
+
 // -------- git
 
 const GIT_BARE_FLAGS = new Set(['--no-pager', '-p', '--paginate', '-P', '--no-optional-locks', '--bare', '--no-replace-objects', '--literal-pathspecs', '--glob-pathspecs', '--noglob-pathspecs', '--icase-pathspecs', '--no-lazy-fetch', '--no-advice']);
@@ -732,6 +865,10 @@ function judgeWords(words, start) {
     if (entry && hitsWrite(entry, words, s + 1)) return write(`write word: ${base}`);
     if (base === 'curl' && curlMutates(words, s + 1)) return write('write word: curl');
     if (entry && !entry.any && computedArg(words, s + 1)) return unknown('computed argument');
+    if (base === 'sed') {
+      const verdict = judgeSed(words, s + 1);
+      if (verdict) return verdict;
+    }
     if (base === 'export') {
       for (let k = s + 1; k < words.length; k++) {
         const m = ASSIGN.exec(words[k].t);
