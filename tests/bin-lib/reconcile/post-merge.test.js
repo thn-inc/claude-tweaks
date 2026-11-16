@@ -1419,9 +1419,10 @@ test('AC4.1 #4549 end to end: a Fixes record Step 4.0 could not close (closeFail
 });
 
 // #4251: a merged PR #11 whose Fixes block names #101 and one `Refs #N — kept open` line per `refs` entry.
-// The refs are also sidebar-linked (closingIssuesReferences), so the armed merge closes them `closedAtOffsetMs`
-// after mergedAt until an `issue reopen N` call; #101 closes 2 s after the merge. Any other gh call throws.
-function refsWorld({ refs, closedAtOffsetMs, parent }) {
+// By default the refs are also sidebar-linked (closingIssuesReferences; `sidebar: false` leaves them only in the
+// Refs lines), and the world reports them closed 2 s after mergedAt until an `issue reopen N` call; #101 closes
+// 2 s after the merge and has no parent. Any other gh call throws.
+function refsWorld({ refs, sidebar = true }) {
   const mergedAt = new Date(NOW - 60 * 60 * 1000).toISOString();
   const repository = { name: 'w', owner: { login: 'acme' } };
   const calls = [];
@@ -1434,7 +1435,7 @@ function refsWorld({ refs, closedAtOffsetMs, parent }) {
       return JSON.stringify({
         state: 'MERGED', mergedAt, url: 'https://github.com/acme/w/pull/11', mergeCommit: { oid: 'abcdef1' }, baseRefName: 'main',
         body: `<!-- claude-tweaks-run: 2026-10-30T090000-spec-101 -->\n\n<!-- fixes-start -->\nFixes #101\n${refLines}\n<!-- fixes-end -->\n`,
-        closingIssuesReferences: [101, ...refs].map((number) => ({ number, repository })),
+        closingIssuesReferences: [101, ...(sidebar ? refs : [])].map((number) => ({ number, repository })),
       });
     }
     if (key === 'api repos/{owner}/{repo}/commits/abcdef1 --jq .commit.message') return 'fix (#11)\n\nFixes #101\n';
@@ -1446,7 +1447,7 @@ function refsWorld({ refs, closedAtOffsetMs, parent }) {
       if (refs.includes(n)) {
         return JSON.stringify(reopened.has(n)
           ? { state: 'OPEN', closedAt: null }
-          : { state: 'CLOSED', closedAt: new Date(Date.parse(mergedAt) + closedAtOffsetMs).toISOString() });
+          : { state: 'CLOSED', closedAt: new Date(Date.parse(mergedAt) + 2000).toISOString() });
       }
     }
     m = /^issue reopen (\d+) --comment /.exec(key);
@@ -1454,7 +1455,7 @@ function refsWorld({ refs, closedAtOffsetMs, parent }) {
     if (args[0] === 'api' && args[1] === 'graphql') {
       if (args[3].startsWith('query={ __type')) return JSON.stringify({ data: { __type: { fields: [{ name: 'subIssues' }] } } });
       const n = Number(/i(\d+):/.exec(args[3])[1]);
-      return JSON.stringify({ data: { repository: { [`i${n}`]: { number: n, parent: parent ? { number: parent } : null } } } });
+      return JSON.stringify({ data: { repository: { [`i${n}`]: { number: n, parent: null } } } });
     }
     throw new Error(`unexpected gh call: ${key}`);
   };
@@ -1463,7 +1464,7 @@ function refsWorld({ refs, closedAtOffsetMs, parent }) {
 
 test('AC1.1 #4251 end to end: an armed merge closed a kept-open Refs record through a sidebar link — the late Step 4.0 reopens it and logs it, then writes the marker', async () => {
   const { root, dir } = e2eCheckout();
-  const world = refsWorld({ refs: [103], closedAtOffsetMs: 2000, parent: null });
+  const world = refsWorld({ refs: [103] });
   const r = await e2ePass(root, world);
   assert.deepEqual(r.entries.map((e) => [e.runDir, e.pr, e.action, e.closingLinks, e.parentsClosed]), [[dir, 11, 'ran', 'reopened', 0]]);
   assert.ok(world.calls.some((c) => /^issue reopen 103 --comment /.test(c.key)), 'the Refs record is reopened');
@@ -1474,9 +1475,24 @@ test('AC1.1 #4251 end to end: an armed merge closed a kept-open Refs record thro
   assert.equal(world.calls.length, before, 'a second pass makes no gh call');
 });
 
-test('AC2.1 #4251 end to end: a run whose fixes span has no Refs record makes no gh issue call', async () => {
+// With no sidebar link GitHub would not normally close #103 on merge; the world still reports it CLOSED after mergedAt
+// (a squash-message keyword or another channel) — the reconciler's late run reopens a closed kept-open Refs record
+// whichever channel closed it.
+test('AC1.2 #4251 end to end: an armed merge closed a kept-open Refs record that no sidebar link names — the late Step 4.0 reopens it from the fixes span\'s Refs line', async () => {
   const { root, dir } = e2eCheckout();
-  const world = refsWorld({ refs: [], closedAtOffsetMs: 2000, parent: null });
+  const world = refsWorld({ refs: [103], sidebar: false });
+  const r = await e2ePass(root, world);
+  assert.deepEqual(r.entries.map((e) => [e.runDir, e.pr, e.action, e.closingLinks, e.parentsClosed]), [[dir, 11, 'ran', 'reopened', 0]]);
+  assert.ok(world.calls.some((c) => /^issue reopen 103 --comment /.test(c.key)), 'the Refs record is reopened');
+  assert.match(decisionsOf(dir), /^- AUTO \d{2}:\d{2}:\d{2} — Closing links: reopened #103 after PR #11's merge closed it/m);
+  assert.equal(entriesOf(dir).at(-1).location, MARKER_STEP, 'the marker is written last');
+});
+
+// Step 4.0b's below-floor parent path makes its own `gh issue` calls (pinned by the 'M6 end to end: an armed merge's
+// last sub-issue closes its below-floor parent once' test); this world's Fixes record has no parent.
+test('AC2.1 #4251 end to end: a run whose fixes span has no Refs record and whose Fixes record has no parent makes no gh issue call', async () => {
+  const { root, dir } = e2eCheckout();
+  const world = refsWorld({ refs: [] });
   const r = await e2ePass(root, world);
   assert.deepEqual(r.entries.map((e) => [e.action, e.closingLinks]), [['ran', 'nothing-closed']]);
   assert.deepEqual(world.calls.filter((c) => /^issue /.test(c.key)).map((c) => c.key), []);
