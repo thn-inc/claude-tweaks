@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
 const { readText } = require('./helpers/read-skill');
+const { rowWithContinuations } = require('./helpers/plugin-structure-entry');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => readText(path.join(ROOT, rel));
@@ -75,7 +76,7 @@ function missing({ dispatch, variants, citers, structure }) {
     fact(`${file} cites step3-tier-variants.md`, citers[file].includes(cite) && !citers[file].includes(old));
   }
   for (const d of STALE_DEICTICS) fact(`no stale deictic: ${d}`, !dispatch.includes(d));
-  const reviewRow = lineStartingWith(structure, '| review |');
+  const reviewRow = rowWithContinuations(structure, '| review |');
   fact('plugin-structure review row lists step3-tier-variants.md',
     reviewRow.includes('step3-lens-dispatch.md, step3-tier-variants.md,') && /step3-tier-variants\.md holds/.test(reviewRow));
   return out;

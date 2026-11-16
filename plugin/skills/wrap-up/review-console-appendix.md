@@ -164,7 +164,7 @@ procedure — no row is left unrouted:
 - `approve` — the curation steps: step 2 (Skill updates), step 3 (Documentation updates), step 4
   (Journey updates), step 5 (Configuration updates). A **Reference repairs** row has no numbered
   step of its own — it is applied by Phase 4's execution step, per
-  `execution-and-verification.md`'s Reference repairs bullet. Cleanup actions run at step 6.
+  `execution-and-verification.md`'s Reference repairs bullet, ahead of that step's Branch finish. Cleanup actions run at step 6.
   A **Reflection insights** row (`staged/wrap-up-reflect-insights.md`) runs at step 10. A Skill
   updates row for `staged/reflect-{n}.md` runs at step 2's reflect clause (`bin/reflect-apply.js`),
   not the Skills curation patch path.
@@ -174,6 +174,7 @@ procedure — no row is left unrouted:
 - `dropped` — execute **nothing**. A tiebreak refuted the finding, or a human chose Approve all on
   its `drop` recommendation (`console-template.md`); its staged file stays in `staged/`, and the
   row is a final outcome, not residue.
+- `carried` — execute **nothing** at the console: the item's decision fact is already in `{run-dir}/packet-facts/decisions.json` and reaches the human through the acceptance packet (`verification-brief.md`'s gather). It is terminal — not residue, so archival proceeds.
 - `stale` — still step 1, but its re-derivation path only: rebuild the diff from the item's
   `Target:`/`Invariant:` preamble. Never `git apply` a diff the CLI already reported as failing
   `--check`, and never drop it silently.
@@ -224,7 +225,7 @@ A rendered console is somebody's open decision and no flag overwrites it, so a c
 follows `_shared/console-on-pr.md`'s Headless conclusion (report `pending-review` with the PR URL);
 an unparseable one stops and reports the CLI's stderr, like exits 2 and 3. Exit codes 2 and 3 (malformed invocation / `--run` not anchored) → a
 HARD-GATE failure: stop the wrap-up and report the CLI's stderr — an unattended run has nobody to
-answer a real stop. Send one consolidated `PushNotification` summarizing the run, at the same
+answer a real stop. Exit code 6 (a control-mode carry write failed) → stop with `flow/failure-cards.md`'s Generic gate failure card naming each item stderr lists. Send one consolidated `PushNotification` summarizing the run, at the same
 point the auto-merge short-circuit sends its own FYI (`_shared/autonomy-ceiling.md`'s Notification
 section) — one notification for the whole run, never one per item. End with the absolute path to
 `decisions.md`, `console.json`, and any retained `staged/*` files, so the operator has a concrete

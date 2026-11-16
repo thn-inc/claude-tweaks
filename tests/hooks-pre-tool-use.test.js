@@ -1758,6 +1758,30 @@ test('#3712: readConsoleCeiling matches console-resolve.js readPolicy() ceiling'
   }
 });
 
+test('#4620 AC4.10: readConsoleCeiling matches readPolicy() under control mode', () => {
+  const { readPolicy } = require('../plugin/bin/console-resolve');
+  const execFile = (cmd, args, opts = {}) => execFileSync(cmd, args, { encoding: 'utf8', ...opts });
+  const policies = [
+    'control-mode: on\n',
+    'control-mode: on\nautonomy: supervised\n',
+    'control-mode: on\nautonomy: trusted\n',
+    'control-mode: off\n',
+    'control-mode: on\nautonomy: supervsed\n',
+  ];
+  for (const policy of policies) {
+    const dir = consoleRun(null);
+    const repo = repoOfRun(dir);
+    withPolicy(repo, policy);
+    assert.strictEqual(pre.readConsoleCeiling(dir, repo), readPolicy({ execFile, cwd: repo, runDir: dir }).ceiling, policy);
+  }
+  const first = consoleRun(null);
+  withPolicy(repoOfRun(first), policies[0]);
+  assert.strictEqual(pre.run(consoleCtx(first, CONSOLE_Q)).json.hookSpecificOutput.permissionDecision, 'deny');
+  const invalid = consoleRun(null);
+  withPolicy(repoOfRun(invalid), 'control-mode: on\nautonomy: supervsed\n');
+  assert.deepStrictEqual(pre.run(consoleCtx(invalid, CONSOLE_Q)), {}, 'an invalid autonomy blocks the implication, so the question is allowed');
+});
+
 test('#3712: a deny logs one gate-denial event for gate review-console-ask', () => {
   const dir = consoleRun('unattended');
   pre.run(consoleCtx(dir, CONSOLE_Q));
