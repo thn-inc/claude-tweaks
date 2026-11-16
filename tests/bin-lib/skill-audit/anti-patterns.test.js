@@ -674,7 +674,9 @@ test('every shipped skill has a parseable Anti-Patterns table', () => {
   //   SKILL.md moved by git mv with its Anti-Patterns table unchanged, and the new
   //   plugin/skills/demo/SKILL.md alias stub carries a one-row table ("Adding
   //   acceptance logic here"). Measured by RUNNING the parser on the working
-  //   tree (actual 424), not by adding 1 to 423 (`[IL-99]`).
+  //   tree (actual 424), not by adding 1 to 423 (`[IL-99]`). The final alias stub
+  //   later reworded that one row ("Printing the notice twice, or reimplementing
+  //   acceptance logic here"); still one row, so the count is unchanged.
   //
   //   424 -> 426, #4613 (accept rewritten as the packet-centric acceptance step). Two
   //   rows ADDED to plugin/skills/accept/SKILL.md's Anti-Patterns table: "Posting a
