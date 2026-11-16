@@ -320,14 +320,17 @@ function settleRow({
     const [, , , currentRaw, currentResolution] = ledgerRowCells(parseLedgerTable(text).rows.get(String(row)));
     const current = (currentRaw || '').toLowerCase();
     const shown = current || '(empty)';
-    const { LEDGER_DEFERRED_STAGED_RE } = wrapUpPack();
+    const { LEDGER_DEFERRED_STAGED_RE, LEDGER_CARRIED_RE } = wrapUpPack();
+    // #4620: the one terminal-to-terminal move — a control-mode console carrying a staged-pointer deferral into the packet.
+    const carriedMove = status === 'deferred' && current === 'deferred' && LEDGER_DEFERRED_STAGED_RE.test(currentResolution)
+      && LEDGER_CARRIED_RE.test(String(resolution || ''));
     if (status === 'open') {
       const refusedReopen = current === 'deferred' && LEDGER_DEFERRED_STAGED_RE.test(currentResolution)
         && String(resolution || '').includes(REFUSED_PROPOSAL_NOTE);
       if (current !== 'open' && !refusedReopen) {
         throw new Error(`row #${row} is ${shown}; only an open row, or a deferred row naming a staged/ path reopened with the note '${REFUSED_PROPOSAL_NOTE}' (the refused-proposal reopen, _shared/ledger-format.md's Resolution-text requirements), can be set to open`);
       }
-    } else if (TERMINAL_STATUSES.includes(current) && !(current === 'deferred' && isIncompleteDeferral(currentResolution, excludeRecords))) {
+    } else if (TERMINAL_STATUSES.includes(current) && !carriedMove && !(current === 'deferred' && isIncompleteDeferral(currentResolution, excludeRecords))) {
       throw new Error(`row #${row} is already ${shown} (terminal) — a wrong resolution gets a new item`);
     }
     writeFileAtomic(ledgerPath, rewritten);
