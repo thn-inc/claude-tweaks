@@ -2016,3 +2016,99 @@ test('defaultDeps(cwd, { env }): ghSync resolves GH_HOST from the origin read un
     fs.rmSync(stubDir, { recursive: true, force: true });
   }
 });
+
+// #3974: the record ladder reads a header at its live or its archived location.
+function runTree(files) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-archived-'));
+  const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
+  for (const [rel, text] of Object.entries(files)) {
+    const file = path.join(pipelines, ...rel.split('/'));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text);
+  }
+  return { root, pipelines };
+}
+const fsDeps = () => ({ readFile: (p) => fs.readFileSync(p, 'utf8'), readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } });
+const ARCH_RUN_ID = '2026-11-16T000000-record-7';
+const archHeader = (n, extra = '') => `---\nrecord: ${n}\n${extra}---\n`;
+
+test('AC1.1 resolveRecords: an archived-only flat header resolves the same record and source as live', () => {
+  const live = runTree({ [`${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7) });
+  const arch = runTree({ [`archive/${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7) });
+  const a = resolveRecords(fsDeps(), path.join(live.pipelines, ARCH_RUN_ID), null);
+  const b = resolveRecords(fsDeps(), path.join(arch.pipelines, ARCH_RUN_ID), null);
+  assert.deepStrictEqual(b, a);
+  assert.strictEqual(b.source, 'headers');
+  assert.deepStrictEqual(closingRecords(b), [7]);
+});
+
+test('AC1.1 resolveRecords: an archived-only header in the worktree mirror resolves as worktree-headers', () => {
+  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-archived-main-'));
+  const liveTree = runTree({ [`${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7) });
+  const archTree = runTree({ [`archive/${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7) });
+  const runDir = path.join(main, '.claude-tweaks', 'pipelines', ARCH_RUN_ID);
+  fs.mkdirSync(runDir, { recursive: true });
+  const a = resolveRecords(fsDeps(), runDir, liveTree.root);
+  const b = resolveRecords(fsDeps(), runDir, archTree.root);
+  assert.deepStrictEqual(b, a);
+  assert.strictEqual(b.source, 'worktree-headers');
+  assert.deepStrictEqual(closingRecords(b), [7]);
+});
+
+test('enumerating merge: live work/8 and archived work/7 resolve [7, 8] from rung (a)', () => {
+  const t = runTree({ [`${ARCH_RUN_ID}/work/8-spec.md`]: archHeader(8), [`archive/${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7) });
+  const res = resolveRecords(fsDeps(), path.join(t.pipelines, ARCH_RUN_ID), null);
+  assert.deepStrictEqual(res.records, [7, 8]);
+  assert.strictEqual(res.source, 'headers');
+  assert.deepStrictEqual(Object.keys(res.parkedAtShaping), ['7', '8']);
+});
+
+test('AC2.1 resolveRecords: archived-only spec-{N} headers resolve through rung (c) like live, manifest kept live', () => {
+  const manifest = 'multispec:\n  parent: 1\n  specs:\n    - id: 9\n      status: complete\n      subdir: spec-9\n';
+  const live = runTree({ [`${ARCH_RUN_ID}/manifest.yml`]: manifest, [`${ARCH_RUN_ID}/spec-9/work/9-spec.md`]: archHeader(9) });
+  const arch = runTree({ [`${ARCH_RUN_ID}/manifest.yml`]: manifest, [`archive/${ARCH_RUN_ID}/spec-9/work/9-spec.md`]: archHeader(9) });
+  const a = resolveRecords(fsDeps(), path.join(live.pipelines, ARCH_RUN_ID), null);
+  const b = resolveRecords(fsDeps(), path.join(arch.pipelines, ARCH_RUN_ID), null);
+  assert.deepStrictEqual(b, a);
+  assert.deepStrictEqual(b.records, [9]);
+  assert.strictEqual(b.source, 'manifest');
+});
+
+test('AC2.1 resolveRecords: manifest-free archived-only spec-{N} headers resolve like live', () => {
+  const live = runTree({ [`${ARCH_RUN_ID}/spec-9/work/9-spec.md`]: archHeader(9), [`${ARCH_RUN_ID}/spec-11/work/11-spec.md`]: archHeader(11) });
+  const arch = runTree({ [`archive/${ARCH_RUN_ID}/spec-9/work/9-spec.md`]: archHeader(9), [`archive/${ARCH_RUN_ID}/spec-11/work/11-spec.md`]: archHeader(11) });
+  const a = resolveRecords(fsDeps(), path.join(live.pipelines, ARCH_RUN_ID), null);
+  const b = resolveRecords(fsDeps(), path.join(arch.pipelines, ARCH_RUN_ID), null);
+  assert.deepStrictEqual(b, a);
+  assert.deepStrictEqual(b.records, [9, 11]);
+  assert.strictEqual(b.source, 'manifest');
+});
+
+test('manifestRecords keeps scanning a non-numeric spec- directory, live or archived (today\'s /^spec-/ filter)', () => {
+  const t = runTree({ [`${ARCH_RUN_ID}/spec-alpha/work/5-spec.md`]: archHeader(5), [`archive/${ARCH_RUN_ID}/spec-beta/work/6-spec.md`]: archHeader(6) });
+  assert.deepStrictEqual(resolveRecords(fsDeps(), path.join(t.pipelines, ARCH_RUN_ID), null).records, [5, 6]);
+});
+
+test('AC7.1 a record present at both locations is counted once, the live copy\'s parked flag wins', () => {
+  const t = runTree({
+    [`${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7),
+    [`archive/${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7, 'parked-at-shaping: true\n'),
+  });
+  const res = resolveRecords(fsDeps(), path.join(t.pipelines, ARCH_RUN_ID), null);
+  assert.deepStrictEqual(res.records, [7]);
+  assert.deepStrictEqual(res.parkedAtShaping, { 7: false });
+  const t2 = runTree({
+    [`${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7, 'parked-at-shaping: true\n'),
+    [`archive/${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7),
+  });
+  assert.deepStrictEqual(resolveRecords(fsDeps(), path.join(t2.pipelines, ARCH_RUN_ID), null).parkedAtShaping, { 7: true });
+});
+
+test('AC9.4 an unreadable archived header is skipped as absent', () => {
+  const t = runTree({ [`archive/${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7) });
+  const deps = fsDeps();
+  const readFile = (p) => { if (p.includes(`${path.sep}archive${path.sep}`)) throw new Error('EACCES'); return deps.readFile(p); };
+  const res = resolveRecords({ ...deps, readFile }, path.join(t.pipelines, ARCH_RUN_ID), null);
+  assert.deepStrictEqual(res.records, []);
+  assert.strictEqual(res.source, 'unavailable');
+});
