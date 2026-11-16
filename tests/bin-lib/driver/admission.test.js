@@ -26,6 +26,27 @@ test('AC3.1: no auto:build', () => {
   assert.deepStrictEqual(reasonsFor({ labels: ['ready'] }), [R.noBuildGrant]);
 });
 
+test('AC8 (#5584): a ready record without auto:build is not refused for the grant only when buildAuthority is typed', () => {
+  assert.deepStrictEqual(evaluateAdmission({ ...ADMIT, labels: ['ready', 'size:low'], buildAuthority: 'typed' }), { admitted: true, reasons: [] });
+  for (const buildAuthority of ['none', undefined, 'label', 'yes', 'Typed', 'typed ', true, null]) {
+    assert.deepStrictEqual(reasonsFor({ labels: ['ready', 'size:low'], buildAuthority }), [R.noBuildGrant], `buildAuthority=${JSON.stringify(buildAuthority)}`);
+  }
+  const absent = { ...ADMIT, labels: ['ready', 'size:low'] };
+  assert.deepStrictEqual(evaluateAdmission(absent).reasons, [R.noBuildGrant]);
+});
+
+test('AC8/AC15 (#5584): a typed fact lifts only the grant gate; every other gate still runs', () => {
+  assert.deepStrictEqual(reasonsFor({ labels: ['ready', 'parked'], buildAuthority: 'typed' }), [R.parked]);
+  assert.deepStrictEqual(reasonsFor({ labels: ['ready', 'bot:parked'], buildAuthority: 'typed' }), [R.parked]);
+  assert.deepStrictEqual(reasonsFor({ labels: ['ready', 'bot:blocked'], buildAuthority: 'typed' }), [R.blocked]);
+  assert.deepStrictEqual(reasonsFor({ labels: ['ready'], buildAuthority: 'typed', state: 'CLOSED' }), [R.notOpen]);
+  assert.deepStrictEqual(reasonsFor({ labels: 'ready', buildAuthority: 'typed' }), [R.labelsUnreadable]);
+  // A labelled record reads the same whatever the fact says.
+  for (const buildAuthority of ['typed', 'none', undefined]) {
+    assert.deepStrictEqual(evaluateAdmission({ ...ADMIT, buildAuthority }), { admitted: true, reasons: [] });
+  }
+});
+
 test('AC3.2: the parked stage label', () => {
   assert.deepStrictEqual(reasonsFor({ labels: ['auto:build', 'parked'] }), [R.parked]);
 });
