@@ -48,12 +48,15 @@
 //     { worktree, headRefName, prHead, parkHead, moved, head } — parkHead is the packet's
 //     `park-head:` (an unreadable or absent packet is null, so moved). Exit 0 entered; 1 a git or
 //     gh failure (including a PR view that will not read); 2 malformed invocation; 4 gh absent,
-//     before any write; 7 stale directory (nothing touched).
+//     before any write; 7 stale directory, on disk or still registered with git (nothing touched;
+//     reenter-remove clears it).
 //   reenter-check --worktree <path> --expect-head <sha>
 //     One JSON line { ok, head, dirty }. Exit 0 ok (HEAD is the expected commit, no tracked file
 //     modified); 8 modified (HEAD moved or a tracked file differs); 1 a git failure; 2 malformed.
 //   reenter-remove --worktree <path>
-//     One JSON line { removed } (false: git no longer lists it). Exit 0; 1 a git failure; 2 malformed.
+//     One JSON line { removed } (false: git no longer lists it). Only a direct child of
+//     <main checkout>/.claude/worktrees named accept-<digits> is removed; it also clears the
+//     registration of a deleted directory. Exit 0; 1 a git failure; 2 malformed or not an accept worktree.
 'use strict';
 
 const path = require('path');
@@ -75,7 +78,7 @@ const USAGE = [
   '       accept-park.js reenter-remove --worktree <path>',
   '  reenter: exit 0 entered; 1 git or gh failure; 2 malformed; 4 gh absent; 7 stale directory',
   '  reenter-check: exit 0 ok; 8 modified; 1 git failure; 2 malformed',
-  '  reenter-remove: exit 0 removed or already gone; 1 git failure; 2 malformed',
+  '  reenter-remove: exit 0 removed or already gone; 1 git failure; 2 malformed or not an accept-<n> worktree',
   '',
 ].join('\n');
 
@@ -623,7 +626,7 @@ function runReenterRemove(opts, deps, ctx) {
     return 0;
   } catch (err) {
     deps.stderr(`accept-park.js: reenter-remove: ${messageOf(err)}\n`);
-    return 1;
+    return err.code === 'not-accept-worktree' ? 2 : 1;
   }
 }
 

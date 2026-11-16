@@ -601,8 +601,9 @@ test('reenter prints the re-entry result with the packet park head, and fences i
   assert.equal(out.parkHead, null, 'the fixture packet carries no park-head, so the PR counts as moved');
   assert.equal(out.moved, true);
   assert.deepEqual(ghCalls, [['pr', 'view', '12', '--json', 'headRefName,headRefOid']]);
-  assert.deepEqual(gitCalls[0].args, ['-C', w.state.root, 'fetch', '--end-of-options', 'origin', 'feat/x']);
-  assert.equal(gitCalls[0].opts.cwd, w.state.root);
+  assert.deepEqual(gitCalls[0].args, ['-C', w.state.root, 'worktree', 'list', '--porcelain']);
+  assert.deepEqual(gitCalls[1].args, ['-C', w.state.root, 'fetch', '--end-of-options', 'origin', 'feat/x']);
+  assert.equal(gitCalls[1].opts.cwd, w.state.root);
 });
 
 test('reenter reads a parked packet head and reports an unmoved PR', async () => {
@@ -632,7 +633,7 @@ test('reenter: a PR view failure exits 1; gh absent exits 4 before any call', as
   const res = await call(failing.w, ['reenter', '--record', '7', '--pr', '12']);
   assert.equal(res.code, 1);
   assert.equal(res.stdout, '');
-  assert.equal(failing.gitCalls.length, 0);
+  assert.equal(failing.gitCalls.some(({ args }) => args.includes('fetch') || args.includes('add')), false);
   const absent = reentryWorld();
   const none = await call(absent.w, ['reenter', '--record', '7', '--pr', '12'], { ghAvailable: () => false });
   assert.equal(none.code, 4);
@@ -662,26 +663,53 @@ test('reenter-check: exit 0 when HEAD matches and the tree is clean, 8 when modi
   assert.equal(failed.stdout, '');
 });
 
-test('reenter-remove removes a listed worktree, reports an unlisted one, and exits 1 on a git failure', async () => {
-  const wt = path.join(os.tmpdir(), 'accept-gone-wt');
-  const listed = reentryWorld({ listed: `worktree ${wt}\nHEAD ${TIP}\ndetached\n\n` });
-  const res = await call(listed.w, ['reenter-remove', '--worktree', wt], { realpath: (p) => p });
+const acceptWt = (w, n = 9) => path.join(w.state.root, '.claude', 'worktrees', `accept-${n}`);
+const listing = (wt) => `worktree ${wt}\nHEAD ${TIP}\ndetached\n\n`;
+const removeArgv = (w, wt = acceptWt(w)) => ['reenter-remove', '--worktree', wt];
+
+test('reenter-remove removes a listed accept worktree, reports an unlisted one, and exits 1 on a git failure', async () => {
+  const listed = reentryWorld();
+  const wt = acceptWt(listed.w);
+  listed.w.deps.git = (args, opts) => {
+    listed.gitCalls.push({ args, opts });
+    return args.includes('list') ? listing(wt) : '';
+  };
+  const res = await call(listed.w, removeArgv(listed.w), { realpath: (p) => p });
   assert.equal(res.code, 0, res.stderr);
   assert.deepEqual(JSON.parse(res.stdout), { removed: true });
   assert.deepEqual(listed.gitCalls.at(-1).args, ['-C', listed.w.state.root, 'worktree', 'remove', '--force', '--end-of-options', wt]);
 
   const gone = reentryWorld({ listed: '' });
-  const none = await call(gone.w, ['reenter-remove', '--worktree', wt], { realpath: (p) => p });
+  const none = await call(gone.w, removeArgv(gone.w), { realpath: (p) => p });
   assert.equal(none.code, 0);
   assert.deepEqual(JSON.parse(none.stdout), { removed: false });
 
-  const failing = reentryWorld({ listed: `worktree ${wt}\n\n` });
+  const failing = reentryWorld();
+  const failWt = acceptWt(failing.w);
   failing.w.deps.git = (args) => {
     if (args.includes('remove')) throw new Error('fatal: cannot remove');
-    return `worktree ${wt}\n\n`;
+    return listing(failWt);
   };
-  const failed = await call(failing.w, ['reenter-remove', '--worktree', wt], { realpath: (p) => p });
+  const failed = await call(failing.w, removeArgv(failing.w), { realpath: (p) => p });
   assert.equal(failed.code, 1);
+});
+
+test('reenter-remove refuses a worktree that is not accept-<n> directly under .claude/worktrees (exit 2)', async () => {
+  const w = reentryWorld();
+  const { root } = w.w.state;
+  const outside = [
+    path.join(root, 'wt-7'),
+    path.join(root, '.claude', 'worktrees', 'feat'),
+    path.join(root, '.claude', 'worktrees', 'accept-x'),
+    path.join(root, '.claude', 'worktrees', 'sub', 'accept-1'),
+    path.join(os.tmpdir(), 'accept-1'),
+  ];
+  for (const target of outside) {
+    const res = await call(w.w, removeArgv(w.w, target), { realpath: (p) => p });
+    assert.equal(res.code, 2, target);
+    assert.match(res.stderr, /not an accept-<n> worktree/);
+  }
+  assert.equal(w.gitCalls.length, 0, 'git never ran');
 });
 
 // ---- invocation ----

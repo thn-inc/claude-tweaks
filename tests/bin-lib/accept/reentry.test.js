@@ -10,7 +10,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-const { reenter, reenterCheck, reenterRemove, sameCommit } = require('../../../plugin/bin/lib/accept/reentry');
+const { reenter, reenterCheck, reenterRemove } = require('../../../plugin/bin/lib/accept/reentry');
 
 const BRANCH = 'feat/accept-me';
 const tempDirs = [];
@@ -57,7 +57,17 @@ function fixture() {
     assert.deepEqual(args.slice(0, 2), ['pr', 'view']);
     return JSON.stringify({ headRefName: BRANCH, headRefOid: tip });
   };
-  return { base, clone, tip, git, gh, calls, ghCalls, list: () => setup(['worktree', 'list', '--porcelain'], clone) };
+  // A commit on a side branch of the clone, never pushed: a second real oid to compare against.
+  const other = () => {
+    setup(['checkout', '-q', '-b', 'side'], clone);
+    fs.writeFileSync(path.join(clone, 'b.txt'), 'two\n');
+    setup(['add', '--', 'b.txt'], clone);
+    setup(['commit', '-q', '-m', 'side'], clone);
+    const oid = setup(['rev-parse', 'HEAD'], clone).trim();
+    setup(['checkout', '-q', '--detach', tip], clone);
+    return oid;
+  };
+  return { base, clone, tip, git, gh, calls, ghCalls, setup, other, list: () => setup(['worktree', 'list', '--porcelain'], clone) };
 }
 
 const enter = (f, extra = {}) => reenter({ record: 42, pr: 7, repoRoot: f.clone, parkHead: f.tip, git: f.git, gh: f.gh, ...extra });
@@ -74,7 +84,7 @@ test('AC4.1: reenter fetches and adds the worktree from the PR branch', () => {
   assert.deepEqual(f.ghCalls, [['pr', 'view', '7', '--json', 'headRefName,headRefOid']]);
   assert.ok(f.list().includes(`worktree ${expected}`));
   // The ref and path operands are fenced from option parsing.
-  assert.ok(f.calls.filter((a) => a.includes('fetch') || a.includes('worktree')).every((a) => a.includes('--end-of-options')));
+  assert.ok(f.calls.filter((a) => a.includes('fetch') || a.includes('add') || a.includes('remove')).every((a) => a.includes('--end-of-options')));
 });
 
 test('AC4.2: before the verdict HEAD is unchanged and no tracked file changed', () => {
@@ -91,6 +101,13 @@ test('AC4.2: before the verdict HEAD is unchanged and no tracked file changed', 
   const dirty = reenterCheck({ worktree, expectHead: head, git: f.git });
   assert.equal(dirty.ok, false);
   assert.deepEqual(dirty.dirty, ['a.txt']);
+});
+
+test('AC4.2: reenterCheck matches the full oid only, not a prefix', () => {
+  const f = fixture();
+  const { worktree, head } = enter(f);
+  assert.equal(reenterCheck({ worktree, expectHead: f.tip.slice(0, 7), git: f.git }).ok, false);
+  assert.equal(reenterCheck({ worktree, expectHead: head.toUpperCase(), git: f.git }).ok, true, 'case is not a difference');
 });
 
 test('AC4.2: a HEAD that is not the expected commit is not ok even with a clean tree', () => {
@@ -115,13 +132,20 @@ test('AC4.3: the worktree is removed after the verdict', () => {
 
 test('AC4.4: a moved PR head withholds Accept and merge', () => {
   const f = fixture();
-  assert.equal(enter(f, { parkHead: 'aaaaaaa' }).moved, true);
+  assert.equal(enter(f, { parkHead: 'aaaaaaa' }).moved, true, 'an unresolvable park head is moved');
   const g = fixture();
   assert.equal(enter(g, { parkHead: g.tip }).moved, false);
   const h = fixture();
-  assert.equal(enter(h, { parkHead: h.tip.slice(0, 7) }).moved, false, 'an abbreviated park head naming the same commit is not moved');
+  assert.equal(enter(h, { parkHead: h.tip.slice(0, 7) }).moved, false, 'an abbreviated park head resolving to the PR head is not moved');
   const i = fixture();
   assert.equal(enter(i, { parkHead: null }).moved, true, 'a missing park head counts as moved');
+  const j = fixture();
+  const other = j.other();
+  const full = enter(j, { parkHead: other });
+  assert.equal(full.moved, true, 'a different full oid is moved');
+  const k = fixture();
+  const short = k.other().slice(0, 7);
+  assert.equal(enter(k, { parkHead: short }).moved, true, 'a short park head resolving to another commit is moved');
 });
 
 test('a stale accept directory is refused, never reused', () => {
@@ -147,13 +171,43 @@ test('reenter refuses a PR view with no usable branch or head', () => {
   const f = fixture();
   assert.throws(() => enter(f, { gh: () => JSON.stringify({ headRefName: '', headRefOid: f.tip }) }), /headRefName/);
   assert.throws(() => enter(f, { gh: () => JSON.stringify({ headRefName: BRANCH, headRefOid: 'nope' }) }), /headRefOid/);
-  assert.equal(f.calls.length, 0);
+  assert.equal(f.calls.filter((a) => a.includes('fetch') || a.includes('add')).length, 0);
 });
 
-test('sameCommit: equal, prefix of 7 or more, never a mismatch or a non-hex value', () => {
-  assert.equal(sameCommit('abc1234', 'abc1234def'), true);
-  assert.equal(sameCommit('abc1234def', 'abc1234'), true);
-  assert.equal(sameCommit('abc1234', 'abc1235def'), false);
-  assert.equal(sameCommit('abc123', 'abc1234def'), false, 'under 7 is not a head');
-  assert.equal(sameCommit(null, 'abc1234'), false);
+test('a registered but deleted accept directory is stale: no add attempted, reenter-remove clears it', () => {
+  const f = fixture();
+  const { worktree } = enter(f);
+  fs.rmSync(worktree, { recursive: true, force: true });
+  assert.ok(f.list().includes(`worktree ${worktree}`), 'git still lists the deleted directory');
+  const before = f.calls.length;
+  assert.throws(() => enter(f), (err) => err.code === 'stale-dir' && /reenter-remove/.test(err.message));
+  assert.equal(f.calls.slice(before).some((a) => a.includes('add') || a.includes('fetch')), false, 'no worktree add or fetch ran');
+  assert.equal(f.ghCalls.length, 1, 'no gh call after the refusal');
+  assert.deepEqual(reenterRemove({ worktree, repoRoot: f.clone, git: f.git }), { removed: true });
+  assert.ok(!f.list().includes(worktree), 'the registration is gone');
+  assert.equal(enter(f).head, f.tip, 're-entry works again');
+});
+
+test('reenter-remove refuses a listed worktree that is not accept-<n> under .claude/worktrees', () => {
+  const f = fixture();
+  const elsewhere = path.join(f.base, 'accept-5');
+  const named = path.join(f.clone, '.claude', 'worktrees', 'feat');
+  const nested = path.join(f.clone, '.claude', 'worktrees', 'deep', 'accept-6');
+  for (const wt of [elsewhere, named, nested]) f.setup(['worktree', 'add', '--detach', '--end-of-options', wt, f.tip], f.clone);
+  for (const wt of [elsewhere, named, nested]) {
+    assert.throws(() => reenterRemove({ worktree: wt, repoRoot: f.clone, git: f.git }), (err) => err.code === 'not-accept-worktree', wt);
+    assert.ok(f.list().includes(`worktree ${wt}`), `${wt} survives`);
+  }
+});
+
+test('a failed rev-parse after the worktree add removes the worktree it made and rethrows', () => {
+  const f = fixture();
+  const boom = new Error('fatal: rev-parse exploded');
+  const git = (args) => {
+    if (args.includes('rev-parse') && args.includes('HEAD') && args[1].includes('accept-42')) throw boom;
+    return f.git(args);
+  };
+  assert.throws(() => enter(f, { git }), (err) => err === boom);
+  assert.ok(!f.list().includes('accept-42'), 'no worktree left behind');
+  assert.equal(fs.existsSync(path.join(f.clone, '.claude', 'worktrees', 'accept-42')), false);
 });
