@@ -28,8 +28,7 @@ const { STALE_DAYS } = require('./lib/harness-health/score');
 // never this repo's own plugin/.claude-plugin/plugin.json, which is ahead of the installed
 // build during development (same distinction hooks/session-start.js's resolveBuildLine
 // makes for the identical read). Fail-toward-undefined: a missing/unreadable/malformed
-// manifest degrades to no Template: line rather than a crashed sweep. #1837 review
-// finding: this was its own third copy of the same read/parse/extract logic — now
+// manifest degrades to no Template: line rather than a crashed sweep. The read is
 // shared with bin/materialize.js and bin/lib/hooks/session-start.js.
 const { resolvePluginVersion } = require('./lib/plugin-version');
 const { canonicalRealpath } = require('./lib/path-guard');
@@ -217,7 +216,7 @@ function cmdValidateFindings(args, ctx) {
   try {
     raw = JSON.parse(fs.readFileSync(findingsPath, 'utf8'));
   } catch {
-    // The message names the findings path as the caller gave it, as before.
+    // The message names the findings path as the caller gave it (findingsArg), not the resolved path.
     stderr(`validate-findings: could not read or parse findings file: ${findingsArg}\n`);
     return 1;
   }

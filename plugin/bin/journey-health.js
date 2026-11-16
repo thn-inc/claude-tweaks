@@ -151,7 +151,7 @@ function cmdValidateFindings(args, ctx) {
   try {
     raw = JSON.parse(fs.readFileSync(findingsPath, 'utf8'));
   } catch {
-    // The message names the findings path as the caller gave it, as before.
+    // The message names the findings path as the caller gave it (findingsArg), not the resolved path.
     stderr(`validate-findings: could not read or parse findings file: ${findingsArg}\n`);
     return 1;
   }

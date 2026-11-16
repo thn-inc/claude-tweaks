@@ -156,8 +156,8 @@ test('next-slice: a change inside a subdirectory does not make the "." slice loo
   assert.strictEqual(result.id, 'sub', 'a change inside "sub" must not make "." look changed instead');
 });
 
-// Real-process pin of the script entry (#5381): the refusal path's code, stdout and stderr are
-// byte-identical before and after the in-process entry conversion.
+// Real-process pin of the script entry (#5381): an unknown command exits 2 with empty stdout and
+// the usage text on stderr.
 test('AC2.1, AC2.2: code-health.js no-such-command exits 2 with the usage text on stderr, naming no removed command (real process)', () => {
   const { spawnCli } = require('../../helpers/run-cli');
   const r = spawnCli(CLI, ['no-such-command'], { env: { ...process.env }, cwd: tmp() });

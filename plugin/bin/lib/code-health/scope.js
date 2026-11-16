@@ -180,9 +180,9 @@ function splitOversized(id, absDir, out, {
 // Falls back to hashing the directory listing string if find/read fails.
 // recursive:false scans only direct file children of absDir (maxdepth 1) —
 // used for the '.' slice, which must NOT overlap every subdirectory/
-// workspace slice that already covers everything beneath root. Was
-// docs/superpowers/specs/2026-07-30-durable-state-git-native-write-design.md
-// — deleted (70849915).
+// workspace slice that already covers everything beneath root, and for the
+// own-files slice splitOversized emits for any oversized directory (see the
+// "Resolve from relDir" comment in gitChurn and sliceRecursive below).
 // Throws on a scan failure instead of swallowing it — sourceFiles below
 // catches this for its own degrade-to-[] contract; isEmptySourceDir below
 // instead needs to tell "genuinely zero files" apart from "the scan failed"
