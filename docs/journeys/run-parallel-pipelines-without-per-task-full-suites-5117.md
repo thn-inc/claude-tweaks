@@ -47,7 +47,7 @@ files:
 
 ### 5. Dispatched agents name the project's test command — `dispatch/task-prompt.md`, `dispatch/express-prompt.md`
 - **URL:** —
-- **Action:** `/claude-tweaks:dispatch`'s first-call, second-call and express prompts tell the dispatched agent to "run the project's test command and every other long-running command in the foreground of this turn". `build/dispatch.md`'s copy, addressed to the agents SDD dispatches, reads "of that turn" and adds "(test/verification.md Step 1)". The handoff evidence line reads "A raw test-command log is not that artifact".
+- **Action:** `/claude-tweaks:dispatch`'s first-call, second-call and express prompts tell the dispatched agent, through Context pack item 7, to "run the project's test command and every other long-running command in the foreground". `build/dispatch.md`'s copy, addressed to the agents SDD dispatches, reads "of that turn" and adds "(test/verification.md Step 1)". The handoff evidence line reads "A raw test-command log is not that artifact".
 - **Should feel:** Correct in any language: a Go or Python consumer is never told to run `npm test`.
 - **Should understand:** The rule reaches each dispatch prompt once, through Context pack item 7, which names the project's test command; no template repeats it.
 - **Red flags:** Any shipped dispatch prompt containing a literal `npm test` instruction; a dispatch template carrying its own copy of the wait rule.

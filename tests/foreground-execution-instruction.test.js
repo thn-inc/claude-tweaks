@@ -3,14 +3,14 @@
 // background test run / fix-round / simplify subagent" with no status line. A Task agent that
 // yields expecting a completion notification is never re-woken inside the Task — the dispatching
 // session had to detect the missing status line and resume each one via SendMessage manually.
-// Neither dispatch/task-prompt.md's two fenced Task-prompt templates nor build/dispatch.md's
+// Neither dispatch/task-prompt.md's Context pack nor build/dispatch.md's
 // implementer/reviewer instruction paragraph said anything about foreground execution, so a
 // dispatched agent (or the SDD implementer/reviewer sub-dispatches it composes) had no textual
 // reason not to background a long-running command and wait on it. This suite pins the
-// foreground-execution instruction in all three locations, and proves the check can actually go
-// red (parse-signal-discipline). It also pins #3078/#3266's nested-dispatch keep-alive rule across
-// the core section, task-prompt.md's item 7 and both fenced templates, plus its output-contract and
-// review/step3 restatements, each with its own go-red proof.
+// foreground-execution instruction in item 7, the handoff template and build/dispatch.md, and
+// proves the check can actually go red (parse-signal-discipline). It also pins #3078/#3266's
+// nested-dispatch keep-alive rule across the core section, task-prompt.md's item 7 and the handoff
+// template, plus its output-contract and review/step3 restatements, each with its own go-red proof.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -28,7 +28,7 @@ const HANDOFF = path.join(PLUGIN, 'skills', 'flow', 'context-handoff.md');
 
 // The load-bearing facts a reader (human or dispatched agent) must come away with — the exact
 // failure mode #1965 documents. Each `\s+` absorbs the templates' hard line wrapping; the
-// this/the alternation covers the direct address in task-prompt.md's templates versus
+// this/the alternation covers the direct address in item 7 and the handoff template versus
 // build/dispatch.md's instruction about the dispatches SDD composes.
 const REQUIRED = [
   [/never\s+with\s+`run_in_background`/i, 'never background a long-running command'],
@@ -420,9 +420,14 @@ test('AC1.1: the rendered-count check goes red with a template paragraph restore
   }
 });
 
-// A fenced template holds no Foreground paragraph and its `{context-pack}` exactly once (#5601).
+// A fenced template holds no Foreground paragraph and its `{context-pack}` exactly once (#5601). The
+// paragraph is found by its heading, or by the primitive and the probe phrase it carried, so an
+// indented or re-headed copy is still caught. The raw block never holds item 7's text.
 const templateDefects = (blocks) => blocks.flatMap(([label, block]) => {
-  const foreground = block.split(/\r?\n\r?\n/).some((p) => p.startsWith('Foreground execution (required):'));
+  const squashed = block.replace(/\s+/g, ' ');
+  const foreground = block.split(/\r?\n\r?\n/).some((p) => p.startsWith('Foreground execution (required):'))
+    || new RegExp(PRIMITIVE.source).test(squashed)
+    || squashed.includes('probe the worktree its prompt names, read-only');
   return foreground || countOf(block, '{context-pack}') !== 1 ? [label] : [];
 });
 function labelledTemplates() {
@@ -449,6 +454,24 @@ test('AC2.1 AC2.2: the template-defect check goes red for a restored paragraph a
     const duplicated = blocks.map((b, i) => (i === index ? [label, `${block}\n\n{context-pack}`] : b));
     assert.notEqual(duplicated[index][1], block);
     assert.deepEqual(templateDefects(duplicated), [label], `a duplicated {context-pack} in only ${label}`);
+  }
+});
+
+// The restored paragraph can dodge a head-only check: indented, or with its heading renamed (#5601 final review).
+test('AC2.1: the template-defect check goes red for an indented or re-headed restored paragraph (#5601)', () => {
+  const blocks = labelledTemplates();
+  const paragraph = readText(PRE_5601_PARAGRAPH).trimEnd();
+  const shapes = [
+    ['indented two spaces', paragraph.split('\n').map((line) => `  ${line}`).join('\n')],
+    ['re-headed', paragraph.replace('Foreground execution (required):', 'Foreground execution:')],
+  ];
+  for (const [shape, doctoredParagraph] of shapes) {
+    assert.notEqual(doctoredParagraph, paragraph, `${shape}: the doctoring changed nothing`);
+    for (const [index, [label, block]] of blocks.entries()) {
+      const restored = blocks.map((b, i) => (i === index ? [label, withParagraphRestored(`\`\`\`\n${block}\n\`\`\``, doctoredParagraph)] : b));
+      assert.notEqual(restored[index][1], block);
+      assert.deepEqual(templateDefects(restored), [label], `a ${shape} restored paragraph in only ${label}`);
+    }
   }
 });
 

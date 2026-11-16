@@ -178,13 +178,26 @@ test('the npm test absence check can go red (#5117)', () => {
   assert.match(PRE_CHANGE_FOREGROUND, NPM_TEST_SPAN);
 });
 
-const foregroundParagraphs = (file) => readText(file).split(/\n\s*\n/)
+const foregroundParagraphs = (text) => text.split(/\n\s*\n/)
   .filter((p) => p.startsWith('Foreground execution (required):'))
   .map((p) => p.replace(/\s+/g, ' '));
+const PRE_5601_PARAGRAPH_FILE = path.join(__dirname, 'fixtures', 'dispatch-prompt', 'foreground-paragraph-pre-5601.txt');
 
 test('AC2.1: neither dispatch prompt file holds a Foreground paragraph (#5601)', () => {
   for (const file of [TASK_PROMPT, EXPRESS_PROMPT]) {
-    assert.equal(foregroundParagraphs(file).length, 0, `${path.basename(file)} Foreground paragraph count`);
+    assert.equal(foregroundParagraphs(readText(file)).length, 0, `${path.basename(file)} Foreground paragraph count`);
+  }
+});
+
+test('AC2.1: the Foreground-paragraph count goes red with the pre-#5601 paragraph restored (#5601)', () => {
+  const paragraph = readText(PRE_5601_PARAGRAPH_FILE).trimEnd();
+  for (const file of [TASK_PROMPT, EXPRESS_PROMPT]) {
+    const text = readText(file);
+    const restored = `${text}\n\n${paragraph}\n`;
+    assert.notEqual(restored, text);
+    const found = foregroundParagraphs(restored);
+    assert.equal(found.length, 1, `${path.basename(file)}: the restored paragraph must be found`);
+    assert.match(found[0], PROJECT_TEST_CMD, `${path.basename(file)}: the found paragraph is the restored one`);
   }
 });
 

@@ -175,8 +175,14 @@ test('go-red control: a reworded copied paragraph fails, a rewrapped one does no
 // each template carries once; a template holding its own Foreground paragraph would state it twice.
 const PRE_5601_PARAGRAPH = readText(path.join(__dirname, 'fixtures', 'dispatch-prompt', 'foreground-paragraph-pre-5601.txt')).trimEnd();
 const FOREGROUND_HEAD = 'Foreground execution (required):';
+// The paragraph is found by its heading, or by the primitive and the probe phrase it carried, so an
+// indented or re-headed copy is still caught. The raw block never holds item 7's text.
+const PRIMITIVE = /`sleep\s+\d+`\s+Bash\s+calls,\s+at\s+most\s+\d+\s+\(\d+\s+minutes\)/;
+const PROBE_PHRASE = 'probe the worktree its prompt names, read-only';
 const expressDefects = (blocks) => Object.entries(blocks).filter(([, block]) => (
   block.split(/\r?\n\r?\n/).some((p) => p.startsWith(FOREGROUND_HEAD))
+  || PRIMITIVE.test(block.replace(/\s+/g, ' '))
+  || block.replace(/\s+/g, ' ').includes(PROBE_PHRASE)
   || block.split('{context-pack}').length - 1 !== 1
 )).map(([label]) => label);
 
@@ -189,6 +195,23 @@ test('AC2: each express template holds {context-pack} once and no Foreground par
     assert.deepEqual(expressDefects({ ...blocks, [label]: restored }), [label], `a restored paragraph in only ${label}`);
     const duplicated = `${blocks[label]}\n\n{context-pack}`;
     assert.deepEqual(expressDefects({ ...blocks, [label]: duplicated }), [label], `a duplicated {context-pack} in only ${label}`);
+  }
+});
+
+// The restored paragraph can dodge a head-only check: indented, or with its heading renamed (#5601 final review).
+test('AC2: the express-template check goes red for an indented or re-headed restored paragraph (#5601)', () => {
+  const blocks = expressBlocks();
+  const shapes = [
+    ['indented two spaces', PRE_5601_PARAGRAPH.split('\n').map((line) => `  ${line}`).join('\n')],
+    ['re-headed', PRE_5601_PARAGRAPH.replace(FOREGROUND_HEAD, 'Foreground execution:')],
+  ];
+  for (const [shape, doctoredParagraph] of shapes) {
+    assert.notEqual(doctoredParagraph, PRE_5601_PARAGRAPH, `${shape}: the doctoring changed nothing`);
+    for (const label of Object.keys(blocks)) {
+      const restored = blocks[label].replace('{context-pack}', `${doctoredParagraph}\n\n{context-pack}`);
+      assert.notEqual(restored, blocks[label]);
+      assert.deepEqual(expressDefects({ ...blocks, [label]: restored }), [label], `a ${shape} restored paragraph in only ${label}`);
+    }
   }
 });
 
