@@ -92,7 +92,7 @@ parked-at-shaping: true            # omitted unless the record was parked when s
 | `surface` | `/claude-tweaks:design-wrapper` wrapper Layer-2 detection (via /build Common Step 1.7 and /flow polish phase); `/claude-tweaks:visual-review` Step 0.5's recommendation-mode surface gate, which reads it directly, without the wrapper's Layer 1 |
 | `design-intent` | design wrapper polish-mode intent-driven dispatch |
 | `ui-stack` | `/claude-tweaks:build` Common Step 1.7 (`design-prebuild.md`) forwards it into the implementer subagent's prompt; `/claude-tweaks:design-wrapper` documents the read side in `frontend-detection.md` |
-| `design-seed` | Audit snapshot of the Impeccable direction contract's seed key — a build's direction is unreproducible without it, since Impeccable 4.x is deliberately non-deterministic by dice. No mechanical reader consumes it at build time; `/claude-tweaks:demo` reads the record body's own `Design-seed:` line, not this copy |
+| `design-seed` | Audit snapshot of the Impeccable direction contract's seed key — a build's direction is unreproducible without it, since Impeccable 4.x is deliberately non-deterministic by dice. No mechanical reader consumes it at build time; `/claude-tweaks:accept` reads the record body's own `Design-seed:` line, not this copy |
 | `parked-at-shaping` | `/wrap-up` Section E release-with-abandon restores `parked` |
 
 `surface`/`design-intent`/`ui-stack`/`design-seed` values are LIFTED from the record body's `Surface:`/`Design-intent:`/`Ui-stack:`/`Design-seed:` metadata lines (spec 17's wire format). Materialized files live under the run dir — committed as audit trail, never gitignored.
@@ -129,7 +129,7 @@ Design-seed: {opaque token — never written by /specify; see below}
 
 `Design-seed:` differs from its three neighbours in **when its value exists**, and materialization must not assume otherwise. `Surface:`/`Design-intent:`/`Ui-stack:` are written by `/specify`, so they are always already there by the time a record is materialized. `Design-seed:` is written *after* the build, by `/claude-tweaks:design-wrapper`'s `review` mode reading the Impeccable direction contract from the relevant surface brief (`_shared/design-contract.md`). Materialization runs at the *start* of a build — so on the very run that produces a seed, there is nothing to lift, and the header correctly omits the line. It appears in the header of *subsequent* materializations of the same record: a rebuild, a follow-up, a re-run after changes were requested. That is not a gap to work around; it is the field's normal lifecycle, and the header's copy is an audit snapshot either way.
 
-Consequently, nothing may treat a missing `design-seed:` as an error or a reason to stop, and nothing may block waiting for it. The record body's own `Design-seed:` line — not this header copy — is what `/claude-tweaks:demo` reads at acceptance time, and it is read live from the record, so a first-build record whose header omits the line still shows its seed at `/demo`.
+Consequently, nothing may treat a missing `design-seed:` as an error or a reason to stop, and nothing may block waiting for it. The record body's own `Design-seed:` line — not this header copy — is what `/claude-tweaks:accept` reads at acceptance time, and it is read live from the record, so a first-build record whose header omits the line still shows its seed at `/demo`.
 
 This is a lift, not a move: the body keeps its own `Surface:`/`Design-intent:`/`Ui-stack:`/`Design-seed:` lines exactly where they were written — see Composing the file below.
 

@@ -18,7 +18,7 @@ const { readText } = require('./helpers/read-skill');
 const ROOT = path.join(__dirname, '..');
 const read = (...p) => readText(path.join(ROOT, ...p));
 const STATUS_SCAN = read('plugin', 'skills', 'help', 'status-scan.md');
-const DEMO_SKILL = read('plugin', 'skills', 'demo', 'SKILL.md');
+const DEMO_SKILL = read('plugin', 'skills', 'accept', 'SKILL.md');
 
 function extractSection(text, startMarker, endMarker) {
   const start = text.indexOf(startMarker);
@@ -92,7 +92,7 @@ test('Stage 4.7: every embedded node -e script is syntactically valid', () => {
   }
 });
 
-test('demo/SKILL.md no longer points a local-files reader at a GitHub-only Stage 4.7', () => {
+test('accept/SKILL.md no longer points a local-files reader at a GitHub-only Stage 4.7', () => {
   assert.ok(
     /awaiting sign-off \(Stage 4\.7 — fires on either driver\)/.test(DEMO_SKILL),
     '"how you got here" bullet does not state Stage 4.7 fires on either driver',

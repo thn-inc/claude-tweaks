@@ -63,6 +63,7 @@ const {
 } = require('./lib/walkthrough/record');
 const {
   CLAIM_SECTIONS, EXPOSURES, MAX_PACKET_CHARS, NOT_RUN_REASON, PACKET_MARKER, RECORDING_NOT_RUN_REASONS, SCHEMA_VERSION, notReadNote,
+  isDeployRef,
 } = require('./lib/wrap-up/packet-contract');
 const {
   gatherPacketFacts,
@@ -617,7 +618,9 @@ const isDecisionEntryList = (value) => isEntryList(value)
   && value.every((entry) => DECISION_RENDER_FIELDS.every((field) => optionalString(entry[field])));
 const isFlagEntryList = (value) => isEntryList(value)
   && value.every((entry) => entry.unconfirmed === undefined || typeof entry.unconfirmed === 'boolean');
-const isDeploy = (value) => isObject(value) && typeof value.target === 'string';
+// A present `ref` is the deployed commit's sha; anything else fails the whole file (#4613).
+const isDeploy = (value) => isObject(value) && typeof value.target === 'string'
+  && (value.ref === undefined || isDeployRef(value.ref));
 
 function runGather(opts, deps) {
   const code = gatherToFile(opts, deps);

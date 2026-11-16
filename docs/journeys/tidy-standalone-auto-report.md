@@ -96,13 +96,13 @@ deleted      #601  Terminal track for design-wrapper — design doc      commit 
    #663  Help dashboard trust table render                               ready, missing risk/size
    #670  Capture born-ready chain: --chained shaping                     ready, missing risk/size
    /claude-tweaks:specify #640,#652,#655,#661,#663,#670
-/claude-tweaks:demo (5)
+/claude-tweaks:accept (5)
    #598  Merge verification policy key                                   closed, no acceptance
    #599  Reference card argument-hint pin                                closed, no acceptance
    #608  Specify native sub_issues linking                               closed, no acceptance
    #610  Specify native blocked_by linking                               closed, no acceptance
    #647  permittedGrants per-grant reasons                               closed, no acceptance
-   /claude-tweaks:demo #598,#599,#608,#610,#647
+   /claude-tweaks:accept #598,#599,#608,#610,#647
 git (2)
    #617  Design exhaust deferral gate                                    PR closed unmerged, wt kept
    #620  Revive needs-definition sweep                                   PR closed unmerged, wt kept

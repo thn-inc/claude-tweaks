@@ -370,7 +370,7 @@ The issue is born from the bare create; `N` is the number it returned.
 
 Line 67 is the conditioning sentence; the create it runs is the fence at 73/83.
 
-### `plugin/skills/demo/SKILL.md`
+### `plugin/skills/accept/SKILL.md`
 
 | Line | Kind | Command | Class |
 |---|---|---|---|
