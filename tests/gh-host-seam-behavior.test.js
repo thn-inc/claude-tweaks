@@ -581,7 +581,8 @@ test('#4794: claim-targets.js on an unknown or SSH-alias origin exits 2 unknown-
   assert.equal(opted.status, 3, `GH_HOST=${UNKNOWN_HOST}: expected exit 3 (in flight on that host); stderr:\n${opted.stderr}`);
 });
 
-// #4794 Task 13: stale-claim-pr.js calls the gate directly (no repo-resolve helper in between). Its
+// #4794 Task 13: stale-claim-pr.js routes its origin through git-exec.js's repoTargetOfRemote with
+// `{ loose: false }` (#5109), which is the gate with no unparseable-remote fallback. Its
 // one open-PR listing and its PR-url match share one host. The claim file is a stale claim blob for
 // RUN_ID; the fake gh answers the listing with a marked PR on the case's host.
 const STALE_CLAIM_PR_LIST_ARGV = 'pr list --repo acme/widgets --state open --json url,body,isCrossRepository --limit 1000';

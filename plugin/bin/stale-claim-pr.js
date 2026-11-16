@@ -48,9 +48,11 @@
 // not proven abandoned. A claim whose runId is absent or not a valid run id is
 // a clean no-match, and no listing is read and no `gh` call is made. A typed
 // host-qualified `--repo host/owner/name` is trusted for any host and is not gated.
-// An `origin` goes through repo-resolve.js's gateOriginRepo (#4933): a host it
+// An `origin` goes through git-exec.js's repoTargetOfRemote (the #4933 gate), with its
+// unparseable-remote fallback off (`{ loose: false }`, #5109): a host the gate
 // refuses (an SSH alias, an unknown name) is the failure `unknown-host: {refusal}`,
-// the refusal also on stderr, with no claim read and no `gh` call (#4794). The open-PR
+// the refusal also on stderr, with no claim read and no `gh` call (#4794), and a remote
+// the gate cannot read (the cloud sandbox proxy remote) is exit 3, not a github.com guess. The open-PR
 // listing and the PR-url match share one host (resolveRepoTarget, one result):
 // the typed `--repo` host, else an exported non-empty GH_HOST, else the origin's
 // host, else github.com. A bare `--repo owner/name` is github.com unless a non-empty GH_HOST is exported.
@@ -61,8 +63,8 @@
 //      --claim-file); usage on stderr.
 //   2  no --listing and `gh` is absent — and only that, so a caller can route
 //      exit 2 to its MCP listing path; stderr names --listing.
-//   3  owner/repo could not be resolved (no --repo, no parseable `origin`
-//      remote); stderr names --repo.
+//   3  owner/repo could not be resolved (no --repo, no `origin` remote the gate can
+//      read); stderr names --repo.
 // Repo root comes from `git remote get-url origin` at the process cwd, never
 // from CLAUDE_PLUGIN_ROOT (unset in Bash tool environments, #170).
 'use strict';
@@ -73,7 +75,8 @@ const { execFileSync } = require('child_process');
 const { openPrListArgs, staleClaimRunId, matchStaleClaimPr } = require('./lib/issues/claim-store');
 const { normalizePrListing } = require('./lib/issues/mcp-pr-shape');
 const { resumeVerdict } = require('./lib/flow/pr-body');
-const { parseRepo, ghAvailable, remoteUrl, ghOptions, gateOriginRepo, resolveRepoTarget } = require('./lib/repo-resolve');
+const { parseRepo, ghAvailable, remoteUrl, ghOptions, resolveRepoTarget } = require('./lib/repo-resolve');
+const { repoTargetOfRemote } = require('./lib/hooks/git-exec');
 const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
 const { lstatType } = require('./lib/path-guard');
 const { RUN_ID_PREFIX_LENGTH } = require('./lib/dispatch/resume-eligibility');
@@ -179,10 +182,11 @@ function noMatch(failure = null) {
   return { match: false, link: null, failure };
 }
 
-// -> { owner, repo, target } (target a resolveRepoTarget result, { host, ghRepo }), { refusal } for an
+// -> { owner, repo, target } (target { host, ghRepo }, a resolveRepoTarget result), { refusal } for an
 // origin the gate refuses, or { target: null } when owner/repo cannot be resolved. A typed
 // host-qualified --repo is trusted and not gated; a bare one is github.com unless a non-empty GH_HOST is exported;
-// an origin goes through the gate and its host decides only after an exported GH_HOST and a typed host.
+// an origin goes through git-exec.js's repoTargetOfRemote with `{ loose: false }`, so a remote the gate
+// cannot read is { target: null } (exit 3), and its host decides only after an exported GH_HOST and a typed host.
 function resolveTarget(opts, deps) {
   const gateDeps = deps.gateDeps || {};
   if (opts.repo) {
@@ -194,11 +198,11 @@ function resolveTarget(opts, deps) {
   }
   let remote = null;
   try { remote = deps.remoteUrl(); } catch { remote = null; }
-  const gated = gateOriginRepo(remote, gateDeps);
-  if (gated.refusal) return { refusal: gated.refusal };
-  if (!gated.spec) return { target: null };
-  const { owner, repo } = gated.spec;
-  return { owner, repo, target: resolveRepoTarget({ owner, repo, originHost: gated.spec.host }, gateDeps) };
+  const resolved = repoTargetOfRemote(remote, gateDeps, { loose: false });
+  if (!resolved) return { target: null };
+  if (resolved.refusal) return { refusal: resolved.refusal };
+  const { owner, repo, host, ghRepo } = resolved;
+  return { owner, repo, target: { host, ghRepo } };
 }
 
 function run(argv, deps) {
