@@ -190,13 +190,40 @@ function repoInfo(p, opts = {}) {
 // check "is there even a policy file to care about" WITHOUT forking git.
 // Returns the directory containing the policy file, or null if none is
 // found anywhere up the ancestor chain.
+//
+// #4492: when the walk finds nothing, a linked worktree whose project keeps
+// policy.yml out of git (placed anywhere, e.g. a sibling of the main checkout)
+// still has the MAIN checkout's file to read — policy-file.js's locator is the
+// one rule for that, so this fast-reject cannot disagree with the readers it
+// guards. The walk's result is unchanged whenever it finds a file.
 function findPolicyFile(p) {
   let dir = nearestExistingDir(p);
   while (dir) {
     if (fs.existsSync(path.join(dir, '.claude-tweaks', 'policy.yml'))) return dir;
     const parent = path.dirname(dir);
-    if (parent === dir) return null;
+    if (parent === dir) break;
     dir = parent;
+  }
+  return mainPolicyRoot(p);
+}
+
+// The main checkout root when the nearest checkout enclosing `p` is a linked
+// worktree that reads the main checkout's policy.yml, else null. Never throws.
+// Lazy require: policy-file.js lazily requires this module, so no top-level cycle.
+function mainPolicyRoot(p) {
+  try {
+    let dir = nearestExistingDir(p);
+    while (dir) {
+      if (fs.existsSync(path.join(dir, '.git'))) {
+        const loc = require('../policy-file').locatePolicyFile(dir);
+        return loc.source === 'main-checkout' ? path.dirname(path.dirname(loc.path)) : null;
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) return null;
+      dir = parent;
+    }
+  } catch {
+    /* fast-reject only: unknown means no fallback */
   }
   return null;
 }
