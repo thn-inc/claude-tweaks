@@ -486,7 +486,12 @@ function namesRecordReference(resolution, excludeRecords) {
 
 // A `deferred` Resolution naming neither a `staged/` path nor a record reference. The one definition
 // behind parseLedger's deferredUnstaged count and stage-item/ledger.js's incomplete-deferral guard.
+// A control-mode console (#4620) settles a row it carried into the acceptance packet with this text;
+// naming the decision fact makes it a complete deferral, like a record reference.
+const LEDGER_CARRIED_RE = /\bcarried to the acceptance packet as decision:\S+/;
+
 function isDeferredUnstaged(resolution, excludeRecords) {
+  if (LEDGER_CARRIED_RE.test(resolution)) return false;
   return !LEDGER_DEFERRED_STAGED_RE.test(resolution) && !namesRecordReference(resolution, excludeRecords);
 }
 
@@ -540,7 +545,8 @@ function parseLedger(text, { excludeRecords = [] } = {}) {
       const item = cells[2] || '';
       const resolution = cells.slice(4).join('|');
       const reasonLivesElsewhere = LEDGER_DEFERRED_STAGED_RE.test(item) || LEDGER_DEFERRED_STAGED_RE.test(resolution)
-        || LEDGER_SDD_RULING_ITEM_RE.test(item) || namesRecordReference(resolution, excludeRecords);
+        || LEDGER_SDD_RULING_ITEM_RE.test(item) || namesRecordReference(resolution, excludeRecords)
+        || LEDGER_CARRIED_RE.test(resolution); // #4620: the reason lives in the carried decision fact
       if (!reasonLivesElsewhere && !hasValidDeferReason(resolution)) missingDeferReasonItems.push(cells[0]);
     }
   }
@@ -907,5 +913,5 @@ function ownRecordNumbers(runDir, worktree) {
 
 module.exports = {
   gatherPack, resolveInputs, resolveWorktreeBase, wrapProbe, withTimeout, parseLedger, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, memberRecords, worktreeMirror,
-  LEDGER_DEFERRED_STAGED_RE, namesRecordReference, isDeferredUnstaged, hasValidDeferReason, ownRecordNumbers, defaultDeps,
+  LEDGER_DEFERRED_STAGED_RE, LEDGER_CARRIED_RE, namesRecordReference, isDeferredUnstaged, hasValidDeferReason, ownRecordNumbers, defaultDeps,
 };
