@@ -2,3 +2,12 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | build | extension-less coincidence line passes the aggregate guard but console lineKeys keys it as `3a\|Makefile:31 share a location`, which no settler names (form 3 on Makefile is already unkeyed) — Defer-reason: genuinely-larger (console lineKeys keying of unreadable paths is its own change in resolve.js) | deferred | Deferred by the SDD task review; Defer-reason: genuinely-larger — filed as a follow-up at Common Step 4 |
+| 2 | build | findingKey/splitDecisionLine cut a spaced path at its first space (`docs/a b.md` → `b.md`) while lineKeys keys it whole; predates this change, the test pins current behaviour for composed and hand-written lines alike — Ruling: not this record's change (console keying), surfaced for the final review to triage. | observation | Parked by the SDD task review — filed as a follow-up at Common Step 4 |
+| 3 | build | docs/journeys/drop-a-refuted-code-is-missing-claim-3329.md:13 quotes form 5 with no pin, so it goes stale silently if the form changes — Defer-reason: genuinely-larger (pinning journey quotes against composers is a cross-journey convention, not this record's) — for final-review triage. | deferred | Deferred by the SDD task review; Defer-reason: genuinely-larger — filed as a follow-up at Common Step 4 |
+| 4 | build | SDD ruling — fold all four into Task 3's dispatch (Task 3 edits the same header, the same append hel...: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
+| 5 | build | SDD ruling — Minors 1, 2, 4 folded into fix round 1 (fix-now); Minor 3 (unknown-kind message prints ...: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
+| 6 | build | SDD ruling — both folded into Task 4's dispatch (Task 4's Step 6 sweep edits review-coordination.js ...: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
+| 7 | build | SDD ruling — all Minors + implementer follow-ups (pair-lines.js:22-24, _shared/multi-agent-coordinat...: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | — |
+| 8 | build | SDD ruling — dispatched the whole-branch review on e9ce43cb3d while the post-merge scoped verify (bd...: ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | open | — |
+| 9 | build | SDD ruling — the fix-wave implementer died on an account usage limit (HTTP 429) with findings 1, 2 a...: ratify or reverse at the Review Console (staged/sdd-ruling-6.md) | open | — |
