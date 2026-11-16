@@ -8,8 +8,9 @@
 // Exit vocabulary, Payload-1/Invocation-2 as in bin/acceptance-packet.js:
 //   0 success; one JSON line on stdout.
 //   1 a well-formed call whose input failed: an unreadable or wrong-shaped --labels-json,
-//     --packet-file or --deploy-json, a failed `gh` read (never reported as `none`), or an
-//     unwritable --out. On a non-zero exit, read and refresh remove an earlier --out, so a
+//     --packet-file or --deploy-json (its `ref` must be a deployed commit's sha, lowercase hex
+//     of 7 to 64 characters, packet-contract.js's isDeployRef), a failed `gh` read (never
+//     reported as `none`), or an unwritable --out. On a non-zero exit, read and refresh remove an earlier --out, so a
 //     stale packet file is not there to read.
 //   2 a malformed invocation: an unknown subcommand or flag, a missing value, both or neither
 //     of --labels-json / --acceptance-facet, an unknown --acceptance-facet, --verdict or
@@ -35,6 +36,7 @@ const {
   automaticLabelAction, packetStateOf, refreshPacket, verdictLabelEdits, VERDICTS,
 } = require('./lib/issues/accept-entry');
 const { readPacket } = require('./lib/wrap-up/packet-gather');
+const { isDeployRef } = require('./lib/wrap-up/packet-contract');
 const { readComments } = require('./lib/wrap-up/packet-post');
 
 const USAGE = [
@@ -250,9 +252,9 @@ function deploySource(deps, file) {
     if (err instanceof InputError) throw err;
     throw new InputError(`--deploy-json ${file} is not JSON (${messageOf(err)})`);
   }
-  const valid = isObject(value) && typeof value.ref === 'string' && value.ref.trim() !== '' && typeof value.text === 'string'
+  const valid = isObject(value) && isDeployRef(value.ref) && typeof value.text === 'string'
     && optionalString(value.devBaseUrl) && optionalString(value.recordingUrl);
-  if (!valid) throw new InputError(`--deploy-json ${file} needs a string ref and text, and string devBaseUrl / recordingUrl when present`);
+  if (!valid) throw new InputError(`--deploy-json ${file} needs a ref (a lowercase hex sha, 7-64 characters) and string text, and string devBaseUrl / recordingUrl when present`);
   return value;
 }
 

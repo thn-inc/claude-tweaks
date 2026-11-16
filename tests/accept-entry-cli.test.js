@@ -226,7 +226,7 @@ test('refresh with an invalid --deploy-json or unreadable --packet-file exits 1 
   const packet = write(path.join(dir, 'packet.md'), packetBody(['target: local', 'ref: aaa1111']));
   const out = path.join(dir, 'fresh.md');
   const noRef = writeJson(path.join(dir, 'noref.json'), { text: 'target: dev' });
-  const badUrl = writeJson(path.join(dir, 'badurl.json'), { ref: 'b', text: 'target: dev', devBaseUrl: 'not a url' });
+  const badUrl = writeJson(path.join(dir, 'badurl.json'), { ref: 'bbb2222', text: 'target: dev', devBaseUrl: 'not a url' });
   const cases = [
     ['refresh', '--packet-file', packet, '--out', out, '--deploy-json', noRef],
     ['refresh', '--packet-file', packet, '--out', out, '--deploy-json', badUrl],
@@ -236,6 +236,23 @@ test('refresh with an invalid --deploy-json or unreadable --packet-file exits 1 
     write(out, 'an earlier refresh\'s packet');
     assert.equal(cli(argv).code, 1, argv.join(' '));
     assert.equal(fs.existsSync(out), false, `stale --out left behind: ${argv.join(' ')}`);
+  }
+});
+
+test('refresh with a --deploy-json ref outside the sha grammar exits 1 and leaves the input untouched', (t) => {
+  const dir = tempDir(t);
+  const body = packetBody(['target: local', 'ref: aaa1111']);
+  const packet = write(path.join(dir, 'packet.md'), body);
+  const out = path.join(dir, 'fresh.md');
+  for (const ref of ['BBB2222', 'bbb', 'bbb2222 ', ' ', 42]) {
+    const deploy = writeJson(path.join(dir, 'deploy.json'), { ref, text: 'target: dev, confirmed live' });
+    write(out, 'an earlier refresh\'s packet');
+    const result = cli(['refresh', '--packet-file', packet, '--out', out, '--deploy-json', deploy]);
+    assert.equal(result.code, 1, JSON.stringify(ref));
+    assert.match(result.stderr, /--deploy-json .* needs a ref \(a lowercase hex sha, 7-64 characters\)/, JSON.stringify(ref));
+    assert.equal(result.stdout, '', JSON.stringify(ref));
+    assert.equal(fs.existsSync(out), false, `stale --out left behind: ${JSON.stringify(ref)}`);
+    assert.equal(fs.readFileSync(packet, 'utf8'), body, JSON.stringify(ref));
   }
 });
 
