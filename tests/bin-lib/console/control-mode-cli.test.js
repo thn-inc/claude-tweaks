@@ -620,6 +620,43 @@ test('--set-item carried refuses a ledger row already terminal in a status the c
   assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'), consoleBefore);
 });
 
+test('--set-item carried leaves a row with an empty Status cell to settleRow: never refused as terminal', async () => {
+  const fx = controlFixture({ consoleJson: consoleOf([ledgerItem()]) });
+  const ledger = path.join(fx.root, 'ledger.md');
+  fs.writeFileSync(ledger, `${LEDGER_HEAD}| 1 | build | a finding |  | → backlog, staged/ledger-record-1.md |\n`);
+  const b = baseDeps(fx, []);
+  const code = await run(setItemArgs(fx, 'ledger-record-1.md', 'carried', '--ledger', ledger), b.d);
+  assert.ok(!/\(terminal\)/.test(b.err()), b.err());
+  assert.notStrictEqual(code, 5, b.err());
+});
+
+test('--set-item carried refuses several ledger rows naming the item: exit 5, no fact, ledger unchanged', async () => {
+  const fx = controlFixture({ consoleJson: consoleOf([ledgerItem()]) });
+  const ledger = path.join(fx.root, 'ledger.md');
+  fs.writeFileSync(ledger, LEDGER_HEAD);
+  appendRow({ runDir: fx.runDir, ledgerPath: ledger, phase: 'build', item: 'a finding', status: 'deferred', resolution: '→ backlog, staged/ledger-record-1.md' });
+  appendRow({ runDir: fx.runDir, ledgerPath: ledger, phase: 'build', item: 'same finding again', status: 'deferred', resolution: '→ backlog, staged/ledger-record-1.md' });
+  const before = fs.readFileSync(ledger, 'utf8');
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(setItemArgs(fx, 'ledger-record-1.md', 'carried', '--ledger', ledger), b.d), 5, b.err());
+  assert.match(b.err(), /2 ledger rows name staged\/ledger-record-1\.md/);
+  assert.ok(lstatAbsent(FACTS(fx)), 'no orphan decisions.json');
+  assert.strictEqual(fs.readFileSync(ledger, 'utf8'), before);
+});
+
+test('--set-item carried exits 5 when console.json stops being rewritable after the fact landed', async () => {
+  const fx = controlFixture({ consoleJson: consoleOf([ledgerItem()]) });
+  const consolePath = path.join(fx.runDir, 'console.json');
+  // `now` is read immediately before the stored rewrite: flip the item there, as a concurrent writer would.
+  const b = baseDeps(fx, [], { now: () => {
+    fs.writeFileSync(consolePath, consoleOf([ledgerItem('dropped')]));
+    return Date.parse('2026-09-06T12:00:00Z');
+  } });
+  assert.strictEqual(await run(setItemArgs(fx, 'ledger-record-1.md', 'carried'), b.d), 5, b.err());
+  assert.match(b.err(), /is dropped, not rewritable to carried .* — nothing written/);
+  assert.strictEqual(cj(fx).items[0].resolution, 'dropped');
+});
+
 test('the Review Console header says control mode whenever control mode carries, explicit unattended included', async () => {
   const fx = controlFixture({ autonomy: 'unattended' });
   assert.strictEqual(await run(resolveArgs(fx), baseDeps(fx, []).d), 0);

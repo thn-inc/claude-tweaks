@@ -98,7 +98,7 @@ const { planMemoryWrite, resolveMemoryTarget } = require('./lib/console/memory-w
 const { decisionFactFor } = require('./lib/console/decision-facts');
 const { convergeResidue, composeResidueProposal, RESIDUE_FAILED } = require('./lib/console/residue-convergence');
 const { withLock } = require('./lib/file-lock');
-const { parseLedgerTable, resolveLedgerPath } = require('./lib/wrap-up/ledger-write');
+const { parseLedgerTable, resolveLedgerPath, TERMINAL_STATUSES } = require('./lib/wrap-up/ledger-write');
 const { ledgerRowCells } = require('./lib/wrap-up/ledger-cells');
 const { settleRow } = require('./lib/stage-item/ledger');
 const { ghOptions } = require('./lib/repo-resolve');
@@ -398,9 +398,10 @@ function carryItem(o, runDir, { stdout, stderr, now, cwd }) {
       stderr(`console-resolve.js: ${found.rows.length} ledger rows name staged/${o.setItem} in ${ledgerPath} (#${found.rows.map((r) => r.number).join(', #')}) — nothing written\n`);
       return 5;
     }
-    // A row already final in a status the carry cannot settle (settleRow would throw after the fact landed) is refused here.
-    if (found.rows.length === 1 && found.rows[0].status !== 'open' && found.rows[0].status !== 'deferred') {
-      stderr(`console-resolve.js: ledger row #${found.rows[0].number} naming staged/${o.setItem} is already ${found.rows[0].status || '(empty)'} (terminal) — nothing written\n`);
+    // A row already final in a terminal status the carry cannot settle (settleRow would throw after the fact landed) is refused here;
+    // any other status (open, empty, malformed) falls through to settleRow's own handling.
+    if (found.rows.length === 1 && TERMINAL_STATUSES.includes(found.rows[0].status) && found.rows[0].status !== 'deferred') {
+      stderr(`console-resolve.js: ledger row #${found.rows[0].number} naming staged/${o.setItem} is already ${found.rows[0].status} (terminal) — nothing written\n`);
       return 5;
     }
     ledger = { ledgerPath, row: found.rows.length === 1 ? found.rows[0].number : null, alreadyRow: found.already[0] };
