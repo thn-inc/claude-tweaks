@@ -13,7 +13,7 @@
 - `.github/workflows/eval-benchmark.yml` was manual-dispatch only and offered six of the directory's 22 scenarios. GitHub shows one run of it (2026-10-09), which failed at its scenario step because the runner had neither `bwrap` nor `socat`, so the harness's required sandbox was unavailable. That is a gap in the harness's environment, not a plugin regression.
 - Its 15 test files never ran in root CI. `npm test` covers `tests/` and `tools/upstream-drift/tests/` only.
 
-Shipped skill text and code comments still cited eval scenario files, some as incident evidence and two, both in `plugin/skills/sweep/SKILL.md`, as what pinned or enforced sweep's boundary, although nothing had run those scenarios since August.
+Shipped skill text and code comments still cited eval scenario files, some as incident evidence and one, in two places in `plugin/skills/sweep/SKILL.md`, as what pinned or enforced sweep's boundary, although nothing had run those scenarios since August.
 
 ## Decision
 
