@@ -897,6 +897,31 @@ test('#5309 (b2) gh: a non-spawn throw in the native step (its own write fails) 
   assert.equal(r.store.written.length, 0);
 });
 
+test('#5309 (b3) gh: an unreadable eligible list inside the native step keeps step()\'s line, not the fail-closed Warning', () => {
+  // blocked-body rewrites dispatch-eligible.json before the native step, so a directory cannot stand in for it
+  // there; the native step's read is the first read of that file after the write, and it alone fails.
+  const realRead = fs.readFileSync;
+  let failed = false;
+  fs.readFileSync = function readUnreadableEligible(file, ...rest) {
+    if (!failed && path.basename(String(file)) === 'dispatch-eligible.json') {
+      failed = true;
+      throw Object.assign(new Error('EACCES: permission denied, open dispatch-eligible.json'), { code: 'EACCES' });
+    }
+    return realRead.call(this, file, ...rest);
+  };
+  let r;
+  try {
+    r = pull(nativeScenario(), { spawn: { 'resolve-blockers.js': { status: 0, stdout: '{}', stderr: '' } } });
+  } finally {
+    fs.readFileSync = realRead;
+  }
+  assert.ok(failed, 'the native step read dispatch-eligible.json');
+  assert.deepEqual(r.errs.filter((l) => l.startsWith('queue-pull: native-deps:') || l.startsWith('Warning: native dependency query failed')),
+    ['queue-pull: native-deps: EACCES: permission denied, open dispatch-eligible.json\n'], r.stderr);
+  assert.deepEqual(r.cliCalls.filter(([n]) => n === 'resolve-blockers.js'), [], 'no query is made');
+  assert.equal(r.store.written.length, 1, 'no fail-closed marker is set, so the write-back runs as on any clean pull');
+});
+
 test('#5309 (c) files: resolve-blockers.js exit 2 (gh absent) keeps the gh-absent fallback and its Warning, filters nothing native, and writes back', () => {
   const r = pull(nativeScenario(), { transport: 'files', run: noGhOnFiles, prepare: (own) => nativeFiles(own),
     spawn: { 'resolve-blockers.js': { status: 2, stdout: '', stderr: 'gh is required\n' } } });
