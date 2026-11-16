@@ -17,7 +17,7 @@ description: Use when adding a key to the policy.yml schema (`POLICY_KEYS` in `p
 6. **A Manifesto-visible lever** also walks `_shared/auto-mode-contract.md`'s "Adding a new policy lever" checklist.
 7. **A key that lands before its consumer** opens its `summary` with `Not yet used. ` or `Not yet used; ` and joins `NOT_YET_USED` in `tests/resolve-policy-control-mode.test.js`. That file pins both directions: every listed key carries the marker, and no unlisted key does. The record that wires a key's first consumer drops the marker and the list entry in the same commit. #4816 marked #4609's fourteen control-mode keys this way, and the comment above `control-mode` in `POLICY_KEYS` names the record that wires each.
 8. **A `policyOnly` key** is also named in the `policyOnly` bullet of `_shared/policy-schema-coverage.md`'s "Canonical read path carve-outs", which lists every key carrying the flag (#5119 moved it there from `_shared/policy-schema.md`, which keeps only a pointer stub).
-9. **A `policyOnly` key** is also named in the step 3 Red flags list of `docs/journeys/resolve-a-policy-key.md`, which lists every `policyOnly` flat key with its record. No test reads that list: #5119's `verify-suite-slots` was missing from it until #5222's review round added it (`259f5da1c`).
+9. **A `policyOnly` key** is also named in the step 3 Red flags list of `docs/journeys/resolve-a-policy-key.md`, which lists every `policyOnly` flat key with its record. No test reads that list: #5119's `verify-suite-slots` was missing from it until #5222's review round added it (`259f5da1c`). A `policyOnly` flag added in a review fix round owes sites 8 and 9 in that same commit: #5563's `6b69def51` set it on `changelog-max-releases` and pinned it in `tests/policy.test.js`, but named the key in neither list.
 
 ## Decide who may set it
 
@@ -25,6 +25,8 @@ Two flags mirror each other. Pick by which source must never set the key:
 
 - **`policyOnly: true`**: the resolver skips the `--run` overlay, so only `policy.yml` or the default applies. Use it for anything executed or anything that names who is trusted. #4609 set it on `deploy-command`, `owned-owners` and `trusted-authors` after review found a run config could otherwise set them (row 10). It set it on `risk-categories` too, because `risk-path-globs` validates against it from policy alone and the two must not disagree (row 11). The resolver reads only the checkout it runs in, so a key that a PR could rewrite in its own branch also needs its consumers to read it from the base branch. The resolver cannot do that for them; #4608 holds that requirement for the consumers (row 15).
 - **`policySourceExcluded: true`**: a `policy.yml` value is discarded, so only a run-config source sets the key. Use it for a this-run-only decision that a standing default would quietly make permanent. `merge-authorization` is the one key with this flag today.
+
+Every new key gets this decision, even when the answer is neither flag. A key whose every consumer reads `policy.yml` directly, never through `resolve-policy.js --run`, is `policyOnly`: an overlay would let `resolve-policy.js --run` report a value no consumer reads. `verify-suite-slots` (#5119, read by `verify.js` only as a flag) and `changelog-max-releases` (#5563, read by both release engines through `policy.js`'s `readChangelogMaxReleases`) are the instances. #5563 first shipped with neither flag, and review caught it (row 12, `6b69def51`). Say the decision in the comment above the row, as both of those do.
 
 ## Validation flags
 
