@@ -403,14 +403,16 @@ test('AC9.1: a real process exits 0 when a second process appends a final stop a
 // A bounded fake runner: returns or throws the next answer, throws past the end, records each query.
 function scripted(answers) {
   const queries = [];
-  const runner = (query) => {
+  const optsSeen = [];
+  const runner = (query, opts) => {
     queries.push(query);
+    optsSeen.push(opts);
     if (queries.length > answers.length) throw new Error('unexpected call');
     const a = answers[queries.length - 1];
     if (a instanceof Error) throw a;
     return a;
   };
-  return { runner, queries };
+  return { runner, queries, optsSeen };
 }
 
 // call() with extra deps (runner, isPidAlive, cwd) merged in.
@@ -569,27 +571,81 @@ test('AC12.1: ci and pid with no session id exit 2 and name it', async (t) => {
   }
 });
 
-test('realDeps.runner\'s gh call passes ghOptions, windowsHide and the gh timeout', () => {
+// Calls realDeps.runner with child_process.execFileSync replaced by a recorder.
+function runRealRunner(query, callOpts, answer) {
   const cp = require('child_process');
-  const { GH_TIMEOUT_MS } = require('../../../plugin/bin/lib/shared-primitives');
   const real = cp.execFileSync;
   const seen = [];
   const key = require.resolve('../../../plugin/bin/wait-for.js');
   const saved = require.cache[key];
+  let out;
   try {
-    cp.execFileSync = (...a) => { seen.push(a); return '{"conclusion":"","status":"queued"}'; };
+    cp.execFileSync = (...a) => { seen.push(a); return answer; };
     delete require.cache[key];
-    const { realDeps } = require(key);
-    const out = realDeps.runner({ run: 5 }, { cwd: os.tmpdir(), env: {} });
-    assert.deepEqual(out, { conclusion: '', status: 'queued' });
+    out = require(key).realDeps.runner(query, callOpts);
   } finally {
     cp.execFileSync = real;
     if (saved) require.cache[key] = saved; else delete require.cache[key];
   }
   assert.equal(seen.length, 1);
-  const [file, args, opts] = seen[0];
-  assert.equal(file, 'gh');
-  assert.deepEqual(args, ['run', 'view', '5', '--json', 'status,conclusion']);
-  assert.equal(opts.windowsHide, true);
-  assert.equal(opts.timeout, GH_TIMEOUT_MS);
+  return { out, file: seen[0][0], args: seen[0][1], opts: seen[0][2] };
+}
+
+test('realDeps.runner\'s gh call passes ghOptions, windowsHide and the gh timeout', () => {
+  const { GH_TIMEOUT_MS } = require('../../../plugin/bin/lib/shared-primitives');
+  const r = runRealRunner({ run: 5 }, { cwd: os.tmpdir(), env: {}, timeoutMs: 600000 }, '{"conclusion":"","status":"queued"}');
+  assert.deepEqual(r.out, { conclusion: '', status: 'queued' });
+  assert.equal(r.file, 'gh');
+  assert.deepEqual(r.args, ['run', 'view', '5', '--json', 'status,conclusion']);
+  assert.equal(r.opts.windowsHide, true);
+  assert.equal(r.opts.timeout, GH_TIMEOUT_MS);
+  const short = runRealRunner({ run: 5 }, { cwd: os.tmpdir(), env: {}, timeoutMs: 1500 }, '{"conclusion":"","status":"queued"}');
+  assert.equal(short.opts.timeout, 1500, 'the gh timeout is capped by the poll timeout');
+});
+
+test('realDeps.runner spawns pr-checks.js as a child with the poll timeout, cwd and env', () => {
+  const env = { PATH: '/x', GH_HOST: 'h.example' };
+  const r = runRealRunner({ pr: 7 }, { cwd: os.tmpdir(), env, timeoutMs: 23456 }, '{"state":"pending"}');
+  assert.deepEqual(r.out, { state: 'pending' });
+  assert.equal(r.file, process.execPath);
+  assert.deepEqual(r.args, [path.resolve(__dirname, '../../../plugin/bin/pr-checks.js'), '--pr', '7']);
+  assert.equal(r.opts.timeout, 23456);
+  assert.equal(r.opts.windowsHide, true);
+  assert.equal(r.opts.env, env);
+  assert.equal(r.opts.cwd, os.tmpdir());
+});
+
+test('each ci poll gets timeoutMs = the time left until the call bound plus 20 s', async (t) => {
+  const dir = tmp(t);
+  const c = clock(T);
+  const { runner, optsSeen } = scripted(new Array(10).fill({ state: 'pending' }));
+  const r = await callWith(['ci', '--pr', '7', '--max-seconds', '100'], { c, dir, deps: { runner, cwd: () => dir } });
+  assert.equal(r.code, 3, r.stderr);
+  assert.deepEqual(optsSeen.map((o) => o.timeoutMs), [120000, 90000, 60000, 30000, 20000]);
+});
+
+test('slow ci polls cannot hold a call past --max-seconds + 20 s', async (t) => {
+  const dir = tmp(t);
+  const c = clock(T);
+  // One good read, then reads that each take as long as their timeout allows and are killed.
+  let n = 0;
+  const slow = (query, { timeoutMs }) => {
+    n += 1;
+    if (n === 1) return { state: 'pending' };
+    c.advance(timeoutMs);
+    throw new Error('killed at the timeout');
+  };
+  const r = await callWith(['ci', '--pr', '8', '--max-seconds', '100'], { c, dir, deps: { runner: slow, cwd: () => dir } });
+  assert.equal(r.code, 3, r.stderr);
+  assert.equal(r.out.bound, 'call');
+  assert.ok(c.monotonicNow() - T <= (100 + 20) * 1000, `ended at ${(c.monotonicNow() - T) / 1000}s`);
+  assert.ok(r.out.readFailures >= 1);
+});
+
+test('a --run read without a conclusion prints conclusion null', async (t) => {
+  const dir = tmp(t);
+  const { runner } = scripted([{ status: 'completed' }]);
+  const r = await callWith(['ci', '--run', '9'], { c: clock(T), dir, deps: { runner, cwd: () => dir } });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.out.conclusion, null);
 });

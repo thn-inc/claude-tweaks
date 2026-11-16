@@ -13,6 +13,7 @@
 'use strict';
 
 const os = require('os');
+const path = require('path');
 const { execFileSync } = require('child_process');
 const { performance } = require('perf_hooks');
 const lib = require('./lib/wait-for');
@@ -22,21 +23,17 @@ const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 
 // One CI read. { pr } -> the `pr-checks.js --pr` envelope; { run } -> `gh run view`'s
 // { status, conclusion }. Throws on any failure; the target decides what a failed read means.
-// pr-checks.js is loaded lazily: the agents and pid targets never need it.
-function runner(query, { cwd, env }) {
+// Both reads are child processes killed at `timeoutMs` (the loop's time left until the call
+// bound plus its grace), so one slow read cannot hold the call past the foreground ceiling;
+// a kill or a non-zero exit throws, which the ci target counts as a failed read. `--pr` runs
+// pr-checks.js as its own process (its code stays where it is); `--run` is bounded by the
+// gh timeout too.
+function runner(query, { cwd, env, timeoutMs }) {
   if (query.pr !== undefined) {
-    let text = '';
-    const code = require('./pr-checks').run(['--pr', String(query.pr)], {
-      stdout: (s) => { text += s; },
-      stderr: () => {},
-      cwd: () => cwd,
-    });
-    const envelope = code === 0 ? JSON.parse(text) : null;
-    if (envelope === null || typeof envelope !== 'object') throw new Error(`pr-checks.js --pr ${query.pr} exited ${code} without an envelope`);
-    return envelope;
+    return JSON.parse(execFileSync(process.execPath, [path.join(__dirname, 'pr-checks.js'), '--pr', String(query.pr)], { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: timeoutMs, windowsHide: true }));
   }
   const args = ['run', 'view', String(query.run), '--json', 'status,conclusion'];
-  return JSON.parse(execFileSync('gh', args, ghOptions(args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true })));
+  return JSON.parse(execFileSync('gh', args, ghOptions(args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: Math.min(timeoutMs, GH_TIMEOUT_MS), windowsHide: true })));
 }
 
 const realDeps = {

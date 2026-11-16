@@ -17,6 +17,10 @@
 // deps.monotonicNow(); the window's openedAt/deadline and the deadline check use
 // the epoch deps.now().
 //
+// A `ci` call whose first read fails exits 2 after it opened its window, so a retry
+// joins that window. Each ci read is a child process killed at callEnd + 20 s at the
+// latest (POLL_GRACE_MS), so no call outlasts --max-seconds + 20.
+//
 // Files: only the two marker-owned files of ./marker.js (the session's stops and
 // waits files in the OS temp dir), never a transcript. `agents` reads stops and
 // returns each final stop once: it appends a `delivered` record per reported id,
@@ -36,6 +40,10 @@ const MAX_SECONDS_CAP = 150;
 const DEFAULT_WINDOW_SECONDS = 1200;
 const WINDOW_SECONDS_CAP = 3600;
 const POLL_MS = { agents: 1000, pid: 1000, ci: 30000 };
+// A ci poll starts before the call bound and is killed by its own timeout, so a call
+// lasts at most --max-seconds + POLL_GRACE_MS (170 s at the cap, under the 180 s ceiling).
+const POLL_GRACE_MS = 20000;
+const MIN_POLL_TIMEOUT_MS = 1000;
 
 const USAGE = `usage: wait-for.js agents --ids <a,b> | ci --pr <n> | ci --run <id> | pid --pid <n>
          [--max-seconds <n>=100 (<=150)] [--window-seconds <n>=1200 (<=3600)] [--session <id>] [--help]
@@ -47,7 +55,7 @@ stays under the measured 180-second foreground ceiling
   agents --ids <a,b>   returns when a listed subagent id has a final stop (not
                        blocked, pending 0) not returned to an earlier call
   ci --pr <n>          returns when the PR's checks leave pending, classified as
-                       pr-checks.js --pr does (green, red, inherited-red, no-ci, stale)
+                       pr-checks.js --pr does (green, red, inherited-red, no-ci)
   ci --run <id>        returns when the workflow run's status is completed
   pid --pid <n>        returns when the process is gone
 A verify run and a suite slot are not targets: verify.js waits on both itself.
@@ -60,14 +68,16 @@ Output keys: target, state, changed, elapsedSeconds, deadlineEpoch, window,
 bound (exit 3 only: "call" or "deadline"), plus the target's own keys
 (agents: reported, pending, stops; ci: readFailures, and conclusion for --run;
 a ci read that fails after a good one counts as pending and adds to readFailures,
-a first read that fails exits 2).
+a first read that fails exits 2 after opening the window, so a retry joins it; each
+ci read is killed at the time left until the call bound plus 20 s, so a call lasts at
+most --max-seconds + 20).
 
 Exit codes: 0 the target changed; 3 a bound was hit; 2 a malformed invocation,
 a missing or invalid session id, a refused marker file, or an unexpected error.
 `;
 
 const MAX_PID = 2147483647;
-const POSITIVE_INT =/^[1-9]\d*$/;
+const POSITIVE_INT = /^[1-9]\d*$/;
 const COMMON_FLAGS = { '--max-seconds': 'maxSeconds', '--window-seconds': 'windowSeconds', '--session': 'session' };
 const TARGET_FLAGS = {
   agents: { '--ids': 'ids' },
@@ -162,11 +172,11 @@ function readProblem(opts, read) {
 
 const ci = {
   key: (opts) => (opts.pr !== undefined ? `pr:${opts.pr}` : `run:${opts.run}`),
-  poll({ opts, deps, scratch }) {
+  poll({ opts, deps, scratch, timeoutMs }) {
     let read = null;
     let problem;
     try {
-      read = deps.runner(opts.pr !== undefined ? { pr: opts.pr } : { run: opts.run }, { cwd: deps.cwd(), env: deps.env });
+      read = deps.runner(opts.pr !== undefined ? { pr: opts.pr } : { run: opts.run }, { cwd: deps.cwd(), env: deps.env, timeoutMs });
       problem = readProblem(opts, read);
     } catch (err) {
       problem = err && err.message ? err.message : String(err);
@@ -183,7 +193,7 @@ const ci = {
     return {
       changed: byRun ? state === 'completed' : state !== 'pending',
       state,
-      extra: { readFailures: scratch.readFailures, ...(byRun ? { conclusion: last.conclusion } : {}) },
+      extra: { readFailures: scratch.readFailures, ...(byRun ? { conclusion: last.conclusion ?? null } : {}) },
     };
   },
 };
@@ -271,6 +281,7 @@ async function run(argv, deps) {
     };
 
     for (;;) {
+      ctx.timeoutMs = Math.max(MIN_POLL_TIMEOUT_MS, callEnd + POLL_GRACE_MS - deps.monotonicNow());
       const res = await target.poll(ctx);
       if (res.changed) {
         print(res);
