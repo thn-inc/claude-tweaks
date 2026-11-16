@@ -18,6 +18,10 @@ const TIMING_CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'timi
 
 const { TIMING_BOUND_MS, ownTranscripts, writeTimingAtClose, writePhaseTimingSync, logTimingSkip, spawnTokenPass } = atClose;
 
+// The SKIP lines about timing.json, and the ones about the step yield passing the close's time bound.
+const timingSkips = (dir) => skipLines(dir).filter((l) => !l.includes('step yield'));
+const yieldBoundSkips = (dir) => skipLines(dir).filter((l) => /time bound before the step yield was derived/.test(l));
+
 function tmpRoot() { return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-at-close-')); }
 
 // A run dir closed by the real closeRunState: worktree null, worktreeAtClose = worktree.
@@ -228,8 +232,11 @@ test('deadline: readUsage never settles → resolves at boundMs, phase rows writ
     assertPhaseRows(timing);
     assert.equal(Object.hasOwn(timing.totals, 'tokens'), false);
     const skips = skipLines(runDir);
-    assert.equal(skips.length, 1);
+    assert.equal(skips.length, 1, 'the one SKIP names the bound; the yield past it adds none of its own');
     assert.match(skips[0], /200 ms time bound/);
+    assert.match(skips[0], /; no step-yield\.json written/, 'the one SKIP names the dropped step-yield.json');
+    // The bound is past, so the yield is not derived either.
+    assert.equal(fs.existsSync(path.join(runDir, 'step-yield.json')), false);
   } finally {
     transcript.readUsage = real;
     fs.rmSync(root, { recursive: true, force: true });
@@ -585,9 +592,13 @@ test('item 7: the read-check-write holds the run dir\'s timing lock — a lock h
     }
     assert.equal(r.status, 'failed');
     assert.equal(fs.readFileSync(file, 'utf8'), before);
-    const skips = skipLines(runDir);
+    const skips = timingSkips(runDir);
     assert.equal(skips.length, 1, JSON.stringify(skips));
     assert.match(skips[0], /condition: timing\.json lock not acquired within \d+ ms → fallback: no timing\.json written/);
+    // The wait spent the whole bound, so the yield past it is skipped: the one SKIP names it, no second line.
+    assert.match(skips[0], /; no step-yield\.json written/);
+    assert.equal(yieldBoundSkips(runDir).length, 0);
+    assert.equal(skipLines(runDir).length, 1, JSON.stringify(skipLines(runDir)));
     // Released, the same call writes.
     sync = await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } });
     assert.equal(sync.status, 'written');
@@ -896,6 +907,347 @@ test('writePhaseTimingSync never calls readUsage or locateTranscripts', () => {
   } finally {
     transcript.readUsage = realRead;
     transcript.locateTranscripts = realLocate;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- #5556: step-yield.json beside timing.json, on every close ---
+
+const stepYield = require('../../../plugin/bin/lib/timing/step-yield');
+const YIELD = stepYield.STEP_YIELD_FILE;
+const readYield = (dir) => JSON.parse(fs.readFileSync(path.join(dir, YIELD), 'utf8'));
+const yieldSkips = (dir) => skipLines(dir).filter((l) => l.includes('step yield could not be written'));
+
+test('AC6.1: writeTimingAtClose leaves step-yield.json beside timing.json (written, kept and phase-only closes alike)', async () => {
+  const root = tmpRoot();
+  try {
+    const cfg = path.join(root, 'cfg');
+    const wt = path.join(root, 'wt-a');
+    const runDir = closedRun(root, 'run', wt);
+    writeTranscript(cfg, wt, [A, B]);
+    assert.equal((await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } })).status, 'written');
+    assert.equal(readYield(runDir).schemaVersion, stepYield.SCHEMA_VERSION);
+    fs.rmSync(path.join(runDir, YIELD));
+    assert.equal((await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } })).status, 'kept');
+    assert.ok(readYield(runDir).steps.length > 0, 'a kept timing.json still gets a yield');
+    const plain = closedRun(root, 'run-phase', wt);
+    assert.equal(writePhaseTimingSync(plain).status, 'written');
+    assert.ok(readYield(plain).steps.length > 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC6.1: a failed timing result on a run dir that exists still gets a yield; a spec-N child gets none', async () => {
+  const root = tmpRoot();
+  try {
+    const runDir = closedRun(root, 'run', path.join(root, 'wt'));
+    fs.mkdirSync(path.join(runDir, 'timing.json'));
+    const r = await writeTimingAtClose(runDir, { tokens: false });
+    assert.equal(r.status, 'failed');
+    assert.ok(readYield(runDir).steps.length > 0);
+    const child = path.join(runDir, 'spec-3');
+    fs.mkdirSync(child);
+    fs.writeFileSync(path.join(child, 'events.jsonl'), '');
+    assert.equal((await writeTimingAtClose(child, { tokens: false })).status, 'not-top-level');
+    assert.equal(fs.existsSync(path.join(child, YIELD)), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('rewritesWhole: a pre-existing step-yield.json with junk is replaced by a whole derived file', async () => {
+  const root = tmpRoot();
+  try {
+    const runDir = closedRun(root, 'run', path.join(root, 'wt'));
+    fs.writeFileSync(path.join(runDir, YIELD), '{"junk":true');
+    await writeTimingAtClose(runDir, { tokens: false });
+    const y = readYield(runDir);
+    assert.equal(y.schemaVersion, stepYield.SCHEMA_VERSION);
+    assert.equal(Object.hasOwn(y, 'junk'), false);
+    assert.deepStrictEqual(fs.readdirSync(runDir).filter((f) => f.includes(YIELD) && f !== YIELD), [], 'no temp file left behind');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('keptKeepsWaits: a kept timing.json carrying questions gives the rewritten yield non-null waitedMinutes', async () => {
+  const root = tmpRoot();
+  try {
+    const runDir = closedRun(root, 'run', path.join(root, 'wt'));
+    const events = [
+      { skill: 'claude-tweaks:build', ts: '2020-01-01T10:00:00.000Z', type: 'skill_invoked' },
+      { type: 'ask-user-question', ts: '2020-01-01T10:05:00.000Z', toolUseId: 'toolu_k1', questions: [{ question: 'Merge now?', options: [] }], response: 'yes' },
+      { type: 'commit', ts: '2020-01-01T10:08:00.000Z', action: 'push' },
+      { skill: 'claude-tweaks:test', ts: '2020-01-01T10:10:00.000Z', type: 'skill_invoked' },
+    ];
+    fs.writeFileSync(path.join(runDir, 'events.jsonl'), events.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    fs.writeFileSync(path.join(runDir, 'timing.json'), JSON.stringify({
+      phases: [], totals: { tokens: { input: 5, output: 0, cacheRead: 0, cacheCreate: 0 } },
+      questions: [{ id: 'toolu_k1', askTs: '2020-01-01T10:03:00.000Z', answerTs: '2020-01-01T10:05:00.000Z', questions: ['Merge now?'] }],
+    }));
+    const before = fs.readFileSync(path.join(runDir, 'timing.json'));
+    assert.equal((await writeTimingAtClose(runDir)).status, 'kept');
+    assert.ok(before.equals(fs.readFileSync(path.join(runDir, 'timing.json'))));
+    const qs = readYield(runDir).steps.flatMap((s) => s.questions);
+    assert.equal(qs.length, 1);
+    assert.equal(typeof qs[0].waitedMinutes, 'number');
+    assert.ok(qs[0].waitedMinutes > 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC6.2: deriveStepYield throwing → the close result is unchanged and exactly one SKIP names the yield', async () => {
+  const root = tmpRoot();
+  try {
+    const a = closedRun(root, 'run-a', path.join(root, 'wt'));
+    const b = closedRun(root, 'run-b', path.join(root, 'wt'));
+    const expected = await writeTimingAtClose(a, { tokens: false });
+    const thrown = await withStub(stepYield, 'deriveStepYield', () => { throw new Error('boom yield'); }, () => writeTimingAtClose(b, { tokens: false }));
+    assert.deepStrictEqual(thrown, expected);
+    assert.deepStrictEqual(yieldSkips(a), []);
+    const skips = yieldSkips(b);
+    assert.equal(skips.length, 1, JSON.stringify(skips));
+    assert.match(skips[0], /condition: step yield could not be written \(boom yield\) → fallback: no step-yield\.json written/);
+    assert.equal(fs.existsSync(path.join(b, YIELD)), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('vanishedDir: the run dir removed before the yield write → nothing recreated, no throw, at most one SKIP', async () => {
+  const root = tmpRoot();
+  try {
+    const runDir = closedRun(root, 'run', path.join(root, 'wt'));
+    fs.rmSync(runDir, { recursive: true, force: true });
+    const r = atClose.writeStepYieldSafe(runDir);
+    assert.equal(r.status, 'failed');
+    assert.equal(fs.existsSync(runDir), false);
+    assert.equal(fs.existsSync(path.join(root, 'archive')), false);
+
+    // Removed between the derive and the write: the temp-then-rename never resurrects the dir.
+    const racing = closedRun(root, 'run-racing', path.join(root, 'wt'));
+    const out = await withStub(stepYield, 'deriveStepYield', (d) => {
+      fs.rmSync(d, { recursive: true, force: true });
+      return { schemaVersion: 1, steps: [] };
+    }, () => atClose.writeStepYieldSafe(racing));
+    assert.equal(out.status, 'failed');
+    assert.equal(fs.existsSync(racing), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('vanishedDir: a run dir an archive moved away → the yield lands in the archive twin, the run dir is not recreated', () => {
+  const root = tmpRoot();
+  try {
+    const runDir = closedRun(root, 'run', path.join(root, 'wt'));
+    const twin = path.join(root, 'archive', 'run');
+    fs.mkdirSync(path.dirname(twin), { recursive: true });
+    fs.renameSync(runDir, twin);
+    const r = atClose.writeStepYieldSafe(runDir);
+    assert.equal(r.status, 'written');
+    assert.equal(fs.existsSync(runDir), false);
+    assert.ok(readYield(twin).steps.length > 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('rename-after-archive: run-state.json moved to the twin while the yield derives → nothing strands in the run dir, the yield lands in the twin', async () => {
+  const root = tmpRoot();
+  try {
+    const runDir = closedRun(root, 'run', path.join(root, 'wt'));
+    const twin = path.join(root, 'archive', 'run');
+    fs.mkdirSync(twin, { recursive: true });
+    const real = stepYield.deriveStepYield;
+    let moved = false;
+    const r = await withStub(stepYield, 'deriveStepYield', (d, o) => {
+      const y = real(d, o);
+      // An archive's per-entry move: run-state.json first, the run dir itself still there.
+      if (!moved) { moved = true; fs.renameSync(path.join(d, 'run-state.json'), path.join(twin, 'run-state.json')); }
+      return y;
+    }, () => atClose.writeStepYieldSafe(runDir));
+    assert.equal(r.status, 'written');
+    assert.equal(fs.existsSync(path.join(runDir, YIELD)), false, 'a yield stranded in the vacated run dir');
+    assert.ok(fs.existsSync(path.join(twin, YIELD)));
+    assert.deepStrictEqual(yieldSkips(runDir), []);
+    assert.equal(fs.existsSync(path.join(runDir, '.timing.lock')), false);
+    assert.equal(fs.existsSync(path.join(twin, '.timing.lock')), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const LOCK_MISS = /condition: step-yield\.json lock not acquired within \d+ ms → fallback: no step-yield\.json written/;
+
+test('lockHeld: a timing lock held by a live writer → no yield, one SKIP naming the lock miss, the file untouched', async () => {
+  const root = tmpRoot();
+  const { acquireLock, releaseLock } = require('../../../plugin/bin/lib/file-lock');
+  try {
+    const runDir = closedRun(root, 'run', path.join(root, 'wt'));
+    const held = acquireLock(path.join(runDir, '.timing.lock'), { waitMs: 0, env: {} });
+    assert.ok(held);
+    let r;
+    try {
+      r = await withStub(atClose, 'PHASE_LOCK_WAIT_MS', 50, () => atClose.writeStepYieldSafe(runDir));
+    } finally {
+      releaseLock(held);
+    }
+    assert.equal(r.status, 'skipped');
+    assert.equal(r.fold, true);
+    assert.equal(Object.hasOwn(r, 'bound'), false, 'inside the bound');
+    assert.match(r.skip, LOCK_MISS);
+    assert.equal(fs.existsSync(path.join(runDir, YIELD)), false);
+    assert.equal(skipLines(runDir).length, 1);
+    assert.match(skipLines(runDir)[0], LOCK_MISS);
+    // Released, the same call writes.
+    assert.equal(atClose.writeStepYieldSafe(runDir).status, 'written');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lock miss inside the bound, through a close: exactly one SKIP line, on the synchronous archive path too, and a timing SKIP absorbs it', async () => {
+  const root = tmpRoot();
+  const { acquireLock, releaseLock } = require('../../../plugin/bin/lib/file-lock');
+  try {
+    // A kept timing.json (token totals) takes no lock, so only the yield misses it.
+    const runDir = closedRun(root, 'run', path.join(root, 'wt'));
+    fs.writeFileSync(path.join(runDir, 'timing.json'), JSON.stringify({ phases: [], totals: { tokens: { input: 5, output: 0, cacheRead: 0, cacheCreate: 0 } } }));
+    const held = acquireLock(path.join(runDir, '.timing.lock'), { waitMs: 0, env: {} });
+    assert.ok(held);
+    try {
+      const r = await withStub(atClose, 'PHASE_LOCK_WAIT_MS', 50, () => writePhaseTimingSync(runDir));
+      assert.equal(r.status, 'kept');
+    } finally {
+      releaseLock(held);
+    }
+    assert.equal(fs.existsSync(path.join(runDir, YIELD)), false);
+    assert.equal(skipLines(runDir).length, 1, JSON.stringify(skipLines(runDir)));
+    assert.match(skipLines(runDir)[0], LOCK_MISS);
+
+    // The timing write misses the same held lock: its SKIP and the yield's are one line.
+    const both = closedRun(root, 'run-both', path.join(root, 'wt'));
+    const heldBoth = acquireLock(path.join(both, '.timing.lock'), { waitMs: 0, env: {} });
+    assert.ok(heldBoth);
+    try {
+      const r = await withStub(atClose, 'PHASE_LOCK_WAIT_MS', 50, () => writePhaseTimingSync(both));
+      assert.equal(r.status, 'failed');
+    } finally {
+      releaseLock(heldBoth);
+    }
+    assert.equal(skipLines(both).length, 1, JSON.stringify(skipLines(both)));
+    assert.match(skipLines(both)[0], /timing\.json lock not acquired within \d+ ms → fallback: no timing\.json written; condition: step-yield\.json lock not acquired within \d+ ms → fallback: no step-yield\.json written/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a yield that throws while the timing write also logged a SKIP: exactly one timing-family SKIP line carries both', async () => {
+  const root = tmpRoot();
+  try {
+    const cfg = path.join(root, 'cfg');
+    // No transcript under cfg: the timing write is phase rows only, with its own SKIP.
+    const runDir = closedRun(root, 'run', path.join(root, 'wt'));
+    await withStub(stepYield, 'deriveStepYield', () => { throw new Error('boom yield'); }, () => writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } }));
+    const skips = skipLines(runDir);
+    assert.equal(skips.length, 1, JSON.stringify(skips));
+    assert.match(skips[0], /→ fallback: timing\.json phase rows written without token totals; condition: step yield could not be written \(boom yield\) → fallback: no step-yield\.json written/);
+    assert.equal(fs.existsSync(path.join(runDir, YIELD)), false);
+    assert.equal(fs.existsSync(path.join(runDir, 'timing.json')), true, 'the timing write is unaffected');
+    // Called on its own (logBound true) the yield logs its one line itself.
+    const alone = closedRun(root, 'run-alone', path.join(root, 'wt'));
+    const r = await withStub(stepYield, 'deriveStepYield', () => { throw new Error('boom alone'); }, () => atClose.writeStepYieldSafe(alone));
+    assert.equal(r.fold, true);
+    assert.equal(skipLines(alone).length, 1);
+    // logBound false returns it for the caller to fold and logs nothing.
+    const folded = closedRun(root, 'run-folded', path.join(root, 'wt'));
+    const f = await withStub(stepYield, 'deriveStepYield', () => { throw new Error('boom folded'); }, () => atClose.writeStepYieldSafe(folded, { logBound: false }));
+    assert.equal(f.fold, true);
+    assert.match(f.skip, /step yield could not be written \(boom folded\)/);
+    assert.deepStrictEqual(skipLines(folded), []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lock wait that spends the close bound: the yield logs its own one SKIP naming the file', () => {
+  const root = tmpRoot();
+  const { acquireLock, releaseLock } = require('../../../plugin/bin/lib/file-lock');
+  try {
+    const runDir = closedRun(root, 'run', path.join(root, 'wt'));
+    const held = acquireLock(path.join(runDir, '.timing.lock'), { waitMs: 0, env: {} });
+    assert.ok(held);
+    let r;
+    try {
+      r = atClose.writeStepYieldSafe(runDir, { deadlineAt: Date.now() + 30, boundMs: 30 });
+    } finally {
+      releaseLock(held);
+    }
+    assert.equal(r.status, 'skipped');
+    assert.equal(r.bound, true);
+    assert.equal(skipLines(runDir).length, 1);
+    assert.match(skipLines(runDir)[0], /no step-yield\.json written/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('unrelatedTwin: a run dir that never had a run-state.json is written in place even when an archive twin of that name exists', () => {
+  const root = tmpRoot();
+  try {
+    const runDir = path.join(root, 'run');
+    fs.mkdirSync(runDir, { recursive: true });
+    writeEvents(runDir);
+    const twin = path.join(root, 'archive', 'run');
+    fs.mkdirSync(twin, { recursive: true });
+    assert.equal(fs.existsSync(path.join(runDir, 'run-state.json')), false);
+    assert.equal(atClose.writeStepYieldSafe(runDir).status, 'written');
+    assert.ok(fs.existsSync(path.join(runDir, YIELD)));
+    assert.equal(fs.existsSync(path.join(twin, YIELD)), false, 'an unrelated twin is not written');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('deadline: a close already past its time bound derives no yield — one SKIP naming the bound, nothing written', async () => {
+  const root = tmpRoot();
+  try {
+    const runDir = closedRun(root, 'run', path.join(root, 'wt'));
+    let derived = 0;
+    const r = await withStub(stepYield, 'deriveStepYield', () => { derived++; return { schemaVersion: 1, steps: [] }; },
+      () => atClose.writeStepYieldSafe(runDir, { deadlineAt: Date.now() - 1, boundMs: 123 }));
+    assert.equal(derived, 0, 'the yield was derived past the deadline');
+    assert.equal(r.status, 'failed');
+    assert.match(r.skip, /close passed the 123 ms time bound before the step yield was derived → fallback: no step-yield\.json written/);
+    assert.equal(fs.existsSync(path.join(runDir, YIELD)), false);
+    assert.equal(skipLines(runDir).length, 1);
+    // inside the bound it writes
+    assert.equal(atClose.writeStepYieldSafe(runDir, { deadlineAt: Date.now() + 60000 }).status, 'written');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('vanishedDir: the dir moves to the twin between the derive and the write → retried once at the twin', async () => {
+  const root = tmpRoot();
+  try {
+    const runDir = closedRun(root, 'run', path.join(root, 'wt'));
+    const twin = path.join(root, 'archive', 'run');
+    fs.mkdirSync(path.dirname(twin), { recursive: true });
+    const real = stepYield.deriveStepYield;
+    let moved = false;
+    const r = await withStub(stepYield, 'deriveStepYield', (d, o) => {
+      const y = real(d, o);
+      if (!moved) { moved = true; fs.renameSync(d, twin); }
+      return y;
+    }, () => atClose.writeStepYieldSafe(runDir));
+    assert.equal(r.status, 'written');
+    assert.equal(fs.existsSync(runDir), false);
+    assert.ok(readYield(twin).steps.length > 0);
+  } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
