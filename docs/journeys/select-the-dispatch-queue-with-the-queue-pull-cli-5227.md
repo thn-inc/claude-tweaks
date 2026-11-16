@@ -8,6 +8,7 @@ files:
   - plugin/bin/lib/dispatch/shipped-releases.js
   - tests/bin-lib/dispatch/queue-pull.test.js
   - tests/bin-lib/dispatch/queue-pull-oracle.js
+  - tests/bin-lib/dispatch/queue-pull-fixtures.js
 ---
 
 # Select the Dispatch Queue with the queue-pull CLI
@@ -37,8 +38,8 @@ files:
 - **URL:** `plugin/bin/queue-pull.js --transport files --queue-raw … --dep-freshness … --open-numbers … --verified-open-deps … --in-flight-raw … --in-flight-claims … --foreign-states …`; `plugin/skills/dispatch/mcp-transport.md`
 - **Action:** The **agent** fetches the records through MCP tools and writes each input file (each flag but `--foreign-states` defaults to its session-scoped path; `--foreign-states` has no default, so the agent passes it whenever it wrote a states file). The claims file covers the claim of every record in the in-flight pool file. It then runs the CLI with `--transport files`. The module copies the queue file into the session file before aliasing its timestamps, so the agent's own file is left as written.
 - **Should feel:** Like the gh path, with the agent doing the fetching and Node doing the computing.
-- **Should understand:** The documented MCP gaps are behaviour. `dispatch-crosspr-overlap.json` is `[]`, `dispatch-linked-prs.json` stays `{}`, and `open-pr`, `shipped` and `unlanded-blocker` cannot fire on this transport. A missing or malformed in-flight pool or claims file stops the pull (exit 4). A bad `--foreign-states` file (the states file the MCP path passes on the call) excludes each foreign-blocked record as `owner/name#N (state unreadable)`, with one fail-closed `ignored (...)` `Warning:` line: the follow-up lookup's own `gh`-absent Warning is not printed a second time (#5304). A lookup that fails for any other reason still prints its own Warning.
-- **Red flags:** `--transport gh` silently falling back to files. With `gh` absent it must exit 2 and name the files transport. A claims file covering only the queue's targets, which leaves in-flight neighbours read as not in flight.
+- **Should understand:** The documented MCP gaps are behaviour. `dispatch-crosspr-overlap.json` is `[]`, `dispatch-linked-prs.json` stays `{}`, and `open-pr`, `shipped` and `unlanded-blocker` cannot fire on this transport. A missing or malformed in-flight pool or claims file stops the pull (exit 4). A queue or dependency-freshness file that parses but is not a JSON array (a wrapper object, a string) is a failed read, never an empty list (#5307): one `Warning: {file} is not a JSON array — treated as a failed read` line, then that file's unparseable path — the queue file stops the pull, the dependency-freshness file stops a warm-cache check or, on a cold cache, leaves no cache written. A bad `--foreign-states` file (the states file the MCP path passes on the call) excludes each foreign-blocked record as `owner/name#N (state unreadable)`, with one fail-closed `ignored (...)` `Warning:` line: the follow-up lookup's own `gh`-absent Warning is not printed a second time (#5304). A lookup that fails for any other reason still prints its own Warning.
+- **Red flags:** `--transport gh` silently falling back to files. With `gh` absent it must exit 2 and name the files transport. A claims file covering only the queue's targets, which leaves in-flight neighbours read as not in flight. A wrapper-object queue file that ends in "no candidates" with exit 0 and no `Warning:` line.
 
 ### 4. Read a stop and recover
 - **URL:** `plugin/bin/queue-pull.js` (exit codes in the header and USAGE)
@@ -58,4 +59,5 @@ files:
 - Created during `/claude-tweaks:build` of record #5227 (2026-11-12), step 1 of 3 of the queue-selection strangler-fig in `docs/superpowers/specs/2026-11-11-pipeline-driver-design.md`, "Phase 5 — Queue selection in the driver". `/claude-tweaks:dispatch` still runs the embedded scripts; the cutover and the scripts' removal are later records.
 - Updated during #5230 (the cutover): `/claude-tweaks:dispatch` now runs this CLI, and step 3's MCP path passes the foreign states as `--foreign-states` rather than `DISPATCH_FOREIGN_STATES`.
 - Updated during #5304: each fetch failure prints one line per pull (one combined claim-read `AUTO` line, also on stop paths; one foreign-states `Warning:` on a `gh`-absent run).
+- Updated during #5307: a non-array queue or dependency-freshness file on the files transport prints one `Warning:` and takes that file's unparseable path instead of reading as `[]`.
 - Related journeys: `dispatch-the-oldest-record-from-a-gh-absent-sandbox-3691.md` (the MCP timestamp alias this module reproduces), `drain-the-queue-past-a-chain-of-overlapping-records-3278.md`.
