@@ -126,7 +126,7 @@ rows, per the note below the array):
   ["bot:in-progress",   "Bot state: an agent currently holds the claim on this record", "6A737D"],
   ["bot:blocked",       "Bot state: retry ceiling hit, or a plan-review question awaits an answer — needs re-authorization", "6A737D"],
   ["bot:parked",        "Bot state: merge-verification parked it (CI red/timed-out) — auto:* grants stay intact", "6A737D"],
-  ["demo:pending",           "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo", "006B75"],
+  ["demo:pending",           "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:accept", "006B75"],
   ["demo:approved",          "Acceptance: a human verified this record does what was asked", "006B75"],
   ["demo:approved-batch",    "Acceptance: approved via /demo's #N,#M batch — no per-record walkthrough", "006B75"],
   ["demo:changes-requested", "Acceptance: a human found a gap during sign-off — see the linked follow-up record", "006B75"],
@@ -149,4 +149,4 @@ rows, per the note below the array):
 ]
 ```
 
-The `accept:*` rows are provisioned alongside the `demo:*` acceptance rows while both spellings are read (`_shared/work-record.md`, Acceptance axis): the acceptance consumers, `wrap-up/verification-brief.md` Step 1, `wrap-up/verification-brief-parent-gate.md`'s Apply the gate and `demo/SKILL.md` Step 3, each list all four, and `/init`'s provision-now offer takes the whole array. This is the one exception to "only the labels they are about to apply", and it applies nothing: bootstrapping creates the labels in the repo and never puts one on a record. No skill adds an `accept:*` label yet; `/demo` removes them when a verdict replaces them (`_shared/work-record-permission-matrix.md`).
+The `accept:*` rows are provisioned alongside the `demo:*` acceptance rows while both spellings are read (`_shared/work-record.md`, Acceptance axis): the acceptance consumers, `wrap-up/verification-brief.md` Step 1, `wrap-up/verification-brief-parent-gate.md`'s Apply the gate and `accept/verdict-interim.md`, each list all four, and `/init`'s provision-now offer takes the whole array. This is the one exception to "only the labels they are about to apply", and it applies nothing: bootstrapping creates the labels in the repo and never puts one on a record. `/accept` is the one skill that adds an `accept:*` label (its verdicts, and `accept:pending` from its automatic entry), and it removes a present `demo:*` twin in the same edit (`_shared/work-record-permission-matrix.md`).

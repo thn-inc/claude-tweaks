@@ -111,7 +111,7 @@ function buildNativeSubIssuesQuery(numbers) {
 // Probed live on this repo 2026-08-24: issue(number:$n){ parent{ number title state } }
 // returns { number, parent: { number, title, state } } for a sub-issue, and
 // parent: null for a parentless record. Same alias/null conventions as
-// buildNativeSubIssuesQuery above. Caller: demo/entry-paths.md's Full verification
+// buildNativeSubIssuesQuery above. Caller: accept/entry-paths.md's Full verification
 // pointer sub-procedure. review/cross-spec-promise-check.md performs the equivalent
 // native parent-resolution query independently — it does not call this function.
 function buildNativeParentQuery(numbers) {
