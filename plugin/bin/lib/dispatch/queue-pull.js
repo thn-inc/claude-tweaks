@@ -736,7 +736,7 @@ function runOpenPr(ctx) {
   deps.stderr(`Warning: open-linked-PR filtering failed — dispatch-groups.json left unfiltered for this exclusion this run: ${trimNl(failure)}\n`);
 }
 
-// `git remote show origin | sed -n '/HEAD branch/s/.*: //p'` (fence 393): a failed git still hands
+// `git remote show origin | sed -n '/HEAD branch/s/.*: //p'` (fence 392): a failed git still hands
 // over whatever it printed.
 function remoteHeadBranch(ctx) {
   let out;
@@ -763,14 +763,14 @@ function targetMissingProposal(num, tpath, ref) {
   ].map((l) => `${l}\n`).join('');
 }
 
-// #5305: the Warning an empty integration branch prints in place of the target-missing pass (fence 391-394).
+// #5305: the Warning an empty integration branch prints in place of the target-missing pass (fence 404-405).
 const TARGET_MISSING_SKIPPED = 'Warning: target-missing pass skipped — no integration branch resolved';
 
-// Fence 384-466. The run-dir and integration-branch resolution (385-395) is shared setup and
+// Fence 384-469. The run-dir and integration-branch resolution (384-394) is shared setup and
 // runs whether or not this pass is omitted; later passes read state.integrationBranch.
 function runTargetMissing(ctx) {
   const { deps, paths, omit, state } = ctx;
-  // Fence 385: `$(node hooks.js resolve-run-dir ...)` captures stdout; its stderr stays on the terminal.
+  // Fence 384: `$(node hooks.js resolve-run-dir ...)` captures stdout; its stderr stays on the terminal.
   const runDirCall = spawnCli(ctx, 'hooks.js', ['resolve-run-dir', '--spec-slug', 'dispatch-standalone']);
   forward(ctx, runDirCall, { stdout: false });
   state.standaloneDir = trimNl(runDirCall.stdout);
@@ -840,7 +840,7 @@ function claimReader(ctx) {
   };
 }
 
-// Fence 551-580: one Close proposal per strong-tier exclusion, staged into the firing's own run dir.
+// Fence 552-579: one Close proposal per strong-tier exclusion, staged into the firing's own run dir.
 // The run-dir call is `2>/dev/null || true`: its stderr is dropped and a spawn throw is silent.
 function stageShippedProposals(ctx) {
   const { paths } = ctx;
@@ -868,7 +868,7 @@ function stageShippedProposals(ctx) {
   }
 }
 
-// Fence 468-580. Omitting the pass skips its classification, probes, exclusions and staging.
+// Fence 476-579. Omitting the pass skips its classification, probes, exclusions and staging.
 function runShipped(ctx) {
   const { deps, paths, omit } = ctx;
   if (omit.has('shipped')) {
@@ -942,7 +942,7 @@ function runShipped(ctx) {
   stageShippedProposals(ctx);
 }
 
-// ---- blocker-landing, neighbour-in-flight, cross-PR overlap and near-duplicate (fence 582-671) --
+// ---- blocker-landing, neighbour-in-flight, cross-PR overlap and near-duplicate (fence 581-663) --
 
 // Fence 582-589. One dispatch-unlanded-blockers.js call writes both the unlanded-blocker and the
 // malformed-blocker entries, so omitting either reason skips the whole call (R7). `--work-links`
@@ -976,7 +976,7 @@ function runBlockerLanding(ctx) {
 
 const IN_FLIGHT_ARGV = ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'];
 const IN_FLIGHT_POOL_AUTO = 'AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull';
-// fence 600, byte for byte
+// fence 602, byte for byte
 const IN_FLIGHT_CAP_WARNING = 'Warning: the bot:in-progress pull for the neighbour-in-flight pass (#3278) returned exactly the --limit cap (200) — in-flight records beyond the cap are not checked as neighbours. Informational only; never blocks dispatch.';
 
 // #5304: one AUTO line per pull for the claims the two claim-reading passes could not read. The
@@ -991,7 +991,7 @@ function reportClaimReadFailures(ctx, neighbourUnreadable) {
   else if (shipped.length) ctx.deps.stderr(`AUTO — dispatch: shipped-candidate claim read failed for ${shipped.join(', ')}; release time unknown, no downgrade\n`);
 }
 
-// Fence 589-627 on `gh`; on `files` mcp-transport.md's Step 2 four-step replacement, whose agent-
+// Fence 591-629 on `gh`; on `files` mcp-transport.md's Step 2 four-step replacement, whose agent-
 // written pool and claim-map FILES this pass reads (steps 1-3 are the agent's). Only the compute
 // is this pass's own: omitting the pass skips it (and so its appends and AUTO line), while the pool
 // fetch and its cap Warning are shared setup. A missing or malformed pool or claim-map file throws
@@ -1030,10 +1030,10 @@ function runNeighbourInFlight(ctx) {
 }
 
 const OPEN_PRS_ARGV = ['pr', 'list', '--state', 'open', '--json', 'number,files,closingIssuesReferences', '--limit', '100'];
-// fence 645, byte for byte
+// fence 638, byte for byte
 const OPEN_PR_CAP_WARNING = 'Warning: the open-PR pull for the cross-PR overlap report (#1579) returned exactly the --limit cap (100) — overlap detection may be missing older open PRs. Informational only; never blocks dispatch.';
 
-// Fence 620-652, informational. On `files` mcp-transport.md skips the fetch and has the agent write
+// Fence 631-652, informational. On `files` mcp-transport.md skips the fetch and has the agent write
 // `[]`; the module does the same and makes no gh call. On `gh` the open-PR fetch fails silently
 // (`2>/dev/null || echo '[]'`) and a compute failure is a step error the fence does not stop on.
 function runCrossPrOverlap(ctx) {
@@ -1063,7 +1063,7 @@ function runCrossPrOverlap(ctx) {
   });
 }
 
-// Fence 654-671, informational: every cross-group pair gets an AUTO line, and only the strong ones
+// Fence 654-663, informational: every cross-group pair gets an AUTO line, and only the strong ones
 // reach dispatch-near-dup-pairs.json (always written, [] when there are none).
 function runNearDupPairs(ctx) {
   if (ctx.omit.has('near-dup-pairs')) return;

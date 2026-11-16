@@ -1727,10 +1727,17 @@ test('#5227 portability: the integration branch comes from the policy key, else 
 });
 
 test('#5227 portability: a failing `git remote show origin` leaves the branch empty, composes no origin/ ref, skips the target-missing pass and the pull continues', () => {
-  const r = pull4({ ...FULL(), gitFail: [['remote', 'show', 'origin']] });
+  const gitArgvs = [];
+  const base = fakeRun({ ...FULL(), gitFail: [['remote', 'show', 'origin']] });
+  const r = pull4({ ...FULL(), gitFail: [['remote', 'show', 'origin']] }, {
+    run: (cmd, args, opts) => { if (cmd === 'git') gitArgvs.push(args); return base(cmd, args, opts); },
+  });
   assert.equal(r.state.integrationBranch, '');
   assert.equal(r.state.integrationRef, '', 'no origin/ ref is composed');
   assert.deepEqual(entriesOf(r, 'target-missing'), [], 'no named target is excluded against an empty branch');
+  assert.ok(r.errs.includes(`${TARGET_MISSING_SKIPPED}\n`), r.stderr);
+  assert.ok(!gitArgvs.some((a) => a[0] === 'cat-file'), 'no `git cat-file` probe runs against an empty branch');
+  assert.deepEqual(reasonsOf(r, 9006), ['shipped'], 'a later pass still ran: #9006 is excluded as shipped, not as target-missing');
   const named = JSON.parse(r.text['dispatch-named-targets.json']).map((e) => e.number);
   assert.ok(named.includes(9006) && named.includes(9009), 'dispatch-named-targets.json is still written with the named candidates');
 });
@@ -3267,8 +3274,8 @@ const STOP_LINE = {
   neighbour: `${NEIGHBOUR_STOP}1); see error above.`,
   target: `${TARGET_STOP}1); see error above.`,
 };
+const TARGET_MISSING_SKIPPED = fenceText(/echo "(Warning: target-missing pass skipped[^"]*)" >&2/);
 // Lines the CLIs and libraries the fence runs print (not fence echo text).
-const TARGET_MISSING_SKIPPED = 'Warning: target-missing pass skipped — no integration branch resolved';
 const LANDING_SKIPPED = 'Warning: unlanded-blocker pass skipped — ';
 const LANDING_EXITED = `${LANDING_SKIPPED}preflight-records.js exited 1; no unlanded-blocker exclusions this pull`;
 const CLAIM_READ_FAILED_7001 = 'AUTO — dispatch: neighbour-in-flight claim read failed for #7001; treated as not in flight';
@@ -3468,7 +3475,7 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
     });
   }
 
-  test('AC4.1 detail: each fault\'s own effect, both sides (cache miss, fail-closed foreign state, origin/ targets, unprobed files, no overlap, no blob)', () => {
+  test('AC4.1 detail: each fault\'s own effect, both sides (cache miss, fail-closed foreign state, skipped target-missing pass, unprobed files, no overlap, no blob)', () => {
     // The un-faulted warm control in the same pool: the same scenario on the same miss origin hits,
     // so the miss below is the fault's doing, never a cache that could not hit at all.
     for (const [side, r] of sides(R['S1-gh-hit'])) assert.ok(r.stderr.includes(HIT_MESSAGE), `S1-gh-hit ${side}: the un-faulted warm run hits (control)`);
