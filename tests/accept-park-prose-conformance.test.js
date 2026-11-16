@@ -177,8 +177,9 @@ test('I2: Step 3 names /claude-tweaks:accept among the expected-head callers', (
 
 // I4: the repo-wide PR scan never recommends closing a parked PR, nor flags it as a stale pending-review PR.
 const SCAN_PARKED_ROW = '| A PR whose `Fixes` record `accept-park.js parked` exits 0';
+const SCAN_EXIT_0_OR_6 = 'exits 0 or 6 (unknown counts as parked';
 const SCAN_STALE_ROW = '| Open PR stale (>4 weeks, no updates) |';
-const SCAN_ITEM11_EXCLUSION = 'A PR whose `Fixes` record `accept-park.js parked` exits 0 is excluded from this row';
+const SCAN_ITEM11_EXCLUSION = 'A PR whose `Fixes` record `accept-park.js parked` exits 0 or 6 (unknown counts as parked) is excluded from this row';
 function pinPrScanPark(text) {
   const lines = text.split('\n');
   const parked = lines.findIndex((l) => l.startsWith(SCAN_PARKED_ROW));
@@ -187,6 +188,7 @@ function pinPrScanPark(text) {
   need(stale !== -1, 'github-pr-scan stale row missing');
   need(parked < stale, 'the parked-PR row must come before the stale row');
   need(lines[parked].includes('Yours, `/claude-tweaks:accept #{record}`, never Close'), 'the parked-PR row must route to /claude-tweaks:accept and never Close');
+  need(lines[parked].includes(SCAN_EXIT_0_OR_6), 'the parked-PR row must treat parked exit 0 or 6 as parked');
   const item11 = paragraphWith(text, '11. **Stale pending-review PR**');
   need(item11.includes(SCAN_ITEM11_EXCLUSION), 'item 11 must exclude a parked PR');
 }
@@ -204,6 +206,8 @@ test('I4 control: each github-pr-scan park claim goes red', () => {
   expectRed(() => pinPrScanPark(swapped), 'the parked-PR row must come before the stale row');
   expectRed(() => pinPrScanPark(PR_SCAN.replace(row, row.replace('never Close', 'or Close'))), 'the parked-PR row must route to /claude-tweaks:accept and never Close');
   expectRed(() => pinPrScanPark(PR_SCAN.replace(SCAN_ITEM11_EXCLUSION, 'A PR is kept in this row')), 'item 11 must exclude a parked PR');
+  expectRed(() => pinPrScanPark(PR_SCAN.replace(row, row.replace('exits 0 or 6', 'exits 0'))), 'the parked-PR row must treat parked exit 0 or 6 as parked');
+  expectRed(() => pinPrScanPark(PR_SCAN.replace(SCAN_ITEM11_EXCLUSION, SCAN_ITEM11_EXCLUSION.replace('exits 0 or 6 (unknown counts as parked)', 'exits 0'))), 'item 11 must exclude a parked PR');
 });
 
 // The shape line lists Step 2.9; the Phase 2 remedy is never run in-flow.
@@ -489,9 +493,11 @@ function pinReentry(text) {
   need(row.includes('`moved:true` from `reenter` (the PR head or base moved since the park), or `reenter-check` exit 8: say so, and withhold `Accept and merge` for this verdict round')
     && row.includes('re-run only by `_shared/pr-first-merge.md` Step 2.5 on a later merge') && row.includes('never inside this round'),
     'awaiting-local row must withhold Accept and merge for this verdict round, the checks re-run only by a later Step 2.5');
+  need(row.includes("only once the chosen option's actions have finished (on `Accept and merge`, after `_shared/pr-first-merge.md` Step 3 and Step 4), `node \"${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js\" reenter-remove"),
+    'awaiting-local row must run reenter-remove only after the chosen option finished, after Step 3 and Step 4 on Accept and merge');
 }
 
-test('AC4.5: /accept re-entry cites reenter, reenter-check and reenter-remove in that order', () => {
+test('AC4.5:/accept re-entry cites reenter, reenter-check and reenter-remove in that order', () => {
   pinReentry(ACCEPT);
 });
 
@@ -504,6 +510,10 @@ test('AC4.5 control: a swapped order and a dropped step both go red', () => {
   expectRed(() => pinReentry(ACCEPT.replace(row, row.replace(/reenter-remove/g, 'x'))), 'awaiting-local row must cite parked, reenter, reenter-check and reenter-remove');
   expectRed(() => pinReentry(ACCEPT.replace(row, row.replace('for this verdict round', 'until the checks are re-run'))),
     'awaiting-local row must withhold Accept and merge for this verdict round, the checks re-run only by a later Step 2.5');
+  expectRed(() => pinReentry(ACCEPT.replace(row, row.replace('only once the chosen option\'s actions have finished', 'after the verdict'))),
+    'awaiting-local row must run reenter-remove only after the chosen option finished, after Step 3 and Step 4 on Accept and merge');
+  expectRed(() => pinReentry(ACCEPT.replace(row, row.replace('after `_shared/pr-first-merge.md` Step 3 and Step 4', 'after the verdict'))),
+    'awaiting-local row must run reenter-remove only after the chosen option finished, after Step 3 and Step 4 on Accept and merge');
   expectRed(() => pinReentry(ACCEPT.replace(row, row.replace('never inside this round', 'here'))),
     'awaiting-local row must withhold Accept and merge for this verdict round, the checks re-run only by a later Step 2.5');
 });
@@ -537,6 +547,7 @@ function pinLocalVerdict(text) {
   need(merge.includes('reenter-check --worktree {worktree} --expect-head {head}` must exit 0') && merge.includes('`Accept and merge` withheld this round')
     && merge.includes('the checks are re-run by Step 2.5 on a later merge') && merge.includes('never in this round'),
     'Accept and merge must run reenter-check --expect-head at merge time and withhold itself this round on a move');
+  need(merge.includes('or any `reenter-check` exit other than 0, say'), 'Accept and merge must withhold itself this round on any reenter-check exit other than 0');
   need(merge.includes('`{expected-head}` = `reenter`\'s printed `head` (so `gh pr merge --match-head-commit`)'), 'Accept and merge must pin Step 3 to reenter\'s head with --match-head-commit');
   need(merge.indexOf('then re-checks the head') < merge.indexOf('then records the approval'), 'Accept and merge must re-check the head before recording the approval');
   need(merge.includes('as `dispatch/close-out.md` step 5 does') && merge.includes('waits on the required checks, no bypass'), 'Accept and merge must cite close-out step 5 and the required checks');
@@ -585,6 +596,8 @@ test('AC5.1 control: a dropped or reordered option goes red', () => {
   assert.ok(headCheck.startsWith(', then re-checks the head at merge time'), 'head-check clause located');
   expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace('`Accept and merge` withheld this round', 'this one withheld'))),
     'Accept and merge must run reenter-check --expect-head at merge time and withhold itself this round on a move');
+  expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace('any `reenter-check` exit other than 0', 'exit 8'))),
+    'Accept and merge must withhold itself this round on any reenter-check exit other than 0');
   expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace(' --expect-head {head}` must exit 0', '` must exit 0'))),
     'Accept and merge must run reenter-check --expect-head at merge time and withhold itself this round on a move');
   expectRed(() => pinLocalVerdict(ACCEPT.replace(block, block.replace(' and `{expected-head}` = `reenter`\'s printed `head` (so `gh pr merge --match-head-commit`)', ''))),
