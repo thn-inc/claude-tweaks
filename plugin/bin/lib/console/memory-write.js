@@ -14,6 +14,9 @@ const { resolveWithin, lstatType, canonicalRealpath } = require('../path-guard')
 
 const MEMORY_DIFF_CAP_BYTES = 20 * 1024;
 const NO_NEWLINE = '\\ No newline at end of file';
+// The reverse of a memory write. `core.autocrlf=false` because `git apply` writes through autocrlf even
+// outside a repository, so a Windows default would restore CRLF bytes (#5694).
+const MEMORY_REVERT_COMMAND = 'git -c core.autocrlf=false apply -R --unidiff-zero';
 
 function splitLines(text) {
   if (text === '') return { lines: [], noNewline: false };
@@ -80,4 +83,4 @@ function planMemoryWrite({ memoryDir, target, content, priorText }) {
   };
 }
 
-module.exports = { MEMORY_DIFF_CAP_BYTES, wholeFileDiff, resolveMemoryTarget, planMemoryWrite, sha256 };
+module.exports = { MEMORY_DIFF_CAP_BYTES, MEMORY_REVERT_COMMAND, wholeFileDiff, resolveMemoryTarget, planMemoryWrite, sha256 };

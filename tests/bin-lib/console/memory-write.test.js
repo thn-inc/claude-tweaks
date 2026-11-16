@@ -14,7 +14,7 @@ const { chmodDenialSkip } = require('../../helpers/root');
 const ROOT = path.join(__dirname, '..', '..', '..');
 const CLI = path.join(ROOT, 'plugin', 'bin', 'console-resolve.js');
 const { run, parseArgs } = require(CLI);
-const { wholeFileDiff, planMemoryWrite, MEMORY_DIFF_CAP_BYTES } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'memory-write'));
+const { wholeFileDiff, planMemoryWrite, MEMORY_DIFF_CAP_BYTES, MEMORY_REVERT_COMMAND } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'memory-write'));
 const { resolveAll } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'resolve'));
 
 const sha = (t) => crypto.createHash('sha256').update(t).digest('hex');
@@ -61,7 +61,13 @@ function diffOf(text) {
 function revert(fx, text) {
   const patch = path.join(fx.root, 'revert.patch');
   fs.writeFileSync(patch, diffOf(text));
-  execFileSync('git', ['apply', '-R', '--unidiff-zero', patch], { cwd: fx.memoryDir, windowsHide: true });
+  // Run the one constant the CLI prints, under the autocrlf a Windows install sets: `git apply` writes
+  // through autocrlf even outside a repository (#5694).
+  const gitconfig = path.join(fx.root, 'autocrlf.gitconfig');
+  fs.writeFileSync(gitconfig, '[core]\n\tautocrlf = true\n');
+  const [bin, ...args] = MEMORY_REVERT_COMMAND.split(' ');
+  assert.strictEqual(bin, 'git');
+  execFileSync(bin, [...args, patch], { cwd: fx.memoryDir, env: { ...process.env, GIT_CONFIG_GLOBAL: gitconfig, GIT_CONFIG_NOSYSTEM: '1' }, windowsHide: true });
 }
 
 test('wholeFileDiff: header, ranges and no-newline markers', () => {
@@ -252,11 +258,11 @@ test('a decisions.md that cannot be written exits 3 after the target was written
   assert.match(r.err, new RegExp(`wrote ${path.join(fx.memoryDir, 'note.md').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}, but the decisions.md entry could not be written`));
 });
 
-test('the entry head tells the reader how to reverse: strip the indent, git apply -R, from the memory directory', async () => {
+test('the entry head tells the reader how to reverse: strip the indent, git apply -R with autocrlf off, from the memory directory', async () => {
   const fx = fixture();
   assert.strictEqual((await write(fx, 'n.md', 'x\n')).code, 0);
   const head = decisions(fx).split('\n').find((l) => l.includes('Memory write'));
-  for (const part of ['strip the 4-space indent', 'git apply -R --unidiff-zero', 'from the memory directory']) assert.ok(head.includes(part), part);
+  for (const part of ['strip the 4-space indent', `${MEMORY_REVERT_COMMAND} {patch}`, 'git -c core.autocrlf=false apply -R --unidiff-zero {patch}', 'from the memory directory']) assert.ok(head.includes(part), part);
 });
 
 test('parseArgs: --memory-write needs its two companions, takes no other flag, and no other shape takes them', () => {

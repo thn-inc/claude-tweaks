@@ -58,7 +58,7 @@
 // automatic, revertable memory write (lib/console/memory-write.js), the Review Console's step 8 under control
 // mode. The target must resolve inside --memory-dir (symlinks followed; a create needs its parent to exist). It
 // writes the target, then logs one AUTO entry under /wrap-up naming the path, the prior sha256 (`none` on a
-// create) and the whole-file diff (reverse with `git apply -R`); a diff over 20 KiB stores the prior content
+// create) and the whole-file diff (reverse with `git -c core.autocrlf=false apply -R`); a diff over 20 KiB stores the prior content
 // at `{run}/staged/.memory-prior-{sha12}.md` (dot-prefixed so it never becomes a console item) and the entry
 // names that path instead. It needs control mode on with consoleAutoResolve granted (exit 4 otherwise, nothing
 // written) and takes no other flag. Exit 0 written, 2 malformed (any
@@ -95,7 +95,7 @@ const { extractPendingGrantedAt, partitionGrantComments } = require('./lib/issue
 const { writeFileAtomic } = require('./lib/atomic-write');
 const { unresolvedItems, splitMissing, formatResidueLines, consoleResidueItems } = require('./lib/console/residue');
 const { REWRITE_FROM, CARRY_REWRITE_FROM, REWRITE_TARGETS, REWRITE_ONLY_IN, rewriteItemResolution } = require('./lib/console/item-resolution');
-const { planMemoryWrite, resolveMemoryTarget } = require('./lib/console/memory-write');
+const { planMemoryWrite, resolveMemoryTarget, MEMORY_REVERT_COMMAND } = require('./lib/console/memory-write');
 const { decisionFactFor } = require('./lib/console/decision-facts');
 const { convergeResidue, composeResidueProposal, RESIDUE_FAILED } = require('./lib/console/residue-convergence');
 const { withLock } = require('./lib/file-lock');
@@ -684,7 +684,7 @@ function memoryWrite(o, runDir, { stdout, stderr, now, cwd }) {
     stderr(`console-resolve.js: could not write ${failing} (${err && err.message ? err.message : err}) — no decisions.md entry written\n`);
     return 3;
   }
-  const head = `Memory write ${plan.path}: prior sha256 ${plan.priorHash}; to reverse, strip the 4-space indent from the diff below into a patch file, then run git apply -R --unidiff-zero {patch} from the memory directory`;
+  const head = `Memory write ${plan.path}: prior sha256 ${plan.priorHash}; to reverse, strip the 4-space indent from the diff below into a patch file, then run ${MEMORY_REVERT_COMMAND} {patch} from the memory directory`;
   const indented = plan.diff.replace(/\n$/, '').split('\n').map((l) => `    ${l}`).join('\n');
   let text;
   let block = '';
