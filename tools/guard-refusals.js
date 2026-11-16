@@ -286,7 +286,7 @@ function renderReplay(r) {
   return lines.join('\n');
 }
 
-// null when fine; else the message for an exit-2. Reads through deps.fs, before any scan.
+// { list } when the file is valid; else { error } with the message for an exit-2. Reads through deps.fs, before any scan.
 function loadPatterns(file, deps) {
   let text;
   try {

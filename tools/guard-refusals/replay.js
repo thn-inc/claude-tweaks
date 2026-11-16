@@ -266,12 +266,10 @@ function replay(rows, given = {}) {
     }
     if (command.includes('node-eval-file.js') && command.includes('remote-branch-collision')) countClass('collision-fence', r);
 
-    if (compiled.length) {
-      for (const { id, re } of compiled) {
-        if (re.test(command)) {
-          byPattern[id].count++;
-          if (rw) byPattern[id].rewritten++;
-        }
+    for (const { id, re } of compiled) {
+      if (re.test(command)) {
+        byPattern[id].count++;
+        if (rw) byPattern[id].rewritten++;
       }
     }
   }
