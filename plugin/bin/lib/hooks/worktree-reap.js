@@ -447,9 +447,9 @@ function isWorktreeLocked(wtPath, { cwd } = {}) {
 function holdVerdict(wtPath, { hostname = os.hostname, isAlive = isPidAlive, startTime = pidStartTime } = {}) {
   try {
     let unverifiable = false;
+    // An empty start time is as unreadable as null: it must never read as a recycled pid.
+    const current = (pid) => { const t = startTime(pid); return t === '' ? null : t; };
     for (const { hold } of readHolds(wtPath)) {
-      // An empty start time is as unreadable as null: it must never read as a recycled pid.
-      const current = (pid) => { const t = startTime(pid); return t === '' ? null : t; };
       const { result, detail } = probeOwnerPid(hold, { hostname, pidAlive: isAlive, pidStartTime: current });
       // result is checked before detail: a thrown probe carries its error message as detail (result
       // 'error'), so a message that happens to read 'gone' must never be taken for a dead owner.
