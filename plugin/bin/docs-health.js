@@ -31,8 +31,8 @@ const TOOL_NAME = 'docs-health';
 // Mirrors bin/lib/code-health/dedup.js's RISK_RANK shape/direction exactly —
 // --min-confidence's "file when at or above the floor" semantics. Kept local
 // to this CLI (rather than in bin/lib/docs-health/dedup.js, which is a thin
-// re-export of the shared bin/lib/health-core/dedup.js used by four of the
-// five health skills) since the threshold/remember behavior below has no
+// re-export of the shared bin/lib/health-core/dedup.js used by every health
+// skill but code-health) since the threshold/remember behavior below has no
 // equivalent in that shared module — same reason code-health forked its own
 // dedup.js instead of extending the shared one.
 const CONFIDENCE_RANK = { high: 0, med: 1, low: 2 };
