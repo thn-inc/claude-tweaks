@@ -456,16 +456,19 @@ test('readDispatches: a dispatch with no procedure reads carries {} and [], an u
     readLine('2026-11-16T08:00:00.000Z', 'mr0', 'plugin/skills/_shared/early.md'),
     readLine('2026-11-16T10:00:03.000Z', 'mr1', 'plugin/skills/_shared/b.md'),
     readLine('not-a-time', 'mr2', 'plugin/skills/_shared/c.md'),
-    readLine('2026-11-16T10:00:07.000Z', 'mr3', '/repo/src/not-a-skill.md'),
+    readLine('2026-11-16T10:00:07.000Z', 'mr3', 'plugin/skills/_shared/d.md'),
+    readLine('2026-11-16T10:00:08.000Z', 'mr4', '/repo/src/not-a-skill.md'),
   ].join('\n') + '\n');
   const r = await readDispatches(dir, { window: { start: Date.parse('2026-11-16T09:00:00.000Z'), end: Date.parse('2026-11-16T11:00:00.000Z') } });
   const by = Object.fromEntries(r.items.map((i) => [i.agentId, i]));
   assert.deepEqual(by.q1.procedureFiles, {});
   assert.deepEqual(by.q1.procedureFileRows, []);
-  assert.deepEqual(by.q2.procedureFiles, { 'skills/_shared/b.md': 1, 'skills/_shared/c.md': 1 });
+  assert.deepEqual(by.q2.procedureFiles, { 'skills/_shared/b.md': 1, 'skills/_shared/c.md': 1, 'skills/_shared/d.md': 1 });
+  // transcript order: the untimed c row sits between b and d, booked at startTs
   assert.deepEqual(by.q2.procedureFileRows, [
     { ts: '2026-11-16T10:00:03.000Z', procedureFiles: { 'skills/_shared/b.md': 1 } },
     { ts: '2026-11-16T10:00:03.000Z', procedureFiles: { 'skills/_shared/c.md': 1 } },
+    { ts: '2026-11-16T10:00:07.000Z', procedureFiles: { 'skills/_shared/d.md': 1 } },
   ]);
 });
 
