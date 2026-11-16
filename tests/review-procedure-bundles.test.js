@@ -48,6 +48,10 @@ for (const site of SITES) {
     // The standalone path (no run directory) still reads the raw source by name.
     const standalone = `Standalone, with no \`$PIPELINE_RUN_DIR\`, read \`${site.source}\``;
     assert.ok(line.includes(standalone), `${site.step} line is missing the standalone read: ${standalone}`);
+    // The compose is gated on the run directory, and the gate comes before the call.
+    const gate = 'With `$PIPELINE_RUN_DIR` set, compose it first';
+    assert.ok(line.includes(gate), `${site.step} line is missing the gating clause: ${gate}`);
+    assert.ok(line.indexOf(gate) < line.indexOf(site.callLine), `${site.step} line states the gate after the call`);
   });
 }
 

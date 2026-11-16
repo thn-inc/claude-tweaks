@@ -284,7 +284,7 @@ Read `step3-tiebreak.md` in this skill's directory and run it after Step 3's rep
 
 Routing logic lives entirely in `step3-routing.md` in this skill's directory: severity-based auto routing (with the contract floors), the interactive batch table, recommendation rules, the deferral gate, the parallel-fix dispatch contract (3+ independent fixes via `/superpowers:dispatching-parallel-agents`, with its mandatory post-dispatch diff audit), and the auto-advance-on-zero-findings rule. `unconfirmed` and `contested` findings reach routing only through Step 3.7's `confirmed` outcome. The fix-now re-verify runs scoped per `test/verification.md`'s "Re-verify scoping" table (review-fix row).
 
-**QA after a Step 3 fix wave (#3598).** A Step 3 Routing fix that touches a story's `source_files` leaves QA as stale as a Step 6.7 fix does, so it gets Step 6.7 item 4's affected-story re-run too — once per review, not once per wave. Before Step 3 Routing applies its first fix (AUTO or Fix now, and before any parallel fix dispatch), capture `WAVE_BASE` exactly as Step 6.7's opening (`late-findings-routing.md`) describes; Step 6.7 then keeps that SHA, and its item 4 covers both waves' files. When Step 6.7 does not run, run its item 4 on its own, right before Step 7, against the same `WAVE_BASE` — read only that file's `WAVE_BASE` paragraph and item 4. A Step 5 simplification edit made after that capture falls inside the same diff and counts the same way.
+**QA after a Step 3 fix wave (#3598).** A Step 3 Routing fix that touches a story's `source_files` leaves QA as stale as a Step 6.7 fix does, so it gets Step 6.7 item 4's affected-story re-run too — once per review, not once per wave. Before Step 3 Routing applies its first fix (AUTO or Fix now, and before any parallel fix dispatch), capture `WAVE_BASE` exactly as Step 6.7's opening (`late-findings-routing.md`) describes; Step 6.7 then keeps that SHA, and its item 4 covers both waves' files. When Step 6.7 does not run, run its item 4 on its own, right before Step 7, against the same `WAVE_BASE` — read that file whole, and follow only its `WAVE_BASE` paragraph and item 4. A Step 5 simplification edit made after that capture falls inside the same diff and counts the same way.
 
 ---
 
@@ -363,7 +363,7 @@ Read `focus-criterion-passes.md` in this skill's directory now and follow its th
 
 Runs **at most once** per review, after Steps 6, 6.5, 6.6, 6.65, and 6.66 have all completed — and only when at least one of them produced actionable findings (Step 6 in full mode with actionable "UI / Visual" findings; Step 6.5 with `{result: "advisory", findings: [...]}`; Step 6.6, Step 6.65, or Step 6.66 with one or more judged findings) AND the user opts to action findings inline.
 
-Read `late-findings-routing.md` in this skill's directory now and follow it; Step 3 Routing's item-4-alone case reads only that file's `WAVE_BASE` paragraph and item 4.
+Read `late-findings-routing.md` in this skill's directory now and follow it; Step 3 Routing's item-4-alone case reads it whole too, and follows only its `WAVE_BASE` paragraph and item 4.
 
 ## Step 7: Present Review Summary
 

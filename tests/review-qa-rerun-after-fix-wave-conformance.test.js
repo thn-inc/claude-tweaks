@@ -40,6 +40,22 @@ test('code-mode-steps Step 6.7 points at late-findings-routing.md', () => {
   assert.ok(!step67Pointer.includes('dispositionByReview'), "Step 6.7's body must no longer sit in code-mode-steps.md");
 });
 
+// #4359: the item-4-alone reader reads late-findings-routing.md whole and follows only part of it,
+// never a piecewise read of the part it needs.
+test('every reader of late-findings-routing.md reads it whole, even the item-4-alone case', () => {
+  const sites = [
+    ['Step 3 Routing', step3, 'read that file whole, and follow only its `WAVE_BASE` paragraph and item 4'],
+    ['Step 6.7 pointer', step67Pointer, 'reads it whole too, and follows only its `WAVE_BASE` paragraph and item 4'],
+    ['late-findings-routing.md intro', step67, 'reads this whole file too, and follows only the `WAVE_BASE` paragraph below and item 4'],
+  ];
+  for (const [name, text, want] of sites) {
+    assert.ok(text.includes(want), `${name} is missing: ${want}`);
+    assert.ok(!/reads? only (?:that file's |the )`WAVE_BASE` paragraph/.test(text), `${name} still invites a piecewise read`);
+  }
+  assert.ok(step67.includes('\n\n**One routing pass for all five late-finding sources.** It replaces what were two sequential passes'),
+    'the WAVE_BASE paragraph opens with its lead-in');
+});
+
 test('#3771: Step 4 re-runs /test with the --source review parent signal', () => {
   assert.ok(step4.includes('re-run `/claude-tweaks:test --source review` before proceeding'));
 });
