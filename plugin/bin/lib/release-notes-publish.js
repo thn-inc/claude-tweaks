@@ -27,7 +27,7 @@
 const { renderReleaseNotes, extractReleaseNotes } = require('./release-notes');
 const { readChangelogMaxReleases } = require('./policy');
 const { resolvePolicyKeys } = require('./policy-schema');
-const { parseChangelogFooter } = require('./changelog');
+const { parseChangelogFooter, parseChangelogVersions } = require('./changelog');
 const { prepareTrim } = require('./changelog-release-trim');
 
 const HIGHLIGHTS_HEADING = '### Highlights';
@@ -112,7 +112,8 @@ function applyToChangelogEntry(changelog, block) {
 const firstLine = (message) => String(message).split(/\r?\n/)[0];
 
 // The branch the trimmed commit must be reachable from: `integration-branch`, else the
-// target of origin/HEAD, else `main`. Called only when `changelog-max-releases` is above 0.
+// target of origin/HEAD, else the checked-out branch, else `main`. Called only when a trim
+// needs the ancestor check (the key is above 0 and the file is over the bound).
 function defaultBranch(deps, readPolicy) {
   const policyRaw = readPolicy();
   const resolved = resolvePolicyKeys(['integration-branch'], { policyRaw: typeof policyRaw === 'string' ? policyRaw : null })['integration-branch'];
@@ -122,9 +123,43 @@ function defaultBranch(deps, readPolicy) {
     const head = deps.git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']).trim().replace(/^origin\//, '');
     if (head) return head;
   } catch {
-    // no origin/HEAD: fall through to main
+    // no origin/HEAD: fall through to the checked-out branch
+  }
+  try {
+    const current = deps.git(['branch', '--show-current']).trim();
+    if (current) return current;
+  } catch {
+    // unreadable: fall through to main
   }
   return 'main';
+}
+
+function commitAndPush(deps, text, subject, progress = {}) {
+  deps.writeFile('CHANGELOG.md', text);
+  deps.git(['add', 'CHANGELOG.md']);
+  deps.git(['commit', '-m', subject]);
+  progress.committed = true;
+  deps.git(['push']);
+}
+
+// The trim-only commit never fails the run: on any error it undoes what it did (the commit when
+// one landed, then the file and the index), prints one line and reports false.
+function commitTrimOnly(deps, text, original, subject) {
+  const progress = { committed: false };
+  try {
+    commitAndPush(deps, text, subject, progress);
+    return true;
+  } catch (err) {
+    try {
+      if (progress.committed) deps.git(['reset', '--soft', 'HEAD~1']);
+      deps.writeFile('CHANGELOG.md', original);
+      deps.git(['add', 'CHANGELOG.md']);
+    } catch {
+      // best effort: the failure line below is what the caller needs
+    }
+    deps.stderr(`changelog trim: failed (${firstLine((err && err.message) || err)}); file left untrimmed\n`);
+    return false;
+  }
 }
 
 // The CHANGELOG half of the run: the Highlights entry (when there is a block) and the bounded
@@ -143,10 +178,13 @@ function publishChangelog(deps, { pair, block, key, readPolicy }) {
     try {
       // An unreadable policy is reported by prepareTrim before it touches the text.
       if (block === null && key.error == null) changelog = deps.readFile('CHANGELOG.md');
-      if (typeof changelog === 'string' || key.error != null) {
+      const text = highlighted !== null ? highlighted : changelog;
+      // Within the bound nothing would be removed: resolve no branch, make no git call.
+      const withinBound = key.error == null && typeof text === 'string' && parseChangelogVersions(text).length <= key.count;
+      if (!withinBound && (typeof changelog === 'string' || key.error != null)) {
         const branch = key.count > 0 ? defaultBranch(deps, readPolicy) : null;
         trimmed = prepareTrim({
-          text: highlighted !== null ? highlighted : changelog,
+          text,
           readPolicy,
           git: deps.git,
           ancestorRefs: branch === null ? [] : [`refs/remotes/origin/${branch}`, `refs/heads/${branch}`],
@@ -164,10 +202,11 @@ function publishChangelog(deps, { pair, block, key, readPolicy }) {
     if (block !== null) deps.stdout('release-notes-publish: CHANGELOG.md already carries the rendered block (or no entry found) — skipped\n');
     return;
   }
-  deps.writeFile('CHANGELOG.md', finalText);
-  deps.git(['add', 'CHANGELOG.md']);
-  deps.git(['commit', '-m', highlighted !== null ? `docs(changelog): append Highlights for ${pair.current}` : `chore: trim CHANGELOG.md to the newest ${trimmed.count} releases`]);
-  deps.git(['push']);
+  if (highlighted !== null) {
+    commitAndPush(deps, finalText, `docs(changelog): append Highlights for ${pair.current}`);
+  } else if (!commitTrimOnly(deps, finalText, changelog, `chore: trim CHANGELOG.md to the newest ${trimmed.count} releases`)) {
+    return;
+  }
   const trimNote = trimmed ? `trimmed to the newest ${trimmed.count} releases` : null;
   if (highlighted !== null) {
     deps.stdout(`release-notes-publish: committed Highlights into CHANGELOG.md for ${pair.current}${trimNote ? ` and ${trimNote}` : ''}\n`);
@@ -178,7 +217,16 @@ function publishChangelog(deps, { pair, block, key, readPolicy }) {
 
 function run(argv, deps) {
   try {
-    const readPolicy = deps.readPolicy || (() => null);
+    // Read once: the key read, the trim and the branch lookup all see the same answer.
+    const rawPolicy = deps.readPolicy || (() => null);
+    let memo = null;
+    const readPolicy = () => {
+      if (memo === null) {
+        try { memo = { value: rawPolicy() }; } catch (err) { memo = { err }; }
+      }
+      if ('err' in memo) throw memo.err;
+      return memo.value;
+    };
     const key = readChangelogMaxReleases(readPolicy);
     const releases = JSON.parse(deps.gh(['release', 'list', '--json', 'tagName,publishedAt', '--limit', '2']));
     const pair = resolveTagPair(releases);

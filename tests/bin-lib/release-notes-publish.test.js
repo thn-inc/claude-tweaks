@@ -397,8 +397,8 @@ function trimDeps(o = {}) {
 }
 
 test('AC2.1 (publish): with the key 0 or absent the written CHANGELOG is byte-identical to the base behavior', () => {
-  const block = '* Added the thing.\n* Fixed the other thing.';
-  const expected = applyToChangelogEntry(FOUR_SECTIONS, block);
+  // The base commit's output, spelled out: the Highlights block closes the newest entry, nothing else moves.
+  const expected = '# Changelog\n\n## 1.3.0 (2026-10-02)\n\n### Features\n\n* a thing\n\n### Highlights\n* Added the thing.\n* Fixed the other thing.\n\n## 1.2.0 (2026-09-01)\n\n### Bug Fixes\n\n* b\n\n## 1.1.0 (2026-08-01)\n\n### Features\n\n* c\n\n## 1.0.0 (2026-07-01)\n\n### Features\n\n* d\n';
   for (const policy of ['changelog-max-releases: 0\n', undefined]) {
     const { deps, state } = trimDeps({ policy });
     assert.strictEqual(run([], deps), 0, state.err);
@@ -515,6 +515,90 @@ test('the ancestor check falls back to the local branch ref when origin/{branch}
   } });
   assert.strictEqual(run([], deps), 0, state.err);
   assert.ok(parseChangelogFooter(state.files['CHANGELOG.md']));
+});
+
+test('a push that throws on the trim-only path: exit 0, one failure line, the file and index restored', () => {
+  // both trim-only exits: no trailers, and a single published release
+  for (const o of [{ commitBodies: ['fix: a\n\nno footer'] }, { releases: [{ tagName: 'v1.3.0', publishedAt: '2026-10-02T00:00:00Z' }] }]) {
+    const { deps, state } = trimDeps({ policy: 'changelog-max-releases: 2\n', ...o });
+    const base = deps.git;
+    deps.git = (args) => {
+      const key = args.join(' ');
+      if (key === 'push') { state.git.push(key); throw new Error('rejected: non-fast-forward\nhint: pull first'); }
+      if (key === 'reset --soft HEAD~1') { state.git.push(key); return ''; }
+      return base(args);
+    };
+    assert.strictEqual(run([], deps), 0);
+    assert.strictEqual(state.err, 'changelog trim: failed (rejected: non-fast-forward); file left untrimmed\n');
+    assert.strictEqual(state.files['CHANGELOG.md'], FOUR_SECTIONS);
+    // the commit is undone before the file is restored, and the restored file is re-staged
+    assert.ok(state.git.indexOf('reset --soft HEAD~1') > state.git.indexOf('push'), state.git.join('\n'));
+    assert.strictEqual(state.git[state.git.length - 1], 'add CHANGELOG.md');
+    assert.ok(!/committed CHANGELOG/.test(state.out), state.out);
+  }
+});
+
+test('a push that throws on the Highlights path still fails the run, as before the key existed', () => {
+  const { deps, state } = trimDeps({ policy: 'changelog-max-releases: 2\n' });
+  const base = deps.git;
+  deps.git = (args) => { if (args.join(' ') === 'push') throw new Error('rejected: non-fast-forward'); return base(args); };
+  assert.strictEqual(run([], deps), 1);
+  assert.match(state.err, /rejected: non-fast-forward/);
+});
+
+test('a write that throws on the trim-only path: exit 0, one failure line', () => {
+  const { deps, state } = trimDeps({ policy: 'changelog-max-releases: 2\n', commitBodies: ['fix: a\n\nno footer'] });
+  deps.writeFile = () => { throw new Error('EROFS: read-only file system'); };
+  assert.strictEqual(run([], deps), 0);
+  assert.strictEqual(state.err, 'changelog trim: failed (EROFS: read-only file system); file left untrimmed\n');
+});
+
+test('an unreadable policy with a Highlights block: Highlights committed, unreadable line printed, exit 0', () => {
+  const { deps, state } = trimDeps({ readPolicy: () => { throw new Error('EACCES: permission denied'); } });
+  assert.strictEqual(run([], deps), 0);
+  assert.strictEqual(state.err, 'changelog trim: policy unreadable (EACCES: permission denied); not trimmed\n');
+  assert.ok(state.git.includes('commit -m docs(changelog): append Highlights for v1.3.0'));
+  assert.strictEqual(parseChangelogFooter(state.files['CHANGELOG.md']), null);
+  assert.ok(state.files['CHANGELOG.md'].includes('### Highlights'));
+});
+
+test('within the bound no git call is made and no branch is resolved', () => {
+  const { deps, state } = trimDeps({ policy: 'changelog-max-releases: 9\n', commitBodies: ['fix: a\n\nno footer'] });
+  const base = deps.git;
+  const trimCalls = [];
+  deps.git = (args) => { if (['symbolic-ref', 'branch', 'rev-parse', 'merge-base', 'remote'].includes(args[0])) { trimCalls.push(args[0]); throw new Error(`unexpected ${args[0]}`); } return base(args); };
+  assert.strictEqual(run([], deps), 0);
+  // the branch lookup swallows its own git errors, so the calls themselves are the evidence
+  assert.deepStrictEqual(trimCalls, []);
+  assert.strictEqual(state.err, '');
+  assert.deepStrictEqual(state.writes, []);
+});
+
+test('the policy is read once per run, whatever the number of consumers', () => {
+  const { deps, state } = trimDeps({ policy: 'changelog-max-releases: 2\n' });
+  let reads = 0;
+  const inner = deps.readPolicy;
+  deps.readPolicy = () => { reads += 1; return inner(); };
+  assert.strictEqual(run([], deps), 0, state.err);
+  assert.strictEqual(reads, 1);
+});
+
+test('the default branch falls back to the checked-out branch before main', () => {
+  const noHead = Object.assign(new Error('no ref'), { status: 128 });
+  const verify = 'rev-parse --verify --quiet --end-of-options refs/remotes/origin/work^{commit}';
+  const { deps, state } = trimDeps({ policy: 'changelog-max-releases: 2\n', gitAnswers: {
+    'symbolic-ref --short refs/remotes/origin/HEAD': noHead,
+    'branch --show-current': 'work\n',
+    [verify]: `${TIP}\n`,
+    [`merge-base --is-ancestor --end-of-options ${TIP} refs/remotes/origin/work`]: '',
+  } });
+  assert.strictEqual(run([], deps), 0, state.err);
+  assert.ok(state.git.includes(verify), state.git.join('\n'));
+  assert.ok(parseChangelogFooter(state.files['CHANGELOG.md']));
+  // an empty answer (detached HEAD) skips to main
+  const detached = trimDeps({ policy: 'changelog-max-releases: 2\n', gitAnswers: { 'symbolic-ref --short refs/remotes/origin/HEAD': noHead, 'branch --show-current': '\n' } });
+  assert.strictEqual(run([], detached.deps), 0, detached.state.err);
+  assert.ok(detached.state.git.some((k) => k.endsWith('refs/remotes/origin/main^{commit}')), detached.state.git.join('\n'));
 });
 
 test('publish: no Highlights and nothing to trim → no commit, no push', () => {
