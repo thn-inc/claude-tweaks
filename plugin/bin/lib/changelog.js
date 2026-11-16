@@ -70,7 +70,7 @@ function renderChangelogFooter({ version, sha, newestRemoved, repoUrl }) {
     + `Newest release removed: v${newestRemoved}\n\n`
     + `    git show ${sha}:CHANGELOG.md\n\n`
     + 'A release removed by a later trim keeps its notes in the file at its own tag, without the Highlights block added after the tag: `git show v<version>:CHANGELOG.md`.\n';
-  if (repoUrl != null) {
+  if (repoUrl) {
     out += `\n- [CHANGELOG.md at ${sha.slice(0, 12)}](${repoUrl}/blob/${sha}/CHANGELOG.md)\n`
       + `- [All releases](${repoUrl}/releases)\n`;
   }
@@ -78,8 +78,11 @@ function renderChangelogFooter({ version, sha, newestRemoved, repoUrl }) {
 }
 
 function parseChangelogVersions(changelogText) {
+  return entriesBeforeFooter(changelogText, parseChangelogFooter(changelogText));
+}
+
+function entriesBeforeFooter(changelogText, footer) {
   const matches = [...changelogText.matchAll(HEADER_RE)];
-  const footer = parseChangelogFooter(changelogText);
   return matches.map((match, i) => {
     const start = match.index + match[0].length;
     let end = i + 1 < matches.length ? matches[i + 1].index : changelogText.length;
@@ -95,15 +98,18 @@ function parseChangelogVersions(changelogText) {
 
 // `partial` (non-enumerable, so the array still deep-equals a plain one) is true only when
 // a trim removed a version the range can reach: the file carries a footer and oldVersion
-// (exclusive) is older than its newest removed version.
+// (exclusive) is older than its newest removed version. A malformed oldVersion throws only
+// where it always did (from the filter, when the file has sections); with nothing to filter
+// it yields [] and partial false, as on the pre-footer code.
 function extractChangelogRange(changelogText, oldVersion, newVersion) {
-  const range = parseChangelogVersions(changelogText).filter(
+  const footer = parseChangelogFooter(changelogText);
+  const range = entriesBeforeFooter(changelogText, footer).filter(
     (entry) =>
       compareVersions(entry.version, oldVersion) > 0 &&
       compareVersions(entry.version, newVersion) <= 0,
   );
-  const footer = parseChangelogFooter(changelogText);
   const partial = Boolean(footer && footer.newestRemoved !== null
+    && /^\d+\.\d+\.\d+$/.test(String(oldVersion).trim())
     && compareVersions(oldVersion, footer.newestRemoved) < 0);
   Object.defineProperty(range, 'partial', { value: partial, enumerable: false });
   return range;
@@ -142,11 +148,13 @@ function trimChangelog(text, count, { sha, repoUrl } = {}) {
       version: versionOf(sections[0]),
       sha,
       newestRemoved: removed[0],
-      repoUrl: repoUrl ?? null,
+      repoUrl: repoUrl || null,
     });
   }
 
-  const kept = text.slice(0, sections[count].index).trimEnd();
+  // Strip only trailing newlines and whitespace-only lines: spaces ending the last content
+  // line (a Markdown hard break) are section bytes, not gap.
+  const kept = text.slice(0, sections[count].index).replace(/(?:\n[ \t]*)+$/, '');
   return { text: `${kept}\n\n${footerText}`, removed };
 }
 

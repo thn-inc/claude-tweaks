@@ -447,3 +447,71 @@ test('parseChangelogFooter: no origin → no links; heading without its record l
   assert.strictEqual(parseChangelogFooter(`Full file up to v1.0.0: commit ${SHA_A}\n\n## Older releases\n`), null, 'record line above the heading');
   assert.strictEqual(parseChangelogFooter(`### Older releases\n\nFull file up to v1.0.0: commit ${SHA_A}\n`), null);
 });
+
+test('an empty repoUrl counts as no origin: no links, and the footer reads back repoUrl null', () => {
+  const rendered = renderChangelogFooter({ version: '1.0.0', sha: SHA_A, newestRemoved: '0.9.0', repoUrl: '' });
+  assert.doesNotMatch(rendered, /\]\(/);
+  assert.strictEqual(parseChangelogFooter(rendered).repoUrl, null);
+  const r = trimChangelog(sixty().text, 50, { sha: SHA_A, repoUrl: '' });
+  const tail = r.text.slice(parseChangelogFooter(r.text).index);
+  assert.doesNotMatch(tail, /\]\(/);
+  assert.strictEqual(parseChangelogFooter(r.text).repoUrl, null);
+});
+
+test('a ## line in the header that HEADER_RE does not match stays byte-identical through a trim', () => {
+  const { text, headings } = sixty();
+  const header = '# Changelog\n\n## Unreleased notes\n\nsomething pending\n\n';
+  const withStray = text.replace('# Changelog\n\nintro prose\n\n', header);
+  const r = trimChangelog(withStray, 50, { sha: SHA_A });
+  assert.ok(r.text.startsWith(header));
+  assert.strictEqual(r.text.indexOf(headings[0]), header.length);
+  assert.strictEqual(r.removed.length, 10);
+});
+
+test('a file with no release sections comes back unchanged with no footer', () => {
+  const text = '# Changelog\n\nintro\n';
+  assert.deepStrictEqual(trimChangelog(text, 1, { sha: SHA_A }), { text, removed: [] });
+  assert.deepStrictEqual(trimChangelog(text, 1), { text, removed: [] });
+  assert.strictEqual(parseChangelogFooter(text), null);
+});
+
+test('trailing spaces on the last kept section\'s last content line (a Markdown hard break) survive the trim', () => {
+  const text = [
+    '# Changelog',
+    '',
+    '## v1.0.3 — c',
+    '',
+    'body c',
+    '',
+    '## v1.0.2 — b',
+    '',
+    'line ends with a hard break  ',
+    '',
+    '## v1.0.1 — a',
+    '',
+    'body a',
+    '',
+  ].join('\n');
+  const r = trimChangelog(text, 2, { sha: SHA_A });
+  const idx = parseChangelogFooter(r.text).index;
+  assert.strictEqual(r.text.slice(0, idx), text.slice(0, text.indexOf('## v1.0.1')).replace(/\n+$/, '') + '\n\n');
+  assert.ok(r.text.includes('line ends with a hard break  \n\n## Older releases'));
+  // A whitespace-only line in the gap is still gap, not content.
+  const spacedGap = text.replace('hard break  \n\n## v1.0.1', 'hard break  \n   \n\n## v1.0.1');
+  const r2 = trimChangelog(spacedGap, 2, { sha: SHA_A });
+  assert.ok(r2.text.includes('line ends with a hard break  \n\n## Older releases'));
+});
+
+test('extractChangelogRange with a malformed oldVersion throws no more than before: a footered file with no sections returns [] with partial false', () => {
+  const footerOnly = `# Changelog\n\n${renderChangelogFooter({ version: '1.0.5', sha: SHA_A, newestRemoved: '1.0.2', repoUrl: null })}`;
+  for (const bad of ['', 'abc', undefined]) {
+    const range = extractChangelogRange(footerOnly, bad, '9.9.9');
+    assert.deepStrictEqual(range, []);
+    assert.strictEqual(range.partial, false);
+  }
+  // Unchanged: with sections present, a malformed oldVersion still throws (as on the base commit).
+  const trimmed = trimChangelog(sixty().text, 50, { sha: SHA_A }).text;
+  assert.throws(() => extractChangelogRange(trimmed, '', '9.9.9'), /Invalid semver version/);
+  // A valid oldVersion on the footer-only file still computes partial.
+  assert.strictEqual(extractChangelogRange(footerOnly, '1.0.1', '9.9.9').partial, true);
+});
