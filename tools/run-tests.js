@@ -575,19 +575,25 @@ function applyDefaultSelection({ select, log, exit }) {
   return plan.action === 'subset' ? plan.files : null;
 }
 
-// Returns a new env with git's auto-maintenance switched off, via env-carried config (appended after
-// any inherited GIT_CONFIG_* so it never clobbers them). Never mutates `env`; a malformed inherited
-// GIT_CONFIG_COUNT is left alone rather than guessed at.
-function gitFixtureConfigEnv(env) {
+// Returns a new env with `pairs` ([key, value]...) appended as env-carried git config after any
+// inherited GIT_CONFIG_* entries, so it never clobbers them (#5768: a test that sets its own
+// GIT_CONFIG_COUNT uses this to keep the runner's entries). Never mutates `env`; a malformed
+// inherited GIT_CONFIG_COUNT is left alone rather than guessed at.
+function appendGitConfigEnv(env, pairs) {
   const out = { ...env };
   if (env.GIT_CONFIG_COUNT !== undefined && !/^\d+$/.test(env.GIT_CONFIG_COUNT)) return out;
   const n = env.GIT_CONFIG_COUNT === undefined ? 0 : Number(env.GIT_CONFIG_COUNT);
-  out.GIT_CONFIG_COUNT = String(n + 2);
-  out[`GIT_CONFIG_KEY_${n}`] = 'maintenance.auto';
-  out[`GIT_CONFIG_VALUE_${n}`] = 'false';
-  out[`GIT_CONFIG_KEY_${n + 1}`] = 'gc.auto';
-  out[`GIT_CONFIG_VALUE_${n + 1}`] = '0';
+  out.GIT_CONFIG_COUNT = String(n + pairs.length);
+  pairs.forEach(([key, value], i) => {
+    out[`GIT_CONFIG_KEY_${n + i}`] = key;
+    out[`GIT_CONFIG_VALUE_${n + i}`] = value;
+  });
   return out;
+}
+
+// Returns a new env with git's auto-maintenance switched off, via env-carried config.
+function gitFixtureConfigEnv(env) {
+  return appendGitConfigEnv(env, [['maintenance.auto', 'false'], ['gc.auto', '0']]);
 }
 
 // #5768: the repository-level half of the maintenance switch-off. Env-carried config
@@ -653,7 +659,7 @@ function writeGitTemplateDir(dir, env, { git = (args, opts) => execFileSync('git
 }
 
 module.exports = {
-  gitFixtureConfigEnv, writeGitTemplateDir, GIT_TEMPLATE_CONFIG,
+  gitFixtureConfigEnv, appendGitConfigEnv, writeGitTemplateDir, GIT_TEMPLATE_CONFIG,
   listTestFiles, buildTestArgs, resolveConcurrency, resolveSlots, subsetFallbackReason, WIN32_COMMAND_LINE_MAX,
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
   parseShard, readDurations, assignShards, extractRunFlags, durationsPartialPath, finishRecording,

@@ -17,7 +17,7 @@ const ROOT = path.join(__dirname, '..');
 const {
   resolveConcurrency, resolveSlots, listTestFiles, buildTestArgs,
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
-  subsetFallbackReason, gitFixtureConfigEnv, writeGitTemplateDir, GIT_TEMPLATE_CONFIG, NODE_TEST_VALUE_FLAGS, parseRunnerOperands, canonicalPath,
+  subsetFallbackReason, gitFixtureConfigEnv, appendGitConfigEnv, writeGitTemplateDir, GIT_TEMPLATE_CONFIG, NODE_TEST_VALUE_FLAGS, parseRunnerOperands, canonicalPath,
 } = require(path.join(ROOT, 'tools', 'run-tests.js'));
 
 test('resolveConcurrency defaults to half the cores, at least 1', () => {
@@ -1270,6 +1270,22 @@ test('gitFixtureConfigEnv returns an unchanged copy when GIT_CONFIG_COUNT is not
   const out = gitFixtureConfigEnv(input);
   assert.deepStrictEqual(out, { GIT_CONFIG_COUNT: 'abc', PATH: '/x' });
   assert.notStrictEqual(out, input);
+  assert.deepStrictEqual(input, copy, 'the input env must not be mutated');
+});
+
+test('appendGitConfigEnv appends the given pairs after inherited entries', () => {
+  const input = {
+    GIT_CONFIG_COUNT: '2',
+    GIT_CONFIG_KEY_0: 'core.autocrlf', GIT_CONFIG_VALUE_0: 'true',
+    GIT_CONFIG_KEY_1: 'maintenance.auto', GIT_CONFIG_VALUE_1: 'false',
+  };
+  const copy = { ...input };
+  assert.deepStrictEqual(appendGitConfigEnv(input, [['branch.main.remote', 'origin']]), {
+    GIT_CONFIG_COUNT: '3',
+    GIT_CONFIG_KEY_0: 'core.autocrlf', GIT_CONFIG_VALUE_0: 'true',
+    GIT_CONFIG_KEY_1: 'maintenance.auto', GIT_CONFIG_VALUE_1: 'false',
+    GIT_CONFIG_KEY_2: 'branch.main.remote', GIT_CONFIG_VALUE_2: 'origin',
+  });
   assert.deepStrictEqual(input, copy, 'the input env must not be mutated');
 });
 
