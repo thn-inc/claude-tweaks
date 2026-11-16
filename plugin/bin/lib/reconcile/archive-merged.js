@@ -1890,11 +1890,11 @@ function isStructurallyStuck(dir, reason, now = Date.now()) {
 // realpath, and calls the injectable `liveness` function (which spawns `ps`
 // and reads events), evaluated LAST after every cheap gate. Every other
 // input (state, worktrees, sessionId, skipReason) is pre-computed by the
-// caller, per this file's own Gotchas — and, deliberately excluded from this
-// function entirely, the abandoned-interrupted kind's `checkRunIntegrity`
-// shipped-unclosed companion gate stays a call-site-only decision so
-// the `explicit: true` archival path's justification is never silently
-// folded into a kind this function alone decided.
+// caller, per this file's own Gotchas. The abandoned-interrupted kind's
+// `checkRunIntegrity` shipped-unclosed companion gate is deliberately excluded
+// from this function entirely: it stays a call-site-only decision so the
+// `explicit: true` archival path's justification is never silently folded into
+// a kind this function alone decided.
 //
 // -> { kind: 'orphaned-mint'|'abandoned-interrupted'|'adhoc-superseded'|
 //            'adhoc-session-ended'|'structurally-stuck'|'none',
