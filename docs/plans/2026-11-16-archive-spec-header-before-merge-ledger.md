@@ -2,14 +2,14 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
-| 1 | build | SDD ruling — noop envelope reports logged: true (archive-run-header.js): ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
-| 2 | build | SDD ruling — multi-spec move: hand-log the owed line on logged: false: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
-| 3 | build | SDD ruling — Section C keep-as-is: no carve-out for the move: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
-| 4 | build | SDD ruling — fix worktree-merge.md reconciliation despite the No reader changes Non-Goal: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | — |
-| 5 | build | SDD ruling — verification-brief --spec gains the archived header candidate: ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | open | — |
-| 6 | build | SDD ruling — final review declined lines accepted with no work: ratify or reverse at the Review Console (staged/sdd-ruling-6.md) | open | — |
-| 7 | build | SDD ruling — residual fix: bind run-id, anchor candidate, name the capture exception: ratify or reverse at the Review Console (staged/sdd-ruling-7.md) | open | — |
-| 8 | build | SDD ruling — pipeline-run-dir invariant reworded from the plan sentence: ratify or reverse at the Review Console (staged/sdd-ruling-8.md) | open | — |
+| 1 | build | SDD ruling — noop envelope reports logged: true (archive-run-header.js): ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | accepted | ratified at Review Console — Task 3's prose hand-logs on `logged: false`, and a noop reporting false would make wrap-up hand-log a bogus line; keeps one meaning per field |
+| 2 | build | SDD ruling — multi-spec move: hand-log the owed line on logged: false: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | accepted | ratified at Review Console — no — why clause on the ruling line |
+| 3 | build | SDD ruling — Section C keep-as-is: no carve-out for the move: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | accepted | ratified at Review Console — no — why clause on the ruling line |
+| 4 | build | SDD ruling — fix worktree-merge.md reconciliation despite the No reader changes Non-Goal: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | accepted | ratified at Review Console — no — why clause on the ruling line |
+| 5 | build | SDD ruling — verification-brief --spec gains the archived header candidate: ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | accepted | ratified at Review Console — no — why clause on the ruling line |
+| 6 | build | SDD ruling — final review declined lines accepted with no work: ratify or reverse at the Review Console (staged/sdd-ruling-6.md) | accepted | ratified at Review Console — no — why clause on the ruling line |
+| 7 | build | SDD ruling — residual fix: bind run-id, anchor candidate, name the capture exception: ratify or reverse at the Review Console (staged/sdd-ruling-7.md) | accepted | ratified at Review Console — no — why clause on the ruling line |
+| 8 | build | SDD ruling — pipeline-run-dir invariant reworded from the plan sentence: ratify or reverse at the Review Console (staged/sdd-ruling-8.md) | accepted | ratified at Review Console — no — why clause on the ruling line |
 | 9 | review | Convention at README.md:86: README and help lifecycle prose still call the materialized header committed audit trail (README.md:86, help/context-flow.md:87,140) | fixed | Reworded in both files: archived on the branch at wrap-up. (2dbb28a2ee) |
 | 10 | review | Security at plugin/bin/lib/run-header-archive.js:120: Every git call and the push inherited process.env unpinned, so an inherited GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE could redirect the move (contested 3b medium vs 3c low; tiebreak confirmed medium) | fixed | Every call runs under repoPinnedEnv; a test with a hostile GIT_DIR fails without the pin. (2dbb28a2ee) |
 | 11 | review | Error handling at plugin/bin/archive-run-header.js:136: A *-partial-revert refusal was logged as a clean fallback ("header left live") | fixed | Its SKIP now says the unwind did not finish and to check git status; CLI test added. (2dbb28a2ee) |
@@ -30,3 +30,5 @@
 | 26 | review | Convention at plugin/bin/lib/reconcile/archive-merged.js:1485: comment says never gitignored | accepted | Tiebreak severity info, recommendation drop: the claim mirrors materialize.md's pinned sentence and no behavior depends on it. |
 | 27 | review | Test quality at tests/run-header-archive.test.js:412: dash-branch test fails on a reordering of pushRunBranch | accepted | Refuted by tiebreak; moot — pushRunBranch was removed with its tests. |
 | 28 | review | Test quality at tests/gitignore-spec-header-narrowing.test.js:76: inverted assertion message | accepted | Refuted by tiebreak: the message prints only on failure, when the path is not ignored. |
+| 29 | wrap-up | pr — PR #5725 — this run's own pr-first PR; disposition is Phase 4's merge decision | observation | Open by design until Phase 4's merge decision. |
+| 30 | wrap-up | suite — residue probe skipped via --no-suite — the run's suite state comes from the verification pass stamp (CI test run 43889593130 on 25bb442b51) | observation | A fact pack never re-runs the suite; the stamp verified the review fix wave, and the docs-only commit after it is covered by the PR gate. |
