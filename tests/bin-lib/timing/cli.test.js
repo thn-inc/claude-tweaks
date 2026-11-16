@@ -229,7 +229,7 @@ test('#1929 whole-branch review fix 2: a --transcript file whose stat succeeds b
 // these runs carry their own two-event events.jsonl covering it; record-1535's
 // 2026-09 events sit outside every fixture dispatch (used once, on purpose).
 const SUBFIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'subagents-session');
-const SUB_EVENTS = '{"ts":"2026-10-17T09:58:00.000Z","type":"skill_invoked","skill":"claude-tweaks:build"}\n{"ts":"2026-10-17T10:10:00.000Z","type":"session-end"}\n';
+const SUB_EVENTS = readText(path.join(SUBFIX, '..', 'subagents-events.jsonl'));
 
 // -> { dir, home, slugDir, transcript, env }: a run dir over the fixture's
 // events, and a tmp HOME holding a copy of the fixture session at the slug of
@@ -408,6 +408,148 @@ test('#3375: a late worktree-reaped event does not stretch the run window over t
   assert.equal(d.excludedOutsideWindow, 1);
   assert.deepEqual(d.items.map((i) => i.agentId), ['a1', 'a2']);
   assert.match(r.stdout, /^dispatches: 1 outside the run window excluded$/m);
+});
+
+// --- #4359 per-file procedure reads -------------------------------------------
+// One assistant line whose Read tool_use names `file` (a skills/ path -> a key).
+const readLine = (agentId, ts, id, file) => JSON.stringify({ type: 'assistant', agentId, isSidechain: true, timestamp: ts, message: { id, role: 'assistant', model: 'claude-sonnet-5-5', content: [{ type: 'tool_use', id: `tu-${id}`, name: 'Read', input: { file_path: file } }], usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } }) + '\n';
+const SKILL_A = '/Users/x/.claude/plugins/cache/m/claude-tweaks/1.0.0/skills/review/SKILL.md';
+const SKILL_B = '/Users/x/.claude/plugins/cache/m/claude-tweaks/1.0.0/skills/review/lenses.md';
+// build [09:58, 10:02) inside call-1; review [10:02, 10:10).
+const SPAN_EVENTS = '{"ts":"2026-10-17T09:58:00.000Z","type":"skill_invoked","skill":"claude-tweaks:flow"}\n{"ts":"2026-10-17T09:58:30.000Z","type":"skill_invoked","skill":"claude-tweaks:build"}\n{"ts":"2026-10-17T10:02:00.000Z","type":"skill_invoked","skill":"claude-tweaks:review"}\n{"ts":"2026-10-17T10:10:00.000Z","type":"session-end"}\n';
+
+test('#4359: a dispatch spanning two phases books each read to its own phase', async () => {
+  const s = subagentRun({ events: SPAN_EVENTS });
+  const sub = path.join(s.slugDir, 'sess-1', 'subagents');
+  fs.writeFileSync(path.join(sub, 'agent-x.meta.json'), JSON.stringify({ description: 'Implement Task 9', model: 'sonnet' }));
+  fs.writeFileSync(path.join(sub, 'agent-x.jsonl'), readLine('x', '2026-10-17T10:00:00.000Z', 'mx1', SKILL_A) + readLine('x', '2026-10-17T10:05:00.000Z', 'mx2', SKILL_B));
+  const r = await run(['--run', s.dir, '--json', '--transcript', s.transcript]);
+  assert.equal(r.status, 0, r.stderr);
+  const t = readTiming(s.dir);
+  const p = Object.fromEntries(t.phases.map((x) => [x.phase, x]));
+  assert.deepEqual(p.build.procedureFiles, { 'skills/review/SKILL.md': 1 });
+  assert.deepEqual(p.review.procedureFiles, { 'skills/review/lenses.md': 1 });
+  assert.deepEqual(t.totals.procedureFiles, { 'skills/review/SKILL.md': 1, 'skills/review/lenses.md': 1 });
+  assert.deepEqual(t.unattributed.procedureFiles, {});
+  // the dispatch reads never become main rows: tokens and round trips equal a run without agent-x
+  const base = subagentRun({ events: SPAN_EVENTS });
+  const rb = await run(['--run', base.dir, '--json', '--transcript', base.transcript]);
+  assert.equal(rb.status, 0, rb.stderr);
+  const mainOnly = readTiming(base.dir).totals;
+  assert.ok(mainOnly.tokens.input > 0, 'setup: the main transcript carries tokens');
+  assert.deepEqual(t.totals.tokens, mainOnly.tokens);
+  assert.equal(t.totals.toolRoundTrips, mainOnly.toolRoundTrips);
+});
+
+test('#4359: an agent transcript passed as --transcript is not counted again as a dispatch', async () => {
+  const s = subagentRun({ events: SPAN_EVENTS });
+  const sub = path.join(s.slugDir, 'sess-1', 'subagents');
+  const agent = path.join(sub, 'agent-x.jsonl');
+  fs.writeFileSync(path.join(sub, 'agent-x.meta.json'), JSON.stringify({ description: 'Implement Task 9', model: 'sonnet' }));
+  fs.writeFileSync(agent, readLine('x', '2026-10-17T10:05:00.000Z', 'mx1', SKILL_A));
+  const r = await run(['--run', s.dir, '--json', '--transcript', agent]);
+  assert.equal(r.status, 0, r.stderr);
+  const t = readTiming(s.dir);
+  assert.ok(t.dispatches.items.some((i) => i.agentId === 'x'), 'agent-x is still listed as a dispatch');
+  assert.deepEqual(t.totals.procedureFiles, { 'skills/review/SKILL.md': 1 });
+  assert.deepEqual(t.phases.find((x) => x.phase === 'review').procedureFiles, { 'skills/review/SKILL.md': 1 });
+});
+
+test('#4359: an agent transcript passed through a symlinked alias of its directory is still not counted again', async () => {
+  const s = subagentRun({ events: SPAN_EVENTS });
+  const sub = path.join(s.slugDir, 'sess-1', 'subagents');
+  fs.writeFileSync(path.join(sub, 'agent-x.meta.json'), JSON.stringify({ description: 'Implement Task 9', model: 'sonnet' }));
+  fs.writeFileSync(path.join(sub, 'agent-x.jsonl'), readLine('x', '2026-10-17T10:05:00.000Z', 'mx1', SKILL_A));
+  // An explicit alias, so the passed path differs from the dispatch's own path on every
+  // platform (not only through macOS's /var -> /private/var tmpdir link): only realpath matches them.
+  const alias = path.join(s.home, 'slug-alias');
+  fs.symlinkSync(s.slugDir, alias, 'junction');
+  const r = await run(['--run', s.dir, '--json', '--transcript', path.join(alias, 'sess-1', 'subagents', 'agent-x.jsonl')]);
+  assert.equal(r.status, 0, r.stderr);
+  const t = readTiming(s.dir);
+  assert.ok(t.dispatches.items.some((i) => i.agentId === 'x'), 'agent-x is still listed as a dispatch');
+  assert.deepEqual(t.totals.procedureFiles, { 'skills/review/SKILL.md': 1 });
+});
+
+test('#4359 I1: a context-bundle Read by a dispatch reaches timing.json under its context/ key, apart from skill files', async () => {
+  const s = subagentRun({ events: SPAN_EVENTS });
+  const sub = path.join(s.slugDir, 'sess-1', 'subagents');
+  const bundle = '/Users/x/Code/repo/.claude-tweaks/pipelines/2026-10-17T095800-record-1/context/lens-child.md';
+  fs.writeFileSync(path.join(sub, 'agent-x.meta.json'), JSON.stringify({ description: 'Review lens 3a', model: 'sonnet' }));
+  fs.writeFileSync(path.join(sub, 'agent-x.jsonl'), readLine('x', '2026-10-17T10:05:00.000Z', 'mx1', bundle) + readLine('x', '2026-10-17T10:06:00.000Z', 'mx2', SKILL_A));
+  const r = await run(['--run', s.dir, '--json', '--transcript', s.transcript]);
+  assert.equal(r.status, 0, r.stderr);
+  const t = readTiming(s.dir);
+  assert.deepEqual(t.phases.find((x) => x.phase === 'review').procedureFiles, { 'context/lens-child.md': 1, 'skills/review/SKILL.md': 1 });
+});
+
+test('#4359 M4: timing.json dispatch items carry neither procedureFileRows nor transcriptPath, and per-row attribution still holds', async () => {
+  const s = subagentRun({ events: SPAN_EVENTS });
+  const sub = path.join(s.slugDir, 'sess-1', 'subagents');
+  fs.writeFileSync(path.join(sub, 'agent-x.meta.json'), JSON.stringify({ description: 'Implement Task 9', model: 'sonnet' }));
+  fs.writeFileSync(path.join(sub, 'agent-x.jsonl'), readLine('x', '2026-10-17T10:00:00.000Z', 'mx1', SKILL_A) + readLine('x', '2026-10-17T10:05:00.000Z', 'mx2', SKILL_B));
+  const r = await run(['--run', s.dir, '--json', '--transcript', s.transcript]);
+  assert.equal(r.status, 0, r.stderr);
+  for (const t of [readTiming(s.dir), JSON.parse(r.stdout)]) {
+    assert.ok(t.dispatches.items.length > 0);
+    for (const item of t.dispatches.items) {
+      assert.ok(!Object.hasOwn(item, 'procedureFileRows'), `${item.agentId} carries procedureFileRows`);
+      assert.ok(!Object.hasOwn(item, 'transcriptPath'), `${item.agentId} carries transcriptPath`);
+    }
+    assert.deepEqual(t.dispatches.items.find((i) => i.agentId === 'x').procedureFiles, { 'skills/review/SKILL.md': 1, 'skills/review/lenses.md': 1 });
+    const p = Object.fromEntries(t.phases.map((x) => [x.phase, x]));
+    assert.deepEqual(p.build.procedureFiles, { 'skills/review/SKILL.md': 1 });
+    assert.deepEqual(p.review.procedureFiles, { 'skills/review/lenses.md': 1 });
+  }
+});
+
+test('#4359 T2-2: a dispatch\'s reads key against the run\'s worktree, as the main rows do', async () => {
+  const s = subagentRun({ events: SPAN_EVENTS });
+  // a worktree under a skills/ directory: only the worktree-relative key is right
+  const wt = '/Users/x/skills/wt';
+  fs.writeFileSync(path.join(s.dir, 'run-state.json'), JSON.stringify({ worktree: wt, sessionId: 'sess-1', status: 'active' }));
+  const sub = path.join(s.slugDir, 'sess-1', 'subagents');
+  fs.writeFileSync(path.join(sub, 'agent-x.meta.json'), JSON.stringify({ description: 'Implement Task 9', model: 'sonnet' }));
+  fs.writeFileSync(path.join(sub, 'agent-x.jsonl'), readLine('x', '2026-10-17T10:05:00.000Z', 'mx1', `${wt}/plugin/skills/review/x.md`));
+  const r = await run(['--run', s.dir, '--json', '--transcript', s.transcript]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(readTiming(s.dir).phases.find((x) => x.phase === 'review').procedureFiles, { 'skills/review/x.md': 1 });
+});
+
+test('#4359: buildTiming returns what run() writes, and writes nothing', async () => {
+  const { buildTiming } = require(CLI);
+  const src = path.join(__dirname, '..', '..', 'fixtures', 'efficiency-report', 'recount');
+  const dir = tmpRun(false);
+  for (const f of ['events.jsonl', 'run-state.json']) fs.copyFileSync(path.join(src, 'archive', '2027-02-01T090000-run-a', f), path.join(dir, f));
+  const transcript = path.join(src, 'transcripts', 'a.jsonl');
+  const built = await buildTiming({ runDir: dir, paths: [transcript], cwd: dir, worktree: '/w/run-a' });
+  assert.ok(!fs.existsSync(path.join(dir, 'timing.json')), 'buildTiming wrote timing.json');
+  const r = await run(['--run', dir, '--transcript', transcript, '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const printed = JSON.parse(r.stdout);
+  assert.deepEqual(built.phases, printed.phases);
+  assert.deepEqual(built.unattributed, printed.unattributed);
+  assert.deepEqual(built.phases.find((p) => p.phase === 'review').procedureFiles, { 'skills/review/code-mode-steps.md': 3 });
+  assert.deepEqual(built.unattributed.procedureFiles, { 'skills/review/code-mode-steps.md': 1 });
+});
+
+test('#4359: buildTiming reads run-state.json worktree when none is given, and an explicit null wins', async () => {
+  const { buildTiming } = require(CLI);
+  const src = path.join(__dirname, '..', '..', 'fixtures', 'efficiency-report', 'recount');
+  const dir = tmpRun(false);
+  // run-b's worktree sits under a skills/ directory: only the worktree-relative key is right.
+  for (const f of ['events.jsonl', 'run-state.json']) fs.copyFileSync(path.join(src, 'archive', '2027-02-03T090000-run-b', f), path.join(dir, f));
+  const paths = [path.join(src, 'transcripts', 'b.jsonl')];
+  const review = (t) => t.phases.find((p) => p.phase === 'review').procedureFiles;
+  assert.deepEqual(review(await buildTiming({ runDir: dir, paths, cwd: dir })), { 'skills/review/code-mode-steps.md': 1, 'skills/review/step3-lens-dispatch.md': 2 });
+  assert.deepEqual(Object.keys(review(await buildTiming({ runDir: dir, paths, cwd: dir, worktree: null }))), ['skills/run-b/plugin/skills/review/code-mode-steps.md', 'skills/run-b/plugin/skills/review/step3-lens-dispatch.md']);
+});
+
+test('#4359: buildTiming rejects an unreadable events.jsonl with code EVENTS_UNREADABLE', async () => {
+  const { buildTiming, EVENTS_UNREADABLE } = require(CLI);
+  const dir = tmpRun(false);
+  fs.mkdirSync(path.join(dir, 'events.jsonl'));
+  await assert.rejects(buildTiming({ runDir: dir, paths: [], cwd: dir }), (e) => e.code === EVENTS_UNREADABLE && /events\.jsonl unreadable/.test(e.message));
 });
 
 // --- #4029 turn-class telemetry -----------------------------------------------
@@ -689,6 +831,77 @@ test('AC9.1: a relative --transcript resolves against the injected cwd, for its 
   assert.ok(t.transcripts[0].rows > 0, JSON.stringify(t.transcripts));
   assert.equal(t.transcripts[0].note, undefined);
   assert.equal(t.dispatches.items.length, 3);
+});
+
+// --- #5597 workflow agents in timing.json ------------------------------------
+function addWorkflowAgent(s, runId, id, { rows = true } = {}) {
+  const dir = path.join(s.slugDir, 'sess-1', 'subagents', 'workflows', runId);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `agent-${id}.meta.json`), JSON.stringify({ description: 'lens 3b A', model: 'sonnet', workflowPhase: 'review' }));
+  const line = (type, ts, message) => JSON.stringify({ type, agentId: id, isSidechain: true, timestamp: ts, message: { role: type, ...message } });
+  fs.writeFileSync(path.join(dir, `agent-${id}.jsonl`), rows ? [
+    line('user', '2026-10-17T10:05:00.000Z', { content: [{ type: 'text', text: 'x' }] }),
+    line('assistant', '2026-10-17T10:05:05.000Z', { id: 'wm1', model: 'claude-sonnet-5-5', content: [{ type: 'text', text: 'x' }], usage: { input_tokens: 1, output_tokens: 2, cache_read_input_tokens: 3, cache_creation_input_tokens: 4 } }),
+  ].join('\n') + '\n' : '');
+  return dir;
+}
+
+async function baselineSubagents() {
+  const base = subagentRun();
+  const r = await runAuto(base);
+  assert.equal(r.status, 0, r.stderr);
+  return readTiming(base.dir).totals.subagents;
+}
+
+async function baselineTiming() {
+  const base = subagentRun();
+  const r = await runAuto(base);
+  assert.equal(r.status, 0, r.stderr);
+  return readTiming(base.dir);
+}
+
+test('#5597 AC9.4: a workflow agent whose transcript has no timestamped row is in dispatches with its note and in no count', async () => {
+  const baseTotal = await baselineSubagents();
+  const s = subagentRun();
+  addWorkflowAgent(s, 'r1', 'w0', { rows: false });
+  const r = await runAuto(s);
+  assert.equal(r.status, 0, r.stderr);
+  const t = readTiming(s.dir);
+  const w0 = t.dispatches.items.find((i) => i.agentId === 'w0');
+  assert.equal(w0.notFound, 'transcript has no usage rows');
+  assert.equal(t.totals.subagents, baseTotal);
+});
+
+test('#5597: workflow agents count in their phase subagents and in dispatches end to end', async () => {
+  const base = await baselineTiming();
+  const baseTotal = base.totals.subagents;
+  const s = subagentRun();
+  addWorkflowAgent(s, 'r1', 'w1');
+  const r = await runAuto(s);
+  assert.equal(r.status, 0, r.stderr);
+  const t = readTiming(s.dir);
+  assert.equal(t.totals.subagents, baseTotal + 1);
+  // The fixture agent starts at 10:05, inside the build phase (09:58-10:10).
+  const phaseOf = (tj, name) => tj.phases.find((p) => p.phase === name);
+  assert.equal(phaseOf(t, 'build').subagents, phaseOf(base, 'build').subagents + 1);
+  assert.equal(t.unattributed.subagents, base.unattributed.subagents);
+  assert.equal(t.dispatches.items.find((i) => i.agentId === 'w1').workflowRunId, 'r1');
+  const direct = t.dispatches.items.find((i) => i.agentId === 'a1');
+  assert.equal('workflowRunId' in direct, false);
+  assert.equal('workflowPhase' in direct, false);
+});
+
+test('#5597: a run directory problem appears in notFoundDirs', async () => {
+  const s = subagentRun();
+  const sub = path.join(s.slugDir, 'sess-1', 'subagents');
+  fs.mkdirSync(path.join(sub, 'workflows', 'r2'), { recursive: true });
+  const r = await runAuto(s);
+  assert.equal(r.status, 0, r.stderr);
+  // collectDispatches canonicalises the subagents dir (realpath), so build the expectation from the same root.
+  const msg = `no agent-* transcripts in ${path.join(fs.realpathSync(sub), 'workflows', 'r2')}`;
+  const dirs = readTiming(s.dir).dispatches.notFoundDirs;
+  assert.ok(dirs && dirs.includes(msg), JSON.stringify(dirs));
+  assert.ok(r.stdout.includes(`dispatches: subagent transcripts not found (${msg})`), r.stdout);
 });
 
 // A run dir whose run-state.json names a worktree and session, plus the session's transcript

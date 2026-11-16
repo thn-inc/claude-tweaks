@@ -5,7 +5,7 @@
 // phase can decide which classes of work have earned more autonomy. This
 // module acts on nothing — it computes and returns rows for display only.
 // Was docs/superpowers/plans/2026-08-07-supervised-trust-table.md — deleted (d83f0720).
-const { resolveProvenance } = require('./provenance.js');
+const { resolveProvenance, issueAuthorTrust } = require('./provenance.js');
 const { dispositionState, approvalProvenance } = require('./acceptance.js');
 const { resolveValue } = require('../policy-schema.js');
 const { hasNegativeEvidenceMarker } = require('./retry.js');
@@ -76,6 +76,9 @@ function riskBand(labels) {
 // from 'mixed' to 'clean'. Trailing punctuation is stripped before the '#N'
 // match is attempted; the digits themselves are never touched, so '#71'
 // still can never resolve to target 7.
+//
+// The line is honoured only from a trusted or unknown author (provenance.js's
+// issueAuthorTrust): an untrusted author's line forms no class and no follow-up.
 const ORIGIN_LINE_RE = /^Origin:[ \t]*(.+?)[ \t]*$/m;
 const TRAILING_PUNCTUATION_RE = /[.,;:)\]]+$/;
 const FOLLOWUP_TAIL_RE = /\bfrom[ \t]+#(\d+)$/i;
@@ -327,6 +330,8 @@ function inEvaluationWindow(record, clock, windowDays) {
 
 function trustRows(records, gitLog, now, policy) {
   const all = Array.isArray(records) ? records : [];
+  // One author-trust verdict per record, shared by the cell and follow-up loops.
+  const authorTrust = new Map(all.map((r) => [r, issueAuthorTrust(r)]));
   const clock = Number.isFinite(now) ? now : Date.now();
   const windowDays = resolveRevertWindowDays(policy);
   const evaluationWindowDays = resolveEvaluationWindowDays(policy);
@@ -343,7 +348,9 @@ function trustRows(records, gitLog, now, policy) {
   const cellByNumber = new Map();
 
   for (const record of closed) {
-    const { kind, source } = resolveProvenance({ labels: record.labels, body: record.body });
+    const { kind, source } = resolveProvenance({
+      labels: record.labels, body: record.body, authorTrust: authorTrust.get(record),
+    });
     const band = riskBand(record.labels);
     const key = `${kind}:${source}|${band}`;
 
@@ -427,6 +434,7 @@ function trustRows(records, gitLog, now, policy) {
   // follow-up Origin references — a follow-up is evidence about the in-window
   // record it names, even when the follow-up itself forms no cell of its own.
   for (const record of all) {
+    if (authorTrust.get(record) === 'untrusted') continue;
     const target = correctiveFollowUpTarget(record.body);
     if (target === null) continue;
     const cell = cellByNumber.get(target);

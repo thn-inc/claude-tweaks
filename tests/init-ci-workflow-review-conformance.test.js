@@ -9,7 +9,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
 const { CHECKS } = require('../plugin/bin/lib/init/ci-workflow-review');
-const { extractArgumentHint } = require('../plugin/bin/lib/skill-audit/argument-hint');
+const { extractArgumentHint } = require('./helpers/argument-hint');
 const { readText } = require('./helpers/read-skill');
 const {
   missingFactsOf, assertEachPatternGoesRed, assertEveryMatchGoesRed, lineStartingWith, sectionOf,
