@@ -90,6 +90,10 @@ Claude-Session: https://claude.ai/code/session_016yg3zo6eTU9wd41H4Npjd5"
 - Create: `tests/bin-lib/dispatch/queue-pull-helpers.js` (the module-level definitions the parity blocks share: `POOL`, `PARITY_S1`, `ALL_REASONS`, `MATRIX`, `EXTRA`, `FAULTS`, `FILES_FAULTS`, `PAIR_MEMO`, `pairJobs`, `runFaultPool`, `runD1`, `assertEveryJobRan`, `sides`, `groupedIn`, `exclusionsIn`, the scenario builders `S1`/`S2`/`SPortable`, and whatever else the four blocks and the kept tests both reference; find them by grepping each block's identifiers)
 - Create: `tests/bin-lib/dispatch/queue-pull-parity-ac1.test.js`, `queue-pull-parity-ac5.test.js`, `queue-pull-parity-ac4.test.js`, `queue-pull-parity-ac7.test.js` (one per `describe`, with the block's own trailing real-writer tests that sit between blocks following the block they follow in the original file)
 
+Unchanged and reused: `tests/bin-lib/dispatch/queue-pull-fixtures.js`, `tests/bin-lib/dispatch/queue-pull-oracle.js`, `tests/bin-lib/dispatch/queue-pull-clock-stub.js` (the split files import them exactly as the original does).
+
+Other test files only mention `queue-pull.test.js` in comments naming tests that sit before line 2812 and so stay in it (`tests/dispatch-*-fixture.test.js`, `tests/specify-near-duplicate-prose.test.js`, `tests/bin-lib/express/queue.test.js`, `tests/bin-lib/stage-item/cli.test.js`, `tests/bin-lib/dispatch/queue-pull-shims.test.js`, `tests/bin-lib/dispatch/reporting-fastlane-bundle-citation.test.js`); `tests/run-tests-default-run.test.js` and `tests/verify-scope-declaration.test.js` use the path as a fixture string. Do not edit them; if the move relocates one of the named tests, repoint that comment in Task 4.
+
 **Interfaces:**
 - Consumes: Task 1's base count `N` and the original file's order.
 - Produces: the same set of tests, same names, spread over five files.
@@ -174,7 +178,7 @@ Claude-Session: https://claude.ai/code/session_016yg3zo6eTU9wd41H4Npjd5"
 ### Task 6: Whole-suite verification and the PR before/after
 
 **Files:**
-- Modify: none (the PR description is edited through `gh`)
+- None modified; the PR description is edited through the GitHub CLI.
 
 - [ ] **Step 1: Full suite**
 
