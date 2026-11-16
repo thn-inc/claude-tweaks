@@ -37,7 +37,7 @@
 //     (the ignored file, then the gh lookup with no gh); #5304 prints the ignored file's only.
 //   - A failed queue or open-numbers fetch stops the pull at the group-building check (the fetch
 //     pass's `stop`), a third and fourth stop beside Q3's corrupt-exclusions and unreadable-groups.
-//   - F-linked's single Warning (the open-linked-PR lookup failed) also turns off the shipped pass:
+//   - F-linked's single Warning (the open-linked-PR lookup failed) names the shipped pass it also turns off:
 //     it drops shipped:9010 as well as the two open-pr exclusions. F-intbranch (no integration-branch
 //     policy key, `git remote show origin` fails) skips the target-missing pass with one Warning and
 //     drops the unlanded-blocker:9011 exclusion beside it. (NEW cross-pass effects; each pass still
@@ -1450,6 +1450,8 @@ test('AC2.1 open-pr: #9005 and #9008 leave the groups with their PR; omitting th
 test('AC2.1 open-pr: a failed resolve-linked-prs.js prints the fence Warning and writes {}; unparseable output prints the filtering Warning and leaves the groups unfiltered', () => {
   const failed = pull4(FULL(), { spawn: { 'resolve-linked-prs.js': { status: 3, stdout: 'partial', stderr: 'graphql down\n' } } });
   assert.ok(failed.errs.includes(`${LINKED_WARNING}graphql down\n`), failed.stderr);
+  assert.equal(LINKED_WARNING, 'Warning: linked-PR query failed — falling back to no open-PR or shipped-candidate exclusion this run: ');
+  assert.ok(failed.errs.some((line) => line.includes('no open-PR or shipped-candidate exclusion')), failed.stderr);
   assert.equal(failed.text['dispatch-linked-prs.json'], '{}\n', "the fence's echo '{}' writes a newline");
   assert.deepEqual(entriesOf(failed, 'open-pr'), []);
   assert.ok(groupNumbers(failed).flat().includes(9008), 'nothing is excluded on a failed query');
@@ -1533,14 +1535,14 @@ test('#5227 oracle helper: reported() keeps AUTO/Warning lines and cuts the four
     'dispatch: queue-pull stopped -- open-linked-PR exclusion pass hit a corrupt exclusions file: node:internal/modules:1',
     'Warning: not-spec-shaped pass skipped — whatever',
     'Warning: open-linked-PR filtering failed — dispatch-groups.json left unfiltered for this exclusion this run: tail',
-    'Warning: linked-PR query failed — falling back to no open-PR exclusion this run: kept whole',
+    'Warning: linked-PR query failed — falling back to no open-PR or shipped-candidate exclusion this run: kept whole',
   ].join('\n');
   assert.deepEqual(reported(text), [
     'dispatch: queue-pull stopped -- not-spec-shaped exclusion pass hit a corrupt exclusions file: ',
     'dispatch: queue-pull stopped -- open-linked-PR exclusion pass hit a corrupt exclusions file: ',
     'Warning: not-spec-shaped pass skipped — ',
     'Warning: open-linked-PR filtering failed — dispatch-groups.json left unfiltered for this exclusion this run: ',
-    'Warning: linked-PR query failed — falling back to no open-PR exclusion this run: kept whole',
+    'Warning: linked-PR query failed — falling back to no open-PR or shipped-candidate exclusion this run: kept whole',
   ]);
 });
 

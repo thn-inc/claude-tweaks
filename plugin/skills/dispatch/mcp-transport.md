@@ -172,7 +172,7 @@ codebase could add on its own side.
 
 On a `gh`-absent transport, `bin/queue-pull.js --transport files` still spawns both CLIs
 (`resolve-blockers.js` under `work-links: native` only), and each fails without `gh` (the pull's
-"Warning: native dependency query failed" / "Warning: linked-PR query failed" lines) and dispatch degrades to "no native filtering" / "no open-PR exclusion" for the
+"Warning: native dependency query failed" / "Warning: linked-PR query failed" lines) and dispatch degrades to "no native filtering" / "no open-PR or shipped-candidate exclusion" for the
 whole firing — every queue-pull candidate is treated as unblocked and PR-free regardless of its
 real state. **Documented, required workaround** — promoting #2051's own recommendation from a
 one-off firing improvisation to a standing step: before finalizing group selection on a `gh`-absent

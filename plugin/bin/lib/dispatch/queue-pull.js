@@ -712,7 +712,7 @@ function runOpenPr(ctx) {
     put(ctx, linkedFile, r.stdout);
     put(ctx, errFile, r.stderr);
     if (r.status !== 0) {
-      deps.stderr(`Warning: linked-PR query failed — falling back to no open-PR exclusion this run: ${trimNl(r.stderr)}\n`);
+      deps.stderr(`Warning: linked-PR query failed — falling back to no open-PR or shipped-candidate exclusion this run: ${trimNl(r.stderr)}\n`);
       put(ctx, linkedFile, '{}\n');
     }
   }
