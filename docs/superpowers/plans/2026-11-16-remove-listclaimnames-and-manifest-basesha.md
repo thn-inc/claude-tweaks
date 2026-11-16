@@ -130,6 +130,8 @@ git commit -m "Remove listClaimNames — no caller since release-merged.js moved
 - Consumes: nothing from other tasks.
 - Produces: `serializeManifestYaml` never emits a `baseSha` line. Task 3's prose describes this behavior ("dropped on the next rewrite").
 
+**Gate before this task is dispatched (controller, not the implementer).** The spec makes the manifest edits wait on a check that no live run carries the key, so the controller re-runs it immediately before dispatching Task 2, not only at authoring time: against the main checkout's run root (the directory `hooks.js resolve-run-dir --root-only` prints, confirmed to be the main checkout by `git rev-parse --git-dir` equalling `--git-common-dir` there), run the spec's `grep -rl --include=manifest.yml --exclude-dir=archive "baseSha:" "{run-root}/.claude-tweaks/pipelines"` and `find "{run-root}/.claude-tweaks/pipelines" -name manifest.yml -not -path '*/archive/*'`, and overwrite the run directory's `evidence/basesha-gate.txt` with the commands, the directory, the manifest count and the result. The implementer never runs it: it reads outside the worktree. If the grep prints any file, Task 2 and Task 3 are not dispatched: the controller stops the manifest work, reports the carrying run, and Task 1's commit stands on its own (the spec: "The `listClaimNames` removal does not depend on this gate and can land regardless").
+
 - [ ] **Step 1: Write the test for the new behavior**
 
 `tests/bin-lib/flow/manifest.test.js`:
