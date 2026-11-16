@@ -20,3 +20,4 @@
 | 16 | build | SDD ruling — the terminal close-run event, ending the last span, counts in that step's events rather than unattributed.even: ratify or reverse at the Review Console (staged/sdd-ruling-15.md) | open | — |
 | 17 | build | SDD ruling — a close logs at most one timing-family SKIP; a step-yield.json dropped because the close bound ran out is name: ratify or reverse at the Review Console (staged/sdd-ruling-16.md) | open | — |
 | 18 | build | SDD ruling — ISO-timestamp status heads before Reproduction: stay unread (no change): ratify or reverse at the Review Console (staged/sdd-ruling-17.md) | open | — |
+| 19 | build/skill | parse-signal-discipline extends: a signal line read from an append-only log is also quoted or carried forward by later writers (wrap-up carry-forward, routing notes), so a reader counting signals keys on a measured writer-label allow-list, not any label before the token (pair-lines.js WRITER_LABEL, #5556) | open | — |
