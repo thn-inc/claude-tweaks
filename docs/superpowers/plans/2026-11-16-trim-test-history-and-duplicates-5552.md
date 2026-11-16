@@ -33,6 +33,7 @@ Waived docs/incident-log.md: describes the comment block historically; left unto
 | AC8.1 | Task 6 Step 2 (PR CI full suite) |
 | AC9.1 | Task 1 Step 6 (pin changed, line not rewritten → red naming the line) |
 | AC9.2 | Task 1 Step 6 (once per file, reverted) and Task 6 Step 3 (PR body) |
+| Plan Review Clarification (`advanced-proof-patterns.md:43`) | Task 2 Steps 1-3 |
 
 ## Global Constraints
 
@@ -46,7 +47,7 @@ Waived docs/incident-log.md: describes the comment block historically; left unto
 - Worktree shell constraint: one plain command per Bash call — no `&&`/`;` chains, no `cd ... &&`, no heredoc, no loop, no `$(...)`, no shell variable carried between calls. Use `git -C "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/flow+spec-5538-5552" ...` and literal absolute paths. File content via Write/Edit only.
 - Every commit message ends with `Claude-Session: https://claude.ai/code/session_01UwjosHw5wcz1a5BNJTJCmu` and carries `Refs #5552`. Write the message with the Write tool to a scratch file and commit with `git commit -F {file}`.
 - Scope and edit discipline (quoted from CLAUDE.md Working Approach): "Commit tests only where the task asks for them or the repo already keeps tests for this kind of change, sized like the neighboring test files; scratch checks stay scratch. Touch only what the task requires — a pre-existing bug you notice is a follow-up to report, not a fix to fold in, unless the task cannot work without it. Don't reformat or "improve" adjacent code; edit in place rather than rewrite when the result is the same."
-- Governing skill `skill-prose-conformance-tests` (`advanced-proof-patterns.md:42`), quoted: "**Measure by running the parser on the working tree; never add the delta to the old number.**" — kept by this change; only the comment-history mandate (`:40` tail, `:45` tail) changes.
+- Governing skill `skill-prose-conformance-tests` (`advanced-proof-patterns.md:42`), quoted: "**Measure by running the parser on the working tree; never add the delta to the old number.**" — kept by this change; only the comment-history mandate (`:40` tail, `:45` tail) changes, plus `:43`'s tail, which moves the "which form you used" note from the comment to the commit message (decided by the user at plan review).
 - Governing skill `policy-key-addition` (`SKILL.md:14`), quoted: "3. **The key count.** `tests/policy-schema.test.js` pins `POLICY_KEYS.length`. Bump it in the same commit." — Task 2 extends it with the `Last bump:` rewrite.
 - AC evidence from scratch checks goes to `"/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-15T231051-spec-5538-5552/spec-5552/evidence/{name}.txt"` (create the dir first with `mkdir -p`) plus one `decisions.md` entry: `node "/Users/thomasholknielsen/.claude/plugins/cache/claude-tweaks-marketplace/claude-tweaks/6.170.0/bin/log-decision.js" --run "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-15T231051-spec-5538-5552/spec-5552" --section "/build" --status AUTO --step "AC evidence" --text-file "{text-file}" --reversibility n/a`, the text file naming the AC id, the command shape, and pass/fail counts. Every mutation is made in the worktree file, its test run, then reverted with Edit (never `git checkout`/`git reset`); confirm `git status --porcelain` shows only intended changes before committing.
 
@@ -82,7 +83,7 @@ Waived docs/incident-log.md: describes the comment block historically; left unto
   // Last bump: 422 -> 423, #3898
 ```
 
-keep `assert.strictEqual(total, 423);` directly below, and add after it `assertLastBump(__filename);`, with `const { assertLastBump } = require('../../helpers/last-bump');` beside the file's other requires. In `policy-schema.test.js`, replace lines `:41-153` with exactly:
+keep `assert.strictEqual(total, 423);` directly below, and add `assertLastBump(__filename);` on its own line directly above the first of the five comment lines (the call must run before the count assertion: a changed pin otherwise fails the count assertion first and the `rewrite the Last bump line` message never shows; it cannot sit between the `Last bump:` line and the assertion, which must stay adjacent), with `const { assertLastBump } = require('../../helpers/last-bump');` beside the file's other requires. In `policy-schema.test.js`, replace lines `:41-153` with exactly:
 
 ```js
   // Changes only with a recorded reason. Recompute by counting the merged list,
@@ -90,7 +91,7 @@ keep `assert.strictEqual(total, 423);` directly below, and add after it `assertL
   // Last bump: 106 -> 109, #5224
 ```
 
-keep `:154-155` directly below unchanged, add `assertLastBump(__filename);` after `:155`, and `const { assertLastBump } = require('./helpers/last-bump');` after the existing `require('./helpers/run-cli')` line.
+keep `:154-155` directly below unchanged, add `assertLastBump(__filename);` on its own line directly above the first of the three comment lines (before the count assertion, for the same reason), and `const { assertLastBump } = require('./helpers/last-bump');` after the existing `require('./helpers/run-cli')` line.
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -115,7 +116,7 @@ Expected: PASS, `fail 0`.
 **Role:** transcription
 
 **Files:**
-- Modify: `.claude/skills/skill-prose-conformance-tests/advanced-proof-patterns.md` (lines 40 and 45)
+- Modify: `.claude/skills/skill-prose-conformance-tests/advanced-proof-patterns.md` (lines 40, 43 and 45)
 - Modify: `.claude/skills/policy-key-addition/SKILL.md` (line 14)
 - Read only: the skill-prose-conformance-tests `SKILL.md` line 175 row points at the section by its unchanged heading and states no comment mandate; Step 2 confirms it still reads correctly.
 
@@ -124,10 +125,10 @@ Expected: PASS, `fail 0`.
 
 - [ ] **Step 1: Run the AC7.1 absence grep to see it fail (matches today)**
 
-Run: `git -C "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/flow+spec-5538-5552" grep -n -F -e "extend it, don't replace it" -e "still belong in the comment" -- .claude/skills`
-Expected: two lines, both in `advanced-proof-patterns.md` (`:40`, `:45`).
+Run: `git -C "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/flow+spec-5538-5552" grep -n -F -e "extend it, don't replace it" -e "still belong in the comment" -e "say in the comment which form you used" -- .claude/skills`
+Expected: three lines, all in `advanced-proof-patterns.md` (`:40`, `:43`, `:45`).
 
-- [ ] **Step 2: Edit.** In `advanced-proof-patterns.md:40` replace the clause `and the running comment above the assertion is the only place the bump history lives — extend it, don't replace it:` with `and the bump history lives in \`git log -L\` on the assertion line — a bump overwrites the single \`Last bump: {old} -> {new}, #{record}\` comment directly above the assertion, which the test checks against the pinned number (\`tests/helpers/last-bump.js\`):`. Replace `:45` with: `Rows *reworded in place* change no count, need no bump, and need no comment.` In `policy-key-addition/SKILL.md:14` replace `Bump it in the same commit.` with `Bump it in the same commit, and rewrite the \`Last bump: {old} -> {new}, #{record}\` line directly above the assertion — the test fails when that line's new value differs from the pin.` Read `skill-prose-conformance-tests/SKILL.md:175` and confirm no edit is needed.
+- [ ] **Step 2: Edit.** In `advanced-proof-patterns.md:40` replace the clause `and the running comment above the assertion is the only place the bump history lives — extend it, don't replace it:` with `and the bump history lives in \`git log -L\` on the assertion line — a bump overwrites the single \`Last bump: {old} -> {new}, #{record}\` comment directly above the assertion, which the test checks against the pinned number (\`tests/helpers/last-bump.js\`):`. In `:43` replace `and say in the comment which form you used.` with `and say in the commit message which form you used.` (the spec's Plan Review Clarification; nothing else on that line changes). Replace `:45` with: `Rows *reworded in place* change no count, need no bump, and need no comment.` In `policy-key-addition/SKILL.md:14` replace `Bump it in the same commit.` with `Bump it in the same commit, and rewrite the \`Last bump: {old} -> {new}, #{record}\` line directly above the assertion — the test fails when that line's new value differs from the pin.` Read `skill-prose-conformance-tests/SKILL.md:175` and confirm no edit is needed.
 
 - [ ] **Step 3: Re-run the Step 1 grep** — Expected: no output (AC7.1).
 
@@ -135,7 +136,7 @@ Expected: two lines, both in `advanced-proof-patterns.md` (`:40`, `:45`).
 
 ### Task 3: Reduce the docs-health and journey-health dedup tests to the identity assertion
 
-**Role:** transcription
+**Role:** integration
 
 **Files:**
 - Modify: `tests/bin-lib/docs-health/dedup.test.js` (whole file)
@@ -166,7 +167,7 @@ Expected: two lines, both in `advanced-proof-patterns.md` (`:40`, `:45`).
   - `AC5.1: a comma list with one malformed entry — exit 1, gh never probed` — deps `ghAvailable` throws; `run(['720,abc,730'])` → `1`, `/malformed <n>/`.
   - `AC5.1: a trailing comma (empty segment) — exit 1` — `run(['720,'])` → `1`, `/malformed <n>/`.
   - `AC5.1: --repo followed by another flag is a missing value, not the value — exit 1` — deps `ghAvailable` and `remoteUrl` throw; `run(['720','--repo','--help'])` → `1`, `/missing value for --repo/`.
-  - `AC5.1: \`gh\` absent — remoteUrl is never called` — deps `ghAvailable: () => false`, `remoteUrl` throws `should not be called`; `run(['720'])` → `2`.
+  - `AC5.1: \`gh\` absent — remoteUrl is never called` — deps `ghAvailable: () => false` and a recording `remoteUrl` (`let remoteCalls = 0; remoteUrl: () => { remoteCalls += 1; return null; }`); `run(['720'])` → `2` and `assert.strictEqual(remoteCalls, 0)`. Never a throwing `remoteUrl` here: the scaffold wraps the call in `try { … } catch { remote = null; }`, which swallows the throw, so the case would stay green under mutation 5.
   Rewrite the header `:1-8`: it covers the factory's parse/exit-code contract once — including the cases moved here from the two concrete CLIs' test files by #5552 — and the concrete CLIs' files test only their own usage name, `gh` argv, `--hostname`, output shapes and GraphQL failure. Keep the `mirroring tests/resolve-blockers-cli.test.js's deps-injection style` phrase.
 
 - [ ] **Step 2: Run** `node --test "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/flow+spec-5538-5552/tests/bin-lib/number-list-cli.test.js"` — Expected: PASS (these pin existing behaviour), `tests 22`.
