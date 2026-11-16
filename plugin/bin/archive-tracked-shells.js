@@ -127,9 +127,25 @@ function resolveIntegration(root, deps, policyValue) {
   return head.startsWith('origin/') ? head.slice('origin/'.length) : null;
 }
 
+// Best-effort and never throws: it runs from a `finally`. The scratch path is this CLI's own, so a
+// leftover that git no longer (or never) registered is deleted outright; `--force --force` also
+// removes a registered worktree that is locked.
 function removeWorktree(root, wt, deps) {
-  if (lstatType(wt).type !== 'missing') deps.git(['worktree', 'remove', '--force', wt], { cwd: root });
-  deps.git(['worktree', 'prune'], { cwd: root });
+  const attempt = (args) => { try { deps.git(args, { cwd: root, env: deps.env }); } catch { /* best-effort */ } };
+  if (lstatType(wt).type !== 'missing') {
+    attempt(['worktree', 'remove', '--force', '--force', wt]);
+    if (lstatType(wt).type !== 'missing') {
+      try { fs.rmSync(wt, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
+  }
+  attempt(['worktree', 'prune']);
+}
+
+// Whether the scratch tree holds this run's archived `work/` (top-level or a spec-N/work).
+function hasArchivedWork(wt, runId) {
+  const dir = archiveDirOf(wt, runId);
+  return lstatType(path.join(dir, 'work')).type === 'directory'
+    || listSpecDirs(dir).some((spec) => lstatType(path.join(dir, spec, 'work')).type === 'directory');
 }
 
 // The real run: archive every shell in a scratch worktree on the local branch. The worktree
@@ -137,22 +153,34 @@ function removeWorktree(root, wt, deps) {
 function archiveInWorktree(root, shells, integration, deps, envelope) {
   const wt = deps.worktreePath(root);
   const env = repoPinnedEnv(deps.env);
-  const fetched = deps.git(['fetch', 'origin', `+refs/heads/${integration}:refs/remotes/origin/${integration}`], { cwd: root });
+  const g = (args, cwd) => deps.git(args, { cwd, env: deps.env });
+  const originRef = `refs/remotes/origin/${integration}`;
+  const fetched = g(['fetch', 'origin', `+refs/heads/${integration}:${originRef}`], root);
   if (fetched.failure) envelope.notes.push(`fetch of origin ${integration} failed; using the last fetched ref`);
-  const hasLocal = !deps.git(['rev-parse', '--verify', '--quiet', `refs/heads/${BRANCH}`], { cwd: root }).failure;
-  const base = hasLocal ? `refs/heads/${BRANCH}` : `refs/remotes/origin/${integration}`;
-  if (deps.git(['rev-parse', '--verify', '--quiet', `${base}^{commit}`], { cwd: root }).failure) {
+  const hasLocal = !g(['rev-parse', '--verify', '--quiet', `refs/heads/${BRANCH}`], root).failure;
+  const base = hasLocal ? `refs/heads/${BRANCH}` : originRef;
+  if (g(['rev-parse', '--verify', '--quiet', `${base}^{commit}`], root).failure) {
     deps.stderr(`archive-tracked-shells: cannot resolve ${base} to start ${BRANCH} from\n`);
     return { code: 2, branch: null };
   }
   removeWorktree(root, wt, deps);
-  const added = deps.git(['worktree', 'add', '-B', BRANCH, wt, base], { cwd: root });
+  const added = g(['worktree', 'add', '-B', BRANCH, wt, base], root);
   if (added.failure) {
     deps.stderr(`archive-tracked-shells: git worktree add failed: ${added.stderr || added.failure}\n`);
     return { code: 2, branch: null };
   }
   try {
-    const dirty = deps.git(['--no-optional-locks', 'status', '--porcelain'], { cwd: wt }); // git-path-read: not a path list (emptiness only)
+    if (hasLocal) {
+      // The kept branch predates this run: bring in what reached the integration branch since, so a
+      // shell that landed later is in the scratch tree.
+      const merged = g(['merge', '--no-edit', originRef], wt);
+      if (merged.failure) {
+        g(['merge', '--abort'], wt);
+        deps.stderr(`archive-tracked-shells: merging ${originRef} into ${BRANCH} failed: ${merged.stderr || merged.failure}\n`);
+        return { code: 2, branch: BRANCH };
+      }
+    }
+    const dirty = g(['--no-optional-locks', 'status', '--porcelain'], wt); // git-path-read: not a path list (emptiness only)
     if (dirty.failure || (dirty.stdout || '').trim() !== '') {
       deps.stderr('archive-tracked-shells: the scratch worktree is not clean; refusing to commit into it\n');
       return { code: 2, branch: BRANCH };
@@ -161,7 +189,14 @@ function archiveInWorktree(root, shells, integration, deps, envelope) {
     for (const shell of shells) {
       const wtRunDir = path.join(pipelinesDir(wt), shell.runId);
       if (!isTrackedShellDir(wtRunDir)) {
-        envelope.notes.push(`${shell.runId}: already archived on ${BRANCH}`);
+        // Done on this branch only when its archived work is here; otherwise the shell is not on
+        // the branch at all (landed after, or never pushed) and is left behind.
+        if (hasArchivedWork(wt, shell.runId)) {
+          envelope.notes.push(`${shell.runId}: already archived on ${BRANCH}`);
+        } else {
+          left += 1;
+          envelope.conflicts.push({ runId: shell.runId, reason: 'not-on-branch', differing: [] });
+        }
         continue;
       }
       const twinned = hasTwin(workAreas(wtRunDir, archiveDirOf(wt, shell.runId)));
@@ -248,7 +283,13 @@ function run(argv, deps) {
       deps.stderr('archive-tracked-shells: cannot resolve the integration branch — set integration-branch in .claude-tweaks/policy.yml\n');
       return 2;
     }
-    const out = archiveInWorktree(root, found.shells, integration, deps, envelope);
+    let out;
+    try {
+      out = archiveInWorktree(root, found.shells, integration, deps, envelope);
+    } catch (err) {
+      deps.stderr(`archive-tracked-shells: archiving failed: ${(err && err.message) || err}\n`);
+      return 2;
+    }
     envelope.branch = out.branch;
     code = out.code;
     if (out.code === 2) return 2;
@@ -259,8 +300,8 @@ function run(argv, deps) {
 
 // git through runGit with the repo-locating env pinned, stdout untrimmed (-z readers need it).
 // `input` is ignored: no git call here reads stdin.
-function realGit(args, { cwd }) {
-  return runGit(args, cwd, { raw: true, env: repoPinnedEnv() });
+function realGit(args, { cwd, env }) {
+  return runGit(args, cwd, { raw: true, env: repoPinnedEnv(env) });
 }
 
 function realGh(args, { cwd, input } = {}) {

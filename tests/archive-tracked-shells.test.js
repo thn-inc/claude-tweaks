@@ -49,7 +49,7 @@ function pipelines(root) { return path.join(root, '.claude-tweaks', 'pipelines')
 
 // twin: 'identical' | 'absent' | 'differs'. Commits the live work/{n}-spec.md (and the archive
 // twin's work/ unless 'absent'), pushes, and writes the gitignored archive run-state.
-function addShell(root, id, { twin = 'identical', clean = true } = {}) {
+function addShell(root, id, { twin = 'identical', clean = true, push = true } = {}) {
   seq += 1;
   const n = 9000 + seq;
   const file = `${n}-spec.md`;
@@ -65,7 +65,7 @@ function addShell(root, id, { twin = 'identical', clean = true } = {}) {
   }
   git(root, 'add', '--', ...add);
   git(root, 'commit', '-q', '-m', `shell ${id}`);
-  git(root, 'push', '-q', 'origin', 'main');
+  if (push) git(root, 'push', '-q', 'origin', 'main');
   if (clean) {
     fs.mkdirSync(path.join(pipelines(root), 'archive', id), { recursive: true });
     fs.writeFileSync(path.join(pipelines(root), 'archive', id, 'run-state.json'), JSON.stringify({ status: 'clean' }));
@@ -73,12 +73,13 @@ function addShell(root, id, { twin = 'identical', clean = true } = {}) {
   return { id, file, live, twinWork };
 }
 
-function call(root, argv, { model = 'pr-first', ghOk = true, branch = 'main' } = {}) {
+function call(root, argv, { model = 'pr-first', ghOk = true, branch = 'main', extra = {} } = {}) {
   const ghCalls = [];
   const res = runCliSync(CLI, argv, {
     cwd: root,
     env: ENV,
     deps: {
+      ...extra,
       gh: (args) => { ghCalls.push(args); throw new Error(`unexpected gh ${args.join(' ')}`); },
       ghAvailable: () => ghOk,
       policy: () => ({ 'integration-model': model, 'integration-branch': branch, 'housekeeping-auto-merge': 'false' }),
@@ -215,4 +216,70 @@ test('nothing to archive exits 0 without creating a branch or worktree', () => {
   assert.deepEqual(r.envelope.moved, []);
   assert.equal(r.envelope.branch, null);
   assert.equal(branches(root), '');
+});
+
+test('a kept local branch is brought up to the integration branch: a later shell is archived, an earlier one is not redone', () => {
+  const { root } = makeFixture();
+  const a = addShell(root, '2026-11-07T000000-record-1', { twin: 'identical' });
+  const first = call(root, ['--root', root, '--no-pr']);
+  assert.equal(first.code, 0, first.stderr);
+  const b = addShell(root, '2026-11-07T000001-record-2', { twin: 'absent' });
+  const second = call(root, ['--root', root, '--no-pr']);
+  assert.equal(second.code, 0, second.stderr);
+  assert.deepEqual(second.envelope.moved.map((m) => m.runId), [b.id]);
+  assert.deepEqual(second.envelope.deleted, []);
+  assert.deepEqual(second.envelope.conflicts, []);
+  assert.ok(second.envelope.notes.some((n) => n.startsWith(`${a.id}: already archived`)));
+  const tree = git(root, 'ls-tree', '-r', '--name-only', BRANCH).split('\n');
+  assert.ok(tree.includes(`.claude-tweaks/pipelines/archive/${b.id}/work/${b.file}`));
+  assert.ok(tree.includes(`.claude-tweaks/pipelines/archive/${a.id}/work/${a.file}`));
+  assert.ok(!tree.some((p) => p.startsWith(`.claude-tweaks/pipelines/${a.id}/work/`)));
+  assert.ok(!tree.some((p) => p.startsWith(`.claude-tweaks/pipelines/${b.id}/work/`)));
+});
+
+test('a shell absent from the scratch tree with no archived work is reported not-on-branch, exit 1', () => {
+  const { root } = makeFixture();
+  const local = addShell(root, '2026-11-08T000000-record-1', { twin: 'absent', push: false });
+  const r = call(root, ['--root', root, '--no-pr']);
+  assert.equal(r.code, 1);
+  assert.deepEqual(r.envelope.conflicts, [{ runId: local.id, reason: 'not-on-branch', differing: [] }]);
+  assert.deepEqual(r.envelope.notes, []);
+});
+
+test('an exception after the scratch worktree exists exits 2 with a message and leaves no scratch worktree', () => {
+  const { root } = makeFixture();
+  addShell(root, '2026-11-09T000000-record-1');
+  const throwing = (args, o) => {
+    if (args.includes('status')) throw new Error('injected git failure');
+    return realDeps.git(args, o);
+  };
+  const r = call(root, ['--root', root, '--no-pr'], { extra: { git: throwing } });
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /injected git failure/);
+  assert.equal(r.stdout, '');
+  assert.equal(fs.existsSync(worktreeDir(root)), false);
+  assert.doesNotMatch(git(root, 'worktree', 'list'), /archive-tracked-shells/);
+});
+
+test('a stale unregistered directory at the scratch path is replaced', () => {
+  const { root } = makeFixture();
+  const s = addShell(root, '2026-11-10T000000-record-1');
+  fs.mkdirSync(worktreeDir(root), { recursive: true });
+  fs.writeFileSync(path.join(worktreeDir(root), 'stale.txt'), 'x\n');
+  const r = call(root, ['--root', root, '--no-pr']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(r.envelope.deleted.map((m) => m.runId), [s.id]);
+  assert.equal(fs.existsSync(worktreeDir(root)), false);
+});
+
+test('a stale locked registered worktree at the scratch path is replaced', () => {
+  const { root } = makeFixture();
+  const s = addShell(root, '2026-11-10T000001-record-1');
+  git(root, 'worktree', 'add', '-q', '-b', 'stale-scratch', worktreeDir(root), 'main');
+  git(root, 'worktree', 'lock', worktreeDir(root));
+  const r = call(root, ['--root', root, '--no-pr']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(r.envelope.deleted.map((m) => m.runId), [s.id]);
+  assert.equal(fs.existsSync(worktreeDir(root)), false);
+  assert.doesNotMatch(git(root, 'worktree', 'list'), /archive-tracked-shells/);
 });
