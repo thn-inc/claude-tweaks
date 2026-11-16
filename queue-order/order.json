@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-16T18:36:34.770Z",
+  "computedAt": "2026-11-16T21:04:04.814Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -20,12 +20,12 @@
       },
       {
         "number": 5770,
-        "updatedAt": "2026-11-16T17:52:22Z",
+        "updatedAt": "2026-11-16T20:14:57Z",
         "state": "OPEN"
       },
       {
         "number": 5769,
-        "updatedAt": "2026-11-16T17:52:19Z",
+        "updatedAt": "2026-11-16T18:42:59Z",
         "state": "OPEN"
       },
       {
@@ -35,7 +35,7 @@
       },
       {
         "number": 5734,
-        "updatedAt": "2026-11-16T18:31:42Z",
+        "updatedAt": "2026-11-16T18:40:37Z",
         "state": "OPEN"
       },
       {
@@ -51,11 +51,6 @@
       {
         "number": 5598,
         "updatedAt": "2026-11-16T00:33:32Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5595,
-        "updatedAt": "2026-11-16T16:10:32Z",
         "state": "OPEN"
       },
       {
@@ -85,7 +80,7 @@
       },
       {
         "number": 5409,
-        "updatedAt": "2026-11-16T05:17:11Z",
+        "updatedAt": "2026-11-16T18:51:37Z",
         "state": "OPEN"
       },
       {
@@ -95,67 +90,67 @@
       },
       {
         "number": 5317,
-        "updatedAt": "2026-11-16T05:17:05Z",
+        "updatedAt": "2026-11-16T18:51:32Z",
         "state": "OPEN"
       },
       {
         "number": 5316,
-        "updatedAt": "2026-11-16T05:16:59Z",
+        "updatedAt": "2026-11-16T18:51:26Z",
         "state": "OPEN"
       },
       {
         "number": 5315,
-        "updatedAt": "2026-11-16T05:16:54Z",
+        "updatedAt": "2026-11-16T18:51:21Z",
         "state": "OPEN"
       },
       {
         "number": 5314,
-        "updatedAt": "2026-11-16T05:16:48Z",
+        "updatedAt": "2026-11-16T18:51:15Z",
         "state": "OPEN"
       },
       {
         "number": 5313,
-        "updatedAt": "2026-11-16T05:16:43Z",
+        "updatedAt": "2026-11-16T18:51:09Z",
         "state": "OPEN"
       },
       {
         "number": 5312,
-        "updatedAt": "2026-11-16T05:16:38Z",
+        "updatedAt": "2026-11-16T18:51:05Z",
         "state": "OPEN"
       },
       {
         "number": 5311,
-        "updatedAt": "2026-11-16T05:16:32Z",
+        "updatedAt": "2026-11-16T20:16:33Z",
         "state": "OPEN"
       },
       {
         "number": 5310,
-        "updatedAt": "2026-11-16T05:16:27Z",
+        "updatedAt": "2026-11-16T18:50:53Z",
         "state": "OPEN"
       },
       {
         "number": 5309,
-        "updatedAt": "2026-11-16T18:00:43Z",
+        "updatedAt": "2026-11-16T18:50:47Z",
         "state": "OPEN"
       },
       {
         "number": 5307,
-        "updatedAt": "2026-11-16T05:16:16Z",
+        "updatedAt": "2026-11-16T18:50:42Z",
         "state": "OPEN"
       },
       {
         "number": 5306,
-        "updatedAt": "2026-11-16T05:16:10Z",
+        "updatedAt": "2026-11-16T18:50:36Z",
         "state": "OPEN"
       },
       {
         "number": 5305,
-        "updatedAt": "2026-11-16T05:16:05Z",
+        "updatedAt": "2026-11-16T18:50:31Z",
         "state": "OPEN"
       },
       {
         "number": 5304,
-        "updatedAt": "2026-11-16T05:15:59Z",
+        "updatedAt": "2026-11-16T18:50:24Z",
         "state": "OPEN"
       },
       {
@@ -280,7 +275,7 @@
       },
       {
         "number": 4619,
-        "updatedAt": "2026-11-16T17:50:53Z",
+        "updatedAt": "2026-11-16T19:25:14Z",
         "state": "OPEN"
       },
       {
@@ -389,28 +384,13 @@
         "state": "OPEN"
       },
       {
-        "number": 4499,
-        "updatedAt": "2026-10-30T04:28:40Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4496,
         "updatedAt": "2026-10-30T04:28:37Z",
         "state": "OPEN"
       },
       {
-        "number": 4494,
-        "updatedAt": "2026-10-30T04:28:32Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4493,
         "updatedAt": "2026-10-31T06:32:28Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4492,
-        "updatedAt": "2026-11-16T12:12:12Z",
         "state": "OPEN"
       },
       {
@@ -501,11 +481,6 @@
       {
         "number": 4429,
         "updatedAt": "2026-10-30T04:27:51Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4424,
-        "updatedAt": "2026-11-16T09:45:46Z",
         "state": "OPEN"
       },
       {
@@ -705,7 +680,7 @@
       },
       {
         "number": 4251,
-        "updatedAt": "2026-11-16T16:05:09Z",
+        "updatedAt": "2026-11-16T20:09:35Z",
         "state": "OPEN"
       },
       {
@@ -794,11 +769,6 @@
         "state": "OPEN"
       },
       {
-        "number": 4038,
-        "updatedAt": "2026-11-16T15:26:43Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4004,
         "updatedAt": "2026-10-26T14:35:07Z",
         "state": "OPEN"
@@ -879,11 +849,6 @@
         "state": "OPEN"
       },
       {
-        "number": 3758,
-        "updatedAt": "2026-11-16T15:23:26Z",
-        "state": "OPEN"
-      },
-      {
         "number": 3731,
         "updatedAt": "2026-10-30T06:34:58Z",
         "state": "OPEN"
@@ -894,8 +859,23 @@
         "state": "OPEN"
       },
       {
+        "number": 4548,
+        "updatedAt": "2026-11-02T11:42:11Z",
+        "state": "CLOSED"
+      },
+      {
         "number": 5392,
         "updatedAt": "2026-11-15T17:54:20Z",
+        "state": "CLOSED"
+      },
+      {
+        "number": 5232,
+        "updatedAt": "2026-11-16T16:07:48Z",
+        "state": "CLOSED"
+      },
+      {
+        "number": 5584,
+        "updatedAt": "2026-11-16T20:13:14Z",
         "state": "CLOSED"
       }
     ]
@@ -1137,8 +1117,8 @@
     ],
     [
       {
-        "body": "**Related:** #5324, #5297\n\nVerified-as-of: c059556fc34954c27371c25ebd65f99e79a4eb0a\n\n## Current State\n\nA full-suite profile on main at 8646f7c (2026-11-16, `node tools/run-tests.js --full`, git trace2 per test file) counted 59,448 git processes. The test files under `tests/bin-lib/learned-skills/` start 10,629 of them (18%):\n\n| File | Git processes | Notes |\n|---|---|---|\n| `land.test.js` | 3,460 | 57 tests; 2,414 from the test process, 1,046 children of another git; diff 367, rev-parse 295, status 250, apply 220. 161 s of git time, the most of any file in the suite |\n| `capture-matrix-joined-crlf.test.js` | 1,009 | diff 343, hash-object 194, apply 190, status 136 |\n| `capture.test.js` | 961 | diff 241, status 149, checkout 85, apply 82 |\n| `capture-matrix-joined.test.js` | 937 | diff 343, apply 190, status 136, hash-object 122 |\n| the other seven `capture-matrix-*` files | the remaining 4,262 | not broken down in the profile |\n\n- `land.test.js`: `fixture(t, { capturedTargets, autocrlf })` runs for every test. It inits a bare origin, inits a clone, commits two skill files, pushes `main`, makes a run directory and captures one patch per target (each capture is several git calls). Five tests then clone a second checkout and push from it, or force-push a foreign commit onto the run's branch, to arrange a state.\n- `tests/helpers/learned-skills-capture.js`: `fixture(t, extraFiles, { autocrlf })` inits and commits per call for `capture.test.js`. The matrix files already reuse per-process scenario templates (`scenario()` over the `templates` map).\n- In the matrix files most of what remains is `capture()` itself plus the helper's own read-only checks around each fault combination (`breaches`, `status`, `diffOf`, `headOf`).\n\n`capture()` and `land()` in `plugin/bin/lib/learned-skills/` re-read tree and index state after each step that changes it. Those reads are part of their failure handling and are not repeats to remove.\n\n`tests/helpers/git-template.js` (`fromTemplate`, `fromTemplateSet`) builds a fixture once per process and gives each caller a copy that starts no git process.\n\n## Deliverables\n\n1. `land.test.js`: the state `fixture()` returns (bare origin, clone, run directory with its captured patches and manifest) is built once per distinct option set through `fromTemplateSet` and copied per test. Any absolute path stored outside git's own files (manifest, patch files, `decisions.md`) is rewritten for the copy or shown not to exist.\n2. `land.test.js`: a clone, push or force-push that only arranges state is folded into a template variant or replaced by a local ref update in the bare origin. Pushes, fetches and `ls-remote` calls made by `land()` itself stay real, as does `gitCalls` recording them.\n3. `tests/helpers/learned-skills-capture.js`: `fixture()` comes from a template keyed by its arguments.\n4. In the matrix path, a read-only git call the helper makes twice for one fault combination with nothing changed in between is made once. Product code under `plugin/bin/lib/learned-skills/` is not changed by this record.\n5. If the traces show a same-question repeat inside one `capture()` or `land()` call with no state change between the two reads, the PR body lists it and it is filed with `/claude-tweaks:capture`.\n6. The PR body reports git processes for every file in `tests/bin-lib/learned-skills/`, before and after.\n\n## Acceptance Criteria\n\n- [ ] `land.test.js` starts at most 1,730 git processes (50% of the 3,460 measured at 8646f7c). Otherwise the PR body names the remaining shortfall and attributes it to fixture setup or to git run by `capture()` and `land()`.\n- [ ] The counts come from `GIT_TRACE2_EVENT=<absolute path of an empty directory>` around `CT_TEST_CONCURRENCY=6 node tools/run-tests.js --files-from <list>`, with the before count re-taken at the branch's merge-base with main and the after count at HEAD, back to back on the same machine.\n- [ ] After a warm-up call, `fixture()` in `land.test.js` and `fixture()` in the capture helper start no git process, shown by a trace2 spawn test in the style of `tests/helpers-git-template.test.js`.\n- [ ] Every file in the directory reports the same test names and the same number of tests as before, all passing, including the `core.autocrlf=true` variants. No assertion is removed or loosened, no test is deleted, skipped or merged, and test concurrency is unchanged.\n- [ ] The full suite and the Windows regression job pass.\n\n**Decision (2026-11-16, record author).** \"Same tests\" means no existing test is deleted, skipped, renamed, merged or loosened. A test count may grow by tests this record itself adds, in an existing file or in a new one. Where another sentence of this record reads more strictly, this paragraph wins. Where this record's wording leaves a choice between a literal reading and its aim (fewer git processes, with coverage kept), take the aim, say so in the PR body, and do not stop to ask.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/bin-lib/learned-skills/land.test.js` — template the origin, clone and captured run directory\n- `tests/helpers/learned-skills-capture.js` — template the capture fixture and drop repeated helper reads\n- `tests/bin-lib/learned-skills/capture.test.js` — use the templated fixture\n- `tests/helpers-git-template.test.js` — spawn tests for the new templates\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-16T15:52:19Z",
+        "body": "Surface: backend\n\n**Related:** #5540, #5535, #5214, #5557, #3835\nRisk-flags: none\n\n## Current State\n\nA lens reviewer in `/claude-tweaks:review` Step 3 replies with a markdown table (`| Severity | Path:Line | Finding | Evidence |`), or the literal `No findings.`, and a last line `STATUS: {WORD}` (`plugin/skills/review/step3-lens-dispatch.md`, \"Per-lens Calibration + Output template\"). No code reads that reply. For each lens pair the reviewing session resolves two paths, turns each table into a JSON findings array by hand, writes both with the Write tool, and calls `review-coordination.js categorise-reproduction` (the same file, line 92). At `high` that is seven path calls, fourteen writes and seven pairing calls, and the session types every finding a second time.\n\nChecked on 2026-11-16 at `026e203f3`:\n\n- No module under `plugin/bin` parses the table. `git grep -l 'Path:Line' -- plugin/bin` names `lib/coordination.js`, `lib/console/resolve.js` and `lib/console/finding-outcomes.js`; none splits a table row.\n- `normalizeFinding` and `parsePathLine` (`plugin/bin/lib/coordination.js:131` and `:163`) exist because hand transcriptions differ: a combined `Path:Line` key, a split `path` and `line`, `Finding` or `text`.\n- The status line's position is checked by the session reading the reply, and by `plugin/bin/lib/hooks/subagent-stop.js` when that hook fires.\n- `tools/replay-scratch/counterfactual.js` has a scratch `parseTable`. #5557 turns it into a maintainer tool under `tools/`, which does not ship and which `plugin/` may not require.\n\n#5599 runs the lens reviewers from a workflow script. A script cannot require a module, so it returns each reviewer's reply as text, and everything after that has to be one call into code that ships: read the replies, pair them, log the lines. This record adds that call. #5595 adds the line writer it uses.\n\nDesign: `docs/superpowers/specs/2026-11-15-process-efficiency-design.md`, Phase 6. The design has the script return findings as structured output. This record keeps the reply as text and parses it in the CLI, because forcing a schema makes the agent answer through a structured-output tool call, which contradicts the brief's own output block (a table, then a status line) that must reach the reviewer unchanged.\n\n## Deliverables\n\n1. **A reply parser.** New `plugin/bin/lib/lens-reply.js`, pure: reply text in, `{ parse, findings, noFindings, overflow, status, statusWord }` out.\n   - `findings`: one `{ severity, path, line, text, evidence }` per table row whose first cell is a severity word (`critical`, `high`, `medium`, `low`, `info`, case and `**`/backticks ignored). `Path:Line` is split by `parsePathLine`, the one location parser. A row with no numeric line keeps `line` undefined.\n   - A row reading `+N more` sets `overflow` to N and is not a finding. The header and separator rows are skipped. Decided 2026-11-16: a reviewer with `overflow` above 0 is still usable and its lens is still paired, as on the Task path, where the session pairs the fifteen rows the brief allows. The verb lists the reviewer under `overflow` with the hidden count, and the session names it in the review summary. A finding behind the cap was never pairable on either path.\n   - A cell boundary is a `|` that is not escaped and not inside a backtick span. When a row still has more than four cells, the surplus joins the Evidence cell. The lens brief's header has four columns (`step3-lens-dispatch.md:136`); the five-column form belongs to other dispatch templates. Cells are mapped by header name when a header row is present, so a column the parser does not know is dropped, never folded into Evidence; with no header row the cells are taken in the brief's order. The surplus rule is for a row with more cells than its header. An unclosed backtick span runs to the end of the row. A row with fewer cells than the header is still a finding when its first cell is a severity word and its second parses as a location, with the missing cells empty. A reply holding both rows and `No findings.` has its `findings` and `noFindings: false`.\n   - `parse` is `ok` when the reply holds at least one finding row or the literal `No findings.`, else `unparseable`.\n   - `status` is `ok` when the last non-empty line is exactly `STATUS: {WORD}` with one of the four words, `misplaced` when it is not and a status line in the canonical or a lenient form is among the first three or last three non-empty lines, else `missing`. `statusWord` is the word found, or null.\n2. **One verb for a whole fan-out.** `review-coordination.js settle-lens-replies <result.json> --ctx-id <id> [--run <dir> --only confirmed|unconfirmed [--hold <file>]]`. The file holds `{ lenses: [{ lens, reviewers }], reviewers: [{ lens, side, text, failed }] }`, the value #5599's script returns, either at the top level or under a top-level `result` key. For each lens the verb parses its replies, gives each reviewer a state, pairs a lens whose two reviewers are both usable with `categoriseReproduction`, and with `--run` logs that lens's lines through #5595's composer under the same `--only` and `--hold` rules. It prints one JSON line. The line is `{ settled: [{ lens, confirmed, unconfirmed, entries, logged }], needsSession: [{ lens, reason, reviewers: [{ side, state, statusWord, text, findingsPath }] }], violations: [{ lens, side, status }], overflow: [{ lens, side, hidden }] }`. `reason` is `single-reviewer` or `reviewer-unusable`. `text` is present for a `not-done` reviewer only and `findingsPath` for a usable one only. `entries` and `logged` are as in #5595 and are absent without `--run`. A lens whose two reviewers both report no findings is settled with empty lists and no line. Exit codes: 0 whenever the input was well formed, also when every lens is under `needsSession`; 2 for a malformed invocation or input; 3 for a run directory that is missing or not anchored. With `--run`, `--only` is required as in #5595, and a `--hold` entry carries `lens` beside the four fields #5595 matches on, because one file covers every lens. Decided 2026-11-16: like #5595's CLI the verb does not de-duplicate log lines; it is called once with `--only confirmed` and once with `--only unconfirmed`. A findings file is written whole each time, so a second call replaces it with the same content.\n3. **Reviewer states.** **Closed rule:** a reviewer is exactly one of `failed`, `not-done`, `unparseable`, `status-missing`, `status-misplaced` or `ok`, by the ordered test at the end of this item. A `not-done` reviewer's text is returned so the session can act on the stated reason. No other state exists. An entry whose `text` is neither a string nor null, or whose `failed` is not a boolean, is a malformed input and exits 2. A plan review that finds a seventh state adds its refusal as a plan amendment, never as a `needs-human` gap. Decided 2026-11-16: the states are tested in a fixed order and the first that fits is the reviewer's state, so each reviewer has exactly one: `failed` (`failed: true`, or `text` null or blank after trimming, whatever else the entry holds); `not-done` (the status word, read from the last line or from a misplaced status line, is `BLOCKED` or `NEEDS_CONTEXT`); `unparseable` (`parse` is not `ok`); `status-missing`; `status-misplaced`; `ok`. Decided 2026-11-16: a reply with a table and no status line cannot be told from one that was cut off, so `status-missing` is not usable and its lens goes to `needsSession`. `status-misplaced` is usable and is reported. A last line of `STATUS: DONE_WITH_CONCERNS` is `ok`, with the word in the output.\n4. **Lenses it does not settle.** A lens with a reviewer in state `failed`, `not-done`, `unparseable` or `status-missing`, or declared with one reviewer, is not paired and gets no line. The verb lists it under `needsSession` with each reviewer's state, and writes each usable reviewer's findings array to the session-scoped path today's prose uses (`review-{ctx-id}-lens-{LENS}-agent{A|B}.json`, resolved through `plugin/bin/lib/session-tmp.js`), so the session continues with the existing per-pair steps.\n5. **Never a clean result from nothing.** A result file with no reviewers, a lens named twice for one side, a side other than `A` or `B`, or a file that is not the shape above exits 2 and writes and logs nothing. A lens is reported as settled only when two usable replies were paired. Decided 2026-11-16: the result file carries the roster, as `lenses: [{ lens, reviewers }]`, `reviewers` being 1 or 2 as the session asked. A file with no `lenses`, a roster lens or side with no entry, or an entry the roster does not name exits 2. So a lens whose reviewers were dropped can never be missing from the output, and \"declared with one reviewer\" is read from the roster.\n6. **Docs.** `docs/plugin-structure.md` describes the verb, its output and its exit codes.\n\n**Decision rule for any further gap (author, 2026-11-16).** Where this record leaves a choice between readings and no Decision above settles it, the build does not stop for it. It takes the reading that, in this order: keeps a run on the previous plugin release working; puts the rule in code and not in skill prose; stays inside this record's Key Files. It states the choice in the PR body. A criterion that can only be observed after a merge or a release is met by filing one parked measurement record through `/claude-tweaks:capture` that carries the check and its bound.\n\n## Acceptance Criteria\n\n- [ ] AC1: The parser returns the expected object for each fixture reply, one test each: a plain table; a row whose Evidence holds `a || b` in backticks; a row with an escaped pipe; a bold severity; `No findings.`; a `+3 more` row; narration before the table; a status line that is not last; no status line; a `BLOCKED` reply with a reason; an empty string; a `Path:Line` cell reading `general`; a five-column table with a `Suggested resolution` header; a row with three cells; a reply holding both rows and `No findings.`.\n- [ ] AC2: For a fixture pair of replies, `categoriseReproduction` over the parser's output equals its result over a hand-written JSON transcription of the same two tables kept beside the fixture.\n- [ ] AC3: A fixture result with three lenses (both reviewers `ok`; one reviewer `failed`; one reviewer `unparseable`) settles the first lens, logs its lines with `--run`, lists the other two under `needsSession`, writes the two usable reviewers' findings files, and exits 0.\n- [ ] AC4: A reviewer with `text: null` never produces `confirmed: []` for its lens: the lens is under `needsSession` and absent from the settled list. The test fails if a failed reviewer is treated as an empty table.\n- [ ] AC5: Each malformed input in Deliverable 5, each malformed entry in Deliverable 3, and a `lens` or `--ctx-id` that is not a single plain path segment exits 2, prints one stderr line naming the fault, and leaves `decisions.md` and the session temp directory untouched. One test per case.\n- [ ] AC6: A `status-misplaced` reviewer's findings are paired and the JSON lists the reviewer under `violations`. A `status-missing` reviewer's lens is under `needsSession` and is not paired.\n- [ ] AC7: With `--run`, the lines logged for a settled lens are byte-identical to what `categorise-reproduction --run --lens` logs for the same two findings arrays. One test compares the two.\n- [ ] AC8: Run over real replies, reported in the PR: the parser is run over the final replies of the lens reviewers of at least 20 archived reviews (found the way `tools/replay-scratch/counterfactual.js` finds them). The PR gives the number of replies read, the share with `parse: ok`, and the status split. For 20 replies picked by a fixed rule (every k-th), the PR confirms by hand that each table row became exactly one finding. If more than 2% of the finished replies (defined at the end of this criterion) are `unparseable`, the PR lists the shapes and the parser handles them or the build stops. Decided 2026-11-16: the bound is taken over every final reply whose status word is `DONE` or `DONE_WITH_CONCERNS`, since a reviewer that says it finished owes a table or `No findings.`, and the PR also gives the number of replies with neither. \"The build stops\" means it ends with status BLOCKED and lists the shapes.\n- [ ] AC9: The existing tests in `tests/bin-lib/review-coordination/cli.test.js` and `tests/multi-agent-coordination.test.js` pass with no edit to their expectations, and so do the existing `subagent-stop` tests after the two patterns move.\n- [ ] AC10: A reviewer whose table ends with a `+3 more` row is paired and is listed under `overflow` with `hidden: 3`.\n- [ ] AC11: Each overlap resolves to one state, one test each: a `BLOCKED` reply with no table is `not-done`; a `BLOCKED` on a misplaced status line is `not-done`; `failed: true` with a full reply is `failed`; a parsed table with no status line is `status-missing`.\n- [ ] AC12: A result whose roster names a lens or side with no entry, or that holds an entry the roster does not name, exits 2. A roster lens with `reviewers: 1` is under `needsSession` with reason `single-reviewer`, and its findings file is written.\n- [ ] AC13: The test built from the live output block of `step3-lens-dispatch.md` passes, and fails when a column is added to the header it reads.\n\n## Technical Approach\n\nThe parser is the only new judgment about reply shape. Keep it small and total: every input string gets a result, never a throw. The status rule is `subagent-stop.js`'s canonical and lenient tiers. Checked on 2026-11-16: `subagent-stop.js` exports `detectStatus` and not its two patterns (`CANONICAL_RE`, `LENIENT_RE`, lines 150 and 165). Decided 2026-11-16: the two patterns move, unchanged, into one small module, `plugin/bin/lib/status-line.js`, which the hook and the parser both require, so there is one list and the hook's other requires do not load in the CLI. The lenient form takes a leading `- `, `**Status:**` or a bare word. One test builds a reply from the live output block of `step3-lens-dispatch.md` (its header row, its severity scale, its `+N more` sentence and its status line) and asserts the parser reads it, so a change to the template turns a test red (`.claude/skills/prose-code-twin-pin`).\n\nThe verb is a loop over lenses around three existing pieces: the parser, `categoriseReproduction`, and #5595's composer with `appendEntries`. It adds no pairing rule and no line form.\n\nDecide between the bare shape and the `result`-wrapped shape from the file's top-level keys: a top-level `reviewers` array is the bare shape; otherwise a top-level `result` object holding one is the wrapped shape; anything else is the exit-2 case.\n\nThe session-scoped paths come from `sessionTmpPath` with the session id from the environment, as `session-tmp-resolve.js` resolves them, so the names match the ones `step3-lens-dispatch.md` tells the session to use. `lens` and `--ctx-id` become part of a file name. Each must be a single plain path segment: `lens` matches `FINDING_LENS_CLASS` (`plugin/bin/lib/console/finding-path.js`) from end to end, and `--ctx-id` holds no path separator, no `..` and no line break. Anything else exits 2 before any file is written. `--ctx-id` names the files and the session id from the environment picks the directory; neither overrides the other. The run directory goes through `anchorRunDir` as in #5595, unchanged; this record adds no path rule.\n\nThe new verb follows this CLI's existing hand-written argument parsing. Checked on 2026-11-16: #5533 lists the shared argument parser as not yet specified. If a record has started on it for `review-coordination.js` when this is built, land after it.\n\n### Key Files\n\n- `plugin/bin/lib/lens-reply.js`\n- `plugin/bin/review-coordination.js`\n- `plugin/bin/lib/coordination.js`\n- `plugin/bin/lib/reproduction-log.js`\n- `plugin/bin/lib/session-tmp.js`\n- `plugin/bin/lib/hooks/subagent-stop.js`\n- `plugin/bin/lib/status-line.js`\n- `tests/bin-lib/review-coordination/cli.test.js`\n- `tests/bin-lib/lens-reply.test.js`\n- `docs/plugin-structure.md`\n\n## Gotchas\n\n- No skill prose calls this verb until #5599 lands. That is intended; #5599 is blocked by this record. Do not wire it into the present Task dispatch: that path keeps its per-pair steps. #5599 records the removal condition for its policy key; the Task dispatch itself stays as the fallback and has none, so `normalizeFinding` keeps its tolerant shapes.\n- The Evidence column holds code. Pipes inside backticks and escaped pipes are the common way a naive split goes wrong; AC1 has a fixture for each.\n- A reply's text is untrusted. It is parsed and written into JSON files and log lines by code. It never reaches a shell.\n- Fixtures are hand-written and hold only what a test asserts. The archive's replies quote record bodies and source; none is copied into `tests/`.\n- AC8 reads this machine's transcripts. It is a one-time validation in the PR, not a test.\n- `review-coordination.js` is edited by #5540 (in progress), #5535 and #5214, and by #5595, which this record is blocked by. Rebase on whichever has landed.\n- Read `.claude/skills/gh-api-module-pattern` (CLI wrapper contract: the `run(argv, deps)` seam, the exit-code vocabulary, the run-directory anchoring guard), `.claude/skills/parse-signal-discipline` (a reply that could not be parsed must never read as a reply with no findings) and `.claude/skills/regex-scan-linearity` for the row splitter.\n\n## Release Note\n\nAdded a command that reads review lens replies, pairs them and logs the result in one call; nothing uses it until the workflow review path ships.\n\n\n<!-- work-fingerprint: process-efficiency:settle-lens-replies -->\nwork-fingerprint: process-efficiency:settle-lens-replies",
+        "createdAt": "2026-11-16T00:12:13Z",
         "labels": [
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
@@ -1147,22 +1127,10 @@
             "color": "2EA44F"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
             "id": "LA_kwDORUwzVM8AAAACruzLxQ",
             "name": "size:medium",
             "description": "Scoring: moderate change, may span several files",
             "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACry2pJg",
@@ -1183,160 +1151,10 @@
             "color": "BFDADC"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
             "color": "FBCA04"
-          }
-        ],
-        "number": 5770,
-        "state": "OPEN",
-        "title": "Build the learned-skills test fixtures once per process instead of once per test",
-        "updatedAt": "2026-11-16T17:52:22Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "**Related:** #5324, #5297\n\nVerified-as-of: c059556fc34954c27371c25ebd65f99e79a4eb0a\n\n## Current State\n\nA full-suite profile on main at 8646f7c (2026-11-16, `node tools/run-tests.js --full`, git trace2 per test file) counted 59,448 git processes. Push, fetch, clone and the git processes they start are 5,995 of them (10%) but 33% of all git time: one push starts receive-pack, rev-list, pack-objects, index-pack and, without `receive.autogc = false`, a maintenance run.\n\nThree files build their remote state from scratch in every test:\n\n| File | Git processes | From the test process | Children of another git | Largest subcommands |\n|---|---|---|---|---|\n| `tests/bin-lib/reconcile/prune-remote.test.js` | 1,150 | 692 | 458 | for-each-ref 97, rev-list 80, push 74, receive-pack 74 |\n| `tests/bin-lib/pre-review-catchup/cli.test.js` | 1,064 | 593 | 471 | rev-list 115, commit 97, add 96, pack-objects 86 |\n| `tests/bin-lib/issues/claims-git-cas.test.js` | 661 | 332 | 329 | rev-list 68, push 45, receive-pack 45, maintenance 44 |\n\n- `prune-remote.test.js`: `makeRepoWithOrigin()` inits a bare origin and a repo and pushes `main` per test. Each test then pushes the branches it needs (`build/merged`, `build/stale`, `build/squashed` and so on), and three tests clone a second checkout to advance or delete a branch.\n- `pre-review-catchup/cli.test.js`: `fixture()` starts from the `originWithTwoClones` template (#5297), then commits, pushes and pulls again in every test to reach its own starting state.\n- `claims-git-cas.test.js`: `makeBareOriginAndClone()` inits a bare origin, clones it and pushes twice (`main`, then `main:claims-registry`) per test.\n\n`tests/helpers/git-template.js` (`fromTemplate`, `fromTemplateSet`) builds a fixture once per process and gives each caller a copy that starts no git process. It already rewrites remote urls and linked-worktree pointers in the copy.\n\n## Deliverables\n\n1. Each file's starting state (bare origin, clones, seed commits, the registry branch, the extra pushed and pulled commits) is built once per process through `fromTemplateSet` or `fromTemplate` and copied per test. Bare origins in these templates call `disableReceiveAutoGc`.\n2. A push, clone, pull or fetch that only arranges state the test needs, and is not what the test checks, is replaced by something cheaper that leaves the same refs and objects: built into a template variant, or a local ref update where the objects are already present.\n3. Remote operations that are the behaviour under test stay real: `pruneRemote`'s own fetch and delete pushes, the claims compare-and-swap push and its lease, the catch-up's fetch and merge, and the tests that need a second clone to advance a branch after the fixture was built.\n4. Each new template has a spawn test in `tests/helpers-git-template.test.js`, in the style of #5297's: after a warm-up call the builder starts no git process.\n5. The PR body reports git processes per file, before and after, with the split by subcommand.\n\n## Acceptance Criteria\n\n- [ ] Total git processes across the three files fall to at most 1,725 (60% of the 2,875 measured at 8646f7c). Otherwise the PR body names the remaining shortfall and attributes it to fixture setup or to git run by the code under test.\n- [ ] The counts come from `GIT_TRACE2_EVENT=<absolute path of an empty directory>` around `CT_TEST_CONCURRENCY=6 node tools/run-tests.js --files-from <list>`, with the before count re-taken at the branch's merge-base with main and the after count at HEAD, back to back on the same machine.\n- [ ] Each file reports the same test names and the same number of tests as before, all passing. The diff changes fixture construction only: no assertion is removed or loosened, no test is deleted, skipped or merged, and test concurrency is unchanged.\n- [ ] Each migrated builder starts no git process after its warm-up call (the spawn tests in deliverable 4).\n- [ ] The full suite and the Windows regression job pass.\n\n**Decision (2026-11-16, record author).** \"Same tests\" means no existing test is deleted, skipped, renamed, merged or loosened. A test count may grow by tests this record itself adds, in an existing file or in a new one. Where another sentence of this record reads more strictly, this paragraph wins. Where this record's wording leaves a choice between a literal reading and its aim (fewer git processes, with coverage kept), take the aim, say so in the PR body, and do not stop to ask.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/bin-lib/reconcile/prune-remote.test.js` — template the origin, repo and pushed branches\n- `tests/bin-lib/pre-review-catchup/cli.test.js` — fold the per-test push and pull into a template\n- `tests/bin-lib/issues/claims-git-cas.test.js` — template the bare origin, clone and registry branch\n- `tests/helpers-git-template.test.js` — spawn tests for the new templates\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-16T15:52:11Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 5769,
-        "state": "OPEN",
-        "title": "Cut remote-protocol git work in the prune-remote, pre-review-catchup and claims-git-cas test fixtures",
-        "updatedAt": "2026-11-16T17:52:19Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: backend\n\n**Related:** #5399, #5416, #5417, #5757\nRisk-flags: auth\nRisk-flags-unconfirmed: true\n\n## Current State\n\nSince #5584 (merged as PR #5625), a `/claude-tweaks:dispatch #N` line a person types builds a `ready` record that has no `auto:build` label. `resolveBuildAuthority` (`plugin/bin/lib/issues/build-authority.js`) answers `typed` for such a record. It reads only the build grant and never looks at `auto:merge`.\n\nEvery reader that authorizes a merge reads the merge grant on its own, without checking `auto:build`:\n\n- The driver's merge step (`plugin/bin/lib/driver/merge.js`). Its entry read and its pre-merge read stop `not-authorized` only when `auto:merge` is absent.\n- `evaluateMaturation` (`plugin/bin/lib/issues/grant-maturation.js`). It answers `already-mature` on `hasMergeLabel` alone, and `matured` on an `auto:merge-pending` label past its veto window. Its four callers are the unattended console resolver (`plugin/bin/lib/console/resolve.js`), the console executor's grant re-check (`plugin/bin/lib/reconcile/console-execute.js`), and the snippets in `plugin/skills/wrap-up/auto-merge-short-circuit.md` and `plugin/skills/dispatch/grant-maturation-gate.md`.\n- The prose lines that route a run into those gates or authorize a merge directly: the applicability paragraph of `plugin/skills/wrap-up/auto-merge-short-circuit.md`, the matching bullet in `plugin/skills/wrap-up/SKILL.md`, the Auto-merge gate in `plugin/skills/dispatch/settle-and-merge.md`, and the Merge step of `plugin/skills/_shared/express-lane.md`.\n\n`plugin/skills/_shared/work-record.md`'s Grant semantics say `auto:merge` is additive on `auto:build` and \"alone is inert\", and both that file and `docs/driver.md` say a typed command never implies `auto:merge`. Before #5584 the inert claim held only because no path built a record without `auto:build`. Now a record that carries a merge grant and no build grant (a person removed `auto:build` and left `auto:merge`, or an `auto:merge-pending` matured after `auto:build` was removed) is built by a typed command and then merged on the leftover grant once the merge-check and acceptance judgments pass. A stale or half-removed merge grant widens what the person typed.\n\nThe maintainer chose the rule on 2026-11-16: a merge grant counts only together with a live `auto:build` label. A typed run on a record without `auto:build` ends at `pending-review`, and a person who wants it merged types the merge (`/claude-tweaks:wrap-up #N merge`).\n\n## Deliverables\n\n1. One rule in both lanes: `auto:merge`, or an `auto:merge-pending` at maturation, authorizes a merge only when the same live label read also carries `auto:build`.\n2. Driver merge step: the entry read and the pre-merge read both stop `not-authorized` when `auto:build` is absent, with a detail that names the missing build grant. As with today's `not-authorized` stop, no label, comment, ready or merge call is made.\n3. `evaluateMaturation` takes the build label as an input and answers not mature, with a new state `no-build-grant`, when that label is absent or the input is not passed. The check runs before the `already-mature` and `matured` answers, so a pending grant on such a record is never promoted to `auto:merge`.\n4. All four `evaluateMaturation` callers pass the build label, and every skill file that lists the states failing Authorization lists `no-build-grant`. The prose readers named in Current State state the same both-labels condition.\n5. The rule is stated once in `plugin/skills/_shared/work-record.md`'s Grant semantics and once in `docs/driver.md`'s Build authority section. The driver's usage text (`plugin/bin/lib/driver/run.js`) and the header comment of `plugin/bin/drive.js`, which both say a record merges when it carries `auto:merge`, say both labels.\n6. Tests pin the behaviour in the driver and in the evaluator, each with a go-red control.\n7. The PR body states the release order against thn-inc/claude-user-config#50 (see Gotchas).\n\n## Acceptance Criteria\n\n- [ ] Driver, entry read: with live labels carrying `auto:merge` and no `auto:build`, the merge step stops `not-authorized` at `merge-entry` and makes no label, comment, ready or merge call. A test in `tests/bin-lib/driver/merge.test.js` asserts the stop, its detail and the absence of those calls.\n- [ ] Driver, pre-merge read: when `auto:build` is present at entry and absent at the read before the merge call, the step stops `not-authorized` at `merge-call` and makes no `gh pr merge` call. A test asserts it.\n- [ ] Driver, label path unchanged: with both labels present at both reads, every existing merge-step test keeps its outcome.\n- [ ] `evaluateMaturation` answers `mature: false` with state `no-build-grant` in three cases, each with its own test in `tests/bin-lib/issues/grant-maturation.test.js`: `auto:merge` present without the build label; `auto:merge-pending` past its veto window without the build label; the build-label input omitted. With the build label present, its five existing states are unchanged.\n- [ ] `plugin/bin/lib/console/resolve.js` resolves `leave-open` for a group with a member carrying `auto:merge` and no `auto:build`, with a reason that names the member and the missing build grant. `plugin/bin/lib/reconcile/console-execute.js` records a merge-grant gap for that member. Each has a test.\n- [ ] A conformance test reads every `evaluateMaturation` call under `plugin/` (two modules, two skill snippets) and fails when one does not pass the build label.\n- [ ] `plugin/skills/wrap-up/auto-merge-short-circuit.md`, `plugin/skills/dispatch/grant-maturation-gate.md` and `plugin/skills/dispatch/settle-and-merge.md` each name `no-build-grant` among the states that fail Authorization, and none promotes `auto:merge-pending` to `auto:merge` for that state. `plugin/skills/_shared/express-lane.md`'s Merge step and `plugin/skills/wrap-up/SKILL.md`'s applicability bullet require both labels.\n- [ ] Go-red control: with the build-label condition removed from `plugin/bin/lib/driver/merge.js`, the two new driver tests fail; with it removed from `plugin/bin/lib/issues/grant-maturation.js`, the three new evaluator tests fail. The PR body quotes both red runs.\n- [ ] `plugin/skills/_shared/work-record.md` and `docs/driver.md` each state the rule once, and no sentence in `docs/driver.md`, `plugin/bin/lib/driver/run.js` or `plugin/bin/drive.js` still says a record merges on `auto:merge` alone.\n- [ ] The PR body states that this change ships before thn-inc/claude-user-config#50, or says why that order no longer applies.\n\n## Release Note\n\nFixed a leftover merge grant letting a record built from a typed dispatch command merge without review.\n\n**Decision rule for any further gap (author, 2026-11-16).** Where this record leaves a choice between readings and no Decision above settles it, the build does not stop for it. It takes the reading that, in this order: keeps a run on the previous plugin release working; puts the rule in code and not in skill prose; stays inside this record's Key Files. It states the choice in the PR body. A criterion that can only be observed after a merge or a release is met by filing one parked measurement record through `/claude-tweaks:capture` that carries the check and its bound.\n\n## Technical Approach\n\nThe rule is stateless. Nothing is carried from admission to the merge: each merge-authorizing read already fetches the record's live labels, and the fix adds the build label to what that read requires. A typed run is by construction a run on a record without `auto:build`, so it ends at `pending-review` with no marker to store, and a run admitted on the label is unaffected as long as the label stays on the record.\n\nConsidered and not chosen: a typed-run marker written at admission and read by the merge readers. It needs state that the driver (step events) and the prose lane (`decisions.md`) store differently, a run started on the previous release carries no marker, and a missing marker would have to fail open to keep those runs working.\n\nTwo consequences of reading live labels, both intended:\n\n- A person who adds `auto:build` and `auto:merge` while a typed run is in flight has granted both, and the run may merge.\n- A person who removes `auto:build` from a label-admitted record mid-run withdraws the merge too, at the next read.\n\nIn `plugin/bin/lib/driver/merge.js` the build check sits after the existing `auto:merge` check at both reads and reuses the `not-authorized` reason word with a distinct detail, so nothing that enumerates the merge step's reason words changes. `auto:merge-pending` still does not count in the driver.\n\nIn `plugin/bin/lib/issues/grant-maturation.js` the new input is checked first and fails closed: a caller that does not pass it gets `no-build-grant`, so a missed caller refuses merges instead of allowing them. `no-build-grant` is an added state; callers that test `mature` need no other change, and files that enumerate the failing states gain the new name.\n\n### Key Files\n\n- `plugin/bin/lib/driver/merge.js` — require `auto:build` beside `auto:merge` at the entry read and the pre-merge read\n- `plugin/bin/lib/issues/grant-maturation.js` — `evaluateMaturation` takes the build label, adds the `no-build-grant` state, fails closed when the input is missing\n- `plugin/bin/lib/console/resolve.js` — pass the build label; reason text for the new state\n- `plugin/bin/lib/reconcile/console-execute.js` — pass the build label in the grant re-check\n- `plugin/skills/wrap-up/auto-merge-short-circuit.md` — applicability and Authorization require both labels; snippet passes the build label; `no-build-grant` fails Authorization without promotion\n- `plugin/skills/dispatch/grant-maturation-gate.md` — snippet passes the build label; group decision lists `no-build-grant`\n- `plugin/skills/dispatch/settle-and-merge.md` — Auto-merge gate states the both-labels condition and the new state\n- `plugin/skills/_shared/express-lane.md` — Merge step requires both labels\n- `plugin/skills/wrap-up/SKILL.md` — applicability bullet requires both labels\n- `plugin/skills/_shared/work-record.md` — Grant semantics state the rule once\n- `docs/driver.md` — Build authority section states the rule once\n- `plugin/bin/lib/driver/run.js` — usage text says both labels\n- `plugin/bin/drive.js` — header comment says both labels\n- `plugin/skills/dispatch/routine-template.yml` — names the maturation states; add the new one where it lists them\n- `tests/bin-lib/driver/merge.test.js` — two new stops; existing fixtures gain `auto:build`\n- `tests/bin-lib/issues/grant-maturation.test.js` — three new cases; existing cases pass the build label\n- `tests/bin-lib/console/resolve.test.js` — new leave-open case; existing fixtures gain `auto:build`\n- `tests/bin-lib/console/cli.test.js` — fixtures that reach a merge resolution gain `auto:build`\n- `tests/console-execute.test.js` — new grant-gap case; existing fixtures gain `auto:build`\n- `tests/review-console-unattended-no-ask-conformance.test.js` — binds to the maturation state names; update if it enumerates them\n\n## Gotchas\n\n- Existing fixtures that authorize a merge with `auto:merge` alone go red once the evaluator fails closed. Give those fixtures `auto:build`; never loosen the rule to keep a fixture green.\n- Confirm the label path cannot regress: find every site that removes `auto:build` (failure Settle in `plugin/skills/dispatch/settle-and-merge.md`, the reconciler's convergent release, `plugin/bin/lib/release-claim/release.js`) and check that none runs before the merge read of a run that should still merge.\n- `/claude-tweaks:wrap-up #N merge` reads no grant label and stays the way a person merges a typed-built record. It needs no change.\n- The `merge-authorization: pre-authorized` lever (`plugin/skills/wrap-up/manifesto-authorized-merge.md`) is a person's live per-run answer that needs no `auto:merge` label. It is out of scope and unchanged.\n- A bundle with one member lacking `auto:build` falls back to `pending-review` for the whole group, under the Auto-merge gate's existing group-wide rule.\n- Release order: `resolveBuildAuthority` answers `none` with reason `launcher` for a session whose launcher sets `CC_POSTURE` without `CC_LAUNCHED_BY=user`, so the typed path is closed for hub-launched sessions until thn-inc/claude-user-config#50 (open at shaping time) ships. A session started without the hub can already reach the gap.\n- #5416 and #5417 also change `plugin/bin/lib/driver/merge.js`.\n- The near-duplicate screen surfaced #5399, #5416, #5417 and #5757, each on one shared anchor; none is a duplicate.\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(auth): …`.\n\n## Original request\n\nA typed dispatch command builds a record that carries auto:merge but no auto:build, and the driver may then merge it\n\n## Current State\n\nFound by /claude-tweaks:review of #5584 (gap-sweep, confirmed by an independent tiebreak). `resolveBuildAuthority` answers `typed` for a named, `ready` record without `auto:build` and never reads `facets.grants.merge`. `plugin/skills/_shared/work-record.md` says `auto:merge` is additive on `auto:build` and inert alone, and the #5584 docs say a typed command never implies `auto:merge`. A record that carries only `auto:merge` (for example a person removed `auto:build` and left `auto:merge`, or an `auto:merge-pending` that later matures) was inert before #5584 because no path built it. A typed command now builds it, and the driver's merge step (`plugin/bin/lib/driver/merge.js`) authorizes the merge on the live `auto:merge` label alone, after the merge-check and acceptance judges pass.\n\n## Open question\n\nWhich reading is intended: (a) a merge grant a person left on a record is honoured once the typed command builds it, so the docs should say so; or (b) a typed run must end at `pending-review` whatever the record carries, so the typed path must refuse or ignore the merge grant (a new reason word or a typed-run marker the merge step reads)?\n\n## Deliverables\n\n- Decide (a) or (b) and state it in `plugin/skills/_shared/work-record.md`'s Grant semantics and `docs/driver.md`.\n- For (b): make the typed path end at `pending-review` for such a record, with a test that a record carrying `auto:merge` and no `auto:build` built on a typed command stops `not-authorized` at the merge step.\n\n**Decision (author, 2026-11-16).** Reading (b). A typed run ends at `pending-review` whatever merge grant the record carries: the typed path must not honour `auto:merge` on a record that has no `auto:build`. Reason: `work-record.md` says `auto:merge` is additive on `auto:build` and inert alone, and a typed command grants build authority only; letting a stale or half-removed merge grant ride a person's one-off command widens what the person typed. A person who wants the merge types the merge (`/claude-tweaks:wrap-up #N merge`). Deliverable 2's test applies as written. This record is built and merged before thn-inc/claude-user-config#50 ships `CC_LAUNCHED_BY`, because until then the typed path is closed for every hub-launched session and the gap cannot be reached; after it ships the gap is open. The build records that order in the PR body.\n\n## Acceptance Criteria\n\n- [ ] The chosen reading is stated once in `work-record.md` and `docs/driver.md`.\n- [ ] A test pins the chosen behaviour for a record carrying `auto:merge` and no `auto:build` built on a typed command, with a go-red control.\n\nOrigin: review of #5584 (finding at plugin/bin/lib/issues/build-authority.js:144)\nDefer-reason: needs-human-decision\n\nrefs #5584\n\n",
-        "createdAt": "2026-11-16T12:22:58Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMTcg",
-            "name": "risk:high",
-            "description": "Scoring: high blast radius — human review required",
-            "color": "D93F0B"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACszEEfQ",
@@ -1345,13 +1163,13 @@
             "color": "FEF2C0"
           }
         ],
-        "number": 5734,
+        "number": 5598,
         "state": "OPEN",
-        "title": "A typed dispatch command builds a record that carries auto:merge but no auto:build, and the driver may then merge it",
-        "updatedAt": "2026-11-16T18:31:42Z",
+        "title": "Settle a review's lens replies in one call: parse the tables, pair them, log the lines",
+        "updatedAt": "2026-11-16T00:33:32Z",
         "facets": {
           "origin": null,
-          "risk": "high",
+          "risk": "medium",
           "size": "medium",
           "ceremony": "standard",
           "solutionUnjustified": false,
@@ -1361,7 +1179,7 @@
           "stage": "ready",
           "grants": {
             "build": true,
-            "merge": false
+            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -3132,84 +2950,6 @@
           "grants": {
             "build": true,
             "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Overview\n\n**Diff tripwire.** The intent-time risk declaration is cross-checked against what the code actually touched. Policy declares sensitive path globs per category (`risk-path-globs`, for example `migrations/**`, `src/auth/**`); the agent also classifies the diff. If the change crosses a category nobody flagged, the run **switches itself to local acceptance** and says why in the acceptance packet.\n\nThe tripwire is **monotonic**: it can add a flag, never remove one. Only the human removes a flag, and the removal is logged to the decision log (`decisions.md`). This is the design's \"machinery that can loosen control\" anti-goal made concrete: an automatic mechanism may only add caution.\n\n**Contract decisions this record pins:**\n\n- **Scope.** Runs only under `control-mode: on`; with it off nothing here is consulted.\n- **Return shape.** `evaluateTripwire({ changedPaths, declaredFlags, removedFlags, globs, agentClassification })` returns `{ status: 'ok' | 'could-not-run', reason?, crossed: [{ category, via: 'glob' | 'agent', evidence }], newFlags: string[], flags: string[] }` with `flags = declaredFlags ∪ newFlags` (always a superset of `declaredFlags`). `could-not-run` adds no flag; it forces target `local` with the reason stated in the packet.\n- **Inputs.** `globs` is the resolved `risk-path-globs` map. **Absent key or `{}`: the glob signal is off, only the agent classification applies, and nothing is forced** (no built-in default globs ship; they are project-specific). **Present but not a map of slug to string list: `could-not-run`.** `changedPaths` is produced by the caller from `git diff --name-status -M --no-color $(git merge-base {integration-branch} HEAD)..HEAD`, evaluated on the final tip immediately before the merge decision (after review and polish fix waves) and re-evaluated if the tip moves; renames contribute both old and new path, deletions count as touched. An empty diff yields `ok` with no crossings. A git failure yields `could-not-run`.\n- **Agent classification** is `[{ category, evidence }]` with `category` in the slug set (built-ins plus policy `risk-categories`); an unknown category is ignored and logged; `evidence` is capped at 300 characters and rendered inert. It is produced by wrap-up's pre-merge step (the same step that calls `evaluateTripwire`, in `_shared/pr-first-merge.md`'s stop-before-merge branch and in the `local-merge` path); if that step did not run, the packet says \"agent classification not run\" and the glob signal still applies.\n- **Matching.** Globs are repo-root-relative (`migrations/**` does not match `src/migrations/x.sql`; projects write `**/migrations/**` for nested). `tripwire.js` wraps the shared `merge-sensitive-paths` matcher with a normalizer (strip `./`, resolve dot segments, drop trailing slash, convert backslashes, compare case-insensitively); the shared matcher and its other consumers (`blast-radius.js`, `grant-gate.js`, express-lane) are not modified. Probe the shared matcher against the cases in AC 8 at build; if it lacks `**` semantics, the wrapper implements its own anchored glob as a pure function.\n- **Flags added by the tripwire** are appended through the risk-flag record's `addRiskFlags` and also listed on a second line `Risk-flags-added-by-tripwire: {slugs}`, so a human can tell them from declared ones. The human can remove a tripwire flag as a false positive only through the same sanctioned `removeRiskFlag` path with explicit confirmation, which logs it. `plugin/bin/lib/accept/` imports only `addRiskFlags`; a source-scan conformance test fails if any module there imports or implements removal.\n- **Removal history.** `removedFlags` is read by the caller from the intent-time removal log (the record comment or `decisions.md` entry the risk-flag record writes); if the log is unreadable the tripwire still fires and the packet omits the \"you removed this flag\" sentence.\n\n## Non-Goals\n\n- Not intent-time classification (separate record) and not target resolution (separate record; the tripwire feeds it a new kept flag).\n- Not blocking or failing the run: crossing an unflagged category changes the acceptance target to `local`, it does not stop the build.\n- Not removing flags by any path.\n- Not a replacement for `merge-sensitive-paths` (an existing, separate merge-safety guard); this record reuses its matching approach for a different decision.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #4618 | Risk flags at intent time | open (Blocked by) |\n| #4615 | Acceptance target resolution and the local pre-merge park | open (Blocked by) |\n\n## Current State\n\n- Precedent matcher: `merge-sensitive-paths` (a policy list of path patterns that always require a human to sign off on a merge) is consumed by `plugin/bin/blast-radius.js` (CLI over `plugin/bin/lib/blast-radius-cli.js`), `plugin/bin/lib/issues/grant-gate.js` and the express-lane modules. Reuse its glob matcher rather than writing a second one.\n- Target resolution function (`resolveAcceptanceTarget`) and the kept-flag record lines are created by the two Blocked-by records; this record adds a `tripwire` input to the former and appends to the latter.\n- `plugin/bin/lib/accept/tripwire.js` does not exist; it is new.\n- Decision log: `.claude-tweaks/pipelines/{run-id}/decisions.md` per `_shared/auto-decision-log.md` (status vocabulary; STAGED needs an artifact).\n\n## Deliverables\n\n- [ ] `plugin/bin/lib/accept/tripwire.js` (new): `evaluateTripwire(...)` with the return shape and input rules in the contract decisions; `newFlags` contains only categories not already declared.\n- [ ] Glob matching for built-in and extra categories from policy `risk-path-globs`, reusing the existing matcher.\n- [ ] Agent classification step: the review/wrap-up agent classifies the diff against the category list and passes the result in; absence of an agent classification does not suppress glob hits.\n- [ ] Wiring before the merge decision: a crossed category adds the flag to the record (append-only), re-runs `resolveAcceptanceTarget` (which now returns `local` by `risk-flag`), and records the reason for the packet's Risk proofs / Deploy-status text.\n- [ ] Monotonicity enforcement: `accept/` imports only `addRiskFlags` (source-scan conformance test); flag removal exists only in the human-interactive path of the intent-time record via `removeRiskFlag` and is logged.\n- [ ] Wiring: a failed flag append fails toward `local` (the run switches to local acceptance and reports the failed write); the packet states the reason, including the earlier human removal when `removedFlags` shows one.\n- [ ] Tests, including the negative that no code path removes a flag.\n\n## Acceptance Criteria\n\n1. A diff touching `migrations/001_add_users.sql` on a record with no declared flags, with policy glob `migrations/**` for the migrations category, yields `crossed: [{ category: 'migrations', via: 'glob' }]`, adds the flag, and the resolved target becomes `local`.\n2. A diff crossing a category already declared yields no new flag and no change.\n3. An agent classification naming `auth` with no glob match adds the `auth` flag (`via: 'agent'`) and forces `local`.\n4. Given declared flags `[migrations]` and a diff touching nothing sensitive, `evaluateTripwire` returns `newFlags: []` and `flags` equal to the declared list (it is never reduced by the tripwire).\n5. A property-style test feeds random declared-flag lists and diffs and asserts `result.flags` is a superset of `declaredFlags` every time, and that `could-not-run` leaves `flags` equal to `declaredFlags`.\n6. The packet states the reason when the tripwire fired (category, path or classification evidence), and the evidence is rendered as inert text.\n7. `risk-path-globs` present but malformed (a string, a map holding a non-list, a non-string glob), or a git failure producing `changedPaths`, returns `status: 'could-not-run'`, forces `local` and the packet states \"tripwire could not run: {reason}\". `risk-path-globs` absent or `{}` returns `ok` with the glob signal off (no forcing, no message beyond \"path globs not configured\"); an empty diff returns `ok` with no crossings; a rename from `migrations/a.sql` to `docs/a.sql` crosses `migrations`; a deletion of `migrations/a.sql` crosses `migrations`. A failed flag append forces `local`.\n8. Path matching normalizes before comparing: a leading `./` is stripped, dot segments and a trailing slash are resolved, and the comparison is case-insensitive. With glob `migrations/**`: `./migrations/x.sql`, `app/../migrations/x.sql` and `Migrations/x.sql` are crossed; `docs/migrations-notes.md` and `src/migrations-readme.md` are not (the word in the wrong component). With glob `src/auth/**`: `src/auth/login.js` is crossed and `src/auth-utils-readme.md` is not. Scheme and percent-encoding variants do not apply to repo-relative git paths and are not tested.\n9. A record whose migrations flag was removed by the human at intent time (a logged removal) and whose diff touches `migrations/**` still triggers the tripwire (target `local`), and the packet text names the earlier removal.\n10. `npm test` passes.\n\n## Release Note\n\nAdded a diff tripwire that switches a run to local acceptance when the code touches migrations, auth, public contracts or irreversible actions nobody flagged.\n\n## Technical Approach\n\nPure function plus thin wiring. Inputs are paths and strings; outputs are additions only. Matching is the existing glob matcher; the agent's classification is an additional signal, never a veto. The \"cannot run\" case is a visible state, not a silent pass (the repo's parse-signal discipline: a could-not-parse case must be distinguishable from \"nothing crossed\").\n\n### Data / API Surface\n\n- `evaluateTripwire` as above.\n- Record update: append categories to the existing flag line; never rewrite.\n\n### Key Files\n\n- `plugin/bin/lib/accept/tripwire.js` — new\n- `plugin/bin/lib/accept/target.js` — created by #4615; accept the tripwire's added flags as a risk-flag input\n- `plugin/bin/blast-radius.js` — precedent for path-sensitive globbing (read only)\n- `plugin/skills/_shared/pr-first-merge.md` — where the pre-merge target is decided\n- `plugin/skills/_shared/acceptance-packet.md` — states the tripwire reason (created by #4611)\n- `tests/bin-lib/accept/tripwire.test.js` — new; the tripwire suite\n\n## Gotchas\n\n- Fail toward caution: any inability to evaluate (malformed globs, a failed diff, a failed flag write) forces `local` and says so, and is never reported as \"no crossing found\". An unset `risk-path-globs` is not an inability: it means the glob signal is off.\n- The tripwire may only add. A reviewer should be able to verify monotonicity by grep: no assignment that shortens the flag list inside `plugin/bin/lib/accept/`.\n- A human removing a flag at intent time is logged to `decisions.md`. Decision for this record: the tripwire still fires when the actual diff crosses that category (the removal judged the planned work; the diff is new evidence of what was built), and the packet says so in plain words (\"you removed the migrations flag at intent; the diff touches migrations/001.sql, so this run is local\"). Pin it with a test (AC 9) rather than leaving the choice open.\n- Diff paths come from git; treat renames as touching both old and new path.\n\n\n<!-- work-fingerprint: human-in-control-acceptance:diff-tripwire -->\nwork-fingerprint: human-in-control-acceptance:diff-tripwire",
-        "createdAt": "2026-10-30T11:46:39Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 4619,
-        "state": "OPEN",
-        "title": "Diff tripwire",
-        "updatedAt": "2026-11-16T17:50:53Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
           },
           "bot": {
             "inProgress": false,
@@ -7977,78 +7717,6 @@
     ],
     [
       {
-        "body": "Origin: ledger resolve gate\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n- `bin/closing-links.js --mode post-merge` (the reopen backstop) runs only from `_shared/pr-first-merge-post-merge.md` Step 4.0, which an `armed` pr-first outcome never reaches: the merge lands later, when the forge is satisfied.\n- The reconciler finishes `armed` runs on merged-PR evidence but does not run the CLI. With `compose-subject.js --keep-open` the squash message and the PR body no longer name a kept-open record, so the only closing channel left is a Development-sidebar link added by hand; on an armed merge nothing reopens a record that link closes.\n- Found by the final whole-branch review of the closing-link guard (ledger row of the build run); shipped with a prose note in Step 4.0 naming the gap.\n\n## Deliverables\n\n- [ ] Add a reconcile convergence check (registration sites per `docs/reconcile-checks.md`) that, for a merged pr-first run whose fixes span carries `Refs #n` records, runs `bin/closing-links.js --mode post-merge` once and logs the outcome.\n- [ ] Drop the \"armed outcome never reaches this step\" caveat from `_shared/pr-first-merge-post-merge.md` Step 4.0 once the check lands.\n\n## Acceptance Criteria\n\n- [ ] A test drives the new check with a fake `gh` that reports a merged PR, a `Refs #n` record closed after `mergedAt`, and asserts the record is reopened and a decisions line is written.\n- [ ] A run whose fixes span has no `Refs` record triggers no `gh issue` call.\n\n## Release Note\n\nA pr-first run that merges through auto-merge now also reopens a record it left open, even when a manual sidebar link closes it.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/closing-links.js` — reuse\n- `docs/reconcile-checks.md` — follow\n- `plugin/skills/_shared/pr-first-merge-post-merge.md` — modify\n\n_Filed by `ledger resolve gate` via specShapedBody._",
-        "createdAt": "2026-10-25T11:01:15Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4251,
-        "state": "OPEN",
-        "title": "pr-first: an armed merge never runs the closing-links post-merge reopen, so a Development-sidebar link can still close a kept-open record",
-        "updatedAt": "2026-11-16T16:05:09Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Origin: ledger resolve gate (run 2026-10-25T090732-record-4210, refs #4210; item 17)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n`substituteVars` in `plugin/bin/lib/hooks/git-command.js` puts a tracked `NAME=\"a b\"` assignment into every token that references it. For a redirect target that is wrong when the reference is unquoted: bash splits the expansion on whitespace and reports an ambiguous redirect, so `NAME=\"a b\"; echo x > $NAME` writes nothing, while the scan resolves `/r/a b` and denies the command (fails closed). Pre-existing on main; found by #4210's wrap-up ledger gate.\n\nThe fix is not local to redirects: `substituteVars` feeds `gitTargets`, `mkdirTargets`, `cd` tracking and the other parsers, each of which would need its own answer for a value that holds whitespace.\n\n## Deliverables\n\n- [ ] Decide, per consumer of `substituteVars`, what an unquoted reference to a value holding whitespace resolves to (nothing, for a redirect target).\n- [ ] Implement it using the per-character span mask `tokenize` already records, and pin each consumer's answer in `tests/hooks-gate-coverage.test.js` and `tests/hooks-git-command.test.js`.\n\n## Acceptance Criteria\n\n`fileWriteTargets('NAME=\"a b\"; echo x > $NAME', cwd)` resolves nothing and `fileWriteTargets('NAME=\"a b\"; echo x > \"$NAME\"', cwd)` resolves `a b`.\n`npm test` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/hooks/git-command.js` — substituteVars treats an unquoted whitespace value as ambiguous\n- `tests/hooks-gate-coverage.test.js` — pin the redirect-target answer\n\n_Filed by `ledger resolve gate` via specShapedBody._",
         "createdAt": "2026-10-25T10:42:22Z",
         "labels": [
@@ -9386,84 +9054,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\nOrigin: reflect (light mode, Friction lens) from #3675's wrap-up run (2026-10-20T162315-record-3675).\n**Related:** #3690 (absorbed), #3188, #3295, #3737, #3740, #3812, #3898, #3956, #3963\n\n## Current State\n\nIn #3675's dispatch group, both dispatched Task calls — `build,test` and `review,polish,wrap-up` — found mid-run that no `Agent`/`Task` tool was available, ran their work inline, and each self-reported the gap in `decisions.md` as a `DONE_WITH_CONCERNS` deviation. Nothing defective shipped, but the same discovery happened twice in one run.\n\nSince then, half of this is settled. #3078 (`364762254`) gave `_shared/subagent-dispatch-core.md`'s Foreground Execution Discipline a **Fallback** for \"no `Agent`/`Task` tool exists (`ToolSearch` finds none, deferred or otherwise — the normal case in a cloud routine sandbox)\", restated in `dispatch/task-prompt.md`'s Context pack item 7: judge the unit in-session, log the downgrade, mark its findings `unconfirmed`. That covers read-only units (lenses, single reads, judges) — the review call's side.\n\nThe build side is still uncovered, and two rules now contradict each other there:\n\n- The Fallback is explicitly limited to read-only units; for a write-capable child it says only that one still silent at the bound is never redone in-session (because an abandoned child keeps running and may still write).\n- `build/execution-mode-policy.md` (#491) rules that executing the plan's substance directly in-session, skipping Task dispatch, is **never licensed** — under a locked `execution-strategy: subagent-only` or otherwise.\n\nThe same environment has already produced two different outcomes. In run `2026-10-20T022848-record-3630` (record #3630, filed as #3690, absorbed here), the dispatched build stopped at `/build`'s Common Step 2 before any implementation (#3690's report calls it a HARD-GATE; `build/SKILL.md` has no gate by that literal name there, so the stop presumably came from the call honoring `execution-mode-policy.md`'s never-licensed rule), and Settle classified it `transient` and kept `auto:build`, so every retry in that sandbox would stop the same way. In #3675's run, the build ran inline instead and reported a concern.\n\nSo a dispatched `build,test` call under `execution-strategy: subagent-only` that has no `Agent` tool has no compliant path: `/superpowers:subagent-driven-development` cannot dispatch implementers, inline execution is forbidden, and nothing says to stop. #3675's call improvised inline execution and reported it as a concern. Nothing about this case is anomalous — the core file itself calls it the normal case in a cloud routine sandbox — yet each call discovers it mid-run, after the plan is written.\n\n## Deliverables\n\n- [ ] `_shared/subagent-dispatch-core.md`'s Foreground Execution Discipline names the **no-nested-agent environment** once, as an expected environment class, and distinguishes its two cases: a child abandoned at the bound (today's rule — a write-capable one is never redone in-session) versus a child that was **never launched because no `Agent` tool exists** (no child exists, so nothing can still be writing, and the unit — write-capable or not — is done in-session)\n- [ ] `build/execution-mode-policy.md` gains one carve-out to #491's \"never licensed\": a dispatched Task call (not the interactive orchestrating session) that has no `Agent` tool executes the plan in-session. State why this keeps #491's rationale: the dispatched call is already a clean room separate from the session that dispatched it, and the second Task call (`review,polish,wrap-up`) remains a separate agent, so the review is still independent of the code's author\n- [ ] `dispatch/task-prompt.md`'s first-call (`build,test`) template tells the call to probe for the `Agent` tool once, **before** choosing an execution strategy (one `ToolSearch`), and on no tool to take the carve-out from the start instead of discovering it mid-plan; Context pack item 7 carries the same distinction for any dispatch that writes\n- [ ] The downgrade logs as one canonical `decisions.md` `AUTO` entry (per `_shared/auto-decision-log.md`'s schema) naming the environment — e.g. `no nested Agent tool — plan executed in-session` — and the call returns `STATUS: DONE`, not `DONE_WITH_CONCERNS`, when that was the only deviation\n- [ ] The read-only Fallback keeps its `unconfirmed` marking unchanged — a self-judged lens finding is still weaker evidence than a second reader's\n\n## Acceptance Criteria\n\n- `subagent-dispatch-core.md` states that a write-capable unit whose child was never launched (no `Agent` tool) is executed in-session, and that a write-capable child abandoned at the bound still ends `STATUS: BLOCKED` — both rules present, and distinguishable by whether a child was ever launched\n- `build/execution-mode-policy.md` names the dispatched-call-with-no-`Agent`-tool carve-out and still states that the interactive orchestrating session may never execute the plan directly\n- `dispatch/task-prompt.md`'s `build,test` template contains the up-front probe instruction, ordered before the execution-strategy choice\n- `tests/foreground-execution-instruction.test.js` (or the suite that pins these sections) asserts the new never-launched-vs-abandoned distinction in the core section, item 7, and the build template, and reverting the core-file sentence turns it red\n- The canonical `AUTO` line's wording is pinned in one place and cited, not restated, by the template\n- A `/claude-tweaks:dispatch` firing against a `subagent-only` record, in an environment whose dispatched Task call has no `Agent` tool, builds via the carve-out rather than stopping at Common Step 2 or being settled `transient` (the #3690 failure)\n- `npm test` passes\n\n## Release Note\n\nDispatched builds in sandboxes without nested agents now follow a defined path instead of improvising and flagging a concern.\n\n## Technical Approach\n\nThe key distinction is whether a child was ever launched. The existing \"never redo a write-capable child in-session\" rule exists because an abandoned child keeps running and may still write (`subagent-dispatch-core.md`'s Fallback). With no `Agent` tool there is no child, so that hazard cannot occur, and in-session execution of a write-capable unit is safe. Write that reasoning into the core file once, and have `task-prompt.md` item 7 and the `build,test` template restate the rule (they are inlined verbatim into a `Task()` prompt whose agent never reads the core file — `docs/skill-graph.md`'s `subagent-dispatch-core.md` row).\n\nThe probe is one `ToolSearch` for the `Agent` tool at the start of the `build,test` call. A probe by the top-level dispatcher would not work: the dispatcher has a Task tool by construction (it is dispatching), and whether its children get a nested one depends on the environment and Claude Code version (`subagent-dispatch-core.md`'s Background-work paragraph, #3722's measurements).\n\n#491's carve-out is narrow on purpose: it licenses in-session execution only for a dispatched Task call that has no `Agent` tool. An interactive session that has the tool and chooses not to use it is still non-compliant.\n\n### Key Files\n\n- `plugin/skills/_shared/subagent-dispatch-core.md` — Foreground Execution Discipline: name the environment class; never-launched vs abandoned\n- `plugin/skills/build/execution-mode-policy.md` — the dispatched-call carve-out to #491\n- `plugin/skills/dispatch/task-prompt.md` — Context pack item 7 and the `build,test` template's up-front probe\n- `plugin/skills/_shared/auto-decision-log.md` — only if the canonical entry needs a new reason slug\n- `tests/foreground-execution-instruction.test.js` — pins the core section, item 7, and both templates\n- `tests/subagent-contract-clauses.test.js` — check for pinned Fallback wording\n- `docs/skill-graph.md` — the `subagent-dispatch-core.md` edge row describing what item 7 restates\n\n## Gotchas\n\n- `/flow`'s `multispec-parallel-waves.md` inlines item 7 and the `build,test` clause verbatim (`docs/skill-graph.md`), so changing either changes what parallel-wave members receive — update that file in the same change.\n- `tests/foreground-execution-instruction.test.js` pins the core section, item 7, and both templates against each other; edit all four together or it goes red.\n- The decision is about the dispatched Task call, not `/superpowers:subagent-driven-development` itself (an upstream skill this repo does not edit) — the carve-out tells the call to execute the plan in-session in place of invoking that skill.\n- #3188 (open) proposes mechanical enforcement of `execution-strategy: subagent-only` (a PreToolUse check or a `/build` Step 2 assertion). Whatever it lands must honor this carve-out — a dispatched call with no `Agent` tool executing in-session is compliant, not a violation.\n- `/build`'s Common Step 2 is where #3630's build stopped; the carve-out has to be reachable from there (the probe result decides the execution strategy before Common Step 2 resolves it), or the build stops anyway.\n- ASSUMPTION — verify at build: #3675's two calls lacked the tool because of the environment (cloud sandbox or a headless Claude Code version), not a one-off harness fault — the run's `decisions.md` was not preserved in the archive, so confirm the class by checking `subagent-dispatch-core.md`'s Background-work measurements against the run's environment if it can be identified.\n\n## Original request\n\nDispatch contract doesn't name or detect an Agent/Task-tool-less sandbox\n\nOrigin: reflect (light mode, Friction lens) from #3675's wrap-up run (2026-10-20T162315-record-3675).\nDefer-reason: tangential\n\n## Current State\n\n`_shared/subagent-dispatch-core.md`'s subagent contract, and `dispatch/settle-and-merge.md`'s\ntwo-call gate, assume `execution-strategy: subagent-only` dispatched Task calls have the\nAgent/Task tool available for nested fan-out. In this run's dispatch group (record #3675), both\ndispatched calls — `build,test` and `review,polish,wrap-up` — independently discovered mid-run\nthat no Agent/Task tool was available, and both fell back to running their work inline, each\nself-reporting the gap in `decisions.md` as a `DONE_WITH_CONCERNS` deviation. Both degraded\ngracefully and no defect landed in the shipped work, but the gap recurred identically across two\nindependent calls in the same run rather than being a one-off anomaly.\n\n## Open Question\n\nShould the dispatch contract (or dispatch's own two-call gate) detect Agent/Task-tool absence up\nfront — either declaring the limitation inline in the dispatch prompt's own preamble, or treating\na Task-tool-less sandbox as a named, expected environment class — rather than leaving each\ndispatched call to discover and self-report the gap independently every time? Or is the existing\nper-call self-report-and-degrade pattern (DONE_WITH_CONCERNS + a decisions.md note) sufficient as\nis, given it already surfaces the gap without blocking?\n\n## Release Note\n\nn/a — no code change proposed yet; this issue exists to get a maintainer decision on whether one\nis warranted.\n\n_Filed by `reflect` via specShapedBody._\n\n",
-        "createdAt": "2026-10-20T16:55:56Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 3758,
-        "state": "OPEN",
-        "title": "Dispatch contract doesn't name or detect an Agent/Task-tool-less sandbox",
-        "updatedAt": "2026-11-16T15:23:26Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
           "stage": "ready",
           "grants": {
             "build": true,
@@ -12040,28 +11630,9 @@
       ]
     },
     {
-      "number": 4499,
-      "blockedBy": [
-        4492
-      ]
-    },
-    {
-      "number": 4494,
-      "blockedBy": [
-        4492
-      ]
-    },
-    {
       "number": 5599,
       "blockedBy": [
-        5598,
-        5595
-      ]
-    },
-    {
-      "number": 5598,
-      "blockedBy": [
-        5595
+        5598
       ]
     },
     {
