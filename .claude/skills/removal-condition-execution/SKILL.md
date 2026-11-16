@@ -41,6 +41,14 @@ When a sentence covered the removed step and a survivor together, deleting the s
 
 A test that proves a section is excluded by asserting the removed text is absent passes vacuously once that text is deleted. `tests/bin-lib/wrap-up/engine-cli.test.js`'s appendix-exclusion check used the sunset sentence. #3847 replaced it with a string found only in the appendix (`producing **no merge commit at all**`), checked with `grep -c -F` against both the appendix and the head file.
 
+### Inventory a pin's assertions before retargeting it
+
+A retargeted pin keeps the feature it was named for and can still drop a second rule its old fixture covered by accident. #5534 retargeted the `--stamp-status --git-dir` test in `tests/bin-lib/verify/cli.test.js` from the bare-SHA file to the JSON stamp. The bare file had no `dirty` field, so the old test had also covered "a stored `dirty` that is not exactly `false` never verifies HEAD"; the retargeted one did not. Only the whole-branch review's mutation caught it, and `8775229de` added the stored-dirty tests back. Before retargeting, list every assertion the old test made, the incidental ones included, and say which test covers each one afterwards.
+
+### Seed an untouched-file assertion with bytes the removed writer never writes
+
+A test asserting that a file the removed code used to write is left untouched can fail only when the fixture's content differs from what that writer would write. #5534's test for a leftover bare-SHA stamp in `tests/bin-lib/verify/cli.test.js` seeded the file with HEAD, which is exactly what the removed twin write wrote, so restoring the twin left the test green. `2e514d4e4` seeds a sha other than HEAD. Prove the assertion by restoring the writer exactly as it was, not a marked variant of it.
+
 ### Behavior the removed thing justified may stay; give it its own reason
 
 `checkPipelineShadowGuard` in `plugin/bin/lib/hooks/pre-tool-use.js` still allows writes into a run dir that already exists in a worktree. Its comment had justified that by the copy-out guard. It now rests on its own ground: a write into an existing directory creates no new shadow. Decide for each such behavior whether it goes with the removed thing or stays with a rewritten rationale, and say which in the spec.
@@ -63,9 +71,9 @@ A test that proves a section is excluded by asserting the removed text is absent
 
 ## Common Operations
 
-1. Run the condition's check from the main checkout and record the command and a count for the PR.
+1. Run the condition's check from the main checkout and record the command and a count for the PR. Post both to the PR as soon as the check has run, before the first deleting commit is pushed (#5534 ran the check first and posted it after the deletions were pushed).
 2. Delete the removed section and its pointer step, keeping later step numbers.
-3. Grep the identifiers, then the skip-list and range shapes, then the framing words, across `plugin docs tests .claude/skills` with the history paths excluded. Give each hit a verdict from the Decision Framework.
+3. Grep the identifiers, then the skip-list and range shapes, then the framing words, across `plugin docs tests .claude/skills` with the history paths excluded. Give each hit a verdict from the Decision Framework. When the record asks for a per-hit verdict table in the PR, build and post it once, after the last code-changing step (simplify, review fixes and any catch-up merge included), and re-run the sweep against the table before posting: every later commit shifts its file:line keys (#5534's table went stale three times).
 4. Re-point every rationale and re-read every inherited qualifier against the survivor.
 5. Re-anchor each absence sentinel on a string unique to its source and confirm it with `grep -c -F`.
 6. Run the full suite: conformance tests pin this prose.
