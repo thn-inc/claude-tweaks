@@ -498,6 +498,7 @@ test('AC1.3: reconcile --dry-run --json --checks archive lists a clean-twin shel
   assert.ok(entry, r.stdout);
   assert.strictEqual(entry.reason, 'archived-pending-tracked-move');
   assert.match(entry.command, /archive-tracked-shells\.js" --root /);
+  assert.strictEqual(entry.shell, true);
 });
 
 test('formatSummary: a skipped entry\'s detail renders in parentheses after the reason, ahead of any count/names suffix; no detail renders unchanged (#4933)', () => {

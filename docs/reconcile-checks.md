@@ -187,12 +187,20 @@ worktree PR, already archived the gitignored half while the tracked headers stay
   automatically (`git rm` when the twin's own copy is already tracked, `git mv -f` when it isn't)
   and the archival proceeds.
 - **`archived-pending-tracked-move`** — the split state itself: the archive twin exists AND the
-  live run dir holds nothing but tracked `work/` headers (no gitignored entries remain).  Under
-  `worktree-always: true` this sweep never commits the tracked-header move itself — it skips with
-  this reason and a paste-ready `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run
-  "<dir>"` command in `skipped[].command` instead of counting toward `move-failed` escalation.
-  Without `worktree-always`, the sweep completes the move itself via `archiveRunDir`'s normal
-  twin-resolution path above.
+  live run dir holds nothing but tracked `work/` headers (no gitignored entries remain).  Detection
+  covers a twin whose `run-state.json` is `clean` too (a spec shell, #3975) — only this sweep's loop
+  opts into that through `iterRunDirsWithState`'s `includeTrackedShells`. For a clean twin, under
+  `worktree-always: true` the sweep never commits the move itself: it skips with this reason and the
+  paste-ready `node "${CLAUDE_PLUGIN_ROOT}/bin/archive-tracked-shells.js" --root "<root>"` in
+  `skipped[].command` (with `shell: true`), which the compact summary prints once per pass as
+  `archive stranded shells: <command>`; the CLI moves every such shell through one housekeeping PR.
+  Without `worktree-always`, the sweep completes at most one non-conflicting shell in place per pass
+  and skips the rest with the same entry, delegating them to the CLI; a shell whose twin `work/`
+  differs from the live copy is skipped without using that slot (`work-twin-conflict` is the CLI's
+  verdict for it). A twin present but not `clean` keeps the older behavior: under `worktree-always`
+  a skip with `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run "<dir>"` as its
+  `command`, instead of counting toward `move-failed` escalation; without it, the sweep completes the
+  move itself (uncapped) via `archiveRunDir`'s normal twin-resolution path above.
 
 **A merged PR is not a finished run (#3503).** When a run's PR is MERGED, the main loop's two
 paths still check one more thing before archiving: the branch-joined path (`archiveMergedRun`)

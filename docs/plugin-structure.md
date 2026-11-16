@@ -390,6 +390,7 @@ node plugin/bin/design-detect.js --mode <mode> [--surface <v>] [--files <f,...>]
 node plugin/bin/reachability-audit.js --skill <path> | --mcp-server <path> [--server-name <name>]   # Reachability-audit lens (#2674), standalone — exit 0 clean / 1 flags raised (JSON result printed either way) / 2 usage error
 node plugin/bin/render-tidy-report.js --run <run-dir>   # Renders a tidy report's Approve section from staged/*.json sidecars (#2612); empty output when nothing is staged; exit 3 on a corrupt sidecar
 node plugin/bin/sweep-stray-run-dirs.js [--root <dir>] [--dry-run] [--log <path>]   # One-time sweep (#593) moving stray top-level run dirs' tracked work/ subtrees into archive/
+node plugin/bin/archive-tracked-shells.js [--root <dir>] [--dry-run] [--no-pr]   # Archive stranded spec-shell run dirs (#3975): moves each live work/-only dir with a clean archive twin into archive/ through one housekeeping PR (exit 0 ok, 1 shell left behind, 2 bad call or unsupported env)
 npm run test:perf                               # Timing budgets in perf/ — NOT part of `npm test`; run alone, without a competing suite (CI runs it daily via .github/workflows/test-perf.yml)
 cd evals && npm install && node --test tests/   # Eval harness's own free unit suite — NOT included in root `npm test` (separate package.json/node_modules)
 cd evals && node runner.js run <scenario>       # Runs a real scenario against the live Claude Agent SDK — costs real tokens/dollars, see evals/README.md
