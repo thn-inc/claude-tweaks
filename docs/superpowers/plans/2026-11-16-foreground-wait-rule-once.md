@@ -17,7 +17,7 @@ Scope sweep (Check B): `CHANGELOG.md`, `docs/superpowers/plans/2026-11-01-dispat
 ## Global Constraints
 
 - Item 7's addition is under 600 bytes (Deliverable 1).
-- `task-prompt.md` ends at least 6,800 bytes smaller and `express-prompt.md` at least 7,400 bytes smaller than on the merge base `47ece10bb` (52,492 and 17,617 bytes there) — AC5. `express-prompt.md` gains no text in this change.
+- `task-prompt.md` ends at least 6,800 bytes smaller and `express-prompt.md` at least 7,400 bytes smaller than on the merge base — AC5. At planning the merge base is `47ece10bb` (52,492 and 17,617 bytes there): #4831, the one open record that removes the same `task-prompt.md` paragraphs, is still open (`gh issue view 4831`: OPEN, 2026-11-16), so the spec's "merge base" and `47ece10bb` are the same commit for this build. If #4831 lands before this branch merges, AC5's `task-prompt.md` bound and AC1's base counts are re-measured against the new merge base at review (plan review row 1, logged). `express-prompt.md` gains no text in this change.
 - `renderTaskPrompt` gets no code change (spec Technical Approach).
 - `tests/flow-context-handoff-conformance.test.js` gets no edit (AC4).
 - Commit messages reference the record as `refs #5601`, never `closes`/`fixes`.
@@ -31,15 +31,15 @@ Scope sweep (Check B): `CHANGELOG.md`, `docs/superpowers/plans/2026-11-01-dispat
   - "Hard-wrapped markdown splits phrases across lines, so a single-line literal match returns zero while the phrase is right there `[IL-66]`." — every new pattern uses `\s+` between words, or runs on whitespace-squashed text.
   - "Apply the whitespace-collapsed control scan to **both** directions of a migration suite — absence assertions need it more than presence ones."
   - "When the assertion and the prose it pins are authored in the same change … copy the pinned literal out of the edit's own replacement text, never from memory of what that edit says."
-- `.claude/skills/parse-signal-discipline` and `.claude/skills/shared-contract-extraction`: no rule beyond the above applies — no parser or `_shared` file is created; the citation sweep is Task 3's grep.
+- `.claude/skills/parse-signal-discipline` and `.claude/skills/shared-contract-extraction`: no rule beyond the above applies — no parser or `_shared` file is created; the citation sweep is Task 2's grep.
 
 ## Review Focus
 
-1. A wrapped line inside item 7 splitting a pinned phrase — patterns use `\s+` or run on squashed text (Tasks 1-2).
-2. A future edit re-adding a Foreground paragraph to one template only — AC2's per-block assertion (Task 2).
-3. The express path narrowed so `{context-pack}` no longer carries item 7 — AC8 pin (Task 2).
+1. A wrapped line inside item 7 splitting a pinned phrase — patterns use `\s+` or run on squashed text (Task 1).
+2. A future edit re-adding a Foreground paragraph to one template only — AC2's per-block assertion (Task 1).
+3. The express path narrowed so `{context-pack}` no longer carries item 7 — AC8 pin (Task 1).
 4. The handoff copy drifting from item 7 — existing word-for-word pin, re-run unchanged (Task 1).
-5. A stale citation of "the Foreground execution clause" left in prose a dispatcher reads — AC6 grep (Task 3).
+5. A stale citation of "the Foreground execution clause" left in prose a dispatcher reads — AC6 grep (Task 2).
 
 ## Item 7 replacement text (used by Task 1, verbatim)
 
@@ -63,7 +63,7 @@ Always
 
 The handoff template's `Async-wait discipline (required):` paragraph in `plugin/skills/flow/context-handoff.md` replaces its identical sentence with the identical new text, so `squash(template)` contains item 7's squashed body again.
 
-## Disposition list (PR body, Deliverable 2 / AC9 — written by the controller after Task 3, not an SDD task)
+## Disposition list (PR body, Deliverable 2 / AC9 — written by the controller after Task 2, not an SDD task)
 
 One line per sentence of the removed paragraph (base `47ece10bb`, `task-prompt.md` lines 154-192):
 
@@ -85,21 +85,30 @@ One line per sentence of the removed paragraph (base `47ece10bb`, `task-prompt.m
 
 ---
 
-### Task 1: Item 7 carries the whole rule; the handoff template follows it
+### Task 1: Item 7 carries the whole rule, and the four templates drop their copies
 
 **Role:** integration
+**Review risk:** high
+
+One task, one commit (plan review, 2026-11-16): adding to item 7 alone would leave `task-prompt.md` above `RAIL_BYTES` (52,500) at a commit boundary, so the item-7 addition (Part A) and the paragraph removal (Part B) land together. Run Part A's Steps 1-3, then Part B's Steps 1-3, then the shared Steps 4-6 at the end.
 
 **Files:**
-- Modify: `plugin/skills/dispatch/task-prompt.md` (item 7 only, lines 37-90)
+- Modify: `plugin/skills/dispatch/task-prompt.md` (item 7, lines 37-90; and delete the `Foreground execution (required):` paragraph and its trailing blank line in both fenced templates, lines 154-193 and 346-385)
+- Modify: `plugin/skills/dispatch/express-prompt.md` (same deletion, lines 31-70 and 133-172)
 - Modify: `plugin/skills/flow/context-handoff.md` (the `Async-wait discipline (required):` paragraph, lines 84-136)
+- Create: `tests/fixtures/dispatch-prompt/foreground-paragraph-pre-5601.txt` — the base paragraph, verbatim, from `git show 47ece10bb:plugin/skills/dispatch/task-prompt.md` lines 154-192 (no trailing blank line)
 - Test: `tests/foreground-execution-instruction.test.js`
 - Test: `tests/pipeline-test-scope-conformance.test.js`
+- Test: `tests/dispatch-express-routing-prose.test.js`
 - Waived `tests/flow-context-handoff-conformance.test.js`: read-only — run in Step 4, never edited (AC4).
+- Waived `plugin/bin/lib/dispatch/task-prompt.js`: read only — `renderTaskPrompt(text, { call, issues, runDir, pluginRoot, policyValues, selectedAt, effortLine })` is the API the new tests call (see `tests/bin-lib/dispatch/task-prompt.test.js` lines 21-32 for a valid opts object).
 
 **Interfaces:**
-- Produces: item 7 text matching `REQUIRED` (both patterns) and `PROJECT_TEST_CMD` once each; `REQUIRED` widened to `\s+` word gaps (Task 2 relies on it unchanged).
+- Produces: item 7 text matching `REQUIRED` (both patterns) and `PROJECT_TEST_CMD` once each; `REQUIRED` widened to `\s+` word gaps; a test-local `renderedCounts(prompt) -> { primitive, probe, runInBackground, projectTestCmd }` helper in `tests/foreground-execution-instruction.test.js`.
 
-- [ ] **Step 1: Write the failing tests**
+#### Part A — item 7 and the handoff template
+
+- [ ] **Step A1: Write the failing tests**
 
 In `tests/foreground-execution-instruction.test.js`:
 - Change both `REQUIRED` patterns' literal spaces to `\s+` (`/never\s+with\s+`run_in_background`/i`, `/never\s+end\s+(?:this|the)\s+turn\s+waiting\s+on\s+a\s+background/i`); the build/dispatch.md test keeps using it.
@@ -111,50 +120,18 @@ In `tests/pipeline-test-scope-conformance.test.js`, add after the `PROJECT_TEST_
 - Test `"AC3.3: task-prompt.md item 7 names the project's test command exactly once (#5601)"`: `assert.equal(squashedItem7.split(PROJECT_TEST_CMD).length - 1, 1)`.
 - Go-red test: strip that one occurrence (`squashedItem7.replace(PROJECT_TEST_CMD, '')`), `assert.notEqual` it, and assert the count helper returns 0.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [ ] **Step A2: Run the tests to verify they fail**
 
 Run: `node --test tests/foreground-execution-instruction.test.js tests/pipeline-test-scope-conformance.test.js`
 Expected: FAIL — item 7 lacks `run_in_background`, "never end the turn waiting on a background" and the project's test command; the handoff paragraph lacks the REQUIRED facts.
 
-- [ ] **Step 3: Edit item 7 and the handoff paragraph**
+- [ ] **Step A3: Edit item 7 and the handoff paragraph**
 
-Apply "Item 7 replacement text" above to `task-prompt.md` item 7, and the identical replacement to `context-handoff.md`'s paragraph. Keep the hard-wrap style of the surrounding lines; change nothing else in either file.
+Apply "Item 7 replacement text" above to `task-prompt.md` item 7, and the identical replacement to `context-handoff.md`'s paragraph. Keep the hard-wrap style of the surrounding lines; change nothing else in item 7 or the handoff file.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+#### Part B — remove the four template paragraphs; assert on rendered prompts
 
-Run: `node --test tests/foreground-execution-instruction.test.js tests/pipeline-test-scope-conformance.test.js tests/flow-context-handoff-conformance.test.js tests/review-dispatched-reviewer-degrade-conformance.test.js`
-Expected: PASS, all four (the third with no edit — AC4.1).
-
-- [ ] **Step 5: Measure the addition**
-
-Run: `wc -c plugin/skills/dispatch/task-prompt.md` — expected at most 53,092 (52,492 + 600). This leaves the file transiently above `RAIL_BYTES` (52,500) between Task 1 and Task 2; Task 2 removes ~7.6 KB in the next commit, and only the end-of-build full suite runs the rail test. Record the number in the commit body.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add plugin/skills/dispatch/task-prompt.md plugin/skills/flow/context-handoff.md tests/foreground-execution-instruction.test.js tests/pipeline-test-scope-conformance.test.js
-git commit -m "Give Context pack item 7 the whole foreground rule — refs #5601"
-```
-
-### Task 2: Remove the four template paragraphs; assert on rendered prompts
-
-**Role:** integration
-**Review risk:** high
-
-**Files:**
-- Modify: `plugin/skills/dispatch/task-prompt.md` (delete the `Foreground execution (required):` paragraph and its trailing blank line in both fenced templates, lines 154-193 and 346-385)
-- Modify: `plugin/skills/dispatch/express-prompt.md` (same, lines 31-70 and 133-172)
-- Create: `tests/fixtures/dispatch-prompt/foreground-paragraph-pre-5601.txt` — the base paragraph, verbatim, from `git show 47ece10bb:plugin/skills/dispatch/task-prompt.md` lines 154-192 (no trailing blank line)
-- Test: `tests/foreground-execution-instruction.test.js`
-- Test: `tests/pipeline-test-scope-conformance.test.js`
-- Test: `tests/dispatch-express-routing-prose.test.js`
-- Waived `plugin/bin/lib/dispatch/task-prompt.js`: read only — `renderTaskPrompt(text, { call, issues, runDir, pluginRoot, policyValues, selectedAt, effortLine })` is the API the new tests call (see `tests/bin-lib/dispatch/task-prompt.test.js` lines 21-32 for a valid opts object).
-
-**Interfaces:**
-- Consumes: Task 1's item 7 (`REQUIRED`, `PROJECT_TEST_CMD` both match it).
-- Produces: a test-local `renderedCounts(prompt) -> { primitive, probe, runInBackground, projectTestCmd }` helper in `tests/foreground-execution-instruction.test.js`; `pipeline-test-scope-conformance.test.js` renders its own prompts with the same opts shape.
-
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step B1: Write the failing tests**
 
 `tests/foreground-execution-instruction.test.js`:
 - Delete `TEMPLATE_KEEP_ALIVE`, `templateKeepAliveMissing`, `foregroundParagraph`, the test `'task-prompt.md: both fenced Task-prompt templates carry the foreground-execution instruction'`, and the test `'the foreground-instruction predicate can actually go red (discrimination proof)'`. In `'neither fenced template keeps the in-turn carve-out (#3078)'` keep only the `dropsInTurnCarveOut` assertion; in `'each task-prompt assertion can actually go red…'` drop the template loop.
@@ -167,7 +144,7 @@ git commit -m "Give Context pack item 7 the whole foreground rule — refs #5601
   - Go-red: (a) the fixture inserted into one block reports exactly that block; (b) a block with `{context-pack}` duplicated reports exactly that block. Each preceded by `assert.notEqual`.
 
 `tests/pipeline-test-scope-conformance.test.js`:
-- `"every dispatch prompt Foreground paragraph names the project's test command (#5117)"` becomes `"AC6: neither dispatch prompt file holds a Foreground paragraph (#5601)"`: `assert.equal(foregroundParagraphs(file).length, 0)` for both files.
+- `"every dispatch prompt Foreground paragraph names the project's test command (#5117)"` becomes `"AC2.1: neither dispatch prompt file holds a Foreground paragraph (#5601)"`: `assert.equal(foregroundParagraphs(file).length, 0)` for both files.
 - New `"AC1.4: both rendered prompts carry item 7's project-test-command sentence (#5601)"`: render `first` and `second` via `renderTaskPrompt`, squash whitespace, `assert.match(squashed, PROJECT_TEST_CMD)`.
 - Keep `'the Foreground project-test-command fact can go red (#5117)'` unchanged (it runs against the frozen `PRE_CHANGE_FOREGROUND`).
 
@@ -177,19 +154,21 @@ git commit -m "Give Context pack item 7 the whole foreground rule — refs #5601
 - New `'AC8.1: express-prompt.md defines {context-pack} as the whole Context pack section (#5601)'`: `assert.match(squash(lineThree), /`\{context-pack\}` is `task-prompt\.md`'s Context pack section, each numbered item resolved as it states/)` where `lineThree` is the line starting `Referenced by`.
 - Go-red `'AC8.2: narrowing the definition to a list without item 7 goes red'`: replace `Context pack section, each numbered item resolved as it states` with `Context pack items 1-6 and 8, each resolved as it states` in memory, `assert.notEqual`, and assert the same check fails (`assert.throws` matched to its message).
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [ ] **Step B2: Run the tests to verify they fail**
 
 Run: `node --test tests/foreground-execution-instruction.test.js tests/pipeline-test-scope-conformance.test.js tests/dispatch-express-routing-prose.test.js`
-Expected: FAIL — rendered counts are 2, the paragraphs are still present, Foreground paragraph count is 2. (AC8.1 passes on base: it pins existing text.)
+Expected: FAIL — rendered counts are 2, the paragraphs are still present, Foreground paragraph count is 2. (AC8.1 passes before the edit: it pins existing text.)
 
-- [ ] **Step 3: Delete the four paragraphs**
+- [ ] **Step B3: Delete the four paragraphs**
 
 Remove each `Foreground execution (required):` paragraph plus one adjacent blank line, so `{context-pack}` is preceded by exactly one blank line. Touch nothing else.
 
+#### Shared closing steps
+
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test tests/foreground-execution-instruction.test.js tests/pipeline-test-scope-conformance.test.js tests/dispatch-express-routing-prose.test.js tests/bin-lib/dispatch/task-prompt.test.js tests/hooks-dispatch-prompt-gate.test.js tests/flow-context-handoff-conformance.test.js`
-Expected: PASS (AC10.1, AC10.2 included).
+Run: `node --test tests/foreground-execution-instruction.test.js tests/pipeline-test-scope-conformance.test.js tests/dispatch-express-routing-prose.test.js tests/bin-lib/dispatch/task-prompt.test.js tests/hooks-dispatch-prompt-gate.test.js tests/flow-context-handoff-conformance.test.js tests/review-dispatched-reviewer-degrade-conformance.test.js`
+Expected: PASS (AC4.1 with no edit to the handoff conformance test; AC10.1, AC10.2 included).
 
 - [ ] **Step 5: Check sizes (AC5)**
 
@@ -199,16 +178,17 @@ Expected: at most 45,692 and 10,217 (merge base `47ece10bb` sizes minus 6,800 an
 - [ ] **Step 6: Commit**
 
 ```bash
-git add plugin/skills/dispatch/task-prompt.md plugin/skills/dispatch/express-prompt.md tests/fixtures/dispatch-prompt/foreground-paragraph-pre-5601.txt tests/foreground-execution-instruction.test.js tests/pipeline-test-scope-conformance.test.js tests/dispatch-express-routing-prose.test.js
-git commit -m "Drop the four template copies of the foreground rule — refs #5601"
+git add plugin/skills/dispatch/task-prompt.md plugin/skills/dispatch/express-prompt.md plugin/skills/flow/context-handoff.md tests/fixtures/dispatch-prompt/foreground-paragraph-pre-5601.txt tests/foreground-execution-instruction.test.js tests/pipeline-test-scope-conformance.test.js tests/dispatch-express-routing-prose.test.js
+git commit -m "State the foreground rule once, in Context pack item 7 — refs #5601"
 ```
 
-### Task 3: Re-point every citation of the removed clause
+### Task 2: Re-point every citation of the removed clause
 
 **Role:** integration
 
 **Files:**
-- Modify: `plugin/skills/dispatch/task-prompt.md` (the three paragraphs after the first-call template, lines ~269-284 after Task 2)
+- Modify: `plugin/skills/dispatch/task-prompt.md` (the three paragraphs after the first-call template, lines ~269-284 after Task 1)
+- Modify: `plugin/skills/_shared/rendered-ui-units.md` (line 3: "its six inlined copies" → "its two inlined copies (`dispatch/task-prompt.md`'s Context pack item 7 and `flow/context-handoff.md`'s template)" — plan review, Deliverable 5)
 - Modify: `plugin/skills/dispatch/sequential-execution.md` (lines 54, 68-70)
 - Modify: `plugin/skills/dispatch/two-call-gate.md` (line 61)
 - Modify: `plugin/skills/_shared/subagent-dispatch-core.md` (line 63)
@@ -222,7 +202,7 @@ git commit -m "Drop the four template copies of the foreground rule — refs #56
 - Test: `tests/foreground-execution-instruction.test.js` (AC7 test)
 
 **Interfaces:**
-- Consumes: Tasks 1-2's final `task-prompt.md` and item 7.
+- Consumes: Task 1's final `task-prompt.md` and item 7.
 
 Replacement wording (copy these literals into prose and tests):
 - `task-prompt.md`: "The Foreground execution clause above is backed by" → "Context pack item 7 is backed by"; "never a reason to relax the Foreground execution clause above or have this call check in mid-turn" → "never a reason to relax Context pack item 7 or have this call check in mid-turn"; the #2533 paragraph becomes: "Context pack item 7 carries the nested-`Agent` rule (#2533, reworked in #3078) into each template through its `{context-pack}` placeholder, because each template is inlined verbatim into a `Task()` prompt whose agent never sees the core file. `_shared/subagent-dispatch-core.md`'s Foreground Execution Discipline is the one definition of that rule, its keep-alive bound and its `unconfirmed` fallback. `_shared/dispatch-waiting.md` describes a top-level dispatcher waiting on its own children, not this agent, so it is not the basis for item 7." (Keeps `RATIONALE`'s citation and `dropsPrimaryResumeSignal`.)
@@ -261,7 +241,7 @@ Run: `git grep -n -i -e "Foreground execution clause" -e "Foreground execution (
 - [ ] **Step 6: Commit**
 
 ```bash
-git add plugin/skills/dispatch/task-prompt.md plugin/skills/dispatch/sequential-execution.md plugin/skills/dispatch/two-call-gate.md plugin/skills/_shared/subagent-dispatch-core.md plugin/skills/flow/multispec-parallel-waves.md docs/skill-graph.md docs/plugin-structure.md docs/journeys/run-parallel-pipelines-without-per-task-full-suites-5117.md .claude/skills/skill-prose-conformance-tests/SKILL.md tests/dispatch-heartbeat-visibility.test.js tests/dispatch-mechanical-enforcement.test.js tests/foreground-execution-instruction.test.js
+git add plugin/skills/dispatch/task-prompt.md plugin/skills/dispatch/sequential-execution.md plugin/skills/dispatch/two-call-gate.md plugin/skills/_shared/subagent-dispatch-core.md plugin/skills/flow/multispec-parallel-waves.md docs/skill-graph.md docs/plugin-structure.md docs/journeys/run-parallel-pipelines-without-per-task-full-suites-5117.md plugin/skills/_shared/rendered-ui-units.md .claude/skills/skill-prose-conformance-tests/SKILL.md tests/dispatch-heartbeat-visibility.test.js tests/dispatch-mechanical-enforcement.test.js tests/foreground-execution-instruction.test.js
 git commit -m "Cite Context pack item 7 where prose named the template clause — refs #5601"
 ```
 
@@ -269,14 +249,14 @@ git commit -m "Cite Context pack item 7 where prose named the template clause �
 
 | AC | Covered by |
 |---|---|
-| AC1.1, AC1.2, AC1.3, AC1.4 | Task 2 rendered-count tests (AC1.3: the once-per-prompt invariant is that test's assertion); AC1.4 also Task 2 pipeline-test-scope test |
-| AC2.1-2.2 | Task 2 template-defects test |
-| AC3.1-3.3 | Task 1 ITEM7 extension + go-red |
+| AC1.1, AC1.2, AC1.3, AC1.4 | Task 1 rendered-count tests (AC1.3: the once-per-prompt invariant is that test's assertion); AC1.4 also Task 1 pipeline-test-scope test |
+| AC2.1, AC2.2 | Task 1 template-defects test |
+| AC3.1, AC3.2 | Task 1 Part A ITEM7 extension + go-red (exactly-once via `assertEachPatternGoesRed`) |
 | AC4.1 | Task 1 Step 4 (no edit) |
-| AC5.1, AC5.2, AC5.3 | Task 2 Step 5 (scratch measurement against the merge base, logged as AC evidence) |
-| AC6.1, AC6.2 | Task 3 Step 5 |
-| AC7.1, AC7.2 | Task 3 AC7.1 test |
-| AC8.1-8.2 | Task 2 express tests |
+| AC5.1, AC5.2, AC5.3 | Task 1 Step 5 (scratch measurement against the merge base, logged as AC evidence) |
+| AC6.1, AC6.2 | Task 2 Step 5 |
+| AC7.1, AC7.2 | Task 2 AC7.1 test |
+| AC8.1 | Task 1 express tests (pin + narrowing go-red) |
 | AC9.1 | Controller: disposition list appended to the PR body |
-| AC10.1 | Task 2 Step 4 |
+| AC10.1 | Task 1 Step 4 |
 | AC11.1 | Common Step 5 / `/claude-tweaks:test` full run |
