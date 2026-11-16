@@ -1,5 +1,6 @@
 'use strict';
 const { test } = require('node:test');
+require('../../helpers/stub-token-pass').installTokenPassStub();
 const assert = require('node:assert/strict');
 const cp = require('child_process');
 // Destructured at require time, so this binding is a snapshot of the REAL
@@ -16,10 +17,11 @@ const {
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, archiveRunCommand, compareWorkTwin,
   classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
   isClosedSlugStuck, recordNumbersFromSlug, refusal, runRecordSet, inFlightRecords,
-  consoleResidue, consoleResidueHint, filingRerunRemedy,
+  consoleResidue, consoleResidueHint, filingRerunRemedy, digestRerunRemedy,
   unfiledCantTellFindings, CANT_TELL_UNFILED_HINT, countOwnerlessNonClean,
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 const { unfiledCantTell } = require('../../../plugin/bin/lib/console/finding-outcomes');
+const { digestLogRemedy } = require('../../../plugin/bin/lib/console/residue');
 const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures, cachePath } = require('../../../plugin/bin/lib/reconcile/cache');
 const { gateOriginRepo } = require('../../../plugin/bin/lib/repo-resolve');
@@ -237,7 +239,7 @@ test('consoleResidueHint: names only the unreadable console.json when no item is
 });
 
 // #4170: a planned can't-tell filing (`console.json#filings`) with no filed line in decisions.md is
-// `filing-pending` residue; the refusal names the `console-filings.js --only` re-run beside the ack.
+// `filing-pending` residue; the refusal names the default-selection `console-filings.js` re-run beside the ack.
 const PLANNED_FILED_LINE = '- AUTO 10:00:00 — Queue write: tiebreak:aaaaaaaaaaaa filed as #501 (work-fingerprint consolefinding-0123abcd). Reversibility: n/a.\n';
 function plannedFilingRunDir() {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-residue-filing-'));
@@ -250,12 +252,12 @@ function plannedFilingRunDir() {
   fs.writeFileSync(path.join(runDir, 'decisions.md'), '## /wrap-up\n');
   return runDir;
 }
-test('AC3.1: a console holding a planned filing with no record reads residue and the hint names the console-filings.js --only re-run (#4170)', () => {
+test('AC3.1: a console holding a planned filing with no record reads residue and the hint names the default-selection console-filings.js re-run (#4170)', () => {
   const runDir = plannedFilingRunDir();
   assert.strictEqual(readConsoleState(runDir), 'residue');
   assert.deepStrictEqual(consoleResidue(runDir), { items: 1, unreadable: [], names: ['tiebreak:aaaaaaaaaaaa (filing-pending)'] });
   assert.ok(consoleResidueHint(runDir).includes(
-    `re-run the planned filing(s): console-filings.js --run "${runDir}" --existing <issues.json> --out-dir <dir> --only 'tiebreak:aaaaaaaaaaaa', then file each printed \`file\` entry and log it as '{item} filed as #{n} (work-fingerprint {fp})', hand-log any \`logFailures\` item as '{item} already filed as #{n} (work-fingerprint {fp})' (the CLI logs each \`deduped\` entry itself), via log-decision.js \`--run\` that console's dir, per wrap-up/review-console.md's Can't-tell filings; or review them, then run console-residue.js --ack --run "${runDir}"`,
+    `re-run the planned filing(s): console-filings.js --run "${runDir}" --existing <issues.json> --out-dir <dir> --digest-comments <comments.json>, then file each printed \`file\` entry and log it as '{item} filed as #{n} (work-fingerprint {fp})', hand-log any \`logFailures\` item as '{item} already filed as #{n} (work-fingerprint {fp})' (the CLI logs each \`deduped\` entry itself; a \`drop\` item's re-run logs its digested line instead), via log-decision.js \`--run\` that console's dir, per wrap-up/review-console.md's Can't-tell filings; or review them, then run console-residue.js --ack --run "${runDir}"`,
   ), consoleResidueHint(runDir));
 });
 test('filingRerunRemedy is empty for a residue console with no planned filing (#4170)', () => {
@@ -263,12 +265,68 @@ test('filingRerunRemedy is empty for a residue console with no planned filing (#
   assert.strictEqual(filingRerunRemedy(runDir), '');
   assert.match(consoleResidueHint(runDir), /unresolved: f1 \(filing-failed\) — review them, then run console-residue\.js --ack --run /);
 });
+// #4679: the digest twin — a planned digest entry with no digested line is `digest-pending` residue and the hint
+// names the digest re-run plus the log remedy, beside the ack.
+const DIGESTED_LINE = '- AUTO 10:00:00 — Queue write: tiebreak:bbbbbbbbbbbb digested (work-fingerprint consolefinding-4567ef01). Reversibility: n/a.\n';
+function plannedDigestRunDir() {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-residue-digest-'));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
+    resolved: true,
+    mode: 'auto-resolve',
+    items: [{ id: 'tiebreak:bbbbbbbbbbbb', section: 'Low-confidence findings', resolution: 'digested', reason: 'r' }],
+    digests: [{ item: 'tiebreak:bbbbbbbbbbbb', fingerprint: 'consolefinding-4567ef01' }],
+  }));
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), '## /wrap-up\n');
+  return runDir;
+}
+test('a console holding a planned digest entry with no digested line reads residue and the hint names the digest re-run (#4679)', () => {
+  const runDir = plannedDigestRunDir();
+  assert.strictEqual(readConsoleState(runDir), 'residue');
+  assert.deepStrictEqual(consoleResidue(runDir), { items: 1, unreadable: [], names: ['tiebreak:bbbbbbbbbbbb (digest-pending)'] });
+  assert.strictEqual(filingRerunRemedy(runDir), '');
+  const remedy = digestRerunRemedy(runDir);
+  assert.ok(remedy.startsWith(`re-run the planned digest entries: console-filings.js --run "${runDir}" --existing <issues.json> --out-dir <dir> --digest-comments <comments.json>, then ${digestLogRemedy({ consoleDir: runDir })}`), remedy);
+  assert.ok(consoleResidueHint(runDir).includes(`${remedy}; or review them, then run console-residue.js --ack --run "${runDir}"`), consoleResidueHint(runDir));
+});
+test('digestRerunRemedy with several digest-pending consoles names each re-run and one log command with a dir placeholder (#4679)', () => {
+  const runDir = plannedDigestRunDir();
+  const sub = path.join(runDir, 'spec-2');
+  fs.mkdirSync(sub);
+  fs.writeFileSync(path.join(sub, 'console.json'), fs.readFileSync(path.join(runDir, 'console.json')));
+  fs.writeFileSync(path.join(sub, 'decisions.md'), '## /wrap-up\n');
+  const remedy = digestRerunRemedy(runDir);
+  assert.ok(remedy.includes(`console-filings.js --run "${runDir}" `) && remedy.includes(`console-filings.js --run "${sub}" `), remedy);
+  assert.ok(remedy.endsWith(digestLogRemedy({ consoleDir: "{that console's dir}" })), remedy);
+  assert.strictEqual(remedy.split('post each printed digest line').length, 2, 'the instruction sentence prints once');
+});
+test('a console holding both a filing-pending and a digest-pending item names the one re-run once in the hint and the archive-run refusal (#4679)', () => {
+  const runDir = plannedFilingRunDir();
+  const cj = JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8'));
+  cj.items.push({ id: 'tiebreak:bbbbbbbbbbbb', section: 'Low-confidence findings', resolution: 'digested', reason: 'r' });
+  cj.digests = [{ item: 'tiebreak:bbbbbbbbbbbb', fingerprint: 'consolefinding-4567ef01' }];
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify(cj));
+  const cmd = `console-filings.js --run "${runDir}" --existing <issues.json> --out-dir <dir> --digest-comments <comments.json>`;
+  const hint = consoleResidueHint(runDir);
+  assert.strictEqual(hint.split(cmd).length, 2, `the command prints once: ${hint}`);
+  assert.ok(hint.includes(digestLogRemedy({ consoleDir: runDir })), 'the digest log remedy is still named');
+  assert.ok(hint.includes('the same re-run also settles the planned digest entries'), hint);
+  assert.ok(!hint.includes('; or the same re-run'), `the digest continuation is an addition, not an alternative: ${hint}`);
+  assert.ok(hint.includes(`; the same re-run also settles`) && hint.includes(`; or review them, then run console-residue.js --ack`), hint);
+});
+test('digestRerunRemedy is empty for a residue console with no planned digest (#4679)', () => {
+  assert.strictEqual(digestRerunRemedy(prConsoleRunDir([['f1', 'filing-failed']])), '');
+});
+test('once the digested line is logged the run reads resolved (#4679)', () => {
+  const runDir = plannedDigestRunDir();
+  fs.appendFileSync(path.join(runDir, 'decisions.md'), DIGESTED_LINE);
+  assert.strictEqual(readConsoleState(runDir), 'resolved');
+});
 test('AC4.1: once the filed line is logged the run reads resolved (#4170)', () => {
   const runDir = plannedFilingRunDir();
   fs.appendFileSync(path.join(runDir, 'decisions.md'), PLANNED_FILED_LINE);
   assert.strictEqual(readConsoleState(runDir), 'resolved');
 });
-test('filingRerunRemedy names one re-run per unacknowledged console, each with only its unfiled planned filings (#4170)', () => {
+test('filingRerunRemedy names one re-run per unacknowledged console that holds an unfiled planned filing (#4170)', () => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-residue-filings-'));
   const [a, b, c, d] = ['aaaaaaaaaaaa', 'bbbbbbbbbbbb', 'cccccccccccc', 'dddddddddddd'].map((h) => `tiebreak:${h}`);
   const fp = { [a]: 'consolefinding-0123abcd', [b]: 'consolefinding-4567ef01', [c]: 'consolefinding-89abcdef', [d]: 'consolefinding-02468ace' };
@@ -287,10 +345,12 @@ test('filingRerunRemedy names one re-run per unacknowledged console, each with o
   const two = specConsole(2, { items: [item(c)], filings: [filing(c)] });
   const three = specConsole(3, { items: [item(d)], filings: [filing(d)], acknowledged: true });
   const remedy = filingRerunRemedy(parent);
-  assert.ok(remedy.includes(`console-filings.js --run "${one}" --existing <issues.json> --out-dir <dir> --only '${b}'`), remedy);
-  assert.ok(remedy.includes(`console-filings.js --run "${two}" --existing <issues.json> --out-dir <dir> --only '${c}'`), remedy);
+  const rerun = (dir) => `console-filings.js --run "${dir}" --existing <issues.json> --out-dir <dir> --digest-comments <comments.json>`;
+  assert.ok(remedy.includes(rerun(one)), remedy);
+  assert.ok(remedy.includes(rerun(two)), remedy);
+  assert.ok(!remedy.includes('--only'), `the re-run keeps the unattended default selection: ${remedy}`);
   assert.ok(!remedy.includes(three) && !remedy.includes(d), `an acknowledged console is not named: ${remedy}`);
-  assert.ok(!remedy.includes(a) && !remedy.includes('reflect-1.md'), `a filed filing and a non-filing item are not named: ${remedy}`);
+  assert.ok(!remedy.includes('reflect-1.md'), `a non-filing item is not named: ${remedy}`);
 });
 
 test('decideArchiveCore: invalid-arguments skips with reason invalid-arguments (#3416)', () => {

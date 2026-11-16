@@ -1159,7 +1159,7 @@ const OTHER_UID = typeof process.geteuid === 'function' ? process.geteuid() + 1 
 // unless a safe.directory entry trusts it. GitHub's Ubuntu runner image ships
 // `safe.directory = *` in the system config, so the host's system and global
 // config are shut out here.
-const DIFFERENT_OWNER_ENV = { ...process.env, GIT_TEST_ASSUME_DIFFERENT_OWNER: '1', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devNull };
+const DIFFERENT_OWNER_ENV = { ...process.env, GIT_TEST_ASSUME_DIFFERENT_OWNER: '1', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
 
 test('originUrlFromConfig: a main checkout owned by another user defers to git (ensure_valid_ownership)', OWNER_OPTS, () => {
   withRepo(LOCAL_URL, (dir) => {

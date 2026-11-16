@@ -4,8 +4,9 @@ const fs = require('fs');
 const path = require('path');
 const { fingerprint } = require('./lib/code-health/fingerprint');
 const {
-  readCache, writeCache, computeChurn, createDurable, buildValidateFindingsUpdate,
+  cachePath, readCache, writeCache, computeChurn, createDurable, buildValidateFindingsUpdate,
 } = require('./lib/code-health/cache');
+const { lstatType, resolveWithin } = require('./lib/path-guard');
 const { decide, RISK_RANK } = require('./lib/code-health/dedup');
 const { computeRisk } = require('./lib/code-health/risk');
 const { validateFindingV2, applyConfidenceFloor } = require('./lib/code-health/validate-finding');
@@ -22,6 +23,40 @@ const { makeCmdChurnReport } = require('./lib/health-core/churn-report');
 
 const TOOL_NAME = 'code-health';
 const FAIL_ON_VALUES = new Set(['regressed', 'risk-high']);
+// Why `status --fail-on` refuses to evaluate (exit 2) rather than pass on an untrusted cache.
+const FAIL_ON_REFUSAL = Object.freeze({
+  missing: 'no cache file (no sweep has written one under this root)',
+  notRegular: 'not a regular file inside the checkout',
+  unreadable: 'not a readable code-health cache',
+});
+
+const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+// Strict read of the local cache for the --fail-on gate: unlike readCache, a missing,
+// non-regular, escaping or malformed cache is a refusal, never an empty cache.
+// The cache is found at a path no caller names and decides a pass/fail verdict, so the
+// lookup is a trust decision (#5529): any symlink is refused, even one that stays
+// inside the checkout — one regular-file rule, no cases to argue about.
+function readGateCache(root) {
+  const p = cachePath(root);
+  const refuse = (key) => ({ ok: false, path: p, reason: FAIL_ON_REFUSAL[key] });
+  const t = lstatType(p).type;
+  if (t === 'missing') return refuse('missing');
+  if (t === 'unreadable') return refuse('unreadable');
+  if (t !== 'file') return refuse('notRegular');
+  // lstat sees only the leaf; this catches a symlinked parent directory
+  // (.claude-tweaks/code-health -> outside the checkout) that lstat reports as a plain file.
+  const real = resolveWithin(p, root);
+  if (real === null) return refuse('notRegular');
+  let cache;
+  try {
+    cache = JSON.parse(fs.readFileSync(real, 'utf8'));
+  } catch {
+    return refuse('unreadable');
+  }
+  if (!isPlainObject(cache) || !Object.values(cache).every(isPlainObject)) return refuse('unreadable');
+  return { ok: true, cache };
+}
 
 // Shared by cmdPullIssues' --min-severity and cmdValidateFindings' --min-risk —
 // both reject a value that isn't a RISK_RANK key, print an error naming the
@@ -64,16 +99,28 @@ function parseArgs(argv, cwd = process.cwd()) {
 function cmdStatus(args, ctx) {
   const root = args.root || ctx.cwd();
   const failOn = args['fail-on'];
-  if (failOn != null && !FAIL_ON_VALUES.has(failOn)) {
+  // `in`, not `failOn != null`: a bare trailing `--fail-on` parses to undefined and must
+  // refuse like any other unrecognized value, never fall through to plain status.
+  if ('fail-on' in args && !FAIL_ON_VALUES.has(failOn)) {
     ctx.stderr(
-      `status: --fail-on "${failOn}" is not a recognized value ` +
+      `status: --fail-on "${failOn ?? ''}" is not a recognized value ` +
       `(must be one of ${[...FAIL_ON_VALUES].join('|')}) — an unrecognized value silently disables ` +
       'the gate (always exits 0) regardless of how many regressed/risk-high findings actually exist.\n',
     );
     return 2;
   }
 
-  const cache = readCache(root);
+  let cache;
+  if (failOn) {
+    const gate = readGateCache(root);
+    if (!gate.ok) {
+      ctx.stderr(`status: --fail-on cannot evaluate: ${gate.path}: ${gate.reason}\n`);
+      return 2;
+    }
+    cache = gate.cache;
+  } else {
+    cache = readCache(root);
+  }
   const findings = Object.values(cache);
   const counts = {
     open: findings.filter((f) => f.status === 'open').length,

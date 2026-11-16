@@ -1,5 +1,6 @@
 'use strict';
 const { test } = require('node:test');
+require('../../helpers/stub-token-pass').installTokenPassStub();
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const fs = require('fs');

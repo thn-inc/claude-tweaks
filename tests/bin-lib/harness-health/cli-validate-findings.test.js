@@ -768,3 +768,20 @@ test('validate-findings runs the Premise-check self-check under the injected env
   assert.ok(!payload.body.includes('Premise-check:'), `expected the shimmed self-check to drop the line, got:\n${payload.body}`);
   assert.ok(shimmed.stderr.includes('dropped Premise-check: line'), `a self-check drop must be logged, got:\n${shimmed.stderr}`);
 });
+
+test('AC6.1: an --issues file whose matching issue carries the label object {name: "wontfix"} suppresses the finding', () => {
+  const root = tmp();
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding()]));
+  const first = runValidateFindings(root, findingsFile, ['--target', 'auth', '--kind', 'skill']);
+  const fp = JSON.parse(first.stdout)[0].body.match(/<!--\s*work-fingerprint:\s*(harnesshealth-[0-9a-f]{8})\s*-->/)[1];
+
+  const issuesFile = path.join(root, 'issues.json');
+  fs.writeFileSync(issuesFile, JSON.stringify([{
+    number: 9, state: 'CLOSED', fingerprint: fp,
+    labels: [{ id: 'LA_1', name: 'by:harness-health' }, { id: 'LA_2', name: 'wontfix' }],
+  }]));
+  const second = runValidateFindings(root, findingsFile, ['--issues', issuesFile, '--target', 'auth', '--kind', 'skill']);
+  assert.strictEqual(second.status, 0, `stderr: ${second.stderr}`);
+  assert.strictEqual(JSON.parse(second.stdout).length, 0, 'a wontfix label object must suppress, not reopen');
+});

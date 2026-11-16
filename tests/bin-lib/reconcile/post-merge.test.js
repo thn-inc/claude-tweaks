@@ -1900,13 +1900,15 @@ test('classifyEntry classifies every action word closing-links.js emits', () => 
   const words = new Set();
   for (const m of src.matchAll(/\baction(?::|\s*=)\s*'([a-z-]+)'/g)) words.add(m[1]);
   for (const m of src.matchAll(/\baction:\s*[\w.]+\s*\?\s*'([a-z-]+)'\s*:\s*'([a-z-]+)'/g)) { words.add(m[1]); words.add(m[2]); }
-  // Post-merge mode's words, then pre-merge mode's (never on this path; denied like any unknown word).
+  // Post-merge mode's words, then pre-merge mode's, then screen mode's (`clean` is shared with pre-merge);
+  // pre-merge and the CLI-only screen mode are never on this path, so denied like any unknown word.
   const EXPECTED = {
     'nothing-closed': 'clean', closed: 'clean', reopened: 'clean', 'no-fixes-span': 'clean', 'not-merged': 'clean', 'no-pr': 'clean',
     'reopen-failed': 'failed', 'close-failed': 'failed', 'base-unchecked': 'failed', 'close-pending': 'failed', 'gh-absent': 'failed',
     clean: 'failed', unlinked: 'failed', 'still-linked': 'failed',
+    neutralized: 'failed',
   };
-  assert.ok(words.size >= 14, `the scan found every producer site (${[...words].join(', ')})`);
+  assert.ok(words.size >= 15, `the scan found every producer site (${[...words].join(', ')})`);
   assert.deepEqual([...words].sort(), Object.keys(EXPECTED).sort());
   for (const [word, verdict] of Object.entries(EXPECTED)) {
     assert.equal(classifyEntry({ action: 'ran', closingLinks: word, parentsClosed: 0 }).verdict, verdict, word);

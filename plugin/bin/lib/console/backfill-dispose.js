@@ -14,7 +14,10 @@
 const fs = require('fs');
 const path = require('path');
 const { SHADOW_DUP_RE, SECTIONS, runIdOf } = require('./resolve');
-const { composeFindingProposal, findingFingerprint, fingerprintMap } = require('./finding-filing');
+const {
+  composeFindingProposal, findingFingerprint, fingerprintMap, areaOfPath, consoleFindingMarker, DIGEST_FINDING_MAX,
+  DIGEST_DEFER_REASON, isDropRecommended,
+} = require('./finding-filing');
 const { composeShadowDupProposal } = require('./shadow-dup-proposal');
 const { digestTextOf, targetOf } = require('./staged-digest-text');
 const { REFLECT_NO_DESTINATION, isApplicableReflect, parseReflectDestination } = require('./reflect-destination');
@@ -31,7 +34,7 @@ const DIGEST_REASONS = Object.freeze({
   UNMAPPED_KIND: 'console-backfill-unmapped-kind',
   REFLECT_NO_DESTINATION,
   CONFIRMED_LOW: 'console-backfill-confirmed-low',
-  CANT_TELL: 'tiebreak-cant-tell',
+  CANT_TELL: DIGEST_DEFER_REASON,
 });
 
 const OUTCOME_OF_ACTION = Object.freeze({ file: 'filed', digest: 'digested', drop: 'dropped', dismiss: 'dismissed' });
@@ -44,7 +47,6 @@ for (const source of ['tiebreak', 'staged-kind', 'digest']) {
 
 const FINDING_FILED_SEVERITIES = new Set(['critical', 'high', 'medium']);
 const KNOWN_SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'info']);
-const DIGEST_FINDING_MAX = 200;
 const DEFAULT_LIMIT = 24;
 
 const squash = (s) => String(s).replace(/\s+/g, ' ').trim();
@@ -52,16 +54,6 @@ const squash = (s) => String(s).replace(/\s+/g, ' ').trim();
 // A digest entry field is one line and can never spell a marker (record.js's defuse): the entry's
 // own fingerprint marker must be the only one on its line.
 const oneLine = (s) => defuse(squash(s));
-
-// A path under plugin/skills/{s}/ -> s; plugin/bin/lib/{m}/ -> m; any other plugin/bin/ file -> bin;
-// else the path's first segment (tests, docs).
-function areaOfPath(p) {
-  const segs = String(p).replace(/\\/g, '/').replace(/^\.\//, '').split('/').filter(Boolean);
-  let area = segs[0] || 'console';
-  if (segs[0] === 'plugin' && segs[1] === 'skills') area = segs.length > 3 ? segs[2] : 'skills';
-  else if (segs[0] === 'plugin' && segs[1] === 'bin') area = segs[2] === 'lib' && segs.length > 4 ? segs[3] : 'bin';
-  return area.toLowerCase();
-}
 
 // An item that names a location (a finding, or a no-claim item standing for a located finding) takes
 // its area from that path. No path to read an area from: a reflect staged finding is `reflect`,
@@ -101,8 +93,10 @@ const itemMarkerOf = (item) => `<!-- ${ITEM_MARKER_PREFIX}: ${itemFingerprint(it
 
 // `marked`: the line also carries the item marker, after the materiality marker, so `{provenance}`
 // stays the bare run id digest-sweep.md dates expiry from (the entry's fields, and so its
-// fingerprint, are unchanged).
-function digestEntryOf({ item, finding, fileRefs, deferReason, runId, marked = false }) {
+// fingerprint, are unchanged). `claimMarker` (a console-finding marker) sits between the two.
+function digestEntryOf({
+  item, finding, fileRefs, deferReason, runId, marked = false, claimMarker = null,
+}) {
   const entry = {
     area: oneLine(areaFor(item)),
     finding: oneLine(finding).slice(0, DIGEST_FINDING_MAX),
@@ -110,7 +104,9 @@ function digestEntryOf({ item, finding, fileRefs, deferReason, runId, marked = f
     deferReason,
     provenance: oneLine(runId),
   };
-  const line = marked ? `${materialityEntryLine(entry)} ${itemMarkerOf(item)}` : materialityEntryLine(entry);
+  const line = marked
+    ? `${materialityEntryLine(entry)}${claimMarker ? ` ${claimMarker}` : ''} ${itemMarkerOf(item)}`
+    : materialityEntryLine(entry);
   return { entry, line, fingerprint: materialityFingerprint(entry) };
 }
 
@@ -140,6 +136,9 @@ function findingProposal(item, verdict, runId, confirmed) {
     finding: { claim: item.claimText },
     runId,
     staged: item.stagedFinding,
+    // The unattended can't-tell shape (#4679); composeFindingProposal ignores it for a staged finding,
+    // and a confirmed filing passes `confirmed`, so both keep their shape.
+    ...(confirmed ? {} : { unattended: true }),
     ...(confirmed ? { verdict: { kind: 'confirmed', evidence: verdict.evidence, mainSha: confirmed.mainSha } } : {}),
   });
   // The record is filed under its claim fingerprint (the first marker, which extractFingerprint reads);
@@ -149,11 +148,23 @@ function findingProposal(item, verdict, runId, confirmed) {
   return { fingerprint: composed.fingerprint, itemFingerprint: fp, title: composed.title, text };
 }
 
-// A finding's digest entry; both digest outcomes (can't-tell, confirmed-low) build it from the same
-// area, claim and location, and materialityFingerprint omits deferReason.
-const findingDigest = (item, deferReason, runId) => digestEntryOf({
-  item, finding: item.claimText, fileRefs: locationOf(item.finding), deferReason, runId, marked: true,
-});
+// The fingerprint composeFindingProposal files this finding under (same lens, path and claim), or null
+// when the item carries no claim to hash.
+function prefiledFingerprint(item) {
+  const f = item.finding;
+  if (!f || typeof item.claimText !== 'string' || !item.claimText.trim()) return null;
+  return findingFingerprint({ lens: f.lens, path: f.path, claim: item.claimText });
+}
+
+// A finding's digest entry; every digest outcome (can't-tell, confirmed-low) builds it from the same
+// area, claim and location, and materialityFingerprint omits deferReason. An item with a claim also
+// carries its console-finding marker (#4679), so the console's own digest dedups against it.
+function findingDigest(item, deferReason, runId) {
+  const fp = prefiledFingerprint(item);
+  return digestEntryOf({
+    item, finding: item.claimText, fileRefs: locationOf(item.finding), deferReason, runId, marked: true, claimMarker: fp ? consoleFindingMarker(fp) : null,
+  });
+}
 
 function disposeFinding({ item, verdict, runId, mainSha }) {
   const digestFor = (deferReason) => result(item, 'digest', 'tiebreak', { digest: findingDigest(item, deferReason, runId) });
@@ -169,6 +180,9 @@ function disposeFinding({ item, verdict, runId, mainSha }) {
       return result(item, 'drop', 'tiebreak', { ref: squash(`${ev.path}:${ev.line ?? 'unknown'} "${ev.quote}"`) });
     }
     case 'console':
+      // A can't-tell item the tiebreak recommends dropping is digested, never filed (#4679); any other
+      // recommendation files the verification task (findingProposal).
+      if (isDropRecommended(verdict)) return digestFor(DIGEST_REASONS.CANT_TELL);
       return result(item, 'file', 'tiebreak', { proposal: findingProposal(item, verdict, runId, null) });
     case 'digest':
       return digestFor(DIGEST_REASONS.CANT_TELL);
@@ -316,14 +330,6 @@ const verdictOf = (verdicts, id) => {
   return Object.hasOwn(verdicts, id) ? verdicts[id] : undefined;
 };
 
-// The fingerprint composeFindingProposal files this finding under (same lens, path and claim), or null
-// when the item carries no claim to hash.
-function prefiledFingerprint(item) {
-  const f = item.finding;
-  if (!f || typeof item.claimText !== 'string' || !item.claimText.trim()) return null;
-  return findingFingerprint({ lens: f.lens, path: f.path, claim: item.claimText });
-}
-
 const WORK_MARKER_RES = [new RegExp(FP_RE_WORK.source, 'g'), new RegExp(FP_RE_WORK_PLAIN.source, 'gm')];
 
 // fingerprint -> record number over EVERY work-fingerprint marker in each row's body (fingerprintMap
@@ -351,10 +357,12 @@ function filedRecordOf(item, fp, known, markers) {
 const commentRef = (comment) => (comment && typeof comment.url === 'string' && comment.url ? comment.url : null);
 
 // The trusted digest comment already holding this digest line — by its materiality fingerprint, or, for
-// a finding, by its item marker — or null. A string (a local-files body) is single-writer and trusted.
+// a finding, by its item marker or its console-finding marker — or null. A string (a local-files body) is single-writer and trusted.
 function heldDigestComment(digestComments, digest, item) {
-  const marker = item && item.kind === 'finding' ? itemMarkerOf(item) : null;
-  const holds = (text) => typeof text === 'string' && (parseMaterialityFingerprints(text).includes(digest.fingerprint) || (marker !== null && text.includes(marker)));
+  const isFinding = Boolean(item) && item.kind === 'finding';
+  const claimFp = isFinding ? prefiledFingerprint(item) : null;
+  const markers = isFinding ? [itemMarkerOf(item), ...(claimFp ? [consoleFindingMarker(claimFp)] : [])] : [];
+  const holds = (text) => typeof text === 'string' && (parseMaterialityFingerprints(text).includes(digest.fingerprint) || markers.some((m) => text.includes(m)));
   if (typeof digestComments === 'string') return holds(digestComments) ? { url: null } : null;
   for (const c of Array.isArray(digestComments) ? digestComments : []) {
     if (isTrustedComment(c) && holds(c.body)) return c;
@@ -407,7 +415,7 @@ function planBatch({ workList, verdicts, existingIssues, digestComments, limit =
           continue;
         }
         // Likewise a finding whose digest line a trusted comment already carries (digested by an interrupted
-        // run), by fingerprint or by item marker. The fingerprint does not depend on the verdict (findingDigest).
+        // run), by fingerprint, item marker, or console-finding marker. The fingerprint does not depend on the verdict (findingDigest).
         if (item.finding && typeof item.claimText === 'string' && item.claimText.trim()) {
           const prefiledDigest = findingDigest(item, DIGEST_REASONS.CANT_TELL, runIdOf(item.consoleDir));
           const held = heldDigestComment(digestComments, prefiledDigest, item);

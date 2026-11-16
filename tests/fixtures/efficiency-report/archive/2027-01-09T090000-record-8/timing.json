@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2027-01-09T09:10:00.000Z",
+  "phases": [
+    {
+      "phase": "review",
+      "start": null,
+      "end": null,
+      "source": "unattributed",
+      "procedureFiles": {}
+    }
+  ],
+  "totals": { "minutes": 10, "procedureFiles": {} }
+}
