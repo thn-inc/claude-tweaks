@@ -89,6 +89,7 @@ const {
   ghAvailable, remoteUrl, ghOptions, gateOriginRepo, repoSlug, originSpecOf,
 } = require('./lib/repo-resolve');
 const { POLICY_KEYS, resolvePolicyKeys } = require('./lib/policy-schema');
+const { locatePolicyFile } = require('./lib/policy-file');
 const { readWorkBackend } = require('./lib/work-backend');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 const {
@@ -188,7 +189,7 @@ const realDeps = {
   // The policy file's text, or null when the project has none.
   readPolicyRaw: (root) => {
     try {
-      return fs.readFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'utf8');
+      return fs.readFileSync(locatePolicyFile(root).path, 'utf8');
     } catch (err) {
       if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) return null;
       throw err;

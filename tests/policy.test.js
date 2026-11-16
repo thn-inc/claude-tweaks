@@ -289,3 +289,38 @@ test('changelog-max-releases: a non-Error or empty-message throw still yields a 
   }
   assert.strictEqual(readChangelogMaxReleases(() => { throw 'plain string'; }).error, 'plain string');
 });
+
+// --- #4492: readers fall back to the main checkout's policy.yml from a linked worktree ---
+function linkedWorktree(t, policy) {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'policy-wt-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const main = path.join(base, 'main');
+  const wt = path.join(base, 'wt');
+  fs.mkdirSync(path.join(main, '.git', 'worktrees', 'wt'), { recursive: true });
+  fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
+  fs.mkdirSync(wt, { recursive: true });
+  fs.writeFileSync(path.join(wt, '.git'), `gitdir: ${path.join(main, '.git', 'worktrees', 'wt')}\n`);
+  fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), policy);
+  return wt;
+}
+
+test('AC1.1: readIntegrationBranch and isWorktreeAlwaysOn read the main checkout\'s policy from a linked worktree root', (t) => {
+  const wt = linkedWorktree(t, 'integration-branch: develop\nworktree-always: true\n');
+  assert.strictEqual(readIntegrationBranch(wt), 'develop');
+  assert.strictEqual(isWorktreeAlwaysOn(wt), true);
+});
+
+test('readRiskPolicy from a linked worktree reads the main checkout\'s control-mode', (t) => {
+  const wt = linkedWorktree(t, 'control-mode: on\nrisk-categories: billing\n');
+  const { readRiskPolicy } = require('../plugin/bin/lib/policy');
+  const risk = readRiskPolicy(wt);
+  assert.strictEqual(risk.controlMode, true);
+  assert.deepStrictEqual(risk.extraCategories, ['billing']);
+});
+
+test('readRiskPolicy with a non-string repoRoot throws a TypeError before calling readFile', () => {
+  const { readRiskPolicy } = require('../plugin/bin/lib/policy');
+  let called = false;
+  assert.throws(() => readRiskPolicy(null, { readFile: () => { called = true; return ''; } }), TypeError);
+  assert.strictEqual(called, false);
+});

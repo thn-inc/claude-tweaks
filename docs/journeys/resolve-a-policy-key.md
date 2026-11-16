@@ -4,6 +4,8 @@ files:
   - plugin/bin/lib/hooks/worktree-detect.js
   - plugin/bin/lib/policy-schema.js
   - plugin/bin/lib/policy.js
+  - plugin/bin/lib/policy-file.js
+  - plugin/bin/pr-early-open.js
   - plugin/bin/hooks.sh
   - plugin/bin/lib/risk-path-globs.js
   - plugin/bin/lib/model-profiles/policy-fragment.js
@@ -65,7 +67,15 @@ files:
 - **Should understand:** Unset reads `{"value":{},"source":"default"}`. A valid block reads the slug-to-glob map with `source: "policy"`, in either list form. A malformed block reads `{"value":null,"source":"default","invalid":true}` — the whole block is rejected, never a partial map, and `null` keeps a consumer from reading it as "no globs" (#4609). `--values` refuses this key as it does `model-profiles`, and `--run` never overlays it.
 - **Red flags:** A malformed block resolving `{}`, which would silently switch off a safety check; a key after the block (`autonomy: trusted`) swallowed into it.
 
+### 7. Resolve from a linked worktree of a project that gitignores `policy.yml` — terminal
+- **URL:** `node plugin/bin/resolve-policy.js --values integration-branch`, run from inside a linked worktree
+- **Action:** In a project that keeps `.claude-tweaks/` out of git and whose main checkout's `policy.yml` sets `integration-branch: develop`, run the command from a linked worktree that has no `policy.yml` of its own. Then commit a `policy.yml` into the worktree's branch and run it again.
+- **Should feel:** Like the worktree and the main checkout are the same project. The configured branch comes back, and stderr says where it came from.
+- **Should understand:** The first run prints `develop`. Stderr gets one line: `resolve-policy: note — {root} has no .claude-tweaks/policy.yml; read the main checkout's {policyPath}`. The same note appears in every output mode, and stdout is unchanged. In-process callers read it from `resolvePolicyConfig`'s `policySource: "main-checkout"` and `policyPath`. Every policy reader goes through one locator, `plugin/bin/lib/policy-file.js`'s `locatePolicyFile`, so every key and every caller gets this fallback, not just this CLI (#4492). On the second run the worktree's own file wins outright and the main checkout's file is not read. Run from the main checkout, the command behaves exactly as before. A root counts as a linked worktree only when its gitdir's parent is exactly `<main>/.git/worktrees`, so a submodule inside a linked worktree keeps its own policy. If no `integration-branch` is set anywhere, `plugin/bin/pr-early-open.js` run from a linked worktree still opens the draft PR against the GitHub default branch, but first warns on stderr: `pr-early-open.js: warning: no integration-branch found (…) — the draft PR targets the GitHub default branch "{base}" from linked worktree {root}`.
+- **Red flags:** An empty line from the first run, which is the #4492 defect that sent draft PRs to the default branch. The note printed when the worktree has its own file. A submodule of a linked worktree reading the superproject's policy. A default-branch fallback from a linked worktree with no stderr warning.
+
 ## Origin
+- Step 7 added during build of #4492 (policy locator falls back to the main checkout's `policy.yml` from a linked worktree); `files:` gains `plugin/bin/lib/policy-file.js` and `plugin/bin/pr-early-open.js`
 - Step 3 updated at the wrap-up of #5563 (`changelog-max-releases`) — the key is `policyOnly`, so step 3's red flag lists it among the flat keys the `--run` overlay must never reach
 - Step 5 updated at the wrap-up of #5392 (the `bin/hooks.sh` node launcher): with no `node` found, the launcher's own `worktree-always` read is a shell copy of `resolveWorktreeAlways`, so step 5 names it and `files:` gains `plugin/bin/hooks.sh`
 - Steps 1 and 3 updated during build of #5224 (driver lane bounds) — step 1 names `express-driver-max-lines` as a derived default over `auto-merge-max-lines`, and step 3's red flag lists the three new `policyOnly` keys
