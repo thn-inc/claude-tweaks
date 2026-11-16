@@ -25,7 +25,7 @@ The test for "this is the line" must be wider than the exact grammar, or a varia
 
 ### Preamble only, fences ignored
 
-Read only the preamble (after an optional frontmatter block, before the first `## ` heading) and skip fenced lines, so a quoted example is never the record's own line. Use `plugin/bin/lib/markdown-blocks.js`'s fence helpers: `parseRiskFlags` uses `fencedLineMask`, and `extractPremiseCheck`, `extractVerifiedAsOf` and `extractTemplateStamp` in `record-payload.js` read through `unfencedText`.
+Read only the preamble (after an optional frontmatter block, before the first `## ` heading) and skip fenced lines, so a quoted example is never the record's own line. Use `plugin/bin/lib/markdown-blocks.js`'s fence helpers: `parseRiskFlags` uses `fencedLineMask`, and `extractPremiseCheck`, `extractVerifiedAsOf` and `extractTemplateStamp` in `record-payload.js` read through `unfencedText`. The one deliberate whole-body exception is `ownOriginLine` in `record-payload.js`: it scans the whole body, skipping fenced lines and lines under a `## Absorbed: …` section, and a line under `## Original request` still counts, since for 170 records it is the only `Origin:` line (#4502).
 
 ### Sanctioned writers
 
