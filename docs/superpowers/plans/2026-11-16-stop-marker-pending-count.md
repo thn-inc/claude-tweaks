@@ -52,7 +52,7 @@ Scope-keyword hits outside the task list (Check B), classified no-change: `tests
 2. A tool error result: `toolUseResult` is a string, not an object, and its content quotes the token — still a tool result, skipped. Test: Task 1 `RF2`.
 3. A `tool_result` user line with no `toolUseResult` field quoting the token — not one of the three shapes, so `null` in both counts (the existing gate test's `quoted()` shape). Test: Task 1 `RF3`.
 4. `<fork-boilerplate>` quoted in the first user message — the Decision covers only `<task-notification>`, so `null` in both counts. Test: Task 1 `RF4`.
-5. A worker fork whose inherited parent prompt quotes the token and whose own directive (inside the `<fork-boilerplate>` boundary entry) quotes it too — the boundary entry is already skipped by the reset; the parent's first user message is skipped by the marker only. Marker `0`, gate `null`. Test: Task 1 `RF5`.
+5. A worker fork whose inherited parent prompt quotes the token and whose own directive (inside the `<fork-boilerplate>` boundary entry) quotes it too — the boundary entry is already skipped by the reset; the parent's first user message is skipped by the marker only, and the fork's own uncompleted launch is pending. Marker `1`, gate `null`. Test: Task 1 `RF5`.
 
 ---
 
