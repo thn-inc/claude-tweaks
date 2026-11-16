@@ -10,7 +10,9 @@
 
 **Spec:** `.claude-tweaks/pipelines/2026-11-16T063345-record-3975/work/3975-spec.md` (record #3975)
 
-Scope keywords: iterRunDirsWithState, isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, archived-pending-tracked-move, archive-tracked-shells
+Scope keywords: archivedPendingTrackedMoveCommand, archived-pending-tracked-move
+
+Referenced, unchanged: `plugin/bin/sweep-stray-run-dirs.js` (its mechanics are reused through `archiveRunDir`, which it already calls), `tests/archive-run-verb.test.js` (its no-`run-state.json` refusal pin must stay green), `plugin/skills/_shared/scratch-worktree.md` (scratch worktrees live under `.worktrees/`, never `.claude/worktrees/`). The spec's `tests/bin-lib/reconcile/archive-merged.test.js` is stale: the split-state tests live in `tests/bin-lib/reconcile/archive-merged-record-guards.test.js`. Every other `iterRunDirsWithState` caller keeps the default call and is not edited.
 
 ## Global Constraints
 
@@ -71,7 +73,7 @@ Scope keywords: iterRunDirsWithState, isArchivedPendingTrackedMove, archivedPend
 - [ ] **Step 2: Run** `node --test tests/bin-lib/reconcile/archive-merged-record-guards.test.js --test-name-pattern "AC6.1"` — Expected: FAIL (`unrelated.txt` is in the commit).
 - [ ] **Step 3: Implement** the `commitPaths` change; collect twin paths from `stagedOps` before the commit.
 - [ ] **Step 4: Run** the whole file plus `tests/archive-run-verb.test.js` — Expected: PASS.
-- [ ] **Step 5: Revert-prove:** temporarily restore the old `commitPaths` line, re-run AC6.1, see it fail, restore.
+- [ ] **Step 5: Revert-prove (AC6.2: run against the old code the test fails):** temporarily restore the old `commitPaths` line, re-run AC6.1, see it fail, restore.
 - [ ] **Step 6: Commit** `Scope archiveRunDir's commit to its own paths in the twin-only case — refs #3975`.
 
 ### Task 3: `archive-tracked-shells.js` — enumeration, dry run, environment refusal, local branch
@@ -118,7 +120,8 @@ Load the `gh-api-module-pattern` skill (and its `cli-wrapper-contract.md`) and `
   - `AC3.2: re-run after simulated merge is a no-op exiting 0 with moved empty` — merge `origin/BRANCH` into `origin/main` (fast-forward push in the bare repo), mark the fake PR `MERGED`, delete the live dirs in the main checkout as a pull would; re-run → exit 0, `moved` and `deleted` empty, no new `pr create`.
   - `AC3.3: re-run while the PR is open reuses the branch and PR and prints its URL` — add a fourth shell, re-run → no second `pr create`, envelope `pr.url` equals the first; remote branch fast-forwarded with the new move.
   - `AC3.4: re-run after a crash resumes from the branch's current state` — leave a stale worktree dir at `worktreePath(root)` and a local `BRANCH` with one shell already moved (no push); re-run → exit 0, every shell archived exactly once on the branch, one PR.
-  - `AC5.1: housekeeping-auto-merge true arms with gh pr merge --auto --squash`; `AC5.2: false leaves it unarmed and says so`; `AC5.3: a rejected arming call leaves the PR unarmed, reports the rejection, exits 0`.
+  - `AC5.1: housekeeping-auto-merge true arms with gh pr merge --auto --squash`; `AC5.2: false leaves it unarmed and says so`; `AC5.3/AC5.4: a rejected arming call leaves the PR unarmed, reports the rejection, and is not an error exit (exit 0)`.
+  - `AC4.3: with one differing and one clean shell the PR still opens for the clean one and the CLI exits 1`.
   - `AC7.5: a failure after the scratch worktree exists removes it and leaves no branch on the remote` — fake `gh pr create` and the read-back fail → exit 1, no `.worktrees/archive-tracked-shells`, `git ls-remote` empty for BRANCH.
 - [ ] **Step 2: Run** the test file — Expected: new tests FAIL.
 - [ ] **Step 3: Implement** the interfaces above.
@@ -157,9 +160,9 @@ Load the `gh-api-module-pattern` skill (and its `cli-wrapper-contract.md`) and `
 
 - [ ] **Step 1:** Add `node plugin/bin/archive-tracked-shells.js [--root <dir>] [--dry-run] [--no-pr]   # Archive stranded spec-shell run dirs (#3975): moves each live work/-only dir with a clean archive twin into archive/ through one housekeeping PR (exit 0 ok, 1 shell left behind, 2 bad call or unsupported env)`.
 - [ ] **Step 2:** Rewrite the `archived-pending-tracked-move` bullet: detection now includes a twin whose `run-state.json` is `clean` (reconcile alone opts into it via `includeTrackedShells`); under `worktree-always` the completion is `node "${CLAUDE_PLUGIN_ROOT}/bin/archive-tracked-shells.js" --root "<root>"`, printed once per pass; without it reconcile completes at most one in place per pass and delegates the rest to the CLI. Grep the repo for other prose naming `archive-run` as this skip's completion (`git grep -n "archived-pending-tracked-move" -- plugin docs`) and update each.
-- [ ] **Step 3: Run** `node --test tests/docs-health-doc-path-prose.test.js` and any suite failing from Task 3 Step 4's listing check — Expected: PASS.
+- [ ] **Step 3: Run (AC8.1, AC8.2)** `node --test tests/docs-health-doc-path-prose.test.js` and any suite failing from Task 3 Step 4's listing check, plus `git grep -n "archive-tracked-shells" -- docs/plugin-structure.md docs/reconcile-checks.md` (both files must hit) — Expected: PASS, two hits.
 - [ ] **Step 4: Commit** `Document archive-tracked-shells and its reconcile completion — refs #3975`.
 
 ### Task 7 (orchestrator, not an implementer): one-time run on this repository
 
-Run by the build session after Task 6 against the main checkout, from this worktree's plugin copy: `node plugin/bin/archive-tracked-shells.js --root "<main checkout>" --dry-run`, record the envelope to the run dir (`archive-tracked-shells-dry-run.json`), then the real run; classify each `untwinned` dir in the housekeeping PR body (archive, keep or delete, with a reason). AC9's post-merge half is filed as one parked measurement record via `/claude-tweaks:capture`.
+Run by the build session after Task 6 against the main checkout, from this worktree's plugin copy: `node plugin/bin/archive-tracked-shells.js --root "<main checkout>" --dry-run`, record the envelope to the run dir (`archive-tracked-shells-dry-run.json`), then the real run; classify each `untwinned` dir in the housekeeping PR body (archive, keep or delete, with a reason). AC9.1: compare the PR's file list with the dry run's `moved`/`deleted` ids. AC9.2/AC9.3 (post-merge: `git ls-tree origin/main .claude-tweaks/pipelines/` lists no live tracked dir with a clean twin, "keep" dirs excepted) are filed as one parked measurement record via `/claude-tweaks:capture`.
