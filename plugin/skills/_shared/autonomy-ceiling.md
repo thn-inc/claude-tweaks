@@ -214,7 +214,8 @@ Why merge stops short of the ceiling when every `unattended` capability above do
   only machine-originated merge grant is `/backlog refine`'s per-record, content-checked,
   double-opt-in `grant-origination-enabled` path.
 - **`unattended` already merges what a human authorized.** `consoleAutoResolve` resolves the merge
-  half to merge for a record carrying `auto:build` with `auto:merge` or a matured `auto:merge-pending`. Deriving
+  half to merge for a record carrying `auto:build` with `auto:merge` or a matured
+  `auto:merge-pending`. Deriving
   `pre-authorized` from the ceiling would merge every `auto:build`-only record as well, erasing the
   build/merge grant split and overturning `wrap-up/review-console.md`'s ungranted-member carve-out
   (#1802, #1966), whose premise is that a withheld grant is itself a human decision.
@@ -223,7 +224,8 @@ Why merge stops short of the ceiling when every `unattended` capability above do
   13 alone, live, without reopening the rest. A dispatch-bound run ignores the token.
 
 So at `unattended` with `consoleAutoResolve` granted, a run ends with zero clicks either way:
-merged when its record carries `auto:build` with `auto:merge` (or a matured `auto:merge-pending`) or its `/flow` was
+merged when its record carries `auto:build` with `auto:merge` (or a matured
+`auto:merge-pending`) or its `/flow` was
 invoked with `pre-authorize-merge` (under `integration-model: pr-first`, `_shared/integration-model.md`), and otherwise parked at `pending-review` — never an
 `AskUserQuestion` stall. Both merge routes still pass `assess-agent-autonomy` `merge-check`.
 
