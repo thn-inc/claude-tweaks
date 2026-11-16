@@ -432,6 +432,8 @@ const OTHER_COMMAND_CONTENT = [
   ['arguments "#3 --budget 2"', COMMAND('claude-tweaks:dispatch', '#3 --budget 2')],
   ['two lines of arguments', COMMAND('claude-tweaks:dispatch', '#3\n#3')],
   ['no <command-args> tag', '<command-message>claude-tweaks:dispatch</command-message>\n<command-name>/claude-tweaks:dispatch</command-name>'],
+  ['arguments ending in a carriage return ("#3\\r")', COMMAND('claude-tweaks:dispatch', '#3\r')],
+  ['arguments with surrounding whitespace (" #3 ")', COMMAND('claude-tweaks:dispatch', ' #3 ')],
 ];
 
 for (const [label, content] of OTHER_COMMAND_CONTENT) {
@@ -545,6 +547,13 @@ test('AC18.6: a project directory named {id}.jsonl answers no-transcript', (t) =
   assert.deepStrictEqual(noTranscript(t, (ctx) => writeTranscript(ctx.configDir, `${T_SESSION}.jsonl`, 'transcript.jsonl', fixture('a'))), none('no-transcript'));
 });
 
+test('AC18.6: a located entry whose path is not a string answers no-transcript, never throws', (t) => {
+  for (const found of [[{ path: 42 }], [{}], [null]]) {
+    const locate = () => found;
+    assert.deepStrictEqual(scenario(t, fixture('a'), { over: { locate } }), none('no-transcript'), JSON.stringify(found));
+  }
+});
+
 // --- transcript-unreadable
 
 test('AC18.7: a read failure after the file was located answers transcript-unreadable', (t) => {
@@ -624,6 +633,9 @@ test('rowCommandNames reads the whole three-tag form and the record list', () =>
   assert.strictEqual(rowCommandNames(row('resume #3'), 3), true);
   assert.strictEqual(rowCommandNames(row('#12,#3'), 3), true);
   assert.strictEqual(rowCommandNames(row(''), 3), false);
+  for (const args of ['#3\r', '#3\r ', '  #3 \r ', '#3 ', ' #3', '#3\t', ' #3']) {
+    assert.strictEqual(rowCommandNames(row(args), 3), false, JSON.stringify(args));
+  }
   const whole = COMMAND('claude-tweaks:dispatch', '#3');
   // Same-length head and tail changes keep the argument slice at '#3', so only
   // the whole-prefix and whole-suffix checks refuse them.

@@ -23,7 +23,7 @@
 // `pointer-other-session`, `no-session-id`), so "absent" never reads like
 // "could not read".
 //
-// readTypedCommand({ number, env, now, tmpdir, homeDir, fsImpl, readRows })
+// readTypedCommand({ number, env, now, tmpdir, homeDir, fsImpl, readRows, locate })
 // -> { answer: 'typed', promptId } | { answer: 'none', reason }. The steps run
 // in order and the first that fails is the answer:
 //
@@ -195,7 +195,9 @@ function rowCommandNames(row, number) {
   if (content.length < COMMAND_HEAD.length + COMMAND_TAIL.length) return false;
   if (!content.startsWith(COMMAND_HEAD) || !content.endsWith(COMMAND_TAIL)) return false;
   const args = content.slice(COMMAND_HEAD.length, content.length - COMMAND_TAIL.length);
-  if (args.includes('\n')) return false;
+  // One line, nothing around it: no line terminator, no surrounding
+  // whitespace (no captured row has either; the stricter reading wins).
+  if (args.includes('\n') || args.includes('\r') || args !== args.trim()) return false;
   const { parseTypedDispatch } = require('./build-authority');
   const numbers = parseTypedDispatch(DISPATCH_LINE + args);
   return Array.isArray(numbers) && numbers.includes(number);
@@ -210,7 +212,7 @@ const none = (reason) => ({ answer: 'none', reason });
 // The proof of typing for one record. The table in the header is the order.
 // The transcript is found by the session id alone, never by a working
 // directory or a path from the pointer.
-function readTypedCommand({ number, env, now, tmpdir = os.tmpdir(), homeDir = os.homedir(), fsImpl = fs, readRows } = {}) {
+function readTypedCommand({ number, env, now, tmpdir = os.tmpdir(), homeDir = os.homedir(), fsImpl = fs, readRows, locate } = {}) {
   const nowMs = new Date(now).getTime();
   const sessionId = isPlainObject(env) ? env.CLAUDE_CODE_SESSION_ID : undefined;
   if (!isWellFormedId(sessionId)) return none('no-session-id');
@@ -226,11 +228,11 @@ function readTypedCommand({ number, env, now, tmpdir = os.tmpdir(), homeDir = os
     : path.join(homeDir, '.claude');
   let found;
   try {
-    found = transcript.locateTranscripts({ sessionId, configDir, homeDir, fsImpl });
+    found = (locate || transcript.locateTranscripts)({ sessionId, configDir, homeDir, fsImpl });
+    if (!Array.isArray(found) || found.length !== 1 || path.basename(found[0].path) !== `${sessionId}.jsonl`) {
+      return none('no-transcript');
+    }
   } catch {
-    return none('no-transcript');
-  }
-  if (!Array.isArray(found) || found.length !== 1 || path.basename(found[0].path) !== `${sessionId}.jsonl`) {
     return none('no-transcript');
   }
 
