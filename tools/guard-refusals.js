@@ -6,7 +6,14 @@
 // skill fence it was copied from. It is the instrument for the per-pipeline refusal count.
 //
 //   node tools/guard-refusals.js [--projects-dir <dir>] [--match <slug-substring>] [--since-days <n>=14]
-//                                [--until <iso>=now] [--skills-root <dir>] [--json] [--help]
+//                                [--until <iso>=now] [--skills-root <dir>] [--replay [--shape-patterns <file>]]
+//                                [--json] [--help]
+//
+// --replay (#5590) replays each refused read against this checkout's guard (tools/guard-refusals/replay.js)
+// and, with --json, appends a final `replay` key: { dispositions, writeTargetsMoved, writeTargetsChecked,
+// ruleNotApplied, byClass, byPattern }; the default keys are unchanged. --shape-patterns <file> (requires
+// --replay) is a JSON array of { id, pattern } (a JS RegExp source; extra fields are ignored) counted in
+// replay.byPattern; a malformed file or pattern exits 2.
 //
 // --projects-dir defaults to $CLAUDE_CONFIG_DIR/projects, else ~/.claude/projects. --skills-root defaults
 // to this checkout's plugin/skills. The scan window is [until - since-days, until) over file mtimes.
@@ -57,11 +64,12 @@ const { REASONS, buildFenceIndex, traceFence } = require('./guard-refusals/trace
 const { detectShapes } = require('./guard-refusals/shapes');
 const { classifyEffect } = require('./guard-refusals/effect');
 const { rewriteForGuard } = require('../plugin/bin/lib/hooks/guard-rewrite');
-const { REWRITE_DEPS } = require('./guard-refusals/replay');
+const { REWRITE_DEPS, replay } = require('./guard-refusals/replay');
 
 const USAGE = [
   'usage: node tools/guard-refusals.js [--projects-dir <dir>] [--match <slug-substring>] [--since-days <n>=14]',
-  '                                    [--until <iso>=now] [--skills-root <dir>] [--json] [--help]',
+  '                                    [--until <iso>=now] [--skills-root <dir>] [--replay [--shape-patterns <file>]]',
+  '                                    [--json] [--help]',
 ].join('\n');
 
 const DAY_MS = 86400e3;
@@ -69,7 +77,7 @@ const TOP_PER_REASON = 20;
 const TOP_COMMAND_CHARS = 300;
 const SPEC = {
   '--projects-dir': 'value', '--match': 'value', '--since-days': 'value', '--until': 'value',
-  '--skills-root': 'value', '--json': 'bool', '--help': 'bool', '-h': 'bool',
+  '--skills-root': 'value', '--shape-patterns': 'value', '--replay': 'bool', '--json': 'bool', '--help': 'bool', '-h': 'bool',
 };
 
 function defaultDeps() {
@@ -254,6 +262,55 @@ function renderTable(out) {
   return lines.join('\n');
 }
 
+function renderReplay(r) {
+  const n = (v) => String(v).padStart(6);
+  const d = r.dispositions;
+  const lines = ['', 'replay', '  plugin reads', ...Object.entries(d.plugin).map(([k, v]) => `  ${n(v)}  ${k}`),
+    '  harness reads', ...Object.entries(d.harness).map(([k, v]) => `  ${n(v)}  ${k}`)];
+  const byShape = Object.entries(d.refusedShapeById || {});
+  if (byShape.length) lines.push('  refused-shape by detector', ...byShape.map(([k, v]) => `  ${n(v)}  ${k}`));
+  lines.push(`  writeTargetsMoved ${r.writeTargetsMoved} of ${r.writeTargetsChecked}`);
+  lines.push(`  rule-not-applied ${r.ruleNotApplied.total}`);
+  for (const [rule, e] of Object.entries(r.ruleNotApplied.byRule)) {
+    for (const [v, c] of Object.entries(e.byVersion)) lines.push(`    ${rule}  ${v}  main ${c.main}  subagent ${c.subagent}`);
+  }
+  lines.push('  by class');
+  for (const [k, e] of Object.entries(r.byClass)) lines.push(`    ${k}  total ${e.total}  unknown-version ${e.unknownVersion}`);
+  if (r.byPattern) {
+    lines.push('  by pattern');
+    for (const [id, e] of Object.entries(r.byPattern)) lines.push(e && e.error ? `    ${id}  ${e.error}` : `    ${id}  count ${e.count}  rewritten ${e.rewritten}`);
+  }
+  return lines.join('\n');
+}
+
+// null when fine; else the message for an exit-2. Reads through deps.fs, before any scan.
+function loadPatterns(file, deps) {
+  let text;
+  try {
+    text = deps.fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    return { error: `--shape-patterns ${file} cannot be read (${err.code || err.message})` };
+  }
+  let list;
+  try {
+    list = JSON.parse(text);
+  } catch (_) {
+    return { error: `--shape-patterns ${file} is not valid JSON` };
+  }
+  if (!Array.isArray(list)) return { error: `--shape-patterns ${file} must be a JSON array of { id, pattern }` };
+  for (const e of list) {
+    if (!e || typeof e.id !== 'string' || !e.id || typeof e.pattern !== 'string') {
+      return { error: `--shape-patterns ${file}: every entry needs a string id and pattern` };
+    }
+    try {
+      new RegExp(e.pattern); // eslint-disable-line no-new
+    } catch (_) {
+      return { error: `--shape-patterns ${file}: the pattern for "${e.id}" is not a valid regular expression` };
+    }
+  }
+  return { list };
+}
+
 function run({ argv, deps: given = {} }) {
   const deps = { ...defaultDeps(), ...given };
   const parsed = parseArgs(argv);
@@ -270,6 +327,19 @@ function run({ argv, deps: given = {} }) {
   if (!Number.isFinite(days) || days <= 0) {
     deps.err(`guard-refusals.js: --since-days must be a positive number\n${USAGE}`);
     return 2;
+  }
+  if (o['--shape-patterns'] !== undefined && !o['--replay']) {
+    deps.err(`guard-refusals.js: --shape-patterns requires --replay\n${USAGE}`);
+    return 2;
+  }
+  let patterns = null;
+  if (o['--shape-patterns'] !== undefined) {
+    const loaded = loadPatterns(o['--shape-patterns'], deps);
+    if (loaded.error) {
+      deps.err(`guard-refusals.js: ${loaded.error}\n${USAGE}`);
+      return 2;
+    }
+    patterns = loaded.list;
   }
   const untilMs = o['--until'] === undefined ? deps.now() : Date.parse(o['--until']);
   if (!Number.isFinite(untilMs)) {
@@ -310,7 +380,12 @@ function run({ argv, deps: given = {} }) {
     return 2;
   }
   const out = summarize({ window, scan, index });
-  deps.log(o['--json'] ? JSON.stringify(out) : renderTable(out));
+  if (o['--replay']) {
+    const cwdByUse = new Map(scan.rows.map((r) => [r.toolUseId, r.cwd]));
+    const rows = out.rows.map((r) => ({ ...r, cwd: cwdByUse.get(r.toolUseId) }));
+    out.replay = replay(rows, patterns ? { patterns } : {});
+  }
+  deps.log(o['--json'] ? JSON.stringify(out) : `${renderTable(out)}${out.replay ? `\n${renderReplay(out.replay)}` : ''}`);
   return 0;
 }
 
