@@ -32,6 +32,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const readline = require('readline');
+const { StringDecoder } = require('string_decoder');
 const { lstatType, resolveLeaf, canonicalRealpath, isAncestorOrSelf } = require('../path-guard');
 const { isPathContained } = require('../shared-primitives');
 const { isProcedurePath, classifyToolCall, readFileKey, bashProcedureFiles } = require('./turn-class');
@@ -257,6 +258,52 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null, signal = null
   }).finally(() => { if (onAbort) signal.removeEventListener('abort', onAbort); });
   // After the stream closes, so a turn's first row holds the per-id max.
   for (const r of rows) if (r.turnStart) r.contextTokens = r.inputTokens + r.cacheRead + r.cacheCreate;
+  return rows;
+}
+
+// path, promptId, { fsImpl?, chunkBytes?, keep? } -> rows (#5584). Synchronous:
+// the parsed lines whose promptId equals promptId exactly (and, with `keep`, for
+// which keep(row) is true), in file order. Reads in chunkBytes chunks, never the
+// whole file at once, so a 100 MB transcript or a line holding a huge message
+// costs one line of memory at most plus the rows returned: a prompt id is shared
+// by every tool-result row of its turn, so a caller that wants only some rows
+// passes `keep` and the rest are never retained. Only a line containing
+// promptId as a substring is parsed; a line that does not parse is skipped. Stat
+// failures throw as statTranscriptOrThrow does (ENOENT, EISDIR, ...); a read
+// failure after the stat propagates with its own code.
+function readPromptRows(filePath, promptId, { fsImpl = fs, chunkBytes = 65536, keep = () => true } = {}) {
+  statTranscriptOrThrow(fsImpl, filePath);
+  const rows = [];
+  const take = (line) => {
+    if (!line.includes(promptId)) return;
+    let entry;
+    try { entry = JSON.parse(line); } catch { return; }
+    if (entry && entry.promptId === promptId && keep(entry)) rows.push(entry);
+  };
+  const fd = fsImpl.openSync(filePath, 'r');
+  try {
+    const buf = Buffer.alloc(chunkBytes);
+    const decoder = new StringDecoder('utf8'); // holds a multi-byte character split across chunks
+    let carry = '';
+    let pos = 0;
+    for (;;) {
+      const n = fsImpl.readSync(fd, buf, 0, chunkBytes, pos);
+      if (n === 0) break;
+      pos += n;
+      const text = decoder.write(buf.subarray(0, n));
+      let start = 0;
+      let nl;
+      while ((nl = text.indexOf('\n', start)) !== -1) {
+        take(carry + text.slice(start, nl));
+        carry = '';
+        start = nl + 1;
+      }
+      carry += text.slice(start);
+    }
+    take(carry + decoder.end());
+  } finally {
+    fsImpl.closeSync(fd);
+  }
   return rows;
 }
 
@@ -504,4 +551,4 @@ async function scanAgentDir(dir, names, { fsImpl, window, worktree, signal = nul
   return { built, ids: ids.size, excluded };
 }
 
-module.exports = { TRANSCRIPT_SLUG_RULE, slugForCwd, locateTranscripts, readUsage, isProcedurePath, resultBytes, statTranscriptOrThrow, subagentsDirFor, readDispatches };
+module.exports = { TRANSCRIPT_SLUG_RULE, slugForCwd, locateTranscripts, readUsage, readPromptRows, isProcedurePath, resultBytes, statTranscriptOrThrow, subagentsDirFor, readDispatches };
