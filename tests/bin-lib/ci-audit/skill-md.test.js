@@ -16,7 +16,7 @@ const {
   registerNoEmojiTest,
   registerRequiredTokenTests,
 } = require('../health-core/skill-md-house-checks');
-const { CHECK_IDS, DEFAULTS } = require('../../../plugin/bin/lib/ci-audit/checks');
+const { CHECK_IDS, DEFAULTS, FLOOR_IDS } = require('../../../plugin/bin/lib/ci-audit/checks');
 const { METRICS } = require('../../../plugin/bin/lib/ci-audit/validate-finding');
 const { DEFINITIONS } = require('../../../plugin/bin/ci-audit');
 
@@ -110,8 +110,41 @@ test('the title reaches the create call as data, never typed into a command line
   const body = read();
   assert.ok(body.includes('every title holds backtick code spans, so neither is ever typed into a command line'));
   assert.ok(body.includes('`CI_HEALTH_TITLE="$(cat "$CI_HEALTH_TITLE_FILE")"`, passed as the double-quoted `"$CI_HEALTH_TITLE"`'));
-  assert.ok(body.includes('the Create row\'s body-file form (`--body-file`)'));
+  // The transport's Create row shows --title/--body: the body file is named as the file form of --body.
+  assert.ok(body.includes('`--body-file "$CI_HEALTH_BODY_FILE"` (the file form of the row\'s `--body`)'));
+  assert.ok(!body.includes('body-file form'), 'the Create row has no body-file form of its own');
   assert.ok(!/--title "<payload\.title>"/.test(body), 'no interpolated title placeholder');
+  // The title-file and body-file assignments are shown in the fence, like every other path.
+  const fence = body.match(/```bash\n(CI_HEALTH_TITLE_FILE=[^`]*?)```/);
+  assert.ok(fence, 'no fence assigns CI_HEALTH_TITLE_FILE');
+  assert.deepEqual(fence[1].trim().split('\n'), [
+    'CI_HEALTH_TITLE_FILE="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value ci-health-title.txt)"',
+    'CI_HEALTH_BODY_FILE="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value ci-health-body.md)"',
+    'CI_HEALTH_TITLE="$(cat "$CI_HEALTH_TITLE_FILE")"',
+  ]);
+});
+
+test('the dedup marker names the real fingerprint prefix', () => {
+  const { fingerprint } = require('../../../plugin/bin/lib/ci-audit/fingerprint');
+  const id = fingerprint({ check: 'queue-wait', workflow: 'w', job: 'j' });
+  const prefix = id.slice(0, id.indexOf('-') + 1);
+  assert.strictEqual(prefix, 'cihealth-');
+  assert.ok(read().includes(`<!-- work-fingerprint: ${prefix}… -->`), 'SKILL.md must cite the real prefix');
+  assert.ok(!read().includes('work-fingerprint: ci-health-'), 'no marker with the unstripped prefix');
+});
+
+test('the report fields, the unmatched-as-unchecked rule and the partiality rule match the gather', () => {
+  const body = read();
+  for (const f of ['unmatchedJobs', 'notTimed']) assert.ok(body.includes(`\`${f}\``), `SKILL.md never names ${f}`);
+  assert.ok(body.includes('A job in `unmatchedJobs` matched no job of its workflow file, so no workflow-file check reached it: report it as unchecked, never as clean.'));
+  assert.ok(body.includes('with both empty the sample is complete, and no partiality is claimed'));
+  assert.ok(body.includes('no workflow files readable at the adapter\'s workflow-file location'));
+  assert.ok(body.includes('`resolve-policy.js` reads the policy of the directory the call runs in, never `--root`\'s'));
+  assert.ok(body.includes('Every `jobs` row\'s workflow is a `workflows` entry, so "a parsed workflow" is one whose entry has an empty `unparsed`.'));
+  assert.ok(!/only as context/.test(body), 'the skill never reads harness-health\'s figures');
+  const cl = checklistBody();
+  assert.ok(cl.includes('treat each as unchecked, never as clean'));
+  assert.ok(cl.includes('the steps that get the workspace or set up the toolchain in every job'));
 });
 
 test('a --budget share names workflows by index, never by file name', () => {
@@ -197,6 +230,13 @@ test('checklist.md names every check id with its default threshold and its evide
     }
   }
   assert.strictEqual(rows.length, CHECK_IDS.length, 'one row per check, no unknown id');
+  // each absolute floor sits in its own check's row with its default; a check with no floor says none
+  for (const id of CHECK_IDS) {
+    const row = rows.find((l) => l.startsWith(`| \`${id}\` |`));
+    const floor = `${id}-floor-ms`;
+    if (FLOOR_IDS.includes(floor)) assert.ok(row.includes(`\`${floor}\` \`${DEFAULTS[floor]}\``), `${id}'s row does not state ${floor} ${DEFAULTS[floor]}`);
+    else assert.ok(row.split('|')[4].trim() === 'none', `${id}'s row must say it has no floor`);
+  }
 });
 
 test('checklist.md names the whole evidence vocabulary', () => {

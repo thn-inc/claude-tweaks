@@ -52,6 +52,19 @@ test('resolve-policy prints the configured text, which parseThresholds accepts',
   assert.deepStrictEqual(parseThresholds(printed), { ok: true, values: { 'queue-wait': 0.5, 'shard-skew': 2 } });
 });
 
+test('a value with spaces around `=` resolves empty with a warning — the documented defaults-in-force fallback', () => {
+  const result = resolveWith('ci-health-thresholds: queue-wait = 0.5\n');
+  assert.strictEqual(result.stdout.trim(), '');
+  assert.match(result.stderr, /ci-health-thresholds/);
+});
+
+test('a floor id is carried like a threshold id and parseThresholds accepts it', () => {
+  const result = resolveWith('ci-health-thresholds: queue-wait-floor-ms=10000,missing-timeout-floor-ms=600000\n');
+  assert.strictEqual(result.status, 0, result.stderr);
+  assert.deepStrictEqual(parseThresholds(result.stdout.trim()),
+    { ok: true, values: { 'queue-wait-floor-ms': 10000, 'missing-timeout-floor-ms': 600000 } });
+});
+
 test('a malformed threshold text is printed verbatim — parseThresholds owns the rejection', () => {
   const result = resolveWith('ci-health-thresholds: bogus=1,queue-wait=abc\n');
   assert.strictEqual(result.status, 0, result.stderr);
