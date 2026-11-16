@@ -402,8 +402,10 @@ function scanPendingDispatches(lines, replyIndex) {
       if (line.includes('<task-notification>')) {
         // A notification in a carrier not recognized above: the gate is null from here on. The marker
         // skips it only when the line is the agent's own prompt, a tool result or an assistant line.
-        if (i === firstUserIndex || entry.toolUseResult != null || entry.type === 'assistant') { gateIndeterminate = true; continue; }
-        return indeterminate;
+        const skippable = i === firstUserIndex || entry.toolUseResult != null || entry.type === 'assistant';
+        if (!skippable) return indeterminate;
+        gateIndeterminate = true;
+        continue;
       }
       continue;
     }
