@@ -153,39 +153,65 @@ function write(runDir, timing, skip, deadlineAt, needRunState) {
 }
 
 const NO_YIELD = 'no step-yield.json written';
+const YIELD_GONE = `condition: run dir and its archive twin are gone → fallback: ${NO_YIELD}`;
 const isArchivedDir = (d) => path.basename(path.dirname(d)) === 'archive';
 
-// Where the yield belongs: dir itself, or its archive twin when a concurrent archive moved the
-// run away (dir gone, or its run-state.json already moved while the twin holds the run).
-function yieldTarget(dir) {
-  if (isArchivedDir(dir)) return dir;
-  const twin = archiveTwin(dir);
-  if (!isDir(dir)) return twin;
-  if (lstatType(path.join(dir, 'run-state.json')).type === 'missing' && isDir(twin)) return twin;
-  return dir;
+// One derive-and-write of the yield in dir, under dir's timing lock (the one the timing.json write
+// takes), so a yield is never derived from a timing.json that a concurrent token pass is about to
+// replace and then written after it. The lock is waited for PHASE_LOCK_WAIT_MS at most, never past
+// the close deadline; a lock not acquired in time skips the yield silently (a later close rewrites
+// it whole). needRunState (dir had a run-state.json when this write started): a dir whose
+// run-state.json is gone is being archived, and a file written into it would strand after the
+// straggler sweep — checked again under the lock, right before the write, so it counts as vanished.
+// -> a result, or { vanished: true } when dir is gone or being vacated.
+function writeYieldIn(dir, deadlineAt, needRunState) {
+  if (!isDir(dir)) return { vanished: true };
+  const waitMs = Math.max(0, Math.floor(Math.min(module.exports.PHASE_LOCK_WAIT_MS, deadlineAt - Date.now())));
+  const held = acquireLock(path.join(dir, LOCK_NAME), { waitMs, env: {}, createParent: false });
+  if (!held) return isDir(dir) ? { status: 'skipped', skip: null } : { vanished: true };
+  const vacated = () => needRunState && lstatType(path.join(dir, 'run-state.json')).type === 'missing';
+  try {
+    if (vacated()) return { vanished: true };
+    const sy = require('./step-yield');
+    const yieldObj = sy.deriveStepYield(dir);
+    if (vacated()) return { vanished: true };
+    try {
+      sy.writeStepYield(dir, yieldObj);
+    } catch (err) {
+      if (!isDir(dir)) return { vanished: true };
+      throw err;
+    }
+    return { status: 'written', skip: null };
+  } finally {
+    releaseLock(held);
+    releaseLock({ lockPath: path.join(archiveTwin(dir), LOCK_NAME), token: held.token });
+  }
 }
 
-// dir -> { status: 'written'|'failed', skip }: step-yield.json, derived whole from the run dir and
-// written temp-then-rename, never into a dir that is not there (a run dir gone is retried once at
-// its archive twin, never recreated). Never throws; a failure is one SKIP line. step-yield.js is
+// dir, { deadlineAt } -> { status: 'written'|'skipped'|'failed', skip }: step-yield.json, derived
+// whole from the run dir and written temp-then-rename, never into a dir that is not there or being
+// vacated (a run dir gone is retried once at its archive twin, never recreated). A close already
+// past its deadline derives nothing. Never throws; a failure is one SKIP line. step-yield.js is
 // resolved through require at call time so a test can stub it.
-function writeStepYieldSafe(dir) {
-  let target = dir;
+function writeStepYieldSafe(dir, { boundMs = module.exports.TIMING_BOUND_MS, deadlineAt = Date.now() + boundMs, logBound = true } = {}) {
+  let target = isArchivedDir(dir) || isDir(dir) ? dir : archiveTwin(dir);
   try {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      target = yieldTarget(target);
-      if (!isDir(target)) return { status: 'failed', skip: `condition: run dir and its archive twin are gone → fallback: ${NO_YIELD}` };
-      try {
-        const sy = require('./step-yield');
-        sy.writeStepYield(target, sy.deriveStepYield(target));
-        return { status: 'written', skip: null };
-      } catch (err) {
-        // The dir vanished under the write (an archive moved it): follow it once.
-        if (attempt === 0 && !isDir(target) && !isArchivedDir(target)) continue;
-        throw err;
-      }
+    if (Date.now() >= deadlineAt) {
+      const skip = `condition: close passed the ${boundMs} ms time bound before the step yield was derived → fallback: ${NO_YIELD}`;
+      // logBound false: the close's own SKIP already names the bound (a hung transcript read), so one line says it.
+      if (logBound) logTimingSkip(target, skip);
+      return { status: 'failed', skip };
     }
-    return { status: 'failed', skip: `condition: run dir and its archive twin are gone → fallback: ${NO_YIELD}` };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (!isDir(target)) return { status: 'failed', skip: YIELD_GONE };
+      const needRunState = lstatType(path.join(target, 'run-state.json')).type !== 'missing';
+      const r = writeYieldIn(target, deadlineAt, needRunState);
+      if (!r.vanished) return r;
+      // The dir vanished under the write (an archive moved it): follow it once.
+      if (attempt === 0 && !isArchivedDir(target)) { target = archiveTwin(target); continue; }
+      break;
+    }
+    return { status: 'failed', skip: YIELD_GONE };
   } catch (err) {
     const skip = `condition: step yield could not be written (${errText(err)}) → fallback: ${NO_YIELD}`;
     logTimingSkip(target, skip);
@@ -195,15 +221,19 @@ function writeStepYieldSafe(dir) {
 
 // Every result a close settles on ends here: its SKIP, then the step yield — read from the run dir
 // after the timing write, so it sees the fresh timing.json (a kept one included: its persisted
-// questions re-derive the wait times). A spec-N child gets none, like timing.json.
-function finish(runDir, result) {
+// questions re-derive the wait times). A spec-N child gets none, like timing.json. deadlineAt is
+// the close's own time bound (TIMING_BOUND_MS from its start): the yield is written inside it.
+function finish(runDir, result, { deadlineAt, boundMs }) {
   if (result.skip) logTimingSkip(runDir, result.skip);
-  if (result.status !== 'not-top-level') module.exports.writeStepYieldSafe(runDir);
+  const boundNamed = typeof result.skip === 'string' && result.skip.includes('ms time bound');
+  if (result.status !== 'not-top-level') module.exports.writeStepYieldSafe(runDir, { deadlineAt, boundMs, logBound: !boundNamed });
   return result;
 }
 
 // runDir -> { status, skip }: phase rows only, synchronous, no transcript read.
 function writePhaseTimingSync(runDir) {
+  const boundMs = module.exports.TIMING_BOUND_MS;
+  const closeDeadlineAt = Date.now() + boundMs;
   let dir = runDir;
   let result;
   try {
@@ -213,7 +243,7 @@ function writePhaseTimingSync(runDir) {
   } catch (err) {
     result = { status: 'failed', tokens: false, skip: `condition: timing at close failed (${errText(err)}) → fallback: ${NOTHING_WRITTEN}` };
   }
-  finish(dir, result);
+  finish(dir, result, { deadlineAt: closeDeadlineAt, boundMs });
   return { status: result.status, skip: result.skip };
 }
 
@@ -223,6 +253,9 @@ async function writeTimingAtClose(runDir, { tokens = true, env = {}, homeDir = o
     const r = writePhaseTimingSync(runDir);
     return { status: r.status, tokens: false, skip: r.skip };
   }
+  // One deadline for the whole close, the transcript read and the yield alike (the named bound).
+  const closeBoundMs = boundMs ?? module.exports.TIMING_BOUND_MS;
+  const closeDeadlineAt = Date.now() + closeBoundMs;
   let dir = runDir;
   let result;
   let base = null;
@@ -259,7 +292,7 @@ async function writeTimingAtClose(runDir, { tokens = true, env = {}, homeDir = o
       } catch { /* the failed result above stands */ }
     }
   }
-  return finish(dir, result);
+  return finish(dir, result, { deadlineAt: closeDeadlineAt, boundMs: closeBoundMs });
 }
 
 // Same as writeTimingAtClose, and a throw out of it (a stub, a defect) is one SKIP line too: the
