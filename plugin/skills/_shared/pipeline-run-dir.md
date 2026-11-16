@@ -7,15 +7,16 @@ Operational reference for skills that need to locate the active pipeline run dir
 ## Resolving it: `resolve-run-dir` (preferred over composing `$RUN_ROOT` by hand)
 
 `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir [--spec-slug <s>] [--mode auto] [--standalone <name>] [--create] [--root-only] [--archived]`
-(`bin/lib/hooks/run-dir-resolve.js`) implements steps 1, 2, and 4 above on top of
-`bin/lib/hooks/worktree-detect.js`'s `mainCheckoutRoot()` — the same anchoring the Bash snippet
-below computes, but as a single command every citing skill step calls instead of restating that
-snippet inline (`[IL-127]`: a restated, hand-typed copy is exactly how the anchoring rule got
-read and then violated in the incident this command exists to prevent). Prints the resolved
-absolute path on stdout and exits `0`; exits non-zero with a message on stderr naming the problem
-when nothing resolves, or when `PIPELINE_RUN_DIR` (or a candidate) resolves inside a linked
-worktree instead of the main checkout — a shadow, the exact `[IL-127]` shape, refused loudly
-rather than silently substituted. Never creates a directory unless `--create` is passed.
+(`bin/lib/hooks/run-dir-resolve.js`) implements steps 1, 2, and 4 of
+`_shared/run-dir-resolution.md`'s Resolution order on top of `bin/lib/hooks/worktree-detect.js`'s
+`mainCheckoutRoot()` — the same anchoring `_shared/run-dir-resolution.md`'s Bash snippet computes,
+but as a single command every citing skill step calls instead of restating that snippet inline
+(`[IL-127]`: a restated, hand-typed copy is exactly how the anchoring rule got read and then
+violated in the incident this command exists to prevent). Prints the resolved absolute path on
+stdout and exits `0`; exits non-zero with a message on stderr naming the problem when nothing
+resolves, or when `PIPELINE_RUN_DIR` (or a candidate) resolves inside a linked worktree instead of
+the main checkout — a shadow, the exact `[IL-127]` shape, refused loudly rather than silently
+substituted. Never creates a directory unless `--create` is passed.
 
 - No flags: steps 1-2 only (env var, then newest matching directory for `--spec-slug`). This is
   the read-only "where is the run I already have" call most steps need. Step 2 never adopts a
