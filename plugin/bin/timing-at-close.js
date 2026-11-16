@@ -5,13 +5,16 @@
 // (lib/timing/at-close.js's spawnTokenPass) to add token totals from the run's own transcript.
 // Sanctioned-writer exit codes: 0 timing.json written or kept (its path on stdout; a spec-N
 // child of a multi-record run gets a one-line note instead — the parent's file covers it);
-// 2 malformed invocation; 3 the run dir is missing or not a directory, or timing.json could
-// not be written (the run's decisions.md already holds the SKIP line). No 1 at all.
+// 2 malformed invocation; 3 the run dir is missing, not a directory, or not anchored under the
+// main checkout (a worktree-local shadow, [IL-127]: refused before any write, like the other
+// sanctioned writers), or timing.json could not be written (the run's decisions.md already holds
+// the SKIP line). No 1 at all.
 'use strict';
 
 const path = require('path');
 const { resolveAgainst } = require('./lib/health-core/io');
 const { lstatType } = require('./lib/path-guard');
+const { resolveTarget } = require('./lib/stage-item/write');
 const { writeTimingAtClose } = require('./lib/timing/at-close');
 
 const USAGE = 'usage: timing-at-close.js --run <run-dir> [--help]\n';
@@ -35,6 +38,7 @@ const realDeps = {
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
   cwd: () => process.cwd(),
+  mainRoot: undefined, // resolved from cwd by resolveTarget; a test injects it
   env: process.env,
   homeDir: () => require('os').homedir(),
 };
@@ -50,6 +54,15 @@ async function run(argv, deps = {}) {
   // archive's real directory, so a link here is never followed into wherever it points.
   if (lstatType(runDir).type !== 'directory') {
     deps.stderr(`timing-at-close.js: run dir does not exist or is not a directory: ${o.run}\n`);
+    return 3;
+  }
+  let target;
+  try { target = resolveTarget({ runDir, cwd: deps.cwd(), mainRoot: deps.mainRoot }); } catch (err) {
+    deps.stderr(`timing-at-close.js: ${err && err.message}\n`);
+    return 3;
+  }
+  if (!target.ok) {
+    deps.stderr(`timing-at-close.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — pass the main-checkout path (_shared/pipeline-run-dir.md's Anchoring section)\n`);
     return 3;
   }
   const r = await writeTimingAtClose(runDir, { tokens: true, env: deps.env, homeDir: deps.homeDir });

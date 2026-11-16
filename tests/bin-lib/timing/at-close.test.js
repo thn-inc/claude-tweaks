@@ -12,19 +12,13 @@ const ctxLib = require('../../../plugin/bin/lib/hooks/context');
 const { closeRunState } = require('../../../plugin/bin/lib/hooks/close-run-state');
 const atClose = require('../../../plugin/bin/lib/timing/at-close');
 const { runCli } = require('../../helpers/run-cli');
+const { gitRepo } = require('../../helpers/git-fixtures');
+const { SID, A, B, writeEvents, writeTranscript, sum, pickTokens, readTiming, skipLines, assertPhaseRows, withStub } = require('../../helpers/close-timing');
 const TIMING_CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'timing-at-close.js');
 
 const { TIMING_BOUND_MS, ownTranscripts, writeTimingAtClose, writePhaseTimingSync, logTimingSkip, spawnTokenPass } = atClose;
-const SID = 'sess-5555';
 
 function tmpRoot() { return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-at-close-')); }
-
-function writeEvents(runDir) {
-  fs.writeFileSync(path.join(runDir, 'events.jsonl'), [
-    { skill: 'claude-tweaks:build', ts: '2026-11-16T10:00:00.000Z', type: 'skill_invoked' },
-    { skill: 'claude-tweaks:test', ts: '2026-11-16T10:10:00.000Z', type: 'skill_invoked' },
-  ].map((e) => JSON.stringify(e)).join('\n') + '\n');
-}
 
 // A run dir closed by the real closeRunState: worktree null, worktreeAtClose = worktree.
 function closedRun(root, name, worktree, sessionId = SID) {
@@ -38,35 +32,6 @@ function closedRun(root, name, worktree, sessionId = SID) {
   return runDir;
 }
 
-// Two assistant lines with usage under {cfg}/projects/{slug(worktree)}/{sid}.jsonl.
-function writeTranscript(cfg, worktree, [a, b], sid = SID) {
-  const dir = path.join(cfg, 'projects', transcript.slugForCwd(worktree));
-  fs.mkdirSync(dir, { recursive: true });
-  const line = (id, ts, u) => JSON.stringify({
-    timestamp: ts,
-    message: { role: 'assistant', id, model: 'claude-test', content: [], usage: { input_tokens: u[0], output_tokens: u[1], cache_read_input_tokens: u[2], cache_creation_input_tokens: u[3] } },
-  });
-  const file = path.join(dir, `${sid}.jsonl`);
-  // Both rows inside writeEvents' 10:00..10:10 window (the at-close writer clips to it).
-  fs.writeFileSync(file, [line('m1', '2026-11-16T10:01:00.000Z', a), line('m2', '2026-11-16T10:09:00.000Z', b)].join('\n') + '\n');
-  return file;
-}
-
-const sum = (a, b) => ({ input: a[0] + b[0], output: a[1] + b[1], cacheRead: a[2] + b[2], cacheCreate: a[3] + b[3] });
-const pickTokens = (t) => ({ input: t.input, output: t.output, cacheRead: t.cacheRead, cacheCreate: t.cacheCreate });
-const readTiming = (runDir) => JSON.parse(fs.readFileSync(path.join(runDir, 'timing.json'), 'utf8'));
-function skipLines(runDir) {
-  let text = '';
-  try { text = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'); } catch { return []; }
-  return text.split('\n').filter((l) => l.startsWith('- SKIP '));
-}
-function assertPhaseRows(timing) {
-  assert.ok(Array.isArray(timing.phases));
-  assert.ok(timing.phases.some((p) => p.phase === 'build' && p.source === 'skill_invoked'));
-}
-
-const A = [10, 20, 30, 40];
-const B = [1, 2, 3, 4];
 const OTHER = [1000, 2000, 3000, 4000];
 
 test('AC2.1: worktree null + worktreeAtClose set, transcripts under two slugs → totals from worktreeAtClose\'s slug', async () => {
@@ -439,13 +404,13 @@ test('item 3: each run counts its own calls from creation through close — afte
 });
 
 test('item 3: the window ends at run-state updatedAt (the close\'s own write), not at the moment the pass runs', async () => {
-  const root = tmpRoot();
+  const root = gitRepo(); // the CLI refuses a run dir outside a main checkout
   try {
     const cfg = path.join(root, 'cfg');
     const { wtA, second } = sequentialRuns(root);
     // A call after run-2's close (11:30) but long before this pass runs (the real now).
     writeRows(cfg, wtA, [['2020-01-06T11:05:00.000Z', A], ['2020-01-06T11:45:00.000Z', OTHER]]);
-    const r = await runCli(TIMING_CLI, ['--run', second], { env: { CLAUDE_CONFIG_DIR: cfg } });
+    const r = await runCli(TIMING_CLI, ['--run', second], { env: { CLAUDE_CONFIG_DIR: cfg }, cwd: root });
     assert.equal(r.code, 0, r.stderr);
     assert.deepStrictEqual(pickTokens(readTiming(second).totals.tokens), sum(A, [0, 0, 0, 0]));
   } finally {
@@ -628,6 +593,78 @@ test('item 7: the read-check-write holds the run dir\'s timing lock — a lock h
     assert.equal(sync.status, 'written');
     assert.equal(fs.existsSync(path.join(runDir, '.timing.lock')), false);
   } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the phase-rows-only write waits for a held timing lock PHASE_LOCK_WAIT_MS, never the transcript bound — one SKIP, the file untouched', async () => {
+  const root = tmpRoot();
+  const { acquireLock, releaseLock } = require('../../../plugin/bin/lib/file-lock');
+  try {
+    assert.ok(atClose.PHASE_LOCK_WAIT_MS < TIMING_BOUND_MS);
+    const runDir = closedRun(root, 'run', path.join(root, 'wt-a'));
+    const held = acquireLock(path.join(runDir, '.timing.lock'), { waitMs: 0, env: {} });
+    assert.ok(held);
+    let r;
+    try {
+      r = await withStub(atClose, 'PHASE_LOCK_WAIT_MS', 50, () => writePhaseTimingSync(runDir));
+    } finally {
+      releaseLock(held);
+    }
+    assert.equal(r.status, 'failed');
+    assert.equal(fs.existsSync(path.join(runDir, 'timing.json')), false);
+    const skips = skipLines(runDir);
+    assert.equal(skips.length, 1, JSON.stringify(skips));
+    const waited = /lock not acquired within (\d+) ms/.exec(skips[0]);
+    assert.ok(waited && Number(waited[1]) <= 50, skips[0]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a throw in token derivation still writes the phase rows: no totals.tokens, one SKIP naming the throw', async () => {
+  const root = tmpRoot();
+  try {
+    const cfg = path.join(root, 'cfg');
+    const wtA = path.join(root, 'wt-a');
+    const runDir = closedRun(root, 'run', wtA);
+    writeTranscript(cfg, wtA, [A, B]);
+    // A reader that hands back nothing makes the derivation throw after the phase rows exist.
+    const r = await withStub(transcript, 'readUsage', async () => null, () => writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } }));
+    assert.equal(r.status, 'written');
+    assert.equal(r.tokens, false);
+    const timing = readTiming(runDir);
+    assertPhaseRows(timing);
+    assert.equal(Object.hasOwn(timing.totals, 'tokens'), false);
+    const skips = skipLines(runDir);
+    assert.equal(skips.length, 1, JSON.stringify(skips));
+    assert.match(skips[0], /condition: timing at close failed \(.+\) → fallback: timing\.json phase rows written without token totals/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a timing.json that cannot be read (EIO) is never overwritten on a guess: failed, one SKIP naming it, the bytes unchanged', () => {
+  const root = tmpRoot();
+  const realRead = fs.readFileSync;
+  try {
+    const runDir = closedRun(root, 'run', path.join(root, 'wt-a'));
+    const file = path.join(runDir, 'timing.json');
+    fs.writeFileSync(file, '{"phases":[],"totals":{"tokens":{"input":5,"output":0,"cacheRead":0,"cacheCreate":0}}}');
+    const before = fs.readFileSync(file);
+    fs.readFileSync = (p, ...rest) => {
+      if (typeof p === 'string' && p.endsWith('timing.json')) throw Object.assign(new Error('EIO: i/o error, read'), { code: 'EIO' });
+      return realRead(p, ...rest);
+    };
+    let r;
+    try { r = writePhaseTimingSync(runDir); } finally { fs.readFileSync = realRead; }
+    assert.equal(r.status, 'failed');
+    assert.deepStrictEqual(fs.readFileSync(file), before);
+    const skips = skipLines(runDir);
+    assert.equal(skips.length, 1, JSON.stringify(skips));
+    assert.match(skips[0], /EIO/);
+  } finally {
+    fs.readFileSync = realRead;
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

@@ -7,6 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { logTimingSkip, logTimingFailure } = require('../../../plugin/bin/lib/log-decision/timing-skip');
+const { appendEntry, formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
 
 function skipLines(runDir) {
   let text = '';
@@ -39,6 +40,23 @@ test('logTimingSkip never throws and never creates a missing run dir', () => {
     assert.doesNotThrow(() => logTimingSkip(gone, 'condition: x → fallback: y'));
     assert.doesNotThrow(() => logTimingFailure(gone, 'x', new Error('y')));
     assert.deepEqual(fs.readdirSync(root), []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// The window logTimingSkip's own directory check cannot close: an archive moves the run dir away
+// after the check, before the append (createParent: false is what keeps the lock from recreating it).
+test('an append with createParent false to a vanished run dir throws and recreates nothing; the default still creates it', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-skip-'));
+  try {
+    const entry = formatEntry({ status: 'SKIP', now: Date.now(), step: 'timing at close', text: 'condition: x → fallback: y' });
+    const gone = path.join(root, 'gone');
+    assert.throws(() => appendEntry({ runDir: gone, section: '/wrap-up', entry, createParent: false }));
+    assert.deepEqual(fs.readdirSync(root), []);
+    const made = path.join(root, 'made');
+    appendEntry({ runDir: made, section: '/wrap-up', entry });
+    assert.ok(fs.existsSync(path.join(made, 'decisions.md')));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

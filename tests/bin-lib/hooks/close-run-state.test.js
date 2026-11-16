@@ -314,6 +314,23 @@ test('AC4.1 close-run: writeTimingAtClose stubbed to throw → stdout and exit c
   }
 });
 
+test('close-run: a close whose run-state.json cannot be written reports it and writes no timing.json (the file is written only after the state change succeeds)', async () => {
+  const fx = closeFixture();
+  try {
+    // A directory where run-state.json belongs makes the state write fail.
+    fs.rmSync(path.join(fx.runDir, 'run-state.json'));
+    fs.mkdirSync(path.join(fx.runDir, 'run-state.json'));
+    T.writeTranscript(fx.cfg, fx.wt);
+    const r = await closeRun(fx);
+    assert.strictEqual(r.code, 0);
+    assert.match(r.stdout, /failed to close run .* run-state\.json could not be written/);
+    assert.strictEqual(fs.existsSync(path.join(fx.runDir, 'timing.json')), false);
+    assert.deepStrictEqual(T.skipLines(fx.runDir), []);
+  } finally {
+    cleanup(fx);
+  }
+});
+
 test('AC4.2 close-run: at-close.js failing at load → stdout and exit code equal the no-op stub\'s (exit 0), one SKIP line', async () => {
   const base = closeFixture();
   const faulty = closeFixture();

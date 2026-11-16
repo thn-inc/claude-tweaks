@@ -44,6 +44,18 @@ test('acquireLock: createParent false + parent directory missing -> null, and th
   releaseLock(held);
 });
 
+test('withLock: createParent false is passed to acquireLock — a missing parent is not created, fn still runs unlocked (#5555)', () => {
+  const base = tmpDir();
+  const parent = path.join(base, 'vanished-run');
+  let ran = false;
+  withLock(path.join(parent, '.x.lock'), () => { ran = true; }, { waitMs: 0, env: {}, createParent: false });
+  assert.equal(ran, true);
+  assert.deepEqual(fs.readdirSync(base), []);
+  // Without the option the parent is still created, as before.
+  withLock(path.join(parent, '.x.lock'), () => {}, { waitMs: 0, env: {} });
+  assert.ok(fs.existsSync(parent));
+});
+
 // Runs acquireLock against a Date.now that advances 25 ms per read, so the
 // wait it honoured is read off a virtual clock, not a real-time budget that
 // flakes under load (tests/wall-clock-budget-conformance.test.js).

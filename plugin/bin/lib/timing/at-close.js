@@ -25,13 +25,21 @@ const { priorWorktree } = require('../run-state-worktree');
 const { acquireLock, releaseLock } = require('../file-lock');
 const timingSkip = require('../log-decision/timing-skip');
 
-// The one time bound on a close's transcript reads (ms).
+// The one time bound on a close's transcript reads (ms). Spec #5555 Deliverable 6 caps the whole
+// timing step at half the driver's 120 s close-run limit (lib/driver/merge.js, settle.js): raise it
+// only together with that limit.
 const TIMING_BOUND_MS = 60000;
+// How long the synchronous phase-rows-only write waits for .timing.lock (ms). That write reads no
+// transcript and holds the lock for milliseconds, so it never borrows the transcript bound.
+// (Read through module.exports at call time, like TIMING_BOUND_MS, so a test can shorten it.)
+const PHASE_LOCK_WAIT_MS = 2000;
 
 const PHASE_ONLY = 'timing.json phase rows written without token totals';
 const NOTHING_WRITTEN = 'no timing.json written';
 
-const { errText } = timingSkip;
+// One SKIP line in a run dir's decisions.md (log-decision/timing-skip.js, shared with the closing
+// paths' own fallback catch); a run dir that is not a directory gets none.
+const { errText, logTimingSkip } = timingSkip;
 
 // runState, { env, homeDir } -> { paths, reason }. At most the one own path.
 // homeDir (a function) is called only when env has no CLAUDE_CONFIG_DIR.
@@ -63,14 +71,19 @@ function isSpecChildDir(runDir) {
   }
 }
 
-// One SKIP line in runDir's decisions.md; a run dir that is not a directory gets none.
-// (log-decision/timing-skip.js, shared with the closing paths' own fallback catch.)
-function logTimingSkip(runDir, text) {
-  timingSkip.logTimingSkip(runDir, text);
-}
-
+// The run dir's timing.json, parsed: null when absent (no file there to protect: ENOENT, or a
+// directory / non-directory path component in its place) or not JSON (a corrupt file is replaced).
+// Any other read failure (EACCES, EIO) throws — a file whose content is unknown is never
+// overwritten on a guess, so a file that has token totals stays byte-identical.
 function readExisting(runDir) {
-  try { return JSON.parse(fs.readFileSync(path.join(runDir, 'timing.json'), 'utf8')); } catch { return null; }
+  let text;
+  try {
+    text = fs.readFileSync(path.join(runDir, 'timing.json'), 'utf8');
+  } catch (err) {
+    if (err && ['ENOENT', 'EISDIR', 'ENOTDIR'].includes(err.code)) return null;
+    throw err;
+  }
+  try { return JSON.parse(text); } catch { return null; }
 }
 
 const isDir = (p) => lstatType(p).type === 'directory';
@@ -151,7 +164,7 @@ function writePhaseTimingSync(runDir) {
   try {
     const p = prepare(runDir);
     if (p.done) result = p.done;
-    else ({ dir, result } = write(runDir, p.base.timing, null, Date.now() + module.exports.TIMING_BOUND_MS, p.base.runState !== null));
+    else ({ dir, result } = write(runDir, p.base.timing, null, Date.now() + module.exports.PHASE_LOCK_WAIT_MS, p.base.runState !== null));
   } catch (err) {
     result = { status: 'failed', tokens: false, skip: `condition: timing at close failed (${errText(err)}) → fallback: ${NOTHING_WRITTEN}` };
   }
@@ -167,11 +180,13 @@ async function writeTimingAtClose(runDir, { tokens = true, env = {}, homeDir = o
   }
   let dir = runDir;
   let result;
+  let base = null;
   try {
     const p = prepare(runDir);
     if (p.done) {
       result = p.done;
     } else {
+      base = p.base;
       const own = ownTranscripts(p.base.runState, { env, homeDir });
       const bound = boundMs ?? module.exports.TIMING_BOUND_MS;
       const deadlineAt = Date.now() + bound;
@@ -189,7 +204,15 @@ async function writeTimingAtClose(runDir, { tokens = true, env = {}, homeDir = o
       }
     }
   } catch (err) {
-    result = { status: 'failed', tokens: false, skip: `condition: timing at close failed (${errText(err)}) → fallback: ${NOTHING_WRITTEN}` };
+    const failed = `condition: timing at close failed (${errText(err)}) → fallback: `;
+    result = { status: 'failed', tokens: false, skip: `${failed}${NOTHING_WRITTEN}` };
+    // A throw after the phase rows were derived (token derivation, a transcript row nothing
+    // expected) still leaves those rows worth a file. A write that fails here too keeps the result above.
+    if (base) {
+      try {
+        ({ dir, result } = write(runDir, base.timing, `${failed}${PHASE_ONLY}`, Date.now() + module.exports.PHASE_LOCK_WAIT_MS, base.runState !== null));
+      } catch { /* the failed result above stands */ }
+    }
   }
   return finish(dir, result);
 }
@@ -225,4 +248,4 @@ function spawnTokenPass(runDir, { env } = {}) {
   }
 }
 
-module.exports = { TIMING_BOUND_MS, ownTranscripts, isSpecChildDir, writeTimingAtClose, writeTimingAtCloseSafe, writePhaseTimingSync, logTimingSkip, spawnTokenPass };
+module.exports = { TIMING_BOUND_MS, PHASE_LOCK_WAIT_MS, ownTranscripts, isSpecChildDir, writeTimingAtClose, writeTimingAtCloseSafe, writePhaseTimingSync, logTimingSkip, spawnTokenPass };

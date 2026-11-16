@@ -164,8 +164,8 @@ function releaseLock(held) {
 // sequence) has actually finished, reopening the exact race the lock exists
 // to close.
 function withLock(lockPath, fn, opts = {}) {
-  const { failClosed = false, waitMs, env = process.env } = opts;
-  const held = acquireLock(lockPath, { waitMs, env });
+  const { failClosed = false, waitMs, env = process.env, createParent } = opts;
+  const held = acquireLock(lockPath, { waitMs, env, createParent });
   if (held === null && failClosed) {
     const err = new Error(`could not acquire lock within the configured wait: ${lockPath}`);
     err.code = 'LOCK_TIMEOUT';

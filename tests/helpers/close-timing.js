@@ -20,7 +20,7 @@ function writeEvents(runDir) {
   ].map((e) => JSON.stringify(e)).join('\n') + '\n');
 }
 
-// Two assistant lines with usage under {cfg}/projects/{slug(worktree)}/{sid}.jsonl, stamped
+// Two assistant lines with usage under {cfg}/projects/{slug(worktree)}/{sid}.jsonl (returns that path), stamped
 // inside writeEvents' 10:00..10:10 span by default (the at-close writer clips to the run's
 // lifetime, which always covers its events); `stamps` places them inside another fixture's.
 function writeTranscript(cfg, worktree, [a, b] = [A, B], sid = SID, [s1, s2] = ['2026-11-16T10:01:00.000Z', '2026-11-16T10:09:00.000Z']) {
@@ -30,7 +30,9 @@ function writeTranscript(cfg, worktree, [a, b] = [A, B], sid = SID, [s1, s2] = [
     timestamp: ts,
     message: { role: 'assistant', id, model: 'claude-test', content: [], usage: { input_tokens: u[0], output_tokens: u[1], cache_read_input_tokens: u[2], cache_creation_input_tokens: u[3] } },
   });
-  fs.writeFileSync(path.join(dir, `${sid}.jsonl`), [line('m1', s1, a), line('m2', s2, b)].join('\n') + '\n');
+  const file = path.join(dir, `${sid}.jsonl`);
+  fs.writeFileSync(file, [line('m1', s1, a), line('m2', s2, b)].join('\n') + '\n');
+  return file;
 }
 
 const sum = (a, b) => ({ input: a[0] + b[0], output: a[1] + b[1], cacheRead: a[2] + b[2], cacheCreate: a[3] + b[3] });
