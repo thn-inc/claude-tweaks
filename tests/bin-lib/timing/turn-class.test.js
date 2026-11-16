@@ -217,6 +217,13 @@ test('turn-class: bashProcedureFiles counts a sed or cat of a context bundle und
   assert.deepEqual(bashProcedureFiles('cat .claude-tweaks/pipelines/run-a/events.jsonl', null), []);
 });
 
+test('turn-class: a bundle under a main checkout inside a skills/ directory still keys under context/', () => {
+  const bundle = '/home/u/skills/repo/.claude-tweaks/pipelines/run-a/context/lens-child.md';
+  assert.equal(isProcedurePath(bundle, null), true, 'setup: the path also looks like a procedure path');
+  assert.equal(readFileKey(bundle, null), 'context/lens-child.md');
+  assert.deepEqual(bashProcedureFiles(`sed -n "1,80p" ${bundle}`, null), ['context/lens-child.md']);
+});
+
 // #4359 T1-1: a grep-family flag that takes a value never lets the value take the pattern slot.
 test('turn-class: bashProcedureFiles skips the value of -A/-B/-C/-m and their long forms', () => {
   for (const flag of ['-A 3', '-B 3', '-C 3', '-m 1', '-nC 2', '--max-count 1', '--context 2', '--after-context 2', '--before-context 2']) {

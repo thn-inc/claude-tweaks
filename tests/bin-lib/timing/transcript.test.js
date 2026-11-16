@@ -322,6 +322,17 @@ test('#4359 I1: readUsage counts a Read and a sed of a context bundle under cont
   assert.deepEqual(rows[1].turnClasses, { read: 1 });
 });
 
+test('#4359: a bundle Read and sed under a main checkout inside a skills/ directory key under context/', async () => {
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pfiles-')), 's.jsonl');
+  const bundle = '/home/u/skills/repo/.claude-tweaks/pipelines/run-a/context/lens-child.md';
+  fs.writeFileSync(f, JSON.stringify({ type: 'assistant', timestamp: '2026-11-16T10:00:00.000Z', message: { id: 'm1', role: 'assistant', content: [
+    { type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: bundle } },
+    { type: 'tool_use', id: 'b1', name: 'Bash', input: { command: `sed -n "1,80p" ${bundle}` } },
+  ], usage: {} } }) + '\n');
+  const rows = await readUsage(f, { worktree: '/home/u/skills/repo/.claude/worktrees/wt' });
+  assert.deepEqual(rows[0].procedureFiles, { 'context/lens-child.md': 2 });
+});
+
 test('#4359 T2-1: a timestamp-less api-request-blob row carrying a skill Read adds no procedure read', async () => {
   const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pfiles-')), 's.jsonl');
   const read = (id) => ({ type: 'tool_use', id, name: 'Read', input: { file_path: 'plugin/skills/review/code-mode-steps.md' } });

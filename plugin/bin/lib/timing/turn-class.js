@@ -73,9 +73,11 @@ function contextBundleKey(filePath, worktree, pathImpl = path) {
 }
 
 // The per-file read key a Read or a Bash read path counts under: its
-// procedureFileKey, else its contextBundleKey, else null.
+// contextBundleKey, else its procedureFileKey, else null. The bundle check
+// goes first: a main checkout under a `skills/` directory makes a bundle path
+// look like a procedure path too.
 function readFileKey(filePath, worktree, pathImpl = path) {
-  return procedureFileKey(filePath, worktree, pathImpl) || contextBundleKey(filePath, worktree, pathImpl);
+  return contextBundleKey(filePath, worktree, pathImpl) || procedureFileKey(filePath, worktree, pathImpl);
 }
 
 // Quote-aware split of a shell command on && || ; | so a quoted "a && b" (a
