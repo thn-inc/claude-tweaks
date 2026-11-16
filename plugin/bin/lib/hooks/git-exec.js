@@ -235,6 +235,8 @@ function repoSpecOfRemote(remote, gateDeps, opts = {}) {
   return m ? { host: null, owner: m[1], repo: m[2] } : null;
 }
 
+// repoSpecOfRemote on `repoRoot`'s origin remote (null when git fails or origin is empty/absent),
+// with the loose fallback on.
 function repoSpecOf(repoRoot, gateDeps) {
   return repoSpecOfRemote(originOf(repoRoot), gateDeps);
 }
