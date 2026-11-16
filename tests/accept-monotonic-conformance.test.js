@@ -182,3 +182,37 @@ test('a planted mis-parse that only blank mode shows is an offender', () => {
   assert.equal(stripperVerdict(src, stripComments(src, { literals: 'blank' })), 'misparsed', 'the control must be a mis-parse in blank mode');
   assert.deepStrictEqual(shape(src), [[1, 'stripper-misparsed']]);
 });
+
+// plugin/bin/lib/accept/ imports no flag writer at all (build deviation 1): the one write goes
+// through accept-park.js, the CLI, which reads and writes the record. A module in that directory
+// that requires the record-flag writer or names one of its adders is an offender, comments aside.
+const WRITER_REQUIRE = /\brequire\s*\(\s*['"`][^'"`]*(?:record-risk-flags|issues\/record)['"`]\s*\)/g;
+const WRITER_REF = /\b(?:addRiskFlags|addTripwireRiskFlags|carryTripwireFlags|appendRiskProofGotcha)\b/g;
+
+function writerImports(raw) {
+  const keep = stripComments(raw);
+  const offenders = [];
+  for (const [re, reason] of [[WRITER_REQUIRE, 'writer-require'], [WRITER_REF, 'writer-ref']]) {
+    for (const m of keep.matchAll(re)) offenders.push([lineAt(keep, m.index), reason]);
+  }
+  return offenders.sort((a, b) => a[0] - b[0]);
+}
+
+test('no accept lib module imports or names a risk-flag writer', () => {
+  const files = listJs(ACCEPT_LIB);
+  assert.ok(files.length >= 5, `scanned only ${files.length} files: the walk broke`);
+  const offenders = [];
+  for (const file of files) {
+    const rel = path.relative(ROOT, file).split(path.sep).join('/');
+    for (const [line, reason] of writerImports(readText(file))) offenders.push(`${rel}:${line} ${reason}`);
+  }
+  assert.deepStrictEqual(offenders, []);
+});
+
+test('a planted writer require or adder reference is flagged, a comment is not', () => {
+  assert.deepStrictEqual(writerImports("const a = 1;\nconst { addRiskFlags } = require('../issues/record-risk-flags');\n"), [[2, 'writer-require'], [2, 'writer-ref']]);
+  assert.deepStrictEqual(writerImports("const a = 1;\nconst r = require('../issues/record');\n"), [[2, 'writer-require']]);
+  assert.deepStrictEqual(writerImports('const a = 1;\naddTripwireRiskFlags(body, flags);\n'), [[2, 'writer-ref']]);
+  assert.deepStrictEqual(writerImports('// addRiskFlags is the CLI\'s\n/* require(\'../issues/record\') */\nconst a = 1;\n'), []);
+  assert.deepStrictEqual(writerImports("const { parseRiskFlags } = require('../issues/record-vocabulary');\n"), []);
+});

@@ -144,6 +144,13 @@ function evaluateTripwire({
 
   const crossed = crossings.map(({ category, via, evidence }) => ({ category, via, evidence }));
   const newFlags = crossings.map((c) => c.category).filter((category) => !declaredFlags.includes(category));
+  // reportedFlags: the crossed categories the packet explains. A category nobody had declared is
+  // new on the first decide (newFlags); the write that follows records it on the record's
+  // `Risk-flags-added-by-tripwire:` line (tripwireFlags), so a re-run of decide on the same diff
+  // finds it already declared (newFlags empty) and would drop the packet's reason. A category
+  // the human declared (declaredFlags minus tripwireFlags) stays silent: AC 2, no change.
+  // tripwireFlags, categories and diffError are inputs the spec's pinned signature predates
+  // (spec: Build Deviations 6).
   const reportedFlags = crossings.map((c) => c.category)
     .filter((category) => newFlags.includes(category) || tripwireFlags.includes(category));
   const removed = isStringList(removedFlags) ? removedFlags : [];

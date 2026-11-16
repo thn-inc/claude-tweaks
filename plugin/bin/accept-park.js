@@ -311,14 +311,28 @@ function keptRiskFlags(parsed) {
   return null;
 }
 
-// A failed call's first line: git's and gh's own stderr when they carry it, else its exit status.
-// Never err.message: execFileSync puts the whole argv there, the main checkout's path included.
+// An absolute path (the main checkout's, a lock file's) never reaches a packet line: a quoted
+// one goes whole, spaces included, then a bare one, which must follow a non-word character so
+// refs/remotes/origin/main stays readable.
+function redactPaths(text) {
+  return text
+    .replace(/(['"])(?:[A-Za-z]:)?[\\/][^'"]*\1/g, '<path>')
+    .replace(/(?<![\w.-])(?:[A-Za-z]:)?[\\/][^\s'"`]*/g, '<path>');
+}
+
+// A failed call's first line: git's and gh's own stderr when they carry it, else its exit status,
+// signal or code, else the first line of a plain Error's message (no argv rides on an error that
+// carries none of those), every line with absolute paths redacted. execFileSync's own message
+// holds the whole argv, the main checkout's path included, so it is never used when status, signal
+// or code is present.
 function failureText(err) {
   const said = firstLine(err?.stderr);
-  if (said) return said;
+  if (said) return redactPaths(said);
   if (Number.isInteger(err?.status)) return `exit ${err.status}`;
   if (typeof err?.signal === 'string') return `signal ${err.signal}`;
-  return typeof err?.code === 'string' ? err.code : 'unknown error';
+  if (typeof err?.code === 'string') return err.code;
+  const message = firstLine(err?.message);
+  return message ? redactPaths(message) : 'unknown error';
 }
 
 // A sibling session's fetch in the shared main checkout can hold the ref's lock. One retry,
@@ -459,7 +473,7 @@ function writeTripwireFacts({ runDir, tripwires, deps }) {
 
 function runDecide(opts, deps, ctx) {
   const { resolvePolicyKeys, BUILTIN_RISK_CATEGORIES } = require('./lib/policy-schema');
-  const { isControlModeOn } = require('./lib/policy');
+  const { isControlModeOn, extraCategoriesOf } = require('./lib/policy');
   const { decideSeries } = require('./lib/accept/park');
   // Without --run the repo-root policy.yml is the authority, as parked reads it.
   let runDir = null;
@@ -489,8 +503,7 @@ function runDecide(opts, deps, ctx) {
   // which gates on policy.yml alone. The two risk keys resolve from policy.yml only; integration-branch
   // takes the run's config.yml over policy.yml.
   const tripwirePolicy = resolvePolicyKeys(['risk-categories', 'risk-path-globs', 'integration-branch'], { policyRaw, runConfigRaw });
-  const categoryValue = tripwirePolicy['risk-categories'].value;
-  const extraCategories = Array.isArray(categoryValue) ? categoryValue : String(categoryValue).split(',').map((slug) => slug.trim()).filter(Boolean);
+  const extraCategories = extraCategoriesOf(tripwirePolicy['risk-categories'].value);
   const categories = [...BUILTIN_RISK_CATEGORIES, ...extraCategories];
   const globsEntry = tripwirePolicy['risk-path-globs'];
   let globs = globsEntry.value;

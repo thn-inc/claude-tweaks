@@ -1037,7 +1037,7 @@ function acceptPark(s) {
       `record #${record} park state unreadable (accept-park.js parked exit 6); no park this run; not merged`);
   }
   if (parked.code !== 5) return stop(s, 'merge-accept-park', 'supplier-failed', `accept-park.js parked ${exitWords(parked)}; not merged`);
-  const decided = acceptParkCli(s, ['decide', '--run', s.runDir, '--record', record, '--head', ctx.head, ...repo]);
+  const decided = acceptParkCli(s, ['decide', '--run', s.runDir, '--record', record, '--head', ctx.head, ...repo], decideTimeoutMs(s.deps));
   if (decided.code !== 0) return stop(s, 'merge-accept-park', 'supplier-failed', `accept-park.js decide ${exitWords(decided)}; not merged`);
   // decide prints exactly one decision per --record: anything else is unusable, never a no-park.
   const d = parseJson(String(decided.stdout).trim());
@@ -1206,15 +1206,24 @@ const RECONCILE_TIMEOUT_MS = 150000;
 // park's own git calls run under, through `deps.gitTimeoutMs`; 30 s, git's default, when the deps
 // carry none or it is unusable). At the defaults: 5 x 120 s + 150 s + 2 x 30 s = 810 s.
 const PARK_GIT_DEFAULT_MS = 30000;
-function parkTimeoutMs(deps) {
-  let git = PARK_GIT_DEFAULT_MS;
+function gitBoundMs(deps) {
   try {
     const v = typeof deps.gitTimeoutMs === 'function' ? deps.gitTimeoutMs() : undefined;
-    if (Number.isSafeInteger(v) && v > 0) git = v;
+    if (Number.isSafeInteger(v) && v > 0) return v;
   } catch {
     // an unreadable bound keeps the default: the budget is never shorter than git's own default
   }
-  return 5 * CLI_TIMEOUT_MS + RECONCILE_TIMEOUT_MS + 2 * git;
+  return PARK_GIT_DEFAULT_MS;
+}
+function parkTimeoutMs(deps) {
+  return 5 * CLI_TIMEOUT_MS + RECONCILE_TIMEOUT_MS + 2 * gitBoundMs(deps);
+}
+// decide's budget (#4619): the one CLI_TIMEOUT_MS its record reads and body edit already had, plus
+// the tripwire's git calls, at most nine (two fetches with a lock retry each, rev-parse, merge-base,
+// diff, and the head and origin/HEAD reads), each under the live GIT_TIMEOUT_MS.
+const DECIDE_GIT_CALLS = 9;
+function decideTimeoutMs(deps) {
+  return CLI_TIMEOUT_MS + DECIDE_GIT_CALLS * gitBoundMs(deps);
 }
 const NOT_LOCKED = /not locked/i;
 
@@ -1589,5 +1598,5 @@ function isReason(reason) {
 
 module.exports = {
   merge, parkComment, conflictComment, refusedComment, classifyMergeFailure, REASONS, PREFIXED_REASONS, isReason,
-  MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS, parkTimeoutMs,
+  MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS, parkTimeoutMs, decideTimeoutMs,
 };

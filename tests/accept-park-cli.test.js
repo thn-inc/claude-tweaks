@@ -443,6 +443,21 @@ test('a CRLF stderr keeps no carriage return in the stderr line or the packet li
   assert.equal(res.stderr.includes('\r') || res.stdout.includes('\r'), false);
 });
 
+test('an absolute path in git stderr or a plain Error never reaches the packet line', async () => {
+  const lock = "fatal: Unable to create '/Users/me/Code Workspaces/repo/.git/refs/remotes/origin/main.lock': File exists.";
+  const failing = world({ policy: TRIPWIRE_POLICY, fail: { 'fetch:main': lock }, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const res = await call(failing, decideArgv(failing));
+  assert.equal(res.code, 0, res.stderr);
+  assert.deepEqual(tripwireOf(res).tripwire.lines, ['tripwire could not run: git fetch of main failed: fatal: Unable to create \\<path\\>: File exists.']);
+  assert.equal(JSON.stringify(res).includes('/Users/me'), false);
+
+  const plain = world({ policy: TRIPWIRE_POLICY, diff: MIGRATION_DIFF, fail: { bodyEdit: new Error('assertSlugs: not a slug at /Users/me/repo/x.js') }, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const plainRes = await call(plain, decideArgv(plain));
+  assert.equal(plainRes.code, 0, plainRes.stderr);
+  assert.ok(tripwireOf(plainRes).tripwire.lines.includes('tripwire: the flag write failed (assertSlugs: not a slug at \\<path\\>), so this run is local'), tripwireOf(plainRes).tripwire.lines.join('\n'));
+  assert.equal(JSON.stringify(plainRes).includes('/Users/me'), false);
+});
+
 test('AC3.1: --classification auth adds auth via agent', async () => {
   const w = world({ policy: 'control-mode: on\nacceptance-target: dev\n', records: { 7: { body: 'Risk-flags: none\n' } } });
   const file = path.join(w.state.root, 'classification.json');
@@ -654,6 +669,10 @@ test('a tripwire line that carries a target: substring never alters the park sta
     assert.equal(line.includes('\n'), false);
     assert.doesNotMatch(line, /(?:^|\s)target:/i);
   }
+  // The park state is the one the auth crossing decides, whatever the evidence text says.
+  const decision = tripwireOf(res);
+  assert.equal(decision.park, true);
+  assert.equal(decision.target, 'local');
 });
 
 // execFileSync's own shape: the whole argv, the main checkout's path included, in the message.
