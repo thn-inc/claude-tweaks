@@ -159,9 +159,10 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPA
   require('fs').writeFileSync(process.argv[3], JSON.stringify(eligiblePreDep));
   require('fs').writeFileSync(process.argv[4], JSON.stringify(unresolved));
 NODE_EVAL_EOF
+DEP_UNREADABLE=
 : > "$DISPATCH_VERIFIED_OPEN_DEPS"
 for DEP in $(node -e "console.log(require(process.argv[1]).join(' '))" -- "$DISPATCH_UNRESOLVED_DEPS"); do
-  STATE=$(gh issue view "$DEP" --json state -q .state 2>/dev/null) || { STATE=OPEN; echo "Warning: gh issue view $DEP failed — dependency #$DEP treated as open (fail closed) this run" >&2; }
+  STATE=$(gh issue view "$DEP" --json state -q .state 2>/dev/null) || { STATE=OPEN; DEP_UNREADABLE=1; echo "Warning: gh issue view $DEP failed — dependency #$DEP treated as open (fail closed) this run" >&2; }
   if [ "$STATE" = "OPEN" ]; then echo "$DEP" >> "$DISPATCH_VERIFIED_OPEN_DEPS"; fi
 done
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE_PRE_DEP" "$DISPATCH_OPEN_NUMBERS" "$DISPATCH_VERIFIED_OPEN_DEPS" "$DISPATCH_ELIGIBLE" "$DISPATCH_BLOCKED_EXCLUDED_BODY" "$DISPATCH_UNRESOLVED_DEPS" <<NODE_EVAL_EOF
@@ -170,11 +171,11 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE_PRE_DEP" 
   const { bodyForeignBlockers } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/cross-repo-states.js');
   const eligiblePreDep = require(process.argv[1]);
   const openNumbers = new Set(require(process.argv[2]).map((i) => i.number));
-  // #5311: a missing or malformed file: every unresolved dependency counts as open.
+  // #5311: missing or malformed: all unresolved count as open.
   const lines = fs.existsSync(process.argv[3]) ? fs.readFileSync(process.argv[3], 'utf8').trim().split('\n').filter(Boolean) : null;
   const bad = lines === null || lines.some((l) => !/^\d+$/.test(l.trim()));
   const unresolved = require(process.argv[6]);
-  if (bad && unresolved.length) process.stderr.write('Warning: verified-open-deps file missing or malformed — every unresolved dependency treated as open (fail closed) this run\n');
+  if (bad && unresolved.length) { process.stderr.write('Warning: verified-open-deps file missing or malformed — every unresolved dependency treated as open (fail closed) this run\n'); process.exitCode = 3; }
   const verifiedOpen = bad ? unresolved : lines.map(Number);
   for (const dep of verifiedOpen) openNumbers.add(dep);
   // #4793: DISPATCH_FOREIGN_STATES is set only on the MCP path (mcp-transport.md); unset asks gh.
@@ -185,6 +186,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE_PRE_DEP" 
   fs.writeFileSync(process.argv[4], JSON.stringify(eligible));
   fs.writeFileSync(process.argv[5], JSON.stringify(excluded));
 NODE_EVAL_EOF
+[ $? -ne 3 ] || DEP_UNREADABLE=1
 echo '{}' > "$DISPATCH_NATIVE_DEPS"
 DISPATCH_TRANSPORT="${DISPATCH_TRANSPORT:-gh}"
 NATIVE_UNREADABLE=
@@ -248,14 +250,13 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE" "$DISPAT
   }
 NODE_EVAL_EOF
 GROUPING_RC=$?
-# #3110: same stop as the cache-hit check above -- later passes must not
-# build on a partially written $DISPATCH_GROUPS/$DISPATCH_EXCLUSIONS.
+# #3110: stop, as the cache-hit check above does.
 if [ "$GROUPING_RC" -ne 0 ]; then
   echo "dispatch: queue-pull stopped -- group-building exclusion pass failed (exit $GROUPING_RC); see error above." >&2
   exit 1
 fi
 
-# #1571: write-back, cache-miss path only; best-effort (AC5). #5309: skipped after a failed native read.
+# #1571: write-back, cache-miss path only; best-effort (AC5). #5309/#5311: skipped after a fail-closed verdict.
 DISPATCH_ALL_DEP_NUMBERS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE_PRE_DEP" <<NODE_EVAL_EOF
   const { parseDependencies } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
   const eligiblePreDep = require(process.argv[1]);
@@ -268,7 +269,7 @@ if [ -n "$DISPATCH_ALL_DEP_NUMBERS" ]; then
   gh issue list --search "$(echo "$DISPATCH_ALL_DEP_NUMBERS" | tr ',' ' ' | sed 's/[0-9][0-9]*/#&/g')" --state all --json number,updatedAt,state --limit 500 > "$DISPATCH_DEP_FRESHNESS" 2>/dev/null || echo '[]' > "$DISPATCH_DEP_FRESHNESS"
 fi
 alias_mcp_timestamps "$DISPATCH_DEP_FRESHNESS"
-if [ -z "$NATIVE_UNREADABLE" ]; then
+if [ -z "$NATIVE_UNREADABLE$DEP_UNREADABLE" ]; then
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPATCH_DEP_FRESHNESS" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" "$DISPATCH_FASTLANE_BUNDLES" <<NODE_EVAL_EOF
   const { mainCheckoutRoot } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/hooks/worktree-detect.js');
   const path = require('path');

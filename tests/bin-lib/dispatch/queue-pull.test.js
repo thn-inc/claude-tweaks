@@ -1269,9 +1269,11 @@ test('#5227 files: the queue file is copied into the session file and aliased th
   assert.deepEqual(entriesOf(absent, 'blocked'), [{ reason: 'blocked', records: [9002], detail: { blockedBy: [8000] } }], 'AC2.1 (#5311): a missing verified-open-deps file fails closed');
   assert.deepEqual(groupNumbers(absent), [[9001]]);
   assert.deepEqual(warningsOf(absent), [VERIFIED_UNREADABLE]);
+  assert.equal(absent.store.written.length, 0, 'a fail-closed verdict is never persisted to the queue-order cache');
   const malformed = pull(S1(), { transport: 'files', run: noGh, prepare: (own) => write(own, { verified: 'this is not json\n' }) });
   assert.deepEqual(groupNumbers(malformed), [[9001]], 'AC2.1 (#5311): a malformed file fails closed');
   assert.deepEqual(warningsOf(malformed), [VERIFIED_UNREADABLE]);
+  assert.equal(malformed.store.written.length, 0, 'a fail-closed verdict is never persisted to the queue-order cache');
   const crlf = pull(S1(), { transport: 'files', run: noGh, prepare: (own) => write(own, { verified: '8000\r\n\n' }) });
   assert.deepEqual(groupNumbers(crlf), [[9001]]);
   assert.deepEqual(warningsOf(crlf), [], 'CRLF and a blank line are well-formed');
@@ -1303,6 +1305,8 @@ test('AC1.1 (#5311): a failed dependency view excludes the dependent record as b
   assert.ok(!groupNumbers(r).flat().includes(9002), '#9002 is not dispatchable');
   assert.deepEqual(warningsOf(r), [DEP_VIEW_FAILED(8000)]);
   assert.equal(r.text['dispatch-verified-open-deps.txt'], '8000\n');
+  assert.equal(r.store.written.length, 0, 'a fail-closed verdict is never persisted to the queue-order cache');
+  assert.equal(pull(S1LiveDep()).store.written.length, 1, 'control: an answered view still writes the blob back');
   // S1({ parity: true }) also carries #9012 `Blocked by #0`: #0 is not an issue number, so it is never live-checked.
   assert.ok(!r.ghCalls.some((a) => a[0] === 'issue' && a[1] === 'view' && a[2] === '0'), 'no gh issue view 0 call');
   const full = pull5(S1LiveDep({ viewFails: true }));
@@ -3482,7 +3486,7 @@ const FAULT_EXPECT = {
   'F-queue': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   'F-opennum': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   'F-depfresh': { status: 0, stderr: [], drops: [] },
-  'F-depview': { status: 0, base: 'gh-livedep', stderr: ['Warning: gh issue view 8000 failed — dependency #8000 treated as open (fail closed) this run'], drops: [] },
+  'F-depview': { status: 0, base: 'gh-livedep', stderr: ['Warning: gh issue view 8000 failed — dependency #8000 treated as open (fail closed) this run'], drops: [], blob: null },
   // #5309: both eligible records are excluded fail-closed (9030 was already blocked, now with the unreadable detail); the unlanded-blocker pass has no candidate left, so it prints nothing.
   // blob: null, both sides, the row's cold origin left no order blob (no write-back); parityView compares the blobs only against each other.
   'F-native': { status: 0, base: 'S2-gh-miss', stderr: [`${NATIVE_FAIL_CLOSED_PREFIX}gh-fault: injected failure`], drops: [], adds: ['blocked:9001'], blob: null },
@@ -3519,8 +3523,8 @@ const FILES_EXPECT = {
   'files-openNumbers-missing': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   'files-openNumbers-malformed': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   // #5311: #8001 (the unresolved dependency of #9011) counts as open too, so #9011 is held as blocked.
-  'files-verifiedOpenDeps-missing': { status: 0, base: 'files-livedep', stderr: ['Warning: verified-open-deps file missing or malformed — every unresolved dependency treated as open (fail closed) this run'], drops: [], adds: ['blocked:9011'] },
-  'files-verifiedOpenDeps-malformed': { status: 0, base: 'files-livedep', stderr: ['Warning: verified-open-deps file missing or malformed — every unresolved dependency treated as open (fail closed) this run'], drops: [], adds: ['blocked:9011'] },
+  'files-verifiedOpenDeps-missing': { status: 0, base: 'files-livedep', stderr: ['Warning: verified-open-deps file missing or malformed — every unresolved dependency treated as open (fail closed) this run'], drops: [], adds: ['blocked:9011'], blob: null },
+  'files-verifiedOpenDeps-malformed': { status: 0, base: 'files-livedep', stderr: ['Warning: verified-open-deps file missing or malformed — every unresolved dependency treated as open (fail closed) this run'], drops: [], adds: ['blocked:9011'], blob: null },
   'files-inFlightRaw-missing': FILES_STOPPED_NEIGHBOUR,
   'files-inFlightRaw-malformed': FILES_STOPPED_NEIGHBOUR,
   'files-inFlightClaims-missing': FILES_STOPPED_NEIGHBOUR,

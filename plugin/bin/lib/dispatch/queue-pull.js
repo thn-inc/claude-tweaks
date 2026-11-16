@@ -351,6 +351,7 @@ function makeContext(options = {}, deps = {}) {
     claimReader: null, // #5304: the pull's one claim reader, built on its first read (claimReader(ctx))
     depFreshnessInput: null, // files only: the agent's dependency-freshness text, read by the fetch pass
     nativeUnreadable: false, // #5309: the native-blockers query failed closed; every eligible record is excluded
+    depUnreadable: false, // #5311: a dependency view or the verified-open-deps file failed closed; nothing is written back
     standaloneDir: '',
     typedNumbers: new Set(), // #5584: the named records admitted on a typed command (fetch pass)
     integrationBranch: '',
@@ -594,7 +595,8 @@ function runBlocked(ctx) {
         const r = ghRun(ctx, ['issue', 'view', dep, '--json', 'state', '-q', '.state'], { quiet: true });
         // #5311: a failed view fails closed.
         if (!r.ok) {
-          ctx.deps.stderr(`Warning: gh issue view ${dep} failed — dependency #${dep} treated as open (fail closed) this run\n`);
+          deps.stderr(`Warning: gh issue view ${dep} failed — dependency #${dep} treated as open (fail closed) this run\n`);
+          state.depUnreadable = true;
           fs.appendFileSync(f.verifiedOpenDeps, `${dep}\n`);
         } else if (trimNl(r.stdout) === 'OPEN') fs.appendFileSync(f.verifiedOpenDeps, `${dep}\n`);
       }
@@ -620,7 +622,10 @@ function runBlocked(ctx) {
     let verifiedOpen;
     if (bad) {
       const unresolved = readJson(paths['dispatch-unresolved-deps.json']);
-      if (unresolved.length) deps.stderr('Warning: verified-open-deps file missing or malformed — every unresolved dependency treated as open (fail closed) this run\n');
+      if (unresolved.length) {
+        deps.stderr('Warning: verified-open-deps file missing or malformed — every unresolved dependency treated as open (fail closed) this run\n');
+        state.depUnreadable = true;
+      }
       verifiedOpen = unresolved.map(Number);
     } else verifiedOpen = lines.map(Number);
     for (const dep of verifiedOpen) openNumbers.add(dep);
@@ -748,6 +753,7 @@ function runWriteBack(ctx) {
 
   if (ctx.omit.size > 0) return; // an omitted pass leaves groups the blob would misdescribe
   if (state.nativeUnreadable) return; // #5309: a failed native read is never persisted as a verdict
+  if (state.depUnreadable) return; // #5311: nor is a fail-closed dependency verdict
   if (state.typedNumbers.size > 0) return; // a typed record must not reach a later drain's cache hit (#5584)
   step(ctx, 'write-back', () => {
     const root = rootOf(ctx);

@@ -23,15 +23,15 @@
 //   common  issue list --label auto:build ... --limit 500 | issue list --state open --json number --limit 200
 //           --version | issue list --label bot:in-progress ... --limit 200 | repo view --json nameWithOwner -q .nameWithOwner
 //           pr list --state open --json number,files,closingIssuesReferences --limit 100
-//   S1 (parity; miss and hit)  issue view 8001 | [injected] issue view 0 | issue list --search #8000 #8001 #0 (miss)
+//   S1 (parity; miss and hit)  issue view 8001 | issue list --search #8000 #8001 #0 (miss; #0 is never live-checked)
 //           issue list --search #8000 #8001 (hit) | <linked: i9005,i9006,i9008,i9009,i9010,i9011,i9012,i9013,i9014,
 //           i9015,i9001,i9003,i9016> | pr view 5016 --json files | <landing: b8001>
 //           api repos/fixture-owner/fixture-repo/compare/main...c0ffee…01 --jq .status   (owner=fixture-owner repo=fixture-repo)
 //   S2      <foreign: c0> o0=acme-corp n0=other | <native: i9001,i9030> | <native: i9001> | <linked: i9001>
 //   SEmpty  the common calls only (no linked query: no group number)
 //   SMalformed, SMalformed('labels')  the queue and open-numbers pulls (and --version), then the stop
-//   SMalformed('body')  <linked: i9001> | SMalformed('blocker')  [injected] issue view 99999999999 |
-//           issue list --search #99999999999 | <linked: i9001,i9022>
+//   SMalformed('body')  <linked: i9001> | SMalformed('blocker')  issue list --search #99999999999 (never
+//           live-checked) | <linked: i9001,i9022>
 //   SPortable  issue view 8001 | issue list --search #8001 | <linked: i9040,i9041,i9042> | <landing: b8001>
 //           api repos/acme-corp/widgets/compare/release/next...c0ffee…01 --jq .status   (owner=acme-corp repo=widgets)
 const fs = require('node:fs');
@@ -406,9 +406,8 @@ function S1({ full = false, pipeline = false, parity = false } = {}) {
       { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
       { argv: OPEN_NUMBERS_ARGV, stdout: JSON.stringify(openNumbers) + '\n' },
       ...(pipeline ? [
-        // #8001 is closed (not an open blocker); #0 is no issue at all, so its state read fails.
+        // #8001 is closed (not an open blocker); #0 is no issue number, so it is never live-checked (#5311).
         { argv: ['issue', 'view', '8001', '--json', 'state', '-q', '.state'], stdout: 'CLOSED\n' },
-        { argv: ['issue', 'view', '0', '--json', 'state', '-q', '.state'], stdout: '', status: 1 },
         { argv: DEP_SEARCH_PIPELINE, stdout: DEP_FRESHNESS_PIPELINE },
         // A queue-order cache hit refetches only the dependencies the blob's freshness signal holds (#0 has no record).
         { argv: DEP_SEARCH_PIPELINE_HIT, stdout: DEP_FRESHNESS_PIPELINE },
@@ -488,9 +487,8 @@ function SMalformed(only = null) {
     gh: [
       { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
       { argv: OPEN_NUMBERS_ARGV, stdout: JSON.stringify(numbers.map((number) => ({ number }))) + '\n' },
-      // #9022's blocker is outside the open-numbers pull, so the fence checks it live (it cannot
-      // exist) and searches it for the freshness signal (nothing matches).
-      { argv: ['issue', 'view', '99999999999', '--json', 'state', '-q', '.state'], stdout: '', stderr: 'GraphQL: Could not resolve to an issue or pull request with the number of 99999999999. (repository.issue)\n', status: 1 },
+      // #9022's blocker is above 2147483647, so it is never live-checked (#5311); the pull only
+      // searches it for the freshness signal (nothing matches).
       { argv: ['issue', 'list', '--search', '#99999999999', '--state', 'all', '--json', 'number,updatedAt,state', '--limit', '500'], stdout: '[]\n' },
       ...tailGh(numbers),
     ],
