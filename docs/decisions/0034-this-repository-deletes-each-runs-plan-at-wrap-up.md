@@ -12,7 +12,7 @@ Under the plugin's default `superpowers-plans-retention: keep-forever`, every ru
 
 This repository sets `superpowers-plans-retention: prune-after-wrapup` in `.claude-tweaks/policy.yml`. The rule is: a plan exists on its run's branch only. Wrap-up's cleanup item 1 deletes the run's plan on the branch before the execution step's commit and push, so the plan never reaches `main`.
 
-One stated exception: cleanup item 1 applies to record-based work only. A design-mode build (brainstorm, design doc, plans, SDD, no `/specify`) has no record, so item 1 does not run and its plan is removed later by `/claude-tweaks:tidy`'s orphan-plan route.
+Two stated exceptions. First, cleanup item 1 applies to record-based work only: a design-mode build (brainstorm, design doc, plans, SDD, no `/specify`) has no record, so item 1 does not run and its plan is removed later by `/claude-tweaks:tidy`'s orphan-plan route. Second, cleanup item 1 keeps a plan that a tracked file cites and stages a `plan-citation-{n}` proposal instead of deleting it.
 
 This narrows ADR-0007 for this repository. A plan is deleted by its own run; a design doc is still kept until `/claude-tweaks:specify` consumes it. The plugin's own default stays `keep-forever`, so consuming projects are unchanged.
 
@@ -45,7 +45,8 @@ Every reader of `docs/superpowers/plans/` found by the audit either runs before 
 
 ## Consequences
 
-- A run that closes without a wrap-up leaves its plan on its branch or `main` until `/claude-tweaks:tidy` prunes it once the record closes.
+- A run that closes without a wrap-up leaves its plan on its branch or `main` until `/claude-tweaks:tidy` prunes it once the record closes and no tracked file cites it.
 - A design-mode build's plan is not deleted at wrap-up (no record, so no cleanup item 1); tidy's orphan-plan route removes it later.
 - The `[IL-36]` rule in `docs/donts.md` and its incident entry now describe this split. ADR-0007 carries a Narrowed-by line, and its Decision text is unchanged.
-- A parked measurement record checks the result: the plan count and bytes on `main` after the setting has been live for a while.
+- Parked record #5638 checks plan files added to and tracked on `main`.
+- The claim that the plan never reaches `main` holds only for runs on the first release that ships #3813's fix (PR #4641). Runs on releases up to and including 6.170.0 delete the plan after the merge, so it lands on `main` and stays until tidy prunes it.
