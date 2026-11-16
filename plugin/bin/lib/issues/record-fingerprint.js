@@ -8,8 +8,12 @@
 
 // Dual-write fingerprint markers: FP_RE_WORK is the current marker written by
 // recordPayload() (record-payload.js); FP_RE_LEGACY is the pre-work-record
-// marker still present on older issues during the migration window, read
-// from all three health producers (skills/_shared/work-record.md).
+// marker, read from all three health producers (skills/_shared/work-record.md).
+// Removal condition: remove FP_RE_LEGACY and its branch in extractFingerprint
+// once no issue, open or closed, carries a code-health-fingerprint,
+// harness-health-fingerprint or journey-health-fingerprint marker. The check is
+//   gh issue list --state all --limit 100000 --json number,body -q '[.[] | select(.body | test("(code|harness|journey)-health-fingerprint:"))] | length'
+// and a result of 0 means the condition is met.
 const FP_RE_WORK = /<!--\s*work-fingerprint:\s*([^\s>]+)\s*-->/;
 const FP_RE_LEGACY = /<!--\s*(?:code-health|harness-health|journey-health)-fingerprint:\s*([^\s>]+)\s*-->/;
 
