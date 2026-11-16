@@ -36,10 +36,26 @@ const REFUSAL_SCAN_CHARS = 2048;
 // arguments and get the native path.
 function isProcedurePath(filePath, worktree, pathImpl = path) {
   if (typeof filePath !== 'string' || !filePath) return false;
-  const inWorktree = worktree && pathImpl.isAbsolute(filePath) && isAncestorOrSelf(worktree, filePath, { pathImpl });
-  const p = inWorktree ? relativeDisplayId(worktree, filePath, pathImpl) : toPosix(filePath, pathImpl.sep);
+  const p = normalizedPath(filePath, worktree, pathImpl);
   if (/(^|\/)(plugin\/)?skills\/.+\.md$/.test(p)) return true;
   return p.includes('/.claude/plugins/') && p.includes('/skills/') && p.endsWith('.md');
+}
+
+// The worktree-relative (when inside it), `/`-normalized form both
+// isProcedurePath and procedureFileKey judge.
+function normalizedPath(filePath, worktree, pathImpl) {
+  const inWorktree = worktree && pathImpl.isAbsolute(filePath) && isAncestorOrSelf(worktree, filePath, { pathImpl });
+  return inWorktree ? relativeDisplayId(worktree, filePath, pathImpl) : toPosix(filePath, pathImpl.sep);
+}
+
+// A procedure path -> its `skills/…/*.md` key (from the first `skills/`
+// segment on), so the repo, worktree and plugin-cache copies of one skill file
+// count as one file (#4359). Any other path -> null.
+function procedureFileKey(filePath, worktree, pathImpl = path) {
+  if (!isProcedurePath(filePath, worktree, pathImpl)) return null;
+  const p = normalizedPath(filePath, worktree, pathImpl);
+  const at = p.search(/(^|\/)skills\//);
+  return p.slice(p[at] === '/' ? at + 1 : at);
 }
 
 // Quote-aware split of a shell command on && || ; | so a quoted "a && b" (a
@@ -173,6 +189,25 @@ function classifyBash(command) {
   return 'other';
 }
 
+// command -> the procedureFileKey of every skill path a read-shaped segment
+// names, one entry per path token, in order (#4359). Only READ_HEADS read a
+// file's text; `git show HEAD:…` or a node script's argument is not a read.
+const READ_HEADS = new Set(['cat', 'head', 'tail', 'sed', 'awk', 'grep', 'rg', 'ugrep', 'wc']);
+function bashProcedureFiles(command, worktree, pathImpl = path) {
+  if (typeof command !== 'string' || !command.trim()) return [];
+  const keys = [];
+  for (const segment of splitSegments(stripPrefixes(command)).map(stripPrefixes).filter(Boolean)) {
+    const tokens = tokenize(segment);
+    if (!READ_HEADS.has((tokens[0] || '').replace(/^.*\//, ''))) continue;
+    for (const t of tokens.slice(1)) {
+      if (t.startsWith('-')) continue;
+      const key = procedureFileKey(t, worktree, pathImpl);
+      if (key) keys.push(key);
+    }
+  }
+  return keys;
+}
+
 // { name, input, isError, resultText, worktree } -> one of TURN_CLASSES.
 function classifyToolCall({ name, input, isError, resultText, worktree } = {}) {
   if (isError === true && typeof resultText === 'string' && GUARD_REFUSAL_RE.test(resultText.slice(0, REFUSAL_SCAN_CHARS))) return 'guard-refusal';
@@ -190,4 +225,4 @@ function classifyToolCall({ name, input, isError, resultText, worktree } = {}) {
   }
 }
 
-module.exports = { TURN_CLASSES, CEREMONY_CLASSES, classifyToolCall, classifyBash, isProcedurePath };
+module.exports = { TURN_CLASSES, CEREMONY_CLASSES, classifyToolCall, classifyBash, isProcedurePath, procedureFileKey, bashProcedureFiles };

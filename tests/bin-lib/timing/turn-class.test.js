@@ -1,7 +1,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { TURN_CLASSES, CEREMONY_CLASSES, classifyToolCall, classifyBash, isProcedurePath } = require('../../../plugin/bin/lib/timing/turn-class');
+const path = require('path');
+const { TURN_CLASSES, CEREMONY_CLASSES, classifyToolCall, classifyBash, isProcedurePath, procedureFileKey, bashProcedureFiles } = require('../../../plugin/bin/lib/timing/turn-class');
 const transcript = require('../../../plugin/bin/lib/timing/transcript');
 
 const bash = (command, extra = {}) => ({ name: 'Bash', input: { command }, ...extra });
@@ -113,4 +114,32 @@ test('turn-class: isProcedurePath moved here and transcript.js re-exports the sa
   assert.equal(isProcedurePath('/repo/plugin/skills/build/SKILL.md', '/repo'), true);
   assert.equal(isProcedurePath('/repo/src/a.js', '/repo'), false);
   assert.equal(isProcedurePath(undefined), false);
+});
+
+test('turn-class: procedureFileKey folds repo, worktree and cache paths to one skills/ key', () => {
+  const key = 'skills/review/code-mode-steps.md';
+  assert.equal(procedureFileKey('plugin/skills/review/code-mode-steps.md', null), key);
+  assert.equal(procedureFileKey('/w/plugin/skills/review/code-mode-steps.md', '/w'), key);
+  assert.equal(procedureFileKey('/Users/u/.claude/plugins/cache/m/claude-tweaks/6.170.0/skills/review/code-mode-steps.md', null), key);
+});
+
+test('turn-class: procedureFileKey returns null for a non-procedure path', () => {
+  assert.equal(procedureFileKey('/r/.claude-tweaks/pipelines/x/context/review-code-mode.md', '/r'), null);
+  assert.equal(procedureFileKey('src/a.js', null), null);
+  assert.equal(procedureFileKey('', null), null);
+});
+
+test('turn-class: procedureFileKey folds a win32 worktree path under path.win32', () => {
+  assert.equal(procedureFileKey('C:\\w\\plugin\\skills\\review\\x.md', 'C:\\w', path.win32), 'skills/review/x.md');
+});
+
+test('turn-class: bashProcedureFiles counts each skill path a read command names', () => {
+  assert.deepEqual(bashProcedureFiles(`sed -n '1,40p' "/U/Code Workspaces/r/plugin/skills/review/code-mode-steps.md"`, null), ['skills/review/code-mode-steps.md']);
+  assert.deepEqual(
+    bashProcedureFiles('grep -n "Step 3" plugin/skills/review/step3-lens-dispatch.md plugin/skills/review/code-mode-steps.md', null),
+    ['skills/review/step3-lens-dispatch.md', 'skills/review/code-mode-steps.md'],
+  );
+  assert.deepEqual(bashProcedureFiles('cat a.txt && head -5 plugin/skills/_shared/x.md', null), ['skills/_shared/x.md']);
+  assert.deepEqual(bashProcedureFiles('git show HEAD:plugin/skills/review/code-mode-steps.md', null), []);
+  assert.deepEqual(bashProcedureFiles('node plugin/bin/x.js plugin/skills/a.md', null), []);
 });
