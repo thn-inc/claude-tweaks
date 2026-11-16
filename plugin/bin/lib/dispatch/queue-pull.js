@@ -242,8 +242,8 @@ function readPolicy(ctx, key) {
 const put = (ctx, file, content) => step(ctx, `write ${path.basename(file)}`, () => fs.writeFileSync(file, content));
 
 // alias_mcp_timestamps (fence 61-69): the camelCase keys added in place. D3 (#5307): a non-array
-// file is a failed read -- a Warning, the file left as the agent wrote it, and a not-ok step, so the
-// reads that follow fail as they do for an unparseable file (readArray).
+// file is a failed read -- a Warning, the file left as the agent wrote it, and a not-ok step no caller
+// checks: the reads that follow fail on their own array checks (readArray).
 function aliasFile(ctx, name, file) {
   const parsed = step(ctx, name, () => readJson(file));
   if (!parsed.ok) return parsed;

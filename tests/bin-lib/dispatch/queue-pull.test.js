@@ -1232,28 +1232,33 @@ test('#5307 D3: a non-array queue file such as {issues:[...]} is a failed read: 
   assert.equal(r.thrown.line, `${head}1${tail}`);
 });
 
-test('#5307 files: a dependency-freshness file holding a JSON string is a failed read, so a warm cache is not hit and the pull stops at the cache check', () => {
-  const blob = pull(S1()).store.written[0].blob;
-  const agent = agentInputs(S1());
-  const r = pull(S1(), {
-    transport: 'files', run: () => { throw new Error('no gh on files'); }, persisted: blob, allowThrow: true,
-    prepare: (own) => {
-      return { inputs: {
-        queueRaw: writeInput(own, 'queue.json', agent['dispatch-queue-raw.json']),
-        openNumbers: writeInput(own, 'open.json', agent['dispatch-open-numbers.json']),
-        depFreshness: writeInput(own, 'dep.json', JSON.stringify(agent['dispatch-dep-freshness.json'])),
-        verifiedOpenDeps: writeInput(own, 'verified.txt', agent['dispatch-verified-open-deps.txt']),
-      } };
-    },
+for (const [shape, wrap] of [
+  ['a JSON string', (text) => JSON.stringify(text)],
+  ['a wrapper object such as {issues:[...]}', (text) => JSON.stringify({ issues: JSON.parse(text) })],
+]) {
+  test(`#5307 files: a dependency-freshness file holding ${shape} is a failed read, so a warm cache is not hit and the pull stops at the cache check`, () => {
+    const blob = pull(S1()).store.written[0].blob;
+    const agent = agentInputs(S1());
+    const r = pull(S1(), {
+      transport: 'files', run: () => { throw new Error('no gh on files'); }, persisted: blob, allowThrow: true,
+      prepare: (own) => {
+        return { inputs: {
+          queueRaw: writeInput(own, 'queue.json', agent['dispatch-queue-raw.json']),
+          openNumbers: writeInput(own, 'open.json', agent['dispatch-open-numbers.json']),
+          depFreshness: writeInput(own, 'dep.json', wrap(agent['dispatch-dep-freshness.json'])),
+          verifiedOpenDeps: writeInput(own, 'verified.txt', agent['dispatch-verified-open-deps.txt']),
+        } };
+      },
+    });
+    assert.ok(!r.stderr.includes(HIT_MESSAGE), `${shape} is not a freshness signal, so the cache is not hit`);
+    const warnings = reported(r.stderr).filter((l) => l.startsWith('Warning: '));
+    assert.equal(warnings.length, 1, r.stderr);
+    assert.ok(warnings[0].endsWith(path.sep + 'dispatch-dep-freshness.json is not a JSON array — treated as a failed read'), warnings[0]);
+    const [, head, tail] = FENCE.match(CACHE_HIT_STOP_RE);
+    assert.ok(r.thrown instanceof QueuePullStopped, String(r.thrown));
+    assert.equal(r.thrown.line, `${head}1${tail}`);
   });
-  assert.ok(!r.stderr.includes(HIT_MESSAGE), 'the string is not a freshness signal, so the cache is not hit');
-  const warnings = reported(r.stderr).filter((l) => l.startsWith('Warning: '));
-  assert.equal(warnings.length, 1, r.stderr);
-  assert.ok(warnings[0].endsWith(path.sep + 'dispatch-dep-freshness.json is not a JSON array — treated as a failed read'), warnings[0]);
-  const [, head, tail] = FENCE.match(CACHE_HIT_STOP_RE);
-  assert.ok(r.thrown instanceof QueuePullStopped, String(r.thrown));
-  assert.equal(r.thrown.line, `${head}1${tail}`);
-});
+}
 
 test('#5307 D3: a JSON-string queue file of 500+ characters prints no cap Warning (a non-array counts 0)', () => {
   const r = pull(S1(), {

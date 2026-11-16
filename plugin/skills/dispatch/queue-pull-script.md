@@ -56,7 +56,7 @@ NODE_EVAL_EOF
 
 # #3691: MCP tools return snake_case created_at/updated_at; readers want camelCase. Adds the camelCase
 # keys in place after each fetch -- a no-op on gh-shaped input, so both transports run the same line.
-# #5307: a non-array file is a Warning, left as written, and a non-zero exit (the reads after it fail).
+# #5307: a non-array file is a Warning, left as written; the reads after it fail their own array checks.
 alias_mcp_timestamps() {
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$@" <<NODE_EVAL_EOF
   const fs = require('fs');
