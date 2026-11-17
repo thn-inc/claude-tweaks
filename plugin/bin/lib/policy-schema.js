@@ -827,12 +827,11 @@ const FORGE_DEGRADE_MEMO_TTL_MS = 60000;
 // shared gh ladder, `shared-primitives.ghTimeoutMsAt(repoRoot, { env })`: env
 // CLAUDE_TWEAKS_GH_TIMEOUT_MS > `gh-timeout-ms` in repoRoot's policy.yml, located
 // through locatePolicyFile (a linked worktree falls back to the main checkout's, #4492)
-// > 5000. The ladder lives there, not here, so every gh bound shares one definition.
-// It reads from repoRoot rather than the cwd, the right root for a caller probing a
-// repo other than the cwd's. `opts.env` (optional) replaces process.env as the place
-// the env var is read from. The require sits inside the body so loading policy-schema
-// never loads shared-primitives. Either placement is acyclic: shared-primitives requires
-// policy-schema (and policy.js) only inside function bodies, never at load time.
+// > 5000. The ladder lives there so every gh bound shares one definition. It reads
+// from repoRoot rather than the cwd, the right root for a caller probing a repo other
+// than the cwd's. `opts.env` (optional) replaces process.env as the place the env var
+// is read from. The require sits inside the body so loading policy-schema never loads
+// shared-primitives.
 function resolveForgeProbeTimeoutMs(repoRoot, opts = {}) {
   const explicit = opts && opts.timeoutMs;
   if (Number.isInteger(explicit) && explicit > 0) return explicit;

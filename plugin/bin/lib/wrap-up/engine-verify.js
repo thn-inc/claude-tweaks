@@ -51,8 +51,8 @@ const { learnedSkillsDelivered } = require('../learned-skills/delivered');
 // object per call: identity for git, ghOptions (#4505's GH_HOST seam) for gh.
 // `boundOf` is required and read per call: every runner names its bound on purpose, since a
 // silent default is the hard-coded literal #4856 removed. The gh bound follows the gh-timeout-ms
-// ladder (the shared GH_TIMEOUT_MS: a GitHub Enterprise Server project raises it, since its gh calls
-// are slower), so gh and git bounds differ on purpose: git is local and keeps its own GIT_BOUND_MS.
+// ladder (the shared GH_TIMEOUT_MS: a GitHub Enterprise Server project raises it, since its gh
+// calls are slower); git is local and keeps its own GIT_BOUND_MS.
 // `ctx` is the caller's injected process context, `{ env, stderr, homeDir }`, each optional (#5379): an
 // `env` becomes the child's environment and reaches ghOptions' host lookup; absent, the child inherits
 // the real one. A `ctx.env` does NOT reach the gh bound: GH_TIMEOUT_MS is the process-wide memoized

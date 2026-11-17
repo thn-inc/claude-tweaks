@@ -62,12 +62,11 @@ function runner(argv, opts = {}) {
   // `opts` lets a caller pass extra `execFileSync` options (e.g. `timeout`)
   // for a specific command without changing every other call through this
   // shared seam. A probe that contacts a remote needs a bound: the forge probe's
-  // `gh pr list` (which contacts the forge) is bounded in `run`'s closure, and
-  // probeRelease's `git ls-remote` (#2882) passes its own timeout. Every other
-  // probe is local-only. The existing catch-all below returns null for every
-  // failure, a timeout kill included, so a timed-out `gh pr list` reads as
-  // probeForge's generic `gh unavailable or not authenticated` reason, not a
-  // distinct timeout reason.
+  // `gh pr list` is bounded in `run`'s closure, and probeRelease's `git ls-remote`
+  // (#2882) passes its own timeout. Every other probe is local-only. The catch-all
+  // below returns null for every failure, a timeout kill included, so a timed-out
+  // `gh pr list` reads as probeForge's generic `gh unavailable or not authenticated`
+  // reason, not a distinct timeout reason.
   // `maxBuffer` defaults to 64 MiB (mirrors suiteRun()'s own bound below) —
   // Node's execFileSync default is 1 MiB, and CHANGELOG.md alone (read via
   // `git show HEAD:CHANGELOG.md` in probeRelease) is already a quarter of
