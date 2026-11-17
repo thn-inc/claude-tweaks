@@ -100,7 +100,7 @@ the same open-queue set `dispatch/SKILL.md` Step 2 uses (open + no `bot:*`, not 
 `auto:build` here — this is informational, not a selection), then run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/preflight-records.js" {target} [{target} …] {other-open-issue} [{other-open-issue} …] [--repo owner/name]
+node "${CLAUDE_PLUGIN_ROOT}/bin/preflight-records.js" {target} [{target} …] {other-open-issue} [{other-open-issue} …] [--repo [host/]owner/name]
 ```
 
 passing every named target together with that open-queue's issue numbers as positional

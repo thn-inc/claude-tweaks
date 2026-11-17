@@ -11,7 +11,7 @@ const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const {
   merge, parkComment, conflictComment, refusedComment, classifyMergeFailure, REASONS, PREFIXED_REASONS, isReason,
-  MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS, parkTimeoutMs,
+  MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS, parkTimeoutMs, decideTimeoutMs,
 } = require(path.join(LIB, 'driver', 'merge'));
 const { MERGE_STEP_NAMES } = require(path.join(LIB, 'driver', 'events'));
 const { createJudgments } = require(path.join(LIB, 'driver', 'judgments'));
@@ -3365,13 +3365,13 @@ test('AC3.7: a local control-mode target parks instead of merging', async () => 
   const r = await merge(CTX, h.deps);
   assert.deepEqual([r.outcome, r.reason], ['pending-review', 'awaiting-local-acceptance']);
   assert.equal(h.calls.filter(isMergeCall).length, 0, 'no pr merge call');
-  assert.deepEqual(parkCalls(h, 'decide')[0].args.slice(1), ['decide', '--run', CTX.runDir, '--record', '7', '--repo', 'o/r']);
+  assert.deepEqual(parkCalls(h, 'decide')[0].args.slice(1), ['decide', '--run', CTX.runDir, '--record', '7', '--head', CTX.head, '--repo', 'o/r']);
   const [p] = parkCalls(h, 'park');
   assert.equal(flagOf(p, '--head'), CTX.head, 'the head the gate read');
   // The park's own bound: the sum of its steps' bounds (5 CLI calls, the archive's reconcile bound, two git calls).
   // The harness carries no gitTimeoutMs, so the budget uses git's 30 s default.
   assert.equal(p.timeout, 5 * 120000 + RECONCILE_TIMEOUT_MS + 2 * 30000);
-  assert.equal(parkCalls(h, 'decide')[0].timeout, 120000, 'decide keeps the ordinary CLI bound');
+  assert.equal(parkCalls(h, 'decide')[0].timeout, 120000 + 9 * 30000, 'decide: one CLI bound plus nine git calls at the 30 s default');
   assert.deepEqual(['--run', '--record', '--claimed', '--pr', '--repo'].map((f) => flagOf(p, f)), [CTX.runDir, '7', '7', '9', 'o/r']);
   // Step 2.9 sits after the gate (Step 2.5) and before Step 3's pre-merge label read.
   const at = (pred) => h.calls.findIndex(pred);
@@ -3491,6 +3491,11 @@ test('the park budget follows the live git bound through deps.gitTimeoutMs', asy
   const h = mergeHarness({ decide: decideReply([LOCAL]), park: parkReply(), deps: { gitTimeoutMs: () => 90000 } });
   await merge(CTX, h.deps);
   assert.equal(parkCalls(h, 'park')[0].timeout, BASE + 2 * 90000);
+  // decide's budget follows the same bound: one CLI call plus nine git calls (#4619).
+  assert.equal(decideTimeoutMs({}), 120000 + 9 * 30000);
+  assert.equal(decideTimeoutMs({ gitTimeoutMs: () => 90000 }), 120000 + 9 * 90000);
+  assert.equal(decideTimeoutMs({ gitTimeoutMs: () => 0 }), 120000 + 9 * 30000);
+  assert.equal(parkCalls(h, 'decide')[0].timeout, 120000 + 9 * 90000);
   // realDeps carries the live bound (shared-primitives' GIT_TIMEOUT_MS getter), not a constant: a
   // child process with the env override set reads a non-default value through it.
   const { spawnSync } = require('node:child_process');

@@ -28,7 +28,7 @@ const readEvents = (run) => fs.readFileSync(path.join(run, 'events.jsonl'), 'utf
 test('post-tool-use logs commit breadcrumb with hash', () => {
   const repo = gitRepoWithCommit();
   const run = mkRun();
-  post.run({ input: { tool_name: 'Bash', tool_input: { command: 'git commit -m "x"' }, cwd: repo }, runDir: run, runState: { status: 'active' }, ownedRun: { dir: run, attribution: 'session' }, cwd: repo });
+  post.run({ env: process.env, input: { tool_name: 'Bash', tool_input: { command: 'git commit -m "x"' }, cwd: repo }, runDir: run, runState: { status: 'active' }, ownedRun: { dir: run, attribution: 'session' }, cwd: repo });
   const ev = readEvents(run);
   assert.strictEqual(ev[0].type, 'commit');
   assert.strictEqual(ev[0].action, 'commit');
@@ -45,6 +45,7 @@ test('post-tool-use logs a DISTINCT hash for each of two real commits to the sam
   const secondHash = execFileSync('git', ['-C', repo, 'rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
 
   post.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: 'git commit -m "a" && git commit --allow-empty -m "b"' }, cwd: repo },
     runDir: run, runState: { status: 'active' }, ownedRun: { dir: run, attribution: 'session' }, cwd: repo,
   });
@@ -57,9 +58,9 @@ test('post-tool-use logs a DISTINCT hash for each of two real commits to the sam
 
 test('post-tool-use without run dir or without git targets is a no-op', () => {
   const repo = gitRepoWithCommit();
-  assert.deepStrictEqual(post.run({ input: { tool_name: 'Bash', tool_input: { command: 'git commit -m x' }, cwd: repo }, runDir: null, runState: null, ownedRun: { dir: null, attribution: null }, cwd: repo }), {});
+  assert.deepStrictEqual(post.run({ env: process.env, input: { tool_name: 'Bash', tool_input: { command: 'git commit -m x' }, cwd: repo }, runDir: null, runState: null, ownedRun: { dir: null, attribution: null }, cwd: repo }), {});
   const run = mkRun();
-  post.run({ input: { tool_name: 'Bash', tool_input: { command: 'npm test' }, cwd: repo }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: repo });
+  post.run({ env: process.env, input: { tool_name: 'Bash', tool_input: { command: 'npm test' }, cwd: repo }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: repo });
   assert.ok(!fs.existsSync(path.join(run, 'events.jsonl')));
 });
 
@@ -85,7 +86,7 @@ function transcript(lastText, { toolUse = true } = {}) {
 
 test('subagent-stop flags a missing status line as contract violation (warn, non-blocking)', () => {
   const run = mkRun();
-  const out = substop.run({ input: { agent_transcript_path: transcript('I did some things.') }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  const out = substop.run({ env: process.env, input: { agent_transcript_path: transcript('I did some things.') }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
   assert.match(out.json.systemMessage, /status line/i);
   assert.strictEqual(readEvents(run)[0].type, 'contract-violation');
 });
@@ -98,7 +99,7 @@ test('subagent-stop flags a missing status line as contract violation (warn, non
 // for the full canonical/lenient/violation matrix this migration added.
 test('subagent-stop accepts an old-format (bare-word-first) status line leniently, logging an informational variant', () => {
   const run = mkRun();
-  const out = substop.run({ input: { agent_transcript_path: transcript('DONE\nAll checks green.') }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  const out = substop.run({ env: process.env, input: { agent_transcript_path: transcript('DONE\nAll checks green.') }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
   assert.deepStrictEqual(out, {}, 'lenient compliance never returns a dispatcher-facing warning');
   const ev = readEvents(run);
   assert.strictEqual(ev[0].type, 'contract-violation');
@@ -125,7 +126,7 @@ function multiTurnTranscript(texts, { toolUse = true } = {}) {
 test('subagent-stop checks the LAST assistant message, not an earlier compliant one', () => {
   const run = mkRun();
   const t = multiTurnTranscript(['DONE\nfirst pass looked fine.', 'Actually let me also check this other thing.']);
-  const out = substop.run({ input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  const out = substop.run({ env: process.env, input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
   assert.match(out.json.systemMessage, /status line/i);
   assert.strictEqual(readEvents(run)[0].type, 'contract-violation');
 });
@@ -133,7 +134,7 @@ test('subagent-stop checks the LAST assistant message, not an earlier compliant 
 test('subagent-stop checks the LAST assistant message, not an earlier non-compliant one', () => {
   const run = mkRun();
   const t = multiTurnTranscript(['still investigating', 'DONE\nAll checks green.']);
-  const out = substop.run({ input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  const out = substop.run({ env: process.env, input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
   // Old-format (bare-word-first) LAST turn — lenient-compliant, informational
   // event only (#2265); see the dedicated old-format test above.
   assert.deepStrictEqual(out, {});
@@ -156,7 +157,7 @@ function toolOnlyLastTurnTranscript() {
 test('subagent-stop treats a tool-call-only LAST assistant turn as nothing to grade, not a fallback to an earlier text message (finding regression)', () => {
   const run = mkRun();
   const t = toolOnlyLastTurnTranscript();
-  const out = substop.run({ input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  const out = substop.run({ env: process.env, input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
   // The real last turn has no text at all — best-effort no-op, matching
   // this file's "unreadable/ungradable -> no-op" posture. Previously the
   // scan fell through to the EARLIER "still investigating" text (which
@@ -192,7 +193,7 @@ function textPlusToolUseLastTurnTranscript() {
 test('subagent-stop treats narration alongside a tool call in the LAST turn as nothing to grade (#1329)', () => {
   const run = mkRun();
   const t = textPlusToolUseLastTurnTranscript();
-  const out = substop.run({ input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  const out = substop.run({ env: process.env, input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
   // The text is genuine mid-task narration that precedes a tool call, not a
   // completed reply — previously this was extracted and graded as if it
   // were the final status-line reply, wrongly flagging it as a violation.
@@ -203,15 +204,15 @@ test('subagent-stop treats narration alongside a tool call in the LAST turn as n
 test('subagent-stop still flags genuine prose-only LAST turn with no tool call as a contract violation (#1329 regression guard)', () => {
   const run = mkRun();
   const t = multiTurnTranscript(['DONE\nfirst pass looked fine.', 'Waiting for the batch-B review notification.']);
-  const out = substop.run({ input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  const out = substop.run({ env: process.env, input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
   assert.match(out.json.systemMessage, /status line/i);
   assert.strictEqual(readEvents(run)[0].type, 'contract-violation');
 });
 
 test('subagent-stop with unreadable transcript or no run dir is a silent no-op', () => {
   const run = mkRun();
-  assert.deepStrictEqual(substop.run({ input: { agent_transcript_path: '/nope.jsonl' }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' }), {});
-  assert.deepStrictEqual(substop.run({ input: {} , runDir: null, runState: null, ownedRun: { dir: null, attribution: null }, cwd: '/x' }), {});
+  assert.deepStrictEqual(substop.run({ env: process.env, input: { agent_transcript_path: '/nope.jsonl' }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' }), {});
+  assert.deepStrictEqual(substop.run({ env: process.env, input: {} , runDir: null, runState: null, ownedRun: { dir: null, attribution: null }, cwd: '/x' }), {});
 });
 
 // #1425: a contract-violation event must land only in the calling session's
@@ -221,6 +222,7 @@ test('subagent-stop scopes the contract-violation event to ctx.ownedRun, not the
   const runA = mkRun(); // owned by this session
   const runB = mkRun(); // a newer, foreign run ctx.runDir happens to resolve to
   const out = substop.run({
+    env: process.env,
     input: { agent_transcript_path: transcript('I did some things.') },
     runDir: runB,
     runState: null,
@@ -235,6 +237,7 @@ test('subagent-stop scopes the contract-violation event to ctx.ownedRun, not the
 test('subagent-stop with no owned run writes no event even though ctx.runDir names a foreign run (#1425)', () => {
   const runB = mkRun(); // foreign — no session owns it
   const out = substop.run({
+    env: process.env,
     input: { agent_transcript_path: transcript('I did some things.') },
     runDir: runB,
     runState: null,
@@ -257,6 +260,7 @@ test('subagent-stop with no owned run writes no event even though ctx.runDir nam
 test('#1431: a fallback-attributed owned run still receives the event, tagged attribution: fallback', () => {
   const runGuess = mkRun(); // the best-guess run ownedRun.attribution: 'fallback' points at
   const out = substop.run({
+    env: process.env,
     input: { agent_transcript_path: transcript('I did some things.') },
     runDir: runGuess,
     runState: null,
@@ -280,14 +284,14 @@ test('#1431: a fallback-attributed owned run still receives the event, tagged at
 // informational variant is logged.
 test('subagent-stop accepts the bolded "**Status:** DONE" line from superpowers SDD\'s implementer template (#750)', () => {
   const run = mkRun();
-  const out = substop.run({ input: { agent_transcript_path: transcript('**Status:** DONE\nCommits: abc123 fix thing') }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  const out = substop.run({ env: process.env, input: { agent_transcript_path: transcript('**Status:** DONE\nCommits: abc123 fix thing') }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
   assert.deepStrictEqual(out, {});
   assert.strictEqual(readEvents(run)[0].variant, 'lenient');
 });
 
 test('subagent-stop accepts the bolded "- **Status:** DONE" bulleted form exactly as the SDD template renders it (#750)', () => {
   const run = mkRun();
-  const out = substop.run({ input: { agent_transcript_path: transcript('- **Status:** DONE\n- Commits: abc123 fix thing') }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  const out = substop.run({ env: process.env, input: { agent_transcript_path: transcript('- **Status:** DONE\n- Commits: abc123 fix thing') }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
   assert.deepStrictEqual(out, {});
   assert.strictEqual(readEvents(run)[0].variant, 'lenient');
 });
@@ -295,7 +299,7 @@ test('subagent-stop accepts the bolded "- **Status:** DONE" bulleted form exactl
 test('subagent-stop accepts the bolded status line for all four contract words (#750)', () => {
   for (const word of ['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED']) {
     const run = mkRun();
-    const out = substop.run({ input: { agent_transcript_path: transcript(`**Status:** ${word}\nmore detail`) }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+    const out = substop.run({ env: process.env, input: { agent_transcript_path: transcript(`**Status:** ${word}\nmore detail`) }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
     assert.deepStrictEqual(out, {}, `expected ${word} to be accepted`);
     assert.strictEqual(readEvents(run)[0].variant, 'lenient', `expected lenient variant for ${word}`);
   }
@@ -309,7 +313,7 @@ test('subagent-stop accepts the bolded status line for all four contract words (
 // the first line was ever checked.)
 test('subagent-stop accepts narration followed by a trailing bolded status line as lenient-compliant (#2265, formerly #750 AC3)', () => {
   const run = mkRun();
-  const out = substop.run({ input: { agent_transcript_path: transcript('Let me check the diff first before giving a verdict.\n**Status:** DONE') }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  const out = substop.run({ env: process.env, input: { agent_transcript_path: transcript('Let me check the diff first before giving a verdict.\n**Status:** DONE') }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
   assert.deepStrictEqual(out, {});
   assert.strictEqual(readEvents(run)[0].variant, 'lenient');
 });
@@ -329,7 +333,7 @@ test('subagent-stop still flags a status word buried outside the first-or-last-3
     'Writing up the summary.',
     'Nothing further to add.',
   ].join('\n');
-  const out = substop.run({ input: { agent_transcript_path: transcript(body) }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  const out = substop.run({ env: process.env, input: { agent_transcript_path: transcript(body) }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
   assert.match(out.json.systemMessage, /status line/i);
   const ev = readEvents(run)[0];
   assert.strictEqual(ev.type, 'contract-violation');
@@ -340,7 +344,7 @@ test('subagent-stop still flags a status word buried outside the first-or-last-3
 // not be accepted just because it superficially resembles the SDD prefix.
 test('subagent-stop still flags a bolded non-"Status:" label as a contract violation (#750 AC3)', () => {
   const run = mkRun();
-  const out = substop.run({ input: { agent_transcript_path: transcript('**Result:** DONE\nAll good.') }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  const out = substop.run({ env: process.env, input: { agent_transcript_path: transcript('**Result:** DONE\nAll good.') }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
   assert.match(out.json.systemMessage, /status line/i);
   assert.strictEqual(readEvents(run)[0].type, 'contract-violation');
 });
@@ -372,6 +376,7 @@ test('isExemptAgentType: false for a missing/non-string agent_type', () => {
 test('subagent-stop: does not log a contract-violation for an exempt third-party agent_type, even with malformed text (#1596)', () => {
   const run = mkRun();
   const out = substop.run({
+    env: process.env,
     input: { agent_transcript_path: transcript('Based on my review, the file looks fine.'), agent_type: 'code-simplifier:code-simplifier' },
     runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x',
   });
@@ -382,6 +387,7 @@ test('subagent-stop: does not log a contract-violation for an exempt third-party
 test('subagent-stop: still logs a contract-violation for a non-exempt agent_type with malformed text (#1596)', () => {
   const run = mkRun();
   const out = substop.run({
+    env: process.env,
     input: { agent_transcript_path: transcript('Based on my review, DONE'), agent_type: 'general-purpose' },
     runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x',
   });
@@ -394,7 +400,7 @@ test('subagent-stop: still logs a contract-violation for a non-exempt agent_type
 // subagent reply (2,471 events in the corpus, most of this shape).
 test('#1928 AC5: transcript_path alone appends no contract-violation event', () => {
   const run = mkRun();
-  const out = substop.run({ input: { transcript_path: transcript('I did some things.') }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  const out = substop.run({ env: process.env, input: { transcript_path: transcript('I did some things.') }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
   assert.deepStrictEqual(out, {});
   assert.strictEqual(fs.existsSync(path.join(run, 'events.jsonl')), false);
 });
@@ -409,6 +415,7 @@ test('#2036 AC1: agent_transcript_path identical to transcript_path appends no c
   const run = mkRun();
   const t = transcript('Waiting on the code-simplifier subagent to return before proceeding.');
   const out = substop.run({
+    env: process.env,
     input: { agent_transcript_path: t, transcript_path: t },
     runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x',
   });
@@ -423,6 +430,7 @@ test('#2036 AC1: agent_transcript_path identical to transcript_path appends no c
 test('#2036 AC2: a genuinely distinct agent transcript missing the status line still logs a contract-violation, even when transcript_path is also present', () => {
   const run = mkRun();
   const out = substop.run({
+    env: process.env,
     input: { agent_transcript_path: transcript('I did some things.'), transcript_path: '/main-session/transcript.jsonl' },
     runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x',
   });
@@ -454,7 +462,7 @@ function transcriptWithPriorLines(priorEntries, lastText) {
 test('#2041 AC: a narration-only reply immediately preceded by an Agent-tool async launch ack logs no contract-violation', () => {
   const run = mkRun();
   const t = transcriptWithPriorLines([asyncLaunchEntry()], 'Still waiting on the 3 lens-review agents to report back.');
-  const out = substop.run({ input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  const out = substop.run({ env: process.env, input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
   assert.deepStrictEqual(out, {});
   assert.strictEqual(fs.existsSync(path.join(run, 'events.jsonl')), false);
 });
@@ -462,7 +470,7 @@ test('#2041 AC: a narration-only reply immediately preceded by an Agent-tool asy
 test('#2041 AC: a narration-only reply immediately preceded by a task-notification logs no contract-violation', () => {
   const run = mkRun();
   const t = transcriptWithPriorLines([taskNotificationEntry()], 'One down, still waiting on 2 more lens-review agents.');
-  const out = substop.run({ input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  const out = substop.run({ env: process.env, input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
   assert.deepStrictEqual(out, {});
   assert.strictEqual(fs.existsSync(path.join(run, 'events.jsonl')), false);
 });
@@ -477,7 +485,7 @@ test('#2041 AC: across multiple background-agent waits, each narration checkpoin
     transcriptWithPriorLines([asyncLaunchEntry(), taskNotificationEntry(), taskNotificationEntry()], 'Lens B reported in, still waiting on C.'),
   ];
   for (const t of checkpoints) {
-    const out = substop.run({ input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+    const out = substop.run({ env: process.env, input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
     assert.deepStrictEqual(out, {});
   }
   assert.strictEqual(fs.existsSync(path.join(run, 'events.jsonl')), false, 'none of the intermediate async-wait checkpoints should have logged a contract-violation');
@@ -491,7 +499,7 @@ test('#2041 regression guard: a genuinely malformed final reply merely mentionin
   // signal, or a genuinely malformed reply could dodge detection just by
   // saying the right word.
   const t = multiTurnTranscript(['DONE\nfirst pass looked fine.', 'Waiting for the batch-B review notification.']);
-  const out = substop.run({ input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  const out = substop.run({ env: process.env, input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
   assert.match(out.json.systemMessage, /status line/i);
   assert.strictEqual(readEvents(run)[0].type, 'contract-violation');
 });
@@ -499,7 +507,7 @@ test('#2041 regression guard: a genuinely malformed final reply merely mentionin
 test('#2041 regression guard: a lenient-compliant final reply immediately preceded by an async launch ack still logs the lenient variant, not suppressed entirely', () => {
   const run = mkRun();
   const t = transcriptWithPriorLines([asyncLaunchEntry()], 'DONE\nAll lens-review findings folded in.');
-  const out = substop.run({ input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
+  const out = substop.run({ env: process.env, input: { agent_transcript_path: t }, runDir: run, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd: '/x' });
   assert.deepStrictEqual(out, {});
   assert.strictEqual(readEvents(run)[0].variant, 'lenient', 'compliance is decided before the async-wait filter is ever consulted');
 });

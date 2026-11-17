@@ -13,7 +13,7 @@
 // single-command escape hatch for the work-links: native blocked-by check
 // (#538). Zero runtime npm deps.
 //
-// Usage: resolve-blockers.js <n>[,<n2>,...] [--repo owner/name] [--help]
+// Usage: resolve-blockers.js <n>[,<n2>,...] [--repo [host/]owner/name] [--help]
 // A comma-joined list (no spaces, mirroring this codebase's existing
 // multi-spec-number convention — see flow/materialize.md's `#A,#B` form)
 // batches every number into the ONE aliased GraphQL call
@@ -44,7 +44,7 @@
 const { fetchNativeDependencies } = require('./lib/issues/native-dependencies');
 const { makeNumberListCli } = require('./lib/number-list-cli');
 
-const USAGE = 'usage: resolve-blockers.js <n>[,<n2>,...] [--repo owner/name] [--help]\n';
+const USAGE = 'usage: resolve-blockers.js <n>[,<n2>,...] [--repo [host/]owner/name] [--help]\n';
 
 const { run, parseArgs, parseNumbers, realDeps } = makeNumberListCli({
   name: 'resolve-blockers.js',

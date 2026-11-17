@@ -217,7 +217,14 @@ test('#4777: reconcile --json with no typo runs for real (positive control for t
   assert.ok(calls[0].env && typeof calls[0].env === 'object', 'reconcile() was handed an env');
   assert.equal(calls[0].env.CLAUDE_CODE_SESSION_ID, 'flag-strict-session');
   assert.equal(calls[0].env.CT_FLAG_STRICT_INJECTED_ENV_5376, 'injected');
-  assert.deepStrictEqual(spawnCalls, [{ root, cwd: root, sessionId: 'flag-strict-session' }]);
+  // #5377: the verb also hands the injected spawn and env on, so the background spawn uses them.
+  assert.equal(spawnCalls.length, 1);
+  const { spawn, env, ...spawnArgs } = spawnCalls[0];
+  assert.deepStrictEqual(spawnArgs, { root, cwd: root, sessionId: 'flag-strict-session' });
+  assert.equal(typeof spawn, 'function');
+  // runCli hands hooks.js a frozen copy of the env the test passed, so identity cannot hold: deep-equal
+  // against the same env, proving the value was passed through and not rebuilt.
+  assert.deepStrictEqual(env, hookEnv({ CLAUDE_CODE_SESSION_ID: 'flag-strict-session', CT_FLAG_STRICT_INJECTED_ENV_5376: 'injected' }));
   assert.deepStrictEqual(JSON.parse(result.stdout).background, { checks: CLI_DEFERRED_CHECKS, spawned: true, reason: 'spawned' });
 });
 

@@ -606,7 +606,10 @@ that merge, so no session ran the steps, and a below-floor parent whose last sub
 way used to wait for a human to approve a tidy row. Step 4.0b's gate is
 `lib/issues/parent-gate.js`, the same code the prose runs through `bin/parent-gate.js` (#4603). The
 module only decides when the steps run and records that they did. Tidy's `parent-gate` backstop is
-unchanged, and every fail-open path below leaves the parent open for it.
+unchanged, and every fail-open path below leaves the parent open for it. The late Step 4.0 also
+reopens a kept-open record the merge closed (a fixes-span `Refs` record, or one only a
+Development-sidebar link names), within the 10-minute reopen window after `mergedAt`
+(`CLOSE_WINDOW_MS`, below), so an armed merge leaves no kept-open record closed by either of those two channels (#4251).
 
 - **Population (keyed on the recorded PR, exactly once).** Every top-level run dir, `clean` status
   included (a closed run is the usual armed-auto-merge shape), whose `run-state.json` records a

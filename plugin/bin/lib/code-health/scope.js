@@ -175,14 +175,14 @@ function splitOversized(id, absDir, out, {
   walk('', id);
 }
 
-// ─── contentHash ─────────────────────────────────────────────────────────────
-// Deterministic SHA-1 of all source-file contents under absDir, skipping SKIP_DIRS.
-// Falls back to hashing the directory listing string if find/read fails.
+// ─── source files and contentHash ────────────────────────────────────────────
+// sourceFilesRaw lists the source files (SOURCE_EXTS) under absDir, skipping
+// SKIP_DIRS, sorted.
 // recursive:false scans only direct file children of absDir (maxdepth 1) —
 // used for the '.' slice, which must NOT overlap every subdirectory/
-// workspace slice that already covers everything beneath root. Was
-// docs/superpowers/specs/2026-07-30-durable-state-git-native-write-design.md
-// — deleted (70849915).
+// workspace slice that already covers everything beneath root, and for the
+// own-files slice splitOversized emits for any oversized directory (see the
+// "Resolve from relDir" comment in gitChurn and sliceRecursive below).
 // Throws on a scan failure instead of swallowing it — sourceFiles below
 // catches this for its own degrade-to-[] contract; isEmptySourceDir below
 // instead needs to tell "genuinely zero files" apart from "the scan failed"
@@ -313,6 +313,9 @@ function locFromFileData(fileData) {
 // across repeated calls for the same absDir within one CLI invocation to
 // avoid re-spawning `find` and re-reading every file.
 // opts: { recursive?, env? } — env is the child environment for the `find`.
+// Deterministic SHA-1 over each source file's path and bytes (an unreadable
+// file hashes as 'unreadable'; a directory with no source files, or a failed
+// scan that sourceFiles degrades to [], hashes 'empty:' + absDir).
 function contentHash(absDir, cache, opts) {
   return hashFromFileData(absDir, readSourceFileDataCached(absDir, cache, opts));
 }

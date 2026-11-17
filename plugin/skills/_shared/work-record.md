@@ -435,8 +435,15 @@ idempotency:
 <!-- work-fingerprint: {fingerprint} -->
 ```
 
-Readers accept the legacy `<!-- code-health-fingerprint: {fingerprint} -->` marker during
-the migration window (read both, emit only `work-fingerprint`). `bin/lib/issues/record.js`'s
+Readers accept the legacy `<!-- code-health-fingerprint: {fingerprint} -->` marker (read both,
+emit only `work-fingerprint`). Removal condition: remove `FP_RE_LEGACY` and its branch in
+`extractFingerprint` once no issue, open or closed, carries a `code-health-fingerprint`,
+`harness-health-fingerprint` or `journey-health-fingerprint` marker; the check is
+`gh issue list --state all --limit 100000 --json number,body -q '[.[] | select(.body | test("(code|harness|journey)-health-fingerprint:"))] | length'`
+and a result of 0 means the condition is met. The command checks only the repository it runs
+in; a 0 is necessary but not sufficient, because the reader also serves consumer repos this
+check cannot see, so removal also needs a release note plus a sunset window (or a sweep step
+that rewrites old markers to `work-fingerprint`). `bin/lib/issues/record.js`'s
 `extractFingerprint` implements the dual read; when both markers are present, the new one wins.
 
 ## Freshness stamp
@@ -468,7 +475,11 @@ none}`, plus `Risk-flags-unconfirmed: true` when no human confirmed the set. `pa
 malformed line or an unknown slug reads all four built-in categories flagged, never "no flags".
 `bin/risk-flags.js` is the one writer path (`/claude-tweaks:specify` settles the set,
 `/claude-tweaks:backlog refine` confirms it); never hand-edit the lines. `local-files` carries
-them in the body, never in `facets`. They are not the `risk:*` scoring axis.
+them in the body, never in `facets`. They are not the `risk:*` scoring axis. A third line,
+`Risk-flags-added-by-tripwire: {slugs}` (#4619), names the flags the diff tripwire added beyond
+the declared set: `parseTripwireFlags` is its one reader and `addTripwireRiskFlags` its writer
+(both in `bin/lib/issues/record.js`; a re-shape's `settle` carries it forward), and
+`parseRiskFlags` ignores it.
 
 ## Acceptance-target line
 

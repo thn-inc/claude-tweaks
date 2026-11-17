@@ -2,6 +2,7 @@
 files:
   - tools/run-tests.js
   - tools/direct-test-run-guard.js
+  - tools/direct-test-run-guard.sh
   - .claude/settings.json
   - tests/direct-test-run-guard.test.js
   - tests/run-tests-isolation.test.js
@@ -22,7 +23,7 @@ files:
 - **Should feel:** Untouched. The run starts at once, with no warning and no added output.
 - **Should understand:**
   - One literal test file outside a loop is allowed. It is the documented way to re-run a failing file in isolation.
-  - The hook still ran. `.claude/settings.json` registers `tools/direct-test-run-guard.js` for every Bash call; it costs one short node start and exits 0 on every path.
+  - The hook still ran. `.claude/settings.json` registers the guard for every Bash call, behind a sh prefilter (`tools/direct-test-run-guard.sh`): a call that names node, as this one does, costs one short node start, a call whose fragments all start with a plain command name (`ls`, `git status`) ends in the hook's own shell, and every path exits 0.
 - **Red flags:**
   - A single-file run denied, or any line printed for an allowed call.
   - A command that has nothing to do with node (`ls`, `git -C … status`) being slowed noticeably or blocked.
@@ -74,4 +75,5 @@ files:
 ## Origin
 - Created during build of #5547. The trigger was one session's scratch mutation script spawning direct multi-file runs for two hours on a 12-core Mac at load 50–94: 224 of 235 fixture commits sampled started `git maintenance`, and their fixtures landed directly under the top of `TMPDIR`.
 - Steps 1–4 built in this session. The guard is a repo-local hook registered in `.claude/settings.json`; nothing under `plugin/` changed.
+- Step 1 updated during build of #5794: the hook command sources a sh prefilter, so a Bash call the guard can never deny no longer starts node. Every deny and allow in steps 1–4 is unchanged.
 - Related: `run-the-suite-alongside-sibling-sessions-3969.md` (the slot, temp root and git settings a runner-driven run gets), `verify-only-the-tests-a-change-can-affect-4024.md` (the `--files-from` subset route) and `prove-a-test-discriminates-in-a-scratch-checkout-4556.md` (single-file discrimination runs, which stay direct).

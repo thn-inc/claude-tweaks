@@ -164,7 +164,9 @@
 'use strict';
 const fs = require('fs');
 const ctxLib = require('./context');
+const holdLib = require('./worktree-hold');
 const contractRetries = require('./contract-retries');
+const { envTmpdir } = require('../session-tmp');
 const { CANONICAL_RE, LENIENT_RE } = require('../status-line');
 
 // Three-tier canonical/lenient/violation classification (#2265). `text` is
@@ -560,8 +562,8 @@ function grade(ctx, memo) {
   // write itself failing — a broken tmp dir) is treated identically to
   // "already retried" so a write failure can never cause a retry loop.
   const agentId = ctx.input.agent_id;
-  const alreadyRetried = agentId ? contractRetries.readRetried(ctx.input.session_id).has(agentId) : true;
-  if (!alreadyRetried && contractRetries.recordRetry(ctx.input.session_id, agentId)) {
+  const alreadyRetried = agentId ? contractRetries.readRetried(ctx.input.session_id, { env: ctx.env }).has(agentId) : true;
+  if (!alreadyRetried && contractRetries.recordRetry(ctx.input.session_id, agentId, { env: ctx.env })) {
     return {
       json: {
         decision: 'block',
@@ -601,14 +603,20 @@ function recordStop(ctx, out, memo) {
       memo.markerPending = counts.marker;
     }
     const blocked = Boolean(out && out.json && out.json.decision === 'block');
-    marker.appendStop(sessionId, { agentId, at: Math.floor(Date.now() / 1000), blocked, pending: memo.markerPending });
+    // The temp dir comes from the context's env (#5377), which is os.tmpdir() for a real hook process, where wait-for.js reads.
+    marker.appendStop(sessionId, { agentId, at: Math.floor(Date.now() / 1000), blocked, pending: memo.markerPending }, { tmpDir: envTmpdir(ctx.env) });
   } catch { /* the marker never changes the hook's answer */ }
 }
 
 function run(ctx) {
+  ctxLib.requireEnv(ctx);
   const memo = {};
   const out = grade(ctx, memo);
   recordStop(ctx, out, memo);
+  // #4960: a finished subagent's worktree hold goes with it; never changes `out`.
+  try {
+    holdLib.releaseAgentHolds({ cwd: ctx.cwd, sessionId: ctx.input.session_id, agentId: ctx.input.agent_id, env: ctx.env });
+  } catch { /* log tier: never break a session */ }
   return out;
 }
 
