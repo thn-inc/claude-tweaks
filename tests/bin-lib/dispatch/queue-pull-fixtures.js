@@ -788,6 +788,9 @@ function EmptyAfterS1() {
       stdout: JSON.stringify(signal.map(({ number, updatedAt, state }) => ({ number, updatedAt, state }))) + '\n' },
     // The linked-PR query a reused hit would make over S1's survivors (unused once the pull is empty),
     // so a pull that wrongly hits fails on its own assertion rather than on an unanswered call.
+    // SEmpty's own graphql entries are dropped: its linked entry has no aliases, so ghAnswer (first
+    // graphql entry of the kind answering every requested alias) would skip it as dead weight and
+    // only the entry added here answers; keeping it would leave a never-matching entry ahead of it.
     ...s.gh.filter((e) => !e.graphql), ...tailGh([9001, 9003]).filter((e) => e.graphql),
   ];
   return s;
