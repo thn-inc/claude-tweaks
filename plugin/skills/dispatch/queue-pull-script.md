@@ -450,7 +450,7 @@ NODE_EVAL_EOF
     echo "**Proposed:** Close #${NUM} as not planned — named target deleted, nothing left to fix."
     echo ""
     echo "**Commands:**"
-    echo "gh issue comment ${NUM} --body \"Closing: the named target ${TPATH} no longer exists at ${INTEGRATION_REF} — this record's Acceptance Criteria has no remaining target. Filed by /claude-tweaks:dispatch (queue pull).\""
+    echo "gh issue comment ${NUM} --body $(node -e "console.log(\"'\"+process.argv[1].replace(/'/g,\"'\\\\''\")+\"'\")" -- "Closing: the named target ${TPATH} no longer exists at ${INTEGRATION_REF} — this record's Acceptance Criteria has no remaining target. Filed by /claude-tweaks:dispatch (queue pull).")"
     echo "gh issue close ${NUM} --reason \"not planned\""
   } > "$PROPOSAL" || continue
   # stage-item.js is the sanctioned writer for a run dir's staged/
@@ -579,9 +579,7 @@ else
 fi
 
 # #3278: neighbour-in-flight pass. Neighbour: a linking Key File or a strong
-# near-duplicate (isStrongNearDuplicate, #3520). Records stay in $DISPATCH_GROUPS; only bare
-# drain's ranking skips them. Fail open: an unreadable claim or a failed fetch
-# excludes nothing. Claim blobs chain one fetch via the first git-tip read.
+# near-duplicate (isStrongNearDuplicate, #3520). Claim blobs chain one fetch via the first git-tip read.
 # MCP transport: mcp-transport.md's neighbour-in-flight section replaces this pass.
 if ! gh issue list --label bot:in-progress --state open --json number,title,body,labels --limit 200 > "$DISPATCH_IN_FLIGHT_RAW" 2>/dev/null; then
   echo '[]' > "$DISPATCH_IN_FLIGHT_RAW"

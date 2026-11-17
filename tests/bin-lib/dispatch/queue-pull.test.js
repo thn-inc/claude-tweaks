@@ -1573,11 +1573,49 @@ const SHIPPED_STOP = fenceText(/echo "(dispatch: queue-pull stopped -- shipped-c
 function fenceTargetProposal(num, tpath, ref) {
   const block = FENCE.match(/(?:^|\n) {2}PROPOSAL="\$\(dirname "\$DISPATCH_EXCLUSIONS"\)\/target-missing-proposal-\$\{NUM\}\.md"\n {2}\{\n([\s\S]*?)\n {2}\} > "\$PROPOSAL" \|\| continue/);
   assert.ok(block, 'the fence no longer builds the proposal with an echo group');
+  const expand = (s) => s.replace(/\$\{NUM\}/g, () => num).replace(/\$\{TPATH\}/g, () => tpath).replace(/\$\{INTEGRATION_REF\}/g, () => ref);
+  const unescape = (s) => s.replace(/\\(["`])/g, '$1');
+  // #5317: the comment echo's `$(node -e "<single-quoter>" -- "TEXT")` prints TEXT as one single-quoted word.
+  const QUOTER = /\$\(node -e "(?:[^"\\]|\\.)*" -- "([^"]*)"\)/g;
   return block[1].split('\n').map((l) => {
     const m = l.trim().match(/^echo "(.*)"$/);
     assert.ok(m, `not an echo line: ${l}`);
-    return m[1].replace(/\\(["`])/g, '$1').replace(/\$\{NUM\}/g, num).replace(/\$\{TPATH\}/g, tpath).replace(/\$\{INTEGRATION_REF\}/g, ref);
+    const quoters = [...m[1].matchAll(QUOTER)];
+    if (!m[1].includes('$(node -e')) return unescape(expand(m[1]));
+    assert.equal(quoters.length, 1, `the fence's quoter changed shape: ${l}`);
+    const [q] = quoters;
+    return unescape(expand(m[1].slice(0, q.index))) + shQuote(expand(q[1])) + unescape(expand(m[1].slice(q.index + q[0].length)));
   }).map((l) => `${l}\n`).join('');
+}
+
+// #5317: a Doc path holding ", $(id), a backtick and '. Its two " are deliberate: they keep the pre-fix
+// double-quoted comment line parseable, so bash really runs `id` there (an odd count is a syntax error,
+// nothing expands, and the "id never ran" assertion would pass on the unfixed code).
+const HOSTILE_DOC = 'docs/q"$(id)`id`"it\'s.md';
+const CLOSING_BODY = (tpath, ref) => `Closing: the named target ${tpath} no longer exists at ${ref} — this record's Acceptance Criteria has no remaining target. Filed by /claude-tweaks:dispatch (queue pull).`;
+
+// Runs the staged `gh issue comment <num> ...` line under bash with stub gh (logs its argv) and stub id
+// (drops a marker): the argv gh received, and whether anything but the quoted word ran `id`.
+function runStagedComment(proposalText, num) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-5317-'));
+  try {
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(bin);
+    const log = path.join(dir, 'gh.log');
+    const marker = path.join(dir, 'id.ran');
+    fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\nexec node -e \'require("fs").appendFileSync(process.env.QP_GH_LOG, JSON.stringify(process.argv.slice(1)) + "\\n")\' -- "$@"\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, 'id'), '#!/bin/sh\n: > "$QP_ID_MARKER"\n', { mode: 0o755 });
+    const line = proposalText.split('\n').find((l) => l.startsWith(`gh issue comment ${num} `));
+    assert.ok(line, 'the proposal has a comment line');
+    const r = spawnSync('bash', ['-c', line], {
+      env: { ...process.env, PATH: bin + path.delimiter + process.env.PATH, QP_GH_LOG: log, QP_ID_MARKER: marker },
+      encoding: 'utf8', windowsHide: true,
+    });
+    const ghCalls = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
+    return { status: r.status, ghCalls, idRan: fs.existsSync(marker), stderr: r.stderr };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 // One assertion function per reason: the positive run and the omitted run both go through it.
@@ -1794,6 +1832,37 @@ test('target-missing oracle: the fence never stages an earlier pull\'s proposal 
     sb.cleanup();
   }
 });
+
+// #9009 naming HOSTILE_DOC: the fake git probe finds no such path at origin/main, like docs/gone.md.
+function hostileScenario() {
+  const scenario = FULL();
+  const records = JSON.parse(scenario.gh[0].stdout);
+  const rec = records.find((x) => x.number === 9009);
+  assert.ok(rec.body.includes('**Doc:** docs/gone.md |'), 'the fixture still names docs/gone.md');
+  rec.body = rec.body.replace('docs/gone.md', () => HOSTILE_DOC);
+  scenario.gh[0] = { ...scenario.gh[0], stdout: JSON.stringify(records) + '\n' };
+  return scenario;
+}
+const hostileProposal = () => {
+  const r = pull4(hostileScenario());
+  assert.ok(r.ghCalls.some((a) => a[0] === 'cat-file' && a[2] === `origin/main:${HOSTILE_DOC}`), 'the hostile path was probed and found absent');
+  return r.cap.staged.find((s) => s.id === 'dispatch-target-missing-9009').body;
+};
+
+test('#5317 target-missing: a hostile Doc path is staged as one single-quoted --body word, equal to the fence', () => {
+  const body = hostileProposal();
+  assert.equal(body, fenceTargetProposal('9009', HOSTILE_DOC, 'origin/main'));
+  assert.ok(body.includes(`gh issue comment 9009 --body ${shQuote(CLOSING_BODY(HOSTILE_DOC, 'origin/main'))}\n`));
+  assert.ok(body.includes('gh issue close 9009 --reason "not planned"\n'), 'the close line is unchanged');
+});
+
+test('#5317 AC1 (module): run by bash, the staged comment posts the path verbatim and runs nothing else',
+  { skip: process.platform === 'win32' && 'no bash' }, () => {
+    const run = runStagedComment(hostileProposal(), 9009);
+    assert.equal(run.status, 0, run.stderr);
+    assert.deepEqual(run.ghCalls, [['issue', 'comment', '9009', '--body', CLOSING_BODY(HOSTILE_DOC, 'origin/main')]]);
+    assert.equal(run.idRan, false, 'neither $(id) nor the backtick ran');
+  });
 
 test('AC2.1 shipped: #9010 (strong) is excluded with its signals, prints the strong AUTO line and stages shipped-close-9010; #9016 (weak) is probed, prints the weak AUTO line and stays', () => {
   const r = pull4(FULL());

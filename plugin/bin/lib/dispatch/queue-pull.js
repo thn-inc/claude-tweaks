@@ -936,6 +936,9 @@ function remoteHeadBranch(ctx) {
   return trimNl(out.split('\n').filter((l) => /HEAD branch/.test(l) && /: /.test(l)).map((l) => l.replace(/^.*: /, '')).join('\n'));
 }
 
+// POSIX single-quoting, the rule of the fence's node quoter in the comment echo (#5317) and of queue-pull-oracle.js's shQuote.
+const shQuote = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
+
 // The staged Close (GitHub) body of a target-missing exclusion: the fence's echo lines.
 function targetMissingProposal(num, tpath, ref) {
   return [
@@ -946,7 +949,7 @@ function targetMissingProposal(num, tpath, ref) {
     `**Proposed:** Close #${num} as not planned — named target deleted, nothing left to fix.`,
     '',
     '**Commands:**',
-    `gh issue comment ${num} --body "Closing: the named target ${tpath} no longer exists at ${ref} — this record's Acceptance Criteria has no remaining target. Filed by /claude-tweaks:dispatch (queue pull)."`,
+    `gh issue comment ${num} --body ${shQuote(`Closing: the named target ${tpath} no longer exists at ${ref} — this record's Acceptance Criteria has no remaining target. Filed by /claude-tweaks:dispatch (queue pull).`)}`,
     `gh issue close ${num} --reason "not planned"`,
   ].map((l) => `${l}\n`).join('');
 }
@@ -1132,7 +1135,7 @@ function runShipped(ctx) {
   stageShippedProposals(ctx);
 }
 
-// ---- blocker-landing, neighbour-in-flight, cross-PR overlap and near-duplicate (fence 581-653) --
+// ---- blocker-landing, neighbour-in-flight, cross-PR overlap and near-duplicate (fence 581-651) --
 
 // Fence 572-579. One dispatch-unlanded-blockers.js call writes both the unlanded-blocker and the
 // malformed-blocker entries, so omitting either reason skips the whole call (R7). `--work-links`
@@ -1166,7 +1169,7 @@ function runBlockerLanding(ctx) {
 
 const IN_FLIGHT_ARGV = ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'];
 const IN_FLIGHT_POOL_AUTO = 'AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull';
-// fence 592, byte for byte
+// fence 590, byte for byte
 const IN_FLIGHT_CAP_WARNING = 'Warning: the bot:in-progress pull for the neighbour-in-flight pass (#3278) returned exactly the --limit cap (200) — in-flight records beyond the cap are not checked as neighbours. Informational only; never blocks dispatch.';
 
 // #5304: one AUTO line per pull for the claims the two claim-reading passes could not read. The
@@ -1181,7 +1184,7 @@ function reportClaimReadFailures(ctx, neighbourUnreadable) {
   else if (shipped.length) ctx.deps.stderr(`AUTO — dispatch: shipped-candidate claim read failed for ${shipped.join(', ')}; release time unknown, no downgrade\n`);
 }
 
-// Fence 581-619 on `gh`; on `files` mcp-transport.md's Step 2 four-step replacement, whose agent-
+// Fence 581-617 on `gh`; on `files` mcp-transport.md's Step 2 four-step replacement, whose agent-
 // written pool and claim-map FILES this pass reads (steps 1-3 are the agent's). Only the compute
 // is this pass's own: omitting the pass skips it (and so its appends and AUTO line), while the pool
 // fetch and its cap Warning are shared setup. A missing or malformed pool or claim-map file throws
@@ -1220,12 +1223,12 @@ function runNeighbourInFlight(ctx) {
 }
 
 const OPEN_PRS_ARGV = ['pr', 'list', '--state', 'open', '--json', 'number,files,closingIssuesReferences', '--limit', '100'];
-// fence 628, byte for byte
+// fence 626, byte for byte
 const OPEN_PR_CAP_WARNING = 'Warning: the open-PR pull for the cross-PR overlap report (#1579) returned exactly the --limit cap (100) — overlap detection may be missing older open PRs. Informational only; never blocks dispatch.';
-// fence 625's failure branch, byte for byte (#5312)
+// fence 623's failure branch, byte for byte (#5312)
 const OPEN_PR_FAIL_WARNING = 'Warning: open-PR pull failed — cross-PR overlap not checked this run';
 
-// Fence 621-642, informational. On `files` mcp-transport.md skips the fetch and has the agent write
+// Fence 619-640, informational. On `files` mcp-transport.md skips the fetch and has the agent write
 // `[]`; the module does the same and makes no gh call. On `gh` a failed open-PR fetch writes [] and
 // prints one Warning (#5312), and a compute failure is a step error the fence does not stop on.
 function runCrossPrOverlap(ctx) {
@@ -1256,7 +1259,7 @@ function runCrossPrOverlap(ctx) {
   });
 }
 
-// Fence 644-653, informational: every cross-group pair gets an AUTO line, and only the strong ones
+// Fence 642-651, informational: every cross-group pair gets an AUTO line, and only the strong ones
 // reach dispatch-near-dup-pairs.json (always written, [] when there are none).
 function runNearDupPairs(ctx) {
   if (ctx.omit.has('near-dup-pairs')) return;
