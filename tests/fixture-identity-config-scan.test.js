@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
 
 // #5771: a fixture that sets its commit identity by spawning git's config command for the name and the
 // email starts two git processes per repo it makes; `initRepo(dir, { name, email })` and `writeIdentity`
@@ -12,10 +13,10 @@ const { readText } = require('./helpers/read-skill');
 // one is an offender. An inline `-c user.name=…` and the GIT_AUTHOR_* variables start no extra process
 // and are not matched.
 //
-// The scan reads raw text, comments included, so a comment naming the command is matched too: a file
-// whose only matches are comments is allowlisted with a reason saying so, which keeps a real call added
-// to any other file red without a comment stripper. perf/ is outside the scanned tree: its sites are
-// timing fixtures run by `npm run test:perf`, not suite tests.
+// Each file is read through the shared comment stripper (tests/helpers/strip-comments.js), so a comment
+// naming the command is not a site; a file the stripper mis-parses or that does not compile as a module
+// is reported as an offender, since the scan cannot see its live code. perf/ is outside the scanned
+// tree: its sites are timing fixtures run by `npm run test:perf`, not suite tests.
 //
 // The matcher is the sweep's grep pattern, assembled from pieces so this file's own source holds no
 // match (the scan reads this file like any other).
@@ -79,7 +80,9 @@ function corpus() {
   if (corpusCache === null) {
     corpusCache = listJs(TESTS_DIR).map((file) => {
       const rel = path.relative(ROOT, file).split(path.sep).join('/');
-      return { rel, sites: identityConfigSites(readText(file)) };
+      const raw = readText(file);
+      const stripped = stripComments(raw);
+      return { rel, verdict: stripperVerdict(raw, stripped), sites: identityConfigSites(stripped) };
     });
   }
   return corpusCache;
@@ -90,6 +93,13 @@ test(`AC3.1: no test file outside the allowlist spawns git config ${USER}.name o
     .filter(({ rel }) => !Object.prototype.hasOwnProperty.call(ALLOWLIST, rel))
     .flatMap(({ rel, sites }) => sites.map((line) => `${rel}:${line}`));
   assert.deepEqual(offenders, [], `set the identity with initRepo(dir, { name, email }) or writeIdentity from tests/helpers/git-fixtures.js, or allowlist the file with a reason:\n${offenders.join('\n')}`);
+});
+
+test('the comment stripper parses every scanned file', () => {
+  const unscannable = corpus()
+    .filter(({ verdict }) => verdict !== 'ok')
+    .map(({ rel, verdict }) => `${rel}: ${STRIPPER_VERDICT_MESSAGES[verdict]}`);
+  assert.deepEqual(unscannable, [], unscannable.join('\n'));
 });
 
 test('the scan walked the test tree', () => {
@@ -115,6 +125,13 @@ test('identityConfigSites matches every call shape and no inline -c identity', (
     'GIT_AUTHOR_NAME',
   ];
   for (const line of negatives) assert.deepEqual(identityConfigSites(line), [], line);
+});
+
+test('a comment naming the command is not a site, a call beside it is', () => {
+  const comment = '// git config ' + USER + '.name T';
+  assert.deepEqual(identityConfigSites(stripComments(comment)), []);
+  const call = "git(['config', '" + USER + ".name', 'T']); " + comment;
+  assert.deepEqual(identityConfigSites(stripComments(call)), [1]);
 });
 
 test('every allowlist entry names an existing file and carries a reason', () => {

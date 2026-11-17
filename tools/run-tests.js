@@ -669,6 +669,7 @@ function writeGitTemplateDir(dir, env, { git = (args, opts) => execFileSync('git
     // `config` is never copied as a file (it holds per-repository core.* keys; the template's own is
     // rebuilt below). With an inherited template every entry of its own is copied wholesale from it, on
     // both paths, so they stay identical; otherwise git's default template files come from the init.
+    fs.mkdirSync(path.join(dir, 'hooks'), { recursive: true });
     if (inherited) {
       const hooksDir = path.join(inherited, 'hooks');
       const notSample = (from) => !isTemplateSampleHook(from, hooksDir);
@@ -677,7 +678,6 @@ function writeGitTemplateDir(dir, env, { git = (args, opts) => execFileSync('git
         fs.cpSync(path.join(inherited, name), path.join(dir, name), { recursive: true, filter: notSample });
       }
     } else {
-      fs.mkdirSync(path.join(dir, 'hooks'), { recursive: true });
       for (const name of ['info', 'description']) {
         const from = path.join(src, '.git', name);
         if (fs.existsSync(from)) fs.cpSync(from, path.join(dir, name), { recursive: true });

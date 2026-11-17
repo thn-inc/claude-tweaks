@@ -126,7 +126,8 @@ const quoteConfigValue = (v) => {
 function writeIdentity(repoDir, { name, email } = {}) {
   if (name === undefined && email === undefined) throw new TypeError('writeIdentity: pass name, email, or both');
   const cfg = localConfigPath(repoDir);
-  const text = fs.existsSync(cfg) ? fs.readFileSync(cfg, 'utf8') : '';
+  let text = '';
+  try { text = fs.readFileSync(cfg, 'utf8'); } catch (err) { if (err.code !== 'ENOENT') throw err; }
   if (/^[ \t]*\[user\]/im.test(text)) throw new Error(`writeIdentity: ${cfg} already has a [user] section`);
   let section = text && !text.endsWith('\n') ? '\n[user]\n' : '[user]\n';
   if (email !== undefined) section += `\temail = ${quoteConfigValue(email)}\n`;

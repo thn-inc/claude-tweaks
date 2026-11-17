@@ -1880,6 +1880,17 @@ test('AC2.1: writeGitTemplateDir ships empty hooks/ and an info/ dir, and drops 
   });
 });
 
+test('writeGitTemplateDir ships an empty hooks/ even when the inherited template has none', () => {
+  withGitTemp((tmp) => {
+    const inherited = path.join(tmp, 'inherited');
+    fs.mkdirSync(path.join(inherited, 'info'), { recursive: true });
+    const dir = path.join(tmp, 'tpl-inherited');
+    assert.strictEqual(writeGitTemplateDir(dir, { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: inherited }), dir);
+    assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'hooks')), []);
+    assert.ok(fs.statSync(path.join(dir, 'info')).isDirectory());
+  });
+});
+
 // Node 20's fs.cpSync hands its filter a namespaced `src` on win32, so a plain dirname compare
 // against the inherited template's hooks dir never matched there and its samples were kept.
 test('isTemplateSampleHook matches a sample hook given as a namespaced win32 path', () => {

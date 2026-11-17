@@ -53,8 +53,10 @@ if (!(process.env.CT_TEST_SUITE_SLOT_HELD === '1' && process.env.GIT_TEMPLATE_DI
   process.once('exit', () => {
     try { fs.rmSync(tplRoot, { recursive: true, force: true }); } catch (_) { /* best effort */ }
   });
-  const tpl = writeGitTemplateDir(path.join(tplRoot, 't'), process.env);
+  let why = 'unknown error';
+  const tpl = writeGitTemplateDir(path.join(tplRoot, 't'), process.env, { onError: (err) => { why = err.message; } });
   if (tpl) process.env.GIT_TEMPLATE_DIR = tpl;
+  else console.error(`git-template.js: could not build the git template (${String(why).replace(/\s+/g, ' ')}) — repositories tests create keep git's own defaults`);
 }
 
 let templateRoot = null;
