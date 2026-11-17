@@ -16,7 +16,8 @@ const COMBINED = ['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir
 
 const NULL_LOCATIONS = Object.freeze({ toplevel: null, gitDir: null, commonDir: null, head: null });
 
-const lines = (text) => String(text).split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== '');
+// Output lines with only the trailing newline dropped: an empty interior line is a value git left empty (null), not a missing line.
+const lines = (text) => String(text).replace(/\r?\n$/, '').split(/\r?\n/).map((l) => l.trim());
 
 function createGitReads({ execImpl = execFileSync, env = process.env } = {}) {
   const locationMemo = new Map();
@@ -24,10 +25,10 @@ function createGitReads({ execImpl = execFileSync, env = process.env } = {}) {
   const keyFor = (cwd) => `${path.resolve(cwd)}\0${envFingerprint(env)}`;
 
   const locationsOf = (cwd, [toplevel, dir, common, head]) => ({
-    toplevel,
-    gitDir: path.resolve(cwd, dir),
-    commonDir: path.resolve(cwd, common),
-    head: head === undefined ? null : head,
+    toplevel: toplevel === '' ? null : toplevel,
+    gitDir: dir === '' ? null : path.resolve(cwd, dir),
+    commonDir: common === '' ? null : path.resolve(cwd, common),
+    head: head === undefined || head === '' ? null : head,
   });
 
   // Today's per-question behavior (bare repo, inside .git): no stdio option, so git's
@@ -61,7 +62,7 @@ function createGitReads({ execImpl = execFileSync, env = process.env } = {}) {
       // An unborn HEAD: rev-parse prints the three locations and exits 1 on --verify.
       if (err && err.status === 1) {
         const out = lines(err.stdout === undefined || err.stdout === null ? '' : err.stdout);
-        if (out.length === 3) return locationsOf(cwd, out);
+        if (out.length === 3 && out.every((l) => l !== '')) return locationsOf(cwd, out);
       }
     }
     return fallback(cwd);

@@ -16,8 +16,9 @@ const COMBINED = ['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir
 const STATUS = ['--no-optional-locks', 'status', '--porcelain'];
 const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
 
-// A fake exec that records calls and answers by argv shape; `answers` maps a
-// shape key to a value, an array of successive values, or a function.
+// A fake exec that records calls and answers by argv shape; `handlers` is an
+// array of [argv, answer] pairs, where an answer is a value, a thrown-error
+// marker (see `thrown`), or a function of the calls so far.
 function fake(handlers) {
   const calls = [];
   const execImpl = (file, args, opts = {}) => {
@@ -62,6 +63,42 @@ test('locations keys on directory and env', () => {
   const other = createGitReads({ execImpl, env: { GIT_DIR: 'x' } });
   other.locations('/r');
   assert.equal(calls.length, 3, 'a second instance with another env asks for itself');
+});
+
+test('every git call carries the directory and the instance env', () => {
+  const env = { GIT_AUTHOR_NAME: 'e' };
+  const ok = fake([[COMBINED, rootAnswer], [STATUS, '']]);
+  const reads = createGitReads({ execImpl: ok.execImpl, env });
+  reads.treeState('/r');
+  assert.equal(ok.calls.length, 2);
+  for (const c of ok.calls) {
+    assert.equal(c.cwd, '/r', c.args.join(' '));
+    assert.strictEqual(c.opts.env, env, c.args.join(' '));
+  }
+  const bare = fake([
+    [COMBINED, thrown({ status: 128, stdout: '' })],
+    [['rev-parse', '--git-dir'], '.\n'],
+    [['rev-parse', '--show-toplevel'], '/b\n'],
+    [['rev-parse', '--git-common-dir'], '.\n'],
+    [['rev-parse', 'HEAD'], 'abc\n'],
+  ]);
+  createGitReads({ execImpl: bare.execImpl, env }).locations('/b');
+  assert.equal(bare.calls.length, 5);
+  for (const c of bare.calls) {
+    assert.equal(c.cwd, '/b', c.args.join(' '));
+    assert.strictEqual(c.opts.env, env, c.args.join(' '));
+  }
+});
+
+test('an empty output line is a null value, not a missing line', () => {
+  const { execImpl, calls } = fake([[COMBINED, '\n.git\n.git\nabc\n']]);
+  assert.deepStrictEqual(createGitReads({ execImpl, env: {} }).locations('/r'), {
+    toplevel: null, gitDir: path.resolve('/r', '.git'), commonDir: path.resolve('/r', '.git'), head: 'abc',
+  });
+  assert.equal(calls.length, 1, 'no fallback calls');
+  const headless = fake([[COMBINED, '/r\n.git\n.git\n\n']]);
+  assert.equal(createGitReads({ execImpl: headless.execImpl, env: {} }).locations('/r').head, null);
+  assert.equal(headless.calls.length, 1);
 });
 
 test('a live env object that changes between reads is a different key', () => {
