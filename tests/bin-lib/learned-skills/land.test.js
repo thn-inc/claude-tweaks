@@ -6,7 +6,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { capture, readManifest, realDeps } = require('../../../plugin/bin/lib/learned-skills/learned-skills.js');
+const { capture, readManifest, realDeps, headShortReader } = require('../../../plugin/bin/lib/learned-skills/learned-skills.js');
 const { land, stage } = require('../../../plugin/bin/lib/learned-skills/land.js');
 const cli = require('../../../plugin/bin/learned-skills-pr.js');
 
@@ -1223,4 +1223,14 @@ test('a failed HEAD read is asked again for the next entry', (t) => {
   assert.equal(asks, 2);
   const short = sh(f.repo, ['rev-parse', '--short', 'HEAD']).trim();
   assert.deepEqual(stagedAtLines(res), ['unknown', short]);
+});
+
+test('an empty HEAD read is not kept: the next ask reads git again, and a non-empty answer is kept', () => {
+  const answers = ['\n', 'abc1234\n'];
+  let calls = 0;
+  const readHead = headShortReader('/wt', { git: () => { calls += 1; return answers.shift(); } });
+  assert.equal(readHead(), 'unknown');
+  assert.equal(readHead(), 'abc1234');
+  assert.equal(readHead(), 'abc1234');
+  assert.equal(calls, 2);
 });
