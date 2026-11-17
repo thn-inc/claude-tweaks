@@ -1612,7 +1612,7 @@ test('AC2.1: a whole-suite run around a no-op suite makes exactly 4 git calls', 
   assert.strictEqual(gitArgs.length, 4);
 });
 
-test('AC3.1: a tree change made while the suites run is seen by the read after them', async () => {
+test('freshness (#5773): a tree change made while the suites run is seen by the read after them', async () => {
   // Run 1: the suite dirties the tree. The end read must see it, so the report is dirty and the stamp that is written never credits the tree.
   const dirtied = tmpGitRepo();
   const dirtyLog = tmpDir();

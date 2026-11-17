@@ -373,6 +373,41 @@ test('mergeNarrowing: an unresolvable integration branch degrades to null, never
   assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'no-such-branch', files, execImpl: r.exec }), null);
 });
 
+// #5773: the working-tree read changedFiles makes is handed to mergeNarrowing, which then asks git no status question.
+test('changedFiles hands its raw working-tree read to a capture object, and returns the same shape with or without one (#5773)', () => {
+  const r = mergeRepo();
+  r.commit('src/own.py', 'own');
+  r.write('src/own.py', 'edited');
+  const capture = {};
+  const captured = changedFiles({ base: r.anchor, execImpl: r.exec, capture });
+  assert.strictEqual(capture.status, ' M src/own.py\0');
+  assert.deepStrictEqual(captured, changedFiles({ base: r.anchor, execImpl: r.exec }));
+  assert.deepStrictEqual(Object.keys(captured), ['base', 'files']);
+});
+
+test('mergeNarrowing with a handed status asks git no status question and decides from that status (#5773)', () => {
+  const r = mergeRepo();
+  mergeTrunkWith(r, [['ui/a.js', 'a'], ['ui/b.js', 'b']]);
+  r.commit('src/own.py', 'own');
+  r.write('ui/b.js', 'b — uncommitted edit');
+  const files = changedSince(r, r.anchor);
+  const capture = {};
+  changedFiles({ base: r.anchor, execImpl: r.exec, capture });
+  const statusCalls = [];
+  const spy = (cmd, args, opts) => { if (args.includes('status')) statusCalls.push(args); return r.exec(cmd, args, opts); };
+  const handed = mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: spy, status: capture.status });
+  assert.deepStrictEqual(statusCalls, [], 'no second working-tree read');
+  assert.deepStrictEqual(handed.files, ['src/own.py', 'ui/b.js']);
+  // The handed value is what decides: an empty one reads a clean tree even though the live tree is dirty.
+  const cleanClaim = mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: spy, status: '' });
+  assert.deepStrictEqual(cleanClaim.files, ['src/own.py']);
+  assert.deepStrictEqual(statusCalls, []);
+  // Without one, git is asked once and sees the dirty tree.
+  const asked = mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: spy });
+  assert.strictEqual(statusCalls.length, 1);
+  assert.deepStrictEqual(asked.files, handed.files);
+});
+
 test('mergeNarrowing: a failing working-tree status read degrades to null, never a throw (#3072 review)', () => {
   const r = mergeRepo();
   mergeTrunkWith(r, [['ui/a.js', 'a']]);

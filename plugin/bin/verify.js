@@ -520,7 +520,7 @@ async function main() {
     for (const line of staleWarnings.splice(0)) fs.writeSync(2, line);
   }
   if (parsed.baseline) {
-    bgit = realGit(parsed.cwd || process.cwd());
+    bgit = realGit(parsed.cwd || process.cwd(), { locations: (d) => reads.locations(d) });
     baseSha = bgit.resolveCommit(parsed.baseline);
     if (baseSha === null) {
       process.stderr.write(`--baseline: ${parsed.baseline} does not resolve to a commit\n${USAGE}\n`);
@@ -720,7 +720,8 @@ async function main() {
       }
 
       // #4024: an impact declaration also needs each changed path's A/M/D status.
-      const changed = changedFiles({ base: resolvedBase, withStatus: Boolean(decl.impact) });
+      const scopeRead = {};
+      const changed = changedFiles({ base: resolvedBase, withStatus: Boolean(decl.impact), capture: scopeRead });
       files = changed.files;
       let statuses = changed.statuses || null;
       const unnarrowed = { files, statuses };
@@ -729,7 +730,8 @@ async function main() {
       // resolved base IS the usable anchor; with no anchor, resolveBase already
       // returned the merge-base, which excludes merged-in files by construction.
       if (parsed.integrationBranch && anchorSha && resolvedBase === anchorSha) {
-        narrowing = mergeNarrowing({ anchor: anchorSha, integrationBranch: parsed.integrationBranch, files });
+        // Handed the working-tree read made just above: only git reads ran between the two (#5773).
+        narrowing = mergeNarrowing({ anchor: anchorSha, integrationBranch: parsed.integrationBranch, files, status: scopeRead.status });
         if (narrowing) {
           files = narrowing.files;
           if (statuses) statuses = Object.fromEntries(files.map((f) => [f, statuses[f]]));
@@ -1107,6 +1109,10 @@ async function main() {
           // adjudicate() calls takeSlot just before its first spawn, so a run
           // it refuses on sight never queues behind every full-lane holder.
           let adjHold = null;
+          // The suites ran since the last location read, and adjudication mutates the checkout: it adds and removes a scratch
+          // worktree (a slot path's leftover too) and reruns files at HEAD, which may commit. Drop every memo before it, so
+          // the repo root and common dir it asks for are read once after the suites, and again after its last mutation.
+          reads.invalidate();
           try {
             // Read before adjudicate() can refuse on sight: a refused nested run with an invalid
             // default declaration still prints its one `concurrency ignored` line (#5150).
@@ -1138,6 +1144,7 @@ async function main() {
             };
           } finally {
             if (adjHold) adjHold.release();
+            reads.invalidate();
           }
         }
       }

@@ -1984,3 +1984,43 @@ test('two adjudications on one slot path: the one whose checkout was replaced lo
   }
   assert.deepStrictEqual(fx.registered(), [fx.repo]);
 });
+
+// #5773: a `locations` provider answers repoRoot() and the slot's common dir in place of git.
+test('realGit with a locations provider asks it, not git, for the repo root (#5773)', (t) => {
+  const fx = slotFixture(t);
+  const asked = [];
+  const provided = fx.mk('baseline-provided-root-');
+  const rg = realGit(fx.repo, { tmpdir: fx.tmpdir, locations: (d) => { asked.push(d); return { toplevel: provided, commonDir: fx.commonDir }; } });
+  assert.strictEqual(rg.repoRoot(), provided, 'a root that differs from git\'s own answer proves git was not asked');
+  assert.deepStrictEqual(asked, [fx.repo]);
+  const none = realGit(fx.repo, { tmpdir: fx.tmpdir, locations: () => ({ toplevel: null, commonDir: null }) });
+  assert.throws(() => none.repoRoot(), /not a git work tree/);
+});
+
+test('realGit without a provider keeps asking git for the repo root (#5773)', (t) => {
+  const fx = slotFixture(t);
+  assert.strictEqual(realp(fx.rg.repoRoot()), realp(fx.g('rev-parse', '--show-toplevel')));
+});
+
+test('realGit slotWorktree canonicalizes a provider commonDir and keeps the repo key byte-identical (#5773)', SYMLINK_POSIX_ONLY, (t) => {
+  const fx = slotFixture(t);
+  const link = path.join(fx.mk('baseline-link-'), 'common-link');
+  fs.symlinkSync(fx.commonDir, link);
+  const viaGit = fx.rg.addWorktree(fx.sha1, { slot: 0, slotBase: fx.S });
+  fx.rg.removeWorktree(viaGit.dir);
+  const provided = realGit(fx.repo, { tmpdir: fx.tmpdir, warn: (line) => fx.warned.push(line), locations: () => ({ toplevel: fx.repo, commonDir: link }) });
+  const viaProvider = provided.addWorktree(fx.sha1, { slot: 0, slotBase: fx.S });
+  t.after(() => provided.removeWorktree(viaProvider.dir));
+  assert.strictEqual(viaProvider.dir, viaGit.dir);
+  assert.strictEqual(viaProvider.dir, fx.at());
+  assert.strictEqual(viaProvider.fallback, undefined);
+});
+
+test('realGit slotWorktree falls back to a fresh path when the provider has no common dir (#5773)', (t) => {
+  const fx = slotFixture(t);
+  const rg = realGit(fx.repo, { tmpdir: fx.tmpdir, warn: (line) => fx.warned.push(line), locations: () => ({ toplevel: fx.repo, commonDir: null }) });
+  const added = rg.addWorktree(fx.sha1, { slot: 0, slotBase: fx.S });
+  t.after(() => rg.removeWorktree(added.dir));
+  assert.strictEqual(added.fallback, 'no-common-dir');
+  assert.deepStrictEqual(fx.warned, [fallbackLine('no-common-dir')]);
+});

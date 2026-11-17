@@ -145,7 +145,9 @@ function statusPorcelainPaths(raw) {
 // The committed diff is read first, then the working tree; the first non-M
 // status seen for a path wins (an existence change outranks a content edit),
 // else M. Without the flag the return shape is exactly { base, files }.
-function changedFiles({ base, execImpl = execFileSync, withStatus = false }) {
+// `capture` (#5773), when an object, receives the raw porcelain read as `capture.status`, so a caller
+// that needs the same working-tree read next (mergeNarrowing) can pass it on instead of asking git again.
+function changedFiles({ base, execImpl = execFileSync, withStatus = false, capture = null }) {
   const seen = new Map();
   const record = ([f, s]) => { if (!seen.has(f) || seen.get(f) === 'M') seen.set(f, s); };
   const diff = git(execImpl, ['diff', '--name-status', '-z', '--end-of-options', `${base}..HEAD`]);
@@ -153,6 +155,7 @@ function changedFiles({ base, execImpl = execFileSync, withStatus = false }) {
   // --untracked-files=all: an untracked directory reports each file inside
   // it individually rather than collapsing to the directory name.
   const status = git(execImpl, ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all']);
+  if (capture !== null) capture.status = status;
   for (const pair of parseStatusPorcelainPairsZ(status)) record(pair);
   const files = [...seen.keys()].sort();
   if (!withStatus) return { base, files };
@@ -190,7 +193,10 @@ function parseNameOnlyZ(raw) {
 // At 844e0d7eb this excluded all 298 changed paths and stamped a zero-suite pass.
 // Both checks run before the working tree is read, so a dirty edit never rescues a
 // narrowing. verify.js also drops a narrowing whose result selects no suite.
-function mergeNarrowing({ anchor, integrationBranch, files, execImpl = execFileSync }) {
+// `status` (#5773), when a string, is the working-tree read changedFiles just made: the caller passes it
+// only when nothing that can write the tree ran between the two reads (this function's own git calls
+// are reads). Without it the working tree is read here, as before.
+function mergeNarrowing({ anchor, integrationBranch, files, execImpl = execFileSync, status: knownStatus = null }) {
   if (!anchor || !integrationBranch) return null;
   const ref = preferOriginRef((args) => git(execImpl, args), integrationBranch);
   const merges = tryGit(execImpl, ['rev-list', '--merges', '--parents', '--end-of-options', `${anchor}..HEAD`]);
@@ -207,7 +213,7 @@ function mergeNarrowing({ anchor, integrationBranch, files, execImpl = execFileS
   const differing = parseNameOnlyZ(differs);
   if (differing.length === 0) return null;
   const own = new Set(differing);
-  const status = tryGit(execImpl, ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all']);
+  const status = typeof knownStatus === 'string' ? knownStatus : tryGit(execImpl, ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all']);
   if (status === null) return null;
   for (const f of statusPorcelainPaths(status)) own.add(f);
   const mb = tryGit(execImpl, ['merge-base', '--end-of-options', anchor, ref]);
