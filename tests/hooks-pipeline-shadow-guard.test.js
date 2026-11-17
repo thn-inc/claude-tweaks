@@ -42,7 +42,7 @@ test('AC: mkdir <worktree>/.claude-tweaks/pipelines/x is denied', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', 'x');
-  const out = pre.run({ input: bashInput(`mkdir -p ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: bashInput(`mkdir -p ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
   assertDenied(out);
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, new RegExp(target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 });
@@ -50,7 +50,7 @@ test('AC: mkdir <worktree>/.claude-tweaks/pipelines/x is denied', () => {
 test('AC: the same mkdir under the main checkout is allowed', () => {
   const main = gitRepo();
   const target = path.join(main, '.claude-tweaks', 'pipelines', 'x');
-  const out = pre.run({ input: bashInput(`mkdir -p ${shellQuote(target)}`, main), runDir: null, runState: null, cwd: main });
+  const out = pre.run({ env: process.env, input: bashInput(`mkdir -p ${shellQuote(target)}`, main), runDir: null, runState: null, cwd: main });
   assertAllowed(out);
 });
 
@@ -58,7 +58,7 @@ test('a Write into a NEW run directory inside a linked worktree is denied', () =
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-spec-1', 'decisions.md');
-  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: writeInput(target), runDir: null, runState: null, cwd: wt });
   assertDenied(out);
 });
 
@@ -66,7 +66,7 @@ test('an Edit into a NEW run directory inside a linked worktree is denied', () =
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-spec-2', 'staged', 'review-1.patch');
-  const out = pre.run({ input: editInput(target), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(target), runDir: null, runState: null, cwd: wt });
   assertDenied(out);
 });
 
@@ -76,7 +76,7 @@ test('a write into a run directory that ALREADY EXISTS in the worktree (no new s
   const existingRunDir = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-spec-3');
   fs.mkdirSync(existingRunDir, { recursive: true });
   const target = path.join(existingRunDir, 'events.jsonl');
-  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: writeInput(target), runDir: null, runState: null, cwd: wt });
   assertAllowed(out);
 });
 
@@ -86,7 +86,7 @@ test('mkdir of a NEW subdirectory inside an already-existing run directory is al
   const existingRunDir = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-spec-4');
   fs.mkdirSync(existingRunDir, { recursive: true });
   const target = path.join(existingRunDir, 'staged');
-  const out = pre.run({ input: bashInput(`mkdir -p ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: bashInput(`mkdir -p ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
   assertAllowed(out);
 });
 
@@ -94,7 +94,7 @@ test('a write inside the MAIN checkout\'s own pipelines dir (correctly anchored,
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(main, '.claude-tweaks', 'pipelines', '2026-01-01T000000-spec-5', 'decisions.md');
-  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: writeInput(target), runDir: null, runState: null, cwd: wt });
   assertAllowed(out);
 });
 
@@ -102,7 +102,7 @@ test('a cp write shape creating a new pipelines run dir file inside a linked wor
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-spec-6', 'decisions.md');
-  const out = pre.run({ input: bashInput(`cp source.md ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: bashInput(`cp source.md ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
   assertDenied(out);
 });
 
@@ -117,7 +117,7 @@ test('#2282: a denied mkdir logs a wd-guard-refusal event (reason: shadow-run-di
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', 'x');
   const input = { ...bashInput(`mkdir -p ${shellQuote(target)}`, wt), session_id: 'sess-2282-shadow' };
-  const out = pre.run({ input, runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input, runDir: null, runState: null, cwd: wt });
   assertDenied(out);
   const pipelinesDir = path.join(main, '.claude-tweaks', 'pipelines');
   const adhocDirs = fs.readdirSync(pipelinesDir).filter((d) => d.endsWith('-adhoc-standalone'));
@@ -134,7 +134,7 @@ test('an unrelated Write inside a linked worktree (outside .claude-tweaks/pipeli
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, 'src', 'index.js');
-  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: writeInput(target), runDir: null, runState: null, cwd: wt });
   assertAllowed(out);
 });
 
@@ -147,7 +147,7 @@ test('#959 AC: a Write of a NEW work/{n}-spec.md into a worktree with no existin
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-record-959', 'work', '959-spec.md');
-  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: writeInput(target), runDir: null, runState: null, cwd: wt });
   assertAllowed(out);
 });
 
@@ -155,7 +155,7 @@ test('#959 AC: mkdir -p of the work/ directory itself, run dir absent, is allowe
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-record-959', 'work');
-  const out = pre.run({ input: bashInput(`mkdir -p ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: bashInput(`mkdir -p ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
   assertAllowed(out);
 });
 
@@ -163,7 +163,7 @@ test('#959 AC: the multi-record spec-{N}/work/{n}-spec.md shape is allowed', () 
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-spec-959-960', 'spec-959', 'work', '959-spec.md');
-  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: writeInput(target), runDir: null, runState: null, cwd: wt });
   assertAllowed(out);
 });
 
@@ -171,7 +171,7 @@ test('#959 negative control: a NEW run dir file named work/notes.md (not {n}-spe
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-record-959b', 'work', 'notes.md');
-  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: writeInput(target), runDir: null, runState: null, cwd: wt });
   assertDenied(out);
 });
 
@@ -179,7 +179,7 @@ test('#959 negative control: a NEW run dir file one level below work/ (work/sub/
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-record-959c', 'work', 'sub', '959-spec.md');
-  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: writeInput(target), runDir: null, runState: null, cwd: wt });
   assertDenied(out);
 });
 
@@ -187,7 +187,7 @@ test('#959 negative control: a NEW run dir file elsewhere (decisions.md) is stil
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-record-959d', 'decisions.md');
-  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: writeInput(target), runDir: null, runState: null, cwd: wt });
   assertDenied(out);
 });
 
@@ -201,7 +201,7 @@ test('#1778 AC: mkdir -p of {id}-sweep-standalone/staged, run dir absent, is all
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-sweep-standalone', 'staged');
-  const out = pre.run({ input: bashInput(`mkdir -p ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: bashInput(`mkdir -p ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
   assertAllowed(out);
 });
 
@@ -209,7 +209,7 @@ test('#1778 AC: mkdir -p of {id}-tidy-standalone/staged, run dir absent, is allo
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-tidy-standalone', 'staged');
-  const out = pre.run({ input: bashInput(`mkdir -p ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: bashInput(`mkdir -p ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
   assertAllowed(out);
 });
 
@@ -217,7 +217,7 @@ test('#1778 AC: a Write of {id}-sweep-standalone/decisions.md, run dir absent, i
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-sweep-standalone', 'decisions.md');
-  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: writeInput(target), runDir: null, runState: null, cwd: wt });
   assertAllowed(out);
 });
 
@@ -225,7 +225,7 @@ test('#1778 AC: a cp of report.md into {id}-sweep-standalone, run dir absent, is
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-sweep-standalone', 'report.md');
-  const out = pre.run({ input: bashInput(`cp source.md ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: bashInput(`cp source.md ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
   assertAllowed(out);
 });
 
@@ -233,7 +233,7 @@ test('#1778 AC: a Write under staged/ ({id}-tidy-standalone/staged/tidy-close-is
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-tidy-standalone', 'staged', 'tidy-close-issue-1.md');
-  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: writeInput(target), runDir: null, runState: null, cwd: wt });
   assertAllowed(out);
 });
 
@@ -241,7 +241,7 @@ test('#1778 negative control: config.yml inside a NEW {id}-sweep-standalone run 
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-sweep-standalone', 'config.yml');
-  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: writeInput(target), runDir: null, runState: null, cwd: wt });
   assertDenied(out);
 });
 
@@ -249,7 +249,7 @@ test('#1778 negative control: context/records.json inside a NEW {id}-sweep-stand
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-sweep-standalone', 'context', 'records.json');
-  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: writeInput(target), runDir: null, runState: null, cwd: wt });
   assertDenied(out);
 });
 
@@ -257,7 +257,7 @@ test('#1778 negative control: decisions.md under a plain non-standalone run dir 
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-record-42', 'decisions.md');
-  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: writeInput(target), runDir: null, runState: null, cwd: wt });
   assertDenied(out);
 });
 
@@ -265,7 +265,7 @@ test('#1778 negative control: a standalone-named directory nested under spec-*/ 
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-multi', 'spec-1-sweep-standalone', 'decisions.md');
-  const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: writeInput(target), runDir: null, runState: null, cwd: wt });
   assertDenied(out);
 });
 
@@ -307,7 +307,7 @@ test('#4303: past the cwd cap, a relative shadow run dir named through `../` is 
       ['S3', `${groups(20)}cd ../${name2}/sub/../.claude-tweaks/pipelines && mkdir 2026-x`],
       ['S3s', `${groups(20)}cd ../${name2}; cd .claude-tweaks; { cd pipelines; }; mkdir 2026-x`],
     ]) {
-      const out = pre.run({ input: bashInput(command, wt), runDir: null, runState: null, cwd: wt });
+      const out = pre.run({ env: process.env, input: bashInput(command, wt), runDir: null, runState: null, cwd: wt });
       assertDenied(out);
       assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /more ways than the hook's shell scanner follows/, `${shape} nested=${nested}`);
     }
@@ -325,7 +325,7 @@ test('#4303: past the cwd cap, a shadow run dir in another worktree after an && 
   const chain = Array.from({ length: 16 }, (_, i) => `cd /tmp/ct-4303-a${i + 1} && `).join('');
   for (const nested of [true, false]) {
     const { wt, name2 } = twoWorktrees4303({ nested });
-    assertDenied(pre.run({ input: bashInput(`${chain}cd ${wt}/sub; mkdir -p ../../${name2}/.claude-tweaks/pipelines/2026-x`, wt), runDir: null, runState: null, cwd: wt }));
+    assertDenied(pre.run({ env: process.env, input: bashInput(`${chain}cd ${wt}/sub; mkdir -p ../../${name2}/.claude-tweaks/pipelines/2026-x`, wt), runDir: null, runState: null, cwd: wt }));
   }
 });
 
@@ -335,7 +335,7 @@ test('#4303: past the cwd cap, a shadow run dir in another worktree after an && 
 // an earlier revision of this branch allowed it.
 test('#4303: past the cwd cap, a lost shadow run dir is denied whatever the segment\'s case', () => {
   const { wt, name2 } = twoWorktrees4303({ nested: false });
-  assertDenied(pre.run({ input: bashInput(`${groups(20)}mkdir -p ../${name2}/.Claude-Tweaks/Pipelines/2026-x`, wt), runDir: null, runState: null, cwd: wt }));
+  assertDenied(pre.run({ env: process.env, input: bashInput(`${groups(20)}mkdir -p ../${name2}/.Claude-Tweaks/Pipelines/2026-x`, wt), runDir: null, runState: null, cwd: wt }));
 });
 
 // #4303: a second collapse keeps the segment spelled before it. With
@@ -349,7 +349,7 @@ test('#4303: past a second cwd-cap collapse, a shadow run dir named before it is
     const { wt, wt2, name2 } = twoWorktrees4303({ nested });
     fs.mkdirSync(path.join(wt2, '.claude-tweaks', 'pipelines'), { recursive: true });
     for (const [shape, tail] of [['A2r', 'mkdir 2026-x'], ['A2rw', 'mkdir 2026-x && echo x > 2026-x/decisions.md']]) {
-      const out = pre.run({ input: bashInput(`${groups(16)}cd ../${name2}/.claude-tweaks/pipelines; ${groups(16)}${tail}`, wt), runDir: null, runState: null, cwd: wt });
+      const out = pre.run({ env: process.env, input: bashInput(`${groups(16)}cd ../${name2}/.claude-tweaks/pipelines; ${groups(16)}${tail}`, wt), runDir: null, runState: null, cwd: wt });
       assertDenied(out);
       assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /more ways than the hook's shell scanner follows/, `${shape} nested=${nested}`);
     }
@@ -367,7 +367,7 @@ test('#4303: past the cwd cap, a run dir made beside the session\'s own run dir 
     const { wt } = twoWorktrees4303({ nested });
     const cwd = path.join(wt, '.claude-tweaks', 'pipelines', '2026-old');
     fs.mkdirSync(cwd, { recursive: true });
-    const out = pre.run({ input: bashInput(`${groups(16)}mkdir ../2026-x`, cwd), runDir: null, runState: null, cwd });
+    const out = pre.run({ env: process.env, input: bashInput(`${groups(16)}mkdir ../2026-x`, cwd), runDir: null, runState: null, cwd });
     assertDenied(out);
     assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /a NEW pipeline run directory inside a linked worktree/, `nested=${nested}`);
   }
@@ -378,7 +378,7 @@ test('#4303: past the cwd cap, a run dir made beside the session\'s own run dir 
 // version.
 test('#4303: past the cwd cap, a lost target that names no pipelines segment is not denied by the shadow guard', () => {
   const { wt, name2 } = twoWorktrees4303({ nested: false });
-  assertAllowed(pre.run({ input: bashInput(`${groups(20)}mkdir -p ../${name2}/build`, wt), runDir: null, runState: null, cwd: wt }));
+  assertAllowed(pre.run({ env: process.env, input: bashInput(`${groups(20)}mkdir -p ../${name2}/build`, wt), runDir: null, runState: null, cwd: wt }));
 });
 
 // #4303: the guard skips git for a candidate whose real path names no `.claude-tweaks/pipelines`
@@ -394,7 +394,7 @@ test('#4303: a new run dir made through a link into a linked worktree\'s pipelin
     const { wt, wt2 } = twoWorktrees4303({ nested });
     fs.mkdirSync(path.join(wt2, '.claude-tweaks', 'pipelines'), { recursive: true });
     fs.symlinkSync(path.join(wt2, '.claude-tweaks', 'pipelines'), path.join(wt2, 'p'));
-    const out = pre.run({ input: bashInput(`mkdir -p ${wt2}/p/2026-x`, wt), runDir: null, runState: null, cwd: wt });
+    const out = pre.run({ env: process.env, input: bashInput(`mkdir -p ${wt2}/p/2026-x`, wt), runDir: null, runState: null, cwd: wt });
     assertDenied(out);
     assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /a NEW pipeline run directory inside a linked worktree/, `nested=${nested}`);
   }
@@ -424,12 +424,12 @@ function shadowFixture3769(extraEntries = {}) {
 
 test('#3769: a NEW run directory is still denied when every probe resolves through an injected case-insensitive fsImpl', { skip: POSIX_ONLY }, () => {
   const { wt, fsImpl, target } = shadowFixture3769();
-  const out = pre.run({ input: bashInput(`mkdir -p ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt }, { fsImpl });
+  const out = pre.run({ env: process.env, input: bashInput(`mkdir -p ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt }, { fsImpl });
   assertDenied(out);
 });
 
 test('#3769: a run directory that exists only on the injected fsImpl counts as existing (allowed)', { skip: POSIX_ONLY }, () => {
   const { wt, fsImpl, target } = shadowFixture3769({ '2026-01-01T000000-spec-5': 'dir' });
-  const out = pre.run({ input: bashInput(`mkdir -p ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt }, { fsImpl });
+  const out = pre.run({ env: process.env, input: bashInput(`mkdir -p ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt }, { fsImpl });
   assertAllowed(out);
 });

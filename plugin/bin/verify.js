@@ -19,7 +19,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn, execFileSync } = require('child_process');
+const { spawn } = require('child_process');
 
 const { parseArgs, UsageError, USAGE, EXIT_NO_VERDICT } = require('./lib/verify/args');
 const { runChecks, runOne, stopTrees } = require('./lib/verify/run');
@@ -34,9 +34,8 @@ const {
 } = require('./lib/verify/extract');
 const { planRetry, runRetries, flakyCaveatLines } = require('./lib/verify/flaky');
 const { matchPreExisting, trackedFiles, newAndFixed } = require('./lib/verify/pre-existing');
-const {
-  gitInfo, gitDir: resolveGitDir, composeReport, writeReportAtomic, dirtyFilePaths,
-} = require('./lib/verify/report');
+const { composeReport, writeReportAtomic, dirtyFilePaths } = require('./lib/verify/report');
+const { createGitReads } = require('./lib/verify/git-reads');
 const {
   readStamp: readCountStamp, detectRegression, caveatLine,
   nextFlakyHits, flakyEscalations, escalationCaveatLine,
@@ -56,6 +55,10 @@ const { resolveTarget, writeStagedItem } = require('./lib/stage-item/write');
 const { appendEvent } = require('./lib/hooks/context');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
 const { canonicalRealpath, lstatType, resolveWithin } = require('./lib/path-guard');
+
+// One invocation's answers to git's read-only questions (#5773). A read that must see a change this
+// process may have made (the suites ran, a retry or adjudication) calls reads.invalidate() first.
+const reads = createGitReads();
 
 const KNOWN_SCOPES = new Set(['full', 'scoped', 'none', 'static-only', 'tool-scoped']);
 // A --stamp-suite chunk runs a caller-chosen subset; kept out of KNOWN_SCOPES so --stamp-status is unchanged.
@@ -142,11 +145,7 @@ function resolveScopePath(scope, scopeCwd) {
 // The git toplevel from scopeCwd — or, outside a git work tree, scopeCwd
 // itself; every other git call the caller makes fails the same way.
 function checkoutRoot(scopeCwd) {
-  try {
-    return realGit(scopeCwd).repoRoot();
-  } catch {
-    return scopeCwd;
-  }
+  return reads.locations(scopeCwd).toplevel ?? scopeCwd;
 }
 
 // #2987: the repo-relative form of a resolved --scope path, so
@@ -155,12 +154,8 @@ function checkoutRoot(scopeCwd) {
 // proven inside this checkout — a file outside it never shows in this
 // tree's dirty set anyway.
 function scopeSelfPath(resolvedPath, scopeCwd) {
-  let root;
-  try {
-    root = realGit(scopeCwd).repoRoot();
-  } catch {
-    return null;
-  }
+  const root = reads.locations(scopeCwd).toplevel;
+  if (root === null) return null;
   const leaf = resolveWithin(resolvedPath, root);
   if (leaf === null) return null;
   const rootReal = canonicalRealpath(root);
@@ -264,15 +259,15 @@ function writeVerifyEvent(runArg, fields) {
 // from the stored stamp (spec Gotchas: a tree that went dirty after a clean
 // pass reports match:false).
 function stampStatus(parsed) {
-  const ownGitDir = resolveGitDir();
+  const ownGitDir = reads.locations(process.cwd()).gitDir;
   const gitDir = parsed.gitDir || ownGitDir;
   const stamp = gitDir ? readVerifyStamp(gitDir) : null;
-  const git = gitDir ? gitInfo() : { sha: null, dirty: null };
+  const git = gitDir ? reads.treeState(process.cwd()) : { sha: null, dirty: null };
   const present = stamp !== null;
   const scope = present ? (stamp.scope || null) : null;
   // An explicit --git-dir that is not this checkout's own git dir can never
-  // match: head/dirty above are always the invoking cwd's (gitInfo() takes
-  // no directory argument), so a foreign --git-dir's stamp is still read and
+  // match: head/dirty above are always the invoking cwd's (the tree-state read
+  // takes the invoking cwd), so a foreign --git-dir's stamp is still read and
   // reported, but never trusted as verifying THIS cwd's HEAD — otherwise a
   // sibling checkout sitting at the same commit could read match:true for a
   // verification it never ran (review finding, refs #1921).
@@ -429,13 +424,14 @@ function stampStatus(parsed) {
 // --ignore-stamp (#3048) skips that stamp anchor, so a stamp written right
 // after the build's own commits cannot hide them.
 function changedFilesMode(parsed) {
-  const ownGitDir = resolveGitDir();
+  // Nothing in this mode spawns or writes the tree, so one HEAD read is valid throughout.
+  const { gitDir: ownGitDir, head } = reads.locations(process.cwd());
   const priorStamp = ownGitDir ? readVerifyStamp(ownGitDir) : null;
   const anchorStamp = parsed.ignoreStamp ? null : priorStamp;
   let base;
   try {
     base = resolveBase({
-      stamp: anchorStamp, integrationBranch: parsed.integrationBranch, base: parsed.base, requireNonDegenerate: true,
+      stamp: anchorStamp, integrationBranch: parsed.integrationBranch, base: parsed.base, requireNonDegenerate: true, head,
     });
   } catch (err) {
     if (!(err instanceof ChangedFilesError)) throw err;
@@ -450,7 +446,6 @@ function changedFilesMode(parsed) {
   // covers any remaining legitimate base===HEAD outcome (e.g. no
   // --integration-branch to fall through to, or the branch really is fully
   // merged into it) that the requireNonDegenerate skip above cannot resolve.
-  const head = gitInfo().sha;
   if (head && base === head) {
     result.warning = 'resolved base equals HEAD — diff will be empty';
   }
@@ -482,11 +477,11 @@ async function main() {
   // no count stamp is persisted. Computed once (nit, re-review): the --scope
   // anchor read below (M5) needs this exact own-git-dir value too, never a
   // --git-dir override, so it is resolved here rather than a second time.
-  const ownGitDir = resolveGitDir();
+  const ownGitDir = reads.locations(process.cwd()).gitDir;
   // #3799: --cwd moves only the check spawns, so a --cwd in another checkout would
   // credit this checkout's stamp and report with checks that ran elsewhere — refused before anything runs.
   if (parsed.cwd && ownGitDir) {
-    const cwdGitDir = resolveGitDir(execFileSync, path.resolve(parsed.cwd));
+    const cwdGitDir = reads.locations(path.resolve(parsed.cwd)).gitDir;
     // OS-cased on both sides (#3417's canonicalRealpath), so a case-variant --cwd
     // into this same checkout matches. An unresolvable side is foreign, never a
     // match — stampStatus()'s --git-dir rule.
@@ -525,7 +520,7 @@ async function main() {
     for (const line of staleWarnings.splice(0)) fs.writeSync(2, line);
   }
   if (parsed.baseline) {
-    bgit = realGit(parsed.cwd || process.cwd());
+    bgit = realGit(parsed.cwd || process.cwd(), { locations: (d) => reads.locations(d) });
     baseSha = bgit.resolveCommit(parsed.baseline);
     if (baseSha === null) {
       process.stderr.write(`--baseline: ${parsed.baseline} does not resolve to a commit\n${USAGE}\n`);
@@ -548,7 +543,7 @@ async function main() {
   const countStampPath = parsed.countStamp || (gitDir ? path.join(gitDir, 'claude-tweaks-test-count.json') : null);
   // #3757: the commit this run verifies is the HEAD it starts on — taken before
   // the --scope selection and runChecks, so selection, checks and stamp agree.
-  const startGit = gitInfo();
+  const startGit = reads.treeState(process.cwd());
   const startSha = startGit.sha;
 
   // --scope (#1922): declaration → changed files since the anchor → pure
@@ -561,6 +556,8 @@ async function main() {
   let decl = null;
   let priorStamp = null;
   let narrowing = null;
+  // #5773: the raw working-tree status changedFiles read in this invocation, kept only when nothing can write the tree before its next reader.
+  let scopeStatusRead = null;
   // #4024: the impact map context and, when a subset runs, its list.
   let impactCtx = null;
   let impactSubset = null;
@@ -686,8 +683,13 @@ async function main() {
       // (ownGitDir is resolved once, above, alongside the default log-dir.)
       priorStamp = ownGitDir ? readVerifyStamp(ownGitDir) : null;
 
+      // The usable anchor is derived once and handed to resolveBase, so the
+      // merge-base --is-ancestor / rev-parse --verify pair is not asked twice.
+      const anchorSha = usableAnchor({ stamp: priorStamp });
       try {
-        resolvedBase = resolveBase({ stamp: priorStamp, integrationBranch: parsed.integrationBranch, base: parsed.base });
+        resolvedBase = resolveBase({
+          stamp: priorStamp, integrationBranch: parsed.integrationBranch, base: parsed.base, anchor: anchorSha,
+        });
       } catch (err) {
         if (!(err instanceof ChangedFilesError)) throw err;
         scopeUsageExit(`--scope: ${err.message}`);
@@ -712,7 +714,6 @@ async function main() {
       // naming the stale anchor, breaking the base === fullSha invariant a
       // full run relies on. Passing `stamp: null` instead forces mode 'full'
       // (#1922 review finding: stale anchor must force a full run).
-      const anchorSha = usableAnchor({ stamp: priorStamp });
       if (parsed.base) {
         if (anchorSha && resolvedBase !== anchorSha) {
           scopeUsageExit(`--scope: --base ${parsed.base} conflicts with the stamp anchor ${anchorSha.slice(0, 9)}; omit --base or clear the stamp (after an integration-branch merge, --integration-branch narrows the scoped set to this branch's own delta)`);
@@ -721,7 +722,11 @@ async function main() {
       }
 
       // #4024: an impact declaration also needs each changed path's A/M/D status.
-      const changed = changedFiles({ base: resolvedBase, withStatus: Boolean(decl.impact) });
+      const statusCapture = {};
+      const changed = changedFiles({ base: resolvedBase, withStatus: Boolean(decl.impact), capture: statusCapture });
+      // Only without an impact declaration may the generated-path read below reuse it: impact.fetch (a shell command)
+      // and the impact-files.txt write run between the two reads otherwise and can change the tree (#5773).
+      if (!decl.impact) scopeStatusRead = statusCapture.status;
       files = changed.files;
       let statuses = changed.statuses || null;
       const unnarrowed = { files, statuses };
@@ -730,7 +735,8 @@ async function main() {
       // resolved base IS the usable anchor; with no anchor, resolveBase already
       // returned the merge-base, which excludes merged-in files by construction.
       if (parsed.integrationBranch && anchorSha && resolvedBase === anchorSha) {
-        narrowing = mergeNarrowing({ anchor: anchorSha, integrationBranch: parsed.integrationBranch, files });
+        // Handed the working-tree read made just above: only git reads ran between the two (#5773).
+        narrowing = mergeNarrowing({ anchor: anchorSha, integrationBranch: parsed.integrationBranch, files, status: statusCapture.status });
         if (narrowing) {
           files = narrowing.files;
           if (statuses) statuses = Object.fromEntries(files.map((f) => [f, statuses[f]]));
@@ -743,7 +749,17 @@ async function main() {
       // so the suite runs its full command. With no usable stamp anchor, the
       // --integration-branch merge-base anchors; an explicit --base never does
       // (it runs full, as before).
-      if (decl.impact) impactCtx = checkoutImpactContext({ decl, cwd: parsed.cwd || process.cwd() });
+      // anchorSha was proved an ancestor of HEAD above; only git reads (changedFiles, mergeNarrowing) run before the
+      // lazy first map read, so a map pinned to that same commit need not ask again (#5773).
+      if (decl.impact) impactCtx = checkoutImpactContext({
+        decl,
+        knownAncestor: anchorSha,
+        cwd: parsed.cwd || process.cwd(),
+        locate: ({ cwd }) => {
+          const l = reads.locations(cwd);
+          return l.toplevel && l.commonDir ? { repoRoot: l.toplevel, commonDir: l.commonDir } : null;
+        },
+      });
       const fallbackBase = !anchorSha && parsed.integrationBranch && !parsed.base ? resolvedBase : null;
       const select = (impact) => selectScope({ decl, files, stamp: anchorSha ? priorStamp : null, statuses, impact, fallbackBase });
       sel = select(impactCtx);
@@ -853,7 +869,7 @@ async function main() {
   // exemption must cover the start read too — a non-generated edit reverted
   // mid-run still disqualifies. Read here, after --scope but before any check
   // runs; only when a declaration names `generated` globs at all.
-  const startDirtyPaths = decl && decl.generated.length && startGit.dirty === true ? dirtyFilePaths() : [];
+  const startDirtyPaths = decl && decl.generated.length && startGit.dirty === true ? dirtyFilePaths(undefined, scopeStatusRead) : [];
 
   // #5119: the machine-wide suite slot. Its count is the declaration's
   // concurrency.suiteSlots (under --scope the declaration read above, else
@@ -1101,6 +1117,10 @@ async function main() {
           // adjudicate() calls takeSlot just before its first spawn, so a run
           // it refuses on sight never queues behind every full-lane holder.
           let adjHold = null;
+          // The suites ran since the last location read, and adjudication mutates the checkout: it adds and removes a scratch
+          // worktree (a slot path's leftover too) and reruns files at HEAD, which may commit. Drop every memo before it, so
+          // the repo root and common dir it asks for are read once after the suites, and again after its last mutation.
+          reads.invalidate();
           try {
             // Read before adjudicate() can refuse on sight: a refused nested run with an invalid
             // default declaration still prints its one `concurrency ignored` line (#5150).
@@ -1132,6 +1152,9 @@ async function main() {
             };
           } finally {
             if (adjHold) adjHold.release();
+            // Defensive: the end read below clears the memo again and nothing reads between, so this keeps any
+            // read added between adjudication and the end read fresh.
+            reads.invalidate();
           }
         }
       }
@@ -1206,7 +1229,10 @@ async function main() {
 
   // #3757: moved is sha-only on purpose — checks routinely leave untracked artifacts, and --stamp-status already refuses a dirty tree.
   // Read after both adjudications: they re-run failing files, so a commit landing during them must count as moved.
-  const endGit = gitInfo();
+  // The suites, retries, adjudication and impact fetches all ran since the start read, and any of them may have
+  // dirtied the tree or moved HEAD: drop every memo so this read asks git again.
+  reads.invalidate();
+  const endGit = reads.treeState(process.cwd());
   const treeMoved = startSha !== null && endGit.sha !== startSha;
   // The verified commit is the start sha; dirty is start OR end, so edits reverted mid-run still leave the stamp dirty.
   // An unreadable status on either side stays null — one clean read never vouches for a read that failed.

@@ -82,6 +82,8 @@ test('AC1.1: a real postMerge run whose Step 4.0b hit gh-failed reaches SessionS
   const nodePathHome = fs.mkdtempSync(path.join(os.tmpdir(), 'post-merge-e2e-nodepath-'));
   roots.push(nodePathHome);
   const out = await require('../plugin/bin/lib/hooks/session-start').run({
+    // #5377: run() reads its env, home and child starter from the context; these are the real ones.
+    env: process.env, homeDir: () => os.homedir(), spawn: (...args) => require('child_process').spawn(...args),
     input: {}, runDir: null, runState: null, cwd: root, superpowersDeps: NO_INSTALL,
     // #5392: run() saves process.execPath under <nodePathHome>/.claude-tweaks/node-path.
     nodePathHome: nodePathHome,

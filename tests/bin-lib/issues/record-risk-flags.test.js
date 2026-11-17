@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  parseRiskFlags, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha,
+  parseRiskFlags, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha, parseTripwireFlags, addTripwireRiskFlags, carryTripwireFlags,
   RISK_FLAGS_UNKNOWN, RISK_FLAGS_NONE,
 } = require('../../../plugin/bin/lib/issues/record');
 const { readRecord, writeRecord } = require('../../../plugin/bin/lib/issues/local-store');
@@ -468,4 +468,149 @@ test('appendRiskProofGotcha preserves CRLF and refuses an unreadable slug', () =
 test('parseRiskFlags returns an ok line in canonical order: built-ins first', () => {
   assert.deepStrictEqual(parseRiskFlags('Risk-flags: auth, migrations\n').flags, ['migrations', 'auth']);
   assert.deepStrictEqual(parseRiskFlags('Risk-flags: zeta, auth, alpha\n', { extraCategories: ['alpha', 'zeta'] }).flags, ['auth', 'zeta', 'alpha']);
+});
+
+// The tripwire line (#4619): Risk-flags-added-by-tripwire: {slugs}, written only by addTripwireRiskFlags.
+const TW = 'Risk-flags-added-by-tripwire:';
+const TW_BODY = '# T\n\nRisk-flags: none\n\n## Overview\n';
+
+test('addTripwireRiskFlags adds the flag and the tripwire line', () => {
+  assert.strictEqual(addTripwireRiskFlags(TW_BODY, ['migrations']),
+    `# T\n\nRisk-flags: migrations\n${TW} migrations\n\n## Overview\n`);
+});
+
+test('a second call unions the tripwire line', () => {
+  const once = addTripwireRiskFlags(TW_BODY, ['migrations']);
+  const twice = addTripwireRiskFlags(once, ['auth']);
+  assert.strictEqual(twice, `# T\n\nRisk-flags: migrations, auth\n${TW} migrations, auth\n\n## Overview\n`);
+  assert.strictEqual(addTripwireRiskFlags(twice, ['auth']), twice, 'idempotent');
+});
+
+test('a tripwire line is rewritten in canonical order and a human-declared flag stays off it', () => {
+  const body = `Risk-flags: public-contract, irreversible-side-effect\n${TW} irreversible-side-effect\n\n## O\n`;
+  const out = addTripwireRiskFlags(body, ['auth']);
+  assert.strictEqual(out, `Risk-flags: auth, public-contract, irreversible-side-effect\n${TW} auth, irreversible-side-effect\n\n## O\n`);
+});
+
+test('parseRiskFlags ignores the tripwire line', () => {
+  const r = parseRiskFlags(`# T\n\nRisk-flags: migrations\n${TW} migrations\n\n## Overview\n`);
+  assert.strictEqual(r.status, 'ok');
+  assert.deepStrictEqual(r.flags, ['migrations']);
+  assert.strictEqual(parseRiskFlags(`${TW} migrations\n\n## O\n`).status, 'unclassified');
+});
+
+test('parseTripwireFlags reads ok, absent, a variant spelling as malformed, and ignores a fenced example', () => {
+  assert.deepStrictEqual(parseTripwireFlags(`Risk-flags: auth\n${TW} auth, migrations\n\n## O\n`), { status: 'ok', flags: ['auth', 'migrations'] });
+  assert.deepStrictEqual(parseTripwireFlags('Risk-flags: auth\n\n## O\n'), { status: 'absent', flags: [] });
+  assert.deepStrictEqual(parseTripwireFlags(''), { status: 'absent', flags: [] });
+  for (const line of ['**Risk-flags-added-by-tripwire:** auth', '- risk_flags_added_by_tripwire: auth', '> Risk flags added by tripwire: auth',
+    'risk-flags-added-by-tripwire: auth', TW, `${TW} Auth`, `${TW} none`, `${TW} auth,, migrations`, `${TW} auth migrations`]) {
+    assert.deepStrictEqual(parseTripwireFlags(`Risk-flags: auth\n${line}\n\n## O\n`), { status: 'malformed', flags: [] }, line);
+  }
+  assert.strictEqual(parseTripwireFlags(`${TW} auth\n${TW} migrations\n\n## O\n`).status, 'malformed', 'two lines');
+  assert.strictEqual(parseTripwireFlags(`Risk-flags: auth\n\n## O\n${TW} auth\n`).status, 'absent', 'past the first heading');
+  assert.strictEqual(parseTripwireFlags(`Risk-flags: auth\n\n\`\`\`\n${TW} auth\n\`\`\`\n\n## O\n`).status, 'absent', 'fenced example');
+});
+
+test('a malformed tripwire line contributes no slugs and is rewritten in exact form', () => {
+  const body = `Risk-flags: auth\n**Risk-flags-added-by-tripwire:** migrations\n\n## O\n`;
+  const out = addTripwireRiskFlags(body, ['public-contract']);
+  assert.strictEqual(out, `Risk-flags: auth, public-contract\n${TW} public-contract\n\n## O\n`);
+});
+
+test('two tripwire lines collapse to one exact line; the first is rewritten in place', () => {
+  const body = `Risk-flags: auth\n${TW} auth\nSurface: infra\n${TW} migrations\n\n## O\n`;
+  assert.strictEqual(addTripwireRiskFlags(body, ['public-contract']), `Risk-flags: auth, public-contract\n${TW} public-contract\nSurface: infra\n\n## O\n`);
+});
+
+test('the line sits below an unconfirmed marker', () => {
+  const body = 'Risk-flags: auth\nRisk-flags-unconfirmed: true\n\n## O\n';
+  assert.strictEqual(addTripwireRiskFlags(body, ['migrations']),
+    `Risk-flags: migrations, auth\nRisk-flags-unconfirmed: true\n${TW} migrations\n\n## O\n`);
+  assert.strictEqual(addTripwireRiskFlags(addTripwireRiskFlags(body, ['migrations']), ['irreversible-side-effect']),
+    `Risk-flags: migrations, auth, irreversible-side-effect\nRisk-flags-unconfirmed: true\n${TW} migrations, irreversible-side-effect\n\n## O\n`);
+});
+
+test('[] is byte-identical', () => {
+  for (const body of [TW_BODY, `Risk-flags: auth\n${TW} auth\n`, 'no line at all', '', 'a\r\nb\n']) {
+    assert.strictEqual(addTripwireRiskFlags(body, []), body);
+  }
+});
+
+test('a uniformly CRLF body stays CRLF', () => {
+  const body = TW_BODY.replace(/\n/g, '\r\n');
+  const out = addTripwireRiskFlags(body, ['migrations']);
+  assert.strictEqual(out, `# T\r\n\r\nRisk-flags: migrations\r\n${TW} migrations\r\n\r\n## Overview\r\n`);
+  assert.ok(!/[^\r]\n/.test(out));
+});
+
+test('addTripwireRiskFlags refuses an invalid slug list like addRiskFlags', () => {
+  assert.throws(() => addTripwireRiskFlags(TW_BODY, ['Auth']), TypeError);
+  assert.throws(() => addTripwireRiskFlags(TW_BODY, 'auth'), TypeError);
+  assert.throws(() => addTripwireRiskFlags(TW_BODY, ['none']), TypeError);
+});
+
+test('addTripwireRiskFlags passes extraCategories through to addRiskFlags', () => {
+  const out = addTripwireRiskFlags(TW_BODY, ['pii'], { extraCategories: ['pii'] });
+  assert.strictEqual(parseRiskFlags(out, { extraCategories: ['pii'] }).status, 'ok');
+  assert.strictEqual(parseTripwireFlags(out).status, 'ok');
+});
+
+test('removeRiskFlag drops the slug from the tripwire line', () => {
+  const body = `Risk-flags: migrations, auth\n${TW} migrations, auth\n\n## O\n`;
+  const step1 = removeRiskFlag(body, 'auth', { humanConfirmed: true });
+  assert.strictEqual(step1, `Risk-flags: migrations\n${TW} migrations\n\n## O\n`);
+  assert.strictEqual(removeRiskFlag(step1, 'migrations', { humanConfirmed: true }), 'Risk-flags: none\n\n## O\n');
+});
+
+test('removeRiskFlag leaves a tripwire line that does not name the slug alone, CRLF included', () => {
+  const body = `Risk-flags: migrations, auth\r\n${TW} migrations\r\n\r\n## O\r\n`;
+  assert.strictEqual(removeRiskFlag(body, 'auth', { humanConfirmed: true }), `Risk-flags: migrations\r\n${TW} migrations\r\n\r\n## O\r\n`);
+});
+
+// Characterization (project-maturity: established): removeRiskFlag on a body with no tripwire line.
+test('removeRiskFlag on a body with no tripwire line is byte-identical to today', () => {
+  const opts = { humanConfirmed: true };
+  assert.strictEqual(removeRiskFlag('# T\n\nRisk-flags: migrations, auth\n\n## Overview\n', 'auth', opts), '# T\n\nRisk-flags: migrations\n\n## Overview\n');
+  assert.strictEqual(removeRiskFlag('Risk-flags: auth\n', 'auth', opts), 'Risk-flags: none\n');
+  assert.strictEqual(removeRiskFlag('Risk-flags: auth, migrations\nRisk-flags-unconfirmed: true\n\n## O\n', 'auth', opts), 'Risk-flags: migrations\n\n## O\n');
+  assert.strictEqual(removeRiskFlag('Risk-flags: auth\n\n## O\n', 'migrations', opts), 'Risk-flags: auth\n\n## O\n');
+  assert.strictEqual(removeRiskFlag('Risk-flags: migrations, auth\r\n\r\n## O\r\n', 'auth', opts), 'Risk-flags: migrations\r\n\r\n## O\r\n');
+  assert.strictEqual(removeRiskFlag('x\n\n## O\n', 'auth', opts), 'x\n\n## O\n');
+});
+
+test('addTripwireRiskFlags never records a slug the flag line already declares', () => {
+  assert.strictEqual(addTripwireRiskFlags('Risk-flags: auth\n\n## O\n', ['auth', 'migrations']), `Risk-flags: migrations, auth\n${TW} migrations\n\n## O\n`);
+  assert.strictEqual(addTripwireRiskFlags('Risk-flags: auth\n\n## O\n', ['auth']), 'Risk-flags: auth\n\n## O\n', 'nothing new: no line, byte-identical');
+});
+
+test('addTripwireRiskFlags drops a tripwire slug the flag line no longer carries', () => {
+  const body = `Risk-flags: auth\n${TW} migrations, auth\n\n## O\n`;
+  assert.strictEqual(addTripwireRiskFlags(body, ['public-contract']), `Risk-flags: auth, public-contract\n${TW} auth, public-contract\n\n## O\n`);
+});
+
+test('removeRiskFlag drops a slug found only on the tripwire line, and a malformed tripwire line', () => {
+  const opts = { humanConfirmed: true };
+  assert.strictEqual(removeRiskFlag(`Risk-flags: auth\n${TW} migrations, auth\n\n## O\n`, 'migrations', opts), `Risk-flags: auth\n${TW} auth\n\n## O\n`);
+  assert.strictEqual(removeRiskFlag(`Risk-flags: auth\n${TW} migrations\n\n## O\n`, 'migrations', opts), 'Risk-flags: auth\n\n## O\n');
+  assert.strictEqual(removeRiskFlag('Risk-flags: auth\n**Risk-flags-added-by-tripwire:** migrations\n\n## O\n', 'migrations', opts), 'Risk-flags: auth\n\n## O\n');
+  assert.strictEqual(removeRiskFlag(`Risk-flags: migrations, auth\n${TW} auth\n${TW} migrations\n\n## O\n`, 'auth', opts), 'Risk-flags: migrations\n\n## O\n', 'two lines read malformed and go');
+  const untouched = `Risk-flags: auth\n${TW} auth\n\n## O\n`;
+  assert.strictEqual(removeRiskFlag(untouched, 'migrations', opts), untouched, 'neither line names it: byte-identical');
+});
+
+test('removeRiskFlag rewrites the tripwire line in canonical order', () => {
+  const body = `Risk-flags: migrations, auth, irreversible-side-effect\n${TW} irreversible-side-effect, auth, migrations\n\n## O\n`;
+  assert.strictEqual(removeRiskFlag(body, 'migrations', { humanConfirmed: true }), `Risk-flags: auth, irreversible-side-effect\n${TW} auth, irreversible-side-effect\n\n## O\n`);
+});
+
+test('carryTripwireFlags carries the prior body\'s line onto a re-shaped body, minus any slug no longer kept', () => {
+  const prior = `Risk-flags: migrations, auth\n${TW} migrations, auth\n\n## O\n`;
+  assert.strictEqual(carryTripwireFlags('# T\n\nRisk-flags: migrations, auth\nSurface: infra\n\n## O\n', prior),
+    `# T\n\nRisk-flags: migrations, auth\n${TW} migrations, auth\nSurface: infra\n\n## O\n`);
+  assert.strictEqual(carryTripwireFlags('Risk-flags: auth\nRisk-flags-unconfirmed: true\n\n## O\n', prior),
+    `Risk-flags: auth\nRisk-flags-unconfirmed: true\n${TW} auth\n\n## O\n`);
+  assert.strictEqual(carryTripwireFlags('Risk-flags: none\n\n## O\n', prior), 'Risk-flags: none\n\n## O\n');
+  assert.strictEqual(carryTripwireFlags('Risk-flags: auth\n\n## O\n', 'Risk-flags: auth\n\n## O\n'), 'Risk-flags: auth\n\n## O\n', 'no prior line: byte-identical');
+  assert.strictEqual(carryTripwireFlags('Risk-flags: auth\r\n\r\n## O\r\n', prior), `Risk-flags: auth\r\n${TW} auth\r\n\r\n## O\r\n`);
 });
