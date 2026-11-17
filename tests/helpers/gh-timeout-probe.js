@@ -49,6 +49,9 @@ function evictModules(modulePaths) {
 function captureExecTimeouts({ env = {}, modulePaths = [], reply = '{}', exercise }) {
   const cp = require('node:child_process');
   const util = require('node:util');
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
   const origExecFileSync = cp.execFileSync;
   const origExecFile = cp.execFile;
   const saved = new Map();
@@ -58,13 +61,11 @@ function captureExecTimeouts({ env = {}, modulePaths = [], reply = '{}', exercis
   }
   // Run from an empty temp dir: the bound getters read the cwd's policy.yml (gh-timeout-ms, git-timeout-ms),
   // and the env clearing above does not stop a raised value in this checkout's own policy from leaking in.
-  const fs = require('node:fs');
-  const os = require('node:os');
   const originalCwd = process.cwd();
-  const emptyDir = fs.mkdtempSync(require('node:path').join(fs.realpathSync(os.tmpdir()), 'ct-exec-bounds-'));
+  const emptyDir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-exec-bounds-'));
   const seen = { gh: [], git: [], node: [] };
-  const record =(cmd, args, opts) => {
-    const name = require('node:path').basename(String(cmd)).replace(/\.exe$/i, '');
+  const record = (cmd, args, opts) => {
+    const name = path.basename(String(cmd)).replace(/\.exe$/i, '');
     if (!Object.prototype.hasOwnProperty.call(seen, name)) return;
     const options = [args, opts].find((a) => a && typeof a === 'object' && !Array.isArray(a));
     seen[name].push(options ? options.timeout : undefined);
