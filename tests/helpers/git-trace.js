@@ -39,7 +39,9 @@ function warmCallStartsNoGit(warm, opts = {}) {
     if (track) track(tracedResult);
     files = fs.readdirSync(dir);
     for (const f of files) {
-      for (const line of fs.readFileSync(path.join(dir, f), 'utf8').split('\n')) {
+      let text = '';
+      try { text = fs.readFileSync(path.join(dir, f), 'utf8'); } catch { /* skip an unreadable trace file, as an unparseable line is skipped; the assertion still reports it */ }
+      for (const line of text.split('\n')) {
         try {
           const ev = JSON.parse(line);
           if (ev.event === 'start') argvs.push(ev.argv);
