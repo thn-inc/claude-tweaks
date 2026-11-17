@@ -254,17 +254,17 @@ function headShortReader(worktree, deps) {
 
 // Creates staged/wrap-up-skill-{N}.md holding the preamble and entry.patch. Exclusive create, so two
 // writers racing for one N cannot overwrite each other; a create that dies partway is removed.
-function writeStage({ runDir, worktree, entry, headShort: readHead }, deps) {
+function writeStage({ runDir, worktree, entry, headShort }, deps) {
   const stagedDir = path.join(runDir, 'staged');
   deps.mkdir(stagedDir);
   const target = oneLine(entry.target);
   const summary = oneLine(entry.summary);
-  const headShort = (readHead || headShortReader(worktree, deps))();
+  const stagedAt = (headShort || headShortReader(worktree, deps))();
   const preamble = [
     `Target: ${target}`,
     `Invariant: ${summary}`,
     `Finding: Skills row — ${summary}`,
-    `Staged-at: ${headShort}`,
+    `Staged-at: ${stagedAt}`,
   ].join('\n') + '\n\n';
   const compose = (patch) => Buffer.concat([Buffer.from(preamble, 'utf8'), toBuffer(patch)]);
   let n = nextStageNumber(stagedDir, deps);

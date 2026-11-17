@@ -1171,6 +1171,34 @@ test('AC2.1: land() with two staged entries runs rev-parse --short HEAD once', (
   assert.deepEqual(stagedAtLines(res), [short, short]);
 });
 
+test('land() with two entries failing apply --check at the build loop runs rev-parse --short HEAD once', (t) => {
+  const f = fixture(t, { originConflict: true }); // origin already conflicts with X's patch
+  const other = path.join(f.root, 'other-z');
+  sh(f.root, ['clone', '-q', f.origin, other]);
+  write(other, Z, '# z\n\nline one\nline two\nline three\nline four\nCHANGED five\nCHANGED six\nCHANGED seven\n');
+  sh(other, ['commit', '-q', '-am', 'conflicting change to z']);
+  sh(other, ['push', '-q', 'origin', 'main']);
+  const g = deps(fakeGh().gh);
+  const res = land(landArgs(f), g.deps);
+  assert.equal(res.staged.length, 2);
+  assert.ok(res.staged.every((s) => /git apply --check/.test(s.reason)));
+  assert.equal(g.gitCalls.filter(isHeadShort).length, 1);
+  const short = sh(f.repo, ['rev-parse', '--short', 'HEAD']).trim();
+  assert.deepEqual(stagedAtLines(res), [short, short]);
+});
+
+test('land() with a failed push stages two entries with one rev-parse --short HEAD', (t) => {
+  const f = fixture(t);
+  fs.writeFileSync(path.join(f.origin, 'hooks', 'pre-receive'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const g = deps(fakeGh().gh);
+  const res = land(landArgs(f), g.deps);
+  assert.equal(res.staged.length, 2);
+  assert.match(res.staged[0].reason, /push of learned-skills\//);
+  assert.equal(g.gitCalls.filter(isHeadShort).length, 1);
+  const short = sh(f.repo, ['rev-parse', '--short', 'HEAD']).trim();
+  assert.deepEqual(stagedAtLines(res), [short, short]);
+});
+
 test('stage() with two captured entries runs rev-parse --short HEAD once', (t) => {
   const f = fixture(t);
   const g = deps(fakeGh().gh);
