@@ -336,6 +336,75 @@ test('unpinnedRepoWithOrigin copies carry the GitHub-shaped origin and one commi
   assert.strictEqual(git(repo, ['rev-list', '--count', 'HEAD']), '1');
 });
 
+// #5324: the verify scenario builders sit on templates, keyed by their arguments.
+const verifyHelpers = require('./bin-lib/verify/cli-helpers');
+const verifyRules = (glob) => [{ match: glob, suites: ['unit'] }];
+for (const [name, make] of [
+  ['verify scopedRepo', () => verifyHelpers.scopedRepo(verifyRules('src/**'))],
+  ['verify flakyRepo()', () => verifyHelpers.flakyRepo()],
+  ['verify flakyRepo({ retryExit: 1 })', () => verifyHelpers.flakyRepo({ retryExit: 1 })],
+  ['verify baselineRepo', () => verifyHelpers.baselineRepo()],
+]) {
+  test(`AC1.1 AC1.2: ${name}: a second call starts no git process`, () => {
+    scratch.push(make().repo);
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(second.repo);
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+test('verify builders: per-call values match git, and different arguments never share a template', () => {
+  const s = verifyHelpers.scopedRepo(verifyRules('src/**'));
+  const s2 = verifyHelpers.scopedRepo(verifyRules('lib/**'));
+  const b = verifyHelpers.baselineRepo();
+  const fDefault = verifyHelpers.flakyRepo();
+  const fExit1 = verifyHelpers.flakyRepo({ retryExit: 1 });
+  scratch.push(s.repo, s2.repo, b.repo, fDefault.repo, fExit1.repo);
+  assert.strictEqual(s.branch, git(s.repo, ['symbolic-ref', '--short', 'HEAD']));
+  assert.ok(s.marker.startsWith(s.gitDir), s.marker);
+  assert.ok(s.unitCmd.includes(s.marker), s.unitCmd);
+  const rulesOf = (r) => JSON.parse(fs.readFileSync(path.join(r.repo, r.declPath), 'utf8')).rules;
+  assert.deepStrictEqual(rulesOf(s), verifyRules('src/**'));
+  assert.deepStrictEqual(rulesOf(s2), verifyRules('lib/**'));
+  assert.strictEqual(b.baseSha, git(b.repo, ['rev-parse', 'HEAD']));
+  assert.strictEqual(fDefault.branch, git(fDefault.repo, ['symbolic-ref', '--short', 'HEAD']));
+  assert.ok(fExit1.marker.startsWith(fExit1.repo), fExit1.marker);
+  assert.ok(fExit1.retryLog(0).startsWith(fExit1.gitDir), fExit1.retryLog(0));
+  assert.ok(fs.readFileSync(path.join(fExit1.repo, 'retry.js'), 'utf8').includes('process.exit(1)'));
+  assert.ok(fs.readFileSync(path.join(fDefault.repo, 'retry.js'), 'utf8').includes('process.exit(0)'));
+});
+test('Absorbed AC (identity): a fresh process building every owned fixture starts no git config user.name/user.email process', () => {
+  const trace = mk('ct-gt-trace-');
+  const script = [
+    "const [pre, verify] = process.argv.slice(1).map((p) => require(p));",
+    'pre.gitRepo(); pre.gitRepoWithCommit(); pre.gitRepoOnLocalMain();',
+    'pre.mainAndWorktree(); pre.mainAndWorktree({ localMain: true });',
+    'pre.unpinnedRepoWithOrigin();',
+    "verify.tmpGitRepo(); verify.scopedRepo([{ match: 'src/**', suites: ['unit'] }]); verify.flakyRepo(); verify.baselineRepo();",
+  ].join('\n');
+  const repoRoot = path.join(__dirname, '..');
+  const res = spawnSync(process.execPath, [
+    '-e', script,
+    path.join(repoRoot, 'tests', 'helpers', 'pre-tool-use'),
+    path.join(repoRoot, 'tests', 'bin-lib', 'verify', 'cli-helpers'),
+  ], { cwd: repoRoot, env: { ...process.env, GIT_TRACE2_EVENT: trace }, encoding: 'utf8' });
+  assert.strictEqual(res.status, 0, res.stderr);
+  const argvs = tracedArgvs(trace);
+  assert.ok(argvs.length > 0, 'control: the builders did trace git processes');
+  // The subcommand is the first word after `git` that is not an option or an option's value.
+  const configKeys = (argv) => {
+    let i = 1;
+    while (i < argv.length) {
+      if (argv[i] === '-C' || argv[i] === '-c') i += 2;
+      else if (argv[i].startsWith('-')) i += 1;
+      else break;
+    }
+    return argv[i] === 'config' ? argv.slice(i + 1) : [];
+  };
+  const offenders = argvs.filter((a) => configKeys(a).some((k) => k === 'user.name' || k === 'user.email'));
+  assert.deepStrictEqual(offenders, []);
+});
+
 test('template build runs with auto-maintenance off', () => {
   // The runner's own GIT_CONFIG_* (tools/run-tests.js) would mask a missing
   // append, so take them out for the duration and put them back after.
