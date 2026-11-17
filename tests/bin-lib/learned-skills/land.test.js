@@ -6,7 +6,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { capture, readManifest, realDeps } = require('../../../plugin/bin/lib/learned-skills/learned-skills.js');
+const { capture, readManifest, realDeps, headShortReader } = require('../../../plugin/bin/lib/learned-skills/learned-skills.js');
 const { land, stage } = require('../../../plugin/bin/lib/learned-skills/land.js');
 const cli = require('../../../plugin/bin/learned-skills-pr.js');
 
@@ -1155,4 +1155,82 @@ test('a malformed manifest entry fails land and stage naming the manifest and th
     assert.throws(() => stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason: 'r' }, { now: () => NOW }), want, problem);
   }
   assert.equal(remoteBranch(f), null);
+});
+
+const isHeadShort = (c) => JSON.stringify(c.args.slice(2)) === JSON.stringify(['rev-parse', '--short', 'HEAD']);
+const stagedAtLines = (res) => res.staged.map((s) => /^Staged-at: (.*)$/m.exec(fs.readFileSync(s.stagePath, 'utf8'))[1]);
+
+test('AC2.1: land() with two staged entries runs rev-parse --short HEAD once', (t) => {
+  const f = fixture(t);
+  sh(f.repo, ['remote', 'set-url', 'origin', path.join(f.root, 'missing.git')]);
+  const g = deps(fakeGh().gh);
+  const res = land(landArgs(f), g.deps);
+  assert.equal(res.staged.length, 2);
+  assert.equal(g.gitCalls.filter(isHeadShort).length, 1);
+  const short = sh(f.repo, ['rev-parse', '--short', 'HEAD']).trim();
+  assert.deepEqual(stagedAtLines(res), [short, short]);
+});
+
+test('land() with two entries failing apply --check at the build loop runs rev-parse --short HEAD once', (t) => {
+  const f = fixture(t, { originConflict: true }); // origin already conflicts with X's patch
+  const other = path.join(f.root, 'other-z');
+  sh(f.root, ['clone', '-q', f.origin, other]);
+  write(other, Z, '# z\n\nline one\nline two\nline three\nline four\nCHANGED five\nCHANGED six\nCHANGED seven\n');
+  sh(other, ['commit', '-q', '-am', 'conflicting change to z']);
+  sh(other, ['push', '-q', 'origin', 'main']);
+  const g = deps(fakeGh().gh);
+  const res = land(landArgs(f), g.deps);
+  assert.equal(res.staged.length, 2);
+  assert.ok(res.staged.every((s) => /git apply --check/.test(s.reason)));
+  assert.equal(g.gitCalls.filter(isHeadShort).length, 1);
+  const short = sh(f.repo, ['rev-parse', '--short', 'HEAD']).trim();
+  assert.deepEqual(stagedAtLines(res), [short, short]);
+});
+
+test('land() with a failed push stages two entries with one rev-parse --short HEAD', (t) => {
+  const f = fixture(t);
+  fs.writeFileSync(path.join(f.origin, 'hooks', 'pre-receive'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const g = deps(fakeGh().gh);
+  const res = land(landArgs(f), g.deps);
+  assert.equal(res.staged.length, 2);
+  assert.match(res.staged[0].reason, /push of learned-skills\//);
+  assert.equal(g.gitCalls.filter(isHeadShort).length, 1);
+  const short = sh(f.repo, ['rev-parse', '--short', 'HEAD']).trim();
+  assert.deepEqual(stagedAtLines(res), [short, short]);
+});
+
+test('stage() with two captured entries runs rev-parse --short HEAD once', (t) => {
+  const f = fixture(t);
+  const g = deps(fakeGh().gh);
+  const res = stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason: 'integration-model is local-merge' }, g.deps);
+  assert.equal(res.staged.length, 2);
+  assert.equal(g.gitCalls.filter(isHeadShort).length, 1);
+  const short = sh(f.repo, ['rev-parse', '--short', 'HEAD']).trim();
+  assert.deepEqual(stagedAtLines(res), [short, short]);
+});
+
+test('a failed HEAD read is asked again for the next entry', (t) => {
+  const f = fixture(t);
+  const g = deps(fakeGh().gh);
+  let asks = 0;
+  const realGit = g.deps.git;
+  g.deps.git = (args, opts) => {
+    if (isHeadShort({ args })) { asks += 1; if (asks === 1) throw new Error('boom'); }
+    return realGit(args, opts);
+  };
+  const res = stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason: 'integration-model is local-merge' }, g.deps);
+  assert.equal(res.staged.length, 2);
+  assert.equal(asks, 2);
+  const short = sh(f.repo, ['rev-parse', '--short', 'HEAD']).trim();
+  assert.deepEqual(stagedAtLines(res), ['unknown', short]);
+});
+
+test('an empty HEAD read is not kept: the next ask reads git again, and a non-empty answer is kept', () => {
+  const answers = ['\n', 'abc1234\n'];
+  let calls = 0;
+  const readHead = headShortReader('/wt', { git: () => { calls += 1; return answers.shift(); } });
+  assert.equal(readHead(), 'unknown');
+  assert.equal(readHead(), 'abc1234');
+  assert.equal(readHead(), 'abc1234');
+  assert.equal(calls, 2);
 });

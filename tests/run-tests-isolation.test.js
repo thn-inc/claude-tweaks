@@ -18,6 +18,7 @@ const {
   resolveConcurrency, resolveSlots, listTestFiles, buildTestArgs,
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
   subsetFallbackReason, gitFixtureConfigEnv, appendGitConfigEnv, writeGitTemplateDir, GIT_TEMPLATE_CONFIG, NODE_TEST_VALUE_FLAGS, parseRunnerOperands, canonicalPath,
+  runnerChildEnv, isTemplateSampleHook,
 } = require(path.join(ROOT, 'tools', 'run-tests.js'));
 
 test('resolveConcurrency defaults to half the cores, at least 1', () => {
@@ -1857,6 +1858,77 @@ test('writeGitTemplateDir does not append its keys twice to a nested runner\'s t
     gitSucceeds(['init', '-q', repo], env);
     gitSucceeds(['-C', repo, 'config', 'gc.auto', '1'], env);
   });
+});
+
+test('AC2.1: writeGitTemplateDir ships empty hooks/ and an info/ dir, and drops an inherited template\'s sample hooks', () => {
+  withGitTemp((tmp) => {
+    const dir = path.join(tmp, 'tpl');
+    assert.strictEqual(writeGitTemplateDir(dir, envWithoutGitConfig()), dir);
+    assert.ok(fs.statSync(path.join(dir, 'hooks')).isDirectory());
+    const hooks = fs.readdirSync(path.join(dir, 'hooks'));
+    assert.deepStrictEqual(hooks.filter((n) => n.endsWith('.sample')), [], `no sample hook: ${hooks.join(', ')}`);
+    assert.ok(fs.statSync(path.join(dir, 'info')).isDirectory());
+    assert.ok(fs.existsSync(path.join(dir, 'info', 'exclude')));
+
+    const inherited = path.join(tmp, 'inherited');
+    fs.mkdirSync(path.join(inherited, 'hooks'), { recursive: true });
+    fs.writeFileSync(path.join(inherited, 'hooks', 'pre-commit.sample'), '#!/bin/sh\n');
+    fs.writeFileSync(path.join(inherited, 'hooks', 'post-checkout'), '#!/bin/sh\n');
+    const fromInherited = path.join(tmp, 'tpl-inherited');
+    assert.strictEqual(writeGitTemplateDir(fromInherited, { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: inherited }), fromInherited);
+    assert.deepStrictEqual(fs.readdirSync(path.join(fromInherited, 'hooks')), ['post-checkout']);
+  });
+});
+
+test('writeGitTemplateDir ships an empty hooks/ even when the inherited template has none', () => {
+  withGitTemp((tmp) => {
+    const inherited = path.join(tmp, 'inherited');
+    fs.mkdirSync(path.join(inherited, 'info'), { recursive: true });
+    const dir = path.join(tmp, 'tpl-inherited');
+    assert.strictEqual(writeGitTemplateDir(dir, { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: inherited }), dir);
+    assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'hooks')), []);
+    assert.ok(fs.statSync(path.join(dir, 'info')).isDirectory());
+  });
+});
+
+// Node 20's fs.cpSync hands its filter a namespaced `src` on win32, so a plain dirname compare
+// against the inherited template's hooks dir never matched there and its samples were kept.
+test('isTemplateSampleHook matches a sample hook given as a namespaced win32 path', () => {
+  const hooksDir = 'C:\\ci\\tpl\\hooks';
+  const ns = (leaf) => `\\\\?\\C:\\ci\\tpl\\hooks\\${leaf}`;
+  assert.strictEqual(isTemplateSampleHook(ns('pre-commit.sample'), hooksDir, path.win32), true);
+  assert.strictEqual(isTemplateSampleHook('C:\\ci\\tpl\\hooks\\pre-commit.sample', hooksDir, path.win32), true);
+  assert.strictEqual(isTemplateSampleHook(ns('pre-commit.sample'), `\\\\?\\${hooksDir}`, path.win32), true);
+  assert.strictEqual(isTemplateSampleHook(ns('post-checkout'), hooksDir, path.win32), false);
+  assert.strictEqual(isTemplateSampleHook(`\\\\?\\C:\\ci\\tpl\\hooks\\sub\\x.sample`, hooksDir, path.win32), false);
+  assert.strictEqual(isTemplateSampleHook(`\\\\?\\C:\\ci\\tpl\\info\\x.sample`, hooksDir, path.win32), false);
+  assert.strictEqual(isTemplateSampleHook('/t/hooks/pre-commit.sample', '/t/hooks', path.posix), true);
+  assert.strictEqual(isTemplateSampleHook('/t/hooks/post-checkout', '/t/hooks', path.posix), false);
+  assert.strictEqual(isTemplateSampleHook('/t/info/x.sample', '/t/hooks', path.posix), false);
+});
+
+test('runnerChildEnv returns the runner\'s child env', () => {
+  const env = { PATH: '/bin', TMPDIR: '/old', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'a.b', GIT_CONFIG_VALUE_0: 'c', GIT_TEMPLATE_DIR: '/outer-tpl' };
+  const before = { ...env };
+  const runRoot = path.join('/runs', 'r1');
+  const common = {
+    PATH: '/bin',
+    GIT_CONFIG_COUNT: '3',
+    GIT_CONFIG_KEY_0: 'a.b', GIT_CONFIG_VALUE_0: 'c',
+    GIT_CONFIG_KEY_1: 'maintenance.auto', GIT_CONFIG_VALUE_1: 'false',
+    GIT_CONFIG_KEY_2: 'gc.auto', GIT_CONFIG_VALUE_2: '0',
+    TMPDIR: runRoot, TMP: runRoot, TEMP: runRoot,
+    CT_TEST_SUITE_SLOT_HELD: '1',
+    CT_HOOKS_REPO_INFO_STORE: path.join(runRoot, 'repo-info-cache.json'),
+  };
+  assert.deepStrictEqual(runnerChildEnv(env, { runRoot, templateDir: '/tpl' }), { ...common, GIT_TEMPLATE_DIR: '/tpl' });
+  // No template: the inherited GIT_TEMPLATE_DIR passes through untouched, as the runner always did.
+  assert.deepStrictEqual(runnerChildEnv(env, { runRoot, templateDir: null }), { ...common, GIT_TEMPLATE_DIR: '/outer-tpl' });
+  const noTpl = { ...env };
+  delete noTpl.GIT_TEMPLATE_DIR;
+  const got = runnerChildEnv(noTpl, { runRoot, templateDir: null });
+  assert.ok(!('GIT_TEMPLATE_DIR' in got), Object.keys(got).join(', '));
+  assert.deepStrictEqual(env, before, 'env is not mutated');
 });
 
 test('writeGitTemplateDir returns null when git fails', () => {

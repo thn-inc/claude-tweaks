@@ -12,7 +12,7 @@ References inside the blocks below to "this file" and to a `## Next Actions` sec
 ## Wrap-Up: {Record #{n} — {title}   |   {topic}}
 {Origin: {origin} — record mode only; the materialized header's origin field:
 by:code-health / by:harness-health / by:journey-health / by:docs-health /
-by:capture / by:dispatch, or "human" when absent. Omit entirely in
+by:ci-health / by:capture / by:dispatch, or "human" when absent. Omit entirely in
 conversation mode and for legacy spec-file-mode runs.}
 
 ### Verdict

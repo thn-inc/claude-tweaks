@@ -6,6 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { archiveRunDir } = require('../../../plugin/bin/lib/reconcile/archive-merged');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 // archiveRunDir's tracked-entry guard exempts the run dir's `work/` subtree via
 // `isPathContained(abs, workDir, { orEqual: true })` (#3498 replaced a
@@ -22,9 +23,7 @@ function git(cwd, ...args) {
 
 function makeRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-work-boundary-'));
-  git(dir, 'init', '-b', 'main');
-  git(dir, 'config', 'user.email', 't@t');
-  git(dir, 'config', 'user.name', 't');
+  initRepo(dir, { branch: 'main', name: 't', email: 't@t' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
   git(dir, 'add', 'a.txt');
   git(dir, 'commit', '-m', 'init');

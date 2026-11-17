@@ -14,6 +14,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { chmodDenialSkip } = require('../../helpers/root');
 const { runCliSync } = require('../../helpers/run-cli');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'wrap-up-engine.js');
 const { runVerify, resolveArchivedRunDir } = require('../../../plugin/bin/lib/wrap-up/engine-verify');
@@ -41,9 +42,7 @@ function ghAbsentPath() {
 function makeRepo() {
   const repo = fs.realpathSync(tmpDir('verify-json-cli-'));
   const g = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8' }).trim();
-  g('init', '-q');
-  g('config', 'user.email', 'test@example.com');
-  g('config', 'user.name', 'Test');
+  initRepo(repo, { name: 'Test', email: 'test@example.com', cwd: repo, encoding: 'utf8' });
   fs.writeFileSync(path.join(repo, 'README.md'), '# fixture\n');
   g('add', '.');
   g('commit', '-q', '-m', 'base');

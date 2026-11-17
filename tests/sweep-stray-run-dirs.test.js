@@ -10,6 +10,7 @@ const {
   sweep, hasTrackedWork, foldEventsJsonl, listStrayRunDirs,
 } = require('../plugin/bin/sweep-stray-run-dirs');
 const { runCliSync, spawnCli } = require('./helpers/run-cli');
+const { initRepo } = require('./helpers/git-fixtures');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'sweep-stray-run-dirs.js');
 
@@ -23,9 +24,7 @@ function trackedFiles(root) {
 
 function makeRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-strays-'));
-  git(dir, 'init', '-b', 'main');
-  git(dir, 'config', 'user.email', 't@t');
-  git(dir, 'config', 'user.name', 't');
+  initRepo(dir, { name: 't', email: 't@t', branch: 'main', cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
   git(dir, 'add', 'a.txt');
   git(dir, 'commit', '-m', 'init');
@@ -310,9 +309,7 @@ test('AC8.1: a relative --root and --log resolve against deps.cwd()', () => {
   try {
     const root = path.join(parent, 'repo');
     fs.mkdirSync(root);
-    git(root, 'init', '-b', 'main');
-    git(root, 'config', 'user.email', 't@t');
-    git(root, 'config', 'user.name', 't');
+    initRepo(root, { name: 't', email: 't@t', branch: 'main', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     commitPath(root, `${PIPELINES}/2026-08-01T090000-spec-1/work/1-spec.md`, '# 1\n');
     const res = runCliSync(CLI, ['--root', 'repo', '--log', 'sweep-rel.log'], { cwd: parent, env: cleanEnv() });
     assert.equal(res.code, 0);

@@ -685,6 +685,7 @@ test('AC1.1: a tree entry named café.json round-trips through readTreeEntries a
   const fs = require('node:fs');
   const os = require('node:os');
   const path = require('node:path');
+  const { writeIdentity } = require('../../helpers/git-fixtures');
   const g = (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'durable-state-z-'));
   try {
@@ -692,8 +693,7 @@ test('AC1.1: a tree entry named café.json round-trips through readTreeEntries a
     const clone = path.join(dir, 'clone');
     g(['init', '--bare', '-q', '-b', 'main', origin]);
     g(['clone', '-q', origin, clone]);
-    g(['-C', clone, 'config', 'user.email', 'test@example.com']);
-    g(['-C', clone, 'config', 'user.name', 'Test']);
+    writeIdentity(clone, { name: 'Test', email: 'test@example.com' });
     g(['-C', clone, 'config', 'core.quotepath', 'true']);
 
     const cafeSpec = [{ key: 'cafe', file: 'café.json', default: {} }];

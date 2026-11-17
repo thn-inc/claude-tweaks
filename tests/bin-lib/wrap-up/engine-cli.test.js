@@ -13,7 +13,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnCli, runCliSync } = require('../../helpers/run-cli');
-const { cleanGitEnv, committedRepo } = require('../../helpers/git-fixtures');
+const { cleanGitEnv, committedRepo, initRepo } = require('../../helpers/git-fixtures');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'wrap-up-engine.js');
 
@@ -31,9 +31,7 @@ function run(args, { cwd, input } = {}) {
 
 before(() => {
   repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-engine-cli-'));
-  git(['init', '-q'], repoDir);
-  git(['config', 'user.email', 'test@example.com'], repoDir);
-  git(['config', 'user.name', 'Test'], repoDir);
+  initRepo(repoDir, { name: 'Test', email: 'test@example.com', cwd: repoDir, encoding: 'utf8' });
 
   fs.writeFileSync(
     path.join(repoDir, 'CLAUDE.md'),
@@ -176,9 +174,7 @@ function withLinkedWorktree(fn) {
   const wtParent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-wt-'));
   const wtDir = path.join(wtParent, 'wt');
   try {
-    git(['init', '-q'], mainDir);
-    git(['config', 'user.email', 'test@example.com'], mainDir);
-    git(['config', 'user.name', 'Test'], mainDir);
+    initRepo(mainDir, { name: 'Test', email: 'test@example.com', cwd: mainDir, encoding: 'utf8' });
     fs.writeFileSync(path.join(mainDir, 'CLAUDE.md'), '# Test project\n');
     fs.mkdirSync(path.join(mainDir, 'docs', 'journeys'), { recursive: true });
     fs.writeFileSync(
@@ -642,9 +638,7 @@ test('render against a run dir with no engine-state.json exits 2', () => {
 test('render --section trace --strict with the original run dir path renders identically after the run is archived', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-render-archive-'));
   try {
-    git(['init', '-q'], repo);
-    git(['config', 'user.email', 'test@example.com'], repo);
-    git(['config', 'user.name', 'Test'], repo);
+    initRepo(repo, { name: 'Test', email: 'test@example.com', cwd: repo, encoding: 'utf8' });
     fs.writeFileSync(path.join(repo, 'README.md'), '# Archive fixture\n');
     git(['add', '.'], repo);
     git(['commit', '-q', '-m', 'base'], repo);

@@ -8,7 +8,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { FIXTURE_TIMEOUT_MS } = require('../../helpers/git-fixtures');
+const { FIXTURE_TIMEOUT_MS, writeIdentity } = require('../../helpers/git-fixtures');
 const { run } = require('../../../plugin/bin/check-staged-stack');
 const { gitEnv } = require('../../../plugin/bin/lib/staged-patch/stack-check');
 const { readText } = require('../../helpers/read-skill');
@@ -27,8 +27,7 @@ function gitRepo(t, content) {
     return r;
   };
   runOk('init', '-q');
-  runOk('config', 'user.email', 'stack-check@example.invalid');
-  runOk('config', 'user.name', 'stack-check');
+  writeIdentity(dir, { name: 'stack-check', email: 'stack-check@example.invalid' });
   fs.writeFileSync(path.join(dir, 'f.txt'), content);
   runOk('add', 'f.txt');
   runOk('commit', '-q', '-m', 'base');

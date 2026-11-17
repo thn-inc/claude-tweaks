@@ -14,6 +14,7 @@ const { execFileSync } = require('node:child_process');
 const { run, renderText } = require('../plugin/bin/load-delta');
 const { readText } = require('./helpers/read-skill');
 const { fromTemplate } = require('./helpers/git-template');
+const { initRepo } = require('./helpers/git-fixtures');
 
 const REPO = path.join(__dirname, '..');
 
@@ -30,9 +31,7 @@ function write(root, rel, text) {
 // A repo with one commit on main, recorded as origin/main, then optional head edits.
 function makeRepo(baseFiles, { origin = true } = {}) {
   return fromTemplate(JSON.stringify([baseFiles, origin]), (dir) => {
-    git(dir, 'init', '-q', '-b', 'main');
-    git(dir, 'config', 'user.email', 't@example.com');
-    git(dir, 'config', 'user.name', 't');
+    initRepo(dir, { name: 't', email: 't@example.com', branch: 'main', cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     for (const [rel, text] of Object.entries(baseFiles)) write(dir, rel, text);
     git(dir, 'add', '-A');
     git(dir, 'commit', '-q', '-m', 'base');

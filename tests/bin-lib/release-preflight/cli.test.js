@@ -9,6 +9,7 @@ const { execFileSync } = require('child_process');
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'release-preflight.js');
 const { run, parseArgs } = require(CLI);
 const { pathWithOnly } = require('../../helpers/path-stub');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 // `gh` has to be genuinely unfindable for the real-binary test below, and a
 // PATH assembled naively from git's and node's own directories does not
@@ -22,7 +23,7 @@ const BIN_PATH = pathWithOnly(['git', 'node'], { exclude: ['gh'] });
 function mainCheckoutWithRun() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'release-preflight-cli-')));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't'); git('commit', '-q', '--allow-empty', '-m', 'init'); git('branch', '-M', 'main');
+  initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); git('commit', '-q', '--allow-empty', '-m', 'init'); git('branch', '-M', 'main');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-model: local-merge\n');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-09-12T000000-record-2255');

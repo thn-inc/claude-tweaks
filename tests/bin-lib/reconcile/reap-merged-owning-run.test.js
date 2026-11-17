@@ -11,6 +11,7 @@ const { writeRunState } = require('../../../plugin/bin/lib/hooks/context');
 const { closeRunState } = require('../../../plugin/bin/lib/hooks/close-run-state');
 const { createPrStateResolver } = require('../../../plugin/bin/lib/reconcile/pr-state-cache');
 const { caseInsensitiveFs } = require('../../helpers/case-insensitive-fs');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 function git(cwd, ...args) {
   return cp.execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
@@ -20,9 +21,7 @@ function git(cwd, ...args) {
 // a run dir whose run-state.json names that worktree.
 function buildReapableFixture() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-owning-')));
-  git(root, 'init', '-q', '-b', 'main');
-  git(root, 'config', 'user.email', 't@t');
-  git(root, 'config', 'user.name', 't');
+  initRepo(root, { branch: 'main', name: 't', email: 't@t' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'a\n');
   git(root, 'add', 'a.txt');
   git(root, 'commit', '-q', '-m', 'init');

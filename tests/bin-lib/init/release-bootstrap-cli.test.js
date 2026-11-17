@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { runCliSync, spawnCli } = require('../../helpers/run-cli');
+const { writeIdentity } = require('../../helpers/git-fixtures');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'release-bootstrap.js');
 
@@ -84,8 +85,7 @@ test('AC9.1: the git tag child reads the repo named by the injected env', () => 
   const mk = (prefix) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
     git(dir, 'init', '-b', 'main');
-    git(dir, 'config', 'user.email', 't@t');
-    git(dir, 'config', 'user.name', 't');
+    writeIdentity(dir, { name: 't', email: 't@t' });
     fs.writeFileSync(path.join(dir, 'README.md'), 'x\n');
     git(dir, 'add', 'README.md');
     git(dir, 'commit', '-m', 'init');

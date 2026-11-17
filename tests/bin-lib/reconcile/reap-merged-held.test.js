@@ -10,6 +10,7 @@ const { reapMerged } = require('../../../plugin/bin/lib/reconcile/reap-merged');
 const { writeRunState, ownerBlock } = require('../../../plugin/bin/lib/hooks/context');
 const { holdKey, writeHold, holdDirOf } = require('../../../plugin/bin/lib/hooks/worktree-hold');
 const { createPrStateResolver } = require('../../../plugin/bin/lib/reconcile/pr-state-cache');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 function git(cwd, ...args) {
   return cp.execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
@@ -19,9 +20,7 @@ function git(cwd, ...args) {
 // harness-domain linked worktree, and a run dir whose run-state.json names that worktree.
 function buildReapableFixture() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-held-')));
-  git(root, 'init', '-q', '-b', 'main');
-  git(root, 'config', 'user.email', 't@t');
-  git(root, 'config', 'user.name', 't');
+  initRepo(root, { branch: 'main', name: 't', email: 't@t' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'a\n');
   git(root, 'add', 'a.txt');
   git(root, 'commit', '-q', '-m', 'init');
