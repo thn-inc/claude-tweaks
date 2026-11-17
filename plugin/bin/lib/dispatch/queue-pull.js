@@ -41,7 +41,8 @@
 //
 // `omit` (queuePull option) takes reasons or ids and removes that pass's own filtering and
 // appends and nothing else, with one exception: omitting either blocker-landing reason skips the
-// shared call, so both reasons. runPasses ALWAYS calls every pass's runner and exposes the omit
+// shared call, so both reasons; the eligibility screen for non-array labels always runs, and its
+// `malformed-blocker` append follows `blocker-landing`'s omit. runPasses ALWAYS calls every pass's runner and exposes the omit
 // set as `ctx.omit` (a Set of ids); each runner skips only its own filtering and appends when
 // `ctx.omit.has(<its id>)` and runs its shared steps regardless (for example `oversized` owns the
 // grouping block that writes dispatch-groups.json and the `blocked` appends, and `target-missing`
@@ -355,6 +356,7 @@ function makeContext(options = {}, deps = {}) {
     nativeUnreadable: false, // #5309: the native-blockers query failed closed; every eligible record is excluded
     depUnreadable: false, // #5311: a dependency view or the verified-open-deps file failed closed; nothing is written back
     depFreshFailed: false, // #5310: the write-back's dependency-freshness search failed; nothing is written back
+    labelsSkipped: false, // #5315: a record with non-array labels was excluded at eligibility; nothing is written back
     standaloneDir: '',
     typedNumbers: new Set(), // #5584: the named records admitted on a typed command (fetch pass)
     integrationBranch: '',
@@ -590,8 +592,16 @@ function runBlocked(ctx) {
   });
 
   step(ctx, 'eligible-pre-dep', () => {
-    const issues = readJson(paths['dispatch-queue-raw.json']);
+    const queued = readJson(paths['dispatch-queue-raw.json']);
     const openNumbers = new Set(readJson(f.openNumbers).map((i) => i.number));
+    // #5315 (fence 151-152, 159): a non-array labels value is excluded on its own; the pull writes no cache.
+    const issues = queued.filter((i) => {
+      if (i.labels == null || Array.isArray(i.labels)) return true;
+      if (!omit.has('blocker-landing')) appendExclusion(paths['dispatch-exclusions.json'], { reason: 'malformed-blocker', records: [i.number], detail: { cause: 'its labels are not an array' } });
+      deps.stderr(`Warning: #${i.number} excluded — its labels are not an array\n`);
+      state.labelsSkipped = true;
+      return false;
+    });
     const eligiblePreDep = issues
       .map((i) => ({ ...i, facets: parseRecordFacets(i.labels) }))
       .filter((i) => (i.facets.grants.build || state.typedNumbers.has(i.number)) && !i.facets.bot.inProgress && !i.facets.bot.blocked && !i.facets.bot.parked);
@@ -779,6 +789,7 @@ function runWriteBack(ctx) {
   if (state.nativeUnreadable) return; // #5309: a failed native read is never persisted as a verdict
   if (state.depUnreadable) return; // #5311: nor is a fail-closed dependency verdict
   if (state.depFreshFailed) return; // #5310: nor a freshness signal missing its dependencies
+  if (state.labelsSkipped) return; // #5315: nor a pull that excluded a non-array-labels record
   if (state.typedNumbers.size > 0) return; // a typed record must not reach a later drain's cache hit (#5584)
   step(ctx, 'write-back', () => {
     const root = rootOf(ctx);

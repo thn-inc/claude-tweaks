@@ -19,12 +19,11 @@
 // One exit-code mapping, not a normalization (R4): where the fence stops (`exit 1`), the CLI exits 4,
 // so the parity tests compare a stopped pair's statuses as 1 and 4 and everything else as is.
 //
-// Script defects the parity matrix (Task 8) shows, reproduced by the module, never fixed:
-//   - A candidate whose `labels` is not an array (SMalformed's #9020) throws inside the eligibility
-//     block (record-vocabulary.js's normalizeLabelNames calls .map on it), so the eligible list is
-//     never written and the pull stops at the group-building check: one malformed record stops
-//     every candidate, the clean #9001 included (a cross-candidate effect, on the run ledger).
 // Script behavior the fault rows (Task 9) show, reproduced by the module (some since fixed, noted per bullet):
+//   - A candidate whose `labels` is not an array (SMalformed's #9020) threw inside the eligibility
+//     block, so one malformed record stopped every candidate; fixed by #5315: it is excluded as
+//     malformed-blocker with one Warning, the pull writes no queue-order cache, and the clean #9001
+//     dispatches.
 //   - D1 (a second pull in one session whose open-numbers fetch fails) reused the first pull's
 //     eligibility files and wrote its groups back under the new freshness signal; fixed by #5314:
 //     the miss path removes them first, so the pull stops at group-building as a fresh session does.
@@ -797,6 +796,64 @@ test('AC2.1 blocked: #9002 (Blocked by open #8000) is excluded and leaves the gr
   assert.deepEqual(omitted.json('dispatch-blocked-excluded-body.json'), []);
   assert.equal(omitted.store.written.length, 0, 'an omit run never persists a blob its groups would misdescribe');
   assert.equal(pull(S1()).store.written.length, 1, 'a normal run still writes back');
+});
+
+// #5315: the eligibility step's Warning for a non-array labels value, read from the fence.
+const LABELS_WARNING_RE = /console\.error\('(Warning: #)' \+ i\.number \+ '([^']*)'\)/;
+const labelsWarning = (n) => {
+  const m = FENCE.match(LABELS_WARNING_RE);
+  assert.ok(m, `the fence no longer matches ${LABELS_WARNING_RE}`);
+  return `${m[1]}${n}${m[2]}\n`;
+};
+const LABELS_ENTRY_9020 = { reason: 'malformed-blocker', records: [9020], detail: { cause: 'its labels are not an array' } };
+const withQueue = (scenario, records) => ({ ...scenario, gh: scenario.gh.map((e) => (e.argv && e.argv.join() === QUEUE_ARGV.join() ? { ...e, stdout: JSON.stringify(records) + '\n' } : e)) });
+const count = (hay, needle) => hay.split(needle).length - 1;
+
+test('AC1.1 (#5315): a record whose labels is a string is excluded as malformed-blocker with one Warning, #9001 is grouped, and no queue-order cache is written', () => {
+  const r = pull(SMalformed('labels'));
+  assert.equal(r.thrown, null);
+  assert.doesNotMatch(r.stderr, /queue-pull:/);
+  assert.equal(labelsWarning(9020), 'Warning: #9020 excluded — its labels are not an array\n');
+  assert.equal(count(r.stderr, labelsWarning(9020)), 1);
+  assert.deepEqual(entriesOf(r, 'malformed-blocker'), [LABELS_ENTRY_9020]);
+  assert.deepEqual(groupNumbers(r), [[9001]]);
+  assert.equal(r.store.written.length, 0);
+});
+
+test('#5315 Review Focus: null labels stay silent and write back; object and number labels are excluded; omit keeps the screen but drops the entry; a typed string-labels record is excluded; an all-malformed queue yields empty groups', () => {
+  const q = (labels) => withQueue(SMalformed('labels'), [ghRecord(9001, { body: withBody(9001) }), { ...ghRecord(9020, { body: withBody(9020) }), labels }]);
+
+  const nul = pull(q(null));
+  assert.ok(!nul.stderr.includes('#9020'));
+  assert.deepEqual(entriesOf(nul, 'malformed-blocker'), []);
+  assert.deepEqual(groupNumbers(nul), [[9001]]);
+  assert.equal(nul.store.written.length, 1);
+
+  for (const labels of [{ name: 'auto:build' }, 42]) {
+    const r = pull(q(labels));
+    assert.equal(count(r.stderr, labelsWarning(9020)), 1, JSON.stringify(labels));
+    assert.deepEqual(entriesOf(r, 'malformed-blocker'), [LABELS_ENTRY_9020], JSON.stringify(labels));
+    assert.deepEqual(groupNumbers(r), [[9001]], JSON.stringify(labels));
+    assert.equal(r.store.written.length, 0, JSON.stringify(labels));
+  }
+
+  const omitted = pull(SMalformed('labels'), { omit: ['malformed-blocker'] });
+  assert.equal(omitted.thrown, null);
+  assert.equal(count(omitted.stderr, labelsWarning(9020)), 1);
+  assert.deepEqual(entriesOf(omitted, 'malformed-blocker'), []);
+  assert.ok(groupNumbers(omitted).flat().includes(9001));
+  assert.ok(!groupNumbers(omitted).flat().includes(9020));
+
+  const typed = pull(SMalformed('labels'), { before: (ctx) => ctx.state.typedNumbers.add(9020) });
+  assert.equal(count(typed.stderr, labelsWarning(9020)), 1);
+  assert.deepEqual(entriesOf(typed, 'malformed-blocker'), [LABELS_ENTRY_9020]);
+  assert.deepEqual(groupNumbers(typed), [[9001]]);
+
+  const all = pull(withQueue(SMalformed('labels'), [{ ...ghRecord(9020, { body: withBody(9020) }), labels: 'auto:build' }]));
+  assert.equal(all.thrown, null);
+  assert.equal(count(all.stderr, labelsWarning(9020)), 1);
+  assert.deepEqual(entriesOf(all, 'malformed-blocker'), [LABELS_ENTRY_9020]);
+  assert.deepEqual(all.json('dispatch-groups.json'), []);
 });
 
 test('AC2.2 oversized: three fast-lane singletons bundle into one group over a guard of 2; omitting the pass keeps the group and bundle, writes no entry', () => {
@@ -3421,35 +3478,31 @@ describe('#5227 parity (AC5, portability)', { skip: oracleSkip(), timeout: 600_0
     t.diagnostic(`AC5/portability: ${EXTRA.length} pairs (${EXTRA.length * 2} runs), pool ${POOL}, wall ${timing.ms} ms`);
   });
 
-  test('AC5.2: non-array labels, a non-string body and an invalid Blocked-by number are handled as the script handles them, and #9001\'s verdict matches the oracle\'s', () => {
+  test('AC5.2 / AC1.1 (#5315): non-array labels, a non-string body and an invalid Blocked-by number each exclude only their own record, and #9001\'s verdict matches the oracle\'s', () => {
     const verdict = (r) => ({
       grouped: r.files['dispatch-groups.json'] ? groupedIn(r).includes(9001) : null,
       reasons: r.files['dispatch-exclusions.json'] ? exclusionsIn(r).filter((e) => e.records.includes(9001)).map((e) => e.reason) : null,
     });
-    // Non-array labels: the script stops the whole pull at the group-building check (header).
-    for (const name of ['SMalformed-gh-miss', 'SMalformed-labels']) {
-      const pair = R[name];
-      assertClean(pair, name);
-      assertParity(pair.oracle, stopMapped(pair.oracle, pair.module), { files: AC1_FILES });
-      for (const [side, r] of sides(pair)) {
-        assert.deepEqual(reported(r.stderr), [`${GROUPING_STOP_RE.exec(FENCE)[1]}1${GROUPING_STOP_RE.exec(FENCE)[2]}`], `${name} ${side}`);
-        assert.equal(r.files['dispatch-groups.json'], '', `${name} ${side}: the grouping redirect truncated the groups file`);
-      }
-      assert.deepEqual(verdict(pair.module), verdict(pair.oracle), `${name}: #9001's verdict`);
-    }
-    // A non-string body: not-spec-shaped. An invalid Blocked-by number: malformed-blocker.
-    const expected = {
-      'SMalformed-body': { reason: 'not-spec-shaped', records: [9021], detail: { missing: ['Current State', 'Deliverables', 'Acceptance Criteria', 'Release Note'] } },
-      'SMalformed-blocker': { reason: 'malformed-blocker', records: [9022], detail: { cause: 'a Blocked by line names no valid issue number (#99999999999)' } },
-    };
-    for (const [name, entry] of Object.entries(expected)) {
+    const NOT_SPEC_9021 = { reason: 'not-spec-shaped', records: [9021], detail: { missing: ['Current State', 'Deliverables', 'Acceptance Criteria', 'Release Note'] } };
+    const MALFORMED_BLOCKER_9022 = { reason: 'malformed-blocker', records: [9022], detail: { cause: 'a Blocked by line names no valid issue number (#99999999999)' } };
+    const TABLE = [
+      { name: 'SMalformed-gh-miss', entries: [LABELS_ENTRY_9020, NOT_SPEC_9021, MALFORMED_BLOCKER_9022], warns: true },
+      { name: 'SMalformed-labels', entries: [LABELS_ENTRY_9020], warns: true },
+      { name: 'SMalformed-body', entries: [NOT_SPEC_9021], warns: false },
+      { name: 'SMalformed-blocker', entries: [MALFORMED_BLOCKER_9022], warns: false },
+    ];
+    for (const { name, entries, warns } of TABLE) {
       const pair = R[name];
       assertClean(pair, name);
       assert.equal(pair.oracle.status, 0, pair.oracle.stderr.slice(-3000));
+      assert.equal(pair.module.status, 0, pair.module.stderr.slice(-3000));
       assertParity(pair.oracle, pair.module, { files: AC1_FILES });
       for (const [side, r] of sides(pair)) {
-        assert.deepEqual(exclusionsIn(r), [entry], `${name} ${side}`);
+        assert.deepEqual(exclusionsIn(r), entries, `${name} ${side}`);
         assert.deepEqual(groupedIn(r), [9001], `${name} ${side}: the clean record is dispatchable`);
+        if (warns) assert.ok(reported(r.stderr).includes(labelsWarning(9020).trimEnd()), `${name} ${side}: the labels Warning`);
+        if (warns) assert.equal(r.orderBlob, null, `${name} ${side}: a non-array-labels pull writes no queue-order blob`);
+        else assert.ok(r.orderBlob, `${name} ${side}: a pull without non-array labels persists its blob (control)`);
       }
       assert.deepEqual(verdict(pair.module), verdict(pair.oracle), `${name}: #9001's verdict`);
       assert.deepEqual(verdict(pair.oracle), { grouped: true, reasons: [] });

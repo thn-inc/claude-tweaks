@@ -29,9 +29,10 @@
 //           api repos/fixture-owner/fixture-repo/compare/main...c0ffee…01 --jq .status   (owner=fixture-owner repo=fixture-repo)
 //   S2      <foreign: c0> o0=acme-corp n0=other | <native: i9001,i9030> | <native: i9001> | <linked: i9001>
 //   SEmpty  the common calls only (no linked query: no group number)
-//   SMalformed, SMalformed('labels')  the queue and open-numbers pulls (and --version), then the stop
-//   SMalformed('body')  <linked: i9001> | SMalformed('blocker')  issue list --search #99999999999 (never
-//           live-checked) | <linked: i9001,i9022>
+//   SMalformed (all three)  issue list --search #99999999999 (never live-checked) | <linked: i9001,i9022>
+//           (#9020 is excluded at eligibility, #5315; #9021 by the shape gate)
+//   SMalformed('labels'), SMalformed('body')  <linked: i9001>
+//   SMalformed('blocker')  issue list --search #99999999999 | <linked: i9001,i9022>
 //   SPortable  issue view 8001 | issue list --search #8001 | <linked: i9040,i9041,i9042> | <landing: b8001>
 //           api repos/acme-corp/widgets/compare/release/next...c0ffee…01 --jq .status   (owner=acme-corp repo=widgets)
 const fs = require('node:fs');
@@ -467,10 +468,9 @@ function SEmpty() {
 
 // SMalformed (AC5.2): #9020's labels is the string "auto:build", #9021's body is the number 42,
 // #9022 declares `Blocked by #99999999999` (above 2147483647, so no issue can exist), and #9001 is
-// the clean control whose verdict must match the oracle's whatever the other three do. In the
-// script, #9020's string labels throw inside the eligibility block (record-vocabulary.js's
-// normalizeLabelNames calls .map on it), so the whole pull stops at the group-building check
-// before #9021 or #9022 reach any pass. SMalformed(only) keeps #9001 and the one named
+// the clean control whose verdict must match the oracle's whatever the other three do. #9020 is
+// excluded at eligibility as malformed-blocker with one Warning (#5315), so #9021 and #9022 reach
+// their own passes. SMalformed(only) keeps #9001 and the one named
 // candidate ('labels', 'body' or 'blocker'), so each malformed input reaches its own handling.
 const MALFORMED = {
   labels: () => ({ ...ghRecord(9020, { body: withBody(9020) }), labels: 'auto:build' }),
