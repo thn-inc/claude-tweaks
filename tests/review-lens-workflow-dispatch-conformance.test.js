@@ -101,13 +101,16 @@ const WITH_3H = 'together with it dispatch lens 3h';
 const THEN_SCOPE = 'lenses 3a–3g only under conditions 3–5';
 // Final review: the dontAsk allow rule (m1), the settle exits (m3) and the re-dispatch's own step label (m5).
 const ALLOW_RULE = '`Workflow(claude-tweaks:review-lens-fanout)`';
-const CONDITION_5_SCOPE = 'the first (or, standalone, the only) `settle-lens-replies` call exits 2 on the run file, or exits 3 again';
-const EXIT_3 = 're-resolve `$PIPELINE_RUN_DIR` per `_shared/pipeline-run-dir.md` and re-run that call once';
+// Residual fix r1/r2: a settle exit 3 is never a fallback condition (the fallback's own writes would exit 3 too).
+const CONDITION_5_SCOPE = 'the first (or, standalone, the only) `settle-lens-replies` call exits 2 on the run file.';
+const EXIT_3 = 're-run this first call once, and when it exits 3 again, never take the fallback — re-run the call standalone (no `--run`, `--only` or `--hold`; nothing is logged), continue with its output, and name in the review summary that the run directory was unusable and the pair lines were not logged';
+const EXIT_3_SECOND = 'An exit 3 on this second call is not condition 5 either: re-resolve `$PIPELINE_RUN_DIR` per `_shared/pipeline-run-dir.md` and re-run this call once, and when it exits 3 again, never take the fallback — carry each settled lens\'s `unconfirmed` list from the first call\'s output on to Step 3.7 and name the unlogged `--only unconfirmed` lines in the review summary.';
 const REDISPATCH_STEP = '--step "Step 3 lens dispatch (reviewer re-dispatch)"';
 
 function checkSubFile(text) {
   assert.ok(sectionOf(text, '## Availability').includes(ALLOW_RULE), 'Availability must name the dontAsk allow rule');
   assert.ok(sectionOf(text, '## Settle').includes(EXIT_3), 'Settle must handle a settle call\'s exit 3');
+  assert.ok(sectionOf(text, '## Settle').includes(EXIT_3_SECOND), 'Settle must keep the second call\'s exit 3 off the fallback');
   assert.ok(sectionOf(text, '## `needsSession`').includes(REDISPATCH_STEP), 'needsSession must log the re-dispatch under its own step label');
   const start = sectionOf(text, '## Start');
   assert.ok(start.includes(TIMER_COMMAND), 'Start must start the 1800000 ms setTimeout timer');
@@ -122,7 +125,7 @@ function checkSubFile(text) {
   assert.ok(fallback.includes(AFTER_LAUNCH_SCOPE), 'Fallback must dispatch only 3a–3g after launch');
   assert.ok(fallback.includes(THEN_SCOPE), 'Fallback\'s Then-dispatch sentence must scope 3a–3g to conditions 3–5');
   for (const label of LABELS) assert.match(fallback, labelItem(label), `fallback condition missing: ${label}`);
-  assert.ok(fallback.includes(CONDITION_5_SCOPE), 'condition 5 must scope exit 2 to the first settle call and take a repeated exit 3');
+  assert.ok(fallback.includes(CONDITION_5_SCOPE), 'condition 5 must scope exit 2 to the first settle call and name no exit 3');
   assert.ok(fallback.includes(SKIP_LINE), 'SKIP line missing from the Fallback section');
   assert.deepEqual(missingFacts(text), [], 'sub-file facts missing');
   const confirmed = text.indexOf(SETTLE_CONFIRMED);
@@ -279,7 +282,9 @@ test('go-red: each final-review pin (allow rule, condition 5, exit 3, re-dispatc
   const cases = [
     [ALLOW_RULE, 'an allow rule', /Availability must name the dontAsk allow rule/],
     [CONDITION_5_SCOPE, 'the first `settle-lens-replies` call (`--only confirmed`) exits 2 on the run file', /condition 5 must scope exit 2 to the first settle call/],
-    [EXIT_3, 're-run that call once', /Settle must handle a settle call's exit 3/],
+    [CONDITION_5_SCOPE, 'the first (or, standalone, the only) `settle-lens-replies` call exits 2 on the run file, or exits 3 again after Settle\'s one re-run.', /condition 5 must scope exit 2 to the first settle call and name no exit 3/],
+    [EXIT_3, 're-run this first call once, and when it exits 3 again, take condition 5', /Settle must handle a settle call's exit 3/],
+    [EXIT_3_SECOND, 'An exit 3 on this second call is condition 5.', /Settle must keep the second call's exit 3 off the fallback/],
     [REDISPATCH_STEP, '--step "Step 3 lens dispatch (workflow fallback)"', /needsSession must log the re-dispatch under its own step label/],
   ];
   for (const [literal, replacement, message] of cases) {
@@ -294,6 +299,7 @@ test('go-red: a final-review pin moved out of its section fails', () => {
   const cases = [
     [ALLOW_RULE, /Availability must name the dontAsk allow rule/],
     [EXIT_3, /Settle must handle a settle call's exit 3/],
+    [EXIT_3_SECOND, /Settle must keep the second call's exit 3 off the fallback/],
     [REDISPATCH_STEP, /needsSession must log the re-dispatch under its own step label/],
   ];
   for (const [literal, message] of cases) {
