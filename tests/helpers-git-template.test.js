@@ -7,7 +7,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const { fixtureGit } = require('./helpers/git-fixtures');
 const {
   fromTemplate,
@@ -497,6 +497,36 @@ test('tmpGitRepo: a second call starts no git process and carries the verify ide
   scratch.push(second.repo);
   assert.deepStrictEqual(fs.readdirSync(trace), []);
   assert.strictEqual(second.git('config', 'user.email').trim(), 'verify-test@example.invalid');
+});
+
+test('AC3.1: learned-skills capture fixture(): a warm copy starts no git process', (t) => {
+  const { fixture } = require('./helpers/learned-skills-capture');
+  fixture(t);                       // warm-up
+  fixture(t, {}, { autocrlf: 'true' });
+  const trace = mk('ct-gt-trace-');
+  const [a, b] = withEnv('GIT_TRACE2_EVENT', trace, () => [fixture(t), fixture(t, {}, { autocrlf: 'true' })]);
+  assert.deepStrictEqual(fs.readdirSync(trace), []);
+  assert.notStrictEqual(a.repo, b.repo);
+  assert.ok(fs.statSync(a.runDir).isDirectory());
+  assert.strictEqual(a.mergeBase.length, 40);
+  // Which variant is which: { autocrlf: 'true' } is a CRLF checkout; the default follows the host.
+  const skill = '.claude/skills/x/SKILL.md';
+  let host = ''; // what the fixture pinned in the copy itself (the trace window is closed here)
+  try { host = execFileSync('git', ['-C', a.repo, 'config', '--get', 'core.autocrlf'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim(); } catch { /* unset */ }
+  assert.ok(fs.readFileSync(path.join(b.repo, skill), 'utf8').includes('\r\n'));
+  if (host !== 'true') assert.ok(!fs.readFileSync(path.join(a.repo, skill), 'utf8').includes('\r\n'));
+});
+
+test('AC3.1: learned-skills land fixture(): a warm copy starts no git process and owns its paths', (t) => {
+  const { fixture, X } = require('./helpers/learned-skills-land');
+  for (const o of [{}, { autocrlf: 'true' }, { capturedTargets: [X] }, { originConflict: true }]) fixture(t, o);
+  const trace = mk('ct-gt-trace-');
+  const f = withEnv('GIT_TRACE2_EVENT', trace, () => fixture(t));
+  withEnv('GIT_TRACE2_EVENT', trace, () => fixture(t, { originConflict: true }));
+  assert.deepStrictEqual(fs.readdirSync(trace), []);
+  const manifest = JSON.parse(fs.readFileSync(path.join(f.runDir, 'learned-skills', 'manifest.json'), 'utf8'));
+  for (const e of manifest) assert.ok(e.patch.startsWith(f.runDir + path.sep), e.patch);
+  assert.strictEqual(git(f.repo, ['remote', 'get-url', 'origin']), f.origin);
 });
 
 // #5772: stack-check, statusline and archive-merged builders — same shape as above.

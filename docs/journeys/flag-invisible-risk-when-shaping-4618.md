@@ -49,7 +49,7 @@ files:
 - **Action:** Answer the question. One flag gets a single-select `Keep {slug} (Recommended)` / `Remove {slug}`. Two to four flags get one multiSelect where a selected option means remove. More than four are asked in sequential chunks of at most four.
 - **Should feel:** Quick and low-stakes to keep, deliberate to remove. The safe default is the first option and there is no free-text answer to parse.
 - **Should understand:**
-  - Only a human removes a flag, and only through this answer. A removal is logged only after the record write lands (`KEPT-PROMPT` in `decisions.md` when a run dir resolves, otherwise a record comment `Risk flag {slug} removed by the maintainer during shaping`), so a failed write never leaves a phantom removal on the record.
+  - Only a human removes a flag, and only through this answer. A removal is logged only after the record write lands (a record comment `Risk flag {slug} removed by the maintainer during shaping` under `github-issues`, always, because the record is the removal log the diff tripwire reads; also a `KEPT-PROMPT` line in `decisions.md` when a run dir resolves), so a failed write never leaves a phantom removal on the record.
   - Any answer clears `Risk-flags-unconfirmed`.
   - A removal does not persist. A flag the floor detects again on a later shaping is re-added, unconfirmed when headless, and asked about again at the next interactive touch.
   - If the existing `Risk-flags:` line is unreadable, nothing is asked: the human is told the line must be repaired first, every flag stays kept and unconfirmed, and no removal is logged.

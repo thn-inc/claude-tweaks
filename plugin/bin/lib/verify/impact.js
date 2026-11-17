@@ -214,7 +214,7 @@ function listDriftTests({ decl, repoRoot, commit, execImpl }) {
   return sortedUnique(out.split('\0').filter((p) => p !== '' && patterns.some((re) => re.test(p))));
 }
 
-function readMap({ decl, mapPath, repoRoot, execImpl, fsImpl }) {
+function readMap({ decl, mapPath, repoRoot, execImpl, fsImpl, knownAncestor = null }) {
   let parsed;
   try {
     parsed = parseImpactMap(fsImpl.readFileSync(mapPath, 'utf8'));
@@ -226,10 +226,14 @@ function readMap({ decl, mapPath, repoRoot, execImpl, fsImpl }) {
   let distance = null;
   if (parsed && parsed.ok) {
     const commit = parsed.map.commit;
-    try {
-      git(execImpl, repoRoot, ['merge-base', '--is-ancestor', '--end-of-options', commit, 'HEAD']);
+    if (knownAncestor !== null && commit === knownAncestor) {
       isAncestor = true;
-    } catch { /* not an ancestor, or not a commit here */ }
+    } else {
+      try {
+        git(execImpl, repoRoot, ['merge-base', '--is-ancestor', '--end-of-options', commit, 'HEAD']);
+        isAncestor = true;
+      } catch { /* not an ancestor, or not a commit here */ }
+    }
     if (isAncestor) {
       try {
         const count = git(execImpl, repoRoot, ['rev-list', '--count', '--end-of-options', `${commit}..HEAD`]).trim();
@@ -250,9 +254,12 @@ function readMap({ decl, mapPath, repoRoot, execImpl, fsImpl }) {
 // A map problem with a declared impact.fetch runs `runFetch(command)` once
 // (→ {ran, exitCode, durationMs, timedOut, signal}); only a fetch that exits
 // 0 reloads the map, so a failed fetch leaves the original problem standing.
-function loadImpactContext({ decl, repoRoot, commonDir, execImpl = execFileSync, fsImpl = fs, runFetch = null }) {
+// `knownAncestor` (optional sha): a commit the caller already proved is an ancestor of HEAD, with only git reads
+// since (#5773). The FIRST map read trusts it for a map commit equal to it; the reload after impact.fetch (a shell
+// command that can rewrite history) always asks git again. Absent, every map read asks git as before.
+function loadImpactContext({ decl, repoRoot, commonDir, execImpl = execFileSync, fsImpl = fs, runFetch = null, knownAncestor = null }) {
   const mapPath = resolveMapPath({ decl, commonDir, repoRoot });
-  let state = readMap({ decl, mapPath, repoRoot, execImpl, fsImpl });
+  let state = readMap({ decl, mapPath, repoRoot, execImpl, fsImpl, knownAncestor });
   let fetch = null;
   if (state.problem && decl.impact.fetch && runFetch) {
     fetch = runFetch(decl.impact.fetch);
@@ -318,12 +325,13 @@ function runImpactFetch(command, cwd, { spawnImpl = spawnSync } = {}) {
 // The lazily loaded impact context for the checkout at `cwd`. `verify.js --scope` and a plain local
 // `npm test` (tools/run-tests.js, #5319) both build it here, so the two always select alike. A cwd
 // outside any git checkout reads as the `map-unlocatable` problem, which fails selection closed.
-// `runFetch(command, repoRoot)` runs impact.fetch; `locate` and `load` are seams for tests.
-function checkoutImpactContext({ decl, cwd, runFetch = runImpactFetch, locate = gitLocations, load = loadImpactContext }) {
+// `runFetch(command, repoRoot)` runs impact.fetch; `locate` and `load` are seams for tests. `knownAncestor` is
+// loadImpactContext's optional proven-ancestor sha, passed on only when set.
+function checkoutImpactContext({ decl, cwd, runFetch = runImpactFetch, locate = gitLocations, load = loadImpactContext, knownAncestor = null }) {
   const where = locate({ cwd });
   return lazyImpactContext(() => (where === null
     ? { map: null, problem: 'map-unlocatable', headTests: [], driftTests: [], mapPath: null, mapCommit: null, mapDirty: null, distance: null, fetch: null }
-    : load({ decl, ...where, runFetch: (command) => runFetch(command, where.repoRoot) })));
+    : load({ decl, ...where, ...(knownAncestor === null ? {} : { knownAncestor }), runFetch: (command) => runFetch(command, where.repoRoot) })));
 }
 
 module.exports = {

@@ -7,7 +7,7 @@ const LOCAL_INVALID = { target: 'local', reason: 'invalid-input' };
 
 test('exports the target and reason vocabularies', () => {
   assert.deepStrictEqual(TARGETS, ['local', 'dev']);
-  assert.deepStrictEqual(REASONS, ['risk-flag', 'item-override', 'policy', 'default', 'invalid-input']);
+  assert.deepStrictEqual(REASONS, ['risk-flag', 'item-override', 'policy', 'default', 'invalid-input', 'tripwire']);
 });
 
 test('AC1.1: kept flag beats a dev override and a dev default', () => {
@@ -92,4 +92,44 @@ test('never dev without an affirmative dev default', () => {
       }
     }
   }
+});
+
+test('REASONS ends with \'tripwire\'', () => {
+  assert.strictEqual(REASONS[REASONS.length - 1], 'tripwire');
+});
+
+test('tripwire could-not-run forces local by tripwire even with policyDefault dev', () => {
+  assert.deepStrictEqual(
+    resolveAcceptanceTarget({ keptRiskFlags: [], policyDefault: 'dev', tripwire: { status: 'could-not-run', newFlags: [] } }),
+    { target: 'local', reason: 'tripwire' });
+  assert.deepStrictEqual(
+    resolveAcceptanceTarget({ keptRiskFlags: ['auth'], itemOverride: 'local', tripwire: { status: 'could-not-run', newFlags: [] } }),
+    { target: 'local', reason: 'tripwire' });
+});
+
+test('tripwire newFlags [auth] with no kept flags resolves local by risk-flag', () => {
+  assert.deepStrictEqual(
+    resolveAcceptanceTarget({ keptRiskFlags: [], policyDefault: 'dev', tripwire: { status: 'ok', newFlags: ['auth'] } }),
+    { target: 'local', reason: 'risk-flag' });
+});
+
+test('tripwire ok with no newFlags and policyDefault dev resolves dev', () => {
+  assert.deepStrictEqual(
+    resolveAcceptanceTarget({ keptRiskFlags: [], policyDefault: 'dev', tripwire: { status: 'ok', newFlags: [] } }),
+    { target: 'dev', reason: 'policy' });
+});
+
+test('an absent tripwire keeps today\'s behavior exactly', () => {
+  assert.deepStrictEqual(resolveAcceptanceTarget({ keptRiskFlags: [], policyDefault: 'dev', tripwire: undefined }), { target: 'dev', reason: 'policy' });
+});
+
+test('a malformed tripwire is invalid-input', () => {
+  for (const tripwire of [{ status: 'maybe' }, { status: 'ok' }, { status: 'ok', newFlags: 'auth' }, { status: 'ok', newFlags: [1] },
+    { status: 'could-not-run', newFlags: null }, null, 'ok', 7, []]) {
+    assert.deepStrictEqual(resolveAcceptanceTarget({ keptRiskFlags: [], policyDefault: 'dev', tripwire }), LOCAL_INVALID, JSON.stringify(tripwire));
+  }
+});
+
+test('input validation precedes the tripwire: bad keptRiskFlags stays invalid-input', () => {
+  assert.deepStrictEqual(resolveAcceptanceTarget({ keptRiskFlags: 'auth', tripwire: { status: 'could-not-run', newFlags: [] } }), LOCAL_INVALID);
 });

@@ -103,6 +103,7 @@ This session's Bash guard refuses heredocs, `cd` chains and any argument contain
 - bash verdict: `runBash(bash, cmd, { cwd, stubDir, root, guardRepo })` from the Bounded bash verdict block below, then read the stub's log and the files it wrote. Repeat with `/opt/homebrew/bin/bash`. After the last case, call `sweepSurvivors()` and report any pids it returns.
 - base comparison: `git worktree add --detach <scratch> <base>`, then `require(<scratch>/plugin/bin/lib/hooks/git-command.js)` beside the branch copy and diff `fileWriteTargets(cmd, cwd)`.
 - mutant: edit a copy in a scratch worktree and run `node tools/run-tests.js tests/hooks-gate-coverage.test.js tests/hooks-git-command.test.js tests/hooks-bash-prefilter.test.js tests/teardown-gate.test.js` there. A mutation loop or script calls that same command once per mutant, from inside the mutant's own checkout (add `--test-reporter=tap` to parse the result); it never starts `node --test` itself. Each call takes the machine-wide subset slot, so it can queue behind other sessions' runs; a handful of mutants are quicker checked by hand, one single-file `node --test <file>` per mutant.
+- mutant of a linearity row: a mutant expected to slow the scan never goes through `tools/run-tests.js`. A quadratic mutant makes the perf file run for minutes, and the run holds the machine-wide subset slot against every other session for that long (#5794: about 20 minutes, four runs queued). Measure it with the perf file's own driver from a scratch script that takes no suite slot, under a spawn timeout, and compare the ratio with the row's bound. Before running it, read the row's payload and check the mutant is super-linear in the dimension that payload grows: a mutant on the first-word read survives a row whose payload grows its second word.
 
 ### Bounded bash verdict
 
@@ -322,6 +323,15 @@ Orphaned oracle shells: `pgrep -lf '[r]unBash-'` lists every bash a driver run l
 - **Go-red controls per pinned literal.** For each literal the copy depends on (a whitespace member such as `\r`, an alias key), copy the script, mutate that one literal, and assert the parity check fails on the fixture that pins it.
 
 Worked example: `tests/hooks-launcher.test.js`, `AC9_FIXTURES` with `assertPolicyParity` (the `perShell` and `perAwk` `hooks.sh AC9` tests and the `\r` go-red).
+
+### Superset prefilter twin
+
+`tools/direct-test-run-guard.sh` (#5794) is a different kind of twin: a sh prefilter that skips node only for a call its JS classifier (`tools/direct-test-run-guard.js`) can never deny. It is a deliberate superset of the classifier, not an equal copy, so parity fixtures do not prove it. It needs these instead:
+
+- **Derive the skip from program positions.** Skip only when every fragment starts with a plain word that is none of the classifier's program words. A filter on text such as `--test` is unsound, because the classifier also reads script files the call runs.
+- **Pin the word list both ways.** The sh word list equals the classifier's exported set (`PROGRAM_WORDS`), and every word the classifier compares inline (`=== 'npx'`, `=== 'find'`) is in that set. Scan the classifier's source for the inline comparisons, with a floor of known words, and exempt a state-only word such as `cd` by name (`#5794 AC6.1` in `tests/direct-test-run-guard.test.js`).
+- **Run every denied case through the prefilter.** Each command the classifier's own tests see denied must reach node, and a replay of recorded commands shows no command is skipped that the classifier denies under any oracle configuration.
+- **Test the downstream process failing.** A prefilter that hands a call on to another process is tested with that process exiting non-zero, failing to load and missing, asserting the hook command's own exit status and stdout. Never `exec` the downstream process from a hook entry that promises exit 0: `exec` gives the hook that process's status. The first version returned status 1 for a guard node could not load, and every fault test had a recorder guard that exits 0 behind the prefilter (`#5794 AC5.2`, fixed in 550e984a6a).
 
 ## Anti-Patterns
 
