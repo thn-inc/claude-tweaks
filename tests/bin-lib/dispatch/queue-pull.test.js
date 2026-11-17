@@ -1747,7 +1747,7 @@ test('#5313 shipped: a failed gh pr view writes files:null and prints one Warnin
   assert.ok(r.errs.includes(weakAuto));
   assert.ok(groupNumbers(r).flat().includes(9016), 'a failed view never excludes');
   assert.ok(!r.stderr.includes('boom'), 'the failed call stderr is dropped (2>/dev/null)');
-  assert.ok(FENCE.includes("if (!predatesClaimRelease(result) && prFiles.get(result.pr) === null) console.error('Warning: gh pr view ' + result.pr + ' failed — #' + c.number + ' kept as a weak shipped candidate (files unprobed) this run');"));
+  assert.ok(FENCE.includes("if (!downgradedAfterMerge(result) && prFiles.get(result.pr) === null) console.error('Warning: gh pr view ' + result.pr + ' failed — #' + c.number + ' kept as a weak shipped candidate (files unprobed) this run');"));
 
   // A failed call that printed something first still reads as null: the fence assigns null, not the partial output.
   const partial = FULL();
@@ -1828,6 +1828,61 @@ test('#5227 shipped: no mention means no probe and no AUTO line; a weak mention 
   ]);
   assert.deepEqual(entriesOf(r, 'shipped'), [], 'a title match that predates the release rates weak, so it is not excluded');
   assert.ok(FENCE.includes("' kept: merged PR #' + result.pr + ' predates claim release at ' + releases[c.number] + ' — remaining work assumed'"));
+});
+
+const SHAPED_AFTER_MERGE = '2026-11-07T10:00:00Z';
+const shapedScenario = (n, lastShapedAt) => {
+  const scenario = FULL();
+  scenario.linked[n] = { ...scenario.linked[n], lastShapedAt };
+  return scenario;
+};
+
+test('AC1.1 (#5722) shipped: a strong title match shaped after the merge stays in dispatch-groups.json, unprobed, with the shaping kept line', () => {
+  const r = pull4(shapedScenario(9010, SHAPED_AFTER_MERGE));
+  assert.ok(groupNumbers(r).flat().includes(9010), 'the record stays in the groups');
+  assert.deepEqual(entriesOf(r, 'shipped'), [], 'a mention that predates the shaping rates weak, so it is not excluded');
+  assert.deepEqual(r.cap.staged.filter((s) => s.id === 'shipped-close-9010'), [], 'no Close proposal is staged');
+  assert.deepEqual(prViews(r), [PR_VIEW(5016)], 'only the unshaped weak candidate is probed; the shaped one is skipped');
+  assert.deepEqual(r.errs.filter((e) => e.startsWith('AUTO — dispatch: #9010')), [
+    'AUTO — dispatch: #9010 kept: merged PR #5010 predates ready/auto:build labeling at 2026-11-07T10:00:00Z — remaining work assumed\n',
+  ]);
+  assert.ok(FENCE.includes("' predates ready/auto:build labeling at '"));
+});
+
+test('AC2.1 (#5722) shipped: a shaping time before the merge leaves 9010 excluded and its Close proposal staged', () => {
+  const r = pull4(shapedScenario(9010, '2026-11-05T09:00:00Z'));
+  assertShipped(r);
+  assert.deepEqual(r.cap.staged.filter((s) => s.id.startsWith('shipped-close-')).map((s) => s.id), ['shipped-close-9010']);
+});
+
+test('#5722 shipped: release and shaping both after the merge print the claim-release kept line', () => {
+  const claims = { 9010: JSON.stringify({ released: true, releasedAt: SHAPED_AFTER_MERGE }) };
+  const r = pull4(shapedScenario(9010, SHAPED_AFTER_MERGE), { claims });
+  assert.deepEqual(r.errs.filter((e) => e.startsWith('AUTO — dispatch: #9010')), [
+    'AUTO — dispatch: #9010 kept: merged PR #5010 predates claim release at 2026-11-07T10:00:00.000Z — remaining work assumed\n',
+  ]);
+  assert.deepEqual(entriesOf(r, 'shipped'), []);
+});
+
+test('#5722 shipped: a weak mention predating the shaping that shares a failed probed PR prints no Warning', () => {
+  const labels = ['auto:build', 'ready'];
+  const numbers = [9301, 9302];
+  const linked = Object.fromEntries(numbers.map((n) => [n, { mentions: [mention(6301, 'Unrelated cleanup of the build output')] }]));
+  linked[9301].lastShapedAt = SHAPED_AFTER_MERGE;
+  const scenario = {
+    policy: { 'work-links': 'body-text' },
+    origin: { branches: { main: {} } },
+    linked,
+    gh: [
+      { argv: QUEUE_ARGV, stdout: JSON.stringify(numbers.map((n) => ghRecord(n, { body: withBody(n), labels }))) + '\n' },
+      { argv: OPEN_NUMBERS_ARGV, stdout: `${JSON.stringify(numbers.map((number) => ({ number })))}\n` },
+      { argv: PR_VIEW(6301), stdout: '', status: 1 },
+    ],
+  };
+  const r = pull4(scenario);
+  assert.deepEqual(prViews(r), [PR_VIEW(6301)], 'the unshaped record makes the PR a probe candidate');
+  assert.deepEqual(r.errs.filter((e) => e.startsWith('Warning:')), [PR_VIEW_FAILED(6301, 9302)], 'the shaped record 9301 stays silent');
+  assert.ok(r.errs.some((e) => e.startsWith('AUTO — dispatch: #9301 kept: merged PR #6301 predates ready/auto:build labeling at')), r.stderr);
 });
 
 test('#5227 shipped: at most 5 distinct PRs are probed per pull', () => {

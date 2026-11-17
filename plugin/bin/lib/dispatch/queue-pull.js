@@ -85,7 +85,7 @@ const { parseRecordFacets, parseDependencies, partitionByOpenBodyBlockers, openB
 const { bodyForeignBlockers } = require('../issues/cross-repo-states');
 const { shapeGate } = require('../issues/materialize-format');
 const { namedTarget } = require('../issues/named-target');
-const { classifyShipped, predatesClaimRelease } = require('../issues/shipped-candidate');
+const { classifyShipped, predatesClaimRelease, downgradedAfterMerge } = require('../issues/shipped-candidate');
 const { extractKeyFiles, expectsKeyFilesSection, buildDispatchGroups, partitionGroupsBySizeGuard, detectCrossPRFileOverlap } = require('../issues/grouping');
 const { neighbourInFlightExclusions, claimReaderFromMap } = require('./in-flight-neighbours');
 const { nearDuplicatePairsAcrossGroups } = require('./near-dup-pairs');
@@ -1126,8 +1126,8 @@ function runShipped(ctx) {
   const prFilesFile = paths['dispatch-shipped-pr-files.jsonl'];
   const releasesFile = paths['dispatch-shipped-releases.json'];
 
-  // First pass: title-only classification; only a `weak` result not predating the claim release is
-  // probed for the files-based upgrade, capped at 5 live `gh pr view` calls per pull. The mentions come
+  // First pass: title-only classification; only a `weak` result not downgraded after the merge (claim release
+  // or shaping, #5722) is probed for the files-based upgrade, capped at 5 live `gh pr view` calls per pull. The mentions come
   // from `dispatch-linked-prs.json`, already fetched, so this pass makes no second round trip for them.
   step(ctx, 'shipped-probe', () => {
     const groups = readJson(paths['dispatch-groups.json']);
@@ -1138,8 +1138,8 @@ function runShipped(ctx) {
       const entry = linkedPRs[c.number];
       const mentions = (entry && entry.mentions) || [];
       if (mentions.length === 0) continue;
-      const result = classifyShipped(c, mentions, { lastReleasedAt: releases[c.number] });
-      if (result.tier === 'weak' && !predatesClaimRelease(result)) toProbe.push(result.pr);
+      const result = classifyShipped(c, mentions, { lastReleasedAt: releases[c.number], lastShapedAt: entry.lastShapedAt });
+      if (result.tier === 'weak' && !downgradedAfterMerge(result)) toProbe.push(result.pr);
     }
     fs.writeFileSync(probeFile, JSON.stringify([...new Set(toProbe)].slice(0, 5)));
   });
@@ -1169,7 +1169,7 @@ function runShipped(ctx) {
       const entry = linkedPRs[c.number];
       const mentions = (entry && entry.mentions) || [];
       if (mentions.length === 0) return true;
-      const result = classifyShipped(c, mentions, { prFiles, lastReleasedAt: releases[c.number] });
+      const result = classifyShipped(c, mentions, { prFiles, lastReleasedAt: releases[c.number], lastShapedAt: entry.lastShapedAt });
       if (result.tier === 'strong') {
         appendExclusion(paths['dispatch-exclusions.json'], { reason: 'shipped', records: [c.number], detail: { pr: result.pr, signals: result.signals } });
         deps.stderr(`AUTO — dispatch: #${c.number} excluded, shipped by merged PR #${result.pr} (${result.signals.join(', ')})\n`);
@@ -1178,8 +1178,10 @@ function runShipped(ctx) {
       if (result.tier === 'weak') {
         deps.stderr(`AUTO — dispatch: #${c.number}${predatesClaimRelease(result)
           ? ` kept: merged PR #${result.pr} predates claim release at ${releases[c.number]} — remaining work assumed`
-          : ` mentioned by merged PR #${result.pr} without a closing keyword; dispatching anyway`}\n`);
-        if (!predatesClaimRelease(result) && prFiles.get(result.pr) === null) deps.stderr(`Warning: gh pr view ${result.pr} failed — #${c.number} kept as a weak shipped candidate (files unprobed) this run\n`);
+          : downgradedAfterMerge(result)
+            ? ` kept: merged PR #${result.pr} predates ready/auto:build labeling at ${entry.lastShapedAt} — remaining work assumed`
+            : ` mentioned by merged PR #${result.pr} without a closing keyword; dispatching anyway`}\n`);
+        if (!downgradedAfterMerge(result) && prFiles.get(result.pr) === null) deps.stderr(`Warning: gh pr view ${result.pr} failed — #${c.number} kept as a weak shipped candidate (files unprobed) this run\n`);
       }
       return true;
     };
