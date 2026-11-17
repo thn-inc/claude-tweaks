@@ -1156,3 +1156,43 @@ test('a malformed manifest entry fails land and stage naming the manifest and th
   }
   assert.equal(remoteBranch(f), null);
 });
+
+const isHeadShort = (c) => JSON.stringify(c.args.slice(2)) === JSON.stringify(['rev-parse', '--short', 'HEAD']);
+const stagedAtLines = (res) => res.staged.map((s) => /^Staged-at: (.*)$/m.exec(fs.readFileSync(s.stagePath, 'utf8'))[1]);
+
+test('AC2.1: land() with two staged entries runs rev-parse --short HEAD once', (t) => {
+  const f = fixture(t);
+  sh(f.repo, ['remote', 'set-url', 'origin', path.join(f.root, 'missing.git')]);
+  const g = deps(fakeGh().gh);
+  const res = land(landArgs(f), g.deps);
+  assert.equal(res.staged.length, 2);
+  assert.equal(g.gitCalls.filter(isHeadShort).length, 1);
+  const short = sh(f.repo, ['rev-parse', '--short', 'HEAD']).trim();
+  assert.deepEqual(stagedAtLines(res), [short, short]);
+});
+
+test('stage() with two captured entries runs rev-parse --short HEAD once', (t) => {
+  const f = fixture(t);
+  const g = deps(fakeGh().gh);
+  const res = stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason: 'integration-model is local-merge' }, g.deps);
+  assert.equal(res.staged.length, 2);
+  assert.equal(g.gitCalls.filter(isHeadShort).length, 1);
+  const short = sh(f.repo, ['rev-parse', '--short', 'HEAD']).trim();
+  assert.deepEqual(stagedAtLines(res), [short, short]);
+});
+
+test('a failed HEAD read is asked again for the next entry', (t) => {
+  const f = fixture(t);
+  const g = deps(fakeGh().gh);
+  let asks = 0;
+  const realGit = g.deps.git;
+  g.deps.git = (args, opts) => {
+    if (isHeadShort({ args })) { asks += 1; if (asks === 1) throw new Error('boom'); }
+    return realGit(args, opts);
+  };
+  const res = stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason: 'integration-model is local-merge' }, g.deps);
+  assert.equal(res.staged.length, 2);
+  assert.equal(asks, 2);
+  const short = sh(f.repo, ['rev-parse', '--short', 'HEAD']).trim();
+  assert.deepEqual(stagedAtLines(res), ['unknown', short]);
+});

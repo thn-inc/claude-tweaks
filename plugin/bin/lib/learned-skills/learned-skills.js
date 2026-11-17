@@ -220,9 +220,9 @@ function nextStageNumber(stagedDir, deps) {
 // the spec fixes this artifact's name as staged/wrap-up-skill-{N}.md, so it could never report a
 // verdict against it.
 // entry: { target, summary, patch: Buffer|string, patchFile?: string, findings?: [{ row, summary }] }.
-function stageEntry({ runDir, worktree, entry, reason }, overrides = {}) {
+function stageEntry({ runDir, worktree, entry, reason, headShort }, overrides = {}) {
   const deps = { ...realDeps, ...overrides };
-  const st = writeStage({ runDir, worktree, entry }, deps);
+  const st = writeStage({ runDir, worktree, entry, headShort }, deps);
   let g;
   try {
     g = gateStage(st, entry, worktree, deps);
@@ -237,15 +237,29 @@ function stageEntry({ runDir, worktree, entry, reason }, overrides = {}) {
   return { stagePath: st.stagePath, gate: g.gate, logFailed };
 }
 
+// A reader for the worktree's short HEAD, for a caller that stages several entries without moving
+// HEAD: asks git on the first call and memoizes only a successful, non-empty answer. A throw or an
+// empty answer yields 'unknown' and is asked again next time.
+function headShortReader(worktree, deps) {
+  let known = null;
+  return () => {
+    if (known !== null) return known;
+    try {
+      const got = String(deps.git(['-C', worktree, 'rev-parse', '--short', 'HEAD'])).trim();
+      if (got) known = got;
+      return got || 'unknown';
+    } catch { return 'unknown'; }
+  };
+}
+
 // Creates staged/wrap-up-skill-{N}.md holding the preamble and entry.patch. Exclusive create, so two
 // writers racing for one N cannot overwrite each other; a create that dies partway is removed.
-function writeStage({ runDir, worktree, entry }, deps) {
+function writeStage({ runDir, worktree, entry, headShort: readHead }, deps) {
   const stagedDir = path.join(runDir, 'staged');
   deps.mkdir(stagedDir);
   const target = oneLine(entry.target);
   const summary = oneLine(entry.summary);
-  let headShort = 'unknown';
-  try { headShort = String(deps.git(['-C', worktree, 'rev-parse', '--short', 'HEAD'])).trim() || 'unknown'; } catch { /* kept as unknown */ }
+  const headShort = (readHead || headShortReader(worktree, deps))();
   const preamble = [
     `Target: ${target}`,
     `Invariant: ${summary}`,
@@ -778,5 +792,5 @@ function pruneEmptyParents(abs, worktree, deps) {
 
 module.exports = {
   UsageError, StagingFailure, realDeps, gitEnv, readManifest, writeManifest, manifestPath, nextId, normalizeTarget, skillLabel,
-  stageEntry, capture, LOG_SECTION, STEP, rowLabel, entryFindings, oneLine, firstStderrLine,
+  stageEntry, headShortReader, capture, LOG_SECTION, STEP, rowLabel, entryFindings, oneLine, firstStderrLine,
 };
