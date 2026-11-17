@@ -48,11 +48,7 @@ function isolateExecBounds(extraKeys, fn) {
   const fs = require('node:fs');
   const os = require('node:os');
   const path = require('node:path');
-  const saved = new Map();
-  for (const key of [ENV_KEY, GIT_ENV_KEY, ...extraKeys]) {
-    if (saved.has(key)) continue;
-    saved.set(key, Object.prototype.hasOwnProperty.call(process.env, key) ? process.env[key] : undefined);
-  }
+  const saved = new Map([ENV_KEY, GIT_ENV_KEY, ...extraKeys].map((key) => [key, process.env[key]]));
   const originalCwd = process.cwd();
   const emptyDir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-exec-bounds-'));
   const restore = () => {

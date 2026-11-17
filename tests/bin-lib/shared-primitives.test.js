@@ -803,18 +803,15 @@ test('captureExecTimeouts: an ambient git bound does not leak into a gh-only pro
   let seenGitInside;
   let ghBound;
   try {
-    withTempCwd(() => {
-      captureExecTimeouts({
-        env: { [ghKey]: '45000' },
-        modulePaths: [],
-        exercise: (setEnv) => {
-          setEnv();
-          seenGitInside = process.env[gitKey];
-          // eslint-disable-next-line global-require
-          const { execTimeoutMsFor } = require('../../plugin/bin/lib/shared-primitives');
-          ghBound = { gh: execTimeoutMsFor('gh'), git: execTimeoutMsFor('git') };
-        },
-      });
+    captureExecTimeouts({
+      env: { [ghKey]: '45000' },
+      exercise: (setEnv) => {
+        setEnv();
+        seenGitInside = process.env[gitKey];
+        // eslint-disable-next-line global-require
+        const { execTimeoutMsFor } = require('../../plugin/bin/lib/shared-primitives');
+        ghBound = { gh: execTimeoutMsFor('gh'), git: execTimeoutMsFor('git') };
+      },
     });
     assert.strictEqual(seenGitInside, undefined, 'the ambient git bound was cleared for the probe');
     assert.deepStrictEqual(ghBound, { gh: 45000, git: 30000 });
