@@ -27,7 +27,7 @@ const {
   EmptyAfterS1, S1LiveDep,
 } = require('./queue-pull-fixtures');
 const {
-  PASSES, PASS_FIELD_VALUES, SESSION_FILES, QueuePullStopped, sessionPaths, runPasses, resolveOmit, defaultDeps, makeContext, queuePull,
+  PASSES, PASS_FIELD_VALUES, SESSION_FILES, END_WRITTEN_FILES, QueuePullStopped, sessionPaths, runPasses, resolveOmit, defaultDeps, makeContext, queuePull,
   rankNext, rankFromFiles, STAYING_EXCLUSION_REASONS, RANK_SKIP_REASONS,
 } = require('../../../plugin/bin/lib/dispatch/queue-pull');
 const { appendExclusion } = require('../../../plugin/bin/lib/dispatch/exclusions');
@@ -507,6 +507,7 @@ test('#5227 truncate: a throw prints "queue-pull: truncate: <message>" and the r
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-t2-trunc-'));
   try {
     const paths = { 'dispatch-exclusions.json': path.join(dir, 'missing-dir', 'x.json') };
+    for (const name of END_WRITTEN_FILES) paths[name] = path.join(dir, name); // #5409: the truncate pass removes these first
     runPasses(PASSES.slice(0, 1), { deps: { stderr: (s) => errs.push(s) }, paths, options: {} });
     assert.equal(errs.length, 1);
     assert.match(errs[0], /^queue-pull: truncate: .*ENOENT/);
@@ -3106,8 +3107,8 @@ test('#5230 near-dup: a stale dispatch-near-dup-pairs.json from an earlier pull 
   const stale = JSON.stringify([{ records: [8, 9], signals: [], sharedAnchors: [] }]);
   const seed = (ctx) => fs.writeFileSync(ctx.paths['dispatch-near-dup-pairs.json'], stale);
   assert.equal(pull5(S1(), { before: seed }).text['dispatch-near-dup-pairs.json'], '[]');
-  // Control: with the pass omitted the seeded file survives the pull, so the rewrite above is the pass's.
-  assert.equal(pull5(S1(), { before: seed, omit: ['near-dup-pairs'] }).text['dispatch-near-dup-pairs.json'], stale);
+  // Control: the pull removes the earlier copy at its start (#5409) and an omitted pass writes nothing, so the '[]' above is the pass's.
+  assert.equal(pull5(S1(), { before: seed, omit: ['near-dup-pairs'] }).text['dispatch-near-dup-pairs.json'], undefined);
 });
 
 test('#5230 neighbour: an in-flight strong near-duplicate with no Key Files is a neighbour, and its detail element carries sharedAnchors (#3520 AC8)', () => {
@@ -3223,7 +3224,29 @@ test('#5314 (AC1.1): a module pull whose open-numbers read fails removes an earl
   assert.deepEqual(twin.json('dispatch-groups.json'), []);
 });
 
-const NAMED_VIEW = (n) => ['issue', 'view', String(n), '--json', 'number,title,body,labels,createdAt,updatedAt,state'];
+test('#5409 (AC1, AC2): a pull whose cross-pr-overlap step throws leaves no earlier pull\'s dispatch-crosspr-overlap.json; the five end-written files are this pull\'s or absent', () => {
+  const STALE = '"an earlier pull\'s copy"';
+  const seed = (ctx) => { for (const n of END_WRITTEN_FILES) fs.writeFileSync(ctx.paths[n], STALE); };
+  // `{}` is valid JSON but no PR list: the compute's `.map` throws before its write.
+  const r = pull5(withGh(PIPE(), OPEN_PRS_ARGV, { stdout: '{}\n' }), { before: seed });
+  assert.equal(r.thrown, null, String(r.thrown)); // the pull completes (exit 0): the reader after it is cross-pr-overlap-report.md
+  assert.ok(r.errs.some((e) => e.startsWith('queue-pull: cross-pr-overlap: ')), r.stderr);
+  assert.equal(r.text['dispatch-crosspr-overlap.json'], undefined, 'no earlier pull\'s overlap report');
+  for (const n of END_WRITTEN_FILES) assert.notEqual(r.text[n], STALE, `${n}: this pull's or absent`);
+  // Control: the same seed and a healthy pull — every file the pull writes is rewritten by this pull.
+  const healthy = pull5(PIPE(), { before: seed });
+  assert.equal(healthy.thrown, null, String(healthy.thrown));
+  assert.ok(Array.isArray(JSON.parse(healthy.text['dispatch-crosspr-overlap.json'])), 'a list this pull computed');
+  // One removal failing (a directory at the first name) does not stop the other four (rm -f's per-operand behaviour).
+  const dirFirst = pull5(PIPE(), {
+    allowThrow: true,
+    before: (ctx) => { seed(ctx); fs.rmSync(ctx.paths['dispatch-named-targets.json']); fs.mkdirSync(ctx.paths['dispatch-named-targets.json']); },
+  });
+  assert.ok(dirFirst.errs.some((e) => e.startsWith('queue-pull: rm-end-written: ')), dirFirst.stderr);
+  for (const n of END_WRITTEN_FILES.filter((x) => x !== 'dispatch-named-targets.json')) assert.notEqual(dirFirst.text[n], STALE, `${n}: removed although an earlier removal failed`);
+});
+
+const NAMED_VIEW =(n) => ['issue', 'view', String(n), '--json', 'number,title,body,labels,createdAt,updatedAt,state'];
 const ADMIT_LINE = (n) => `#${n} has no auto:build label — built on the typed /claude-tweaks:dispatch command\n`;
 const AUTO_RE = (n) => new RegExp(`^- AUTO \\d{2}:\\d{2}:\\d{2} — queue pull: #${n} admitted on a typed /claude-tweaks:dispatch command \\(no auto:build label\\)\\. Reversibility: n/a\\.$`);
 const TYPED_SESSION = 'test-session-0001';

@@ -156,6 +156,16 @@ const SESSION_FILES = deepFreeze([
   'dispatch-next-pick.json',
 ]);
 
+// The session files written only at the very end of their step (#5409): removed at pull start.
+// The fence's `rm -f` line carries the same set.
+const END_WRITTEN_FILES = deepFreeze([
+  'dispatch-named-targets.json',
+  'dispatch-shipped-probe-prs.json',
+  'dispatch-shipped-releases.json',
+  'dispatch-crosspr-overlap.json',
+  'dispatch-near-dup-pairs.json',
+]);
+
 // sessionId -> { [name]: absolute path }; with no session id each falls back to os.tmpdir()/name.
 function sessionPaths(sessionId) {
   const out = {};
@@ -172,9 +182,13 @@ class QueuePullStopped extends Error {
   }
 }
 
-// Fence lines 46-51. The only direct write to the exclusions file; every later pass appends
+// Fence lines 44 and 46-51. The only direct write to the exclusions file; every later pass appends
 // through appendExclusion. Keeps only the 'firing' entries (firing-exclusion.md).
 function runTruncate(ctx) {
+  // #5409 (fence 44): each of these files is written only at the end of its step, so a step that
+  // throws first would leave an earlier pull's copy for the pass or reader after it; the agent
+  // inputs and the exclusions file are not in the set. One step per file, like `rm -f`'s operands.
+  for (const name of END_WRITTEN_FILES) step(ctx, 'rm-end-written', () => fs.rmSync(ctx.paths[name], { force: true }));
   const file = ctx.paths['dispatch-exclusions.json'];
   try {
     const kept = readExclusions(file).filter((e) => e.reason === 'firing');
@@ -1440,6 +1454,6 @@ function rankFromFiles({ sessionId, priority } = {}) {
 }
 
 module.exports = {
-  PASSES, PASS_FIELD_VALUES, SESSION_FILES, sessionPaths, QueuePullStopped, runPasses, resolveOmit, defaultDeps, makeContext, queuePull, rankNext, rankFromFiles,
+  PASSES, PASS_FIELD_VALUES, SESSION_FILES, END_WRITTEN_FILES, sessionPaths, QueuePullStopped, runPasses, resolveOmit, defaultDeps, makeContext, queuePull, rankNext, rankFromFiles,
   STAYING_EXCLUSION_REASONS, RANK_SKIP_REASONS,
 };
