@@ -386,26 +386,30 @@ test('verify builders: per-call values match git, and different arguments never 
 });
 test('Absorbed AC (identity): a fresh process building every owned fixture starts no git config user.name/user.email process', () => {
   const trace = mk('ct-gt-trace-');
-  const childTmp = mk('ct-gt-childtmp-');
-  const script = [
-    "const [pre, verify] = process.argv.slice(1).map((p) => require(p));",
-    'pre.gitRepo(); pre.gitRepoWithCommit(); pre.gitRepoOnLocalMain();',
-    'pre.mainAndWorktree(); pre.mainAndWorktree({ localMain: true });',
-    'pre.unpinnedRepoWithOrigin();',
-    "verify.tmpGitRepo(); verify.scopedRepo([{ match: 'src/**', suites: ['unit'] }]); verify.flakyRepo(); verify.baselineRepo();",
-  ].join('\n');
-  const repoRoot = path.join(__dirname, '..');
-  const res = spawnSync(process.execPath, [
-    '-e', script,
-    path.join(repoRoot, 'tests', 'helpers', 'pre-tool-use'),
-    path.join(repoRoot, 'tests', 'bin-lib', 'verify', 'cli-helpers'),
-  ], {
-    cwd: repoRoot,
-    // The child's own copies live under its temp dir; pointing it at a scratch dir lets this file's after() remove them.
-    env: { ...process.env, GIT_TRACE2_EVENT: trace, TMPDIR: childTmp, TMP: childTmp, TEMP: childTmp },
-    encoding: 'utf8',
-  });
-  assert.strictEqual(res.status, 0, res.stderr);
+  const freshTmp = mk('ct-gt-freshtmp-');
+  // Fresh module instances give cold template caches without a node child; the
+  // original instances go back in require.cache afterwards.
+  const modules = ['./helpers/git-template', './helpers/pre-tool-use', './bin-lib/verify/cli-helpers'].map((m) => require.resolve(m));
+  const saved = modules.map((m) => [m, require.cache[m]]);
+  // A fresh build appends maintenance-off keys to process.env; put them back too.
+  const cfgKeys = /^GIT_CONFIG_/;
+  const savedCfg = Object.entries(process.env).filter(([k]) => cfgKeys.test(k));
+  const envs = { GIT_TRACE2_EVENT: trace, TMPDIR: freshTmp, TMP: freshTmp, TEMP: freshTmp };
+  const inEnv = (names, fn) => (names.length ? withEnv(names[0], envs[names[0]], () => inEnv(names.slice(1), fn)) : fn());
+  try {
+    for (const m of modules) delete require.cache[m];
+    const [, pre, verify] = modules.map((m) => require(m));
+    inEnv(Object.keys(envs), () => {
+      pre.gitRepo(); pre.gitRepoWithCommit(); pre.gitRepoOnLocalMain();
+      pre.mainAndWorktree(); pre.mainAndWorktree({ localMain: true });
+      pre.unpinnedRepoWithOrigin();
+      verify.tmpGitRepo(); verify.scopedRepo([{ match: 'src/**', suites: ['unit'] }]); verify.flakyRepo(); verify.baselineRepo();
+    });
+  } finally {
+    for (const [m, mod] of saved) { if (mod) require.cache[m] = mod; else delete require.cache[m]; }
+    for (const k of Object.keys(process.env)) if (cfgKeys.test(k)) delete process.env[k];
+    for (const [k, v] of savedCfg) process.env[k] = v;
+  }
   const argvs = tracedArgvs(trace);
   assert.ok(argvs.length > 0, 'control: the builders did trace git processes');
   // The subcommand is the first word after `git` that is not an option or an option's value.
