@@ -4106,7 +4106,7 @@ test('AC4.2 fallback: a local-merge run merged without the move is still archive
 // the shared pinned-config runner is bound under its own name.
 const cleanupAfter = (t, dirs) => t.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
 // The copied bare origin a clone fixture's .git/config names, so a test can clean it up too.
-const originDirOf = (root) => fs.readFileSync(path.join(root, '.git', 'config'), 'utf8').match(/^\s*url = (.+)$/m)[1].trim();
+const originDirOf = (root) => readText(path.join(root, '.git', 'config')).match(/^\s*url = (.+)$/m)[1].trim();
 for (const [name, make, dirsOf] of [
   ['makeRepo()', () => makeRepo(), (d) => [d]],
   ['mergedFeatureBranchRepo(feat-x)', () => mergedFeatureBranchRepo('feat-x'), (r) => [r.root]],
