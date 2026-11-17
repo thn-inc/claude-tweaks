@@ -46,7 +46,7 @@ function deps(overrides = {}) {
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
     gitApplyCheck: () => ({ ok: true }),
-    readGrants: (numbers) => Object.fromEntries(numbers.map((n) => [n, { labels: ['auto:merge'], pendingSince: null }])),
+    readGrants: (numbers) => Object.fromEntries(numbers.map((n) => [n, { labels: ['auto:build', 'auto:merge'], pendingSince: null }])),
     now: () => Date.parse('2026-09-06T12:00:00Z'),
     sensitivePaths: [],
     ...overrides,
@@ -126,7 +126,7 @@ test('resolveAll resolves one item per section per the short-circuit stances and
   assert.strictEqual(by['wrap-up-reflect-insights.md'].reason, SECTION_STANCES['Reflection insights'].reason);
   assert.deepStrictEqual({ resolution: by['mystery-9.md'].resolution, reason: by['mystery-9.md'].reason }, { resolution: 'pending', reason: 'unmapped-prefix' });
   assert.strictEqual(r.sections.cleanup.resolution, 'approve');
-  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' });
+  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' });
   assert.strictEqual(r.items.length, Object.keys(EVERY_SECTION).length);
   assert.strictEqual(r.ceiling, 'unattended');
 });
@@ -729,7 +729,7 @@ test('a needs-human merge-check verdict in decisions.md resolves the merge half 
 });
 
 test('an ungranted member (no auto:merge, no matured auto:merge-pending) resolves the merge half to leave-open (#1932 AC3)', () => {
-  const grants = { 7: { labels: ['auto:merge'], pendingSince: null }, 8: { labels: ['auto:merge-pending'], pendingSince: new Date('2026-09-06T11:00:00Z') } };
+  const grants = { 7: { labels: ['auto:build', 'auto:merge'], pendingSince: null }, 8: { labels: ['auto:build', 'auto:merge-pending'], pendingSince: new Date('2026-09-06T11:00:00Z') } };
   const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7, 8] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
   assert.strictEqual(r.merge.resolution, 'leave-open');
   assert.match(r.merge.reason, /#8/);
@@ -738,7 +738,7 @@ test('an ungranted member (no auto:merge, no matured auto:merge-pending) resolve
 
 test('an unmatured grant names the untrusted marker comments ghReadGrants passed over in the merge reason (#3358)', () => {
   const note = 'skipped marker comment https://x/issues/7#c1 by eve (NONE) — not an owner, member, or collaborator';
-  const grants = { 7: { labels: ['auto:merge-pending'], pendingSince: null, skippedUntrusted: [note] } };
+  const grants = { 7: { labels: ['auto:build', 'auto:merge-pending'], pendingSince: null, skippedUntrusted: [note] } };
   const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
   assert.strictEqual(r.merge.resolution, 'leave-open');
   assert.ok(r.merge.reason.endsWith(` — ${note}`), r.merge.reason);
@@ -746,15 +746,38 @@ test('an unmatured grant names the untrusted marker comments ghReadGrants passed
 });
 
 test('an unmatured grant with no passed-over comment keeps the merge reason unchanged (#3358 characterization)', () => {
-  const grants = { 7: { labels: ['auto:merge-pending'], pendingSince: null, skippedUntrusted: [] } };
+  const grants = { 7: { labels: ['auto:build', 'auto:merge-pending'], pendingSince: null, skippedUntrusted: [] } };
   const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
   assert.ok(r.merge.reason.endsWith('treated as not yet matured)'), r.merge.reason);
 });
 
 test('a matured auto:merge-pending counts as granted (#1932 AC3)', () => {
-  const grants = { 7: { labels: ['auto:merge-pending'], pendingSince: new Date('2026-09-01T00:00:00Z') } };
+  const grants = { 7: { labels: ['auto:build', 'auto:merge-pending'], pendingSince: new Date('2026-09-01T00:00:00Z') } };
   const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
   assert.strictEqual(r.merge.resolution, 'merge');
+});
+
+const NO_BUILD_REASON = 'no auto:build label present — a merge grant counts only together with a live auto:build';
+
+test('AC5.1, AC5.3: a member carrying auto:merge without auto:build resolves the merge half to leave-open naming the member', () => {
+  const grants = { 7: { labels: ['auto:build', 'auto:merge'], pendingSince: null }, 8: { labels: ['auto:merge'], pendingSince: null } };
+  const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7, 8] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
+  assert.strictEqual(r.merge.resolution, 'leave-open');
+  assert.strictEqual(r.merge.reason, `#8: ${NO_BUILD_REASON}`);
+});
+
+test('AC5.1: a no-build member with passed-over untrusted notes carries the passedOver suffix in the no-build-grant reason', () => {
+  const note = 'skipped marker comment https://x/issues/8#c1 by eve (NONE) — not an owner, member, or collaborator';
+  const grants = { 8: { labels: ['auto:merge'], pendingSince: null, skippedUntrusted: [note] } };
+  const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [8] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
+  assert.strictEqual(r.merge.reason, `#8: ${NO_BUILD_REASON} — ${note}`);
+});
+
+test('AC5.1: a member with no grant labels at all keeps the lacks auto:merge reason, not the build one', () => {
+  const grants = { 8: { labels: [], pendingSince: null } };
+  const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [8] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
+  assert.strictEqual(r.merge.resolution, 'leave-open');
+  assert.strictEqual(r.merge.reason, '#8 lacks auto:merge and a matured auto:merge-pending (no auto:merge or auto:merge-pending label present)');
 });
 
 test('readGrants throwing resolves the merge half to leave-open with reason grants-unreadable (#1932 AC3)', () => {
@@ -783,7 +806,7 @@ test('a drain-overlap hold whose PR has since merged self-heals: falls through t
     policy: 'console-auto',
     deps: deps({ checkPrState: () => 'MERGED' }),
   });
-  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' });
+  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' });
 });
 
 test('a drain-overlap hold whose PR has since closed self-heals the same as merged (#2299)', () => {
@@ -872,7 +895,7 @@ test('a group held by two distinct overlapping drain PRs falls through to merge 
     deps: deps({ checkPrState: (n) => { calls.push(n); return states[n]; } }),
   });
   assert.deepStrictEqual(calls, [4001, 4002]);
-  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' });
+  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' });
 });
 
 test('the regex matches PR number extraction from drain-pr-overlap.md\'s own Step 6 log-line template, instantiated with concrete values (final review Minor #4 — producer/consumer coupling)', () => {
@@ -940,7 +963,7 @@ test('a wrap-up-pack.json whose records came from the config rung yields no memb
 test('members come from wrap-up-pack.json inputs.records when present (#1932 decision 2)', () => {
   const calls = [];
   const runDir = fixture({ staged: { 'reflect-1.md': 'x' }, pack: { inputs: { records: [41, 42] } }, headers: [7] });
-  resolveAll({ runDir, policy: 'console-auto', deps: deps({ readGrants: (n) => { calls.push(n); return Object.fromEntries(n.map((x) => [x, { labels: ['auto:merge'], pendingSince: null }])); } }) });
+  resolveAll({ runDir, policy: 'console-auto', deps: deps({ readGrants: (n) => { calls.push(n); return Object.fromEntries(n.map((x) => [x, { labels: ['auto:build', 'auto:merge'], pendingSince: null }])); } }) });
   assert.deepStrictEqual(calls, [[41, 42]]);
 });
 
@@ -963,7 +986,7 @@ test('a multi-spec parent run dir with no wrap-up-pack.json resolves members via
     manifest,
     specHeaders: { 41: [41], 42: [42] },
   });
-  const r = resolveAll({ runDir, policy: 'console-auto', deps: deps({ readGrants: (n) => { calls.push(n); return Object.fromEntries(n.map((x) => [x, { labels: ['auto:merge'], pendingSince: null }])); } }) });
+  const r = resolveAll({ runDir, policy: 'console-auto', deps: deps({ readGrants: (n) => { calls.push(n); return Object.fromEntries(n.map((x) => [x, { labels: ['auto:build', 'auto:merge'], pendingSince: null }])); } }) });
   assert.deepStrictEqual(calls, [[41, 42]]);
   assert.notDeepStrictEqual(r.merge, { resolution: 'leave-open', reason: 'members-unresolved' });
 });

@@ -119,7 +119,7 @@ function defaultMergeScript(over, files, logs, applied) {
   return [
     [isGh('issue', 'view'), () => {
       // Read per call, so seq() can script the entry read and the pre-merge read apart.
-      const labels = over.labels === undefined ? [{ name: 'auto:merge' }] : knob(over.labels);
+      const labels = over.labels === undefined ? [{ name: 'auto:build' }, { name: 'auto:merge' }] : knob(over.labels);
       if (labels instanceof Error) throw labels;
       if (typeof labels === 'string') return labels;
       return JSON.stringify({ labels: [...labels, ...applied.map((name) => ({ name }))] });
@@ -431,7 +431,7 @@ test('AC1.2, AC1.3: labels without auto:merge, empty, auto:merge-pending only â†
     assert.ok(!kindsOf(h).includes('judgments'));
     assert.ok(!kindsOf(h).includes('policyCore'), 'labels are read before any policy read');
   }
-  const ok = mergeHarness({ labels: [{ name: 'bug' }, { name: 'auto:merge' }] });
+  const ok = mergeHarness({ labels: [{ name: 'bug' }, { name: 'auto:build' }, { name: 'auto:merge' }] });
   assert.equal((await merge(CTX, ok.deps)).outcome, 'merged');
 });
 
@@ -1603,7 +1603,7 @@ const ghErr = (stderr) => Object.assign(new Error(`Command failed: gh pr merge 9
 const argAfter = (c, flags) => flags.map((f) => (c.args.includes(f) ? c.args[c.args.indexOf(f) + 1] : undefined));
 const isConfirmRead = (c) => isGh('pr', 'view')(c) && c.args.includes(CONFIRM_FIELDS);
 const isLabelRead = isGh('issue', 'view');
-const AUTO_MERGE = [{ name: 'auto:merge' }];
+const AUTO_MERGE = [{ name: 'auto:build' }, { name: 'auto:merge' }];
 const ARMED = { state: 'OPEN', mergedAt: null, autoMergeRequest: { enabledAt: '2026-11-13T09:30:00Z', mergeMethod: 'SQUASH' }, mergeCommit: null };
 const BLOCKED_PENDING = { ...PENDING, mergeStateStatus: 'BLOCKED' };
 const BODY_FILE = path.join(CTX.runDir, 'merge-subject', 'body.md');
@@ -3508,4 +3508,23 @@ test('the park check runs once when an --auto refusal degrades to the wait row',
   assert.equal(h.calls.filter(isMergeCall).length, 2);
   assert.equal(parkCalls(h, 'parked').length, 1);
   assert.equal(parkCalls(h, 'decide').length, 1);
+});
+
+test('AC1.1, AC1.2: auto:merge without auto:build stops not-authorized at merge-entry with no label, comment, ready or merge call', async () => {
+  const h = mergeHarness({ labels: [{ name: 'auto:merge' }] });
+  const r = await merge(CTX, h.deps);
+  assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'not-authorized', mergeCommit: null, postMerge: null });
+  assert.equal(r.detail, 'record lacks auto:build');
+  assertNoReadyNoMerge(h);
+  assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-entry', 'stop']);
+  assert.ok(!h.calls.some((c) => c.kind === 'gh' && ((c.args[0] === 'issue' && ['edit', 'comment'].includes(c.args[1])) || (c.args[0] === 'pr' && c.args[1] === 'comment'))), 'no label edit or comment');
+});
+
+test('AC2.1, AC2.2: auto:build removed before the pre-merge read stops not-authorized at merge-call with no merge call', async () => {
+  const h = mergeHarness({ labels: seq(AUTO_MERGE, [{ name: 'auto:merge' }]) });
+  const r = await merge(CTX, h.deps);
+  assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'not-authorized', mergeCommit: null, postMerge: null });
+  assert.equal(r.detail, 'record lacks auto:build at the pre-merge read');
+  noMerge(h);
+  assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-call', 'stop']);
 });
