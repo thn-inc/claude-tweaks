@@ -498,3 +498,140 @@ test('tmpGitRepo: a second call starts no git process and carries the verify ide
   assert.deepStrictEqual(fs.readdirSync(trace), []);
   assert.strictEqual(second.git('config', 'user.email').trim(), 'verify-test@example.invalid');
 });
+
+// #5772: stack-check, statusline and archive-merged builders — same shape as above.
+const stackFixtures = require('./bin-lib/staged-patch/stack-check-fixtures');
+for (const [name, make] of [
+  ['stack-check gitFixture(BASE)', () => stackFixtures.gitFixture(null)],
+  ['stack-check gitFixture(Latin-1 bytes)', () => stackFixtures.gitFixture(null, Buffer.from('caf\xe9\n', 'latin1'))],
+  ['stack-check repoWith(files)', () => stackFixtures.repoWith(null, { 'g.txt': 'one\n', 'bin.dat': Buffer.from([0, 1, 255]) })],
+]) {
+  test(`AC3.1: ${name}: a second call starts no git process`, () => {
+    scratch.push(make().dir);
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(second.dir);
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+
+test('AC4.1: a stack-check fixture copy carries maintenance.auto=false and gc.auto=0 in its own config', () => {
+  const fx = stackFixtures.gitFixture(null);
+  scratch.push(fx.dir);
+  assert.strictEqual(fx.git('config', '--local', 'maintenance.auto').stdout.trim(), 'false');
+  assert.strictEqual(fx.git('config', '--local', 'gc.auto').stdout.trim(), '0');
+  assert.strictEqual(fx.git('config', '--local', 'user.email').stdout.trim(), 'stack-check@example.invalid');
+});
+
+const archiveMergedHelpers = require('./bin-lib/reconcile/archive-merged-helpers');
+// The copied bare origin a clone fixture's .git/config names, so a test can clean it up too.
+const originDirOf = (root) => fs.readFileSync(path.join(root, '.git', 'config'), 'utf8').match(/^\s*url = (.+)$/m)[1].trim();
+for (const [name, make, dirsOf] of [
+  ['makeRepo()', () => archiveMergedHelpers.makeRepo(), (d) => [d]],
+  ['mergedFeatureBranchRepo(feat-x)', () => archiveMergedHelpers.mergedFeatureBranchRepo('feat-x'), (r) => [r.root]],
+  ['fixtureCleanUnarchivedRun({ origin: true })', () => archiveMergedHelpers.fixtureCleanUnarchivedRun({ runId: '2026-08-01T090000-record-2', origin: true }), (r) => [r.root]],
+  ['fixtureAbandonedShippedRun', () => archiveMergedHelpers.fixtureAbandonedShippedRun({ runId: '2026-08-01T090000-record-1' }), (r) => [r.root]],
+  ['cloneOfSeededOrigin()', () => archiveMergedHelpers.cloneOfSeededOrigin(), (r) => [r.seed, r.root, originDirOf(r.root)]],
+]) {
+  test(`AC3.1: archive-merged ${name}: a second call starts no git process`, () => {
+    scratch.push(...dirsOf(make()));
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(...dirsOf(second));
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+
+test('mergedFeatureBranchRepo copy: feature tip is an ancestor of main and the branch ref exists', () => {
+  scratch.push(archiveMergedHelpers.mergedFeatureBranchRepo('feat-x').root);
+  const { root, featureSha } = archiveMergedHelpers.mergedFeatureBranchRepo('feat-x');
+  scratch.push(root);
+  const r = spawnSync('git', ['merge-base', '--is-ancestor', featureSha, 'main'], { cwd: root, env: gitEnv() });
+  assert.strictEqual(r.status, 0, String(r.stderr));
+  assert.strictEqual(git(root, ['rev-parse', 'feat-x']), featureSha);
+});
+
+for (const [name, make, dirsOf] of [
+  ['fixtureAbandonedBehindOrigin()', () => archiveMergedHelpers.fixtureAbandonedBehindOrigin(), (r) => [r.root, originDirOf(r.root)]],
+  ['fixtureAbandonedBehindOrigin({ squash: true })', () => archiveMergedHelpers.fixtureAbandonedBehindOrigin({ squash: true }), (r) => [r.root, originDirOf(r.root)]],
+  ['headerMergedRepo3976({ moved: true, merge: squash })', () => archiveMergedHelpers.headerMergedRepo3976({ moved: true, merge: 'squash' }), (r) => [r.root]],
+  ['headerMergedRepo3976({ moved: false, merge: no-ff })', () => archiveMergedHelpers.headerMergedRepo3976({ moved: false, merge: 'no-ff' }), (r) => [r.root]],
+]) {
+  test(`AC3.1: archive-merged ${name}: a second call starts no git process`, () => {
+    scratch.push(...dirsOf(make()));
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(...dirsOf(second));
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+
+test('AC3.1: archive-merged mergedFeatureBranchRepo(): a call with a new branch name starts no git process', () => {
+  scratch.push(archiveMergedHelpers.mergedFeatureBranchRepo('feat-warm-5772').root);
+  const trace = mk('ct-gt-trace-');
+  const second = withEnv('GIT_TRACE2_EVENT', trace, () => archiveMergedHelpers.mergedFeatureBranchRepo('feat-fresh-5772'));
+  scratch.push(second.root);
+  assert.deepStrictEqual(fs.readdirSync(trace), []);
+});
+
+test('mergedFeatureBranchRepo copy under a new branch name: the ref and its reflog carry that name only', () => {
+  const { root, featureSha } = archiveMergedHelpers.mergedFeatureBranchRepo('feat/renamed-5772');
+  scratch.push(root);
+  assert.strictEqual(git(root, ['rev-parse', 'feat/renamed-5772']), featureSha);
+  assert.strictEqual(git(root, ['rev-parse', 'main']), featureSha);
+  assert.strictEqual(git(root, ['for-each-ref', '--format=%(refname)', 'refs/heads']), 'refs/heads/feat/renamed-5772\nrefs/heads/main');
+  assert.notStrictEqual(git(root, ['reflog', 'show', 'feat/renamed-5772']), '');
+  assert.match(git(root, ['reflog', 'show', 'main']), /merge feat\/renamed-5772: Fast-forward/);
+});
+
+for (const [name, make, dirsOf] of [
+  ['deletedBranchMergedRepo(feat-3503-bynumber, origin)', () => archiveMergedHelpers.deletedBranchMergedRepo('feat-3503-bynumber', 'git@github.com:acme/w.git'), (r) => [r.root]],
+  ['reusedBranchLiveRepo()', () => archiveMergedHelpers.reusedBranchLiveRepo(), (r) => [r.root, r.wt]],
+  ['shellRepo3975()', () => archiveMergedHelpers.shellRepo3975(), (r) => [r.root]],
+]) {
+  test(`AC3.1: archive-merged ${name}: a second call starts no git process`, () => {
+    scratch.push(...dirsOf(make()));
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(...dirsOf(second));
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+
+const statuslineFixtures = require('./helpers/statusline-fixtures');
+for (const [name, make, dirsOf] of [
+  ['committedRepo()', () => statuslineFixtures.committedRepo(), (d) => [d]],
+  ["committedRepo({ branch: 'feature/isolated-branch' })", () => statuslineFixtures.committedRepo({ branch: 'feature/isolated-branch' }), (d) => [d]],
+  ["repoWithOrigin('git@github.com:owner/repo.git')", () => statuslineFixtures.repoWithOrigin('git@github.com:owner/repo.git'), (r) => [r.base]],
+  ['repoWithOrigin(null)', () => statuslineFixtures.repoWithOrigin(null), (r) => [r.base]],
+  ['worktreeShapes()', () => statuslineFixtures.worktreeShapes(), (r) => [r.base]],
+  ['linkedWorktreeProject()', () => statuslineFixtures.linkedWorktreeProject(), (r) => [r.base]],
+]) {
+  test(`AC3.1: statusline ${name}: a second call starts no git process`, () => {
+    scratch.push(...dirsOf(make()));
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(...dirsOf(second));
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+
+test('worktreeShapes copy: link points at this copy\'s wt, and wt and sub resolve inside this copy', () => {
+  const { base, wt, sub, link } = statuslineFixtures.worktreeShapes();
+  scratch.push(base);
+  const realBase = fs.realpathSync(base);
+  const inside = (p) => p.startsWith(realBase + path.sep);
+  if (link !== null) assert.strictEqual(fs.realpathSync(link), fs.realpathSync(wt));
+  for (const dir of [wt, sub]) {
+    const common = fs.realpathSync(path.resolve(dir, git(dir, ['rev-parse', '--git-common-dir'])));
+    assert.ok(inside(common), `${dir}: ${common} is outside ${realBase}`);
+  }
+  const gitmodules = path.join(base, 'main-repo', '.gitmodules');
+  if (fs.existsSync(gitmodules)) {
+    const urls = [...fs.readFileSync(gitmodules, 'utf8').matchAll(/^\s*url\s*=\s*(.+?)\s*$/gm)].map((m) => m[1]);
+    assert.ok(urls.length > 0, 'control: .gitmodules names a url');
+    for (const url of urls) {
+      assert.ok(inside(fs.realpathSync(path.resolve(url))), `.gitmodules url ${url} is outside ${realBase}`);
+    }
+  }
+});

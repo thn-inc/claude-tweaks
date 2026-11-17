@@ -33,6 +33,7 @@ const {
   git, trackedFiles, makeRepo, commitPath, ghJsonHeredoc, installGhWrapper, mergedFeatureBranchRepo,
   fixtureCleanUnarchivedRun, fixtureAbandonedShippedRun, DEAD, mkDirWithMtime, seedStuckDir4180,
   fixtureActiveUnstampedMergedRun, fixtureOrdinaryMergedNoConsole, ref,
+  addOriginRemote, deletedBranchMergedRepo, reusedBranchLiveRepo, makeShell, shellRepo3975,
 } = require('./archive-merged-helpers');
 
 // #1892: stamps `worktree-always: true` in `.claude-tweaks/policy.yml` — the
@@ -423,9 +424,8 @@ test('STRUCTURALLY_STUCK_REASONS includes merged-partial and no-repo-slug but no
 // console.json.
 function fixtureByNumberMergedRecordRun({ runId, closes, issueStates = null, consoleResolved = false, findings = null, decisions = null }) {
   const branch = 'feat-3503-bynumber';
-  const { root, featureSha } = mergedFeatureBranchRepo(branch);
-  git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
-  git(root, 'branch', '-D', branch); // branch ref gone too — nothing for fallbackBranch to recover
+  // branch ref gone too — nothing for fallbackBranch to recover
+  const { root, featureSha } = deletedBranchMergedRepo(branch, 'git@github.com:acme/w.git');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
@@ -779,9 +779,7 @@ test('#4794: an SSH-alias origin skips the record check unknown-host with the re
 test('#4794: a run with a stamped pr.number and no branch, whose by-number read says unknown-host on an SSH-alias origin, skips unknown-host with the refusal as hint', { skip: STUB_SKIP }, () => {
   const origin = 'git@github-work:acme/w.git';
   const branch = 'feat-4794-bynumber';
-  const { root } = mergedFeatureBranchRepo(branch);
-  git(root, 'remote', 'add', 'origin', origin);
-  git(root, 'branch', '-D', branch); // branch ref gone too — only the stamped number can name the PR
+  const { root } = deletedBranchMergedRepo(branch, origin); // branch ref gone too — only the stamped number can name the PR
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-10-17T062549-record-4794');
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
@@ -829,9 +827,7 @@ test('AC4.1 AC4.2: STRUCTURALLY_STUCK_REASONS has pr-not-found and not network-f
 // This fixture is that shape: the live worktree is on `worktree-reused`, and
 // the earlier merged PR is the one the branch list would return.
 function fixtureReusedBranchLiveRun({ runId, prNumber, consoleResolved = false }) {
-  const { root, featureSha } = mergedFeatureBranchRepo('feat-reused-branch');
-  const wt = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-reusedwt-')));
-  git(root, 'worktree', 'add', '-q', wt, '-b', 'worktree-reused');
+  const { root, wt, featureSha } = reusedBranchLiveRepo();
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
@@ -908,7 +904,7 @@ const NOT_FOUND_BODY = '{"data":{"repository":{"pullRequest":null}},"errors":[{"
 
 function runStaleStampPass({ runId, graphql }) {
   const { root, runDir, featureSha } = fixtureReusedBranchLiveRun({ runId, prNumber: 3406, consoleResolved: true });
-  git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+  addOriginRemote(root, 'git@github.com:acme/w.git');
   const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
   fs.utimesSync(runDir, backdated, backdated);
   const wrapper = installGhPrWrapper({
@@ -942,7 +938,7 @@ test('AC5.1: a stamped pr.number resolving pr-not-found skips pr-not-found, neve
 
 test('AC5.3: the no-branch by-number path skips pr-not-found (not no-branch/no-worktree) for a stale stamp and enters the stuck counter with "stuck at pr-not-found" (#3543)', { skip: STUB_SKIP }, () => {
   const root = fs.realpathSync(makeRepo());
-  git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+  addOriginRemote(root, 'git@github.com:acme/w.git');
   const runId = '2026-10-17T090000-record-3543-nobranch-stale-stamp';
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
   fs.mkdirSync(runDir, { recursive: true });
@@ -1275,17 +1271,10 @@ test('archiveRunCommand: a paste-ready archive-run command naming the run dir', 
   assert.match(command, /2026-01-01T000000-spec-1/);
 });
 
-// #3975: a clean-twin shell — the archive twin carries a clean run-state, only tracked work/ is live.
-function makeShell(root, runId, { twinWork = '# w\n', liveWork = '# w\n' } = {}) {
-  commitPath(root, `.claude-tweaks/pipelines/${runId}/work/w-spec.md`, liveWork);
-  commitPath(root, `.claude-tweaks/pipelines/archive/${runId}/work/w-spec.md`, twinWork);
-  commitPath(root, `.claude-tweaks/pipelines/archive/${runId}/run-state.json`, JSON.stringify({ status: 'clean' }));
-  return path.join(root, '.claude-tweaks', 'pipelines', runId);
-}
-
+// #3975: makeShell (archive-merged-helpers.js) commits a clean-twin shell; shellRepo3975 is a
+// fresh repo already holding the default '2026-09-01T100000-spec-1' one.
 test('AC1.4: without worktree-always only one shell is archived in place per pass (#3975)', () => {
-  const root = fs.realpathSync(makeRepo());
-  const a = makeShell(root, '2026-09-01T100000-spec-1');
+  const { root, shellDir: a } = shellRepo3975();
   const b = makeShell(root, '2026-09-01T110000-spec-2');
   const result = archiveMerged({ cwd: root });
   assert.equal(result.archived.length, 1, JSON.stringify(result));
@@ -1314,8 +1303,7 @@ test('AC1.5: a conflicting clean-twin shell does not take the in-place slot and 
 });
 
 test('AC1.7: a failed in-place attempt on a clean-twin shell leaves the twin clean (#3975)', (t) => {
-  const root = fs.realpathSync(makeRepo());
-  const shellDir = makeShell(root, '2026-09-01T100000-spec-1');
+  const { root, shellDir } = shellRepo3975();
   t.mock.method(cp, 'execFileSync', (cmd, args, opts) => {
     if (cmd === 'git' && Array.isArray(args) && args.includes('commit')) throw new Error('simulated failure: git commit');
     return execFileSync(cmd, args, opts);
@@ -2173,8 +2161,7 @@ test('prefetchArchivePrStates: a number with no answer queues no branch (#4032)'
 // The branchless by-number fallback (archiveMerged's own `resolvePrStateByNumber`
 // site, distinct from resolveRunPrState) routes through `prStates` too.
 test('archiveMerged: prStates answers the branchless by-number fallback (#4032)', { skip: STUB_SKIP }, () => {
-  const { root, featureSha } = mergedFeatureBranchRepo('feat-4032-branchless');
-  git(root, 'branch', '-D', 'feat-4032-branchless'); // branch ref gone — nothing for fallbackBranch to recover
+  const { root, featureSha } = deletedBranchMergedRepo('feat-4032-branchless'); // branch ref gone — nothing for fallbackBranch to recover
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-08-01T090000-record-4032-branchless');
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
@@ -2388,7 +2375,7 @@ test('archiveMerged: a dry run, a pass with no main checkout and an unreadable p
 // transient and must never escalate as residue.
 test('archiveMerged: a run dir in postMergeDeferred is skipped post-merge-pending, untracked, and left in place (#4599)', () => {
   const root = fs.realpathSync(makeRepo());
-  git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+  addOriginRemote(root, 'git@github.com:acme/w.git');
   const dir = seedStuckDir4180(root, '2026-01-01T000000-pending-4599');
   const runner = () => { throw new Error('no gh in this test'); };
 
