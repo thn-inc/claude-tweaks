@@ -252,7 +252,10 @@ function S0() {
 const REPO_SLUG = 'fixture-owner/fixture-repo';
 
 // A linked-PR GraphQL node (the oracle's gh table) for record `n`; `spec` is scenario.linked[n]:
-// { openPR, mentions: [{ number, title, merged, mergedAt, createdAt }] }.
+// { openPR, mentions: [{ number, title, merged, mergedAt, createdAt }], lastShapedAt }.
+// `lastShapedAt` (#5722, an ISO string) is the one source for both halves: here it becomes a
+// single `auto:build` LabeledEvent, which fetchLinkedPRs reduces back to the same string;
+// linkedOutput prints it directly — so the oracle's real CLI and the module's fake agree.
 function linkedNode(n, spec = {}) {
   const mentions = spec.mentions || [];
   return {
@@ -262,11 +265,12 @@ function linkedNode(n, spec = {}) {
     timelineItems: { nodes: mentions.map((m) => ({ source: {
       number: m.number, title: m.title, state: m.merged ? 'MERGED' : 'OPEN', merged: m.merged, mergedAt: m.mergedAt || null, createdAt: m.createdAt || null, repository: { nameWithOwner: REPO_SLUG },
     } })) },
+    labelEvents: { nodes: spec.lastShapedAt ? [{ createdAt: spec.lastShapedAt, label: { name: 'auto:build' } }] : [] },
   };
 }
 
-// What bin/resolve-linked-prs.js prints for `numbers` over scenario.linked: openPR, mentions and
-// hasClosingPRReference only (the CLI drops fetchLinkedPRs' issueState).
+// What bin/resolve-linked-prs.js prints for `numbers` over scenario.linked: openPR, mentions,
+// hasClosingPRReference and lastShapedAt (the CLI drops fetchLinkedPRs' issueState).
 function linkedOutput(linked, numbers) {
   const out = {};
   for (const n of numbers) {
@@ -275,6 +279,7 @@ function linkedOutput(linked, numbers) {
       openPR: spec.openPR || null,
       mentions: (spec.mentions || []).map((m) => ({ number: m.number, title: m.title, state: m.merged ? 'MERGED' : 'OPEN', merged: !!m.merged, mergedAt: m.mergedAt || null, createdAt: m.createdAt || null })),
       hasClosingPRReference: Boolean(spec.openPR),
+      lastShapedAt: spec.lastShapedAt || null,
     };
   }
   return out;

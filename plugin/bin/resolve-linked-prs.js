@@ -47,14 +47,17 @@ const { run, parseArgs, parseNumbers, realDeps } = makeNumberListCli({
   }),
   // #2934: fetchLinkedPRs' Map entries also carry `issueState` now (consumed
   // directly by wrap-up/engine-verify.js's carrier-commit fallback) --
-  // excluded here so this CLI's own public output shape stays exactly what
-  // it was (openPR/mentions/hasClosingPRReference), never silently growing
-  // a field this contract doesn't document.
+  // excluded here so this CLI's own public output shape stays what it was
+  // (openPR/mentions/hasClosingPRReference), never silently growing a field
+  // this contract doesn't document. #5722 documents one: `lastShapedAt`, the
+  // latest `ready`/`auto:build` label time (ISO string or null), which the
+  // dispatch queue pull reads from dispatch-linked-prs.json to downgrade a
+  // shipped mention the record was shaped or granted after.
   mapResult: (n, byNumber) => {
     const entry = byNumber.get(n);
     if (!entry) return entry;
-    const { openPR, mentions, hasClosingPRReference } = entry;
-    return { openPR, mentions, hasClosingPRReference };
+    const { openPR, mentions, hasClosingPRReference, lastShapedAt } = entry;
+    return { openPR, mentions, hasClosingPRReference, lastShapedAt };
   },
 });
 
