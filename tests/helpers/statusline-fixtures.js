@@ -11,6 +11,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { fromTemplate } = require('./git-template');
+const { initRepo } = require('./git-fixtures');
 
 function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -18,9 +19,7 @@ function git(args, cwd) {
 
 // init on `branch`, the test identity, then `file` holding `content` committed as `init`.
 function initCommitted(dir, branch, file, content) {
-  git(['init', '-q', '-b', branch], dir);
-  git(['config', 'user.email', 'test@example.com'], dir);
-  git(['config', 'user.name', 'Test'], dir);
+  initRepo(dir, { branch, name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(dir, file), content);
   git(['add', file], dir);
   git(['commit', '-q', '-m', 'init'], dir);

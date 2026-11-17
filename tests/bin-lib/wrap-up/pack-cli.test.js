@@ -8,12 +8,13 @@ const { execFileSync } = require('node:child_process');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'wrap-up-pack.js');
 const { run, parseArgs } = require(CLI);
+const { initRepo } = require('../../helpers/git-fixtures');
 
 // A throwaway "main checkout" (a git repo) with a run dir under its .claude-tweaks/pipelines.
 function mainCheckoutWithRun() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-cli-')));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't'); git('commit', '-q', '--allow-empty', '-m', 'init');
+  initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); git('commit', '-q', '--allow-empty', '-m', 'init');
   // work-backend lives in CLAUDE.md, not policy.yml (#1930 review E1).
   fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# Fixture\n\nwork-backend: github-issues\n');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-09-06T000000-record-7');

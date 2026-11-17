@@ -17,6 +17,7 @@ const { execFileSync } = require('child_process');
 const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
 const { readText } = require('./helpers/read-skill');
 const { shellQuote } = require('./helpers/shell-quote');
+const { initRepo } = require('./helpers/git-fixtures');
 const { isPolicyOnlyCommit, POLICY_COMMIT_ALLOWLIST, isDeleteOnlyPush, DELETE_ONLY_PUSH_ALLOWLIST } = pre;
 
 // Sibling suites contending for the same machine can push a plain git init/
@@ -38,9 +39,7 @@ function trackTmp(dir) {
 
 function gitRepoWithCommit() {
   const dir = trackTmp(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-polexempt-')));
-  execFileSync('git', ['-C', dir, 'init', '-q']);
-  execFileSync('git', ['-C', dir, 'config', 'user.email', 'test@example.com']);
-  execFileSync('git', ['-C', dir, 'config', 'user.name', 'Test']);
+  initRepo(dir, { name: 'Test', email: 'test@example.com' });
   execFileSync('git', ['-C', dir, 'commit', '--allow-empty', '-m', 'init', '-q']);
   return fs.realpathSync(dir);
 }

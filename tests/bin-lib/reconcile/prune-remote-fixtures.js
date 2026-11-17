@@ -6,7 +6,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { fromTemplateSet, disableReceiveAutoGc } = require('../../helpers/git-template');
-const { fixtureGit } = require('../../helpers/git-fixtures');
+const { fixtureGit, initRepo } = require('../../helpers/git-fixtures');
 
 function git(cwd, ...args) {
   return fixtureGit(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -16,9 +16,7 @@ function git(cwd, ...args) {
 function buildBase({ origin, dir }) {
   git(origin, 'init', '--bare', '-b', 'main');
   disableReceiveAutoGc(origin);
-  git(dir, 'init', '-b', 'main');
-  git(dir, 'config', 'user.email', 't@t');
-  git(dir, 'config', 'user.name', 't');
+  initRepo(dir, { branch: 'main', name: 't', email: 't@t' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
   git(dir, 'add', 'a.txt');
   git(dir, 'commit', '-m', 'init');

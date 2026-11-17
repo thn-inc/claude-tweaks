@@ -7,13 +7,13 @@ const os = require('os');
 const path = require('path');
 
 const HOOKS = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'hooks.js');
+const { writeIdentity } = require('../../helpers/git-fixtures');
 
 function git(args, cwd) { return execFileSync('git', args, { cwd, encoding: 'utf8' }); }
 
 function seedRepo(dir) {
   git(['init', '-q', '--initial-branch=main'], dir);
-  git(['config', 'user.email', 't@e.com'], dir);
-  git(['config', 'user.name', 'T'], dir);
+  writeIdentity(dir, { name: 'T', email: 't@e.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'x');
   git(['add', 'a.txt'], dir);
   git(['commit', '-q', '-m', 'seed'], dir);

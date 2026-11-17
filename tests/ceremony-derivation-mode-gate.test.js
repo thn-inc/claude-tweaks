@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { readText } = require('./helpers/read-skill');
+const { initRepo } = require('./helpers/git-fixtures');
 
 const ROOT = path.join(__dirname, '..');
 const SET_CONFIG = path.join(ROOT, 'plugin', 'bin', 'set-config.js');
@@ -20,7 +21,7 @@ const LOW_SURFACE = [
 function runDirWith(mode) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ceremony-gate-')));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't'); git('commit', '-q', '--allow-empty', '-m', 'init');
+  initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); git('commit', '-q', '--allow-empty', '-m', 'init');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-09-06T000000-record-7');
   fs.mkdirSync(runDir, { recursive: true });
   if (mode !== null) fs.writeFileSync(path.join(runDir, 'config.yml'), `mode: ${mode}\nceremony-profile: standard\n`);

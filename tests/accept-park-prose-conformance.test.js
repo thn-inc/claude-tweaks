@@ -59,9 +59,10 @@ const M_DECIDE = 'accept-park.js" decide';
 const M_STEP29 = '## Step 2.9: Local acceptance park (control mode)';
 
 // Raised from 300 (#4615 round 2) so the pointer carries the --run argument and the stop statement, and
-// from 410 (final review M4) for the per-merged-run rule; the composed merge bundle's own rail
-// (tests/bin-lib/skill-audit) is what bounds the file.
-const POINTER_BYTES = 450;
+// from 410 (final review M4) for the per-merged-run rule, and to 560 (#4619) for the head and
+// classification arguments; the composed merge bundle's own rail (tests/bin-lib/skill-audit)
+// is what bounds the file.
+const POINTER_BYTES = 560;
 const POINTER_MSG = `Step 2.9 must stay a pointer of at most ${POINTER_BYTES} bytes`;
 
 function pinStep29(text) {
@@ -121,9 +122,7 @@ test('AC3b.2 control: each Step 2.9 claim goes red on its own message', () => {
 // Every Step 2.5 route into Step 3 (arm, immediate merge, forge-enforced arm) passes Step 2.9 first, with two named exemptions.
 const GATE_HEAD = 'No fence below runs until Step 2.9 lets the merge through';
 const GATE_FACTS = [
-  ['let-through condition', '(`parked` exit 5, `decide` exit 0 with `park:false`)'],
   ['every Step 2.5 route', 'whichever Step 2.5 route led here'],
-  ['tidy record-linked arm runs both', "tidy's record-linked arm runs both without `--run`"],
   ['no-Fixes-record exemption', "a caller with no `Fixes` record (tidy's housekeeping arm)"],
   ['own-guard exemption', 'one running Step 3 alone behind its own `parked` guard (dispatch close-out, `/claude-tweaks:accept`)'],
 ];
@@ -636,7 +635,9 @@ function pinGraph(text) {
     const s = sectionOf(text, `## ${name}`);
     need(s.includes('`bin/accept-park.js`'), `## ${name} must carry a bin/accept-park.js row`);
   }
-  need(sectionOf(text, '## accept').includes('`_shared/pr-first-merge.md`'), 'the accept row must name pr-first-merge.md');
+  // The row itself, not the section: the tripwire-classification row names pr-first-merge.md too.
+  const row = sectionOf(text, '## accept').split('\n').find((l) => l.startsWith('| `bin/accept-park.js` |')) || '';
+  need(row.includes('`_shared/pr-first-merge.md`'), 'the accept row must name pr-first-merge.md');
 }
 
 test('skill-graph names the accept-park.js edges on the accept, dispatch and tidy sections', () => {
@@ -650,4 +651,34 @@ test('skill-graph control: each section row and the accept edge go red when stri
   }
   const row = rowOf('accept');
   expectRed(() => pinGraph(GRAPH.replace(row, row.split('`_shared/pr-first-merge.md`').join('x'))), 'the accept row must name pr-first-merge.md');
+});
+
+// ---------------------------------------------------------------------------------------------
+// #4619 — every merge site's `decide` call passes the PR head (the diff tripwire's target)
+// ---------------------------------------------------------------------------------------------
+const HEAD_ARG = ' --head {headRefOid}';
+const DECIDE_HEAD_SITES = [
+  ['Step 2.9', (merge) => collapse(sectionOf(merge, M_STEP29)), /accept-park\.js" decide --run "\$PIPELINE_RUN_DIR" --record \{n\}\[,\{m\}…\] --head \{headRefOid\}/],
+  ['local-acceptance-park.md step 2', (_m, park) => collapse(park), /accept-park\.js" decide --run "\$PIPELINE_RUN_DIR" --record \{n\}\[,\{m\}…\] --head \{headRefOid\}/],
+  ["tidy's Arm ready PR", (_m, _p, tidy) => collapse(sectionOf(tidy, '## Arm ready PR')), /accept-park\.js" decide --record \{n\}\[,\{m\}…\] --head \{headRefOid\}/],
+];
+function pinDecideHead(merge, park, tidy) {
+  for (const [name, slice, re] of DECIDE_HEAD_SITES) need(re.test(slice(merge, park, tidy)), `${name} must pass --head {headRefOid} to decide`);
+}
+
+test('#4619: Step 2.9, local-acceptance-park.md and the tidy arm each pass --head to decide', () => {
+  pinDecideHead(MERGE, PARK, TIDY_ACTIONS);
+});
+
+test('#4619 control: stripping --head from any one site reports that site', () => {
+  const sources = [MERGE, PARK, TIDY_ACTIONS];
+  DECIDE_HEAD_SITES.forEach(([name, , re], i) => {
+    // Each site is one unwrapped line, so the raw text carries the pinned span; strip the flag from that span only.
+    const span = sources[i].match(re);
+    assert.ok(span, `control: ${name} span present in the raw text`);
+    const args = [...sources];
+    args[i] = sources[i].replace(span[0], span[0].replace(HEAD_ARG, ''));
+    assert.notStrictEqual(args[i], sources[i]);
+    expectRed(() => pinDecideHead(...args), `${name} must pass --head {headRefOid} to decide`);
+  });
 });

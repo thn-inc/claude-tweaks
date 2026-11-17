@@ -180,6 +180,7 @@ const ADOPTERS = [
   'plugin/skills/docs-health/SKILL.md',
   'plugin/skills/harness-health/filing.md',
   'plugin/skills/journey-health/SKILL.md',
+  'plugin/skills/ci-health/SKILL.md',
 ];
 
 for (const rel of ADOPTERS) {
@@ -200,12 +201,13 @@ test('no adopter file restates the floor\'s three-axis definition', () => {
   }
 });
 
-test('the four health sweeps state materiality-floor-before-cap-digest ordering', () => {
+test('the five health sweeps state materiality-floor-before-cap-digest ordering', () => {
   const HEALTH_FILES = [
     'plugin/skills/code-health/filing.md',
     'plugin/skills/docs-health/SKILL.md',
     'plugin/skills/harness-health/filing.md',
     'plugin/skills/journey-health/SKILL.md',
+    'plugin/skills/ci-health/SKILL.md',
   ];
   for (const rel of HEALTH_FILES) {
     assert.match(
@@ -247,7 +249,7 @@ test('multi-branch adopter files cite materiality-floor.md at each of their fili
 
 // --- #1279: Defer-reason vocabulary for direct-filing producers ---
 
-test('materiality-floor.md documents a Defer-reason value for direct-filing producers (the four health sweeps)', () => {
+test('materiality-floor.md documents a Defer-reason value for direct-filing producers (the five health sweeps)', () => {
   assert.ok(FLOOR.includes('direct-filing-sweep'));
   assert.match(FLOOR, /### Direct-filing producers' `Defer-reason:` value/);
 });
@@ -371,13 +373,14 @@ test('reflect/hindsight-mode.md inherits digest URL/count surfacing from full-mo
   assert.match(HINDSIGHT, /this mode's own end-of-run summary states the same digest comment URL and count/);
 });
 
-test('the four health sweeps report a materiality-digest count distinct from the cap-digest count in the throttle line', () => {
+test('the five health sweeps report a materiality-digest count distinct from the cap-digest count in the throttle line', () => {
   assert.match(HEALTH_DIGEST, /filed: N, digested: M, cap: \{CAP\}, materiality: K/);
   const HEALTH_SKILLS = [
     'plugin/skills/code-health/SKILL.md',
     'plugin/skills/docs-health/SKILL.md',
     'plugin/skills/harness-health/SKILL.md',
     'plugin/skills/journey-health/SKILL.md',
+    'plugin/skills/ci-health/SKILL.md',
   ];
   for (const rel of HEALTH_SKILLS) {
     assert.match(

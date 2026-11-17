@@ -110,6 +110,7 @@ rows, per the note below the array):
   ["by:docs-health",    "Origin: filed by the docs-health skill", "BFD4F2"],
   ["by:capture",        "Origin: filed via /capture", "BFD4F2"],
   ["by:dispatch",       "Origin: self-filed by /claude-tweaks:dispatch on a headless Preflight failure", "BFD4F2"],
+  ["by:ci-health",      "Origin: filed by the ci-health skill", "BFD4F2"],
   ["risk:low",          "Scoring: low blast radius — safe for autonomous build", "0E8A16"],
   ["risk:medium",       "Scoring: moderate blast radius — review before merge recommended", "FBCA04"],
   ["risk:high",         "Scoring: high blast radius — human review required", "D93F0B"],

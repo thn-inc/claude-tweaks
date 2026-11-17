@@ -2,7 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const {
-  recordPayload, TYPE_LABELS, CLASSIFICATION_SCORING, LABELS, DEFER_REASONS,
+  recordPayload, ORIGINS, TYPE_LABELS, CLASSIFICATION_SCORING, LABELS, DEFER_REASONS,
   extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, ownOriginLine, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
   buildNativeDependencyQuery, hasOpenNativeBlocker, parseSubIssues, parseParent, buildNativeSubIssuesQuery,
   buildNativeParentQuery,
@@ -65,6 +65,32 @@ test('recordPayload accepts origin: docs-health', () => {
 test('recordPayload accepts origin: dispatch', () => {
   const payload = recordPayload({ title: 'x', body: 'y', type: 'task', origin: 'dispatch' });
   assert.ok(payload.labels.includes('by:dispatch'));
+});
+
+test('AC9.1: the by:ci-health origin is registered beside the six existing origins (expand-only)', () => {
+  const path = require('node:path');
+  const { readText } = require('../../helpers/read-skill');
+  const shared = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared');
+  assert.ok(ORIGINS.includes('ci-health'));
+  assert.deepStrictEqual(ORIGINS.slice(0, 6), ['code-health', 'harness-health', 'journey-health', 'docs-health', 'capture', 'dispatch']);
+  assert.strictEqual(parseRecordFacets(['by:ci-health', 'ready']).origin, 'ci-health');
+  assert.deepStrictEqual(
+    recordPayload({ title: 't', body: 'b', type: 'task', origin: 'ci-health', risk: 'low', size: 'low', ready: true }).labels,
+    ['by:ci-health', 'risk:low', 'size:low', 'ready'],
+  );
+  // The shared contracts carry every origin: label-bootstrap.md registers a by:* label for each,
+  // and work-record.md's Origin row states the matching count and lists each label.
+  const bootstrap = readText(path.join(shared, 'label-bootstrap.md'));
+  const rows = [...bootstrap.matchAll(/^\s*\["(by:[a-z-]+)",\s*"([^"]*)",\s*"([0-9A-F]{6})"\]/gm)].map((m) => ({ name: m[1], description: m[2], color: m[3] }));
+  for (const origin of ORIGINS) {
+    assert.ok(rows.some((r) => r.name === `by:${origin}`), `label-bootstrap.md LABELS_JSON must register by:${origin}`);
+  }
+  const ci = rows.find((r) => r.name === 'by:ci-health');
+  assert.deepStrictEqual(ci && [ci.description, ci.color], ['Origin: filed by the ci-health skill', 'BFD4F2']);
+  const originRow = readText(path.join(shared, 'work-record.md')).split('\n').find((l) => l.startsWith('| Origin ('));
+  assert.ok(originRow, 'work-record.md must carry the Origin family row');
+  assert.ok(originRow.startsWith(`| Origin (${ORIGINS.length}) |`), `Origin row count must equal ORIGINS.length (${ORIGINS.length})`);
+  for (const origin of ORIGINS) assert.ok(originRow.includes(`\`by:${origin}\``), `Origin row must list by:${origin}`);
 });
 
 test('recordPayload throws on unknown risk', () => {

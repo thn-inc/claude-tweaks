@@ -8,6 +8,7 @@ const os = require('os');
 const path = require('path');
 const { archiveMerged, ORPHAN_MINT_TTL_MS } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 const { repoPinnedEnv } = require('../../../plugin/bin/lib/hooks/git-exec');
+const { writeIdentity } = require('../../helpers/git-fixtures');
 
 // #4178: archiveMerged addresses the main checkout via `git -C <root>`, but an
 // inherited GIT_DIR (e.g. a process spawned from inside a linked worktree) overrides
@@ -23,8 +24,7 @@ function git(cwd, ...args) {
 function makeRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-linked-wt-'));
   git(dir, 'init', '-b', 'main');
-  git(dir, 'config', 'user.email', 't@t');
-  git(dir, 'config', 'user.name', 't');
+  writeIdentity(dir, { name: 't', email: 't@t' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
   git(dir, 'add', 'a.txt');
   git(dir, 'commit', '-m', 'init');

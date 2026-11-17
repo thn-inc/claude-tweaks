@@ -15,11 +15,12 @@ const { run, writeDecisionFacts, EXIT_CARRY_FAILED } = require(CLI);
 const { readConsoleState } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'reconcile', 'archive-merged'));
 const { readRunResidue, consoleResidueItems } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'residue'));
 const { appendRow } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'stage-item', 'ledger'));
+const { initRepo } = require('../../helpers/git-fixtures');
 
 function mainCheckoutWithRun({ autonomy = 'unattended', staged = {}, decisions = '', policyExtra = '', writePolicy = true, runConfig = null, consoleJson = null } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-cm-cli-')));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't'); git('commit', '-q', '--allow-empty', '-m', 'init');
+  initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); git('commit', '-q', '--allow-empty', '-m', 'init');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   if (writePolicy) fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), `${autonomy === null ? '' : `autonomy: ${autonomy}\n`}${policyExtra}`);
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-09-06T000000-record-7');

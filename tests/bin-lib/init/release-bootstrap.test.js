@@ -279,11 +279,10 @@ test('renderers: workflow, config, manifest, policy rows', () => {
 });
 
 const { execFileSync } = require('child_process');
+const { initRepo } = require('../../helpers/git-fixtures');
 function git(cwd, ...args) { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim(); }
 function gitRepo(root) {
-  git(root, 'init', '-b', 'main');
-  git(root, 'config', 'user.email', 't@t');
-  git(root, 'config', 'user.name', 't');
+  initRepo(root, { name: 't', email: 't@t', branch: 'main', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   write(root, 'README.md', 'x\n');
   git(root, 'add', 'README.md');
   git(root, 'commit', '-m', 'init');
