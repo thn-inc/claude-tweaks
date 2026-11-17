@@ -381,7 +381,7 @@ test('#4599: Step 4.0 says the reconciler\'s post-merge check runs the CLI for a
   const body = collapse(section(pm, '### Step 4.0:', STEP_40B));
   assert.ok(
     body.includes(
-      "An `armed` outcome never reaches this step in-session: the reconciler's `post-merge` check (`gh` only) runs the CLI for that run once GitHub has merged the PR for 10 minutes (the merge grace), with no settle poll and reopens bounded to 10 minutes after `mergedAt`; with `--keep-open` on the composer,",
+      "An `armed` outcome never reaches this step in-session: the reconciler's `post-merge` check (`gh` only) runs the CLI for that run once GitHub has merged the PR for 10 minutes (the merge grace), with no settle poll and reopens bounded to 10 minutes after `mergedAt`, so it also reopens a kept-open record (a `Refs` record, or one a Development-sidebar link names) that the merge closed (#4251).",
     ),
     'Step 4.0 names the reconciler\'s post-merge check, gh-only, the merge grace, no settle poll, and the 10-minute reopen bound',
   );
@@ -389,7 +389,7 @@ test('#4599: Step 4.0 says the reconciler\'s post-merge check runs the CLI for a
   const { MERGE_GRACE_MS } = require('../plugin/bin/lib/reconcile/post-merge');
   assert.equal(MERGE_GRACE_MS, 10 * 60 * 1000, 'the 10 minutes of merge grace the prose states is MERGE_GRACE_MS');
   assert.ok(!body.includes('the reconciler does not run the CLI'), 'the "reconciler does not run the CLI" claim is gone');
-  assert.ok(body.includes('only a Development-sidebar link can still close a kept-open record there'), 'the --keep-open clause is kept');
+  assert.ok(!body.includes("a gap tracked in the run's ledger"), 'the sidebar-link gap caveat is gone (#4251)');
   // The numbers the prose states are the module's.
   const { CLOSE_WINDOW_MS } = require('../plugin/bin/lib/reconcile/post-merge');
   assert.equal(CLOSE_WINDOW_MS, 10 * 60 * 1000, 'the 10 minutes the prose states is CLOSE_WINDOW_MS');

@@ -44,7 +44,6 @@
 // never sets `json` or `exit`, so the dispatcher always exits 0.
 'use strict';
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const ctxLib = require('./context');
 
@@ -70,20 +69,24 @@ function skillExists(name, { skillsDir = path.resolve(__dirname, '..', '..', '..
 const DISPATCH_COMMAND = '/claude-tweaks:dispatch';
 
 // input -> true when the pointer was written. The cheap gate runs before any
-// require; writePointer validates the session and prompt ids itself.
-function recordTypedDispatch(input, { now = new Date(), tmpdir = os.tmpdir() } = {}) {
+// require; writePointer validates the session and prompt ids itself. The temp
+// directory is `tmpdir`, else the one `env` names (#5377: `run` passes the
+// context's env), which is os.tmpdir() for a real hook process and without `env`.
+function recordTypedDispatch(input, { now = new Date(), tmpdir, env } = {}) {
   if (!input || typeof input.prompt !== 'string') return false;
   const firstLine = input.prompt.split('\n', 1)[0].replace(/\r$/, '');
   if (firstLine !== DISPATCH_COMMAND && !firstLine.startsWith(`${DISPATCH_COMMAND} `)) return false;
   const numbers = require('../issues/build-authority').parseTypedDispatch(firstLine);
   if (!numbers) return false;
   return require('../issues/typed-command').writePointer({
-    sessionId: input.session_id, promptId: input.prompt_id, numbers, now, tmpdir,
+    sessionId: input.session_id, promptId: input.prompt_id, numbers, now,
+    tmpdir: tmpdir || require('../session-tmp').envTmpdir(env),
   });
 }
 
 function run(ctx) {
-  try { recordTypedDispatch(ctx.input); } catch { /* never breaks a session */ }
+  ctxLib.requireEnv(ctx);
+  try { recordTypedDispatch(ctx.input, { env: ctx.env }); } catch { /* never breaks a session */ }
   const name = parseTypedSkill(ctx.input && ctx.input.prompt);
   if (!name || !skillExists(name)) return {};
   const ownedRun = ctx.ownedRun || {};

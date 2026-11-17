@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { lineStartingWith } = require('./helpers/conformance-asserts');
 
 // Two records landed in one change, in the same two files and largely the same
 // paragraphs: #124 supplied the *why* (the Subagent Contract is dispatch-correctness
@@ -426,5 +427,111 @@ test('go-red control: the pre-#3519 recipe wording fails the shell-safe assertio
   assert.throws(
     () => assertShellSafeScratchRecipe(`${SHELL_SAFE_RECIPE} (\`mkdir -p\` + a redirect)`, 'mkdir -p + a leftover', 1),
     /mkdir -p/,
+  );
+});
+
+// #5599: a /review lens fan-out may run through the plugin workflow
+// plugin/workflows/review-lens-fanout.js. The contract states, rule by rule, how each
+// Subagent Contract rule is kept on that path, and CLAUDE.md names the dispatch site.
+const WORKFLOW_SECTION_HEADING = '## Workflow-dispatched agents';
+const WORKFLOW_ROW_LABELS = [
+  'Input discipline',
+  'Status line',
+  'Output template',
+  'Model profile',
+  'Working-directory, read-only, foreground and shell rules',
+  'Re-prompt on violation',
+  'Failed, empty or unparseable',
+];
+
+const GATE_RULE_CLAUSE = "does not see a workflow agent's prompt";
+
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function assertWorkflowSection(text) {
+  const section = sectionRegion(text, WORKFLOW_SECTION_HEADING);
+  assert.ok(section.length > 0, `the contract must carry a "${WORKFLOW_SECTION_HEADING}" section (#5599)`);
+  for (const label of WORKFLOW_ROW_LABELS) {
+    assert.match(
+      section,
+      new RegExp(`^\\| ${escapeRegExp(label)} \\|`, 'm'),
+      `the workflow section must keep a table row for the rule "${label}" (#5599)`,
+    );
+  }
+  assert.ok(
+    section.includes('plugin/workflows/review-lens-fanout.js'),
+    'the workflow section must name plugin/workflows/review-lens-fanout.js (#5599)',
+  );
+  assert.ok(
+    section.includes('computed task'),
+    'the workflow section must state the harness frame (`computed task`) a workflow agent receives (#5599)',
+  );
+  const repromptRow = lineStartingWith(section, '| Re-prompt on violation |');
+  assert.ok(
+    repromptRow.includes('`SubagentStop` hook'),
+    'the Re-prompt on violation row must name the plugin\'s `SubagentStop` hook as what re-prompts a workflow agent (#5599)',
+  );
+  assert.ok(
+    section.includes(GATE_RULE_CLAUSE),
+    'the workflow section must say a gate rule written for Agent and Task calls does not see a workflow agent\'s prompt (#5599)',
+  );
+}
+
+test('the contract states how each rule is kept under a workflow (#5599)', () => {
+  assertWorkflowSection(FILES['skills/_shared/subagent-output-contract.md']);
+});
+
+test('the workflow section check fails when a row is removed', () => {
+  const live = FILES['skills/_shared/subagent-output-contract.md'];
+  for (const label of WORKFLOW_ROW_LABELS) {
+    const rowStart = `| ${label} |`;
+    const mutated = live
+      .split('\n')
+      .filter((line) => !line.startsWith(rowStart))
+      .join('\n');
+    assert.ok(mutated !== live, `the "${label}" row must exist in the live file before it can be removed`);
+    assert.throws(
+      () => assertWorkflowSection(mutated),
+      { message: new RegExp(`the rule "${escapeRegExp(label)}"`) },
+      `removing the "${label}" row must fail the workflow section check on that row's own assertion`,
+    );
+  }
+});
+
+test('the workflow section check fails when the re-prompt row drops the SubagentStop hook', () => {
+  const live = FILES['skills/_shared/subagent-output-contract.md'];
+  const mutated = live
+    .split('\n')
+    .map((line) => (line.startsWith('| Re-prompt on violation |') ? line.replace('`SubagentStop` hook', 'hook') : line))
+    .join('\n');
+  assert.ok(mutated !== live, 'the Re-prompt on violation row must name the `SubagentStop` hook before it can be removed');
+  assert.throws(
+    () => assertWorkflowSection(mutated),
+    { message: /`SubagentStop` hook as what re-prompts/ },
+    'dropping SubagentStop from the re-prompt row must fail on the re-prompt row assertion',
+  );
+});
+
+test('the workflow section check fails when the gate-rule sentence is removed', () => {
+  const live = FILES['skills/_shared/subagent-output-contract.md'];
+  const section = sectionRegion(live, WORKFLOW_SECTION_HEADING);
+  const paragraphs = section.split('\n\n');
+  const gate = paragraphs.filter((p) => p.includes(GATE_RULE_CLAUSE));
+  assert.strictEqual(gate.length, 1, 'exactly one paragraph of the workflow section must carry the gate-rule sentence');
+  const mutated = live.replace(section, paragraphs.filter((p) => !p.includes(GATE_RULE_CLAUSE)).join('\n\n'));
+  assert.ok(mutated !== live, 'removing the gate-rule paragraph must change the text');
+  assert.throws(
+    () => assertWorkflowSection(mutated),
+    { message: /does not see a workflow agent's prompt/ },
+    'removing the gate-rule sentence must fail on the gate-rule assertion',
+  );
+});
+
+test('CLAUDE.md names the workflow lens dispatch site (#5599)', () => {
+  const paragraph = lineStartingWith(FILES['CLAUDE.md'], 'Skills that dispatch parallel Task agents');
+  assert.ok(paragraph.length > 0, 'CLAUDE.md must keep its Subagent Contract dispatch-site paragraph');
+  assert.ok(
+    paragraph.includes('review-lens-fanout'),
+    "CLAUDE.md's dispatch-site paragraph must name /review's opt-in review-lens-fanout workflow path (#5599)",
   );
 });

@@ -275,14 +275,14 @@ const { shadowPipelineRunDir } = require('../../../plugin/bin/lib/hooks/pre-tool
 
 test('#3642 AC2.1 pre-tool-use: a new run dir named ..foo inside a linked worktree is a shadow (was treated as outside pipelines/)', () => {
   const wt = linkedWorktreeOf(gitRepo());
-  const out = shadowPipelineRunDir(path.join(wt, '.claude-tweaks', 'pipelines', '..foo', 'decisions.md'));
+  const out = shadowPipelineRunDir(path.join(wt, '.claude-tweaks', 'pipelines', '..foo', 'decisions.md'), { env: process.env });
   assert.ok(out, 'expected a shadow verdict');
   assert.equal(out.runDirCandidate, path.join(canonicalRealpath(wt), '.claude-tweaks', 'pipelines', '..foo'));
 });
 
 test('#3642 pre-tool-use: the pipelines dir itself is still not a shadow (strictness kept)', () => {
   const wt = linkedWorktreeOf(gitRepo());
-  assert.equal(shadowPipelineRunDir(path.join(wt, '.claude-tweaks', 'pipelines')), null);
+  assert.equal(shadowPipelineRunDir(path.join(wt, '.claude-tweaks', 'pipelines'), { env: process.env }), null);
 });
 
 const { resolveSafe } = require('../../../plugin/bin/lib/visual-decide/server');

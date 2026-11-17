@@ -317,6 +317,7 @@ test('exit 2: gh absent, or owner/repo unresolvable without --repo', () => {
   assert.equal(run(['2251'], r.deps), 2);
   r = fakeDeps({ remoteUrl: () => { throw new Error('not a git repo'); } });
   assert.equal(run(['2251'], r.deps), 2);
+  assert.match(r.out.stderr, /could not resolve owner\/repo — pass --repo \[host\/\]owner\/name/);
   r = fakeDeps({ remoteUrl: () => { throw new Error('not a git repo'); } });
   assert.equal(run(['2251', '--repo', 'acme/repo'], r.deps), 0, r.out.stderr);
 });
