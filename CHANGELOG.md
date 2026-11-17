@@ -53,6 +53,19 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.173.0](https://github.com/thn-inc/claude-tweaks/compare/v6.172.0...v6.173.0) (2026-11-17)
+
+
+### Features
+
+* Add a ci-health skill that audits where CI time goes and… ([#5757](https://github.com/thn-inc/claude-tweaks/issues/5757)) ([a17143a](https://github.com/thn-inc/claude-tweaks/commit/a17143a39050065eef2900773b8abb6a225df3fc))
+
+
+### Bug Fixes
+
+* Queue pull prints one fetch failure twice (claim fetch… ([#5304](https://github.com/thn-inc/claude-tweaks/issues/5304)) ([63a4fb1](https://github.com/thn-inc/claude-tweaks/commit/63a4fb1ea63440bde010a1341c0d3655a2169364)), closes [#5305](https://github.com/thn-inc/claude-tweaks/issues/5305) [#5306](https://github.com/thn-inc/claude-tweaks/issues/5306) [#5307](https://github.com/thn-inc/claude-tweaks/issues/5307) [#5309](https://github.com/thn-inc/claude-tweaks/issues/5309) [#5310](https://github.com/thn-inc/claude-tweaks/issues/5310) [#5311](https://github.com/thn-inc/claude-tweaks/issues/5311) [#5312](https://github.com/thn-inc/claude-tweaks/issues/5312) [#5313](https://github.com/thn-inc/claude-tweaks/issues/5313) [#5314](https://github.com/thn-inc/claude-tweaks/issues/5314) [#5315](https://github.com/thn-inc/claude-tweaks/issues/5315) [#5316](https://github.com/thn-inc/claude-tweaks/issues/5316) [#5317](https://github.com/thn-inc/claude-tweaks/issues/5317) [#5409](https://github.com/thn-inc/claude-tweaks/issues/5409)
+* Route every gh call's timeout through GH_TIMEOUT_MS ([#4856](https://github.com/thn-inc/claude-tweaks/issues/4856)) ([4b43e18](https://github.com/thn-inc/claude-tweaks/commit/4b43e182edd28a4f544a3588ec4b0bc8ef03faa2)), closes [#5050](https://github.com/thn-inc/claude-tweaks/issues/5050)
+
 ## [6.172.0](https://github.com/thn-inc/claude-tweaks/compare/v6.171.0...v6.172.0) (2026-11-17)
 
 
