@@ -237,3 +237,213 @@ test('listRunDirs reads a root and its archive, skipping a directory named archi
   const dirs = listRunDirs([root], fs).map((d) => path.relative(root, d)).sort();
   assert.deepEqual(dirs, [path.join('2026-11-12T090000-record-1'), path.join('archive', '2026-11-10T090000-record-2')].sort());
 });
+
+// ---- #5580: per-run rows, the lane rule, the window and the per-lane step table ----
+
+const T = require(path.join(ROOT, 'tools', 'step-yield-report.js'));
+const { deriveStepYield } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'timing', 'step-yield'));
+const mkTmp = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-step-yield-lane-')); CREATED.push(d); return d; };
+const write = (dir, name, text) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, name), text); };
+const jl = (...objs) => `${objs.map((o) => (typeof o === 'string' ? o : JSON.stringify(o))).join('\n')}\n`;
+
+test('laneOf: driver events win, then an express proceed line, then config.yml, then none', () => {
+  const root = mkTmp();
+  const proceed = entry(10, 'AUTO', 'Express lane check', '#7 proceed — small and green.');
+  const escalate = entry(20, 'AUTO', 'Express lane', 'escalated #7 to /flow (reason: scope) — grew.');
+  const d1 = path.join(root, 'a'); write(d1, 'driver-events.jsonl', jl({ step: 'worker', ms: 1 })); write(d1, 'decisions.md', `${proceed}\n`); write(d1, 'config.yml', 'ceremony-profile: standard\n');
+  const d2 = path.join(root, 'b'); write(d2, 'decisions.md', `# Decisions\n\n${proceed}\n`); write(d2, 'config.yml', 'ceremony-profile: standard\n');
+  const d3 = path.join(root, 'c'); write(d3, 'config.yml', 'ceremony-profile: fast-lane\n');
+  const d4 = path.join(root, 'd'); fs.mkdirSync(d4);
+  const d5 = path.join(root, 'e'); write(d5, 'decisions.md', `${entry(10, 'AUTO', 'Express lane check', '#1 escalate — too big.')}\n`); write(d5, 'config.yml', 'ceremony-profile: standard\n');
+  const d6 = path.join(root, 'f'); write(d6, 'decisions.md', `${proceed}\n${escalate}\n`); write(d6, 'config.yml', 'ceremony-profile: standard\n');
+  assert.deepEqual(T.laneOf(d1, fs), { lane: 'driver', source: 'driver-events' });
+  assert.deepEqual(T.laneOf(d2, fs), { lane: 'express', source: 'express-check' });
+  assert.deepEqual(T.laneOf(d3, fs), { lane: 'fast-lane', source: 'config' });
+  assert.deepEqual(T.laneOf(d4, fs), { lane: 'none', source: 'none' });
+  assert.deepEqual(T.laneOf(d5, fs), { lane: 'standard', source: 'config' });
+  assert.deepEqual(T.laneOf(d6, fs), { lane: 'standard', source: 'config' }, 'an escalation after the proceed cancels it');
+  // an escalation of another record does not cancel record 7's proceed
+  const d7 = path.join(root, 'g'); write(d7, 'decisions.md', `${proceed}\n${entry(20, 'AUTO', 'Express lane', 'escalated #8 to /flow (reason: scope) — grew.')}\n`);
+  assert.deepEqual(T.laneOf(d7, fs), { lane: 'express', source: 'express-check' });
+});
+
+test('lane and closed state degrade', () => {
+  const root = mkTmp();
+  const bare = path.join(root, 'bare'); fs.mkdirSync(bare);
+  assert.deepEqual(T.closedStateOf(bare, fs), { closed: false, closedAt: null });
+  assert.deepEqual(T.laneOf(bare, fs), { lane: 'none', source: 'none' });
+  const clean = path.join(root, 'clean');
+  write(clean, 'run-state.json', '{"status":"clean","updatedAt":"2026-11-10T00:00:00.000Z"}');
+  assert.deepEqual(T.closedStateOf(clean, fs), { closed: true, closedAt: '2026-11-10T00:00:00.000Z' });
+  const withEvents = path.join(root, 'ev');
+  write(withEvents, 'run-state.json', '{"status":"clean","updatedAt":"2026-11-10T00:00:00.000Z"}');
+  write(withEvents, 'events.jsonl', jl({ ts: '2026-11-11T05:00:00.000Z', type: 'a' }, 'not json', { ts: '2026-11-11T07:00:00.000Z', type: 'b' }, { ts: '2026-11-11T06:00:00.000Z', type: 'c' }, { type: 'no-ts' }));
+  assert.deepEqual(T.closedStateOf(withEvents, fs), { closed: true, closedAt: '2026-11-11T07:00:00.000Z' });
+  const open = path.join(root, 'open'); write(open, 'run-state.json', '{"status":"running"}');
+  assert.equal(T.closedStateOf(open, fs).closed, false);
+  const corrupt = path.join(root, 'corrupt'); write(corrupt, 'run-state.json', '{ nope');
+  assert.deepEqual(T.closedStateOf(corrupt, fs), { closed: false, closedAt: null });
+});
+
+test('driver steps sum ms and usage per step, tokens null without usage, malformed lines unparsed', () => {
+  const root = mkTmp();
+  const usage = { input_tokens: 1, output_tokens: 2, cache_read_input_tokens: 3, cache_creation_input_tokens: 4 };
+  write(root, 'driver-events.jsonl', jl(
+    { step: 'worker', ms: 60000, status: 'ok', usage }, { step: 'worker', ms: 120000, status: 'ok', usage },
+    { step: 'test', ms: 30000, status: 'fail' }, { step: 'final', ms: 5, status: 'ok' }, { step: 'budget', status: 'ok' }, 'not json', { nostep: 1 },
+  ));
+  const r = T.driverStepsOf(root, fs);
+  assert.deepEqual(r.steps.map((s) => s.name), ['worker', 'test']);
+  assert.deepEqual(r.steps[0], { name: 'worker', count: 2, minutes: 3, tokens: 20, failed: 0 });
+  assert.equal(r.steps[1].tokens, null);
+  assert.equal(r.steps[1].failed, 1);
+  assert.equal(r.unparsed, 2);
+  assert.equal(T.driverStepsOf(path.join(root, 'absent'), fs), null);
+});
+
+test('runRow maps a derived yield to step rows', () => {
+  const root = mkTmp();
+  const dir = path.join(root, '2026-11-12T090000-record-1');
+  buildDerivedRun(dir);
+  write(dir, 'run-state.json', '{"status":"clean"}');
+  const row = T.runRow(dir, { fs, derive: deriveStepYield });
+  assert.equal(row.runId, '2026-11-12T090000-record-1');
+  assert.equal(row.closed, true);
+  assert.equal(row.yieldSource, 'derived');
+  assert.deepEqual([row.lane, row.laneSource, row.driverSteps], ['none', 'none', null]);
+  const review = row.steps.find((s) => s.name === 'review');
+  assert.equal(review.ran, true);
+  assert.equal(review.raised, 3);
+  assert.equal(review.confirmed, 2, 'one reported by both reviewers plus one confirmed tiebreak');
+  assert.equal(review.tokens, null, 'no timing.json, no cost');
+});
+
+test('commits count the commit action only, and only after the build is a fix', () => {
+  const step = (phase, commits) => ({ phase, minutes: 1, tokens: null, agents: null, commits, events: {}, decisions: {}, findings: null, verify: { fail: 0 } });
+  const derive = () => ({ steps: [step('build', { commit: 2, push: 1 }), step('review', { commit: 1, push: 1, rm: 1 })], unattributed: {} });
+  const row = T.runRow(path.join(mkTmp(), 'x'), { fs, derive });
+  const by = Object.fromEntries(row.steps.map((s) => [s.name, s]));
+  assert.deepEqual([by.build.commits, by.build.fixCommits], [2, 0]);
+  assert.deepEqual([by.review.commits, by.review.fixCommits], [1, 1]);
+});
+
+const mkRow = (id, lane, closedAt, over = {}) => ({ runId: id, closed: true, closedAt, lane, laneSource: 'config', yieldSource: 'file', steps: [], driverSteps: null, ...over });
+const widenFixture = () => {
+  const day = (n) => `2026-11-${String(n).padStart(2, '0')}T00:00:00.000Z`;
+  const rows = [];
+  for (let i = 0; i < 6; i++) rows.push(mkRow(`2026-11-${10 + i}T000000-record-s${i}`, 'standard', day(10 + i)));
+  rows.push(mkRow('2026-11-12T120000-record-f1', 'fast-lane', '2026-11-12T12:00:00.000Z'));
+  rows.push(mkRow('2026-11-02T000000-record-f2', 'fast-lane', day(2)), mkRow('2026-11-01T000000-record-f3', 'fast-lane', day(1)));
+  rows.push(mkRow('2026-11-09T000000-record-undated', 'standard', null));
+  rows.push(mkRow('2026-11-09T000001-record-open', 'standard', day(9), { closed: false }));
+  rows.push(mkRow('2026-11-01T000000-wrap-up-standalone', 'standard', day(14)));
+  return rows;
+};
+
+test('window widening', () => {
+  const sel = T.selectWindow(widenFixture(), { window: 5, laneFloor: 3 });
+  assert.equal(sel.runs.length, 5);
+  assert.deepEqual(sel.runs.map((r) => r.runId), [
+    '2026-11-15T000000-record-s5', '2026-11-14T000000-record-s4', '2026-11-13T000000-record-s3', '2026-11-12T120000-record-f1', '2026-11-12T000000-record-s2',
+  ]);
+  assert.equal(sel.undated, 1);
+  const ff = sel.lanes['fast-lane'];
+  assert.deepEqual([ff.inWindow, ff.used, ff.widened, ff.belowFloor, ff.rows.length], [1, 3, true, false, 3]);
+  assert.equal(ff.archiveTotal, 3);
+  const std = sel.lanes.standard;
+  assert.deepEqual([std.inWindow, std.used, std.widened, std.rows.length], [4, 4, false, 4], 'a lane with enough in the window is not widened');
+  const tight = T.selectWindow(widenFixture(), { window: 5, laneFloor: 4 });
+  assert.deepEqual([tight.lanes['fast-lane'].belowFloor, tight.lanes['fast-lane'].archiveTotal], [true, 3]);
+});
+
+const sRow = (name, over = {}) => ({ name, ran: true, minutes: 1, tokens: null, agents: null, commits: 0, fixCommits: 0, verifyFail: 0, raised: 0, confirmed: 0, ...over });
+
+test('stepTable counts outcome-changing runs per lane and step', () => {
+  const rows = [
+    mkRow('2026-11-10T000000-record-a', 'standard', '2026-11-10T00:00:00.000Z', { steps: [sRow('review', { confirmed: 1, minutes: 4 }), sRow('build', { commits: 1 })] }),
+    mkRow('2026-11-11T000000-record-b', 'standard', '2026-11-11T00:00:00.000Z', { steps: [sRow('review', { confirmed: 0, minutes: 2, tokens: 10 }), sRow('build', { commits: 1 })] }),
+  ];
+  const t = T.stepTable(T.selectWindow(rows, { window: 10, laneFloor: 1 })).standard;
+  assert.equal(t.review.runs, 2);
+  assert.equal(t.review.outcome.confirmedRuns, 1);
+  assert.equal(t.review.outcome.anyRuns, 1);
+  assert.deepEqual(t.review.minutes, { median: 3, sum: 6 });
+  assert.deepEqual(t.review.tokens, { median: 10, sum: 10, nullRuns: 1 });
+  assert.deepEqual(t.build.tokens, { median: null, sum: 0, nullRuns: 2 });
+  assert.deepEqual(t.build.agents, { median: null, sum: 0, nullRuns: 2 });
+  assert.equal(t.build.outcome.commitRuns, 2);
+  assert.equal(t.build.outcome.anyRuns, 0, 'a build commit is the product, not an outcome change');
+  // a failed gate and a fix commit each make a run count
+  const more = mkRow('2026-11-12T000000-record-c', 'standard', '2026-11-12T00:00:00.000Z', { steps: [sRow('test', { verifyFail: 1 }), sRow('review', { fixCommits: 1, commits: 1 })] });
+  const t2 = T.stepTable(T.selectWindow([...rows, more], { window: 10, laneFloor: 1 })).standard;
+  assert.deepEqual([t2.test.outcome.verifyFailRuns, t2.test.outcome.anyRuns], [1, 1]);
+  assert.deepEqual([t2.review.outcome.fixCommitRuns, t2.review.outcome.anyRuns], [1, 2]);
+});
+
+test("stepTable reads a widened lane's own rows", () => {
+  const rows = widenFixture().map((r) => ({ ...r, steps: [sRow('review')] }));
+  const sel = T.selectWindow(rows, { window: 5, laneFloor: 3 });
+  const t = T.stepTable(sel);
+  assert.equal(t['fast-lane'].review.runs, 3, 'the widened set, not the one in-window run');
+  assert.equal(t.standard.review.runs, 4);
+});
+
+test('the driver lane is keyed by driver steps', () => {
+  const driverSteps = [{ name: 'worker', count: 1, minutes: 18, tokens: 100, failed: 0 }, { name: 'test', count: 2, minutes: 2, tokens: null, failed: 1 }];
+  const rows = [mkRow('2026-11-12T000000-drive-1', 'driver', '2026-11-12T00:00:00.000Z', { steps: [sRow('build', { tokens: null })], driverSteps })];
+  const t = T.stepTable(T.selectWindow(rows, { window: 5, laneFloor: 1 })).driver;
+  assert.deepEqual(Object.keys(t), ['worker', 'test']);
+  assert.equal(t.worker.agents.nullRuns, 1);
+  assert.equal(t.worker.tokens.sum, 100);
+  assert.deepEqual([t.test.outcome.verifyFailRuns, t.test.outcome.fixCommitRuns, t.test.outcome.anyRuns], [1, 0, 1]);
+});
+
+test('driver nullCost follows driver steps', () => {
+  const driverSteps = [{ name: 'worker', count: 1, minutes: 1, tokens: 5, failed: 0 }];
+  const nullSteps = [{ name: 'worker', count: 1, minutes: 1, tokens: null, failed: 0 }];
+  const yieldNull = [sRow('build', { tokens: null })];
+  const withCost = mkRow('2026-11-12T000000-drive-1', 'driver', '2026-11-12T00:00:00.000Z', { steps: yieldNull, driverSteps });
+  const noCost = mkRow('2026-11-11T000000-drive-2', 'driver', '2026-11-11T00:00:00.000Z', { steps: [sRow('build', { tokens: 9 })], driverSteps: nullSteps });
+  const sel = T.selectWindow([withCost, noCost], { window: 5, laneFloor: 1 });
+  assert.equal(sel.lanes.driver.nullCost, 1);
+  assert.equal(sel.lanes.driver.rows.length, 2);
+  const std = T.selectWindow([mkRow('2026-11-12T000000-record-1', 'standard', '2026-11-12T00:00:00.000Z', { steps: yieldNull })], { window: 5, laneFloor: 1 });
+  assert.equal(std.lanes.standard.nullCost, 1, 'a non-driver lane reads the yield steps');
+});
+
+test('the CLI without the new flags prints exactly what it printed before', () => {
+  const root = setup();
+  const plain = JSON.parse(runCli([root, '--json']).out);
+  for (const k of ['runs', 'window', 'stepTable']) assert.equal(Object.hasOwn(plain, k), false, k);
+  const text = runCli([root]).out;
+  assert.doesNotMatch(text, /^lane |^step /m);
+  const full = JSON.parse(runCli([root, '--runs', '--window', '2', '--json']).out);
+  assert.equal(full.runs.length, 2);
+  assert.equal(typeof full.window, 'object');
+  assert.equal(typeof full.stepTable, 'object');
+  assert.equal(full.runsFailed, 0);
+  assert.equal(full.findings.raised, plain.findings.raised, 'the totals do not move');
+  const withText = runCli([root, '--window', '2']).out;
+  assert.ok(withText.startsWith(text), 'the window lines follow the unchanged report');
+});
+
+test('the text report adds one line per lane and per lane step with --window', () => {
+  const root = mkTmp();
+  const dir = path.join(root, '2026-11-12T090000-record-1');
+  buildDerivedRun(dir);
+  write(dir, 'run-state.json', '{"status":"clean"}');
+  write(dir, 'config.yml', 'ceremony-profile: standard\n');
+  const out = runCli([root, '--window', '5', '--lane-floor', '3']).out;
+  assert.match(out, /^lane standard: 1 runs \(1 in window, below floor\) \S+ \.\. \S+$/m);
+  assert.match(out, /^step standard\/review: runs 1 \| ran 1 /m);
+});
+
+test('--window takes a positive integer', () => {
+  const root = setup();
+  for (const argv of [[root, '--window', '0'], [root, '--window', 'x'], [root, '--lane-floor', '-1'], [root, '--window'], [root, '--window', '2.5']]) {
+    const r = runCli(argv);
+    assert.equal(r.code, 2, argv.join(' '));
+    assert.match(r.errs, /usage: node tools\/step-yield-report\.js/);
+    assert.equal(r.out, '');
+  }
+});

@@ -2,7 +2,7 @@
 'use strict';
 // tools/step-yield-report.js — review yield over an archive of pipeline run directories (#5556).
 //
-//   node tools/step-yield-report.js <pipelines-root>... [--json]
+//   node tools/step-yield-report.js <pipelines-root>... [--json] [--runs] [--window <N>] [--lane-floor <M>]
 //
 // Scans each root and its `archive/` subdirectory for run directories (every directory but one named
 // `archive`) and totals the review counters of each run's step yield: findings raised, reported by both
@@ -19,7 +19,19 @@
 // `unparsed.count` over those lines. A second share adds the `unattributed` bucket's lines to both sides
 // — an upper bound, since a line outside every span cannot be told apart from a review line there.
 //
-// Exit codes: 0 rendered; 2 no roots given.
+// Per-run rows (#5580): `--runs` adds `runs` (one row per run directory: closed state, lane, the yield's
+// steps as StepRows, the driver's own steps) to the JSON summary; `--window N` adds `window` (the N newest
+// closed runs, each lane widened to `--lane-floor` runs, default 20) and `stepTable` (per lane and step:
+// median and summed minutes/tokens/agents, and how many runs the step changed the outcome in). Without
+// those flags the output is what it was. Rules:
+//   closed  run-state.json parses with status 'clean'; closedAt is the latest parseable `ts` in
+//           events.jsonl, else run-state.json's updatedAt, else null (undated, left out of the window).
+//   lane    driver-events.jsonl present -> `driver`; else `express` when decisions.md holds an
+//           'Express lane check: #N proceed' entry no later 'Express lane: escalated #N to /flow' entry
+//           cancels (plugin/bin/lib/express/cli.js hasProceed, mirrored: it is not exported); else
+//           config.yml's `ceremony-profile`; else `none`.
+//
+// Exit codes: 0 rendered; 2 no roots given, or a flag value that is not a positive integer.
 //
 // Seam: run(argv, deps) returns the exit code; deps holds fs, derive (deriveStepYield) and the log/err
 // line writers.
@@ -27,6 +39,8 @@
 const fs = require('fs');
 const path = require('path');
 const { deriveStepYield, STEP_YIELD_FILE, SCHEMA_VERSION, ownGet, ownSet } = require('../plugin/bin/lib/timing/step-yield');
+const { parseEntry } = require('../plugin/bin/lib/log-decision/append');
+const { parseFlatLines } = require('../plugin/bin/lib/policy-schema');
 
 const VERDICTS = ['confirmed', 'refuted', 'cant-tell', 'unsettled'];
 const OUTCOMES = ['confirmed', 'drop', 'digest', 'console', 'none'];
@@ -85,7 +99,7 @@ function addFindings(into, f) {
 // matched counts again under `unparsed` — so the status sum is the line total, with no unparsed added.
 const decisionLines = (b) => Object.values(b.decisions || {}).reduce((s, n) => s + (Number.isFinite(n) ? n : 0), 0);
 
-function collect(roots, deps) {
+function collect(roots, deps, failedDirs = new Set()) {
   const rootsUnreadable = [];
   const dirs = listRunDirs(roots, deps.fs, rootsUnreadable);
   const totals = emptyCounters();
@@ -99,7 +113,7 @@ function collect(roots, deps) {
   let fileStale = 0;
   for (const dir of dirs) {
     let r;
-    try { r = yieldOf(dir, deps); } catch (e) { failed++; deps.err(`step-yield-report.js: ${dir}: ${errText(e)}`); continue; }
+    try { r = yieldOf(dir, deps); } catch (e) { failed++; failedDirs.add(dir); deps.err(`step-yield-report.js: ${dir}: ${errText(e)}`); continue; }
     if (r.source === 'file') fromFile++;
     if (r.fileUnreadable) fileUnreadable++;
     if (r.fileStale) fileStale++;
@@ -132,6 +146,236 @@ function collect(roots, deps) {
   };
 }
 
+// ---- per-run rows, the window and the per-lane step table (#5580) ----
+
+const RUN_NAME_RE = /^\d{4}-\d{2}-\d{2}T\d{6}-(spec|record|drive)-/;
+const DRIVER_EVENTS_FILE = 'driver-events.jsonl';
+const PRODUCT_PHASES = ['build', 'plan', 'tasks'];
+const CHECK_STEP = 'Express lane check';
+const ESCALATION_STEP = 'Express lane';
+
+function readText(fsImpl, file) {
+  try { return fsImpl.readFileSync(file, 'utf8'); } catch { return null; }
+}
+
+function readJson(fsImpl, file) {
+  const text = readText(fsImpl, file);
+  if (text === null) return null;
+  try { return JSON.parse(text); } catch { return null; }
+}
+
+const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const num = (v) => (Number.isFinite(v) ? v : 0);
+
+// An express run: a proceed entry for some record that no later escalation of that record cancels.
+function expressProceeded(decisionsText) {
+  const proceeded = new Map();
+  for (const line of String(decisionsText || '').split(/\r?\n/)) {
+    const e = parseEntry(line);
+    if (!e) continue;
+    if (e.location === CHECK_STEP) {
+      const m = /^#(\d+) proceed/.exec(e.action);
+      if (m) proceeded.set(m[1], true);
+    } else if (e.location === ESCALATION_STEP) {
+      const m = /^escalated #(\d+) to \/flow/.exec(e.action);
+      if (m) proceeded.set(m[1], false);
+    }
+  }
+  return [...proceeded.values()].some(Boolean);
+}
+
+function laneOf(dir, fsImpl) {
+  if (readText(fsImpl, path.join(dir, DRIVER_EVENTS_FILE)) !== null) return { lane: 'driver', source: 'driver-events' };
+  const decisions = readText(fsImpl, path.join(dir, 'decisions.md'));
+  if (decisions !== null && expressProceeded(decisions)) return { lane: 'express', source: 'express-check' };
+  const config = readText(fsImpl, path.join(dir, 'config.yml'));
+  const v = config === null ? null : parseFlatLines(config)['ceremony-profile'];
+  const profile = v ? v.replace(/^(["'])(.*)\1$/, '$2') : null;
+  return profile ? { lane: profile, source: 'config' } : { lane: 'none', source: 'none' };
+}
+
+function closedStateOf(dir, fsImpl) {
+  const state = readJson(fsImpl, path.join(dir, 'run-state.json'));
+  const st = isObject(state) ? state : null;
+  let latest = null;
+  let latestMs = -Infinity;
+  const events = readText(fsImpl, path.join(dir, 'events.jsonl'));
+  for (const line of events === null ? [] : events.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let ev;
+    try { ev = JSON.parse(line); } catch { continue; }
+    const ms = isObject(ev) && typeof ev.ts === 'string' ? Date.parse(ev.ts) : NaN;
+    if (Number.isFinite(ms) && ms > latestMs) { latestMs = ms; latest = ev.ts; }
+  }
+  const updated = st && typeof st.updatedAt === 'string' && Number.isFinite(Date.parse(st.updatedAt)) ? st.updatedAt : null;
+  return { closed: !!st && st.status === 'clean', closedAt: latest || updated || null };
+}
+
+// driver-events.jsonl -> the driver's own steps, or null when the run has none.
+function driverStepsOf(dir, fsImpl) {
+  const text = readText(fsImpl, path.join(dir, DRIVER_EVENTS_FILE));
+  if (text === null) return null;
+  const by = new Map();
+  let unparsed = 0;
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let ev;
+    try { ev = JSON.parse(line); } catch { unparsed++; continue; }
+    if (!isObject(ev) || typeof ev.step !== 'string') { unparsed++; continue; }
+    if (ev.step === 'final' || ev.step === 'budget') continue;
+    if (!by.has(ev.step)) by.set(ev.step, { name: ev.step, count: 0, minutes: 0, tokens: null, failed: 0 });
+    const s = by.get(ev.step);
+    s.count++;
+    s.minutes += num(ev.ms) / 60000;
+    if (isObject(ev.usage)) {
+      const u = ev.usage;
+      s.tokens = (s.tokens || 0) + num(u.input_tokens) + num(u.output_tokens) + num(u.cache_read_input_tokens) + num(u.cache_creation_input_tokens);
+    }
+    if (ev.status !== 'ok' && ev.status !== 'skip') s.failed++;
+  }
+  return { steps: [...by.values()], unparsed };
+}
+
+const sumCounts = (o) => (isObject(o) ? Object.values(o).reduce((a, n) => a + num(n), 0) : 0);
+
+function stepRow(s) {
+  const t = isObject(s.tokens) ? s.tokens : null;
+  const f = isObject(s.findings) ? s.findings : null;
+  const verdicts = f && f.tiebreak && f.tiebreak.byVerdict;
+  const commits = isObject(s.commits) ? num(s.commits.commit) : 0;
+  const minutes = num(s.minutes);
+  return {
+    name: s.phase,
+    ran: minutes > 0 || sumCounts(s.events) > 0 || sumCounts(s.decisions) > 0,
+    minutes,
+    tokens: t ? num(t.input) + num(t.output) + num(t.cacheRead) + num(t.cacheCreate) : null,
+    agents: Number.isFinite(s.agents) ? s.agents : null,
+    commits,
+    fixCommits: PRODUCT_PHASES.includes(s.phase) ? 0 : commits,
+    verifyFail: isObject(s.verify) ? num(s.verify.fail) : 0,
+    raised: f ? num(f.raised) : 0,
+    confirmed: f ? num(f.both) + num(verdicts && verdicts.confirmed) : 0,
+  };
+}
+
+function runRow(dir, deps) {
+  const r = yieldOf(dir, deps);
+  const { lane, source } = laneOf(dir, deps.fs);
+  const driver = lane === 'driver' ? driverStepsOf(dir, deps.fs) : null;
+  return {
+    runId: path.basename(dir),
+    ...closedStateOf(dir, deps.fs),
+    lane, laneSource: source, yieldSource: r.source,
+    steps: (r.y.steps || []).map(stepRow),
+    driverSteps: driver ? driver.steps : null,
+  };
+}
+
+const closedMs = (row) => Date.parse(row.closedAt);
+const newestFirst = (a, b) => closedMs(b) - closedMs(a) || (a.runId < b.runId ? 1 : a.runId > b.runId ? -1 : 0);
+
+// The steps a lane's cost is read from: the driver's own for the driver lane, the yield's otherwise.
+const costSteps = (row) => (row.lane === 'driver' ? (row.driverSteps || []) : row.steps);
+
+function selectWindow(rows, { window, laneFloor }) {
+  const candidates = rows.filter((r) => r.closed && RUN_NAME_RE.test(r.runId));
+  const dated = candidates.filter((r) => r.closedAt !== null && Number.isFinite(closedMs(r))).sort(newestFirst);
+  const inWindow = dated.slice(0, window);
+  const span = (list) => ({ oldest: list.length ? list[list.length - 1].closedAt : null, newest: list.length ? list[0].closedAt : null });
+  const lanes = {};
+  for (const lane of [...new Set(dated.map((r) => r.lane))].sort()) {
+    const all = dated.filter((r) => r.lane === lane);
+    const inside = inWindow.filter((r) => r.lane === lane);
+    const used = inside.length < laneFloor ? all.slice(0, laneFloor) : inside;
+    lanes[lane] = {
+      rows: used, inWindow: inside.length, used: used.length, widened: used.length > inside.length,
+      archiveTotal: all.length, belowFloor: all.length < laneFloor,
+      ...span(used),
+      nullCost: used.filter((r) => costSteps(r).every((s) => s.tokens === null)).length,
+    };
+  }
+  return { ...span(inWindow), undated: candidates.length - dated.length, runs: inWindow, lanes };
+}
+
+function median(values) {
+  if (!values.length) return null;
+  const v = [...values].sort((a, b) => a - b);
+  const mid = v.length >> 1;
+  return v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2;
+}
+
+const total = (values) => values.reduce((a, n) => a + n, 0);
+
+// A driver step in the shape the table reads: no agents, no commits; a step with a failed event is a failed gate.
+const driverAsStep = (s) => ({ name: s.name, ran: s.count > 0, minutes: s.minutes, tokens: s.tokens, agents: null, commits: 0, fixCommits: 0, verifyFail: s.failed > 0 ? 1 : 0, raised: 0, confirmed: 0 });
+
+function stepTable(selection) {
+  const table = {};
+  for (const [lane, info] of Object.entries(selection.lanes)) {
+    const byStep = new Map();
+    for (const row of info.rows) {
+      for (const s of lane === 'driver' ? (row.driverSteps || []).map(driverAsStep) : row.steps) {
+        if (!byStep.has(s.name)) byStep.set(s.name, []);
+        byStep.get(s.name).push(s);
+      }
+    }
+    const out = {};
+    for (const [name, list] of byStep) {
+      const cost = (k) => { const v = list.map((s) => s[k]).filter((x) => x !== null); return { median: median(v), sum: total(v), nullRuns: list.length - v.length }; };
+      const minutes = list.map((s) => s.minutes);
+      out[name] = {
+        runs: list.length,
+        ranRuns: list.filter((s) => s.ran).length,
+        minutes: { median: median(minutes), sum: total(minutes) },
+        tokens: cost('tokens'),
+        agents: cost('agents'),
+        outcome: {
+          confirmedRuns: list.filter((s) => s.confirmed > 0).length,
+          verifyFailRuns: list.filter((s) => s.verifyFail > 0).length,
+          commitRuns: list.filter((s) => s.commits > 0).length,
+          fixCommitRuns: list.filter((s) => s.fixCommits > 0).length,
+          anyRuns: list.filter((s) => s.confirmed > 0 || s.verifyFail > 0 || s.fixCommits > 0).length,
+        },
+      };
+    }
+    table[lane] = out;
+  }
+  return table;
+}
+
+function renderWindow(sel, table) {
+  const out = [''];
+  for (const [lane, l] of Object.entries(sel.lanes)) {
+    out.push(`lane ${lane}: ${l.used} runs (${l.inWindow} in window${l.widened ? ', widened' : ''}${l.belowFloor ? ', below floor' : ''}) ${l.oldest} .. ${l.newest}`);
+  }
+  const fmt = (n) => (n === null ? 'n/a' : String(Math.round(n * 100) / 100));
+  for (const [lane, steps] of Object.entries(table)) {
+    for (const [name, t] of Object.entries(steps)) {
+      out.push(`step ${lane}/${name}: runs ${t.runs} | ran ${t.ranRuns} | minutes median ${fmt(t.minutes.median)} sum ${fmt(t.minutes.sum)} | tokens median ${fmt(t.tokens.median)} null ${t.tokens.nullRuns} | agents median ${fmt(t.agents.median)} null ${t.agents.nullRuns} | outcome runs: confirmed ${t.outcome.confirmedRuns} verify-fail ${t.outcome.verifyFailRuns} commit ${t.outcome.commitRuns} fix ${t.outcome.fixCommitRuns} any ${t.outcome.anyRuns}`);
+    }
+  }
+  return out.join('\n');
+}
+
+const USAGE = 'usage: node tools/step-yield-report.js <pipelines-root>... [--json] [--runs] [--window <N>] [--lane-floor <M>]';
+const POSITIVE_INT = /^[1-9]\d*$/;
+
+// argv -> { roots, json, runs, window, laneFloor } or { error }. A value flag takes the next argument.
+function parseArgs(argv) {
+  const o = { roots: [], json: false, runs: false, window: null, laneFloor: 20 };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--json') o.json = true;
+    else if (a === '--runs') o.runs = true;
+    else if (a === '--window' || a === '--lane-floor') {
+      const v = argv[++i];
+      if (typeof v !== 'string' || !POSITIVE_INT.test(v)) return { error: `${a} takes a positive integer, got ${v === undefined ? 'nothing' : `"${v}"`}` };
+      if (a === '--window') o.window = Number(v); else o.laneFloor = Number(v);
+    } else o.roots.push(a);
+  }
+  return o;
+}
+
 const pct = (n) => (n === null ? 'n/a' : `${(100 * n).toFixed(2)}%`);
 
 function render(s) {
@@ -159,18 +403,40 @@ function render(s) {
 
 function run(argv, deps = {}) {
   const d = { fs, derive: deriveStepYield, log: (s) => process.stdout.write(`${s}\n`), err: (s) => process.stderr.write(`${s}\n`), ...deps };
-  const roots = argv.filter((a) => a !== '--json');
-  const json = argv.includes('--json');
-  if (!roots.length) {
-    d.err('usage: node tools/step-yield-report.js <pipelines-root>... [--json]');
+  const args = parseArgs(argv);
+  if (args.error) {
+    d.err(`step-yield-report.js: ${args.error}`);
+    d.err(USAGE);
     return 2;
   }
-  const summary = collect(roots, d);
-  d.log(json ? JSON.stringify(summary, null, 2) : render(summary));
+  const { roots, json } = args;
+  if (!roots.length) {
+    d.err(USAGE);
+    return 2;
+  }
+  const failedDirs = new Set();
+  const summary = collect(roots, d, failedDirs);
+  let windowText = '';
+  if (args.runs || args.window !== null) {
+    // A second pass over the run directories; one that already failed to derive in collect is not counted twice.
+    const rows = [];
+    for (const dir of listRunDirs(roots, d.fs)) {
+      if (failedDirs.has(dir)) continue;
+      try { rows.push(runRow(dir, d)); } catch (e) { summary.runsFailed++; d.err(`step-yield-report.js: ${dir}: ${errText(e)}`); }
+    }
+    if (args.runs) summary.runs = rows;
+    if (args.window !== null) {
+      const selection = selectWindow(rows, { window: args.window, laneFloor: args.laneFloor });
+      summary.window = selection;
+      summary.stepTable = stepTable(selection);
+      windowText = renderWindow(selection, summary.stepTable);
+    }
+  }
+  d.log(json ? JSON.stringify(summary, null, 2) : render(summary) + windowText);
   for (const u of summary.rootsUnreadable) d.err(`step-yield-report: cannot read ${u.root}: ${u.error}`);
   return summary.rootsUnreadable.length ? 2 : 0;
 }
 
-module.exports = { run, collect, listRunDirs };
+module.exports = { run, collect, listRunDirs, RUN_NAME_RE, laneOf, closedStateOf, driverStepsOf, runRow, selectWindow, stepTable };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2));
