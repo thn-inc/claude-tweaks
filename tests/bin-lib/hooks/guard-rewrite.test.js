@@ -860,6 +860,19 @@ function runIn(shell, command, extraEnv, cwd = CWD) {
   return { stdout: r.stdout, stderr: r.stderr, status: r.status };
 }
 
+test('the node stub shadows the real node in every tested shell', { skip: process.platform === 'win32' || SHELLS.length === 0 }, (t) => {
+  // TEMP-DIAG
+  for (const cmd of ['type -a node', 'type -a git', 'echo "$PATH"', 'ls -ld "$0" 2>&1; command -v bash; echo "$BASH_VERSION"']) {
+    for (const shell of SHELLS) t.diagnostic(`DIAG ${shell} [${cmd}]: ${JSON.stringify(runIn(shell, cmd, {}))}`);
+  }
+  t.diagnostic(`DIAG STUB=${STUB} TMPDIR=${process.env.TMPDIR} whichbash=${spawnSync('sh', ['-c', 'command -v bash; ls -ld "$(dirname ' + JSON.stringify(STUB) + ')" ' + JSON.stringify(STUB) + '; ls -le ' + JSON.stringify(STUB)], { encoding: 'utf8' }).stdout}`);
+  for (const shell of SHELLS) {
+    const { stdout, status } = runIn(shell, 'command -v node', {});
+    assert.strictEqual(status, 0, `${shell} could not resolve node`);
+    assert.strictEqual(stdout.trim(), path.join(STUB, 'node'), `${shell} resolved node to ${stdout.trim()}, not the stub`);
+  }
+});
+
 test('every positive case is argv-identical under bash and zsh', { skip: process.platform === 'win32' || !SHELLS.includes('bash') }, (t) => {
   if (!SHELLS.includes('zsh')) t.diagnostic('zsh not present — bash half only');
   for (const { rule, command } of POSITIVE) {
