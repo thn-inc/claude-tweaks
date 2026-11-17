@@ -942,7 +942,8 @@ test('gatherPack: a gh call killed by the exec timeout names gh and the timeout 
     if (cmd === 'gh') { const e = new Error('Command failed: gh pr view'); e.killed = true; e.signal = 'SIGTERM'; throw e; }
     return okDeps().execFile(cmd, args);
   } });
-  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['pr'], deps });
+  // The gh bound follows CLAUDE_TWEAKS_GH_TIMEOUT_MS (#5050), so pin the environment: an ambient raised value must not leak in.
+  const pack = await withExecBounds({}, (mod) => mod.gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['pr'], deps }));
   assert.match(pack.pr.error, /^timeout after 30000ms: gh pr \(killed by SIGTERM\)$/);
 });
 
@@ -1634,7 +1635,8 @@ test('gatherPack: body-text work-links skips the second state query entirely whe
 test('gatherPack: every subprocess call is bounded by maxBuffer and a timeout (#1930 review I3)', async () => {
   const opts = [];
   const deps = okDeps({ execFile: async (cmd, args, o) => { opts.push(o); return okDeps().execFile(cmd, args); } });
-  await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', deps });
+  // gh's bound follows CLAUDE_TWEAKS_GH_TIMEOUT_MS (#5050), so pin the environment: an ambient raised value must not leak in.
+  await withExecBounds({}, (mod) => mod.gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', deps }));
   assert.ok(opts.length > 0);
   for (const o of opts) {
     assert.strictEqual(o.maxBuffer, 32 * 1024 * 1024, JSON.stringify(o));
