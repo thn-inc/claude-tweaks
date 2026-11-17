@@ -120,7 +120,12 @@ Each task's verification: `node tools/run-tests.js <its files plus the test file
 **Role:** integration
 
 **Files:**
-- Modify: `tests/bin-lib/wrap-up/facts.test.js`, `tests/hooks-session-start.test.js`, `tests/console-execute.test.js`, `tests/bin-lib/hooks/reconcile-background.test.js`, `tests/bin-lib/flow/check-artifact-overwrite-cli.test.js`, `tests/helpers/reconcile-fixtures.js`
+- Modify: `tests/bin-lib/wrap-up/facts.test.js`
+- Modify: `tests/hooks-session-start.test.js`
+- Modify: `tests/console-execute.test.js`
+- Modify: `tests/bin-lib/hooks/reconcile-background.test.js`
+- Modify: `tests/bin-lib/flow/check-artifact-overwrite-cli.test.js`
+- Modify: `tests/helpers/reconcile-fixtures.js`
 
 - [ ] **Step 1: Run the files' tests (before), quote the summary.**
 - [ ] **Step 2: Apply the sweep rule.**
@@ -199,3 +204,12 @@ Run by the orchestrating session after Task 7, results written to `$PIPELINE_RUN
 - **AC3.1** traced: the HEAD trace over the swept files minus allowlisted files holds zero identity `config` processes.
 - **AC6.1 AC6.2**: the before and after runs list the same test names per pre-existing file, all passing, and the per-file test count grows only by this record's added tests (`evidence/test-names.diff`).
 - **AC7.1**: full suite via `/claude-tweaks:test`; the Windows regression job via the platform-proof workflow before merge (second call).
+
+| AC clause | Evidence |
+|---|---|
+| AC4.1 | `evidence/scan-red.txt` (scan test red in an extract with one restored site) |
+| AC4.2 | PR body quotes `evidence/scan-red.txt` |
+| AC5.1 | `evidence/counts.txt` (trace2 counts, merge base and HEAD extracts, back to back) |
+| AC6.1 | `evidence/test-names.diff` (same names, all passing) |
+| AC6.2 | `evidence/test-names.diff` plus the sweep tasks' before/after summaries; whole-branch review reads the diff for removed or loosened assertions |
+| AC7.1 | `/claude-tweaks:test` stamp; Windows regression job run before merge |
