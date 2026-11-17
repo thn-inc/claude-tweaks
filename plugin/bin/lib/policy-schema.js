@@ -179,7 +179,7 @@ const POLICY_KEYS = [
   // CLAUDE_TWEAKS_GIT_TIMEOUT_MS (an env var, not a policy key) takes
   // precedence over this when both are set — see shared-primitives.js's
   // resolution order.
-  { key: 'git-timeout-ms', type: 'integer', min: 1000, max: 120000, default: 30000, summary: "Bounds one `git` call on the claims-registry, pr-checks, compose-subject, console-resolve and release-preflight runners; killed on timeout.", category: 'housekeeping', tier: 'advanced' },
+  { key: 'git-timeout-ms', type: 'integer', min: 1000, max: 120000, default: 30000, summary: "Bounds one `git` call on runners incl. claims-registry, pr-checks, compose-subject, console-resolve, release-preflight; killed on timeout.", category: 'housekeeping', tier: 'advanced' },
   { key: 'depth-survey', type: 'enum', values: ['off'], summary: "When set, turns off the end-of-run prompt asking whether recently changed code deserves a deeper architectural pass.", category: 'housekeeping', tier: 'advanced' },
   { key: 'creative-survey', type: 'enum', values: ['off'], summary: "When set, turns off the end-of-run prompt suggesting creative or UX improvement ideas for what was just built.", category: 'housekeeping', tier: 'advanced' },
   { key: 'declare-claude-tweaks', type: 'boolean', default: true, summary: "When false, /init stops declaring claude-tweaks in committed project settings and the cloud setup script; superpowers stays.", category: 'housekeeping', tier: 'advanced' },
