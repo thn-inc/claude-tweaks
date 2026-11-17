@@ -2625,7 +2625,8 @@ function run(ctx, deps = {}) {
   if (indeterminateTargets.length) {
     // Deliberately says the check could not RUN, not that a policy was
     // skipped. Reaching here means findPolicyFile found a policy.yml
-    // somewhere up the ancestor chain, which is not the same as
+    // somewhere up the ancestor chain, or the main checkout's file via a
+    // linked worktree (#4492), which is not the same as
     // worktree-always being on for this repo — that check needs a repoRoot
     // we never obtained. Claiming "the gate was not applied" would assert a
     // policy applied that may not exist.

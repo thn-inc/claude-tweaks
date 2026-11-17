@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // bin/preflight-records.js — record pre-flight JSON in one command.
-//   node bin/preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--merge-gate] [--waves] [--integration-branch <name>] [--records-json <path>] [--prefetched-json <path>] [--blocker-landing] [--blocker-states-json <path>] [--help]
+//   node bin/preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo [host/]owner/name] [--merge-gate] [--waves] [--integration-branch <name>] [--records-json <path>] [--prefetched-json <path>] [--blocker-landing] [--blocker-states-json <path>] [--help]
 // Fetches every record (`gh issue view`), derives facets/keyFiles/fingerprint
 // (bin/lib/issues/record.js, bin/lib/issues/grouping.js), resolves blockedBy
 // either from the body (work-links: body-text, no extra call) or one batched
@@ -93,7 +93,6 @@
 'use strict';
 
 const fs = require('fs');
-const path = require('path');
 const { execFileSync } = require('child_process');
 const preflight = require('./lib/preflight-records/preflight-records');
 const {
@@ -106,11 +105,12 @@ const {
 const { planMergeGateSplit } = require('./lib/preflight-records/merge-gate');
 const { planParallelWaves } = require('./lib/preflight-records/waves');
 const { resolvePolicyKeys } = require('./lib/policy-schema');
+const { locatePolicyFile } = require('./lib/policy-file');
 const {
   parseRepo, repoResolutionNote, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 
-const USAGE = 'usage: preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--merge-gate] [--waves] [--integration-branch <name>] [--records-json <path>] [--prefetched-json <path>] [--blocker-landing] [--blocker-states-json <path>] [--help]\n';
+const USAGE = 'usage: preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo [host/]owner/name] [--merge-gate] [--waves] [--integration-branch <name>] [--records-json <path>] [--prefetched-json <path>] [--blocker-landing] [--blocker-states-json <path>] [--help]\n';
 
 function parseArgs(argv) {
   const opts = {
@@ -190,7 +190,7 @@ const realDeps = {
   // pure — the schema default ('body-text') is what a totally unconfigured
   // project resolves to.
   resolveWorkLinks: () => {
-    const policyRaw = readFileSafe(path.join(repoRoot(), '.claude-tweaks', 'policy.yml'));
+    const policyRaw = readFileSafe(locatePolicyFile(repoRoot()).path);
     return resolvePolicyKeys(['work-links'], { policyRaw, runConfigRaw: null })['work-links'].value;
   },
   stdout: (s) => process.stdout.write(s),
@@ -275,7 +275,7 @@ function loadFromGh(opts, numbers, deps) {
 
   let dependencies = null;
   if (workLinks === 'native') {
-    if (!repoSpec) { deps.stderr('preflight-records.js: could not resolve owner/repo — pass --repo owner/name\n'); return { code: 2 }; }
+    if (!repoSpec) { deps.stderr('preflight-records.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return { code: 2 }; }
     try {
       dependencies = preflight.fetchNativeDependencies({
         numbers, owner: repoSpec.owner, repo: repoSpec.repo, host: repoSpec.host, runner: nativeRecoveringRunner(deps.runner, numbers),
@@ -409,7 +409,7 @@ function blockerLandingFromGh(opts, union, repoSpec, deps) {
     return { code: 2 };
   }
   if (!repoSpec) {
-    deps.stderr('preflight-records.js: could not resolve owner/repo for --blocker-landing — pass --repo owner/name\n');
+    deps.stderr('preflight-records.js: could not resolve owner/repo for --blocker-landing — pass --repo [host/]owner/name\n');
     return { code: 2 };
   }
   const { results, error, probeErrors } = fetchBlockerLanding({

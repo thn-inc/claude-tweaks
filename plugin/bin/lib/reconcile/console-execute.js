@@ -35,7 +35,7 @@ const { execFileSyncTimed, execFileAsyncTimed } = require('./timing');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { iterRunDirsWithState } = require('../hooks/context');
 const { runWithConcurrency } = require('./gh-pool');
-const { evaluateMaturation, extractPendingGrantedAt, partitionGrantComments } = require('../issues/grant-maturation');
+const { evaluateMaturation, withheldGrant, extractPendingGrantedAt, partitionGrantComments } = require('../issues/grant-maturation');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { resolvePolicyConfig } = require('../policy-schema');
 const { sddRulingDeferralReason, SDD_RULING_REASONS, sddRulingRatifyAction } = require('../console/sdd-ruling');
@@ -393,6 +393,7 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
           const grant = ctx.memberGrants[n];
           if (!grant) { mergeGrantGap = { member: n, reason: 'grant-unreadable' }; break; }
           const mat = evaluateMaturation({
+            hasBuildLabel: (grant.labels || []).includes('auto:build'),
             hasMergeLabel: (grant.labels || []).includes('auto:merge'),
             hasPendingLabel: (grant.labels || []).includes('auto:merge-pending'),
             pendingSince: grant.pendingSince || null,
@@ -404,7 +405,8 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
             // passed over names them, so the withhold is not mistaken for "nobody
             // ever granted" -- the planted comment is what the operator should see.
             const passedOver = Array.isArray(grant.skippedUntrusted) ? grant.skippedUntrusted : [];
-            mergeGrantGap = { member: n, reason: passedOver.length ? `${mat.reason} — ${passedOver.join('; ')}` : mat.reason };
+            const base = withheldGrant(mat, grant.labels).detail;
+            mergeGrantGap = { member: n, reason: passedOver.length ? `${base} — ${passedOver.join('; ')}` : base };
             break;
           }
         }

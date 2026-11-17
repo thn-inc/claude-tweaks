@@ -376,7 +376,7 @@ test('CLI: no --repo and no readable origin exits 2 with the owner/repo message,
   deps.remoteUrl = () => { throw new Error('no remote'); };
   const code = run(['--drafts', 'drafts.json'], deps);
   assert.equal(code, 2);
-  assert.match(err.join(''), /could not resolve owner\/repo/);
+  assert.match(err.join(''), /could not resolve owner\/repo — pass --repo \[host\/\]owner\/name/);
   assert.doesNotMatch(err.join(''), /is not a known GitHub host/);
   assert.deepEqual(calls, []);
 });

@@ -147,14 +147,14 @@ test('exit 2 when no --repo is given and the origin remote is unreadable', () =>
     remoteUrl: () => { throw new Error('not a git repository'); },
   });
   assert.strictEqual(run(['3214'], deps), 2);
-  assert.match(out.stderr.join(''), /could not resolve owner\/repo/);
+  assert.match(out.stderr.join(''), /could not resolve owner\/repo — pass --repo \[host\/\]owner\/name/);
   assert.deepStrictEqual(out.runner, []);
 });
 
 test('--help exits 0 before ghAvailable is called', () => {
   const { deps, out } = fakeDeps();
   assert.strictEqual(run(['--help'], deps), 0);
-  assert.match(out.stdout.join(''), /usage: resolved-refusal\.js <n> \[--repo owner\/name\] \[--help\]/);
+  assert.match(out.stdout.join(''), /usage: resolved-refusal\.js <n> \[--repo \[host\/\]owner\/name\] \[--help\]/);
   assert.strictEqual(out.ghAvailable, 0);
   assert.deepStrictEqual(out.runner, []);
 });

@@ -54,15 +54,22 @@ With zero orgs, Option 1 (the personal account) is the only explicit option — 
 
 **6. Final confirmation.** One explicit summary confirm before executing — covers the whole create+link+push action, not a re-ask of sub-steps 3-5:
 
-- `question`: `"Create github.com/{owner}/{name} ({visibility}) and set it as origin{push_clause}?"`, `header`: `"Confirm"`, `multiSelect`: `false` (`{push_clause}` = `", pushing the current branch"` when `git rev-parse HEAD` succeeds, else empty string — matching the same commit-existence check the Execute step below uses for `$PUSH_FLAG`)
+- `question`: `"Create github.com/{owner}/{name} ({visibility}) and set it as origin{push_clause}?"`, `header`: `"Confirm"`, `multiSelect`: `false` (`{push_clause}` = `", pushing the current branch"` when `git rev-parse HEAD` succeeds, else empty string — matching the same commit-existence check the Execute step below uses for `--push`)
 - Option 1 — `label`: `"Yes — create it (Recommended)"`, `description`: `"Runs gh repo create with --source=. --remote=origin."`
 - Option 2 — `label`: `"Cancel"`, `description`: `"Don't create anything."`
 
 **7. Execute.**
 
+Two plain calls: a variable assigned after the `git` call and then referenced is refused in a worktree session (`_shared/scratch-worktree.md` §7).
+
 ```bash
-git rev-parse HEAD >/dev/null 2>&1 && PUSH_FLAG="--push" || PUSH_FLAG=""
-gh repo create "{owner}/{name}" --{private|public} --source=. --remote=origin $PUSH_FLAG
+git rev-parse HEAD
+```
+
+Exit 0: run the create call as written. Any other exit: run it without `--push`.
+
+```bash
+gh repo create "{owner}/{name}" --{private|public} --source=. --remote=origin --push
 ```
 
 `--push` is included only when the current branch already has at least one commit — an empty repo has nothing to push yet. On a name collision, report it and return to sub-step 4 (pick a different name); on a permission error (the chosen owner rejects the create), report it and return to sub-step 3 (pick a different owner) — neither aborts the whole step.

@@ -12,6 +12,7 @@ const { readText } = require('./helpers/read-skill');
 const { missingFactsOf, assertEachPatternGoesRed, assertEveryMatchGoesRed, globalOf, lineStartingWith, sectionOf } = require('./helpers/conformance-asserts');
 const { buildFindingsArtifact, resolveTiebreak, checkTiebreakCoverage, findingId, CHUNK_MAX, judgeTier, planChunks } = require('../plugin/bin/lib/tiebreak');
 const { formatEntry } = require('../plugin/bin/lib/log-decision/append');
+const { coincidence } = require('../plugin/bin/lib/reproduction-log');
 const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
 const { categoriseReproduction, findingsMatch, LINE_TOLERANCE_REPRODUCTION_WIDE } = require('../plugin/bin/lib/coordination');
 const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record');
@@ -1179,7 +1180,7 @@ function consoleLowItems(decisions) {
       readFile: (p) => fs.readFileSync(p, 'utf8'),
       readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
       gitApplyCheck: () => ({ ok: true }),
-      readGrants: (numbers) => Object.fromEntries(numbers.map((n) => [n, { labels: ['auto:merge'], pendingSince: null }])),
+      readGrants: (numbers) => Object.fromEntries(numbers.map((n) => [n, { labels: ['auto:build', 'auto:merge'], pendingSince: null }])),
       now: () => Date.parse('2026-10-22T12:00:00Z'),
     };
     return resolveAll({ runDir, policy: 'console-auto', deps }).items.filter((i) => i.section === 'Low-confidence findings');
@@ -1260,12 +1261,14 @@ test('the resolve-tiebreak failure-line assertions can go red', () => {
 
 // Final re-review residuals: every unconfirmed source keeps a console-visible line, and the
 // two "run the sweep once" sentences name Step 3.7's re-run.
-const nearLocationLine = (texts) => documentedTemplate(texts.step3, ['share a location but not substance']);
+// The share-a-location line comes from its composer (#5595), not the prose; a doctored texts.nearLocation stands in for it.
+const NEAR_LOCATION_LINE = formatEntry({ ...coincidence({ lens: '3b', path: 'src/a.js', lineA: 4, lineB: 6 }), now: new Date(2026, 9, 22, 10, 0, 0) });
+const nearLocationLine = (texts) => texts.nearLocation || NEAR_LOCATION_LINE;
 const partnerDiedParagraph = (texts) => lineStartingWith(texts.tierVariants, '> **Reproduction-pair partner dies or is unavailable.**');
 const PER_FINDING_LINE = /per-finding (?:`unconfirmed` )?line/;
 function residualProblems(texts) {
   const problems = [];
-  if (consoleLowItems(`${instantiate(nearLocationLine(texts))}\n`).length !== 1) problems.push('nearLocation line does not surface');
+  if (consoleLowItems(`${nearLocationLine(texts)}\n`).length !== 1) problems.push('nearLocation line does not surface');
   if (!PER_FINDING_LINE.test(hungParagraph(texts))) problems.push('hung-agent findings get no per-finding line');
   if (!PER_FINDING_LINE.test(partnerDiedParagraph(texts))) problems.push('partner-died findings get no per-finding line');
   if (!/Step 3\.7 re-runs it/.test(texts.step3)) problems.push('step3 sweep says once without the Step 3.7 re-run');
@@ -1281,7 +1284,7 @@ test('nearLocation, hung-agent and partner-died findings stay console-visible; t
 test('each console-visibility and sweep re-run assertion can go red', () => {
   const live = liveTexts();
   const cases = [
-    [{ step3: live.step3.replace('both staged unconfirmed.', 'both staged.') }, 'nearLocation line does not surface'],
+    [{ nearLocation: NEAR_LOCATION_LINE.replace('both staged unconfirmed.', 'both staged.') }, 'nearLocation line does not surface'],
     [{ step3: live.step3.replace(", plus `step3-tier-variants.md`'s low-tier per-finding line for each finding it reports.", '') }, 'hung-agent findings get no per-finding line'],
     [{ tierVariants: live.tierVariants.replace(' plus the low-tier per-finding `unconfirmed` line for each of its findings,', '') }, 'partner-died findings get no per-finding line'],
     [{ step3: live.step3.replace('; Step 3.7 re-runs it once for its own waves (`step3-tiebreak.md`).', '.') }, 'step3 sweep says once without the Step 3.7 re-run'],

@@ -9,14 +9,14 @@
 // plus each reader's own value interpretation.
 'use strict';
 const fs = require('fs');
-const path = require('path');
 const {
   parseFlatLines, RENAMED_KEYS, resolveValue, resolvePolicyKeys,
 } = require('./policy-schema');
+const { locatePolicyFile } = require('./policy-file');
 
 function readPolicyFile(repoRoot) {
   try {
-    return fs.readFileSync(path.join(repoRoot, '.claude-tweaks', 'policy.yml'), 'utf8');
+    return fs.readFileSync(locatePolicyFile(repoRoot).path, 'utf8');
   } catch {
     return null;
   }
@@ -113,7 +113,7 @@ const controlModeOff = () => ({ controlMode: false, extraCategories: [], pathGlo
 
 // The risk-flag policy (#4618): repoRoot, { readFile } -> { controlMode, extraCategories,
 // pathGlobs, globsInvalid }, the extras bin/lib/issues/risk-flag-classify.js and Check G
-// take. `.claude-tweaks/policy.yml` under repoRoot; an absent file (ENOENT/ENOTDIR) is
+// take. `.claude-tweaks/policy.yml` found through locatePolicyFile (repoRoot's own, else a linked worktree's main checkout's; a non-string repoRoot throws a TypeError); an absent file (ENOENT/ENOTDIR) is
 // control mode off and any other read error throws — unlike readPolicyFile's null, since
 // "no extra categories" would read a policy slug as unknown. `risk-categories` and
 // `risk-path-globs` are consulted only with control mode on (isControlModeOn), each
@@ -123,7 +123,9 @@ function readRiskPolicy(repoRoot, deps) {
   const { readFile = fs.readFileSync } = deps || {};
   let policyRaw;
   try {
-    policyRaw = readFile(path.join(repoRoot, '.claude-tweaks', 'policy.yml'), 'utf8');
+    const policyPath = locatePolicyFile(repoRoot).path;
+    if (policyPath === null) throw new TypeError('readRiskPolicy: repoRoot must be a string');
+    policyRaw = readFile(policyPath, 'utf8');
   } catch (error) {
     if (error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) return controlModeOff();
     throw error;

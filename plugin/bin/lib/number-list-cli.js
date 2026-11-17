@@ -114,7 +114,7 @@ function makeNumberListCli({
       if (gated.refusal) { deps.stderr(`${name}: ${gated.refusal}\n`); return 2; }
       repoSpec = gated.spec;
     }
-    if (!repoSpec) { deps.stderr(`${name}: could not resolve owner/repo — pass --repo owner/name\n`); return 2; }
+    if (!repoSpec) { deps.stderr(`${name}: could not resolve owner/repo — pass --repo [host/]owner/name\n`); return 2; }
     if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
     const { owner, repo, host } = repoSpec;
     // #2538 Deliverable 3 — visible only for a resolved non-github.com host;
