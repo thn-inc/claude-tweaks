@@ -152,6 +152,8 @@ git commit -m "Add per-run lane rows and a per-lane step table to step-yield-rep
 
 ### Task 2: Doc skeleton and Evidence section
 
+**Role:** judgment
+
 **Files:**
 - Create: `docs/superpowers/specs/2026-11-17-standard-lane-run-graph-design.md`
 
@@ -186,6 +188,8 @@ git commit -m "Start the standard-lane run graph design with its evidence — re
 
 ### Task 3: Step vocabulary, Not a step, and Today's graph
 
+**Role:** judgment
+
 **Files:**
 - Modify: `docs/superpowers/specs/2026-11-17-standard-lane-run-graph-design.md` (`## Step vocabulary`, `## Not a step`, `## Today's graph`)
 
@@ -216,6 +220,9 @@ git commit -m "Add the step vocabulary and today's graph to the run graph design
 ---
 
 ### Task 4: Inputs, evaluation points, the function, and Never skipped
+
+**Role:** judgment
+**Review risk:** high
 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-11-17-standard-lane-run-graph-design.md` (`## Inputs`, `## Evaluation points`, `## The selection function`, `## Never skipped`)
@@ -255,6 +262,8 @@ git commit -m "Add the selection function, its inputs and assertions to the run 
 
 ### Task 5: Loops
 
+**Role:** judgment
+
 **Files:**
 - Modify: `docs/superpowers/specs/2026-11-17-standard-lane-run-graph-design.md` (`## Loops`)
 
@@ -282,6 +291,9 @@ git commit -m "Add bounded loops to the run graph design — refs #5580"
 
 ### Task 6: Walker choice, roster replacement and mixed-version operation
 
+**Role:** judgment
+**Review risk:** high
+
 **Files:**
 - Modify: `docs/superpowers/specs/2026-11-17-standard-lane-run-graph-design.md` (`## Who walks the graph`, `## Roster replacement`, `## Mixed-version operation`)
 
@@ -305,6 +317,8 @@ git commit -m "Add walker choice, roster replacement and mixed-version plan to t
 ---
 
 ### Task 7: Scope, open records, decisions and phases
+
+**Role:** judgment
 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-11-17-standard-lane-run-graph-design.md` (`## What this design does not decide`, `## Open records`, `## Phase 0 — Decisions`, `## Phase N` sections, `## Left to the builder`, `## Calls made in this document that were not discussed`)
@@ -333,6 +347,8 @@ git commit -m "Add scope, open records, decisions and phases to the run graph de
 ---
 
 ### Task 8: Acceptance checks over the finished doc
+
+**Role:** integration
 
 **Files:**
 - Modify (only if a check fails): `docs/superpowers/specs/2026-11-17-standard-lane-run-graph-design.md`
