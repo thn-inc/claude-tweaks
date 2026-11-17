@@ -1,0 +1,66 @@
+# THROWAWAY SPIKE for #5838 — do not merge.
+#
+# Measures whether the full suite passes on a standard GitHub-hosted macOS
+# runner, how long it takes, and how long the job waits for a runner. The
+# answer decides whether a CI macOS job can replace the local macOS whole-suite
+# run in /claude-tweaks:release Step 3 (#5370). Triggers only on a PR that
+# touches this file, so it never runs anywhere else.
+name: macos-suite-spike
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/macos-suite-spike.yml
+
+concurrency:
+  group: macos-suite-spike-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  suite:
+    name: full suite (macos-latest, node ${{ matrix.node }})
+    runs-on: macos-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20 is the repo's CI Node; 22 is what the local macOS run uses.
+        node: [20, 22]
+    env:
+      GIT_AUTHOR_NAME: ci
+      GIT_AUTHOR_EMAIL: ci@invalid.example
+      GIT_COMMITTER_NAME: ci
+      GIT_COMMITTER_EMAIL: ci@invalid.example
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Runner facts
+        run: |
+          sw_vers || true
+          sysctl -n hw.ncpu machdep.cpu.brand_string || true
+          node --version
+          command -v zsh && zsh --version
+      - name: Run the whole suite
+        shell: bash
+        run: |
+          start=$(date +%s)
+          set +e
+          npm test --silent -- --full | tee "$RUNNER_TEMP/suite.tap"
+          code=${PIPESTATUS[0]}
+          echo "suite wall time: $(( $(date +%s) - start ))s, exit $code"
+          exit $code
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: suite-tap-node-${{ matrix.node }}
+          path: ${{ runner.temp }}/suite.tap
+          retention-days: 7
+          if-no-files-found: warn
