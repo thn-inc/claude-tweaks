@@ -48,7 +48,7 @@ jobs:
         shell: bash
         run: |
           node -v
-          command -v -a node
+          type -a node
           echo "$PATH"
           env | grep -i -e node -e bash_env -e test_context || true
           sw_vers
