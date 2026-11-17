@@ -125,6 +125,13 @@ A suite like this imports the stripper, so it joins both caller lists named unde
 
 A scan that lands with a list of files not yet converted (`NOT_YET` in `tests/bin-lib/cli-entry-conformance.test.js`, #5374) is shrunk by several records, often in parallel. Pin its size as a ceiling (`length <= N`, N the landing size), never an exact count: an exact count makes every converting record edit one shared line, and two of them conflict. Keep one entry per line, sorted, so each record deletes only its own lines. Fail a listed file that now conforms, so the list cannot hold a stale entry. Build the list's go-red self-tests from inline fixtures and match the failure message; never borrow a file that is on the list, because the record that converts it turns the self-test red. The first version of that scan pinned `length === 27` and borrowed `verify.js`, and review replaced both (c40ea0f13).
 
+### A scan that bounds what a file may name or print
+
+`tests/ci-health-skill-agnostic.test.js` (#5757) guards a promise that the ci-health code names no vendor. Two rules came out of building it:
+
+- **Pair the text rule with an import-boundary rule.** A text scan sees only the file's own text, not what a module it imports prints. The scan was green while `ci-audit.js` required `repo-resolve`, whose refusal text names the forge, and only the final review caught it (`a622c35d9f`). List the shared modules that carry the forbidden knowledge, flag any relative require of one from a file that must stay free of it, assert a floor on the require sites matched (`REQUIRE_FLOOR`), and state the one-level limit in the test header: a module two requires away is not seen.
+- **Every allowlist or carve-out entry carries an inline reason and a removal condition** (a record number, or the change that retires it), and a review of the scanned area reads each entry as a candidate finding, not as settled. `ALLOWED_FORGE_IMPORTS` waived `workflow-facts.js`'s `../merge-verification` import by name while that module also spawns for other callers. The scan stayed green over the leak, and two review lenses and three tiebreak judges found it separately (`plugin/bin/lib/ci-audit/workflow-facts.js:34`).
+
 ## Decision Framework
 
 | Situation | Do this |
