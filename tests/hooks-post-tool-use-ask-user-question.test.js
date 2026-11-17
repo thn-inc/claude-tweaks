@@ -37,7 +37,7 @@ function askCtx({ toolInput, toolResponse, ownedRun } = {}) {
   const input = { tool_name: 'AskUserQuestion' };
   if (toolInput !== undefined) input.tool_input = toolInput;
   if (toolResponse !== undefined) input.tool_response = toolResponse;
-  return { input, cwd: '/does/not/matter', ownedRun };
+  return { input, cwd: '/does/not/matter', env: process.env, ownedRun };
 }
 
 test('logs questions (header, question, option labels) and the raw response text — real captured payload (Example 1)', () => {
@@ -137,7 +137,7 @@ test('logs response: null when tool_response is absent or malformed, and never t
 
 test('does not fire for a tool other than AskUserQuestion', () => {
   const runDir = makeRunDir();
-  const out = post.run({ input: { tool_name: 'ExitWorktree' }, cwd: '/x', ownedRun: { dir: runDir } });
+  const out = post.run({ env: process.env, input: { tool_name: 'ExitWorktree' }, cwd: '/x', ownedRun: { dir: runDir } });
   assert.deepStrictEqual(out, {});
   assert.ok(!fs.existsSync(path.join(runDir, 'events.jsonl')), 'no event file should be created');
 });

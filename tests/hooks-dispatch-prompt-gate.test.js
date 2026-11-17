@@ -79,6 +79,7 @@ function render(fx, call, { extra = [], out } = {}) {
 }
 
 const ctxFor = (fx, prompt, over = {}) => ({
+  env: process.env,
   cwd: fx.cwd || fx.project,
   input: { tool_name: 'Agent', session_id: 'S', tool_input: { subagent_type: 'general-purpose', prompt }, ...over },
 });
@@ -272,7 +273,7 @@ test('a load fault in dispatch-prompt-gate.js allows the Agent call and leaves t
   git(['-C', fx.project, '-c', 'user.name=t', '-c', 'user.email=t@example.test', 'commit', '--allow-empty', '-q', '-m', 'init']);
   fs.writeFileSync(path.join(fx.project, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
   const first = render(fx, 'first');
-  const editCtx = { cwd: fx.project, input: { tool_name: 'Edit', session_id: 'S', tool_input: { file_path: path.join(fx.project, 'a.txt') } } };
+  const editCtx = { env: process.env, cwd: fx.project, input: { tool_name: 'Edit', session_id: 'S', tool_input: { file_path: path.join(fx.project, 'a.txt') } } };
   // Controls with the real module: the Agent gate denies an edited prompt, the worktree gate denies the Edit.
   assert.ok(denyReason(ptu.run(ctxFor(fx, editWord(first.prompt)))));
   assert.match(denyReason(ptu.run(editCtx)) || '', /worktree-always/);
@@ -316,7 +317,7 @@ test('fail-open: tool_input.prompt is not a string', async () => {
   for (const prompt of [undefined, null, 42, [`resume run ${R}`], { text: `resume run ${R}` }]) {
     assertAllowedNoEvent(gate(ctxFor(fx, prompt)), fx);
   }
-  assertAllowedNoEvent(gate({ cwd: fx.project, input: { tool_name: 'Agent', session_id: 'S' } }), fx);
+  assertAllowedNoEvent(gate({ env: process.env, cwd: fx.project, input: { tool_name: 'Agent', session_id: 'S' } }), fx);
 });
 
 test('fail-open: a marker-less prompt with no session_id', async () => {

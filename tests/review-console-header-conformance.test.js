@@ -77,6 +77,7 @@ function denyReason({ multiSpec }) {
     input: { tool_name: 'AskUserQuestion', tool_input: { questions: [{ header: REVIEW_CONSOLE_HEADER, question: 'q', options: [] }] }, session_id: 'sess-1', cwd: repo },
     ownedRun: { dir, attribution: 'session' },
     cwd: repo,
+    env: process.env,
   };
   const out = pre.checkReviewConsoleAskGate(ctx, { readConsoleCeiling: () => 'unattended' });
   return out.json.hookSpecificOutput.permissionDecisionReason;
