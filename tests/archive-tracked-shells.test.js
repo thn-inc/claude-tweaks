@@ -9,6 +9,7 @@ const os = require('os');
 const path = require('path');
 const { readText } = require('./helpers/read-skill');
 const { cleanGitEnv, fixtureGit } = require('./helpers/git-fixtures');
+const { fromTemplate, disableReceiveAutoGc } = require('./helpers/git-template');
 const { runCliSync } = require('./helpers/run-cli');
 const { compareWorkTwin } = require('../plugin/bin/lib/reconcile/archive-merged');
 
@@ -25,33 +26,69 @@ function git(cwd, ...args) {
   return fixtureGit(args, { cwd, env: ENV, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
+// Runs fn with git's trace2 event output pointed at `dir` for git started through process.env or
+// through the module's ENV: every git process writes one file there. Both are restored after.
+function traced(dir, fn) {
+  const key = 'GIT_TRACE2_EVENT';
+  const saved = [process.env, ENV].map((env) => [env, env[key]]);
+  process.env[key] = dir;
+  ENV[key] = dir;
+  try {
+    return fn();
+  } finally {
+    for (const [env, v] of saved) {
+      if (v === undefined) delete env[key]; else env[key] = v;
+    }
+  }
+}
+
+// Read when called: a template build runs with auto-maintenance off in process.env, which the
+// module-level ENV (read at load) does not carry.
+const fixtureEnv = () => ({ ...cleanGitEnv(), ...IDENTITY });
+
 let seq = 0;
 
 // A bare `origin` and a clone of it as the main checkout, with this repo's .gitignore (so the
-// archive paths behave as in production), an initial commit pushed to origin/main.
+// archive paths behave as in production), an initial commit pushed to origin/main. Built once per
+// process; every call gets a copy.
 function makeFixture() {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ats-')));
-  const origin = path.join(base, 'origin.git');
-  const root = path.join(base, 'main');
-  fixtureGit(['init', '-q', '--bare', '-b', 'main', origin], { env: ENV });
-  fixtureGit(['clone', '-q', origin, root], { env: ENV });
-  git(root, 'config', 'core.autocrlf', 'false');
-  git(root, 'checkout', '-q', '-B', 'main');
-  fs.writeFileSync(path.join(root, '.gitignore'), readText(REPO_GITIGNORE));
-  fs.writeFileSync(path.join(root, 'README.md'), 'seed\n');
-  git(root, 'add', '.gitignore', 'README.md');
-  git(root, 'commit', '-q', '-m', 'seed');
-  git(root, 'push', '-q', '-u', 'origin', 'main');
-  return { base, origin, root };
+  const base = fromTemplate('ats:fixture:[]', (dir) => {
+    const env = fixtureEnv();
+    const origin = path.join(dir, 'origin.git');
+    const root = path.join(dir, 'main');
+    const run = (cwd, ...args) => fixtureGit(args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    fixtureGit(['init', '-q', '--bare', '-b', 'main', origin], { env });
+    disableReceiveAutoGc(origin);
+    fixtureGit(['clone', '-q', origin, root], { env });
+    run(root, 'config', 'core.autocrlf', 'false');
+    run(root, 'checkout', '-q', '-B', 'main');
+    fs.writeFileSync(path.join(root, '.gitignore'), readText(REPO_GITIGNORE));
+    fs.writeFileSync(path.join(root, 'README.md'), 'seed\n');
+    run(root, 'add', '.gitignore', 'README.md');
+    run(root, 'commit', '-q', '-m', 'seed');
+    run(root, 'push', '-q', '-u', 'origin', 'main');
+  }, { prefix: 'ct-ats-', realpath: true });
+  return { base, origin: path.join(base, 'origin.git'), root: path.join(base, 'main'), shells: [] };
+}
+
+// An empty `git init` repository for the policy test, built once per process.
+function policyRepo() {
+  return fromTemplate('ats:policy-repo', (dir) => {
+    fixtureGit(['init', '-q', dir], { env: fixtureEnv() });
+  }, { prefix: 'ct-ats-policy-', realpath: true });
 }
 
 function pipelines(root) { return path.join(root, '.claude-tweaks', 'pipelines'); }
 
 // twin: 'identical' | 'absent' | 'differs' | 'differs-same-length'. Commits the live work/{n}-spec.md (and the archive
 // twin's work/ unless 'absent'), pushes, and writes the gitignored archive run-state.
-function addShell(root, id, { twin = 'identical', clean = true, push = true } = {}) {
+function addShell(root, id, opts) {
   seq += 1;
-  const n = 9000 + seq;
+  return writeShell(git, root, id, 9000 + seq, opts);
+}
+
+// `run(cwd, ...args)` runs git; `n` numbers the spec file.
+function writeShell(run, root, id, n, { twin = 'identical', clean = true, push = true } = {}) {
   const file = `${n}-spec.md`;
   const live = path.join(pipelines(root), id, 'work');
   fs.mkdirSync(live, { recursive: true });
@@ -63,9 +100,9 @@ function addShell(root, id, { twin = 'identical', clean = true, push = true } = 
     fs.writeFileSync(path.join(twinWork, file), twin === 'differs' ? `other ${n}\n` : twin === 'differs-same-length' ? `spac ${n}\n` : `spec ${n}\n`);
     add.push(path.join('.claude-tweaks', 'pipelines', 'archive', id, 'work', file));
   }
-  git(root, 'add', '--', ...add);
-  git(root, 'commit', '-q', '-m', `shell ${id}`);
-  if (push) git(root, 'push', '-q', 'origin', 'main');
+  run(root, 'add', '--', ...add);
+  run(root, 'commit', '-q', '-m', `shell ${id}`);
+  if (push) run(root, 'push', '-q', 'origin', 'main');
   if (clean) {
     fs.mkdirSync(path.join(pipelines(root), 'archive', id), { recursive: true });
     fs.writeFileSync(path.join(pipelines(root), 'archive', id, 'run-state.json'), JSON.stringify({ status: 'clean' }));
@@ -931,15 +968,18 @@ test('every git call of a dry run and of enumeration carries the injected env', 
 
 // A no-forge local-merge project: one checkout, no `origin` at all.
 function makeLocalOnlyFixture() {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ats-local-')));
-  const root = path.join(base, 'main');
-  fixtureGit(['init', '-q', '-b', 'main', root], { env: ENV });
-  git(root, 'config', 'core.autocrlf', 'false');
-  fs.writeFileSync(path.join(root, '.gitignore'), readText(REPO_GITIGNORE));
-  fs.writeFileSync(path.join(root, 'README.md'), 'seed\n');
-  git(root, 'add', '.gitignore', 'README.md');
-  git(root, 'commit', '-q', '-m', 'seed');
-  return { root };
+  const base = fromTemplate('ats:local-only', (dir) => {
+    const env = fixtureEnv();
+    const root = path.join(dir, 'main');
+    const run = (cwd, ...args) => fixtureGit(args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    fixtureGit(['init', '-q', '-b', 'main', root], { env });
+    run(root, 'config', 'core.autocrlf', 'false');
+    fs.writeFileSync(path.join(root, '.gitignore'), readText(REPO_GITIGNORE));
+    fs.writeFileSync(path.join(root, 'README.md'), 'seed\n');
+    run(root, 'add', '.gitignore', 'README.md');
+    run(root, 'commit', '-q', '-m', 'seed');
+  }, { prefix: 'ct-ats-local-', realpath: true });
+  return { root: path.join(base, 'main') };
 }
 
 test('--no-pr in a repository with no origin builds the branch on the local integration branch and exits 0', () => {
@@ -1016,8 +1056,7 @@ test('a throw after the shells were archived exits 2 and still prints the envelo
 
 test('realDeps.policy returns flat strings: true/false as text and an unset key as the empty string', () => {
   const resolveIn = (body) => {
-    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ats-policy-')));
-    fixtureGit(['init', '-q', dir], { env: ENV });
+    const dir = policyRepo();
     fs.mkdirSync(path.join(dir, '.claude-tweaks'));
     fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), body);
     return realDeps.policy(dir, ['integration-model', 'integration-branch', 'housekeeping-auto-merge'], { env: ENV });
@@ -1030,4 +1069,32 @@ test('realDeps.policy returns flat strings: true/false as text and an unset key 
     resolveIn('integration-model: local-merge\nintegration-branch: trunk\nhousekeeping-auto-merge: false\n'),
     { 'integration-model': 'local-merge', 'integration-branch': 'trunk', 'housekeeping-auto-merge': 'false' },
   );
+});
+
+test('#5845 AC4.1: a fixture copy has its own origin; a push in one copy leaves another copy unchanged', () => {
+  const a = makeFixture();
+  const b = makeFixture();
+  assert.notEqual(a.base, b.base);
+  for (const f of [a, b]) {
+    assert.equal(f.origin, path.join(f.base, 'origin.git'));
+    assert.equal(f.root, path.join(f.base, 'main'));
+    assert.equal(fs.realpathSync.native(git(f.root, 'remote', 'get-url', 'origin')), fs.realpathSync.native(f.origin));
+    assert.equal(git(f.root, 'config', 'core.autocrlf'), 'false');
+    assert.equal(git(f.root, 'rev-parse', '--abbrev-ref', 'main@{upstream}'), 'origin/main');
+    assert.equal(git(f.root, 'log', '--format=%s'), 'seed');
+  }
+  const before = git(b.origin, 'rev-parse', 'main');
+  assert.equal(git(a.origin, 'rev-parse', 'main'), before);
+  addShell(a.root, '2026-11-30T000000-record-1', { twin: 'absent' }); // commits and pushes in copy a
+  assert.notEqual(git(a.origin, 'rev-parse', 'main'), before);
+  assert.equal(git(b.origin, 'rev-parse', 'main'), before);
+  assert.equal(git(b.root, 'rev-parse', 'HEAD'), before);
+});
+
+test('#5845 AC3.1: a warm call of each templated fixture builder starts no git process', () => {
+  const builders = [() => makeFixture(), () => makeLocalOnlyFixture(), () => policyRepo()];
+  for (const build of builders) build(); // warm-up: a first call may build the template
+  const trace = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ats-trace-'));
+  traced(trace, () => { for (const build of builders) build(); });
+  assert.deepEqual(fs.readdirSync(trace), []);
 });
