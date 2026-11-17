@@ -658,3 +658,25 @@ test('an impact-declared run with a generated glob and a dirty tree still reads 
   const zStatus = readGitCalls(traceDir).flatMap((p) => p.events).filter((e) => e.kind === 'git' && e.args.includes('status') && e.args.includes('-z'));
   assert.strictEqual(zStatus.length, 3, JSON.stringify(zStatus.map((e) => e.args)));
 });
+
+// #5773: the stamp anchor is proved an ancestor of HEAD before selection; a map pinned to that same commit reuses the answer
+// (only git reads run in between), so the ancestry question for that commit is asked once per run.
+test('a map pinned to the stamp anchor asks whether the anchor is an ancestor of HEAD once (#5773)', async () => {
+  const r = impactRepo();
+  const first = await runCli([...ARGS, '--local'], r.repo);
+  assert.strictEqual(first.code, 0, first.stderr + first.stdout);
+  const anchor = r.stamp().fullSha;
+  assert.match(anchor, /^[0-9a-f]{40}$/, 'the first full run left an anchor');
+  writeMap(r, anchor);
+  commitFile(r, 'src/x.js', 'x2\n');
+  const traceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-impact-trace-'));
+  after(() => fs.rmSync(traceDir, { recursive: true, force: true }));
+  const run = spawnSync(process.execPath, ['--require', path.join(__dirname, '..', '..', 'helpers', 'git-call-recorder.js'), CLI, ...ARGS, '--local'], {
+    cwd: r.repo, encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL', env: { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1', CT_TEST_GIT_CALL_LOG: traceDir },
+  });
+  assert.strictEqual(run.status, 0, run.stderr + run.stdout);
+  assert.strictEqual(r.report().scope.impact.fallback, null, 'the map was read and trusted');
+  const asked = readGitCalls(traceDir).flatMap((p) => p.events)
+    .filter((e) => e.kind === 'git' && e.args.includes('--is-ancestor') && e.args.includes(anchor));
+  assert.strictEqual(asked.length, 1, JSON.stringify(asked.map((e) => e.args)));
+});

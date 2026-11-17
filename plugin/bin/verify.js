@@ -749,8 +749,11 @@ async function main() {
       // so the suite runs its full command. With no usable stamp anchor, the
       // --integration-branch merge-base anchors; an explicit --base never does
       // (it runs full, as before).
+      // anchorSha was proved an ancestor of HEAD above; only git reads (changedFiles, mergeNarrowing) run before the
+      // lazy first map read, so a map pinned to that same commit need not ask again (#5773).
       if (decl.impact) impactCtx = checkoutImpactContext({
         decl,
+        knownAncestor: anchorSha,
         cwd: parsed.cwd || process.cwd(),
         locate: ({ cwd }) => {
           const l = reads.locations(cwd);
