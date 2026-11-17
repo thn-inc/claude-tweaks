@@ -35,6 +35,7 @@ const {
   fixtureActiveUnstampedMergedRun, fixtureOrdinaryMergedNoConsole, ref,
   addOriginRemote, deletedBranchMergedRepo, reusedBranchLiveRepo, makeShell, shellRepo3975,
 } = require('./archive-merged-helpers');
+const { warmCallStartsNoGit } = require('../../helpers/git-trace');
 
 // #1892: stamps `worktree-always: true` in `.claude-tweaks/policy.yml` — the
 // flat kebab-case format `bin/lib/policy.js` reads directly (no YAML dep).
@@ -2479,3 +2480,16 @@ test('AC6.1: twin-only archival commits only its own paths, never an unrelated s
   assert.ok(after.length > 0, 'pathspec after -- must be non-empty');
   assert.deepEqual(after.map((p) => path.resolve(root, p)), [path.join(root, liveRel)]);
 });
+
+// #5846: these three archive-merged fixtures are templates (#5772) — a warm-up call may build, a further call
+// starts no git process. They live here because this file is the only one that builds them.
+const cleanupAfter = (t, dirs) => t.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
+for (const [name, make, dirsOf] of [
+  ['deletedBranchMergedRepo(feat-3503-bynumber, origin)', () => deletedBranchMergedRepo('feat-3503-bynumber', 'git@github.com:acme/w.git'), (r) => [r.root]],
+  ['reusedBranchLiveRepo()', () => reusedBranchLiveRepo(), (r) => [r.root, r.wt]],
+  ['shellRepo3975()', () => shellRepo3975(), (r) => [r.root]],
+]) {
+  test(`AC3.1: archive-merged ${name}: a second call starts no git process`, (t) => {
+    warmCallStartsNoGit(make, { track: (r) => cleanupAfter(t, dirsOf(r)) });
+  });
+}
