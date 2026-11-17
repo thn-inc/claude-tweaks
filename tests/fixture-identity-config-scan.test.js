@@ -30,28 +30,7 @@ const USER = 'user';
 
 // Posix path relative to the repo root -> why that file's matches are allowed.
 const ALLOWLIST = {
-  'tests/hooks-pre-tool-use.test.js': 'owned by #5324',
-  'tests/hooks-pre-tool-use-forge-memo.test.js': 'owned by #5324',
-  'tests/bin-lib/verify/cli-helpers.js': 'owned by #5324',
   'tests/bin-lib/reconcile/prune-remote.test.js': 'owned by #5769',
-  'tests/bin-lib/pre-review-catchup/cli.test.js': 'owned by #5769',
-  'tests/bin-lib/issues/claims-git-cas.test.js': 'owned by #5769',
-  'tests/bin-lib/learned-skills/capture-matrix-joined-crlf.test.js': 'owned by #5770',
-  'tests/bin-lib/learned-skills/capture-matrix-joined-pairs-1.test.js': 'owned by #5770',
-  'tests/bin-lib/learned-skills/capture-matrix-joined-pairs-2.test.js': 'owned by #5770',
-  'tests/bin-lib/learned-skills/capture-matrix-joined.test.js': 'owned by #5770',
-  'tests/bin-lib/learned-skills/capture-matrix-tracked-crlf.test.js': 'owned by #5770',
-  'tests/bin-lib/learned-skills/capture-matrix-tracked-pairs.test.js': 'owned by #5770',
-  'tests/bin-lib/learned-skills/capture-matrix-tracked.test.js': 'owned by #5770',
-  'tests/bin-lib/learned-skills/capture-matrix-untracked-pairs.test.js': 'owned by #5770',
-  'tests/bin-lib/learned-skills/capture-matrix-untracked.test.js': 'owned by #5770',
-  'tests/bin-lib/learned-skills/capture.test.js': 'owned by #5770',
-  'tests/bin-lib/learned-skills/land.test.js': 'owned by #5770',
-  'tests/helpers/learned-skills-capture.js': 'owned by #5770',
-  'tests/statusline.test.js': 'owned by #5772',
-  'tests/bin-lib/reconcile/archive-merged.test.js': 'owned by #5772',
-  'tests/bin-lib/reconcile/archive-merged-record-guards.test.js': 'owned by #5772',
-  'tests/bin-lib/staged-patch/stack-check.test.js': 'owned by #5772',
   'tests/helpers-git-template.test.js': `reads ${USER}.name/${USER}.email back with git config to prove an identity reached a fixture repo, a template copy or a worktree's common config; one test title names the command; the writeIdentity byte-parity test runs git config ${USER}.name as the reference its bytes are compared against (the behaviour under test)`,
 };
 
@@ -134,9 +113,11 @@ test('a comment naming the command is not a site, a call beside it is', () => {
   assert.deepEqual(identityConfigSites(stripComments(call)), [1]);
 });
 
-test('every allowlist entry names an existing file and carries a reason', () => {
+test('every allowlist entry names an existing file that still holds a site, and carries a reason', () => {
+  const siteCounts = new Map(corpus().map(({ rel, sites }) => [rel, sites.length]));
   for (const [rel, reason] of Object.entries(ALLOWLIST)) {
     assert.ok(fs.statSync(path.join(ROOT, rel), { throwIfNoEntry: false })?.isFile(), `${rel} is not a file`);
+    assert.ok((siteCounts.get(rel) ?? 0) >= 1, `${rel} holds no site any more: remove its allowlist entry`);
     assert.ok(typeof reason === 'string' && reason.trim() !== '', `${rel} has no reason`);
   }
 });
