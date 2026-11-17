@@ -13,27 +13,9 @@ const { FIXTURE_TIMEOUT_MS } = require('../../helpers/git-fixtures');
 const { checkStack, gitEnv, headerSources, rederive, stagedApplyOrder, stackVerdicts } = require('../../../plugin/bin/lib/staged-patch/stack-check');
 const { readSnapshot } = require('../../../plugin/bin/lib/console/resolve');
 
-const FIXTURE_ENV = gitEnv();
-const BASE = ['l1', 'l2', 'l3', 'l4', 'anchor', 'a1', 'a2', 'a3'].join('\n') + '\n';
+// gitFixture/repoWith are template copies (#5772); FIXTURE_ENV is gitEnv() taken once at load.
+const { gitFixture, repoWith, BASE, FIXTURE_ENV } = require('./stack-check-fixtures');
 const PREAMBLE = 'Target: f.txt\nInvariant: x\n\n';
-
-function gitFixture(t, content = BASE) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stack-check-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const git = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS, env: FIXTURE_ENV });
-  const runOk = (...args) => {
-    const r = git(...args);
-    assert.equal(r.status, 0, r.stderr);
-    return r;
-  };
-  runOk('init', '-q');
-  runOk('config', 'user.email', 'stack-check@example.invalid');
-  runOk('config', 'user.name', 'stack-check');
-  fs.writeFileSync(path.join(dir, 'f.txt'), content);
-  runOk('add', 'f.txt');
-  runOk('commit', '-q', '-m', 'base');
-  return { dir, git, runOk };
-}
 
 // Edit f.txt in a fixture whose HEAD is `base`, capture `git diff`, then restore f.txt.
 function captureDiff(t, base, edit) {
@@ -403,17 +385,6 @@ test('#3997: gitEnv drops env-carried config (GIT_CONFIG_PARAMETERS/COUNT/KEY_n/
   assert.strictEqual(env.GIT_CONFIG_KEY_X, 'keep');
   assert.deepStrictEqual(input, before);
 });
-
-// A fixture repo with every `{name: content}` file committed.
-function repoWith(t, files) {
-  const fx = gitFixture(t);
-  for (const [name, content] of Object.entries(files)) {
-    fs.writeFileSync(path.join(fx.dir, name), content);
-    fx.runOk('add', name);
-  }
-  fx.runOk('commit', '-q', '--allow-empty', '-m', 'files');
-  return fx;
-}
 
 // A real git capture: a fixture committed with `files`, `mutate(fx)` run on it, then `git <gitArgs>`.
 function captureFrom(t, files, mutate, gitArgs = ['diff']) {

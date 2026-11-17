@@ -31,6 +31,7 @@ test('#2783 repro: the harness refusal from an ad-hoc EnterWorktree session surv
   assert.strictEqual(atEnter.attribution, 'fallback', 'precondition: the bug\'s shape — only a guessed run resolves');
 
   post.run({
+    env: process.env,
     input: { tool_name: 'EnterWorktree', tool_response: { content: `Created worktree at ${wt} on branch wt-branch. The session is now working in the worktree.` }, session_id: S, cwd: wt },
     cwd: wt,
     ownedRun: atEnter,
@@ -39,6 +40,7 @@ test('#2783 repro: the harness refusal from an ad-hoc EnterWorktree session surv
   assert.strictEqual(afterEnter.attribution, 'session', 'EnterWorktree must have minted a session-owned ad-hoc dir');
 
   failure.run({
+    env: process.env,
     input: {
       tool_name: 'Bash', tool_input: { command: 'd=.; sed -n 1,2p $d/README.md' }, session_id: S, cwd: wt,
       error: `This session is isolated in the worktree ${wt}, but this command … cannot be shown not to be git. Refusing to run it — a worktree-isolated session's git operations must target its own worktree.`,
@@ -69,7 +71,7 @@ test('#2783 control: without --session (and no env id), the same sequence after 
   const pipelines = path.join(main, '.claude-tweaks', 'pipelines');
   const wt = harnessWorktreeOf(main);
   const S = 'sess-2783-control';
-  post.run({ input: { tool_name: 'EnterWorktree', tool_response: { content: `Created worktree at ${wt} on branch b.` }, session_id: S, cwd: wt }, cwd: wt, ownedRun: ctxLib.resolveRun(wt, {}, S) });
+  post.run({ env: process.env, input: { tool_name: 'EnterWorktree', tool_response: { content: `Created worktree at ${wt} on branch b.` }, session_id: S, cwd: wt }, cwd: wt, ownedRun: ctxLib.resolveRun(wt, {}, S) });
   execFileSync('git', ['-C', main, 'worktree', 'remove', '--force', wt]);
   const wrapUpRunDir = path.join(pipelines, '2026-10-03T000000-wrap-up-standalone');
   fs.mkdirSync(wrapUpRunDir, { recursive: true });

@@ -15,6 +15,7 @@ const { HARNESS_ISOLATION_REFUSAL_RE, classifyRefusal } = require('./harness-ref
 const COMMAND_EXCERPT_CHARS = 200;
 
 function run(ctx) {
+  ctxLib.requireEnv(ctx);
   try {
     const input = (ctx && ctx.input) || {};
     if (input.tool_name !== 'Bash') return {};
@@ -23,7 +24,7 @@ function run(ctx) {
     const toolInput = input.tool_input || {};
     const command = typeof toolInput.command === 'string' ? toolInput.command.slice(0, COMMAND_EXCERPT_CHARS) : null;
     const { dir, attribution } = ctxLib.resolveDenialRunDir(ctx);
-    const testTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
+    const testTag = ctx.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
     ctxLib.appendEvent(dir, 'wd-guard-refusal', { tool: 'Bash', reason: 'harness-worktree-isolation', actor: refusal.actor, variant: refusal.variant, command, ...testTag }, attribution);
   } catch { /* never break a session over bookkeeping */ }
   return {};
