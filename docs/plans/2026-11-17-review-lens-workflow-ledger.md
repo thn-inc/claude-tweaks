@@ -9,3 +9,4 @@
 | 5 | build | SDD ruling — T4 gap fill: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | — |
 | 6 | build | SDD ruling — Task path has no categorise-reproduction --run exit-3 handling (out of #5599 scope): ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | open | — |
 | 7 | build | SDD ruling — q1 not fixed in this build: ratify or reverse at the Review Console (staged/sdd-ruling-6.md) | open | — |
+| 8 | build/skill | [skill: NEW - plugin-workflow-script] First plugin/workflows/ script: pure-literal meta, args validated before any agent(), each agent() wrapped on its own, tested by tests/helpers/workflow-script.js's stub-globals loader plus a banned-token source scan — no project skill covers authoring or testing one. | open | — |
