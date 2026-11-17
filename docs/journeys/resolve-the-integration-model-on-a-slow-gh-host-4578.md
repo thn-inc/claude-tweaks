@@ -4,6 +4,10 @@ files:
   - plugin/bin/lib/shared-primitives.js
   - plugin/bin/lib/wrap-up/engine-verify.js
   - plugin/bin/residue.js
+  - plugin/bin/console-resolve.js
+  - plugin/bin/lib/flow/preflight.js
+  - plugin/bin/lib/release-preflight/pack.js
+  - plugin/bin/lib/wrap-up/pack.js
   - plugin/bin/lib/policy-file.js
   - plugin/bin/lib/policy-derived-defaults.js
   - plugin/bin/resolve-policy.js
@@ -64,10 +68,18 @@ files:
 - **Should understand:** Only `gh` calls take the ladder. `git` calls never do: `engine-verify.js` keeps its own fixed 5 s bound for them, and `residue.js` leaves its git calls on their own bounds. A `timeout` that a caller passes to `residue.js`'s runner still wins over the ladder. The getter is read once per process, so a changed env var or policy value takes effect on the next command, not mid-run.
 - **Red flags:** A wrap-up `gh` call killed after about 5 s while `gh-timeout-ms: 20000` is set. A `git` call that waits on the `gh` bound.
 
+### 7. The preflight packs and console-resolve read through the batched bound — `plugin/bin/console-resolve.js`, `plugin/bin/lib/flow/preflight.js`, `plugin/bin/lib/release-preflight/pack.js`, `plugin/bin/lib/wrap-up/pack.js`
+- **URL:** —
+- **Action:** With `gh-timeout-ms: 45000` in `policy.yml` (or `CLAUDE_TWEAKS_GH_TIMEOUT_MS=45000`), every `gh` spawn these four seams make runs bounded at 45 s, where each used to be killed at a fixed 30 s. With `gh-timeout-ms: 20000` the bound stays 30 s, because the batched bound is `max(30000, gh-timeout-ms)`.
+- **Should feel:** Nothing visible. The `/claude-tweaks:flow` second-call preflight, the release preflight, the wrap-up fact pack and the console's grant reads wait as long as the host needs.
+- **Should understand:** The bound follows the command, through `execTimeoutMsFor(cmd)` in `plugin/bin/lib/shared-primitives.js`: `gh` takes `GH_BATCH_TIMEOUT_MS`, `git` takes `GIT_TIMEOUT_MS` (`git-timeout-ms`, so `console-resolve.js` and `release-preflight/pack.js` follow it), and a `node` spawn such as `verify.js` keeps a fixed 30 s. A timeout kill in the wrap-up pack reads `timeout after 45000ms: gh …`, naming the bound the killed call carried. Spawns that carried no timeout before (some `git` and `gh` helpers in `flow/preflight.js` and `wrap-up/pack.js`) are unchanged; they are tracked separately.
+- **Red flags:** A pack `gh` call killed at 30 s while `gh-timeout-ms: 45000` is set. A `node verify.js` spawn that follows the `gh` bound. A `git` call that follows `gh-timeout-ms`.
+
 ## Origin
 - Created during build of #4578 (policy-schema detectIntegrationModel: ignores gh-timeout-ms and silently falls back to local-merge)
 - Steps 1-4 built in this session; step 5 is the existing pin/timeout override, now named in the degrade line
 - Step 4 extended during build of #4830 (run-scoped forge degrade memo): a hung `gh` now costs the PR-stamp gate one probe per `FORGE_DEGRADE_MEMO_TTL_MS` window instead of one per covered call
 - Steps 1 and 5 updated at the wrap-up of #4492 (policy locator): from a linked worktree without its own `policy.yml`, the `gh-timeout-ms` rung reads the main checkout's file, and step 5's red flag warns against a worktree-local copy; `files:` gains `plugin/bin/lib/policy-file.js`
 - Step 1 extended and step 6 added during build of #4856 (route every gh call's timeout through GH_TIMEOUT_MS): the ladder moved into `ghTimeoutMsAt`, and `engine-verify.js` and `residue.js` now honour it
+- Step 7 added during build of #5050 (decide the gh bound for the four generic exec seams): the four seams' fixed 30 s became a per-command bound (`gh` batched, `git` its own key, `node` fixed); `files:` gains the four seam files
 - Related: `open-a-run-pr-on-a-slow-gh-host-4554.md` (the same slow host's draft-PR path), `resolve-a-policy-key.md`
