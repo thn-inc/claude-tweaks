@@ -61,7 +61,7 @@ function createGitReads({ execImpl = execFileSync, env = process.env } = {}) {
     } catch (err) {
       // An unborn HEAD: rev-parse prints the three locations and exits 1 on --verify.
       if (err && err.status === 1) {
-        const out = lines(err.stdout === undefined || err.stdout === null ? '' : err.stdout);
+        const out = lines(err.stdout ?? '');
         if (out.length === 3 && out.every((l) => l !== '')) return locationsOf(cwd, out);
       }
     }
