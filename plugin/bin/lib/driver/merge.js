@@ -1,9 +1,9 @@
 'use strict';
 // The pipeline driver's merge step (#5226): takes a record whose live labels carry `auto:merge`
-// from a green draft PR to a merged one, in program code, with no model call. The one judgment
-// the lane needs (the merge-check verdict and the acceptance state) arrives only through the
-// `deps.judgments` supplier (production builds it from `deps.createJudgments`, #5228); a deps
-// object with no supplier changes nothing.
+// together with `auto:build` from a green draft PR to a merged one, in program code, with no
+// model call. The one judgment the lane needs (the merge-check verdict and the acceptance state)
+// arrives only through the `deps.judgments` supplier (production builds it from
+// `deps.createJudgments`, #5228); a deps object with no supplier changes nothing.
 //
 // Ported procedure, by section: `_shared/pr-first-merge.md` Steps 2 to 3 (Step 2.9 included),
 // `_shared/pr-first-merge-post-merge.md` Steps 4 and 5, and `_shared/express-lane.md` step 9.
@@ -93,8 +93,9 @@ function logDecision(s, step, text, status = 'AUTO', reversibility = null, lever
   }
 }
 
-// Ports pr-first-merge.md Step 2 (the live label read): `auto:merge` is the authorization,
-// read from GitHub now, not from a cached copy. `auto:merge-pending` does not count.
+// Ports pr-first-merge.md Step 2 (the live label read): `auto:merge` together with `auto:build`
+// is the authorization, read from GitHub now, not from a cached copy. `auto:merge-pending` does
+// not count.
 function readLabels(s) {
   const { ctx, deps } = s;
   let raw;
@@ -242,6 +243,7 @@ async function entry(s) {
   const labels = readLabels(s);
   if (labels.unreadable) return stop(s, 'merge-entry', 'labels-unreadable', labels.unreadable);
   if (!labels.names.includes(AUTHORIZING_LABEL)) return stop(s, 'merge-entry', 'not-authorized', `record lacks ${AUTHORIZING_LABEL}`);
+  if (!labels.names.includes(LABELS.AUTO_BUILD)) return stop(s, 'merge-entry', 'not-authorized', `record lacks ${LABELS.AUTO_BUILD}`);
   if (ctx.summaryLogged !== true) return stop(s, 'merge-entry', 'summary-entry-missing', 'the summary decision entry was not logged');
   const notPrFirst = readIntegrationModel(s);
   if (notPrFirst) return stop(s, 'merge-entry', 'not-pr-first', notPrFirst);
@@ -1089,6 +1091,9 @@ async function mergeCall(s, mode) {
   if (labels.unreadable) return stop(s, 'merge-call', 'labels-unreadable', `pre-merge ${labels.unreadable}`);
   if (!labels.names.includes(AUTHORIZING_LABEL)) {
     return stop(s, 'merge-call', 'not-authorized', `record lacks ${AUTHORIZING_LABEL} at the pre-merge read`);
+  }
+  if (!labels.names.includes(LABELS.AUTO_BUILD)) {
+    return stop(s, 'merge-call', 'not-authorized', `record lacks ${LABELS.AUTO_BUILD} at the pre-merge read`);
   }
   const auto = mode === 'auto';
   try {

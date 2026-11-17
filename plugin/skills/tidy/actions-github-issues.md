@@ -77,7 +77,7 @@ acceptance-labeling guard below — beyond that, only `step-6-auto.md`'s tier ga
 4.8 ran: re-fetch the PR's `isDraft`, `statusCheckRollup`, `autoMergeRequest`, and unresolved
 thread count fresh, plus the head-sha workflow runs (`_shared/pr-first-merge.md` Step 2.5's
 `gh run list --commit {headRefOid}` read — a head run not yet `completed` is not green), and
-re-check the grant (every linked record still carries `auto:merge`, or
+re-check the grant (every linked record still carries `auto:build` and `auto:merge`, or
 `housekeeping-auto-merge` is still set) before doing anything. If any gate no longer holds — a new
 commit landed, a check regressed, a thread reopened, the grant was revoked — this is a silent
 no-op: skip it, don't error, and don't report it as armed in the applied-report either, exactly as

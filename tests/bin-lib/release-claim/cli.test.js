@@ -210,7 +210,7 @@ test('#4933: an unreadable origin keeps the CLI\'s own could-not-resolve message
   const { calls, d } = deps({ content: live(RUN_DIR_NAME), out, mainRoot: rootOf(runDir) });
   d.remoteUrl = () => { throw new Error('not a git repo'); };
   assert.equal(run(['999', '--run', runDir, '--reason', 'r'], d), 2);
-  assert.match(stderrOf(out), /could not resolve owner\/repo/);
+  assert.match(stderrOf(out), /could not resolve owner\/repo — pass --repo \[host\/\]owner\/name/);
   assert.deepEqual(calls, []);
 });
 

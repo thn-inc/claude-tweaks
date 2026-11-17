@@ -1,10 +1,10 @@
 'use strict';
 // #2053, AC2: `churn-report.js`, `mark.js`, and `retry-cli.js`'s `update` no
 // longer call `process.exit()` directly -- they return a numeric code (or
-// undefined) and each of the four health-suite CLIs' own `main()` returns the
+// undefined) and each of the four health-suite CLIs' own `run()` returns the
 // sub-command's exit code without ever setting `process.exitCode` (#5374's
 // entry contract; the process-level assignment lives in the file's guard).
-// This file exercises that wiring end-to-end through each CLI's real `main()`
+// This file exercises that wiring end-to-end through each CLI's real `run()`
 // function -- in-process (`require` + call, not a subprocess): every row
 // asserts the returned code via `returnedCode`, which also checks that
 // `process.exitCode` was left untouched.
@@ -71,114 +71,114 @@ function captureStdio(fn) {
 }
 
 // All four health CLIs (code-health.js, docs-health.js, harness-health.js, journey-health.js) are on
-// the entry contract (#5380, #5381): main() returns the exit code and never sets process.exitCode,
+// the entry contract (#5380, #5381): run() returns the exit code and never sets process.exitCode,
 // so their rows assert the return value and that process.exitCode is untouched.
 function returnedCode(fn) {
   const original = process.exitCode;
   process.exitCode = undefined;
   try {
     const code = fn();
-    assert.strictEqual(process.exitCode, undefined, 'main() must not set process.exitCode');
+    assert.strictEqual(process.exitCode, undefined, 'run() must not set process.exitCode');
     return code;
   } finally {
     process.exitCode = original;
   }
 }
 
-test('harness-health.js main(): churn-report --fail-on-high-churn with a non-numeric value returns 2 (not a silently-disabled gate)', () => {
+test('harness-health.js run(): churn-report --fail-on-high-churn with a non-numeric value returns 2 (not a silently-disabled gate)', () => {
   const root = tmpGitRootWithOneRun('harness-health-churn-', 'harness-health');
-  const code = returnedCode(() => captureStdio(() => harnessHealth.main(['churn-report', '--fail-on-high-churn', 'not-a-number', '--root', root])));
+  const code = returnedCode(() => captureStdio(() => harnessHealth.run(['churn-report', '--fail-on-high-churn', 'not-a-number', '--root', root])));
   assert.strictEqual(code, 2);
 });
 
-test('journey-health.js main(): churn-report --fail-on-high-churn with a non-numeric value returns 2 (not a silently-disabled gate)', () => {
+test('journey-health.js run(): churn-report --fail-on-high-churn with a non-numeric value returns 2 (not a silently-disabled gate)', () => {
   const root = tmpGitRootWithOneRun('journey-health-churn-', 'journey-health');
-  const code = returnedCode(() => captureStdio(() => journeyHealth.main(['churn-report', '--fail-on-high-churn', 'not-a-number', '--root', root])));
+  const code = returnedCode(() => captureStdio(() => journeyHealth.run(['churn-report', '--fail-on-high-churn', 'not-a-number', '--root', root])));
   assert.strictEqual(code, 2);
 });
 
-test('code-health.js main(): churn-report --fail-on-high-churn with a non-numeric value returns 2 (not a silently-disabled gate)', () => {
+test('code-health.js run(): churn-report --fail-on-high-churn with a non-numeric value returns 2 (not a silently-disabled gate)', () => {
   const root = tmpGitRootWithOneRun('code-health-churn-', 'code-health');
-  const code = returnedCode(() => captureStdio(() => codeHealth.main(['churn-report', '--fail-on-high-churn', 'not-a-number', '--root', root])));
+  const code = returnedCode(() => captureStdio(() => codeHealth.run(['churn-report', '--fail-on-high-churn', 'not-a-number', '--root', root])));
   assert.strictEqual(code, 2);
 });
 
-test('docs-health.js main(): churn-report --fail-on-high-churn with a non-numeric value returns 2 (not a silently-disabled gate)', () => {
+test('docs-health.js run(): churn-report --fail-on-high-churn with a non-numeric value returns 2 (not a silently-disabled gate)', () => {
   const root = tmpGitRootWithOneRun('docs-health-churn-', 'docs-health');
-  const code = returnedCode(() => captureStdio(() => docsHealth.main(['churn-report', '--fail-on-high-churn', 'not-a-number', '--root', root])));
+  const code = returnedCode(() => captureStdio(() => docsHealth.run(['churn-report', '--fail-on-high-churn', 'not-a-number', '--root', root])));
   assert.strictEqual(code, 2);
 });
 
-test('harness-health.js main(): mark <fingerprint> <bad-status> returns 2', () => {
+test('harness-health.js run(): mark <fingerprint> <bad-status> returns 2', () => {
   const root = tmpRoot('harness-health-mark-');
-  const code = returnedCode(() => captureStdio(() => harnessHealth.main(['mark', 'some-fingerprint', 'bogus-status', '--root', root])));
+  const code = returnedCode(() => captureStdio(() => harnessHealth.run(['mark', 'some-fingerprint', 'bogus-status', '--root', root])));
   assert.strictEqual(code, 2);
 });
 
-test('journey-health.js main(): mark <fingerprint> <bad-status> returns 2', () => {
+test('journey-health.js run(): mark <fingerprint> <bad-status> returns 2', () => {
   const root = tmpRoot('journey-health-mark-');
-  const code = returnedCode(() => captureStdio(() => journeyHealth.main(['mark', 'some-fingerprint', 'bogus-status', '--root', root])));
+  const code = returnedCode(() => captureStdio(() => journeyHealth.run(['mark', 'some-fingerprint', 'bogus-status', '--root', root])));
   assert.strictEqual(code, 2);
 });
 
-test('docs-health.js main(): mark <fingerprint> <bad-status> returns 2', () => {
+test('docs-health.js run(): mark <fingerprint> <bad-status> returns 2', () => {
   const root = tmpRoot('docs-health-mark-');
-  const code = returnedCode(() => captureStdio(() => docsHealth.main(['mark', 'some-fingerprint', 'bogus-status', '--root', root])));
+  const code = returnedCode(() => captureStdio(() => docsHealth.run(['mark', 'some-fingerprint', 'bogus-status', '--root', root])));
   assert.strictEqual(code, 2);
 });
 
-test('harness-health.js main(): retry-queue update with a missing results-file argument returns 2', () => {
+test('harness-health.js run(): retry-queue update with a missing results-file argument returns 2', () => {
   const root = tmpRoot('harness-health-retryq-missing-');
-  const code = returnedCode(() => captureStdio(() => harnessHealth.main(['retry-queue', 'update', '--root', root])));
+  const code = returnedCode(() => captureStdio(() => harnessHealth.run(['retry-queue', 'update', '--root', root])));
   assert.strictEqual(code, 2);
 });
 
-test('harness-health.js main(): retry-queue update with an unparseable results file returns 1', () => {
+test('harness-health.js run(): retry-queue update with an unparseable results file returns 1', () => {
   const root = tmpRoot('harness-health-retryq-malformed-');
   const resultsPath = path.join(root, 'results.json');
   fs.writeFileSync(resultsPath, 'not valid json {{{');
-  const code = returnedCode(() => captureStdio(() => harnessHealth.main(['retry-queue', 'update', resultsPath, '--root', root])));
+  const code = returnedCode(() => captureStdio(() => harnessHealth.run(['retry-queue', 'update', resultsPath, '--root', root])));
   assert.strictEqual(code, 1);
 });
 
-test('journey-health.js main(): retry-queue update with a missing results-file argument returns 2', () => {
+test('journey-health.js run(): retry-queue update with a missing results-file argument returns 2', () => {
   const root = tmpRoot('journey-health-retryq-missing-');
-  const code = returnedCode(() => captureStdio(() => journeyHealth.main(['retry-queue', 'update', '--root', root])));
+  const code = returnedCode(() => captureStdio(() => journeyHealth.run(['retry-queue', 'update', '--root', root])));
   assert.strictEqual(code, 2);
 });
 
-test('journey-health.js main(): retry-queue update with an unparseable results file returns 1', () => {
+test('journey-health.js run(): retry-queue update with an unparseable results file returns 1', () => {
   const root = tmpRoot('journey-health-retryq-malformed-');
   const resultsPath = path.join(root, 'results.json');
   fs.writeFileSync(resultsPath, 'not valid json {{{');
-  const code = returnedCode(() => captureStdio(() => journeyHealth.main(['retry-queue', 'update', resultsPath, '--root', root])));
+  const code = returnedCode(() => captureStdio(() => journeyHealth.run(['retry-queue', 'update', resultsPath, '--root', root])));
   assert.strictEqual(code, 1);
 });
 
-test('code-health.js main(): retry-queue update with a missing results-file argument returns 2', () => {
+test('code-health.js run(): retry-queue update with a missing results-file argument returns 2', () => {
   const root = tmpRoot('code-health-retryq-missing-');
-  const code = returnedCode(() => captureStdio(() => codeHealth.main(['retry-queue', 'update', '--root', root])));
+  const code = returnedCode(() => captureStdio(() => codeHealth.run(['retry-queue', 'update', '--root', root])));
   assert.strictEqual(code, 2);
 });
 
-test('code-health.js main(): retry-queue update with an unparseable results file returns 1', () => {
+test('code-health.js run(): retry-queue update with an unparseable results file returns 1', () => {
   const root = tmpRoot('code-health-retryq-malformed-');
   const resultsPath = path.join(root, 'results.json');
   fs.writeFileSync(resultsPath, 'not valid json {{{');
-  const code = returnedCode(() => captureStdio(() => codeHealth.main(['retry-queue', 'update', resultsPath, '--root', root])));
+  const code = returnedCode(() => captureStdio(() => codeHealth.run(['retry-queue', 'update', resultsPath, '--root', root])));
   assert.strictEqual(code, 1);
 });
 
-test('docs-health.js main(): retry-queue update with a missing results-file argument returns 2', () => {
+test('docs-health.js run(): retry-queue update with a missing results-file argument returns 2', () => {
   const root = tmpRoot('docs-health-retryq-missing-');
-  const code = returnedCode(() => captureStdio(() => docsHealth.main(['retry-queue', 'update', '--root', root])));
+  const code = returnedCode(() => captureStdio(() => docsHealth.run(['retry-queue', 'update', '--root', root])));
   assert.strictEqual(code, 2);
 });
 
-test('docs-health.js main(): retry-queue update with an unparseable results file returns 1', () => {
+test('docs-health.js run(): retry-queue update with an unparseable results file returns 1', () => {
   const root = tmpRoot('docs-health-retryq-malformed-');
   const resultsPath = path.join(root, 'results.json');
   fs.writeFileSync(resultsPath, 'not valid json {{{');
-  const code = returnedCode(() => captureStdio(() => docsHealth.main(['retry-queue', 'update', resultsPath, '--root', root])));
+  const code = returnedCode(() => captureStdio(() => docsHealth.run(['retry-queue', 'update', resultsPath, '--root', root])));
   assert.strictEqual(code, 1);
 });

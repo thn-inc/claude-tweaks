@@ -6,7 +6,7 @@
 // decisions live in bin/lib/accept/ (target.js, park.js); this file reads the inputs, runs the
 // steps and picks the exit code.
 //
-//   decide --record <n>[,<m>…] [--run <dir>] [--repo owner/name]
+//   decide --record <n>[,<m>…] [--run <dir>] [--repo [host/]owner/name]
 //          [--head <sha>] [--base <ref>] [--classification <file>]
 //     One JSON line, decideSeries' result. Control mode off (isControlModeOn over
 //     resolvePolicyKeys, the run's config.yml over policy.yml as resolve-policy.js --run reads
@@ -30,7 +30,7 @@
 //     failed (decision printed too); 2 malformed invocation; 3 --run
 //     refused (missing, or not anchored under the main checkout: a worktree-local shadow).
 //   park --run <dir> --record <n>[,<m>…] --pr <n> --head <sha> --worktree <path>
-//        [--claimed <n>[,<m>…]] [--worktree-mode remove|caller] [--repo owner/name]
+//        [--claimed <n>[,<m>…]] [--worktree-mode remove|caller] [--repo [host/]owner/name]
 //     --record names the records whose decision parks; --claimed every record the run claimed
 //     (default: --record). Runs runPark's five steps: (1) per parked record, ensure the packet
 //     and accept:pending — a found packet gets the label when no pending spelling is on it, no
@@ -47,7 +47,7 @@
 //     failed (hand-log it). Exit 0 parked (a step 3-5 failure included, reported in `steps`);
 //     1 park-failed (step 1 or 2, nothing archived); 2 malformed invocation or an unresolvable
 //     repository; 3 --run refused; 4 gh absent, before any write.
-//   parked --record <n> [--run <dir>] [--repo owner/name]
+//   parked --record <n> [--run <dir>] [--repo [host/]owner/name]
 //     Prints parked / not-parked / unknown. control-mode resolves as decide resolves it (the
 //     run's config.yml over policy.yml with --run; the main checkout's policy.yml without): off
 //     prints not-parked with no gh call, so a record parked under control mode is mergeable
@@ -55,7 +55,7 @@
 //     over the record's labels and packet comment. Exit 0 parked, 5 not-parked, 6 unknown (a
 //     record or policy read failure, or gh absent), 2 malformed invocation, 3 --run refused (as
 //     decide). A caller treats 0 and 6 alike: do not merge, close or reap.
-//   reenter --record <n> --pr <n> [--repo owner/name]
+//   reenter --record <n> --pr <n> [--repo [host/]owner/name]
 //     /accept's re-entry: bin/lib/accept/reentry.js adds `.claude/worktrees/accept-<n>` under the
 //     main checkout from the PR branch's tip (never an existing directory). One JSON line:
 //     { worktree, headRefName, prHead, prBase, parkHead, parkBase, moved, head } — parkHead and
@@ -80,15 +80,15 @@ const { execFileSync, spawnSync } = require('child_process');
 const { pinExplicitRepoHost } = require('./lib/repo-resolve');
 
 const USAGE = [
-  'usage: accept-park.js decide --record <n>[,<m>...] [--run <dir>] [--repo owner/name]',
+  'usage: accept-park.js decide --record <n>[,<m>...] [--run <dir>] [--repo [host/]owner/name]',
   '         [--head <sha>] [--base <ref>] [--classification <file>]',
   '       accept-park.js park --run <dir> --record <n>[,<m>...] --pr <n> --head <sha> --worktree <path>',
-  '         [--claimed <n>[,<m>...]] [--worktree-mode remove|caller] [--repo owner/name]',
-  '       accept-park.js parked --record <n> [--run <dir>] [--repo owner/name]',
+  '         [--claimed <n>[,<m>...]] [--worktree-mode remove|caller] [--repo [host/]owner/name]',
+  '       accept-park.js parked --record <n> [--run <dir>] [--repo [host/]owner/name]',
   '  decide: exit 0 printed; 1 policy or record read failure or a failed packet-facts write; 2 malformed; 3 --run refused',
   '  park:   exit 0 parked; 1 park-failed; 2 malformed or unresolvable repo; 3 --run refused; 4 gh absent',
   '  parked: exit 0 parked; 5 not-parked (control mode off included); 6 unknown; 2 malformed; 3 --run refused',
-  '       accept-park.js reenter --record <n> --pr <n> [--repo owner/name]',
+  '       accept-park.js reenter --record <n> --pr <n> [--repo [host/]owner/name]',
   '       accept-park.js reenter-check --worktree <path> --expect-head <sha>',
   '       accept-park.js reenter-remove --worktree <path>',
   '  reenter: exit 0 entered; 1 git or gh failure; 2 malformed; 4 gh absent; 7 stale directory',
@@ -789,7 +789,7 @@ async function runParkVerb(opts, deps, ctx) {
   }
   const { spec: repoSpec, refusal } = resolveRepoSpec(opts, deps, ctx);
   if (!repoSpec) {
-    deps.stderr(`accept-park.js: ${refusal || 'could not resolve owner/repo — pass --repo owner/name'}\n`);
+    deps.stderr(`accept-park.js: ${refusal || 'could not resolve owner/repo — pass --repo [host/]owner/name'}\n`);
     return 2;
   }
   if (opts.repo !== undefined) deps.pinGhHost(repoSpec, { env: deps.env, cwd: ctx.mainRoot() });
