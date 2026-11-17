@@ -110,6 +110,8 @@ Reproduction pairs (the 2-agent verification dispatch below) run for every lens 
 >
 > **Model profile (per lens):** 3a (Convention) and 3f (Test Quality) → [Use: Fast] — mechanical convention checks on isolated files. 3b-3e (Security, Errors, Performance, Architecture) and 3g (Ownability) → [Use: Standard] — multi-file analysis and cross-cutting findings. 3h (UX Analysis) → [Use: Capable] — judgment-heavy synthesis. Resolve each via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" {profile}` (contract § Model Selection).
 >
+> **Workflow dispatch (opt-in, #5599).** Resolve `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values review-lens-dispatch` once (add `--run "$PIPELINE_RUN_DIR"` when a run directory exists). When it prints `workflow`, read `step3-workflow-dispatch.md` in this skill's directory and dispatch the agent lenses through the workflow `claude-tweaks:review-lens-fanout` as it says. Read that file only when the key resolves `workflow`; otherwise this file's Task dispatch applies unchanged.
+>
 > **Output template (each agent must follow exactly):** The Calibration block + OUTPUT FORMAT must be reproduced byte-identical in each dispatched agent's prompt — do NOT paraphrase. The canonical dispatch template is the "Per-lens Calibration + Output template" section below; inline it verbatim into every `Task()` call.
 
 ## Per-lens Calibration + Output template (dispatch contract)
