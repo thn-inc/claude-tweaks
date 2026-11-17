@@ -37,6 +37,7 @@
 ### Task 1: `initRepo` and `writeIdentity` helpers
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `tests/helpers/git-fixtures.js`
@@ -50,7 +51,7 @@
 - [ ] **Step 1: Write the failing tests** in `tests/helpers-git-template.test.js` (reuse the file's `mk`, `withEnv`, `tracedArgvs`, `git`):
   - `AC1.1: initRepo starts exactly one git process for an init with an identity` — under `withEnv('GIT_TRACE2_EVENT', trace, …)` call `initRepo(path.join(mk('ct-gt-ir-'), 'r'), { name: 'Test', email: 'test@example.com' })`; assert `fs.readdirSync(trace).length === 1` and `tracedArgvs(trace)[0]` includes `'init'`; then (outside the trace) `git(dir, ['config', 'user.name'])` is `'Test'` and `user.email` is `'test@example.com'`.
   - `initRepo honours branch and bare` — `{ branch: 'trunk' }` → `symbolic-ref --short HEAD` is `trunk`; `{ bare: true, name: 'T', email: 't@t' }` → `rev-parse --is-bare-repository` is `true` and `config --local user.name` is `T`.
-  - `writeIdentity values read back exactly as git config would` — for name `A "Q" \\ B; #x` and email `e@x.test`, in a plain repo, a bare repo, and a linked worktree (`git worktree add` from a committed repo): `git config user.name` / `user.email` in that directory equal the inputs, and after `git commit --allow-empty` in the plain repo, `git log -1 --format=%an <%ae>` equals `A "Q" \ B; #x <e@x.test>`. For the worktree, assert the main repo's `config --local user.name` also returns it (written to the common config).
+  - `writeIdentity values read back exactly as git config would` — for name JS literal `'A "Q" \\ B; #x'` (one backslash at runtime) and email `e@x.test`, in a plain repo, a bare repo, and a linked worktree (`git worktree add` from a committed repo): `git config user.name` / `user.email` in that directory equal the inputs, and after `git commit --allow-empty` in the plain repo, `git log -1 --format=%an <%ae>` equals `A "Q" \ B; #x <e@x.test>`. The commit and the `log` run with `gitEnv()` minus every `GIT_AUTHOR_*` and `GIT_COMMITTER_*` key (git prefers those env values over config, and CI exports `GIT_AUTHOR_NAME: ci`); the test asserts those keys are absent from that env. For the worktree, assert the main repo's `config --local user.name` also returns it (written to the common config).
   - `writeIdentity refuses a second identity and a non-repo` — a repo after one `writeIdentity` throws `/already has a \[user\] section/` on the second; `writeIdentity(mk('ct-gt-nr-'), …)` throws `/not a git repository/`.
 
 - [ ] **Step 2: Run to verify they fail**
@@ -111,7 +112,7 @@ Each sweep task follows the same rule. For every `git config user.name` / `git c
 - A call where `git config` itself is the behaviour under test stays; report it as `path: reason` in the task report for Task 7's allowlist.
 - Touch nothing else in the file.
 
-Find the sites with `git grep -n -P "config['\"]?\s*,?\s*['\"]?user\.(name|email)" -- <files>`; control: at the merge base this matches every file listed below (302 lines over 95 files repo-wide, `tests/` + `perf/`).
+Find the sites with Task 7's pattern: `git grep -n -P "config['\"\x60]?\s*,?\s*['\"\x60]?(?:--(?:local|global|add)['\"\x60]?\s*,?\s*['\"\x60]?)?user\.(?:name|email)\b" -- <files>`; control: at the merge base this matches every file listed below (302 lines over 95 files repo-wide, `tests/` + `perf/`).
 
 Each task's verification: `node tools/run-tests.js <its files plus the test files that require its helpers>` before the edit and after, the same test names and the same pass counts (quote both raw summary lines), and the grep above printing nothing for the swept files.
 
@@ -200,8 +201,9 @@ Expected: PASS after Tasks 3–6 (before them, AC3.1 fails listing the unswept s
 Run by the orchestrating session after Task 7, results written to `$PIPELINE_RUN_DIR/evidence/` with a plain Bash redirect and logged with `log-decision.js --status AUTO --step "AC evidence" --text-file`.
 
 - **AC4.1** go-red: in a scratch copy of HEAD (archive extract), restore one swept site from the merge base (`git show <base>:tests/console-execute.test.js`), run the scan test there, capture the red output to `evidence/scan-red.txt`; AC4.2: the PR body quotes that output.
-- **AC5.1** counts: touched-file list = every test file Tasks 1–7 changed plus the test files that require a changed helper. For the merge base and for HEAD, each in an archive extract (`git init` + snapshot commit outside the trace window), run `GIT_TRACE2_EVENT=<empty abs dir> CT_TEST_CONCURRENCY=6 node tools/run-tests.js --files-from <list>` back to back; count trace files (total git processes) and those whose `start` argv has a `config` subcommand (all, and identity keys). Write both to `evidence/counts.txt`.
-- **AC3.1** traced: the HEAD trace over the swept files minus allowlisted files holds zero identity `config` processes.
+- **AC5.1** counts: touched-file list = every `*.test.js` file Tasks 1–7 changed plus the test files that require a changed helper (helper files themselves are never listed — the runner rejects a non-`*.test.js` entry). The before list is that HEAD list minus files absent at the base (`tests/fixture-identity-config-scan.test.js`); the PR body says the after count includes this record's added tests. For the merge base and for HEAD, each in an archive extract (`git init` + snapshot commit outside the trace window), run `GIT_TRACE2_EVENT=<empty abs dir> CT_TEST_CONCURRENCY=6 node tools/run-tests.js --files-from <list>` back to back; count trace files (total git processes) and those whose `start` argv has a `config` subcommand (all, and identity keys). Write both to `evidence/counts.txt`.
+- **AC3.1** traced: a separate traced `--files-from` pass at HEAD over the swept `*.test.js` files minus every `ALLOWLIST` key (and minus sibling-owned consumers) holds zero identity `config` processes (`evidence/identity-trace.txt`); trace2 carries no file attribution, so the AC5.1 trace cannot stand in for it.
+- **PR body (aim reading):** state that #5768's template is changed to drop `*.sample` hooks (`info/` and `description` kept), under the record's Decision aim clause, because its premise that the template already had no sample hooks was false.
 - **AC6.1 AC6.2**: the before and after runs list the same test names per pre-existing file, all passing, and the per-file test count grows only by this record's added tests (`evidence/test-names.diff`).
 - **AC7.1**: full suite via `/claude-tweaks:test`; the Windows regression job via the platform-proof workflow before merge (second call).
 
