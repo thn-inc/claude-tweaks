@@ -9,7 +9,7 @@ argument-hint: "[#N[,#M...]] [--budget <n|all>] [--priority high|medium|low] [--
 The thin protocol wrapper between the authorization gate and the executor: select → mint run dir → invoke /flow (claims + executes) → settle. Sits outside the main brainstorm-to-build chain, downstream of the gate:
 
 ```
-capture / code-health / harness-health / journey-health / docs-health   (file records)
+capture / code-health / harness-health / journey-health / docs-health / ci-health   (file records)
                               │
                               v
                 /claude-tweaks:specify   (shapes to ready)

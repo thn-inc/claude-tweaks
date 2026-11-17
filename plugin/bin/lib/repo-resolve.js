@@ -222,6 +222,7 @@ function originSpecOf(remote) {
 function resolveGhSpec(cwd, deps = {}) {
   const key = path.resolve(cwd);
   const memo = ghHostSpecMemo(deps.env);
+  // The memo is keyed by env object and directory, not by `homeDir`: a caller reusing one env object with a different home in one process gets the first lookup's answer.
   if (memo.has(key)) return memo.get(key);
   let spec = null;
   try {

@@ -92,8 +92,8 @@ throttling vs. below-floor deferral).
 
 ### Direct-filing producers' `Defer-reason:` value
 
-The four health sweeps (`code-health`, `docs-health`, `harness-health`, `journey-health`) never
-route through `_shared/deferral-gate.md` — they file spec-shaped issues directly (`recordPayload`/
+The five health sweeps (`ci-health`, `code-health`, `docs-health`, `harness-health`,
+`journey-health`) never route through `_shared/deferral-gate.md` — they file spec-shaped issues directly (`recordPayload`/
 `specShapedBody`), so a below-floor finding of theirs reaches this file with no
 `Defer-reason:` value from that gate's closed vocabulary to write. `Defer-reason: direct-filing-sweep`
 is this Entry format's own documented value for exactly that producer class — a below-floor
@@ -148,7 +148,7 @@ digest issue itself. A run that routes one or more findings states the digest co
 alongside the count; a run that routes none still states the count, as `0`, rather than
 omitting the line — an omitted line is indistinguishable from a caller that forgot to check,
 so silence is never the zero-case signal. Adopters cite this paragraph rather than restating
-it; `review/step3-routing.md` is the reference implementation. The four health sweeps additionally fold their own count into the existing
+it; `review/step3-routing.md` is the reference implementation. The five health sweeps additionally fold their own count into the existing
 drain-rate-cap throttle line (`_shared/health-filing-digest.md`'s SUMMARIZE step) as a distinct
 `materiality: K` field, never combined with that line's own `digested: M` (cap-digest) count —
 the two mechanisms answer different questions and a reader diagnosing either needs its own
@@ -205,8 +205,8 @@ the exact promotion and expiry procedures.
 
 These adopter files route below-floor findings here: `review/step3-routing.md`,
 `wrap-up/residue-sweep.md`, `wrap-up/leftover-routing.md`, `reflect/full-mode.md`,
-`reflect/hindsight-mode.md`, `visual-review/browser-review.md`, and the four health sweeps
-(`code-health`, `docs-health`, `harness-health`, `journey-health`) — see `docs/skill-graph.md` for
+`reflect/hindsight-mode.md`, `visual-review/browser-review.md`, and the five health sweeps
+(`ci-health`, `code-health`, `docs-health`, `harness-health`, `journey-health`) — see `docs/skill-graph.md` for
 the full per-skill relationship. `/tidy`'s digest sweep (`tidy/digest-sweep.md`) manages the
 container's lifecycle (cluster promotion + expiry) independent of which adopters are actively
 routing to it.

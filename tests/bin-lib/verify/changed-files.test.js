@@ -9,6 +9,7 @@ const { execFileSync } = require('child_process');
 const {
   changedFiles, resolveBase, usableAnchor, mergeNarrowing, ChangedFilesError,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'changed-files.js'));
+const { initRepo } = require('../../helpers/git-fixtures');
 
 const FULL = '0123456789abcdef0123456789abcdef01234567';
 const MB = 'fedcba9876543210fedcba9876543210fedcba98';
@@ -288,9 +289,7 @@ test('usableAnchor guards a dash-prefixed anchor with --end-of-options so it can
 function mergeRepo(preBranchFiles = []) {
   const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'merge-narrowing-')));
   const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  git('init', '-q', '-b', 'trunk');
-  git('config', 'user.email', 'verify-test@example.invalid');
-  git('config', 'user.name', 'verify test');
+  initRepo(repo, { name: 'verify test', email: 'verify-test@example.invalid', branch: 'trunk', cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   const write = (rel, content) => {
     fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
     fs.writeFileSync(path.join(repo, rel), content);
@@ -371,6 +370,41 @@ test('mergeNarrowing: an unresolvable integration branch degrades to null, never
   mergeTrunkWith(r, [['ui/a.js', 'a']]);
   const files = changedSince(r, r.anchor);
   assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'no-such-branch', files, execImpl: r.exec }), null);
+});
+
+// #5773: the working-tree read changedFiles makes is handed to mergeNarrowing, which then asks git no status question.
+test('changedFiles hands its raw working-tree read to a capture object, and returns the same shape with or without one (#5773)', () => {
+  const r = mergeRepo();
+  r.commit('src/own.py', 'own');
+  r.write('src/own.py', 'edited');
+  const capture = {};
+  const captured = changedFiles({ base: r.anchor, execImpl: r.exec, capture });
+  assert.strictEqual(capture.status, ' M src/own.py\0');
+  assert.deepStrictEqual(captured, changedFiles({ base: r.anchor, execImpl: r.exec }));
+  assert.deepStrictEqual(Object.keys(captured), ['base', 'files']);
+});
+
+test('mergeNarrowing with a handed status asks git no status question and decides from that status (#5773)', () => {
+  const r = mergeRepo();
+  mergeTrunkWith(r, [['ui/a.js', 'a'], ['ui/b.js', 'b']]);
+  r.commit('src/own.py', 'own');
+  r.write('ui/b.js', 'b — uncommitted edit');
+  const files = changedSince(r, r.anchor);
+  const capture = {};
+  changedFiles({ base: r.anchor, execImpl: r.exec, capture });
+  const statusCalls = [];
+  const spy = (cmd, args, opts) => { if (args.includes('status')) statusCalls.push(args); return r.exec(cmd, args, opts); };
+  const handed = mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: spy, status: capture.status });
+  assert.deepStrictEqual(statusCalls, [], 'no second working-tree read');
+  assert.deepStrictEqual(handed.files, ['src/own.py', 'ui/b.js']);
+  // The handed value is what decides: an empty one reads a clean tree even though the live tree is dirty.
+  const cleanClaim = mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: spy, status: '' });
+  assert.deepStrictEqual(cleanClaim.files, ['src/own.py']);
+  assert.deepStrictEqual(statusCalls, []);
+  // Without one, git is asked once and sees the dirty tree.
+  const asked = mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: spy });
+  assert.strictEqual(statusCalls.length, 1);
+  assert.deepStrictEqual(asked.files, handed.files);
 });
 
 test('mergeNarrowing: a failing working-tree status read degrades to null, never a throw (#3072 review)', () => {
@@ -546,4 +580,24 @@ test('round-4 Reading B: a no-own-commit --no-ff merge of the ref declines even 
   assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec }), null);
   r.commit('src/own.py', 'own');
   assert.ok(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files: changedSince(r, r.anchor), execImpl: r.exec }), 'control: one own commit makes the tree differ, so narrowing engages');
+});
+
+test('resolveBase uses a passed head instead of asking (#5773)', () => {
+  const exec = fakeExec({
+    [`merge-base --is-ancestor --end-of-options ${FULL} HEAD`]: '',
+    [`rev-parse --verify --end-of-options ${FULL}^{commit}`]: `${FULL}\n`,
+    'rev-parse --verify --quiet refs/remotes/origin/main': 'abc\n',
+    'merge-base --end-of-options origin/main HEAD': `${MB}\n`,
+  });
+  const result = resolveBase({
+    stamp: { sha: 'x', fullSha: FULL }, integrationBranch: 'main', requireNonDegenerate: true, head: FULL, execImpl: exec,
+  });
+  assert.strictEqual(result, MB, 'the passed head equals the anchor, so the degenerate skip still applies');
+  assert.ok(!exec.calls.some((c) => c.join(' ') === 'git rev-parse --verify HEAD'), 'no rev-parse --verify HEAD call');
+});
+
+test('resolveBase uses a passed anchor instead of re-deriving it (#5773)', () => {
+  const exec = fakeExec({});
+  assert.strictEqual(resolveBase({ stamp: { sha: 'x', fullSha: FULL }, anchor: 'abc', execImpl: exec }), 'abc');
+  assert.deepStrictEqual(exec.calls, [], 'no git call, in particular no merge-base --is-ancestor');
 });

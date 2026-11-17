@@ -20,13 +20,26 @@ const { readText } = require('../helpers/read-skill');
 const BIN_DIR = path.join(__dirname, '..', '..', 'plugin', 'bin');
 
 // The files that do not meet the entry rules yet. This list only shrinks: each
-// sibling record of #5373 converts its CLIs and deletes their lines here. `hooks.js`
-// leaves it through #5377, which replaces its entry with a named exemption in this
-// test, with its reason, kept apart from this list.
+// sibling record of #5373 converts its CLIs and deletes their lines here.
 const NOT_YET = [
-  'hooks.js',
   'verify.js',
 ];
+
+// A file that cannot meet the entry rules, by design (#5377). Unlike NOT_YET it is a
+// standing decision, so each entry names its reason and a proof file that pins the
+// behavior the rules would otherwise have to cover; the walk fails the entry as soon
+// as the file conforms, and as soon as it has an offence outside `offences` (so hooks.js
+// losing its `run` export still fails). `offences` are the exact checkEntry reports the
+// exemption covers: hooks.js's prefilter calls process.exit(0) above the guard line; the
+// script entry's own process.exit(code) sits inside the guard, so checkEntry never reports it.
+// Each pattern covers exactly one offence, and stays line-number independent (the prefilter moves).
+const EXEMPT = {
+  'hooks.js': {
+    reason: 'require-time bash prefilter (exits before run) and a script entry that calls process.exit(code) so a hook never outlives its event',
+    proof: 'tests/hooks-bash-prefilter.test.js',
+    offences: [/^process\.exit\( above the guard \(line \d+\)$/],
+  },
+};
 
 const GUARD = 'require.main === module';
 
@@ -80,9 +93,18 @@ function checkEntry(rawText) {
   return { offences };
 }
 
-function assertFile(name, rawText, notYet) {
+function assertFile(name, rawText, notYet, exempt = EXEMPT) {
   const { offences } = checkEntry(rawText);
-  if (notYet.includes(name)) {
+  if (Object.prototype.hasOwnProperty.call(exempt, name)) {
+    assert.ok(offences.length > 0, `${name} now conforms — delete it from EXEMPT`);
+    // Each pattern covers one offence: a second offence of the same kind is uncovered.
+    const unused = [...exempt[name].offences];
+    for (const offence of offences) {
+      const at = unused.findIndex((re) => re.test(offence));
+      assert.ok(at !== -1, `${name} has an offence its EXEMPT entry does not cover: ${offence}`);
+      unused.splice(at, 1);
+    }
+  } else if (notYet.includes(name)) {
     assert.ok(offences.length > 0, `${name} now conforms — delete it from NOT_YET`);
   } else {
     assert.deepStrictEqual(offences, [], `${name} breaks the CLI entry contract:\n${offences.join('\n')}`);
@@ -105,7 +127,7 @@ function binFiles() {
     .sort();
 }
 
-test('AC9.1: every top-level plugin/bin CLI meets the entry rules, except the files listed in NOT_YET', () => {
+test('AC7.1 AC7.2: every top-level plugin/bin CLI meets the entry rules, except the named EXEMPT entries and the files listed in NOT_YET', () => {
   const files = binFiles();
   assert.ok(files.length >= 120, `the walk saw only ${files.length} files — a lower count than 120 means it stopped seeing plugin/bin/*.js`);
   for (const name of files) assertFile(name, readText(path.join(BIN_DIR, name)), NOT_YET);
@@ -120,6 +142,60 @@ test('AC9.4: NOT_YET only shrinks, and stays sorted, without duplicates, naming 
   assert.deepStrictEqual(NOT_YET, [...NOT_YET].sort());
   assert.strictEqual(new Set(NOT_YET).size, NOT_YET.length);
   for (const name of NOT_YET) assert.ok(fs.existsSync(path.join(BIN_DIR, name)), `NOT_YET names ${name}, which does not exist in plugin/bin`);
+});
+
+test('AC7.1: each EXEMPT entry names a reason and an existing proof file', () => {
+  for (const [name, { reason, proof, offences }] of Object.entries(EXEMPT)) {
+    assert.ok(typeof reason === 'string' && reason.trim().length > 0, `EXEMPT ${name} has no reason`);
+    assert.ok(Array.isArray(offences) && offences.length > 0 && offences.every((re) => re instanceof RegExp), `EXEMPT ${name} names no offence patterns`);
+    assert.ok(typeof proof === 'string' && fs.existsSync(path.join(__dirname, '..', '..', proof)), `EXEMPT ${name} names proof ${proof}, which does not exist`);
+    assert.ok(fs.existsSync(path.join(BIN_DIR, name)), `EXEMPT names ${name}, which does not exist in plugin/bin`);
+  }
+});
+
+test('AC7.3: hooks.js is in EXEMPT and not in NOT_YET', () => {
+  assert.ok(!NOT_YET.includes('hooks.js'));
+  assert.deepStrictEqual(Object.keys(EXEMPT), ['hooks.js']);
+  // NOT_YET is not empty (it still holds verify.js), so the list and the code that
+  // reads it stay; only hooks.js left it.
+  assert.ok(NOT_YET.length > 0);
+});
+
+test('AC7.1: a file cannot be both exempt and listed', () => {
+  for (const name of Object.keys(EXEMPT)) assert.ok(!NOT_YET.includes(name), `${name} is in both EXEMPT and NOT_YET`);
+});
+
+test('AC7.4: an EXEMPT file that now conforms fails the walk', () => {
+  assert.throws(() => assertFile('hooks.js', CONFORMING, [], EXEMPT), /hooks\.js now conforms — delete it from EXEMPT/);
+});
+
+test('AC7.4: an EXEMPT file with an offence outside its patterns fails the walk, naming the offence', () => {
+  // The exempt shape (a prefilter exit above the guard) that also lost its `run` export.
+  const noRun = [
+    "'use strict';",
+    'if (process.argv[2] === "x") process.exit(0);',
+    'function main() { return 0; }',
+    'module.exports = { main };',
+    'if (require.main === module) process.exit(main());',
+  ].join('\n');
+  assert.deepStrictEqual(checkEntry(noRun).offences, ['exports no run', 'process.exit( above the guard (line 2)']);
+  assert.throws(() => assertFile('hooks.js', noRun, [], EXEMPT), /hooks\.js has an offence its EXEMPT entry does not cover: exports no run/);
+  // The same shape with its `run` export is covered.
+  assert.doesNotThrow(() => assertFile('hooks.js', noRun.replace('{ main }', '{ main, run: main }'), [], EXEMPT));
+});
+
+test('AC7.4: a second process.exit( above the guard in an EXEMPT file is uncovered and fails the walk', () => {
+  const two = [
+    "'use strict';",
+    'if (process.argv[2] === "x") process.exit(0);',
+    'function bail() { process.exit(3); }',
+    'function run() { return 0; }',
+    'module.exports = { run };',
+    'if (require.main === module) process.exit(run());',
+  ].join('\n');
+  assert.deepStrictEqual(checkEntry(two).offences, ['process.exit( above the guard (line 2)', 'process.exit( above the guard (line 3)']);
+  assert.throws(() => assertFile('hooks.js', two, [], EXEMPT), /hooks\.js has an offence its EXEMPT entry does not cover: process\.exit\( above the guard \(line 3\)/);
+  assert.doesNotThrow(() => assertFile('hooks.js', two.replace('function bail() { process.exit(3); }\n', ''), [], EXEMPT));
 });
 
 test('AC9.2: a conforming file listed in NOT_YET fails the walk', () => {

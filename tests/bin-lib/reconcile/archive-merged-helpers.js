@@ -1,6 +1,7 @@
 'use strict';
 // Shared fixtures and helpers for the archive-merged*.test.js suites split out
 // of tests/bin-lib/reconcile/archive-merged.test.js. Not a test file itself.
+const assert = require('node:assert/strict');
 const cp = require('child_process');
 // Destructured at require time, so this binding is a snapshot of the REAL
 // implementation — it stays callable as the pass-through inside the
@@ -15,6 +16,9 @@ const {
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 const { PROBE_ORDER } = require('../../../plugin/bin/lib/run-liveness');
 const { serializeManifestYaml } = require('../../../plugin/bin/lib/flow/manifest');
+const { archiveRunHeader } = require('../../../plugin/bin/lib/run-header-archive');
+const { fromTemplate, fromTemplateSet, disableReceiveAutoGc } = require('../../helpers/git-template');
+const { writeIdentity } = require('../../helpers/git-fixtures');
 
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -24,15 +28,33 @@ function trackedFiles(root) {
   return git(root, 'ls-files').split('\n').filter(Boolean);
 }
 
-function makeRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-'));
-  git(dir, 'init', '-b', 'main');
-  git(dir, 'config', 'user.email', 't@t');
-  git(dir, 'config', 'user.name', 't');
+// The repo builders below sit on git templates (#5772): each is built once per
+// test process, and every call hands back an fs copy, which starts no git process.
+function initRepo(dir) {
+  // Loose refs whatever the global init.defaultRefFormat: renameLooseBranch moves ref files.
+  // Not `init --ref-format=files`, which git < 2.45 (Apple Git 2.39) rejects.
+  git(dir, '-c', 'init.defaultRefFormat=files', 'init', '-b', 'main');
+  writeIdentity(dir, { name: 't', email: 't@t' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
   git(dir, 'add', 'a.txt');
   git(dir, 'commit', '-m', 'init');
-  return dir;
+}
+
+function makeRepo() {
+  return fromTemplate('archive-merged:makeRepo', initRepo, { prefix: 'archive-merged-' });
+}
+
+// Template build: fills the empty `dir` with the repo at `src` (a template copy holding no
+// absolute path), then removes `src`.
+function seedFromCopy(src, dir) {
+  fs.cpSync(src, dir, { recursive: true });
+  fs.rmSync(src, { recursive: true, force: true });
+}
+
+// Template build: fills the empty `dir` with a copy of makeRepo()'s repo, so a
+// template built on it starts no init, config or first-commit process of its own.
+function seedFromMakeRepo(dir) {
+  seedFromCopy(makeRepo(), dir);
 }
 
 function commitPath(root, relPath, content) {
@@ -100,11 +122,56 @@ function installGhWrapper(prsJson, issueStates = null) {
   return { restore: () => { process.env.PATH = originalPath; } };
 }
 
+// Template build: `branch` committed in a worktree in a sibling temp dir, merged
+// into main, then the worktree removed (the branch ref stays). Returns the
+// feature tip sha. `commitEnv` overrides the feature commit's environment.
+function mergeFeatureBranch(root, branch, wtPrefix, commitEnv) {
+  const wt = fs.mkdtempSync(path.join(os.tmpdir(), wtPrefix));
+  try {
+    git(root, 'worktree', 'add', '-q', wt, '-b', branch);
+    fs.writeFileSync(path.join(wt, 'feature.txt'), 'feature\n');
+    execFileSync('git', ['add', 'feature.txt'], { cwd: wt, encoding: 'utf8' });
+    execFileSync('git', ['commit', '-q', '-m', 'feature work'], { cwd: wt, encoding: 'utf8', ...(commitEnv ? { env: commitEnv } : {}) });
+    const featureSha = execFileSync('git', ['rev-parse', branch], { cwd: root, encoding: 'utf8' }).trim();
+    git(root, 'merge', '-q', '--ff-only', branch); // --ff-only overrides a global merge.ff=false
+    git(root, 'worktree', 'remove', '--force', wt);
+    return featureSha;
+  } finally {
+    fs.rmSync(wt, { recursive: true, force: true }); // a no-op once `worktree remove` took it
+  }
+}
+
+// Template key -> the feature sha its build recorded, so a copy needs no rev-parse.
+const featureShas = new Map();
+
+// The branch name mergedFeatureBranchRepo's one template is built with; each copy renames it.
+const MERGED_TEMPLATE_BRANCH = 'feat-merged-template';
+
+// `git branch -m from to` as plain file moves, so it starts no git process: the loose ref,
+// its reflog, and the name in main's and HEAD's fast-forward reflog line. The merge is a
+// fast-forward, so no commit names the branch.
+function renameLooseBranch(root, from, to) {
+  if (from === to) return;
+  const gitDir = path.join(root, '.git');
+  if (fs.existsSync(path.join(gitDir, 'refs/heads', to))) {
+    throw new Error(`renameLooseBranch: refs/heads/${to} already exists`);
+  }
+  for (const sub of ['refs/heads', 'logs/refs/heads']) {
+    const dest = path.join(gitDir, sub, to);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.renameSync(path.join(gitDir, sub, from), dest);
+  }
+  for (const log of ['logs/HEAD', 'logs/refs/heads/main']) {
+    const file = path.join(gitDir, log);
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').split(`\tmerge ${from}:`).join(`\tmerge ${to}:`));
+  }
+}
+
 // The "PR merged, worktree torn down" repo shape both fixtures below build
 // on: a feature branch committed in its own worktree, merged into main, then
 // the worktree removed (branch ref stays). The returned `featureSha` is that
 // branch's real tip commit, which a test hands back as the PR's
-// `mergeCommit.oid` — `git merge --no-edit` folds it into main, so
+// `mergeCommit.oid` — `git merge --ff-only` folds it into main, so
 // `merge-base --is-ancestor` (localHasMerge) sees it as an ancestor, same as
 // a genuine fast-forward/merge would. The root is realpath'd (unlike
 // makeRepo()'s own return) because mainCheckoutRoot resolves through realpath
@@ -112,17 +179,83 @@ function installGhWrapper(prsJson, issueStates = null) {
 // symlink) — archiveMerged's `root` would otherwise differ from a fixture's
 // own `runDir` string, and a plain string membership assertion against
 // `result.archived` would spuriously fail.
+// One template serves every branch name (#5772): it is built on MERGED_TEMPLATE_BRANCH, and
+// each copy renames that branch to `branch`, so every copy shares one featureSha.
 function mergedFeatureBranchRepo(branch) {
-  const root = fs.realpathSync(makeRepo());
-  const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-featwt-'));
-  git(root, 'worktree', 'add', '-q', wt, '-b', branch);
-  fs.writeFileSync(path.join(wt, 'feature.txt'), 'feature\n');
-  execFileSync('git', ['add', 'feature.txt'], { cwd: wt, encoding: 'utf8' });
-  execFileSync('git', ['commit', '-q', '-m', 'feature work'], { cwd: wt, encoding: 'utf8' });
-  const featureSha = execFileSync('git', ['rev-parse', branch], { cwd: root, encoding: 'utf8' }).trim();
-  git(root, 'merge', '-q', '--no-edit', branch);
-  git(root, 'worktree', 'remove', '--force', wt);
-  return { root, featureSha };
+  const key = 'archive-merged:merged';
+  const root = fromTemplate(key, (dir) => {
+    seedFromMakeRepo(dir);
+    const sha = mergeFeatureBranch(dir, MERGED_TEMPLATE_BRANCH, 'archive-merged-featwt-');
+    featureShas.set(key, sha);
+    const loose = (name) => {
+      try { return fs.readFileSync(path.join(dir, '.git', 'refs', 'heads', name), 'utf8').trim(); } catch { return null; }
+    };
+    // The reflogs renameLooseBranch moves must exist too: a global core.logAllRefUpdates=false
+    // writes none, and the failure belongs here (the build cleans up after itself), not in a copy.
+    const reflogs = ['logs/HEAD', 'logs/refs/heads/main', `logs/refs/heads/${MERGED_TEMPLATE_BRANCH}`];
+    if (loose(MERGED_TEMPLATE_BRANCH) !== sha || loose('main') !== sha
+      || reflogs.some((log) => !fs.existsSync(path.join(dir, '.git', log)))) {
+      throw new Error('mergedFeatureBranchRepo: the template needs loose refs, their reflogs and a fast-forward merge, so a copy can rename the branch');
+    }
+  }, { prefix: 'archive-merged-', realpath: true });
+  renameLooseBranch(root, MERGED_TEMPLATE_BRANCH, branch);
+  return { root, featureSha: featureShas.get(key) };
+}
+
+// `git remote add origin {url}` as a plain config append, so it starts no git process.
+function addOriginRemote(root, url) {
+  fs.appendFileSync(path.join(root, '.git', 'config'),
+    `[remote "origin"]\n\turl = ${url}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n`);
+}
+
+// mergedFeatureBranchRepo(branch) with the branch ref deleted too, so only a stamped
+// pr.number can reach the merged PR; `origin`, when given, is the origin remote's url.
+// A template per (branch, origin) (#5772); the root is realpath'd.
+function deletedBranchMergedRepo(branch, origin = null) {
+  const key = `archive-merged:deleted-branch:${branch}:${origin}`;
+  const root = fromTemplate(key, (dir) => {
+    const src = mergedFeatureBranchRepo(branch);
+    featureShas.set(key, src.featureSha);
+    seedFromCopy(src.root, dir);
+    if (origin) addOriginRemote(dir, origin);
+    git(dir, 'branch', '-D', branch);
+  }, { prefix: 'archive-merged-', realpath: true });
+  return { root, featureSha: featureShas.get(key) };
+}
+
+// mergedFeatureBranchRepo('feat-reused-branch') plus a live linked worktree `wt` on a new
+// `worktree-reused` branch: one template set (#5772), both dirs realpath'd.
+function reusedBranchLiveRepo() {
+  const key = 'archive-merged:reused-branch-live';
+  const { root, wt } = fromTemplateSet(key, (dirs) => {
+    const src = mergedFeatureBranchRepo('feat-reused-branch');
+    featureShas.set(key, src.featureSha);
+    seedFromCopy(src.root, dirs.root);
+    git(dirs.root, 'worktree', 'add', '-q', dirs.wt, '-b', 'worktree-reused');
+  }, {
+    root: { prefix: 'archive-merged-', realpath: true },
+    wt: { prefix: 'archive-merged-reusedwt-', realpath: true },
+  });
+  return { root, wt, featureSha: featureShas.get(key) };
+}
+
+// #3975: a clean-twin shell — the archive twin carries a clean run-state, only tracked work/ is live.
+function makeShell(root, runId, { twinWork = '# w\n', liveWork = '# w\n' } = {}) {
+  commitPath(root, `.claude-tweaks/pipelines/${runId}/work/w-spec.md`, liveWork);
+  commitPath(root, `.claude-tweaks/pipelines/archive/${runId}/work/w-spec.md`, twinWork);
+  commitPath(root, `.claude-tweaks/pipelines/archive/${runId}/run-state.json`, JSON.stringify({ status: 'clean' }));
+  return path.join(root, '.claude-tweaks', 'pipelines', runId);
+}
+
+// makeRepo() holding one default makeShell(root, '2026-09-01T100000-spec-1'): a template
+// (#5772); the root is realpath'd.
+const SHELL_3975_RUN = '2026-09-01T100000-spec-1';
+function shellRepo3975() {
+  const root = fromTemplate('archive-merged:shell-3975', (dir) => {
+    seedFromMakeRepo(dir);
+    makeShell(dir, SHELL_3975_RUN);
+  }, { prefix: 'archive-merged-', realpath: true });
+  return { root, shellDir: path.join(root, '.claude-tweaks', 'pipelines', SHELL_3975_RUN) };
 }
 
 // #1544: a run dir close-run already marked `{status: 'clean', worktree:
@@ -133,7 +266,7 @@ function mergedFeatureBranchRepo(branch) {
 // #3416: `prNumber`, when set, stamps the run's PR identity (pr.number).
 function fixtureCleanUnarchivedRun({ runId, consoleResolved = true, prNumber, origin = false } = {}) {
   const { root, featureSha } = mergedFeatureBranchRepo('feat-clean-branch');
-  if (origin) git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+  if (origin) addOriginRemote(root, 'git@github.com:acme/w.git');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
   fs.mkdirSync(runDir, { recursive: true });
   const pr = prNumber ? { number: prNumber, branch: 'feat-clean-branch' } : { branch: 'feat-clean-branch' };
@@ -165,21 +298,17 @@ function fixtureAbandonedShippedRun({ runId, ownerSessionId, extraEventLines = [
   // /var -> /private/var symlink) — archiveMerged's `root` would otherwise
   // differ from this fixture's own `runDir` string, and a plain string
   // membership assertion against `result.archived` would spuriously fail.
-  const root = fs.realpathSync(makeRepo());
+  const root = fromTemplate('archive-merged:abandoned-shipped', (dir) => {
+    seedFromMakeRepo(dir);
+    mergeFeatureBranch(dir, 'feat-branch', 'archive-merged-wt-', // branch ref stays, worktree gone
+      { ...process.env, GIT_AUTHOR_DATE: '2026-08-01T10:00:00Z', GIT_COMMITTER_DATE: '2026-08-01T10:00:00Z' });
+  }, { prefix: 'archive-merged-', realpath: true });
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-branch: main\n');
 
+  // The stamped worktree path: unique per call and absent, as a torn-down worktree's is.
   const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-wt-'));
-  git(root, 'worktree', 'add', '-q', wt, '-b', 'feat-branch');
-  fs.writeFileSync(path.join(wt, 'feature.txt'), 'feature\n');
-  execFileSync('git', ['add', 'feature.txt'], { cwd: wt, encoding: 'utf8' });
-  execFileSync('git', ['commit', '-q', '-m', 'feature work'], {
-    cwd: wt,
-    encoding: 'utf8',
-    env: { ...process.env, GIT_AUTHOR_DATE: '2026-08-01T10:00:00Z', GIT_COMMITTER_DATE: '2026-08-01T10:00:00Z' },
-  });
-  git(root, 'merge', '-q', '--no-edit', 'feat-branch');
-  git(root, 'worktree', 'remove', '--force', wt); // branch ref stays, worktree gone
+  fs.rmSync(wt, { recursive: true, force: true });
 
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
   fs.mkdirSync(runDir, { recursive: true });
@@ -248,7 +377,7 @@ function fixtureOrdinaryMergedNoConsole(branch, runId, stagedFiles = [], specSta
   gateDeps = undefined,
 } = {}) {
   const { root, featureSha } = mergedFeatureBranchRepo(branch); // branch ref stays — fallbackBranch recovers it
-  if (origin) git(root, 'remote', 'add', 'origin', typeof origin === 'string' ? origin : 'git@github.com:acme/w.git');
+  if (origin) addOriginRemote(root, typeof origin === 'string' ? origin : 'git@github.com:acme/w.git');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n'); // adopted — keeps the orphaned-mint classification out of the way
@@ -297,6 +426,122 @@ function fixtureOrdinaryMergedNoConsole(branch, runId, stagedFiles = [], specSta
   }
 }
 
+// #4387: a bare origin seeded with one commit (a.txt) from `seed`, plus `root`, a configured clone of it.
+// The bare origin has receive.autogc off, so a push into it starts no maintenance process.
+function buildSeededOrigin({ origin, seed: s, clone: c }) {
+  git(origin, 'init', '--bare', '-b', 'main');
+  disableReceiveAutoGc(origin);
+  git(s, 'clone', '-q', origin, '.');
+  writeIdentity(s, { name: 't', email: 't@t' });
+  commitPath(s, 'a.txt', 'a\n');
+  git(s, 'push', '-q', 'origin', 'main');
+  git(c, 'clone', '-q', origin, '.');
+  writeIdentity(c, { name: 't', email: 't@t' });
+}
+
+function cloneOfSeededOrigin() {
+  const { seed, clone } = fromTemplateSet('archive-merged:cloneOfSeededOrigin', buildSeededOrigin, {
+    origin: { prefix: 'archive-merged-origin-' },
+    seed: { prefix: 'archive-merged-seed-' },
+    clone: { prefix: 'archive-merged-clone-', realpath: true },
+  });
+  return { seed, root: clone };
+}
+
+// Template key -> the feature commit its build recorded.
+const behindFeatureOids = new Map();
+
+// The shared fixture of the abandoned-interrupted local-behind tests: a clone whose
+// local main is behind origin/main, which holds the run's work/ file — landed by fast-forward,
+// or (squash) as a new commit carrying the same patch, so the run's branch tip is no ancestor
+// of main and only the cherry shape recognises it as merged. The repos are a template per
+// shape (#5772); the seed clone that pushed the merge lives only in the template build.
+function fixtureAbandonedBehindOrigin({ squash = false } = {}) {
+  const runId = '2026-08-01T090000-record-4387-abandoned';
+  const key = `archive-merged:abandoned-behind-origin:${squash ? 'squash' : 'ff'}`;
+  const { clone: root } = fromTemplateSet(key, ({ origin, clone }) => {
+    const seed = path.join(path.dirname(origin), 'seed');
+    fs.mkdirSync(seed);
+    buildSeededOrigin({ origin, seed, clone });
+    // The feature commit (dated after the run's start so the run-start corroboration passes)
+    // carries the run's tracked work/ file, then lands on origin/main.
+    git(seed, 'checkout', '-q', '-b', 'feat-4387-abandoned');
+    fs.mkdirSync(path.join(seed, '.claude-tweaks', 'pipelines', runId, 'work'), { recursive: true });
+    fs.writeFileSync(path.join(seed, '.claude-tweaks', 'pipelines', runId, 'work', '4387-spec.md'), '# spec 4387\n');
+    git(seed, 'add', '.claude-tweaks');
+    execFileSync('git', ['commit', '-q', '-m', 'feature work'], {
+      cwd: seed,
+      encoding: 'utf8',
+      env: { ...process.env, GIT_AUTHOR_DATE: '2026-08-01T10:00:00Z', GIT_COMMITTER_DATE: '2026-08-01T10:00:00Z' },
+    });
+    const featureOid = git(seed, 'rev-parse', 'HEAD').trim();
+    behindFeatureOids.set(key, featureOid);
+    git(seed, 'checkout', '-q', 'main');
+    if (squash) {
+      git(seed, 'merge', '-q', '--squash', 'feat-4387-abandoned');
+      git(seed, 'commit', '-q', '-m', 'squash feature work');
+    } else {
+      git(seed, 'merge', '-q', '--ff-only', 'feat-4387-abandoned');
+    }
+    git(seed, 'push', '-q', 'origin', 'main');
+    if (squash) git(seed, 'push', '-q', 'origin', 'feat-4387-abandoned'); // the tip is no ancestor of main: ship it for root to fetch
+    // A copy's FETCH_HEAD still names the template's origin path: harmless, since no code
+    // under test reads it and any later fetch overwrites it.
+    git(clone, 'fetch', '-q', 'origin', 'main'); // only origin/main advances; root stays on a behind main
+    if (squash) git(clone, 'fetch', '-q', 'origin', 'feat-4387-abandoned:feat-4387-abandoned');
+    else git(clone, 'branch', 'feat-4387-abandoned', featureOid); // the run's branch ref survives locally
+  }, {
+    origin: { prefix: 'archive-merged-origin-' },
+    clone: { prefix: 'archive-merged-clone-', realpath: true },
+  });
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-branch: main\n');
+
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'interrupted', worktree: path.join(root, 'gone-4387'), pr: { branch: 'feat-4387-abandoned' },
+  }));
+  fs.writeFileSync(
+    path.join(runDir, 'events.jsonl'),
+    '{"skill":"claude-tweaks:build","ts":"2020-01-01T09:05:00.000Z","type":"skill_invoked"}\n',
+  );
+  return { root, runDir, archiveDir, featureOid: behindFeatureOids.get(key) };
+}
+
+// #3976: the run whose tracked header wrap-up moves to archive/ on the run branch.
+const RUN_3976 = '2026-11-16T000000-record-7';
+// Template key -> the merge commit its build recorded.
+const header3976MergeShas = new Map();
+
+// main with one commit; branch feat-3976 carries the live header and, when `moved`, the move.
+// The branch is merged back with `--squash` or `--no-ff`; the main checkout keeps only the
+// gitignored half of the run dir (run-state, console, decisions) the way a real one does.
+// A template per (moved, merge) pair (#5772); the root is realpath'd.
+function headerMergedRepo3976({ moved, merge }) {
+  const key = `archive-merged:header-3976:${moved ? 'moved' : 'unmoved'}:${merge}`;
+  const root = fromTemplate(key, (dir) => {
+    seedFromMakeRepo(dir);
+    addOriginRemote(dir, 'git@github.com:acme/w.git'); // archiveMerged needs a repo slug
+    git(dir, 'checkout', '-q', '-b', 'feat-3976');
+    commitPath(dir, `.claude-tweaks/pipelines/${RUN_3976}/work/7-spec.md`, 'spec header\n');
+    if (moved) {
+      const res = archiveRunHeader({ worktree: dir, runId: RUN_3976 });
+      assert.equal(res.outcome, 'moved', JSON.stringify(res));
+    }
+    git(dir, 'checkout', '-q', 'main');
+    if (merge === 'squash') {
+      git(dir, 'merge', '--squash', 'feat-3976');
+      git(dir, 'commit', '-q', '-m', 'Squashed feature (#7001)');
+    } else {
+      git(dir, 'merge', '-q', '--no-ff', '--no-edit', 'feat-3976');
+    }
+    header3976MergeShas.set(key, git(dir, 'rev-parse', 'HEAD').trim());
+  }, { prefix: 'archive-merged-', realpath: true });
+  return { root, mergeSha: header3976MergeShas.get(key) };
+}
+
 // Shape of one `closingIssuesReferences` entry from `gh pr view --json`.
 function ref(n, owner = 'acme', name = 'w') {
   return { number: n, repository: { name, owner: { login: owner } } };
@@ -318,5 +563,14 @@ module.exports = {
   seedStuckDir4180,
   fixtureActiveUnstampedMergedRun,
   fixtureOrdinaryMergedNoConsole,
+  cloneOfSeededOrigin,
+  fixtureAbandonedBehindOrigin,
+  RUN_3976,
+  headerMergedRepo3976,
+  addOriginRemote,
+  deletedBranchMergedRepo,
+  reusedBranchLiveRepo,
+  makeShell,
+  shellRepo3975,
   ref,
 };

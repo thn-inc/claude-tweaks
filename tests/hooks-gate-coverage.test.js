@@ -24,6 +24,7 @@ const { WRITE_SHAPES, fileWriteTargets, forEachShellSegment, gitTargets, mkdirTa
 const { shouldRunFull } = require('../plugin/bin/lib/hooks/bash-prefilter');
 const { readText } = require('./helpers/read-skill');
 const { shellQuote } = require('./helpers/shell-quote');
+const { initRepo } = require('./helpers/git-fixtures');
 
 const runsFull = (event, command) => shouldRunFull(event, { tool_name: 'Bash', tool_input: { command } });
 function bashGroupOf(group) {
@@ -381,9 +382,7 @@ test('#976 AC1: `git mv` inside a worktree-always project triggers the same E1 d
   const osMod = require('os');
   const { execFileSync } = require('child_process');
   const main = fsMod.mkdtempSync(path.join(osMod.tmpdir(), 'ct-976-main-'));
-  execFileSync('git', ['-C', main, 'init', '-q']);
-  execFileSync('git', ['-C', main, 'config', 'user.email', 't@example.com']);
-  execFileSync('git', ['-C', main, 'config', 'user.name', 'T']);
+  initRepo(main, { name: 'T', email: 't@example.com' });
   fsMod.writeFileSync(path.join(main, 'a.txt'), 'x\n');
   execFileSync('git', ['-C', main, 'add', 'a.txt']);
   execFileSync('git', ['-C', main, 'commit', '-q', '-m', 'init']);
@@ -391,6 +390,7 @@ test('#976 AC1: `git mv` inside a worktree-always project triggers the same E1 d
   fsMod.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
 
   const out = preToolUse.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: 'git mv a.txt b.txt' }, cwd: main },
     runDir: null,
     runState: null,
@@ -3659,6 +3659,7 @@ test('e2e #3080: bare redirection from a worktree-always main checkout is DENIED
   fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
   const decisionFor = (command) => {
     const out = preToolUse.run({
+      env: process.env,
       input: { tool_name: 'Bash', tool_input: { command }, cwd: main },
       runDir: null, runState: null, ownedRun: {}, cwd: main,
     });
@@ -3692,6 +3693,7 @@ test('e2e #4149: a command past the cwd cap from a linked worktree is DENIED for
   git('worktree', 'add', '-q', wt);
   const decisionFor = (command) => {
     const out = preToolUse.run({
+      env: process.env,
       input: { tool_name: 'Bash', tool_input: { command }, cwd: wt },
       runDir: null, runState: null, ownedRun: {}, cwd: wt,
     });
@@ -3730,6 +3732,7 @@ function linkedWorktree4303({ nested = false, policy = true } = {}) {
   git('worktree', 'add', '-q', wt);
   const outputFor = (command, cwd = wt) => {
     const out = preToolUse.run({
+      env: process.env,
       input: { tool_name: 'Bash', tool_input: { command }, cwd },
       runDir: null, runState: null, ownedRun: {}, cwd,
     });
@@ -4207,6 +4210,7 @@ test('e2e #4303: past the cwd cap with no policy file anywhere, a relative write
   const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const plain = tmpDir4303('ct-4303-plain-');
   const out = preToolUse.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: `${groups4303(16)}echo x > out.txt` }, cwd: plain },
     runDir: null, runState: null, ownedRun: {}, cwd: plain,
   });
@@ -4303,6 +4307,7 @@ test('e2e #3989: a `>` in a heredoc body from a worktree-always main checkout is
   fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
   const decisionFor = (command) => {
     const out = preToolUse.run({
+      env: process.env,
       input: { tool_name: 'Bash', tool_input: { command }, cwd: main },
       runDir: null, runState: null, ownedRun: {}, cwd: main,
     });

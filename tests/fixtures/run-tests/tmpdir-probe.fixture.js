@@ -22,9 +22,18 @@ function gitConfigEnv() {
   return Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('GIT_CONFIG_')));
 }
 
-test('records the TMPDIR, slot flag, slot lock and git config env run-tests.js gave this suite', () => {
+// The text of the config file inside the GIT_TEMPLATE_DIR this suite was given; null when unreadable.
+function gitTemplateConfig() {
+  try {
+    return fs.readFileSync(path.join(process.env.GIT_TEMPLATE_DIR, 'config'), 'utf8');
+  } catch (_) {
+    return null;
+  }
+}
+
+test('records the TMPDIR, slot flag, slot lock, git config env and git template run-tests.js gave this suite', () => {
   fs.writeFileSync(
     process.env.CT_PROBE_OUT,
-    JSON.stringify({ tmpdir: os.tmpdir(), repoInfoStore: process.env.CT_HOOKS_REPO_INFO_STORE, held: process.env.CT_TEST_SUITE_SLOT_HELD, lockPid: slotLockPid(), git: gitConfigEnv(), execArgv: process.execArgv }),
+    JSON.stringify({ tmpdir: os.tmpdir(), repoInfoStore: process.env.CT_HOOKS_REPO_INFO_STORE, held: process.env.CT_TEST_SUITE_SLOT_HELD, lockPid: slotLockPid(), git: gitConfigEnv(), gitTemplateDir: process.env.GIT_TEMPLATE_DIR, gitTemplateConfig: gitTemplateConfig(), execArgv: process.execArgv }),
   );
 });

@@ -7,6 +7,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { STUB_SKIP } = require('../../helpers/path-stub');
 const { fakeGh } = require('../../helpers/fake-gh');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 const { defaultResolvePolicy } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'express', 'policy.js'));
 
@@ -15,7 +16,7 @@ const { defaultResolvePolicy } = require(path.join(__dirname, '..', '..', '..', 
 test('defaultResolvePolicy hands the run config to computeDerivedDefaults: a merge-verification-only read under a run-pinned integration-model never spawns gh (#4578 AC13.1)', { skip: STUB_SKIP }, () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'express-policy-runpin-')));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
-  git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't');
+  initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
   git('commit', '-q', '--allow-empty', '-m', 'init');
   git('remote', 'add', 'origin', 'https://github.com/o/n.git');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-10-31T000000-record-7');

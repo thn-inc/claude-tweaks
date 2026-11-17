@@ -23,6 +23,7 @@ function enterCtx(wt, input = {}) {
       ...input,
     },
     cwd: wt,
+    env: process.env,
   };
 }
 
@@ -69,7 +70,7 @@ test('ExitWorktree clears the session\'s hold', () => withPid(() => {
   const a = harnessWorktreeOf(main, 'hold-a');
   post.run(enterCtx(a));
   assert.strictEqual(hold.readHolds(a).length, 1);
-  post.run({ input: { tool_name: 'ExitWorktree', cwd: main, session_id: 's1' }, cwd: main });
+  post.run({ env: process.env, input: { tool_name: 'ExitWorktree', cwd: main, session_id: 's1' }, cwd: main });
   assert.deepStrictEqual(hold.readHolds(a), []);
 }));
 
@@ -90,7 +91,7 @@ test('a subagent\'s ExitWorktree (agent_id set) clears only its own hold, not th
   post.run(enterCtx(a));
   post.run(enterCtx(b, { agent_id: 'ag1' }));
   assert.deepStrictEqual(keys(b), [`s1__ag1__${process.pid}`]);
-  post.run({ input: { tool_name: 'ExitWorktree', cwd: main, session_id: 's1', agent_id: 'ag1' }, cwd: main });
+  post.run({ env: process.env, input: { tool_name: 'ExitWorktree', cwd: main, session_id: 's1', agent_id: 'ag1' }, cwd: main });
   assert.deepStrictEqual(hold.readHolds(b), []);
   assert.deepStrictEqual(keys(a), [`s1__main__${process.pid}`]);
 }));
@@ -139,7 +140,7 @@ test('ExitWorktree from inside the worktree being exited clears its hold', () =>
   const a = harnessWorktreeOf(main, 'hold-a');
   post.run(enterCtx(a));
   assert.strictEqual(hold.readHolds(a).length, 1);
-  post.run({ input: { tool_name: 'ExitWorktree', cwd: a, session_id: 's1' }, cwd: a });
+  post.run({ env: process.env, input: { tool_name: 'ExitWorktree', cwd: a, session_id: 's1' }, cwd: a });
   assert.deepStrictEqual(hold.readHolds(a), []);
 }));
 
@@ -151,7 +152,7 @@ test('a compact SessionStart inside B keeps the launch worktree A held', () => w
   assert.strictEqual(stamp(a), 'stamped');
   post.run(enterCtx(b));
   assert.strictEqual(stamp(b), 'stamped');
-  post.run({ input: { tool_name: 'ExitWorktree', cwd: b, session_id: 's1' }, cwd: b });
+  post.run({ env: process.env, input: { tool_name: 'ExitWorktree', cwd: b, session_id: 's1' }, cwd: b });
   assert.ok(keys(a).includes(`s1__home__${process.pid}`));
 }));
 
@@ -162,7 +163,7 @@ test('a session started in worktree A keeps its hold on A across EnterWorktree B
   assert.strictEqual(hold.stampHoldForCwd({ cwd: a, sessionId: 's1', env: process.env, ownerBlock: ownerBlock }), 'stamped');
   post.run(enterCtx(b));
   assert.deepStrictEqual(keys(b), [`s1__main__${process.pid}`]);
-  post.run({ input: { tool_name: 'ExitWorktree', cwd: b, session_id: 's1' }, cwd: b });
+  post.run({ env: process.env, input: { tool_name: 'ExitWorktree', cwd: b, session_id: 's1' }, cwd: b });
   assert.deepStrictEqual(hold.readHolds(b), []);
   assert.ok(keys(a).includes(`s1__home__${process.pid}`));
 }));

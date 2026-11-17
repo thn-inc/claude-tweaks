@@ -7,7 +7,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const { sweepCli } = require('../../helpers/health-sweep-cli');
-const { cleanGitEnv } = require('../../helpers/git-fixtures');
+const { cleanGitEnv, writeIdentity } = require('../../helpers/git-fixtures');
 const { seedDurableState } = require('../health-core/seed-durable-state');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'docs-health.js');
@@ -26,8 +26,7 @@ function makeTmpRoot() {
 function makeTmpGitRoot() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-cli-check-freshness-'));
   execFileSync('git', ['init', '-q'], { cwd: root, ...GIT_OPTS });
-  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root, ...GIT_OPTS });
-  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root, ...GIT_OPTS });
+  writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   return root;
 }
 

@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { spawn, spawnSync } = require('child_process');
 const { readText } = require('../../helpers/read-skill');
+const { readGitCalls } = require('../../helpers/git-call-recorder');
 const { CLI, tmpDir, runCli, tmpGitRepo, nodeCmd, scopedRepo, stampOf, passStampFiles, commitFile, flakyRepo, anchoredRunDir } = require('./cli-helpers');
 
 const STAMP = 'claude-tweaks-verify-pass.json';
@@ -1586,4 +1587,73 @@ test('#4177 AC4: nodeCmd refuses a script or argument whose meaning differs betw
     assert.throws(() => nodeCmd('0', bad), (e) => e.message.endsWith(`contains ${JSON.stringify(ch)}, which /bin/sh or cmd.exe interprets`), `argument ${bad} names ${ch}`);
   }
   assert.throws(() => nodeCmd('0', 'C:\\dir\\'), (e) => e.message.endsWith('contains a trailing backslash, which /bin/sh or cmd.exe interprets'));
+});
+
+// #5773: one verify.js invocation asks git each read-only question once, unless the answer may have changed.
+const RECORDER = path.join(__dirname, '..', '..', 'helpers', 'git-call-recorder.js');
+const COMBINED_REV_PARSE = ['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir', '--verify', '-q', 'HEAD'];
+const STATUS_PORCELAIN = ['--no-optional-locks', 'status', '--porcelain'];
+
+function spawnRecorded(cliArgs, cwd, traceDir) {
+  return spawnSync(process.execPath, ['--require', RECORDER, CLI, ...cliArgs], {
+    cwd,
+    env: { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1', CT_TEST_GIT_CALL_LOG: traceDir },
+    encoding: 'utf8',
+    timeout: 60000,
+    killSignal: 'SIGKILL',
+  });
+}
+
+function recordedGitCalls(traceDir) {
+  return readGitCalls(traceDir).flatMap((p) => p.events).filter((e) => e.kind === 'git');
+}
+
+test('AC2.1: a whole-suite run around a no-op suite makes exactly 4 git calls', () => {
+  const { repo } = tmpGitRepo();
+  const traceDir = tmpDir();
+  const result = spawnRecorded(['--cmd', 'tests=node -e 0', '--no-stamp'], repo, traceDir);
+  assert.strictEqual(result.status, 0, result.stderr);
+  const gitArgs = recordedGitCalls(traceDir).map((e) => e.args);
+  // Before #5773 the same run made 6: --git-dir, --show-toplevel, HEAD + status at the start, HEAD + status at the end.
+  assert.deepStrictEqual(gitArgs, [COMBINED_REV_PARSE, STATUS_PORCELAIN, COMBINED_REV_PARSE, STATUS_PORCELAIN]);
+  assert.strictEqual(gitArgs.length, 4);
+});
+
+test('freshness (#5773): a tree change made while the suites run is seen by the read after them', async () => {
+  // Run 1: the suite dirties the tree. The end read must see it, so the report is dirty and the stamp that is written never credits the tree.
+  const dirtied = tmpGitRepo();
+  const dirtyLog = tmpDir();
+  const dirtyRun = await runCli(['--log-dir', dirtyLog, '--cmd', `tests=${nodeCmd("require('fs').writeFileSync('made-by-suite.txt','x')")}`], { cwd: dirtied.repo });
+  assert.strictEqual(dirtyRun.code, 0, dirtyRun.stderr);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dirtyLog, 'report.json'), 'utf8')).dirty, true);
+  const dirtyStatus = await runCli(['--stamp-status'], { cwd: dirtied.repo });
+  const dirtyStamp = JSON.parse(dirtyStatus.stdout);
+  assert.strictEqual(dirtyStamp.dirty, true, 'the live tree is dirty');
+  assert.strictEqual(stampOf(dirtied.gitDir).dirty, true, 'the stamp the run wrote records the suite-made change');
+  assert.strictEqual(dirtyStamp.match, false, 'a run that dirtied its own tree never reads as verifying it');
+
+  // Run 2: the suite commits a file. The end read must see the moved HEAD: no pass stamp, and the report keeps the start sha.
+  const moved = tmpGitRepo();
+  const startSha = moved.git('rev-parse', 'HEAD').trim();
+  const movedLog = tmpDir();
+  const commitScript = "const{execFileSync:x}=require('child_process');require('fs').writeFileSync('c.txt','x');x('git',['add','c.txt'],{windowsHide:true});x('git',['commit','-q','-m','c'],{windowsHide:true})";
+  const movedRun = await runCli(['--log-dir', movedLog, '--cmd', `tests=${nodeCmd(commitScript)}`], { cwd: moved.repo });
+  assert.strictEqual(movedRun.code, 0, movedRun.stderr);
+  const movedStatus = await runCli(['--stamp-status'], { cwd: moved.repo });
+  assert.strictEqual(JSON.parse(movedStatus.stdout).present, false, 'a run that moved HEAD leaves no pass stamp');
+  assert.notStrictEqual(moved.git('rev-parse', 'HEAD').trim(), startSha, 'the suite really committed');
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(movedLog, 'report.json'), 'utf8')).sha, startSha);
+});
+
+test('a --scope run with a generated glob and a dirty tree reads the working tree for the changed files and the exemption once, then once more after the suites (#5773)', () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }], { generated: ['dist/**'] });
+  commitFile(r, 'dist/bundle.js', 'v1');
+  fs.writeFileSync(path.join(r.repo, 'dist', 'bundle.js'), 'v2-regenerated');
+  const traceDir = tmpDir();
+  const run = spawnRecorded(['--scope', r.declPath, '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], r.repo, traceDir);
+  assert.strictEqual(run.status, 0, run.stderr);
+  assert.deepStrictEqual(stampOf(r.gitDir).generatedExempt, ['dist/bundle.js'], 'the exemption still reads the dirty generated path');
+  const zStatus = recordedGitCalls(traceDir).filter((e) => e.args.includes('status') && e.args.includes('-z'));
+  // The changed-file read serves the start exemption too; the other read is the one after the suites.
+  assert.strictEqual(zStatus.length, 2, JSON.stringify(zStatus.map((e) => e.args)));
 });

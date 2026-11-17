@@ -288,7 +288,7 @@ function isRepoRelativeKeyFilePath(filePath) {
 // (#2660) `releaseNote` is REQUIRED, not optional, alongside currentState/
 // deliverables/filedBy below — deliberately, not an oversight. This composer
 // is the shared body-composition path for every "born-ready" producer
-// (`_shared/work-record.md`'s Born-ready rule): the four health-sweep
+// (`_shared/work-record.md`'s Born-ready rule): the five health-sweep
 // skills' issue-payload.js files, plus /wrap-up, /reflect, and /review's
 // `side-effect:*` producers. `_shared/work-record.md` and
 // `bin/lib/compose-record/compose.js`'s own `REQUIRED_SECTIONS` both already

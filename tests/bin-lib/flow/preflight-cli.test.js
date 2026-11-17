@@ -8,11 +8,12 @@ const { execFileSync } = require('child_process');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'flow-preflight.js');
 const { run } = require(CLI);
+const { initRepo } = require('../../helpers/git-fixtures');
 
 function mainCheckoutWithRun() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-cli-')));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't'); git('commit', '-q', '--allow-empty', '-m', 'init');
+  initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); git('commit', '-q', '--allow-empty', '-m', 'init');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-09-06T000000-record-7');
   fs.mkdirSync(path.join(runDir, 'work'), { recursive: true });
   fs.writeFileSync(path.join(runDir, 'config.yml'), 'mode: auto\nceremony-profile: standard\n');

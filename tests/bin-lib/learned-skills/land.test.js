@@ -5,10 +5,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
-const { capture, readManifest, realDeps } = require('../../../plugin/bin/lib/learned-skills/learned-skills.js');
+const { capture, readManifest, realDeps, headShortReader } = require('../../../plugin/bin/lib/learned-skills/learned-skills.js');
 const { land, stage } = require('../../../plugin/bin/lib/learned-skills/land.js');
 const cli = require('../../../plugin/bin/learned-skills-pr.js');
 
@@ -17,54 +15,7 @@ Object.assign(process.env, {
   GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test',
 });
 
-const X = '.claude/skills/x/SKILL.md';
-const Z = '.claude/skills/z/SKILL.md';
-const BODY = '# s\n\nline one\nline two\nline three\nline four\nline five\nline six\nline seven\n';
-const RUN_ID = '2026-11-13T000000-spec-1';
-const BRANCH = `learned-skills/${RUN_ID}`;
-const NOW = Date.UTC(2026, 10, 13, 12, 0, 0);
-
-function sh(cwd, args) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-}
-function write(repo, rel, text) {
-  fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
-  fs.writeFileSync(path.join(repo, rel), text);
-}
-// A tree file's text with its line endings as git records them (a core.autocrlf=true checkout holds CRLF).
-const read = (repo, rel) => fs.readFileSync(path.join(repo, rel), 'utf8').replace(/\r\n/g, '\n');
-
-// origin (bare) + a clone with main pushed, two skill files, a run dir, and one captured patch per file.
-// autocrlf: 'true' pins core.autocrlf in the clone's config, a Windows checkout on any host. The
-// committed files are checked out again, so the tree holds what a clone writes (CRLF under autocrlf).
-function fixture(t, { capturedTargets = [X, Z], autocrlf } = {}) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ls-land-')));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const origin = path.join(root, 'origin.git');
-  const repo = path.join(root, 'wt');
-  sh(root, ['init', '-q', '--bare', '-b', 'main', origin]);
-  fs.mkdirSync(repo);
-  sh(repo, ['init', '-q', '-b', 'main']);
-  if (autocrlf) sh(repo, ['config', 'core.autocrlf', autocrlf]);
-  sh(repo, ['remote', 'add', 'origin', origin]);
-  write(repo, X, BODY.replace('# s', '# x'));
-  write(repo, Z, BODY.replace('# s', '# z'));
-  sh(repo, ['add', '-A']);
-  sh(repo, ['commit', '-q', '-m', 'base']);
-  for (const rel of [X, Z]) fs.rmSync(path.join(repo, rel));
-  sh(repo, ['checkout', '-q', '--', '.']);
-  sh(repo, ['push', '-q', 'origin', 'main']);
-  const runDir = path.join(repo, '.claude-tweaks', 'pipelines', RUN_ID);
-  fs.mkdirSync(runDir, { recursive: true });
-  const mergeBase = sh(repo, ['rev-parse', 'HEAD']).trim();
-  const f = { root, origin, repo, runDir, mergeBase, mainTip: mergeBase };
-  for (const target of capturedTargets) {
-    write(repo, target, read(repo, target) + `learned: note for ${path.basename(path.dirname(target))}\n`);
-    const res = capture({ runDir, worktree: repo, mergeBase, target, summary: 'adds a note' }, { now: () => NOW });
-    assert.equal(res.route, 'captured');
-  }
-  return f;
-}
+const { fixture, sh, write, read, X, Z, RUN_ID, BRANCH, NOW } = require('../../helpers/learned-skills-land');
 
 // A gh fake. State: the open PR list. Throws on any argv it does not handle.
 function fakeGh({ prs = [], createThrows = null, editThrows = null } = {}) {
@@ -110,7 +61,28 @@ function deps(gh) {
 const landArgs = (f, extra = {}) => ({
   runDir: f.runDir, worktree: f.repo, record: 5290, integrationBranch: 'main', mergeBase: f.mergeBase, ...extra,
 });
-const remoteBranch = (f) => sh(f.repo, ['ls-remote', 'origin', `refs/heads/${BRANCH}`]).trim().split(/\s+/)[0] || null;
+// The tip of BRANCH on origin, read from the bare origin's own ref files (no git process): the loose
+// ref, else a packed-refs line. Every caller reads the fixture's origin, never a re-pointed remote.
+// Files ref backend only: a reftable origin would read as null for every branch, so refuse it.
+const remoteBranch = (f) => {
+  if (fs.existsSync(path.join(f.origin, 'reftable'))) {
+    throw new Error(`remoteBranch reads the files ref backend only; ${f.origin} uses reftable`);
+  }
+  const ref = `refs/heads/${BRANCH}`;
+  const readOrNull = (rel) => {
+    try {
+      return fs.readFileSync(path.join(f.origin, rel), 'utf8');
+    } catch (e) {
+      if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return null;
+      throw e;
+    }
+  };
+  const loose = readOrNull(ref);
+  if (loose !== null) return loose.trim() || null;
+  const packed = readOrNull('packed-refs');
+  const line = packed && packed.split(/\r?\n/).find((l) => l.endsWith(` ${ref}`));
+  return line ? line.split(' ')[0] : null;
+};
 const decisions = (f) => fs.readFileSync(path.join(f.runDir, 'decisions.md'), 'utf8');
 const pushes = (gitCalls) => gitCalls.filter((c) => c.args.includes('push'));
 
@@ -297,13 +269,8 @@ test('resume after a lost manifest write reuses the pushed commits and the open 
 });
 
 test('apply-check failure stages that patch only', (t) => {
-  const f = fixture(t);
-  // Another session changes the same target on origin/main after capture.
-  const other = path.join(f.root, 'other');
-  sh(f.root, ['clone', '-q', f.origin, other]);
-  write(other, X, '# x\n\nline one\nline two\nline three\nline four\nCHANGED five\nCHANGED six\nCHANGED seven\n');
-  sh(other, ['commit', '-q', '-am', 'conflicting change']);
-  sh(other, ['push', '-q', 'origin', 'main']);
+  // Another session changed the same target on origin/main after capture: the fixture's origin carries it.
+  const f = fixture(t, { originConflict: true });
 
   const gh = fakeGh();
   const res = land(landArgs(f), deps(gh.gh).deps);
@@ -841,13 +808,8 @@ const failManifest = (d) => {
 };
 
 test('a re-land after a lost manifest write stages nothing twice', (t) => {
-  const f = fixture(t);
   // X's patch no longer applies to origin/main, so it stages; Z lands.
-  const other = path.join(f.root, 'other');
-  sh(f.root, ['clone', '-q', f.origin, other]);
-  write(other, X, '# x\n\nline one\nline two\nline three\nline four\nCHANGED five\nCHANGED six\nCHANGED seven\n');
-  sh(other, ['commit', '-q', '-am', 'conflicting change']);
-  sh(other, ['push', '-q', 'origin', 'main']);
+  const f = fixture(t, { originConflict: true });
   const gh = fakeGh();
   const first = land(landArgs(f), failManifest(deps(gh.gh).deps));
   assert.equal(first.manifestFailed, true);
@@ -958,9 +920,9 @@ test('a branch commit with a matching entry id but another run id is not reused'
   const gh = fakeGh();
   const first = land(landArgs(f), deps(gh.gh).deps);
   const tree = sh(f.repo, ['rev-parse', `${first.landed[0].commit}^{tree}`]).trim();
-  const foreign = sh(f.repo, ['commit-tree', tree, '-p', f.mainTip, '-m',
+  const foreign = sh(f.origin, ['commit-tree', tree, '-p', f.mainTip, '-m',
     'Add learned skill update\n\nLearned-Skills-Run: 2026-01-01T000000-other-run\nLearned-Skills-Entry: 1\n']).trim();
-  sh(f.repo, ['push', '-q', '-f', 'origin', `${foreign}:refs/heads/${BRANCH}`]);
+  sh(f.origin, ['update-ref', `refs/heads/${BRANCH}`, foreign]);
   loseManifest(f);
   const res = land(landArgs(f), deps(gh.gh).deps);
   assert.deepEqual(res.landed, [], 'the other run\'s commit is not this run\'s');
@@ -974,9 +936,9 @@ test('a same-run commit under another entry id, with an equal patch-id, is not m
   const first = land(landArgs(f), deps(gh.gh).deps);
   const tree = sh(f.repo, ['rev-parse', `${first.landed[0].commit}^{tree}`]).trim();
   // Same diff, same run, but the trailer names entry 99: the entry id is part of the match.
-  const other = sh(f.repo, ['commit-tree', tree, '-p', f.mainTip, '-m',
+  const other = sh(f.origin, ['commit-tree', tree, '-p', f.mainTip, '-m',
     `Add learned skill update\n\nLearned-Skills-Run: ${RUN_ID}\nLearned-Skills-Entry: 99\n`]).trim();
-  sh(f.repo, ['push', '-q', '-f', 'origin', `${other}:refs/heads/${BRANCH}`]);
+  sh(f.origin, ['update-ref', `refs/heads/${BRANCH}`, other]);
   loseManifest(f);
   const res = land(landArgs(f), deps(gh.gh).deps);
   assert.deepEqual(res.landed, []);
@@ -1017,8 +979,8 @@ test('a no-PR branch holding a foreign commit is not reused as a base', (t) => {
   const gh = fakeGh();
   const first = land(landArgs(f), deps(gh.gh).deps);
   const tree = sh(f.repo, ['rev-parse', `${first.landed[0].commit}^{tree}`]).trim();
-  const foreign = sh(f.repo, ['commit-tree', tree, '-p', f.mainTip, '-m', 'someone else\'s commit\n']).trim();
-  sh(f.repo, ['push', '-q', '-f', 'origin', `${foreign}:refs/heads/${BRANCH}`]);
+  const foreign = sh(f.origin, ['commit-tree', tree, '-p', f.mainTip, '-m', 'someone else\'s commit\n']).trim();
+  sh(f.origin, ['update-ref', `refs/heads/${BRANCH}`, foreign]);
   loseManifest(f);
   gh.state.prs = [];
   const res = land(landArgs(f), deps(gh.gh).deps);
@@ -1193,4 +1155,82 @@ test('a malformed manifest entry fails land and stage naming the manifest and th
     assert.throws(() => stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason: 'r' }, { now: () => NOW }), want, problem);
   }
   assert.equal(remoteBranch(f), null);
+});
+
+const isHeadShort = (c) => JSON.stringify(c.args.slice(2)) === JSON.stringify(['rev-parse', '--short', 'HEAD']);
+const stagedAtLines = (res) => res.staged.map((s) => /^Staged-at: (.*)$/m.exec(fs.readFileSync(s.stagePath, 'utf8'))[1]);
+
+test('AC2.1: land() with two staged entries runs rev-parse --short HEAD once', (t) => {
+  const f = fixture(t);
+  sh(f.repo, ['remote', 'set-url', 'origin', path.join(f.root, 'missing.git')]);
+  const g = deps(fakeGh().gh);
+  const res = land(landArgs(f), g.deps);
+  assert.equal(res.staged.length, 2);
+  assert.equal(g.gitCalls.filter(isHeadShort).length, 1);
+  const short = sh(f.repo, ['rev-parse', '--short', 'HEAD']).trim();
+  assert.deepEqual(stagedAtLines(res), [short, short]);
+});
+
+test('land() with two entries failing apply --check at the build loop runs rev-parse --short HEAD once', (t) => {
+  const f = fixture(t, { originConflict: true }); // origin already conflicts with X's patch
+  const other = path.join(f.root, 'other-z');
+  sh(f.root, ['clone', '-q', f.origin, other]);
+  write(other, Z, '# z\n\nline one\nline two\nline three\nline four\nCHANGED five\nCHANGED six\nCHANGED seven\n');
+  sh(other, ['commit', '-q', '-am', 'conflicting change to z']);
+  sh(other, ['push', '-q', 'origin', 'main']);
+  const g = deps(fakeGh().gh);
+  const res = land(landArgs(f), g.deps);
+  assert.equal(res.staged.length, 2);
+  assert.ok(res.staged.every((s) => /git apply --check/.test(s.reason)));
+  assert.equal(g.gitCalls.filter(isHeadShort).length, 1);
+  const short = sh(f.repo, ['rev-parse', '--short', 'HEAD']).trim();
+  assert.deepEqual(stagedAtLines(res), [short, short]);
+});
+
+test('land() with a failed push stages two entries with one rev-parse --short HEAD', (t) => {
+  const f = fixture(t);
+  fs.writeFileSync(path.join(f.origin, 'hooks', 'pre-receive'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const g = deps(fakeGh().gh);
+  const res = land(landArgs(f), g.deps);
+  assert.equal(res.staged.length, 2);
+  assert.match(res.staged[0].reason, /push of learned-skills\//);
+  assert.equal(g.gitCalls.filter(isHeadShort).length, 1);
+  const short = sh(f.repo, ['rev-parse', '--short', 'HEAD']).trim();
+  assert.deepEqual(stagedAtLines(res), [short, short]);
+});
+
+test('stage() with two captured entries runs rev-parse --short HEAD once', (t) => {
+  const f = fixture(t);
+  const g = deps(fakeGh().gh);
+  const res = stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason: 'integration-model is local-merge' }, g.deps);
+  assert.equal(res.staged.length, 2);
+  assert.equal(g.gitCalls.filter(isHeadShort).length, 1);
+  const short = sh(f.repo, ['rev-parse', '--short', 'HEAD']).trim();
+  assert.deepEqual(stagedAtLines(res), [short, short]);
+});
+
+test('a failed HEAD read is asked again for the next entry', (t) => {
+  const f = fixture(t);
+  const g = deps(fakeGh().gh);
+  let asks = 0;
+  const realGit = g.deps.git;
+  g.deps.git = (args, opts) => {
+    if (isHeadShort({ args })) { asks += 1; if (asks === 1) throw new Error('boom'); }
+    return realGit(args, opts);
+  };
+  const res = stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason: 'integration-model is local-merge' }, g.deps);
+  assert.equal(res.staged.length, 2);
+  assert.equal(asks, 2);
+  const short = sh(f.repo, ['rev-parse', '--short', 'HEAD']).trim();
+  assert.deepEqual(stagedAtLines(res), ['unknown', short]);
+});
+
+test('an empty HEAD read is not kept: the next ask reads git again, and a non-empty answer is kept', () => {
+  const answers = ['\n', 'abc1234\n'];
+  let calls = 0;
+  const readHead = headShortReader('/wt', { git: () => { calls += 1; return answers.shift(); } });
+  assert.equal(readHead(), 'unknown');
+  assert.equal(readHead(), 'abc1234');
+  assert.equal(readHead(), 'abc1234');
+  assert.equal(calls, 2);
 });
