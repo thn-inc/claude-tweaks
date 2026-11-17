@@ -735,9 +735,7 @@ test('housekeeping-auto-merge true on a PR the forge does not hold (not BLOCKED)
     SOMETHING_NEW: 'merge state SOMETHING_NEW is not one this CLI knows; only BLOCKED (the forge holds the merge for its required checks) is armed',
     '': 'merge state not reported; only BLOCKED (the forge holds the merge for its required checks) is armed',
   };
-  let i = 0;
   for (const [mergeState, note] of Object.entries(NOTES)) {
-    i += 1;
     const { root } = makeFixture([ABSENT]);
     const fake = fakeGh({ mergeState: mergeState || null, mergeOnArm: true });
     const r = call(root, ['--root', root], { ghFake: fake.gh, auto: 'true' });
