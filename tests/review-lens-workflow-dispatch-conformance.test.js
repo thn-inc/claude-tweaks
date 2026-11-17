@@ -86,12 +86,17 @@ const missingFacts = missingFactsOf(FACTS);
 
 // The 30-minute bound needs something to wake the session: a background timer started in `## Start` (fix round 1, I1).
 const TIMER_COMMAND = 'node -e "setTimeout(()=>{},1800000)"';
+// Fix round 2: an abandoned run is stopped (n3), and a post-launch fallback keeps the 3h already dispatched (n1+n2).
+const STOP_RUN = "stop the run with `TaskStop` on the launch result's `taskId`";
+const AFTER_LAUNCH_SCOPE = 'under conditions 3–5 (taken after launch) it dispatches the agent lenses 3a–3g only';
 
 function checkSubFile(text) {
   const start = sectionOf(text, '## Start');
   assert.ok(start.includes(TIMER_COMMAND), 'Start must start the 1800000 ms setTimeout timer');
   assert.match(start, /`run_in_background` Bash call/, 'Start must run the timer as a run_in_background Bash call');
+  assert.ok(start.includes(STOP_RUN), 'Start must stop an abandoned run by its launch taskId');
   const fallback = sectionOf(text, '## Fallback');
+  assert.ok(fallback.includes(AFTER_LAUNCH_SCOPE), 'Fallback must dispatch only 3a–3g after launch');
   for (const label of LABELS) assert.match(fallback, labelItem(label), `fallback condition missing: ${label}`);
   assert.ok(fallback.includes(SKIP_LINE), 'SKIP line missing from the Fallback section');
   assert.deepEqual(missingFacts(text), [], 'sub-file facts missing');
@@ -206,6 +211,16 @@ test('go-red: the timer sentence moved out of the Start section fails', () => {
   const mutated = `${live.replace(sentence, 'Wait for the notification.')}\n## Elsewhere\n\n${sentence}\n`;
   assert.notEqual(mutated, live);
   assert.throws(() => checkSubFile(mutated), { message: /Start must start the 1800000 ms setTimeout timer/ });
+});
+
+test('go-red: a Start without the abandoned-run stop, or a Fallback without the 3a–3g scope, fails', () => {
+  const live = read(SUB_FILE);
+  const noStop = live.split(STOP_RUN).join('carry on');
+  assert.notEqual(noStop, live);
+  assert.throws(() => checkSubFile(noStop), { message: /Start must stop an abandoned run by its launch taskId/ });
+  const noScope = live.split(AFTER_LAUNCH_SCOPE).join('under conditions 3–5 it dispatches every lens');
+  assert.notEqual(noScope, live);
+  assert.throws(() => checkSubFile(noScope), { message: /Fallback must dispatch only 3a–3g after launch/ });
 });
 
 test('go-red: each sub-file fact goes red alone when its text is removed', () => {

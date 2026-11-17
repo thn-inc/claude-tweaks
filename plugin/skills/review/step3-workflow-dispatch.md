@@ -22,7 +22,7 @@ For each lens's `model`, run `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js
 
 ## Start
 
-Make one `Workflow` call: `name` `claude-tweaks:review-lens-fanout`, `args` `{ lenses: [{ lens, brief, model, reviewers }, …] }`, passed as a JSON object, not a string, one entry per lens. Lens 3h, when in scope, is dispatched as a Task agent in the same assistant message as the `Workflow` call, so it runs alongside the workflow, under the Task path's 3h rules. The tool result arrives at launch (`status: async_launched`) with `runId` and `transcriptDir` and no returned value. Wait for the workflow's completion notification, without polling, and wait at most 30 minutes: immediately after the launch result, start one timer as its own `run_in_background` Bash call, `node -e "setTimeout(()=>{},1800000)"`. Whichever arrives first, the workflow's completion notification or that timer's completion, triggers the one state read below; when the workflow's notification arrives first, stop the timer task with `TaskStop` on its id.
+Make one `Workflow` call, alone in its message: `name` `claude-tweaks:review-lens-fanout`, `args` `{ lenses: [{ lens, brief, model, reviewers }, …] }`, passed as a JSON object, not a string, one entry per lens. The tool result arrives at launch (`status: async_launched`) with `taskId`, `runId` and `transcriptDir` and no returned value. Wait for the workflow's completion notification, without polling, and wait at most 30 minutes, counted from launch: as soon as the launch result returns, in the next message, start one timer as its own `run_in_background` Bash call, `node -e "setTimeout(()=>{},1800000)"`, and together with it dispatch lens 3h, when in scope, as a Task agent under the Task path's 3h rules, so it runs alongside the workflow. Whichever arrives first, the workflow's completion notification or that timer's completion, triggers the one state read below; when the workflow's notification arrives first, stop the timer task with `TaskStop` on its id. When the `Workflow` call itself fails (conditions 1 and 2 below), no timer starts and 3h is not dispatched here: the fallback's Task dispatch covers every lens, 3h included.
 
 The run file holds the returned value under `result`, beside the run's `status`. Its path is three directories above `transcriptDir`, then `workflows/{runId}.json`: a `transcriptDir` of `{session}/subagents/workflows/{runId}` gives `{session}/workflows/{runId}.json`. Call that path `{run-file}`. Never read another run's file, never retype a reply, and never read the replies into this thread: the notification's own copy of the value is cut short, and `settle-lens-replies` reads the run file itself.
 
@@ -32,11 +32,11 @@ When the notification or the timer arrives, read the run file's state once, with
 node -e "console.log(JSON.stringify((function(r){return {status:r.status,started:(r.result||{}).started,reason:(r.result||{}).reason}})(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')))))" "{run-file}"
 ```
 
-`status` `completed` with `started: true` goes to Settle. Anything else is a fallback condition below, and once the fallback is taken a result that arrives later is never read.
+`status` `completed` with `started: true` goes to Settle. Anything else is a fallback condition below, and once the fallback is taken a result that arrives later is never read. When the timer arrived first and the run is not `completed`, stop the run with `TaskStop` on the launch result's `taskId` before taking condition 4, so it stops spending.
 
 ## Fallback
 
-The review runs every lens through `step3-lens-dispatch.md`'s Task dispatch, and logs one `SKIP` line, on any of these conditions — each with what the session observes:
+The review falls back to `step3-lens-dispatch.md`'s Task dispatch, and logs one `SKIP` line, on any of these conditions — each with what the session observes. Under conditions 1 and 2 (no launch) the Task dispatch covers every lens, 3h included; under conditions 3–5 (taken after launch) it dispatches the agent lenses 3a–3g only, and keeps the 3h agent already dispatched alongside the workflow.
 
 1. `no Workflow tool` — `Workflow` is not among the session's tools and `ToolSearch` does not return it.
 2. `refused or failed before a reviewer starts` — the `Workflow` call's result is an error or a permission denial, not a launch.
@@ -50,7 +50,7 @@ Resolve the line's text file with one plain call, `node "${CLAUDE_PLUGIN_ROOT}/b
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/review" --status SKIP --step "Step 3 lens dispatch (workflow fallback)" --text-file "{path-S}" --reversibility n/a
 ```
 
-It writes `SKIP {HH:MM:SS} — Step 3 lens dispatch (workflow fallback): condition: {condition} → fallback: Task lens dispatch. Reversibility: n/a.` Standalone (no run directory), put the same sentence in the review report instead. Then dispatch every lens as `step3-lens-dispatch.md` says for the Task path. Under conditions 4 and 5 the workflow reviewers may already have run, so that review pays for its lenses twice; the `SKIP` line names the condition. With the key at `task` this file is never read and no line is written.
+It writes `SKIP {HH:MM:SS} — Step 3 lens dispatch (workflow fallback): condition: {condition} → fallback: Task lens dispatch. Reversibility: n/a.` Standalone (no run directory), put the same sentence in the review report instead. Then dispatch the lenses as `step3-lens-dispatch.md` says for the Task path: every lens under conditions 1 and 2, lenses 3a–3g only under conditions 3–5. Under conditions 4 and 5 the workflow reviewers may already have run, so that review pays for its lenses twice; the `SKIP` line names the condition. With the key at `task` this file is never read and no line is written.
 
 ## Settle
 
