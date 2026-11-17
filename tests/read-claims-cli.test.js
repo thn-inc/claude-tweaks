@@ -12,6 +12,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 const { run } = require('../plugin/bin/read-claims');
+const { writeIdentity } = require('./helpers/git-fixtures');
 
 const NOW = Date.parse('2026-11-01T12:00:00Z');
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'read-claims.js');
@@ -227,8 +228,7 @@ test('real git: a temp origin with two live claim blobs reads as two rows and th
   const git = (args, cwd = work) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: 'pipe' });
   git(['init', '--bare', '-q', origin], root);
   git(['clone', '-q', origin, work], root);
-  git(['config', 'user.email', 'test@example.com']);
-  git(['config', 'user.name', 'Test']);
+  writeIdentity(work, { name: 'Test', email: 'test@example.com' });
   git(['config', 'commit.gpgsign', 'false']);
   git(['checkout', '-q', '--orphan', 'claims-registry']);
   fs.mkdirSync(path.join(work, 'claims'));

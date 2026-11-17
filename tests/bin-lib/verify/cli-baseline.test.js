@@ -7,6 +7,7 @@ const fs = require('fs');
 const { spawn, spawnSync, execFileSync } = require('child_process');
 const { slotEnv } = require('../../helpers/suite-slot-env');
 const { CLI, tmpDir, runCli, tmpGitRepo, passStampFiles, commitFile, baselineRepo, SUITE, PER_FILE, nestedRunEnv, headCommit } = require('./cli-helpers');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 test('--baseline: failures that also fail at base exit 0, stamp a baseline pass, and --stamp-status says verifiedHead (#3043 AC1)', async () => {
   const r = baselineRepo();
@@ -52,9 +53,7 @@ test('--baseline: run from a linked worktree nested in a space-containing checko
   const repo = path.join(tmpDir(), 'Code Workspaces', 'repo');
   fs.mkdirSync(repo, { recursive: true });
   const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git(repo, 'init', '-q');
-  git(repo, 'config', 'user.email', 'verify-test@example.invalid');
-  git(repo, 'config', 'user.name', 'verify test');
+  initRepo(repo, { name: 'verify test', email: 'verify-test@example.invalid', cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   fs.mkdirSync(path.join(repo, 'tests'));
   fs.writeFileSync(path.join(repo, 'tests', 'env.test.js'), "require('node:test')('env', () => { throw new Error('env-specific'); });\n");
   fs.writeFileSync(path.join(repo, 'tests', 'ok.test.js'), "require('node:test')('ok', () => {});\n");

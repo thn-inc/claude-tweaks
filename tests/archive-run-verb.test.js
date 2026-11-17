@@ -9,7 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { readText } = require('./helpers/read-skill');
-const { cleanGitEnv } = require('./helpers/git-fixtures');
+const { cleanGitEnv, writeIdentity } = require('./helpers/git-fixtures');
 const { runCli, spawnCli } = require('./helpers/run-cli');
 const { appendGitConfigEnv } = require('../tools/run-tests');
 const { formatEntry } = require('../plugin/bin/lib/log-decision/append');
@@ -54,8 +54,7 @@ function runHook(args, { cwd = HOOK_SANDBOX, env = {} } = {}) {
 function runDirFixture(status) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-archrun-')));
   git(['init', '-q', '--initial-branch=main'], root);
-  git(['config', 'user.email', 'test@example.com'], root);
-  git(['config', 'user.name', 'Test'], root);
+  writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], root);
   git(['commit', '-q', '-m', 'seed'], root);
@@ -140,8 +139,7 @@ test('archive-run: a not-yet-clean run gets timing.json phase rows and exactly o
 test('archive-run: sweep-standalone run with untracked decisions.md/staged refuses audit-untracked, names the files and the fix', async () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-archrun-standalone-')));
   git(['init', '-q', '--initial-branch=main'], root);
-  git(['config', 'user.email', 'test@example.com'], root);
-  git(['config', 'user.name', 'Test'], root);
+  writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], root);
   git(['commit', '-q', '-m', 'seed'], root);

@@ -13,6 +13,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const { readText } = require('./helpers/read-skill');
+const { initRepo } = require('./helpers/git-fixtures');
 
 const ROOT = path.join(__dirname, '..');
 const read = (...p) => readText(path.join(ROOT, ...p));
@@ -168,7 +169,7 @@ function everyOutcomeRun() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'console-no-ask-')));
   fixtureRoots.push(root);
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't'); git('commit', '-q', '--allow-empty', '-m', 'init');
+  initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); git('commit', '-q', '--allow-empty', '-m', 'init');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'autonomy: unattended\n');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-10-24T100000-record-7');

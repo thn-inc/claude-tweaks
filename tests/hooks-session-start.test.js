@@ -11,6 +11,7 @@ const ctxLib = require('../plugin/bin/lib/hooks/context');
 const deps = require('../plugin/bin/lib/deps');
 const { INTERACTION_STYLE_DIRECTIVE } = require('../plugin/bin/lib/hooks/interaction-style');
 const { fromTemplate, disableReceiveAutoGc } = require('./helpers/git-template');
+const { initRepo, writeIdentity } = require('./helpers/git-fixtures');
 
 // #3380: session-start.js reads the real ~/.claude/plugins/installed_plugins.json
 // through effectiveSuperpowersVersion unless a test injects `superpowersDeps`.
@@ -490,8 +491,7 @@ test('SessionStart fast-forwards a behind-and-clean integration branch via recon
   // single writer avoids that entirely rather than working around it.
   const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-seed-'));
   git(['clone', '-q', originDir, seedDir]);
-  git(['config', 'user.email', 'test@example.com'], seedDir);
-  git(['config', 'user.name', 'Test'], seedDir);
+  writeIdentity(seedDir, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(seedDir, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], seedDir);
   git(['commit', '-q', '-m', 'seed'], seedDir);
@@ -508,8 +508,7 @@ test('SessionStart fast-forwards a behind-and-clean integration branch via recon
 
   const mainDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-main-'));
   git(['clone', '-q', originDir, mainDir]);
-  git(['config', 'user.email', 'test@example.com'], mainDir);
-  git(['config', 'user.name', 'Test'], mainDir);
+  writeIdentity(mainDir, { name: 'Test', email: 'test@example.com' });
 
   // Origin moves ahead — mainDir is now strictly behind and clean.
   fs.writeFileSync(path.join(seedDir, 'b.txt'), 'two\n');
@@ -535,8 +534,7 @@ test('#413: a run carrying an unresolved console.json never crashes SessionStart
   // tests/console-execute.test.js's pure decideConsoleExecute unit tests).
   const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-console-')));
   execFileSync('git', ['init', '-q', '--initial-branch=main'], { cwd: project });
-  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: project });
-  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: project });
+  writeIdentity(project, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(project, 'a.txt'), 'one\n');
   execFileSync('git', ['add', 'a.txt'], { cwd: project });
   execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd: project });
@@ -555,8 +553,7 @@ test('#413: a run carrying an unresolved console.json never crashes SessionStart
 test('#561: a redTip finding from reconcile() renders as its own additionalContext line', async () => {
   const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-redtip-')));
   execFileSync('git', ['init', '-q', '--initial-branch=main'], { cwd: project });
-  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: project });
-  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: project });
+  writeIdentity(project, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(project, 'a.txt'), 'one\n');
   execFileSync('git', ['add', 'a.txt'], { cwd: project });
   execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd: project });
@@ -973,8 +970,7 @@ function prFirstRemoteFixture() {
 
   const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-spawn-seed-'));
   git(['clone', '-q', originDir, seedDir]);
-  git(['config', 'user.email', 'test@example.com'], seedDir);
-  git(['config', 'user.name', 'Test'], seedDir);
+  writeIdentity(seedDir, { name: 'Test', email: 'test@example.com' });
   fs.mkdirSync(path.join(seedDir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(seedDir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
   git(['add', '.claude-tweaks/policy.yml'], seedDir);
@@ -983,8 +979,7 @@ function prFirstRemoteFixture() {
 
   const mainDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-spawn-main-'));
   git(['clone', '-q', originDir, mainDir]);
-  git(['config', 'user.email', 'test@example.com'], mainDir);
-  git(['config', 'user.name', 'Test'], mainDir);
+  writeIdentity(mainDir, { name: 'Test', email: 'test@example.com' });
   return mainDir;
 }
 
@@ -1171,8 +1166,7 @@ test('SessionStart: a second session start inside the TTL short-circuits the inl
     disableReceiveAutoGc(originDir);
     const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-ttl-seed-'));
     git(['clone', '-q', originDir, seedDir]);
-    git(['config', 'user.email', 'test@example.com'], seedDir);
-    git(['config', 'user.name', 'Test'], seedDir);
+    writeIdentity(seedDir, { name: 'Test', email: 'test@example.com' });
     fs.mkdirSync(path.join(seedDir, '.claude-tweaks'), { recursive: true });
     fs.writeFileSync(path.join(seedDir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
     // Mirrors this repo's own .gitignore. Without it the cache file the
@@ -1187,8 +1181,7 @@ test('SessionStart: a second session start inside the TTL short-circuits the inl
 
     const mainDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-ttl-main-'));
     git(['clone', '-q', originDir, mainDir]);
-    git(['config', 'user.email', 'test@example.com'], mainDir);
-    git(['config', 'user.name', 'Test'], mainDir);
+    writeIdentity(mainDir, { name: 'Test', email: 'test@example.com' });
 
     function advanceOrigin(name) {
       fs.writeFileSync(path.join(seedDir, `${name}.txt`), `${name}\n`);
@@ -1260,9 +1253,7 @@ test('verdict banner: a throw from policy.resolveWorktreeAlways is swallowed —
 // the policy value, so the cache has something real to coalesce.
 function fixtureRepoNoPolicy() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-spawn-')));
-  execFileSync('git', ['-C', root, 'init', '-q', '-b', 'trunk']);
-  execFileSync('git', ['-C', root, 'config', 'user.email', 't@example.com']);
-  execFileSync('git', ['-C', root, 'config', 'user.name', 'T']);
+  initRepo(root, { name: 'T', email: 't@example.com', branch: 'trunk' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
   execFileSync('git', ['-C', root, 'add', 'a.txt']);
   execFileSync('git', ['-C', root, 'commit', '-q', '-m', 'base']);

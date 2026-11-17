@@ -6,13 +6,12 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { domainChurn } = require('../../../plugin/bin/lib/health-core/churn');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'health-core-churn-')); }
 
 function initGitRepo(root) {
-  execFileSync('git', ['-C', root, 'init', '-q']);
-  execFileSync('git', ['-C', root, 'config', 'user.email', 'test@test.com']);
-  execFileSync('git', ['-C', root, 'config', 'user.name', 'Test']);
+  initRepo(root, { name: 'Test', email: 'test@test.com' });
 }
 
 function commit(root, msg) {

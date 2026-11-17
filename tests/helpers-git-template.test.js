@@ -813,3 +813,106 @@ test('worktreeShapes copy: link points at this copy\'s wt, and wt and sub resolv
     }
   }
 });
+
+// #5771: one `git init` process per fixture repo, with the identity written as a config-file edit.
+test('AC1.1: initRepo starts exactly one git process for an init with an identity', () => {
+  const trace = mk('ct-gt-trace-');
+  const dir = path.join(mk('ct-gt-ir-'), 'r');
+  const returned = withEnv('GIT_TRACE2_EVENT', trace, () => gitFixtures.initRepo(dir, { name: 'Test', email: 'test@example.com' }));
+  assert.strictEqual(returned, dir);
+  assert.strictEqual(fs.readdirSync(trace).length, 1);
+  assert.ok(tracedArgvs(trace)[0].includes('init'), JSON.stringify(tracedArgvs(trace)));
+  assert.strictEqual(git(dir, ['config', 'user.name']), 'Test');
+  assert.strictEqual(git(dir, ['config', 'user.email']), 'test@example.com');
+});
+
+test('initRepo honours branch and bare', () => {
+  const branched = gitFixtures.initRepo(path.join(mk('ct-gt-irb-'), 'r'), { branch: 'trunk' });
+  assert.strictEqual(git(branched, ['symbolic-ref', '--short', 'HEAD']), 'trunk');
+  const bare = gitFixtures.initRepo(path.join(mk('ct-gt-irbare-'), 'r.git'), { bare: true, name: 'T', email: 't@t' });
+  assert.strictEqual(git(bare, ['rev-parse', '--is-bare-repository']), 'true');
+  assert.strictEqual(git(bare, ['config', '--local', 'user.name']), 'T');
+});
+
+test('writeIdentity values read back exactly as git config would', () => {
+  const name = 'A "Q" \\ B; #x';
+  const email = 'e@x.test';
+  // git prefers GIT_AUTHOR_*/GIT_COMMITTER_* over config (and CI exports GIT_AUTHOR_NAME), so the
+  // commit and log that read the identity back run without any of them.
+  const configOnlyEnv = Object.fromEntries(Object.entries(gitEnv()).filter(([k]) => !/^GIT_(AUTHOR|COMMITTER)_/.test(k)));
+  // Control: the unfiltered env does carry the identity variables, so the filter is what removes them.
+  assert.deepStrictEqual(Object.keys(gitEnv()).filter((k) => /^GIT_(AUTHOR|COMMITTER)_/.test(k)).sort(),
+    ['GIT_AUTHOR_EMAIL', 'GIT_AUTHOR_NAME', 'GIT_COMMITTER_EMAIL', 'GIT_COMMITTER_NAME']);
+
+  const plain = gitFixtures.initRepo(path.join(mk('ct-gt-wip-'), 'r'));
+  gitFixtures.writeIdentity(plain, { name, email });
+  const bare = gitFixtures.initRepo(path.join(mk('ct-gt-wib-'), 'r.git'), { bare: true });
+  gitFixtures.writeIdentity(bare, { name, email });
+  const main = gitFixtures.initRepo(path.join(mk('ct-gt-wim-'), 'r'));
+  git(main, ['commit', '-q', '--allow-empty', '-m', 'base']);
+  const wt = path.join(mk('ct-gt-wiw-'), 'wt');
+  git(main, ['worktree', 'add', '-q', wt, '-b', 'wt-5771']);
+  gitFixtures.writeIdentity(wt, { name, email });
+
+  for (const dir of [plain, bare, wt]) {
+    assert.strictEqual(git(dir, ['config', 'user.name']), name, dir);
+    assert.strictEqual(git(dir, ['config', 'user.email']), email, dir);
+  }
+  assert.strictEqual(git(main, ['config', '--local', 'user.name']), name, 'the worktree identity lands in the common config');
+  git(plain, ['commit', '-q', '--allow-empty', '-m', 'id'], configOnlyEnv);
+  assert.strictEqual(git(plain, ['log', '-1', '--format=%an <%ae>'], configOnlyEnv), 'A "Q" \\ B; #x <e@x.test>');
+});
+
+test('writeIdentity writes the bytes git config writes', () => {
+  // The `[user]` section to the end of the file; git's own file is only read here, never written by fs.
+  const userSection = (repo) => {
+    const text = fs.readFileSync(path.join(repo, '.git', 'config'), 'utf8');
+    const at = text.indexOf('[user]');
+    assert.notStrictEqual(at, -1, `${repo} has no [user] section`);
+    return text.slice(at);
+  };
+  for (const v of ['Test', 't@example.com', ' lead', 'trail ', 'a;b', 'a#b', 'A "Q" \\ B', 'tab\there', 'a\rb', 'a\nb']) {
+    const byGit = gitFixtures.initRepo(path.join(mk('ct-gt-wbg-'), 'r'));
+    git(byGit, ['config', 'user.name', v]);
+    const byHelper = gitFixtures.initRepo(path.join(mk('ct-gt-wbh-'), 'r'));
+    gitFixtures.writeIdentity(byHelper, { name: v });
+    assert.strictEqual(userSection(byHelper), userSection(byGit), JSON.stringify(v));
+  }
+  // Both keys, in the order the swept call sites ran them: email, then name.
+  const byGit = gitFixtures.initRepo(path.join(mk('ct-gt-wbg2-'), 'r'));
+  git(byGit, ['config', 'user.email', 't@example.com']);
+  git(byGit, ['config', 'user.name', 'Test']);
+  const byHelper = gitFixtures.initRepo(path.join(mk('ct-gt-wbh2-'), 'r'));
+  gitFixtures.writeIdentity(byHelper, { name: 'Test', email: 't@example.com' });
+  assert.strictEqual(userSection(byHelper), userSection(byGit), 'name and email');
+});
+
+test('initRepo resolves a relative dir against opts.cwd for the identity write', () => {
+  const parent = mk('ct-gt-irc-');
+  const leaf = `${path.basename(parent)}-r`; // a name the process cwd does not hold
+  assert.ok(!fs.existsSync(path.resolve(leaf)), 'control: the leaf is absent from the process cwd');
+  assert.strictEqual(gitFixtures.initRepo(leaf, { cwd: parent, name: 'T', email: 't@t' }), leaf);
+  assert.ok(!fs.existsSync(path.resolve(leaf)), 'nothing lands in the process cwd');
+  assert.strictEqual(git(path.join(parent, leaf), ['config', '--local', 'user.name']), 'T');
+  assert.strictEqual(git(path.join(parent, leaf), ['config', '--local', 'user.email']), 't@t');
+});
+
+test('writeIdentity starts the [user] section on its own line when the config lacks a final newline', () => {
+  const repo = gitFixtures.initRepo(path.join(mk('ct-gt-winl-'), 'r'));
+  const cfg = path.join(repo, '.git', 'config');
+  const before = fs.readFileSync(cfg, 'utf8').replace(/\n+$/, '');
+  fs.writeFileSync(cfg, before);
+  gitFixtures.writeIdentity(repo, { name: 'T', email: 't@t' });
+  assert.strictEqual(fs.readFileSync(cfg, 'utf8'), `${before}\n[user]\n\temail = t@t\n\tname = T\n`);
+  assert.strictEqual(git(repo, ['config', '--local', 'user.name']), 'T');
+});
+
+test('writeIdentity refuses a second identity and a non-repo', () => {
+  const dir = gitFixtures.initRepo(path.join(mk('ct-gt-wi2-'), 'r'), { name: 'T', email: 't@t' });
+  assert.throws(() => gitFixtures.writeIdentity(dir, { name: 'U' }), /already has a \[user\] section/);
+  const upper = gitFixtures.initRepo(path.join(mk('ct-gt-wiu-'), 'r'));
+  fs.appendFileSync(path.join(upper, '.git', 'config'), '[User]\n\tname = X\n');
+  assert.throws(() => gitFixtures.writeIdentity(upper, { email: 'u@u' }), /already has a \[user\] section/);
+  assert.throws(() => gitFixtures.writeIdentity(gitFixtures.initRepo(path.join(mk('ct-gt-wie-'), 'r')), {}), TypeError);
+  assert.throws(() => gitFixtures.writeIdentity(mk('ct-gt-nr-'), { name: 'T', email: 't@t' }), /not a git repository/);
+});

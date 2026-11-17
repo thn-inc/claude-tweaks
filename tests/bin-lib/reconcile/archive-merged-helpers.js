@@ -18,6 +18,7 @@ const { PROBE_ORDER } = require('../../../plugin/bin/lib/run-liveness');
 const { serializeManifestYaml } = require('../../../plugin/bin/lib/flow/manifest');
 const { archiveRunHeader } = require('../../../plugin/bin/lib/run-header-archive');
 const { fromTemplate, fromTemplateSet, disableReceiveAutoGc } = require('../../helpers/git-template');
+const { writeIdentity } = require('../../helpers/git-fixtures');
 
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -33,8 +34,7 @@ function initRepo(dir) {
   // Loose refs whatever the global init.defaultRefFormat: renameLooseBranch moves ref files.
   // Not `init --ref-format=files`, which git < 2.45 (Apple Git 2.39) rejects.
   git(dir, '-c', 'init.defaultRefFormat=files', 'init', '-b', 'main');
-  git(dir, 'config', 'user.email', 't@t');
-  git(dir, 'config', 'user.name', 't');
+  writeIdentity(dir, { name: 't', email: 't@t' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
   git(dir, 'add', 'a.txt');
   git(dir, 'commit', '-m', 'init');
@@ -432,13 +432,11 @@ function buildSeededOrigin({ origin, seed: s, clone: c }) {
   git(origin, 'init', '--bare', '-b', 'main');
   disableReceiveAutoGc(origin);
   git(s, 'clone', '-q', origin, '.');
-  git(s, 'config', 'user.email', 't@t');
-  git(s, 'config', 'user.name', 't');
+  writeIdentity(s, { name: 't', email: 't@t' });
   commitPath(s, 'a.txt', 'a\n');
   git(s, 'push', '-q', 'origin', 'main');
   git(c, 'clone', '-q', origin, '.');
-  git(c, 'config', 'user.email', 't@t');
-  git(c, 'config', 'user.name', 't');
+  writeIdentity(c, { name: 't', email: 't@t' });
 }
 
 function cloneOfSeededOrigin() {

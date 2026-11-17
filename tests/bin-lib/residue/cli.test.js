@@ -8,6 +8,7 @@ const path = require('node:path');
 const { runCliSync, spawnCli } = require('../../helpers/run-cli');
 const { STUB_SKIP } = require('../../helpers/path-stub');
 const { CLI } = require('./cli-helpers');
+const { writeIdentity } = require('../../helpers/git-fixtures');
 
 // The complete environment the CLI sees: its git and npm children need PATH, and HOME keeps a global
 // git config reachable. SystemRoot and USERPROFILE are what a Windows child needs to start.
@@ -42,8 +43,7 @@ function git(cwd, ...args) {
 function initRepo(prefix, branch = 'main') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   git(root, 'init', '-q', '-b', branch);
-  git(root, 'config', 'user.email', 'test@example.com');
-  git(root, 'config', 'user.name', 'Test');
+  writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   git(root, 'commit', '--allow-empty', '-q', '-m', 'init');
   return root;
 }

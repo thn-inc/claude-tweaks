@@ -9,6 +9,7 @@ const path = require('path');
 const { localHasMerge } = require('../../plugin/bin/lib/reconcile/archive-merged');
 const { installStub } = require('./path-stub');
 const { fromTemplate, fromTemplateSet, disableReceiveAutoGc } = require('./git-template');
+const { writeIdentity } = require('./git-fixtures');
 
 const HOOKS =path.join(__dirname, '..', '..', 'plugin', 'bin', 'hooks.js');
 
@@ -28,16 +29,14 @@ function pairedFixture() {
     disableReceiveAutoGc(origin);
 
     git(['clone', '-q', origin, seed]);
-    git(['config', 'user.email', 'test@example.com'], seed);
-    git(['config', 'user.name', 'Test'], seed);
+    writeIdentity(seed, { name: 'Test', email: 'test@example.com' });
     fs.writeFileSync(path.join(seed, 'a.txt'), 'one\n');
     git(['add', 'a.txt'], seed);
     git(['commit', '-q', '-m', 'seed'], seed);
     git(['push', '-q', 'origin', 'main'], seed);
 
     git(['clone', '-q', origin, main]);
-    git(['config', 'user.email', 'test@example.com'], main);
-    git(['config', 'user.name', 'Test'], main);
+    writeIdentity(main, { name: 'Test', email: 'test@example.com' });
   }, {
     origin: { prefix: 'ct-recon-origin-' },
     seed: { prefix: 'ct-recon-seed-' },
@@ -49,8 +48,7 @@ function pairedFixture() {
 function bareRepoRoot() {
   return fromTemplate('reconcile-fixtures:orphan', (root) => {
     git(['init', '-q', '--initial-branch=main'], root);
-    git(['config', 'user.email', 'test@example.com'], root);
-    git(['config', 'user.name', 'Test'], root);
+    writeIdentity(root, { name: 'Test', email: 'test@example.com' });
     fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
     git(['add', 'a.txt'], root);
     git(['commit', '-q', '-m', 'seed'], root);

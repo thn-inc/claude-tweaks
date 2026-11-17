@@ -19,6 +19,7 @@ const { substituteFile } = require(path.join(__dirname, '..', '..', '..', 'plugi
 const { derivePhases } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'timing', 'derive.js'));
 const { slotEnv } = require('../../helpers/suite-slot-env');
 const { readGitCalls } = require('../../helpers/git-call-recorder');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 const TMP_DIRS = [];
 after(() => { for (const d of TMP_DIRS) fs.rmSync(d, { recursive: true, force: true }); });
@@ -78,10 +79,8 @@ function declOf(impact = {}, overrides = {}) {
 function impactRepo(decl = declOf(), extraFiles = {}) {
   const repo = tmpDir();
   const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git('init', '-q');
+  initRepo(repo, { name: 'verify test', email: 'verify-test@example.invalid', cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   git('symbolic-ref', 'HEAD', 'refs/heads/main');
-  git('config', 'user.email', 'verify-test@example.invalid');
-  git('config', 'user.name', 'verify test');
   const files = {
     ...SCRIPTS,
     'src/x.js': 'x\n',

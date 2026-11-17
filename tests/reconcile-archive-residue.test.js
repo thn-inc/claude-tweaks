@@ -22,6 +22,7 @@ const {
   reconcileWithAsyncMerge,
   writePolicyViaSeedAndPull,
 } = require('./helpers/reconcile-fixtures');
+const { writeIdentity } = require('./helpers/git-fixtures');
 
 // Every non-dry reconcile() pass prunes the declined-learning store (#1399). The prune now anchors at
 // the pass's own cwd (#5376), but before that it resolved from process.cwd() to the main checkout
@@ -419,8 +420,7 @@ test('reconcile(): a scoped skipCacheStamp pass still persists the index entries
 function dryRunFixture() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-4180-')));
   git(['init', '-q', '--initial-branch=main'], root);
-  git(['config', 'user.email', 'test@example.com'], root);
-  git(['config', 'user.name', 'Test'], root);
+  writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], root);
   git(['commit', '-q', '-m', 'seed'], root);

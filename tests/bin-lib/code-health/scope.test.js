@@ -8,14 +8,12 @@ const { listSlices, contentHash, selectSlice, listWorkspaceSlices, gitChurn, sli
 const { MAX_STALE_DAYS } = require('../../../plugin/bin/lib/code-health/score');
 const { toPosix } = require('../../../plugin/bin/lib/shared-primitives');
 const { chmodDenialSkip } = require('../../helpers/root');
-const { cleanGitEnv } = require('../../helpers/git-fixtures');
+const { cleanGitEnv, initRepo, writeIdentity } = require('../../helpers/git-fixtures');
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-scope-')); }
 
 function initGitRepo(root) {
-  execFileSync('git', ['-C', root, 'init', '-q']);
-  execFileSync('git', ['-C', root, 'config', 'user.email', 'test@test.com']);
-  execFileSync('git', ['-C', root, 'config', 'user.name', 'Test']);
+  initRepo(root, { name: 'Test', email: 'test@test.com' });
 }
 
 // ─── sliceRecursive ────────────────────────────────────────────────────────
@@ -925,8 +923,7 @@ function envOnlyFixture() {
   const env = cleanEnv();
   const git = (args) => execFileSync('git', ['-C', B, ...args], { env, stdio: 'pipe' });
   git(['init', '-q']);
-  git(['config', 'user.email', 'test@test.com']);
-  git(['config', 'user.name', 'Test']);
+  writeIdentity(B, { name: 'Test', email: 'test@test.com' });
   fs.mkdirSync(path.join(B, 'src'), { recursive: true });
   fs.writeFileSync(path.join(B, 'src', 'a.js'), 'module.exports = 1;\n');
   git(['add', '-A']);
