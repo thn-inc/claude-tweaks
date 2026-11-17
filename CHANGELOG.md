@@ -53,6 +53,57 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.172.0](https://github.com/thn-inc/claude-tweaks/compare/v6.171.0...v6.172.0) (2026-11-17)
+
+
+### Features
+
+* Acceptance target resolution and the local pre-merge park ([#4615](https://github.com/thn-inc/claude-tweaks/issues/4615)) ([#5710](https://github.com/thn-inc/claude-tweaks/issues/5710)) ([c8a37ab](https://github.com/thn-inc/claude-tweaks/commit/c8a37ab9b4e000493eac22aac12232a64ab3840d))
+* Archive the spec header on the run branch before merge… ([#3976](https://github.com/thn-inc/claude-tweaks/issues/3976)) ([413ad43](https://github.com/thn-inc/claude-tweaks/commit/413ad43455f6c254423da7d3eaf5a08518f42bca))
+* Build a record named in a typed dispatch command without… ([#5584](https://github.com/thn-inc/claude-tweaks/issues/5584)) ([#5625](https://github.com/thn-inc/claude-tweaks/issues/5625)) ([3930b3a](https://github.com/thn-inc/claude-tweaks/commit/3930b3a7389bf459e057579782601ed0748e1bdd))
+* Diff tripwire ([#4619](https://github.com/thn-inc/claude-tweaks/issues/4619)) ([e989bb9](https://github.com/thn-inc/claude-tweaks/commit/e989bb910aa2c6f732d11442491b35bd7d6d77b9))
+* Guard direct multi-file node --test runs and steer them… ([#5547](https://github.com/thn-inc/claude-tweaks/issues/5547)) ([6cb97fc](https://github.com/thn-inc/claude-tweaks/commit/6cb97fc99a8927a6d2c088662c54047e2d8dd52b))
+* Run the review lens fan-out as a plugin workflow, behind… ([#5599](https://github.com/thn-inc/claude-tweaks/issues/5599)) ([#5819](https://github.com/thn-inc/claude-tweaks/issues/5819)) ([ecd6469](https://github.com/thn-inc/claude-tweaks/commit/ecd6469c0e1ac73461c570195f1452df95d95d03))
+* Upstream filing: automatic into owned repos, held for… ([#4621](https://github.com/thn-inc/claude-tweaks/issues/4621)) ([d368735](https://github.com/thn-inc/claude-tweaks/commit/d3687351e773322776964466804c4d7203516e52))
+
+
+### Bug Fixes
+
+* A typed dispatch command builds a record that carries… ([#5734](https://github.com/thn-inc/claude-tweaks/issues/5734)) ([#5788](https://github.com/thn-inc/claude-tweaks/issues/5788)) ([29f84ab](https://github.com/thn-inc/claude-tweaks/commit/29f84ab8b2723ff27e13da718275e53b573ab034))
+* console-resolve: design-decision items auto-resolve as… ([#4038](https://github.com/thn-inc/claude-tweaks/issues/4038)) ([b34ec52](https://github.com/thn-inc/claude-tweaks/commit/b34ec5264bc2fcdbafc8089519a4c8d6395e8ff4))
+* dispatch: a merged group's worktree can be deleted while… ([#4960](https://github.com/thn-inc/claude-tweaks/issues/4960)) ([1b5af3c](https://github.com/thn-inc/claude-tweaks/commit/1b5af3c18be39a1f4f61e7facd2efe2112f9ab07))
+* policy resolution in worktrees: gitignored policy.yml is… ([#4492](https://github.com/thn-inc/claude-tweaks/issues/4492)) ([12a781f](https://github.com/thn-inc/claude-tweaks/commit/12a781ff0715cd276759a232757e630809d183fc)), closes [#4494](https://github.com/thn-inc/claude-tweaks/issues/4494) [#4499](https://github.com/thn-inc/claude-tweaks/issues/4499)
+* pr-first: an armed merge never runs the closing-links… ([#4251](https://github.com/thn-inc/claude-tweaks/issues/4251)) ([36a4495](https://github.com/thn-inc/claude-tweaks/commit/36a449523405a48e2afa62d47a2bd56c519d9167))
+* verify.js baseline adjudication calls a SIGTERM-killed… ([#4424](https://github.com/thn-inc/claude-tweaks/issues/4424)) ([3f9d5d0](https://github.com/thn-inc/claude-tweaks/commit/3f9d5d0fa2125c54e3ba50716655f46e2f66d4b7))
+* wait-for.js never reports a child whose transcript quotes… ([#5706](https://github.com/thn-inc/claude-tweaks/issues/5706)) ([b284e82](https://github.com/thn-inc/claude-tweaks/commit/b284e8298052e09a369d864f1ac1009977c1b396))
+* Windows regression: 1 test file(s) newly failing after… ([#5689](https://github.com/thn-inc/claude-tweaks/issues/5689)) ([717e699](https://github.com/thn-inc/claude-tweaks/commit/717e699fd8d0238cbaee76cf8c56972de7d4f132))
+* Windows regression: six test files failing on main with… ([#5694](https://github.com/thn-inc/claude-tweaks/issues/5694)) ([e3f9474](https://github.com/thn-inc/claude-tweaks/commit/e3f947486de2816a618c7b08f70efa4678eff318))
+* Windows regression: tests failing after 4fb2fad30 (not… ([#5490](https://github.com/thn-inc/claude-tweaks/issues/5490)) ([40f6a34](https://github.com/thn-inc/claude-tweaks/commit/40f6a344bb5d46fd0d52ab2601f997d6a945e482))
+
+### Highlights
+* Added a diff tripwire that switches a run to local acceptance when the code touches migrations, auth, public contracts or irreversible actions nobody flagged.
+* verify.js starts fewer git processes on each run.
+* Even out the PR test gate's four shards so one slow shard no longer sets a roughly 3-minute wait.
+* Removed unused commands, flags and legacy code paths from the health sweep tools.
+* Added an optional way for `/claude-tweaks:review` to run its lens reviewers through one workflow script; it is off by default and falls back to the present dispatch where the Workflow tool is not available.
+* A dispatch run across several records no longer loses its working directory when one record's PR merges.
+* No behavior change: reopening a record that an auto-merged pr-first run left open already shipped. This adds tests for it and removes an outdated caveat from the merge procedure.
+* The unresolved-origin hint of the gated CLIs now says `--repo [host/]owner/name`, so a GitHub Enterprise user is told the host-qualified form.
+* Added a command that reads review lens replies, pairs them and logs the result in one call; nothing uses it until the workflow review path ships.
+* Fixed a leftover merge grant letting a record built from a typed dispatch command merge without review.
+* Dispatched agents now wait on child agents, CI checks and background processes with one blocking command instead of repeated sleep calls.
+* Documented more of the shell commands a worktree session's guard refuses, with the form that works for each, and added a maintainer replay that checks no harmless command is refused by the plugin's own gates.
+* `/claude-tweaks:review` now has its pairing command write the per-finding reproduction lines to the decision log itself, in one fixed form, instead of the reviewing session typing them.
+* Pipelines running in a worktree now read the main checkout's `.claude-tweaks/policy.yml` when the project keeps that file out of git, so draft PRs target the configured integration branch instead of the GitHub default.
+* Covered by #4492: worktree pipelines now read the main checkout's gitignored policy file.
+* Design-decision findings at the unattended Review Console now wait for a person instead of being marked as an applied patch.
+* A test file that was killed under load and then passes on its own no longer fails the run's verification gate.
+* Maintainer-side: the post-merge Windows check stops reporting failures in six test files. If a fix lands in shipped code under `plugin/`, the PR states its user-visible effect.
+* Typing a dispatch command that names a record, in a session a person launched, now builds it even without a build grant; runs started by a routine, a hub, a schedule or a message from another session still need the grant, and nothing merges without a merge grant.
+* Added acceptance-target resolution so work flagged as risky, or marked for local trial, stops before merge with its pull request open until you accept it locally.
+* Removed an unused review-coordination command and two unused entry shims.
+* Removed an unused claim-listing helper and stopped carrying an unread legacy key in multi-spec run manifests.
+
 ## [6.171.0](https://github.com/thn-inc/claude-tweaks/compare/v6.170.0...v6.171.0) (2026-11-16)
 
 

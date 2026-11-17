@@ -1,6 +1,6 @@
 # Health Filing Gate — Canonical Ask-Before-File Rule
 
-`code-health`, `harness-health`, `journey-health`, and `docs-health` each end their SELECT → JUDGE → VALIDATE/DEDUP → FILE pipeline with an interactive decision over which surviving findings actually become GitHub issues. This file is the one place that decision's *applicability*, *scope*, *placement*, *menu shape*, and *per-consumer batch table* are defined.
+`code-health`, `harness-health`, `journey-health`, `docs-health`, and `ci-health` each end their SELECT (ci-health's: GATHER) → JUDGE → VALIDATE/DEDUP → FILE pipeline with an interactive decision over which surviving findings actually become GitHub issues. This file is the one place that decision's *applicability*, *scope*, *placement*, *menu shape*, and *per-consumer batch table* are defined.
 
 **Consumers no longer inline this gate.** Each one's FILE step carries a short pointer here, conditioned on interactive mode. The reason is Applicability below: a headless Routine firing skips this gate outright, and scheduled firings are how these skills primarily run — so an inlined copy was a block every scheduled firing loaded and never executed. Reading this file is therefore the interactive path's cost, not every path's.
 
@@ -45,6 +45,7 @@ Each consumer renders the columns its own Finding Shape computes. Render the hea
 | `harness-health` | `\| # \| Title \| Category \| Classification \| Confidence \| Reversibility \| Recommended \|` | `confidence: high` or `med` → `"File issue"`; `low` → `"Capture"`. |
 | `journey-health` | `\| # \| Journey \| Category \| Section \| Severity \| Confidence \| Recommended \|` | `confidence: high` or `med` → `"File issue"`; `low` → `"Capture"`. |
 | `docs-health` | `\| # \| Title \| Category \| Misleads \| Classification \| Confidence \| Recommended \|` | `confidence: high` or `med` → `"File issue"`; `low` → `"Capture"`. |
+| `ci-health` | `\| # \| Title \| Check \| Workflow \| Subject \| Recommended \|` | Every row → `"File issue"`: a finding that survived `validate-findings` carries no confidence tier to grade. |
 
 A finding filtered out by that consumer's confidence/risk floor (`--min-confidence`, or code-health's `--min-risk`) never reaches this table at all — the `validate-findings` step already diverted it into the `remembered` cache before the FILE step runs.
 
@@ -56,8 +57,8 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/journey-health.js" mark "<payload.id>" declined 
 node "${CLAUDE_PLUGIN_ROOT}/bin/docs-health.js"    mark "<payload.id>" declined --root <root>
 ```
 
-`code-health` is the exception: its CLI has no `mark` subcommand and no persistent decline cache, so its "Dismiss" simply drops the finding.
+`code-health` and `ci-health` are the exceptions: neither CLI has a `mark` subcommand or a persistent decline cache, so their "Dismiss" simply drops the finding.
 
 Turning the resolved dispositions into `gh issue create` calls is **not** described here: that is the consumer's own conditioning sentence, which per Placement above must stay inline in its FILE step, immediately before its Type expression branch. Restating it here would put the sentence that scopes "every payload" in a file the headless path never reads.
 
-"Dismiss" always runs the consumer's own `mark <id> declined` CLI command so the same proposal doesn't reappear on a future firing — except `code-health`, whose CLI has no `mark` subcommand; its "Dismiss" description stays `"Drop this finding"` since it has no persistent decline cache to write to.
+"Dismiss" always runs the consumer's own `mark <id> declined` CLI command so the same proposal doesn't reappear on a future firing — except `code-health` and `ci-health`, whose CLIs have no `mark` subcommand; their "Dismiss" description stays `"Drop this finding"` since neither has a persistent decline cache to write to.
