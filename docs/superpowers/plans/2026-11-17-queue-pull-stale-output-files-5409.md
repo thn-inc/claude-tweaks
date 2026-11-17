@@ -21,14 +21,18 @@
 ## Review Focus
 
 1. A pull with a pass omitted (`omit`, test-only): the omitted pass's file is now absent rather than an earlier pull's — the existing `#5230 near-dup` control (queue-pull.test.js ~line 3110) asserted the earlier copy survives and must be updated, not deleted (Task 1 Step 4).
-2. A session path that is a directory (`queue-pull.test.js` ~line 1900 makes `dispatch-named-targets.json` one): `rmSync({ force: true })` throws on a directory, so the removal step prints one `queue-pull: <step>: ...` line and the pull goes on to the target-missing stop exactly as before (`errs.some(...)` still holds). Task 1 Step 4 re-runs that test.
-3. A pull whose target-missing probe now finds no named-targets file (named-targets threw): the probe's read fails and the pull stops with the existing target-missing stop line (exit 4 through the CLI) — never a probe over an earlier pull's records. No new code; it falls out of the removal. Pinned by the fixture's control (Task 1 Step 1).
+2. A session path that is a directory (`queue-pull.test.js` ~line 1900 makes `dispatch-named-targets.json` one): `rmSync({ force: true })` throws on a directory, so its removal prints one `queue-pull: rm-end-written: ...` line and the pull goes on to the target-missing stop exactly as before (`errs.some(...)` still holds). Each file is removed in its own `step` call, like `rm -f`, which goes on to its next operand after one fails: one loop inside a single step would stop at the directory (the first name) and leave the other four files stale. Task 1's fixture pins this (its directory case), and Task 1 Step 4 re-runs the `#5227` test.
+3. A pull whose target-missing probe now finds no named-targets file (named-targets threw): the probe's `readJson` fails (ENOENT) and the pull stops with the existing target-missing stop line (exit 4 through the CLI) — never a probe over an earlier pull's records. No new code; it falls out of the removal. Not separately pinned: the read-failure stop itself is pinned by `#5227 target-missing and shipped stops` (an unreadable file, the directory case), and the absent file reaches the same `readJson` throw and the same `if (!probe.ok)` stop; no test makes the named-targets compute itself throw, since it reads only `dispatch-groups.json`, which every earlier pass needs too.
 4. The `files` transport: none of the five is an agent input, so the removal never deletes an agent-written file. The conformance test of Task 2 pins the exact set, and the parity files run both transports.
 5. The fence and the module removing different sets (drift). Task 2's conformance test derives the fence's set from its own `rm -f` line and `--value` assignments and compares it with the module's exported constant.
+6. The readers after the pull: an absent file now means "no data from this pull". `cross-pr-overlap-report.md` renders nothing, `near-duplicate-pairs.md` and `drain-pr-overlap.md` find no pairs, and `driver-route.md` already passes `--near-dup-pairs` only when the pull wrote the file (`plugin/bin/lib/driver/merge.js` holds on an unreadable one, so the route must not pass an absent path). Task 3 states this in the three reader files.
 
 ---
 
 ### Task 1: Remove the five end-written files at pull start (module) and the fixture
+
+**Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/dispatch/queue-pull.js` (constant beside `ELIGIBILITY_FILES` ~line 550 or beside `SESSION_FILES`; `runTruncate` ~lines 175-185; `module.exports` ~line 1443)
@@ -53,6 +57,13 @@ test('#5409 (AC1, AC2): a pull whose cross-pr-overlap step throws leaves no earl
   const healthy = pull5(PIPE(), { before: seed });
   assert.equal(healthy.thrown, null, String(healthy.thrown));
   assert.ok(Array.isArray(JSON.parse(healthy.text['dispatch-crosspr-overlap.json'])), 'a list this pull computed');
+  // One removal failing (a directory at the first name) does not stop the other four (rm -f's per-operand behaviour).
+  const dirFirst = pull5(PIPE(), {
+    allowThrow: true,
+    before: (ctx) => { seed(ctx); fs.rmSync(ctx.paths['dispatch-named-targets.json']); fs.mkdirSync(ctx.paths['dispatch-named-targets.json']); },
+  });
+  assert.ok(dirFirst.errs.some((e) => e.startsWith('queue-pull: rm-end-written: ')), dirFirst.stderr);
+  for (const n of END_WRITTEN_FILES.filter((x) => x !== 'dispatch-named-targets.json')) assert.notEqual(dirFirst.text[n], STALE, `${n}: removed although an earlier removal failed`);
 });
 ```
 
@@ -65,7 +76,7 @@ Expected: FAIL after Step 1 — first on the `END_WRITTEN_FILES` import (undefin
 
 - [ ] **Step 3: Implement the removal in `runTruncate(ctx)`**
 
-Before the exclusions truncation, one `step(ctx, 'rm-end-written', () => { for (const name of END_WRITTEN_FILES) fs.rmSync(ctx.paths[name], { force: true }); })`. Comment it as `// #5409 (fence 44): ...` with the reason in one sentence: each of these files is written only at the end of its step, so a step that throws first would leave an earlier pull's copy for the pass or reader after it; the agent inputs and the exclusions file are not in the set. Update `runTruncate`'s header comment from `Fence lines 46-51.` to cover line 44 too.
+Before the exclusions truncation, one `step` per file: `for (const name of END_WRITTEN_FILES) step(ctx, 'rm-end-written', () => fs.rmSync(ctx.paths[name], { force: true }));` — never one loop inside a single step, which would stop at its first failure where `rm -f` goes on to its next operand (Review Focus 2). Comment it as `// #5409 (fence 44): ...` with the reason in one sentence: each of these files is written only at the end of its step, so a step that throws first would leave an earlier pull's copy for the pass or reader after it; the agent inputs and the exclusions file are not in the set. Update `runTruncate`'s header comment from `Fence lines 46-51.` to cover line 44 too.
 
 - [ ] **Step 4: Update the near-dup control and run the module suite**
 
@@ -83,6 +94,9 @@ git commit -F <message-file>   # "Remove the queue pull's five end-written sessi
 
 ### Task 2: Mirror into the fence within the byte rail, and pin the two sets equal
 
+**Role:** integration
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/skills/dispatch/queue-pull-script.md` — line 44 (today blank), line 8 (prose), line 242 (a node comment inside the grouping block)
 - Test: `tests/bin-lib/dispatch/queue-pull.test.js` (new conformance test beside the Task 1 test)
@@ -92,7 +106,7 @@ git commit -F <message-file>   # "Remove the queue pull's five end-written sessi
 
 - [ ] **Step 1: Write the failing test** `#5409: the fence's pull-start rm -f removes exactly the module's END_WRITTEN_FILES, before the exclusions truncation`
 
-Assertions: find the fence line that starts `rm -f ` and ends `# #5409: no earlier pull's copy`; map each `"$DISPATCH_X"` on it to its file through the fence's own `DISPATCH_X="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value NAME)"` assignment lines; `assert.deepEqual(names.sort(), [...END_WRITTEN_FILES].sort())`; assert the line's index in `FENCE.split('\n')` is below the index of the `# #1752: truncate dispatch-exclusions.json` line and above the last assignment line.
+Assertions: find the fence line that starts `rm -f ` and ends `# #5409: no earlier pull's copy`; map each `"$DISPATCH_X"` on it to its file through the fence's own `DISPATCH_X="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value NAME)"` assignment lines; `assert.deepEqual(names.sort(), [...END_WRITTEN_FILES].sort())`. Ordering, numerically, over `const lines = FENCE.split('\n')`: `rmIdx` = the rm line's index, `lastAssign` = the greatest index of a `session-tmp-resolve.js --value` assignment line, `truncIdx` = the index of the `# #1752: truncate dispatch-exclusions.json` line; each `findIndex` result is asserted `>= 0` first, then `assert.ok(lastAssign < rmIdx && rmIdx < truncIdx, \`last assignment ${lastAssign} < rm ${rmIdx} < truncation ${truncIdx}\`)` (every variable it names is assigned before it, and it runs before any pass).
 
 - [ ] **Step 2: Run it to verify it fails**
 
@@ -108,7 +122,7 @@ rm -f "$DISPATCH_NAMED_TARGETS" "$DISPATCH_SHIPPED_PROBE_PRS" "$DISPATCH_SHIPPED
 ```
 
 Pay for the bytes beyond the 37 of headroom with two restatement cuts, both within their own line:
-- Line 8: replace ` — no bypass: a spec-shape failure is not a risk anyone can accept, since \`/flow\`'s own Materialization gate would stop the named record anyway, after a claim and a spent retry attempt.` with `, with no \`#N\` bypass (\`not-spec-shaped-exclusion-report.md\` says why).` — the reason is stated in `not-spec-shaped-exclusion-report.md` (~line 28, "not a risk anyone can accept the way a human naming an oversized group accepts its …") and in `queue-pull-notes.md`'s Not-spec-shaped paragraph.
+- Line 8: replace ` — no bypass: a spec-shape failure is not a risk anyone can accept, since \`/flow\`'s own Materialization gate would stop the named record anyway, after a claim and a spent retry attempt.` with `, with no \`#N\` bypass (\`not-spec-shaped-exclusion-report.md\` says why).` — the instruction ("no bypass") stays on the line; the reason the cut drops is stated in full in `not-spec-shaped-exclusion-report.md` lines 25-29 ("There is no bypass: naming the record directly does not restore it, because `/flow`'s own Materialization gate would stop it anyway, after a claim and a spent retry attempt … not a risk anyone can accept"), and again in `queue-pull-notes.md` line 33 (the retry-ceiling and `auto:merge` consequence, "with no `#N`/`#N,#M,...` bypass") and `SKILL.md` line 148 ("no bypass, unlike Oversized").
 - Line 242: `  // Size guard (#1228): flagged, never removed from DISPATCH_GROUPS; only the ranking script excludes it.` becomes `  // Size guard (#1228): flagged, never removed from DISPATCH_GROUPS.` — line 6 of the same file states that only bare drain's auto-selection (the ranking script) excludes an oversized group.
 
 Run: `wc -c plugin/skills/dispatch/queue-pull-script.md` and `wc -l plugin/skills/dispatch/queue-pull-script.md`
@@ -124,6 +138,35 @@ Expected: every file passes, 0 failures; quote the runner's summary lines.
 ```bash
 git add plugin/skills/dispatch/queue-pull-script.md tests/bin-lib/dispatch/queue-pull.test.js
 git commit -F <message-file>   # "Mirror the pull-start removal of the five end-written files into the retained fence — paid for by two restatement cuts, line count unchanged (refs #5409)"
+```
+
+### Task 3: Say in the three readers that an absent file means no data
+
+**Role:** transcription
+**Review risk:** high
+
+**Files:**
+- Modify: `plugin/skills/dispatch/cross-pr-overlap-report.md` (line 15-17, "Read `dispatch-crosspr-overlap.json` … Non-empty: render one line per entry")
+- Modify: `plugin/skills/dispatch/near-duplicate-pairs.md` (lines 13-14, "rewritten by every queue pull")
+- Modify: `plugin/skills/dispatch/drain-pr-overlap.md` (line 55, the `dispatch-near-dup-pairs.json` argument)
+
+- [ ] **Step 1: Edit the three files**
+
+Edit each in place, rewrapping only the lines touched:
+- `cross-pr-overlap-report.md`: between the closing `detectCrossPRFileOverlap\`).` of the Read sentence and `Non-empty:` insert the sentence `Absent (the pull removes it at its start and a failed overlap step writes none, #5409) or empty: render nothing.`
+- `near-duplicate-pairs.md` step 1: the words `rewritten by every queue pull` become `removed at the start of every queue pull and rewritten by its near-dup-pairs pass, so it is absent when that pass failed or was omitted (#5409)`. Step 4 already omits the step on an absent file.
+- `drain-pr-overlap.md`: the parenthetical `(\`queue-pull-script.md\`'s output, strong pairs only)` gains `; read an absent file as \`[]\`, no pairs from this pull (#5409)` before its closing parenthesis.
+
+- [ ] **Step 2: Run the dispatch prose suites**
+
+Run: `node tools/run-tests.js` over every `tests/**/*.test.js` file that reads any of the three files (find them with `git grep -l -F -e cross-pr-overlap-report.md -e near-duplicate-pairs.md -e drain-pr-overlap.md -- tests`), foreground, timeout 1200000.
+Expected: 0 failures; quote the summary.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add plugin/skills/dispatch/cross-pr-overlap-report.md plugin/skills/dispatch/near-duplicate-pairs.md plugin/skills/dispatch/drain-pr-overlap.md
+git commit -F <message-file>   # "State in dispatch's three session-file readers that an absent file is no data — the queue pull now removes it at its start (refs #5409)"
 ```
 
 ## Proofs
