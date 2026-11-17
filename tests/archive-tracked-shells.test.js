@@ -46,6 +46,9 @@ function traced(dir, fn) {
 // module-level ENV (read at load) does not carry.
 const fixtureEnv = () => ({ ...cleanGitEnv(), ...IDENTITY });
 
+// The template builders' git runner: git in `cwd` under `env`, output untrimmed.
+const runnerFor = (env) => (cwd, ...args) => fixtureGit(args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+
 let seq = 0;
 
 // The addShell option objects a seeded fixture takes (IDENTICAL: the default twin).
@@ -66,7 +69,7 @@ function makeFixture(shells = []) {
     const env = fixtureEnv();
     const origin = path.join(dir, 'origin.git');
     const root = path.join(dir, 'main');
-    const run = (cwd, ...args) => fixtureGit(args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const run = runnerFor(env);
     fixtureGit(['init', '-q', '--bare', '-b', 'main', origin], { env });
     disableReceiveAutoGc(origin);
     fixtureGit(['clone', '-q', origin, root], { env });
@@ -943,7 +946,7 @@ function makeLocalOnlyFixture() {
   const base = fromTemplate('ats:local-only', (dir) => {
     const env = fixtureEnv();
     const root = path.join(dir, 'main');
-    const run = (cwd, ...args) => fixtureGit(args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const run = runnerFor(env);
     fixtureGit(['init', '-q', '-b', 'main', root], { env });
     run(root, 'config', 'core.autocrlf', 'false');
     fs.writeFileSync(path.join(root, '.gitignore'), readText(REPO_GITIGNORE));
@@ -1086,4 +1089,5 @@ test('#5845 AC3.1: a warm call of each templated fixture builder starts no git p
   const trace = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ats-trace-'));
   traced(trace, () => { for (const build of builders) build(); });
   assert.deepEqual(fs.readdirSync(trace), []);
+  fs.rmSync(trace, { recursive: true, force: true });
 });
