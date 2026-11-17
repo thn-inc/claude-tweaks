@@ -279,7 +279,11 @@ function runRow(dir, deps) {
 }
 
 // startedAt is an ISO string, so string order is time order; ties break on the run id.
-const newestFirst = (a, b) => (a.startedAt < b.startedAt ? 1 : a.startedAt > b.startedAt ? -1 : a.runId < b.runId ? 1 : a.runId > b.runId ? -1 : 0);
+function newestFirst(a, b) {
+  if (a.startedAt !== b.startedAt) return a.startedAt < b.startedAt ? 1 : -1;
+  if (a.runId !== b.runId) return a.runId < b.runId ? 1 : -1;
+  return 0;
+}
 
 // The steps a lane's cost is read from: the driver's own for the driver lane, the yield's otherwise.
 const costSteps = (row) => (row.lane === 'driver' ? (row.driverSteps || []) : row.steps);
