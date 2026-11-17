@@ -953,13 +953,13 @@ Each session reads the skill files and CLIs of the release it has installed. Wha
 
 No row stops, fails or restarts a run. Only a fresh run's `start` can refuse, and the one fresh case among the rows refuses before any step runs and releases the claim it holds. The absent-store branch refuses nothing, and a previous-release session ignores the store.
 
-**Removal condition.** The old form is the roster: `_shared/ceremony-profile.md`'s three tables and every sentence that skips a step by citing them. Removing it breaks no run in flight, because no run reads the new release's copy of it. A previous-release session reads the roster of the release it has installed, which the removal does not touch; a new-release session reads a store-less run through the absent-store branch, which reads `config.yml`, not the roster. So the condition counts files, not runs: the remove stage lands when no file under `plugin/` or `tests/` cites the roster by name or by tag, except the roster and its own test. C9, from the repository root:
+**Removal condition.** The old form is the roster: `_shared/ceremony-profile.md`'s three tables and every sentence that skips a step by citing them. Removing it breaks no run in flight, because no run reads the new release's copy of it. A previous-release session reads the roster of the release it has installed, which the removal does not touch; a new-release session reads a store-less run through the absent-store branch, which reads `config.yml`, not the roster. So the condition counts files, not runs: the remove stage lands when no file under `plugin/` or `tests/` cites the roster by name or by tag, except the roster, its own test and `build/plan-review.md`, whose plan-review `SKIP` text, `(roster tag plan-review)`, is read as a log line, not a citation. C9, from the repository root:
 
 ```
 git grep -l -E "ceremony-profile\.md|roster tag" -- plugin tests
 ```
 
-On 2026-11-17, at `bee556e906`, it prints 24 paths: the roster, its test, 18 other skill files and 4 other test files (`tests/build-plan-review-conformance.test.js`, `tests/express-lane-prose.test.js`, `tests/log-decision-text-file-sites-conformance.test.js`, `tests/plan-review-hard-gate-conformance.test.js`). The migrate stage drives the 18 skill files and the 4 tests to none, leaving 2 paths, and the remove stage deletes those 2. Data source: `git grep` over this repository, which sees every file in it and nothing outside it. It cannot see cloud routine runs, other machines, or consumer projects on an older release, and the condition does not need to: each of those reads the roster of the release it has installed, and a consumer that upgrades past the remove stage with a run open reaches the absent-store branch.
+On 2026-11-17, at the base (`git grep -l -E "ceremony-profile\.md|roster tag" f88beb9ecbef1f0b2560249df0d3ae70a96b4843 -- plugin tests`), it prints 24 paths: the roster, its test, 18 other skill files and 4 other test files (`tests/build-plan-review-conformance.test.js`, `tests/express-lane-prose.test.js`, `tests/log-decision-text-file-sites-conformance.test.js`, `tests/plan-review-hard-gate-conformance.test.js`). The migrate stage drives the 4 tests and 17 of the skill files to none. It rewrites `build/plan-review.md`'s prose citation (its line 172) but keeps the `SKIP` text, so 3 paths remain: the roster, its test and `build/plan-review.md`. The remove stage deletes the first 2 and drops the parenthetical from the third (Phase 4). Data source: `git grep` over this repository, which sees every file in it and nothing outside it. It cannot see cloud routine runs, other machines, or consumer projects on an older release, and the condition does not need to: each of those reads the roster of the release it has installed, and a consumer that upgrades past the remove stage with a run open reaches the absent-store branch.
 
 The absent-store branch has no removal condition (`### The remainder store`). Its load on this machine, counted with C10, `node store-count.js <main-checkout>/.claude-tweaks/pipelines`, where `store-count.js` is:
 
@@ -1024,7 +1024,7 @@ Process-efficiency Phase 4 has no other open record. #5600 and its sub-issues #5
 - Phase 6 needs a rule that does not exist yet. Phase 7 waits for the release that carries Phase 6.
 - Phases 2, 3, 4 and 5 reword the roster or files that cite it or are pinned by tests. Each must pass the full suite, and each names `.claude/skills/skill-prose-conformance-tests` and `.claude/skills/shared-contract-extraction` for its builder. Phases 4 and 6 add a removal or a policy key, so they name `.claude/skills/removal-condition-execution` and `.claude/skills/policy-key-addition`. No phase adds a driver step, so `.claude/skills/driver-step-addition` applies to none.
 
-Skill prose is read whole only up to 52,500 bytes. A phase that adds text to a skill file of 47,250 bytes or more says what it removes from that file, and it is done only when the file is no larger than it was at the phase's base. Sizes from `wc -c` at this design's base:
+Skill prose is read whole only up to 52,500 bytes. A phase that adds text to a skill file of 47,250 bytes or more says what it removes from that file. Every phase is done only when each skill file it edits is still under 52,500 bytes, and each file of 47,250 bytes or more is no larger than at the phase's base. Two edited files sit within about 2 KB of the threshold: `wrap-up/SKILL.md` (45,115 bytes, Phase 3) and `review/code-mode-steps.md` (below). Sizes from `wc -c {file}` at this design's base:
 
 | File | Bytes | Phases that edit it |
 |---|---|---|
@@ -1082,9 +1082,10 @@ No build. The maintainer answers; the answer is written into this section.
   - `wrap-up/flags.md` and `wrap-up/cleanup-procedures-execution.md`.
   - `tests/dispatch-prompt-cli-prose.test.js`, `tests/settle-blocker-landing-stop-conformance.test.js`, and the tests that pin any text this phase moves.
 - **Removes from near-limit files:**
-  - `flow/SKILL.md` gets one pointer sentence into `flow/run-graph-calls.md` at each of the three sites. It moves `### Examples` (2,225 bytes) to `flow/examples.md`.
-  - `dispatch/settle-and-merge.md` moves Step 6's Plan-review needs-human, No-dispatch-host and Blocker-landing special cases (4,118 bytes), with the new case, into `dispatch/settle-special-cases.md`, behind one pointer line.
-  - `wrap-up/cleanup-procedures-execution.md` folds Section E's four `skip the claim release` paragraphs (2,989 bytes) and the new fifth into one table.
+  - `flow/SKILL.md` gets one pointer sentence into `flow/run-graph-calls.md` at each of the three sites. It moves `### Examples` (2,226 bytes, `sed -n '87,107p' plugin/skills/flow/SKILL.md | wc -c`) to `flow/examples.md`.
+  - `dispatch/settle-and-merge.md` moves Step 6's Plan-review needs-human, No-dispatch-host and Blocker-landing special cases (4,119 bytes, `sed -n '113,117p' plugin/skills/dispatch/settle-and-merge.md | wc -c`), with the new case, into `dispatch/settle-special-cases.md`, behind one pointer line.
+  - `wrap-up/cleanup-procedures-execution.md` folds Section E's four `skip the claim release` paragraphs (2,990 bytes, `sed -n '334,341p' plugin/skills/wrap-up/cleanup-procedures-execution.md | wc -c`) and the new fifth into one table.
+  - The byte counts come from those commands, run from the repository root on this design's base, and include each block's trailing newline.
 - **Done when:**
   - A fresh run writes an `evaluated` store with `start`, `config` and `build` entries.
   - A run started on the previous release completes through the backfill at each resume point in `## Mixed-version operation`.
@@ -1092,7 +1093,7 @@ No build. The maintainer answers; the answer is written into this section.
   - Each of the three files above is no larger than at the phase's base.
   - The full suite passes.
 - **Waits for:** Phase 1 merged, and decision 0.1.
-- **Expected effect on #4031:** about three more Bash calls per run, and no change to wall time.
+- **Expected effect on #4031:** three more Bash calls per run, a count of the calls this phase adds (`--at start`, `--at config`, `--at build`), not a measurement. No change to wall time is expected.
 - **Builder skills:** `.claude/skills/skill-prose-conformance-tests`, `.claude/skills/shared-contract-extraction`.
 
 ## Phase 3 — Steps read the graph
@@ -1115,13 +1116,13 @@ No build. The maintainer answers; the answer is written into this section.
   - `build/plan-authoring-checks.md`: the two `sdd-whole-branch-review` citations shorten to the rule id. The example that cites the roster test's exemption table is dropped, or replaced by a shorter one.
   - `_shared/policy-schema.md`: the `design-ceremony` row's pointer to the roster's note becomes the value-collision decision itself, in one sentence no longer than the pointer.
 - **Done when:**
-  - C9 prints only the roster, its test and `build/plan-review.md`. That file stays because its plan-review `SKIP` text carries `(roster tag plan-review)`. The text is a decision-log line, which this phase keeps, not a citation.
+  - C9 prints only the roster, its test and `build/plan-review.md`, whose plan-review `SKIP` text, `(roster tag plan-review)`, is read as a log line, not a citation. This phase rewrites that file's prose citation (line 172) and keeps the log text.
   - Each near-limit file is no larger than at the phase's base.
   - A `fast-lane` run and a `standard` run each walk the graph `## Today's graph` gives them, plus the absent-surface additions.
   - The close check logs no `SKIP` on a run that walked every asserted step.
   - The full suite passes.
 - **Waits for:** Phase 2 merged. The two may ship in one release, because a run with no store reaches the absent-store branch either way.
-- **Expected effect on #4031:** both targets move slightly the wrong way: about one Bash call per `--step` site that runs, and `visual-review` loads on records with no `Surface:` line and no `frontend` path. No movement toward the targets is expected from this phase.
+- **Expected effect on #4031:** both targets move slightly the wrong way. By a count of named calls, not a measurement, a run gains one Bash call for `--at plan`, one for each `--step` site that runs and one for the close check; the gated steps' calls replace their `skill-gate.js` calls one for one. Records with no `Surface:` line and no `frontend` path also gain `visual-review` loads. No movement toward the targets is expected from this phase.
 - **Builder skills:** `.claude/skills/skill-prose-conformance-tests`, `.claude/skills/shared-contract-extraction`.
 
 ## Phase 4 — Remove the roster
@@ -1137,7 +1138,7 @@ No build. The maintainer answers; the answer is written into this section.
   - `git grep -l -F "ceremony-profile.md" -- plugin tests docs .claude/skills` prints only dated records under `docs/decisions/`, `docs/plans/` and `docs/superpowers/`.
   - The full suite passes.
 - **Waits for:**
-  - Phase 3 merged, with C9 down to the paths its done criterion names. That is the removal condition in `## Mixed-version operation`, with the plan-review `SKIP` text read as a log line, not a citation.
+  - Phase 3 merged, and the removal condition in `## Mixed-version operation` met. C9 prints only the roster, its test and `build/plan-review.md`, whose plan-review `SKIP` text, `(roster tag plan-review)`, is read as a log line, not a citation.
   - #3381 and #5292 (`## Open records`).
 - **Expected effect on #4031:** none expected, because skills cite the roster and do not read it while running.
 - **Builder skills:** `.claude/skills/removal-condition-execution`, `.claude/skills/skill-prose-conformance-tests`, `.claude/skills/shared-contract-extraction`.
@@ -1174,7 +1175,7 @@ No such rule exists yet. Every rule in `### Rules` is unchanged from today. This
   - The policy value `run-graph-rules`: a list of rule ids, empty by default, so the default reproduces today's graph.
   - Its removal condition, from `### Rules`. A rule's id moves into the default once the rule is "evidenced" over at least 20 runs that had it on. The value is removed when no rule in it is still off by default.
 - **Files:** `plugin/bin/lib/run-graph/`, `plugin/bin/lib/policy-schema.js`, `_shared/policy-schema.md` and a `_shared/policy-schema-*.md` sub-file, `docs/run-graph.md`, and their tests. No skill that asks `--step` changes, because skills state no rule.
-- **Removes from near-limit files:** `_shared/policy-schema.md` gets only a key-only row, `` | `run-graph-rules` | ``, and the full row goes in the sub-file, the split `## Model profiles` uses. The same file loses at least as many bytes as the phase adds there, and the record names them from the file as it then is. At this base, one candidate is the `## Model profiles` paragraph's split-out history, "(split out per IL-70 — merged branch content pushed this file over its ceiling)", 82 bytes.
+- **Removes from near-limit files:** `_shared/policy-schema.md` gets only a key-only row, `` | `run-graph-rules` | ``, and the full row goes in the sub-file, the split `## Model profiles` uses. The same file loses at least as many bytes as the phase adds there, and the record names them from the file as it then is. At this base, one candidate is the `## Model profiles` paragraph's split-out history, "(split out per IL-70 — merged branch content pushed this file over its ceiling)", 82 bytes with its leading space (`grep -o " (split out per IL-70 — merged branch content pushed this file over its ceiling)" plugin/skills/_shared/policy-schema.md | tr -d '\n' | wc -c`).
 - **Done when:**
   - With `run-graph-rules` unset, every Phase 1 test passes unchanged, and so does the C7 comparison.
   - With the rule's id set, the function leaves out the rule's step and no assertion fires.
