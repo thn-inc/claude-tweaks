@@ -223,15 +223,303 @@ The numbers come from one machine. Cloud routine runs are not in its run directo
 
 ## Step vocabulary
 
-<!-- filled by Task 3 -->
+A vocabulary step is the smallest unit the selection function may include or leave out on its own. Anything that always runs with its parent is part of the parent. Today a unit is left out in one of three ways: a profile skip in the roster, a selector outside the roster (the gates and conditions in Today's graph), or the unit's own check that it has nothing to work on, such as no `docs/REGISTRY.md` or no `## Manual Steps` section. Each of the three leaves a unit out while the rest of its skill runs, so each such unit is a step here. The 33 steps below are the closed list. Later sections use these names and no others.
+
+A setting that changes how much of a step runs, without leaving out a unit that has its own body, is a mode of the step, not a step. Three steps have modes today. `plan` composes a one-task micro-plan in place of `/superpowers:writing-plans` (`build/micro-plan.md`). `review-code` runs at one of five review-effort tiers, which set its lens scope and whether cross-lens corroboration, debate, refutation and the gap-sweep run (`review/code-mode-steps.md` Step 2.5). `wrap-up` runs under `fast-lane` with reflect in light mode, smaller curation budgets and the ceremony escape hatch armed (`wrap-up/SKILL.md` Reflect, The registry, Ceremony escape hatch). The effort-gated review passes are not steps, because the tier that selects them also sets the lens scope, which no step name can carry.
+
+Skill paths in this section and the two after it are relative to `plugin/skills/`.
+
+**Names.** A name the code already uses is kept where it names the same unit. `plan`, `tasks`, `test`, `polish`, `wrap-up` and `merge` are `PHASES` names (`plugin/bin/lib/timing/derive.js`); `plan-audit`, `plan-review` and `architecture-alignment` are roster tags; `stories`, `journeys`, `visual-review` and `simplify` are skill names. Four of the `PHASES` names span more than the step, because `derivePhases` bounds each phase by events: the `plan` phase runs from `/superpowers:writing-plans` to the start of `/superpowers:subagent-driven-development`, so it also holds `plan-audit`, `plan-review` and `design-pre-build`; the `tasks` phase runs from that start to the next `verify` event, which only a `verify.js --run` call writes (`writeVerifyEvent` in `plugin/bin/verify.js`) and the per-task test runs do not pass (`build/dispatch.md`, Affected-set testing), so it holds `whole-branch-review`, `simplify`, `architecture-alignment`, `journeys` and `docs-sync` unless an earlier `--run` call ends it; the `test` phase spans the whole skill, `qa` and `design-gate` included; the `merge` phase runs from the first push after wrap-up starts to the PR's merge time. The other names differ from their source as follows:
+
+- `worktree-setup` is build Spec Step 1 and Common Step 1, named for `build/worktree-setup.md`, which both follow.
+- `manual-steps` is build Spec Step 2.5; `docs-sync` is Common Step 6.5; `operational-checklist` is Common Step 5.5; `verify` is Common Step 5 (Final Verification), not the driver's `test` step.
+- `whole-branch-review` is roster tag `sdd-whole-branch-review`: the final review in `build/dispatch.md`'s "Whole-branch review model".
+- `design-pre-build`, `design-gate`, `design-review` and `polish` are `/claude-tweaks:design-wrapper`'s `pre-build`, `test`, `review` and `polish` modes; `design-gate` is test Step 1.5 (Design CLI gate) and `design-review` is review Step 6.5 (Design Quality Pass).
+- `qa` is `/claude-tweaks:test`'s QA story validation.
+- `review-spec`, `review-promises` and `review-hindsight` are roster tags `review-step-1`, `review-step-1.6` and `review-step-4`. `review-code` is review Steps 1.5, 2, 2.5, 3 and 7, which no roster row skips. `review-simplify` is review Step 5.
+- `security-hardening`, `agent-trust-scope` and `app-store-readiness` are review Steps 6.6, 6.65 and 6.66, named for the code-health focus criteria they reuse.
+- `creative-survey` and `depth-survey` are `/claude-tweaks:flow` Step 5's Creative Opportunities and Depth Opportunities surveys; the first is also a policy key.
+
+**Two process-efficiency phases already changed steps named here, and the table records the form on this commit.** Unit 4.2 (#5605, merged as `b3517f6602`) put a `skill-gate.js` call in front of `design-pre-build`, `journeys`, `design-gate`, `visual-review`, `design-review`, `polish` and `creative-survey` (`_shared/skill-load-gate.md`), so a skill with nothing to do is never loaded. The gate's verdict is an input to the selection function, not a second selector. Phase 6 (#5599, merged as `ecd6469c0e`) lets `review-code`'s agent lenses run through the plugin workflow `claude-tweaks:review-lens-fanout` when the policy key `review-lens-dispatch` resolves `workflow` (`review/step3-lens-dispatch.md`'s Workflow dispatch). The key defaults to `task` (`plugin/bin/lib/policy-schema.js`), and Task dispatch stays the fallback, so the step's unit and outputs are unchanged.
+
+**Model profile.** "Walker" means the agent walking the run performs the step itself. Under `/claude-tweaks:dispatch` that is the first Task call, `[Use: Capable]`, for `worktree-setup` through `design-gate`, and the second, `[Use: Standard]`, for `review-spec` onward (`dispatch/task-prompt.md`, First call and Second call). In a top-level `/claude-tweaks:flow` run it is the session's model. #4030 owns the first call's profile. The column records today's profiles and this design changes none.
+
+**Evidence.** The Evidence column names the Evidence rows that cover the step. A row's minutes are wall spans, idle time included, and its outcome counts are over the entries in which the step ran (`ranRuns`). A step that runs inside another step's span has no row of its own: it is marked "not measured separately", with the rows whose span holds it. A driver row is named as a step's driver counterpart where the driver step does the same work.
+
+| Step | What it does | Performer | Body today | Produces | Reads | Model profile today | Evidence |
+|---|---|---|---|---|---|---|---|
+| `worktree-setup` | Creates the worktree, materializes the record's spec as the branch's first commit, stamps the worktree in the run state and opens the draft PR | model, calling programs | build Spec Step 1 and Common Step 1: `materialize.js`, `/superpowers:using-git-worktrees`, `build/worktree-setup.md` (Step 4.5 `record-worktree`, Step 6 `pr-early-open.js`); under `/claude-tweaks:flow`, the worktree and the materialize commit come before `/claude-tweaks:build` is invoked (`flow/SKILL.md` Step 4) | the worktree and branch; `work/{n}-spec.md`; `run-state.json`'s `worktree` and `pr`; the draft PR under `pr-first`; `staged/premise-satisfied-{n}.md` when the record's `Premise-check:` already holds at base | the record (`materialize.js`); the Manifesto's ceremony verdict for an unlabeled record (`--ceremony`); `integration-model` | walker | not measured separately (inside E-standard-call-1, E-fast-lane-call-1, and E-standard-build, E-fast-lane-build for the part `/claude-tweaks:build` runs); driver counterpart E-driver-worktree |
+| `manual-steps` | Probes each `## Manual Steps` item, or each Deliverable when all are operational, for a CLI and credentials, then executes, seeds or escalates it | model | build Spec Step 2.5, `build/manual-steps.md` | executed operations; `ops` ledger rows for what it cannot run | `work/{n}-spec.md` (`## Manual Steps`, `## Deliverables`) | walker | not measured separately (inside E-standard-build, E-fast-lane-build) |
+| `plan` | Checks for an existing plan and for an already-satisfied record, probes the spec's `ASSUMPTION — verify at build:` lines, writes the plan, and runs the plan audit's floor. Mode: micro-plan | model; program for the floor (`plan-audit.js --bytes`, `--risk-proofs`) | build Spec Steps 2-3 (Design Steps 1-3 in design mode): `/superpowers:writing-plans`, or `build/micro-plan.md`; Common Step 1.5's Check D and Check G, which run on its skip path too | `docs/superpowers/plans/YYYY-MM-DD-{feature}.md`; one `decisions.md` line per assumption probe; on an already-shipped record, `OUTCOME: already-shipped` and a staged Close proposal | `work/{n}-spec.md` (for micro-plan: its header's `ceremony:` and `size:`, `### Key Files`, `Risk-flags:`); the materialize envelope's `premise` and `template`; an existing plan in `docs/superpowers/plans/` | walker | E-standard-plan, E-fast-lane-plan (the phase also holds `plan-audit`, `plan-review` and `design-pre-build`; a micro-plan run has no `plan` span) |
+| `plan-audit` | Audits the plan against the repository: every Files path exists, the `Scope keywords:` sweep, each task's `Expected: FAIL` pre-run, skill-file headroom, and spec coverage with `--spec`; adds missed files per the `scope-creep` policy | program (`plan-audit.js`); model routes its findings | build Common Step 1.5, `build/plan-audit.md` | the audit's JSON envelope; plan amendments | the plan file; `work/{n}-spec.md` (`--spec`); `config.yml`'s `ceremony-profile` (skip gate) | walker | not measured separately (inside E-standard-plan) |
+| `plan-review` | One reviewer reads the spec and the plan before any code and returns spec gaps, undecided behaviour and the other classes `build/plan-review.md` names; a resolvable finding amends the spec and plan, a needs-human spec gap stops the run | model | build Common Step 1.6, `build/plan-review.md` | `## Plan Review Clarifications` in `work/{n}-spec.md`; plan amendments in the same commit; a record comment; a re-audit with `plan-audit.js` | the worktree's `work/{n}-spec.md`; the plan file; `config.yml`'s `ceremony-profile`; `decisions.md` (an earlier review of the same plan in this run) | Capable (`build/plan-review.md` Dispatch) | not measured separately (inside E-standard-plan) |
+| `design-pre-build` | Loads Impeccable's references and the project's design context into the implementer prompts | model | build Common Step 1.7: `skill-gate.js`, then `/claude-tweaks:design-wrapper pre-build` (`build/design-prebuild.md`) | design references in the implementer prompts | the spec header's `surface:`; the design-integration setting; `PRODUCT.md` and `DESIGN.md` | walker | not measured separately (inside E-standard-plan, E-fast-lane-plan) |
+| `tasks` | Executes the plan: one implementer per task, each followed by its task review; probes for a dispatch tool first and catches up with the integration branch after the last task; routes blocked work to the ledger | model | build Common Step 2 (`build/dispatch.md`: `/superpowers:subagent-driven-development`, or `/superpowers:executing-plans` under `batched`), the dispatch-capability preflight at the head of Common Step 1.5, the pre-review catch-up (`pre-review-catchup.js`), and Common Step 4 | the build's commits; `sdd-dispatch-sample.txt` (the AC-forwarding check); ledger rows for blocked work | the plan file; `work/{n}-spec.md` (the Acceptance Criteria it forwards; the header's `size:`); `plan-audit.js --task-markers`; the composed `sdd-child` context bundle | implementer by the header's `size:`: `low` Fast, `medium` Standard, `high` Capable; a task's `Role:` marker and the `profile=` token override it; task review by `Review risk:` (`build/dispatch.md`) | E-standard-tasks, E-fast-lane-tasks; driver counterpart E-driver-worker, E-driver-commit |
+| `whole-branch-review` | SDD's final review of the whole branch after the last task review, with its fix wave and re-review | model | `build/dispatch.md` "Whole-branch review model" | review findings; fix-wave commits | the branch diff from the catch-up's `reviewBase`; `diff-facts.js` (`computeDiffFacts`); `config.yml`'s `ceremony-profile` and `plan-audit.js --count-tasks` (skip gate) | Capable; Standard on a diff of at most one implementation file and under 60 lines (`resolve-profile.js --diff-facts`, `build/dispatch.md`) | not measured separately (inside E-standard-tasks, E-fast-lane-tasks) |
+| `simplify` | Simplifies the build's changed code and logs the simplified tree | model | build Common Step 3: `/claude-tweaks:simplify` (the `code-simplifier:code-simplifier` agent) | a simplification commit; the `decisions.md` line `Common Step 3: simplify: scope simplified at {sha}` | the files the build changed | Standard (`simplify/SKILL.md`) | not measured separately (inside E-standard-tasks, E-fast-lane-tasks, which end at `verify`) |
+| `architecture-alignment` | Compares what was built with the spec and sorts each mismatch into Beneficial, Fix now or Update the spec; routes a module-level deviation to `/claude-tweaks:deepen` | model | build Common Step 4.5, `build/architecture-alignment.md` | fix commits; spec updates; ledger rows | `work/{n}-spec.md` or the design doc; the diff; `config.yml`'s `ceremony-profile` | walker | not measured separately (inside E-standard-tasks, which ends at `verify`) |
+| `journeys` | Documents the user journeys the build touched | model | build Common Step 6: `skill-gate.js`, then `/claude-tweaks:journeys` | `docs/journeys/*.md` | the files the build changed; the spec | walker | not measured separately (inside E-standard-tasks, E-fast-lane-tasks, which end at `verify`) |
+| `docs-sync` | Updates registered docs matching the changed files, or defers them to wrap-up | model | build Common Step 6.5, `build/docs-sync.md` | doc updates; deferrals to wrap-up | `docs/REGISTRY.md`; the changed files | walker | not measured separately (inside E-standard-tasks, E-fast-lane-tasks, which end at `verify`) |
+| `verify` | Applies Category A operational fixes, catches up with a moved base, runs types, lint and tests and fixes what fails; then closes the build (Common Step 7: the bookkeeping assertion, the handoff and the phase-exit push) | program (`verify.js`, `phase-exit.js`); model fixes failures | build Common Steps 5 and 7, `test/verification.md`, `_shared/pre-verification-catchup.md` | `report.json`; the runner pass stamp; a `verify` event; `VERIFICATION_PASSED` and `VERIFICATION_SHA`; the pushed branch under `pr-first` | `.claude-tweaks/verify-scope.json`; the project's CLAUDE.md commands; the tree `journeys` and `docs-sync` wrote | walker | not measured separately (inside E-standard-build, E-fast-lane-build); driver counterpart E-driver-test, E-driver-check |
+| `operational-checklist` | Runs the Category B operational tasks and writes a ledger row per operational finding (schema, env, IaC, CI, platform config), a `fixed` row per Category A fix included | model | build Common Step 5.5, `build/operational-checklist.md` | ledger rows; Category B results | the build's diff; `Category A` commits since the build started | walker | not measured separately (inside E-standard-build, E-fast-lane-build) |
+| `stories` | Browses the app and writes QA story YAML for the changed UI | model | `/claude-tweaks:stories`, inserted by `/claude-tweaks:flow` after the build (`flow/SKILL.md` Automatic story generation) | `stories/*.yaml`; `STORIES_DIR` and `DEV_URL` | `docs/journeys/*.md`; the dev server URL (`_shared/dev-url-detection.md`) | walker | not measured separately (`stories` nests in the enclosing phase, `NESTED_PARENT`) |
+| `test` | The test gate: the PR-bookkeeping check, verification unless `verify`'s pass still covers HEAD, the PR-check read, then `TEST_PASSED`; fix mode on a straightforward failure | program (`check-pr-bookkeeping.js`, `verify.js`, `pr-checks.js`); model in fix mode | `/claude-tweaks:test` Steps 0, 1 (the standard suite), 2 and 3 | `TEST_PASSED`; a pass stamp when it re-ran; fix commits; the phase-exit push | `VERIFICATION_PASSED` and `VERIFICATION_SHA` (from `verify`); `verify.js --stamp-status`; `run-state.json` (Step 0); the PR's checks (`_shared/pr-check-gate.md`) | walker | E-standard-test, E-fast-lane-test, E-none-test (the phase also holds `qa` and `design-gate`) |
+| `qa` | Selects the stories whose `source_files` meet the changed files and runs them in a browser | model | `/claude-tweaks:test`'s QA story validation, `test/qa-procedures.md` | `{run-dir}/report.json`; the QA pass stamp; `test/qa` ledger rows | `stories/*.yaml` (from `stories`, or already in the repository); `verify.js --changed-files --ignore-stamp`; `qa-stamp.js --check`; `DEV_URL` | qa-agent workers, `[Use: Standard]` (`test/qa-prompts.md`) | not measured separately (inside E-standard-test, E-fast-lane-test) |
+| `design-gate` | Runs the deterministic Impeccable CLI check on the changed frontend files; a `warning` finding fails the test gate | program (the Impeccable CLI, through the wrapper) | test Step 1.5: `skill-gate.js`, then `/claude-tweaks:design-wrapper test` (`test/design-gate.md`) | a Design CLI pass, fail or skip | `verify.js --changed-files --ignore-stamp`; `surface:` | walker | not measured separately (inside E-standard-test, E-fast-lane-test) |
+| `review-spec` | Checks deliverables, acceptance criteria, Non-Goals, risk markers, the Current State's outcome and PR-body deliverables against the spec; a significant gap or an unresolved risk marker is BLOCKED | model | review Step 1 (`review/code-mode-steps.md`) | the spec-compliance verdict in the review summary | `work/{n}-spec.md`, `plan-review`'s clarifications included; `decisions.md`'s `AC evidence` entries and their `evidence/` logs; the live PR body | walker | not measured separately (inside E-standard-review) |
+| `review-promises` | Updates a parent record's promise table and tracks forward assumptions | model | review Step 1.6, `review/cross-spec-promise-check.md` | updates to the parent's promise table | the parent record's `## Cross-Spec Promises` | walker | not measured separately (inside E-standard-review) |
+| `review-code` | The test gate (Step 1.5), the change set and its review effort, the code-review lenses with reproduction, corroboration or debate, tiebreak, routing and fix waves, then the summary, verdict and verdict comment. Mode: the review-effort tier | model; programs for coordination (`build-review-context.js`, `review-coordination.js`) | review Steps 1.5, 2, 2.5, 3 (3.5 to 3.7 and Step 3 Routing included) and 7; `review/step3-lens-dispatch.md` | findings; fix commits; the verdict; the review summary with its Key Learnings; the verdict PR comment; the phase-exit push | `TEST_PASSED`; `verify.js --stamp-status`; the `test/qa` ledger rows and QA results; `decisions.md` (the ledger's creation, `/build`'s not-run steps); the record's `risk:*` and `size:*` labels; `run-state.json`'s `pr` | lenses 3a and 3f Fast, 3b-3e and 3g Standard, 3h Capable (`review/step3-lens-dispatch.md`); tiebreak Capable or Standard per chunk (`review/step3-tiebreak.md`); refutation Capable and gap-sweep Frontier (`review/step3-debate-and-refutation.md`) | E-standard-review, E-fast-lane-review (the phase spans the whole skill: every `review-*` step and the gated passes after them) |
+| `review-hindsight` | Evaluates the approach in hindsight and applies "Change now" fixes | model | review Step 4: `/claude-tweaks:reflect` in hindsight mode | `review/hindsight` ledger rows; fix commits, each followed by a `/claude-tweaks:test` re-run | the scope Steps 2-3 analysed | walker | not measured separately (inside E-standard-review) |
+| `review-simplify` | Simplifies the review's file scope when a fix touched it after `simplify` | model | review Step 5: `/claude-tweaks:simplify` | simplification commits | the `## /build` line `Common Step 3: simplify: scope simplified at {sha}` in `decisions.md` (skip test); Step 2's own-work file scope | Standard (`simplify/SKILL.md`) | not measured separately (inside E-standard-review, E-fast-lane-review) |
+| `visual-review` | In code mode, a browserless recommendation naming the affected journeys; in full mode, a browser review of the running app | model | review Step 6: `skill-gate.js`, then `/claude-tweaks:visual-review` | "UI / Visual" findings, or the recommendation | Step 2's diff scope; `surface:`; `docs/journeys/*.md`; QA results; `DEV_URL` | Standard page and discover agents (`visual-review/page-mode.md`, `visual-review/discover-mode.md`) | not measured separately (inside E-standard-review, E-fast-lane-review) |
+| `design-review` | Impeccable's critique and audit of the changed UI files, plus Impeccable's finish reviewer when a direction contract exists; advisory | model | review Step 6.5: `skill-gate.js`, then `/claude-tweaks:design-wrapper review` | Design Quality findings; `staged/design-decision-*.md` | the changed UI files; `surface:`; the surface brief's direction contract | walker; the finish reviewer is a third-party agent | not measured separately (inside E-standard-review, E-fast-lane-review) |
+| `security-hardening` | Judges the client-side and route files in the diff against the security-hardening criterion | model | review Step 6.6, `review/focus-criterion-passes.md` | judged findings | Step 2's diff scope (pre-check: `CLIENT_DIR_RE`, `ROUTE_DIR_RE`) | walker | not measured separately (inside E-standard-review, E-fast-lane-review) |
+| `agent-trust-scope` | Judges changes to `.claude/settings.json` and `.claude-tweaks/policy.yml` | model | review Step 6.65, `review/focus-criterion-passes.md` | judged findings | Step 2's diff scope (pre-check: either file touched) | walker | not measured separately (inside E-standard-review, E-fast-lane-review) |
+| `app-store-readiness` | Judges the mobile-app files in the diff against the app-store-readiness criterion | model | review Step 6.66, `review/focus-criterion-passes.md` | judged findings | Step 2's diff scope (pre-check: a mobile-app signal) | walker | not measured separately (inside E-standard-review, E-fast-lane-review) |
+| `polish` | Impeccable's refinement set (polish, clarify, harden) plus the commands an audit finding names, then one re-verify when it changed code | model | the `/claude-tweaks:flow` polish phase: `skill-gate.js`, then `/claude-tweaks:design-wrapper polish` (`flow/polish-execution.md`), then `/claude-tweaks:test skip-qa` | code changes; a ledger entry; `decisions.md` `AUTO` and `STAGED` lines for `commands_invoked` and `staged_suggestions`; the phase-exit push, or the PR checklist row's removal on a skip | the review verdict (PASS); `config.yml`'s `ceremony-profile`; the branch's changed files; `surface:` and `design-intent:` | walker | E-standard-polish |
+| `wrap-up` | Establishes the run, reflects, routes each learning through the curation registry, settles leftovers and the ledger, runs the Review Console, executes the approved actions, then closes and archives the run. Mode: `standard` or `fast-lane` | model; programs (`wrap-up-engine.js`, `wrap-up-pack.js`, `phase-timing.js`) | `/claude-tweaks:wrap-up` Phases 1-4 | applied and staged curation items; the console's resolutions; acceptance labeling; the closing carrier commit; `close-run`; the archived run directory; the phase-trace report | the review summary (Step 1's verdict, findings, Key Learnings); `config.yml`'s `ceremony-profile` and `mode`; `decisions.md`; `staged/`; the ledger; `report.json`'s `flakyEscalation`; the plan file (the packet snapshot) | walker; curation judgment Capable per row with three or more open rows, else one Frontier agent (`wrap-up/curation-engine.md`) | E-standard-wrap-up, E-fast-lane-wrap-up, E-none-wrap-up, E-express-wrap-up |
+| `merge` | With a merge authorized under `pr-first`: the `merge-check` content judgment, then `_shared/pr-first-merge.md`: acceptance labeling landed, mark ready, the merge-verification gate (CI) and `gh pr merge --auto` | model, calling programs | the Auto-merge short-circuit in wrap-up's Review Console (`wrap-up/auto-merge-short-circuit.md`), or `dispatch/settle-and-merge.md`'s Auto-merge gate; `_shared/pr-first-merge.md` | a merged or armed PR, or `pending-review` | the record's live `auto:build` and `auto:merge` labels; `wrap-up-pack.json`'s `inputs.closingRecords`; `run-state.json`'s `pr`; `verify.json`'s `acceptance-labeling` row; `engine-state.json` (the curation-apply guard); the PR's checks | walker | E-standard-merge, E-fast-lane-merge (CI and human waits included); driver counterpart E-driver-ci |
+| `creative-survey` | Ranks creative Impeccable commands worth running by hand; recommends only | model | `/claude-tweaks:flow` Step 5: `skill-gate.js`, then `/claude-tweaks:design-wrapper survey` (`flow/survey.md`) | the Creative Opportunities block | the full diff's changed files; the prior-recommendations cache (decline detection) | walker | not measured separately |
+| `depth-survey` | Ranks shallow-module candidates in the changed source files; recommends only | model | `/claude-tweaks:flow` Step 5: `/claude-tweaks:deepen`'s analysis-only path (`flow/survey.md`) | the Depth Opportunities block; `staged/deepen-collapse-{n}.patch` | the changed source files | walker | not measured separately |
 
 ## Not a step
 
-<!-- filled by Task 3 -->
+These names appear in the sources the vocabulary was built from and are not steps. Each is a container of steps, the run's frame before the first step, a selector, a skill outside the run, a utility any step may call, or a stop inside a step.
+
+| Name | Source | Reason |
+|---|---|---|
+| `call-1`, `call-2` | `PHASES` | A container: the span of one `/claude-tweaks:flow` invocation (`derivePhases`), which `/claude-tweaks:dispatch` makes once per Task call (`dispatch/two-call-gate.md`). It holds steps; the function selects the steps, not the call that runs them. |
+| `call-3` to `call-6` | `timing.json` phases outside `PHASES` | The same container for a later `/claude-tweaks:flow` invocation in the same run directory: a context-handoff continuation (`flow/context-handoff.md`), or a resumed or repeated call. |
+| `build` | Allowed Steps; `PHASES` | A skill holding the steps `worktree-setup` through `operational-checklist`. `/claude-tweaks:flow`'s step argument names it, and its phase spans the whole skill. |
+| `review` | Allowed Steps; `PHASES` | A skill holding the steps `review-spec` through `app-store-readiness`. |
+| `review-console` | Allowed Steps, the text under the table | A resume-only entry for a multi-spec run that re-presents the consolidated console. It re-enters `wrap-up`'s console and runs no step of its own. |
+| `specify` | `timing.json` | `/claude-tweaks:specify` shapes the record before any run, and is not allowed in `/claude-tweaks:flow` (Allowed Steps). |
+| `tidy`, `visualize`, `dispatch` | `timing.json`; `tidy` is also row E-standard-tidy | Skills outside a run's steps: `tidy` is not allowed in `/claude-tweaks:flow`, `visualize` is a utility skill, and `dispatch` is the queue consumer that starts runs. `derivePhases` opens a phase for any top-level skill invocation it finds in the run's events, so these phases are invocations that landed in a run directory. |
+| `red-team-persona` | roster, `## Skips by profile` | A `/claude-tweaks:specify` step (`specify/red-team.md`) that runs before any run. |
+| `capture` | `NESTED_PARENT` | A utility any step may call to file a follow-up record; not allowed in `/claude-tweaks:flow`. |
+| `challenge` | `NESTED_PARENT` | Called from `/claude-tweaks:specify` and `/claude-tweaks:backlog`, before a run; no step of a run calls it. |
+| `ledger` | `NESTED_PARENT` | A knowledge dependency the steps read and write; its own description says it is never invoked through the Skill tool. |
+| `policy`, `fetch`, `eligibility`, `admission` | `STEP_NAMES` | The driver lane's entry: they decide whether a record enters the lane, which this design leaves unchanged (Non-goals). The standard lane reads policy and the record in `/claude-tweaks:flow`'s pre-flight and Manifesto, before the first step. |
+| `claim`, `run-dir` | `STEP_NAMES` | The run's frame. The standard lane claims at `/claude-tweaks:flow` Step 2.8 (`flow/claim-targets.md`) and has its run directory before any step runs. |
+| `review` (driver) | `STEP_NAMES` | The driver's read-only reviewer worker, whose findings count only with a red test (`docs/driver.md`, The reviewer step). No standard-lane step works that way; it stays the driver's. |
+| `set-config`, `summary` | `STEP_NAMES` | Bookkeeping: `set-config` writes the run's `config.yml` from `check`'s `configSet`, and `summary` logs one decision line (`plugin/bin/lib/driver/steps.js`). |
+| Ceremony-Aware Step Selection | review (`review/code-mode-steps.md`) | A selector: the `fast-lane` skip of review Steps 1, 1.6 and 4. Roster replacement covers it. |
+| Diff-derived ceremony default | wrap-up (`wrap-up/SKILL.md`) | A selector: `ceremony-derive.js`'s narrowing of `standard` to `fast-lane` at wrap-up. Roster replacement covers it. |
+| Common Steps 3 + 4.5 | build (`build/SKILL.md`) | An ordering rule: `simplify` finishes, its commit included, before `architecture-alignment` starts. |
+| HARD-GATEs | roster, `## Never skipped` | A set of stops, each inside a step. The HARD-GATE row of `_shared/auto-mode-contract.md` lists them: review Step 1 (`review-spec`); review Step 1.5's test gate (`review-code`); `/build` Design Step 3's plan validation (`plan`); the plan audit's hard fails (`plan-audit`, with Check D in `plan`); test Step 0 (`test`); the adopted-branch collision stop (`worktree-setup`); the plan-review needs-human spec gap (`plan-review`); `/claude-tweaks:flow` Step 2.7's design-doc rejection and the multi-spec boundary-freshness escalation, both in the run's frame; and `/release` Step 4, outside any run. Never skipped places each. |
+
+### Placement list
+
+Every name collected for the vocabulary, mapped to a vocabulary step, to "part of" one, or to Not a step. The sources are `flow/steps-and-gates.md`'s Allowed Steps table and the text under it; the numbered step headings of `build/SKILL.md` and `test/SKILL.md`; the step headings of `review/code-mode-steps.md`; the phase headings of `wrap-up/SKILL.md` and the headings under them; `PHASES` and `NESTED_PARENT` in `plugin/bin/lib/timing/derive.js` and the `timing.json` phases outside `PHASES`; `STEP_NAMES` in `plugin/bin/lib/driver/events.js`; and the rows of the roster's `## Skips by profile` and `## Never skipped`. A driver step placed as part of a vocabulary step does that step's work in the driver lane; the driver keeps its own body.
+
+| Name | Source | Placement |
+|---|---|---|
+| `build` | Allowed Steps | Not a step |
+| `stories` | Allowed Steps | `stories` |
+| `test` | Allowed Steps | `test` (the skill also runs `qa` and `design-gate`) |
+| `review` | Allowed Steps | Not a step |
+| `polish` | Allowed Steps | `polish` |
+| `wrap-up` | Allowed Steps | `wrap-up` |
+| `re-verify` | Allowed Steps, text | part of `polish` |
+| `review-console` | Allowed Steps, text | Not a step |
+| `build Spec Step 1` | `build/SKILL.md` | part of `worktree-setup` |
+| `build Spec Step 2` | `build/SKILL.md` | part of `plan` |
+| `build Spec Step 2.5` | `build/SKILL.md` | `manual-steps` |
+| `build Spec Step 3` | `build/SKILL.md` | `plan` |
+| `build Design Step 1` | `build/SKILL.md` | part of `plan` |
+| `build Design Step 2` | `build/SKILL.md` | part of `plan` |
+| `build Design Step 3` | `build/SKILL.md` | part of `plan` |
+| `build Common Step 1` | `build/SKILL.md` | part of `worktree-setup` |
+| `build Common Step 1.5` | `build/SKILL.md` | `plan-audit` (its floor, Check D and Check G, is part of `plan`; its dispatch-capability preflight is part of `tasks`) |
+| `build Common Step 1.6` | `build/SKILL.md` | `plan-review` |
+| `build Common Step 1.7` | `build/SKILL.md` | `design-pre-build` |
+| `build Common Step 2` | `build/SKILL.md` | `tasks` (its final whole-branch review is `whole-branch-review`) |
+| `build Common Steps 3 + 4.5` | `build/SKILL.md` | Not a step |
+| `build Common Step 3` | `build/SKILL.md` | `simplify` |
+| `build Common Step 4` | `build/SKILL.md` | part of `tasks` |
+| `build Common Step 4.5` | `build/SKILL.md` | `architecture-alignment` |
+| `build Common Step 6` | `build/SKILL.md` | `journeys` |
+| `build Common Step 6.5` | `build/SKILL.md` | `docs-sync` |
+| `build Common Step 5` | `build/SKILL.md` | `verify` |
+| `build Common Step 5.5` | `build/SKILL.md` | `operational-checklist` |
+| `build Common Step 7` | `build/SKILL.md` | part of `verify` (it closes the build, after `operational-checklist` when that step runs) |
+| `test Step 0` | `test/SKILL.md` | part of `test` |
+| `test Step 1` | `test/SKILL.md` | `test` (its QA story run is `qa`) |
+| `test Step 1.5` | `test/SKILL.md` | `design-gate` |
+| `test Step 2` | `test/SKILL.md` | part of `test` |
+| `test Step 3` | `test/SKILL.md` | part of `test` |
+| `review Ceremony-Aware Step Selection` | `review/code-mode-steps.md` | Not a step |
+| `review Step 1` | `review/code-mode-steps.md` | `review-spec` |
+| `review Step 1.5` | `review/code-mode-steps.md` | part of `review-code` |
+| `review Step 1.6` | `review/code-mode-steps.md` | `review-promises` |
+| `review Step 2` | `review/code-mode-steps.md` | part of `review-code` |
+| `review Step 2.5` | `review/code-mode-steps.md` | part of `review-code` |
+| `review Step 3` | `review/code-mode-steps.md` | `review-code` |
+| `review 3g-cov` | `review/code-mode-steps.md` | part of `review-code` |
+| `review 3h` | `review/code-mode-steps.md` | part of `review-code` |
+| `review 3i` | `review/code-mode-steps.md` | part of `review-code` |
+| `review 3j` | `review/code-mode-steps.md` | part of `review-code` |
+| `review Cross-Lens Corroboration` | `review/code-mode-steps.md` | part of `review-code` |
+| `review Step 3.5 & 3.6` | `review/code-mode-steps.md` | part of `review-code` |
+| `review Step 3.7` | `review/code-mode-steps.md` | part of `review-code` |
+| `review Step 3 Routing` | `review/code-mode-steps.md` | part of `review-code` |
+| `review Step 4` | `review/code-mode-steps.md` | `review-hindsight` |
+| `review Step 5` | `review/code-mode-steps.md` | `review-simplify` |
+| `review Step 6` | `review/code-mode-steps.md` | `visual-review` |
+| `review Step 6.5` | `review/code-mode-steps.md` | `design-review` |
+| `review Step 6.6` | `review/code-mode-steps.md` | `security-hardening` |
+| `review Step 6.65` | `review/code-mode-steps.md` | `agent-trust-scope` |
+| `review Step 6.66` | `review/code-mode-steps.md` | `app-store-readiness` |
+| `review Step 6.7` | `review/code-mode-steps.md` | part of `visual-review`, `design-review`, `security-hardening`, `agent-trust-scope` and `app-store-readiness` (it routes their findings once, after the last of them) |
+| `review Step 7` | `review/code-mode-steps.md` | part of `review-code` |
+| `wrap-up Phase 1 ESTABLISH` | `wrap-up/SKILL.md` | part of `wrap-up` |
+| `wrap-up Identify the work context` | `wrap-up/SKILL.md` | part of `wrap-up` |
+| `wrap-up Summarize completed work` | `wrap-up/SKILL.md` | part of `wrap-up` |
+| `wrap-up Establish the run directory` | `wrap-up/SKILL.md` | part of `wrap-up` |
+| `wrap-up Diff-derived ceremony default` | `wrap-up/SKILL.md` | Not a step |
+| `wrap-up Reflect` | `wrap-up/SKILL.md` | part of `wrap-up` |
+| `wrap-up Ceremony escape hatch` | `wrap-up/SKILL.md` | part of `wrap-up` |
+| `wrap-up Phase 2 ROUTE` | `wrap-up/SKILL.md` | part of `wrap-up` |
+| `wrap-up The registry` | `wrap-up/SKILL.md` | part of `wrap-up` |
+| `wrap-up Run the engine` | `wrap-up/SKILL.md` | part of `wrap-up` |
+| `wrap-up Phase 3 SETTLE` | `wrap-up/SKILL.md` | part of `wrap-up` |
+| `wrap-up Leftover work` | `wrap-up/SKILL.md` | part of `wrap-up` |
+| `wrap-up Efficiency budget` | `wrap-up/SKILL.md` | part of `wrap-up` |
+| `wrap-up Nothing left behind` | `wrap-up/SKILL.md` | part of `wrap-up` |
+| `wrap-up Newly unblocked records` | `wrap-up/SKILL.md` | part of `wrap-up` |
+| `wrap-up Phase 4 CLOSE` | `wrap-up/SKILL.md` | part of `wrap-up` |
+| `wrap-up Plan cleanup actions` | `wrap-up/SKILL.md` | part of `wrap-up` |
+| `wrap-up Wrap-Up Review Console` | `wrap-up/SKILL.md` | part of `wrap-up` (its Auto-merge short-circuit is `merge`) |
+| `wrap-up Execute approved actions` | `wrap-up/SKILL.md` | part of `wrap-up` |
+| `wrap-up The phase-trace report` | `wrap-up/SKILL.md` | part of `wrap-up` |
+| `PHASES call-1` | `PHASES` | Not a step |
+| `PHASES call-2` | `PHASES` | Not a step |
+| `PHASES build` | `PHASES` | Not a step |
+| `PHASES plan` | `PHASES` | `plan` |
+| `PHASES tasks` | `PHASES` | `tasks` |
+| `PHASES test` | `PHASES` | `test` |
+| `PHASES review` | `PHASES` | Not a step |
+| `PHASES polish` | `PHASES` | `polish` |
+| `PHASES wrap-up` | `PHASES` | `wrap-up` |
+| `PHASES merge` | `PHASES` | `merge` |
+| `timing.json call-3` | `timing.json` | Not a step |
+| `timing.json call-4` | `timing.json` | Not a step |
+| `timing.json call-5` | `timing.json` | Not a step |
+| `timing.json call-6` | `timing.json` | Not a step |
+| `timing.json specify` | `timing.json` | Not a step |
+| `timing.json visualize` | `timing.json` | Not a step |
+| `timing.json dispatch` | `timing.json` | Not a step |
+| `timing.json tidy` | `timing.json` (row E-standard-tidy) | Not a step |
+| `NESTED_PARENT simplify` | `NESTED_PARENT` | `simplify` (the skill is also the body of `review-simplify`) |
+| `NESTED_PARENT reflect` | `NESTED_PARENT` | part of `wrap-up` (the skill is also the body of `review-hindsight`) |
+| `NESTED_PARENT visual-review` | `NESTED_PARENT` | `visual-review` |
+| `NESTED_PARENT capture` | `NESTED_PARENT` | Not a step |
+| `NESTED_PARENT design-wrapper` | `NESTED_PARENT` | part of `design-pre-build`, `design-gate`, `design-review`, `polish` and `creative-survey` (the body of each, by mode) |
+| `NESTED_PARENT challenge` | `NESTED_PARENT` | Not a step |
+| `NESTED_PARENT assess-agent-autonomy` | `NESTED_PARENT` | part of `merge` (its `merge-check` mode) |
+| `NESTED_PARENT ledger` | `NESTED_PARENT` | Not a step |
+| `NESTED_PARENT journeys` | `NESTED_PARENT` | `journeys` |
+| `NESTED_PARENT stories` | `NESTED_PARENT` | `stories` |
+| `NESTED_PARENT deepen` | `NESTED_PARENT` | `depth-survey` |
+| `NESTED_PARENT feedback` | `NESTED_PARENT` | part of `wrap-up` (the Upstream feedback row files through it) |
+| `STEP_NAMES policy` | `STEP_NAMES` | Not a step |
+| `STEP_NAMES fetch` | `STEP_NAMES` | Not a step |
+| `STEP_NAMES eligibility` | `STEP_NAMES` | Not a step |
+| `STEP_NAMES admission` | `STEP_NAMES` | Not a step |
+| `STEP_NAMES claim` | `STEP_NAMES` | Not a step |
+| `STEP_NAMES run-dir` | `STEP_NAMES` | Not a step |
+| `STEP_NAMES worktree` | `STEP_NAMES` | part of `worktree-setup` |
+| `STEP_NAMES worker` | `STEP_NAMES` | part of `tasks` |
+| `STEP_NAMES commit` | `STEP_NAMES` | part of `tasks` |
+| `STEP_NAMES test` | `STEP_NAMES` | part of `verify` |
+| `STEP_NAMES check` | `STEP_NAMES` | part of `verify` |
+| `STEP_NAMES review` | `STEP_NAMES` | Not a step |
+| `STEP_NAMES push` | `STEP_NAMES` | part of `verify` |
+| `STEP_NAMES pr` | `STEP_NAMES` | part of `worktree-setup` |
+| `STEP_NAMES record-pr` | `STEP_NAMES` | part of `worktree-setup` |
+| `STEP_NAMES set-config` | `STEP_NAMES` | Not a step |
+| `STEP_NAMES summary` | `STEP_NAMES` | Not a step |
+| `STEP_NAMES ci` | `STEP_NAMES` | part of `merge` |
+| `STEP_NAMES merge` | `STEP_NAMES` | `merge` |
+| `roster skip review-step-1` | `## Skips by profile` | `review-spec` |
+| `roster skip review-step-1.6` | `## Skips by profile` | `review-promises` |
+| `roster skip review-step-4` | `## Skips by profile` | `review-hindsight` |
+| `roster skip plan-audit` | `## Skips by profile` | `plan-audit` |
+| `roster skip plan-review` | `## Skips by profile` | `plan-review` |
+| `roster skip architecture-alignment` | `## Skips by profile` | `architecture-alignment` |
+| `roster skip reflect-light-mode` | `## Skips by profile` | part of `wrap-up` (its `fast-lane` mode) |
+| `roster skip red-team-persona` | `## Skips by profile` | Not a step |
+| `roster skip sdd-whole-branch-review` | `## Skips by profile` | `whole-branch-review` |
+| `roster skip polish` | `## Skips by profile` | `polish` |
+| `roster never review Step 2` | `## Never skipped` | part of `review-code` |
+| `roster never review Step 3` | `## Never skipped` | part of `review-code` |
+| `roster never review Step 5` | `## Never skipped` | `review-simplify` |
+| `roster never review Step 6 rendered-UI check` | `## Never skipped` | `visual-review` |
+| `roster never build Common Step 5` | `## Never skipped` | `verify` |
+| `roster never reflect Near-misses, Fresh-start, Friction` | `## Never skipped` | part of `wrap-up` |
+| `roster never Ceremony escape hatch` | `## Never skipped` | part of `wrap-up` |
+| `roster never [IL-116] cleanup floor` | `## Never skipped` | part of `wrap-up` |
+| `roster never HARD-GATEs` | `## Never skipped` | Not a step |
+| `roster never test Step 1.5 Design CLI gate` | `## Never skipped` | `design-gate` |
+| `roster never review Step 6.5 Design Quality Pass` | `## Never skipped` | `design-review` |
+
+The rows of the roster's `## Mentions that are not skips` are not placed here: Roster replacement covers them.
 
 ## Today's graph
 
-<!-- filled by Task 3 -->
+The steps a run takes today, per lane, and what decides each. `standard` and `fast-lane` are `/claude-tweaks:flow` runs under that `ceremony-profile`, read from the run's `config.yml`. Prose express is `_shared/express-lane.md`'s Procedure, and driver is `drive.js`'s `STEPS` (`plugin/bin/lib/driver/steps.js`). A cell says when the step runs and cites the file that states it. "As `standard`" means the same rule from the same file. "—" means the lane has no such step: neither `_shared/express-lane.md`'s Procedure nor `STEPS` names one.
+
+Under `/claude-tweaks:dispatch` both profiles run as two Task calls, `worktree-setup` through `design-gate` in the first and `review-spec` onward in the second (`dispatch/two-call-gate.md`), and `fast-lane` keeps the split (`_shared/ceremony-profile.md`, "The two-call split is kept"). A design-mode build, from a design doc with no record, is a standalone `/claude-tweaks:build` path, which `/claude-tweaks:flow` rejects, so it is not in the table.
+
+| Step | `standard` | `fast-lane` | Prose express | Driver |
+|---|---|---|---|---|
+| `worktree-setup` | Runs; non-skippable (`build/SKILL.md` Spec Step 1) | As `standard` | The agent starts in a worktree stamped by `record-worktree`; the draft PR opens at step 7, after the push (`_shared/express-lane.md` Procedure) | `worktree`; the draft PR opens after the push, in `pr` and `record-pr` (`steps.js`) |
+| `manual-steps` | Runs when the spec has `## Manual Steps`, or every Deliverable is operational (`build/SKILL.md` Spec Step 2.5) | As `standard` | — | — |
+| `plan` | `/superpowers:writing-plans` (`build/SKILL.md` Spec Step 3). An already-satisfied premise or an already-shipped record ends the build here (Spec Step 2) | Micro-plan when the header has `size: low`, `### Key Files` names at most one implementation file and the body carries no risk flag; otherwise `/superpowers:writing-plans` (`build/micro-plan.md` Applicability gate). The Spec Step 2 exits as `standard` | — (step 2 edits from the record) | — (`worker` edits from the record) |
+| `plan-audit` | Runs unless the plan has fewer than 3 file references and no `Scope keywords:` (`build/SKILL.md` Common Step 1.5) | Skipped (roster `plan-audit`); Check D and Check G still run (Common Step 1.5) | — | — |
+| `plan-review` | Runs unless the plan is trivial by Common Step 1.5's test (`build/SKILL.md` Common Step 1.6) | Skipped (roster `plan-review`) | — | — |
+| `design-pre-build` | Runs when `skill-gate.js` proceeds for `design-wrapper pre-build` (design integration on; a surface that is not absent, `backend` or `infra`) and the plan is not trivial (`_shared/skill-load-gate.md` Rules; `build/design-prebuild.md`) | As `standard` | — | — |
+| `tasks` | Runs: one implementer and one task review per task (`build/SKILL.md` Common Step 2, `build/dispatch.md`) | As `standard` | Steps 2-3: edit, then commit by explicit path | `worker`, then `commit` |
+| `whole-branch-review` | Runs at any task count, on Capable, or Standard on a diff of at most one implementation file and under 60 lines (`resolve-profile.js --diff-facts`, `build/dispatch.md` "Whole-branch review model") | Skipped when `plan-audit.js --count-tasks` prints `tasks: 1` and `batched: false`; otherwise as `standard` (`build/dispatch.md`, single-task fast-lane skip) | — | — |
+| `simplify` | Runs (`build/SKILL.md` Common Step 3) | As `standard` | — | — |
+| `architecture-alignment` | Runs unless the plan was trivial, fewer than 3 tasks with single-file changes (`build/SKILL.md` Common Step 4.5) | Skipped (roster `architecture-alignment`) | — | — |
+| `journeys` | Runs when `skill-gate.js` proceeds for `journeys`: a changed file outside the no-surface set, under `docs/journeys/`, or in a journey's `files:` (`_shared/skill-load-gate.md`; `build/SKILL.md` Common Step 6) | As `standard` | — | — |
+| `docs-sync` | Runs when `docs/REGISTRY.md` exists (`build/SKILL.md` Common Step 6.5) | As `standard` | — | — |
+| `verify` | Runs (`build/SKILL.md` Common Step 5; roster `## Never skipped`) | As `standard` | Steps 4-5: the impacted tests, then `express-lane.js check` | `test`, then `check` |
+| `operational-checklist` | Runs when the diff matches schema, env, IaC, CI or platform-config files, or Common Step 5 applied a Category A fix (`build/SKILL.md` Common Step 5.5) | As `standard` | — | — |
+| `stories` | Runs when the build changed UI files (`design-wrapper/frontend-detection.md` Layer 3) and `no-stories` is not set (`flow/SKILL.md` Automatic story generation) | As `standard` | — | — |
+| `test` | Runs; types, lint and tests are skipped when `VERIFICATION_SHA` equals HEAD (`test/SKILL.md` Pipeline Context Awareness) | As `standard` | — | — |
+| `qa` | Runs when stories exist and the selection is non-empty: the stories whose `source_files` meet the changed files, or the full set when none match and a UI trigger file changed; a set the QA pass stamp already covers is skipped (`test/SKILL.md` Pipeline Context Awareness) | As `standard` | — | — |
+| `design-gate` | Runs when `skill-gate.js` proceeds for `design-wrapper test` (`test/design-gate.md`); no profile skips it (roster `## Never skipped`) | As `standard` | — | — |
+| `review-spec` | Runs (`review/code-mode-steps.md` Step 1) | Skipped (roster `review-step-1`) | — | — |
+| `review-promises` | Runs when the record's parent has a `## Cross-Spec Promises` section (`review/code-mode-steps.md` Step 1.6) | Skipped (roster `review-step-1.6`) | — | — |
+| `review-code` | Runs, at the review-effort tier from the record's `risk:*` × `size:*`, raised by the diff heuristic and `review-effort-floor`, and `high` when neither gives a clear tier (`review/review-effort-derivation.md`) | As `standard` | — (a sample of merged express PRs is reviewed at the end of a bare `/claude-tweaks:dispatch` drain, `_shared/express-lane.md` Post-merge sampling) | — (the driver's own `review` step runs per `express-driver-review`; under its default and the default lane bounds it does not run in a real run, `docs/driver.md` The reviewer step) |
+| `review-hindsight` | Runs (`review/code-mode-steps.md` Step 4) | Skipped (roster `review-step-4`) | — | — |
+| `review-simplify` | Runs unless `/build`'s `Common Step 3: simplify: scope simplified at {sha}` line covers the scope and no in-scope source file changed since (`review/code-mode-steps.md` Step 5, #4137) | As `standard` | — | — |
+| `visual-review` | Runs when `skill-gate.js` proceeds for `visual-review`: a frontend file changed, or the surface is not absent, `terminal`, `backend` or `infra`. Full mode opens a browser; with no UI file in the diff it gives the recommendation instead (`review/code-mode-steps.md` Step 6; `_shared/skill-load-gate.md`) | As `standard` | — | — |
+| `design-review` | Runs when `skill-gate.js` proceeds for `design-wrapper review` (`review/code-mode-steps.md` Step 6.5) | As `standard` | — | — |
+| `security-hardening` | Runs when the diff touches a client-side or route file (`review/focus-criterion-passes.md` Step 6.6) | As `standard` | — | — |
+| `agent-trust-scope` | Runs when the diff touches `.claude/settings.json` or `.claude-tweaks/policy.yml` (`review/focus-criterion-passes.md` Step 6.65) | As `standard` | — | — |
+| `app-store-readiness` | Runs when the diff shows a mobile-app signal (`review/focus-criterion-passes.md` Step 6.66) | As `standard` | — | — |
+| `polish` | Runs when the review verdict is PASS, `no-polish` is not set and `skill-gate.js` proceeds for `design-wrapper polish`, which skips a non-frontend record; re-verifies once when it changed code (`flow/steps-and-gates.md` Polish-phase decision tree) | Skipped (roster `polish`) | — | — |
+| `wrap-up` | Runs at `standard` depth; narrowed to the `fast-lane` mode when `config.yml`'s `mode` is `auto`, the profile reads `standard` and the diff touches no implementation file (`ceremony-derive.js`; `wrap-up/ceremony-derivation.md`) | Runs in the `fast-lane` mode: reflect in light mode, a skills budget of 2 and a docs budget of 1, and the escape hatch armed, which raises the rest of wrap-up to `standard` on a review finding or a reflect Safety regression (`wrap-up/SKILL.md` Reflect, The registry, Ceremony escape hatch) | — (step 8 logs one summary line, step 10 reports) | — (`set-config` writes `config.yml`, `summary` logs one line) |
+| `merge` | Under `pr-first`, runs when the record's live labels carry `auto:build` with `auto:merge` or a matured `auto:merge-pending`, or `merge-authorization` pre-authorizes it, and `merge-check` confirms; otherwise the PR stays `pending-review` (`wrap-up/auto-merge-short-circuit.md`, `_shared/pr-first-merge.md`). Under `local-merge` the dispatching session merges (`dispatch/settle-and-merge.md`) | As `standard` | Step 9: runs when the live labels carry `auto:merge` and `auto:build`, or the Manifesto authorization applies, after `merge-check`; CI must be green | `ci` waits for CI; `merge` runs only when that wait ended green, and `merge.js` owns the decision (`steps.js` `mergeStep`) |
+| `creative-survey` | Runs unless `no-creative` is set or `creative-survey` resolves `off`, when `skill-gate.js` proceeds for `design-wrapper survey` (`flow/SKILL.md` Step 5; `flow/survey.md`) | As `standard` | — | — |
+| `depth-survey` | Runs when source modules changed and `no-deepen` is not set (`flow/SKILL.md` Step 5) | As `standard` | — | — |
+
+The selectors in the record's Current State act on these rows:
+
+| Selector | Row | Today's rule | File |
+|---|---|---|---|
+| UI-changed `stories` | `stories` | Inserted after the build when it changed a Layer 3 UI file | `flow/SKILL.md` Automatic story generation |
+| Non-frontend `polish` skip | `polish` | Since #5605, the skill-load gate's `design-wrapper polish` verdict; the wrapper's own `{skipped: ...}` return still stands behind it | `flow/steps-and-gates.md` Polish-phase decision tree; `_shared/skill-load-gate.md` |
+| `micro-plan.md` plan-writing skip | `plan` (its mode) | `fast-lane` header, `size: low`, at most one implementation Key File, no risk flag | `build/micro-plan.md` |
+| Review effort | `review-code` (its mode) | `risk:*` × `size:*`, the diff heuristic, `review-effort-floor`; upward on ambiguity | `review/review-effort-derivation.md` |
+| `resolve-profile.js --diff-facts` | `whole-branch-review` | Caps the reviewer's model at Standard; leaves no step out | `build/dispatch.md` "Whole-branch review model" |
+| `plan-audit.js --count-tasks` | `whole-branch-review` | Under `fast-lane` only: `tasks: 1` and `batched: false` skips the review | `build/dispatch.md` |
+| `ceremony-derive.js` | `wrap-up` (its mode) | `standard` to `fast-lane` at wrap-up on a diff with no implementation file, in `auto` mode only; earlier steps have already run at `standard` | `wrap-up/ceremony-derivation.md`; `plugin/bin/lib/dispatch/ceremony-derive.js` |
+
+"Never skipped" in the roster means that no profile skips a row; it does not mean every graph holds it. Four of its rows have a skip on facts today: review Step 5 when `simplify` already covered the scope (`review-simplify`), and review Step 6, test Step 1.5 and review Step 6.5 when `skill-gate.js` finds nothing to do (`visual-review`, `design-gate`, `design-review`).
 
 ## Inputs
 
