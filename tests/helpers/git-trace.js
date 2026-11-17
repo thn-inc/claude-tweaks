@@ -31,6 +31,8 @@ function warmCallStartsNoGit(warm, opts = {}) {
     try {
       tracedResult = traced();
       if (tracedResult && typeof tracedResult.then === 'function') {
+        // Handle the refused promise so its own rejection cannot surface as an unhandled rejection over the TypeError.
+        tracedResult.then(undefined, () => {});
         throw new TypeError('warmCallStartsNoGit: traced must be synchronous (an async call would run its git after GIT_TRACE2_EVENT is restored)');
       }
     } finally {
