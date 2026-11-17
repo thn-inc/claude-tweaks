@@ -113,8 +113,13 @@ const WIN32_DASH_SKIP = 'win32: dash cannot exec a Windows-form path (C:\\...\\n
 
 const SHELLS = [['sh', findOnPath('sh')], ['dash', findOnPath('dash')]];
 
+function skipReason(name, shell) {
+  if (name === 'dash' && process.platform === 'win32') return WIN32_DASH_SKIP;
+  return shell ? false : `${name} not on PATH`;
+}
+
 for (const [name, shell] of SHELLS) {
-  const skip = name === 'dash' && process.platform === 'win32' ? WIN32_DASH_SKIP : (shell ? false : `${name} not on PATH`);
+  const skip = skipReason(name, shell);
   let cached;
   const best = () => { cached = cached || measure(shell); return cached; };
 
