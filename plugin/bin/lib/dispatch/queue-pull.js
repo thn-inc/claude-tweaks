@@ -156,7 +156,7 @@ const SESSION_FILES = deepFreeze([
   'dispatch-next-pick.json',
 ]);
 
-// The session files written only at the very end of their step (#5409): removed at pull start.
+// The session files written only after their step's fallible work (#5409): removed at pull start.
 // The fence's `rm -f` line carries the same set.
 const END_WRITTEN_FILES = deepFreeze([
   'dispatch-named-targets.json',
@@ -185,7 +185,7 @@ class QueuePullStopped extends Error {
 // Fence lines 44 and 46-51. The only direct write to the exclusions file; every later pass appends
 // through appendExclusion. Keeps only the 'firing' entries (firing-exclusion.md).
 function runTruncate(ctx) {
-  // #5409 (fence 44): each of these files is written only at the end of its step, so a step that
+  // #5409 (fence 44): each of these files is written after its step's fallible work, so a step that
   // throws first would leave an earlier pull's copy for the pass or reader after it; the agent
   // inputs and the exclusions file are not in the set. One step per file, like `rm -f`'s operands.
   for (const name of END_WRITTEN_FILES) step(ctx, 'rm-end-written', () => fs.rmSync(ctx.paths[name], { force: true }));
