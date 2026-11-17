@@ -6,11 +6,15 @@
 // Since #5230 dispatch runs this module (bin/queue-pull.js), not the fence: the module is the
 // live queue pull, and the retained fence is its revert path and parity oracle until #5231
 // removes it. Fix a defect here and mirror the change into the fence, never the other way round.
+// One rule is module-only by decision and is not mirrored: #5408's omitted-dependency check in the
+// blocked pass (search `#5408`), which the fence cannot see because it never gets the agent's raw
+// dependency-freshness text there. It stays a divergence until #5231 deletes the fence.
 //
 // R6, step-for-step port: each fence step is one function. A throw inside a step is caught and
 // printed to stderr as `queue-pull: <step>: <message>`, and the run then continues or stops
 // exactly where the fence has an RC check or a `grep -q 'appendExclusion:'` check. Stop and
-// Warning texts match the fence byte for byte, and the two must keep the same behavior.
+// Warning texts match the fence byte for byte, and the two must keep the same behavior, except for
+// the #5408 rule named above.
 //   The fence's own calls are unbounded; the default deps bound every one (shared-primitives.js),
 // so a call that hangs, or outlasts its bound, is where the two can differ. GH_BATCH_TIMEOUT_MS
 // bounds an aliased GraphQL batch and every paginated list call (`issue list` / `pr list` with
@@ -696,6 +700,8 @@ function runBlocked(ctx) {
     // #5408: on `files` the agent writes the verified-open list, so it is not complete by construction
     // as the CLI's is. An unresolved dependency it omits counts as closed only when the agent's own
     // dependency-freshness text shows it closed; otherwise it counts as open (fail closed).
+    // Module-only: the fence has no twin of this block, by the plan-review decision, until #5231
+    // deletes the fence. Do not mirror it, and do not remove it to restore parity.
     if (!bad && ctx.options.transport === 'files') {
       const closed = closedDependencyNumbers(state.depFreshnessInput);
       for (const dep of readJson(paths['dispatch-unresolved-deps.json'])) {
