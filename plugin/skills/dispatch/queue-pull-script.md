@@ -106,7 +106,7 @@ CACHE_HIT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_
   const depFreshness = require(process.argv[2]);
   if (!Array.isArray(autoBuild) || !Array.isArray(depFreshness)) throw new Error('not a JSON array');
   const current = buildFreshnessSignal([...autoBuild, ...depFreshness]);
-  if (!cacheUsable(persisted, current, require('${CLAUDE_PLUGIN_ROOT}/bin/lib/express/queue.js').expressQueuePolicy().grouping)) { console.log('0'); process.exit(0); }
+  if (!autoBuild.length || !cacheUsable(persisted, current, require('${CLAUDE_PLUGIN_ROOT}/bin/lib/express/queue.js').expressQueuePolicy().grouping)) { console.log('0'); process.exit(0); }
   fs.writeFileSync(process.argv[3], JSON.stringify(persisted.groups));
   // persisted.excluded keeps the disk cache's {number, blockedBy}[] shape; convert to reason:'blocked' entries here.
   for (const e of persisted.excluded) {
@@ -118,9 +118,7 @@ CACHE_HIT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_
   for (const g of oversized) {
     appendExclusion(process.argv[4], { reason: 'oversized', records: g.map((i) => i.number), detail: { size: g.length, threshold } });
   }
-  // #2066: a cache hit's persisted bundle membership replaces the
-  // pre-computation '[]' default above -- a persisted record from before
-  // this field existed has no 'bundles' key, so this falls back to [].
+  // #2066: a blob from before the field has no 'bundles' key: [].
   fs.writeFileSync(process.argv[6], JSON.stringify(persisted.bundles || []));
   console.log('1');
 NODE_EVAL_EOF
@@ -144,6 +142,8 @@ gh issue list --state open --json number --limit 200 > "$DISPATCH_OPEN_NUMBERS"
 WORK_LINKS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values work-links)
 DISPATCH_GROUP_SIZE_GUARD=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values dispatch-group-size-guard)
 DISPATCH_FASTLANE_BUNDLE_CAP=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values dispatch-fastlane-bundle-cap)
+# #5314: no earlier pull's eligibility files.
+rm -f "$DISPATCH_ELIGIBLE_PRE_DEP" "$DISPATCH_UNRESOLVED_DEPS" "$DISPATCH_ELIGIBLE" "$DISPATCH_BLOCKED_EXCLUDED_BODY"
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPATCH_OPEN_NUMBERS" "$DISPATCH_ELIGIBLE_PRE_DEP" "$DISPATCH_UNRESOLVED_DEPS" <<NODE_EVAL_EOF
   const { parseRecordFacets, parseDependencies } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
   const issues = require(process.argv[1]);

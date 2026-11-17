@@ -14,7 +14,7 @@ const {
   appendShimRecord, readShimLog, SHIM_LOGS, createSandbox, writeShims, REPO,
 } = require('./queue-pull-oracle');
 const {
-  S0, S1, S2, SEmpty, SMalformed, SPortable, D1Second, S1LiveDep, FAULTS, QUEUE_ARGV, ghAnswer, shimTable,
+  S0, S1, S2, SEmpty, SMalformed, SPortable, D1Second, D1Third, EmptyAfterS1, S1LiveDep, FAULTS, QUEUE_ARGV, ghAnswer, shimTable,
 } = require('./queue-pull-fixtures');
 
 // The shims are #!/bin/sh scripts and need no bash, so unlike the parity suite's oracleSkip these
@@ -482,7 +482,7 @@ test('the gh shim is a sh script', { skip: shimSkip() }, (t) => {
 
 test('the sh gh shim agrees with ghAnswer on every exact entry', { skip: shimSkip() }, (t) => {
   const scenarios = [S0(), S1(), S1({ full: true }), S1({ parity: true }), S2(), SEmpty(), SMalformed(), SMalformed('labels'), SMalformed('body'),
-    SMalformed('blocker'), SPortable(), D1Second(), S1LiveDep(), ...FAULTS.map((f) => f.scenario())];
+    SMalformed('blocker'), SPortable(), D1Second(), D1Third(), EmptyAfterS1(), S1LiveDep(), ...FAULTS.map((f) => f.scenario())];
   const checked = new Set();
   let longest = 0;
   scenarios.forEach((scenario, n) => {

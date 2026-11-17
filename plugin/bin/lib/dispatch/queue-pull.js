@@ -476,7 +476,7 @@ function fetchNamed(ctx, number) {
 
 const NAMED_FIELDS = 'number,title,body,labels,createdAt,updatedAt,state';
 
-// Fence 68-139, then line 143 and the policy reads of 144-146 on a miss: the queue pull, the
+// Fence 68-137, then line 141 and the policy reads of 142-144 on a miss: the queue pull, the
 // aliasing, the 500-cap Warning, the dependency-freshness fetch and the cache check. On a hit it
 // has written dispatch-groups.json; the blocked and oversized passes replay the rest.
 function runFetch(ctx) {
@@ -521,8 +521,10 @@ function runFetch(ctx) {
   try {
     const persisted = readOrder();
     if (persisted) {
-      const current = buildFreshnessSignal([...readArray(queueFile), ...readArray(depFile)]);
-      if (cacheUsable(persisted, current, deps.expressQueuePolicy({ stderr: deps.stderr }).grouping)) {
+      const autoBuild = readArray(queueFile);
+      const current = buildFreshnessSignal([...autoBuild, ...readArray(depFile)]);
+      // #5314 (fence 109): an empty queue never reuses the earlier pull's groups.
+      if (autoBuild.length > 0 && cacheUsable(persisted, current,deps.expressQueuePolicy({ stderr: deps.stderr }).grouping)) {
         fs.writeFileSync(paths['dispatch-groups.json'], JSON.stringify(persisted.groups));
         state.cacheHit = true;
         state.persisted = persisted;
@@ -546,6 +548,9 @@ const GH_ABSENT_LOOKUP = /^Warning: foreign blocker state lookup failed \(exit 2
 // #5309: the blockedBy entry every eligible record carries when the native query failed closed.
 const NATIVE_UNREADABLE = 'native blockers (state unreadable)';
 
+// #5314: the eligibility files the miss path computes, removed before it does.
+const ELIGIBILITY_FILES = ['dispatch-eligible-pre-dep.json', 'dispatch-unresolved-deps.json', 'dispatch-eligible.json', 'dispatch-blocked-excluded-body.json'];
+
 // #5309: a failed native-blockers call. On gh every failure fails closed: the Warning names the
 // call and the consequence, and the grouping block excludes every eligible record. On files only
 // exit 3 fails closed (exit 2 is gh absent, the normal files result); any other failure keeps the
@@ -559,8 +564,9 @@ function nativeQueryFailed(ctx, r) {
   ctx.deps.stderr(`Warning: native dependency query failed — every candidate excluded as blocked (native blockers unreadable, fail closed) this run: ${trimNl(r.stderr)}\n`);
 }
 
-// Fence 147-207 on a miss (the eligible list, the unresolved-dependency check, the body-text and
-// native blocker filtering); on a hit the persisted `excluded` entries replayed as 'blocked'.
+// Fence 145-207 on a miss (the removal of an earlier pull's eligibility files, the eligible list, the
+// unresolved-dependency check, the body-text and native blocker filtering); on a hit the persisted
+// `excluded` entries replayed as 'blocked'.
 function runBlocked(ctx) {
   const { deps, paths, omit, state } = ctx;
   const f = state.files;
@@ -576,6 +582,12 @@ function runBlocked(ctx) {
     }
     return;
   }
+
+  // #5314 (fence 145-146): this pull's eligibility files are computed below; an earlier pull's
+  // never stand in for them when a read below fails, so a failed step stops at group-building.
+  step(ctx, 'rm-eligibility', () => {
+    for (const name of ELIGIBILITY_FILES) fs.rmSync(paths[name], { force: true });
+  });
 
   step(ctx, 'eligible-pre-dep', () => {
     const issues = readJson(paths['dispatch-queue-raw.json']);

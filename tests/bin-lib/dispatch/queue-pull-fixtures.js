@@ -761,13 +761,35 @@ FILES_FAULTS.push(
   { id: 'F-native-files', input: 'gh', mode: 'GraphQL-blocked (exit 3)', pass: 'blocked', scenario: () => nativeFaultOnFiles(S2()), agent: (f) => f },
 );
 
-// D1: two pulls in one session. The second's open-numbers fetch returns nothing (exit 1), and
-// #9003 changed since the first (a new title and updatedAt, so the queue-order cache misses).
-function D1Second() {
-  const s = failGh(S1(), OPEN_NUMBERS_ARGV);
-  s.gh = s.gh.map((e) => (sameArgv(e.argv, QUEUE_ARGV)
+// D1: three pulls in one session (healthy S1, then D1Second, then D1Third). In both later pulls
+// #9003 changed since the first (a new title and updatedAt, so the queue-order cache misses); the
+// second's open-numbers fetch also returns nothing (exit 1), the third's is healthy again.
+function retitled9003(scenario) {
+  scenario.gh = scenario.gh.map((e) => (sameArgv(e.argv, QUEUE_ARGV)
     ? { ...e, stdout: JSON.stringify(JSON.parse(e.stdout).map((r) => (r.number === 9003 ? { ...r, title: 'Retitled after the first pull', updatedAt: '2026-11-12T11:00:00Z' } : r))) + '\n' }
     : e));
+  return scenario;
+}
+const D1Second = () => retitled9003(failGh(S1(), OPEN_NUMBERS_ARGV));
+const D1Third = () => retitled9003(S1());
+
+// #5314: an empty auto:build queue after a non-empty S1 pull. The second pull re-fetches every
+// issue of the first pull's persisted freshness signal (queue records, then the #8000 dependency)
+// as dependency-only, and gets each back unchanged, so the cache would hit on the first pull's groups.
+function EmptyAfterS1() {
+  const base = S1();
+  const answer = (argv) => JSON.parse(base.gh.find((e) => sameArgv(e.argv, argv)).stdout);
+  const signal = [...answer(QUEUE_ARGV), ...answer(DEP_SEARCH_8000)];
+  const search = signal.map((i) => `#${i.number}`).join(' ');
+  const s = SEmpty();
+  s.name = 'EmptyAfterS1';
+  s.gh = [
+    { argv: ['issue', 'list', '--search', search, '--state', 'all', '--json', 'number,updatedAt,state', '--limit', '500'],
+      stdout: JSON.stringify(signal.map(({ number, updatedAt, state }) => ({ number, updatedAt, state }))) + '\n' },
+    // The linked-PR query a reused hit would make over S1's survivors (unused once the pull is empty),
+    // so a pull that wrongly hits fails on its own assertion rather than on an unanswered call.
+    ...s.gh.filter((e) => !e.graphql), ...tailGh([9001, 9003]).filter((e) => e.graphql),
+  ];
   return s;
 }
 
@@ -853,5 +875,5 @@ module.exports = {
   ghLabel, ghRecord, SPEC_BODY, QUEUE_ARGV, OPEN_NUMBERS_ARGV, IN_FLIGHT_ARGV, OPEN_PRS_ARGV, writeInput, DEP_SEARCH_8000, withBody, S0, S1, S2, SEmpty, SMalformed, SPortable, SFast, fakeSpawnCli, agentInputs,
   LANDING_COMMIT, PORTABLE_SLUG,
   REPO_SLUG, linkedNode, linkedOutput, mention, WEAK_PR_FILES, tailGh, IN_FLIGHT_7001, OPEN_PR_41, LIVE_CLAIM,
-  FAULTS, FILES_FAULTS, D1Second, S1LiveDep, failGh, NOT_JSON, GH_FAULT_STDERR, contentsApiArgv,
+  FAULTS, FILES_FAULTS, D1Second, D1Third, EmptyAfterS1, S1LiveDep, failGh, NOT_JSON, GH_FAULT_STDERR, contentsApiArgv,
 };

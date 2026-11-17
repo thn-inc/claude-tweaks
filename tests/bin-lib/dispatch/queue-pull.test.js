@@ -25,9 +25,9 @@
 //     never written and the pull stops at the group-building check: one malformed record stops
 //     every candidate, the clean #9001 included (a cross-candidate effect, on the run ledger).
 // Script behavior the fault rows (Task 9) show, reproduced by the module (some since fixed, noted per bullet):
-//   - D1 reaches past the session files: the second pull's write-back persists the first pull's
-//     stale groups under the second pull's freshness signal, so a third pull over the same queue
-//     would hit the cache on them (NEW: beyond ledger row 1, which names the session files only).
+//   - D1 (a second pull in one session whose open-numbers fetch fails) reused the first pull's
+//     eligibility files and wrote its groups back under the new freshness signal; fixed by #5314:
+//     the miss path removes them first, so the pull stops at group-building as a fresh session does.
 //   - One failed native-dependency GraphQL call (F-native) turns off two passes: the blocked pass's
 //     native filtering and, through preflight-records.js's native read, the unlanded-blocker pass
 //     (a Warning each). (NEW cross-pass effects; each pass still fails open.) Fixed by #5309: a
@@ -71,7 +71,7 @@ const {
 const {
   S0, S1, S2, SEmpty, SMalformed, SPortable, SFast, fakeRun, fakeSpawnCli, agentInputs, ghAnswer, ghRecord, withBody, QUEUE_ARGV, DEP_SEARCH_8000, mention, WEAK_PR_FILES,
   OPEN_NUMBERS_ARGV, IN_FLIGHT_ARGV, OPEN_PRS_ARGV, writeInput,
-  IN_FLIGHT_7001, OPEN_PR_41, LIVE_CLAIM, LANDING_COMMIT, PORTABLE_SLUG, FAULTS, FILES_FAULTS, D1Second, S1LiveDep, NOT_JSON,
+  IN_FLIGHT_7001, OPEN_PR_41, LIVE_CLAIM, LANDING_COMMIT, PORTABLE_SLUG, FAULTS, FILES_FAULTS, D1Second, D1Third, EmptyAfterS1, S1LiveDep, NOT_JSON,
 } = require('./queue-pull-fixtures');
 const {
   PASSES, PASS_FIELD_VALUES, SESSION_FILES, QueuePullStopped, sessionPaths, runPasses, resolveOmit, defaultDeps, makeContext, queuePull, rankNext, rankFromFiles,
@@ -3677,27 +3677,42 @@ function assertFaultRow(row, expect, R, transport) {
   assertFaultFiles(pair, transport, row.id, module);
 }
 
-// D1: two pulls in one session per side (the one deliberate session reuse: one session id and one
-// TMPDIR), the second answering from D1Second's table.
-async function runD1() {
+// D1: three pulls in one session per side (the one deliberate session reuse: one session id and one
+// TMPDIR), the second answering from D1Second's table, the third from D1Third's.
+// Each later scenario is a function: `later` pulls follow `first`, one after the other.
+async function runSession(name, first, later) {
   const made = [];
   try {
-    const oracleSb = createSandbox(S1(), { name: 'D1' });
+    const oracleSb = createSandbox(first(), { name });
     made.push(oracleSb);
-    const moduleSb = createSandbox(S1(), { name: 'D1' });
+    const moduleSb = createSandbox(first(), { name });
     made.push(moduleSb);
-    const both = () => Promise.all([
-      runOracle(oracleSb, FENCE, { tmp: 'one-session' }),
-      runModuleCli(moduleSb, ['--transport', 'gh'], { tmp: 'one-session' }),
-    ]);
-    const [o1, m1] = await both();
-    for (const sb of made) sb.setScenario(D1Second());
-    const [o2, m2] = await both();
-    return { first: { oracle: o1, module: m1 }, second: { oracle: o2, module: m2 } };
+    const both = async () => {
+      const [oracle, module] = await Promise.all([
+        runOracle(oracleSb, FENCE, { tmp: 'one-session' }),
+        runModuleCli(moduleSb, ['--transport', 'gh'], { tmp: 'one-session' }),
+      ]);
+      return { oracle, module };
+    };
+    const pulls = [await both()];
+    for (const scenario of later) {
+      for (const sb of made) sb.setScenario(scenario());
+      pulls.push(await both());
+    }
+    return pulls;
   } catch (err) {
     for (const sb of made) sb.cleanup();
     throw err;
   }
+}
+async function runD1() {
+  const [first, second, third] = await runSession('D1', S1, [D1Second, D1Third]);
+  return { first, second, third };
+}
+// #5314: a non-empty pull that persists a blob, then a well-formed empty queue.
+async function runEmptyAfterS1() {
+  const [first, second] = await runSession('EmptyAfterS1', S1, [EmptyAfterS1]);
+  return { first, second };
 }
 
 // The one fault pool: both transports' rows, their bases and D1, started by the first describe
@@ -3708,17 +3723,18 @@ function runFaultPool() {
     const configs = faultConfigs();
     const reused = configs.filter((c) => PAIR_MEMO.has(c.name)).length;
     const t0 = Date.now();
-    // D1 first: its two pulls run one after the other, so it starts before the single-pull pairs.
-    faultPool = runAll([{ name: 'D1', run: runD1 }, ...pairJobs(configs)], POOL)
+    // D1 and EmptyAfterS1 first: their pulls run one after the other, so they start before the single-pull pairs.
+    faultPool = runAll([{ name: 'D1', run: runD1 }, { name: 'EmptyAfterS1', run: runEmptyAfterS1 }, ...pairJobs(configs)], POOL)
       .then((R) => ({ R, pairs: configs.length - reused, reused, ms: Date.now() - t0 }));
   }
   return faultPool;
 }
 after(async () => {
   if (!faultPool) return;
-  let d1 = null;
-  try { d1 = (await faultPool).R.D1; } catch { return; } // a failed runD1 removed its own sandboxes
-  cleanupPairs([d1.first]); // the second pull ran in the same two sandboxes; the pairs are the memo's
+  let R = null;
+  try { R = (await faultPool).R; } catch { return; } // a failed session job removed its own sandboxes
+  // The later pulls ran in the same two sandboxes as the first; the pairs are the memo's.
+  cleanupPairs([R.D1, R.EmptyAfterS1].filter((s) => s && s.first).map((s) => s.first));
 });
 
 describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600_000 }, () => {
@@ -3731,7 +3747,7 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
 
   test('#5227 fault pool: every job ran (the gh and files fault rows, their bases and D1, in one pool)', (t) => {
     assertEveryJobRan(R);
-    t.diagnostic(`fault pool: ${pool.pairs} new pairs (${pool.pairs * 2} runs) + D1 (4 runs), ${pool.reused} reused from the AC1 matrix, pool ${POOL}, wall ${pool.ms} ms`);
+    t.diagnostic(`fault pool: ${pool.pairs} new pairs (${pool.pairs * 2} runs) + D1 (6 runs) + EmptyAfterS1 (4 runs), ${pool.reused} reused from the AC1 matrix, pool ${POOL}, wall ${pool.ms} ms`);
   });
 
   for (const f of FAULTS) {
@@ -3945,31 +3961,46 @@ describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600
     for (const [side, r] of sides(R['files-inFlightClaims-empty'])) assert.ok(reported(r.stderr).includes(CLAIM_READ_FAILED_7001), side);
   });
 
-  test('#5227 D1: a second pull in the same session whose open-numbers fetch returns empty reuses the first pull\'s eligible files, both sides', () => {
-    const { first, second } = R.D1;
-    assertClean(first, 'D1 first');
-    assertClean(second, 'D1 second');
+  test('#5314 D1 (AC1.1, AC2.1): a second pull whose open-numbers fetch fails reads no earlier pull\'s eligibility file and stops at group-building; a third pull does not hit the cache on the first pull\'s groups', () => {
+    const { first, second, third } = R.D1;
+    for (const [label, pair] of [['D1 first', first], ['D1 second', second], ['D1 third', third]]) assertClean(pair, label);
+    const [, head, tail] = FENCE.match(GROUPING_STOP_RE);
+    const mapped = stopMapped(second.oracle, second.module); // fence exit 1, CLI exit 4
+    assertParity(second.oracle, mapped, { files: AC1_FILES });
     for (const [side] of sides(second)) {
-      const one = first[side];
-      const two = second[side];
-      assert.equal(one.status, 0, `${side} first: ${one.stderr.slice(-2000)}`);
-      assert.equal(two.status, 0, `${side} second: exit 0 on stale data: ${two.stderr.slice(-2000)}`);
+      const one = first[side]; const two = second[side]; const three = third[side];
+      assert.equal(one.status, 0, side);
+      assert.ok(reported(two.stderr).includes(`${head}1${tail}`), `${side}: the group-building stop`);
       assert.equal(two.files['dispatch-open-numbers.json'], '', `${side}: the second open-numbers fetch returned nothing`);
-      assert.ok(two.ghArgv.some((a) => a.tag === 'injected' && a.argv.join(' ') === OPEN_NUMBERS_ARGV.join(' ')), side);
-      assert.ok(!two.stderr.includes(HIT_MESSAGE), `${side}: the changed #9003 makes the cache miss`);
-      for (const name of ['dispatch-eligible-pre-dep.json', 'dispatch-eligible.json', 'dispatch-blocked-excluded-body.json']) {
-        assert.equal(two.files[name], one.files[name], `${side}: ${name} is the first pull's`);
+      for (const name of ['dispatch-eligible-pre-dep.json', 'dispatch-unresolved-deps.json', 'dispatch-eligible.json', 'dispatch-blocked-excluded-body.json']) {
+        assert.notEqual(one.files[name], null, `${side} first: ${name} written`);
+        assert.equal(two.files[name], null, `${side}: no ${name} from the first pull`);
       }
-      assert.ok(JSON.parse(two.files['dispatch-queue-raw.json']).some((c) => c.title === 'Retitled after the first pull'), `${side}: the second queue holds the new title`);
+      assert.equal(two.files['dispatch-groups.json'], '', `${side}: groups truncated, never the first pull's`);
+      assert.deepEqual(two.orderBlob, one.orderBlob, `${side}: no write-back after the stop`);
+      // AC2: a third, healthy pull over the second pull's queue misses the cache and groups the new record.
+      assert.equal(three.status, 0, `${side} third: ${three.stderr.slice(-2000)}`);
+      assert.ok(!three.stderr.includes(HIT_MESSAGE), `${side} third: no cache hit on the first pull's groups`);
       const title9003 = (groups) => groups.flat().find((c) => c.number === 9003).title;
-      assert.equal(title9003(JSON.parse(two.files['dispatch-groups.json'])), 'Fixture record 9003', `${side}: the groups carry the first pull's record`);
-      // Beyond the session files: the write-back persists those stale groups under the second
-      // pull's freshness signal, so a third pull over the same queue would hit the cache on them.
-      assert.equal(title9003(two.orderBlob.groups), 'Fixture record 9003', `${side}: the blob holds the stale groups`);
-      assert.equal(two.orderBlob.freshnessSignal.issues.find((i) => i.number === 9003).updatedAt, '2026-11-12T11:00:00Z', `${side}: under the new freshness`);
+      assert.equal(title9003(JSON.parse(three.files['dispatch-groups.json'])), 'Retitled after the first pull', `${side} third: this pull's record`);
+      assert.equal(title9003(three.orderBlob.groups), 'Retitled after the first pull', `${side} third: the blob holds this pull's groups`);
     }
-    assert.deepEqual(assertFaultFiles(first, 'gh', 'D1 first'), [], 'D1 first: no tail line, every file compared whole');
-    assert.deepEqual(assertFaultFiles(second, 'gh', 'D1 second'), [], 'D1 second: no tail line, every file compared whole');
+    assertParity(third.oracle, third.module, { files: AC1_FILES });
+  });
+
+  test('#5314 (AC1.1, cache hit path): a [] queue after a non-empty pull that persisted a blob never reuses its groups — empty eligible set, exit 0, both sides', () => {
+    const { first, second } = R.EmptyAfterS1;
+    for (const [label, pair] of [['first', first], ['second', second]]) assertClean(pair, label);
+    assertParity(second.oracle, second.module, { files: AC1_FILES });
+    for (const [side] of sides(second)) {
+      assert.equal(first[side].status, 0, side);
+      assert.ok(first[side].orderBlob && first[side].orderBlob.groups.flat().length > 0, `${side}: the first pull persisted non-empty groups`);
+      const two = second[side];
+      assert.equal(two.status, 0, `${side}: ${two.stderr.slice(-2000)}`);
+      assert.ok(!two.stderr.includes(HIT_MESSAGE), `${side}: no cache hit on the earlier pull's groups`);
+      assert.deepEqual(JSON.parse(two.files['dispatch-groups.json']), [], `${side}: empty groups`);
+      assert.equal(two.files['dispatch-eligible.json'], '[]', `${side}: empty eligible set, nothing from the earlier pull`);
+    }
   });
 });
 
@@ -4203,6 +4234,31 @@ test('#5230 shipped: the stage-item.js stderr of a shipped Close proposal reache
 // real transcript check, because the captured rows name record #3.
 const { writePointer } = require('../../../plugin/bin/lib/issues/typed-command');
 const { failGh } = require('./queue-pull-fixtures');
+
+test('#5314 (AC1.1): a module pull whose open-numbers read fails removes an earlier pull\'s eligibility files and stops at group-building with no write-back; a [] queue still exits clean', () => {
+  const STALE = JSON.stringify([{ number: 1, title: 'stale', labels: [], body: '' }]);
+  const names = ['dispatch-eligible-pre-dep.json', 'dispatch-unresolved-deps.json', 'dispatch-eligible.json', 'dispatch-blocked-excluded-body.json'];
+  const seed = (ctx) => { for (const n of names) fs.writeFileSync(ctx.paths[n], STALE); };
+  const r = pull(failGh(S1(), OPEN_NUMBERS_ARGV), { allowThrow: true, before: seed });
+  assert.ok(r.thrown instanceof QueuePullStopped, String(r.thrown));
+  const [, head, tail] = FENCE.match(GROUPING_STOP_RE);
+  assert.equal(r.thrown.line, `${head}1${tail}`);
+  for (const n of names) assert.equal(r.text[n], undefined, `${n} removed`);
+  assert.equal(r.store.written.length, 0, 'no write-back');
+  // Control: a well-formed empty queue after the same seed is an empty eligible set and no stop.
+  const empty = pull(SEmpty(), { before: seed });
+  assert.equal(empty.thrown, null, String(empty.thrown));
+  assert.equal(empty.text['dispatch-eligible.json'], '[]');
+  // Twin of the cache-hit path: a blob from a non-empty pull whose signal the [] pull's
+  // dependency-freshness answer reproduces must not be reused for an empty queue.
+  const blob = pull(S1()).store.written[0].blob;
+  const reproduces = EmptyAfterS1();
+  const twin = pull(reproduces, { persisted: blob });
+  assert.equal(twin.thrown, null, String(twin.thrown));
+  assert.equal(twin.state.cacheHit, false, 'an empty queue never uses the queue-order cache');
+  assert.equal(twin.text['dispatch-eligible.json'], '[]');
+  assert.deepEqual(twin.json('dispatch-groups.json'), []);
+});
 
 const NAMED_VIEW = (n) => ['issue', 'view', String(n), '--json', 'number,title,body,labels,createdAt,updatedAt,state'];
 const ADMIT_LINE = (n) => `#${n} has no auto:build label — built on the typed /claude-tweaks:dispatch command\n`;
