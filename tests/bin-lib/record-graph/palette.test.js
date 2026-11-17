@@ -15,7 +15,7 @@ test('palette has a string label for every column key', () => {
 });
 
 test('palette has a hex origin color for every recognized origin plus the human fallback', () => {
-  for (const key of ['code-health', 'harness-health', 'journey-health', 'docs-health', 'capture', 'dispatch', 'human']) {
+  for (const key of ['code-health', 'harness-health', 'journey-health', 'docs-health', 'capture', 'dispatch', 'ci-health', 'human']) {
     assert.match(ORIGIN_COLORS[key], /^#[0-9a-f]{6}$/);
   }
 });

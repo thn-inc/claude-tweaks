@@ -544,7 +544,7 @@ test('accepts label objects ({name}) as well as plain strings', () => {
 
 // ── extractKeyFiles: the `### Key Files` fallthrough (#154) ──────────────────
 // /specify-produced sub-issues and /capture records carry no by:* origin label, so
-// they reach the fallthrough below the four health-sweep branches. Before #154
+// they reach the fallthrough below the five health-sweep branches. Before #154
 // that fallthrough was a bare `return []`, and every such record reported zero
 // key files — making groupByFileOverlap emit singletons regardless of real
 // overlap, which is exactly the collision guard /dispatch relies on.
@@ -743,6 +743,12 @@ test('expectsKeyFilesSection is false for a by:journey-health-origin issue', () 
 
 test('expectsKeyFilesSection is false for a by:docs-health-origin issue', () => {
   assert.strictEqual(expectsKeyFilesSection({ labels: ['by:docs-health'] }), false);
+});
+
+test('a by:ci-health record: expectsKeyFilesSection false, and its Check header id is never read as a file', () => {
+  const issue = { labels: ['by:ci-health', 'ready'], body: '**Check:** `repeated-work` | **Workflow:** `ci` | **Step:** `npm ci`\n\n## Current State\n' };
+  assert.strictEqual(expectsKeyFilesSection(issue), false);
+  assert.deepStrictEqual(extractKeyFiles(issue), []);
 });
 
 test('expectsKeyFilesSection is true for an issue with no labels at all', () => {
