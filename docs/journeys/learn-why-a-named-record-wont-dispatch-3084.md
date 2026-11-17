@@ -28,7 +28,7 @@ files:
 ## Steps
 
 ### 1. Name the record
-- **URL:** `plugin/skills/dispatch/SKILL.md` Step 3, `#N` / `#N[,#M,#O...]` bullets; `plugin/bin/dispatch-unlanded-blockers.js` (the queue-pull pass that writes `unlanded-blocker` and `malformed-blocker`)
+- **URL:** `plugin/skills/dispatch/SKILL.md` Step 3, `#N` / `#N[,#M,#O...]` bullets; `plugin/bin/dispatch-unlanded-blockers.js` (the queue-pull pass that writes `unlanded-blocker` and `malformed-blocker`; the eligibility step also writes `malformed-blocker` for non-array labels, #5315)
 - **Action:** Run `/claude-tweaks:dispatch #N`. The label checks pass (it has `auto:build`, no `bot:*`), but the queue pull already dropped it from `dispatch-groups.json` before any selection form read that file.
 - **Should feel:** Direct — the maintainer named one record and gets one answer about that record.
 - **Should understand:** A record can carry every grant and still be ineligible this firing: the queue pull removes candidates for seven reasons (`blocked`, `open-pr`, `not-spec-shaped`, `target-missing`, `shipped`, `unlanded-blocker`, `malformed-blocker`) unconditionally, and naming the record does not bypass any of them.

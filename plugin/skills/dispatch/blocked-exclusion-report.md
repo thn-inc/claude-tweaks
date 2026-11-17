@@ -32,7 +32,7 @@ render one line per record, under the same exception and empty-array rules below
 `#{number} excluded — blocker not landed: #{blocker} (closing commit {commit}), … — eligible again once it reaches the integration branch`
 
 Then its `reason: 'malformed-blocker'` entries (`records: [number], detail: {cause}` each, #4792 —
-the same pass), one line per record, under the same rules:
+the same pass, or the eligibility step for non-array labels, #5315), one line per record, under the same rules:
 
 `#{number} excluded — malformed blocker declaration: {cause} — eligible again once its blocker declaration can be checked`
 
