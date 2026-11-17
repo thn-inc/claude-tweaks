@@ -42,7 +42,7 @@ test('retry-queue drain without --root drains the retry queue of the injected cw
   assert.deepStrictEqual(JSON.parse(result.stdout), [{ title: 'Queued from the injected cwd' }]);
 });
 
-// bin/harness-health.js's main() dispatches `retry-queue update` by rebasing
+// bin/harness-health.js's run() dispatches `retry-queue update` by rebasing
 // args._ (dropping the leading 'retry-queue' entry) before handing off to
 // retryQueueCommands.update(), which expects its own args._[1] to be the
 // results-file path (see the comment above that dispatch line). Nothing
