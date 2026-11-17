@@ -20,7 +20,7 @@
 // — an upper bound, since a line outside every span cannot be told apart from a review line there.
 //
 // Per-run rows (#5580): `--runs` adds `runs` (one row per run directory: closed state, start time, lane,
-// the yield's steps as StepRows, the driver's own steps) to the JSON summary; `--window N` adds `window`
+// the yield's steps as StepRows, the driver's own steps and its unparsed line count) to the JSON summary; `--window N` adds `window`
 // (the N most recently started closed runs, each lane widened to `--lane-floor` runs, default 20) and
 // `stepTable` (per lane and step: median and summed minutes/tokens/agents, and how many runs the step
 // changed the outcome in). Without those flags the output is what it was. Rules:
@@ -239,9 +239,11 @@ function driverStepsOf(dir, fsImpl) {
 }
 
 const sumCounts = (o) => (isObject(o) ? Object.values(o).reduce((a, n) => a + num(n), 0) : 0);
+const TOKEN_KEYS = ['input', 'output', 'cacheRead', 'cacheCreate'];
 
 function stepRow(s) {
-  const t = isObject(s.tokens) ? s.tokens : null;
+  // A tokens object whose every field is null (step-yield.js writes `tk.input ?? null`) is unknown cost, not 0.
+  const t = isObject(s.tokens) && !TOKEN_KEYS.every((k) => s.tokens[k] === null || s.tokens[k] === undefined) ? s.tokens : null;
   const f = isObject(s.findings) ? s.findings : null;
   const verdicts = f && f.tiebreak && f.tiebreak.byVerdict;
   const commits = isObject(s.commits) ? num(s.commits.commit) : 0;
@@ -250,7 +252,7 @@ function stepRow(s) {
     name: s.phase,
     ran: minutes > 0 || sumCounts(s.events) > 0 || sumCounts(s.decisions) > 0,
     minutes,
-    tokens: t ? num(t.input) + num(t.output) + num(t.cacheRead) + num(t.cacheCreate) : null,
+    tokens: t ? TOKEN_KEYS.reduce((a, k) => a + num(t[k]), 0) : null,
     agents: Number.isFinite(s.agents) ? s.agents : null,
     commits,
     fixCommits: PRODUCT_PHASES.includes(s.phase) ? 0 : commits,
@@ -272,6 +274,7 @@ function runRow(dir, deps) {
     lane, laneSource: source, yieldSource: r.source,
     steps: (r.y.steps || []).map(stepRow),
     driverSteps: driver ? driver.steps : null,
+    driverUnparsed: driver ? driver.unparsed : null,
   };
 }
 

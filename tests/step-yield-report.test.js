@@ -340,6 +340,27 @@ test('runRow maps a derived yield to step rows', () => {
   assert.equal(review.tokens, null, 'no timing.json, no cost');
 });
 
+test('runRow carries the driver lines that did not parse', () => {
+  const dir = path.join(mkTmp(), '2026-11-12T090000-drive-1');
+  write(dir, 'driver-events.jsonl', jl({ step: 'worker', ms: 60000, status: 'ok' }, 'not json'));
+  const derive = () => ({ steps: [], unattributed: {} });
+  const row = T.runRow(dir, { fs, derive });
+  assert.equal(row.lane, 'driver');
+  assert.equal(row.driverUnparsed, 1);
+  assert.equal(T.runRow(path.join(mkTmp(), 'x'), { fs, derive }).driverUnparsed, null, 'no driver events, no count');
+});
+
+test('a tokens object whose four fields are all null is unknown cost, not 0', () => {
+  const step = (phase, tokens) => ({ phase, minutes: 1, tokens, agents: null, commits: {}, events: {}, decisions: {}, findings: null, verify: { fail: 0 } });
+  const derive = () => ({ steps: [
+    step('review', { input: null, output: null, cacheRead: null, cacheCreate: null }),
+    step('test', { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 }),
+    step('build', { input: 1, output: null, cacheRead: 2, cacheCreate: null }),
+  ], unattributed: {} });
+  const by = Object.fromEntries(T.runRow(path.join(mkTmp(), 'x'), { fs, derive }).steps.map((s) => [s.name, s.tokens]));
+  assert.deepEqual(by, { review: null, test: 0, build: 3 });
+});
+
 test('commits count the commit action only, and only after the build is a fix', () => {
   const step = (phase, commits) => ({ phase, minutes: 1, tokens: null, agents: null, commits, events: {}, decisions: {}, findings: null, verify: { fail: 0 } });
   const derive = () => ({ steps: [step('build', { commit: 2, push: 1 }), step('review', { commit: 1, push: 1, rm: 1 })], unattributed: {} });
