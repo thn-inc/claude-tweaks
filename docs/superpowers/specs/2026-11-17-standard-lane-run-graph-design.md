@@ -563,7 +563,7 @@ The function is evaluated at the points below, in this run order. Each point dec
 
 | Point (`at`) | When | Facts first known | Steps it decides |
 |---|---|---|---|
-| `start` | the first evaluation: right after `/claude-tweaks:flow` Step 1's `materialize.js --check` (item 5), which has fetched and shape-gated the record, and before Step 2.8's mint and claim | rows 1-4, 6 and 10-12; `design-pre-build`'s gate verdict | every step not listed below |
+| `start` | the first evaluation, for a record target only: right after the record passes `/claude-tweaks:flow` Step 1's `materialize.js --check` (item 5 for a record reference; a topic name resolves to a record at item 6, after item 5, and `start` runs once that record has passed the same check), and before Step 2.8's mint and claim | rows 1-4, 6 and 10-12; `design-pre-build`'s gate verdict. The `--check` envelope, `{record, check, title, ceremony, surface, bodyBlockedBy}` (`plugin/bin/materialize.js`), carries row 4 only; `## Who walks the graph` says where the others come from | every step not listed below |
 | `config` | after the Manifesto writes `config.yml`, before `worktree-setup` | the ceremony | R2's six steps, `whole-branch-review` under `standard`, and R9's ceremony clause |
 | `plan` | after `plan`, before `plan-audit` | the task count | `whole-branch-review` |
 | `journeys` | immediately before `journeys`, after its `skill-gate.js` call | its gate verdict; the changed-path classes | `journeys` |
@@ -738,7 +738,7 @@ node -e 'const {liftMetadata}=require(require("path").resolve("plugin/bin/lib/is
 
 It prints `{ absent: 477, backend: 22, infra: 86, terminal: 5 }`.
 
-**Expected effect on #4031's targets**, as an expectation and not a criterion: none from the function at its default. Every ready record keeps today's graph at the first evaluation. The one default change in this repository is R8's absent-surface clause, which adds `visual-review`, a skill load and a browserless recommendation, to a run whose record has no `Surface:` line and whose diff has no `frontend` path; for those runs both the median wall time and the round-trip count are expected to rise slightly. Movement toward 15 minutes and 120 round trips is expected from the walker (`## Who walks the graph`) and from later rules, once each vocabulary step has an Evidence row of its own, not from this function's default.
+**Expected effect on #4031's targets**, as an expectation and not a criterion: none from the function at its default. Every ready record keeps today's graph at the first evaluation. The one default change in this repository is R8's absent-surface clause, which adds `visual-review`, a skill load and a browserless recommendation, to a run whose record has no `Surface:` line and whose diff has no `frontend` path; for those runs both the median wall time and the round-trip count are expected to rise slightly. Movement toward 15 minutes and 120 round trips is expected from later rules, once each vocabulary step has an Evidence row of its own, not from this function's default or from its walker (`## Who walks the graph`).
 
 **Decision for Phase 0: an unlabeled record's ceremony.** The ceremony input takes the Manifesto's `ceremony-check` verdict for a record with no `ceremony:*` label, as today. The stricter reading is to read an absent label at `standard`. That adds R2's six steps, and `whole-branch-review` on a one-task plan, to each unlabeled record the Manifesto would judge `fast-lane`: up to 456 of today's 590 ready records. Recommendation: keep the verdict. Neither value removes an asserted step, so the stricter reading strengthens no assertion. The verdict also comes from the same `ceremony-check` mode that stamps the label. The weakest point of that argument is that a headless Manifesto verdict has no human on it, while `/claude-tweaks:specify`'s stamp can. If the maintainer weighs that, the stricter reading gives more steps, so it needs no policy value.
 
@@ -746,7 +746,7 @@ It prints `{ absent: 477, backend: 22, infra: 86, terminal: 5 }`.
 
 The roster's Never skipped table mixes two things: steps that must be in every graph, and stops that must fire when their step is in the graph. They are separated here. The assertions are conditions on the function's output and run at every evaluation. The stops are inside step bodies and fire whenever their step runs.
 
-**On a violation.** At `start`, before any step runs, a violation refuses the run with one line, `run graph: {id} violated: {assertion}`, and writes nothing: `start` comes before Step 2.8 mints a run directory or takes a claim, so the run has made nothing yet. Under `/claude-tweaks:dispatch` the dispatching session has already minted an empty run directory before `/claude-tweaks:flow` runs. The refusal leaves that directory as it is, and dispatch's own first-call failure path handles it (`dispatch/two-call-gate.md` §5). At a later evaluation a violation never stops or fails the run: the caller keeps `previous`, which still satisfies every assertion because no evaluation removes an asserted step, and logs one `SKIP` line naming the assertion through `log-decision.js`. Under the rules above no combination of inputs violates an assertion: each rule leaves out only steps no assertion names, or, for A7-A9, only under the condition the assertion allows. A violation therefore marks a defect in a rule, and the check keeps that defect from shortening a run.
+**On a violation.** At `start`, before any step runs, a violation refuses the run with one line, `run graph: {id} violated: {assertion}`, and writes nothing: `start` comes before Step 2.8 mints a run directory or takes a claim, so the run has made nothing yet. Under `/claude-tweaks:dispatch` the dispatching session has already minted the group's run directory before `/claude-tweaks:flow` runs, a minted run directory holding only `run-state.json` (the `dispatched: true` bind of `record-worktree --dispatch`, `dispatch/sibling-session-check.md`). The refusal leaves that directory as it is, and the first call reports `ISSUE #{n}: failed:run-graph-refused`. This design adds a run-graph-refused special case to `dispatch/settle-and-merge.md`'s Settle, beside its No-dispatch-host special case and for the same reason: a pre-claim stop, at which no claim of this run's exists. Skip steps 1-7: no release, no `failure-check` classification, no attempt counted against `dispatch-retry-ceiling`, no `auto:merge` or `auto:merge-pending` revocation, no failure comment and no PR tombstone, so nothing is written to the record. The dispatching session's first-call failure path (`dispatch/two-call-gate.md` §5) then makes its `cleanup-only` call with the parenthetical `(run-graph-refused: skip the claim release)`, which `wrap-up/cleanup-procedures-execution.md` Section E honours as it does `prompt-not-dispatched`, because `release-claim.js` would post a false release comment on a record this run never claimed. At a later evaluation a violation never stops or fails the run: the caller keeps `previous`, which still satisfies every assertion because no evaluation removes an asserted step, and logs one `SKIP` line naming the assertion through `log-decision.js`. Under the rules above no combination of inputs violates an assertion: each rule leaves out only steps no assertion names, or, for A7-A9, only under the condition the assertion allows. A violation therefore marks a defect in a rule, and the check keeps that defect from shortening a run.
 
 ### Assertions
 
@@ -783,7 +783,7 @@ So of the three HARD-GATEs that sit inside a `fast-lane` skip today, none has it
 
 Stops dropped from the assertions, each with its reason:
 
-- `/flow` Step 2.7 design-doc rejection: it rejects a path argument, which has no record to `--check`, so a design doc never reaches `start`.
+- `/flow` Step 2.7 design-doc rejection: `start` runs for record targets only, a record reference after Step 1 item 5 and a topic name after item 6 resolves it, so a path argument, held to Step 2.7 and rejected there, never reaches `start`.
 - `/build` Design Step 3 plan validation: a design-mode build, which `/claude-tweaks:flow` rejects, is not in the standard lane (`## Today's graph`).
 - `/flow`'s multi-spec boundary-freshness escalation: it fires between two records of a multi-spec series, outside any one record's graph.
 - `/flow`'s adopted-run PR-conflict catch-up stop: it fires in the adoption frame, before a resumed run's next evaluation.
@@ -822,15 +822,151 @@ The graph has no other cycle. Its steps run in the Step vocabulary table's order
 
 ## Who walks the graph
 
-<!-- filled by Task 6 -->
+Skill paths in this section and the two after it are relative to `plugin/skills/`.
+
+The function decides the steps; a walker runs them. Two walkers were compared.
+
+| Question | (a) `drive.js` walks, with model workers for the judgment steps | (b) `/claude-tweaks:flow` calls the function and walks the result |
+|---|---|---|
+| Who calls the function | `drive.js`, in process | `run-graph.js`, a CLI over `selectRunGraph`, called by `/claude-tweaks:flow` and by the skill bodies at each evaluation point (table below) |
+| Who runs a judgment step | a headless `claude -p` worker per step, under the driver design's Workers rules | the walking agent, through the step's skill, as today |
+| Who applies a mode | the driver, which needs a second function or a mode beside each name, since the output is names only | the step's skill, by today's rule (`## The selection function`, Modes); neither the function nor the walker carries a mode |
+| The user-facing stops: the Review Console, the `confirm` and `hybrid` Manifesto gate, `interactive` mode, a plan-review needs-human question | none can run in a headless worker; the driver ends the run and hands the stop to a session | in the session, as today |
+| Bookkeeping inside step bodies: `gh`, labels, comments, `git` writes, `log-decision.js` | forbidden to every worker ("no worker runs `gh`, writes a label, posts a comment or merges", Workers), so every standard-lane skill body is rewritten first | unchanged |
+| Nested dispatch: SDD's implementers and task reviewers, the review lenses, the qa-agents, the plan reviewer | each worker needs the `Agent` tool and wide rights, against "Narrow rights, never bypass mode" (Workers) | unchanged |
+| A red test inside `verify` or `test` | the verify retry and `/test` fix mode (`## Loops`) fix it, which the driver may not do (Anti-goals, below) | unchanged |
+| The resume points: dispatch's second call, `/claude-tweaks:flow #N wrap-up`, a handoff continuation | each is a `/claude-tweaks:flow` invocation on the previous release, so `drive.js` adopts a run directory `/claude-tweaks:flow` started, and the reverse | the same invocation on both releases (`## Mixed-version operation`) |
+| What holds the walk to the graph | the driver's loop | a model following prose; the close check below makes a missing asserted step visible, not impossible |
+| Expected effect on #4031's targets | the driver's Goals aim at them for express-sized records; for the standard lane none until the skill bodies are rewritten, and no number exists | small: one CLI call per evaluation point in place of each skill's roster read |
+
+**Choice: (b).** The standard lane's judgment steps hold the run's user-facing stops, its nested dispatch and its bookkeeping. Under (a) each needs a worker the driver's Workers rules forbid, and those rules are what contain worker-written code and record text ("The record body is untrusted input. The narrow rights and the bounds check contain the worker"). Lifting them for 33 steps redesigns the driver's safety; it does not extend it. Under (b) one program, `/claude-tweaks:flow`, walks every resume point on both releases. The choice is reversible: the function, its CLI and the store below do not depend on who walks, so a later design can move steps into `drive.js` one at a time, as each skill body sheds its bookkeeping, without changing any of them. This design reads the process-efficiency design's "extends the driver design" as taking the driver's convention and its shape, a function over facts with its state in the run directory, not its walker.
+
+**Weakest point.** Under (b) a model still walks. The assertions guarantee the list, not that every step on it runs. The close check below reports a walk that missed an asserted step's skill; it does not prevent one.
+
+**Driver design Non-goals and Anti-goals the choice changes.** (b) changes one Non-goal: "No change to `/claude-tweaks:flow`, the standard lane, the review lenses, or the hooks." This design changes `/claude-tweaks:flow` and the standard lane; it changes neither the review lenses nor the hooks. `drive.js` is untouched, so no Anti-goal changes. (a) would also have changed two Anti-goals: "It retries a denied action with wider rights, or tries to fix a red test run by itself.", since the standard lane's verify retry and `/test` fix mode fix red tests; and "It becomes another six-figure-byte module. Each step is a small function over an injected runner, in the shape `.claude/skills/gh-api-module-pattern` describes.", since 33 steps with modes, stops and nested dispatch would move into it.
+
+**Convention.** The run graph has code as its statement of record and a usage page, not a prose contract with pinned tests. It takes the driver's Anti-goal as its rule: "For the driver, the code is the statement of record. It gets a usage page in `docs/` and nothing under `plugin/skills/_shared/`, and no test pins its prose." The statement of record is `selectRunGraph`, its rule and assertion tables and `run-graph.js`, under `plugin/bin/lib/run-graph/`; the usage page `docs/run-graph.md` names the CLI, the store, the exit codes and where the rules live, and copies no rule. Its tests are behaviour tests of the function and the CLI. A skill sentence that calls `run-graph.js` names the call and what to do with its answer and states no rule, so no rule has a prose twin to pin. The roster's convention, prose with a pinned test, ends with the roster (`## Roster replacement`).
+
+### The remainder store
+
+`run-graph.json`, in the run directory; in a multi-spec run, in each spec's `spec-{N}/` directory, the one `PIPELINE_RUN_DIR` names for that spec.
+
+```
+{ "schema": 1,
+  "points": [
+    { "at": "start",  "source": "evaluated", "facts": { "surface": "infra", "...": "..." }, "remainder": ["worktree-setup", "..."] },
+    { "at": "config", "source": "evaluated", "facts": { "ceremony": "standard" }, "remainder": ["worktree-setup", "..."] }
+  ] }
+```
+
+- `points` holds one entry per evaluation point the run has passed, in run order. The remainder in force is the last entry's. `facts` holds the closed values the function read at that point and nothing else. `source` is `evaluated`, or `backfilled` for an entry the absent-store branch wrote. An entry whose evaluation violated an assertion also carries `violation`, the assertion's id, and its remainder is the one the rule in `## Never skipped` kept.
+- Writer: `run-graph.js` and nothing else. It rewrites the file atomically and appends one entry per call that evaluates a point.
+- A call for a point the store already records evaluates nothing and prints the stored entry. That is how "Once per run" (`## Evaluation points`) holds in code: a repeated call is harmless.
+- Readers: `run-graph.js` only. The walker asks it for a point (`--at`) and a skill asks whether a step is in the remainder (`--step`, which evaluates nothing; a step a later point still decides reads as in). With no run directory, a standalone skill invocation, a skill asks nothing and runs its steps as it does today without a `config.yml`. The close, archive and reconcile paths read nothing in the file; `archive-run` moves it with every other entry (`wrap-up/cleanup-procedures-execution.md` Section C step 4).
+
+| Point | Who calls | Call | Writes |
+|---|---|---|---|
+| `start` | `/claude-tweaks:flow` Step 1, after the record's `--check` passes | `run-graph.js --at start`, with `--run "$PIPELINE_RUN_DIR"` when it is set | nothing on a fresh run: prints `{at, facts, remainder}`, or, on a violation, the one refusal line and a non-zero exit |
+| `config` | `/claude-tweaks:flow`, after Step 3's Manifesto has written or adopted `config.yml` | `run-graph.js --run … --at config --start-facts {the facts start printed}` | the store, with its `start` and `config` entries |
+| `plan`, `journeys` | `/claude-tweaks:build`, after `plan` and before `journeys` | `--at plan`, `--at journeys` | one entry |
+| `build` | `/claude-tweaks:flow`, after the build closes | `--at build` | one entry |
+| each gated step | the step's skill body, in place of its own `skill-gate.js` call, which the CLI makes itself (`decide`) | `--at {step}` | one entry |
+
+**Facts at `start`.** The `--check` envelope carries row 4 (surface). `materialize.js --check` adds four fields to it, `type`, `size`, `risk` and `riskFlags` (rows 1-3 and 6), parsed by the functions the Inputs table names from the record it has already fetched, on the `--record-json` path as on the `gh` one. Fields are added and none renamed, so a previous-release reader of the envelope is unaffected. No rule reads those four today, so `start`'s output does not depend on them, but the function takes them and the store records them. Rows 10-12 `run-graph.js` reads itself: CLAUDE.md, `resolve-policy.js`, and the run flags, which the walker passes as the closed tokens Step 1 parsed. It computes `design-pre-build`'s gate verdict with `decide`.
+
+**Start facts are relayed as facts.** A fresh run has no run directory at `start`, so the walker holds the printed facts until `config`. `--start-facts` is checked value by value against the Inputs' closed sets, an invalid value is read at its most cautious, and the function recomputes the `start` remainder from them. A relayed fact set can only yield a graph the function gives some record, which satisfies every assertion (`### Inputs from model judgment or record text`); a relayed remainder could drop an asserted step, so none is relayed.
+
+**Absent store.** A call whose `--run` names a directory holding `config.yml` and no `run-graph.json` meets a run that passed `config` without a store: one started on a release without the run graph, a prose express run escalated into `/claude-tweaks:flow` from Step 3 (`_shared/express-lane.md`, Escalation), or a `config` call that never landed. That call first evaluates `start` and `config`: `start` from the start facts its invocation passes, which every `/claude-tweaks:flow` invocation for a record target holds from its own Step 1, read as absent when none are passed; `config` from `config.yml`'s `ceremony-profile`. It writes both entries as `backfilled`, logs one `SKIP` line naming the missing store, and then answers its own call. A violation at a backfilled point refuses nothing, because the run has already made things: its remainder is the whole vocabulary, which satisfies every assertion, with one `SKIP` naming the assertion. The branch is permanent. It is how a run directory that reaches the walker without a store is read, as an absent fact is read at its most cautious, so it has no removal condition.
+
+| Case | Finds | Does |
+|---|---|---|
+| Dispatch's second call | the store call 1 wrote, under the same `PIPELINE_RUN_DIR` | Step 1's `--at start` and Step 3's `--at config` print the stored entries; it evaluates only the points ahead |
+| A context-handoff continuation | the same directory and `handoff.json` | as the second call |
+| A resumed or adopted run: `PIPELINE_RUN_DIR` set, adoption case 1 or 3, `/claude-tweaks:flow #N {step}` | the store, when the run passed `config` on a release that writes one | as the second call; without a store, the absent-store branch |
+| Adoption case 2: a mint holding only claim lines or the dispatch bind | no `config.yml` and no store | `start` as on a fresh run, dry, and it may refuse |
+| `dispatch resume` | a fresh run directory, "one no earlier claim names" (`dispatch/settle-and-merge.md`, No-dispatch-host special case) | a new graph from `start` |
+
+**Walking.** An invocation walks the remainder's steps its step list covers, in remainder order. A step-list entry covers the vocabulary steps its skill holds (`## Not a step`), and the step list keeps today's rules (`/claude-tweaks:flow` Step 1 item 4, `no-polish` included), so a flag typed on a later invocation still trims what that invocation walks. A step-list entry none of whose steps is in the remainder is passed over with one `SKIP` line naming the rule that left it out.
+
+**Close check.** At wrap-up's close, before `close-run`, one `run-graph.js --run … --check-walk` call compares the store's remainder with the run's skill events (`events.jsonl`) at skill granularity: `/claude-tweaks:build` for A1-A3, `/claude-tweaks:test` for A4 and A8, `/claude-tweaks:review` for A5-A7 and A9. It logs one `SKIP` line per asserted step whose skill left no event, which the Review Console shows, and never fails the close. On a backfilled store, or with no store, it logs one `SKIP` and checks nothing.
 
 ## Roster replacement
 
-<!-- filled by Task 6 -->
+Process-efficiency Decision 0.1 binds the replacement: "a change must not break a run in flight on the previous release, because live sessions run mixed plugin versions." So the new form is added beside the roster, every consumer is migrated to it, and the roster is removed under the condition at the end of `## Mixed-version operation`.
+
+| Stage | What lands | Behaviour change |
+|---|---|---|
+| Add | `selectRunGraph`, `run-graph.js`, the store, the walker's calls at `start`, `config` and `build`, the four `--check` fields, and the run-graph-refused special case in dispatch's Settle and teardown | none: the walker records the store and walks as today, and no skill reads the store yet |
+| Migrate | each sentence that skips a step by citing the roster asks `run-graph.js --step` instead; the walk follows the remainder (Walking, above); `/claude-tweaks:build` calls `--at plan` and `--at journeys`; each gated step's `skill-gate.js` call becomes its `--at {step}` call; the close check | at the default, only the absent-surface additions (`## The selection function`, What a defaulted surface adds). Each skip keeps today's `decisions.md` line, `--step` label and text included, because a previous-release session may read the log |
+| Remove | the roster file and its test | none |
+
+| Item | Fate | By what, or under what condition |
+|---|---|---|
+| The roster's `## Skips by profile` | replaced, then removed | R2, R3 and R9 in code (`### Rules`). `reflect-light-mode` becomes part of `wrap-up`'s `fast-lane` mode, stated in `reflect/light-mode.md`; `red-team-persona`, a `/claude-tweaks:specify` step (`## Not a step`), is stated in `specify/red-team.md`. Removed at the remove stage |
+| The roster's `## Never skipped` | replaced, then removed | A1-A10 in code; the stops stay in their step bodies (`### Stops`). Removed at the remove stage |
+| The roster's `## Mentions that are not skips` | removed | It indexes the mentions `tests/ceremony-profile-roster.test.js` must not read as skips, so it goes with that test |
+| The `ceremony:*` labels | kept | the ceremony input's source (Inputs row 5); `/claude-tweaks:specify` stamps them |
+| The `config.yml` `ceremony-profile` key | kept | the ceremony input. `wrap-up`'s mode, the efficiency-budget ceilings (`plugin/bin/lib/timing/budget.js`), the absent-store branch and a previous-release session continuing a new run all read it |
+| The `ceremony-check` mode | kept | it stamps the label and gives the Manifesto's verdict for an unlabeled record |
+| `plugin/bin/lib/dispatch/ceremony-derive.js` | kept | `wrap-up`'s mode rule; it selects no step |
+| The wrap-up Ceremony escape hatch | kept | A10 names it; it changes only `wrap-up`'s mode |
+| `tests/ceremony-profile-roster.test.js` | replaced, then removed | by behaviour tests of `selectRunGraph` (each rule, each assertion, each most-cautious read) and of `run-graph.js` (the store, the repeated call, the absent-store branch, the relayed facts). Removed with the roster tables, which it pins while they exist |
+| `docs/decisions/0006-ceremony-tiering-owned-by-specify.md` | kept, with a note | Its decision, that `/claude-tweaks:specify` computes and stamps the label, stands. The migrate stage adds a dated note in the file's own form saying that step selection now reads the label through the run graph, and adds a decision record for the run graph itself |
+
+The roster file's paragraphs outside its tables move to the files they describe before the remove stage: the escape-hatch paragraph to `wrap-up/SKILL.md`'s Ceremony escape hatch, "The two-call split is kept" to `dispatch/two-call-gate.md`, and the value-collision decision to `_shared/policy-schema.md`'s `design-ceremony` row.
 
 ## Mixed-version operation
 
-<!-- filled by Task 6 -->
+Each session reads the skill files and CLIs of the release it has installed. What crosses releases is the run directory and the record. "Previous release" is the last release without the add stage; "new code" is a release with the migrate stage. A release with the add stage alone walks as today and also writes the store, so it reads a run as the previous release does.
+
+| Case | What the reader finds in the run directory | What it does |
+|---|---|---|
+| Started on the previous release; dispatch's second call runs the new code | `run-state.json`, `config.yml`, `decisions.md`, the worktree's commits; no `run-graph.json` | The absent-store branch backfills `start` and `config`, the ceremony from `config.yml`, then walks `review,polish,wrap-up` within that remainder: the previous release's graph for those steps, plus the absent-surface additions. The run completes |
+| Started on the previous release; `/claude-tweaks:flow #N wrap-up` on the new code | the same | the same backfill; walks `wrap-up` |
+| Started on the previous release; a context-handoff continuation on the new code | the same, and `handoff.json` | the same backfill at the continuation's first `run-graph.js` call |
+| Started on the previous release; the close path (`hooks.js close-run`, wrap-up Section C) and the reconcile path (`hooks.js reconcile`'s reap and archive checks) on the new code | the same | They read nothing of the graph. The close check logs one `SKIP` for the missing store and checks nothing; `archive-run` moves the directory's entries as today |
+| Started on the previous release, its `config.yml` lost; adopted by the new code (adoption case 3) | `decisions.md` and run content, no `config.yml`, no store | Case 3 rewrites `config.yml` from the config snapshot as today; the next `run-graph.js` call meets the absent-store branch |
+| Started on the new code; dispatch's second call, `/claude-tweaks:flow #N wrap-up` or a handoff continuation in a previous-release session | `run-graph.json` beside `config.yml` | The previous release ignores the file, reads `ceremony-profile` and its own roster, and walks today's graph. It does not make the absent-surface additions, so A7-A9's absent-surface clauses are not enforced in that session; no step is missing that today's graph holds, because at the default no rule leaves one out. The run completes |
+| Started on the new code; closed or reconciled by previous-release code | `run-graph.json` among the entries | `close-run` reads nothing of it; `archive-run` moves it with the rest, since it enumerates the directory's entries |
+| A prose express run escalated into `/claude-tweaks:flow` on the new code (the lane is unchanged, Non-goals) | `config.yml` written by the express lane, no store | the absent-store branch, as for a previous-release run |
+| A record labelled `ceremony:fast-lane` before the change and built after it | a new run directory; the Manifesto folds the label into `config.yml` as today | R2, R3 and R9 read `fast-lane`: today's fast-lane graph, plus the absent-surface additions |
+| This repository's `policy.yml` sets `run-graph-rules`; a previous-release session reads it | the policy line, not the run directory | A previous-release resolver never requests the key, so that session walks today's graph. The opt-in phase waits for the release that carries the rule (`## The selection function`) |
+
+No row stops, fails or restarts a run: the absent-store branch refuses nothing, and a previous-release session ignores the store.
+
+**Removal condition.** The old form is the roster: `_shared/ceremony-profile.md`'s three tables and every sentence that skips a step by citing them. Removing it breaks no run in flight, because no run reads the new release's copy of it. A previous-release session reads the roster of the release it has installed, which the removal does not touch; a new-release session reads a store-less run through the absent-store branch, which reads `config.yml`, not the roster. So the condition counts files, not runs: the remove stage lands when no file under `plugin/` or `tests/` cites the roster by name or by tag, except the roster and its own test. C9, from the repository root:
+
+```
+git grep -l -E "ceremony-profile\.md|roster tag" -- plugin tests
+```
+
+On 2026-11-17, at `bee556e906`, it prints 24 paths: the roster, its test, 18 other skill files and 4 other test files (`tests/build-plan-review-conformance.test.js`, `tests/express-lane-prose.test.js`, `tests/log-decision-text-file-sites-conformance.test.js`, `tests/plan-review-hard-gate-conformance.test.js`). The migrate stage drives the 18 skill files and the 4 tests to none, leaving 2 paths, and the remove stage deletes those 2. Data source: `git grep` over this repository, which sees every file in it and nothing outside it. It cannot see cloud routine runs, other machines, or consumer projects on an older release, and the condition does not need to: each of those reads the roster of the release it has installed, and a consumer that upgrades past the remove stage with a run open reaches the absent-store branch.
+
+The absent-store branch has no removal condition (`### The remainder store`). Its load on this machine, counted with C10, `node store-count.js <main-checkout>/.claude-tweaks/pipelines`, where `store-count.js` is:
+
+```js
+// Run directories directly under a pipelines root (archive/ left out) whose run-state.json status is not
+// `clean` and which hold config.yml: how many hold run-graph.json, and the oldest and newest run id.
+const fs = require('fs');
+const path = require('path');
+const root = process.argv[2];
+const out = { open: 0, withConfig: 0, withStore: 0, withoutStore: 0, ids: [] };
+for (const name of fs.readdirSync(root).sort()) {
+  const d = path.join(root, name);
+  if (name === 'archive' || !fs.statSync(d).isDirectory()) continue;
+  let status = null;
+  try { status = JSON.parse(fs.readFileSync(path.join(d, 'run-state.json'), 'utf8')).status; } catch {}
+  if (status === 'clean') continue;
+  out.open += 1;
+  if (!fs.existsSync(path.join(d, 'config.yml'))) continue;
+  out.withConfig += 1;
+  out.ids.push(name);
+  if (fs.existsSync(path.join(d, 'run-graph.json'))) out.withStore += 1; else out.withoutStore += 1;
+}
+console.log(JSON.stringify({ ...out, ids: undefined, oldest: out.ids[0], newest: out.ids[out.ids.length - 1] }));
+```
+
+On 2026-11-17 it printed `{"open":293,"withConfig":20,"withStore":0,"withoutStore":20,"oldest":"2026-09-01T123248-record-1664","newest":"2026-11-17T080323-spec-5844"}`. A run directory left open since 2026-09-01 is why the branch stays: a count that must reach zero could wait on abandoned runs indefinitely. The count falls as wrap-up closes and archives runs and as the reaper and `/claude-tweaks:tidy` clear abandoned ones; once the add stage is the installed plugin, new standard-lane runs add none, and escalated express runs still do. Data source: this machine's pipelines root. It cannot see cloud routine runs, whose run directories live in the sandbox and end with it, other machines' run directories, or consumer projects on an older release, whose open runs reach the branch when they upgrade.
 
 ## What this design does not decide
 
