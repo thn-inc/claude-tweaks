@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** On the queue-order cache-miss path, remove the four per-session eligibility files before this pull computes them, in the module and the retained fence, so a failed or empty fetch can never hand an earlier pull's eligible set to grouping or to the queue-order write-back.
+**Goal:** On the queue-order cache-miss path, remove the four per-session eligibility files before this pull computes them, in the module and the retained fence, so a failed or empty fetch can never hand an earlier pull's eligible set to grouping or to the queue-order write-back; and never use the cache when the auto:build queue is empty, so a `[]` queue cannot hit on an earlier pull's groups.
 
 **Architecture:** One `rm` step at the start of the miss path's eligibility computation, in `runBlocked` (module) and right before the eligible-pre-dep node block (fence). A pull whose eligibility step then fails reads no file and stops at the existing group-building check, as a fresh session already does, so the write-back (which runs after grouping) never persists groups this pull did not compute. The D1 parity row flips from "reproduces the stale reuse" to that stop, and gains a third pull proving the cache does not hit on the earlier groups.
 
@@ -15,7 +15,7 @@ Scope keywords: dispatch-eligible-pre-dep.json, dispatch-eligible.json, D1Second
 ## Premise re-derivation (record text predates this branch)
 
 - The record's "a later queue fetch returns empty" is, in its own D1 fixture (`queue-pull-fixtures.js` `D1Second`), the **open-numbers** fetch failing (exit 1, no stdout) while the queue fetch succeeds. At HEAD: `runBlocked`'s `eligible-pre-dep` step throws on the empty open-numbers file and writes nothing; `blocked-body` and the grouping block then read the first pull's `dispatch-eligible-pre-dep.json` / `dispatch-eligible.json`, the pull exits 0, and `runWriteBack` persists those groups under the second pull's freshness signal. The fence does the same (its node blocks throw, the shell continues). No earlier record on this branch changed this: the D1 test (`queue-pull.test.js`, `#5227 D1: ...reuses the first pull's eligible files`) still asserts the reuse.
-- Corrected outcome for D1 (a **failed** fetch): the same stop a fresh session already takes — `dispatch: queue-pull stopped -- group-building exclusion pass failed (exit 1); see error above.`, fence exit 1, CLI exit 4 (R4 mapping), no eligibility file from the earlier pull, no write-back. This matches the established posture recorded in the test header ("A failed queue or open-numbers fetch stops the pull at the group-building check"). AC1's "empty eligible set and exit 0" is read as a genuinely empty queue (`[]`), which already yields an empty eligible set and exit 0 (eligibility files are rewritten as `[]`); the fix keeps that and adds no special case. Turning a failed open-numbers fetch into exit 0 would be a fail-open change no record asks for.
+- Corrected outcome for D1 (a **failed** fetch): the same stop a fresh session already takes — `dispatch: queue-pull stopped -- group-building exclusion pass failed (exit 1); see error above.`, fence exit 1, CLI exit 4 (R4 mapping), no eligibility file from the earlier pull, no write-back. This matches the established posture recorded in the test header ("A failed queue or open-numbers fetch stops the pull at the group-building check"). AC1's "empty eligible set and exit 0" is read as a genuinely empty queue (`[]`). On a cache miss that already yields an empty eligible set and exit 0 (eligibility files are rewritten as `[]`). **Plan-review settlement (converged round, Reading A):** after a non-empty pull that persisted a blob, a `[]` queue re-fetches every persisted signal issue as dependency-only (queue-pull.js `dep-numbers`, fence 79-96), so `buildFreshnessSignal` rebuilds the persisted signal and `cacheUsable` hits on the earlier pull's groups — AC1 fails on the hit path. Fix: an empty auto:build queue never uses the cache (module `runFetch`'s cache check, fence line 109's `cacheUsable` condition). Turning a failed open-numbers fetch into exit 0 would be a fail-open change no record asks for.
 - **Decision (plan review, 2026-11-17, user):** Reading B — a failed open-numbers fetch stops the pull at the group-building check (fence exit 1, CLI exit 4), with no eligibility file from the earlier pull and no cache write-back; it is never read as "no open issues". AC1 is read as a well-formed empty (`[]`) queue fetch after a non-empty pull yielding an empty eligible set and exit 0 with no earlier `dispatch-eligible*.json` content. Recorded in the record body and the re-materialized spec (d2fb985461). This plan already implemented Reading B; no task changes beyond the plan-review low row below.
 - Scope boundary with #5409 (later in this run): #5409 covers every other step whose output a later pass reads. This plan touches only the four eligibility outputs the miss path computes (`dispatch-eligible-pre-dep.json`, `dispatch-unresolved-deps.json`, `dispatch-eligible.json`, `dispatch-blocked-excluded-body.json`). `dispatch-groups.json` is already truncated by the grouping block before it reads (fence `>` redirect, module `fs.writeFileSync(..., '')`), and `dispatch-native-deps.json` is already reset to `{}` every pull.
 
@@ -23,7 +23,7 @@ Scope keywords: dispatch-eligible-pre-dep.json, dispatch-eligible.json, D1Second
 
 - Module first, fence mirrored (queue-pull.js header): "Fix a defect here and mirror the change into the fence, never the other way round." Stop and Warning texts match the fence byte for byte.
 - R6: "A throw inside a step is caught and printed to stderr as `queue-pull: <step>: <message>`, and the run then continues or stops exactly where the fence has an RC check". The new removal is a `step(...)` in the module; in the fence it is a plain `rm -f` (cannot fail the run).
-- Fence size rail: `plugin/skills/dispatch/queue-pull-script.md` is 52,451 bytes against `RAIL_BYTES` 52,500 (`plugin/bin/lib/skill-audit/budgets.js`). The addition is paid for by condensing the three-line `#2066` comment inside the CACHE_HIT node block (file lines 121-123), which restates line 91's placeholder comment; keep its one instruction-bearing fact (a blob from before the field has no `bundles` key, so `[]`). Never cut a clause that tells the reader what to do. Final `wc -c` must be ≤ 52,500 and is quoted in the commit body.
+- Fence size rail: `plugin/skills/dispatch/queue-pull-script.md` is 52,451 bytes against `RAIL_BYTES` 52,500 (`plugin/bin/lib/skill-audit/budgets.js`). The additions (the two-line rm block, about +124 bytes with the short comment below, and the 21-byte `!autoBuild.length || ` guard) are paid for by condensing the three-line `#2066` comment inside the CACHE_HIT node block (file lines 121-123, 213 bytes → one line of about 67), which restates line 91's placeholder comment; keep its one instruction-bearing fact (a blob from before the field has no `bundles` key, so `[]`). Expected result about 52,490. If `wc -c` still comes out over 52,500, the one further sanctioned source is line 111's comment (`persisted.excluded keeps the disk cache's {number, blockedBy}[] shape; convert to reason:'blocked' entries here.`), condensed keeping both facts (the disk shape, the conversion to `reason: 'blocked'`). Never cut a clause that tells the reader what to do. Final `wc -c` must be ≤ 52,500 and is quoted in the commit body.
 - Fence line citations: queue-pull.js cites fence file lines as `fence NNN` / `Fence NNN-MMM`. The layout below keeps every line from 147 on at its current number (−2 lines at 121-123, +2 lines before 147). Re-anchor every citation that names a line in 124-146, and set `runBlocked`'s header citation to start at the new rm line (`Fence 145-207`). At HEAD the one citation in that range is `runFetch`'s header (queue-pull.js line 479, `Fence 68-139, then line 143 and the policy reads of 144-146`), which becomes `Fence 68-137, then line 141 and the policy reads of 142-144`. Grep `fence [0-9]` / `Fence [0-9]` in queue-pull.js after the edit and check each cited line still holds what the comment says.
 - Whole-fence parity oracle (`.claude/skills/skill-prose-conformance-tests/whole-fence-parity-oracle.md` item 8): "Compare the exit status, the files each side writes, and the reported line kinds the criterion names... Add a guard that fails when the port prints a step diagnostic where the reference's stderr shows no error". The D1 row keeps `assertClean` and compares both sides.
 - `failGh` is bound in `queue-pull.test.js` only at line 4205 (`const { failGh } = require('./queue-pull-fixtures');`, HEAD 31afe52ab); a new test using it goes after that line. (`D1Second` is imported at the top and may be used anywhere.)
@@ -60,6 +60,8 @@ Proof(risk-medium): the D1 parity row runs fence and module over the same three-
 **Interfaces:**
 - Produces: `D1Third()` in `queue-pull-fixtures.js` — S1 with #9003 retitled exactly as `D1Second` does (title `'Retitled after the first pull'`, updatedAt `'2026-11-12T11:00:00Z'`) and every fetch healthy. Factor the retitle into one local helper both use; export `D1Third` beside `D1Second`.
 - Produces: `runD1()` returns `{ first, second, third }`, each `{ oracle, module }`.
+- Produces: `EmptyAfterS1()` in `queue-pull-fixtures.js` (exported beside `D1Third`), and `runEmptyAfterS1()` returning `{ first, second }`, registered in the fault pool as job `EmptyAfterS1`.
+- Review Focus 1 still holds for a non-empty queue: a hit keeps its output byte for byte; only an empty queue skips the cache.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -118,6 +120,27 @@ test('#5314 (AC1.1): a module pull whose open-numbers read fails removes an earl
 });
 ```
 
+(d) Plan-review settlement (Reading A), the hit path of AC1. Add a fixture `EmptyAfterS1()` in `queue-pull-fixtures.js` (exported, imported into both test files, added to `queue-pull-shims.test.js`'s scenario list like `D1Third`): SEmpty's queue and open-numbers answers, plus an answer to the dependency-freshness search the second pull makes over the first pull's persisted signal issues (`gh issue list --search "#… #…" --state all --json number,updatedAt,state --limit 500`), returning every one of them with S1's own `number`/`updatedAt`/`state` unchanged — derive the search argv from what the first pull actually persisted (S1's signal issues), not by hand-guessing. At HEAD this second pull must be a cache hit (its stderr carries `HIT_MESSAGE`), which is what makes the row discriminating; if it is not a hit at HEAD, the fixture is wrong — fix the fixture, never the assertion. Add a job beside D1 in the fault pool (`runEmptyAfterS1`, same shape as `runD1`: two sandboxes, `tmp: 'one-session'`, S1 then `EmptyAfterS1()`; clean both up in the same `after`, and count its runs in the pool diagnostic), and one test:
+
+```js
+test('#5314 (AC1.1, cache hit path): a [] queue after a non-empty pull that persisted a blob never reuses its groups — empty eligible set, exit 0, both sides', () => {
+  const { first, second } = R.EmptyAfterS1;
+  for (const [label, pair] of [['first', first], ['second', second]]) assertClean(pair, label);
+  assertParity(second.oracle, second.module, { files: AC1_FILES });
+  for (const [side] of sides(second)) {
+    assert.equal(first[side].status, 0, side);
+    assert.ok(first[side].orderBlob && first[side].orderBlob.groups.flat().length > 0, `${side}: the first pull persisted non-empty groups`);
+    const two = second[side];
+    assert.equal(two.status, 0, `${side}: ${two.stderr.slice(-2000)}`);
+    assert.ok(!two.stderr.includes(HIT_MESSAGE), `${side}: no cache hit on the earlier pull's groups`);
+    assert.deepEqual(JSON.parse(two.files['dispatch-groups.json']), [], `${side}: empty groups`);
+    assert.equal(two.files['dispatch-eligible.json'], '[]', `${side}: empty eligible set, nothing from the earlier pull`);
+  }
+});
+```
+
+Adapt helper names to what is in scope (as for (a)); keep every assertion. Also extend test (c) with a module-only in-process twin: seed the fake queue-order store with a blob holding S1's groups and a freshness signal the `[]` pull's dependency-freshness answer reproduces, run `pull(SEmpty-with-that-search-answer)`, and assert `thrown === null`, `dispatch-eligible.json` is `'[]'` and `dispatch-groups.json` is `'[]'` (red at HEAD: the groups come back from the blob).
+
 Check `pull`'s real option and result names (`allowThrow`, `before`, `text`, `store.written`, `thrown`) against the tests at ~1468-1500 and `SEmpty`'s shape before relying on them; adapt names, not assertions.
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -142,9 +165,11 @@ with `const ELIGIBILITY_FILES = ['dispatch-eligible-pre-dep.json', 'dispatch-unr
 Fence: replace lines 121-123 with one line `  // #2066: a blob from before the field has no 'bundles' key: [].` (or shorter, same fact), and insert before the `node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPATCH_OPEN_NUMBERS" "$DISPATCH_ELIGIBLE_PRE_DEP" ...` line:
 
 ```bash
-# #5314: an earlier pull's eligibility files never stand in for this pull's.
+# #5314: no earlier pull's eligibility files.
 rm -f "$DISPATCH_ELIGIBLE_PRE_DEP" "$DISPATCH_UNRESOLVED_DEPS" "$DISPATCH_ELIGIBLE" "$DISPATCH_BLOCKED_EXCLUDED_BODY"
 ```
+
+Empty-queue cache guard (plan-review settlement, Reading A). Fence line 109: `if (!autoBuild.length || !cacheUsable(persisted, current, ...)) { console.log('0'); process.exit(0); }` — in place, no line added. Module `runFetch`, the cache check at ~523: use the persisted blob only when the queue file holds at least one record (`if (persisted && readArray(queueFile).length > 0)`, or the equivalent with the module's own helpers), with a one-line `// #5314 (fence 109): an empty queue never reuses the earlier pull's groups.` comment. The dependency-freshness search before it is unchanged (a wasted call on an empty queue, kept so the fence and the module make the same calls).
 
 Then: `wc -c plugin/skills/dispatch/queue-pull-script.md` ≤ 52,500; confirm the inserted `rm` sits on file lines 145-146 and the eligible-pre-dep `node` line is still line 147; re-anchor queue-pull.js citations per Global Constraints.
 
@@ -171,5 +196,5 @@ git -C "<worktree>" commit -m "Remove an earlier pull's eligibility files before
 | Deliverable 1 (empty fetch clears the earlier eligibility/group files) | Task 1 Step 3 (rm step; groups already truncated) |
 | Deliverable 2 (write-back never records groups this pull did not compute) | Task 1 (stop precedes write-back; test (a) `orderBlob` unchanged, test (c) `store.written` empty) |
 | Deliverable 3 (D1 expectation flips) | Task 1 Step 1 (a) |
-| AC1.1 | Tests (a) and (c), incl. the `[]` queue control |
+| AC1.1 | Tests (a) and (c), incl. the `[]` queue control; test (d) and (c)'s in-process twin for the cache-hit path (plan-review settlement) |
 | AC2.1 | Test (a) third pull |
