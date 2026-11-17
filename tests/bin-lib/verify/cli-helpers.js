@@ -45,12 +45,19 @@ function initVerifyRepo(dir) {
   gitIn(dir)('commit', '-q', '--allow-empty', '-m', 'init');
 }
 
-// The branch a copy's HEAD names, read from the file rather than asked of git.
-function headBranch(gitDir) {
-  const head = fs.readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim();
-  const prefix = 'ref: refs/heads/';
-  if (!head.startsWith(prefix)) throw new Error(`headBranch: ${gitDir}/HEAD is not a branch ref: ${JSON.stringify(head)}`);
-  return head.slice(prefix.length);
+// What a template's build learned that a copy cannot re-derive without a git process
+// (key -> { branch, baseSha? }); written only inside the build, read on every call.
+const buildMeta = new Map();
+
+// The branch HEAD names, asked of git once inside a template build (works for any ref format).
+function recordBranch(key, dir) {
+  buildMeta.set(key, { ...buildMeta.get(key), branch: gitIn(dir)('symbolic-ref', '--short', 'HEAD').trim() });
+}
+
+function metaOf(label, key) {
+  const meta = buildMeta.get(key);
+  if (!meta) throw new Error(`${label}: the template build left no metadata under ${key}`);
+  return meta;
 }
 
 // A repo copied from a template built once per process under `key`.
@@ -86,8 +93,10 @@ function nodeCmd(script, ...args) {
 // trivially true whenever the one suite's rule matches.
 function scopedRepo(rules, extra = {}) {
   // The arguments shape the committed declaration, so they are in the key.
-  const r = templatedRepo(`verify-cli:scoped:${JSON.stringify([rules, extra])}`, (dir) => {
+  const key = `verify-cli:scoped:${JSON.stringify([rules, extra])}`;
+  const r = templatedRepo(key, (dir) => {
     initVerifyRepo(dir);
+    recordBranch(key, dir);
     const decl = { checks: { tests: { unit: 'placeholder', other: 'placeholder' } }, rules, ...extra };
     fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
     fs.writeFileSync(path.join(dir, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
@@ -107,7 +116,7 @@ function scopedRepo(rules, extra = {}) {
   const unitCmd = nodeCmd("require('fs').writeFileSync(process.argv[1], 'ran')", marker);
   // The temp repo has no origin, so --integration-branch names its own local
   // branch — whatever init.defaultBranch made it (master on this machine).
-  const branch = headBranch(r.gitDir);
+  const { branch } = metaOf('scopedRepo', key);
   return { ...r, marker, unitCmd, branch, declPath: '.claude-tweaks/verify-scope.json' };
 }
 
@@ -132,8 +141,10 @@ function commitFile(r, rel, content) {
 // the declaration's flaky section (default: tests/flaky.test.js listed).
 function flakyRepo({ failingFile = 'tests/flaky.test.js', retryExit = 0, flaky = { files: ['tests/flaky.test.js'] }, extraDecl = {} } = {}) {
   // Every option shapes the committed files, so all four are in the key, in a fixed order.
-  const r = templatedRepo(`verify-cli:flaky:${JSON.stringify({ failingFile, retryExit, flaky, extraDecl })}`, (dir) => {
+  const key = `verify-cli:flaky:${JSON.stringify({ failingFile, retryExit, flaky, extraDecl })}`;
+  const r = templatedRepo(key, (dir) => {
     initVerifyRepo(dir);
+    recordBranch(key, dir);
     const tap = ['not ok 1 - a flaky one', '  ---', '  stack: |-', `    at TestContext.<anonymous> (${failingFile}:12:5)`, '  ...', '# tests 1', '# pass 0', '# fail 1'].join('\n');
     fs.writeFileSync(path.join(dir, 'fail.js'), `process.stdout.write(${JSON.stringify(tap)} + '\\n'); process.exit(1);\n`);
     fs.writeFileSync(path.join(dir, 'retry.js'), `require('fs').writeFileSync('retry.marker', process.argv[2]); process.exit(${retryExit});\n`);
@@ -149,7 +160,7 @@ function flakyRepo({ failingFile = 'tests/flaky.test.js', retryExit = 0, flaky =
     gitIn(dir)('add', '.');
     gitIn(dir)('commit', '-q', '-m', 'flaky fixture');
   });
-  const branch = headBranch(r.gitDir);
+  const { branch } = metaOf('flakyRepo', key);
   const args = ['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', branch, '--cmd', 'tests=node fail.js'];
   return { ...r, branch, args, marker: path.join(r.repo, 'retry.marker'), retryLog: (i) => path.join(r.gitDir, 'claude-tweaks-verify', `tests-retry-tests+flaky.test.js-${i}.log`) };
 }
@@ -162,9 +173,6 @@ function anchoredRunDir(repo) {
 }
 
 // #3043: a repo whose base commit already carries a failing test file.
-// What a template's build learned that a copy cannot re-derive without a git process
-// (key -> { baseSha }); written only inside the build, read on every call.
-const buildMeta = new Map();
 function baselineRepo() {
   const key = 'verify-cli:baseline';
   const r = templatedRepo(key, (dir) => {
@@ -174,11 +182,9 @@ function baselineRepo() {
     fs.writeFileSync(path.join(dir, 'tests', 'ok.test.js'), "require('node:test')('ok', () => {});\n");
     gitIn(dir)('add', '.');
     gitIn(dir)('commit', '-q', '-m', 'base');
-    buildMeta.set(key, { baseSha: gitIn(dir)('rev-parse', 'HEAD').trim() });
+    buildMeta.set(key, { ...buildMeta.get(key), baseSha: gitIn(dir)('rev-parse', 'HEAD').trim() });
   });
-  const meta = buildMeta.get(key);
-  if (!meta) throw new Error(`baselineRepo: the template build left no metadata under ${key}`);
-  const { baseSha } = meta;
+  const { baseSha } = metaOf('baselineRepo', key);
   return { ...r, baseSha, opts: { cwd: r.repo, env: nestedRunEnv() } };
 }
 const SUITE = 'tests=node --test --test-reporter=tap tests/env.test.js tests/ok.test.js';

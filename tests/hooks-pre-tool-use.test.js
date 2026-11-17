@@ -1205,7 +1205,8 @@ test('hasMaterializeCommit: a resolvable-but-nonexistent integration-branch poli
 // pre-#1688 unbounded fallback armed the gate against history the worktree
 // never made.
 //
-// The branch is renamed explicitly to 'main' rather than trusting the host's
+// `gitRepoOnLocalMain` (tests/helpers/pre-tool-use.js) renames the branch
+// explicitly to 'main' rather than trusting the host's
 // `init.defaultBranch` (this machine's own default is 'master') -- the probe
 // itself tries both 'main' and 'master', but the test must be deterministic
 // regardless of which default a given machine or CI runner ships.

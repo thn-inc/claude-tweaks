@@ -341,6 +341,7 @@ const verifyHelpers = require('./bin-lib/verify/cli-helpers');
 const verifyRules = (glob) => [{ match: glob, suites: ['unit'] }];
 for (const [name, make] of [
   ['verify scopedRepo', () => verifyHelpers.scopedRepo(verifyRules('src/**'))],
+  ['verify scopedRepo with generated', () => verifyHelpers.scopedRepo(verifyRules('src/**'), { generated: ['**'] })],
   ['verify flakyRepo()', () => verifyHelpers.flakyRepo()],
   ['verify flakyRepo({ retryExit: 1 })', () => verifyHelpers.flakyRepo({ retryExit: 1 })],
   ['verify baselineRepo', () => verifyHelpers.baselineRepo()],
@@ -372,9 +373,20 @@ test('verify builders: per-call values match git, and different arguments never 
   assert.ok(fExit1.retryLog(0).startsWith(fExit1.gitDir), fExit1.retryLog(0));
   assert.ok(fs.readFileSync(path.join(fExit1.repo, 'retry.js'), 'utf8').includes('process.exit(1)'));
   assert.ok(fs.readFileSync(path.join(fDefault.repo, 'retry.js'), 'utf8').includes('process.exit(0)'));
+  // A key that dropped `failingFile` or `extra` would hand a later call the first call's files.
+  const fReal = verifyHelpers.flakyRepo({ failingFile: 'tests/real.test.js' });
+  const sGenerated = verifyHelpers.scopedRepo(verifyRules('src/**'), { generated: ['**'] });
+  scratch.push(fReal.repo, sGenerated.repo);
+  const failJs = (r) => fs.readFileSync(path.join(r.repo, 'fail.js'), 'utf8');
+  assert.ok(failJs(fReal).includes('tests/real.test.js'), failJs(fReal));
+  assert.ok(!failJs(fDefault).includes('tests/real.test.js'), failJs(fDefault));
+  const declOf = (r) => JSON.parse(fs.readFileSync(path.join(r.repo, r.declPath), 'utf8'));
+  assert.deepStrictEqual(declOf(sGenerated).generated, ['**']);
+  assert.strictEqual(declOf(s).generated, undefined);
 });
 test('Absorbed AC (identity): a fresh process building every owned fixture starts no git config user.name/user.email process', () => {
   const trace = mk('ct-gt-trace-');
+  const childTmp = mk('ct-gt-childtmp-');
   const script = [
     "const [pre, verify] = process.argv.slice(1).map((p) => require(p));",
     'pre.gitRepo(); pre.gitRepoWithCommit(); pre.gitRepoOnLocalMain();',
@@ -387,7 +399,12 @@ test('Absorbed AC (identity): a fresh process building every owned fixture start
     '-e', script,
     path.join(repoRoot, 'tests', 'helpers', 'pre-tool-use'),
     path.join(repoRoot, 'tests', 'bin-lib', 'verify', 'cli-helpers'),
-  ], { cwd: repoRoot, env: { ...process.env, GIT_TRACE2_EVENT: trace }, encoding: 'utf8' });
+  ], {
+    cwd: repoRoot,
+    // The child's own copies live under its temp dir; pointing it at a scratch dir lets this file's after() remove them.
+    env: { ...process.env, GIT_TRACE2_EVENT: trace, TMPDIR: childTmp, TMP: childTmp, TEMP: childTmp },
+    encoding: 'utf8',
+  });
   assert.strictEqual(res.status, 0, res.stderr);
   const argvs = tracedArgvs(trace);
   assert.ok(argvs.length > 0, 'control: the builders did trace git processes');
@@ -403,6 +420,15 @@ test('Absorbed AC (identity): a fresh process building every owned fixture start
   };
   const offenders = argvs.filter((a) => configKeys(a).some((k) => k === 'user.name' || k === 'user.email'));
   assert.deepStrictEqual(offenders, []);
+});
+test('Absorbed AC (identity): the identity written into a template reaches its copies', () => {
+  // `--local` reads only the copy's own .git/config, so a CI-exported GIT_AUTHOR_* cannot stand in for it.
+  const plain = verifyHelpers.tmpGitRepo();
+  const scoped = verifyHelpers.scopedRepo(verifyRules('src/**'));
+  scratch.push(plain.repo, scoped.repo);
+  for (const r of [plain, scoped]) {
+    assert.strictEqual(git(r.repo, ['config', '--local', 'user.email']), 'verify-test@example.invalid');
+  }
 });
 
 test('template build runs with auto-maintenance off', () => {
