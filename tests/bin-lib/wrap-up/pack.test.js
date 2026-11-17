@@ -942,7 +942,8 @@ test('gatherPack: a gh call killed by the exec timeout names gh and the timeout 
     if (cmd === 'gh') { const e = new Error('Command failed: gh pr view'); e.killed = true; e.signal = 'SIGTERM'; throw e; }
     return okDeps().execFile(cmd, args);
   } });
-  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['pr'], deps });
+  // The gh bound follows CLAUDE_TWEAKS_GH_TIMEOUT_MS (#5050), so pin the environment: an ambient raised value must not leak in.
+  const pack = await withExecBounds({}, (mod) => mod.gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['pr'], deps }));
   assert.match(pack.pr.error, /^timeout after 30000ms: gh pr \(killed by SIGTERM\)$/);
 });
 
@@ -1634,7 +1635,8 @@ test('gatherPack: body-text work-links skips the second state query entirely whe
 test('gatherPack: every subprocess call is bounded by maxBuffer and a timeout (#1930 review I3)', async () => {
   const opts = [];
   const deps = okDeps({ execFile: async (cmd, args, o) => { opts.push(o); return okDeps().execFile(cmd, args); } });
-  await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', deps });
+  // gh's bound follows CLAUDE_TWEAKS_GH_TIMEOUT_MS (#5050), so pin the environment: an ambient raised value must not leak in.
+  await withExecBounds({}, (mod) => mod.gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', deps }));
   assert.ok(opts.length > 0);
   for (const o of opts) {
     assert.strictEqual(o.maxBuffer, 32 * 1024 * 1024, JSON.stringify(o));
@@ -2124,4 +2126,71 @@ test('AC9.4 an unreadable archived header is skipped as absent, a readable archi
   const res = resolveRecords({ ...deps, readFile }, path.join(t.pipelines, ARCH_RUN_ID), null);
   assert.deepStrictEqual(res.records, [8]);
   assert.strictEqual(res.source, 'headers');
+});
+
+// exec bounds (#5050): each spawn carries the bound its command resolves (execTimeoutMsFor) and the
+// timeout message names that same bound. pack.js and shared-primitives are re-required under the env so
+// the memoized getters resolve fresh; both bound env vars are cleared first and restored afterwards.
+const PACK_MODULE_PATH = require.resolve('../../../plugin/bin/lib/wrap-up/pack.js');
+async function withExecBounds(env, fn) {
+  const { evictModules, isolateExecBounds } = require('../../helpers/gh-timeout-probe');
+  // isolateExecBounds clears both bound env vars and runs from an empty temp cwd (the getters read the cwd's policy.yml).
+  return isolateExecBounds(Object.keys(env), async () => {
+    try {
+      for (const [k, v] of Object.entries(env)) process.env[k] = v;
+      evictModules([PACK_MODULE_PATH]);
+      return await fn(require(PACK_MODULE_PATH));
+    } finally {
+      evictModules([PACK_MODULE_PATH]);
+    }
+  });
+}
+
+async function spawnTimeouts(env) {
+  const seen = { gh: [], node: [] };
+  const deps = okDeps({ execFile: async (cmd, args, o) => { if (seen[cmd]) seen[cmd].push(o.timeout); return okDeps().execFile(cmd, args); } });
+  await withExecBounds(env, (mod) => mod.gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', deps }));
+  return seen;
+}
+
+const BOTH_HIGH = { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '45000', CLAUDE_TWEAKS_GIT_TIMEOUT_MS: '90000' };
+
+test('exec bounds (#5050): the gh spawn follows CLAUDE_TWEAKS_GH_TIMEOUT_MS above the floor', async () => {
+  const seen = await spawnTimeouts({ CLAUDE_TWEAKS_GH_TIMEOUT_MS: '45000' });
+  assert.ok(seen.gh.length > 0);
+  for (const t of seen.gh) assert.strictEqual(t, 45000);
+});
+
+test('exec bounds (#5050): the gh spawn keeps 30000 when the env is unset or below the floor', async () => {
+  const unset = await spawnTimeouts({});
+  assert.ok(unset.gh.length > 0);
+  for (const t of unset.gh) assert.strictEqual(t, 30000, 'unset');
+  const low = await spawnTimeouts({ CLAUDE_TWEAKS_GH_TIMEOUT_MS: '10000' });
+  assert.ok(low.gh.length > 0);
+  for (const t of low.gh) assert.strictEqual(t, 30000, '10000');
+});
+
+test('exec bounds (#5050): every node spawn, the direct pr-checks.js one included, stays 30000 with both keys high', async () => {
+  const seen = await spawnTimeouts(BOTH_HIGH);
+  // state, residue and the unblocked probe's resolve-blockers.js, plus pr-checks.js (the direct spawn).
+  assert.ok(seen.node.length >= 4, `node spawns: ${seen.node.length}`);
+  for (const t of seen.node) assert.strictEqual(t, 30000);
+});
+
+test('exec bounds (#5050): a gh kill reads the raised bound the call carried', async () => {
+  const deps = okDeps({ execFile: async (cmd, args) => {
+    if (cmd === 'gh') throw Object.assign(new Error('Command failed: gh pr view'), { killed: true, signal: 'SIGTERM' });
+    return okDeps().execFile(cmd, args);
+  } });
+  const pack = await withExecBounds({ CLAUDE_TWEAKS_GH_TIMEOUT_MS: '45000' }, (mod) => mod.gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['pr'], deps }));
+  assert.match(pack.pr.error, /^timeout after 45000ms: gh pr \(killed by SIGTERM\)$/);
+});
+
+test('exec bounds (#5050): a node kill reads 30000 with both keys high', async () => {
+  const deps = okDeps({ execFile: async (cmd, args) => {
+    if (cmd === 'node' && String(args[0]).endsWith('residue.js')) throw Object.assign(new Error('Command failed: node residue.js'), { killed: true, signal: 'SIGTERM' });
+    return okDeps().execFile(cmd, args);
+  } });
+  const pack = await withExecBounds(BOTH_HIGH, (mod) => mod.gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['residue'], deps }));
+  assert.match(pack.residue.error, /^timeout after 30000ms: node residue\.js \(killed by SIGTERM\)$/);
 });
