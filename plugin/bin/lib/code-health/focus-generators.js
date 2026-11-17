@@ -11,13 +11,11 @@
 // owned by any single vertical's own module. It previously lived inside
 // `candidates-dead-code.js`, which reversed the framework->vertical
 // dependency direction for every future vertical that would have had to
-// require a sibling vertical's file just to reach the shared registry
-// (review finding, `docs/plans/2026-08-09-code-health-focus-mode-dead-code-
-// ledger.md` item #6). Each vertical now registers its own generator here
-// instead — `dead-code` (`candidates-dead-code.js`) is the only entry that
-// ships today; the other three verticals named in the parent design doc's
-// Non-Goals (test-hygiene, abstraction-police, experiment-cleanup) add their
-// own key via `registerGenerator` rather than inventing a second registry.
+// require a sibling vertical's file just to reach the shared registry. Each
+// vertical (`candidates-{vertical}.js`) registers its own generator here
+// instead — every registered vertical is in the require list at the bottom of
+// this file — and a new vertical adds its own key via `registerGenerator`
+// rather than inventing a second registry.
 
 const FOCUS_GENERATORS = {};
 

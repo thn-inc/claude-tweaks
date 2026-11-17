@@ -10,7 +10,7 @@
 // bound variables — for the open-linked-PR exclusion check (#1224). Zero
 // runtime npm deps.
 //
-// Usage: resolve-linked-prs.js <n>[,<n2>,...] [--repo owner/name] [--help]
+// Usage: resolve-linked-prs.js <n>[,<n2>,...] [--repo [host/]owner/name] [--help]
 // A comma-joined list (no spaces, mirroring resolve-blockers.js's own
 // convention) batches every number into the ONE aliased GraphQL call
 // fetchLinkedPRs makes for an N-record set — this CLI never issues more
@@ -35,7 +35,7 @@
 const { fetchLinkedPRs } = require('./lib/issues/linked-prs');
 const { makeNumberListCli } = require('./lib/number-list-cli');
 
-const USAGE = 'usage: resolve-linked-prs.js <n>[,<n2>,...] [--repo owner/name] [--help]\n';
+const USAGE = 'usage: resolve-linked-prs.js <n>[,<n2>,...] [--repo [host/]owner/name] [--help]\n';
 
 const { run, parseArgs, parseNumbers, realDeps } = makeNumberListCli({
   name: 'resolve-linked-prs.js',

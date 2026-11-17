@@ -1,4 +1,4 @@
-// bin/lib/hooks/post-tool-use.js — E2: commit breadcrumbs (log tier) + closing-keyword check (warn tier) + design-doc capture nudge (warn tier) + EnterWorktree staleness backstop (warn tier) + post-teardown re-anchor backstop (warn tier, see checkPostTeardownReanchor below) + ad-hoc-session run-dir stamping (log tier, see stampAdHocRunDir below) + skill-invocation ledger (log tier, see ./skill-invocation.js) + AskUserQuestion ledger (log tier, see logAskUserQuestion below).
+// bin/lib/hooks/post-tool-use.js — E2: commit breadcrumbs (log tier) + closing-keyword check (warn tier) + design-doc capture nudge (warn tier) + EnterWorktree staleness backstop (warn tier) + post-teardown re-anchor backstop (warn tier, see checkPostTeardownReanchor below) + worktree hold stamp/clear on EnterWorktree/ExitWorktree (log tier, see ./worktree-hold.js) + ad-hoc-session run-dir stamping (log tier, see stampAdHocRunDir below) + skill-invocation ledger (log tier, see ./skill-invocation.js) + AskUserQuestion ledger (log tier, see logAskUserQuestion below).
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -7,6 +7,7 @@ const ctxLib = require('./context');
 const runDirResolve = require('./run-dir-resolve');
 const skillInvocation = require('./skill-invocation');
 const wtDetect = require('./worktree-detect');
+const holdLib = require('./worktree-hold');
 // Reused, not reimplemented (#703): the same teardown-target resolution
 // pre-tool-use.js's own checkTeardownGate relies on. Safe to require here —
 // pre-tool-use.js never requires this file back.
@@ -767,6 +768,22 @@ function run(ctx) {
   // Deferred-subproject capture nudge (warn tier) — deliberately NOT gated on ctx.runDir.
   const designDocNudge = checkDesignDocWrite(ctx);
   if (designDocNudge) return designDocNudge;
+
+  // Worktree hold (#4960, log tier): record that this session now stands in the entered
+  // worktree (or has left it) so the reapers skip it. No early return lies between here and
+  // the run-dir stamp below, and the only earlier returns (closing-keyword, design-doc) fire
+  // on Bash/Write calls, so an EnterWorktree/ExitWorktree call always reaches it; it also runs
+  // ahead of the later nudges that return. Never changes this hook's answer.
+  try {
+    const holdOutcome = holdLib.syncHoldForToolUse(ctx.input, {
+      cwd: ctx.cwd, env: process.env, ownerBlock: ctxLib.ownerBlock, resolveEnteredPath: () => resolveCreatedWorktreePath(ctx),
+    });
+    // A failed write leaves the session standing in the worktree unheld: leave a trace (owned run only).
+    const ownedRun = ctx.ownedRun || {};
+    if (holdOutcome === 'failed' && ownedRun.dir) {
+      ctxLib.appendEvent(ownedRun.dir, 'worktree-hold-failed', { tool: ctx.input.tool_name }, ownedRun.attribution);
+    }
+  } catch { /* log tier: never break a session */ }
 
   // Ad-hoc-session run-dir stamping (log tier, side effect only — no
   // message). Runs before the staleness check below so a formal pipeline's

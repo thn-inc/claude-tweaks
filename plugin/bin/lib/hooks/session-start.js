@@ -10,6 +10,7 @@ const deps = require('../deps');
 const policy = require('../policy');
 const wtDetect = require('./worktree-detect');
 const ctxLib = require('./context');
+const holdLib = require('./worktree-hold');
 const sessionResidue = require('./session-residue');
 const { reconcile } = require('../reconcile');
 const { HOOK_FORGE_PROBE_TIMEOUT_MS } = require('../policy-schema');
@@ -148,6 +149,16 @@ async function run(ctx) {
   // (further down) — one place for a future normalization/validation fix to
   // land, instead of two reads that can drift.
   const pluginRootEnv = process.env.CLAUDE_PLUGIN_ROOT;
+  // #4960: stamp this session's worktree hold before anything below can spawn a reconcile pass
+  // that reaps — a resume re-stamps under its new pid.
+  try {
+    const holdOutcome = holdLib.stampHoldForCwd({ cwd: ctx.cwd, sessionId, env: process.env, ownerBlock: ctxLib.ownerBlock });
+    // A failed write leaves the session standing in its worktree unheld: leave a trace (owned run only).
+    const owned = ctx.ownedRun || {};
+    if (holdOutcome === 'failed' && owned.dir) {
+      ctxLib.appendEvent(owned.dir, 'worktree-hold-failed', { tool: 'SessionStart' }, owned.attribution);
+    }
+  } catch { /* best-effort */ }
   try { restampOwnerPidOnResume(ctx); } catch { /* best-effort */ }
   // #3973: re-stamp the owner block (a resume runs under a new process) before anything below spawns.
   // #4150: restampWhileFresh keeps the full pid probe here — a resume must re-stamp at once, not at the next window edge.

@@ -14,7 +14,7 @@
 // bin/lib/release/subject.js's composeSubject() output. Skill prose reaches
 // the composer only through this CLI — the pure module has no shell surface.
 //
-// Usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--pr <n>] [--keep-open <n>[,<m>...]] [--out-dir <dir>] [--help]
+// Usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo [host/]owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--pr <n>] [--keep-open <n>[,<m>...]] [--out-dir <dir>] [--help]
 // Numbers may be comma-joined and/or space-separated; the subject record is
 // the lowest number, and the body carries one `Fixes #n` line per number.
 // `--keep-open` (#4199) names numbers from that list the merge must not
@@ -78,7 +78,7 @@ const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./shared-primitives');
 const { readCommitScope, readListKey } = require('./policy');
 const { parseScopePaths, resolveCommitScope, CommitScopeError } = require('./commit-scope');
 
-const USAGE = 'usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--pr <n>] [--keep-open <n>[,<m>...]] [--out-dir <dir>] [--help]\n';
+const USAGE = 'usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo [host/]owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--pr <n>] [--keep-open <n>[,<m>...]] [--out-dir <dir>] [--help]\n';
 // Decision (#2319): kept at the single-call convention, not widened. Each
 // `gh issue view` call below fetches exactly one record — unlike
 // fetch-sub-issues.js's 30000ms bound, which covers a single batched
@@ -330,7 +330,7 @@ function run(argv, deps = realDeps) {
     if (gated.refusal) { deps.stderr(`compose-subject.js: ${gated.refusal}\n`); return 2; }
     repoSpec = gated.spec;
   }
-  if (!repoSpec) { deps.stderr('compose-subject.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+  if (!repoSpec) { deps.stderr('compose-subject.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return 2; }
   if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec, injected);
   const slug = repoSlug(repoSpec);
 
