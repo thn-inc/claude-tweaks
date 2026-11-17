@@ -42,7 +42,7 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
     });
   }
 
-  test('AC4.1 detail: each fault\'s own effect, both sides (cache miss, fail-closed foreign state, origin/ targets, unprobed files, no overlap, no blob)', () => {
+  test('AC4.1 detail: each fault\'s own effect, both sides (cache miss, fail-closed foreign state, skipped target-missing pass, unprobed files, no overlap, no blob)', () => {
     // The un-faulted warm control in the same pool: the same scenario on the same miss origin hits,
     // so the miss below is the fault's doing, never a cache that could not hit at all.
     for (const [side, r] of sides(R['S1-gh-hit'])) assert.ok(r.stderr.includes(HIT_MESSAGE), `S1-gh-hit ${side}: the un-faulted warm run hits (control)`);
@@ -55,17 +55,17 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
     }
     assert.deepEqual(exclusionsIn(R['S2-gh-miss'].oracle).find((e) => e.records[0] === 9031).detail.blockedBy, ['acme-corp/other#12'], 'the S2 base reads the state (control)');
     for (const [side, r] of sides(R['F-intbranch'])) {
-      assert.deepEqual(exclusionsIn(r).find((e) => e.records[0] === 9017).detail, { path: 'docs/present.md' }, `F-intbranch ${side}`);
+      assert.ok(!exclusionsIn(r).some((e) => e.reason === 'target-missing'), `F-intbranch ${side}: no named target is excluded as absent`);
       assert.ok(r.gitArgv.some((e) => e.tag === 'injected' && e.argv.join(' ') === 'remote show origin'), `F-intbranch ${side}`);
+      assert.ok(!r.gitArgv.some((e) => e.argv[0] === 'cat-file'), `F-intbranch ${side}: no git cat-file probe runs against origin/`);
       const proposals = Object.entries(r.staged).filter(([n]) => n.startsWith('dispatch-target-missing-')).map(([, body]) => body);
-      assert.equal(proposals.length, 3, `F-intbranch ${side}`);
-      assert.ok(proposals.every((body) => body.includes('absent at `origin/`')), `F-intbranch ${side}: every target-missing Close proposal names origin/`);
+      assert.equal(proposals.length, 0, `F-intbranch ${side}: no target-missing Close proposal is staged`);
     }
-    for (const [side, r] of sides(R['F-prview'])) assert.equal(r.files['dispatch-shipped-pr-files.jsonl'], '{"pr":5016,"files":[]}\n', `F-prview ${side}: a failed probe reads as no files`);
+    for (const [side, r] of sides(R['F-prview'])) assert.equal(r.files['dispatch-shipped-pr-files.jsonl'], '{"pr":5016,"files":null}\n', `F-prview ${side}: a failed probe reads as files:null`);
     assert.equal(R['S1-gh-miss'].oracle.files['dispatch-shipped-pr-files.jsonl'], `{"pr":5016,"files":${JSON.stringify(WEAK_PR_FILES)}}\n`, 'the base probes the files (control)');
     for (const [side, r] of sides(R['F-openprs'])) assert.deepEqual(JSON.parse(r.files['dispatch-crosspr-overlap.json']), [], `F-openprs ${side}`);
     assert.notDeepEqual(JSON.parse(R['S1-gh-miss'].oracle.files['dispatch-crosspr-overlap.json']), [], 'the base reports #9001 against PR #41 (control)');
-    for (const [side, r] of sides(R['F-depview'])) assert.ok(groupedIn(r).includes(9002), `F-depview ${side}: #9002 is dispatchable`);
+    for (const [side, r] of sides(R['F-depview'])) assert.ok(!groupedIn(r).includes(9002), `F-depview ${side}: #9002 is held (fail closed)`);
     for (const [side, r] of sides(R['gh-livedep'])) assert.ok(r.ghArgv.some((a) => a.argv.join(' ') === 'issue view 8000 --json state -q .state'), `gh-livedep ${side}: the live check is what holds #9002`);
   });
 
@@ -88,7 +88,7 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
   });
 
   test('AC4.4: the oracle stops on exactly the observed stop set, and every other fault exits 0', () => {
-    const STOP_SET = ['F-corrupt', 'F-groups', 'F-opennum', 'F-queue'];
+    const STOP_SET = ['F-claim-neighbour-stop', 'F-claim-stop', 'F-corrupt', 'F-groups', 'F-opennum', 'F-queue'];
     assert.deepEqual(FAULTS.filter((f) => R[f.id].oracle.status !== 0).map((f) => f.id).sort(), STOP_SET, 'the oracle');
     assert.deepEqual(FAULTS.filter((f) => R[f.id].module.status !== 0).map((f) => f.id).sort(), STOP_SET, 'the module');
     for (const f of FAULTS) {
