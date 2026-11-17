@@ -236,9 +236,10 @@ const ghCall = (r, pattern) => r.ghArgv.map((a) => a.argv).filter((argv) => argv
 // ---- Task 9: fetch-failure faults (AC4), files-input faults (AC7.2) and the reproduced script
 // defects (D1, D4; D3 is fixed, #5307). Each FAULTS row (queue-pull-fixtures.js) fails one gh
 // fetch, and each FILES_FAULTS row one files input, on both sides through the shared table. Its
-// base is the same scenario un-faulted: the matrix's config of it where the matrix has one (S1 and S2), else a base config of
-// its own; the fault pool runs either (the AC1 file's runs are not shared: each file is its own process).
-// One pool runs the rows, bases and D1 of the transports it is asked for, from one `before`. A row asserts what the ORACLE did (Plan Review
+// base is the same scenario un-faulted: the matrix's config of it where the matrix has one (S1
+// and S2), else a base config of its own; the fault pool runs either (the AC1 file's runs are not
+// shared: each file is its own process). One pool runs the rows, bases and D1 of the transports
+// it is asked for, from one `before`. A row asserts what the ORACLE did (Plan Review
 // Clarifications, criteria 4, 5 and 7): its exit, the lines it adds on each channel, and its
 // exclusions read against the base's. It then asserts that the module did the same.
 // Files compared: every session file, byte-equal (JSON-equal), with two row-level carve-outs (see
