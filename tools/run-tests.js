@@ -413,6 +413,31 @@ function assignShards(files, durations, total) {
   return shards;
 }
 
+// The committed durations map's guards. A test file this big with no entry is weighed as the median
+// file and can sit unnoticed on one shard; an entry this slow is one the shards cannot balance around.
+const DURATIONS_SIZE_FLOOR_BYTES = 102400;
+const DURATIONS_CEILING_MS = 100000;
+
+// The files at or above the size floor that `durations` has no entry for, sorted. `sizeOf(file)` returns
+// a byte size, or null for a file that is gone (skipped). Looked up by posix path, like `assignShards`.
+// Pure.
+function durationsCoverageGaps(files, durations, sizeOf) {
+  return files
+    .filter((file) => {
+      const size = sizeOf(file);
+      return size !== null && size >= DURATIONS_SIZE_FLOOR_BYTES && !durations.has(posixKey(file));
+    })
+    .sort(byPath);
+}
+
+// The entries of `durations` slower than `ceilingMs`, sorted, each formatted "<path> <ms> ms". Pure.
+function durationsOverCeiling(durations, ceilingMs = DURATIONS_CEILING_MS) {
+  return [...durations]
+    .filter(([, ms]) => ms > ceilingMs)
+    .sort(([a], [b]) => byPath(a, b))
+    .map(([file, ms]) => `${file} ${ms} ms`);
+}
+
 // Where a `--record-durations <out>` run's reporter writes until the run ends: beside `out`, tagged
 // with the runner's pid, so the suite (which reads the committed durations file) never sees it
 // truncated mid-run.
@@ -673,6 +698,7 @@ module.exports = {
   parseShard, readDurations, assignShards, extractRunFlags, durationsPartialPath, finishRecording,
   resolveRunMode, selectChangedTests, realSelectionDeps, planDefaultRun, applyDefaultSelection,
   DURATIONS_FILE, PER_FILE_OVERHEAD_MS, DEFAULT_FILE_MS, NODE_TEST_VALUE_FLAGS, parseRunnerOperands, canonicalPath,
+  DURATIONS_SIZE_FLOOR_BYTES, DURATIONS_CEILING_MS, durationsCoverageGaps, durationsOverCeiling,
 };
 
 if (require.main === module) {
