@@ -862,6 +862,27 @@ function runIn(shell, command, extraEnv, cwd = CWD) {
 
 test('the node stub shadows the real node in every tested shell', { skip: process.platform === 'win32' || SHELLS.length === 0 }, (t) => {
   // TEMP-DIAG
+  {
+    const P0 = `${STUB}${path.delimiter}${process.env.PATH}`;
+    const variants = {
+      pathHome: [{ PATH: P0, HOME: process.env.HOME }, CWD],
+      pathOnly: [{ PATH: P0 }, CWD],
+      shortPath: [{ PATH: `${STUB}:/usr/bin:/bin`, HOME: process.env.HOME }, CWD],
+      tmpCwd: [{ PATH: P0, HOME: process.env.HOME }, '/tmp'],
+      stubAtEnd: [{ PATH: `${process.env.PATH}:${STUB}`, HOME: process.env.HOME }, CWD],
+    };
+    for (const [k, [env, cwd]] of Object.entries(variants)) {
+      for (const sh of ['/bin/bash', 'bash']) {
+        const r = spawnSync(sh, ['-x', '-c', 'echo "$-|$BASH_ENV|$0"; echo "$PATH"; type -a node'], { cwd, env, encoding: 'utf8', windowsHide: true });
+        t.diagnostic(`DIAG2 ${k} ${sh}: ${JSON.stringify({ o: r.stdout, e: r.stderr })}`);
+      }
+    }
+    const r = spawnSync('/bin/bash', ['-c', 'echo "$PATH"'], { cwd: CWD, env: { PATH: '/a:/b' }, encoding: 'utf8' });
+    t.diagnostic(`DIAG2 tinyPath: ${JSON.stringify(r.stdout)}`);
+    const r2 = spawnSync('/bin/bash', ['-c', 'echo "$PATH"'], { cwd: CWD, env: { PATH: '/a:/b:/usr/bin' }, encoding: 'utf8' });
+    t.diagnostic(`DIAG2 tinyPath2: ${JSON.stringify(r2.stdout)}`);
+    t.diagnostic(`DIAG2 files: ${spawnSync('sh', ['-c', 'ls -la /etc/bashrc /etc/profile ~/.bashrc ~/.bash_profile ~/.profile ~/.zshenv /etc/zshenv 2>&1; cat /etc/profile 2>&1 | head -20; ls -l /bin/bash /bin/sh; file /bin/bash'], { encoding: 'utf8' }).stdout}`);
+  }
   for (const cmd of ['type -a node', 'type -a git', 'echo "$PATH"', 'ls -ld "$0" 2>&1; command -v bash; echo "$BASH_VERSION"']) {
     for (const shell of SHELLS) t.diagnostic(`DIAG ${shell} [${cmd}]: ${JSON.stringify(runIn(shell, cmd, {}))}`);
   }
