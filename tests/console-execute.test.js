@@ -22,6 +22,7 @@ const {
 } = require('../plugin/bin/lib/reconcile/console-execute');
 const { reconcile } = require('../plugin/bin/lib/reconcile');
 const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record');
+const { writeIdentity } = require('./helpers/git-fixtures');
 
 function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' });
@@ -527,8 +528,7 @@ test('fetchIssueGrant: a non-marker comment authored NONE is silent -- skippedUn
 test('consoleExecuteDetect: a withheld merge grant names the untrusted pending-grant comment it passed over', { skip: process.platform === 'win32' }, async () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-grant-')));
   git(['init', '-q', '--initial-branch=main'], dir);
-  git(['config', 'user.email', 'test@example.com'], dir);
-  git(['config', 'user.name', 'Test'], dir);
+  writeIdentity(dir, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], dir);
   git(['commit', '-q', '-m', 'seed'], dir);
@@ -668,8 +668,7 @@ test('AC2.1: decideConsoleExecute leaves every other valid Defer-reason ruling f
 function makeRulingRepo(items, stagedFiles) {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-ruling-')));
   git(['init', '-q', '--initial-branch=main'], dir);
-  git(['config', 'user.email', 'test@example.com'], dir);
-  git(['config', 'user.name', 'Test'], dir);
+  writeIdentity(dir, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], dir);
   git(['commit', '-q', '-m', 'seed'], dir);
@@ -902,8 +901,7 @@ test('consoleExecuteDetect: outside any repo returns empty ready/skipped, never 
 test('consoleExecuteDetect: a run dir with no console.json is reported as no-console, never crashes', async () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-run-')));
   git(['init', '-q', '--initial-branch=main'], dir);
-  git(['config', 'user.email', 'test@example.com'], dir);
-  git(['config', 'user.name', 'Test'], dir);
+  writeIdentity(dir, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], dir);
   git(['commit', '-q', '-m', 'seed'], dir);
@@ -920,8 +918,7 @@ test('consoleExecuteDetect: a run dir with no console.json is reported as no-con
 test('consoleExecuteDetect: a run with console.json but no reachable PR is reported skipped (gh-absent or network-failure), never crashes or reports ready', async () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-run2-')));
   git(['init', '-q', '--initial-branch=main'], dir);
-  git(['config', 'user.email', 'test@example.com'], dir);
-  git(['config', 'user.name', 'Test'], dir);
+  writeIdentity(dir, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], dir);
   git(['commit', '-q', '-m', 'seed'], dir);
@@ -945,8 +942,7 @@ test('consoleExecuteDetect: a run with console.json but no reachable PR is repor
 test('reconcile(): the console check is wired in and reachable via ALL_CHECKS on a pr-first project', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-reconcile-'));
   git(['init', '-q', '--initial-branch=main'], dir);
-  git(['config', 'user.email', 'test@example.com'], dir);
-  git(['config', 'user.name', 'Test'], dir);
+  writeIdentity(dir, { name: 'Test', email: 'test@example.com' });
   fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\nintegration-branch: main\n');
   fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');

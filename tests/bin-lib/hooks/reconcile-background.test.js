@@ -5,6 +5,7 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { initRepo, writeIdentity } = require('../../helpers/git-fixtures');
 
 const HOOKS = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'hooks.js');
 
@@ -13,8 +14,7 @@ function git(args, cwd) { return execFileSync('git', args, { cwd, encoding: 'utf
 test('reconcile-background: writes a status file with completedAt + summary, exits 0 even with no gh/remote', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-'));
   git(['init', '-q', '--initial-branch=main'], dir);
-  git(['config', 'user.email', 't@e.com'], dir);
-  git(['config', 'user.name', 'T'], dir);
+  writeIdentity(dir, { name: 'T', email: 't@e.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'x');
   git(['add', 'a.txt'], dir);
   git(['commit', '-q', '-m', 'seed'], dir);
@@ -39,8 +39,7 @@ test('reconcile-background: writes a status file with completedAt + summary, exi
 test('reconcile-background: a second call within the freshness window is a no-op — it does not re-run reconcile() or touch the status file', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-nop-'));
   git(['init', '-q', '--initial-branch=main'], dir);
-  git(['config', 'user.email', 't@e.com'], dir);
-  git(['config', 'user.name', 'T'], dir);
+  writeIdentity(dir, { name: 'T', email: 't@e.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'x');
   git(['add', 'a.txt'], dir);
   git(['commit', '-q', '-m', 'seed'], dir);
@@ -68,8 +67,7 @@ test('reconcile-background: a second call within the freshness window is a no-op
 test('reconcile-background: a lock already held by a live process is never taken over — no status-file write, lock left in place', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-locked-'));
   git(['init', '-q', '--initial-branch=main'], dir);
-  git(['config', 'user.email', 't@e.com'], dir);
-  git(['config', 'user.name', 'T'], dir);
+  writeIdentity(dir, { name: 'T', email: 't@e.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'x');
   git(['add', 'a.txt'], dir);
   git(['commit', '-q', '-m', 'seed'], dir);
@@ -94,8 +92,7 @@ test('reconcile-background: a lock already held by a live process is never taken
 test('reconcile-background: a stale (dead-pid) lock is reclaimed; a completed pass leaves no lock file behind', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-stale-lock-'));
   git(['init', '-q', '--initial-branch=main'], dir);
-  git(['config', 'user.email', 't@e.com'], dir);
-  git(['config', 'user.name', 'T'], dir);
+  writeIdentity(dir, { name: 'T', email: 't@e.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'x');
   git(['add', 'a.txt'], dir);
   git(['commit', '-q', '-m', 'seed'], dir);
@@ -124,9 +121,7 @@ test('reconcile-background: a stale (dead-pid) lock is reclaimed; a completed pa
 // gate), not merely a unit test that passes sessionId as a function argument.
 function fixtureAbandonedShippedRun({ runId, ownerSessionId } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-owner-')));
-  git(['init', '-q', '-b', 'main'], root);
-  git(['config', 'user.email', 't@e.com'], root);
-  git(['config', 'user.name', 'T'], root);
+  initRepo(root, { name: 'T', email: 't@e.com', branch: 'main' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'a\n');
   git(['add', 'a.txt'], root);
   git(['commit', '-q', '-m', 'init'], root);
