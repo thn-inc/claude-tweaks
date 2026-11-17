@@ -157,7 +157,9 @@ const SESSION_FILES = deepFreeze([
 ]);
 
 // The session files written only after their step's fallible work (#5409): removed at pull start.
-// The fence's `rm -f` line carries the same set.
+// The fence's `rm -f` line carries the same set. A new session file written that way joins both;
+// every other SESSION_FILES entry is reset before its step's fallible work, removed by its own step
+// (ELIGIBILITY_FILES), or an agent input. The #5409 partition test names each one's class.
 const END_WRITTEN_FILES = deepFreeze([
   'dispatch-named-targets.json',
   'dispatch-shipped-probe-prs.json',

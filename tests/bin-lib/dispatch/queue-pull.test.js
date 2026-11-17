@@ -3246,6 +3246,21 @@ test('#5409 (AC1, AC2): a pull whose cross-pr-overlap step throws leaves no earl
   for (const n of END_WRITTEN_FILES.filter((x) => x !== 'dispatch-named-targets.json')) assert.notEqual(dirFirst.text[n], STALE, `${n}: removed although an earlier removal failed`);
 });
 
+test('#5409: every session file is end-written (removed at pull start) or named here with the reason it is not', () => {
+  // A new SESSION_FILES entry fails this until it is classed: one written only after its step's
+  // fallible work belongs in END_WRITTEN_FILES (and the fence's rm -f line), never in this list.
+  const NOT_END_WRITTEN = [
+    'dispatch-queue-raw.json', 'dispatch-open-numbers.json', 'dispatch-native-deps.json', 'dispatch-native-deps.tmp.json',
+    'dispatch-native-deps.err', 'dispatch-groups.json', 'dispatch-exclusions.json', 'dispatch-fastlane-bundles.json',
+    'dispatch-in-flight-raw.json', 'dispatch-in-flight-claims.json', 'dispatch-dep-freshness.json', 'dispatch-open-prs.json',
+    'dispatch-linked-prs.json', 'dispatch-linked-prs.err', 'dispatch-shipped-pr-files.jsonl', 'dispatch-shape-gate.err',
+    'dispatch-next-pick.json', // reset before its step's fallible work, or an agent input on `files`
+    'dispatch-eligible-pre-dep.json', 'dispatch-unresolved-deps.json', 'dispatch-eligible.json',
+    'dispatch-blocked-excluded-body.json', 'dispatch-verified-open-deps.txt', // removed by the blocked pass (#5314), or its agent input
+  ];
+  assert.deepEqual([...END_WRITTEN_FILES, ...NOT_END_WRITTEN].sort(), [...SESSION_FILES].sort());
+});
+
 test('#5409: the fence\'s pull-start rm -f removes exactly the module\'s END_WRITTEN_FILES, before the exclusions truncation', () => {
   const lines = FENCE.split('\n');
   const assignRe = /^(DISPATCH_[A-Z_]+)="\$\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/session-tmp-resolve\.js" --value ([^ )"]+)\)"$/;
