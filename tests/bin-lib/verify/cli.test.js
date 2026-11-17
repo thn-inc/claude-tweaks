@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { spawn, spawnSync } = require('child_process');
 const { readText } = require('../../helpers/read-skill');
+const { readGitCalls } = require('../../helpers/git-call-recorder');
 const { CLI, tmpDir, runCli, tmpGitRepo, nodeCmd, scopedRepo, stampOf, passStampFiles, commitFile, flakyRepo, anchoredRunDir } = require('./cli-helpers');
 
 const STAMP = 'claude-tweaks-verify-pass.json';
@@ -1589,8 +1590,6 @@ test('#4177 AC4: nodeCmd refuses a script or argument whose meaning differs betw
 });
 
 // #5773: one verify.js invocation asks git each read-only question once, unless the answer may have changed.
-const { readGitCalls } = require('../../helpers/git-call-recorder');
-
 const RECORDER = path.join(__dirname, '..', '..', 'helpers', 'git-call-recorder.js');
 const COMBINED_REV_PARSE = ['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir', '--verify', '-q', 'HEAD'];
 const STATUS_PORCELAIN = ['--no-optional-locks', 'status', '--porcelain'];
