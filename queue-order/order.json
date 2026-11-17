@@ -1,16 +1,16 @@
 {
-  "computedAt": "2026-11-16T23:13:39.898Z",
+  "computedAt": "2026-11-17T05:59:36.178Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
       {
         "number": 5773,
-        "updatedAt": "2026-11-16T17:52:31Z",
+        "updatedAt": "2026-11-17T05:32:14Z",
         "state": "OPEN"
       },
       {
         "number": 5772,
-        "updatedAt": "2026-11-16T17:52:28Z",
+        "updatedAt": "2026-11-17T03:31:44Z",
         "state": "OPEN"
       },
       {
@@ -25,22 +25,7 @@
       },
       {
         "number": 5768,
-        "updatedAt": "2026-11-16T23:07:58Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5734,
-        "updatedAt": "2026-11-16T23:05:56Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5599,
-        "updatedAt": "2026-11-16T02:14:03Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5598,
-        "updatedAt": "2026-11-16T21:19:48Z",
+        "updatedAt": "2026-11-16T23:20:15Z",
         "state": "OPEN"
       },
       {
@@ -65,77 +50,77 @@
       },
       {
         "number": 5409,
-        "updatedAt": "2026-11-16T22:40:09Z",
+        "updatedAt": "2026-11-17T05:12:52Z",
         "state": "OPEN"
       },
       {
         "number": 5324,
-        "updatedAt": "2026-11-16T17:52:34Z",
+        "updatedAt": "2026-11-17T00:43:21Z",
         "state": "OPEN"
       },
       {
         "number": 5317,
-        "updatedAt": "2026-11-16T22:40:04Z",
+        "updatedAt": "2026-11-17T05:12:46Z",
         "state": "OPEN"
       },
       {
         "number": 5316,
-        "updatedAt": "2026-11-16T22:39:59Z",
+        "updatedAt": "2026-11-17T05:12:41Z",
         "state": "OPEN"
       },
       {
         "number": 5315,
-        "updatedAt": "2026-11-16T22:39:53Z",
+        "updatedAt": "2026-11-17T05:12:36Z",
         "state": "OPEN"
       },
       {
         "number": 5314,
-        "updatedAt": "2026-11-16T22:39:48Z",
+        "updatedAt": "2026-11-17T05:12:32Z",
         "state": "OPEN"
       },
       {
         "number": 5313,
-        "updatedAt": "2026-11-16T22:39:42Z",
+        "updatedAt": "2026-11-17T05:12:27Z",
         "state": "OPEN"
       },
       {
         "number": 5312,
-        "updatedAt": "2026-11-16T22:39:37Z",
+        "updatedAt": "2026-11-17T05:12:22Z",
         "state": "OPEN"
       },
       {
         "number": 5311,
-        "updatedAt": "2026-11-16T22:39:32Z",
+        "updatedAt": "2026-11-17T05:12:17Z",
         "state": "OPEN"
       },
       {
         "number": 5310,
-        "updatedAt": "2026-11-16T22:39:26Z",
+        "updatedAt": "2026-11-17T05:12:11Z",
         "state": "OPEN"
       },
       {
         "number": 5309,
-        "updatedAt": "2026-11-16T22:39:21Z",
+        "updatedAt": "2026-11-17T05:12:06Z",
         "state": "OPEN"
       },
       {
         "number": 5307,
-        "updatedAt": "2026-11-16T22:39:16Z",
+        "updatedAt": "2026-11-17T05:12:01Z",
         "state": "OPEN"
       },
       {
         "number": 5306,
-        "updatedAt": "2026-11-16T22:39:11Z",
+        "updatedAt": "2026-11-17T05:11:55Z",
         "state": "OPEN"
       },
       {
         "number": 5305,
-        "updatedAt": "2026-11-16T22:39:05Z",
+        "updatedAt": "2026-11-17T05:11:50Z",
         "state": "OPEN"
       },
       {
         "number": 5304,
-        "updatedAt": "2026-11-16T22:39:00Z",
+        "updatedAt": "2026-11-17T03:57:29Z",
         "state": "OPEN"
       },
       {
@@ -664,11 +649,6 @@
         "state": "OPEN"
       },
       {
-        "number": 4251,
-        "updatedAt": "2026-11-16T20:09:35Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4248,
         "updatedAt": "2026-10-31T09:59:33Z",
         "state": "OPEN"
@@ -866,162 +846,6 @@
     ]
   },
   "groups": [
-    [
-      {
-        "body": "**Related:** #5378, #5294\n\nVerified-as-of: c059556fc34954c27371c25ebd65f99e79a4eb0a\n\n## Current State\n\nOne `verify.js` run starts about six git processes before and around the tests it runs, and a third of them repeat a question the same process already asked.\n\nProbed on 2026-11-16 at c059556f, by logging every git child of `tests/bin-lib/verify/cli-stamp-discovery.test.js`: 90 `verify.js` processes made 585 git calls (6.5 each), and 183 of those calls had the same arguments as an earlier call in the same process.\n\n| Call | Count over 90 runs | Asked from |\n|---|---|---|\n| `rev-parse --show-toplevel` | 156 | `realGit(scopeCwd).repoRoot()` in `lib/verify/baseline.js`, reached from `checkoutRoot` and from `scopeSelfPath` in `plugin/bin/verify.js` |\n| `rev-parse HEAD` | 137 | `lib/verify/report.js` (the tree-state read), from four places in `verify.js` |\n| `status --porcelain` | 137 | the same tree-state read |\n| `rev-parse --git-dir` | 90 | `lib/verify/report.js`, from three places in `verify.js` |\n\nNot every repeat is waste. The tree-state read (`rev-parse HEAD` plus `status --porcelain`) runs before and after the suites on purpose, because the tree can change while they run. A second read with nothing in between is waste.\n\nThis matters beyond the tests. In the full-suite profile on main at 8646f7c, five verify CLI test files start 4,464 git processes, 3,155 of them from spawned `verify.js` runs (`cli.test.js` 1,073, `impact-cli.test.js` 942, `ci-cli.test.js` 912, `cli-scope-integration.test.js` 771, `cli-stamp-discovery.test.js` 766). Every real verify run in a pipeline pays the same repeats.\n\n`plugin/bin/lib/hooks/repo-info-cache.js` (#5294) is the existing pattern for remembering a git answer in memory: one multi-flag `rev-parse` answers several questions, and the memo is keyed on directory and git-relevant environment.\n\n## Deliverables\n\n1. A trace of one `verify.js` invocation in each mode (whole suite, `--scope`, `--baseline`, impact-selected, CI-answered), listing its git calls in order and marking each same-arguments, same-directory, same-environment repeat with whether anything that could change the answer ran in between. The table goes in the PR body.\n2. The repeats with nothing in between are removed: the toplevel, the git directory and the common directory are read once per invocation (one `rev-parse` with several flags can answer them together), and a tree-state read is reused until the next point where the tree may have changed.\n3. The memory lives for one process only, is keyed on the directory and the git-relevant environment, and is never written to disk. A read after the suites ran, after a baseline worktree was created or removed, or in another directory asks git again.\n4. The injected `execImpl` and `deps` seams keep working. A test that stubs git by argument shape is updated to the merged call without losing an assertion.\n5. The PR body reports git calls per invocation per mode, and git processes for the five test files, before and after.\n\n## Acceptance Criteria\n\n- [ ] In a traced invocation of each mode, no git call repeats with the same arguments, directory and environment unless the PR body names it and says what may have changed between the two calls.\n- [ ] A test pins the number of git calls a whole-suite invocation makes around a no-op suite, counted through the injectable exec seam (no wall clock). It goes red when one removed repeat is restored; the PR body quotes that red output.\n- [ ] A test shows freshness: a tree change made while the suites run is seen by the read after them.\n- [ ] Total git processes across the five verify CLI test files fall to at most 3,571 (80% of the 4,464 measured at 8646f7c). Otherwise the PR body names the remaining shortfall and attributes it.\n- [ ] The counts come from `GIT_TRACE2_EVENT=<absolute path of an empty directory>` around `CT_TEST_CONCURRENCY=6 node tools/run-tests.js --files-from <list>`, with the before count re-taken at the branch's merge-base with main and the after count at HEAD, back to back on the same machine.\n- [ ] `verify.js` prints the same report, writes the same `verify-report.json` fields and exits with the same codes as before: the existing verify tests pass with changes only to stubbed call shapes, and no test is deleted, skipped or loosened.\n- [ ] The full suite and the Windows regression job pass.\n\n**Decision (2026-11-16, record author).** \"Same tests\" means no existing test is deleted, skipped, renamed, merged or loosened. A test count may grow by tests this record itself adds, in an existing file or in a new one. Where another sentence of this record reads more strictly, this paragraph wins. Where this record's wording leaves a choice between a literal reading and its aim (fewer git processes, with coverage kept), take the aim, say so in the PR body, and do not stop to ask.\n\n## Release Note\n\nverify.js starts fewer git processes on each run.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/verify.js` — read toplevel, git dir and tree state once per invocation\n- `plugin/bin/lib/verify/baseline.js` — reuse the invocation's repo-root answer\n- `plugin/bin/lib/verify/report.js` — reuse the tree-state and git-dir reads\n- `plugin/bin/lib/verify/impact.js` — reuse the toplevel and common-dir answers\n- `plugin/bin/lib/verify/changed-files.js` — reuse the HEAD read\n- `tests/bin-lib/verify/cli.test.js` — pin the per-invocation git call count\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-16T15:52:42Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 5773,
-        "state": "OPEN",
-        "title": "verify.js: ask git each read-only question once per invocation",
-        "updatedAt": "2026-11-16T17:52:31Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "**Related:** #5324, #5297\n\nVerified-as-of: c059556fc34954c27371c25ebd65f99e79a4eb0a\n\n## Current State\n\nA full-suite profile on main at 8646f7c (2026-11-16, `node tools/run-tests.js --full`, git trace2 per test file) counted 59,448 git processes; fixture setup (`init`, `config`, `add`, `commit`) is 25% of them. #5297 moved the shared builders onto `tests/helpers/git-template.js`, which builds a fixture once per process and gives each caller a copy that starts no git process. #5324 covers the repo-plus-worktree pairs in `tests/hooks-pre-tool-use.test.js` and the verify scenario builders in `tests/bin-lib/verify/cli-helpers.js`.\n\nFour of the heaviest remaining files still build their repositories per test:\n\n| File | Git processes | Largest subcommands |\n|---|---|---|\n| `tests/statusline.test.js` | 2,298 (1,542 from the test process, 444 children of another git) | config 525, add 334, rev-parse 272, init 204 |\n| `tests/bin-lib/reconcile/archive-merged.test.js` | 1,422 | config 193, commit 169, add 152, worktree 122 |\n| `tests/bin-lib/reconcile/archive-merged-record-guards.test.js` | 1,253 | worktree 180, remote 155, config 148, commit 145 |\n| `tests/bin-lib/staged-patch/stack-check.test.js` | 1,094 | apply 237, config 192, init 176, add 136 |\n\n- `statusline.test.js` builds through `makeCommittedRepo()`, `withRepo(remoteUrl, fn)`, `withWorktrees(fn)` and several inline init, config, config, add, commit sequences.\n- The two archive-merged files start from `tests/helpers/reconcile-fixtures.js` (already templated) and then add their own repos, commits and worktrees per test.\n- `stack-check.test.js` builds through `gitFixture(t, content)` and `repoWith(t, files)`, each an init plus identity config plus add plus commit per call, under `gitEnv()`.\n\nIn `archive-merged-record-guards.test.js` the `remote get-url origin` and `worktree list --porcelain` calls come from `archiveMerged` itself, once per call (probed 2026-11-16). They are the code under test and stay.\n\n## Deliverables\n\n1. In each of the four files, a builder whose output is fixed, or fixed for a given set of arguments, comes from `fromTemplate` or `fromTemplateSet`, keyed by its arguments. Return shapes, directory prefixes and the commit identity stay the same.\n2. A builder that cannot be a template (its content differs per test) makes its repo without a `git config` process: the identity goes in through the template it starts from, an inline `-c`, or the config file.\n3. `stack-check.test.js`'s fixture repos carry `maintenance.auto = false` and `gc.auto = 0` in their own config. `gitEnv()` drops the runner's environment config on purpose, so nothing else reaches the commits made under it.\n4. Repo-plus-linked-worktree sets with a fixed shape come from one `fromTemplateSet` layout. A worktree added to an arbitrary per-test repo stays a real `git worktree add`.\n5. Each new template has a spawn test in `tests/helpers-git-template.test.js`: after a warm-up call the builder starts no git process.\n6. The PR body reports git processes per file, before and after, with the split by subcommand.\n\n## Acceptance Criteria\n\n- [ ] Total git processes across the four files fall to at most 3,640 (60% of the 6,067 measured at 8646f7c). Otherwise the PR body names the remaining shortfall and attributes it to fixture setup or to git run by the code under test.\n- [ ] The counts come from `GIT_TRACE2_EVENT=<absolute path of an empty directory>` around `CT_TEST_CONCURRENCY=6 node tools/run-tests.js --files-from <list>`, with the before count re-taken at the branch's merge-base with main and the after count at HEAD, back to back on the same machine.\n- [ ] Each migrated builder starts no git process after its warm-up call (the spawn tests in deliverable 5).\n- [ ] A traced run of `stack-check.test.js` shows zero `maintenance` git processes.\n- [ ] Each file reports the same test names and the same number of tests as before, all passing. The diff changes fixture construction only: no assertion is removed or loosened, no test is deleted, skipped or merged, and test concurrency is unchanged.\n- [ ] The full suite and the Windows regression job pass.\n\n**Decision (2026-11-16, record author).** \"Same tests\" means no existing test is deleted, skipped, renamed, merged or loosened. A test count may grow by tests this record itself adds, in an existing file or in a new one. Where another sentence of this record reads more strictly, this paragraph wins. Where this record's wording leaves a choice between a literal reading and its aim (fewer git processes, with coverage kept), take the aim, say so in the PR body, and do not stop to ask.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/statusline.test.js` — template the committed repo, remote and worktree builders\n- `tests/bin-lib/reconcile/archive-merged.test.js` — template the per-test repos and worktrees\n- `tests/bin-lib/reconcile/archive-merged-record-guards.test.js` — template the per-test repos and worktrees\n- `tests/bin-lib/staged-patch/stack-check.test.js` — template gitFixture and repoWith\n- `tests/helpers-git-template.test.js` — spawn tests for the new templates\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-16T15:52:34Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
-            "name": "size:high",
-            "description": "Scoring: large change — consider decomposition before building",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          }
-        ],
-        "number": 5772,
-        "state": "OPEN",
-        "title": "Move the statusline, archive-merged and stack-check test fixtures onto git-template",
-        "updatedAt": "2026-11-16T17:52:28Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "high",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
     [
       {
         "body": "**Related:** #5324, #5297\n\nVerified-as-of: c059556fc34954c27371c25ebd65f99e79a4eb0a\n\n## Current State\n\nA full-suite profile on main at 8646f7c (2026-11-16, `node tools/run-tests.js --full`, git trace2 per test file) counted 59,448 git processes. Fixture setup (`init`, `config`, `add`, `commit`) is 14,732 of them (25%) across 274 test files, 76 of which start 50 or more.\n\n- `git config` alone is 3,409 processes. Nearly all are an identity pair run right after an init: `config user.name Test` 660, `config user.email test@example.com` 550, `config user.name t` 457, `config user.email t@t` 317.\n- `git init` is 3,579 processes at 17–19 ms of CPU each on the measuring machine, because the default template copies the sample hooks into every new repo. With an empty template directory an init costs 13.5 ms.\n- Measured on one five-process fixture (init, config, config, add, commit): writing the identity straight into `.git/config` and using an empty template directory cut it from 61 ms to 38 ms of CPU.\n\nAt c059556f, 131 files under `tests/` mention `user.name` or `user.email`: 78 under `tests/bin-lib/` (215 sites), 49 top-level test files (147 sites) and 4 helpers (10 sites). 41 files already pass the identity inline as `-c user.name=...`, which costs no extra process.\n\n`tests/helpers/git-fixtures.js` holds the shared builders (`gitRepo`, `committedRepo`, `fixtureGit`). `tools/run-tests.js` already injects environment into its child tree (`gitFixtureConfigEnv`, `TMPDIR`), and `tests/helpers/git-template.js` sets the same kind of default for a bare `node --test` run.\n\nSibling records own these files, and this record leaves them alone: `tests/hooks-pre-tool-use.test.js`, `tests/hooks-pre-tool-use-forge-memo.test.js` and `tests/bin-lib/verify/cli-helpers.js` (#5324); `tests/bin-lib/reconcile/prune-remote.test.js`, `tests/bin-lib/pre-review-catchup/cli.test.js` and `tests/bin-lib/issues/claims-git-cas.test.js`; everything under `tests/bin-lib/learned-skills/` and `tests/helpers/learned-skills-capture.js`; `tests/statusline.test.js`, `tests/bin-lib/reconcile/archive-merged.test.js`, `tests/bin-lib/reconcile/archive-merged-record-guards.test.js` and `tests/bin-lib/staged-patch/stack-check.test.js`.\n\n## Deliverables\n\n1. A helper in `tests/helpers/git-fixtures.js` that makes a repository with one git process: it runs `git init` (optional branch, optional bare) and writes the identity into the repository's config file with `fs`, giving the same `user.name` and `user.email` values a `git config` call would. A second export writes the identity into an existing repository's config for callers that init some other way.\n2. Every `git init` in a runner child uses an empty template directory, set once in `tools/run-tests.js`'s child environment, with the same default applied for a bare `node --test` run by the helper module. Tests that write into `.git/hooks/` or `.git/info/` without creating the directory keep working (ship those two empty directories in the template, or fix the callers). Tests that assert on template content (a sample hook, `description`, `info/exclude`) are found and kept green.\n3. Every fixture `git config user.name` / `git config user.email` process in the test tree is replaced by the helper, except in the sibling-owned files listed in Current State and in tests where a `git config` call is itself the behaviour under test. The name and email each fixture commits with stay the same.\n4. A suite test that keeps it that way: it scans the test tree for a spawned `config user.name` or `config user.email` and fails on any outside a per-file allowlist whose entries each carry a reason. The sibling-owned files start on the allowlist with their record number as the reason.\n5. The PR body reports, for the touched files, total git processes and `git config` processes before and after.\n\n## Acceptance Criteria\n\n- [ ] The helper starts exactly one git process for an init with an identity, shown by a trace2 test in the style of `tests/helpers-git-template.test.js`.\n- [ ] A fresh fixture repo made in a runner child, and one made under a bare `node --test` run that loads the helper module, holds no `.git/hooks/*.sample` file. A test asserts both.\n- [ ] A traced run of the swept files shows zero `git config user.name` and `git config user.email` processes outside the allowlist.\n- [ ] The scan test in deliverable 4 goes red when one swept call site is restored. The PR body quotes that red output.\n- [ ] The counts come from `GIT_TRACE2_EVENT=<absolute path of an empty directory>` around `CT_TEST_CONCURRENCY=6 node tools/run-tests.js --files-from <list>`, with the before count taken at the branch's merge-base with main and the after count at HEAD, back to back on the same machine.\n- [ ] Every touched test file reports the same test names and the same number of tests as before, all passing. No assertion is removed or loosened, no test is deleted, skipped or merged, and test concurrency is unchanged.\n- [ ] The full suite and the Windows regression job pass.\n\n**Decision (2026-11-16, record author).** \"Same tests\" means no existing test is deleted, skipped, renamed, merged or loosened. A test count may grow by tests this record itself adds, in an existing file or in a new one. Where another sentence of this record reads more strictly, this paragraph wins. Where this record's wording leaves a choice between a literal reading and its aim (fewer git processes, with coverage kept), take the aim, say so in the PR body, and do not stop to ask.\n\n**Decision (2026-11-16, record author), Deliverable 2.** #5768 may ship a runner-written git template directory (exported as `GIT_TEMPLATE_DIR`, holding a `config` that switches maintenance off). If it has merged when this record builds, build on that directory instead of adding a second one: a template with no sample hooks then already exists, and what remains here is the `.git/hooks/` and `.git/info/` directory check, the tests that assert on template content, and the same default for a bare `node --test` run.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/helpers/git-fixtures.js` — one-process init helper and identity writer\n- `tests/helpers/git-template.js` — empty template directory default for a bare node --test run\n- `tools/run-tests.js` — empty template directory in the child environment\n- `tests/helpers/reconcile-fixtures.js` — use the identity writer in the template builds\n- `tests/bin-lib/wrap-up/facts.test.js` — replace the identity config calls (20 sites)\n- `tests/hooks-session-start.test.js` — replace the identity config calls (18 sites)\n- `tests/console-execute.test.js` — replace the identity config calls (10 sites)\n- `tests/bin-lib/hooks/reconcile-background.test.js` — replace the identity config calls (10 sites)\n- `tests/bin-lib/flow/check-artifact-overwrite-cli.test.js` — replace the identity config calls (10 sites)\n- `tests/helpers-git-template.test.js` — trace2 and template-directory tests for the helper\n\n_Filed by `capture` via specShapedBody._",
@@ -1399,90 +1223,6 @@
           "grants": {
             "build": true,
             "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Verified-as-of: 8ce3275ebfcb0bda4da59264d7167625a179834e\n\nOrigin: #5297 whole-branch review: AC3.1 (60% git-process target) shortfall levers\n\nDefer-reason: tangential\n\n## Current State\n\n#5297 moved the suite's reused fixture builders onto `tests/helpers/git-template.js`, which builds each fixture once per process and copies it per test with zero git processes. It also turned off auto-maintenance for the suite.\n\nMeasured on its branch, through `node tools/run-tests.js --files-from <list>` with `CT_TEST_CONCURRENCY=6` (git processes counted by `GIT_TRACE2_EVENT` file):\n\n| Set | Before | After |\n|---|---|---|\n| A: tests/hooks-pre-tool-use, hooks-session-start, hooks-teardown-run, issue-branch-tracking, reconcile-archive-residue, load-delta-cli | 3,632 | 2,319 |\n| B: tests/bin-lib/verify/cli-baseline, cli-flaky-preexisting, cli-scope-integration, cli-slot-queue | 2,527 | 1,940 |\n\nThe combined total is 4,259 of 6,159, or 69%. That misses #5297's 60% target.\n\nMost of the residue is git run by the code under test, not by fixtures. In `hooks-pre-tool-use`, the hook's own `rev-parse` ran 230 times, `ls-files` 141 and `check-ignore` 36. In `cli-baseline`, most calls are verify.js's own `rev-parse HEAD`, `status`, `merge-base` and `worktree list`.\n\nTwo fixture levers remain:\n\n- **Fixed repo-plus-linked-worktree pairs.** `tests/hooks-pre-tool-use.test.js`'s `mainAndWorktree()` (~line 49) and its other `gitRepoWithCommit()` + `linkedWorktreeOf(main)` pairs run a real `git worktree add` per test. That is 3 processes each (worktree add, plus its `branch` and `reset` children), about 190 of the file's 729 git processes. A fixed pair can come from `fromTemplateSet` with a `{ main, wtparent }` layout. Teardown-run's fixture already shows that the template rewrites a linked worktree's `gitdir` and `.git` pointers correctly.\n- **Argument-keyed verify scenario builders.** `tests/bin-lib/verify/cli-helpers.js`'s `scopedRepo(rules)`, `flakyRepo(opts)` and `baselineRepo()` still init, add and commit per test. In set B's run, the commits `base` ran 26 times, `declare verify scope` 15, `pre-existing fixture` 15, `flaky fixture` 11 and `head` 12, each with its `add`.\n\n## Deliverables\n\n1. The fixed repo-plus-linked-worktree pairs in `tests/hooks-pre-tool-use.test.js` (and `tests/hooks-pre-tool-use-forge-memo.test.js` where it has the same shape) come from `fromTemplateSet` templates, with shape and prefixes unchanged. A pair built against an arbitrary per-test repo stays a real `git worktree add`.\n2. `scopedRepo`, `flakyRepo` and `baselineRepo` in `tests/bin-lib/verify/cli-helpers.js` come from `fromTemplate`. Each is keyed by its arguments (`JSON.stringify`), with return shapes unchanged.\n3. The PR body reports sets A and B before and after, measured as in Current State.\n\n## Acceptance Criteria\n\n- [ ] After a warm-up call, each migrated builder starts no git process. This is a trace2 test in `tests/helpers-git-template.test.js`, in the style of #5297's.\n- [ ] Total git processes across sets A and B, measured as in Current State, fall to at most 3,695 (60% of #5297's 6,159 baseline), with the same tests passing. Otherwise, the PR body names the remaining shortfall and attributes it.\n- [ ] The full `npm test` suite and the Windows CI job pass.\n\n**Decision (2026-11-16, record author).** \"Same tests\" means no existing test is deleted, skipped, renamed, merged or loosened. A test count may grow by tests this record itself adds, in an existing file or in a new one. Where another sentence of this record reads more strictly, this paragraph wins. Where this record's wording leaves a choice between a literal reading and its aim (fewer git processes, with coverage kept), take the aim, say so in the PR body, and do not stop to ask.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/hooks-pre-tool-use.test.js` — template fixed repo+worktree pairs\n- `tests/bin-lib/verify/cli-helpers.js` — template scenario builders\n- `tests/helpers-git-template.test.js` — spawn tests for the new templates\n\n## Absorbed: 2026-11-16 — Suite-wide git process reduction: scope split with the sibling records\n\nThis record is now one of eight that cut the test suite's git process cost. A full-suite profile on main at 8646f7c (2026-11-16, `node tools/run-tests.js --full`, git trace2 per test file) counted 59,448 git processes per run; fixture setup (`init`, `config`, `add`, `commit`) is 14,732 of them (25%) across 274 test files.\n\nThe work is split by file so the records can build in parallel:\n\n- **This record** keeps `tests/hooks-pre-tool-use.test.js`, `tests/hooks-pre-tool-use-forge-memo.test.js` and `tests/bin-lib/verify/cli-helpers.js`. No sibling edits them.\n- #5771 adds a one-process repo init helper (identity written to `.git/config`, empty template directory) and removes the per-fixture `git config user.*` calls everywhere else. Its scan test allowlists this record's three files by record number.\n- #5772 moves the statusline, archive-merged and stack-check fixtures onto `git-template`.\n- #5769 (prune-remote, pre-review-catchup, claims-git-cas) and #5770 (learned-skills) cut remote-protocol and per-test fixture work in their files.\n- #5768 closes the auto-maintenance processes that still start, #5767 removes a node start per fake command in `guard-rewrite.test.js`, and #5773 removes repeated git reads inside one `verify.js` run.\n\nAdded to this record's Deliverables:\n\n4. In the three files this record owns, no fixture starts a `git config user.name` or `git config user.email` process: the identity goes in through the template, an inline `-c`, or #5771's helper when that has merged. If #5771 has merged, this record removes its three files from that scan test's allowlist.\n5. The PR body also reports git processes per touched file, before and after, with the split by subcommand.\n\nAdded to this record's Acceptance Criteria:\n\n- [ ] A traced run of the three files shows zero `git config user.name` and `git config user.email` processes.\n- [ ] Each touched file reports the same test names and the same number of tests as before; no assertion is removed or loosened, no test is deleted, skipped or merged, and test concurrency is unchanged.\n\n_Filed by `capture` via specShapedBody._\n",
-        "createdAt": "2026-11-13T02:27:47Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          }
-        ],
-        "number": 5324,
-        "state": "OPEN",
-        "title": "Template the remaining per-test fixture builders: repo+worktree pairs and verify scenario repos",
-        "updatedAt": "2026-11-16T17:52:34Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -11534,12 +11274,6 @@
       "number": 4591,
       "blockedBy": [
         4365
-      ]
-    },
-    {
-      "number": 5599,
-      "blockedBy": [
-        5598
       ]
     },
     {
