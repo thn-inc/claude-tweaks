@@ -113,10 +113,11 @@ function localConfigPath(repoDir) {
 // with a space or contains `;`, `#` or a carriage return (unquoted, git's reader drops a CR before the
 // line end). A reader that parses config text (the statusline's fast path defers on any quote) sees git's file.
 const CONFIG_ESCAPES = { '\\': '\\\\', '"': '\\"', '\n': '\\n', '\t': '\\t' };
-const quoteConfigValue = (v) => {
-  const q = v.startsWith(' ') || v.endsWith(' ') || /[;#\r]/.test(v) ? '"' : '';
-  return `${q}${v.replace(/[\\"\n\t]/g, (c) => CONFIG_ESCAPES[c])}${q}`;
-};
+function quoteConfigValue(value) {
+  const needsQuotes = value.startsWith(' ') || value.endsWith(' ') || /[;#\r]/.test(value);
+  const quote = needsQuotes ? '"' : '';
+  return `${quote}${value.replace(/[\\"\n\t]/g, (c) => CONFIG_ESCAPES[c])}${quote}`;
+}
 
 // Appends `[user]` with the given name and/or email to `repoDir`'s local config — what the config
 // command's `user.email` then `user.name` writes leave, without starting a process (the swept call

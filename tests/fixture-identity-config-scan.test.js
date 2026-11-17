@@ -90,7 +90,7 @@ function corpus() {
 
 test(`AC3.1: no test file outside the allowlist spawns git config ${USER}.name or ${USER}.email`, () => {
   const offenders = corpus()
-    .filter(({ rel }) => !Object.prototype.hasOwnProperty.call(ALLOWLIST, rel))
+    .filter(({ rel }) => !Object.hasOwn(ALLOWLIST, rel))
     .flatMap(({ rel, sites }) => sites.map((line) => `${rel}:${line}`));
   assert.deepEqual(offenders, [], `set the identity with initRepo(dir, { name, email }) or writeIdentity from tests/helpers/git-fixtures.js, or allowlist the file with a reason:\n${offenders.join('\n')}`);
 });
