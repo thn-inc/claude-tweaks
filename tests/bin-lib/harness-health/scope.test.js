@@ -11,6 +11,7 @@ const {
   listMemory, selectMemoryTarget, resolveTargetPath,
 } = require('../../../plugin/bin/lib/harness-health/scope');
 const { STALE_DAYS } = require('../../../plugin/bin/lib/harness-health/score');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 function tmp(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-health-scope-'));
@@ -19,9 +20,7 @@ function tmp(t) {
 }
 
 function initGitRepo(root) {
-  execFileSync('git', ['-C', root, 'init', '-q']);
-  execFileSync('git', ['-C', root, 'config', 'user.email', 'test@test.com']);
-  execFileSync('git', ['-C', root, 'config', 'user.name', 'Test']);
+  initRepo(root, { name: 'Test', email: 'test@test.com' });
 }
 
 function commit(root, msg) {

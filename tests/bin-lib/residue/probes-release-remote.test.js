@@ -9,6 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { probeRelease } = require('../../../plugin/bin/lib/residue/probes/release');
 const { renderChangelogFooter } = require('../../../plugin/bin/lib/changelog');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 const SCOPE = { ran: true, reason: null, base: 'a1b2c3d', headBranch: 'main', branches: [], worktrees: [] };
 
@@ -33,9 +34,7 @@ function runner(cwd) {
 // c2. `withRemoteRef` points refs/remotes/origin/main at c2.
 function fixture({ remoteChangelog, withRemoteRef = true }) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-rel-')));
-  git(root, 'init', '-q', '-b', 'main');
-  git(root, 'config', 'user.email', 't@example.com');
-  git(root, 'config', 'user.name', 'T');
+  initRepo(root, { name: 'T', email: 't@example.com', branch: 'main', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   fs.writeFileSync(path.join(root, '.release-please-manifest.json'), '{".": "1.0.0"}\n');
   fs.writeFileSync(path.join(root, 'CHANGELOG.md'), '# Changelog\n\n## v1.0.0 — first\n');
   git(root, 'add', '.');
@@ -120,9 +119,7 @@ test('#3023: behind the remote with an unreadable remote CHANGELOG declines with
 // pre-#3023 behavior, which reports no finding here.
 test('#3023: no local tag at all declines to trust the remote ref and reads HEAD', () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-rel-notag-')));
-  git(root, 'init', '-q', '-b', 'main');
-  git(root, 'config', 'user.email', 't@example.com');
-  git(root, 'config', 'user.name', 'T');
+  initRepo(root, { name: 'T', email: 't@example.com', branch: 'main', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   fs.writeFileSync(path.join(root, '.release-please-manifest.json'), '{".": "1.0.0"}\n');
   fs.writeFileSync(path.join(root, 'CHANGELOG.md'), '# Changelog\n');
   git(root, 'add', '.');
@@ -161,9 +158,7 @@ after(() => { for (const r of floorRoots) fs.rmSync(r, { recursive: true, force:
 function trimmedFixture({ withFooter }) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-rel-floor-')));
   floorRoots.push(root);
-  git(root, 'init', '-q', '-b', 'main');
-  git(root, 'config', 'user.email', 't@example.com');
-  git(root, 'config', 'user.name', 'T');
+  initRepo(root, { name: 'T', email: 't@example.com', branch: 'main', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   fs.writeFileSync(path.join(root, '.release-please-manifest.json'), '{".": "1.0.0"}\n');
   fs.writeFileSync(path.join(root, 'CHANGELOG.md'), '# Changelog\n');
   git(root, 'add', '.');
