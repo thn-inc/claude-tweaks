@@ -30,8 +30,12 @@ const { STUB_SKIP } = require('../../helpers/path-stub');
 const {
   git, trackedFiles, makeRepo, commitPath, installGhWrapper, mergedFeatureBranchRepo,
   fixtureCleanUnarchivedRun, fixtureAbandonedShippedRun, verdictOf, DEAD, mkDirWithMtime, seedStuckDir4180,
-  fixtureActiveUnstampedMergedRun, fixtureOrdinaryMergedNoConsole, ref,
+  fixtureActiveUnstampedMergedRun, fixtureOrdinaryMergedNoConsole, cloneOfSeededOrigin, ref,
+  fixtureAbandonedBehindOrigin, RUN_3976, headerMergedRepo3976, addOriginRemote,
 } = require('./archive-merged-helpers');
+
+// `git config core.quotepath true` as a plain config append, so it starts no git process.
+const setQuotepath = (root) => fs.appendFileSync(path.join(root, '.git', 'config'), '[core]\n\tquotepath = true\n');
 
 // Forces a REAL `git commit` failure via a failing pre-commit hook — the same
 // class of real-world cause named in #652's Technical Approach (gpgsign
@@ -348,7 +352,7 @@ test('archiveRunDir: non-tidy run with a stray tracked file outside work/ still 
 for (const [label, specName] of [['ASCII control', 'cafe-spec.md'], ['non-ASCII', 'café-spec.md']]) {
   test(`archiveRunDir: AC1.1 — a tracked ${label} spec under work/ (work/ gone from disk) does not refuse tracked-entry`, () => {
     const root = makeRepo();
-    git(root, 'config', 'core.quotepath', 'true');
+    setQuotepath(root);
     const runId = '2026-08-30T090000-record-3651-quotepath';
     const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
     const relSpec = `.claude-tweaks/pipelines/${runId}/work/${specName}`;
@@ -365,7 +369,7 @@ for (const [label, specName] of [['ASCII control', 'cafe-spec.md'], ['non-ASCII'
 
 test('archiveRunDir: AC1.1 — a tracked non-ASCII file outside work/ still refuses tracked-entry (the exemption is not widened)', () => {
   const root = makeRepo();
-  git(root, 'config', 'core.quotepath', 'true');
+  setQuotepath(root);
   const runId = '2026-08-30T090000-record-3651-quotepath-stray';
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
   commitPath(root, `.claude-tweaks/pipelines/${runId}/café-notes.md`, '# stray\n');
@@ -2074,7 +2078,7 @@ test('#4180 archiveMerged: a dry run with nothing stuck returns an empty residue
 
 test('#4180 archiveMerged: a real run returns residuePlan null and surfaces a failed prune resolve in residueErrors', () => {
   const root = fs.realpathSync(makeRepo());
-  git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+  addOriginRemote(root, 'git@github.com:acme/w.git');
   const gone = path.join(root, '.claude-tweaks', 'pipelines', 'gone-4180');
   for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) recordResidueFailure(root, 'move-failed', gone, { lastError: 'EBUSY' });
   const result = archiveMerged({ cwd: root, runner: () => { throw new Error('gh down'); } });
@@ -2142,7 +2146,7 @@ test('archiveMerged: two dirs crossing the structurally-stuck threshold in one c
   // `runner` at all) unless repoTargetOf(root) resolves — makeRepo()'s bare
   // fixture has no origin remote, so one is stamped here (same shape
   // release-merged.test.js's own fixtures use).
-  git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+  addOriginRemote(root, 'git@github.com:acme/w.git');
 
   function seedStuckDir(id, gonePath) {
     const dir = path.join(root, '.claude-tweaks', 'pipelines', id);
@@ -2244,7 +2248,7 @@ test('archiveMerged: two dirs crossing the structurally-stuck threshold in one c
 // events.jsonl) never pollute the count.
 test('archiveMerged: a pass processing 2 structurally-stuck dirs reads and writes reconcile-cache.json exactly once each, not once per dir', { skip: STUB_SKIP }, () => {
   const root = fs.realpathSync(makeRepo());
-  git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+  addOriginRemote(root, 'git@github.com:acme/w.git');
 
   function seedStuckDir(id, gonePath) {
     const dir = path.join(root, '.claude-tweaks', 'pipelines', id);
@@ -3180,15 +3184,7 @@ test('archiveMerged: same shape as above, but the merge commit is not yet locall
 // archive through origin's ancestry (the real pass's mirror would fast-forward
 // first), while nothing moves.
 test('archiveMerged: dry-run by-number MERGED path with local main behind origin previews the archive (#4387)', { skip: STUB_SKIP }, () => {
-  const root = fs.realpathSync(makeRepo());
-  const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-origin-'));
-  git(origin, 'init', '--bare', '-b', 'main');
-  git(root, 'remote', 'add', 'origin', origin);
-  git(root, 'push', '-q', 'origin', 'main');
-  const seed = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-seed-'));
-  git(seed, 'clone', '-q', origin, '.');
-  git(seed, 'config', 'user.email', 't@t');
-  git(seed, 'config', 'user.name', 't');
+  const { seed, root } = cloneOfSeededOrigin();
   commitPath(seed, 'merged.txt', 'merged\n');
   git(seed, 'push', '-q', 'origin', 'main');
   const mergeOid = git(seed, 'rev-parse', 'HEAD').trim();
@@ -3219,24 +3215,6 @@ test('archiveMerged: dry-run by-number MERGED path with local main behind origin
   assert.equal(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId)), false, 'a dry-run must not archive');
   assert.notEqual(git(root, 'rev-parse', 'main').trim(), mergeOid, 'a dry-run must not fast-forward local main');
 });
-
-// #4387: a bare origin seeded with one commit (a.txt) from `seed`, plus `root`, a configured clone of it.
-function cloneOfSeededOrigin() {
-  const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-origin-'));
-  git(origin, 'init', '--bare', '-b', 'main');
-  const seed = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-seed-'));
-  git(seed, 'clone', '-q', origin, '.');
-  git(seed, 'config', 'user.email', 't@t');
-  git(seed, 'config', 'user.name', 't');
-  commitPath(seed, 'a.txt', 'a\n');
-  git(seed, 'push', '-q', 'origin', 'main');
-  const clone = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-clone-'));
-  git(clone, 'clone', '-q', origin, '.');
-  const root = fs.realpathSync(clone);
-  git(root, 'config', 'user.email', 't@t');
-  git(root, 'config', 'user.name', 't');
-  return { seed, root };
-}
 
 // #4387: the main checkout sits on the integration branch but origin/main
 // already holds the merge that carries the run's work/ subtree. The first pass
@@ -3296,54 +3274,6 @@ test('archiveMerged: main checkout on main but behind origin\'s merge — skips 
   assert.ok(headShow.includes(`.claude-tweaks/pipelines/${runId}/work/4387-spec.md`), `HEAD should delete the live work file:\n${headShow}`);
   assert.ok(headShow.includes(`.claude-tweaks/pipelines/archive/${runId}/work/4387-spec.md`), `HEAD should add the archived work file:\n${headShow}`);
 });
-
-// The shared fixture of the abandoned-interrupted local-behind tests below: a clone whose
-// local main is behind origin/main, which holds the run's work/ file — landed by fast-forward,
-// or (squash) as a new commit carrying the same patch, so the run's branch tip is no ancestor
-// of main and only the cherry shape recognises it as merged.
-function fixtureAbandonedBehindOrigin({ squash = false } = {}) {
-  const { seed, root } = cloneOfSeededOrigin();
-  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
-  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-branch: main\n');
-
-  const runId = '2026-08-01T090000-record-4387-abandoned';
-  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
-  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
-  // The feature commit (dated after the run's start so the run-start corroboration passes)
-  // carries the run's tracked work/ file, then lands on origin/main.
-  git(seed, 'checkout', '-q', '-b', 'feat-4387-abandoned');
-  fs.mkdirSync(path.join(seed, '.claude-tweaks', 'pipelines', runId, 'work'), { recursive: true });
-  fs.writeFileSync(path.join(seed, '.claude-tweaks', 'pipelines', runId, 'work', '4387-spec.md'), '# spec 4387\n');
-  git(seed, 'add', '.claude-tweaks');
-  execFileSync('git', ['commit', '-q', '-m', 'feature work'], {
-    cwd: seed,
-    encoding: 'utf8',
-    env: { ...process.env, GIT_AUTHOR_DATE: '2026-08-01T10:00:00Z', GIT_COMMITTER_DATE: '2026-08-01T10:00:00Z' },
-  });
-  const featureOid = git(seed, 'rev-parse', 'HEAD').trim();
-  git(seed, 'checkout', '-q', 'main');
-  if (squash) {
-    git(seed, 'merge', '-q', '--squash', 'feat-4387-abandoned');
-    git(seed, 'commit', '-q', '-m', 'squash feature work');
-  } else {
-    git(seed, 'merge', '-q', '--ff-only', 'feat-4387-abandoned');
-  }
-  git(seed, 'push', '-q', 'origin', 'main');
-  if (squash) git(seed, 'push', '-q', 'origin', 'feat-4387-abandoned'); // the tip is no ancestor of main: ship it for root to fetch
-  git(root, 'fetch', '-q', 'origin', 'main'); // only origin/main advances; root stays on a behind main
-  if (squash) git(root, 'fetch', '-q', 'origin', 'feat-4387-abandoned:feat-4387-abandoned');
-  else git(root, 'branch', 'feat-4387-abandoned', featureOid); // the run's branch ref survives locally
-
-  fs.mkdirSync(runDir, { recursive: true });
-  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
-    status: 'interrupted', worktree: path.join(root, 'gone-4387'), pr: { branch: 'feat-4387-abandoned' },
-  }));
-  fs.writeFileSync(
-    path.join(runDir, 'events.jsonl'),
-    '{"skill":"claude-tweaks:build","ts":"2020-01-01T09:05:00.000Z","type":"skill_invoked"}\n',
-  );
-  return { root, runDir, archiveDir, featureOid };
-}
 
 // #4387 (final-review I2): the abandoned-interrupted path archives straight away, on
 // checkRunIntegrity's shipped evidence — which reads origin/main under the policy-
@@ -4090,35 +4020,11 @@ test('archiveRunDir hands its env option to the token pass', async () => {
 
 // #3976: wrap-up moves a run's tracked header to archive/ on the run branch before the merge, so
 // the merge lands no live run dir and the post-merge archive commit has nothing tracked to move.
-const { archiveRunHeader } = require('../../../plugin/bin/lib/run-header-archive');
 const { createPrStateResolver: createPrStatesFor3976 } = require('../../../plugin/bin/lib/reconcile/pr-state-cache');
 
-const RUN_3976 = '2026-11-16T000000-record-7';
 const LIVE_3976 = `.claude-tweaks/pipelines/${RUN_3976}`;
 const ARCH_3976 = `.claude-tweaks/pipelines/archive/${RUN_3976}`;
 const lines3976 = (s) => s.split('\n').filter(Boolean);
-
-// main with one commit; branch feat-3976 carries the live header and, when `moved`, the move.
-// The branch is merged back with `--squash` or `--no-ff`; the main checkout keeps only the
-// gitignored half of the run dir (run-state, console, decisions) the way a real one does.
-function headerMergedRepo3976({ moved, merge }) {
-  const root = fs.realpathSync(makeRepo());
-  git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git'); // archiveMerged needs a repo slug
-  git(root, 'checkout', '-q', '-b', 'feat-3976');
-  commitPath(root, `${LIVE_3976}/work/7-spec.md`, 'spec header\n');
-  if (moved) {
-    const res = archiveRunHeader({ worktree: root, runId: RUN_3976 });
-    assert.equal(res.outcome, 'moved', JSON.stringify(res));
-  }
-  git(root, 'checkout', '-q', 'main');
-  if (merge === 'squash') {
-    git(root, 'merge', '--squash', 'feat-3976');
-    git(root, 'commit', '-q', '-m', 'Squashed feature (#7001)');
-  } else {
-    git(root, 'merge', '-q', '--no-ff', '--no-edit', 'feat-3976');
-  }
-  return { root, mergeSha: git(root, 'rev-parse', 'HEAD').trim() };
-}
 
 function seedGitignoredRunHalf3976(root) {
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', RUN_3976);

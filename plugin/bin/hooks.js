@@ -759,7 +759,8 @@ async function runRecordWorktree(argv, deps) {
     // #3973: the owner block, only with a session id (record-worktree is the adoption
     // path, so it replaces another session's block).
     const result = ctxLib.writeRunState(runDir,
-      ctxLib.patchWithOwnerBlock(patch, deps.env.CLAUDE_CODE_SESSION_ID, { replacesSessionId: true }));
+      ctxLib.patchWithOwnerBlock(patch, deps.env.CLAUDE_CODE_SESSION_ID, { replacesSessionId: true, env: deps.env }),
+      { env: deps.env });
     if (result) {
       deps.stdout(`claude-tweaks: worktree recorded for ${path.basename(runDir)}\n`);
     } else {
@@ -975,7 +976,7 @@ async function runRecordPr(argv, deps) {
       prBranch = deriveBranch(repoRootOf(runDir), ctxLib.readRunState(runDir)?.worktree || null);
     } catch { prBranch = null; }
     const prField = prBranch ? { number, url: urlArg, branch: prBranch } : { number, url: urlArg };
-    const result = ctxLib.writeRunState(runDir, { pr: prField });
+    const result = ctxLib.writeRunState(runDir, { pr: prField }, { env: deps.env });
     if (result) {
       deps.stdout(`claude-tweaks: PR #${number} recorded for ${path.basename(runDir)}\n`);
     } else {
@@ -1712,7 +1713,7 @@ async function runCheckSessionResidue(argv, deps) {
     return 0;
   }
   const root = pluginRoot(deps.env);
-  const staleEntries = sessionResidue.collectStaleRuns(deps.cwd(), { exclude: runDir, pluginRoot: root });
+  const staleEntries = sessionResidue.collectStaleRuns(deps.cwd(), { exclude: runDir, pluginRoot: root, env: deps.env });
   const approvableEntries = sessionResidue.collectApprovableStandalone(deps.cwd(), { exclude: runDir });
   const { runs: consoleEntries, more: moreConsoles } = sessionResidue.scanUnresolvedConsoles(deps.cwd(), { exclude: runDir, pluginRoot: root });
   if (!staleEntries.length && !approvableEntries.length && !consoleEntries.length) {
@@ -1789,7 +1790,7 @@ async function runCheckSiblingSessions(argv, deps) {
     deps.stdout('claude-tweaks: --record <id-or-slug> is required — sibling-session check not run\n');
     return 0;
   }
-  const match = siblingSessions.findConflictingSession(recordRef, { cwd: deps.cwd(), sessionId: deps.env.CLAUDE_CODE_SESSION_ID });
+  const match = siblingSessions.findConflictingSession(recordRef, { cwd: deps.cwd(), env: deps.env, sessionId: deps.env.CLAUDE_CODE_SESSION_ID });
   if (match) {
     deps.stdout(
       `claude-tweaks: sibling session may already hold record ${recordRef} — ` +
@@ -1800,7 +1801,7 @@ async function runCheckSiblingSessions(argv, deps) {
   }
   // The worktree lock above sees only local siblings; the live claim is the
   // remote-facing half (another machine, the cloud, no worktree yet).
-  const claim = siblingSessions.findLiveClaim(recordRef, { cwd: deps.cwd(), sessionId: deps.env.CLAUDE_CODE_SESSION_ID });
+  const claim = siblingSessions.findLiveClaim(recordRef, { cwd: deps.cwd(), env: deps.env, sessionId: deps.env.CLAUDE_CODE_SESSION_ID });
   if (claim) {
     deps.stdout(
       `claude-tweaks: sibling session may already hold record ${recordRef} — ` +
@@ -1842,7 +1843,7 @@ async function runReconcile(argv, deps) {
   const opts = {
     dryRun: args.includes('--dry-run'),
     cwd: deps.cwd(),
-    // Reaches only the no-repo/no-remote gate's git children today (see reconcile()'s opts comment; #5606).
+    // Reaches the no-repo/no-remote gate, the model resolve, the gh preflight, the shared fetch and the fast checks (mirror, red-tip, console); the checks outside that set still inherit process.env (#5606).
     env: deps.env,
     mcpReachable: args.includes('--mcp-reachable'),
     // Unscoped: run everything except the janitorial checks deferred to the
@@ -1894,6 +1895,8 @@ async function runReconcile(argv, deps) {
             root: wtDetect.mainCheckoutRoot(cwd),
             cwd,
             sessionId: deps.env.CLAUDE_CODE_SESSION_ID || undefined,
+            spawn: deps.spawn,
+            env: deps.env,
           });
           background = { checks: CLI_DEFERRED_CHECKS, spawned: r.spawned, reason: r.reason };
         }
@@ -2259,9 +2262,9 @@ async function run(argv, deps) {
   // #3973: the owner's own events keep the run's owner block fresh. session-start
   // refreshes it itself, before its reconcile spawn.
   if (cmd !== 'session-start') {
-    try { ctxLib.refreshOwnerBlock({ input, ownedRun }); } catch { /* never breaks a session */ }
+    try { ctxLib.refreshOwnerBlock({ input, ownedRun }, { env: deps.env }); } catch { /* never breaks a session */ }
   }
-  const out = (await mod.run({ input, runDir, runState, ownedRun, cwd })) || {};
+  const out = (await mod.run({ input, runDir, runState, ownedRun, cwd, env: deps.env, homeDir: deps.homeDir, spawn: deps.spawn })) || {};
   if (out.json) deps.stdoutSync(JSON.stringify(out.json));
   return typeof out.exit === 'number' ? out.exit : 0;
 }
@@ -2306,6 +2309,9 @@ const realDeps = {
   cwd: () => process.cwd(),
   env: process.env,
   stdin: () => (EARLY ? EARLY.raw : ctxLib.readStdin()),
+  homeDir: () => require('os').homedir(),
+  // Looked up at call time so a test that patches child_process.spawn sees the call.
+  spawn: (file, args, options) => require('child_process').spawn(file, args, { windowsHide: true, ...options }),
 };
 
 // The script entry's `argv` is the full process.argv; `run` takes it without the two leading

@@ -7,7 +7,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const { fixtureGit } = require('./helpers/git-fixtures');
 const {
   fromTemplate,
@@ -327,6 +327,154 @@ for (const [name, [make, dirsOf]] of Object.entries(builders)) {
   });
 }
 
+// #5324: the pre-tool-use fixed pairs and repos sit on templates too.
+const preToolUsePairs = {
+  'pre-tool-use mainAndWorktree': [() => preToolUse.mainAndWorktree(), (r) => [r.main, path.dirname(r.wt)]],
+  'pre-tool-use mainAndWorktree({ localMain })': [() => preToolUse.mainAndWorktree({ localMain: true }), (r) => [r.main, path.dirname(r.wt)]],
+  'pre-tool-use gitRepoOnLocalMain': [() => preToolUse.gitRepoOnLocalMain(), (d) => [d]],
+  'pre-tool-use unpinnedRepoWithOrigin': [() => preToolUse.unpinnedRepoWithOrigin(), (d) => [d]],
+};
+for (const [name, [make, dirsOf]] of Object.entries(preToolUsePairs)) {
+  test(`AC1.1 AC1.2: ${name}: a second call starts no git process`, () => {
+    scratch.push(...dirsOf(make()));
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(...dirsOf(second));
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+test('a copied mainAndWorktree pair resolves to its own main, and a second worktree can be added to it', () => {
+  const a = preToolUse.mainAndWorktree();
+  const b = preToolUse.mainAndWorktree();
+  scratch.push(a.main, path.dirname(a.wt), b.main, path.dirname(b.wt));
+  for (const p of [a, b]) {
+    assert.ok(path.basename(p.main).startsWith('ct-e1-'), p.main);
+    assert.ok(path.basename(path.dirname(p.wt)).startsWith('ct-e1-wtparent-'), p.wt);
+    const common = git(p.wt, ['rev-parse', '--git-common-dir']);
+    assert.strictEqual(fs.realpathSync(path.resolve(p.wt, common)), path.join(p.main, '.git'));
+    assert.strictEqual(fs.realpathSync(git(p.wt, ['rev-parse', '--show-toplevel'])), p.wt);
+  }
+  const listed = (p) => git(p.main, ['worktree', 'list', '--porcelain'])
+    .split('\n').filter((l) => l.startsWith('worktree ')).map((l) => fs.realpathSync(l.slice(9)));
+  assert.ok(listed(a).includes(a.wt), listed(a).join(', '));
+  assert.ok(!listed(a).includes(b.wt), listed(a).join(', '));
+  const extra = path.join(mk('ct-gt-wt2-'), 'wt');
+  git(a.main, ['worktree', 'add', '-q', extra, '-b', 'extra']);
+  assert.strictEqual(git(extra, ['rev-parse', 'HEAD']), git(a.main, ['rev-parse', 'HEAD']));
+});
+test('mainAndWorktree({ localMain: true }) and gitRepoOnLocalMain copies are on main', () => {
+  const pair = preToolUse.mainAndWorktree({ localMain: true });
+  const repo = preToolUse.gitRepoOnLocalMain();
+  scratch.push(pair.main, path.dirname(pair.wt), repo);
+  assert.strictEqual(git(pair.main, ['symbolic-ref', '--short', 'HEAD']), 'main');
+  assert.strictEqual(git(repo, ['symbolic-ref', '--short', 'HEAD']), 'main');
+});
+test('unpinnedRepoWithOrigin copies carry the GitHub-shaped origin and one commit', () => {
+  const repo = preToolUse.unpinnedRepoWithOrigin();
+  scratch.push(repo);
+  assert.strictEqual(git(repo, ['remote', 'get-url', 'origin']), 'https://github.com/o/n.git');
+  assert.strictEqual(git(repo, ['rev-list', '--count', 'HEAD']), '1');
+});
+
+// #5324: the verify scenario builders sit on templates, keyed by their arguments.
+const verifyHelpers = require('./bin-lib/verify/cli-helpers');
+const verifyRules = (glob) => [{ match: glob, suites: ['unit'] }];
+for (const [name, make] of [
+  ['verify scopedRepo', () => verifyHelpers.scopedRepo(verifyRules('src/**'))],
+  ['verify scopedRepo with generated', () => verifyHelpers.scopedRepo(verifyRules('src/**'), { generated: ['**'] })],
+  ['verify flakyRepo()', () => verifyHelpers.flakyRepo()],
+  ['verify flakyRepo({ retryExit: 1 })', () => verifyHelpers.flakyRepo({ retryExit: 1 })],
+  ['verify baselineRepo', () => verifyHelpers.baselineRepo()],
+]) {
+  test(`AC1.1 AC1.2: ${name}: a second call starts no git process`, () => {
+    scratch.push(make().repo);
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(second.repo);
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+test('verify builders: per-call values match git, and different arguments never share a template', () => {
+  const s = verifyHelpers.scopedRepo(verifyRules('src/**'));
+  const s2 = verifyHelpers.scopedRepo(verifyRules('lib/**'));
+  const b = verifyHelpers.baselineRepo();
+  const fDefault = verifyHelpers.flakyRepo();
+  const fExit1 = verifyHelpers.flakyRepo({ retryExit: 1 });
+  scratch.push(s.repo, s2.repo, b.repo, fDefault.repo, fExit1.repo);
+  assert.strictEqual(s.branch, git(s.repo, ['symbolic-ref', '--short', 'HEAD']));
+  assert.ok(s.marker.startsWith(s.gitDir), s.marker);
+  assert.ok(s.unitCmd.includes(s.marker), s.unitCmd);
+  const rulesOf = (r) => JSON.parse(fs.readFileSync(path.join(r.repo, r.declPath), 'utf8')).rules;
+  assert.deepStrictEqual(rulesOf(s), verifyRules('src/**'));
+  assert.deepStrictEqual(rulesOf(s2), verifyRules('lib/**'));
+  assert.strictEqual(b.baseSha, git(b.repo, ['rev-parse', 'HEAD']));
+  assert.strictEqual(fDefault.branch, git(fDefault.repo, ['symbolic-ref', '--short', 'HEAD']));
+  assert.ok(fExit1.marker.startsWith(fExit1.repo), fExit1.marker);
+  assert.ok(fExit1.retryLog(0).startsWith(fExit1.gitDir), fExit1.retryLog(0));
+  assert.ok(fs.readFileSync(path.join(fExit1.repo, 'retry.js'), 'utf8').includes('process.exit(1)'));
+  assert.ok(fs.readFileSync(path.join(fDefault.repo, 'retry.js'), 'utf8').includes('process.exit(0)'));
+  // A key that dropped `failingFile` or `extra` would hand a later call the first call's files.
+  const fReal = verifyHelpers.flakyRepo({ failingFile: 'tests/real.test.js' });
+  const sGenerated = verifyHelpers.scopedRepo(verifyRules('src/**'), { generated: ['**'] });
+  scratch.push(fReal.repo, sGenerated.repo);
+  const failJs = (r) => fs.readFileSync(path.join(r.repo, 'fail.js'), 'utf8');
+  assert.ok(failJs(fReal).includes('tests/real.test.js'), failJs(fReal));
+  assert.ok(!failJs(fDefault).includes('tests/real.test.js'), failJs(fDefault));
+  const declOf = (r) => JSON.parse(fs.readFileSync(path.join(r.repo, r.declPath), 'utf8'));
+  assert.deepStrictEqual(declOf(sGenerated).generated, ['**']);
+  assert.strictEqual(declOf(s).generated, undefined);
+});
+test('Absorbed AC (identity): a fresh process building every owned fixture starts no git config user.name/user.email process', () => {
+  const trace = mk('ct-gt-trace-');
+  const freshTmp = mk('ct-gt-freshtmp-');
+  // Fresh module instances give cold template caches without a node child; the
+  // original instances go back in require.cache afterwards.
+  const modules = ['./helpers/git-template', './helpers/pre-tool-use', './bin-lib/verify/cli-helpers'].map((m) => require.resolve(m));
+  const saved = modules.map((m) => [m, require.cache[m]]);
+  // A fresh build appends maintenance-off keys to process.env; put them back too.
+  const cfgKeys = /^GIT_CONFIG_/;
+  const savedCfg = Object.entries(process.env).filter(([k]) => cfgKeys.test(k));
+  const envs = { GIT_TRACE2_EVENT: trace, TMPDIR: freshTmp, TMP: freshTmp, TEMP: freshTmp };
+  const inEnv = (names, fn) => (names.length ? withEnv(names[0], envs[names[0]], () => inEnv(names.slice(1), fn)) : fn());
+  try {
+    for (const m of modules) delete require.cache[m];
+    const [, pre, verify] = modules.map((m) => require(m));
+    inEnv(Object.keys(envs), () => {
+      pre.gitRepo(); pre.gitRepoWithCommit(); pre.gitRepoOnLocalMain();
+      pre.mainAndWorktree(); pre.mainAndWorktree({ localMain: true });
+      pre.unpinnedRepoWithOrigin();
+      verify.tmpGitRepo(); verify.scopedRepo([{ match: 'src/**', suites: ['unit'] }]); verify.flakyRepo(); verify.baselineRepo();
+    });
+  } finally {
+    for (const [m, mod] of saved) { if (mod) require.cache[m] = mod; else delete require.cache[m]; }
+    for (const k of Object.keys(process.env)) if (cfgKeys.test(k)) delete process.env[k];
+    for (const [k, v] of savedCfg) process.env[k] = v;
+  }
+  const argvs = tracedArgvs(trace);
+  assert.ok(argvs.length > 0, 'control: the builders did trace git processes');
+  // The subcommand is the first word after `git` that is not an option or an option's value.
+  const configKeys = (argv) => {
+    let i = 1;
+    while (i < argv.length) {
+      if (argv[i] === '-C' || argv[i] === '-c') i += 2;
+      else if (argv[i].startsWith('-')) i += 1;
+      else break;
+    }
+    return argv[i] === 'config' ? argv.slice(i + 1) : [];
+  };
+  const offenders = argvs.filter((a) => configKeys(a).some((k) => k === 'user.name' || k === 'user.email'));
+  assert.deepStrictEqual(offenders, []);
+});
+test('Absorbed AC (identity): the identity written into a template reaches its copies', () => {
+  // `--local` reads only the copy's own .git/config, so a CI-exported GIT_AUTHOR_* cannot stand in for it.
+  const plain = verifyHelpers.tmpGitRepo();
+  const scoped = verifyHelpers.scopedRepo(verifyRules('src/**'));
+  scratch.push(plain.repo, scoped.repo);
+  for (const r of [plain, scoped]) {
+    assert.strictEqual(git(r.repo, ['config', '--local', 'user.email']), 'verify-test@example.invalid');
+  }
+});
+
 test('template build runs with auto-maintenance off', () => {
   // The runner's own GIT_CONFIG_* (tools/run-tests.js) would mask a missing
   // append, so take them out for the duration and put them back after.
@@ -497,4 +645,171 @@ test('tmpGitRepo: a second call starts no git process and carries the verify ide
   scratch.push(second.repo);
   assert.deepStrictEqual(fs.readdirSync(trace), []);
   assert.strictEqual(second.git('config', 'user.email').trim(), 'verify-test@example.invalid');
+});
+
+test('AC3.1: learned-skills capture fixture(): a warm copy starts no git process', (t) => {
+  const { fixture } = require('./helpers/learned-skills-capture');
+  fixture(t);                       // warm-up
+  fixture(t, {}, { autocrlf: 'true' });
+  const trace = mk('ct-gt-trace-');
+  const [a, b] = withEnv('GIT_TRACE2_EVENT', trace, () => [fixture(t), fixture(t, {}, { autocrlf: 'true' })]);
+  assert.deepStrictEqual(fs.readdirSync(trace), []);
+  assert.notStrictEqual(a.repo, b.repo);
+  assert.ok(fs.statSync(a.runDir).isDirectory());
+  assert.strictEqual(a.mergeBase.length, 40);
+  // Which variant is which: { autocrlf: 'true' } is a CRLF checkout; the default follows the host.
+  const skill = '.claude/skills/x/SKILL.md';
+  let host = ''; // what the fixture pinned in the copy itself (the trace window is closed here)
+  try { host = execFileSync('git', ['-C', a.repo, 'config', '--get', 'core.autocrlf'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim(); } catch { /* unset */ }
+  assert.ok(fs.readFileSync(path.join(b.repo, skill), 'utf8').includes('\r\n'));
+  if (host !== 'true') assert.ok(!fs.readFileSync(path.join(a.repo, skill), 'utf8').includes('\r\n'));
+});
+
+test('AC3.1: learned-skills land fixture(): a warm copy starts no git process and owns its paths', (t) => {
+  const { fixture, X } = require('./helpers/learned-skills-land');
+  for (const o of [{}, { autocrlf: 'true' }, { capturedTargets: [X] }, { originConflict: true }]) fixture(t, o);
+  const trace = mk('ct-gt-trace-');
+  const f = withEnv('GIT_TRACE2_EVENT', trace, () => fixture(t));
+  withEnv('GIT_TRACE2_EVENT', trace, () => fixture(t, { originConflict: true }));
+  assert.deepStrictEqual(fs.readdirSync(trace), []);
+  const manifest = JSON.parse(fs.readFileSync(path.join(f.runDir, 'learned-skills', 'manifest.json'), 'utf8'));
+  for (const e of manifest) assert.ok(e.patch.startsWith(f.runDir + path.sep), e.patch);
+  assert.strictEqual(git(f.repo, ['remote', 'get-url', 'origin']), f.origin);
+});
+
+// #5772: stack-check, statusline and archive-merged builders — same shape as above.
+const stackFixtures = require('./bin-lib/staged-patch/stack-check-fixtures');
+for (const [name, make] of [
+  ['stack-check gitFixture(BASE)', () => stackFixtures.gitFixture(null)],
+  ['stack-check gitFixture(Latin-1 bytes)', () => stackFixtures.gitFixture(null, Buffer.from('caf\xe9\n', 'latin1'))],
+  ['stack-check repoWith(files)', () => stackFixtures.repoWith(null, { 'g.txt': 'one\n', 'bin.dat': Buffer.from([0, 1, 255]) })],
+]) {
+  test(`AC3.1: ${name}: a second call starts no git process`, () => {
+    scratch.push(make().dir);
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(second.dir);
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+
+test('AC4.1: a stack-check fixture copy carries maintenance.auto=false and gc.auto=0 in its own config', () => {
+  const fx = stackFixtures.gitFixture(null);
+  scratch.push(fx.dir);
+  assert.strictEqual(fx.git('config', '--local', 'maintenance.auto').stdout.trim(), 'false');
+  assert.strictEqual(fx.git('config', '--local', 'gc.auto').stdout.trim(), '0');
+  assert.strictEqual(fx.git('config', '--local', 'user.email').stdout.trim(), 'stack-check@example.invalid');
+});
+
+const archiveMergedHelpers = require('./bin-lib/reconcile/archive-merged-helpers');
+// The copied bare origin a clone fixture's .git/config names, so a test can clean it up too.
+const originDirOf = (root) => fs.readFileSync(path.join(root, '.git', 'config'), 'utf8').match(/^\s*url = (.+)$/m)[1].trim();
+for (const [name, make, dirsOf] of [
+  ['makeRepo()', () => archiveMergedHelpers.makeRepo(), (d) => [d]],
+  ['mergedFeatureBranchRepo(feat-x)', () => archiveMergedHelpers.mergedFeatureBranchRepo('feat-x'), (r) => [r.root]],
+  ['fixtureCleanUnarchivedRun({ origin: true })', () => archiveMergedHelpers.fixtureCleanUnarchivedRun({ runId: '2026-08-01T090000-record-2', origin: true }), (r) => [r.root]],
+  ['fixtureAbandonedShippedRun', () => archiveMergedHelpers.fixtureAbandonedShippedRun({ runId: '2026-08-01T090000-record-1' }), (r) => [r.root]],
+  ['cloneOfSeededOrigin()', () => archiveMergedHelpers.cloneOfSeededOrigin(), (r) => [r.seed, r.root, originDirOf(r.root)]],
+]) {
+  test(`AC3.1: archive-merged ${name}: a second call starts no git process`, () => {
+    scratch.push(...dirsOf(make()));
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(...dirsOf(second));
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+
+test('mergedFeatureBranchRepo copy: feature tip is an ancestor of main and the branch ref exists', () => {
+  scratch.push(archiveMergedHelpers.mergedFeatureBranchRepo('feat-x').root);
+  const { root, featureSha } = archiveMergedHelpers.mergedFeatureBranchRepo('feat-x');
+  scratch.push(root);
+  const r = spawnSync('git', ['merge-base', '--is-ancestor', featureSha, 'main'], { cwd: root, env: gitEnv() });
+  assert.strictEqual(r.status, 0, String(r.stderr));
+  assert.strictEqual(git(root, ['rev-parse', 'feat-x']), featureSha);
+});
+
+for (const [name, make, dirsOf] of [
+  ['fixtureAbandonedBehindOrigin()', () => archiveMergedHelpers.fixtureAbandonedBehindOrigin(), (r) => [r.root, originDirOf(r.root)]],
+  ['fixtureAbandonedBehindOrigin({ squash: true })', () => archiveMergedHelpers.fixtureAbandonedBehindOrigin({ squash: true }), (r) => [r.root, originDirOf(r.root)]],
+  ['headerMergedRepo3976({ moved: true, merge: squash })', () => archiveMergedHelpers.headerMergedRepo3976({ moved: true, merge: 'squash' }), (r) => [r.root]],
+  ['headerMergedRepo3976({ moved: false, merge: no-ff })', () => archiveMergedHelpers.headerMergedRepo3976({ moved: false, merge: 'no-ff' }), (r) => [r.root]],
+]) {
+  test(`AC3.1: archive-merged ${name}: a second call starts no git process`, () => {
+    scratch.push(...dirsOf(make()));
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(...dirsOf(second));
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+
+test('AC3.1: archive-merged mergedFeatureBranchRepo(): a call with a new branch name starts no git process', () => {
+  scratch.push(archiveMergedHelpers.mergedFeatureBranchRepo('feat-warm-5772').root);
+  const trace = mk('ct-gt-trace-');
+  const second = withEnv('GIT_TRACE2_EVENT', trace, () => archiveMergedHelpers.mergedFeatureBranchRepo('feat-fresh-5772'));
+  scratch.push(second.root);
+  assert.deepStrictEqual(fs.readdirSync(trace), []);
+});
+
+test('mergedFeatureBranchRepo copy under a new branch name: the ref and its reflog carry that name only', () => {
+  const { root, featureSha } = archiveMergedHelpers.mergedFeatureBranchRepo('feat/renamed-5772');
+  scratch.push(root);
+  assert.strictEqual(git(root, ['rev-parse', 'feat/renamed-5772']), featureSha);
+  assert.strictEqual(git(root, ['rev-parse', 'main']), featureSha);
+  assert.strictEqual(git(root, ['for-each-ref', '--format=%(refname)', 'refs/heads']), 'refs/heads/feat/renamed-5772\nrefs/heads/main');
+  assert.notStrictEqual(git(root, ['reflog', 'show', 'feat/renamed-5772']), '');
+  assert.match(git(root, ['reflog', 'show', 'main']), /merge feat\/renamed-5772: Fast-forward/);
+});
+
+for (const [name, make, dirsOf] of [
+  ['deletedBranchMergedRepo(feat-3503-bynumber, origin)', () => archiveMergedHelpers.deletedBranchMergedRepo('feat-3503-bynumber', 'git@github.com:acme/w.git'), (r) => [r.root]],
+  ['reusedBranchLiveRepo()', () => archiveMergedHelpers.reusedBranchLiveRepo(), (r) => [r.root, r.wt]],
+  ['shellRepo3975()', () => archiveMergedHelpers.shellRepo3975(), (r) => [r.root]],
+]) {
+  test(`AC3.1: archive-merged ${name}: a second call starts no git process`, () => {
+    scratch.push(...dirsOf(make()));
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(...dirsOf(second));
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+
+const statuslineFixtures = require('./helpers/statusline-fixtures');
+for (const [name, make, dirsOf] of [
+  ['committedRepo()', () => statuslineFixtures.committedRepo(), (d) => [d]],
+  ["committedRepo({ branch: 'feature/isolated-branch' })", () => statuslineFixtures.committedRepo({ branch: 'feature/isolated-branch' }), (d) => [d]],
+  ["repoWithOrigin('git@github.com:owner/repo.git')", () => statuslineFixtures.repoWithOrigin('git@github.com:owner/repo.git'), (r) => [r.base]],
+  ['repoWithOrigin(null)', () => statuslineFixtures.repoWithOrigin(null), (r) => [r.base]],
+  ['worktreeShapes()', () => statuslineFixtures.worktreeShapes(), (r) => [r.base]],
+  ['linkedWorktreeProject()', () => statuslineFixtures.linkedWorktreeProject(), (r) => [r.base]],
+]) {
+  test(`AC3.1: statusline ${name}: a second call starts no git process`, () => {
+    scratch.push(...dirsOf(make()));
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(...dirsOf(second));
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+
+test('worktreeShapes copy: link points at this copy\'s wt, and wt and sub resolve inside this copy', () => {
+  const { base, wt, sub, link } = statuslineFixtures.worktreeShapes();
+  scratch.push(base);
+  const realBase = fs.realpathSync(base);
+  const inside = (p) => p.startsWith(realBase + path.sep);
+  if (link !== null) assert.strictEqual(fs.realpathSync(link), fs.realpathSync(wt));
+  for (const dir of [wt, sub]) {
+    const common = fs.realpathSync(path.resolve(dir, git(dir, ['rev-parse', '--git-common-dir'])));
+    assert.ok(inside(common), `${dir}: ${common} is outside ${realBase}`);
+  }
+  const gitmodules = path.join(base, 'main-repo', '.gitmodules');
+  if (fs.existsSync(gitmodules)) {
+    const urls = [...fs.readFileSync(gitmodules, 'utf8').matchAll(/^\s*url\s*=\s*(.+?)\s*$/gm)].map((m) => m[1]);
+    assert.ok(urls.length > 0, 'control: .gitmodules names a url');
+    for (const url of urls) {
+      assert.ok(inside(fs.realpathSync(path.resolve(url))), `.gitmodules url ${url} is outside ${realBase}`);
+    }
+  }
 });

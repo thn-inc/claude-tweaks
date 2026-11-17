@@ -30,7 +30,7 @@ test('bookkeeping-stamps gate: no materialize commit yet -> allow (Common Step 1
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const { run } = mkRunDir(projectDir(), null, undefined);
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
   assert.deepStrictEqual(out, {});
 });
 
@@ -38,7 +38,7 @@ test('bookkeeping-stamps gate: materialize commit landed, no run resolved -> all
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: null, runState: null, cwd: wt });
   assert.deepStrictEqual(out, {});
 });
 
@@ -47,7 +47,7 @@ test('bookkeeping-stamps gate: multi-record materialize commit (spec-{slug}/work
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('spec-991-995', 'work', '991-spec.md'));
   const { run } = mkRunDir(projectDir(), null, undefined);
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
   assert.ok(out.json, 'multi-record spec-{slug}/work/{n}-spec.md form must also be recognized as a landed materialize commit');
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
 });
@@ -66,7 +66,7 @@ test('bookkeeping-stamps gate (#2571): a multi-spec per-spec runDir ({parent}/sp
   commitMaterializedSpec(wt, path.join('spec-991', 'work', '991-spec.md'));
   const { run: parentRun } = mkRunDir(projectDir(), null, undefined);
   const childRunDir = path.join(parentRun, 'spec-991');
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: childRunDir, runState: { status: 'active' }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: childRunDir, runState: { status: 'active' }, cwd: wt });
   assert.ok(out.json, 'a per-spec $PIPELINE_RUN_DIR must still recognize its own committed spec-{N}/work/{n}-spec.md as the materialize sentinel');
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
 });
@@ -78,7 +78,7 @@ test('bookkeeping-stamps gate (#2571): a multi-spec per-spec runDir does NOT mat
   commitMaterializedSpec(wt, path.join('spec-995', 'work', '995-spec.md'));
   const { run: parentRun } = mkRunDir(projectDir(), null, undefined);
   const childRunDir = path.join(parentRun, 'spec-991');
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: childRunDir, runState: { status: 'active' }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: childRunDir, runState: { status: 'active' }, cwd: wt });
   assert.deepStrictEqual(out, {}, 'spec-991\'s own gate must not arm off a sibling spec\'s materialize commit');
 });
 
@@ -107,7 +107,7 @@ test('bookkeeping-stamps gate: materialize commit landed, run resolved, no workt
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const { run } = mkRunDir(projectDir(), null, undefined);
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
   assert.ok(out.json, 'expected a deny result');
   const spec = out.json.hookSpecificOutput;
   assert.strictEqual(spec.permissionDecision, 'deny');
@@ -123,7 +123,7 @@ test('bookkeeping-stamps gate: same deny fires for a Bash git-commit call, not j
   fs.writeFileSync(path.join(wt, 'other.txt'), 'x'); // staged content for the commit below
   execFileSync('git', ['-C', wt, 'add', 'other.txt']);
   const { run } = mkRunDir(projectDir(), null, undefined);
-  const out = pre.run({ input: bashInput('git commit -m "unrelated fix"', wt), runDir: run, runState: { status: 'active' }, cwd: wt });
+  const out = pre.run({ env: process.env, input: bashInput('git commit -m "unrelated fix"', wt), runDir: run, runState: { status: 'active' }, cwd: wt });
   assert.ok(out.json, 'expected a deny result for a Bash git-commit call too');
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/);
@@ -140,7 +140,7 @@ test('bookkeeping-stamps gate: materialize commit landed, run dir resolved but r
   // Deliberately no run-state.json -- mirrors bin/hooks.js's real wiring
   // (`runState = runDir ? ctxLib.readRunState(runDir) : null`), where a
   // resolved-but-uninitialized run dir yields runState === null, not {}.
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: null, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: null, cwd: wt });
   assert.ok(out.json, 'expected a deny result -- a landed materialize commit with no run-state.json at all must not be treated as "no run resolved"');
   const spec = out.json.hookSpecificOutput;
   assert.strictEqual(spec.permissionDecision, 'deny');
@@ -156,7 +156,7 @@ test('bookkeeping-stamps gate: materialize commit landed AND worktree stamp pres
   // No origin remote on this fixture repo -> resolveIntegrationModel resolves
   // 'local-merge' (detectIntegrationModel's own fail-open first check), so the
   // PR-stamp branch (Task 3) never denies here even with runState.pr unset.
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt });
   assert.deepStrictEqual(out, {});
 });
 
@@ -175,7 +175,7 @@ test('bookkeeping-stamps gate (#2526): claim logged -> falls through past the cl
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const { run } = mkRunDir(projectDir(), null, undefined);
   fs.writeFileSync(path.join(run, 'decisions.md'), '# Auto-Decision Log\n\n## /flow\n- AUTO 00:00:00 — Step 2.8: claimed #991 (bin/claim-targets.js, transport: git).\n');
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
   assert.ok(out.json, 'expected the NEXT check (worktree stamp, still unsatisfied) to deny');
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/, 'must be the worktree deny, not a claim-log deny');
@@ -187,7 +187,7 @@ test('bookkeeping-stamps gate (#2526): claim missing after materialize -> deny, 
   writeGithubIssuesClaudeMd(wt);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const { run } = mkRunDir(projectDir(), null, undefined);
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
   assert.ok(out.json, 'expected a deny result');
   const spec = out.json.hookSpecificOutput;
   assert.strictEqual(spec.permissionDecision, 'deny');
@@ -204,7 +204,7 @@ test('AC1.1 (#3012): a paraphrased claim line (flow: claimed issue #991 via MCP 
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const { run } = mkRunDir(projectDir(), null, undefined);
   fs.writeFileSync(path.join(run, 'decisions.md'), '# Auto-Decision Log\n\n## /flow\n- AUTO 06:31:43 — log-decision: flow: claimed issue #991 via MCP transport (gh CLI unavailable); tombstone reclaim from prior run. Reversibility: high.\n');
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
   assert.ok(out.json, 'expected the NEXT check (worktree stamp, still unsatisfied) to deny');
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/, 'must be the worktree deny, not a claim-log deny');
@@ -217,7 +217,7 @@ test('AC1.1 (#3012): a negated paraphrase (… never itself claimed #991 …) ->
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const { run } = mkRunDir(projectDir(), null, undefined);
   fs.writeFileSync(path.join(run, 'decisions.md'), '# Auto-Decision Log\n\n## /flow\n- AUTO 16:14:57 — log-decision: Wrap-up outcome: pending-review. Separately noted: this run never itself claimed #991 via claim-targets.js. Reversibility: n/a.\n');
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
   assert.ok(out.json, 'expected a deny result');
   const spec = out.json.hookSpecificOutput;
   assert.strictEqual(spec.permissionDecision, 'deny');
@@ -233,7 +233,7 @@ test('bookkeeping-stamps gate (#2526): decisions.md exists but names a DIFFERENT
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const { run } = mkRunDir(projectDir(), null, undefined);
   fs.writeFileSync(path.join(run, 'decisions.md'), '- AUTO 00:00:00 — Step 2.8: claimed #700 (bin/claim-targets.js, transport: git).\n');
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
   assert.ok(out.json, 'expected a deny result');
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /#991/);
@@ -245,7 +245,7 @@ test('bookkeeping-stamps gate (#2526): work-backend: local-files -> exempt uncon
   fs.writeFileSync(path.join(wt, 'CLAUDE.md'), '# Fixture\n\nwork-backend: local-files\n');
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const { run } = mkRunDir(projectDir(), null, undefined);
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
   assert.ok(out.json, 'expected a deny result');
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/, 'must be the worktree deny, not a claim-log deny');
   assert.ok(!readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'claim-log'), 'local-files must never trip the claim-log deny');
@@ -256,7 +256,7 @@ test('bookkeeping-stamps gate (#2526): no CLAUDE.md at all (unconfigured work-ba
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const { run } = mkRunDir(projectDir(), null, undefined);
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
   assert.ok(out.json, 'expected a deny result');
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/, 'must be the worktree deny, not a claim-log deny');
 });
@@ -268,6 +268,7 @@ test('bookkeeping-stamps gate (#2526): a provably foreign-owned run warns instea
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const { run } = mkRunDir(projectDir(), null, 'owner-session');
   const out = pre.run({
+    env: process.env,
     input: { ...editInput(path.join(wt, 'src', 'x.js')), session_id: 'caller-session' },
     runDir: run,
     runState: { status: 'active', sessionId: 'owner-session' },
@@ -291,7 +292,7 @@ test('bookkeeping-stamps gate (#2526): a multi-record run — every record needs
   fs.writeFileSync(path.join(dir995, '995-spec.md'), '---\nrecord: 995\n---\nbody\n');
   const { run } = mkRunDir(projectDir(), null, undefined);
   fs.writeFileSync(path.join(run, 'decisions.md'), '- AUTO 00:00:00 — Step 2.8: claimed #991 (bin/claim-targets.js, transport: git).\n');
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
   assert.ok(out.json, 'expected a deny result');
   const reason = out.json.hookSpecificOutput.permissionDecisionReason;
   assert.match(reason, /#995/, 'must name the still-missing record');
@@ -312,6 +313,7 @@ test('bookkeeping-stamps gate (#2636): worktree+pr already stamped (real post-st
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const { run } = mkRunDir(projectDir(), null, undefined);
   const out = pre.run({
+    env: process.env,
     input: editInput(path.join(wt, 'src', 'x.js')),
     runDir: run,
     runState: { status: 'active', worktree: wt, pr: { number: 1, url: 'https://x' } },
@@ -335,6 +337,7 @@ test('bookkeeping-stamps gate (#2636): worktree stamped + prExempt (local-merge 
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const { run } = mkRunDir(projectDir(), null, undefined);
   const out = pre.run({
+    env: process.env,
     input: editInput(path.join(wt, 'src', 'x.js')),
     runDir: run,
     runState: { status: 'active', worktree: wt, prExempt: true },
@@ -355,6 +358,7 @@ test('bookkeeping-stamps gate (#2636): worktree+pr+claimExempt all set -> short-
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const { run } = mkRunDir(projectDir(), null, undefined);
   const out = pre.run({
+    env: process.env,
     input: editInput(path.join(wt, 'src', 'x.js')),
     runDir: run,
     runState: {
@@ -385,7 +389,7 @@ test('bookkeeping-stamps gate (#2636): a multi-record run whose decisions.md car
     path.join(run, 'decisions.md'),
     `- AUTO 02:30:28 — Step 2.8: Claimed all 2 targets under run ${RUN_ID} (claim-targets.js exit 0). Reversibility: high.\n`,
   );
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
   assert.ok(out.json, 'expected a deny result — but from the NEXT check (worktree stamp), not the claim branch');
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/, 'must be the worktree deny, not a claim-log deny');
@@ -400,7 +404,7 @@ test('bookkeeping-stamps gate (#2636): the batch-claim line alone does not satis
   const { run } = mkRunDir(projectDir(), null, undefined);
   // No decisions.md at all for THIS run -- hasLoggedClaim must fail closed
   // (missing file -> false), not accidentally match some other run's batch line.
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
   assert.ok(out.json, 'expected a deny result');
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /Step 2\.8/);
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /#991/);
@@ -430,7 +434,7 @@ test('bookkeeping-stamps gate (#1258): local-merge steady state — first resolu
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
 
-  const baseline = withSpawnCount(() => pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: null, runState: null, cwd: wt }));
+  const baseline = withSpawnCount(() => pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: null, runState: null, cwd: wt }));
   assert.deepStrictEqual(baseline.out, {});
 
   // First covered call after the worktree stamp: no origin remote on this
@@ -441,6 +445,7 @@ test('bookkeeping-stamps gate (#1258): local-merge steady state — first resolu
   // proving this call is not already trivially at the fast path.
   const { run } = mkRunDir(project, wt, undefined);
   const first = withSpawnCount(() => pre.run({
+    env: process.env,
     input: editInput(path.join(wt, 'src', 'x.js')),
     runDir: run,
     runState: { status: 'active', worktree: wt },
@@ -464,6 +469,7 @@ test('bookkeeping-stamps gate (#1258): local-merge steady state — first resolu
   // beyond pre.run()'s own baseline dispatch — the exact guarantee the AC
   // requires: no worse than a fully-stamped pr-first run's steady state.
   const steadyState = withSpawnCount(() => pre.run({
+    env: process.env,
     input: editInput(path.join(wt, 'src', 'x.js')),
     runDir: run,
     runState: {
@@ -490,7 +496,7 @@ test('bookkeeping-stamps gate (#1258): pr-first with degrade already logged also
     '## /build\n- AUTO 09:00:00 — PR-early run lifecycle: push of wt-branch to origin FAILED (network); run proceeds local-only, no PR opened. Reversibility: n/a.\n',
   );
   const out = pre.run(
-    { input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
     { resolveIntegrationModel: () => 'pr-first' },
   );
   assert.deepStrictEqual(out, {});
@@ -505,7 +511,7 @@ test('bookkeeping-stamps gate (#1258): a caught model-resolution exception never
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
   const { run } = mkRunDir(project, wt, undefined);
   const out = pre.run(
-    { input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
     { resolveIntegrationModel: () => { throw new Error('transient gh failure'); } },
   );
   // Fail-open: an unresolvable model is not provably pr-first, so this call allows.
@@ -524,7 +530,7 @@ test('bookkeeping-stamps gate (#4578 Q5): a degraded detection never persists pr
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
   const { run } = mkRunDir(project, wt, undefined);
   const out = pre.run(
-    { input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
     {
       // Guarded so a one-argument call cannot throw into the catch branch and pass for the wrong reason.
       resolveIntegrationModel: (root, o) => {
@@ -550,7 +556,7 @@ test('bookkeeping-stamps gate (#4578 Q5): the override receives an onDegrade cal
   const { run } = mkRunDir(project, wt, undefined);
   let got;
   const out = pre.run(
-    { input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
     { resolveIntegrationModel: (root, o) => { got = o; return 'local-merge'; } },
   );
   assert.deepStrictEqual(out, {});
@@ -575,11 +581,11 @@ test('bookkeeping-stamps gate (#4830 AC1): three covered calls inside the TTL ru
   try {
     const input = editInput(path.join(wt, 'src', 'x.js'));
     // Call 1 detects: two hook-bounded attempts, both hang, so the detection degrades and stamps the memo.
-    assert.deepStrictEqual(pre.run({ input, runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt }), {});
+    assert.deepStrictEqual(pre.run({ env: process.env, input, runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt }), {});
     assert.strictEqual(gh.count(), 2, 'call 1 spends the two bounded attempts');
     // Calls 2 and 3 load run-state.json from disk, as a fresh hook process would.
-    assert.deepStrictEqual(pre.run({ input, runDir: run, runState: readRunState(run), cwd: wt }), {});
-    assert.deepStrictEqual(pre.run({ input, runDir: run, runState: readRunState(run), cwd: wt }), {});
+    assert.deepStrictEqual(pre.run({ env: process.env, input, runDir: run, runState: readRunState(run), cwd: wt }), {});
+    assert.deepStrictEqual(pre.run({ env: process.env, input, runDir: run, runState: readRunState(run), cwd: wt }), {});
     assert.strictEqual(gh.count(), 2, 'calls 2 and 3 are inside the TTL — the memo skips the probe');
     const persisted = readRunState(run);
     assert.strictEqual(typeof persisted.forgeDegradedAt, 'number', 'the degrade stamp is persisted');
@@ -595,7 +601,7 @@ test('bookkeeping-stamps gate (#4830 AC3): an expired memo plus a recovered gh c
   // 'fail' is a definitive answer (exit 1, no timeout): detection resolves local-merge cleanly.
   const gh = fakeGh({ first: 'fail' });
   try {
-    const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: readRunState(run), cwd: wt });
+    const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: readRunState(run), cwd: wt });
     assert.deepStrictEqual(out, {});
     assert.strictEqual(gh.count(), 1, 'the expired memo re-probes');
     const persisted = readRunState(run);
@@ -615,7 +621,7 @@ test('bookkeeping-stamps gate (#4830): an expired memo plus a recovered gh resol
   const { run } = mkRunDir(project, wt, undefined, { forgeDegradedAt: Date.now() - 2 * FORGE_DEGRADE_MEMO_TTL_MS });
   const gh = fakeGh({ first: 'ok' });
   try {
-    const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: readRunState(run), cwd: wt });
+    const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: readRunState(run), cwd: wt });
     assert.ok(out.json, 'expected a deny once the recovered detection resolves pr-first with no PR recorded');
     const spec = out.json.hookSpecificOutput;
     assert.strictEqual(spec.permissionDecision, 'deny');

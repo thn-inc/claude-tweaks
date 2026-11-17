@@ -23,10 +23,12 @@ const { parseStatusPorcelainZ } = require('../git-z');
 // its source is deleted from the tree relative to HEAD, so a non-generated
 // file renamed into a generated path must still disqualify the stamp. A
 // copy's source is unchanged, so only its new path counts.
-function dirtyFilePaths(execImpl = execFileSync) {
+// `status` (#5773), when a string, is the raw output of this very command that the caller already
+// read in this directory with nothing able to write the tree since; it is parsed instead of asking git.
+function dirtyFilePaths(execImpl = execFileSync, status = null) {
   let out;
   try {
-    out = String(execImpl('git', ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all'], { encoding: 'utf8', windowsHide: true }));
+    out = typeof status === 'string' ? status : String(execImpl('git', ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all'], { encoding: 'utf8', windowsHide: true }));
   } catch {
     return null;
   }
