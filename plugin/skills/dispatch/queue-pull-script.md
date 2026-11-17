@@ -454,7 +454,7 @@ NODE_EVAL_EOF
     echo "gh issue close ${NUM} --reason \"not planned\""
   } > "$PROPOSAL" || continue
   # stage-item.js is the sanctioned writer for a run dir's staged/
-  # (pipeline-run-dir.md) -- never a direct Write/heredoc into it.
+  # (pipeline-run-dir.md) -- never a direct Write/heredoc into it. Comment quoting: queue-pull-notes.md.
   node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$DISPATCH_STANDALONE_DIR" --id "dispatch-target-missing-${NUM}" --file "$PROPOSAL"
 done
 
