@@ -468,6 +468,16 @@ test('#5722: release and shaping both after the merge carry both signals, weak',
   assert.strictEqual(downgradedAfterMerge(r), true);
 });
 
+test('#5722: a plain weak mention merged after the shaping outranks a shaping-downgraded one, whatever the order', () => {
+  const later = { ...SHAPED_MENTION, number: 5701, title: 'totally unrelated wording', mergedAt: '2026-11-16T11:30:00Z' };
+  for (const mentions of [[SHAPED_MENTION, later], [later, SHAPED_MENTION]]) {
+    const r = classifyShipped(SHAPED_RECORD, mentions, { lastShapedAt: SHAPED_AFTER_MERGE });
+    assert.strictEqual(r.tier, 'weak');
+    assert.strictEqual(r.pr, 5701);
+    assert.ok(!r.signals.includes('predates-shaping'));
+  }
+});
+
 test('#5722: downgradedAfterMerge is true only for a downgraded result', () => {
   const releaseOnly = classifyShipped(SHAPED_RECORD, [SHAPED_MENTION], { lastReleasedAt: SHAPED_AFTER_MERGE });
   const shapingOnly = classifyShipped(SHAPED_RECORD, [SHAPED_MENTION], { lastShapedAt: SHAPED_AFTER_MERGE });
