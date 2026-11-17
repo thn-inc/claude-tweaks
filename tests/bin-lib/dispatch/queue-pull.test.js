@@ -1885,6 +1885,20 @@ test('#5722 shipped: a weak mention predating the shaping that shares a failed p
   assert.ok(r.errs.some((e) => e.startsWith('AUTO — dispatch: #9301 kept: merged PR #6301 predates ready/auto:build labeling at')), r.stderr);
 });
 
+// pull4 runs the module only, so the fence's shaping wiring is pinned by text: both classifyShipped
+// calls carry lastShapedAt, and the first pass skips the probe for either downgrade.
+test('#5722 fence: the first-pass classifyShipped call passes lastShapedAt', () => {
+  assert.ok(FENCE.includes("const result = classifyShipped(c, mentions, { lastReleasedAt: releases[c.number], lastShapedAt: entry.lastShapedAt });"));
+});
+
+test('#5722 fence: the first pass skips the probe for either downgrade through downgradedAfterMerge', () => {
+  assert.ok(FENCE.includes("if (result.tier === 'weak' && !downgradedAfterMerge(result)) toProbe.push(result.pr);"));
+});
+
+test('#5722 fence: the second-pass classifyShipped call passes lastShapedAt', () => {
+  assert.ok(FENCE.includes("const result = classifyShipped(c, mentions, { prFiles, lastReleasedAt: releases[c.number], lastShapedAt: entry.lastShapedAt });"));
+});
+
 test('#5227 shipped: at most 5 distinct PRs are probed per pull', () => {
   const labels = ['auto:build', 'ready'];
   const numbers = [9201, 9202, 9203, 9204, 9205, 9206, 9207, 9208];
