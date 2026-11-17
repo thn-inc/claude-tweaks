@@ -32,6 +32,7 @@ files:
 - **Should understand:**
   - The hold names the Claude process's pid and its start time, so a dead or recycled pid reads as gone.
   - The hold lives in the admin dir, so `git worktree remove` takes it along. An older plugin build in flight never reads it, and nothing it does breaks.
+  - Which hook writes or clears which key (`main`, a subagent's `agent_id`, `home`) is spelled out in `docs/hooks.md`'s "Worktree hold (log tier, #4960)" bullet, the contract this journey walks.
 - **Red flags:**
   - No hold file after EnterWorktree.
   - A hold left in the previous worktree under the same key.
