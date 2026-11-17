@@ -19,6 +19,7 @@
 - Governing skill `dispatch-queue-exclusion-addition`, step 7, verbatim: "**Does the pass hand its verdict on through a file?** When the next pass reads a file whose empty or partial form is itself a valid answer (an empty verified-open-deps file reads as "none open"), write it once after the loop and remove it when that write fails, so the reader fails closed on a missing file." This change touches the reader only: the writer at `queue-pull.js:631-652` (gh transport) is unchanged.
 - Governing skill `mcp-agent-fetch-node-compute`, rule 3, verbatim: "**Validate the shape of every agent-written entry.** The agent can record an error object, a not-found message or a `{content, sha}` wrapper as if it were data." Hence `closedDependencyNumbers` ignores any entry without an integer `number` and a string `state`, and never reads a wrapper object as evidence. Rule 8 (widen the handoff shape) needs nothing: `mcp-transport.md`'s `--dep-freshness` shape `[{number, updated_at, state}]` already carries `state`.
 - Behavioral claim, with its code path: "on gh the verified-open file is complete by construction" is the `verified-open-deps` step at `queue-pull.js:630-653`, which runs only when `ctx.options.transport !== 'files'` and writes every open or unreadable unresolved dependency from live `gh issue view` calls.
+- Decided by the user at plan review: the spec's deliverable to mirror the rule into `queue-pull-script.md` is dropped, and Acceptance Criterion 1 is read with the closed-evidence exception (spec's `## Plan Review Clarifications`).
 - Do not edit `plugin/skills/dispatch/queue-pull-script.md`, `next-ranking.md`, or any oracle machinery's comparison logic. #5231 deletes those scripts; the rule cannot be mirrored into the bash fence because the fence never sees the agent's raw dependency-freshness text at the blocked pass (it is reset to `[]` before it on a cold cache).
 
 ## Review Focus
@@ -32,6 +33,9 @@
 ---
 
 ### Task 1: Evidence-based fail-closed rule in the blocked pass
+
+**Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/dispatch/queue-pull.js` (the `blocked-body` step, around line 655-698; a helper next to `agentDepFreshness`, around line 294)
@@ -59,7 +63,7 @@ Expected: FAIL: the omitted-dependency cases still group 9002 and print no Warni
 
 - [ ] **Step 3: Implement the rule**
 
-In `plugin/bin/lib/dispatch/queue-pull.js` add `closedDependencyNumbers(text)`: `JSON.parse` the text inside `try`/`catch`, return an empty `Set` for `null`, an unparseable value or a non-array, otherwise the numbers of entries whose `number` is an integer and whose `state` is a string equal to `closed` ignoring case. In the `blocked-body` step, after `verifiedOpen` is computed and only when `ctx.options.transport === 'files'` and the file was not `bad`, take each `unresolved` number that is in neither `verifiedOpen` nor `closedDependencyNumbers(state.depFreshnessInput)`: add it to `openNumbers`, print the `OMITTED` line for it through `deps.stderr`, and set `state.depUnreadable = true`. Keep the order of the Warning lines the order of `unresolved`.
+In `plugin/bin/lib/dispatch/queue-pull.js` add `closedDependencyNumbers(text)`: `JSON.parse` the text inside `try`/`catch`, return an empty `Set` for `null`, an unparseable value or a non-array, otherwise the numbers of entries whose `number` is an integer and whose `state` is a string equal to `closed` ignoring case. In the `blocked-body` step, after `verifiedOpen` is computed and only when `ctx.options.transport === 'files'` and the file was not `bad`, take each number of `readJson(paths['dispatch-unresolved-deps.json'])` (the step's own `unresolved` local is `[]` on that branch, `queue-pull.js:671`, so never iterate it) that is in neither `verifiedOpen` nor `closedDependencyNumbers(state.depFreshnessInput)`: add it to `openNumbers`, print the `OMITTED` line for it through `deps.stderr`, and set `state.depUnreadable = true`. Keep the order of the Warning lines the order of `unresolved`.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -79,6 +83,8 @@ git commit -m "Fail closed on an omitted open dependency — queue pull, files t
 
 ### Task 2: Keep the oracle and sibling suites green, and state the rule in the MCP transport doc
 
+**Role:** integration
+
 **Files:**
 - Modify: `plugin/skills/dispatch/mcp-transport.md` (the `--verified-open-deps` bullet at line 84)
 - Modify: `docs/journeys/select-the-dispatch-queue-with-the-queue-pull-cli-5227.md` (append the #5408 rule to the "Updated during #5311" note at line 73). Behavior-change sweep, classified: `docs/plugin-structure.md:368` and `plugin/bin/queue-pull.js` list the flag only, so no change; `queue-pull-script.md:177` is the retained oracle, not edited.
@@ -96,7 +102,7 @@ Expected: PASS, or a files-transport pair failing because its fixture has an unr
 
 - [ ] **Step 2: Fix each failing pair's fixture**
 
-For each failing pair, give the fixture's dependency-freshness text a `state: "closed"` entry for the dependency its verified-open file omits, so the module and the bash oracle agree again. Never relax a comparison, skip a pair, or edit the retained script. If a pair cannot agree because the script sees no evidence, stop and report `NEEDS_CONTEXT` naming the pair.
+The six dependency-freshness fault rows in `FILES_FAULTS` (`tests/bin-lib/dispatch/queue-pull-fixtures.js:734-756`: `files-depFreshness-missing`, `files-depFreshness-malformed`, `files-depFreshness-missing-cold`, `files-depFreshness-wrapper`, `files-depFreshness-string`, `files-depFreshness-wrapper-cold`) run on scenario `P1`, where the closed #8001 is unresolved and absent from the verified-open file. Faulting the freshness file removes the module's only closed evidence, so the module now blocks the record and the bash oracle does not: an inherent divergence from Task 1's rule, not a fixture slip. Decided: give those six rows a scenario whose dependency is open and listed in the verified-open file (the existing `S1LiveDep`, used by the `verifiedOpenDeps` row at line 730, is the model), so both sides agree and each row still exercises its freshness fault and its warm or cold cache. Add no carve-out to `faultComparison`, do not skip a row, and do not edit the retained script. For any other pair that fails, give its fixture's dependency-freshness text a `state: "closed"` entry for the dependency its verified-open file omits. If no scenario variant keeps a row's cache semantics, stop and report `NEEDS_CONTEXT` naming the row.
 
 - [ ] **Step 3: State the rule in `mcp-transport.md`**
 
@@ -108,6 +114,7 @@ Run: `node --test tests/bin-lib/dispatch/*.test.js`
 Expected: PASS.
 
 ```bash
-git add plugin/skills/dispatch/mcp-transport.md tests/bin-lib/dispatch
+git add plugin/skills/dispatch/mcp-transport.md docs/journeys/select-the-dispatch-queue-with-the-queue-pull-cli-5227.md tests/bin-lib/dispatch
+git add -u tests
 git commit -m "State the omitted-dependency rule in the MCP transport doc, keep the oracle pairs green (#5408)"
 ```
