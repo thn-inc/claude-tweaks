@@ -40,7 +40,7 @@ The review falls back to `step3-lens-dispatch.md`'s Task dispatch, and logs one 
 
 1. `no Workflow tool` — `Workflow` is not among the session's tools and `ToolSearch` does not return it.
 2. `refused or failed before a reviewer starts` — the `Workflow` call's result is an error or a permission denial, not a launch.
-3. `started: false` — the state command prints `started: false`; its `reason` is the tool's message.
+3. `started: false` — the state command prints `started: false`, or any `started` other than `true` on a `completed` run; its `reason`, when there is one, is the tool's message.
 4. `ended with no result` — no error, but the run file is absent (the state command fails with `ENOENT`), its `status` is not `completed`, or it holds no `result` (a killed run holds `"status":"killed","result":null`); this includes a run still going at 30 minutes.
 5. `result unreadable` — the state command fails on a file that exists, or the first (or, standalone, the only) `settle-lens-replies` call exits 2 on the run file.
 
