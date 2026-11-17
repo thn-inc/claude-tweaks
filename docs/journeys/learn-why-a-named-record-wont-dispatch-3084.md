@@ -97,3 +97,4 @@ files:
 - Updated during build of #4432: Step 2e covers a record whose only merged mention predates its latest claim release, which is kept with a `kept:` log line instead of read as `shipped`. `shipped-releases.js` added to `files:`
 - Updated during build of #4350: Step 2's not-spec-shaped line names an `unclosed-fence at line L` entry and routes it to `/claude-tweaks:specify #N`. `materialize-format.js` added to `files:`
 - Updated during build of #5584: Step 2f covers a named record without `auto:build`, judged on the typed command and reported with its reason words and remedy. `build-authority.js` and `queue-pull-notes.md` added to `files:`
+- Updated during build of #5315: Step 1's URL names the eligibility step as a second `malformed-blocker` writer, for a record whose labels are not an array
