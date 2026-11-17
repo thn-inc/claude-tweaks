@@ -168,7 +168,7 @@ const POLICY_KEYS = [
   // before its one automatic retry even starts. CLAUDE_TWEAKS_GH_TIMEOUT_MS
   // (an env var, not a policy key) takes precedence over this when both are
   // set — see shared-primitives.js's resolution order.
-  { key: 'gh-timeout-ms', type: 'integer', min: 1000, max: 60000, default: 5000, summary: "Bounds how long one `gh` call may run before it is killed and retried once; batched calls outside reconcile get max(30000, this value).", category: 'housekeeping', tier: 'advanced' },
+  { key: 'gh-timeout-ms', type: 'integer', min: 1000, max: 60000, default: 5000, summary: "Bounds one `gh` call (killed; retried once only where a caller opts in); batched and exec-seam calls get max(30000, this value).", category: 'housekeeping', tier: 'advanced' },
   // #3051: the `git` subprocess timeout for claims-git-cas.js's compare-and-
   // swap reads/writes against the claims-registry branch, routed through
   // bin/lib/shared-primitives.js's GIT_TIMEOUT_MS export — mirrors
@@ -179,7 +179,7 @@ const POLICY_KEYS = [
   // CLAUDE_TWEAKS_GIT_TIMEOUT_MS (an env var, not a policy key) takes
   // precedence over this when both are set — see shared-primitives.js's
   // resolution order.
-  { key: 'git-timeout-ms', type: 'integer', min: 1000, max: 120000, default: 30000, summary: "Bounds how long one `git` subprocess call on the claims-registry, pr-checks and compose-subject runners may run before it is killed.", category: 'housekeeping', tier: 'advanced' },
+  { key: 'git-timeout-ms', type: 'integer', min: 1000, max: 120000, default: 30000, summary: "Bounds one `git` call on runners incl. claims-registry, pr-checks, compose-subject, console-resolve, release-preflight; killed on timeout.", category: 'housekeeping', tier: 'advanced' },
   { key: 'depth-survey', type: 'enum', values: ['off'], summary: "When set, turns off the end-of-run prompt asking whether recently changed code deserves a deeper architectural pass.", category: 'housekeeping', tier: 'advanced' },
   { key: 'creative-survey', type: 'enum', values: ['off'], summary: "When set, turns off the end-of-run prompt suggesting creative or UX improvement ideas for what was just built.", category: 'housekeeping', tier: 'advanced' },
   { key: 'declare-claude-tweaks', type: 'boolean', default: true, summary: "When false, /init stops declaring claude-tweaks in committed project settings and the cloud setup script; superpowers stays.", category: 'housekeeping', tier: 'advanced' },
@@ -825,23 +825,20 @@ const HOOK_FORGE_PROBE_TIMEOUT_MS = 5000;
 const FORGE_DEGRADE_MEMO_TTL_MS = 60000;
 
 // The `gh` timeout for detectIntegrationModel's `gh repo view` probe. Ladder:
-// explicit positive-integer `opts.timeoutMs` (returns before any file read) >
-// env CLAUDE_TWEAKS_GH_TIMEOUT_MS, when within gh-timeout-ms's bounds (an
-// invalid value falls through, never throws) > `gh-timeout-ms` in
-// {repoRoot}/.claude-tweaks/policy.yml (resolveValue: out of range -> 5000) >
-// 5000. Reads from repoRoot rather than shared-primitives' cwd-anchored
-// GH_TIMEOUT_MS getter: a require cycle, and the wrong root for a caller
-// probing a repo other than the cwd's. `opts.env` (optional) replaces process.env
-// as the place the env var is read from.
+// explicit positive-integer `opts.timeoutMs` (returns before any read) > the
+// shared gh ladder, `shared-primitives.ghTimeoutMsAt(repoRoot, { env })`: env
+// CLAUDE_TWEAKS_GH_TIMEOUT_MS > `gh-timeout-ms` in repoRoot's policy.yml, located
+// through locatePolicyFile (a linked worktree falls back to the main checkout's, #4492)
+// > 5000. The ladder lives there so every gh bound shares one definition. It reads
+// from repoRoot rather than the cwd, the right root for a caller probing a repo other
+// than the cwd's. `opts.env` (optional) replaces process.env as the place the env var
+// is read from. The require sits inside the body so loading policy-schema never loads
+// shared-primitives.
 function resolveForgeProbeTimeoutMs(repoRoot, opts = {}) {
   const explicit = opts && opts.timeoutMs;
   if (Number.isInteger(explicit) && explicit > 0) return explicit;
-  const raw = (opts && opts.env ? opts.env : process.env).CLAUDE_TWEAKS_GH_TIMEOUT_MS;
-  if (raw !== undefined && isValidValue(SCHEMA_BY_KEY.get('gh-timeout-ms'), raw)) return parseInt(raw, 10);
-  // A non-string repoRoot has no policy.yml to read: skip to the default, which keeps
-  // detectIntegrationModel's never-throws contract.
-  const policyRaw = readLocatedPolicy(repoRoot);
-  return resolveValue('gh-timeout-ms', parseFlatLines(policyRaw)['gh-timeout-ms']);
+  const { ghTimeoutMsAt } = require('./shared-primitives');
+  return ghTimeoutMsAt(repoRoot, { env: opts && opts.env });
 }
 
 // The reason codes of detectIntegrationModel's degrade object — the one

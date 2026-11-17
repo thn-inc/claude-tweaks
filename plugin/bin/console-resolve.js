@@ -147,6 +147,7 @@ const { settleRow } = require('./lib/stage-item/ledger');
 const { ghOptions } = require('./lib/repo-resolve');
 const { sensitivePathsOf } = require('./lib/express/policy');
 const { canonicalRealpath, lstatType } = require('./lib/path-guard');
+const { execTimeoutMsFor } = require('./lib/shared-primitives');
 const { REFERENCE_REPAIR_REASONS, stagedDiffPaths, referenceRepairFloorHits, referenceRepairFloorReason, referenceRepairHoldReason, referenceFindingsByFile } = require('./lib/console/reference-repair');
 
 const EXIT_CARRY_FAILED = 6;
@@ -251,8 +252,9 @@ function parseArgs(argv) {
   return out;
 }
 
+// Exported for #5050's per-command bound tests (tests/bin-lib/console/resolve.test.js) — keep the export.
 function defaultExecFile(cmd, args, opts = {}) {
-  return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024, timeout: 30000, ...opts, windowsHide: true });
+  return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024, timeout: execTimeoutMsFor(cmd), ...opts, windowsHide: true });
 }
 
 // The ceiling AND the veto window, resolved in-process with the same precedence
@@ -1132,4 +1134,4 @@ if (require.main === module) {
   run(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (err) => { process.stderr.write(`console-resolve.js: ${err && err.stack ? err.stack : err}\n`); process.exitCode = 1; });
 }
 
-module.exports = { run, parseArgs, ghReadGrants, readPolicy, readUpstreamOwnership, checkPatchStack, writeDecisionFacts, EXIT_CARRY_FAILED, USAGE };
+module.exports = { run, parseArgs, defaultExecFile, ghReadGrants, readPolicy, readUpstreamOwnership, checkPatchStack, writeDecisionFacts, EXIT_CARRY_FAILED, USAGE };

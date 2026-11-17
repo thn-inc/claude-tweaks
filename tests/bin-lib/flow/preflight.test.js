@@ -1,5 +1,5 @@
 'use strict';
-const { test } = require('node:test');
+const { test, describe } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
@@ -878,4 +878,46 @@ test('AC9.4 spec probe: an unreadable archived work/ is absent, a readable archi
   const unreadable = path.join(archived, 'work');
   const readdir = (p) => { if (p === unreadable) return []; try { return fs.readdirSync(p); } catch { return []; } };
   assert.deepStrictEqual(await probeSpec(fx, { readdir }), { path: null, present: true, record: null, records: [8] });
+});
+
+describe('default exec bounds (#5050)', () => {
+  const { captureExecTimeouts } = require('../../helpers/gh-timeout-probe');
+  // Sync runner first, then async: each spawn is asserted by index so a regression in either shows.
+  // The async runner is started inside exercise (so it sees the stubs) and awaited after the probe returns.
+  const run = async (cmd, env) => {
+    const pending = [];
+    const seen = captureExecTimeouts({
+      env,
+      modulePaths: [MOD + '.js'],
+      exercise: (setEnv) => {
+        setEnv();
+        const deps = require(MOD).defaultDeps(process.cwd());
+        deps.execFile(cmd, ['--version']);
+        pending.push(deps.execFileAsync(cmd, ['--version']));
+      },
+    });
+    await Promise.all(pending);
+    return seen;
+  };
+
+  test('gh spawns (sync and async runner) follow CLAUDE_TWEAKS_GH_TIMEOUT_MS above the floor', async () => {
+    const { gh } = await run('gh', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '45000' });
+    assert.strictEqual(gh[0], 45000, 'sync execFile');
+    assert.strictEqual(gh[1], 45000, 'async execFileAsync');
+  });
+
+  test('gh spawns keep the 30000 default when the env is unset or below the floor', async () => {
+    const unset = await run('gh', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: undefined });
+    assert.strictEqual(unset.gh[0], 30000, 'sync execFile, unset');
+    assert.strictEqual(unset.gh[1], 30000, 'async execFileAsync, unset');
+    const low = await run('gh', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '10000' });
+    assert.strictEqual(low.gh[0], 30000, 'sync execFile, 10000');
+    assert.strictEqual(low.gh[1], 30000, 'async execFileAsync, 10000');
+  });
+
+  test('node verify.js spawns stay 30000 even with both bound env vars set high', async () => {
+    const { node } = await run('node', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '45000', CLAUDE_TWEAKS_GIT_TIMEOUT_MS: '90000' });
+    assert.strictEqual(node[0], 30000, 'sync execFile');
+    assert.strictEqual(node[1], 30000, 'async execFileAsync');
+  });
 });
