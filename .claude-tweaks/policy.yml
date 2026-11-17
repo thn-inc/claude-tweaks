@@ -15,5 +15,4 @@ project-maturity: established
 # release-train: false
 specify-decomposition-log: true
 declare-claude-tweaks: false
-verify-suite-slots: 2  # TEMPORARY for the #5304–#5409 queue-pull flow run (PR #5514): revert before merge
 superpowers-plans-retention: prune-after-wrapup
