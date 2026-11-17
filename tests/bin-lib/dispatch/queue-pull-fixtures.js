@@ -470,8 +470,8 @@ function SEmpty() {
 // #9022 declares `Blocked by #99999999999` (above 2147483647, so no issue can exist), and #9001 is
 // the clean control whose verdict must match the oracle's whatever the other three do. #9020 is
 // excluded at eligibility as malformed-blocker with one Warning (#5315), so #9021 and #9022 reach
-// their own passes. SMalformed(only) keeps #9001 and the one named
-// candidate ('labels', 'body' or 'blocker'), so each malformed input reaches its own handling.
+// their own passes. SMalformed(only) keeps #9001 and the one named candidate ('labels', 'body' or
+// 'blocker'), so each malformed input reaches its own handling.
 const MALFORMED = {
   labels: () => ({ ...ghRecord(9020, { body: withBody(9020) }), labels: 'auto:build' }),
   body: () => ({ ...ghRecord(9021), body: 42 }),

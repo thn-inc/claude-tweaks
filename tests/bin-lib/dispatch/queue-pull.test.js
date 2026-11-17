@@ -3500,9 +3500,12 @@ describe('#5227 parity (AC5, portability)', { skip: oracleSkip(), timeout: 600_0
       for (const [side, r] of sides(pair)) {
         assert.deepEqual(exclusionsIn(r), entries, `${name} ${side}`);
         assert.deepEqual(groupedIn(r), [9001], `${name} ${side}: the clean record is dispatchable`);
-        if (warns) assert.ok(reported(r.stderr).includes(labelsWarning(9020).trimEnd()), `${name} ${side}: the labels Warning`);
-        if (warns) assert.equal(r.orderBlob, null, `${name} ${side}: a non-array-labels pull writes no queue-order blob`);
-        else assert.ok(r.orderBlob, `${name} ${side}: a pull without non-array labels persists its blob (control)`);
+        if (warns) {
+          assert.ok(reported(r.stderr).includes(labelsWarning(9020).trimEnd()), `${name} ${side}: the labels Warning`);
+          assert.equal(r.orderBlob, null, `${name} ${side}: a non-array-labels pull writes no queue-order blob`);
+        } else {
+          assert.ok(r.orderBlob, `${name} ${side}: a pull without non-array labels persists its blob (control)`);
+        }
       }
       assert.deepEqual(verdict(pair.module), verdict(pair.oracle), `${name}: #9001's verdict`);
       assert.deepEqual(verdict(pair.oracle), { grouped: true, reasons: [] });

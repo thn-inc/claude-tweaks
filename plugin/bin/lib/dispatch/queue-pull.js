@@ -44,13 +44,13 @@
 // shared call, so both reasons; the eligibility screen for non-array labels always runs, and its
 // `malformed-blocker` append follows `blocker-landing`'s omit. runPasses ALWAYS calls every pass's
 // runner and exposes the omit set as `ctx.omit` (a Set of ids); each runner skips only its own
-// filtering and appends when
-// `ctx.omit.has(<its id>)` and runs its shared steps regardless (for example `oversized` owns the
-// grouping block that writes dispatch-groups.json and the `blocked` appends, and `target-missing`
-// owns the integration-branch and run-dir resolution). Omitting a setup pass, or naming an
-// unknown reason or id, throws TypeError. Omit is a test-only contract (no shipped caller passes
-// it); because an omitted pass leaves groups the cache blob would then misdescribe, the write-back
-// pass writes nothing (no writeOrder call) whenever the omit set is non-empty.
+// filtering and appends when `ctx.omit.has(<its id>)` and runs its shared steps regardless (for
+// example `oversized` owns the grouping block that writes dispatch-groups.json and the `blocked`
+// appends, and `target-missing` owns the integration-branch and run-dir resolution). Omitting a
+// setup pass, or naming an unknown reason or id, throws TypeError. Omit is a test-only contract
+// (no shipped caller passes it); because an omitted pass leaves groups the cache blob would then
+// misdescribe, the write-back pass writes nothing (no writeOrder call) whenever the omit set is
+// non-empty.
 //
 // failOpen is taken across both transports, so a gh-only reader sees `stop` for a pass whose
 // gh fetch fails open (neighbour-in-flight): on `files`, a missing or malformed in-flight or
