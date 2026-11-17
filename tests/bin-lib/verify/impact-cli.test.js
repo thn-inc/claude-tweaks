@@ -648,8 +648,7 @@ test('an impact-declared run with a generated glob and a dirty tree still reads 
   writeMap(r);
   commitFile(r, 'src/x.js', 'x2\n');
   fs.writeFileSync(path.join(r.repo, 'dist', 'bundle.js'), 'v2-regenerated');
-  const traceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-impact-trace-'));
-  after(() => fs.rmSync(traceDir, { recursive: true, force: true }));
+  const traceDir = tmpDir('verify-impact-trace-');
   const run = spawnSync(process.execPath, ['--require', path.join(__dirname, '..', '..', 'helpers', 'git-call-recorder.js'), CLI, ...ARGS], {
     cwd: r.repo, encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL', env: { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1', CT_TEST_GIT_CALL_LOG: traceDir },
   });
@@ -669,8 +668,7 @@ test('a map pinned to the stamp anchor asks whether the anchor is an ancestor of
   assert.match(anchor, /^[0-9a-f]{40}$/, 'the first full run left an anchor');
   writeMap(r, anchor);
   commitFile(r, 'src/x.js', 'x2\n');
-  const traceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-impact-trace-'));
-  after(() => fs.rmSync(traceDir, { recursive: true, force: true }));
+  const traceDir = tmpDir('verify-impact-trace-');
   const run = spawnSync(process.execPath, ['--require', path.join(__dirname, '..', '..', 'helpers', 'git-call-recorder.js'), CLI, ...ARGS, '--local'], {
     cwd: r.repo, encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL', env: { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1', CT_TEST_GIT_CALL_LOG: traceDir },
   });

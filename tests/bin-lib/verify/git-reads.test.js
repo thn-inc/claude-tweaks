@@ -99,6 +99,12 @@ test('an empty output line is a null value, not a missing line', () => {
   const headless = fake([[COMBINED, '/r\n.git\n.git\n\n']]);
   assert.equal(createGitReads({ execImpl: headless.execImpl, env: {} }).locations('/r').head, null);
   assert.equal(headless.calls.length, 1);
+  // An empty git-dir / common-dir line is null, not path.resolve(cwd, '') (which would quietly be the cwd).
+  const noDirs = fake([[COMBINED, '/r\n\n\nabc\n']]);
+  const answer = createGitReads({ execImpl: noDirs.execImpl, env: {} }).locations('/r');
+  assert.strictEqual(answer.gitDir, null);
+  assert.strictEqual(answer.commonDir, null);
+  assert.equal(noDirs.calls.length, 1);
 });
 
 test('a live env object that changes between reads is a different key', () => {

@@ -1607,7 +1607,7 @@ test('AC2.1: a whole-suite run around a no-op suite makes exactly 4 git calls', 
   });
   assert.strictEqual(result.status, 0, result.stderr);
   const gitArgs = readGitCalls(traceDir).flatMap((p) => p.events).filter((e) => e.kind === 'git').map((e) => e.args);
-  // Today the same run makes 6: --git-dir, --show-toplevel, HEAD + status at the start, HEAD + status at the end.
+  // Before #5773 the same run made 6: --git-dir, --show-toplevel, HEAD + status at the start, HEAD + status at the end.
   assert.deepStrictEqual(gitArgs, [COMBINED_REV_PARSE, STATUS_PORCELAIN, COMBINED_REV_PARSE, STATUS_PORCELAIN]);
   assert.strictEqual(gitArgs.length, 4);
 });

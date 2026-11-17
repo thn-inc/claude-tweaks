@@ -1152,6 +1152,8 @@ async function main() {
             };
           } finally {
             if (adjHold) adjHold.release();
+            // Defensive: the end read below clears the memo again and nothing reads between, so this keeps any
+            // read added between adjudication and the end read fresh.
             reads.invalidate();
           }
         }
