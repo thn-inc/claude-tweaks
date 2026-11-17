@@ -8,7 +8,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
-const { fixtureGit } = require('./helpers/git-fixtures');
+const pinned = require('./helpers/pinned-git');
+const { pinnedGit: git, pinnedGitEnv: gitEnv } = pinned;
 const { warmCallStartsNoGit } = require('./helpers/git-trace');
 const {
   fromTemplate,
@@ -28,21 +29,6 @@ function mk(prefix) {
   return d;
 }
 
-// An empty config file pinned as the global/system config, so a host's own
-// git config (maintenance.auto, receive.autogc, signing...) cannot leak in.
-const EMPTY_CONFIG = path.join(mk('ct-gt-cfg-'), 'empty');
-fs.writeFileSync(EMPTY_CONFIG, '');
-// Built per call, never at load: a template build appends maintenance-off keys
-// to process.env at build time, and a load-time snapshot would miss them.
-const gitEnv = () => ({
-  ...process.env,
-  GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test',
-  GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test',
-  GIT_CONFIG_GLOBAL: EMPTY_CONFIG, GIT_CONFIG_SYSTEM: EMPTY_CONFIG,
-});
-function git(cwd, args, env = gitEnv()) {
-  return fixtureGit(args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-}
 function commit(cwd, name) {
   fs.writeFileSync(path.join(cwd, name), name);
   git(cwd, ['add', name]);
@@ -106,6 +92,11 @@ test('#5846 AC4.1: warmCallStartsNoGit throws when the traced call starts a git 
   const startsGit = () => execFileSync('git', ['--version'], { env: gitEnv(), stdio: 'ignore', windowsHide: true });
   assert.throws(() => warmCallStartsNoGit(() => {}, { traced: startsGit }), assert.AssertionError);
   assert.strictEqual(process.env.GIT_TRACE2_EVENT, before);
+  const sentinel = path.join(mk('ct-gt-sentinel-'), 'sentinel');
+  withEnv('GIT_TRACE2_EVENT', sentinel, () => {
+    assert.throws(() => warmCallStartsNoGit(() => {}, { traced: startsGit }), assert.AssertionError);
+    assert.strictEqual(process.env.GIT_TRACE2_EVENT, sentinel);
+  });
   const tracked = [];
   const r = warmCallStartsNoGit(() => 'w', { traced: () => 't', track: (x) => tracked.push(x) });
   assert.deepStrictEqual(r, { warm: 'w', traced: 't' });
@@ -445,8 +436,8 @@ test('template build runs with auto-maintenance off', () => {
   for (const [k] of saved) delete process.env[k];
   const trace = mk('ct-gt-trace-');
   try {
-    process.env.GIT_CONFIG_GLOBAL = EMPTY_CONFIG;
-    process.env.GIT_CONFIG_SYSTEM = EMPTY_CONFIG;
+    process.env.GIT_CONFIG_GLOBAL = pinned.EMPTY_GIT_CONFIG;
+    process.env.GIT_CONFIG_SYSTEM = pinned.EMPTY_GIT_CONFIG;
     withEnv('GIT_TRACE2_EVENT', trace, () => {
       // The file's own repoBuild path (call-time gitEnv), as every other build here.
       scratch.push(fromTemplate('maint-off', repoBuild, { prefix: 'ct-gt-' }));

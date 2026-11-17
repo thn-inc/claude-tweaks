@@ -14,6 +14,7 @@ const { fakeGh } = require('./helpers/fake-gh');
 const { readText } = require('./helpers/read-skill');
 const { gitRepo, gitRepoWithCommit, gitRepoOnLocalMain, mainAndWorktree, GH_TIMEOUT_ENV, unpinnedRepoWithOrigin } = require('./helpers/pre-tool-use');
 const { warmCallStartsNoGit } = require('./helpers/git-trace');
+const { pinnedGit: git } = require('./helpers/pinned-git');
 const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
 // A hook event's context always carries env (hooks.js builds it); a hand-built one passes it explicitly.
 const BASE_ENV = Object.freeze({ ...process.env });
@@ -2097,18 +2098,6 @@ function mk(prefix) {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   movedScratch.push(d);
   return d;
-}
-// An empty config pinned as the global/system config, so a host's own git config cannot leak in.
-const EMPTY_CONFIG = path.join(mk('ct-gt-cfg-'), 'empty');
-fs.writeFileSync(EMPTY_CONFIG, '');
-function git(cwd, args) {
-  const env = {
-    ...process.env,
-    GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test',
-    GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test',
-    GIT_CONFIG_GLOBAL: EMPTY_CONFIG, GIT_CONFIG_SYSTEM: EMPTY_CONFIG,
-  };
-  return fixtureGit(args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 const preToolUse = { gitRepo, gitRepoWithCommit, gitRepoOnLocalMain, mainAndWorktree, unpinnedRepoWithOrigin };
 const preToolUseBuilders = {
