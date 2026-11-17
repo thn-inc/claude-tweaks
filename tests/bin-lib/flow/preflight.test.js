@@ -916,7 +916,7 @@ describe('default exec bounds (#5050)', () => {
   });
 
   test('node verify.js spawns stay 30000 even with both bound env vars set high', async () => {
-    const { node } = await run('node', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '90000', CLAUDE_TWEAKS_GIT_TIMEOUT_MS: '90000' });
+    const { node } = await run('node', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '45000', CLAUDE_TWEAKS_GIT_TIMEOUT_MS: '90000' });
     assert.strictEqual(node[0], 30000, 'sync execFile');
     assert.strictEqual(node[1], 30000, 'async execFileAsync');
   });
