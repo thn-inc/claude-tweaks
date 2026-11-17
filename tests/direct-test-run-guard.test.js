@@ -1691,8 +1691,12 @@ perPrefilterShell('#5794 AC5.1 AC5.2 AC5.3: a missing, CRLF or broken prefilter 
         const label = `[${sh.name}] ${state} ${JSON.stringify(input)}`;
         assert.equal(res.status, 0, label);
         assert.equal(res.stdout.toString(), '', label);
-        assert.equal(fs.existsSync(seen), true, `${label}: node did not run`);
-        assert.deepEqual(fs.readFileSync(seen), Buffer.from(input), label);
+        // Git Bash (the sh and bash on a Windows runner) reads CRLF line endings as LF, so a CRLF copy
+        // works there as the prefilter and skips node for the harmless call (windows-regression run
+        // 43980547211). Under dash and bash on macOS and Linux it is a syntax fault and node runs.
+        const nodeRuns = !(state === 'CRLF' && process.platform === 'win32' && input !== D + '\n');
+        assert.equal(fs.existsSync(seen), nodeRuns, `${label}: node ${nodeRuns ? 'did not run' : 'ran'}`);
+        if (nodeRuns) assert.deepEqual(fs.readFileSync(seen), Buffer.from(input), label);
       }
     });
     withHookProject(prefilter, REAL_GUARD, ({ dir }) => {

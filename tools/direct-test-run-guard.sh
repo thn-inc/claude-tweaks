@@ -20,7 +20,8 @@
 # found before anything reads stdin. With CRLF line endings the brace is not read as a brace: the
 # shell reports unknown commands on stderr and then stops at a syntax error in the first function,
 # again before anything reads stdin. `command .` then returns, and the hook command's own
-# `node "$d.js"` runs the guard on the untouched stdin, as the registration did before #5794. The
+# `node "$d.js"` runs the guard on the untouched stdin, as the registration did before #5794. Under
+# Git Bash, which reads CRLF line endings as LF, a CRLF copy is simply read and works. The
 # hook command ends in `exit 0`, and nothing here prints to stdout.
 #
 # POSIX sh only: dash, bash 3.2 (macOS /bin/sh) and Git Bash run it. No [[, local, arrays, $'...'
