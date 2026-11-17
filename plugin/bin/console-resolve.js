@@ -252,6 +252,7 @@ function parseArgs(argv) {
   return out;
 }
 
+// Exported for #5050's per-command bound tests (tests/bin-lib/console/resolve.test.js) — keep the export.
 function defaultExecFile(cmd, args, opts = {}) {
   return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024, timeout: execTimeoutMsFor(cmd), ...opts, windowsHide: true });
 }
