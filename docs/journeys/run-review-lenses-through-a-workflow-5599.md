@@ -41,11 +41,12 @@ files:
 
 ### 4. Fall back when the path cannot finish — the review session
 - **URL:** `log-decision.js --text-file` with `Step 3 lens dispatch (workflow fallback): condition: … → fallback: Task lens dispatch. Reversibility: n/a.`
-- **Action:** on any of the five conditions — no Workflow tool, refused or failed before a reviewer starts, `started: false`, ended with no result (including the 30-minute timer winning; stop the run first), or the first settle call exiting 2 — dispatch lenses 3a–3g through the Task path and keep 3h.
+- **Action:** on any of the five conditions — no Workflow tool, refused or failed before a reviewer starts, `started: false` (or any `started` other than `true` on a `completed` run), ended with no result (including the 30-minute timer winning; stop the run first), or the first settle call exiting 2 — dispatch lenses 3a–3g through the Task path and keep 3h.
 - **Should feel:** the review still completes; the only trace is one line naming the condition.
 - **Should understand:** once the fallback is taken, a result that arrives later is never read; those reviews pay for the reviewers twice, which the parked measurement record counts.
 - **Red flags:** a fallback with no `SKIP` line; a review waiting on a run it cannot see; 3h dispatched twice.
 
 ## Origin
 - Created during the build of #5599 (PR #5819), which added the `review-lens-dispatch` key, `plugin/workflows/review-lens-fanout.js`, `step3-workflow-dispatch.md`, and the Subagent Contract's Workflow-dispatched agents section.
+- Step 4 updated during review of #5599: fallback condition 3 also covers a `completed` run whose `started` is missing or anything other than `true`.
 - Related journeys: `settle-a-lens-fan-out-in-one-call-5598.md` (the settle verb this path calls), `log-reproduction-lines-through-the-pairing-command-5595.md` (the Task path's per-pair command), `resolve-a-policy-key.md`.
