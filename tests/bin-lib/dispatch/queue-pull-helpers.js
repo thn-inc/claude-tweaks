@@ -71,7 +71,7 @@ const {
   STREAM_TRUNCATED, TAIL_LINES,
 } = require('./queue-pull-oracle');
 const {
-  S1, S2, agentInputs, LANDING_COMMIT, FAULTS, FILES_FAULTS, D1Second, D1Third, EmptyAfterS1, S1LiveDep, fakeRun, fakeSpawnCli,
+  S1, S2, agentInputs, LANDING_COMMIT, FAULTS, FILES_FAULTS, D1Second, D1Third, EmptyAfterS1, S1LiveDep, S1OpenDeps, fakeRun, fakeSpawnCli,
 } = require('./queue-pull-fixtures');
 const { PASSES, SESSION_FILES, sessionPaths, makeContext, runPasses } = require('../../../plugin/bin/lib/dispatch/queue-pull');
 const { appendExclusion } = require('../../../plugin/bin/lib/dispatch/exclusions');
@@ -345,7 +345,7 @@ const FILES_EXPECT = {
   'files-queueRaw-malformed': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   'files-depFreshness-missing': { status: 1, stderr: [STOP_LINE.cacheHit], entries: [] },
   'files-depFreshness-malformed': { status: 1, stderr: [STOP_LINE.cacheHit], entries: [] },
-  'files-depFreshness-missing-cold': { status: 0, stderr: [], drops: [] },
+  'files-depFreshness-missing-cold': { status: 0, base: 'files-opendeps', stderr: [], drops: [] },
   'files-openNumbers-missing': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   'files-openNumbers-malformed': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   // #5311: #8001 (the unresolved dependency of #9011) counts as open too, so #9011 is held as blocked.
@@ -360,7 +360,7 @@ const FILES_EXPECT = {
   'files-queueRaw-string': { status: 1, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-queueRaw-string/dispatch-queue-raw.json is not a JSON array — treated as a failed read', STOP_LINE.grouping], entries: [] },
   'files-depFreshness-wrapper': { status: 1, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-depFreshness-wrapper/dispatch-dep-freshness.json is not a JSON array — treated as a failed read', STOP_LINE.cacheHit], entries: [] },
   'files-depFreshness-string': { status: 1, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-depFreshness-string/dispatch-dep-freshness.json is not a JSON array — treated as a failed read', STOP_LINE.cacheHit], entries: [] },
-  'files-depFreshness-wrapper-cold': { status: 0, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-depFreshness-wrapper-cold/dispatch-dep-freshness.json is not a JSON array — treated as a failed read'], drops: [] },
+  'files-depFreshness-wrapper-cold': { status: 0, base: 'files-opendeps', stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-depFreshness-wrapper-cold/dispatch-dep-freshness.json is not a JSON array — treated as a failed read'], drops: [] },
   'files-inFlightRaw-empty': { status: 0, stderr: [], drops: ['neighbour-in-flight:9013'] },
   'files-inFlightClaims-empty': { status: 0, stderr: [CLAIM_READ_FAILED_7001], drops: ['neighbour-in-flight:9013'] },
   'files-inFlightClaims-string': { status: 0, stderr: [], drops: ['neighbour-in-flight:9013'] },
@@ -410,13 +410,13 @@ function assertFailOpenPostures(pool, family, t) {
 }
 
 // A row's default base, and the fault pool's bases: the matrix configs themselves (one
-// definition of each base), the live-dependency scenario the matrix does not run, and S1-gh-hit,
+// definition of each base), the live-dependency and open-dependency scenarios the matrix does not run, and S1-gh-hit,
 // F-depfresh's un-faulted warm control on the same miss origin.
 const MATRIX_CFG = Object.fromEntries(MATRIX.map((c) => [c.name, c]));
 const BASE = { gh: 'S1-gh-miss', files: 'S1-files-miss' };
 const FAULT_BASES = [
   MATRIX_CFG['S1-gh-miss'], MATRIX_CFG['S1-gh-hit'], MATRIX_CFG['S2-gh-miss'], { name: 'gh-livedep', scenario: S1LiveDep(), transport: 'gh' },
-  MATRIX_CFG['S1-files-miss'], MATRIX_CFG['S2-files-miss'], { name: 'files-livedep', scenario: S1LiveDep(), transport: 'files' },
+  MATRIX_CFG['S1-files-miss'], MATRIX_CFG['S2-files-miss'], { name: 'files-livedep', scenario: S1LiveDep(), transport: 'files' }, { name: 'files-opendeps', scenario: S1OpenDeps(), transport: 'files' },
 ];
 
 // The fault pool's pair configs for the transports it runs: their bases, then each transport's rows (a
