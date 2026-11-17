@@ -80,6 +80,30 @@ Three conventions follow from how this repo works, and all are visible below:
 * Windows regression: six test files failing on main with… ([#5694](https://github.com/thn-inc/claude-tweaks/issues/5694)) ([e3f9474](https://github.com/thn-inc/claude-tweaks/commit/e3f947486de2816a618c7b08f70efa4678eff318))
 * Windows regression: tests failing after 4fb2fad30 (not… ([#5490](https://github.com/thn-inc/claude-tweaks/issues/5490)) ([40f6a34](https://github.com/thn-inc/claude-tweaks/commit/40f6a344bb5d46fd0d52ab2601f997d6a945e482))
 
+### Highlights
+* Added a diff tripwire that switches a run to local acceptance when the code touches migrations, auth, public contracts or irreversible actions nobody flagged.
+* verify.js starts fewer git processes on each run.
+* Even out the PR test gate's four shards so one slow shard no longer sets a roughly 3-minute wait.
+* Removed unused commands, flags and legacy code paths from the health sweep tools.
+* Added an optional way for `/claude-tweaks:review` to run its lens reviewers through one workflow script; it is off by default and falls back to the present dispatch where the Workflow tool is not available.
+* A dispatch run across several records no longer loses its working directory when one record's PR merges.
+* No behavior change: reopening a record that an auto-merged pr-first run left open already shipped. This adds tests for it and removes an outdated caveat from the merge procedure.
+* The unresolved-origin hint of the gated CLIs now says `--repo [host/]owner/name`, so a GitHub Enterprise user is told the host-qualified form.
+* Added a command that reads review lens replies, pairs them and logs the result in one call; nothing uses it until the workflow review path ships.
+* Fixed a leftover merge grant letting a record built from a typed dispatch command merge without review.
+* Dispatched agents now wait on child agents, CI checks and background processes with one blocking command instead of repeated sleep calls.
+* Documented more of the shell commands a worktree session's guard refuses, with the form that works for each, and added a maintainer replay that checks no harmless command is refused by the plugin's own gates.
+* `/claude-tweaks:review` now has its pairing command write the per-finding reproduction lines to the decision log itself, in one fixed form, instead of the reviewing session typing them.
+* Pipelines running in a worktree now read the main checkout's `.claude-tweaks/policy.yml` when the project keeps that file out of git, so draft PRs target the configured integration branch instead of the GitHub default.
+* Covered by #4492: worktree pipelines now read the main checkout's gitignored policy file.
+* Design-decision findings at the unattended Review Console now wait for a person instead of being marked as an applied patch.
+* A test file that was killed under load and then passes on its own no longer fails the run's verification gate.
+* Maintainer-side: the post-merge Windows check stops reporting failures in six test files. If a fix lands in shipped code under `plugin/`, the PR states its user-visible effect.
+* Typing a dispatch command that names a record, in a session a person launched, now builds it even without a build grant; runs started by a routine, a hub, a schedule or a message from another session still need the grant, and nothing merges without a merge grant.
+* Added acceptance-target resolution so work flagged as risky, or marked for local trial, stops before merge with its pull request open until you accept it locally.
+* Removed an unused review-coordination command and two unused entry shims.
+* Removed an unused claim-listing helper and stopped carrying an unread legacy key in multi-spec run manifests.
+
 ## [6.171.0](https://github.com/thn-inc/claude-tweaks/compare/v6.170.0...v6.171.0) (2026-11-16)
 
 
