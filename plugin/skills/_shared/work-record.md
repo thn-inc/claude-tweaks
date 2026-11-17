@@ -200,7 +200,10 @@ command stands in for `auto:build` (below).
 - `auto:merge` — a completely clean autonomous run may merge without waiting for a live
   review. **Additive on `auto:build`:** the gate always grants `auto:build` when granting
   `auto:merge`. Dispatch queries `auto:build` only; `auto:merge` **alone is inert** — no
-  queue selects on it.
+  queue selects on it. A merge grant (`auto:merge`, or `auto:merge-pending` at maturation)
+  authorizes a merge only when the same live label read also carries `auto:build` (#5734): a
+  typed run on a record without `auto:build` ends at `pending-review`, and a person merges it
+  with `/claude-tweaks:wrap-up #N merge`.
 - `auto:merge-pending` — a waypoint on the machine-origination path only (`/backlog refine`
   writes `auto:merge` directly). Additive on `auto:build`, exclusive of `auto:merge`, inert
   for queue selection the same way. Matures into `auto:merge` once older than

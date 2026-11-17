@@ -310,7 +310,7 @@ for (const [file, doc] of SNIPPETS) {
     const script = body
       .replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, PLUGIN_ROOT)
       .replace(/\$GRANT_VETO_WINDOW_HOURS/g, '24');
-    const prelude = `const labels = ['auto:merge-pending']; const comments = ${JSON.stringify(comments)};\n`;
+    const prelude = `const labels = ['auto:build', 'auto:merge-pending']; const comments = ${JSON.stringify(comments)};\n`;
     const run = spawnSync(process.execPath, ['-e', prelude + script], { encoding: 'utf8' });
     assert.strictEqual(run.status, 0, `snippet failed: ${run.stderr}`);
     // Only the 48h-old MEMBER grant counts -> matured; an unfiltered read would see the 1h-old NONE marker as latest.
