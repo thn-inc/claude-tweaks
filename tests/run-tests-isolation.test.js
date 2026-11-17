@@ -18,7 +18,7 @@ const {
   resolveConcurrency, resolveSlots, listTestFiles, buildTestArgs,
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
   subsetFallbackReason, gitFixtureConfigEnv, appendGitConfigEnv, writeGitTemplateDir, GIT_TEMPLATE_CONFIG, NODE_TEST_VALUE_FLAGS, parseRunnerOperands, canonicalPath,
-  runnerChildEnv,
+  runnerChildEnv, isTemplateSampleHook,
 } = require(path.join(ROOT, 'tools', 'run-tests.js'));
 
 test('resolveConcurrency defaults to half the cores, at least 1', () => {
@@ -1878,6 +1878,22 @@ test('AC2.1: writeGitTemplateDir ships empty hooks/ and an info/ dir, and drops 
     assert.strictEqual(writeGitTemplateDir(fromInherited, { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: inherited }), fromInherited);
     assert.deepStrictEqual(fs.readdirSync(path.join(fromInherited, 'hooks')), ['post-checkout']);
   });
+});
+
+// Node 20's fs.cpSync hands its filter a namespaced `src` on win32, so a plain dirname compare
+// against the inherited template's hooks dir never matched there and its samples were kept.
+test('isTemplateSampleHook matches a sample hook given as a namespaced win32 path', () => {
+  const hooksDir = 'C:\\ci\\tpl\\hooks';
+  const ns = (leaf) => `\\\\?\\C:\\ci\\tpl\\hooks\\${leaf}`;
+  assert.strictEqual(isTemplateSampleHook(ns('pre-commit.sample'), hooksDir, path.win32), true);
+  assert.strictEqual(isTemplateSampleHook('C:\\ci\\tpl\\hooks\\pre-commit.sample', hooksDir, path.win32), true);
+  assert.strictEqual(isTemplateSampleHook(ns('pre-commit.sample'), `\\\\?\\${hooksDir}`, path.win32), true);
+  assert.strictEqual(isTemplateSampleHook(ns('post-checkout'), hooksDir, path.win32), false);
+  assert.strictEqual(isTemplateSampleHook(`\\\\?\\C:\\ci\\tpl\\hooks\\sub\\x.sample`, hooksDir, path.win32), false);
+  assert.strictEqual(isTemplateSampleHook(`\\\\?\\C:\\ci\\tpl\\info\\x.sample`, hooksDir, path.win32), false);
+  assert.strictEqual(isTemplateSampleHook('/t/hooks/pre-commit.sample', '/t/hooks', path.posix), true);
+  assert.strictEqual(isTemplateSampleHook('/t/hooks/post-checkout', '/t/hooks', path.posix), false);
+  assert.strictEqual(isTemplateSampleHook('/t/info/x.sample', '/t/hooks', path.posix), false);
 });
 
 test('runnerChildEnv returns the runner\'s child env', () => {

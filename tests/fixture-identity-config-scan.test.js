@@ -52,7 +52,6 @@ const ALLOWLIST = {
   'tests/bin-lib/reconcile/archive-merged-record-guards.test.js': 'owned by #5772',
   'tests/bin-lib/staged-patch/stack-check.test.js': 'owned by #5772',
   'tests/helpers-git-template.test.js': `reads ${USER}.name/${USER}.email back with git config to prove an identity reached a fixture repo, a template copy or a worktree's common config; one test title names the command; the writeIdentity byte-parity test runs git config ${USER}.name as the reference its bytes are compared against (the behaviour under test)`,
-  'tests/helpers/git-fixtures.js': `comments only: the initRepo and writeIdentity doc comments name the git config ${USER}.name/${USER}.email calls those helpers replace`,
 };
 
 // 1-based line numbers of every line spawning (or naming) git config for user.name or user.email.

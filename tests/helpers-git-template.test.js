@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
-const { fixtureGit } = require('./helpers/git-fixtures');
+const { fixtureGit, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
 const {
   fromTemplate,
   fromTemplateSet,
@@ -327,13 +327,13 @@ test('AC2.1 AC2.2: a fixture repo made in a runner child and in a bare node --te
 const { initRepo, gitRepo } = require(${JSON.stringify(fixtures)});
 const a = initRepo(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-gt-ac2-')), { name: 't', email: 't@example.test' });
 process.stdout.write(JSON.stringify([a, gitRepo()]));`;
-  const runnerEnv = runnerChildEnv(base, { runRoot: mk('ct-gt-ac2-run-'), templateDir: writeGitTemplateDir(mk('ct-gt-ac2-tpl-') + '/t', base) });
+  const runnerEnv = runnerChildEnv(base, { runRoot: mk('ct-gt-ac2-run-'), templateDir: writeGitTemplateDir(path.join(mk('ct-gt-ac2-tpl-'), 't'), base) });
   assert.strictEqual(typeof runnerEnv.GIT_TEMPLATE_DIR, 'string', 'the runner child has a template');
   const bareEnv = { ...base };
   delete bareEnv.GIT_TEMPLATE_DIR;
   delete bareEnv.CT_TEST_SUITE_SLOT_HELD;
   for (const [label, env] of [['runner child', runnerEnv], ['bare node --test', bareEnv]]) {
-    const r = spawnSync(process.execPath, ['-e', script], { env, encoding: 'utf8', windowsHide: true });
+    const r = spawnSync(process.execPath, ['-e', script], { env, encoding: 'utf8', windowsHide: true, timeout: FIXTURE_TIMEOUT_MS });
     assert.strictEqual(r.status, 0, `${label}: ${r.stderr}`);
     const repos = JSON.parse(r.stdout);
     scratch.push(...repos);
@@ -879,7 +879,9 @@ test('writeIdentity values read back exactly as git config would', () => {
   // git prefers GIT_AUTHOR_*/GIT_COMMITTER_* over config (and CI exports GIT_AUTHOR_NAME), so the
   // commit and log that read the identity back run without any of them.
   const configOnlyEnv = Object.fromEntries(Object.entries(gitEnv()).filter(([k]) => !/^GIT_(AUTHOR|COMMITTER)_/.test(k)));
-  assert.deepStrictEqual(Object.keys(configOnlyEnv).filter((k) => /^GIT_(AUTHOR|COMMITTER)_/.test(k)), []);
+  // Control: the unfiltered env does carry the identity variables, so the filter is what removes them.
+  assert.deepStrictEqual(Object.keys(gitEnv()).filter((k) => /^GIT_(AUTHOR|COMMITTER)_/.test(k)).sort(),
+    ['GIT_AUTHOR_EMAIL', 'GIT_AUTHOR_NAME', 'GIT_COMMITTER_EMAIL', 'GIT_COMMITTER_NAME']);
 
   const plain = gitFixtures.initRepo(path.join(mk('ct-gt-wip-'), 'r'));
   gitFixtures.writeIdentity(plain, { name, email });
@@ -908,13 +910,40 @@ test('writeIdentity writes the bytes git config writes', () => {
     assert.notStrictEqual(at, -1, `${repo} has no [user] section`);
     return text.slice(at);
   };
-  for (const v of ['Test', 't@example.com', ' lead', 'trail ', 'a;b', 'a#b', 'A "Q" \\ B', 'tab\there']) {
+  for (const v of ['Test', 't@example.com', ' lead', 'trail ', 'a;b', 'a#b', 'A "Q" \\ B', 'tab\there', 'a\rb', 'a\nb']) {
     const byGit = gitFixtures.initRepo(path.join(mk('ct-gt-wbg-'), 'r'));
     git(byGit, ['config', 'user.name', v]);
     const byHelper = gitFixtures.initRepo(path.join(mk('ct-gt-wbh-'), 'r'));
     gitFixtures.writeIdentity(byHelper, { name: v });
     assert.strictEqual(userSection(byHelper), userSection(byGit), JSON.stringify(v));
   }
+  // Both keys, in the order the swept call sites ran them: email, then name.
+  const byGit = gitFixtures.initRepo(path.join(mk('ct-gt-wbg2-'), 'r'));
+  git(byGit, ['config', 'user.email', 't@example.com']);
+  git(byGit, ['config', 'user.name', 'Test']);
+  const byHelper = gitFixtures.initRepo(path.join(mk('ct-gt-wbh2-'), 'r'));
+  gitFixtures.writeIdentity(byHelper, { name: 'Test', email: 't@example.com' });
+  assert.strictEqual(userSection(byHelper), userSection(byGit), 'name and email');
+});
+
+test('initRepo resolves a relative dir against opts.cwd for the identity write', () => {
+  const parent = mk('ct-gt-irc-');
+  const leaf = `${path.basename(parent)}-r`; // a name the process cwd does not hold
+  assert.ok(!fs.existsSync(path.resolve(leaf)), 'control: the leaf is absent from the process cwd');
+  assert.strictEqual(gitFixtures.initRepo(leaf, { cwd: parent, name: 'T', email: 't@t' }), leaf);
+  assert.ok(!fs.existsSync(path.resolve(leaf)), 'nothing lands in the process cwd');
+  assert.strictEqual(git(path.join(parent, leaf), ['config', '--local', 'user.name']), 'T');
+  assert.strictEqual(git(path.join(parent, leaf), ['config', '--local', 'user.email']), 't@t');
+});
+
+test('writeIdentity starts the [user] section on its own line when the config lacks a final newline', () => {
+  const repo = gitFixtures.initRepo(path.join(mk('ct-gt-winl-'), 'r'));
+  const cfg = path.join(repo, '.git', 'config');
+  const before = fs.readFileSync(cfg, 'utf8').replace(/\n+$/, '');
+  fs.writeFileSync(cfg, before);
+  gitFixtures.writeIdentity(repo, { name: 'T', email: 't@t' });
+  assert.strictEqual(fs.readFileSync(cfg, 'utf8'), `${before}\n[user]\n\temail = t@t\n\tname = T\n`);
+  assert.strictEqual(git(repo, ['config', '--local', 'user.name']), 'T');
 });
 
 test('writeIdentity refuses a second identity and a non-repo', () => {

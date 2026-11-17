@@ -627,6 +627,13 @@ function gitFixtureConfigEnv(env) {
 // `git init`/`git clone` creates, so those repositories carry the keys themselves.
 const GIT_TEMPLATE_CONFIG = '[maintenance]\n\tauto = false\n[gc]\n\tauto = 0\n[receive]\n\tautogc = false\n';
 
+// True when `from` (a path fs.cpSync hands its filter) is a `*.sample` file directly inside `hooksDir`.
+// On win32, Node 20's cpSync passes a namespaced `src` (`\\?\C:\…\hooks\x.sample`), so both sides
+// are compared namespaced; toNamespacedPath is idempotent, and a no-op on POSIX.
+function isTemplateSampleHook(from, hooksDir, pathImpl = path) {
+  return from.endsWith('.sample') && pathImpl.toNamespacedPath(pathImpl.dirname(from)) === pathImpl.toNamespacedPath(hooksDir);
+}
+
 // Writes a git template directory at `dir` (git's built-in default template, or a usable inherited
 // GIT_TEMPLATE_DIR, plus GIT_TEMPLATE_CONFIG) and returns `dir`; null when any step throws.
 // `onError` is called with the caught error before null is returned.
@@ -664,7 +671,7 @@ function writeGitTemplateDir(dir, env, { git = (args, opts) => execFileSync('git
     // both paths, so they stay identical; otherwise git's default template files come from the init.
     if (inherited) {
       const hooksDir = path.join(inherited, 'hooks');
-      const notSample = (from) => !(path.dirname(from) === hooksDir && from.endsWith('.sample'));
+      const notSample = (from) => !isTemplateSampleHook(from, hooksDir);
       for (const name of fs.readdirSync(inherited)) {
         if (name === 'config') continue;
         fs.cpSync(path.join(inherited, name), path.join(dir, name), { recursive: true, filter: notSample });
@@ -704,7 +711,7 @@ function runnerChildEnv(env, { runRoot, templateDir }) {
 }
 
 module.exports = {
-  gitFixtureConfigEnv, appendGitConfigEnv, writeGitTemplateDir, GIT_TEMPLATE_CONFIG, runnerChildEnv,
+  gitFixtureConfigEnv, appendGitConfigEnv, writeGitTemplateDir, isTemplateSampleHook, GIT_TEMPLATE_CONFIG, runnerChildEnv,
   listTestFiles, buildTestArgs, resolveConcurrency, resolveSlots, subsetFallbackReason, WIN32_COMMAND_LINE_MAX,
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
   parseShard, readDurations, assignShards, extractRunFlags, durationsPartialPath, finishRecording,

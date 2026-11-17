@@ -70,8 +70,8 @@ function fixtureGit(args, { execFileSync: run = execFileSync, ...opts } = {}) {
   }
 }
 
-// A one-process `git init` (#5771). Fixtures ran `git init` then `git config user.name` and
-// `git config user.email`: an identity pair is two extra git processes per fixture repo, across
+// A one-process `git init` (#5771). Fixtures ran `git init` then the config command's `user.name`
+// and `user.email` writes: an identity pair is two extra git processes per fixture repo, across
 // ~300 call sites. `initRepo` starts exactly one process (the init); `writeIdentity` appends the
 // `[user]` section to the config file directly and starts none.
 //
@@ -107,28 +107,30 @@ function localConfigPath(repoDir) {
   throw new Error(`writeIdentity: ${repoDir} is not a git repository`);
 }
 
-// Spells a config value the way git's own config writer does (config.c write_pair), so the file holds
-// the bytes `git config` would leave: backslash, double quote, newline and tab always escaped, and the
-// whole value in double quotes only when it begins or ends with a space or contains `;` or `#`.
-// A reader that parses config text (the statusline's fast path defers on any quote) sees git's file.
+// Spells a config value the way git's own config writer does (config.c write_pair, as of git 2.56), so
+// the file holds the bytes `git config` would leave: backslash, double quote, newline and tab always
+// escaped, a carriage return kept raw, and the whole value in double quotes only when it begins or ends
+// with a space or contains `;`, `#` or a carriage return (unquoted, git's reader drops a CR before the
+// line end). A reader that parses config text (the statusline's fast path defers on any quote) sees git's file.
 const CONFIG_ESCAPES = { '\\': '\\\\', '"': '\\"', '\n': '\\n', '\t': '\\t' };
 const quoteConfigValue = (v) => {
-  const q = v.startsWith(' ') || v.endsWith(' ') || /[;#]/.test(v) ? '"' : '';
+  const q = v.startsWith(' ') || v.endsWith(' ') || /[;#\r]/.test(v) ? '"' : '';
   return `${q}${v.replace(/[\\"\n\t]/g, (c) => CONFIG_ESCAPES[c])}${q}`;
 };
 
-// Appends `[user]` with the given name and/or email to `repoDir`'s local config — what
-// `git config user.name`/`user.email` would write, without starting a process. Refuses a config
-// that already has a `[user]` section (any case): a second header would leave git reading the
-// last value of each key, silently.
+// Appends `[user]` with the given name and/or email to `repoDir`'s local config — what the config
+// command's `user.email` then `user.name` writes leave, without starting a process (the swept call
+// sites wrote the email first, so `email` precedes `name`). Refuses a config that already has a
+// `[user]` section (any case): a second header would leave git reading the last value of each key,
+// silently.
 function writeIdentity(repoDir, { name, email } = {}) {
   if (name === undefined && email === undefined) throw new TypeError('writeIdentity: pass name, email, or both');
   const cfg = localConfigPath(repoDir);
   const text = fs.existsSync(cfg) ? fs.readFileSync(cfg, 'utf8') : '';
   if (/^[ \t]*\[user\]/im.test(text)) throw new Error(`writeIdentity: ${cfg} already has a [user] section`);
   let section = text && !text.endsWith('\n') ? '\n[user]\n' : '[user]\n';
-  if (name !== undefined) section += `\tname = ${quoteConfigValue(name)}\n`;
   if (email !== undefined) section += `\temail = ${quoteConfigValue(email)}\n`;
+  if (name !== undefined) section += `\tname = ${quoteConfigValue(name)}\n`;
   fs.appendFileSync(cfg, section);
 }
 
