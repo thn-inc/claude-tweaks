@@ -173,7 +173,7 @@ function ghTimeoutFromPolicy(repoRoot) {
   try {
     // eslint-disable-next-line global-require
     const { readGhTimeoutMs } = require('./policy');
-    return typeof repoRoot === 'string' ? readGhTimeoutMs(repoRoot) : undefined;
+    return typeof repoRoot === 'string' && repoRoot !== '' ? readGhTimeoutMs(repoRoot) : undefined;
   } catch {
     // No repo root resolvable at cwd, a malformed policy.yml, or any other
     // read failure — fall through to the hard-coded default below.
@@ -185,10 +185,10 @@ function ghTimeoutFromPolicy(repoRoot) {
 // gh-timeout-ms's bounds) > `gh-timeout-ms` in the root's policy.yml > 5000.
 // Root- and env-parameterised and deliberately NOT memoized: the GH_TIMEOUT_MS
 // getter below memoizes its own result, and a caller holding a different root
-// (or a test's env) must get that root's answer. A non-object `opts.env` reads
-// process.env; a non-string `repoRoot` has no policy file.
+// (or a test's env) must get that root's answer. A non-object (or array)
+// `opts.env` reads process.env; a non-string or empty `repoRoot` has no policy file.
 function ghTimeoutMsAt(repoRoot, opts) {
-  const env = opts && typeof opts.env === 'object' && opts.env !== null ? opts.env : process.env;
+  const env = opts && typeof opts.env === 'object' && opts.env !== null && !Array.isArray(opts.env) ? opts.env : process.env;
   return ghTimeoutFromEnv(env) ?? ghTimeoutFromPolicy(repoRoot) ?? DEFAULT_GH_TIMEOUT_MS;
 }
 

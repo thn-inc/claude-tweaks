@@ -169,7 +169,14 @@ test('resolveForgeProbeTimeoutMs with opts.env null reads the policy and never t
   const root = tmp('timeout-null');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'gh-timeout-ms: 7000\n');
-  assert.equal(resolveForgeProbeTimeoutMs(root, { env: null }), 7000);
+  const prior = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+  delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+  try {
+    assert.equal(resolveForgeProbeTimeoutMs(root, { env: null }), 7000);
+  } finally {
+    if (prior === undefined) delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+    else process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = prior;
+  }
 });
 
 test('resolvePolicyConfig falls back to the given cwd when git fails', () => {

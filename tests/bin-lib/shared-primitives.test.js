@@ -399,6 +399,27 @@ test('ghTimeoutMsAt: a non-string repoRoot has no policy file and resolves env, 
   });
 });
 
+test('ghTimeoutMsAt: an empty-string repoRoot has no policy file — it never reads the cwd policy', () => {
+  withTempCwd((dir) => {
+    writePolicyFile(dir, 'gh-timeout-ms: 7000\n');
+    assert.strictEqual(ghTimeoutMsAt('', { env: {} }), 5000);
+  });
+});
+
+test('ghTimeoutMsAt: an array opts.env is not an env — it reads process.env', () => {
+  const key = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+  const prior = process.env[key];
+  process.env[key] = '15000';
+  try {
+    withTempCwd((dir) => {
+      assert.strictEqual(ghTimeoutMsAt(dir, { env: [] }), 15000);
+    });
+  } finally {
+    if (prior === undefined) delete process.env[key];
+    else process.env[key] = prior;
+  }
+});
+
 test('ghTimeoutMsAt: does not memoize across alternating roots', () => {
   withTempCwd((a) => {
     withTempCwd((b) => {

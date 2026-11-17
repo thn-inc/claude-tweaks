@@ -3767,6 +3767,7 @@ test('#1230: defaultGit and defaultGh both carry a timeout; git\'s is its own 50
   assert.notStrictEqual(gitCall[2].timeout, undefined, 'defaultGit must set a timeout option');
   assert.notStrictEqual(ghCall[2].timeout, undefined, 'defaultGh must set a timeout option');
   assert.strictEqual(gitCall[2].timeout, 5000, 'git keeps its own local bound regardless of GH_TIMEOUT_MS');
+  assert.strictEqual(ghCall[2].timeout, 12000, 'gh follows CLAUDE_TWEAKS_GH_TIMEOUT_MS');
 });
 
 test('#4856: defaultGh passes timeout 12000 under CLAUDE_TWEAKS_GH_TIMEOUT_MS=12000', () => {
