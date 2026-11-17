@@ -7,6 +7,9 @@ const { spawn, spawnSync } = require('child_process');
 const { readText } = require('../../helpers/read-skill');
 const { readGitCalls } = require('../../helpers/git-call-recorder');
 const { CLI, tmpDir, runCli, tmpGitRepo, nodeCmd, scopedRepo, stampOf, passStampFiles, commitFile, flakyRepo, anchoredRunDir } = require('./cli-helpers');
+const verifyHelpers = require('./cli-helpers');
+const { pinnedGit: git } = require('../../helpers/pinned-git');
+const { warmCallStartsNoGit } = require('../../helpers/git-trace');
 
 const STAMP = 'claude-tweaks-verify-pass.json';
 
@@ -1656,4 +1659,65 @@ test('a --scope run with a generated glob and a dirty tree reads the working tre
   const zStatus = recordedGitCalls(traceDir).filter((e) => e.args.includes('status') && e.args.includes('-z'));
   // The changed-file read serves the start exemption too; the other read is the one after the suites.
   assert.strictEqual(zStatus.length, 2, JSON.stringify(zStatus.map((e) => e.args)));
+});
+
+// #5324: the verify scenario builders sit on templates, keyed by their arguments.
+// #5846: the warm-call and builder-key tests live here, where this file's own tests build scopedRepo/tmpGitRepo/flakyRepo.
+const verifyRules = (glob) => [{ match: glob, suites: ['unit'] }];
+for (const [name, make] of [
+  ['verify scopedRepo', () => verifyHelpers.scopedRepo(verifyRules('src/**'))],
+  ['verify scopedRepo with generated', () => verifyHelpers.scopedRepo(verifyRules('src/**'), { generated: ['**'] })],
+]) {
+  test(`AC1.1 AC1.2: ${name}: a second call starts no git process`, (t) => {
+    warmCallStartsNoGit(make, { track: (r) => t.after(() => fs.rmSync(r.repo, { recursive: true, force: true })) });
+  });
+}
+test('verify builders: per-call values match git, and different arguments never share a template', (t) => {
+  const scratch = [];
+  t.after(() => { for (const d of scratch) fs.rmSync(d, { recursive: true, force: true }); });
+  const s = verifyHelpers.scopedRepo(verifyRules('src/**'));
+  const s2 = verifyHelpers.scopedRepo(verifyRules('lib/**'));
+  const b = verifyHelpers.baselineRepo();
+  const fDefault = verifyHelpers.flakyRepo();
+  const fExit1 = verifyHelpers.flakyRepo({ retryExit: 1 });
+  scratch.push(s.repo, s2.repo, b.repo, fDefault.repo, fExit1.repo);
+  assert.strictEqual(s.branch, git(s.repo, ['symbolic-ref', '--short', 'HEAD']));
+  assert.ok(s.marker.startsWith(s.gitDir), s.marker);
+  assert.ok(s.unitCmd.includes(s.marker), s.unitCmd);
+  const rulesOf = (r) => JSON.parse(fs.readFileSync(path.join(r.repo, r.declPath), 'utf8')).rules;
+  assert.deepStrictEqual(rulesOf(s), verifyRules('src/**'));
+  assert.deepStrictEqual(rulesOf(s2), verifyRules('lib/**'));
+  assert.strictEqual(b.baseSha, git(b.repo, ['rev-parse', 'HEAD']));
+  assert.strictEqual(fDefault.branch, git(fDefault.repo, ['symbolic-ref', '--short', 'HEAD']));
+  assert.ok(fExit1.marker.startsWith(fExit1.repo), fExit1.marker);
+  assert.ok(fExit1.retryLog(0).startsWith(fExit1.gitDir), fExit1.retryLog(0));
+  assert.ok(fs.readFileSync(path.join(fExit1.repo, 'retry.js'), 'utf8').includes('process.exit(1)'));
+  assert.ok(fs.readFileSync(path.join(fDefault.repo, 'retry.js'), 'utf8').includes('process.exit(0)'));
+  // A key that dropped `failingFile` or `extra` would hand a later call the first call's files.
+  const fReal = verifyHelpers.flakyRepo({ failingFile: 'tests/real.test.js' });
+  const sGenerated = verifyHelpers.scopedRepo(verifyRules('src/**'), { generated: ['**'] });
+  scratch.push(fReal.repo, sGenerated.repo);
+  const failJs = (r) => fs.readFileSync(path.join(r.repo, 'fail.js'), 'utf8');
+  assert.ok(failJs(fReal).includes('tests/real.test.js'), failJs(fReal));
+  assert.ok(!failJs(fDefault).includes('tests/real.test.js'), failJs(fDefault));
+  const declOf = (r) => JSON.parse(fs.readFileSync(path.join(r.repo, r.declPath), 'utf8'));
+  assert.deepStrictEqual(declOf(sGenerated).generated, ['**']);
+  assert.strictEqual(declOf(s).generated, undefined);
+});
+test('Absorbed AC (identity): the identity written into a template reaches its copies', (t) => {
+  const scratch = [];
+  t.after(() => { for (const d of scratch) fs.rmSync(d, { recursive: true, force: true }); });
+  // `--local` reads only the copy's own .git/config, so a CI-exported GIT_AUTHOR_* cannot stand in for it.
+  const plain = verifyHelpers.tmpGitRepo();
+  const scoped = verifyHelpers.scopedRepo(verifyRules('src/**'));
+  scratch.push(plain.repo, scoped.repo);
+  for (const r of [plain, scoped]) {
+    assert.strictEqual(git(r.repo, ['config', '--local', 'user.email']), 'verify-test@example.invalid');
+  }
+});
+
+test('tmpGitRepo: a second call starts no git process and carries the verify identity', (t) => {
+  const { tmpGitRepo } = require('./cli-helpers');
+  const { traced: second } = warmCallStartsNoGit(tmpGitRepo, { track: (r) => t.after(() => fs.rmSync(r.repo, { recursive: true, force: true })) });
+  assert.strictEqual(second.git('config', 'user.email').trim(), 'verify-test@example.invalid');
 });

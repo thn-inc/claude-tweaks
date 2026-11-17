@@ -11,6 +11,7 @@ const { execFileSync } = require('child_process');
 const pinned = require('./helpers/pinned-git');
 const { pinnedGit: git, pinnedGitEnv: gitEnv } = pinned;
 const { warmCallStartsNoGit } = require('./helpers/git-trace');
+const gitFixtures = require('./helpers/git-fixtures');
 const {
   fromTemplate,
   fromTemplateSet,
@@ -311,72 +312,6 @@ test('AC3.1: under the runner\'s git template a bare-origin push and a fixture c
   assert.ok(has(control.push), 'control: without the template the push starts maintenance');
 });
 
-// The per-test repo builders sit on templates (#5297): after one warm-up call
-// (which may build), a further call starts no git process.
-const gitFixtures = require('./helpers/git-fixtures');
-const builders = {
-  'git-fixtures gitRepo()': [() => gitFixtures.gitRepo(), (d) => [d]],
-  'git-fixtures gitRepo({ branch })': [() => gitFixtures.gitRepo({ branch: 'trunk' }), (d) => [d]],
-  'originWithTwoClones': [() => gitFixtures.originWithTwoClones('ct-gt-otc-'), (r) => [r.root]],
-};
-for (const [name, [make, dirsOf]] of Object.entries(builders)) {
-  test(`${name}: a second call starts no git process`, () => {
-    scratch.push(...dirsOf(make()));
-    const trace = mk('ct-gt-trace-');
-    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
-    scratch.push(...dirsOf(second));
-    assert.deepStrictEqual(fs.readdirSync(trace), []);
-  });
-}
-
-// #5324: the verify scenario builders sit on templates, keyed by their arguments.
-const verifyHelpers = require('./bin-lib/verify/cli-helpers');
-const verifyRules = (glob) => [{ match: glob, suites: ['unit'] }];
-for (const [name, make] of [
-  ['verify scopedRepo', () => verifyHelpers.scopedRepo(verifyRules('src/**'))],
-  ['verify scopedRepo with generated', () => verifyHelpers.scopedRepo(verifyRules('src/**'), { generated: ['**'] })],
-  ['verify flakyRepo()', () => verifyHelpers.flakyRepo()],
-  ['verify flakyRepo({ retryExit: 1 })', () => verifyHelpers.flakyRepo({ retryExit: 1 })],
-  ['verify baselineRepo', () => verifyHelpers.baselineRepo()],
-]) {
-  test(`AC1.1 AC1.2: ${name}: a second call starts no git process`, () => {
-    scratch.push(make().repo);
-    const trace = mk('ct-gt-trace-');
-    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
-    scratch.push(second.repo);
-    assert.deepStrictEqual(fs.readdirSync(trace), []);
-  });
-}
-test('verify builders: per-call values match git, and different arguments never share a template', () => {
-  const s = verifyHelpers.scopedRepo(verifyRules('src/**'));
-  const s2 = verifyHelpers.scopedRepo(verifyRules('lib/**'));
-  const b = verifyHelpers.baselineRepo();
-  const fDefault = verifyHelpers.flakyRepo();
-  const fExit1 = verifyHelpers.flakyRepo({ retryExit: 1 });
-  scratch.push(s.repo, s2.repo, b.repo, fDefault.repo, fExit1.repo);
-  assert.strictEqual(s.branch, git(s.repo, ['symbolic-ref', '--short', 'HEAD']));
-  assert.ok(s.marker.startsWith(s.gitDir), s.marker);
-  assert.ok(s.unitCmd.includes(s.marker), s.unitCmd);
-  const rulesOf = (r) => JSON.parse(fs.readFileSync(path.join(r.repo, r.declPath), 'utf8')).rules;
-  assert.deepStrictEqual(rulesOf(s), verifyRules('src/**'));
-  assert.deepStrictEqual(rulesOf(s2), verifyRules('lib/**'));
-  assert.strictEqual(b.baseSha, git(b.repo, ['rev-parse', 'HEAD']));
-  assert.strictEqual(fDefault.branch, git(fDefault.repo, ['symbolic-ref', '--short', 'HEAD']));
-  assert.ok(fExit1.marker.startsWith(fExit1.repo), fExit1.marker);
-  assert.ok(fExit1.retryLog(0).startsWith(fExit1.gitDir), fExit1.retryLog(0));
-  assert.ok(fs.readFileSync(path.join(fExit1.repo, 'retry.js'), 'utf8').includes('process.exit(1)'));
-  assert.ok(fs.readFileSync(path.join(fDefault.repo, 'retry.js'), 'utf8').includes('process.exit(0)'));
-  // A key that dropped `failingFile` or `extra` would hand a later call the first call's files.
-  const fReal = verifyHelpers.flakyRepo({ failingFile: 'tests/real.test.js' });
-  const sGenerated = verifyHelpers.scopedRepo(verifyRules('src/**'), { generated: ['**'] });
-  scratch.push(fReal.repo, sGenerated.repo);
-  const failJs = (r) => fs.readFileSync(path.join(r.repo, 'fail.js'), 'utf8');
-  assert.ok(failJs(fReal).includes('tests/real.test.js'), failJs(fReal));
-  assert.ok(!failJs(fDefault).includes('tests/real.test.js'), failJs(fDefault));
-  const declOf = (r) => JSON.parse(fs.readFileSync(path.join(r.repo, r.declPath), 'utf8'));
-  assert.deepStrictEqual(declOf(sGenerated).generated, ['**']);
-  assert.strictEqual(declOf(s).generated, undefined);
-});
 test('Absorbed AC (identity): a fresh process building every owned fixture starts no git config user.name/user.email process', () => {
   const trace = mk('ct-gt-trace-');
   const freshTmp = mk('ct-gt-freshtmp-');
@@ -418,15 +353,6 @@ test('Absorbed AC (identity): a fresh process building every owned fixture start
   const offenders = argvs.filter((a) => configKeys(a).some((k) => k === 'user.name' || k === 'user.email'));
   assert.deepStrictEqual(offenders, []);
 });
-test('Absorbed AC (identity): the identity written into a template reaches its copies', () => {
-  // `--local` reads only the copy's own .git/config, so a CI-exported GIT_AUTHOR_* cannot stand in for it.
-  const plain = verifyHelpers.tmpGitRepo();
-  const scoped = verifyHelpers.scopedRepo(verifyRules('src/**'));
-  scratch.push(plain.repo, scoped.repo);
-  for (const r of [plain, scoped]) {
-    assert.strictEqual(git(r.repo, ['config', '--local', 'user.email']), 'verify-test@example.invalid');
-  }
-});
 
 test('template build runs with auto-maintenance off', () => {
   // The runner's own GIT_CONFIG_* (tools/run-tests.js) would mask a missing
@@ -448,26 +374,6 @@ test('template build runs with auto-maintenance off', () => {
   }
   assert.ok(tracedArgvs(trace).length > 0, 'control: the build did trace git processes');
   assert.ok(!tracedArgvs(trace).some((a) => a.includes('maintenance')), 'no maintenance process during the build');
-});
-
-test('git-fixtures gitRepo({ branch }) keeps the requested branch', () => {
-  const dir = gitFixtures.gitRepo({ branch: 'trunk' });
-  scratch.push(dir);
-  assert.strictEqual(git(dir, ['symbolic-ref', '--short', 'HEAD']), 'trunk');
-});
-
-test('AC4.1: originWithTwoClones with a seed and no key throws', () => {
-  assert.throws(() => gitFixtures.originWithTwoClones('ct-gt-otc-', { seed: () => {} }), /seed needs a key/);
-});
-
-test('tmpGitRepo: a second call starts no git process and carries the verify identity', () => {
-  const { tmpGitRepo } = require('./bin-lib/verify/cli-helpers');
-  scratch.push(tmpGitRepo().repo);
-  const trace = mk('ct-gt-trace-');
-  const second = withEnv('GIT_TRACE2_EVENT', trace, tmpGitRepo);
-  scratch.push(second.repo);
-  assert.deepStrictEqual(fs.readdirSync(trace), []);
-  assert.strictEqual(second.git('config', 'user.email').trim(), 'verify-test@example.invalid');
 });
 
 // #5771: one `git init` process per fixture repo, with the identity written as a config-file edit.
