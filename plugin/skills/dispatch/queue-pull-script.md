@@ -413,7 +413,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_NAMED_TARGETS" "$I
 NODE_EVAL_EOF
 TARGET_MISSING_RC=$?
 # #3110: stop rather than continue with a partial exclusion list when
-# appendExclusion throws (corrupt/unreadable dispatch-exclusions.json).
+# appendExclusion throws.
 if [ "$TARGET_MISSING_RC" -ne 0 ]; then
   echo "dispatch: queue-pull stopped -- target-missing exclusion pass failed (exit $TARGET_MISSING_RC); see error above." >&2
   exit 1
@@ -441,7 +441,7 @@ NODE_EVAL_EOF
   TPATH=$(node -e "console.log(JSON.parse(Buffer.from(process.argv[1], 'base64').toString()).path)" -- "$ROW")
   node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$DISPATCH_STANDALONE_DIR" --status AUTO \
     --text "dispatch: #${NUM} excluded, named target ${TPATH} absent at ${INTEGRATION_REF}" --reversibility n/a
-  TMP_PROPOSAL=$(mktemp)
+  TMP_PROPOSAL="$(dirname "$DISPATCH_EXCLUSIONS")/target-missing-proposal-${NUM}.md"
   {
     echo "# Staged: Close (GitHub) — #${NUM} (named target absent at ${INTEGRATION_REF})"
     echo ""
@@ -453,8 +453,8 @@ NODE_EVAL_EOF
     echo "gh issue comment ${NUM} --body \"Closing: the named target ${TPATH} no longer exists at ${INTEGRATION_REF} — this record's Acceptance Criteria has no remaining target. Filed by /claude-tweaks:dispatch (queue pull).\""
     echo "gh issue close ${NUM} --reason \"not planned\""
   } > "$TMP_PROPOSAL"
-  # stage-item.js is the sanctioned writer for a run dir's staged/ (CLAUDE.md's
-  # pipeline-run-dir.md citation) -- never a direct Write/heredoc into it.
+  # stage-item.js is the sanctioned writer for a run dir's staged/
+  # (pipeline-run-dir.md) -- never a direct Write/heredoc into it.
   node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$DISPATCH_STANDALONE_DIR" --id "dispatch-target-missing-${NUM}" --file "$TMP_PROPOSAL"
 done
 

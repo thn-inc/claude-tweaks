@@ -1018,11 +1018,10 @@ function runTargetMissing(ctx) {
   for (const { number, path: tpath } of rows) {
     forward(ctx, spawnCli(ctx, 'log-decision.js', ['--run', state.standaloneDir, '--status', 'AUTO',
       '--text', `dispatch: #${number} excluded, named target ${tpath} absent at ${ref}`, '--reversibility', 'n/a']));
-    // The mktemp file is extensionless, so stage-item.js names the staged item after its random
-    // suffix (ledger row 2). Reproduced, never normalized.
-    const tmp = step(ctx, 'mktemp', () => deps.tmpName());
-    if (tmp.ok) put(ctx, tmp.value, targetMissingProposal(number, tpath, ref));
-    forward(ctx, spawnCli(ctx, 'stage-item.js', ['--run', state.standaloneDir, '--id', `dispatch-target-missing-${number}`, '--file', tmp.ok ? tmp.value : '']));
+    // Fence 444: beside dispatch-exclusions.json, as the shipped pass's proposals are; the .md names the staged item (#5316).
+    const file = path.join(path.dirname(exclusions), `target-missing-proposal-${number}.md`);
+    put(ctx, file, targetMissingProposal(number, tpath, ref));
+    forward(ctx, spawnCli(ctx, 'stage-item.js', ['--run', state.standaloneDir, '--id', `dispatch-target-missing-${number}`, '--file', file]));
   }
 }
 

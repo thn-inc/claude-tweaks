@@ -1628,7 +1628,7 @@ const SHIPPED_STOP = fenceText(/echo "(dispatch: queue-pull stopped -- shipped-c
 
 // The target-missing Close proposal the fence's `echo` lines build, derived from the fence text.
 function fenceTargetProposal(num, tpath, ref) {
-  const block = FENCE.match(/TMP_PROPOSAL=\$\(mktemp\)\n {2}\{\n([\s\S]*?)\n {2}\} > "\$TMP_PROPOSAL"/);
+  const block = FENCE.match(/TMP_PROPOSAL="\$\(dirname "\$DISPATCH_EXCLUSIONS"\)\/target-missing-proposal-\$\{NUM\}\.md"\n {2}\{\n([\s\S]*?)\n {2}\} > "\$TMP_PROPOSAL"/);
   assert.ok(block, 'the fence no longer builds the proposal with an echo group');
   return block[1].split('\n').map((l) => {
     const m = l.trim().match(/^echo "(.*)"$/);
@@ -1800,18 +1800,22 @@ test('AC2.1 target-missing: a target present at the integration tip is kept; the
   assert.deepEqual(r.cap.staged.map((s) => s.id).filter((id) => id.startsWith('dispatch-target-missing-')), ['dispatch-target-missing-9006']);
 });
 
-test('AC2.1 target-missing D2: --file is whatever deps.tmpName returns, so the staged id takes its random suffix; QP_TMPNAME_COUNTER_FILE makes it tmp.qp00000001', () => {
-  const random = pull4(FULL());
-  const randomFiles = random.cap.staged.filter((s) => s.id.startsWith('dispatch-target-missing-')).map((s) => s.file);
-  assert.equal(randomFiles.length, 2);
-  for (const file of randomFiles) assert.match(file, /tmp\.[A-Za-z0-9]{10}$/);
-  assert.notEqual(randomFiles[0], randomFiles[1]);
-
-  const seamed = pull4(FULL(), { prepare: (own) => { process.env.QP_TMPNAME_COUNTER_FILE = path.join(own, 'counter'); return {}; } });
-  const seamFiles = seamed.cap.staged.filter((s) => s.id.startsWith('dispatch-target-missing-')).map((s) => s.file);
-  assert.deepEqual(seamFiles.map((f) => path.basename(f)), ['tmp.qp00000001', 'tmp.qp00000002']);
-  assert.deepEqual(seamFiles.map((f) => path.extname(f)), ['.qp00000001', '.qp00000002'], 'the extensionless mktemp name hands stage-item.js its extension (ledger row 2)');
-  assert.equal(seamed.cap.staged[0].body, fenceTargetProposal('9006', 'docs/gone6.md', 'origin/main'));
+test('AC1.1 target-missing: the Close proposal is written to target-missing-proposal-<n>.md in the session dir, so stage-item.js stages dispatch-target-missing-<n>.md', () => {
+  const r = pull4(FULL(), {
+    // Review Focus 1: an earlier pull's file at the same path is overwritten, not kept.
+    prepare: () => {
+      const dir = path.dirname(sessionPaths('qp-t3')['dispatch-groups.json']);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'target-missing-proposal-9006.md'), 'stale\n');
+      return {};
+    },
+  });
+  const staged = r.cap.staged.filter((s) => s.id.startsWith('dispatch-target-missing-'));
+  assert.deepEqual(staged.map((s) => `${s.id}${path.extname(s.file)}`), ['dispatch-target-missing-9006.md', 'dispatch-target-missing-9009.md'], 'the name stage-item.js writes: --id plus --file\'s extension (write.js)');
+  assert.deepEqual(staged.map((s) => path.basename(s.file)), ['target-missing-proposal-9006.md', 'target-missing-proposal-9009.md']);
+  assert.equal(staged[0].body, fenceTargetProposal('9006', 'docs/gone6.md', 'origin/main'));
+  assert.equal(r.text['target-missing-proposal-9006.md'], staged[0].body, 'the file sits in the session dir beside dispatch-exclusions.json');
+  assert.equal(r.text['target-missing-proposal-9009.md'], staged[1].body);
 });
 
 test('AC2.1 shipped: #9010 (strong) is excluded with its signals, prints the strong AUTO line and stages shipped-close-9010; #9016 (weak) is probed, prints the weak AUTO line and stays', () => {
@@ -2172,7 +2176,7 @@ test('#5227 oracle cross-check: S1 full gives the oracle the same groups, the fo
   const bodies = (staged) => Object.fromEntries(Object.entries(staged).map(([name, body]) => [name.replace(/\..*$/, ''), body]));
   const myBodies = Object.fromEntries(mine.cap.staged.map((s) => [s.id, s.body]));
   assert.deepEqual(myBodies, bodies(oracle.staged), 'the staged Close bodies match');
-  assert.ok(Object.keys(oracle.staged).some((n) => /^dispatch-target-missing-9009\.qp\d{8}$/.test(n)), `the oracle names the target-missing item after the mktemp suffix: ${Object.keys(oracle.staged)}`);
+  assert.ok(Object.keys(oracle.staged).includes('dispatch-target-missing-9009.md'), `the oracle stages the target-missing item as .md: ${Object.keys(oracle.staged)}`);
   assert.deepEqual(mine.json('dispatch-linked-prs.json'), JSON.parse(oracle.files['dispatch-linked-prs.json']));
   assert.deepEqual(mine.json('dispatch-shipped-probe-prs.json'), JSON.parse(oracle.files['dispatch-shipped-probe-prs.json']));
   assert.equal(mine.text['dispatch-shipped-pr-files.jsonl'], oracle.files['dispatch-shipped-pr-files.jsonl']);
@@ -3300,7 +3304,7 @@ describe('#5227 parity (AC1)', { skip: oracleSkip(), timeout: 600_000 }, () => {
     }
     for (const name of ['S1-gh-miss', 'S1-files-miss']) {
       const names = Object.keys(R[name].oracle.staged);
-      assert.ok(names.some((n) => /^dispatch-target-missing-9009\.qp\d{8}$/.test(n)), `${name}: the mktemp suffix names the item (D2): ${names}`);
+      assert.ok(names.includes('dispatch-target-missing-9009.md'), `${name}: the target-missing item is staged as .md: ${names}`);
     }
     assert.ok(Object.keys(R['S1-gh-miss'].oracle.staged).includes('shipped-close-9010.md'));
     const sb = R['S1-gh-miss'].oracle.sandbox;
