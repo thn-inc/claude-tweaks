@@ -8,7 +8,7 @@ The key resolved `workflow`. This file covers the agent lenses that use the repr
 
 ## Availability
 
-The session has the tool when `Workflow` is among its tools, or `ToolSearch` with `select:Workflow` returns it. A continuation agent, a dispatched reviewer (a review running inside a Task agent, as under `/claude-tweaks:dispatch`) and a pipeline-driver worker have no Workflow tool. Check before composing any brief; without the tool, take the fallback at once, with condition 1 below. A review resumed in a new session never resumes a workflow run it started earlier: it treats that run as ended with no result.
+The session has the tool when `Workflow` is among its tools, or `ToolSearch` with `select:Workflow` returns it. A continuation agent, a dispatched reviewer (a review running inside a Task agent, as under `/claude-tweaks:dispatch`) and a pipeline-driver worker have no Workflow tool. Check before composing any brief; without the tool, take the fallback at once, with condition 1 below. A review resumed in a new session never resumes a workflow run it started earlier: it treats that run as ended with no result. A headless `claude -p` session kills a workflow still running 10 minutes after its last turn unless `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` is set in its environment (`docs/reference/workflow-tool-probe.md`, rows `long-run` and `long-run-nowait`); without it, a long fan-out there ends as condition 4.
 
 ## Compose
 
@@ -22,11 +22,11 @@ For each lens's `model`, run `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js
 
 ## Start
 
-Make one `Workflow` call: `name` `claude-tweaks:review-lens-fanout`, `args` `{ lenses: [{ lens, brief, model, reviewers }, …] }`, passed as a JSON object, not a string, one entry per lens. The tool result arrives at launch (`status: async_launched`) with `runId` and `transcriptDir` and no returned value. Wait for the workflow's completion notification, without polling, and wait at most 30 minutes.
+Make one `Workflow` call: `name` `claude-tweaks:review-lens-fanout`, `args` `{ lenses: [{ lens, brief, model, reviewers }, …] }`, passed as a JSON object, not a string, one entry per lens. Lens 3h, when in scope, is dispatched as a Task agent in the same assistant message as the `Workflow` call, so it runs alongside the workflow, under the Task path's 3h rules. The tool result arrives at launch (`status: async_launched`) with `runId` and `transcriptDir` and no returned value. Wait for the workflow's completion notification, without polling, and wait at most 30 minutes: immediately after the launch result, start one timer as its own `run_in_background` Bash call, `node -e "setTimeout(()=>{},1800000)"`. Whichever arrives first, the workflow's completion notification or that timer's completion, triggers the one state read below; when the workflow's notification arrives first, stop the timer task with `TaskStop` on its id.
 
 The run file holds the returned value under `result`, beside the run's `status`. Its path is three directories above `transcriptDir`, then `workflows/{runId}.json`: a `transcriptDir` of `{session}/subagents/workflows/{runId}` gives `{session}/workflows/{runId}.json`. Call that path `{run-file}`. Never read another run's file, never retype a reply, and never read the replies into this thread: the notification's own copy of the value is cut short, and `settle-lens-replies` reads the run file itself.
 
-When the notification arrives, or at 30 minutes with none, read the run file's state once, with one plain command:
+When the notification or the timer arrives, read the run file's state once, with one plain command:
 
 ```bash
 node -e "console.log(JSON.stringify((function(r){return {status:r.status,started:(r.result||{}).started,reason:(r.result||{}).reason}})(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')))))" "{run-file}"
@@ -42,7 +42,7 @@ The review runs every lens through `step3-lens-dispatch.md`'s Task dispatch, and
 2. `refused or failed before a reviewer starts` — the `Workflow` call's result is an error or a permission denial, not a launch.
 3. `started: false` — the state command prints `started: false`; its `reason` is the tool's message.
 4. `ended with no result` — no error, but the run file is absent (the state command fails with `ENOENT`), its `status` is not `completed`, or it holds no `result` (a killed run holds `"status":"killed","result":null`); this includes a run still going at 30 minutes.
-5. `result unreadable` — the state command fails on a file that exists, or `settle-lens-replies` exits 2 on the run file.
+5. `result unreadable` — the state command fails on a file that exists, or the first `settle-lens-replies` call (`--only confirmed`) exits 2 on the run file.
 
 Resolve the line's text file with one plain call, `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" S=review-{ctx-id}-workflow-skip.txt`, `Write` one line to the printed path (`{path-S}`) — `condition: {label} → fallback: Task lens dispatch`, or `condition: {label}: {message} → fallback: Task lens dispatch` when the tool gave a message (its first line only) — and run:
 
@@ -68,17 +68,17 @@ It writes every settled lens's `confirmed` pair lines under `## /review` and pri
 node "${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" settle-lens-replies "{run-file}" --ctx-id "{ctx-id}" --run "$PIPELINE_RUN_DIR" --only unconfirmed
 ```
 
-Add `--hold "{path-H}"` when the absence check refuted or corroboration promoted a finding of a settled lens: resolve `H=review-{ctx-id}-workflow-hold.json` with `session-tmp-resolve.js`, and `Write` there a JSON array of those whole `unconfirmed` entries from the first call's output, each with its lens added as `lens`. A lens brought to its verdict through `categorise-reproduction` makes its own `--only unconfirmed` call, as the Task path does.
+Add `--hold "{path-H}"` when the absence check refuted or corroboration promoted a finding of a settled lens: resolve `H=review-{ctx-id}-workflow-hold.json` with `session-tmp-resolve.js`, and `Write` there a JSON array of those whole `unconfirmed` entries from the first call's output, each with its lens added as `lens`. An exit 2 on this second call is never condition 5: the confirmed lines are already logged, so it means the hold file is wrong — an entry that matches no `unconfirmed` finding or two, or names a lens that did not settle. Fix the hold file and re-run this call; never take the fallback here. A lens brought to its verdict through `categorise-reproduction` makes its own `--only unconfirmed` call, as the Task path does.
 
 Standalone (no run directory): one call with neither `--run`, `--only` nor `--hold`; nothing is logged, and `log-reproduction-judgment` is skipped, as on the Task path. Name every `violations` entry (a reply whose status line is misplaced or missing — a contract violation) in the review summary.
 
 ## `needsSession`
 
-Each lens the verb could not pair is listed with a `reason` and its reviewers, each with `side`, `state`, `statusWord`, and a `findingsPath` when its reply was usable. A reviewer that failed, replied `BLOCKED` or `NEEDS_CONTEXT`, has no status line, or whose reply does not parse is unusable; a reply with a misplaced status line is used and listed under `violations`. A usable reviewer whose `findingsPath` is null (the write failed) counts as unusable here.
+Each lens the verb could not pair is listed with a `reason` and its reviewers, each with `side`, `state`, `statusWord`, and a `findingsPath` when its reply was usable. A reviewer that failed, replied `BLOCKED` or `NEEDS_CONTEXT`, has no status line, or whose reply does not parse is unusable; a reply with a misplaced status line is used and listed under `violations`. A usable reviewer whose `findingsPath` is null (the write failed) counts as unusable here. A reviewer's `text` field, present for a `BLOCKED` or `NEEDS_CONTEXT` reply, is not acted on: that side is dispatched again like any other unusable side.
 
 **`single-reviewer`.** At `low`, apply `step3-tier-variants.md`'s Low-tier single-read rule to the findings at `findingsPath`: every finding enters `unconfirmed`, with that rule's per-finding line, and goes to the tiebreak. Nothing is dispatched again and no `SKIP` line is written. When that one reviewer is unusable, it is handled as `reviewer-unusable` below handles one side (one Task re-dispatch, one `SKIP` line), and the single-read rule applies to the new reply.
 
-**`reviewer-unusable`.** Dispatch only the unusable reviewers again, once, as Task agents with the lens's same brief and model, and log one `SKIP` line by the Fallback command, its text file holding `condition: reviewer-unusable {lens}/{side}[, …] → fallback: Task dispatch of those reviewers`. When both sides are unusable, both are dispatched again as one Task pair. `Write` each new reviewer's `findings` array to its side's path from `step3-lens-dispatch.md`'s `session-tmp-resolve.js` call (a usable side's `findingsPath` is already its side's path there), then run that lens through the Task path's per-pair steps from its `categorise-reproduction` call on. When that Task re-dispatch itself fails (a session limit, no `Agent` tool, a timeout), `step3-tier-variants.md`'s partner-died single-read rule applies to the lens.
+**`reviewer-unusable`.** Dispatch only the unusable reviewers again, once, as Task agents with the lens's same brief and model, and log one `SKIP` line by the Fallback command, its text file holding `condition: reviewer-unusable {lens}/{side}[, …] → fallback: Task dispatch of those reviewers`. When both sides are unusable, both are dispatched again as one Task pair. `Write` each new reviewer's `findings` array to its side's path from `step3-lens-dispatch.md`'s `session-tmp-resolve.js` call (a usable side's `findingsPath` is already its side's path there), then run that lens through the Task path's per-pair steps from its `categorise-reproduction` call on. When that Task re-dispatch itself fails (a session limit, no `Agent` tool, a timeout), `step3-tier-variants.md`'s partner-died single-read rule applies to the lens. The one Task re-dispatch is that rule's one retry, so a failed re-dispatch goes straight to its single-read degrade, with no second retry.
 
 ## Then
 

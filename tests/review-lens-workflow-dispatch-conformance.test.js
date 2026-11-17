@@ -84,7 +84,13 @@ const FACTS = [
 ];
 const missingFacts = missingFactsOf(FACTS);
 
+// The 30-minute bound needs something to wake the session: a background timer started in `## Start` (fix round 1, I1).
+const TIMER_COMMAND = 'node -e "setTimeout(()=>{},1800000)"';
+
 function checkSubFile(text) {
+  const start = sectionOf(text, '## Start');
+  assert.ok(start.includes(TIMER_COMMAND), 'Start must start the 1800000 ms setTimeout timer');
+  assert.match(start, /`run_in_background` Bash call/, 'Start must run the timer as a run_in_background Bash call');
   const fallback = sectionOf(text, '## Fallback');
   for (const label of LABELS) assert.match(fallback, labelItem(label), `fallback condition missing: ${label}`);
   assert.ok(fallback.includes(SKIP_LINE), 'SKIP line missing from the Fallback section');
@@ -181,6 +187,25 @@ test('go-red: the sub-file without the SKIP line fails', () => {
   const mutated = live.split(SKIP_LINE).join('the line');
   assert.notEqual(mutated, live);
   assert.throws(() => checkSubFile(mutated), { message: /SKIP line missing/ });
+});
+
+test('go-red: a Start section without the timer command, or without run_in_background, fails', () => {
+  const live = read(SUB_FILE);
+  const noTimer = live.split(TIMER_COMMAND).join('a timer');
+  assert.notEqual(noTimer, live);
+  assert.throws(() => checkSubFile(noTimer), { message: /Start must start the 1800000 ms setTimeout timer/ });
+  const noBackground = live.split('`run_in_background` Bash call').join('Bash call');
+  assert.notEqual(noBackground, live);
+  assert.throws(() => checkSubFile(noBackground), { message: /Start must run the timer as a run_in_background Bash call/ });
+});
+
+test('go-red: the timer sentence moved out of the Start section fails', () => {
+  const live = read(SUB_FILE);
+  const sentence = live.split('\n').find((line) => line.includes(TIMER_COMMAND));
+  assert.ok(sentence, 'timer line not found');
+  const mutated = `${live.replace(sentence, 'Wait for the notification.')}\n## Elsewhere\n\n${sentence}\n`;
+  assert.notEqual(mutated, live);
+  assert.throws(() => checkSubFile(mutated), { message: /Start must start the 1800000 ms setTimeout timer/ });
 });
 
 test('go-red: each sub-file fact goes red alone when its text is removed', () => {
