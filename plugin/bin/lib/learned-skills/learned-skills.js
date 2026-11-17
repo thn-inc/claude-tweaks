@@ -440,13 +440,18 @@ function addFinding(runDir, manifest, existing, finding, deps) {
 }
 
 // The git subcommand: the first argv element after leading `-C <dir>`, `-c <k=v>` and
-// `--no-optional-locks`, with the arguments after it.
+// `--no-optional-locks`, with its options: the arguments after it up to a `--` (a path after the
+// separator named `--check` or `-w` is a path, never an option).
 function gitSubcommand(args) {
   let i = 0;
   for (;;) {
     if (args[i] === '-C' || args[i] === '-c') i += 2;
     else if (args[i] === '--no-optional-locks') i += 1;
-    else return { sub: args[i], rest: args.slice(i + 1) };
+    else {
+      const rest = args.slice(i + 1);
+      const end = rest.indexOf('--');
+      return { sub: args[i], options: end === -1 ? rest : rest.slice(0, end) };
+    }
   }
 }
 
@@ -454,7 +459,7 @@ function gitSubcommand(args) {
 // it, so the same read-only question often reaches git again with nothing changed in between. deps
 // is returned with its seams wrapped:
 //   - git: `diff`, `status` and `hash-object` (without -w), with no opts.env, are answered from the
-//     cache when the same argv, encoding and input bytes were answered since the last discard. Only a
+//     cache when the same argv, encoding, cwd and input bytes were answered since the last discard. Only a
 //     successful answer is kept; a Buffer is kept and returned as a copy, so no caller sees another's
 //     mutation. `apply --check`, `rev-parse` and `cat-file` pass through untouched. Every other call,
 //     and any call carrying opts.env, discards every kept answer before it runs.
@@ -467,17 +472,19 @@ function withReadCache(deps, target) {
   const copy = (x) => (Buffer.isBuffer(x) ? Buffer.from(x) : x);
   const isTarget = (p) => path.resolve(p) === path.resolve(target);
   const git = (args, opts = {}) => {
-    const { sub, rest } = gitSubcommand(args);
-    const read = sub === 'diff' || sub === 'status' || (sub === 'hash-object' && !rest.includes('-w'));
+    const { sub, options } = gitSubcommand(args);
+    const read = sub === 'diff' || sub === 'status' || (sub === 'hash-object' && !options.includes('-w'));
     if (read && !opts.env) {
       const input = opts.input === undefined ? null : crypto.createHash('sha256').update(opts.input).digest('hex');
-      const key = JSON.stringify([args, opts.encoding || null, input]);
+      // encoding defaults as realDeps.git's does, so an omitted one and 'utf8' share one answer.
+      const cwd = opts.cwd === undefined ? null : path.resolve(opts.cwd);
+      const key = JSON.stringify([args, opts.encoding || 'utf8', cwd, input]);
       if (answers.has(key)) return copy(answers.get(key));
       const got = deps.git(args, opts);
       answers.set(key, copy(got));
       return got;
     }
-    const passThrough = (sub === 'apply' && rest.includes('--check')) || sub === 'rev-parse' || sub === 'cat-file';
+    const passThrough = (sub === 'apply' && options.includes('--check')) || sub === 'rev-parse' || sub === 'cat-file';
     if (!passThrough || opts.env) discard();
     return deps.git(args, opts);
   };

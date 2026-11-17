@@ -1054,6 +1054,25 @@ test('withReadCache: apply --check, rev-parse and cat-file between two asks keep
   assert.equal(fake.count(REV), 2);
 });
 
+test('withReadCache: a path after -- named --check is not an option: that apply discards', () => {
+  const fake = fakeGit();
+  const d = withReadCache({ git: fake.git }, CACHE_TARGET);
+  d.git(DIFF);
+  d.git(['-C', '/wt', 'apply', '--', '--check']);
+  d.git(DIFF);
+  assert.equal(fake.count(DIFF), 2);
+});
+
+test('withReadCache: an omitted encoding and utf8 share one answer; another cwd asks again', () => {
+  const fake = fakeGit();
+  const d = withReadCache({ git: fake.git }, CACHE_TARGET);
+  const first = d.git(DIFF);
+  assert.equal(d.git(DIFF, { encoding: 'utf8' }), first);
+  assert.equal(fake.count(DIFF), 1);
+  d.git(DIFF, { cwd: '/elsewhere' });
+  assert.equal(fake.count(DIFF), 2);
+});
+
 test('withReadCache: a failed read is asked again', () => {
   const fake = fakeGit({ throwFirst: true });
   const d = withReadCache({ git: fake.git }, CACHE_TARGET);
