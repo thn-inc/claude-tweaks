@@ -43,6 +43,8 @@ function repoWithOrigin(remoteUrl) {
 }
 
 // `base/real-project-name` (GitHub origin) plus its linked worktree `base/worktree-branch-name` on `feature`.
+// Raw (not realpath'd) base, unlike worktreeShapes: its test passes the symlinked mkdtemp path on purpose
+// and builds the expected link from fs.realpathSync(mainDir), so the reader's realpath step stays exercised.
 function linkedWorktreeProject() {
   const base = fromTemplate('statusline:linkedWorktree', (dir) => {
     const mainDir = path.join(dir, 'real-project-name');

@@ -1232,7 +1232,7 @@ test('commonDirFromFs: a FIFO main config returns null promptly', FIFO_OPTS, () 
       // Real process: a blocking FIFO read would hang the test thread, so the reader runs in a child with its own timeout.
       assert.strictEqual(readerInChild('sl.commonDirFromFs(p, {})', f.wt), null);
     } finally {
-      fs.rmSync(cfg); // git blocks on it too, and the fixture's cleanup runs git
+      fs.rmSync(cfg); // git blocks on it too
     }
   });
 });
