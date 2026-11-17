@@ -7,7 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { checkRunIntegrity, checkBranchLanded, repoRootOf, worktreePathForBranch } = require('../plugin/bin/lib/hooks/run-integrity');
-const { fixtureGit } = require('./helpers/git-fixtures');
+const { fixtureGit, initRepo } = require('./helpers/git-fixtures');
 const { hookEnv, runHookCli } = require('./helpers/hook-event');
 const { withBrokenGitDir } = require('./helpers/process-env');
 const { fixtureHomeEnv } = require('./helpers/fixture-home');
@@ -34,9 +34,7 @@ const BEFORE_RUN_START = '2026-07-01T00:00:00Z';
 // feature branch with one commit, and one active run dir recording that worktree.
 function fixtureRepo() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ri-')));
-  fixtureGit(['init', '-q', '-b', 'trunk', root]);
-  sh(root, 'config', 'user.email', 't@example.com');
-  sh(root, 'config', 'user.name', 'T');
+  initRepo(root, { name: 'T', email: 't@example.com', branch: 'trunk' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
   sh(root, 'add', 'a.txt');
   datedSh(root, AFTER_RUN_START, 'commit', '-q', '-m', 'base');
@@ -59,9 +57,7 @@ function fixtureRepo() {
 // the run directory's own 2026-08-01T090000 start time.
 function fixtureZeroCommitRepo() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ri-zc-')));
-  fixtureGit(['init', '-q', '-b', 'trunk', root]);
-  sh(root, 'config', 'user.email', 't@example.com');
-  sh(root, 'config', 'user.name', 'T');
+  initRepo(root, { name: 'T', email: 't@example.com', branch: 'trunk' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
   sh(root, 'add', 'a.txt');
   datedSh(root, BEFORE_RUN_START, 'commit', '-q', '-m', 'base');
@@ -167,9 +163,7 @@ test('#1672 validation: a resolved name that is not a real local ref never becom
 // nothing more — each test adds only what it individually needs on top of this.
 function basicRepo() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wpfb-')));
-  execFileSync('git', ['init', '-q', '-b', 'trunk'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 't@example.com'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'T'], { cwd: root });
+  initRepo(root, { name: 'T', email: 't@example.com', branch: 'trunk', cwd: root });
   fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
   execFileSync('git', ['add', 'a.txt'], { cwd: root });
   execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: root });
@@ -216,9 +210,7 @@ function fixtureRemoteTrackingIntegrationRepo() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ri-rt-')));
   const remote = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ri-rt-remote-')));
   fixtureGit(['init', '-q', '--bare', '-b', 'trunk', remote]);
-  fixtureGit(['init', '-q', '-b', 'trunk', root]);
-  sh(root, 'config', 'user.email', 't@example.com');
-  sh(root, 'config', 'user.name', 'T');
+  initRepo(root, { name: 'T', email: 't@example.com', branch: 'trunk' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
   sh(root, 'add', 'a.txt');
   datedSh(root, AFTER_RUN_START, 'commit', '-q', '-m', 'base');

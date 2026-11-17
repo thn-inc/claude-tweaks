@@ -13,7 +13,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { parseLedger } = require('../plugin/bin/lib/wrap-up/pack');
-const { cleanGitEnv, fixtureGit } = require('./helpers/git-fixtures');
+const { cleanGitEnv, fixtureGit, writeIdentity } = require('./helpers/git-fixtures');
 const { runCli, spawnCli } = require('./helpers/run-cli');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
@@ -49,8 +49,7 @@ function runHook(args, { cwd, env } = {}) {
 function seedRepo(prefix) {
   const root = tmp(prefix);
   git(['init', '-q', '--initial-branch=main'], root);
-  git(['config', 'user.email', 'test@example.com'], root);
-  git(['config', 'user.name', 'Test'], root);
+  writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], root);
   git(['commit', '-q', '-m', 'seed'], root);

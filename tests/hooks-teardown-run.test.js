@@ -39,9 +39,7 @@ function fixtureRepo() {
   return { root, wt, runDir: path.join(root, '.claude-tweaks', 'pipelines', runId), runId };
 }
 function buildFixtureRepo(root) {
-  git(root, 'init', '-q', '-b', 'trunk');
-  git(root, 'config', 'user.email', 't@example.com');
-  git(root, 'config', 'user.name', 'T');
+  initRepo(root, { name: 'T', email: 't@example.com', branch: 'trunk', encoding: 'utf8' });
   git(root, 'remote', 'add', 'origin', 'git@github.com:acme/widgets.git');
   fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
   git(root, 'add', 'a.txt');
@@ -791,7 +789,7 @@ test('#5293: dead owner, merged, branch-recovered worktree locked by a live pid 
 // #5555 Task 4: `hooks.js teardown-run` (and close-run before it) write timing.json before they
 // return. In-process through run(argv, deps); --abandoned keeps the gh seam unreached.
 const { runCli } = require('./helpers/run-cli');
-const { cleanGitEnv } = require('./helpers/git-fixtures');
+const { cleanGitEnv, initRepo } = require('./helpers/git-fixtures');
 const atClose = require('../plugin/bin/lib/timing/at-close');
 const T = require('./helpers/close-timing');
 

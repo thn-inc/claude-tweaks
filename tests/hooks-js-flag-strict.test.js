@@ -21,7 +21,7 @@ const { BACKGROUND_CHECKS, CLI_DEFERRED_CHECKS, KNOWN_FLAGS, USAGE, VALUE_FLAGS,
 const { ALL_CHECKS } = require('../plugin/bin/lib/reconcile');
 const { BACKGROUND_BUDGET_MS } = require('../plugin/bin/lib/reconcile/budget');
 const { readText } = require('./helpers/read-skill');
-const { hookEnv: baseHookEnv, fixtureGit } = require('./helpers/git-fixtures');
+const { hookEnv: baseHookEnv, fixtureGit, writeIdentity } = require('./helpers/git-fixtures');
 const { runCli, spawnCli } = require('./helpers/run-cli');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
@@ -108,8 +108,7 @@ function assertRefused(result, verb, firstLine, label) {
 function runDirFixture(status) {
   const root = tracked(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-flag-'))));
   git(['init', '-q', '--initial-branch=main'], root);
-  git(['config', 'user.email', 'test@example.com'], root);
-  git(['config', 'user.name', 'Test'], root);
+  writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], root);
   git(['commit', '-q', '-m', 'seed'], root);
@@ -128,8 +127,7 @@ function runDirFixture(status) {
 function freshRepo() {
   const root = tracked(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-flag-fresh-'))));
   git(['init', '-q', '--initial-branch=main'], root);
-  git(['config', 'user.email', 'test@example.com'], root);
-  git(['config', 'user.name', 'Test'], root);
+  writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   git(['commit', '-q', '--allow-empty', '-m', 'seed'], root);
   return root;
 }
