@@ -67,4 +67,5 @@ files:
 - Updated during #5310: a failed dependency-freshness search prints one Warning per failed search (cache check, write-back) and a failed write-back search writes no queue-order cache.
 - Updated during #5312: a failed open-PR list for the cross-PR overlap report prints one Warning instead of failing open silently.
 - Updated during #5313: a failed shipped-pass `gh pr view` writes `files: null` and prints one Warning per affected non-predating weak record instead of reading as `[]` silently; the fail-open line count is no longer "zero or one per failed fetch".
+- Updated during #5315: a queue record whose `labels` is not an array is excluded as `malformed-blocker` with one Warning, and that pull writes no queue-order cache, instead of stopping the whole pull; step 1 no longer lists it among the defects reproduced on purpose.
 - Related journeys: `dispatch-the-oldest-record-from-a-gh-absent-sandbox-3691.md` (the MCP timestamp alias this module reproduces), `drain-the-queue-past-a-chain-of-overlapping-records-3278.md`.
