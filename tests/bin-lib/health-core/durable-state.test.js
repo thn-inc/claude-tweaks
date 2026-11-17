@@ -15,6 +15,8 @@ const {
   createDurableState,
   createNamespacedState,
 } = require('../../../plugin/bin/lib/health-core/durable-state');
+const { LARGE_MAX_BUFFER_BYTES } = require('../../../plugin/bin/lib/shared-primitives');
+const { isCatFileBatch, answerCatFileBatch } = require('../../helpers/fake-cat-file-batch');
 
 test('constants', () => {
   assert.strictEqual(HEALTH_STATE_BRANCH, 'health-state');
@@ -103,18 +105,33 @@ test('casBackoffMs windows never overlap across attempts, guaranteeing a later a
 // each match — use a function whenever a rule needs to react to prior calls
 // (a counter, a flag flipped by an earlier matched rule) so the state change
 // happens when the fake is actually invoked by the code under test, not once
-// eagerly while the script array literal is being built. ---
+// eagerly while the script array literal is being built. A `git cat-file
+// --batch` call no rule matches is answered by fake-cat-file-batch.js, which
+// runs these same rules on one synthetic `git show <ref>:<path>` per object
+// (those dispatches are not recorded in `calls` — only the real call is). ---
 
 function fakeRunner(script) {
   const calls = [];
-  function run(cmd, args, opts) {
-    calls.push({ cmd, args, opts });
+  function applyRules(cmd, args) {
     for (const rule of script) {
       if (rule.match(cmd, args)) {
         const throwsVal = typeof rule.throws === 'function' ? rule.throws(cmd, args) : rule.throws;
         if (throwsVal) throw new Error(throwsVal);
-        return typeof rule.returns === 'function' ? rule.returns(cmd, args) : rule.returns;
+        return { matched: true, value: typeof rule.returns === 'function' ? rule.returns(cmd, args) : rule.returns };
       }
+    }
+    return { matched: false };
+  }
+  function run(cmd, args, opts) {
+    calls.push({ cmd, args, opts });
+    const hit = applyRules(cmd, args);
+    if (hit.matched) return hit.value;
+    if (isCatFileBatch(cmd, args)) {
+      return answerCatFileBatch(args, opts, (showArgs) => {
+        const shown = applyRules('git', showArgs);
+        if (!shown.matched) throw new Error(`fakeRunner: no rule matched git ${JSON.stringify(showArgs)}`);
+        return shown.value;
+      });
     }
     throw new Error(`fakeRunner: no rule matched ${cmd} ${JSON.stringify(args)}`);
   }
@@ -302,7 +319,7 @@ test('createNamespacedState with only a stderr (no env, no run) captures a real 
   assert.match(err, /health-state: fetch failed/);
 });
 
-test('readState parses each file via git show, defaulting missing files to {}/[]', () => {
+test('readState parses each file via the batched read, defaulting missing files to {}/[]', () => {
   const { run } = fakeRunner([
     { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'fetch'), returns: '' },
     { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'cursors.json'), returns: JSON.stringify({ '.': { lastSweptMs: 1 } }) },
@@ -327,6 +344,115 @@ test('readState omits the remembered key entirely for a skill that does not opt 
   const state = ds.readState('/repo');
   assert.deepStrictEqual(state, { cursors: {}, retryQueue: [], runs: [] });
   assert.ok(!('remembered' in state), 'a skill that never opts in must never see a remembered key at all');
+});
+
+test('AC5.1: a read round at a resolving ref starts exactly one git process for every file spec, a cat-file --batch fed one ref:path line per spec', () => {
+  const { run, calls } = fakeRunner([
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'fetch'), returns: '' },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'show') && matchArgs(args, 'cursors.json'), returns: JSON.stringify({ '.': { lastSweptMs: 7 } }) },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'show'), throws: 'fatal: path does not exist' },
+  ]);
+  const ds = createDurableState('code-health', { run, sleep: () => {}, includeRemembered: true, includeDeclined: true });
+  const state = ds.readState('/repo');
+  assert.deepStrictEqual(state, { cursors: { '.': { lastSweptMs: 7 } }, retryQueue: [], runs: [], remembered: {}, declined: {} });
+  const reads = calls.filter((c) => c.cmd === 'git' && !c.args.includes('fetch'));
+  assert.strictEqual(reads.length, 1);
+  assert.deepStrictEqual(reads[0].args, ['-C', '/repo', 'cat-file', '--batch']);
+  assert.ok(Buffer.isBuffer(reads[0].opts.input), 'input must be a Buffer: a string input with encoding buffer throws ERR_UNKNOWN_ENCODING');
+  assert.strictEqual(reads[0].opts.input.toString('utf8'), ['cursors.json', 'retry-queue.json', 'runs.json', 'remembered.json', 'declined.json']
+    .map((f) => `origin/health-state:code-health/${f}\n`).join(''));
+  assert.strictEqual(reads[0].opts.encoding, 'buffer');
+  assert.strictEqual(reads[0].opts.maxBuffer, LARGE_MAX_BUFFER_BYTES);
+});
+
+// Reads `fileSpecs` under namespace `ns` through a fake whose cat-file rule
+// returns `response` verbatim (rule-first, so fake-cat-file-batch.js is bypassed).
+function readWithBatchResponse(fileSpecs, response) {
+  const { run } = fakeRunner([
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'fetch'), returns: '' },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'cat-file'), returns: response },
+  ]);
+  return createNamespacedState('ns', fileSpecs, { run, sleep: () => {} }).readState('/repo');
+}
+
+test('a non-blob slot degrades to its default and the following blob still reads (byte-length framing skips the tree body)', () => {
+  const response = Buffer.concat([Buffer.from(`${'e'.repeat(40)} tree 5\nabcde\n`),Buffer.from(`${'b'.repeat(40)} blob 9\n{"k":"v"}\n`)]);
+  const state = readWithBatchResponse([{ key: 'a', file: 'a.json', default: { d: 1 } }, { key: 'b', file: 'b.json', default: {} }], response);
+  assert.deepStrictEqual(state, { a: { d: 1 }, b: { k: 'v' } });
+});
+
+test('a truncated batch stream degrades the unread slots to defaults and never throws', () => {
+  const response = `${'b'.repeat(40)} blob 9\n{"k":"v"}\n`;
+  const state = readWithBatchResponse([
+    { key: 'a', file: 'a.json', default: {} },
+    { key: 'b', file: 'b.json', default: { d: 2 } },
+    { key: 'c', file: 'c.json', default: [3] },
+  ], response);
+  assert.deepStrictEqual(state, { a: { k: 'v' }, b: { d: 2 }, c: [3] });
+});
+
+test('a string response is framed by bytes, so a multi-byte first slot does not misframe the next', () => {
+  const first = '{"n":"café ☕"}';
+  const response = `${'a'.repeat(40)} blob ${Buffer.byteLength(first)}\n${first}\n${'b'.repeat(40)} blob 9\n{"k":"v"}\n`;
+  const state = readWithBatchResponse([{ key: 'a', file: 'a.json', default: {} }, { key: 'b', file: 'b.json', default: {} }], response);
+  assert.deepStrictEqual(state, { a: { n: 'café ☕' }, b: { k: 'v' } });
+});
+
+test('missing and ambiguous headers degrade only their own slot', () => {
+  const response = `origin/health-state:ns/a.json missing\norigin/health-state:ns/b.json ambiguous\n${'c'.repeat(40)} blob 2\n[]\n`;
+  const state = readWithBatchResponse([
+    { key: 'a', file: 'a.json', default: { d: 'a' } },
+    { key: 'b', file: 'b.json', default: { d: 'b' } },
+    { key: 'c', file: 'c.json', default: { d: 'c' } },
+  ], response);
+  assert.deepStrictEqual(state, { a: { d: 'a' }, b: { d: 'b' }, c: [] });
+});
+
+test('a failed batch process degrades every spec to its default', () => {
+  const { run } = fakeRunner([
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'fetch'), returns: '' },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'cat-file'), throws: 'fatal: not a git repository' },
+  ]);
+  const ds = createDurableState('code-health', { run, sleep: () => {}, includeRemembered: true, includeDeclined: true });
+  let state;
+  const stderrOut = withCapturedStderr(() => { state = ds.readState('/repo'); });
+  assert.deepStrictEqual(state, { cursors: {}, retryQueue: [], runs: [], remembered: {}, declined: {} });
+  assert.strictEqual(stderrOut, '');
+});
+
+test('AC3.1: the default runner gives the batch read the 30 s timeout, windowsHide, a 64 MiB maxBuffer and a Buffer result', () => {
+  const childProcess = require('child_process');
+  const modulePath = require.resolve('../../../plugin/bin/lib/health-core/durable-state');
+  const realExecFileSync = childProcess.execFileSync;
+  const calls = [];
+  childProcess.execFileSync = (cmd, args, opts) => {
+    calls.push({ cmd, args, opts });
+    if (typeof opts.input === 'string' && opts.encoding === 'buffer') {
+      const err = new TypeError('Unknown encoding: buffer');
+      err.code = 'ERR_UNKNOWN_ENCODING';
+      throw err;
+    }
+    if (args.includes('fetch')) return '';
+    if (args.includes('cat-file')) return Buffer.from('');
+    throw new Error(`unexpected call ${cmd} ${JSON.stringify(args)}`);
+  };
+  delete require.cache[modulePath];
+  try {
+    const fresh = require(modulePath);
+    fresh.createNamespacedState('ns', [{ key: 'a', file: 'a.json', default: {} }]).readState('/repo');
+  } finally {
+    childProcess.execFileSync = realExecFileSync;
+    delete require.cache[modulePath];
+  }
+  const batch = calls.find((c) => c.args.includes('cat-file'));
+  assert.ok(batch, 'the default runner must start a cat-file --batch read');
+  assert.deepStrictEqual(batch.args, ['-C', '/repo', 'cat-file', '--batch']);
+  assert.strictEqual(batch.opts.timeout, 30000);
+  assert.strictEqual(batch.opts.windowsHide, true);
+  assert.strictEqual(batch.opts.encoding, 'buffer');
+  assert.strictEqual(batch.opts.maxBuffer, LARGE_MAX_BUFFER_BYTES);
+  assert.ok(Buffer.isBuffer(batch.opts.input), 'a string input with encoding buffer throws ERR_UNKNOWN_ENCODING in the real call');
+  assert.strictEqual(batch.opts.input.toString('utf8'), 'origin/health-state:ns/a.json\n');
 });
 
 test('writeState succeeds on the first attempt: fetch, read, build blobs/tree/commit, push', () => {
@@ -754,6 +880,39 @@ test('AC1.1: a tree entry named café.json round-trips through readTreeEntries a
   }
 });
 
+test('a real repo round-trips multi-byte, multi-line JSON, an invalid-JSON file and a missing file through the batch read', () => {
+  const { execFileSync } = require('node:child_process');
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { writeIdentity } = require('../../helpers/git-fixtures');
+  const g = (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'durable-state-batch-'));
+  try {
+    const origin = path.join(dir, 'origin.git');
+    const clone = path.join(dir, 'clone');
+    g(['init', '--bare', '-q', '-b', 'main', origin]);
+    g(['clone', '-q', origin, clone]);
+    writeIdentity(clone, { name: 'Test', email: 'test@example.com' });
+
+    const sleep = () => {};
+    const writer = createNamespacedState('ns', [
+      { key: 'a', file: 'a.json', default: {} },
+      { key: 'bad', file: 'bad.json', default: {}, serialize: () => '{nope' },
+    ], { sleep });
+    assert.deepStrictEqual(writer.writeState(clone, () => ({ a: { note: 'café ☕\nline two', n: [1, 2] } })), { ok: true });
+
+    const reader = createNamespacedState('ns', [
+      { key: 'a', file: 'a.json', default: {} },
+      { key: 'bad', file: 'bad.json', default: { fallback: true } },
+      { key: 'gone', file: 'gone.json', default: [] },
+    ], { sleep });
+    assert.deepStrictEqual(reader.readState(clone), { a: { note: 'café ☕\nline two', n: [1, 2] }, bad: { fallback: true }, gone: [] });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // --- includeDeclined: durable persistence for the 'declined' dismissal mark
 // (mirrors includeRemembered's opt-in-flag pattern above) ---
 
@@ -767,7 +926,7 @@ test('readState omits the declined key entirely for a skill that does not opt in
   assert.ok(!('declined' in state), 'a skill that never opts in must never see a declined key at all');
 });
 
-test('readState parses declined.json via git show for a skill that opts in, defaulting to {} when missing', () => {
+test('readState parses declined.json via the batched read for a skill that opts in, defaulting to {} when missing', () => {
   const { run } = fakeRunner([
     { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'fetch'), returns: '' },
     { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'declined.json'), returns: JSON.stringify({ 'hh-abc123': { lastSeenMs: 1 } }) },
