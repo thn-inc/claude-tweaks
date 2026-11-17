@@ -71,6 +71,10 @@ assert.strictEqual(await hookOf({ 'mirror-marketplace.yml': mirror }), true);
 
 When the text is a live skill file read by a prose test, the CRLF case tests the test's own extractor. See the fence-regex row in `skill-prose-conformance-tests`'s Anti-Patterns.
 
+### A fixture copied from a template must not keep the template's root
+
+When a fixture is built once and copied per test (`fromTemplate`, `fromTemplateSet` in `tests/helpers/git-template.js`), any file outside git's own storage that records an absolute path (a manifest, a patch list, a decisions log) still names the template root in the copy. Rewrite it for the copy, and guard the copy with a scan that throws when a root survives. Search each root in every spelling the build used (its `realpath` and its raw form), and for a JSON file also the JSON-escaped spelling: JSON stores a win32 path `C:\a\b` as `C:\\a\\b`, so a plain substring search passes on Linux and misses the leak on Windows (`tests/helpers/learned-skills-land.js`, #5770).
+
 ### Keep a win32-only real-process round-trip as the ground truth
 
 Exact-string pins prove the translation did not change. They do not prove it is right. Keep one test that runs the real thing on Windows and skips elsewhere with a stated reason:

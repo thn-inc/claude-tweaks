@@ -16,7 +16,6 @@ const SEVERITY_MAP = { Low: 'low', Medium: 'med', High: 'high' };
 //   { verdict: 'inconclusive', reason: string }
 function evaluateQaEvidence(storyIds, report, opts = {}) {
   const now = opts.now != null ? opts.now : Date.now();
-  const staleDaysDeep = opts.staleDaysDeep != null ? opts.staleDaysDeep : STALE_DAYS_DEEP;
 
   if (!storyIds || storyIds.length === 0) {
     return { verdict: 'inconclusive', reason: 'journey has no associated stories' };
@@ -25,8 +24,8 @@ function evaluateQaEvidence(storyIds, report, opts = {}) {
     return { verdict: 'inconclusive', reason: 'no QA report available' };
   }
   const ageDays = (now - new Date(report.timestamp).getTime()) / 86400000;
-  if (!(ageDays <= staleDaysDeep)) {
-    return { verdict: 'inconclusive', reason: `QA report is ${Math.round(ageDays)} days old, past the ${staleDaysDeep}-day window` };
+  if (!(ageDays <= STALE_DAYS_DEEP)) {
+    return { verdict: 'inconclusive', reason: `QA report is ${Math.round(ageDays)} days old, past the ${STALE_DAYS_DEEP}-day window` };
   }
 
   const storiesById = new Map((report.stories || []).map((s) => [s.id, s]));

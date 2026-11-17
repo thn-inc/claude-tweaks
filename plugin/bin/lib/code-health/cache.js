@@ -23,7 +23,7 @@ const core = createCache('code-health');
 // createDurable({ env, stderr }) builds the durable-state accessors with an
 // injected child-git environment and stderr sink (#5381) — an in-process caller
 // passes its own; the module-level exports below are bound to createDurable()
-// (inherited env, process.stderr), exactly as before.
+// (inherited env, process.stderr).
 function createDurable({ env, stderr } = {}) {
   const state = createDurableState('code-health', {
     includeRemembered: true, includeDeclined: true, env, stderr,
@@ -33,10 +33,10 @@ function createDurable({ env, stderr } = {}) {
 
 const durable = createDurable();
 
-// computeChurn (union-denominator ratio + the `stayed` field) now lives once
-// in health-core/runs.js, shared by all four health-suite engines — re-export
-// it here so existing call sites (bin/code-health.js,
-// tests/bin-lib/code-health/*) keep importing it from this module.
+// computeChurn (union-denominator ratio + the `stayed` field) is imported from
+// health-core/runs.js, shared by all four health-suite engines, and re-exported
+// below so bin/code-health.js and tests/bin-lib/code-health/* import it from
+// this module.
 
 // Pure: computes the next durable-state object for a validate-findings run.
 // current: { cursors, remembered, retryQueue, runs } — the current durable
