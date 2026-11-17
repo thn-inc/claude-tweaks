@@ -1776,17 +1776,20 @@ test('target-missing: a proposal write that fails stages nothing for that record
   assert.ok(r.errs.some((e) => /^queue-pull: write target-missing-proposal-9006\.md: /.test(e)), r.stderr);
 });
 
-test('target-missing oracle: the fence skips staging a proposal whose write fails and stages the next record', { skip: oracleSkip() }, async () => {
+// A read-only file an earlier pull left: the write fails but the stale file stays readable, so only the
+// fence's `|| continue` keeps it from being staged. Root writes through 0444, so the fault cannot be planted.
+test('target-missing oracle: the fence never stages an earlier pull\'s proposal when this pull\'s write fails, and stages the next record', { skip: oracleSkip() || (process.getuid && process.getuid() === 0 && 'root writes through a read-only file') }, async () => {
   const sessionId = 'qp-tm-write-fail';
   const { resolveSessionId } = require(path.join(REPO, 'plugin', 'bin', 'lib', 'session-tmp.js'));
   const sb = createSandbox(FULL());
   try {
-    // The same directory-at-the-proposal-path fault as the module test above, planted in the fence's session dir.
-    fs.mkdirSync(path.join(sb.root, 'tmp', 'tm-fail', `ct-session-${resolveSessionId(sessionId)}`, 'target-missing-proposal-9006.md'), { recursive: true });
+    const dir = path.join(sb.root, 'tmp', 'tm-fail', `ct-session-${resolveSessionId(sessionId)}`);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'target-missing-proposal-9006.md'), 'stale\n', { mode: 0o444 });
     const oracle = await runOracle(sb, FENCE, { sessionId, tmp: 'tm-fail' });
     assert.equal(oracle.status, 0, oracle.stderr);
     assert.deepEqual(Object.keys(oracle.staged).filter((n) => n.startsWith('dispatch-target-missing-')), ['dispatch-target-missing-9009.md']);
-    assert.match(oracle.stderr, /target-missing-proposal-9006\.md: Is a directory/);
+    assert.match(oracle.stderr, /target-missing-proposal-9006\.md: Permission denied/);
   } finally {
     sb.cleanup();
   }
