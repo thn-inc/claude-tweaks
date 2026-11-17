@@ -54,13 +54,15 @@ function usableAnchor({ stamp = null, execImpl = execFileSync } = {}) {
 
 function resolveBase({
   stamp = null, integrationBranch = null, base = null, execImpl = execFileSync, requireNonDegenerate = false,
+  head = undefined, anchor: knownAnchor = undefined,
 } = {}) {
   if (base) {
     const out = tryGit(execImpl, ['rev-parse', '--verify', '--end-of-options', `${base}^{commit}`]);
     if (out === null || out.trim() === '') throw new ChangedFilesError(`--base "${base}" does not resolve to a commit`);
     return out.trim();
   }
-  const anchor = usableAnchor({ stamp, execImpl });
+  // A caller that already derived the usable anchor (or read HEAD) passes it, so the same git question is not asked twice.
+  const anchor = knownAnchor !== undefined ? knownAnchor : usableAnchor({ stamp, execImpl });
   if (anchor !== null) {
     // #2486: a stamp anchor identical to HEAD answers "nothing since the
     // last full verify" — correct for --scope's own incremental intent
@@ -70,10 +72,12 @@ function resolveBase({
     // question instead produces a plausible-looking but empty diff. When
     // the anchor is this degenerate and an integration branch was given,
     // skip it and fall through to the integration-branch resolution below.
-    const head = requireNonDegenerate && integrationBranch
-      ? tryGit(execImpl, ['rev-parse', '--verify', 'HEAD'])
-      : null;
-    const degenerate = head !== null && head.trim() === anchor;
+    let headSha = null;
+    if (requireNonDegenerate && integrationBranch) {
+      if (typeof head === 'string' || head === null) headSha = head;
+      else headSha = tryGit(execImpl, ['rev-parse', '--verify', 'HEAD']);
+    }
+    const degenerate = headSha !== null && headSha.trim() === anchor;
     if (!degenerate) return anchor;
   }
   if (!integrationBranch) {

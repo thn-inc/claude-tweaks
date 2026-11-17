@@ -547,3 +547,23 @@ test('round-4 Reading B: a no-own-commit --no-ff merge of the ref declines even 
   r.commit('src/own.py', 'own');
   assert.ok(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files: changedSince(r, r.anchor), execImpl: r.exec }), 'control: one own commit makes the tree differ, so narrowing engages');
 });
+
+test('resolveBase uses a passed head instead of asking (#5773)', () => {
+  const exec = fakeExec({
+    [`merge-base --is-ancestor --end-of-options ${FULL} HEAD`]: '',
+    [`rev-parse --verify --end-of-options ${FULL}^{commit}`]: `${FULL}\n`,
+    'rev-parse --verify --quiet refs/remotes/origin/main': 'abc\n',
+    'merge-base --end-of-options origin/main HEAD': `${MB}\n`,
+  });
+  const result = resolveBase({
+    stamp: { sha: 'x', fullSha: FULL }, integrationBranch: 'main', requireNonDegenerate: true, head: FULL, execImpl: exec,
+  });
+  assert.strictEqual(result, MB, 'the passed head equals the anchor, so the degenerate skip still applies');
+  assert.ok(!exec.calls.some((c) => c.join(' ') === 'git rev-parse --verify HEAD'), 'no rev-parse --verify HEAD call');
+});
+
+test('resolveBase uses a passed anchor instead of re-deriving it (#5773)', () => {
+  const exec = fakeExec({});
+  assert.strictEqual(resolveBase({ stamp: { sha: 'x', fullSha: FULL }, anchor: 'abc', execImpl: exec }), 'abc');
+  assert.deepStrictEqual(exec.calls, [], 'no git call, in particular no merge-base --is-ancestor');
+});
