@@ -1020,6 +1020,7 @@ test('review-lens-dispatch resolves task by default and for an invalid value, wo
   try {
     fs.writeFileSync(path.join(runDir, 'config.yml'), 'review-lens-dispatch: workflow\n');
     const r = driverCli(['--run', runDir, '--values', 'review-lens-dispatch'], repo);
+    assert.strictEqual(r.status, 0, r.stderr);
     assert.strictEqual(r.stdout.trim(), 'workflow', r.stderr);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
