@@ -29,10 +29,10 @@
 // the inform-tier banners and has the cwd, and one small synchronous read fits
 // its inline block. This module is pure of the hook: every failure — an absent
 // or malformed plugins file, an unreadable artifact, an injected dep that
-// throws — returns null, so a session never breaks on it.
+// throws — returns null, so a session never breaks on it. The one exception is a
+// caller error: a missing `env` or `homedir` throws TypeError (#5377).
 
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const { readInstalledPlugins, selectEntry, safeRealpath } = require('./installed-plugins');
 const { lstatType } = require('./path-guard');
@@ -71,13 +71,15 @@ function defaultDeps() {
     // JS one echoes the input's casing), so a mis-cased cwd or projectPath still
     // compares equal to its own project.
     realpath: fs.realpathSync.native,
-    homedir: os.homedir,
-    env: process.env,
   };
 }
 
-// overrides: test-only seam over { readFile, realpath, homedir, env }.
+// overrides: { env, homedir } from the SessionStart hook's context, which only the hook calls this for:
+// both are required, with no fallback to the real process.env or os.homedir() (#5377). `readFile` and
+// `realpath` stay a test seam.
 function effectiveSuperpowersVersion(projectDir, overrides = {}) {
+  if (overrides.env === null || typeof overrides.env !== 'object') throw new TypeError('effectiveSuperpowersVersion: env is required');
+  if (typeof overrides.homedir !== 'function') throw new TypeError('effectiveSuperpowersVersion: homedir is required');
   try {
     const deps = { ...defaultDeps(), ...overrides };
     const read = readInstalledPlugins(deps);
