@@ -432,6 +432,22 @@ test('ghTimeoutMsAt: does not memoize across alternating roots', () => {
   });
 });
 
+// #4492: the policy rung finds policy.yml through locatePolicyFile, so a linked
+// worktree with no policy.yml of its own reads the main checkout's value.
+test('ghTimeoutMsAt: a linked worktree with no policy.yml reads the main checkout\'s gh-timeout-ms', (t) => {
+  // eslint-disable-next-line global-require
+  const { gitRepo, linkedWorktreeOf } = require('../helpers/git-fixtures');
+  const main = gitRepo();
+  writePolicyFile(main, 'gh-timeout-ms: 7000\n');
+  const wt = linkedWorktreeOf(main);
+  t.after(() => {
+    fs.rmSync(path.dirname(wt), { recursive: true, force: true });
+    fs.rmSync(main, { recursive: true, force: true });
+  });
+  assert.strictEqual(fs.existsSync(path.join(wt, '.claude-tweaks', 'policy.yml')), false);
+  assert.strictEqual(ghTimeoutMsAt(wt, { env: {} }), 7000);
+});
+
 test('ghTimeoutMsAt: no opts argument reads process.env, and a null opts.env does too', () => {
   const key = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
   const prior = process.env[key];

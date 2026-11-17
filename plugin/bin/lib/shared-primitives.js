@@ -183,6 +183,10 @@ function ghTimeoutFromPolicy(repoRoot) {
 
 // #4856: the one ladder every gh call's timeout routes through — env var (within
 // gh-timeout-ms's bounds) > `gh-timeout-ms` in the root's policy.yml > 5000.
+// The policy rung reads through policy.js's readGhTimeoutMs, which finds the file
+// via policy-file.js's locatePolicyFile (#4492): a linked worktree with no
+// policy.yml of its own reads the main checkout's — and so does the GH_TIMEOUT_MS
+// getter, which resolves at process.cwd().
 // Root- and env-parameterised and deliberately NOT memoized: the GH_TIMEOUT_MS
 // getter below memoizes its own result, and a caller holding a different root
 // (or a test's env) must get that root's answer. A non-object (or array)

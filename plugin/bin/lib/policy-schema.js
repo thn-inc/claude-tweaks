@@ -825,7 +825,8 @@ const FORGE_DEGRADE_MEMO_TTL_MS = 60000;
 // The `gh` timeout for detectIntegrationModel's `gh repo view` probe. Ladder:
 // explicit positive-integer `opts.timeoutMs` (returns before any read) > the
 // shared gh ladder, `shared-primitives.ghTimeoutMsAt(repoRoot, { env })`: env
-// CLAUDE_TWEAKS_GH_TIMEOUT_MS > `gh-timeout-ms` in {repoRoot}/.claude-tweaks/policy.yml
+// CLAUDE_TWEAKS_GH_TIMEOUT_MS > `gh-timeout-ms` in repoRoot's policy.yml, located
+// through locatePolicyFile (a linked worktree falls back to the main checkout's, #4492)
 // > 5000. The ladder lives there, not here, so every gh bound shares one definition.
 // It reads from repoRoot rather than the cwd, the right root for a caller probing a
 // repo other than the cwd's. `opts.env` (optional) replaces process.env as the place
