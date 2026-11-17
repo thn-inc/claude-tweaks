@@ -800,7 +800,6 @@ test('captureExecTimeouts: an env value of undefined deletes the variable, never
 });
 
 test('captureExecTimeouts: an ambient git bound does not leak into a gh-only probe, and is restored', () => {
-  const cp = require('node:child_process');
   const gitKey = 'CLAUDE_TWEAKS_GIT_TIMEOUT_MS';
   const ghKey = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
   const priorGit = process.env[gitKey];
@@ -831,7 +830,6 @@ test('captureExecTimeouts: an ambient git bound does not leak into a gh-only pro
     if (priorGit === undefined) delete process.env[gitKey]; else process.env[gitKey] = priorGit;
     if (priorGh === undefined) delete process.env[ghKey]; else process.env[ghKey] = priorGh;
   }
-  assert.strictEqual(typeof cp.execFileSync, 'function');
 });
 
 test('captureExecTimeouts: child_process and the require cache are left as found', () => {
