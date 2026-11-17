@@ -327,6 +327,154 @@ for (const [name, [make, dirsOf]] of Object.entries(builders)) {
   });
 }
 
+// #5324: the pre-tool-use fixed pairs and repos sit on templates too.
+const preToolUsePairs = {
+  'pre-tool-use mainAndWorktree': [() => preToolUse.mainAndWorktree(), (r) => [r.main, path.dirname(r.wt)]],
+  'pre-tool-use mainAndWorktree({ localMain })': [() => preToolUse.mainAndWorktree({ localMain: true }), (r) => [r.main, path.dirname(r.wt)]],
+  'pre-tool-use gitRepoOnLocalMain': [() => preToolUse.gitRepoOnLocalMain(), (d) => [d]],
+  'pre-tool-use unpinnedRepoWithOrigin': [() => preToolUse.unpinnedRepoWithOrigin(), (d) => [d]],
+};
+for (const [name, [make, dirsOf]] of Object.entries(preToolUsePairs)) {
+  test(`AC1.1 AC1.2: ${name}: a second call starts no git process`, () => {
+    scratch.push(...dirsOf(make()));
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(...dirsOf(second));
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+test('a copied mainAndWorktree pair resolves to its own main, and a second worktree can be added to it', () => {
+  const a = preToolUse.mainAndWorktree();
+  const b = preToolUse.mainAndWorktree();
+  scratch.push(a.main, path.dirname(a.wt), b.main, path.dirname(b.wt));
+  for (const p of [a, b]) {
+    assert.ok(path.basename(p.main).startsWith('ct-e1-'), p.main);
+    assert.ok(path.basename(path.dirname(p.wt)).startsWith('ct-e1-wtparent-'), p.wt);
+    const common = git(p.wt, ['rev-parse', '--git-common-dir']);
+    assert.strictEqual(fs.realpathSync(path.resolve(p.wt, common)), path.join(p.main, '.git'));
+    assert.strictEqual(fs.realpathSync(git(p.wt, ['rev-parse', '--show-toplevel'])), p.wt);
+  }
+  const listed = (p) => git(p.main, ['worktree', 'list', '--porcelain'])
+    .split('\n').filter((l) => l.startsWith('worktree ')).map((l) => fs.realpathSync(l.slice(9)));
+  assert.ok(listed(a).includes(a.wt), listed(a).join(', '));
+  assert.ok(!listed(a).includes(b.wt), listed(a).join(', '));
+  const extra = path.join(mk('ct-gt-wt2-'), 'wt');
+  git(a.main, ['worktree', 'add', '-q', extra, '-b', 'extra']);
+  assert.strictEqual(git(extra, ['rev-parse', 'HEAD']), git(a.main, ['rev-parse', 'HEAD']));
+});
+test('mainAndWorktree({ localMain: true }) and gitRepoOnLocalMain copies are on main', () => {
+  const pair = preToolUse.mainAndWorktree({ localMain: true });
+  const repo = preToolUse.gitRepoOnLocalMain();
+  scratch.push(pair.main, path.dirname(pair.wt), repo);
+  assert.strictEqual(git(pair.main, ['symbolic-ref', '--short', 'HEAD']), 'main');
+  assert.strictEqual(git(repo, ['symbolic-ref', '--short', 'HEAD']), 'main');
+});
+test('unpinnedRepoWithOrigin copies carry the GitHub-shaped origin and one commit', () => {
+  const repo = preToolUse.unpinnedRepoWithOrigin();
+  scratch.push(repo);
+  assert.strictEqual(git(repo, ['remote', 'get-url', 'origin']), 'https://github.com/o/n.git');
+  assert.strictEqual(git(repo, ['rev-list', '--count', 'HEAD']), '1');
+});
+
+// #5324: the verify scenario builders sit on templates, keyed by their arguments.
+const verifyHelpers = require('./bin-lib/verify/cli-helpers');
+const verifyRules = (glob) => [{ match: glob, suites: ['unit'] }];
+for (const [name, make] of [
+  ['verify scopedRepo', () => verifyHelpers.scopedRepo(verifyRules('src/**'))],
+  ['verify scopedRepo with generated', () => verifyHelpers.scopedRepo(verifyRules('src/**'), { generated: ['**'] })],
+  ['verify flakyRepo()', () => verifyHelpers.flakyRepo()],
+  ['verify flakyRepo({ retryExit: 1 })', () => verifyHelpers.flakyRepo({ retryExit: 1 })],
+  ['verify baselineRepo', () => verifyHelpers.baselineRepo()],
+]) {
+  test(`AC1.1 AC1.2: ${name}: a second call starts no git process`, () => {
+    scratch.push(make().repo);
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(second.repo);
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+test('verify builders: per-call values match git, and different arguments never share a template', () => {
+  const s = verifyHelpers.scopedRepo(verifyRules('src/**'));
+  const s2 = verifyHelpers.scopedRepo(verifyRules('lib/**'));
+  const b = verifyHelpers.baselineRepo();
+  const fDefault = verifyHelpers.flakyRepo();
+  const fExit1 = verifyHelpers.flakyRepo({ retryExit: 1 });
+  scratch.push(s.repo, s2.repo, b.repo, fDefault.repo, fExit1.repo);
+  assert.strictEqual(s.branch, git(s.repo, ['symbolic-ref', '--short', 'HEAD']));
+  assert.ok(s.marker.startsWith(s.gitDir), s.marker);
+  assert.ok(s.unitCmd.includes(s.marker), s.unitCmd);
+  const rulesOf = (r) => JSON.parse(fs.readFileSync(path.join(r.repo, r.declPath), 'utf8')).rules;
+  assert.deepStrictEqual(rulesOf(s), verifyRules('src/**'));
+  assert.deepStrictEqual(rulesOf(s2), verifyRules('lib/**'));
+  assert.strictEqual(b.baseSha, git(b.repo, ['rev-parse', 'HEAD']));
+  assert.strictEqual(fDefault.branch, git(fDefault.repo, ['symbolic-ref', '--short', 'HEAD']));
+  assert.ok(fExit1.marker.startsWith(fExit1.repo), fExit1.marker);
+  assert.ok(fExit1.retryLog(0).startsWith(fExit1.gitDir), fExit1.retryLog(0));
+  assert.ok(fs.readFileSync(path.join(fExit1.repo, 'retry.js'), 'utf8').includes('process.exit(1)'));
+  assert.ok(fs.readFileSync(path.join(fDefault.repo, 'retry.js'), 'utf8').includes('process.exit(0)'));
+  // A key that dropped `failingFile` or `extra` would hand a later call the first call's files.
+  const fReal = verifyHelpers.flakyRepo({ failingFile: 'tests/real.test.js' });
+  const sGenerated = verifyHelpers.scopedRepo(verifyRules('src/**'), { generated: ['**'] });
+  scratch.push(fReal.repo, sGenerated.repo);
+  const failJs = (r) => fs.readFileSync(path.join(r.repo, 'fail.js'), 'utf8');
+  assert.ok(failJs(fReal).includes('tests/real.test.js'), failJs(fReal));
+  assert.ok(!failJs(fDefault).includes('tests/real.test.js'), failJs(fDefault));
+  const declOf = (r) => JSON.parse(fs.readFileSync(path.join(r.repo, r.declPath), 'utf8'));
+  assert.deepStrictEqual(declOf(sGenerated).generated, ['**']);
+  assert.strictEqual(declOf(s).generated, undefined);
+});
+test('Absorbed AC (identity): a fresh process building every owned fixture starts no git config user.name/user.email process', () => {
+  const trace = mk('ct-gt-trace-');
+  const freshTmp = mk('ct-gt-freshtmp-');
+  // Fresh module instances give cold template caches without a node child; the
+  // original instances go back in require.cache afterwards.
+  const modules = ['./helpers/git-template', './helpers/pre-tool-use', './bin-lib/verify/cli-helpers'].map((m) => require.resolve(m));
+  const saved = modules.map((m) => [m, require.cache[m]]);
+  // A fresh build appends maintenance-off keys to process.env; put them back too.
+  const cfgKeys = /^GIT_CONFIG_/;
+  const savedCfg = Object.entries(process.env).filter(([k]) => cfgKeys.test(k));
+  const envs = { GIT_TRACE2_EVENT: trace, TMPDIR: freshTmp, TMP: freshTmp, TEMP: freshTmp };
+  const inEnv = (names, fn) => (names.length ? withEnv(names[0], envs[names[0]], () => inEnv(names.slice(1), fn)) : fn());
+  try {
+    for (const m of modules) delete require.cache[m];
+    const [, pre, verify] = modules.map((m) => require(m));
+    inEnv(Object.keys(envs), () => {
+      pre.gitRepo(); pre.gitRepoWithCommit(); pre.gitRepoOnLocalMain();
+      pre.mainAndWorktree(); pre.mainAndWorktree({ localMain: true });
+      pre.unpinnedRepoWithOrigin();
+      verify.tmpGitRepo(); verify.scopedRepo([{ match: 'src/**', suites: ['unit'] }]); verify.flakyRepo(); verify.baselineRepo();
+    });
+  } finally {
+    for (const [m, mod] of saved) { if (mod) require.cache[m] = mod; else delete require.cache[m]; }
+    for (const k of Object.keys(process.env)) if (cfgKeys.test(k)) delete process.env[k];
+    for (const [k, v] of savedCfg) process.env[k] = v;
+  }
+  const argvs = tracedArgvs(trace);
+  assert.ok(argvs.length > 0, 'control: the builders did trace git processes');
+  // The subcommand is the first word after `git` that is not an option or an option's value.
+  const configKeys = (argv) => {
+    let i = 1;
+    while (i < argv.length) {
+      if (argv[i] === '-C' || argv[i] === '-c') i += 2;
+      else if (argv[i].startsWith('-')) i += 1;
+      else break;
+    }
+    return argv[i] === 'config' ? argv.slice(i + 1) : [];
+  };
+  const offenders = argvs.filter((a) => configKeys(a).some((k) => k === 'user.name' || k === 'user.email'));
+  assert.deepStrictEqual(offenders, []);
+});
+test('Absorbed AC (identity): the identity written into a template reaches its copies', () => {
+  // `--local` reads only the copy's own .git/config, so a CI-exported GIT_AUTHOR_* cannot stand in for it.
+  const plain = verifyHelpers.tmpGitRepo();
+  const scoped = verifyHelpers.scopedRepo(verifyRules('src/**'));
+  scratch.push(plain.repo, scoped.repo);
+  for (const r of [plain, scoped]) {
+    assert.strictEqual(git(r.repo, ['config', '--local', 'user.email']), 'verify-test@example.invalid');
+  }
+});
+
 test('template build runs with auto-maintenance off', () => {
   // The runner's own GIT_CONFIG_* (tools/run-tests.js) would mask a missing
   // append, so take them out for the duration and put them back after.
