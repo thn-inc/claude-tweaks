@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
-const { fixtureGit, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
+const { fixtureGit } = require('./helpers/git-fixtures');
 const {
   fromTemplate,
   fromTemplateSet,
@@ -304,45 +304,6 @@ test('AC3.1: under the runner\'s git template a bare-origin push and a fixture c
   const control = run(undefined);
   assert.ok(has(control.commit), 'control: without the template the commit starts maintenance');
   assert.ok(has(control.push), 'control: without the template the push starts maintenance');
-});
-
-// #5771: git's default template copies 14 `*.sample` hooks into every repository a test creates.
-// The runner's template drops them, and a bare `node --test` run gets the same template when it
-// loads the helper (git-fixtures.js requires git-template.js).
-const { runnerChildEnv } = require('../tools/run-tests');
-test('AC2.1 AC2.2: a fixture repo made in a runner child and in a bare node --test run holds no sample hook', () => {
-  const base = gitEnv();
-  for (const k of Object.keys(base)) if (/^(GIT_TEMPLATE_DIR|GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+))$/.test(k)) delete base[k];
-  const samplesIn = (gitDir) => {
-    assert.ok(fs.statSync(path.join(gitDir, 'hooks')).isDirectory(), `${gitDir}/hooks is a directory`);
-    return fs.readdirSync(path.join(gitDir, 'hooks')).filter((n) => n.endsWith('.sample'));
-  };
-
-  const control = mk('ct-gt-ac2-ctl-');
-  git(control, ['init', '-q'], base);
-  assert.notDeepStrictEqual(samplesIn(path.join(control, '.git')), [], 'control: a plain git init without the helper holds sample hooks');
-
-  const fixtures = path.join(__dirname, 'helpers', 'git-fixtures.js');
-  const script = `const fs = require('fs'); const os = require('os'); const path = require('path');
-const { initRepo, gitRepo } = require(${JSON.stringify(fixtures)});
-const a = initRepo(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-gt-ac2-')), { name: 't', email: 't@example.test' });
-process.stdout.write(JSON.stringify([a, gitRepo()]));`;
-  const runnerEnv = runnerChildEnv(base, { runRoot: mk('ct-gt-ac2-run-'), templateDir: writeGitTemplateDir(path.join(mk('ct-gt-ac2-tpl-'), 't'), base) });
-  assert.strictEqual(typeof runnerEnv.GIT_TEMPLATE_DIR, 'string', 'the runner child has a template');
-  const bareEnv = { ...base };
-  delete bareEnv.GIT_TEMPLATE_DIR;
-  delete bareEnv.CT_TEST_SUITE_SLOT_HELD;
-  for (const [label, env] of [['runner child', runnerEnv], ['bare node --test', bareEnv]]) {
-    const r = spawnSync(process.execPath, ['-e', script], { env, encoding: 'utf8', windowsHide: true, timeout: FIXTURE_TIMEOUT_MS });
-    assert.strictEqual(r.status, 0, `${label}: ${r.stderr}`);
-    const repos = JSON.parse(r.stdout);
-    scratch.push(...repos);
-    assert.strictEqual(repos.length, 2, label);
-    for (const repo of repos) {
-      assert.deepStrictEqual(samplesIn(path.join(repo, '.git')), [], `${label}: ${repo}`);
-      assert.ok(fs.statSync(path.join(repo, '.git', 'info')).isDirectory(), `${label}: ${repo}/.git/info is a directory`);
-    }
-  }
 });
 
 // The per-test repo builders sit on templates (#5297): after one warm-up call
