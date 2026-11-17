@@ -107,6 +107,16 @@ test('AC3.1: headless never removes a prior flag the new text no longer implies'
   assert.match(body, /^Risk-flags-unconfirmed: true$/m);
 });
 
+test('a re-shape carries the prior body\'s tripwire line forward, minus a slug answered remove', () => {
+  const prior = rawFile('# t\n\nSurface: infra\nRisk-flags: migrations, auth\nRisk-flags-added-by-tripwire: migrations, auth\n\n## Overview\n');
+  const headless = settle(CLEAN_SPEC, ['--headless', '--prior-body-file', prior]);
+  assert.match(headless.body, /^Risk-flags: migrations, auth\nRisk-flags-unconfirmed: true\nRisk-flags-added-by-tripwire: migrations, auth$/m);
+  const answered = settle(CLEAN_SPEC, ['--prior-body-file', prior, '--answers-file', answers({ migrations: 'keep', auth: 'remove' })]);
+  assert.deepStrictEqual(answered.out.removed, ['auth']);
+  assert.match(answered.body, /^Risk-flags: migrations\nRisk-flags-added-by-tripwire: migrations$/m);
+  assert.strictEqual(record.parseTripwireFlags(settle(CLEAN_SPEC, ['--headless']).body).status, 'absent', 'no prior body: no line');
+});
+
 test('a relative --body-file and --answers-file resolve against the injected cwd', () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(TMP, 'cwd-')));
   assert.notStrictEqual(dir, process.cwd());

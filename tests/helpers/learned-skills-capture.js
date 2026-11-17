@@ -8,18 +8,22 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { fromTemplate } = require('./git-template');
 const { capture, readManifest, realDeps, StagingFailure } = require('../../plugin/bin/lib/learned-skills/learned-skills.js');
 
-const ENV = {
-  ...process.env,
+const IDENT = {
   GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test',
   GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test',
   GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
 };
+// Kept for importers; `sh` builds its env per call, so a template build's maintenance-off keys
+// and a test's GIT_TRACE2_EVENT, set on process.env after load, reach its git children.
+const ENV = { ...process.env, ...IDENT };
 const X = '.claude/skills/x/SKILL.md';
+const RUN_NAME = '2026-11-13T000000-spec-1';
 
 function sh(cwd, args) {
-  return execFileSync('git', args, { cwd, env: ENV, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  return execFileSync('git', args, { cwd, env: { ...process.env, ...IDENT }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
 }
 function write(repo, rel, text) {
   fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
@@ -30,33 +34,51 @@ function write(repo, rel, text) {
 const lf = (text) => text.replace(/\r\n/g, '\n');
 const read = (repo, rel) => lf(fs.readFileSync(path.join(repo, rel), 'utf8'));
 
-// The core.autocrlf the plugin's own git runner sees in this repo, before the fixture sets one: ENV's
+// The core.autocrlf the plugin's own git runner sees in this repo, before the fixture sets one: IDENT's
 // /dev/null config files hide the system and global config from `sh`, and Git for Windows ships
 // `core.autocrlf=true` in its system config. null when unset.
-function hostAutocrlf(repo) {
-  try { return String(realDeps.git(['-C', repo, 'config', '--get', 'core.autocrlf'])).trim() || null; } catch { return null; }
+let hostEol; // undefined until first resolved; null when unset
+function hostAutocrlf() {
+  if (hostEol !== undefined) return hostEol;
+  const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'ls-capture-host-'));
+  try {
+    sh(probe, ['init', '-q']);
+    try { hostEol = String(realDeps.git(['-C', probe, 'config', '--get', 'core.autocrlf'])).trim() || null; } catch { hostEol = null; }
+  } finally { fs.rmSync(probe, { recursive: true, force: true }); }
+  return hostEol;
 }
 
 // A repo with one commit holding x/SKILL.md, a run dir under .claude-tweaks/pipelines, a merge base.
 // opts.autocrlf pins core.autocrlf in the repo's own config ('true' builds a Windows checkout on any
 // host); by default the repo pins what the plugin's runner sees, so `sh` and capture agree on it. The
-// committed files are then checked out again, so the tree and the index stat are what a clone writes
-// (CRLF under autocrlf=true), never the LF bytes the fixture wrote.
+// committed files are then checked out again, so the tree holds what a clone writes (CRLF under
+// autocrlf=true), never the LF bytes the fixture wrote. Each copy has a fresh inode and ctime, so its
+// index stat no longer matches the tree and git rehashes the files on first use (git-template.js header).
+// Built once per (resolved autocrlf, extraFiles) and copied per call (#5770): a warm call starts no
+// git process. The resolved autocrlf is part of the key, so the host default and an explicit pin
+// that resolve alike share one build, and 'true' stays a distinct CRLF checkout.
+const fixtureMergeBase = new Map();
 function fixture(t, extraFiles = {}, { autocrlf } = {}) {
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ls-capture-')));
+  const eol = autocrlf === undefined ? hostAutocrlf() : autocrlf;
+  const key = JSON.stringify([eol, extraFiles]);
+  const repo = fromTemplate(key, (dir) => {
+    sh(dir, ['init', '-q']);
+    if (eol) sh(dir, ['config', 'core.autocrlf', eol]);
+    write(dir, X, '# x\n\nline one\nline two\nline three\nline four\nline five\nline six\nline seven\n');
+    for (const [rel, text] of Object.entries(extraFiles)) write(dir, rel, text);
+    sh(dir, ['add', '-A']);
+    sh(dir, ['commit', '-q', '-m', 'base']);
+    for (const rel of [X, ...Object.keys(extraFiles)]) fs.rmSync(path.join(dir, rel));
+    sh(dir, ['checkout', '-q', '--', '.']);
+    fs.mkdirSync(path.join(dir, '.claude-tweaks', 'pipelines', RUN_NAME), { recursive: true });
+    // git needs no sample hooks; dropping them halves what every copy has to copy.
+    fs.rmSync(path.join(dir, '.git', 'hooks'), { recursive: true, force: true });
+    fixtureMergeBase.set(key, sh(dir, ['rev-parse', 'HEAD']).trim());
+  }, { prefix: 'ls-capture-', realpath: true });
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
-  sh(repo, ['init', '-q']);
-  const eol = autocrlf === undefined ? hostAutocrlf(repo) : autocrlf;
-  if (eol) sh(repo, ['config', 'core.autocrlf', eol]);
-  write(repo, X, '# x\n\nline one\nline two\nline three\nline four\nline five\nline six\nline seven\n');
-  for (const [rel, text] of Object.entries(extraFiles)) write(repo, rel, text);
-  sh(repo, ['add', '-A']);
-  sh(repo, ['commit', '-q', '-m', 'base']);
-  for (const rel of [X, ...Object.keys(extraFiles)]) fs.rmSync(path.join(repo, rel));
-  sh(repo, ['checkout', '-q', '--', '.']);
-  const runDir = path.join(repo, '.claude-tweaks', 'pipelines', '2026-11-13T000000-spec-1');
+  const runDir = path.join(repo, '.claude-tweaks', 'pipelines', RUN_NAME);
   fs.mkdirSync(runDir, { recursive: true });
-  return { repo, runDir, mergeBase: sh(repo, ['rev-parse', 'HEAD']).trim() };
+  return { repo, runDir, mergeBase: fixtureMergeBase.get(key) };
 }
 
 const status = (repo, rel) => sh(repo, ['--no-optional-locks', 'status', '--porcelain', '--untracked-files=all', '--', rel]);
@@ -112,7 +134,8 @@ function scenario(t, kind, autocrlf) {
 function buildScenario(t, kind, autocrlf) {
   const f = fixture(t, {}, autocrlf ? { autocrlf } : {});
   const body = read(f.repo, X);
-  const s = { f, kind, joined: kind === 'joined', head: sh(f.repo, ['rev-parse', 'HEAD']).trim() };
+  // The fixture's merge base is its one commit, which is HEAD until a call commits.
+  const s = { f, kind, joined: kind === 'joined', head: f.mergeBase };
   if (kind === 'untracked') {
     s.target = '.claude/skills/y/SKILL.md';
     write(f.repo, s.target, '# y\n\nbrand new\n');

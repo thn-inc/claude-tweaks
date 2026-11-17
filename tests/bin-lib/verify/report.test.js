@@ -127,6 +127,17 @@ test('dirtyFilePaths returns null when git fails (#2987)', () => {
   assert.strictEqual(dirtyFilePaths(throwing), null);
 });
 
+test('dirtyFilePaths parses a handed raw status without asking git, and asks git when none is handed (#5773)', () => {
+  const calls = [];
+  const fake = (...a) => { calls.push(a); return ' M asked.js\0'; };
+  assert.deepStrictEqual(dirtyFilePaths(fake, ' M handed.js\0R  new.js\0old.js\0'), ['handed.js', 'new.js', 'old.js']);
+  assert.deepStrictEqual(calls, []);
+  assert.deepStrictEqual(dirtyFilePaths(fake, ''), [], 'an empty handed status is a clean tree, not a missing one');
+  assert.deepStrictEqual(dirtyFilePaths(fake, null), ['asked.js']);
+  assert.deepStrictEqual(dirtyFilePaths(fake), ['asked.js']);
+  assert.strictEqual(calls.length, 2);
+});
+
 test('dirtyFilePaths parses -z porcelain output, one record per changed/untracked file (#2987)', () => {
   const fake = () => ' M a.js\0?? dir/b.js\0';
   assert.deepStrictEqual(dirtyFilePaths(fake), ['a.js', 'dir/b.js']);

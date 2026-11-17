@@ -12,7 +12,7 @@ const { shellQuote } = require('./helpers/shell-quote');
 const { STUB_SKIP } = require('./helpers/path-stub');
 const { fakeGh } = require('./helpers/fake-gh');
 const { readText } = require('./helpers/read-skill');
-const { gitRepo, gitRepoWithCommit, GH_TIMEOUT_ENV, unpinnedRepoWithOrigin } = require('./helpers/pre-tool-use');
+const { gitRepo, gitRepoWithCommit, gitRepoOnLocalMain, mainAndWorktree, GH_TIMEOUT_ENV, unpinnedRepoWithOrigin } = require('./helpers/pre-tool-use');
 const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
 // A hook event's context always carries env (hooks.js builds it); a hand-built one passes it explicitly.
 const BASE_ENV = Object.freeze({ ...process.env });
@@ -50,11 +50,6 @@ function mkRunAt(project, name, worktree) {
 // have no shared main-checkout root, so they now read as two different
 // projects — which is exactly the OUT-of-project scenario, not the
 // wrong-checkout-of-THIS-project scenario most of these tests intend.
-function mainAndWorktree() {
-  const main = gitRepoWithCommit();
-  const wt = linkedWorktreeOf(main);
-  return { main, wt };
-}
 const bashInput = (command, cwd) => ({ tool_name: 'Bash', tool_input: { command }, cwd });
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -253,8 +248,7 @@ test('two live runs: commit in the OLDER run\'s own worktree is allowed even whe
 
 test('three concurrent live runs: a commit in THIS run\'s own assigned worktree never logs wd-ambiguous, even with multiple unrelated sibling worktrees registered as live candidates (#1329)', () => {
   const project = tmpProject();
-  const main = gitRepoWithCommit();
-  const ownWt = linkedWorktreeOf(main);
+  const { main, wt: ownWt } = mainAndWorktree();
   const siblingWtA = linkedWorktreeOf(main);
   const siblingWtB = linkedWorktreeOf(main);
   // Two unrelated concurrent sibling runs registered BEFORE the resolved
@@ -284,8 +278,7 @@ test('two live runs: commit in a THIRD repo matching neither worktree is still d
   // project (still in-scope for this gate), distinct from thirdRepo being a
   // genuinely unrelated repo (which #861 now allows — covered by its own
   // test above).
-  const main = gitRepoWithCommit();
-  const olderWt = linkedWorktreeOf(main);
+  const { main, wt: olderWt } = mainAndWorktree();
   const newerWt = linkedWorktreeOf(main);
   const thirdRepo = main;
   mkRunAt(project, '2026-07-01T090000-spec-1', olderWt);
@@ -1181,8 +1174,7 @@ test('hasMaterializeCommit: AC3 — an unresolvable integration branch falls bac
   // strictly non-regressive, and it forfeits nothing #1674 set out to fix:
   // the false positive #1674 targets needs a materialize commit merged INTO
   // an integration branch, which cannot exist when none does.
-  const main = gitRepoWithCommit(); // no policy.yml committed
-  const wt = linkedWorktreeOf(main);
+  const { wt } = mainAndWorktree(); // no policy.yml committed
   commitMaterializeFile(wt, MATERIALIZE_RUN_ID);
   const runDir = runDirForId(MATERIALIZE_RUN_ID);
   assert.strictEqual(pre.hasMaterializeCommit(wt, runDir), true,
@@ -1197,8 +1189,7 @@ test('hasMaterializeCommit: the unresolvable-integration fallback still RUNS the
   // caught it. This is the missing half: same unresolvable-integration repo,
   // but NO materialize commit anywhere. An unconditional arm returns true here;
   // a real pathspec check returns false.
-  const main = gitRepoWithCommit(); // no policy.yml, no origin -> integration unresolvable
-  const wt = linkedWorktreeOf(main);
+  const { wt } = mainAndWorktree(); // no policy.yml, no origin -> integration unresolvable
   const runDir = runDirForId(MATERIALIZE_RUN_ID); // nothing ever committed for it
   assert.strictEqual(pre.hasMaterializeCommit(wt, runDir), false,
     'the fallback must still be a real pathspec query — arming unconditionally would deny every covered call in any no-origin repo');
@@ -1211,8 +1202,7 @@ test('hasMaterializeCommit: a resolvable-but-nonexistent integration-branch poli
   // guard, the blanket `if (failure) return false` collapsed that into "gate
   // not armed" — disarming IL-131 on a config typo. Found by both agents of
   // the review's lens-3c pair.
-  const main = gitRepoWithCommit();
-  const wt = linkedWorktreeOf(main);
+  const { wt } = mainAndWorktree();
   // The policy file must live in the WORKTREE, not the main checkout:
   // hasMaterializeCommit is called with the worktree root, linkedWorktreeOf
   // places that outside the main checkout, and readIntegrationBranch walks up
@@ -1237,18 +1227,13 @@ test('hasMaterializeCommit: a resolvable-but-nonexistent integration-branch poli
 // pre-#1688 unbounded fallback armed the gate against history the worktree
 // never made.
 //
-// The branch is renamed explicitly to 'main' rather than trusting the host's
+// `gitRepoOnLocalMain` (tests/helpers/pre-tool-use.js) renames the branch
+// explicitly to 'main' rather than trusting the host's
 // `init.defaultBranch` (this machine's own default is 'master') -- the probe
 // itself tries both 'main' and 'master', but the test must be deterministic
 // regardless of which default a given machine or CI runner ships.
-function repoOnLocalMain() {
-  const dir = gitRepoWithCommit();
-  execFileSync('git', ['-C', dir, 'branch', '-M', 'main']);
-  return dir;
-}
-
 test('hasMaterializeCommit: #1688 AC1 — a no-remote repo\'s inherited materialize commit is NOT armed once a local main/master probe can bound the range', () => {
-  const main = repoOnLocalMain();
+  const main = gitRepoOnLocalMain();
   commitMaterializeFile(main, MATERIALIZE_RUN_ID); // lands on `main` itself -- inherited, not the worktree's own
   const wt = linkedWorktreeOf(main); // branches off main's HEAD, which already includes the materialize commit
   const runDir = runDirForId(MATERIALIZE_RUN_ID);
@@ -1257,8 +1242,7 @@ test('hasMaterializeCommit: #1688 AC1 — a no-remote repo\'s inherited material
 });
 
 test('hasMaterializeCommit: #1688 AC2 regression guard — the local default-branch probe still arms the gate for the worktree\'s own unmerged commit', () => {
-  const main = repoOnLocalMain();
-  const wt = linkedWorktreeOf(main);
+  const { wt } = mainAndWorktree({ localMain: true });
   commitMaterializeFile(wt, MATERIALIZE_RUN_ID); // on the worktree's own branch, never merged into main
   const runDir = runDirForId(MATERIALIZE_RUN_ID);
   assert.strictEqual(pre.hasMaterializeCommit(wt, runDir), true,
@@ -1327,16 +1311,14 @@ function commitHeaderMove(repo, fromRel, toRel) {
 }
 
 test('AC1.1 hasMaterializeCommit: a commit touching only the archived flat header counts', () => {
-  const main = repoOnLocalMain();
-  const wt = linkedWorktreeOf(main);
+  const { wt } = mainAndWorktree({ localMain: true });
   commitHeaderAt(wt, archivedHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'));
   assert.strictEqual(pre.hasMaterializeCommit(wt, runDirForId(MATERIALIZE_RUN_ID)), true,
     'a header committed only at the archived flat path must read as materialized');
 });
 
 test('AC2.1 hasMaterializeCommit: a commit touching only archive/{id}/spec-{N}/work/{N}-spec.md counts, for the parent and the per-spec run dir', () => {
-  const main = repoOnLocalMain();
-  const wt = linkedWorktreeOf(main);
+  const { wt } = mainAndWorktree({ localMain: true });
   commitHeaderAt(wt, archivedHeaderRel(MATERIALIZE_RUN_ID, 'spec-4/work/4-spec.md'));
   const parent = runDirForId(MATERIALIZE_RUN_ID);
   assert.strictEqual(pre.hasMaterializeCommit(wt, parent), true, 'the parent run dir reads the archived spec-* header');
@@ -1350,7 +1332,7 @@ test('AC3.1 hasMaterializeCommit: branch whose last commit git-mv\'d the header 
   // This fixture alone does not prove the archived pathspecs: a `git mv` commit
   // deletes the live path, so it already matches through the live pathspec's
   // delete side. The archived-only variants (AC1.1, AC2.1) carry that proof.
-  const main = repoOnLocalMain();
+  const main = gitRepoOnLocalMain();
   commitHeaderAt(main, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'));
   const wt = linkedWorktreeOf(main);
   commitHeaderMove(wt, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'), archivedHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'));
@@ -1359,16 +1341,14 @@ test('AC3.1 hasMaterializeCommit: branch whose last commit git-mv\'d the header 
 });
 
 test('AC4.1 (a) never-materialized run returns false', () => {
-  const main = repoOnLocalMain();
-  const wt = linkedWorktreeOf(main);
+  const { wt } = mainAndWorktree({ localMain: true });
   commitHeaderAt(wt, 'src/unrelated.txt', 'unrelated work'); // a non-empty range that touches neither header path
   assert.strictEqual(pre.hasMaterializeCommit(wt, runDirForId(MATERIALIZE_RUN_ID)), false,
     'no commit at the live or the archived path: not materialized');
 });
 
 test('AC4.2 (b) run A\'s archived header reachable from the integration branch does not arm run B', () => {
-  const main = repoOnLocalMain();
-  const wtA = linkedWorktreeOf(main);
+  const { main, wt: wtA } = mainAndWorktree({ localMain: true });
   commitHeaderAt(wtA, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'));
   commitHeaderMove(wtA, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'), archivedHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'));
   execFileSync('git', ['-C', main, 'merge', '--no-ff', currentBranch(wtA), '-m', 'Merge run A', '-q']);
@@ -1381,8 +1361,7 @@ test('AC4.2 (b) run A\'s archived header reachable from the integration branch d
 });
 
 test('AC4.3 (c) run A\'s own branch with materialize + move commits returns true', () => {
-  const main = repoOnLocalMain();
-  const wtA = linkedWorktreeOf(main);
+  const { wt: wtA } = mainAndWorktree({ localMain: true });
   commitHeaderAt(wtA, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'));
   commitHeaderMove(wtA, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'), archivedHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'));
   assert.strictEqual(pre.hasMaterializeCommit(wtA, runDirForId(MATERIALIZE_RUN_ID)), true,

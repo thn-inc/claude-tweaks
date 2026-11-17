@@ -111,6 +111,11 @@ function isControlModeOn(value) {
 
 const controlModeOff = () => ({ controlMode: false, extraCategories: [], pathGlobs: {}, globsInvalid: false });
 
+// The `risk-categories` value (a list, or a comma-joined string) as a list of slugs.
+function extraCategoriesOf(value) {
+  return Array.isArray(value) ? value : String(value).split(',').map((slug) => slug.trim()).filter(Boolean);
+}
+
 // The risk-flag policy (#4618): repoRoot, { readFile } -> { controlMode, extraCategories,
 // pathGlobs, globsInvalid }, the extras bin/lib/issues/risk-flag-classify.js and Check G
 // take. `.claude-tweaks/policy.yml` found through locatePolicyFile (repoRoot's own, else a linked worktree's main checkout's; a non-string repoRoot throws a TypeError); an absent file (ENOENT/ENOTDIR) is
@@ -133,8 +138,7 @@ function readRiskPolicy(repoRoot, deps) {
   const mode = resolvePolicyKeys(['control-mode'], { policyRaw })['control-mode'];
   if (!isControlModeOn(mode.value)) return controlModeOff();
   const resolved = resolvePolicyKeys(['risk-categories', 'risk-path-globs'], { policyRaw });
-  const categories = resolved['risk-categories'].value;
-  const extraCategories = Array.isArray(categories) ? categories : String(categories).split(',').map((slug) => slug.trim()).filter(Boolean);
+  const extraCategories = extraCategoriesOf(resolved['risk-categories'].value);
   const globs = resolved['risk-path-globs'];
   const globsInvalid = globs.invalid === true;
   return { controlMode: true, extraCategories, pathGlobs: globsInvalid || globs.value === null ? {} : globs.value, globsInvalid };
@@ -237,5 +241,5 @@ function resolvePortServices(repoRoot) {
 
 module.exports = {
   isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, readCommitScope, resolvePortServices, readGhTimeoutMs,
-  readGitTimeoutMs, readEfficiencyCeilings, isControlModeOn, readRiskPolicy, readChangelogMaxReleases,
+  readGitTimeoutMs, readEfficiencyCeilings, isControlModeOn, readRiskPolicy, extraCategoriesOf, readChangelogMaxReleases,
 };
