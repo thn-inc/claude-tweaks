@@ -127,14 +127,18 @@ function installGhWrapper(prsJson, issueStates = null) {
 // feature tip sha. `commitEnv` overrides the feature commit's environment.
 function mergeFeatureBranch(root, branch, wtPrefix, commitEnv) {
   const wt = fs.mkdtempSync(path.join(os.tmpdir(), wtPrefix));
-  git(root, 'worktree', 'add', '-q', wt, '-b', branch);
-  fs.writeFileSync(path.join(wt, 'feature.txt'), 'feature\n');
-  execFileSync('git', ['add', 'feature.txt'], { cwd: wt, encoding: 'utf8' });
-  execFileSync('git', ['commit', '-q', '-m', 'feature work'], { cwd: wt, encoding: 'utf8', ...(commitEnv ? { env: commitEnv } : {}) });
-  const featureSha = execFileSync('git', ['rev-parse', branch], { cwd: root, encoding: 'utf8' }).trim();
-  git(root, 'merge', '-q', '--ff-only', branch); // --ff-only overrides a global merge.ff=false
-  git(root, 'worktree', 'remove', '--force', wt);
-  return featureSha;
+  try {
+    git(root, 'worktree', 'add', '-q', wt, '-b', branch);
+    fs.writeFileSync(path.join(wt, 'feature.txt'), 'feature\n');
+    execFileSync('git', ['add', 'feature.txt'], { cwd: wt, encoding: 'utf8' });
+    execFileSync('git', ['commit', '-q', '-m', 'feature work'], { cwd: wt, encoding: 'utf8', ...(commitEnv ? { env: commitEnv } : {}) });
+    const featureSha = execFileSync('git', ['rev-parse', branch], { cwd: root, encoding: 'utf8' }).trim();
+    git(root, 'merge', '-q', '--ff-only', branch); // --ff-only overrides a global merge.ff=false
+    git(root, 'worktree', 'remove', '--force', wt);
+    return featureSha;
+  } finally {
+    fs.rmSync(wt, { recursive: true, force: true }); // a no-op once `worktree remove` took it
+  }
 }
 
 // Template key -> the feature sha its build recorded, so a copy needs no rev-parse.
@@ -186,8 +190,12 @@ function mergedFeatureBranchRepo(branch) {
     const loose = (name) => {
       try { return fs.readFileSync(path.join(dir, '.git', 'refs', 'heads', name), 'utf8').trim(); } catch { return null; }
     };
-    if (loose(MERGED_TEMPLATE_BRANCH) !== sha || loose('main') !== sha) {
-      throw new Error('mergedFeatureBranchRepo: the template needs loose refs and a fast-forward merge, so a copy can rename the branch');
+    // The reflogs renameLooseBranch moves must exist too: a global core.logAllRefUpdates=false
+    // writes none, and the failure belongs here (the build cleans up after itself), not in a copy.
+    const reflogs = ['logs/HEAD', 'logs/refs/heads/main', `logs/refs/heads/${MERGED_TEMPLATE_BRANCH}`];
+    if (loose(MERGED_TEMPLATE_BRANCH) !== sha || loose('main') !== sha
+      || reflogs.some((log) => !fs.existsSync(path.join(dir, '.git', log)))) {
+      throw new Error('mergedFeatureBranchRepo: the template needs loose refs, their reflogs and a fast-forward merge, so a copy can rename the branch');
     }
   }, { prefix: 'archive-merged-', realpath: true });
   renameLooseBranch(root, MERGED_TEMPLATE_BRANCH, branch);

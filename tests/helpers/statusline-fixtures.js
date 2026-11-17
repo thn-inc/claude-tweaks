@@ -120,9 +120,10 @@ function worktreeShapes() {
   // :.gitmodules`, `git diff` or `status` in main-repo).
   const gitmodules = path.join(main, '.gitmodules');
   const text = fs.readFileSync(gitmodules, 'utf8');
-  if (shapesInnerUrl && text.includes(shapesInnerUrl)) {
-    fs.writeFileSync(gitmodules, text.split(shapesInnerUrl).join(fwd(path.join(base, 'inner-repo'))));
+  if (!shapesInnerUrl || !text.includes(shapesInnerUrl)) {
+    throw new Error(`worktreeShapes: .gitmodules does not name the template's inner-repo (${shapesInnerUrl}), so a copy would keep pointing at it`);
   }
+  fs.writeFileSync(gitmodules, text.split(shapesInnerUrl).join(fwd(path.join(base, 'inner-repo'))));
   const wt = path.join(base, 'abs-wt');
   const relWt = path.join(base, 'rel-wt');
   const linkPath = path.join(base, 'link-wt');
