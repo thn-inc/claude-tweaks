@@ -15,8 +15,12 @@ const path = require('path');
 
 function readGitCalls(dir) {
   const out = [];
-  for (const name of fs.readdirSync(dir).filter((n) => n.endsWith('.jsonl')).sort()) {
-    const events = fs.readFileSync(path.join(dir, name), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  for (const name of fs.readdirSync(dir).filter((n) => n.endsWith('.jsonl')).sort((a, b) => parseInt(a, 10) - parseInt(b, 10))) {
+    const events = [];
+    for (const line of fs.readFileSync(path.join(dir, name), 'utf8').split('\n')) {
+      if (!line) continue;
+      try { events.push(JSON.parse(line)); } catch { /* a line cut short by a killed process */ }
+    }
     const first = events[0] && events[0].kind === 'argv' ? events[0] : null;
     out.push({
       pid: Number(name.slice(0, -'.jsonl'.length)),
