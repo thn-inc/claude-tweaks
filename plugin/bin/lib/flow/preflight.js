@@ -21,13 +21,13 @@ const { computeDerivedDefaults } = require('../policy-derived-defaults');
 const { resolveTarget } = require('../stage-item/write');
 const { classifyDecisions } = require('../log-decision/claim-log');
 const { splitNul } = require('../git-z');
-const { toPosix } = require('../shared-primitives');
+const { toPosix, execTimeoutMsFor } = require('../shared-primitives');
 const { ghOptions } = require('../repo-resolve');
 const { archivedRunDir, listHeaderDirs } = require('../run-header');
 
 const BIN = path.join(__dirname, '..', '..');
 const VERIFY_JS = path.join(BIN, 'verify.js');
-const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024, timeout: 30000 };
+const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024 };
 
 // Outer per-probe bound, mirroring bin/lib/wrap-up/pack.js's own
 // withTimeout/PROBE_TIMEOUT_MS (#1930): a hung `gh`/`node verify.js` call
@@ -67,8 +67,8 @@ function defaultDeps(cwd) {
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
     git: (args, opts = {}) => execFileSync('git', args, { cwd: opts.cwd || cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
-    execFile: (cmd, args, opts = {}) => execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...EXEC_OPTS, ...opts, windowsHide: true }),
-    execFileAsync: async (cmd, args, opts = {}) => (await execFileAsync(cmd, args, { cwd, encoding: 'utf8', ...EXEC_OPTS, ...opts, windowsHide: true })).stdout,
+    execFile: (cmd, args, opts = {}) => execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...EXEC_OPTS, timeout: execTimeoutMsFor(cmd), ...opts, windowsHide: true }),
+    execFileAsync: async (cmd, args, opts = {}) => (await execFileAsync(cmd, args, { cwd, encoding: 'utf8', ...EXEC_OPTS, timeout: execTimeoutMsFor(cmd), ...opts, windowsHide: true })).stdout,
     checkResumeFreshness,
     checkStagedInventory,
     readRunState,
