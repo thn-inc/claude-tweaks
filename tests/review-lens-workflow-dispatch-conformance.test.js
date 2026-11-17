@@ -43,12 +43,16 @@ const POINTER_NEEDLES = [
   [/only when[^.]*`workflow`/, 'pointer must read the sub-file only when the key resolves `workflow`'],
 ];
 
+// Final review m4: the pointer opens the blockquote whose Task dispatch prose it overrides.
+const PARALLEL_ANCHOR = '> **Parallel execution (conditional):**';
+
 function checkPointer(text) {
   const paragraph = pointerParagraph(text);
   assert.ok(paragraph !== null, 'pointer paragraph missing');
   const bytes = Buffer.byteLength(paragraph);
   assert.ok(bytes <= POINTER_MAX_BYTES, `pointer paragraph is ${bytes} bytes, over ${POINTER_MAX_BYTES}`);
   for (const [needle, message] of POINTER_NEEDLES) assert.match(paragraph, needle, message);
+  assert.ok(text.includes(`${paragraph}\n>\n${PARALLEL_ANCHOR}`), 'pointer must sit immediately before the Parallel execution paragraph');
 }
 
 // ---- the sub-file ----
@@ -95,8 +99,16 @@ const LAUNCH_ALONE = 'Make one `Workflow` call, alone in its message';
 const NEXT_MESSAGE = 'in the next message, start one timer';
 const WITH_3H = 'together with it dispatch lens 3h';
 const THEN_SCOPE = 'lenses 3a–3g only under conditions 3–5';
+// Final review: the dontAsk allow rule (m1), the settle exits (m3) and the re-dispatch's own step label (m5).
+const ALLOW_RULE = '`Workflow(claude-tweaks:review-lens-fanout)`';
+const CONDITION_5_SCOPE = 'the first (or, standalone, the only) `settle-lens-replies` call exits 2 on the run file, or exits 3 again';
+const EXIT_3 = 're-resolve `$PIPELINE_RUN_DIR` per `_shared/pipeline-run-dir.md` and re-run that call once';
+const REDISPATCH_STEP = '--step "Step 3 lens dispatch (reviewer re-dispatch)"';
 
 function checkSubFile(text) {
+  assert.ok(sectionOf(text, '## Availability').includes(ALLOW_RULE), 'Availability must name the dontAsk allow rule');
+  assert.ok(sectionOf(text, '## Settle').includes(EXIT_3), 'Settle must handle a settle call\'s exit 3');
+  assert.ok(sectionOf(text, '## `needsSession`').includes(REDISPATCH_STEP), 'needsSession must log the re-dispatch under its own step label');
   const start = sectionOf(text, '## Start');
   assert.ok(start.includes(TIMER_COMMAND), 'Start must start the 1800000 ms setTimeout timer');
   assert.match(start, /`run_in_background` Bash call/, 'Start must run the timer as a run_in_background Bash call');
@@ -110,6 +122,7 @@ function checkSubFile(text) {
   assert.ok(fallback.includes(AFTER_LAUNCH_SCOPE), 'Fallback must dispatch only 3a–3g after launch');
   assert.ok(fallback.includes(THEN_SCOPE), 'Fallback\'s Then-dispatch sentence must scope 3a–3g to conditions 3–5');
   for (const label of LABELS) assert.match(fallback, labelItem(label), `fallback condition missing: ${label}`);
+  assert.ok(fallback.includes(CONDITION_5_SCOPE), 'condition 5 must scope exit 2 to the first settle call and take a repeated exit 3');
   assert.ok(fallback.includes(SKIP_LINE), 'SKIP line missing from the Fallback section');
   assert.deepEqual(missingFacts(text), [], 'sub-file facts missing');
   const confirmed = text.indexOf(SETTLE_CONFIRMED);
@@ -176,6 +189,16 @@ test('go-red: a pointer without each needle fails with that needle\'s message', 
     assert.notEqual(mutated, live, `needle not found in the pointer: ${message}`);
     assert.throws(() => checkPointer(mutated), { message: new RegExp(esc(message)) });
   }
+});
+
+test('go-red: the pointer moved back after the Task dispatch prose fails', () => {
+  const live = read(LENS_DISPATCH);
+  const paragraph = pointerParagraph(live);
+  const placed = `${paragraph}\n>\n${PARALLEL_ANCHOR}`;
+  assert.ok(live.includes(placed), 'pointer not found before the Parallel execution paragraph');
+  const moved = live.replace(placed, PARALLEL_ANCHOR).replace('> **Output template (each agent must follow exactly):**', `${paragraph}\n>\n> **Output template (each agent must follow exactly):**`);
+  assert.notEqual(moved, live);
+  assert.throws(() => checkPointer(moved), { message: /pointer must sit immediately before the Parallel execution paragraph/ });
 });
 
 // ---- go-red controls: the sub-file ----
@@ -247,6 +270,35 @@ test('go-red: each launch-order and stop pin goes red with its own message', () 
   for (const [literal, replacement, message] of cases) {
     const mutated = live.split(literal).join(replacement);
     assert.notEqual(mutated, live, `literal not found: ${literal}`);
+    assert.throws(() => checkSubFile(mutated), { message });
+  }
+});
+
+test('go-red: each final-review pin (allow rule, condition 5, exit 3, re-dispatch label) goes red with its own message', () => {
+  const live = read(SUB_FILE);
+  const cases = [
+    [ALLOW_RULE, 'an allow rule', /Availability must name the dontAsk allow rule/],
+    [CONDITION_5_SCOPE, 'the first `settle-lens-replies` call (`--only confirmed`) exits 2 on the run file', /condition 5 must scope exit 2 to the first settle call/],
+    [EXIT_3, 're-run that call once', /Settle must handle a settle call's exit 3/],
+    [REDISPATCH_STEP, '--step "Step 3 lens dispatch (workflow fallback)"', /needsSession must log the re-dispatch under its own step label/],
+  ];
+  for (const [literal, replacement, message] of cases) {
+    const mutated = live.split(literal).join(replacement);
+    assert.notEqual(mutated, live, `literal not found: ${literal}`);
+    assert.throws(() => checkSubFile(mutated), { message });
+  }
+});
+
+test('go-red: a final-review pin moved out of its section fails', () => {
+  const live = read(SUB_FILE);
+  const cases = [
+    [ALLOW_RULE, /Availability must name the dontAsk allow rule/],
+    [EXIT_3, /Settle must handle a settle call's exit 3/],
+    [REDISPATCH_STEP, /needsSession must log the re-dispatch under its own step label/],
+  ];
+  for (const [literal, message] of cases) {
+    assert.ok(live.includes(literal), `literal not found: ${literal}`);
+    const mutated = `${live.split(literal).join('moved')}\n## Elsewhere\n\n${literal}\n`;
     assert.throws(() => checkSubFile(mutated), { message });
   }
 });
