@@ -37,6 +37,7 @@ Real-input probe (done at plan time, #5689 live): `timelineItems(itemTypes:[LABE
 ### Task 1: Fetch the latest shaping-or-grant time in the linked-PR batch
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/issues/record-dependencies.js:329-331` (`buildLinkedPRQuery`, plus a `#5722` paragraph in the comment block above it)
@@ -127,7 +128,13 @@ Expected: FAIL after Step 1 — `downgradedAfterMerge` is not a function; the AC
 Run: `node --test tests/bin-lib/issues/shipped-candidate.test.js`
 Expected: PASS, every existing #4432 test still green.
 
-- [ ] **Step 5: Go-red proof (AC4.1)** — with the scratch-copy method of Task 1 Step 5, restore the pre-task `shipped-candidate.js` but keep a stub export `downgradedAfterMerge` returning `false` so the file loads; run the suite; the `AC1.1` cases must fail; restore. Quote the failing names.
+- [ ] **Step 5: Go-red proof (AC4.1)** — with the scratch-copy method of Task 1 Step 5, restore the pre-task `shipped-candidate.js` but keep a stub export `downgradedAfterMerge` returning `false` so the file loads; run the suite; the `AC1.1` cases must fail; restore. Then the unchanged-behaviour tests, each against its named mutant of the new code (spec's Plan Review Clarifications, AC4 Reading A), one mutant at a time, same scratch-copy method:
+  - `AC2.1 … still strong` — mutant M1: downgrade whenever `lastShapedAt` is truthy (drop the `mergedAtMs <` comparison).
+  - `AC3.1: a missing or unparseable shaping time …` — mutant M2: replace the falsy→`NaN` guard and `Date` parse with `Date.parse(x) || 0` style coercion so an unparseable value compares as an instant (or drop the NaN guard so `new Date(null)` is epoch 0); the plain-mention half must also fail under a mutant that adds `'predates-shaping'` unconditionally.
+  - `AC3.1: a shaping time at the exact merge instant …` — mutant M3: `<=` in place of `<`.
+  - `#5722: a mention with no mergedAt is not downgraded …` — mutant M4: treat a missing `mergedAt` as epoch 0 (`new Date(mention.mergedAt || 0)`).
+  - `#5722: downgradedAfterMerge is true only for a downgraded result` — mutant M5: `downgradedAfterMerge` returns `predatesClaimRelease(result)` only.
+  Quote each test name with the mutant that turned it red.
 
 - [ ] **Step 6: Commit**
 
@@ -137,6 +144,7 @@ Commit: `Rate a shipped mention weak when the record was shaped or granted after
 ### Task 3: Wire the shaping time through the queue pull, its fence twin and the dispatch prose
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/dispatch/queue-pull.js:1129-1186` (`runShipped`: both `classifyShipped` calls pass `lastShapedAt: entry.lastShapedAt`; probe skip and failed-probe Warning use `downgradedAfterMerge`; kept line)
@@ -177,7 +185,11 @@ Expected: FAIL after Step 1 — the four `#5722` queue-pull tests (9010 excluded
 Run: `node --test tests/bin-lib/dispatch/queue-pull.test.js tests/dispatch-shipped-candidate-prose.test.js tests/bin-lib/dispatch/queue-pull-oracle-checks.test.js tests/bin-lib/dispatch/queue-pull-parity-ac1.test.js tests/bin-lib/dispatch/queue-pull-parity-ac4.test.js tests/bin-lib/dispatch/queue-pull-parity-ac7.test.js`
 Expected: PASS, 0 fail (oracle tests may skip where `oracleSkip()` says so — report skips).
 
-- [ ] **Step 5: Go-red proof (AC4.1)** — scratch-copy revert of `queue-pull.js`'s two `lastShapedAt:` arguments only; the `AC1.1 (#5722)` queue-pull test must fail; restore. Quote the failing name.
+- [ ] **Step 5: Go-red proof (AC4.1)** — scratch-copy revert of `queue-pull.js`'s two `lastShapedAt:` arguments only; the `AC1.1 (#5722)` queue-pull test and the `#5722 … failed probed PR prints no Warning` test must fail; restore. Then the unchanged-behaviour tests, each against its named mutant (spec's Plan Review Clarifications, AC4 Reading A), one at a time:
+  - `AC2.1 (#5722) shipped: a shaping time before the merge leaves 9010 excluded …` — mutant M6: the second pass keeps any candidate whose linked entry carries a `lastShapedAt` (skip `classifyShipped` when `entry.lastShapedAt` is set).
+  - `#5722 shipped: release and shaping both after the merge print the claim-release kept line` — mutant M7: test `predatesShaping` before `predatesClaimRelease` when choosing the kept line (the shaping line wins).
+  - the prose test — mutant M8: drop the new `#5722` sentence from SKILL.md.
+  Quote each test name with the mutant that turned it red.
 
 - [ ] **Step 6: Commit**
 
@@ -192,6 +204,7 @@ Commit: `Keep a record shaped or granted after the mentioning PR merged in the q
 | Deliverable 2 / AC2.1 | Task 2 (unit strong), Task 3 (still stages a Close proposal) |
 | Deliverable 3 | Task 3 (SKILL.md False-positive posture) |
 | AC3.1 | Task 1 (unparseable label time skipped), Task 2 (missing/unparseable/exact instant) |
-| AC4.1 | Step 5 of each task |
+| AC4.1 | Step 5 of each task — the reverted change for the downgrade tests, a named mutant (M1-M8) for each unchanged-behaviour test (AC4 Reading A, decided by the user at plan review) |
+| Key Files departure | The spec lists `plugin/bin/lib/dispatch/shipped-releases.js` as modified; the shaping time instead rides the linked-PR batch (the spec's per-record-call Gotcha), so the files actually modified for it are `plugin/bin/lib/issues/record-dependencies.js`, `plugin/bin/lib/issues/linked-prs.js` and `plugin/bin/resolve-linked-prs.js` (Task 1) — in scope, not scope creep; `shipped-releases.js` is reviewed in Task 3 and changed only if its header claims to be the only downgrade source |
 | Gotcha: per-record call | none needed — Task 1 rides the batch; real probe recorded above |
 | Gotcha: `dispatch-queue-exclusion-addition` | not applicable — no new exclusion reason; `shipped` keeps its registration |
