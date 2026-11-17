@@ -523,19 +523,263 @@ The selectors in the record's Current State act on these rows:
 
 ## Inputs
 
-<!-- filled by Task 4 -->
+The function reads the facts below and nothing else. Each value comes from a closed set or is an integer, and each is parsed by the function named in its row before the function sees it. Rows 1-9 are facts about the record or the run. Rows 10-12 are settings, chosen by the project or the caller: an unset setting takes its documented default, and the function reads that default. A fact that is absent, unreadable or outside its vocabulary is read at its most cautious value, the one for which the function returns the most steps, so none of the three gives a graph with fewer steps than the most cautious present value gives.
+
+| # | Input | Source today and its parser | First known | Values | Absent, unreadable or outside the vocabulary | Most cautious value | Read by |
+|---|---|---|---|---|---|---|---|
+| 1 | Type | `type:*` label or native Issue Type; `typeOf` (`plugin/bin/lib/issues/record-vocabulary.js`) | before the run | `bug`, `feature`, `task` | `null`. No rule reads type, so the graph is the same | any: every value gives the same graph | no rule |
+| 2 | Size | `size:*` label, `effort:*` as its pre-rename fallback; `parseRecordFacets` (same file) | before the run | `low`, `medium`, `high` | `null`: `parseRecordFacets` ignores a value outside its vocabulary, so `size:small` reads as no size. No step rule reads size, so the graph is the same | any | no step rule; the modes of `plan` and `review-code` (Modes, below) |
+| 3 | Risk | `risk:*` label; `parseRecordFacets` | before the run | `low`, `medium`, `high` | `null`, as for size | any | no step rule; the mode of `review-code` |
+| 4 | Surface | the `Surface:` line in the body's first block; `liftMetadata` (`plugin/bin/lib/issues/materialize-format.js`), case-folded as `normalizeSurface` (`plugin/bin/lib/skill-gate/index.js`) does, legacy `frontend` read as `web` | before the run | `web`, `mobile`, `desktop`, `terminal`, `backend`, `infra` | each rule that reads surface takes its own most cautious value: no skill-load gate `skip` is honoured (rules R5, R7-R10) | per rule: any value but `backend` or `infra` for `design-pre-build`; `web`, `mobile` or `desktop` for `visual-review`; `terminal` for `design-gate`, `design-review`, `polish` and `creative-survey`, a declared-only track the wrapper never sniffs (`layer3Applies`, `plugin/bin/lib/design-detect/index.js`) | R5, R7-R10; A7-A9 |
+| 5 | Ceremony | the `ceremony:*` label (`parseRecordFacets`), else the Manifesto's `ceremony-check` verdict for an unlabeled record (`flow/manifesto.md` Ceremony profile computation); over a multi-record run, `fast-lane` only when every record is (`computeLevers`, `plugin/bin/lib/flow/manifesto-write.js`) | before the run | `fast-lane`, `standard` | `standard`. A missing verdict stops the run at the Manifesto today, before the first evaluation, and still does | `standard` | R2, R3, R9 |
+| 6 | Risk flags | the `Risk-flags:` preamble line; `parseRiskFlags` (`plugin/bin/lib/issues/record-risk-flags.js`) | before the run | `none`, or a set of `migrations`, `auth`, `public-contract`, `irreversible-side-effect` and the policy's `risk-categories` | absent: unclassified, no flags; malformed or an unknown slug: all four built-ins flagged (`parseRiskFlags`). No step rule reads it, so the graph is the same | any | no step rule; the mode of `plan`, and plan-audit Check G inside `plan` and `plan-audit` |
+| 7 | Changed paths | `git diff --numstat -z` against the integration branch, parsed by `parseNumstatZ`; classes in the table below | after the build's tasks; re-read at each later point | a set of the classes below | every class present | `frontend` present | R6, R8; A7 |
+| 8 | Task count | `plan-audit.js --count-tasks` (`countTasks`, `plugin/bin/lib/plan-audit/parser.js`), which prints `{tasks, batched}` | after the plan | `tasks` a non-negative integer, `batched` a boolean; threshold `tasks === 1` | `tasks` not a non-negative integer, `batched` not a boolean, or the call fails: absent, and `whole-branch-review` stays in | any value but `tasks: 1` with `batched: false` | R3 |
+| 9 | Skill-load gate verdict | `skill-gate.js` (`decide`, `plugin/bin/lib/skill-gate/index.js`; #5605, process-efficiency unit 4.2), one verdict per gated step: `design-pre-build`, `journeys`, `design-gate`, `visual-review`, `design-review`, `polish`, `creative-survey` | `design-pre-build`'s before the run, since its gate reads no diff; each other one immediately before its step | `proceed`, `skip`; a reason starting `cannot tell:` is a `proceed` | `proceed`, as `_shared/skill-load-gate.md`'s Result handling reads exit 2, exit 3 or no JSON | `proceed` | R4, R5, R7-R10 |
+| 10 | Design integration (setting) | CLAUDE.md's `## Design integration` `design-integration:` key; `readDesignIntegrationFlag` (`plugin/bin/lib/design-detect/index.js`) | before the run | `enabled`, `plugin-only`, `disabled` | a setting: unset or unrecognised is "not configured", which `layer1` in the same file reads as off | not applicable: a setting | R5, R7, R9, R10 |
+| 11 | Survey policy values (setting) | `creative-survey`, `depth-survey` (`plugin/bin/lib/policy-schema.js`), through `resolve-policy.js` | before the run | `off`, or unset | a setting: unset is on | not applicable | R10, R11 |
+| 12 | Run flags (setting) | `/claude-tweaks:flow`'s `no-stories`, `no-polish`, `no-creative`, `no-deepen` (`flow/SKILL.md` Arguments) | before the run | set, unset | a setting: unset | not applicable | R6, R9, R10, R11 |
+
+The step-list argument of `/claude-tweaks:flow` is not an input. It names which part of the graph one invocation walks, as `/claude-tweaks:dispatch`'s two calls do, and `## Who walks the graph` owns it.
+
+**Changed-path classes.** Changed paths enter the function only as the set of classes their paths fall in. Each path is in exactly one of `test`, `docs` and `impl`, the three-way split of `computeDiffFacts` (`plugin/bin/lib/dispatch/ceremony-derive.js`), which builds on `classifyDiffFiles` (`plugin/bin/lib/issues/blast-radius.js`); `frontend` is independent of the three.
+
+| Class | A path is in it when | Function |
+|---|---|---|
+| `test` | `isTestPath`: a `test/` or `tests/` segment, a `.test.` or `.spec.` JS or TS suffix, `_test.go`, `test_*.py` or `*_test.py`, or YAML under `stories/`; prompt prose (markdown under `skills/`, `agents/` or `commands/`) never is | `classifyDiffFiles` |
+| `docs` | not `test`, and markdown that is not prompt prose, or `docs/plans/*.html` | `isDocsPath` in `computeDiffFacts` |
+| `impl` | neither `test` nor `docs`; prompt prose is `impl` | `computeDiffFacts` (`implFiles`) |
+| `frontend` | `fileMatchesFrontendPredicate`: a trigger extension (`.tsx`, `.jsx`, `.vue`, `.svelte`, `.html`, `.css`, `.scss`, `.sass`, `.less`, `.astro`, `.mdx`), or a `components`, `pages`, `app`, `routes`, `views` or `ui` segment outside `app/api/` and `pages/api/` | `plugin/bin/lib/design-detect/index.js`, design-wrapper's Layer 3 |
+
+The step rules read only `frontend`. `test`, `docs` and `impl` are the classes `wrap-up`'s mode rule reads (its `lowSurface` is a diff with no `impl` path), so both read paths through the same two functions.
+
+**Union.** Inputs combine by union: a step is in the graph when any rule that names it holds. A rule may read several inputs, as R9 does, but no input removes a step another input's rule requires.
+
+**Not yet known is not absent.** A fact that does not exist yet at an evaluation point, such as the task count at `start`, is not absent. Each step is decided at the last evaluation point before it would run, from the facts that exist by then (Evaluation points).
 
 ## Evaluation points
 
-<!-- filled by Task 4 -->
+The function is evaluated at the points below, in this run order. Each point decides the steps whose deciding facts first exist there; every other step is decided at `start`.
+
+| Point (`at`) | When | Facts first known | Steps it decides |
+|---|---|---|---|
+| `start` | the first evaluation: after `/claude-tweaks:flow`'s Manifesto computes its levers (`computeLevers`), before `writeManifesto` writes `config.yml` | rows 1-6 and 10-12; `design-pre-build`'s gate verdict | every step not listed below |
+| `plan` | after `plan`, before `plan-audit` | the task count | `whole-branch-review` |
+| `journeys` | immediately before `journeys`, after its `skill-gate.js` call | its gate verdict; the changed-path classes | `journeys` |
+| `build` | after the build closes (`verify`'s Common Step 7), before `stories` | the changed-path classes of the closed build | `stories` |
+| `design-gate`, `visual-review`, `design-review`, `polish`, `creative-survey` | immediately before the step, after its `skill-gate.js` call | the step's gate verdict; the changed-path classes as of then | that step |
+
+A step whose rule still depends on a fact that does not exist yet is in every earlier evaluation's output: it stays in until that fact exists. A step whose rule is already false at an earlier point, such as `polish` under `fast-lane` at `start`, is out from that point.
+
+A later evaluation may remove one step, the one that point decides, and only when no rule for it holds: `whole-branch-review` at `plan`, `stories` at `build`, and each gated step at its own point. It removes no other step. It never removes an asserted step: `whole-branch-review`, `stories`, `journeys`, `polish` and `creative-survey` are in no assertion, and `design-gate`, `visual-review` and `design-review` leave only under the condition A7, A8 and A9 allow (Never skipped).
+
+Under the rules below no later evaluation adds a step, because every step a later point decides is already in. The ceremony escape hatch's write to `config.yml` changes only `wrap-up`'s mode, and no step after it reads the profile. The union rule allows a later rule that reads a later fact to add a step. Where the remainder is kept between evaluations, and across `/claude-tweaks:dispatch`'s two calls, is in `## Who walks the graph`.
 
 ## The selection function
 
-<!-- filled by Task 4 -->
+```
+selectRunGraph(facts, { at, previous }) -> string[]
+```
+
+- `facts` holds the Inputs, each already parsed into its closed form: `{ type, size, risk, surface, ceremony, riskFlags, taskCount: { tasks, batched }, pathClasses, gates, designIntegration, policy: { creativeSurvey, depthSurvey }, flags: { noStories, noPolish, noCreative, noDeepen } }`. `gates` maps a gated step's name to its verdict. The function knows from `at` which facts exist by then; one that should exist and does not is absent.
+- `at` is the evaluation point: `start`, `plan`, `build`, or the name of the gated step about to run.
+- `previous` is the remainder the previous evaluation returned, and `null` at `start`.
+- The result is the remainder of the graph from `at` on: vocabulary step names, in the Step vocabulary table's order, with each skill keeping its own step order inside it. At `start` it is the whole graph.
+- The assertions run inside the function, after the rules. A violation throws an error carrying the assertion's id and one line; `## Never skipped` says what the caller does with it at each point.
+
+No input is free text. Every value the function reads is one of the closed values in Inputs or an integer; the record's title and body reach it only through the parsers named there.
+
+### Rules
+
+A step is in the graph when a rule for it holds. A step the function leaves out is one for which none holds. Each rule's leave-out carries one mark, checked against the step's row in `## Today's graph`.
+
+| Rule | Steps | In the graph when | Decided at | Mark for the leave-out |
+|---|---|---|---|---|
+| R1 | `worktree-setup`, `manual-steps`, `plan`, `tasks`, `simplify`, `docs-sync`, `verify`, `operational-checklist`, `test`, `qa`, `review-code`, `review-simplify`, `security-hardening`, `agent-trust-scope`, `app-store-readiness`, `wrap-up`, `merge` | always | `start` | none: R1 leaves no step out |
+| R2 | `plan-audit`, `plan-review`, `architecture-alignment`, `review-spec`, `review-promises`, `review-hindsight` | ceremony is `standard` | `start` | unchanged from today: each row's `fast-lane` cell, "Skipped (roster …)" |
+| R3 | `whole-branch-review` | ceremony is `standard`; or the task count is anything but `tasks: 1` with `batched: false` | `start` under `standard`, `plan` under `fast-lane` | unchanged from today: row `whole-branch-review` |
+| R4 | `journeys` | its gate verdict is `proceed` | `journeys` | unchanged from today: row `journeys` |
+| R5 | `design-pre-build` | design integration is on, and its gate verdict is `proceed` or the surface is absent or unrecognised | `start` | unchanged from today for a declared surface: row `design-pre-build`. An absent surface adds the step, where today's gate skips on "no surface declared" |
+| R6 | `stories` | a `frontend` path changed, and `no-stories` is unset | `build` | unchanged from today: row `stories` |
+| R7 | `design-gate`, `design-review` | design integration is on, and the step's gate verdict is `proceed` or the surface is absent or unrecognised | the step's own point | unchanged from today for a recognised surface: rows `design-gate`, `design-review`. An absent or unrecognised surface adds the step, where today `evaluate()` sniffs the files |
+| R8 | `visual-review` | its gate verdict is `proceed`; or the surface is absent, unrecognised, `web`, `mobile` or `desktop`; or a `frontend` path changed | `visual-review` | unchanged from today for a declared surface: row `visual-review`. An absent surface adds the step on a diff with no `frontend` path |
+| R9 | `polish` | ceremony is `standard`, `no-polish` is unset, design integration is on, and its gate verdict is `proceed` or the surface is absent or unrecognised | `start`; `polish` for the verdict | unchanged from today: row `polish` and `flow/steps-and-gates.md`'s Polish-phase decision tree. The surface clause adds as in R7 |
+| R10 | `creative-survey` | `no-creative` is unset, `creative-survey` is not `off`, design integration is on, and its gate verdict is `proceed` or the surface is absent or unrecognised | `start`; `creative-survey` for the verdict | unchanged from today: row `creative-survey`. The surface clause adds as in R7 |
+| R11 | `depth-survey` | `no-deepen` is unset and `depth-survey` is not `off` | `start` | unchanged from today: row `depth-survey`, and `flow/survey.md` for the policy value the row leaves unnamed |
+
+Each step's own check that it has nothing to do stays in the step's body and is unchanged from today: no `## Manual Steps` section, no `docs/REGISTRY.md`, a trivial plan (`plan-audit`, `plan-review`, `architecture-alignment`, `design-pre-build`), a parent with no `## Cross-Spec Promises`, no matching operational file, no stories or an empty or stamp-covered selection (`qa`), a scope `simplify` already covered (`review-simplify`), the three focus passes' pre-checks, no source module changed (`depth-survey`), `plan`'s already-satisfied and already-shipped exits, and `merge`'s authorization and `merge-check`. Those checks read files, plans and run-directory lines, which are not inputs. A review verdict of BLOCKED stops the run before `polish` (`flow/steps-and-gates.md`, the gate table); that is a stop, not a rule.
+
+**Modes.** The output carries no mode, because it is a list of step names. Each of the three modes stays with its step and is chosen by today's rule from the same inputs, unchanged from today: `plan`'s micro-plan (`build/micro-plan.md` Applicability gate), `review-code`'s effort tier (`review/review-effort-derivation.md`), and `wrap-up`'s `fast-lane` mode (`ceremony-profile`, `ceremony-derive.js`, the escape hatch). Each shortens its step. A later rule that shortens a step through its mode is a rule of this design all the same: it carries a mark, and if that mark is "evidenced" or "risk accepted" it sits behind the policy value below.
+
+**Today's selectors.** Each selector the record's Current State lists is carried over or replaced; none is dropped.
+
+| Selector today | In this design |
+|---|---|
+| The `ceremony:*` label, else the Manifesto's `ceremony-check` verdict, folded into `config.yml`'s `ceremony-profile` | carried over as the ceremony input, read by R2, R3 and R9 |
+| The roster's skip rows `review-step-1`, `review-step-1.6`, `review-step-4`, `plan-audit`, `plan-review`, `architecture-alignment`, `polish` and `sdd-whole-branch-review` | replaced by R2, R3 and R9, in code. What happens to the roster itself is in `## Roster replacement` |
+| The roster's `reflect-light-mode` | carried over as part of `wrap-up`'s `fast-lane` mode |
+| The roster's `red-team-persona` | outside the run (`## Not a step`), not changed |
+| The `stories` trigger on UI files (`flow/SKILL.md`) | replaced by R6 over the `frontend` class, the same predicate |
+| The `polish` skip on a non-frontend record, the skill-load gate since #5605 | replaced by the gate verdict in R9 |
+| The skill-load gates of `design-pre-build`, `journeys`, `design-gate`, `visual-review`, `design-review` and `creative-survey` (#5605) | replaced by the gate verdict input in R4, R5, R7, R8 and R10 |
+| `build/micro-plan.md`'s plan-writing skip | carried over as `plan`'s mode |
+| Review effort (`review/review-effort-derivation.md`) | carried over as `review-code`'s mode |
+| `ceremony-derive.js` | carried over as `wrap-up`'s mode rule; it selects no step |
+| `resolve-profile.js --diff-facts` | carried over outside the function: it picks the whole-branch reviewer's model and leaves no step out |
+| `plan-audit.js --count-tasks` | carried over as the task-count input of R3 |
+
+**No rule rests on a number.** No rule in this design gives a record fewer steps than it gets today, so none is marked "evidenced" or "risk accepted". The evidence cannot carry one yet. A step with no Evidence row of its own is "not measured separately", and any rule about it is unchanged from today (AC2's Decided paragraph). The steps that have rows:
+
+| Step | Why no leave-out or shortening rests on its row |
+|---|---|
+| `plan` | Its outcome is not countable: its commits are the run's product, and its stops are decision-log prose (What "outcome-changing" counts). E-standard-plan shows 0 outcome-changing entries in 61 that ran, a zero that holds by construction. |
+| `tasks` | The run's product. |
+| `test`, `review-code`, `wrap-up` | Asserted (A4, A5, A10). E-standard-review changed the outcome in 30 of the 54 entries in which it ran, 24 of them with a confirmed finding. |
+| `polish` | E-standard-polish ran in 4 entries, below 20, and `fast-lane` already leaves it out. |
+| `merge` | Its body decides whether it merges. Its fix-commit counts can be bookkeeping, and its span is CI and human waits. |
+
+The first rule that gives fewer steps than today adds one policy value with it, `run-graph-rules`: a list of rule ids that are on, empty by default, so the default reproduces today's graph. A rule's id moves into the default only once the rule is "evidenced" under AC13 over at least 20 runs that had it on, and the value is removed when no rule in it is left off by default. The phase that turns a rule on for this repository waits for the release that carries it.
+
+**What a defaulted surface adds.** R5, R7, R8, R9 and R10 read an absent surface at its most cautious value, which puts back a skill load that #5605's gate removes today: the step loads its skill, whose own check then finds nothing to do (design-wrapper's Layer 3 sniff; `visual-review`'s browserless recommendation on a diff with no UI file, `review/code-mode-steps.md` Step 6). The remedy is a `Surface:` line on the record, which `/claude-tweaks:specify` stamps; the count below measures how many ready records lack one.
+
+### Inputs from model judgment or record text
+
+The function's safety rests on the assertions, not on the accuracy of its inputs: each assertion holds whatever value a record-text or model-judgment input takes, with the one residual named below.
+
+| Input | Origin | Closed values | Steps a value can remove | Asserted steps any value removes |
+|---|---|---|---|---|
+| Ceremony | the `ceremony:*` label, stamped by `/claude-tweaks:specify` from `ceremony-check`, a model judgment; or the Manifesto's verdict from the same mode | `fast-lane`, `standard` | `fast-lane`: R2's six, R3's `whole-branch-review` (with one task), R9's `polish` | none: no assertion names a step R2, R3 or R9 decides |
+| Risk flags | the `Risk-flags:` line, record text | `none`; subsets of the built-in four and the policy's `risk-categories`; an unreadable line reads as all four built-ins | none: no step rule reads it | none |
+| Surface | the `Surface:` line, record text | `web`, `mobile`, `desktop`, `terminal`, `backend`, `infra` | through the gate verdict, R5, R7-R10's steps | A7's `visual-review` only on a diff with no `frontend` path, which A7 allows: a wrong surface cannot remove it from a diff that changed UI files. A8's `design-gate` and A9's `design-review` with a declared `backend` or `infra` surface (and `mobile` for `design-gate`) on a diff with UI files: design-wrapper's own Layer 2 skips there, the gate reports that skip, and A8 and A9 allow it, as today |
+
+The type, size and risk labels are record text too, and no step rule reads them.
+
+A wrong label is corrected outside the run. The run never rewrites the record's `ceremony:*` label (`_shared/ceremony-profile.md`, "Escape hatch and the build-side skips"). Inside the run, the wrap-up escape hatch raises the rest of `wrap-up` to `standard` on a review finding or a reflect Safety regression, and re-runs no left-out step. The next run reads the label again at `start`, so the correction is `/claude-tweaks:specify` re-stamping the record or a human editing the label; the same holds for `Surface:`, `size:*` and `risk:*`.
+
+### When a left-out step's output is absent
+
+For each step a rule can leave out, the kept steps that read its output (the Step vocabulary table's Reads column) and what each does without it:
+
+| Left-out step | Kept readers of its output | What the reader does when it is absent | File |
+|---|---|---|---|
+| `plan-audit` | none read its envelope; `tasks` runs the plan file as written | `tasks` executes the unamended plan; Checks D and G have run inside `plan` | `build/SKILL.md` Common Step 1.5 (skip path) |
+| `plan-review` | `review-spec` reads its clarifications and is out in the same graphs (R2); `tasks` forwards the spec's criteria | `tasks` forwards the criteria as materialized | `build/dispatch.md` |
+| `design-pre-build` | `tasks` (the implementer prompts) | the prompts carry no design references; the skip is logged | `build/design-prebuild.md` On skip |
+| `whole-branch-review` | none | `review-code` reviews the whole branch with its own lenses; a prior review is reused only at byte-identical scope | `review/code-mode-steps.md` Reusing a Prior Whole-Branch Review |
+| `architecture-alignment` | `wrap-up` (the ledger) | settles the ledger rows that exist | `wrap-up/SKILL.md` |
+| `journeys` | `stories`, `visual-review` (`docs/journeys/*.md`) | read the journeys already in the repository; `stories` browses without them when there are none | `flow/SKILL.md` Automatic story generation |
+| `stories` | `qa`; `review-code` (QA results); `visual-review` (`DEV_URL`) | `qa` runs the stories already in the repository, or reports none and `test` still sets `TEST_PASSED`; `review-code`'s QA Ledger Check finds no `test/qa` rows; `visual-review` detects the dev URL itself | `test/SKILL.md` Pipeline Context Awareness; `review/code-mode-steps.md` Step 1.5; `visual-review/SKILL.md` |
+| `design-gate` | none; `test` reports the result | `test` notes the skip and proceeds | `test/design-gate.md` Result handling |
+| `review-spec` | `wrap-up` (the verification brief's `{AC_RESULTS}`) | writes no AC-results file and passes no `--ac-results` | `wrap-up/verification-brief.md` |
+| `review-promises` | none in the run | the parent's own gate re-runs the promise check | `_shared/ceremony-profile.md`, row `review-step-1.6` |
+| `review-hindsight` | `wrap-up` (the ledger) | settles the ledger rows that exist | `wrap-up/SKILL.md` |
+| `visual-review` | `review-code`'s summary; `wrap-up`'s visual-review safety net | the summary's Visual Review status reads skipped; for an `app-route` or `rendered-page` plan the safety net treats that as Recommended and runs `/claude-tweaks:visual-review` | `wrap-up/verification-brief.md` Step 2.5 |
+| `design-review` | `review-code`'s Step 6.7 routing; `wrap-up`'s Review Console (`staged/`) | route the findings that exist; no design decision is staged | `review/late-findings-routing.md` |
+| `polish` | `wrap-up` (`decisions.md`, the ledger); the PR checklist | the walker does the skip path's bookkeeping, logging the `SKIP` and removing the polish PR row as the `fast-lane` path does today; no re-verify runs | `flow/steps-and-gates.md` Polish-phase decision tree |
+| `creative-survey` | none | the Pipeline Summary omits the block | `flow/survey.md` |
+| `depth-survey` | none | the Pipeline Summary omits the block; no `deepen-collapse` patch is staged | `flow/survey.md` |
+
+### Ready records at the first evaluation
+
+Counted on 2026-11-17 over the open `ready` records with C6 and C7, from the repository root. C6:
+
+```
+gh issue list --repo thn-inc/claude-tweaks --label ready --state open --limit 1000 --json number,labels,body > ready.json
+```
+
+C7 is `node graph-count.js < ready.json`, with `graph-count.js` as below. It applies the rules decided at `start` that can leave a step out: R2 and R9's ceremony clause, and the design-integration clause of R5, R7, R9 and R10, with R5's gate rule. It sets no run flag and no survey policy value, as neither is set in this repository's `.claude-tweaks/policy.yml`. A step a later point decides is in, as at `start`.
+
+```js
+// Counts open ready records by the steps selectRunGraph leaves out at `start`. Run from the repository root.
+const lib = (p) => require(require('path').resolve('plugin/bin/lib', p));
+const { parseRecordFacets } = lib('issues/record-vocabulary.js');
+const { liftMetadata } = lib('issues/materialize-format.js');
+const { readDesignIntegrationFlagFromFile } = lib('design-detect/index.js');
+const FAST_LANE_OUT = ['plan-audit', 'plan-review', 'architecture-alignment', 'review-spec', 'review-promises', 'review-hindsight', 'polish'];
+const WRAPPER_STEPS = ['design-pre-build', 'design-gate', 'design-review', 'polish', 'creative-survey'];
+const designOn = ['enabled', 'plugin-only'].includes(readDesignIntegrationFlagFromFile('.'));
+const counts = {};
+for (const r of JSON.parse(require('fs').readFileSync(0, 'utf8'))) {
+  const ceremony = parseRecordFacets(r.labels).ceremony || 'judged at run start';
+  const surface = String(liftMetadata(r.body).surface || '').toLowerCase();
+  const out = new Set(ceremony === 'fast-lane' ? FAST_LANE_OUT : []);
+  if (!designOn) WRAPPER_STEPS.forEach((s) => out.add(s));
+  else if (surface === 'backend' || surface === 'infra') out.add('design-pre-build');
+  const key = `ceremony ${ceremony}; left out: ${[...out].sort().join(', ') || 'none'}`;
+  counts[key] = (counts[key] || 0) + 1;
+}
+console.log('design-integration on:', designOn);
+for (const [key, n] of Object.entries(counts)) console.log(n, key);
+```
+
+It prints:
+
+```
+design-integration on: false
+455 ceremony judged at run start; left out: creative-survey, design-gate, design-pre-build, design-review, polish
+95 ceremony standard; left out: creative-survey, design-gate, design-pre-build, design-review, polish
+39 ceremony fast-lane; left out: architecture-alignment, creative-survey, design-gate, design-pre-build, design-review, plan-audit, plan-review, polish, review-hindsight, review-promises, review-spec
+```
+
+The 589 records (455 + 95 + 39) get two distinct graphs at `start`: the vocabulary less the five design-wrapper steps, for the 95 `standard` records, and that less R2's six as well, for the 39 `fast-lane` ones. This repository's CLAUDE.md sets no `design-integration:` key, so every design-wrapper step is out for every record. Each of the 455 unlabeled records gets one of the two by the Manifesto's `ceremony-check` verdict at run start, which no script can reproduce. Every record's graph at `start` is the graph it gets today. Of the 589, 476 have no `Surface:` line (C8, from the repository root):
+
+```
+node -e 'const {liftMetadata}=require(require("path").resolve("plugin/bin/lib/issues/materialize-format.js"));const c={};for(const r of JSON.parse(require("fs").readFileSync(0,"utf8"))){const s=String(liftMetadata(r.body).surface||"absent").toLowerCase();c[s]=(c[s]||0)+1}console.log(c)' < ready.json
+```
+
+It prints `{ absent: 476, backend: 22, infra: 86, terminal: 5 }`.
+
+**Expected effect on #4031's targets**, as an expectation and not a criterion: none from the function at its default. Every ready record keeps today's graph at the first evaluation. The one default change in this repository is R8's absent-surface clause, which adds `visual-review`, a skill load and a browserless recommendation, to a run whose record has no `Surface:` line and whose diff has no `frontend` path; for those runs both the median wall time and the round-trip count are expected to rise slightly. Movement toward 15 minutes and 120 round trips is expected from the walker (`## Who walks the graph`) and from later rules, once each vocabulary step has an Evidence row of its own, not from this function's default.
 
 ## Never skipped
 
-<!-- filled by Task 4 -->
+The roster's Never skipped table mixes two things: steps that must be in every graph, and stops that must fire when their step is in the graph. They are separated here. The assertions are conditions on the function's output and run at every evaluation. The stops are inside step bodies and fire whenever their step runs.
+
+**On a violation.** At `start`, before any step runs, a violation refuses the run with one line, `run graph: {id} violated: {assertion}`, and the refusal writes nothing: `config.yml` is not yet written. At a later evaluation a violation never stops or fails the run: the caller keeps `previous`, which still satisfies every assertion because no evaluation removes an asserted step, and logs one `SKIP` line naming the assertion through `log-decision.js`. Under the rules above no combination of inputs violates an assertion: each rule leaves out only steps no assertion names, or, for A7-A9, only under the condition the assertion allows. A violation therefore marks a defect in a rule, and the check keeps that defect from shortening a run.
+
+### Assertions
+
+| Id | Assertion on the output | Reason | Roster row or contract stop it keeps |
+|---|---|---|---|
+| A1 | `worktree-setup` is in | Every later step works in the branch it creates, and it holds the adopted-branch collision stop | contract: `/build`'s adopted-branch collision stop |
+| A2 | `plan` is in | `tasks` executes the plan; the plan audit's Checks D and G run inside it on every profile | contract: the plan audit's hard fails, Checks D and G |
+| A3 | `verify` is in | It produces `VERIFICATION_PASSED` and the runner's pass stamp, and a test failure stops the run there | roster: build Common Step 5; roster HARD-GATEs: test failures |
+| A4 | `test` is in | It holds test Step 0's PR-bookkeeping stop and produces `TEST_PASSED`, which review Step 1.5 reads | contract: `/test` Step 0 |
+| A5 | `review-code` is in | Review Step 2's diff shape and Step 3's lenses are the judgment every later step reasons from; it holds review Step 1.5's test gate | roster: review Steps 2 and 3; contract: `/review` Step 1.5 |
+| A6 | `review-simplify` is in | Scoped to the diff already; its own covered-by-`simplify` check stays in its body | roster: review Step 5 |
+| A7 | `visual-review` is in, unless the surface is `backend`, `infra` or `terminal` and no `frontend` path changed | A UI-dependent record must not reach a merge decision without a rendered check or an explicit decline (CLAUDE.md, #808) | roster: review Step 6 rendered-UI check |
+| A8 | with design integration on, `design-gate` is in, unless the surface is present and recognised and the step's gate verdict is `skip` | R9's `fast-lane` leave-out of `polish` leans on it | roster: `/claude-tweaks:test` Step 1.5 Design CLI gate |
+| A9 | with design integration on, `design-review` is in, under A8's condition | R9's `fast-lane` leave-out of `polish` leans on it | roster: `/claude-tweaks:review` Step 6.5 Design Quality Pass |
+| A10 | `wrap-up` is in | Both of its modes keep reflect's Near-misses, Fresh-start and Friction lenses, the ceremony escape hatch and the `[IL-116]` cleanup floor | roster: reflect Near-misses, Fresh-start, Friction; Ceremony escape hatch; `[IL-116]` cleanup floor |
+
+Every row of the roster's `## Never skipped` table is kept: the ten above, and its HARD-GATEs row, which the stops below cover. None is dropped.
+
+### Stops
+
+Each stop in the contract's "HARD-GATE / BLOCKED / STOP conditions" row (`_shared/auto-mode-contract.md`), with its step and whether that step is now in every graph:
+
+| Stop | Step | In every graph |
+|---|---|---|
+| `/review` Step 1 spec compliance | `review-spec` (roster tag `review-step-1`) | No. R2 leaves it out under `fast-lane`, unchanged from today. The stop fires whenever the step runs |
+| `/review` Step 1.5 test gate | `review-code` | Yes (A5) |
+| `/build` Common Step 1.5 plan audit hard fails | Checks D and G in `plan`; Checks A, B, C and the headroom check in `plan-audit` (roster tag `plan-audit`) | `plan` yes (A2). `plan-audit` no: R2 leaves it out under `fast-lane`, and its own trivial-plan check skips it, both unchanged from today |
+| `/test` Step 0 PR-bookkeeping check | `test` | Yes (A4) |
+| `/build`'s adopted-branch collision stop | `worktree-setup` | Yes (A1) |
+| `/build` Common Step 1.6 plan-review needs-human spec gap | `plan-review` (roster tag `plan-review`) | No. R2 leaves it out under `fast-lane`, and its own trivial-plan check skips it, both unchanged from today |
+| `/claude-tweaks:dispatch`'s second-call missing-claim fallback | `merge` | In every graph by R1, and not asserted: a graph without `merge` merges nothing, which is the state the stop forces |
+
+So of the three HARD-GATEs that sit inside a `fast-lane` skip today, none has its step in every graph: `review-spec`, `plan-audit` and `plan-review` stay out of a `fast-lane` graph, as today. Only the plan audit's Checks D and G, inside `plan`, run in every graph.
+
+Stops dropped from the assertions, each with its reason:
+
+- `/flow` Step 2.7 design-doc rejection: it runs in the run's frame before `start`, so a design doc never reaches the function.
+- `/build` Design Step 3 plan validation: a design-mode build, which `/claude-tweaks:flow` rejects, is not in the standard lane (`## Today's graph`).
+- `/flow`'s multi-spec boundary-freshness escalation: it fires between two records of a multi-spec series, outside any one record's graph.
+- `/flow`'s adopted-run PR-conflict catch-up stop: it fires in the adoption frame, before a resumed run's next evaluation.
+- `/release` Step 4's two gates: outside any run.
+- The roster HARD-GATEs row's "structural coupling", `/flow` Step 2.6's shape check: it runs in the run's frame before `start`, and the contract's row says it is not a HARD-GATE under `auto`.
+
+Each of these stops stays where it is; dropping it from the assertions changes none of them.
 
 ## Loops
 
