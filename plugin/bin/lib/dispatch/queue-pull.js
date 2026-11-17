@@ -1176,11 +1176,15 @@ function runShipped(ctx) {
         return false;
       }
       if (result.tier === 'weak') {
-        deps.stderr(`AUTO — dispatch: #${c.number}${predatesClaimRelease(result)
-          ? ` kept: merged PR #${result.pr} predates claim release at ${releases[c.number]} — remaining work assumed`
-          : downgradedAfterMerge(result)
-            ? ` kept: merged PR #${result.pr} predates ready/auto:build labeling at ${entry.lastShapedAt} — remaining work assumed`
-            : ` mentioned by merged PR #${result.pr} without a closing keyword; dispatching anyway`}\n`);
+        let keptDetail;
+        if (predatesClaimRelease(result)) {
+          keptDetail = ` kept: merged PR #${result.pr} predates claim release at ${releases[c.number]} — remaining work assumed`;
+        } else if (downgradedAfterMerge(result)) {
+          keptDetail = ` kept: merged PR #${result.pr} predates ready/auto:build labeling at ${entry.lastShapedAt} — remaining work assumed`;
+        } else {
+          keptDetail = ` mentioned by merged PR #${result.pr} without a closing keyword; dispatching anyway`;
+        }
+        deps.stderr(`AUTO — dispatch: #${c.number}${keptDetail}\n`);
         if (!downgradedAfterMerge(result) && prFiles.get(result.pr) === null) deps.stderr(`Warning: gh pr view ${result.pr} failed — #${c.number} kept as a weak shipped candidate (files unprobed) this run\n`);
       }
       return true;
