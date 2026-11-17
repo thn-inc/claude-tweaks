@@ -341,6 +341,37 @@ test('writeState succeeds on the first attempt: fetch, read, build blobs/tree/co
   assert.strictEqual(written.updated, true);
 });
 
+const isStateRead = (c) => c.cmd === 'git' && (c.args.includes('show') || c.args.includes('cat-file'));
+
+test('AC4.1: writeState against an unresolvable origin/health-state starts no state-file read and hands the mutator the defaults', () => {
+  const { run, calls } = fakeRunner([
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'fetch'), throws: "couldn't find remote ref health-state" },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'rev-parse'), throws: 'unknown revision or path not in the working tree' },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'show'), returns: JSON.stringify({ stale: true }) },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'cat-file'), returns: 'x blob 2\n{}\n' },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'hash-object'), returns: 'blob-sha\n' },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'mktree'), returns: 'tree-sha-1\n' },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'commit-tree'), returns: 'commit-sha-1\n' },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'push'), returns: '' },
+  ]);
+  let seen = null;
+  const ds = createDurableState('code-health', { run, sleep: () => {}, includeRemembered: true });
+  assert.deepStrictEqual(ds.writeState('/repo', (current) => { seen = current; return current; }), { ok: true });
+  assert.deepStrictEqual(seen, { cursors: {}, retryQueue: [], runs: [], remembered: {} });
+  assert.strictEqual(calls.filter(isStateRead).length, 0, 'no show/cat-file may run when the ref does not resolve');
+});
+
+test('writeState reads the state files at the commit sha rev-parse resolved, the same commit it parents the new one on', () => {
+  const { run, calls } = fakeRunner([...baseWriteStateRules(), pushRule({ returns: '' })]);
+  const ds = createDurableState('code-health', { run, sleep: () => {} });
+  assert.deepStrictEqual(ds.writeState('/repo', (current) => current), { ok: true });
+  const reads = calls.filter(isStateRead);
+  assert.ok(reads.length > 0);
+  const readText = reads.map((c) => `${c.args.join(' ')} ${c.opts && c.opts.input ? c.opts.input : ''}`).join('\n');
+  assert.match(readText, /commit-sha-1:code-health\/cursors\.json/);
+  assert.doesNotMatch(readText, /origin\/health-state:/);
+});
+
 test('writeState retries on a rejected (non-fast-forward) push, then succeeds', () => {
   let pushAttempts = 0;
   const { run } = fakeRunner([

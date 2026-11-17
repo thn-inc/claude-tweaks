@@ -221,14 +221,17 @@ function createNamespacedState(namespace, fileSpecs, {
   }
 
   // Read every fileSpec at whatever branch tip the caller already fetched,
-  // WITHOUT triggering another network fetch. Shared by readStateWithMeta
-  // below (which fetches first, for standalone callers) and by writeState's
-  // own CAS loop (which already fetched once per attempt). The loop must
-  // never call the fetch-then-read path a second time: a redundant fetch
-  // transiently failing would make that path silently degrade to empty
-  // defaults and hand the mutator bogus near-empty state, durably
-  // overwriting the branch's real content even though the push's
-  // fast-forward check has no way to catch a bad-but-valid write like that.
+  // WITHOUT triggering another network fetch. Used by readStateWithMeta
+  // below (which fetches first, for standalone callers). writeState's CAS
+  // loop does not use it: it already fetched once per attempt and reads at
+  // the commit sha it resolved (no git call at all when that is null), which
+  // also keeps the mutator's input and the new commit's parent on one
+  // commit. The loop must never call the fetch-then-read path a second
+  // time: a redundant fetch transiently failing would make that path
+  // silently degrade to empty defaults and hand the mutator bogus
+  // near-empty state, durably overwriting the branch's real content even
+  // though the push's fast-forward check has no way to catch a bad-but-valid
+  // write like that.
   function readFilesAtFetchedTip(root) {
     return readFilesAt(root, `origin/${HEALTH_STATE_BRANCH}`);
   }
@@ -395,7 +398,7 @@ function createNamespacedState(namespace, fileSpecs, {
           // history, and the next attempt re-fetches from scratch).
         }
         const { commitSha: parentSha, treeSha: baseTreeSha } = currentRefShas(root);
-        const current = readFilesAtFetchedTip(root);
+        const current = readFilesAt(root, parentSha);
         const next = mutatorFn(current);
         const files = buildFiles(next);
         const rootTreeSha = buildRootTree(root, baseTreeSha, files);
