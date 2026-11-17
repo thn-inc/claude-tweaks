@@ -3768,7 +3768,7 @@ test('#5310: a failed write-back dep-freshness search warns once and persists no
   assert.ok(!/queue-pull: /.test(r.stderr), 'no step diagnostic beside the Warning');
 });
 
-test('#5310 control: the same pulls with the search answered print no dep-freshness Warning and persist the blob', () => {
+test('#5310 control: a cold pull with the search answered prints no dep-freshness Warning and persists the blob', () => {
   const r = pull(S1());
   assert.deepEqual(depWarnings(r), []);
   assert.equal(r.store.written.length, 1);
