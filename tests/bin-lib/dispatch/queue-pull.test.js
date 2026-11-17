@@ -1846,7 +1846,7 @@ test('AC1.1 (#5722) shipped: a strong title match shaped after the merge stays i
   assert.deepEqual(r.errs.filter((e) => e.startsWith('AUTO — dispatch: #9010')), [
     'AUTO — dispatch: #9010 kept: merged PR #5010 predates ready/auto:build labeling at 2026-11-07T10:00:00Z — remaining work assumed\n',
   ]);
-  assert.ok(FENCE.includes("' predates ready/auto:build labeling at '"));
+  assert.ok(FENCE.includes("          : downgradedAfterMerge(result)\n            ? ' kept: merged PR #' + result.pr + ' predates ready/auto:build labeling at ' + entry.lastShapedAt + ' — remaining work assumed'"));
 });
 
 test('AC2.1 (#5722) shipped: a shaping time before the merge leaves 9010 excluded and its Close proposal staged', () => {
