@@ -19,13 +19,16 @@
 // `unparsed.count` over those lines. A second share adds the `unattributed` bucket's lines to both sides
 // — an upper bound, since a line outside every span cannot be told apart from a review line there.
 //
-// Per-run rows (#5580): `--runs` adds `runs` (one row per run directory: closed state, lane, the yield's
-// steps as StepRows, the driver's own steps) to the JSON summary; `--window N` adds `window` (the N newest
-// closed runs, each lane widened to `--lane-floor` runs, default 20) and `stepTable` (per lane and step:
-// median and summed minutes/tokens/agents, and how many runs the step changed the outcome in). Without
-// those flags the output is what it was. Rules:
-//   closed  run-state.json parses with status 'clean'; closedAt is the latest parseable `ts` in
-//           events.jsonl, else run-state.json's updatedAt, else null (undated, left out of the window).
+// Per-run rows (#5580): `--runs` adds `runs` (one row per run directory: closed state, start time, lane,
+// the yield's steps as StepRows, the driver's own steps) to the JSON summary; `--window N` adds `window`
+// (the N most recently started closed runs, each lane widened to `--lane-floor` runs, default 20) and
+// `stepTable` (per lane and step: median and summed minutes/tokens/agents, and how many runs the step
+// changed the outcome in). Without those flags the output is what it was. Rules:
+//   closed  run-state.json parses with status 'clean'.
+//   recent  "most recent" means most recently STARTED among closed runs: the run id's leading
+//           YYYY-MM-DDTHHMMSS read as UTC (`startedAt`; null, so undated and out of the window, when the id
+//           has none). A last-event time is not a close time: verify, ci-gate and worktree-reap events keep
+//           landing on a run directory after it closed, so ordering by it shifts old runs into the window.
 //   lane    driver-events.jsonl present -> `driver`; else `express` when decisions.md holds an
 //           'Express lane check: #N proceed' entry no later 'Express lane: escalated #N to /flow' entry
 //           cancels (plugin/bin/lib/express/cli.js hasProceed, mirrored: it is not exported); else
@@ -99,7 +102,7 @@ function addFindings(into, f) {
 // matched counts again under `unparsed` — so the status sum is the line total, with no unparsed added.
 const decisionLines = (b) => Object.values(b.decisions || {}).reduce((s, n) => s + (Number.isFinite(n) ? n : 0), 0);
 
-function collect(roots, deps, failedDirs = new Set()) {
+function collect(roots, deps, failedDirs = new Set(), yields = null) {
   const rootsUnreadable = [];
   const dirs = listRunDirs(roots, deps.fs, rootsUnreadable);
   const totals = emptyCounters();
@@ -114,6 +117,7 @@ function collect(roots, deps, failedDirs = new Set()) {
   for (const dir of dirs) {
     let r;
     try { r = yieldOf(dir, deps); } catch (e) { failed++; failedDirs.add(dir); deps.err(`step-yield-report.js: ${dir}: ${errText(e)}`); continue; }
+    if (yields) yields.set(dir, r);
     if (r.source === 'file') fromFile++;
     if (r.fileUnreadable) fileUnreadable++;
     if (r.fileStale) fileStale++;
@@ -194,21 +198,19 @@ function laneOf(dir, fsImpl) {
   return profile ? { lane: profile, source: 'config' } : { lane: 'none', source: 'none' };
 }
 
-function closedStateOf(dir, fsImpl) {
+function closedOf(dir, fsImpl) {
   const state = readJson(fsImpl, path.join(dir, 'run-state.json'));
-  const st = isObject(state) ? state : null;
-  let latest = null;
-  let latestMs = -Infinity;
-  const events = readText(fsImpl, path.join(dir, 'events.jsonl'));
-  for (const line of events === null ? [] : events.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    let ev;
-    try { ev = JSON.parse(line); } catch { continue; }
-    const ms = isObject(ev) && typeof ev.ts === 'string' ? Date.parse(ev.ts) : NaN;
-    if (Number.isFinite(ms) && ms > latestMs) { latestMs = ms; latest = ev.ts; }
-  }
-  const updated = st && typeof st.updatedAt === 'string' && Number.isFinite(Date.parse(st.updatedAt)) ? st.updatedAt : null;
-  return { closed: !!st && st.status === 'clean', closedAt: latest || updated || null };
+  return isObject(state) && state.status === 'clean';
+}
+
+// The run id's leading YYYY-MM-DDTHHMMSS read as UTC -> an ISO string, or null when it is not a real instant.
+function startedAtOf(runId) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})(\d{2})/.exec(runId);
+  if (!m) return null;
+  const [y, mo, d, h, mi, s] = m.slice(1).map(Number);
+  const t = new Date(Date.UTC(y, mo - 1, d, h, mi, s));
+  const ok = t.getUTCFullYear() === y && t.getUTCMonth() === mo - 1 && t.getUTCDate() === d && t.getUTCHours() === h && t.getUTCMinutes() === mi && t.getUTCSeconds() === s;
+  return ok ? t.toISOString() : null;
 }
 
 // driver-events.jsonl -> the driver's own steps, or null when the run has none.
@@ -259,37 +261,40 @@ function stepRow(s) {
 }
 
 function runRow(dir, deps) {
-  const r = yieldOf(dir, deps);
+  const r = (deps.yields && deps.yields.get(dir)) || yieldOf(dir, deps);
   const { lane, source } = laneOf(dir, deps.fs);
   const driver = lane === 'driver' ? driverStepsOf(dir, deps.fs) : null;
+  const runId = path.basename(dir);
   return {
-    runId: path.basename(dir),
-    ...closedStateOf(dir, deps.fs),
+    runId,
+    closed: closedOf(dir, deps.fs),
+    startedAt: startedAtOf(runId),
     lane, laneSource: source, yieldSource: r.source,
     steps: (r.y.steps || []).map(stepRow),
     driverSteps: driver ? driver.steps : null,
   };
 }
 
-const closedMs = (row) => Date.parse(row.closedAt);
-const newestFirst = (a, b) => closedMs(b) - closedMs(a) || (a.runId < b.runId ? 1 : a.runId > b.runId ? -1 : 0);
+// startedAt is an ISO string, so string order is time order; ties break on the run id.
+const newestFirst = (a, b) => (a.startedAt < b.startedAt ? 1 : a.startedAt > b.startedAt ? -1 : a.runId < b.runId ? 1 : a.runId > b.runId ? -1 : 0);
 
 // The steps a lane's cost is read from: the driver's own for the driver lane, the yield's otherwise.
 const costSteps = (row) => (row.lane === 'driver' ? (row.driverSteps || []) : row.steps);
 
 function selectWindow(rows, { window, laneFloor }) {
   const candidates = rows.filter((r) => r.closed && RUN_NAME_RE.test(r.runId));
-  const dated = candidates.filter((r) => r.closedAt !== null && Number.isFinite(closedMs(r))).sort(newestFirst);
+  const dated = candidates.filter((r) => r.startedAt !== null).sort(newestFirst);
   const inWindow = dated.slice(0, window);
-  const span = (list) => ({ oldest: list.length ? list[list.length - 1].closedAt : null, newest: list.length ? list[0].closedAt : null });
+  const span = (list) => ({ oldest: list.length ? list[list.length - 1].startedAt : null, newest: list.length ? list[0].startedAt : null });
   const lanes = {};
-  for (const lane of [...new Set(dated.map((r) => r.lane))].sort()) {
+  for (const lane of [...new Set(candidates.map((r) => r.lane))].sort()) {
     const all = dated.filter((r) => r.lane === lane);
     const inside = inWindow.filter((r) => r.lane === lane);
     const used = inside.length < laneFloor ? all.slice(0, laneFloor) : inside;
+    const laneCandidates = candidates.filter((r) => r.lane === lane).length;
     lanes[lane] = {
       rows: used, inWindow: inside.length, used: used.length, widened: used.length > inside.length,
-      archiveTotal: all.length, belowFloor: all.length < laneFloor,
+      undated: laneCandidates - all.length, archiveTotal: laneCandidates, belowFloor: laneCandidates < laneFloor,
       ...span(used),
       nullCost: used.filter((r) => costSteps(r).every((s) => s.tokens === null)).length,
     };
@@ -321,7 +326,7 @@ function stepTable(selection) {
     }
     const out = {};
     for (const [name, list] of byStep) {
-      const cost = (k) => { const v = list.map((s) => s[k]).filter((x) => x !== null); return { median: median(v), sum: total(v), nullRuns: list.length - v.length }; };
+      const cost = (k) => { const v = list.map((s) => s[k]).filter((x) => x !== null); return { median: median(v), sum: v.length ? total(v) : null, nullRuns: list.length - v.length }; };
       const minutes = list.map((s) => s.minutes);
       out[name] = {
         runs: list.length,
@@ -415,14 +420,17 @@ function run(argv, deps = {}) {
     return 2;
   }
   const failedDirs = new Set();
-  const summary = collect(roots, d, failedDirs);
+  const wantRows = args.runs || args.window !== null;
+  const yields = wantRows ? new Map() : null;
+  const summary = collect(roots, d, failedDirs, yields);
   let windowText = '';
-  if (args.runs || args.window !== null) {
-    // A second pass over the run directories; one that already failed to derive in collect is not counted twice.
+  if (wantRows) {
+    // A second pass over the run directories, reusing the yields collect derived (each run derives once);
+    // one that already failed to derive in collect is not counted twice.
     const rows = [];
     for (const dir of listRunDirs(roots, d.fs)) {
       if (failedDirs.has(dir)) continue;
-      try { rows.push(runRow(dir, d)); } catch (e) { summary.runsFailed++; d.err(`step-yield-report.js: ${dir}: ${errText(e)}`); }
+      try { rows.push(runRow(dir, { ...d, yields })); } catch (e) { summary.runsFailed++; d.err(`step-yield-report.js: ${dir}: ${errText(e)}`); }
     }
     if (args.runs) summary.runs = rows;
     if (args.window !== null) {
@@ -437,6 +445,6 @@ function run(argv, deps = {}) {
   return summary.rootsUnreadable.length ? 2 : 0;
 }
 
-module.exports = { run, collect, listRunDirs, RUN_NAME_RE, laneOf, closedStateOf, driverStepsOf, runRow, selectWindow, stepTable };
+module.exports = { run, collect, listRunDirs, RUN_NAME_RE, laneOf, closedOf, startedAtOf, driverStepsOf, runRow, selectWindow, stepTable };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2));

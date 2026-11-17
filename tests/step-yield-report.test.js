@@ -267,22 +267,44 @@ test('laneOf: driver events win, then an express proceed line, then config.yml, 
   assert.deepEqual(T.laneOf(d7, fs), { lane: 'express', source: 'express-check' });
 });
 
-test('lane and closed state degrade', () => {
+test('lane and closed state degrade; start time comes from the run id', () => {
   const root = mkTmp();
   const bare = path.join(root, 'bare'); fs.mkdirSync(bare);
-  assert.deepEqual(T.closedStateOf(bare, fs), { closed: false, closedAt: null });
+  assert.equal(T.closedOf(bare, fs), false);
   assert.deepEqual(T.laneOf(bare, fs), { lane: 'none', source: 'none' });
-  const clean = path.join(root, 'clean');
-  write(clean, 'run-state.json', '{"status":"clean","updatedAt":"2026-11-10T00:00:00.000Z"}');
-  assert.deepEqual(T.closedStateOf(clean, fs), { closed: true, closedAt: '2026-11-10T00:00:00.000Z' });
-  const withEvents = path.join(root, 'ev');
-  write(withEvents, 'run-state.json', '{"status":"clean","updatedAt":"2026-11-10T00:00:00.000Z"}');
-  write(withEvents, 'events.jsonl', jl({ ts: '2026-11-11T05:00:00.000Z', type: 'a' }, 'not json', { ts: '2026-11-11T07:00:00.000Z', type: 'b' }, { ts: '2026-11-11T06:00:00.000Z', type: 'c' }, { type: 'no-ts' }));
-  assert.deepEqual(T.closedStateOf(withEvents, fs), { closed: true, closedAt: '2026-11-11T07:00:00.000Z' });
+  const clean = path.join(root, 'clean'); write(clean, 'run-state.json', '{"status":"clean"}');
+  assert.equal(T.closedOf(clean, fs), true);
   const open = path.join(root, 'open'); write(open, 'run-state.json', '{"status":"running"}');
-  assert.equal(T.closedStateOf(open, fs).closed, false);
+  assert.equal(T.closedOf(open, fs), false);
   const corrupt = path.join(root, 'corrupt'); write(corrupt, 'run-state.json', '{ nope');
-  assert.deepEqual(T.closedStateOf(corrupt, fs), { closed: false, closedAt: null });
+  assert.equal(T.closedOf(corrupt, fs), false);
+  assert.equal(T.startedAtOf('2026-11-17T060227-record-5580'), '2026-11-17T06:02:27.000Z');
+  assert.equal(T.startedAtOf('wrap-up-standalone'), null);
+  assert.equal(T.startedAtOf('2026-13-17T060227-record-1'), null, 'a month that does not exist is not a time');
+  assert.equal(T.startedAtOf('2026-11-17T250227-record-1'), null);
+});
+
+test('a run with a much later last event still sorts by its id timestamp', () => {
+  const root = mkTmp();
+  const oldRun = path.join(root, '2026-11-01T000000-record-1');
+  const newRun = path.join(root, '2026-11-10T000000-record-2');
+  for (const dir of [oldRun, newRun]) { write(dir, 'run-state.json', '{"status":"clean","updatedAt":"2026-11-05T00:00:00.000Z"}'); write(dir, 'config.yml', 'ceremony-profile: standard\n'); }
+  write(oldRun, 'events.jsonl', jl({ ts: '2026-12-31T00:00:00.000Z', type: 'worktree-reap' }));
+  const s = JSON.parse(runCli([root, '--runs', '--window', '1', '--json']).out);
+  assert.deepEqual(s.window.runs.map((r) => r.runId), ['2026-11-10T000000-record-2']);
+  assert.equal(s.window.newest, '2026-11-10T00:00:00.000Z');
+  assert.equal(s.window.oldest, '2026-11-10T00:00:00.000Z');
+  assert.equal(Object.hasOwn(s.runs[0], 'closedAt'), false);
+});
+
+test('each run dir derives once when --runs and --window are both given', () => {
+  const root = setup();
+  let calls = 0;
+  const out = [];
+  const code = run([root, '--runs', '--window', '5', '--json'], { log: (x) => out.push(x), err: () => {}, derive: (...a) => { calls++; return deriveStepYield(...a); } });
+  assert.equal(code, 0);
+  assert.equal(JSON.parse(out.join('\n')).runs.length, 2);
+  assert.equal(calls, 1, 'two run dirs, one of which has a step-yield.json: one derive, not two');
 });
 
 test('driver steps sum ms and usage per step, tokens null without usage, malformed lines unparsed', () => {
@@ -327,7 +349,7 @@ test('commits count the commit action only, and only after the build is a fix', 
   assert.deepEqual([by.review.commits, by.review.fixCommits], [1, 1]);
 });
 
-const mkRow = (id, lane, closedAt, over = {}) => ({ runId: id, closed: true, closedAt, lane, laneSource: 'config', yieldSource: 'file', steps: [], driverSteps: null, ...over });
+const mkRow = (id, lane, startedAt, over = {}) => ({ runId: id, closed: true, startedAt, lane, laneSource: 'config', yieldSource: 'file', steps: [], driverSteps: null, ...over });
 const widenFixture = () => {
   const day = (n) => `2026-11-${String(n).padStart(2, '0')}T00:00:00.000Z`;
   const rows = [];
@@ -352,6 +374,9 @@ test('window widening', () => {
   assert.equal(ff.archiveTotal, 3);
   const std = sel.lanes.standard;
   assert.deepEqual([std.inWindow, std.used, std.widened, std.rows.length], [4, 4, false, 4], 'a lane with enough in the window is not widened');
+  assert.deepEqual([std.undated, std.archiveTotal, ff.undated], [1, 7, 0], 'a lane counts its undated closed runs in archiveTotal');
+  const seven = T.selectWindow(widenFixture(), { window: 5, laneFloor: 7 }).lanes.standard;
+  assert.deepEqual([seven.belowFloor, seven.used], [false, 6], 'the undated run counts toward the floor but is not used');
   const tight = T.selectWindow(widenFixture(), { window: 5, laneFloor: 4 });
   assert.deepEqual([tight.lanes['fast-lane'].belowFloor, tight.lanes['fast-lane'].archiveTotal], [true, 3]);
 });
@@ -369,8 +394,8 @@ test('stepTable counts outcome-changing runs per lane and step', () => {
   assert.equal(t.review.outcome.anyRuns, 1);
   assert.deepEqual(t.review.minutes, { median: 3, sum: 6 });
   assert.deepEqual(t.review.tokens, { median: 10, sum: 10, nullRuns: 1 });
-  assert.deepEqual(t.build.tokens, { median: null, sum: 0, nullRuns: 2 });
-  assert.deepEqual(t.build.agents, { median: null, sum: 0, nullRuns: 2 });
+  assert.deepEqual(t.build.tokens, { median: null, sum: null, nullRuns: 2 });
+  assert.deepEqual(t.build.agents, { median: null, sum: null, nullRuns: 2 });
   assert.equal(t.build.outcome.commitRuns, 2);
   assert.equal(t.build.outcome.anyRuns, 0, 'a build commit is the product, not an outcome change');
   // a failed gate and a fix commit each make a run count
