@@ -3,6 +3,8 @@ files:
   - tests/bin-lib/cli-entry-conformance.test.js
   - .claude/skills/gh-api-module-pattern/cli-wrapper-contract.md
   - plugin/bin/resolve-policy.js
+  - plugin/bin/hooks.js
+  - tests/hooks-bash-prefilter.test.js
 ---
 
 # Act on a Red CLI Entry Conformance Scan
@@ -13,13 +15,14 @@ files:
 - `<file> breaks the CLI entry contract:` followed by one offence per line
 - `<file> now conforms — delete it from NOT_YET`
 - a failure in `AC9.4: NOT_YET only shrinks, and stays sorted, without duplicates, naming existing files`
-**Success state:** The scan passes: every top-level `plugin/bin/*.js` either meets the three entry rules or is still named in `NOT_YET`, and `NOT_YET` names only files that exist and do not conform.
+- `hooks.js has an offence its EXEMPT entry does not cover: <offence>`, or `hooks.js now conforms — delete it from EXEMPT`
+**Success state:** The scan passes: every top-level `plugin/bin/*.js` meets the three entry rules, is still named in `NOT_YET`, or is `hooks.js` with exactly the one offence its `EXEMPT` entry names, and `NOT_YET` names only files that exist and do not conform.
 
 ## Steps
 
 ### 1. Read which side of the ratchet failed
 - **URL:** the failing assertion's message in the test run.
-- **Action:** Tell the two messages apart. `breaks the CLI entry contract` is about a file that is not on `NOT_YET` and has offences. `now conforms — delete it from NOT_YET` is about a file that is on the list and has none.
+- **Action:** Tell the two messages apart. `breaks the CLI entry contract` is about a file that is not on `NOT_YET` and has offences. `now conforms — delete it from NOT_YET` is about a file that is on the list and has none. A message naming `EXEMPT` is about `hooks.js`; go to step 4.
 - **Should feel:** Unambiguous. The message names the file and, for a breaking file, each rule it breaks with a line number.
 - **Should understand:**
   - The scan reads every `*.js` file directly in `plugin/bin` as text (no recursion into `plugin/bin/lib`), with comments stripped.
@@ -39,10 +42,22 @@ files:
 - **URL:** the `NOT_YET` array near the top of `tests/bin-lib/cli-entry-conformance.test.js`.
 - **Action:** Delete the converted CLI's line and keep the list sorted. Leave `NOT_YET_CEILING` (27) as it is: it is the list's landing size, a ceiling the list must stay under, not a count to lower with each deletion.
 - **Should feel:** Like ticking an item off. The list is the count of CLIs still to convert.
-- **Should understand:** `AC9.4` fails when the list grows past the ceiling (`NOT_YET grew to N (ceiling 27) — the list only shrinks`), and also when it is unsorted, holds a duplicate, or names a file that no longer exists in `plugin/bin`, so a renamed or deleted CLI is removed here as well. `hooks.js` leaves the list through #5377, as a named exemption with its reason kept apart from `NOT_YET`.
+- **Should understand:** `AC9.4` fails when the list grows past the ceiling (`NOT_YET grew to N (ceiling 27) — the list only shrinks`), and also when it is unsorted, holds a duplicate, or names a file that no longer exists in `plugin/bin`, so a renamed or deleted CLI is removed here as well. `hooks.js` left the list in #5377 and is a named exemption, kept apart from `NOT_YET` (step 4).
 - **Red flags:** Leaving a conforming file on the list "to be safe". The scan fails on exactly that, by design.
 
-### 4. Re-run and confirm
+### 4. The message names `EXEMPT`: fix `hooks.js`, not the exemption
+- **URL:** the `EXEMPT` object below `NOT_YET` in `tests/bin-lib/cli-entry-conformance.test.js`, and `plugin/bin/hooks.js`.
+- **Action:** For `has an offence its EXEMPT entry does not cover: <offence>`, remove that offence from `hooks.js` (restore its `run` export, or return an exit code where the new `process.exit(` or `process.exitCode` was added). For `now conforms — delete it from EXEMPT`, delete the entry.
+- **Should feel:** Narrow. The exemption allows one thing and says why.
+- **Should understand:**
+  - `hooks.js` is exempt by design, not waiting for conversion: its bash prefilter calls `process.exit(0)` while the file loads, before `run` exists. The entry names that reason, a proof file (`tests/hooks-bash-prefilter.test.js`) and the offence pattern it covers.
+  - Each pattern covers one offence. A second `process.exit(` above the guard is reported as uncovered, although it matches the same pattern.
+  - The script entry's own `process.exit(code)` sits inside the guard, so the scan never reports it.
+- **Red flags:**
+  - Adding a pattern, or a second copy of the pattern, to `offences` to get to green. That widens a standing decision; the offence belongs in a returned exit code.
+  - Adding another file to `EXEMPT`. `AC7.3` pins the keys to `hooks.js` alone; a CLI that cannot meet the rules needs its own recorded reason and proof file first.
+
+### 5. Re-run and confirm
 - **URL:** the scan.
 - **Action:** Run `node --test tests/bin-lib/cli-entry-conformance.test.js`.
 - **Should feel:** Mechanical. All tests pass, including the self-tests that plant each offence and expect it flagged on its exact line.
@@ -50,6 +65,7 @@ files:
 - **Red flags:** A self-test fails after you edited a rule. The rule no longer flags the shape it names; fix the rule, and keep the self-test.
 
 ## Origin
+- Updated during build of #5377, which took `hooks.js` off `NOT_YET` and made it the one `EXEMPT` entry: the two `EXEMPT` messages in the entry point, the success state, and step 4.
 - Entry point and step 3 updated during review of #5374: `AC9.4` became a ceiling (`NOT_YET_CEILING`, 27) instead of an exact count, so the sibling records of #5373 delete their own lines without editing the test's count.
 - Created during build of #5374, which added the scan with a `NOT_YET` list of 27 files and wrote the entry contract into `cli-wrapper-contract.md`.
 - Related: `call-a-plugin-bin-cli-in-process-from-a-test-5374.md` (what the contract makes possible), `act-on-a-red-strip-comments-caller-pin-4008.md` (the scan's stem is on that pin's caller lists).

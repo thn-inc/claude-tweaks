@@ -8,6 +8,7 @@ const { execFileSync } = require('child_process');
 const { PROFILES } = require('./model-profiles/profiles');
 const { stripComment } = require('./model-profiles/policy-fragment');
 const { parseRiskPathGlobs } = require('./risk-path-globs');
+const { locatePolicyFile } = require('./policy-file');
 
 const PROFILE_NAMES = Object.keys(PROFILES);
 
@@ -71,6 +72,9 @@ const POLICY_KEYS = [
   // _shared/auto-mode-contract.md's Merge authorization lever row.
   { key: 'merge-authorization', type: 'enum', values: ['ask', 'pre-authorized'], default: 'ask', policySourceExcluded: true, summary: "Lets a human pre-authorize, for one run, that it merges itself once every HARD-GATE is green — never a standing default.", category: 'merge-safety', tier: 'advanced' },
   { key: 'design-ceremony', type: 'enum', values: ['fast-lane', 'standard'], default: 'standard', summary: "Trims /specify's brainstorming handoff to fewer per-section approval stops once the design approach is chosen.", category: 'pipeline-behavior', tier: 'advanced' },
+  // review-lens-dispatch (#5599): how /claude-tweaks:review Step 3 runs its lens reviewers — `task` (parallel Task dispatch) or `workflow` (one plugin workflow script, step3-workflow-dispatch.md). Neither policyOnly nor policySourceExcluded: Step 3 resolves it with --run, so a run config may set it for one review.
+  // Removal condition: the `task` value and the key are removed, and `workflow` becomes the only primary path, one minor release after the default flips to `workflow`. The flip is its own record, filed when the parked measurement record (#5599 Deliverable 7) passes; the Task dispatch stays as the fallback for a host without the Workflow tool.
+  { key: 'review-lens-dispatch', type: 'enum', values: ['task', 'workflow'], default: 'task', summary: "Picks how review runs its lens reviewers: parallel Task agents, or one plugin workflow script (opt-in, while it is measured).", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'dispatch-retry-ceiling', type: 'integer', default: 3, summary: "Sets how many consecutive autonomous build failures a record tolerates before it is flagged blocked and pulled from auto-pilot.", category: 'merge-safety', tier: 'advanced' },
   { key: 'dispatch-batch-size', type: 'integer', default: 3, summary: "Caps how many queued records one dispatch run works through in sequence before leaving the rest for next time.", category: 'merge-safety', tier: 'advanced' },
   // Deprecated alias for dispatch-batch-size (renamed in #295 — the value is a
@@ -402,6 +406,13 @@ function readFileSafe(filePath) {
   } catch {
     return null;
   }
+}
+
+// policy.yml text found through locatePolicyFile (#4492); null when unreadable or
+// when `repoRoot` is not a string (locatePolicyFile returns a null path then).
+function readLocatedPolicy(repoRoot) {
+  const policyPath = locatePolicyFile(repoRoot).path;
+  return policyPath === null ? null : readFileSafe(policyPath);
 }
 
 // Flat `key: value` line matcher, tolerant of a trailing `# comment` and of
@@ -946,7 +957,8 @@ function detectIntegrationModel(repoRoot, opts = {}) {
 // `opts` (optional) forwards unchanged to detectIntegrationModel — see that
 // function's own comment for the mcpReachable override contract.
 function resolveIntegrationModel(repoRoot, opts = {}) {
-  const policyRaw = readFileSafe(path.join(repoRoot, '.claude-tweaks', 'policy.yml'));
+  // A non-string repoRoot locates no policy file and falls through to detection — deliberate.
+  const policyRaw = readLocatedPolicy(repoRoot);
   const resolved = resolvePolicyKeys(['integration-model'], { policyRaw, runConfigRaw: null });
   const entry = resolved['integration-model'];
   if (entry && entry.source !== 'default') return entry.value;
@@ -967,7 +979,11 @@ function resolveIntegrationModel(repoRoot, opts = {}) {
 // rethrows the rest) — only the orchestration around them is shared. `root`
 // is returned too since a caller such as resolve-policy.js's
 // integration-model default needs it independent of any resolved key.
-// `cwd` (optional) replaces `process.cwd()` as that fallback root.
+// `cwd` (optional) replaces `process.cwd()` as that fallback root. The policy
+// file is found through locatePolicyFile (#4492), so from a linked worktree
+// without its own copy the main checkout's is read; `policyPath` is the file
+// read (null only for a non-string root) and `policySource` is `checkout` or
+// `main-checkout`.
 function resolvePolicyConfig({ git, readFile, runDir = null, keys, onInvalid, cwd }) {
   let root;
   try {
@@ -975,14 +991,15 @@ function resolvePolicyConfig({ git, readFile, runDir = null, keys, onInvalid, cw
   } catch {
     root = cwd || process.cwd();
   }
-  const policyRaw = readFile(path.join(root, '.claude-tweaks', 'policy.yml'));
+  const { path: policyPath, source: policySource } = locatePolicyFile(root);
+  const policyRaw = policyPath === null ? null : readFile(policyPath);
   const runConfigRaw = runDir ? readFile(path.join(runDir, 'config.yml')) : null;
   const result = resolvePolicyKeys(keys, { policyRaw, runConfigRaw, onInvalid });
-  return { root, policyRaw, runConfigRaw, result };
+  return { root, policyRaw, runConfigRaw, result, policyPath, policySource };
 }
 
 function auditPolicy(repoRoot) {
-  const policyRaw = readFileSafe(path.join(repoRoot, '.claude-tweaks', 'policy.yml'));
+  const policyRaw = readLocatedPolicy(repoRoot);
   const claudeMdRaw = readFileSafe(path.join(repoRoot, 'CLAUDE.md'));
   const policyEntries = parseFlatLines(policyRaw);
   const claudeMdEntries = parseFlatLines(claudeMdRaw);

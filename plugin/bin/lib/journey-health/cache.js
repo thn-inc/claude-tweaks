@@ -20,8 +20,7 @@ const core = createCache('journey-health');
 
 // createDurable({ env, stderr }) builds the durable-state accessors with an
 // injected child-git environment and stderr sink (#5380); the module-level
-// exports below are bound to createDurable() (inherited env, process.stderr),
-// exactly as before.
+// exports below are bound to createDurable() (inherited env, process.stderr).
 function createDurable({ env, stderr } = {}) {
   const state = createDurableState('journey-health', { includeDeclined: true, env, stderr });
   return { readDurableState: state.readState, writeDurableState: state.writeState };

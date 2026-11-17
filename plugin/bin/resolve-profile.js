@@ -41,6 +41,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { resolve, PROFILES } = require('./lib/model-profiles/profiles');
+const { locatePolicyFile } = require('./lib/policy-file');
 const { parsePolicyModelConfig } = require('./lib/model-profiles/policy-fragment');
 const { readFailedModels, recordFailure, invalidateFailures } = require('./lib/model-profiles/session-failures');
 const { anchoredOrOutsideMessage } = require('./lib/run-dir-guard');
@@ -132,7 +133,7 @@ function run(argv, deps) {
   }
 
   let policy = {};
-  const policyPath = path.join(deps.cwd(), '.claude-tweaks', 'policy.yml');
+  const policyPath = locatePolicyFile(deps.cwd()).path;
   if (fs.existsSync(policyPath)) {
     try {
       policy = parsePolicyModelConfig(fs.readFileSync(policyPath, 'utf8'));

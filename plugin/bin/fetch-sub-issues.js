@@ -9,7 +9,7 @@
 // Shell constraint section) has a single-command escape hatch for #1097's
 // batched sub-issue fetch. Zero runtime npm deps.
 //
-// Usage: fetch-sub-issues.js [<n> ...] [--repo owner/name] [--resolve-retries] [--help]
+// Usage: fetch-sub-issues.js [<n> ...] [--repo [host/]owner/name] [--resolve-retries] [--help]
 // Output: one JSON line {"byParent":{"1095":[1097,1101]},"retry":[]} on
 // stdout — byParent as a plain object keyed by stringified number (JSON has
 // no Map). Prose invokes this via command substitution, not `xargs`; zero
@@ -41,7 +41,7 @@ const {
 } = require('./lib/repo-resolve');
 const sharedPrimitives = require('./lib/shared-primitives');
 
-const USAGE = 'usage: fetch-sub-issues.js [<n> ...] [--repo owner/name] [--resolve-retries] [--help]\n';
+const USAGE = 'usage: fetch-sub-issues.js [<n> ...] [--repo [host/]owner/name] [--resolve-retries] [--help]\n';
 
 // Exported for an in-process caller that branches on it (lib/issues/parent-gate.js).
 const EXIT_SUBISSUES_UNAVAILABLE = 4;
@@ -118,7 +118,7 @@ function run(argv, deps = realDeps) {
     if (gated.refusal) { deps.stderr(`fetch-sub-issues.js: ${gated.refusal}\n`); return 2; }
     repoSpec = gated.spec;
   }
-  if (!repoSpec) { deps.stderr('fetch-sub-issues.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+  if (!repoSpec) { deps.stderr('fetch-sub-issues.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return 2; }
   if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
   const { host, owner, repo } = repoSpec;
   // parseRepo's regex accepts any non-'/' owner/repo segment, including '.'/'..' — review finding

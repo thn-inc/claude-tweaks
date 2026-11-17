@@ -86,7 +86,7 @@ const USAGE = [
   'Takes each named record, one at a time and in order, from admission to a draft PR with',
   'CI read. Prints one JSON event line per step on stdout (and, once the run directory',
   'exists, to {run-dir}/driver-events.jsonl); each record ends with a final line carrying',
-  'its outcome: pending-review, express-escalated, blocked, refused, merged or armed. A record merges only when it carries auto:merge and the merge-check and acceptance judgment workers both clear it.',
+  'its outcome: pending-review, express-escalated, blocked, refused, merged or armed. A record merges only when it carries auto:merge and auto:build and the merge-check and acceptance judgment workers both clear it.',
   'Exit codes (Combined-2):',
   '  0  every named record reached its final event, whatever its outcome; with --budget, the loop ended normally (budget spent, queue exhausted, a claim stop on claim-targets.js exit 2, 6 or 7, or express-driver off), whatever each record\'s outcome',
   '  1  when the policy, or the run\'s repository or integration branch, cannot be resolved and no further record is attempted; with --budget, also a failed queue pull',

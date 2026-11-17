@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // bin/materialize.js — record-to-build-time-file materialization in one command.
-//   node bin/materialize.js <n> --run-dir <dir> [--repo owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]
-//   node bin/materialize.js <n> --check [--repo owner/name] [--record-json <path>]
+//   node bin/materialize.js <n> --run-dir <dir> [--repo [host/]owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]
+//   node bin/materialize.js <n> --check [--repo [host/]owner/name] [--record-json <path>]
 // --check (#4027) runs only Resolution + the Materialization hard gate —
 // /flow Step 1 item 5's pre-flight — with no --run-dir and no write, and
 // prints {record, check: "passed", title, ceremony, surface, bodyBlockedBy}; its exit codes
@@ -61,8 +61,8 @@ const { resolveTarget: resolveStageTarget, writeStagedItem } = require('./lib/st
 const { resolvePluginVersion } = require('./lib/plugin-version');
 const { defaultRunner: runPremiseCommand, PREMISE_SELF_CHECK_TIMEOUT_MS } = require('./lib/health-core/premise-self-check');
 
-const USAGE = 'usage: materialize.js <n> --run-dir <dir> [--repo owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]\n'
-  + '       materialize.js <n> --check [--repo owner/name] [--record-json <path>]\n'
+const USAGE = 'usage: materialize.js <n> --run-dir <dir> [--repo [host/]owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]\n'
+  + '       materialize.js <n> --check [--repo [host/]owner/name] [--record-json <path>]\n'
   + '  --check: Resolution + the Materialization hard gate only (#4027) — no --run-dir, no write;\n'
   + '           prints {record, check: "passed", title, ceremony, surface, bodyBlockedBy}; exit 0 passed, 1 gate failed, 2 unresolved/malformed\n';
 
@@ -281,12 +281,10 @@ const realDeps = {
   // never hit the real filesystem for it either.
   readFile: (file) => fs.readFileSync(file, 'utf8'),
   // #1840: the RUNNING build's own version — CLAUDE_PLUGIN_ROOT/.claude-plugin/
-  // plugin.json, the same read bin/harness-health.js's own resolvePluginVersion
-  // performs (never this repo's own plugin/.claude-plugin/plugin.json, which is
-  // ahead of the installed build during development). Fail-toward-undefined.
-  // #1837 review finding: this was its own third copy of the same
-  // read/parse/extract logic — now shared with bin/harness-health.js and
-  // bin/lib/hooks/session-start.js via bin/lib/plugin-version.js.
+  // plugin.json, read by bin/lib/plugin-version.js's resolvePluginVersion (never
+  // this repo's own plugin/.claude-plugin/plugin.json, which is ahead of the
+  // installed build during development). Fails toward undefined; shared with
+  // bin/harness-health.js and bin/lib/hooks/session-start.js.
   installedPluginVersion: () => resolvePluginVersion(),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
@@ -396,7 +394,7 @@ function run(argv, deps = realDeps) {
       if (gated.refusal) { deps.stderr(`materialize.js: ${gated.refusal}\n`); return 2; }
       repoSpec = gated.spec;
     }
-    if (!repoSpec) { deps.stderr('materialize.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+    if (!repoSpec) { deps.stderr('materialize.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return 2; }
     if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
     const { host, owner, repo } = repoSpec;
     // #2538 Deliverable 3 — visible only for a resolved non-github.com host.
