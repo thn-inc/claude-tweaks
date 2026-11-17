@@ -376,7 +376,7 @@ function readWithBatchResponse(fileSpecs, response) {
 }
 
 test('a non-blob slot degrades to its default and the following blob still reads (byte-length framing skips the tree body)', () => {
-  const response = Buffer.concat([Buffer.from(`${'e'.repeat(40)} tree 5\nabcde\n`),Buffer.from(`${'b'.repeat(40)} blob 9\n{"k":"v"}\n`)]);
+  const response = Buffer.concat([Buffer.from(`${'e'.repeat(40)} tree 5\nabcde\n`), Buffer.from(`${'b'.repeat(40)} blob 9\n{"k":"v"}\n`)]);
   const state = readWithBatchResponse([{ key: 'a', file: 'a.json', default: { d: 1 } }, { key: 'b', file: 'b.json', default: {} }], response);
   assert.deepStrictEqual(state, { a: { d: 1 }, b: { k: 'v' } });
 });
@@ -389,6 +389,13 @@ test('a truncated batch stream degrades the unread slots to defaults and never t
     { key: 'c', file: 'c.json', default: [3] },
   ], response);
   assert.deepStrictEqual(state, { a: { k: 'v' }, b: { d: 2 }, c: [3] });
+});
+
+test('a header claiming more bytes than the stream holds degrades that slot and every later one, never reading the short body', () => {
+  // Without the length guard the short remainder `{"k":"v"}\n` would be sliced and parsed as slot a.
+  const response = `${'a'.repeat(40)} blob 50\n{"k":"v"}\n`;
+  const state = readWithBatchResponse([{ key: 'a', file: 'a.json', default: { d: 1 } }, { key: 'b', file: 'b.json', default: { d: 2 } }], response);
+  assert.deepStrictEqual(state, { a: { d: 1 }, b: { d: 2 } });
 });
 
 test('a string response is framed by bytes, so a multi-byte first slot does not misframe the next', () => {
@@ -420,7 +427,7 @@ test('a failed batch process degrades every spec to its default', () => {
   assert.strictEqual(stderrOut, '');
 });
 
-test('AC3.1: the default runner gives the batch read the 30 s timeout, windowsHide, a 64 MiB maxBuffer and a Buffer result', () => {
+test('AC3.1: the default runner gives the batch read the 30 s timeout, windowsHide, a 64 MiB maxBuffer, encoding buffer and a Buffer input', () => {
   const childProcess = require('child_process');
   const modulePath = require.resolve('../../../plugin/bin/lib/health-core/durable-state');
   const realExecFileSync = childProcess.execFileSync;
