@@ -1844,11 +1844,11 @@ function hostileScenario() {
   scenario.gh[0] = { ...scenario.gh[0], stdout: JSON.stringify(records) + '\n' };
   return scenario;
 }
-const hostileProposal = () => {
+function hostileProposal() {
   const r = pull4(hostileScenario());
   assert.ok(r.ghCalls.some((a) => a[0] === 'cat-file' && a[2] === `origin/main:${HOSTILE_DOC}`), 'the hostile path was probed and found absent');
   return r.cap.staged.find((s) => s.id === 'dispatch-target-missing-9009').body;
-};
+}
 
 test('#5317 target-missing: a hostile Doc path is staged as one single-quoted --body word, equal to the fence', () => {
   const body = hostileProposal();
