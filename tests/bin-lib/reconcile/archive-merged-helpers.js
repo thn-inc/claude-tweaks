@@ -42,12 +42,17 @@ function makeRepo() {
   return fromTemplate('archive-merged:makeRepo', initRepo, { prefix: 'archive-merged-' });
 }
 
+// Template build: fills the empty `dir` with the repo at `src` (a template copy holding no
+// absolute path), then removes `src`.
+function seedFromCopy(src, dir) {
+  fs.cpSync(src, dir, { recursive: true });
+  fs.rmSync(src, { recursive: true, force: true });
+}
+
 // Template build: fills the empty `dir` with a copy of makeRepo()'s repo, so a
 // template built on it starts no init, config or first-commit process of its own.
 function seedFromMakeRepo(dir) {
-  const src = makeRepo();
-  fs.cpSync(src, dir, { recursive: true });
-  fs.rmSync(src, { recursive: true, force: true });
+  seedFromCopy(makeRepo(), dir);
 }
 
 function commitPath(root, relPath, content) {
@@ -133,6 +138,26 @@ function mergeFeatureBranch(root, branch, wtPrefix, commitEnv) {
 // Template key -> the feature sha its build recorded, so a copy needs no rev-parse.
 const featureShas = new Map();
 
+// The branch name mergedFeatureBranchRepo's one template is built with; each copy renames it.
+const MERGED_TEMPLATE_BRANCH = 'feat-merged-template';
+
+// `git branch -m from to` as plain file moves, so it starts no git process: the loose ref,
+// its reflog, and the name in main's and HEAD's fast-forward reflog line. The merge is a
+// fast-forward, so no commit names the branch.
+function renameLooseBranch(root, from, to) {
+  if (from === to) return;
+  const gitDir = path.join(root, '.git');
+  for (const sub of ['refs/heads', 'logs/refs/heads']) {
+    const dest = path.join(gitDir, sub, to);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.renameSync(path.join(gitDir, sub, from), dest);
+  }
+  for (const log of ['logs/HEAD', 'logs/refs/heads/main']) {
+    const file = path.join(gitDir, log);
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').split(`\tmerge ${from}:`).join(`\tmerge ${to}:`));
+  }
+}
+
 // The "PR merged, worktree torn down" repo shape both fixtures below build
 // on: a feature branch committed in its own worktree, merged into main, then
 // the worktree removed (branch ref stays). The returned `featureSha` is that
@@ -145,12 +170,22 @@ const featureShas = new Map();
 // symlink) — archiveMerged's `root` would otherwise differ from a fixture's
 // own `runDir` string, and a plain string membership assertion against
 // `result.archived` would spuriously fail.
+// One template serves every branch name (#5772): it is built on MERGED_TEMPLATE_BRANCH, and
+// each copy renames that branch to `branch`, so every copy shares one featureSha.
 function mergedFeatureBranchRepo(branch) {
-  const key = `archive-merged:merged:${branch}`;
+  const key = 'archive-merged:merged';
   const root = fromTemplate(key, (dir) => {
     seedFromMakeRepo(dir);
-    featureShas.set(key, mergeFeatureBranch(dir, branch, 'archive-merged-featwt-'));
+    const sha = mergeFeatureBranch(dir, MERGED_TEMPLATE_BRANCH, 'archive-merged-featwt-');
+    featureShas.set(key, sha);
+    const loose = (name) => {
+      try { return fs.readFileSync(path.join(dir, '.git', 'refs', 'heads', name), 'utf8').trim(); } catch { return null; }
+    };
+    if (loose(MERGED_TEMPLATE_BRANCH) !== sha || loose('main') !== sha) {
+      throw new Error('mergedFeatureBranchRepo: the template needs loose refs and a fast-forward merge, so a copy can rename the branch');
+    }
   }, { prefix: 'archive-merged-', realpath: true });
+  renameLooseBranch(root, MERGED_TEMPLATE_BRANCH, branch);
   return { root, featureSha: featureShas.get(key) };
 }
 
@@ -158,6 +193,56 @@ function mergedFeatureBranchRepo(branch) {
 function addOriginRemote(root, url) {
   fs.appendFileSync(path.join(root, '.git', 'config'),
     `[remote "origin"]\n\turl = ${url}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n`);
+}
+
+// mergedFeatureBranchRepo(branch) with the branch ref deleted too, so only a stamped
+// pr.number can reach the merged PR; `origin`, when given, is the origin remote's url.
+// A template per (branch, origin) (#5772); the root is realpath'd.
+function deletedBranchMergedRepo(branch, origin = null) {
+  const key = `archive-merged:deleted-branch:${branch}:${origin}`;
+  const root = fromTemplate(key, (dir) => {
+    const src = mergedFeatureBranchRepo(branch);
+    featureShas.set(key, src.featureSha);
+    seedFromCopy(src.root, dir);
+    if (origin) addOriginRemote(dir, origin);
+    git(dir, 'branch', '-D', branch);
+  }, { prefix: 'archive-merged-', realpath: true });
+  return { root, featureSha: featureShas.get(key) };
+}
+
+// mergedFeatureBranchRepo('feat-reused-branch') plus a live linked worktree `wt` on a new
+// `worktree-reused` branch: one template set (#5772), both dirs realpath'd.
+function reusedBranchLiveRepo() {
+  const key = 'archive-merged:reused-branch-live';
+  const { root, wt } = fromTemplateSet(key, (dirs) => {
+    const src = mergedFeatureBranchRepo('feat-reused-branch');
+    featureShas.set(key, src.featureSha);
+    seedFromCopy(src.root, dirs.root);
+    git(dirs.root, 'worktree', 'add', '-q', dirs.wt, '-b', 'worktree-reused');
+  }, {
+    root: { prefix: 'archive-merged-', realpath: true },
+    wt: { prefix: 'archive-merged-reusedwt-', realpath: true },
+  });
+  return { root, wt, featureSha: featureShas.get(key) };
+}
+
+// #3975: a clean-twin shell — the archive twin carries a clean run-state, only tracked work/ is live.
+function makeShell(root, runId, { twinWork = '# w\n', liveWork = '# w\n' } = {}) {
+  commitPath(root, `.claude-tweaks/pipelines/${runId}/work/w-spec.md`, liveWork);
+  commitPath(root, `.claude-tweaks/pipelines/archive/${runId}/work/w-spec.md`, twinWork);
+  commitPath(root, `.claude-tweaks/pipelines/archive/${runId}/run-state.json`, JSON.stringify({ status: 'clean' }));
+  return path.join(root, '.claude-tweaks', 'pipelines', runId);
+}
+
+// makeRepo() holding one default makeShell(root, '2026-09-01T100000-spec-1'): a template
+// (#5772); the root is realpath'd.
+const SHELL_3975_RUN = '2026-09-01T100000-spec-1';
+function shellRepo3975() {
+  const root = fromTemplate('archive-merged:shell-3975', (dir) => {
+    seedFromMakeRepo(dir);
+    makeShell(dir, SHELL_3975_RUN);
+  }, { prefix: 'archive-merged-', realpath: true });
+  return { root, shellDir: path.join(root, '.claude-tweaks', 'pipelines', SHELL_3975_RUN) };
 }
 
 // #1544: a run dir close-run already marked `{status: 'clean', worktree:
@@ -470,5 +555,9 @@ module.exports = {
   RUN_3976,
   headerMergedRepo3976,
   addOriginRemote,
+  deletedBranchMergedRepo,
+  reusedBranchLiveRepo,
+  makeShell,
+  shellRepo3975,
   ref,
 };
