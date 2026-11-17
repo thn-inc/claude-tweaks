@@ -39,9 +39,9 @@ notes: >
   still has to run `/claude-tweaks:backlog refine` periodically to grant auto:build before
   this routine has anything to pick up. A group whose run comes back clean (per the
   two-layer auto-merge gate, assess-agent-autonomy's merge-check mode verdicting auto-merge)
-  merges without waiting, when every member carries auto:merge or a matured
-  auto:merge-pending; anything less than clean falls back to a normal pending-review wait.
-  There is no consolidated multi-group console — each firing reports only its own group's
+  merges without waiting, when every member carries auto:build with auto:merge or a
+  matured auto:merge-pending; anything less than clean falls back to a normal
+  pending-review wait. There is no consolidated multi-group console — each firing reports only its own group's
   outcome; the aggregate picture surfaces over time via /claude-tweaks:tidy's own periodic
   GitHub/PR sweep. A pending-review outcome parks (branch and run dir wait for a
   human, or the claim's TTL expires and a later firing supersedes it); a firing with no

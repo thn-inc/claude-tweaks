@@ -81,7 +81,7 @@ test('renders a row per run with appeared/disappeared/ratio columns', () => {
 
 // #2053: cmdChurnReport no longer calls process.exit() directly (a pending
 // stdout write right before process.exit() can truncate it for a piped
-// consumer -- the caller's own main() applies the returned code to
+// consumer -- the caller's own script entry applies the returned code to
 // process.exitCode instead). These three tests assert the returned value
 // rather than mocking process.exit.
 

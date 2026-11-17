@@ -6,10 +6,10 @@ label branch is unchanged and does not need this file.
 
 ## Applicability (second, independent trigger)
 
-In addition to the existing condition (issue's live labels carry `auto:merge`, or a matured
-`auto:merge-pending` — see `auto-merge-short-circuit.md`'s own Authorization step, #309), this
-short-circuit also applies when this run's `config.yml` resolves `merge-authorization` to
-`pre-authorized`:
+In addition to the existing condition (issue's live labels carry `auto:build` together with
+`auto:merge` or a matured `auto:merge-pending` — see `auto-merge-short-circuit.md`'s own
+Authorization step, #309), this short-circuit also applies when this run's `config.yml`
+resolves `merge-authorization` to `pre-authorized`:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --run "$PIPELINE_RUN_DIR" --values merge-authorization
@@ -28,9 +28,10 @@ the lever authorizes the merge decision, not a skip of the content-judgment safe
 Both merge call sites resolve the same `{tag}` the same way: `_shared/pr-first-merge.md` Step 3's
 `{tag}` parameter (`pr-first` subsection) and the `local-merge` subsection's `--tag {tag}` argument
 to `bin/compose-subject.js` (which carries it as a `[{tag}]` body paragraph of the composed merge
-message). `{tag}` is `fast-lane` when the live `auto:merge` label is present
+message). `{tag}` is `fast-lane` when the live labels carry `auto:merge` and `auto:build`
 (the standing, pre-existing signal wins when both conditions hold); `manifesto-authorized` when
-only the `merge-authorization` lever triggered this branch (no `auto:merge` label).
+only the `merge-authorization` lever triggered this branch (no `auto:merge` label, or a leftover
+`auto:merge` without `auto:build` that the lever cleared).
 
 ## Why policy.yml is excluded
 

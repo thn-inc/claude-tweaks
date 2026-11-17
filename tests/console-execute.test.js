@@ -328,14 +328,30 @@ test('decideConsoleExecute: isMergeRow present but ctx incomplete (no prBody or 
   const expected = { member: null, reason: 'grant-context-missing' };
   assert.deepStrictEqual(decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now()).mergeGrantGap, expected);
   assert.deepStrictEqual(decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), { prBody: 'Fixes #1' }).mergeGrantGap, expected);
-  assert.deepStrictEqual(decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), { memberGrants: { 1: { labels: ['auto:merge'], pendingSince: null } } }).mergeGrantGap, expected);
+  assert.deepStrictEqual(decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), { memberGrants: { 1: { labels: ['auto:build', 'auto:merge'], pendingSince: null } } }).mergeGrantGap, expected);
 });
 
 test('decideConsoleExecute: a solo record (one Fixes line) carrying auto:merge -> mergeGrantGap null, merge row floor-clearing', () => {
   const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
-    prBody: 'Fixes #1966', memberGrants: { 1966: { labels: ['auto:merge'], pendingSince: null } },
+    prBody: 'Fixes #1966', memberGrants: { 1966: { labels: ['auto:build', 'auto:merge'], pendingSince: null } },
   });
   assert.strictEqual(result.mergeGrantGap, null);
+});
+
+test('AC5.2, AC5.3: a solo record with auto:merge and no auto:build -> mergeGrantGap names the missing build grant', () => {
+  const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
+    prBody: 'Fixes #7', memberGrants: { 7: { labels: ['auto:merge'], pendingSince: null } },
+  });
+  assert.strictEqual(result.mergeGrantGap.member, 7);
+  assert.strictEqual(result.mergeGrantGap.reason, 'no auto:build label present — a merge grant counts only together with a live auto:build');
+});
+
+test('a member with no grant labels at all -> mergeGrantGap names the missing merge grant, not the build grant', () => {
+  const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
+    prBody: 'Fixes #7', memberGrants: { 7: { labels: [], pendingSince: null } },
+  });
+  assert.strictEqual(result.mergeGrantGap.member, 7);
+  assert.strictEqual(result.mergeGrantGap.reason, 'no auto:merge or auto:merge-pending label present');
 });
 
 test('decideConsoleExecute: a solo record with auto:build only, no auto:merge -> mergeGrantGap names it (#1966\'s reported bug)', () => {
@@ -352,7 +368,7 @@ test('decideConsoleExecute: a matured auto:merge-pending clears the gap', () => 
   // never a string; evaluateMaturation only accepts `instanceof Date`.
   const pendingSince = new Date(Date.now() - 30 * 60 * 60 * 1000); // 30h ago
   const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
-    prBody: 'Fixes #7', memberGrants: { 7: { labels: ['auto:merge-pending'], pendingSince } }, vetoWindowHours: 24,
+    prBody: 'Fixes #7', memberGrants: { 7: { labels: ['auto:build', 'auto:merge-pending'], pendingSince } }, vetoWindowHours: 24,
   });
   assert.strictEqual(result.mergeGrantGap, null);
 });
@@ -360,7 +376,7 @@ test('decideConsoleExecute: a matured auto:merge-pending clears the gap', () => 
 test('decideConsoleExecute: an unmatured grant whose untrusted marker comment was passed over names that comment in the gap reason (#3358)', () => {
   const note = 'skipped marker comment https://x/issues/7#c1 by eve (NONE) — not an owner, member, or collaborator';
   const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
-    prBody: 'Fixes #7', memberGrants: { 7: { labels: ['auto:merge-pending'], pendingSince: null, skippedUntrusted: [note] } },
+    prBody: 'Fixes #7', memberGrants: { 7: { labels: ['auto:build', 'auto:merge-pending'], pendingSince: null, skippedUntrusted: [note] } },
   });
   assert.strictEqual(result.mergeGrantGap.member, 7);
   assert.match(result.mergeGrantGap.reason, /could not be determined from the audit trail/);
@@ -371,8 +387,8 @@ test('decideConsoleExecute: an empty or absent skippedUntrusted leaves the gap r
   const run = (grant) => decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
     prBody: 'Fixes #7', memberGrants: { 7: grant },
   }).mergeGrantGap.reason;
-  const bare = run({ labels: ['auto:merge-pending'], pendingSince: null });
-  assert.strictEqual(run({ labels: ['auto:merge-pending'], pendingSince: null, skippedUntrusted: [] }), bare);
+  const bare = run({ labels: ['auto:build', 'auto:merge-pending'], pendingSince: null });
+  assert.strictEqual(run({ labels: ['auto:build', 'auto:merge-pending'], pendingSince: null, skippedUntrusted: [] }), bare);
   assert.ok(!bare.includes('skipped marker comment'));
 });
 
@@ -405,7 +421,7 @@ test('renderExecutedLines: each passed-over untrusted reply comment gets its own
 test('decideConsoleExecute: an auto:merge-pending still inside the veto window withholds', () => {
   const pendingSince = new Date(Date.now() - 1 * 60 * 60 * 1000); // 1h ago
   const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
-    prBody: 'Fixes #7', memberGrants: { 7: { labels: ['auto:merge-pending'], pendingSince } }, vetoWindowHours: 24,
+    prBody: 'Fixes #7', memberGrants: { 7: { labels: ['auto:build', 'auto:merge-pending'], pendingSince } }, vetoWindowHours: 24,
   });
   assert.strictEqual(result.mergeGrantGap.member, 7);
   assert.match(result.mergeGrantGap.reason, /veto window/);
@@ -415,9 +431,9 @@ test('decideConsoleExecute: a bundle with one ungranted member among several gra
   const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
     prBody: 'Fixes #1\nFixes #2\nFixes #3',
     memberGrants: {
-      1: { labels: ['auto:merge'], pendingSince: null },
+      1: { labels: ['auto:build', 'auto:merge'], pendingSince: null },
       2: { labels: ['auto:build'], pendingSince: null },
-      3: { labels: ['auto:merge'], pendingSince: null },
+      3: { labels: ['auto:build', 'auto:merge'], pendingSince: null },
     },
   });
   assert.strictEqual(result.mergeGrantGap.member, 2);
@@ -478,18 +494,18 @@ const GRANT_MARKER = '<!-- grant-mode-audit: date=2020-01-01T00:00:00Z auto-merg
 
 test('fetchIssueGrant: a planted pending-grant marker authored NONE leaves pendingSince null and is named in skippedUntrusted', { skip: process.platform === 'win32' }, async () => {
   const res = await withFakeGh({
-    labels: [{ name: 'auto:merge-pending' }],
+    labels: [{ name: 'auto:build' }, { name: 'auto:merge-pending' }],
     comments: [{ body: GRANT_MARKER, url: 'https://x/issues/7#c1', author: { login: 'eve' }, authorAssociation: 'NONE' }],
   }, () => fetchIssueGrant(process.cwd(), 7));
   assert.strictEqual(res.ok, true);
-  assert.deepStrictEqual(res.labels, ['auto:merge-pending']);
+  assert.deepStrictEqual(res.labels, ['auto:build', 'auto:merge-pending']);
   assert.strictEqual(res.pendingSince, null);
   assert.deepStrictEqual(res.skippedUntrusted, ['skipped marker comment https://x/issues/7#c1 by eve (NONE) — not an owner, member, or collaborator']);
 });
 
 test('fetchIssueGrant: the same marker authored MEMBER is that date, with nothing skipped', { skip: process.platform === 'win32' }, async () => {
   const res = await withFakeGh({
-    labels: [{ name: 'auto:merge-pending' }],
+    labels: [{ name: 'auto:build' }, { name: 'auto:merge-pending' }],
     comments: [{ body: GRANT_MARKER, authorAssociation: 'MEMBER' }],
   }, () => fetchIssueGrant(process.cwd(), 7));
   assert.strictEqual(res.pendingSince.toISOString(), '2020-01-01T00:00:00.000Z');
@@ -523,7 +539,7 @@ test('consoleExecuteDetect: a withheld merge grant names the untrusted pending-g
 
   const pr = { comments: RESOLVED_COMMENTS, body: 'Fixes #7' };
   const issue = {
-    labels: [{ name: 'auto:merge-pending' }],
+    labels: [{ name: 'auto:build' }, { name: 'auto:merge-pending' }],
     comments: [{ body: GRANT_MARKER, url: 'https://x/issues/7#c1', author: { login: 'eve' }, authorAssociation: 'NONE' }],
   };
   const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-ghwrap-'));
