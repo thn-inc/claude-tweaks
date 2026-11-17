@@ -17,6 +17,7 @@ Scope keywords: headShortReader, withReadCache
 - Keep every existing test and assertion under `tests/bin-lib/learned-skills/` unchanged; they must pass, including the `core.autocrlf=true` variants and every fault-matrix file (`capture-matrix-*.test.js`).
 - Failure handling is unchanged: every re-check that follows a step that can change tree or index state still reads git.
 - A cache must be invalidated by every state-changing call, not keyed only by argv.
+- Single writer during one `capture()` (spec Plan Review Clarifications, Reading A): invalidation covers state-changing git calls and writes through capture's own `deps` seams; a write to the target by another process is out of scope, so every cached question, the durability re-checks included, uses the one uniform cache rule.
 - No new `execFileSync` site; every git call still goes through `deps.git` (source-scan suites over `plugin/bin/` stay green).
 - Release note: no user-visible change.
 
@@ -33,6 +34,7 @@ Scope keywords: headShortReader, withReadCache
 ### Task 1: Read HEAD once per land()/stage() call for staging
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/learned-skills/learned-skills.js` (`writeStage` ~:242-268, `stageEntry` ~:223-238, exports)
@@ -176,7 +178,7 @@ git commit -m "Reuse unchanged read-only git answers within one learned-skills c
 
 ### Task 3: Measure git processes before and after (controller-run, no code)
 
-**Role:** transcription
+**Role:** integration
 
 **Files:** none committed.
 
