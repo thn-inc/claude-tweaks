@@ -1,6 +1,6 @@
 // tests/hooks-pre-tool-use.test.js
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
@@ -13,6 +13,7 @@ const { STUB_SKIP } = require('./helpers/path-stub');
 const { fakeGh } = require('./helpers/fake-gh');
 const { readText } = require('./helpers/read-skill');
 const { gitRepo, gitRepoWithCommit, gitRepoOnLocalMain, mainAndWorktree, GH_TIMEOUT_ENV, unpinnedRepoWithOrigin } = require('./helpers/pre-tool-use');
+const { warmCallStartsNoGit } = require('./helpers/git-trace');
 const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
 // A hook event's context always carries env (hooks.js builds it); a hand-built one passes it explicitly.
 const BASE_ENV = Object.freeze({ ...process.env });
@@ -2083,4 +2084,82 @@ test('#4492 F1: worktree-required allows a Write inside a submodule of a sibling
   assert.deepStrictEqual(allowed, {});
   const denied = pre.run({ env: BASE_ENV, input: { tool_name: 'Write', tool_input: { file_path: path.join(main, 'file.txt') } }, runDir: null, runState: null, cwd: main });
   assert.strictEqual(denied.json.hookSpecificOutput.permissionDecision, 'deny');
+});
+
+// #5846: the pre-tool-use fixture builders sit on templates (#5297, #5324) — a warm-up call may
+// build, a further call starts no git process — and the copies carry the right git state. They
+// live here because this file's own tests already build every one of these templates.
+const movedScratch = [];
+after(() => {
+  for (const d of movedScratch) fs.rmSync(d, { recursive: true, force: true });
+});
+function mk(prefix) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  movedScratch.push(d);
+  return d;
+}
+// An empty config pinned as the global/system config, so a host's own git config cannot leak in.
+const EMPTY_CONFIG = path.join(mk('ct-gt-cfg-'), 'empty');
+fs.writeFileSync(EMPTY_CONFIG, '');
+function git(cwd, args) {
+  const env = {
+    ...process.env,
+    GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test',
+    GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test',
+    GIT_CONFIG_GLOBAL: EMPTY_CONFIG, GIT_CONFIG_SYSTEM: EMPTY_CONFIG,
+  };
+  return fixtureGit(args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+}
+const preToolUse = { gitRepo, gitRepoWithCommit, gitRepoOnLocalMain, mainAndWorktree, unpinnedRepoWithOrigin };
+const preToolUseBuilders = {
+  'pre-tool-use gitRepo': [() => preToolUse.gitRepo(), (d) => [d]],
+  'pre-tool-use gitRepoWithCommit': [() => preToolUse.gitRepoWithCommit(), (d) => [d]],
+};
+for (const [name, [make, dirsOf]] of Object.entries(preToolUseBuilders)) {
+  test(`${name}: a second call starts no git process`, () => {
+    warmCallStartsNoGit(make, { track: (r) => movedScratch.push(...dirsOf(r)) });
+  });
+}
+const preToolUsePairs = {
+  'pre-tool-use mainAndWorktree': [() => preToolUse.mainAndWorktree(), (r) => [r.main, path.dirname(r.wt)]],
+  'pre-tool-use mainAndWorktree({ localMain })': [() => preToolUse.mainAndWorktree({ localMain: true }), (r) => [r.main, path.dirname(r.wt)]],
+  'pre-tool-use gitRepoOnLocalMain': [() => preToolUse.gitRepoOnLocalMain(), (d) => [d]],
+  'pre-tool-use unpinnedRepoWithOrigin': [() => preToolUse.unpinnedRepoWithOrigin(), (d) => [d]],
+};
+for (const [name, [make, dirsOf]] of Object.entries(preToolUsePairs)) {
+  test(`AC1.1 AC1.2: ${name}: a second call starts no git process`, () => {
+    warmCallStartsNoGit(make, { track: (r) => movedScratch.push(...dirsOf(r)) });
+  });
+}
+test('a copied mainAndWorktree pair resolves to its own main, and a second worktree can be added to it', () => {
+  const a = preToolUse.mainAndWorktree();
+  const b = preToolUse.mainAndWorktree();
+  movedScratch.push(a.main, path.dirname(a.wt), b.main, path.dirname(b.wt));
+  for (const p of [a, b]) {
+    assert.ok(path.basename(p.main).startsWith('ct-e1-'), p.main);
+    assert.ok(path.basename(path.dirname(p.wt)).startsWith('ct-e1-wtparent-'), p.wt);
+    const common = git(p.wt, ['rev-parse', '--git-common-dir']);
+    assert.strictEqual(fs.realpathSync(path.resolve(p.wt, common)), path.join(p.main, '.git'));
+    assert.strictEqual(fs.realpathSync(git(p.wt, ['rev-parse', '--show-toplevel'])), p.wt);
+  }
+  const listed = (p) => git(p.main, ['worktree', 'list', '--porcelain'])
+    .split('\n').filter((l) => l.startsWith('worktree ')).map((l) => fs.realpathSync(l.slice(9)));
+  assert.ok(listed(a).includes(a.wt), listed(a).join(', '));
+  assert.ok(!listed(a).includes(b.wt), listed(a).join(', '));
+  const extra = path.join(mk('ct-gt-wt2-'), 'wt');
+  git(a.main, ['worktree', 'add', '-q', extra, '-b', 'extra']);
+  assert.strictEqual(git(extra, ['rev-parse', 'HEAD']), git(a.main, ['rev-parse', 'HEAD']));
+});
+test('mainAndWorktree({ localMain: true }) and gitRepoOnLocalMain copies are on main', () => {
+  const pair = preToolUse.mainAndWorktree({ localMain: true });
+  const repo = preToolUse.gitRepoOnLocalMain();
+  movedScratch.push(pair.main, path.dirname(pair.wt), repo);
+  assert.strictEqual(git(pair.main, ['symbolic-ref', '--short', 'HEAD']), 'main');
+  assert.strictEqual(git(repo, ['symbolic-ref', '--short', 'HEAD']), 'main');
+});
+test('unpinnedRepoWithOrigin copies carry the GitHub-shaped origin and one commit', () => {
+  const repo = preToolUse.unpinnedRepoWithOrigin();
+  movedScratch.push(repo);
+  assert.strictEqual(git(repo, ['remote', 'get-url', 'origin']), 'https://github.com/o/n.git');
+  assert.strictEqual(git(repo, ['rev-list', '--count', 'HEAD']), '1');
 });

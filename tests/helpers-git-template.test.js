@@ -9,6 +9,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 const { fixtureGit } = require('./helpers/git-fixtures');
+const { warmCallStartsNoGit } = require('./helpers/git-trace');
 const {
   fromTemplate,
   fromTemplateSet,
@@ -88,14 +89,27 @@ test('fromTemplate builds once and returns independent copies', () => {
 
 test('a copy starts no git process', () => {
   const build = repoBuild;
-  scratch.push(fromTemplate('k1', build, { prefix: 'ct-gt-' })); // warm-up: the build may spawn git
-  const trace = mk('ct-gt-trace-');
-  const copies = withEnv('GIT_TRACE2_EVENT', trace, () => [
-    fromTemplate('k1', build, { prefix: 'ct-gt-' }),
-    fromTemplate('k1', build, { prefix: 'ct-gt-' }),
-  ]);
-  scratch.push(...copies);
-  assert.deepStrictEqual(fs.readdirSync(trace), []);
+  warmCallStartsNoGit(
+    () => fromTemplate('k1', build, { prefix: 'ct-gt-' }), // warm-up: the build may spawn git
+    {
+      traced: () => [
+        fromTemplate('k1', build, { prefix: 'ct-gt-' }),
+        fromTemplate('k1', build, { prefix: 'ct-gt-' }),
+      ],
+      track: (r) => scratch.push(...[].concat(r)),
+    },
+  );
+});
+
+test('#5846 AC4.1: warmCallStartsNoGit throws when the traced call starts a git process, and restores GIT_TRACE2_EVENT', () => {
+  const before = process.env.GIT_TRACE2_EVENT;
+  const startsGit = () => execFileSync('git', ['--version'], { env: gitEnv(), stdio: 'ignore', windowsHide: true });
+  assert.throws(() => warmCallStartsNoGit(() => {}, { traced: startsGit }), assert.AssertionError);
+  assert.strictEqual(process.env.GIT_TRACE2_EVENT, before);
+  const tracked = [];
+  const r = warmCallStartsNoGit(() => 'w', { traced: () => 't', track: (x) => tracked.push(x) });
+  assert.deepStrictEqual(r, { warm: 'w', traced: 't' });
+  assert.deepStrictEqual(tracked, ['w', 't']);
 });
 
 test('fromTemplateSet rewires a clone to its own copied origin', () => {
@@ -308,11 +322,8 @@ test('AC3.1: under the runner\'s git template a bare-origin push and a fixture c
 
 // The per-test repo builders sit on templates (#5297): after one warm-up call
 // (which may build), a further call starts no git process.
-const preToolUse = require('./helpers/pre-tool-use');
 const gitFixtures = require('./helpers/git-fixtures');
 const builders = {
-  'pre-tool-use gitRepo': [() => preToolUse.gitRepo(), (d) => [d]],
-  'pre-tool-use gitRepoWithCommit': [() => preToolUse.gitRepoWithCommit(), (d) => [d]],
   'git-fixtures gitRepo()': [() => gitFixtures.gitRepo(), (d) => [d]],
   'git-fixtures gitRepo({ branch })': [() => gitFixtures.gitRepo({ branch: 'trunk' }), (d) => [d]],
   'originWithTwoClones': [() => gitFixtures.originWithTwoClones('ct-gt-otc-'), (r) => [r.root]],
@@ -326,55 +337,6 @@ for (const [name, [make, dirsOf]] of Object.entries(builders)) {
     assert.deepStrictEqual(fs.readdirSync(trace), []);
   });
 }
-
-// #5324: the pre-tool-use fixed pairs and repos sit on templates too.
-const preToolUsePairs = {
-  'pre-tool-use mainAndWorktree': [() => preToolUse.mainAndWorktree(), (r) => [r.main, path.dirname(r.wt)]],
-  'pre-tool-use mainAndWorktree({ localMain })': [() => preToolUse.mainAndWorktree({ localMain: true }), (r) => [r.main, path.dirname(r.wt)]],
-  'pre-tool-use gitRepoOnLocalMain': [() => preToolUse.gitRepoOnLocalMain(), (d) => [d]],
-  'pre-tool-use unpinnedRepoWithOrigin': [() => preToolUse.unpinnedRepoWithOrigin(), (d) => [d]],
-};
-for (const [name, [make, dirsOf]] of Object.entries(preToolUsePairs)) {
-  test(`AC1.1 AC1.2: ${name}: a second call starts no git process`, () => {
-    scratch.push(...dirsOf(make()));
-    const trace = mk('ct-gt-trace-');
-    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
-    scratch.push(...dirsOf(second));
-    assert.deepStrictEqual(fs.readdirSync(trace), []);
-  });
-}
-test('a copied mainAndWorktree pair resolves to its own main, and a second worktree can be added to it', () => {
-  const a = preToolUse.mainAndWorktree();
-  const b = preToolUse.mainAndWorktree();
-  scratch.push(a.main, path.dirname(a.wt), b.main, path.dirname(b.wt));
-  for (const p of [a, b]) {
-    assert.ok(path.basename(p.main).startsWith('ct-e1-'), p.main);
-    assert.ok(path.basename(path.dirname(p.wt)).startsWith('ct-e1-wtparent-'), p.wt);
-    const common = git(p.wt, ['rev-parse', '--git-common-dir']);
-    assert.strictEqual(fs.realpathSync(path.resolve(p.wt, common)), path.join(p.main, '.git'));
-    assert.strictEqual(fs.realpathSync(git(p.wt, ['rev-parse', '--show-toplevel'])), p.wt);
-  }
-  const listed = (p) => git(p.main, ['worktree', 'list', '--porcelain'])
-    .split('\n').filter((l) => l.startsWith('worktree ')).map((l) => fs.realpathSync(l.slice(9)));
-  assert.ok(listed(a).includes(a.wt), listed(a).join(', '));
-  assert.ok(!listed(a).includes(b.wt), listed(a).join(', '));
-  const extra = path.join(mk('ct-gt-wt2-'), 'wt');
-  git(a.main, ['worktree', 'add', '-q', extra, '-b', 'extra']);
-  assert.strictEqual(git(extra, ['rev-parse', 'HEAD']), git(a.main, ['rev-parse', 'HEAD']));
-});
-test('mainAndWorktree({ localMain: true }) and gitRepoOnLocalMain copies are on main', () => {
-  const pair = preToolUse.mainAndWorktree({ localMain: true });
-  const repo = preToolUse.gitRepoOnLocalMain();
-  scratch.push(pair.main, path.dirname(pair.wt), repo);
-  assert.strictEqual(git(pair.main, ['symbolic-ref', '--short', 'HEAD']), 'main');
-  assert.strictEqual(git(repo, ['symbolic-ref', '--short', 'HEAD']), 'main');
-});
-test('unpinnedRepoWithOrigin copies carry the GitHub-shaped origin and one commit', () => {
-  const repo = preToolUse.unpinnedRepoWithOrigin();
-  scratch.push(repo);
-  assert.strictEqual(git(repo, ['remote', 'get-url', 'origin']), 'https://github.com/o/n.git');
-  assert.strictEqual(git(repo, ['rev-list', '--count', 'HEAD']), '1');
-});
 
 // #5324: the verify scenario builders sit on templates, keyed by their arguments.
 const verifyHelpers = require('./bin-lib/verify/cli-helpers');
