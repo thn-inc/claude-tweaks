@@ -46,7 +46,7 @@ under the title:
 
 | Axis | Channel | Values |
 |---|---|---|
-| Origin | Node fill color | `by:code-health` / `by:harness-health` / `by:journey-health` / `by:docs-health` / `by:capture` / `by:dispatch` / none → `human` |
+| Origin | Node fill color | `by:code-health` / `by:harness-health` / `by:journey-health` / `by:docs-health` / `by:ci-health` / `by:capture` / `by:dispatch` / none → `human` |
 | Bot state | Node border style + color | `bot:in-progress` (solid accent), `bot:blocked` (dashed warning), `bot:parked` (solid amber — merge-verification gate parked it, grants intact), neither (default) |
 | Type | Text badge | `[bug]` / `[feature]` / `[task]` — native Issue Type wins over a `type:*` label; an unrecognized type omits the badge rather than guessing |
 | Scoring | Text badge | `R:{risk} S:{size}`, with `?` for whichever side is unset; omitted entirely when both are unset |
@@ -152,8 +152,8 @@ Step 3 (re-theme) exactly as written for every other enhanced type. Step 3 consu
 `SKILL.md` Step 2's extracted tokens, which is why Step 2 still runs for this type.
 That step's "map each distinct hex to the nearest project token, by role — use
 judgment, there's no universal 1:1 mapping" guidance applies here too: this type's
-six-value Origin fill palette will commonly map several origins onto the same nearest
-token on a project with fewer than six accent-ish colors in `DESIGN.md` — an accepted,
+seven-value Origin fill palette will commonly map several origins onto the same nearest
+token on a project with fewer than seven accent-ish colors in `DESIGN.md` — an accepted,
 inherited limitation of the existing generic mechanism, not something this type
 works around.
 
@@ -164,7 +164,7 @@ applies `visual-html-output.md` Step 4's wrapper adapters as usual. Note that th
 baseline fragment is the one `/visualize` output that is **not** themed from the
 project's own `DESIGN.md` tokens: it carries `palette.js`'s small fixed categorical
 palette (in its own scoped `<style>` block, following `visual-html-output.md` Step 3's
-shape) because the Origin axis needs six-plus mutually distinguishable hues, which a
+shape) because the Origin axis needs seven-plus mutually distinguishable hues, which a
 typical `DESIGN.md` token set doesn't supply. That's a known, accepted tradeoff for
 this type given its categorical palette, not an oversight.
 

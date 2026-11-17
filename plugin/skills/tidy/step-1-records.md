@@ -216,7 +216,7 @@ aggressiveness tier (`step-6-auto.md`'s **Legacy taxonomy** row), exactly like S
 
 ### Shape 6 — flagged code demonstrably gone
 
-Not scanned here. This is Step 4.8's code-health/harness-health/journey-health/docs-health issue judgment (`_shared/github-pr-scan.md`'s `repo-wide` scope, items 3/5/6/7) — unchanged by this merge. It's listed in this file only so the finding shapes the record-scan design replaces (former Steps 1 and 2, plus former Step 4.8's backlog-issue item) stay documented in one place; the mechanics that actually judge "is the flagged code gone" continue to live where they already did.
+Not scanned here. This is Step 4.8's code-health/harness-health/journey-health/docs-health/ci-health issue judgment (`_shared/github-pr-scan.md`'s `repo-wide` scope, items 3/5/6/7) — unchanged by this merge. It's listed in this file only so the finding shapes the record-scan design replaces (former Steps 1 and 2, plus former Step 4.8's backlog-issue item) stay documented in one place; the mechanics that actually judge "is the flagged code gone" continue to live where they already did.
 
 ### Shape 7 — decomposition parent gate due
 
