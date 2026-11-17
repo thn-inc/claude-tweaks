@@ -43,7 +43,9 @@ Real-input probe (done at plan time, #5689 live): `timelineItems(itemTypes:[LABE
 - Modify: `plugin/bin/lib/issues/linked-prs.js:59-89` (`fetchLinkedPRs` entry)
 - Modify: `plugin/bin/resolve-linked-prs.js:48-58` (`mapResult` adds `lastShapedAt`; update its comment)
 - Modify: `tests/bin-lib/dispatch/queue-pull-fixtures.js:255-281` (one source of truth, `spec.lastShapedAt`: `linkedNode` emits `labelEvents: { nodes: [{ createdAt: spec.lastShapedAt, label: { name: 'auto:build' } }] }` when it is set, else `{ nodes: [] }`; `linkedOutput` emits `lastShapedAt: spec.lastShapedAt || null` — so the oracle's real CLI and the module's fake agree)
-- Test: `tests/bin-lib/issues/record.test.js`, `tests/bin-lib/issues/linked-prs.test.js`, `tests/resolve-linked-prs-cli.test.js`
+- Test: `tests/bin-lib/issues/record.test.js`
+- Test: `tests/bin-lib/issues/linked-prs.test.js`
+- Test: `tests/resolve-linked-prs-cli.test.js`
 
 **Interfaces:**
 - Produces: each `fetchLinkedPRs` Map entry gains `lastShapedAt: string|null` — the raw `createdAt` string of the latest-instant `LabeledEvent` whose `label.name` is `ready` or `auto:build`, or `null` when none parses. `resolve-linked-prs.js` prints `{ openPR, mentions, hasClosingPRReference, lastShapedAt }` per number, so `dispatch-linked-prs.json` entries carry `lastShapedAt`.
@@ -65,7 +67,7 @@ Real-input probe (done at plan time, #5689 live): `timelineItems(itemTypes:[LABE
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `node --test tests/bin-lib/issues/record.test.js tests/bin-lib/issues/linked-prs.test.js tests/resolve-linked-prs-cli.test.js`
-Expected: FAIL — the five new tests (no `labelEvents` in the query, `lastShapedAt` undefined).
+Expected: FAIL after Step 1 — the five new tests (no `labelEvents` in the query, `lastShapedAt` undefined).
 
 - [ ] **Step 3: Implement**
 
@@ -116,7 +118,7 @@ const SHAPED_MENTION = { number: 5700, title: 'Windows path test fails on the re
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test tests/bin-lib/issues/shipped-candidate.test.js`
-Expected: FAIL — `downgradedAfterMerge` is not a function; the AC1.1 cases return `strong`.
+Expected: FAIL after Step 1 — `downgradedAfterMerge` is not a function; the AC1.1 cases return `strong`.
 
 - [ ] **Step 3: Implement** `opts.lastShapedAt` the same way as `lastReleasedAt` (falsy → `NaN`, instants via `Date`), `predatesShaping = mergedAtMs < lastShapedAtMs`, tier `strong` only when `(titleMatch || filesCoverAll) && !predatesRelease && !predatesShaping`, rank with `downgraded = predatesRelease || predatesShaping`.
 
@@ -138,10 +140,12 @@ Commit: `Rate a shipped mention weak when the record was shaped or granted after
 
 **Files:**
 - Modify: `plugin/bin/lib/dispatch/queue-pull.js:1129-1186` (`runShipped`: both `classifyShipped` calls pass `lastShapedAt: entry.lastShapedAt`; probe skip and failed-probe Warning use `downgradedAfterMerge`; kept line)
-- Modify: `plugin/skills/dispatch/queue-pull-script.md:466-525` (same three changes, byte-matched, plus the `#5722` sentence in the comment at 466-468)
+- Modify: `plugin/skills/dispatch/queue-pull-script.md:466-525` (same three changes, byte-matched; **rail remedy:** the file has 18 bytes of headroom under `RAIL_BYTES`, so the fence edit must be byte-neutral or smaller — cut the bytes the new kept-line branch adds from the same section's own comments (lines 466-470 and 496-497 restate what the module header and `queue-pull-notes.md` already say; compress them to one `# #1984/#4314/#4432/#5722: …` line each), add no new comment sentence, and confirm with `wc -c` against 52500 that the file is still at or under the rail)
 - Modify: `plugin/skills/dispatch/SKILL.md:124` (False-positive posture paragraph)
 - Modify: `docs/plugin-structure.md` (the `shipped-candidate.js` entry: the shaping downgrade and `downgradedAfterMerge`; the `linked-prs` CLI output if listed)
-- Test: `tests/bin-lib/dispatch/queue-pull.test.js`, `tests/dispatch-shipped-candidate-prose.test.js`
+- Test: `tests/bin-lib/dispatch/queue-pull.test.js`
+- Test: `tests/dispatch-shipped-candidate-prose.test.js`
+- Review (scope sweep, change only where the file states the shipped tier rule or the linked-PR output shape): `plugin/skills/dispatch/queue-pull-notes.md`, `plugin/skills/dispatch/mcp-transport.md`, `plugin/bin/lib/dispatch/shipped-releases.js` (header comment names the release downgrade only — add one clause pointing at `lastShapedAt` as its sibling if it claims to be the only downgrade source), `docs/journeys/learn-why-a-named-record-wont-dispatch-3084.md`. Consumers of `buildLinkedPRQuery`/`fetchLinkedPRs` that read named fields and are unaffected by an added field, so unchanged: `plugin/bin/lib/issues/near-duplicate.js`, `plugin/bin/lib/issues/record.js` (re-export), `plugin/bin/lib/wrap-up/engine-verify.js`, `plugin/skills/specify/shaping-mode.md`. Report each reviewed file's disposition in the task report.
 
 **Interfaces:**
 - Consumes: `dispatch-linked-prs.json` entries' `lastShapedAt` (Task 1); `downgradedAfterMerge` and `predatesClaimRelease` (Task 2).
@@ -164,7 +168,7 @@ Commit: `Rate a shipped mention weak when the record was shaped or granted after
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test tests/bin-lib/dispatch/queue-pull.test.js tests/dispatch-shipped-candidate-prose.test.js`
-Expected: FAIL — the four `#5722` queue-pull tests (9010 excluded as shipped) and the prose test.
+Expected: FAIL after Step 1 — the four `#5722` queue-pull tests (9010 excluded as shipped) and the prose test.
 
 - [ ] **Step 3: Implement** the module change, then mirror it into the fence, then the prose: in SKILL.md's False-positive posture paragraph, after the #4432 sentences, add one sentence — a mention whose PR merged before the record was shaped to `ready` or granted `auto:build` also rates `weak` at most (#5722): someone saw that merge and kept the record open; a missing or unreadable label time never downgrades — and widen the parenthetical "any mention that predates the latest claim release" to "any mention that predates the latest claim release or the latest `ready`/`auto:build` labeling". Keep SKILL.md under the read-limit rail (the existing rail test). Update `docs/plugin-structure.md`'s `shipped-candidate.js` entry likewise.
 
