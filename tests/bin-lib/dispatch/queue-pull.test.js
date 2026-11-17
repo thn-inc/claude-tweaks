@@ -3246,7 +3246,27 @@ test('#5409 (AC1, AC2): a pull whose cross-pr-overlap step throws leaves no earl
   for (const n of END_WRITTEN_FILES.filter((x) => x !== 'dispatch-named-targets.json')) assert.notEqual(dirFirst.text[n], STALE, `${n}: removed although an earlier removal failed`);
 });
 
-const NAMED_VIEW =(n) => ['issue', 'view', String(n), '--json', 'number,title,body,labels,createdAt,updatedAt,state'];
+test('#5409: the fence\'s pull-start rm -f removes exactly the module\'s END_WRITTEN_FILES, before the exclusions truncation', () => {
+  const lines = FENCE.split('\n');
+  const assignRe = /^(DISPATCH_[A-Z_]+)="\$\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/session-tmp-resolve\.js" --value ([^ )"]+)\)"$/;
+  const fileOf = {};
+  let lastAssign = -1;
+  lines.forEach((l, i) => {
+    const m = l.match(assignRe);
+    if (m) { fileOf[m[1]] = m[2]; lastAssign = i; }
+  });
+  const rmIdx = lines.findIndex((l) => l.startsWith('rm -f ') && l.endsWith('# #5409: no earlier pull\'s copy'));
+  const truncIdx = lines.findIndex((l) => l.startsWith('# #1752: truncate dispatch-exclusions.json'));
+  assert.ok(rmIdx >= 0, 'the fence has the pull-start rm -f line');
+  assert.ok(lastAssign >= 0, 'the fence has session-tmp-resolve assignments');
+  assert.ok(truncIdx >= 0, 'the fence has the exclusions truncation comment');
+  const vars = [...lines[rmIdx].matchAll(/"\$(DISPATCH_[A-Z_]+)"/g)].map((m) => m[1]);
+  for (const v of vars) assert.ok(fileOf[v], `${v} is assigned by a session-tmp-resolve line`);
+  assert.deepEqual(vars.map((v) => fileOf[v]).sort(), [...END_WRITTEN_FILES].sort());
+  assert.ok(lastAssign < rmIdx && rmIdx < truncIdx, `last assignment ${lastAssign} < rm ${rmIdx} < truncation ${truncIdx}`);
+});
+
+const NAMED_VIEW = (n) => ['issue', 'view', String(n), '--json', 'number,title,body,labels,createdAt,updatedAt,state'];
 const ADMIT_LINE = (n) => `#${n} has no auto:build label — built on the typed /claude-tweaks:dispatch command\n`;
 const AUTO_RE = (n) => new RegExp(`^- AUTO \\d{2}:\\d{2}:\\d{2} — queue pull: #${n} admitted on a typed /claude-tweaks:dispatch command \\(no auto:build label\\)\\. Reversibility: n/a\\.$`);
 const TYPED_SESSION = 'test-session-0001';
