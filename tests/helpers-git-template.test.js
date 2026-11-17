@@ -482,3 +482,29 @@ test('AC4.1: a stack-check fixture copy carries maintenance.auto=false and gc.au
   assert.strictEqual(fx.git('config', '--local', 'gc.auto').stdout.trim(), '0');
   assert.strictEqual(fx.git('config', '--local', 'user.email').stdout.trim(), 'stack-check@example.invalid');
 });
+
+const archiveMergedHelpers = require('./bin-lib/reconcile/archive-merged-helpers');
+for (const [name, make, dirsOf] of [
+  ['makeRepo()', () => archiveMergedHelpers.makeRepo(), (d) => [d]],
+  ['mergedFeatureBranchRepo(feat-x)', () => archiveMergedHelpers.mergedFeatureBranchRepo('feat-x'), (r) => [r.root]],
+  ['fixtureCleanUnarchivedRun({ origin: true })', () => archiveMergedHelpers.fixtureCleanUnarchivedRun({ runId: '2026-08-01T090000-record-2', origin: true }), (r) => [r.root]],
+  ['fixtureAbandonedShippedRun', () => archiveMergedHelpers.fixtureAbandonedShippedRun({ runId: '2026-08-01T090000-record-1' }), (r) => [r.root]],
+  ['cloneOfSeededOrigin()', () => archiveMergedHelpers.cloneOfSeededOrigin(), (r) => [r.seed, r.root]],
+]) {
+  test(`AC3.1: archive-merged ${name}: a second call starts no git process`, () => {
+    scratch.push(...dirsOf(make()));
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(...dirsOf(second));
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+
+test('mergedFeatureBranchRepo copy: feature tip is an ancestor of main and the branch ref exists', () => {
+  scratch.push(archiveMergedHelpers.mergedFeatureBranchRepo('feat-x').root);
+  const { root, featureSha } = archiveMergedHelpers.mergedFeatureBranchRepo('feat-x');
+  scratch.push(root);
+  const r = spawnSync('git', ['merge-base', '--is-ancestor', featureSha, 'main'], { cwd: root, env: gitEnv() });
+  assert.strictEqual(r.status, 0, String(r.stderr));
+  assert.strictEqual(git(root, ['rev-parse', 'feat-x']), featureSha);
+});

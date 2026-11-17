@@ -15,6 +15,7 @@ const {
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 const { PROBE_ORDER } = require('../../../plugin/bin/lib/run-liveness');
 const { serializeManifestYaml } = require('../../../plugin/bin/lib/flow/manifest');
+const { fromTemplate, fromTemplateSet, disableReceiveAutoGc } = require('../../helpers/git-template');
 
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -24,15 +25,19 @@ function trackedFiles(root) {
   return git(root, 'ls-files').split('\n').filter(Boolean);
 }
 
-function makeRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-'));
+// The repo builders below sit on git templates (#5772): each is built once per
+// test process, and every call hands back an fs copy, which starts no git process.
+function initRepo(dir) {
   git(dir, 'init', '-b', 'main');
   git(dir, 'config', 'user.email', 't@t');
   git(dir, 'config', 'user.name', 't');
   fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
   git(dir, 'add', 'a.txt');
   git(dir, 'commit', '-m', 'init');
-  return dir;
+}
+
+function makeRepo() {
+  return fromTemplate('archive-merged:makeRepo', initRepo, { prefix: 'archive-merged-' });
 }
 
 function commitPath(root, relPath, content) {
@@ -100,6 +105,24 @@ function installGhWrapper(prsJson, issueStates = null) {
   return { restore: () => { process.env.PATH = originalPath; } };
 }
 
+// Template build: `branch` committed in a worktree in a sibling temp dir, merged
+// into main, then the worktree removed (the branch ref stays). Returns the
+// feature tip sha. `commitEnv` overrides the feature commit's environment.
+function mergeFeatureBranch(root, branch, wtPrefix, commitEnv) {
+  const wt = fs.mkdtempSync(path.join(os.tmpdir(), wtPrefix));
+  git(root, 'worktree', 'add', '-q', wt, '-b', branch);
+  fs.writeFileSync(path.join(wt, 'feature.txt'), 'feature\n');
+  execFileSync('git', ['add', 'feature.txt'], { cwd: wt, encoding: 'utf8' });
+  execFileSync('git', ['commit', '-q', '-m', 'feature work'], { cwd: wt, encoding: 'utf8', ...(commitEnv ? { env: commitEnv } : {}) });
+  const featureSha = execFileSync('git', ['rev-parse', branch], { cwd: root, encoding: 'utf8' }).trim();
+  git(root, 'merge', '-q', '--no-edit', branch);
+  git(root, 'worktree', 'remove', '--force', wt);
+  return featureSha;
+}
+
+// Template key -> the feature sha its build recorded, so a copy needs no rev-parse.
+const featureShas = new Map();
+
 // The "PR merged, worktree torn down" repo shape both fixtures below build
 // on: a feature branch committed in its own worktree, merged into main, then
 // the worktree removed (branch ref stays). The returned `featureSha` is that
@@ -113,16 +136,18 @@ function installGhWrapper(prsJson, issueStates = null) {
 // own `runDir` string, and a plain string membership assertion against
 // `result.archived` would spuriously fail.
 function mergedFeatureBranchRepo(branch) {
-  const root = fs.realpathSync(makeRepo());
-  const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-featwt-'));
-  git(root, 'worktree', 'add', '-q', wt, '-b', branch);
-  fs.writeFileSync(path.join(wt, 'feature.txt'), 'feature\n');
-  execFileSync('git', ['add', 'feature.txt'], { cwd: wt, encoding: 'utf8' });
-  execFileSync('git', ['commit', '-q', '-m', 'feature work'], { cwd: wt, encoding: 'utf8' });
-  const featureSha = execFileSync('git', ['rev-parse', branch], { cwd: root, encoding: 'utf8' }).trim();
-  git(root, 'merge', '-q', '--no-edit', branch);
-  git(root, 'worktree', 'remove', '--force', wt);
-  return { root, featureSha };
+  const key = `archive-merged:merged:${branch}`;
+  const root = fromTemplate(key, (dir) => {
+    initRepo(dir);
+    featureShas.set(key, mergeFeatureBranch(dir, branch, 'archive-merged-featwt-'));
+  }, { prefix: 'archive-merged-', realpath: true });
+  return { root, featureSha: featureShas.get(key) };
+}
+
+// `git remote add origin {url}` as a plain config append, so it starts no git process.
+function addOriginRemote(root, url) {
+  fs.appendFileSync(path.join(root, '.git', 'config'),
+    `[remote "origin"]\n\turl = ${url}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n`);
 }
 
 // #1544: a run dir close-run already marked `{status: 'clean', worktree:
@@ -133,7 +158,7 @@ function mergedFeatureBranchRepo(branch) {
 // #3416: `prNumber`, when set, stamps the run's PR identity (pr.number).
 function fixtureCleanUnarchivedRun({ runId, consoleResolved = true, prNumber, origin = false } = {}) {
   const { root, featureSha } = mergedFeatureBranchRepo('feat-clean-branch');
-  if (origin) git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+  if (origin) addOriginRemote(root, 'git@github.com:acme/w.git');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
   fs.mkdirSync(runDir, { recursive: true });
   const pr = prNumber ? { number: prNumber, branch: 'feat-clean-branch' } : { branch: 'feat-clean-branch' };
@@ -165,21 +190,17 @@ function fixtureAbandonedShippedRun({ runId, ownerSessionId, extraEventLines = [
   // /var -> /private/var symlink) — archiveMerged's `root` would otherwise
   // differ from this fixture's own `runDir` string, and a plain string
   // membership assertion against `result.archived` would spuriously fail.
-  const root = fs.realpathSync(makeRepo());
+  const root = fromTemplate('archive-merged:abandoned-shipped', (dir) => {
+    initRepo(dir);
+    mergeFeatureBranch(dir, 'feat-branch', 'archive-merged-wt-', // branch ref stays, worktree gone
+      { ...process.env, GIT_AUTHOR_DATE: '2026-08-01T10:00:00Z', GIT_COMMITTER_DATE: '2026-08-01T10:00:00Z' });
+  }, { prefix: 'archive-merged-', realpath: true });
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-branch: main\n');
 
+  // The stamped worktree path: unique per call and absent, as a torn-down worktree's is.
   const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-wt-'));
-  git(root, 'worktree', 'add', '-q', wt, '-b', 'feat-branch');
-  fs.writeFileSync(path.join(wt, 'feature.txt'), 'feature\n');
-  execFileSync('git', ['add', 'feature.txt'], { cwd: wt, encoding: 'utf8' });
-  execFileSync('git', ['commit', '-q', '-m', 'feature work'], {
-    cwd: wt,
-    encoding: 'utf8',
-    env: { ...process.env, GIT_AUTHOR_DATE: '2026-08-01T10:00:00Z', GIT_COMMITTER_DATE: '2026-08-01T10:00:00Z' },
-  });
-  git(root, 'merge', '-q', '--no-edit', 'feat-branch');
-  git(root, 'worktree', 'remove', '--force', wt); // branch ref stays, worktree gone
+  fs.rmSync(wt, { recursive: true, force: true });
 
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
   fs.mkdirSync(runDir, { recursive: true });
@@ -297,6 +318,28 @@ function fixtureOrdinaryMergedNoConsole(branch, runId, stagedFiles = [], specSta
   }
 }
 
+// #4387: a bare origin seeded with one commit (a.txt) from `seed`, plus `root`, a configured clone of it.
+// The bare origin has receive.autogc off, so a push into it starts no maintenance process.
+function cloneOfSeededOrigin() {
+  const { seed, clone } = fromTemplateSet('archive-merged:cloneOfSeededOrigin', ({ origin, seed: s, clone: c }) => {
+    git(origin, 'init', '--bare', '-b', 'main');
+    disableReceiveAutoGc(origin);
+    git(s, 'clone', '-q', origin, '.');
+    git(s, 'config', 'user.email', 't@t');
+    git(s, 'config', 'user.name', 't');
+    commitPath(s, 'a.txt', 'a\n');
+    git(s, 'push', '-q', 'origin', 'main');
+    git(c, 'clone', '-q', origin, '.');
+    git(c, 'config', 'user.email', 't@t');
+    git(c, 'config', 'user.name', 't');
+  }, {
+    origin: { prefix: 'archive-merged-origin-' },
+    seed: { prefix: 'archive-merged-seed-' },
+    clone: { prefix: 'archive-merged-clone-', realpath: true },
+  });
+  return { seed, root: clone };
+}
+
 // Shape of one `closingIssuesReferences` entry from `gh pr view --json`.
 function ref(n, owner = 'acme', name = 'w') {
   return { number: n, repository: { name, owner: { login: owner } } };
@@ -318,5 +361,6 @@ module.exports = {
   seedStuckDir4180,
   fixtureActiveUnstampedMergedRun,
   fixtureOrdinaryMergedNoConsole,
+  cloneOfSeededOrigin,
   ref,
 };

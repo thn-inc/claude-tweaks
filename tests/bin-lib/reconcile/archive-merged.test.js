@@ -30,7 +30,7 @@ const { STUB_SKIP } = require('../../helpers/path-stub');
 const {
   git, trackedFiles, makeRepo, commitPath, installGhWrapper, mergedFeatureBranchRepo,
   fixtureCleanUnarchivedRun, fixtureAbandonedShippedRun, verdictOf, DEAD, mkDirWithMtime, seedStuckDir4180,
-  fixtureActiveUnstampedMergedRun, fixtureOrdinaryMergedNoConsole, ref,
+  fixtureActiveUnstampedMergedRun, fixtureOrdinaryMergedNoConsole, cloneOfSeededOrigin, ref,
 } = require('./archive-merged-helpers');
 
 // Forces a REAL `git commit` failure via a failing pre-commit hook — the same
@@ -3219,24 +3219,6 @@ test('archiveMerged: dry-run by-number MERGED path with local main behind origin
   assert.equal(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId)), false, 'a dry-run must not archive');
   assert.notEqual(git(root, 'rev-parse', 'main').trim(), mergeOid, 'a dry-run must not fast-forward local main');
 });
-
-// #4387: a bare origin seeded with one commit (a.txt) from `seed`, plus `root`, a configured clone of it.
-function cloneOfSeededOrigin() {
-  const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-origin-'));
-  git(origin, 'init', '--bare', '-b', 'main');
-  const seed = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-seed-'));
-  git(seed, 'clone', '-q', origin, '.');
-  git(seed, 'config', 'user.email', 't@t');
-  git(seed, 'config', 'user.name', 't');
-  commitPath(seed, 'a.txt', 'a\n');
-  git(seed, 'push', '-q', 'origin', 'main');
-  const clone = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-clone-'));
-  git(clone, 'clone', '-q', origin, '.');
-  const root = fs.realpathSync(clone);
-  git(root, 'config', 'user.email', 't@t');
-  git(root, 'config', 'user.name', 't');
-  return { seed, root };
-}
 
 // #4387: the main checkout sits on the integration branch but origin/main
 // already holds the merge that carries the run's work/ subtree. The first pass
