@@ -33,3 +33,4 @@
 | 29 | build | SDD ruling — Important 1 (PR body) is handled by the controller in Common Step 4.5's PR-bo...: ratify or reverse at the Review Console (staged/sdd-ruling-8.md) | open | — |
 | 30 | build | SDD ruling — residual Important after the single fix wave gets one targeted fix (resume th...: ratify or reverse at the Review Console (staged/sdd-ruling-9.md) | open | — |
 | 31 | build | SDD ruling — leave the planned-vs-walked baseline bias unstated in this build and stage it...: ratify or reverse at the Review Console (staged/sdd-ruling-10.md) | open | — |
+| 32 | build/docs | docs/plugin-structure.md may need updates — line 271's tools/step-yield-report.js usage line lists only [--json]; the tool gained --runs, --window and --lane-floor. Held out of the PR on AC1's literal diff list (staged/build-deviation-1.md decides it; the design doc's Phase 1 names it otherwise). Review in wrap-up. | open | — |
