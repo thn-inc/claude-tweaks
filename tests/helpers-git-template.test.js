@@ -249,7 +249,11 @@ test('disableReceiveAutoGc stops receive-pack maintenance', () => {
   function pushArgvs(disable) {
     const origin = mk('ct-gtg-o-');
     const work = mk('ct-gtg-w-');
-    git(origin, ['init', '-q', '--bare', '-b', 'main']);
+    // The runner's GIT_TEMPLATE_DIR (#5768) would write the maintenance-off keys into this origin and
+    // defeat the control below; this test is about disableReceiveAutoGc alone, so init without it.
+    const bareEnv = gitEnv();
+    delete bareEnv.GIT_TEMPLATE_DIR;
+    git(origin, ['init', '-q', '--bare', '-b', 'main'], bareEnv);
     if (disable) disableReceiveAutoGc(origin);
     // Keep receive-pack's maintenance in the foreground (git >= 2.47 detaches
     // by default), so its trace file is complete before we read and remove it.
@@ -258,12 +262,48 @@ test('disableReceiveAutoGc stops receive-pack maintenance', () => {
     git(work, ['remote', 'add', 'origin', origin]);
     commit(work, 'base');
     const trace = mk('ct-gtg-t-');
-    git(work, ['push', '-q', 'origin', 'main'], { ...gitEnv(), GIT_TRACE2_EVENT: trace });
+    git(work, ['push', '-q', 'origin', 'main'], { ...bareEnv, GIT_TRACE2_EVENT: trace });
     return tracedArgvs(trace);
   }
   const hasMaintenance = (argvs) => argvs.some((a) => a.includes('maintenance'));
   assert.ok(!hasMaintenance(pushArgvs(true)), 'no maintenance after disableReceiveAutoGc');
   assert.ok(hasMaintenance(pushArgvs(false)), 'control: without the call, receive-pack starts maintenance');
+});
+
+// #5768: the runner's per-run git template (tools/run-tests.js) must keep a plain `git init` origin and
+// work repo from starting maintenance. Under the runner the template under test is the one it exported.
+const { writeGitTemplateDir } = require('../tools/run-tests');
+test('AC3.1: under the runner\'s git template a bare-origin push and a fixture commit start no maintenance process', () => {
+  const underRunner = process.env.CT_TEST_SUITE_SLOT_HELD === '1';
+  const template = underRunner ? process.env.GIT_TEMPLATE_DIR : writeGitTemplateDir(mk('ct-gt-tpl-') + '/t', process.env);
+  if (!underRunner) assert.ok(template, 'writeGitTemplateDir could not build a template outside the runner');
+  const sysCfg = path.join(mk('ct-gt-sys-'), 'system');
+  fs.writeFileSync(sysCfg, '[maintenance]\n\tautoDetach = false\n');
+  const scrubbed = /^(GIT_TEMPLATE_DIR|GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+))$/;
+  function run(templateDir) {
+    const env = Object.fromEntries(Object.entries(gitEnv()).filter(([k]) => !scrubbed.test(k)));
+    env.GIT_CONFIG_SYSTEM = sysCfg;
+    if (templateDir !== undefined) env.GIT_TEMPLATE_DIR = templateDir;
+    const origin = mk('ct-gt3-o-');
+    const work = mk('ct-gt3-w-');
+    git(origin, ['init', '-q', '--bare', '-b', 'main'], env);
+    git(work, ['init', '-q', '-b', 'main'], env);
+    git(work, ['remote', 'add', 'origin', origin], env);
+    const commitTrace = mk('ct-gt3-c-');
+    fs.writeFileSync(path.join(work, 'f'), 'f');
+    git(work, ['add', 'f'], { ...env, GIT_TRACE2_EVENT: commitTrace });
+    git(work, ['commit', '-q', '-m', 'f'], { ...env, GIT_TRACE2_EVENT: commitTrace });
+    const pushTrace = mk('ct-gt3-p-');
+    git(work, ['push', '-q', 'origin', 'main'], { ...env, GIT_TRACE2_EVENT: pushTrace });
+    return { commit: tracedArgvs(commitTrace), push: tracedArgvs(pushTrace) };
+  }
+  const has = (argvs) => argvs.some((a) => a.includes('maintenance'));
+  const withT = run(template);
+  assert.ok(withT.commit.length + withT.push.length > 0, 'the traced runs did start git processes');
+  assert.ok(!has(withT.commit) && !has(withT.push), 'no maintenance process under the template');
+  const control = run(undefined);
+  assert.ok(has(control.commit), 'control: without the template the commit starts maintenance');
+  assert.ok(has(control.push), 'control: without the template the push starts maintenance');
 });
 
 // The per-test repo builders sit on templates (#5297): after one warm-up call
@@ -290,7 +330,7 @@ for (const [name, [make, dirsOf]] of Object.entries(builders)) {
 test('template build runs with auto-maintenance off', () => {
   // The runner's own GIT_CONFIG_* (tools/run-tests.js) would mask a missing
   // append, so take them out for the duration and put them back after.
-  const mine = /^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+|GLOBAL|SYSTEM)$/;
+  const mine = /^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+|GLOBAL|SYSTEM)$|^GIT_TEMPLATE_DIR$/;
   const saved = Object.entries(process.env).filter(([k]) => mine.test(k));
   for (const [k] of saved) delete process.env[k];
   const trace = mk('ct-gt-trace-');
