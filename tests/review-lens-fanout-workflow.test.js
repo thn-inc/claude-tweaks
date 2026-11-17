@@ -101,6 +101,10 @@ const REFUSALS = [
   ['reviewers: 0', { lenses: [lens('3b', 'B', 'm', 0)] }, 'lens 3b reviewers must be 1 or 2'],
   ['a lens that is not one plain token', { lenses: [lens('3b x', 'B', 'm')] }, 'lens must be one plain token of letters, digits, _ or -'],
   ['an empty lens name', { lenses: [lens('', 'B', 'm')] }, 'lens must be one plain token of letters, digits, _ or -'],
+  ['args given as an array', [], 'args must be an object'],
+  ['a null lens entry', { lenses: [null] }, 'lens must be one plain token of letters, digits, _ or -'],
+  ['a numeric lens name', { lenses: [lens(3, 'B', 'm')] }, 'lens must be one plain token of letters, digits, _ or -'],
+  ["reviewers: '2' as a string", { lenses: [lens('3b', 'B', 'm', '2')] }, 'lens 3b reviewers must be 1 or 2'],
 ];
 for (const [name, args, reason] of REFUSALS) {
   test(`refuses ${name} (AC3)`, async () => {
@@ -130,6 +134,22 @@ test('null, blank and throwing replies are failed and leave the others alone (AC
 test('a non-string reply is failed', async () => {
   const { result } = await runScript({ lenses: [lens('3b', 'B3b', 'm', 1)] }, () => ({ x: 1 }));
   assert.deepStrictEqual(result.reviewers, [{ lens: '3b', side: 'A', text: null, failed: true }]);
+});
+
+// A parallel() that does not catch: only the script's own per-call wrap keeps one throw from failing the run.
+test('each agent call is wrapped on its own: a throw under a non-catching parallel() fails only that reviewer', async () => {
+  const nonCatching = (thunks) => Promise.all(thunks.map((t) => t()));
+  const reply = (p, opts) => {
+    if (opts.label === 'lens 3a B') throw new Error('agent died');
+    return `reply for ${opts.label}`;
+  };
+  const { result } = await runScript({ lenses: [lens('3a', 'B3a', 'm'), lens('3b', 'B3b', 'm')] }, reply, nonCatching);
+  assert.deepStrictEqual(result.reviewers, [
+    { lens: '3a', side: 'A', text: 'reply for lens 3a A', failed: false },
+    { lens: '3a', side: 'B', text: null, failed: true },
+    { lens: '3b', side: 'A', text: 'reply for lens 3b A', failed: false },
+    { lens: '3b', side: 'B', text: 'reply for lens 3b B', failed: false },
+  ]);
 });
 
 test('a slot parallel() leaves null is failed', async () => {

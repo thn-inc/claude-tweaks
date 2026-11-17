@@ -43,11 +43,15 @@ const reason = refusal(args)
 if (reason !== null) return { started: false, reason }
 
 phase('Lens reviewers')
-const slots = args.lenses.flatMap((l) => (l.reviewers === 2 ? ['A', 'B'] : ['A']).map((side) => ({ lens: l.lens, brief: l.brief, model: l.model, side })))
+const slots = args.lenses.flatMap((l) => {
+  const sides = l.reviewers === 2 ? ['A', 'B'] : ['A']
+  return sides.map((side) => ({ lens: l.lens, brief: l.brief, model: l.model, side }))
+})
 const replies = await parallel(slots.map(({ lens, brief, model, side }) => async () => {
   try {
     const text = await agent(brief, { label: `lens ${lens} ${side}`, model, phase: 'Lens reviewers' })
-    return typeof text === 'string' && text.trim() !== '' ? { lens, side, text, failed: false } : { lens, side, text: null, failed: true }
+    if (typeof text === 'string' && text.trim() !== '') return { lens, side, text, failed: false }
+    return { lens, side, text: null, failed: true }
   } catch {
     return { lens, side, text: null, failed: true }
   }
