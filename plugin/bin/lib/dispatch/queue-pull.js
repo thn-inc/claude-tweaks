@@ -42,8 +42,9 @@
 // `omit` (queuePull option) takes reasons or ids and removes that pass's own filtering and
 // appends and nothing else, with one exception: omitting either blocker-landing reason skips the
 // shared call, so both reasons; the eligibility screen for non-array labels always runs, and its
-// `malformed-blocker` append follows `blocker-landing`'s omit. runPasses ALWAYS calls every pass's runner and exposes the omit
-// set as `ctx.omit` (a Set of ids); each runner skips only its own filtering and appends when
+// `malformed-blocker` append follows `blocker-landing`'s omit. runPasses ALWAYS calls every pass's
+// runner and exposes the omit set as `ctx.omit` (a Set of ids); each runner skips only its own
+// filtering and appends when
 // `ctx.omit.has(<its id>)` and runs its shared steps regardless (for example `oversized` owns the
 // grouping block that writes dispatch-groups.json and the `blocked` appends, and `target-missing`
 // owns the integration-branch and run-dir resolution). Omitting a setup pass, or naming an
@@ -594,7 +595,7 @@ function runBlocked(ctx) {
   step(ctx, 'eligible-pre-dep', () => {
     const queued = readJson(paths['dispatch-queue-raw.json']);
     const openNumbers = new Set(readJson(f.openNumbers).map((i) => i.number));
-    // #5315 (fence 151-152, 159): a non-array labels value is excluded on its own; the pull writes no cache.
+    // #5315 (fence 151-152, 160): a non-array labels value is excluded on its own; the pull writes no cache.
     const issues = queued.filter((i) => {
       if (i.labels == null || Array.isArray(i.labels)) return true;
       if (!omit.has('blocker-landing')) appendExclusion(paths['dispatch-exclusions.json'], { reason: 'malformed-blocker', records: [i.number], detail: { cause: 'its labels are not an array' } });
