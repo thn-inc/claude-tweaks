@@ -164,6 +164,7 @@
 'use strict';
 const fs = require('fs');
 const ctxLib = require('./context');
+const holdLib = require('./worktree-hold');
 const contractRetries = require('./contract-retries');
 const { CANONICAL_RE, LENIENT_RE } = require('../status-line');
 
@@ -609,6 +610,10 @@ function run(ctx) {
   const memo = {};
   const out = grade(ctx, memo);
   recordStop(ctx, out, memo);
+  // #4960: a finished subagent's worktree hold goes with it; never changes `out`.
+  try {
+    holdLib.releaseAgentHolds({ cwd: ctx.cwd, sessionId: ctx.input.session_id, agentId: ctx.input.agent_id, env: process.env });
+  } catch { /* log tier: never break a session */ }
   return out;
 }
 

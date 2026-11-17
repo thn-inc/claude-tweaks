@@ -1112,7 +1112,7 @@ function appendEvent(runDir, type, data, attribution) {
 
 module.exports = {
   readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState, isTrackedShellDir,
-  readRunState, priorWorktree, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, findAdHocRunsBySessionId, RUN_ID_RE, findNonCanonicalRunDirs,
+  readRunState, priorWorktree, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, worktreeMatches, findAdHocRunsBySessionId, RUN_ID_RE, findNonCanonicalRunDirs,
   rollbackMint, isStaleClaim, stampAdHocRunDirForDenial, listedWorktreeForCwd, isTrustedOwnedRun, isAdHocRunDir, isSessionOwnedAdHocRun, resolveDenialRunDir,
   claudePid, ownerPidPatch, isPidAlive, isNestedSession, ownerBlock, ownerStampPatch, patchWithOwnerBlock, refreshOwnerBlock,
 };
