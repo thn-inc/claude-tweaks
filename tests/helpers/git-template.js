@@ -28,7 +28,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { gitFixtureConfigEnv } = require('../../tools/run-tests');
+const { gitFixtureConfigEnv, writeGitTemplateDir } = require('../../tools/run-tests');
 
 // #5294: repoInfo remembers answers in a per-user store (~/.claude-tweaks/repo-info-cache.json).
 // tools/run-tests.js points CT_HOOKS_REPO_INFO_STORE into its run root before any suite loads;
@@ -41,6 +41,20 @@ if (!process.env.CT_HOOKS_REPO_INFO_STORE) {
   process.once('exit', () => {
     try { fs.rmSync(storeDir, { recursive: true, force: true }); } catch (_) { /* best effort */ }
   });
+}
+
+// #5771: tools/run-tests.js exports its git template (maintenance off, no sample hooks) to its child as
+// GIT_TEMPLATE_DIR. A bare `node --test` run has no runner, so a suite that loads this helper builds the
+// same template here (child processes inherit it), removed on exit. Only a runner child
+// (CT_TEST_SUITE_SLOT_HELD=1 with GIT_TEMPLATE_DIR set) keeps its own; any other inherited
+// GIT_TEMPLATE_DIR is carried into the new template, as the runner does. A failed build leaves env alone.
+if (!(process.env.CT_TEST_SUITE_SLOT_HELD === '1' && process.env.GIT_TEMPLATE_DIR)) {
+  const tplRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-git-tpl-dir-'));
+  process.once('exit', () => {
+    try { fs.rmSync(tplRoot, { recursive: true, force: true }); } catch (_) { /* best effort */ }
+  });
+  const tpl = writeGitTemplateDir(path.join(tplRoot, 't'), process.env);
+  if (tpl) process.env.GIT_TEMPLATE_DIR = tpl;
 }
 
 let templateRoot = null;
