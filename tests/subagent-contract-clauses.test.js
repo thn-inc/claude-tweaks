@@ -444,6 +444,8 @@ const WORKFLOW_ROW_LABELS = [
   'Failed, empty or unparseable',
 ];
 
+const GATE_RULE_CLAUSE = "does not see a workflow agent's prompt";
+
 const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 function assertWorkflowSection(text) {
@@ -463,6 +465,15 @@ function assertWorkflowSection(text) {
   assert.ok(
     section.includes('computed task'),
     'the workflow section must state the harness frame (`computed task`) a workflow agent receives (#5599)',
+  );
+  const repromptRow = lineStartingWith(section, '| Re-prompt on violation |');
+  assert.ok(
+    repromptRow.includes('`SubagentStop` hook'),
+    'the Re-prompt on violation row must name the plugin\'s `SubagentStop` hook as what re-prompts a workflow agent (#5599)',
+  );
+  assert.ok(
+    section.includes(GATE_RULE_CLAUSE),
+    'the workflow section must say a gate rule written for Agent and Task calls does not see a workflow agent\'s prompt (#5599)',
   );
 }
 
@@ -485,6 +496,35 @@ test('the workflow section check fails when a row is removed', () => {
       `removing the "${label}" row must fail the workflow section check on that row's own assertion`,
     );
   }
+});
+
+test('the workflow section check fails when the re-prompt row drops the SubagentStop hook', () => {
+  const live = FILES['skills/_shared/subagent-output-contract.md'];
+  const mutated = live
+    .split('\n')
+    .map((line) => (line.startsWith('| Re-prompt on violation |') ? line.replace('`SubagentStop` hook', 'hook') : line))
+    .join('\n');
+  assert.ok(mutated !== live, 'the Re-prompt on violation row must name the `SubagentStop` hook before it can be removed');
+  assert.throws(
+    () => assertWorkflowSection(mutated),
+    { message: /`SubagentStop` hook as what re-prompts/ },
+    'dropping SubagentStop from the re-prompt row must fail on the re-prompt row assertion',
+  );
+});
+
+test('the workflow section check fails when the gate-rule sentence is removed', () => {
+  const live = FILES['skills/_shared/subagent-output-contract.md'];
+  const section = sectionRegion(live, WORKFLOW_SECTION_HEADING);
+  const paragraphs = section.split('\n\n');
+  const gate = paragraphs.filter((p) => p.includes(GATE_RULE_CLAUSE));
+  assert.strictEqual(gate.length, 1, 'exactly one paragraph of the workflow section must carry the gate-rule sentence');
+  const mutated = live.replace(section, paragraphs.filter((p) => !p.includes(GATE_RULE_CLAUSE)).join('\n\n'));
+  assert.ok(mutated !== live, 'removing the gate-rule paragraph must change the text');
+  assert.throws(
+    () => assertWorkflowSection(mutated),
+    { message: /does not see a workflow agent's prompt/ },
+    'removing the gate-rule sentence must fail on the gate-rule assertion',
+  );
 });
 
 test('CLAUDE.md names the workflow lens dispatch site (#5599)', () => {
