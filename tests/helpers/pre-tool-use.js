@@ -22,11 +22,16 @@ function gitRepoWithCommit() {
   }, { prefix: 'ct-e1-', realpath: true });
 }
 
+// A template build's first two steps: init, then one empty commit.
+function initWithCommit(dir) {
+  execFileSync('git', ['-C', dir, 'init', '-q']);
+  execFileSync('git', ['-C', dir, 'commit', '--allow-empty', '-m', 'init', '-q']);
+}
+
 // The same repo on a local `main`, not the host's init.defaultBranch.
 function gitRepoOnLocalMain() {
   return fromTemplate('pre-tool-use:init-commit-main', (dir) => {
-    execFileSync('git', ['-C', dir, 'init', '-q']);
-    execFileSync('git', ['-C', dir, 'commit', '--allow-empty', '-m', 'init', '-q']);
+    initWithCommit(dir);
     execFileSync('git', ['-C', dir, 'branch', '-M', 'main']);
   }, { prefix: 'ct-e1-', realpath: true });
 }
@@ -35,8 +40,7 @@ function gitRepoOnLocalMain() {
 // against the realpath of the template's wtparent, so the recorded gitdir paths are realpath spellings.
 function mainAndWorktree({ localMain = false } = {}) {
   const { main, wtparent } = fromTemplateSet(localMain ? 'pre-tool-use:main-wt:local-main' : 'pre-tool-use:main-wt', (dirs) => {
-    execFileSync('git', ['-C', dirs.main, 'init', '-q']);
-    execFileSync('git', ['-C', dirs.main, 'commit', '--allow-empty', '-m', 'init', '-q']);
+    initWithCommit(dirs.main);
     if (localMain) execFileSync('git', ['-C', dirs.main, 'branch', '-M', 'main']);
     const wt = path.join(fs.realpathSync(dirs.wtparent), 'wt');
     execFileSync('git', ['-C', dirs.main, 'worktree', 'add', '-q', wt, '-b', 'wt-branch-ct-e1-wtparent-template']);
@@ -61,8 +65,7 @@ function withoutGhTimeoutEnv(fn) {
 // An unpinned repo whose origin looks like a GitHub remote, so detection reaches the fake `gh`.
 function unpinnedRepoWithOrigin() {
   return fromTemplate('pre-tool-use:unpinned-origin', (dir) => {
-    execFileSync('git', ['-C', dir, 'init', '-q']);
-    execFileSync('git', ['-C', dir, 'commit', '--allow-empty', '-m', 'init', '-q']);
+    initWithCommit(dir);
     execFileSync('git', ['-C', dir, 'remote', 'add', 'origin', 'https://github.com/o/n.git']);
   }, { prefix: 'ct-e1-', realpath: true });
 }
