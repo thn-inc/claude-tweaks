@@ -311,8 +311,8 @@ function closedDependencyNumbers(text) {
   if (!Array.isArray(entries)) return new Set();
   const valid = entries.filter((e) => e && Number.isInteger(e.number) && typeof e.state === 'string');
   const isClosed = (e) => e.state.toLowerCase() === 'closed';
-  return new Set(valid.filter(isClosed).map((e) => e.number)
-    .filter((n) => valid.every((e) => e.number !== n || isClosed(e))));
+  const contested = new Set(valid.filter((e) => !isClosed(e)).map((e) => e.number));
+  return new Set(valid.filter(isClosed).map((e) => e.number).filter((n) => !contested.has(n)));
 }
 
 // On `files` the agent's queue file stands where the fence's queue pull stands, as the agent's Write
