@@ -22,6 +22,7 @@
 // Every side effect goes through `deps` (git, now, appendEntries, fs seams) so tests inject fakes.
 'use strict';
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -438,8 +439,60 @@ function addFinding(runDir, manifest, existing, finding, deps) {
   }
 }
 
+// The git subcommand: the first argv element after leading `-C <dir>`, `-c <k=v>` and
+// `--no-optional-locks`, with the arguments after it.
+function gitSubcommand(args) {
+  let i = 0;
+  for (;;) {
+    if (args[i] === '-C' || args[i] === '-c') i += 2;
+    else if (args[i] === '--no-optional-locks') i += 1;
+    else return { sub: args[i], rest: args.slice(i + 1) };
+  }
+}
+
+// One capture() call's read cache (#5790): capture re-checks state after every step that may change
+// it, so the same read-only question often reaches git again with nothing changed in between. deps
+// is returned with its seams wrapped:
+//   - git: `diff`, `status` and `hash-object` (without -w), with no opts.env, are answered from the
+//     cache when the same argv, encoding and input bytes were answered since the last discard. Only a
+//     successful answer is kept; a Buffer is kept and returned as a copy, so no caller sees another's
+//     mutation. `apply --check`, `rev-parse` and `cat-file` pass through untouched. Every other call,
+//     and any call carrying opts.env, discards every kept answer before it runs.
+//   - unlink, writeFile, writeFileExclusive, rename (either side) naming `target`, and rmdir of
+//     `target` or a directory above it, discard every kept answer before they run.
+// The worktree has one writer during the call: a write by another process is out of scope.
+function withReadCache(deps, target) {
+  const answers = new Map();
+  const discard = () => answers.clear();
+  const copy = (x) => (Buffer.isBuffer(x) ? Buffer.from(x) : x);
+  const isTarget = (p) => path.resolve(p) === path.resolve(target);
+  const git = (args, opts = {}) => {
+    const { sub, rest } = gitSubcommand(args);
+    const read = sub === 'diff' || sub === 'status' || (sub === 'hash-object' && !rest.includes('-w'));
+    if (read && !opts.env) {
+      const input = opts.input === undefined ? null : crypto.createHash('sha256').update(opts.input).digest('hex');
+      const key = JSON.stringify([args, opts.encoding || null, input]);
+      if (answers.has(key)) return copy(answers.get(key));
+      const got = deps.git(args, opts);
+      answers.set(key, copy(got));
+      return got;
+    }
+    const passThrough = (sub === 'apply' && rest.includes('--check')) || sub === 'rev-parse' || sub === 'cat-file';
+    if (!passThrough || opts.env) discard();
+    return deps.git(args, opts);
+  };
+  return {
+    ...deps,
+    git,
+    unlink: (p) => { if (isTarget(p)) discard(); return deps.unlink(p); },
+    writeFile: (p, data) => { if (isTarget(p)) discard(); return deps.writeFile(p, data); },
+    writeFileExclusive: (p, data) => { if (isTarget(p)) discard(); return deps.writeFileExclusive(p, data); },
+    rename: (from, to) => { if (isTarget(from) || isTarget(to)) discard(); return deps.rename(from, to); },
+    rmdir: (p) => { if (isAncestorOrSelf(path.resolve(p), path.resolve(target))) discard(); return deps.rmdir(p); },
+  };
+}
+
 function capture({ runDir, worktree, mergeBase, target, summary, row = DEFAULT_ROW }, overrides = {}) {
-  const deps = { ...realDeps, ...overrides };
   if (typeof runDir !== 'string' || !runDir) throw new UsageError('runDir is required');
   if (typeof worktree !== 'string' || !worktree) throw new UsageError('worktree is required');
   if (typeof mergeBase !== 'string' || !mergeBase.trim() || mergeBase.startsWith('-')) {
@@ -451,8 +504,10 @@ function capture({ runDir, worktree, mergeBase, target, summary, row = DEFAULT_R
   if (!note) throw new UsageError('summary is required');
   const finding = { row, summary: note };
 
-  const git = (args, opts) => deps.git(['-C', worktree, ...args], opts);
   const abs = path.join(worktree, rel);
+  // Every seam below goes through one call's read cache: an unchanged question is asked once.
+  const deps = withReadCache({ ...realDeps, ...overrides }, abs);
+  const git = (args, opts) => deps.git(['-C', worktree, ...args], opts);
 
   // 1. Record-owned: an edit the record's own commits already touched stays on the run branch.
   const owned = splitNul(git(['-c', 'core.quotePath=false', 'diff', '--name-only', '-z', '--end-of-options', mergeBase, 'HEAD', '--']));
@@ -792,5 +847,5 @@ function pruneEmptyParents(abs, worktree, deps) {
 
 module.exports = {
   UsageError, StagingFailure, realDeps, gitEnv, readManifest, writeManifest, manifestPath, nextId, normalizeTarget, skillLabel,
-  stageEntry, headShortReader, capture, LOG_SECTION, STEP, rowLabel, entryFindings, oneLine, firstStderrLine,
+  stageEntry, headShortReader, withReadCache, capture, LOG_SECTION, STEP, rowLabel, entryFindings, oneLine, firstStderrLine,
 };
