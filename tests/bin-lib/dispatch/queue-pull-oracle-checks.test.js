@@ -52,7 +52,7 @@ test('#5227 oracle cross-check: S1 full gives the oracle the same groups, the fo
   const bodies = (staged) => Object.fromEntries(Object.entries(staged).map(([name, body]) => [name.replace(/\..*$/, ''), body]));
   const myBodies = Object.fromEntries(mine.cap.staged.map((s) => [s.id, s.body]));
   assert.deepEqual(myBodies, bodies(oracle.staged), 'the staged Close bodies match');
-  assert.ok(Object.keys(oracle.staged).some((n) => /^dispatch-target-missing-9009\.qp\d{8}$/.test(n)), `the oracle names the target-missing item after the mktemp suffix: ${Object.keys(oracle.staged)}`);
+  assert.ok(Object.keys(oracle.staged).includes('dispatch-target-missing-9009.md'), `the oracle stages the target-missing item as .md: ${Object.keys(oracle.staged)}`);
   assert.deepEqual(mine.json('dispatch-linked-prs.json'), JSON.parse(oracle.files['dispatch-linked-prs.json']));
   assert.deepEqual(mine.json('dispatch-shipped-probe-prs.json'), JSON.parse(oracle.files['dispatch-shipped-probe-prs.json']));
   assert.equal(mine.text['dispatch-shipped-pr-files.jsonl'], oracle.files['dispatch-shipped-pr-files.jsonl']);

@@ -23,15 +23,16 @@
 //   common  issue list --label auto:build ... --limit 500 | issue list --state open --json number --limit 200
 //           --version | issue list --label bot:in-progress ... --limit 200 | repo view --json nameWithOwner -q .nameWithOwner
 //           pr list --state open --json number,files,closingIssuesReferences --limit 100
-//   S1 (parity; miss and hit)  issue view 8001 | [injected] issue view 0 | issue list --search #8000 #8001 #0 (miss)
+//   S1 (parity; miss and hit)  issue view 8001 | issue list --search #8000 #8001 #0 (miss; #0 is never live-checked)
 //           issue list --search #8000 #8001 (hit) | <linked: i9005,i9006,i9008,i9009,i9010,i9011,i9012,i9013,i9014,
 //           i9015,i9001,i9003,i9016> | pr view 5016 --json files | <landing: b8001>
 //           api repos/fixture-owner/fixture-repo/compare/main...c0ffee…01 --jq .status   (owner=fixture-owner repo=fixture-repo)
 //   S2      <foreign: c0> o0=acme-corp n0=other | <native: i9001,i9030> | <native: i9001> | <linked: i9001>
 //   SEmpty  the common calls only (no linked query: no group number)
-//   SMalformed, SMalformed('labels')  the queue and open-numbers pulls (and --version), then the stop
-//   SMalformed('body')  <linked: i9001> | SMalformed('blocker')  [injected] issue view 99999999999 |
-//           issue list --search #99999999999 | <linked: i9001,i9022>
+//   SMalformed (all three)  issue list --search #99999999999 (never live-checked) | <linked: i9001,i9022>
+//           (#9020 is excluded at eligibility, #5315; #9021 by the shape gate)
+//   SMalformed('labels'), SMalformed('body')  <linked: i9001>
+//   SMalformed('blocker')  issue list --search #99999999999 | <linked: i9001,i9022>
 //   SPortable  issue view 8001 | issue list --search #8001 | <linked: i9040,i9041,i9042> | <landing: b8001>
 //           api repos/acme-corp/widgets/compare/release/next...c0ffee…01 --jq .status   (owner=acme-corp repo=widgets)
 const fs = require('node:fs');
@@ -406,9 +407,8 @@ function S1({ full = false, pipeline = false, parity = false } = {}) {
       { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
       { argv: OPEN_NUMBERS_ARGV, stdout: JSON.stringify(openNumbers) + '\n' },
       ...(pipeline ? [
-        // #8001 is closed (not an open blocker); #0 is no issue at all, so its state read fails.
+        // #8001 is closed (not an open blocker); #0 is no issue number, so it is never live-checked (#5311).
         { argv: ['issue', 'view', '8001', '--json', 'state', '-q', '.state'], stdout: 'CLOSED\n' },
-        { argv: ['issue', 'view', '0', '--json', 'state', '-q', '.state'], stdout: '', status: 1 },
         { argv: DEP_SEARCH_PIPELINE, stdout: DEP_FRESHNESS_PIPELINE },
         // A queue-order cache hit refetches only the dependencies the blob's freshness signal holds (#0 has no record).
         { argv: DEP_SEARCH_PIPELINE_HIT, stdout: DEP_FRESHNESS_PIPELINE },
@@ -468,11 +468,10 @@ function SEmpty() {
 
 // SMalformed (AC5.2): #9020's labels is the string "auto:build", #9021's body is the number 42,
 // #9022 declares `Blocked by #99999999999` (above 2147483647, so no issue can exist), and #9001 is
-// the clean control whose verdict must match the oracle's whatever the other three do. In the
-// script, #9020's string labels throw inside the eligibility block (record-vocabulary.js's
-// normalizeLabelNames calls .map on it), so the whole pull stops at the group-building check
-// before #9021 or #9022 reach any pass. SMalformed(only) keeps #9001 and the one named
-// candidate ('labels', 'body' or 'blocker'), so each malformed input reaches its own handling.
+// the clean control whose verdict must match the oracle's whatever the other three do. #9020 is
+// excluded at eligibility as malformed-blocker with one Warning (#5315), so #9021 and #9022 reach
+// their own passes. SMalformed(only) keeps #9001 and the one named candidate ('labels', 'body' or
+// 'blocker'), so each malformed input reaches its own handling.
 const MALFORMED = {
   labels: () => ({ ...ghRecord(9020, { body: withBody(9020) }), labels: 'auto:build' }),
   body: () => ({ ...ghRecord(9021), body: 42 }),
@@ -488,9 +487,8 @@ function SMalformed(only = null) {
     gh: [
       { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
       { argv: OPEN_NUMBERS_ARGV, stdout: JSON.stringify(numbers.map((number) => ({ number }))) + '\n' },
-      // #9022's blocker is outside the open-numbers pull, so the fence checks it live (it cannot
-      // exist) and searches it for the freshness signal (nothing matches).
-      { argv: ['issue', 'view', '99999999999', '--json', 'state', '-q', '.state'], stdout: '', stderr: 'GraphQL: Could not resolve to an issue or pull request with the number of 99999999999. (repository.issue)\n', status: 1 },
+      // #9022's blocker is above 2147483647, so it is never live-checked (#5311); the pull only
+      // searches it for the freshness signal (nothing matches).
       { argv: ['issue', 'list', '--search', '#99999999999', '--state', 'all', '--json', 'number,updatedAt,state', '--limit', '500'], stdout: '[]\n' },
       ...tailGh(numbers),
     ],
@@ -579,6 +577,16 @@ function failGraphql(scenario, kind) {
   return scenario;
 }
 
+// #5309: the files transport with gh present (the GraphQL-blocked route): a gh shim answers
+// --version and the failing native query, and every other gh call misses (filesGh, oracle).
+function nativeFaultOnFiles(scenario) {
+  const native = failGraphql(scenario, 'native').gh.find((e) => e.graphql === 'native');
+  // agentInputs derives the agent's files from the queue, open-numbers and dependency-search answers: kept as the base has them.
+  const agentAnswers = scenario.gh.filter((e) => Array.isArray(e.argv)
+    && (sameArgv(e.argv, QUEUE_ARGV) || sameArgv(e.argv, OPEN_NUMBERS_ARGV) || (e.argv[0] === 'issue' && e.argv[2] === '--search')));
+  return { ...scenario, filesGh: true, gh: [{ argv: ['--version'], stdout: 'gh version 2.0.0\n' }, ...agentAnswers, native] };
+}
+
 // `effect` lands on the graphql entry of `kind`, which still answers (exit 0).
 function effectOn(scenario, kind, effect) {
   scenario.gh = scenario.gh.map((e) => (e.graphql === kind ? { ...e, effect } : e));
@@ -597,15 +605,23 @@ function withRecord(scenario, record, { open = true } = {}) {
   return scenario;
 }
 
+// #5317: S1({ parity: true }) plus #9050, a docs-health record whose named target `doc` (a path the
+// caller makes hostile) is absent at origin/main, so both sides stage the target-missing Close proposal.
+function SHostileTarget({ doc }) {
+  return withRecord(S1({ parity: true }), ghRecord(9050, {
+    body: `**Doc:** ${doc} | **Section:** fixture\n\n${withBody(9050)}`,
+    labels: ['auto:build', 'ready', 'by:docs-health'],
+  }));
+}
+
 // An OPEN blocker's landing node: the landing check reads it `open` and leaves it to the blocked pass.
 const OPEN_LANDING = (number) => ({
   number, state: 'OPEN', stateReason: null, timelineItems: { nodes: [] }, closedByPullRequestsReferences: { pageInfo: { hasNextPage: false }, nodes: [] },
 });
 
 // S1({ parity: true }) with #8000 outside the open-numbers pull, so the fence checks it live with
-// `gh issue view 8000` (answered OPEN, so #9002 is held). `viewFails` makes that view fail: #9002
-// then passes the blocked pass, so it is also given its linked-PR alias and #8000 its landing node.
-// (The brief's `issue view 8100` is S2's native blocker, which S2's open-numbers pull answers and
+// `gh issue view 8000` (answered OPEN, so #9002 is held). `viewFails` is described at its branch
+// below. (The brief's `issue view 8100` is S2's native blocker, which S2's open-numbers pull answers and
 // whose body-text dependency no record declares; #8000 is the body-text dependency that reaches
 // this loop.)
 function S1LiveDep({ viewFails = false } = {}) {
@@ -614,13 +630,11 @@ function S1LiveDep({ viewFails = false } = {}) {
   s.gh = s.gh.map((e) => (sameArgv(e.argv, OPEN_NUMBERS_ARGV)
     ? { ...e, stdout: JSON.stringify(JSON.parse(e.stdout).filter((r) => r.number !== 8000)) + '\n' } : e));
   s.gh.unshift({ argv: view, stdout: 'OPEN\n' });
+  // #5311: `viewFails` makes that view fail, which fails closed: #8000 counts as open, so #9002 is still held.
+  // The full pass list's landing pass reads #8000 as an OPEN blocker, so it keeps its landing node.
   if (!viewFails) return s;
   failGh(s, view);
-  s.gh = s.gh.map((e) => {
-    if (e.graphql === 'linked') return { ...e, aliases: { ...e.aliases, i9002: linkedNode(9002) } };
-    if (e.graphql === 'landing') return { ...e, aliases: { ...e.aliases, b8000: OPEN_LANDING(8000) } };
-    return e;
-  });
+  s.gh = s.gh.map((e) => (e.graphql === 'landing' ? { ...e, aliases: { ...e.aliases, b8000: OPEN_LANDING(8000) } } : e));
   return s;
 }
 
@@ -632,6 +646,8 @@ const FAULTS = [
   { id: 'F-queue', pass: 'fetch', scenario: () => failGh(P1(), QUEUE_ARGV) },
   { id: 'F-opennum', pass: 'fetch', scenario: () => failGh(P1(), OPEN_NUMBERS_ARGV) },
   { id: 'F-depfresh', pass: 'fetch', warm: true, scenario: () => failGh(P1(), DEP_SEARCH_PIPELINE_HIT) },
+  { id: 'F-depfresh-writeback', pass: 'write-back', scenario: () => failGh(P1(), DEP_SEARCH_PIPELINE) },
+  { id: 'F-depfresh-both', pass: 'fetch', warm: true, scenario: () => failGh(failGh(P1(), DEP_SEARCH_PIPELINE_HIT), DEP_SEARCH_PIPELINE) },
   { id: 'F-depview', pass: 'blocked', scenario: () => S1LiveDep({ viewFails: true }) },
   {
     id: 'F-native', pass: 'blocked',
@@ -644,6 +660,9 @@ const FAULTS = [
     },
   },
   { id: 'F-foreign', pass: 'blocked', scenario: () => failGraphql(S2(), 'foreign') },
+  // #5304: gh transport with DISPATCH_FOREIGN_STATES naming an unwritten file, and the lookup failing
+  // for a cause other than gh being absent: the ignored-file Warning and the lookup Warning both print.
+  { id: 'F-foreign-states', pass: 'blocked', scenario: () => Object.assign(failGraphql(S2(), 'foreign'), { foreignEnv: true }) },
   { id: 'F-linked', pass: 'open-pr', scenario: () => failGraphql(P1(), 'linked') },
   {
     id: 'F-intbranch', pass: 'target-missing',
@@ -665,6 +684,28 @@ const FAULTS = [
       return Object.assign(s, { gitFail: [['fetch', '-q', 'origin']] });
     },
   },
+  {
+    // #5304: the shipped pass's claim reads fail (#9010, #9016), then the pull stops between the shipped and
+    // neighbour passes: the landing answer corrupts the exclusions file, so the unlanded-blocker CLI cannot
+    // append #9011 and exits non-zero. The fence's flush_shipped_claims prints the shipped claim line once.
+    id: 'F-claim-stop', pass: '(stop)',
+    scenario: () => {
+      const s = effectOn(P1(), 'landing', 'corrupt-exclusions');
+      for (const n of [9010, 9016]) failGh(s, contentsApiArgv(n));
+      return Object.assign(s, { gitFail: [['fetch', '-q', 'origin']] });
+    },
+  },
+  {
+    // #5304: the shipped pass's claim reads fail, then the neighbour pass throws before its claim line (the in-flight
+    // pool answers exit 0 with non-JSON), so the neighbour block's finally is the only place the shipped line can print.
+    id: 'F-claim-neighbour-stop', pass: '(stop)',
+    scenario: () => {
+      const s = P1();
+      for (const n of [9010, 9016]) failGh(s, contentsApiArgv(n));
+      s.gh = s.gh.map((e) => (sameArgv(e.argv, IN_FLIGHT_ARGV) ? { ...e, stdout: NOT_JSON } : e));
+      return Object.assign(s, { gitFail: [['fetch', '-q', 'origin']] });
+    },
+  },
   { id: 'F-openprs', pass: 'cross-pr-overlap', scenario: () => failGh(P1(), OPEN_PRS_ARGV) },
   { id: 'F-writeback', pass: 'write-back', scenario: () => Object.assign(P1(), { gitFail: [['push']] }) },
   { id: 'F-corrupt', pass: '(stop)', scenario: () => effectOn(P1(), 'linked', 'corrupt-exclusions') },
@@ -673,8 +714,9 @@ const FAULTS = [
 
 // FILES_FAULTS (files transport): { id, input, mode, pass, scenario(), agent(base agent files) ->
 // agent files, warm? }. `missing` leaves the file unwritten (the agent wrote none), `malformed`
-// writes NOT_JSON; the queue's `wrapper` (D3), the claim map's `non-JSON string` (D4) and the
-// agent-written `[]` / `{}` values are the shapes the Plan Review Clarifications name.
+// writes NOT_JSON; the queue's and the dependency-freshness `wrapper` and `JSON string` rows
+// (D3), the claim map's `non-JSON string` (D4) and the agent-written `[]` / `{}` values are the
+// shapes the Plan Review Clarifications name.
 const withAgent = (name, content) => (files) => {
   const out = { ...files };
   if (content === undefined) delete out[name];
@@ -701,6 +743,17 @@ FILES_FAULTS.push(
   { id: 'files-depFreshness-missing-cold', input: 'depFreshness', mode: 'missing (cold cache)', pass: 'fetch', warm: false, scenario: P1, agent: withAgent('dispatch-dep-freshness.json', undefined) },
   { id: 'files-queueRaw-wrapper', input: 'queueRaw', mode: 'wrapper', pass: 'fetch', scenario: P1,
     agent: (files) => ({ ...files, 'dispatch-queue-raw.json': JSON.stringify({ issues: JSON.parse(files['dispatch-queue-raw.json']) }) }) },
+  // #5307: a 500+ character JSON string queue has a string `.length` past the fence's cap, so
+  // this row pins that the fence counts a non-array as 0 and prints no cap Warning.
+  { id: 'files-queueRaw-string', input: 'queueRaw', mode: 'JSON string', pass: 'fetch', scenario: P1,
+    agent: withAgent('dispatch-queue-raw.json', JSON.stringify('x'.repeat(600))) },
+  // #5307: the dependency-freshness wrapper, warm (the cache check stops) and cold (the write-back does).
+  { id: 'files-depFreshness-wrapper', input: 'depFreshness', mode: 'wrapper', pass: 'fetch', warm: true, scenario: P1,
+    agent: (files) => ({ ...files, 'dispatch-dep-freshness.json': JSON.stringify({ issues: JSON.parse(files['dispatch-dep-freshness.json']) }) }) },
+  { id: 'files-depFreshness-string', input: 'depFreshness', mode: 'JSON string', pass: 'fetch', warm: true, scenario: P1,
+    agent: withAgent('dispatch-dep-freshness.json', JSON.stringify('not an array')) },
+  { id: 'files-depFreshness-wrapper-cold', input: 'depFreshness', mode: 'wrapper (cold cache)', pass: 'fetch', warm: false, scenario: P1,
+    agent: (files) => ({ ...files, 'dispatch-dep-freshness.json': JSON.stringify({ issues: JSON.parse(files['dispatch-dep-freshness.json']) }) }) },
   { id: 'files-inFlightRaw-empty', input: 'inFlightRaw', mode: 'empty []', pass: 'neighbour-in-flight', scenario: P1, agent: withAgent('dispatch-in-flight-raw.json', '[]') },
   { id: 'files-inFlightClaims-empty', input: 'inFlightClaims', mode: 'empty {}', pass: 'neighbour-in-flight', scenario: P1, agent: withAgent('dispatch-in-flight-claims.json', '{}') },
   { id: 'files-inFlightClaims-string', input: 'inFlightClaims', mode: 'non-JSON string', pass: 'neighbour-in-flight', scenario: P1,
@@ -709,15 +762,46 @@ FILES_FAULTS.push(
   // string is written as is.
   { id: 'files-foreignStates-missing', input: 'foreignStates', mode: 'missing', pass: 'blocked', scenario: () => Object.assign(S2(), { foreign: null }), agent: (f) => f },
   { id: 'files-foreignStates-malformed', input: 'foreignStates', mode: 'malformed', pass: 'blocked', scenario: () => Object.assign(S2(), { foreign: NOT_JSON }), agent: (f) => f },
+  // #5311: a missing verified-open-deps file with no unresolved dependency is no failure: no Warning,
+  // nothing held (the fence's `bad && unresolved.length` gate).
+  { id: 'files-verifiedOpenDeps-missing-none', input: 'verifiedOpenDeps', mode: 'missing (nothing unresolved)', pass: 'blocked', scenario: () => S2(), agent: withAgent('dispatch-verified-open-deps.txt', undefined) },
+  // #5309: the files transport with gh present (the GraphQL-blocked route): resolve-blockers.js
+  // answers --version, then its native query throws (exit 3). Every other gh call misses.
+  { id: 'F-native-files', input: 'gh', mode: 'GraphQL-blocked (exit 3)', pass: 'blocked', scenario: () => nativeFaultOnFiles(S2()), agent: (f) => f },
 );
 
-// D1: two pulls in one session. The second's open-numbers fetch returns nothing (exit 1), and
-// #9003 changed since the first (a new title and updatedAt, so the queue-order cache misses).
-function D1Second() {
-  const s = failGh(S1(), OPEN_NUMBERS_ARGV);
-  s.gh = s.gh.map((e) => (sameArgv(e.argv, QUEUE_ARGV)
+// D1: three pulls in one session (healthy S1, then D1Second, then D1Third). In both later pulls
+// #9003 changed since the first (a new title and updatedAt, so the queue-order cache misses); the
+// second's open-numbers fetch also returns nothing (exit 1), the third's is healthy again.
+function retitled9003(scenario) {
+  scenario.gh = scenario.gh.map((e) => (sameArgv(e.argv, QUEUE_ARGV)
     ? { ...e, stdout: JSON.stringify(JSON.parse(e.stdout).map((r) => (r.number === 9003 ? { ...r, title: 'Retitled after the first pull', updatedAt: '2026-11-12T11:00:00Z' } : r))) + '\n' }
     : e));
+  return scenario;
+}
+const D1Second = () => retitled9003(failGh(S1(), OPEN_NUMBERS_ARGV));
+const D1Third = () => retitled9003(S1());
+
+// #5314: an empty auto:build queue after a non-empty S1 pull. The second pull re-fetches every
+// issue of the first pull's persisted freshness signal (queue records, then the #8000 dependency)
+// as dependency-only, and gets each back unchanged, so the cache would hit on the first pull's groups.
+function EmptyAfterS1() {
+  const base = S1();
+  const answer = (argv) => JSON.parse(base.gh.find((e) => sameArgv(e.argv, argv)).stdout);
+  const signal = [...answer(QUEUE_ARGV), ...answer(DEP_SEARCH_8000)];
+  const search = signal.map((i) => `#${i.number}`).join(' ');
+  const s = SEmpty();
+  s.name = 'EmptyAfterS1';
+  s.gh = [
+    { argv: ['issue', 'list', '--search', search, '--state', 'all', '--json', 'number,updatedAt,state', '--limit', '500'],
+      stdout: JSON.stringify(signal.map(({ number, updatedAt, state }) => ({ number, updatedAt, state }))) + '\n' },
+    // The linked-PR query a reused hit would make over S1's survivors (unused once the pull is empty),
+    // so a pull that wrongly hits fails on its own assertion rather than on an unanswered call.
+    // SEmpty's own graphql entries are dropped: its linked entry has no aliases, so ghAnswer (first
+    // graphql entry of the kind answering every requested alias) would skip it as dead weight and
+    // only the entry added here answers; keeping it would leave a never-matching entry ahead of it.
+    ...s.gh.filter((e) => !e.graphql), ...tailGh([9001, 9003]).filter((e) => e.graphql),
+  ];
   return s;
 }
 
@@ -803,5 +887,5 @@ module.exports = {
   ghLabel, ghRecord, SPEC_BODY, QUEUE_ARGV, OPEN_NUMBERS_ARGV, IN_FLIGHT_ARGV, OPEN_PRS_ARGV, writeInput, DEP_SEARCH_8000, withBody, S0, S1, S2, SEmpty, SMalformed, SPortable, SFast, fakeSpawnCli, agentInputs,
   LANDING_COMMIT, PORTABLE_SLUG,
   REPO_SLUG, linkedNode, linkedOutput, mention, WEAK_PR_FILES, tailGh, IN_FLIGHT_7001, OPEN_PR_41, LIVE_CLAIM,
-  FAULTS, FILES_FAULTS, D1Second, S1LiveDep, failGh, NOT_JSON, GH_FAULT_STDERR, contentsApiArgv,
+  SHostileTarget, FAULTS, FILES_FAULTS, D1Second, D1Third, EmptyAfterS1, S1LiveDep, failGh, NOT_JSON, GH_FAULT_STDERR, contentsApiArgv,
 };
