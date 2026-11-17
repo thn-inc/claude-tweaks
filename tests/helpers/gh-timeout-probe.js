@@ -11,6 +11,7 @@
 // 45000 is above the 30000 floor (batch == single-call bound); 10000 is below it, so only
 // GH_BATCH_TIMEOUT_MS (not GH_TIMEOUT_MS) yields 30000.
 const ENV_KEY = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+const GIT_ENV_KEY = 'CLAUDE_TWEAKS_GIT_TIMEOUT_MS';
 
 function captureGhTimeout({ envValue, modulePaths, reply = '{}', exercise }) {
   const cp = require('node:child_process');
@@ -32,4 +33,67 @@ function captureGhTimeout({ envValue, modulePaths, reply = '{}', exercise }) {
   }
 }
 
-module.exports = { captureGhTimeout };
+// Evict `modulePaths` and shared-primitives from the require cache — the evict step alone, for a test
+// that injects fake `deps` and only needs a fresh module load (#5050).
+function evictModules(modulePaths) {
+  const primitivesPath = require.resolve('../../plugin/bin/lib/shared-primitives');
+  for (const p of [...modulePaths, primitivesPath]) delete require.cache[p];
+}
+
+// #5050: the per-command twin of captureGhTimeout. Stubs BOTH child_process.execFileSync and
+// child_process.execFile (the latter with util.promisify.custom resolving `{ stdout: reply, stderr: '' }`)
+// and records EVERY `timeout` each command name carried, in spawn order, so a test asserts each runner's
+// spawn separately by index. `env` is `{ ENV_NAME: value }` applied by the `setEnv()` callback handed to
+// `exercise` (a value of `undefined` deletes the variable); both bound env vars are cleared first so an
+// ambient developer-shell value cannot leak in, and both are restored afterwards with the stubs and cache.
+function captureExecTimeouts({ env = {}, modulePaths = [], reply = '{}', exercise }) {
+  const cp = require('node:child_process');
+  const util = require('node:util');
+  const origExecFileSync = cp.execFileSync;
+  const origExecFile = cp.execFile;
+  const saved = new Map();
+  for (const key of [ENV_KEY, GIT_ENV_KEY, ...Object.keys(env)]) {
+    if (saved.has(key)) continue;
+    saved.set(key, Object.prototype.hasOwnProperty.call(process.env, key) ? process.env[key] : undefined);
+  }
+  const seen = { gh: [], git: [], node: [] };
+  const record = (cmd, args, opts) => {
+    const name = require('node:path').basename(String(cmd)).replace(/\.exe$/i, '');
+    if (!Object.prototype.hasOwnProperty.call(seen, name)) return;
+    const options = [args, opts].find((a) => a && typeof a === 'object' && !Array.isArray(a));
+    seen[name].push(options ? options.timeout : undefined);
+  };
+  const execFileStub = (cmd, args, opts, cb) => {
+    record(cmd, args, opts);
+    const done = [args, opts, cb].find((a) => typeof a === 'function');
+    if (done) done(null, reply, '');
+    return { kill() {}, on() {}, once() {} };
+  };
+  execFileStub[util.promisify.custom] = (cmd, args, opts) => {
+    record(cmd, args, opts);
+    return Promise.resolve({ stdout: reply, stderr: '' });
+  };
+  const setEnv = () => {
+    for (const [key, value] of Object.entries(env)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  };
+  try {
+    delete process.env[ENV_KEY];
+    delete process.env[GIT_ENV_KEY];
+    cp.execFileSync = (cmd, args, opts) => { record(cmd, args, opts); return reply; };
+    cp.execFile = execFileStub;
+    evictModules(modulePaths);
+    exercise(setEnv);
+    return seen;
+  } finally {
+    cp.execFileSync = origExecFileSync;
+    cp.execFile = origExecFile;
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    evictModules(modulePaths);
+  }
+}
+
+module.exports = { captureGhTimeout, captureExecTimeouts, evictModules };

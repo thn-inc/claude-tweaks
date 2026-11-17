@@ -249,6 +249,17 @@ function getGitPushTimeoutMs() {
   return resolvedGitPushTimeoutMs;
 }
 
+// #5050: the one command-to-bound map the default exec seams share. `gh` takes the batched
+// bound, `git` the git bound, everything else (a `node` child) a fixed 30 s. The getters
+// are read here, per call — they memoize once per process, so never destructure them.
+const DEFAULT_EXEC_TIMEOUT_MS = 30000;
+
+function execTimeoutMsFor(cmd) {
+  if (cmd === 'gh') return module.exports.GH_BATCH_TIMEOUT_MS;
+  if (cmd === 'git') return module.exports.GIT_TIMEOUT_MS;
+  return DEFAULT_EXEC_TIMEOUT_MS;
+}
+
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -316,7 +327,7 @@ async function runClassifiedAsync(fn, mapError, { retryOnTimeout = false } = {})
 
 module.exports = {
   LARGE_MAX_BUFFER_BYTES, escapeRegExp, isPathContained, isTimeoutError, runClassified, runClassifiedAsync, toPosix,
-  relativeDisplayId, ghTimeoutMsAt,
+  relativeDisplayId, ghTimeoutMsAt, execTimeoutMsFor,
 };
 Object.defineProperty(module.exports, 'GH_TIMEOUT_MS', { enumerable: true, get: getGhTimeoutMs });
 Object.defineProperty(module.exports, 'GH_BATCH_TIMEOUT_MS', {
