@@ -2099,10 +2099,9 @@ function mk(prefix) {
   movedScratch.push(d);
   return d;
 }
-const preToolUse = { gitRepo, gitRepoWithCommit, gitRepoOnLocalMain, mainAndWorktree, unpinnedRepoWithOrigin };
 const preToolUseBuilders = {
-  'pre-tool-use gitRepo': [() => preToolUse.gitRepo(), (d) => [d]],
-  'pre-tool-use gitRepoWithCommit': [() => preToolUse.gitRepoWithCommit(), (d) => [d]],
+  'pre-tool-use gitRepo': [() => gitRepo(), (d) => [d]],
+  'pre-tool-use gitRepoWithCommit': [() => gitRepoWithCommit(), (d) => [d]],
 };
 for (const [name, [make, dirsOf]] of Object.entries(preToolUseBuilders)) {
   test(`${name}: a second call starts no git process`, () => {
@@ -2110,10 +2109,10 @@ for (const [name, [make, dirsOf]] of Object.entries(preToolUseBuilders)) {
   });
 }
 const preToolUsePairs = {
-  'pre-tool-use mainAndWorktree': [() => preToolUse.mainAndWorktree(), (r) => [r.main, path.dirname(r.wt)]],
-  'pre-tool-use mainAndWorktree({ localMain })': [() => preToolUse.mainAndWorktree({ localMain: true }), (r) => [r.main, path.dirname(r.wt)]],
-  'pre-tool-use gitRepoOnLocalMain': [() => preToolUse.gitRepoOnLocalMain(), (d) => [d]],
-  'pre-tool-use unpinnedRepoWithOrigin': [() => preToolUse.unpinnedRepoWithOrigin(), (d) => [d]],
+  'pre-tool-use mainAndWorktree': [() => mainAndWorktree(), (r) => [r.main, path.dirname(r.wt)]],
+  'pre-tool-use mainAndWorktree({ localMain })': [() => mainAndWorktree({ localMain: true }), (r) => [r.main, path.dirname(r.wt)]],
+  'pre-tool-use gitRepoOnLocalMain': [() => gitRepoOnLocalMain(), (d) => [d]],
+  'pre-tool-use unpinnedRepoWithOrigin': [() => unpinnedRepoWithOrigin(), (d) => [d]],
 };
 for (const [name, [make, dirsOf]] of Object.entries(preToolUsePairs)) {
   test(`AC1.1 AC1.2: ${name}: a second call starts no git process`, () => {
@@ -2121,8 +2120,8 @@ for (const [name, [make, dirsOf]] of Object.entries(preToolUsePairs)) {
   });
 }
 test('a copied mainAndWorktree pair resolves to its own main, and a second worktree can be added to it', () => {
-  const a = preToolUse.mainAndWorktree();
-  const b = preToolUse.mainAndWorktree();
+  const a = mainAndWorktree();
+  const b = mainAndWorktree();
   movedScratch.push(a.main, path.dirname(a.wt), b.main, path.dirname(b.wt));
   for (const p of [a, b]) {
     assert.ok(path.basename(p.main).startsWith('ct-e1-'), p.main);
@@ -2140,14 +2139,14 @@ test('a copied mainAndWorktree pair resolves to its own main, and a second workt
   assert.strictEqual(git(extra, ['rev-parse', 'HEAD']), git(a.main, ['rev-parse', 'HEAD']));
 });
 test('mainAndWorktree({ localMain: true }) and gitRepoOnLocalMain copies are on main', () => {
-  const pair = preToolUse.mainAndWorktree({ localMain: true });
-  const repo = preToolUse.gitRepoOnLocalMain();
+  const pair = mainAndWorktree({ localMain: true });
+  const repo = gitRepoOnLocalMain();
   movedScratch.push(pair.main, path.dirname(pair.wt), repo);
   assert.strictEqual(git(pair.main, ['symbolic-ref', '--short', 'HEAD']), 'main');
   assert.strictEqual(git(repo, ['symbolic-ref', '--short', 'HEAD']), 'main');
 });
 test('unpinnedRepoWithOrigin copies carry the GitHub-shaped origin and one commit', () => {
-  const repo = preToolUse.unpinnedRepoWithOrigin();
+  const repo = unpinnedRepoWithOrigin();
   movedScratch.push(repo);
   assert.strictEqual(git(repo, ['remote', 'get-url', 'origin']), 'https://github.com/o/n.git');
   assert.strictEqual(git(repo, ['rev-list', '--count', 'HEAD']), '1');

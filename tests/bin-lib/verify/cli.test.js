@@ -1717,7 +1717,6 @@ test('Absorbed AC (identity): the identity written into a template reaches its c
 });
 
 test('tmpGitRepo: a second call starts no git process and carries the verify identity', (t) => {
-  const { tmpGitRepo } = require('./cli-helpers');
   const { traced: second } = warmCallStartsNoGit(tmpGitRepo, { track: (r) => t.after(() => fs.rmSync(r.repo, { recursive: true, force: true })) });
   assert.strictEqual(second.git('config', 'user.email').trim(), 'verify-test@example.invalid');
 });

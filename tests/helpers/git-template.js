@@ -27,11 +27,10 @@
 //
 // Where a builder's warm-call test belongs: in a test file that already builds
 // that template (calls the builder with arguments giving the same key), never in
-// tests/helpers-git-template.test.js. Templates are
-// cached per process, so a "second call starts no git process" test costs
-// nothing where the template is built anyway and costs a whole build in a file
-// that would not otherwise build it. The check itself is
-// `warmCallStartsNoGit` in tests/helpers/git-trace.js.
+// tests/helpers-git-template.test.js. Templates are cached per process, so a
+// "second call starts no git process" test costs nothing where the template is
+// built anyway and costs a whole build in a file that would not otherwise build
+// it. The check itself is `warmCallStartsNoGit` in tests/helpers/git-trace.js.
 
 const fs = require('fs');
 const os = require('os');
