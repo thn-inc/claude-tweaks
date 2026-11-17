@@ -441,7 +441,7 @@ NODE_EVAL_EOF
   TPATH=$(node -e "console.log(JSON.parse(Buffer.from(process.argv[1], 'base64').toString()).path)" -- "$ROW")
   node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$DISPATCH_STANDALONE_DIR" --status AUTO \
     --text "dispatch: #${NUM} excluded, named target ${TPATH} absent at ${INTEGRATION_REF}" --reversibility n/a
-  TMP_PROPOSAL="$(dirname "$DISPATCH_EXCLUSIONS")/target-missing-proposal-${NUM}.md"
+  PROPOSAL="$(dirname "$DISPATCH_EXCLUSIONS")/target-missing-proposal-${NUM}.md"
   {
     echo "# Staged: Close (GitHub) — #${NUM} (named target absent at ${INTEGRATION_REF})"
     echo ""
@@ -452,10 +452,10 @@ NODE_EVAL_EOF
     echo "**Commands:**"
     echo "gh issue comment ${NUM} --body \"Closing: the named target ${TPATH} no longer exists at ${INTEGRATION_REF} — this record's Acceptance Criteria has no remaining target. Filed by /claude-tweaks:dispatch (queue pull).\""
     echo "gh issue close ${NUM} --reason \"not planned\""
-  } > "$TMP_PROPOSAL"
+  } > "$PROPOSAL"
   # stage-item.js is the sanctioned writer for a run dir's staged/
   # (pipeline-run-dir.md) -- never a direct Write/heredoc into it.
-  node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$DISPATCH_STANDALONE_DIR" --id "dispatch-target-missing-${NUM}" --file "$TMP_PROPOSAL"
+  node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$DISPATCH_STANDALONE_DIR" --id "dispatch-target-missing-${NUM}" --file "$PROPOSAL"
 done
 
 # #5304: a stop before the claim line prints the shipped claims read so far, once (at each stop below that calls this).

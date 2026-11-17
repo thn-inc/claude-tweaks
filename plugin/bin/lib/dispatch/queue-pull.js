@@ -56,13 +56,6 @@
 // gh fetch fails open (neighbour-in-flight): on `files`, a missing or malformed in-flight or
 // claims file stops the pull.
 //
-// Test-only seam: when QP_TMPNAME_COUNTER_FILE is set, defaultDeps().tmpName reads that file's
-// integer (a missing file is 0; a non-integer or negative value is refused, as the oracle's
-// mktemp shim refuses it), creates `tmp.qp<8-digit counter+1>` exclusively, and only then writes
-// the counter back, so a failed create does not advance it. The parity CLI is
-// a subprocess and cannot take an injected function, and the oracle's mktemp shim implements the
-// same format over the same variable, so both sides emit identical names. Production never sets it.
-//
 // Test seams beyond `deps` (no shipped caller uses them; a refactor keeps them or updates the
 // tests in queue-pull.test.js that read them): `makeContext(options, deps)` is exported, and tests
 // run passes over its context and then assert on `ctx.state.cacheHit`, `.workLinks`,
@@ -74,7 +67,6 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const crypto = require('crypto');
 const { execFileSync, spawnSync } = require('child_process');
 
 const { readExclusions, appendExclusion, groupIsExcluded } = require('./exclusions');
@@ -1318,27 +1310,6 @@ function runPasses(passes, ctx) {
   }
 }
 
-function tmpName() {
-  const counterFile = process.env.QP_TMPNAME_COUNTER_FILE;
-  let next = null;
-  let base;
-  if (counterFile) {
-    let stored = null;
-    try { stored = fs.readFileSync(counterFile, 'utf8'); } catch (err) { if (!err || err.code !== 'ENOENT') throw err; }
-    const n = stored === null ? 0 : Number(stored);
-    if (!Number.isSafeInteger(n) || n < 0) throw new Error(`queue-pull: tmpName: counter file holds ${JSON.stringify(stored)}`);
-    next = n + 1;
-    base = `tmp.qp${String(next).padStart(8, '0')}`;
-  } else {
-    const alnum = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    base = 'tmp.' + Array.from(crypto.randomBytes(10), (b) => alnum[b % alnum.length]).join('');
-  }
-  const file = path.join(os.tmpdir(), base);
-  fs.writeFileSync(file, '', { flag: 'wx', mode: 0o600 });
-  if (next !== null) fs.writeFileSync(counterFile, String(next)); // only after a successful create
-  return file;
-}
-
 // A gh call bounded by GH_BATCH_TIMEOUT_MS rather than GH_TIMEOUT_MS: an aliased GraphQL batch, or
 // a paginated list call (`issue list` / `pr list` with --limit above 100, or a `pr list` asking for
 // `files`), the #4815 batched-call precedent.
@@ -1383,7 +1354,6 @@ function defaultDeps(seams = {}) {
     stdout: (s) => process.stdout.write(s),
     stderr: (s) => process.stderr.write(s),
     now: () => new Date(),
-    tmpName,
     queueOrder: {
       readOrder: (...a) => require('./queue-order').readOrder(...a),
       writeOrder: (...a) => require('./queue-order').writeOrder(...a),

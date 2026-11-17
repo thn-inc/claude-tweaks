@@ -1,12 +1,12 @@
 'use strict';
 // #5227: queue-pull module parity suite. The bash oracle runs plugin/skills/dispatch/
-// queue-pull-script.md's fence whole, in a throwaway sandbox under PATH shims for gh, git and
-// mktemp (tests/bin-lib/dispatch/queue-pull-oracle.js), with a frozen clock preloaded into every
+// queue-pull-script.md's fence whole, in a throwaway sandbox under PATH shims for gh and git
+// (tests/bin-lib/dispatch/queue-pull-oracle.js), with a frozen clock preloaded into every
 // node process (queue-pull-clock-stub.js).
 //
 // Normalizations (AC1, and nothing else): the sandbox root becomes <SCR> and the pre-minted
-// run-dir basename becomes <RUN>. The clock is frozen by the stub rather than normalized, and
-// temp names match across sides through the QP_TMPNAME_COUNTER_FILE seam.
+// run-dir basename becomes <RUN>. The clock is frozen by the stub rather than normalized; the one
+// temp file both sides name (the target-missing proposal) has a fixed name.
 // One documented exception (controller ruling, Task 4 review): the four failure lines whose fence
 // tail is `$(cat <err file>)` (the not-spec-shaped and open-pr corrupt-exclusions stop lines and
 // the not-spec-shaped / open-linked-PR filtering Warnings) compare up to and including their fixed
@@ -80,12 +80,6 @@ const { appendExclusion } = require('../../../plugin/bin/lib/dispatch/exclusions
 const { aliasMcpTimestamps } = require('../../../plugin/bin/lib/issues/mcp-issue-shape');
 
 const FENCE = extractFence(readText(SCRIPT_MD), FENCE_FIRST_LINE);
-const ORACLE_ENV_KEYS = new Set([
-  'PATH', 'HOME', 'PWD', 'OLDPWD', 'TMPDIR', 'TZ', 'LANG', 'CLAUDE_PLUGIN_ROOT', 'CLAUDE_CODE_SESSION_ID',
-  'GIT_CEILING_DIRECTORIES', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_GLOBAL', 'GIT_AUTHOR_DATE', 'GIT_COMMITTER_DATE',
-  'QP_SHIM_TABLE', 'QP_LOG_DIR', 'QP_TMPNAME_COUNTER_FILE', 'NODE_OPTIONS',
-]);
-
 test('#5227 oracle: queue-pull-script.md runs whole over a one-record fixture', { skip: oracleSkip() }, async () => {
   const r = await withEscapeGuard(REPO, () => runOracle(createSandbox(S0()), FENCE));
   assert.equal(r.status, 0, r.stderr);
@@ -120,28 +114,6 @@ test('#5227 oracle: fenceSessionFiles lists the fence --value names in order', (
   assert.equal(names.length, 26);
   assert.equal(names[0], 'dispatch-queue-raw.json');
   assert.equal(names[25], 'dispatch-shape-gate.err');
-});
-
-test('#5227 oracle: the mktemp shim emits tmp.qp00000001 then tmp.qp00000002 from QP_TMPNAME_COUNTER_FILE', { skip: oracleSkip() }, () => {
-  const sb = createSandbox(S0());
-  try {
-    const tmpdir = path.join(sb.root, 'tmp', 'mktemp-probe');
-    fs.mkdirSync(tmpdir, { recursive: true });
-    const env = sb.runEnv({ tmpdir, sessionId: 'qp-mktemp-probe' });
-    assert.deepEqual(Object.keys(env).filter((k) => !ORACLE_ENV_KEYS.has(k) && !k.startsWith('CT_TRACE_')), [], 'nothing inherited');
-    const mktemp = (args = []) => spawnSync(path.join(sb.bin, 'mktemp'), args, { env, encoding: 'utf8' });
-    const first = mktemp();
-    assert.equal(first.status, 0, first.stderr);
-    assert.equal(first.stdout, path.join(tmpdir, 'tmp.qp00000001') + '\n');
-    const second = mktemp();
-    assert.equal(second.stdout, path.join(tmpdir, 'tmp.qp00000002') + '\n');
-    assert.equal(fs.readFileSync(env.QP_TMPNAME_COUNTER_FILE, 'utf8'), '2');
-    const refused = mktemp(['-d']);
-    assert.equal(refused.status, 97);
-    assert.deepEqual(fs.readdirSync(tmpdir).sort(), ['tmp.qp00000001', 'tmp.qp00000002']);
-  } finally {
-    sb.cleanup();
-  }
 });
 
 test('#5227 oracle: the git shim refuses a directory outside the sandbox, an exported GIT_DIR and every -c key but core.quotePath', { skip: oracleSkip() }, () => {
@@ -561,10 +533,9 @@ test('AC11.2: every registry field has a fixed value set', () => {
 // Runs fn with TMPDIR (and the win32 spellings) pointed at a test-owned dir, never the host one.
 function inOwnTmp(fn) {
   const own = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-t2-'));
-  const keys = ['TMPDIR', 'TEMP', 'TMP', 'QP_TMPNAME_COUNTER_FILE'];
+  const keys = ['TMPDIR', 'TEMP', 'TMP'];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
-  for (const k of ['TMPDIR', 'TEMP', 'TMP']) process.env[k] = own;
-  delete process.env.QP_TMPNAME_COUNTER_FILE;
+  for (const k of keys) process.env[k] = own;
   try {
     return fn(own);
   } finally {
@@ -614,25 +585,6 @@ test('#5227 SESSION_FILES equals the fence --value list in fence order', () => {
   assert.equal(SESSION_FILES.length, 27);
 });
 
-test('#5227 tmpName: random tmp.<10 alnum> by default; tmp.qp00000001, tmp.qp00000002 under QP_TMPNAME_COUNTER_FILE', () => inOwnTmp((own) => {
-  const { tmpName } = defaultDeps();
-  const random = tmpName();
-  assert.equal(path.dirname(random), own);
-  assert.match(path.basename(random), /^tmp\.[A-Za-z0-9]{10}$/);
-  assert.equal(fs.readFileSync(random, 'utf8'), '', 'the file is created');
-  assert.notEqual(tmpName(), random);
-
-  const counter = path.join(own, 'counter');
-  process.env.QP_TMPNAME_COUNTER_FILE = counter;
-  const first = tmpName();
-  const second = tmpName();
-  assert.equal(path.basename(first), 'tmp.qp00000001');
-  assert.equal(path.basename(second), 'tmp.qp00000002');
-  assert.equal(path.dirname(first), own);
-  assert.equal(fs.readFileSync(counter, 'utf8'), '2');
-  assert.ok(fs.existsSync(first) && fs.existsSync(second));
-}));
-
 test('#5227 sessionPaths fallback: no session id gives path.join(os.tmpdir(), name)', () => inOwnTmp((own) => {
   const none = sessionPaths(undefined);
   assert.deepEqual(Object.keys(none), SESSION_FILES);
@@ -657,22 +609,6 @@ test('#5227 omit: unknown reason or a setup pass throws TypeError; malformed-blo
     assert.deepEqual(fs.readdirSync(own), [], 'omit is validated before any session path is created');
   });
 });
-
-test('#5227 tmpName counter seam matches the oracle mktemp shim: refuses a bad counter, advances only after a successful create', () => inOwnTmp((own) => {
-  const { tmpName } = defaultDeps();
-  const counter = path.join(own, 'counter');
-  process.env.QP_TMPNAME_COUNTER_FILE = counter;
-  for (const bad of ['abc', '-1', '1.5', '']) {
-    fs.writeFileSync(counter, bad);
-    if (bad === '') { assert.equal(path.basename(tmpName()), 'tmp.qp00000001'); continue; }
-    assert.throws(() => tmpName(), /counter file holds/, bad);
-    assert.equal(fs.readFileSync(counter, 'utf8'), bad, 'a refused counter is left as it was');
-  }
-  fs.writeFileSync(counter, '4');
-  fs.writeFileSync(path.join(own, 'tmp.qp00000005'), '');
-  assert.throws(() => tmpName(), (e) => e.code === 'EEXIST');
-  assert.equal(fs.readFileSync(counter, 'utf8'), '4', 'an EEXIST create does not advance the counter');
-}));
 
 test('#5227 queuePull runs every registry pass in order and returns the final groups and exclusions', () => inOwnTmp((own) => {
   const paths = sessionPaths('qp-pull');
@@ -1628,7 +1564,7 @@ const SHIPPED_STOP = fenceText(/echo "(dispatch: queue-pull stopped -- shipped-c
 
 // The target-missing Close proposal the fence's `echo` lines build, derived from the fence text.
 function fenceTargetProposal(num, tpath, ref) {
-  const block = FENCE.match(/TMP_PROPOSAL="\$\(dirname "\$DISPATCH_EXCLUSIONS"\)\/target-missing-proposal-\$\{NUM\}\.md"\n {2}\{\n([\s\S]*?)\n {2}\} > "\$TMP_PROPOSAL"/);
+  const block = FENCE.match(/(?:^|\n) {2}PROPOSAL="\$\(dirname "\$DISPATCH_EXCLUSIONS"\)\/target-missing-proposal-\$\{NUM\}\.md"\n {2}\{\n([\s\S]*?)\n {2}\} > "\$PROPOSAL"/);
   assert.ok(block, 'the fence no longer builds the proposal with an echo group');
   return block[1].split('\n').map((l) => {
     const m = l.trim().match(/^echo "(.*)"$/);
@@ -1802,7 +1738,7 @@ test('AC2.1 target-missing: a target present at the integration tip is kept; the
 
 test('AC1.1 target-missing: the Close proposal is written to target-missing-proposal-<n>.md in the session dir, so stage-item.js stages dispatch-target-missing-<n>.md', () => {
   const r = pull4(FULL(), {
-    // Review Focus 1: an earlier pull's file at the same path is overwritten, not kept.
+    // An earlier pull's file at the same path is overwritten, not kept.
     prepare: () => {
       const dir = path.dirname(sessionPaths('qp-t3')['dispatch-groups.json']);
       fs.mkdirSync(dir, { recursive: true });
@@ -3297,7 +3233,7 @@ describe('#5227 parity (AC1)', { skip: oracleSkip(), timeout: 600_000 }, () => {
     });
   }
 
-  test('AC1.2: normalize substitutes only the sandbox root and the run id; the staged target-missing ids are byte-equal on both sides (deterministic temp names)', (t) => {
+  test('AC1.2: normalize substitutes only the sandbox root and the run id; the staged target-missing ids are byte-equal on both sides', (t) => {
     for (const cfg of MATRIX) {
       const { oracle, module } = R[cfg.name];
       assert.deepEqual(Object.keys(module.staged), Object.keys(oracle.staged), `${cfg.name}: the staged names, before any normalization`);
@@ -3308,9 +3244,9 @@ describe('#5227 parity (AC1)', { skip: oracleSkip(), timeout: 600_000 }, () => {
     }
     assert.ok(Object.keys(R['S1-gh-miss'].oracle.staged).includes('shipped-close-9010.md'));
     const sb = R['S1-gh-miss'].oracle.sandbox;
-    const sample = `${sb.root}/proj/.claude-tweaks/pipelines/${RUN_DIR_NAME}/staged x 2026-11-12T12:00:00.000Z ${sb.root}-not tmp.qp00000001`;
-    assert.equal(normalize(sample, sb), '<SCR>/proj/.claude-tweaks/pipelines/<RUN>/staged x 2026-11-12T12:00:00.000Z <SCR>-not tmp.qp00000001',
-      'the clock and the temp names are left as they are');
+    const sample = `${sb.root}/proj/.claude-tweaks/pipelines/${RUN_DIR_NAME}/staged x 2026-11-12T12:00:00.000Z ${sb.root}-not`;
+    assert.equal(normalize(sample, sb), '<SCR>/proj/.claude-tweaks/pipelines/<RUN>/staged x 2026-11-12T12:00:00.000Z <SCR>-not',
+      'the clock is left as it is');
     for (const [side, r] of sides(R['S1-gh-miss'])) assert.equal(r.orderBlob.computedAt, '2026-11-12T12:00:00.000Z', `${side}: the frozen clock, not a normalization`);
     t.diagnostic(`AC1 matrix: ${MATRIX.length} pairs (${MATRIX.length * 2} runs), pool ${POOL}, wall ${timing.ms} ms`);
   });
