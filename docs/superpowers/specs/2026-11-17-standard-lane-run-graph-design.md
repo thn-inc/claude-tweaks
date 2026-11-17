@@ -2,7 +2,7 @@
 
 Date: 2026-11-17. Status: draft for approval.
 
-Record: #5580. Extends `docs/superpowers/specs/2026-11-11-pipeline-driver-design.md`, as Phase 7 of `docs/superpowers/specs/2026-11-15-process-efficiency-design.md`. Written against `main` at `60464ca6b9e06ac7bb5f9ed3cd0c8da4892cd50d` (`git rev-parse origin/main` after `git fetch origin main`, 2026-11-17).
+Record: #5580. Extends `docs/superpowers/specs/2026-11-11-pipeline-driver-design.md`, as Phase 7 of `docs/superpowers/specs/2026-11-15-process-efficiency-design.md`. Written against `main` at `f88beb9ecbef1f0b2560249df0d3ae70a96b4843`, this branch's merge base with `origin/main` (`git merge-base HEAD origin/main` after `git fetch origin main`, 2026-11-17). Every file claim was read in this branch's tree, which changes nothing under `plugin/`, so the plugin it describes is that commit's. `origin/main` has moved since; a phase re-reads a claim before it relies on one.
 
 ## Why
 
@@ -740,7 +740,7 @@ It prints `{ absent: 477, backend: 22, infra: 86, terminal: 5 }`.
 
 **Expected effect on #4031's targets**, as an expectation and not a criterion: none from the function at its default. Every ready record keeps today's graph at the first evaluation. The one default change in this repository is R8's absent-surface clause, which adds `visual-review`, a skill load and a browserless recommendation, to a run whose record has no `Surface:` line and whose diff has no `frontend` path; for those runs both the median wall time and the round-trip count are expected to rise slightly. Movement toward 15 minutes and 120 round trips is expected from later rules, once each vocabulary step has an Evidence row of its own, not from this function's default or from its walker (`## Who walks the graph`).
 
-**Decision for Phase 0: an unlabeled record's ceremony.** The ceremony input takes the Manifesto's `ceremony-check` verdict for a record with no `ceremony:*` label, as today. The stricter reading is to read an absent label at `standard`. That adds R2's six steps, and `whole-branch-review` on a one-task plan, to each unlabeled record the Manifesto would judge `fast-lane`: up to 456 of today's 590 ready records. Recommendation: keep the verdict. Neither value removes an asserted step, so the stricter reading strengthens no assertion. The verdict also comes from the same `ceremony-check` mode that stamps the label. The weakest point of that argument is that a headless Manifesto verdict has no human on it, while `/claude-tweaks:specify`'s stamp can. If the maintainer weighs that, the stricter reading gives more steps, so it needs no policy value.
+Whether an unlabeled record takes the Manifesto's verdict or reads `standard` is decision 0.2 (`## Phase 0 — Decisions`).
 
 ## Never skipped
 
@@ -902,7 +902,7 @@ The branch evaluates `start` and `config`. `start` comes from the start facts it
 
 **Close check.** At wrap-up's close, before `close-run`, one `run-graph.js --run … --check-walk` call compares the store's remainder with the run's skill events (`events.jsonl`) at skill granularity: `/claude-tweaks:build` for A1-A3, `/claude-tweaks:test` for A4 and A8, `/claude-tweaks:review` for A5-A7 and A9. It logs one `SKIP` line per asserted step whose skill left no event, which the Review Console shows, and never fails the close. On a backfilled store, or with no store, it logs one `SKIP` and checks nothing.
 
-**Decision for Phase 0: the walker.** This design takes (b). The reading not taken is (a), and the repository supports it. The process-efficiency design's Phase 7 calls this "a design doc that extends the driver design to the standard lane". The driver design makes `drive.js` the program that walks a run: "The driver inverts control. A program owns the steps that need no judgment and starts a model only for the steps that do." Record #5580's Technical Approach leaves the reading open: "AC12's comparison settles whether that means `drive.js` walks the standard-lane graph." Recommendation: keep (b) for this design's phases. The weakest point of that recommendation is that (b) leaves a model walking, while (a)'s walk would be code. Choosing (a) later reuses the function, `run-graph.js` and the store unchanged, but it first needs the skill bodies to shed their bookkeeping, which no phase here does.
+The choice between (a) and (b) is decision 0.1 (`## Phase 0 — Decisions`).
 
 ## Roster replacement
 
@@ -989,24 +989,252 @@ On 2026-11-17 it printed `{"open":293,"withConfig":20,"withStore":0,"withoutStor
 
 ## What this design does not decide
 
-<!-- filled by Task 7 -->
+- It builds nothing. No file under `plugin/` changes with this document. Its phases are for `/claude-tweaks:specify` to decompose, and this record files no record for any of them.
+- The prose express lane (`_shared/express-lane.md`) and the driver's admission and bounds for express-sized records (`plugin/bin/lib/express/eligibility.js`, `plugin/bin/lib/driver/admission.js`, the `express-driver-max-*` policy values) are unchanged. No phase touches `plugin/bin/drive.js` or `plugin/bin/lib/driver/`.
+- It sets no rule that gives a record fewer steps than today, because none exists: every rule in `### Rules` is unchanged from today, and no step has an Evidence row that can carry one. Phase 6 is the form such a rule takes. Which rule comes first, and the number it rests on, is for a later record.
+- Whether `drive.js` later walks some standard-lane steps. Decision 0.1 recommends `/claude-tweaks:flow` as the walker. The function, its CLI and the store do not depend on the walker, so that question stays open.
+- The rules of the three modes (`plan`'s micro-plan, `review-code`'s effort tier, `wrap-up`'s `fast-lane` mode), the `ceremony-check` judgment, who stamps `ceremony:*` (decision 0006), the skill-load gate's own rules (`decide`, #5605) and the review lens dispatch path (`review-lens-dispatch`, #5599). Each stays as it is today.
+- Any step's model profile (#4030).
+- Whether the 477 ready records without a `Surface:` line get one. Reading an absent surface at its most cautious value adds `visual-review` loads (`## The selection function`, What a defaulted surface adds). A backfill through `/claude-tweaks:specify` would remove that cost, and no phase here does it.
 
 ## Open records
 
-<!-- filled by Task 7 -->
+Looked up on 2026-11-17 with `gh issue view {n} --repo thn-inc/claude-tweaks --json state,title,labels`. The sub-issues of #5225 came from `gh api repos/thn-inc/claude-tweaks/issues/5225/sub_issues`, and the process-efficiency records from `gh issue list --repo thn-inc/claude-tweaks --state all --search "process-efficiency in:body" --limit 100 --json number,title,state`. This record edits none of them.
+
+| Record | State | Title | Disposition | Reason |
+|---|---|---|---|---|
+| #3381 | open | Decide /flow's double whole-branch review from measured per-dispatch cost | waited for by Phase 4 | Its Outcomes 1 and 2 change the roster and its pin test, and Phase 4 deletes both. Phase 4 waits until #3381 closes, or until it is reshaped so its skip lands as a `run-graph-rules` rule (Phase 6) |
+| #5292 | open | Plan review's needs-human question is the largest mid-flow stop: raise spec gaps at /specify | waited for by Phases 4 and 5 | Its Key Files include `ceremony-profile.md`, which Phase 4 deletes. It also narrows the plan-review stop whose rounds Phase 5 counts |
+| #5262 | open | The express lane never admits a /capture-born record — no ceremony label until /specify | independent | It changes the express lane's admission, which this design leaves unchanged |
+| #4118 | open | /capture's born-ready branch files `ready` records with no `ceremony:*` label, so every one pays /flow's ceremony-check fallback | independent | It changes where the ceremony value comes from. The function reads `config.yml`'s `ceremony-profile` either way (Inputs row 5) |
+| #5232 | closed | Route driver-admitted singletons from /claude-tweaks:dispatch to drive.js | independent | Closed on 2026-11-16, before this design's base. No phase touches `drive.js` or the dispatch route |
+| #5225 | open | Pipeline driver, Phase 5: queue selection in the driver | independent | Sub-issues #5227, #5229 and #5230 are closed; #5231 (Remove the embedded queue-pull and ranking scripts) is open. Queue selection picks which record runs, not which steps it takes |
+| #4030 | open | Re-measure and move build,test dispatch agents to the Standard profile once ceremony is deterministic | independent | No phase changes a step's profile. Ceremony does not become deterministic here, because the label and the Manifesto's verdict stay its source |
+| #5594 | open | Process efficiency Phase 6: review fan-out as a plugin workflow | independent | Its five sub-issues, #5595 to #5599, are closed. The dispatch path changes neither `review-code`'s unit nor its outputs (`## Step vocabulary`) |
+| #5825 | open, `parked` | Measure the workflow review lens dispatch against the Task dispatch before flipping its default | independent | It holds the check for flipping the default of process-efficiency Phase 6's key; same reason as #5594 |
+| #5783 | open, `parked` | Measure sleep-led subagent Bash calls 30 days after the wait-for.js prose shipped (#5604) | independent | It holds the check for process-efficiency unit 4.1, whose waits are not steps |
+
+Process-efficiency Phase 4 has no other open record. #5600 and its sub-issues #5601, #5602, #5604 and #5605 (unit 4.2) are closed. #5605's gate verdict is Inputs row 9, and Phase 3 moves its call into `run-graph.js`.
+
+## Order and file sizes
+
+- Phase 0 is decisions. Each is needed only by the phase that names it.
+- Phases 1 to 4 run in order: add (1 and 2), migrate (3) and remove (4), the stages of `## Roster replacement`. Phases 1 and 2 change no behaviour. Phase 3 changes it at the default only through the absent-surface additions.
+- Phase 5, the new loop bounds, is independent of Phases 1 to 4.
+- Phase 6 needs a rule that does not exist yet. Phase 7 waits for the release that carries Phase 6.
+- Phases 2, 3, 4 and 5 reword the roster or files that cite it or are pinned by tests. Each must pass the full suite, and each names `.claude/skills/skill-prose-conformance-tests` and `.claude/skills/shared-contract-extraction` for its builder. Phases 4 and 6 add a removal or a policy key, so they name `.claude/skills/removal-condition-execution` and `.claude/skills/policy-key-addition`. No phase adds a driver step, so `.claude/skills/driver-step-addition` applies to none.
+
+Skill prose is read whole only up to 52,500 bytes. A phase that adds text to a skill file of 47,250 bytes or more says what it removes from that file, and it is done only when the file is no larger than it was at the phase's base. Sizes from `wc -c` at this design's base:
+
+| File | Bytes | Phases that edit it |
+|---|---|---|
+| `plugin/skills/build/plan-authoring-checks.md` | 52,497 | 3 |
+| `plugin/skills/flow/SKILL.md` | 51,924 | 2, 3 |
+| `plugin/skills/dispatch/SKILL.md` | 51,675 | none |
+| `plugin/skills/dispatch/settle-and-merge.md` | 51,106 | 2 |
+| `plugin/skills/_shared/policy-schema.md` | 49,849 | 3, 6 |
+| `plugin/skills/build/SKILL.md` | 49,340 | 3, 5 |
+| `plugin/skills/wrap-up/cleanup-procedures-execution.md` | 49,084 | 2 |
+| `plugin/skills/_shared/auto-mode-contract.md` | 47,500 | 5, only if its plan-review text needs it |
+| `plugin/skills/review/code-mode-steps.md` | 46,443 | 3, 5 |
+
+The record's Gotchas gave `review/code-mode-steps.md` as 52,358 bytes. At this base it is 46,443, below the threshold. The other four the Gotchas name are within 413 bytes of their stated sizes.
 
 ## Phase 0 — Decisions
 
-<!-- filled by Task 7 -->
+No build. The maintainer answers; the answer is written into this section.
 
-## Phase 1 — …
+**0.1 Who walks the graph.** This design compares two walkers (`## Who walks the graph`) and takes (b), `/claude-tweaks:flow` calling `run-graph.js`. The repository also supports (a), `drive.js` walking with model workers for the judgment steps. The process-efficiency design's Phase 7 calls this "a design doc that extends the driver design to the standard lane". The driver design makes `drive.js` the program that walks a run: "The driver inverts control. A program owns the steps that need no judgment and starts a model only for the steps that do." Record #5580's Technical Approach leaves the reading open: "AC12's comparison settles whether that means `drive.js` walks the standard-lane graph." Recommendation: (b) for this design's phases. Its weakest point is that (b) leaves a model walking, where (a)'s walk would be code. Choosing (a) later reuses the function, `run-graph.js` and the store unchanged, but it first needs the skill bodies to shed their bookkeeping, and no phase here does that. Needed before Phase 2.
 
-<!-- filled by Task 7 -->
+**0.2 An unlabeled record's ceremony.** The ceremony input takes the Manifesto's `ceremony-check` verdict for a record with no `ceremony:*` label, as today. The stricter reading treats an absent label as `standard`. That adds R2's six steps, and `whole-branch-review` on a one-task plan, to each unlabeled record the Manifesto would judge `fast-lane`: up to 456 of today's 590 ready records. Recommendation: keep the verdict. Neither value removes an asserted step, so the stricter reading strengthens no assertion, and the verdict comes from the same `ceremony-check` mode that stamps the label. The weakest point is that a headless Manifesto verdict has no human on it, while `/claude-tweaks:specify`'s stamp can have one. The stricter reading gives more steps, so it would need no policy value. Needed before Phase 1.
+
+**0.3 Plan-review rounds across runs.** Today nothing counts them. A needs-human stop blocks on its first occurrence. The human answers, and the next run may ask again. The converged-round rule (#4958) narrows the needs-human rows after one answered round, but it counts no rounds (`build/plan-review.md`). `## Loops` proposes 3 needs-human rounds per record. At the third round, rows that survive the convergence rule are not posted as another question. Instead the record gets `bot:blocked` and one comment sending it to `/claude-tweaks:specify`. Only the maintainer can set this, because it ends a question-and-answer exchange with a human on a record. Recommendation: 3. The weakest point is that no measured distribution of rounds per record backs the number. Needed before Phase 5.
+
+**0.4 `review-spec` under `fast-lane`.** R2 leaves `review-spec` out of a `fast-lane` graph, as today, so review Step 1's spec-compliance stop is not in every graph (`### Stops`). Making the step unconditional adds a step, so it would need no policy value. `[IL-145]` records a defect this skip let through: a fast-lane build hand-edited a generated file, and the skipped Step 1 is the check that compares the spec's Key Files with what the diff touched. Recommendation: keep today's leave-out in these phases. Nothing measures how often `review-spec` changes an outcome: it has no Evidence row of its own, and its stop is decision-log prose the tool does not count (`### What "outcome-changing" counts and what it cannot see`). The weakest point is that one recorded miss is evidence, and an absent count is not evidence of no misses. If the maintainer makes the step unconditional, R1 takes `review-spec`, an assertion holds it, and Phase 1 builds both. Needed before Phase 1.
+
+## Phase 1 — The function and its CLI
+
+- **Builds:**
+  - `selectRunGraph`, with rules R1 to R11, assertions A1 to A10, the parsing of each Inputs row and the changed-path classes, under `plugin/bin/lib/run-graph/`.
+  - `plugin/bin/run-graph.js`, with `--at`, `--step`, `--start-facts`, `--fresh` and `--check-walk`, the `run-graph.json` store and the absent-store branch (`## Who walks the graph`).
+  - The four `materialize.js --check` fields.
+  - The usage page `docs/run-graph.md`, and a decision record for the run graph.
+  - No skill calls the CLI yet.
+- **Files:** new `plugin/bin/lib/run-graph/`, `plugin/bin/run-graph.js`, `docs/run-graph.md` and a file in `docs/decisions/`; `plugin/bin/materialize.js`; `docs/plugin-structure.md`; their tests. No skill file.
+- **Done when:**
+  - Behaviour tests cover each rule; each assertion; each Inputs row's absent, unreadable and out-of-vocabulary reads, `size:small` among them; a repeated `--at` call; the backfill; and the validation of relayed facts.
+  - A forced violation at a fresh `start` exits non-zero with one line, `run graph: {id} violated: {assertion}`. Anywhere else, it keeps the previous remainder, or the whole vocabulary, and logs one `SKIP`.
+  - The `--check` envelope keeps its six fields and adds four.
+  - Run over C6's `ready.json` at `start` and `config`, with an unlabeled record's ceremony set to `standard` as C7 lists it, `selectRunGraph` gives the counts C7 prints for the same file.
+- **Waits for:** decisions 0.2 and 0.4.
+- **Expected effect on #4031:** none, because nothing calls it yet.
+- **Builder skills:** `.claude/skills/gh-api-module-pattern`, whose CLI wrapper contract covers a run-directory writer.
+
+## Phase 2 — The walker records the graph
+
+- **Builds:**
+  - The add stage's walker calls in `/claude-tweaks:flow`: Step 1's `--at start`, including the `--check` call for a topic resolved at item 6; Step 3's `--at config`, with `--fresh` as `## Who walks the graph` rules; and `--at build` after the build closes.
+  - The run-graph-refused case in Settle, its `two-call-gate.md` §5 parenthetical, Section E's skip and the `wrap-up/flags.md` entry (`## Never skipped`, On a violation).
+  - The walk itself does not change: no skill reads the store yet.
+- **Files:**
+  - `flow/SKILL.md` and a new `flow/run-graph-calls.md`.
+  - `dispatch/settle-and-merge.md`, a new `dispatch/settle-special-cases.md` and `dispatch/two-call-gate.md`.
+  - `wrap-up/flags.md` and `wrap-up/cleanup-procedures-execution.md`.
+  - `tests/dispatch-prompt-cli-prose.test.js`, `tests/settle-blocker-landing-stop-conformance.test.js`, and the tests that pin any text this phase moves.
+- **Removes from near-limit files:**
+  - `flow/SKILL.md` gets one pointer sentence into `flow/run-graph-calls.md` at each of the three sites. It moves `### Examples` (2,225 bytes) to `flow/examples.md`.
+  - `dispatch/settle-and-merge.md` moves Step 6's Plan-review needs-human, No-dispatch-host and Blocker-landing special cases (4,118 bytes), with the new case, into `dispatch/settle-special-cases.md`, behind one pointer line.
+  - `wrap-up/cleanup-procedures-execution.md` folds Section E's four `skip the claim release` paragraphs (2,989 bytes) and the new fifth into one table.
+- **Done when:**
+  - A fresh run writes an `evaluated` store with `start`, `config` and `build` entries.
+  - A run started on the previous release completes through the backfill at each resume point in `## Mixed-version operation`.
+  - Under `/claude-tweaks:dispatch`, a forced refusal releases the claim when the run holds one, labels the record `bot:blocked` with one comment, and skips Settle steps 3 to 5.
+  - Each of the three files above is no larger than at the phase's base.
+  - The full suite passes.
+- **Waits for:** Phase 1 merged, and decision 0.1.
+- **Expected effect on #4031:** about three more Bash calls per run, and no change to wall time.
+- **Builder skills:** `.claude/skills/skill-prose-conformance-tests`, `.claude/skills/shared-contract-extraction`.
+
+## Phase 3 — Steps read the graph
+
+- **Builds:**
+  - The migrate stage. Each sentence that skips a step by citing the roster asks `run-graph.js --step` instead, and keeps its `decisions.md` line, `--step` label and text.
+  - `/claude-tweaks:flow` walks the remainder (`## Who walks the graph`, Walking), and `/claude-tweaks:build` calls `--at plan`.
+  - In `_shared/skill-load-gate.md`, the invocation becomes the matching `run-graph.js` call whenever the run directory holds `run-graph.json`, with the same arguments: `--at {step}`, or `--step design-pre-build`, whose verdict `start` already holds. So `journeys` and the other gated steps change at that one site, and their callers keep their argument lists.
+  - The close check, decision 0006's dated note, and the moves of the roster's text outside its tables to the five places `## Roster replacement` names.
+  - At the default, the only change in behaviour is the absent-surface additions.
+- **Files:**
+  - The 18 skill files and 4 tests C9 lists, besides the roster and its test.
+  - `_shared/skill-load-gate.md`.
+  - `wrap-up/SKILL.md`, which takes the close check beside its "Every exit runs the close-out" paragraph.
+  - `_shared/express-lane.md`, `dispatch/two-call-gate.md` and `flow/run-graph-calls.md`.
+  - `docs/run-graph.md` and `docs/decisions/0006-ceremony-tiering-owned-by-specify.md`.
+- **Removes from near-limit files:**
+  - `build/SKILL.md`: Common Steps 1.5, 1.6 and 4.5 lose the `config.yml` `ceremony-profile` clause and the roster citation that the `--step` ask replaces. That pays for the `--at plan` sentence.
+  - `flow/SKILL.md`: Step 4's polish clause, "`ceremony-profile` is not `fast-lane` — roster tag `polish`, `_shared/ceremony-profile.md`", becomes one pointer to the walking rule in `flow/run-graph-calls.md`.
+  - `build/plan-authoring-checks.md`: the two `sdd-whole-branch-review` citations shorten to the rule id. The example that cites the roster test's exemption table is dropped, or replaced by a shorter one.
+  - `_shared/policy-schema.md`: the `design-ceremony` row's pointer to the roster's note becomes the value-collision decision itself, in one sentence no longer than the pointer.
+- **Done when:**
+  - C9 prints only the roster, its test and `build/plan-review.md`. That file stays because its plan-review `SKIP` text carries `(roster tag plan-review)`. The text is a decision-log line, which this phase keeps, not a citation.
+  - Each near-limit file is no larger than at the phase's base.
+  - A `fast-lane` run and a `standard` run each walk the graph `## Today's graph` gives them, plus the absent-surface additions.
+  - The close check logs no `SKIP` on a run that walked every asserted step.
+  - The full suite passes.
+- **Waits for:** Phase 2 merged. The two may ship in one release, because a run with no store reaches the absent-store branch either way.
+- **Expected effect on #4031:** both targets move slightly the wrong way: about one Bash call per `--step` site that runs, and `visual-review` loads on records with no `Surface:` line and no `frontend` path. No movement toward the targets is expected from this phase.
+- **Builder skills:** `.claude/skills/skill-prose-conformance-tests`, `.claude/skills/shared-contract-extraction`.
+
+## Phase 4 — Remove the roster
+
+- **Builds:**
+  - The remove stage. It deletes `_shared/ceremony-profile.md` and `tests/ceremony-profile-roster.test.js`.
+  - It drops `(roster tag plan-review)` from `build/plan-review.md`'s `SKIP` text. First it checks that no reader matches it: `git grep -n -F "roster tag" -- plugin/bin tests`.
+  - It sweeps the eight citations C9 does not scope, as listed in `## Roster replacement`'s Remove row.
+- **Files:** the two deleted files; `build/plan-review.md`; `docs/plugin-structure.md`, `docs/skill-graph.md` and the three journeys; the `SKILL.md` of `.claude/skills/removal-condition-execution`, `.claude/skills/shared-contract-extraction` and `.claude/skills/skill-prose-conformance-tests`.
+- **Removes from near-limit files:** none, since this phase edits none of them.
+- **Done when:**
+  - C9 prints nothing.
+  - `git grep -l -F "ceremony-profile.md" -- plugin tests docs .claude/skills` prints only dated records under `docs/decisions/`, `docs/plans/` and `docs/superpowers/`.
+  - The full suite passes.
+- **Waits for:**
+  - Phase 3 merged, with C9 down to the paths its done criterion names. That is the removal condition in `## Mixed-version operation`, with the plan-review `SKIP` text read as a log line, not a citation.
+  - #3381 and #5292 (`## Open records`).
+- **Expected effect on #4031:** none expected, because skills cite the roster and do not read it while running.
+- **Builder skills:** `.claude/skills/removal-condition-execution`, `.claude/skills/skill-prose-conformance-tests`, `.claude/skills/shared-contract-extraction`.
+
+## Phase 5 — Loop bounds
+
+- **Builds:** the four bounds `## Loops` proposes where today's files state none, each with the outcome that table gives at the bound:
+  - the verify retry: 2 fix-and-re-run cycles;
+  - the review fix wave: 1 per wave point and 4 per review, each with 1 re-verify;
+  - a PR-check red, which counts as `/test` fix mode's one attempt;
+  - per decision 0.3, the plan-review round count across runs, read in code from the record's `<!-- plan-review-question -->` comments.
+- **Files:**
+  - `build/SKILL.md` (Common Step 5), `review/step3-routing.md` and `review/code-mode-steps.md` (Step 6.7).
+  - `test/fix-mode.md` and `_shared/pr-check-gate.md`.
+  - `build/plan-review.md`, `dispatch/settle-special-cases.md` (the third-round block under dispatch), the CLI that counts rounds, and their tests.
+  - `_shared/auto-mode-contract.md`, only if its plan-review text, as #5292 leaves it, restates the round behaviour.
+- **Removes from near-limit files:**
+  - `build/SKILL.md`: Common Step 5's unbounded "If anything fails, fix it and commit the fix" becomes the bounded sentence, no longer than the one it replaces.
+  - `_shared/auto-mode-contract.md`, if this phase edits it: the plan-review row's restated exit state and resume text become a pointer to `build/plan-review.md`, which states them.
+- **Done when:**
+  - Each bound has a test that reaches it and asserts the outcome `## Loops` gives.
+  - Each near-limit file is no larger than at the phase's base.
+  - The full suite passes.
+- **Waits for:** decision 0.3 (for the plan-review count only), and #5292.
+- **Expected effect on #4031:** no change to the median. The bounds cut the tail, since a run that loops today stops at the bound. No number exists for this.
+- **Builder skills:** `.claude/skills/skill-prose-conformance-tests`, `.claude/skills/shared-contract-extraction`.
+
+## Phase 6 — The first rule that gives fewer steps
+
+No such rule exists yet. Every rule in `### Rules` is unchanged from today. This phase is the form the first "evidenced" or "risk accepted" rule takes, and it is built only once a record names that rule.
+
+- **Builds:**
+  - The rule in `selectRunGraph`, with its mark. An "evidenced" rule carries the rate it rests on, over at least 20 runs in which the step ran, and the command that measured it (AC13).
+  - The policy value `run-graph-rules`: a list of rule ids, empty by default, so the default reproduces today's graph.
+  - Its removal condition, from `### Rules`. A rule's id moves into the default once the rule is "evidenced" over at least 20 runs that had it on. The value is removed when no rule in it is still off by default.
+- **Files:** `plugin/bin/lib/run-graph/`, `plugin/bin/lib/policy-schema.js`, `_shared/policy-schema.md` and a `_shared/policy-schema-*.md` sub-file, `docs/run-graph.md`, and their tests. No skill that asks `--step` changes, because skills state no rule.
+- **Removes from near-limit files:** `_shared/policy-schema.md` gets only a key-only row, `` | `run-graph-rules` | ``, and the full row goes in the sub-file, the split `## Model profiles` uses. The same file loses at least as many bytes as the phase adds there, and the record names them from the file as it then is. At this base, one candidate is the `## Model profiles` paragraph's split-out history, "(split out per IL-70 — merged branch content pushed this file over its ceiling)", 82 bytes.
+- **Done when:**
+  - With `run-graph-rules` unset, every Phase 1 test passes unchanged, and so does the C7 comparison.
+  - With the rule's id set, the function leaves out the rule's step and no assertion fires.
+- **Waits for:**
+  - A record that names the rule, its mark and its number, with the maintainer's acceptance for a "risk accepted" rule.
+  - Phase 3 merged, so the walk follows the remainder.
+- **Expected effect on #4031:** the first phase expected to move a target. Its effect is the share of wall time and round trips the left-out step takes in the runs the rule covers, and only in projects that opt in. This repository sees none before Phase 7.
+- **Builder skills:** `.claude/skills/policy-key-addition`, `.claude/skills/removal-condition-execution`.
+
+## Phase 7 — Opt this repository in
+
+- **Builds:**
+  - `.claude-tweaks/policy.yml` sets `run-graph-rules` to the Phase 6 rule's id.
+  - One parked measurement record, filed through `/claude-tweaks:capture` in the form of #5825. It carries the default-change check, the rule "evidenced" over at least 20 runs that had it on, and its bound.
+- **Files:** `.claude-tweaks/policy.yml`.
+- **Done when:** `resolve-policy.js` returns the id in this repository, a run's `run-graph.json` shows the rule's leave-out, and the parked record exists.
+- **Waits for:** the release that carries Phase 6, as the installed plugin in this repository's sessions (`## The selection function`; `## Mixed-version operation`, last row).
+- **Expected effect on #4031:** as for Phase 6, in this repository, from the first run on that release.
 
 ## Left to the builder
 
-<!-- filled by Task 7 -->
+- The layout of `plugin/bin/lib/run-graph/`, beyond `selectRunGraph` and `run-graph.js`.
+- `run-graph.js`'s exit-code numbers, whether `--start-facts` is a file or an argument, and how the store is written atomically.
+- The new decision record's number, and the wording of decision 0006's dated note.
+- Which block leaves a near-limit file when the block a phase names has gone by build time, provided the file ends no larger than at the phase's base.
+- Which CLI holds Phase 5's round count.
+- Tests sized like the neighbouring suites.
 
 ## Calls made in this document that were not discussed
 
-<!-- filled by Task 7 -->
+Each was made under the record's decision rule for a gap. Those only the maintainer can make are also in `## Phase 0 — Decisions`.
+
+1. The window orders runs by start time, read from the run id, not by close time, because events keep landing after a run closes (`### Window`).
+2. A fix commit is a `commit`-action event in a step other than `build`, `plan` and `tasks`. A failed gate is a failed `verify` event. Gate stops recorded only as decision-log prose are not counted (`### What "outcome-changing" counts and what it cannot see`).
+3. A prose express run is one whose proceed entry no later escalation cancels (`### Lane rule`).
+4. No "evidenced" rule rests on a fix-commit rate alone, because commit events carry no message.
+5. Modes stay with their steps and are not in the function's output. The effort-gated review passes are not steps (`## Step vocabulary`).
+6. Settings take their documented default when unset, not their most cautious value (`## Inputs`).
+7. An absent or unrecognised `Surface:` is read at each rule's most cautious value, as AC5 requires. This puts back skill loads that #5605 removes; in this repository it adds `visual-review` for records with no `Surface:` line and no `frontend` path.
+8. A step's own nothing-to-do check stays in its body and is not an input.
+9. `design-pre-build`'s gate verdict is taken at `start`, earlier than today's Common Step 1.7.
+10. `start` runs before Step 2.8's claim, and a `--check` call is added for a record resolved from a topic (`## Evaluation points`).
+11. `review-spec`, `plan-audit` and `plan-review` keep their `fast-lane` leave-out (decision 0.4 for `review-spec`).
+12. `merge` is in every graph by R1, but no assertion holds it.
+13. The step-list argument of `/claude-tweaks:flow` is not an input.
+14. New loop bounds where today's files state none: the verify retry at 2 cycles; the review fix wave at 1 per wave point and 4 per review, each with 1 re-verify; a PR-check red counted as `/test` fix mode's one attempt; and plan-review rounds at 3 per record across runs, then `bot:blocked` and a comment sending the record to `/claude-tweaks:specify` (decision 0.3).
+15. The walker is `/claude-tweaks:flow` with `run-graph.js` (decision 0.1).
+16. The store is `run-graph.json`, with `run-graph.js` its only writer. Start facts are relayed as validated facts, never as a remainder.
+17. `materialize.js --check` gains four fields. They are added, and none is renamed.
+18. The run-graph-refused Settle case labels the record `bot:blocked` with one comment, skips Settle steps 3 to 5 and releases a claim the run holds. AC8's "nothing is written" is read as being about the run, not the record.
+19. When a backfill violates an assertion and nothing is stored, the whole vocabulary is the fallback.
+20. Freshness is keyed on run state: `--fresh` goes on the `config` call only for adoption case 2, case 5's creation path, or an express escalation in the same invocation.
+21. The absent-store branch is permanent and has no removal condition.
+22. The roster's removal condition counts the files that cite it (C9), not runs.
+23. Decision 0006 is kept with a dated note, beside a new decision record.
+24. The run graph takes the driver's convention: code is its statement of record and it has a usage page, with no prose contract and no pinned prose.
+25. The migrate stage keeps each skip's `decisions.md` text. Phase 4 drops the one roster tag left in a log literal, after checking that no reader matches it.
+26. The run-graph refusal is a pre-flight stop like the blocker-landing stop. It is not added to `_shared/auto-mode-contract.md`'s HARD-GATE row, so no phase edits that file for it.
+27. The gated steps migrate at `_shared/skill-load-gate.md` alone, and their callers keep their argument lists.
+28. The close check goes in `wrap-up/SKILL.md`, which is below the threshold, rather than in `wrap-up/cleanup-procedures-execution.md`.
+29. Each phase names its removal from a near-limit file: the move of `### Examples`, the special-cases sub-file, the Section E table, and the key-only policy row.
+30. Phase 5 counts plan-review rounds in code, from the record's question comments.
+31. The header names this branch's merge base, not `origin/main` as it stood while the doc was written, because the branch's tree is what the file claims were checked against.
