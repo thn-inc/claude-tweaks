@@ -79,14 +79,15 @@ function setup(t, name) {
   const sid = `marker-${name}-${process.pid}`;
   t.after(() => {
     drainTmpDirs();
-    for (const p of [marker.stopsPath(sid), contractRetries.retriesPath(sid)]) {
+    for (const p of [marker.stopsPath(sid), contractRetries.retriesPath(sid, { env: process.env })]) {
       if (p) { try { fs.unlinkSync(p); } catch { /* already absent */ } }
     }
   });
   return sid;
 }
 
-function runHook(entries, input, ownedRun) {
+// `env` is the hook context's environment (#5377): the marker and the retry file land under its temp directory.
+function runHook(entries, input, ownedRun, env = process.env) {
   const run = mkRun();
   const transcript = typeof entries === 'string' ? entries : writeTranscript(entries);
   const out = substop.run({
@@ -95,9 +96,20 @@ function runHook(entries, input, ownedRun) {
     runState: null,
     ownedRun: ownedRun === undefined ? { dir: run, attribution: 'session' } : ownedRun,
     cwd: '/x',
+    env,
   });
   return out;
 }
+
+test('#5377: the marker lands under the context env\'s temp directory, not the process\'s', (t) => {
+  const sid = setup(t, 'envtmp');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-substop-env-'));
+  tmpDirs.push(tmp);
+  const out = runHook(pEntries(), { session_id: sid, agent_id: 'agent-p' }, undefined, { ...process.env, TMPDIR: tmp, TEMP: tmp, TMP: tmp });
+  assert.deepStrictEqual(out, {});
+  assert.strictEqual(marker.readStops(sid, { tmpDir: tmp }).stops.length, 1);
+  assert.strictEqual(fs.existsSync(marker.stopsPath(sid)), false);
+});
 
 test('AC8.1: a stop appends one marker line that reads back to the payload\'s agent_id and the fixture\'s pending count', (t) => {
   const sid = setup(t, 'p');
