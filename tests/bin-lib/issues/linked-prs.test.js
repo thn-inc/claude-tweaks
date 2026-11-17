@@ -183,6 +183,26 @@ test('#5722: a null label or unparseable createdAt is skipped', () => {
   ]), '2026-11-16T09:00:00Z');
 });
 
+// The unparseable event comes AFTER a valid one, and then alone: an order-dependent or missing
+// NaN guard would let it overwrite the valid time, or report it as the answer.
+test('#5722: an unparseable createdAt after a valid shaping event never replaces it', () => {
+  assert.strictEqual(shapedAt([
+    { createdAt: '2026-11-16T09:00:00Z', label: { name: 'auto:build' } },
+    { createdAt: 'not-a-date', label: { name: 'ready' } },
+  ]), '2026-11-16T09:00:00Z');
+});
+
+test('#5722: an unparseable createdAt as the only shaping event gives lastShapedAt null', () => {
+  assert.strictEqual(shapedAt([{ createdAt: 'not-a-date', label: { name: 'ready' } }]), null);
+});
+
+test('#5722: two shaping events at the same instant keep the first one\'s string', () => {
+  assert.strictEqual(shapedAt([
+    { createdAt: '2026-11-16T10:51:03Z', label: { name: 'ready' } },
+    { createdAt: '2026-11-16T10:51:03.000Z', label: { name: 'auto:build' } },
+  ]), '2026-11-16T10:51:03Z');
+});
+
 test('#5722: lastShapedAt compares instants, not strings', () => {
   // 13:00+02:00 is 11:00Z — earlier than 12:00Z, though it sorts later as a string.
   assert.strictEqual(shapedAt([

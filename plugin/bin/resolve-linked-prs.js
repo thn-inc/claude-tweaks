@@ -16,9 +16,10 @@
 // fetchLinkedPRs makes for an N-record set — this CLI never issues more
 // than one gh call regardless of how many numbers are passed.
 // Output: one JSON line, an object keyed by each requested number (as a
-// string, JSON's own key convention) to its {"openPR": number|null} — the
-// same per-record shape fetchLinkedPRs' Map values already carry, not a new
-// shape invented here. A single-number invocation still returns a one-key
+// string, JSON's own key convention) to its {"openPR": number|null,
+// "mentions": [...], "hasClosingPRReference": boolean, "lastShapedAt":
+// string|null} — fetchLinkedPRs' per-record Map value minus `issueState`, not
+// a new shape invented here. A single-number invocation still returns a one-key
 // object — no special-cased flat shape — so every caller reads results the
 // same way regardless of how many numbers it asked for. Exit 0 on success;
 // 1 on a malformed invocation (missing/non-positive-integer number in the
@@ -47,12 +48,12 @@ const { run, parseArgs, parseNumbers, realDeps } = makeNumberListCli({
   }),
   // #2934: fetchLinkedPRs' Map entries also carry `issueState` now (consumed
   // directly by wrap-up/engine-verify.js's carrier-commit fallback) --
-  // excluded here so this CLI's own public output shape stays what it was
-  // (openPR/mentions/hasClosingPRReference), never silently growing a field
-  // this contract doesn't document. #5722 documents one: `lastShapedAt`, the
-  // latest `ready`/`auto:build` label time (ISO string or null), which the
-  // dispatch queue pull reads from dispatch-linked-prs.json to downgrade a
-  // shipped mention the record was shaped or granted after.
+  // excluded here: this CLI prints `openPR`, `mentions`, `hasClosingPRReference`
+  // and `lastShapedAt` (#5722: the latest `ready`/`auto:build` label time, ISO
+  // string or null, which the dispatch queue pull reads from
+  // dispatch-linked-prs.json to downgrade a shipped mention the record was
+  // shaped or granted after) and never silently grows a field this contract
+  // doesn't document.
   mapResult: (n, byNumber) => {
     const entry = byNumber.get(n);
     if (!entry) return entry;

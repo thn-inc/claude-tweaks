@@ -2,7 +2,8 @@
 // Executes bin/lib/issues/record.js's buildLinkedPRQuery — the pure batched,
 // aliased GraphQL query builder for the open-linked-PR exclusion (#1224) —
 // via an injectable runner, and parses the response into the
-// {openPR: number|null} shape bin/resolve-linked-prs.js's CLI and
+// {openPR, mentions, hasClosingPRReference, issueState, lastShapedAt}
+// shape bin/resolve-linked-prs.js's CLI and
 // dispatch/queue-pull-script.md's eligibility pipeline both need. Mirrors
 // native-dependencies.js's fetchNativeDependencies exactly (same
 // throw-on-partial-result posture, same injectable-runner seam) but for the
