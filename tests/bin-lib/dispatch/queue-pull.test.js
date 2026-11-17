@@ -1590,8 +1590,9 @@ function fenceTargetProposal(num, tpath, ref) {
 
 // #5317: a Doc path holding ", $(id), a backtick and '. Its two " are deliberate: they keep the pre-fix
 // double-quoted comment line parseable, so bash really runs `id` there (an odd count is a syntax error,
-// nothing expands, and the "id never ran" assertion would pass on the unfixed code).
-const HOSTILE_DOC = 'docs/q"$(id)`id`"it\'s.md';
+// nothing expands, and the "id never ran" assertion would pass on the unfixed code). The literal backslash-x27
+// is there so a fence regressing to `echo -e` / `printf '%b'` (which turns it into ') fails the verbatim check.
+const HOSTILE_DOC = 'docs/q"$(id)`id`"it\'s\\x27.md';
 const CLOSING_BODY = (tpath, ref) => `Closing: the named target ${tpath} no longer exists at ${ref} — this record's Acceptance Criteria has no remaining target. Filed by /claude-tweaks:dispatch (queue pull).`;
 
 // Runs the staged `gh issue comment <num> ...` line under bash with stub gh (logs its argv) and stub id
@@ -3513,7 +3514,8 @@ describe('#5317 parity: a hostile named-target path', { skip: oracleSkip(), time
         const run = runStagedComment(pair[side].staged['dispatch-target-missing-9050.md'], 9050);
         assert.equal(run.status, 0, run.stderr);
         assert.deepEqual({ idRan: run.idRan, ghCalls: run.ghCalls },
-          { idRan: false, ghCalls: [['issue', 'comment', '9050', '--body', CLOSING_BODY(HOSTILE_DOC, 'origin/main')]] });
+          { idRan: false, ghCalls: [['issue', 'comment', '9050', '--body', CLOSING_BODY(HOSTILE_DOC, 'origin/main')]] },
+          'neither $(id) nor the backtick ran, and the path reached the comment verbatim');
       });
   }
 });
