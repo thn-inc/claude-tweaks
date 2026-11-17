@@ -900,6 +900,23 @@ test('writeIdentity values read back exactly as git config would', () => {
   assert.strictEqual(git(plain, ['log', '-1', '--format=%an <%ae>'], configOnlyEnv), 'A "Q" \\ B; #x <e@x.test>');
 });
 
+test('writeIdentity writes the bytes git config writes', () => {
+  // The `[user]` section to the end of the file; git's own file is only read here, never written by fs.
+  const userSection = (repo) => {
+    const text = fs.readFileSync(path.join(repo, '.git', 'config'), 'utf8');
+    const at = text.indexOf('[user]');
+    assert.notStrictEqual(at, -1, `${repo} has no [user] section`);
+    return text.slice(at);
+  };
+  for (const v of ['Test', 't@example.com', ' lead', 'trail ', 'a;b', 'a#b', 'A "Q" \\ B', 'tab\there']) {
+    const byGit = gitFixtures.initRepo(path.join(mk('ct-gt-wbg-'), 'r'));
+    git(byGit, ['config', 'user.name', v]);
+    const byHelper = gitFixtures.initRepo(path.join(mk('ct-gt-wbh-'), 'r'));
+    gitFixtures.writeIdentity(byHelper, { name: v });
+    assert.strictEqual(userSection(byHelper), userSection(byGit), JSON.stringify(v));
+  }
+});
+
 test('writeIdentity refuses a second identity and a non-repo', () => {
   const dir = gitFixtures.initRepo(path.join(mk('ct-gt-wi2-'), 'r'), { name: 'T', email: 't@t' });
   assert.throws(() => gitFixtures.writeIdentity(dir, { name: 'U' }), /already has a \[user\] section/);

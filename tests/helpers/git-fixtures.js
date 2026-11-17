@@ -107,9 +107,15 @@ function localConfigPath(repoDir) {
   throw new Error(`writeIdentity: ${repoDir} is not a git repository`);
 }
 
-// Quotes a config value the way git's parser reads it back: backslash, double quote, newline, tab.
+// Spells a config value the way git's own config writer does (config.c write_pair), so the file holds
+// the bytes `git config` would leave: backslash, double quote, newline and tab always escaped, and the
+// whole value in double quotes only when it begins or ends with a space or contains `;` or `#`.
+// A reader that parses config text (the statusline's fast path defers on any quote) sees git's file.
 const CONFIG_ESCAPES = { '\\': '\\\\', '"': '\\"', '\n': '\\n', '\t': '\\t' };
-const quoteConfigValue = (v) => `"${v.replace(/[\\"\n\t]/g, (c) => CONFIG_ESCAPES[c])}"`;
+const quoteConfigValue = (v) => {
+  const q = v.startsWith(' ') || v.endsWith(' ') || /[;#]/.test(v) ? '"' : '';
+  return `${q}${v.replace(/[\\"\n\t]/g, (c) => CONFIG_ESCAPES[c])}${q}`;
+};
 
 // Appends `[user]` with the given name and/or email to `repoDir`'s local config — what
 // `git config user.name`/`user.email` would write, without starting a process. Refuses a config
