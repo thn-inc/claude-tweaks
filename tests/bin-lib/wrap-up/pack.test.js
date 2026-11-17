@@ -2136,12 +2136,18 @@ async function withExecBounds(env, fn) {
   const { evictModules } = require('../../helpers/gh-timeout-probe');
   const keys = ['CLAUDE_TWEAKS_GH_TIMEOUT_MS', 'CLAUDE_TWEAKS_GIT_TIMEOUT_MS'];
   const saved = keys.map((k) => [k, Object.prototype.hasOwnProperty.call(process.env, k) ? process.env[k] : undefined]);
+  // An empty temp cwd: the bound getters read the cwd's policy.yml, which a raised gh-timeout-ms/git-timeout-ms in this checkout would otherwise leak in.
+  const originalCwd = process.cwd();
+  const emptyDir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-exec-bounds-'));
   try {
     for (const k of keys) delete process.env[k];
     for (const [k, v] of Object.entries(env)) process.env[k] = v;
+    process.chdir(emptyDir);
     evictModules([PACK_MODULE_PATH]);
     return await fn(require(PACK_MODULE_PATH));
   } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(emptyDir, { recursive: true, force: true });
     for (const [k, v] of saved) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
     evictModules([PACK_MODULE_PATH]);
   }
