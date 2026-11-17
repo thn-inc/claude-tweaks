@@ -9,6 +9,7 @@ const os = require('os');
 const path = require('path');
 const { readText } = require('./helpers/read-skill');
 const { cleanGitEnv, fixtureGit } = require('./helpers/git-fixtures');
+const { fromTemplate, disableReceiveAutoGc } = require('./helpers/git-template');
 const { runCliSync } = require('./helpers/run-cli');
 const { compareWorkTwin } = require('../plugin/bin/lib/reconcile/archive-merged');
 
@@ -25,33 +26,88 @@ function git(cwd, ...args) {
   return fixtureGit(args, { cwd, env: ENV, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
+// Runs fn with git's trace2 event output pointed at `dir` for git started through process.env or
+// through the module's ENV: every git process writes one file there. Both are restored after.
+function traced(dir, fn) {
+  const key = 'GIT_TRACE2_EVENT';
+  const saved = [process.env, ENV].map((env) => [env, env[key]]);
+  process.env[key] = dir;
+  ENV[key] = dir;
+  try {
+    return fn();
+  } finally {
+    for (const [env, v] of saved) {
+      if (v === undefined) delete env[key]; else env[key] = v;
+    }
+  }
+}
+
+// Read when called: a template build runs with auto-maintenance off in process.env, which the
+// module-level ENV (read at load) does not carry.
+const fixtureEnv = () => ({ ...cleanGitEnv(), ...IDENTITY });
+
+// The template builders' git runner: git in `cwd` under `env`, output untrimmed.
+const runnerFor = (env) => (cwd, ...args) => fixtureGit(args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+
 let seq = 0;
 
+// The addShell option objects a seeded fixture takes (IDENTICAL: the default twin).
+const ABSENT = { twin: 'absent' };
+const IDENTICAL = {};
+
+const shellId = (i) => `2026-10-01T00000${i}-record-${i + 1}`;
+const shellNumber = (i) => 8001 + i;
+
 // A bare `origin` and a clone of it as the main checkout, with this repo's .gitignore (so the
-// archive paths behave as in production), an initial commit pushed to origin/main.
-function makeFixture() {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ats-')));
-  const origin = path.join(base, 'origin.git');
+// archive paths behave as in production), an initial commit pushed to origin/main. Built once per
+// process; every call gets a copy. `shells` is an ordered list of addShell options seeded after the
+// seed push, one template per distinct list: shell i has id 2026-10-01T00000{i}-record-{i + 1} and
+// file number 8001 + i. The returned descriptors point into the copy.
+function makeFixture(shells = []) {
+  const norm = shells.map(({ twin = 'identical', clean = true, push = true }) => [twin, clean, push]);
+  const base = fromTemplate(`ats:fixture:${JSON.stringify(norm)}`, (dir) => {
+    const env = fixtureEnv();
+    const origin = path.join(dir, 'origin.git');
+    const root = path.join(dir, 'main');
+    const run = runnerFor(env);
+    fixtureGit(['init', '-q', '--bare', '-b', 'main', origin], { env });
+    disableReceiveAutoGc(origin);
+    fixtureGit(['clone', '-q', origin, root], { env });
+    run(root, 'config', 'core.autocrlf', 'false');
+    run(root, 'checkout', '-q', '-B', 'main');
+    fs.writeFileSync(path.join(root, '.gitignore'), readText(REPO_GITIGNORE));
+    fs.writeFileSync(path.join(root, 'README.md'), 'seed\n');
+    run(root, 'add', '.gitignore', 'README.md');
+    run(root, 'commit', '-q', '-m', 'seed');
+    run(root, 'push', '-q', '-u', 'origin', 'main');
+    norm.forEach(([twin, clean, push], i) => writeShell(run, root, shellId(i), shellNumber(i), { twin, clean, push }));
+  }, { prefix: 'ct-ats-', realpath: true });
   const root = path.join(base, 'main');
-  fixtureGit(['init', '-q', '--bare', '-b', 'main', origin], { env: ENV });
-  fixtureGit(['clone', '-q', origin, root], { env: ENV });
-  git(root, 'config', 'core.autocrlf', 'false');
-  git(root, 'checkout', '-q', '-B', 'main');
-  fs.writeFileSync(path.join(root, '.gitignore'), readText(REPO_GITIGNORE));
-  fs.writeFileSync(path.join(root, 'README.md'), 'seed\n');
-  git(root, 'add', '.gitignore', 'README.md');
-  git(root, 'commit', '-q', '-m', 'seed');
-  git(root, 'push', '-q', '-u', 'origin', 'main');
-  return { base, origin, root };
+  const seeded = norm.map((_, i) => {
+    const id = shellId(i);
+    return { id, file: `${shellNumber(i)}-spec.md`, live: path.join(pipelines(root), id, 'work'), twinWork: path.join(pipelines(root), 'archive', id, 'work') };
+  });
+  return { base, origin: path.join(base, 'origin.git'), root, shells: seeded };
+}
+
+// An empty `git init` repository for the policy test, built once per process.
+function policyRepo() {
+  return fromTemplate('ats:policy-repo', (dir) => {
+    fixtureGit(['init', '-q', dir], { env: fixtureEnv() });
+  }, { prefix: 'ct-ats-policy-', realpath: true });
 }
 
 function pipelines(root) { return path.join(root, '.claude-tweaks', 'pipelines'); }
 
 // twin: 'identical' | 'absent' | 'differs' | 'differs-same-length'. Commits the live work/{n}-spec.md (and the archive
 // twin's work/ unless 'absent'), pushes, and writes the gitignored archive run-state.
-function addShell(root, id, { twin = 'identical', clean = true, push = true } = {}) {
+function addShell(root, id, opts) {
   seq += 1;
-  const n = 9000 + seq;
+  return writeShell(git, root, id, 9000 + seq, opts);
+}
+
+// `run(cwd, ...args)` runs git; `n` numbers the spec file.
+function writeShell(run, root, id, n, { twin = 'identical', clean = true, push = true } = {}) {
   const file = `${n}-spec.md`;
   const live = path.join(pipelines(root), id, 'work');
   fs.mkdirSync(live, { recursive: true });
@@ -63,9 +119,9 @@ function addShell(root, id, { twin = 'identical', clean = true, push = true } = 
     fs.writeFileSync(path.join(twinWork, file), twin === 'differs' ? `other ${n}\n` : twin === 'differs-same-length' ? `spac ${n}\n` : `spec ${n}\n`);
     add.push(path.join('.claude-tweaks', 'pipelines', 'archive', id, 'work', file));
   }
-  git(root, 'add', '--', ...add);
-  git(root, 'commit', '-q', '-m', `shell ${id}`);
-  if (push) git(root, 'push', '-q', 'origin', 'main');
+  run(root, 'add', '--', ...add);
+  run(root, 'commit', '-q', '-m', `shell ${id}`);
+  if (push) run(root, 'push', '-q', 'origin', 'main');
   if (clean) {
     fs.mkdirSync(path.join(pipelines(root), 'archive', id), { recursive: true });
     fs.writeFileSync(path.join(pipelines(root), 'archive', id, 'run-state.json'), JSON.stringify({ status: 'clean' }));
@@ -134,8 +190,7 @@ test('AC7.1: --dry-run makes no change and opens no PR', () => {
 });
 
 test('AC7.2: local-merge without --no-pr refuses with exit 2 naming --no-pr', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-03T000000-record-1');
+  const { root } = makeFixture([IDENTICAL]);
   const r = call(root, ['--root', root], { model: 'local-merge' });
   assert.equal(r.code, 2);
   assert.match(r.stderr, /--no-pr/);
@@ -144,8 +199,7 @@ test('AC7.2: local-merge without --no-pr refuses with exit 2 naming --no-pr', ()
 });
 
 test('AC7.3: gh absent without --no-pr refuses with exit 2 naming --no-pr', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-03T000001-record-1');
+  const { root } = makeFixture([IDENTICAL]);
   const r = call(root, ['--root', root], { model: 'pr-first', ghOk: false });
   assert.equal(r.code, 2);
   assert.match(r.stderr, /--no-pr/);
@@ -154,9 +208,7 @@ test('AC7.3: gh absent without --no-pr refuses with exit 2 naming --no-pr', () =
 });
 
 test('AC7.4: --no-pr makes the branch and commits locally, pushes nothing, prints the branch name', () => {
-  const { root } = makeFixture();
-  const a = addShell(root, '2026-11-04T000000-record-1', { twin: 'absent' });
-  const b = addShell(root, '2026-11-04T000001-record-2', { twin: 'identical' });
+  const { root, shells: [a, b] } = makeFixture([ABSENT, IDENTICAL]);
   const head = git(root, 'rev-parse', 'HEAD');
   const r = call(root, ['--root', root, '--no-pr'], { model: 'local-merge' });
   assert.equal(r.code, 0, r.stderr);
@@ -174,9 +226,7 @@ test('AC7.4: --no-pr makes the branch and commits locally, pushes nothing, print
 });
 
 test('AC4.1: identical twin -> deleted, absent twin -> moved', () => {
-  const { root } = makeFixture();
-  const absent = addShell(root, '2026-11-05T000000-record-1', { twin: 'absent' });
-  const same = addShell(root, '2026-11-05T000001-record-2', { twin: 'identical' });
+  const { root, shells: [absent, same] } = makeFixture([ABSENT, IDENTICAL]);
   const r = call(root, ['--root', root, '--no-pr']);
   assert.equal(r.code, 0, r.stderr);
   assert.deepEqual(r.envelope.moved.map((m) => m.runId), [absent.id]);
@@ -228,8 +278,7 @@ test('nothing to archive exits 0 without creating a branch or worktree', () => {
 });
 
 test('a kept local branch is brought up to the integration branch: a later shell is archived, an earlier one is not redone', () => {
-  const { root } = makeFixture();
-  const a = addShell(root, '2026-11-07T000000-record-1', { twin: 'identical' });
+  const { root, shells: [a] } = makeFixture([IDENTICAL]);
   const first = call(root, ['--root', root, '--no-pr']);
   assert.equal(first.code, 0, first.stderr);
   const b = addShell(root, '2026-11-07T000001-record-2', { twin: 'absent' });
@@ -256,8 +305,7 @@ test('a shell absent from the scratch tree with no archived work is reported not
 });
 
 test('an exception after the scratch worktree exists exits 2 with a message and leaves no scratch worktree', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-09T000000-record-1');
+  const { root } = makeFixture([IDENTICAL]);
   const throwing = (args, o) => {
     if (args.includes('status')) throw new Error('injected git failure');
     return realDeps.git(args, o);
@@ -271,8 +319,7 @@ test('an exception after the scratch worktree exists exits 2 with a message and 
 });
 
 test('a stale unregistered directory at the scratch path is replaced', () => {
-  const { root } = makeFixture();
-  const s = addShell(root, '2026-11-10T000000-record-1');
+  const { root, shells: [s] } = makeFixture([IDENTICAL]);
   fs.mkdirSync(worktreeDir(root), { recursive: true });
   fs.writeFileSync(path.join(worktreeDir(root), 'stale.txt'), 'x\n');
   const r = call(root, ['--root', root, '--no-pr']);
@@ -282,8 +329,7 @@ test('a stale unregistered directory at the scratch path is replaced', () => {
 });
 
 test('a stale scratch worktree locked by a dead archive-tracked-shells pid is replaced', () => {
-  const { root } = makeFixture();
-  const s = addShell(root, '2026-11-10T000001-record-1');
+  const { root, shells: [s] } = makeFixture([IDENTICAL]);
   git(root, 'worktree', 'add', '-q', '-b', 'stale-scratch', worktreeDir(root), 'main');
   git(root, 'worktree', 'lock', '--reason', 'archive-tracked-shells (pid 424242)', worktreeDir(root));
   const asked = [];
@@ -296,8 +342,7 @@ test('a stale scratch worktree locked by a dead archive-tracked-shells pid is re
 });
 
 test('a scratch worktree locked by a live archive-tracked-shells run refuses with exit 2 and is left untouched', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-10T000002-record-1');
+  const { root } = makeFixture([IDENTICAL]);
   git(root, 'worktree', 'add', '-q', '-b', 'live-scratch', worktreeDir(root), 'main');
   git(root, 'worktree', 'lock', '--reason', 'archive-tracked-shells (pid 424243)', worktreeDir(root));
   fs.writeFileSync(path.join(worktreeDir(root), 'in-flight.txt'), 'x\n');
@@ -311,8 +356,7 @@ test('a scratch worktree locked by a live archive-tracked-shells run refuses wit
 });
 
 test('a scratch worktree locked with no pid in its reason refuses with exit 2 naming git worktree unlock', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-10T000003-record-1');
+  const { root } = makeFixture([IDENTICAL]);
   git(root, 'worktree', 'add', '-q', '-b', 'other-scratch', worktreeDir(root), 'main');
   git(root, 'worktree', 'lock', worktreeDir(root));
   const r = call(root, ['--root', root, '--no-pr'], { extra: { pidAlive: () => { throw new Error('no pid to ask about'); } } });
@@ -323,8 +367,7 @@ test('a scratch worktree locked with no pid in its reason refuses with exit 2 na
 
 test('a run that locks the scratch worktree after this run read the worktree list keeps it: no forced remove, exit 2', () => {
   for (const stale of [false, true]) {
-    const { root } = makeFixture();
-    addShell(root, `2026-11-10T00001${stale ? 1 : 0}-record-1`);
+    const { root } = makeFixture([IDENTICAL]);
     if (stale) {
       fs.mkdirSync(worktreeDir(root), { recursive: true });
       fs.writeFileSync(path.join(worktreeDir(root), 'stale.txt'), 'x\n');
@@ -351,8 +394,7 @@ test('a run that locks the scratch worktree after this run read the worktree lis
 });
 
 test('an unlocked scratch worktree git could not remove is left registered, never deleted behind git, exit 2', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-10T000012-record-1');
+  const { root } = makeFixture([IDENTICAL]);
   git(root, 'worktree', 'add', '-q', '-b', 'stuck-scratch', worktreeDir(root), 'main');
   fs.writeFileSync(path.join(worktreeDir(root), 'in-use.txt'), 'x\n');
   const failingRemove = (args, o) => {
@@ -367,8 +409,7 @@ test('an unlocked scratch worktree git could not remove is left registered, neve
 });
 
 test('a locked registration that appears between the remove and the add makes the add fail, exit 2, registration kept', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-10T000013-record-1');
+  const { root } = makeFixture([IDENTICAL]);
   // Run A (pid 424245) registers and locks the scratch path right after this run's prune, its
   // directory not yet populated: only a forced add would take it over.
   let raced = false;
@@ -389,8 +430,7 @@ test('a locked registration that appears between the remove and the add makes th
 });
 
 test('the scratch worktree is created locked with this run\'s pid', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-10T000004-record-1');
+  const { root } = makeFixture([IDENTICAL]);
   let lockLine = null;
   const peeking = (args, o) => {
     if (args.includes('status')) lockLine = (git(root, 'worktree', 'list', '--porcelain').match(/^locked .*archive-tracked-shells.*$/m) || [null])[0];
@@ -469,8 +509,7 @@ const remoteTree = (origin, ref = BRANCH) => git(origin, 'ls-tree', '-r', '--nam
 const archivedOnRemote = (origin, s) => remoteTree(origin).includes(`.claude-tweaks/pipelines/archive/${s.id}/work/${s.file}`);
 
 test('AC2.1: under worktree-always the emitted command exits 0, creates the branch, moves the shell, opens one PR, main checkout HEAD unchanged', () => {
-  const { root, origin } = makeFixture();
-  const s = addShell(root, '2026-11-11T000000-record-1', { twin: 'absent' });
+  const { root, origin, shells: [s] } = makeFixture([ABSENT]);
   const head = git(root, 'rev-parse', 'HEAD');
   const fake = fakeGh();
   const r = call(root, ['--root', root], { ghFake: fake.gh });
@@ -500,9 +539,7 @@ test('AC3.1: three shells -> exactly one PR, branch carries every move', () => {
 });
 
 test('AC3.2: re-run after simulated merge is a no-op exiting 0 with moved empty', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-13T000000-record-1', { twin: 'absent' });
-  addShell(root, '2026-11-13T000001-record-2', { twin: 'identical' });
+  const { root } = makeFixture([ABSENT, IDENTICAL]);
   const fake = fakeGh();
   assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
   git(root, 'fetch', '-q', 'origin');
@@ -518,8 +555,7 @@ test('AC3.2: re-run after simulated merge is a no-op exiting 0 with moved empty'
 });
 
 test('AC3.2b: after a squash merge whose head branch was deleted, a run with new shells bases on origin/main, not the stale local branch', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-14T000000-record-1', { twin: 'absent' });
+  const { root } = makeFixture([ABSENT]);
   const fake = fakeGh();
   assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
   git(root, 'fetch', '-q', 'origin');
@@ -539,8 +575,7 @@ test('AC3.2b: after a squash merge whose head branch was deleted, a run with new
 });
 
 test('a merged PR whose head branch still exists on the remote has that branch deleted first, then restarts from the integration branch', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-14T100000-record-1', { twin: 'absent' });
+  const { root } = makeFixture([ABSENT]);
   const fake = fakeGh();
   assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
   markMerged(fake, root);
@@ -561,8 +596,7 @@ test('a merged PR whose head branch still exists on the remote has that branch d
 });
 
 test('a merged PR followed by a newer CLOSED PR whose branch is still on origin refuses with exit 2 and deletes nothing', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-14T110000-record-1', { twin: 'absent' });
+  const { root } = makeFixture([ABSENT]);
   const fake = fakeGh();
   assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
   markMerged(fake, root);
@@ -579,8 +613,7 @@ test('a merged PR followed by a newer CLOSED PR whose branch is still on origin 
 });
 
 test('a merged PR whose remote branch moved since the merge refuses with exit 2 and deletes nothing', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-14T120000-record-1', { twin: 'absent' });
+  const { root } = makeFixture([ABSENT]);
   const fake = fakeGh();
   assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
   markMerged(fake, root);
@@ -598,8 +631,7 @@ test('a merged PR whose remote branch moved since the merge refuses with exit 2 
 });
 
 test('a merged PR with the integration fetch failing refuses with exit 2 instead of building on a stale ref', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-14T150000-record-1', { twin: 'absent' });
+  const { root } = makeFixture([ABSENT]);
   const fake = fakeGh();
   assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
   markMerged(fake, root);
@@ -619,8 +651,7 @@ test('a merged PR with the integration fetch failing refuses with exit 2 instead
 });
 
 test('a CLOSED PR whose remote branch is gone starts over like no PR ever: the local branch is kept and a new PR opens', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-14T200000-record-1', { twin: 'absent' });
+  const { root } = makeFixture([ABSENT]);
   const fake = fakeGh();
   assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
   fake.prs[0].state = 'CLOSED';
@@ -634,8 +665,7 @@ test('a CLOSED PR whose remote branch is gone starts over like no PR ever: the l
 });
 
 test('a CLOSED PR whose remote branch still exists exits 2 naming both remedies and touches nothing', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-14T210000-record-1', { twin: 'absent' });
+  const { root } = makeFixture([ABSENT]);
   const fake = fakeGh();
   assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
   fake.prs[0].state = 'CLOSED';
@@ -665,8 +695,7 @@ test('AC3.3: re-run while the PR is open reuses the branch and PR and prints its
 });
 
 test('AC3.4: re-run after a crash resumes from the branch current state', () => {
-  const { root, origin } = makeFixture();
-  const a = addShell(root, '2026-11-16T000000-record-1', { twin: 'absent' });
+  const { root, origin, shells: [a] } = makeFixture([ABSENT]);
   assert.equal(call(root, ['--root', root, '--no-pr']).code, 0);
   const b = addShell(root, '2026-11-16T000001-record-2', { twin: 'absent' });
   const c = addShell(root, '2026-11-16T000002-record-3', { twin: 'identical' });
@@ -682,8 +711,7 @@ test('AC3.4: re-run after a crash resumes from the branch current state', () => 
 });
 
 test('AC5.1: housekeeping-auto-merge true on a PR the forge holds (BLOCKED) arms with gh pr merge --auto --squash', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-17T000000-record-1', { twin: 'absent' });
+  const { root } = makeFixture([ABSENT]);
   const fake = fakeGh({ mergeState: 'BLOCKED' });
   const r = call(root, ['--root', root], { ghFake: fake.gh, auto: 'true' });
   assert.equal(r.code, 0, r.stderr);
@@ -710,11 +738,8 @@ test('housekeeping-auto-merge true on a PR the forge does not hold (not BLOCKED)
     SOMETHING_NEW: 'merge state SOMETHING_NEW is not one this CLI knows; only BLOCKED (the forge holds the merge for its required checks) is armed',
     '': 'merge state not reported; only BLOCKED (the forge holds the merge for its required checks) is armed',
   };
-  let i = 0;
   for (const [mergeState, note] of Object.entries(NOTES)) {
-    i += 1;
-    const { root } = makeFixture();
-    addShell(root, `2026-11-17T0001${String(i).padStart(2, '0')}-record-1`, { twin: 'absent' });
+    const { root } = makeFixture([ABSENT]);
     const fake = fakeGh({ mergeState: mergeState || null, mergeOnArm: true });
     const r = call(root, ['--root', root], { ghFake: fake.gh, auto: 'true' });
     assert.equal(r.code, 0, r.stderr);
@@ -727,8 +752,7 @@ test('housekeeping-auto-merge true on a PR the forge does not hold (not BLOCKED)
 });
 
 test('an arming call that merged the PR at once is reported as merged, not armed', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-17T000010-record-1', { twin: 'absent' });
+  const { root } = makeFixture([ABSENT]);
   // The state read said BLOCKED, but the forge merged on arming: the read-back is what counts.
   const fake = fakeGh({ mergeState: 'BLOCKED', mergeOnArm: true });
   const r = call(root, ['--root', root], { ghFake: fake.gh, auto: 'true' });
@@ -740,8 +764,7 @@ test('an arming call that merged the PR at once is reported as merged, not armed
 });
 
 test('a merge-state read that fails leaves the PR unarmed with the reason, exit 0', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-17T000011-record-1', { twin: 'absent' });
+  const { root } = makeFixture([ABSENT]);
   const fake = fakeGh({ failView: true });
   const r = call(root, ['--root', root], { ghFake: fake.gh, auto: 'true' });
   assert.equal(r.code, 0, r.stderr);
@@ -751,8 +774,7 @@ test('a merge-state read that fails leaves the PR unarmed with the reason, exit 
 });
 
 test('AC5.2: housekeeping-auto-merge false leaves the PR unarmed and says so', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-17T000001-record-1', { twin: 'absent' });
+  const { root } = makeFixture([ABSENT]);
   const fake = fakeGh();
   const r = call(root, ['--root', root], { ghFake: fake.gh, auto: 'false' });
   assert.equal(r.code, 0, r.stderr);
@@ -762,8 +784,7 @@ test('AC5.2: housekeeping-auto-merge false leaves the PR unarmed and says so', (
 });
 
 test('AC5.3/AC5.4: a rejected arming call leaves the PR unarmed, reports the rejection, and is not an error exit', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-17T000002-record-1', { twin: 'absent' });
+  const { root } = makeFixture([ABSENT]);
   const fake = fakeGh({ failMerge: true, mergeState: 'BLOCKED' });
   const r = call(root, ['--root', root], { ghFake: fake.gh, auto: 'true' });
   assert.equal(r.code, 0, r.stderr);
@@ -797,8 +818,7 @@ test('the PR body lists untwinned dirs under their own heading', () => {
 });
 
 test('AC7.5: a failure after the scratch worktree exists removes it and leaves no branch on the remote', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-19T000000-record-1', { twin: 'absent' });
+  const { root } = makeFixture([ABSENT]);
   const fake = fakeGh({ failCreate: true });
   const r = call(root, ['--root', root], { ghFake: fake.gh });
   assert.equal(r.code, 2);
@@ -807,8 +827,7 @@ test('AC7.5: a failure after the scratch worktree exists removes it and leaves n
 });
 
 test('a create that succeeded keeps its branch and takes the PR from the create output when the read-back fails', () => {
-  const { root, origin } = makeFixture();
-  const s = addShell(root, '2026-11-19T200000-record-1', { twin: 'absent' });
+  const { root, origin, shells: [s] } = makeFixture([ABSENT]);
   const fake = fakeGh({ failOpenList: true });
   const r = call(root, ['--root', root], { ghFake: fake.gh });
   assert.equal(r.code, 0, r.stderr);
@@ -819,8 +838,7 @@ test('a create that succeeded keeps its branch and takes the PR from the create 
 });
 
 test('a failed create whose read-back also fails keeps the branch: the PR is unconfirmed, not absent', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-19T300000-record-1', { twin: 'absent' });
+  const { root } = makeFixture([ABSENT]);
   const fake = fakeGh({ failCreate: true, failOpenList: true });
   const r = call(root, ['--root', root], { ghFake: fake.gh });
   assert.equal(r.code, 2);
@@ -829,8 +847,7 @@ test('a failed create whose read-back also fails keeps the branch: the PR is unc
 });
 
 test('a re-run that archives nothing new does not push a merge-only commit', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-19T400000-record-1', { twin: 'absent' });
+  const { root } = makeFixture([ABSENT]);
   const fake = fakeGh();
   assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
   const tip = git(root, 'ls-remote', 'origin', `refs/heads/${BRANCH}`);
@@ -845,8 +862,7 @@ test('a re-run that archives nothing new does not push a merge-only commit', () 
 });
 
 test('a push-then-create recovery titles the PR by the archived headers on the branch, never "Archive 0"', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-19T500000-record-1', { twin: 'absent' });
+  const { root } = makeFixture([ABSENT]);
   const fake = fakeGh({ failCreate: true });
   assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 2);
   // The crash left the branch on the remote with no PR; run again with nothing new to archive.
@@ -877,8 +893,7 @@ test('prBody neutralizes closing phrases, HTML-comment markers and @-mentions in
 });
 
 test('the arming note says "is false" only for the literal false', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-19T600000-record-1', { twin: 'absent' });
+  const { root } = makeFixture([ABSENT]);
   const fake = fakeGh();
   const r = call(root, ['--root', root], { ghFake: fake.gh, auto: 'maybe' });
   assert.equal(r.code, 0, r.stderr);
@@ -888,8 +903,7 @@ test('the arming note says "is false" only for the literal false', () => {
 });
 
 test('a create failure on a branch the call did not create leaves the remote branch alone', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-19T100000-record-1', { twin: 'absent' });
+  const { root } = makeFixture([ABSENT]);
   const fake = fakeGh();
   assert.equal(call(root, ['--root', root], { ghFake: fake.gh }).code, 0);
   fake.prs.length = 0; // the PR is gone: the branch is on the remote with no PR
@@ -901,8 +915,7 @@ test('a create failure on a branch the call did not create leaves the remote bra
 });
 
 test('a kept local branch that cannot merge the integration branch aborts with exit 2 and no scratch worktree', () => {
-  const { root } = makeFixture();
-  const a = addShell(root, '2026-11-20T000000-record-1', { twin: 'absent' });
+  const { root, shells: [a] } = makeFixture([ABSENT]);
   assert.equal(call(root, ['--root', root, '--no-pr']).code, 0);
   // origin/main adds the archive file the kept branch also added, with other bytes: an add/add conflict.
   fs.mkdirSync(a.twinWork, { recursive: true });
@@ -919,8 +932,7 @@ test('a kept local branch that cannot merge the integration branch aborts with e
 });
 
 test('every git call of a dry run and of enumeration carries the injected env', () => {
-  const { root } = makeFixture();
-  addShell(root, '2026-11-21T000000-record-1', { twin: 'absent' });
+  const { root } = makeFixture([ABSENT]);
   const seen = [];
   const recording = (args, o) => { seen.push({ args, env: o && o.env }); return realDeps.git(args, o); };
   const r = call(root, ['--root', root, '--dry-run'], { extra: { git: recording } });
@@ -931,15 +943,18 @@ test('every git call of a dry run and of enumeration carries the injected env', 
 
 // A no-forge local-merge project: one checkout, no `origin` at all.
 function makeLocalOnlyFixture() {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ats-local-')));
-  const root = path.join(base, 'main');
-  fixtureGit(['init', '-q', '-b', 'main', root], { env: ENV });
-  git(root, 'config', 'core.autocrlf', 'false');
-  fs.writeFileSync(path.join(root, '.gitignore'), readText(REPO_GITIGNORE));
-  fs.writeFileSync(path.join(root, 'README.md'), 'seed\n');
-  git(root, 'add', '.gitignore', 'README.md');
-  git(root, 'commit', '-q', '-m', 'seed');
-  return { root };
+  const base = fromTemplate('ats:local-only', (dir) => {
+    const env = fixtureEnv();
+    const root = path.join(dir, 'main');
+    const run = runnerFor(env);
+    fixtureGit(['init', '-q', '-b', 'main', root], { env });
+    run(root, 'config', 'core.autocrlf', 'false');
+    fs.writeFileSync(path.join(root, '.gitignore'), readText(REPO_GITIGNORE));
+    fs.writeFileSync(path.join(root, 'README.md'), 'seed\n');
+    run(root, 'add', '.gitignore', 'README.md');
+    run(root, 'commit', '-q', '-m', 'seed');
+  }, { prefix: 'ct-ats-local-', realpath: true });
+  return { root: path.join(base, 'main') };
 }
 
 test('--no-pr in a repository with no origin builds the branch on the local integration branch and exits 0', () => {
@@ -962,8 +977,7 @@ test('--no-pr in a repository with no origin builds the branch on the local inte
 });
 
 test('a clean-twin work/-only dir with no tracked file is named in untracked and left alone', () => {
-  const { root } = makeFixture();
-  const s = addShell(root, '2026-11-23T000000-record-1', { twin: 'absent' });
+  const { root, shells: [s] } = makeFixture([ABSENT]);
   const id = '2026-11-23T000001-record-2';
   fs.mkdirSync(path.join(pipelines(root), id, 'work'), { recursive: true });
   fs.writeFileSync(path.join(pipelines(root), id, 'work', '1-spec.md'), 'untracked\n');
@@ -982,8 +996,7 @@ test('a clean-twin work/-only dir with no tracked file is named in untracked and
 });
 
 test('a push failure after the shells were archived exits 2 and still prints the envelope with branch and error', () => {
-  const { root } = makeFixture();
-  const s = addShell(root, '2026-11-24T000000-record-1', { twin: 'absent' });
+  const { root, shells: [s] } = makeFixture([ABSENT]);
   const failingPush = (args, o) => {
     if (args[0] === 'push' && args.includes(BRANCH)) return { stdout: '', stderr: 'remote rejected\nmore', failure: 'git-error' };
     return realDeps.git(args, o);
@@ -1001,8 +1014,7 @@ test('a push failure after the shells were archived exits 2 and still prints the
 });
 
 test('a throw after the shells were archived exits 2 and still prints the envelope with branch and error', () => {
-  const { root } = makeFixture();
-  const s = addShell(root, '2026-11-24T000001-record-1', { twin: 'absent' });
+  const { root, shells: [s] } = makeFixture([ABSENT]);
   const throwing = (args, o) => {
     if (args[0] === 'rev-list') throw new Error('injected rev-list failure');
     return realDeps.git(args, o);
@@ -1016,8 +1028,7 @@ test('a throw after the shells were archived exits 2 and still prints the envelo
 
 test('realDeps.policy returns flat strings: true/false as text and an unset key as the empty string', () => {
   const resolveIn = (body) => {
-    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ats-policy-')));
-    fixtureGit(['init', '-q', dir], { env: ENV });
+    const dir = policyRepo();
     fs.mkdirSync(path.join(dir, '.claude-tweaks'));
     fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), body);
     return realDeps.policy(dir, ['integration-model', 'integration-branch', 'housekeeping-auto-merge'], { env: ENV });
@@ -1030,4 +1041,53 @@ test('realDeps.policy returns flat strings: true/false as text and an unset key 
     resolveIn('integration-model: local-merge\nintegration-branch: trunk\nhousekeeping-auto-merge: false\n'),
     { 'integration-model': 'local-merge', 'integration-branch': 'trunk', 'housekeeping-auto-merge': 'false' },
   );
+});
+
+test('#5845 AC4.1: a fixture copy has its own origin; a push in one copy leaves another copy unchanged', () => {
+  const a = makeFixture();
+  const b = makeFixture();
+  assert.notEqual(a.base, b.base);
+  for (const f of [a, b]) {
+    assert.equal(f.origin, path.join(f.base, 'origin.git'));
+    assert.equal(f.root, path.join(f.base, 'main'));
+    assert.equal(fs.realpathSync.native(git(f.root, 'remote', 'get-url', 'origin')), fs.realpathSync.native(f.origin));
+    assert.equal(git(f.root, 'config', 'core.autocrlf'), 'false');
+    assert.equal(git(f.root, 'rev-parse', '--abbrev-ref', 'main@{upstream}'), 'origin/main');
+    assert.equal(git(f.root, 'log', '--format=%s'), 'seed');
+  }
+  const before = git(b.origin, 'rev-parse', 'main');
+  assert.equal(git(a.origin, 'rev-parse', 'main'), before);
+  addShell(a.root, '2026-11-30T000000-record-1', { twin: 'absent' }); // commits and pushes in copy a
+  assert.notEqual(git(a.origin, 'rev-parse', 'main'), before);
+  assert.equal(git(b.origin, 'rev-parse', 'main'), before);
+  assert.equal(git(b.root, 'rev-parse', 'HEAD'), before);
+  const v = makeFixture([ABSENT, IDENTICAL]);
+  const w = makeFixture([{ twin: 'absent' }, { twin: 'identical' }]); // same template: defaults are normalized
+  assert.deepEqual(v.shells.map((s) => s.id), ['2026-10-01T000000-record-1', '2026-10-01T000001-record-2']);
+  assert.deepEqual(w.shells.map((s) => s.id), v.shells.map((s) => s.id));
+  for (const f of [v, w]) {
+    for (const s of f.shells) {
+      assert.equal(s.live, path.join(pipelines(f.root), s.id, 'work'));
+      assert.equal(s.twinWork, path.join(pipelines(f.root), 'archive', s.id, 'work'));
+      assert.ok(fs.existsSync(path.join(s.live, s.file)));
+      assert.ok(fs.existsSync(path.join(pipelines(f.root), 'archive', s.id, 'run-state.json')));
+    }
+    assert.equal(fs.existsSync(f.shells[0].twinWork), false); // absent twin
+    assert.ok(fs.existsSync(path.join(f.shells[1].twinWork, f.shells[1].file))); // identical twin
+    assert.equal(git(f.root, 'status', '--porcelain'), '');
+    assert.equal(git(f.root, 'rev-parse', 'HEAD'), git(f.origin, 'rev-parse', 'main')); // both shells pushed
+    assert.deepEqual(findShells(f.root, realDeps).shells.map((s) => s.runId), f.shells.map((s) => s.id));
+  }
+});
+
+test('#5845 AC3.1: a warm call of each templated fixture builder starts no git process', () => {
+  const builders = [
+    () => makeFixture(), () => makeFixture([ABSENT]), () => makeFixture([IDENTICAL]), () => makeFixture([ABSENT, IDENTICAL]),
+    () => makeLocalOnlyFixture(), () => policyRepo(),
+  ];
+  for (const build of builders) build(); // warm-up: a first call may build the template
+  const trace = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ats-trace-'));
+  traced(trace, () => { for (const build of builders) build(); });
+  assert.deepEqual(fs.readdirSync(trace), []);
+  fs.rmSync(trace, { recursive: true, force: true });
 });

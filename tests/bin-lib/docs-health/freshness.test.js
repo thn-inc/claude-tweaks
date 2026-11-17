@@ -7,13 +7,11 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { parseFilesField, checkTrackedFreshness, gitLastChangedMap } = require('../../../plugin/bin/lib/docs-health/freshness');
 const { STUB_SKIP, installStub } = require('../../helpers/path-stub');
-const { cleanGitEnv } = require('../../helpers/git-fixtures');
+const { cleanGitEnv, initRepo, writeIdentity } = require('../../helpers/git-fixtures');
 
 function makeTmpGitRoot() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-freshness-'));
-  execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root });
+  initRepo(root, { name: 'Test', email: 'test@example.com', cwd: root });
   return root;
 }
 
@@ -190,8 +188,7 @@ test('checkTrackedFreshness runs git log with the injected env (#5381)', () => {
   const B = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-freshness-envB-'));
   const git = (args) => execFileSync('git', ['-C', B, ...args], { env: clean, stdio: 'pipe' });
   git(['init', '-q']);
-  git(['config', 'user.email', 'test@example.com']);
-  git(['config', 'user.name', 'Test']);
+  writeIdentity(B, { name: 'Test', email: 'test@example.com' });
   fs.mkdirSync(path.join(B, 'src'), { recursive: true });
   fs.writeFileSync(path.join(B, 'src', 'a.ts'), 'export const a = 1;\n');
   git(['add', '-A']);

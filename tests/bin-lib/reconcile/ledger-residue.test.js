@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 const { readText } = require('../../helpers/read-skill');
 const { chmodDenialSkip } = require('../../helpers/root');
+const { initRepo } = require('../../helpers/git-fixtures');
 const {
   LEDGER_RESIDUE_MARKER, QUIET_SKIP_REASONS, residueLedgerPaths, removalBranchName, ledgerFeatureSlug, runDirNamesNumber,
   attributedRunDir, classifyLedgerCandidate, partitionByRemovalPrs, decideLedgerResidue, defaultListRunDirs,
@@ -366,9 +367,7 @@ function makeRepo({ ledgers = { [LEDGER]: ledgerText() } } = {}) {
   const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-residue-origin-'));
   git(origin, 'init', '--bare', '-b', 'main');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-residue-'));
-  git(dir, 'init', '-b', 'main');
-  git(dir, 'config', 'user.email', 't@t');
-  git(dir, 'config', 'user.name', 't');
+  initRepo(dir, { branch: 'main', name: 't', email: 't@t' });
   fs.mkdirSync(path.join(dir, 'docs', 'plans'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'docs', 'plans', 'keep.html'), '<p>keep</p>\n');
   for (const [p, text] of Object.entries(ledgers)) fs.writeFileSync(path.join(dir, p), text);

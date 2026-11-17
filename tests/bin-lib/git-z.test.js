@@ -11,6 +11,7 @@ const {
   splitNul, parseNameStatusZ, splitLogZ,
   parseNumstatZ, parseStatusPorcelainZ, parseLsTreeZ, unquoteCPath,
 } = require('../../plugin/bin/lib/git-z.js');
+const { initRepo } = require('../helpers/git-fixtures');
 
 const isHeader = (t) => t.startsWith('\x01');
 
@@ -69,9 +70,7 @@ test('AC1.1: real git -z output reports docs/café.md unquoted', () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'git-z-'));
   const git = (...args) => execFileSync('git', args, { cwd, encoding: 'utf8' });
   try {
-    git('init', '-q');
-    git('config', 'user.email', 'test@example.com');
-    git('config', 'user.name', 'Test');
+    initRepo(cwd, { name: 'Test', email: 'test@example.com', cwd, encoding: 'utf8' });
     // Pin the two settings a host's global config could flip: quotepath decides
     // whether the plain form below is C-quoted, gpgsign would make `commit` prompt.
     git('config', 'core.quotepath', 'true');

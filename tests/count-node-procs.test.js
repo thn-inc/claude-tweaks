@@ -268,7 +268,7 @@ test('AC10.1: one real run prints a row for the listed test file', () => {
   try {
     const listFile = path.join(tmp, 'list.txt');
     const outPath = path.join(tmp, 'out.json');
-    fs.writeFileSync(listFile, 'tests/helpers-git-template.test.js\n');
+    fs.writeFileSync(listFile, 'tools/count-node-procs-fixture/sample.test.js\n');
     const r = spawnSync(process.execPath, [toolPath, '--files-from', listFile, '--json', outPath], {
       cwd: repoRoot,
       env: slotEnv(tmp, { CT_TEST_SUITE_SLOT_HELD: '1' }),
@@ -280,11 +280,12 @@ test('AC10.1: one real run prints a row for the listed test file', () => {
     assert.strictEqual(r.status, 0, `${r.stdout}\n${r.stderr}`);
     const rows = JSON.parse(fs.readFileSync(outPath, 'utf8'));
     assert.strictEqual(rows.length, 1);
-    assert.strictEqual(rows[0].file, 'tests/helpers-git-template.test.js');
-    // exactly the test file's own process: its helpers start git (not node), and the `node --test`
-    // runner and tools/run-tests.js above it are unattributed
-    assert.strictEqual(rows[0].nodeProcs, 1);
-    assert.deepStrictEqual(rows[0].cliProcs, {});
+    assert.strictEqual(rows[0].file, 'tools/count-node-procs-fixture/sample.test.js');
+    // the fixture's own process plus its one child node process (plugin/bin/compose-record.js --help,
+    // a side-effect-free CLI); the fixture's `git --version` starts git, not node, so it is not counted.
+    // The `node --test` runner and tools/run-tests.js above it are unattributed.
+    assert.strictEqual(rows[0].nodeProcs, 2);
+    assert.deepStrictEqual(rows[0].cliProcs, { 'compose-record.js': 1 });
     assert.strictEqual(typeof rows[0].wallMs, 'number');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

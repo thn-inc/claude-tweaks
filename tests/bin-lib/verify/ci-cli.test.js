@@ -15,6 +15,7 @@ const { execFile, execFileSync, spawn, spawnSync } = require('child_process');
 const { slotEnv } = require('../../helpers/suite-slot-env');
 const { anchoredRunDir } = require('./cli-helpers');
 const { derivePhases } = require('../../../plugin/bin/lib/timing/derive');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
 const SKIP = process.platform === 'win32' ? 'a PATH shim named gh is not spawnable on win32' : false;
@@ -74,9 +75,7 @@ function runCli(args, { cwd, env }) {
 function repoWith({ ci = true, extraFiles = {}, declExtra = {} } = {}) {
   const repo = tmpDir();
   const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git('init', '-q');
-  git('config', 'user.email', 'verify-test@example.invalid');
-  git('config', 'user.name', 'verify test');
+  initRepo(repo, { name: 'verify test', email: 'verify-test@example.invalid', cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   fs.mkdirSync(path.join(repo, 'tests'));
   fs.writeFileSync(path.join(repo, 'tests', 'env.test.js'), "require('node:test')('env', () => { throw new Error('env-specific'); });\n");
   fs.writeFileSync(path.join(repo, 'tests', 'ok.test.js'), "require('node:test')('ok', () => {});\n");

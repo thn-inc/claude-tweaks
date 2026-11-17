@@ -11,6 +11,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { runCliSync, spawnCli } = require('../../helpers/run-cli.js');
+const { initRepo, writeIdentity } = require('../../helpers/git-fixtures');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'check-artifact-overwrite.js');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'flow', 'artifact-overwrite-check.js');
@@ -87,9 +88,7 @@ test('a bug in the check itself (not an ArtifactOverwriteCheckError) crashes lou
 test('end-to-end against a real repo (no fake check) — clean walk exits 0', () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-check-artifact-overwrite-cli-')));
   const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8', timeout: 30000 });
-  git('init', '-q');
-  git('config', 'user.email', 't@example.invalid');
-  git('config', 'user.name', 'Test');
+  initRepo(dir, { name: 'Test', email: 't@example.invalid' });
   git('commit', '-q', '--allow-empty', '-m', 'base');
   const base = git('rev-parse', 'HEAD').trim();
   fs.mkdirSync(path.join(dir, 'docs', 'journeys'), { recursive: true });
@@ -145,9 +144,7 @@ function rewriteManifest(runDir, from, to) {
 function storyRepo() {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-cao-repo-')));
   const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'] });
-  git('init', '-q');
-  git('config', 'user.email', 't@example.invalid');
-  git('config', 'user.name', 'Test');
+  initRepo(dir, { name: 'Test', email: 't@example.invalid' });
   git('commit', '-q', '--allow-empty', '-m', 'base');
   const base = git('rev-parse', 'HEAD').trim();
   const commitAt = (message, iso, relPath, content) => {
@@ -322,9 +319,7 @@ test('end-to-end: a catch-up merge of upstream\'s journey exits 0 with --integra
     fs.writeFileSync(path.join(dir, rel), content);
   };
   const commit = (message) => { git('add', '-A'); git('commit', '-q', '-m', message); };
-  git('init', '-q');
-  git('config', 'user.email', 't@example.invalid');
-  git('config', 'user.name', 'Test');
+  initRepo(dir, { name: 'Test', email: 't@example.invalid' });
   git('commit', '-q', '--allow-empty', '-m', 'base');
   const base = git('rev-parse', 'HEAD').trim();
   git('branch', 'up');
@@ -366,14 +361,11 @@ test('AC6.1: the check\'s git child takes the injected env — GIT_DIR in env ai
     git(cwd, 'add', '-A');
     git(cwd, 'commit', '-q', '-m', message);
   };
-  git(a, 'init', '-q');
-  git(a, 'config', 'user.email', 't@example.invalid');
-  git(a, 'config', 'user.name', 'Test');
+  initRepo(a, { name: 'Test', email: 't@example.invalid' });
   git(a, 'commit', '-q', '--allow-empty', '-m', 'base');
   const base = git(a, 'rev-parse', 'HEAD').trim();
   git(b, 'clone', '-q', a, '.');
-  git(b, 'config', 'user.email', 't@example.invalid');
-  git(b, 'config', 'user.name', 'Test');
+  writeIdentity(b, { name: 'Test', email: 't@example.invalid' });
   // A: a journey added only. B: the same journey, then another spec edits its line (an overwrite).
   commit(a, 'docs/journeys/demo.md', '# Demo\nFirst.\n', 'Add demo journey (refs #10)');
   commit(b, 'docs/journeys/demo.md', '# Demo\nFirst.\n', 'Add demo journey (refs #10)');

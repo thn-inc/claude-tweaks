@@ -129,11 +129,17 @@ Canonical defaults for the keys in this section also live in `_shared/work-recor
 | `harness-health-scoped-rule-budget` | `policy.yml` | `/claude-tweaks:harness-health` | `30` | Line-count budget for path-scoped `.claude/rules/*.md` files |
 | `harness-health-always-loaded-budget` | `policy.yml` | `/claude-tweaks:harness-health` | `150` | Line-count budget for CLAUDE.md and unscoped rule files |
 
+## CI-health thresholds
+
+| Key | Canonical home | Owner skill(s) | Default | Meaning |
+|---|---|---|---|---|
+| `ci-health-thresholds` | `policy.yml` | `/claude-tweaks:ci-health` — passed to `ci-audit.js gather --thresholds` | unset (empty) | Comma-separated `id=positive-number` text overriding that checklist's thresholds and absolute floors (`<check>-floor-ms`, in milliseconds), e.g. `queue-wait=0.5,shard-skew=2` — write the pairs with no space around `=` or `,`. Unset resolves empty and the checklist defaults apply. A set value resolves verbatim whatever its contents; `parseThresholds` rejects an unknown id or non-positive number at gather time, so a bad pair is never silently dropped. Whitespace in the value is schema-invalid and resolves empty with `invalid: true` |
+
 ## Health-sweep filing
 
 | Key | Canonical home | Owner skill(s) | Default | Meaning |
 |---|---|---|---|---|
-| `health-open-cap` | `policy.yml` | `/claude-tweaks:code-health`, `/claude-tweaks:harness-health`, `/claude-tweaks:docs-health`, `/claude-tweaks:journey-health` — via `bin/lib/health-core/digest.js` | `10` | Per-origin open-singleton-finding cap. At or above this count, a brand-new finding that would otherwise file its own issue is appended to that origin's digest issue instead (see each skill's FILE step). A regressed-reopen always bypasses the cap. `0` disables the throttle (unconditional filing, matching pre-#235 behavior); unset applies the default — 10 |
+| `health-open-cap` | `policy.yml` | `/claude-tweaks:code-health`, `/claude-tweaks:harness-health`, `/claude-tweaks:docs-health`, `/claude-tweaks:journey-health`, `/claude-tweaks:ci-health` — via `bin/lib/health-core/digest.js` | `10` | Per-origin open-singleton-finding cap. At or above this count, a brand-new finding that would otherwise file its own issue is appended to that origin's digest issue instead (see each skill's FILE step). A regressed-reopen always bypasses the cap. `0` disables the throttle (unconditional filing, matching pre-#235 behavior); unset applies the default — 10 |
 
 ## Code-health focus verticals
 

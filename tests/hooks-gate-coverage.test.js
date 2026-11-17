@@ -24,6 +24,7 @@ const { WRITE_SHAPES, fileWriteTargets, forEachShellSegment, gitTargets, mkdirTa
 const { shouldRunFull } = require('../plugin/bin/lib/hooks/bash-prefilter');
 const { readText } = require('./helpers/read-skill');
 const { shellQuote } = require('./helpers/shell-quote');
+const { initRepo } = require('./helpers/git-fixtures');
 
 const runsFull = (event, command) => shouldRunFull(event, { tool_name: 'Bash', tool_input: { command } });
 function bashGroupOf(group) {
@@ -381,9 +382,7 @@ test('#976 AC1: `git mv` inside a worktree-always project triggers the same E1 d
   const osMod = require('os');
   const { execFileSync } = require('child_process');
   const main = fsMod.mkdtempSync(path.join(osMod.tmpdir(), 'ct-976-main-'));
-  execFileSync('git', ['-C', main, 'init', '-q']);
-  execFileSync('git', ['-C', main, 'config', 'user.email', 't@example.com']);
-  execFileSync('git', ['-C', main, 'config', 'user.name', 'T']);
+  initRepo(main, { name: 'T', email: 't@example.com' });
   fsMod.writeFileSync(path.join(main, 'a.txt'), 'x\n');
   execFileSync('git', ['-C', main, 'add', 'a.txt']);
   execFileSync('git', ['-C', main, 'commit', '-q', '-m', 'init']);

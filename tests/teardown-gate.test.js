@@ -7,7 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { findRunByWorktreePath, findRunsByWorktreePath, classifyOwnership, resolveRun, readRunState } = require('../plugin/bin/lib/hooks/context');
-const { fixtureGit } = require('./helpers/git-fixtures');
+const { fixtureGit, initRepo } = require('./helpers/git-fixtures');
 const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
 const { caseInsensitiveFs } = require('./helpers/case-insensitive-fs');
 const { readText } = require('./helpers/read-skill');
@@ -68,9 +68,7 @@ function withPolicy(repo, content) {
 // root must itself be a real git repo, same as tests/run-integrity.test.js.
 function fixtureRoot() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-tdg-')));
-  fixtureGit(['init', '-q', '-b', 'trunk', root]);
-  sh(root, 'config', 'user.email', 't@example.com');
-  sh(root, 'config', 'user.name', 'T');
+  initRepo(root, { name: 'T', email: 't@example.com', branch: 'trunk' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
   sh(root, 'add', 'a.txt');
   sh(root, 'commit', '-q', '-m', 'base');

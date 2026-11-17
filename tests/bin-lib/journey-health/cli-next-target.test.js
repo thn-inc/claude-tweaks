@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const { STUB_SKIP } = require('../../helpers/path-stub');
 const { sweepCli } = require('../../helpers/health-sweep-cli');
+const { writeIdentity } = require('../../helpers/git-fixtures');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'journey-health.js');
 
@@ -138,8 +139,7 @@ test('four next-target -> validate-findings cycles against a permanently broken 
   fs.rmSync(path.join(root, 'src', 'a-flow.tsx'));
   seedDurableCursors(root, {});
   // commit-tree (writeDurableState's write path) needs a committer identity.
-  execFileSync('git', ['-C', root, 'config', 'user.email', 'test@example.com']);
-  execFileSync('git', ['-C', root, 'config', 'user.name', 'test']);
+  writeIdentity(root, { name: 'test', email: 'test@example.com' });
 
   const findingsFile = path.join(root, 'findings.json');
   fs.writeFileSync(findingsFile, '[]');

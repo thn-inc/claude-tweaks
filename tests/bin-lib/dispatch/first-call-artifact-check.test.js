@@ -9,7 +9,7 @@ const { checkFirstCallArtifacts, checkFirstCallStamp } = require('../../../plugi
 const { claimFilePath } = require('../../../plugin/bin/lib/issues/claims');
 const { manifestInit } = require('../../../plugin/bin/lib/flow/manifest');
 const { run: runGauge } = require('../../../plugin/bin/context-gauge');
-const { gitRepo } = require('../../helpers/git-fixtures');
+const { gitRepo, initRepo } = require('../../helpers/git-fixtures');
 
 const REPO_SLUG = 'acme/widgets';
 const RUN_ID = '2026-09-29T154722-record-2806';
@@ -882,9 +882,7 @@ test('a complete composition from real --stamp-suite chunks verifies through the
   const VERIFY = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
   const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-stamp-composed-')));
   const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', windowsHide: true }).trim();
-  git('init', '-q');
-  git('config', 'user.email', 'first-call-test@example.invalid');
-  git('config', 'user.name', 'first-call test');
+  initRepo(repo, { name: 'first-call test', email: 'first-call-test@example.invalid', cwd: repo, encoding: 'utf8', windowsHide: true });
   const decl = { checks: { tests: { unit: 'node -e 0', other: 'node -e 0' } }, rules: [{ match: 'src/**', suites: ['unit'], static: true }] };
   fs.mkdirSync(path.join(repo, '.claude-tweaks'));
   fs.writeFileSync(path.join(repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));

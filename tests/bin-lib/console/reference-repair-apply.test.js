@@ -15,6 +15,7 @@ const ROOT = path.resolve(__dirname, '..', '..', '..');
 const { stagedDiffPaths, referenceRepairFloorReason, REFERENCE_REPAIR_REASONS } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'reference-repair'));
 const { gitEnv } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'staged-patch', 'stack-check'));
 const { readText } = require('../../helpers/read-skill');
+const { writeIdentity } = require('../../helpers/git-fixtures');
 
 const EXECUTION = readText(path.join(ROOT, 'plugin', 'skills', 'wrap-up', 'execution-and-verification.md'));
 const MULTISPEC = readText(path.join(ROOT, 'plugin', 'skills', 'flow', 'multispec-review-console.md'));
@@ -33,8 +34,7 @@ after(() => { for (const dir of made) fs.rmSync(dir, { recursive: true, force: t
 function repoWith(rel, text) {
   const repo = tmp('ref-repair-apply-');
   git(repo, 'init', '-q');
-  git(repo, 'config', 'user.email', 't@example.invalid');
-  git(repo, 'config', 'user.name', 't');
+  writeIdentity(repo, { name: 't', email: 't@example.invalid' });
   git(repo, 'config', 'core.autocrlf', 'false');
   fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
   fs.writeFileSync(path.join(repo, rel), text);

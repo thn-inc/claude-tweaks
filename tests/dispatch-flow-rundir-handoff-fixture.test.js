@@ -33,7 +33,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-const { fixtureGit } = require('./helpers/git-fixtures');
+const { fixtureGit, initRepo } = require('./helpers/git-fixtures');
 const { run: claimTargetsRun, BOT_IN_PROGRESS } = require('../plugin/bin/lib/claim-targets/claim-targets');
 
 const ROOT = path.join(__dirname, '..');
@@ -93,9 +93,7 @@ function makeFixtureRepo() {
   const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e2e-bare-'));
   fixtureGit(['init', '--bare', '-q', bareDir]);
   const mainDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e2e-main-'));
-  fixtureGit(['init', '-q', '-b', 'main', mainDir]);
-  fixtureGit(['-C', mainDir, 'config', 'user.email', 'fixture@example.com']);
-  fixtureGit(['-C', mainDir, 'config', 'user.name', 'Fixture']);
+  initRepo(mainDir, { name: 'Fixture', email: 'fixture@example.com', branch: 'main' });
   fixtureGit(['-C', mainDir, 'commit', '--allow-empty', '-q', '-m', 'init']);
   const bareReal = fs.realpathSync(bareDir);
   fixtureGit(['-C', mainDir, 'remote', 'add', 'origin', bareReal]);

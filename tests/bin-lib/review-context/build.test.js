@@ -18,6 +18,7 @@ const {
 } = require('../../../plugin/bin/lib/review-context/build');
 
 const { runCliSync } = require('../../helpers/run-cli');
+const { initRepo: initFixtureRepo } = require('../../helpers/git-fixtures');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'build-review-context.js');
 
@@ -39,9 +40,7 @@ function git(repo, args) {
 // adds one, and deletes one — the deletion exercises the empty-section degradation.
 function makeFixtureRepo() {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'review-ctx-fixture-'));
-  git(repo, ['init', '-q', '-b', 'main']);
-  git(repo, ['config', 'user.email', 'test@example.invalid']);
-  git(repo, ['config', 'user.name', 'Test']);
+  initFixtureRepo(repo, { name: 'Test', email: 'test@example.invalid', branch: 'main', cwd: repo, encoding: 'utf8' });
   fs.writeFileSync(path.join(repo, 'kept.txt'), 'kept line 1\n');
   fs.writeFileSync(path.join(repo, 'doomed.txt'), 'doomed content\n');
   git(repo, ['add', '.']);
@@ -294,9 +293,7 @@ const LATE_MARKER = 'DISTINCTIVE-LATE-LINE-MARKER\n';
 // A fresh repo on `main` with a committer identity configured; `prefix` names the temp dir.
 function initRepo(prefix) {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  git(repo, ['init', '-q', '-b', 'main']);
-  git(repo, ['config', 'user.email', 'test@example.invalid']);
-  git(repo, ['config', 'user.name', 'Test']);
+  initFixtureRepo(repo, { name: 'Test', email: 'test@example.invalid', branch: 'main', cwd: repo, encoding: 'utf8' });
   return repo;
 }
 
