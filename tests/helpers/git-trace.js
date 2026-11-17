@@ -5,11 +5,13 @@
 //
 // warmCallStartsNoGit(warm, opts = {}) -> { warm, traced }
 //   warm:        () => any   called once first; it may build a template and start git
-//   opts.traced: () => any   called under GIT_TRACE2_EVENT=<fresh empty dir>; defaults to `warm`
+//   opts.traced: () => any   synchronous; called under GIT_TRACE2_EVENT=<fresh empty dir>; defaults to `warm`
 //   opts.track:  (result) => void   called with warm's result, then with traced's result,
 //                                   before the assertion, so the caller can register cleanup
-// Asserts that no trace file was written (a git process writes one each), removes the
-// trace dir, and returns both results for the caller's further assertions.
+// Asserts that no trace file was written (a git process writes one each; the failure message
+// names the argv of each started process), removes the trace dir, and returns both results
+// for the caller's further assertions. An async `traced` is refused: its git would run after
+// GIT_TRACE2_EVENT is restored.
 const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
@@ -23,19 +25,31 @@ function warmCallStartsNoGit(warm, opts = {}) {
   const prev = process.env.GIT_TRACE2_EVENT;
   let tracedResult;
   let files;
+  const argvs = [];
   try {
     process.env.GIT_TRACE2_EVENT = dir;
     try {
       tracedResult = traced();
+      if (tracedResult && typeof tracedResult.then === 'function') {
+        throw new TypeError('warmCallStartsNoGit: traced must be synchronous (an async call would run its git after GIT_TRACE2_EVENT is restored)');
+      }
     } finally {
       if (prev === undefined) delete process.env.GIT_TRACE2_EVENT; else process.env.GIT_TRACE2_EVENT = prev;
     }
     if (track) track(tracedResult);
     files = fs.readdirSync(dir);
+    for (const f of files) {
+      for (const line of fs.readFileSync(path.join(dir, f), 'utf8').split('\n')) {
+        try {
+          const ev = JSON.parse(line);
+          if (ev.event === 'start') argvs.push(ev.argv);
+        } catch { /* skip a line that does not parse */ }
+      }
+    }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  assert.deepStrictEqual(files, []);
+  assert.deepStrictEqual(files, [], `the traced call started ${files.length} git process(es): ${JSON.stringify(argvs)}`);
   return { warm: warmResult, traced: tracedResult };
 }
 

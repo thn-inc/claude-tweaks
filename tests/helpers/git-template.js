@@ -25,8 +25,9 @@
 // rehashes copied files anyway, since their inode and ctime differ from the
 // ones recorded in the copied index.
 //
-// Where a builder's warm-call test belongs: in a test file that already uses
-// the builder, never in tests/helpers-git-template.test.js. Templates are
+// Where a builder's warm-call test belongs: in a test file that already builds
+// that template (calls the builder with arguments giving the same key), never in
+// tests/helpers-git-template.test.js. Templates are
 // cached per process, so a "second call starts no git process" test costs
 // nothing where the template is built anyway and costs a whole build in a file
 // that would not otherwise build it. The check itself is

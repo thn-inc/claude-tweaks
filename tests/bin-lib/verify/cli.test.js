@@ -1721,3 +1721,7 @@ test('tmpGitRepo: a second call starts no git process and carries the verify ide
   const { traced: second } = warmCallStartsNoGit(tmpGitRepo, { track: (r) => t.after(() => fs.rmSync(r.repo, { recursive: true, force: true })) });
   assert.strictEqual(second.git('config', 'user.email').trim(), 'verify-test@example.invalid');
 });
+
+test('AC1.1 AC1.2: verify flakyRepo({ retryExit: 1 }): a second call starts no git process', (t) => {
+  warmCallStartsNoGit(() => verifyHelpers.flakyRepo({ retryExit: 1 }), { track: (r) => t.after(() => fs.rmSync(r.repo, { recursive: true, force: true })) });
+});

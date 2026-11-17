@@ -47,7 +47,7 @@ test('decideRemotePrune: transport failures -> skip (fail closed)', () => {
   assert.strictEqual(decideRemotePrune({ branch: 'build/x', cherryEquivalent: true, prState: 'network-failure' }).reason, 'network-failure');
 });
 
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -633,7 +633,6 @@ test('decideRemotePrune order pin: OPEN prState -> pr-open regardless of cherryE
 // starts no git process — and the squashed and b1-deleted copies hold their variant's setup. They live
 // here because this file's own tests already build every variant. This file's `git` takes (cwd, ...args),
 // so the shared pinned-config runner is bound under its own name.
-const { spawnSync } = require('child_process');
 const movedFixtureDirs = [];
 after(() => {
   for (const d of movedFixtureDirs) fs.rmSync(d, { recursive: true, force: true });

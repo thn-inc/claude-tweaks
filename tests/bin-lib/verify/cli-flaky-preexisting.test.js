@@ -520,12 +520,7 @@ test('preExisting: log frames are relativized against --cwd, not the process cwd
   assert.match(stdout, /Pre-existing: adjudicated — 1 failing file\(s\) covered by the declared preExisting allowlist: tests\/known-shallow\.test\.js/);
 });
 
-// #5846: the verify scenario builders sit on templates (#5324); this file builds flakyRepo's variants, so the warm-call checks live here.
-for (const [name, make] of [
-  ['verify flakyRepo()', () => flakyRepo()],
-  ['verify flakyRepo({ retryExit: 1 })', () => flakyRepo({ retryExit: 1 })],
-]) {
-  test(`AC1.1 AC1.2: ${name}: a second call starts no git process`, (t) => {
-    warmCallStartsNoGit(make, { track: (r) => t.after(() => fs.rmSync(r.repo, { recursive: true, force: true })) });
-  });
-}
+// #5846: the verify scenario builders sit on templates (#5324); this file builds flakyRepo()'s default template, so that warm-call check lives here (the retryExit: 1 one is in cli.test.js).
+test('AC1.1 AC1.2: verify flakyRepo(): a second call starts no git process', (t) => {
+  warmCallStartsNoGit(() => flakyRepo(), { track: (r) => t.after(() => fs.rmSync(r.repo, { recursive: true, force: true })) });
+});

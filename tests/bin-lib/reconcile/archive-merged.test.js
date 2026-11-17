@@ -4104,7 +4104,6 @@ test('AC4.2 fallback: a local-merge run merged without the move is still archive
 // no git process, and the mergedFeatureBranchRepo copies hold their branch. They live here because this
 // file's own tests already build every one of these templates. This file's `git` takes (cwd, ...args), so
 // the shared pinned-config runner is bound under its own name.
-const { spawnSync } = require('child_process');
 const cleanupAfter = (t, dirs) => t.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
 // The copied bare origin a clone fixture's .git/config names, so a test can clean it up too.
 const originDirOf = (root) => fs.readFileSync(path.join(root, '.git', 'config'), 'utf8').match(/^\s*url = (.+)$/m)[1].trim();
@@ -4124,7 +4123,7 @@ test('mergedFeatureBranchRepo copy: feature tip is an ancestor of main and the b
   cleanupAfter(t, [mergedFeatureBranchRepo('feat-x').root]);
   const { root, featureSha } = mergedFeatureBranchRepo('feat-x');
   cleanupAfter(t, [root]);
-  const r = spawnSync('git', ['merge-base', '--is-ancestor', featureSha, 'main'], { cwd: root, env: pinnedGitEnv() });
+  const r = cp.spawnSync('git', ['merge-base', '--is-ancestor', featureSha, 'main'], { cwd: root, env: pinnedGitEnv() });
   assert.strictEqual(r.status, 0, String(r.stderr));
   assert.strictEqual(pinnedGit(root, ['rev-parse', 'feat-x']), featureSha);
 });

@@ -93,6 +93,8 @@ test('#5846 AC4.1: warmCallStartsNoGit throws when the traced call starts a git 
   const startsGit = () => execFileSync('git', ['--version'], { env: gitEnv(), stdio: 'ignore', windowsHide: true });
   assert.throws(() => warmCallStartsNoGit(() => {}, { traced: startsGit }), assert.AssertionError);
   assert.strictEqual(process.env.GIT_TRACE2_EVENT, before);
+  assert.throws(() => warmCallStartsNoGit(() => {}, { traced: async () => {} }), TypeError);
+  assert.strictEqual(process.env.GIT_TRACE2_EVENT, before);
   const sentinel = path.join(mk('ct-gt-sentinel-'), 'sentinel');
   withEnv('GIT_TRACE2_EVENT', sentinel, () => {
     assert.throws(() => warmCallStartsNoGit(() => {}, { traced: startsGit }), assert.AssertionError);
