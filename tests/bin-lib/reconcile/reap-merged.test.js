@@ -16,6 +16,7 @@ const { reconcile } = require('../../../plugin/bin/lib/reconcile');
 const { residueBody } = require('../../../plugin/bin/lib/reconcile/escalate-residue');
 const { chmodDenialSkip } = require('../../helpers/root');
 const { STUB_SKIP, installStub } = require('../../helpers/path-stub');
+const { initRepo, writeIdentity } = require('../../helpers/git-fixtures');
 
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -83,9 +84,7 @@ function buildReapableFixture({ worktreeDirName = 'issue-1' } = {}) {
   // reapMerged actually hands to releasePorts, so the #1793 assertions
   // below never matched on a real Mac (#1900).
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-root-')));
-  git(root, 'init', '-q', '-b', 'main');
-  git(root, 'config', 'user.email', 't@t');
-  git(root, 'config', 'user.name', 't');
+  initRepo(root, { branch: 'main', name: 't', email: 't@t' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'a\n');
   git(root, 'add', 'a.txt');
   git(root, 'commit', '-q', '-m', 'init');
@@ -561,8 +560,7 @@ function buildReapableFixtureWithRemote() {
   // clone again into the fixture's real main checkout.
   const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-seed-'));
   execFileSync('git', ['clone', '-q', originDir, seedDir], { stdio: 'ignore' });
-  git(seedDir, 'config', 'user.email', 't@t');
-  git(seedDir, 'config', 'user.name', 't');
+  writeIdentity(seedDir, { name: 't', email: 't@t' });
   fs.writeFileSync(path.join(seedDir, 'a.txt'), 'a\n');
   git(seedDir, 'add', 'a.txt');
   git(seedDir, 'commit', '-q', '-m', 'seed');
@@ -570,8 +568,7 @@ function buildReapableFixtureWithRemote() {
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-remote-root-'));
   execFileSync('git', ['clone', '-q', originDir, root], { stdio: 'ignore' });
-  git(root, 'config', 'user.email', 't@t');
-  git(root, 'config', 'user.name', 't');
+  writeIdentity(root, { name: 't', email: 't@t' });
 
   // reconcile()'s pr-first branch is policy-gated, not auto-detected from a
   // local bare-repo origin URL — force it explicitly, same as this repo's

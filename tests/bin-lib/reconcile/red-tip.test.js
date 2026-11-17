@@ -128,6 +128,7 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -135,9 +136,7 @@ function git(cwd, ...args) {
 
 test('redTipCheck: no origin/{integration} ref reachable (git rev-parse fails) -> null, never throws', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'red-tip-'));
-  git(dir, 'init', '-q', '-b', 'main');
-  git(dir, 'config', 'user.email', 't@t');
-  git(dir, 'config', 'user.name', 't');
+  initRepo(dir, { branch: 'main', name: 't', email: 't@t' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
   git(dir, 'add', 'a.txt');
   git(dir, 'commit', '-q', '-m', 'init');

@@ -14,7 +14,7 @@ const { decideRelease } = require('../plugin/bin/lib/reconcile/release-merged');
 const { decideArchiveCore, classifyRunDir, readConsoleState, localHasMerge } = require('../plugin/bin/lib/reconcile/archive-merged');
 const { isWorktreeLocked } = require('../plugin/bin/lib/hooks/worktree-reap');
 const { reconcile } = require('../plugin/bin/lib/reconcile');
-const { gitRepo } = require('./helpers/git-fixtures');
+const { gitRepo, writeIdentity } = require('./helpers/git-fixtures');
 const { chmodDenialSkip } = require('./helpers/root');
 const { STUB_SKIP, installStub } = require('./helpers/path-stub');
 const { toPosix } = require('../plugin/bin/lib/shared-primitives');
@@ -544,8 +544,7 @@ test('localHasMerge: detached HEAD with local behind — still falls back to ori
 function runDirFixture() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-archive-')));
   git(['init', '-q', '--initial-branch=main'], root);
-  git(['config', 'user.email', 'test@example.com'], root);
-  git(['config', 'user.name', 'Test'], root);
+  writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], root);
   git(['commit', '-q', '-m', 'seed'], root);
@@ -1163,8 +1162,7 @@ test('isWorktreeLocked: a path not registered in git worktree list at all is not
 test('reconcile: local-merge project falls back to the legacy ancestry reap, skips mirror/release/archive (AC4-adjacent)', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-lm-'));
   git(['init', '-q', '--initial-branch=main'], dir);
-  git(['config', 'user.email', 'test@example.com'], dir);
-  git(['config', 'user.name', 'Test'], dir);
+  writeIdentity(dir, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], dir);
   git(['commit', '-q', '-m', 'seed'], dir);
@@ -1209,8 +1207,7 @@ test('reconcile: no network / no remote resolves to no-remote, never crashes (AC
 test('reconcile: an archive merged-partial skip carries unclosed through to result.runs (#3503)', { skip: STUB_SKIP }, async () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-partial-')));
   git(['init', '-q', '--initial-branch=main'], root);
-  git(['config', 'user.email', 'test@example.com'], root);
-  git(['config', 'user.name', 'Test'], root);
+  writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], root);
   git(['commit', '-q', '-m', 'seed'], root);
@@ -1257,8 +1254,7 @@ test('reconcile: an archive merged-partial skip carries unclosed through to resu
 test('reconcile: an archive tiebreak-coverage-missing skip carries missing and hint through to result.runs (#3945)', { skip: STUB_SKIP }, async () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-tiebreak-')));
   git(['init', '-q', '--initial-branch=main'], root);
-  git(['config', 'user.email', 'test@example.com'], root);
-  git(['config', 'user.name', 'Test'], root);
+  writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], root);
   git(['commit', '-q', '-m', 'seed'], root);

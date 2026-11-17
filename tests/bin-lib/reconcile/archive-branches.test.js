@@ -147,6 +147,7 @@ const path = require('path');
 const { archiveBranches } = require('../../../plugin/bin/lib/reconcile/archive-branches');
 const { reconcile, ALL_CHECKS } = require('../../../plugin/bin/lib/reconcile');
 const { gateOriginRepo } = require('../../../plugin/bin/lib/repo-resolve');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -154,9 +155,7 @@ function git(cwd, ...args) {
 
 function makeRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-branches-'));
-  git(dir, 'init', '-b', 'main');
-  git(dir, 'config', 'user.email', 't@t');
-  git(dir, 'config', 'user.name', 't');
+  initRepo(dir, { branch: 'main', name: 't', email: 't@t' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
   git(dir, 'add', 'a.txt');
   git(dir, 'commit', '-m', 'init');
