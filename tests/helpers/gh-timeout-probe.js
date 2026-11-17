@@ -40,6 +40,43 @@ function evictModules(modulePaths) {
   for (const p of [...modulePaths, primitivesPath]) delete require.cache[p];
 }
 
+// #5050: runs `fn` with both bound env vars (and `extraKeys`) cleared, from an empty temp cwd, and restores
+// the env and the cwd afterwards. The bound getters read the env first and then the cwd's policy.yml
+// (gh-timeout-ms, git-timeout-ms), so clearing the env alone would still let a raised value in this
+// checkout's own policy leak in. `fn` may return a promise; the restore then runs once it settles.
+function isolateExecBounds(extraKeys, fn) {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const saved = new Map();
+  for (const key of [ENV_KEY, GIT_ENV_KEY, ...extraKeys]) {
+    if (saved.has(key)) continue;
+    saved.set(key, Object.prototype.hasOwnProperty.call(process.env, key) ? process.env[key] : undefined);
+  }
+  const originalCwd = process.cwd();
+  const emptyDir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-exec-bounds-'));
+  const restore = () => {
+    process.chdir(originalCwd);
+    fs.rmSync(emptyDir, { recursive: true, force: true });
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  };
+  let result;
+  try {
+    delete process.env[ENV_KEY];
+    delete process.env[GIT_ENV_KEY];
+    process.chdir(emptyDir);
+    result = fn();
+  } catch (err) {
+    restore();
+    throw err;
+  }
+  if (result && typeof result.then === 'function') return result.finally(restore);
+  restore();
+  return result;
+}
+
 // #5050: the per-command twin of captureGhTimeout. Stubs BOTH child_process.execFileSync and
 // child_process.execFile (the latter with util.promisify.custom resolving `{ stdout: reply, stderr: '' }`)
 // and records EVERY `timeout` each command name carried, in spawn order, so a test asserts each runner's
@@ -49,20 +86,9 @@ function evictModules(modulePaths) {
 function captureExecTimeouts({ env = {}, modulePaths = [], reply = '{}', exercise }) {
   const cp = require('node:child_process');
   const util = require('node:util');
-  const fs = require('node:fs');
-  const os = require('node:os');
   const path = require('node:path');
   const origExecFileSync = cp.execFileSync;
   const origExecFile = cp.execFile;
-  const saved = new Map();
-  for (const key of [ENV_KEY, GIT_ENV_KEY, ...Object.keys(env)]) {
-    if (saved.has(key)) continue;
-    saved.set(key, Object.prototype.hasOwnProperty.call(process.env, key) ? process.env[key] : undefined);
-  }
-  // Run from an empty temp dir: the bound getters read the cwd's policy.yml (gh-timeout-ms, git-timeout-ms),
-  // and the env clearing above does not stop a raised value in this checkout's own policy from leaking in.
-  const originalCwd = process.cwd();
-  const emptyDir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-exec-bounds-'));
   const seen = { gh: [], git: [], node: [] };
   const record = (cmd, args, opts) => {
     const name = path.basename(String(cmd)).replace(/\.exe$/i, '');
@@ -85,25 +111,19 @@ function captureExecTimeouts({ env = {}, modulePaths = [], reply = '{}', exercis
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
   };
-  try {
-    delete process.env[ENV_KEY];
-    delete process.env[GIT_ENV_KEY];
-    cp.execFileSync = (cmd, args, opts) => { record(cmd, args, opts); return reply; };
-    cp.execFile = execFileStub;
-    process.chdir(emptyDir);
-    evictModules(modulePaths);
-    exercise(setEnv);
-    return seen;
-  } finally {
-    process.chdir(originalCwd);
-    fs.rmSync(emptyDir, { recursive: true, force: true });
-    cp.execFileSync = origExecFileSync;
-    cp.execFile = origExecFile;
-    for (const [key, value] of saved) {
-      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  return isolateExecBounds(Object.keys(env), () => {
+    try {
+      cp.execFileSync = (cmd, args, opts) => { record(cmd, args, opts); return reply; };
+      cp.execFile = execFileStub;
+      evictModules(modulePaths);
+      exercise(setEnv);
+      return seen;
+    } finally {
+      cp.execFileSync = origExecFileSync;
+      cp.execFile = origExecFile;
+      evictModules(modulePaths);
     }
-    evictModules(modulePaths);
-  }
+  });
 }
 
-module.exports = { captureGhTimeout, captureExecTimeouts, evictModules };
+module.exports = { captureGhTimeout, captureExecTimeouts, evictModules, isolateExecBounds };

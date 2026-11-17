@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const { runClassified, runClassifiedAsync, isPathContained, toPosix, relativeDisplayId, ghTimeoutMsAt } = require('../../plugin/bin/lib/shared-primitives');
 const path = require('path');
-const { captureExecTimeouts, evictModules } = require('../helpers/gh-timeout-probe');
+const { captureExecTimeouts, evictModules, isolateExecBounds } = require('../helpers/gh-timeout-probe');
 
 // A synthetic execFileSync/execFile timeout-kill error — the exact shape
 // bin/lib/hooks/git-exec.js's own tests already use to force this branch
@@ -702,25 +702,19 @@ test('relativeDisplayId is plain path.relative under path.posix (#3315)', () => 
 
 // execTimeoutMsFor (#5050): the one command-to-bound map the four exec seams share —
 // gh -> GH_BATCH_TIMEOUT_MS, git -> GIT_TIMEOUT_MS, anything else -> a fixed 30000.
-// Each case loads shared-primitives fresh (the getters memoize per process) in an empty
-// temp cwd, so neither this checkout's policy.yml nor an ambient env value reaches it.
+// Each case loads shared-primitives fresh (the getters memoize per process) through
+// captureExecTimeouts, which clears both bound env vars and runs from an empty temp cwd,
+// so neither this checkout's policy.yml nor an ambient env value reaches it.
 function execBoundsWithEnv(env) {
-  const keys = ['CLAUDE_TWEAKS_GH_TIMEOUT_MS', 'CLAUDE_TWEAKS_GIT_TIMEOUT_MS'];
-  const prior = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   let bounds;
-  withTempCwd(() => {
-    try {
-      for (const k of keys) delete process.env[k];
-      for (const [k, v] of Object.entries(env)) process.env[k] = v;
-      delete require.cache[MODULE_PATH];
+  captureExecTimeouts({
+    env,
+    exercise: (setEnv) => {
+      setEnv();
       // eslint-disable-next-line global-require
       const { execTimeoutMsFor } = require('../../plugin/bin/lib/shared-primitives');
       bounds = { gh: execTimeoutMsFor('gh'), git: execTimeoutMsFor('git'), node: execTimeoutMsFor('node') };
-    } finally {
-      for (const k of keys) {
-        if (prior[k] === undefined) delete process.env[k]; else process.env[k] = prior[k];
-      }
-    }
+    },
   });
   return bounds;
 }
@@ -832,13 +826,39 @@ test('captureExecTimeouts: an ambient git bound does not leak into a gh-only pro
   }
 });
 
-test('captureExecTimeouts: child_process and the require cache are left as found', () => {
+test('captureExecTimeouts: child_process is restored and shared-primitives is evicted from the require cache', () => {
   const cp = require('node:child_process');
   const { execFileSync, execFile } = cp;
   captureExecTimeouts({ modulePaths: [], exercise: () => { require('../../plugin/bin/lib/shared-primitives'); } });
   assert.strictEqual(cp.execFileSync, execFileSync);
   assert.strictEqual(cp.execFile, execFile);
   assert.strictEqual(require.cache[MODULE_PATH], undefined, 'shared-primitives was evicted after the probe');
+});
+
+test('isolateExecBounds: clears both bound keys and the cwd for the call, then restores them, for a sync throw and an async reject alike', async () => {
+  const ghKey = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+  const gitKey = 'CLAUDE_TWEAKS_GIT_TIMEOUT_MS';
+  const priorGh = process.env[ghKey];
+  const priorGit = process.env[gitKey];
+  const cwdBefore = process.cwd();
+  process.env[ghKey] = '40000';
+  process.env[gitKey] = '90000';
+  try {
+    let inside;
+    isolateExecBounds([], () => { inside = { gh: process.env[ghKey], git: process.env[gitKey], cwd: process.cwd() }; });
+    assert.deepStrictEqual({ gh: inside.gh, git: inside.git }, { gh: undefined, git: undefined });
+    assert.notStrictEqual(inside.cwd, cwdBefore, 'ran from an empty temp cwd');
+    assert.deepStrictEqual({ gh: process.env[ghKey], git: process.env[gitKey], cwd: process.cwd() }, { gh: '40000', git: '90000', cwd: cwdBefore });
+    assert.throws(() => isolateExecBounds([], () => { throw new Error('sync boom'); }), /sync boom/);
+    assert.strictEqual(process.env[ghKey], '40000', 'restored after a throw');
+    assert.strictEqual(process.cwd(), cwdBefore);
+    await assert.rejects(isolateExecBounds([], async () => { throw new Error('async boom'); }), /async boom/);
+    assert.strictEqual(process.env[gitKey], '90000', 'restored after a reject');
+    assert.strictEqual(process.cwd(), cwdBefore);
+  } finally {
+    if (priorGh === undefined) delete process.env[ghKey]; else process.env[ghKey] = priorGh;
+    if (priorGit === undefined) delete process.env[gitKey]; else process.env[gitKey] = priorGit;
+  }
 });
 
 test('evictModules: drops the named modules and shared-primitives from the require cache', () => {

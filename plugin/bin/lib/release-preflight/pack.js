@@ -22,6 +22,8 @@ const { execTimeoutMsFor } = require('../shared-primitives');
 
 const PROBE_NAMES = ['engine', 'lastTag', 'unreleased', 'proposedVersion', 'releasePr', 'ciTip', 'openReleasePrConflict', 'hook'];
 const PROBE_TIMEOUT_MS = 60000;
+// maxBuffer only: the wall-clock `timeout` is added per spawn through
+// execTimeoutMsFor(cmd) (the sync `git` and async execFileAsync runners below).
 const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024 };
 const ENGINES = new Set(['pr-first', 'local-merge']);
 const CONFIG_SOURCES = new Set(['policy', 'run-config']);

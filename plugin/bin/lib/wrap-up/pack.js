@@ -30,12 +30,15 @@ const { listHeaderDirs } = require('../run-header');
 const PROBE_NAMES = ['residue', 'state', 'blastRadius', 'pr', 'recordLabels', 'claim', 'ledger', 'unblocked'];
 const BIN = path.join(__dirname, '..', '..');
 
-// Every subprocess this module spawns is bounded the same way: a 32 MB stdout
-// ceiling (a `gh issue list --limit 200` of long bodies overruns Node's 1 MB
-// default and comes back as a truncation error) and a per-command wall clock
-// (`execTimeoutMsFor(cmd)`: gh and git follow their policy keys, node stays
-// 30 s), so one hung `gh` can never hold the whole pack open. The wall clock is
-// added at each call site, not held here, so the message names the bound the call carried.
+// Every async subprocess this module spawns through execBounded is bounded the
+// same way: a 32 MB stdout ceiling (a `gh issue list --limit 200` of long bodies
+// overruns Node's 1 MB default and comes back as a truncation error) and a
+// per-command wall clock (`execTimeoutMsFor(cmd)`: gh and git follow their policy
+// keys, node stays 30 s), so one hung async `gh` can never hold the whole pack
+// open. The wall clock is added at each call site, not held here, so the message
+// names the bound the call carried. The synchronous runners below (execSync,
+// defaultGit, defaultGhSync, defaultResolvePolicy's git) carry neither bound on
+// purpose: bounding them is #5870's decision, not #5050's.
 // Merged with `cwd` at each call site; never mutated.
 const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024, windowsHide: true };
 
@@ -61,7 +64,7 @@ async function execBounded(deps, cmd, args, cwd, wrap = keepOptions) {
   }
 }
 
-// The per-probe outer bound, one level above EXEC_OPTS: a probe that makes no
+// The per-probe outer bound, one level above the per-spawn execTimeoutMsFor bound: a probe that makes no
 // subprocess call at all (a module probe spinning, an fs read on a dead mount)
 // is still bounded. Injectable via deps.probeTimeoutMs for tests.
 const PROBE_TIMEOUT_MS = 60000;

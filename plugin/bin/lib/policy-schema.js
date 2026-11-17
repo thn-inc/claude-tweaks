@@ -168,7 +168,7 @@ const POLICY_KEYS = [
   // before its one automatic retry even starts. CLAUDE_TWEAKS_GH_TIMEOUT_MS
   // (an env var, not a policy key) takes precedence over this when both are
   // set — see shared-primitives.js's resolution order.
-  { key: 'gh-timeout-ms', type: 'integer', min: 1000, max: 60000, default: 5000, summary: "Bounds one `gh` call, killed and retried once; batched calls and exec-seam reads get max(30000, this value).", category: 'housekeeping', tier: 'advanced' },
+  { key: 'gh-timeout-ms', type: 'integer', min: 1000, max: 60000, default: 5000, summary: "Bounds one `gh` call (killed; retried once only where a caller opts in); batched and exec-seam calls get max(30000, this value).", category: 'housekeeping', tier: 'advanced' },
   // #3051: the `git` subprocess timeout for claims-git-cas.js's compare-and-
   // swap reads/writes against the claims-registry branch, routed through
   // bin/lib/shared-primitives.js's GIT_TIMEOUT_MS export — mirrors

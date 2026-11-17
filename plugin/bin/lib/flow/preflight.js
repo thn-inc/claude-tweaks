@@ -27,6 +27,9 @@ const { archivedRunDir, listHeaderDirs } = require('../run-header');
 
 const BIN = path.join(__dirname, '..', '..');
 const VERIFY_JS = path.join(BIN, 'verify.js');
+// maxBuffer only: the wall-clock `timeout` is added per spawn through
+// execTimeoutMsFor(cmd) (the execFile/execFileAsync runners in defaultDeps), so a
+// new spawn built from EXEC_OPTS alone carries no timeout.
 const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024 };
 
 // Outer per-probe bound, mirroring bin/lib/wrap-up/pack.js's own
@@ -66,6 +69,8 @@ function defaultDeps(cwd) {
   return {
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
+    // No timeout here (nor on resolvePolicy's git below) on purpose: #5050 changed only the
+    // spawns that already carried the fixed 30 s, and bounding these is #5870's decision.
     git: (args, opts = {}) => execFileSync('git', args, { cwd: opts.cwd || cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
     execFile: (cmd, args, opts = {}) => execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...EXEC_OPTS, timeout: execTimeoutMsFor(cmd), ...opts, windowsHide: true }),
     execFileAsync: async (cmd, args, opts = {}) => (await execFileAsync(cmd, args, { cwd, encoding: 'utf8', ...EXEC_OPTS, timeout: execTimeoutMsFor(cmd), ...opts, windowsHide: true })).stdout,
