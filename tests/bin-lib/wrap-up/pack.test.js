@@ -2125,3 +2125,71 @@ test('AC9.4 an unreadable archived header is skipped as absent, a readable archi
   assert.deepStrictEqual(res.records, [8]);
   assert.strictEqual(res.source, 'headers');
 });
+
+// exec bounds (#5050): each spawn carries the bound its command resolves (execTimeoutMsFor) and the
+// timeout message names that same bound. pack.js and shared-primitives are re-required under the env so
+// the memoized getters resolve fresh; both bound env vars are cleared first and restored afterwards.
+const PACK_MODULE_PATH = require.resolve('../../../plugin/bin/lib/wrap-up/pack.js');
+async function withExecBounds(env, fn) {
+  const { evictModules } = require('../../helpers/gh-timeout-probe');
+  const keys = ['CLAUDE_TWEAKS_GH_TIMEOUT_MS', 'CLAUDE_TWEAKS_GIT_TIMEOUT_MS'];
+  const saved = keys.map((k) => [k, Object.prototype.hasOwnProperty.call(process.env, k) ? process.env[k] : undefined]);
+  try {
+    for (const k of keys) delete process.env[k];
+    for (const [k, v] of Object.entries(env)) process.env[k] = v;
+    evictModules([PACK_MODULE_PATH]);
+    return await fn(require(PACK_MODULE_PATH));
+  } finally {
+    for (const [k, v] of saved) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    evictModules([PACK_MODULE_PATH]);
+  }
+}
+
+async function spawnTimeouts(env) {
+  const seen = { gh: [], node: [] };
+  const deps = okDeps({ execFile: async (cmd, args, o) => { if (seen[cmd]) seen[cmd].push(o.timeout); return okDeps().execFile(cmd, args); } });
+  await withExecBounds(env, (mod) => mod.gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', deps }));
+  return seen;
+}
+
+const BOTH_HIGH = { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '45000', CLAUDE_TWEAKS_GIT_TIMEOUT_MS: '90000' };
+
+test('exec bounds (#5050): the gh spawn follows CLAUDE_TWEAKS_GH_TIMEOUT_MS above the floor', async () => {
+  const seen = await spawnTimeouts({ CLAUDE_TWEAKS_GH_TIMEOUT_MS: '45000' });
+  assert.ok(seen.gh.length > 0);
+  for (const t of seen.gh) assert.strictEqual(t, 45000);
+});
+
+test('exec bounds (#5050): the gh spawn keeps 30000 when the env is unset or below the floor', async () => {
+  const unset = await spawnTimeouts({});
+  assert.ok(unset.gh.length > 0);
+  for (const t of unset.gh) assert.strictEqual(t, 30000, 'unset');
+  const low = await spawnTimeouts({ CLAUDE_TWEAKS_GH_TIMEOUT_MS: '10000' });
+  assert.ok(low.gh.length > 0);
+  for (const t of low.gh) assert.strictEqual(t, 30000, '10000');
+});
+
+test('exec bounds (#5050): every node spawn, the direct pr-checks.js one included, stays 30000 with both keys high', async () => {
+  const seen = await spawnTimeouts(BOTH_HIGH);
+  // state, residue and the unblocked probe's resolve-blockers.js, plus pr-checks.js (the direct spawn).
+  assert.ok(seen.node.length >= 4, `node spawns: ${seen.node.length}`);
+  for (const t of seen.node) assert.strictEqual(t, 30000);
+});
+
+test('exec bounds (#5050): a gh kill reads the raised bound the call carried', async () => {
+  const deps = okDeps({ execFile: async (cmd, args) => {
+    if (cmd === 'gh') throw Object.assign(new Error('Command failed: gh pr view'), { killed: true, signal: 'SIGTERM' });
+    return okDeps().execFile(cmd, args);
+  } });
+  const pack = await withExecBounds({ CLAUDE_TWEAKS_GH_TIMEOUT_MS: '45000' }, (mod) => mod.gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['pr'], deps }));
+  assert.match(pack.pr.error, /^timeout after 45000ms: gh pr \(killed by SIGTERM\)$/);
+});
+
+test('exec bounds (#5050): a node kill reads 30000 with both keys high', async () => {
+  const deps = okDeps({ execFile: async (cmd, args) => {
+    if (cmd === 'node' && String(args[0]).endsWith('residue.js')) throw Object.assign(new Error('Command failed: node residue.js'), { killed: true, signal: 'SIGTERM' });
+    return okDeps().execFile(cmd, args);
+  } });
+  const pack = await withExecBounds(BOTH_HIGH, (mod) => mod.gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['residue'], deps }));
+  assert.match(pack.residue.error, /^timeout after 30000ms: node residue\.js \(killed by SIGTERM\)$/);
+});

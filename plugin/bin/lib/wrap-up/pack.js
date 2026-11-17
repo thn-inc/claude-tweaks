@@ -22,7 +22,7 @@ const { gateOriginRepo, repoSlug, ghOptions, injectedGhDeps } = require('../repo
 const { readRunStateWithParent } = require('../hooks/context');
 const { ownedPlansFiles } = require('./ledger-ownership');
 const { ledgerRowCells } = require('./ledger-cells');
-const { isTimeoutError } = require('../shared-primitives');
+const { isTimeoutError, execTimeoutMsFor } = require('../shared-primitives');
 const { parseWorkBackend } = require('../work-backend');
 const { PIN_PATTERNS } = require('../set-config/write');
 const { listHeaderDirs } = require('../run-header');
@@ -32,10 +32,12 @@ const BIN = path.join(__dirname, '..', '..');
 
 // Every subprocess this module spawns is bounded the same way: a 32 MB stdout
 // ceiling (a `gh issue list --limit 200` of long bodies overruns Node's 1 MB
-// default and comes back as a truncation error) and a 30 s wall clock, so one
-// hung `gh` can never hold the whole pack open.
+// default and comes back as a truncation error) and a per-command wall clock
+// (`execTimeoutMsFor(cmd)`: gh and git follow their policy keys, node stays
+// 30 s), so one hung `gh` can never hold the whole pack open. The wall clock is
+// added at each call site, not held here, so the message names the bound the call carried.
 // Merged with `cwd` at each call site; never mutated.
-const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024, timeout: 30000, windowsHide: true };
+const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024, windowsHide: true };
 
 // The default `wrap` of execBounded and execSync: hands the options through unchanged.
 const keepOptions = (_args, opts) => opts;
@@ -47,12 +49,13 @@ const keepOptions = (_args, opts) => opts;
 // unchanged. `wrap` transforms the options per call: identity by default,
 // ghOptions (#4505's GH_HOST seam) for a gh spawn.
 async function execBounded(deps, cmd, args, cwd, wrap = keepOptions) {
+  const timeout = execTimeoutMsFor(cmd);
   try {
-    return await deps.execFile(cmd, args, wrap(args, { cwd, ...EXEC_OPTS }));
+    return await deps.execFile(cmd, args, wrap(args, { cwd, ...EXEC_OPTS, timeout }));
   } catch (err) {
     if (isTimeoutError(err)) {
       const target = cmd === 'node' ? path.basename(args[0]) : args[0];
-      throw new Error(`timeout after ${EXEC_OPTS.timeout}ms: ${cmd} ${target} (killed by ${err.signal || 'timeout'})`, { cause: err });
+      throw new Error(`timeout after ${timeout}ms: ${cmd} ${target} (killed by ${err.signal || 'timeout'})`, { cause: err });
     }
     throw err;
   }
@@ -763,7 +766,7 @@ function buildProbes(inputs, deps) {
     // --no-suite: a fact pack never re-runs the project's test suite. Suite
     // state belongs to /claude-tweaks:test's verification stamp, which already
     // holds it by the time wrap-up runs; re-running it here costs minutes (on
-    // this repo residue.js's suite probe exceeds both EXEC_OPTS.timeout and
+    // this repo residue.js's suite probe exceeds both the node spawn's 30 s bound and
     // the per-probe race), so every pack-fed residue carries
     // `suite: {ran: false, reason: 'skipped via --no-suite'}` by construction
     // — residue-sweep.md's "Running the sweep" says where the sweep reads
@@ -792,7 +795,7 @@ function buildProbes(inputs, deps) {
       // console shows the PR head's own verdict.
       let ci;
       try {
-        const { stdout: out } = await deps.execFile('node', [path.join(BIN, 'pr-checks.js'), '--pr', String(inputs.pr)], { cwd: inputs.worktree || undefined, ...EXEC_OPTS });
+        const { stdout: out } = await deps.execFile('node', [path.join(BIN, 'pr-checks.js'), '--pr', String(inputs.pr)], { cwd: inputs.worktree || undefined, ...EXEC_OPTS, timeout: execTimeoutMsFor('node') });
         const lines = String(out).split('\n').map((l) => l.trim()).filter(Boolean);
         ci = JSON.parse(lines[lines.length - 1]);
         if (ci === null || typeof ci !== 'object') throw new Error('pr-checks.js output is not a JSON object');
