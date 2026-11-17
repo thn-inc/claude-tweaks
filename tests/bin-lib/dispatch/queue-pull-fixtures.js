@@ -605,6 +605,15 @@ function withRecord(scenario, record, { open = true } = {}) {
   return scenario;
 }
 
+// #5317: S1({ parity: true }) plus #9050, a docs-health record whose named target `doc` (a path the
+// caller makes hostile) is absent at origin/main, so both sides stage the target-missing Close proposal.
+function SHostileTarget({ doc }) {
+  return withRecord(S1({ parity: true }), ghRecord(9050, {
+    body: `**Doc:** ${doc} | **Section:** fixture\n\n${withBody(9050)}`,
+    labels: ['auto:build', 'ready', 'by:docs-health'],
+  }));
+}
+
 // An OPEN blocker's landing node: the landing check reads it `open` and leaves it to the blocked pass.
 const OPEN_LANDING = (number) => ({
   number, state: 'OPEN', stateReason: null, timelineItems: { nodes: [] }, closedByPullRequestsReferences: { pageInfo: { hasNextPage: false }, nodes: [] },
@@ -878,5 +887,5 @@ module.exports = {
   ghLabel, ghRecord, SPEC_BODY, QUEUE_ARGV, OPEN_NUMBERS_ARGV, IN_FLIGHT_ARGV, OPEN_PRS_ARGV, writeInput, DEP_SEARCH_8000, withBody, S0, S1, S2, SEmpty, SMalformed, SPortable, SFast, fakeSpawnCli, agentInputs,
   LANDING_COMMIT, PORTABLE_SLUG,
   REPO_SLUG, linkedNode, linkedOutput, mention, WEAK_PR_FILES, tailGh, IN_FLIGHT_7001, OPEN_PR_41, LIVE_CLAIM,
-  FAULTS, FILES_FAULTS, D1Second, D1Third, EmptyAfterS1, S1LiveDep, failGh, NOT_JSON, GH_FAULT_STDERR, contentsApiArgv,
+  SHostileTarget, FAULTS, FILES_FAULTS, D1Second, D1Third, EmptyAfterS1, S1LiveDep, failGh, NOT_JSON, GH_FAULT_STDERR, contentsApiArgv,
 };

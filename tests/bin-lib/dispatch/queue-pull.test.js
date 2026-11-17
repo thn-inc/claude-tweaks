@@ -70,7 +70,7 @@ const {
 const {
   S0, S1, S2, SEmpty, SMalformed, SPortable, SFast, fakeRun, fakeSpawnCli, agentInputs, ghAnswer, ghRecord, withBody, QUEUE_ARGV, DEP_SEARCH_8000, mention, WEAK_PR_FILES,
   OPEN_NUMBERS_ARGV, IN_FLIGHT_ARGV, OPEN_PRS_ARGV, writeInput,
-  IN_FLIGHT_7001, OPEN_PR_41, LIVE_CLAIM, LANDING_COMMIT, PORTABLE_SLUG, FAULTS, FILES_FAULTS, D1Second, D1Third, EmptyAfterS1, S1LiveDep, NOT_JSON,
+  IN_FLIGHT_7001, OPEN_PR_41, LIVE_CLAIM, LANDING_COMMIT, PORTABLE_SLUG, FAULTS, FILES_FAULTS, D1Second, D1Third, EmptyAfterS1, S1LiveDep, NOT_JSON, SHostileTarget,
 } = require('./queue-pull-fixtures');
 const {
   PASSES, PASS_FIELD_VALUES, SESSION_FILES, QueuePullStopped, sessionPaths, runPasses, resolveOmit, defaultDeps, makeContext, queuePull, rankNext, rankFromFiles,
@@ -1581,10 +1581,10 @@ function fenceTargetProposal(num, tpath, ref) {
     const m = l.trim().match(/^echo "(.*)"$/);
     assert.ok(m, `not an echo line: ${l}`);
     const quoters = [...m[1].matchAll(QUOTER)];
-    if (!m[1].includes('$(node -e')) return unescape(expand(m[1]));
+    if (!m[1].includes('$(node -e')) return expand(unescape(m[1]));
     assert.equal(quoters.length, 1, `the fence's quoter changed shape: ${l}`);
     const [q] = quoters;
-    return unescape(expand(m[1].slice(0, q.index))) + shQuote(expand(q[1])) + unescape(expand(m[1].slice(q.index + q[0].length)));
+    return expand(unescape(m[1].slice(0, q.index))) + shQuote(expand(q[1])) + expand(unescape(m[1].slice(q.index + q[0].length)));
   }).map((l) => `${l}\n`).join('');
 }
 
@@ -1860,8 +1860,9 @@ test('#5317 AC1 (module): run by bash, the staged comment posts the path verbati
   { skip: process.platform === 'win32' && 'no bash' }, () => {
     const run = runStagedComment(hostileProposal(), 9009);
     assert.equal(run.status, 0, run.stderr);
-    assert.deepEqual(run.ghCalls, [['issue', 'comment', '9009', '--body', CLOSING_BODY(HOSTILE_DOC, 'origin/main')]]);
-    assert.equal(run.idRan, false, 'neither $(id) nor the backtick ran');
+    assert.deepEqual({ idRan: run.idRan, ghCalls: run.ghCalls },
+      { idRan: false, ghCalls: [['issue', 'comment', '9009', '--body', CLOSING_BODY(HOSTILE_DOC, 'origin/main')]] },
+      'neither $(id) nor the backtick ran, and the path reached the comment verbatim');
   });
 
 test('AC2.1 shipped: #9010 (strong) is excluded with its signals, prints the strong AUTO line and stages shipped-close-9010; #9016 (weak) is probed, prints the weak AUTO line and stays', () => {
@@ -3495,6 +3496,26 @@ describe('#5227 parity (AC1)', { skip: oracleSkip(), timeout: 600_000 }, () => {
       }
     }
   });
+});
+
+describe('#5317 parity: a hostile named-target path', { skip: oracleSkip(), timeout: 600_000 }, () => {
+  let pair;
+  before(async () => { pair = await memoPair({ name: 'S1-hostile-target', scenario: SHostileTarget({ doc: HOSTILE_DOC }), transport: 'gh' }); });
+  test('AC2: the script and the module stage byte-identical proposals, and the rest of the run matches', () => {
+    assertClean(pair, 'S1-hostile-target');
+    assert.equal(pair.oracle.status, 0, pair.oracle.stderr.slice(-3000));
+    assertParity(pair.oracle, pair.module, { files: AC1_FILES });
+    assert.equal(pair.module.staged['dispatch-target-missing-9050.md'], pair.oracle.staged['dispatch-target-missing-9050.md']);
+  });
+  for (const side of ['oracle', 'module']) {
+    test(`AC1 (${side}): run by bash, the staged comment posts the path verbatim and runs nothing else`,
+      { skip: process.platform === 'win32' && 'no bash' }, () => {
+        const run = runStagedComment(pair[side].staged['dispatch-target-missing-9050.md'], 9050);
+        assert.equal(run.status, 0, run.stderr);
+        assert.deepEqual({ idRan: run.idRan, ghCalls: run.ghCalls },
+          { idRan: false, ghCalls: [['issue', 'comment', '9050', '--body', CLOSING_BODY(HOSTILE_DOC, 'origin/main')]] });
+      });
+  }
 });
 
 describe('#5227 parity (AC5, portability)', { skip: oracleSkip(), timeout: 600_000 }, () => {
