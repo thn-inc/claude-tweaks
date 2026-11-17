@@ -1084,12 +1084,12 @@ function mcpRecord(number, body) {
 test('#5227 files: the queue file is copied into the session file and aliased there, dispatch-verified-open-deps.txt replaces the gh issue view loop, and no gh call is made', () => {
   const calls = [];
   const noGh = (cmd, args) => { calls.push([cmd, ...args]); throw new Error(`gh must not be called on files: ${args.join(' ')}`); };
-  const write = (own, { verified }) => {
+  const write = (own, { verified, freshness = '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"open"}]' }) => {
     return {
       inputs: {
         queueRaw: writeInput(own, 'queue.json', JSON.stringify([mcpRecord(9001, withBody(9001)), mcpRecord(9002, `Blocked by #8000\n\n${withBody(9002)}`)])),
         openNumbers: writeInput(own, 'open.json', '[{"number":9001},{"number":9002}]'),
-        depFreshness: writeInput(own, 'dep.json', '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"open"}]'),
+        depFreshness: writeInput(own, 'dep.json', freshness),
         verifiedOpenDeps: verified === null ? path.join(own, 'absent.txt') : writeInput(own, 'verified.txt', verified),
       },
     };
@@ -1123,8 +1123,8 @@ test('#5227 files: the queue file is copied into the session file and aliased th
   const crlf = pull(S1(), { transport: 'files', run: noGh, prepare: (own) => write(own, { verified: '8000\r\n\n' }) });
   assert.deepEqual(groupNumbers(crlf), [[9001]]);
   assert.deepEqual(warningsOf(crlf), [], 'CRLF and a blank line are well-formed');
-  const empty = pull(S1(), { transport: 'files', run: noGh, prepare: (own) => write(own, { verified: '' }) });
-  assert.deepEqual(groupNumbers(empty), [[9001], [9002]], 'an empty file is a well-formed "none open" answer');
+  const empty = pull(S1(), { transport: 'files', run: noGh, prepare: (own) => write(own, { verified: '', freshness: '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"closed"}]' }) });
+  assert.deepEqual(groupNumbers(empty), [[9001], [9002]], 'an empty file with the dependency shown closed is a well-formed "none open" answer');
   assert.deepEqual(warningsOf(empty), []);
   assert.deepEqual(calls, []);
 
@@ -1142,6 +1142,36 @@ test('#5227 files: the queue file is copied into the session file and aliased th
   });
   assert.deepEqual(entriesOf(foreign, 'blocked'), [{ reason: 'blocked', records: [9001], detail: { blockedBy: ['acme-corp/other#12'] } }], 'PF17: foreignStates is read on files too');
   assert.deepEqual(foreign.cliCalls.filter(([n]) => n === 'resolve-foreign-blockers.js'), []);
+});
+
+test('AC1.1, AC1.2 (#5408): files: an unresolved dependency the verified-open-deps file omits and the dependency-freshness file does not show closed is treated as open, with one Warning naming it', () => {
+  const OMITTED = (n) => `Warning: verified-open-deps file omits #${n}, which the dependency-freshness file does not show closed — treated as open (fail closed) this run`;
+  const noGh = (cmd, args) => { throw new Error(`gh must not be called on files: ${args.join(' ')}`); };
+  const run = (blockedBody, freshness) => pull(S1(), { transport: 'files', run: noGh, prepare: (own) => ({ inputs: {
+    queueRaw: writeInput(own, 'queue.json', JSON.stringify([mcpRecord(9001, withBody(9001)), mcpRecord(9002, `${blockedBody}\n\n${withBody(9002)}`)])),
+    openNumbers: writeInput(own, 'open.json', '[{"number":9001},{"number":9002}]'),
+    depFreshness: writeInput(own, 'dep.json', freshness),
+    verifiedOpenDeps: writeInput(own, 'verified.txt', ''),
+  } }) });
+  const BLOCKED_8000 = [{ reason: 'blocked', records: [9002], detail: { blockedBy: [8000] } }];
+
+  for (const [label, freshness] of [
+    ['an empty dependency-freshness file', '[]'],
+    ['an entry showing the dependency open', '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"open"}]'],
+  ]) {
+    const r = run('Blocked by #8000', freshness);
+    assert.deepEqual(groupNumbers(r), [[9001]], `${label}: #9002 is not dispatchable`);
+    assert.deepEqual(entriesOf(r, 'blocked'), BLOCKED_8000, label);
+    assert.deepEqual(warningsOf(r), [OMITTED(8000)], label);
+    assert.equal(r.store.written.length, 0, `${label}: a fail-closed verdict is never persisted to the queue-order cache`);
+  }
+
+  const closed = run('Blocked by #8000', '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"CLOSED"}]');
+  assert.deepEqual(groupNumbers(closed), [[9001], [9002]], 'a dependency the freshness file shows closed does not block');
+  assert.deepEqual(warningsOf(closed), []);
+
+  const two = run('Blocked by #8000\nBlocked by #8001', '[]');
+  assert.deepEqual(warningsOf(two), [OMITTED(8000), OMITTED(8001)], 'one Warning per omitted dependency, in dependency order');
 });
 
 test('AC1.1 (#5311): a failed dependency view excludes the dependent record as blocked and prints the line naming the view', () => {

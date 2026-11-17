@@ -297,6 +297,21 @@ function agentDepFreshness(ctx, file) {
   else put(ctx, file, text);
 }
 
+// The numbers the agent's dependency-freshness text shows closed (#5408). An unparseable value, a
+// non-array, or an entry without an integer `number` and a string `state` is no evidence of closure.
+function closedDependencyNumbers(text) {
+  let entries;
+  try {
+    entries = JSON.parse(text);
+  } catch {
+    return new Set();
+  }
+  if (!Array.isArray(entries)) return new Set();
+  return new Set(entries
+    .filter((e) => e && Number.isInteger(e.number) && typeof e.state === 'string' && e.state.toLowerCase() === 'closed')
+    .map((e) => e.number));
+}
+
 // On `files` the agent's queue file stands where the fence's queue pull stands, as the agent's Write
 // does: copied into the session file, which is the one aliased and read from then on, so the
 // caller's own file is never rewritten (a non-array session copy is a failed read, #5307). A
@@ -675,6 +690,18 @@ function runBlocked(ctx) {
     }
     const verifiedOpen = bad ? unresolved.map(Number) : lines.map(Number);
     for (const dep of verifiedOpen) openNumbers.add(dep);
+    // #5408: on `files` the agent writes the verified-open list, so it is not complete by construction
+    // as the CLI's is. An unresolved dependency it omits counts as closed only when the agent's own
+    // dependency-freshness text shows it closed; otherwise it counts as open (fail closed).
+    if (!bad && ctx.options.transport === 'files') {
+      const closed = closedDependencyNumbers(state.depFreshnessInput);
+      for (const dep of readJson(paths['dispatch-unresolved-deps.json'])) {
+        if (verifiedOpen.includes(dep) || closed.has(dep)) continue;
+        openNumbers.add(dep);
+        deps.stderr(`Warning: verified-open-deps file omits #${dep}, which the dependency-freshness file does not show closed — treated as open (fail closed) this run\n`);
+        state.depUnreadable = true;
+      }
+    }
     // #4793: a supplied states file (either transport) answers the foreign refs; the rest go to
     // resolve-foreign-blockers.js through the library's own bounded spawn (tests inject
     // deps.foreignDeps.spawn).
