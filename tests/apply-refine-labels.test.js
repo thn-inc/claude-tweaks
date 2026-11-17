@@ -221,7 +221,7 @@ test('run: no owner/repo resolvable from --repo or git remote exits 2', () => {
   });
   const code = run(['actions.json'], deps);
   assert.strictEqual(code, 2);
-  assert.match(deps.calls.stderr.join(''), /could not resolve owner\/repo/);
+  assert.match(deps.calls.stderr.join(''), /could not resolve owner\/repo — pass --repo \[host\/\]owner\/name/);
 });
 
 test('run: gh not available exits 2 before reading the actions file', () => {

@@ -1,21 +1,23 @@
 'use strict';
-// tests/bin-lib/timing/pair-lines.test.js — #5556: the review pair-line reader and its prose pin.
+// tests/bin-lib/timing/pair-lines.test.js — #5556: the review pair-line reader and its producer pin.
 //
 // Producers of the pair lines (git grep -n -F 'Reproduction: lens' -- plugin):
-//   plugin/skills/review/step3-lens-dispatch.md  — the seven pair templates (pinned below)
+//   plugin/bin/lib/reproduction-log.js           — the seven pair forms (#5595; pinned below to PAIR_FORMS)
 //   plugin/skills/review/step3-tier-variants.md  — the single-read-coverage notice (pinned below)
 //   plugin/bin/lib/tiebreak.js, plugin/bin/lib/console/resolve.js — the tiebreak forms,
 //     owned by parseTiebreakLine (a pair-lines null, asserted below)
-// Mention that is not a producer: release/SKILL.md (quotes one template).
+// Mention that is not a producer: release/SKILL.md (quotes form 1, naming the composer; pinned below to rl.reproduced).
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { readText } = require('../../helpers/read-skill');
 const { PAIR_FORMS, LEGACY_FORMS, ALL_FORMS, JUDGE_NONE, classifyPairLine, isReviewMarkedLine, entryLine, isJudgeNone } = require('../../../plugin/bin/lib/timing/pair-lines');
+const rl = require('../../../plugin/bin/lib/reproduction-log');
+const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
 
 const SKILL_DIR = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'review');
-const SKILL = path.join(SKILL_DIR, 'step3-lens-dispatch.md');
 const TIER = path.join(SKILL_DIR, 'step3-tier-variants.md');
+const RELEASE = path.join(SKILL_DIR, '..', 'release', 'SKILL.md');
 const COVERAGE_PHRASES = ['session limit twice', 'unavailable', 'timed out'];
 const RULE = 'pair-line patterns are additive: add a pattern for the new wording, never replace one, so archived runs keep parsing';
 
@@ -43,6 +45,32 @@ for (const [id, line, want] of CASES) {
     assert.deepEqual(classifyPairLine(labelled), { form: id, ...want });
   });
 }
+
+test('#5595: an unlocated not-reproduced line (no :line) classifies with line null; a located one keeps its line', () => {
+  const unlocated = L('STAGED', `Reproduction: lens "3c" finding plugin/x.js not reproduced. Staged to Review Console as low-confidence. ${R}`);
+  assert.deepEqual(classifyPairLine(unlocated), { form: 'not-reproduced', lens: '3c', path: 'plugin/x.js', line: null });
+  assert.deepEqual(classifyPairLine(unlocated.replace('plugin/x.js', 'docs/a b.md')), { form: 'not-reproduced', lens: '3c', path: 'docs/a b.md', line: null });
+  assert.deepEqual(classifyPairLine(unlocated.replace('plugin/x.js', 'plugin/x.js:12')), { form: 'not-reproduced', lens: '3c', path: 'plugin/x.js', line: 12 });
+});
+
+// A located line carrying a note keeps its path and line: the unlocated pattern, tried first among the strict
+// ones, must not read the note as part of a path. (Archived line, verbatim: archive/2026-10-20T124340-record-3048.)
+test('#5595: a located not-reproduced line with a note keeps its line (the unlocated pattern never takes it)', () => {
+  const noted = '- STAGED 18:13:35 — Reproduction: lens "3c" finding plugin/bin/lib/verify/changed-files.js:78 (exit-1 message says "no usable stamp anchor" under --ignore-stamp) not reproduced. Staged to Review Console as low-confidence. Reversibility: high.';
+  assert.deepEqual(classifyPairLine(noted), { form: 'not-reproduced', lens: '3c', path: 'plugin/bin/lib/verify/changed-files.js', line: 78 });
+  // A line range: no strict located pattern reads it, so the loose one must, not the unlocated strict one.
+  assert.deepEqual(classifyPairLine(L('STAGED', `Reproduction: lens "3c" finding plugin/x.js:12-14 not reproduced. Staged to Review Console as low-confidence. ${R}`)),
+    { form: 'not-reproduced', lens: '3c', path: 'plugin/x.js', line: 12 });
+  // A dash-led note after an unlocated path is no pair line either: the unlocated path never holds ` — `.
+  assert.equal(classifyPairLine(L('STAGED', `Reproduction: lens "3c" finding tests/x.test.js — no test for the guard not reproduced. Staged to Review Console as low-confidence. ${R}`)), null);
+  // A path holding ` (` is read by the located pattern but not unlocated (it cannot be told from a note); the
+  // composer's unlocated form 3 for such a path is therefore no pair line (#5595).
+  assert.equal(classifyPairLine(L('STAGED', `Reproduction: lens "3c" finding docs/a (b).md not reproduced. Staged to Review Console as low-confidence. ${R}`)), null);
+  assert.deepEqual(classifyPairLine(L('STAGED', `Reproduction: lens "3c" finding docs/a (b).md:4 not reproduced. Staged to Review Console as low-confidence. ${R}`)),
+    { form: 'not-reproduced', lens: '3c', path: 'docs/a (b).md', line: 4 });
+  // A noted line with no location is no pair line (as before #5595).
+  assert.equal(classifyPairLine(L('STAGED', `Reproduction: lens "3c" finding tests/x.test.js (no test for the guard) not reproduced. Staged to Review Console as low-confidence. ${R}`)), null);
+});
 
 test('AC3.2: a path containing a space still parses', () => {
   const r = classifyPairLine(L('AUTO', `Reproduction: lens "3a" finding docs/a b.md:4 reproduced. Confirmed. ${R}`));
@@ -327,14 +355,33 @@ test('legacy forms: ids are distinct from the prose-pinned forms, and an elevati
   assert.ok(Object.isFrozen(LEGACY_FORMS) && Object.isFrozen(ALL_FORMS));
 });
 
-// --- Prose pin: the live templates are the only producer of the pair lines. ---
+// --- Producer pin: the composer writes seven pair forms, step3-tier-variants.md's template the eighth. ---
+// Since #5595 plugin/bin/lib/reproduction-log.js is the only home of the seven forms (that step3-lens-dispatch.md
+// carries no template is tests/review-reproduction-call-conformance.test.js's AC10.1). Each composed line must match exactly one PAIR_FORMS pattern, and
+// its action must equal that form's `template` filled with the same values: the composer↔PAIR_FORMS twin pin.
 
 const FILL = [
   ['{observed output}', '1 failing'], ['{command}', 'grep -n foo plugin/x.js'], ['{symbol}', 'foo'],
   ['{lineA}', '12'], ['{lineB}', '14'], ['{line}', '12'], ['{path}', 'plugin/x.js'], ['{lens}', '3a'],
 ];
+// Form 5's second location (after `found it at `) is foundAt, in another file, so a template that filled it
+// from `{path}` cannot pass.
+const FOUND_AT = { path: 'plugin/y.js', line: 40 };
 
-function liveTemplates(file = SKILL) {
+const COMPOSED = [
+  rl.reproduced({ lens: '3a', path: 'plugin/x.js', line: 12 }),
+  rl.reproduced({ lens: '3a', path: 'plugin/x.js', line: 12, severityContested: true }),
+  rl.notReproduced({ lens: '3a', path: 'plugin/x.js', line: 12 }),
+  rl.absenceRefuted({ lens: '3a', path: 'plugin/x.js', symbol: 'foo', command: 'grep -n foo plugin/x.js', foundAt: FOUND_AT }),
+  rl.vacuityDowngraded({ path: 'plugin/x.js', line: 12 }),
+  rl.vacuityReconfirmed({ path: 'plugin/x.js', line: 12, command: 'grep -n foo plugin/x.js', output: '1 failing' }),
+  rl.coincidence({ lens: '3a', path: 'plugin/x.js', lineA: 12, lineB: 14 }),
+];
+const NOW = new Date(2026, 10, 16, 10, 0, 0);
+const composedLine = (entry) => formatEntry({ ...entry, now: NOW });
+const actionOf = (line) => line.replace(/^- \w+ \d{2}:\d{2}:\d{2} — /, '');
+
+function liveTemplates(file) {
   const text = readText(file);
   const spans = [];
   for (const m of text.matchAll(/`([^`\n]*— Reproduction:[^`\n]*)`/g)) spans.push(m[1]);
@@ -342,7 +389,7 @@ function liveTemplates(file = SKILL) {
 }
 
 function fill(template) {
-  let out = template;
+  let out = template.split('found it at {path}:{line}').join(`found it at ${FOUND_AT.path}:${FOUND_AT.line}`);
   for (const [k, v] of FILL) out = out.split(k).join(v);
   return out;
 }
@@ -351,21 +398,24 @@ function matchingForms(action) {
   return PAIR_FORMS.filter((f) => f.pattern.some((re) => re.test(action))).map((f) => f.id);
 }
 
-test('AC3.3: every pair-line template in step3-lens-dispatch.md matches its pattern', () => {
-  const tier = liveTemplates(TIER);
-  assert.equal(tier.length, 1, `step3-tier-variants.md holds ${tier.length} pair templates, expected 1; the producers are step3-tier-variants.md (single-read-coverage) and step3-lens-dispatch.md (the seven pair forms) — ${RULE}`);
-  const templates = [...liveTemplates(SKILL), ...tier];
-  assert.equal(templates.length, PAIR_FORMS.length, `step3-lens-dispatch.md holds ${templates.length} pair templates, PAIR_FORMS has ${PAIR_FORMS.length} — ${RULE}`);
+test('AC3.3: every composed pair line matches exactly one form and equals its PAIR_FORMS template', () => {
   const matched = [];
-  for (const t of templates) {
-    const filled = fill(t.replace(/\{session limit twice \| unavailable \| timed out\}/, COVERAGE_PHRASES[0]));
+  for (const entry of COMPOSED) {
+    const line = composedLine(entry);
+    const forms = matchingForms(line);
+    assert.equal(forms.length, 1, `composed line "${line}" matches forms [${forms.join(', ')}], expected exactly one — ${RULE}`);
+    const filled = fill(PAIR_FORMS.find((f) => f.id === forms[0]).template);
     assert.ok(!/[{}]/.test(filled), `a placeholder survived filling: ${filled}`);
-    const forms = matchingForms(filled);
-    assert.equal(forms.length, 1, `template "${t}" matches forms [${forms.join(', ')}], expected exactly one — ${RULE}`);
-    assert.equal(PAIR_FORMS.find((f) => f.id === forms[0]).template, t, `form ${forms[0]} template text drifted from the prose — ${RULE}`);
+    assert.equal(actionOf(line), filled, `form ${forms[0]}: the composer and its PAIR_FORMS template drifted apart — ${RULE}`);
     matched.push(forms[0]);
   }
-  assert.deepEqual(matched.sort(), PAIR_FORMS.map((f) => f.id).sort());
+  assert.deepEqual(matched.sort(), PAIR_FORMS.map((f) => f.id).filter((id) => id !== 'single-read-coverage').sort());
+});
+
+test('AC3.3: step3-tier-variants.md carries the eighth pair template', () => {
+  const tier = liveTemplates(TIER);
+  assert.equal(tier.length, 1, `step3-tier-variants.md holds ${tier.length} pair templates, expected 1 (single-read-coverage) — ${RULE}`);
+  assert.equal(PAIR_FORMS.find((f) => f.id === 'single-read-coverage').template, tier[0], `form single-read-coverage template text drifted from the prose — ${RULE}`);
 });
 
 test('AC3.3: each single-read-coverage alternation filling matches that form', () => {
@@ -379,10 +429,37 @@ test('AC3.3: each single-read-coverage alternation filling matches that form', (
   assert.equal(matchingForms(fill(t.replace(/\{[^}]*\|[^}]*\}/, 'exploded'))).length, 0);
 });
 
-test('AC3.3: a reworded template matches no form (go-red control)', () => {
-  const [first] = liveTemplates();
+test('AC3.3: a reworded composed line matches no form, and a drifted template fails the twin pin (go-red controls)', () => {
+  const first = composedLine(COMPOSED[0]);
   assert.ok(first.includes('reproduced.'));
-  const mutated = fill(first).replace('reproduced.', 'was reproduced.');
+  const mutated = first.replace('reproduced.', 'was reproduced.');
   assert.deepEqual(matchingForms(mutated), []);
   assert.equal(classifyPairLine(mutated), null);
+  // Form 5's template filled with `{path}` in both locations differs from the composed line.
+  const absence = PAIR_FORMS.find((f) => f.id === 'absence-refuted');
+  let naive = absence.template;
+  for (const [k, v] of FILL) naive = naive.split(k).join(v);
+  assert.notEqual(actionOf(composedLine(COMPOSED[3])), naive);
+  assert.equal(actionOf(composedLine(COMPOSED[3])), fill(absence.template));
+});
+
+// release/SKILL.md quotes form 1; the quote is the composer's output with the quote's own placeholders.
+function releaseQuoteProblem(text) {
+  const m = /`(AUTO \{time\} — Reproduction: [^`\n]*)`/.exec(text);
+  if (!m) return 'release/SKILL.md quotes no Reproduction line';
+  // location() drops a non-integer line, so compose with a sentinel line and put the quote's `{line}` back.
+  const composed = composedLine(rl.reproduced({ lens: '{lens}', path: '{path}', line: 987 }))
+    .replace(/^- (\w+) \d{2}:\d{2}:\d{2} /, '$1 {time} ').replace('{path}:987', '{path}:{line}');
+  return m[1] === composed ? null : `release/SKILL.md quote drifted from rl.reproduced: ${m[1]} vs ${composed}`;
+}
+
+test('#5595: release/SKILL.md\'s quoted form 1 line equals rl.reproduced composed with its placeholders', () => {
+  assert.equal(releaseQuoteProblem(readText(RELEASE)), null);
+});
+
+test('#5595 go-red: a drifted release/SKILL.md quote is caught', () => {
+  const live = readText(RELEASE);
+  const drifted = live.replace('reproduced. Confirmed. Reversibility: high.`', 'reproduced. Confirmed. …`');
+  assert.notEqual(drifted, live);
+  assert.match(releaseQuoteProblem(drifted), /drifted/);
 });

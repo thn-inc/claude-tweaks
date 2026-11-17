@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/bin/lib/policy-schema.js
+  - plugin/bin/lib/policy-file.js
   - plugin/bin/lib/policy-derived-defaults.js
   - plugin/bin/resolve-policy.js
   - plugin/bin/lib/flow/manifesto-write.js
@@ -22,7 +23,7 @@ files:
 - **URL:** —
 - **Action:** `resolve-policy.js integration-model` runs `gh repo view` bounded by the repo's own timeout ladder. The order is an explicit `opts.timeoutMs`, then `CLAUDE_TWEAKS_GH_TIMEOUT_MS`, then `gh-timeout-ms` from `{repoRoot}/.claude-tweaks/policy.yml`, then 5000. An 8 s answer resolves `pr-first`.
 - **Should feel:** Nothing visible. The slow host just works once the timeout is set.
-- **Should understand:** The ladder reads the repo being detected, not `process.cwd()`. The `git remote get-url origin` probe keeps its own short 5 s bound.
+- **Should understand:** The ladder reads the repo being detected, not `process.cwd()`. The `git remote get-url origin` probe keeps its own short 5 s bound. From a linked worktree with no `policy.yml` of its own (a project that keeps `.claude-tweaks/` out of git), the `gh-timeout-ms` rung reads the main checkout's file, found through `plugin/bin/lib/policy-file.js`'s `locatePolicyFile` (#4492).
 - **Red flags:** `local-merge` comes back after about 5 s even though `gh-timeout-ms: 20000` is set.
 
 ### 2. A timeout is retried once, then reported as degraded — `resolve-policy.js` stderr and JSON
@@ -51,10 +52,11 @@ files:
 - **Action:** Follow the stderr line's advice: pin `integration-model: pr-first` (no `gh` call at all, ever), or raise `gh-timeout-ms` (bounded 1000–60000) and re-run.
 - **Should feel:** One edit, done.
 - **Should understand:** A pin in `policy.yml`, or in the run's `config.yml`, wins outright over detection. An out-of-range `gh-timeout-ms` (for example 90000) silently falls back to 5000.
-- **Red flags:** Still degraded at 60000 ms. The host is down, not slow.
+- **Red flags:** Still degraded at 60000 ms. The host is down, not slow. From a linked worktree that reads the main checkout's `policy.yml`, the edit landing in a new worktree-local `.claude-tweaks/policy.yml`: that file wins outright and hides every other main-checkout key (#4492). Edit the main checkout's file instead.
 
 ## Origin
 - Created during build of #4578 (policy-schema detectIntegrationModel: ignores gh-timeout-ms and silently falls back to local-merge)
 - Steps 1-4 built in this session; step 5 is the existing pin/timeout override, now named in the degrade line
 - Step 4 extended during build of #4830 (run-scoped forge degrade memo): a hung `gh` now costs the PR-stamp gate one probe per `FORGE_DEGRADE_MEMO_TTL_MS` window instead of one per covered call
+- Steps 1 and 5 updated at the wrap-up of #4492 (policy locator): from a linked worktree without its own `policy.yml`, the `gh-timeout-ms` rung reads the main checkout's file, and step 5's red flag warns against a worktree-local copy; `files:` gains `plugin/bin/lib/policy-file.js`
 - Related: `open-a-run-pr-on-a-slow-gh-host-4554.md` (the same slow host's draft-PR path), `resolve-a-policy-key.md`

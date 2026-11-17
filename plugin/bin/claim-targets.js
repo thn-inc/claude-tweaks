@@ -26,8 +26,9 @@ const { run, defaultAppendClaimLog } = require('./lib/claim-targets/claim-target
 const { defaultRunner: gitDefaultRunner } = require('./lib/issues/claims-git-cas');
 const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 const {
-  ghOptions, resolveRepoTarget, resolveGhHost, gateOriginRepo, originUrl,
+  ghOptions, resolveRepoTarget, resolveGhHost, originUrl,
 } = require('./lib/repo-resolve');
+const { repoTargetOfRemote } = require('./lib/hooks/git-exec');
 
 // maxBuffer: the stale-claim check's `gh pr list --json url,body,...` carries
 // every open PR's body, which overflows Node's 1 MiB default (ENOBUFS) well
@@ -50,19 +51,27 @@ const realDeps = {
   sessionId: process.env.CLAUDE_CODE_SESSION_ID || '',
   appendClaimLog: defaultAppendClaimLog,
   // #4794: the origin-host gate's verdict ({ spec, refusal }), for run() to refuse an
-  // unknown or SSH-alias origin before any gh call. `originUrl` carries the git timeout.
+  // unknown or SSH-alias origin before any gh call. `originUrl` carries the git timeout. The gate
+  // is git-exec.js's repoTargetOfRemote (#5109), with its one loose fallback on: a remote the gate
+  // cannot read (an unparseable sandbox proxy remote) gets a spec whose host is an exported host
+  // override or github.com, as `resolveGhHost`'s null gave before; only an unread or wholly
+  // unparseable origin gives neither a spec nor a refusal.
   gateOrigin: () => {
     let remote = null;
     try { remote = originUrl(process.cwd()); } catch { remote = null; }
-    return gateOriginRepo(remote);
+    const t = repoTargetOfRemote(remote);
+    if (!t) return { spec: null, refusal: null };
+    if (t.refusal) return { spec: null, refusal: t.refusal };
+    return { spec: { host: t.host, owner: t.owner, repo: t.repo }, refusal: null };
   },
   // #4794: the run's one repo target. The host is the gh seam's (`resolveGhHost`, positive
   // signals only): the one `defaultGh`'s inferred calls (`gh repo view`, `gh pr view`) already
   // reach, so the stale listing, the tombstone check and the stale match share it. When the gate
   // admitted a spec, run() passes its host (`gateHost`) so the one origin read decides: a second
   // `resolveGhHost` read could time out alone and send the run's calls to github.com although the
-  // gate admitted a GHE origin. With no spec (an unparseable sandbox proxy remote) the seam's own
-  // read stays the fallback.
+  // gate admitted a GHE origin. `resolveGhHost` is now the fallback only for an origin that was
+  // unread (`originUrl` threw or gave nothing) or wholly unparseable, the host the seam's
+  // memoized read gave `gh repo view`.
   repoTarget: (owner, repo, gateHost) => resolveRepoTarget({
     owner, repo, originHost: gateHost || resolveGhHost(process.cwd()),
   }),

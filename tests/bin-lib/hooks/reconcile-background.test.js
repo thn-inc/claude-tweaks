@@ -244,6 +244,17 @@ test('reconcile-background summary: counts each check\'s taken entries (characte
   assert.deepEqual(summary.skipped, [{ check: 'release', reason: 'x' }]);
 });
 
+test("reconcile-background summary: the banner drops reap-merged's 'held' and 'in-use' skips but keeps held-unverifiable (#4960)", async () => {
+  const summary = await backgroundSummaryFor({
+    worktrees: [
+      { action: 'skipped', path: '/w/held', reason: 'held' },
+      { action: 'skipped', path: '/w/in-use', reason: 'in-use' },
+      { action: 'skipped', path: '/w/stuck', reason: 'held-unverifiable' },
+    ],
+  });
+  assert.deepEqual(summary.notableWorktrees, [{ path: '/w/stuck', reason: 'held-unverifiable' }]);
+});
+
 test('reconcile-background summary: counts post-merge runs and the parents they closed, a marker-write-failed entry\'s parents included (#4599)', async () => {
   const summary = await backgroundSummaryFor({
     postMerge: [
