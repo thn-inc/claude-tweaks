@@ -627,9 +627,19 @@ function gitFixtureConfigEnv(env) {
 // `git init`/`git clone` creates, so those repositories carry the keys themselves.
 const GIT_TEMPLATE_CONFIG = '[maintenance]\n\tauto = false\n[gc]\n\tauto = 0\n[receive]\n\tautogc = false\n';
 
+// True when `from` (a path fs.cpSync hands its filter) is a `*.sample` file directly inside `hooksDir`.
+// On win32, Node 20's cpSync passes a namespaced `src` (`\\?\C:\…\hooks\x.sample`), so both sides
+// are compared namespaced; toNamespacedPath is idempotent, and a no-op on POSIX.
+function isTemplateSampleHook(from, hooksDir, pathImpl = path) {
+  return from.endsWith('.sample') && pathImpl.toNamespacedPath(pathImpl.dirname(from)) === pathImpl.toNamespacedPath(hooksDir);
+}
+
 // Writes a git template directory at `dir` (git's built-in default template, or a usable inherited
 // GIT_TEMPLATE_DIR, plus GIT_TEMPLATE_CONFIG) and returns `dir`; null when any step throws.
 // `onError` is called with the caught error before null is returned.
+// #5771: no `hooks/*.sample` file is kept: git's default ships 14 of them and copies every one into
+// each repository a test creates. `hooks/` itself stays, empty from the default and with an
+// inherited template's other hooks; `info/` (with `exclude`) and `description` stay.
 function writeGitTemplateDir(dir, env, { git = (args, opts) => execFileSync('git', args, { ...opts, stdio: 'ignore', windowsHide: true }), onError = () => {} } = {}) {
   const src = `${dir}-src`;
   const emptyConfig = `${dir}-empty-gitconfig`;
@@ -659,13 +669,16 @@ function writeGitTemplateDir(dir, env, { git = (args, opts) => execFileSync('git
     // `config` is never copied as a file (it holds per-repository core.* keys; the template's own is
     // rebuilt below). With an inherited template every entry of its own is copied wholesale from it, on
     // both paths, so they stay identical; otherwise git's default template files come from the init.
+    fs.mkdirSync(path.join(dir, 'hooks'), { recursive: true });
     if (inherited) {
+      const hooksDir = path.join(inherited, 'hooks');
+      const notSample = (from) => !isTemplateSampleHook(from, hooksDir);
       for (const name of fs.readdirSync(inherited)) {
         if (name === 'config') continue;
-        fs.cpSync(path.join(inherited, name), path.join(dir, name), { recursive: true });
+        fs.cpSync(path.join(inherited, name), path.join(dir, name), { recursive: true, filter: notSample });
       }
     } else {
-      for (const name of ['hooks', 'info', 'description']) {
+      for (const name of ['info', 'description']) {
         const from = path.join(src, '.git', name);
         if (fs.existsSync(from)) fs.cpSync(from, path.join(dir, name), { recursive: true });
       }
@@ -691,8 +704,14 @@ function writeGitTemplateDir(dir, env, { git = (args, opts) => execFileSync('git
   }
 }
 
+// The env the runner hands its `node --test` child: `env` with maintenance off, the run's template
+// (when one was built), TMPDIR/TMP/TEMP and the repo-info store inside `runRoot`, and the slot-held mark.
+function runnerChildEnv(env, { runRoot, templateDir }) {
+  return { ...gitFixtureConfigEnv(env), ...(templateDir ? { GIT_TEMPLATE_DIR: templateDir } : {}), TMPDIR: runRoot, TMP: runRoot, TEMP: runRoot, CT_TEST_SUITE_SLOT_HELD: '1', CT_HOOKS_REPO_INFO_STORE: path.join(runRoot, 'repo-info-cache.json') };
+}
+
 module.exports = {
-  gitFixtureConfigEnv, appendGitConfigEnv, writeGitTemplateDir, GIT_TEMPLATE_CONFIG,
+  gitFixtureConfigEnv, appendGitConfigEnv, writeGitTemplateDir, isTemplateSampleHook, GIT_TEMPLATE_CONFIG, runnerChildEnv,
   listTestFiles, buildTestArgs, resolveConcurrency, resolveSlots, subsetFallbackReason, WIN32_COMMAND_LINE_MAX,
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
   parseShard, readDurations, assignShards, extractRunFlags, durationsPartialPath, finishRecording,
@@ -945,7 +964,7 @@ if (require.main === module) {
       // heavy test files, #5297). Two layers switch it off: env-carried config reaches every git process
       // that keeps its environment; the template's config lands in each repository a test creates, which
       // reaches the processes that scrub or never inherit it (receive-pack, product code, #5768).
-      env: { ...gitFixtureConfigEnv(process.env), ...(templateDir ? { GIT_TEMPLATE_DIR: templateDir } : {}), TMPDIR: runRoot, TMP: runRoot, TEMP: runRoot, CT_TEST_SUITE_SLOT_HELD: '1', CT_HOOKS_REPO_INFO_STORE: path.join(runRoot, 'repo-info-cache.json') },
+      env: runnerChildEnv(process.env, { runRoot, templateDir }),
     });
   } catch (err) {
     cleanup();

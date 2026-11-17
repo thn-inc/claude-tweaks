@@ -10,6 +10,7 @@ const { ADOPTION_NOTES, PR_CONFLICT_NOTE, computeAdoption, parseChecklist, gathe
 const { execFileSync } = require('child_process');
 const { STUB_SKIP } = require('../../helpers/path-stub');
 const { fakeGh } = require('../../helpers/fake-gh');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 // A fake main checkout with one run dir under .claude-tweaks/pipelines/.
 function mainRoot() {
@@ -328,7 +329,7 @@ test('specOnBranch falls back to a recursive spec-{N}/work/ listing when {run-di
 test('defaultDeps().resolvePolicy applies computeDerivedDefaults, so merge-verification resolves to a value with no policy.yml (#1931 I2)', () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-derived-')));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't');
+  initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   git('commit', '-q', '--allow-empty', '-m', 'init');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-09-06T000000-record-7');
   fs.mkdirSync(runDir, { recursive: true });
@@ -341,7 +342,7 @@ test('defaultDeps().resolvePolicy applies computeDerivedDefaults, so merge-verif
 test('defaultDeps().resolvePolicy hands the run config to computeDerivedDefaults: a merge-verification-only read under a run-pinned integration-model never spawns gh (#4578 AC13.1)', { skip: STUB_SKIP }, () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-runpin-')));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't');
+  initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   git('commit', '-q', '--allow-empty', '-m', 'init');
   git('remote', 'add', 'origin', 'https://github.com/o/n.git');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-10-31T000000-record-7');
@@ -367,7 +368,7 @@ test('defaultDeps().resolvePolicy hands the run config to computeDerivedDefaults
 test('defaultDeps().resolvePolicy carries a degraded forge detection onto the integration-model entry (#4578 Q10 seam)', { skip: STUB_SKIP }, () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-degraded-')));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't');
+  initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   git('commit', '-q', '--allow-empty', '-m', 'init');
   git('remote', 'add', 'origin', 'https://github.com/o/n.git');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-11-01T000000-record-7');

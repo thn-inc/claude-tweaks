@@ -12,11 +12,12 @@ const { execFileSync } = require('child_process');
 const ROOT = path.join(__dirname, '..', '..', '..');
 const CLI = path.join(ROOT, 'plugin', 'bin', 'console-resolve.js');
 const { run, EXIT_CARRY_FAILED } = require(CLI);
+const { initRepo } = require('../../helpers/git-fixtures');
 
 function mainCheckoutWithRun({ autonomy = 'unattended', staged = {}, decisions = '', policyExtra = '', consoleJson = null } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-up-cli-')));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't'); git('commit', '-q', '--allow-empty', '-m', 'init');
+  initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); git('commit', '-q', '--allow-empty', '-m', 'init');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), `${autonomy === null ? '' : `autonomy: ${autonomy}\n`}${policyExtra}`);
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-09-06T000000-record-7');

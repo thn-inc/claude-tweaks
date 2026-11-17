@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { runCliSync, spawnCli } = require('./helpers/run-cli');
+const { writeIdentity } = require('./helpers/git-fixtures');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'blast-radius.js');
 
@@ -37,8 +38,7 @@ function cli(args, opts = {}) {
 function makeFixtureRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'blast-radius-'));
   git(dir, 'init', '-b', 'main');
-  git(dir, 'config', 'user.email', 'test@example.invalid');
-  git(dir, 'config', 'user.name', 'Test');
+  writeIdentity(dir, { name: 'Test', email: 'test@example.invalid' });
   fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'merge-sensitive-paths: secrets/*\n');
   fs.writeFileSync(path.join(dir, 'base.txt'), 'base\n');
@@ -113,8 +113,7 @@ test('e2e: nonexistent --run dir exits 1 with the bad-path message and NO stdout
 function makeStaleLocalMainFixture() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'blast-radius-stale-'));
   git(dir, 'init', '-b', 'main');
-  git(dir, 'config', 'user.email', 'test@example.invalid');
-  git(dir, 'config', 'user.name', 'Test');
+  writeIdentity(dir, { name: 'Test', email: 'test@example.invalid' });
   fs.writeFileSync(path.join(dir, 'root.txt'), 'root\n');
   git(dir, 'add', '.');
   git(dir, 'commit', '-m', 'root');
@@ -173,8 +172,7 @@ test('AC5.1: require() of blast-radius.js prints nothing and leaves process.exit
 test('AC9.1: the git child reads the repo named by the injected env, not the inherited one', () => {
   const a = fs.mkdtempSync(path.join(os.tmpdir(), 'blast-radius-a-'));
   git(a, 'init', '-b', 'trunk');
-  git(a, 'config', 'user.email', 'test@example.invalid');
-  git(a, 'config', 'user.name', 'Test');
+  writeIdentity(a, { name: 'Test', email: 'test@example.invalid' });
   fs.writeFileSync(path.join(a, 'a.txt'), 'a\n');
   git(a, 'add', '.');
   git(a, 'commit', '-m', 'a');

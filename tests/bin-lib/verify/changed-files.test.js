@@ -9,6 +9,7 @@ const { execFileSync } = require('child_process');
 const {
   changedFiles, resolveBase, usableAnchor, mergeNarrowing, ChangedFilesError,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'changed-files.js'));
+const { initRepo } = require('../../helpers/git-fixtures');
 
 const FULL = '0123456789abcdef0123456789abcdef01234567';
 const MB = 'fedcba9876543210fedcba9876543210fedcba98';
@@ -288,9 +289,7 @@ test('usableAnchor guards a dash-prefixed anchor with --end-of-options so it can
 function mergeRepo(preBranchFiles = []) {
   const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'merge-narrowing-')));
   const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  git('init', '-q', '-b', 'trunk');
-  git('config', 'user.email', 'verify-test@example.invalid');
-  git('config', 'user.name', 'verify test');
+  initRepo(repo, { name: 'verify test', email: 'verify-test@example.invalid', branch: 'trunk', cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   const write = (rel, content) => {
     fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
     fs.writeFileSync(path.join(repo, rel), content);

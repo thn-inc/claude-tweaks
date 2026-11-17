@@ -8,6 +8,7 @@ const { probeWorktrees, extractPid, defaultIsDirty, readPorcelainStatus } = requ
 const { probeBranches } = require('../../../plugin/bin/lib/residue/probes/branches');
 const { filterResultsByScope } = require('../../../plugin/bin/lib/residue/scope-filter');
 const { validateFinding } = require('../../../plugin/bin/lib/residue/finding');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 function stubRunner(responses) {
   return (args) => (Object.prototype.hasOwnProperty.call(responses, args.join(' ')) ? responses[args.join(' ')] : null);
@@ -397,9 +398,7 @@ test('AC1.1: probeWorktrees counts both git-style and native win32 paths as in t
 // --porcelain`) against real worktrees on disk, per #1424's Deliverables.
 function tmpGitRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'residue-worktree-dirty-'));
-  execFileSync('git', ['init', '-q', dir]);
-  execFileSync('git', ['-C', dir, 'config', 'user.email', 'test@example.com']);
-  execFileSync('git', ['-C', dir, 'config', 'user.name', 'Test']);
+  initRepo(dir, { name: 'Test', email: 'test@example.com' });
   execFileSync('git', ['-C', dir, 'commit', '-q', '--allow-empty', '-m', 'init']);
   return dir;
 }
