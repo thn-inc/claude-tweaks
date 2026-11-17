@@ -114,6 +114,9 @@ function run(argv, deps = {}) {
   const cwd = d.cwd();
   // Deliberately named `run`, shadowing this function inside its own body, so the probeForge call
   // below keeps the text tests/gh-host-seam-conformance.test.js pins (not quoted here: its mutants edit the first match).
+  // The gh bound is the process-wide memoized GH_TIMEOUT_MS (process env, the process cwd's policy), not
+  // the injected d.env and cwd passed beside it: the #4856 plan-review ruling, which rejected
+  // ghTimeoutMsAt(cwd, { env: d.env }). It sits here rather than in `runner` so an injected runner sees it.
   const run = (cmd, execOpts) => d.runner(cmd, { cwd, env: d.env, stderr: d.stderr, homeDir: d.homeDir, ...(cmd[0] === 'gh' ? { timeout: sharedPrimitives.GH_TIMEOUT_MS } : {}), ...execOpts });
   const git = (args, execOpts) => run(['git', ...args], execOpts);
   const scope = resolveScope({ base: opts.base, run: git });

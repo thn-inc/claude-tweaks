@@ -49,13 +49,16 @@ const { learnedSkillsDelivered } = require('../learned-skills/delivered');
 // #1230 found them to (defaultGit missing the `timeout` defaultGh already
 // had) -- one options object, reused by construction. `wrap` transforms that
 // object per call: identity for git, ghOptions (#4505's GH_HOST seam) for gh.
-// `boundOf` is read per call. The gh bound follows the gh-timeout-ms ladder (the shared
-// GH_TIMEOUT_MS: a GitHub Enterprise Server project raises it, since its gh calls are slower), so
-// gh and git bounds differ on purpose: git is local and keeps its own GIT_BOUND_MS.
+// `boundOf` is required and read per call: every runner names its bound on purpose, since a
+// silent default is the hard-coded literal #4856 removed. The gh bound follows the gh-timeout-ms
+// ladder (the shared GH_TIMEOUT_MS: a GitHub Enterprise Server project raises it, since its gh calls
+// are slower), so gh and git bounds differ on purpose: git is local and keeps its own GIT_BOUND_MS.
 // `ctx` is the caller's injected process context, `{ env, stderr, homeDir }`, each optional (#5379): an
 // `env` becomes the child's environment and reaches ghOptions' host lookup; absent, the child inherits
-// the real one.
-function makeDefaultRunner(cmd, wrap = (_args, o) => o, boundOf) {
+// the real one. A `ctx.env` does NOT reach the gh bound: GH_TIMEOUT_MS is the process-wide memoized
+// getter (process env, the process cwd's policy) — the #4856 plan-review ruling, which rejected
+// threading the injected env and cwd through `ghTimeoutMsAt(cwd, { env })`.
+function makeDefaultRunner(cmd, boundOf, wrap = (_args, o) => o) {
   return function run(args, cwd, ctx = {}) {
     return execFileSync(cmd, args, wrap(args, {
       cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: boundOf(), windowsHide: true,
@@ -65,8 +68,8 @@ function makeDefaultRunner(cmd, wrap = (_args, o) => o, boundOf) {
 }
 
 const GIT_BOUND_MS = 5000;
-const defaultGit = makeDefaultRunner('git', undefined, () => GIT_BOUND_MS);
-const defaultGh = makeDefaultRunner('gh', ghOptions, () => sharedPrimitives.GH_TIMEOUT_MS);
+const defaultGit = makeDefaultRunner('git', () => GIT_BOUND_MS);
+const defaultGh = makeDefaultRunner('gh', () => sharedPrimitives.GH_TIMEOUT_MS, ghOptions);
 
 // Registry of check functions, populated by Tasks 2-5. Each entry:
 // { name: string, fn: ({runDir, originalRunDir, base, repoRoot, cwd, expectations, deps}) => {result, detail} }.

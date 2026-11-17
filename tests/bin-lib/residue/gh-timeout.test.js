@@ -1,28 +1,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
+const { committedRepo } = require('../../helpers/git-fixtures');
 
 const RESIDUE = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'residue.js');
 const SHARED = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'shared-primitives.js');
-
-// A fixture git call that ignores any repo-locating variable the test process inherited.
-function git(cwd, ...args) {
-  const env = { ...process.env };
-  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete env[key];
-  return execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-}
-
-function initRepo(prefix, branch = 'main') {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  git(root, 'init', '-q', '-b', branch);
-  git(root, 'config', 'user.email', 'test@example.com');
-  git(root, 'config', 'user.name', 'Test');
-  git(root, 'commit', '--allow-empty', '-q', '-m', 'init');
-  return root;
-}
 
 function evict() {
   delete require.cache[RESIDUE];
@@ -36,9 +19,9 @@ test('residue bounds a gh argv with GH_TIMEOUT_MS and leaves a git argv unbounde
   const saved = process.env[key];
   process.env[key] = '12000';
   evict();
+  const { dir: root } = committedRepo({ prefix: 'residue-gh-timeout-', branch: 'main' });
   try {
     const fresh = require(RESIDUE);
-    const root = initRepo('residue-gh-timeout-');
     const calls = [];
     const runner = (argv, opts) => {
       calls.push([argv, opts]);
@@ -64,5 +47,6 @@ test('residue bounds a gh argv with GH_TIMEOUT_MS and leaves a git argv unbounde
     if (saved === undefined) delete process.env[key];
     else process.env[key] = saved;
     evict();
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });

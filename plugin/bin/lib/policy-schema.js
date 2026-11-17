@@ -830,8 +830,9 @@ const FORGE_DEGRADE_MEMO_TTL_MS = 60000;
 // > 5000. The ladder lives there, not here, so every gh bound shares one definition.
 // It reads from repoRoot rather than the cwd, the right root for a caller probing a
 // repo other than the cwd's. `opts.env` (optional) replaces process.env as the place
-// the env var is read from. The require sits inside the body: shared-primitives lazily
-// requires policy-schema back, so a load-time require here would close a cycle.
+// the env var is read from. The require sits inside the body so loading policy-schema
+// never loads shared-primitives. Either placement is acyclic: shared-primitives requires
+// policy-schema (and policy.js) only inside function bodies, never at load time.
 function resolveForgeProbeTimeoutMs(repoRoot, opts = {}) {
   const explicit = opts && opts.timeoutMs;
   if (Number.isInteger(explicit) && explicit > 0) return explicit;

@@ -391,7 +391,9 @@ test('ghTimeoutMsAt: invalid env values fall through to the policy value', () =>
 });
 
 test('ghTimeoutMsAt: a non-string repoRoot has no policy file and resolves env, then 5000', () => {
-  withTempCwd(() => {
+  withTempCwd((dir) => {
+    // A cwd policy that must not be read: a non-string root never falls back to the cwd.
+    writePolicyFile(dir, 'gh-timeout-ms: 7000\n');
     for (const root of [undefined, null, 42]) {
       assert.strictEqual(ghTimeoutMsAt(root, { env: {} }), 5000, String(root));
       assert.strictEqual(ghTimeoutMsAt(root, { env: { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '9000' } }), 9000, String(root));

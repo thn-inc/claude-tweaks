@@ -175,8 +175,8 @@ function ghTimeoutFromPolicy(repoRoot) {
     const { readGhTimeoutMs } = require('./policy');
     return typeof repoRoot === 'string' && repoRoot !== '' ? readGhTimeoutMs(repoRoot) : undefined;
   } catch {
-    // No repo root resolvable at cwd, a malformed policy.yml, or any other
-    // read failure — fall through to the hard-coded default below.
+    // policy.js failed to load, or readGhTimeoutMs threw (a malformed
+    // policy.yml, any other read failure) — fall through to the default.
     return undefined;
   }
 }

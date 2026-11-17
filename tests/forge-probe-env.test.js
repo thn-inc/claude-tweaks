@@ -179,6 +179,26 @@ test('resolveForgeProbeTimeoutMs with opts.env null reads the policy and never t
   }
 });
 
+test("deriveMergeVerification: readDefaultBranch's gh call takes GH_TIMEOUT_MS (12000), not a hard-coded 5000 (#4856)", () => {
+  const { captureGhTimeout } = require('./helpers/gh-timeout-probe');
+  const mvPath = require.resolve('../plugin/bin/lib/merge-verification');
+  const seen = captureGhTimeout({
+    envValue: '12000',
+    modulePaths: [mvPath],
+    reply: 'main\n',
+    exercise: (setEnv) => {
+      setEnv();
+      const { deriveMergeVerification: fresh } = require('../plugin/bin/lib/merge-verification');
+      fresh(tmp('mv-timeout'), {
+        integrationModel: () => 'pr-first',
+        readWorkflows: () => [{ text: CI_WORKFLOW }],
+        integrationBranch: () => 'main',
+      });
+    },
+  });
+  assert.equal(seen, 12000);
+});
+
 test('resolvePolicyConfig falls back to the given cwd when git fails', () => {
   const other = tmp('cwd');
   const seen = [];
