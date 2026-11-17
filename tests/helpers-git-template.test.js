@@ -484,12 +484,14 @@ test('AC4.1: a stack-check fixture copy carries maintenance.auto=false and gc.au
 });
 
 const archiveMergedHelpers = require('./bin-lib/reconcile/archive-merged-helpers');
+// The copied bare origin a clone fixture's .git/config names, so a test can clean it up too.
+const originDirOf = (root) => fs.readFileSync(path.join(root, '.git', 'config'), 'utf8').match(/^\s*url = (.+)$/m)[1].trim();
 for (const [name, make, dirsOf] of [
   ['makeRepo()', () => archiveMergedHelpers.makeRepo(), (d) => [d]],
   ['mergedFeatureBranchRepo(feat-x)', () => archiveMergedHelpers.mergedFeatureBranchRepo('feat-x'), (r) => [r.root]],
   ['fixtureCleanUnarchivedRun({ origin: true })', () => archiveMergedHelpers.fixtureCleanUnarchivedRun({ runId: '2026-08-01T090000-record-2', origin: true }), (r) => [r.root]],
   ['fixtureAbandonedShippedRun', () => archiveMergedHelpers.fixtureAbandonedShippedRun({ runId: '2026-08-01T090000-record-1' }), (r) => [r.root]],
-  ['cloneOfSeededOrigin()', () => archiveMergedHelpers.cloneOfSeededOrigin(), (r) => [r.seed, r.root]],
+  ['cloneOfSeededOrigin()', () => archiveMergedHelpers.cloneOfSeededOrigin(), (r) => [r.seed, r.root, originDirOf(r.root)]],
 ]) {
   test(`AC3.1: archive-merged ${name}: a second call starts no git process`, () => {
     scratch.push(...dirsOf(make()));
@@ -510,8 +512,8 @@ test('mergedFeatureBranchRepo copy: feature tip is an ancestor of main and the b
 });
 
 for (const [name, make, dirsOf] of [
-  ['fixtureAbandonedBehindOrigin()', () => archiveMergedHelpers.fixtureAbandonedBehindOrigin(), (r) => [r.root]],
-  ['fixtureAbandonedBehindOrigin({ squash: true })', () => archiveMergedHelpers.fixtureAbandonedBehindOrigin({ squash: true }), (r) => [r.root]],
+  ['fixtureAbandonedBehindOrigin()', () => archiveMergedHelpers.fixtureAbandonedBehindOrigin(), (r) => [r.root, originDirOf(r.root)]],
+  ['fixtureAbandonedBehindOrigin({ squash: true })', () => archiveMergedHelpers.fixtureAbandonedBehindOrigin({ squash: true }), (r) => [r.root, originDirOf(r.root)]],
   ['headerMergedRepo3976({ moved: true, merge: squash })', () => archiveMergedHelpers.headerMergedRepo3976({ moved: true, merge: 'squash' }), (r) => [r.root]],
   ['headerMergedRepo3976({ moved: false, merge: no-ff })', () => archiveMergedHelpers.headerMergedRepo3976({ moved: false, merge: 'no-ff' }), (r) => [r.root]],
 ]) {

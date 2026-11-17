@@ -30,7 +30,9 @@ function trackedFiles(root) {
 // The repo builders below sit on git templates (#5772): each is built once per
 // test process, and every call hands back an fs copy, which starts no git process.
 function initRepo(dir) {
-  git(dir, 'init', '-b', 'main');
+  // Loose refs whatever the global init.defaultRefFormat: renameLooseBranch moves ref files.
+  // Not `init --ref-format=files`, which git < 2.45 (Apple Git 2.39) rejects.
+  git(dir, '-c', 'init.defaultRefFormat=files', 'init', '-b', 'main');
   git(dir, 'config', 'user.email', 't@t');
   git(dir, 'config', 'user.name', 't');
   fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
@@ -130,7 +132,7 @@ function mergeFeatureBranch(root, branch, wtPrefix, commitEnv) {
   execFileSync('git', ['add', 'feature.txt'], { cwd: wt, encoding: 'utf8' });
   execFileSync('git', ['commit', '-q', '-m', 'feature work'], { cwd: wt, encoding: 'utf8', ...(commitEnv ? { env: commitEnv } : {}) });
   const featureSha = execFileSync('git', ['rev-parse', branch], { cwd: root, encoding: 'utf8' }).trim();
-  git(root, 'merge', '-q', '--no-edit', branch);
+  git(root, 'merge', '-q', '--ff-only', branch); // --ff-only overrides a global merge.ff=false
   git(root, 'worktree', 'remove', '--force', wt);
   return featureSha;
 }
@@ -147,6 +149,9 @@ const MERGED_TEMPLATE_BRANCH = 'feat-merged-template';
 function renameLooseBranch(root, from, to) {
   if (from === to) return;
   const gitDir = path.join(root, '.git');
+  if (fs.existsSync(path.join(gitDir, 'refs/heads', to))) {
+    throw new Error(`renameLooseBranch: refs/heads/${to} already exists`);
+  }
   for (const sub of ['refs/heads', 'logs/refs/heads']) {
     const dest = path.join(gitDir, sub, to);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
@@ -162,7 +167,7 @@ function renameLooseBranch(root, from, to) {
 // on: a feature branch committed in its own worktree, merged into main, then
 // the worktree removed (branch ref stays). The returned `featureSha` is that
 // branch's real tip commit, which a test hands back as the PR's
-// `mergeCommit.oid` — `git merge --no-edit` folds it into main, so
+// `mergeCommit.oid` — `git merge --ff-only` folds it into main, so
 // `merge-base --is-ancestor` (localHasMerge) sees it as an ancestor, same as
 // a genuine fast-forward/merge would. The root is realpath'd (unlike
 // makeRepo()'s own return) because mainCheckoutRoot resolves through realpath
@@ -474,6 +479,8 @@ function fixtureAbandonedBehindOrigin({ squash = false } = {}) {
     }
     git(seed, 'push', '-q', 'origin', 'main');
     if (squash) git(seed, 'push', '-q', 'origin', 'feat-4387-abandoned'); // the tip is no ancestor of main: ship it for root to fetch
+    // A copy's FETCH_HEAD still names the template's origin path: harmless, since no code
+    // under test reads it and any later fetch overwrites it.
     git(clone, 'fetch', '-q', 'origin', 'main'); // only origin/main advances; root stays on a behind main
     if (squash) git(clone, 'fetch', '-q', 'origin', 'feat-4387-abandoned:feat-4387-abandoned');
     else git(clone, 'branch', 'feat-4387-abandoned', featureOid); // the run's branch ref survives locally

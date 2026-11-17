@@ -39,8 +39,8 @@ function helpers(dir, env = FIXTURE_ENV) {
 // init, the repo-local config, then f.txt committed as `base`. The build takes gitEnv() at call
 // time, not the load-time FIXTURE_ENV: the two differ only in variables set since load, and the
 // config ones never reach git (gitEnv() pins GIT_CONFIG_GLOBAL and strips GIT_CONFIG_*), so the
-// repo is the same, while a caller's
-// GIT_TRACE2_EVENT reaches a build — which is what lets a "copy starts no git" test go red.
+// repo is the same, while a caller's GIT_TRACE2_EVENT reaches a build — which is what lets a
+// "copy starts no git" test go red.
 function buildBase(dir, content) {
   const { runOk } = helpers(dir, gitEnv());
   runOk('init', '-q');
