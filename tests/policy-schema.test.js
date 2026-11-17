@@ -42,9 +42,9 @@ test('POLICY_KEYS entries are unique', () => {
   assertLastBump(__filename);
   // Changes only with a recorded reason. Recompute by counting the merged list,
   // never by summing either side's delta (IL-99); history is `git log -L`.
-  // Last bump: 109 -> 110, #5563
-  assert.strictEqual(POLICY_KEYS.length, 110);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 110);
+  // Last bump: 110 -> 111, #5599
+  assert.strictEqual(POLICY_KEYS.length, 111);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 111);
 });
 
 test('express-lane keys resolve their defaults (#4025)', () => {
@@ -1001,6 +1001,30 @@ test('AC8.3: each ceiling\'s doc row states its unit', () => {
 test('AC11.4: the policyOnly bullet names every DRIVER_KEYS key', () => {
   const line = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema-coverage.md')).split('\n').find((l) => l.includes('are `policyOnly`'));
   for (const { key } of DRIVER_KEYS) assert.ok(line.includes('`' + key + '`'), key);
+});
+
+test('review-lens-dispatch resolves task by default and for an invalid value, workflow when set (#5599)', () => {
+  const cases = [[null, 'task'], ['review-lens-dispatch: sideways\n', 'task'], ['review-lens-dispatch: workflow\n', 'workflow']];
+  for (const [policy, expected] of cases) {
+    const repo = tmpRepo();
+    try {
+      if (policy !== null) writePolicy(repo, policy);
+      const r = driverCli(['--values', 'review-lens-dispatch'], repo);
+      assert.strictEqual(r.status, 0, r.stderr);
+      assert.strictEqual(r.stdout.trim(), expected, `policy.yml: ${policy}`);
+    } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+  }
+  // Neither policyOnly nor policySourceExcluded: /claude-tweaks:review Step 3 resolves it with --run, so a run config sets it for one review.
+  const repo = tmpRepo();
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-review-lens-run-'));
+  try {
+    fs.writeFileSync(path.join(runDir, 'config.yml'), 'review-lens-dispatch: workflow\n');
+    const r = driverCli(['--run', runDir, '--values', 'review-lens-dispatch'], repo);
+    assert.strictEqual(r.stdout.trim(), 'workflow', r.stderr);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
 });
 
 // #5224: the driver lane bound keys.
