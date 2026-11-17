@@ -1053,7 +1053,8 @@ function runShipped(ctx) {
   const releasesFile = paths['dispatch-shipped-releases.json'];
 
   // First pass: title-only classification; only a `weak` result not predating the claim release is
-  // probed for the files-based upgrade, capped at 5 live `gh pr view` calls per pull.
+  // probed for the files-based upgrade, capped at 5 live `gh pr view` calls per pull. The mentions come
+  // from `dispatch-linked-prs.json`, already fetched, so this pass makes no second round trip for them.
   step(ctx, 'shipped-probe', () => {
     const groups = readJson(paths['dispatch-groups.json']);
     const linkedPRs = readJson(linkedFile);

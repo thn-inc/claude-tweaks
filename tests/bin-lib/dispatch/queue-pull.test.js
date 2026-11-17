@@ -1825,7 +1825,7 @@ test('#5313 shipped: a failed gh pr view writes files:null and prints one Warnin
   assert.ok(r.errs.includes(weakAuto));
   assert.ok(groupNumbers(r).flat().includes(9016), 'a failed view never excludes');
   assert.ok(!r.stderr.includes('boom'), 'the failed call stderr is dropped (2>/dev/null)');
-  assert.ok(FENCE.includes("'Warning: gh pr view ' + result.pr + ' failed — #' + c.number + ' kept as a weak shipped candidate (files unprobed) this run'"));
+  assert.ok(FENCE.includes("if (!predatesClaimRelease(result) && prFiles.get(result.pr) === null) console.error('Warning: gh pr view ' + result.pr + ' failed — #' + c.number + ' kept as a weak shipped candidate (files unprobed) this run');"));
 
   // A failed call that printed something first still reads as null: the fence assigns null, not the partial output.
   const partial = FULL();
