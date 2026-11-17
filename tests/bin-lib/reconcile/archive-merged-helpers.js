@@ -1,6 +1,7 @@
 'use strict';
 // Shared fixtures and helpers for the archive-merged*.test.js suites split out
 // of tests/bin-lib/reconcile/archive-merged.test.js. Not a test file itself.
+const assert = require('node:assert/strict');
 const cp = require('child_process');
 // Destructured at require time, so this binding is a snapshot of the REAL
 // implementation — it stays callable as the pass-through inside the
@@ -16,7 +17,6 @@ const {
 const { PROBE_ORDER } = require('../../../plugin/bin/lib/run-liveness');
 const { serializeManifestYaml } = require('../../../plugin/bin/lib/flow/manifest');
 const { archiveRunHeader } = require('../../../plugin/bin/lib/run-header-archive');
-const assert = require('node:assert/strict');
 const { fromTemplate, fromTemplateSet, disableReceiveAutoGc } = require('../../helpers/git-template');
 
 function git(cwd, ...args) {
