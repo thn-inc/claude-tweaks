@@ -21,6 +21,8 @@ Scope keywords: `timeout: 30000`, `EXEC_OPTS`, `GH_BATCH_TIMEOUT_MS`, `GIT_TIMEO
 - Commits: `{Verb} {what} — {detail}`; stage specific files by path only; never `git stash`; run tests with `node tools/run-tests.js <files>` (never bare `node --test`).
 - Deviation from the record's Key Files (shared-primitives "read only"): one small shared function is added there instead of four copies of the same three-line command-to-bound map. Classify as Beneficial at Common Step 4.5.
 
+Waived AC8.1: `npm test` passing is Common Step 5's whole-suite verification run (`verify.js`), not a plan task.
+
 ## Review Focus
 
 - `CLAUDE_TWEAKS_GH_TIMEOUT_MS` outside `gh-timeout-ms`'s bounds (65000, 500): ignored, `gh` spawns carry 30000 — pinned in Task 1.
@@ -42,7 +44,7 @@ Scope keywords: `timeout: 30000`, `EXEC_OPTS`, `GH_BATCH_TIMEOUT_MS`, `GIT_TIMEO
 - Produces: `execTimeoutMsFor(cmd: string): number` from `shared-primitives.js` — `'gh'` → `GH_BATCH_TIMEOUT_MS`, `'git'` → `GIT_TIMEOUT_MS`, anything else → `30000`. Reads the getters on every call.
 - Produces: `captureExecTimeouts({ env, modulePaths, reply = '{}', exercise }): { gh, git, node }` from `tests/helpers/gh-timeout-probe.js` — `env` is `{ ENV_NAME: value }` applied via the `setEnv()` callback handed to `exercise` (so the caller chooses before/after module load); stubs both `child_process.execFileSync` and `child_process.execFile` (the latter carrying `util.promisify.custom` that resolves `{ stdout: reply, stderr: '' }`) and records the `timeout` last seen per command name (`null` when that command was never spawned); evicts `modulePaths` and `shared-primitives` from the require cache before and after; restores the stubs and every env var it set.
 
-- [ ] **Step 1: Write the failing tests** in `tests/bin-lib/shared-primitives.test.js`: `execTimeoutMsFor` with a fresh `shared-primitives` load (evict, set env, require, restore) — gh env 45000 → `gh` 45000, `git` 30000, `node` 30000; gh env 10000 → `gh` 30000; gh env 65000 and 500 → `gh` 30000; git env 90000 → `git` 90000; git env 200000 → `git` 30000; both set high → `node` 30000; unset → 30000/30000/30000. Add one test for `captureExecTimeouts` itself: a `exercise` that calls `execFileSync('gh', …)` and `execFileSync('git', …)` yields `{ gh: <timeout>, git: <timeout>, node: null }` and leaves `process.env` and `child_process` as it found them.
+- [ ] **Step 1: Write the failing tests** in `tests/bin-lib/shared-primitives.test.js` (cites AC7.1 — the unset case pins that every default bound is unchanged): `execTimeoutMsFor` with a fresh `shared-primitives` load (evict, set env, require, restore) — gh env 45000 → `gh` 45000, `git` 30000, `node` 30000; gh env 10000 → `gh` 30000; gh env 65000 and 500 → `gh` 30000; git env 90000 → `git` 90000; git env 200000 → `git` 30000; both set high → `node` 30000; unset → 30000/30000/30000. Add one test for `captureExecTimeouts` itself: a `exercise` that calls `execFileSync('gh', …)` and `execFileSync('git', …)` yields `{ gh: <timeout>, git: <timeout>, node: null }` and leaves `process.env` and `child_process` as it found them.
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node tools/run-tests.js tests/bin-lib/shared-primitives.test.js`
@@ -66,15 +68,15 @@ git commit -m "Add execTimeoutMsFor and a per-command timeout probe — one comm
 **Interfaces:**
 - Consumes: `execTimeoutMsFor`, `captureExecTimeouts` (Task 1).
 
-- [ ] **Step 1: Write the failing tests** (new `describe` block, "default exec bound (#5050)"): through `captureExecTimeouts` with `modulePaths: [require.resolve('../../../plugin/bin/console-resolve')]`, drive the real default runner (the `deps.execFile || defaultExecFile` path via `run`, with an argv/shape that reaches one `gh` and one `git` spawn; if no shape reaches both without a record, export `defaultExecFile` and call it directly for each command — say so in the commit). Assertions: gh env 45000 → `gh` 45000; gh env unset and 10000 → `gh` 30000; git env 90000 → `git` 90000; git unset → `git` 30000. One test per assertion group, titled so a failure names the seam.
+- [ ] **Step 1: Write the failing tests** (cites AC1.1, AC1.2, AC1.3, AC2.1, AC2.2, AC2.3; new `describe` block, "default exec bound (#5050)"): through `captureExecTimeouts` with `modulePaths: [require.resolve('../../../plugin/bin/console-resolve')]`, drive the real default runner (the `deps.execFile || defaultExecFile` path via `run`, with an argv/shape that reaches one `gh` and one `git` spawn; if no shape reaches both without a record, export `defaultExecFile` and call it directly for each command — say so in the commit). Assertions: gh env 45000 → `gh` 45000; gh env unset and 10000 → `gh` 30000; git env 90000 → `git` 90000; git unset → `git` 30000. One test per assertion group, titled so a failure names the seam.
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node tools/run-tests.js tests/bin-lib/console/resolve.test.js`
-Expected: FAIL — the 45000 and 90000 cases see `30000`.
+Expected: FAIL after Step 1 — the 45000 and 90000 cases see `30000` (the file exists and passes today; Step 1 appends the new block).
 
 - [ ] **Step 3: Implement** — in `defaultExecFile`, replace the literal `timeout: 30000` with `timeout: execTimeoutMsFor(cmd)`; caller `opts` still spread after it so an explicit `opts.timeout` keeps winning. Import `execTimeoutMsFor` from `./lib/shared-primitives`.
 - [ ] **Step 4: Run to verify they pass** — same command; Expected: PASS.
-- [ ] **Step 5: Prove discrimination** — temporarily restore the literal `timeout: 30000`, rerun, confirm the new tests are red, then restore the change (do not commit the revert).
+- [ ] **Step 5: Verify the test discriminates (AC5.1, AC5.2)** — temporarily restore the literal `timeout: 30000`, rerun, confirm the new tests are red, then restore the change (do not commit the revert).
 - [ ] **Step 6: Commit**
 
 ```bash
@@ -91,15 +93,15 @@ git commit -m "Route console-resolve's exec bound by command — gh and git foll
 **Interfaces:**
 - Consumes: `execTimeoutMsFor`, `captureExecTimeouts` (Task 1).
 
-- [ ] **Step 1: Write the failing tests** (block "default exec bounds (#5050)"): through `captureExecTimeouts` with the module evicted, call `defaultDeps(cwd).execFile` (sync) and `.execFileAsync` (async) for `'gh'` and `'node'` and assert: gh env 45000 → both runners' `gh` 45000; gh env unset/10000 → 30000; both keys set high → `node` 30000 on both runners.
+- [ ] **Step 1: Write the failing tests** (cites AC1.1, AC1.2, AC1.3, AC3.1, AC3.2; block "default exec bounds (#5050)"): through `captureExecTimeouts` with the module evicted, call `defaultDeps(cwd).execFile` (sync) and `.execFileAsync` (async) for `'gh'` and `'node'` and assert: gh env 45000 → both runners' `gh` 45000; gh env unset/10000 → 30000; both keys set high → `node` 30000 on both runners.
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node tools/run-tests.js tests/bin-lib/flow/preflight.test.js`
-Expected: FAIL — `gh` sees `30000` at env 45000.
+Expected: FAIL after Step 1 — `gh` sees `30000` at env 45000 (the file exists and passes today; Step 1 appends the new block).
 
 - [ ] **Step 3: Implement** — `EXEC_OPTS` keeps `maxBuffer` only (drop its fixed `timeout`); both runners set `timeout: execTimeoutMsFor(cmd)` after `...EXEC_OPTS` and before `...opts`.
 - [ ] **Step 4: Run to verify they pass** — same command; Expected: PASS.
-- [ ] **Step 5: Prove discrimination** — restore the literal temporarily, confirm red, restore the change.
+- [ ] **Step 5: Verify the test discriminates (AC5.1, AC5.2)** — restore the literal temporarily, confirm red, restore the change.
 - [ ] **Step 6: Commit**
 
 ```bash
@@ -116,15 +118,15 @@ git commit -m "Route flow preflight's exec bound by command — gh follows gh-ti
 **Interfaces:**
 - Consumes: `execTimeoutMsFor`, `captureExecTimeouts` (Task 1).
 
-- [ ] **Step 1: Write the failing tests** (block "default exec bounds (#5050)"): through `captureExecTimeouts`, call `defaultDeps(cwd).git([...])` and `.execFileAsync('gh', […])`: git env 90000 → `git` 90000, unset → 30000; gh env 45000 → `gh` 45000, unset and 10000 → 30000; both high leaves nothing else changed (no `node` spawn here, assert `node` is `null`).
+- [ ] **Step 1: Write the failing tests** (cites AC1.1, AC1.2, AC1.3, AC2.1, AC2.2, AC2.3; block "default exec bounds (#5050)"): through `captureExecTimeouts`, call `defaultDeps(cwd).git([...])` and `.execFileAsync('gh', […])`: git env 90000 → `git` 90000, unset → 30000; gh env 45000 → `gh` 45000, unset and 10000 → 30000; both high leaves nothing else changed (no `node` spawn here, assert `node` is `null`).
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node tools/run-tests.js tests/bin-lib/release-preflight/pack.test.js`
-Expected: FAIL — 90000/45000 cases see `30000`.
+Expected: FAIL after Step 1 — 90000/45000 cases see `30000` (the file exists and passes today; Step 1 appends the new block).
 
 - [ ] **Step 3: Implement** — `EXEC_OPTS` keeps `maxBuffer`; the sync `git` runner sets `timeout: execTimeoutMsFor('git')`; `execFileAsync` sets `timeout: execTimeoutMsFor(cmd)` before `...opts`.
 - [ ] **Step 4: Run to verify they pass** — same command; Expected: PASS.
-- [ ] **Step 5: Prove discrimination** — restore the literal temporarily, confirm red, restore.
+- [ ] **Step 5: Verify the test discriminates (AC5.1, AC5.2)** — restore the literal temporarily, confirm red, restore.
 - [ ] **Step 6: Commit**
 
 ```bash
@@ -141,15 +143,15 @@ git commit -m "Route release preflight's exec bound by command — gh and git fo
 **Interfaces:**
 - Consumes: `execTimeoutMsFor`, `captureExecTimeouts` (Task 1).
 
-- [ ] **Step 1: Write the failing tests** (block "exec bounds (#5050)"): (a) through `gatherPack` with a recording fake `deps.execFile`, the `gh` spawn carries `timeout` 45000 under gh env 45000, 30000 unset/10000 (module evicted per probe via `captureExecTimeouts`' evict, or a fresh require); every `node` spawn — including the direct `pr-checks.js` one — carries 30000 with both keys at 45000/90000. (b) a fake `deps.execFile` that rejects a `gh` call with `{ killed: true, signal: 'SIGTERM' }` under gh env 45000 makes the probe's thrown message read `timeout after 45000ms: gh …`; the same for a `node` kill under both keys high reads `timeout after 30000ms: node …`.
+- [ ] **Step 1: Write the failing tests** (cites AC1.1, AC1.2, AC1.3, AC3.1, AC3.2, AC4.1; block "exec bounds (#5050)"): (a) through `gatherPack` with a recording fake `deps.execFile`, the `gh` spawn carries `timeout` 45000 under gh env 45000, 30000 unset/10000 (module evicted per probe via `captureExecTimeouts`' evict, or a fresh require); every `node` spawn — including the direct `pr-checks.js` one — carries 30000 with both keys at 45000/90000. (b) a fake `deps.execFile` that rejects a `gh` call with `{ killed: true, signal: 'SIGTERM' }` under gh env 45000 makes the probe's thrown message read `timeout after 45000ms: gh …`; the same for a `node` kill under both keys high reads `timeout after 30000ms: node …`.
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node tools/run-tests.js tests/bin-lib/wrap-up/pack.test.js`
-Expected: FAIL — `gh` sees 30000 and the message names 30000.
+Expected: FAIL after Step 1 — `gh` sees 30000 and the message names 30000 (the file exists and passes today; Step 1 appends the new block).
 
 - [ ] **Step 3: Implement** — `EXEC_OPTS` keeps `maxBuffer` and `windowsHide`; `execBounded` computes `const timeout = execTimeoutMsFor(cmd)`, passes `{ cwd, ...EXEC_OPTS, timeout }` to `wrap`, and the thrown message uses that `timeout`; the direct `pr-checks.js` spawn passes `timeout: execTimeoutMsFor('node')`. Reword the comment above `EXEC_OPTS` to describe the per-command bound. Confirm `ghOptions` does not overwrite `timeout`.
 - [ ] **Step 4: Run to verify they pass** — same command; Expected: PASS.
-- [ ] **Step 5: Prove discrimination** — restore the literal `EXEC_OPTS.timeout` use temporarily, confirm red, restore.
+- [ ] **Step 5: Verify the test discriminates (AC5.1, AC5.2)** — restore the literal `EXEC_OPTS.timeout` use temporarily, confirm red, restore.
 - [ ] **Step 6: Commit**
 
 ```bash
@@ -162,16 +164,24 @@ git commit -m "Route wrap-up pack's exec bound by command — the timeout messag
 **Files:**
 - Modify: `plugin/bin/lib/policy-schema.js` (`gh-timeout-ms` row ~line 171, `git-timeout-ms` row ~line 182)
 - Modify: `docs/journeys/resolve-a-policy-key.md` (the `GH_BATCH_TIMEOUT_MS` consumer sentence in step 2 and a new `Step 2 updated during build of #5050` line beside the #4815 one)
-- Modify (if they restate the consumer lists): `plugin/skills/_shared/policy-schema.md`, `docs/plugin-structure.md`
-- Test: `tests/policy-schema.test.js` only if it pins either summary
+- Modify: `plugin/skills/_shared/policy-schema.md` (only where it restates the consumer lists)
+- Modify: `docs/plugin-structure.md` (only where it restates the consumer lists)
+- Modify: `docs/driver.md` (only where it restates the consumer lists)
+- Modify: `docs/journeys/select-the-dispatch-queue-with-the-queue-pull-cli-5227.md` (only where it restates the consumer lists)
+- Read: `docs/superpowers/plans/2026-11-15-dispatch-driver-route.md` (another record's historical plan naming the keywords; deliberately untouched)
+- Read: `docs/superpowers/plans/2026-11-16-origin-author-trust.md` (same; deliberately untouched)
+- Test: `tests/policy-schema.test.js` (extend only if it pins either summary)
 
 **Interfaces:**
 - Consumes: the finished seam changes (Tasks 2-5).
 
 - [ ] **Step 1: Find pins and restatements** — `git grep -n "gh-timeout-ms\|git-timeout-ms\|GH_BATCH_TIMEOUT_MS"` over `tests/`, `docs/`, `plugin/skills/_shared/` and read every hit that describes a consumer list; update each (never leave a stale list).
-- [ ] **Step 2: Write the failing assertion** only where a test already pins summary text: extend it to expect the new wording; otherwise skip this step and say so in the commit.
+- [ ] **Step 2: Run the pinning tests first**
+
+Run: `node tools/run-tests.js tests/policy-schema.test.js`
+Expected: PASS before the edit (no test pins either summary today); if Step 1 finds one that does, extend it to expect the new wording first, and Expected becomes FAIL after Step 1.
 - [ ] **Step 3: Edit** — `gh-timeout-ms` summary: still bounds one `gh` call, and also reaches console-resolve, flow preflight, release preflight and the wrap-up pack's `gh` reads through the batched bound; `git-timeout-ms` summary: names the claims-registry, pr-checks, compose-subject runners plus console-resolve and release-preflight's `git` calls. Journey: name the four seams as `GH_BATCH_TIMEOUT_MS` consumers (and `console-resolve`/`release-preflight` as `GIT_TIMEOUT_MS` consumers), and note `node` spawns keep 30000.
-- [ ] **Step 4: Run to verify** — `node tools/run-tests.js tests/policy-schema.test.js tests/resolve-policy-cli.test.js`; Expected: PASS.
+- [ ] **Step 4: Run to verify the summaries and journey (AC6.1)** — `node tools/run-tests.js tests/policy-schema.test.js tests/resolve-policy-cli.test.js`; Expected: PASS, and `git grep -n "console-resolve" docs/journeys/resolve-a-policy-key.md plugin/bin/lib/policy-schema.js` shows both docs name the seams.
 - [ ] **Step 5: Commit**
 
 ```bash
