@@ -281,15 +281,26 @@ test('never merges across priority bands', () => {
   assert.deepStrictEqual(bundles[0].records, [1, 3]);
 });
 
-test('never merges records with different auto:merge state', () => {
+test('never merges records with different merge-grant state', () => {
   const groups = [
-    [fastLaneIssue(1, { labels: ['auto:merge'] })],
-    [fastLaneIssue(2)],
-    [fastLaneIssue(3, { labels: ['auto:merge'] })],
+    [fastLaneIssue(1, { labels: ['auto:build', 'auto:merge'] })],
+    [fastLaneIssue(2, { labels: ['auto:build'] })],
+    [fastLaneIssue(3, { labels: ['auto:build', 'auto:merge'] })],
   ];
   const { bundles } = bundleFastLaneSingletons(groups);
   assert.strictEqual(bundles.length, 1);
   assert.deepStrictEqual(bundles[0].records, [1, 3]);
+});
+
+test('#5734: a leftover auto:merge without auto:build buckets with the ungranted records, never with a granted bundle', () => {
+  const groups = [
+    [fastLaneIssue(1, { labels: ['auto:build', 'auto:merge'] })],
+    [fastLaneIssue(2, { labels: ['auto:merge'] })],
+    [fastLaneIssue(3, { labels: ['auto:build', 'auto:merge'] })],
+    [fastLaneIssue(4)],
+  ];
+  const { bundles } = bundleFastLaneSingletons(groups);
+  assert.deepStrictEqual(bundles.map((b) => b.records).sort((a, b) => a[0] - b[0]), [[1, 3], [2, 4]]);
 });
 
 test('bundles oldest-first within a bucket', () => {

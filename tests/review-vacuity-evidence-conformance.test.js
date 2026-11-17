@@ -7,6 +7,8 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
+const { vacuityDowngraded, vacuityReconfirmed } = require('../plugin/bin/lib/reproduction-log');
+const { formatEntry } = require('../plugin/bin/lib/log-decision/append');
 
 const REVIEW = path.join(__dirname, '..', 'plugin', 'skills', 'review');
 const lensDispatch = readText(path.join(REVIEW, 'step3-lens-dispatch.md'));
@@ -50,11 +52,22 @@ test('the Reproduction dispatch section downgrades an unevidenced lens 3f vacuit
   const idx = lines.findIndex((l) => /^> - \*\*Lens 3f vacuity findings need execution evidence/.test(l));
   assert.ok(idx !== -1, 'Reproduction dispatch blockquote must carry the lens 3f downgrade bullet');
   const bullet = lines[idx];
-  assert.match(bullet, /categorise-reproduction/);
+  assert.match(bullet, /categorise-reproduction --only confirmed/);
   assert.match(bullet, /`unconfirmed`/);
-  assert.match(bullet, /reproduction agreement overridden, no execution evidence/);
+  // The two lines come from their composer (#5595); the bullet names the judgment kinds that write them.
+  assert.match(bullet, /`log-reproduction-judgment`[^\n]*`--lens "3f"`[^\n]*`\{kind: "vacuity-downgraded", path, line\}`/);
   assert.match(bullet, /Reading source alone never lifts this downgrade: the only way back/);
-  assert.match(bullet, /re-confirmed by executed run: \{command\} → \{observed output\}\. Confirmed\./);
+  assert.match(bullet, /`\{kind: "vacuity-reconfirmed", path, line, command, output\}`/);
+  assert.match(bullet, /log only one you executed/);
+  // The wording is pinned once (tests/bin-lib/reproduction-log.test.js); this rule needs the downgrade to stage
+  // the finding as low-confidence, and the re-confirm to be an AUTO Confirmed line carrying the command and output.
+  const at = new Date(2026, 0, 1, 10, 0, 0);
+  const down = vacuityDowngraded({ path: 't.js', line: 5 });
+  assert.equal(down.status, 'STAGED');
+  assert.match(formatEntry({ ...down, now: at }), /lens "3f" vacuity finding t\.js:5 downgraded to unconfirmed[^\n]* Staged to Review Console as low-confidence\./);
+  const up = vacuityReconfirmed({ path: 't.js', line: 5, command: 'node --test t.js', output: '1 failing' });
+  assert.equal(up.status, 'AUTO');
+  assert.match(formatEntry({ ...up, now: at }), /lens "3f" vacuity finding t\.js:5 [^\n]*node --test t\.js → 1 failing\. Confirmed\./);
   const onlyOne = lines.findIndex((l) => /^> - Findings present in only one agent's output/.test(l));
   assert.ok(onlyOne !== -1 && onlyOne < idx, 'the downgrade bullet must follow the reproduction bullets');
 });
@@ -64,7 +77,7 @@ test('the retired Direct-verification override paragraph is gone; the downgrade 
   assert.equal(para, undefined, 'the Direct-verification override paragraph must stay retired');
   assert.doesNotMatch(lensDispatch, /direct[- ]verification/i);
   const bullet = lensDispatch.split('\n').find((l) => /^> - \*\*Lens 3f vacuity findings need execution evidence/.test(l));
-  assert.match(bullet, /re-confirmed by executed run/);
+  assert.match(bullet, /`\{kind: "vacuity-reconfirmed"/);
 });
 
 test('step3-routing lists the lens 3f no-execution-evidence source among unconfirmed sources', () => {

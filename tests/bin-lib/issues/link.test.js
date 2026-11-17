@@ -267,7 +267,7 @@ test('link-records CLI: a throwing remoteUrl (outside a git repo) is the friendl
   deps.remoteUrl = () => { throw new Error('fatal: not a git repository'); };
   const code = run(['--parent', '592', '--subs', '595'], deps);
   assert.equal(code, 2);
-  assert.match(err.join(''), /could not resolve owner\/repo — pass --repo/);
+  assert.match(err.join(''), /could not resolve owner\/repo — pass --repo \[host\/\]owner\/name/);
 });
 
 test('errorText fallback: a runner throwing a non-Error still yields a non-empty failed[].error', () => {

@@ -6114,7 +6114,7 @@ function mergeHarness(over = {}) {
       ...(over.script || []),
       [on('resolveRunDir'), { ok: true, created: true, reason: null, message: '', path: MERGE_RUN }],
       [(c) => c.kind === 'lstatType' && c.args[0].startsWith(path.join(MAIN, '.claude-tweaks')), (c) => realLstatType(c.args[0])],
-      [(c) => c.kind === 'gh' && c.args[0] === 'issue' && c.args[1] === 'view' && c.args.at(-1) === 'labels', JSON.stringify({ labels: [{ name: 'auto:merge' }] })],
+      [(c) => c.kind === 'gh' && c.args[0] === 'issue' && c.args[1] === 'view' && c.args.at(-1) === 'labels', JSON.stringify({ labels: [{ name: 'auto:build' }, { name: 'auto:merge' }] })],
       [(c) => c.kind === 'policyCore' && c.args.includes('integration-model'), { code: 0, result: { 'integration-model': { value: 'pr-first', source: 'run-config' } }, invalidRaw: new Map(), degrades: new Map() }],
       [(c) => c.kind === 'policyCore' && c.args.includes('merge-verification'), { code: 0, result: { 'merge-verification': { value: 'wait', source: 'run-config' } }, invalidRaw: new Map(), degrades: new Map() }],
       [(c) => c.kind === 'readFile' && path.basename(c.args[0]) === 'run-state.json', JSON.stringify({ pr: { number: 9 } })],

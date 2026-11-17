@@ -9,7 +9,7 @@
 
 const crypto = require('crypto');
 const path = require('path');
-const { evaluateMaturation } = require('../issues/grant-maturation');
+const { evaluateMaturation, withheldGrant } = require('../issues/grant-maturation');
 const { resolveRecords, memberRecords } = require('../wrap-up/pack');
 const {
   SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction,
@@ -67,7 +67,11 @@ const SECTION_MAP = [
   [/^review-unconfirmed-/, SECTIONS.LOW],
   [/^review-(contested|debate)-/, SECTIONS.CONTESTED],
   [/\.patch$/, SECTIONS.PENDING],
-  [/^(polish-suggestion|visual-review|design-decision|build-deviation|simplify|deepen|sdd-ruling)-/, SECTIONS.PENDING],
+  [/^(polish-suggestion|visual-review|build-deviation|simplify|deepen|sdd-ruling)-/, SECTIONS.PENDING],
+  // design-decision- (#4038): design-wrapper/modes/review.md Step 5.5 stages it with no
+  // diff and a `Remedy:` naming a human-run upstream command (DESIGN.md stays
+  // upstream-owned), so there is nothing to apply — it resolves pending.
+  [/^design-decision-/, SECTIONS.PENDING, 'design-decision-human-remedy'],
   // sibling-premise-disproof- (#3488): bin/materialize.js stages it as a note for a
   // human to read, not a change to apply — so it resolves pending.
   [/^sibling-premise-disproof-/, SECTIONS.PENDING, 'sibling-premise-disproof-note'],
@@ -120,7 +124,8 @@ const SECTION_MAP = [
 const CANONICAL_PREFIXES = [
   'review-unconfirmed-',
   'review-contested-', 'review-debate-',
-  'polish-suggestion-', 'visual-review-', 'design-decision-', 'build-deviation-', 'simplify-', 'deepen-', 'sdd-ruling-',
+  'polish-suggestion-', 'visual-review-', 'build-deviation-', 'simplify-', 'deepen-', 'sdd-ruling-',
+  'design-decision-',
   'sibling-premise-disproof-', 'plan-citation-', 'translation-',
   'wrap-up-skill-', 'skills-',
   'wrap-up-doc-', 'tidy-doc-', 'docs-',
@@ -449,6 +454,7 @@ function mergeResolution(snapshot, deps) {
     const g = snapshot.grants[n] || { labels: [], pendingSince: null };
     const labels = g.labels || [];
     const mat = evaluateMaturation({
+      hasBuildLabel: labels.includes('auto:build'),
       hasMergeLabel: labels.includes('auto:merge'),
       hasPendingLabel: labels.includes('auto:merge-pending'),
       pendingSince: g.pendingSince || null,
@@ -459,10 +465,14 @@ function mergeResolution(snapshot, deps) {
       // #3358: name the untrusted marker comments ghReadGrants passed over, so an
       // unknown-age grant is not mistaken for "never granted".
       const passedOver = Array.isArray(g.skippedUntrusted) && g.skippedUntrusted.length ? ` — ${g.skippedUntrusted.join('; ')}` : '';
-      return { resolution: 'leave-open', reason: `#${n} lacks auto:merge and a matured auto:merge-pending (${mat.reason})${passedOver}` };
+      const withheld = withheldGrant(mat, labels);
+      if (withheld.missing === 'build-grant') {
+        return { resolution: 'leave-open', reason: `#${n}: ${withheld.detail}${passedOver}` };
+      }
+      return { resolution: 'leave-open', reason: `#${n} lacks auto:merge and a matured auto:merge-pending (${withheld.detail})${passedOver}` };
     }
   }
-  return { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' };
+  return { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' };
 }
 
 // ---- tiebreak verdicts are a finding's final outcome (#3949) ----
@@ -1057,4 +1067,4 @@ function resolveAll({ runDir, policy, deps, controlMode }) {
   return result;
 }
 
-module.exports = { CARRIED_RESOLUTION, CARRY_FROM, UNATTENDED_SHADOWED_DROP_REASON, decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction, RATIFY_FILES_RECORD_REASON, REFERENCE_REPAIR_REASONS, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };
+module.exports = { CARRIED_RESOLUTION, CARRY_FROM, UNATTENDED_SHADOWED_DROP_REASON, decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction, RATIFY_FILES_RECORD_REASON, REFERENCE_REPAIR_REASONS, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs, findingKey, lineKeys };
