@@ -458,3 +458,27 @@ test('tmpGitRepo: a second call starts no git process and carries the verify ide
   assert.deepStrictEqual(fs.readdirSync(trace), []);
   assert.strictEqual(second.git('config', 'user.email').trim(), 'verify-test@example.invalid');
 });
+
+// #5772: stack-check, statusline and archive-merged builders — same shape as above.
+const stackFixtures = require('./bin-lib/staged-patch/stack-check-fixtures');
+for (const [name, make] of [
+  ['stack-check gitFixture(BASE)', () => stackFixtures.gitFixture(null)],
+  ['stack-check gitFixture(Latin-1 bytes)', () => stackFixtures.gitFixture(null, Buffer.from('caf\xe9\n', 'latin1'))],
+  ['stack-check repoWith(files)', () => stackFixtures.repoWith(null, { 'g.txt': 'one\n', 'bin.dat': Buffer.from([0, 1, 255]) })],
+]) {
+  test(`AC3.1: ${name}: a second call starts no git process`, () => {
+    scratch.push(make().dir);
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(second.dir);
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+
+test('AC4.1: a stack-check fixture copy carries maintenance.auto=false and gc.auto=0 in its own config', () => {
+  const fx = stackFixtures.gitFixture(null);
+  scratch.push(fx.dir);
+  assert.strictEqual(fx.git('config', '--local', 'maintenance.auto').stdout.trim(), 'false');
+  assert.strictEqual(fx.git('config', '--local', 'gc.auto').stdout.trim(), '0');
+  assert.strictEqual(fx.git('config', '--local', 'user.email').stdout.trim(), 'stack-check@example.invalid');
+});
