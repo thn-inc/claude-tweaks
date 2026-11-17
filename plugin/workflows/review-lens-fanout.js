@@ -27,7 +27,7 @@ function refusal(input) {
   if (!Array.isArray(input.lenses) || input.lenses.length === 0) return 'lenses must be a non-empty array'
   const seen = new Set()
   for (const l of input.lenses) {
-    if (l === null || typeof l !== 'object' || typeof l.lens !== 'string' || !LENS_TOKEN.test(l.lens)) {
+    if (typeof l?.lens !== 'string' || !LENS_TOKEN.test(l.lens)) {
       return 'lens must be one plain token of letters, digits, _ or -'
     }
     if (seen.has(l.lens)) return `lens ${l.lens} is named twice`
