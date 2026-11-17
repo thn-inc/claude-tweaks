@@ -374,7 +374,7 @@ test("the handoff template inlines task-prompt.md's async-wait item 7 in the sam
 test('the verbatim-copy check can go red: one changed word in the copy fails it', () => {
   const [tpl] = fencedBlocks(read(HANDOFF));
   const body = item7Body(read(TASK_PROMPT));
-  const doctored = squash(tpl).replace('at most 60 (20 minutes)', 'at most 90 (30 minutes)');
+  const doctored = squash(tpl).replace('--max-seconds 150', '--max-seconds 120');
   assert.notEqual(doctored, squash(tpl), 'the doctoring anchor is gone from the template');
   assert.ok(!doctored.includes(body));
 });
@@ -389,7 +389,7 @@ const HANDOFF_PROGRESS = [
   [/A failed wait call counts as no wait but ends its window, and the probe runs as at any bound/, 'the template states a failed wait call expires the window'],
   [/against the previous probe \(taken right after launching the wave, then at each bound/, 'the template compares with the previous probe'],
   [/a child whose prompt names no worktree counts as unchanged/, 'the template states the no-named-worktree rule'],
-  [/Per wave, while any child shows a change, log one wait line and grant one more 60-wait window/, 'the template states the per-wave grant'],
+  [/Per wave, while any child shows a change, log one wait line and grant one more 20-minute window/, 'the template states the per-wave grant'],
   [/a failed probe command counts as no change, never retried in another form/, 'the template states a failed probe command counts as no change'],
   [/stop when a whole window passes with no change/, 'the template states the one-window stall condition'],
   [/ceiling of 3 windows \(60 minutes\) per wave/, 'the template states the 3-window ceiling'],

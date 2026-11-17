@@ -516,7 +516,7 @@ test('CLI native mode: unresolvable owner/repo (no --repo, no remote) exits 2', 
   deps.remoteUrl = () => { throw new Error('fatal: not a git repository'); };
   const code = run(['720'], deps);
   assert.equal(code, 2);
-  assert.match(err.join(''), /could not resolve owner\/repo/);
+  assert.match(err.join(''), /could not resolve owner\/repo — pass --repo \[host\/\]owner\/name/);
 });
 
 test('CLI: --work-links with an invalid value is a malformed invocation (exit 2)', () => {
@@ -1270,7 +1270,7 @@ test('AC9.1: --blocker-landing with no resolvable repo and an out-of-run blocker
   blocked.deps.remoteUrl = () => { throw new Error("fatal: No such remote 'origin'"); };
   assert.equal(run(['11', '--blocker-landing'], blocked.deps), 2);
   assert.equal(blocked.out.length, 0);
-  assert.match(blocked.err.join(''), /could not resolve owner\/repo for --blocker-landing — pass --repo owner\/name/);
+  assert.match(blocked.err.join(''), /could not resolve owner\/repo for --blocker-landing — pass --repo \[host\/\]owner\/name/);
   assert.deepEqual(calls.filter((a) => !isIssueView(a, 11)), [], 'no runner call past the issue fetch');
 
   calls.length = 0;
