@@ -45,7 +45,7 @@ Proof(shell-injection): Task 1's module test and Task 2's oracle test run the st
 - Test: `tests/bin-lib/dispatch/queue-pull.test.js` (`fenceTargetProposal` at 1572-1581; new tests after the target-missing tests ending near 1795)
 
 **Interfaces:**
-- Produces (test file, used by Task 2): `HOSTILE_DOC` (a `const` string, `docs/q"$(id)` + "`id`" + `it's.md` — holds `"`, `$(id)`, a backtick and `'`), `runStagedComment(proposalText, num) -> { status, ghCalls: string[][], idRan: boolean, stderr }`, and `CLOSING_BODY(tpath, ref) -> string` (the unquoted comment text from Global Constraints).
+- Produces (test file, used by Task 2): `HOSTILE_DOC` (a `const` string, `docs/q"$(id)` + "`id`" + `"it's.md` — holds `"`, `$(id)`, a backtick and `'`; its two `"` are deliberate: they keep the pre-fix double-quoted line parseable, so bash really runs `id` and splits the argv there — with an odd count the pre-fix line is a syntax error, bash expands nothing, and `idRan === false` would pass on the unfixed code), `runStagedComment(proposalText, num) -> { status, ghCalls: string[][], idRan: boolean, stderr }`, and `CLOSING_BODY(tpath, ref) -> string` (the unquoted comment text from Global Constraints).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -76,7 +76,7 @@ Use the real ref the in-process scenario resolves (read it from the staged title
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test --test-name-pattern "#5317" tests/bin-lib/dispatch/queue-pull.test.js` (foreground, timeout 600000)
-Expected: FAIL after Step 1 — the staged line holds `--body "Closing: … docs/q"$(id)…"`; the bash run records a split argv and `idRan: true`.
+Expected: FAIL after Step 1 — the staged line holds `--body "Closing: … docs/q"$(id)…"`; the bash run exits 0 having run the stub `id` (`idRan: true`) and records a `--body` argv without the `$(id)`/backtick text (`Closing: the named target docs/qit's.md …`).
 
 - [ ] **Step 3: Change the fence**
 
@@ -171,6 +171,8 @@ git -C "<worktree>" commit -F <message file>   # "Pin a hostile named-target pat
 - AC2.1 (parity stays green, byte-identical proposals): Task 2 Step 1's `AC2` row plus the existing `#5227 parity (AC1)` matrix.
 
 ## Not changed (swept)
+
+- A failing `node -e` quoter inside the fence's `echo` would stage `--body ` with no argument and the module has no such path. Out of scope: the same loop runs two `node -e` calls first (fence lines 440-441, `NUM`/`TPATH`), so a node that cannot start fails there before this line; no guard is added (plan review, low).
 
 - `docs/superpowers/plans/2026-11-17-queue-pull-target-missing-md-5316.md` matches the scope keywords only as #5316's own finished plan; no change.
 
