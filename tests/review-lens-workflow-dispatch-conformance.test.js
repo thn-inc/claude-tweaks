@@ -89,14 +89,26 @@ const TIMER_COMMAND = 'node -e "setTimeout(()=>{},1800000)"';
 // Fix round 2: an abandoned run is stopped (n3), and a post-launch fallback keeps the 3h already dispatched (n1+n2).
 const STOP_RUN = "stop the run with `TaskStop` on the launch result's `taskId`";
 const AFTER_LAUNCH_SCOPE = 'under conditions 3–5 (taken after launch) it dispatches the agent lenses 3a–3g only';
+// Fix round 3: the stop covers condition 5 too (p1); the launch order and the "Then dispatch" scope are pinned (p2).
+const STOP_BOTH = 'before taking condition 4 or 5';
+const LAUNCH_ALONE = 'Make one `Workflow` call, alone in its message';
+const NEXT_MESSAGE = 'in the next message, start one timer';
+const WITH_3H = 'together with it dispatch lens 3h';
+const THEN_SCOPE = 'lenses 3a–3g only under conditions 3–5';
 
 function checkSubFile(text) {
   const start = sectionOf(text, '## Start');
   assert.ok(start.includes(TIMER_COMMAND), 'Start must start the 1800000 ms setTimeout timer');
   assert.match(start, /`run_in_background` Bash call/, 'Start must run the timer as a run_in_background Bash call');
   assert.ok(start.includes(STOP_RUN), 'Start must stop an abandoned run by its launch taskId');
+  assert.ok(start.includes(STOP_BOTH), 'Start must stop the run before condition 4 or 5');
+  assert.ok(start.includes(LAUNCH_ALONE), 'Start must make the Workflow call alone in its message');
+  assert.ok(start.includes(NEXT_MESSAGE), 'Start must start the timer in the next message');
+  assert.ok(start.includes(WITH_3H), 'Start must dispatch lens 3h together with the timer');
+  assert.ok(start.indexOf(LAUNCH_ALONE) < start.indexOf(NEXT_MESSAGE), 'the Workflow call must come before the timer message');
   const fallback = sectionOf(text, '## Fallback');
   assert.ok(fallback.includes(AFTER_LAUNCH_SCOPE), 'Fallback must dispatch only 3a–3g after launch');
+  assert.ok(fallback.includes(THEN_SCOPE), 'Fallback\'s Then-dispatch sentence must scope 3a–3g to conditions 3–5');
   for (const label of LABELS) assert.match(fallback, labelItem(label), `fallback condition missing: ${label}`);
   assert.ok(fallback.includes(SKIP_LINE), 'SKIP line missing from the Fallback section');
   assert.deepEqual(missingFacts(text), [], 'sub-file facts missing');
@@ -221,6 +233,29 @@ test('go-red: a Start without the abandoned-run stop, or a Fallback without the 
   const noScope = live.split(AFTER_LAUNCH_SCOPE).join('under conditions 3–5 it dispatches every lens');
   assert.notEqual(noScope, live);
   assert.throws(() => checkSubFile(noScope), { message: /Fallback must dispatch only 3a–3g after launch/ });
+});
+
+test('go-red: each launch-order and stop pin goes red with its own message', () => {
+  const live = read(SUB_FILE);
+  const cases = [
+    [STOP_BOTH, 'before taking condition 4', /Start must stop the run before condition 4 or 5/],
+    [LAUNCH_ALONE, 'Make one `Workflow` call', /Start must make the Workflow call alone in its message/],
+    [NEXT_MESSAGE, 'start one timer', /Start must start the timer in the next message/],
+    [WITH_3H, 'dispatch lens 3h', /Start must dispatch lens 3h together with the timer/],
+    [THEN_SCOPE, 'every lens under conditions 3–5', /Then-dispatch sentence must scope 3a–3g to conditions 3–5/],
+  ];
+  for (const [literal, replacement, message] of cases) {
+    const mutated = live.split(literal).join(replacement);
+    assert.notEqual(mutated, live, `literal not found: ${literal}`);
+    assert.throws(() => checkSubFile(mutated), { message });
+  }
+});
+
+test('go-red: the timer message placed before the Workflow call fails the launch-order check', () => {
+  const live = read(SUB_FILE);
+  const swapped = live.replace(LAUNCH_ALONE, '\u0000').replace(NEXT_MESSAGE, LAUNCH_ALONE).replace('\u0000', NEXT_MESSAGE);
+  assert.notEqual(swapped, live);
+  assert.throws(() => checkSubFile(swapped), { message: /the Workflow call must come before the timer message/ });
 });
 
 test('go-red: each sub-file fact goes red alone when its text is removed', () => {
