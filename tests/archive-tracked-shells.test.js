@@ -48,14 +48,18 @@ const fixtureEnv = () => ({ ...cleanGitEnv(), ...IDENTITY });
 
 let seq = 0;
 
+// The addShell option objects a seeded fixture takes (IDENTICAL: the default twin).
+const ABSENT = { twin: 'absent' };
+const IDENTICAL = {};
+
+const shellId = (i) => `2026-10-01T00000${i}-record-${i + 1}`;
+const shellNumber = (i) => 8001 + i;
+
 // A bare `origin` and a clone of it as the main checkout, with this repo's .gitignore (so the
 // archive paths behave as in production), an initial commit pushed to origin/main. Built once per
 // process; every call gets a copy. `shells` is an ordered list of addShell options seeded after the
 // seed push, one template per distinct list: shell i has id 2026-10-01T00000{i}-record-{i + 1} and
 // file number 8001 + i. The returned descriptors point into the copy.
-const ABSENT = { twin: 'absent' };
-const IDENTICAL = {};
-
 function makeFixture(shells = []) {
   const norm = shells.map(({ twin = 'identical', clean = true, push = true }) => [twin, clean, push]);
   const base = fromTemplate(`ats:fixture:${JSON.stringify(norm)}`, (dir) => {
@@ -73,17 +77,15 @@ function makeFixture(shells = []) {
     run(root, 'add', '.gitignore', 'README.md');
     run(root, 'commit', '-q', '-m', 'seed');
     run(root, 'push', '-q', '-u', 'origin', 'main');
-    norm.forEach(([twin, clean, push], i) => writeShell(run, root, shellId(i), 8001 + i, { twin, clean, push }));
+    norm.forEach(([twin, clean, push], i) => writeShell(run, root, shellId(i), shellNumber(i), { twin, clean, push }));
   }, { prefix: 'ct-ats-', realpath: true });
   const root = path.join(base, 'main');
   const seeded = norm.map((_, i) => {
     const id = shellId(i);
-    return { id, file: `${8001 + i}-spec.md`, live: path.join(pipelines(root), id, 'work'), twinWork: path.join(pipelines(root), 'archive', id, 'work') };
+    return { id, file: `${shellNumber(i)}-spec.md`, live: path.join(pipelines(root), id, 'work'), twinWork: path.join(pipelines(root), 'archive', id, 'work') };
   });
   return { base, origin: path.join(base, 'origin.git'), root, shells: seeded };
 }
-
-const shellId = (i) => `2026-10-01T00000${i}-record-${i + 1}`;
 
 // An empty `git init` repository for the policy test, built once per process.
 function policyRepo() {
