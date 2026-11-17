@@ -80,6 +80,12 @@ const { appendExclusion } = require('../../../plugin/bin/lib/dispatch/exclusions
 const { aliasMcpTimestamps } = require('../../../plugin/bin/lib/issues/mcp-issue-shape');
 
 const FENCE = extractFence(readText(SCRIPT_MD), FENCE_FIRST_LINE);
+const ORACLE_ENV_KEYS = new Set([
+  'PATH', 'HOME', 'PWD', 'OLDPWD', 'TMPDIR', 'TZ', 'LANG', 'CLAUDE_PLUGIN_ROOT', 'CLAUDE_CODE_SESSION_ID',
+  'GIT_CEILING_DIRECTORIES', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_GLOBAL', 'GIT_AUTHOR_DATE', 'GIT_COMMITTER_DATE',
+  'QP_SHIM_TABLE', 'QP_LOG_DIR', 'NODE_OPTIONS',
+]);
+
 test('#5227 oracle: queue-pull-script.md runs whole over a one-record fixture', { skip: oracleSkip() }, async () => {
   const r = await withEscapeGuard(REPO, () => runOracle(createSandbox(S0()), FENCE));
   assert.equal(r.status, 0, r.stderr);
@@ -120,6 +126,7 @@ test('#5227 oracle: the git shim refuses a directory outside the sandbox, an exp
   const sb = createSandbox(S0());
   try {
     const env = sb.runEnv({ tmpdir: path.join(sb.root, 'tmp'), sessionId: 'qp-git-probe' });
+    assert.deepEqual(Object.keys(env).filter((k) => !ORACLE_ENV_KEYS.has(k) && !k.startsWith('CT_TRACE_')), [], 'nothing inherited');
     const git = (args, extra = {}) => spawnSync(path.join(sb.bin, 'git'), args, { cwd: sb.proj, env: { ...env, ...extra }, encoding: 'utf8' });
     const inside = git(['rev-parse', '--show-toplevel']);
     assert.equal(inside.status, 0, inside.stderr);
