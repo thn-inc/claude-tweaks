@@ -26,6 +26,13 @@ function loadIssueIndex(file, toolName, { stderr = DEFAULT_IO.stderr, cwd } = {}
     stderr(`[${toolName}] validate-findings: --issues file must contain a JSON array: ${file} — dedup falls back to the local cache only\n`);
     return {};
   }
+  return buildIssueIndex(arr, toolName, { stderr });
+}
+
+// The same index built from an already-parsed issues array (a caller that read and validated
+// the --issues file itself, e.g. through its own injected reader, passes the array and never
+// re-reads the path). The array's elements are checked here; a non-array is the caller's to refuse.
+function buildIssueIndex(arr, toolName, { stderr = DEFAULT_IO.stderr } = {}) {
   const index = {};
   let dropped = 0;
   let stateless = 0;
@@ -67,4 +74,4 @@ function normalizeLabels(labels) {
   return { names, dropped };
 }
 
-module.exports = { loadIssueIndex };
+module.exports = { loadIssueIndex, buildIssueIndex };

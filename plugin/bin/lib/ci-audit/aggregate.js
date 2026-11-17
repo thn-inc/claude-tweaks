@@ -2,7 +2,10 @@
 // computes across recent runs: per-job phase percentiles, each workflow's critical path over
 // `needs`, matrix shard skew, step names declared in several jobs, which workflow-job pairs never
 // ran at the same time, and the run jobs no workflow job matched. Pure: no spawns, no I/O, no
-// knowledge of where the runs came from. It takes normalized runs — { id, workflow, conclusion,
+// knowledge of which service the runs came from or how they were fetched. It does read the
+// workflow-file naming and expression syntax: the `${{ … }}` delimiters of a declared job name and
+// the matrix-shard rendering `name (value)` of a run job's name (matchJob, familyOf). It takes
+// normalized runs — { id, workflow, conclusion,
 // createdAt, jobs: NormJob[] } — the workflow facts readWorkflowFacts gives, keyed by the same
 // `workflow` string the runs carry, and { minSample } (default 1), the shared-run floor an
 // `overlaps` pair needs. matchJob, familyOf and usableJobs are exported so the checks map run jobs
@@ -99,7 +102,11 @@ function stepDurations(steps, into) {
   }
 }
 
-// Heaviest chain over `needs`, or null on a cycle or when no job is weighed.
+// Heaviest chain over `needs`, or null on a cycle or when no job is weighed. A job with no weight
+// (never run, or unmatched) is bridged over: its needs' best chain passes through it unchanged, so
+// the chain lists weighed jobs only and a path may skip an unweighed link. The final tie clause
+// (`top.chain.length === 0 && r.chain.length > 0`) lets a chain whose weighed jobs total 0 ms beat
+// the empty initial `top`, so an all-zero workflow still yields a path rather than null.
 function criticalPath(wfJobs, weightById) {
   const byId = new Map(wfJobs.map((j) => [j.id, j]));
   const memo = new Map();

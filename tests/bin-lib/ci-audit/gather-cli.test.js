@@ -444,6 +444,19 @@ test('a zero-run read inside a truncated window says the window was truncated', 
   assert.equal(r.report.noData.reason, 'no completed run was sampled in the 7-day window — the window was truncated (see truncated)');
 });
 
+test('a zero-run read where one workflow list failed says part of the read failed, never just empty', () => {
+  const fake = fakeRunner({ runs: [] });
+  const runner = (args) => {
+    if (isRunsList(args) && LIST_RE.exec(args[3])[1] === 'shard.yml') throw Object.assign(new Error('x'), { stderr: 'gh: Bad Gateway (HTTP 502)' });
+    return fake.runner(args);
+  };
+  const r = gather(['gather', '--repo', REPO, '--days', '7'], { fake: { runner, calls: [] }, workflows: BOTH });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.report.failures.length, 1);
+  assert.equal(r.report.noData.reason,
+    'no completed run was sampled in the 7-day window — part of the read failed (see failures), so the window may not be empty');
+});
+
 test('a repeated-work breach (workflow null) is kept beside an unparsed workflow whose breaches are dropped', () => {
   // Three parsed jobs declare `Setup` (a repeated-work lead with workflow null); the tabbed workflow's
   // queue-wait lead is dropped. Only the `b.workflow === null` clause keeps the first.

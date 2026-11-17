@@ -1,6 +1,8 @@
 // plugin/bin/lib/ci-audit/phases.js — per-job phase split and nearest-rank percentiles for
-// /claude-tweaks:ci-health (#5757). Pure: no spawns, no I/O, and no knowledge of where a job came
-// from. It consumes the normalized job shape only —
+// /claude-tweaks:ci-health (#5757). Pure: no spawns, no I/O, and no knowledge of which service a
+// job came from or how it was fetched. It does read the workflow-file naming syntax: nameMatches
+// below treats the `${{ … }}` expression delimiters in a declared name as template holes. It
+// consumes the normalized job shape only —
 //   { name, createdAt, startedAt, completedAt, conclusion,
 //     steps: [{ name, number, conclusion, startedAt, completedAt }] }
 // with instants as ISO-8601 strings — plus the steps the workflow file declares, in file order, as

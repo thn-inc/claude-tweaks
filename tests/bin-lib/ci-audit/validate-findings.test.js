@@ -1,8 +1,8 @@
 'use strict';
 // tests/bin-lib/ci-audit/validate-findings.test.js — #5757: ci-audit's finding validator, its
 // fingerprint, its issue payload and the `validate-findings` verb. Every input is a hand-built
-// gather report in the real gather shape; files the verb reads are real temp files (the issue
-// index loader reads its file itself), and every output is captured by an injected stdout/stderr.
+// gather report in the real gather shape; files the verb reads are real temp files read through an
+// injected readFile, and every output is captured by an injected stdout/stderr.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -272,6 +272,21 @@ test('repeated-work cites its step: resolved, contradicting, missing step, a set
   assert.deepEqual(errorsOf(finding({ step: 'Install deps' })), ['step: only repeated-work names a step']);
 });
 
+test('a job-row figure over fewer runs than window.minSample is rejected naming the sample; with the floor met it is accepted', () => {
+  const thin = { ...row('lint', [9000, 12000], [2000, 3000], [4000, 5000], [15000, 20000]), runs: 3 };
+  const g = gather({ jobs: [thin], underSampled: [{ workflow: CI, job: 'lint', runs: 3 }] });
+  assert.deepEqual(errorsOf(finding({ evidence: [{ job: 'lint', metric: 'waiting.p50Ms', value: 9000 }] }), g),
+    ['evidence[0]: job "lint" is under-sampled in workflow "wf/ci.yml": 3 runs, under the gather\'s minimum sample of 5']);
+  accepted(finding({ evidence: [{ job: 'lint', metric: 'waiting.p50Ms', value: 9000 }] }),
+    gather({ jobs: [thin], window: { ...gather().window, minSample: 3 } }));
+});
+
+test('a finding naming a workflow with unparsed reasons is rejected; with none it is accepted', () => {
+  const g = gather({ workflows: [{ file: CI, unparsed: ['tab indentation in jobs:'] }, { file: 'wf/nightly.yml', unparsed: [] }] });
+  assert.deepEqual(errorsOf(finding(), g), ['workflow: "wf/ci.yml" has unparsed workflow-file reasons in the gather, so it is never judged']);
+  accepted(finding());
+});
+
 // ---- fingerprint ------------------------------------------------------------------------
 
 test('the fingerprint is cihealth-<8 hex> over check, workflow, job and step only', () => {
@@ -377,6 +392,19 @@ test('repeated-work Acceptance Criteria read "below" (the check fires at its thr
   const mc = payloadFor(finding({ check: 'missing-concurrency', job: null, evidence: [{ job: null, metric: 'concurrencyDeclared', value: 0 }] }), g);
   assert.equal(extractSection(mc.body, 'Acceptance Criteria', { trim: true }),
     'On the next sweep, the missing-concurrency check reports no breach for workflow `wf/ci.yml`.');
+});
+
+test('the Failed reads block shows the first 20 lines and counts the rest, so the body stays bounded', () => {
+  const failures = Array.from({ length: 25 }, (_, i) => `jobs of run ${i + 1}: timed out`);
+  const p = payloadFor(finding(), gather({ failures }));
+  checkBody(p.body);
+  const block = p.body.split('Failed reads:\n\n```\n')[1].split('\n```')[0].split('\n');
+  assert.equal(block.length, 21);
+  assert.equal(block[19], 'jobs of run 20: timed out');
+  assert.equal(block[20], '+5 more failed reads');
+  assert.ok(!p.body.includes('jobs of run 21:'));
+  const exact = payloadFor(finding(), gather({ failures: failures.slice(0, 20) }));
+  assert.ok(!exact.body.includes('more failed reads'));
 });
 
 test('a failed-read line carrying credential-shaped text is withheld from the body', () => {
@@ -557,6 +585,29 @@ test('AC4.2: a different fingerprint files; a closed wontfix match produces none
   assert.equal(reopened.length, 1);
   assert.equal(reopened[0].action, 'reopen');
   assert.equal(reopened[0].reopens, 43);
+});
+
+test('a closed match with no issue number is held, never printed as a reopen of null', () => {
+  const closed = [{ state: 'CLOSED', labels: ['by:ci-health'], fingerprint: 'cihealth-f788ae38' }];
+  const r = verb(VF, { 'g.json': gather(), 'f.json': [finding()], 'i.json': closed });
+  assert.equal(r.code, 0);
+  assert.deepEqual(parseOut(r), []);
+  assert.match(r.err, /1 already filed or suppressed, 0 payload\(s\)/);
+});
+
+test('the issue index is built from the --issues array read once through the injected reader, never re-read by path', () => {
+  const reads = [];
+  const files = { 'g.json': gather(), 'f.json': [finding()], 'i.json': [{ number: 41, state: 'OPEN', labels: ['by:ci-health'], fingerprint: 'cihealth-f788ae38' }] };
+  let out = '';
+  const code = run(VF, {
+    cwd: () => '/nonexistent-checkout',
+    readFile: (p) => { reads.push(p); return JSON.stringify(files[p]); },
+    stdout: (s) => { out += s; },
+    stderr: () => {},
+  });
+  assert.equal(code, 0);
+  assert.equal(out, '[]\n');
+  assert.deepEqual(reads, ['g.json', 'f.json', 'i.json']);
 });
 
 test('a repeat run over unchanged data with its own payload filed files nothing', () => {

@@ -9,6 +9,7 @@ const {
   CHECK_IDS, DEFAULTS, FLOOR_IDS, DEFAULT_MIN_SAMPLE, parseThresholds, limitsOf, evaluate,
 } = require('../../../plugin/bin/lib/ci-audit/checks');
 const { aggregate } = require('../../../plugin/bin/lib/ci-audit/aggregate');
+const { METRICS } = require('../../../plugin/bin/lib/ci-audit/validate-finding');
 
 const W = 'workflows/ci.yml';
 const S = 1000;
@@ -277,6 +278,32 @@ test('evaluate orders breaches by check, then workflow, then job, and tolerates 
   ]);
   assert.deepEqual(evaluate(agg(), {}, {}, 5), []);
   assert.deepEqual(evaluate(null, null), []);
+});
+
+// The validator's per-check metric (METRICS.breach) is a twin of what evaluate emits: one fixture
+// fires all eight checks, so a renamed metric on either side fails here, not at a judge's finding.
+test('every metric evaluate emits for a breach is the validator\'s METRICS.breach entry for its check', () => {
+  const step = { name: 'Install', kind: 'command' };
+  const f = {
+    [W]: facts([
+      fj('q', { steps: [step] }), fj('s', { steps: [step] }), fj('build', { steps: [step] }), fj('test', { needs: ['build'] }),
+      fj('unit', { matrix: true }), fj('slow', { timeoutDeclared: false }),
+    ], { concurrencyDeclared: false }),
+  };
+  const jobs = [
+    row('q', 5, 50, 10, 40), row('s', 5, 10, 50, 40), row('build', 5, 0, 20, 100), row('test', 5, 0, 10, 70),
+    row('unit (a)', 5, 0, 0, 10), row('unit (b)', 5, 0, 0, 10), row('unit (c)', 5, 0, 0, 25),
+    row('slow', 5, 0, 0, 100, { runningP90: 400 }),
+  ];
+  const out = evaluate(agg({
+    jobs,
+    criticalPaths: [{ workflow: W, pathMs: 200 * S, sumMs: 300 * S, chain: ['build', 'test'], allJobsMatched: true }],
+    overlaps: [{ workflow: W, a: 'q', b: 's', sharedRuns: 5 }],
+    shardSkews: [{ workflow: W, family: 'unit', ratio: 2.5, slowest: 'unit (c)', shards: 3 }],
+    repeatedSteps: [{ name: 'Install', jobs: ['q', 's', 'build'] }],
+  }), f, {}, 5);
+  assert.deepEqual([...new Set(out.map((b) => b.check))].sort(), [...CHECK_IDS].sort(), 'the fixture fires every check');
+  for (const b of out) assert.equal(b.metric, METRICS.breach[b.check], b.check);
 });
 
 // ---- review fixes ----

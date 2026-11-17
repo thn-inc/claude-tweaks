@@ -7,6 +7,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const childProcess = require('child_process');
 const os = require('os');
 const path = require('path');
 const {
@@ -277,6 +278,31 @@ test('every per-run jobs read failing is ok:false with every failure recorded', 
   assert.equal(r.cliAbsent, false);
   assert.deepEqual(r.runs, []);
   assert.equal(r.failures.filter((f) => /43904630871|43904882452/.test(f)).length, 2);
+});
+
+const newestTestRuns = (n) => Array.from({ length: n }, (_, i) => runRow({ id: 100 + i, created_at: `2026-11-16T10:${String(59 - i).padStart(2, '0')}:00Z` }));
+const failing = () => Object.assign(new Error('x'), { stderr: 'HTTP 502: Bad Gateway' });
+
+test('five consecutive failed jobs reads stop the per-run reads: later runs are not read and one truncated line counts them', () => {
+  const runs = newestTestRuns(9);
+  const jobs = Object.fromEntries(runs.map((r) => [r.id, failing()]));
+  const fake = fakeRunner({ runs, jobs });
+  const r = read(fake, { listing: listingOf(TEST) });
+  assert.equal(r.ok, false);
+  assert.equal(jobsCalls(fake).length, 5);
+  assert.equal(r.failures.length, 5);
+  assert.deepEqual(r.truncated, ['jobs of 4 sampled runs: not read (stopped after 5 consecutive failed jobs reads)']);
+});
+
+test('a successful jobs read resets the failure streak: four failures, a success, four failures read every run', () => {
+  const runs = newestTestRuns(9);
+  const jobs = Object.fromEntries(runs.map((r, i) => [r.id, i === 4 ? TEST_JOBS : failing()]));
+  const fake = fakeRunner({ runs, jobs });
+  const r = read(fake, { listing: listingOf(TEST) });
+  assert.equal(jobsCalls(fake).length, 9);
+  assert.equal(r.failures.length, 8);
+  assert.deepEqual(r.truncated, []);
+  assert.equal(r.ok, true);
 });
 
 test('a list with zero completed runs that did work is ok:true, runs:[]; skipped and in-progress runs are not sampled', () => {
@@ -605,6 +631,17 @@ test('resolveRepo: --repo is pinned as given; the origin is gated and pinned wit
   assert.deepEqual(resolveRepo({ root: '/other' }, { remoteUrl, pinHost, gateDeps }), { slug: 'thn-inc/claude-tweaks' });
   assert.deepEqual(roots, ['/other']);
   assert.deepEqual(pins, [{ owner: 'o', repo: 'r' }, { host: 'github.com', owner: 'thn-inc', repo: 'claude-tweaks' }]);
+});
+
+test('resolveRepo reads the default origin from the injected cwd, not the process directory', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-audit-origin-'));
+  try {
+    childProcess.execFileSync('git', ['init', '-q'], { cwd: dir, windowsHide: true });
+    childProcess.execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/injected/cwd-repo.git'], { cwd: dir, windowsHide: true });
+    assert.deepEqual(resolveRepo({}, { cwd: () => dir, pinHost: () => {}, gateDeps }), { slug: 'injected/cwd-repo' });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('resolveRepo refuses an unreadable, unparseable, unusable or unknown-host origin, and a pin that throws', () => {

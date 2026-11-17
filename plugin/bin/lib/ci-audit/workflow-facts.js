@@ -2,7 +2,10 @@
 // (#5757) reads beside run data: each job's id, name, `needs`, whether it declares a job-level
 // `timeout-minutes`, whether its `strategy` holds a `matrix`, and its steps' kinds, plus whether
 // the workflow declares a top-level `concurrency`. Pure: it takes the workflow file's TEXT, never
-// reads a file, never spawns, never throws.
+// reads a file, never spawns, never throws. This module holds the workflow-file schema reading by
+// the spec's Key Files design (the one place that knows the file's keys: jobs, needs, strategy,
+// steps, concurrency). It is hand-scanned, with no YAML library, because the plugin payload has
+// zero runtime dependencies (see merge-verification.js's header).
 //
 // It never guesses. Anything its scanner cannot follow is one reason in `unparsed` and `jobs` is
 // then [] — never a partial list. The jobs: and concurrency: region guards (tab indentation, a

@@ -33,6 +33,9 @@
 //    serial-independent-jobs pair `a + b`). repeated-work names its `step` (a `repeatedSteps[].name`)
 //    and has job null; no other check names a step.
 //  - A gather with `noData` set rejects every finding: no run was sampled.
+//  - A workflow whose gathered `unparsed` is non-empty is never judged, so a finding naming it is
+//    rejected; a job-row metric cited for a row under `window.minSample` runs (a row the gather
+//    lists in `underSampled`) is rejected too, so too few runs never back a finding.
 //  - Free text: `claim` and `remedy` are required, at most 500 characters each (rejected, never
 //    cut), and neither may carry credential-shaped text (findCredentialInText; the match is never
 //    echoed). No checked string — claim, remedy, check, workflow, job, step, an evidence job — may carry a
@@ -82,6 +85,12 @@ function resolve(ev, f, g) {
     if (job === null) return { error: `${metric} needs a job` };
     const r = list(g, 'jobs').find((j) => j.workflow === wf && j.job === job);
     if (!r) return { error: `job ${q(job)} has no gathered row in workflow ${q(wf)}` };
+    // A row under the gather's minimum sample is one no check judged: a figure over so few runs
+    // is not evidence (the gather lists it in `underSampled`, never as clean).
+    const min = g.window && g.window.minSample;
+    if (num(min) && num(r.runs) && r.runs < min) {
+      return { error: `job ${q(job)} is under-sampled in workflow ${q(wf)}: ${r.runs} runs, under the gather's minimum sample of ${min}` };
+    }
     const [phase, stat] = metric.split('.');
     const value = stat === undefined ? r[phase] : (r[phase] && r[phase][stat]);
     if (!num(value)) return { error: `${metric} of job ${q(job)} has no gathered figure` };
@@ -190,6 +199,9 @@ function validateFinding(finding, gather) {
     if (f.workflow !== null) errors.push('workflow: must be null for repeated-work (the step spans every workflow)');
   } else if (!list(g, 'workflows').some((w) => w.file === f.workflow)) {
     errors.push(`workflow: ${q(f.workflow)} is not a gathered workflow file`);
+  } else if (list(g, 'workflows').some((w) => w.file === f.workflow && Array.isArray(w.unparsed) && w.unparsed.length > 0)) {
+    // The gather never judges a workflow whose file it could not fully read (its breaches are dropped).
+    errors.push(`workflow: ${q(f.workflow)} has unparsed workflow-file reasons in the gather, so it is never judged`);
   }
   if (errors.length > 0) return { ok: false, errors };
 
@@ -205,6 +217,12 @@ function validateFinding(finding, gather) {
       errors.push(`job: ${q(f.job)} is not a gathered job of workflow ${q(f.workflow)}`);
     }
   }
+  // Evidence resolves against the finding's own step and job, so a step or job that is itself
+  // malformed stops here rather than adding misleading evidence errors. The two prefixes below are
+  // coupled to the messages pushed in the repeated-work branch (`step: required for repeated-work`,
+  // `job: must be null for repeated-work`) and in the else branch (`job: must be a string or null`):
+  // change those texts and this match together. The other errors (an unknown step or job name)
+  // still let the evidence resolve, so one rejection names every unresolved fact.
   if (errors.some((e) => e.startsWith('step: required') || e.startsWith('job: must'))) return { ok: false, errors };
   errors.push(...evidenceErrors({ ...f, step }, g));
   if (errors.length > 0) return { ok: false, errors };

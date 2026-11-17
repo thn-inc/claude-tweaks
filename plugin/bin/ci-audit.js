@@ -52,7 +52,11 @@
 // none, no completed run that did work, workflow files never run: unsampled.neverRun), the sampled
 // runs had no jobs, or no job was timed, else
 // null: an empty sample is never a clean report.
-// Exit codes:
+// Exit codes (gather's 0/2/3 matches none of the exit-code families in the repo's CLI wrapper
+// contract, cli-wrapper-contract.md in its module-pattern skill, deliberately: the status is the
+// skill's Step 1 table input, where 2 must separate "no report" from "a report of a failed read"
+// by whether stdout holds one, and 3 names the absent forge CLI; validate-findings below uses
+// 0/1/2):
 //   0 report printed — partial allowed (failures, truncated lines, noData)
 //   2 malformed invocation, an unusable origin or host pin (one stderr line, nothing on stdout), or
 //     the read failed (the workflow files could not be listed, no runs page was read, or no
@@ -63,7 +67,7 @@
 // report they cite (--gather) by lib/ci-audit/validate-finding.js, fingerprinted
 // (lib/ci-audit/fingerprint.js), collapsed within the batch (the first finding per fingerprint
 // wins), deduplicated against the open and closed by:ci-health issues (--issues: a JSON array of
-// {number, state, labels, fingerprint}, read by health-core's loadIssueIndex; `[]` when none exist)
+// {number, state, labels, fingerprint}, parsed here, indexed by health-core's buildIssueIndex; `[]` when none exist)
 // through health-core's decide with no local cache, and projected into born-ready payloads
 // (lib/ci-audit/issue-payload.js). An open match is skipped, a `wontfix` match suppressed, a
 // closed match reopened. Emit-only: it reads its three files and nothing else, starts no process
@@ -89,7 +93,7 @@ const { CHECK_IDS, DEFAULT_MIN_SAMPLE, parseThresholds, limitsOf, evaluate } = r
 const { validateFinding } = require('./lib/ci-audit/validate-finding');
 const { fingerprint } = require('./lib/ci-audit/fingerprint');
 const { toIssuePayload } = require('./lib/ci-audit/issue-payload');
-const { loadIssueIndex } = require('./lib/health-core/issue-index');
+const { buildIssueIndex } = require('./lib/health-core/issue-index');
 const { decide } = require('./lib/health-core/dedup');
 
 const { DEFAULT_MAX_RUNS, MAX_RUNS, DEFAULT_DAYS, MAX_DAYS } = source;
@@ -98,7 +102,8 @@ const USAGE = 'usage: ci-audit.js gather [--days N] [--runs N] [--workflow <file
   + '       ci-audit.js validate-findings --gather <file> --findings <file> --issues <file> [--dry-run]\n'
   + '       ci-audit.js --help|-h\n';
 
-// The phase definitions, verbatim from the plan's Global Constraints and checklist.md.
+// The phase definitions, verbatim from plugin/skills/ci-health/checklist.md's phase definitions;
+// tests/bin-lib/ci-audit/skill-md.test.js pins the two equal.
 const DEFINITIONS = Object.freeze({
   waiting: 'job started − job created',
   setup: 'job started → start of the first step the workflow file declares as a command (steps with no declaration count as setup when they precede it)',
@@ -212,7 +217,8 @@ function noDataReason(o, read, agg) {
   if (neverRun > 0) why.push(`${plural(neverRun, 'workflow file has', 'workflow files have')} never run`);
   return `no completed run was sampled in the ${o.days}-day window${filter}`
     + (why.length > 0 ? `: ${why.join('; ')}` : '')
-    + (read.truncated.length > 0 ? ' — the window was truncated (see truncated)' : '');
+    + (read.truncated.length > 0 ? ' — the window was truncated (see truncated)' : '')
+    + (read.failures.length > 0 ? ' — part of the read failed (see failures), so the window may not be empty' : '');
 }
 
 const VALUE_FLAGS = { '--gather': 'gather', '--findings': 'findings', '--issues': 'issues' };
@@ -283,7 +289,9 @@ function runValidateFindings(argv, deps) {
     for (const e of v.errors) say(`finding ${i} (${check}) rejected: ${e}`);
   });
 
-  const index = loadIssueIndex(o.issues, 'ci-audit', { stderr: deps.stderr, cwd: deps.cwd });
+  // From the array parsed above, never a second read of the path: the injected readFile is the
+  // only reader, and a failing second read cannot silently empty the dedup index.
+  const index = buildIssueIndex(inputs.issues, 'ci-audit', { stderr: deps.stderr });
   const seen = new Set();
   const payloads = [];
   let collapsed = 0;
@@ -293,10 +301,12 @@ function runValidateFindings(argv, deps) {
     seen.add(finding.id);
     const decision = decide(finding, index, {});
     if (decision.action !== 'file' && decision.action !== 'reopen') { held += 1; continue; }
+    // A reopen with no issue number to reopen cannot be filed as one: held, never `reopens: null`.
+    if (decision.action === 'reopen' && !Number.isInteger(decision.issue)) { held += 1; continue; }
     const { id, check, workflow, job, step, ...rest } = toIssuePayload(finding, gather.value, null);
     const payload = {
       id, check, workflow, job, step, action: decision.action,
-      reopens: decision.action === 'reopen' ? (decision.issue ?? null) : null, ...rest,
+      reopens: decision.action === 'reopen' ? decision.issue : null, ...rest,
     };
     if (o.dryRun) payload.dryRun = true;
     payloads.push(payload);
@@ -327,6 +337,9 @@ function run(argv, deps = realDeps) {
 
   const minSample = o.minSample === null ? DEFAULT_MIN_SAMPLE : o.minSample;
   const agg = aggregate(read.runs, factsByWorkflow, { minSample });
+  // evaluate() skips an unparsed workflow only in the checks that read workflow facts; the checks
+  // over run data alone (queue-wait, setup-dominance, shard-skew) still fire for it. Dropping every
+  // breach of an unparsed workflow is left to this caller, so `droppedBreaches` can count them.
   const unjudged = new Set(workflows.filter((w) => w.unparsed.length > 0).map((w) => w.file));
   const judged = evaluate(agg, factsByWorkflow, o.thresholds, minSample);
   const breaches = judged.filter((b) => b.workflow === null || !unjudged.has(b.workflow));

@@ -61,7 +61,9 @@
 //    (`page cap`) or whose listing the deadline cut before it held maxRuns runs, listed runs left
 //    out by MAX_TOTAL_RUNS, sampled runs whose jobs the deadline left unread (one line per
 //    workflow), a run cut at the jobs page cap, and a run whose full jobs page came without a
-//    total_count. A workflow that holds maxRuns runs, or whose window ran out, is complete.
+//    total_count, and the runs left unread when MAX_JOB_FAIL_STREAK jobs reads failed in a row (a
+//    dead forge or token fails every run alike; one line, the failures keep each failed read). A
+//    workflow that holds maxRuns runs, or whose window ran out, is complete.
 //  - unsampled: { skipped, neverRun } — the NO_WORK runs seen while paging, and the listed
 //    workflow files the forge answered 404 for (it has never run them: an empty read, not a
 //    failure), so an empty sample can say why. When every list call answers 404 the
@@ -80,7 +82,8 @@
 // resolveRepo({ repo, root }, deps) -> { slug } | { error }: `repo` (owner/name) as given, else the
 // origin remote of `root` (or the current directory) through repo-resolve.js's gateOriginRepo,
 // which refuses a host gh does not know; either way the host is pinned (pinExplicitRepoHost) so
-// every later call reaches it. deps.remoteUrl / pinHost / gateDeps replace the real ones in tests.
+// every later call reaches it. deps.remoteUrl / pinHost / gateDeps replace the real ones in tests;
+// deps.cwd (() => string) names the current directory the default remote read falls back to.
 // makeRunner(spawn) is the real runner: gh through repo-resolve.js's ghOptions (the pinned host
 // reaches every call), windowsHide, piped stdio, LARGE_MAX_BUFFER_BYTES and the caller's timeout
 // (else the shared bound).
@@ -107,6 +110,7 @@ const MAX_RUN_PAGES = 5;
 const JOBS_PER_PAGE = 100;
 const MAX_JOB_PAGES = 3;
 const JOBS_RESERVE_MS = 300000;
+const MAX_JOB_FAIL_STREAK = 5;
 const WORKFLOW_DIR = '.github/workflows/';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9._-]+$/;
@@ -300,7 +304,9 @@ function readRunData({
   }
 
   const unread = new Map(); // file -> runs the deadline left unread
-  for (const { file, run } of sample) {
+  let failStreak = 0; // consecutive failed jobs reads: a dead forge or token fails every run alike
+  for (let i = 0; i < sample.length; i += 1) {
+    const { file, run } = sample[i];
     const { id } = run;
     if (!Number.isSafeInteger(id) || id < 1) {
       result.failures.push(`run ${JSON.stringify(id)}: not a run id — excluded`);
@@ -312,8 +318,15 @@ function readRunData({
       read = readJobs({ owner, repo: name, id }, { runner, outOfTime: () => outOfTime(deadlineMs) });
     } catch (err) {
       result.failures.push(`jobs of run ${id}: ${whyOf(err)}`);
+      failStreak += 1;
+      if (failStreak >= MAX_JOB_FAIL_STREAK) {
+        const left = sample.length - (i + 1);
+        if (left > 0) result.truncated.push(`jobs of ${plural(left, 'sampled run', 'sampled runs')}: not read (stopped after ${MAX_JOB_FAIL_STREAK} consecutive failed jobs reads)`);
+        break;
+      }
       continue;
     }
+    failStreak = 0;
     if (read.cut) result.truncated.push(read.cut);
     result.runs.push({ id, workflow: file, conclusion: str(run.conclusion), createdAt: str(run.created_at), jobs: read.jobs.map(normJob) });
   }
@@ -325,7 +338,7 @@ function readRunData({
 // -> { slug } | { error }; the host is pinned for the repository either way, so a --root checkout
 // on another host than the current directory's still reaches its own.
 function resolveRepo({ repo = null, root = null } = {}, deps = {}) {
-  const remoteUrl = deps.remoteUrl || ((r) => originUrl(r || process.cwd()));
+  const remoteUrl = deps.remoteUrl || ((r) => originUrl(r || (typeof deps.cwd === 'function' ? deps.cwd() : process.cwd())));
   const pinHost = deps.pinHost || ((spec) => pinExplicitRepoHost(spec));
   let spec;
   if (repo !== null) {

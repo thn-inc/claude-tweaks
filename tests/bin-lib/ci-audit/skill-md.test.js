@@ -19,6 +19,7 @@ const {
 const { CHECK_IDS, DEFAULTS, FLOOR_IDS } = require('../../../plugin/bin/lib/ci-audit/checks');
 const { METRICS } = require('../../../plugin/bin/lib/ci-audit/validate-finding');
 const { DEFINITIONS } = require('../../../plugin/bin/ci-audit');
+const { CI_HEALTH_DEADLINE_MS } = require('../../../plugin/bin/lib/ci-health/constants');
 
 const SKILLS = path.resolve(__dirname, '..', '..', '..', 'plugin', 'skills');
 const SKILL = path.join(SKILLS, 'ci-health', 'SKILL.md');
@@ -80,6 +81,12 @@ test('runs gather through ${CLAUDE_PLUGIN_ROOT}/bin/ci-audit.js with a 600000 ms
   assert.ok(body.includes('node "${CLAUDE_PLUGIN_ROOT}/bin/ci-audit.js" gather'));
   assert.ok(body.includes('node "${CLAUDE_PLUGIN_ROOT}/bin/ci-audit.js" validate-findings'));
   assert.match(body, /Bash timeout of `600000`/);
+});
+
+test('the Bash timeout the skill passes covers the gather\'s own read deadline', () => {
+  const m = /Bash timeout of `(\d+)`/.exec(read());
+  assert.ok(m, 'the skill names a Bash timeout');
+  assert.ok(Number(m[1]) >= CI_HEALTH_DEADLINE_MS, `${m[1]} ms is under the ${CI_HEALTH_DEADLINE_MS} ms read deadline`);
 });
 
 test('reports noData as "no runs sampled" and an unavailable read as unavailable, never as clean', () => {

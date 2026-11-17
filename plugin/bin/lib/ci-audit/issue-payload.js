@@ -13,7 +13,7 @@
 //  - Current State: the window (days, first day, sampled runs, the minimum sample a check needs),
 //    each cited figure, the judge's claim verbatim in a fenced block, and — only when the gather
 //    has truncated lines (each one a cut that could have changed the sample) or failed reads —
-//    that the sample is partial, naming each.
+//    that the sample is partial, naming each (failed reads: the first FAILURE_LINES, then a count).
 //  - Deliverables: the judge's remedy verbatim in a fenced block, as a recommendation to
 //    investigate and apply where it holds; never an instruction to edit a named file.
 //  - Acceptance Criteria: the gather breach's metric back under its threshold on the next sweep
@@ -37,6 +37,7 @@ const { DEFAULTS } = require('./checks');
 const RELEASE_NOTE = 'No user-visible change — CI timing finding.';
 const ORIGIN = 'ci-health';
 const TITLE_CAP = 200;
+const FAILURE_LINES = 20;
 
 const span = (v) => codeSpan(defuse(String(v)));
 const block = (v) => fencedBlock(defuse(v));
@@ -70,7 +71,10 @@ function currentState(f, g) {
   if (truncated.length > 0 || failures.length > 0) {
     parts.push(`The sample is partial: some reads were cut short or failed, so these figures cover only the runs read.${truncated.length > 0 ? ' Truncated:' : ''}`);
     if (truncated.length > 0) parts.push(block(truncated.join('\n')));
-    if (failures.length > 0) parts.push('Failed reads:', block(failures.join('\n')));
+    // One failed read per sampled run can pile up: show the first FAILURE_LINES, count the rest.
+    const shown = failures.slice(0, FAILURE_LINES);
+    if (failures.length > FAILURE_LINES) shown.push(`+${failures.length - FAILURE_LINES} more failed reads`);
+    if (failures.length > 0) parts.push('Failed reads:', block(shown.join('\n')));
   }
   return parts;
 }
