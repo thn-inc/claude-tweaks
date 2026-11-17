@@ -122,7 +122,7 @@ test('#5227 oracle: fenceSessionFiles lists the fence --value names in order', (
   assert.equal(names[25], 'dispatch-shape-gate.err');
 });
 
-test('#5227 oracle: the git shim refuses a directory outside the sandbox, an exported GIT_DIR and every -c key but core.quotePath', { skip: oracleSkip() }, () => {
+test('#5227 oracle: the run env inherits nothing; the git shim refuses a directory outside the sandbox, an exported GIT_DIR and every -c key but core.quotePath', { skip: oracleSkip() }, () => {
   const sb = createSandbox(S0());
   try {
     const env = sb.runEnv({ tmpdir: path.join(sb.root, 'tmp'), sessionId: 'qp-git-probe' });
@@ -1773,6 +1773,23 @@ test('target-missing: a proposal write that fails stages nothing for that record
   // cliCalls records each stage-item.js invocation before the stub runs; the stub itself throws on the directory, so cap.staged cannot show it.
   const staged = r.cliCalls.filter((c) => c[0] === 'stage-item.js').map((c) => c[c.indexOf('--id') + 1]).filter((id) => id.startsWith('dispatch-target-missing-'));
   assert.deepEqual(staged, ['dispatch-target-missing-9009']);
+  assert.ok(r.errs.some((e) => /^queue-pull: write target-missing-proposal-9006\.md: /.test(e)), r.stderr);
+});
+
+test('target-missing oracle: the fence skips staging a proposal whose write fails and stages the next record', { skip: oracleSkip() }, async () => {
+  const sessionId = 'qp-tm-write-fail';
+  const { resolveSessionId } = require(path.join(REPO, 'plugin', 'bin', 'lib', 'session-tmp.js'));
+  const sb = createSandbox(FULL());
+  try {
+    // The same directory-at-the-proposal-path fault as the module test above, planted in the fence's session dir.
+    fs.mkdirSync(path.join(sb.root, 'tmp', 'tm-fail', `ct-session-${resolveSessionId(sessionId)}`, 'target-missing-proposal-9006.md'), { recursive: true });
+    const oracle = await runOracle(sb, FENCE, { sessionId, tmp: 'tm-fail' });
+    assert.equal(oracle.status, 0, oracle.stderr);
+    assert.deepEqual(Object.keys(oracle.staged).filter((n) => n.startsWith('dispatch-target-missing-')), ['dispatch-target-missing-9009.md']);
+    assert.match(oracle.stderr, /target-missing-proposal-9006\.md: Is a directory/);
+  } finally {
+    sb.cleanup();
+  }
 });
 
 test('AC2.1 shipped: #9010 (strong) is excluded with its signals, prints the strong AUTO line and stages shipped-close-9010; #9016 (weak) is probed, prints the weak AUTO line and stays', () => {
