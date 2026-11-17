@@ -88,6 +88,7 @@ test("the script's lens token rule is settle-lens-replies' FINDING_LENS_CLASS", 
 });
 
 // AC3: every refusal comes before any agent call.
+const VALID_FIRST_LENS = lens('3a', 'A', 'm');
 const REFUSALS = [
   ['no args', undefined, 'args must be an object'],
   ['args given as a string', '{"lenses":[]}', 'args must be an object'],
@@ -106,10 +107,10 @@ const REFUSALS = [
   ['a numeric lens name', { lenses: [lens(3, 'B', 'm')] }, 'lens must be one plain token of letters, digits, _ or -'],
   ["reviewers: '2' as a string", { lenses: [lens('3b', 'B', 'm', '2')] }, 'lens 3b reviewers must be 1 or 2'],
   // A valid first lens before a broken second one: every check runs over all lenses before any agent starts.
-  ['a later lens with a blank brief', { lenses: [lens('3a', 'A', 'm'), lens('3b', ' ', 'm')] }, 'lens 3b has no brief'],
-  ['a later lens with no model', { lenses: [lens('3a', 'A', 'm'), { lens: '3b', brief: 'B', reviewers: 2 }] }, 'lens 3b has no model'],
-  ['a later lens that is not one plain token', { lenses: [lens('3a', 'A', 'm'), lens('3b x', 'B', 'm')] }, 'lens must be one plain token of letters, digits, _ or -'],
-  ['a later lens with reviewers: 3', { lenses: [lens('3a', 'A', 'm'), lens('3b', 'B', 'm', 3)] }, 'lens 3b reviewers must be 1 or 2'],
+  ['a later lens with a blank brief', { lenses: [VALID_FIRST_LENS, lens('3b', ' ', 'm')] }, 'lens 3b has no brief'],
+  ['a later lens with no model', { lenses: [VALID_FIRST_LENS, { lens: '3b', brief: 'B', reviewers: 2 }] }, 'lens 3b has no model'],
+  ['a later lens that is not one plain token', { lenses: [VALID_FIRST_LENS, lens('3b x', 'B', 'm')] }, 'lens must be one plain token of letters, digits, _ or -'],
+  ['a later lens with reviewers: 3', { lenses: [VALID_FIRST_LENS, lens('3b', 'B', 'm', 3)] }, 'lens 3b reviewers must be 1 or 2'],
 ];
 for (const [name, args, reason] of REFUSALS) {
   test(`refuses ${name} (AC3)`, async () => {
