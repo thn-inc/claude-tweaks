@@ -321,6 +321,8 @@ function faultyDeps(s, faults, fired) {
   return {
     ...baseDeps,
     git: (a, o) => {
+      // `diffs` counts `--binary` diffs that reach git: capture() wraps deps in withReadCache above this
+      // seam, so a cache hit never gets here and the second diff to reach git is not always the second asked.
       if (a.includes('--binary') && ++diffs === 2 && has('re-diff')) throw boom('re-diff');
       if (a.includes('checkout') && has('checkout')) throw boom('checkout');
       if (a.includes('rm') && a.includes('--cached') && has('rm-cached')) throw boom('rm-cached');
