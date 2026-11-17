@@ -1147,17 +1147,25 @@ test('#5227 files: the queue file is copied into the session file and aliased th
 test('AC1.1, AC1.2 (#5408): files: an unresolved dependency the verified-open-deps file omits and the dependency-freshness file does not show closed is treated as open, with one Warning naming it', () => {
   const OMITTED = (n) => `Warning: verified-open-deps file omits #${n}, which the dependency-freshness file does not show closed — treated as open (fail closed) this run`;
   const noGh = (cmd, args) => { throw new Error(`gh must not be called on files: ${args.join(' ')}`); };
-  const run = (blockedBody, freshness) => pull(S1(), { transport: 'files', run: noGh, prepare: (own) => ({ inputs: {
+  // freshness === null leaves the dependency-freshness file absent (the agent wrote none).
+  const run = (blockedBody, freshness, verified = '') => pull(S1(), { transport: 'files', run: noGh, prepare: (own) => ({ inputs: {
     queueRaw: writeInput(own, 'queue.json', JSON.stringify([mcpRecord(9001, withBody(9001)), mcpRecord(9002, `${blockedBody}\n\n${withBody(9002)}`)])),
     openNumbers: writeInput(own, 'open.json', '[{"number":9001},{"number":9002}]'),
-    depFreshness: writeInput(own, 'dep.json', freshness),
-    verifiedOpenDeps: writeInput(own, 'verified.txt', ''),
+    depFreshness: freshness === null ? path.join(own, 'absent-dep.json') : writeInput(own, 'dep.json', freshness),
+    verifiedOpenDeps: writeInput(own, 'verified.txt', verified),
   } }) });
   const BLOCKED_8000 = [{ reason: 'blocked', records: [9002], detail: { blockedBy: [8000] } }];
 
   for (const [label, freshness] of [
     ['an empty dependency-freshness file', '[]'],
     ['an entry showing the dependency open', '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"open"}]'],
+    ['an absent dependency-freshness file', null],
+    ['an entry whose number is a string', '[{"number":"8000","state":"closed"}]'],
+    ['an entry with no state', '[{"number":8000}]'],
+    ['an object wrapper around the entries', '{"issues":[{"number":8000,"state":"closed"}]}'],
+    ['an unparseable file', 'not json'],
+    ['contradictory entries, closed then open', '[{"number":8000,"state":"closed"},{"number":8000,"state":"open"}]'],
+    ['contradictory entries, open then closed', '[{"number":8000,"state":"open"},{"number":8000,"state":"closed"}]'],
   ]) {
     const r = run('Blocked by #8000', freshness);
     assert.deepEqual(groupNumbers(r), [[9001]], `${label}: #9002 is not dispatchable`);
@@ -1169,9 +1177,20 @@ test('AC1.1, AC1.2 (#5408): files: an unresolved dependency the verified-open-de
   const closed = run('Blocked by #8000', '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"CLOSED"}]');
   assert.deepEqual(groupNumbers(closed), [[9001], [9002]], 'a dependency the freshness file shows closed does not block');
   assert.deepEqual(warningsOf(closed), []);
+  assert.equal(closed.store.written.length, 1, 'a dependency shown closed is a trusted verdict: the write-back still runs');
 
   const two = run('Blocked by #8000\nBlocked by #8001', '[]');
   assert.deepEqual(warningsOf(two), [OMITTED(8000), OMITTED(8001)], 'one Warning per omitted dependency, in dependency order');
+
+  const mixed = run('Blocked by #8000\nBlocked by #8001', '[]', '8000\n');
+  assert.deepEqual(warningsOf(mixed), [OMITTED(8001)], 'a dependency the file lists draws no Warning; only the omitted one does');
+  assert.deepEqual(entriesOf(mixed, 'blocked'), [{ reason: 'blocked', records: [9002], detail: { blockedBy: [8000, 8001] } }]);
+  assert.deepEqual(groupNumbers(mixed), [[9001]]);
+
+  const listedClosed = run('Blocked by #8000', '[{"number":8000,"state":"closed"}]', '8000\n');
+  assert.deepEqual(entriesOf(listedClosed, 'blocked'), BLOCKED_8000, 'a dependency the verified-open-deps file lists still blocks when the freshness file shows it closed');
+  assert.deepEqual(groupNumbers(listedClosed), [[9001]]);
+  assert.deepEqual(warningsOf(listedClosed), []);
 });
 
 test('AC1.1 (#5311): a failed dependency view excludes the dependent record as blocked and prints the line naming the view', () => {

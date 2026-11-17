@@ -298,7 +298,9 @@ function agentDepFreshness(ctx, file) {
 }
 
 // The numbers the agent's dependency-freshness text shows closed (#5408). An unparseable value, a
-// non-array, or an entry without an integer `number` and a string `state` is no evidence of closure.
+// non-array, or an entry without an integer `number` and a string `state` is no evidence of closure,
+// and a number counts closed only when every valid entry for it says so: two contradictory entries
+// are untrusted input that must fail closed, not open.
 function closedDependencyNumbers(text) {
   let entries;
   try {
@@ -307,9 +309,10 @@ function closedDependencyNumbers(text) {
     return new Set();
   }
   if (!Array.isArray(entries)) return new Set();
-  return new Set(entries
-    .filter((e) => e && Number.isInteger(e.number) && typeof e.state === 'string' && e.state.toLowerCase() === 'closed')
-    .map((e) => e.number));
+  const valid = entries.filter((e) => e && Number.isInteger(e.number) && typeof e.state === 'string');
+  const isClosed = (e) => e.state.toLowerCase() === 'closed';
+  return new Set(valid.filter(isClosed).map((e) => e.number)
+    .filter((n) => valid.every((e) => e.number !== n || isClosed(e))));
 }
 
 // On `files` the agent's queue file stands where the fence's queue pull stands, as the agent's Write
