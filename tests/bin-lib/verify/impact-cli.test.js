@@ -11,13 +11,14 @@ const assert = require('node:assert');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
-const { execFile, execFileSync } = require('child_process');
+const { execFile, execFileSync, spawnSync } = require('child_process');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
 const { encodeImpactMap, DEFAULT_MAP_NAME } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'impact.js'));
 const { substituteFile } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'file-template.js'));
 const { derivePhases } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'timing', 'derive.js'));
 const { slotEnv } = require('../../helpers/suite-slot-env');
+const { readGitCalls } = require('../../helpers/git-call-recorder');
 
 const TMP_DIRS = [];
 after(() => { for (const d of TMP_DIRS) fs.rmSync(d, { recursive: true, force: true }); });
@@ -638,4 +639,22 @@ test('AC2.2: under the key --local runs the full command here when selection fal
   assert.strictEqual(run.code, 0, run.stderr + run.stdout);
   assert.strictEqual(r.marker(), 'FULL');
   assert.strictEqual(r.report().scope.impact.fallback, 'map-missing');
+});
+
+// #5773: with an impact declaration impact.fetch and the list write can change the tree between the changed-file read and the
+// generated-path read, so that read still asks git: changed files, start exemption, end.
+test('an impact-declared run with a generated glob and a dirty tree still reads the working tree for the exemption at the start, as well as for the changed files and after the suites (#5773)', () => {
+  const r = impactRepo(declOf({}, { generated: ['dist/**'], rules: [...RULES, { match: 'dist/**', suites: '*', static: false }] }), { 'dist/bundle.js': 'v1' });
+  writeMap(r);
+  commitFile(r, 'src/x.js', 'x2\n');
+  fs.writeFileSync(path.join(r.repo, 'dist', 'bundle.js'), 'v2-regenerated');
+  const traceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-impact-trace-'));
+  after(() => fs.rmSync(traceDir, { recursive: true, force: true }));
+  const run = spawnSync(process.execPath, ['--require', path.join(__dirname, '..', '..', 'helpers', 'git-call-recorder.js'), CLI, ...ARGS], {
+    cwd: r.repo, encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL', env: { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1', CT_TEST_GIT_CALL_LOG: traceDir },
+  });
+  assert.strictEqual(run.status, 0, run.stderr + run.stdout);
+  assert.ok(r.report().scope.impact, 'the run went through impact selection');
+  const zStatus = readGitCalls(traceDir).flatMap((p) => p.events).filter((e) => e.kind === 'git' && e.args.includes('status') && e.args.includes('-z'));
+  assert.strictEqual(zStatus.length, 3, JSON.stringify(zStatus.map((e) => e.args)));
 });

@@ -1993,13 +1993,15 @@ test('realGit with a locations provider asks it, not git, for the repo root (#57
   const rg = realGit(fx.repo, { tmpdir: fx.tmpdir, locations: (d) => { asked.push(d); return { toplevel: provided, commonDir: fx.commonDir }; } });
   assert.strictEqual(rg.repoRoot(), provided, 'a root that differs from git\'s own answer proves git was not asked');
   assert.deepStrictEqual(asked, [fx.repo]);
-  const none = realGit(fx.repo, { tmpdir: fx.tmpdir, locations: () => ({ toplevel: null, commonDir: null }) });
-  assert.throws(() => none.repoRoot(), /not a git work tree/);
+  // A provider with no toplevel falls back to git, so the failure text is git's own (it reaches the report's adjudication-error reason).
+  const bare = fx.mk('baseline-not-a-repo-');
+  const none = realGit(bare, { tmpdir: fx.tmpdir, locations: () => ({ toplevel: null, commonDir: null }) });
+  assert.throws(() => none.repoRoot(), (err) => /not a git repository/.test(String(err.stderr || err.message)) && !/not a git work tree/.test(err.message));
 });
 
 test('realGit without a provider keeps asking git for the repo root (#5773)', (t) => {
   const fx = slotFixture(t);
-  assert.strictEqual(realp(fx.rg.repoRoot()), realp(fx.g('rev-parse', '--show-toplevel')));
+  assert.strictEqual(fx.rg.repoRoot(), fx.g('rev-parse', '--show-toplevel'));
 });
 
 test('realGit slotWorktree canonicalizes a provider commonDir and keeps the repo key byte-identical (#5773)', SYMLINK_POSIX_ONLY, (t) => {

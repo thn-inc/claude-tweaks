@@ -1637,3 +1637,18 @@ test('freshness (#5773): a tree change made while the suites run is seen by the 
   assert.notStrictEqual(moved.git('rev-parse', 'HEAD').trim(), startSha, 'the suite really committed');
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(movedLog, 'report.json'), 'utf8')).sha, startSha);
 });
+
+test('a --scope run with a generated glob and a dirty tree reads the working tree for the changed files and the exemption once, then once more after the suites (#5773)', () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }], { generated: ['dist/**'] });
+  commitFile(r, 'dist/bundle.js', 'v1');
+  fs.writeFileSync(path.join(r.repo, 'dist', 'bundle.js'), 'v2-regenerated');
+  const traceDir = tmpDir();
+  const run = spawnSync(process.execPath, ['--require', RECORDER, CLI, '--scope', r.declPath, '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], {
+    cwd: r.repo, encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL', env: { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1', CT_TEST_GIT_CALL_LOG: traceDir },
+  });
+  assert.strictEqual(run.status, 0, run.stderr);
+  assert.deepStrictEqual(stampOf(r.gitDir).generatedExempt, ['dist/bundle.js'], 'the exemption still reads the dirty generated path');
+  const zStatus = readGitCalls(traceDir).flatMap((p) => p.events).filter((e) => e.kind === 'git' && e.args.includes('status') && e.args.includes('-z'));
+  // The changed-file read serves the start exemption too; the other read is the one after the suites.
+  assert.strictEqual(zStatus.length, 2, JSON.stringify(zStatus.map((e) => e.args)));
+});

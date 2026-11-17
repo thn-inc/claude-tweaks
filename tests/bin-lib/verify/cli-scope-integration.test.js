@@ -358,14 +358,14 @@ test('--scope --integration-branch: round-4 Reading B: a no-own-commit merge of 
 // #5773: the working-tree read the changed-file set makes also serves merge narrowing — one `status -z` per run, same answer.
 test('--scope --integration-branch: merge narrowing reuses the changed-file set\'s working-tree read, and still sees an uncommitted edit (#5773)', () => {
   const r = mergedScopedRepo();
-  const anchorRun = spawnSync(process.execPath, [CLI, '--scope', r.declPath, '--integration-branch', r.trunk, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], { cwd: r.repo, encoding: 'utf8', env: { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1' } });
+  const anchorRun = spawnSync(process.execPath, [CLI, '--scope', r.declPath, '--integration-branch', r.trunk, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], { cwd: r.repo, encoding: 'utf8', env: { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1' }, timeout: 60000, killSignal: 'SIGKILL' });
   assert.strictEqual(anchorRun.status, 0, anchorRun.stderr);
   mergeTrunk(r, ['ui/a.js', 'ui/b.js']);
   commitFile(r, 'src/own.js', 'own');
   fs.writeFileSync(path.join(r.repo, 'ui', 'b.js'), 'uncommitted edit');
   const traceDir = tmpDir();
   const run = spawnSync(process.execPath, ['--require', path.join(__dirname, '..', '..', 'helpers', 'git-call-recorder.js'), CLI, '--scope', r.declPath, '--integration-branch', r.trunk, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0', '--no-stamp'], {
-    cwd: r.repo, encoding: 'utf8', env: { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1', CT_TEST_GIT_CALL_LOG: traceDir },
+    cwd: r.repo, encoding: 'utf8', env: { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1', CT_TEST_GIT_CALL_LOG: traceDir }, timeout: 60000, killSignal: 'SIGKILL',
   });
   assert.strictEqual(run.status, 0, run.stderr);
   assert.match(run.stdout, /^merge-narrowed: 1 merge-identical path\(s\) excluded/m, 'the narrowing ran, and the edited ui/b.js stayed selected');

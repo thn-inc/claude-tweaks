@@ -130,10 +130,9 @@ function realGit(cwd, {
   };
   return {
     repoRoot: () => {
-      if (locations === null) return git(['rev-parse', '--show-toplevel']);
-      const { toplevel } = locations(cwd);
-      if (toplevel === null) throw new Error('not a git work tree');
-      return toplevel;
+      const toplevel = locations === null ? null : locations(cwd).toplevel;
+      // No answer from the provider (not a work tree): ask git, so the error text is git's own.
+      return toplevel === null ? git(['rev-parse', '--show-toplevel']) : toplevel;
     },
     resolveCommit: (ref) => {
       // --end-of-options: a ref spelled like a flag is a (non-existent) ref, never a git option.

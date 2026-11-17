@@ -556,6 +556,8 @@ async function main() {
   let decl = null;
   let priorStamp = null;
   let narrowing = null;
+  // #5773: the raw working-tree status changedFiles read in this invocation, kept only when nothing can write the tree before its next reader.
+  let scopeStatusRead = null;
   // #4024: the impact map context and, when a subset runs, its list.
   let impactCtx = null;
   let impactSubset = null;
@@ -720,8 +722,11 @@ async function main() {
       }
 
       // #4024: an impact declaration also needs each changed path's A/M/D status.
-      const scopeRead = {};
-      const changed = changedFiles({ base: resolvedBase, withStatus: Boolean(decl.impact), capture: scopeRead });
+      const statusCapture = {};
+      const changed = changedFiles({ base: resolvedBase, withStatus: Boolean(decl.impact), capture: statusCapture });
+      // Only without an impact declaration may the generated-path read below reuse it: impact.fetch (a shell command)
+      // and the impact-files.txt write run between the two reads otherwise and can change the tree (#5773).
+      if (!decl.impact) scopeStatusRead = statusCapture.status;
       files = changed.files;
       let statuses = changed.statuses || null;
       const unnarrowed = { files, statuses };
@@ -731,7 +736,7 @@ async function main() {
       // returned the merge-base, which excludes merged-in files by construction.
       if (parsed.integrationBranch && anchorSha && resolvedBase === anchorSha) {
         // Handed the working-tree read made just above: only git reads ran between the two (#5773).
-        narrowing = mergeNarrowing({ anchor: anchorSha, integrationBranch: parsed.integrationBranch, files, status: scopeRead.status });
+        narrowing = mergeNarrowing({ anchor: anchorSha, integrationBranch: parsed.integrationBranch, files, status: statusCapture.status });
         if (narrowing) {
           files = narrowing.files;
           if (statuses) statuses = Object.fromEntries(files.map((f) => [f, statuses[f]]));
@@ -861,7 +866,7 @@ async function main() {
   // exemption must cover the start read too — a non-generated edit reverted
   // mid-run still disqualifies. Read here, after --scope but before any check
   // runs; only when a declaration names `generated` globs at all.
-  const startDirtyPaths = decl && decl.generated.length && startGit.dirty === true ? dirtyFilePaths() : [];
+  const startDirtyPaths = decl && decl.generated.length && startGit.dirty === true ? dirtyFilePaths(undefined, scopeStatusRead) : [];
 
   // #5119: the machine-wide suite slot. Its count is the declaration's
   // concurrency.suiteSlots (under --scope the declaration read above, else
