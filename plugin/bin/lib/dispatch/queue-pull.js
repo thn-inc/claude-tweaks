@@ -1010,9 +1010,10 @@ function runTargetMissing(ctx) {
   for (const { number, path: tpath } of rows) {
     forward(ctx, spawnCli(ctx, 'log-decision.js', ['--run', state.standaloneDir, '--status', 'AUTO',
       '--text', `dispatch: #${number} excluded, named target ${tpath} absent at ${ref}`, '--reversibility', 'n/a']));
-    // Fence 444: beside dispatch-exclusions.json, as the shipped pass's proposals are; the .md names the staged item (#5316).
+    // Fence 444: beside dispatch-exclusions.json, as the shipped pass's proposals are;
+    // the .md names the staged item (#5316).
     const file = path.join(path.dirname(exclusions), `target-missing-proposal-${number}.md`);
-    put(ctx, file, targetMissingProposal(number, tpath, ref));
+    if (!put(ctx, file, targetMissingProposal(number, tpath, ref)).ok) continue;
     forward(ctx, spawnCli(ctx, 'stage-item.js', ['--run', state.standaloneDir, '--id', `dispatch-target-missing-${number}`, '--file', file]));
   }
 }

@@ -1571,7 +1571,7 @@ const SHIPPED_STOP = fenceText(/echo "(dispatch: queue-pull stopped -- shipped-c
 
 // The target-missing Close proposal the fence's `echo` lines build, derived from the fence text.
 function fenceTargetProposal(num, tpath, ref) {
-  const block = FENCE.match(/(?:^|\n) {2}PROPOSAL="\$\(dirname "\$DISPATCH_EXCLUSIONS"\)\/target-missing-proposal-\$\{NUM\}\.md"\n {2}\{\n([\s\S]*?)\n {2}\} > "\$PROPOSAL"/);
+  const block = FENCE.match(/(?:^|\n) {2}PROPOSAL="\$\(dirname "\$DISPATCH_EXCLUSIONS"\)\/target-missing-proposal-\$\{NUM\}\.md"\n {2}\{\n([\s\S]*?)\n {2}\} > "\$PROPOSAL" \|\| continue/);
   assert.ok(block, 'the fence no longer builds the proposal with an echo group');
   return block[1].split('\n').map((l) => {
     const m = l.trim().match(/^echo "(.*)"$/);
@@ -1759,6 +1759,20 @@ test('AC1.1 target-missing: the Close proposal is written to target-missing-prop
   assert.equal(staged[0].body, fenceTargetProposal('9006', 'docs/gone6.md', 'origin/main'));
   assert.equal(r.text['target-missing-proposal-9006.md'], staged[0].body, 'the file sits in the session dir beside dispatch-exclusions.json');
   assert.equal(r.text['target-missing-proposal-9009.md'], staged[1].body);
+});
+
+test('target-missing: a proposal write that fails stages nothing for that record and the pass moves on', () => {
+  const r = pull4(FULL(), {
+    // A directory at the proposal path makes this pull's write fail, so no file of this pull exists to stage.
+    prepare: () => {
+      const dir = path.dirname(sessionPaths('qp-t3')['dispatch-groups.json']);
+      fs.mkdirSync(path.join(dir, 'target-missing-proposal-9006.md'), { recursive: true });
+      return {};
+    },
+  });
+  // cliCalls records each stage-item.js invocation before the stub runs; the stub itself throws on the directory, so cap.staged cannot show it.
+  const staged = r.cliCalls.filter((c) => c[0] === 'stage-item.js').map((c) => c[c.indexOf('--id') + 1]).filter((id) => id.startsWith('dispatch-target-missing-'));
+  assert.deepEqual(staged, ['dispatch-target-missing-9009']);
 });
 
 test('AC2.1 shipped: #9010 (strong) is excluded with its signals, prints the strong AUTO line and stages shipped-close-9010; #9016 (weak) is probed, prints the weak AUTO line and stays', () => {

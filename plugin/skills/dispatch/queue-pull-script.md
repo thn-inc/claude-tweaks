@@ -452,7 +452,7 @@ NODE_EVAL_EOF
     echo "**Commands:**"
     echo "gh issue comment ${NUM} --body \"Closing: the named target ${TPATH} no longer exists at ${INTEGRATION_REF} — this record's Acceptance Criteria has no remaining target. Filed by /claude-tweaks:dispatch (queue pull).\""
     echo "gh issue close ${NUM} --reason \"not planned\""
-  } > "$PROPOSAL"
+  } > "$PROPOSAL" || continue
   # stage-item.js is the sanctioned writer for a run dir's staged/
   # (pipeline-run-dir.md) -- never a direct Write/heredoc into it.
   node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$DISPATCH_STANDALONE_DIR" --id "dispatch-target-missing-${NUM}" --file "$PROPOSAL"
