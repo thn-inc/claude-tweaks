@@ -1063,6 +1063,28 @@ test('withReadCache: a path after -- named --check is not an option: that apply 
   assert.equal(fake.count(DIFF), 2);
 });
 
+test('withReadCache: an argument after --end-of-options named --check is not an option: that apply discards', () => {
+  const fake = fakeGit();
+  const d = withReadCache({ git: fake.git }, CACHE_TARGET);
+  d.git(DIFF);
+  d.git(['-C', '/wt', 'apply', '--end-of-options', '--check']);
+  d.git(DIFF);
+  assert.equal(fake.count(DIFF), 2);
+});
+
+test('withReadCache: hash-object -w is a write and discards; a -w after -- is a path and the ask is cached', () => {
+  const fake = fakeGit();
+  const d = withReadCache({ git: fake.git }, CACHE_TARGET);
+  d.git(DIFF);
+  d.git(['-C', '/wt', 'hash-object', '-w', '--stdin'], { input: Buffer.from('A') });
+  d.git(DIFF);
+  assert.equal(fake.count(DIFF), 2);
+  const PATH_W = ['-C', '/wt', 'hash-object', '--stdin', '--', '-w'];
+  d.git(PATH_W, { input: Buffer.from('A') });
+  d.git(PATH_W, { input: Buffer.from('A') });
+  assert.equal(fake.count(PATH_W), 1);
+});
+
 test('withReadCache: an omitted encoding and utf8 share one answer; another cwd asks again', () => {
   const fake = fakeGit();
   const d = withReadCache({ git: fake.git }, CACHE_TARGET);

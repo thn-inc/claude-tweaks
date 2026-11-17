@@ -440,8 +440,8 @@ function addFinding(runDir, manifest, existing, finding, deps) {
 }
 
 // The git subcommand: the first argv element after leading `-C <dir>`, `-c <k=v>` and
-// `--no-optional-locks`, with its options: the arguments after it up to a `--` (a path after the
-// separator named `--check` or `-w` is a path, never an option).
+// `--no-optional-locks`, with its options: the arguments after it up to the first `--` or
+// `--end-of-options` (an argument after either named `--check` or `-w` is not an option).
 function gitSubcommand(args) {
   let i = 0;
   for (;;) {
@@ -449,7 +449,7 @@ function gitSubcommand(args) {
     else if (args[i] === '--no-optional-locks') i += 1;
     else {
       const rest = args.slice(i + 1);
-      const end = rest.indexOf('--');
+      const end = rest.findIndex((a) => a === '--' || a === '--end-of-options');
       return { sub: args[i], options: end === -1 ? rest : rest.slice(0, end) };
     }
   }
