@@ -61,7 +61,7 @@ unconditionally on every transport — the write path is unsanitized either way,
 costs nothing. `extractFingerprint` tries the HTML-comment marker first (both the current and
 legacy forms), then falls back to the plain-text companion — the one form an MCP-stripped body
 still carries. Every consumer that calls `extractFingerprint` on a fetched body (this file's own
-`gh`-absent projection step, `pullReconIssues` in `bin/lib/code-health/pull-issues.js`, and each
+`gh`-absent projection step and each
 health sweep's own GATHER OPEN ISSUES instructions) gets the fix automatically — there is no
 separate MCP-specific parsing path to maintain.
 

@@ -616,8 +616,8 @@ test('refreshOwnerBlock never throws', () => {
   const fx = refreshFixture();
   const deps = { ...refreshDeps(), resolveOwnerPid: () => { throw new Error('probe'); } };
   assert.strictEqual(refresh(fx, { now: RT0 + 61_000, deps }), null);
-  assert.strictEqual(ctx.refreshOwnerBlock(undefined), null);
-  assert.strictEqual(ctx.refreshOwnerBlock({ input: null, ownedRun: null }), null);
+  assert.strictEqual(ctx.refreshOwnerBlock(undefined, { env: {} }), null);
+  assert.strictEqual(ctx.refreshOwnerBlock({ input: null, ownedRun: null }, { env: {} }), null);
 });
 
 // #4153: one judge — refreshOwnerBlock's takeover decision reads the same owner-pid

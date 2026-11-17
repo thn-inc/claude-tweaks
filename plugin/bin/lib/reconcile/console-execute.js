@@ -35,12 +35,12 @@ const { execFileSyncTimed, execFileAsyncTimed } = require('./timing');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { iterRunDirsWithState } = require('../hooks/context');
 const { runWithConcurrency } = require('./gh-pool');
-const { evaluateMaturation, extractPendingGrantedAt, partitionGrantComments } = require('../issues/grant-maturation');
+const { evaluateMaturation, withheldGrant, extractPendingGrantedAt, partitionGrantComments } = require('../issues/grant-maturation');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { resolvePolicyConfig } = require('../policy-schema');
 const { sddRulingDeferralReason, SDD_RULING_REASONS, sddRulingRatifyAction } = require('../console/sdd-ruling');
 const { canonicalRealpath, resolveLeaf, isAncestorOrSelf } = require('../path-guard');
-const { ghOptions } = require('../repo-resolve');
+const { ghOptions, injectedGhDeps } = require('../repo-resolve');
 
 const FETCH_TIMEOUT_MS = 5000;
 // _shared/console-execution.md's Pre-execution claim section — a claim older
@@ -147,13 +147,14 @@ function parseItemTicks(body) {
 // event loop regardless of how the calling code is structured (#820, D5).
 // Unparseable stdout reads as 'network-failure', same as a failed spawn: a gh
 // that answered with something other than the requested JSON told us nothing.
-async function ghJson(repoRoot, args) {
+// `inj` ({ env, homeDir }, optional): a hook event's context (#5377), the environment gh runs in and reads its host from.
+async function ghJson(repoRoot, args, inj = {}) {
   let stdout;
   try {
     ({ stdout } = await execFileAsyncTimed(
       'gh',
       args,
-      ghOptions(args, { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true }),
+      ghOptions(args, { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true, ...(inj.env ? { env: inj.env } : {}) }, injectedGhDeps(inj)),
     ));
   } catch (e) {
     if (e && e.code === 'ENOENT') return { ok: false, reason: 'gh-absent' };
@@ -166,8 +167,8 @@ async function ghJson(repoRoot, args) {
   }
 }
 
-async function fetchPrData(repoRoot, prNumber) {
-  const res = await ghJson(repoRoot, ['pr', 'view', String(prNumber), '--json', 'comments,body']);
+async function fetchPrData(repoRoot, prNumber, inj) {
+  const res = await ghJson(repoRoot, ['pr', 'view', String(prNumber), '--json', 'comments,body'], inj);
   if (!res.ok) return res;
   const { json } = res;
   return {
@@ -200,8 +201,8 @@ function parseFixesMembers(body) {
 // plantable by anyone who can comment, and a backdated one would mature a
 // pending grant -- so pendingSince reads trusted comments only, and each
 // untrusted comment carrying the marker is named in skippedUntrusted.
-async function fetchIssueGrant(repoRoot, issueNumber) {
-  const res = await ghJson(repoRoot, ['issue', 'view', String(issueNumber), '--json', 'labels,comments']);
+async function fetchIssueGrant(repoRoot, issueNumber, inj) {
+  const res = await ghJson(repoRoot, ['issue', 'view', String(issueNumber), '--json', 'labels,comments'], inj);
   if (!res.ok) return res;
   const { json } = res;
   const labels = (json.labels || []).map((l) => (typeof l === 'string' ? l : l.name));
@@ -215,9 +216,9 @@ async function fetchIssueGrant(repoRoot, issueNumber) {
 // console-resolve.js's own readPolicy. Fails open to `undefined`
 // (evaluateMaturation's own DEFAULT_VETO_WINDOW_HOURS fallback) on any error,
 // same posture as every other best-effort read in this file.
-function resolveVetoWindowHours(runDir, repoRoot) {
+function resolveVetoWindowHours(runDir, repoRoot, inj = {}) {
   try {
-    const git = (args) => execFileSyncTimed('git', args, { cwd: repoRoot, encoding: 'utf8', windowsHide: true });
+    const git = (args) => execFileSyncTimed('git', args, { cwd: repoRoot, encoding: 'utf8', windowsHide: true, ...(inj.env ? { env: inj.env } : {}) });
     const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
     const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['grant-veto-window-hours'] });
     const entry = result['grant-veto-window-hours'];
@@ -392,6 +393,7 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
           const grant = ctx.memberGrants[n];
           if (!grant) { mergeGrantGap = { member: n, reason: 'grant-unreadable' }; break; }
           const mat = evaluateMaturation({
+            hasBuildLabel: (grant.labels || []).includes('auto:build'),
             hasMergeLabel: (grant.labels || []).includes('auto:merge'),
             hasPendingLabel: (grant.labels || []).includes('auto:merge-pending'),
             pendingSince: grant.pendingSince || null,
@@ -403,7 +405,8 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
             // passed over names them, so the withhold is not mistaken for "nobody
             // ever granted" -- the planted comment is what the operator should see.
             const passedOver = Array.isArray(grant.skippedUntrusted) ? grant.skippedUntrusted : [];
-            mergeGrantGap = { member: n, reason: passedOver.length ? `${mat.reason} — ${passedOver.join('; ')}` : mat.reason };
+            const base = withheldGrant(mat, grant.labels).detail;
+            mergeGrantGap = { member: n, reason: passedOver.length ? `${base} — ${passedOver.join('; ')}` : base };
             break;
           }
         }
@@ -432,6 +435,8 @@ async function consoleExecuteDetect(opts = {}) {
   const start = opts.cwd || process.cwd();
   const root = mainCheckoutRoot(start);
   if (!root) return { ready, skipped };
+  // opts.env / opts.homeDir (a hook event's context, #5377) reach every gh and git child below; absent, the inherited ones.
+  const inj = { ...(opts.env ? { env: opts.env } : {}), ...(opts.homeDir ? { homeDir: opts.homeDir } : {}) };
   const now = opts.now || Date.now();
 
   const candidates = [];
@@ -442,7 +447,7 @@ async function consoleExecuteDetect(opts = {}) {
     candidates.push({ dir, consoleJson });
   }
 
-  const fetches = await runWithConcurrency(candidates, (c) => fetchPrData(root, c.consoleJson.prNumber));
+  const fetches = await runWithConcurrency(candidates, (c) => fetchPrData(root, c.consoleJson.prNumber, inj));
 
   // #1802: collect every (candidate, member) pair that needs a live grant
   // re-fetch — only candidates whose console.json carries an isMergeRow item
@@ -466,7 +471,7 @@ async function consoleExecuteDetect(opts = {}) {
   });
   const memberGrantsByCandidate = new Map();
   for (const i of mergeRowCandidateIndices) memberGrantsByCandidate.set(i, {});
-  const grantResults = await runWithConcurrency(grantJobs, (job) => fetchIssueGrant(root, job.member));
+  const grantResults = await runWithConcurrency(grantJobs, (job) => fetchIssueGrant(root, job.member, inj));
   grantJobs.forEach((job, i) => {
     const g = grantResults[i] instanceof Error ? { ok: false } : grantResults[i];
     if (!g.ok) return;
@@ -477,7 +482,7 @@ async function consoleExecuteDetect(opts = {}) {
     const fetch = fetches[i] instanceof Error ? { ok: false, reason: 'network-failure' } : fetches[i];
     if (!fetch.ok) { skipped.push({ runDir: c.dir, reason: fetch.reason }); return; }
     const ctx = memberGrantsByCandidate.has(i)
-      ? { prBody: fetch.body, memberGrants: memberGrantsByCandidate.get(i), vetoWindowHours: resolveVetoWindowHours(c.dir, root), now }
+      ? { prBody: fetch.body, memberGrants: memberGrantsByCandidate.get(i), vetoWindowHours: resolveVetoWindowHours(c.dir, root, inj), now }
       : {};
     // #3880: every candidate gets its ruling rows' staged texts (a no-op {} when it has none);
     // #4049: and each unreadable row's cause, so the gap names why the read failed.

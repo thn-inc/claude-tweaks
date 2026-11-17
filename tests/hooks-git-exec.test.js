@@ -9,6 +9,7 @@ const os = require('os');
 const path = require('path');
 const {
   runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoPinnedEnv, repoSpecOf, repoTargetOf,
+  repoSpecOfRemote, repoTargetOfRemote,
 } = require('../plugin/bin/lib/hooks/git-exec');
 const { gateOriginRepo } = require('../plugin/bin/lib/repo-resolve');
 const { gitRepo, fixtureGit } = require('./helpers/git-fixtures');
@@ -574,4 +575,42 @@ test('repoTargetOf (#4794): the gated origin host and its --repo slug — GHE qu
 
   // No origin remote -> null.
   assert.strictEqual(repoTargetOf(gitRepo(), gateDeps()), null);
+});
+
+// #5109: the remote-taking core both CLIs call. repoTargetOf(root) is "read origin, then this".
+test('AC1.2 (#5109): repoTargetOfRemote is repoTargetOf on a URL; the loose fallback trims, and { loose: false } turns it off', () => {
+  const none = () => { throw new Error('none'); };
+  const deps = (env = {}) => ({ env, readFile: none });
+  const PROXY = 'http://local_proxy@127.0.0.1:43215/git/acme/widgets';
+  const repo = gitRepo();
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'https://github.com/acme/widgets.git']);
+  for (const url of ['https://github.com/acme/widgets.git', 'git@acme.ghe.com:acme/widgets.git',
+    'https://ghe.example.com/acme/widgets.git', 'git@github-work:acme/widgets.git', PROXY]) {
+    fixtureGit(['-C', repo, 'remote', 'set-url', 'origin', url]);
+    for (const env of [{}, { GH_HOST: 'mine.example' }]) {
+      assert.deepStrictEqual(repoTargetOfRemote(url, deps(env)), repoTargetOf(repo, deps(env)), `${url} ${JSON.stringify(env)}`);
+      assert.deepStrictEqual(repoSpecOfRemote(url, deps(env)), repoSpecOf(repo, deps(env)), `${url} ${JSON.stringify(env)}`);
+    }
+  }
+  // Review Focus 1: the real origin readers return untrimmed stdout.
+  assert.deepStrictEqual(repoTargetOfRemote(`${PROXY}\n`, deps()),
+    { owner: 'acme', repo: 'widgets', slug: 'acme/widgets', host: 'github.com', ghRepo: 'acme/widgets' });
+  assert.deepStrictEqual(repoSpecOfRemote(`${PROXY}\r\n`, deps()), { host: null, owner: 'acme', repo: 'widgets' });
+  // Review Focus 2: { loose: false } is null for a remote the gate cannot read, GH_HOST or not ...
+  assert.strictEqual(repoTargetOfRemote(PROXY, deps(), { loose: false }), null);
+  assert.strictEqual(repoTargetOfRemote(PROXY, deps({ GH_HOST: 'mine.example' }), { loose: false }), null);
+  assert.strictEqual(repoSpecOfRemote(PROXY, deps(), { loose: false }), null);
+  // ... and changes nothing the gate decides.
+  assert.deepStrictEqual(repoTargetOfRemote('https://acme.ghe.com/acme/widgets.git\n', deps(), { loose: false }),
+    { owner: 'acme', repo: 'widgets', slug: 'acme/widgets', host: 'acme.ghe.com', ghRepo: 'acme.ghe.com/acme/widgets' });
+  assert.deepStrictEqual(repoTargetOfRemote('git@github-work:acme/widgets.git', deps(), { loose: false }),
+    { refusal: gateOriginRepo('git@github-work:acme/widgets.git', deps()).refusal });
+  // A null opts is the default (loose), never a throw.
+  assert.deepStrictEqual(repoTargetOfRemote(PROXY, deps(), null), repoTargetOfRemote(PROXY, deps()));
+  assert.deepStrictEqual(repoSpecOfRemote(PROXY, deps(), null), { host: null, owner: 'acme', repo: 'widgets' });
+  // Review Focus 5: degenerate remotes are null, never a throw.
+  for (const r of [null, undefined, '', '   \n', 'not a url']) {
+    assert.strictEqual(repoTargetOfRemote(r, deps()), null, JSON.stringify(r));
+    assert.strictEqual(repoSpecOfRemote(r, deps()), null, JSON.stringify(r));
+  }
 });

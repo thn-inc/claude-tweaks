@@ -200,7 +200,10 @@ command stands in for `auto:build` (below).
 - `auto:merge` — a completely clean autonomous run may merge without waiting for a live
   review. **Additive on `auto:build`:** the gate always grants `auto:build` when granting
   `auto:merge`. Dispatch queries `auto:build` only; `auto:merge` **alone is inert** — no
-  queue selects on it.
+  queue selects on it. A merge grant (`auto:merge`, or `auto:merge-pending` at maturation)
+  authorizes a merge only when the same live label read also carries `auto:build` (#5734): a
+  typed run on a record without `auto:build` ends at `pending-review`, and a person merges it
+  with `/claude-tweaks:wrap-up #N merge`.
 - `auto:merge-pending` — a waypoint on the machine-origination path only (`/backlog refine`
   writes `auto:merge` directly). Additive on `auto:build`, exclusive of `auto:merge`, inert
   for queue selection the same way. Matures into `auto:merge` once older than
@@ -432,8 +435,15 @@ idempotency:
 <!-- work-fingerprint: {fingerprint} -->
 ```
 
-Readers accept the legacy `<!-- code-health-fingerprint: {fingerprint} -->` marker during
-the migration window (read both, emit only `work-fingerprint`). `bin/lib/issues/record.js`'s
+Readers accept the legacy `<!-- code-health-fingerprint: {fingerprint} -->` marker (read both,
+emit only `work-fingerprint`). Removal condition: remove `FP_RE_LEGACY` and its branch in
+`extractFingerprint` once no issue, open or closed, carries a `code-health-fingerprint`,
+`harness-health-fingerprint` or `journey-health-fingerprint` marker; the check is
+`gh issue list --state all --limit 100000 --json number,body -q '[.[] | select(.body | test("(code|harness|journey)-health-fingerprint:"))] | length'`
+and a result of 0 means the condition is met. The command checks only the repository it runs
+in; a 0 is necessary but not sufficient, because the reader also serves consumer repos this
+check cannot see, so removal also needs a release note plus a sunset window (or a sweep step
+that rewrites old markers to `work-fingerprint`). `bin/lib/issues/record.js`'s
 `extractFingerprint` implements the dual read; when both markers are present, the new one wins.
 
 ## Freshness stamp

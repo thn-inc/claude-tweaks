@@ -9,7 +9,7 @@
 
 const crypto = require('crypto');
 const path = require('path');
-const { evaluateMaturation } = require('../issues/grant-maturation');
+const { evaluateMaturation, withheldGrant } = require('../issues/grant-maturation');
 const { resolveRecords, memberRecords } = require('../wrap-up/pack');
 const {
   SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction,
@@ -454,6 +454,7 @@ function mergeResolution(snapshot, deps) {
     const g = snapshot.grants[n] || { labels: [], pendingSince: null };
     const labels = g.labels || [];
     const mat = evaluateMaturation({
+      hasBuildLabel: labels.includes('auto:build'),
       hasMergeLabel: labels.includes('auto:merge'),
       hasPendingLabel: labels.includes('auto:merge-pending'),
       pendingSince: g.pendingSince || null,
@@ -464,10 +465,14 @@ function mergeResolution(snapshot, deps) {
       // #3358: name the untrusted marker comments ghReadGrants passed over, so an
       // unknown-age grant is not mistaken for "never granted".
       const passedOver = Array.isArray(g.skippedUntrusted) && g.skippedUntrusted.length ? ` — ${g.skippedUntrusted.join('; ')}` : '';
-      return { resolution: 'leave-open', reason: `#${n} lacks auto:merge and a matured auto:merge-pending (${mat.reason})${passedOver}` };
+      const withheld = withheldGrant(mat, labels);
+      if (withheld.missing === 'build-grant') {
+        return { resolution: 'leave-open', reason: `#${n}: ${withheld.detail}${passedOver}` };
+      }
+      return { resolution: 'leave-open', reason: `#${n} lacks auto:merge and a matured auto:merge-pending (${withheld.detail})${passedOver}` };
     }
   }
-  return { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' };
+  return { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' };
 }
 
 // ---- tiebreak verdicts are a finding's final outcome (#3949) ----

@@ -148,6 +148,22 @@ Re-prompting on format (below) does not apply to an exempt agent: it is not viol
 
 **Current exempt dispatch:** `impeccable-finish-reviewer`, shipped by the Impeccable plugin and dispatched by `/claude-tweaks:design-wrapper`'s `review` mode (`modes/review.md` Step 3.7). Its output contract (a first-line `disposition: recapture|rebuild|fix|ship`, then exactly five sections — `persistence` / `fidelity` / `ceiling` / `material_fixes` / `keep` — or, on `recapture`, a single `recapture` section replacing all five) is upstream's; that mode's Step 4 maps it into this repo's normalized finding shape.
 
+## Workflow-dispatched agents
+
+A `/claude-tweaks:review` lens fan-out may run through `plugin/workflows/review-lens-fanout.js` when `review-lens-dispatch` resolves `workflow`; the Task dispatch stays the fallback.
+
+| Rule | How it is kept |
+|---|---|
+| Input discipline | The brief is the only text the script passes, and both reviewers of a lens get one string, so "byte-identical prompts" is a property of the script. The harness wraps that string in a `[Workflow harness — computed task]` frame, indents every line, and in an interactive session first relays the request that started the run (`docs/reference/workflow-tool-probe.md`, `agent-prompt-frame`), so the brief must not rely on column-zero lines. |
+| Status line | The brief's own trailing `STATUS:` rule, unchanged. No schema is used, so the reply is the agent's text. `settle-lens-replies` checks the line's position. |
+| Output template | Template A sits inside the brief, unchanged. |
+| Model profile | Resolved per lens by `resolve-profile.js` as today and passed as `model`. The script refuses a lens with no model, so no agent inherits the session model by omission. |
+| Working-directory, read-only, foreground and shell rules | Lines inside the brief, unchanged. |
+| Re-prompt on violation | The session cannot re-prompt a workflow agent. Inside a claude-tweaks run the plugin's own `SubagentStop` hook re-prompts one whose reply has no status line (`agent-verbatim`, `init-interactive`). A reply with a misplaced status line is used, and `settle-lens-replies` lists it under `violations`, which the session names in the review summary. A reply with no status line, or one that does not parse, is not used: that reviewer is dispatched again once through the Task path. |
+| Failed, empty or unparseable | Never a clean result: the lens goes to `needsSession`. |
+
+A gate rule written for `Agent` and `Task` calls (the PreToolUse dispatch-prompt gate) does not see a workflow agent's prompt; the plugin's PreToolUse hook does fire for a workflow agent's own tool calls.
+
 ## Re-prompt on violation
 
 When an agent returns malformed output — a wrong or missing status line, no table, narration before the table, wrong columns — the dispatcher re-prompts:

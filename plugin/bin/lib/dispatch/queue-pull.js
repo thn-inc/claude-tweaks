@@ -33,8 +33,10 @@
 //   It is the strictest posture across all of the pass's fetches and across BOTH transports.
 //   A consumer cannot read fail-closed from failOpen alone: `blocked` is 'open', yet an unreadable
 //   foreign state excludes its record. Each fetch's exclusion effect is pinned by the fault rows
-//   (queue-pull.test.js AC4.1 and AC7.2), and each value here is asserted from those oracle runs
-//   (AC4.2), never from the spec.
+//   (queue-pull-parity-ac4.test.js AC4.1 and queue-pull-parity-ac7.test.js AC7.2), and each value
+//   here is asserted from those oracle runs (AC4.2, one test per transport: AC4.2 [gh] in
+//   queue-pull-parity-ac4.test.js and AC4.2 [files] in queue-pull-parity-ac7.test.js), never from
+//   the spec.
 // `malformed-blocker` and `unlanded-blocker` share `id: 'blocker-landing'`, because one
 // dispatch-unlanded-blockers.js call writes both; they carry one identical failOpen. A shared id
 // runs once, at its first entry.
@@ -62,8 +64,9 @@
 // same format over the same variable, so both sides emit identical names. Production never sets it.
 //
 // Test seams beyond `deps` (no shipped caller uses them; a refactor keeps them or updates the
-// tests in queue-pull.test.js that read them): `makeContext(options, deps)` is exported, and tests
-// run passes over its context and then assert on `ctx.state.cacheHit`, `.workLinks`,
+// tests that read them: queue-pull.test.js, and the shared `pull` harness in queue-pull-helpers.js
+// that it and queue-pull-oracle-checks.test.js run): `makeContext(options, deps)` is exported,
+// and tests run passes over its context and then assert on `ctx.state.cacheHit`, `.workLinks`,
 // `.groupSizeGuard`, `.integrationBranch`, `.integrationRef` and `.files` (the effective input
 // paths); `runPasses` takes `ctx.runners` ({ [id]: fn }) in place of the real runners; and
 // `defaultDeps({ execFileSync, spawnSync })` replaces the two child_process calls the default

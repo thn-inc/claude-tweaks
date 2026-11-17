@@ -194,12 +194,14 @@ function bundleFastLaneSingletons(groups, options = {}) {
     eligible.push(issue);
   }
 
-  // Bucket by (auto:merge presence, priority band) — never merge across
-  // either axis.
+  // Bucket by (merge grant, priority band) — never merge across either axis.
+  // A merge grant is auto:merge together with auto:build (#5734): a leftover
+  // auto:merge alone buckets with the ungranted records, so it cannot hold a
+  // granted bundle at pending-review.
   const buckets = new Map();
   for (const issue of eligible) {
     const names = normalizeLabelNames(issue.labels);
-    const autoMerge = names.includes('auto:merge');
+    const autoMerge = names.includes('auto:merge') && names.includes('auto:build');
     const priority = names.find((n) => n.startsWith('priority:')) || 'none';
     const key = `${autoMerge}|${priority}`;
     if (!buckets.has(key)) buckets.set(key, []);

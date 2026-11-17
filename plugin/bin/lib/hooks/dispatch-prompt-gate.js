@@ -59,14 +59,15 @@ const { isDispatchTaskCall } = require('../dispatch/task-call');
 
 const GATE = 'dispatch-prompt-fidelity';
 
-function pluginRoot() {
-  return process.env.CLAUDE_PLUGIN_ROOT || '${CLAUDE_PLUGIN_ROOT}';
+// Both helpers are reached only from this gate, so `env` is required, with no default.
+function pluginRoot(env) {
+  return env.CLAUDE_PLUGIN_ROOT || '${CLAUDE_PLUGIN_ROOT}';
 }
 
 const isNonEmptyString = (v) => typeof v === 'string' && v.length > 0;
 
-function testTag() {
-  return process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
+function testTag(env) {
+  return env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
 }
 
 // The main checkout's canonical pipelines dir, or null when it cannot be proven.
@@ -100,7 +101,7 @@ function checkMismatch(ctx, prompt, marker, tp, d, deny) {
   const parts = latest && isNonEmptyString(latest.out) && Number.isInteger(latest.chunks) && latest.chunks > 0
     ? `"${tp.partPath(latest.out, 1)}".."${tp.partPath(latest.out, latest.chunks)}"`
     : 'the files dispatch-prompt.js wrote';
-  ctxLib.appendEvent(real, 'gate-denial', { tool: ctx.input.tool_name, gate: GATE, reason: 'mismatch', ...testTag() });
+  ctxLib.appendEvent(real, 'gate-denial', { tool: ctx.input.tool_name, gate: GATE, reason: 'mismatch', ...testTag(ctx.env) });
   return deny(
     `claude-tweaks: this dispatch Task prompt for run ${runId} is not byte-for-byte the prompt ` +
     `bin/dispatch-prompt.js last rendered for its ${call} call (#4589). Resend it unchanged once — cat each of ` +
@@ -124,11 +125,11 @@ function checkMissingMarker(ctx, prompt, d, deny) {
     if (!state || typeof state !== 'object' || state.status === 'clean') continue;
     if (!isNonEmptyString(state.dispatchSessionId)) continue;
     if (!isDispatchTaskCall({ runState: state, sessionId })) continue;
-    ctxLib.appendEvent(runDir, 'gate-denial', { tool: ctx.input.tool_name, gate: GATE, reason: 'missing-marker', ...testTag() });
+    ctxLib.appendEvent(runDir, 'gate-denial', { tool: ctx.input.tool_name, gate: GATE, reason: 'missing-marker', ...testTag(ctx.env) });
     return deny(
       `claude-tweaks: this Agent prompt names run ${name}, which this session dispatched, but carries no ` +
       `dispatch-prompt.js marker (#4589). A /claude-tweaks:dispatch Task prompt is rendered with ` +
-      `node "${pluginRoot()}/bin/dispatch-prompt.js" (dispatch SKILL.md Step 5) and passed unchanged — never ` +
+      `node "${pluginRoot(ctx.env)}/bin/dispatch-prompt.js" (dispatch SKILL.md Step 5) and passed unchanged — never ` +
       `fill task-prompt.md by hand.`,
     );
   }
@@ -136,6 +137,8 @@ function checkMissingMarker(ctx, prompt, d, deny) {
 }
 
 function checkDispatchPromptGate(ctx, deps = {}, deny) {
+  // Before the try: inside it the throw would read as "gate passes" and silently disable the gate.
+  ctxLib.requireEnv(ctx);
   try {
     const input = ctx && ctx.input;
     if (!input || (input.tool_name !== 'Agent' && input.tool_name !== 'Task')) return {};
