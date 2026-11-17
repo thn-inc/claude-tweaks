@@ -1594,18 +1594,26 @@ const RECORDER = path.join(__dirname, '..', '..', 'helpers', 'git-call-recorder.
 const COMBINED_REV_PARSE = ['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir', '--verify', '-q', 'HEAD'];
 const STATUS_PORCELAIN = ['--no-optional-locks', 'status', '--porcelain'];
 
-test('AC2.1: a whole-suite run around a no-op suite makes exactly 4 git calls', () => {
-  const { repo } = tmpGitRepo();
-  const traceDir = tmpDir();
-  const result = spawnSync(process.execPath, ['--require', RECORDER, CLI, '--cmd', 'tests=node -e 0', '--no-stamp'], {
-    cwd: repo,
+function spawnRecorded(cliArgs, cwd, traceDir) {
+  return spawnSync(process.execPath, ['--require', RECORDER, CLI, ...cliArgs], {
+    cwd,
     env: { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1', CT_TEST_GIT_CALL_LOG: traceDir },
     encoding: 'utf8',
     timeout: 60000,
     killSignal: 'SIGKILL',
   });
+}
+
+function recordedGitCalls(traceDir) {
+  return readGitCalls(traceDir).flatMap((p) => p.events).filter((e) => e.kind === 'git');
+}
+
+test('AC2.1: a whole-suite run around a no-op suite makes exactly 4 git calls', () => {
+  const { repo } = tmpGitRepo();
+  const traceDir = tmpDir();
+  const result = spawnRecorded(['--cmd', 'tests=node -e 0', '--no-stamp'], repo, traceDir);
   assert.strictEqual(result.status, 0, result.stderr);
-  const gitArgs = readGitCalls(traceDir).flatMap((p) => p.events).filter((e) => e.kind === 'git').map((e) => e.args);
+  const gitArgs = recordedGitCalls(traceDir).map((e) => e.args);
   // Before #5773 the same run made 6: --git-dir, --show-toplevel, HEAD + status at the start, HEAD + status at the end.
   assert.deepStrictEqual(gitArgs, [COMBINED_REV_PARSE, STATUS_PORCELAIN, COMBINED_REV_PARSE, STATUS_PORCELAIN]);
   assert.strictEqual(gitArgs.length, 4);
@@ -1642,12 +1650,10 @@ test('a --scope run with a generated glob and a dirty tree reads the working tre
   commitFile(r, 'dist/bundle.js', 'v1');
   fs.writeFileSync(path.join(r.repo, 'dist', 'bundle.js'), 'v2-regenerated');
   const traceDir = tmpDir();
-  const run = spawnSync(process.execPath, ['--require', RECORDER, CLI, '--scope', r.declPath, '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], {
-    cwd: r.repo, encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL', env: { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1', CT_TEST_GIT_CALL_LOG: traceDir },
-  });
+  const run = spawnRecorded(['--scope', r.declPath, '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], r.repo, traceDir);
   assert.strictEqual(run.status, 0, run.stderr);
   assert.deepStrictEqual(stampOf(r.gitDir).generatedExempt, ['dist/bundle.js'], 'the exemption still reads the dirty generated path');
-  const zStatus = readGitCalls(traceDir).flatMap((p) => p.events).filter((e) => e.kind === 'git' && e.args.includes('status') && e.args.includes('-z'));
+  const zStatus = recordedGitCalls(traceDir).filter((e) => e.args.includes('status') && e.args.includes('-z'));
   // The changed-file read serves the start exemption too; the other read is the one after the suites.
   assert.strictEqual(zStatus.length, 2, JSON.stringify(zStatus.map((e) => e.args)));
 });
