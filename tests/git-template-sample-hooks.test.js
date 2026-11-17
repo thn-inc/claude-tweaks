@@ -9,7 +9,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { fixtureGit, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
-const { writeGitTemplateDir } = require('../tools/run-tests');
+const { writeGitTemplateDir, runnerChildEnv } = require('../tools/run-tests');
 
 const scratch = [];
 after(() => {
@@ -40,7 +40,6 @@ function git(cwd, args, env = gitEnv()) {
 // #5771: git's default template copies 14 `*.sample` hooks into every repository a test creates.
 // The runner's template drops them, and a bare `node --test` run gets the same template when it
 // loads the helper (git-fixtures.js requires git-template.js).
-const { runnerChildEnv } = require('../tools/run-tests');
 test('AC2.1 AC2.2: a fixture repo made in a runner child and in a bare node --test run holds no sample hook', () => {
   const base = gitEnv();
   for (const k of Object.keys(base)) if (/^(GIT_TEMPLATE_DIR|GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+))$/.test(k)) delete base[k];
