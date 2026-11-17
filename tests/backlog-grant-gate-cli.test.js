@@ -201,7 +201,7 @@ test('native work-links with no --repo and no resolvable remote exits 2', () => 
     remoteUrl: () => { throw new Error('no remote'); },
   });
   assert.strictEqual(run([], d), 2);
-  assert.match(d.err.join(''), /could not resolve owner\/repo/);
+  assert.match(d.err.join(''), /could not resolve owner\/repo — pass --repo \[host\/\]owner\/name/);
 });
 
 // --- Trust policy plumbing: policy.yml -> resolvePolicyKeys -> computeOutlook -> trustRows (#5291) ---

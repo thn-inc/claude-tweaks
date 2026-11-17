@@ -11,6 +11,7 @@ const path = require('path');
 const { readText } = require('./helpers/read-skill');
 const { cleanGitEnv } = require('./helpers/git-fixtures');
 const { runCli, spawnCli } = require('./helpers/run-cli');
+const { appendGitConfigEnv } = require('../tools/run-tests');
 const { formatEntry } = require('../plugin/bin/lib/log-decision/append');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
@@ -798,13 +799,13 @@ test('AC10.1: archive-run starts the archive commit and its push-state probe wit
   git(['init', '-q', '--bare'], bare);
   git(['remote', 'add', 'origin', bare], root);
   git(['push', '-q', 'origin', 'main'], root);
+  // #5768: the upstream is appended to the runner's inherited GIT_CONFIG_* entries, so its maintenance-off
+  // entries stay in place; only the GIT_CONFIG_* keys are kept, so hookEnv's removal of GIT_DIR and its
+  // siblings is not undone by spreading the whole process.env over it.
+  const withUpstream = appendGitConfigEnv(process.env, [['branch.main.remote', 'origin'], ['branch.main.merge', 'refs/heads/main']]);
   const env = {
     GIT_AUTHOR_NAME: 'ct-env-only-author',
-    GIT_CONFIG_COUNT: '2',
-    GIT_CONFIG_KEY_0: 'branch.main.remote',
-    GIT_CONFIG_VALUE_0: 'origin',
-    GIT_CONFIG_KEY_1: 'branch.main.merge',
-    GIT_CONFIG_VALUE_1: 'refs/heads/main',
+    ...Object.fromEntries(Object.entries(withUpstream).filter(([k]) => /^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$/.test(k))),
   };
   const result = await runHook(['archive-run', '--run', runDir], { cwd: root, env });
   assert.equal(result.code, 0, result.stderr);
