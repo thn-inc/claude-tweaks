@@ -24,8 +24,12 @@ const NO_INSTALL = { readFile: () => { throw Object.assign(new Error('no install
 // temp one so no test writes the developer's real home. HOME itself is left
 // alone: the git commits below need the global identity in ~/.gitconfig.
 const NODE_PATH_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-nodepath-'));
+// #5377: run() takes its environment, home and child starter from the context. These are the real ones;
+// `spawn` looks up child_process.spawn per call so a test that stubs it (cp.spawn = ...) is still seen.
+const HOME_DIR = () => os.homedir();
+const SPAWN = (...args) => require('child_process').spawn(...args);
 const runSessionStart = (ctx) => sessionStart.run({
-  ...ctx, superpowersDeps: ctx.superpowersDeps || NO_INSTALL, nodePathHome: ctx.nodePathHome || NODE_PATH_HOME,
+  env: process.env, homeDir: HOME_DIR, spawn: SPAWN, ...ctx, superpowersDeps: ctx.superpowersDeps || NO_INSTALL, nodePathHome: ctx.nodePathHome || NODE_PATH_HOME,
 });
 
 test('#5392: run() writes the node path under ctx.nodePathHome, never under HOME', async () => {
@@ -468,7 +472,8 @@ test('worktree-always nudge is absent when policy is off', async () => {
 });
 
 function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8' });
+  // stderr captured: cloning the empty bare origin prints "You appear to have cloned an empty repository" otherwise.
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 // #408 AC1: a session starting in a checkout strictly behind origin gets its
@@ -577,7 +582,7 @@ test('#561: a redTip finding from reconcile() renders as its own additionalConte
   delete require.cache[require.resolve('../plugin/bin/lib/hooks/session-start')];
   try {
     const freshSessionStart = require('../plugin/bin/lib/hooks/session-start');
-    const out = await freshSessionStart.run({ superpowersDeps: NO_INSTALL, nodePathHome: NODE_PATH_HOME, input: {}, runDir: null, runState: null, cwd: project });
+    const out = await freshSessionStart.run({ env: process.env, homeDir: HOME_DIR, spawn: SPAWN, superpowersDeps: NO_INSTALL, nodePathHome: NODE_PATH_HOME, input: {}, runDir: null, runState: null, cwd: project });
     assert.ok(out.json, 'a redTip finding must render additionalContext');
     assert.match(out.json.hookSpecificOutput.additionalContext, /CI is red on main tip at 0123456 — ci\/tests/);
   } finally {
@@ -609,7 +614,7 @@ test('#4578: SessionStart passes HOOK_FORGE_PROBE_TIMEOUT_MS into its inline rec
   delete require.cache[require.resolve('../plugin/bin/lib/hooks/session-start')];
   try {
     const freshSessionStart = require('../plugin/bin/lib/hooks/session-start');
-    await freshSessionStart.run({ superpowersDeps: NO_INSTALL, nodePathHome: NODE_PATH_HOME, input: {}, runDir: null, runState: null, cwd: project });
+    await freshSessionStart.run({ env: process.env, homeDir: HOME_DIR, spawn: SPAWN, superpowersDeps: NO_INSTALL, nodePathHome: NODE_PATH_HOME, input: {}, runDir: null, runState: null, cwd: project });
     assert.strictEqual(seen.length, 1, 'the inline reconcile() must have been called exactly once');
     assert.strictEqual(typeof HOOK_FORGE_PROBE_TIMEOUT_MS, 'number');
     assert.strictEqual(seen[0].forgeProbeTimeoutMs, HOOK_FORGE_PROBE_TIMEOUT_MS);
@@ -1522,7 +1527,7 @@ function mkSuperpowersWorld(project, { projectVersion, userVersion, rawFile, use
   return { env: { CLAUDE_CONFIG_DIR: config }, homedir: () => path.join(tmp, 'home') };
 }
 const SP_NOTICE = /superpowers 6\.3\.0 is older than 7\.0\.0/g;
-const spCtx = (project, input, superpowersDeps) => ({ input, runDir: null, runState: null, cwd: project, superpowersDeps });
+const spCtx = (project, input, superpowersDeps) => ({ env: process.env, homeDir: HOME_DIR, spawn: SPAWN, input, runDir: null, runState: null, cwd: project, superpowersDeps });
 
 test('#3380: startup emits the superpowers notice once', async () => {
   const project = tmpProject();

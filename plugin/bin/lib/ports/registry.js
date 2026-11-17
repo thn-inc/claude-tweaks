@@ -142,10 +142,10 @@ function finishAllocation(realPath, result) {
   };
 }
 
-// (checkoutPath, { services, home, probe }) -> Promise<{ base, ports, vars, envWriteError }>
+// (checkoutPath, { services, home, probe, env }) -> Promise<{ base, ports, vars, envWriteError }>
 // Idempotent: a second call for the same path returns the existing lease
 // without re-probing or changing its recorded services list.
-async function allocate(checkoutPath, { services = [], home = os.homedir(), probe = blockFree } = {}) {
+async function allocate(checkoutPath, { services = [], home = os.homedir(), probe = blockFree, env } = {}) {
   const regPath = registryPath({ home });
   const lockPath = `${regPath}.lock`;
   const realPath = fs.realpathSync(checkoutPath);
@@ -176,12 +176,12 @@ async function allocate(checkoutPath, { services = [], home = os.homedir(), prob
     }
 
     return claimFreeBase(registry, regPath, realPath, services, probe);
-  }, { failClosed: true });
+  }, { failClosed: true, ...(env ? { env } : {}) });
 
   return finishAllocation(realPath, result);
 }
 
-// (checkoutPath, { services, home, probe }) -> Promise<{ base, ports, vars, envWriteError }>
+// (checkoutPath, { services, home, probe, env }) -> Promise<{ base, ports, vars, envWriteError }>
 // Unlike allocate, never returns an existing lease for this path — it drops
 // one first (inside the same lock) and claims a fresh candidate block. For
 // #1792/ensure.js's "a foreign process now holds this checkout's block, and
@@ -190,7 +190,7 @@ async function allocate(checkoutPath, { services = [], home = os.homedir(), prob
 // bases with no current lease entry), so a still-bound former block is never
 // re-offered — probe() would reject it anyway, but dropping the stale entry
 // first also stops a THIRD allocator from reading it as taken.
-async function reallocate(checkoutPath, { services = [], home = os.homedir(), probe = blockFree } = {}) {
+async function reallocate(checkoutPath, { services = [], home = os.homedir(), probe = blockFree, env } = {}) {
   const regPath = registryPath({ home });
   const lockPath = `${regPath}.lock`;
   const realPath = fs.realpathSync(checkoutPath);
@@ -206,7 +206,7 @@ async function reallocate(checkoutPath, { services = [], home = os.homedir(), pr
     }
     const registry = { ...pruned, leases };
     return claimFreeBase(registry, regPath, realPath, services, probe);
-  }, { failClosed: true });
+  }, { failClosed: true, ...(env ? { env } : {}) });
 
   return finishAllocation(realPath, result);
 }
