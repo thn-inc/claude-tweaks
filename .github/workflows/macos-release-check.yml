@@ -1,5 +1,28 @@
-# macOS release check (#5881): the full suite on GitHub's standard macos-latest
-# runner, dispatchable against any sha.
+# macOS release check (#5881, the release gate of #5838): the full suite on
+# GitHub's standard macos-latest runner, dispatchable against any sha.
+#
+# Triggers: workflow_dispatch with a `sha` input (the real use), and
+# pull_request limited to this file's own path (so edits to it are proven
+# before merge). Only a dispatch run posts a commit status; a pull_request run
+# posts none.
+#
+# The verdict is a COMMIT STATUS on the input sha, not a check run: a check run
+# from a dispatch attaches to the ref's head, not to the sha that was tested.
+# Context: macos-release-check. States:
+#   pending  the run is in progress
+#   success  the suite passed
+#   failure  the suite step ran and failed
+#   error    the run could not test the sha (an earlier step failed, or the run
+#            was cancelled or timed out), so there is no verdict on the code
+# A sha never dispatched has no status at all.
+#
+# Read it with exactly this call (empty output means missing, never success;
+# never read the combined /status state, which shows `pending` with zero
+# statuses):
+#   gh api repos/{owner}/{repo}/commits/{sha}/statuses --jq '[.[] | select(.context=="macos-release-check")][0].state'
+#
+# Cost: free on this public repo; about $0.062/min if the repo were private.
+# Standard runner only (no larger runner).
 name: macos-release-check
 
 on:
@@ -9,16 +32,19 @@ on:
   workflow_dispatch:
     inputs:
       sha:
-        description: Commit sha to check
+        description: Commit sha to check (40 hex characters)
         required: true
         type: string
 
+# Workflow-level, so the matrix jobs of one run share a group and are not
+# serialized or cancelled against each other. Dispatches on one sha queue.
 concurrency:
-  group: macos-release-check-${{ github.event_name == 'pull_request' && github.ref || inputs.sha }}
+  group: macos-release-check-${{ github.event_name }}-${{ inputs.sha || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
+  statuses: write
 
 jobs:
   suite:
@@ -36,43 +62,78 @@ jobs:
       GIT_COMMITTER_NAME: ci
       GIT_COMMITTER_EMAIL: ci@invalid.example
       GH_TOKEN: ${{ github.token }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
+      - name: Validate sha
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          SHA_INPUT: ${{ inputs.sha }}
+        run: |
+          sha=$(printf '%s' "$SHA_INPUT" | tr '[:upper:]' '[:lower:]')
+          if ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::sha input is not a 40-hex commit sha"
+            echo "$SHA_INPUT"
+            exit 1
+          fi
+          echo "SHA=$sha" >> "$GITHUB_ENV"
+      - name: Take the pull request head sha
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: echo "SHA=$PR_HEAD" >> "$GITHUB_ENV"
+      - name: Mark pending
+        if: github.event_name == 'workflow_dispatch' && env.SHA != ''
+        shell: bash
+        run: |
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$SHA" \
+            -f state=pending \
+            -f context=macos-release-check \
+            -f target_url="$RUN_URL" \
+            -f description="macOS full suite running"
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.sha || github.event.pull_request.head.sha }}
+          ref: ${{ env.SHA }}
           fetch-depth: 0
+      - name: Confirm checked-out sha
+        shell: bash
+        run: |
+          head=$(git rev-parse HEAD)
+          echo "HEAD=$head"
+          echo "SHA=$SHA"
+          test "$head" = "$SHA"
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
-      - name: Diagnostics (temporary)
-        shell: bash
-        run: |
-          node -v
-          type -a node
-          echo "$PATH"
-          env | grep -i -e node -e bash_env -e test_context || true
-          sw_vers
-          /bin/bash --version | head -1
-          command -v bash
-          ls -ld "$TMPDIR"
-          mount | grep -e ' /private' -e ' /var' || true
-          d=$(mktemp -d)
-          printf '#!/bin/sh\necho STUB\n' > "$d/node"
-          chmod 755 "$d/node"
-          ls -l "$d/node"
-          env -i PATH="$d:$PATH" HOME="$HOME" bash -c 'command -v node; node x'
-          env -i PATH="$d:$PATH" HOME="$HOME" zsh -f -c 'command -v node; node x'
       - name: Run the whole suite
+        id: suite
         shell: bash
         run: |
           set +e
-          npm test --silent -- --full | tee "$RUNNER_TEMP/suite.tap"
+          npm test --silent -- --full | tee "$RUNNER_TEMP/suite.log"
           code=${PIPESTATUS[0]}
-          exit $code
+          exit "$code"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: suite-tap-node-${{ matrix.node }}
-          path: ${{ runner.temp }}/suite.tap
+          name: suite-log-node-${{ matrix.node }}
+          path: ${{ runner.temp }}/suite.log
           retention-days: 7
           if-no-files-found: warn
+      - name: Record verdict
+        if: always() && github.event_name == 'workflow_dispatch' && env.SHA != ''
+        shell: bash
+        env:
+          SUITE_OUTCOME: ${{ steps.suite.outcome }}
+        run: |
+          case "$SUITE_OUTCOME" in
+            success) state=success; desc="macOS full suite passed" ;;
+            failure) state=failure; desc="macOS full suite failed" ;;
+            *) state=error; desc="macOS full suite did not run to a verdict" ;;
+          esac
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$SHA" \
+            -f state="$state" \
+            -f context=macos-release-check \
+            -f target_url="$RUN_URL" \
+            -f description="$desc"
