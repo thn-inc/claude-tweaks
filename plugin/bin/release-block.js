@@ -37,7 +37,8 @@ const NAME = 'release-block.js';
 const USAGE = `usage: ${NAME} check [--repo [host/]owner/name | --records-json <path>]\n`
   + `       ${NAME} stamp --record <n> --finding "<category> at <file:line>|general" [--repo [host/]owner/name]\n`
   + `       ${NAME} [--help]\n`
-  + '  check: exit 0 none open; 1 blocked; 2 usage; 3 state unreadable\n';
+  + '  check: exit 0 none open; 1 blocked; 2 usage; 3 state unreadable\n'
+  + '  stamp: exit 0 stamped or already stamped; 2 usage, no such record, or a PR number; 3 write failure\n';
 
 const EXIT = Object.freeze({ OK: 0, BLOCKED: 1, USAGE: 2, FAILURE: 3 });
 const LIST_LIMIT = 100;
@@ -47,7 +48,7 @@ const LABEL = Object.freeze({
   color: 'B4006E',
 });
 // `<category> at <file:line>` or `<category> at general`, one line — it lands in a comment body.
-const FINDING_RE = /^[^\r\n]*\S at (?:general|[^\s:][^\s]*:\d+)$/;
+const FINDING_RE = /^[^\r\n]*\S at (?:general|[^\s:][^\r\n:]*:\d+)$/;
 const RECORD_RE = /^[1-9]\d*$/;
 const VIEW_FIELDS = 'number,state,labels,url';
 const JSON_FIELDS = 'number,title,url,state';
@@ -236,8 +237,8 @@ function stamp(opts, deps) {
     deps.stderr(`${NAME}: could not read #${n} (${firstLine(err && err.stderr) || messageOf(err)})\n`);
     return EXIT.FAILURE;
   }
-  if (!view || typeof view !== 'object') { deps.stderr(`${NAME}: could not read #${n} (unexpected answer)\n`); return EXIT.FAILURE; }
-  if (typeof view.url === 'string' && view.url.includes('/pull/')) {
+  if (!view || typeof view !== 'object' || typeof view.url !== 'string' || !Array.isArray(view.labels)) { deps.stderr(`${NAME}: could not read #${n} (unexpected answer)\n`); return EXIT.FAILURE; }
+  if (view.url.includes('/pull/')) {
     deps.stderr(`${NAME}: #${n} is a pull request, not a record\n`);
     return EXIT.USAGE;
   }
@@ -262,7 +263,12 @@ function stamp(opts, deps) {
   } catch (err) {
     return writeFailed('issue edit', err);
   }
-  deps.invalidateSnapshot(deps.env.CLAUDE_CODE_SESSION_ID);
+  try {
+    deps.invalidateSnapshot(deps.env.CLAUDE_CODE_SESSION_ID);
+  } catch (err) {
+    // The label already landed; a stale session snapshot is not a write failure.
+    deps.stderr(`${NAME}: could not invalidate the session record snapshot (${messageOf(err)}) — continuing\n`);
+  }
   try {
     deps.gh(['issue', 'comment', n, '--repo', slug, '--body-file', '-'], { ...ghCtx(deps), input: stampCommentBody(opts.finding) });
   } catch (err) {

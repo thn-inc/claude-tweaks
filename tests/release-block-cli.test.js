@@ -410,3 +410,60 @@ test('label twin: LABEL equals the canonical LABELS_JSON row and LABELS.RELEASE_
   const current = md.match(/current value: `(\d+)`/);
   assert.ok(Number(current[1]) >= 11);
 });
+
+test('stamp: an invalidateSnapshot that throws still stamps — exit 0, comment posted, stderr note', () => {
+  const h = stampHarness({ labelList: 'release-block\n', overrides: { invalidateSnapshot: () => { throw new Error('EACCES'); } } });
+  assert.equal(run(stampArgs(), h.deps), 0);
+  assert.ok(h.keys().includes('issue comment'));
+  assert.equal(h.out(), stampOut(7, 'stamped'));
+  assert.match(h.err(), /could not invalidate the session record snapshot/);
+});
+
+test('stamp: a view without url or labels, or not an object -> exit 3 before any write', () => {
+  for (const view of ['{}', '[]', JSON.stringify({ number: 7, state: 'OPEN', labels: [] }), JSON.stringify({ number: 7, url: 'https://github.com/acme/widgets/issues/7' })]) {
+    const h = stampHarness({ view });
+    assert.equal(run(stampArgs(), h.deps), 3, view);
+    assert.deepEqual(h.keys(), ['issue view'], view);
+  }
+});
+
+test('stamp: --repo pins the host before the first gh call and reaches gh as given', () => {
+  const h = stampHarness({ labelList: 'release-block\n' });
+  const order = [];
+  const gh = h.deps.gh;
+  h.deps.gh = (args, opts) => { order.push('gh'); return gh(args, opts); };
+  const pin = h.deps.pinGhHost;
+  h.deps.pinGhHost = (spec, o) => { order.push('pin'); return pin(spec, o); };
+  assert.equal(run(stampArgs(['--repo', 'ghe.example.com/acme/widgets']), h.deps), 0);
+  assert.equal(order[0], 'pin');
+  assert.equal(h.calls.pin.length, 1);
+  assert.equal(h.calls.pin[0].host, 'ghe.example.com');
+  for (const c of h.calls.gh) assert.equal(c.args[c.args.indexOf('--repo') + 1], 'ghe.example.com/acme/widgets');
+});
+
+test('stamp: a throwing label list, or a throwing re-list after a failed create -> exit 3, no edit or comment', () => {
+  const first = stampHarness({ labelList: () => { throw new Error('HTTP 500'); } });
+  assert.equal(run(stampArgs(), first.deps), 3);
+  assert.deepEqual(first.keys(), ['issue view', 'label list']);
+  let lists = 0;
+  const relist = stampHarness({
+    labelList: () => { if (++lists === 2) throw new Error('HTTP 500'); return ''; },
+    handlers: { 'label create': () => { throw new Error('boom'); } },
+  });
+  assert.equal(run(stampArgs(), relist.deps), 3);
+  assert.ok(!relist.keys().includes('issue edit') && !relist.keys().includes('issue comment'));
+});
+
+test('FINDING_RE: a path with inner spaces is accepted; multi-line and location-less are not', () => {
+  assert.ok(FINDING_RE.test('security at docs/my file.md:3'));
+  assert.ok(!FINDING_RE.test('no location'));
+  assert.ok(!FINDING_RE.test('security at a.js:8\nmore'));
+  const h = stampHarness({ labelList: 'release-block\n' });
+  assert.equal(run(['stamp', '--record', '7', '--finding', 'security at docs/my file.md:3'], h.deps), 0);
+});
+
+test('--help names both verbs\' exit contracts', () => {
+  const h = stampHarness();
+  assert.equal(run(['--help'], h.deps), 0);
+  assert.match(h.out(), /stamp: exit 0 stamped or already stamped; 2 usage/);
+});
