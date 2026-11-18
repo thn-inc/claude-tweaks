@@ -398,13 +398,13 @@ function writeFailure(w) {
   return w.reason || w.failure || 'the write failed';
 }
 
-// -> { read, marker } | { stop: an outcome result }. Absent is refused (there is nothing to
-// advance), with `absentReason`; a transport failure, and bytes that are not a marker, are
-// unreadable.
-function readMarker(store, absentReason = NO_MARKER) {
+// -> { read, marker } | { stop: an outcome result }. Absent is `absent` (default: refused,
+// there is nothing to advance; the re-read after a lost write passes a contested one); a
+// transport failure, and bytes that are not a marker, are unreadable.
+function readMarker(store, absent = { outcome: 'refused', reason: NO_MARKER }) {
   const read = store.read();
   if (read.state === 'unreadable') return { stop: { outcome: 'unreadable', reason: read.reason } };
-  if (read.state === 'absent') return { stop: { outcome: 'refused', reason: absentReason } };
+  if (read.state === 'absent') return { stop: { ...absent } };
   const parsed = parseMarker(read.value);
   if (parsed.error) return { stop: { outcome: 'unreadable', reason: parsed.error } };
   return { read, marker: parsed.marker };
@@ -415,8 +415,9 @@ function readMarker(store, absentReason = NO_MARKER) {
 // Forward-only along the first-parent line, with at most two compare-and-set writes. A lost
 // write re-reads: a marker a competitor moved to or past `to` is success with no write.
 // After the first lost write anything else is judged again from scratch (never a blind write
-// on the fresh lease); after the second, anything else (an unreadable or vanished marker,
-// an undetermined verdict) is contested.
+// on the fresh lease; a marker that vanished is contested, not refused: a competing writer
+// changed the state, the target is not bad); after the second, anything else (an unreadable
+// or vanished marker, an undetermined verdict) is contested.
 //
 // Requires a history object no earlier call has used: the at-or-past check below relies on
 // the history's one snapshot refresh being unspent when the operation starts.
@@ -451,7 +452,8 @@ function advanceMarker(ctx, { to, run } = {}) {
       };
     }
     if (!w.conflict) return { outcome: 'unreadable', reason: writeFailure(w) };
-    const again = readMarker(ctx.store, MARKER_VANISHED);
+    // A marker gone on the re-read is a competing writer's change, not a bad target (R17).
+    const again = readMarker(ctx.store, { outcome: 'contested', reason: MARKER_VANISHED });
     // A competitor may have advanced to a commit newer than the history's snapshot of the
     // branch, which only the history's one refresh can see (Review Focus 1). After the first
     // lost write that refresh is still unspent here: pass 1's verdict took the snapshot (the

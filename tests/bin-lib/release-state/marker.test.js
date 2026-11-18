@@ -760,11 +760,11 @@ test('AC3.1: after a second conflict, a marker a third writer moved to or past t
   }
 });
 
-test('AC3.1: a marker that vanished after the first lost write is refused without init advice', () => {
+test('AC3.1: a marker that vanished after the first lost write is contested (ruling R17), without init advice', () => {
   const vanished = { state: 'absent', lease: null, via: 'git', branchMissing: false };
   const { ctx, calls } = fakeCtx({ reads: [presentAt(F), vanished], write: () => ({ ok: false, conflict: true }), verdicts: { [`${F}>${T}`]: 'descendant' } });
   const r = advanceMarker(ctx, { to: T, run: 'ra' });
-  assert.equal(r.outcome, 'refused');
+  assert.equal(r.outcome, 'contested');
   assert.match(r.reason, /disappeared after a lost compare-and-set/);
   assert.doesNotMatch(r.reason, /init/);
   assert.equal(calls.write.length, 1);
