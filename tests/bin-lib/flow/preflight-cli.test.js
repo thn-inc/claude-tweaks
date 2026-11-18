@@ -94,7 +94,7 @@ test('run: a throw outside the per-probe safety net (adoption\'s readRunState) p
 test('run: --json redirects the write inside the anchored target; a symlinked escape is refused (#1931, [IL-150])', async () => {
   const fx = mainCheckoutWithRun();
   const { d } = baseDeps(fx);
-  const dest = path.join(fx.root, 'preflight-copy.json');
+  const dest = path.join(fx.runDir, 'work', 'preflight-copy.json');
   assert.strictEqual(await run(['--run', fx.runDir, '--steps', 'review', '--json', dest], d), 0);
   assert.ok(fs.existsSync(dest));
   assert.ok(!fs.existsSync(path.join(fx.runDir, 'preflight.json')));

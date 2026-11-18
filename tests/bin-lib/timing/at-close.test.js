@@ -359,10 +359,10 @@ test('a token-totals timing.json written mid-call by a concurrent pass is kept b
 // Two runs of one session and worktree, closed one after the other: run-1 created
 // 09:55, events 10:00..10:10, closed 10:30; run-2 created 10:55, events 11:00..11:10,
 // closed 11:30. updatedAt is set as the close's own writeRunState stamps it.
-function sequentialRuns(root) {
+function sequentialRuns(root, runsParent = root) {
   const wtA = path.join(root, 'wt-a');
   const mk = (id, [e1, e2], closedAt) => {
-    const runDir = closedRun(root, id, wtA);
+    const runDir = closedRun(runsParent, id, wtA);
     fs.writeFileSync(path.join(runDir, 'events.jsonl'), [
       { skill: 'claude-tweaks:build', ts: e1, type: 'skill_invoked' },
       { skill: 'claude-tweaks:wrap-up', ts: e2, type: 'skill_invoked' },
@@ -411,10 +411,10 @@ test('item 3: each run counts its own calls from creation through close — afte
 });
 
 test('item 3: the window ends at run-state updatedAt (the close\'s own write), not at the moment the pass runs', async () => {
-  const root = gitRepo(); // the CLI refuses a run dir outside a main checkout
+  const root = gitRepo(); // the CLI refuses a run dir outside a main checkout's .claude-tweaks/pipelines/
   try {
     const cfg = path.join(root, 'cfg');
-    const { wtA, second } = sequentialRuns(root);
+    const { wtA, second } = sequentialRuns(root, path.join(root, '.claude-tweaks', 'pipelines'));
     // A call after run-2's close (11:30) but long before this pass runs (the real now).
     writeRows(cfg, wtA, [['2020-01-06T11:05:00.000Z', A], ['2020-01-06T11:45:00.000Z', OTHER]]);
     const r = await runCli(TIMING_CLI, ['--run', second], { env: { CLAUDE_CONFIG_DIR: cfg }, cwd: root });

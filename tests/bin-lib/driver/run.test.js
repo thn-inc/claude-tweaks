@@ -6814,7 +6814,7 @@ function assertRefusedNothingWritten(h, code, why, { branchRead = false } = {}) 
 
 const WHY_MISSING = 'run directory missing';
 const WHY_NOT_ANCHORED = 'run directory not-anchored';
-const WHY_NOT_RUN_DIR = 'not a run directory under the main checkout';
+const WHY_NOT_RUN_DIR = 'run directory not-a-run-dir';
 const WHY_NOT_WORKTREE = 'working directory is not a linked worktree of the main checkout';
 const WHY_NO_BRANCH = 'adopted worktree has no branch (detached HEAD or unreadable)';
 

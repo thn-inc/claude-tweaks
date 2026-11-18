@@ -19,6 +19,10 @@
 // mainRoot. No `.git` found anywhere above the run dir also refuses — this
 // predicate fails CLOSED on the unknown case, same as
 // bin/lib/hooks/worktree-reap.js.
+//
+// Anchoring is the first half of the guard. The second half (#5830,
+// bin/lib/run-dir-guard.js) requires the run dir to sit strictly inside
+// <checkout>/.claude-tweaks/pipelines/ — 'not-a-run-dir' otherwise.
 'use strict';
 
 const fs = require('fs');
@@ -26,6 +30,7 @@ const path = require('path');
 const { mainCheckoutRoot, safeReal } = require('../hooks/worktree-detect');
 const { withLock } = require('../file-lock');
 const { writeFileAtomic } = require('../atomic-write');
+const { isUnderPipelines } = require('../run-dir-guard');
 
 const STATUSES = ['AUTO', 'STAGED', 'KEPT-PROMPT', 'SCANNED', 'REFUSED', 'SKIP'];
 // Read vocabulary: the writer's set plus FAILED, a hand-composed historical status log-decision.js never writes.
@@ -84,7 +89,8 @@ function isDirectory(p) {
   try { return fs.statSync(p).isDirectory(); } catch { return false; }
 }
 
-// { runDir, cwd?, mainRoot? } -> { ok, file } | { ok:false, reason:'missing'|'not-anchored' }
+// { runDir, cwd?, mainRoot? } -> { ok, file } | { ok:false, reason:'missing'|'not-anchored'|'not-a-run-dir' }
+// 'not-a-run-dir': anchored, but not strictly inside <checkout>/.claude-tweaks/pipelines/ (#5830).
 function resolveTarget({ runDir, cwd = process.cwd(), mainRoot }) {
   const real = safeReal(runDir);
   if (!real || !isDirectory(real)) return { ok: false, reason: 'missing' };
@@ -107,6 +113,7 @@ function resolveTarget({ runDir, cwd = process.cwd(), mainRoot }) {
     if (!anchor) return { ok: false, reason: 'not-anchored' };
   }
   if (anchor && (safeReal(anchor) || anchor) !== gitRoot) return { ok: false, reason: 'not-anchored' };
+  if (!isUnderPipelines(real, gitRoot)) return { ok: false, reason: 'not-a-run-dir' };
   return { ok: true, file: path.join(real, 'decisions.md') };
 }
 

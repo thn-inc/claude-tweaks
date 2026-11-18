@@ -1,12 +1,12 @@
 'use strict';
 // Characterization of resolveTarget's refusals that plugin/bin/ci-gate-record.js
 // relies on to anchor its --run argument (#5160 AC4). The AC4 probe also ran
-// three cases resolveTarget does NOT refuse, reported for filing and so absent
-// here: C3a/C3b (a `..` spelling, un-normalized and normalized, that lands on
-// main/docs — inside the main checkout, outside .claude-tweaks/pipelines/) and
-// C4 (a look-alike main/x.claude-tweaks/pipelines-copy/<id> dir). Each resolved
-// { ok: true }: the predicate checks only that the nearest .git ancestor is the
-// main checkout's, not that the dir sits under .claude-tweaks/pipelines/.
+// three cases the anchor check alone did not refuse: C3a/C3b (a `..` spelling,
+// un-normalized and normalized, that lands on main/docs — inside the main
+// checkout, outside .claude-tweaks/pipelines/) and C4 (a look-alike
+// main/x.claude-tweaks/pipelines-copy/<id> dir). Each resolved { ok: true }
+// until #5830 added the run-dir guard (plugin/bin/lib/run-dir-guard.js): they
+// are now refused as 'not-a-run-dir'.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
@@ -33,10 +33,11 @@ function fixture(t) {
   fs.mkdirSync(shadow, { recursive: true });
   fs.mkdirSync(outside);
   fs.mkdirSync(path.join(main, 'docs'));
-  fs.mkdirSync(path.join(main, 'x.claude-tweaks', 'pipelines-copy', RUN_ID), { recursive: true });
+  const lookAlike = path.join(main, 'x.claude-tweaks', 'pipelines-copy', RUN_ID);
+  fs.mkdirSync(lookAlike, { recursive: true });
   fs.mkdirSync(path.join(main, '.git'));
   fs.writeFileSync(path.join(worktree, '.git'), 'gitdir: ../../../.git/worktrees/flow-5160\n');
-  return { singleDir, worktree, shadow, outside };
+  return { singleDir, worktree, shadow, outside, lookAlike };
 }
 
 // `..` spellings are built by concatenation, never path.join (which normalizes).
@@ -69,6 +70,23 @@ test('AC4 probe C2b: resolveTarget refuses the normalized .. escape out of the c
   const { singleDir, worktree } = fixture(t);
   const runDir = path.normalize(singleDir + sep + up(4) + sep + 'outside');
   assertRefused(resolveTarget({ runDir, cwd: worktree }), 'not-anchored');
+});
+
+test('AC4 probe C3a: resolveTarget refuses an un-normalized .. spelling that lands on main/docs as not-a-run-dir', (t) => {
+  const { singleDir, worktree } = fixture(t);
+  const runDir = singleDir + sep + up(3) + sep + 'docs';
+  assertRefused(resolveTarget({ runDir, cwd: worktree }), 'not-a-run-dir');
+});
+
+test('AC4 probe C3b: resolveTarget refuses the normalized .. spelling that lands on main/docs as not-a-run-dir', (t) => {
+  const { singleDir, worktree } = fixture(t);
+  const runDir = path.normalize(singleDir + sep + up(3) + sep + 'docs');
+  assertRefused(resolveTarget({ runDir, cwd: worktree }), 'not-a-run-dir');
+});
+
+test('AC4 probe C4: resolveTarget refuses the look-alike main/x.claude-tweaks/pipelines-copy/<id> dir as not-a-run-dir', (t) => {
+  const { lookAlike, worktree } = fixture(t);
+  assertRefused(resolveTarget({ runDir: lookAlike, cwd: worktree }), 'not-a-run-dir');
 });
 
 test('AC4 probe C5a: resolveTarget refuses an unanchored dir spelled with a trailing separator', (t) => {
