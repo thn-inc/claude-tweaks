@@ -3966,6 +3966,22 @@ test('AC7.3: a --run that names no run directory, or one resolveTarget refuses, 
   }
 }));
 
+test('#5830: --run naming a directory outside .claude-tweaks/pipelines/ is refused', () => withMainCheckout(({ root }) => {
+  const stray = path.join(root, 'plugin');
+  fs.mkdirSync(stray);
+  for (const transport of ['gh', 'files']) {
+    let probed = 0; let pulled = 0;
+    const r = cliRun(['--transport', transport, '--named', '12', '--run', stray], {
+      env: {}, cwd: root, ghAvailable: () => { probed += 1; return true; }, queuePull: () => { pulled += 1; },
+    });
+    assert.equal(r.code, 1, `${transport}: ${r.stderr}`);
+    assert.match(r.stderr, /not a pipeline run directory/);
+    assert.equal(r.stdout, '');
+    assert.deepEqual([probed, pulled], [0, 0]);
+    assert.equal(fs.existsSync(path.join(stray, 'decisions.md')), false, 'nothing is written into the stray directory');
+  }
+}));
+
 test('AC7.4: a bare --run id resolves under <main>/.claude-tweaks/pipelines, a path is used as given; named and the run dir reach queuePull', () => withMainCheckout(({ root, runDir }) => {
   const sub = path.join(root, 'plugin');
   fs.mkdirSync(sub);

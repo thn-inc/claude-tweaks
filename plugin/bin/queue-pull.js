@@ -199,7 +199,9 @@ function resolveRunDir(value, cwd) {
   }
   const target = resolveTarget({ runDir: candidate, cwd });
   if (!target.ok) {
-    const why = target.reason === 'missing' ? 'names no run directory' : 'is not anchored under the main checkout';
+    const why = target.reason === 'missing' ? 'names no run directory'
+      : target.reason === 'not-a-run-dir' ? 'is not a pipeline run directory (it must sit under .claude-tweaks/pipelines)'
+        : 'is not anchored under the main checkout\'s .claude-tweaks/pipelines';
     return { error: `${value}: ${candidate} ${why}` };
   }
   return { runDir: path.dirname(target.file) };

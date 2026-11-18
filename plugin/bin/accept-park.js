@@ -28,7 +28,7 @@
 //     that will not read (gh absent included) — its decision is still printed, failing closed
 //     to local by invalid-input, and the caller must not merge — or a packet-facts write that
 //     failed (decision printed too); 2 malformed invocation; 3 --run
-//     refused (missing, or not anchored under the main checkout: a worktree-local shadow).
+//     refused (missing, or not anchored under the main checkout's .claude-tweaks/pipelines: a worktree-local shadow).
 //   park --run <dir> --record <n>[,<m>…] --pr <n> --head <sha> --worktree <path>
 //        [--claimed <n>[,<m>…]] [--worktree-mode remove|caller] [--repo [host/]owner/name]
 //     --record names the records whose decision parks; --claimed every record the run claimed
@@ -263,7 +263,8 @@ function anchoredRun(runDir, deps) {
   }
   if (target.ok) return true;
   if (target.reason === 'missing') deps.stderr(`accept-park.js: run dir does not exist: ${runDir}\n`);
-  else deps.stderr(`accept-park.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section\n`);
+  else if (target.reason === 'not-a-run-dir') deps.stderr(`accept-park.js: run dir is not a pipeline run directory (it must sit under .claude-tweaks/pipelines): ${runDir}\n`);
+  else deps.stderr(`accept-park.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow): ${runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section\n`);
   return false;
 }
 

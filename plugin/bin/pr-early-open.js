@@ -162,7 +162,7 @@ async function run(argv, overrides = {}) {
   if (!target.ok) {
     return usageError(target.reason === 'missing'
       ? `--run dir does not exist or is not a directory: ${o.run}`
-      : `--run ${o.run} is not anchored under the main checkout (a worktree-local shadow, or outside every checkout) — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
+      : `--run ${o.run} is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or outside every checkout) — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
   }
   const runDir = target.dir;
   const runId = path.basename(runDir);

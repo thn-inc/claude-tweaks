@@ -3,7 +3,7 @@
 // /claude-tweaks:wrap-up's Phases 3-4 (#1930): eight probes, concurrently,
 // one JSON. Read-only. Exit 0 whenever the pack was produced (a failing
 // probe degrades its own field), 2 on a malformed invocation, 3 when --run
-// is not anchored under the main checkout (stage-item's resolveTarget —
+// is not anchored under the main checkout's .claude-tweaks/pipelines (stage-item's resolveTarget —
 // [IL-127]: a worktree-local shadow run dir must never be written), and 3
 // likewise when --json would write outside that same anchored target. An
 // undecided crash — a throw that reaches the top level rather than a
@@ -70,7 +70,7 @@ async function run(argv, deps = {}) {
   }
   const target = resolveTarget({ runDir: o.run, cwd: cwd(), mainRoot: deps.mainRoot });
   if (!target.ok) {
-    stderr(`wrap-up-pack.js: --run ${o.run} refused (${target.reason === 'missing' ? 'missing' : 'not anchored under the main checkout'}) — nothing written\n`);
+    stderr(`wrap-up-pack.js: --run ${o.run} refused (${target.reason === 'missing' ? 'missing' : 'not anchored under the main checkout\'s .claude-tweaks/pipelines'}) — nothing written\n`);
     return 3;
   }
   // --json is the same write, redirected — so it clears the same anchoring bar

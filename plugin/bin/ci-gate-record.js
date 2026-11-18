@@ -157,7 +157,7 @@ function run(argv, deps = realDeps) {
   }
   if (!target.ok) {
     if (target.reason === 'missing') return fail(3, `run dir does not exist: ${o.run}`);
-    return fail(3, `run dir is not anchored under the main checkout (e.g. a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
+    return fail(3, `run dir is not anchored under the main checkout's .claude-tweaks/pipelines (e.g. a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
   }
 
   const ghArgs = ['run', 'list', '--commit', o.headSha, '--limit', '100', '--json', RUN_LIST_FIELDS, ...(o.repo ? ['--repo', o.repo] : [])];

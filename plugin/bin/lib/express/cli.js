@@ -29,7 +29,7 @@
 // an upstream failure (gate --issue's fetch, samples' fetches or a search still at its
 // 1000-result cap within one second, a policy read); 2 malformed invocation (an unreadable or
 // mis-shaped --records-json / --record-json / --detail-file included) or `gh` absent
-// where it is needed; 3 the --run dir is missing or not anchored under the main checkout
+// where it is needed; 3 the --run dir is missing or not anchored under the main checkout's .claude-tweaks/pipelines
 // (log-decision/append.js's resolveTarget, [IL-127]), or (escalate only) decisions.md is
 // unwritable. check self-logs its entry and reports a failed append as `logged: false`
 // in its envelope plus a stderr line, never through the exit code.
@@ -60,7 +60,7 @@ const USAGE = [
   "       --max-lines: the pipeline driver's implementation-line bound (bin/drive.js); absent, check applies auto-merge-max-lines",
   'exit: 0 success (gate/check: verdict JSON on stdout whatever it is); 1 verify found an artifact missing, an escalation was refused',
   '      because run-state.json already records the PR, or an upstream fetch failed (samples: also a search at its 1000-result cap within one second);',
-  '      2 malformed invocation or `gh` absent; 3 --run missing or not anchored under the main checkout, or (escalate) decisions.md unwritable;',
+  '      2 malformed invocation or `gh` absent; 3 --run missing or not anchored under the main checkout\'s .claude-tweaks/pipelines, or (escalate) decisions.md unwritable;',
   '      check reports its own failed decisions.md append as `logged: false` in the JSON, exit 0',
   '',
 ].join('\n');
@@ -206,7 +206,7 @@ function anchoredDecisions(deps, runDir) {
   try { target = resolveTarget({ runDir, cwd: deps.cwd(), mainRoot: deps.mainRoot }); } catch (err) { throw new AnchorError(String(err && err.message)); }
   if (target.ok) return target.file;
   if (target.reason === 'missing') throw new AnchorError(`run dir does not exist: ${runDir}`);
-  throw new AnchorError(`run dir is not anchored under the main checkout (a worktree-local shadow): ${runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section`);
+  throw new AnchorError(`run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow): ${runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section`);
 }
 
 function readDecisions(deps, file) {

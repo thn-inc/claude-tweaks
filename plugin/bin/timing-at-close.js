@@ -62,7 +62,7 @@ async function run(argv, deps = {}) {
     return 3;
   }
   if (!target.ok) {
-    deps.stderr(`timing-at-close.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — pass the main-checkout path (_shared/pipeline-run-dir.md's Anchoring section)\n`);
+    deps.stderr(`timing-at-close.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow): ${o.run} — pass the main-checkout path (_shared/pipeline-run-dir.md's Anchoring section)\n`);
     return 3;
   }
   const r = await writeTimingAtClose(runDir, { tokens: true, env: deps.env, homeDir: deps.homeDir });

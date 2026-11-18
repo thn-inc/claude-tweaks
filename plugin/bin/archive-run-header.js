@@ -33,7 +33,7 @@
 // 2 malformed invocation (a missing or option-shaped value, an unknown flag, a --run that is not under
 //   `.claude-tweaks/pipelines/` or whose run id or spec segment is not shaped like one; the move's own
 //   argument error, ERR_RUN_HEADER_ARGS); git is never spawned for a malformed --run.
-// 3 run dir missing or not anchored under the main checkout (a worktree-local shadow --
+// 3 run dir missing or not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow --
 //   _shared/pipeline-run-dir.md, [IL-127]); an archive/{run-id} dir in the main checkout is anchored.
 //   Checked before any git call. Same vocabulary as post-merge-run.js (the Sanctioned-writer family).
 // An unexpected exception from the move propagates as exit 1 with nothing logged; the caller's
@@ -61,7 +61,7 @@ const USAGE = `usage: ${NAME} --run <run-dir> [--worktree <path>] [--section </s
   + `  logs one AUTO (moved) or SKIP (refused) line under ${DEFAULT_SECTION} unless --section names another; noop logs nothing and reports logged: true\n`
   + '  exit 0 an envelope was printed (every outcome and reason is data)\n'
   + '       2 malformed invocation\n'
-  + '       3 run dir missing or not anchored under the main checkout\n';
+  + '       3 run dir missing or not anchored under the main checkout\'s .claude-tweaks/pipelines\n';
 
 const VALUE_FLAGS = { '--run': 'run', '--worktree': 'worktree', '--section': 'section' };
 
@@ -176,7 +176,7 @@ function run(argv, overrides = {}) {
   if (!target.ok) {
     return unanchored(target.reason === 'missing'
       ? `run dir does not exist: ${o.run}`
-      : `run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
+      : `run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
   }
   // The validated real path: what the identity is read from and what the entry is logged under.
   const runDir = path.dirname(target.file);

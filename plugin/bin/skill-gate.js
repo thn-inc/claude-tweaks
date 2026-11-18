@@ -37,7 +37,7 @@ const USAGE = 'usage: skill-gate.js --skill journeys|visual-review|design-wrappe
   + '  --run, --section and --step go together: a skip appends one SKIP line to the run\'s decisions.md\n'
   + '  prints {decision: proceed|skip, reason, journeys? (visual-review skip), logged? (skip)}\n'
   + '  proceed with a reason starting "cannot tell: " means the gate could not decide; it also writes that reason to stderr\n'
-  + '  exit 0 either decision; 2 malformed invocation; 3 run dir missing or not anchored under the main checkout\n';
+  + '  exit 0 either decision; 2 malformed invocation; 3 run dir missing or not anchored under the main checkout\'s .claude-tweaks/pipelines\n';
 
 const VALUE_FLAGS = {
   '--skill': 'skill',
@@ -161,7 +161,7 @@ function run(argv, deps = realDeps) {
     }
     if (!target.ok) {
       if (target.reason === 'missing') deps.stderr(`skill-gate.js: run dir does not exist: ${o.run}\n`);
-      else deps.stderr(`skill-gate.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+      else deps.stderr(`skill-gate.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
       return 3;
     }
   }

@@ -893,7 +893,7 @@ async function runAdoptRunDir(argv, deps) {
     if (target.reason === 'missing') {
       deps.stderr(`claude-tweaks: adopt-run-dir: run dir does not exist: ${runArg}\n`);
     } else {
-      deps.stderr(`claude-tweaks: adopt-run-dir: run dir is not anchored under the main checkout (a worktree-local shadow): ${runArg} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+      deps.stderr(`claude-tweaks: adopt-run-dir: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow): ${runArg} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
     }
     return 3;
   }

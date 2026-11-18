@@ -297,6 +297,25 @@ test('decide: a --run outside the main checkout is refused with exit 3', async (
   assert.equal(w.state.gh.length, 0);
 });
 
+test('#5830: decide, park and parked refuse a --run outside .claude-tweaks/pipelines with exit 3', async () => {
+  const w = world({ policy: 'control-mode: on\n', records: { 7: {} } });
+  const stray = path.join(w.state.root, 'plugin');
+  fs.mkdirSync(stray, { recursive: true });
+  // A config.yml the run's own agent could write must never be read from a directory that is no run.
+  fs.writeFileSync(path.join(stray, 'config.yml'), 'control-mode: off\n');
+  for (const argv of [
+    ['decide', '--run', stray, '--record', '7'],
+    ['park', '--run', stray, '--record', '7', '--pr', '12', '--head', HEAD, '--worktree', w.state.worktree],
+    ['parked', '--record', '7', '--run', stray],
+  ]) {
+    const res = await call(w, argv);
+    assert.equal(res.code, 3, `${argv[0]}: ${res.stderr}`);
+    assert.equal(res.stdout, '');
+    assert.match(res.stderr, /not a pipeline run directory/);
+  }
+  assert.equal(w.state.gh.length, 0);
+});
+
 // ---- decide: the diff tripwire (#4619) ----
 
 const TRIPWIRE_POLICY = `control-mode: on\nacceptance-target: dev\n${GLOBS}`;

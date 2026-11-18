@@ -63,7 +63,7 @@
 //        is not a positive integer, a --next-steps entry outside FLOW_STEPS, an
 //        invalid --record-steps value, --record-steps beside --next-steps,
 //        --keep-going or --no-stories without --record-steps, or a --run that
-//        is missing, not anchored under the main checkout (a worktree-local
+//        is missing, not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local
 //        shadow, or outside every checkout — [IL-127]), or whose basename is
 //        not a run id. Nothing is written.
 // --run is anchored strictly through lib/stage-item/write.js's resolveTarget
@@ -92,7 +92,7 @@ const USAGE = 'usage: context-gauge.js --run <run-dir> [--transcript <path>] [--
   + '  --keep-going (only with --record-steps) carries the run\'s keep-going token into the resume line\n'
   + '  --no-stories (only with --record-steps) carries the run\'s no-stories token into the resume line\n'
   + '  exit 0 in every measured state (the JSON is the answer)\n'
-  + '       2 malformed invocation or bad --run (missing, not anchored under the main checkout, not a run id)\n';
+  + '       2 malformed invocation or bad --run (missing, not anchored under the main checkout\'s .claude-tweaks/pipelines, not a run id)\n';
 
 const FLAGS = { '--run': 'run', '--transcript': 'transcript', '--cap': 'cap', '--next-steps': 'nextSteps', '--record-steps': 'recordSteps' };
 
@@ -297,7 +297,7 @@ async function run(argv, overrides = {}) {
   if (!target.ok) {
     return usageError(target.reason === 'missing'
       ? `--run dir does not exist or is not a directory: ${o.run}`
-      : `--run ${o.run} is not anchored under the main checkout (a worktree-local shadow, or outside every checkout) — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
+      : `--run ${o.run} is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or outside every checkout) — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
   }
   const runDir = target.dir;
   const runId = path.basename(runDir);

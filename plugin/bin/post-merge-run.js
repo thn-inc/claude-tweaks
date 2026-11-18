@@ -60,7 +60,7 @@
 //
 // Status is data: exit 0 whenever an entry was printed, whatever its action or reason.
 // 2 malformed invocation (unknown flag, missing --run, --run without a value).
-// 3 run dir missing or not anchored under the main checkout (a worktree-local
+// 3 run dir missing or not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local
 //   shadow -- _shared/pipeline-run-dir.md, [IL-127]); an archive/{run-id} dir in
 //   the main checkout is anchored. Same vocabulary as closing-links.js.
 'use strict';
@@ -84,7 +84,7 @@ const USAGE = 'usage: post-merge-run.js --run <run-dir> [--help]\n'
   + '  failedSteps on a failed ran entry: the steps that failed, 4.0 and/or 4.0b; report only those\n'
   + '  exit 0 an entry was printed (every action and reason is data)\n'
   + '       2 malformed invocation\n'
-  + '       3 run dir missing or not anchored under the main checkout\n';
+  + '       3 run dir missing or not anchored under the main checkout\'s .claude-tweaks/pipelines\n';
 
 function parseArgs(argv) {
   const o = { run: null, help: false };
@@ -137,7 +137,7 @@ async function run(argv, overrides = {}) {
   }
   if (!target.ok) {
     if (target.reason === 'missing') deps.stderr(`post-merge-run.js: run dir does not exist: ${o.run}\n`);
-    else deps.stderr(`post-merge-run.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+    else deps.stderr(`post-merge-run.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
     return 3;
   }
   // The validated real path: what postMergeOne reads, claims and logs under.

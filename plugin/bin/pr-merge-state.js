@@ -119,7 +119,7 @@ function run(argv, overrides = {}) {
   const target = resolveTarget({ runDir: o.run, cwd: deps.cwd(), mainRoot: deps.mainRoot });
   if (!target.ok) {
     if (target.reason === 'missing') deps.stderr(`pr-merge-state.js: run dir does not exist: ${o.run}\n`);
-    else deps.stderr(`pr-merge-state.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+    else deps.stderr(`pr-merge-state.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
     return 3;
   }
   let state = null;
