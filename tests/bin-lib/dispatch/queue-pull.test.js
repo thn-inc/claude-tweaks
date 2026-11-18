@@ -1193,15 +1193,19 @@ test('AC1.1, AC1.2 (#5408): files: an unresolved dependency the verified-open-de
   assert.deepEqual(warningsOf(listedClosed), []);
 });
 
-test('AC1.1, AC2.1, AC3.1, AC3.2 (#5865): files: a dependency-freshness entry marked unreadable is treated as open, prints one Warning naming it and writes no queue-order cache', () => {
-  const UNREADABLE = (...ns) => `Warning: dependency-freshness file marks ${ns.map((n) => `#${n}`).join(', ')} unreadable — treated as open (fail closed), queue-order cache not written this run`;
-  const noGh = (cmd, args) => { throw new Error(`gh must not be called on files: ${args.join(' ')}`); };
-  const run = (blockedBody, freshness, verified = '') => pull(S1(), { transport: 'files', run: noGh, prepare: (own) => ({ inputs: {
+// Pulls two records on `files` where #9002's body starts with `blockedBody`, with the given
+// dependency-freshness and verified-open-deps file contents.
+function pullBlockedRecord(blockedBody, freshness, verified = '') {
+  return pull(S1(), { transport: 'files', run: noGhOnFiles, prepare: (own) => ({ inputs: {
     queueRaw: writeInput(own, 'queue.json', JSON.stringify([mcpRecord(9001, withBody(9001)), mcpRecord(9002, `${blockedBody}\n\n${withBody(9002)}`)])),
     openNumbers: writeInput(own, 'open.json', '[{"number":9001},{"number":9002}]'),
     depFreshness: writeInput(own, 'dep.json', freshness),
     verifiedOpenDeps: writeInput(own, 'verified.txt', verified),
   } }) });
+}
+
+test('AC1.1, AC2.1, AC3.1, AC3.2 (#5865): files: a dependency-freshness entry marked unreadable is treated as open, prints one Warning naming it and writes no queue-order cache', () => {
+  const UNREADABLE = (...ns) => `Warning: dependency-freshness file marks ${ns.map((n) => `#${n}`).join(', ')} unreadable — treated as open (fail closed), queue-order cache not written this run`;
   const warningsNaming = (r, n) => r.stderr.split('\n').filter((l) => l.startsWith('Warning:') && l.includes(`#${n}`));
   const BLOCKED_8000 = [{ reason: 'blocked', records: [9002], detail: { blockedBy: [8000] } }];
 
@@ -1210,65 +1214,58 @@ test('AC1.1, AC2.1, AC3.1, AC3.2 (#5865): files: a dependency-freshness entry ma
     ['listed in the verified-open-deps file', '[{"number":8000,"state":"unreadable"}]', '8000\n'],
     ['a mixed-case state and a contradicting closed entry', '[{"number":8000,"state":"closed"},{"number":8000,"state":"UNREADABLE"}]', ''],
   ]) {
-    const r = run('Blocked by #8000', freshness, verified);
+    const r = pullBlockedRecord('Blocked by #8000', freshness, verified);
     assert.deepEqual(entriesOf(r, 'blocked'), BLOCKED_8000, label);
     assert.deepEqual(groupNumbers(r), [[9001]], `${label}: #9002 is not dispatchable`);
     assert.deepEqual(warningsNaming(r, 8000), [UNREADABLE(8000)], `${label}: exactly one Warning names #8000`);
     assert.equal(r.store.written.length, 0, `${label}: no queue-order cache`);
   }
 
-  const closed = run('Blocked by #8000', '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"closed"}]');
+  const closed = pullBlockedRecord('Blocked by #8000', '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"closed"}]');
   assert.deepEqual(groupNumbers(closed), [[9001], [9002]]);
   assert.ok(!closed.stderr.split('\n').some((l) => l.startsWith('Warning:') && l.includes('unreadable')), 'a closed entry draws no unreadable Warning');
   assert.equal(closed.store.written.length, 1);
 
-  const other = run('Blocked by #8000\nBlocked by #8001', '[{"number":8000,"state":"unreadable"},{"number":8001,"updated_at":"2026-11-09T10:00:00Z","state":"closed"}]');
+  const other = pullBlockedRecord('Blocked by #8000\nBlocked by #8001', '[{"number":8000,"state":"unreadable"},{"number":8001,"updated_at":"2026-11-09T10:00:00Z","state":"closed"}]');
   assert.equal(other.store.written.length, 0, 'one unreadable entry keeps the cache unwritten');
   assert.deepEqual(entriesOf(other, 'blocked'), BLOCKED_8000, '#8001 is still counted closed');
   assert.deepEqual(warningsNaming(other, 8000), [UNREADABLE(8000)]);
   assert.deepEqual(warningsNaming(other, 8001), [], 'no Warning names the closed #8001');
 
-  const both = run('Blocked by #8000\nBlocked by #8001', '[{"number":8001,"state":"unreadable"},{"number":8000,"state":"unreadable"},{"number":8000,"state":"unreadable"}]');
+  const both = pullBlockedRecord('Blocked by #8000\nBlocked by #8001', '[{"number":8001,"state":"unreadable"},{"number":8000,"state":"unreadable"},{"number":8000,"state":"unreadable"}]');
   assert.deepEqual(both.stderr.split('\n').filter((l) => l.startsWith('Warning: dependency-freshness')), [UNREADABLE(8000, 8001)], 'one Warning, numbers ascending and de-duplicated');
 
   assert.ok(!closedDependencyNumbers('[{"number":8000,"state":"unreadable"}]').has(8000), 'an unreadable entry is never a closed one');
 
   // The malformed verified-open-deps file (the `bad` branch): the existing malformed-file Warning, the
   // one unreadable Warning, and no cache.
-  const bad = run('Blocked by #8000', '[{"number":8000,"state":"unreadable"}]', 'x\n');
+  const bad = pullBlockedRecord('Blocked by #8000', '[{"number":8000,"state":"unreadable"}]', 'x\n');
   const badWarnings = bad.stderr.split('\n').filter((l) => l.startsWith('Warning:'));
   assert.deepEqual(badWarnings, ['Warning: verified-open-deps file missing or malformed — every unresolved dependency treated as open (fail closed) this run', UNREADABLE(8000)]);
   assert.equal(bad.store.written.length, 0, 'a malformed file plus an unreadable entry writes no cache');
 });
 
 test('AC3.1 (#5865): files: an unreadable entry draws a Warning only for an in-range dependency of an eligible record', () => {
-  const noGh = (cmd, args) => { throw new Error(`gh must not be called on files: ${args.join(' ')}`); };
-  const run = (blockedBody, freshness) => pull(S1(), { transport: 'files', run: noGh, prepare: (own) => ({ inputs: {
-    queueRaw: writeInput(own, 'queue.json', JSON.stringify([mcpRecord(9001, withBody(9001)), mcpRecord(9002, `${blockedBody}\n\n${withBody(9002)}`)])),
-    openNumbers: writeInput(own, 'open.json', '[{"number":9001},{"number":9002}]'),
-    depFreshness: writeInput(own, 'dep.json', freshness),
-    verifiedOpenDeps: writeInput(own, 'verified.txt', ''),
-  } }) });
   const unreadableLines = (r) => r.stderr.split('\n').filter((l) => l.includes('unreadable'));
 
   // `Blocked by #0`: not an issue number, so the agent writes an unreadable entry for it, but it is the
   // blocker-landing pass's malformed-blocker case, not a live-check dependency (#5311).
-  const zero = run('Blocked by #0', '[{"number":0,"state":"unreadable"}]');
+  const zero = pullBlockedRecord('Blocked by #0', '[{"number":0,"state":"unreadable"}]');
   assert.deepEqual(unreadableLines(zero), [], '#0 draws no unreadable Warning');
   assert.equal(zero.store.written.length, 1, '#0 does not keep the cache unwritten');
 
   // A number above GRAPHQL_INT_MAX is out of range the same way.
-  const huge = run('Blocked by #2147483648', '[{"number":2147483648,"state":"unreadable"}]');
+  const huge = pullBlockedRecord('Blocked by #2147483648', '[{"number":2147483648,"state":"unreadable"}]');
   assert.deepEqual(unreadableLines(huge), [], 'an out-of-range number draws no unreadable Warning');
   assert.equal(huge.store.written.length, 1);
 
   // An unreadable number no eligible record depends on.
-  const stray = run('Blocked by #8000', '[{"number":7777,"state":"unreadable"},{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"closed"}]');
+  const stray = pullBlockedRecord('Blocked by #8000', '[{"number":7777,"state":"unreadable"},{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"closed"}]');
   assert.deepEqual(unreadableLines(stray), [], 'a stray number draws no Warning');
   assert.equal(stray.store.written.length, 1, 'a stray number does not keep the cache unwritten');
 
   // Control: an in-range dependency of an eligible record still warns, alongside a stray one.
-  const real = run('Blocked by #8000', '[{"number":7777,"state":"unreadable"},{"number":8000,"state":"unreadable"}]');
+  const real = pullBlockedRecord('Blocked by #8000', '[{"number":7777,"state":"unreadable"},{"number":8000,"state":"unreadable"}]');
   assert.deepEqual(unreadableLines(real), ['Warning: dependency-freshness file marks #8000 unreadable — treated as open (fail closed), queue-order cache not written this run']);
   assert.equal(real.store.written.length, 0);
 });
