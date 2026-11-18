@@ -6,7 +6,7 @@
 // operation's outcome to one exit code.
 //
 // usage: release-state.js marker read [--repo [host/]owner/name | --marker-json <path>]
-//        release-state.js marker advance --to <sha> --run <id> [--branch <name>] [--repo [host/]owner/name | --marker-json <path>]
+//        release-state.js marker advance --to <sha> --run <id> [--branch <name>] [--repo [host/]owner/name | --marker-json <path> [--after-conflict]]
 //        release-state.js marker init --to <sha> [--branch <name>] [--repo [host/]owner/name | --emit]
 //        release-state.js marker reset --to <sha> --run <id> [--force --reason <text>] [--branch <name>] [--repo [host/]owner/name | --marker-json <path>]
 //        release-state.js [--help]
@@ -29,7 +29,9 @@
 //             unreadable file or an unparseable one is exit 3, never absent and never a marker.
 //             A write is captured, not made: stdout is
 //             {"write":{"branch","path","content","sha"|null,"message"}} on exit 0, and the agent
-//             makes that one contents-API PUT over MCP (sha = the lease; null creates).
+//             makes that one contents-API PUT over MCP (sha = the lease; null creates). After a
+//             rejected PUT the agent re-reads the file and re-runs `advance --after-conflict`:
+//             a marker at or past --to is exit 0 at-or-past with no write, a vanished one is exit 4.
 //
 // The exit codes, the stdout shapes and the marker file are a stable contract: /release and
 // _shared/release-state.md call them. Change them only by expand-contract. The vocabulary is the
@@ -55,7 +57,7 @@ const {
 const {
   MARKER_FILE, SHA_RE, RUN_RE, REASON_RE, INIT_RUN, parseMarker, storeFacade,
   createLocalHistory, createCompareHistory, createHistory, advanceMarker, initMarker, resetMarker,
-  resetMessageFits,
+  resetMessageFits, recheckAfterConflict,
 } = require('./lib/release-state/marker');
 
 const NAME = 'release-state.js';
@@ -73,7 +75,7 @@ const OUTCOME_EXIT = Object.freeze({
 });
 
 const USAGE = `usage: ${NAME} marker read [--repo [host/]owner/name | --marker-json <path>]\n`
-  + `       ${NAME} marker advance --to <sha> --run <id> [--branch <name>] [--repo [host/]owner/name | --marker-json <path>]\n`
+  + `       ${NAME} marker advance --to <sha> --run <id> [--branch <name>] [--repo [host/]owner/name | --marker-json <path> [--after-conflict]]\n`
   + `       ${NAME} marker init --to <sha> [--branch <name>] [--repo [host/]owner/name | --emit]\n`
   + `       ${NAME} marker reset --to <sha> --run <id> [--force --reason <text>] [--branch <name>] [--repo [host/]owner/name | --marker-json <path>]\n`
   + `       ${NAME} [--help]\n`
@@ -92,10 +94,10 @@ const BUDGET_NOTE = 'the 200-character commit-message budget';
 const VALUE_FLAGS = Object.freeze({
   '--to': 'to', '--run': 'run', '--branch': 'branch', '--repo': 'repo', '--marker-json': 'markerJson', '--reason': 'reason',
 });
-const BOOLEAN_FLAGS = Object.freeze({ '--force': 'force', '--emit': 'emit' });
+const BOOLEAN_FLAGS = Object.freeze({ '--force': 'force', '--emit': 'emit', '--after-conflict': 'afterConflict' });
 const VERB_FLAGS = Object.freeze({
   read: ['--repo', '--marker-json'],
-  advance: ['--to', '--run', '--branch', '--repo', '--marker-json'],
+  advance: ['--to', '--run', '--branch', '--repo', '--marker-json', '--after-conflict'],
   init: ['--to', '--branch', '--repo', '--emit'],
   reset: ['--to', '--run', '--force', '--reason', '--branch', '--repo', '--marker-json'],
 });
@@ -133,6 +135,7 @@ function parseArgs(argv) {
   }
   if (out.markerJson !== undefined && out.repo !== undefined) return { error: '--marker-json and --repo are mutually exclusive' };
   if (out.emit && out.repo !== undefined) return { error: '--emit and --repo are mutually exclusive' };
+  if (out.afterConflict && out.markerJson === undefined) return { error: '--after-conflict needs --marker-json (the emit path re-reads the marker the agent just fetched)' };
   if (verb !== 'read') {
     if (out.to === undefined || !SHA_RE.test(out.to)) return { error: '--to must be a 40-character lowercase hex commit sha' };
   }
@@ -223,7 +226,12 @@ function runVerb(opts, deps, ctx, captured, flags) {
   let result;
   try {
     if (opts.verb === 'read') return reportRead(deps, ctx.store.read(), flags);
-    if (opts.verb === 'advance') result = advanceMarker(ctx, { to: opts.to, run: opts.run });
+    if (opts.verb === 'advance') {
+      // --after-conflict: the agent's PUT lost, and the handoff file is its re-read. Apply the same
+      // at-or-past check advanceMarker runs after a lost write; otherwise advance as usual.
+      result = (opts.afterConflict && recheckAfterConflict(ctx, { to: opts.to }))
+        || advanceMarker(ctx, { to: opts.to, run: opts.run });
+    }
     else if (opts.verb === 'init') result = initMarker(ctx, { to: opts.to });
     else {
       result = resetMarker(ctx, {

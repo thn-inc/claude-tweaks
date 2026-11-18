@@ -410,6 +410,29 @@ function readMarker(store, absent = { outcome: 'refused', reason: NO_MARKER }) {
   return { read, marker: parsed.marker };
 }
 
+// The one at-or-past rule, shared by advanceMarker's lost-write re-read and the emit path's
+// `recheckAfterConflict`: a marker `fresh` is at or past `to` when it is `to`, or `to` is an
+// ancestor of it along the first-parent line.
+function isAtOrPast(ctx, to, fresh) {
+  return fresh === to || ctx.history.verdict(to, fresh).verdict === 'descendant';
+}
+
+// (ctx, { to }) -> an ok at-or-past result | { outcome: 'contested', reason } | null.
+// The emit path's stand-in for advanceMarker's lost-write re-read (the agent, not the CLI, made
+// the write that lost): `ctx.store` reads the marker the agent just re-fetched. A marker at or
+// past `to` is success with no write; a vanished one is contested (R17); anything else (behind
+// `to`, unreadable, malformed) is null, and the caller runs the normal advance over it.
+function recheckAfterConflict(ctx, { to } = {}) {
+  assertSha(to);
+  const again = readMarker(ctx.store, { outcome: 'contested', reason: MARKER_VANISHED });
+  if (again.stop) return again.stop.outcome === 'contested' ? again.stop : null;
+  const fresh = again.marker.sha;
+  if (!isAtOrPast(ctx, to, fresh)) return null;
+  return {
+    outcome: 'ok', advanced: false, sha: fresh, reason: 'at-or-past',
+  };
+}
+
 // (ctx, { to, run }) -> { outcome: 'ok', advanced: true, from, to }
 //  | { outcome: 'ok', advanced: false, sha, reason: 'same' | 'at-or-past' } | { outcome, reason }
 // Forward-only along the first-parent line, with at most two compare-and-set writes. A lost
@@ -464,7 +487,7 @@ function advanceMarker(ctx, { to, run } = {}) {
     // the snapshot then reads as not at-or-past, which is contested, never orphaned.
     if (!again.stop) {
       const fresh = again.marker.sha;
-      if (fresh === to || ctx.history.verdict(to, fresh).verdict === 'descendant') {
+      if (isAtOrPast(ctx, to, fresh)) {
         return {
           outcome: 'ok', advanced: false, sha: fresh, reason: 'at-or-past',
         };
@@ -574,6 +597,8 @@ module.exports = {
   OUTCOMES,
   storeFacade,
   advanceMarker,
+  isAtOrPast,
+  recheckAfterConflict,
   initMarker,
   resetMarker,
   resetMessageFits,

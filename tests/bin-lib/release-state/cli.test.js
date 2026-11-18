@@ -293,7 +293,8 @@ const USAGE_CASES = [
   ['--run with a space', ['marker', 'advance', '--to', T, '--run', 'a b'], /--run must match/],
   ['--force without --reason', ['marker', 'reset', '--to', T, '--run', 'r1', '--force'], /--force requires --reason/],
   ['--reason without --force', ['marker', 'reset', '--to', T, '--run', 'r1', '--reason', REASON], /--reason is only valid with --force/],
-  // These reasons fit the commit-message budget, so only the reason rule itself can refuse them.
+  // The short reasons (#, newline) fit the commit-message budget, so only the reason rule refuses
+  // them; the 201-character reason is refused by that rule first, ahead of the budget check.
   ['a --reason with #', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', 'fix #12'], /--reason must match/],
   ['a --reason with a newline', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', 'one\ntwo'], /--reason must match/],
   ['a --reason over 200 characters', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', 'x'.repeat(201)], /--reason must match/],
@@ -313,6 +314,11 @@ const USAGE_CASES = [
   ['--run on init', ['marker', 'init', '--to', T, '--run', 'r1'], /--run is not valid for marker init/],
   ['--force on advance', ['marker', 'advance', '--to', T, '--run', 'r1', '--force'], /--force is not valid for marker advance/],
   ['--to on read', ['marker', 'read', '--to', T], /--to is not valid for marker read/],
+  ['--after-conflict without --marker-json', ['marker', 'advance', '--to', T, '--run', 'r1', '--after-conflict'], /--after-conflict needs --marker-json/],
+  ['--after-conflict with --repo', ['marker', 'advance', '--to', T, '--run', 'r1', '--after-conflict', '--repo', 'o/r'], /--after-conflict needs --marker-json/],
+  ['--after-conflict on read', ['marker', 'read', '--after-conflict', '--marker-json', 'x'], /--after-conflict is not valid for marker read/],
+  ['--after-conflict on init', ['marker', 'init', '--to', T, '--after-conflict'], /--after-conflict is not valid for marker init/],
+  ['--after-conflict on reset', ['marker', 'reset', '--to', T, '--run', 'r1', '--after-conflict', '--marker-json', 'x'], /--after-conflict is not valid for marker reset/],
   ['an unknown flag', ['marker', 'read', '--frobnicate'], /unknown argument: --frobnicate/],
   ['a repeated flag', ['marker', 'advance', '--to', T, '--to', T, '--run', 'r1'], /--to given more than once/],
   ['a trailing --repo', ['marker', 'read', '--repo'], /--repo requires a value/],
@@ -563,6 +569,54 @@ test('emit mode: an advance that is already satisfied prints its normal line and
   const back = run(['marker', 'advance', '--to', fx.P2, '--run', 'r1', '--marker-json', 'm.json']);
   assert.equal(back.code, 1);
   assert.equal(back.stdout, '');
+});
+
+// ---- --after-conflict: the MCP path's at-or-past check after a lost PUT (ruling R20) ----
+
+const AFTER = (fx, extra = []) => ['marker', 'advance', '--to', fx.P3, '--run', 'r1', '--marker-json', 'm.json', '--after-conflict', ...extra];
+
+test('after-conflict: a fresh marker at the target is at-or-past, exit 0, no write', () => {
+  const fx = makeLine();
+  const { run } = emitHarness(fx, { 'm.json': readFileOf(fx.P3) });
+  const r = run(AFTER(fx));
+  assert.deepEqual([r.code, r.stdout], [0, `{"advanced":false,"sha":"${fx.P3}","reason":"at-or-past"}\n`]);
+});
+
+test('after-conflict: a fresh marker past the target is at-or-past, exit 0, no write (Review Focus 1)', () => {
+  const fx = makeLine();
+  const { run } = emitHarness(fx, { 'm.json': readFileOf(fx.P5) });
+  const r = run(AFTER(fx));
+  assert.deepEqual([r.code, r.stdout], [0, `{"advanced":false,"sha":"${fx.P5}","reason":"at-or-past"}\n`]);
+  // Without the flag the same file is a backward move: refused.
+  const plain = run(['marker', 'advance', '--to', fx.P3, '--run', 'r1', '--marker-json', 'm.json']);
+  assert.equal(plain.code, 1);
+});
+
+test('after-conflict: a fresh marker behind the target gets a write descriptor leased on the fresh blob', () => {
+  const fx = makeLine();
+  const { run } = emitHarness(fx, { 'm.json': readFileOf(fx.P1, 'e'.repeat(40)) });
+  const r = run(AFTER(fx));
+  assert.equal(r.code, 0, r.stderr);
+  const { write } = JSON.parse(r.stdout);
+  assert.equal(write.sha, 'e'.repeat(40));
+  assert.equal(write.message, `Advance reviewed-through to ${short12(fx.P3)} from ${short12(fx.P1)} — run r1`);
+});
+
+test('after-conflict: a vanished marker (null file) is contested, exit 4', () => {
+  const fx = makeLine();
+  const { run } = emitHarness(fx, { 'm.json': 'null' });
+  const r = run(AFTER(fx));
+  assert.equal(r.code, 4);
+  assert.equal(r.stdout, '');
+  assert.match(r.stderr, /^release-state\.js: contested — the marker disappeared/);
+});
+
+test('after-conflict: a fresh marker that is unreadable stays unreadable, exit 3', () => {
+  const fx = makeLine();
+  const { run } = emitHarness(fx, { 'm.json': JSON.stringify({ content: '{', sha: 'c'.repeat(40) }) });
+  const r = run(AFTER(fx));
+  assert.equal(r.code, 3);
+  assert.equal(r.stdout, '');
 });
 
 test('emit mode: a null file is no marker (read: absent; advance: refused)', () => {

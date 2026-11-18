@@ -7,7 +7,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
-const { EXIT } = require('../plugin/bin/release-state');
+const { EXIT, USAGE } = require('../plugin/bin/release-state');
 const { RELEASE_STATE_BRANCH } = require('../plugin/bin/lib/release-state/store');
 const { MARKER_FILE, parseMarker, serializeMarker } = require('../plugin/bin/lib/release-state/marker');
 
@@ -81,14 +81,27 @@ function assertNamesAndExample(text) {
   assert.equal(m[1], serializeMarker(parsed.marker).trimEnd());
 }
 
+// The bash fence under ## The CLI, one line per usage form, with the plugin-root spelling reduced
+// to the script name the CLI's own USAGE prints.
+function assertUsageFence(text) {
+  const m = sectionBody(text, '## The CLI').match(/```bash\n([\s\S]*?)\n```/);
+  assert.ok(m, 'a bash fence of the usage forms under ## The CLI');
+  const fence = m[1].split('\n').map((l) => l.replace('node "${CLAUDE_PLUGIN_ROOT}/bin/release-state.js"', 'release-state.js'));
+  const printed = USAGE.split('\n').map((l) => l.trim().replace(/^usage: /, '')).filter((l) => l.startsWith('release-state.js marker '));
+  assert.ok(printed.length >= 4, 'USAGE carries the marker forms');
+  assert.deepEqual(fence, printed);
+}
+
 function assertMcpPath(text) {
   const body = sectionBody(text, '## gh-absent (MCP) path');
   for (const needle of ['get_file_contents', 'create_branch', 'create_or_update_file', '--marker-json', '--emit']) {
     assert.ok(body.includes(needle), `the MCP path names ${needle}`);
   }
   assert.match(body, /counts as `null` only after/, 'the confirm-before-absent ladder');
-  assert.match(body, /re-runs the same call once/, 'retry once');
-  assert.match(body, /second rejection is the exit-4 equivalent/, 'then contested');
+  assert.match(body, /that read answers not-found and the root on the default/, 'only a not-found on the branch read leads to a missing branch');
+  assert.match(body, /re-run step 2 with `--after-conflict`/, 'retry once, through the at-or-past check');
+  assert.match(body, /anything else, a `write` included, is the exit-4 equivalent/, 'then contested');
+  assert.match(body, /`reset` takes `--marker-json` the same way and makes one write; a rejection is the exit-4\nequivalent/, 'reset: one write');
   assert.match(body, /needs a local clone, because no compare tool is used/, 'descent needs a local clone');
 }
 
@@ -124,13 +137,24 @@ test('contract: names and the marker example match the code', () => {
   assert.throws(() => assertNamesAndExample(text.split(`\`${MARKER_FILE}\``).join('`other.json`')), 'a renamed file');
 });
 
+test('contract: the usage fence equals the CLI\'s USAGE forms', () => {
+  const text = load();
+  assert.doesNotThrow(() => assertUsageFence(text));
+  assert.throws(() => assertUsageFence(text.replace(' [--after-conflict]]', ']')), 'a flag dropped');
+  assert.throws(() => assertUsageFence(text.replace('marker init --to <sha>', 'marker init --to <ref>')), 'a placeholder renamed');
+  assert.throws(() => assertUsageFence(text.replace(/^node .* marker reset .*\n/m, '')), 'a form dropped');
+  assert.doesNotThrow(() => assertUsageFence(readCrlf(text)));
+});
+
 test('contract: MCP path', () => {
   const text = load();
   assert.doesNotThrow(() => assertMcpPath(text));
   assert.throws(() => assertMcpPath(text.split('get_file_contents').join('x')));
   assert.throws(() => assertMcpPath(text.replace('counts as `null` only after', 'counts as `null` after')));
-  assert.throws(() => assertMcpPath(text.replace('re-runs the same call once', 're-runs it')));
-  assert.throws(() => assertMcpPath(text.replace('second rejection is the exit-4 equivalent', 'second rejection is fine')));
+  assert.throws(() => assertMcpPath(text.replace('that read answers not-found and', 'that read fails and')), 'the old ladder');
+  assert.throws(() => assertMcpPath(text.replace('re-run step 2 with `--after-conflict`', 're-run step 2')));
+  assert.throws(() => assertMcpPath(text.replace('anything else, a `write` included, is the exit-4 equivalent', 'anything else is fine')));
+  assert.throws(() => assertMcpPath(text.replace('makes one write; a rejection', 'makes writes; a rejection')));
   assert.throws(() => assertMcpPath(text.replace('needs a local clone, because no compare tool is used', 'needs nothing')));
 });
 

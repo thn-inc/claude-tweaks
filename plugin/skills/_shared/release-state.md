@@ -19,8 +19,9 @@ branch, moved only through `bin/release-state.js` (`bin/lib/release-state/store.
 - It never writes to `main`: every push names `refs/heads/release-state` and every contents-API
   write carries `branch=release-state`.
 - The git fetch uses `--no-write-fetch-head`, which needs git 2.29 or newer. On older git the
-  local history answers insufficient history (exit 5) and the store falls back to the contents
-  API.
+  local history answers insufficient history and the store falls back to the contents API. On
+  the gh path the compare API then answers; exit 5 follows only when no compare history exists
+  (as in emit mode), so a consumer on old git can tell why every check reads insufficient history.
 
 ## reviewed-through.json
 
@@ -51,7 +52,8 @@ exit codes are a frozen contract; change them only by expand-contract.
   (`reason: "at-or-past"`); otherwise one re-validated retry; a second lost write is checked once
   more for at-or-past, else contested (exit 4). A marker that vanishes on a re-read is contested.
 - A shallow or stale clone answers what it holds. A sha it lacks is insufficient history
-  (exit 5), never refused or orphaned. With no local answer the compare API serves.
+  (exit 5 once no compare history can answer either), never refused or orphaned. With no local
+  answer the compare API serves.
 - `marker init` is create-if-not-exists, at a target on the first-parent line, with run `init`.
 - Every commit message is one line, at most 200 characters, with no `#`: the generated
   `track-issue-fixes.yml` job fires on a `#` beside a closing keyword, so a reason such as
@@ -63,21 +65,25 @@ exit codes are a frozen contract; change them only by expand-contract.
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/release-state.js" marker read [--repo [host/]owner/name | --marker-json <path>]
-node "${CLAUDE_PLUGIN_ROOT}/bin/release-state.js" marker advance --to <sha> --run <id> [--branch <name>] [--repo [host/]owner/name | --marker-json <path>]
+node "${CLAUDE_PLUGIN_ROOT}/bin/release-state.js" marker advance --to <sha> --run <id> [--branch <name>] [--repo [host/]owner/name | --marker-json <path> [--after-conflict]]
 node "${CLAUDE_PLUGIN_ROOT}/bin/release-state.js" marker init --to <sha> [--branch <name>] [--repo [host/]owner/name | --emit]
 node "${CLAUDE_PLUGIN_ROOT}/bin/release-state.js" marker reset --to <sha> --run <id> [--force --reason <text>] [--branch <name>] [--repo [host/]owner/name | --marker-json <path>]
 ```
 
 The repo is `--repo`, else the origin. The local clone serves history only when its origin is
-that repo; any other target uses the contents and compare APIs alone, with no git call.
+that repo; any other target uses the contents and compare APIs alone, with no git call that
+could reach `origin`.
 
-On exit 0 stdout is one JSON line; a non-zero exit prints nothing on stdout and one stderr line
-`release-state.js: {outcome} — {reason}`.
+On exit 0 stdout is one JSON line. Exits 1 and 3-6 print nothing on stdout and one stderr line
+`release-state.js: {outcome} — {reason}`; with `gh` missing a second hint line follows. Exit 2
+prints `release-state.js: {error}` and then the usage text; an unresolvable or refused repo
+prints `release-state.js: {message}` alone, with no outcome word.
 
 - `read`: the marker object, or `{"absent":true}`.
 - `advance`: `{"advanced":true,"from","to"}`, or `{"advanced":false,"sha","reason":"same"|"at-or-past"}`.
 - `init`: `{"initialized":true,"sha"}`. `reset`: `{"reset":true,"from","to","basis"}`.
-- With `--marker-json` or `--emit`: `{"write":{"branch","path","content","sha","message"}}`.
+- An `advance`, `init` or `reset` that writes, under `--marker-json` or `--emit`, prints
+  `{"write":{"branch","path","content","sha","message"}}` in place of its line.
 
 ### Exit codes
 
@@ -102,16 +108,25 @@ same repository.
 
 1. Read: `get_file_contents` of `reviewed-through.json` at ref `release-state`. With the Write
    tool, write `{content, sha}`, `null` or `{failure}` to the path
-   `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value release-state-marker.json` prints.
+   `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value release-state-marker.json` prints;
+   that path is `{tmp-marker-json}` below. `content` is the decoded file text (never base64) and
+   `sha` the file's 40-lowercase-hex blob sha.
    A not-found counts as `null` only after `get_file_contents` of the root on `release-state`
-   succeeds (the file is missing), or that fails and the root on the default branch succeeds
-   (the branch is missing). Otherwise it is `{failure}`. Any other shape exits 3.
+   succeeds (the file is missing), or that read answers not-found and the root on the default
+   branch succeeds (the branch is missing). Any other failure on any read is `{failure}`. Any other file shape exits 3.
 2. Run `node "${CLAUDE_PLUGIN_ROOT}/bin/release-state.js" marker advance --to {sha} --run {id} --marker-json "{tmp-marker-json}"`
    from that checkout, and route on its exit code.
 3. On exit 0 with `write`, call `create_or_update_file` with `branch`, `path`, `content`,
    `message` and `sha` (omitted when null): the conditional-write pattern in that same file.
-4. A sha-mismatch or exists rejection goes back to step 1 and re-runs the same call once. A
-   second rejection is the exit-4 equivalent.
+4. On a sha-mismatch or exists rejection, re-read (step 1) and re-run step 2 with `--after-conflict`
+   added: it applies the at-or-past check of Writer rules to the fresh file. Exit 0 without
+   `write` is success (at-or-past); exit 0 with `write` makes step 3's call once more. On a
+   second rejection, re-read and re-run with `--after-conflict` again: exit 0 without `write` is
+   success; anything else, a `write` included, is the exit-4 equivalent, and nothing is written.
+   A `null` file under `--after-conflict` is exit 4.
+
+`reset` takes `--marker-json` the same way and makes one write; a rejection is the exit-4
+equivalent, with no retry.
 
 Init: `--emit`, then `create_branch` (name `release-state`, from the default branch; tolerate
 "already exists"), then `create_or_update_file` without `sha`. An exists rejection is the
