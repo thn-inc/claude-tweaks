@@ -31,19 +31,22 @@
 
 ### Task 1: Unreadable entry fails closed on the files transport
 
+**Role:** integration
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/dispatch/queue-pull.js` (new `unreadableDependencyNumbers` beside `closedDependencyNumbers` ~line 308; the files block of the blocked pass ~line 706)
 - Modify: `plugin/skills/dispatch/mcp-transport.md` (the `--dep-freshness` bullet, line 83)
 - Test: `tests/bin-lib/dispatch/queue-pull.test.js` (a new test after the `AC1.1, AC1.2 (#5408)` test, ~line 1147, reusing its `run` harness shape)
 
 **Interfaces:**
-- Produces: `unreadableDependencyNumbers(text: string|null) -> number[]` (ascending, de-duplicated; `[]` for null, unparseable, or a non-array).
+- Produces: `unreadableDependencyNumbers(text: string|null) -> number[]` (ascending, de-duplicated; `[]` for null, unparseable, or a non-array). Module-internal: not exported. Only `closedDependencyNumbers` is added to `module.exports` (if not already there), for Step 1's unit assertion. The caller wraps the array in `new Set(...)` for membership lookups and uses the array itself for the Warning's ascending number list.
 
 - [ ] **Step 1: Write the failing test (AC1.1, AC2.1, AC3.1, AC3.2)** `#5865: files: a dependency-freshness entry marked unreadable is treated as open, prints one Warning naming it and writes no queue-order cache`, built on the #5408 test's `run(blockedBody, freshness, verified)` harness (copy the harness, do not share mutable state). Cases:
   - `run('Blocked by #8000', '[{"number":8000,"state":"unreadable"}]')` (8000 absent from verified-open-deps): `entriesOf(r, 'blocked')` equals `[{ reason: 'blocked', records: [9002], detail: { blockedBy: [8000] } }]`; the Warning lines that contain `#8000` are exactly `[UNREADABLE(8000)]` (filter `r.stderr` lines starting `Warning:` and including `#8000`); `r.store.written.length === 0`.
   - Same with `verified = '8000\n'`: same three assertions.
   - `'[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"closed"}]'`: `groupNumbers(r)` is `[[9001], [9002]]`, no Warning line contains `unreadable`, `r.store.written.length === 1`.
-  - Two dependencies (`Blocked by #8000` and `Blocked by #8001` on #9002, a second record #9003 `Blocked by #8001` — or the nearest shape the S1 harness allows) with `[{"number":8000,"state":"unreadable"},{"number":8001,"state":"closed"}]`: `r.store.written.length === 0`, #8001 counted closed (a record blocked only by #8001 is dispatchable), one Warning naming #8000 and not #8001.
+  - #9002 blocked by both (`Blocked by #8000\nBlocked by #8001` as its blocked body, verified-open-deps empty) with `[{"number":8000,"state":"unreadable"},{"number":8001,"updated_at":"2026-11-09T10:00:00Z","state":"closed"}]`: `r.store.written.length === 0`; `entriesOf(r, 'blocked')` equals `[{ reason: 'blocked', records: [9002], detail: { blockedBy: [8000] } }]` (#8001 counted closed, so it is not in `blockedBy`); exactly one Warning line names #8000 and no Warning line names #8001.
   - `'[{"number":8000,"state":"closed"},{"number":8000,"state":"UNREADABLE"}]'`: blocked as above, one `UNREADABLE(8000)` Warning, no cache.
   - A unit assertion that `closedDependencyNumbers('[{"number":8000,"state":"unreadable"}]')` has no 8000 (export it for the test if it is not exported; the module's export list is at the bottom of the file).
 
@@ -59,7 +62,7 @@ Expected: FAIL after Step 1 (no unreadable Warning is printed; the closed-other-
 - [ ] **Step 5: Run the suites and verify the revert goes red (AC4.1)**
 
 Run: `node --test tests/bin-lib/dispatch/queue-pull.test.js`
-Expected: PASS, 0 failures. Then revert only the Step 3 change in `queue-pull.js` (keep the export), re-run the `#5865` test, see it FAIL, and restore it. Quote both raw outputs. Also run `node --test tests/skill-size-single-source.test.js tests/bin-lib/skill-audit/budgets.test.js` (AC5.1, rail) — Expected: PASS.
+Expected: PASS, 0 failures. Then revert the Step 3 change in `queue-pull.js` (the new function and its call site; keep the `closedDependencyNumbers` export), re-run the `#5865` test, see it FAIL on the `#5865` assertions themselves — a module-load error is not a valid red — and restore it. Quote both raw outputs. Also run `node --test tests/skill-size-single-source.test.js tests/bin-lib/skill-audit/budgets.test.js` (AC5.1, rail) — Expected: PASS.
 
 - [ ] **Step 6: Commit** — `Fail closed on an unreadable dependency in the files-transport freshness file (refs #5865)`.
 
