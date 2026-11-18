@@ -640,6 +640,9 @@ function createSandbox(scenario, { transport = 'gh', origin = null, name = scena
     if (origin) fs.cpSync(origin, originDir, { recursive: true });
     else seedOrigin(originDir, scenario.origin, git, scenario.headBranch);
     git(['clone', '-q', originDir, proj]);
+    // #5863: origin's HEAD dangles only after the clone (a dangling HEAD before it clones with no checkout), so the
+    // clone checks out main and only the live `git remote show origin` prints `HEAD branch: (unknown)`.
+    if (scenario.danglingHead) git(['-C', originDir, 'symbolic-ref', 'HEAD', 'refs/heads/no-such-head']);
 
     const policy = Object.entries(scenario.policy || {}).map(([k, v]) => `${k}: ${v}\n`).join('');
     fs.mkdirSync(path.join(proj, '.claude-tweaks'), { recursive: true });

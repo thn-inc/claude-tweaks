@@ -68,6 +68,13 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
       const proposals = Object.entries(r.staged).filter(([n]) => n.startsWith('dispatch-target-missing-')).map(([, body]) => body);
       assert.equal(proposals.length, 0, `F-intbranch ${side}: no target-missing Close proposal is staged`);
     }
+    for (const [side, r] of sides(R['F-headunknown'])) {
+      assert.ok(r.gitArgv.some((e) => e.tag === 'delegated' && e.argv.join(' ') === 'remote show origin'), `F-headunknown ${side}: the branch is read from the live remote`);
+      assert.ok(!exclusionsIn(r).some((e) => e.reason === 'target-missing'), `F-headunknown ${side}: no named target is excluded as absent`);
+      assert.ok(!r.gitArgv.some((e) => e.argv[0] === 'cat-file'), `F-headunknown ${side}: no git cat-file probe runs against origin/(unknown)`);
+      const proposals = Object.entries(r.staged).filter(([n]) => n.startsWith('dispatch-target-missing-')).map(([, body]) => body);
+      assert.equal(proposals.length, 0, `F-headunknown ${side}: no target-missing Close proposal is staged`);
+    }
     for (const [side, r] of sides(R['F-prview'])) assert.equal(r.files['dispatch-shipped-pr-files.jsonl'], '{"pr":5016,"files":null}\n', `F-prview ${side}: a failed probe reads as files:null`);
     assert.equal(R['S1-gh-miss'].oracle.files['dispatch-shipped-pr-files.jsonl'], `{"pr":5016,"files":${JSON.stringify(WEAK_PR_FILES)}}\n`, 'the base probes the files (control)');
     for (const [side, r] of sides(R['F-openprs'])) assert.deepEqual(JSON.parse(r.files['dispatch-crosspr-overlap.json']), [], `F-openprs ${side}`);
