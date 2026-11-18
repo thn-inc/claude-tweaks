@@ -6,15 +6,17 @@
 // Since #5230 dispatch runs this module (bin/queue-pull.js), not the fence: the module is the
 // live queue pull, and the retained fence is its revert path and parity oracle until #5231
 // removes it. Fix a defect here and mirror the change into the fence, never the other way round.
-// One rule is module-only by decision and is not mirrored: #5408's omitted-dependency check in the
-// blocked pass (search `#5408`), which the fence cannot see because it never gets the agent's raw
-// dependency-freshness text there. It stays a divergence until #5231 deletes the fence.
+// Two rules are module-only by decision and are not mirrored, both in the blocked pass's `files`
+// block: #5408's omitted-dependency check and #5865's `unreadable` freshness entry, which warns and
+// keeps the queue-order cache unwritten (search `#5408`, `#5865`). The fence cannot see either,
+// because it never gets the agent's raw dependency-freshness text there. They stay divergences
+// until #5231 deletes the fence.
 //
 // R6, step-for-step port: each fence step is one function. A throw inside a step is caught and
 // printed to stderr as `queue-pull: <step>: <message>`, and the run then continues or stops
 // exactly where the fence has an RC check or a `grep -q 'appendExclusion:'` check. Stop and
 // Warning texts match the fence byte for byte, and the two must keep the same behavior, except for
-// the #5408 rule named above.
+// the #5408 and #5865 rules named above.
 //   The fence's own calls are unbounded; the default deps bound every one (shared-primitives.js),
 // so a call that hangs, or outlasts its bound, is where the two can differ. GH_BATCH_TIMEOUT_MS
 // bounds an aliased GraphQL batch and every paginated list call (`issue list` / `pr list` with
@@ -301,6 +303,13 @@ function agentDepFreshness(ctx, file) {
   else put(ctx, file, text);
 }
 
+// #5311: a dependency number the blocked pass checks, 1..GRAPHQL_INT_MAX. Anything else belongs to the
+// blocker-landing pass's malformed-blocker exclusion (unlanded-blockers.js malformedRecords, the exact
+// complement, hence the shared constant) and is never live-checked.
+function inLiveCheckRange(dep) {
+  return dep > 0 && dep <= GRAPHQL_INT_MAX;
+}
+
 // The valid entries of the agent's dependency-freshness text: an unparseable value, a non-array, or an
 // entry without an integer `number` and a string `state` yields none.
 function validFreshnessEntries(text) {
@@ -404,7 +413,7 @@ function makeContext(options = {}, deps = {}) {
     depFreshnessInput: null, // files only: the agent's dependency-freshness text, read by the fetch pass
     nativeUnreadable: false, // #5309: the native-blockers query failed closed; every eligible record is excluded
     depUnreadable: false, // #5311: a dependency view or the verified-open-deps file failed closed; nothing is written back
-    depFreshFailed: false, // #5310: the write-back's dependency-freshness search failed; nothing is written back
+    depFreshFailed: false, // #5310: the write-back's dependency-freshness search failed, or #5865: the files freshness text marks a dependency unreadable; nothing is written back
     labelsSkipped: false, // #5315: a record with non-array labels was excluded at eligibility; nothing is written back
     standaloneDir: '',
     typedNumbers: new Set(), // #5584: the named records admitted on a typed command (fetch pass)
@@ -655,11 +664,10 @@ function runBlocked(ctx) {
       .map((i) => ({ ...i, facets: parseRecordFacets(i.labels) }))
       .filter((i) => (i.facets.grants.build || state.typedNumbers.has(i.number)) && !i.facets.bot.inProgress && !i.facets.bot.blocked && !i.facets.bot.parked);
     // '--limit 200' can truncate the open-issues pull: a dependency absent from it is
-    // unresolved, not closed, and is checked live below. #5311: a number outside 1..GRAPHQL_INT_MAX
-    // is never live-checked: it belongs to the blocker-landing pass's malformed-blocker exclusion
-    // (unlanded-blockers.js malformedRecords, the exact complement of this filter, hence the shared
-    // constant); live-checking it would fail closed as a spurious `blocked` with a Warning every pull.
-    const unresolved = [...new Set(eligiblePreDep.flatMap((i) => parseDependencies(i.body)).filter((dep) => dep > 0 && dep <= GRAPHQL_INT_MAX && !openNumbers.has(dep)))];
+    // unresolved, not closed, and is checked live below. #5311: a number outside inLiveCheckRange
+    // is never live-checked; live-checking it would fail closed as a spurious `blocked` with a
+    // Warning every pull.
+    const unresolved = [...new Set(eligiblePreDep.flatMap((i) => parseDependencies(i.body)).filter((dep) => inLiveCheckRange(dep) && !openNumbers.has(dep)))];
     fs.writeFileSync(paths['dispatch-eligible-pre-dep.json'], JSON.stringify(eligiblePreDep));
     fs.writeFileSync(paths['dispatch-unresolved-deps.json'], JSON.stringify(unresolved));
   });
@@ -722,9 +730,9 @@ function runBlocked(ctx) {
     // never closed: the one Warning below names it in place of the omitted-dependency Warning, and
     // depFreshFailed keeps the queue-order cache unwritten. Checked whether or not the file was `bad`.
     // Only an in-range dependency of an eligible record counts: `Blocked by #0` or a number above
-    // GRAPHQL_INT_MAX is the blocker-landing pass's malformed-blocker case (#5311), never live-checked.
+    // GRAPHQL_INT_MAX is the blocker-landing pass's malformed-blocker case (#5311, inLiveCheckRange).
     if (ctx.options.transport === 'files') {
-      const depended = new Set(eligiblePreDep.flatMap((i) => parseDependencies(i.body)).filter((dep) => dep > 0 && dep <= GRAPHQL_INT_MAX));
+      const depended = new Set(eligiblePreDep.flatMap((i) => parseDependencies(i.body)).filter(inLiveCheckRange));
       const unreadable = unreadableDependencyNumbers(state.depFreshnessInput).filter((n) => depended.has(n));
       if (!bad) {
         const closed = closedDependencyNumbers(state.depFreshnessInput);

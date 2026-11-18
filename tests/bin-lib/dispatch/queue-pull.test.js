@@ -1264,6 +1264,17 @@ test('AC3.1 (#5865): files: an unreadable entry draws a Warning only for an in-r
   assert.deepEqual(unreadableLines(stray), [], 'a stray number draws no Warning');
   assert.equal(stray.store.written.length, 1, 'a stray number does not keep the cache unwritten');
 
+  // An unreadable number only an ineligible (bot:parked) record depends on.
+  const parked = { ...mcpRecord(9003, `Blocked by #7777\n\n${withBody(9003)}`), labels: [{ name: 'auto:build' }, { name: 'ready' }, { name: 'bot:parked' }] };
+  const ineligible = pull(S1(), { transport: 'files', run: noGhOnFiles, prepare: (own) => ({ inputs: {
+    queueRaw: writeInput(own, 'queue.json', JSON.stringify([mcpRecord(9001, withBody(9001)), mcpRecord(9002, withBody(9002)), parked])),
+    openNumbers: writeInput(own, 'open.json', '[{"number":9001},{"number":9002},{"number":9003}]'),
+    depFreshness: writeInput(own, 'dep.json', '[{"number":7777,"state":"unreadable"}]'),
+    verifiedOpenDeps: writeInput(own, 'verified.txt', ''),
+  } }) });
+  assert.deepEqual(unreadableLines(ineligible), [], 'a number only an ineligible record depends on draws no Warning');
+  assert.equal(ineligible.store.written.length, 1, 'a number only an ineligible record depends on does not keep the cache unwritten');
+
   // Control: an in-range dependency of an eligible record still warns, alongside a stray one.
   const real = pullBlockedRecord('Blocked by #8000', '[{"number":7777,"state":"unreadable"},{"number":8000,"state":"unreadable"}]');
   assert.deepEqual(unreadableLines(real), ['Warning: dependency-freshness file marks #8000 unreadable — treated as open (fail closed), queue-order cache not written this run']);
