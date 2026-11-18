@@ -4,7 +4,11 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { run, parseArgs, EXIT, LIST_LIMIT } = require('../plugin/bin/release-block');
+const { readText } = require('./helpers/read-skill');
+const path = require('path');
+const { run, parseArgs, EXIT, LIST_LIMIT, LABEL, FINDING_RE, stampCommentBody } = require('../plugin/bin/release-block');
+const { ensureLabelPayload } = require('../plugin/bin/lib/issues/labels');
+const { LABELS } = require('../plugin/bin/lib/issues/record');
 const { resolveAgainst } = require('../plugin/bin/lib/health-core/io');
 const { captureGhTimeout } = require('./helpers/gh-timeout-probe');
 
@@ -231,4 +235,178 @@ test('realDeps.gh carries the GH_TIMEOUT_MS bound', () => {
     },
   });
   assert.equal(seen, 45000);
+});
+
+// ---- stamp (#5882) ----
+const F = 'security at plugin/skills/_shared/skill-load-gate.md:8';
+const VIEW7 = { number: 7, state: 'OPEN', labels: [{ name: 'ready' }], url: 'https://github.com/acme/widgets/issues/7' };
+
+// A fake gh scripting issue view / label list / label create / issue edit / issue comment.
+function stampHarness({ view = VIEW7, labelList = '', handlers = {}, overrides = {} } = {}) {
+  const order = [];
+  const invalidated = [];
+  const h = harness({
+    env: { CLAUDE_CODE_SESSION_ID: 's1' },
+    invalidateSnapshot: (id) => { order.push('invalidate'); invalidated.push(id); },
+    ...overrides,
+    gh: (args, opts = {}) => {
+      h.calls.gh.push({ args, input: opts.input });
+      const key = `${args[0]} ${args[1]}`;
+      order.push(key);
+      if (handlers[key]) return handlers[key](args, opts);
+      if (key === 'issue view') return typeof view === 'string' ? view : JSON.stringify(view);
+      if (key === 'label list') return typeof labelList === 'function' ? labelList() : labelList;
+      if (key === 'label create' || key === 'issue edit' || key === 'issue comment') return '';
+      throw new Error(`unexpected ${args.join(' ')}`);
+    },
+  });
+  return Object.assign(h, { order, invalidated, keys: () => h.calls.gh.map((c) => `${c.args[0]} ${c.args[1]}`) });
+}
+const stampArgs = (extra = []) => ['stamp', '--record', '7', '--finding', F, ...extra];
+const stampOut = (record, outcome) => `${JSON.stringify({ record, outcome })}\n`;
+
+test('AC5.1: stamping an unlabelled record adds the label, then posts one comment naming the finding', () => {
+  const h = stampHarness();
+  assert.equal(run(stampArgs(), h.deps), 0);
+  assert.deepEqual(h.keys(), ['issue view', 'label list', 'label create', 'issue edit', 'issue comment']);
+  assert.deepEqual(h.calls.gh[3].args, ['issue', 'edit', '7', '--repo', 'acme/widgets', '--add-label', 'release-block']);
+  assert.deepEqual(h.calls.gh[4].args, ['issue', 'comment', '7', '--repo', 'acme/widgets', '--body-file', '-']);
+  assert.equal(h.calls.gh[4].input, stampCommentBody(F));
+  assert.equal(h.out(), stampOut(7, 'stamped'));
+});
+
+test('stampCommentBody: the fixed copy', () => {
+  assert.equal(stampCommentBody(F), `**Release block:** ${F}\n\nReleases stop while this record is open and carries the \`release-block\` label. To clear the block, close this record or remove the label.\n`);
+});
+
+test('stamp: the issue view argv', () => {
+  const h = stampHarness();
+  run(stampArgs(), h.deps);
+  assert.deepEqual(h.calls.gh[0].args, ['issue', 'view', '7', '--repo', 'acme/widgets', '--json', 'number,state,labels,url']);
+});
+
+test('stamp: label bootstrap when missing — exact-name match over a fuzzy search', () => {
+  const fuzzy = stampHarness({ labelList: 'fix-on-worktree-release-install-commands\nfix-on-worktree-design-release-skill\nrelease-block-old\n' });
+  assert.equal(run(stampArgs(), fuzzy.deps), 0);
+  const creates = fuzzy.calls.gh.filter((c) => c.args[1] === 'create');
+  assert.equal(creates.length, 1);
+  assert.deepEqual(creates[0].args, ['label', 'create', 'release-block', '--repo', 'acme/widgets', '--color', 'B4006E', '--description', LABEL.description]);
+  const present = stampHarness({ labelList: 'release-block\n' });
+  assert.equal(run(stampArgs(), present.deps), 0);
+  assert.equal(present.calls.gh.filter((c) => c.args[1] === 'create').length, 0);
+});
+
+test('stamp: a label create that loses a race proceeds; one that fails outright is a write failure', () => {
+  let lists = 0;
+  const raced = stampHarness({
+    labelList: () => (++lists === 1 ? '' : 'release-block\n'),
+    handlers: { 'label create': () => { throw new Error('already exists'); } },
+  });
+  assert.equal(run(stampArgs(), raced.deps), 0);
+  assert.ok(raced.keys().includes('issue edit') && raced.keys().includes('issue comment'));
+  const failed = stampHarness({ handlers: { 'label create': () => { throw new Error('HTTP 500'); } } });
+  assert.equal(run(stampArgs(), failed.deps), 3);
+  assert.ok(!failed.keys().includes('issue edit'));
+  assert.ok(!failed.keys().includes('issue comment'));
+});
+
+test('stamp: label before comment — a failed comment leaves the label', () => {
+  const h = stampHarness({ labelList: 'release-block\n', handlers: { 'issue comment': () => { throw new Error('HTTP 502'); } } });
+  assert.equal(run(stampArgs(), h.deps), 3);
+  assert.ok(h.keys().indexOf('issue edit') > -1 && h.keys().indexOf('issue edit') < h.keys().indexOf('issue comment'));
+  assert.ok(!h.calls.gh.some((c) => c.args.includes('--remove-label')));
+  assert.match(h.err(), /label stays/);
+});
+
+test('stamp: a failed label edit posts no comment', () => {
+  const h = stampHarness({ labelList: 'release-block\n', handlers: { 'issue edit': () => { throw new Error('HTTP 403'); } } });
+  assert.equal(run(stampArgs(), h.deps), 3);
+  assert.ok(!h.keys().includes('issue comment'));
+  assert.deepEqual(h.invalidated, []);
+});
+
+test('stamp: re-stamping an already-labelled record is a no-op', () => {
+  const h = stampHarness({ view: { ...VIEW7, labels: [{ name: 'release-block' }] } });
+  assert.equal(run(stampArgs(), h.deps), 0);
+  assert.equal(h.out(), stampOut(7, 'already-stamped'));
+  assert.deepEqual(h.keys(), ['issue view']);
+  assert.deepEqual(h.invalidated, []);
+});
+
+test('stamp: no such record -> exit 2', () => {
+  const h = stampHarness({ handlers: { 'issue view': () => { throw Object.assign(new Error('x'), { stderr: 'GraphQL: Could not resolve to an issue or pull request with the number of 999999. (repository.issue)' }); } } });
+  assert.equal(run(['stamp', '--record', '999999', '--finding', F], h.deps), 2);
+  assert.match(h.err(), /no such record #999999/);
+});
+
+test('stamp: a PR number -> exit 2, nothing labelled', () => {
+  const h = stampHarness({ view: { ...VIEW7, url: 'https://github.com/acme/widgets/pull/7' } });
+  assert.equal(run(stampArgs(), h.deps), 2);
+  assert.deepEqual(h.keys(), ['issue view']);
+  assert.match(h.err(), /pull request, not a record/);
+});
+
+test('stamp: an unreadable view -> exit 3', () => {
+  const net = stampHarness({ handlers: { 'issue view': () => { throw new Error('error connecting to api.github.com'); } } });
+  assert.equal(run(stampArgs(), net.deps), 3);
+  const junk = stampHarness({ view: 'not json' });
+  assert.equal(run(stampArgs(), junk.deps), 3);
+  assert.deepEqual(junk.keys(), ['issue view']);
+});
+
+test('stamp: a closed record is stamped, with a stderr note that it never blocks', () => {
+  const h = stampHarness({ view: { ...VIEW7, state: 'CLOSED' }, labelList: 'release-block\n' });
+  assert.equal(run(stampArgs(), h.deps), 0);
+  assert.match(h.err(), /closed record never blocks/);
+  assert.equal(h.out(), stampOut(7, 'stamped'));
+});
+
+test('stamp: the label write invalidates the session record snapshot once, after issue edit', () => {
+  const h = stampHarness({ labelList: 'release-block\n' });
+  assert.equal(run(stampArgs(), h.deps), 0);
+  assert.deepEqual(h.invalidated, ['s1']);
+  assert.equal(h.order.indexOf('invalidate'), h.order.indexOf('issue edit') + 1);
+});
+
+test('stamp usage -> exit 2, zero gh calls; two findings are accepted', () => {
+  const bad = [
+    ['stamp', '--finding', F],
+    ['stamp', '--record', '0', '--finding', F],
+    ['stamp', '--record', 'abc', '--finding', F],
+    ['stamp', '--record', '7x', '--finding', F],
+    ['stamp', '--finding', F, '--record'],
+    ['stamp', '--record', '7'],
+    ['stamp', '--record', '7', '--finding', 'no location'],
+    ['stamp', '--record', '7', '--finding', 'security at a.js:8\nmore'],
+    ['stamp', '--record', '7', '--finding', F, '--records-json', 'r.json'],
+  ];
+  for (const argv of bad) {
+    const h = stampHarness();
+    assert.equal(run(argv, h.deps), 2, argv.join(' '));
+    assert.equal(h.calls.gh.length, 0, argv.join(' '));
+  }
+  for (const finding of ['security at general', F]) {
+    assert.ok(FINDING_RE.test(finding));
+    const h = stampHarness({ labelList: 'release-block\n' });
+    assert.equal(run(['stamp', '--record', '7', '--finding', finding], h.deps), 0);
+  }
+});
+
+test('stamp: gh absent -> exit 3 with zero gh calls', () => {
+  const h = stampHarness({ overrides: { ghAvailable: () => false } });
+  assert.equal(run(stampArgs(), h.deps), 3);
+  assert.equal(h.calls.gh.length, 0);
+});
+
+test('label twin: LABEL equals the canonical LABELS_JSON row and LABELS.RELEASE_BLOCK', () => {
+  const md = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'label-bootstrap.md'));
+  const fence = md.match(/## Canonical LABELS_JSON[\s\S]*?```js\n([\s\S]*?)\n```/);
+  assert.ok(fence);
+  const row = JSON.parse(fence[1]).find(([name]) => name === 'release-block');
+  assert.deepEqual(row, [LABEL.name, LABEL.description, LABEL.color]);
+  assert.doesNotThrow(() => ensureLabelPayload(...row));
+  assert.equal(LABELS.RELEASE_BLOCK, 'release-block');
+  assert.equal(LABEL.name, LABELS.RELEASE_BLOCK);
+  const current = md.match(/current value: `(\d+)`/);
+  assert.ok(Number(current[1]) >= 11);
 });

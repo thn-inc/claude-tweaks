@@ -42,7 +42,7 @@ gh label list --search "claude-tweaks:bootstrapped-v{LABEL_BOOTSTRAP_VERSION}" -
   | grep -qx "claude-tweaks:bootstrapped-v{LABEL_BOOTSTRAP_VERSION}" && SKIP_BOOTSTRAP=true || SKIP_BOOTSTRAP=false
 ```
 
-`{LABEL_BOOTSTRAP_VERSION}` is the literal integer below — **current value: `10`**. Bump it (and
+`{LABEL_BOOTSTRAP_VERSION}` is the literal integer below — **current value: `11`**. Bump it (and
 this literal) whenever a label is added to or removed from the canonical `LABELS_JSON` array
 below, **or whenever an existing label's description or color changes** (#1873 — a color-only
 convention update is exactly this case). A marker stamped under the old version no longer matches
@@ -146,7 +146,8 @@ rows, per the note below the array):
   ["priority:high",     "Priority: dispatch picks this band first", "B60205"],
   ["priority:medium",   "Priority: dispatch picks after priority:high", "FBCA04"],
   ["priority:low",      "Priority: dispatch picks last among prioritized records", "C2E0C6"],
-  ["digest",            "Container: rolling digest for below-floor deferred findings (see _shared/materiality-floor.md)", "EEEEEE"]
+  ["digest",            "Container: rolling digest for below-floor deferred findings (see _shared/materiality-floor.md)", "EEEEEE"],
+  ["release-block",     "Release gate: releases stop while this is open — close the record or remove this label to clear", "B4006E"]
 ]
 ```
 

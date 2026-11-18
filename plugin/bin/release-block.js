@@ -30,6 +30,8 @@ const {
 const { resolveAgainst } = require('./lib/health-core/io');
 const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 const { invalidateSnapshot } = require('./lib/issues/record-snapshot');
+const { LABELS, normalizeLabelNames } = require('./lib/issues/record');
+const { ensureLabelPayload } = require('./lib/issues/labels');
 
 const NAME = 'release-block.js';
 const USAGE = `usage: ${NAME} check [--repo [host/]owner/name | --records-json <path>]\n`
@@ -39,16 +41,43 @@ const USAGE = `usage: ${NAME} check [--repo [host/]owner/name | --records-json <
 
 const EXIT = Object.freeze({ OK: 0, BLOCKED: 1, USAGE: 2, FAILURE: 3 });
 const LIST_LIMIT = 100;
-const LABEL = 'release-block';
+const LABEL = Object.freeze({
+  name: LABELS.RELEASE_BLOCK,
+  description: 'Release gate: releases stop while this is open — close the record or remove this label to clear',
+  color: 'B4006E',
+});
+// `<category> at <file:line>` or `<category> at general`, one line — it lands in a comment body.
+const FINDING_RE = /^[^\r\n]*\S at (?:general|[^\s:][^\s]*:\d+)$/;
+const RECORD_RE = /^[1-9]\d*$/;
+const VIEW_FIELDS = 'number,state,labels,url';
 const JSON_FIELDS = 'number,title,url,state';
 const GH_ABSENT_HINT = 'gh not found — fetch over MCP and pass --records-json (_shared/release-block.md)';
 
 const messageOf = (err) => (err && err.message ? err.message : String(err));
 
+function parseStampArgs(rest) {
+  const out = { verb: 'stamp', repo: undefined, record: undefined, finding: undefined, help: false };
+  const keys = { '--record': 'record', '--finding': 'finding', '--repo': 'repo' };
+  for (let i = 0; i < rest.length; i++) {
+    const flag = rest[i];
+    if (flag === '--help' || flag === '-h') return { help: true };
+    const key = keys[flag];
+    if (!key) return { error: `unknown argument: ${flag}` };
+    if (out[key] !== undefined) return { error: `${flag} given more than once` };
+    const value = rest[++i];
+    if (typeof value !== 'string' || !value.trim() || (key !== 'finding' && value.startsWith('-'))) return { error: `${flag} requires a value` };
+    out[key] = value;
+  }
+  if (out.record === undefined || !RECORD_RE.test(out.record)) return { error: '--record must be a positive integer record number' };
+  if (out.finding === undefined || !FINDING_RE.test(out.finding)) return { error: '--finding must be "<category> at <file:line>" or "<category> at general"' };
+  return out;
+}
+
 function parseArgs(argv) {
   const [verb, ...rest] = argv;
   if (verb === '--help' || verb === '-h') return { help: true };
   if (verb === undefined) return { error: 'a subcommand is required' };
+  if (verb === 'stamp') return parseStampArgs(rest);
   if (verb !== 'check') return { error: `unknown subcommand: ${verb}` };
   const out = { verb, repo: undefined, recordsJson: undefined, record: undefined, finding: undefined, help: false };
   for (let i = 0; i < rest.length; i++) {
@@ -150,7 +179,7 @@ function check(opts, deps) {
     if (opts.repo !== undefined) deps.pinGhHost(spec, { env: deps.env, cwd: deps.cwd() });
     try {
       text = deps.gh(
-        ['issue', 'list', '--repo', repoSlug(spec), '--label', LABEL, '--state', 'open', '--limit', String(LIST_LIMIT), '--json', JSON_FIELDS],
+        ['issue', 'list', '--repo', repoSlug(spec), '--label', LABEL.name, '--state', 'open', '--limit', String(LIST_LIMIT), '--json', JSON_FIELDS],
         { cwd: deps.cwd(), env: deps.env, stderr: deps.stderr, homeDir: deps.homeDir },
       );
     } catch (err) {
@@ -164,15 +193,95 @@ function check(opts, deps) {
   return blocked ? EXIT.BLOCKED : EXIT.OK;
 }
 
+const stampCommentBody = (finding) => `**Release block:** ${finding}\n\nReleases stop while this record is open and carries the \`${LABEL.name}\` label. To clear the block, close this record or remove the label.\n`;
+
+const labelListed = (deps, slug) => {
+  const text = deps.gh(['label', 'list', '--repo', slug, '--search', LABEL.name, '--json', 'name', '-q', '.[].name'], ghCtx(deps));
+  return String(text ?? '').split(/\r?\n/).some((line) => line.trim() === LABEL.name);
+};
+
+const ghCtx = (deps) => ({ cwd: deps.cwd(), env: deps.env, stderr: deps.stderr, homeDir: deps.homeDir });
+
+function ensureLabel(deps, slug) {
+  if (labelListed(deps, slug)) return true;
+  const { name, description, color } = ensureLabelPayload(LABEL.name, LABEL.description, LABEL.color);
+  try {
+    deps.gh(['label', 'create', name, '--repo', slug, '--color', color, '--description', description], ghCtx(deps));
+    return true;
+  } catch {
+    // A concurrent stamp may have created it first: only a re-list that still misses it is a failure.
+    try { return labelListed(deps, slug); } catch { return false; }
+  }
+}
+
+function stamp(opts, deps) {
+  const n = opts.record;
+  if (!deps.ghAvailable({ env: deps.env, cwd: deps.cwd() })) {
+    deps.stderr(`${NAME}: gh not found — stamp has no MCP path here; add the label and comment by hand (_shared/release-block.md)\n`);
+    return EXIT.FAILURE;
+  }
+  const { spec, refusal } = resolveRepoSpec(opts, deps);
+  if (refusal) { deps.stderr(`${NAME}: ${refusal}\n`); return EXIT.USAGE; }
+  if (!spec) { deps.stderr(`${NAME}: could not resolve owner/repo — pass --repo [host/]owner/name\n`); return EXIT.USAGE; }
+  if (opts.repo !== undefined) deps.pinGhHost(spec, { env: deps.env, cwd: deps.cwd() });
+  const slug = repoSlug(spec);
+  let view;
+  try {
+    view = JSON.parse(deps.gh(['issue', 'view', n, '--repo', slug, '--json', VIEW_FIELDS], ghCtx(deps)));
+  } catch (err) {
+    if (/Could not resolve to an issue or pull request/.test((err && err.stderr) || messageOf(err))) {
+      deps.stderr(`${NAME}: no such record #${n}\n`);
+      return EXIT.USAGE;
+    }
+    deps.stderr(`${NAME}: could not read #${n} (${firstLine(err && err.stderr) || messageOf(err)})\n`);
+    return EXIT.FAILURE;
+  }
+  if (!view || typeof view !== 'object') { deps.stderr(`${NAME}: could not read #${n} (unexpected answer)\n`); return EXIT.FAILURE; }
+  if (typeof view.url === 'string' && view.url.includes('/pull/')) {
+    deps.stderr(`${NAME}: #${n} is a pull request, not a record\n`);
+    return EXIT.USAGE;
+  }
+  if (normalizeLabelNames(view.labels).includes(LABEL.name)) {
+    deps.stdout(`${JSON.stringify({ record: Number(n), outcome: 'already-stamped' })}\n`);
+    return EXIT.OK;
+  }
+  if (typeof view.state === 'string' && view.state.toLowerCase() === 'closed') {
+    deps.stderr(`${NAME}: #${n} is closed — a closed record never blocks a release\n`);
+  }
+  const writeFailed = (what, err) => {
+    deps.stderr(`${NAME}: ${what} failed on #${n} (${firstLine(err && err.stderr) || messageOf(err)})\n`);
+    return EXIT.FAILURE;
+  };
+  try {
+    if (!ensureLabel(deps, slug)) return writeFailed('label create', new Error('label still absent after create'));
+  } catch (err) {
+    return writeFailed('label list', err);
+  }
+  try {
+    deps.gh(['issue', 'edit', n, '--repo', slug, '--add-label', LABEL.name], ghCtx(deps));
+  } catch (err) {
+    return writeFailed('issue edit', err);
+  }
+  deps.invalidateSnapshot(deps.env.CLAUDE_CODE_SESSION_ID);
+  try {
+    deps.gh(['issue', 'comment', n, '--repo', slug, '--body-file', '-'], { ...ghCtx(deps), input: stampCommentBody(opts.finding) });
+  } catch (err) {
+    deps.stderr(`${NAME}: label added to #${n} but the comment failed — the label stays and the block stands; post the comment by hand\n`);
+    return EXIT.FAILURE;
+  }
+  deps.stdout(`${JSON.stringify({ record: Number(n), outcome: 'stamped' })}\n`);
+  return EXIT.OK;
+}
+
 const firstLine = (text) => String(text || '').trim().split(/\r?\n/, 1)[0];
 
 function run(argv, deps) {
   const opts = parseArgs(argv);
   if (opts.help) { deps.stdout(USAGE); return EXIT.OK; }
   if (opts.error) { deps.stderr(`${NAME}: ${opts.error}\n${USAGE}`); return EXIT.USAGE; }
-  return check(opts, deps);
+  return opts.verb === 'stamp' ? stamp(opts, deps) : check(opts, deps);
 }
 
-module.exports = { run, realDeps, parseArgs, EXIT, LIST_LIMIT, checkRows };
+module.exports = { run, realDeps, parseArgs, EXIT, LIST_LIMIT, checkRows, LABEL, FINDING_RE, stampCommentBody };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
