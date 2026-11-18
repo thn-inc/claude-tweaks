@@ -227,7 +227,7 @@ SKIP {HH:MM:SS} — Step 3: --allow-blocking ignored under --train (no human has
 
 ## Step 4: Console
 
-Read `console.md` in this skill's directory now and render the console it defines: the shipped records, the proposed bump and the commit that drove it, this step's review verdict, the hook-configured column, and the two overrides. Two HARD-GATEs stop the run here for a decision regardless of mode (`console.md` says what each mode does with the stop: `--train` stages and exits `HELD`, interactive asks once) — `review: blocking` (not overridden), and a major bump on the **effective** version — and they are registered as such in `_shared/auto-mode-contract.md`'s HARD-GATE list; everything else renders read-only in `auto` and proceeds.
+Read `console.md` in this skill's directory now and render the console it defines: the shipped records, the proposed bump and the commit that drove it, this step's review verdict, the hook-configured column, the release block (re-read) and the two overrides. Two HARD-GATEs stop the run here for a decision regardless of mode (`console.md` says what each mode does with the stop: `--train` stages and exits `HELD`, interactive asks once) — `review: blocking` (not overridden), and a major bump on the **effective** version — and they are registered as such in `_shared/auto-mode-contract.md`'s HARD-GATE list; everything else renders read-only in `auto` and proceeds.
 
 ## Step 5: Execute
 

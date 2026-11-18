@@ -611,3 +611,119 @@ test('HELD lists elsewhere name Step 1.5', () => {
     assert.deepStrictEqual(missingHeldElsewhere({ ...pieces, [name]: PRE_HELD_ELSEWHERE[name] }), [name], `pre-change ${name}`);
   }
 });
+
+// ---- Task 5: Step 4's console row and re-read, and Step 8's disposition stamp ----------------
+const CONSOLE = live('plugin/skills/release/console.md');
+const DISPOSITION = live('plugin/skills/release/disposition.md');
+const BASH_CHECK = 'release-block.js" check';
+
+function releaseBlockRowOf(src) {
+  const lines = src.split('\n');
+  const idx = lines.findIndex((l) => l.startsWith('| Release block |'));
+  return { idx, row: idx === -1 ? '' : lines[idx], review: lines.findIndex((l) => l.startsWith('| Review |')), ci: lines.findIndex((l) => l.startsWith('| CI on tip |')) };
+}
+function assertConsoleRow(src) {
+  const { idx, row, review, ci } = releaseBlockRowOf(src);
+  assert.ok(idx !== -1, 'console row: no | Release block | row');
+  for (const v of ['`none`', '`blocked — #N {title}`', 'one line per record', '`unreadable — {first stderr line}`', '`n/a (local-merge)`']) {
+    assert.ok(row.includes(v), `console row: missing ${v}`);
+  }
+  assert.ok(!row.includes('local-files') && !row.includes('no GitHub origin'), 'console row: keyed on work-backend or a remote probe');
+  assert.ok(review < idx && idx < ci, 'console row: must sit after | Review | and before | CI on tip |');
+}
+// The superseded wording, frozen: Task 5's first plan keyed the fourth value on the forge.
+const SUPERSEDED_ROW_VALUE = '`n/a (no GitHub origin)`';
+const SUPERSEDED_ROW_BACKEND = '`n/a (work-backend local-files)`';
+
+test('AC8.1: Step 4\'s console renders the release-block state', () => {
+  assertConsoleRow(CONSOLE);
+  const { row } = releaseBlockRowOf(CONSOLE);
+  assert.throws(() => assertConsoleRow(CONSOLE.replace(`${row}\n`, '')), { message: /no \| Release block \| row/ });
+  assert.throws(() => assertConsoleRow(CONSOLE.replace(row, row.replace('`n/a (local-merge)`', SUPERSEDED_ROW_VALUE))), { message: /missing `n\/a \(local-merge\)`|remote probe/ });
+  assert.throws(() => assertConsoleRow(CONSOLE.replace(row, row.replace('`n/a (local-merge)`', SUPERSEDED_ROW_BACKEND))), { message: /missing `n\/a \(local-merge\)`|work-backend/ });
+  const moved = CONSOLE.replace(`${row}\n`, '').replace('| Review |', `${row}\n| Review |`);
+  assert.throws(() => assertConsoleRow(moved), { message: /after \| Review \|/ });
+});
+
+const inputsOf = (src) => sectionOf(src, '## Inputs');
+const gatesOf = (src) => sectionOf(src, '## Gates');
+const inputsBullet = (src) => lineStartingWith(inputsOf(src), '- The release-block state');
+
+test('Step 4 re-reads the block before Step 5', () => {
+  const inputs = inputsOf(CONSOLE);
+  assert.ok(inputs.includes(BASH_CHECK), 'Inputs: names no bash check');
+  const gates = gatesOf(CONSOLE);
+  for (const lit of ['The release block, re-read', 'HELD', 'release-held.md', 'release-block state unreadable', 'no question', 'Stopped before Step 5.']) {
+    assert.ok(gates.includes(lit), `Gates: missing ${lit}`);
+  }
+  assert.ok(gates.indexOf('The release block, re-read') < gates.indexOf('**`HELD` is mode-independent.**'), 'the re-read paragraph sits with the gates');
+});
+
+function assertEngineThenGh(bullet) {
+  const engine = bullet.indexOf("the pack's `engine`");
+  const gh = bullet.indexOf('command -v gh');
+  const bash = bullet.indexOf(BASH_CHECK);
+  assert.ok(engine !== -1 && gh !== -1 && bash !== -1, 'Inputs bullet: a marker is missing');
+  assert.ok(engine < gh && gh < bash, 'Inputs bullet: engine, command -v gh, bash check must increase');
+  assert.ok(/MCP `check`/.test(bullet), 'Inputs bullet: names no MCP check');
+  assert.ok(!bullet.includes('no GitHub origin') && !bullet.includes('remote get-url'), 'Inputs bullet: a remote probe');
+}
+
+test('Step 4\'s re-read detects gh before the bash check', () => {
+  const bullet = inputsBullet(CONSOLE);
+  assert.ok(bullet, 'no Inputs bullet');
+  assertEngineThenGh(bullet);
+  const moved = `${bullet.replace('then `command -v gh`, ', '')} then \`command -v gh\``;
+  assert.throws(() => assertEngineThenGh(moved), { message: /must increase/ });
+  assert.throws(() => assertEngineThenGh(`${bullet} no GitHub origin`), { message: /remote probe/ });
+});
+
+const stampParagraph = (src) => lineStartingWith(src, '**Stamp the release block.**');
+const SUPERSEDED_STAMP = 'Medium and low findings are never stamped. Neither is a `declined (covered by #{n})` row, because nothing was filed.';
+function assertStampParagraph(src) {
+  const p = stampParagraph(src);
+  assert.ok(p, 'no Stamp the release block paragraph');
+  for (const lit of ['release-block.js" stamp --record', '`critical`', '`high`', '{category} at {file:line}', '{category} at general', '`declined (covered by #{n})`', 'the covering record', 'Medium and low findings are never stamped, including when declined as covered', '`pr-first`', '`local-merge`']) {
+    assert.ok(p.includes(lit), `stamp paragraph: missing ${lit}`);
+  }
+  assert.ok(!p.includes('Neither is a') && !p.includes('because nothing was filed'), 'stamp paragraph: superseded sentence');
+  assert.ok(!p.includes('GitHub origin') && !p.includes('forge'), 'stamp paragraph: keyed on the forge');
+}
+
+test('AC5.1: Step 8 stamps a filed critical or high finding', () => {
+  assertStampParagraph(DISPOSITION);
+  const p = stampParagraph(DISPOSITION);
+  assert.throws(() => assertStampParagraph(DISPOSITION.replace(p, p.replace('{category} at general', 'x'))), { message: /missing \{category\} at general/ });
+});
+
+test('AC5.1: Step 8 stamps the covering record of a critical or high finding declined as covered', () => {
+  const p = stampParagraph(DISPOSITION);
+  assert.ok(p.includes('resolved `declined (covered by #{n})` stamps the covering record'));
+  const frozen = p.replace('Medium and low findings are never stamped, including when declined as covered.', SUPERSEDED_STAMP);
+  assert.notStrictEqual(frozen, p);
+  assert.throws(() => assertStampParagraph(DISPOSITION.replace(p, frozen)), { message: /superseded sentence|never stamped, including/ });
+});
+
+test('AC5.2: medium and low findings are not stamped', () => {
+  assert.ok(stampParagraph(DISPOSITION).includes('Medium and low findings are never stamped, including when declined as covered'));
+});
+
+test('stamp failure counts as a disposition failure', () => {
+  const failed = DISPOSITION.split('\n').find((l) => l.startsWith('- Exit 2 or 3'));
+  assert.ok(failed, 'no stamp failure bullet');
+  assert.ok(failed.includes('stamp failed:') && failed.includes('FAILED') && failed.includes('{k} failed'), 'failure bullet: shape or count');
+});
+
+test('Inventory names the Step 1.5 early exit, and the review gate rows say whose Step 1.5', () => {
+  assert.ok(sectionOf(DISPOSITION, '## Inventory').includes('a Step 1.5 release-block stop'));
+  const rows = DISPOSITION.split('\n').filter((l) => l.startsWith('| `test-fix-` |') || l.startsWith('| `flaky-allowlist-` |'));
+  assert.strictEqual(rows.length, 2);
+  for (const r of rows) assert.ok(r.includes("(the review's Step 1.5 test gate)") && !r.includes("(Step 1.5's test gate)"), r);
+});
+
+test('console HELD list, held-file schema and log line name the release block', () => {
+  assert.ok(lineStartingWith(CONSOLE, '**`HELD` is mode-independent.**').includes("SKILL.md's Step 1.5 release-block stop"));
+  assert.ok(lineStartingWith(CONSOLE, '**`HELD` is mode-independent.**').includes('`#N {title} {url}`'));
+  assert.ok(lineStartingWith(CONSOLE, 'AUTO {time} — Step 4: console rendered').includes('release-block {none|n open|unreadable'));
+  assert.ok(sectionOf(SKILL, '## Step 4: Console').includes('release block'));
+});
