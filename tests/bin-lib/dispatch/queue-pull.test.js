@@ -2081,16 +2081,17 @@ test('#5227 portability: the integration branch comes from the policy key, else 
   const viaRemote = pull4({ ...FULL(), headBranch: 'trunk', origin: { branches: { main: {}, trunk: { 'docs/gone.md': 'x' } } } }, {
     run: (cmd, args, opts) => { if (cmd === 'git') gitArgvs.push(args); return base(cmd, args, opts); },
   });
-  assert.deepEqual(gitArgvs, [['remote', 'show', 'origin'], ['cat-file', '-e', 'origin/trunk:docs/gone6.md'], ['cat-file', '-e', 'origin/trunk:docs/gone.md']]);
+  assert.deepEqual(gitArgvs, [['remote', 'show', 'origin'], ['rev-parse', '--verify', '--quiet', 'origin/trunk^{commit}'], ['cat-file', '-e', 'origin/trunk:docs/gone6.md'], ['cat-file', '-e', 'origin/trunk:docs/gone.md']]);
   assert.equal(viaRemote.state.integrationBranch, 'trunk');
   assert.deepEqual(entriesOf(viaRemote, 'target-missing').map((e) => e.records[0]), [9006]);
 
   const policyGit = [];
-  const policyBase = fakeRun(FULL());
-  pull4({ ...FULL(), policy: { 'work-links': 'body-text', 'integration-branch': 'release/next' } }, {
+  const policyScenario = { ...FULL(), policy: { 'work-links': 'body-text', 'integration-branch': 'release/next' }, origin: { branches: { 'release/next': { 'docs/gone.md': 'x' }, main: {} } } };
+  const policyBase = fakeRun(policyScenario);
+  pull4(policyScenario, {
     run: (cmd, args, opts) => { if (cmd === 'git') policyGit.push(args); return policyBase(cmd, args, opts); },
   });
-  assert.deepEqual(policyGit.map((a) => a.join(' ')), ['cat-file -e origin/release/next:docs/gone6.md', 'cat-file -e origin/release/next:docs/gone.md'], 'no `git remote show origin` when the policy answers');
+  assert.deepEqual(policyGit.map((a) => a.join(' ')), ['rev-parse --verify --quiet origin/release/next^{commit}', 'cat-file -e origin/release/next:docs/gone6.md', 'cat-file -e origin/release/next:docs/gone.md'], 'no `git remote show origin` when the policy answers');
 });
 
 test('#5227 portability: a failing `git remote show origin` leaves the branch empty, composes no origin/ ref, skips the target-missing pass and the pull continues', () => {
@@ -2107,6 +2108,26 @@ test('#5227 portability: a failing `git remote show origin` leaves the branch em
   assert.deepEqual(reasonsOf(r, 9006), ['shipped'], 'a later pass still ran: #9006 is excluded as shipped, not as target-missing');
   const named = JSON.parse(r.text['dispatch-named-targets.json']).map((e) => e.number);
   assert.ok(named.includes(9006) && named.includes(9009), 'dispatch-named-targets.json is still written with the named candidates');
+});
+
+test('#5863: an origin HEAD branch of (unknown) skips the target-missing pass with the Warning, excludes nothing as target-missing and stages no Close proposal', () => {
+  const skipped = (scenario) => {
+    const gitArgvs = [];
+    const base = fakeRun(scenario);
+    const r = pull4(scenario, { run: (cmd, args, opts) => { if (cmd === 'git') gitArgvs.push(args); return base(cmd, args, opts); } });
+    assert.deepEqual(entriesOf(r, 'target-missing'), [], 'no named target is excluded against an unresolvable branch');
+    assert.ok(r.errs.includes(`${TARGET_MISSING_SKIPPED}\n`), r.stderr);
+    assert.ok(!r.cap.staged.some((s) => s.id.startsWith('dispatch-target-missing-')), 'no Close proposal is staged');
+    assert.ok(!gitArgvs.some((a) => a[0] === 'cat-file'), 'no `git cat-file` probe runs against an unresolvable branch');
+    return r;
+  };
+  // Reading B (spec 5863 Plan Review Clarifications): only this pass skips; the shared branch stays as resolved for the unlanded-blocker pass.
+  const viaRemote = skipped({ ...FULL(), headBranch: '(unknown)' });
+  assert.equal(viaRemote.state.integrationBranch, '(unknown)');
+  assert.equal(viaRemote.state.integrationRef, 'origin/(unknown)');
+  const viaPolicy = skipped({ ...FULL(), policy: { 'work-links': 'body-text', 'integration-branch': 'no-such-branch' } });
+  assert.equal(viaPolicy.state.integrationBranch, 'no-such-branch');
+  assert.equal(viaPolicy.state.integrationRef, 'origin/no-such-branch');
 });
 
 test('AC4.6 (in-process): a corrupt exclusions file before the open-PR append throws QueuePullStopped with the fence stop line, runs no later pass and leaves the file as it was', () => {

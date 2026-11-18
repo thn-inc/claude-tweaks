@@ -1047,6 +1047,17 @@ function targetMissingProposal(num, tpath, ref) {
   ].map((l) => `${l}\n`).join('');
 }
 
+// #5863: whether `ref` (origin/{branch}) names a commit here. `git remote show origin` prints
+// `HEAD branch: (unknown)` for a dangling origin HEAD, and a policy key can name a deleted branch.
+function originRefResolves(ctx, ref) {
+  try {
+    ctx.deps.run('git', ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], runOpts(ctx, { stdio: 'pipe' }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // #5305: the Warning an empty integration branch prints in place of the target-missing pass (fence 394-395).
 const TARGET_MISSING_SKIPPED = 'Warning: target-missing pass skipped — no integration branch resolved';
 
@@ -1061,9 +1072,11 @@ function runTargetMissing(ctx) {
   let branch = readPolicy(ctx, 'integration-branch');
   if (!branch) branch = remoteHeadBranch(ctx);
   state.integrationBranch = branch;
-  // #5305: an empty branch composes no origin/ ref; the pass that compares against it is skipped.
+  // #5305: an empty or unresolvable branch (#5863) composes no usable origin/ ref; the pass that compares against it is skipped.
+  // Only this pass skips: the shared branch and ref stay as resolved for the unlanded-blocker pass, which checks landing through the GitHub API.
   const ref = branch ? `origin/${branch}` : '';
   state.integrationRef = ref;
+  const targetResolved = Boolean(branch) && originRefResolves(ctx, ref);
   const exclusions = paths['dispatch-exclusions.json'];
 
   if (!omit.has('target-missing')) {
@@ -1073,7 +1086,7 @@ function runTargetMissing(ctx) {
         .filter((c) => c.target);
       fs.writeFileSync(paths['dispatch-named-targets.json'], JSON.stringify(named));
     });
-    if (!branch) {
+    if (!targetResolved) {
       deps.stderr(`${TARGET_MISSING_SKIPPED}\n`);
     } else {
       const probe = step(ctx, 'target-missing', () => {

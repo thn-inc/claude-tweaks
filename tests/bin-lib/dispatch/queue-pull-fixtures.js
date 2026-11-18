@@ -181,6 +181,12 @@ function fakeRun(scenario, { sessionDir } = {}) {
       if (sub.length === 3 && sub[0] === 'remote' && sub[1] === 'show' && sub[2] === 'origin') {
         return `* remote origin\n  Fetch URL: ${table.git.remoteUrl}\n  HEAD branch: ${scenario.headBranch || 'main'}\n`;
       }
+      // #5863: `rev-parse --verify --quiet origin/{branch}^{commit}` resolves only a branch origin holds.
+      if (sub.length === 4 && sub[0] === 'rev-parse' && sub[1] === '--verify' && sub[2] === '--quiet' && sub[3].endsWith('^{commit}')) {
+        const ref = sub[3].slice(0, -'^{commit}'.length);
+        if (originBranchFiles(scenario, ref.replace(/^origin\//, ''))) return `${'a'.repeat(40)}\n`;
+        throw fakeFailure(args, { status: 1, stdout: '', stderr: '' });
+      }
       if (sub.length === 3 && sub[0] === 'cat-file' && sub[1] === '-e') {
         const colon = sub[2].indexOf(':');
         const ref = sub[2].slice(0, colon);
