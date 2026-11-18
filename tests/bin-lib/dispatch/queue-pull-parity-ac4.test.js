@@ -153,7 +153,7 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
       const runEnv = moduleSb.runEnv;
       moduleSb.runEnv = (o) => {
         const env = runEnv(o);
-        return { ...env, NODE_OPTIONS: `${env.NODE_OPTIONS} --require ${JSON.stringify(preload)}` };
+        return { ...env, NODE_OPTIONS: [env.NODE_OPTIONS, `--require ${JSON.stringify(preload)}`].filter(Boolean).join(' ') };
       };
       const [oracle, module] = await Promise.all([runOracle(oracleSb, FENCE), runModuleCli(moduleSb, ['--transport', 'gh'])]);
       const pair = { oracle, module };
@@ -161,6 +161,7 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
       for (const [side, sb] of [['oracle', oracleSb], ['module', moduleSb]]) assert.ok(fs.existsSync(marker(sb)), `${side}: the injected read failure fired`);
       assert.ok(module.stderr.includes('queue-pull: verified-open-deps: EACCES'), module.stderr);
       const base = R['S1-gh-miss'];
+      assert.ok(base.oracle.orderBlob, 'the base persists the blob (control)');
       const want = [...exclusionsIn(base.oracle).filter((e) => !(e.reason === 'unlanded-blocker' && e.records[0] === 9011)), { reason: 'blocked', records: [9011], detail: { blockedBy: [8001] } }];
       for (const [side, r] of sides(pair)) {
         assert.equal(r.status, 0, `${side}: ${r.stderr.slice(-2000)}`);
@@ -168,6 +169,7 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
         assert.deepEqual(reported(r.stderr).filter((l) => l.startsWith('Warning: ')), [VERIFIED_UNREADABLE], side);
         assert.deepEqual(sortEntries(exclusionsIn(r)), sortEntries(want), `${side}: #9011 held as blocked, nothing else changed`);
         assert.ok(!r.ghArgv.some((a) => a.argv[0] === 'issue' && a.argv[1] === 'view'), `${side}: no dependency is viewed`);
+        assert.equal(r.orderBlob, null, `${side}: a fail-closed verdict writes no order blob back`);
       }
       assertFaultFiles(pair, 'gh', 'unresolved-read-once');
     } finally {

@@ -1266,6 +1266,7 @@ test('AC1.1 (#5879): gh: an unreadable unresolved-deps list leaves no verified-o
   assert.ok(!r.stderr.includes('queue-pull: blocked-body:'), r.stderr);
   assert.ok(entriesOf(r, 'blocked').some((e) => e.records.includes(9011)), 'the dependent #9011 is held as blocked');
   assert.ok(!r.ghCalls.some((a) => a[0] === 'issue' && a[1] === 'view'), 'no dependency is viewed');
+  assert.equal(r.store.written.length, 0, 'a fail-closed verdict is never persisted to the queue-order cache');
 });
 
 test('AC1.1 (#5879) control: with no unresolved dependency the step still ends with an empty file and prints no Warning', () => {
