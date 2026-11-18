@@ -154,6 +154,7 @@ test('check --records-json: no gh call and the same rules', () => {
   assert.equal(via('[]').code, 0);
   assert.equal(via('{').code, 3);
   assert.equal(via(JSON.stringify([without(ROW7, 'url')])).code, 3);
+  assert.equal(via(JSON.stringify([{ ...ROW7, state: 'opne' }])).code, 3);
   assert.equal(via(JSON.stringify(manyRows(100))).code, 3);
   const missing = harness({ readFile: () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); } });
   assert.equal(run(['check', '--records-json', 'recs.json'], missing.deps), 3);
@@ -316,6 +317,7 @@ test('stamp: label before comment — a failed comment leaves the label', () => 
   assert.ok(h.keys().indexOf('issue edit') > -1 && h.keys().indexOf('issue edit') < h.keys().indexOf('issue comment'));
   assert.ok(!h.calls.gh.some((c) => c.args.includes('--remove-label')));
   assert.match(h.err(), /label stays/);
+  assert.match(h.err(), /the comment failed \(HTTP 502\)/, 'the cause is quoted for disposition\'s FAILED line');
 });
 
 test('stamp: a failed label edit posts no comment', () => {
@@ -455,14 +457,17 @@ test('stamp: a throwing label list, or a throwing re-list after a failed create 
 });
 
 test('isValidFinding: accepts real locations, rejects malformed ones', () => {
-  for (const ok of [F, 'security at general', 'security at docs/my file.md:3', 'security at plugin/x.md:8:12', 'security at C:/x.js:3', 'x at y at file:1', 'x at y at general']) {
+  for (const ok of [F, 'security at general', 'security at docs/my file.md:3', 'security at plugin/x.md:8:12', 'security at C:/x.js:3', 'x at y at file:1', 'x at y at general', 'security at a.js:12-15', 'security at C:/x.js:3-4', 'x at a.js:8:12-15']) {
     assert.ok(isValidFinding(ok), ok);
   }
-  for (const bad of ['no location', 'security at a.js:8\nmore', ' at a.js:8', 'security at ', 'security at a.js:', 'security at a.js:x', 'x at y at nowhere', 'security \tat general\r', 'security\tat general', 'security \tat a.js:3', 'security\t at general', 'security\t at a.js:3']) {
+  for (const bad of ['no location', 'security at a.js:8\nmore', ' at a.js:8', 'security at ', 'security at a.js:', 'security at a.js:x', 'x at y at nowhere', 'security \tat general\r', 'security\tat general', 'security \tat a.js:3', 'security\t at general', 'security\t at a.js:3', 'security at a.js:12-', 'security at a.js:-5', 'security at a.js:1-2-3', 'security at a.js:12-x', 'security at a.js:12--15']) {
     assert.ok(!isValidFinding(bad), JSON.stringify(bad));
   }
   const h = stampHarness({ labelList: 'release-block\n' });
   assert.equal(run(['stamp', '--record', '7', '--finding', 'security at docs/my file.md:3'], h.deps), 0);
+  const ranged = stampHarness({ labelList: 'release-block\n' });
+  assert.equal(run(['stamp', '--record', '7', '--finding', 'security at a.js:12-15'], ranged.deps), 0);
+  assert.equal(ranged.calls.gh.find((c) => c.args[1] === 'comment').input, stampCommentBody('security at a.js:12-15'));
 });
 
 test('stamp: a 200 KB finding of repeated " at " is rejected as usage (correctness only)', () => {
@@ -475,4 +480,6 @@ test('--help names both verbs\' exit contracts', () => {
   const h = stampHarness();
   assert.equal(run(['--help'], h.deps), 0);
   assert.match(h.out(), /stamp: exit 0 stamped or already stamped; 2 usage/);
+  assert.match(h.out(), /check: exit 0 none open; 1 blocked; 2 usage, or an unresolvable or refused repo; 3/);
+  assert.match(h.out(), /stamp: [^\n]*2 usage, an unresolvable or refused repo, no such record/);
 });

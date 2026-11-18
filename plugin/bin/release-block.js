@@ -10,11 +10,12 @@
 //           number. The query is `gh issue list --label release-block --state open --limit 100`;
 //           --records-json <path> reads the same rows from a file instead (a gh-absent caller
 //           fetched them over MCP) and makes no gh call. The same rules apply to both inputs.
-//           Exit 0 none open; 1 blocked; 2 usage error; 3 state unreadable (a failed gh call, a
-//           missing gh with no --records-json, malformed or incomplete rows, or a list that
-//           filled --limit — unreadable is never reported as clear).
-//   stamp   Exit 0 stamped or already stamped; 2 usage error, no such record, or a PR number; 3 write
-//           failure or unreadable state (gh absent, the view unreadable or the wrong shape).
+//           Exit 0 none open; 1 blocked; 2 usage error, or an unresolvable or refused repo; 3 state
+//           unreadable (a failed gh call, a missing gh with no --records-json, malformed or
+//           incomplete rows, or a list that filled --limit — unreadable is never reported as clear).
+//   stamp   Exit 0 stamped or already stamped; 2 usage error, an unresolvable or refused repo, no such
+//           record, or a PR number; 3 write failure or unreadable state (gh absent, the view
+//           unreadable or the wrong shape).
 //
 // The exit codes and the exit-1 JSON shape are a stable contract: #5885 and #5887 call them.
 // Change them only by expand-contract. The vocabulary is the spec's own domain set, not one of
@@ -38,8 +39,8 @@ const NAME = 'release-block.js';
 const USAGE = `usage: ${NAME} check [--repo [host/]owner/name | --records-json <path>]\n`
   + `       ${NAME} stamp --record <n> --finding "<category> at <file:line>|general" [--repo [host/]owner/name]\n`
   + `       ${NAME} [--help]\n`
-  + '  check: exit 0 none open; 1 blocked; 2 usage; 3 state unreadable\n'
-  + '  stamp: exit 0 stamped or already stamped; 2 usage, no such record, or a PR number; 3 write failure or unreadable state (gh absent, view unreadable)\n';
+  + '  check: exit 0 none open; 1 blocked; 2 usage, or an unresolvable or refused repo; 3 state unreadable\n'
+  + '  stamp: exit 0 stamped or already stamped; 2 usage, an unresolvable or refused repo, no such record, or a PR number; 3 write failure or unreadable state (gh absent, view unreadable)\n';
 
 const EXIT = Object.freeze({ OK: 0, BLOCKED: 1, USAGE: 2, FAILURE: 3 });
 const LIST_LIMIT = 100;
@@ -49,7 +50,8 @@ const LABEL = Object.freeze({
   color: 'B4006E',
 });
 // `<category> at <file:line>` or `<category> at general`, one line — it lands in a comment body.
-const LOCATION_RE = /^\S[^\r\n]*:\d+$/;
+// The line may be a range (`a.js:12-15`). Anchored at both ends, so one start position: linear.
+const LOCATION_RE = /^\S[^\r\n]*:\d+(?:-\d+)?$/;
 // Linear parse, not one regex: a pattern with an unbounded prefix before ` at ` backtracks
 // quadratically on a finding with many of them. Split at the LAST ` at `.
 function isValidFinding(finding) {
@@ -284,7 +286,7 @@ function stamp(opts, deps) {
   try {
     deps.gh(['issue', 'comment', n, '--repo', slug, '--body-file', '-'], { ...ghCtx(deps), input: stampCommentBody(opts.finding) });
   } catch (err) {
-    deps.stderr(`${NAME}: label added to #${n} but the comment failed — the label stays and the block stands; post the comment by hand\n`);
+    deps.stderr(`${NAME}: label added to #${n} but the comment failed (${firstLine(err && err.stderr) || messageOf(err)}) — the label stays and the block stands; post the comment by hand\n`);
     return EXIT.FAILURE;
   }
   deps.stdout(`${JSON.stringify({ record: Number(n), outcome: 'stamped' })}\n`);

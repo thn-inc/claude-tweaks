@@ -12,6 +12,8 @@ files:
   - plugin/bin/lib/hooks/run-dir-resolve.js
   - plugin/bin/release-tip-check.js
   - plugin/bin/lib/release-tip/check.js
+  - plugin/bin/release-block.js
+  - plugin/skills/_shared/release-block.md
   - plugin/skills/review/SKILL.md
   - plugin/skills/test/SKILL.md
 ---
