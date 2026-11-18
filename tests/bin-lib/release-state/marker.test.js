@@ -7,9 +7,9 @@ const {
   MARKER_FILE, MARKER_VERSION, SHA_RE, RUN_RE, REASON_RE, INIT_RUN, ISO_UTC_RE,
   parseMarker, serializeMarker, VERDICTS, descentVerdict, compareVerdict, compareOnLine,
   createLocalHistory, createCompareHistory, createHistory,
-  OUTCOMES, storeFacade, advanceMarker, initMarker, resetMarker,
+  OUTCOMES, storeFacade, advanceMarker, initMarker, resetMarker, resetMessageFits,
 } = require('../../../plugin/bin/lib/release-state/marker');
-const { createStateFile } = require('../../../plugin/bin/lib/release-state/store');
+const { readStateFile, writeStateFile, createStateFile } = require('../../../plugin/bin/lib/release-state/store');
 const {
   makeLine, realRunner, rewriteMain, pushMainCommit, shallowClone, setupGit, commitRawState,
   VALID_MARKER: VALID, MALFORMED_MARKERS,
@@ -567,19 +567,30 @@ test('AC5.1: an unreadable read gives unreadable and never refused', () => {
 });
 
 test('AC8.3: a stored marker of each malformed shape gives unreadable', () => {
+  // One fixture; each shape is planted as its own real commit on release-state, over the
+  // previous one. Object shapes go through the store (created, then compare-and-set
+  // updates); the non-object ones through commitRawState, since the store refuses them.
+  const fx = makeLine();
+  const deps = { gitRunner: realRunner(fx.cloneA), ghApi: throwingGh };
   const planted = [...MALFORMED_MARKERS, ['a raw {', undefined, '{']];
   for (const [label, value, raw] of planted) {
-    const fx = makeLine();
+    const before = stateTip(fx);
     const isObject = raw === undefined && value !== null && typeof value === 'object' && !Array.isArray(value);
     if (isObject) {
-      const c = createStateFile({ gitRunner: realRunner(fx.cloneA), ghApi: throwingGh }, 'o/r', MARKER_FILE, {
-        content: `${JSON.stringify(value, null, 2)}\n`, message: 'Plant a malformed marker',
-      });
-      assert.equal(c.ok, true, label);
+      const content = `${JSON.stringify(value, null, 2)}\n`;
+      const message = 'Plant a malformed marker';
+      const cur = readStateFile(deps, 'o/r', MARKER_FILE);
+      const w = cur.state === 'absent'
+        ? createStateFile(deps, 'o/r', MARKER_FILE, { content, message })
+        : writeStateFile(deps, 'o/r', MARKER_FILE, {
+          content, message, lease: cur.lease, via: cur.via, expectedContent: cur.content,
+        });
+      assert.equal(w.ok, true, label);
     } else {
       commitRawState(fx, fx.cloneA, MARKER_FILE, raw === undefined ? JSON.stringify(value) : raw);
     }
     const tip = stateTip(fx);
+    assert.notEqual(tip, before, `${label} planted as a new commit`);
     assert.equal(advanceMarker(ctxFor(fx.cloneA), { to: fx.P5, run: 'r2' }).outcome, 'unreadable', label);
     assert.equal(stateTip(fx), tip, label);
   }
@@ -702,9 +713,10 @@ test('AC3.1: a second conflict is contested; a fresh read that fails stops; any 
   const first = presentAt(F, 'b'.repeat(40));
   const second = presentAt(A, 'c'.repeat(40));
   const verdicts = { [`${F}>${T}`]: 'descendant', [`${T}>${A}`]: 'backward', [`${A}>${T}`]: 'descendant' };
+  // The read after the second conflict still shows A, behind the target: contested.
   const { ctx, calls } = fakeCtx({ reads: [first, second], write: () => ({ ok: false, conflict: true }), verdicts });
   assert.equal(advanceMarker(ctx, { to: T, run: 'ra' }).outcome, 'contested');
-  assert.equal(calls.read, 2);
+  assert.equal(calls.read, 3);
   assert.equal(calls.write.length, 2);
   const content = serializeMarker({ sha: T, advancedAt: NOW.toISOString(), run: 'ra' });
   assert.deepEqual(calls.write[0], {
@@ -723,6 +735,49 @@ test('AC3.1: a second conflict is contested; a fresh read that fails stops; any 
     assert.equal(advanceMarker(f.ctx, { to: T, run: 'ra' }).outcome, 'unreadable', JSON.stringify(failed));
     assert.equal(f.calls.write.length, 1);
     assert.equal(f.calls.read, 1);
+  }
+});
+
+test('AC3.1: after a second conflict, a marker a third writer moved to or past the target is at-or-past (ruling R16)', () => {
+  const first = presentAt(F, 'b'.repeat(40));
+  const second = presentAt(A, 'c'.repeat(40));
+  const base = { [`${F}>${T}`]: 'descendant', [`${T}>${A}`]: 'backward', [`${A}>${T}`]: 'descendant' };
+  const conflict = () => ({ ok: false, conflict: true });
+  const cases = [
+    ['at the target', presentAt(T, 'd'.repeat(40)), {}, { outcome: 'ok', advanced: false, sha: T, reason: 'at-or-past' }],
+    ['past the target', presentAt(X, 'd'.repeat(40)), { [`${T}>${X}`]: 'descendant' }, { outcome: 'ok', advanced: false, sha: X, reason: 'at-or-past' }],
+    ['undetermined against the target', presentAt(M, 'd'.repeat(40)), { [`${T}>${M}`]: 'undetermined' }, { outcome: 'contested' }],
+    ['unreadable', { state: 'unreadable', failure: 'x', reason: 'gone' }, {}, { outcome: 'contested' }],
+    ['vanished', { state: 'absent', lease: null, via: 'git', branchMissing: false }, {}, { outcome: 'contested' }],
+  ];
+  for (const [label, third, extra, want] of cases) {
+    const { ctx, calls } = fakeCtx({ reads: [first, second, third], write: conflict, verdicts: { ...base, ...extra } });
+    const r = advanceMarker(ctx, { to: T, run: 'ra' });
+    if (want.outcome === 'contested') assert.equal(r.outcome, 'contested', label);
+    else assert.deepEqual(r, want, label);
+    assert.equal(calls.write.length, 2, `${label}: never a third write`);
+    assert.equal(calls.read, 3, label);
+  }
+});
+
+test('AC3.1: a marker that vanished after the first lost write is refused without init advice', () => {
+  const vanished = { state: 'absent', lease: null, via: 'git', branchMissing: false };
+  const { ctx, calls } = fakeCtx({ reads: [presentAt(F), vanished], write: () => ({ ok: false, conflict: true }), verdicts: { [`${F}>${T}`]: 'descendant' } });
+  const r = advanceMarker(ctx, { to: T, run: 'ra' });
+  assert.equal(r.outcome, 'refused');
+  assert.match(r.reason, /disappeared after a lost compare-and-set/);
+  assert.doesNotMatch(r.reason, /init/);
+  assert.equal(calls.write.length, 1);
+  // Absent on the first read is still the plain "no marker" refusal.
+  const fresh = fakeCtx({ reads: [vanished] });
+  assert.deepEqual(advanceMarker(fresh.ctx, { to: T, run: 'ra' }), { outcome: 'refused', reason: 'no marker — run marker init' });
+});
+
+test('advanceMarker: a verdict outside the table fails closed as insufficient-history, even a prototype key', () => {
+  for (const verdict of ['constructor', 'toString', 'sideways']) {
+    const { ctx, calls } = fakeCtx({ reads: [presentAt(F)], verdicts: { [`${F}>${T}`]: verdict } });
+    assert.equal(advanceMarker(ctx, { to: T, run: 'ra' }).outcome, 'insufficient-history', verdict);
+    assert.equal(calls.write.length, 0);
   }
 });
 
@@ -782,6 +837,34 @@ test('AC8.8: a forced reset logs its reason', () => {
     outcome: 'ok', reset: true, from: fx.P1, to: fx.P3, basis: 'forced',
   });
   assert.equal(tipSubject(fx), `Reset reviewed-through from ${short12(fx.P1)} to ${short12(fx.P3)} — run r9 — forced: history rewritten by hand`);
+});
+
+test('AC8.8: a forced reset over an orphaned marker is forced and logs the reason (ruling R15)', () => {
+  const fx = makeLine();
+  initAt(fx, fx.P3);
+  const rewritten = rewriteMain(fx);
+  assert.deepEqual(resetMarker(ctxFor(fx.cloneA), {
+    to: rewritten, run: 'r9', force: true, reason: 'history rewritten by hand',
+  }), {
+    outcome: 'ok', reset: true, from: fx.P3, to: rewritten, basis: 'forced',
+  });
+  assert.equal(tipSubject(fx), `Reset reviewed-through from ${short12(fx.P3)} to ${short12(rewritten)} — run r9 — forced: history rewritten by hand`);
+});
+
+test("AC8.8: a forced reset never consults the marker's line state, so an undetermined one still resets (ruling R15)", () => {
+  // The fake history throws on any onLine it was not given: F (the marker) is absent from
+  // the table, so the test fails if the forced reset asks about it.
+  const { ctx, calls } = fakeCtx({ reads: [presentAt(F)], write: () => ({ ok: true, via: 'git' }), onLine: { [T]: { onLine: true } } });
+  assert.deepEqual(resetMarker(ctx, {
+    to: T, run: 'r9', force: true, reason: 'history rewritten by hand',
+  }), {
+    outcome: 'ok', reset: true, from: F, to: T, basis: 'forced',
+  });
+  assert.equal(calls.write[0].message, `Reset reviewed-through from ${short12(F)} to ${short12(T)} — run r9 — forced: history rewritten by hand`);
+  // Unforced, the same undetermined marker is insufficient-history, with no write.
+  const unforced = fakeCtx({ reads: [presentAt(F)], onLine: { [F]: { undetermined: 'shallow' }, [T]: { onLine: true } } });
+  assert.equal(resetMarker(unforced.ctx, { to: T, run: 'r9' }).outcome, 'insufficient-history');
+  assert.equal(unforced.calls.write.length, 0);
 });
 
 test('AC8.9: a reset target off the line, or no marker, is refused', () => {
@@ -904,6 +987,22 @@ test('marker: a reset whose commit message would pass 200 characters is a TypeEr
   // Even the orphaned basis overflows with a 128-char run: 202 characters.
   assert.throws(() => resetMarker(ctx, { to: T, run: longRun }), names200);
   assert.deepEqual(touched, []);
+});
+
+test('resetMessageFits: the shared R1 check, at its 200-character boundary', () => {
+  const run = (n) => `r${'x'.repeat(n - 1)}`;
+  // Unforced: 74 characters plus the run, so a 126-char run fits and a 127-char one does not.
+  assert.deepEqual(resetMessageFits({ run: run(126) }), { fits: true, length: 200 });
+  assert.deepEqual(resetMessageFits({ run: run(127) }), { fits: false, length: 201 });
+  // Forced: 74 characters plus the run and the reason ('forced: ' replaces 'orphaned').
+  assert.deepEqual(resetMessageFits({ run: 'r9', force: true, reason: 'z'.repeat(124) }), { fits: true, length: 200 });
+  assert.deepEqual(resetMessageFits({ run: 'r9', force: true, reason: 'z'.repeat(125) }), { fits: false, length: 201 });
+  assert.deepEqual(resetMessageFits({ run: run(128), force: true, reason: 'y'.repeat(200) }), { fits: false, length: 402 });
+  // resetMarker uses the same check: the boundary throws there too, before any call.
+  const { ctx, touched } = trapCtx();
+  assert.throws(() => resetMarker(ctx, { to: T, run: run(127) }), TypeError);
+  assert.throws(() => resetMarker(ctx, { to: T, run: run(126) }), /read must not be called/);
+  assert.deepEqual(touched, ['read']);
 });
 
 test('marker: the longest messages that fit land on the real store', () => {

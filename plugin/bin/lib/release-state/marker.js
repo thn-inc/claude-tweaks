@@ -365,6 +365,9 @@ const VERDICT_STOPS = Object.freeze({
 });
 
 const NO_MARKER = 'no marker — run marker init';
+// Absent on the re-read after a lost compare-and-set: a competitor removed the marker, so
+// "run marker init" would be the wrong advice.
+const MARKER_VANISHED = 'the marker disappeared after a lost compare-and-set — another writer removed it; read it again before acting';
 
 // (deps: {ghApi, gitRunner?, sleep?}, slug, name) -> ctx.store: the store's read,
 // compare-and-set write and create, bound to one file.
@@ -396,11 +399,12 @@ function writeFailure(w) {
 }
 
 // -> { read, marker } | { stop: an outcome result }. Absent is refused (there is nothing to
-// advance); a transport failure, and bytes that are not a marker, are unreadable.
-function readMarker(store) {
+// advance), with `absentReason`; a transport failure, and bytes that are not a marker, are
+// unreadable.
+function readMarker(store, absentReason = NO_MARKER) {
   const read = store.read();
   if (read.state === 'unreadable') return { stop: { outcome: 'unreadable', reason: read.reason } };
-  if (read.state === 'absent') return { stop: { outcome: 'refused', reason: NO_MARKER } };
+  if (read.state === 'absent') return { stop: { outcome: 'refused', reason: absentReason } };
   const parsed = parseMarker(read.value);
   if (parsed.error) return { stop: { outcome: 'unreadable', reason: parsed.error } };
   return { read, marker: parsed.marker };
@@ -409,9 +413,13 @@ function readMarker(store) {
 // (ctx, { to, run }) -> { outcome: 'ok', advanced: true, from, to }
 //  | { outcome: 'ok', advanced: false, sha, reason: 'same' | 'at-or-past' } | { outcome, reason }
 // Forward-only along the first-parent line, with at most two compare-and-set writes. A lost
-// write re-reads: a marker a competitor moved to or past `to` is success with no write;
-// anything else is judged again from scratch (never a blind write on the fresh lease), and a
-// second lost write is contested.
+// write re-reads: a marker a competitor moved to or past `to` is success with no write.
+// After the first lost write anything else is judged again from scratch (never a blind write
+// on the fresh lease); after the second, anything else (an unreadable or vanished marker,
+// an undetermined verdict) is contested.
+//
+// Requires a history object no earlier call has used: the at-or-past check below relies on
+// the history's one snapshot refresh being unspent when the operation starts.
 function advanceMarker(ctx, { to, run } = {}) {
   assertSha(to);
   assertRun(run);
@@ -425,7 +433,11 @@ function advanceMarker(ctx, { to, run } = {}) {
         outcome: 'ok', advanced: false, sha: marker.sha, reason: 'same',
       };
     }
-    if (v.verdict !== 'descendant') return { outcome: VERDICT_STOPS[v.verdict] || 'insufficient-history', reason: v.reason };
+    if (v.verdict !== 'descendant') {
+      // Own keys only: a verdict such as 'constructor' must not resolve through the prototype.
+      const outcome = Object.hasOwn(VERDICT_STOPS, v.verdict) ? VERDICT_STOPS[v.verdict] : 'insufficient-history';
+      return { outcome, reason: v.reason };
+    }
     const w = ctx.store.write({
       content: markerContent(ctx, to, run),
       lease: read.lease,
@@ -439,21 +451,26 @@ function advanceMarker(ctx, { to, run } = {}) {
       };
     }
     if (!w.conflict) return { outcome: 'unreadable', reason: writeFailure(w) };
-    if (pass === 2) return { outcome: 'contested', reason: `the marker moved again while advancing to ${short(to)}` };
-    cur = readMarker(ctx.store);
-    if (cur.stop) return cur.stop;
-    const fresh = cur.marker.sha;
+    const again = readMarker(ctx.store, MARKER_VANISHED);
     // A competitor may have advanced to a commit newer than the history's snapshot of the
-    // branch, which only the history's one refresh can see (Review Focus 1). That refresh is
-    // still unspent here: pass 1's verdict took the snapshot (the call that takes it never
-    // refreshes), and a pass-1 verdict that missed the snapshot is orphaned, off-line or
-    // undetermined, each of which ended the operation above before any write. So a conflict,
-    // and this check, only ever follow a pass whose shas were all in the snapshot.
-    if (fresh === to || ctx.history.verdict(to, fresh).verdict === 'descendant') {
-      return {
-        outcome: 'ok', advanced: false, sha: fresh, reason: 'at-or-past',
-      };
+    // branch, which only the history's one refresh can see (Review Focus 1). After the first
+    // lost write that refresh is still unspent here: pass 1's verdict took the snapshot (the
+    // call that takes it never refreshes), and a pass-1 verdict that missed the snapshot is
+    // orphaned, off-line or undetermined, each of which ended the operation above before any
+    // write. So the first conflict, and this check, only ever follow a pass whose shas were
+    // all in the snapshot. After the second lost write the refresh may be spent; a marker past
+    // the snapshot then reads as not at-or-past, which is contested, never orphaned.
+    if (!again.stop) {
+      const fresh = again.marker.sha;
+      if (fresh === to || ctx.history.verdict(to, fresh).verdict === 'descendant') {
+        return {
+          outcome: 'ok', advanced: false, sha: fresh, reason: 'at-or-past',
+        };
+      }
     }
+    if (pass === 2) return { outcome: 'contested', reason: `the marker moved again while advancing to ${short(to)}` };
+    if (again.stop) return again.stop;
+    cur = again;
   }
 }
 
@@ -470,13 +487,26 @@ function initMarker(ctx, { to } = {}) {
   return { outcome: 'unreadable', reason: writeFailure(c) };
 }
 
-const resetMessage = (fromLabel, to, run, basis) => `Reset reviewed-through from ${fromLabel} to ${short(to)} — run ${run} — ${basis}`;
+// The basis a reset logs: a forced reset always logs the operator's reason (ruling R15),
+// whatever the marker's line state; `orphaned` is only the basis of an unforced reset.
+const resetBasisText = (force, reason) => (force ? `forced: ${reason}` : 'orphaned');
+const resetMessage = (fromLabel, to, run, basisText) => `Reset reviewed-through from ${fromLabel} to ${short(to)} — run ${run} — ${basisText}`;
+
+// ({ run, force, reason }) -> { fits, length }: whether the longest reset commit message
+// these arguments can compose (a 12-char `from` and `to`) fits the store's commit-message
+// rule (ruling R1). `resetMarker` throws when it does not; the CLI calls this first, so an
+// overlong run id or reason is a usage error, never a write that fails as unreadable.
+function resetMessageFits({ run, force = false, reason } = {}) {
+  const longest = resetMessage('0'.repeat(12), '0'.repeat(40), run, resetBasisText(force, reason));
+  return { fits: MESSAGE_RE.test(longest), length: longest.length };
+}
 
 // (ctx, { to, run, force, reason }) -> { outcome: 'ok', reset: true, from, to, basis }
 //  | { outcome, from, reason }, with `from` the old marker's sha, or null when there was no
-// readable marker. The guarded recovery: the marker must be orphaned, or unreadable bytes
-// or a still-on-line marker are overwritten only with `force` and a logged reason; the
-// target must be on the line; one write, and a lost one is contested, never retried.
+// readable marker. The guarded recovery: without `force` the marker must be orphaned
+// (basis `orphaned`); with `force` and a logged reason any readable or unreadable-bytes
+// marker is overwritten (basis `forced`) and its line state is not consulted. The target
+// must be on the line; one write, and a lost one is contested, never retried.
 function resetMarker(ctx, {
   to, run, force = false, reason,
 } = {}) {
@@ -485,13 +515,9 @@ function resetMarker(ctx, {
   if (force && (typeof reason !== 'string' || !REASON_RE.test(reason))) {
     throw new TypeError(`release-state marker: a forced reset needs a --reason matching ${REASON_RE}, got ${JSON.stringify(reason)}`);
   }
-  const forcedBasis = `forced: ${reason}`;
-  // Ruling R1: the longest message this call can compose (a 12-char `from`, and the forced
-  // basis when forced) must fit the store's commit-message rule. Checked before any read, so
-  // an overlong run id or reason is a caller error, never a write that fails as unreadable.
-  const longest = resetMessage('0'.repeat(12), to, run, force ? forcedBasis : 'orphaned');
-  if (!MESSAGE_RE.test(longest)) {
-    throw new TypeError(`release-state marker: the reset commit message would be ${longest.length} characters, over the store's 200-character budget — shorten --run or --reason`);
+  const fit = resetMessageFits({ run, force, reason });
+  if (!fit.fits) {
+    throw new TypeError(`release-state marker: the reset commit message would be ${fit.length} characters, over the store's 200-character budget — shorten --run or --reason`);
   }
 
   const read = ctx.store.read();
@@ -499,24 +525,14 @@ function resetMarker(ctx, {
   // A transport failure carries no bytes and no lease: there is nothing a reset could replace.
   if (read.state === 'unreadable' && typeof read.content !== 'string') return { outcome: 'unreadable', from: null, reason: read.reason };
   const parsed = read.state === 'present' ? parseMarker(read.value) : { error: read.reason };
-  let from = null;
-  let basis;
-  if (parsed.error) {
-    if (!force) return { outcome: 'unreadable', from: null, reason: `${parsed.error} — pass --force --reason to overwrite it` };
-    basis = 'forced';
-  } else {
-    from = parsed.marker.sha;
+  const from = parsed.error ? null : parsed.marker.sha;
+  if (parsed.error && !force) return { outcome: 'unreadable', from: null, reason: `${parsed.error} — pass --force --reason to overwrite it` };
+  if (!force) {
     const on = ctx.history.onLine(from);
-    if (on.onLine === false) {
-      basis = 'orphaned';
-    } else if (force) {
-      basis = 'forced';
-    } else if ('undetermined' in on) {
-      return { outcome: 'insufficient-history', from, reason: on.undetermined };
-    } else {
-      return { outcome: 'refused', from, reason: `the marker ${short(from)} is not orphaned (it is on the first-parent line) — pass --force --reason to reset it anyway` };
-    }
+    if ('undetermined' in on) return { outcome: 'insufficient-history', from, reason: on.undetermined };
+    if (on.onLine) return { outcome: 'refused', from, reason: `the marker ${short(from)} is not orphaned (it is on the first-parent line) — pass --force --reason to reset it anyway` };
   }
+  const basis = force ? 'forced' : 'orphaned';
   const target = ctx.history.onLine(to);
   if ('undetermined' in target) return { outcome: 'insufficient-history', from, reason: target.undetermined };
   if (!target.onLine) return { outcome: 'refused', from, reason: `${short(to)} is not on the first-parent line` };
@@ -525,7 +541,7 @@ function resetMarker(ctx, {
     lease: read.lease,
     via: read.via,
     expectedContent: read.content,
-    message: resetMessage(from ? short(from) : 'unreadable', to, run, basis === 'forced' ? forcedBasis : 'orphaned'),
+    message: resetMessage(from ? short(from) : 'unreadable', to, run, resetBasisText(force, reason)),
   });
   if (w.ok) {
     return {
@@ -558,4 +574,5 @@ module.exports = {
   advanceMarker,
   initMarker,
   resetMarker,
+  resetMessageFits,
 };
