@@ -122,6 +122,10 @@ test('compareVerdict: a malformed parents entry is undetermined, never orphaned'
   assert.equal(compareOnLine(F, withM([null])), 'undetermined');
   const badSha = { tip: T, compare: { ...AHEAD_FROM_F, commits: [...AHEAD_FROM_F.commits, { sha: 'x', parents: [T] }] } };
   assert.equal(compareVerdict(F, T, badSha).verdict, 'undetermined');
+  // A sha-valid listing that loops (M's first parent is A, A's is M) passes the shape check
+  // and reaches the walk's loop guard: undetermined, never orphaned.
+  const cyclic = { tip: T, compare: { status: 'ahead', total_commits: 3, commits: [commit(A, M), commit(M, A), commit(T, M)] } };
+  assert.equal(compareVerdict(F, T, cyclic).verdict, 'undetermined');
   // An empty `parents` is a root commit, where the first-parent walk legitimately ends: the
   // base was reached only through a second parent, so it is orphaned.
   const rootOnWalk = { tip: T, compare: { status: 'ahead', total_commits: 3, commits: [commit(A), commit(M, A, F), commit(T, M)] } };
