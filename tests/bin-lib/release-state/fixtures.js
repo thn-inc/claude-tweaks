@@ -5,7 +5,6 @@
 
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { fromTemplate, disableReceiveAutoGc } = require('../../helpers/git-template');
@@ -98,11 +97,11 @@ function makeLine({ branch = 'main' } = {}) {
 function commitRawState(fx, clone, name, text) {
   const run = realRunner(clone);
   const scratchRef = `refs/release-state-fixture/${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const scratchIndex = path.join(os.tmpdir(), `release-state-fixture-index-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const scratchIndex = path.join(fx.root, `release-state-fixture-index-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const listed = run(['ls-remote', '--heads', 'origin', RELEASE_STATE_REF]).trim();
   const branchExists = listed !== '';
   try {
-    run(['fetch', '-q', 'origin', branchExists ? `release-state:${scratchRef}` : `HEAD:${scratchRef}`]);
+    run(['fetch', '-q', 'origin', branchExists ? `${RELEASE_STATE_REF}:${scratchRef}` : `HEAD:${scratchRef}`]);
     const parent = run(['rev-parse', scratchRef]).trim();
     const extraEnv = { GIT_INDEX_FILE: scratchIndex };
     const blob = run(['hash-object', '-w', '--stdin'], { input: text, extraEnv }).trim();

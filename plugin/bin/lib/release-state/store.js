@@ -29,14 +29,13 @@
 // git leg (null when the branch is missing) and the blob sha on the contents-API leg.
 // The two are never interchangeable and a lease is never carried across transports.
 //
-// Mirrors claim-store.js's readClaimBlob / readClaimBlobContentsApi / readClaimsBranch /
-// ensureClaimsBranch (parameterized on a file name), and claims-git-cas.js's
-// readClaimBlobGit / bootstrapClaimsBranchGit; if either changes, check the other.
-// Nothing is extracted from those: their signatures belong to the fleet's most-contended
-// write path.
+// Mirrors claim-store.js's readClaimBlob / readClaimBlobContentsApi (parameterized on a
+// file name) and claims-git-cas.js's readClaimBlobGit / bootstrapClaimsBranchGit; if
+// either changes, check the other. The branch-creating contents-API leg is not a mirror:
+// it is claim-store.js's `createBranchContentsApi`, shared with the claims bootstrap.
 'use strict';
 
-const { refusalText } = require('../issues/claim-store');
+const { refusalText, createBranchContentsApi } = require('../issues/claim-store');
 const { classifyGitError, errText } = require('../issues/claims-git-cas');
 
 const RELEASE_STATE_BRANCH = 'release-state';
@@ -104,7 +103,8 @@ function readStateGit(runner, name) {
   const ref = scratchRef();
   let tip;
   try {
-    runner(['fetch', '-q', 'origin', `${RELEASE_STATE_BRANCH}:${ref}`]);
+    // Fully qualified: a bare `release-state` could resolve to a same-named tag.
+    runner(['fetch', '-q', 'origin', `refs/heads/${RELEASE_STATE_BRANCH}:${ref}`]);
     tip = runner(['rev-parse', ref]).trim();
   } catch (err) {
     if (classifyGitError(err).kind === 'missing-branch') {
@@ -130,8 +130,11 @@ function readStateGit(runner, name) {
   return classifyStateContent(content, { lease: tip, via: 'git' });
 }
 
-// (ghApi, slug) -> { exists: true | false | null, result } — mirrors claim-store.js's
-// readClaimsBranch. `exists` null = could not tell.
+// (ghApi, slug) -> { exists: true | false | null, result }. `exists` null = could not tell.
+// Deliberately stricter than claim-store.js's readClaimsBranch: that one counts any
+// failure-free, non-404 answer as "there", while this one also reads a failure-free answer
+// that carries a status (a 409, a 422) as could-not-tell, because here "there" licenses
+// reading a missing file as absent.
 function readStateBranch(ghApi, slug) {
   const result = ghApi([`repos/${slug}/branches/${RELEASE_STATE_BRANCH}`, '-q', '.name']);
   if (result.status === 404) return { exists: false, result };
@@ -179,7 +182,7 @@ function readStateContentsApi(ghApi, slug, name) {
     parsed = null;
   }
   if (!parsed || typeof parsed.content !== 'string' || typeof parsed.sha !== 'string' || !parsed.sha) {
-    return { state: 'unreadable', failure: 'network-failure', reason: 'the contents API answer was not a {content, sha} object' };
+    return { state: 'unreadable', failure: 'malformed-answer', reason: 'the contents API answer was not a {content, sha} object' };
   }
   return classifyStateContent(parsed.content, { lease: parsed.sha, via: 'contents-api' });
 }
@@ -203,19 +206,10 @@ function readStateFile(deps, slug, name) {
 
 // ---- branch bootstrap ----
 
-// The one transient-vs-refusal rule for the contents-API leg (claim-store.js's
-// TRANSIENT_BOOTSTRAP_FAILURES): a network failure or a secondary rate limit may clear
-// on a later run; every other answer is one a retry will not change.
-const TRANSIENT_BOOTSTRAP_FAILURES = new Set(['network-failure', 'secondary-rate-limit']);
-
-function apiRefusal(r) {
-  return {
-    ok: false,
-    reason: refusalText(r.error) || r.failure || `HTTP ${r.status}`,
-    ...(TRANSIENT_BOOTSTRAP_FAILURES.has(r.failure) ? { transient: true, failure: r.failure } : {}),
-  };
-}
-
+// The contents-API leg is claim-store.js's `createBranchContentsApi`, shared with the
+// claims bootstrap (the transient-vs-refusal rule lives there). The git leg below is
+// this store's own: it differs by `--no-verify`.
+//
 // Mirrors claims-git-cas.js's bootstrapClaimsBranchGit: creates the branch at the remote
 // HEAD's tip, never an orphan commit. The push is create-only (an empty
 // `--force-with-lease=ref:` expectation means the ref must not exist) so a concurrent
@@ -243,45 +237,13 @@ function bootstrapBranchGit(runner) {
   }
 }
 
-// Mirrors claim-store.js's createClaimsBranchContentsApi: `POST git/refs` at the default
-// branch's tip. A 422 is ambiguous (the branch exists, or a ruleset forbids creating
-// it), so only a re-read of the branch settles it.
-function createBranchContentsApi(ghApi, slug) {
-  const branchRead = ghApi([`repos/${slug}`, '-q', '.default_branch']);
-  if (branchRead.failure || branchRead.status) return apiRefusal(branchRead);
-  const defaultBranch = String(branchRead.stdout || '').trim();
-  if (!defaultBranch) return { ok: false, reason: 'the repository reported no default branch' };
-  const encoded = defaultBranch.split('/').map(encodeURIComponent).join('/');
-  const tipRead = ghApi([`repos/${slug}/git/ref/heads/${encoded}`, '-q', '.object.sha']);
-  if (tipRead.failure || tipRead.status) return apiRefusal(tipRead);
-  const tipSha = String(tipRead.stdout || '').trim();
-  if (!tipSha) return { ok: false, reason: `the default branch ${defaultBranch} reported no tip sha` };
-  const r = ghApi([
-    '--method', 'POST', `repos/${slug}/git/refs`,
-    '-f', `ref=refs/heads/${RELEASE_STATE_BRANCH}`,
-    '-f', `sha=${tipSha}`,
-  ]);
-  if (r.failure === null && r.status === null) return { ok: true, created: true };
-  if (r.status === 422) {
-    // Only a clean re-read proves the lost race; `exists` would count any failure-free
-    // non-404 answer as "there".
-    const { result } = readStateBranch(ghApi, slug);
-    if (result.failure === null && result.status === null) return { ok: true, created: false };
-    const postRefusal = apiRefusal(r);
-    if (result.status === 404) return postRefusal;
-    const reread = apiRefusal(result);
-    return { ...reread, reason: `${postRefusal.reason}; branch re-read: ${reread.reason}` };
-  }
-  return apiRefusal(r);
-}
-
 // (deps: {ghApi, gitRunner?}, slug)
 // -> { ok: true, created, via: 'git' | 'contents-api' }
 //  | { ok: false, reason }
 //  | { ok: false, reason, transient: true, failure: 'network-failure' | 'secondary-rate-limit' }
-// Mirrors claim-store.js's ensureClaimsBranch: a git push first when a `gitRunner` is
-// supplied, the contents API when git cannot. A refusal is never retried; `reason`
-// carries each leg's own text.
+// Same shape as claim-store.js's ensureClaimsBranch (a git push first when a `gitRunner`
+// is supplied, the contents API when git cannot), over the shared contents-API helper.
+// A refusal is never retried; `reason` carries each leg's own text.
 function ensureReleaseStateBranch(deps, slug) {
   assertSlug(slug);
   const reasons = [];
@@ -290,7 +252,7 @@ function ensureReleaseStateBranch(deps, slug) {
     if (g.ok) return { ok: true, created: g.created, via: 'git' };
     reasons.push(`git: ${g.reason}`);
   }
-  const a = createBranchContentsApi(deps.ghApi, slug);
+  const a = createBranchContentsApi(deps.ghApi, slug, RELEASE_STATE_BRANCH);
   if (a.ok) return { ok: true, created: a.created, via: 'contents-api' };
   reasons.push(`contents-api: ${a.reason}`);
   return { ok: false, reason: reasons.join('; '), ...(a.transient ? { transient: true, failure: a.failure } : {}) };

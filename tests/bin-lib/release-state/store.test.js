@@ -139,6 +139,19 @@ test('AC5.1: a branch read or repo read that fails is unreadable with that failu
   assert.equal(b.failure, 'permission-denied');
 });
 
+test('AC5.1: a branch read answering a status with no failure is unreadable, never absent', () => {
+  for (const status of [409, 422]) {
+    const gh = fakeGh({
+      [CONTENTS_PATH]: notFound(),
+      [BRANCH_PATH]: { stdout: null, failure: null, status, error: `HTTP ${status}` },
+    });
+    const r = readStateFile({ ghApi: gh.ghApi }, 'o/r', FILE);
+    assert.equal(r.state, 'unreadable', String(status));
+    assert.equal(r.failure, `http-${status}`);
+    assert.equal(gh.calls.length, 2, 'no repo read follows');
+  }
+});
+
 test('AC5.1: auth, 5xx, rate limit and gh-absent are unreadable', () => {
   const cases = [
     failed('permission-denied', 403), failed('network-failure'), failed('secondary-rate-limit', 403), failed('gh-absent'),
@@ -157,6 +170,7 @@ test('AC5.1: a contents answer that is not a {content, sha} object is unreadable
     const gh = fakeGh({ [CONTENTS_PATH]: ok(stdout) });
     const r = readStateFile({ ghApi: gh.ghApi }, 'o/r', FILE);
     assert.equal(r.state, 'unreadable', stdout);
+    assert.equal(r.failure, 'malformed-answer', stdout);
   }
 });
 
@@ -259,7 +273,7 @@ test('store: argv', () => {
   const fetch = calls.find((args) => args[0] === 'fetch');
   assert.equal(fetch.length, 4);
   assert.deepEqual(fetch.slice(0, 3), ['fetch', '-q', 'origin']);
-  assert.match(fetch[3], /^release-state:refs\/release-state-cas\/\d+-\d+-[a-z0-9]*$/);
+  assert.match(fetch[3], /^refs\/heads\/release-state:refs\/release-state-cas\/\d+-\d+-[a-z0-9]*$/);
   const scratch = fetch[3].split(':')[1];
   assert.deepEqual(calls.find((args) => args[0] === 'rev-parse'), ['rev-parse', scratch]);
   assert.deepEqual(calls.find((args) => args[0] === 'show'), ['show', `${tip}:${FILE}`]);
