@@ -33,10 +33,10 @@ release-block.js stamp --record <n> --finding "<category> at <file:line>|general
 | `stamp` | Meaning |
 |---|---|
 | 0 | stamped or already stamped — `{"record":N,"outcome":"stamped"\|"already-stamped"}` |
-| 2 | usage error, no such record, or a PR number |
+| 2 | usage error, an unresolvable or refused repo, no such record, or a PR number |
 | 3 | write failure or unreadable state; the label is added before the comment, so a comment failure leaves the label |
 
-`--finding` is `<category> at <file:line>` or `<category> at general`, on one line. The location is the text after the last ` at `: `general`, or ending `:{line}` (digits). The category is non-blank with no trailing whitespace. The CLI rejects anything else (`isValidFinding`); the MCP `stamp` path applies the same rule before any write.
+`--finding` is `<category> at <file:line>` or `<category> at general`, on one line. The location is the text after the last ` at `: `general`, or a file part that starts with a non-whitespace character, followed by `:` and one or more digits (the file part may contain spaces and colons). The category is non-blank with no trailing whitespace. The CLI rejects anything else (`isValidFinding`); the MCP `stamp` path applies the same rule before any write.
 
 ### Stamp comment
 

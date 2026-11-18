@@ -132,7 +132,7 @@ function assertExitTables(cli) {
     assert.ok(check.includes(row), `check table: missing row ${row.slice(0, 3)}`);
   }
   const stamp = tableSlice(cli, '| `stamp` |');
-  for (const row of ['| 0 | stamped or already stamped', '| 2 | usage error, no such record, or a PR number', '| 3 | write failure']) {
+  for (const row of ['| 0 | stamped or already stamped', '| 2 | usage error, an unresolvable or refused repo, no such record, or a PR number', '| 3 | write failure']) {
     assert.ok(stamp.includes(row), `stamp table: missing row ${row.slice(0, 3)}`);
   }
 }
@@ -146,12 +146,30 @@ test('contract: exit codes', () => {
   const noCheck2 = cli.split('\n').filter((l) => !l.startsWith('| 2 | usage error, or')).join('\n');
   assert.notStrictEqual(noCheck2, cli);
   assert.throws(() => assertExitTables(noCheck2), { message: /check table: missing row \| 2/ });
-  const gutted = cli.replace('| 2 | usage error, no such record, or a PR number', '| 2 | usage error');
+  const gutted = cli.replace('| 2 | usage error, an unresolvable or refused repo, no such record, or a PR number', '| 2 | usage error');
   assert.notStrictEqual(gutted, cli);
   assert.throws(() => assertExitTables(gutted), { message: /stamp table: missing row \| 2/ });
   assert.ok(cli.includes('{"blocked":true,"records":[{"number":N,"title":"…","url":"…"}]}'), 'exit-1 JSON shape');
   assert.match(cli, /fills `--limit 100`/);
   assert.match(cli, /missing label reads as none/);
+});
+
+function assertFindingGrammar(src) {
+  const cli = section(src, '## The CLI');
+  assert.match(cli, /file part that starts with a non-whitespace character, followed by `:` and one or more digits/, 'location rule');
+  assert.match(cli, /file part may contain spaces and colons/, 'location rule: spaces and colons');
+}
+
+test('contract: finding grammar matches isValidFinding', () => {
+  assertFindingGrammar(text);
+  const loose = text.replace('starts with a non-whitespace character', 'ends');
+  assert.notStrictEqual(loose, text);
+  assert.throws(() => assertFindingGrammar(loose), { message: /location rule/ });
+  // The doc's rule agrees with the CLI on the two cases the review named.
+  const { isValidFinding } = require('../plugin/bin/release-block');
+  assert.strictEqual(isValidFinding('x at  a:5'), false);
+  assert.strictEqual(isValidFinding('x at :5'), false);
+  assert.strictEqual(isValidFinding('x at C:/a b.js:5'), true);
 });
 
 test('contract: stamp comment twin', () => {
