@@ -4,7 +4,7 @@
 
 **Goal:** Releases stop while any open record carries the `release-block` label, naming each blocking record; `plugin/bin/release-block.js` reads (`check`) and sets (`stamp`) that state, and `/claude-tweaks:release` enforces it before any review or suite work.
 
-**Architecture:** One gh CLI (`check`, `stamp`) on the injectable-runner seam, with a gh-free `--records-json` input for the MCP path. One new contract, `_shared/release-block.md`, holds the semantics, the release-gate procedure and the MCP equivalents. The release skill gains a Step 1.5 that runs `check` and routes on its exit code only, a Step 4 re-read rendered as a console row, and a Step 8 disposition stamp for every critical/high finding it files.
+**Architecture:** One gh CLI (`check`, `stamp`) on the injectable-runner seam, with a gh-free `--records-json` input for the MCP path. One new contract, `_shared/release-block.md`, holds the semantics, the release-gate procedure and the MCP equivalents. The release skill gains a Step 1.5 that runs `check` and routes on its exit code only, a Step 4 re-read rendered as a console row, and a Step 8 disposition stamp for every critical/high finding it files or declines as covered by an open record (stamping the covering record). All three are keyed on the forge (a GitHub origin), never on `work-backend` (spec `## Plan Review Clarifications`).
 
 **Tech Stack:** Node 20+ CommonJS, `node:test`, `gh` CLI, markdown skill prose.
 
@@ -48,7 +48,7 @@
 ## Review Focus
 
 1. **A PR number passed to `stamp --record`.** `gh issue view` resolves PR numbers (probed: #5894 → `/pull/` url). Expected: exit 2, and nothing labelled. The test lives in Task 2.
-2. **A `work-backend: local-files` project with no forge.** `check` cannot reach gh there, and treating that as exit 3 would stop every release forever, which breaks AC3.1. Expected: Step 1.5 skips with a logged `SKIP` line. The prose test lives in Task 4.
+2. **A project with no forge (no GitHub origin).** `check` has no repo to read there, and treating that as exit 2 or 3 would stop every release forever, which breaks AC3.1. Expected: Step 1.5 skips with a logged `SKIP` line, keyed on the forge per the spec's Plan Review Clarifications, never on `work-backend`. "Has a GitHub origin" is `_shared/forge-detection.md` check 1, `git -C "$RUN_ROOT" remote get-url origin` exits 0, the probe `release/execute.md`'s local-merge Tag bullet already keys on. A GitHub-hosted project with no `## Work records` flag (so `local-files`) still runs `check`. An origin whose host `release-block.js`'s own `gateOriginRepo` (`plugin/bin/lib/repo-resolve.js`) refuses exits 2 and stops `failed`, with the gate's `export GH_HOST=…` text: fail-closed, never a silent skip. The prose tests live in Tasks 3 and 4.
 3. **A block stamped while Step 3's long review runs.** Release runs take 1.5–6 h, and #5885's rolling review can stamp during one. Expected: Step 4 re-reads `check` and holds the release before Step 5. The prose test lives in Task 5.
 4. **`gh label list --search` is fuzzy** (probed above). Expected: a near-name match never counts as "label exists", so the label is created exactly when the exact name is absent. The test lives in Task 2.
 5. **The MCP path spells state lowercase** (`open`/`closed`, per `_shared/github-write-transport.md`'s `issue_read` row). Expected: `--records-json` normalizes case, so a `closed` row never blocks and an `open` row does. The test lives in Task 1.
@@ -227,12 +227,13 @@ Expected: PASS, 0 failures.
 ### Task 3: The `_shared/release-block.md` contract and its doc rows
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Create: `plugin/skills/_shared/release-block.md`
 - Create: `tests/release-block-prose-conformance.test.js`
 - Modify: `docs/plugin-structure.md` (in the CLI listing, add one `node plugin/bin/release-block.js …   # …` line directly above `node plugin/bin/release-bootstrap.js`, in the same one-line format as its neighbours)
-- Modify: `docs/skill-graph.md` (add two rows to the `## release` table: `| \`bin/release-block.js\` | Step 1.5's check and Step 4's re-read; Step 8's disposition stamps each critical/high finding it files (#5882). Its exit codes are the gate's verdict, never its prose. |` and `| \`_shared/release-block.md\` | The release-block contract: what sets and clears a block, what Step 1.5 and Step 4 do while one is open, and the gh-absent (MCP) equivalents of \`check\` and \`stamp\`. |`)
+- Modify: `docs/skill-graph.md` (add two rows to the `## release` table: `| \`bin/release-block.js\` | Step 1.5's check and Step 4's re-read; Step 8's disposition stamps each critical/high finding it files, and the covering record of one it declines as covered (#5882). Its exit codes are the gate's verdict, never its prose. |` and `| \`_shared/release-block.md\` | The release-block contract: what sets and clears a block, what Step 1.5 and Step 4 do while one is open, and the gh-absent (MCP) equivalents of \`check\` and \`stamp\`. |`)
 
 **Interfaces:**
 - Consumes: Task 2's `stampCommentBody`, `LABEL` and `EXIT`.
@@ -249,7 +250,10 @@ Expected: PASS, 0 failures.
   - `contract: every section heading is present, in order`. Factor this into `assertContractSections(text)`. Go-red: run the same function on a copy with `## How a block clears` deleted, and expect it to throw.
   - `contract: sets and clears`.
     - The text names three setters: a critical or high finding that the rolling review or a release's delta review files as a record, Step 8's disposition, and a human.
+    - It says Step 8 also stamps the covering record of a critical or high finding declined as `declined (covered by #{n})`.
     - It names the clearing acts, `close the record` and `remove the label`, and says no reason is required.
+  - `contract: forge-keyed skip` (Review Focus 2). The release section's `SKIP` log line contains `condition: no GitHub origin (_shared/forge-detection.md check 1)`, and the whole file contains no `condition: work-backend`. Go-red: the same helper must reject a frozen copy of the superseded line, `SKIP … — Step 1.5 release-block check (skipped): condition: work-backend local-files → fallback: no forge label to read; release proceeds. Reversibility: n/a.`
+  - `contract: gh detected before the bash check`. The release section names `command -v gh` before `release-block.js" check`, and states the gh-absent branch goes to `## gh-absent (MCP) path` with no new exit code (an unavailable transport is exit 3).
   - `contract: exit codes`. The `## The CLI` section states `check` 0/1/2/3 and `stamp` 0/2/3 as table rows, and quotes the exit-1 JSON shape verbatim.
   - `contract: stamp comment twin`.
     - Take the fenced `text` block under `### Stamp comment` and replace `{finding}` with `X at general`. The result must equal `stampCommentBody('X at general')` with its trailing newline trimmed.
@@ -266,9 +270,9 @@ Run: `node tools/run-tests.js tests/release-block-prose-conformance.test.js`
 Expected: FAIL with `ENOENT … release-block.md`.
 
 - [ ] **Step 3: Write `plugin/skills/_shared/release-block.md`** (at most 10,000 B), with the headings above in that order.
-  - **Opening paragraph:** what the signal is, and that it applies under `work-backend: github-issues`.
-    - Under `local-files` there is no forge label to read, and the release logs a skip.
-  - **What sets a block:** the three setters from the Step 1 test.
+  - **Opening paragraph:** what the signal is, and that it is keyed on the forge, never on `work-backend`: it applies whenever the repository has a GitHub origin (`_shared/forge-detection.md` check 1, `git -C "$RUN_ROOT" remote get-url origin` exits 0), including a GitHub-hosted project with no `## Work records` flag.
+    - With no GitHub origin there is no forge label to read, and the release logs a skip.
+  - **What sets a block:** the three setters from the Step 1 test, plus Step 8's stamp on the covering record of a critical/high `declined (covered by #{n})` row.
     - #5885 (the rolling review) and #5887 (the promotion gate) will call `stamp` and `check`.
   - **How a block clears:** close the record or remove the label.
     - This is the durable form of the old interactive "Proceed".
@@ -280,7 +284,8 @@ Expected: FAIL with `ENOENT … release-block.md`.
     - The truncation rule: a list that fills `--limit 100` is exit 3.
     - The fact that a missing label reads as none.
     - Under `### Stamp comment`, the fixed body from Task 2 in a ```` ```text ```` fence.
-  - **What a release does while a block is open:** this section is the full Step 1.5 procedure that SKILL.md points to.
+  - **What a release does while a block is open:** this section is the full Step 1.5 procedure that SKILL.md points to. It holds the routing paragraph moved out of SKILL.md under Global Constraints' remedy, so SKILL.md keeps only the order, the command and a compact exit map.
+    - Order, for Step 1.5 and Step 4's re-read alike: (1) the forge check — no GitHub origin → the `SKIP` line below, release proceeds; (2) detect `gh` with `command -v gh` per `_shared/github-write-transport.md`'s Detection; (3) gh present → the bash `release-block.js" check` fence; gh absent → `## gh-absent (MCP) path`'s `check`, never the fence. No new exit code: an unavailable MCP transport is exit 3.
     - Exit 0 → continue.
     - Exit 1 → stop before any review or suite work and print this line:
       `release: blocked — {n} open release-block record(s): #{N} {title}[; #{M} {title}]. Close each record or remove its release-block label, then re-run.`
@@ -290,7 +295,7 @@ Expected: FAIL with `ENOENT … release-block.md`.
       `AUTO … — Step 1.5: release-block check: none open. Reversibility: n/a (read-only).`
       `STAGED … — Step 1.5: HARD-GATE release-block — {n} open record(s) {#a, #b}; release held. Stage path: staged/release-held.md. Reversibility: high.`
       `AUTO … — Step 1.5: release-block state unreadable — exit {code}: {stderr line}. Stopped before Step 2. Reversibility: n/a.`
-      `SKIP … — Step 1.5 release-block check (skipped): condition: work-backend local-files → fallback: no forge label to read; release proceeds. Reversibility: n/a.`
+      `SKIP … — Step 1.5 release-block check (skipped): condition: no GitHub origin (_shared/forge-detection.md check 1) → fallback: no forge label to read; release proceeds. Reversibility: n/a.`
     - The same routing applies to Step 4's re-read (`release/console.md`), whose log lines say `Step 4`.
     - No autonomy ceiling clears a block, and each firing re-runs `check`.
   - **gh-absent (MCP) path:**
@@ -342,7 +347,7 @@ Expected: PASS, 0 failures, and `wc -c plugin/skills/_shared/release-block.md` �
 - Modify: `plugin/skills/release/bookkeeping.md` (line 15's **Never reached under `HELD`** list gains Step 1.5's release-block stop)
 - Modify: `plugin/skills/release/execute.md` (the closing paragraph `` `HELD` is only ever a **pre-merge** word here `` changes "alongside the Step 4 HARD-GATEs that fire before this file runs at all" to "alongside Step 1.5's release-block stop and the Step 4 HARD-GATEs, which fire before this file runs at all")
 - Modify: `docs/journeys/release-a-version.md` (the **Should understand** `HELD` gloss gains "at Step 1.5's release-block check")
-- Modify: `plugin/bin/lib/console/resolve.js` (line 150's `STAGING_EXEMPTIONS` reason changes "surfaced by release's own Step 4 console (release/console.md)" to "surfaced by release's own Step 8 summary (release/SKILL.md)", because a Step 1.5 hold never renders the console)
+- Modify: `plugin/bin/lib/console/resolve.js` (line 150's `STAGING_EXEMPTIONS` reason changes "surfaced by release's own Step 4 console (release/console.md)" to "surfaced by release's own Step 8 summary (release/SKILL.md; a Step 1.5 hold never renders the Step 4 console)", so the full string reads `"/claude-tweaks:release's standalone run dir; surfaced by release's own Step 8 summary (release/SKILL.md; a Step 1.5 hold never renders the Step 4 console), never by wrap-up's console-resolve.js"`. No test pins the old text (`git grep` finds it only in `resolve.js`).)
 - Modify: `tests/release-block-prose-conformance.test.js`
 
 **Interfaces:**
@@ -359,7 +364,8 @@ Expected: PASS, 0 failures, and `wc -c plugin/skills/_shared/release-block.md` �
     - `never on the prose`
     - `_shared/release-block.md`
   - `AC4.2: an unreadable state stops the release and never proceeds`. The Step 1.5 body contains `release-block state unreadable` and `failed`.
-  - `AC3.1: work-backend local-files skips with a logged reason` (Review Focus 2). The Step 1.5 body names `local-files` and `SKIP`.
+  - `AC3.1: no GitHub origin skips with a logged reason, keyed on the forge` (Review Focus 2). The Step 1.5 body contains `remote get-url origin`, `_shared/forge-detection.md` check 1, `no GitHub origin` and `SKIP`, and contains neither `local-files` nor `` Read `work-backend` ``. Go-red: the same helper rejects a frozen excerpt reading ``Read `work-backend` as `console.md`'s Inputs does. `local-files` → log the `SKIP` line``.
+  - `Step 1.5 detects gh before the bash check` (no new exit code). Factor `assertGhFirst(body)`: the indexes of `remote get-url origin`, `command -v gh`, and the fence line `` node "${CLAUDE_PLUGIN_ROOT}/bin/release-block.js" check `` strictly increase, and the text after the fence names `gh-absent (MCP)` and `never the fence`. Go-red: the same function throws on a copy where the `command -v gh` sentence is moved after the fence.
   - `AC2.1: --train holds on a block with release-held.md`.
     - The `## --train semantics` section and the `--train` Input row each name `release-block`.
     - The `HELD` outcome bullet in Step 8 names `Step 1.5`.
@@ -379,18 +385,13 @@ Expected: PASS, 0 failures, and `wc -c plugin/skills/_shared/release-block.md` �
 Run: `node tools/run-tests.js tests/release-block-prose-conformance.test.js tests/control-mode-hard-gates-conformance.test.js`
 Expected: FAIL. The Task 4 tests and the new `GATES` entry fail; the Task 3 tests still pass.
 
-- [ ] **Step 3: Write `## Step 1.5: Release-block check`** in `plugin/skills/release/SKILL.md`. The section has about 1,100 B and contains:
+- [ ] **Step 3: Write `## Step 1.5: Release-block check`** in `plugin/skills/release/SKILL.md`. The forge check and gh detection add ~250 B, so Global Constraints' remedy is applied up front: the full routing paragraph (record naming, no question, `--allow-blocking`, log lines, `release-held.md`) lives in `_shared/release-block.md` (Task 3), and SKILL.md keeps the order, the command and a compact exit map. A draft of this shape measured 1,098 B. The section contains, in this order:
   1. One sentence saying the check runs before any review or suite work, on every path: interactive, `auto`, headless, `--train` and `--dry-run`. It runs directly after the read-only fact pack, so it precedes Step 3's tree check, `/claude-tweaks:test full` and `/claude-tweaks:review`. It also precedes any early-verify step a later change inserts after Step 1.
-  2. Read `work-backend` as `console.md`'s Inputs does. `local-files` → log the `SKIP` line and go on to Step 2.
-  3. A bash fence holding exactly `node "${CLAUDE_PLUGIN_ROOT}/bin/release-block.js" check`.
-  4. One routing paragraph: route on the exit code, never on the prose.
-     - **0** → Step 2, unchanged.
-     - **1** → stop, naming every record by `#N` and title, with outcome `HELD` in every mode. No question is asked, and `--allow-blocking` does not lift it.
-     - **2** or **3** → stop, reporting `release-block state unreadable`, with outcome `failed`.
-     - When `gh` is absent, take the MCP path.
-     - On any exit but 0, read `_shared/release-block.md`'s "What a release does while a block is open" section now.
+  2. The forge rule, never `work-backend`: when `git -C "$RUN_ROOT" remote get-url origin` fails (`_shared/forge-detection.md` check 1: no GitHub origin), log the `SKIP` line and go on to Step 2. This stays prose, not a fence, as in `release/execute.md`'s local-merge Tag bullet, so `tests/skill-fence-guard-shapes.test.js` needs no new ratchet.
+  3. Detect `gh` first: `command -v gh` per `_shared/github-write-transport.md`'s Detection. Present → a bash fence holding exactly `node "${CLAUDE_PLUGIN_ROOT}/bin/release-block.js" check`. Absent → `_shared/release-block.md`'s gh-absent (MCP) `check`, never the fence. No new exit code: an unavailable transport is exit 3.
+  4. A compact exit map: route on the exit code, never on the prose. **0** → Step 2, unchanged; **1** → stop `HELD`; **2** or **3** → stop `failed`, `release-block state unreadable`. On any exit but 0, read `_shared/release-block.md`'s "What a release does while a block is open" section now.
 
-  Then make the four small SKILL.md edits named in Files. Keep the whole SKILL.md growth to +1,700 B or less, and measure it with `wc -c plugin/skills/release/SKILL.md`, which must be ≤ 51925. Over that, apply the remedy in Global Constraints.
+  Then make the four small SKILL.md edits named in Files. Keep the whole SKILL.md growth to +1,700 B or less, and measure it with `wc -c plugin/skills/release/SKILL.md`, which must be ≤ 51925. Over that, shorten Step 1.5's sentence 1 (never another step's content).
 
 - [ ] **Step 4: Make the remaining edits** named in Files: `auto-mode-contract.md`, the `GATES` entry, `autonomy-ceiling.md`, `routine-template.yml`, `bookkeeping.md`, `execute.md`, the journey, and `resolve.js`'s reason string.
 
@@ -414,11 +415,12 @@ Expected: PASS, 0 failures, and `wc -c plugin/skills/release/SKILL.md` ≤ 51925
 ### Task 5: Step 4's release-block row and re-read, and Step 8's disposition stamp
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/release/console.md`
-  - `## Inputs` gains a bullet: re-run `release-block.js check` here, just before rendering, under the same `work-backend` rule.
-  - `## The table` gains a `| Release block |` row after `| Review |`. Its value is `none`, or `blocked — #N {title}` (one line per record), or `unreadable — {first stderr line}`, or `n/a (work-backend local-files)`.
+  - `## Inputs` gains a bullet: re-run `release-block.js check` here, just before rendering, in Step 1.5's order (`_shared/release-block.md`): the forge check first (no GitHub origin → `n/a`), then `command -v gh`, then the bash `release-block.js" check` only with gh present, otherwise the MCP `check`. It is keyed on the forge, never on the `work-backend` bullet beside it.
+  - `## The table` gains a `| Release block |` row after `| Review |`. Its value is `none`, or `blocked — #N {title}` (one line per record), or `unreadable — {first stderr line}`, or `n/a (no GitHub origin)`.
   - `## Gates` gains one paragraph after the two numbered gates, **The release block, re-read.** Exit 1 holds the release before Step 5 exactly as Step 1.5 does (`_shared/release-block.md`), with `HELD`, `release-held.md`, and no question in any mode. Exit 2 or 3 stops it `failed`, with reason `release-block state unreadable`.
   - The **`HELD` is mode-independent** paragraph's list of other `HELD` reasons gains SKILL.md Step 1.5's release-block stop.
   - The first `## Log lines` line gains `, release-block {none|n open|unreadable}`.
@@ -433,14 +435,16 @@ Expected: PASS, 0 failures, and `wc -c plugin/skills/release/SKILL.md` ≤ 51925
 
 - [ ] **Step 1: Write the failing prose tests** (append them, using the same frozen pre-change pattern).
   - `AC8.1: Step 4's console renders the release-block state`.
-    - `console.md`'s table has a row line starting `| Release block |`, with all four values named.
+    - `console.md`'s table has a row line starting `| Release block |`, with all four values named, the fourth being `n/a (no GitHub origin)`; the row contains no `local-files`.
     - Its index sits after `| Review |` and before `| CI on tip |`.
-    - Go-red: run the same helper on a copy with the row removed.
+    - Go-red: run the same helper on a copy with the row removed, and on a frozen copy whose fourth value is `n/a (work-backend local-files)`.
   - `Step 4 re-reads the block before Step 5` (Review Focus 3).
     - `console.md`'s `## Inputs` names `` release-block.js" check ``.
     - Its `## Gates` contains `The release block, re-read`, `HELD`, `release-block state unreadable`, and `no question`.
+  - `Step 4's re-read detects gh before the bash check`. In the `## Inputs` release-block bullet, the indexes of `no GitHub origin`, `command -v gh` and `` release-block.js" check `` strictly increase, and the bullet names the MCP `check` for the gh-absent case. Go-red: a copy with `command -v gh` moved last throws in the same helper.
   - `AC5.1: Step 8 stamps a filed critical or high finding`. `disposition.md` contains `` release-block.js" stamp --record ``, `critical`, `high`, `{category} at {file:line}`, and `at general`.
-  - `AC5.2: medium and low findings are not stamped`. The stamp paragraph contains `Medium and low findings are never stamped`.
+  - `AC5.1: Step 8 stamps the covering record of a critical or high finding declined as covered` (Plan Review Clarifications). The stamp paragraph contains `` `declined (covered by #{n})` `` and `the covering record`, and contains neither `Neither is a` nor `because nothing was filed`. Go-red: the same helper rejects the frozen superseded sentence ``Medium and low findings are never stamped. Neither is a `declined (covered by #{n})` row, because nothing was filed.``
+  - `AC5.2: medium and low findings are not stamped`. The stamp paragraph contains `Medium and low findings are never stamped`, including when declined as covered.
   - `stamp failure counts as a disposition failure`. The stamp paragraph names the `FAILED` line shape `stamp failed:` and says it counts toward `{k} failed`.
   - `Inventory names the Step 1.5 early exit`. `disposition.md`'s Inventory contains `a Step 1.5 release-block stop`.
 
@@ -453,11 +457,13 @@ Expected: FAIL. The Task 5 tests fail; the earlier tests pass.
     - `{category}` and `{file:line}` come from the finding's own Step 3 Routing line (`… finding {category} at {file:line}`), or from its staged file's `Finding:` line.
     - When neither names a `file:line`, use `{category} at general`.
     - This covers a `confirmed`, `unconfirmed`, `contested` or `decisions.md`-only row at critical/high, and a `proposal` file whose own severity is critical/high.
-  - Medium and low findings are never stamped. Neither is a `declined (covered by #{n})` row, because nothing was filed.
-  - Exit 0 → append ` (release-block stamped)` to that row's `filed #{n}` log line.
+  - A critical or high row resolved `declined (covered by #{n})` stamps the covering record: the same command with `--record {n}` (the covering record's number) and the same `--finding`, so its comment names this finding. A covering record that already carries the label is `already-stamped`, a no-op with no second comment.
+  - Medium and low findings are never stamped, including when declined as covered.
+  - The stamp follows Step 1.5's forge rule: with no GitHub origin (`_shared/forge-detection.md` check 1) nothing is stamped, never keyed on `work-backend`.
+  - Exit 0 → append ` (release-block stamped)` to that row's `filed #{n}` or `declined (covered by #{n})` log line.
   - Exit 2 or 3 → write the hand-composed line `FAILED {HH:MM:SS} — Step 8 disposition: {staged path} — stamp failed: exit {code}: {stderr line}. Reversibility: n/a (write did not land).`
     - It counts toward `{k} failed`, so the summary names it and archival is skipped.
-    - The record stays filed.
+    - The filed record stays filed; a covered row stays declined.
   - The gh-absent path is `_shared/release-block.md`'s MCP stamp.
   - It runs in the same approval case that filed the row, so an `unattended` run stamps with zero clicks. A headless run below `unattended` files nothing and therefore stamps nothing.
 
@@ -489,11 +495,13 @@ Expected: 0 failing files. A file whose failure count varies run to run is re-ru
 | Deliverable 5, the disposition stamp | Task 5 |
 | AC1.1, AC1.2 | Task 1 (exit 1 JSON), Task 4 (order and stop) |
 | AC2.1 | Task 3 (the `release-held.md` content), Task 4 (`--train`) |
-| AC3.1 | Task 1 (exit 0), Task 4 (Step 2 unchanged; local-files skip) |
+| AC3.1 | Task 1 (exit 0), Task 3 (forge-keyed `SKIP` line), Task 4 (Step 2 unchanged; no-GitHub-origin skip) |
 | AC4.1, AC4.2, AC4.3, AC4.4 | Task 1 (exit 3 cases), Task 4 (the release stops) |
 | AC5.1, AC5.2 | Task 2 (stamp effect), Task 5 (disposition) |
 | AC6.1 | Task 1 |
 | AC7.1 | Task 1 |
 | AC8.1 | Task 5 |
 | Key File `plugin/skills/release/SKILL.md` (run `check` before Step 3) | Task 4 |
+| Plan Review Clarification 1: `check`, the Step 4 re-read and the Step 8 stamp keyed on the forge (a GitHub origin), never on `work-backend` | Task 3 (contract opening, order, `SKIP` line), Task 4 (Step 1.5), Task 5 (console Inputs and row, stamp rule) |
+| Plan Review Clarification 2: a critical/high `declined (covered by #{n})` row stamps the covering record; medium/low never | Task 3 (setters), Task 5 (stamp paragraph and tests) |
 | Gotchas: a stable exit contract, exit 3 kept distinct from 0, the label removal clearing a block, a manual tag not stopped, no reason needed to clear | Tasks 1–3 |
