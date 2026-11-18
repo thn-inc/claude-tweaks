@@ -2,8 +2,8 @@
 // The branch store behind /release's "reviewed through" marker (#5883): one small
 // JSON file per name on the `release-state` branch, read over a git leg first
 // (fetch the branch tip into a scratch ref, `git show` the file at it) and over
-// the contents API when git cannot answer. This task owns the reads and the
-// branch bootstrap; the writes join this file in the next task.
+// the contents API when git cannot answer. The same file owns the branch bootstrap and
+// the compare-and-set writes (`writeStateFile`, `createStateFile`).
 //
 // The module spawns nothing itself. Both runners are injected:
 //   `deps.ghApi(args)`            -> `{stdout, failure, status, error?}`, never throws
@@ -35,13 +35,18 @@
 // it is claim-store.js's `createBranchContentsApi`, shared with the claims bootstrap.
 'use strict';
 
-const { refusalText, createBranchContentsApi } = require('../issues/claim-store');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const {
+  refusalText, createBranchContentsApi, casBackoffMs, defaultSleep, isWellFormedClaimContent,
+} = require('../issues/claim-store');
 const { classifyGitError, errText } = require('../issues/claims-git-cas');
 
 const RELEASE_STATE_BRANCH = 'release-state';
 const STATE_FILE_RE = /^[a-z0-9][a-z0-9-]*\.json$/;
 // How many times a write re-leases and re-pushes after a rejection a fresh read proves
-// spurious (the next task's writes; claim-store.js's constant of the same name).
+// spurious (claim-store.js's constant of the same name).
 const MAX_CAS_ATTEMPTS = 3;
 
 const BARE_SLUG_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -258,6 +263,225 @@ function ensureReleaseStateBranch(deps, slug) {
   return { ok: false, reason: reasons.join('; '), ...(a.transient ? { transient: true, failure: a.failure } : {}) };
 }
 
+// ---- compare-and-set writes ----
+
+// One line, at most 200 chars, no `#`: the generated track-issue-fixes job's prefilter
+// fires on a `#` together with a closing keyword, so a message like `fix #12` would label
+// issue #12. Refused here, before any call, never sanitized.
+const MESSAGE_RE = /^[^\r\n#]{1,200}$/;
+
+// -> the refusal result, or null when both are acceptable. A caller bug surfaces as its
+// own failure, never as a contest or a transport problem.
+function refuseInvalid(content, message) {
+  if (!isWellFormedClaimContent(content)) {
+    return { ok: false, failure: 'invalid-content', reason: 'the state content is not a non-empty JSON object' };
+  }
+  if (typeof message !== 'string' || !MESSAGE_RE.test(message)) {
+    return { ok: false, failure: 'invalid-message', reason: 'the commit message must be one line of at most 200 characters with no "#"' };
+  }
+  return null;
+}
+
+// Builds a commit that sets `{name}` to `content` on top of `tip` and pushes it with
+// `tip` as the lease. -> { ok: true, commitSha } | { ok: false, contested: true }
+// | { ok: false, reason }. A scratch index keeps the build off the working tree's index.
+// Mirrors claims-git-cas.js's writeClaimBlobGit; if either changes, check the other.
+// Deliberate differences: the path is the file name, the push passes `--no-verify` (the
+// branch carries no code, so a consumer's pre-push suite must not run for it), a
+// rate-limit rejection is not told apart from any other non-contest failure (both fall
+// back to the contents API), and the index layers onto the runner's own repo-pinned env
+// through `extraEnv` rather than onto `process.env`.
+function writeStateGit(runner, name, content, message, tip) {
+  const scratchIndex = path.join(os.tmpdir(), `release-state-index-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const extraEnv = { GIT_INDEX_FILE: scratchIndex };
+  const target = `refs/heads/${RELEASE_STATE_BRANCH}`;
+  try {
+    const blob = runner(['hash-object', '-w', '--stdin'], { input: content, extraEnv }).trim();
+    runner(['read-tree', tip], { extraEnv });
+    runner(['update-index', '--add', '--cacheinfo', `100644,${blob},${name}`], { extraEnv });
+    const tree = runner(['write-tree'], { extraEnv }).trim();
+    const commit = runner(['commit-tree', tree, '-p', tip, '-m', message], { extraEnv }).trim();
+    runner(['push', '--no-verify', 'origin', `${commit}:${target}`, `--force-with-lease=${target}:${tip}`]);
+    return { ok: true, commitSha: commit };
+  } catch (err) {
+    if (classifyGitError(err).kind === 'contested') return { ok: false, contested: true };
+    return { ok: false, reason: errText(err) };
+  } finally {
+    try {
+      fs.rmSync(scratchIndex, { force: true });
+    } catch { /* best-effort cleanup, never masks the write's own outcome */ }
+  }
+}
+
+function putContents(ghApi, slug, name, content, message, lease) {
+  const args = [
+    '--method', 'PUT', `repos/${slug}/contents/${name}`,
+    '-f', `message=${message}`,
+    '-f', `content=${Buffer.from(content, 'utf8').toString('base64')}`,
+    '-f', `branch=${RELEASE_STATE_BRANCH}`,
+  ];
+  if (lease) args.push('-f', `sha=${lease}`);
+  return ghApi(args);
+}
+
+// A PUT that came back with no rejection status: ok, or the failure it carried.
+function putFailure(r) {
+  const failure = r.failure || (r.status ? `http-${r.status}` : 'network-failure');
+  return { ok: false, failure, reason: refusalText(r.error) || failure };
+}
+
+const REJECTED_PUT_STATUSES = new Set([404, 409, 422]);
+
+// A PUT answered 404, 409 or 422: could be a lost race, our own earlier write whose ack was
+// lost, a missing branch, or a refusal. Only a contents re-read tells them apart. `create`
+// is the no-prior-read write: a different content is `exists`, not a contest.
+// Mirrors the 4xx settle block of claim-store.js's writeClaimBlob; if either changes, check
+// the other. Deliberate difference: a re-read that cannot answer is that failure, never a
+// manufactured contest (claims keeps `conflict` for every failure but permission-denied).
+function settleRejectedPut(ghApi, slug, name, content, put, { create }) {
+  const fresh = readStateContentsApi(ghApi, slug, name);
+  if (fresh.state === 'unreadable' && typeof fresh.content !== 'string') {
+    return { ok: false, failure: fresh.failure, reason: fresh.reason };
+  }
+  if (fresh.state === 'absent') {
+    if (fresh.branchMissing) return { ok: false, branchMissing: true };
+    if (create) return { ok: false, failure: 'put-rejected', reason: refusalText(put.error) || `HTTP ${put.status}` };
+    return { ok: false, conflict: true };
+  }
+  if (fresh.content === content) return create ? { ok: true, created: true, via: 'contents-api' } : { ok: true, via: 'contents-api' };
+  return create ? { ok: false, exists: true } : { ok: false, conflict: true };
+}
+
+// The contents-API write with the lease it was given. A secondary rate limit and every
+// other non-rejection failure is that failure; a rejection is settled by a re-read.
+function writeContents(deps, slug, name, { content, message, lease }) {
+  const r = putContents(deps.ghApi, slug, name, content, message, lease);
+  if (r.status && REJECTED_PUT_STATUSES.has(r.status)) {
+    return settleRejectedPut(deps.ghApi, slug, name, content, r, { create: false });
+  }
+  if (r.failure || r.status) return putFailure(r);
+  return { ok: true, via: 'contents-api' };
+}
+
+// (deps: {ghApi, gitRunner?, sleep?}, slug, name, { content, lease, via, expectedContent, message })
+// -> { ok: true, via, commitSha? } | { ok: false, conflict: true } | { ok: false, branchMissing: true }
+//  | { ok: false, failure, reason }
+// The conditional update of a file a read saw present: `lease`/`via` are that read's, and
+// `expectedContent` is its `content`. Mirrors claim-store.js's writeClaimBlob (the C1 and I1
+// rules of its header comment); if either changes, check the other.
+//
+//   * `via: 'git'` (lease = the branch tip): the git leg first. The push is leased on the
+//     whole branch, so a rejection is ambiguous. A fresh git read settles it: this file
+//     changed (or went) = `conflict`, never retried; unchanged = unrelated branch activity,
+//     re-lease on the fresh tip and push again, up to MAX_CAS_ATTEMPTS with a backoff. A
+//     non-contest git failure (and the last spurious contest) falls to the contents API,
+//     with a FRESH contents read: a lease never crosses transports, so the tip is never a
+//     blob sha, and the write is never made blind (C1). Fresh content equal to ours is the
+//     self-write (an earlier push landed, its ack was lost); different from
+//     `expectedContent` is `conflict`, with no PUT.
+//   * `via: 'contents-api'` (lease = a blob sha): a PUT carrying that lease, nothing else.
+//   * With no `gitRunner` a git lease has no leg to run on, and takes the fresh-read path.
+//
+// Deliberate differences from writeClaimBlob: the file is the caller's, not a per-issue path;
+// the message is validated (see MESSAGE_RE); the lease is required; `branchMissing` and
+// `reason` are named in the result.
+function writeStateFile(deps, slug, name, {
+  content, lease, via, expectedContent, message,
+} = {}) {
+  assertSlug(slug);
+  assertName(name);
+  if (via !== 'git' && via !== 'contents-api') {
+    throw new TypeError(`release-state store: via must be 'git' or 'contents-api', got ${JSON.stringify(via)}`);
+  }
+  if (typeof lease !== 'string' || lease === '') throw new TypeError('release-state store: a conditional write needs the lease its read returned');
+  const refused = refuseInvalid(content, message);
+  if (refused) return refused;
+
+  let putLease = lease;
+  if (via === 'git') {
+    if (deps.gitRunner) {
+      let tip = lease;
+      for (let attempt = 1; attempt <= MAX_CAS_ATTEMPTS; attempt += 1) {
+        const g = writeStateGit(deps.gitRunner, name, content, message, tip);
+        if (g.ok) return { ok: true, via: 'git', commitSha: g.commitSha };
+        if (!g.contested) break; // a non-contest failure: the contents-API fallback below
+        const fresh = readStateGit(deps.gitRunner, name);
+        if (!fresh) return { ok: false, failure: 'transport-failure', reason: 'the push was rejected and git could not re-read the branch' };
+        if (fresh.state === 'absent' && fresh.branchMissing) return { ok: false, branchMissing: true };
+        if (fresh.state === 'absent' || fresh.content !== expectedContent) return { ok: false, conflict: true };
+        if (attempt === MAX_CAS_ATTEMPTS) break; // spurious every time: land it over the contents API instead
+        tip = fresh.lease;
+        (deps.sleep || defaultSleep)(casBackoffMs(attempt));
+      }
+    }
+    const fresh = readStateContentsApi(deps.ghApi, slug, name);
+    if (fresh.state === 'unreadable' && typeof fresh.content !== 'string') return { ok: false, failure: fresh.failure, reason: fresh.reason };
+    if (fresh.state === 'absent') return fresh.branchMissing ? { ok: false, branchMissing: true } : { ok: false, conflict: true };
+    if (fresh.content === content) return { ok: true, via: 'contents-api' };
+    if (fresh.content !== expectedContent) return { ok: false, conflict: true };
+    putLease = fresh.lease;
+  }
+  return writeContents(deps, slug, name, { content, message, lease: putLease });
+}
+
+// (deps: {ghApi, gitRunner?, sleep?}, slug, name, { content, message })
+// -> { ok: true, created: true, via } | { ok: false, exists: true } | { ok: false, failure, reason }
+// Create-if-not-exists with no prior read of the file. A missing branch is created first
+// (`ensureReleaseStateBranch`). The git leg reads the tip and refuses to build a commit when
+// the file is already there (`exists`); its push is leased on that tip, and a contest is
+// settled by the same fresh read (a creator who got there first is `exists`, unrelated
+// activity retries on the new tip). A non-contest git failure falls to the contents API,
+// whose PUT carries no `sha`, so the forge refuses to overwrite: a 404, 409 or 422 is settled
+// by a re-read (ours = ok, other content = `exists`, a missing branch = create it and PUT
+// once more, anything else absent = `put-rejected`).
+// Mirrors writeClaimBlob's `createOnly` mode; if either changes, check the other.
+function createStateFile(deps, slug, name, { content, message } = {}) {
+  assertSlug(slug);
+  assertName(name);
+  const refused = refuseInvalid(content, message);
+  if (refused) return refused;
+
+  const ensureBranch = () => {
+    const e = ensureReleaseStateBranch(deps, slug);
+    return e.ok ? null : { ok: false, failure: e.failure || 'branch-uncreatable', reason: e.reason };
+  };
+
+  if (deps.gitRunner) {
+    let ensured = false;
+    let attempt = 0;
+    while (attempt < MAX_CAS_ATTEMPTS) {
+      const cur = readStateGit(deps.gitRunner, name);
+      if (!cur) break; // git could not answer: the contents API below
+      if (cur.state !== 'absent') return { ok: false, exists: true }; // present, or bytes that are not an object: either way not creatable
+      if (cur.branchMissing) {
+        if (ensured) break; // created, yet still missing: let the contents API judge
+        ensured = true;
+        const failed = ensureBranch();
+        if (failed) return failed;
+        continue;
+      }
+      attempt += 1;
+      const g = writeStateGit(deps.gitRunner, name, content, message, cur.lease);
+      if (g.ok) return { ok: true, created: true, via: 'git' };
+      if (!g.contested) break;
+      if (attempt < MAX_CAS_ATTEMPTS) (deps.sleep || defaultSleep)(casBackoffMs(attempt));
+    }
+  }
+
+  let branchEnsured = false;
+  for (;;) {
+    const r = putContents(deps.ghApi, slug, name, content, message, null);
+    if (!(r.status && REJECTED_PUT_STATUSES.has(r.status))) {
+      return r.failure || r.status ? putFailure(r) : { ok: true, created: true, via: 'contents-api' };
+    }
+    const settled = settleRejectedPut(deps.ghApi, slug, name, content, r, { create: true });
+    if (!settled.branchMissing || branchEnsured) return settled;
+    branchEnsured = true;
+    const failed = ensureBranch();
+    if (failed) return failed;
+  }
+}
+
 module.exports = {
   RELEASE_STATE_BRANCH,
   STATE_FILE_RE,
@@ -265,4 +489,6 @@ module.exports = {
   readStateFile,
   classifyStateContent,
   ensureReleaseStateBranch,
+  writeStateFile,
+  createStateFile,
 };
