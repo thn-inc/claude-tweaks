@@ -159,8 +159,9 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPA
 NODE_EVAL_EOF
 [ $? -eq 3 ] && LABELS_SKIPPED=1 || LABELS_SKIPPED=
 DEP_UNREADABLE=
-: > "$DISPATCH_VERIFIED_OPEN_DEPS"
-for DEP in $(node -e "console.log(require(process.argv[1]).join(' '))" -- "$DISPATCH_UNRESOLVED_DEPS"); do
+rm -f "$DISPATCH_VERIFIED_OPEN_DEPS"
+DEP_LIST=$(node -e "console.log(require(process.argv[1]).join(' '))" -- "$DISPATCH_UNRESOLVED_DEPS") && : > "$DISPATCH_VERIFIED_OPEN_DEPS"
+for DEP in $DEP_LIST; do
   STATE=$(gh issue view "$DEP" --json state -q .state 2>/dev/null) || { STATE=OPEN; DEP_UNREADABLE=1; echo "Warning: gh issue view $DEP failed — dependency #$DEP treated as open (fail closed) this run" >&2; }
   if [ "$STATE" = "OPEN" ]; then echo "$DEP" >> "$DISPATCH_VERIFIED_OPEN_DEPS"; fi
 done
@@ -318,8 +319,7 @@ then
 else
   rm -f "${DISPATCH_GROUPS}.tmp"
   # #3110: same distinction as the open-linked-PR pass below -- a thrown
-  # appendExclusion means the exclusions file itself may be partially
-  # written, which is not safe to just skip past.
+  # appendExclusion means the exclusions file may be partially written.
   if grep -q 'appendExclusion:' "$DISPATCH_SHAPE_GATE_ERR" 2>/dev/null; then
     echo "dispatch: queue-pull stopped -- not-spec-shaped exclusion pass hit a corrupt exclusions file: $(cat "$DISPATCH_SHAPE_GATE_ERR")" >&2
     exit 1

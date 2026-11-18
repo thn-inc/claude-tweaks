@@ -1232,6 +1232,48 @@ test('AC1.1 (#5311) multi: every failed view prints its own Warning', () => {
   assert.equal(r.text['dispatch-verified-open-deps.txt'], '8000\n8002\n');
 });
 
+// #5879: the verified-open-deps step's own read of the unresolved list fails once (a one-off failure; the
+// blocked pass's later read of the same file gets through).
+function pullWithUnresolvedReadFailingOnce(scenario, o = {}) {
+  const realRead = fs.readFileSync;
+  let reads = 0;
+  fs.readFileSync = function readUnresolvedOnce(file, ...rest) {
+    if (path.basename(String(file)) === 'dispatch-unresolved-deps.json' && ++reads === 1) {
+      throw Object.assign(new Error('EACCES: permission denied, open dispatch-unresolved-deps.json'), { code: 'EACCES' });
+    }
+    return realRead.call(this, file, ...rest);
+  };
+  try {
+    return { r: pull(scenario, o), reads };
+  } finally {
+    fs.readFileSync = realRead;
+  }
+}
+const verifiedOpenDepsFiles = (r) => Object.keys(r.text).filter((k) => path.basename(k) === 'dispatch-verified-open-deps.txt');
+
+test('AC1.1 (#5879): gh: an unreadable unresolved-deps list leaves no verified-open-deps file and the blocked pass fails closed', () => {
+  const { r, reads } = pullWithUnresolvedReadFailingOnce(S1({ parity: true }), {
+    before: (ctx) => fs.writeFileSync(ctx.state.files.verifiedOpenDeps, '7777\n'),
+  });
+  assert.ok(reads > 1, 'the step\'s read failed and later reads got through');
+  assert.deepEqual(r.json('dispatch-unresolved-deps.json'), [8001], 'one unresolved dependency');
+  assert.deepEqual(verifiedOpenDepsFiles(r), [], 'the file is absent: neither empty nor the stale 7777');
+  assert.deepEqual(r.errs.filter((l) => l.startsWith('queue-pull: verified-open-deps:')),
+    ['queue-pull: verified-open-deps: EACCES: permission denied, open dispatch-unresolved-deps.json\n'], r.stderr);
+  assert.deepEqual(warningsOf(r), [VERIFIED_UNREADABLE], r.stderr);
+  assert.ok(!r.stderr.includes('queue-pull: blocked-body:'), r.stderr);
+  assert.ok(entriesOf(r, 'blocked').some((e) => e.records.includes(9011)), 'the dependent #9011 is held as blocked');
+  assert.ok(!r.ghCalls.some((a) => a[0] === 'issue' && a[1] === 'view'), 'no dependency is viewed');
+});
+
+test('AC1.1 (#5879) control: with no unresolved dependency the step still ends with an empty file and prints no Warning', () => {
+  const r = pull(S1(), { before: (ctx) => fs.writeFileSync(ctx.state.files.verifiedOpenDeps, '7777\n') });
+  assert.deepEqual(r.json('dispatch-unresolved-deps.json'), []);
+  assert.equal(r.text['dispatch-verified-open-deps.txt'], '', 'present and empty: "none open"');
+  assert.deepEqual(warningsOf(r), []);
+  assert.ok(!r.stderr.includes('queue-pull: '), r.stderr);
+});
+
 test('AC2.1 (#5311) control: with no unresolved dependency and no verified-open-deps file, no Warning and both records are grouped', () => {
   const noGh = (cmd, args) => { throw new Error(`gh must not be called on files: ${args.join(' ')}`); };
   const control = pull(S1(), { transport: 'files', run: noGh, prepare: (own) => ({ inputs: {
@@ -3052,8 +3094,12 @@ test('#5227 filesOracleScript: every gh fetch becomes the agent write, the neigh
 
   const anchors = FENCE.split('\n').filter((l) => /^\s*(if ! )?gh (issue|pr) /.test(l));
   assert.equal(anchors.length, 6, `the fence's gh fetch lines: ${anchors.join('\n')}`);
-  for (const line of [...anchors, ': > "$DISPATCH_VERIFIED_OPEN_DEPS"']) {
+  for (const line of [...anchors, 'rm -f "$DISPATCH_VERIFIED_OPEN_DEPS"']) {
     assert.throws(() => filesOracleScript(FENCE.replace(line, '# moved'), mcp), (err) => err.message === `anchor not found: ${line}`, line);
+  }
+  // #5879: the span the agent write replaces: remove, then create the empty file only once the unresolved list was read.
+  for (const line of ['rm -f "$DISPATCH_VERIFIED_OPEN_DEPS"', 'DEP_LIST=$(node -e "console.log(require(process.argv[1]).join(\' \'))" -- "$DISPATCH_UNRESOLVED_DEPS") && : > "$DISPATCH_VERIFIED_OPEN_DEPS"', 'for DEP in $DEP_LIST; do']) {
+    assert.ok(FENCE.split('\n').includes(line), `the fence holds the whole line: ${line}`);
   }
   // mcp-transport.md's claim-targets fence (step 2) is the only one whose first line ends at this argument.
   assert.throws(() => filesOracleScript(FENCE, mcp.replace('"$DISPATCH_IN_FLIGHT_RAW" <<NODE_EVAL_EOF', '"$X" <<NODE_EVAL_EOF')), /anchor not found/);
@@ -3374,7 +3420,7 @@ test('#5409: every session file is end-written (removed at pull start) or named 
     'dispatch-linked-prs.json', 'dispatch-linked-prs.err', 'dispatch-shipped-pr-files.jsonl', 'dispatch-shape-gate.err',
     'dispatch-next-pick.json', // reset before its step's fallible work, or an agent input on `files`
     'dispatch-eligible-pre-dep.json', 'dispatch-unresolved-deps.json', 'dispatch-eligible.json',
-    'dispatch-blocked-excluded-body.json', 'dispatch-verified-open-deps.txt', // removed by the blocked pass (#5314), or its agent input
+    'dispatch-blocked-excluded-body.json', 'dispatch-verified-open-deps.txt', // removed by the blocked pass (#5314); verified-open-deps also removed at its step's start on gh (#5879), or its agent input on files
   ];
   assert.deepEqual([...END_WRITTEN_FILES, ...NOT_END_WRITTEN].sort(), [...SESSION_FILES].sort());
 });
