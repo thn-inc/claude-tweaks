@@ -649,14 +649,25 @@ const inputsOf = (src) => sectionOf(src, '## Inputs');
 const gatesOf = (src) => sectionOf(src, '## Gates');
 const inputsBullet = (src) => lineStartingWith(inputsOf(src), '- The release-block state');
 
-test('Step 4 re-reads the block before Step 5', () => {
-  const inputs = inputsOf(CONSOLE);
-  assert.ok(inputs.includes(BASH_CHECK), 'Inputs: names no bash check');
-  const gates = gatesOf(CONSOLE);
-  for (const lit of ['The release block, re-read', 'HELD', 'release-held.md', 'release-block state unreadable', 'no question', 'Stopped before Step 5.']) {
-    assert.ok(gates.includes(lit), `Gates: missing ${lit}`);
+const rereadParagraph = (src) => lineStartingWith(gatesOf(src), '**The release block, re-read.**');
+function assertReread(src) {
+  const gates = gatesOf(src);
+  const p = rereadParagraph(src);
+  assert.ok(p, 'Gates: no re-read paragraph');
+  for (const lit of ['`HELD`', '`release-held.md`', 'release-block state unreadable', 'no question', 'Stopped before Step 5.', 'a `--dry-run` changes neither', '`HELD` there too', 'any other exit']) {
+    assert.ok(p.toLowerCase().includes(lit.toLowerCase()), `re-read paragraph: missing ${lit}`);
   }
-  assert.ok(gates.indexOf('The release block, re-read') < gates.indexOf('**`HELD` is mode-independent.**'), 'the re-read paragraph sits with the gates');
+  assert.ok(gates.indexOf('**The release block, re-read.**') < gates.indexOf('**`HELD` is mode-independent.**'), 'the re-read paragraph sits with the gates');
+}
+// Frozen: the Gates section as Task 5's first commit left it (the literals HELD, release-held.md pre-exist elsewhere in it).
+const PRE_REREAD_TAIL = 'stops it `failed`, with reason `release-block state unreadable`.';
+
+test('Step 4 re-reads the block before Step 5', () => {
+  assert.ok(inputsOf(CONSOLE).includes(BASH_CHECK), 'Inputs: names no bash check');
+  assertReread(CONSOLE);
+  const p = rereadParagraph(CONSOLE);
+  assert.throws(() => assertReread(CONSOLE.replace(p, '')), { message: /no re-read paragraph/ });
+  assert.throws(() => assertReread(CONSOLE.replace(p, p.slice(0, p.indexOf(PRE_REREAD_TAIL) + PRE_REREAD_TAIL.length))), { message: /dry-run/ });
 });
 
 function assertEngineThenGh(bullet) {
@@ -683,9 +694,10 @@ const SUPERSEDED_STAMP = 'Medium and low findings are never stamped. Neither is 
 function assertStampParagraph(src) {
   const p = stampParagraph(src);
   assert.ok(p, 'no Stamp the release block paragraph');
-  for (const lit of ['release-block.js" stamp --record', '`critical`', '`high`', '{category} at {file:line}', '{category} at general', '`declined (covered by #{n})`', 'the covering record', 'Medium and low findings are never stamped, including when declined as covered', '`pr-first`', '`local-merge`']) {
+  for (const lit of ['release-block.js" stamp --record', '`critical`', '`high`', '{category} at {file:line}', '{category} at general', '`declined (covered by #{n})`', 'the covering record', 'Medium and low findings are never stamped, including when declined as covered', '`pr-first`', '`local-merge`', '`github-issues`', '`local-files`', '**and** `work-backend`', 'Step 8 disposition stamp (skipped): condition:', 'record numbers are local, not GitHub issues', 'critical at {file:line}']) {
     assert.ok(p.includes(lit), `stamp paragraph: missing ${lit}`);
   }
+  assert.ok(!p.includes('never keyed on `work-backend`'), 'stamp paragraph: engine-only keying');
   assert.ok(!p.includes('Neither is a') && !p.includes('because nothing was filed'), 'stamp paragraph: superseded sentence');
   assert.ok(!p.includes('GitHub origin') && !p.includes('forge'), 'stamp paragraph: keyed on the forge');
 }
@@ -704,14 +716,45 @@ test('AC5.1: Step 8 stamps the covering record of a critical or high finding dec
   assert.throws(() => assertStampParagraph(DISPOSITION.replace(p, frozen)), { message: /superseded sentence|never stamped, including/ });
 });
 
-test('AC5.2: medium and low findings are not stamped', () => {
-  assert.ok(stampParagraph(DISPOSITION).includes('Medium and low findings are never stamped, including when declined as covered'));
+// Frozen: the engine-only keying Task 5's first commit shipped (controller ruling: local-files record numbers are not GitHub issues).
+const SUPERSEDED_ENGINE_ONLY = "Stamping follows Step 1's `engine` (`_shared/release-block.md`): under `pr-first` it runs, with the gh-absent path that file's MCP `stamp`; under `local-merge` nothing is stamped, never keyed on `work-backend`.";
+const ENGINE_AND_BACKEND_START = 'Stamping runs only when Step 1\'s `engine` is `pr-first` **and**';
+
+test('the stamp runs only under pr-first and github-issues, and says why it skipped', () => {
+  const p = stampParagraph(DISPOSITION);
+  const start = p.indexOf(ENGINE_AND_BACKEND_START);
+  assert.ok(start !== -1, 'no two-condition sentence');
+  const end = p.indexOf('Reversibility: n/a.`', start) + 'Reversibility: n/a.`'.length;
+  const frozen = p.slice(0, start) + SUPERSEDED_ENGINE_ONLY + p.slice(end);
+  assert.throws(() => assertStampParagraph(DISPOSITION.replace(p, frozen)), { message: /missing `github-issues`|engine-only keying/ });
+  const contract = section(text, '## What sets a block');
+  assert.ok(contract.includes('only when the engine is `pr-first` and `work-backend` is `github-issues`'), 'contract setter: no two conditions');
+  assert.ok(!contract.replace('only when the engine is `pr-first` and `work-backend` is `github-issues` (a `local-files` record number is not a GitHub issue)', '').includes('github-issues'), 'contract setter: the condition appears outside the setter');
 });
 
-test('stamp failure counts as a disposition failure', () => {
-  const failed = DISPOSITION.split('\n').find((l) => l.startsWith('- Exit 2 or 3'));
+const MEDIUM_LOW = 'Medium and low findings are never stamped, including when declined as covered';
+test('AC5.2: medium and low findings are not stamped', () => {
+  assert.ok(stampParagraph(DISPOSITION).includes(MEDIUM_LOW));
+  const p = stampParagraph(DISPOSITION);
+  assert.throws(() => assertStampParagraph(DISPOSITION.replace(p, p.replace(MEDIUM_LOW, 'Medium and low findings are stamped too'))), { message: /missing Medium and low/ });
+  assert.throws(() => assertStampParagraph(DISPOSITION.replace(p, p.replace(`${MEDIUM_LOW}.`, SUPERSEDED_STAMP))), { message: /superseded sentence|missing Medium and low/ });
+});
+
+const stampFailureBullet = (src) => src.split('\n').find((l) => l.startsWith('- Exit 2, 3')) || '';
+function assertStampFailure(src) {
+  const failed = stampFailureBullet(src);
   assert.ok(failed, 'no stamp failure bullet');
+  assert.ok(failed.includes('any other non-zero'), 'failure bullet: a crash (exit 1) is not routed');
   assert.ok(failed.includes('stamp failed:') && failed.includes('FAILED') && failed.includes('{k} failed'), 'failure bullet: shape or count');
+}
+test('stamp failure counts as a disposition failure', () => {
+  assertStampFailure(DISPOSITION);
+  const failed = stampFailureBullet(DISPOSITION);
+  // Frozen: the first commit routed only exits 2 and 3.
+  const frozen = failed.replace('- Exit 2, 3, or any other non-zero (a crash exits 1) →', '- Exit 2 or 3 →');
+  assert.notStrictEqual(frozen, failed);
+  assert.throws(() => assertStampFailure(DISPOSITION.replace(failed, frozen)), { message: /no stamp failure bullet/ });
+  assert.throws(() => assertStampFailure(DISPOSITION.replace(failed, failed.replace('any other non-zero', 'x'))), { message: /not routed/ });
 });
 
 test('Inventory names the Step 1.5 early exit, and the review gate rows say whose Step 1.5', () => {
@@ -721,9 +764,30 @@ test('Inventory names the Step 1.5 early exit, and the review gate rows say whos
   for (const r of rows) assert.ok(r.includes("(the review's Step 1.5 test gate)") && !r.includes("(Step 1.5's test gate)"), r);
 });
 
-test('console HELD list, held-file schema and log line name the release block', () => {
-  assert.ok(lineStartingWith(CONSOLE, '**`HELD` is mode-independent.**').includes("SKILL.md's Step 1.5 release-block stop"));
-  assert.ok(lineStartingWith(CONSOLE, '**`HELD` is mode-independent.**').includes('`#N {title} {url}`'));
-  assert.ok(lineStartingWith(CONSOLE, 'AUTO {time} — Step 4: console rendered').includes('release-block {none|n open|unreadable'));
-  assert.ok(sectionOf(SKILL, '## Step 4: Console').includes('release block'));
+const CONSOLE_FACTS = [
+  ['HELD list names Step 1.5', (c) => lineStartingWith(c, '**`HELD` is mode-independent.**').includes("SKILL.md's Step 1.5 release-block stop")],
+  ['held-file schema admits the record form', (c) => lineStartingWith(c, '**`HELD` is mode-independent.**').includes('`#N {title} {url}`')],
+  ['log line names the release block', (c) => lineStartingWith(c, 'AUTO {time} — Step 4: console rendered').includes('release-block {none|n open|unreadable')],
+  ['gate count names the re-read', (c) => lineStartingWith(c, 'Besides the release-block re-read below, two HARD-GATEs evaluate here') !== '' && lineStartingWith(c, 'The console renders read-only').includes('and a release-block hold, which stop regardless of mode')],
+  ['interactive bullet asks no question for a hold', (c) => lineStartingWith(c, '- **`interactive`**').includes('a release-block hold asks no question')],
+];
+const missingConsole = (c) => CONSOLE_FACTS.filter(([, ok]) => !ok(c)).map(([f]) => f);
+// Frozen pre-change excerpts of those lines.
+const PRE_CONSOLE = [
+  ['HELD list names Step 1.5', "(the other `HELD` reasons are `execute.md`'s Step 5 stops", "(the other `HELD` reasons are SKILL.md's Step 1.5 release-block stop, which Step 4 re-reads, and `execute.md`'s Step 5 stops"],
+  ['held-file schema admits the record form', '(SKILL.md\'s `--train semantics` composes it).', '(SKILL.md\'s `--train semantics` composes it; a release-block hold names each blocking record as `#N {title} {url}` plus the clearing act instead).'],
+  ['log line names the release block', 'hook {value}. Reversibility: n/a.', 'hook {value}, release-block {none|n open|unreadable|n/a}. Reversibility: n/a.'],
+  ['gate count names the re-read', 'Two HARD-GATEs evaluate here, on', 'Besides the release-block re-read below, two HARD-GATEs evaluate here, on'],
+  ['gate count names the re-read', 'except at the two gates above, which stop', 'except at the two gates above and a release-block hold, which stop'],
+  ['interactive bullet asks no question for a hold', '- **`interactive`** — one', '- **`interactive`** (the two gates above only; a release-block hold asks no question) — one'],
+];
+
+test('console HELD list, held-file schema, gate counts and log line name the release block', () => {
+  assert.deepStrictEqual(missingConsole(CONSOLE), []);
+  for (const [fact, frozen, live] of PRE_CONSOLE) {
+    assert.ok(CONSOLE.includes(live), `live piece not found: ${live.slice(0, 40)}`);
+    assert.deepStrictEqual(missingConsole(CONSOLE.replace(live, frozen)), [fact], `pre-change ${fact}`);
+  }
+  assert.ok(sectionOf(SKILL, '## Step 4: Console').includes('Besides the release-block re-read, two HARD-GATEs stop the run here'));
+  assert.ok(!sectionOf(SKILL, '## Step 4: Console').replace('Besides the release-block re-read, two', 'Two').includes('Besides'));
 });

@@ -7,7 +7,7 @@ A durable "do not release" signal (#5882): an **open** record carrying the `rele
 Three setters:
 
 1. A critical or high finding that the rolling review or a release's delta review files as a record — the filer stamps that record.
-2. `/release` Step 8's disposition — it stamps each critical/high finding it files, and also the covering record of a critical/high finding it declines as `declined (covered by #{n})`.
+2. `/release` Step 8's disposition — it stamps each critical/high finding it files, and also the covering record of a critical/high finding it declines as `declined (covered by #{n})`, only when the engine is `pr-first` and `work-backend` is `github-issues` (a `local-files` record number is not a GitHub issue).
 3. The `release-block` label added by a human to any record.
 
 ## How a block clears
