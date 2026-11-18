@@ -416,6 +416,8 @@ const CLI_TABLE = [
   // stuck-open-prs.js (#4951): one granted candidate whose batched linked-PR read finds no
   // open PR, so the read is its one network-bound gh call and no per-record read follows.
   { cli: 'stuck-open-prs.js', argv: ['--records', 'records.json'], setup: writeJsonFile('records.json', [{ number: 1, state: 'OPEN', title: 'R', createdAt: '2026-10-01T08:00:00Z', labels: [{ name: 'auto:build' }] }]), acceptsRepo: false, canned: { 'api-graphql': STUCK_OPEN_PRS_GRAPHQL } },
+  // release-block.js (#5882): `check` makes one gh call, the labelled open-record list.
+  { cli: 'release-block.js', argv: ['check'], acceptsRepo: true, canned: { 'issue-list': '[]' } },
 ];
 
 module.exports = {

@@ -301,7 +301,7 @@ test('AC3.1: every gh spawn under plugin/bin/ routes through ghOptions', () => {
 // then splits one record across two hosts on a GHE origin (found in #4505's review), so the roster
 // is pinned here.
 const PIN_WIRED = ['accept-entry.js', 'accept-park.js', 'acceptance-packet.js', 'activity-gather.js', 'ci-health.js', 'fetch-sub-issues.js', 'lib/compose-subject.js', 'lib/number-list-cli.js', 'link-records.js',
-  'list-claims.js', 'materialize.js', 'preflight-records.js', 'release-claim.js', 'remote-branch-collision.js', 'repair-claim.js', 'resolved-refusal.js'];
+  'list-claims.js', 'materialize.js', 'preflight-records.js', 'release-block.js', 'release-claim.js', 'remote-branch-collision.js', 'repair-claim.js', 'resolved-refusal.js'];
 
 test('review (#4505): every CLI that pins its explicit --repo host keeps both halves of the wiring, and no unlisted CLI wires it', () => {
   for (const rel of PIN_WIRED) {
@@ -409,7 +409,7 @@ const NOT_ORIGIN = {
 // The files whose code calls gateOriginRepo(, the defining lib/repo-resolve.js excluded.
 const ORIGIN_GATED = ['materialize.js', 'lib/compose-subject.js', 'release-claim.js', 'repair-claim.js', 'preflight-records.js',
   'parent-gate.js', 'resolved-refusal.js', 'link-records.js', 'fetch-sub-issues.js', 'backlog-grant-gate.js',
-  'apply-refine-labels.js', 'file-feedback.js', 'list-claims.js', 'lib/number-list-cli.js', 'lib/wrap-up/pack.js', 'lib/wrap-up/engine-verify.js', 'lib/hooks/git-exec.js', 'stuck-open-prs.js', 'lib/driver/steps.js', 'accept-park.js', 'lib/ci-audit/source.js'];
+  'apply-refine-labels.js', 'file-feedback.js', 'list-claims.js', 'lib/number-list-cli.js', 'lib/wrap-up/pack.js', 'lib/wrap-up/engine-verify.js', 'lib/hooks/git-exec.js', 'stuck-open-prs.js', 'lib/driver/steps.js', 'accept-park.js', 'lib/ci-audit/source.js', 'release-block.js'];
 
 // A gateOriginRepo( call in code; blank mode leaves a name inside a string or comment unseen.
 const callsGate = (raw) => /(?<![\w$])gateOriginRepo\s*\(/.test(stripComments(raw, BLANK));
