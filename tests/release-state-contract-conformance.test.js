@@ -103,6 +103,11 @@ function assertMcpPath(text) {
   assert.match(body, /anything else, a `write` included, is the exit-4 equivalent/, 'then contested');
   assert.match(body, /`reset` takes `--marker-json` the same way and makes one write; a rejection is the exit-4\nequivalent/, 'reset: one write');
   assert.match(body, /needs a local clone, because no compare tool is used/, 'descent needs a local clone');
+  assert.match(body, /any other\s+exit routes as in step 2/, 'step 4: other exits of the --after-conflict re-run route as in step 2');
+  assert.match(body, /fails with no rejection[^]*?re-read and re-run with `--after-conflict`/, 'step 5: a no-rejection failure re-reads and re-runs with --after-conflict');
+  assert.match(body, /A write that\s+landed reads as at-or-past \(exit 0 without `write`, success\)/, 'step 5: a landed write reads as at-or-past');
+  assert.match(body, /anything else is the exit-3\s+equivalent, and nothing more is written/, 'step 5: otherwise the exit-3 equivalent');
+  assert.match(body, /Without\s+one, the CLI exits 5\. When exit 5 comes from a shallow clone or git older than 2\.29, deepen the\s+clone \(`git fetch --unshallow origin`\) or upgrade git, then re-run/, 'exit-5 recovery');
 }
 
 function assertResetReason(text) {
@@ -156,6 +161,19 @@ test('contract: MCP path', () => {
   assert.throws(() => assertMcpPath(text.replace('anything else, a `write` included, is the exit-4 equivalent', 'anything else is fine')));
   assert.throws(() => assertMcpPath(text.replace('makes one write; a rejection', 'makes writes; a rejection')));
   assert.throws(() => assertMcpPath(text.replace('needs a local clone, because no compare tool is used', 'needs nothing')));
+  const dropped = (needle, to) => {
+    const mutated = text.replace(needle, to);
+    assert.notEqual(mutated, text, `the contract carries ${needle}`);
+    return mutated;
+  };
+  assert.throws(() => assertMcpPath(dropped(/any other\s+exit routes as in step 2/, 'nothing else happens')), 'step 4: other exits dropped');
+  assert.throws(() => assertMcpPath(dropped(/re-read and re-run with `--after-conflict`\. A write that/, 'give up. A write that')), 'step 5: the re-run dropped');
+  assert.throws(() => assertMcpPath(dropped(/landed reads as at-or-past \(exit 0 without `write`, success\)/, 'landed is fine')), 'step 5: at-or-past dropped');
+  assert.throws(() => assertMcpPath(dropped(/anything else is the exit-3\s+equivalent, and nothing more is written/, 'anything else is fine')), 'step 5: exit-3 equivalent dropped');
+  assert.throws(() => assertMcpPath(dropped('(`git fetch --unshallow origin`)', '(`git fetch`)')), 'exit-5 recovery: the unshallow fetch dropped');
+  assert.throws(() => assertMcpPath(dropped('or upgrade git, then re-run', 'then stop')), 'exit-5 recovery: upgrade and re-run dropped');
+  assert.throws(() => assertMcpPath(dropped('older than 2.29', 'older')), 'exit-5 recovery: the git version dropped');
+  assert.doesNotThrow(() => assertMcpPath(readCrlf(text)), 'CRLF checkout');
 });
 
 test('contract: the reset reason and commit-message rule names # and its reason', () => {
