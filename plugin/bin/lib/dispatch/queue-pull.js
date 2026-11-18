@@ -319,6 +319,23 @@ function closedDependencyNumbers(text) {
   return new Set(valid.filter(isClosed).map((e) => e.number).filter((n) => !contested.has(n)));
 }
 
+// The numbers the agent's dependency-freshness text marks `unreadable` (#5865): ascending and
+// de-duplicated, under closedDependencyNumbers's own validity test. Never closed, whatever else
+// the file says about the same number.
+function unreadableDependencyNumbers(text) {
+  let entries;
+  try {
+    entries = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(entries)) return [];
+  const numbers = entries
+    .filter((e) => e && Number.isInteger(e.number) && typeof e.state === 'string' && e.state.toLowerCase() === 'unreadable')
+    .map((e) => e.number);
+  return [...new Set(numbers)].sort((a, b) => a - b);
+}
+
 // On `files` the agent's queue file stands where the fence's queue pull stands, as the agent's Write
 // does: copied into the session file, which is the one aliased and read from then on, so the
 // caller's own file is never rewritten (a non-array session copy is a failed read, #5307). A
@@ -703,13 +720,24 @@ function runBlocked(ctx) {
     // dependency-freshness text shows it closed; otherwise it counts as open (fail closed).
     // Module-only: the fence has no twin of this block, by the plan-review decision, until #5231
     // deletes the fence. Do not mirror it, and do not remove it to restore parity.
-    if (!bad && ctx.options.transport === 'files') {
-      const closed = closedDependencyNumbers(state.depFreshnessInput);
-      for (const dep of readJson(paths['dispatch-unresolved-deps.json'])) {
-        if (verifiedOpen.includes(dep) || closed.has(dep)) continue;
-        openNumbers.add(dep);
-        deps.stderr(`Warning: verified-open-deps file omits #${dep}, which the dependency-freshness file does not show closed — treated as open (fail closed) this run\n`);
-        state.depUnreadable = true;
+    // #5865: a number the freshness file marks `unreadable` (the agent's issue_read failed on it) is
+    // never closed: the one Warning below names it in place of the omitted-dependency Warning, and
+    // depFreshFailed keeps the queue-order cache unwritten. Checked whether or not the file was `bad`.
+    if (ctx.options.transport === 'files') {
+      const unreadable = unreadableDependencyNumbers(state.depFreshnessInput);
+      if (!bad) {
+        const closed = closedDependencyNumbers(state.depFreshnessInput);
+        const unreadableSet = new Set(unreadable);
+        for (const dep of readJson(paths['dispatch-unresolved-deps.json'])) {
+          if (verifiedOpen.includes(dep) || closed.has(dep)) continue;
+          openNumbers.add(dep);
+          if (!unreadableSet.has(dep)) deps.stderr(`Warning: verified-open-deps file omits #${dep}, which the dependency-freshness file does not show closed — treated as open (fail closed) this run\n`);
+          state.depUnreadable = true;
+        }
+      }
+      if (unreadable.length) {
+        deps.stderr(`Warning: dependency-freshness file marks ${unreadable.map((n) => `#${n}`).join(', ')} unreadable — treated as open (fail closed), queue-order cache not written this run\n`);
+        state.depFreshFailed = true;
       }
     }
     // #4793: a supplied states file (either transport) answers the foreign refs; the rest go to
@@ -1500,5 +1528,5 @@ function rankFromFiles({ sessionId, priority } = {}) {
 
 module.exports = {
   PASSES, PASS_FIELD_VALUES, SESSION_FILES, END_WRITTEN_FILES, sessionPaths, QueuePullStopped, runPasses, resolveOmit, defaultDeps, makeContext, queuePull, rankNext, rankFromFiles,
-  STAYING_EXCLUSION_REASONS, RANK_SKIP_REASONS,
+  STAYING_EXCLUSION_REASONS, RANK_SKIP_REASONS, closedDependencyNumbers,
 };
