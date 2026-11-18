@@ -170,6 +170,20 @@ function resolveRepoSpec(opts, deps) {
   return { spec: gated.spec, refusal: gated.refusal };
 }
 
+const ghCtx = (deps) => ({ cwd: deps.cwd(), env: deps.env, stderr: deps.stderr, homeDir: deps.homeDir });
+
+const firstLine = (text) => String(text || '').trim().split(/\r?\n/, 1)[0];
+
+// Resolves the repo, pins an explicit --repo's host, and reports a usage failure itself: the
+// caller returns `exit` when it is set, otherwise uses `spec`.
+function resolveRepoOrFail(opts, deps) {
+  const { spec, refusal } = resolveRepoSpec(opts, deps);
+  if (refusal) { deps.stderr(`${NAME}: ${refusal}\n`); return { exit: EXIT.USAGE }; }
+  if (!spec) { deps.stderr(`${NAME}: could not resolve owner/repo — pass --repo [host/]owner/name\n`); return { exit: EXIT.USAGE }; }
+  if (opts.repo !== undefined) deps.pinGhHost(spec, { env: deps.env, cwd: deps.cwd() });
+  return { spec };
+}
+
 const unreadable = (deps, why) => {
   deps.stderr(`${NAME}: state unreadable — ${why}\n`);
   return EXIT.FAILURE;
@@ -188,14 +202,12 @@ function check(opts, deps) {
       deps.stderr(`${NAME}: ${GH_ABSENT_HINT}\n`);
       return EXIT.FAILURE;
     }
-    const { spec, refusal } = resolveRepoSpec(opts, deps);
-    if (refusal) { deps.stderr(`${NAME}: ${refusal}\n`); return EXIT.USAGE; }
-    if (!spec) { deps.stderr(`${NAME}: could not resolve owner/repo — pass --repo [host/]owner/name\n`); return EXIT.USAGE; }
-    if (opts.repo !== undefined) deps.pinGhHost(spec, { env: deps.env, cwd: deps.cwd() });
+    const { spec, exit } = resolveRepoOrFail(opts, deps);
+    if (exit !== undefined) return exit;
     try {
       text = deps.gh(
         ['issue', 'list', '--repo', repoSlug(spec), '--label', LABEL.name, '--state', 'open', '--limit', String(LIST_LIMIT), '--json', JSON_FIELDS],
-        { cwd: deps.cwd(), env: deps.env, stderr: deps.stderr, homeDir: deps.homeDir },
+        ghCtx(deps),
       );
     } catch (err) {
       return unreadable(deps, `gh issue list failed (${firstLine(err && err.stderr) || messageOf(err)})`);
@@ -215,8 +227,6 @@ const labelListed = (deps, slug) => {
   return String(text ?? '').split(/\r?\n/).some((line) => line.trim() === LABEL.name);
 };
 
-const ghCtx = (deps) => ({ cwd: deps.cwd(), env: deps.env, stderr: deps.stderr, homeDir: deps.homeDir });
-
 function ensureLabel(deps, slug) {
   if (labelListed(deps, slug)) return true;
   const { name, description, color } = ensureLabelPayload(LABEL.name, LABEL.description, LABEL.color);
@@ -235,10 +245,8 @@ function stamp(opts, deps) {
     deps.stderr(`${NAME}: gh not found — stamp has no MCP path here; add the label and comment by hand (_shared/release-block.md)\n`);
     return EXIT.FAILURE;
   }
-  const { spec, refusal } = resolveRepoSpec(opts, deps);
-  if (refusal) { deps.stderr(`${NAME}: ${refusal}\n`); return EXIT.USAGE; }
-  if (!spec) { deps.stderr(`${NAME}: could not resolve owner/repo — pass --repo [host/]owner/name\n`); return EXIT.USAGE; }
-  if (opts.repo !== undefined) deps.pinGhHost(spec, { env: deps.env, cwd: deps.cwd() });
+  const { spec, exit } = resolveRepoOrFail(opts, deps);
+  if (exit !== undefined) return exit;
   const slug = repoSlug(spec);
   let view;
   try {
@@ -292,8 +300,6 @@ function stamp(opts, deps) {
   deps.stdout(`${JSON.stringify({ record: Number(n), outcome: 'stamped' })}\n`);
   return EXIT.OK;
 }
-
-const firstLine = (text) => String(text || '').trim().split(/\r?\n/, 1)[0];
 
 function run(argv, deps) {
   const opts = parseArgs(argv);
