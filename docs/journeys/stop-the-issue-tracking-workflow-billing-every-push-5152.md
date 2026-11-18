@@ -45,10 +45,10 @@ files:
 
 ### 5. Bookkeeping-branch pushes create no run — `issue-branch-tracking.js`
 - **URL:** —
-- **Action:** The trigger's `branches` list is `'**'`, `'!claims-registry'`, `'!health-state'`. The names come from the plugin's own `CLAIMS_BRANCH` and `HEALTH_STATE_BRANCH` constants.
-- **Should feel:** Quiet: claim and health-state writes no longer appear in the Actions run list.
-- **Should understand:** Renaming either branch in the plugin carries through to newly generated files; an older generated file is refreshed by step 2 on the next init.
-- **Red flags:** A workflow run listed for a `claims-registry` or `health-state` push.
+- **Action:** The trigger's `branches` list is `'**'`, `'!claims-registry'`, `'!health-state'`, `'!release-state'`. The names come from the plugin's own `CLAIMS_BRANCH`, `HEALTH_STATE_BRANCH` and `RELEASE_STATE_BRANCH` constants.
+- **Should feel:** Quiet: claim, health-state and release-state writes no longer appear in the Actions run list.
+- **Should understand:** Renaming any of these branches in the plugin carries through to newly generated files; an older generated file is refreshed by step 2 on the next init.
+- **Red flags:** A workflow run listed for a `claims-registry`, `health-state` or `release-state` push.
 
 ## Origin
 - Created during the build of #5152 (generated issue-tracking workflow starts a runner on every push), reported from a private project on the pr-first model.
