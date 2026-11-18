@@ -434,6 +434,8 @@ function assertGhFirst(body) {
   const after = body.slice(fence + FENCE_LINE.length + 1);
   assert.ok(after.includes('gh-absent (MCP)'), 'gh-first: the gh-absent (MCP) check is not named after the fence');
   assert.ok(after.includes('never the fence'), 'gh-first: "never the fence" is not said after the fence');
+  const absent = after.split('\n').find((l) => l.startsWith('Absent:'));
+  assert.ok(absent && absent.includes('`_shared/release-block.md`'), 'gh-absent: the Absent line does not name _shared/release-block.md');
 }
 
 // Moves one sentence of the body to just after the check fence.
@@ -446,6 +448,10 @@ function moveAfterFence(body, sentence) {
 test('Step 1.5 detects gh before the bash check', () => {
   const body = step15Of(SKILL);
   assertGhFirst(body);
+  // Go-red: the frozen "the contract's" wording (file name dropped from the Absent line).
+  const nameless = body.replace("Absent: `_shared/release-block.md`'s gh-absent", "Absent: the contract's gh-absent");
+  assert.notStrictEqual(nameless, body);
+  assert.throws(() => assertGhFirst(nameless), { message: /the Absent line does not name _shared\/release-block\.md/ });
   // Permutation: the `command -v gh` sentence moved after the fence.
   const sentence = body.match(/[^.\n]*`command -v gh`[^.\n]*\./);
   assert.ok(sentence, 'no `command -v gh` sentence');

@@ -113,7 +113,7 @@ AUTO {HH:MM:SS} — Step 1: pack at {run-dir}/release-preflight.json: engine {va
 
 ## Step 1.5: Release-block check
 
-Open `release-block` halts before any review or suite work, on every path: interactive, `auto`, headless, `--train` and `--dry-run`, ahead of Step 3's tree check and any early-verify step inserted after Step 1.
+An open `release-block` record stops the release here, before any review or suite work, on every path: interactive, `auto`, headless, `--train` and `--dry-run`, ahead of Step 3's tree check and any early-verify step inserted after Step 1.
 
 Step 1's `engine` `local-merge` and `work-backend` `local-files` → log the `SKIP` line, then Step 2; never a fresh probe (CLAUDE.md `## Work records`; none → `local-files`). Else detect `gh` first: `command -v gh`. Present:
 
@@ -121,9 +121,9 @@ Step 1's `engine` `local-merge` and `work-backend` `local-files` → log the `SK
 node "${CLAUDE_PLUGIN_ROOT}/bin/release-block.js" check
 ```
 
-Absent: the contract's gh-absent (MCP) `check`, never the fence.
+Absent: `_shared/release-block.md`'s gh-absent (MCP) `check`, never the fence.
 
-Route on the exit code, never on the prose: **0** → log `AUTO {HH:MM:SS} — Step 1.5: release-block check: none open. Reversibility: n/a (read-only).`, then Step 2; **1** with its `"blocked":true` line → stop `HELD`; **2**, **3** or anything else → stop `failed`, `release-block state unreadable`. On the `SKIP` or any exit but 0, read `_shared/release-block.md`'s "What a release does while a block is open" section.
+Route on the exit code, never on the prose: **0** → log `AUTO {HH:MM:SS} — Step 1.5: release-block check: none open. Reversibility: n/a (read-only).`, then Step 2; **1** with its `"blocked":true` line → stop `HELD`; **2**, **3** or anything else → stop `failed`, `release-block state unreadable`. On the `SKIP` or any exit but 0, read `_shared/release-block.md`'s "What a release does while a block is open" section now.
 
 ## Step 2: Nothing to release
 
