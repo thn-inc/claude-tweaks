@@ -116,6 +116,7 @@ Waived `plugin/skills/_shared/issue-claims.md`: read only. It is the precedent c
     - `{ state:'absent', lease: string|null, via:'git'|'contents-api', branchMissing: boolean }`
     - `{ state:'present', content, value, lease, via }`
     - `{ state:'unreadable', failure, reason, content?, lease?, via? }`. The last three keys appear only when the bytes were read but are not a JSON object (`failure` `'malformed-json'` or `'not-an-object'`). They let Task 4's forced reset carry a lease.
+  - `classifyStateContent(content, { lease, via })` is the pure content step. It returns `{ state:'present', content, value, lease, via }`, or `{ state:'unreadable', failure:'malformed-json'|'not-an-object', reason, content, lease, via }`. Both `readStateFile` legs and Task 5's emit adapter call it, so the two transports classify bytes one way.
   - `ensureReleaseStateBranch(deps, slug)` returns `{ok:true, created, via}`, `{ok:false, reason}` or `{ok:false, reason, transient:true, failure}`, the shape of `ensureClaimsBranch`.
 - `deps = { ghApi, gitRunner?, sleep? }`:
   - `ghApi(args) -> {stdout, failure, status, error?}` never throws (the claim-store contract). The caller has already appended any `--hostname`.
@@ -123,7 +124,8 @@ Waived `plugin/skills/_shared/issue-claims.md`: read only. It is the precedent c
 - `slug` is a bare `owner/repo`. A host-qualified slug or a `name` failing `STATE_FILE_RE` throws `TypeError` (a caller bug).
 - `lease`: on the git leg, the branch tip commit sha (null when the branch is missing); on the contents-API leg, the blob sha. It is never carried across transports.
 - Fixtures (`fixtures.js`), each built once per process with `fromTemplate` and copied per call:
-  - `makeLine()` returns `{ root, originDir, cloneA, cloneB, P1, P2, P3, P4, P5, S }`. It builds a bare origin whose `main` first-parent line is P1←P2←P3←P4←P5. P4 is a `--no-ff` merge whose second parent is the side commit S. There is no `release-state` branch. Clones A and B carry identity written through `writeIdentity`.
+  - `makeLine({ branch = 'main' } = {})` returns `{ root, originDir, cloneA, cloneB, branch, P1, P2, P3, P4, P5, S }`. It builds a bare origin whose `{branch}` first-parent line is P1←P2←P3←P4←P5, with `{branch}` as the origin's default branch (`init --bare -b {branch}`). P4 is a `--no-ff` merge whose second parent is the side commit S. There is no `release-state` branch. Clones A and B carry identity written through `writeIdentity`. The template key includes the branch, so `main` and `trunk` are separate templates.
+  - `commitRawState(fx, clone, name, text)` writes `text` byte for byte as `{name}` on `release-state` with plain git (hash-object, an index commit on the branch tip, or on the default tip when the branch is missing, then push), bypassing the store. It is the only way to plant content `createStateFile` refuses (`[]`, `null`, `'x'`, a raw `{`), and it returns the new tip sha.
   - `realRunner(cwd)` returns `(args, {input, extraEnv} = {}) => execFileSync('git', args, { cwd, env: { ...repoPinnedEnv(pinnedGitEnv()), ...extraEnv }, input, encoding:'utf8', stdio:['pipe','pipe','pipe'], windowsHide:true })`.
   - `rewriteMain(fx)` force-pushes `main` to P1←P2←P3′ and returns P3′.
   - `pushMainCommit(fx, clone)` returns a new first-parent tip P6.
@@ -136,7 +138,7 @@ Waived `plugin/skills/_shared/issue-claims.md`: read only. It is the precedent c
   - `AC4.1: a missing file on an existing branch reads absent without branchMissing`. Contents 404, then branch read answers `release-state`.
   - `AC5.1: an inaccessible repo is unreadable, never absent`. Contents 404, branch 404, repo 404. Expect `state:'unreadable', failure:'repo-unconfirmed'` (Review Focus 2).
   - `AC5.1: auth, 5xx, rate limit and gh-absent are unreadable`. Contents answers `{failure:'permission-denied', status:403}`, `{failure:'network-failure'}`, `{failure:'secondary-rate-limit', status:403}` and `{failure:'gh-absent'}`. Each is unreadable with that failure, and no branch read follows.
-  - `AC8.2: malformed JSON and a non-object are unreadable but keep the lease`. Contents stdout `{"content":"{","sha":"<40 hex>"}` gives `failure:'malformed-json'`, `content:'{'` and `lease` = that sha. Content `[1]` gives `'not-an-object'`. The git leg gives the same after a real commit of `{` onto the branch.
+  - `AC8.2: malformed JSON and a non-object are unreadable but keep the lease`. Contents stdout `{"content":"{","sha":"<40 hex>"}` gives `failure:'malformed-json'`, `content:'{'` and `lease` = that sha. Content `[1]` gives `'not-an-object'`. The git leg gives the same after `commitRawState(fx, cloneB, 'reviewed-through.json', '{')`.
   - `store: a present file returns content, parsed value and lease on both legs`. Git lease = tip; contents lease = blob sha.
   - `store: a git transport failure falls back to the contents API`. The git runner throws `fatal: unable to access` on fetch, so the contents API is called once.
   - `store: argv`.
@@ -262,6 +264,7 @@ Expected: PASS, 0 failures.
     3. `to` is not in `line`: `off-line` when complete, else `undetermined`.
     4. `isAncestor(from, to)`: true is `descendant`, false is `backward`, anything else is `undetermined`.
   - `compareVerdict(from, to, { tip, compare })` and `compareOnLine(sha, { tip, compare })`. `compare` is `{ notFound: true }` or `{ status, total_commits, commits: [{sha, parents}] }` for `{base}...{tip}`.
+    - `identical` (base equals tip, `total_commits: 0`, an empty listing) is checked first and never walked. `compareOnLine` returns true. `compareVerdict(from, to)` returns `same` when `to === from`, otherwise `off-line`, because nothing newer than the tip is on the line. This is the common case for init at the current tip, and for a marker that already sits at the tip.
     - `behind`, `diverged` or `notFound` on the marker's range means `orphaned` (for `compareOnLine`, false).
     - Fewer commits than `total_commits` means `undetermined`.
     - Otherwise walk `parents[0]` from `tip` through the listed commits. Leaving the set before reaching `from` means `orphaned`. `to` on the walked path is `descendant`. `to` elsewhere is `off-line`.
@@ -291,7 +294,7 @@ Expected: PASS, 0 failures.
     - same;
     - `to` missing with complete → off-line; with incomplete → undetermined;
     - isAncestor true → descendant; false → backward; `'undetermined'` → undetermined.
-  - `compareVerdict: walks parents[0] only`. Use fixtures in the probe's shape. A merge commit's second-parent commit S listed in the range is `off-line`; a walk that never reaches `from` is `orphaned`; `behind` is `orphaned`; 2 of `total_commits: 3` is `undetermined`; `notFound` is `orphaned`.
+  - `compareVerdict: walks parents[0] only`. Use fixtures in the probe's shape. A merge commit's second-parent commit S listed in the range is `off-line`; a walk that never reaches `from` is `orphaned`; `behind` is `orphaned`; 2 of `total_commits: 3` is `undetermined`; `notFound` is `orphaned`. `identical` with `total_commits: 0` and `commits: []` gives: `compareOnLine(tip)` true; `compareVerdict(tip, tip)` `same`; `compareVerdict(tip, X)` `off-line`. Go-red for the identical rows: drop the `identical` branch. The empty walk then reads `orphaned`, and both rows must go red.
   - `createCompareHistory: argv and pagination`. The fake `ghApi` serves page 1 with 100 commits and page 2 with 1 (`total_commits: 101`). Assert the exact args of the tip read and both page reads, and that no arg is `-f`/`-F`. `--branch release/v1#x` encodes as `release/v1%23x`.
   - Local history on real git (`makeLine()`, `realRunner(cloneA)`):
     - `AC1.1 (descent): P1→P3 descendant`.
@@ -301,7 +304,7 @@ Expected: PASS, 0 failures.
     - `AC8.1 (descent): a shallow clone answers what it holds and is undetermined on a miss, never refused or orphaned`. Use `shallowClone(fx, 2)`: P4→P5 is descendant; P1→P5 is undetermined; `onLine(P1)` is undetermined.
     - `AC8.1 (descent): a failed fetch is undetermined`. Repoint clone A's `origin` to a missing path.
     - `history: a membership miss refreshes the snapshot once` (Review Focus 1). Take a verdict, then `pushMainCommit` from clone B, then `verdict(P5, P6)` on the same history object is descendant. Prove it with a counting runner: two fetches, not three.
-    - `history: consumer branch name`. Build the fixture's first-parent line on `trunk`; `createLocalHistory({ branch: 'trunk' })` answers P1→P3 descendant.
+    - `history: consumer branch name`. Use `makeLine({ branch: 'trunk' })` (Task 1's fixture parameter). `createLocalHistory({ branch: 'trunk' })` answers P1→P3 descendant, and `createLocalHistory()` (default `main`) answers `undetermined`, because the fetch of a missing `main` fails.
     - `createHistory: local undetermined falls to compare; neither gives undetermined`.
 
 - [ ] **Step 2: Run the tests and confirm they fail**
@@ -377,14 +380,14 @@ Expected: PASS, 0 failures.
   - `AC8.5: an orphaned marker gives orphaned, not refused`. Marker at P3, then `rewriteMain`, then advance to P3′.
   - `AC8.1: a shallow clone with the marker below the boundary gives insufficient-history`. Run from `shallowClone(fx, 2)` with the marker at P1.
   - `AC5.1: an unreadable read gives unreadable and never refused`. A facade whose `read` returns `{state:'unreadable'}`.
-  - `AC8.3: a stored marker of each malformed shape gives unreadable`. Loop over `assertRejected`'s shapes, each written raw through `createStateFile`, then advance.
+  - `AC8.3: a stored marker of each malformed shape gives unreadable`. Loop over `assertRejected`'s shapes, then advance. Object-shaped ones (a bad sha, `version: 2`, a bad `advancedAt`, …) are written through `createStateFile`. The non-object ones (`[]`, `null`, `'x'`, a raw `{`) are written with `commitRawState`, because `createStateFile` refuses them as `invalid-content` (Task 2).
   - `AC3.1/AC3.2: a concurrent advance seen through the injected read seam`. This follows lock-race-test-seam: never two processes.
     - Wrap clone A's `ctx.store.read`. On its first call, take the real read, then run `advanceMarker(ctxB, { to: P5, run: 'rb' })` from clone B in-process and assert it `ok`. Return the stale first read.
     - `advanceMarker(ctxA, { to: P3, run: 'ra' })` must give `ok`, `advanced:false`, `reason:'at-or-past'`.
     - The origin's `release-state` has exactly two commits past its base (init, B's advance), and the marker reads P5 with run `rb`.
     - A sibling case where B advances to P3 (equal) gives the same result.
   - `AC3.1: a competitor behind our target makes us retry once and land`. B advances to P2 inside the seam; A targets P3. A gives `advanced:true, from:P2`.
-  - `AC3.1: the retry re-validates against the fresh marker`. Inside the seam, B resets the marker with `--force` to an off-line sha (S, written raw). A's second pass gives `refused`, not a blind write.
+  - `AC3.1: the retry re-validates against the fresh marker`. Inside the seam, B rewrites the marker to an off-line sha: `commitRawState` with `serializeMarker({ sha: S, … })`. A's second pass calls `verdict(S, P3)`, and check 1 (`from` not on the line of a complete clone) gives `orphaned`. Expect `orphaned`, which is exit 6, with no write: a blind write would land `advanced:true`. A fresh marker on the line can never give `refused` here. Being behind the target makes it the retry-and-land case above, and being at or past it gives `at-or-past`.
   - `AC3.1: a second conflict is contested`. Use a fake in-memory facade whose `write` always returns `{ok:false, conflict:true}` and whose `read` returns an older marker each time.
   - `AC6.1: init refuses when a marker exists`. Also: init on a branchless remote creates the branch with `run: 'init'`; init at S is refused with no branch created.
   - `AC8.6/AC8.7/AC8.8/AC8.9: reset only under its guards, and the commit message logs it`. Cases:
@@ -393,7 +396,7 @@ Expected: PASS, 0 failures.
     - `force` with reason `history rewritten by hand` gives `ok, basis:'forced'`. The message contains `forced: history rewritten by hand`.
     - An off-line target gives `refused`.
     - No marker gives `refused`.
-    - A raw `{` marker without force gives `unreadable`; with force it gives `ok`, `from:null`.
+    - A raw `{` marker (planted with `commitRawState`) without force gives `unreadable`; with force it gives `ok`, `from:null`.
   - `marker: TypeError on bad arguments` (Review Focus 4). Cases: `run: 'init'` on advance, `run: '-x'`, reason `fix #12`, reason `'a\nb'`.
 
 - [ ] **Step 2: Run the tests and confirm they fail**
@@ -408,7 +411,7 @@ Expected: PASS, 0 failures.
 
 - [ ] **Step 5: Prove the race test goes red** (lock-race-test-seam). Do these reverts, one at a time, restoring the code after each:
   - Delete the at-or-past re-read branch. The P5 race case must go red (it then reports `refused`).
-  - Replace the second pass's re-validation with a blind write on the fresh lease. The re-validation case must go red.
+  - Replace the second pass's re-validation with a blind write on the fresh lease. The re-validation case must go red (it then reports `ok`, `advanced:true` instead of `orphaned`).
   - Make `resetMarker` skip the orphan check. The not-orphaned case must go red.
 
 - [ ] **Step 6: Commit**
@@ -429,7 +432,7 @@ Expected: PASS, 0 failures.
 - Modify: `tests/helpers/gh-host-seam.js`. Append a `CLI_TABLE` row: `{ cli: 'release-state.js', argv: ['marker', 'read'], acceptsRepo: true, canned: { 'api-repos/o/r/contents/reviewed-through.json?ref=release-state': JSON.stringify({ content: JSON.stringify({ version: 1, sha: 'a'.repeat(40), advancedAt: '2026-11-18T10:00:00.000Z', run: 'r1' }), sha: 'b'.repeat(40) }) } }`. The git leg's fetch fails under the table's `GIT_ALLOW_PROTOCOL=file`, so the read reaches the contents API.
 
 **Interfaces:**
-- Consumes: Task 4's operations and `storeFacade`; Task 3's histories; Task 1's `readStateFile`.
+- Consumes: Task 4's operations and `storeFacade`; Task 3's histories; Task 1's `readStateFile` and `classifyStateContent`.
 - Produces, all exported from `plugin/bin/release-state.js`:
   - `run(argv, deps) -> number`, `realDeps`, `parseArgs(argv)`, `EXIT` (Global Constraints), and `OUTCOME_EXIT = { ok: 0, refused: 1, unreadable: 3, contested: 4, 'insufficient-history': 5, orphaned: 6 }`.
   - `USAGE`:
@@ -450,12 +453,13 @@ Expected: PASS, 0 failures.
 - Flow, gh path:
   1. Parse. `--marker-json`/`--emit` together with `--repo`, `--force` without `--reason`, or `--reason` without `--force` gives exit 2.
   2. Resolve the repo as `release-block.js`'s `resolveRepoOrFail` does, giving exit 2 with the gate's text. `--repo` pins the host.
-  3. Use the local clone only when `git rev-parse --is-inside-work-tree` prints `true` and the origin gates to the same host, owner and repo. Otherwise give no `gitRunner` and no local history (Review Focus 3).
+  3. Use the local clone only when `git rev-parse --is-inside-work-tree` prints `true` and the origin gates to the same host, owner and repo. Read the origin through `deps.remoteUrl`, the same dep step 2 uses, never through a separate git call. Otherwise give no `gitRunner` and no local history (Review Focus 3).
   4. The history ladder: local, then compare.
   5. Run the operation, print one JSON line, and exit `OUTCOME_EXIT[outcome]`.
   6. A `gh-absent` failure adds the stderr hint `gh not found — read over MCP and pass --marker-json (_shared/release-state.md)`.
 - Emit mode (`--marker-json` for read/advance/reset, `--emit` for init): no gh call, no repo resolution, local history only.
-  - The file is `null` (absent), `{content: string, sha: 40-hex}` (present), or `{failure: string}`. Any other shape, an unreadable file or unparseable JSON is exit 3.
+  - The file is `null` (absent), `{content: string, sha: 40-hex}` (read), or `{failure: string}`. Any other shape, an unreadable file or an unparseable handoff file is exit 3.
+  - A `{content, sha}` entry goes through Task 1's `classifyStateContent(content, { lease: sha, via: 'contents-api' })`, exactly as `readStateFile` does. A marker whose *content* is malformed JSON or a non-object is therefore an unreadable read that still carries `content` and `lease` = the blob `sha`. `marker reset --force --reason` can overwrite it on the MCP path as on the gh path (Task 6's Recovery).
   - `ctx.store.write`/`create` capture the write instead of making it.
   - The write prints `{"write":{"branch":"release-state","path":"reviewed-through.json","content":"…","sha":"<blob sha>"|null,"message":"…"}}` and exits 0.
 - Stdout on exit 0, one line each:
@@ -467,7 +471,14 @@ Expected: PASS, 0 failures.
 
 - [ ] **Step 1: Write the failing tests** in `cli.test.js`. In-process cases go through `runCliSync` from `tests/helpers/run-cli.js` with an absolute `cliPath`. The fake `gh` records `{args}` and throws `unexpected …` on any other shape. The fake `git` records too. Fixed `now`.
   - `public contract: EXIT and OUTCOME_EXIT values`. Assert `deepStrictEqual(EXIT, {OK:0,REFUSED:1,USAGE:2,UNREADABLE:3,CONTESTED:4,INSUFFICIENT_HISTORY:5,ORPHANED:6})`. Assert that `OUTCOME_EXIT` covers exactly `OUTCOMES`.
-  - `AC1.1: marker read prints the marker after an advance`. The real-git fixture runs through `spawnCli` with `cwd: cloneA` and `PATH` keeping `git` but not `gh` (`pathWithOnly` from `tests/helpers/path-stub.js`). Run `marker init --to P1`, then `marker advance --to P3 --run r1`, then `marker read`. Assert the exit codes are 0, 0, 0 and that read's stdout `sha` is P3. This path makes no gh call, because the git leg succeeds.
+  - `AC1.1: marker read prints the marker after an advance`. This runs in-process through `runCliSync` on the real-git fixture, with no `--repo` and no `gh`. The fixture's `origin` is a bare local path, which `parseRepo` cannot read (`plugin/bin/lib/repo-resolve.js:29-33`). A `url.insteadOf` rewrite does not help, because `git remote get-url` expands insteadOf. So the test injects these deps:
+    - `remoteUrl: () => 'https://github.com/o/r.git'`, so the gate resolves `o/r` and Flow step 3 sees the same repo.
+    - `cwd: () => cloneA`.
+    - `git` left as the real `realDeps.git`. It is a git-only seam, deliberately not on `FAIL_CLOSED_KEYS`, and runs against the real clone and its file-path `origin`.
+    - `env` as `{ ...cleanGitEnv(), ...pinnedGitEnv() }` (`tests/helpers/git-fixtures.js`, `tests/helpers/pinned-git.js`).
+    - `gh` as a fake that throws `unexpected …`, so no gh call is allowed.
+
+    Run `marker init --to P1`, then `marker advance --to P3 --run r1`, then `marker read`. Assert the exit codes are 0, 0, 0, that read's stdout `sha` is P3, and that the fake `gh` was never called. One `spawnCli` smoke test covers the script entry: `--help` exits 0 with the usage on stdout.
   - `AC2.1 / AC7.1 / AC8.5 / AC8.1 / AC6.1 / AC5.1 / AC8.3: each outcome maps to its exit code`. Use a fake-deps table with one operation result per row. Exits: refused 1, same 0 with `reason:"same"`, orphaned 6, insufficient-history 5, init-exists 1, unreadable 3, and malformed marker 3. Each non-zero exit leaves stdout empty and stderr matching `/^release-state\.js: /`.
   - `AC4.1: read on a branchless remote prints {"absent":true}`. This is the contents leg with the confirmation reads faked.
   - `usage -> exit 2, zero gh and git calls`. Cases:
@@ -481,6 +492,10 @@ Expected: PASS, 0 failures.
     - `null` plus `advance` gives exit 1.
     - These shapes each give exit 3: `{failure:'x'}`, `{content:'…'}` without `sha`, `'str'`, `[]`, a missing file and `not json`.
     - `init --emit` prints `sha:null`.
+    - `AC8.6: a malformed marker is recoverable on the MCP path`.
+      - Use `{content:'{', sha:'c'.repeat(40)}`. `reset --to P3 --run r1 --force --reason "history rewritten by hand"` prints a `write` descriptor whose `sha` is `'c'.repeat(40)`, whose `content` is `serializeMarker({sha:P3, …, run:'r1'})`, and whose `message` ends `forced: history rewritten by hand`.
+      - The same file without `--force` exits 3.
+      - Go-red: point the adapter at a copy that maps malformed content to `{failure}`. The `--force` case must go red.
     - Build file keys with `path.join(root, …)` and reach them through a relative path under an injected `cwd`.
   - `repo: --repo other/x with origin acme/widgets uses no local git` (Review Focus 3). The recorded git calls hold no `fetch`/`push`, and the compare tip read runs.
   - `repo: --hostname rides every gh api call off github.com, never on github.com`. `--repo ghe.example.com/o/r` puts the trailing `--hostname ghe.example.com` on every call. A bare `--repo o/r` has none. `pinGhHost` is called once with `--repo` only.
@@ -515,6 +530,7 @@ Expected: PASS, 0 failures.
 ### Task 6: The `_shared/release-state.md` contract and the structure doc
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Create: `plugin/skills/_shared/release-state.md`
@@ -651,7 +667,7 @@ Expected: PASS, 0 failures, and `wc -c plugin/skills/_shared/release-state.md` �
 - No `ls-tree` or `ls-files` read, so `-z` is not owed.
 - `store.js` avoids the three claims-path strings (`claims-single-write-path`).
 
-**Real-writer fixture:** Marker states in the operation tests are written by the real `createStateFile`/`writeStateFile`. A malformed marker is written raw through `createStateFile`, never as hand-built JSON in a fake.
+**Real-writer fixture:** Marker states in the operation tests are written by the real `createStateFile`/`writeStateFile`. A malformed marker is written as a real commit on the branch: through `createStateFile` when it is object-shaped, and through `commitRawState` when it is not. It is never hand-built JSON in a fake.
 
 **Moved-prose pin / Prose-held pin:** No prose is moved.
 
