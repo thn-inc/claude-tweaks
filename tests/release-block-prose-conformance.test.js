@@ -453,7 +453,7 @@ test('Step 1.5 detects gh before the bash check', () => {
   assert.notStrictEqual(moved, body);
   assert.throws(() => assertGhFirst(moved), { message: /command -v gh must precede the check fence/ });
   // Permutation: the engine sentence moved after the gh detection.
-  const engineSentence = body.match(/Step 1's `engine` `local-merge`[^\n]*?never a fresh probe\./);
+  const engineSentence = body.match(/Step 1's `engine` `local-merge`[^\n]*?never a fresh probe \([^)\n]*\)\./);
   assert.ok(engineSentence, 'no engine sentence');
   const engineMoved = moveAfterFence(body, engineSentence[0]);
   assert.notStrictEqual(engineMoved, body);
@@ -952,4 +952,20 @@ test('the release journey lists the release-block CLI and contract', () => {
     assert.notStrictEqual(without, JOURNEY);
     assert.ok(!journeyFiles(without).includes(f), `control: ${f} removed`);
   }
+});
+
+// Step 1.5 names where `work-backend` is read (#5882 residual): the rule otherwise lived only in
+// console.md's Inputs, which loads at Step 4, so a local-merge project with no flag guessed the default.
+const WORK_BACKEND_SOURCE = '(CLAUDE.md `## Work records`; none → `local-files`)';
+const PRE_WORK_BACKEND = 'never a fresh probe. Else detect `gh` first: `command -v gh`. Present:';
+const namesWorkBackendSource = (body) => body.includes('## Work records') && body.includes(WORK_BACKEND_SOURCE);
+
+test('Step 1.5 states where work-backend is read and that a missing flag is local-files', () => {
+  const body = step15Of(SKILL);
+  assert.ok(namesWorkBackendSource(body), 'Step 1.5 does not name the work-backend source');
+  // Go-red: the frozen pre-fix text (engine sentence without the source) fails the same helper.
+  const doctored = body.replace(` ${WORK_BACKEND_SOURCE}`, '');
+  assert.notStrictEqual(doctored, body);
+  assert.ok(doctored.includes(PRE_WORK_BACKEND), 'frozen copy anchors on the pre-fix text');
+  assert.strictEqual(namesWorkBackendSource(doctored), false);
 });
