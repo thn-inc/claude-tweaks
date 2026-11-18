@@ -68,6 +68,11 @@ test('#4432: SKILL.md states the release rule and its accepted false negative', 
   assert.match(DISPATCH_SKILL, /shaping-only release/);
 });
 
+test('#5722: SKILL.md states the shaping-or-grant downgrade', () => {
+  assert.match(DISPATCH_SKILL, /#5722/);
+  assert.match(DISPATCH_SKILL, /shaped to `ready` or granted `auto:build` after/);
+});
+
 test('dispatch/SKILL.md stays under the read-limit rail', () => {
   const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
   assert.ok(Buffer.byteLength(DISPATCH_SKILL) <= RAIL_BYTES);
