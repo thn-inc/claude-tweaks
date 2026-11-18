@@ -14,8 +14,10 @@
 //   Exit 0 ok, 1 refused, 2 usage, 3 unreadable, 4 contested, 5 insufficient-history, 6 orphaned.
 //   Exit 3 also covers a write that failed for a non-contest reason (a refused push or contents-API
 //   PUT, an uncreatable branch), the same overload release-block.js documents for its exit 3.
-//   Stdout on exit 0 is one JSON line; a non-zero exit prints nothing on stdout and one stderr
-//   line, `release-state.js: {outcome} — {reason}` (a `gh` that is absent adds a hint line).
+//   Stdout on exit 0 is one JSON line, except `--help`, which prints the usage text on exit 0.
+//   Exits 1 and 3-6 print nothing on stdout and one stderr line, `release-state.js: {outcome} —
+//   {reason}` (a `gh` that is absent adds a hint line). Exit 2 prints `release-state.js: {error}`
+//   and then the usage text on stderr; an unresolvable or refused repo prints its one line alone.
 //
 //   gh path   Repo from --repo, else the gated origin. The local clone is used (git leg first,
 //             then first-parent descent over a fetched snapshot) only when it is inside a work
@@ -79,7 +81,7 @@ const USAGE = `usage: ${NAME} marker read [--repo [host/]owner/name | --marker-j
   + `       ${NAME} marker init --to <sha> [--branch <name>] [--repo [host/]owner/name | --emit]\n`
   + `       ${NAME} marker reset --to <sha> --run <id> [--force --reason <text>] [--branch <name>] [--repo [host/]owner/name | --marker-json <path>]\n`
   + `       ${NAME} [--help]\n`
-  + `  exit ${EXIT.OK} ok: one JSON line on stdout (a --marker-json or --emit write prints its write descriptor)\n`
+  + `  exit ${EXIT.OK} ok: one JSON line on stdout (a --marker-json or --emit write prints its write descriptor); --help prints this usage text instead\n`
   + `  exit ${EXIT.REFUSED} refused: the move is not allowed (no marker, a target off the first-parent line or behind the marker, a marker already exists)\n`
   + `  exit ${EXIT.USAGE} usage: a malformed invocation, or an unresolvable or refused repo\n`
   + `  exit ${EXIT.UNREADABLE} unreadable: the marker, the repo or the handoff file cannot be read, or a write failed for a non-contest reason\n`
@@ -229,6 +231,11 @@ function runVerb(opts, deps, ctx, captured, flags) {
     if (opts.verb === 'advance') {
       // --after-conflict: the agent's PUT lost, and the handoff file is its re-read. Apply the same
       // at-or-past check advanceMarker runs after a lost write; otherwise advance as usual.
+      // advanceMarker wants a history no earlier call has used, and recheckAfterConflict may
+      // spend this one's refresh first. That is safe here: --after-conflict exists only on the
+      // emit path, whose store captures a write rather than making it and so never reports a
+      // conflict; advanceMarker's post-conflict re-read, the one step that needs the refresh
+      // unspent, is never reached.
       result = (opts.afterConflict && recheckAfterConflict(ctx, { to: opts.to }))
         || advanceMarker(ctx, { to: opts.to, run: opts.run });
     }

@@ -105,15 +105,16 @@ function unreadableFrom(r) {
 // -> the git leg's answer, or null when git could not answer (a transport failure: the
 // caller falls back to the contents API, the documented degrade, not an error).
 // Fetches into a per-call scratch ref with `--no-write-fetch-head`, never touching FETCH_HEAD
-// (a single shared pointer a concurrent fetch can overwrite), and deletes the ref afterwards;
-// the object read below survives the ref's deletion. A remote with no release-state branch
-// is a normal pre-bootstrap state, never a failure.
+// (a single shared pointer a concurrent fetch can overwrite), and with `--no-tags`, since a
+// fetch that stores into a ref auto-follows tags into the user's clone; it deletes the ref
+// afterwards, and the object read below survives the ref's deletion. A remote with no
+// release-state branch is a normal pre-bootstrap state, never a failure.
 function readStateGit(runner, name) {
   const ref = scratchRef();
   let tip;
   try {
     // Fully qualified: a bare `release-state` could resolve to a same-named tag.
-    runner(['fetch', '-q', '--no-write-fetch-head', 'origin', `refs/heads/${RELEASE_STATE_BRANCH}:${ref}`]);
+    runner(['fetch', '-q', '--no-tags', '--no-write-fetch-head', 'origin', `refs/heads/${RELEASE_STATE_BRANCH}:${ref}`]);
     tip = runner(['rev-parse', ref]).trim();
   } catch (err) {
     if (classifyGitError(err).kind === 'missing-branch') {
@@ -229,7 +230,7 @@ function bootstrapBranchGit(runner) {
   const ref = scratchRef();
   const target = `refs/heads/${RELEASE_STATE_BRANCH}`;
   try {
-    runner(['fetch', '-q', '--no-write-fetch-head', 'origin', `HEAD:${ref}`]);
+    runner(['fetch', '-q', '--no-tags', '--no-write-fetch-head', 'origin', `HEAD:${ref}`]);
     const base = runner(['rev-parse', ref]).trim();
     runner(['push', '--no-verify', 'origin', `${base}:${target}`, `--force-with-lease=${target}:`]);
     return { ok: true, created: true };
@@ -460,17 +461,20 @@ function writeStateFile(deps, slug, name, {
 
 // (deps: {ghApi, gitRunner?, sleep?}, slug, name, { content, message })
 // -> { ok: true, created: true, via } | { ok: false, exists: true } | { ok: false, failure, reason }
-// Create-if-not-exists with no prior read of the file. A missing branch is created
-// (`ensureReleaseStateBranch`): first on the git leg, which reads the tip before building
-// anything, and after a rejected PUT on the contents leg, whose re-read settles that 404 as
-// `branchMissing` (one creation per leg; a branch still missing after it is
-// `branch-uncreatable`). The git leg reads the tip and refuses to build a commit when
-// the file is already there (`exists`); its push is leased on that tip, and a contest is
-// settled by the same fresh read (a creator who got there first is `exists`, unrelated
-// activity retries on the new tip). A non-contest git failure falls to the contents API,
-// whose PUT carries no `sha`, so the forge refuses to overwrite: a 404, 409 or 422 is settled
-// by a re-read (ours = ok, other content = `exists`, a missing branch = create it and PUT
-// once more, anything else absent = `put-rejected`).
+// Create-if-not-exists with no prior read of the file. Each leg confirms the branch before
+// its first write and creates a missing one (`ensureReleaseStateBranch`) first, so no write
+// ever names a branch that is not there and "never write state to main" holds by
+// construction, not by the forge refusing a PUT to a missing branch. The git leg reads the
+// tip before building anything; the contents leg reads the branch before its first PUT, and
+// a branch read that cannot answer is that failure, with no PUT. One creation per leg; a
+// branch still missing after it is `branch-uncreatable`. The git leg refuses to build a
+// commit when the file is already there (`exists`); its push is leased on that tip, and a
+// contest is settled by the same fresh read (a creator who got there first is `exists`,
+// unrelated activity retries on the new tip). A non-contest git failure falls to the
+// contents API, whose PUT carries no `sha`, so the forge refuses to overwrite: a 404, 409 or
+// 422 is settled by a re-read (ours = ok, other content = `exists`, a branch that went
+// missing after the check = create it, unless this leg already did, and PUT once more,
+// anything else absent = `put-rejected`).
 // Mirrors writeClaimBlob's `createOnly` mode; if either changes, check the other.
 function createStateFile(deps, slug, name, { content, message } = {}) {
   assertSlug(slug);
@@ -505,7 +509,17 @@ function createStateFile(deps, slug, name, { content, message } = {}) {
     }
   }
 
+  const branch = readStateBranch(deps.ghApi, slug);
+  if (branch.exists === null) {
+    const u = unreadableFrom(branch.result);
+    return { ok: false, failure: u.failure, reason: u.reason };
+  }
   let branchEnsured = false;
+  if (!branch.exists) {
+    branchEnsured = true;
+    const failed = ensureBranch();
+    if (failed) return failed;
+  }
   for (;;) {
     const r = putContents(deps.ghApi, slug, name, content, message, null);
     if (!(r.status && REJECTED_PUT_STATUSES.has(r.status))) {

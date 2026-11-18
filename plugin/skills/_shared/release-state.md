@@ -16,8 +16,9 @@ branch, moved only through `bin/release-state.js` (`bin/lib/release-state/store.
   (#5884) next. Reads try git first (fetch the tip into a scratch ref, show the file), then the
   contents API. A missing file reads absent only once the branch read confirms it; an
   inaccessible repository reads unreadable, never absent.
-- It never writes to `main`: every push names `refs/heads/release-state` and every contents-API
-  write carries `branch=release-state`.
+- It never writes to `main`: every push names `refs/heads/release-state`, every contents-API
+  write carries `branch=release-state`, and a create confirms the branch (creating a missing
+  one) before its first write, on either transport.
 - The git fetch uses `--no-write-fetch-head`, which needs git 2.29 or newer. On older git the
   local history answers insufficient history and the store falls back to the contents API. On
   the gh path the compare API then answers; exit 5 follows only when no compare history exists
@@ -74,7 +75,8 @@ The repo is `--repo`, else the origin. The local clone serves history only when 
 that repo; any other target uses the contents and compare APIs alone, with no git call that
 could reach `origin`.
 
-On exit 0 stdout is one JSON line. Exits 1 and 3-6 print nothing on stdout and one stderr line
+On exit 0 stdout is one JSON line; `--help` prints the usage text instead, also on exit 0.
+Exits 1 and 3-6 print nothing on stdout and one stderr line
 `release-state.js: {outcome} — {reason}`; with `gh` missing a second hint line follows. Exit 2
 prints `release-state.js: {error}` and then the usage text; an unresolvable or refused repo
 prints `release-state.js: {message}` alone, with no outcome word.
@@ -113,17 +115,22 @@ same repository.
    `sha` the file's 40-lowercase-hex blob sha.
    A not-found counts as `null` only after `get_file_contents` of the root on `release-state`
    succeeds (the file is missing), or that read answers not-found and the root on the default
-   branch succeeds (the branch is missing). Any other failure on any read is `{failure}`. Any other file shape exits 3.
+   branch succeeds (the branch is missing). Any other failure on any read is `{failure}`. Any
+   other file shape exits 3.
 2. Run `node "${CLAUDE_PLUGIN_ROOT}/bin/release-state.js" marker advance --to {sha} --run {id} --marker-json "{tmp-marker-json}"`
    from that checkout, and route on its exit code.
 3. On exit 0 with `write`, call `create_or_update_file` with `branch`, `path`, `content`,
    `message` and `sha` (omitted when null): the conditional-write pattern in that same file.
 4. On a sha-mismatch or exists rejection, re-read (step 1) and re-run step 2 with `--after-conflict`
    added: it applies the at-or-past check of Writer rules to the fresh file. Exit 0 without
-   `write` is success (at-or-past); exit 0 with `write` makes step 3's call once more. On a
-   second rejection, re-read and re-run with `--after-conflict` again: exit 0 without `write` is
-   success; anything else, a `write` included, is the exit-4 equivalent, and nothing is written.
-   A `null` file under `--after-conflict` is exit 4.
+   `write` is success (at-or-past); exit 0 with `write` makes step 3's call once more; any other
+   exit routes as in step 2. On a second rejection, re-read and re-run with `--after-conflict`
+   again: exit 0 without `write` is success; anything else, a `write` included, is the exit-4 equivalent,
+   and nothing is written. A `null` file under `--after-conflict` is exit 4.
+5. A step-3 call that fails with no rejection (a 5xx or a network error, a write that landed but
+   whose answer was lost included): re-read and re-run with `--after-conflict`. A write that
+   landed reads as at-or-past (exit 0 without `write`, success); anything else is the exit-3
+   equivalent, and nothing more is written.
 
 `reset` takes `--marker-json` the same way and makes one write; a rejection is the exit-4
 equivalent, with no retry.
@@ -133,7 +140,8 @@ Init: `--emit`, then `create_branch` (name `release-state`, from the default bra
 exit-1 equivalent.
 
 The descent check needs a local clone, because no compare tool is used on the MCP path. Without
-one, the CLI exits 5.
+one, the CLI exits 5. When exit 5 comes from a shallow clone or git older than 2.29, deepen the
+clone (`git fetch --unshallow origin`) or upgrade git, then re-run.
 
 ## Recovery: an orphaned or malformed marker
 
