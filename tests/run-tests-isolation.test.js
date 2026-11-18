@@ -765,10 +765,13 @@ test('run-tests.js runs the suite under a ct-testrun-* TMPDIR it removes on exit
     const recorded = JSON.parse(fs.readFileSync(sb.probeOut, 'utf8'));
     assert.match(path.basename(recorded.tmpdir), /^ct-testrun-\d+-/);
     // Run roots live under a dedicated parent, so the startup sweep never scans the whole tmpdir.
+    // Its `.noindex` suffix is what keeps macOS Spotlight out of the fixtures.
     assert.strictEqual(
       fs.realpathSync(path.dirname(recorded.tmpdir)),
-      fs.realpathSync(path.join(sb.childTmp, 'ct-test-runs')),
+      fs.realpathSync(path.join(sb.childTmp, 'ct-test-runs.noindex')),
     );
+    // The runner does not create the parent's old name.
+    assert.strictEqual(fs.existsSync(path.join(sb.childTmp, 'ct-test-runs')), false);
     assert.strictEqual(fs.existsSync(recorded.tmpdir), false);
     // #5294: the repoInfo store lives inside the run root, never the real per-user location.
     assert.strictEqual(typeof recorded.repoInfoStore, 'string');
@@ -814,21 +817,30 @@ test('a failing suite makes run-tests.js exit non-zero, and it still frees its s
     const result = runRunner(sb, { timeout: 120000 });
     assert.strictEqual(result.status, 1, result.stdout + result.stderr);
     assert.deepStrictEqual(SLOT_LOCKS(sb.slotDir), []);
-    assert.deepStrictEqual(fs.readdirSync(path.join(sb.childTmp, 'ct-test-runs')), []);
+    assert.deepStrictEqual(fs.readdirSync(path.join(sb.childTmp, 'ct-test-runs.noindex')), []);
   });
 });
 
-test('run-tests.js sweeps a run root left by a dead pid before it runs', async () => {
-  await withSandbox(...PROBE, (sb) => {
-    const dead = spawnSync(process.execPath, ['-e', '0']);
-    const orphan = path.join(sb.childTmp, 'ct-test-runs', `ct-testrun-${dead.pid}-orphan`);
-    fs.mkdirSync(orphan, { recursive: true });
-    fs.writeFileSync(path.join(orphan, 'leaked'), 'x');
-    const result = runRunner(sb, { timeout: 120000 });
-    assert.strictEqual(result.status, 0, result.stdout + result.stderr);
-    assert.strictEqual(fs.existsSync(orphan), false);
+// The second parent is the name from before the `.noindex` suffix: a checkout that predates the
+// rename still leaves roots there.
+for (const parent of ['ct-test-runs.noindex', 'ct-test-runs']) {
+  test(`run-tests.js sweeps a run root left by a dead pid under ${parent} before it runs`, async () => {
+    await withSandbox(...PROBE, (sb) => {
+      const dead = spawnSync(process.execPath, ['-e', '0']);
+      const orphan = path.join(sb.childTmp, parent, `ct-testrun-${dead.pid}-orphan`);
+      // A live pid's root under the same parent is another run's, and stays.
+      const live = path.join(sb.childTmp, parent, `ct-testrun-${process.pid}-live`);
+      for (const root of [orphan, live]) {
+        fs.mkdirSync(root, { recursive: true });
+        fs.writeFileSync(path.join(root, 'leaked'), 'x');
+      }
+      const result = runRunner(sb, { timeout: 120000 });
+      assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+      assert.strictEqual(fs.existsSync(orphan), false);
+      assert.strictEqual(fs.existsSync(path.join(live, 'leaked')), true);
+    });
   });
-});
+}
 
 test('a nested run with CT_TEST_SUITE_SLOT_HELD=1 skips the slot', async () => {
   await withSandbox(...PROBE, (sb) => {
@@ -1164,7 +1176,7 @@ for (const [signal, expectedCode] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHU
         assert.strictEqual(outcome.sig, null);
         assert.strictEqual(outcome.code, expectedCode);
         assert.deepStrictEqual(SLOT_LOCKS(sb.slotDir), []);
-        const runsDir = path.join(sb.childTmp, 'ct-test-runs');
+        const runsDir = path.join(sb.childTmp, 'ct-test-runs.noindex');
         assert.deepStrictEqual(fs.readdirSync(runsDir), []);
         await until(() => !isPidAlive(workerPid), 30000, 'the sleeping test worker to be gone');
       } finally {
@@ -1549,7 +1561,7 @@ test('AC1.1 AC1.2 AC1.3 AC3.1: file operands run exactly those files on the subs
     assert.strictEqual(result.status, 0, result.stdout + result.stderr);
     assert.match(result.stdout, TESTS_RAN(2), result.stdout);
     const recorded = JSON.parse(fs.readFileSync(sb.probeOut, 'utf8'));
-    assert.strictEqual(path.basename(path.dirname(recorded.tmpdir)), 'ct-test-runs');
+    assert.strictEqual(path.basename(path.dirname(recorded.tmpdir)), 'ct-test-runs.noindex');
     assert.strictEqual(recorded.held, '1');
     const pairs = Object.entries(recorded.git).filter(([k]) => k.startsWith('GIT_CONFIG_KEY_')).map(([k, key]) => [key, recorded.git[k.replace('KEY', 'VALUE')]]);
     assert.ok(pairs.some(([key, value]) => key === 'maintenance.auto' && value === 'false'), JSON.stringify(recorded.git));

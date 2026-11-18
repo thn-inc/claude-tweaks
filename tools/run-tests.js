@@ -60,9 +60,9 @@
 // Running the suite also bounds its load on the machine (#3969): concurrent suites from sibling
 // worktrees and fixtures leaked into the shared temp dir made the dev machine unusable. Each run
 // takes a cross-process slot, runs `node --test` with a bounded `--test-concurrency` and a private
-// TMPDIR under `<tmpdir>/ct-test-runs/` (removed on exit; roots orphaned by a killed run are swept
-// from that directory on the next one), and forwards SIGINT/SIGTERM/SIGHUP to the child so a
-// signalled runner frees its slot and root promptly instead of after the suite. Env knobs:
+// TMPDIR under `<tmpdir>/ct-test-runs.noindex/` (removed on exit; roots orphaned by a killed run
+// are swept from that directory on the next one), and forwards SIGINT/SIGTERM/SIGHUP to the child
+// so a signalled runner frees its slot and root promptly instead of after the suite. Env knobs:
 // CT_TEST_SUITE_SLOTS (simultaneous suites, default 1), CT_TEST_CONCURRENCY (files at once,
 // default half the cores, or cores - 1 when CI is set), CT_TEST_SUITE_SLOT_DIR (where the slot
 // locks live, default under the real tmpdir), CT_TEST_SUITE_SLOT_HELD (=1 set for the child so a
@@ -316,6 +316,22 @@ function subsetFallbackReason(execPath, args, { platform }) {
   const len = [execPath, ...args].reduce((n, a) => n + a.length + 3, 0) - 1;
   if (len < WIN32_COMMAND_LINE_MAX) return null;
   return `a ${args.filter((a) => !a.startsWith('-')).length}-file subset needs a ${len}-character command line, over the Windows limit of ${WIN32_COMMAND_LINE_MAX}`;
+}
+
+// The parent of every run root, under the real tmpdir, and its name before the `.noindex` suffix.
+const RUNS_DIR_NAME = 'ct-test-runs.noindex';
+const LEGACY_RUNS_DIR_NAME = 'ct-test-runs';
+
+// Whether `dir` is a real directory this user owns: `ensureOwnDir`'s test (a symlink or another
+// user's directory must not steer the sweep's deletes), without creating `dir` or throwing.
+function isOwnDir(dir) {
+  try {
+    const st = fs.lstatSync(dir);
+    const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+    return st.isDirectory() && (uid === null || st.uid === uid);
+  } catch (_) {
+    return false;
+  }
 }
 
 // The per-run temp root: a pid-tagged directory under `realTmp` that the suite's children use as
@@ -892,10 +908,18 @@ if (require.main === module) {
   }
 
   // Run roots live under one dedicated parent, so the startup sweep reads a directory that only
-  // ever holds run roots instead of scanning the whole real tmpdir.
-  const runsDir = path.join(os.tmpdir(), 'ct-test-runs');
+  // ever holds run roots instead of scanning the whole real tmpdir. The parent's name ends in
+  // `.noindex`, the suffix that makes macOS Spotlight skip a directory and everything under it: a
+  // suite creates and removes thousands of fixture paths a second there.
+  const runsDir = path.join(os.tmpdir(), RUNS_DIR_NAME);
   ensureOwnDir(runsDir);
   sweepStaleRoots({ dir: runsDir, isAlive: isPidAlive });
+  // A checkout from before the suffix still puts its run roots under the old name and sweeps them
+  // there; once the last such checkout is gone, nothing else would collect a root one of its
+  // killed runs left. Removal condition: drop this sweep and LEGACY_RUNS_DIR_NAME once no local
+  // worktree and no open PR branch has a tools/run-tests.js without RUNS_DIR_NAME.
+  const legacyRunsDir = path.join(os.tmpdir(), LEGACY_RUNS_DIR_NAME);
+  if (isOwnDir(legacyRunsDir)) sweepStaleRoots({ dir: legacyRunsDir, isAlive: isPidAlive });
 
   // A nested run (a test that itself runs this script) inherits CT_TEST_SUITE_SLOT_HELD=1 from
   // the suite that already holds the slot, and must not wait on it.

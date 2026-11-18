@@ -26,7 +26,7 @@ files:
   - A plain `npm test` with no arguments prints its one impact-selection line first and runs only the selected files. The slot, the per-run temp directory and the concurrency below are unchanged. Only the lane differs: a subset takes the subset lane (`CT_TEST_SUBSET_SLOTS`), so it does not queue behind a sibling's whole-suite run, and a run with nothing selected takes no slot.
   - Test files named on the command line (`node tools/run-tests.js tests/a.test.js tests/b.test.js`) run as an explicit subset from the subset lane too, with the same temp directory, git settings and concurrency (`run-several-test-files-through-the-runner-5547.md`).
   - The run holds a lock in `<tmpdir>/ct-test-suite-slots/` for its duration.
-  - Its tests see `TMPDIR` pointing at `<tmpdir>/ct-test-runs/ct-testrun-<pid>-XXXXXX/`.
+  - Its tests see `TMPDIR` pointing at `<tmpdir>/ct-test-runs.noindex/ct-testrun-<pid>-XXXXXX/`. The `.noindex` suffix keeps macOS Spotlight out of the fixtures.
   - `node --test` runs with `--test-concurrency` set to half the cores, or cores minus 1 when `CI` is set.
   - Its tests' git sees `maintenance.auto=false` and `gc.auto=0`, appended as `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` after any `GIT_CONFIG_COUNT` entries the caller already exported.
   - Its tests' hooks see `CT_HOOKS_REPO_INFO_STORE` pointing at `repo-info-cache.json` inside that same run root, so fixture repos never land in the user's real `~/.claude-tweaks/repo-info-cache.json`. A bare `node --test` run of a suite that loads `tests/helpers/git-template.js` gets a fresh temp store instead, when the variable is unset.
