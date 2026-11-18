@@ -452,20 +452,46 @@ const PRE_OUTCOME = {
   dryRun: '| `--dry-run` | Step 5 is a no-op — nothing is merged, nothing is tagged, no `Release-As:` commit is pushed. Step 3\'s whole-branch review **still runs**',
   failed: '- **`failed`** — nothing landed and no HARD-GATE fired: either the run stopped before the console for a reason that is not a gate (a refused `--train` with no human present at Step 0; Step 3\'s review-tree assertion;',
 };
+// The round-1 fix's wording (Task 4 re-review): the unreadable stop sat inside the "not a gate"
+// list, the HELD exclusion said "no gate fired", and the dry-run summary sentence was unqualified.
+const ROUND1 = {
+  failedPreamble: "nothing landed and no HARD-GATE fired: either the run stopped before the console for a reason that is not a gate (a refused `--train` with no human present at Step 0; Step 1.5's `release-block state unreadable`, the gate failing closed with no block observed; Step 3's",
+  failedHeld: 'Never reported as `HELD` (no gate fired)',
+  dryRunSummary: "Step 8's summary reads `dry-run`. |",
+};
+const LIVE_OUTCOME = {
+  failedPreamble: "nothing landed and no HARD-GATE fired, or Step 1.5's registered one failed closed (`release-block state unreadable`): either the run stopped before the console for a reason that is not a gate (a refused `--train` with no human present at Step 0; Step 3's",
+  failedHeld: 'Never reported as `HELD` (no gate saw a block)',
+  dryRunSummary: "Step 8's summary reads `dry-run` (`HELD` when Step 1.5 holds it). |",
+};
+const dryRunRow = (s) => lineStartingWith(s, '| `--dry-run` |');
+const failedBullet = (s) => lineStartingWith(s, '- **`failed`**');
+const notAGateList = (s) => {
+  const b = failedBullet(s);
+  const at = b.indexOf('for a reason that is not a gate (');
+  return at === -1 ? '' : b.slice(at, b.indexOf(')', at));
+};
 const OUTCOME_FACTS = [
-  ['--dry-run row names the Step 1.5 hold', (s) => lineStartingWith(s, '| `--dry-run` |').includes('Unless a release block holds it `HELD` at Step 1.5')],
-  ['failed bullet reconciles the unreadable stop with the gate', (s) => lineStartingWith(s, '- **`failed`**').includes("Step 1.5's `release-block state unreadable`, the gate failing closed with no block observed")],
+  ['--dry-run review sentence names the Step 1.5 hold', (s) => dryRunRow(s).includes("Unless Step 1.5 holds it `HELD`, Step 3's whole-branch review **still runs**")],
+  ['--dry-run summary sentence names the Step 1.5 hold', (s) => dryRunRow(s).includes(LIVE_OUTCOME.dryRunSummary)],
+  ['failed preamble names the gate failing closed', (s) => failedBullet(s).includes("no HARD-GATE fired, or Step 1.5's registered one failed closed (`release-block state unreadable`): either")],
+  ['the not-a-gate list excludes the release block', (s) => notAGateList(s) !== '' && !notAGateList(s).includes('release-block')],
+  ['the HELD exclusion covers a gate that saw no block', (s) => failedBullet(s).includes(LIVE_OUTCOME.failedHeld) && !failedBullet(s).includes('(no gate fired)')],
 ];
 const missingOutcome = (src) => OUTCOME_FACTS.filter(([, ok]) => !ok(src)).map(([fact]) => fact);
 
 test('a dry run is held by a block, and an unreadable state is the gate failing closed', () => {
   assert.deepStrictEqual(missingOutcome(SKILL), []);
   const swaps = [
-    [lineStartingWith(SKILL, '| `--dry-run` |'), PRE_OUTCOME.dryRun, ['--dry-run row names the Step 1.5 hold']],
-    [lineStartingWith(SKILL, '- **`failed`**'), PRE_OUTCOME.failed, ['failed bullet reconciles the unreadable stop with the gate']],
+    [dryRunRow(SKILL), PRE_OUTCOME.dryRun, ['--dry-run review sentence names the Step 1.5 hold', '--dry-run summary sentence names the Step 1.5 hold']],
+    [failedBullet(SKILL), PRE_OUTCOME.failed, ['failed preamble names the gate failing closed', 'the HELD exclusion covers a gate that saw no block']],
+    // Round-1 wording, one piece at a time.
+    [LIVE_OUTCOME.failedPreamble, ROUND1.failedPreamble, ['failed preamble names the gate failing closed', 'the not-a-gate list excludes the release block']],
+    [LIVE_OUTCOME.failedHeld, ROUND1.failedHeld, ['the HELD exclusion covers a gate that saw no block']],
+    [LIVE_OUTCOME.dryRunSummary, ROUND1.dryRunSummary, ['--dry-run summary sentence names the Step 1.5 hold']],
   ];
   for (const [livePiece, frozen, facts] of swaps) {
-    assert.ok(livePiece, 'live piece not found');
+    assert.ok(livePiece && SKILL.includes(livePiece), 'live piece not found');
     const doctored = SKILL.replace(livePiece, frozen);
     assert.notStrictEqual(doctored, SKILL);
     assert.deepStrictEqual(missingOutcome(doctored), facts);
