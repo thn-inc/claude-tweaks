@@ -8,6 +8,7 @@ const { spawn, spawnSync, execFileSync } = require('child_process');
 const { slotEnv } = require('../../helpers/suite-slot-env');
 const { CLI, tmpDir, runCli, tmpGitRepo, passStampFiles, commitFile, baselineRepo, SUITE, PER_FILE, nestedRunEnv, headCommit } = require('./cli-helpers');
 const { initRepo } = require('../../helpers/git-fixtures');
+const { warmCallStartsNoGit } = require('../../helpers/git-trace');
 
 test('--baseline: failures that also fail at base exit 0, stamp a baseline pass, and --stamp-status says verifiedHead (#3043 AC1)', async () => {
   const r = baselineRepo();
@@ -325,4 +326,9 @@ test('the baseline adjudication re-reads the repo root after the suites and reus
   const remove = events.findIndex(isWorktree('remove'));
   assert.ok(remove > add, 'the scratch worktree was removed');
   assert.ok(events.slice(remove + 1).some((e) => e.kind === 'git' && same(e.args, COMBINED_REV_PARSE)), 'the end read asks git again');
+});
+
+// #5846: the verify scenario builders sit on templates (#5324); this file already builds baselineRepo, so the warm-call check lives here.
+test('AC1.1 AC1.2: verify baselineRepo: a second call starts no git process', (t) => {
+  warmCallStartsNoGit(() => baselineRepo(), { track: (r) => t.after(() => fs.rmSync(r.repo, { recursive: true, force: true })) });
 });
