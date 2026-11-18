@@ -196,6 +196,7 @@ test('realDeps.git runs under the injected env, with extraEnv laid on top', () =
 const ON_LINE = () => makeWorld({ marker: markerText(LINE[1]) });
 const REFUSE = [
   ['AC2.1: refused (a target off the first-parent line)', ON_LINE, ['advance', '--to', OFF, '--run', 'r2'], 1, /^release-state\.js: refused — /],
+  ['AC2.1: refused (a target behind the marker)', () => makeWorld({ marker: markerText(LINE[3]) }), ['advance', '--to', LINE[1], '--run', 'r2'], 1, /^release-state\.js: refused — /],
   ['AC8.5: orphaned (the marker is not on the line)', () => makeWorld({ marker: markerText(OFF) }), ['advance', '--to', LINE[3], '--run', 'r2'], 6, /^release-state\.js: orphaned — /],
   ['AC8.1: insufficient-history (the tip cannot be read)', () => makeWorld({ marker: markerText(LINE[1]), tipFails: true }), ['advance', '--to', LINE[3], '--run', 'r2'], 5, /^release-state\.js: insufficient-history — /],
   ['AC6.1: init-exists (a marker is already there)', ON_LINE, ['init', '--to', LINE[2]], 1, /^release-state\.js: refused — a marker already exists/],
@@ -219,8 +220,9 @@ for (const [label, world, args, exit, stderr] of REFUSE) {
   });
 }
 
-test('every non-ok outcome of marker.js has a row above (the table covers the exit vocabulary)', () => {
-  assert.deepEqual([...new Set(REFUSE.map((row) => row[3]))].sort(), [1, 3, 4, 5, 6]);
+test('every non-ok outcome of marker.js has a row above (derived from OUTCOMES through OUTCOME_EXIT)', () => {
+  const want = OUTCOMES.filter((o) => o !== 'ok').map((o) => OUTCOME_EXIT[o]);
+  assert.deepEqual([...new Set(REFUSE.map((row) => row[3]))].sort(), [...new Set(want)].sort());
 });
 
 const OK_ROWS = [
@@ -291,6 +293,10 @@ const USAGE_CASES = [
   ['a --reason with a newline', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', 'one\ntwo']],
   ['a --reason over 200 characters', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', 'x'.repeat(201)]],
   ['a --reason that is another flag', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', '--force']],
+  ['a --reason with a leading dash (ruling R19)', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', '-x']],
+  ['a --reason of -h is a refused value, not help', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', '-h']],
+  ['a --run of -h is a refused value, not help', ['marker', 'advance', '--to', T, '--run', '-h']],
+  ['a --repo of --help is a refused value, not help', ['marker', 'read', '--repo', '--help']],
   ['a trailing --reason', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason']],
   ['an invalid --branch', ['marker', 'advance', '--to', T, '--run', 'r1', '--branch', 'a..b']],
   ['a leading-dash --branch', ['marker', 'advance', '--to', T, '--run', 'r1', '--branch', '-x']],
@@ -351,11 +357,22 @@ test('a repo that cannot be resolved is a usage failure before any gh call', () 
   assert.equal(r.code, 2);
   assert.match(r.stderr, /could not resolve owner\/repo/);
   assert.deepEqual(h.calls.gh, []);
-  for (const bad of ['o/r?x', 'o/..', 'x', 'o/r/extra/more']) {
+  for (const bad of ['o/r?x', 'o/..', 'x', 'o/r/extra/more', 'o/r~1', 'o/r:x', 'o/a b']) {
     const again = harness();
     assert.equal(call(['marker', 'read', '--repo', bad], again).code, 2, bad);
     assert.deepEqual(again.calls.gh, [], bad);
   }
+});
+
+test('a slug the store refuses is exit 2 at the CLI: one rule, the store\'s own predicate', () => {
+  const { isBareSlug } = require('../../../plugin/bin/lib/release-state/store');
+  for (const slug of ['o/..', 'o/r~1', 'o/r:x', 'o/a b', 'o/r?x']) {
+    assert.equal(isBareSlug(slug), false, slug);
+    const h = harness();
+    assert.equal(call(['marker', 'read', '--repo', slug], h).code, 2, slug);
+    assert.deepEqual(h.calls.gh, [], slug);
+  }
+  assert.equal(isBareSlug('o/r'), true);
 });
 
 // ---- the repo, the host and the branch (Review Focus 3) ----

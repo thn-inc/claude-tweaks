@@ -818,6 +818,7 @@ module.exports = {
   defaultGhApi,
   claimPath,
   classifyGhApiError,
+  ghErrorText,
   refusalText,
   tombstoneInFlightPr,
   staleClaimInFlightPr,

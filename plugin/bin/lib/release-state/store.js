@@ -52,10 +52,14 @@ const MAX_CAS_ATTEMPTS = 3;
 const BARE_SLUG_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const SCRATCH_REF_PREFIX = 'refs/release-state-cas';
 
-function assertSlug(slug) {
-  const ok = typeof slug === 'string' && BARE_SLUG_RE.test(slug)
+// Non-throwing form of assertSlug's rule, for a caller that wants a usage failure, not a TypeError.
+function isBareSlug(slug) {
+  return typeof slug === 'string' && BARE_SLUG_RE.test(slug)
     && slug.split('/').every((part) => part !== '.' && part !== '..');
-  if (!ok) throw new TypeError(`release-state store: slug must be a bare owner/repo, got ${JSON.stringify(slug)}`);
+}
+
+function assertSlug(slug) {
+  if (!isBareSlug(slug)) throw new TypeError(`release-state store: slug must be a bare owner/repo, got ${JSON.stringify(slug)}`);
 }
 
 function assertName(name) {
@@ -523,6 +527,7 @@ module.exports = {
   STATE_FILE_RE,
   MAX_CAS_ATTEMPTS,
   MESSAGE_RE,
+  isBareSlug,
   readStateFile,
   classifyStateContent,
   ensureReleaseStateBranch,

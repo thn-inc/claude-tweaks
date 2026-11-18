@@ -48,8 +48,10 @@ const { repoPinnedEnv } = require('./lib/hooks/git-exec');
 const { resolveAgainst } = require('./lib/health-core/io');
 const { isValidBranchName } = require('./lib/branch-name');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
-const { classifyGhApiError, defaultSleep } = require('./lib/issues/claim-store');
-const { RELEASE_STATE_BRANCH, MESSAGE_RE, classifyStateContent } = require('./lib/release-state/store');
+const { classifyGhApiError, ghErrorText, defaultSleep } = require('./lib/issues/claim-store');
+const {
+  RELEASE_STATE_BRANCH, MESSAGE_RE, classifyStateContent, isBareSlug,
+} = require('./lib/release-state/store');
 const {
   MARKER_FILE, SHA_RE, RUN_RE, REASON_RE, INIT_RUN, parseMarker, storeFacade,
   createLocalHistory, createCompareHistory, createHistory, advanceMarker, initMarker, resetMarker,
@@ -97,19 +99,15 @@ const VERB_FLAGS = Object.freeze({
   init: ['--to', '--branch', '--repo', '--emit'],
   reset: ['--to', '--run', '--force', '--reason', '--branch', '--repo', '--marker-json'],
 });
-// The store's own bare-slug rule (store.js's assertSlug is not exported): checked here so a
-// malformed owner or repo is a usage error, not a TypeError out of the store.
-const SLUG_PART_RE = /^[A-Za-z0-9_.-]+$/;
-
 const messageOf = (err) => (err && err.message ? err.message : String(err));
 const oneLine = (text) => String(text || '').split(/[\r\n]+/).map((s) => s.trim()).filter(Boolean).join('; ');
-const ghErrorText = (e) => [e && e.message, e && e.stderr, e && e.stdout].filter(Boolean).map(String).join(' ');
 
 // -> { help: true } | { error } | the parsed options. Pure: it reads nothing and calls nothing,
 // so every usage failure here costs no gh or git call.
 function parseArgs(argv) {
-  if (argv.some((a) => a === '--help' || a === '-h')) return { help: true };
+  const isHelp = (a) => a === '--help' || a === '-h';
   const [group, verb, ...rest] = argv;
+  if (isHelp(group) || isHelp(verb)) return { help: true };
   if (group === undefined) return { error: 'a subcommand is required' };
   if (group !== 'marker') return { error: `unknown subcommand: ${group}` };
   if (verb === undefined) return { error: 'marker needs read, advance, init or reset' };
@@ -118,6 +116,8 @@ function parseArgs(argv) {
   const out = { verb };
   for (let i = 0; i < rest.length; i++) {
     const flag = rest[i];
+    // Help only where a flag may stand: a value consumed by the flag before it is never help.
+    if (isHelp(flag)) return { help: true };
     const isValue = Object.hasOwn(VALUE_FLAGS, flag);
     const isBoolean = Object.hasOwn(BOOLEAN_FLAGS, flag);
     if (!isValue && !isBoolean) return { error: `unknown argument: ${flag}` };
@@ -126,10 +126,9 @@ function parseArgs(argv) {
     if (out[key] !== undefined) return { error: `${flag} given more than once` };
     if (isBoolean) { out[key] = true; continue; }
     const value = rest[++i];
-    // A value-taking flag read past the end is undefined; a value that opens `-` would be
-    // read as an option by a child (`--reason` text may open a single `-`, but not `--`).
-    const optionLike = flag === '--reason' ? typeof value === 'string' && value.startsWith('--') : typeof value === 'string' && value.startsWith('-');
-    if (typeof value !== 'string' || !value.trim() || optionLike) return { error: `${flag} requires a value` };
+    // A value-taking flag read past the end is undefined; a value that opens `-` is refused for
+    // every flag, `--reason` included (ruling R19): an argv-level guard, like the run id's.
+    if (typeof value !== 'string' || !value.trim() || value.startsWith('-')) return { error: `${flag} requires a value` };
     out[key] = value;
   }
   if (out.markerJson !== undefined && out.repo !== undefined) return { error: '--marker-json and --repo are mutually exclusive' };
@@ -261,8 +260,8 @@ function resolveRepoOrFail(opts, deps, gated) {
     spec = gated.spec;
   }
   if (!spec) { deps.stderr(`${NAME}: could not resolve owner/repo — pass --repo [host/]owner/name\n`); return { exit: EXIT.USAGE }; }
-  const ok = SLUG_PART_RE.test(spec.owner) && SLUG_PART_RE.test(spec.repo)
-    && ![spec.owner, spec.repo].includes('.') && ![spec.owner, spec.repo].includes('..') && !spec.host.startsWith('-');
+  // The store's own slug rule, so a slug it would reject is a usage failure here, not a TypeError.
+  const ok = isBareSlug(`${spec.owner}/${spec.repo}`) && !spec.host.startsWith('-');
   if (!ok) { deps.stderr(`${NAME}: ${spec.host}/${spec.owner}/${spec.repo} is not a valid [host/]owner/name\n`); return { exit: EXIT.USAGE }; }
   if (opts.repo !== undefined) deps.pinGhHost(spec, { env: deps.env, cwd: deps.cwd() });
   return { spec };
