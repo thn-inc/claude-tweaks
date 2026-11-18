@@ -301,28 +301,9 @@ function agentDepFreshness(ctx, file) {
   else put(ctx, file, text);
 }
 
-// The numbers the agent's dependency-freshness text shows closed (#5408). An unparseable value, a
-// non-array, or an entry without an integer `number` and a string `state` is no evidence of closure,
-// and a number counts closed only when every valid entry for it says so: two contradictory entries
-// are untrusted input that must fail closed, not open.
-function closedDependencyNumbers(text) {
-  let entries;
-  try {
-    entries = JSON.parse(text);
-  } catch {
-    return new Set();
-  }
-  if (!Array.isArray(entries)) return new Set();
-  const valid = entries.filter((e) => e && Number.isInteger(e.number) && typeof e.state === 'string');
-  const isClosed = (e) => e.state.toLowerCase() === 'closed';
-  const contested = new Set(valid.filter((e) => !isClosed(e)).map((e) => e.number));
-  return new Set(valid.filter(isClosed).map((e) => e.number).filter((n) => !contested.has(n)));
-}
-
-// The numbers the agent's dependency-freshness text marks `unreadable` (#5865): ascending and
-// de-duplicated, under closedDependencyNumbers's own validity test. Never closed, whatever else
-// the file says about the same number.
-function unreadableDependencyNumbers(text) {
+// The valid entries of the agent's dependency-freshness text: an unparseable value, a non-array, or an
+// entry without an integer `number` and a string `state` yields none.
+function validFreshnessEntries(text) {
   let entries;
   try {
     entries = JSON.parse(text);
@@ -330,8 +311,25 @@ function unreadableDependencyNumbers(text) {
     return [];
   }
   if (!Array.isArray(entries)) return [];
-  const numbers = entries
-    .filter((e) => e && Number.isInteger(e.number) && typeof e.state === 'string' && e.state.toLowerCase() === 'unreadable')
+  return entries.filter((e) => e && Number.isInteger(e.number) && typeof e.state === 'string');
+}
+
+// The numbers the agent's dependency-freshness text shows closed (#5408). A number counts closed
+// only when every valid entry for it says so: two contradictory entries are untrusted input that
+// must fail closed, not open.
+function closedDependencyNumbers(text) {
+  const valid = validFreshnessEntries(text);
+  const isClosed = (e) => e.state.toLowerCase() === 'closed';
+  const contested = new Set(valid.filter((e) => !isClosed(e)).map((e) => e.number));
+  return new Set(valid.filter(isClosed).map((e) => e.number).filter((n) => !contested.has(n)));
+}
+
+// The numbers the agent's dependency-freshness text marks `unreadable` (#5865): ascending and
+// de-duplicated, under the same validity test. Never closed, whatever else the file says about the
+// same number.
+function unreadableDependencyNumbers(text) {
+  const numbers = validFreshnessEntries(text)
+    .filter((e) => e.state.toLowerCase() === 'unreadable')
     .map((e) => e.number);
   return [...new Set(numbers)].sort((a, b) => a - b);
 }
@@ -723,8 +721,11 @@ function runBlocked(ctx) {
     // #5865: a number the freshness file marks `unreadable` (the agent's issue_read failed on it) is
     // never closed: the one Warning below names it in place of the omitted-dependency Warning, and
     // depFreshFailed keeps the queue-order cache unwritten. Checked whether or not the file was `bad`.
+    // Only an in-range dependency of an eligible record counts: `Blocked by #0` or a number above
+    // GRAPHQL_INT_MAX is the blocker-landing pass's malformed-blocker case (#5311), never live-checked.
     if (ctx.options.transport === 'files') {
-      const unreadable = unreadableDependencyNumbers(state.depFreshnessInput);
+      const depended = new Set(eligiblePreDep.flatMap((i) => parseDependencies(i.body)).filter((dep) => dep > 0 && dep <= GRAPHQL_INT_MAX));
+      const unreadable = unreadableDependencyNumbers(state.depFreshnessInput).filter((n) => depended.has(n));
       if (!bad) {
         const closed = closedDependencyNumbers(state.depFreshnessInput);
         const unreadableSet = new Set(unreadable);
