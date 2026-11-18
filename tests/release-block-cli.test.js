@@ -102,6 +102,10 @@ test('AC4.4: a record without url, title or a numeric number, a non-array, or em
     JSON.stringify([without(ROW7, 'number')]),
     JSON.stringify([{ ...ROW7, number: '7' }]),
     JSON.stringify([{ ...ROW7, url: '' }]),
+    JSON.stringify([{ ...ROW7, state: null }]),
+    JSON.stringify([{ ...ROW7, state: 42 }]),
+    JSON.stringify([{ ...ROW7, state: 'opne' }]),
+    JSON.stringify([{ ...ROW7, state: 'MERGED' }]),
     '{}',
     '',
   ];
@@ -109,6 +113,7 @@ test('AC4.4: a record without url, title or a numeric number, a non-array, or em
     const h = harness({}, text);
     assert.equal(run(['check'], h.deps), 3, text);
     assert.equal(h.out(), '', text);
+    assert.match(h.err(), /state unreadable/, text);
   }
 });
 
@@ -168,7 +173,7 @@ test('usage -> exit 2 with no gh call', () => {
     ['check', '--records-json', 'r.json', '--repo', 'acme/widgets'],
   ];
   for (const argv of cases) {
-    const h = harness({ gh: () => { throw new Error('gh must not be called'); } });
+    const h = harness();
     assert.equal(run(argv, h.deps), 2, argv.join(' '));
     assert.equal(h.calls.gh.length, 0);
   }
@@ -181,12 +186,15 @@ test('--help -> exit 0, usage on stdout, gh never probed', () => {
 });
 
 test('repo: --repo bare and host-qualified both reach gh as given, and the host is pinned', () => {
-  for (const repo of ['acme/widgets', 'ghe.example.com/acme/widgets']) {
+  for (const [repo, host] of [['acme/widgets', 'github.com'], ['ghe.example.com/acme/widgets', 'ghe.example.com']]) {
     const h = harness({}, '[]');
     assert.equal(run(['check', '--repo', repo], h.deps), 0);
     const args = h.calls.gh[0].args;
     assert.equal(args[args.indexOf('--repo') + 1], repo);
     assert.equal(h.calls.pin.length, 1);
+    assert.equal(h.calls.pin[0].host, host);
+    assert.equal(h.calls.pin[0].owner, 'acme');
+    assert.equal(h.calls.pin[0].repo, 'widgets');
   }
   const origin = harness({}, '[]');
   run(['check'], origin.deps);

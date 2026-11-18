@@ -83,7 +83,11 @@ function checkRows(text) {
     if (!Number.isInteger(row.number) || row.number <= 0) return { error: 'a record has no positive integer number' };
     if (typeof row.title !== 'string') return { error: `record #${row.number} has no title` };
     if (typeof row.url !== 'string' || !row.url) return { error: `record #${row.number} has no url` };
-    if (row.state !== undefined && String(row.state).toLowerCase() !== 'open') continue;
+    if (row.state !== undefined) {
+      const state = typeof row.state === 'string' ? row.state.toLowerCase() : null;
+      if (state !== 'open' && state !== 'closed') return { error: `record #${row.number} has an unrecognised state` };
+      if (state === 'closed') continue;
+    }
     records.push({ number: row.number, title: row.title, url: row.url });
   }
   records.sort((a, b) => a.number - b.number);
