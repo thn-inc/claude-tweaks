@@ -1255,7 +1255,9 @@ test('AC1.1 (#5879): gh: an unreadable unresolved-deps list leaves no verified-o
   const { r, reads } = pullWithUnresolvedReadFailingOnce(S1({ parity: true }), {
     before: (ctx) => fs.writeFileSync(ctx.state.files.verifiedOpenDeps, '7777\n'),
   });
-  assert.ok(reads > 1, 'the step\'s read failed and later reads got through');
+  // Read 1 is the step's (it throws) and read 2 the blocked pass's fail-closed re-read; read 3 is pull()'s
+  // end-of-run collection of the session files. The old truncate code skips read 2.
+  assert.equal(reads, 3, 'the step\'s read failed, the blocked pass read the list again, then the harness collected it');
   assert.deepEqual(r.json('dispatch-unresolved-deps.json'), [8001], 'one unresolved dependency');
   assert.deepEqual(verifiedOpenDepsFiles(r), [], 'the file is absent: neither empty nor the stale 7777');
   assert.deepEqual(r.errs.filter((l) => l.startsWith('queue-pull: verified-open-deps:')),

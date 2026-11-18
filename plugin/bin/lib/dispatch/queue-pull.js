@@ -600,7 +600,7 @@ function nativeQueryFailed(ctx, r) {
   ctx.deps.stderr(`Warning: native dependency query failed — every candidate excluded as blocked (native blockers unreadable, fail closed) this run: ${trimNl(r.stderr)}\n`);
 }
 
-// Fence 145-207 on a miss (the removal of an earlier pull's eligibility files, the eligible list, the
+// Fence 145-208 on a miss (the removal of an earlier pull's eligibility files, the eligible list, the
 // unresolved-dependency check, the body-text and native blocker filtering); on a hit the persisted
 // `excluded` entries replayed as 'blocked'.
 function runBlocked(ctx) {
@@ -758,7 +758,7 @@ function runBlocked(ctx) {
   }
 }
 
-// Fence 208-254 on a miss: the grouping block, which writes dispatch-groups.json, then the
+// Fence 209-255 on a miss: the grouping block, which writes dispatch-groups.json, then the
 // bundles, then the 'blocked' appends, then the 'oversized' appends. On a hit it runs the size
 // guard over the persisted groups and keeps the persisted bundles.
 function runOversized(ctx) {
@@ -815,7 +815,7 @@ function runOversized(ctx) {
   }
 }
 
-// Fence 256-295, the cache-miss path only: the dependency-freshness refetch over every eligible
+// Fence 257-296, the cache-miss path only: the dependency-freshness refetch over every eligible
 // record's dependencies, then the best-effort write-back of the queue-order blob.
 function runWriteBack(ctx) {
   const { deps, paths, state } = ctx;
@@ -863,7 +863,7 @@ function runWriteBack(ctx) {
   });
 }
 
-// ---- not-spec-shaped, open-pr, target-missing and shipped (fence 299-569) ---------------------
+// ---- not-spec-shaped, open-pr, target-missing and shipped (fence 300-566) ---------------------
 
 // The text this module quotes where the fence prints `$(cat $ERR_FILE)`. The fence's file holds
 // Node's uncaught-exception report: a header (a throw-site file:line, or a node:internal loader
@@ -908,7 +908,7 @@ function rewriteGroups(ctx, makeKeep) {
   fs.writeFileSync(file, `${JSON.stringify(finalGroups)}\n`);
 }
 
-// The node block of an exclusion pass whose stderr the fence redirects into `errFile` (fence 300,
+// The node block of an exclusion pass whose stderr the fence redirects into `errFile` (fence 301,
 // 344): the file keeps the failure text. Returns the failure text, or null on success.
 function runRedirectedBlock(ctx, errFile, fn) {
   try {
@@ -922,7 +922,7 @@ function runRedirectedBlock(ctx, errFile, fn) {
   }
 }
 
-// Fence 299-328. Keeps a candidate only when its cached body passes the Materialization gate.
+// Fence 300-328. Keeps a candidate only when its cached body passes the Materialization gate.
 function runNotSpecShaped(ctx) {
   const { deps, paths, omit } = ctx;
   const skip = omit.has('not-spec-shaped');
@@ -1087,7 +1087,7 @@ function claimReader(ctx) {
   };
 }
 
-// Fence 542-569: one Close proposal per strong-tier exclusion, staged into the firing's own run dir.
+// Fence 539-566: one Close proposal per strong-tier exclusion, staged into the firing's own run dir.
 // The run-dir call is `2>/dev/null || true`: its stderr is dropped and a spawn throw is silent.
 function stageShippedProposals(ctx) {
   const { paths } = ctx;
@@ -1115,7 +1115,7 @@ function stageShippedProposals(ctx) {
   }
 }
 
-// Fence 466-569. Omitting the pass skips its classification, probes, exclusions and staging.
+// Fence 466-566. Omitting the pass skips its classification, probes, exclusions and staging.
 function runShipped(ctx) {
   const { deps, paths, omit } = ctx;
   if (omit.has('shipped')) {
@@ -1197,9 +1197,9 @@ function runShipped(ctx) {
   stageShippedProposals(ctx);
 }
 
-// ---- blocker-landing, neighbour-in-flight, cross-PR overlap and near-duplicate (fence 581-651) --
+// ---- blocker-landing, neighbour-in-flight, cross-PR overlap and near-duplicate (fence 568-648) --
 
-// Fence 572-579. One dispatch-unlanded-blockers.js call writes both the unlanded-blocker and the
+// Fence 568-576. One dispatch-unlanded-blockers.js call writes both the unlanded-blocker and the
 // malformed-blocker entries, so omitting either reason skips the whole call (R7). `--work-links`
 // is the value the fetch pass stored: on a queue-order cache hit the fence never sets WORK_LINKS,
 // so "$WORK_LINKS" is the empty string and the CLI accepts it.
@@ -1231,7 +1231,7 @@ function runBlockerLanding(ctx) {
 
 const IN_FLIGHT_ARGV = ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'];
 const IN_FLIGHT_POOL_AUTO = 'AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull';
-// fence 590, byte for byte
+// fence 587, byte for byte
 const IN_FLIGHT_CAP_WARNING = 'Warning: the bot:in-progress pull for the neighbour-in-flight pass (#3278) returned exactly the --limit cap (200) — in-flight records beyond the cap are not checked as neighbours. Informational only; never blocks dispatch.';
 
 // #5304: one AUTO line per pull for the claims the two claim-reading passes could not read. The
@@ -1246,7 +1246,7 @@ function reportClaimReadFailures(ctx, neighbourUnreadable) {
   else if (shipped.length) ctx.deps.stderr(`AUTO — dispatch: shipped-candidate claim read failed for ${shipped.join(', ')}; release time unknown, no downgrade\n`);
 }
 
-// Fence 581-617 on `gh`; on `files` mcp-transport.md's Step 2 four-step replacement, whose agent-
+// Fence 578-614 on `gh`; on `files` mcp-transport.md's Step 2 four-step replacement, whose agent-
 // written pool and claim-map FILES this pass reads (steps 1-3 are the agent's). Only the compute
 // is this pass's own: omitting the pass skips it (and so its appends and AUTO line), while the pool
 // fetch and its cap Warning are shared setup. A missing or malformed pool or claim-map file throws
@@ -1285,12 +1285,12 @@ function runNeighbourInFlight(ctx) {
 }
 
 const OPEN_PRS_ARGV = ['pr', 'list', '--state', 'open', '--json', 'number,files,closingIssuesReferences', '--limit', '100'];
-// fence 626, byte for byte
+// fence 623, byte for byte
 const OPEN_PR_CAP_WARNING = 'Warning: the open-PR pull for the cross-PR overlap report (#1579) returned exactly the --limit cap (100) — overlap detection may be missing older open PRs. Informational only; never blocks dispatch.';
-// fence 623's failure branch, byte for byte (#5312)
+// fence 620's failure branch, byte for byte (#5312)
 const OPEN_PR_FAIL_WARNING = 'Warning: open-PR pull failed — cross-PR overlap not checked this run';
 
-// Fence 619-640, informational. On `files` mcp-transport.md skips the fetch and has the agent write
+// Fence 616-637, informational. On `files` mcp-transport.md skips the fetch and has the agent write
 // `[]`; the module does the same and makes no gh call. On `gh` a failed open-PR fetch writes [] and
 // prints one Warning (#5312), and a compute failure is a step error the fence does not stop on.
 function runCrossPrOverlap(ctx) {
@@ -1321,7 +1321,7 @@ function runCrossPrOverlap(ctx) {
   });
 }
 
-// Fence 642-651, informational: every cross-group pair gets an AUTO line, and only the strong ones
+// Fence 639-648, informational: every cross-group pair gets an AUTO line, and only the strong ones
 // reach dispatch-near-dup-pairs.json (always written, [] when there are none).
 function runNearDupPairs(ctx) {
   if (ctx.omit.has('near-dup-pairs')) return;
