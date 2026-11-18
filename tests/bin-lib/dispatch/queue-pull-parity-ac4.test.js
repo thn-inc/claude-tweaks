@@ -115,7 +115,7 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
     }
   });
 
-  test('AC2.1 (#5879): the fence and the module leave no verified-open-deps file when the unresolved-deps read fails, and give the same blocked verdict', async () => {
+  test('AC4.7 (#5879, spec AC2): the fence and the module leave no verified-open-deps file when the unresolved-deps read fails, and give the same blocked verdict', async () => {
     // A one-off failure of the verified-open-deps step's read of dispatch-unresolved-deps.json, the blocked
     // pass's later read getting through. Fence: the PATH node fails the loop's `node -e` over that file once.
     // Module: a --require preload fails the first readFileSync of it once. A marker file per sandbox makes it once.

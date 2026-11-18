@@ -3415,7 +3415,8 @@ test('#5409 (AC1, AC2): a pull whose cross-pr-overlap step throws leaves no earl
 
 test('#5409: every session file is end-written (removed at pull start) or named here with the reason it is not', () => {
   // A new SESSION_FILES entry fails this until it is classed: one written only after its step's
-  // fallible work belongs in END_WRITTEN_FILES (and the fence's rm -f line), never in this list.
+  // fallible work belongs in END_WRITTEN_FILES (and the fence's rm -f line), never in this list,
+  // unless it is an agent input on `files` that a pull-start removal would delete (verified-open-deps).
   const NOT_END_WRITTEN = [
     'dispatch-queue-raw.json', 'dispatch-open-numbers.json', 'dispatch-native-deps.json', 'dispatch-native-deps.tmp.json',
     'dispatch-native-deps.err', 'dispatch-groups.json', 'dispatch-exclusions.json', 'dispatch-fastlane-bundles.json',

@@ -651,7 +651,7 @@ function runBlocked(ctx) {
 
   if (!skip && ctx.options.transport !== 'files') {
     step(ctx, 'verified-open-deps', () => {
-      // #5879: removed, not truncated, so a throw before the write below leaves no file.
+      // #5879: removed, never truncated (rationale: queue-pull-notes.md).
       fs.rmSync(f.verifiedOpenDeps, { force: true });
       const open = [];
       const unresolved = readJson(paths['dispatch-unresolved-deps.json']).join(' ').split(/\s+/).filter(Boolean);
