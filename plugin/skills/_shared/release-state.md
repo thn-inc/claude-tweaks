@@ -1,0 +1,131 @@
+# Release State — the `release-state` branch and the reviewed-through marker
+
+The one place `/release` keeps cross-run state: a small JSON file per name on a dedicated
+branch, moved only through `bin/release-state.js` (`bin/lib/release-state/store.js` and
+`marker.js`). Consumers cite the headings below; do not restate the protocol inline.
+
+## The branch and its files
+
+- The branch is `release-state`. The first write creates it from the default branch tip, as
+  `claims-registry` is created (`_shared/issue-claims.md`, Bootstrap the branch), so it carries
+  that history underneath. It is never an orphan branch, and nothing merges it.
+- Files sit flat at the root and match `[a-z0-9][a-z0-9-]*\.json`. Compare-and-set is per file:
+  git compares the whole branch tip (a rejection is re-read before it counts), the contents API
+  the file's blob sha.
+- `store.js` is the sole writer API: `reviewed-through.json` today, the merge-pause flag
+  (#5884) next. Reads try git first (fetch the tip into a scratch ref, show the file), then the
+  contents API. A missing file reads absent only once the branch read confirms it; an
+  inaccessible repository reads unreadable, never absent.
+- It never writes to `main`: every push names `refs/heads/release-state` and every contents-API
+  write carries `branch=release-state`.
+- The git fetch uses `--no-write-fetch-head`, which needs git 2.29 or newer. On older git the
+  local history answers insufficient history (exit 5) and the store falls back to the contents
+  API.
+
+## reviewed-through.json
+
+The marker `/release` has reviewed through. `sha` is 40 lowercase hex, `advancedAt` ISO-8601
+UTC, `run` the caller's run id (`init` for `marker init`).
+
+```json
+{
+  "version": 1,
+  "sha": "1111111111111111111111111111111111111111",
+  "advancedAt": "2026-11-18T09:30:00.000Z",
+  "run": "2026-11-18T093000-release"
+}
+```
+
+The bytes are exactly `JSON.stringify(marker, null, 2)` plus one trailing newline. A reader
+requires those four keys, ignores any others, and reads every other shape as unreadable: never
+absent, never a marker. `version` is the expand-contract seam: a new shape adds beside the old,
+and any version other than `1` reads as unreadable. The branch name, file name, marker shape and
+exit codes are a frozen contract; change them only by expand-contract.
+
+## Writer rules
+
+- Forward-only along the first-parent line of `--branch` (default `main`). A target behind the
+  marker or merged in through a second parent is refused; a marker no longer on the line is
+  orphaned. The same sha is a no-op (`reason: "same"`).
+- A lost compare-and-set re-reads. A marker at or past the target is success with no write
+  (`reason: "at-or-past"`); otherwise one re-validated retry; a second lost write is checked once
+  more for at-or-past, else contested (exit 4). A marker that vanishes on a re-read is contested.
+- A shallow or stale clone answers what it holds. A sha it lacks is insufficient history
+  (exit 5), never refused or orphaned. With no local answer the compare API serves.
+- `marker init` is create-if-not-exists, at a target on the first-parent line, with run `init`.
+- Every commit message is one line, at most 200 characters, with no `#`: the generated
+  `track-issue-fixes.yml` job fires on a `#` beside a closing keyword, so a reason such as
+  `fix #12` would label issue #12. The store refuses any other message.
+- `--run` ids match `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`; `init` is reserved. A flag value
+  starting with `-` is a usage error.
+
+## The CLI
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/release-state.js" marker read [--repo [host/]owner/name | --marker-json <path>]
+node "${CLAUDE_PLUGIN_ROOT}/bin/release-state.js" marker advance --to <sha> --run <id> [--branch <name>] [--repo [host/]owner/name | --marker-json <path>]
+node "${CLAUDE_PLUGIN_ROOT}/bin/release-state.js" marker init --to <sha> [--branch <name>] [--repo [host/]owner/name | --emit]
+node "${CLAUDE_PLUGIN_ROOT}/bin/release-state.js" marker reset --to <sha> --run <id> [--force --reason <text>] [--branch <name>] [--repo [host/]owner/name | --marker-json <path>]
+```
+
+The repo is `--repo`, else the origin. The local clone serves history only when its origin is
+that repo; any other target uses the contents and compare APIs alone, with no git call.
+
+On exit 0 stdout is one JSON line; a non-zero exit prints nothing on stdout and one stderr line
+`release-state.js: {outcome} — {reason}`.
+
+- `read`: the marker object, or `{"absent":true}`.
+- `advance`: `{"advanced":true,"from","to"}`, or `{"advanced":false,"sha","reason":"same"|"at-or-past"}`.
+- `init`: `{"initialized":true,"sha"}`. `reset`: `{"reset":true,"from","to","basis"}`.
+- With `--marker-json` or `--emit`: `{"write":{"branch","path","content","sha","message"}}`.
+
+### Exit codes
+
+| code | name | meaning |
+|---|---|---|
+| 0 | `ok` | done; one JSON line on stdout |
+| 1 | `refused` | not allowed: no marker, a target off the line or behind the marker, a marker already exists |
+| 2 | `usage` | a malformed invocation, or an unresolvable or refused repo |
+| 3 | `unreadable` | the marker, repo or handoff file cannot be read, or a write failed for a non-contest reason |
+| 4 | `contested` | a competing writer changed the marker; read it again |
+| 5 | `insufficient-history` | the history could not settle it: a shallow clone, no local clone and no compare answer |
+| 6 | `orphaned` | the marker is off the first-parent line; `marker reset` recovers |
+
+Exit 5 is never exit 1: a history that cannot answer does not refuse.
+
+## gh-absent (MCP) path
+
+Detection is `_shared/github-write-transport.md`'s Detection: `gh` absent selects this path. The
+CLI never reaches MCP; the agent fetches, hands the CLI a file, and makes the one write it
+prints. Emit mode does no repo resolution and no origin check: run it from a checkout of the
+same repository.
+
+1. Read: `get_file_contents` of `reviewed-through.json` at ref `release-state`. With the Write
+   tool, write `{content, sha}`, `null` or `{failure}` to the path
+   `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value release-state-marker.json` prints.
+   A not-found counts as `null` only after `get_file_contents` of the root on `release-state`
+   succeeds (the file is missing), or that fails and the root on the default branch succeeds
+   (the branch is missing). Otherwise it is `{failure}`. Any other shape exits 3.
+2. Run `node "${CLAUDE_PLUGIN_ROOT}/bin/release-state.js" marker advance --to {sha} --run {id} --marker-json "{tmp-marker-json}"`
+   from that checkout, and route on its exit code.
+3. On exit 0 with `write`, call `create_or_update_file` with `branch`, `path`, `content`,
+   `message` and `sha` (omitted when null): the conditional-write pattern in that same file.
+4. A sha-mismatch or exists rejection goes back to step 1 and re-runs the same call once. A
+   second rejection is the exit-4 equivalent.
+
+Init: `--emit`, then `create_branch` (name `release-state`, from the default branch; tolerate
+"already exists"), then `create_or_update_file` without `sha`. An exists rejection is the
+exit-1 equivalent.
+
+The descent check needs a local clone, because no compare tool is used on the MCP path. Without
+one, the CLI exits 5.
+
+## Recovery: an orphaned or malformed marker
+
+- Orphaned (exit 6): `marker reset --to {sha} --run {id}`. It succeeds only for an orphaned
+  marker (basis `orphaned`).
+- Any other marker, a malformed one included: add `--force --reason "{text}"` (basis `forced`).
+  A reason is one line of at most 200 characters with no `#`, and the composed commit message
+  must fit the same budget, else exit 2.
+- The reset is logged in the `release-state` commit message (`forced: {reason}` when forced).
+- The target must be on the first-parent line; one write, and a lost one is contested.
