@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A resolved integration branch that does not name a resolvable `origin/` ref — `HEAD branch: (unknown)` included — is treated exactly like the empty branch #5305 already handles: the target-missing pass is skipped with its one Warning, nothing is excluded as `target-missing`, no Close proposal is staged.
+**Goal:** A resolved integration branch that does not name a resolvable `origin/` ref — `HEAD branch: (unknown)` included — makes the target-missing pass skip with the same one Warning the empty branch (#5305) already gets: nothing is excluded as `target-missing`, no Close proposal is staged. Only the target-missing pass is affected (the maintainer's answer at plan review, Reading B, recorded in the spec's `## Plan Review Clarifications`).
 
-**Architecture:** After the branch is resolved (policy key, else `git remote show origin`), probe `origin/{branch}` once with `git rev-parse --verify --quiet origin/{branch}^{commit}`. A failed probe clears the branch to `''` (and so the ref), so every later reader — the target-missing pass and the unlanded-blocker pass that takes `--integration-branch` — sees the empty-branch state #5305 already handles. The module and the fence (`plugin/skills/dispatch/queue-pull-script.md`) change identically.
+**Architecture:** After the branch is resolved (policy key, else `git remote show origin`), probe `origin/{branch}` once with `git rev-parse --verify --quiet origin/{branch}^{commit}`. A failed probe makes only the target-missing pass take its existing empty-branch skip path; it does NOT clear the shared `state.integrationBranch` / `state.integrationRef` (module) or `INTEGRATION_BRANCH` / `INTEGRATION_REF` (fence), because the unlanded-blocker pass reads them and checks landing through the GitHub API, not a local ref: a branch that exists on GitHub with no local `origin/` ref (a single-branch clone) must keep its unlanded-blocker exclusions and print no new landing-skip Warning. The module and the fence (`plugin/skills/dispatch/queue-pull-script.md`) change identically.
 
 **Tech Stack:** Node (CommonJS), bash fence, `node --test`.
 
@@ -22,7 +22,7 @@ Scope keywords: remoteHeadBranch, TARGET_MISSING_SKIPPED, INTEGRATION_REF
 
 1. A policy `integration-branch` naming a branch origin does not have (typo, deleted branch) — expected: the same skip-with-Warning path (the probe applies to both sources). Pinned in Task 1.
 2. A valid remote HEAD (`trunk`, `release/next`) — expected: unchanged exclusions; the probe adds exactly one git call before the `cat-file` probes. Pinned by updating the existing #5227 portability argv assertions in Task 1.
-3. The unlanded-blocker pass after an unresolvable branch — expected: its existing `no integration branch resolved` skip Warning, as for the empty branch (it reads the cleared `state.integrationBranch`). Pinned by the Task 2 parity row's expectation (same stderr as `F-intbranch`).
+3. The unlanded-blocker pass after an unresolvable branch — expected: unchanged from today. It still receives the resolved branch (`state.integrationBranch` keeps its value), keeps its exclusions, and prints no new landing-skip Warning (Reading B). Pinned in Task 1 by asserting `state.integrationBranch` still holds the resolved value and the unlanded-blocker skip Warning is absent from stderr, and in Task 2 by the parity row's expectation being derived from a baseline run of that pass, never copied from `F-intbranch` (whose empty branch does skip it).
 4. An empty branch (failed `git remote show origin`) — expected: unchanged from #5305; the module runs no probe for an empty branch (the existing test asserts no `cat-file`; keep the probe off too).
 5. A branch name with shell-significant characters — the module passes argv (no shell); the fence quotes `"$INTEGRATION_REF^{commit}"`.
 
@@ -36,23 +36,23 @@ Scope keywords: remoteHeadBranch, TARGET_MISSING_SKIPPED, INTEGRATION_REF
 - Test: `tests/bin-lib/dispatch/queue-pull.test.js` (beside the `#5227 portability` tests, ~line 1983-2022)
 
 **Interfaces:**
-- Produces: git argv `['rev-parse', '--verify', '--quiet', 'origin/{branch}^{commit}']`, run once per pull only when the resolved branch is non-empty, before any `cat-file` probe. On a throw, `state.integrationBranch` and `state.integrationRef` are both `''`.
+- Produces: git argv `['rev-parse', '--verify', '--quiet', 'origin/{branch}^{commit}']`, run once per pull only when the resolved branch is non-empty, before any `cat-file` probe. On a throw, `runTargetMissing` takes its existing empty-branch skip path (the one Warning, no `cat-file`, nothing excluded or staged) and leaves `state.integrationBranch` and `state.integrationRef` as resolved.
 
 - [ ] **Step 1: Write the failing test (AC1.1)** — first teach `fakeRun` the probe: for git sub-argv `rev-parse --verify --quiet {ref}^{commit}`, return `'{40-hex}\n'` when `originBranchFiles(scenario, ref-without-origin/)` is truthy, else throw `fakeFailure(args, { status: 1, stdout: '', stderr: '' })` (`gitFail` already applies first). Then the test `#5863: an origin HEAD branch of (unknown) skips the target-missing pass with the Warning, excludes nothing as target-missing and stages no Close proposal`, modelled on the `#5227 … failing git remote show origin` test at ~2008:
   - `pull4({ ...FULL(), headBranch: '(unknown)' }, { run: <argv recorder over fakeRun> })`
-  - `assert.equal(r.state.integrationBranch, '')`, `assert.equal(r.state.integrationRef, '')`
+  - `assert.equal(r.state.integrationBranch, '(unknown)')` and `assert.equal(r.state.integrationRef, 'origin/(unknown)')` (Reading B: the shared branch is left as resolved), and `assert.ok(!r.errs.includes(<the unlanded-blocker skip Warning text, read from where the module defines it>))`
   - `assert.deepEqual(entriesOf(r, 'target-missing'), [])`
   - `assert.ok(r.errs.includes(`${TARGET_MISSING_SKIPPED}\n`))`
   - `assert.ok(!r.cap.staged.some((s) => s.id.startsWith('dispatch-target-missing-')))`
   - `assert.ok(!gitArgvs.some((a) => a[0] === 'cat-file'))`
-  - Second case in the same test: policy `'integration-branch': 'no-such-branch'` → same four outcomes.
+  - Second case in the same test: policy `'integration-branch': 'no-such-branch'` → same outcomes, with `state.integrationBranch` still `'no-such-branch'`.
 
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `node --test --test-name-pattern "#5863" tests/bin-lib/dispatch/queue-pull.test.js`
 Expected: FAIL after Step 1 (`integrationBranch` is `'(unknown)'`; target-missing entries are non-empty).
 
-- [ ] **Step 3: Implement** in `runTargetMissing`: after `if (!branch) branch = remoteHeadBranch(ctx);`, when `branch` is non-empty run the probe via `ctx.deps.run('git', argv, runOpts(ctx, { stdio: 'pipe' }))` in a try/catch; on a throw set `branch = ''`. Update the `#5305` comment above `const ref` to say "an empty or unresolvable branch". Name the probe helper `originRefResolves(ctx, ref)` returning a boolean.
+- [ ] **Step 3: Implement** in `runTargetMissing`: after `if (!branch) branch = remoteHeadBranch(ctx);`, when `branch` is non-empty run the probe via `ctx.deps.run('git', argv, runOpts(ctx, { stdio: 'pipe' }))` in a try/catch; on a throw make this pass take its existing empty-branch skip path without writing `ctx.state.integrationBranch` or `ctx.state.integrationRef` (a local `skip` flag or local `branch`/`ref` variables; never the shared state). Update the `#5305` comment above `const ref` to say "an empty or unresolvable branch". Name the probe helper `originRefResolves(ctx, ref)` returning a boolean.
 
 - [ ] **Step 4: Update the existing argv assertions** the new call changes: the `#5227 portability` test's `gitArgvs` (insert `['rev-parse', '--verify', '--quiet', 'origin/trunk^{commit}']` after `['remote', 'show', 'origin']`) and `policyGit` (prepend `'rev-parse --verify --quiet origin/release/next^{commit}'`). Any other test pinning a git argv sequence that now fails: same treatment, never loosening the assertion.
 
@@ -76,16 +76,14 @@ Expected: PASS, 0 failures. Then revert only the Step 3 code change in `queue-pu
 **Interfaces:**
 - Consumes: Task 1's clear-on-failed-probe behaviour (the module side of the parity pair).
 
-- [ ] **Step 1: Add the parity row** `F-headunknown` (pass `target-missing`): the `F-intbranch` scenario (with the `#9017`/`docs/present.md` record) but instead of `gitFail`, a scenario flag (e.g. `danglingHead: true`) that makes `seedOrigin` point origin's `HEAD` at a branch that does not exist (`git symbolic-ref HEAD refs/heads/{absent}`), so a real `git remote show origin` prints `HEAD branch: (unknown)` — verify that with one manual run before relying on it. Its `FAULT_EXPECT` row: same `status`, `stderr`, `stdout`, `drops` and `adds` as `F-intbranch`. In the AC4.1 detail test, add a loop over `sides(R['F-headunknown'])` asserting no `target-missing` exclusion, no `dispatch-target-missing-*` staged proposal, and no `cat-file` git argv.
+- [ ] **Step 1: Add the parity row** `F-headunknown` (pass `target-missing`): the `F-intbranch` scenario (with the `#9017`/`docs/present.md` record) but instead of `gitFail`, a scenario flag (e.g. `danglingHead: true`) that makes `seedOrigin` point origin's `HEAD` at a branch that does not exist (`git symbolic-ref HEAD refs/heads/{absent}`), so a real `git remote show origin` prints `HEAD branch: (unknown)` — verify that with one manual run before relying on it. Its `FAULT_EXPECT` row: the target-missing skip Warning and no target-missing exclusion, with the unlanded-blocker pass's output taken from a baseline run of that pass at the unchanged branch (Reading B keeps its exclusions and adds no landing-skip Warning), so `stderr`, `drops` and `adds` are NOT copied from `F-intbranch`, whose empty branch also skips the blocker pass. In the AC4.1 detail test, add a loop over `sides(R['F-headunknown'])` asserting no `target-missing` exclusion, no `dispatch-target-missing-*` staged proposal, and no `cat-file` git argv.
 
 - [ ] **Step 2: Run it to verify it fails (oracle side)**
 
 Run: `node --test tests/bin-lib/dispatch/queue-pull-parity-ac4.test.js`
 Expected: FAIL after Step 1 on `F-headunknown` — the fence still probes `origin/(unknown)` and excludes the named targets.
 
-- [ ] **Step 3: Implement in the fence** — immediately after line 384 (`INTEGRATION_REF=...`), the mirror of Task 1:
-  `git rev-parse -q --verify "$INTEGRATION_REF^{commit}" >/dev/null 2>&1 || INTEGRATION_BRANCH= INTEGRATION_REF=`
-  (an empty ref fails the probe too, which leaves the empty case unchanged). Then trim bytes per Global Constraints until `wc -c` ≤ 52500.
+- [ ] **Step 3: Implement in the fence** — the mirror of Task 1, scoped to the target-missing pass only (Reading B): read how the fence's target-missing pass tests `INTEGRATION_BRANCH` for the empty-branch skip (fence ~line 394-395) and the unlanded-blocker pass's own read of it; add a probe `git rev-parse -q --verify "$INTEGRATION_REF^{commit}" >/dev/null 2>&1` whose failure makes only the target-missing pass take that existing skip (a new local flag or a local ref variable), and leave `INTEGRATION_BRANCH` and `INTEGRATION_REF` untouched for the unlanded-blocker pass. An empty ref fails the probe too, which leaves the empty case unchanged. Then trim bytes per Global Constraints until `wc -c` ≤ 52500.
 
 - [ ] **Step 4: Run to verify it passes**
   Run: `node --test tests/bin-lib/dispatch/queue-pull-parity-ac4.test.js tests/bin-lib/dispatch/queue-pull.test.js`
@@ -98,4 +96,5 @@ Expected: FAIL after Step 1 on `F-headunknown` — the fence still probes `origi
 ## Self-review
 
 - Spec coverage: Deliverable 1 (module + fence) → Task 1 Step 4, Task 2 Step 3. Deliverable 2 (in-process test + parity row) → Task 1 Step 2, Task 2 Step 1. AC 1 → Task 1 Step 2 assertions. AC 2 → Task 1 Step 6 revert check.
+- Reading B (spec `## Plan Review Clarifications`) → Task 1 Interfaces and Step 3, Task 2 Step 3 and Step 1, Review Focus 3.
 - Placeholders: none.
