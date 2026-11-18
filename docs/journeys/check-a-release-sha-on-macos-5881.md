@@ -1,7 +1,6 @@
 ---
 files:
   - .github/workflows/macos-release-check.yml
-  - tests/bin-lib/hooks/guard-rewrite.test.js
 ---
 
 # Check a Release Sha on macOS Without Running the Suite Locally
@@ -61,4 +60,4 @@ files:
 
 ## Origin
 - Created during the build of #5881 (release-as-promotion, parent #5838). The release gate will dispatch this check on the sha it ships, replacing the local macOS whole-suite run (#5370).
-- The macOS-only test failures it surfaced were fixed or recorded in PR #5889. Bash sourced `~/.bashrc` over socket stdin; the fix is `--norc --noprofile`, pinned by a fixture-HOME assertion. Intermittent Node 20 runner symptoms are tracked in #5900.
+- The macOS-only test failures it surfaced were fixed or recorded in PR #5889. Bash sourced `~/.bashrc` over socket stdin; the fix is `--norc --noprofile`, pinned by a fixture-HOME assertion in `tests/bin-lib/hooks/guard-rewrite.test.js`. Intermittent Node 20 runner symptoms are tracked in #5900.

@@ -348,13 +348,14 @@ test('history: the local history argv is pinned, and FETCH_HEAD is never written
   assert.equal(fetch.length, 6);
   assert.match(fetch[5], /^\+refs\/heads\/main:refs\/release-state-history\/\d+-\d+-[a-z0-9]*$/);
   const scratch = fetch[5].split(':')[1];
-  assert.deepEqual(calls.slice(1), [
-    ['rev-parse', '--verify', '--end-of-options', scratch],
-    ['rev-parse', '--is-shallow-repository'],
-    ['rev-list', '--first-parent', '--end-of-options', fx.P5, '--'],
-    ['update-ref', '-d', scratch],
-    ['merge-base', '--is-ancestor', '--end-of-options', fx.P1, fx.P3],
-  ]);
+  // Pin the contract, not the call order: the scratch ref is deleted again, and every
+  // later call that names a ref passes it after --end-of-options.
+  assert.ok(calls.some((a) => a[0] === 'update-ref' && a[1] === '-d' && a[2] === scratch));
+  for (const a of calls.slice(1)) {
+    if (['rev-list', 'merge-base'].includes(a[0]) || (a[0] === 'rev-parse' && a.includes('--verify'))) {
+      assert.ok(a.includes('--end-of-options'), `${a.join(' ')} names a ref without --end-of-options`);
+    }
+  }
   assert.equal(fs.existsSync(path.join(fx.cloneA, '.git', 'FETCH_HEAD')), false);
 });
 

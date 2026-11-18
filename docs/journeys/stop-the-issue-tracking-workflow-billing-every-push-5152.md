@@ -11,7 +11,7 @@ files:
 **Persona:** Maintainer of a private repository that follows the pr-first model. They ran `/claude-tweaks:init` months ago and accepted Step 16's `track-issue-fixes.yml`. Every pipeline phase pushes, and the plugin's bookkeeping branches take pushes of their own. Each of those pushes started a billed Actions runner, even when no commit referenced an issue. They noticed it in the monthly Actions bill, not in any report.
 **Goal:** Pushes that reference no issue cost no runner minutes, and they get the cheaper workflow without hand-editing a generated file or losing any edits of their own.
 **Entry point:** Re-running `/claude-tweaks:init` (Step 16) in a project that already has `.github/workflows/track-issue-fixes.yml`, or running it for the first time.
-**Success state:** The workflow file carries the job-level prefilter and the `claims-registry`/`health-state` exclusion. A push whose commit messages contain no `#` together with a closing-keyword stem shows both jobs as skipped and bills nothing. A push to a bookkeeping branch creates no workflow run at all. A push that says `fixes #42` still labels issue 42. The maintainer should feel the upgrade was safe: a file they never touched was refreshed silently, and a file they had edited was left alone unless they chose otherwise.
+**Success state:** The workflow file carries the job-level prefilter and the `claims-registry`/`health-state`/`release-state` exclusion. A push whose commit messages contain no `#` together with a closing-keyword stem shows both jobs as skipped and bills nothing. A push to a bookkeeping branch creates no workflow run at all. A push that says `fixes #42` still labels issue 42. The maintainer should feel the upgrade was safe: a file they never touched was refreshed silently, and a file they had edited was left alone unless they chose otherwise.
 
 ## Steps
 
@@ -52,4 +52,5 @@ files:
 
 ## Origin
 - Created during the build of #5152 (generated issue-tracking workflow starts a runner on every push), reported from a private project on the pr-first model.
+- Updated during the build of #5883: step 5 and the success state name the `release-state` branch exclusion (`RELEASE_STATE_BRANCH`).
 - Related: `bootstrap-release-automation-2253.md` (another init-generated workflow), `ci-test-gate.md`.

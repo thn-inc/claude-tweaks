@@ -49,12 +49,13 @@ files:
 - **Red flags:** An agent that writes the marker without the descriptor's `sha`, or that writes again after a second rejection. A `null` file handed to the CLI after a read that failed for a reason other than not-found.
 
 ### 5. Recover an orphaned or malformed marker
-- **URL:** `plugin/bin/release-state.js marker reset --to <sha> --run <id> [--force --reason <text>]`
-- **Action:** After a force-push or history rewrite leaves the marker off `main`'s first-parent line, `marker advance` exits 6 (orphaned). The maintainer runs `marker reset` to a commit on the line. A marker that is still on the line, or that is malformed, needs `--force --reason`.
+- **URL:** `plugin/bin/release-state.js marker reset --to <sha> --run <id> [--force (--reason <text> | --reason-file <path>)]`
+- **Action:** After a force-push or history rewrite leaves the marker off `main`'s first-parent line, `marker advance` exits 6 (orphaned). The maintainer runs `marker reset` to a commit on the line. A marker that is still on the line, or that is malformed, needs `--force` with `--reason` or `--reason-file`.
 - **Should feel:** Guarded. Recovery exists, but never as a quiet way around the forward-only rule.
-- **Should understand:** An unforced reset succeeds only for an orphaned marker (basis `orphaned`). A forced reset always records basis `forced` and puts its reason in the `release-state` commit message. A reason is one line of at most 200 characters with no `#`, and the composed message must fit the same budget, else exit 2.
-- **Red flags:** An unforced reset that succeeds over a marker still on the line. A reset target off the first-parent line that is accepted.
+- **Should understand:** An unforced reset succeeds only for an orphaned marker (basis `orphaned`). A forced reset always records basis `forced` and puts its reason in the `release-state` commit message. A reason is one line of at most 200 characters with no `#`, and the composed message must fit the same budget, else exit 2. A skill writes the reason to a file and passes `--reason-file`, never `--reason "…"`, because double quotes still let a shell expand `$(…)` and backticks; the two flags are mutually exclusive.
+- **Red flags:** An unforced reset that succeeds over a marker still on the line. A reset target off the first-parent line that is accepted. A skill-composed reason passed inline as `--reason "…"`.
 
 ## Origin
 - Created during `/claude-tweaks:build` of record #5883 (2026-11-18), the release-state branch store under the release-as-promotion parent #5838. The merge-pause flag (#5884) is the next file on the same store.
+- Updated during the review of #5883: step 5 names `--reason-file`, the file form of a forced reset's reason.
 - Related journeys: `stop-the-issue-tracking-workflow-billing-every-push-5152.md` (the generated workflow now skips pushes to `release-state` as well).
