@@ -38,9 +38,7 @@ Scope keywords: remoteHeadBranch, TARGET_MISSING_SKIPPED, INTEGRATION_REF
 **Interfaces:**
 - Produces: git argv `['rev-parse', '--verify', '--quiet', 'origin/{branch}^{commit}']`, run once per pull only when the resolved branch is non-empty, before any `cat-file` probe. On a throw, `state.integrationBranch` and `state.integrationRef` are both `''`.
 
-- [ ] **Step 1: Teach `fakeRun` the probe.** For git sub-argv `rev-parse --verify --quiet {ref}^{commit}`: return `'{40-hex}\n'` when `originBranchFiles(scenario, ref-without-origin/)` is truthy, else throw `fakeFailure(args, { status: 1, stdout: '', stderr: '' })`. Honour `gitFail` like the other git commands (it already runs first).
-
-- [ ] **Step 2: Write the failing test** `#5863: an origin HEAD branch of (unknown) skips the target-missing pass with the Warning, excludes nothing as target-missing and stages no Close proposal`, modelled on the `#5227 … failing git remote show origin` test at ~2008:
+- [ ] **Step 1: Write the failing test (AC1.1)** — first teach `fakeRun` the probe: for git sub-argv `rev-parse --verify --quiet {ref}^{commit}`, return `'{40-hex}\n'` when `originBranchFiles(scenario, ref-without-origin/)` is truthy, else throw `fakeFailure(args, { status: 1, stdout: '', stderr: '' })` (`gitFail` already applies first). Then the test `#5863: an origin HEAD branch of (unknown) skips the target-missing pass with the Warning, excludes nothing as target-missing and stages no Close proposal`, modelled on the `#5227 … failing git remote show origin` test at ~2008:
   - `pull4({ ...FULL(), headBranch: '(unknown)' }, { run: <argv recorder over fakeRun> })`
   - `assert.equal(r.state.integrationBranch, '')`, `assert.equal(r.state.integrationRef, '')`
   - `assert.deepEqual(entriesOf(r, 'target-missing'), [])`
@@ -49,19 +47,21 @@ Scope keywords: remoteHeadBranch, TARGET_MISSING_SKIPPED, INTEGRATION_REF
   - `assert.ok(!gitArgvs.some((a) => a[0] === 'cat-file'))`
   - Second case in the same test: policy `'integration-branch': 'no-such-branch'` → same four outcomes.
 
-- [ ] **Step 3: Run it to verify it fails**
-  Run: `node --test --test-name-pattern "#5863" tests/bin-lib/dispatch/queue-pull.test.js`
-  Expected: FAIL (`integrationBranch` is `'(unknown)'`; target-missing entries are non-empty).
+- [ ] **Step 2: Run it to verify it fails**
 
-- [ ] **Step 4: Implement** in `runTargetMissing`: after `if (!branch) branch = remoteHeadBranch(ctx);`, when `branch` is non-empty run the probe via `ctx.deps.run('git', argv, runOpts(ctx, { stdio: 'pipe' }))` in a try/catch; on a throw set `branch = ''`. Update the `#5305` comment above `const ref` to say "an empty or unresolvable branch". Name the probe helper `originRefResolves(ctx, ref)` returning a boolean.
+Run: `node --test --test-name-pattern "#5863" tests/bin-lib/dispatch/queue-pull.test.js`
+Expected: FAIL after Step 1 (`integrationBranch` is `'(unknown)'`; target-missing entries are non-empty).
 
-- [ ] **Step 5: Update the existing argv assertions** the new call changes: the `#5227 portability` test's `gitArgvs` (insert `['rev-parse', '--verify', '--quiet', 'origin/trunk^{commit}']` after `['remote', 'show', 'origin']`) and `policyGit` (prepend `'rev-parse --verify --quiet origin/release/next^{commit}'`). Any other test pinning a git argv sequence that now fails: same treatment, never loosening the assertion.
+- [ ] **Step 3: Implement** in `runTargetMissing`: after `if (!branch) branch = remoteHeadBranch(ctx);`, when `branch` is non-empty run the probe via `ctx.deps.run('git', argv, runOpts(ctx, { stdio: 'pipe' }))` in a try/catch; on a throw set `branch = ''`. Update the `#5305` comment above `const ref` to say "an empty or unresolvable branch". Name the probe helper `originRefResolves(ctx, ref)` returning a boolean.
 
-- [ ] **Step 6: Run the dispatch suites.**
-  Run: `node --test tests/bin-lib/dispatch/queue-pull.test.js`
-  Expected: PASS, 0 failures. Then revert only the Step 4 code change, re-run the `#5863` test, see it FAIL, restore (AC 2).
+- [ ] **Step 4: Update the existing argv assertions** the new call changes: the `#5227 portability` test's `gitArgvs` (insert `['rev-parse', '--verify', '--quiet', 'origin/trunk^{commit}']` after `['remote', 'show', 'origin']`) and `policyGit` (prepend `'rev-parse --verify --quiet origin/release/next^{commit}'`). Any other test pinning a git argv sequence that now fails: same treatment, never loosening the assertion.
 
-- [ ] **Step 7: Commit** — `Skip the target-missing pass on an unresolvable origin HEAD branch — module (refs #5863)`.
+- [ ] **Step 5: Run the test suite and verify the revert goes red (AC1.1, AC2.1)**
+
+Run: `node --test tests/bin-lib/dispatch/queue-pull.test.js`
+Expected: PASS, 0 failures. Then revert only the Step 3 code change in `queue-pull.js`, re-run the `#5863` test, see it FAIL, and restore it (AC2.1). Quote both raw outputs in the report.
+
+- [ ] **Step 6: Commit** — `Skip the target-missing pass on an unresolvable origin HEAD branch — module (refs #5863)`.
 
 ### Task 2: Fence probe + parity row
 
@@ -71,6 +71,7 @@ Scope keywords: remoteHeadBranch, TARGET_MISSING_SKIPPED, INTEGRATION_REF
 - Modify: `tests/bin-lib/dispatch/queue-pull-oracle.js` (`seedOrigin` ~line 253: a way to leave origin's HEAD dangling)
 - Modify: `tests/bin-lib/dispatch/queue-pull-helpers.js` (`FAULT_EXPECT`, beside `'F-intbranch'` ~line 319)
 - Test: `tests/bin-lib/dispatch/queue-pull-parity-ac4.test.js` (the AC4.1 detail test, beside the `F-intbranch` loop ~line 64)
+- Modify: `docs/reference/gh-issue-write-inventory.md` — only if the fence's line count changes: shift the `queue-pull-script.md` line numbers its `### plugin/skills/dispatch/queue-pull-script.md` table and line 76 cite past fence line 384 by the same delta (Check B scope-keyword hit on `INTEGRATION_REF`)
 
 **Interfaces:**
 - Consumes: Task 1's clear-on-failed-probe behaviour (the module side of the parity pair).
@@ -78,8 +79,9 @@ Scope keywords: remoteHeadBranch, TARGET_MISSING_SKIPPED, INTEGRATION_REF
 - [ ] **Step 1: Add the parity row** `F-headunknown` (pass `target-missing`): the `F-intbranch` scenario (with the `#9017`/`docs/present.md` record) but instead of `gitFail`, a scenario flag (e.g. `danglingHead: true`) that makes `seedOrigin` point origin's `HEAD` at a branch that does not exist (`git symbolic-ref HEAD refs/heads/{absent}`), so a real `git remote show origin` prints `HEAD branch: (unknown)` — verify that with one manual run before relying on it. Its `FAULT_EXPECT` row: same `status`, `stderr`, `stdout`, `drops` and `adds` as `F-intbranch`. In the AC4.1 detail test, add a loop over `sides(R['F-headunknown'])` asserting no `target-missing` exclusion, no `dispatch-target-missing-*` staged proposal, and no `cat-file` git argv.
 
 - [ ] **Step 2: Run it to verify it fails (oracle side)**
-  Run: `node --test tests/bin-lib/dispatch/queue-pull-parity-ac4.test.js`
-  Expected: FAIL on `F-headunknown` — the fence still probes `origin/(unknown)` and excludes the named targets.
+
+Run: `node --test tests/bin-lib/dispatch/queue-pull-parity-ac4.test.js`
+Expected: FAIL after Step 1 on `F-headunknown` — the fence still probes `origin/(unknown)` and excludes the named targets.
 
 - [ ] **Step 3: Implement in the fence** — immediately after line 384 (`INTEGRATION_REF=...`), the mirror of Task 1:
   `git rev-parse -q --verify "$INTEGRATION_REF^{commit}" >/dev/null 2>&1 || INTEGRATION_BRANCH= INTEGRATION_REF=`
