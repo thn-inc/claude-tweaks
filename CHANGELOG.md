@@ -53,6 +53,13 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.173.1](https://github.com/thn-inc/claude-tweaks/compare/v6.173.0...v6.173.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* Fail closed when the MCP verified-open-deps file omits an… ([#5408](https://github.com/thn-inc/claude-tweaks/issues/5408)) ([e97c8ab](https://github.com/thn-inc/claude-tweaks/commit/e97c8ab6390db6dff021ae0937dffa4a7201603d)), closes [#5722](https://github.com/thn-inc/claude-tweaks/issues/5722)
+
 ## [6.173.0](https://github.com/thn-inc/claude-tweaks/compare/v6.172.0...v6.173.0) (2026-11-17)
 
 
