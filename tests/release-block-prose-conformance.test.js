@@ -459,10 +459,16 @@ const ROUND1 = {
   failedHeld: 'Never reported as `HELD` (no gate fired)',
   dryRunSummary: "Step 8's summary reads `dry-run`. |",
 };
-const LIVE_OUTCOME = {
-  failedPreamble: "nothing landed and no HARD-GATE fired, or Step 1.5's registered one failed closed (`release-block state unreadable`): either the run stopped before the console for a reason that is not a gate (a refused `--train` with no human present at Step 0; Step 3's",
-  failedHeld: 'Never reported as `HELD` (no gate saw a block)',
+// Round 2 (Task 5 re-review): the same pieces named only Step 1.5, though Step 4's re-read reaches both outcomes.
+const ROUND2 = {
   dryRunSummary: "Step 8's summary reads `dry-run` (`HELD` when Step 1.5 holds it). |",
+  heldToo: "Step 1.5's release-block stop is `HELD` too,",
+};
+const LIVE_OUTCOME = {
+  failedPreamble: "nothing landed and no HARD-GATE fired, or Step 1.5's/Step 4's registered one failed closed (`release-block state unreadable`): either the run stopped before the console for a reason that is not a gate (a refused `--train` with no human present at Step 0; Step 3's",
+  failedHeld: 'Never reported as `HELD` (no gate saw a block)',
+  dryRunSummary: "Step 8's summary reads `dry-run` (`HELD` on a release block). |",
+  heldToo: "Step 1.5's and Step 4's release-block stop is `HELD` too,",
 };
 const dryRunRow = (s) => lineStartingWith(s, '| `--dry-run` |');
 const failedBullet = (s) => lineStartingWith(s, '- **`failed`**');
@@ -474,7 +480,8 @@ const notAGateList = (s) => {
 const OUTCOME_FACTS = [
   ['--dry-run review sentence names the Step 1.5 hold', (s) => dryRunRow(s).includes("Unless Step 1.5 holds it `HELD`, Step 3's whole-branch review **still runs**")],
   ['--dry-run summary sentence names the Step 1.5 hold', (s) => dryRunRow(s).includes(LIVE_OUTCOME.dryRunSummary)],
-  ['failed preamble names the gate failing closed', (s) => failedBullet(s).includes("no HARD-GATE fired, or Step 1.5's registered one failed closed (`release-block state unreadable`): either")],
+  ['failed preamble names the gate failing closed', (s) => failedBullet(s).includes("no HARD-GATE fired, or Step 1.5's/Step 4's registered one failed closed (`release-block state unreadable`): either")],
+  ['the HELD sweep covers Step 4\'s re-read', (s) => s.includes(LIVE_OUTCOME.heldToo)],
   ['the not-a-gate list excludes the release block', (s) => notAGateList(s) !== '' && !notAGateList(s).includes('release-block')],
   ['the HELD exclusion covers a gate that saw no block', (s) => failedBullet(s).includes(LIVE_OUTCOME.failedHeld) && !failedBullet(s).includes('(no gate fired)')],
 ];
@@ -489,6 +496,10 @@ test('a dry run is held by a block, and an unreadable state is the gate failing 
     [LIVE_OUTCOME.failedPreamble, ROUND1.failedPreamble, ['failed preamble names the gate failing closed', 'the not-a-gate list excludes the release block']],
     [LIVE_OUTCOME.failedHeld, ROUND1.failedHeld, ['the HELD exclusion covers a gate that saw no block']],
     [LIVE_OUTCOME.dryRunSummary, ROUND1.dryRunSummary, ['--dry-run summary sentence names the Step 1.5 hold']],
+    // Round-2 wording (Step 1.5 only), one piece at a time.
+    ["Step 1.5's/Step 4's registered one failed closed", "Step 1.5's registered one failed closed", ['failed preamble names the gate failing closed']],
+    [LIVE_OUTCOME.dryRunSummary, ROUND2.dryRunSummary, ['--dry-run summary sentence names the Step 1.5 hold']],
+    [LIVE_OUTCOME.heldToo, ROUND2.heldToo, ["the HELD sweep covers Step 4's re-read"]],
   ];
   for (const [livePiece, frozen, facts] of swaps) {
     assert.ok(livePiece && SKILL.includes(livePiece), 'live piece not found');
@@ -732,7 +743,21 @@ test('the stamp runs only under pr-first and github-issues, and says why it skip
   assert.ok(!contract.replace('only when the engine is `pr-first` and `work-backend` is `github-issues` (a `local-files` record number is not a GitHub issue)', '').includes('github-issues'), 'contract setter: the condition appears outside the setter');
 });
 
-const MEDIUM_LOW = 'Medium and low findings are never stamped, including when declined as covered';
+const LOCAL_FILES_SENTENCE = 'Every stamp targets a GitHub issue; under `work-backend: local-files` a filer stamps nothing and logs a SKIP';
+function assertSettersGated(src) {
+  const sec = section(src, '## What sets a block');
+  assert.ok(sec.includes(LOCAL_FILES_SENTENCE), 'setters: no local-files rule for every setter');
+  assert.ok(Buffer.byteLength(src) <= 10000, 'contract over 10,000 B');
+}
+test('every setter stamps only a GitHub issue: local-files stamps nothing', () => {
+  assertSettersGated(text);
+  // Frozen: the contract before this rule (setter 1 carried no work-backend condition).
+  const frozen = text.replace(/\nEvery stamp targets a GitHub issue;[^\n]*\n/, '\n');
+  assert.notStrictEqual(frozen, text);
+  assert.throws(() => assertSettersGated(frozen), { message: /no local-files rule/ });
+});
+
+const MEDIUM_LOW ='Medium and low findings are never stamped, including when declined as covered';
 test('AC5.2: medium and low findings are not stamped', () => {
   assert.ok(stampParagraph(DISPOSITION).includes(MEDIUM_LOW));
   const p = stampParagraph(DISPOSITION);

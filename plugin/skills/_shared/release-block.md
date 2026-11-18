@@ -10,6 +10,8 @@ Three setters:
 2. `/release` Step 8's disposition — it stamps each critical/high finding it files, and also the covering record of a critical/high finding it declines as `declined (covered by #{n})`, only when the engine is `pr-first` and `work-backend` is `github-issues` (a `local-files` record number is not a GitHub issue).
 3. The `release-block` label added by a human to any record.
 
+Every stamp targets a GitHub issue; under `work-backend: local-files` a filer stamps nothing and logs a SKIP (a local record number is not one).
+
 ## How a block clears
 
 A block clears by one of two acts: close the record, or remove the label. No reason is required — this is the durable form of the old interactive "Proceed". A clearing comment is recommended, not required.
