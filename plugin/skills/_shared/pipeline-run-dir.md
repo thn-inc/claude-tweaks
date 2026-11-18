@@ -241,8 +241,13 @@ argument still holds there.
   strict anchored-under-the-main-checkout rule, but through `bin/lib/stage-item/write.js`'s
   exported `resolveTarget` rather than `worktree-detect.js` directly, and refuses with exit **3**
   — their documented run-dir-failure code, kept distinct from their exit 2 (malformed
-  invocation), with its own two messages ("run dir does not exist" versus "not anchored under
-  the main checkout (a worktree-local shadow)"). A further writer imports that `resolveTarget`
+  invocation), with its own three messages ("run dir does not exist", "not anchored under
+  the main checkout's .claude-tweaks/pipelines (a worktree-local shadow)", and "not a pipeline
+  run directory"). The guard also requires the real path to sit strictly inside the main
+  checkout's `.claude-tweaks/pipelines/` (`bin/lib/run-dir-guard.js`'s `isUnderPipelines`), so a
+  directory that is anchored but elsewhere in the checkout (`plugin/`, `docs/`) is refused with
+  the third message (`not-a-run-dir`) before any `config.yml` in it is read or anything is written.
+  A further writer imports that `resolveTarget`
   rather than re-deriving the predicate, as the third, fourth and fifth did.
 
 - **The composer CLI** — `bin/compose-context.js` (`--run`, #1988) — writes

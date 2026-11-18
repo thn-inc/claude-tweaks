@@ -6,15 +6,17 @@
 // Since #5230 dispatch runs this module (bin/queue-pull.js), not the fence: the module is the
 // live queue pull, and the retained fence is its revert path and parity oracle until #5231
 // removes it. Fix a defect here and mirror the change into the fence, never the other way round.
-// One rule is module-only by decision and is not mirrored: #5408's omitted-dependency check in the
-// blocked pass (search `#5408`), which the fence cannot see because it never gets the agent's raw
-// dependency-freshness text there. It stays a divergence until #5231 deletes the fence.
+// Two rules are module-only by decision and are not mirrored, both in the blocked pass's `files`
+// block: #5408's omitted-dependency check and #5865's `unreadable` freshness entry, which warns and
+// keeps the queue-order cache unwritten (search `#5408`, `#5865`). The fence cannot see either,
+// because it never gets the agent's raw dependency-freshness text there. They stay divergences
+// until #5231 deletes the fence.
 //
 // R6, step-for-step port: each fence step is one function. A throw inside a step is caught and
 // printed to stderr as `queue-pull: <step>: <message>`, and the run then continues or stops
 // exactly where the fence has an RC check or a `grep -q 'appendExclusion:'` check. Stop and
 // Warning texts match the fence byte for byte, and the two must keep the same behavior, except for
-// the #5408 rule named above.
+// the #5408 and #5865 rules named above.
 //   The fence's own calls are unbounded; the default deps bound every one (shared-primitives.js),
 // so a call that hangs, or outlasts its bound, is where the two can differ. GH_BATCH_TIMEOUT_MS
 // bounds an aliased GraphQL batch and every paginated list call (`issue list` / `pr list` with
@@ -301,22 +303,44 @@ function agentDepFreshness(ctx, file) {
   else put(ctx, file, text);
 }
 
-// The numbers the agent's dependency-freshness text shows closed (#5408). An unparseable value, a
-// non-array, or an entry without an integer `number` and a string `state` is no evidence of closure,
-// and a number counts closed only when every valid entry for it says so: two contradictory entries
-// are untrusted input that must fail closed, not open.
-function closedDependencyNumbers(text) {
+// #5311: a dependency number the blocked pass checks, 1..GRAPHQL_INT_MAX. Anything else belongs to the
+// blocker-landing pass's malformed-blocker exclusion (unlanded-blockers.js malformedRecords, the exact
+// complement, hence the shared constant) and is never live-checked.
+function inLiveCheckRange(dep) {
+  return dep > 0 && dep <= GRAPHQL_INT_MAX;
+}
+
+// The valid entries of the agent's dependency-freshness text: an unparseable value, a non-array, or an
+// entry without an integer `number` and a string `state` yields none.
+function validFreshnessEntries(text) {
   let entries;
   try {
     entries = JSON.parse(text);
   } catch {
-    return new Set();
+    return [];
   }
-  if (!Array.isArray(entries)) return new Set();
-  const valid = entries.filter((e) => e && Number.isInteger(e.number) && typeof e.state === 'string');
+  if (!Array.isArray(entries)) return [];
+  return entries.filter((e) => e && Number.isInteger(e.number) && typeof e.state === 'string');
+}
+
+// The numbers the agent's dependency-freshness text shows closed (#5408). A number counts closed
+// only when every valid entry for it says so: two contradictory entries are untrusted input that
+// must fail closed, not open.
+function closedDependencyNumbers(text) {
+  const valid = validFreshnessEntries(text);
   const isClosed = (e) => e.state.toLowerCase() === 'closed';
   const contested = new Set(valid.filter((e) => !isClosed(e)).map((e) => e.number));
   return new Set(valid.filter(isClosed).map((e) => e.number).filter((n) => !contested.has(n)));
+}
+
+// The numbers the agent's dependency-freshness text marks `unreadable` (#5865): ascending and
+// de-duplicated, under the same validity test. Never closed, whatever else the file says about the
+// same number.
+function unreadableDependencyNumbers(text) {
+  const numbers = validFreshnessEntries(text)
+    .filter((e) => e.state.toLowerCase() === 'unreadable')
+    .map((e) => e.number);
+  return [...new Set(numbers)].sort((a, b) => a - b);
 }
 
 // On `files` the agent's queue file stands where the fence's queue pull stands, as the agent's Write
@@ -389,7 +413,7 @@ function makeContext(options = {}, deps = {}) {
     depFreshnessInput: null, // files only: the agent's dependency-freshness text, read by the fetch pass
     nativeUnreadable: false, // #5309: the native-blockers query failed closed; every eligible record is excluded
     depUnreadable: false, // #5311: a dependency view or the verified-open-deps file failed closed; nothing is written back
-    depFreshFailed: false, // #5310: the write-back's dependency-freshness search failed; nothing is written back
+    depFreshFailed: false, // #5310: the write-back's dependency-freshness search failed, or #5865: the files freshness text marks a dependency unreadable; nothing is written back
     labelsSkipped: false, // #5315: a record with non-array labels was excluded at eligibility; nothing is written back
     standaloneDir: '',
     typedNumbers: new Set(), // #5584: the named records admitted on a typed command (fetch pass)
@@ -600,7 +624,7 @@ function nativeQueryFailed(ctx, r) {
   ctx.deps.stderr(`Warning: native dependency query failed — every candidate excluded as blocked (native blockers unreadable, fail closed) this run: ${trimNl(r.stderr)}\n`);
 }
 
-// Fence 145-207 on a miss (the removal of an earlier pull's eligibility files, the eligible list, the
+// Fence 145-208 on a miss (the removal of an earlier pull's eligibility files, the eligible list, the
 // unresolved-dependency check, the body-text and native blocker filtering); on a hit the persisted
 // `excluded` entries replayed as 'blocked'.
 function runBlocked(ctx) {
@@ -640,18 +664,18 @@ function runBlocked(ctx) {
       .map((i) => ({ ...i, facets: parseRecordFacets(i.labels) }))
       .filter((i) => (i.facets.grants.build || state.typedNumbers.has(i.number)) && !i.facets.bot.inProgress && !i.facets.bot.blocked && !i.facets.bot.parked);
     // '--limit 200' can truncate the open-issues pull: a dependency absent from it is
-    // unresolved, not closed, and is checked live below. #5311: a number outside 1..GRAPHQL_INT_MAX
-    // is never live-checked: it belongs to the blocker-landing pass's malformed-blocker exclusion
-    // (unlanded-blockers.js malformedRecords, the exact complement of this filter, hence the shared
-    // constant); live-checking it would fail closed as a spurious `blocked` with a Warning every pull.
-    const unresolved = [...new Set(eligiblePreDep.flatMap((i) => parseDependencies(i.body)).filter((dep) => dep > 0 && dep <= GRAPHQL_INT_MAX && !openNumbers.has(dep)))];
+    // unresolved, not closed, and is checked live below. #5311: a number outside inLiveCheckRange
+    // is never live-checked; live-checking it would fail closed as a spurious `blocked` with a
+    // Warning every pull.
+    const unresolved = [...new Set(eligiblePreDep.flatMap((i) => parseDependencies(i.body)).filter((dep) => inLiveCheckRange(dep) && !openNumbers.has(dep)))];
     fs.writeFileSync(paths['dispatch-eligible-pre-dep.json'], JSON.stringify(eligiblePreDep));
     fs.writeFileSync(paths['dispatch-unresolved-deps.json'], JSON.stringify(unresolved));
   });
 
   if (!skip && ctx.options.transport !== 'files') {
     step(ctx, 'verified-open-deps', () => {
-      fs.writeFileSync(f.verifiedOpenDeps, '');
+      // #5879: removed, never truncated (rationale: queue-pull-notes.md).
+      fs.rmSync(f.verifiedOpenDeps, { force: true });
       const open = [];
       const unresolved = readJson(paths['dispatch-unresolved-deps.json']).join(' ').split(/\s+/).filter(Boolean);
       for (const dep of unresolved) {
@@ -702,13 +726,27 @@ function runBlocked(ctx) {
     // dependency-freshness text shows it closed; otherwise it counts as open (fail closed).
     // Module-only: the fence has no twin of this block, by the plan-review decision, until #5231
     // deletes the fence. Do not mirror it, and do not remove it to restore parity.
-    if (!bad && ctx.options.transport === 'files') {
-      const closed = closedDependencyNumbers(state.depFreshnessInput);
-      for (const dep of readJson(paths['dispatch-unresolved-deps.json'])) {
-        if (verifiedOpen.includes(dep) || closed.has(dep)) continue;
-        openNumbers.add(dep);
-        deps.stderr(`Warning: verified-open-deps file omits #${dep}, which the dependency-freshness file does not show closed — treated as open (fail closed) this run\n`);
-        state.depUnreadable = true;
+    // #5865: a number the freshness file marks `unreadable` (the agent's issue_read failed on it) is
+    // never closed: the one Warning below names it in place of the omitted-dependency Warning, and
+    // depFreshFailed keeps the queue-order cache unwritten. Checked whether or not the file was `bad`.
+    // Only an in-range dependency of an eligible record counts: `Blocked by #0` or a number above
+    // GRAPHQL_INT_MAX is the blocker-landing pass's malformed-blocker case (#5311, inLiveCheckRange).
+    if (ctx.options.transport === 'files') {
+      const depended = new Set(eligiblePreDep.flatMap((i) => parseDependencies(i.body)).filter(inLiveCheckRange));
+      const unreadable = unreadableDependencyNumbers(state.depFreshnessInput).filter((n) => depended.has(n));
+      if (!bad) {
+        const closed = closedDependencyNumbers(state.depFreshnessInput);
+        const unreadableSet = new Set(unreadable);
+        for (const dep of readJson(paths['dispatch-unresolved-deps.json'])) {
+          if (verifiedOpen.includes(dep) || closed.has(dep)) continue;
+          openNumbers.add(dep);
+          if (!unreadableSet.has(dep)) deps.stderr(`Warning: verified-open-deps file omits #${dep}, which the dependency-freshness file does not show closed — treated as open (fail closed) this run\n`);
+          state.depUnreadable = true;
+        }
+      }
+      if (unreadable.length) {
+        deps.stderr(`Warning: dependency-freshness file marks ${unreadable.map((n) => `#${n}`).join(', ')} unreadable — treated as open (fail closed), queue-order cache not written this run\n`);
+        state.depFreshFailed = true;
       }
     }
     // #4793: a supplied states file (either transport) answers the foreign refs; the rest go to
@@ -757,7 +795,7 @@ function runBlocked(ctx) {
   }
 }
 
-// Fence 208-254 on a miss: the grouping block, which writes dispatch-groups.json, then the
+// Fence 209-255 on a miss: the grouping block, which writes dispatch-groups.json, then the
 // bundles, then the 'blocked' appends, then the 'oversized' appends. On a hit it runs the size
 // guard over the persisted groups and keeps the persisted bundles.
 function runOversized(ctx) {
@@ -814,7 +852,7 @@ function runOversized(ctx) {
   }
 }
 
-// Fence 256-295, the cache-miss path only: the dependency-freshness refetch over every eligible
+// Fence 257-296, the cache-miss path only: the dependency-freshness refetch over every eligible
 // record's dependencies, then the best-effort write-back of the queue-order blob.
 function runWriteBack(ctx) {
   const { deps, paths, state } = ctx;
@@ -862,7 +900,7 @@ function runWriteBack(ctx) {
   });
 }
 
-// ---- not-spec-shaped, open-pr, target-missing and shipped (fence 299-569) ---------------------
+// ---- not-spec-shaped, open-pr, target-missing and shipped (fence 300-566) ---------------------
 
 // The text this module quotes where the fence prints `$(cat $ERR_FILE)`. The fence's file holds
 // Node's uncaught-exception report: a header (a throw-site file:line, or a node:internal loader
@@ -907,7 +945,7 @@ function rewriteGroups(ctx, makeKeep) {
   fs.writeFileSync(file, `${JSON.stringify(finalGroups)}\n`);
 }
 
-// The node block of an exclusion pass whose stderr the fence redirects into `errFile` (fence 300,
+// The node block of an exclusion pass whose stderr the fence redirects into `errFile` (fence 301,
 // 344): the file keeps the failure text. Returns the failure text, or null on success.
 function runRedirectedBlock(ctx, errFile, fn) {
   try {
@@ -921,7 +959,7 @@ function runRedirectedBlock(ctx, errFile, fn) {
   }
 }
 
-// Fence 299-328. Keeps a candidate only when its cached body passes the Materialization gate.
+// Fence 300-328. Keeps a candidate only when its cached body passes the Materialization gate.
 function runNotSpecShaped(ctx) {
   const { deps, paths, omit } = ctx;
   const skip = omit.has('not-spec-shaped');
@@ -1009,8 +1047,20 @@ function targetMissingProposal(num, tpath, ref) {
   ].map((l) => `${l}\n`).join('');
 }
 
-// #5305: the Warning an empty integration branch prints in place of the target-missing pass (fence 394-395).
-const TARGET_MISSING_SKIPPED = 'Warning: target-missing pass skipped — no integration branch resolved';
+// #5863: whether `ref` (origin/{branch}) names a commit here. `git remote show origin` prints
+// `HEAD branch: (unknown)` for a dangling origin HEAD, and a policy key can name a deleted branch.
+function originRefResolves(ctx, ref) {
+  try {
+    ctx.deps.run('git', ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], runOpts(ctx, { stdio: 'pipe' }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// #5305, #5863: the Warning printed in place of the target-missing pass when the integration branch is empty
+// or its origin/ ref does not resolve (fence 394-395).
+const TARGET_MISSING_SKIPPED = 'Warning: target-missing pass skipped — no resolvable integration branch';
 
 // Fence 376-459. The run-dir and integration-branch resolution (377-384) is shared setup and
 // runs whether or not this pass is omitted; later passes read state.integrationBranch.
@@ -1023,7 +1073,8 @@ function runTargetMissing(ctx) {
   let branch = readPolicy(ctx, 'integration-branch');
   if (!branch) branch = remoteHeadBranch(ctx);
   state.integrationBranch = branch;
-  // #5305: an empty branch composes no origin/ ref; the pass that compares against it is skipped.
+  // #5305: an empty or unresolvable branch (#5863) composes no usable origin/ ref; the pass that compares against it is skipped.
+  // Only this pass skips: the shared branch and ref stay as resolved for the unlanded-blocker pass, which checks landing through the GitHub API.
   const ref = branch ? `origin/${branch}` : '';
   state.integrationRef = ref;
   const exclusions = paths['dispatch-exclusions.json'];
@@ -1035,7 +1086,8 @@ function runTargetMissing(ctx) {
         .filter((c) => c.target);
       fs.writeFileSync(paths['dispatch-named-targets.json'], JSON.stringify(named));
     });
-    if (!branch) {
+    // The probe runs only when this pass does, as in the fence; an empty branch never reaches it.
+    if (!branch || !originRefResolves(ctx, ref)) {
       deps.stderr(`${TARGET_MISSING_SKIPPED}\n`);
     } else {
       const probe = step(ctx, 'target-missing', () => {
@@ -1086,7 +1138,7 @@ function claimReader(ctx) {
   };
 }
 
-// Fence 542-569: one Close proposal per strong-tier exclusion, staged into the firing's own run dir.
+// Fence 539-566: one Close proposal per strong-tier exclusion, staged into the firing's own run dir.
 // The run-dir call is `2>/dev/null || true`: its stderr is dropped and a spawn throw is silent.
 function stageShippedProposals(ctx) {
   const { paths } = ctx;
@@ -1114,7 +1166,7 @@ function stageShippedProposals(ctx) {
   }
 }
 
-// Fence 466-569. Omitting the pass skips its classification, probes, exclusions and staging.
+// Fence 466-566. Omitting the pass skips its classification, probes, exclusions and staging.
 function runShipped(ctx) {
   const { deps, paths, omit } = ctx;
   if (omit.has('shipped')) {
@@ -1196,9 +1248,9 @@ function runShipped(ctx) {
   stageShippedProposals(ctx);
 }
 
-// ---- blocker-landing, neighbour-in-flight, cross-PR overlap and near-duplicate (fence 581-651) --
+// ---- blocker-landing, neighbour-in-flight, cross-PR overlap and near-duplicate (fence 568-648) --
 
-// Fence 572-579. One dispatch-unlanded-blockers.js call writes both the unlanded-blocker and the
+// Fence 568-576. One dispatch-unlanded-blockers.js call writes both the unlanded-blocker and the
 // malformed-blocker entries, so omitting either reason skips the whole call (R7). `--work-links`
 // is the value the fetch pass stored: on a queue-order cache hit the fence never sets WORK_LINKS,
 // so "$WORK_LINKS" is the empty string and the CLI accepts it.
@@ -1230,7 +1282,7 @@ function runBlockerLanding(ctx) {
 
 const IN_FLIGHT_ARGV = ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'];
 const IN_FLIGHT_POOL_AUTO = 'AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull';
-// fence 590, byte for byte
+// fence 587, byte for byte
 const IN_FLIGHT_CAP_WARNING = 'Warning: the bot:in-progress pull for the neighbour-in-flight pass (#3278) returned exactly the --limit cap (200) — in-flight records beyond the cap are not checked as neighbours. Informational only; never blocks dispatch.';
 
 // #5304: one AUTO line per pull for the claims the two claim-reading passes could not read. The
@@ -1245,7 +1297,7 @@ function reportClaimReadFailures(ctx, neighbourUnreadable) {
   else if (shipped.length) ctx.deps.stderr(`AUTO — dispatch: shipped-candidate claim read failed for ${shipped.join(', ')}; release time unknown, no downgrade\n`);
 }
 
-// Fence 581-617 on `gh`; on `files` mcp-transport.md's Step 2 four-step replacement, whose agent-
+// Fence 578-614 on `gh`; on `files` mcp-transport.md's Step 2 four-step replacement, whose agent-
 // written pool and claim-map FILES this pass reads (steps 1-3 are the agent's). Only the compute
 // is this pass's own: omitting the pass skips it (and so its appends and AUTO line), while the pool
 // fetch and its cap Warning are shared setup. A missing or malformed pool or claim-map file throws
@@ -1284,12 +1336,12 @@ function runNeighbourInFlight(ctx) {
 }
 
 const OPEN_PRS_ARGV = ['pr', 'list', '--state', 'open', '--json', 'number,files,closingIssuesReferences', '--limit', '100'];
-// fence 626, byte for byte
+// fence 623, byte for byte
 const OPEN_PR_CAP_WARNING = 'Warning: the open-PR pull for the cross-PR overlap report (#1579) returned exactly the --limit cap (100) — overlap detection may be missing older open PRs. Informational only; never blocks dispatch.';
-// fence 623's failure branch, byte for byte (#5312)
+// fence 620's failure branch, byte for byte (#5312)
 const OPEN_PR_FAIL_WARNING = 'Warning: open-PR pull failed — cross-PR overlap not checked this run';
 
-// Fence 619-640, informational. On `files` mcp-transport.md skips the fetch and has the agent write
+// Fence 616-637, informational. On `files` mcp-transport.md skips the fetch and has the agent write
 // `[]`; the module does the same and makes no gh call. On `gh` a failed open-PR fetch writes [] and
 // prints one Warning (#5312), and a compute failure is a step error the fence does not stop on.
 function runCrossPrOverlap(ctx) {
@@ -1320,7 +1372,7 @@ function runCrossPrOverlap(ctx) {
   });
 }
 
-// Fence 642-651, informational: every cross-group pair gets an AUTO line, and only the strong ones
+// Fence 639-648, informational: every cross-group pair gets an AUTO line, and only the strong ones
 // reach dispatch-near-dup-pairs.json (always written, [] when there are none).
 function runNearDupPairs(ctx) {
   if (ctx.omit.has('near-dup-pairs')) return;
@@ -1499,5 +1551,5 @@ function rankFromFiles({ sessionId, priority } = {}) {
 
 module.exports = {
   PASSES, PASS_FIELD_VALUES, SESSION_FILES, END_WRITTEN_FILES, sessionPaths, QueuePullStopped, runPasses, resolveOmit, defaultDeps, makeContext, queuePull, rankNext, rankFromFiles,
-  STAYING_EXCLUSION_REASONS, RANK_SKIP_REASONS,
+  STAYING_EXCLUSION_REASONS, RANK_SKIP_REASONS, closedDependencyNumbers,
 };

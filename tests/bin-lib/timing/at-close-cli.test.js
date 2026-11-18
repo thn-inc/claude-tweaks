@@ -15,12 +15,13 @@ const { closeRunState } = require('../../../plugin/bin/lib/hooks/close-run-state
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'timing-at-close.js');
 const SID = 'sess-5555-cli';
 
-// A real git repo: the CLI refuses a run dir that is not anchored under a main checkout, so every
-// run dir here lives inside one and the CLI is run with that repo as its cwd.
+// A real git repo: the CLI refuses a run dir that is not anchored under a main checkout and sitting
+// under its .claude-tweaks/pipelines/ (#5830), so every run dir here lives there and the CLI is run
+// with that repo as its cwd.
 function tmpRoot() { return gitRepo(); }
 
 function closedRun(root, name, worktree) {
-  const runDir = path.join(root, name);
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', name);
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(path.join(runDir, 'events.jsonl'), [
     { skill: 'claude-tweaks:build', ts: '2026-11-16T10:00:00.000Z', type: 'skill_invoked' },
@@ -140,7 +141,7 @@ test('a relative --run resolves against deps.cwd()', async () => {
     const wt = path.join(root, 'wt');
     const runDir = closedRun(root, 'run', wt);
     writeTranscript(cfg, wt);
-    const r = await runCli(CLI, ['--run', 'run'], { env: { CLAUDE_CONFIG_DIR: cfg }, cwd: root });
+    const r = await runCli(CLI, ['--run', path.join('.claude-tweaks', 'pipelines', 'run')], { env: { CLAUDE_CONFIG_DIR: cfg }, cwd: root });
     assert.equal(r.code, 0);
     assert.equal(r.stdout, path.join(runDir, 'timing.json') + '\n');
   } finally {

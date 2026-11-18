@@ -883,7 +883,8 @@ async function runAdoptRunDir(argv, deps) {
     // which is not necessarily either side of the --worktree/--run pairing
     // this verb actually compares) while still enforcing its structural
     // check: a `.git` FILE ancestor (a linked worktree/submodule) is always
-    // refused, never adopted as if it were the main checkout.
+    // refused, never adopted as if it were the main checkout, and a dir
+    // outside .claude-tweaks/pipelines/ is refused as not-a-run-dir (#5830).
     target = require('./lib/log-decision/append').resolveTarget({ runDir: runArg, cwd: deps.cwd(), mainRoot: null });
   } catch (err) {
     deps.stderr(`claude-tweaks: adopt-run-dir: ${err && err.message}\n`);
@@ -893,7 +894,7 @@ async function runAdoptRunDir(argv, deps) {
     if (target.reason === 'missing') {
       deps.stderr(`claude-tweaks: adopt-run-dir: run dir does not exist: ${runArg}\n`);
     } else {
-      deps.stderr(`claude-tweaks: adopt-run-dir: run dir is not anchored under the main checkout (a worktree-local shadow): ${runArg} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+      deps.stderr(`claude-tweaks: adopt-run-dir: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${runArg} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
     }
     return 3;
   }
