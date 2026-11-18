@@ -15,6 +15,8 @@ const { fixtureHomeEnv } = require('./helpers/fixture-home');
 const { runCli, spawnCli } = require('./helpers/run-cli');
 const { chmodDenialSkip } = require('./helpers/root');
 const { committedRepo, repoWithOrigin, linkedWorktreeProject, worktreeShapes, trySymlink } = require('./helpers/statusline-fixtures');
+const { warmCallStartsNoGit } = require('./helpers/git-trace');
+const { pinnedGit: git } = require('./helpers/pinned-git');
 
 // The project segment wraps text in OSC 8 hyperlinks (\x1b]8;;URL\x07text\x1b]8;;\x07).
 // Assertions about segment order/content strip those wrappers first; the link
@@ -2310,4 +2312,41 @@ test('rendered project and git segments are byte-identical with the fast paths o
   });
   assert.strictEqual(compared.length, 11);
   assert.deepStrictEqual(launches.filter((l) => l.fn === 'exec' || l.fn === 'execSync'), []);
+});
+
+// #5846: the statusline fixtures are templates (#5772) — a warm-up call may build, a further call starts no
+// git process, and the worktreeShapes copy holds its own paths. They live here because this file's own tests
+// already build every one of these templates.
+const cleanupAfter = (t, dirs) => t.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
+for (const [name, make, dirsOf] of [
+  ['committedRepo()', () => committedRepo(), (d) => [d]],
+  ["committedRepo({ branch: 'feature/isolated-branch' })", () => committedRepo({ branch: 'feature/isolated-branch' }), (d) => [d]],
+  ["repoWithOrigin('git@github.com:owner/repo.git')", () => repoWithOrigin('git@github.com:owner/repo.git'), (r) => [r.base]],
+  ['repoWithOrigin(null)', () => repoWithOrigin(null), (r) => [r.base]],
+  ['worktreeShapes()', () => worktreeShapes(), (r) => [r.base]],
+  ['linkedWorktreeProject()', () => linkedWorktreeProject(), (r) => [r.base]],
+]) {
+  test(`AC3.1: statusline ${name}: a second call starts no git process`, (t) => {
+    warmCallStartsNoGit(make, { track: (r) => cleanupAfter(t, dirsOf(r)) });
+  });
+}
+
+test('worktreeShapes copy: link points at this copy\'s wt, and wt and sub resolve inside this copy', (t) => {
+  const { base, wt, sub, link } = worktreeShapes();
+  cleanupAfter(t, [base]);
+  const realBase = fs.realpathSync(base);
+  const inside = (p) => p.startsWith(realBase + path.sep);
+  if (link !== null) assert.strictEqual(fs.realpathSync(link), fs.realpathSync(wt));
+  for (const dir of [wt, sub]) {
+    const common = fs.realpathSync(path.resolve(dir, git(dir, ['rev-parse', '--git-common-dir'])));
+    assert.ok(inside(common), `${dir}: ${common} is outside ${realBase}`);
+  }
+  const gitmodules = path.join(base, 'main-repo', '.gitmodules');
+  if (fs.existsSync(gitmodules)) {
+    const urls = [...fs.readFileSync(gitmodules, 'utf8').matchAll(/^\s*url\s*=\s*(.+?)\s*$/gm)].map((m) => m[1]);
+    assert.ok(urls.length > 0, 'control: .gitmodules names a url');
+    for (const url of urls) {
+      assert.ok(inside(fs.realpathSync(path.resolve(url))), `.gitmodules url ${url} is outside ${realBase}`);
+    }
+  }
 });

@@ -16,6 +16,8 @@ Object.assign(process.env, {
 });
 
 const { fixture, sh, write, read, X, Z, RUN_ID, BRANCH, NOW } = require('../../helpers/learned-skills-land');
+const { pinnedGit: git } = require('../../helpers/pinned-git');
+const { warmCallStartsNoGit } = require('../../helpers/git-trace');
 
 // A gh fake. State: the open PR list. Throws on any argv it does not handle.
 function fakeGh({ prs = [], createThrows = null, editThrows = null } = {}) {
@@ -1233,4 +1235,16 @@ test('an empty HEAD read is not kept: the next ask reads git again, and a non-em
   assert.equal(readHead(), 'abc1234');
   assert.equal(readHead(), 'abc1234');
   assert.equal(calls, 2);
+});
+
+// #5846: the land fixture is a template (#5770) — a warm call starts no git process. The test lives
+// here because this file's own tests already build every variant.
+test('AC3.1: learned-skills land fixture(): a warm copy starts no git process and owns its paths', (t) => {
+  const { traced: f } = warmCallStartsNoGit(
+    () => { for (const o of [{}, { autocrlf: 'true' }, { capturedTargets: [X] }, { originConflict: true }]) fixture(t, o); },
+    { traced: () => { const made = fixture(t); fixture(t, { originConflict: true }); return made; } },
+  );
+  const manifest = JSON.parse(fs.readFileSync(path.join(f.runDir, 'learned-skills', 'manifest.json'), 'utf8'));
+  for (const e of manifest) assert.ok(e.patch.startsWith(f.runDir + path.sep), e.patch);
+  assert.strictEqual(git(f.repo, ['remote', 'get-url', 'origin']), f.origin);
 });

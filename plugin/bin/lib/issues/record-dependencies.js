@@ -326,8 +326,17 @@ function partitionByOpenNativeBlockers(candidates, repoData) {
 // (linked-prs.js) passes it through as `issueState` on each Map entry, so
 // wrap-up's carrier-commit fallback can read whether the issue is CLOSED
 // from this one batched call instead of a per-issue `gh issue view`.
+//
+// #5722: each alias also selects the issue's label timeline, under the alias
+// `labelEvents` (the unaliased `timelineItems` above takes different
+// arguments, so GraphQL would reject two with the same response name). It
+// answers "when did this record last gain `ready` or `auto:build`" inside this
+// same batch, with no per-record call — linked-prs.js reduces it to
+// `lastShapedAt`, which classifyShipped reads to downgrade a mention the
+// record was shaped or granted after. `last:100` takes the most recent events,
+// the same newest-matters reasoning as `last:20` above (#2449).
 function buildLinkedPRQuery(numbers) {
-  return buildAliasedIssueQuery(numbers, (n) => `issue(number:${n}){ number state closedByPullRequestsReferences(first:10){ nodes{ number state } } timelineItems(itemTypes:[CROSS_REFERENCED_EVENT], last:20){ nodes{ ... on CrossReferencedEvent { source { ... on PullRequest { number title state createdAt merged mergedAt repository { nameWithOwner } } } } } } }`);
+  return buildAliasedIssueQuery(numbers, (n) => `issue(number:${n}){ number state closedByPullRequestsReferences(first:10){ nodes{ number state } } timelineItems(itemTypes:[CROSS_REFERENCED_EVENT], last:20){ nodes{ ... on CrossReferencedEvent { source { ... on PullRequest { number title state createdAt merged mergedAt repository { nameWithOwner } } } } } } labelEvents: timelineItems(itemTypes:[LABELED_EVENT], last:100){ nodes{ ... on LabeledEvent { createdAt label { name } } } } }`);
 }
 
 // candidates[] (each with .number), repoData: the linked-PR GraphQL response's

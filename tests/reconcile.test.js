@@ -1,6 +1,6 @@
 // tests/reconcile.test.js
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 require('./helpers/stub-token-pass').installTokenPassStub();
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
@@ -24,6 +24,8 @@ const {
   bareRepoRoot,
   mintEmptyRunDir,
 } = require('./helpers/reconcile-fixtures');
+const { pinnedGit } = require('./helpers/pinned-git');
+const { warmCallStartsNoGit } = require('./helpers/git-trace');
 
 // Every non-dry reconcile() pass prunes the declined-learning store (#1399). The prune now anchors at
 // the pass's own cwd (#5376), but before that it resolved from process.cwd() to the main checkout
@@ -1332,4 +1334,39 @@ test('reconcile: checks filter excludes reap -> local-merge project runs nothing
   // 'mirror' was requested but has no local-merge equivalent — nothing runs.
   assert.strictEqual(r.worktrees, null);
   assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' }]);
+});
+
+// #5846: the pairedFixture and bareRepoRoot builders sit on templates (#5297) — a warm-up call may
+// build, a further call starts no git process — and a pairedFixture copy points at its own origin.
+// They live here because this file's own tests already build both templates.
+const movedFixtureDirs = [];
+after(() => {
+  for (const d of movedFixtureDirs) fs.rmSync(d, { recursive: true, force: true });
+});
+// This file's `git` takes (args, cwd), so the shared pinned-config runner is bound under its own name.
+function commit(cwd, name) {
+  fs.writeFileSync(path.join(cwd, name), name);
+  pinnedGit(cwd, ['add', name]);
+  pinnedGit(cwd, ['commit', '-q', '-m', name]);
+}
+for (const [name, make, dirsOf] of [
+  ['reconcile pairedFixture', () => pairedFixture(), (r) => Object.values(r)],
+  ['reconcile bareRepoRoot', () => bareRepoRoot(), (d) => [d]],
+]) {
+  test(`${name}: a second call starts no git process`, () => {
+    warmCallStartsNoGit(make, { track: (r) => movedFixtureDirs.push(...dirsOf(r)) });
+  });
+}
+
+test('pairedFixture copies point at their own origin and sync through it', () => {
+  const a = pairedFixture();
+  const b = pairedFixture();
+  movedFixtureDirs.push(...Object.values(a), ...Object.values(b));
+  assert.strictEqual(pinnedGit(a.mainDir, ['remote', 'get-url', 'origin']), a.originDir);
+  assert.strictEqual(pinnedGit(b.mainDir, ['remote', 'get-url', 'origin']), b.originDir);
+  commit(a.seedDir, 'next');
+  pinnedGit(a.seedDir, ['push', '-q', 'origin', 'main']);
+  pinnedGit(a.mainDir, ['fetch', '-q', 'origin']);
+  assert.strictEqual(pinnedGit(a.mainDir, ['rev-parse', 'origin/main']), pinnedGit(a.seedDir, ['rev-parse', 'HEAD']));
+  assert.notStrictEqual(pinnedGit(b.mainDir, ['rev-parse', 'origin/main']), pinnedGit(a.seedDir, ['rev-parse', 'HEAD']));
 });

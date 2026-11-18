@@ -33,6 +33,8 @@ const {
   fixtureActiveUnstampedMergedRun, fixtureOrdinaryMergedNoConsole, cloneOfSeededOrigin, ref,
   fixtureAbandonedBehindOrigin, RUN_3976, headerMergedRepo3976, addOriginRemote,
 } = require('./archive-merged-helpers');
+const { warmCallStartsNoGit } = require('../../helpers/git-trace');
+const { pinnedGit, pinnedGitEnv } = require('../../helpers/pinned-git');
 
 // `git config core.quotepath true` as a plain config append, so it starts no git process.
 const setQuotepath = (root) => fs.appendFileSync(path.join(root, '.git', 'config'), '[core]\n\tquotepath = true\n');
@@ -4096,4 +4098,60 @@ test('AC4.2 fallback: a local-merge run merged without the move is still archive
   assert.equal(git(root, 'log', '-1', '--format=%s').trim().startsWith('[reconcile] archive run'), true);
   assert.deepEqual(lines3976(git(root, 'ls-tree', '-r', '--name-only', 'main', `${ARCH_3976}/work/`)), [`${ARCH_3976}/work/7-spec.md`]);
   assert.deepEqual(lines3976(git(root, 'ls-tree', '-r', 'main', '--', `${LIVE_3976}/`)), []);
+});
+
+// #5846: the archive-merged fixtures are templates (#5772) — a warm-up call may build, a further call starts
+// no git process, and the mergedFeatureBranchRepo copies hold their branch. They live here because this
+// file's own tests already build every one of these templates. This file's `git` takes (cwd, ...args), so
+// the shared pinned-config runner is bound under its own name.
+const cleanupAfter = (t, dirs) => t.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
+// The copied bare origin a clone fixture's .git/config names, so a test can clean it up too.
+const originDirOf = (root) => readText(path.join(root, '.git', 'config')).match(/^\s*url = (.+)$/m)[1].trim();
+for (const [name, make, dirsOf] of [
+  ['makeRepo()', () => makeRepo(), (d) => [d]],
+  ['mergedFeatureBranchRepo(feat-x)', () => mergedFeatureBranchRepo('feat-x'), (r) => [r.root]],
+  ['fixtureCleanUnarchivedRun({ origin: true })', () => fixtureCleanUnarchivedRun({ runId: '2026-08-01T090000-record-2', origin: true }), (r) => [r.root]],
+  ['fixtureAbandonedShippedRun', () => fixtureAbandonedShippedRun({ runId: '2026-08-01T090000-record-1' }), (r) => [r.root]],
+  ['cloneOfSeededOrigin()', () => cloneOfSeededOrigin(), (r) => [r.seed, r.root, originDirOf(r.root)]],
+]) {
+  test(`AC3.1: archive-merged ${name}: a second call starts no git process`, (t) => {
+    warmCallStartsNoGit(make, { track: (r) => cleanupAfter(t, dirsOf(r)) });
+  });
+}
+
+test('mergedFeatureBranchRepo copy: feature tip is an ancestor of main and the branch ref exists', (t) => {
+  cleanupAfter(t, [mergedFeatureBranchRepo('feat-x').root]);
+  const { root, featureSha } = mergedFeatureBranchRepo('feat-x');
+  cleanupAfter(t, [root]);
+  const r = cp.spawnSync('git', ['merge-base', '--is-ancestor', featureSha, 'main'], { cwd: root, env: pinnedGitEnv() });
+  assert.strictEqual(r.status, 0, String(r.stderr));
+  assert.strictEqual(pinnedGit(root, ['rev-parse', 'feat-x']), featureSha);
+});
+
+for (const [name, make, dirsOf] of [
+  ['fixtureAbandonedBehindOrigin()', () => fixtureAbandonedBehindOrigin(), (r) => [r.root, originDirOf(r.root)]],
+  ['fixtureAbandonedBehindOrigin({ squash: true })', () => fixtureAbandonedBehindOrigin({ squash: true }), (r) => [r.root, originDirOf(r.root)]],
+  ['headerMergedRepo3976({ moved: true, merge: squash })', () => headerMergedRepo3976({ moved: true, merge: 'squash' }), (r) => [r.root]],
+  ['headerMergedRepo3976({ moved: false, merge: no-ff })', () => headerMergedRepo3976({ moved: false, merge: 'no-ff' }), (r) => [r.root]],
+]) {
+  test(`AC3.1: archive-merged ${name}: a second call starts no git process`, (t) => {
+    warmCallStartsNoGit(make, { track: (r) => cleanupAfter(t, dirsOf(r)) });
+  });
+}
+
+test('AC3.1: archive-merged mergedFeatureBranchRepo(): a call with a new branch name starts no git process', (t) => {
+  warmCallStartsNoGit(() => mergedFeatureBranchRepo('feat-warm-5772'), {
+    traced: () => mergedFeatureBranchRepo('feat-fresh-5772'),
+    track: (r) => cleanupAfter(t, [r.root]),
+  });
+});
+
+test('mergedFeatureBranchRepo copy under a new branch name: the ref and its reflog carry that name only', (t) => {
+  const { root, featureSha } = mergedFeatureBranchRepo('feat/renamed-5772');
+  cleanupAfter(t, [root]);
+  assert.strictEqual(pinnedGit(root, ['rev-parse', 'feat/renamed-5772']), featureSha);
+  assert.strictEqual(pinnedGit(root, ['rev-parse', 'main']), featureSha);
+  assert.strictEqual(pinnedGit(root, ['for-each-ref', '--format=%(refname)', 'refs/heads']), 'refs/heads/feat/renamed-5772\nrefs/heads/main');
+  assert.notStrictEqual(pinnedGit(root, ['reflog', 'show', 'feat/renamed-5772']), '');
+  assert.match(pinnedGit(root, ['reflog', 'show', 'main']), /merge feat\/renamed-5772: Fast-forward/);
 });

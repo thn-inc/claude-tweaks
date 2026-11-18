@@ -1084,12 +1084,12 @@ function mcpRecord(number, body) {
 test('#5227 files: the queue file is copied into the session file and aliased there, dispatch-verified-open-deps.txt replaces the gh issue view loop, and no gh call is made', () => {
   const calls = [];
   const noGh = (cmd, args) => { calls.push([cmd, ...args]); throw new Error(`gh must not be called on files: ${args.join(' ')}`); };
-  const write = (own, { verified }) => {
+  const write = (own, { verified, freshness = '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"open"}]' }) => {
     return {
       inputs: {
         queueRaw: writeInput(own, 'queue.json', JSON.stringify([mcpRecord(9001, withBody(9001)), mcpRecord(9002, `Blocked by #8000\n\n${withBody(9002)}`)])),
         openNumbers: writeInput(own, 'open.json', '[{"number":9001},{"number":9002}]'),
-        depFreshness: writeInput(own, 'dep.json', '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"open"}]'),
+        depFreshness: writeInput(own, 'dep.json', freshness),
         verifiedOpenDeps: verified === null ? path.join(own, 'absent.txt') : writeInput(own, 'verified.txt', verified),
       },
     };
@@ -1123,8 +1123,8 @@ test('#5227 files: the queue file is copied into the session file and aliased th
   const crlf = pull(S1(), { transport: 'files', run: noGh, prepare: (own) => write(own, { verified: '8000\r\n\n' }) });
   assert.deepEqual(groupNumbers(crlf), [[9001]]);
   assert.deepEqual(warningsOf(crlf), [], 'CRLF and a blank line are well-formed');
-  const empty = pull(S1(), { transport: 'files', run: noGh, prepare: (own) => write(own, { verified: '' }) });
-  assert.deepEqual(groupNumbers(empty), [[9001], [9002]], 'an empty file is a well-formed "none open" answer');
+  const empty = pull(S1(), { transport: 'files', run: noGh, prepare: (own) => write(own, { verified: '', freshness: '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"closed"}]' }) });
+  assert.deepEqual(groupNumbers(empty), [[9001], [9002]], 'an empty file with the dependency shown closed is a well-formed "none open" answer');
   assert.deepEqual(warningsOf(empty), []);
   assert.deepEqual(calls, []);
 
@@ -1142,6 +1142,55 @@ test('#5227 files: the queue file is copied into the session file and aliased th
   });
   assert.deepEqual(entriesOf(foreign, 'blocked'), [{ reason: 'blocked', records: [9001], detail: { blockedBy: ['acme-corp/other#12'] } }], 'PF17: foreignStates is read on files too');
   assert.deepEqual(foreign.cliCalls.filter(([n]) => n === 'resolve-foreign-blockers.js'), []);
+});
+
+test('AC1.1, AC1.2 (#5408): files: an unresolved dependency the verified-open-deps file omits and the dependency-freshness file does not show closed is treated as open, with one Warning naming it', () => {
+  const OMITTED = (n) => `Warning: verified-open-deps file omits #${n}, which the dependency-freshness file does not show closed — treated as open (fail closed) this run`;
+  const noGh = (cmd, args) => { throw new Error(`gh must not be called on files: ${args.join(' ')}`); };
+  // freshness === null leaves the dependency-freshness file absent (the agent wrote none).
+  const run = (blockedBody, freshness, verified = '') => pull(S1(), { transport: 'files', run: noGh, prepare: (own) => ({ inputs: {
+    queueRaw: writeInput(own, 'queue.json', JSON.stringify([mcpRecord(9001, withBody(9001)), mcpRecord(9002, `${blockedBody}\n\n${withBody(9002)}`)])),
+    openNumbers: writeInput(own, 'open.json', '[{"number":9001},{"number":9002}]'),
+    depFreshness: freshness === null ? path.join(own, 'absent-dep.json') : writeInput(own, 'dep.json', freshness),
+    verifiedOpenDeps: writeInput(own, 'verified.txt', verified),
+  } }) });
+  const BLOCKED_8000 = [{ reason: 'blocked', records: [9002], detail: { blockedBy: [8000] } }];
+
+  for (const [label, freshness] of [
+    ['an empty dependency-freshness file', '[]'],
+    ['an entry showing the dependency open', '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"open"}]'],
+    ['an absent dependency-freshness file', null],
+    ['an entry whose number is a string', '[{"number":"8000","state":"closed"}]'],
+    ['an entry with no state', '[{"number":8000}]'],
+    ['an object wrapper around the entries', '{"issues":[{"number":8000,"state":"closed"}]}'],
+    ['an unparseable file', 'not json'],
+    ['contradictory entries, closed then open', '[{"number":8000,"state":"closed"},{"number":8000,"state":"open"}]'],
+    ['contradictory entries, open then closed', '[{"number":8000,"state":"open"},{"number":8000,"state":"closed"}]'],
+  ]) {
+    const r = run('Blocked by #8000', freshness);
+    assert.deepEqual(groupNumbers(r), [[9001]], `${label}: #9002 is not dispatchable`);
+    assert.deepEqual(entriesOf(r, 'blocked'), BLOCKED_8000, label);
+    assert.deepEqual(warningsOf(r), [OMITTED(8000)], label);
+    assert.equal(r.store.written.length, 0, `${label}: a fail-closed verdict is never persisted to the queue-order cache`);
+  }
+
+  const closed = run('Blocked by #8000', '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"CLOSED"}]');
+  assert.deepEqual(groupNumbers(closed), [[9001], [9002]], 'a dependency the freshness file shows closed does not block');
+  assert.deepEqual(warningsOf(closed), []);
+  assert.equal(closed.store.written.length, 1, 'a dependency shown closed is a trusted verdict: the write-back still runs');
+
+  const two = run('Blocked by #8000\nBlocked by #8001', '[]');
+  assert.deepEqual(warningsOf(two), [OMITTED(8000), OMITTED(8001)], 'one Warning per omitted dependency, in dependency order');
+
+  const mixed = run('Blocked by #8000\nBlocked by #8001', '[]', '8000\n');
+  assert.deepEqual(warningsOf(mixed), [OMITTED(8001)], 'a dependency the file lists draws no Warning; only the omitted one does');
+  assert.deepEqual(entriesOf(mixed, 'blocked'), [{ reason: 'blocked', records: [9002], detail: { blockedBy: [8000, 8001] } }]);
+  assert.deepEqual(groupNumbers(mixed), [[9001]]);
+
+  const listedClosed = run('Blocked by #8000', '[{"number":8000,"state":"closed"}]', '8000\n');
+  assert.deepEqual(entriesOf(listedClosed, 'blocked'), BLOCKED_8000, 'a dependency the verified-open-deps file lists still blocks when the freshness file shows it closed');
+  assert.deepEqual(groupNumbers(listedClosed), [[9001]]);
+  assert.deepEqual(warningsOf(listedClosed), []);
 });
 
 test('AC1.1 (#5311): a failed dependency view excludes the dependent record as blocked and prints the line naming the view', () => {
@@ -1698,7 +1747,7 @@ test('#5313 shipped: a failed gh pr view writes files:null and prints one Warnin
   assert.ok(r.errs.includes(weakAuto));
   assert.ok(groupNumbers(r).flat().includes(9016), 'a failed view never excludes');
   assert.ok(!r.stderr.includes('boom'), 'the failed call stderr is dropped (2>/dev/null)');
-  assert.ok(FENCE.includes("if (!predatesClaimRelease(result) && prFiles.get(result.pr) === null) console.error('Warning: gh pr view ' + result.pr + ' failed — #' + c.number + ' kept as a weak shipped candidate (files unprobed) this run');"));
+  assert.ok(FENCE.includes("if (!downgradedAfterMerge(result) && prFiles.get(result.pr) === null) console.error('Warning: gh pr view ' + result.pr + ' failed — #' + c.number + ' kept as a weak shipped candidate (files unprobed) this run');"));
 
   // A failed call that printed something first still reads as null: the fence assigns null, not the partial output.
   const partial = FULL();
@@ -1779,6 +1828,75 @@ test('#5227 shipped: no mention means no probe and no AUTO line; a weak mention 
   ]);
   assert.deepEqual(entriesOf(r, 'shipped'), [], 'a title match that predates the release rates weak, so it is not excluded');
   assert.ok(FENCE.includes("' kept: merged PR #' + result.pr + ' predates claim release at ' + releases[c.number] + ' — remaining work assumed'"));
+});
+
+const SHAPED_AFTER_MERGE = '2026-11-07T10:00:00Z';
+const shapedScenario = (n, lastShapedAt) => {
+  const scenario = FULL();
+  scenario.linked[n] = { ...scenario.linked[n], lastShapedAt };
+  return scenario;
+};
+
+test('AC1.1 (#5722) shipped: a strong title match shaped after the merge stays in dispatch-groups.json, unprobed, with the shaping kept line', () => {
+  const r = pull4(shapedScenario(9010, SHAPED_AFTER_MERGE));
+  assert.ok(groupNumbers(r).flat().includes(9010), 'the record stays in the groups');
+  assert.deepEqual(entriesOf(r, 'shipped'), [], 'a mention that predates the shaping rates weak, so it is not excluded');
+  assert.deepEqual(r.cap.staged.filter((s) => s.id === 'shipped-close-9010'), [], 'no Close proposal is staged');
+  assert.deepEqual(prViews(r), [PR_VIEW(5016)], 'only the unshaped weak candidate is probed; the shaped one is skipped');
+  assert.deepEqual(r.errs.filter((e) => e.startsWith('AUTO — dispatch: #9010')), [
+    'AUTO — dispatch: #9010 kept: merged PR #5010 predates ready/auto:build labeling at 2026-11-07T10:00:00Z — remaining work assumed\n',
+  ]);
+  assert.ok(FENCE.includes("          : downgradedAfterMerge(result)\n            ? ' kept: merged PR #' + result.pr + ' predates ready/auto:build labeling at ' + entry.lastShapedAt + ' — remaining work assumed'"));
+});
+
+test('AC2.1 (#5722) shipped: a shaping time before the merge leaves 9010 excluded and its Close proposal staged', () => {
+  const r = pull4(shapedScenario(9010, '2026-11-05T09:00:00Z'));
+  assertShipped(r);
+  assert.deepEqual(r.cap.staged.filter((s) => s.id.startsWith('shipped-close-')).map((s) => s.id), ['shipped-close-9010']);
+});
+
+test('#5722 shipped: release and shaping both after the merge print the claim-release kept line', () => {
+  const claims = { 9010: JSON.stringify({ released: true, releasedAt: SHAPED_AFTER_MERGE }) };
+  const r = pull4(shapedScenario(9010, SHAPED_AFTER_MERGE), { claims });
+  assert.deepEqual(r.errs.filter((e) => e.startsWith('AUTO — dispatch: #9010')), [
+    'AUTO — dispatch: #9010 kept: merged PR #5010 predates claim release at 2026-11-07T10:00:00.000Z — remaining work assumed\n',
+  ]);
+  assert.deepEqual(entriesOf(r, 'shipped'), []);
+});
+
+test('#5722 shipped: a weak mention predating the shaping that shares a failed probed PR prints no Warning', () => {
+  const labels = ['auto:build', 'ready'];
+  const numbers = [9301, 9302];
+  const linked = Object.fromEntries(numbers.map((n) => [n, { mentions: [mention(6301, 'Unrelated cleanup of the build output')] }]));
+  linked[9301].lastShapedAt = SHAPED_AFTER_MERGE;
+  const scenario = {
+    policy: { 'work-links': 'body-text' },
+    origin: { branches: { main: {} } },
+    linked,
+    gh: [
+      { argv: QUEUE_ARGV, stdout: JSON.stringify(numbers.map((n) => ghRecord(n, { body: withBody(n), labels }))) + '\n' },
+      { argv: OPEN_NUMBERS_ARGV, stdout: `${JSON.stringify(numbers.map((number) => ({ number })))}\n` },
+      { argv: PR_VIEW(6301), stdout: '', status: 1 },
+    ],
+  };
+  const r = pull4(scenario);
+  assert.deepEqual(prViews(r), [PR_VIEW(6301)], 'the unshaped record makes the PR a probe candidate');
+  assert.deepEqual(r.errs.filter((e) => e.startsWith('Warning:')), [PR_VIEW_FAILED(6301, 9302)], 'the shaped record 9301 stays silent');
+  assert.ok(r.errs.some((e) => e.startsWith('AUTO — dispatch: #9301 kept: merged PR #6301 predates ready/auto:build labeling at')), r.stderr);
+});
+
+// pull4 runs the module only, so the fence's shaping wiring is pinned by text: both classifyShipped
+// calls carry lastShapedAt, and the first pass skips the probe for either downgrade.
+test('#5722 fence: the first-pass classifyShipped call passes lastShapedAt', () => {
+  assert.ok(FENCE.includes("const result = classifyShipped(c, mentions, { lastReleasedAt: releases[c.number], lastShapedAt: entry.lastShapedAt });"));
+});
+
+test('#5722 fence: the first pass skips the probe for either downgrade through downgradedAfterMerge', () => {
+  assert.ok(FENCE.includes("if (result.tier === 'weak' && !downgradedAfterMerge(result)) toProbe.push(result.pr);"));
+});
+
+test('#5722 fence: the second-pass classifyShipped call passes lastShapedAt', () => {
+  assert.ok(FENCE.includes("const result = classifyShipped(c, mentions, { prFiles, lastReleasedAt: releases[c.number], lastShapedAt: entry.lastShapedAt });"));
 });
 
 test('#5227 shipped: at most 5 distinct PRs are probed per pull', () => {

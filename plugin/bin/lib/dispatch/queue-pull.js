@@ -6,11 +6,15 @@
 // Since #5230 dispatch runs this module (bin/queue-pull.js), not the fence: the module is the
 // live queue pull, and the retained fence is its revert path and parity oracle until #5231
 // removes it. Fix a defect here and mirror the change into the fence, never the other way round.
+// One rule is module-only by decision and is not mirrored: #5408's omitted-dependency check in the
+// blocked pass (search `#5408`), which the fence cannot see because it never gets the agent's raw
+// dependency-freshness text there. It stays a divergence until #5231 deletes the fence.
 //
 // R6, step-for-step port: each fence step is one function. A throw inside a step is caught and
 // printed to stderr as `queue-pull: <step>: <message>`, and the run then continues or stops
 // exactly where the fence has an RC check or a `grep -q 'appendExclusion:'` check. Stop and
-// Warning texts match the fence byte for byte, and the two must keep the same behavior.
+// Warning texts match the fence byte for byte, and the two must keep the same behavior, except for
+// the #5408 rule named above.
 //   The fence's own calls are unbounded; the default deps bound every one (shared-primitives.js),
 // so a call that hangs, or outlasts its bound, is where the two can differ. GH_BATCH_TIMEOUT_MS
 // bounds an aliased GraphQL batch and every paginated list call (`issue list` / `pr list` with
@@ -81,7 +85,7 @@ const { parseRecordFacets, parseDependencies, partitionByOpenBodyBlockers, openB
 const { bodyForeignBlockers } = require('../issues/cross-repo-states');
 const { shapeGate } = require('../issues/materialize-format');
 const { namedTarget } = require('../issues/named-target');
-const { classifyShipped, predatesClaimRelease } = require('../issues/shipped-candidate');
+const { classifyShipped, predatesClaimRelease, downgradedAfterMerge } = require('../issues/shipped-candidate');
 const { extractKeyFiles, expectsKeyFilesSection, buildDispatchGroups, partitionGroupsBySizeGuard, detectCrossPRFileOverlap } = require('../issues/grouping');
 const { neighbourInFlightExclusions, claimReaderFromMap } = require('./in-flight-neighbours');
 const { nearDuplicatePairsAcrossGroups } = require('./near-dup-pairs');
@@ -295,6 +299,24 @@ function agentDepFreshness(ctx, file) {
   const text = ctx.state.depFreshnessInput;
   if (text === null) step(ctx, 'agent-dep-freshness', () => fs.rmSync(file, { force: true }));
   else put(ctx, file, text);
+}
+
+// The numbers the agent's dependency-freshness text shows closed (#5408). An unparseable value, a
+// non-array, or an entry without an integer `number` and a string `state` is no evidence of closure,
+// and a number counts closed only when every valid entry for it says so: two contradictory entries
+// are untrusted input that must fail closed, not open.
+function closedDependencyNumbers(text) {
+  let entries;
+  try {
+    entries = JSON.parse(text);
+  } catch {
+    return new Set();
+  }
+  if (!Array.isArray(entries)) return new Set();
+  const valid = entries.filter((e) => e && Number.isInteger(e.number) && typeof e.state === 'string');
+  const isClosed = (e) => e.state.toLowerCase() === 'closed';
+  const contested = new Set(valid.filter((e) => !isClosed(e)).map((e) => e.number));
+  return new Set(valid.filter(isClosed).map((e) => e.number).filter((n) => !contested.has(n)));
 }
 
 // On `files` the agent's queue file stands where the fence's queue pull stands, as the agent's Write
@@ -675,6 +697,20 @@ function runBlocked(ctx) {
     }
     const verifiedOpen = bad ? unresolved.map(Number) : lines.map(Number);
     for (const dep of verifiedOpen) openNumbers.add(dep);
+    // #5408: on `files` the agent writes the verified-open list, so it is not complete by construction
+    // as the CLI's is. An unresolved dependency it omits counts as closed only when the agent's own
+    // dependency-freshness text shows it closed; otherwise it counts as open (fail closed).
+    // Module-only: the fence has no twin of this block, by the plan-review decision, until #5231
+    // deletes the fence. Do not mirror it, and do not remove it to restore parity.
+    if (!bad && ctx.options.transport === 'files') {
+      const closed = closedDependencyNumbers(state.depFreshnessInput);
+      for (const dep of readJson(paths['dispatch-unresolved-deps.json'])) {
+        if (verifiedOpen.includes(dep) || closed.has(dep)) continue;
+        openNumbers.add(dep);
+        deps.stderr(`Warning: verified-open-deps file omits #${dep}, which the dependency-freshness file does not show closed — treated as open (fail closed) this run\n`);
+        state.depUnreadable = true;
+      }
+    }
     // #4793: a supplied states file (either transport) answers the foreign refs; the rest go to
     // resolve-foreign-blockers.js through the library's own bounded spawn (tests inject
     // deps.foreignDeps.spawn).
@@ -1090,8 +1126,8 @@ function runShipped(ctx) {
   const prFilesFile = paths['dispatch-shipped-pr-files.jsonl'];
   const releasesFile = paths['dispatch-shipped-releases.json'];
 
-  // First pass: title-only classification; only a `weak` result not predating the claim release is
-  // probed for the files-based upgrade, capped at 5 live `gh pr view` calls per pull. The mentions come
+  // First pass: title-only classification; only a `weak` result not downgraded after the merge (claim release
+  // or shaping, #5722) is probed for the files-based upgrade, capped at 5 live `gh pr view` calls per pull. The mentions come
   // from `dispatch-linked-prs.json`, already fetched, so this pass makes no second round trip for them.
   step(ctx, 'shipped-probe', () => {
     const groups = readJson(paths['dispatch-groups.json']);
@@ -1102,8 +1138,8 @@ function runShipped(ctx) {
       const entry = linkedPRs[c.number];
       const mentions = (entry && entry.mentions) || [];
       if (mentions.length === 0) continue;
-      const result = classifyShipped(c, mentions, { lastReleasedAt: releases[c.number] });
-      if (result.tier === 'weak' && !predatesClaimRelease(result)) toProbe.push(result.pr);
+      const result = classifyShipped(c, mentions, { lastReleasedAt: releases[c.number], lastShapedAt: entry.lastShapedAt });
+      if (result.tier === 'weak' && !downgradedAfterMerge(result)) toProbe.push(result.pr);
     }
     fs.writeFileSync(probeFile, JSON.stringify([...new Set(toProbe)].slice(0, 5)));
   });
@@ -1133,17 +1169,23 @@ function runShipped(ctx) {
       const entry = linkedPRs[c.number];
       const mentions = (entry && entry.mentions) || [];
       if (mentions.length === 0) return true;
-      const result = classifyShipped(c, mentions, { prFiles, lastReleasedAt: releases[c.number] });
+      const result = classifyShipped(c, mentions, { prFiles, lastReleasedAt: releases[c.number], lastShapedAt: entry.lastShapedAt });
       if (result.tier === 'strong') {
         appendExclusion(paths['dispatch-exclusions.json'], { reason: 'shipped', records: [c.number], detail: { pr: result.pr, signals: result.signals } });
         deps.stderr(`AUTO — dispatch: #${c.number} excluded, shipped by merged PR #${result.pr} (${result.signals.join(', ')})\n`);
         return false;
       }
       if (result.tier === 'weak') {
-        deps.stderr(`AUTO — dispatch: #${c.number}${predatesClaimRelease(result)
-          ? ` kept: merged PR #${result.pr} predates claim release at ${releases[c.number]} — remaining work assumed`
-          : ` mentioned by merged PR #${result.pr} without a closing keyword; dispatching anyway`}\n`);
-        if (!predatesClaimRelease(result) && prFiles.get(result.pr) === null) deps.stderr(`Warning: gh pr view ${result.pr} failed — #${c.number} kept as a weak shipped candidate (files unprobed) this run\n`);
+        let keptDetail;
+        if (predatesClaimRelease(result)) {
+          keptDetail = ` kept: merged PR #${result.pr} predates claim release at ${releases[c.number]} — remaining work assumed`;
+        } else if (downgradedAfterMerge(result)) {
+          keptDetail = ` kept: merged PR #${result.pr} predates ready/auto:build labeling at ${entry.lastShapedAt} — remaining work assumed`;
+        } else {
+          keptDetail = ` mentioned by merged PR #${result.pr} without a closing keyword; dispatching anyway`;
+        }
+        deps.stderr(`AUTO — dispatch: #${c.number}${keptDetail}\n`);
+        if (!downgradedAfterMerge(result) && prFiles.get(result.pr) === null) deps.stderr(`Warning: gh pr view ${result.pr} failed — #${c.number} kept as a weak shipped candidate (files unprobed) this run\n`);
       }
       return true;
     };
