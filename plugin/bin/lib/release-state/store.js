@@ -269,6 +269,7 @@ function ensureReleaseStateBranch(deps, slug) {
 // fires on a `#` together with a closing keyword, so a message like `fix #12` would label
 // issue #12. Refused here, before any call, never sanitized.
 const MESSAGE_RE = /^[^\r\n#]{1,200}$/;
+const GIT_LEASE_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
 // -> the refusal result, or null when both are acceptable. A caller bug surfaces as its
 // own failure, never as a contest or a transport problem.
@@ -336,9 +337,13 @@ const REJECTED_PUT_STATUSES = new Set([404, 409, 422]);
 // lost, a missing branch, or a refusal. Only a contents re-read tells them apart. `create`
 // is the no-prior-read write: a different content is `exists`, not a contest.
 // Mirrors the 4xx settle block of claim-store.js's writeClaimBlob; if either changes, check
-// the other. Deliberate difference: a re-read that cannot answer is that failure, never a
-// manufactured contest (claims keeps `conflict` for every failure but permission-denied).
-function settleRejectedPut(ghApi, slug, name, content, put, { create }) {
+// the other. Deliberate differences: a re-read that cannot answer is that failure, never a
+// manufactured contest (claims keeps `conflict` for every failure but permission-denied);
+// and, for a conditional write (`expectedContent` given), a re-read that still shows the
+// content the decision was based on is `{retry:true, lease}`, not a contest: blob shas are
+// content-addressed, so an unchanged file means the rejection was a transient ref-update
+// race, and the caller re-PUTs with the fresh blob sha (claims reports `conflict` there).
+function settleRejectedPut(ghApi, slug, name, content, put, { create, expectedContent }) {
   const fresh = readStateContentsApi(ghApi, slug, name);
   if (fresh.state === 'unreadable' && typeof fresh.content !== 'string') {
     return { ok: false, failure: fresh.failure, reason: fresh.reason };
@@ -349,18 +354,32 @@ function settleRejectedPut(ghApi, slug, name, content, put, { create }) {
     return { ok: false, conflict: true };
   }
   if (fresh.content === content) return create ? { ok: true, created: true, via: 'contents-api' } : { ok: true, via: 'contents-api' };
-  return create ? { ok: false, exists: true } : { ok: false, conflict: true };
+  if (create) return { ok: false, exists: true };
+  if (fresh.content === expectedContent) return { retry: true, lease: fresh.lease };
+  return { ok: false, conflict: true };
 }
 
 // The contents-API write with the lease it was given. A secondary rate limit and every
-// other non-rejection failure is that failure; a rejection is settled by a re-read.
-function writeContents(deps, slug, name, { content, message, lease }) {
-  const r = putContents(deps.ghApi, slug, name, content, message, lease);
-  if (r.status && REJECTED_PUT_STATUSES.has(r.status)) {
-    return settleRejectedPut(deps.ghApi, slug, name, content, r, { create: false });
+// other non-rejection failure is that failure; a rejection is settled by a re-read, and an
+// unchanged file re-PUTs with the fresh blob sha, up to MAX_CAS_ATTEMPTS PUTs with a
+// backoff, before it is reported as a conflict.
+function writeContents(deps, slug, name, {
+  content, message, lease, expectedContent,
+}) {
+  let putLease = lease;
+  for (let attempt = 1; attempt <= MAX_CAS_ATTEMPTS; attempt += 1) {
+    const r = putContents(deps.ghApi, slug, name, content, message, putLease);
+    if (!(r.status && REJECTED_PUT_STATUSES.has(r.status))) {
+      return r.failure || r.status ? putFailure(r) : { ok: true, via: 'contents-api' };
+    }
+    const settled = settleRejectedPut(deps.ghApi, slug, name, content, r, { create: false, expectedContent });
+    if (!settled.retry) return settled;
+    if (attempt < MAX_CAS_ATTEMPTS) {
+      putLease = settled.lease;
+      (deps.sleep || defaultSleep)(casBackoffMs(attempt));
+    }
   }
-  if (r.failure || r.status) return putFailure(r);
-  return { ok: true, via: 'contents-api' };
+  return { ok: false, conflict: true };
 }
 
 // (deps: {ghApi, gitRunner?, sleep?}, slug, name, { content, lease, via, expectedContent, message })
@@ -394,6 +413,14 @@ function writeStateFile(deps, slug, name, {
     throw new TypeError(`release-state store: via must be 'git' or 'contents-api', got ${JSON.stringify(via)}`);
   }
   if (typeof lease !== 'string' || lease === '') throw new TypeError('release-state store: a conditional write needs the lease its read returned');
+  // A git lease goes to `read-tree` and `commit-tree -p` as a bare argument: an argv array
+  // stops shell injection, not a leading `-` read as an option.
+  if (via === 'git' && !GIT_LEASE_RE.test(lease)) {
+    throw new TypeError(`release-state store: a git lease must be a commit sha, got ${JSON.stringify(lease)}`);
+  }
+  if (typeof expectedContent !== 'string') {
+    throw new TypeError('release-state store: a conditional write needs the content its read returned as expectedContent');
+  }
   const refused = refuseInvalid(content, message);
   if (refused) return refused;
 
@@ -421,13 +448,18 @@ function writeStateFile(deps, slug, name, {
     if (fresh.content !== expectedContent) return { ok: false, conflict: true };
     putLease = fresh.lease;
   }
-  return writeContents(deps, slug, name, { content, message, lease: putLease });
+  return writeContents(deps, slug, name, {
+    content, message, lease: putLease, expectedContent,
+  });
 }
 
 // (deps: {ghApi, gitRunner?, sleep?}, slug, name, { content, message })
 // -> { ok: true, created: true, via } | { ok: false, exists: true } | { ok: false, failure, reason }
-// Create-if-not-exists with no prior read of the file. A missing branch is created first
-// (`ensureReleaseStateBranch`). The git leg reads the tip and refuses to build a commit when
+// Create-if-not-exists with no prior read of the file. A missing branch is created
+// (`ensureReleaseStateBranch`): first on the git leg, which reads the tip before building
+// anything, and after a rejected PUT on the contents leg, whose re-read settles that 404 as
+// `branchMissing` (one creation per leg; a branch still missing after it is
+// `branch-uncreatable`). The git leg reads the tip and refuses to build a commit when
 // the file is already there (`exists`); its push is leased on that tip, and a contest is
 // settled by the same fresh read (a creator who got there first is `exists`, unrelated
 // activity retries on the new tip). A non-contest git failure falls to the contents API,
@@ -475,7 +507,10 @@ function createStateFile(deps, slug, name, { content, message } = {}) {
       return r.failure || r.status ? putFailure(r) : { ok: true, created: true, via: 'contents-api' };
     }
     const settled = settleRejectedPut(deps.ghApi, slug, name, content, r, { create: true });
-    if (!settled.branchMissing || branchEnsured) return settled;
+    if (!settled.branchMissing) return settled;
+    if (branchEnsured) {
+      return { ok: false, failure: 'branch-uncreatable', reason: 'the branch was created but the write still found it missing' };
+    }
     branchEnsured = true;
     const failed = ensureBranch();
     if (failed) return failed;

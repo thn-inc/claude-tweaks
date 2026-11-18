@@ -1,6 +1,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
 const {
   RELEASE_STATE_BRANCH, STATE_FILE_RE, MAX_CAS_ATTEMPTS, readStateFile, classifyStateContent, ensureReleaseStateBranch,
   writeStateFile, createStateFile,
@@ -665,34 +667,51 @@ test('writeStateFile: a git transport failure falls back to a contents-API PUT c
 test('writeStateFile: after a git failure, a fresh read that differs from expectedContent is {conflict:true} with no PUT', () => {
   const fx = makeLine();
   commitRawState(fx, fx.cloneB, FILE, OLD);
-  const run = realRunner(fx.cloneA);
+  const calls = [];
+  const run = recordingRunner(fx.cloneA, calls);
   const gitRunner = (args, opts) => {
-    if (args[0] === 'push') throw transportDown();
+    if (args[0] === 'push') {
+      calls.push(args);
+      throw transportDown();
+    }
     return run(args, opts);
   };
+  // Read first, so the tip's objects are in clone A and the injected push failure, not an
+  // unknown-object failure at `read-tree`, is what routes the write to the contents API.
+  const read = readStateFile({ ghApi: noGh().ghApi, gitRunner }, 'o/r', FILE);
+  assert.equal(read.via, 'git');
   for (const answer of [contentsAnswer(OTHER, 'f'.repeat(40)), notFound()]) {
     const gh = fakeGh({ [CONTENTS_PATH]: answer, [BRANCH_PATH]: ok('release-state') });
-    const deps = { ghApi: gh.ghApi, gitRunner };
-    const r = writeStateFile(deps, 'o/r', FILE, {
-      content: NEW, lease: setupGit(['rev-parse', 'refs/heads/release-state'], fx.originDir), via: 'git', expectedContent: OLD, message: MSG,
+    const pushesBefore = calls.filter((args) => args[0] === 'push').length;
+    const r = writeStateFile({ ghApi: gh.ghApi, gitRunner }, 'o/r', FILE, {
+      content: NEW, lease: read.lease, via: read.via, expectedContent: read.content, message: MSG,
     });
     assert.deepEqual(r, { ok: false, conflict: true });
+    assert.equal(calls.filter((args) => args[0] === 'push').length, pushesBefore + 1, 'the push was attempted');
     assert.equal(gh.calls.some((args) => args[0] === '--method'), false, 'no PUT');
   }
 });
 
 test('writeStateFile: after a git failure, a fresh read equal to our content is the self-write, ok with no PUT', () => {
   const fx = makeLine();
-  const tip = commitRawState(fx, fx.cloneB, FILE, OLD);
+  commitRawState(fx, fx.cloneB, FILE, OLD);
+  const calls = [];
+  const run = recordingRunner(fx.cloneA, calls);
   const gitRunner = (args, opts) => {
-    if (args[0] === 'push') throw transportDown();
-    return realRunner(fx.cloneA)(args, opts);
+    if (args[0] === 'push') {
+      calls.push(args);
+      throw transportDown();
+    }
+    return run(args, opts);
   };
+  const read = readStateFile({ ghApi: noGh().ghApi, gitRunner }, 'o/r', FILE);
+  assert.equal(read.via, 'git');
   const gh = fakeGh({ [CONTENTS_PATH]: contentsAnswer(NEW) });
   const r = writeStateFile({ ghApi: gh.ghApi, gitRunner }, 'o/r', FILE, {
-    content: NEW, lease: tip, via: 'git', expectedContent: OLD, message: MSG,
+    content: NEW, lease: read.lease, via: read.via, expectedContent: read.content, message: MSG,
   });
   assert.deepEqual(r, { ok: true, via: 'contents-api' });
+  assert.equal(calls.filter((args) => args[0] === 'push').length, 1, 'the push was attempted');
   assert.equal(gh.calls.length, 1);
 });
 
@@ -829,6 +848,115 @@ test('store: a bad slug, file name, via or lease is a TypeError before any call'
   assert.throws(() => createStateFile(deps, 'ghe.example.com/o/r', FILE, base), TypeError);
   assert.throws(() => createStateFile(deps, 'o/r', 'main', base), TypeError);
   assert.equal(gh.calls.length, 0);
+});
+
+test('createStateFile: a branch still missing after one creation is branch-uncreatable, never a bare branchMissing', () => {
+  const gh = fakeGh({
+    [PUT]: rejected(404),
+    [CONTENTS_PATH]: notFound(),
+    [BRANCH_PATH]: notFound(),
+    'repos/o/r': (args) => (args[2] === '.full_name' ? ok('o/r\n') : ok('main\n')),
+    'repos/o/r/git/ref/heads/main': ok('e'.repeat(40)),
+    'POST repos/o/r/git/refs': ok(''),
+  });
+  const r = createStateFile({ ghApi: gh.ghApi }, 'o/r', FILE, { content: NEW, message: MSG });
+  assert.equal(r.ok, false);
+  assert.equal(r.failure, 'branch-uncreatable');
+  assert.equal(typeof r.reason, 'string');
+  assert.equal('branchMissing' in r, false);
+  assert.equal(gh.calls.filter((args) => args[0] === '--method' && args[1] === 'PUT').length, 2, 'one creation, one retry, no more');
+  assert.equal(gh.calls.filter((args) => args[0] === '--method' && args[1] === 'POST').length, 1);
+});
+
+test('writeStateFile: a git lease that is not a commit sha is a TypeError, never an argument to git', () => {
+  const calls = [];
+  const gitRunner = (args) => { calls.push(args); throw new Error('no git call may happen'); };
+  const gh = noGh();
+  const base = {
+    content: NEW, via: 'git', expectedContent: OLD, message: MSG,
+  };
+  for (const lease of ['--upload-pack=x', '-x', 'HEAD', 'main', 'A'.repeat(40), 'a'.repeat(39), 'a'.repeat(41), `${'a'.repeat(40)} `, 'a'.repeat(64 + 1)]) {
+    assert.throws(() => writeStateFile({ ghApi: gh.ghApi, gitRunner }, 'o/r', FILE, { ...base, lease }), TypeError, lease);
+  }
+  assert.equal(calls.length, 0);
+  assert.equal(gh.calls.length, 0);
+  // A SHA-1 and a SHA-256 commit id pass the shape check; a blob sha is not checked as a commit.
+  for (const lease of ['a'.repeat(40), 'a'.repeat(64)]) {
+    const ok1 = fakeGh({ [CONTENTS_PATH]: contentsAnswer(OLD, 'f'.repeat(40)), [PUT]: ok('') });
+    assert.equal(writeStateFile({ ghApi: ok1.ghApi }, 'o/r', FILE, { ...base, lease }).ok, true, lease);
+  }
+  const put = fakeGh({ [PUT]: ok('') });
+  assert.equal(writeStateFile({ ghApi: put.ghApi }, 'o/r', FILE, { ...base, via: 'contents-api', lease: 'not-a-sha-but-a-blob-lease' }).ok, true);
+});
+
+test('writeStateFile: a missing expectedContent is a TypeError, never a contest', () => {
+  const gh = noGh();
+  for (const expectedContent of [undefined, null, 5, {}]) {
+    assert.throws(() => writeStateFile({ ghApi: gh.ghApi }, 'o/r', FILE, {
+      content: NEW, lease: BLOB, via: 'contents-api', expectedContent, message: MSG,
+    }), TypeError, String(expectedContent));
+  }
+  assert.equal(gh.calls.length, 0);
+});
+
+test('writeStateFile: a contents-API 409 whose re-read is unchanged retries the PUT with the fresh blob sha', () => {
+  const fresh = 'c'.repeat(40);
+  let puts = 0;
+  const gh = fakeGh({
+    [PUT]: () => { puts += 1; return puts === 1 ? rejected(409) : ok(''); },
+    [CONTENTS_PATH]: contentsAnswer(OLD, fresh),
+  });
+  const sleeps = [];
+  const r = writeStateFile({ ghApi: gh.ghApi, sleep: (ms) => sleeps.push(ms) }, 'o/r', FILE, {
+    content: NEW, lease: BLOB, via: 'contents-api', expectedContent: OLD, message: MSG,
+  });
+  assert.deepEqual(r, { ok: true, via: 'contents-api' });
+  assert.equal(sleeps.length, 1);
+  const sent = gh.calls.filter((args) => args[0] === '--method' && args[1] === 'PUT');
+  assert.deepEqual(sent, [putArgs(NEW, BLOB), putArgs(NEW, fresh)]);
+});
+
+test('writeStateFile: a contents-API rejection that stays unchanged is a conflict after MAX_CAS_ATTEMPTS PUTs', () => {
+  const gh = fakeGh({ [PUT]: rejected(409), [CONTENTS_PATH]: contentsAnswer(OLD, 'c'.repeat(40)) });
+  const sleeps = [];
+  const r = writeStateFile({ ghApi: gh.ghApi, sleep: (ms) => sleeps.push(ms) }, 'o/r', FILE, {
+    content: NEW, lease: BLOB, via: 'contents-api', expectedContent: OLD, message: MSG,
+  });
+  assert.deepEqual(r, { ok: false, conflict: true });
+  assert.equal(gh.calls.filter((args) => args[0] === '--method' && args[1] === 'PUT').length, MAX_CAS_ATTEMPTS);
+  assert.equal(sleeps.length, MAX_CAS_ATTEMPTS - 1);
+});
+
+test('writeStateFile: the scratch index is removed after a successful write and after a failed one', () => {
+  const prefix = `release-state-index-${process.pid}-`;
+  const leftovers = () => fs.readdirSync(os.tmpdir()).filter((entry) => entry.startsWith(prefix));
+  assert.deepEqual(leftovers(), []);
+  const fx = makeLine();
+  commitRawState(fx, fx.cloneB, FILE, OLD);
+  const run = recordingRunner(fx.cloneA);
+  const read = readStateFile({ ghApi: noGh().ghApi, gitRunner: run }, 'o/r', FILE);
+  const written = writeStateFile({ ghApi: noGh().ghApi, gitRunner: run }, 'o/r', FILE, {
+    content: NEW, lease: read.lease, via: 'git', expectedContent: read.content, message: MSG,
+  });
+  assert.equal(written.ok, true);
+  assert.deepEqual(leftovers(), [], 'removed after a success');
+
+  const seen = [];
+  const failing = (args, opts) => {
+    if (args[0] === 'push') {
+      seen.push(leftovers().length);
+      throw transportDown();
+    }
+    return run(args, opts);
+  };
+  const read2 = readStateFile({ ghApi: noGh().ghApi, gitRunner: failing }, 'o/r', FILE);
+  const gh = fakeGh({ [CONTENTS_PATH]: contentsAnswer(OTHER, 'f'.repeat(40)) });
+  const failed = writeStateFile({ ghApi: gh.ghApi, gitRunner: failing }, 'o/r', FILE, {
+    content: OLD, lease: read2.lease, via: 'git', expectedContent: read2.content, message: MSG,
+  });
+  assert.deepEqual(failed, { ok: false, conflict: true });
+  assert.deepEqual(seen, [1], 'the index existed when the push failed');
+  assert.deepEqual(leftovers(), [], 'removed after a failure');
 });
 
 // Last in the file, so every recording runner above has run.
