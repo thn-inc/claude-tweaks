@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
+const path = require('node:path');
 const {
   RELEASE_STATE_BRANCH, STATE_FILE_RE, MAX_CAS_ATTEMPTS, readStateFile, classifyStateContent, ensureReleaseStateBranch,
   writeStateFile, createStateFile,
@@ -277,10 +278,11 @@ test('store: argv', () => {
   const calls = [];
   readStateFile({ ghApi: noGh().ghApi, gitRunner: recordingRunner(fx.cloneA, calls) }, 'o/r', FILE);
   const fetch = calls.find((args) => args[0] === 'fetch');
-  assert.equal(fetch.length, 4);
-  assert.deepEqual(fetch.slice(0, 3), ['fetch', '-q', 'origin']);
-  assert.match(fetch[3], /^refs\/heads\/release-state:refs\/release-state-cas\/\d+-\d+-[a-z0-9]*$/);
-  const scratch = fetch[3].split(':')[1];
+  assert.equal(fetch.length, 5);
+  assert.deepEqual(fetch.slice(0, 4), ['fetch', '-q', '--no-write-fetch-head', 'origin']);
+  assert.match(fetch[4], /^refs\/heads\/release-state:refs\/release-state-cas\/\d+-\d+-[a-z0-9]*$/);
+  assert.equal(fs.existsSync(path.join(fx.cloneA, '.git', 'FETCH_HEAD')), false, 'the read never writes FETCH_HEAD');
+  const scratch = fetch[4].split(':')[1];
   assert.deepEqual(calls.find((args) => args[0] === 'rev-parse'), ['rev-parse', scratch]);
   assert.deepEqual(calls.find((args) => args[0] === 'show'), ['show', `${tip}:${FILE}`]);
   assert.deepEqual(calls.find((args) => args[0] === 'update-ref'), ['update-ref', '-d', scratch]);
@@ -313,6 +315,10 @@ test('ensureReleaseStateBranch: creates the branch from the default tip, on the 
   const r = ensureReleaseStateBranch({ ghApi: gh.ghApi, gitRunner: recordingRunner(fx.cloneA, calls) }, 'o/r');
   assert.deepEqual(r, { ok: true, created: true, via: 'git' });
   assert.equal(setupGit(['rev-parse', 'refs/heads/release-state'], fx.originDir), fx.P5);
+  const fetch = calls.find((args) => args[0] === 'fetch');
+  assert.deepEqual(fetch.slice(0, 4), ['fetch', '-q', '--no-write-fetch-head', 'origin']);
+  assert.match(fetch[4], /^HEAD:refs\/release-state-cas\/\d+-\d+-[a-z0-9]*$/);
+  assert.equal(fs.existsSync(path.join(fx.cloneA, '.git', 'FETCH_HEAD')), false, 'the bootstrap never writes FETCH_HEAD');
   const push = calls.find((args) => args[0] === 'push');
   assert.deepEqual(push, ['push', '--no-verify', 'origin', `${fx.P5}:refs/heads/release-state`, '--force-with-lease=refs/heads/release-state:']);
   assert.equal(gh.calls.length, 0);

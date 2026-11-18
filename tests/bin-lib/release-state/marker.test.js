@@ -1,6 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 const {
   MARKER_FILE, MARKER_VERSION, SHA_RE, RUN_RE, REASON_RE, INIT_RUN, ISO_UTC_RE,
@@ -9,33 +10,11 @@ const {
 } = require('../../../plugin/bin/lib/release-state/marker');
 const {
   makeLine, realRunner, rewriteMain, pushMainCommit, shallowClone, setupGit,
+  VALID_MARKER: VALID, MALFORMED_MARKERS,
 } = require('./fixtures');
 
-const VALID = {
-  version: 1, sha: 'a'.repeat(40), advancedAt: '2026-11-18T10:00:00.000Z', run: 'r1',
-};
-const without = (key) => Object.fromEntries(Object.entries(VALID).filter(([k]) => k !== key));
-
-// Every shape a reader must refuse: [label, value]. Shared with the marker-operation tests,
-// which plant each one and advance over it.
-const MALFORMED_MARKERS = [
-  ['no sha', without('sha')],
-  ['a 39-hex sha', { ...VALID, sha: 'a'.repeat(39) }],
-  ['an uppercase sha', { ...VALID, sha: 'A'.repeat(40) }],
-  ['a non-hex sha', { ...VALID, sha: 'g'.repeat(40) }],
-  ['version 2', { ...VALID, version: 2 }],
-  ["version '1'", { ...VALID, version: '1' }],
-  ['no version', without('version')],
-  ['an offset advancedAt', { ...VALID, advancedAt: '2026-11-18T10:00:00+01:00' }],
-  ['a prose advancedAt', { ...VALID, advancedAt: 'yesterday' }],
-  ['an advancedAt Date.parse rejects', { ...VALID, advancedAt: '2026-13-45T10:00:00Z' }],
-  ['an empty run', { ...VALID, run: '' }],
-  ['a run with a space', { ...VALID, run: 'a b' }],
-  ['an array', []],
-  ['null', null],
-  ['a string', 'x'],
-];
-
+// The malformed shapes live in fixtures.js, so another suite imports them from there
+// rather than requiring this file (which would re-register every test here).
 function assertRejected(value) {
   const r = parseMarker(value);
   assert.equal(r.marker, undefined, `parsed as a marker: ${JSON.stringify(value)}`);
@@ -130,6 +109,25 @@ test('compareVerdict: walks parents[0] only', () => {
   assert.equal(compareVerdict(F, T, malformed).verdict, 'undetermined');
 });
 
+test('compareVerdict: a malformed parents entry is undetermined, never orphaned', () => {
+  const withM = (parents) => ({
+    tip: T,
+    compare: {
+      status: 'ahead', total_commits: 4, commits: [commit(A, F), commit(S, F), { sha: M, parents }, commit(T, M)],
+    },
+  });
+  assert.equal(compareVerdict(F, T, withM([null])).verdict, 'undetermined');
+  assert.equal(compareVerdict(F, T, withM(['not-a-sha'])).verdict, 'undetermined');
+  assert.equal(compareVerdict(F, T, withM([A, 'A'.repeat(40)])).verdict, 'undetermined');
+  assert.equal(compareOnLine(F, withM([null])), 'undetermined');
+  const badSha = { tip: T, compare: { ...AHEAD_FROM_F, commits: [...AHEAD_FROM_F.commits, { sha: 'x', parents: [T] }] } };
+  assert.equal(compareVerdict(F, T, badSha).verdict, 'undetermined');
+  // An empty `parents` is a root commit, where the first-parent walk legitimately ends: the
+  // base was reached only through a second parent, so it is orphaned.
+  const rootOnWalk = { tip: T, compare: { status: 'ahead', total_commits: 3, commits: [commit(A), commit(M, A, F), commit(T, M)] } };
+  assert.equal(compareVerdict(F, T, rootOnWalk).verdict, 'orphaned');
+});
+
 test('compareVerdict: identical is never walked', () => {
   const identical = { tip: T, compare: { status: 'identical', total_commits: 0, commits: [] } };
   assert.equal(compareOnLine(T, identical), true);
@@ -209,6 +207,54 @@ test('history: a compare-history membership miss re-reads the tip once (Review F
   assert.equal(gh.calls.filter((a) => a[0].endsWith('/git/ref/heads/main')).length, 2);
 });
 
+test('history: a failed compare-history tip re-read keeps the previous tip and listings', () => {
+  const tips = [ok(`${M}\n`), { stdout: null, failure: 'network-failure', status: null }];
+  const gh = fakeGh({
+    'repos/o/r/git/ref/heads/main': () => tips.shift(),
+    [`repos/o/r/compare/${F}...${M}?per_page=100&page=1`]: ok(JSON.stringify({ status: 'ahead', total_commits: 3, commits: [commit(A, F), commit(S, F), commit(M, A, S)] })),
+  });
+  const h = createCompareHistory({ ghApi: gh.ghApi, slug: 'o/r' });
+  assert.equal(h.verdict(F, A).verdict, 'descendant');
+  // The miss that triggered the failed re-read is undetermined: the fresh state is unknown.
+  assert.equal(h.verdict(F, T).verdict, 'undetermined');
+  // Later calls still answer from the tip and listing read before.
+  assert.equal(h.verdict(F, M).verdict, 'descendant');
+  assert.equal(h.verdict(F, S).verdict, 'off-line');
+  assert.equal(gh.calls.filter((a) => a[0].endsWith('/git/ref/heads/main')).length, 2);
+});
+
+// A ghApi serving `per` fresh commits on every compare page, for the pagination bounds.
+function pagingGh(base, tip, { total, per, emptyFrom = Infinity }) {
+  const pages = [];
+  const ghApi = (args) => {
+    if (args[0] === 'repos/o/r/git/ref/heads/main') return ok(`${tip}\n`);
+    const m = /^repos\/o\/r\/compare\/([0-9a-f]{40})\.\.\.([0-9a-f]{40})\?per_page=100&page=(\d+)$/.exec(args[0]);
+    if (!m || m[1] !== base || m[2] !== tip) throw new Error(`unexpected ${args.join(' ')}`);
+    const n = Number(m[3]);
+    pages.push(n);
+    const commits = n >= emptyFrom ? [] : Array.from({ length: per }, (_, i) => commit(hex(n * 1000 + i), hex(n * 1000 + i + 1)));
+    return ok(JSON.stringify({ status: 'ahead', total_commits: total, commits }));
+  };
+  return { ghApi, pages };
+}
+
+test('createCompareHistory: an empty page stops the listing, and a short listing is undetermined', () => {
+  const gh = pagingGh(F, T, { total: 150, per: 100, emptyFrom: 2 });
+  const r = createCompareHistory({ ghApi: gh.ghApi, slug: 'o/r' }).verdict(F, T);
+  assert.equal(r.verdict, 'undetermined');
+  assert.match(r.reason, /listed 100 of 150 commits/);
+  assert.deepEqual(gh.pages, [1, 2]);
+});
+
+test('createCompareHistory: a listing past 100 pages is undetermined after exactly 100 page reads', () => {
+  const gh = pagingGh(F, T, { total: 1000000, per: 100 });
+  const r = createCompareHistory({ ghApi: gh.ghApi, slug: 'o/r' }).verdict(F, T);
+  assert.equal(r.verdict, 'undetermined');
+  assert.match(r.reason, /past 100 pages/);
+  assert.equal(gh.pages.length, 100);
+  assert.deepEqual(gh.pages.slice(-1), [100]);
+});
+
 // The scratch refs a local history leaves in a clone: none, once each answer returns.
 function scratchRefs(clone) {
   return setupGit(['for-each-ref', '--format=%(refname)', 'refs/release-state-history/'], clone);
@@ -279,6 +325,52 @@ test('history: a membership miss refreshes the snapshot once (Review Focus 1)', 
   assert.equal(h.verdict(fx.P5, P6).verdict, 'descendant');
   // The refresh is spent: a second miss answers from the refreshed snapshot.
   assert.equal(h.verdict(fx.P5, fx.S).verdict, 'off-line');
+  assert.equal(fetches, 2);
+});
+
+test('history: the local history argv is pinned, and FETCH_HEAD is never written', () => {
+  const fx = makeLine();
+  const run = realRunner(fx.cloneA);
+  const calls = [];
+  const git = (args, opts) => {
+    calls.push(args);
+    return run(args, opts);
+  };
+  assert.equal(createLocalHistory({ git }).verdict(fx.P1, fx.P3).verdict, 'descendant');
+  const fetch = calls[0];
+  assert.deepEqual(fetch.slice(0, 5), ['fetch', '-q', '--no-tags', '--no-write-fetch-head', 'origin']);
+  assert.equal(fetch.length, 6);
+  assert.match(fetch[5], /^\+refs\/heads\/main:refs\/release-state-history\/\d+-\d+-[a-z0-9]*$/);
+  const scratch = fetch[5].split(':')[1];
+  assert.deepEqual(calls.slice(1), [
+    ['rev-parse', '--verify', '--end-of-options', scratch],
+    ['rev-parse', '--is-shallow-repository'],
+    ['rev-list', '--first-parent', '--end-of-options', fx.P5, '--'],
+    ['update-ref', '-d', scratch],
+    ['merge-base', '--is-ancestor', '--end-of-options', fx.P1, fx.P3],
+  ]);
+  assert.equal(fs.existsSync(path.join(fx.cloneA, '.git', 'FETCH_HEAD')), false);
+});
+
+test('history: a failed refresh keeps the previous snapshot', () => {
+  const fx = makeLine();
+  const run = realRunner(fx.cloneA);
+  let fetches = 0;
+  const git = (args, opts) => {
+    if (args[0] === 'fetch') fetches += 1;
+    return run(args, opts);
+  };
+  const h = createLocalHistory({ git });
+  assert.equal(h.verdict(fx.P1, fx.P3).verdict, 'descendant');
+  setupGit(['remote', 'set-url', 'origin', path.join(fx.root, 'missing.git')], fx.cloneA);
+  // The miss that triggered the failed refresh is undetermined: the fresh state is unknown.
+  const missed = h.verdict(fx.P5, fx.S);
+  assert.equal(missed.verdict, 'undetermined');
+  assert.match(missed.reason, /^fetch failed — /);
+  // Later calls answer from the snapshot taken before.
+  assert.equal(h.verdict(fx.P2, fx.P5).verdict, 'descendant');
+  assert.equal(h.verdict(fx.P5, fx.S).verdict, 'off-line');
+  assert.deepEqual(h.onLine(fx.P4), { onLine: true });
   assert.equal(fetches, 2);
 });
 

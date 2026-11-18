@@ -118,9 +118,15 @@ function walkFirstParent(base, { tip, compare }) {
   }
   if (status !== 'ahead') return { kind: 'orphaned', reason: `${short(base)} is ${status} the branch tip, not on its line` };
   if (commits.length < total) return { kind: 'undetermined', reason: `the compare API listed ${commits.length} of ${total} commits` };
+  // Every listed sha and every parent must be a full sha: a malformed entry would otherwise
+  // end the walk early and read as orphaned. An empty `parents` is a root commit, where a
+  // first-parent walk legitimately ends.
+  const isSha = (s) => typeof s === 'string' && SHA_RE.test(s);
   const bySha = new Map();
   for (const c of commits) {
-    if (!c || typeof c.sha !== 'string' || !Array.isArray(c.parents)) return { kind: 'undetermined', reason: 'a listed commit is not {sha, parents}' };
+    if (!c || !isSha(c.sha) || !Array.isArray(c.parents) || !c.parents.every(isSha)) {
+      return { kind: 'undetermined', reason: 'a listed commit is not {sha, parents} with full shas' };
+    }
     bySha.set(c.sha, c.parents);
   }
   const path = new Set();
@@ -164,14 +170,15 @@ function createLocalHistory({ git, branch = 'main' }) {
   let snapshot = null;
   let refreshed = false;
 
-  // -> { tip, complete, line } | { undetermined }. A per-call scratch ref, never FETCH_HEAD
-  // (one shared pointer a concurrent fetch can overwrite), deleted whatever happens.
+  // -> { tip, complete, line } | { undetermined }. A per-call scratch ref, deleted whatever
+  // happens, and `--no-write-fetch-head`: FETCH_HEAD is one shared pointer a concurrent
+  // fetch can overwrite, so this read neither uses nor clobbers it.
   const load = () => {
     const scratch = `${SCRATCH_REF_PREFIX}/${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     try {
       try {
         // Fully qualified: a same-named tag must not shadow the branch.
-        git(['fetch', '-q', '--no-tags', 'origin', `+refs/heads/${branch}:${scratch}`]);
+        git(['fetch', '-q', '--no-tags', '--no-write-fetch-head', 'origin', `+refs/heads/${branch}:${scratch}`]);
       } catch (err) {
         return { undetermined: `fetch failed — ${gitFailure(err)}` };
       }
@@ -190,7 +197,9 @@ function createLocalHistory({ git, branch = 'main' }) {
   };
 
   // The snapshot, refreshed once per history object when a sha misses a snapshot an
-  // earlier call took (never on the call that took it).
+  // earlier call took (never on the call that took it). A failed refresh answers the miss
+  // that triggered it as undetermined (the fresh state is unknown) and keeps the previous
+  // snapshot for every later call.
   const snapshotFor = (shas) => {
     if (!snapshot) {
       snapshot = load();
@@ -198,7 +207,9 @@ function createLocalHistory({ git, branch = 'main' }) {
     }
     if (!refreshed && !snapshot.undetermined && shas.some((s) => !snapshot.line.has(s))) {
       refreshed = true;
-      snapshot = load();
+      const next = load();
+      if (next.undetermined) return next;
+      snapshot = next;
     }
     return snapshot;
   };
@@ -277,7 +288,8 @@ function createCompareHistory({ ghApi, slug, branch = 'main' }) {
   };
 
   // Answers `judge(listing, tip)` for `base`; on a miss, re-reads the tip once per history
-  // object (never on the call that first read it) and answers again when it moved.
+  // object (never on the call that first read it) and answers again when it moved. A failed
+  // re-read answers that miss as undetermined and keeps the previous tip and listings.
   const answer = (base, judge, isMiss) => {
     let fresh = false;
     if (!tipRead) {
@@ -292,9 +304,10 @@ function createCompareHistory({ ghApi, slug, branch = 'main' }) {
       const result = judge(listing, tipRead.tip);
       if (fresh || refreshed || !isMiss(result)) return { result };
       refreshed = true;
-      const before = tipRead.tip;
-      tipRead = readTip();
-      if (tipRead.tip === before) return { result };
+      const next = readTip();
+      if (next.undetermined) return { undetermined: next.undetermined };
+      if (next.tip === tipRead.tip) return { result };
+      tipRead = next;
       listings.clear();
     }
   };

@@ -152,6 +152,32 @@ function shallowClone(fx, depth) {
   return dir;
 }
 
+// A well-formed marker value, and every shape a marker reader must refuse as [label, value]:
+// the marker suite asserts each is an error, and the marker-operation tests plant each one
+// and advance over it.
+const VALID_MARKER = Object.freeze({
+  version: 1, sha: 'a'.repeat(40), advancedAt: '2026-11-18T10:00:00.000Z', run: 'r1',
+});
+const markerWithout = (key) => Object.fromEntries(Object.entries(VALID_MARKER).filter(([k]) => k !== key));
+const MALFORMED_MARKERS = Object.freeze([
+  ['no sha', markerWithout('sha')],
+  ['a 39-hex sha', { ...VALID_MARKER, sha: 'a'.repeat(39) }],
+  ['an uppercase sha', { ...VALID_MARKER, sha: 'A'.repeat(40) }],
+  ['a non-hex sha', { ...VALID_MARKER, sha: 'g'.repeat(40) }],
+  ['version 2', { ...VALID_MARKER, version: 2 }],
+  ["version '1'", { ...VALID_MARKER, version: '1' }],
+  ['no version', markerWithout('version')],
+  ['an offset advancedAt', { ...VALID_MARKER, advancedAt: '2026-11-18T10:00:00+01:00' }],
+  ['a prose advancedAt', { ...VALID_MARKER, advancedAt: 'yesterday' }],
+  ['an advancedAt Date.parse rejects', { ...VALID_MARKER, advancedAt: '2026-13-45T10:00:00Z' }],
+  ['an empty run', { ...VALID_MARKER, run: '' }],
+  ['a run with a space', { ...VALID_MARKER, run: 'a b' }],
+  ['an array', []],
+  ['null', null],
+  ['a string', 'x'],
+]);
+
 module.exports = {
   makeLine, commitRawState, realRunner, rewriteMain, pushMainCommit, shallowClone, setupGit,
+  VALID_MARKER, MALFORMED_MARKERS,
 };

@@ -100,16 +100,16 @@ function unreadableFrom(r) {
 
 // -> the git leg's answer, or null when git could not answer (a transport failure: the
 // caller falls back to the contents API, the documented degrade, not an error).
-// Fetches into a per-call scratch ref rather than FETCH_HEAD (a single shared pointer a
-// concurrent fetch can overwrite) and deletes it afterwards; the object read below
-// survives the ref's deletion. A remote with no release-state branch is a normal
-// pre-bootstrap state, never a failure.
+// Fetches into a per-call scratch ref with `--no-write-fetch-head`, never touching FETCH_HEAD
+// (a single shared pointer a concurrent fetch can overwrite), and deletes the ref afterwards;
+// the object read below survives the ref's deletion. A remote with no release-state branch
+// is a normal pre-bootstrap state, never a failure.
 function readStateGit(runner, name) {
   const ref = scratchRef();
   let tip;
   try {
     // Fully qualified: a bare `release-state` could resolve to a same-named tag.
-    runner(['fetch', '-q', 'origin', `refs/heads/${RELEASE_STATE_BRANCH}:${ref}`]);
+    runner(['fetch', '-q', '--no-write-fetch-head', 'origin', `refs/heads/${RELEASE_STATE_BRANCH}:${ref}`]);
     tip = runner(['rev-parse', ref]).trim();
   } catch (err) {
     if (classifyGitError(err).kind === 'missing-branch') {
@@ -225,7 +225,7 @@ function bootstrapBranchGit(runner) {
   const ref = scratchRef();
   const target = `refs/heads/${RELEASE_STATE_BRANCH}`;
   try {
-    runner(['fetch', '-q', 'origin', `HEAD:${ref}`]);
+    runner(['fetch', '-q', '--no-write-fetch-head', 'origin', `HEAD:${ref}`]);
     const base = runner(['rev-parse', ref]).trim();
     runner(['push', '--no-verify', 'origin', `${base}:${target}`, `--force-with-lease=${target}:`]);
     return { ok: true, created: true };
