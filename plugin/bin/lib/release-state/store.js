@@ -9,8 +9,12 @@
 //   `deps.ghApi(args)`            -> `{stdout, failure, status, error?}`, never throws
 //                                    (claim-store.js's contract); the caller has already
 //                                    appended any `--hostname`.
-//   `deps.gitRunner(args, {input, extraEnv} = {})` -> stdout string, throws on failure;
-//                                    the runner owns its cwd and its repo-pinned env and
+//   `deps.gitRunner(args, {input, extraEnv} = {})` -> stdout string, throws on failure,
+//                                    the thrown error carrying the child's exit code as
+//                                    `.status` (execFileSync's shape; marker.js's
+//                                    isAncestor relies on it to tell exit 1, "not an
+//                                    ancestor", from a failed check); the runner owns
+//                                    its cwd and its repo-pinned env and
 //                                    layers `extraEnv` on top. Omitted, every call takes
 //                                    the contents-API leg (the gh-only / MCP-only seam).
 // `slug` is a bare `owner/repo`: a host-qualified slug inside a REST path is the open

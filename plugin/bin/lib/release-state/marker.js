@@ -7,8 +7,11 @@
 //
 // Two histories answer the descent question, and both spawn nothing themselves:
 //   * local   `git(args, {input, extraEnv} = {})` -> stdout, throws on failure (the store's
-//             gitRunner contract). Fetches the branch into a scratch ref, then reads the
-//             first-parent line with `rev-list`, and the direction with `merge-base
+//             gitRunner contract), the thrown error carrying the child's exit code as
+//             `.status` (execFileSync's shape): `isAncestor` reads exit 1 as "not an
+//             ancestor" and any other failure as undetermined. Fetches the branch into a
+//             scratch ref, then reads the first-parent line with `rev-list`, and the
+//             direction with `merge-base
 //             --is-ancestor`. A shallow clone answers every question whose shas it holds;
 //             only a miss there is `undetermined`, never `orphaned` or `off-line`, because
 //             the answer may sit below the shallow boundary.
