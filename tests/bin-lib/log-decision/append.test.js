@@ -99,16 +99,18 @@ function pipelinesFixture() {
 
 test('resolveTarget: a run dir outside .claude-tweaks/pipelines/ is not-a-run-dir', () => {
   const { main, pipelines } = pipelinesFixture();
-  const refused = [
+  const outsideDirs = [
     path.join(main, 'plugin'),
     path.join(main, 'docs'),
-    pipelines,
     path.join(main, 'x.claude-tweaks', 'pipelines-copy', 'run-a'),
+  ];
+  for (const dir of [...outsideDirs, path.join(pipelines, 'run-a')]) fs.mkdirSync(dir, { recursive: true });
+  const refused = [
+    ...outsideDirs,
+    pipelines,
     // a `..` spelling that lands on main/docs from inside pipelines/run-a
     path.join(pipelines, 'run-a') + path.sep + ['..', '..', '..', 'docs'].join(path.sep),
   ];
-  fs.mkdirSync(path.join(pipelines, 'run-a'), { recursive: true });
-  for (const dir of [refused[0], refused[1], refused[3]]) fs.mkdirSync(dir, { recursive: true });
   for (const runDir of refused) {
     assert.deepEqual(resolveTarget({ runDir, mainRoot: main }), { ok: false, reason: 'not-a-run-dir' }, runDir);
   }
