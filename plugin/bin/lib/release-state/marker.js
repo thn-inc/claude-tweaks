@@ -23,10 +23,18 @@
 // resets. Each history object takes one snapshot of the branch and refreshes it once on a
 // membership miss: a competitor's advance can name a commit newer than the snapshot, and
 // that must read as a descendant, never as orphaned (Review Focus 1).
+//
+// The three operations (`advanceMarker`, `initMarker`, `resetMarker`) take
+// `ctx = { store: { read, write, create }, history, now }` (`storeFacade` binds the store) and
+// return `{ outcome, ... }` with `outcome` one of OUTCOMES, which the CLI maps to its exit
+// codes. A bad argument is a caller bug and throws TypeError before anything is read.
 'use strict';
 
 const { refusalText } = require('../issues/claim-store');
 const { errText } = require('../issues/claims-git-cas');
+const {
+  RELEASE_STATE_BRANCH, MESSAGE_RE, readStateFile, writeStateFile, createStateFile,
+} = require('./store');
 
 const MARKER_FILE = 'reviewed-through.json';
 const MARKER_VERSION = 1;
@@ -347,6 +355,187 @@ function createHistory({ local, compare } = {}) {
   };
 }
 
+// ---- operations ----
+
+const OUTCOMES = Object.freeze(['ok', 'refused', 'unreadable', 'contested', 'insufficient-history', 'orphaned']);
+
+// A verdict that ends an advance before any write. An unknown verdict fails closed.
+const VERDICT_STOPS = Object.freeze({
+  orphaned: 'orphaned', undetermined: 'insufficient-history', backward: 'refused', 'off-line': 'refused',
+});
+
+const NO_MARKER = 'no marker — run marker init';
+
+// (deps: {ghApi, gitRunner?, sleep?}, slug, name) -> ctx.store: the store's read,
+// compare-and-set write and create, bound to one file.
+function storeFacade(deps, slug, name = MARKER_FILE) {
+  return {
+    read: () => readStateFile(deps, slug, name),
+    write: (args) => writeStateFile(deps, slug, name, args),
+    create: (args) => createStateFile(deps, slug, name, args),
+  };
+}
+
+function assertSha(sha) {
+  if (typeof sha !== 'string' || !SHA_RE.test(sha)) throw new TypeError(`release-state marker: --to must be 40 lowercase hex, got ${JSON.stringify(sha)}`);
+}
+
+function assertRun(run) {
+  if (typeof run !== 'string' || !RUN_RE.test(run) || run === INIT_RUN) {
+    throw new TypeError(`release-state marker: --run must match ${RUN_RE} and is never "${INIT_RUN}", got ${JSON.stringify(run)}`);
+  }
+}
+
+const markerContent = (ctx, sha, run) => serializeMarker({ sha, advancedAt: ctx.now().toISOString(), run });
+
+// A store write result that is neither ok nor a conflict -> its reason (the outcome is
+// unreadable: a refused push and PUT, an uncreatable or vanished branch).
+function writeFailure(w) {
+  if (w.branchMissing) return `the ${RELEASE_STATE_BRANCH} branch is missing`;
+  return w.reason || w.failure || 'the write failed';
+}
+
+// -> { read, marker } | { stop: an outcome result }. Absent is refused (there is nothing to
+// advance); a transport failure, and bytes that are not a marker, are unreadable.
+function readMarker(store) {
+  const read = store.read();
+  if (read.state === 'unreadable') return { stop: { outcome: 'unreadable', reason: read.reason } };
+  if (read.state === 'absent') return { stop: { outcome: 'refused', reason: NO_MARKER } };
+  const parsed = parseMarker(read.value);
+  if (parsed.error) return { stop: { outcome: 'unreadable', reason: parsed.error } };
+  return { read, marker: parsed.marker };
+}
+
+// (ctx, { to, run }) -> { outcome: 'ok', advanced: true, from, to }
+//  | { outcome: 'ok', advanced: false, sha, reason: 'same' | 'at-or-past' } | { outcome, reason }
+// Forward-only along the first-parent line, with at most two compare-and-set writes. A lost
+// write re-reads: a marker a competitor moved to or past `to` is success with no write;
+// anything else is judged again from scratch (never a blind write on the fresh lease), and a
+// second lost write is contested.
+function advanceMarker(ctx, { to, run } = {}) {
+  assertSha(to);
+  assertRun(run);
+  let cur = readMarker(ctx.store);
+  if (cur.stop) return cur.stop;
+  for (let pass = 1; ; pass += 1) {
+    const { read, marker } = cur;
+    const v = ctx.history.verdict(marker.sha, to);
+    if (v.verdict === 'same') {
+      return {
+        outcome: 'ok', advanced: false, sha: marker.sha, reason: 'same',
+      };
+    }
+    if (v.verdict !== 'descendant') return { outcome: VERDICT_STOPS[v.verdict] || 'insufficient-history', reason: v.reason };
+    const w = ctx.store.write({
+      content: markerContent(ctx, to, run),
+      lease: read.lease,
+      via: read.via,
+      expectedContent: read.content,
+      message: `Advance reviewed-through to ${short(to)} from ${short(marker.sha)} — run ${run}`,
+    });
+    if (w.ok) {
+      return {
+        outcome: 'ok', advanced: true, from: marker.sha, to,
+      };
+    }
+    if (!w.conflict) return { outcome: 'unreadable', reason: writeFailure(w) };
+    if (pass === 2) return { outcome: 'contested', reason: `the marker moved again while advancing to ${short(to)}` };
+    cur = readMarker(ctx.store);
+    if (cur.stop) return cur.stop;
+    const fresh = cur.marker.sha;
+    // A competitor may have advanced to a commit newer than the history's snapshot of the
+    // branch, which only the history's one refresh can see (Review Focus 1). That refresh is
+    // still unspent here: pass 1's verdict took the snapshot (the call that takes it never
+    // refreshes), and a pass-1 verdict that missed the snapshot is orphaned, off-line or
+    // undetermined, each of which ended the operation above before any write. So a conflict,
+    // and this check, only ever follow a pass whose shas were all in the snapshot.
+    if (fresh === to || ctx.history.verdict(to, fresh).verdict === 'descendant') {
+      return {
+        outcome: 'ok', advanced: false, sha: fresh, reason: 'at-or-past',
+      };
+    }
+  }
+}
+
+// (ctx, { to }) -> { outcome: 'ok', initialized: true, sha } | { outcome, reason }
+// Creates the marker (and the branch, when missing) at an on-line `to`, with run "init".
+function initMarker(ctx, { to } = {}) {
+  assertSha(to);
+  const on = ctx.history.onLine(to);
+  if ('undetermined' in on) return { outcome: 'insufficient-history', reason: on.undetermined };
+  if (!on.onLine) return { outcome: 'refused', reason: `${short(to)} is not on the first-parent line` };
+  const c = ctx.store.create({ content: markerContent(ctx, to, INIT_RUN), message: `Initialize reviewed-through at ${short(to)}` });
+  if (c.ok) return { outcome: 'ok', initialized: true, sha: to };
+  if (c.exists) return { outcome: 'refused', reason: 'a marker already exists — use marker advance, or marker reset to recover' };
+  return { outcome: 'unreadable', reason: writeFailure(c) };
+}
+
+const resetMessage = (fromLabel, to, run, basis) => `Reset reviewed-through from ${fromLabel} to ${short(to)} — run ${run} — ${basis}`;
+
+// (ctx, { to, run, force, reason }) -> { outcome: 'ok', reset: true, from, to, basis }
+//  | { outcome, from, reason }, with `from` the old marker's sha, or null when there was no
+// readable marker. The guarded recovery: the marker must be orphaned, or unreadable bytes
+// or a still-on-line marker are overwritten only with `force` and a logged reason; the
+// target must be on the line; one write, and a lost one is contested, never retried.
+function resetMarker(ctx, {
+  to, run, force = false, reason,
+} = {}) {
+  assertSha(to);
+  assertRun(run);
+  if (force && (typeof reason !== 'string' || !REASON_RE.test(reason))) {
+    throw new TypeError(`release-state marker: a forced reset needs a --reason matching ${REASON_RE}, got ${JSON.stringify(reason)}`);
+  }
+  const forcedBasis = `forced: ${reason}`;
+  // Ruling R1: the longest message this call can compose (a 12-char `from`, and the forced
+  // basis when forced) must fit the store's commit-message rule. Checked before any read, so
+  // an overlong run id or reason is a caller error, never a write that fails as unreadable.
+  const longest = resetMessage('0'.repeat(12), to, run, force ? forcedBasis : 'orphaned');
+  if (!MESSAGE_RE.test(longest)) {
+    throw new TypeError(`release-state marker: the reset commit message would be ${longest.length} characters, over the store's 200-character budget — shorten --run or --reason`);
+  }
+
+  const read = ctx.store.read();
+  if (read.state === 'absent') return { outcome: 'refused', from: null, reason: NO_MARKER };
+  // A transport failure carries no bytes and no lease: there is nothing a reset could replace.
+  if (read.state === 'unreadable' && typeof read.content !== 'string') return { outcome: 'unreadable', from: null, reason: read.reason };
+  const parsed = read.state === 'present' ? parseMarker(read.value) : { error: read.reason };
+  let from = null;
+  let basis;
+  if (parsed.error) {
+    if (!force) return { outcome: 'unreadable', from: null, reason: `${parsed.error} — pass --force --reason to overwrite it` };
+    basis = 'forced';
+  } else {
+    from = parsed.marker.sha;
+    const on = ctx.history.onLine(from);
+    if (on.onLine === false) {
+      basis = 'orphaned';
+    } else if (force) {
+      basis = 'forced';
+    } else if ('undetermined' in on) {
+      return { outcome: 'insufficient-history', from, reason: on.undetermined };
+    } else {
+      return { outcome: 'refused', from, reason: `the marker ${short(from)} is not orphaned (it is on the first-parent line) — pass --force --reason to reset it anyway` };
+    }
+  }
+  const target = ctx.history.onLine(to);
+  if ('undetermined' in target) return { outcome: 'insufficient-history', from, reason: target.undetermined };
+  if (!target.onLine) return { outcome: 'refused', from, reason: `${short(to)} is not on the first-parent line` };
+  const w = ctx.store.write({
+    content: markerContent(ctx, to, run),
+    lease: read.lease,
+    via: read.via,
+    expectedContent: read.content,
+    message: resetMessage(from ? short(from) : 'unreadable', to, run, basis === 'forced' ? forcedBasis : 'orphaned'),
+  });
+  if (w.ok) {
+    return {
+      outcome: 'ok', reset: true, from, to, basis,
+    };
+  }
+  if (w.conflict) return { outcome: 'contested', from, reason: 'the marker changed after it was read — read it again before resetting' };
+  return { outcome: 'unreadable', from, reason: writeFailure(w) };
+}
+
 module.exports = {
   MARKER_FILE,
   MARKER_VERSION,
@@ -364,4 +553,9 @@ module.exports = {
   createLocalHistory,
   createCompareHistory,
   createHistory,
+  OUTCOMES,
+  storeFacade,
+  advanceMarker,
+  initMarker,
+  resetMarker,
 };

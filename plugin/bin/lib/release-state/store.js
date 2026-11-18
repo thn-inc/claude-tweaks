@@ -522,6 +522,7 @@ module.exports = {
   RELEASE_STATE_BRANCH,
   STATE_FILE_RE,
   MAX_CAS_ATTEMPTS,
+  MESSAGE_RE,
   readStateFile,
   classifyStateContent,
   ensureReleaseStateBranch,
