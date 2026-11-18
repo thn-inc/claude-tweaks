@@ -84,12 +84,14 @@ test('contract: every section heading is present, in order', () => {
 
 test('contract: sets and clears', () => {
   const sets = section(text, '## What sets a block');
-  assert.match(sets, /critical or high/);
-  assert.match(sets, /rolling review/);
-  assert.match(sets, /delta review/);
-  assert.match(sets, /Step 8's disposition/);
-  assert.match(sets, /a human/);
-  assert.ok(sets.includes('declined (covered by #{n})'), 'covering-record stamp');
+  const items = sets.split('\n').filter((l) => /^\d\. /.test(l));
+  assert.strictEqual(items.length, 3, 'exactly three numbered setters');
+  assert.match(items[0], /critical or high/);
+  assert.match(items[0], /rolling review/);
+  assert.match(items[0], /delta review/);
+  assert.match(items[1], /Step 8's disposition/);
+  assert.ok(items[1].includes('declined (covered by #{n})'), 'covering-record stamp on the Step 8 setter');
+  assert.match(items[2], /a human/);
   const clears = section(text, '## How a block clears');
   assert.match(clears, /close the record/);
   assert.match(clears, /remove the label/);
@@ -115,10 +117,38 @@ test('contract: gh detected before the bash check', () => {
   assert.throws(() => assertGhBeforeBash(swapped), { message: /must precede/ });
 });
 
+// Each table is sliced from its header row to the first blank line, so a row can only
+// satisfy the table it sits in.
+function tableSlice(src, header) {
+  const lines = src.split('\n');
+  const start = lines.findIndex((l) => l.startsWith(header));
+  assert.notStrictEqual(start, -1, `missing table: ${header}`);
+  const end = lines.findIndex((l, i) => i > start && l.trim() === '');
+  return lines.slice(start, end === -1 ? lines.length : end).join('\n');
+}
+function assertExitTables(cli) {
+  const check = tableSlice(cli, '| `check` |');
+  for (const row of ['| 0 | none open', '| 1 | blocked', '| 2 | usage error, or an unresolvable or refused repo', '| 3 | state unreadable']) {
+    assert.ok(check.includes(row), `check table: missing row ${row.slice(0, 3)}`);
+  }
+  const stamp = tableSlice(cli, '| `stamp` |');
+  for (const row of ['| 0 | stamped or already stamped', '| 2 | usage error, no such record, or a PR number', '| 3 | write failure']) {
+    assert.ok(stamp.includes(row), `stamp table: missing row ${row.slice(0, 3)}`);
+  }
+}
+
 test('contract: exit codes', () => {
   const cli = section(text, '## The CLI');
-  for (const row of [/\| 0 \| none open/, /\| 1 \| blocked/, /\| 2 \| usage/, /\| 3 \| state unreadable/]) assert.match(cli, row);
-  assert.match(cli, /stamp[\s\S]*\| 0 \| stamped or already stamped/);
+  assertExitTables(cli);
+  const noStamp3 = cli.split('\n').filter((l) => !l.startsWith('| 3 | write failure')).join('\n');
+  assert.notStrictEqual(noStamp3, cli);
+  assert.throws(() => assertExitTables(noStamp3), { message: /stamp table: missing row \| 3/ });
+  const noCheck2 = cli.split('\n').filter((l) => !l.startsWith('| 2 | usage error, or')).join('\n');
+  assert.notStrictEqual(noCheck2, cli);
+  assert.throws(() => assertExitTables(noCheck2), { message: /check table: missing row \| 2/ });
+  const gutted = cli.replace('| 2 | usage error, no such record, or a PR number', '| 2 | usage error');
+  assert.notStrictEqual(gutted, cli);
+  assert.throws(() => assertExitTables(gutted), { message: /stamp table: missing row \| 2/ });
   assert.ok(cli.includes('{"blocked":true,"records":[{"number":N,"title":"…","url":"…"}]}'), 'exit-1 JSON shape');
   assert.match(cli, /fills `--limit 100`/);
   assert.match(cli, /missing label reads as none/);
