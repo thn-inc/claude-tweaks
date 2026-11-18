@@ -160,9 +160,9 @@ function computeAdoption({ runDir, mainRoot, cwd, deps }) {
   if (!runDir) return { case: 5, note: null, path: null, anchored: false, hasConfig: false, hasOtherContent: false, specMaterialized: null, backfills: [] };
   const target = deps.resolveTarget({ runDir, cwd, mainRoot });
   if (!target.ok) {
-    const why = target.reason === 'missing' ? 'does not exist'
-      : target.reason === 'not-a-run-dir' ? 'is not a pipeline run directory'
-        : 'is not anchored to the main checkout';
+    let why = 'is not anchored to the main checkout';
+    if (target.reason === 'missing') why = 'does not exist';
+    else if (target.reason === 'not-a-run-dir') why = 'is not a pipeline run directory';
     return { case: 4, note: ADOPTION_NOTES[4].replace('{path}', runDir).replace(CASE4_PLACEHOLDER, why), path: runDir, anchored: false, hasConfig: false, hasOtherContent: false, specMaterialized: null, backfills: [] };
   }
   const real = target.dir;

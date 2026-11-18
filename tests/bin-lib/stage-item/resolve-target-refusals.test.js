@@ -121,7 +121,7 @@ test('resolveTarget refuses a pipelines/ symlink pointing at main/docs as not-a-
   assertRefused(resolveTarget({ runDir: link, cwd: worktree }), 'not-a-run-dir');
 });
 
-test('AC4 probe C5a:resolveTarget refuses an unanchored dir spelled with a trailing separator', (t) => {
+test('AC4 probe C5a: resolveTarget refuses an unanchored dir spelled with a trailing separator', (t) => {
   const { outside, worktree } = fixture(t);
   assertRefused(resolveTarget({ runDir: outside + sep, cwd: worktree }), 'not-anchored');
 });

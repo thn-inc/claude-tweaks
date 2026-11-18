@@ -121,7 +121,7 @@ test('case 4: a missing dir and an unanchored dir each render the case-4 literal
   assert.strictEqual(d.case, 4);
   assert.match(d.note, /which is not a pipeline run directory — created/);
   assert.doesNotMatch(d.note, /not anchored/);
-  const c =computeAdoption({ runDir: null, mainRoot: fx.root, cwd: fx.root, deps: deps(fx) });
+  const c = computeAdoption({ runDir: null, mainRoot: fx.root, cwd: fx.root, deps: deps(fx) });
   assert.deepStrictEqual({ case: c.case, note: c.note }, { case: 5, note: null });
 });
 
