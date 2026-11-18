@@ -862,13 +862,22 @@ function runIn(shell, command, extraEnv, cwd = CWD) {
 }
 
 test('the node stub shadows the real node in every tested shell', { skip: process.platform === 'win32' || SHELLS.length === 0 }, (t) => {
+  // Cause pin (#5881): Node's piped stdio is a socket, which bash takes for rshd and so sources ~/.bashrc
+  // even under -c; on the macOS runner image that file prepends Homebrew dirs ahead of the stub. A fixture
+  // HOME whose startup files prepend a marker dir makes the pin red on any host if runIn reads them.
+  const rcHome = path.join(SANDBOX, 'rc-home');
+  const marker = path.join(rcHome, 'marker-bin');
+  fs.mkdirSync(marker, { recursive: true });
+  for (const rc of ['.bashrc', '.bash_profile', '.profile', '.zshenv', '.zshrc']) {
+    fs.writeFileSync(path.join(rcHome, rc), `PATH="${marker}${path.delimiter}$PATH"; export PATH\n`);
+  }
   for (const shell of SHELLS) {
     const { stdout, status } = runIn(shell, 'command -v node', {});
     assert.strictEqual(status, 0, `${shell} could not resolve node`);
     assert.strictEqual(stdout.trim(), path.join(STUB, 'node'), `${shell} resolved node to ${stdout.trim()}, not the stub`);
-    // Cause pin (#5881): Node's piped stdio is a socket, which bash takes for rshd and so sources ~/.bashrc
-    // even under -c; on the macOS runner image that file prepends Homebrew dirs ahead of the stub.
-    assert.ok(runIn(shell, 'echo "$PATH"', {}).stdout.startsWith(`${STUB}${path.delimiter}`), `${shell} rebuilt PATH ahead of the stub`);
+    const seen = runIn(shell, 'echo "$PATH"', { HOME: rcHome }).stdout.trim();
+    assert.ok(seen.startsWith(`${STUB}${path.delimiter}`), `${shell} rebuilt PATH ahead of the stub: ${seen}`);
+    assert.ok(!seen.split(path.delimiter).includes(marker), `${shell} sourced a startup file from HOME: ${seen}`);
   }
 });
 
