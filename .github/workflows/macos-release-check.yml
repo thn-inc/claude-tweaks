@@ -155,10 +155,8 @@ jobs:
         id: suite
         shell: bash
         run: |
-          set +e
+          # shell: bash runs with pipefail, so the step exits with npm's status, not tee's.
           npm test --silent -- --full | tee "$RUNNER_TEMP/suite.log"
-          code=${PIPESTATUS[0]}
-          exit "$code"
       - uses: actions/upload-artifact@v7
         if: always()
         with:

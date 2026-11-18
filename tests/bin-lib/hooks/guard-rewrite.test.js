@@ -861,7 +861,7 @@ function runIn(shell, command, extraEnv, cwd = CWD) {
   return { stdout: r.stdout, stderr: r.stderr, status: r.status };
 }
 
-test('the node stub shadows the real node in every tested shell', { skip: process.platform === 'win32' || SHELLS.length === 0 }, (t) => {
+test('the node stub shadows the real node in every tested shell', { skip: process.platform === 'win32' || SHELLS.length === 0 }, () => {
   // Cause pin (#5881): Node's piped stdio is a socket, which bash takes for rshd and so sources ~/.bashrc
   // even under -c; on the macOS runner image that file prepends Homebrew dirs ahead of the stub. A fixture
   // HOME whose startup files prepend a marker dir makes the pin red on any host if runIn reads them.
