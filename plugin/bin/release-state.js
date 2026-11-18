@@ -138,8 +138,8 @@ function parseArgs(argv) {
   if (out.markerJson !== undefined && out.repo !== undefined) return { error: '--marker-json and --repo are mutually exclusive' };
   if (out.emit && out.repo !== undefined) return { error: '--emit and --repo are mutually exclusive' };
   if (out.afterConflict && out.markerJson === undefined) return { error: '--after-conflict needs --marker-json (the emit path re-reads the marker the agent just fetched)' };
-  if (verb !== 'read') {
-    if (out.to === undefined || !SHA_RE.test(out.to)) return { error: '--to must be a 40-character lowercase hex commit sha' };
+  if (verb !== 'read' && (out.to === undefined || !SHA_RE.test(out.to))) {
+    return { error: '--to must be a 40-character lowercase hex commit sha' };
   }
   if (verb === 'advance' || verb === 'reset') {
     if (out.run === undefined) return { error: '--run is required' };
@@ -238,9 +238,9 @@ function runVerb(opts, deps, ctx, captured, flags) {
       // unspent, is never reached.
       result = (opts.afterConflict && recheckAfterConflict(ctx, { to: opts.to }))
         || advanceMarker(ctx, { to: opts.to, run: opts.run });
-    }
-    else if (opts.verb === 'init') result = initMarker(ctx, { to: opts.to });
-    else {
+    } else if (opts.verb === 'init') {
+      result = initMarker(ctx, { to: opts.to });
+    } else {
       result = resetMarker(ctx, {
         to: opts.to, run: opts.run, force: Boolean(opts.force), reason: opts.reason,
       });

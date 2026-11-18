@@ -95,11 +95,15 @@ function classifyStateContent(content, { lease = null, via } = {}) {
   };
 }
 
-// {stdout, failure, status, error?} -> unreadable. A failure-free answer with a status
-// (a 409, a 422 on a read) has no classified failure, so it is named by its status.
-function unreadableFrom(r) {
+// {stdout, failure, status, error?} -> { failure, reason }. A failure-free answer with a status
+// (a 409, a 422) has no classified failure, so it is named by its status.
+function failureFrom(r) {
   const failure = r.failure || (r.status ? `http-${r.status}` : 'network-failure');
-  return { state: 'unreadable', failure, reason: refusalText(r.error) || failure };
+  return { failure, reason: refusalText(r.error) || failure };
+}
+
+function unreadableFrom(r) {
+  return { state: 'unreadable', ...failureFrom(r) };
 }
 
 // -> the git leg's answer, or null when git could not answer (a transport failure: the
@@ -330,10 +334,9 @@ function putContents(ghApi, slug, name, content, message, lease) {
   return ghApi(args);
 }
 
-// A PUT that came back with no rejection status: ok, or the failure it carried.
+// A PUT that came back with no rejection status: the failure it carried.
 function putFailure(r) {
-  const failure = r.failure || (r.status ? `http-${r.status}` : 'network-failure');
-  return { ok: false, failure, reason: refusalText(r.error) || failure };
+  return { ok: false, ...failureFrom(r) };
 }
 
 const REJECTED_PUT_STATUSES = new Set([404, 409, 422]);
@@ -511,8 +514,7 @@ function createStateFile(deps, slug, name, { content, message } = {}) {
 
   const branch = readStateBranch(deps.ghApi, slug);
   if (branch.exists === null) {
-    const u = unreadableFrom(branch.result);
-    return { ok: false, failure: u.failure, reason: u.reason };
+    return { ok: false, ...failureFrom(branch.result) };
   }
   let branchEnsured = false;
   if (!branch.exists) {
