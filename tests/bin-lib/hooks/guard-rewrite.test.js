@@ -852,12 +852,16 @@ const POSITIVE = [
 ];
 const SHELLS = ['bash', 'zsh'].filter((sh) => spawnSync(sh, ['-c', 'exit 0'], { windowsHide: true }).status === 0);
 
+// Every shell child in this file builds its argv here, so the precondition test's fixture-HOME pin covers all of them.
+// --norc/--noprofile: bash sources ~/.bashrc under -c when stdin is a socket (see the precondition test).
+function shellArgs(shell, command) {
+  return shell === 'zsh' ? ['-f', '-c', command] : ['--norc', '--noprofile', '-c', command];
+}
+
 function runIn(shell, command, extraEnv, cwd = CWD) {
   // A's first character is not `-`: see the node-eval-separator divergence test below.
   const env = { PATH: `${STUB}${path.delimiter}${process.env.PATH}`, HOME: process.env.HOME || os.homedir(), A: 'a --flag -x', ...extraEnv };
-  // --norc/--noprofile: bash sources ~/.bashrc under -c when stdin is a socket (see the precondition test).
-  const args = shell === 'zsh' ? ['-f', '-c', command] : ['--norc', '--noprofile', '-c', command];
-  const r = spawnSync(shell, args, { cwd, env, encoding: 'utf8', windowsHide: true });
+  const r = spawnSync(shell, shellArgs(shell, command), { cwd, env, encoding: 'utf8', windowsHide: true });
   return { stdout: r.stdout, stderr: r.stderr, status: r.status };
 }
 
@@ -1052,9 +1056,8 @@ test('property: every rewrite of a randomly drawn command keeps stdout, stderr a
     }
     rewritten += 1;
     for (const shell of SHELLS) {
-      const args = (c) => (shell === 'zsh' ? ['-f', '-c', c] : ['--norc', '--noprofile', '-c', c]);
       const run = (c) => {
-        const r = spawnSync(shell, args(c), { cwd: CWD, env, encoding: 'utf8', windowsHide: true });
+        const r = spawnSync(shell, shellArgs(shell, c), { cwd: CWD, env, encoding: 'utf8', windowsHide: true });
         // bash echoes the offending source line after a syntax error: that echo is the command text itself,
         // so it differs for any rewrite (the diagnostic above it, and the status, still must match).
         return { stdout: r.stdout, stderr: r.stderr.replace(/^(bash: -c: line \d+: )`.*'$/gm, '$1<source echo>'), status: r.status };
