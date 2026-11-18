@@ -1,6 +1,6 @@
 # Release block
 
-A durable "do not release" signal (#5882): an **open** record carrying the `release-block` label stops a release. It is keyed on the forge, never on `work-backend` — it applies whenever the repository has a GitHub origin (`_shared/forge-detection.md` check 1: `git -C "$RUN_ROOT" remote get-url origin` exits 0), including a GitHub-hosted project with no `## Work records` flag. With no GitHub origin there is no forge label to read, and the release logs a skip. `bin/release-block.js` is the one reader and writer; #5885 (the rolling review) and #5887 (the promotion gate) call its `stamp` and `check`.
+A durable "do not release" signal (#5882): an **open** record carrying the `release-block` label stops a release. It is keyed on `/release` Step 1's fact-pack `engine`, never on `work-backend` and never on a fresh remote probe: under `pr-first` (GitHub-backed, `_shared/integration-model.md`) the release reads the label, including a project with no `## Work records` flag; under `local-merge` there is no GitHub forge to read, and the release logs a skip. A non-GitHub origin (GitLab, Gitea, a bare remote) resolves `local-merge` under forge detection (`_shared/forge-detection.md`), so it skips rather than failing on a forge `check` cannot read. `bin/release-block.js` is the one reader and writer; #5885 (the rolling review) and #5887 (the promotion gate) call its `stamp` and `check`.
 
 ## What sets a block
 
@@ -50,7 +50,7 @@ Releases stop while this record is open and carries the `release-block` label. T
 
 This is the full Step 1.5 procedure; `/release` Step 4's re-read (`release/console.md`) runs it with a different stop point. **Step 1.5** stops before any review or suite work (before Step 2). **Step 4** has already run Step 3's review, so it stops before Step 5, before anything merges; its log lines say `Step 4` and end `Stopped before Step 5.` in place of `Stopped before Step 2.`
 
-1. **Forge check.** No GitHub origin → log the `SKIP` line below; the release proceeds.
+1. **Engine check.** Read `engine` from Step 1's fact pack, never re-detected. `local-merge` → log the `SKIP` line below; the release proceeds. `pr-first` → go on.
 2. **Detect `gh`** with `command -v gh`, per `_shared/github-write-transport.md`'s Detection.
 3. **gh present** → run `node "${CLAUDE_PLUGIN_ROOT}/bin/release-block.js" check`. **gh absent** → `## gh-absent (MCP) path`'s `check`, never the bash call. There is no new exit code: an unavailable transport is exit 3.
 
@@ -59,6 +59,7 @@ Route on the exit code:
 - **0** → log the AUTO line and continue.
 - **1** → stop at the step's stop point and print `release: blocked — {n} open release-block record(s): #{N} {title}[; #{M} {title}]. Close each record or remove its release-block label, then re-run.` Stage `release-held.md` through `node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "{run-dir}" --id release-held --file {composed .md file}`, using the existing schema: the gate (`release-block`), each record as `#N {title} {url}`, the effective version and its base (`n/a — {proposedVersion error}` when the pack has none), and the clearing act (close the record or remove the label). The outcome is `HELD` in every mode (reason `release-block — {n} open record(s)`), with no question, and `--allow-blocking` does not lift it.
 - **2 or 3** → stop and print `release: stopped — release-block state unreadable (exit {code}: {first stderr line})`. The outcome is `failed`, reason `release-block state unreadable`.
+- **Any other exit, or exit 1 whose stdout is not the `{"blocked":true,…}` line** (a crash also exits 1) → treat it as exit 3: `failed`, `release-block state unreadable`, never `HELD` with no records.
 
 Log through `log-decision.js --section "/release" --step "Step 1.5"`; the text never starts with the step name:
 
@@ -66,7 +67,7 @@ Log through `log-decision.js --section "/release" --step "Step 1.5"`; the text n
 AUTO … — Step 1.5: release-block check: none open. Reversibility: n/a (read-only).
 STAGED … — Step 1.5: HARD-GATE release-block — {n} open record(s) {#a, #b}; release held. Stage path: staged/release-held.md. Reversibility: high.
 AUTO … — Step 1.5: release-block state unreadable — exit {code}: {stderr line}. Stopped before Step 2. Reversibility: n/a.
-SKIP … — Step 1.5 release-block check (skipped): condition: no GitHub origin (_shared/forge-detection.md check 1) → fallback: no forge label to read; release proceeds. Reversibility: n/a.
+SKIP … — Step 1.5 release-block check (skipped): condition: engine local-merge (Step 1 fact pack) → fallback: no GitHub forge to read; release proceeds. Reversibility: n/a.
 ```
 
 No autonomy ceiling lifts the block, and every firing re-runs `check` — a block cleared since the last firing is simply not there.

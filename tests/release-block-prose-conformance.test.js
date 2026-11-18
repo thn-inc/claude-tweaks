@@ -49,20 +49,34 @@ function section(src, heading) {
 }
 
 const REL = '## What a release does while a block is open';
-const SKIP_LINE = 'condition: no GitHub origin (_shared/forge-detection.md check 1)';
-function assertForgeKeyedSkip(src) {
-  assert.ok(section(src, REL).includes(SKIP_LINE), 'skip line must be forge-keyed');
+// Keyed on Step 1's fact-pack engine (Task 4 review ruling), never a fresh remote probe.
+const SKIP_LINE = 'condition: engine local-merge (Step 1 fact pack)';
+function assertEngineKeyedSkip(src) {
+  const rel = section(src, REL);
+  assert.ok(rel.includes(SKIP_LINE), 'skip line must be engine-keyed');
   assert.ok(!src.includes('condition: work-backend'), 'no work-backend condition anywhere');
+  const probes = rel.includes('GitHub origin') || src.includes('remote get-url origin') || /forge-detection\.md`? check 1/.test(src);
+  assert.ok(!probes, 'no fresh remote probe');
+  const opening = src.slice(0, src.indexOf('\n## '));
+  assert.ok(opening.includes("Step 1's fact-pack `engine`"), 'opening paragraph: not keyed on the engine');
 }
 
-// The superseded line, frozen (spec Plan Review Clarifications): keyed on work-backend.
+// The superseded lines, frozen: keyed on work-backend (spec Plan Review Clarifications), then
+// on a fresh origin probe (Task 3), each replaced by the engine rule.
 const SUPERSEDED_SKIP = 'SKIP … — Step 1.5 release-block check (skipped): condition: work-backend local-files → fallback: no forge label to read; release proceeds. Reversibility: n/a.';
+const SUPERSEDED_ORIGIN_SKIP = 'SKIP … — Step 1.5 release-block check (skipped): condition: no GitHub origin (_shared/forge-detection.md check 1) → fallback: no forge label to read; release proceeds. Reversibility: n/a.';
+const SUPERSEDED_ORIGIN_STEP = '1. **Forge check.** No GitHub origin → log the `SKIP` line below; the release proceeds.';
+const SUPERSEDED_ORIGIN_OPENING = 'It is keyed on the forge, never on `work-backend` — it applies whenever the repository has a GitHub origin (`_shared/forge-detection.md` check 1: `git -C "$RUN_ROOT" remote get-url origin` exits 0), including a GitHub-hosted project with no `## Work records` flag.';
 
+const ENGINE_STEP = '1. **Engine check.**';
 function assertGhBeforeBash(rel) {
+  const engine = rel.indexOf(ENGINE_STEP);
   const detect = rel.indexOf('command -v gh');
   const bash = rel.indexOf('release-block.js" check');
+  assert.ok(engine !== -1, 'the engine check is named');
   assert.ok(detect !== -1, 'command -v gh is named');
   assert.ok(bash !== -1, 'the bash check is named');
+  assert.ok(engine < detect, 'the engine check must precede command -v gh');
   assert.ok(detect < bash, 'command -v gh must precede the bash check');
 }
 
@@ -99,12 +113,25 @@ test('contract: sets and clears', () => {
   assert.match(clears, /no reason is required/i);
 });
 
-test('contract: forge-keyed skip', () => {
-  assertForgeKeyedSkip(text);
+test('contract: engine-keyed skip', () => {
+  assertEngineKeyedSkip(text);
   const swapped = text.replace(/SKIP …[^\n]*\n?/, `${SUPERSEDED_SKIP}\n`);
   assert.notStrictEqual(swapped, text);
-  assert.throws(() => assertForgeKeyedSkip(swapped), { message: /forge-keyed|work-backend/ });
-  assert.throws(() => assertForgeKeyedSkip(`${text}\n${SUPERSEDED_SKIP}\n`), { message: /no work-backend condition/ });
+  assert.throws(() => assertEngineKeyedSkip(swapped), { message: /engine-keyed/ });
+  assert.throws(() => assertEngineKeyedSkip(`${text}\n${SUPERSEDED_SKIP}\n`), { message: /no work-backend condition/ });
+  // The superseded origin-probe forms: the skip line, the procedure step, the opening paragraph.
+  const originSkip = text.replace(/SKIP …[^\n]*\n?/, `${SUPERSEDED_ORIGIN_SKIP}\n`);
+  assert.notStrictEqual(originSkip, text);
+  assert.throws(() => assertEngineKeyedSkip(originSkip), { message: /engine-keyed/ });
+  const originStep = text.replace(/^1\. \*\*Engine check\.\*\*[^\n]*$/m, SUPERSEDED_ORIGIN_STEP);
+  assert.notStrictEqual(originStep, text);
+  assert.throws(() => assertEngineKeyedSkip(originStep), { message: /no fresh remote probe/ });
+  const originOpening = text.replace(/It is keyed on `\/release` Step 1's fact-pack `engine`[^;]*;/, SUPERSEDED_ORIGIN_OPENING);
+  assert.notStrictEqual(originOpening, text);
+  assert.throws(() => assertEngineKeyedSkip(originOpening), { message: /no fresh remote probe/ });
+  const unkeyedOpening = text.replace("Step 1's fact-pack `engine`", 'the engine');
+  assert.notStrictEqual(unkeyedOpening, text);
+  assert.throws(() => assertEngineKeyedSkip(unkeyedOpening), { message: /opening paragraph: not keyed on the engine/ });
 });
 
 test('contract: gh detected before the bash check', () => {
@@ -115,7 +142,29 @@ test('contract: gh detected before the bash check', () => {
   assert.match(rel, /unavailable[\s\S]{0,60}exit 3/);
   // Control: the same text with the two markers swapped must fail the order check.
   const swapped = rel.replace('command -v gh', '@@').replace('release-block.js" check', 'command -v gh').replace('@@', 'release-block.js" check');
-  assert.throws(() => assertGhBeforeBash(swapped), { message: /must precede/ });
+  assert.throws(() => assertGhBeforeBash(swapped), { message: /command -v gh must precede/ });
+  // Control: the engine check moved below the gh detection.
+  const engineLine = rel.split('\n').find((l) => l.startsWith(ENGINE_STEP));
+  const engineLast = `${rel.replace(`${engineLine}\n`, '')}\n${engineLine}\n`;
+  assert.notStrictEqual(engineLast.replace(/\n+$/, ''), rel.replace(/\n+$/, ''));
+  assert.throws(() => assertGhBeforeBash(engineLast), { message: /the engine check must precede/ });
+});
+
+// An exit outside 0–3, or an exit 1 without the blocked JSON (a Node crash exits 1), fails closed.
+const UNMAPPED_RE = /^- \*\*Any other exit, or exit 1 whose stdout is not the `\{"blocked":true,…\}` line\*\*[^\n]*→ treat it as exit 3: `failed`, `release-block state unreadable`, never `HELD`/m;
+function assertUnmappedFailsClosed(rel) {
+  assert.match(rel, UNMAPPED_RE, 'routing: an unmapped exit or a bare exit 1 is not treated as unreadable');
+}
+
+test('contract: an unmapped exit or an exit 1 without the blocked JSON reads as unreadable', () => {
+  const rel = section(text, REL);
+  assertUnmappedFailsClosed(rel);
+  const dropped = rel.replace(UNMAPPED_RE, '');
+  assert.notStrictEqual(dropped, rel);
+  assert.throws(() => assertUnmappedFailsClosed(dropped), { message: /routing: an unmapped exit/ });
+  const asHeld = rel.replace('treat it as exit 3: `failed`, `release-block state unreadable`', 'treat it as exit 1: `HELD`');
+  assert.notStrictEqual(asHeld, rel);
+  assert.throws(() => assertUnmappedFailsClosed(asHeld), { message: /routing: an unmapped exit/ });
 });
 
 // Each table is sliced from its header row to the first blank line, so a row can only
@@ -245,12 +294,12 @@ test('AC1.1/AC1.2: Step 1.5 sits after Step 1 and before Steps 2 and 3, so no re
 
 const STEP15_FACTS = [
   [/before any review or suite work, on every path: interactive, `auto`, headless, `--train` and `--dry-run`/, 'every path, before any review or suite work'],
-  [/precedes Step 3's tree check and any early-verify step inserted after Step 1/, 'precedes the tree check and any early verify'],
+  [/ahead of Step 3's tree check and any early-verify step inserted after Step 1/, 'precedes the tree check and any early verify'],
   [/^node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/release-block\.js" check$/m, 'the check fence line'],
   [/never on the prose/, 'routes on the exit code only'],
   [/\*\*0\*\* → log `AUTO[^`\n]*`, then Step 2/, 'exit 0 logs and goes on to Step 2'],
-  [/\*\*1\*\* → stop `HELD`/, 'exit 1 stops HELD'],
-  [/\*\*2\*\* or \*\*3\*\* → stop `failed`, `release-block state unreadable`/, 'exit 2 or 3 stops failed, unreadable'],
+  [/\*\*1\*\* with its `"blocked":true` line → stop `HELD`/, 'exit 1 with the blocked JSON stops HELD'],
+  [/\*\*2\*\*, \*\*3\*\* or anything else → stop `failed`, `release-block state unreadable`/, 'exit 2, 3 or anything else stops failed, unreadable'],
   [/`_shared\/release-block\.md`'s "What a release does while a block is open" section/, 'points at the contract section'],
 ];
 const missingStep15 = (body) => STEP15_FACTS.filter(([re]) => !re.test(body)).map(([, fact]) => fact);
@@ -280,43 +329,70 @@ test('AC1.1: Step 1.5\'s exit-0 log line matches the contract', () => {
   assert.throws(() => assertAutoLineTwin(step15Of(SKILL), drifted), { message: /differs from the contract/ });
 });
 
-test('AC4.2: an unreadable state stops the release and never proceeds', () => {
-  const body = step15Of(SKILL);
-  assert.ok(body.includes('release-block state unreadable'));
-  assert.match(body, /stop `failed`/);
-  assert.doesNotMatch(body, /\*\*[23]\*\*[^\n]{0,40}→ (?:log|Step 2)/, 'an unreadable state never routes on to Step 2');
-});
-
-// The superseded plan-draft sentence (spec Plan Review Clarifications): keyed on work-backend.
-const SUPERSEDED_FORGE = 'Read `work-backend` as `console.md`\'s Inputs does. `local-files` → log the `SKIP` line';
-
-function assertForgeKeyedStep15(body) {
-  for (const lit of ['remote get-url origin', '`_shared/forge-detection.md` check 1', 'no GitHub origin', '`SKIP`']) {
-    assert.ok(body.includes(lit), `forge skip: missing ${lit}`);
-  }
-  assert.ok(!body.includes('local-files'), 'forge skip: keyed on local-files');
-  assert.ok(!body.includes('Read `work-backend`'), 'forge skip: reads work-backend');
+// The Step 2/3 routing clause, read exactly: it must stop `failed`, never route on.
+const UNREADABLE_ROUTE_RE = /\*\*2\*\*, \*\*3\*\* or anything else → ([^;\n]*?)\. On /;
+function assertUnreadableFails(body) {
+  const m = body.match(UNREADABLE_ROUTE_RE);
+  assert.ok(m, 'unreadable route: no **2**, **3** or anything else clause');
+  assert.strictEqual(m[1], 'stop `failed`, `release-block state unreadable`', 'unreadable route: not exactly stop failed');
 }
 
-test('AC3.1: no GitHub origin skips with a logged reason, keyed on the forge', () => {
+test('AC4.2: an unreadable state stops the release and never proceeds', () => {
   const body = step15Of(SKILL);
-  assertForgeKeyedStep15(body);
-  assert.throws(() => assertForgeKeyedStep15(`${STEP15}\n\n${SUPERSEDED_FORGE}\n`), { message: /forge skip: missing remote get-url origin/ });
-  // Controls that keep every forge anchor and add only the superseded keying.
-  assert.throws(() => assertForgeKeyedStep15(`${body}\n${SUPERSEDED_FORGE}\n`), { message: /keyed on local-files/ });
-  assert.throws(() => assertForgeKeyedStep15(`${body}\nRead \`work-backend\` first.\n`), { message: /reads work-backend/ });
+  assertUnreadableFails(body);
+  const proceeds = body.replace('anything else → stop `failed`, `release-block state unreadable`.', 'anything else → log it, then Step 2.');
+  assert.notStrictEqual(proceeds, body);
+  assert.throws(() => assertUnreadableFails(proceeds), { message: /unreadable route: not exactly stop failed/ });
+  // The frozen pre-fix map (Task 4 first pass) stated only 2 or 3, so an unmapped exit was unrouted.
+  const preFix = body.replace(/\*\*1\*\* with its[^\n]*/, '**1** → stop `HELD`; **2** or **3** → stop `failed`, `release-block state unreadable`. On the `SKIP` or any exit but 0, read it now.');
+  assert.notStrictEqual(preFix, body);
+  assert.throws(() => assertUnreadableFails(preFix), { message: /unreadable route: no \*\*2\*\*, \*\*3\*\* or anything else clause/ });
+});
+
+// The superseded keyings, frozen: the plan draft's work-backend sentence (spec Plan Review
+// Clarifications), and the Task 4 first pass's fresh origin probe (review ruling: key on the engine).
+const SUPERSEDED_FORGE = 'Read `work-backend` as `console.md`\'s Inputs does. `local-files` → log the `SKIP` line';
+const SUPERSEDED_ORIGIN_P2 = 'Key it on the forge, never `work-backend`: when `git -C "$RUN_ROOT" remote get-url origin` fails (`_shared/forge-detection.md` check 1: no GitHub origin), log the `SKIP` line and go on to Step 2. Otherwise detect `gh` first: `command -v gh` (`_shared/github-write-transport.md`\'s Detection). Present:';
+const ENGINE_KEY = "Key it on Step 1's pack `engine`";
+
+function assertEngineKeyedStep15(body) {
+  for (const lit of [ENGINE_KEY, '`local-merge` → log the `SKIP` line', '`pr-first` → detect `gh` first']) {
+    assert.ok(body.includes(lit), `engine skip: missing ${lit}`);
+  }
+  assert.ok(!body.includes('remote get-url origin') && !body.includes('forge-detection'), 'engine skip: probes the remote');
+  assert.ok(!body.includes('work-backend') && !body.includes('local-files'), 'engine skip: keyed on work-backend');
+}
+
+test('AC3.1: a local-merge engine skips with a logged reason, keyed on Step 1\'s engine', () => {
+  const body = step15Of(SKILL);
+  assertEngineKeyedStep15(body);
+  const p2 = body.split('\n').find((l) => l.startsWith(ENGINE_KEY));
+  assert.ok(p2, 'no engine paragraph');
+  const swapped = body.replace(p2, SUPERSEDED_ORIGIN_P2);
+  assert.throws(() => assertEngineKeyedStep15(swapped), { message: /engine skip: missing Key it on Step 1's pack/ });
+  assert.throws(() => assertEngineKeyedStep15(`${STEP15}\n\n${SUPERSEDED_FORGE}\n`), { message: /engine skip: missing/ });
+  // Controls that keep every engine anchor and add only a superseded keying.
+  assert.throws(() => assertEngineKeyedStep15(`${body}\n${SUPERSEDED_ORIGIN_P2}\n`), { message: /probes the remote/ });
+  assert.throws(() => assertEngineKeyedStep15(`${body}\n${SUPERSEDED_FORGE}\n`), { message: /keyed on work-backend/ });
 });
 
 function assertGhFirst(body) {
-  const origin = body.indexOf('remote get-url origin');
+  const engine = body.indexOf(ENGINE_KEY);
   const gh = body.indexOf('command -v gh');
   const fence = body.indexOf(`\n${FENCE_LINE}\n`);
-  assert.ok(origin !== -1 && gh !== -1 && fence !== -1, 'gh-first: a marker is missing');
-  assert.ok(origin < gh, 'gh-first: the forge check must precede command -v gh');
+  assert.ok(engine !== -1 && gh !== -1 && fence !== -1, 'gh-first: a marker is missing');
+  assert.ok(engine < gh, 'gh-first: the engine check must precede command -v gh');
   assert.ok(gh < fence, 'gh-first: command -v gh must precede the check fence');
   const after = body.slice(fence + FENCE_LINE.length + 1);
   assert.ok(after.includes('gh-absent (MCP)'), 'gh-first: the gh-absent (MCP) check is not named after the fence');
   assert.ok(after.includes('never the fence'), 'gh-first: "never the fence" is not said after the fence');
+}
+
+// Moves one sentence of the body to just after the check fence.
+function moveAfterFence(body, sentence) {
+  const without = body.replace(sentence, '');
+  const fenceEnd = without.indexOf('```', without.indexOf(FENCE_LINE));
+  return `${without.slice(0, fenceEnd + 3)}\n${sentence}${without.slice(fenceEnd + 3)}`;
 }
 
 test('Step 1.5 detects gh before the bash check', () => {
@@ -325,11 +401,15 @@ test('Step 1.5 detects gh before the bash check', () => {
   // Permutation: the `command -v gh` sentence moved after the fence.
   const sentence = body.match(/[^.\n]*`command -v gh`[^.\n]*\./);
   assert.ok(sentence, 'no `command -v gh` sentence');
-  const without = body.replace(sentence[0], '');
-  const fenceEnd = without.indexOf('```', without.indexOf(FENCE_LINE));
-  const moved = `${without.slice(0, fenceEnd + 3)}\n${sentence[0]}${without.slice(fenceEnd + 3)}`;
+  const moved = moveAfterFence(body, sentence[0]);
   assert.notStrictEqual(moved, body);
   assert.throws(() => assertGhFirst(moved), { message: /command -v gh must precede the check fence/ });
+  // Permutation: the engine sentence moved after the gh detection.
+  const engineSentence = body.match(/Key it on Step 1's pack `engine`[^\n]*?go on to Step 2\./);
+  assert.ok(engineSentence, 'no engine sentence');
+  const engineMoved = moveAfterFence(body, engineSentence[0]);
+  assert.notStrictEqual(engineMoved, body);
+  assert.throws(() => assertGhFirst(engineMoved), { message: /the engine check must precede command -v gh/ });
 });
 
 // Frozen pre-change excerpts (each a prefix of its pre-change line, or a paragraph run).
@@ -364,6 +444,31 @@ test('AC2.1: --train holds on a block with release-held.md', () => {
     const doctored = SKILL.replace(livePiece, frozen);
     assert.notStrictEqual(doctored, SKILL);
     assert.deepStrictEqual(missingTrain(doctored), facts, `swapping in the pre-change ${facts[0]} piece`);
+  }
+});
+
+// Frozen pre-change prefixes of the `--dry-run` row and the `failed` bullet.
+const PRE_OUTCOME = {
+  dryRun: '| `--dry-run` | Step 5 is a no-op — nothing is merged, nothing is tagged, no `Release-As:` commit is pushed. Step 3\'s whole-branch review **still runs**',
+  failed: '- **`failed`** — nothing landed and no HARD-GATE fired: either the run stopped before the console for a reason that is not a gate (a refused `--train` with no human present at Step 0; Step 3\'s review-tree assertion;',
+};
+const OUTCOME_FACTS = [
+  ['--dry-run row names the Step 1.5 hold', (s) => lineStartingWith(s, '| `--dry-run` |').includes('Unless a release block holds it `HELD` at Step 1.5')],
+  ['failed bullet reconciles the unreadable stop with the gate', (s) => lineStartingWith(s, '- **`failed`**').includes("Step 1.5's `release-block state unreadable`, the gate failing closed with no block observed")],
+];
+const missingOutcome = (src) => OUTCOME_FACTS.filter(([, ok]) => !ok(src)).map(([fact]) => fact);
+
+test('a dry run is held by a block, and an unreadable state is the gate failing closed', () => {
+  assert.deepStrictEqual(missingOutcome(SKILL), []);
+  const swaps = [
+    [lineStartingWith(SKILL, '| `--dry-run` |'), PRE_OUTCOME.dryRun, ['--dry-run row names the Step 1.5 hold']],
+    [lineStartingWith(SKILL, '- **`failed`**'), PRE_OUTCOME.failed, ['failed bullet reconciles the unreadable stop with the gate']],
+  ];
+  for (const [livePiece, frozen, facts] of swaps) {
+    assert.ok(livePiece, 'live piece not found');
+    const doctored = SKILL.replace(livePiece, frozen);
+    assert.notStrictEqual(doctored, SKILL);
+    assert.deepStrictEqual(missingOutcome(doctored), facts);
   }
 });
 
@@ -453,12 +558,16 @@ const PRE_HELD_ELSEWHERE = {
   execute: '`HELD` is only ever a **pre-merge** word here — the `gh`-absent Transport stop, delta 5\'s re-rendered-major re-gate and the reviewed-tip comparison\'s two stops (`integration branch kept moving`, a blocking delta review), all of which move nothing — alongside the Step 4 HARD-GATEs that fire before this file runs at all.',
   journey: '- **Should understand:** Five outcome words, never folded: `released`, `dry-run`, `HELD` (a gate stopped the run before the merge — at Step 4, or at one of Step 5\'s no-merge stops such as `integration branch kept moving` — in any mode, not only the train; nothing moved, and `release-held.md` names which gate)',
   resolve: "/claude-tweaks:release's standalone run dir; surfaced by release's own Step 4 console (release/console.md), never by wrap-up's console-resolve.js",
+  journeyFeel: '- **Should feel:** Trustworthy to leave alone — the two things it will never do on its own (ship a major, ship past a blocking review) are exactly the two a human would want to see.',
+  journeyAction: '- **Action:** Refused unless `release-train: true` and `autonomy: unattended` — with a human present the refusal falls back to an on-demand run, in a headless firing it stops before Step 1 as `failed` with nothing moved; when accepted, Steps 1–4 run without a console prompt,',
 };
 const HELD_ELSEWHERE_FACTS = [
   ['bookkeeping', (p) => p.bookkeeping.includes("Step 1.5's release-block stop")],
   ['execute', (p) => p.execute.includes("alongside Step 1.5's release-block stop and the Step 4 HARD-GATEs, which fire before this file runs at all")],
   ['journey', (p) => p.journey.includes("at Step 1.5's release-block check")],
   ['resolve', (p) => p.resolve.includes('Step 8 summary') && p.resolve.includes('a Step 1.5 hold never renders the Step 4 console')],
+  ['journeyFeel', (p) => p.journeyFeel.includes('the three things it will never do on its own (ship past an open release block,') && !p.journeyFeel.includes('the two things')],
+  ['journeyAction', (p) => p.journeyAction.includes('when accepted, an open `release-block` record holds it `HELD` at Step 1.5, before any review')],
 ];
 const missingHeldElsewhere = (pieces) => HELD_ELSEWHERE_FACTS.filter(([, ok]) => !ok(pieces)).map(([name]) => name);
 
@@ -468,6 +577,8 @@ test('HELD lists elsewhere name Step 1.5', () => {
     execute: lineStartingWith(live('plugin/skills/release/execute.md'), '`HELD` is only ever a **pre-merge** word here'),
     journey: lineStartingWith(live('docs/journeys/release-a-version.md'), '- **Should understand:** Five outcome words'),
     resolve: stagingExemption('release-held') || '',
+    journeyFeel: lineStartingWith(live('docs/journeys/release-a-version.md'), '- **Should feel:** Trustworthy to leave alone'),
+    journeyAction: lineStartingWith(live('docs/journeys/release-a-version.md'), '- **Action:** Refused unless `release-train: true`'),
   };
   assert.deepStrictEqual(missingHeldElsewhere(pieces), []);
   for (const name of Object.keys(PRE_HELD_ELSEWHERE)) {

@@ -48,8 +48,8 @@ files:
 
 ### 4. Unattended — `--train`
 - **URL:** `/claude-tweaks:release --train` — by hand on an `unattended` repo, or as the scheduled firing `/claude-tweaks:routine create release` instantiates from `skills/release/routine-template.yml` (the release train Routine, #2258: daily on weekdays, a refused nothing-moved `failed` stop until `release-train: true` and `autonomy: unattended` are set)
-- **Action:** Refused unless `release-train: true` and `autonomy: unattended` — with a human present the refusal falls back to an on-demand run, in a headless firing it stops before Step 1 as `failed` with nothing moved; when accepted, Steps 1–4 run without a console prompt, and a major bump (effective, after `--as`) or `review: blocking` stages `release-held.md` and exits with `HELD`; a Step 6 miss after the merge landed is `PARTIAL`, never `HELD`.
-- **Should feel:** Trustworthy to leave alone — the two things it will never do on its own (ship a major, ship past a blocking review) are exactly the two a human would want to see.
+- **Action:** Refused unless `release-train: true` and `autonomy: unattended` — with a human present the refusal falls back to an on-demand run, in a headless firing it stops before Step 1 as `failed` with nothing moved; when accepted, an open `release-block` record holds it `HELD` at Step 1.5, before any review; otherwise Steps 1–4 run without a console prompt, and a major bump (effective, after `--as`) or `review: blocking` stages `release-held.md` and exits with `HELD`; a Step 6 miss after the merge landed is `PARTIAL`, never `HELD`.
+- **Should feel:** Trustworthy to leave alone — the three things it will never do on its own (ship past an open release block, ship a major, ship past a blocking review) are exactly the three a human would want to see.
 - **Should understand:** `HELD` means nothing moved; `PARTIAL` means the tag landed and the hook did not — different recovery, different urgency.
 - **Red flags:** `--allow-blocking` honoured under `--train`; a `HELD` summary on a run whose merge actually happened.
 
