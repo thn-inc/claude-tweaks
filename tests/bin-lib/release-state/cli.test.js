@@ -273,57 +273,63 @@ test('an unexpected throw from an operation is unreadable, never the exit code t
 
 const T = LINE[2];
 const REASON = 'history rewritten by hand';
+// Each row names the stderr text of the one check that must fire, so a row cannot pass on a later
+// check catching what an earlier one stopped catching.
 const USAGE_CASES = [
-  ['no verb', []],
-  ['marker alone', ['marker']],
-  ['an unknown group', ['frobnicate', 'read']],
-  ['an unknown marker verb', ['marker', 'frobnicate']],
-  ['advance without --to', ['marker', 'advance', '--run', 'r1']],
-  ['--to given as 39 hex', ['marker', 'advance', '--to', 'a'.repeat(39), '--run', 'r1']],
-  ['--to given as uppercase hex', ['marker', 'advance', '--to', 'A'.repeat(40), '--run', 'r1']],
-  ['advance without --run', ['marker', 'advance', '--to', T]],
-  ['a trailing --run', ['marker', 'advance', '--to', T, '--run']],
-  ['a leading-dash --run', ['marker', 'advance', '--to', T, '--run', '-x']],
-  ['--run init', ['marker', 'advance', '--to', T, '--run', 'init']],
-  ['a --run over 128 characters', ['marker', 'advance', '--to', T, '--run', 'r'.repeat(129)]],
-  ['--run with a space', ['marker', 'advance', '--to', T, '--run', 'a b']],
-  ['--force without --reason', ['marker', 'reset', '--to', T, '--run', 'r1', '--force']],
-  ['--reason without --force', ['marker', 'reset', '--to', T, '--run', 'r1', '--reason', REASON]],
-  ['a --reason with #', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', 'fix #12']],
-  ['a --reason with a newline', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', 'one\ntwo']],
-  ['a --reason over 200 characters', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', 'x'.repeat(201)]],
-  ['a --reason that is another flag', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', '--force']],
-  ['a --reason with a leading dash (ruling R19)', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', '-x']],
-  ['a --reason of -h is a refused value, not help', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', '-h']],
-  ['a --run of -h is a refused value, not help', ['marker', 'advance', '--to', T, '--run', '-h']],
-  ['a --repo of --help is a refused value, not help', ['marker', 'read', '--repo', '--help']],
-  ['a trailing --reason', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason']],
-  ['an invalid --branch', ['marker', 'advance', '--to', T, '--run', 'r1', '--branch', 'a..b']],
-  ['a leading-dash --branch', ['marker', 'advance', '--to', T, '--run', 'r1', '--branch', '-x']],
-  ['--marker-json with --repo (advance)', ['marker', 'advance', '--to', T, '--run', 'r1', '--marker-json', 'x', '--repo', 'o/r']],
-  ['--marker-json with --repo (read)', ['marker', 'read', '--marker-json', 'x', '--repo', 'o/r']],
-  ['--emit with --repo', ['marker', 'init', '--to', T, '--emit', '--repo', 'o/r']],
-  ['--emit on advance', ['marker', 'advance', '--to', T, '--run', 'r1', '--emit']],
-  ['--marker-json on init', ['marker', 'init', '--to', T, '--marker-json', 'x']],
-  ['--run on init', ['marker', 'init', '--to', T, '--run', 'r1']],
-  ['--force on advance', ['marker', 'advance', '--to', T, '--run', 'r1', '--force']],
-  ['--to on read', ['marker', 'read', '--to', T]],
-  ['an unknown flag', ['marker', 'read', '--frobnicate']],
-  ['a repeated flag', ['marker', 'advance', '--to', T, '--to', T, '--run', 'r1']],
-  ['a trailing --repo', ['marker', 'read', '--repo']],
-  ['an empty --marker-json', ['marker', 'read', '--marker-json', '']],
+  ['no verb', [], /a subcommand is required/],
+  ['marker alone', ['marker'], /marker needs read, advance, init or reset/],
+  ['an unknown group', ['frobnicate', 'read'], /unknown subcommand: frobnicate/],
+  ['an unknown marker verb', ['marker', 'frobnicate'], /unknown marker subcommand: frobnicate/],
+  ['an unknown marker verb before --help is not help', ['marker', 'frobnicate', '--help'], /unknown marker subcommand: frobnicate/],
+  ['an unknown flag before --help is not help', ['marker', 'read', '--bogus', '--help'], /unknown argument: --bogus/],
+  ['advance without --to', ['marker', 'advance', '--run', 'r1'], /--to must be a 40-character/],
+  ['--to given as 39 hex', ['marker', 'advance', '--to', 'a'.repeat(39), '--run', 'r1'], /--to must be a 40-character/],
+  ['--to given as uppercase hex', ['marker', 'advance', '--to', 'A'.repeat(40), '--run', 'r1'], /--to must be a 40-character/],
+  ['advance without --run', ['marker', 'advance', '--to', T], /--run is required/],
+  ['a trailing --run', ['marker', 'advance', '--to', T, '--run'], /--run requires a value/],
+  ['a leading-dash --run', ['marker', 'advance', '--to', T, '--run', '-x'], /--run requires a value/],
+  ['--run init', ['marker', 'advance', '--to', T, '--run', 'init'], /--run must match .* never "init"/],
+  ['a --run over 128 characters', ['marker', 'advance', '--to', T, '--run', 'r'.repeat(129)], /--run must match/],
+  ['--run with a space', ['marker', 'advance', '--to', T, '--run', 'a b'], /--run must match/],
+  ['--force without --reason', ['marker', 'reset', '--to', T, '--run', 'r1', '--force'], /--force requires --reason/],
+  ['--reason without --force', ['marker', 'reset', '--to', T, '--run', 'r1', '--reason', REASON], /--reason is only valid with --force/],
+  // These reasons fit the commit-message budget, so only the reason rule itself can refuse them.
+  ['a --reason with #', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', 'fix #12'], /--reason must match/],
+  ['a --reason with a newline', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', 'one\ntwo'], /--reason must match/],
+  ['a --reason over 200 characters', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', 'x'.repeat(201)], /--reason must match/],
+  ['a --reason that is another flag', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', '--force'], /--reason requires a value/],
+  ['a --reason with a leading dash (ruling R19)', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', '-x'], /--reason requires a value/],
+  ['a --reason of -h is a refused value, not help', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', '-h'], /--reason requires a value/],
+  ['a --run of -h is a refused value, not help', ['marker', 'advance', '--to', T, '--run', '-h'], /--run requires a value/],
+  ['a --repo of --help is a refused value, not help', ['marker', 'read', '--repo', '--help'], /--repo requires a value/],
+  ['a trailing --reason', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason'], /--reason requires a value/],
+  ['an invalid --branch', ['marker', 'advance', '--to', T, '--run', 'r1', '--branch', 'a..b'], /is not a valid branch name/],
+  ['a leading-dash --branch', ['marker', 'advance', '--to', T, '--run', 'r1', '--branch', '-x'], /--branch requires a value/],
+  ['--marker-json with --repo (advance)', ['marker', 'advance', '--to', T, '--run', 'r1', '--marker-json', 'x', '--repo', 'o/r'], /--marker-json and --repo are mutually exclusive/],
+  ['--marker-json with --repo (read)', ['marker', 'read', '--marker-json', 'x', '--repo', 'o/r'], /--marker-json and --repo are mutually exclusive/],
+  ['--emit with --repo', ['marker', 'init', '--to', T, '--emit', '--repo', 'o/r'], /--emit and --repo are mutually exclusive/],
+  ['--emit on advance', ['marker', 'advance', '--to', T, '--run', 'r1', '--emit'], /--emit is not valid for marker advance/],
+  ['--marker-json on init', ['marker', 'init', '--to', T, '--marker-json', 'x'], /--marker-json is not valid for marker init/],
+  ['--run on init', ['marker', 'init', '--to', T, '--run', 'r1'], /--run is not valid for marker init/],
+  ['--force on advance', ['marker', 'advance', '--to', T, '--run', 'r1', '--force'], /--force is not valid for marker advance/],
+  ['--to on read', ['marker', 'read', '--to', T], /--to is not valid for marker read/],
+  ['an unknown flag', ['marker', 'read', '--frobnicate'], /unknown argument: --frobnicate/],
+  ['a repeated flag', ['marker', 'advance', '--to', T, '--to', T, '--run', 'r1'], /--to given more than once/],
+  ['a trailing --repo', ['marker', 'read', '--repo'], /--repo requires a value/],
+  ['an empty --marker-json', ['marker', 'read', '--marker-json', ''], /--marker-json requires a value/],
   // The reset commit message must fit the store's 200-character rule (ruling R1): a valid run id
   // and a valid reason can still overflow it together.
-  ['a reset whose --run and --reason overflow the commit-message budget', ['marker', 'reset', '--to', T, '--run', 'r'.repeat(128), '--force', '--reason', 'x'.repeat(200)]],
-  ['an unforced reset whose --run alone overflows the budget', ['marker', 'reset', '--to', T, '--run', 'r'.repeat(128)]],
+  ['a reset whose --run and --reason overflow the commit-message budget', ['marker', 'reset', '--to', T, '--run', 'r'.repeat(128), '--force', '--reason', 'x'.repeat(200)], /200-character commit-message budget/],
+  ['an unforced reset whose --run alone overflows the budget', ['marker', 'reset', '--to', T, '--run', 'r'.repeat(128)], /200-character commit-message budget/],
 ];
-for (const [label, argv] of USAGE_CASES) {
+for (const [label, argv, expected] of USAGE_CASES) {
   test(`usage: ${label} -> exit 2, zero gh, git, origin and file calls`, () => {
     const h = harness();
     const r = call(argv, h);
     assert.equal(r.code, 2);
     assert.equal(r.stdout, '');
     assert.match(r.stderr, /^release-state\.js: /);
+    assert.match(r.stderr.split('\n')[0], expected);
     assert.ok(r.stderr.endsWith(USAGE), 'the usage follows the reason');
     silent(h);
   });
