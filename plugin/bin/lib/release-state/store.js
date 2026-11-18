@@ -30,9 +30,10 @@
 // The two are never interchangeable and a lease is never carried across transports.
 //
 // Mirrors claim-store.js's readClaimBlob / readClaimBlobContentsApi (parameterized on a
-// file name) and claims-git-cas.js's readClaimBlobGit / bootstrapClaimsBranchGit; if
-// either changes, check the other. The branch-creating contents-API leg is not a mirror:
-// it is claim-store.js's `createBranchContentsApi`, shared with the claims bootstrap.
+// file name) and claims-git-cas.js's readClaimBlobGit; if either changes, check the other.
+// The branch bootstrap is not a mirror: both its legs are the claims bootstrap's own,
+// claims-git-cas.js's `bootstrapClaimsBranchGit` and claim-store.js's
+// `createBranchContentsApi`, each called with this branch.
 'use strict';
 
 const fs = require('node:fs');
@@ -41,7 +42,7 @@ const path = require('node:path');
 const {
   refusalText, createBranchContentsApi, casBackoffMs, defaultSleep, isWellFormedClaimContent,
 } = require('../issues/claim-store');
-const { classifyGitError, errText } = require('../issues/claims-git-cas');
+const { classifyGitError, errText, bootstrapClaimsBranchGit } = require('../issues/claims-git-cas');
 
 const RELEASE_STATE_BRANCH = 'release-state';
 const STATE_FILE_RE = /^[a-z0-9][a-z0-9-]*\.json$/;
@@ -220,35 +221,26 @@ function readStateFile(deps, slug, name) {
 
 // ---- branch bootstrap ----
 
-// The contents-API leg is claim-store.js's `createBranchContentsApi`, shared with the
-// claims bootstrap (the transient-vs-refusal rule lives there). The git leg below is
-// this store's own: it differs by `--no-verify`.
-//
-// Mirrors claims-git-cas.js's bootstrapClaimsBranchGit: creates the branch at the remote
-// HEAD's tip, never an orphan commit. The push is create-only (an empty
+// Both legs are shared with the claims bootstrap. The contents-API leg is claim-store.js's
+// `createBranchContentsApi` (the transient-vs-refusal rule lives there); the git leg is
+// claims-git-cas.js's bootstrapClaimsBranchGit, which creates the branch at the remote
+// HEAD's tip, never an orphan commit, with a create-only push (an empty
 // `--force-with-lease=ref:` expectation means the ref must not exist) so a concurrent
-// bootstrapper loses cleanly; `--no-verify` because the branch carries no code and a
-// consumer's pre-push suite must not run for it. A rejected create is a lost race only
-// when ls-remote shows the branch now exists.
+// bootstrapper loses cleanly; a rejected create is a lost race only when ls-remote shows the
+// branch now exists. This store's options: the fetch passes `--no-tags` and
+// `--no-write-fetch-head` (readStateGit's reasons), the push `--no-verify` (the branch
+// carries no code and a consumer's pre-push suite must not run for it), and the scratch ref
+// sits under this store's prefix. -> { ok: true, created } | { ok: false, reason }.
 function bootstrapBranchGit(runner) {
-  const ref = scratchRef();
-  const target = `refs/heads/${RELEASE_STATE_BRANCH}`;
-  try {
-    runner(['fetch', '-q', '--no-tags', '--no-write-fetch-head', 'origin', `HEAD:${ref}`]);
-    const base = runner(['rev-parse', ref]).trim();
-    runner(['push', '--no-verify', 'origin', `${base}:${target}`, `--force-with-lease=${target}:`]);
-    return { ok: true, created: true };
-  } catch (err) {
-    if (classifyGitError(err).kind === 'contested') {
-      try {
-        const listed = runner(['ls-remote', '--heads', 'origin', target]);
-        if (String(listed).trim()) return { ok: true, created: false };
-      } catch { /* an unreadable remote leaves the original rejection as the reason */ }
-    }
-    return { ok: false, reason: errText(err) };
-  } finally {
-    try { runner(['update-ref', '-d', ref]); } catch { /* best-effort cleanup, never masks the bootstrap's own outcome */ }
-  }
+  const g = bootstrapClaimsBranchGit({
+    remote: 'origin',
+    branch: RELEASE_STATE_BRANCH,
+    runner,
+    fetchFlags: ['--no-tags', '--no-write-fetch-head'],
+    pushFlags: ['--no-verify'],
+    scratchRefPrefix: SCRATCH_REF_PREFIX,
+  });
+  return g.ok ? { ok: true, created: g.created } : { ok: false, reason: g.reason };
 }
 
 // (deps: {ghApi, gitRunner?}, slug)
