@@ -356,6 +356,77 @@ test('usage: the longest reset that fits is accepted and reaches the store', () 
   assert.equal(h.world.puts[0].message.length, 200);
 });
 
+// ---- --reason-file: a forced reset's free-text reason, read from a file so no shell expands it ----
+
+const REASON_PATH = `/work${path.sep}reason.txt`;
+const FORCED_FILE = ['marker', 'reset', '--to', LINE[3], '--run', 'r9', '--force', '--reason-file', 'reason.txt'];
+// A harness whose readFile serves `text` (or throws, for null) and records each path it was asked for.
+function reasonFileHarness(text) {
+  const h = harness({ world: ON_LINE() });
+  h.deps.readFile = (p) => {
+    h.calls.readFile.push(p);
+    if (text === null) throw Object.assign(new Error(`EACCES: permission denied, open '${p}'`), { code: 'EACCES' });
+    return text;
+  };
+  return h;
+}
+
+test('--reason-file: $(…), a backtick and " in the reason reach the commit message verbatim', () => {
+  const reason = 'rewound by `id` and $(touch x) — "quoted" $HOME';
+  const h = reasonFileHarness(`${reason}\n`);
+  const r = call(FORCED_FILE, h);
+  assert.deepEqual([r.code, r.stderr], [0, '']);
+  assert.equal(r.stdout, `{"reset":true,"from":"${LINE[1]}","to":"${LINE[3]}","basis":"forced"}\n`);
+  assert.deepEqual(h.calls.readFile, [REASON_PATH], 'read relative to the cwd');
+  assert.equal(h.world.puts.length, 1);
+  assert.equal(h.world.puts[0].message, `Reset reviewed-through from ${short12(LINE[1])} to ${short12(LINE[3])} — run r9 — forced: ${reason}`);
+});
+
+test('--reason-file: exactly one trailing CRLF is stripped', () => {
+  const h = reasonFileHarness('history rewritten by hand\r\n');
+  assert.equal(call(FORCED_FILE, h).code, 0);
+  assert.ok(h.world.puts[0].message.endsWith('— forced: history rewritten by hand'), h.world.puts[0].message);
+});
+
+const REASON_FILE_REFUSALS = [
+  ['an unreadable file', null, FORCED_FILE, /could not read --reason-file reason\.txt \(EACCES/],
+  ['a reason with #', 'fix #12\n', FORCED_FILE, /--reason-file reason\.txt must match/],
+  ['an interior newline', 'one\ntwo\n', FORCED_FILE, /--reason-file reason\.txt must match/],
+  ['two trailing newlines (only one is the file\'s)', 'one\n\n', FORCED_FILE, /--reason-file reason\.txt must match/],
+  ['a reason over 200 characters', `${'x'.repeat(201)}\n`, FORCED_FILE, /--reason-file reason\.txt must match/],
+  ['a reason that overflows the commit-message budget', `${'x'.repeat(200)}\n`, ['marker', 'reset', '--to', LINE[3], '--run', 'r'.repeat(128), '--force', '--reason-file', 'reason.txt'], /200-character commit-message budget — shorten --run or --reason-file reason\.txt/],
+  ['a blank file', '\n', FORCED_FILE, /--reason-file reason\.txt must hold a reason that is not blank/],
+  ['a reason with a leading dash', '-x\n', FORCED_FILE, /--reason-file reason\.txt must hold a reason .* does not start with "-"/],
+];
+for (const [label, text, argv, expected] of REASON_FILE_REFUSALS) {
+  test(`--reason-file: ${label} -> exit 2, the usage, no write and zero gh, git or origin calls`, () => {
+    const h = reasonFileHarness(text);
+    const r = call(argv, h);
+    assert.equal(r.code, 2);
+    assert.equal(r.stdout, '');
+    assert.match(r.stderr.split('\n')[0], expected);
+    assert.ok(r.stderr.endsWith(USAGE), 'the usage follows the reason');
+    assert.deepEqual(h.calls.readFile, [REASON_PATH]);
+    assert.deepEqual([h.calls.gh, h.calls.git, h.calls.remote, h.world.puts], [[], [], 0, []]);
+  });
+}
+
+const REASON_FILE_ARGV_REFUSALS = [
+  ['--reason with --reason-file', [...FORCED_FILE, '--reason', REASON], /--reason and --reason-file are mutually exclusive/],
+  ['--reason-file without --force', ['marker', 'reset', '--to', LINE[3], '--run', 'r9', '--reason-file', 'reason.txt'], /--reason-file is only valid with --force/],
+  ['--reason-file on advance', ['marker', 'advance', '--to', LINE[3], '--run', 'r9', '--reason-file', 'reason.txt'], /--reason-file is not valid for marker advance/],
+];
+for (const [label, argv, expected] of REASON_FILE_ARGV_REFUSALS) {
+  test(`usage: ${label} -> exit 2 before the file is read`, () => {
+    const h = reasonFileHarness('history rewritten by hand\n');
+    const r = call(argv, h);
+    assert.equal(r.code, 2);
+    assert.match(r.stderr.split('\n')[0], expected);
+    assert.ok(r.stderr.endsWith(USAGE), 'the usage follows the reason');
+    silent(h);
+  });
+}
+
 test('--help anywhere prints the usage on stdout and exits 0 with no call', () => {
   const h = harness();
   const r = call(['marker', 'advance', '--help'], h);

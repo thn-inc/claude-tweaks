@@ -68,7 +68,7 @@ exit codes are a frozen contract; change them only by expand-contract.
 node "${CLAUDE_PLUGIN_ROOT}/bin/release-state.js" marker read [--repo [host/]owner/name | --marker-json <path>]
 node "${CLAUDE_PLUGIN_ROOT}/bin/release-state.js" marker advance --to <sha> --run <id> [--branch <name>] [--repo [host/]owner/name | --marker-json <path> [--after-conflict]]
 node "${CLAUDE_PLUGIN_ROOT}/bin/release-state.js" marker init --to <sha> [--branch <name>] [--repo [host/]owner/name | --emit]
-node "${CLAUDE_PLUGIN_ROOT}/bin/release-state.js" marker reset --to <sha> --run <id> [--force --reason <text>] [--branch <name>] [--repo [host/]owner/name | --marker-json <path>]
+node "${CLAUDE_PLUGIN_ROOT}/bin/release-state.js" marker reset --to <sha> --run <id> [--force (--reason <text> | --reason-file <path>)] [--branch <name>] [--repo [host/]owner/name | --marker-json <path>]
 ```
 
 The repo is `--repo`, else the origin. The local clone serves history only when its origin is
@@ -118,7 +118,9 @@ same repository.
    branch succeeds (the branch is missing). Any other failure on any read is `{failure}`. Any
    other file shape exits 3.
 2. Run `node "${CLAUDE_PLUGIN_ROOT}/bin/release-state.js" marker advance --to {sha} --run {id} --marker-json "{tmp-marker-json}"`
-   from that checkout, and route on its exit code.
+   from that checkout, and route on its exit code. Before either goes on the line, check that
+   `{sha}` is 40 lowercase hex and `{id}` matches `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`; both
+   grammars are shell-inert, and a value that fails its check is not run.
 3. On exit 0 with `write`, call `create_or_update_file` with `branch`, `path`, `content`,
    `message` and `sha` (omitted when null): the conditional-write pattern in that same file.
 4. On a sha-mismatch or exists rejection, re-read (step 1) and re-run step 2 with `--after-conflict`
@@ -146,9 +148,14 @@ clone (`git fetch --unshallow origin`) or upgrade git, then re-run.
 ## Recovery: an orphaned or malformed marker
 
 - Orphaned (exit 6): `marker reset --to {sha} --run {id}`. It succeeds only for an orphaned
-  marker (basis `orphaned`).
-- Any other marker, a malformed one included: add `--force --reason "{text}"` (basis `forced`).
-  A reason is one line of at most 200 characters with no `#`, and the composed commit message
-  must fit the same budget, else exit 2.
+  marker (basis `orphaned`). `{sha}` is 40 lowercase hex and `{id}` matches
+  `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`; check both before they go on the line (both grammars are
+  shell-inert), and do not run a command whose value fails its check.
+- Any other marker, a malformed one included: a forced reset (basis `forced`). The reason is free
+  text, so it never goes on the command line: with the Write tool, write it to the path
+  `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value release-state-reset-reason.txt`
+  prints, then add `--force --reason-file "{that path}"`. Never pass `--reason "…"` from skill
+  prose: double quotes still expand `$(…)` and backticks. A reason is one line of at most 200
+  characters with no `#`, and the composed commit message must fit the same budget, else exit 2.
 - The reset is logged in the `release-state` commit message (`forced: {reason}` when forced).
 - The target must be on the first-parent line; one write, and a lost one is contested.

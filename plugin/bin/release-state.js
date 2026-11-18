@@ -8,8 +8,12 @@
 // usage: release-state.js marker read [--repo [host/]owner/name | --marker-json <path>]
 //        release-state.js marker advance --to <sha> --run <id> [--branch <name>] [--repo [host/]owner/name | --marker-json <path> [--after-conflict]]
 //        release-state.js marker init --to <sha> [--branch <name>] [--repo [host/]owner/name | --emit]
-//        release-state.js marker reset --to <sha> --run <id> [--force --reason <text>] [--branch <name>] [--repo [host/]owner/name | --marker-json <path>]
+//        release-state.js marker reset --to <sha> --run <id> [--force (--reason <text> | --reason-file <path>)] [--branch <name>] [--repo [host/]owner/name | --marker-json <path>]
 //        release-state.js [--help]
+//
+//   --reason-file <path> reads a forced reset's reason from a file (relative to the cwd; one
+//   trailing line break is the file's), so a skill passes free text no shell ever expands. The
+//   text meets every rule --reason does; an unreadable file or invalid text is exit 2.
 //
 //   Exit 0 ok, 1 refused, 2 usage, 3 unreadable, 4 contested, 5 insufficient-history, 6 orphaned.
 //   Exit 3 also covers a write that failed for a non-contest reason (a refused push or contents-API
@@ -79,7 +83,7 @@ const OUTCOME_EXIT = Object.freeze({
 const USAGE = `usage: ${NAME} marker read [--repo [host/]owner/name | --marker-json <path>]\n`
   + `       ${NAME} marker advance --to <sha> --run <id> [--branch <name>] [--repo [host/]owner/name | --marker-json <path> [--after-conflict]]\n`
   + `       ${NAME} marker init --to <sha> [--branch <name>] [--repo [host/]owner/name | --emit]\n`
-  + `       ${NAME} marker reset --to <sha> --run <id> [--force --reason <text>] [--branch <name>] [--repo [host/]owner/name | --marker-json <path>]\n`
+  + `       ${NAME} marker reset --to <sha> --run <id> [--force (--reason <text> | --reason-file <path>)] [--branch <name>] [--repo [host/]owner/name | --marker-json <path>]\n`
   + `       ${NAME} [--help]\n`
   + `  exit ${EXIT.OK} ok: one JSON line on stdout (a --marker-json or --emit write prints its write descriptor); --help prints this usage text instead\n`
   + `  exit ${EXIT.REFUSED} refused: the move is not allowed (no marker, a target off the first-parent line or behind the marker, a marker already exists)\n`
@@ -94,17 +98,26 @@ const BUDGET_NOTE = 'the 200-character commit-message budget';
 
 // The value-taking flags and the boolean ones, then which each verb accepts.
 const VALUE_FLAGS = Object.freeze({
-  '--to': 'to', '--run': 'run', '--branch': 'branch', '--repo': 'repo', '--marker-json': 'markerJson', '--reason': 'reason',
+  '--to': 'to', '--run': 'run', '--branch': 'branch', '--repo': 'repo', '--marker-json': 'markerJson', '--reason': 'reason', '--reason-file': 'reasonFile',
 });
 const BOOLEAN_FLAGS = Object.freeze({ '--force': 'force', '--emit': 'emit', '--after-conflict': 'afterConflict' });
 const VERB_FLAGS = Object.freeze({
   read: ['--repo', '--marker-json'],
   advance: ['--to', '--run', '--branch', '--repo', '--marker-json', '--after-conflict'],
   init: ['--to', '--branch', '--repo', '--emit'],
-  reset: ['--to', '--run', '--force', '--reason', '--branch', '--repo', '--marker-json'],
+  reset: ['--to', '--run', '--force', '--reason', '--reason-file', '--branch', '--repo', '--marker-json'],
 });
 const messageOf = (err) => (err && err.message ? err.message : String(err));
 const oneLine = (text) => String(text || '').split(/[\r\n]+/).map((s) => s.trim()).filter(Boolean).join('; ');
+
+// A reset's reason rule and its composed commit message's budget -> an error text, or null.
+// `source` names where the reason came from (`--reason`, or `--reason-file <path>`).
+function resetReasonError({ run, force, reason }, source) {
+  if (force && !REASON_RE.test(reason)) return `${source} must match ${REASON_RE} (one line of at most 200 characters, no "#")`;
+  const fit = resetMessageFits({ run, force: Boolean(force), reason });
+  if (!fit.fits) return `the reset commit message would be ${fit.length} characters, over ${BUDGET_NOTE} — shorten --run or ${source}`;
+  return null;
+}
 
 // -> { help: true } | { error } | the parsed options. Pure: it reads nothing and calls nothing,
 // so every usage failure here costs no gh or git call.
@@ -147,11 +160,13 @@ function parseArgs(argv) {
   }
   if (out.branch !== undefined && !isValidBranchName(out.branch)) return { error: `--branch ${JSON.stringify(out.branch)} is not a valid branch name` };
   if (verb === 'reset') {
-    if (out.force && out.reason === undefined) return { error: '--force requires --reason' };
+    if (out.reason !== undefined && out.reasonFile !== undefined) return { error: '--reason and --reason-file are mutually exclusive' };
+    if (out.force && out.reason === undefined && out.reasonFile === undefined) return { error: '--force requires --reason or --reason-file' };
     if (!out.force && out.reason !== undefined) return { error: '--reason is only valid with --force' };
-    if (out.force && !REASON_RE.test(out.reason)) return { error: `--reason must match ${REASON_RE} (one line of at most 200 characters, no "#")` };
-    const fit = resetMessageFits({ run: out.run, force: Boolean(out.force), reason: out.reason });
-    if (!fit.fits) return { error: `the reset commit message would be ${fit.length} characters, over ${BUDGET_NOTE} — shorten --run or --reason` };
+    if (!out.force && out.reasonFile !== undefined) return { error: '--reason-file is only valid with --force' };
+    // --reason-file is read and validated in run(), where deps can read it.
+    const invalid = out.reasonFile === undefined && resetReasonError(out, '--reason');
+    if (invalid) return { error: invalid };
   }
   return { ...out, branch: out.branch === undefined ? 'main' : out.branch };
 }
@@ -437,8 +452,26 @@ function runEmit(opts, deps) {
   return runVerb(opts, deps, ctx, captured, {});
 }
 
+// The reason text from --reason-file: a skill writes the operator's free text to a file so no
+// shell ever expands it (docs/skill-authoring.md's "Untrusted text into a shell or paste command").
+// One trailing line break is the file's, not the reason's; the rest meets every rule --reason
+// meets, the argv guard (not blank, no leading `-`) included. -> { reason } | { error }.
+function readReasonFile(opts, deps) {
+  const source = `--reason-file ${opts.reasonFile}`;
+  let text;
+  try {
+    text = String(deps.readFile(resolveAgainst(deps.cwd(), opts.reasonFile)));
+  } catch (err) {
+    return { error: `could not read ${source} (${messageOf(err)})` };
+  }
+  const reason = text.replace(/\r?\n$/, '');
+  if (!reason.trim() || reason.startsWith('-')) return { error: `${source} must hold a reason that is not blank and does not start with "-"` };
+  const invalid = resetReasonError({ ...opts, reason }, source);
+  return invalid ? { error: invalid } : { reason };
+}
+
 function run(argv, deps) {
-  const opts = parseArgs(argv);
+  let opts = parseArgs(argv);
   if (opts.help) { deps.stdout(USAGE); return EXIT.OK; }
   if (opts.error) { deps.stderr(`${NAME}: ${opts.error}\n${USAGE}`); return EXIT.USAGE; }
   // Read the working directory once, inside a try: process.cwd() throws when it was deleted, and
@@ -450,6 +483,11 @@ function run(argv, deps) {
     return failure(deps, 'unreadable', `working directory unavailable (${messageOf(err)})`);
   }
   const pinned = { ...deps, cwd: () => cwd };
+  if (opts.reasonFile !== undefined) {
+    const read = readReasonFile(opts, pinned);
+    if (read.error) { deps.stderr(`${NAME}: ${read.error}\n${USAGE}`); return EXIT.USAGE; }
+    opts = { ...opts, reason: read.reason };
+  }
   return opts.markerJson !== undefined || opts.emit ? runEmit(opts, pinned) : runGh(opts, pinned);
 }
 
