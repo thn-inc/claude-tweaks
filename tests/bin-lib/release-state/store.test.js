@@ -755,7 +755,7 @@ test('writeStateFile: contents-API 409/422 settle by re-read', () => {
     assert.deepEqual(writeStateFile({ ghApi: self.ghApi }, 'o/r', FILE, args), { ok: true, via: 'contents-api' }, `${status} self-write`);
 
     const other = fakeGh({ [PUT]: rejected(status), [CONTENTS_PATH]: contentsAnswer(OTHER, lease) });
-    assert.deepEqual(writeStateFile({ ghApi: other.ghApi }, 'o/r', FILE, args), { ok: false, conflict: true }, `${status} other content`);
+    assert.deepEqual(writeStateFile({ ghApi: other.ghApi, sleep: () => {} }, 'o/r', FILE, args), { ok: false, conflict: true }, `${status} other content`);
 
     const denied = fakeGh({ [PUT]: rejected(status), [CONTENTS_PATH]: failed('permission-denied', 403) });
     const d = writeStateFile({ ghApi: denied.ghApi }, 'o/r', FILE, args);
@@ -914,6 +914,25 @@ test('writeStateFile: a contents-API 409 whose re-read is unchanged retries the 
   assert.equal(sleeps.length, 1);
   const sent = gh.calls.filter((args) => args[0] === '--method' && args[1] === 'PUT');
   assert.deepEqual(sent, [putArgs(NEW, BLOB), putArgs(NEW, fresh)]);
+});
+
+test('writeStateFile: a contents-API rejection whose re-read shows other content is a conflict with one PUT and no retry', () => {
+  // The PUT would succeed on a second try (with the competitor's blob sha as the lease), so a
+  // retry here would silently overwrite the competitor: the lost update the lease prevents.
+  for (const status of [409, 422]) {
+    let puts = 0;
+    const gh = fakeGh({
+      [PUT]: () => { puts += 1; return puts === 1 ? rejected(status) : ok(''); },
+      [CONTENTS_PATH]: contentsAnswer(OTHER, 'c'.repeat(40)),
+    });
+    const sleeps = [];
+    const r = writeStateFile({ ghApi: gh.ghApi, sleep: (ms) => sleeps.push(ms) }, 'o/r', FILE, {
+      content: NEW, lease: BLOB, via: 'contents-api', expectedContent: OLD, message: MSG,
+    });
+    assert.deepEqual(r, { ok: false, conflict: true }, String(status));
+    assert.equal(puts, 1, `${status}: exactly one PUT`);
+    assert.equal(sleeps.length, 0, `${status}: no backoff`);
+  }
 });
 
 test('writeStateFile: a contents-API rejection that stays unchanged is a conflict after MAX_CAS_ATTEMPTS PUTs', () => {

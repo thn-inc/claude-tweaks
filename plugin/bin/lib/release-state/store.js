@@ -402,8 +402,9 @@ function writeContents(deps, slug, name, {
 //   * With no `gitRunner` a git lease has no leg to run on, and takes the fresh-read path.
 //
 // Deliberate differences from writeClaimBlob: the file is the caller's, not a per-issue path;
-// the message is validated (see MESSAGE_RE); the lease is required; `branchMissing` and
-// `reason` are named in the result.
+// the message is validated (see MESSAGE_RE); the lease and `expectedContent` are required (a
+// missing one is a TypeError, never a contest); `branchMissing` and `reason` are named in the
+// result.
 function writeStateFile(deps, slug, name, {
   content, lease, via, expectedContent, message,
 } = {}) {
