@@ -34,7 +34,7 @@
 // input — a failed `gh run list` is 2 (unreadable input), as is gh output that
 // is not a JSON array of objects or a completed run with an unparseable
 // timestamp, never a ciWallMs of null; 3 the run dir is missing or not anchored
-// under the main checkout (e.g. a worktree-local shadow — _shared/pipeline-run-dir.md's
+// under the main checkout (e.g. a worktree-local shadow, or a directory outside pipelines/ — _shared/pipeline-run-dir.md's
 // Anchoring section, [IL-127]), or the write did not land. No exit 1. The
 // gh-failure overload of 2 is deliberate: Step 2.5 logs a SKIP on any non-zero
 // exit; a caller that retries a remote failure would reopen it.
@@ -157,7 +157,7 @@ function run(argv, deps = realDeps) {
   }
   if (!target.ok) {
     if (target.reason === 'missing') return fail(3, `run dir does not exist: ${o.run}`);
-    return fail(3, `run dir is not anchored under the main checkout's .claude-tweaks/pipelines (e.g. a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
+    return fail(3, `run dir is not anchored under the main checkout's .claude-tweaks/pipelines (e.g. a worktree-local shadow, or a directory outside pipelines/): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
   }
 
   const ghArgs = ['run', 'list', '--commit', o.headSha, '--limit', '100', '--json', RUN_LIST_FIELDS, ...(o.repo ? ['--repo', o.repo] : [])];

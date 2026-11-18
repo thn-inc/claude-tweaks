@@ -55,7 +55,7 @@
 //        in the working tree (still committable on the run branch), or the patch file that holds it
 //      2 malformed invocation, an unreadable --summary-file, a capture --target that is not a file under
 //        .claude/skills/ (any other file is its own row's to commit or stage), or a --run that is
-//        missing, not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow), or not a directory —
+//        missing, not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/), or not a directory —
 //        nothing was changed
 // The codes follow the Combined-2 vocabulary (.claude/skills/gh-api-module-pattern's CLI wrapper
 // contract): 0 ok, 1 an operation failure, 2 a call to fix. --run is anchored strictly through
@@ -142,7 +142,7 @@ function run(argv, overrides = {}) {
   if (!target.ok) {
     return usageError(target.reason === 'missing'
       ? `--run dir does not exist or is not a directory: ${o.run}`
-      : `--run ${o.run} is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or outside every checkout) — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
+      : `--run ${o.run} is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/, or outside every checkout) — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
   }
 
   if (o.verb !== 'capture') return runDelivery(o, target, deps, usageError);

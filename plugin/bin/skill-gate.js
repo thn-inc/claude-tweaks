@@ -18,7 +18,7 @@
 //
 // Exit codes: 0 either decision; 2 malformed invocation (usage on stderr);
 // 3 --run names a directory that is missing or not anchored under the main
-// checkout (a worktree-local shadow -- _shared/pipeline-run-dir.md, [IL-127]);
+// checkout (a worktree-local shadow, or a directory outside pipelines/ -- _shared/pipeline-run-dir.md, [IL-127]);
 // nothing is written.
 'use strict';
 
@@ -161,7 +161,7 @@ function run(argv, deps = realDeps) {
     }
     if (!target.ok) {
       if (target.reason === 'missing') deps.stderr(`skill-gate.js: run dir does not exist: ${o.run}\n`);
-      else deps.stderr(`skill-gate.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+      else deps.stderr(`skill-gate.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
       return 3;
     }
   }

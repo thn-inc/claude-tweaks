@@ -206,7 +206,7 @@ function anchoredDecisions(deps, runDir) {
   try { target = resolveTarget({ runDir, cwd: deps.cwd(), mainRoot: deps.mainRoot }); } catch (err) { throw new AnchorError(String(err && err.message)); }
   if (target.ok) return target.file;
   if (target.reason === 'missing') throw new AnchorError(`run dir does not exist: ${runDir}`);
-  throw new AnchorError(`run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow): ${runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section`);
+  throw new AnchorError(`run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section`);
 }
 
 function readDecisions(deps, file) {

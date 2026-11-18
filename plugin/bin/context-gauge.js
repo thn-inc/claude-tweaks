@@ -64,7 +64,7 @@
 //        invalid --record-steps value, --record-steps beside --next-steps,
 //        --keep-going or --no-stories without --record-steps, or a --run that
 //        is missing, not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local
-//        shadow, or outside every checkout — [IL-127]), or whose basename is
+//        shadow, or a directory outside pipelines/, or outside every checkout — [IL-127]), or whose basename is
 //        not a run id. Nothing is written.
 // --run is anchored strictly through lib/stage-item/write.js's resolveTarget
 // (deps-injected, mainRoot injectable): handoff.json is a run-dir write, and
@@ -297,7 +297,7 @@ async function run(argv, overrides = {}) {
   if (!target.ok) {
     return usageError(target.reason === 'missing'
       ? `--run dir does not exist or is not a directory: ${o.run}`
-      : `--run ${o.run} is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or outside every checkout) — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
+      : `--run ${o.run} is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/, or outside every checkout) — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
   }
   const runDir = target.dir;
   const runId = path.basename(runDir);

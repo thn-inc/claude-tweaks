@@ -21,7 +21,7 @@
 // Status is data: exit 0 for written, no-op, no-pr and gh-absent.
 // 2 malformed invocation, or an unreadable --summary-file.
 // 3 run dir missing or not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local
-//   shadow -- _shared/pipeline-run-dir.md, [IL-127]).
+//   shadow, or a directory outside pipelines/ -- _shared/pipeline-run-dir.md, [IL-127]).
 // 4 run-marker mismatch: the PR body's first line names a different run (or
 //   none) -- refused, nothing written to the PR. The CLI logs the refusal
 //   (`refused on PR #{n} — run marker mismatch (body names run {found|none},
@@ -121,7 +121,7 @@ function run(argv, overrides = {}) {
   const target = resolveTarget({ runDir: o.run, cwd: deps.cwd(), mainRoot: deps.mainRoot });
   if (!target.ok) {
     if (target.reason === 'missing') deps.stderr(`pr-checklist.js: run dir does not exist: ${o.run}\n`);
-    else deps.stderr(`pr-checklist.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+    else deps.stderr(`pr-checklist.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
     return 3;
   }
 

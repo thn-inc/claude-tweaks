@@ -287,7 +287,7 @@ Same resolution order as every other lever, implemented by `resolveCeiling`:
 1. Explicit CLI arg
 2. `config.yml` (this run's Manifesto answer)
 3. `.claude-tweaks/policy.yml` project default
-4. `control-mode: on` (run config or `policy.yml`) → `unattended`
+4. `control-mode: on` (`policy.yml` only — `control-mode` is `policyOnly`, a run's `config.yml` is not read for it) → `unattended`
 5. Skill default: `supervised`
 
 An unrecognized value at any level is **skipped, not honored and not thrown on** — resolution

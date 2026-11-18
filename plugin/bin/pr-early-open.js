@@ -42,7 +42,7 @@
 //        stale recorded PR (Resume found it closed or gone) is cleared to
 //        `pr: null` on a degrade, so nothing reads the closed PR as live.
 //      2 malformed invocation; a --run that is missing, not anchored under the
-//        main checkout (a worktree-local shadow, or outside every checkout), or
+//        main checkout (a worktree-local shadow, or a directory outside pipelines/, or outside every checkout), or
 //        whose basename is not a run id; an unreadable --summary-file; an
 //        integration-branch value holding whitespace; or gh absent — take the
 //        MCP path in pr-early-run-lifecycle.md's "gh absent" row.
@@ -162,7 +162,7 @@ async function run(argv, overrides = {}) {
   if (!target.ok) {
     return usageError(target.reason === 'missing'
       ? `--run dir does not exist or is not a directory: ${o.run}`
-      : `--run ${o.run} is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or outside every checkout) — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
+      : `--run ${o.run} is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/, or outside every checkout) — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
   }
   const runDir = target.dir;
   const runId = path.basename(runDir);

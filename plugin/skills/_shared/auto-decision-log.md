@@ -204,7 +204,7 @@ For the very first entry of a pipeline run, `/flow` (or the first standalone ski
 per the Entry schema above; when `--section` is passed, the entry is placed under the `## /{skill}`
 heading (creating it when absent), otherwise appended at EOF. It refuses to write with exit `3`
 when the run dir is missing, not anchored under `$RUN_ROOT` (`_shared/pipeline-run-dir.md`'s
-Anchoring section — i.e. a worktree-local shadow), or unwritable, so a worktree-local shadow is
+Anchoring section — i.e. a worktree-local shadow, or a directory outside pipelines/), or unwritable, so a worktree-local shadow is
 never written silently:
 
 ```bash

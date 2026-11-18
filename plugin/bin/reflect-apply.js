@@ -48,7 +48,7 @@
 // a gh reply with no issue number, whose error says the issue may exist — check before re-running); 2 malformed invocation
 // (a missing/unknown flag, a combination that does not fit, an item that is not an applicable reflect file —
 // the message lists the applicable names, an --applied that does not fit the file's destination); 3 the run dir
-// is missing or not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow — _shared/pipeline-run-dir.md's
+// is missing or not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/ — _shared/pipeline-run-dir.md's
 // Anchoring section, [IL-127]). This is the Sanctioned-writer vocabulary plus a 1 for per-item failures, which
 // a caller branches on to retry the failed items. The proposal body file given to gh and the emitted proposal
 // files are create-or-overwrite with no lock; the body file lives in a fresh os.tmpdir() directory that is
@@ -169,7 +169,7 @@ function run(argv, overrides = {}) {
   }
   if (!target.ok) {
     if (target.reason === 'missing') deps.stderr(`reflect-apply.js: run dir does not exist: ${o.run}\n`);
-    else deps.stderr(`reflect-apply.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+    else deps.stderr(`reflect-apply.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
     return 3;
   }
   const runDir = target.dir;

@@ -107,7 +107,7 @@ function snapshotTarget(o, deps) {
   let target;
   try { target = resolveTarget({ runDir: o.run, cwd: deps.cwd(), mainRoot: deps.mainRoot }); } catch (err) { return { anchor: (err && err.message) || String(err) }; }
   if (!target.ok) {
-    return { anchor: target.reason === 'missing' ? `run dir does not exist: ${o.run}` : `run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow): ${o.run}` };
+    return { anchor: target.reason === 'missing' ? `run dir does not exist: ${o.run}` : `run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${o.run}` };
   }
   return { file: path.join(target.dir, 'snapshots', `tidy-release-note-${o.ref}.original.md`), runDir: target.dir };
 }

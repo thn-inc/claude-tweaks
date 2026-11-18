@@ -39,7 +39,7 @@
 //        Nothing is written.
 //      2 malformed invocation (incl. --mode confirm|hybrid|interactive); a --run
 //        that is missing or not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-
-//        local shadow, or a dir outside every checkout — [IL-127]); a basename
+//        local shadow, or a directory outside pipelines/, or a dir outside every checkout — [IL-127]); a basename
 //        that is not a run id; or a decisions.md that already carries a
 //        snapshot header (a case-3 recovery). Nothing is written.
 //      1 a filesystem failure, or a lever that did not resolve. A config.yml
@@ -140,7 +140,7 @@ function run(argv, overrides = {}) {
   if (!target.ok) {
     return usageError(target.reason === 'missing'
       ? `--run dir does not exist or is not a directory: ${o.run}`
-      : `--run ${o.run} is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or outside every checkout) — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
+      : `--run ${o.run} is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/, or outside every checkout) — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
   }
   const runDir = target.dir;
 
