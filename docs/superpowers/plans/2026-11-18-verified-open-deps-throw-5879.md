@@ -33,6 +33,7 @@
 
 ### Task 1: Fail closed when the unresolved-deps read throws, in the module and the fence
 
+**Role:** judgment
 **Review risk:** high
 
 **Files:**
