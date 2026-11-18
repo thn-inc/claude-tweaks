@@ -463,13 +463,9 @@ flush_shipped_claims() {
   node -e "const s = (() => { try { const v = JSON.parse(process.argv[1]); return Array.isArray(v) ? v : []; } catch (e) { return []; } })(); if (s.length) console.error('AUTO — dispatch: shipped-candidate claim read failed for ' + s.join(', ') + '; release time unknown, no downgrade')" -- "${SHIPPED_UNREADABLE:-[]}"
 }
 
-# #1984: shipped-candidate classification after the #1224/#1983 exclusions.
-# #4314: a mention whose PR predates the record never counts. #4432: one merged before
-# the latest claim release rates weak at most (unreadable claim: no downgrade).
-#
-# First pass: title-only; only a non-predating `weak` is probed (5 `gh pr view` max).
+# #1984/#4314/#4432/#5722: first pass title-only; probes a `weak` not downgraded after the merge.
 SHIPPED_UNREADABLE=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_SHIPPED_PROBE_PRS" "$DISPATCH_SHIPPED_RELEASES" <<NODE_EVAL_EOF
-  const { classifyShipped, predatesClaimRelease } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
+  const { classifyShipped, downgradedAfterMerge } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
   const groups = require(process.argv[1]);
   const linkedPRs = require(process.argv[2]);
   const unreadable = [];
@@ -480,8 +476,8 @@ SHIPPED_UNREADABLE=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPAT
     const entry = linkedPRs[c.number];
     const mentions = (entry && entry.mentions) || [];
     if (mentions.length === 0) continue;
-    const result = classifyShipped(c, mentions, { lastReleasedAt: releases[c.number] });
-    if (result.tier === 'weak' && !predatesClaimRelease(result)) toProbe.push(result.pr);
+    const result = classifyShipped(c, mentions, { lastReleasedAt: releases[c.number], lastShapedAt: entry.lastShapedAt });
+    if (result.tier === 'weak' && !downgradedAfterMerge(result)) toProbe.push(result.pr);
   }
   require('fs').writeFileSync(process.argv[3], JSON.stringify([...new Set(toProbe)].slice(0, 5)));
 NODE_EVAL_EOF
@@ -493,11 +489,10 @@ for PR in $(node -e "console.log(require(process.argv[1]).join(' '))" -- "$DISPA
   node -e "console.log(JSON.stringify({pr: Number(process.argv[1]), files: JSON.parse(process.argv[2])}))" -- "$PR" "$FILES_JSON" >> "$DISPATCH_SHIPPED_PR_FILES"
 done
 
-# Second pass: `strong` is excluded, logged for a staged Close;
-# `weak` stays eligible (warns on a failed probe); `none` is silent.
+# #1984/#4314/#4432/#5722, second pass: `strong` is excluded for a staged Close; `weak` stays.
 if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_EXCLUSIONS" "$DISPATCH_SHIPPED_PR_FILES" "$DISPATCH_SHIPPED_RELEASES" > "${DISPATCH_GROUPS}.tmp" <<NODE_EVAL_EOF
   const fs = require('fs');
-  const { classifyShipped, predatesClaimRelease } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
+  const { classifyShipped, predatesClaimRelease, downgradedAfterMerge } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
   const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const groups = require(process.argv[1]);
   const linkedPRs = require(process.argv[2]);
@@ -511,7 +506,7 @@ if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPA
       const entry = linkedPRs[c.number];
       const mentions = (entry && entry.mentions) || [];
       if (mentions.length === 0) return true;
-      const result = classifyShipped(c, mentions, { prFiles, lastReleasedAt: releases[c.number] });
+      const result = classifyShipped(c, mentions, { prFiles, lastReleasedAt: releases[c.number], lastShapedAt: entry.lastShapedAt });
       if (result.tier === 'strong') {
         appendExclusion(process.argv[3], { reason: 'shipped', records: [c.number], detail: { pr: result.pr, signals: result.signals } });
         console.error('AUTO — dispatch: #' + c.number + ' excluded, shipped by merged PR #' + result.pr + ' (' + result.signals.join(', ') + ')');
@@ -520,8 +515,10 @@ if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPA
       if (result.tier === 'weak') {
         console.error('AUTO — dispatch: #' + c.number + (predatesClaimRelease(result)
           ? ' kept: merged PR #' + result.pr + ' predates claim release at ' + releases[c.number] + ' — remaining work assumed'
-          : ' mentioned by merged PR #' + result.pr + ' without a closing keyword; dispatching anyway'));
-        if (!predatesClaimRelease(result) && prFiles.get(result.pr) === null) console.error('Warning: gh pr view ' + result.pr + ' failed — #' + c.number + ' kept as a weak shipped candidate (files unprobed) this run');
+          : downgradedAfterMerge(result)
+            ? ' kept: merged PR #' + result.pr + ' predates ready/auto:build labeling at ' + entry.lastShapedAt + ' — remaining work assumed'
+            : ' mentioned by merged PR #' + result.pr + ' without a closing keyword; dispatching anyway'));
+        if (!downgradedAfterMerge(result) && prFiles.get(result.pr) === null) console.error('Warning: gh pr view ' + result.pr + ' failed — #' + c.number + ' kept as a weak shipped candidate (files unprobed) this run');
       }
       return true;
     }))

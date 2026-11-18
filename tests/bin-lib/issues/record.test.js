@@ -678,6 +678,12 @@ test('buildLinkedPRQuery also requests the cross-reference timeline, same-repo P
   assert.match(q, /\.\.\. on PullRequest \{ number title state createdAt merged mergedAt/);
 });
 
+test('#5722: buildLinkedPRQuery requests the aliased LABELED_EVENT timeline (last:100) with createdAt and label name', () => {
+  const q = buildLinkedPRQuery([5689]);
+  assert.match(q, /labelEvents:\s*timelineItems\(itemTypes:\[LABELED_EVENT\], last:100\)/);
+  assert.ok(q.includes('... on LabeledEvent { createdAt label { name } }'), q);
+});
+
 test('buildLinkedPRQuery returns null for an empty array', () => {
   assert.strictEqual(buildLinkedPRQuery([]), null);
 });

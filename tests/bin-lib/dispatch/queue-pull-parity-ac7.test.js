@@ -4,7 +4,7 @@
 // parity describe, each its own process); see queue-pull-helpers.js for the oracle/parity header and the
 // shared machinery.
 // Pool: runFaultPool(['files'], { d1: false }): the files fault rows and the files bases they read
-// (S1-files-miss, S2-files-miss, files-livedep), one pool for both describes. The gh fault rows run in
+// (S1-files-miss, S2-files-miss, files-livedep, files-opendeps), one pool for both describes. The gh fault rows run in
 // queue-pull-parity-ac4.test.js and D1 (and its test) in queue-pull-parity-d1.test.js. AC4.2 [files]
 // reads the gh rows' exits from FAULT_EXPECT (postureView), which queue-pull-parity-ac4's AC4.1 rows pin
 // to the gh runs; AC4.3 [files] checks the files rows' share of the tail-row set.
@@ -87,7 +87,7 @@ describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600
       assert.equal(r.status, 0, `cold ${side}`);
       assert.equal(r.files['dispatch-dep-freshness.json'], null, `cold ${side}: the agent wrote none, so the session file is gone`);
       assert.equal(r.orderBlob, null, `cold ${side}: the write-back cannot read the freshness and persists nothing`);
-      assert.deepEqual(groupedIn(r), groupedIn(R['S1-files-miss'].oracle), `cold ${side}: the pull itself is the base's`);
+      assert.deepEqual(groupedIn(r), groupedIn(R['files-opendeps'].oracle), `cold ${side}: the pull itself is the base's`);
     }
     for (const [side, r] of sides(R['files-depFreshness-wrapper-cold'])) {
       assert.equal(r.status, 0, `cold wrapper ${side}`);
@@ -95,7 +95,7 @@ describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600
       const warnings = reported(r.stderr).filter((l) => l.includes('/dispatch-dep-freshness.json is not a JSON array'));
       assert.equal(warnings.length, 1, `cold wrapper ${side}: one Warning naming the file`);
       assert.equal(r.orderBlob, null, `cold wrapper ${side}: the write-back cannot read the wrapper and persists nothing`);
-      assert.deepEqual(groupedIn(r), groupedIn(R['S1-files-miss'].oracle), `cold wrapper ${side}: the pull itself is the base's`);
+      assert.deepEqual(groupedIn(r), groupedIn(R['files-opendeps'].oracle), `cold wrapper ${side}: the pull itself is the base's`);
     }
   });
 
