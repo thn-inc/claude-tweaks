@@ -60,6 +60,10 @@ Three conventions follow from how this repo works, and all are visible below:
 
 * Fail closed when the MCP verified-open-deps file omits an… ([#5408](https://github.com/thn-inc/claude-tweaks/issues/5408)) ([e97c8ab](https://github.com/thn-inc/claude-tweaks/commit/e97c8ab6390db6dff021ae0937dffa4a7201603d)), closes [#5722](https://github.com/thn-inc/claude-tweaks/issues/5722)
 
+### Highlights
+* Dispatch no longer treats a dependency as closed on a gh-absent firing just because the agent left it out of the verified-open list.
+* Dispatch no longer excludes a record as already shipped when it was shaped or granted after the mentioning PR merged.
+
 ## [6.173.0](https://github.com/thn-inc/claude-tweaks/compare/v6.172.0...v6.173.0) (2026-11-17)
 
 
