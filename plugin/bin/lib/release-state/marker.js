@@ -442,8 +442,9 @@ function recheckAfterConflict(ctx, { to } = {}) {
 // changed the state, the target is not bad); after the second, anything else (an unreadable
 // or vanished marker, an undetermined verdict) is contested.
 //
-// Requires a history object no earlier call has used: the at-or-past check below relies on
-// the history's one snapshot refresh being unspent when the operation starts.
+// `ctx.history` is this operation's own, never one an earlier operation used: the at-or-past
+// check below relies on the history's one snapshot refresh being unspent when the operation
+// starts. The CLI builds a fresh history for every operation it runs, a recheck included.
 function advanceMarker(ctx, { to, run } = {}) {
   assertSha(to);
   assertRun(run);

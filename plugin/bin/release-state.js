@@ -236,27 +236,27 @@ function reportRead(deps, read, flags) {
   return printLine(deps, parsed.marker);
 }
 
-// Runs the verb over `ctx` ({ store, history, now }); `captured` is the emit path's write slot.
-// A throw is a caller bug (every argument was validated before this point), reported as
-// unreadable rather than left to exit 1, the code that means refused.
-function runVerb(opts, deps, ctx, captured, flags) {
+// Runs the verb over `wiring` ({ store, newHistory, now }); `captured` is the emit path's write slot.
+// Every operation gets its own fresh history from `newHistory()`: a history refreshes its branch
+// snapshot once, and an operation must start with that refresh unspent (marker.js's header), so
+// no history is ever shared between two operations. A throw is a caller bug (every argument was
+// validated before this point), reported as unreadable rather than left to exit 1, the code that
+// means refused.
+function runVerb(opts, deps, wiring, captured, flags) {
+  const ctx = () => ({ store: wiring.store, history: wiring.newHistory(), now: wiring.now });
   let result;
   try {
-    if (opts.verb === 'read') return reportRead(deps, ctx.store.read(), flags);
+    if (opts.verb === 'read') return reportRead(deps, wiring.store.read(), flags);
     if (opts.verb === 'advance') {
       // --after-conflict: the agent's PUT lost, and the handoff file is its re-read. Apply the same
-      // at-or-past check advanceMarker runs after a lost write; otherwise advance as usual.
-      // advanceMarker wants a history no earlier call has used, and recheckAfterConflict may
-      // spend this one's refresh first. That is safe here: --after-conflict exists only on the
-      // emit path, whose store captures a write rather than making it and so never reports a
-      // conflict; advanceMarker's post-conflict re-read, the one step that needs the refresh
-      // unspent, is never reached.
-      result = (opts.afterConflict && recheckAfterConflict(ctx, { to: opts.to }))
-        || advanceMarker(ctx, { to: opts.to, run: opts.run });
+      // at-or-past check advanceMarker runs after a lost write; otherwise advance as usual, on a
+      // history of its own.
+      result = (opts.afterConflict && recheckAfterConflict(ctx(), { to: opts.to }))
+        || advanceMarker(ctx(), { to: opts.to, run: opts.run });
     } else if (opts.verb === 'init') {
-      result = initMarker(ctx, { to: opts.to });
+      result = initMarker(ctx(), { to: opts.to });
     } else {
-      result = resetMarker(ctx, {
+      result = resetMarker(ctx(), {
         to: opts.to, run: opts.run, force: Boolean(opts.force), reason: opts.reason,
       });
     }
@@ -350,14 +350,12 @@ function runGh(opts, deps) {
     })
     : undefined;
   const storeDeps = { ghApi, sleep: deps.sleep, ...(gitRunner ? { gitRunner } : {}) };
-  // A fresh history per operation, never warmed: the advance's lost-race check needs its one
-  // snapshot refresh unspent (marker.js's contract).
-  const history = createHistory({
+  const newHistory = () => createHistory({
     ...(gitRunner ? { local: createLocalHistory({ git: gitRunner, branch: opts.branch }) } : {}),
     compare: createCompareHistory({ ghApi, slug, branch: opts.branch }),
   });
-  const ctx = { store: storeFacade(storeDeps, slug), history, now: deps.now };
-  return runVerb(opts, deps, ctx, null, { get ghAbsent() { return state.ghAbsent; } });
+  const wiring = { store: storeFacade(storeDeps, slug), newHistory, now: deps.now };
+  return runVerb(opts, deps, wiring, null, { get ghAbsent() { return state.ghAbsent; } });
 }
 
 // ---- the emit path ----
@@ -436,12 +434,12 @@ function runEmit(opts, deps) {
   const gitRunner = (args, { input, extraEnv } = {}) => deps.git(args, {
     cwd: deps.cwd(), env: deps.env, input, extraEnv,
   });
-  const ctx = {
+  const wiring = {
     store: emitStore(file, captured),
-    history: createHistory({ local: createLocalHistory({ git: gitRunner, branch: opts.branch }) }),
+    newHistory: () => createHistory({ local: createLocalHistory({ git: gitRunner, branch: opts.branch }) }),
     now: deps.now,
   };
-  return runVerb(opts, deps, ctx, captured, {});
+  return runVerb(opts, deps, wiring, captured, {});
 }
 
 // The reason text from --reason-file: a skill writes the operator's free text to a file so no

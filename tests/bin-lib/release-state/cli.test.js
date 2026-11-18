@@ -581,14 +581,14 @@ test('realDeps.gh carries the GH_TIMEOUT_MS bound', () => {
 
 function emitHarness(fx, files = {}, clone = fx.cloneA) {
   const calls = {
-    gh: [], pin: [], remote: 0, read: [],
+    gh: [], git: [], pin: [], remote: 0, read: [],
   };
   const env = { ...cleanGitEnv(), ...pinnedGitEnv() };
   delete env.GH_HOST;
   const table = new Map(Object.entries(files).map(([name, text]) => [path.join(clone, name), text]));
   const deps = {
     cwd: () => clone,
-    git: realDeps.git,
+    git: (args, o) => { calls.git.push(args); return realDeps.git(args, o); },
     gh: (args) => { calls.gh.push(args); throw new Error(`unexpected ${args.join(' ')}`); },
     remoteUrl: () => { calls.remote += 1; throw new Error('unexpected remoteUrl'); },
     pinGhHost: (spec) => { calls.pin.push(spec); },
@@ -671,6 +671,21 @@ test('after-conflict: a fresh marker behind the target gets a write descriptor l
   const { write } = JSON.parse(r.stdout);
   assert.equal(write.sha, 'e'.repeat(40));
   assert.equal(write.message, `Advance reviewed-through to ${short12(fx.P3)} from ${short12(fx.P1)} — run r1`);
+});
+
+test('after-conflict: the recheck and the advance each load a history of their own, never a shared one', () => {
+  const fx = makeLine();
+  const { run, calls } = emitHarness(fx, { 'm.json': readFileOf(fx.P1, 'e'.repeat(40)) });
+  const r = run(AFTER(fx));
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(JSON.parse(r.stdout).write, 'the recheck fell through to an advance');
+  // One branch fetch per history. A shared history would hand the advance the recheck's
+  // snapshot (one fetch in all), and with it any refresh the recheck had spent.
+  const historyFetches = (c) => c.git.filter((a) => a[0] === 'fetch' && a.some((x) => String(x).includes(':refs/release-state-history/'))).length;
+  assert.equal(historyFetches(calls), 2);
+  const plain = emitHarness(fx, { 'm.json': readFileOf(fx.P1, 'e'.repeat(40)) });
+  assert.equal(plain.run(['marker', 'advance', '--to', fx.P3, '--run', 'r1', '--marker-json', 'm.json']).code, 0);
+  assert.equal(historyFetches(plain.calls), 1, 'a lone advance loads one history');
 });
 
 test('after-conflict: a vanished marker (null file) is contested, exit 4', () => {
