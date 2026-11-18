@@ -458,7 +458,7 @@ test('isValidFinding: accepts real locations, rejects malformed ones', () => {
   for (const ok of [F, 'security at general', 'security at docs/my file.md:3', 'security at plugin/x.md:8:12', 'security at C:/x.js:3', 'x at y at file:1', 'x at y at general']) {
     assert.ok(isValidFinding(ok), ok);
   }
-  for (const bad of ['no location', 'security at a.js:8\nmore', ' at a.js:8', 'security at ', 'security at a.js:', 'security at a.js:x', 'x at y at nowhere', 'security \tat general\r']) {
+  for (const bad of ['no location', 'security at a.js:8\nmore', ' at a.js:8', 'security at ', 'security at a.js:', 'security at a.js:x', 'x at y at nowhere', 'security \tat general\r', 'security\tat general', 'security \tat a.js:3', 'security\t at general', 'security\t at a.js:3']) {
     assert.ok(!isValidFinding(bad), JSON.stringify(bad));
   }
   const h = stampHarness({ labelList: 'release-block\n' });
