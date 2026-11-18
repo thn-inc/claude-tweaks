@@ -3,7 +3,7 @@
 // `release-block` label, open, stops a release; this CLI reads that label so /release's gate
 // (and the callers #5885 and #5887) ask one command instead of each re-deriving the query.
 //
-// usage: release-block.js check [--repo [host/]owner/name | --records-json <path>] | stamp --record <n> --finding "<category> at <file:line>|general" [--repo [host/]owner/name] [--help]
+// usage: release-block.js check [--repo [host/]owner/name | --records-json <path>] | stamp --record <n> (--finding "<category> at <file:line>|general" | --finding-file <path>) [--repo [host/]owner/name] [--help]
 //
 //   check   Prints one JSON line. None open: {"blocked":false,"records":[]}. Otherwise
 //           {"blocked":true,"records":[{"number":N,"title":"…","url":"…"}]}, ascending by
@@ -13,9 +13,11 @@
 //           Exit 0 none open; 1 blocked; 2 usage error, or an unresolvable or refused repo; 3 state
 //           unreadable (a failed gh call, a missing gh with no --records-json, malformed or
 //           incomplete rows, or a list that filled --limit — unreadable is never reported as clear).
-//   stamp   Exit 0 stamped or already stamped; 2 usage error, an unresolvable or refused repo, no such
-//           record, or a PR number; 3 write failure or unreadable state (gh absent, the view
-//           unreadable or the wrong shape).
+//   stamp   Exit 0 stamped or already stamped; 2 usage error (an unreadable or malformed
+//           --finding-file included), an unresolvable or refused repo, no such record, or a PR
+//           number; 3 write failure or unreadable state (gh absent, the view unreadable or the
+//           wrong shape). --finding-file <path> reads the finding from a file, so a skill passes
+//           review-derived text without a shell expanding it.
 //
 // The exit codes and the exit-1 JSON shape are a stable contract: #5885 and #5887 call them.
 // Change them only by expand-contract. The vocabulary is the spec's own domain set, not one of
@@ -37,7 +39,7 @@ const { ensureLabelPayload } = require('./lib/issues/labels');
 
 const NAME = 'release-block.js';
 const USAGE = `usage: ${NAME} check [--repo [host/]owner/name | --records-json <path>]\n`
-  + `       ${NAME} stamp --record <n> --finding "<category> at <file:line>|general" [--repo [host/]owner/name]\n`
+  + `       ${NAME} stamp --record <n> (--finding "<category> at <file:line>|general" | --finding-file <path>) [--repo [host/]owner/name]\n`
   + `       ${NAME} [--help]\n`
   + '  check: exit 0 none open; 1 blocked; 2 usage, or an unresolvable or refused repo; 3 state unreadable\n'
   + '  stamp: exit 0 stamped or already stamped; 2 usage, an unresolvable or refused repo, no such record, or a PR number; 3 write failure or unreadable state (gh absent, view unreadable)\n';
@@ -71,8 +73,8 @@ const GH_ABSENT_HINT = 'gh not found — fetch over MCP and pass --records-json 
 const messageOf = (err) => (err && err.message ? err.message : String(err));
 
 function parseStampArgs(rest) {
-  const out = { verb: 'stamp', repo: undefined, record: undefined, finding: undefined, help: false };
-  const keys = { '--record': 'record', '--finding': 'finding', '--repo': 'repo' };
+  const out = { verb: 'stamp', repo: undefined, record: undefined, finding: undefined, findingFile: undefined, help: false };
+  const keys = { '--record': 'record', '--finding': 'finding', '--finding-file': 'findingFile', '--repo': 'repo' };
   for (let i = 0; i < rest.length; i++) {
     const flag = rest[i];
     if (flag === '--help' || flag === '-h') return { help: true };
@@ -84,8 +86,26 @@ function parseStampArgs(rest) {
     out[key] = value;
   }
   if (out.record === undefined || !RECORD_RE.test(out.record)) return { error: '--record must be a positive integer record number' };
+  if (out.finding !== undefined && out.findingFile !== undefined) return { error: '--finding and --finding-file are mutually exclusive' };
+  // --finding-file is read and validated in stamp(), where deps can read it.
+  if (out.findingFile !== undefined) return out;
   if (out.finding === undefined || !isValidFinding(out.finding)) return { error: '--finding must be "<category> at <file:line>" or "<category> at general"' };
   return out;
+}
+
+// The finding text from --finding-file: a skill writes review-derived text to a file so no shell
+// ever expands it (docs/skill-authoring.md's "Untrusted text into a shell or paste command").
+// One trailing line break is the file's, not the finding's. Returns { finding } or { error }.
+function readFindingFile(opts, deps) {
+  let text;
+  try {
+    text = String(deps.readFile(resolveAgainst(deps.cwd(), opts.findingFile)));
+  } catch (err) {
+    return { error: `could not read --finding-file ${opts.findingFile} (${messageOf(err)})` };
+  }
+  const finding = text.replace(/\r?\n$/, '');
+  if (!isValidFinding(finding)) return { error: `--finding-file ${opts.findingFile} must hold one line "<category> at <file:line>" or "<category> at general"` };
+  return { finding };
 }
 
 function parseArgs(argv) {
@@ -241,6 +261,12 @@ function ensureLabel(deps, slug) {
 
 function stamp(opts, deps) {
   const n = opts.record;
+  let finding = opts.finding;
+  if (opts.findingFile !== undefined) {
+    const read = readFindingFile(opts, deps);
+    if (read.error) { deps.stderr(`${NAME}: ${read.error}\n${USAGE}`); return EXIT.USAGE; }
+    finding = read.finding;
+  }
   if (!deps.ghAvailable({ env: deps.env, cwd: deps.cwd() })) {
     deps.stderr(`${NAME}: gh not found — stamp has no MCP path here; add the label and comment by hand (_shared/release-block.md)\n`);
     return EXIT.FAILURE;
@@ -292,7 +318,7 @@ function stamp(opts, deps) {
     deps.stderr(`${NAME}: could not invalidate the session record snapshot (${messageOf(err)}) — continuing\n`);
   }
   try {
-    deps.gh(['issue', 'comment', n, '--repo', slug, '--body-file', '-'], { ...ghCtx(deps), input: stampCommentBody(opts.finding) });
+    deps.gh(['issue', 'comment', n, '--repo', slug, '--body-file', '-'], { ...ghCtx(deps), input: stampCommentBody(finding) });
   } catch (err) {
     deps.stderr(`${NAME}: label added to #${n} but the comment failed (${firstLine(err && err.stderr) || messageOf(err)}) — the label stays and the block stands; post the comment by hand\n`);
     return EXIT.FAILURE;
@@ -305,7 +331,16 @@ function run(argv, deps) {
   const opts = parseArgs(argv);
   if (opts.help) { deps.stdout(USAGE); return EXIT.OK; }
   if (opts.error) { deps.stderr(`${NAME}: ${opts.error}\n${USAGE}`); return EXIT.USAGE; }
-  return opts.verb === 'stamp' ? stamp(opts, deps) : check(opts, deps);
+  // Read the working directory once, inside a try: process.cwd() throws when it was deleted, and
+  // an uncaught throw exits 1 — the code that means "blocked". Every later deps.cwd() reuses it.
+  let cwd;
+  try {
+    cwd = deps.cwd();
+  } catch (err) {
+    return unreadable(deps, `working directory unavailable (${messageOf(err)})`);
+  }
+  const pinned = { ...deps, cwd: () => cwd };
+  return opts.verb === 'stamp' ? stamp(opts, pinned) : check(opts, pinned);
 }
 
 module.exports = { run, realDeps, parseArgs, EXIT, LIST_LIMIT, checkRows, LABEL, isValidFinding, stampCommentBody };

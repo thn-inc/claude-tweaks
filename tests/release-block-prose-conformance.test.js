@@ -825,6 +825,25 @@ test('AC5.1: Step 8 stamps a filed critical or high finding', () => {
   assert.throws(() => assertStampParagraph(DISPOSITION.replace(p, p.replace('{category} at general', 'x'))), { message: /missing \{category\} at general/ });
 });
 
+// Frozen: the shell-interpolated stamp command the review found (#5882 review, lens 3b): review-derived
+// `{category}` and `{file:line}` inside a double-quoted `--finding "…"`, which a shell expands.
+const SUPERSEDED_STAMP_COMMAND = '`node "${CLAUDE_PLUGIN_ROOT}/bin/release-block.js" stamp --record {n} --finding "{category} at {file:line}"`';
+const assertStampShellSafe = (p) => {
+  assert.ok(p.includes('--finding-file "{that path}"'), 'stamp paragraph: the finding is not passed as a file');
+  assert.ok(p.includes('session-tmp-resolve.js" --value release-block-finding.txt'), 'stamp paragraph: no session-tmp path for the finding file');
+  assert.ok(!p.includes('--finding "{category}'), 'stamp paragraph: review-derived text interpolated into a shell argument');
+};
+
+test('Step 8 passes the finding to stamp as a file, never interpolated into the shell command', () => {
+  const p = stampParagraph(DISPOSITION);
+  assertStampShellSafe(p);
+  const start = p.indexOf('`Write` the finding as one line');
+  const end = p.indexOf('`{category}` and `{file:line}` come from');
+  assert.ok(start > 0 && end > start, 'stamp paragraph: the finding-file sentences moved');
+  const frozen = `${p.slice(0, start)}${SUPERSEDED_STAMP_COMMAND}. ${p.slice(end)}`;
+  assert.throws(() => assertStampShellSafe(frozen), { message: /not passed as a file|interpolated/ });
+});
+
 test('AC5.1: Step 8 stamps the covering record of a critical or high finding declined as covered', () => {
   const p = stampParagraph(DISPOSITION);
   assert.ok(p.includes('resolved `declined (covered by #{n})` stamps the covering record'));

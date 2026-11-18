@@ -476,6 +476,64 @@ test('stamp: a 200 KB finding of repeated " at " is rejected as usage (correctne
   assert.equal(h.calls.gh.length, 0);
 });
 
+test('stamp --finding-file: the finding is read from the file, so shell metacharacters reach the comment verbatim', () => {
+  const finding = 'security at app/routes/posts.$(touch x)`id`".tsx:8';
+  const seen = [];
+  const h = stampHarness({ labelList: 'release-block\n', overrides: { readFile: (p) => { seen.push(p); return `${finding}\n`; } } });
+  assert.equal(run(['stamp', '--record', '7', '--finding-file', 'finding.txt'], h.deps), 0);
+  assert.deepEqual(seen, [resolveAgainst('/work', 'finding.txt')]);
+  const comment = h.calls.gh.find((c) => c.args[0] === 'issue' && c.args[1] === 'comment');
+  assert.equal(comment.input, stampCommentBody(finding));
+});
+
+test('stamp --finding-file: unreadable, malformed, or combined with --finding -> exit 2, zero gh calls', () => {
+  const cases = [
+    { argv: ['stamp', '--record', '7', '--finding-file', 'f.txt'], readFile: () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); } },
+    { argv: ['stamp', '--record', '7', '--finding-file', 'f.txt'], readFile: () => 'no location\n' },
+    { argv: ['stamp', '--record', '7', '--finding-file', 'f.txt'], readFile: () => 'security at a.js:8\nmore\n' },
+    { argv: ['stamp', '--record', '7', '--finding-file', 'f.txt', '--finding', F], readFile: () => `${F}\n` },
+    { argv: ['stamp', '--record', '7', '--finding-file', '--repo'], readFile: () => `${F}\n` },
+  ];
+  for (const { argv, readFile } of cases) {
+    const h = stampHarness({ overrides: { readFile } });
+    assert.equal(run(argv, h.deps), 2, argv.join(' '));
+    assert.equal(h.calls.gh.length, 0, argv.join(' '));
+  }
+});
+
+test('a working directory that throws -> exit 3 state unreadable, never 1, for both verbs', () => {
+  for (const argv of [['check'], stampArgs()]) {
+    const h = stampHarness({ overrides: { cwd: () => { throw new Error('ENOENT: uv_cwd'); } } });
+    assert.equal(run(argv, h.deps), 3, argv.join(' '));
+    assert.match(h.err(), /state unreadable — working directory unavailable/);
+    assert.equal(h.calls.gh.length, 0);
+  }
+});
+
+test('repo: an origin host that is not a known GitHub host is refused -> exit 2 for both verbs, no gh call', () => {
+  for (const argv of [['check'], stampArgs()]) {
+    const h = stampHarness({ overrides: { remoteUrl: () => 'https://gitlab.example.com/acme/widgets.git' } });
+    assert.equal(run(argv, h.deps), 2, argv.join(' '));
+    assert.match(h.err(), /not a known GitHub host/);
+    assert.equal(h.calls.gh.length, 0);
+  }
+});
+
+test('check: a null row, and a row whose number is 0 or negative -> exit 3, never 1', () => {
+  for (const rows of [[null], [{ ...ROW7, number: 0 }], [{ ...ROW7, number: -7 }]]) {
+    const r = checkWith(rows);
+    assert.equal(r.code, 3, JSON.stringify(rows));
+    assert.match(r.err(), /state unreadable/);
+    assert.equal(r.out(), '');
+  }
+});
+
+test('check: a --records-json row with no state is treated as open — it blocks', () => {
+  const h = harness({ gh: () => { throw new Error('gh must not be called'); }, readFile: () => JSON.stringify([without(ROW7, 'state')]) });
+  assert.equal(run(['check', '--records-json', 'recs.json'], h.deps), 1);
+  assert.equal(h.out(), BLOCKED_7);
+});
+
 test('--help names both verbs\' exit contracts', () => {
   const h = stampHarness();
   assert.equal(run(['--help'], h.deps), 0);

@@ -20,7 +20,7 @@ A block clears by one of two acts: close the record, or remove the label. No rea
 
 ```
 release-block.js check [--repo [host/]owner/name | --records-json <path>]
-release-block.js stamp --record <n> --finding "<category> at <file:line>|general" [--repo [host/]owner/name]
+release-block.js stamp --record <n> (--finding "<category> at <file:line>|general" | --finding-file <path>) [--repo [host/]owner/name]
 ```
 
 `check` prints one JSON line. Exit 1 carries `{"blocked":true,"records":[{"number":N,"title":"…","url":"…"}]}`, ascending by number; exit 0 carries `{"blocked":false,"records":[]}`. A missing label reads as none open. A list that fills `--limit 100` is truncated, so it is exit 3, never clear.
@@ -38,7 +38,7 @@ release-block.js stamp --record <n> --finding "<category> at <file:line>|general
 | 2 | usage error, an unresolvable or refused repo, no such record, or a PR number |
 | 3 | write failure or unreadable state; the label is added before the comment, so a comment failure leaves the label |
 
-`--finding` is `<category> at <file:line>` or `<category> at general`, on one line. The location is the text after the last ` at `: `general`, or a file part that starts with a non-whitespace character, followed by `:` and one or more digits, optionally a range: `-` and one or more digits (`a.js:12-15`). The file part may contain spaces and colons. The category is non-blank with no trailing whitespace. The CLI rejects anything else (`isValidFinding`); the MCP `stamp` path applies the same rule before any write.
+`--finding` is `<category> at <file:line>` or `<category> at general`, on one line. The location is the text after the last ` at `: `general`, or a file part that starts with a non-whitespace character, followed by `:` and one or more digits, optionally a range: `-` and one or more digits (`a.js:12-15`). The file part may contain spaces and colons. The category is non-blank with no trailing whitespace. The CLI rejects anything else (`isValidFinding`); the MCP `stamp` path applies the same rule before any write. `--finding-file <path>` takes the same one line from a file (one trailing line break allowed) and is the form a skill uses: a finding is review-derived text, and a shell would expand the `$(…)` or backtick a file name or category can carry in `--finding "…"`. The two flags are mutually exclusive, and an unreadable or malformed file is a usage error (exit 2).
 
 ### Stamp comment
 
@@ -88,7 +88,7 @@ Detection is per `_shared/github-write-transport.md`. The CLI never reaches MCP 
 
 **`stamp`:**
 
-1. Check `--finding` against the grammar under `## The CLI`; a bad one is the exit-2 equivalent, before any call.
+1. Check the finding against the grammar under `## The CLI`; a bad one is the exit-2 equivalent, before any call.
 2. `issue_read` in get mode. A missing issue or a PR is the exit-2 equivalent; an issue already carrying the label is a no-op.
 3. `issue_write` in update mode with the full label array from `mergeLabelNames` (`_shared/github-write-transport.md`'s Full-replace hazard), then read the labels back.
 4. If the label is absent, retry once. Still absent is the exit-3 equivalent. `label create` has no MCP row, so the label must already exist; create it with `gh` or the GitHub UI.
