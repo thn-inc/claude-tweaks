@@ -90,19 +90,22 @@ test('resolveTarget: run dir under mainRoot ok; under either linked-worktree dom
 // strictly inside <main>/.claude-tweaks/pipelines/ (archived and nested multi-spec
 // run dirs included), or a `--run main/plugin` would turn a config.yml planted
 // there into a run config.
-function pipelinesFixture() {
+function pipelinesFixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-notrun-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const main = path.join(root, 'main');
   fs.mkdirSync(path.join(main, '.git'), { recursive: true });
   return { root, main, pipelines: path.join(main, '.claude-tweaks', 'pipelines') };
 }
 
-test('resolveTarget: a run dir outside .claude-tweaks/pipelines/ is not-a-run-dir', () => {
-  const { main, pipelines } = pipelinesFixture();
+test('resolveTarget: a run dir outside .claude-tweaks/pipelines/ is not-a-run-dir', (t) => {
+  const { main, pipelines } = pipelinesFixture(t);
   const outsideDirs = [
     path.join(main, 'plugin'),
     path.join(main, 'docs'),
     path.join(main, 'x.claude-tweaks', 'pipelines-copy', 'run-a'),
+    // a sibling whose name only string-prefix-matches `pipelines`
+    path.join(main, '.claude-tweaks', 'pipelines-copy', 'run-a'),
   ];
   for (const dir of [...outsideDirs, path.join(pipelines, 'run-a')]) fs.mkdirSync(dir, { recursive: true });
   const refused = [
@@ -125,8 +128,8 @@ test('resolveTarget: a run dir outside .claude-tweaks/pipelines/ is not-a-run-di
   }
 });
 
-test('resolveTarget: a run dir that is a symlink out of pipelines/ is not-a-run-dir', { skip: process.platform === 'win32' && 'win32: creating a directory symlink needs elevated rights' }, () => {
-  const { main, pipelines } = pipelinesFixture();
+test('resolveTarget: a run dir that is a symlink out of pipelines/ is not-a-run-dir', { skip: process.platform === 'win32' && 'win32: creating a directory symlink needs elevated rights' }, (t) => {
+  const { main, pipelines } = pipelinesFixture(t);
   fs.mkdirSync(path.join(main, 'docs'), { recursive: true });
   fs.mkdirSync(pipelines, { recursive: true });
   fs.symlinkSync(path.join(main, 'docs'), path.join(pipelines, 'link'), 'dir');
@@ -136,8 +139,8 @@ test('resolveTarget: a run dir that is a symlink out of pipelines/ is not-a-run-
   );
 });
 
-test('resolveTarget: a pipelines/ that is itself a symlink to a directory inside the checkout still accepts its run dirs', { skip: process.platform === 'win32' && 'win32: creating a directory symlink needs elevated rights' }, () => {
-  const { main, pipelines } = pipelinesFixture();
+test('resolveTarget: a pipelines/ that is itself a symlink to a directory inside the checkout still accepts its run dirs', { skip: process.platform === 'win32' && 'win32: creating a directory symlink needs elevated rights' }, (t) => {
+  const { main, pipelines } = pipelinesFixture(t);
   fs.mkdirSync(path.join(main, 'var', 'runs', 'run-a'), { recursive: true });
   fs.mkdirSync(path.dirname(pipelines), { recursive: true });
   fs.symlinkSync(path.join(main, 'var', 'runs'), pipelines, 'dir');

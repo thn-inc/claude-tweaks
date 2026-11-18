@@ -74,7 +74,7 @@ async function run(argv, deps = {}) {
     return 3;
   }
   // --json is the same write, redirected — so it clears the same anchoring bar
-  // as --run: its parent directory must itself resolve under the main checkout.
+  // as --run: its parent directory must itself resolve under .claude-tweaks/pipelines/.
   // The decision is made on the parent's REAL path (symlinks followed) — a
   // lexical "starts with the run dir" test would let a symlinked subdirectory
   // planted inside the run dir carry the write outside the anchor ([IL-150]);

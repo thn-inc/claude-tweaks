@@ -106,13 +106,15 @@ function resolveTarget({ runDir, cwd = process.cwd(), mainRoot }) {
   // accept whatever real checkout the run dir happens to sit in ([IL-127]-
   // class bypass). An explicit `mainRoot: null` is a distinct, deliberate
   // opt-out kept for callers that only want the .git-file structural gate
-  // above and never asked for a domain match.
+  // above and never asked for a domain match; the pipelines containment check
+  // below still applies to them.
   let anchor = mainRoot;
   if (mainRoot === undefined) {
     anchor = mainCheckoutRoot(cwd);
     if (!anchor) return { ok: false, reason: 'not-anchored' };
   }
   if (anchor && (safeReal(anchor) || anchor) !== gitRoot) return { ok: false, reason: 'not-anchored' };
+  // Last on purpose: missing and not-anchored keep priority; runs even with `mainRoot: null`.
   if (!isUnderPipelines(real, gitRoot)) return { ok: false, reason: 'not-a-run-dir' };
   return { ok: true, file: path.join(real, 'decisions.md') };
 }

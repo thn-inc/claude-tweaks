@@ -35,9 +35,12 @@ function fixture(t) {
   fs.mkdirSync(path.join(main, 'docs'));
   const lookAlike = path.join(main, 'x.claude-tweaks', 'pipelines-copy', RUN_ID);
   fs.mkdirSync(lookAlike, { recursive: true });
+  const pipelines = path.join(main, '.claude-tweaks', 'pipelines');
+  const siblingPrefix = path.join(main, '.claude-tweaks', 'pipelines-copy', RUN_ID);
+  fs.mkdirSync(siblingPrefix, { recursive: true });
   fs.mkdirSync(path.join(main, '.git'));
   fs.writeFileSync(path.join(worktree, '.git'), 'gitdir: ../../../.git/worktrees/flow-5160\n');
-  return { singleDir, worktree, shadow, outside, lookAlike };
+  return { main, pipelines, singleDir, worktree, shadow, outside, lookAlike, siblingPrefix };
 }
 
 // `..` spellings are built by concatenation, never path.join (which normalizes).
@@ -89,7 +92,36 @@ test('AC4 probe C4: resolveTarget refuses the look-alike main/x.claude-tweaks/pi
   assertRefused(resolveTarget({ runDir: lookAlike, cwd: worktree }), 'not-a-run-dir');
 });
 
-test('AC4 probe C5a: resolveTarget refuses an unanchored dir spelled with a trailing separator', (t) => {
+test('resolveTarget refuses the sibling main/.claude-tweaks/pipelines-copy/<id> dir (a string-prefix match of pipelines) as not-a-run-dir', (t) => {
+  const { siblingPrefix, worktree } = fixture(t);
+  assertRefused(resolveTarget({ runDir: siblingPrefix, cwd: worktree }), 'not-a-run-dir');
+});
+
+test('resolveTarget refuses the pipelines directory itself as not-a-run-dir', (t) => {
+  const { pipelines, worktree } = fixture(t);
+  assertRefused(resolveTarget({ runDir: pipelines, cwd: worktree }), 'not-a-run-dir');
+});
+
+test('resolveTarget accepts an archived and a nested multi-spec run dir under pipelines/', (t) => {
+  const { pipelines, worktree } = fixture(t);
+  const archived = path.join(pipelines, 'archive', RUN_ID);
+  const nested = path.join(pipelines, 'parent-run', 'spec-1');
+  fs.mkdirSync(archived, { recursive: true });
+  fs.mkdirSync(nested, { recursive: true });
+  for (const runDir of [archived, nested]) {
+    const r = resolveTarget({ runDir, cwd: worktree });
+    assert.equal(r.ok, true, JSON.stringify(r));
+  }
+});
+
+test('resolveTarget refuses a pipelines/ symlink pointing at main/docs as not-a-run-dir', { skip: process.platform === 'win32' && 'win32: creating a directory symlink needs elevated rights' }, (t) => {
+  const { main, pipelines, worktree } = fixture(t);
+  const link = path.join(pipelines, 'link');
+  fs.symlinkSync(path.join(main, 'docs'), link, 'dir');
+  assertRefused(resolveTarget({ runDir: link, cwd: worktree }), 'not-a-run-dir');
+});
+
+test('AC4 probe C5a:resolveTarget refuses an unanchored dir spelled with a trailing separator', (t) => {
   const { outside, worktree } = fixture(t);
   assertRefused(resolveTarget({ runDir: outside + sep, cwd: worktree }), 'not-anchored');
 });

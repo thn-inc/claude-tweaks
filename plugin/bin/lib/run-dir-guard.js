@@ -17,7 +17,8 @@
 'use strict';
 const path = require('path');
 const wtDetect = require('./hooks/worktree-detect');
-const { canonicalRealpath, isAncestorOrSelf } = require('./path-guard');
+const { canonicalRealpath } = require('./path-guard');
+const { isPathContained } = require('./shared-primitives');
 
 // Returns null when runDir is anchored under the main checkout or resolves
 // outside any git checkout (both accepted, per checkRunDirAnchoredOrOutside's
@@ -37,13 +38,16 @@ function anchoredOrOutsideMessage(runDir, cwd, flag) {
 // dispatch-resume.js --bound-run accepts) still accepts its run dirs; a
 // run dir that is a symlink OUT of pipelines/ is judged by its real path and
 // refused. Both sides go through path-guard's canonicalRealpath (OS casing) and
-// isAncestorOrSelf (path.relative, never a string prefix); the pipelines dir
-// itself is not a run dir, so equality is refused.
+// shared-primitives' isPathContained (path.relative, never a string prefix); the
+// pipelines dir itself is not a run dir, so equality is refused.
 function isUnderPipelines(realRunDir, gitRoot) {
   const base = path.join(gitRoot, '.claude-tweaks', 'pipelines');
+  // canonicalRealpath is null when the path cannot be resolved; the raw spelling then
+  // fails closed: a pipelines dir that does not exist contains no existing run dir,
+  // and realRunDir is already a real path from the caller.
   const realBase = canonicalRealpath(base) || base;
   const run = canonicalRealpath(realRunDir) || realRunDir;
-  return run !== realBase && isAncestorOrSelf(realBase, run);
+  return isPathContained(run, realBase);
 }
 
 module.exports = { anchoredOrOutsideMessage, isUnderPipelines };

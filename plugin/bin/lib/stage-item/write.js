@@ -25,7 +25,7 @@ function sanitizeId(id) {
 }
 
 // Anchoring rationale (ADR-0004's two worktree domains, fail-closed-on-unknown,
-// the deliberate `mainRoot: null` opt-out): see `bin/lib/log-decision/append.js`'s
+// the deliberate `mainRoot: null` opt-out, which still gets the pipelines check): see `bin/lib/log-decision/append.js`'s
 // header comment — this predicate is deliberately duplicated for two small
 // sibling files, not extracted.
 // Walk up from `startDir` for the nearest ancestor containing a `.git` entry.

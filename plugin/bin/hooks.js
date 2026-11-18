@@ -883,7 +883,8 @@ async function runAdoptRunDir(argv, deps) {
     // which is not necessarily either side of the --worktree/--run pairing
     // this verb actually compares) while still enforcing its structural
     // check: a `.git` FILE ancestor (a linked worktree/submodule) is always
-    // refused, never adopted as if it were the main checkout.
+    // refused, never adopted as if it were the main checkout, and a dir
+    // outside .claude-tweaks/pipelines/ is refused as not-a-run-dir (#5830).
     target = require('./lib/log-decision/append').resolveTarget({ runDir: runArg, cwd: deps.cwd(), mainRoot: null });
   } catch (err) {
     deps.stderr(`claude-tweaks: adopt-run-dir: ${err && err.message}\n`);
