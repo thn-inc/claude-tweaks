@@ -1058,8 +1058,9 @@ function originRefResolves(ctx, ref) {
   }
 }
 
-// #5305: the Warning an empty integration branch prints in place of the target-missing pass (fence 394-395).
-const TARGET_MISSING_SKIPPED = 'Warning: target-missing pass skipped — no integration branch resolved';
+// #5305, #5863: the Warning printed in place of the target-missing pass when the integration branch is empty
+// or its origin/ ref does not resolve (fence 394-395).
+const TARGET_MISSING_SKIPPED = 'Warning: target-missing pass skipped — no resolvable integration branch';
 
 // Fence 376-459. The run-dir and integration-branch resolution (377-384) is shared setup and
 // runs whether or not this pass is omitted; later passes read state.integrationBranch.
@@ -1076,7 +1077,6 @@ function runTargetMissing(ctx) {
   // Only this pass skips: the shared branch and ref stay as resolved for the unlanded-blocker pass, which checks landing through the GitHub API.
   const ref = branch ? `origin/${branch}` : '';
   state.integrationRef = ref;
-  const targetResolved = Boolean(branch) && originRefResolves(ctx, ref);
   const exclusions = paths['dispatch-exclusions.json'];
 
   if (!omit.has('target-missing')) {
@@ -1086,7 +1086,8 @@ function runTargetMissing(ctx) {
         .filter((c) => c.target);
       fs.writeFileSync(paths['dispatch-named-targets.json'], JSON.stringify(named));
     });
-    if (!targetResolved) {
+    // The probe runs only when this pass does, as in the fence; an empty branch never reaches it.
+    if (!branch || !originRefResolves(ctx, ref)) {
       deps.stderr(`${TARGET_MISSING_SKIPPED}\n`);
     } else {
       const probe = step(ctx, 'target-missing', () => {

@@ -373,7 +373,7 @@ else
   echo "Warning: open-linked-PR filtering failed — dispatch-groups.json left unfiltered for this exclusion this run: $(cat "$DISPATCH_LINKED_PRS_ERR")" >&2
 fi
 
-# #1983: named-target existence exclusion. Why at the integration tip: queue-pull-notes.md. #5863: an unresolved origin/ ref skips only this pass.
+# #1983: named-target existence exclusion. Why at the integration tip: queue-pull-notes.md.
 DISPATCH_STANDALONE_DIR=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --spec-slug "dispatch-standalone")
 # {integration-branch}: _shared/integration-branch.md ladder rank 3 (policy.yml), rank-6 git-remote fallback;
 # ranks 4-5 need a human to disambiguate, and this script has none (settle-and-merge.md).
@@ -391,8 +391,8 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH
     .filter((c) => c.target);
   fs.writeFileSync(process.argv[2], JSON.stringify(named));
 NODE_EVAL_EOF
-if [ -z "$INTEGRATION_BRANCH" ] || ! git rev-parse --verify --quiet "$INTEGRATION_REF^{commit}" >/dev/null 2>&1; then
-  echo "Warning: target-missing pass skipped — no integration branch resolved" >&2
+if [ -z "$INTEGRATION_BRANCH" ] || ! git rev-parse --verify --quiet "$INTEGRATION_REF^{commit}" >/dev/null 2>&1; then # #5305 empty, #5863 unresolved ref: skips only this pass
+  echo "Warning: target-missing pass skipped — no resolvable integration branch" >&2
 else
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_NAMED_TARGETS" "$INTEGRATION_REF" "$DISPATCH_EXCLUSIONS" <<NODE_EVAL_EOF
   const { execFileSync } = require('child_process');

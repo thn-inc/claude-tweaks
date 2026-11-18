@@ -15,7 +15,7 @@ Scope keywords: remoteHeadBranch, TARGET_MISSING_SKIPPED, INTEGRATION_REF
 ## Global Constraints
 
 - `plugin/skills/dispatch/queue-pull-script.md` is 52,499 bytes against the 52,500-byte Read-limit rail (`RAIL_BYTES`, `plugin/bin/lib/skill-audit/budgets.js`). After Task 2 it must still be at or under 52,500 bytes (`wc -c`), with the `rail:` tests green. Make room by cutting bytes from comments or prose in the same file (never an executed line, never a string a test reads from the fence via `fenceText`), or by moving a lazy prose section into `plugin/skills/dispatch/queue-pull-notes.md` with a pointer. Keep the fence's line count from line 376 down unchanged where possible: the module cites fence line numbers in comments (`Fence 376-459`, `fence 382`, `fence 394-395`); if a line count changes, update every such citation in `plugin/bin/lib/dispatch/queue-pull.js`.
-- The skip Warning text stays byte-identical: `Warning: target-missing pass skipped — no integration branch resolved` (module constant `TARGET_MISSING_SKIPPED`, fence line 395). The test helpers read it from the fence.
+- The skip Warning text read `Warning: target-missing pass skipped — no integration branch resolved`; review changed it to `… — no resolvable integration branch`, since a branch can now resolve while its `origin/` ref does not (module constant `TARGET_MISSING_SKIPPED`, fence line 395). The test helpers read it from the fence.
 - Scope: Touch only what the task requires. Do not change the policy-key path's behaviour beyond the probe.
 
 ## Review Focus

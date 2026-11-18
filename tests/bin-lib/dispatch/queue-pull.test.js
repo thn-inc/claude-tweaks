@@ -2105,6 +2105,7 @@ test('#5227 portability: a failing `git remote show origin` leaves the branch em
   assert.deepEqual(entriesOf(r, 'target-missing'), [], 'no named target is excluded against an empty branch');
   assert.ok(r.errs.includes(`${TARGET_MISSING_SKIPPED}\n`), r.stderr);
   assert.ok(!gitArgvs.some((a) => a[0] === 'cat-file'), 'no `git cat-file` probe runs against an empty branch');
+  assert.ok(!gitArgvs.some((a) => a[0] === 'rev-parse'), 'no `git rev-parse` ref probe runs against an empty branch (#5863: the probe guard keeps the empty-branch short-circuit)');
   assert.deepEqual(reasonsOf(r, 9006), ['shipped'], 'a later pass still ran: #9006 is excluded as shipped, not as target-missing');
   const named = JSON.parse(r.text['dispatch-named-targets.json']).map((e) => e.number);
   assert.ok(named.includes(9006) && named.includes(9009), 'dispatch-named-targets.json is still written with the named candidates');
