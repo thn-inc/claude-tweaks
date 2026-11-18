@@ -58,7 +58,7 @@ const { isValidBranchName } = require('./lib/branch-name');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 const { classifyGhApiError, ghErrorText, defaultSleep } = require('./lib/issues/claim-store');
 const {
-  RELEASE_STATE_BRANCH, MESSAGE_RE, classifyStateContent, isBareSlug,
+  RELEASE_STATE_BRANCH, classifyStateContent, isBareSlug, assertConditionalWrite, refuseInvalid,
 } = require('./lib/release-state/store');
 const {
   MARKER_FILE, SHA_RE, RUN_RE, REASON_RE, INIT_RUN, parseMarker, storeFacade,
@@ -393,19 +393,13 @@ function loadHandoff(opts, deps) {
 // The store the emit path hands the operations: reads come from the handoff file, classified
 // exactly as the contents-API leg classifies them (so a malformed marker keeps its content and
 // lease, and a forced reset can overwrite it); writes are captured, not made. It accepts the
-// call shapes writeStateFile and createStateFile accept.
+// call shapes writeStateFile and createStateFile accept, and checks them with the store's own
+// validators (assertConditionalWrite, refuseInvalid), so the write rules live in one place.
 function emitStore(file, captured) {
   const capture = (content, sha, message) => {
     captured.write = {
       branch: RELEASE_STATE_BRANCH, path: MARKER_FILE, content, sha, message,
     };
-  };
-  const invalid = (content, message) => {
-    if (typeof content !== 'string' || content === '') return { ok: false, failure: 'invalid-content', reason: 'the state content is not a non-empty string' };
-    if (typeof message !== 'string' || !MESSAGE_RE.test(message)) {
-      return { ok: false, failure: 'invalid-message', reason: 'the commit message must be one line of at most 200 characters with no "#"' };
-    }
-    return null;
   };
   return {
     read: () => (file === null
@@ -416,16 +410,14 @@ function emitStore(file, captured) {
     write: ({
       content, lease, via, expectedContent, message,
     } = {}) => {
-      if (via !== 'contents-api') throw new TypeError(`release-state emit: via must be 'contents-api', got ${JSON.stringify(via)}`);
-      if (typeof lease !== 'string' || lease === '') throw new TypeError('release-state emit: a conditional write needs the lease its read returned');
-      if (typeof expectedContent !== 'string') throw new TypeError('release-state emit: a conditional write needs the content its read returned as expectedContent');
-      const refused = invalid(content, message);
+      assertConditionalWrite({ lease, via, expectedContent }, ['contents-api']);
+      const refused = refuseInvalid(content, message);
       if (refused) return refused;
       capture(content, lease, message);
       return { ok: true, via: 'contents-api' };
     },
     create: ({ content, message } = {}) => {
-      const refused = invalid(content, message);
+      const refused = refuseInvalid(content, message);
       if (refused) return refused;
       capture(content, null, message);
       return { ok: true, created: true, via: 'contents-api' };

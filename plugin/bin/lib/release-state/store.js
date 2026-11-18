@@ -280,6 +280,26 @@ function ensureReleaseStateBranch(deps, slug) {
 const MESSAGE_RE = /^[^\r\n#]{1,200}$/;
 const GIT_LEASE_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
+// The write rules live here and nowhere else: `writeStateFile`, `createStateFile` and the CLI's
+// emit adapter (which captures a write rather than making it) all call these two.
+
+// The argument checks of a conditional write: a caller bug throws TypeError before any call.
+// `vias` lists the transports the caller's reads can return (the emit adapter's: the contents API).
+function assertConditionalWrite({ lease, via, expectedContent } = {}, vias = ['git', 'contents-api']) {
+  if (!vias.includes(via)) {
+    throw new TypeError(`release-state store: via must be ${vias.map((v) => `'${v}'`).join(' or ')}, got ${JSON.stringify(via)}`);
+  }
+  if (typeof lease !== 'string' || lease === '') throw new TypeError('release-state store: a conditional write needs the lease its read returned');
+  // A git lease goes to `read-tree` and `commit-tree -p` as a bare argument: an argv array
+  // stops shell injection, not a leading `-` read as an option.
+  if (via === 'git' && !GIT_LEASE_RE.test(lease)) {
+    throw new TypeError(`release-state store: a git lease must be a commit sha, got ${JSON.stringify(lease)}`);
+  }
+  if (typeof expectedContent !== 'string') {
+    throw new TypeError('release-state store: a conditional write needs the content its read returned as expectedContent');
+  }
+}
+
 // -> the refusal result, or null when both are acceptable. A caller bug surfaces as its
 // own failure, never as a contest or a transport problem.
 function refuseInvalid(content, message) {
@@ -418,18 +438,7 @@ function writeStateFile(deps, slug, name, {
 } = {}) {
   assertSlug(slug);
   assertName(name);
-  if (via !== 'git' && via !== 'contents-api') {
-    throw new TypeError(`release-state store: via must be 'git' or 'contents-api', got ${JSON.stringify(via)}`);
-  }
-  if (typeof lease !== 'string' || lease === '') throw new TypeError('release-state store: a conditional write needs the lease its read returned');
-  // A git lease goes to `read-tree` and `commit-tree -p` as a bare argument: an argv array
-  // stops shell injection, not a leading `-` read as an option.
-  if (via === 'git' && !GIT_LEASE_RE.test(lease)) {
-    throw new TypeError(`release-state store: a git lease must be a commit sha, got ${JSON.stringify(lease)}`);
-  }
-  if (typeof expectedContent !== 'string') {
-    throw new TypeError('release-state store: a conditional write needs the content its read returned as expectedContent');
-  }
+  assertConditionalWrite({ lease, via, expectedContent });
   const refused = refuseInvalid(content, message);
   if (refused) return refused;
 
@@ -546,6 +555,8 @@ module.exports = {
   isBareSlug,
   readStateFile,
   classifyStateContent,
+  assertConditionalWrite,
+  refuseInvalid,
   ensureReleaseStateBranch,
   writeStateFile,
   createStateFile,
