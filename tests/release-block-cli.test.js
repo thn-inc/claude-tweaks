@@ -6,7 +6,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { readText } = require('./helpers/read-skill');
 const path = require('path');
-const { run, parseArgs, EXIT, LIST_LIMIT, LABEL, FINDING_RE, stampCommentBody } = require('../plugin/bin/release-block');
+const { run, parseArgs, EXIT, LIST_LIMIT, LABEL, isValidFinding, stampCommentBody } = require('../plugin/bin/release-block');
 const { ensureLabelPayload } = require('../plugin/bin/lib/issues/labels');
 const { LABELS } = require('../plugin/bin/lib/issues/record');
 const { resolveAgainst } = require('../plugin/bin/lib/health-core/io');
@@ -386,7 +386,7 @@ test('stamp usage -> exit 2, zero gh calls; two findings are accepted', () => {
     assert.equal(h.calls.gh.length, 0, argv.join(' '));
   }
   for (const finding of ['security at general', F]) {
-    assert.ok(FINDING_RE.test(finding));
+    assert.ok(isValidFinding(finding));
     const h = stampHarness({ labelList: 'release-block\n' });
     assert.equal(run(['stamp', '--record', '7', '--finding', finding], h.deps), 0);
   }
@@ -454,12 +454,21 @@ test('stamp: a throwing label list, or a throwing re-list after a failed create 
   assert.ok(!relist.keys().includes('issue edit') && !relist.keys().includes('issue comment'));
 });
 
-test('FINDING_RE: a path with inner spaces is accepted; multi-line and location-less are not', () => {
-  assert.ok(FINDING_RE.test('security at docs/my file.md:3'));
-  assert.ok(!FINDING_RE.test('no location'));
-  assert.ok(!FINDING_RE.test('security at a.js:8\nmore'));
+test('isValidFinding: accepts real locations, rejects malformed ones', () => {
+  for (const ok of [F, 'security at general', 'security at docs/my file.md:3', 'security at plugin/x.md:8:12', 'security at C:/x.js:3', 'x at y at file:1', 'x at y at general']) {
+    assert.ok(isValidFinding(ok), ok);
+  }
+  for (const bad of ['no location', 'security at a.js:8\nmore', ' at a.js:8', 'security at ', 'security at a.js:', 'security at a.js:x', 'x at y at nowhere', 'security \tat general\r']) {
+    assert.ok(!isValidFinding(bad), JSON.stringify(bad));
+  }
   const h = stampHarness({ labelList: 'release-block\n' });
   assert.equal(run(['stamp', '--record', '7', '--finding', 'security at docs/my file.md:3'], h.deps), 0);
+});
+
+test('stamp: a 200 KB finding of repeated " at " is rejected as usage (correctness only)', () => {
+  const h = stampHarness();
+  assert.equal(run(['stamp', '--record', '7', '--finding', 'x at '.repeat(40000) + 'z'], h.deps), 2);
+  assert.equal(h.calls.gh.length, 0);
 });
 
 test('--help names both verbs\' exit contracts', () => {

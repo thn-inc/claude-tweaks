@@ -13,7 +13,8 @@
 //           Exit 0 none open; 1 blocked; 2 usage error; 3 state unreadable (a failed gh call, a
 //           missing gh with no --records-json, malformed or incomplete rows, or a list that
 //           filled --limit — unreadable is never reported as clear).
-//   stamp   Exit 0 stamped or already stamped; 2 usage error or no such record; 3 write failure.
+//   stamp   Exit 0 stamped or already stamped; 2 usage error, no such record, or a PR number; 3 write
+//           failure or unreadable state (gh absent, the view unreadable or the wrong shape).
 //
 // The exit codes and the exit-1 JSON shape are a stable contract: #5885 and #5887 call them.
 // Change them only by expand-contract. The vocabulary is the spec's own domain set, not one of
@@ -38,7 +39,7 @@ const USAGE = `usage: ${NAME} check [--repo [host/]owner/name | --records-json <
   + `       ${NAME} stamp --record <n> --finding "<category> at <file:line>|general" [--repo [host/]owner/name]\n`
   + `       ${NAME} [--help]\n`
   + '  check: exit 0 none open; 1 blocked; 2 usage; 3 state unreadable\n'
-  + '  stamp: exit 0 stamped or already stamped; 2 usage, no such record, or a PR number; 3 write failure\n';
+  + '  stamp: exit 0 stamped or already stamped; 2 usage, no such record, or a PR number; 3 write failure or unreadable state (gh absent, view unreadable)\n';
 
 const EXIT = Object.freeze({ OK: 0, BLOCKED: 1, USAGE: 2, FAILURE: 3 });
 const LIST_LIMIT = 100;
@@ -48,7 +49,18 @@ const LABEL = Object.freeze({
   color: 'B4006E',
 });
 // `<category> at <file:line>` or `<category> at general`, one line — it lands in a comment body.
-const FINDING_RE = /^[^\r\n]*\S at (?:general|[^\s:][^\r\n:]*:\d+)$/;
+const LOCATION_RE = /^\S[^\r\n]*:\d+$/;
+// Linear parse, not one regex: a pattern with an unbounded prefix before ` at ` backtracks
+// quadratically on a finding with many of them. Split at the LAST ` at `.
+function isValidFinding(finding) {
+  if (typeof finding !== 'string' || /[\r\n]/.test(finding)) return false;
+  const at = finding.lastIndexOf(' at ');
+  if (at < 0) return false;
+  const category = finding.slice(0, at);
+  if (!/\S/.test(category) || /\s$/.test(category)) return false;
+  const location = finding.slice(at + 4);
+  return location === 'general' || LOCATION_RE.test(location);
+}
 const RECORD_RE = /^[1-9]\d*$/;
 const VIEW_FIELDS = 'number,state,labels,url';
 const JSON_FIELDS = 'number,title,url,state';
@@ -70,7 +82,7 @@ function parseStampArgs(rest) {
     out[key] = value;
   }
   if (out.record === undefined || !RECORD_RE.test(out.record)) return { error: '--record must be a positive integer record number' };
-  if (out.finding === undefined || !FINDING_RE.test(out.finding)) return { error: '--finding must be "<category> at <file:line>" or "<category> at general"' };
+  if (out.finding === undefined || !isValidFinding(out.finding)) return { error: '--finding must be "<category> at <file:line>" or "<category> at general"' };
   return out;
 }
 
@@ -288,6 +300,6 @@ function run(argv, deps) {
   return opts.verb === 'stamp' ? stamp(opts, deps) : check(opts, deps);
 }
 
-module.exports = { run, realDeps, parseArgs, EXIT, LIST_LIMIT, checkRows, LABEL, FINDING_RE, stampCommentBody };
+module.exports = { run, realDeps, parseArgs, EXIT, LIST_LIMIT, checkRows, LABEL, isValidFinding, stampCommentBody };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
