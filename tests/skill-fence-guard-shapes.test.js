@@ -155,6 +155,7 @@ const ALLOWLIST = [
   ratchet('dispatch/queue-pull-script.md', 'git-in-substitution', 'DISPATCH_QUEUE_RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value disp'),
   ratchet('dispatch/queue-pull-script.md', 'node-git-text', 'DISPATCH_QUEUE_RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value disp'),
   ratchet('dispatch/queue-pull-script.md', 'gh-computed-input', 'DISPATCH_QUEUE_RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value disp'),
+  ratchet('dispatch/queue-pull-script.md', 'git-var-operand', 'DISPATCH_QUEUE_RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value disp'),
   ratchet('dispatch/settle-and-merge.md', 'gh-computed-input', 'LIVE_LABELS=$(gh issue view "$ISSUE" --json labels -q \'.labels[].name\')'),
   ratchet('dispatch/settle-and-merge.md', 'gh-computed-input', 'DISPATCH_COMMENTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "disp'),
   ratchet('docs-health/SKILL.md', 'gh-computed-input', 'gh issue reopen <issue_number>'),

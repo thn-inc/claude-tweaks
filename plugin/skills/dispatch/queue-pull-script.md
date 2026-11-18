@@ -159,8 +159,9 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPA
 NODE_EVAL_EOF
 [ $? -eq 3 ] && LABELS_SKIPPED=1 || LABELS_SKIPPED=
 DEP_UNREADABLE=
-: > "$DISPATCH_VERIFIED_OPEN_DEPS"
-for DEP in $(node -e "console.log(require(process.argv[1]).join(' '))" -- "$DISPATCH_UNRESOLVED_DEPS"); do
+rm -f "$DISPATCH_VERIFIED_OPEN_DEPS"
+DEP_LIST=$(node -e "console.log(require(process.argv[1]).join(' '))" -- "$DISPATCH_UNRESOLVED_DEPS") && : > "$DISPATCH_VERIFIED_OPEN_DEPS"
+for DEP in $DEP_LIST; do
   STATE=$(gh issue view "$DEP" --json state -q .state 2>/dev/null) || { STATE=OPEN; DEP_UNREADABLE=1; echo "Warning: gh issue view $DEP failed — dependency #$DEP treated as open (fail closed) this run" >&2; }
   if [ "$STATE" = "OPEN" ]; then echo "$DEP" >> "$DISPATCH_VERIFIED_OPEN_DEPS"; fi
 done
@@ -318,8 +319,7 @@ then
 else
   rm -f "${DISPATCH_GROUPS}.tmp"
   # #3110: same distinction as the open-linked-PR pass below -- a thrown
-  # appendExclusion means the exclusions file itself may be partially
-  # written, which is not safe to just skip past.
+  # appendExclusion means the exclusions file may be partially written.
   if grep -q 'appendExclusion:' "$DISPATCH_SHAPE_GATE_ERR" 2>/dev/null; then
     echo "dispatch: queue-pull stopped -- not-spec-shaped exclusion pass hit a corrupt exclusions file: $(cat "$DISPATCH_SHAPE_GATE_ERR")" >&2
     exit 1
@@ -362,10 +362,10 @@ then
   mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
 else
   rm -f "${DISPATCH_GROUPS}.tmp"
-  # #3110: a thrown appendExclusion (corrupt/unreadable dispatch-exclusions.json)
-  # is not the same failure as a transient resolve-linked-prs.js/network issue --
-  # stop the firing instead of the warn-and-continue-unfiltered degrade below,
-  # since the exclusions file itself may now be partially written.
+  # #3110: a thrown appendExclusion (corrupt
+  # exclusions file) is not a transient
+  # resolve-linked-prs.js/network issue: stop,
+  # don't degrade unfiltered below.
   if grep -q 'appendExclusion:' "$DISPATCH_LINKED_PRS_ERR" 2>/dev/null; then
     echo "dispatch: queue-pull stopped -- open-linked-PR exclusion pass hit a corrupt exclusions file: $(cat "$DISPATCH_LINKED_PRS_ERR")" >&2
     exit 1
@@ -391,8 +391,8 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH
     .filter((c) => c.target);
   fs.writeFileSync(process.argv[2], JSON.stringify(named));
 NODE_EVAL_EOF
-if [ -z "$INTEGRATION_BRANCH" ]; then
-  echo "Warning: target-missing pass skipped — no integration branch resolved" >&2
+if [ -z "$INTEGRATION_BRANCH" ] || ! git rev-parse --verify --quiet "$INTEGRATION_REF^{commit}" >/dev/null 2>&1; then # #5305 empty, #5863 unresolved ref: skips only this pass
+  echo "Warning: target-missing pass skipped — no resolvable integration branch" >&2
 else
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_NAMED_TARGETS" "$INTEGRATION_REF" "$DISPATCH_EXCLUSIONS" <<NODE_EVAL_EOF
   const { execFileSync } = require('child_process');
