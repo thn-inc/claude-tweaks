@@ -58,7 +58,7 @@ Expected: FAIL — the new and flipped assertions see `ok: true`.
 - Modify: `plugin/bin/queue-pull.js` (`resolveRunDir`, lines ~184-206)
 - Modify: `plugin/bin/accept-park.js` (`anchoredRun`, lines ~254-269)
 - Modify: `plugin/bin/release-claim.js` (~line 176) and `plugin/bin/repair-claim.js` (~line 131): the `not-anchored` / else branches
-- Modify: every other consumer whose `resolveTarget` else-branch prints "not anchored under the main checkout" (listed by Step 3's grep), and any test pinning that text
+- Modify: `plugin/bin/flow-preflight.js`, `plugin/bin/release-tip-check.js`, `plugin/bin/release-note-repair.js`, `plugin/bin/verify-run-bookends.js` and any other file Step 3's grep lists (their guard else-branch prints "not anchored under the main checkout"), plus any test pinning that text
 - Modify: `plugin/skills/_shared/pipeline-run-dir.md` (Sanctioned-write CLIs bullet, ~line 238-246)
 - Test: `tests/bin-lib/dispatch/queue-pull.test.js`, `tests/accept-park-cli.test.js`
 
