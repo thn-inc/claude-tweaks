@@ -461,7 +461,7 @@ test('AC4.1: the first write on a branchless remote creates the branch, then the
 });
 
 test('AC4.1: the first write on a branchless remote creates the branch, then the file, on the contents leg', () => {
-  // R23: the branch is read and created before the first PUT, so no PUT ever names a
+  // The branch is read and created before the first PUT, so no PUT ever names a
   // branch that is not there.
   const tip = 'e'.repeat(40);
   const gh = fakeGh({

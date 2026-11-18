@@ -144,7 +144,7 @@ function parseArgs(argv) {
     if (isBoolean) { out[key] = true; continue; }
     const value = rest[++i];
     // A value-taking flag read past the end is undefined; a value that opens `-` is refused for
-    // every flag, `--reason` included (ruling R19): an argv-level guard, like the run id's.
+    // every flag, `--reason` included: an argv-level guard, like the run id's.
     if (typeof value !== 'string' || !value.trim() || value.startsWith('-')) return { error: `${flag} requires a value` };
     out[key] = value;
   }
@@ -302,7 +302,7 @@ const sameRepo = (a, b) => normalizeHost(a.host) === normalizeHost(b.host)
 
 // Whether the local clone may serve the target: it must sit inside a work tree and its gated
 // origin must be the target itself. A typed --repo naming another repo gets no local history and
-// no git call at all (Review Focus 3).
+// no git call at all, so nothing can reach a different repo's `origin`.
 function localClone(spec, gated, deps) {
   if (!gated.spec || !sameRepo(gated.spec, spec)) return false;
   try {

@@ -22,7 +22,7 @@
 // Every failure resolves to `undetermined` (exit 5), never to a verdict that refuses or
 // resets. Each history object takes one snapshot of the branch and refreshes it once on a
 // membership miss: a competitor's advance can name a commit newer than the snapshot, and
-// that must read as a descendant, never as orphaned (Review Focus 1).
+// that must read as a descendant, never as orphaned.
 //
 // The three operations (`advanceMarker`, `initMarker`, `resetMarker`) take
 // `ctx = { store: { read, write, create }, history, now }` (`storeFacade` binds the store) and
@@ -420,7 +420,7 @@ function isAtOrPast(ctx, to, fresh) {
 // (ctx, { to }) -> an ok at-or-past result | { outcome: 'contested', reason } | null.
 // The emit path's stand-in for advanceMarker's lost-write re-read (the agent, not the CLI, made
 // the write that lost): `ctx.store` reads the marker the agent just re-fetched. A marker at or
-// past `to` is success with no write; a vanished one is contested (R17); anything else (behind
+// past `to` is success with no write; a vanished one is contested; anything else (behind
 // `to`, unreadable, malformed) is null, and the caller runs the normal advance over it.
 function recheckAfterConflict(ctx, { to } = {}) {
   assertSha(to);
@@ -476,10 +476,10 @@ function advanceMarker(ctx, { to, run } = {}) {
       };
     }
     if (!w.conflict) return { outcome: 'unreadable', reason: writeFailure(w) };
-    // A marker gone on the re-read is a competing writer's change, not a bad target (R17).
+    // A marker gone on the re-read is a competing writer's change, not a bad target.
     const again = readMarker(ctx.store, { outcome: 'contested', reason: MARKER_VANISHED });
     // A competitor may have advanced to a commit newer than the history's snapshot of the
-    // branch, which only the history's one refresh can see (Review Focus 1). After the first
+    // branch, which only the history's one refresh can see. After the first
     // lost write that refresh is still unspent here: pass 1's verdict took the snapshot (the
     // call that takes it never refreshes), and a pass-1 verdict that missed the snapshot is
     // orphaned, off-line or undetermined, each of which ended the operation above before any
@@ -513,14 +513,14 @@ function initMarker(ctx, { to } = {}) {
   return { outcome: 'unreadable', reason: writeFailure(c) };
 }
 
-// The basis a reset logs: a forced reset always logs the operator's reason (ruling R15),
+// The basis a reset logs: a forced reset always logs the operator's reason,
 // whatever the marker's line state; `orphaned` is only the basis of an unforced reset.
 const resetBasisText = (force, reason) => (force ? `forced: ${reason}` : 'orphaned');
 const resetMessage = (fromLabel, to, run, basisText) => `Reset reviewed-through from ${fromLabel} to ${short(to)} — run ${run} — ${basisText}`;
 
 // ({ run, force, reason }) -> { fits, length }: whether the longest reset commit message
 // these arguments can compose (a 12-char `from` and `to`) fits the store's commit-message
-// rule (ruling R1). `resetMarker` throws when it does not; the CLI calls this first, so an
+// rule. `resetMarker` throws when it does not; the CLI calls this first, so an
 // overlong run id or reason is a usage error, never a write that fails as unreadable.
 function resetMessageFits({ run, force = false, reason } = {}) {
   const longest = resetMessage('0'.repeat(12), '0'.repeat(40), run, resetBasisText(force, reason));

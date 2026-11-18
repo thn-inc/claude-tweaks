@@ -202,7 +202,7 @@ const REFUSE = [
   ['AC6.1: init-exists (a marker is already there)', ON_LINE, ['init', '--to', LINE[2]], 1, /^release-state\.js: refused — a marker already exists/],
   ['AC5.1: unreadable (the contents read failed)', () => makeWorld({ contentsError: 'connection reset by peer' }), ['advance', '--to', LINE[3], '--run', 'r2'], 3, /^release-state\.js: unreadable — /],
   ['AC8.3: a malformed marker is unreadable', () => makeWorld({ marker: '{"version":2}' }), ['advance', '--to', LINE[3], '--run', 'r2'], 3, /^release-state\.js: unreadable — .*version/],
-  ['an inaccessible repo is unreadable, never absent (Review Focus 2)', () => makeWorld({ branchExists: false, repoMissing: true }), ['read'], 3, /^release-state\.js: unreadable — .*could not be confirmed/],
+  ['an inaccessible repo is unreadable, never absent', () => makeWorld({ branchExists: false, repoMissing: true }), ['read'], 3, /^release-state\.js: unreadable — .*could not be confirmed/],
   ['contested (every write loses)', () => makeWorld({ marker: markerText(LINE[1]), putConflict: true }), ['advance', '--to', LINE[3], '--run', 'r2'], 4, /^release-state\.js: contested — /],
   ['reset of a marker still on the line is refused', ON_LINE, ['reset', '--to', LINE[3], '--run', 'r9'], 1, /^release-state\.js: refused — .*not orphaned/],
   ['reset of an unreadable marker without --force is unreadable', () => makeWorld({ marker: '{' }), ['reset', '--to', LINE[3], '--run', 'r9'], 3, /^release-state\.js: unreadable — .*--force --reason/],
@@ -299,7 +299,7 @@ const USAGE_CASES = [
   ['a --reason with a newline', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', 'one\ntwo'], /--reason must match/],
   ['a --reason over 200 characters', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', 'x'.repeat(201)], /--reason must match/],
   ['a --reason that is another flag', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', '--force'], /--reason requires a value/],
-  ['a --reason with a leading dash (ruling R19)', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', '-x'], /--reason requires a value/],
+  ['a --reason with a leading dash is refused like any flag value', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', '-x'], /--reason requires a value/],
   ['a --reason of -h is a refused value, not help', ['marker', 'reset', '--to', T, '--run', 'r1', '--force', '--reason', '-h'], /--reason requires a value/],
   ['a --run of -h is a refused value, not help', ['marker', 'advance', '--to', T, '--run', '-h'], /--run requires a value/],
   ['a --repo of --help is a refused value, not help', ['marker', 'read', '--repo', '--help'], /--repo requires a value/],
@@ -323,7 +323,7 @@ const USAGE_CASES = [
   ['a repeated flag', ['marker', 'advance', '--to', T, '--to', T, '--run', 'r1'], /--to given more than once/],
   ['a trailing --repo', ['marker', 'read', '--repo'], /--repo requires a value/],
   ['an empty --marker-json', ['marker', 'read', '--marker-json', ''], /--marker-json requires a value/],
-  // The reset commit message must fit the store's 200-character rule (ruling R1): a valid run id
+  // The reset commit message must fit the store's 200-character rule: a valid run id
   // and a valid reason can still overflow it together.
   ['a reset whose --run and --reason overflow the commit-message budget', ['marker', 'reset', '--to', T, '--run', 'r'.repeat(128), '--force', '--reason', 'x'.repeat(200)], /200-character commit-message budget/],
   ['an unforced reset whose --run alone overflows the budget', ['marker', 'reset', '--to', T, '--run', 'r'.repeat(128)], /200-character commit-message budget/],
@@ -458,7 +458,7 @@ test('a slug the store refuses is exit 2 at the CLI: one rule, the store\'s own 
   assert.equal(isBareSlug('o/r'), true);
 });
 
-// ---- the repo, the host and the branch (Review Focus 3) ----
+// ---- the repo, the host and the branch: a typed repo other than the origin gets no local git ----
 
 test('repo: --repo other/x with origin acme/widgets uses no local git', () => {
   const h = harness({ world: makeWorld({ slug: 'other/x', marker: markerText(LINE[1]) }), origin: 'https://github.com/acme/widgets.git' });
@@ -577,7 +577,7 @@ test('realDeps.gh carries the GH_TIMEOUT_MS bound', () => {
   assert.equal(seen, 45000);
 });
 
-// ---- emit mode: no gh, no repo resolution, local history only (Review Focus 5) ----
+// ---- emit mode: no gh, no repo resolution, local history only ----
 
 function emitHarness(fx, files = {}, clone = fx.cloneA) {
   const calls = {
@@ -642,7 +642,7 @@ test('emit mode: an advance that is already satisfied prints its normal line and
   assert.equal(back.stdout, '');
 });
 
-// ---- --after-conflict: the MCP path's at-or-past check after a lost PUT (ruling R20) ----
+// ---- --after-conflict: the MCP path's at-or-past check after a lost PUT ----
 
 const AFTER = (fx, extra = []) => ['marker', 'advance', '--to', fx.P3, '--run', 'r1', '--marker-json', 'm.json', '--after-conflict', ...extra];
 
@@ -653,7 +653,7 @@ test('after-conflict: a fresh marker at the target is at-or-past, exit 0, no wri
   assert.deepEqual([r.code, r.stdout], [0, `{"advanced":false,"sha":"${fx.P3}","reason":"at-or-past"}\n`]);
 });
 
-test('after-conflict: a fresh marker past the target is at-or-past, exit 0, no write (Review Focus 1)', () => {
+test('after-conflict: a fresh marker past the target is at-or-past, exit 0, no write', () => {
   const fx = makeLine();
   const { run } = emitHarness(fx, { 'm.json': readFileOf(fx.P5) });
   const r = run(AFTER(fx));

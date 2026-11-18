@@ -198,7 +198,7 @@ test('createCompareHistory: a 404 is notFound, any other failure is undetermined
   assert.ok('undetermined' in createCompareHistory({ ghApi: noTip.ghApi, slug: 'o/r' }).onLine(X));
 });
 
-test('history: a compare-history membership miss re-reads the tip once (Review Focus 1)', () => {
+test('history: a compare-history membership miss re-reads the tip once: a newer tip from a competitor is seen, never orphaned', () => {
   // The tip read first answers M, then T: a competitor's T landed past the snapshot.
   const tips = [M, T, T];
   const gh = fakeGh({
@@ -317,7 +317,7 @@ test('AC8.1 (descent): a failed fetch is undetermined', () => {
   assert.equal(scratchRefs(fx.cloneA), '');
 });
 
-test('history: a membership miss refreshes the snapshot once (Review Focus 1)', () => {
+test('history: a membership miss refreshes the snapshot once: a newer commit from a competitor is seen, never orphaned', () => {
   const fx = makeLine();
   const run = realRunner(fx.cloneA);
   let fetches = 0;
@@ -674,7 +674,7 @@ test('AC3.1: the retry re-validates against the fresh marker', () => {
   assert.equal(stateTip(fx), planted, 'no write after the re-validation');
 });
 
-test('Review Focus 1: a competitor landing past our fetched main snapshot is at-or-past after one refresh, never orphaned', () => {
+test('advance: a competitor landing past our fetched main snapshot is at-or-past after one refresh, never orphaned', () => {
   const fx = makeLine();
   initAt(fx, fx.P1);
   const ctxA = ctxFor(fx.cloneA);
@@ -738,7 +738,7 @@ test('AC3.1: a second conflict is contested; a fresh read that fails stops; any 
   }
 });
 
-test('AC3.1: after a second conflict, a marker a third writer moved to or past the target is at-or-past (ruling R16)', () => {
+test('AC3.1: after a second conflict, a marker a third writer moved to or past the target is at-or-past', () => {
   const first = presentAt(F, 'b'.repeat(40));
   const second = presentAt(A, 'c'.repeat(40));
   const base = { [`${F}>${T}`]: 'descendant', [`${T}>${A}`]: 'backward', [`${A}>${T}`]: 'descendant' };
@@ -760,7 +760,7 @@ test('AC3.1: after a second conflict, a marker a third writer moved to or past t
   }
 });
 
-test('AC3.1: a marker that vanished after the first lost write is contested (ruling R17), without init advice', () => {
+test('AC3.1: a marker that vanished after the first lost write is contested (a competing writer changed it), without init advice', () => {
   const vanished = { state: 'absent', lease: null, via: 'git', branchMissing: false };
   const { ctx, calls } = fakeCtx({ reads: [presentAt(F), vanished], write: () => ({ ok: false, conflict: true }), verdicts: { [`${F}>${T}`]: 'descendant' } });
   const r = advanceMarker(ctx, { to: T, run: 'ra' });
@@ -839,7 +839,7 @@ test('AC8.8: a forced reset logs its reason', () => {
   assert.equal(tipSubject(fx), `Reset reviewed-through from ${short12(fx.P1)} to ${short12(fx.P3)} — run r9 — forced: history rewritten by hand`);
 });
 
-test('AC8.8: a forced reset over an orphaned marker is forced and logs the reason (ruling R15)', () => {
+test('AC8.8: a forced reset over an orphaned marker is forced and logs the reason, whatever the line state', () => {
   const fx = makeLine();
   initAt(fx, fx.P3);
   const rewritten = rewriteMain(fx);
@@ -851,7 +851,7 @@ test('AC8.8: a forced reset over an orphaned marker is forced and logs the reaso
   assert.equal(tipSubject(fx), `Reset reviewed-through from ${short12(fx.P3)} to ${short12(rewritten)} — run r9 — forced: history rewritten by hand`);
 });
 
-test("AC8.8: a forced reset never consults the marker's line state, so an undetermined one still resets (ruling R15)", () => {
+test("AC8.8: a forced reset never consults the marker's line state, so an undetermined one still resets", () => {
   // The fake history throws on any onLine it was not given: F (the marker) is absent from
   // the table, so the test fails if the forced reset asks about it.
   const { ctx, calls } = fakeCtx({ reads: [presentAt(F)], write: () => ({ ok: true, via: 'git' }), onLine: { [T]: { onLine: true } } });
@@ -949,7 +949,7 @@ function trapCtx() {
   };
 }
 
-test('marker: TypeError on bad arguments (Review Focus 4)', () => {
+test('marker: TypeError on bad arguments, thrown before anything is read', () => {
   const { ctx, touched } = trapCtx();
   const forced = { force: true };
   const cases = [
@@ -974,7 +974,7 @@ test('marker: TypeError on bad arguments (Review Focus 4)', () => {
   assert.deepEqual(touched, []);
 });
 
-test('marker: a reset whose commit message would pass 200 characters is a TypeError before any read (ruling R1)', () => {
+test('marker: a reset whose commit message would pass 200 characters is a TypeError before any read', () => {
   const { ctx, touched } = trapCtx();
   const longRun = `r${'x'.repeat(127)}`;
   const longReason = 'y'.repeat(200);
@@ -989,7 +989,7 @@ test('marker: a reset whose commit message would pass 200 characters is a TypeEr
   assert.deepEqual(touched, []);
 });
 
-test('resetMessageFits: the shared R1 check, at its 200-character boundary', () => {
+test('resetMessageFits: the shared commit-message budget check, at its 200-character boundary', () => {
   const run = (n) => `r${'x'.repeat(n - 1)}`;
   // Unforced: 74 characters plus the run, so a 126-char run fits and a 127-char one does not.
   assert.deepEqual(resetMessageFits({ run: run(126) }), { fits: true, length: 200 });
