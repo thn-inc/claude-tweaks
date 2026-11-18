@@ -9,8 +9,8 @@
 //   decide --record <n>[,<m>…] [--run <dir>] [--repo [host/]owner/name]
 //          [--head <sha>] [--base <ref>] [--classification <file>]
 //     One JSON line, decideSeries' result. Control mode off (isControlModeOn over
-//     resolvePolicyKeys, the run's config.yml over policy.yml as resolve-policy.js --run reads
-//     them; without --run, the main checkout's policy.yml alone, as parked reads it) prints
+//     resolvePolicyKeys; control-mode is policyOnly (#5830), so the main checkout's policy.yml
+//     alone decides it, with or without --run, which still anchors the AUTO lines) prints
 //     `consulted: false` for every record and reads no record. On, each record's
 //     body gives its kept risk flags (parseRiskFlags: ok -> flags, unclassified -> [], unknown
 //     -> the widened flags, so it parks) and its Acceptance-target override; an invalid
@@ -49,7 +49,7 @@
 //     repository; 3 --run refused; 4 gh absent, before any write.
 //   parked --record <n> [--run <dir>] [--repo [host/]owner/name]
 //     Prints parked / not-parked / unknown. control-mode resolves as decide resolves it (the
-//     run's config.yml over policy.yml with --run; the main checkout's policy.yml without): off
+//     main checkout's policy.yml alone, #5830; a run's config.yml never overrides it): off
 //     prints not-parked with no gh call, so a record parked under control mode is mergeable
 //     once control mode is off (the accepted tradeoff, spec AC2a). On: isParkedForLocalAcceptance
 //     over the record's labels and packet comment. Exit 0 parked, 5 not-parked, 6 unknown (a
@@ -500,9 +500,8 @@ function runDecide(opts, deps, ctx) {
   let policyDefault = target.value;
   if (target.invalid) policyDefault = null;
   else if (target.source === 'default') policyDefault = undefined;
-  // Gated by the control-mode result above (the run's config.yml over policy.yml), never by readRiskPolicy,
-  // which gates on policy.yml alone. The two risk keys resolve from policy.yml only; integration-branch
-  // takes the run's config.yml over policy.yml.
+  // Gated by the control-mode result above (policy.yml alone, as readRiskPolicy gates, #5830). The two
+  // risk keys resolve from policy.yml only; integration-branch takes the run's config.yml over policy.yml.
   const tripwirePolicy = resolvePolicyKeys(['risk-categories', 'risk-path-globs', 'integration-branch'], { policyRaw, runConfigRaw });
   const extraCategories = extraCategoriesOf(tripwirePolicy['risk-categories'].value);
   const categories = [...BUILTIN_RISK_CATEGORIES, ...extraCategories];
