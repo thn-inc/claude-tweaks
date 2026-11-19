@@ -333,6 +333,7 @@ function resolve(opts = {}) {
         '(omit --mode entirely for a caller that creates in every mode, e.g. wrap-up).',
       );
     }
+    const mintManifest = (dir, lane) => require('../run-manifest/write').initRunManifest(dir, { lane, cwd }); // lazy: hot paths that never mint skip the policy resolver; never passes env (the driver's is {})
     if (opts.standalone) {
       // The step-4 standalone-auto-fallback shape: {ts}-{name}-standalone,
       // pre-populated with decisions.md and staged/ — byte-for-byte what the
@@ -351,12 +352,13 @@ function resolve(opts = {}) {
       }
       fs.mkdirSync(path.join(dir, 'staged'), { recursive: true });
       try { fs.closeSync(fs.openSync(path.join(dir, 'decisions.md'), 'a')); } catch { /* best-effort touch */ }
+      mintManifest(dir, 'unknown');
       return ok(dir, true);
     }
     if (opts.specSlug) {
       // The plain mint shape /flow (steps-and-gates.md case 4), /dispatch
       // (SKILL.md Step 4), and /claude-tweaks:flow's claim-targets.md use:
-      // mkdir only. config.yml/decisions.md are written later, by whichever
+      // mkdir plus manifest.json. config.yml/decisions.md are written later, by whichever
       // step actually initializes the run (the Config Manifesto), not by
       // this mint.
       const dir = path.join(pipelinesRoot, `${formatTimestamp(now)}-${opts.specSlug}`);
@@ -369,6 +371,7 @@ function resolve(opts = {}) {
         );
       }
       fs.mkdirSync(dir, { recursive: true });
+      mintManifest(dir, /^drive-\d+$/.test(opts.specSlug) ? 'driver' : 'unknown');
       return ok(dir, true);
     }
     return fail(
