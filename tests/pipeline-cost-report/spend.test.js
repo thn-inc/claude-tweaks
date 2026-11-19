@@ -11,7 +11,7 @@ const os = require('os');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..', '..');
-const { PRICES, familyOf, bucketOf, priceRequest, scanTranscript } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'spend.js'));
+const { PRICES, familyOf, bucketOf, priceRequest, scanTranscript, collectSpend } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'spend.js'));
 
 const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pcr-'));
 after(() => fs.rmSync(DIR, { recursive: true, force: true }));
@@ -251,4 +251,148 @@ test('firstSkill reads a typed command or a Skill call, whichever comes first', 
 test('malformed lines are skipped', async () => {
   const file = fixture(['{not json', asst('a', 'claude-opus-4-8', 0, { input_tokens: 7 })]);
   assert.strictEqual((await scanTranscript(file)).requests[0].input, 7);
+});
+
+// --- collectSpend ---
+
+let rootN = 0;
+function newRoot() {
+  const root = path.join(DIR, `root${rootN++}`);
+  fs.mkdirSync(root, { recursive: true });
+  return root;
+}
+function put(file, lines) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  return file;
+}
+const typed = (min, skill) => user(min, [{ type: 'text', text: `<command-name>/claude-tweaks:${skill}</command-name>` }]);
+const WINDOW = { since: new Date('2026-11-08T00:00:00Z'), until: new Date('2026-11-19T00:00:00Z'), match: null };
+// one Opus call: 1,000,000 uncached input tokens = $4
+const opusCall = (id, min, input = 1000000) => asst(id, 'claude-opus-4-8', min, { input_tokens: input, output_tokens: 0 });
+const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} !== ${b}`);
+
+test('AC3.1: a session whose first claude-tweaks skill is dispatch is reported under dispatch', async () => {
+  const root = newRoot();
+  put(path.join(root, 'slug-a', 's1.jsonl'), [typed(0, 'dispatch'), opusCall('a', 1), skillCall('b', 2, 'claude-tweaks:flow')]);
+  const r = await collectSpend({ roots: [root], ...WINDOW });
+  assert.ok(r.bySessionType.dispatch > 0);
+  assert.strictEqual(r.bySessionType.flow, undefined);
+  assert.strictEqual(r.sessions, 1);
+  assert.strictEqual(r.unreadable, 0);
+});
+
+test('AC3.2: a session that invoked no claude-tweaks skill is reported under no skill invoked', async () => {
+  const root = newRoot();
+  put(path.join(root, 'slug-a', 's1.jsonl'), [user(0), opusCall('a', 1)]);
+  const r = await collectSpend({ roots: [root], ...WINDOW });
+  near(r.bySessionType['no skill invoked'], 4);
+  near(r.total, 4);
+  near(r.byModel.opus, 4);
+  near(r.byAgent.main, 4);
+  assert.strictEqual(r.byAgent.subagent, 0);
+  assert.strictEqual(r.byBucket['>700'].requests, 1);
+});
+
+test("AC3.3: subagent spend is attributed to its parent session's type", async () => {
+  const root = newRoot();
+  put(path.join(root, 'slug-a', 's1.jsonl'), [typed(0, 'flow'), opusCall('a', 1)]);
+  put(path.join(root, 'slug-a', 's1', 'subagents', 'agent-x.jsonl'), [opusCall('b', 2, 500000)]);
+  const r = await collectSpend({ roots: [root], ...WINDOW });
+  near(r.bySessionType.flow, 6);
+  near(r.byAgent.subagent, 2);
+  near(r.byAgent.main, 4);
+  assert.strictEqual(r.sessions, 1);
+});
+
+test('AC3.3: a subagent whose parent transcript is missing is reported under unattributed', async () => {
+  const root = newRoot();
+  put(path.join(root, 'slug-a', 's1', 'subagents', 'agent-x.jsonl'), [opusCall('b', 2, 500000)]);
+  const r = await collectSpend({ roots: [root], ...WINDOW });
+  near(r.bySessionType.unattributed, 2);
+  assert.strictEqual(r.sessions, 0);
+});
+
+test('AC3.3: a Workflow-tool agent under subagents/workflows/{id}/ is a subagent of its session', async () => {
+  const root = newRoot();
+  put(path.join(root, 'slug-a', 's1.jsonl'), [typed(0, 'review')]);
+  put(path.join(root, 'slug-a', 's1', 'subagents', 'workflows', 'wf_1', 'agent-x.jsonl'), [opusCall('b', 2, 500000)]);
+  put(path.join(root, 'slug-a', 's1', 'tool-results', 'agent-y.jsonl'), [opusCall('c', 2)]);
+  const r = await collectSpend({ roots: [root], ...WINDOW });
+  near(r.bySessionType.review, 2);
+  near(r.byAgent.subagent, 2);
+  near(r.total, 2);
+});
+
+test('AC8.1: a transcript that disappears during the scan is counted unreadable and the scan continues', async () => {
+  const root = newRoot();
+  const gone = put(path.join(root, 'slug-a', 'gone.jsonl'), [opusCall('a', 1)]);
+  put(path.join(root, 'slug-a', 'kept.jsonl'), [opusCall('b', 1, 500000)]);
+  const enoent = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+  const failStat = {
+    ...fs,
+    statSync: (f, ...rest) => {
+      if (f === gone) throw enoent();
+      return fs.statSync(f, ...rest);
+    },
+  };
+  const r = await collectSpend({ roots: [root], ...WINDOW }, { fsImpl: failStat });
+  assert.strictEqual(r.unreadable, 1);
+  near(r.total, 2);
+  const failRead = {
+    ...fs,
+    createReadStream: (f, ...rest) => {
+      if (f === gone) throw enoent();
+      return fs.createReadStream(f, ...rest);
+    },
+  };
+  const r2 = await collectSpend({ roots: [root], ...WINDOW }, { fsImpl: failRead });
+  assert.strictEqual(r2.unreadable, 1);
+  near(r2.total, 2);
+});
+
+test('window: a message outside --since/--until is not counted, by its own timestamp', async () => {
+  const root = newRoot();
+  const m = (id, iso) => ({ ...opusCall(id, 0, 500000), timestamp: iso });
+  put(path.join(root, 'slug-a', 's1.jsonl'), [
+    m('a', '2026-11-07T23:59:59Z'),
+    m('b', '2026-11-08T00:00:00Z'),
+    m('c', '2026-11-19T23:59:59Z'),
+    m('d', '2026-11-20T00:00:00Z'),
+  ]);
+  const r = await collectSpend({ roots: [root], ...WINDOW });
+  near(r.total, 4); // b and c count; a and d do not
+});
+
+test('a file last modified before --since is skipped', async () => {
+  const root = newRoot();
+  const f = put(path.join(root, 'slug-a', 's1.jsonl'), [opusCall('a', 0)]);
+  const old = new Date('2026-10-01T00:00:00Z');
+  fs.utimesSync(f, old, old);
+  const r = await collectSpend({ roots: [root], ...WINDOW });
+  assert.strictEqual(r.total, 0);
+  assert.strictEqual(r.sessions, 0);
+});
+
+test('match keeps only transcripts whose cwd contains the substring', async () => {
+  const root = newRoot();
+  put(path.join(root, 'slug-a', 's1.jsonl'), [{ ...user(0), cwd: '/work/claude-tweaks' }, opusCall('a', 1, 500000)]);
+  put(path.join(root, 'slug-b', 's2.jsonl'), [{ ...user(0), cwd: '/work/other' }, opusCall('b', 1, 500000)]);
+  put(path.join(root, 'claude-tweaks-slug', 's3.jsonl'), [user(0), opusCall('c', 1, 500000)]);
+  const r = await collectSpend({ roots: [root], ...WINDOW, match: 'claude-tweaks' });
+  near(r.total, 4);
+  assert.strictEqual(r.sessions, 2);
+});
+
+test('re-writes are tallied by cause and unpriced models are counted apart from spend', async () => {
+  const root = newRoot();
+  put(path.join(root, 'slug-a', 's1.jsonl'), [
+    asst('a', 'claude-opus-4-8', 0, { cache_creation_input_tokens: 100000 }),
+    asst('u', 'mystery-model', 1, { input_tokens: 300, output_tokens: 7 }),
+    asst('s', '<synthetic>', 2, {}),
+  ]);
+  const r = await collectSpend({ roots: [root], ...WINDOW });
+  assert.strictEqual(r.cacheWrites['session start'].requests, 1);
+  near(r.cacheWrites['session start'].usd, 0.5);
+  assert.deepStrictEqual(r.unpriced, { requests: 1, tokens: 307 });
 });

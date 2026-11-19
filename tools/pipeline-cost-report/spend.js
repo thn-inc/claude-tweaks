@@ -18,6 +18,7 @@
 // and returned with zero cost, never priced.
 
 const fs = require('fs');
+const path = require('path');
 const readline = require('readline');
 
 // [input, output, cache read, 5-minute cache write, 1-hour cache write]
@@ -174,4 +175,149 @@ async function scanTranscript(file, { fsImpl = fs } = {}) {
   return out;
 }
 
-module.exports = { PRICES, familyOf, bucketOf, priceRequest, scanTranscript };
+const DAY_MS = 24 * 60 * 60 * 1000;
+const NO_SKILL = 'no skill invoked';
+const UNATTRIBUTED = 'unattributed';
+
+function dayStart(date) {
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+}
+
+function add(map, key, usd) {
+  map[key] = (map[key] || 0) + usd;
+}
+
+function addCount(map, key, usd) {
+  const e = map[key] || (map[key] = { requests: 0, usd: 0 });
+  e.requests += 1;
+  e.usd += usd;
+}
+
+// Spend over the transcripts under `roots` ({root}/{slug}/{session}.jsonl, plus the subagent files under
+// {root}/{slug}/{session}/subagents/ and subagents/workflows/{id}/). The window is `since`'s UTC day through
+// `until`'s UTC day, both inclusive; a request belongs to it by its own timestamp. A directory or file that cannot be
+// read (live sessions are reaped mid-scan) is counted in `unreadable` and the scan goes on. Roots are scanned as given;
+// de-duplicating aliased roots is the caller's job. Money figures are unrounded dollars. Synthetic API-error lines
+// carry no spend and are left out of every tally, `unpriced` included.
+async function collectSpend({ roots, since, until, match = null }, { fsImpl = fs } = {}) {
+  const startMs = dayStart(since);
+  const endMs = dayStart(until) + DAY_MS;
+  const res = {
+    total: 0,
+    bySessionType: {},
+    byModel: {},
+    byAgent: { main: 0, subagent: 0 },
+    byBucket: {},
+    cacheWrites: {},
+    unpriced: { requests: 0, tokens: 0 },
+    sessions: 0,
+    unreadable: 0,
+  };
+  const scans = new Map();
+  const scan = (file) => {
+    if (!scans.has(file)) scans.set(file, scanTranscript(file, { fsImpl }).then((value) => ({ value }), (error) => ({ error })));
+    return scans.get(file);
+  };
+  const list = (dir) => {
+    try {
+      return fsImpl.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      res.unreadable += 1;
+      return [];
+    }
+  };
+  const inWindow = (file) => {
+    try {
+      return fsImpl.statSync(file).mtimeMs >= startMs;
+    } catch {
+      res.unreadable += 1;
+      return null;
+    }
+  };
+  const wanted = (cwd, slug) => !match || (cwd || slug).includes(match);
+
+  function tally(requests, sessionType, agent) {
+    for (const r of requests) {
+      if (r.synthetic || r.model === SYNTHETIC_MODEL) continue;
+      const t = Date.parse(r.ts);
+      if (!(t >= startMs && t < endMs)) continue;
+      res.total += r.usd;
+      add(res.bySessionType, sessionType, r.usd);
+      add(res.byModel, r.family, r.usd);
+      res.byAgent[agent] += r.usd;
+      addCount(res.byBucket, bucketOf(r.prompt), r.usd);
+      if (r.cacheWrite > REWRITE_MIN_TOKENS && r.cacheWrite > r.prompt / 2) {
+        const e = res.cacheWrites[r.cause] || (res.cacheWrites[r.cause] = { requests: 0, tokens: 0, usd: 0 });
+        e.requests += 1;
+        e.tokens += r.cacheWrite;
+        e.usd += r.cacheWriteUsd;
+      }
+      if (r.family === 'unpriced') {
+        res.unpriced.requests += 1;
+        res.unpriced.tokens += r.prompt + r.output;
+      }
+    }
+  }
+
+  async function readInto(file, slug, sessionTypeOf, agent) {
+    const got = await scan(file);
+    if (got.error) {
+      // the cache holds one outcome per file; a main that failed is counted where it is listed, below
+      return got;
+    }
+    const { cwd, requests } = got.value;
+    if (!wanted(cwd, slug)) return got;
+    tally(requests, sessionTypeOf(got.value), agent);
+    return got;
+  }
+
+  for (const root of roots) {
+    for (const slugEntry of list(root)) {
+      if (!slugEntry.isDirectory()) continue;
+      const slug = slugEntry.name;
+      const slugDir = path.join(root, slug);
+      const entries = list(slugDir);
+      const mains = new Set(entries.filter((e) => e.isFile() && e.name.endsWith('.jsonl')).map((e) => e.name.slice(0, -'.jsonl'.length)));
+
+      for (const session of mains) {
+        const file = path.join(slugDir, `${session}.jsonl`);
+        const fresh = inWindow(file);
+        if (fresh !== true) continue;
+        const got = await readInto(file, slug, (v) => v.firstSkill || NO_SKILL, 'main');
+        if (got.error) res.unreadable += 1;
+        else if (wanted(got.value.cwd, slug)) res.sessions += 1;
+      }
+
+      for (const dirEntry of entries) {
+        if (!dirEntry.isDirectory()) continue;
+        const session = dirEntry.name;
+        const subDir = path.join(slugDir, session, 'subagents');
+        const files = [];
+        for (const e of list(subDir)) {
+          if (e.isFile() && e.name.startsWith('agent-') && e.name.endsWith('.jsonl')) files.push(path.join(subDir, e.name));
+          else if (e.isDirectory() && e.name === 'workflows') {
+            for (const wf of list(path.join(subDir, 'workflows'))) {
+              if (!wf.isDirectory()) continue;
+              const wfDir = path.join(subDir, 'workflows', wf.name);
+              for (const a of list(wfDir)) if (a.isFile() && a.name.startsWith('agent-') && a.name.endsWith('.jsonl')) files.push(path.join(wfDir, a.name));
+            }
+          }
+        }
+        if (files.length === 0) continue;
+        let parentType = UNATTRIBUTED;
+        if (mains.has(session)) {
+          const parent = await scan(path.join(slugDir, `${session}.jsonl`));
+          if (parent.value) parentType = parent.value.firstSkill || NO_SKILL;
+        }
+        for (const file of files) {
+          if (inWindow(file) !== true) continue;
+          const got = await readInto(file, slug, () => parentType, 'subagent');
+          if (got.error) res.unreadable += 1;
+        }
+      }
+    }
+  }
+  return res;
+}
+
+module.exports = { PRICES, familyOf, bucketOf, priceRequest, scanTranscript, collectSpend };
