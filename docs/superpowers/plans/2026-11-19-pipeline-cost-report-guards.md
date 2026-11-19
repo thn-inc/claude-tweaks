@@ -22,7 +22,11 @@
 
 ## Decisions the spec leaves open (made here)
 
-- **Task key** = run name + `parentAgentId` (or `''`) + record number + task number. The record number is the first `#(\d+)` in the description, `''` when none. Real multi-spec runs (`2026-11-18T072534-spec-5879-5863-5865-5830`) name the record (`Implement #5830 Task 1`, `Implement #5863 Task 1`, both `parentAgentId: null`), and without it the two would merge. Task number regex: `/\bTask\s+(\d+)\b/i`.
+The run-eligibility, task-key, guard-1-input and `--section all` rules below were decided by the user at plan review (the spec's `## Plan Review Clarifications`).
+
+- **Run eligibility** (user decision): only pipeline runs count toward `--runs n`. A run is eligible when its name matches `/(^|-)(spec|record)-/` or its directory holds a `timing.json`. Ineligible runs are dropped before the columns are cut, are in neither column and are not unparsed.
+- **Guard 1 input** (user decision): the dispatches with `role === 'whole-branch review'`, plus those with `role === 'unlabelled'` whose description matches `/^final review\b/i` (`Final review for #5865`).
+- **Task key** (user decision) = run name + `parentAgentId` (or `''`) + record number + task number. The record number is the first `#(\d+)` in the description. A dispatch whose description names no record inherits the record of the one `implementer` dispatch with that task number under the same parent; with zero or several such implementers it stays `''`. Real multi-spec runs (`2026-11-18T072534-spec-5879-5863-5865-5830`) name the record (`Implement #5830 Task 1`, `Implement #5863 Task 1`, both `parentAgentId: null`), and without it the two would merge. Task number regex: `/\bTask\s+(\d+)\b/i`.
 - **Task dispatches** are the roles `implementer`, `task review`, `re-review`. A `re-review` or `task review` with no task number reviews a fix wave (`Re-review the final-review fix wave`), not a task, and is ignored. An `implementer` with no task number counts 1 unparsed.
 - **Transcript lookup**: session ids are the basenames (no `.jsonl`) of `timing.json`'s `transcripts[].path`. The report file is `{root}/{any slug}/{session}/subagents/agent-{agentId}.jsonl` for any root in `ctx.roots`. The slug is not taken from `transcripts[].path`, because real runs differ: 5846's main transcript is under the worktree slug and its subagents are under the main-checkout slug.
 - **`timing.json`**: a run with no `timing.json` contributes nothing and is not unparsed (release and adhoc runs have none). One that exists but does not parse counts 1 unparsed in guard 1 and 1 in guard 2. Only the run's top-level `timing.json` is read; it already lists every member's dispatches.
@@ -43,6 +47,7 @@
 ### Task 1: Columns, report parsing and guard 1
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Create: `tools/pipeline-cost-report/guards.js`
@@ -51,7 +56,7 @@
 **Interfaces:**
 - Consumes: run objects from `tools/pipeline-cost-report/runs.js` `listRuns`: `{ name, date, dir, archived, members }`.
 - Produces:
-  - `selectColumns(runs, { split, n }) -> { before: Run[], after: Run[] }`. Both are in ascending `name` order. `before` holds the last `n` runs with `date < split`, `after` the first `n` with `date >= split`.
+  - `selectColumns(runs, { split, n, fsImpl }) -> { before: Run[], after: Run[] }`. Both are in ascending `name` order. It first drops the runs the Run eligibility rule excludes; then `before` holds the last `n` eligible runs with `date < split`, `after` the first `n` with `date >= split`.
   - `parseReviewCounts(text) -> { critical, important, minor } | null`.
   - `readTiming(runDir, fsImpl) -> { items: Dispatch[], sessions: string[] } | null`. It returns null when `timing.json` is absent (ENOENT) and throws when the file exists but does not parse. `Dispatch` is a `dispatches.items[]` entry (`agentId, description, role, tier, parentAgentId, startTs`).
   - `readReport({ roots, sessions, agentId }, fsImpl) -> string | null`: the last assistant `text` block of the first `{root}/{slug}/{session}/subagents/agent-{agentId}.jsonl` that exists, or null when there is no file or no text block.
@@ -70,6 +75,8 @@
   - `guard 1: a missing transcript and an error reply are unparsed`. One dispatch has no report file. One report's text is `API Error 403`. One parsed report has 1 Critical item. Expect `n === 1`, `unparsed === 2`, `share === 1`, `meanCritical === 1`.
   - `AC6.1: --split 2026-11-19 --runs 2 picks the two latest before and two earliest on or after`. Runs: `2026-11-16T1-a`, `2026-11-17T1-a`, `2026-11-18T1-a`, `2026-11-19T1-a`, `2026-11-20T1-a`, passed in shuffled order. Expect before names `['2026-11-17T1-a','2026-11-18T1-a']` and after names `['2026-11-19T1-a','2026-11-20T1-a']`.
   - `selectColumns orders one date by full name and keeps a short column`. Runs: `2026-11-18T2-b`, `2026-11-18T1-a`, `2026-11-20T1-a`. With `split '2026-11-19', n 5`, before is `['2026-11-18T1-a','2026-11-18T2-b']` (length 2) and after is `['2026-11-20T1-a']`.
+  - `--runs counts only pipeline runs`. Runs: `2026-11-17T1-spec-1`, `2026-11-18T1-adhoc-standalone` (no `timing.json`), `2026-11-18T2-release-standalone` (no `timing.json`), `2026-11-18T3-x` (has a `timing.json`), `2026-11-18T4-record-2`. With `split '2026-11-19', n 3`, before is `['2026-11-17T1-spec-1','2026-11-18T3-x','2026-11-18T4-record-2']`.
+  - `guard 1 also reads an unlabelled final review`. One run: a `whole-branch review` dispatch with one Important item, an `unlabelled` dispatch `Final review for #5865` with one Critical item, and an `unlabelled` dispatch `Implement Task 1` with a report holding a `#### Critical` item. Expect `n === 2`, `meanCritical === 0.5`, `unparsed === 0`.
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -81,7 +88,7 @@ Expected: FAIL with `Cannot find module` for `tools/pipeline-cost-report/guards.
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `node tools/run-tests.js tests/pipeline-cost-report/guards.test.js`
-Expected: PASS, 8 tests.
+Expected: PASS, 10 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -111,6 +118,7 @@ git commit -m "Add the whole-branch review guard to the cost report — refs #59
     - Expect `n === 3`, `Math.round(share * 100) === 67`, `byTier.standard` `{ share: 1, n: 2 }` and `byTier.capable` `{ share: 0, n: 1 }`. Task 2's tier is capable because its earliest implementer by `startTs` is capable, though its later one is standard.
   - `AC4.1: task 1 of two runs counts twice`. Two runs, each with `Implement Task 1` and `Review Task 1`. Expect `n === 2`.
   - `first pass keys tasks by record number within a run`. One run holds `Implement #5830 Task 1`, `Implement #5863 Task 1` and `Re-review Task 1 for #5863`, all with `parentAgentId: null`. Expect `n === 2` and `share === 0.5`.
+  - `a dispatch naming no record inherits its task's one implementer's record`. One run, `parentAgentId: null`: `Implement #5830 Task 1`, `Review Task 1` and `Re-review Task 1 fix round 1`. Expect `n === 1`, `unparsed === 0` and `share === 0`: the re-review joins #5830's task 1.
   - `first pass keys tasks by parent agent`. One run holds `Implement Task 1` twice, under `parentAgentId` `p1` and `p2`. Expect `n === 2`.
   - `a review group with no implementer is unparsed; an untasked fix-wave re-review is ignored`. The dispatches are `Review Task 4` (no implementer for task 4), `Re-review the final-review fix wave`, `Implement Task 1` and `Implement the fix wave` (an implementer with no task number). Expect `n === 1` and `unparsed === 2`.
   - `guard 1 and 2 ignore a run with no timing.json`. One run directory has no `timing.json`. Expect `collectWholeBranch` and `collectFirstPass` to give `n === 0`, `unparsed === 0` and `share === null`.
@@ -126,7 +134,7 @@ Expected: FAIL. `collectFirstPass is not a function`, and the corrupt-file test 
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `node tools/run-tests.js tests/pipeline-cost-report/guards.test.js`
-Expected: PASS, 15 tests.
+Expected: PASS, 18 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -189,6 +197,7 @@ git commit -m "Add the post-merge bug guard to the cost report — refs #5916"
 ### Task 4: The `guards` section in the CLI
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `tools/pipeline-cost-report.js` (header comment, `SECTIONS`, `USAGE`, `parseArgs`)
