@@ -1434,7 +1434,7 @@ test('AC7, AC12: a mid-pass stop has fixed counts and takes back every evidence 
   assert.strictEqual(out.result.detail, 'the evidence run changed the tree outside the evidence files: second.txt');
   // The finding the pass stopped on, and those after it, are not counted.
   assert.deepStrictEqual(out.counts, { returned: 3, reproduced: 1, discarded: 0 });
-  assert.deepStrictEqual(out.extra, { returned: 3, reproduced: 1, discarded: 0, usage: { input_tokens: 7 }, denials: [], costUsd: 0.1, turns: 2 });
+  assert.deepStrictEqual(out.extra, { returned: 3, reproduced: 1, discarded: 0, usage: { input_tokens: 7 }, denials: [], costUsd: 0.1, turns: 2, model: roleModel('reviewer', POLICY) });
   assert.deepStrictEqual(out.result.extra, out.extra);
   // The current file first, then the confirmed ones, newest first, with the directories the pass made.
   assert.deepStrictEqual(ofKind(rig.calls, 'rmFile').map((c) => c.p), [at('tests/new/r1.test.js'), at('tests/new/r0.test.js')]);
@@ -1725,17 +1725,18 @@ test('AC12: counts add up', async () => {
   assert.strictEqual(out.result, null);
   assert.deepStrictEqual(out.counts, { returned: 7, reproduced: 1, discarded: 6 });
   assert.strictEqual(out.counts.returned, out.counts.reproduced + out.counts.discarded);
-  assert.deepStrictEqual(Object.keys(out.extra).sort(), ['costUsd', 'denials', 'discarded', 'reproduced', 'returned', 'turns', 'usage']);
+  assert.deepStrictEqual(Object.keys(out.extra).sort(), ['costUsd', 'denials', 'discarded', 'model', 'reproduced', 'returned', 'turns', 'usage']);
   assert.deepStrictEqual(out.extra, {
+    model: roleModel('reviewer', POLICY),
     returned: 7, reproduced: 1, discarded: 6, usage: { input_tokens: 7 }, costUsd: 0.1, turns: 2,
     denials: [{ tool_name: 'Read', tool_input: neutralize(JSON.stringify(denials[0].tool_input)) }],
   });
   assert.ok(!out.extra.denials[0].tool_input.includes('#3') && out.extra.denials[0].tool_input.includes('@​bob'));
-  // A stop carries the same seven keys, on the result's extra too: a reviewer that failed after
-  // spending reports its cost and turns.
+  // A stop carries the same seven keys plus the reviewer's model (#5917), on the result's extra too: a reviewer
+  // that failed after spending reports its cost and turns.
   const stopped = passRig({ envelope: { ...okEnvelope([]), status: 'fail', reason: 'exit', result: null, denials, usage: null, costUsd: 0.25, turns: 3 } });
   const s = await stopped.run();
-  assert.deepStrictEqual(Object.keys(s.extra).sort(), ['costUsd', 'denials', 'discarded', 'reproduced', 'returned', 'turns', 'usage']);
+  assert.deepStrictEqual(Object.keys(s.extra).sort(), ['costUsd', 'denials', 'discarded', 'model', 'reproduced', 'returned', 'turns', 'usage']);
   assert.deepStrictEqual(s.result.extra, s.extra);
   assert.deepStrictEqual([s.extra.costUsd, s.extra.turns], [0.25, 3]);
   // An envelope that reports neither gives null for both, as for usage.
@@ -1829,7 +1830,7 @@ test('review: a raw error from a dep after an evidence write is a stop that take
   assert.strictEqual(out.result.detail, 'the review pass failed unexpectedly (EACCES)');
   assert.doesNotMatch(JSON.stringify(out), /SECRET|wt/);
   assert.deepStrictEqual(out.confirmed, []);
-  assert.deepStrictEqual(out.extra, { returned: 1, reproduced: 0, discarded: 0, usage: { input_tokens: 7 }, denials: [], costUsd: 0.1, turns: 2 });
+  assert.deepStrictEqual(out.extra, { returned: 1, reproduced: 0, discarded: 0, usage: { input_tokens: 7 }, denials: [], costUsd: 0.1, turns: 2, model: roleModel('reviewer', POLICY) });
   assert.strictEqual(ofKind(rig.calls, 'rmFile').length, 1, 'the written file was removed');
   assert.strictEqual(rig.types.get(at('tests/new/r0.test.js')), undefined);
 });

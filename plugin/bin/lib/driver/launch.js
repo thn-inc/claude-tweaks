@@ -102,6 +102,7 @@ function modelPolicyRefusal(policy) {
 // win32, WIN32_CLAUDE_BIN. Only the first runner call is the worker: on win32 the launcher's
 // ceiling kill runs taskkill through the same runner, and that handle must not replace the
 // worker's. shared.activeWorker is reset however the launch ends; a throw reaches the caller.
+// Resolves `{ envelope, model }`; a launcher throw is rethrown with `model` attached.
 async function launchTracked(shared, deps, { minutes, dollars }, opts) {
   // Resolved before anything is touched: a refusal leaves the runner, the launcher and
   // shared.activeWorker as they were. `model` follows the opts spread, so no caller can override it.
@@ -116,7 +117,7 @@ async function launchTracked(shared, deps, { minutes, dollars }, opts) {
     return handle;
   };
   try {
-    return await deps.launchWorker({
+    const envelope = await deps.launchWorker({
       ...opts,
       model,
       ceilings: { wallClockMs: minutes * 60000, spendCeiling: dollars },
@@ -124,6 +125,13 @@ async function launchTracked(shared, deps, { minutes, dollars }, opts) {
       env: deps.env,
       ...(deps.platform === 'win32' ? { bin: WIN32_CLAUDE_BIN } : {}),
     }, { runner });
+    return { envelope, model };
+  } catch (err) {
+    // A throw after the model resolved carries it, so the caller's event line can still name it. A
+    // refusal from roleModel above never reaches here, so it carries no `model`.
+    const e = err instanceof Error ? err : new Error(String(err));
+    e.model = model;
+    throw e;
   } finally {
     shared.activeWorker = null;
   }

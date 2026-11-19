@@ -21,6 +21,7 @@ const {
 } = require(path.join(LIB, 'driver', 'steps'));
 const { ENDED, STATUS_BY_ENDED } = require(path.join(LIB, 'driver', 'budget'));
 const { PROFILES } = require(path.join(LIB, 'model-profiles', 'profiles'));
+const { driverStepsOf } = require('../../../tools/step-yield-report');
 const { modelProfilesEntry } = require(path.join(LIB, 'model-profiles', 'policy-fragment'));
 const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema'));
 const M = (profile) => PROFILES[profile].model;
@@ -1543,7 +1544,7 @@ test('the worker step launches the implementer in the worktree with the policy c
   assert.ok(mk < h.calls.indexOf(workerCall(h)));
   assert.deepEqual(ctx.worker, { title: 'Add the loop', summary: 'Adds the loop.', usage: ENVELOPE.usage, turns: 3, denials: [], costUsd: 0.25, spendOverrun: false });
   const line = h.lines().find((l) => l.step === 'worker');
-  assert.deepEqual([line.status, line.usage, line.denials, 'model' in line], ['ok', ENVELOPE.usage, [], false]);
+  assert.deepEqual([line.status, line.usage, line.denials, line.model], ['ok', ENVELOPE.usage, [], M('standard')]);
   assert.deepEqual([line.turns, 'spendOverrun' in line], [3, false], 'turns always; spendOverrun only when the envelope says true');
   // An ok envelope whose last turn crossed the spend ceiling (worker.js: checked between turns).
   const over = harness({ worker: { turns: 11, spendOverrun: true, costUsd: 5.4 } });
@@ -2241,9 +2242,11 @@ const K2 = ['detail', 'ms', 'record', 'run', 'status', 'step', 'ts'];
 const K3 = ['ciWaitMs', 'detail', 'ms', 'record', 'run', 'status', 'step', 'ts'];
 const K4 = ['ci', 'costUsd', 'denialCount', 'merge', 'ms', 'msTotal', 'msWithoutCi', 'outcome', 'pr', 'record', 'run', 'settle', 'settleFailed', 'settleRow', 'status', 'step', 'stop', 'ts', 'turns'];
 const K5 = ['costUsd', 'denials', 'detail', 'discarded', 'ms', 'record', 'reproduced', 'returned', 'run', 'status', 'step', 'ts', 'turns', 'usage'];
-// The admission line gained `authority` (#5584) and the worker line `tests` (#5915), the fields added since the capture.
+// The admission line gained `authority` (#5584), the worker line `tests` (#5915) and `model` (#5917), and the review
+// line `model` (#5917): the fields added since the capture.
 const KA = ['authority', ...K0];
-const KW = [...K1, 'tests'].sort();
+const KW = [...K1, 'model', 'tests'].sort();
+const K5M = [...K5, 'model'].sort();
 const BASE_KEYS_PLAIN = [
   K0, K0, K0, KA, K0, K0,
   K0, KW, K2, K2, K0, K0,
@@ -2252,7 +2255,7 @@ const BASE_KEYS_PLAIN = [
 ];
 const BASE_KEYS_FIX = [
   K0, K0, K0, KA, K0, K0,
-  K0, KW, K2, K2, K0, K5,
+  K0, KW, K2, K2, K0, K5M,
   K0, K2, K0, K0, K0, K3,
   K2, K2, K4,
 ];
@@ -3879,6 +3882,90 @@ function fixRig({ findings = [evidenceFinding(0)], fix = {}, effect = () => {}, 
   return h;
 }
 const FINDING_0 =`${normalizeEventText('src/a.js')}:1 ${normalizeEventText(evidenceFinding(0).claim)}`;
+
+// --- the model on the worker and review event lines (#5917, Task 7) -----------------------------
+const workerLines = (h) => h.lines().filter((l) => l.step === STEP.worker);
+const FAST_IMPLEMENTER = { ...POLICY['express-driver-models'], implementer: 'fast' };
+
+test('AC7.1: every worker line carries the model its launch was given', async () => {
+  const h = fixRig({ policy: { 'express-driver-review': 'on', 'express-driver-models': FAST_IMPLEMENTER } });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [line] = workerLines(h);
+  assert.equal(line.model, M('fast'));
+  assert.equal(line.model, implementerCalls(h)[0].args[0].model);
+  const reviewerCall = h.calls.find((c) => c.kind === 'worker' && c.args[0].role === 'reviewer');
+  const [review] = reviewLines(h);
+  assert.equal(review.model, M('capable'));
+  assert.equal(review.model, reviewerCall.args[0].model);
+  assert.notEqual(review.model, implementerCalls(h)[1].args[0].model, 'the fix round implementer model stays off the review line');
+});
+
+test('AC7.1: a worker launch that returns no envelope still names its model', async () => {
+  const h = harness({ script: [[on('worker'), null]] });
+  await run(['#7'], h.deps);
+  const [line] = workerLines(h);
+  assert.equal(line.status, 'fail');
+  assert.equal(line.detail, 'worker launch returned no envelope');
+  assert.equal(line.model, M('standard'));
+});
+
+test('AC7.1: a launcher that throws after the model resolved still names it', async () => {
+  const thrown = harness({ script: [[on('worker'), new Error('launch blew up')]] });
+  await run(['#7'], thrown.deps);
+  const [line] = workerLines(thrown);
+  assert.equal(line.status, 'fail');
+  assert.equal(line.detail, 'launch blew up');
+  assert.equal(line.model, M('standard'));
+  assert.ok('tests' in line, 'the thrown line keeps the tests field');
+  assert.equal(lastLine(thrown).stop.step, 'worker');
+  assert.equal(lastLine(thrown).stop.class, 'pre-push');
+  // A non-Error throw: the detail is its text and the model still rides on the line.
+  const bare = harness({ script: [[on('worker'), () => { throw 'boom'; }]] });
+  await run(['#7'], bare.deps);
+  const [bareLine] = workerLines(bare);
+  assert.equal(bareLine.detail, 'boom');
+  assert.equal(bareLine.model, M('standard'));
+  assert.equal(lastLine(bare).stop.step, 'worker');
+});
+
+test('AC7.1: a fix round launch refusal carries the refusal code on the review line detail', async () => {
+  let shared = null;
+  const h = fixRig({
+    script: [[(c) => c.kind === 'worker' && c.args[0].role === 'implementer' && implementerCalls(h).length === 1, (c) => {
+      // After the first implementer launch the role map loses its implementer row: only the fix round's launch refuses.
+      shared.policy['express-driver-models'] = { value: { reviewer: 'capable', 'merge-check': 'standard', acceptance: 'standard' }, source: 'policy' };
+      return { ...ENVELOPE };
+    }]],
+  });
+  shared = newShared();
+  await driveRecord(7, shared, h.deps);
+  assert.equal(implementerCalls(h).length, 1, 'the refused fix launch never reached the launcher');
+  const [review] = reviewLines(h);
+  assert.equal(review.status, 'fail');
+  assert.match(review.detail, /^fix round launch: no model for driver role implementer: no work profile in the role map \(DRIVER_MODEL_REFUSED\): /);
+  assert.equal(lastLine(h).stop.detail, review.detail);
+});
+
+test('old readers tolerate the model field (#5917)', async () => {
+  const h = fixRig({ policy: { 'express-driver-review': 'on', 'express-driver-models': FAST_IMPLEMENTER } });
+  await run(['#7'], h.deps);
+  const thrown = harness({ script: [[on('worker'), new Error('launch blew up')]] });
+  await run(['#7'], thrown.deps);
+  const readerRows = (lines) => {
+    const dir = tmpDir('model-field-');
+    fs.writeFileSync(path.join(dir, 'driver-events.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    return driverStepsOf(dir, fs);
+  };
+  for (const [name, lines] of [['happy fix run', h.lines()], ['worker throw', thrown.lines()]]) {
+    assert.ok(lines.some((l) => 'model' in l), `${name}: the run writes the model field`);
+    const stripped = lines.map(({ model, ...rest }) => rest);
+    const withModel = readerRows(lines);
+    const without = readerRows(stripped);
+    assert.equal(withModel.unparsed, 0, name);
+    assert.deepEqual(withModel, without, name);
+    assert.deepEqual(lines.at(-1).stop, stripped.at(-1).stop, name);
+  }
+});
 
 test('AC8: one fix round, in order', async () => {
   const h = fixRig();

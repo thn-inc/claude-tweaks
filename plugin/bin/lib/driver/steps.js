@@ -705,7 +705,7 @@ function newIndexFlagStop(ctx, deps) {
 // HEAD is a `fail` naming only the shas. After an unmoved HEAD the index flags are checked, on the
 // throw path too. Once those checks are done, the worker's test list file is removed (#5915).
 async function runImplementer(ctx, deps, opts = {}) {
-  const launch = { started: false, note: null };
+  const launch = { started: false, note: null, model: null };
   let result;
   try {
     result = await launchImplementerAndCheck(ctx, deps, opts, launch);
@@ -713,6 +713,9 @@ async function runImplementer(ctx, deps, opts = {}) {
     // On a launcher throw too; the throw then propagates as it was.
     if (launch.started) launch.note = removeWorkerTestList(ctx, deps);
   }
+  // Every result of a launch that resolved a model names it (#5917): no envelope and the HEAD and flag stops too.
+  // A refusal never sets it. A thrown launcher carries it on the error (see workerStep).
+  if (launch.model) result = { ...result, extra: { ...(result.extra || {}), model: launch.model } };
   if (launch.note === null) return result;
   return { ...result, detail: result.detail ? `${result.detail}; ${launch.note}` : launch.note };
 }
@@ -744,20 +747,24 @@ async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '' } = {}, l
   let envelope;
   launch.started = true;
   try {
-    envelope = await launchTracked(shared, deps, { minutes, dollars }, {
+    const launched = await launchTracked(shared, deps, { minutes, dollars }, {
       role: 'implementer',
       cwd: ctx.wt,
       prompt: workerPrompt(ctx, { minutes, dollars, maxLines, tests }) + extraPrompt,
       ...(tests !== null ? { testCommand: tests.command } : {}),
       settingsDir,
     });
+    ({ envelope } = launched);
+    launch.model = launched.model;
   } catch (err) {
     // A model refusal (#5917) is thrown before any process starts: nothing ran, so nothing is swept
     // or re-read, and the result carries noLine so the refusal writes no `worker` event line.
     if (err && err.code === MODEL_REFUSED_CODE) {
       launch.started = false;
-      return { status: 'fail', detail: err.message, noLine: true };
+      return { status: 'fail', detail: err.message, code: err.code, noLine: true };
     }
+    // A throw after the model resolved carries it (launchTracked): the stops below name it too.
+    if (err && typeof err.model === 'string') launch.model = err.model;
     // A launcher that throws may have moved HEAD: that is reported in place of the throw;
     // otherwise the throw is rethrown as it was.
     const headStop = headFail(before, headOf(deps, ctx.wt));
@@ -812,8 +819,18 @@ async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '' } = {}, l
   return { status: 'ok', extra };
 }
 // The worker line also names which path the targeted test command took (`tests`, #5915).
+// A launcher throw that carries the model it ran on (launchTracked) is reported as defineStep's own catch
+// would, plus the line's `tests` and `model`; any other throw propagates unchanged (#5917).
 const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
-  const result = await runImplementer(ctx, deps, {});
+  let result;
+  try {
+    result = await runImplementer(ctx, deps, {});
+  } catch (err) {
+    if (err && typeof err.model === 'string') {
+      return { status: 'fail', detail: (err && err.message) || String(err), extra: { tests: ctx.workerTestMode, model: err.model } };
+    }
+    throw err;
+  }
   return { ...result, extra: { ...(result.extra || {}), tests: ctx.workerTestMode } };
 });
 
