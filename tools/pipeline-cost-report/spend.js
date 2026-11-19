@@ -35,8 +35,7 @@ const PRICES = {
 // Claude Code writes `<synthetic>` assistant lines (zero usage) for API errors such as usage_limit_reached. They are
 // kept in `requests` (zero cost) but are left out of every spend tally, `unpriced` included. They are not model
 // calls: they never serve as the previous call for the family or idle-gap check and never use up a pending
-// compaction marker. Any other unpriced id is a real call of an
-// unknown family and stays in the chain.
+// compaction marker. Any other unpriced id is a real call of an unknown family and stays in the chain.
 const SYNTHETIC_MODEL = '<synthetic>';
 const HAIKU_LONG_PROMPT = 100000;
 const HAIKU_LONG_MULTIPLIER = 5;
