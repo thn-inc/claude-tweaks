@@ -3,8 +3,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   LABEL_TRANSITIONS, MERGE_SUBSTEP_TRANSITIONS,
-  outcomeForReleaseReason, outcomeForDriverStatus, transitionsForLabel,
-} = require('../../../plugin/bin/lib/station-events/stations');
+  outcomeForReleaseReason, outcomeForDriverStatus, transitionsForLabel, releaseTransition,
+} =require('../../../plugin/bin/lib/station-events/stations');
 const { PARK_REASON } = require('../../../plugin/bin/lib/accept/park-grammar');
 const { ABORT_REASON } = require('../../../plugin/bin/lib/claim-targets/claim-targets');
 
@@ -38,6 +38,21 @@ test('outcomeForReleaseReason covers every outcome word settle.js can write', ()
   }
   // Four words, four classes: passed (finished, pending review), abandoned (refused), failed (blocked), returned (escalated).
   assert.deepEqual([...seen].sort(), ['abandoned', 'failed', 'passed', 'returned']);
+});
+
+test('releaseTransition: a build release is exited build with the mapped outcome; a shaping release is no transition', () => {
+  assert.deepEqual(releaseTransition('merged: spec 5902'), { kind: 'exited', station: 'build', outcome: 'passed' });
+  assert.deepEqual(releaseTransition(PARK_REASON), { kind: 'exited', station: 'build', outcome: 'passed' });
+  assert.deepEqual(releaseTransition(ABORT_REASON), { kind: 'exited', station: 'build', outcome: 'abandoned' });
+  assert.deepEqual(releaseTransition('failed: test'), { kind: 'exited', station: 'build', outcome: 'failed' });
+  assert.notEqual(releaseTransition('merged: spec 5902'), releaseTransition('merged: spec 5902'), 'a fresh object per call');
+  // specify/next-mode-shape.md's Release step reasons: the claim was a shaping claim, no build visit opened.
+  for (const r of ['shaped: #5902', 'routed: needs:definition #5902', 'failed: shaping']) {
+    assert.equal(releaseTransition(r), null, r);
+  }
+  // Only the exact shaping fail is shaping: a build gate failure with a similar word still ends build.
+  assert.equal(releaseTransition('failed: shaping-gate-test').outcome, 'failed');
+  assert.equal(releaseTransition('shapedX: 1').outcome, 'returned');
 });
 
 test('outcomeForDriverStatus maps ok, fail and stop', () => {

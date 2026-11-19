@@ -79,7 +79,7 @@ const os = require('os');
 const { execFileSync, spawnSync } = require('child_process');
 const { pinExplicitRepoHost } = require('./lib/repo-resolve');
 const { appendStationEvent, toRepoName } = require('./lib/station-events/emit');
-const { transitionsForLabel, outcomeForReleaseReason } = require('./lib/station-events/stations');
+const { transitionsForLabel, releaseTransition } = require('./lib/station-events/stations');
 
 const USAGE = [
   'usage: accept-park.js decide --record <n>[,<m>...] [--run <dir>] [--repo [host/]owner/name]',
@@ -780,9 +780,10 @@ function parkSteps({ opts, deps, ctx, runDir, repoSpec, log }) {
         });
         // Only a real release ends the build visit; `already-released` is a repeat.
         // lane stays 'unknown' (the emit default): park cannot know the lane, and lane is no eventKey input.
-        if (r.outcome === 'released') {
+        const transition = releaseTransition(PARK_REASON);
+        if (r.outcome === 'released' && transition) {
           emit({
-            kind: 'exited', station: 'build', outcome: outcomeForReleaseReason(PARK_REASON), recordNumber: n,
+            ...transition, recordNumber: n,
             runId: path.basename(runDir), payload: { reason: PARK_REASON }, discriminator: `release:${path.basename(runDir)}`,
           });
         }

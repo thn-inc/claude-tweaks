@@ -4,11 +4,23 @@
 // Reference: docs/reference/station-events.md.
 'use strict';
 
-// Ordered: a record's journey from capture to acceptance.
+// Ordered: a record's journey from capture to acceptance. Call sites name a
+// station through STATION (or a helper below), never by string.
 // Names are unconfirmed pending the design's Phase 0 fixtures.
-const STATIONS = Object.freeze([
-  'intake', 'shape', 'authorize', 'release', 'build', 'test', 'review', 'polish', 'wrap-up', 'merge', 'accept',
-]);
+const STATION = Object.freeze({
+  INTAKE: 'intake', SHAPE: 'shape', AUTHORIZE: 'authorize', RELEASE: 'release', BUILD: 'build', TEST: 'test',
+  REVIEW: 'review', POLISH: 'polish', WRAP_UP: 'wrap-up', MERGE: 'merge', ACCEPT: 'accept',
+});
+const STATIONS = Object.freeze(Object.values(STATION));
+
+// A `session_bound` event (a claim's, a driver worker's or a review fix's) is filed under the
+// build station: that is where the bound session works.
+const SESSION_BOUND_STATION = STATION.BUILD;
+
+// pr-early-open's point fact: a PR opened or reopened for a record is `started` at the build
+// station with `payload.fact: PR_OPENED_FACT`. It has no `exited` pair and no `payload.step`.
+const PR_OPENED_FACT = 'pr_opened';
+const PR_OPENED_TRANSITION = Object.freeze({ kind: 'started', station: STATION.BUILD });
 
 // Passed in by the caller, never inferred; `unknown` is valid.
 const LANES = Object.freeze(['standard', 'express', 'driver', 'unknown']);
@@ -112,8 +124,23 @@ function outcomeForReleaseReason(reason) {
   return 'returned';
 }
 
+// A shaping claim (`/specify`'s headless drain, specify/next-mode-shape.md's Release step) is
+// released with `shaped: #n`, `routed: needs:definition #n` or `failed: shaping`. It never entered
+// the build station, and the design's shape station has no `entered` producer to pair an exit
+// with, so a shaping release is no station transition.
+const SHAPING_RELEASE = [/^shaped(?::|\s|$)/, /^routed(?::|\s|$)/, /^failed: shaping\s*$/];
+
+// Claim-release reason -> the station transition the release makes, or null when it makes none:
+// a fresh `{ kind: 'exited', station, outcome }` that the caller spreads into its event.
+function releaseTransition(reason) {
+  const r = typeof reason === 'string' ? reason : '';
+  if (SHAPING_RELEASE.some((re) => re.test(r))) return null;
+  return { kind: 'exited', station: STATION.BUILD, outcome: outcomeForReleaseReason(r) };
+}
+
 module.exports = {
-  STATIONS, LANES, KINDS, OUTCOMES, BLOCKER_SNAPSHOT_STATION,
+  STATION, STATIONS, LANES, KINDS, OUTCOMES, BLOCKER_SNAPSHOT_STATION, SESSION_BOUND_STATION,
+  PR_OPENED_FACT, PR_OPENED_TRANSITION,
   DRIVER_STEP_STATIONS, MERGE_SUBSTEP_TRANSITIONS, LABEL_TRANSITIONS,
-  outcomeForReleaseReason, outcomeForDriverStatus, transitionsForLabel,
+  outcomeForReleaseReason, releaseTransition, outcomeForDriverStatus, transitionsForLabel,
 };

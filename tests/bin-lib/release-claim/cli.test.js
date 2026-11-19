@@ -608,6 +608,27 @@ test('#5902: the real release reasons record the corrected outcome in the exited
   }
 });
 
+test('#5902: a shaping claim release (shaped:, routed:, failed: shaping) records no station event; stdout and exit are those of a run without an emitter', () => {
+  for (const reason of ['shaped: #999', 'routed: needs:definition #999', 'failed: shaping']) {
+    const runA = mkRun();
+    const outA = [];
+    const { d: plain } = deps({ content: live(RUN_DIR_NAME), out: outA, mainRoot: rootOf(runA) });
+    const codeA = run(['999', '--run', runA, '--reason', reason], plain);
+
+    const runB = mkRun();
+    const outB = [];
+    const { d: recording } = deps({ content: live(RUN_DIR_NAME), out: outB, mainRoot: rootOf(runB) });
+    const events = withStationSpy(recording);
+    const codeB = run(['999', '--run', runB, '--reason', reason], recording);
+
+    assert.deepEqual(events, [], reason);
+    assert.equal(codeB, codeA, reason);
+    assert.equal(envelope(outB).outcome, 'released', reason);
+    assert.equal(streamOf(outB, 'out'), streamOf(outA, 'out'), reason);
+    assert.equal(stderrOf(outB), stderrOf(outA), reason);
+  }
+});
+
 test('#5902: skipped-not-owner and already-released record no station event', () => {
   const notOwner = [];
   const { d: d1 } = deps({ content: live('2026-08-16T110000-spec-999'), out: notOwner });

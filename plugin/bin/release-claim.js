@@ -52,7 +52,7 @@ const {
   parseRepo, ghAvailable, repoSlug, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 const { appendStationEvent, toRepoName } = require('./lib/station-events/emit');
-const { outcomeForReleaseReason } = require('./lib/station-events/stations');
+const { releaseTransition } = require('./lib/station-events/stations');
 
 const USAGE = 'usage: release-claim.js <issue> --run <run-dir> --reason <reason> [--link <url>] [--remove-grants] [--remove-in-progress] [--keep-in-progress-label] [--repo [host/]owner/name] [--sweep] [--section "/<skill>"] [--step <text>] [--help]\n';
 const EXIT = { released: 0, 'already-released': 3, 'skipped-not-owner': 4, unreadable: 5, failed: 1 };
@@ -206,7 +206,9 @@ function run(argv, deps = realDeps) {
   // (matching its entered/session_bound events) and names the sweeper in sweptBy.
   // The holder's session is unknown, so sessionId is null; the sweeper's own
   // session goes only to payload.sweptBySession.
-  if (r.outcome === 'released' && typeof deps.stationEvent === 'function') {
+  // A shaping claim's release (`shaped:`, `routed:`, `failed: shaping`) makes no transition.
+  const transition = releaseTransition(reason);
+  if (r.outcome === 'released' && transition && typeof deps.stationEvent === 'function') {
     try {
       const visitRunId = r.sweptFrom || runId;
       const ownSession = deps.sessionId || '';
@@ -216,7 +218,7 @@ function run(argv, deps = realDeps) {
         if (ownSession) payload.sweptBySession = ownSession;
       }
       deps.stationEvent({
-        kind: 'exited', station: 'build', outcome: outcomeForReleaseReason(reason), recordNumber: issue,
+        ...transition, recordNumber: issue,
         repoName: toRepoName(`${repoSpec.owner}/${repoSpec.repo}`), runId: visitRunId, sessionId: r.sweptFrom ? null : ownSession, lane: 'unknown',
         payload, discriminator: `release:${visitRunId}`,
       });
