@@ -500,13 +500,16 @@ test('keyFilesOf strips backticks, a trailing :line and a trailing note', () => 
   assert.strictEqual(keyFilesOf('## Overview\nno files here'), null);
 });
 
-// A fake gh: prs is [{ number, mergedAt, files: [path] }], bugs is [{ number, createdAt, body }].
+// A fake gh: prs is [{ number, mergedAt, files: [path], changedFiles? }], bugs is [{ number, createdAt, body }]. Like the
+// real `gh pr view --json files`, the view returns at most 100 files; the paginated REST read returns them all.
 function fakeGh(prs, bugs) {
   const calls = [];
+  const pr = (n) => prs.find((p) => String(p.number) === String(n));
   const gh = (args) => {
     calls.push(args);
-    if (args[0] === 'pr' && args[1] === 'list') return JSON.stringify(prs.map(({ number, mergedAt }) => ({ number, mergedAt })));
-    if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ files: prs.find((p) => String(p.number) === args[2]).files.map((f) => ({ path: f })) });
+    if (args[0] === 'pr' && args[1] === 'list') return JSON.stringify(prs.map(({ number, mergedAt, files, changedFiles }) => ({ number, mergedAt, changedFiles: changedFiles === undefined ? files.length : changedFiles })));
+    if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ files: pr(args[2]).files.slice(0, 100).map((f) => ({ path: f })) });
+    if (args[0] === 'api' && args[1] === '--paginate') return pr(/pulls\/(\d+)\/files$/.exec(args[2])[1]).files.join('\n') + '\n';
     if (args[0] === 'issue' && args[1] === 'list') return JSON.stringify(bugs);
     throw new Error('unexpected gh call ' + args.join(' '));
   };
@@ -560,6 +563,21 @@ test('guard 3 window: created at the merge instant is out, exactly 14 days after
   );
   const r = collectPostMergeBugs(col('2026-11-01', '2026-11-05'), { repo: 'o/r', gh });
   assert.strictEqual(r.count, 1);
+  // Each edge on its own, so flipping both comparisons cannot keep the total at 1.
+  const only = (bug) => collectPostMergeBugs(col('2026-11-01', '2026-11-05'), { repo: 'o/r', gh: fakeGh([{ number: 7, mergedAt: '2026-11-03T12:00:00Z', files: ['tools/a.js'] }], [bug]).gh }).count;
+  assert.strictEqual(only({ number: 100, createdAt: '2026-11-03T12:00:00Z', body: keyBody('tools/a.js') }), 0);
+  assert.strictEqual(only({ number: 101, createdAt: '2026-11-17T12:00:00Z', body: keyBody('tools/a.js') }), 1);
+});
+
+test('guard 3 reads every changed file of a PR over the 100 files gh pr view returns', () => {
+  const files = Array.from({ length: 150 }, (_, i) => `tools/f${i}.js`);
+  const { gh, calls } = fakeGh(
+    [{ number: 9, mergedAt: '2026-11-03T12:00:00Z', files }],
+    [{ number: 100, createdAt: '2026-11-10T12:00:00Z', body: keyBody('tools/f120.js') }],
+  );
+  const r = collectPostMergeBugs(col('2026-11-01', '2026-11-05'), { repo: 'o/r', gh });
+  assert.strictEqual(r.count, 1);
+  assert.deepStrictEqual(calls.find((c) => c[0] === 'api'), ['api', '--paginate', 'repos/o/r/pulls/9/files', '--jq', '.[].filename']);
 });
 
 test('guard 3: a bug with no Key Files section is unparsed', () => {
@@ -578,8 +596,9 @@ test('guard 3 queries the column\'s merge window and 14 days past it', () => {
   const prList = calls.find((c) => c[0] === 'pr' && c[1] === 'list');
   const prView = calls.find((c) => c[0] === 'pr' && c[1] === 'view');
   const issueList = calls.find((c) => c[0] === 'issue' && c[1] === 'list');
-  assert.deepStrictEqual(prList, ['pr', 'list', '--repo', 'o/r', '--state', 'merged', '--search', 'merged:2026-11-01..2026-11-05', '--limit', '1000', '--json', 'number,mergedAt']);
+  assert.deepStrictEqual(prList, ['pr', 'list', '--repo', 'o/r', '--state', 'merged', '--search', 'merged:2026-11-01..2026-11-05', '--limit', '1000', '--json', 'number,mergedAt,changedFiles']);
   assert.deepStrictEqual(prView, ['pr', 'view', '7', '--repo', 'o/r', '--json', 'files']);
+  assert.ok(!calls.some((c) => c[0] === 'api'), 'a PR whose view lists every changed file needs no REST read');
   assert.deepStrictEqual(issueList, ['issue', 'list', '--repo', 'o/r', '--state', 'all', '--label', 'type:bug', '--search', 'created:2026-11-01..2026-11-19', '--limit', '1000', '--json', 'number,createdAt,body']);
   assert.deepStrictEqual(r, { count: 0, perPr: 0, mergedPrs: 1, unparsed: 0 });
 });

@@ -322,10 +322,15 @@ function collectPostMergeBugs(column, { repo, gh }) {
   const from = column[0].date;
   const to = column[column.length - 1].date;
   const json = (args) => JSON.parse(String(gh(args)));
-  const prs = json(['pr', 'list', '--repo', repo, '--state', 'merged', '--search', `merged:${from}..${to}`, '--limit', '1000', '--json', 'number,mergedAt']);
+  const prs = json(['pr', 'list', '--repo', repo, '--state', 'merged', '--search', `merged:${from}..${to}`, '--limit', '1000', '--json', 'number,mergedAt,changedFiles']);
   const merged = prs.map((pr) => {
     const view = json(['pr', 'view', String(pr.number), '--repo', repo, '--json', 'files']);
-    return { at: Date.parse(pr.mergedAt), files: new Set((view.files || []).map((f) => f.path)) };
+    let paths = (view.files || []).map((f) => f.path);
+    // `gh pr view --json files` stops at 100 files; a larger PR's full list comes from the paginated REST read.
+    if (Number.isInteger(pr.changedFiles) && paths.length < pr.changedFiles) {
+      paths = String(gh(['api', '--paginate', `repos/${repo}/pulls/${pr.number}/files`, '--jq', '.[].filename'])).split('\n').filter(Boolean);
+    }
+    return { at: Date.parse(pr.mergedAt), files: new Set(paths) };
   });
   const bugs = json(['issue', 'list', '--repo', repo, '--state', 'all', '--label', 'type:bug', '--search', `created:${from}..${dayPlus(to, BUG_WINDOW_DAYS)}`, '--limit', '1000', '--json', 'number,createdAt,body']);
   let count = 0;
