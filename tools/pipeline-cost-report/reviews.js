@@ -31,7 +31,6 @@ const PLAN_KINDS = ['cross-task contract', 'undecided behaviour', 'spec gap', 'm
 const VERDICT_RE = /^\s*(?:\*\*)?Task quality:?(?:\*\*)?:?\s*(?:\*\*)?\s*(Approved|Needs fixes)\b/im;
 const NO_FINDINGS_RE = /^[\s*_`>#-]*No findings?\b/im;
 const OVERFLOW_RE = /^\+(\d+) more\b/;
-const SEPARATOR_CELL_RE = /^:?-{2,}:?$/;
 
 // 'approved' | 'needs-fixes', or null when the report holds no `Task quality` verdict line.
 function parseTaskVerdict(text) {
@@ -57,8 +56,6 @@ const overflowOf = (cells) => {
   }
   return null;
 };
-
-const isSeparator = (cells) => cells.length > 0 && cells.every((c) => SEPARATOR_CELL_RE.test(c));
 
 // Case, hyphens, underscores and the US spelling `behavior` are folded before the kind is looked up.
 const foldKind = (s) => s.toLowerCase().replace(/behavior/g, 'behaviour').replace(/[-_\s]+/g, ' ').trim();
@@ -88,7 +85,6 @@ function parsePlanReview(text) {
       }
       continue;
     }
-    if (isSeparator(cells)) continue;
     const more = overflowOf(cells);
     if (more !== null) {
       findings += more;
@@ -107,30 +103,38 @@ function parsePlanReview(text) {
   return null;
 }
 
-// { critical, high, medium, low, info, overflow } | null. A finding row is a `|`-row whose first cell is a severity
-// word; a row with a `+N more` cell adds N to `overflow` and is never counted as a finding. Rows win over a
-// `No findings` opening; with no row the report is parsed only when it states `No findings`, so a header with
-// nothing after it (a reply cut off) is null.
+// { critical, high, medium, low, info, overflow } | null. The finding table starts at the `| Severity | …` header row and
+// ends at the first non-`|` line after it, so a later table is not read. A finding row is a row whose first cell is a
+// severity word; a row with a `+N more` cell adds N to `overflow` and is never counted as a finding. Rows win over a
+// `No findings` opening; with no finding row (no header, or a header and nothing after it, as in a reply cut off) the
+// report is parsed only when it states `No findings`, else null.
 function parseLensReport(text) {
   const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0, overflow: 0 };
-  let table = false;
+  let header = false;
+  let rows = false;
   for (const line of String(text).split(/\r?\n/)) {
     const cells = cellsOf(line);
-    if (!cells || !cells.length) continue;
-    const first = cells[0].toLowerCase();
-    if (first === 'severity') continue;
+    if (!cells) {
+      if (header) break;
+      continue;
+    }
+    if (!header) {
+      if (cells[0] && cells[0].toLowerCase() === 'severity') header = true;
+      continue;
+    }
     const more = overflowOf(cells);
     if (more !== null) {
       counts.overflow += more;
-      table = true;
+      rows = true;
       continue;
     }
+    const first = (cells[0] || '').toLowerCase();
     if (SEVERITIES.includes(first)) {
       counts[first] += 1;
-      table = true;
+      rows = true;
     }
   }
-  if (table || NO_FINDINGS_RE.test(String(text))) return counts;
+  if (rows || NO_FINDINGS_RE.test(String(text))) return counts;
   return null;
 }
 

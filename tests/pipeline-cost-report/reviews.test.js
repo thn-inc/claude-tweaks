@@ -83,6 +83,30 @@ test('parsePlanReview counts only the first table: a later unrelated table is no
   assert.strictEqual(got.byKind.other, 0);
 });
 
+test('parsePlanReview: the table ends at the first non-table line, even when a later table has severity rows and an overflow row', () => {
+  const row = '| low | spec gap | — | a.md:1 | f | e | s |\n';
+  const later = '| Severity | Count |\n|---|---|\n| high | 3 |\n| low | 2 |\n| info | +4 more |';
+  const got = parsePlanReview(`${PLAN_HEAD}${row}\n${later}`);
+  assert.strictEqual(got.findings, 1);
+  assert.strictEqual(got.byKind.other, 0);
+});
+
+test('parsePlanReview: a table directly under the findings table counts only rows that start with a severity word', () => {
+  const row = '| low | spec gap | — | a.md:1 | f | e | s |\n';
+  const got = parsePlanReview(`${PLAN_HEAD}${row}| Task | Risk |\n|---|---|\n| 1 | high |\n| 2 | low |`);
+  assert.strictEqual(got.findings, 1);
+  assert.strictEqual(got.byKind.other, 0);
+});
+
+test('parseLensReport counts only the first table: a later summary table with severity rows is not findings', () => {
+  const got = parseLensReport(`${LENS_HEAD}| low | a.js:1 | x | y |\n\nSummary:\n\n| Severity | Count |\n|---|---|\n| low | 2 |\n| info | +4 more |`);
+  assert.strictEqual(got.low, 1);
+  assert.strictEqual(got.overflow, 0);
+  // Severity rows with no `Severity` header row are no table: unparsed unless the reply states No findings.
+  assert.strictEqual(parseLensReport('| low | a.js:1 | x | y |'), null);
+  assert.strictEqual(parseLensReport('No findings.\n\n| low | a.js:1 | x | y |').low, 0);
+});
+
 test('parsePlanReview: a header with no row is unparsed unless "No findings" is stated', () => {
   assert.strictEqual(parsePlanReview(PLAN_HEAD), null);
   assert.deepStrictEqual(parsePlanReview(`${PLAN_HEAD}\nNo findings.`), { findings: 0, byKind: NO_KINDS });
