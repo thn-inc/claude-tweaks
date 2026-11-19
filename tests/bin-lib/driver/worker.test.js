@@ -10,7 +10,9 @@ const crypto = require('node:crypto');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const worker = require(path.join(LIB, 'driver', 'worker.js'));
 const { launchWorker, buildEnv, conformsTo, ENVELOPE_FIELDS, ENV_ALLOW, ENV_ALLOW_WIN32 } = worker;
-const { RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainReadPaths } = require(path.join(LIB, 'driver', 'roles.js'));
+const { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, ROLES, DRIVER_ROLE_PROFILES, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainReadPaths } = require(path.join(LIB, 'driver', 'roles.js'));
+const { MODEL_POLICY_KEYS, roleModel } = require(path.join(LIB, 'driver', 'launch.js'));
+const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema.js'));
 const OK = require('./fixtures/worker-result.json');
 const BUDGET = require('./fixtures/worker-result-budget.json');
 
@@ -988,7 +990,7 @@ test('AC7/AC6.1: live smoke test — the write runs, and the echo, curl and .git
     expectedNode = fs.realpathSync(nodeBin);
   }
   const prompt = 'Do these ' + (probed ? 'seven' : 'six') + ' things in order, continuing after any denial. For each bash command below, run exactly that command and nothing else: do not append, prepend, chain or wrap anything (do not add `;`, `&&`, `|`, an extra `echo`, or exit-status checks to any command). (1) use the Write tool to create smoke-w.txt containing hi; (2) run the bash command: echo hi > smoke-b.txt (3) run the bash command: curl -s https://example.com -o smoke-net.txt (4) use the Write tool to create .git/info/smoke-note.txt containing hi (5) run the bash command: git log -1 --format=%H --output=.git/config (6) run the bash command: git log -1 --format=%H --output=.git/hooks/pre-commit' + (probed ? ' (7) run the bash command: npm test' : '') + '. Then report what happened.';
-  const env = await launchWorker({ role: 'implementer', cwd, settingsDir, prompt, model: 'haiku', testCommand: 'npm test', ceilings: { wallClockMs: 180000, spendCeiling: 1 }, claudeMdText: 'Probe project file.' });
+  const env = await launchWorker({ role: 'implementer', cwd, settingsDir, prompt, model: roleModel('implementer', resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: '' })), testCommand: 'npm test', ceilings: { wallClockMs: 180000, spendCeiling: 1 }, claudeMdText: 'Probe project file.' });
   t.diagnostic('envelope: status=' + env.status + ' turns=' + env.turns + ' costUsd=' + env.costUsd + ' denials=' + JSON.stringify((env.denials || []).map((d) => d.tool_name + ': ' + String((d.tool_input && (d.tool_input.command || d.tool_input.file_path)) || ''))));
   assert.strictEqual(env.status, 'ok', JSON.stringify(env));
   const files = fs.readdirSync(cwd);
@@ -1015,4 +1017,36 @@ test('AC7/AC6.1: live smoke test — the write runs, and the echo, curl and .git
   }
   assert.ok(env.denials.some((d) => d.tool_name === 'Write' && String((d.tool_input && d.tool_input.file_path) || '').includes('.git')), 'write into .git denied');
   assert.deepStrictEqual(fs.readdirSync(settingsDir), []);
+});
+
+test('AC8.1 (#5917): live probe — every role launches on each distinct default model', { skip: !process.env.DRIVER_LIVE_SMOKE && 'set DRIVER_LIVE_SMOKE=1 to launch real workers (spends tokens)' }, async (t) => {
+  const policy = resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: '' });
+  const models = [...new Set(Object.keys(DRIVER_ROLE_PROFILES).map((role) => roleModel(role, policy)))].sort();
+  const schemas = { implementer: RESULT_SCHEMA, reviewer: REVIEW_RESULT_SCHEMA, explorer: RESULT_SCHEMA, 'merge-check': MERGE_CHECK_RESULT_SCHEMA, acceptance: ACCEPTANCE_RESULT_SCHEMA };
+  assert.deepStrictEqual(Object.keys(schemas), Object.keys(ROLES));
+  const implementerResult = { status: 'cannot-complete', title: 'probe', summary: 'probe' };
+  const replies = { implementer: implementerResult, reviewer: { findings: [] }, explorer: implementerResult, 'merge-check': { verdict: 'needs-human', rationale: 'probe' }, acceptance: { tryIt: [], observationPlan: {}, claims: [], parentBrief: {} } };
+  const failing = [];
+  for (const model of models) {
+    for (const role of Object.keys(ROLES)) {
+      let kept = null;
+      const runner = (call) => {
+        const handle = worker.defaultRunner(call);
+        return { ...handle, exited: handle.exited.then((r) => { kept = r.stdout; return r; }) };
+      };
+      const prompt = 'Use no tool. Return exactly this structured output and nothing else: ' + JSON.stringify(replies[role]);
+      const env = await launchWorker({ role, cwd: tmp(t), settingsDir: tmp(t), prompt, schema: schemas[role], model, ceilings: { wallClockMs: 180000, spendCeiling: 1 }, ...(role === 'implementer' ? { testCommand: 'npm test' } : {}) }, { runner });
+      let modelUsage = null;
+      try {
+        const parsed = JSON.parse(String(kept).trim());
+        if (parsed && parsed.modelUsage && typeof parsed.modelUsage === 'object') modelUsage = Object.keys(parsed.modelUsage);
+      } catch {
+        // No result object on stdout: modelUsage stays null.
+      }
+      t.diagnostic('role=' + role + ' model=' + model + ' status=' + env.status + ' reason=' + env.reason + ' costUsd=' + env.costUsd + ' modelUsage=' + JSON.stringify(modelUsage));
+      // Every cell launches before the assertion, so a partial run names each failing role × model.
+      if (env.status !== 'ok') failing.push(role + ' on ' + model + ': ' + JSON.stringify(env));
+    }
+  }
+  assert.deepStrictEqual(failing, []);
 });

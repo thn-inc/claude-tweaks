@@ -82,6 +82,15 @@
 // - Smoke test. The opt-in live smoke test passed once on the same CLI, date and
 //   platform, launched from a process with no TTY. A run started by a person from a
 //   terminal passed too, on 2026-11-12 with the same CLI (2.1.322) on macOS (darwin).
+//   Both 2026-11-12 runs used the model alias `haiku`.
+// - Default models (#5917). Re-probed on 2026-11-19 with Claude Code CLI 2.1.325 on
+//   macOS (darwin), under a subscription login, launched from a process with no TTY:
+//   the opt-in live probe (`AC8.1`) launched every role in ROLES on each distinct
+//   default model the roles resolve to with no policy (`sonnet`, `opus`), each asked
+//   for its own schema's structured output. All 10 launches (5 roles × 2 models)
+//   returned `ok`, and each result's `modelUsage` named one model id: `claude-sonnet-5-5`
+//   for `sonnet`, `claude-opus-5-5` for `opus`. The `AC7` smoke test passed in the same
+//   run on the implementer's default (`sonnet`).
 //
 // On win32 the default `bin` of `claude` does not find an npm-installed `claude.cmd`;
 // a win32 caller passes `bin` explicitly.
