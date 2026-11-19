@@ -1073,7 +1073,14 @@ test('AC8.1 (#5917): live probe — every role launches on each distinct default
         return { ...handle, exited: handle.exited.then((r) => { kept = r.stdout; return r; }) };
       };
       const prompt = 'Use no tool. Return exactly this structured output and nothing else: ' + JSON.stringify(replies[role]);
-      const env = await launchWorker({ role, cwd: tmp(t), settingsDir: tmp(t), prompt, schema: schemas[role], model, ceilings: { wallClockMs: 180000, spendCeiling: 1 }, ...(role === 'implementer' ? { testCommand: 'npm test' } : {}) }, { runner });
+      let env;
+      try {
+        env = await launchWorker({ role, cwd: tmp(t), settingsDir: tmp(t), prompt, schema: schemas[role], model, ceilings: { wallClockMs: 180000, spendCeiling: 1 }, ...(role === 'implementer' ? { testCommand: 'npm test' } : {}) }, { runner });
+      } catch (err) {
+        // A launcher throw fails its own cell, not the rest of the matrix.
+        failing.push(role + ' on ' + model + ': threw ' + (err && err.message));
+        continue;
+      }
       let modelUsage = null;
       try {
         const parsed = JSON.parse(String(kept).trim());
@@ -1084,6 +1091,8 @@ test('AC8.1 (#5917): live probe — every role launches on each distinct default
       t.diagnostic('role=' + role + ' model=' + model + ' status=' + env.status + ' reason=' + env.reason + ' costUsd=' + env.costUsd + ' modelUsage=' + JSON.stringify(modelUsage));
       // Every cell launches before the assertion, so a partial run names each failing role × model.
       if (env.status !== 'ok') failing.push(role + ' on ' + model + ': ' + JSON.stringify(env));
+      // The model that ran is the one asked for: its id carries the requested alias's family.
+      else if (!(modelUsage && modelUsage.some((id) => id.includes(model)))) failing.push(role + ' on ' + model + ': modelUsage ' + JSON.stringify(modelUsage));
     }
   }
   assert.deepStrictEqual(failing, []);

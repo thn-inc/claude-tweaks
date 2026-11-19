@@ -91,7 +91,8 @@
 //   for its own schema's structured output. All 10 launches (5 roles × 2 models)
 //   returned `ok`, and each result's `modelUsage` named one model id: `claude-sonnet-5-5`
 //   for `sonnet`, `claude-opus-5-5` for `opus`. The `AC7` smoke test passed in the same
-//   run on the implementer's default (`sonnet`).
+//   run on the implementer's default (`sonnet`); `AC7` prints no `modelUsage`, so its model
+//   is the alias it requested, not one the CLI reported.
 //
 // On win32 the default `bin` of `claude` does not find an npm-installed `claude.cmd`;
 // a win32 caller passes `bin` explicitly.

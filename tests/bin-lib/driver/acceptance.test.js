@@ -909,6 +909,20 @@ describe('runAcceptance: failures and bounds', () => {
     assert.deepStrictEqual(h.events[0].extra, { route: 'no-parent-gated', model: PROFILES.standard.model });
   });
 
+  test('the due-exceeds route reports its route and the model (#5917)', async () => {
+    const h = harness('due-exceeds', { existingLabels: ['accept:pending'] });
+    const r = await h.run();
+    assert.strictEqual(r.completed, true);
+    assert.deepStrictEqual(h.events[0].extra, { route: 'due-exceeds', model: PROFILES.standard.model });
+  });
+
+  test('a worker launch that throws after the model resolved still names it on the line (#5917)', async () => {
+    const h = harness('try-it-only', { envelope: new Error('spawn') });
+    await h.run();
+    assert.strictEqual(h.events[0].status, 'stop');
+    assert.deepStrictEqual(h.events[0].extra, { route: 'try-it-only', model: PROFILES.standard.model });
+  });
+
   test('a run stopped before any launch carries no model key (#5917)', async () => {
     const h = harness('try-it-only', { nodeThrows: 'resolve-policy.js' });
     await h.run();
