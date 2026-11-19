@@ -878,7 +878,7 @@ test('Expiry\'s date fence runs: a run-id, a stamped line, the comment date, and
 });
 
 // --- #5931 Task 4: visual-review's Issue severities onto the command's (plan-review Decision 2) ---
-const VISUAL_SEVERITY_MAP = ['Critical `critical`', 'Major `medium`', 'Minor `low`', 'Cosmetic `info`', 'none for an Idea'];
+const VISUAL_SEVERITY_MAP = ['Critical `critical`', 'Major `medium`', 'Minor `low`', 'Cosmetic `info`', 'an agent row\'s lowercase word as-is, `high` as `medium`', 'none for an Idea'];
 function visualSeverityProblems(text) {
   const defer = text.split('\n').find((l) => l.startsWith('- **Defer** (new work record — born-ready'));
   if (!defer) return ['the Issues Defer bullet is missing'];
@@ -893,5 +893,32 @@ for (const m of VISUAL_SEVERITY_MAP) {
     const mutated = text.split(m).join('');
     assert.notEqual(mutated, text, `anchor ${m} not in browser-review.md`);
     assert.deepStrictEqual(visualSeverityProblems(mutated), [`the Issues Defer bullet does not map ${m}`]);
+  });
+}
+
+// every one of the four filing branches runs the command, not just the Issues Defer bullet
+const VISUAL_BRANCHES = [
+  ['Issues Defer', '- **Defer** (new work record — born-ready'],
+  ['Issues Capture', '- **Capture** — the issue is'],
+  ['Ideas Defer', '- **Defer** (new work record, `parked`)'],
+  ['Ideas Capture', '- **Capture** — the idea is'],
+];
+function visualBranchProblems(text) {
+  const lines = text.split('\n');
+  return VISUAL_BRANCHES.flatMap(([name, prefix]) => {
+    const line = lines.find((l) => l.startsWith(prefix));
+    if (!line) return [`the ${name} bullet is missing`];
+    return line.includes('deferral-route.js') ? [] : [`the ${name} bullet does not run deferral-route.js`];
+  });
+}
+test('#5931 every visual-review filing branch runs deferral-route.js', () => {
+  assert.deepStrictEqual(visualBranchProblems(read('plugin/skills/visual-review/browser-review.md')), []);
+});
+for (const [name, prefix] of VISUAL_BRANCHES) {
+  test(`#5931 go-red: the ${name} bullet without deferral-route.js fails the branch pin`, () => {
+    const text = read('plugin/skills/visual-review/browser-review.md');
+    const mutated = text.split('\n').map((l) => (l.startsWith(prefix) ? l.split('deferral-route.js').join('') : l)).join('\n');
+    assert.notEqual(mutated, text, `${name} bullet has no deferral-route.js`);
+    assert.deepStrictEqual(visualBranchProblems(mutated), [`the ${name} bullet does not run deferral-route.js`]);
   });
 }
