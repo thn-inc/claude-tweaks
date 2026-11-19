@@ -638,10 +638,49 @@ test('a lens dispatch with no agentId is kept and unparsed', () => {
   assert.strictEqual(b.noFinding, null);
 });
 
-test('collectReviews adds lens: { byTier, byLens, perRun }', () => {
+test('a lens agentId listed twice in one timing.json counts once', () => {
+  const pipelines = fresh('pl');
+  const projects = fresh('pr');
+  const run = writeRun(pipelines, '2026-11-18T1-spec-1', { items: [lensItem('a1', '3a', 'convention A', 'fast'), lensItem('a1', '3a', 'convention A', 'fast')], sessions: ['s1'] }, projects);
+  writeReport(projects, 's1', 'a1', 'No findings.');
+  const walked = walkRuns([run], { since: null, until: null, fsImpl: fs });
+  assert.deepStrictEqual(lensAgentsOf(walked[0], fs).map((a) => a.agentId), ['a1']);
+  assert.strictEqual(lensFigures(run, projects).byLens['3a'].agents, 1);
+});
+
+test('lens items with no agentId take their own tier by order, past a non-lens item, and no tier is unknown', () => {
+  const pipelines = fresh('pl');
+  const anon = (role, tier, description) => {
+    const d = item('x', role, tier, description);
+    delete d.agentId;
+    if (tier === undefined) delete d.tier;
+    return d;
+  };
+  const items = [anon('task review', 'capable', 'Task 1: x'), anon('lens reviewer', 'fast', 'Lens 3a convention A'), anon('lens reviewer', 'standard', 'Lens 3b security A'), anon('lens reviewer', undefined, 'Lens 3c error handling A')];
+  const run = writeRun(pipelines, '2026-11-18T1-spec-1', { items });
+  const walked = walkRuns([run], { since: null, until: null, fsImpl: fs });
+  assert.deepStrictEqual(lensAgentsOf(walked[0], fs).map((a) => [a.lens, a.tier]), [['3a', 'fast'], ['3b', 'standard'], ['3c', 'unknown']]);
+});
+
+test('a null entry in dispatches.items makes the run unreadable for the lens figures, never zero, and never throws', () => {
+  const pipelines = fresh('pl');
+  const projects = fresh('pr');
+  const run = writeRun(pipelines, '2026-11-18T1-spec-1', { items: [null, lensItem('a1', '3a', 'convention A', 'fast')], sessions: ['s1'] }, projects);
+  writeReport(projects, 's1', 'a1', 'No findings.');
+  const walked = walkRuns([run], { since: null, until: null, fsImpl: fs });
+  assert.strictEqual(walked[0].timing, 'ok');
+  assert.deepStrictEqual(lensAgentsOf(walked[0], fs), []);
+  const got = collectLensAgents(walked, { roots: [projects], fsImpl: fs });
+  assert.strictEqual(got.unreadable, 1);
+  assert.deepStrictEqual(got.byLens, {});
+  assert.strictEqual(taskFigures(pipelines, projects).lens.unreadable, 1);
+});
+
+test('collectReviews adds lens: { byTier, byLens, unreadable, perRun }', () => {
   const { pipelines, projects } = lensRun();
   const got = taskFigures(pipelines, projects);
-  assert.deepStrictEqual(Object.keys(got.lens), ['byTier', 'byLens', 'perRun']);
+  assert.deepStrictEqual(Object.keys(got.lens), ['byTier', 'byLens', 'unreadable', 'perRun']);
+  assert.strictEqual(got.lens.unreadable, 0);
   assert.strictEqual(got.lens.byLens['3a'].agents, 2);
   assert.strictEqual(got.lens.perRun.unparsed, 1);
 });

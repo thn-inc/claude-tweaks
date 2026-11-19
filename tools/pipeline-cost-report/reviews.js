@@ -358,33 +358,47 @@ function isLensItem(d) {
 // kept, its tier from the item carrying the same description (readCost drops the description, so the k-th such agent
 // pairs with the k-th lens item that has no agentId, both in timing.json order). `unknown` when no item names a tier.
 // [] when readCost cannot read the run's timing.json.
-function lensAgentsOf(walked, fsImpl = fs) {
-  const cost = readCost({ fs: fsImpl }, walked.run.dir);
-  if (!cost) return [];
+// A repeated agentId in one file matches once (its entry is consumed), as the walk keeps one item. A timing.json whose
+// items readCost cannot read (a null entry) is `unreadable`, not an empty run.
+function readLensAgents(walked, fsImpl) {
+  let cost;
+  try {
+    cost = readCost({ fs: fsImpl }, walked.run.dir);
+  } catch {
+    return { agents: [], unreadable: true };
+  }
+  if (!cost) return { agents: [], unreadable: false };
   const byId = new Map();
   for (const d of walked.items) if (d && d.agentId != null) byId.set(d.agentId, d);
   const anonymous = walked.items.filter((d) => d && d.agentId == null && isLensItem(d));
   let k = 0;
-  const out = [];
+  const agents = [];
   for (const a of cost.lensAgents) {
     const source = a.agentId != null ? byId.get(a.agentId) : anonymous[k++];
     if (a.agentId != null && !source) continue;
-    out.push({ agentId: a.agentId, lens: a.lens, side: a.side, tier: (source && source.tier) || 'unknown' });
+    if (a.agentId != null) byId.delete(a.agentId);
+    agents.push({ agentId: a.agentId, lens: a.lens, side: a.side, tier: (source && source.tier) || 'unknown' });
   }
-  return out;
+  return { agents, unreadable: false };
 }
+
+const lensAgentsOf = (walked, fsImpl = fs) => readLensAgents(walked, fsImpl).agents;
 
 const MEAN_KEYS = [...SEVERITIES, 'overflow'];
 
 // Lens reviewers by model tier and by lens. `agents` is every lens agent, `n` those whose report parsed (an agent with no
 // agentId is always unparsed), `noFinding` the share of the parsed with no row at all, `perAgent` the mean per parsed
-// agent of each severity, of `overflow` and of `total` (their sum); null when nothing parsed.
+// agent of each severity, of `overflow` and of `total` (their sum); null when nothing parsed. `unreadable` counts the
+// runs whose timing.json readCost could not read (their agents are in no figure, never counted as zero).
 function collectLensAgents(walkedRuns, { roots, fsImpl = fs } = {}) {
   const groups = { byTier: {}, byLens: {} };
   const slot = (map, key) => (map[key] = map[key] || { agents: 0, n: 0, unparsed: 0, zero: 0, sums: Object.fromEntries(MEAN_KEYS.map((k) => [k, 0])) });
+  let unreadable = 0;
   for (const w of walkedRuns) {
-    for (const a of lensAgentsOf(w, fsImpl)) {
-      const text = a.agentId == null ? null : readReport({ roots, sessions: w.sessions, agentId: a.agentId }, fsImpl);
+    const read = readLensAgents(w, fsImpl);
+    if (read.unreadable) unreadable += 1;
+    for (const a of read.agents) {
+      const text = a.agentId == null ? null : reportOf(w, a, roots, fsImpl);
       const counts = text == null ? null : parseLensReport(text);
       for (const [map, key] of [[groups.byTier, a.tier], [groups.byLens, a.lens]]) {
         const g = slot(map, key);
@@ -409,7 +423,7 @@ function collectLensAgents(walkedRuns, { roots, fsImpl = fs } = {}) {
     }
     return out;
   };
-  return { byTier: finish(groups.byTier), byLens: finish(groups.byLens) };
+  return { byTier: finish(groups.byTier), byLens: finish(groups.byLens), unreadable };
 }
 
 const VERDICT_KEYS = ['confirmed', 'pair', 'tiebreak', 'refuted', 'cantTell'];
