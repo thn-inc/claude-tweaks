@@ -3,8 +3,8 @@
 // tools/pipeline-cost-report.js — what the pipeline costs and what it produces, over a UTC day window (#5914).
 //
 //   node tools/pipeline-cost-report.js [--since <YYYY-MM-DD>] [--until <YYYY-MM-DD>] [--projects <dir>]...
-//     [--pipelines <dir>] [--match <substring> | --all-projects] [--section spend|funnel|records|all]
-//     [--repo <owner/name>] [--simulate <reason[,reason...]>]... [--json]
+//     [--pipelines <dir>] [--match <substring> | --all-projects] [--section spend|funnel|records|guards|all]
+//     [--split <YYYY-MM-DD>] [--runs <n>] [--repo <owner/name>] [--simulate <reason[,reason...]>]... [--json]
 //
 // Spend scope: merged PRs and records are this repository's, so by default only transcripts whose working directory is
 // the main checkout or under it (its worktrees) are priced. `--match <substring>` replaces that with a substring of the
@@ -17,6 +17,12 @@
 //   funnel   asks the driver (`drive.js --check`) which open ready + auto:build records it would admit, and why not
 //            (funnel.js). `checked` is every listed record, unreadable ones included.
 //   records  counts records created, closed, open and deferred in the window from the forge (records.js).
+//   guards   three quality guards over two columns of pipeline runs, the last --runs (default 20) dated before --split
+//            and the first --runs dated on or after it, independent of the window (guards.js): the share of whole-branch
+//            reviews that found a Critical or Important issue, the share of tasks needing no re-review (by first
+//            implementer tier), and bug records filed within 14 days of a merge touching their Key Files. Each figure
+//            carries its `unparsed` count. --split is required for --section guards; --section all without it skips guards
+//            (`{ skipped }`, exit unaffected). A guard 3 forge failure marks only that cell and exits 1.
 // The run directories under --pipelines are counted once (runs.js); `runs.inWindow` is the runs dated in the window.
 //
 // The window is --since through --until, both inclusive, UTC; --until defaults to today, --since to --until minus 6
@@ -46,7 +52,9 @@ const { PRICES, collectSpend } = require('./pipeline-cost-report/spend');
 const { collectFunnel, defaultGh, defaultCheck, readPluginVersion } = require('./pipeline-cost-report/funnel');
 const { collectRecords, countMergedPrs } = require('./pipeline-cost-report/records');
 const { listRuns, isDate } = require('./pipeline-cost-report/runs');
+const { collectGuards } = require('./pipeline-cost-report/guards');
 
+const DEFAULT_RUNS = 20;
 const PLUGIN_ROOT = path.join(__dirname, '..', 'plugin');
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SESSION_TYPE_NOTE = 'Session type is the first claude-tweaks skill a session invoked; a session that did several things is counted once.';
@@ -176,11 +184,52 @@ const SECTIONS = [
       return lines;
     },
   },
+  {
+    key: 'guards',
+    async collect(ctx) {
+      if (!ctx.opts.split) return { skipped: '--split not given' };
+      if (ctx.runs.error) throw new Error(ctx.runs.error);
+      return collectGuards(
+        { runs: ctx.runs.runs, split: ctx.opts.split, n: ctx.opts.runs || DEFAULT_RUNS, roots: ctx.roots, repo: ctx.repo },
+        { fsImpl: ctx.deps.fs, gh: ctx.deps.gh },
+      );
+    },
+    failed: (d) => Boolean(d.before && d.after && (d.before.postMergeBugs.error || d.after.postMergeBugs.error)),
+    unreadable: () => 0,
+    render(d) {
+      if (d.skipped) return ['Guards: not run — --split <YYYY-MM-DD> not given.'];
+      const pct = (s) => (s === null ? 'none' : `${Math.round(s * 100)}%`);
+      const mean = (v) => v.toFixed(2);
+      const head = (label, c) => (c.runCount > 0 ? `${label} (${c.runCount} runs, ${c.from} to ${c.to})` : `${label} (0 runs)`);
+      const whole = (c) => {
+        const w = c.wholeBranch;
+        return w.n > 0 ? `${pct(w.share)} of ${w.n}; mean ${mean(w.meanCritical)} critical, ${mean(w.meanImportant)} important; ${w.unparsed} unparsed` : `none of 0; ${w.unparsed} unparsed`;
+      };
+      const first = (c) => `${pct(c.firstPass.share)} of ${c.firstPass.n}; ${c.firstPass.unparsed} unparsed`;
+      const bugs = (c) => {
+        const b = c.postMergeBugs;
+        if (b.error) return `unavailable — ${b.error}`;
+        return `${b.count} over ${b.mergedPrs} merged PRs (${b.perPr === null ? 'none' : mean(b.perPr)} per PR); ${b.unparsed} unparsed`;
+      };
+      const lines = ['## Guards', '', `Split ${d.split}; up to ${d.runs} runs per column.`, '', `| Guard | ${head('Before', d.before)} | ${head('After', d.after)} |`, '|---|---|---|'];
+      lines.push(`| Whole-branch reviews with a Critical or Important issue | ${whole(d.before)} | ${whole(d.after)} |`);
+      lines.push(`| Tasks with no re-review | ${first(d.before)} | ${first(d.after)} |`);
+      lines.push(`| Bug records within 14 days of a merge touching its Key Files | ${bugs(d.before)} | ${bugs(d.after)} |`, '');
+      const tiers = [...new Set([...Object.keys(d.before.firstPass.byTier), ...Object.keys(d.after.firstPass.byTier)])].sort();
+      if (tiers.length > 0) {
+        const cell = (c, tier) => (c.firstPass.byTier[tier] ? `${pct(c.firstPass.byTier[tier].share)} of ${c.firstPass.byTier[tier].n}` : 'none');
+        lines.push('| First implementer tier | Before | After |', '|---|---|---|');
+        for (const tier of tiers) lines.push(`| ${tier} | ${cell(d.before, tier)} | ${cell(d.after, tier)} |`);
+      }
+      return lines;
+    },
+  },
 ];
 
 const SECTION_KEYS = SECTIONS.map((s) => s.key);
-const USAGE = `usage: node tools/pipeline-cost-report.js [--since <YYYY-MM-DD>] [--until <YYYY-MM-DD>] [--projects <dir>]... [--pipelines <dir>] [--match <substring> | --all-projects] [--section ${[...SECTION_KEYS, 'all'].join('|')}] [--repo <owner/name>] [--simulate <reason[,reason...]>]... [--json]
-  spend covers the main checkout and its worktrees unless --match or --all-projects widens it; the funnel always checks the current checkout's repository, so --repo must match it for --section funnel|all`;
+const USAGE = `usage: node tools/pipeline-cost-report.js [--since <YYYY-MM-DD>] [--until <YYYY-MM-DD>] [--projects <dir>]... [--pipelines <dir>] [--match <substring> | --all-projects] [--section ${[...SECTION_KEYS, 'all'].join('|')}] [--split <YYYY-MM-DD>] [--runs <n>] [--repo <owner/name>] [--simulate <reason[,reason...]>]... [--json]
+  spend covers the main checkout and its worktrees unless --match or --all-projects widens it; the funnel always checks the current checkout's repository, so --repo must match it for --section funnel|all
+  guards compares the last --runs (default ${DEFAULT_RUNS}) pipeline runs dated before --split with the first --runs on or after it; --section guards needs --split, and --section all without it skips guards`;
 
 function parseArgs(args) {
   const opts = { section: 'all', projects: [], simulate: [] };
@@ -198,6 +247,14 @@ function parseArgs(args) {
       const v = args[++i];
       if (!isDate(v)) return { error: `${a} needs a YYYY-MM-DD date` };
       opts[a.slice(2)] = v;
+    } else if (a === '--split') {
+      const v = args[++i];
+      if (!isDate(v)) return { error: '--split needs a YYYY-MM-DD date' };
+      opts.split = v;
+    } else if (a === '--runs') {
+      const v = args[++i];
+      if (!/^[1-9]\d*$/.test(v || '')) return { error: '--runs needs a positive integer' };
+      opts.runs = Number(v);
     } else if (['--projects', '--pipelines', '--match', '--repo', '--section', '--simulate'].includes(a)) {
       const r = value(++i, a);
       if (r.error) return r;
@@ -211,6 +268,7 @@ function parseArgs(args) {
   }
   if (opts.simulate.some((set) => set.length === 0)) return { error: '--simulate needs at least one reason' };
   if (opts.allProjects && opts.match) return { error: '--match and --all-projects cannot be combined' };
+  if (opts.section === 'guards' && !opts.split) return { error: '--section guards needs --split <YYYY-MM-DD>' };
   return { opts };
 }
 

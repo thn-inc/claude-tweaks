@@ -137,7 +137,7 @@ test('sections are separated by a single blank line, a section ending in a table
   const h = harness();
   assert.strictEqual(await run({ argv: h.base, deps: h.deps }), 0);
   const text = h.logs.join('\n');
-  assert.match(text, /\| tangential \| 1 \| 1 \|\n\nRuns: /);
+  assert.match(text, /\| tangential \| 1 \| 1 \|\n\nGuards: not run — --split <YYYY-MM-DD> not given\.\n\nRuns: /);
   assert.ok(!text.includes('\n\n\n'), text);
 });
 
@@ -387,7 +387,7 @@ test('a section receives the run listing in ctx.runs, collected before the secti
 test('usage names every section key', async () => {
   const h = harness();
   assert.strictEqual(await run({ argv: ['--section', 'bogus'], deps: h.deps }), 2);
-  assert.ok(h.errs.join('\n').includes('--section spend|funnel|records|all]'), h.errs.join('\n'));
+  assert.ok(h.errs.join('\n').includes('--section spend|funnel|records|guards|all]'), h.errs.join('\n'));
 });
 
 test('a failed default --pipelines lookup prints Runs: unavailable and leaves the exit code alone', async () => {

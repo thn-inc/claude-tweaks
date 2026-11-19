@@ -308,4 +308,31 @@ function collectPostMergeBugs(column, { repo, gh }) {
   return { count, perPr: merged.length ? count / merged.length : null, mergedPrs: merged.length, unparsed };
 }
 
-module.exports = { selectColumns, parseReviewCounts, readTiming, readReport, collectWholeBranch, collectFirstPass, keyFilesOf, collectPostMergeBugs };
+const firstLine = (e) => String((e && e.message) || e).split('\n')[0];
+
+// The guards section: the before and after columns of `selectColumns`, each read by the three guards. `repo` is a
+// function returning a promise of owner/name, awaited per column inside guard 3's own error handling and only for a
+// column with runs, so a failing repository lookup or `gh` read becomes that column's `postMergeBugs: { error }` and
+// never blanks guards 1 and 2.
+async function collectGuards({ runs, split, n, roots, repo }, { fsImpl = fs, gh } = {}) {
+  const columns = selectColumns(runs, { split, n, fsImpl });
+  const read = async (column) => {
+    let postMergeBugs;
+    try {
+      postMergeBugs = collectPostMergeBugs(column, { repo: column.length ? await repo() : null, gh });
+    } catch (e) {
+      postMergeBugs = { error: firstLine(e) };
+    }
+    return {
+      runCount: column.length,
+      from: column.length ? column[0].date : null,
+      to: column.length ? column[column.length - 1].date : null,
+      wholeBranch: collectWholeBranch(column, { roots, fsImpl }),
+      firstPass: collectFirstPass(column, { fsImpl }),
+      postMergeBugs,
+    };
+  };
+  return { split, runs: n, before: await read(columns.before), after: await read(columns.after) };
+}
+
+module.exports = { selectColumns, parseReviewCounts, readTiming, readReport, collectWholeBranch, collectFirstPass, keyFilesOf, collectPostMergeBugs, collectGuards };

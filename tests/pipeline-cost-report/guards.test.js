@@ -13,6 +13,8 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..', '..');
 const { selectColumns, parseReviewCounts, readTiming, readReport, collectWholeBranch, collectFirstPass, keyFilesOf, collectPostMergeBugs } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'guards.js'));
 
+const { run: runCli } = require(path.join(ROOT, 'tools', 'pipeline-cost-report.js'));
+
 const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pcr-guards-'));
 after(() => fs.rmSync(DIR, { recursive: true, force: true }));
 let n = 0;
@@ -449,16 +451,15 @@ test('guard 3: a bug with no Key Files section is unparsed', () => {
 });
 
 test('guard 3 queries the column\'s merge window and 14 days past it', () => {
-  const { gh, calls } = fakeGh([], []);
+  const { gh, calls } = fakeGh([{ number: 7, mergedAt: '2026-11-03T12:00:00Z', files: ['tools/a.js'] }], []);
   const r = collectPostMergeBugs(col('2026-11-01', '2026-11-05'), { repo: 'o/r', gh });
-  const arg = (c, flag) => c[c.indexOf(flag) + 1];
   const prList = calls.find((c) => c[0] === 'pr' && c[1] === 'list');
+  const prView = calls.find((c) => c[0] === 'pr' && c[1] === 'view');
   const issueList = calls.find((c) => c[0] === 'issue' && c[1] === 'list');
-  assert.strictEqual(arg(prList, '--search'), 'merged:2026-11-01..2026-11-05');
-  assert.strictEqual(arg(issueList, '--search'), 'created:2026-11-01..2026-11-19');
-  assert.strictEqual(arg(issueList, '--label'), 'type:bug');
-  for (const c of calls) assert.strictEqual(arg(c, '--repo'), 'o/r');
-  assert.deepStrictEqual(r, { count: 0, perPr: null, mergedPrs: 0, unparsed: 0 });
+  assert.deepStrictEqual(prList, ['pr', 'list', '--repo', 'o/r', '--state', 'merged', '--search', 'merged:2026-11-01..2026-11-05', '--limit', '1000', '--json', 'number,mergedAt']);
+  assert.deepStrictEqual(prView, ['pr', 'view', '7', '--repo', 'o/r', '--json', 'files']);
+  assert.deepStrictEqual(issueList, ['issue', 'list', '--repo', 'o/r', '--state', 'all', '--label', 'type:bug', '--search', 'created:2026-11-01..2026-11-19', '--limit', '1000', '--json', 'number,createdAt,body']);
+  assert.deepStrictEqual(r, { count: 0, perPr: 0,mergedPrs: 1, unparsed: 0 });
 });
 
 test('guard 3: an empty column makes no gh call and a gh throw propagates', () => {
@@ -466,4 +467,201 @@ test('guard 3: an empty column makes no gh call and a gh throw propagates', () =
   assert.deepStrictEqual(collectPostMergeBugs([], { repo: 'o/r', gh }), { count: 0, perPr: null, mergedPrs: 0, unparsed: 0 });
   assert.strictEqual(calls.length, 0);
   assert.throws(() => collectPostMergeBugs(col('2026-11-01'), { repo: 'o/r', gh: () => { throw new Error('boom'); } }), /boom/);
+});
+
+// ---- the guards section through run({ argv, deps }) ----
+
+const CLI_PR = { number: 7, mergedAt: '2026-11-16T12:00:00Z', files: ['tools/a.js'] };
+const CLI_BUG = { number: 100, createdAt: '2026-11-20T12:00:00Z', body: keyBody('tools/a.js') };
+
+// A fake gh for the whole CLI: guard 3 sees one merged PR and one bug naming its file; every other call answers empty.
+function cliGh({ failOn = null, repoView = 'o/r\n' } = {}) {
+  const calls = [];
+  const gh = (args) => {
+    calls.push(args);
+    const key = args.slice(0, 2).join(' ');
+    if (failOn === key) throw new Error('gh: HTTP 502\nsecond line');
+    if (key === 'repo view') return repoView;
+    if (args[0] === 'api') return '0\n';
+    if (key === 'pr list') return JSON.stringify([{ number: CLI_PR.number, mergedAt: CLI_PR.mergedAt }]);
+    if (key === 'pr view') return JSON.stringify({ files: CLI_PR.files.map((f) => ({ path: f })) });
+    if (key === 'issue list') return JSON.stringify(args.includes('type:bug') ? [CLI_BUG] : []);
+    throw new Error('unexpected gh call ' + args.join(' '));
+  };
+  return { gh, calls };
+}
+
+// Runs 15-16 are outside --runs 2; the before column is 16-17 (the AC1.1 and AC3.1 fixtures in run 17), the after column 19-20.
+function cliFixture() {
+  const pipelines = fresh('pl');
+  const projects = fresh('pr');
+  const items = [
+    review('k1'), review('k2'), review('k3'), review('k4'),
+    impl('Implement Task 1: a', 'standard', 1),
+    rev('Review Task 1', 'capable', 2),
+    impl('Implement Task 2: b', 'capable', 3),
+    impl('Implement Task 2: b again', 'standard', 5),
+    rev('Review Task 2', 'capable', 6),
+    rerev('Re-review Task 2 fix round 1', 'capable', 7),
+    impl('Implement Task 3: c', 'standard', 6),
+    rev('Review Task 3', 'capable', 7),
+  ];
+  writeRun(pipelines, '2026-11-15T1-spec-0');
+  writeRun(pipelines, '2026-11-16T1-spec-9');
+  writeRun(pipelines, '2026-11-17T1-spec-1', { items, sessions: ['s1'] }, projects);
+  writeRun(pipelines, '2026-11-19T1-spec-2');
+  writeRun(pipelines, '2026-11-20T1-spec-3');
+  writeRun(pipelines, '2026-11-21T1-spec-4');
+  writeReport(projects, 's1', 'k1', '#### Important\n1. x\n');
+  writeReport(projects, 's1', 'k2', '#### Important\n1. x\n');
+  writeReport(projects, 's1', 'k3', '#### Minor\n1. m\n');
+  writeReport(projects, 's1', 'k4', '#### Minor\n1. m\n');
+  return { pipelines, projects };
+}
+
+async function cli(extra, { gh = cliGh().gh, deps = {}, fixture = cliFixture() } = {}) {
+  const logs = [];
+  const errs = [];
+  const main = fresh('main');
+  const full = {
+    gh,
+    check: async () => '{}',
+    now: () => new Date('2026-11-19T12:00:00Z'),
+    pluginVersion: () => '9.9.9',
+    git: () => path.join(main, '.git'),
+    cwd: ROOT,
+    home: fresh('home'),
+    log: (s) => logs.push(s),
+    err: (s) => errs.push(s),
+    ...deps,
+  };
+  const argv = ['--projects', fixture.projects, '--pipelines', fixture.pipelines, ...extra];
+  const code = await runCli({ argv, deps: full });
+  return { code, text: logs.join('\n'), logs, errs };
+}
+const GUARDS = ['--section', 'guards', '--split', '2026-11-19', '--runs', '2', '--repo', 'o/r'];
+
+test('AC7.1: --json prints the figures under a guards key', async () => {
+  const r = await cli([...GUARDS, '--json']);
+  assert.strictEqual(r.code, 0);
+  const g = JSON.parse(r.logs[0]).guards;
+  assert.strictEqual(g.split, '2026-11-19');
+  assert.strictEqual(g.runs, 2);
+  assert.strictEqual(g.before.runCount, 2);
+  assert.strictEqual(g.before.from, '2026-11-16');
+  assert.strictEqual(g.before.to, '2026-11-17');
+  assert.deepStrictEqual(g.before.wholeBranch, { share: 0.5, meanCritical: 0, meanImportant: 0.5, n: 4, unparsed: 0 });
+  assert.strictEqual(g.before.firstPass.n, 3);
+  assert.strictEqual(g.before.firstPass.unparsed, 0);
+  assert.deepStrictEqual(g.before.firstPass.byTier.capable, { share: 0, n: 1 });
+  assert.deepStrictEqual(g.before.postMergeBugs, { count: 1, perPr: 1, mergedPrs: 1, unparsed: 0 });
+  assert.strictEqual(g.after.runCount, 2);
+  assert.strictEqual(g.after.from, '2026-11-19');
+  assert.strictEqual(g.after.to, '2026-11-20');
+  assert.strictEqual(g.after.wholeBranch.share, null);
+  assert.strictEqual(g.after.wholeBranch.n, 0);
+});
+
+test('AC1.1/AC3.1: markdown prints 50% and 67%, each with its unparsed count', async () => {
+  const r = await cli(GUARDS);
+  assert.strictEqual(r.code, 0);
+  assert.match(r.text, /^## Guards$/m);
+  assert.match(r.text, /Split 2026-11-19; up to 2 runs per column\./);
+  const rows = r.text.split('\n');
+  const g1 = rows.find((l) => l.includes('Whole-branch reviews with a Critical or Important issue'));
+  const g2 = rows.find((l) => l.includes('Tasks with no re-review'));
+  const g3 = rows.find((l) => l.includes('Bug records within 14 days of a merge touching its Key Files'));
+  assert.match(g1, /50% of 4; mean 0\.00 critical, 0\.50 important; 0 unparsed/);
+  assert.match(g2, /67% of 3; 0 unparsed/);
+  assert.match(g3, /1 over 1 merged PRs \(1\.00 per PR\); 0 unparsed/);
+  assert.ok(rows.some((l) => l.startsWith('| Guard | Before (2 runs, 2026-11-16 to 2026-11-17) | After (2 runs, 2026-11-19 to 2026-11-20) |')), r.text);
+  assert.ok(g1.includes('none of 0; 0 unparsed'), g1);
+  assert.ok(rows.some((l) => /^\| First implementer tier \| Before \| After \|/.test(l)), r.text);
+  assert.ok(rows.some((l) => /^\| capable \| 0% of 1 \|/.test(l)), r.text);
+  assert.ok(rows.some((l) => /^\| standard \| 100% of 2 \|/.test(l)), r.text);
+});
+
+test('--section guards without a valid --split or --runs exits 2', async () => {
+  for (const argv of [
+    ['--section', 'guards'],
+    ['--section', 'guards', '--split', '2026-13-01'],
+    ['--section', 'guards', '--split', '2026-11-19', '--runs', '0'],
+    ['--section', 'guards', '--split', '2026-11-19', '--runs', '2.5'],
+    ['--section', 'all', '--runs', '0'],
+  ]) {
+    const r = await cli(argv);
+    assert.strictEqual(r.code, 2, argv.join(' '));
+    assert.strictEqual(r.logs.length, 0);
+    assert.match(r.errs.join('\n'), /--split|--runs/);
+  }
+});
+
+test('--section all without --split marks guards not run and exits 0', async () => {
+  const r = await cli(['--since', '2026-11-18', '--until', '2026-11-18']);
+  assert.strictEqual(r.code, 0, r.text + r.errs.join('\n'));
+  assert.ok(r.text.includes('Guards: not run — --split <YYYY-MM-DD> not given.'), r.text);
+  const j = await cli(['--since', '2026-11-18', '--until', '2026-11-18', '--json']);
+  assert.strictEqual(j.code, 0);
+  assert.deepStrictEqual(JSON.parse(j.logs[0]).guards, { skipped: '--split not given' });
+});
+
+test('guard 3 gh failure keeps guards 1 and 2 and exits 1', async () => {
+  const r = await cli(GUARDS, { gh: cliGh({ failOn: 'pr list' }).gh });
+  assert.strictEqual(r.code, 1);
+  assert.match(r.text, /50% of 4/);
+  assert.match(r.text, /67% of 3/);
+  assert.ok(r.text.includes('unavailable — gh: HTTP 502'), r.text);
+  assert.ok(!r.text.includes('second line'));
+  const j = await cli([...GUARDS, '--json'], { gh: cliGh({ failOn: 'pr list' }).gh });
+  const g = JSON.parse(j.logs[0]).guards;
+  assert.deepStrictEqual(g.before.postMergeBugs, { error: 'gh: HTTP 502' });
+  assert.strictEqual(g.before.wholeBranch.share, 0.5);
+});
+
+test('guard 3 resolves the repository itself; a failing gh repo view keeps guards 1 and 2', async () => {
+  const argv = GUARDS.slice(0, -2);
+  const ok = cliGh();
+  const r = await cli(argv, { gh: ok.gh });
+  assert.strictEqual(r.code, 0);
+  const guard3 = ok.calls.filter((c) => (c[0] === 'pr' || c[0] === 'issue') && c.includes('--repo'));
+  assert.ok(guard3.length >= 3);
+  for (const c of guard3) assert.strictEqual(c[c.indexOf('--repo') + 1], 'o/r');
+  const bad = await cli(argv, { gh: cliGh({ failOn: 'repo view' }).gh });
+  assert.strictEqual(bad.code, 1);
+  assert.match(bad.text, /50% of 4/);
+  assert.match(bad.text, /67% of 3/);
+  assert.ok(bad.text.includes('unavailable — gh: HTTP 502'), bad.text);
+});
+
+test('an empty column never resolves the repository', async () => {
+  // --split 2026-11-22 leaves the after column empty; only the before column (runs 20 and 21) needs the repository.
+  const r = await cli(['--section', 'guards', '--split', '2026-11-22', '--runs', '2', '--json'], { gh: cliGh({ failOn: 'repo view' }).gh });
+  assert.strictEqual(r.code, 1);
+  const g = JSON.parse(r.logs[0]).guards;
+  assert.deepStrictEqual(g.after.postMergeBugs, { count: 0, perPr: null, mergedPrs: 0, unparsed: 0 });
+  assert.strictEqual(g.after.runCount, 0);
+  assert.strictEqual(g.after.from, null);
+  assert.deepStrictEqual(g.before.postMergeBugs, { error: 'gh: HTTP 502' });
+});
+
+test('a pipelines listing error makes the section unavailable', async () => {
+  const fixture = cliFixture();
+  const logs = [];
+  const code = await runCli({
+    argv: ['--section', 'guards', '--split', '2026-11-19', '--projects', fixture.projects],
+    deps: { gh: cliGh().gh, now: () => new Date('2026-11-19T12:00:00Z'), git: () => { throw new Error('not a repo\nmore'); }, cwd: ROOT, home: fresh('home'), log: (s) => logs.push(s), err: () => {} },
+  });
+  assert.strictEqual(code, 1);
+  assert.ok(logs.join('\n').includes('guards: unavailable — cannot resolve the pipelines directory (not a repo)'), logs.join('\n'));
+});
+
+test('--runs defaults to 20 per column', async () => {
+  const fixture = { pipelines: fresh('pl'), projects: fresh('pr') };
+  for (let i = 1; i <= 22; i++) writeRun(fixture.pipelines, `2026-10-${String(i).padStart(2, '0')}T1-spec-${i}`);
+  const r = await cli(['--section', 'guards', '--split', '2026-11-01', '--repo', 'o/r', '--json'], { fixture });
+  const g = JSON.parse(r.logs[0]).guards;
+  assert.strictEqual(g.runs, 20);
+  assert.strictEqual(g.before.runCount, 20);
+  assert.strictEqual(g.before.from, '2026-10-03');
+  assert.strictEqual(g.after.runCount, 0);
 });
