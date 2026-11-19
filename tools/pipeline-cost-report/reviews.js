@@ -78,13 +78,13 @@ function cellsOf(line) {
     .map((c) => c.replace(/[*`]/g, '').trim());
 }
 
-const overflowOf = (cells) => {
+function overflowOf(cells) {
   for (const c of cells) {
     const m = OVERFLOW_RE.exec(c);
     if (m) return Number(m[1]);
   }
   return null;
-};
+}
 
 // Case, hyphens, underscores and the US spelling `behavior` are folded before the kind is looked up.
 const foldKind = (s) => s.toLowerCase().replace(/behavior/g, 'behaviour').replace(/[-_\s]+/g, ' ').trim();
@@ -194,13 +194,18 @@ function unitsOf(run, fsImpl) {
   return [{ name: run.name, dir }];
 }
 
+function compareStrings(a, b) {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
 // Walked[]: the runs dated since..until (inclusive; a null bound is open), each through resolveRun, sorted by date then
 // name. A run keeps its place when its timing.json is absent ('missing') or unusable ('unparsed'), with no items. An
 // agentId already seen in an earlier run of the walk, or earlier in the same file, is dropped.
 function walkRuns(runs, { since, until, fsImpl = fs } = {}) {
   const inWindow = runs.filter((r) => (since == null || r.date >= since) && (until == null || r.date <= until));
   const resolved = inWindow.map((r) => resolveRun(r, fsImpl));
-  resolved.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  resolved.sort((a, b) => compareStrings(a.date, b.date) || compareStrings(a.name, b.name));
   const seen = new Set();
   return resolved.map((run) => {
     let timing = 'ok';
