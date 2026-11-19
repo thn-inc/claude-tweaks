@@ -30,6 +30,9 @@ const { LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
 const IMPACT_MAP_VERSION = 1;
 const DEFAULT_MAP_NAME = 'claude-tweaks-test-impact.json';
 const KINDS = ['f', 's', 'd', 'c'];
+const DRIFT_REFRESH_TESTS = 50;
+const REFRESH_WINDOW_MS = 10 * 60 * 1000;
+const REFRESH_MARKER_NAME = 'claude-tweaks-test-impact.refresh-attempt';
 const SHA_RE = /^[0-9a-f]{40}$/;
 
 const sortedUnique = (list) => [...new Set(list)].sort();
@@ -257,7 +260,18 @@ function readMap({ decl, mapPath, repoRoot, execImpl, fsImpl, knownAncestor = nu
 // `knownAncestor` (optional sha): a commit the caller already proved is an ancestor of HEAD, with only git reads
 // since (#5773). The FIRST map read trusts it for a map commit equal to it; the reload after impact.fetch (a shell
 // command that can rewrite history) always asks git again. Absent, every map read asks git as before.
-function loadImpactContext({ decl, repoRoot, commonDir, execImpl = execFileSync, fsImpl = fs, runFetch = null, knownAncestor = null }) {
+// A usable map whose drift exceeds DRIFT_REFRESH_TESTS runs the fetch once too (#5947), at most once per
+// REFRESH_WINDOW_MS per checkout (a marker beside the shared map, written before the fetch so a failed or
+// timed-out attempt counts); the reload is adopted only if usable with no more drift, else the current map stands.
+function recentRefreshAttempt({ markerPath, fsImpl, now }) {
+  try {
+    return now - fsImpl.statSync(markerPath).mtimeMs < REFRESH_WINDOW_MS;
+  } catch {
+    return false;
+  }
+}
+
+function loadImpactContext({ decl, repoRoot, commonDir, execImpl = execFileSync, fsImpl = fs, runFetch = null, knownAncestor = null, now = Date.now() }) {
   const mapPath = resolveMapPath({ decl, commonDir, repoRoot });
   let state = readMap({ decl, mapPath, repoRoot, execImpl, fsImpl, knownAncestor });
   let fetch = null;
@@ -269,7 +283,23 @@ function loadImpactContext({ decl, repoRoot, commonDir, execImpl = execFileSync,
   let driftTests = [];
   let driftProblem = null;
   if (!state.problem) {
-    const drift = listDriftTests({ decl, repoRoot, commit: state.mapCommit, execImpl });
+    let drift = listDriftTests({ decl, repoRoot, commit: state.mapCommit, execImpl });
+    const markerPath = path.join(commonDir, REFRESH_MARKER_NAME);
+    if (drift !== null && drift.length > DRIFT_REFRESH_TESTS && decl.impact.fetch && runFetch && fetch === null
+      && !recentRefreshAttempt({ markerPath, fsImpl, now })) {
+      try { fsImpl.writeFileSync(markerPath, String(now)); } catch { /* an unwritable marker never blocks the load */ }
+      fetch = runFetch(decl.impact.fetch);
+      if (fetch.exitCode === 0) {
+        const next = readMap({ decl, mapPath, repoRoot, execImpl, fsImpl });
+        if (!next.problem) {
+          const nextDrift = listDriftTests({ decl, repoRoot, commit: next.mapCommit, execImpl });
+          if (nextDrift !== null && nextDrift.length <= drift.length) {
+            state = next;
+            drift = nextDrift;
+          }
+        }
+      }
+    }
     if (drift === null) driftProblem = 'map-drift-unreadable';
     else driftTests = drift;
   }
@@ -335,7 +365,7 @@ function checkoutImpactContext({ decl, cwd, runFetch = runImpactFetch, locate = 
 }
 
 module.exports = {
-  IMPACT_MAP_VERSION, DEFAULT_MAP_NAME, KINDS,
+  IMPACT_MAP_VERSION, DEFAULT_MAP_NAME, KINDS, DRIFT_REFRESH_TESTS, REFRESH_WINDOW_MS, REFRESH_MARKER_NAME,
   encodeImpactMap, parseImpactMap, under, selectImpactTests, mapProblem,
   gitLocations, resolveMapPath, loadImpactContext, lazyImpactContext, runImpactFetch, checkoutImpactContext,
 };
