@@ -43,9 +43,15 @@
 //   admits a strict subset of what `Bash(npm test *)` admitted (`npm test -- <args>`
 //   passed the same arguments to `tools/run-tests.js`), so it widens no right; its
 //   write/exec flags (`--test-reporter`, `--test-reporter-destination`, listed test
-//   files) run inside the same sandbox as before. The new form and the
-//   no-`testCommand` launch are both unprobed live as of this commit; the #5915 AC5
-//   driver run is the planned probe. For another project the rule is that project's own
+//   files) run inside the same sandbox as before. Probed on 2026-11-19 with Claude
+//   Code CLI 2.1.325 on macOS (darwin), under a subscription login, launched from a
+//   process with no TTY, through the AC7 live smoke test in
+//   `tests/bin-lib/driver/worker.test.js`: with `testCommand` set to
+//   `node tools/run-tests.js --files-from`, the worker ran that command on a list file
+//   and the test file it named ran on the `node` that `PATH` names, while its read of a
+//   home-directory canary failed with `EPERM`. With `testCommand: 'npm test'` and the
+//   same prompt, the same command was denied and nothing ran. The no-`testCommand`
+//   launch is still unprobed live; the #5915 AC5 driver run is its planned probe. For another project the rule is that project's own
 //   declared `impact.command` runner, contained by the same sandbox and read block, with
 //   that runner's write and exec flags unprobed: a stated residual the #5915 spec accepts.
 // - `sandbox.failIfUnavailable: true` comes from the documentation and was not

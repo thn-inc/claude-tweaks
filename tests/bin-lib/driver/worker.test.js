@@ -986,6 +986,11 @@ test("defaultRunner lets the child's exit decide when stdin errors", async () =>
   assert.deepStrictEqual(await handle.exited, { code: 1, signal: null, stdout: '', stderr: "error: unknown option '--x'\n" });
 });
 
+// The test command the driver passes on this repository (verify-scope.json's impact.command
+// cut before ` {files}`) and the list file it tells the worker to write (#5915).
+const SMOKE_TEST_COMMAND = 'node tools/run-tests.js --files-from';
+const SMOKE_TEST_LIST = '.claude-tweaks/pipelines/worker-test-files.txt';
+
 test('AC7/AC6.1: live smoke test — the write runs, and the echo, curl and .git writes do not, and the test command cannot read a home-directory canary', { skip: !process.env.DRIVER_LIVE_SMOKE && 'set DRIVER_LIVE_SMOKE=1 to launch a real worker (spends tokens)' }, async (t) => {
   const cwd = tmp(t);
   const settingsDir = tmp(t);
@@ -1005,7 +1010,19 @@ test('AC7/AC6.1: live smoke test — the write runs, and the echo, curl and .git
     canary = path.join(os.homedir(), '.driver-smoke-canary-' + crypto.randomBytes(6).toString('hex'));
     fs.writeFileSync(canary, 'canary', { flag: 'wx' });
     t.after(() => fs.rmSync(canary, { force: true }));
-    fs.writeFileSync(path.join(cwd, 'package.json'), JSON.stringify({ private: true, scripts: { test: 'node --test' } }));
+    // The shipped targeted-runner form (#5915): a runner that takes a list file and runs
+    // `node --test` on the paths it names, and the list file the driver tells the worker to write.
+    fs.mkdirSync(path.join(cwd, 'tools'));
+    fs.writeFileSync(path.join(cwd, 'tools', 'run-tests.js'), [
+      "const fs = require('fs');",
+      "const cp = require('child_process');",
+      "const files = fs.readFileSync(process.argv[process.argv.indexOf('--files-from') + 1], 'utf8').split('\\n').filter(Boolean);",
+      "const r = cp.spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit' });",
+      'process.exit(r.status === null ? 1 : r.status);',
+      '',
+    ].join('\n'));
+    fs.mkdirSync(path.join(cwd, ...SMOKE_TEST_LIST.split('/').slice(0, -1)), { recursive: true });
+    fs.writeFileSync(path.join(cwd, ...SMOKE_TEST_LIST.split('/')), 'smoke-canary.test.js\n');
     fs.writeFileSync(path.join(cwd, 'smoke-canary.test.js'), [
       "const fs = require('fs');",
       "const path = require('path');",
@@ -1027,8 +1044,8 @@ test('AC7/AC6.1: live smoke test — the write runs, and the echo, curl and .git
     expectedVersion = probe.stdout.trim();
     expectedNode = fs.realpathSync(nodeBin);
   }
-  const prompt = 'Do these ' + (probed ? 'seven' : 'six') + ' things in order, continuing after any denial. For each bash command below, run exactly that command and nothing else: do not append, prepend, chain or wrap anything (do not add `;`, `&&`, `|`, an extra `echo`, or exit-status checks to any command). (1) use the Write tool to create smoke-w.txt containing hi; (2) run the bash command: echo hi > smoke-b.txt (3) run the bash command: curl -s https://example.com -o smoke-net.txt (4) use the Write tool to create .git/info/smoke-note.txt containing hi (5) run the bash command: git log -1 --format=%H --output=.git/config (6) run the bash command: git log -1 --format=%H --output=.git/hooks/pre-commit' + (probed ? ' (7) run the bash command: npm test' : '') + '. Then report what happened.';
-  const env = await launchWorker({ role: 'implementer', cwd, settingsDir, prompt, model: roleModel('implementer', resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: '' })), testCommand: 'npm test', ceilings: { wallClockMs: 180000, spendCeiling: 1 }, claudeMdText: 'Probe project file.' });
+  const prompt = 'Do these ' + (probed ? 'seven' : 'six') + ' things in order, continuing after any denial. For each bash command below, run exactly that command and nothing else: do not append, prepend, chain or wrap anything (do not add `;`, `&&`, `|`, an extra `echo`, or exit-status checks to any command). (1) use the Write tool to create smoke-w.txt containing hi; (2) run the bash command: echo hi > smoke-b.txt (3) run the bash command: curl -s https://example.com -o smoke-net.txt (4) use the Write tool to create .git/info/smoke-note.txt containing hi (5) run the bash command: git log -1 --format=%H --output=.git/config (6) run the bash command: git log -1 --format=%H --output=.git/hooks/pre-commit' + (probed ? ' (7) run the bash command: ' + SMOKE_TEST_COMMAND + ' ' + SMOKE_TEST_LIST : '') + '. Then report what happened.';
+  const env = await launchWorker({ role: 'implementer', cwd, settingsDir, prompt, model: roleModel('implementer', resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: '' })), testCommand: SMOKE_TEST_COMMAND, ceilings: { wallClockMs: 180000, spendCeiling: 1 }, claudeMdText: 'Probe project file.' });
   t.diagnostic('envelope: status=' + env.status + ' turns=' + env.turns + ' costUsd=' + env.costUsd + ' denials=' + JSON.stringify((env.denials || []).map((d) => d.tool_name + ': ' + String((d.tool_input && (d.tool_input.command || d.tool_input.file_path)) || ''))));
   assert.strictEqual(env.status, 'ok', JSON.stringify(env));
   const files = fs.readdirSync(cwd);

@@ -46,7 +46,7 @@ files:
 - **URL:** `DRIVER_LIVE_SMOKE=1 node --test --test-name-pattern="live smoke test" tests/bin-lib/driver/worker.test.js`
 - **Action:** run it after a Claude Code upgrade, or before trusting the launcher on a new machine. It starts one small real worker, on the implementer's default model, in a temporary directory and spends a few tokens. After a change to a role's default model, also run `--test-name-pattern="live probe"`, which launches every role on each distinct default model, and record the dated result in `worker.js`'s header.
 - **Should feel:** like a seat-belt check: one command, well under a minute, a plain pass or fail.
-- **Should understand:** the test shows the write the worker is allowed, and that an `echo` redirect, a `curl`, a write into `.git` and two `git log --output` attempts leave nothing behind. On macOS it also runs `npm test` through the worker: the test file's read of a canary placed in the home directory must fail with a permission error, while `npm test` itself still runs on the same `node` as `PATH` names. Without the variable the test is skipped, so the ordinary suite never spends tokens.
+- **Should understand:** the test shows the write the worker is allowed, and that an `echo` redirect, a `curl`, a write into `.git` and two `git log --output` attempts leave nothing behind. On macOS it also runs the driver's targeted test command (`node tools/run-tests.js --files-from`, on a list file naming one test file) through the worker: the test file's read of a canary placed in the home directory must fail with a permission error, while the test file itself still runs on the same `node` as `PATH` names. Without the variable the test is skipped, so the ordinary suite never spends tokens.
 - **Red flags:** the smoke test failing after an upgrade. The CLI's permission or sandbox behaviour has changed, and the facts in the module headers need probing again before any worker is launched.
 
 ## Origin
@@ -56,4 +56,5 @@ files:
 - Updated at wrap-up of #5228 (run `2026-11-14T212212-spec-5228`): the entry point and step 1 add the read-only `merge-check` and `acceptance` judgment roles, and step 3 names their result schemas.
 - Updated during build of #5915 (run `2026-11-19T062113-spec-5915-5917`): step 1 says `testCommand` is optional and that the driver passes only a targeted runner.
 - Updated during build of #5917 (run `2026-11-19T062113-spec-5915-5917`): step 1 says every driver launch names a policy-chosen model and refuses a role with none, and step 5 adds the per-role live probe.
+- Updated at wrap-up of #5915 (run `2026-11-19T062113-spec-5915-5917`): step 5's smoke test runs the driver's targeted test command instead of `npm test`.
 - The rights, the sandbox settings and what the sandbox was observed to contain are recorded, with the CLI version and date of each probe, in the header comments of `plugin/bin/lib/driver/roles.js` and `plugin/bin/lib/driver/worker.js`.
