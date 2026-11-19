@@ -7,6 +7,7 @@ const { execFileSync } = require('child_process');
 const { scratchDir } = require('../../helpers/tmp-dir');
 const { initRepo, cleanGitEnv, originWithTwoClones } = require('../../helpers/git-fixtures');
 const { classifyMirror } = require('../../../plugin/bin/lib/reconcile/classify');
+const { appendGitConfigEnv } = require('../../../tools/run-tests');
 const {
   appendStationEvent, buildLine, eventKey, toRepoName, stationEventPath, EXCLUDE_ENTRIES, ensureLocalExclude,
 } = require('../../../plugin/bin/lib/station-events/emit');
@@ -190,10 +191,11 @@ test('toRepoName maps a host-prefixed or bare slug to owner/name', () => {
 function hermeticEnv() {
   // The literal '/dev/null' (not os.devNull, which is '\\.\nul' on Windows) is the value
   // git accepts on every platform (tests/git-config-null-device-conformance.test.js).
-  return { ...cleanGitEnv(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
-    // GIT_CONFIG_GLOBAL does not stop git reading its default excludes file
-    // ($XDG_CONFIG_HOME/git/ignore, ~/.config/git/ignore); core.excludesFile does.
-    GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.excludesFile', GIT_CONFIG_VALUE_0: '/dev/null' };
+  // GIT_CONFIG_GLOBAL does not stop git reading its default excludes file
+  // ($XDG_CONFIG_HOME/git/ignore, ~/.config/git/ignore); core.excludesFile does. It is
+  // appended after the runner's own GIT_CONFIG_* pairs so they survive (#5768).
+  return appendGitConfigEnv({ ...cleanGitEnv(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
+    [['core.excludesFile', '/dev/null']]);
 }
 
 function porcelain(dir) {
@@ -204,7 +206,7 @@ function excludeLines(root) {
   return fs.readFileSync(path.join(root, '.git', 'info', 'exclude'), 'utf8').split(/\r?\n/).filter(Boolean);
 }
 
-test('AC1.1: an append in a repo with no station-events ignore rule leaves git status clean', () => {
+test('an append in a repo with no station-events ignore rule leaves git status clean', () => {
   // Control: in a fresh repo a hand-written log reads dirty, so a hiding environment fails loudly.
   const control = scratchDir('ct-station-events-');
   initRepo(control);
@@ -220,7 +222,7 @@ test('AC1.1: an append in a repo with no station-events ignore rule leaves git s
   assert.equal(readLines(root).lines.length, 1);
 });
 
-test('AC3.1: reconcile mirror reads the checkout clean after an append', () => {
+test('reconcile mirror reads the checkout clean after an append', () => {
   const { work } = originWithTwoClones('ct-station-events-mirror-');
   const file = stationEventPath(work);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -230,6 +232,15 @@ test('AC3.1: reconcile mirror reads the checkout clean after an append', () => {
   const { d } = deps(work);
   assert.deepEqual(appendStationEvent(event(), d), { written: true });
   assert.deepEqual(classifyMirror(work, 'main', { env: hermeticEnv() }), { state: 'current', failure: null });
+});
+
+test('the exclude lists the log and its lock directory', () => {
+  // Literal paths, so dropping either entry from EXCLUDE_ENTRIES fails here: a lock
+  // directory left by a killed append would otherwise dirty the checkout.
+  assert.deepEqual([...EXCLUDE_ENTRIES], [
+    '/.claude-tweaks/station-events.jsonl',
+    '/.claude-tweaks/station-events.jsonl.lock',
+  ]);
 });
 
 test('the exclude entries are appended once, on their own lines', () => {

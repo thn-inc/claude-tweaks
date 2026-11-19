@@ -160,6 +160,9 @@ function appendStationEvent(event, deps = {}) {
     const file = stationEventPath(d.mainRoot);
     d.fs.mkdirSync(path.dirname(file), { recursive: true });
     d.withLock(`${file}.lock`, () => {
+      // Inside the lock so two concurrent appends do not both read the exclude as missing
+      // and write its entries twice. The result is ignored on purpose: a failed exclude
+      // write must not drop the event, and the next append retries it.
       ensureLocalExclude(d.mainRoot, d.fs);
       d.fs.appendFileSync(file, `${JSON.stringify(line)}\n`);
     }, { createParent: true });
