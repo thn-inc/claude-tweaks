@@ -925,17 +925,20 @@ for (const [name, prefix] of VISUAL_BRANCHES) {
 }
 
 // an agent row's `high` keeps its word: the floor's Overrides clear `high`/`critical` rows, so a remap to `medium` would digest one
-test('#5931 visual-review passes an agent row\'s `high` as-is, never remapped to `medium`', () => {
-  const text = read('plugin/skills/visual-review/browser-review.md');
+function highRemapProblems(text) {
   const defer = text.split('\n').find((l) => l.startsWith('- **Defer** (new work record — born-ready'));
-  assert.ok(defer && !defer.includes('`high` as `medium`'), 'the Issues Defer bullet remaps `high` as `medium`');
+  if (!defer) return ['the Issues Defer bullet is missing'];
+  return defer.includes('`high` as `medium`') ? ['the Issues Defer bullet remaps `high` as `medium`'] : [];
+}
+test('#5931 visual-review passes an agent row\'s `high` as-is, never remapped to `medium`', () => {
+  assert.deepStrictEqual(highRemapProblems(read('plugin/skills/visual-review/browser-review.md')), []);
 });
 test('#5931 go-red: a `high` as `medium` remap in the Issues Defer bullet fails the pin', () => {
   const text = read('plugin/skills/visual-review/browser-review.md');
   const mutated = text.replace('lowercase word as-is;', 'lowercase word as-is, `high` as `medium`;');
   assert.notEqual(mutated, text);
-  const defer = mutated.split('\n').find((l) => l.startsWith('- **Defer** (new work record — born-ready'));
-  assert.ok(defer.includes('`high` as `medium`'));
+  assert.deepStrictEqual(highRemapProblems(mutated), ['the Issues Defer bullet remaps `high` as `medium`']);
+  assert.deepStrictEqual(highRemapProblems(text), []);
 });
 
 // review's Defer and Capture bullets and reflect's Capture bullet each run the command (the visual-review branch pin's pattern)
