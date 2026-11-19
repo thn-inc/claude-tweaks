@@ -707,11 +707,20 @@ function newIndexFlagStop(ctx, deps) {
 async function runImplementer(ctx, deps, opts = {}) {
   const launch = { started: false, note: null, model: null };
   let result;
+  let threw = false;
+  let thrown;
   try {
     result = await launchImplementerAndCheck(ctx, deps, opts, launch);
-  } finally {
-    // On a launcher throw too; the throw then propagates as it was.
-    if (launch.started) launch.note = removeWorkerTestList(ctx, deps);
+  } catch (err) {
+    threw = true;
+    thrown = err;
+  }
+  // On a launcher throw too; the throw then propagates as it was, carrying the note as `testListNote`
+  // for workerStep's catch to put on its line (an object error only).
+  if (launch.started) launch.note = removeWorkerTestList(ctx, deps);
+  if (threw) {
+    if (launch.note !== null && thrown !== null && typeof thrown === 'object') thrown.testListNote = launch.note;
+    throw thrown;
   }
   // Every result of a launch that resolved a model names it (#5917): no envelope and the HEAD and flag stops too.
   // A refusal never sets it. A thrown launcher carries it on the error (see workerStep).
@@ -761,6 +770,7 @@ async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '' } = {}, l
     // or re-read, and the result carries noLine so the refusal writes no `worker` event line.
     if (err && err.code === MODEL_REFUSED_CODE) {
       launch.started = false;
+      // `code` is read only by fixRound's codeSuffix(launched); the worker step's own line ignores it.
       return { status: 'fail', detail: err.message, code: err.code, noLine: true };
     }
     // A throw after the model resolved carries it (launchTracked): the stops below name it too.
@@ -832,7 +842,10 @@ const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, de
     result = await runImplementer(ctx, deps, {});
   } catch (err) {
     if (err && typeof err.model === 'string') {
-      return { status: 'fail', detail: (err && err.message) || String(err), extra: { tests: ctx.workerTestMode, model: err.model } };
+      const detail = (err && err.message) || String(err);
+      // The removal note runImplementer's normal path appends, kept for the throw path too (#5915).
+      const note = typeof err.testListNote === 'string' ? err.testListNote : null;
+      return { status: 'fail', detail: note === null ? detail : `${detail}; ${note}`, extra: { tests: ctx.workerTestMode, model: err.model } };
     }
     throw err;
   }

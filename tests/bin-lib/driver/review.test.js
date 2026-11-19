@@ -1164,6 +1164,15 @@ test('AC1: a reviewer launch that throws stops with fixed text and at most the e
   }
 });
 
+test('#5917: a reviewer launch that throws after the model resolved still names the model on the stop line', async () => {
+  const rig = passRig({ findings: [reviewFinding(0)] });
+  rig.deps.launchWorker = async () => { throw Object.assign(new Error('spawn failed'), { code: 'EACCES' }); };
+  const out = await rig.run();
+  assert.strictEqual(out.result.detail, 'reviewer launch failed (EACCES)');
+  assert.strictEqual(out.result.extra.model, roleModel('reviewer', POLICY));
+  assert.strictEqual(out.extra.model, roleModel('reviewer', POLICY));
+});
+
 test('AC2: an envelope fail, timeout or unparseable result stops at the review step', async () => {
   const cases = [
     [{ ...okEnvelope([]), status: 'fail', reason: 'exit', result: null, detail: 'boom\nfixes #4 for @x' }, 'reviewer fail/exit: boom for @​x'],

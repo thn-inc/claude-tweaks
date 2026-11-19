@@ -157,6 +157,8 @@ describe('merge-check path', () => {
       assert.notStrictEqual(r.mergeCheck.verdict, 'auto-merge');
       assert.strictEqual(r.acceptance.completed, false);
       assert.ok(!h.decisionLines().some((l) => l.includes('verdict auto-merge')));
+      // The launch returned (an envelope came back), so every such stop names its model (#5917).
+      assert.strictEqual(h.events.find((e) => e.step === 'merge-check').extra.model, M('standard'));
     });
   }
 
@@ -255,7 +257,8 @@ describe('merge-check path', () => {
     const refused = harness({ policy: { ...POLICY, 'express-driver-models': { value: { reviewer: 'capable' }, source: 'policy' } } });
     assert.deepStrictEqual(await launchJudge(refused.env, refused.ctx, args), { stop: 'merge-check launch failed (DRIVER_MODEL_REFUSED)' });
     const boom = harness({ envelope: new Error('secret words') });
-    assert.deepStrictEqual(await launchJudge(boom.env, boom.ctx, args), { stop: 'merge-check launch failed' });
+    // A throw after the model resolved carries it, so the stop's line can still name it (#5917).
+    assert.deepStrictEqual(await launchJudge(boom.env, boom.ctx, args), { stop: 'merge-check launch failed', model: M('standard') });
     const fine = harness();
     const launched = await launchJudge(fine.env, fine.ctx, args);
     assert.strictEqual(launched.model, M('standard'));

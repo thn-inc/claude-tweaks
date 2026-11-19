@@ -78,7 +78,7 @@ function roleModel(role, policy) {
   try {
     return resolve(profile, { policy: resolvePolicy, unattended: true }).model;
   } catch (err) {
-    throw refuse(role, `profile ${profile} did not resolve (${neutralize(err.message)})`);
+    throw refuse(role, `profile ${neutralize(String(profile))} did not resolve (${neutralize(err.message)})`);
   }
 }
 

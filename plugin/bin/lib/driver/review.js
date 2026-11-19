@@ -781,7 +781,8 @@ async function launchReviewer(ctx, deps, diff) {
     });
   } catch (err) {
     // The launcher's or the runner's own message can name a path: fixed text and at most the code.
-    return { stop: `reviewer launch failed${codeSuffix(err)}` };
+    // A throw after the model resolved carries it (launchTracked), so the stop's line can still name it.
+    return { stop: `reviewer launch failed${codeSuffix(err)}`, ...(typeof err?.model === 'string' ? { model: err.model } : {}) };
   }
   return { envelope: launched.envelope, model: launched.model, minutes, dollars };
 }

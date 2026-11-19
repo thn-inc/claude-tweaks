@@ -158,6 +158,11 @@ test('launchTracked: the resolved model wins over a model in the caller opts', a
   const shared = { activeWorker: null, policy: policyFrom('') };
   let got = null;
   const deps = { platform: 'linux', env: {}, runner: () => {}, launchWorker: (o) => { got = o; } };
-  await launchTracked(shared, deps, { minutes: 1, dollars: 1 }, { role: 'implementer', model: 'opus', prompt: 'p' });
+  await launchTracked(shared, deps, { minutes: 1, dollars: 1 }, { role: 'implementer', model: 'caller-model', prompt: 'p' });
   assert.strictEqual(got.model, M('standard'));
+});
+
+test('roleModel: a profile name that does not resolve reaches the refusal neutralized (one line, no mention)', () => {
+  const policy = { 'express-driver-models': { value: { implementer: 'bad\nprofile @x' }, source: 'policy' } };
+  assert.throws(() => roleModel('implementer', policy), (e) => e.code === MODEL_REFUSED_CODE && !e.message.includes('\n') && !e.message.includes(' @x'));
 });

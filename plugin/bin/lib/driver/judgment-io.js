@@ -92,7 +92,8 @@ async function launchJudge({ deps, shared }, ctx, { role, dir, label, prompt, sc
     return { envelope, model };
   } catch (err) {
     // A model refusal names its code (#5917); any other error stays fixed text, never the error's words.
-    return { stop: `${label} launch failed${err && err.code === MODEL_REFUSED_CODE ? ` (${err.code})` : ''}` };
+    // A throw after the model resolved carries it (launchTracked), so the stop's line can still name it.
+    return { stop: `${label} launch failed${err && err.code === MODEL_REFUSED_CODE ? ` (${err.code})` : ''}`, ...(typeof err?.model === 'string' ? { model: err.model } : {}) };
   }
 }
 

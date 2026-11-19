@@ -1680,6 +1680,8 @@ test('AC5.1 (driver): a launch-time refusal writes no worker line, the final lin
   const calls8 = h.calls.slice(callsBefore);
   const lines8 = h.lines().slice(linesBefore);
   assert.equal(calls8.filter((c) => c.kind === 'worker').length, 0);
+  // Nothing ran, so the worker's test list file is not looked for or removed (#5915).
+  assert.deepEqual(calls8.filter((c) => (c.kind === 'lstatType' || c.kind === 'rmFile') && String(c.args[0]).endsWith('worker-test-files.txt')), []);
   assert.equal(lines8.filter((l) => l.step === 'worker').length, 0);
   assert.deepEqual(lines8.map((l) => l.step).slice(0, 4), ['policy', 'fetch', 'eligibility', 'admission']);
   for (const step of ['claim', 'run-dir', 'worktree']) assert.ok(lines8.some((l) => l.step === step), step);
@@ -2026,6 +2028,19 @@ test('(#5415) a launcher throw after which a flag is set reports the flag', asyn
   await run(['#7'], h.deps);
   assert.deepEqual(stopOf(h).slice(0, 2), ['worker', 'fail']);
   assert.equal(lastLine(h).stop.detail, ONE_NEW);
+});
+
+test('#5917: a launcher throw that moved HEAD or set a flag still names the model on the worker line', async () => {
+  const thrown = [on('worker'), new Error('launch blew up')];
+  for (const [label, script] of [['HEAD moved', [thrown, nthCall(isHeadRead, 2, `${OTHER_SHA}\n`)]], ['flag set', [thrown, nthCall(isFlagRead, 2, NEW_FLAG_INDEX)]]]) {
+    const h = harness({ script });
+    await run(['#7'], h.deps);
+    const lines = h.lines().filter((l) => l.step === STEP.worker);
+    assert.equal(lines.length, 1, label);
+    assert.equal(lines[0].status, 'fail', label);
+    assert.equal(lines[0].model, M('standard'), label);
+    assert.ok('tests' in lines[0], `${label}: the line keeps the tests field`);
+  }
 });
 
 test('(#5415) an interrupt during a launch that also set a flag is reported as the interrupt', async () => {
@@ -3908,6 +3923,7 @@ const FAST_IMPLEMENTER = { ...POLICY['express-driver-models'], implementer: 'fas
 test('AC7.1: every worker line carries the model its launch was given', async () => {
   const h = fixRig({ policy: { 'express-driver-review': 'on', 'express-driver-models': FAST_IMPLEMENTER } });
   assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(workerLines(h).length, 1, 'one worker line, so the first is every one');
   const [line] = workerLines(h);
   assert.equal(line.model, M('fast'));
   assert.equal(line.model, implementerCalls(h)[0].args[0].model);
@@ -4310,6 +4326,18 @@ test('#5915: a launcher throw after the launch started still removes the list fi
   await run(['#7'], h.deps);
   assert.deepEqual(h.calls.filter((c) => c.kind === 'rmFile').map((c) => c.args[0]), [LIST_ABS]);
   assert.deepEqual(stopOf(h).slice(0, 2), ['worker', 'fail']);
+});
+
+test('#5915 + #5917: a launcher throw whose list file cannot be removed keeps the removal note on the worker line', async () => {
+  const eacces = () => { throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }); };
+  const h = harness({ script: [scopeIs('file'), ...declares(DECL), ...listIs('file'), [on('worker'), new Error('launch blew up')]], deps: { rmFile: eacces } });
+  await run(['#7'], h.deps);
+  const worker = h.lines().find((l) => l.step === 'worker');
+  assert.deepEqual([worker.status, worker.detail, worker.model], ['fail', `launch blew up; ${LIST_NOTE}`, M('standard')]);
+  // A removable list file leaves the throw's detail as it was.
+  const clean = harness({ script: [scopeIs('file'), ...declares(DECL), ...listIs('file'), [on('worker'), new Error('launch blew up')]] });
+  await run(['#7'], clean.deps);
+  assert.equal(clean.lines().find((l) => l.step === 'worker').detail, 'launch blew up');
 });
 
 test('#5915: a list file that cannot be removed never changes the worker step\'s status', async () => {
@@ -5256,6 +5284,16 @@ test('skip: a skipped step emits no line and the loop goes on', async () => {
   // Only the boolean true is a skip.
   const loose = defineStep('x', STOP_CLASSES.PRE_PUSH, () => ({ status: 'ok', skip: 'yes' }));
   assert.equal((await loose.run({}, {})).skip, false);
+});
+
+test('noLine: only a non-ok result can suppress its line; an ok result with noLine still emits one', async () => {
+  const ok = defineStep('x', STOP_CLASSES.PRE_PUSH, () => ({ status: 'ok', noLine: true }));
+  assert.equal((await ok.run({}, {})).noLine, false);
+  const fail = defineStep('y', STOP_CLASSES.PRE_PUSH, () => ({ status: 'fail', noLine: true }));
+  assert.equal((await fail.run({}, {})).noLine, true);
+  const h = harness();
+  await driveRecord(7, newShared(), h.deps, [ok]);
+  assert.deepEqual(h.lines().map((l) => l.step), ['x', FINAL_STEP]);
 });
 
 test('summary: the line is logged from a file with the changed files, test mode and PR; a failure never halts', async () => {
