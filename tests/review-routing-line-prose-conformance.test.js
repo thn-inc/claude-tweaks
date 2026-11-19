@@ -122,7 +122,7 @@ const RECORD_PROPOSAL_CLAUSES = [
   ['session-tmp-resolve.js" --value review-followup-proposal.md', 'resolves a .md scratch path'],
   ['written `deferred`, its Resolution naming `staged/', 'writes the staged proposal ledger row deferred, naming its staged path'],
   ["Before composing, apply `_shared/materiality-floor.md`'s floor test", 'applies the materiality floor before composing'],
-  ['`digest` goes to the digest container', 'routes a digest verdict to the digest container'],
+  ['`digest` goes to the digest container instead', 'routes a digest verdict to the digest container'],
   ['(`isMaterialityDuplicate`)', 'runs the digest dedup check'],
   ['`AUTO … materiality-floor:` audit line', 'logs the materiality-floor audit line'],
   ['skips the compose, stage and composer-log steps', 'skips compose, stage and composer-log for a digest-routed finding'],
