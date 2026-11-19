@@ -78,6 +78,8 @@ const fs = require('fs');
 const os = require('os');
 const { execFileSync, spawnSync } = require('child_process');
 const { pinExplicitRepoHost } = require('./lib/repo-resolve');
+const { appendStationEvent, toRepoName } = require('./lib/station-events/emit');
+const { transitionsForLabel, outcomeForReleaseReason } = require('./lib/station-events/stations');
 
 const USAGE = [
   'usage: accept-park.js decide --record <n>[,<m>...] [--run <dir>] [--repo [host/]owner/name]',
@@ -718,16 +720,33 @@ function parkSteps({ opts, deps, ctx, runDir, repoSpec, log }) {
   const claimed = opts.claimed ?? opts.record;
   const prUrl = `https://${repoSpec.host || 'github.com'}/${repoSpec.owner}/${repoSpec.repo}/pull/${opts.pr}`;
   const worktree = ctx.absolute(opts.worktree);
+  const runId = path.basename(runDir) || null;
+  const repoName = toRepoName(`${repoSpec.owner}/${repoSpec.repo}`);
+  const sessionId = deps.env?.CLAUDE_CODE_SESSION_ID || null;
+  // #5902: optional dep (absent = none), each emission wrapped so a throwing
+  // emitter never changes a step's detail, stdout or the exit code.
+  const emit = (event) => {
+    if (typeof deps.stationEvent !== 'function' || !repoName) return;
+    try {
+      deps.stationEvent({ repoName, sessionId, lane: 'unknown', ...event });
+    } catch { /* best-effort: the park stands */ }
+  };
 
   return {
     postPacket: () => perRecord(opts.record, (n) => {
+      const added = (said) => {
+        for (const t of transitionsForLabel(LABELS.ACCEPT_PENDING, 'added')) {
+          emit({ ...t, recordNumber: n, runId, payload: { label: LABELS.ACCEPT_PENDING }, discriminator: `accept-pending:${n}:${runId || ''}` });
+        }
+        return said;
+      };
       const packet = readFoundPacket(n);
-      if (packet.status !== 'found') return postFreshPacket(n);
+      if (packet.status !== 'found') return added(postFreshPacket(n));
       const { labels } = JSON.parse(ctx.ghIssue(['issue', 'view', String(n), '--json', 'labels']));
       if (!Array.isArray(labels)) throw new Error('labels is not a list');
       if (acceptanceOf(normalizeLabelNames(labels)) === 'pending') return 'pending label present';
       ctx.ghIssue(['issue', 'edit', String(n), '--add-label', LABELS.ACCEPT_PENDING]);
-      return `${LABELS.ACCEPT_PENDING} added`;
+      return added(`${LABELS.ACCEPT_PENDING} added`);
     }),
     writeDeployStatus: () => perRecord(opts.record, (n) => {
       const packet = readFoundPacket(n);
@@ -759,6 +778,13 @@ function parkSteps({ opts, deps, ctx, runDir, repoSpec, log }) {
           owner: repoSpec.owner, repo: repoSpec.repo, host: repoSpec.host, issueNumber: n, runId: path.basename(runDir),
           reason: PARK_REASON, link: prUrl, runner: ctx.gh, gitRunner: ctx.gitRunner, now: deps.now(),
         });
+        // Only a real release ends the build visit; `already-released` is a repeat.
+        if (r.outcome === 'released') {
+          emit({
+            kind: 'exited', station: 'build', outcome: outcomeForReleaseReason(PARK_REASON), recordNumber: n,
+            runId: path.basename(runDir), payload: { reason: PARK_REASON }, discriminator: `release:${path.basename(runDir)}`,
+          });
+        }
         const released = r.outcome === 'released' || r.outcome === 'already-released';
         if (!released) ok = false;
         details.push(`#${n}: ${r.outcome}${r.error ? ` (${r.error})` : ''}${r.holder ? ` (held by ${r.holder})` : ''}`);
@@ -930,4 +956,4 @@ async function run(argv, overrides = {}) {
 
 module.exports = { run, parseArgs, realDeps };
 
-if (require.main === module) run(process.argv.slice(2), realDeps).then((code) => { process.exitCode = code; });
+if (require.main === module) run(process.argv.slice(2), { ...realDeps, stationEvent: appendStationEvent }).then((code) => { process.exitCode = code; });
