@@ -411,6 +411,16 @@ test('a top-level stub reads its timing.json from archive/ and the column counts
   assert.strictEqual(g.after.noTiming, 0);
 });
 
+test('a top-level run holding its own timing.json is not redirected to its archived copy', async () => {
+  const pipelines = fresh('pl');
+  const projects = fresh('pr');
+  const run = writeRun(pipelines, '2026-11-17T1-spec-1', { items: [impl('Implement Task 1', 'standard', 1)] });
+  writeRun(path.join(pipelines, 'archive'), '2026-11-17T1-spec-1', { items: [impl('Implement Task 1', 'standard', 1), impl('Implement Task 2', 'standard', 2), impl('Implement Task 3', 'standard', 3)] });
+  assert.strictEqual(selectColumns([run], { split: '2026-11-19', n: 5 }).before[0].dir, run.dir);
+  const g = await guardsOf([run], projects);
+  assert.strictEqual(g.before.firstPass.n, 1);
+});
+
 test('a stub of a non-pipeline name is eligible through its archived timing.json', () => {
   const pipelines = fresh('pl');
   const stub = stubRun(pipelines, '2026-11-17T1-x', {});
