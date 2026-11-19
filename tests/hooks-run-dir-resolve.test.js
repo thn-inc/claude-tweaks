@@ -499,6 +499,135 @@ test('plain spec-slug fallback with --create mkdir-only mints a bare run directo
   assert.strictEqual(path.basename(out.path), '2026-03-04T050607-spec-88');
   assert.ok(fs.statSync(out.path).isDirectory());
   assert.ok(!fs.existsSync(path.join(out.path, 'decisions.md')), 'the mkdir-only mint shape must not pre-populate decisions.md');
+  assert.ok(!fs.existsSync(path.join(out.path, 'staged')), 'the mkdir-only mint shape must not pre-populate staged/');
+  const manifest = JSON.parse(fs.readFileSync(path.join(out.path, 'manifest.json'), 'utf8'));
+  assert.strictEqual(manifest.v, 1);
+  assert.strictEqual(manifest.runId, path.basename(out.path));
+  assert.strictEqual(manifest.lane, 'unknown');
+  assert.strictEqual(manifest.ceremonyProfile, null);
+});
+
+// #5903: the mint gathers the run-start facts itself — policy hash, base commit, model profile.
+test('#5903: a --create mint records the policy hash, the integration tip as baseCommit, and the model profile', () => {
+  const main = gitRepo({ branch: 'main' });
+  fixtureGit(['-C', main, 'update-ref', 'refs/remotes/origin/main', 'HEAD']);
+  fixtureGit(['-C', main, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
+  const tip = String(fixtureGit(['-C', main, 'rev-parse', 'HEAD'])).trim();
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-89', create: true, now: new Date('2026-03-04T05:06:07Z') });
+  assert.strictEqual(out.ok, true);
+  const manifest = JSON.parse(fs.readFileSync(path.join(out.path, 'manifest.json'), 'utf8'));
+  assert.match(manifest.policyHash, /^sha256:[0-9a-f]{64}$/);
+  assert.strictEqual(manifest.baseCommit, tip);
+  assert.ok(['economy', 'default', 'max-rigor'].includes(manifest.modelProfile.stance), JSON.stringify(manifest.modelProfile));
+  assert.ok(Object.prototype.hasOwnProperty.call(manifest.modelProfile, 'ceiling'));
+});
+
+// #5903: the mint writes manifest.json beside the directory it creates.
+test('#5903: --spec-slug drive-5 --create writes lane driver in manifest.json', () => {
+  const main = gitRepo();
+  const out = resolve({ cwd: main, env: {}, specSlug: 'drive-5', create: true, now: new Date('2026-03-04T05:06:07Z') });
+  assert.strictEqual(out.ok, true);
+  const manifest = JSON.parse(fs.readFileSync(path.join(out.path, 'manifest.json'), 'utf8'));
+  assert.strictEqual(manifest.lane, 'driver');
+});
+
+test('#5903: near-miss --spec-slug values (drive-5x, drive-) write lane unknown, not driver', () => {
+  for (const specSlug of ['drive-5x', 'drive-']) {
+    const main = gitRepo();
+    const out = resolve({ cwd: main, env: {}, specSlug, create: true, now: new Date('2026-03-04T05:06:07Z') });
+    assert.strictEqual(out.ok, true, specSlug);
+    const manifest = JSON.parse(fs.readFileSync(path.join(out.path, 'manifest.json'), 'utf8'));
+    assert.strictEqual(manifest.lane, 'unknown', specSlug);
+  }
+});
+
+test('#5903: a mint with env {} (the driver\'s call shape) still writes a non-null pluginVersion', () => {
+  const pluginRoot = scratchDir('ct-rdr-plugin-');
+  fs.mkdirSync(path.join(pluginRoot, '.claude-plugin'), { recursive: true });
+  fs.writeFileSync(path.join(pluginRoot, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'fixture', version: '9.8.7' }));
+  const saved = process.env.CLAUDE_PLUGIN_ROOT;
+  process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
+  try {
+    const main = gitRepo();
+    const out = resolve({ cwd: main, env: {}, specSlug: 'drive-6', create: true, now: new Date('2026-03-04T05:06:07Z') });
+    assert.strictEqual(out.ok, true);
+    const manifest = JSON.parse(fs.readFileSync(path.join(out.path, 'manifest.json'), 'utf8'));
+    assert.strictEqual(manifest.pluginVersion, '9.8.7');
+  } finally {
+    if (saved === undefined) delete process.env.CLAUDE_PLUGIN_ROOT;
+    else process.env.CLAUDE_PLUGIN_ROOT = saved;
+  }
+});
+
+test('#5903: standalone mint still pre-populates staged/ and decisions.md and writes lane unknown', () => {
+  const main = gitRepo();
+  const out = resolve({ cwd: main, env: {}, standalone: 'tidy', create: true, now: new Date('2026-03-04T05:06:07Z') });
+  assert.strictEqual(out.ok, true);
+  assert.ok(fs.statSync(path.join(out.path, 'staged')).isDirectory());
+  assert.ok(fs.existsSync(path.join(out.path, 'decisions.md')));
+  const manifest = JSON.parse(fs.readFileSync(path.join(out.path, 'manifest.json'), 'utf8'));
+  assert.strictEqual(manifest.lane, 'unknown');
+  assert.strictEqual(manifest.runId, path.basename(out.path));
+});
+
+test('#5903: standalone \'adhoc\' mint writes no manifest.json and still pre-populates staged/ and decisions.md', () => {
+  const main = gitRepo();
+  const out = resolve({ cwd: main, env: {}, standalone: 'adhoc', create: true, now: new Date('2026-03-04T05:06:07Z') });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.created, true);
+  assert.ok(fs.statSync(path.join(out.path, 'staged')).isDirectory());
+  assert.ok(fs.existsSync(path.join(out.path, 'decisions.md')));
+  assert.ok(!fs.existsSync(path.join(out.path, 'manifest.json')), 'a hook-stamped ad-hoc dir carries no manifest');
+});
+
+test('#5903: a standalone mint with any other name (tidy) still writes lane unknown', () => {
+  const main = gitRepo();
+  const out = resolve({ cwd: main, env: {}, standalone: 'tidy', create: true, now: new Date('2026-03-04T05:06:07Z') });
+  const manifest = JSON.parse(fs.readFileSync(path.join(out.path, 'manifest.json'), 'utf8'));
+  assert.strictEqual(manifest.lane, 'unknown');
+});
+
+test('#5903: re-resolving an existing run writes no manifest and leaves an existing one byte-identical', () => {
+  const main = gitRepo();
+  // Resolution step 2 (a --standalone --spec-slug call adopts a matching run): no manifest appears.
+  const bare = mkRunDir(main, '2026-01-01T000000-spec-31');
+  const found = resolve({ cwd: main, env: {}, specSlug: 'spec-31', standalone: 'spec-31', create: true });
+  assert.strictEqual(found.created, false);
+  assert.strictEqual(found.path, bare);
+  assert.ok(!fs.existsSync(path.join(bare, 'manifest.json')), 'finding an existing run must not write a manifest');
+  // Resolution step 1 (PIPELINE_RUN_DIR): an existing manifest is left byte-identical.
+  const withManifest = mkRunDir(main, '2026-01-01T000000-spec-32');
+  const file = path.join(withManifest, 'manifest.json');
+  fs.writeFileSync(file, '{"v":1,"keep":"me"}\n');
+  const again = resolve({ cwd: main, env: { PIPELINE_RUN_DIR: withManifest }, specSlug: 'spec-32', create: true });
+  assert.strictEqual(again.created, false);
+  assert.strictEqual(again.path, withManifest);
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), '{"v":1,"keep":"me"}\n');
+  const bareEnv = mkRunDir(main, '2026-01-01T000000-spec-33');
+  const viaEnv = resolve({ cwd: main, env: { PIPELINE_RUN_DIR: bareEnv }, specSlug: 'spec-33', create: true });
+  assert.strictEqual(viaEnv.created, false);
+  assert.ok(!fs.existsSync(path.join(bareEnv, 'manifest.json')));
+});
+
+test('#5903: a manifest write failure does not change the resolve result', (t) => {
+  const main = gitRepo();
+  const realRename = fs.renameSync;
+  t.mock.method(fs, 'renameSync', (from, to) => {
+    if (/manifest\.json\.tmp-\d+$/.test(String(from))) {
+      throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+    }
+    return realRename(from, to);
+  });
+  const stderr = [];
+  t.mock.method(process.stderr, 'write', (chunk) => { stderr.push(String(chunk)); return true; });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-89', create: true, now: new Date('2026-03-04T05:06:07Z') });
+  assert.strictEqual(stderr.length, 1, 'the dropped write leaves exactly one stderr line');
+  assert.match(stderr[0], /^claude-tweaks: run-manifest: .*EACCES/);
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.created, true);
+  assert.strictEqual(path.basename(out.path), '2026-03-04T050607-spec-89');
+  assert.ok(fs.statSync(out.path).isDirectory());
+  assert.ok(!fs.existsSync(path.join(out.path, 'manifest.json')));
 });
 
 test('--create with neither --standalone nor --spec-slug fails loud (nothing to name the new directory)', () => {

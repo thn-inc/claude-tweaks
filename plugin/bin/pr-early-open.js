@@ -69,6 +69,8 @@ const { isLinkedWorktreeRoot } = require('./lib/policy-file');
 const { ghAvailable, parseRepo, repoSlug, ghOptions } = require('./lib/repo-resolve');
 const { sessionTmpPath } = require('./lib/session-tmp');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, isTimeoutError } = require('./lib/shared-primitives');
+const { appendStationEvent, toRepoName } = require('./lib/station-events/emit');
+const { PR_OPENED_FACT, PR_OPENED_TRANSITION } = require('./lib/station-events/stations');
 
 const USAGE = 'usage: pr-early-open.js --run <run-dir> --target "#N[,#M]" --fixes N[,M] --title <text> --summary-file <path>\n'
   + '         [--worktree <path>] [--base <branch>] [--next-step build] [--help]\n'
@@ -128,6 +130,9 @@ const realDeps = {
     fs.writeFileSync(p, text);
     return p;
   },
+  sessionId: process.env.CLAUDE_CODE_SESSION_ID || null,
+  // #5902: the station-event emitter; a caller that overrides it with undefined emits nothing.
+  stationEvent: (e) => appendStationEvent(e),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -259,6 +264,23 @@ async function run(argv, overrides = {}) {
       writeBodyFile: deps.writeBodyFile,
       readFile: deps.readFile,
     });
+    // #5902: a PR this call opened or reopened is a build-station fact for every
+    // record it fixes (one event each); a reused PR or a degrade writes nothing.
+    // Optional dep (absent = none); each emission wrapped so a throwing emitter
+    // never skips another record or changes stdout or the exit code.
+    const repoName = toRepoName(repo);
+    if ((res.outcome === 'opened' || res.outcome === 'reopened') && typeof deps.stationEvent === 'function' && repoName) {
+      const payload = { fact: PR_OPENED_FACT, prNumber: res.number, prUrl: res.url, outcome: res.outcome };
+      for (const n of fixes) {
+        try {
+          deps.stationEvent({
+            ...PR_OPENED_TRANSITION, recordNumber: Number(n), repoName,
+            runId, sessionId: deps.sessionId || null, lane: 'unknown',
+            payload: { ...payload }, discriminator: `pr:${res.number}:${res.outcome}`,
+          });
+        } catch { /* best-effort: the PR stands */ }
+      }
+    }
     deps.stdout(`${JSON.stringify(res)}\n`);
     return OK_OUTCOMES.has(res.outcome) ? 0 : 3;
   } catch (e) {
@@ -269,7 +291,7 @@ async function run(argv, overrides = {}) {
   }
 }
 
-module.exports = { run, parseArgs };
+module.exports = { run, parseArgs, realDeps };
 
 if (require.main === module) {
   run(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (err) => {

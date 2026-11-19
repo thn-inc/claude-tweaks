@@ -392,6 +392,7 @@ test('#3198: run dir removed after target resolves but before the decisions.md w
 test('realDeps wires the real git-CAS runner and the real gh runner', () => {
   assert.equal(realDeps.gitRunner, claimsGitCas.defaultRunner, 'gitRunner is claims-git-cas.js\'s defaultRunner export');
   assert.equal(realDeps.runner, release.defaultRunner, 'runner is release.js\'s defaultRunner export');
+  assert.equal(typeof realDeps.stationEvent, 'function', '#5902: the station-event emitter is wired');
 });
 
 // The middle link of the same chain: `realDeps` holds the real git-CAS runner (test
@@ -554,4 +555,178 @@ test('#4495: a branchless claims remote exits 3 with a "nothing to release" note
   assert.equal(gitCalls.some((a) => a[0] === 'push'), false, 'a release never creates the branch');
   assert.equal(calls.some(isPut), false);
   assert.equal(calls.some(isComment), false, 'no false "Released by run" comment on a record this run never claimed');
+});
+
+// ---- #5902: the release transition station event --------------------------
+
+function withStationSpy(d) {
+  const events = [];
+  d.stationEvent = (e) => { events.push(e); };
+  d.sessionId = 'sess-1';
+  return events;
+}
+
+test('#5902: a released claim with --reason merged records one exited build passed event carrying the reason', () => {
+  const runDir = mkRun();
+  const out = [];
+  const { d } = deps({ content: live(RUN_DIR_NAME), out, mainRoot: rootOf(runDir) });
+  const events = withStationSpy(d);
+  assert.equal(run(['999', '--run', runDir, '--reason', 'merged', '--link', 'https://x/1'], d), 0);
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0], {
+    kind: 'exited', station: 'build', outcome: 'passed', recordNumber: 999, repoName: 'acme/w',
+    runId: RUN_DIR_NAME, sessionId: 'sess-1', lane: 'unknown',
+    payload: { reason: 'merged', link: 'https://x/1' }, discriminator: `release:${RUN_DIR_NAME}:2026-08-16T11:00:00.000Z`,
+  });
+});
+
+test('#5902: the release discriminator names the released claim instance — a re-claim by the same run releases under a new key, a replay under the same', () => {
+  const release = (claimedAt) => {
+    const runDir = mkRun();
+    const content = JSON.stringify({ runId: RUN_DIR_NAME, sessionId: 's', claimedAt, ttlHours: 72, host: 'h' });
+    const { d } = deps({ content, out: [], mainRoot: rootOf(runDir) });
+    const events = withStationSpy(d);
+    assert.equal(run(['999', '--run', runDir, '--reason', 'merged: spec 999'], d), 0);
+    return events[0];
+  };
+  const first = release('2026-08-16T11:00:00.000Z');
+  const reclaim = release('2026-08-16T11:30:00.000Z');
+  assert.equal(first.discriminator, release('2026-08-16T11:00:00.000Z').discriminator, 'a replay keys the same');
+  assert.notEqual(first.discriminator, reclaim.discriminator, 'a re-claim by the same run keys differently');
+  assert.equal(reclaim.discriminator, `release:${RUN_DIR_NAME}:2026-08-16T11:30:00.000Z`);
+  const { buildLine } = require('../../../plugin/bin/lib/station-events/emit');
+  assert.notEqual(buildLine(first).eventKey, buildLine(reclaim).eventKey, 'so the second release is not deduplicated away');
+});
+
+test('#5902: --reason "never-started: x" records an abandoned exit; no --link carries link null', () => {
+  const runDir = mkRun();
+  const out = [];
+  const { d } = deps({ content: live(RUN_DIR_NAME), out, mainRoot: rootOf(runDir) });
+  const events = withStationSpy(d);
+  assert.equal(run(['999', '--run', runDir, '--reason', 'never-started: x'], d), 0);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].outcome, 'abandoned');
+  assert.deepEqual(events[0].payload, { reason: 'never-started: x', link: null });
+});
+
+test('#5902: the real release reasons record the corrected outcome in the exited event', () => {
+  const cases = [
+    ['merged: spec 999', 'passed'], ['pr-opened: spec 999', 'passed'], ['abandoned: spec 999', 'abandoned'],
+    ['failed: local-ahead-of-origin', 'failed'], ['drive.js settle: pending-review at summary', 'passed'],
+    ['drive.js settle: blocked at test', 'failed'], ['drive.js settle: express-escalated at check', 'returned'],
+    ['drive.js settle: refused at admission', 'abandoned'], ['swept: issue closed', 'abandoned'],
+  ];
+  for (const [reason, outcome] of cases) {
+    const runDir = mkRun();
+    const { d } = deps({ content: live(RUN_DIR_NAME), out: [], mainRoot: rootOf(runDir) });
+    const events = withStationSpy(d);
+    assert.equal(run(['999', '--run', runDir, '--reason', reason], d), 0, reason);
+    assert.equal(events.length, 1, reason);
+    assert.equal(events[0].outcome, outcome, reason);
+  }
+});
+
+test('#5902: a shaping claim release (shaped:, routed:, failed: shaping) records no station event; stdout and exit are those of a run without an emitter', () => {
+  for (const reason of ['shaped: #999', 'routed: needs:definition #999', 'failed: shaping']) {
+    const runA = mkRun();
+    const outA = [];
+    const { d: plain } = deps({ content: live(RUN_DIR_NAME), out: outA, mainRoot: rootOf(runA) });
+    const codeA = run(['999', '--run', runA, '--reason', reason], plain);
+
+    const runB = mkRun();
+    const outB = [];
+    const { d: recording } = deps({ content: live(RUN_DIR_NAME), out: outB, mainRoot: rootOf(runB) });
+    const events = withStationSpy(recording);
+    const codeB = run(['999', '--run', runB, '--reason', reason], recording);
+
+    assert.deepEqual(events, [], reason);
+    assert.equal(codeB, codeA, reason);
+    assert.equal(envelope(outB).outcome, 'released', reason);
+    assert.equal(streamOf(outB, 'out'), streamOf(outA, 'out'), reason);
+    assert.equal(stderrOf(outB), stderrOf(outA), reason);
+  }
+});
+
+test('#5902: skipped-not-owner and already-released record no station event', () => {
+  const notOwner = [];
+  const { d: d1 } = deps({ content: live('2026-08-16T110000-spec-999'), out: notOwner });
+  const ev1 = withStationSpy(d1);
+  assert.equal(run(['999', '--run', mkRun(), '--reason', 'merged'], d1), 4);
+  assert.deepEqual(ev1, [], 'skipped-not-owner emits nothing');
+
+  const already = [];
+  const { d: d2 } = deps({
+    content: live(RUN_DIR_NAME), contentAfterConflict: JSON.stringify({ released: true }), putThrows: 'HTTP 422 sha mismatch', out: already,
+  });
+  const ev2 = withStationSpy(d2);
+  assert.equal(run(['999', '--run', mkRun(), '--reason', 'merged'], d2), 3);
+  assert.equal(envelope(already).outcome, 'already-released');
+  assert.deepEqual(ev2, [], 'already-released emits nothing, so a repeat release writes nothing');
+});
+
+test('#5902: a --sweep release closes the holder\'s visit — runId and discriminator are the holder\'s, sweptBy names the sweeper', () => {
+  const HOLDER = '2026-08-10T090000-spec-1';
+  const staleForeign = JSON.stringify({
+    runId: HOLDER, sessionId: 's', claimedAt: '2026-08-12T12:00:00.000Z', ttlHours: 72, host: 'h',
+  });
+  const runDir = mkRun();
+  const out = [];
+  const { d } = deps({ content: staleForeign, issueState: 'OPEN', out, mainRoot: rootOf(runDir) });
+  const events = withStationSpy(d);
+  assert.equal(run(['999', '--run', runDir, '--reason', 'swept: stale claim', '--sweep'], d), 0);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].runId, HOLDER);
+  assert.equal(events[0].discriminator, `release:${HOLDER}:2026-08-12T12:00:00.000Z`);
+  assert.equal(events[0].outcome, 'abandoned');
+  assert.equal(events[0].sessionId, null, 'the holder\'s session is unknown — never the sweeper\'s');
+  assert.deepEqual(events[0].payload, {
+    reason: 'swept: stale claim', link: null, sweptBy: RUN_DIR_NAME, sweptBySession: 'sess-1',
+  });
+
+  const out2 = [];
+  const { d: d2 } = deps({ content: staleForeign, issueState: 'OPEN', out: out2, mainRoot: rootOf(runDir) });
+  const events2 = withStationSpy(d2);
+  d2.sessionId = '';
+  assert.equal(run(['999', '--run', mkRun(), '--reason', 'swept: stale claim', '--sweep'], d2), 0);
+  assert.equal(events2[0].sessionId, null);
+  assert.equal('sweptBySession' in events2[0].payload, false, 'an empty sweeper session is left out');
+});
+
+test('#5902: a throwing stationEvent leaves stdout, the exit code and logged byte-identical', () => {
+  const runA = mkRun();
+  const outA = [];
+  const { d: plain } = deps({ content: live(RUN_DIR_NAME), out: outA, mainRoot: rootOf(runA) });
+  const codeA = run(['999', '--run', runA, '--reason', 'merged', '--link', 'https://x/1'], plain);
+
+  const runB = mkRun();
+  const outB = [];
+  const { d: throwing } = deps({ content: live(RUN_DIR_NAME), out: outB, mainRoot: rootOf(runB) });
+  let thrown = 0;
+  throwing.stationEvent = () => { thrown += 1; throw new Error('emitter boom'); };
+  const codeB = run(['999', '--run', runB, '--reason', 'merged', '--link', 'https://x/1'], throwing);
+
+  assert.equal(thrown, 1, 'the emitter was reached');
+  assert.equal(codeB, codeA);
+  assert.equal(streamOf(outB, 'out'), streamOf(outA, 'out'), 'stdout is byte-identical');
+  assert.equal(envelope(outB).logged, true);
+  assert.equal(envelope(outB).logged, envelope(outA).logged);
+  assert.equal(stderrOf(outB), stderrOf(outA), 'no extra stderr either');
+});
+
+test('#5902: a recording stationEvent leaves stdout, the exit code and stderr byte-identical', () => {
+  const runA = mkRun();
+  const outA = [];
+  const { d: plain } = deps({ content: live(RUN_DIR_NAME), out: outA, mainRoot: rootOf(runA) });
+  const codeA = run(['999', '--run', runA, '--reason', 'merged', '--link', 'https://x/1'], plain);
+
+  const runB = mkRun();
+  const outB = [];
+  const { d: recording } = deps({ content: live(RUN_DIR_NAME), out: outB, mainRoot: rootOf(runB) });
+  const events = withStationSpy(recording);
+  const codeB = run(['999', '--run', runB, '--reason', 'merged', '--link', 'https://x/1'], recording);
+
+  assert.equal(events.length, 1, 'the recorder saw the release');
+  assert.equal(codeB, codeA);
+  assert.equal(streamOf(outB, 'out'), streamOf(outA, 'out'), 'stdout is byte-identical');
+  assert.equal(stderrOf(outB), stderrOf(outA));
 });

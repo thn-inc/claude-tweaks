@@ -28,6 +28,8 @@ const { ensureLabelPayload } = require('../issues/labels');
 const { runClassified, isTimeoutError } = require('../shared-primitives');
 const { appendEntry, formatEntry, resolveTarget } = require('../log-decision/append');
 const { CLAIM_LOG_SECTION, CLAIM_LOG_STEP, claimLogText } = require('../log-decision/claim-log');
+const { toRepoName } = require('../station-events/emit');
+const { LANES, SESSION_BOUND_STATION, transitionsForLabel, releaseTransition } = require('../station-events/stations');
 const { tombstoneInFlightPr, refusalText } = claimStore;
 
 const BOT_IN_PROGRESS = 'bot:in-progress';
@@ -38,7 +40,8 @@ const BOT_IN_PROGRESS_DESC = 'Bot state: an agent currently holds the claim on t
 const BOT_IN_PROGRESS_COLOR = '6A737D';
 const ABORT_REASON = 'never-started: file-overlap group partial claim';
 
-const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep-going] [--run <run-dir>] [--steps <step,step,...>] [--resume-pr <url>] [--help]\n'
+const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep-going] [--run <run-dir>] [--steps <step,step,...>] [--resume-pr <url>] [--lane <lane>] [--help]\n'
+  + '  --lane <standard|express|driver|unknown>: the lane stamped on this claim\'s station events (default unknown)\n'
   + '  --steps <step,step,...>: the resolved /flow step list; one with neither build nor test claims\n'
   + '           nothing and exits 0 with {claimed:[],alreadyOwned:[],skipped:[],skipGuard:"no-build-or-test"}\n'
   + '  --resume-pr <url>: re-claims a stale claim whose in-flight PR is exactly <url> (dispatch resume, #4588);\n'
@@ -80,7 +83,7 @@ function parseJsonOrNull(text) {
 
 function parseArgs(argv) {
   const opts = {
-    runId: null, targetsRaw: null, keepGoing: false, help: false, runDir: null, stepsRaw: null, resumePr: null,
+    runId: null, targetsRaw: null, keepGoing: false, help: false, runDir: null, stepsRaw: null, resumePr: null, lane: 'unknown',
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -92,6 +95,7 @@ function parseArgs(argv) {
     else if (a === '--run') opts.runDir = next();
     else if (a === '--steps') opts.stepsRaw = next();
     else if (a === '--resume-pr') opts.resumePr = next();
+    else if (a === '--lane') opts.lane = next();
     else return { error: `unknown argument: ${a}` };
   }
   return opts;
@@ -315,6 +319,10 @@ function run(argv, deps) {
     return 2;
   }
 
+  // #5902: the lane is passed in, never inferred; a bare flag, a blank or an
+  // unknown name is malformed rather than silently read as `unknown`.
+  if (!LANES.includes(opts.lane)) { deps.stderr(USAGE); return 2; }
+
   // #4027: `flow/claim-targets.md`'s skip-guard — a step list with neither
   // `build` nor `test` (a dispatched group's second call, any wrap-up-only
   // resume) has nothing left to build, so nothing to lock. Checked after all
@@ -442,6 +450,7 @@ function run(argv, deps) {
     const { released, releaseFailed } = releaseClaimedThisRun(
       deps, repoSlug, opts.runId, [...claimedThisRun, ...extraToRelease],
     );
+    for (const issue of released) emitRollbackExit(issue);
     deps.stdout(JSON.stringify({ ...envelope, released, releaseFailed }));
     return exitCode;
   }
@@ -546,6 +555,42 @@ function run(argv, deps) {
     const reason = oneLineReason(refusalText(result.error) || 'permission-denied');
     deps.stderr(`claim-targets: GitHub refused the claim ${operation} for #${issue}: ${reason} — check the token's access to this repository and the ${CLAIMS_BRANCH} branch\n`);
     return abort({ permissionDenied: { issue, operation, reason } }, 7);
+  }
+
+  // #5902: station events through the optional `deps.stationEvent` (absent =
+  // none). Each emit is wrapped, so a throwing emitter never changes stdout,
+  // the exit code or `claimed`. The discriminator is the claim's own
+  // `claimedAt`, so a re-emit of the same claim keys identically.
+  const stationRepoName = toRepoName(repoSlug);
+  function emitStation(issue, claimedAt, fields) {
+    if (typeof deps.stationEvent !== 'function' || !claimedAt) return;
+    try {
+      deps.stationEvent({
+        repoName: stationRepoName, recordNumber: issue, outcome: null,
+        lane: opts.lane, sessionId: deps.sessionId, runId: opts.runId, ...fields,
+      });
+    } catch { /* best-effort: the claim stands */ }
+  }
+  function emitSessionBound(issue, claimedAt) {
+    if (typeof deps.sessionId !== 'string' || deps.sessionId === '') return;
+    emitStation(issue, claimedAt, { kind: 'session_bound', station: SESSION_BOUND_STATION, discriminator: claimedAt });
+  }
+  function emitInProgressTransition(issue, claimedAt) {
+    for (const row of transitionsForLabel(BOT_IN_PROGRESS, 'added')) {
+      emitStation(issue, claimedAt, { ...row, discriminator: `${claimedAt}:${row.kind}:${row.station}` });
+    }
+  }
+  // `abort()`'s rollback ends the build visit of every record this run had
+  // claimed and actually released; an unverified extra target was never
+  // claimed here, so it has no `claimedAt` entry and emits nothing.
+  const claimedAtByIssue = new Map();
+  function emitRollbackExit(issue) {
+    if (!claimedAtByIssue.has(issue)) return;
+    const claimedAt = claimedAtByIssue.get(issue);
+    emitStation(issue, claimedAt, {
+      ...releaseTransition(ABORT_REASON),
+      payload: { reason: ABORT_REASON }, discriminator: `${claimedAt}:abort`,
+    });
   }
 
   for (let i = 0; i < targets.length; i += 1) {
@@ -745,10 +790,21 @@ function run(argv, deps) {
     }
 
     claimedThisRun.push(issue);
+    const claimMarker = parseJsonOrNull(payload.fileContent);
+    const claimedAt = claimMarker && typeof claimMarker.claimedAt === 'string' && claimMarker.claimedAt !== ''
+      ? claimMarker.claimedAt : null;
+    if (claimedAt !== null) claimedAtByIssue.set(issue, claimedAt);
+    else if (typeof deps.stationEvent === 'function') {
+      deps.stderr(`claim-targets: station events skipped for #${issue} — claim payload has no claimedAt\n`);
+    }
+    emitSessionBound(issue, claimedAt);
     if (resumeLink !== null) resumedPr.push({ issue, link: resumeLink });
 
     try {
       ensureAndAddLabel(deps.gh, issue);
+      // A `--resume-pr` re-claim never left `build`: a new session binds,
+      // but there is no release exit or build entry to record.
+      if (resumeLink === null) emitInProgressTransition(issue, claimedAt);
     } catch (e) {
       labelFailures.push({ issue, error: errText(e) });
     }

@@ -312,6 +312,20 @@ test('only unadopted mints exist — resolves null rather than guessing into one
   assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, null), { dir: null, attribution: null });
 });
 
+// #5903: the mint now writes manifest.json, which is not adoption — the
+// manifest-only dir stays an unadopted mint (isUnadoptedMint is not exported;
+// resolveRun's fallback is where it bites).
+test('a mint holding only manifest.json is still an unadopted mint — fallback skips it (#5903)', () => {
+  const cwd = project();
+  const real = mkRun(cwd, '2026-07-01T090000-real', { status: 'active' });
+  const mint = mkRun(cwd, '2026-07-02T090000-mint', null); // sorts newest
+  fs.writeFileSync(path.join(mint, 'manifest.json'), '{}\n');
+
+  assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, 'me'), { dir: real, attribution: 'fallback' });
+  fs.rmSync(real, { recursive: true });
+  assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, 'me'), { dir: null, attribution: null });
+});
+
 test('a run with a corrupt run-state.json and no decisions.md is still not a mint — presence, not parseability', () => {
   const cwd = project();
   const dir = mkRun(cwd, '2026-07-01T090000-corrupt', null);

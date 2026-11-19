@@ -908,6 +908,24 @@ test('archiveMerged: an orphaned mint older than the TTL is archived on the next
   assert.ok(result.archived.includes(path.join(root, '.claude-tweaks', 'pipelines', runId)));
 });
 
+// #5903: the mint writes manifest.json, which is not adoption — a manifest-only dir is
+// still an orphaned mint. Writing the file bumps the dir mtime, so back-date after it.
+test('classifyRunDir orphaned-mint and archiveMerged: a mint holding only manifest.json is still orphaned past the TTL (#5903)', () => {
+  const { archiveMerged, ORPHAN_MINT_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const root = bareRepoRoot();
+  const runId = '2026-08-01T130000-record-999';
+  const dir = mintEmptyRunDir(root, runId);
+  fs.writeFileSync(path.join(dir, 'manifest.json'), '{}\n');
+  const backdated = new Date(Date.now() - ORPHAN_MINT_TTL_MS - 60000);
+  fs.utimesSync(dir, backdated, backdated);
+  assert.strictEqual(classifyRunDir({ dir, kinds: ['orphaned-mint'] }).kind, 'orphaned-mint');
+
+  archiveMerged({ cwd: root });
+
+  assert.ok(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId)), 'a manifest-only mint should be archived');
+  assert.ok(!fs.existsSync(dir), 'original mint dir should no longer exist');
+});
+
 test('archiveMerged: an orphaned mint within the TTL is left in place, not archived', () => {
   const { archiveMerged } = require('../plugin/bin/lib/reconcile/archive-merged');
   const root = bareRepoRoot();

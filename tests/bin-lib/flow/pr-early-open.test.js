@@ -760,6 +760,8 @@ function cliDeps(fx, { list = [], lists = null, create = `${URL42}\n`, push = nu
     sleep: async () => {},
     now: () => NOW,
     writeBodyFile: (name, text) => { const p = path.join(fx.root, name); fs.writeFileSync(p, text); return p; },
+    // #5902: realDeps carries the real emitter; undefined here is "no emission" unless a test records.
+    stationEvent: undefined,
     stdout: (s) => out.push(s),
     stderr: (s) => err.push(s),
   };
@@ -1074,4 +1076,126 @@ test('CLI: --help prints usage and exits 0 before any probe', async () => {
   const h = cliDeps(cliFixture(), { ghAvailable: false });
   assert.equal(await run(['--help'], h.deps), 0);
   assert.match(h.out.join(''), /^usage: pr-early-open\.js/);
+});
+
+// ---- station events (#5902) ----
+
+test('#5902: realDeps wires a stationEvent emitter, so the real entry point emits', () => {
+  const { realDeps } = require('../../../plugin/bin/pr-early-open');
+  assert.equal(typeof realDeps.stationEvent, 'function', 'stationEvent is wired');
+});
+
+const withEvents = (h, stationEvent) => {
+  const events = [];
+  h.deps.sessionId = 'sess-pr';
+  h.deps.stationEvent = stationEvent || ((e) => { events.push(e); });
+  return events;
+};
+
+test('#5902: an opened single-record PR records one started build event', async () => {
+  const fx = cliFixture();
+  const h = cliDeps(fx);
+  const events = withEvents(h);
+  assert.equal(await run(cliArgv(fx), h.deps), 0, h.err.join(''));
+  assert.deepEqual(events, [{
+    kind: 'started', station: 'build', recordNumber: 4027, repoName: REPO, runId: RUN_ID, sessionId: 'sess-pr', lane: 'unknown',
+    payload: { fact: 'pr_opened', prNumber: 42, prUrl: URL42, outcome: 'opened' }, discriminator: 'pr:42:opened',
+  }]);
+});
+
+test('#5902: an opened multi-record PR records one started build event per record in --fixes', async () => {
+  const fx = cliFixture();
+  const h = cliDeps(fx);
+  const events = withEvents(h);
+  const argv = ['--run', fx.runDir, '--target', '#4031,#4027,#4029', '--fixes', '4031,#4027,4029', '--title', 'T', '--summary-file', fx.summaryFile, '--worktree', fx.wt];
+  assert.equal(await run(argv, h.deps), 0, h.err.join(''));
+  const payload = { fact: 'pr_opened', prNumber: 42, prUrl: URL42, outcome: 'opened' };
+  assert.deepEqual(events, [4031, 4027, 4029].map((recordNumber) => ({
+    kind: 'started', station: 'build', recordNumber, repoName: REPO, runId: RUN_ID, sessionId: 'sess-pr', lane: 'unknown',
+    payload, discriminator: 'pr:42:opened',
+  })));
+});
+
+test('#5902: one throwing emission does not skip the other records', async () => {
+  const fx = cliFixture();
+  const h = cliDeps(fx);
+  const seen = [];
+  withEvents(h, (e) => { seen.push(e.recordNumber); if (e.recordNumber === 4031) throw new Error('emitter exploded'); });
+  const argv = ['--run', fx.runDir, '--target', '#4031,#4027', '--fixes', '4031,4027', '--title', 'T', '--summary-file', fx.summaryFile, '--worktree', fx.wt];
+  assert.equal(await run(argv, h.deps), 0, h.err.join(''));
+  assert.deepEqual(seen, [4031, 4027]);
+  assert.deepEqual(JSON.parse(h.out.join('')), { outcome: 'opened', number: 42, url: URL42 });
+});
+
+test('#5902: a repo slug that maps to no owner/name records no event', async () => {
+  const fx = cliFixture();
+  const h = cliDeps(fx);
+  h.deps.gh = ((inner) => (args, opts) => {
+    if (args[0] === 'repo' && args[1] === 'view') return JSON.stringify({ nameWithOwner: 'noslash', url: 'not a url', defaultBranchRef: { name: 'main' } });
+    return inner(args, opts);
+  })(h.deps.gh);
+  let calls = 0;
+  withEvents(h, () => { calls += 1; });
+  assert.equal(await run(cliArgv(fx), h.deps), 0, h.err.join(''));
+  assert.equal(JSON.parse(h.out.join('')).outcome, 'opened');
+  assert.equal(calls, 0);
+});
+
+test('#5902: a reopened PR records one started build event', async () => {
+  const fx = cliFixture();
+  const h = cliDeps(fx, { lists: [[PR7_CLOSED], [PR7_OPEN]] });
+  const events = withEvents(h);
+  assert.equal(await run(cliArgv(fx), h.deps), 0, h.err.join(''));
+  assert.equal(JSON.parse(h.out.join('')).outcome, 'reopened');
+  assert.deepEqual(events.map((e) => [e.kind, e.station, e.recordNumber, e.payload, e.discriminator]), [
+    ['started', 'build', 4027, { fact: 'pr_opened', prNumber: 7, prUrl: URL7, outcome: 'reopened' }, 'pr:7:reopened'],
+  ]);
+});
+
+test('#5902: a reused PR records no event', async () => {
+  const fx = cliFixture();
+  const h = cliDeps(fx, { list: [PR7_OPEN] });
+  const events = withEvents(h);
+  assert.equal(await run(cliArgv(fx), h.deps), 0, h.err.join(''));
+  assert.equal(JSON.parse(h.out.join('')).outcome, 'reused');
+  assert.deepEqual(events, []);
+});
+
+test('#5902: a degrade (exit 3) records no event', async () => {
+  const fx = cliFixture();
+  const h = cliDeps(fx, { push: new Error('fatal: Authentication failed for https://github.com/') });
+  const events = withEvents(h);
+  assert.equal(await run(cliArgv(fx), h.deps), 3);
+  assert.deepEqual(events, []);
+});
+
+test('#5902: a throwing stationEvent leaves stdout and the exit code unchanged', async () => {
+  const fx = cliFixture();
+  const h = cliDeps(fx);
+  let calls = 0;
+  withEvents(h, () => { calls += 1; throw new Error('emitter exploded'); });
+  assert.equal(await run(cliArgv(fx), h.deps), 0, h.err.join(''));
+  assert.equal(calls, 1, 'the emission was attempted');
+  assert.deepEqual(JSON.parse(h.out.join('')), { outcome: 'opened', number: 42, url: URL42 });
+  assert.equal(h.err.join(''), '');
+});
+
+test('#5902: stdout and the exit code are byte-identical with stationEvent absent, recording and throwing', async () => {
+  const once = async (wire) => {
+    const fx = cliFixture();
+    const h = cliDeps(fx);
+    const events = wire ? wire(h) : null;
+    const code = await run(cliArgv(fx), h.deps);
+    return { code, out: h.out.join(''), err: h.err.join(''), events };
+  };
+  const plain = await once(null);
+  const recording = await once((h) => withEvents(h));
+  const throwing = await once((h) => withEvents(h, () => { throw new Error('emitter exploded'); }));
+  assert.equal(plain.code, 0, plain.err);
+  assert.equal(recording.events.length, 1, 'the recorder saw the emission');
+  for (const r of [recording, throwing]) {
+    assert.equal(r.code, plain.code);
+    assert.equal(r.out, plain.out);
+    assert.equal(r.err, plain.err);
+  }
 });

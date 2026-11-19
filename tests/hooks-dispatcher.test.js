@@ -423,6 +423,18 @@ test('record-pr, spec-status, close-run, teardown-run, check-resume-freshness, c
   }
 });
 
+// #5903: the run-dir mint now writes manifest.json, but it is not one of the
+// three initialization markers — a dir holding only it is still uninitialized.
+test('close-run rejects a --run target whose only file is manifest.json (#5903: manifest.json is not run initialization)', async () => {
+  const project = gitRepo();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(run, 'manifest.json'), '{}\n');
+  const result = await runHook(['close-run', '--run', run], { cwd: project });
+  assert.strictEqual(result.code, 1);
+  assert.match(result.stdout, /--run path rejected: .*not an initialized run dir/);
+});
+
 test('close-run with a non-existent --run path fails loudly instead of falling back', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
