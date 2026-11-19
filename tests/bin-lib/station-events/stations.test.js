@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const {
   STATION, STATIONS, SESSION_BOUND_STATION, PR_OPENED_FACT, PR_OPENED_TRANSITION, LABEL_TRANSITIONS, MERGE_SUBSTEP_TRANSITIONS,
   outcomeForReleaseReason, outcomeForDriverStatus, transitionsForLabel, releaseTransition,
-} =require('../../../plugin/bin/lib/station-events/stations');
+} = require('../../../plugin/bin/lib/station-events/stations');
 const { PARK_REASON } = require('../../../plugin/bin/lib/accept/park-grammar');
 const { ABORT_REASON } = require('../../../plugin/bin/lib/claim-targets/claim-targets');
 
