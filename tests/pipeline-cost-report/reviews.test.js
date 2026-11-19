@@ -301,7 +301,20 @@ test('human stops: the two real forms count, a settled gap does not', () => {
   writeDecisions(b.dir, `${SETTLED}\n${RELEASED}\n`);
   const walked = walkRuns([a, b, c], { since: null, until: null, fsImpl: fs });
   const got = collectPlanReview(walked, walked.map((w) => w.units.map((u) => readVerdicts(u, fs))), { roots: [], fsImpl: fs });
-  assert.deepStrictEqual(got.humanStops, { runs: 1, n: 2, unparsed: 1 });
+  assert.deepStrictEqual(got.humanStops, { runs: 1, n: 2, unparsed: 1, planReviewUnits: 2 });
+});
+
+test('human stops: planReviewUnits counts only the units whose log has a Common Step 1.6 line', () => {
+  const pipelines = fresh('pl');
+  const a = writeRun(pipelines, '2026-11-18T1-spec-1');
+  const b = writeRun(pipelines, '2026-11-18T2-spec-2');
+  const c = writeRun(pipelines, '2026-11-18T3-spec-3');
+  writeDecisions(a.dir, `${KEPT}\n`);
+  writeDecisions(b.dir, `${RELEASED}\n`);
+  writeDecisions(c.dir, `${SETTLED}\n${RELEASED}\n`);
+  const walked = walkRuns([a, b, c], { since: null, until: null, fsImpl: fs });
+  const got = collectPlanReview(walked, walked.map((w) => w.units.map((u) => readVerdicts(u, fs))), { roots: [], fsImpl: fs });
+  assert.deepStrictEqual(got.humanStops, { runs: 1, n: 3, unparsed: 0, planReviewUnits: 2 });
 });
 
 test('readVerdicts reads confirmed, refuted and cant-tell locations and the decisions text', () => {
@@ -364,7 +377,7 @@ test('a stub whose archived copy has decisions but no timing.json reads its deci
   writeDecisions(path.join(pipelines, 'archive', '2026-11-16T1-record-7'), `${KEPT}\n`);
   const got = taskFigures(pipelines, fresh('pr'));
   assert.strictEqual(got.window.noTiming, 1);
-  assert.deepStrictEqual(got.planReview.humanStops, { runs: 1, n: 1, unparsed: 0 });
+  assert.deepStrictEqual(got.planReview.humanStops, { runs: 1, n: 1, unparsed: 0, planReviewUnits: 1 });
 });
 
 test('an agentId listed by two runs counts once', () => {
@@ -441,7 +454,7 @@ test('a run resolved to its archive copy does not look for archive/archive/{name
   writeRun(path.join(pipelines, 'archive'), name);
   writeDecisions(path.join(pipelines, 'archive', 'archive', name), `${KEPT}\n`);
   const got = taskFigures(pipelines, fresh('pr'));
-  assert.deepStrictEqual(got.planReview.humanStops, { runs: 0, n: 0, unparsed: 1 });
+  assert.deepStrictEqual(got.planReview.humanStops, { runs: 0, n: 0, unparsed: 1, planReviewUnits: 0 });
 });
 
 test('a top-level multi-spec run reads its members, never the archive copy of its decisions', () => {
@@ -451,7 +464,7 @@ test('a top-level multi-spec run reads its members, never the archive copy of it
   for (const id of [1, 2]) writeDecisions(path.join(parent.dir, `spec-${id}`), `${SETTLED}\n`);
   writeDecisions(path.join(pipelines, 'archive', name), `${KEPT}\n`);
   const got = taskFigures(pipelines, fresh('pr'));
-  assert.deepStrictEqual(got.planReview.humanStops, { runs: 0, n: 2, unparsed: 0 });
+  assert.deepStrictEqual(got.planReview.humanStops, { runs: 0, n: 2, unparsed: 0, planReviewUnits: 2 });
 });
 
 test('a top-level run with its own decisions.md never reads the archive copy', () => {
@@ -461,7 +474,7 @@ test('a top-level run with its own decisions.md never reads the archive copy', (
   writeDecisions(run.dir, `${SETTLED}\n`);
   writeDecisions(path.join(pipelines, 'archive', name), `${KEPT}\n`);
   const got = taskFigures(pipelines, fresh('pr'));
-  assert.deepStrictEqual(got.planReview.humanStops, { runs: 0, n: 1, unparsed: 0 });
+  assert.deepStrictEqual(got.planReview.humanStops, { runs: 0, n: 1, unparsed: 0, planReviewUnits: 1 });
 });
 
 test("a KEPT-PROMPT line in a multi-spec parent's own decisions.md is ignored", () => {
@@ -470,7 +483,7 @@ test("a KEPT-PROMPT line in a multi-spec parent's own decisions.md is ignored", 
   writeDecisions(parent.dir, `${KEPT}\n`);
   for (const id of [1, 2]) writeDecisions(path.join(parent.dir, `spec-${id}`), `${SETTLED}\n`);
   const got = taskFigures(pipelines, fresh('pr'));
-  assert.deepStrictEqual(got.planReview.humanStops, { runs: 0, n: 2, unparsed: 0 });
+  assert.deepStrictEqual(got.planReview.humanStops, { runs: 0, n: 2, unparsed: 0, planReviewUnits: 2 });
 });
 
 test('walkRuns sorts by date then name and reports timing state', () => {
@@ -922,7 +935,7 @@ test('AC3.1 markdown', async () => {
   writeDecisions(path.join(pipelines, '2026-11-18T1-spec-1'), `${KEPT}\n${threeA(1)}`);
   const got = await reviewsCli(pipelines, projects);
   assert.ok(got.text.includes('Reviews: 2; with a finding: 50%; findings per review: 1.50; unparsed: 0.'), got.text);
-  assert.ok(got.text.includes('Stopped to ask a human: 1 of 1 run units; 0 unparsed.'), got.text);
+  assert.ok(got.text.includes('Stopped to ask a human: 1 of 1 run units with a plan review (1 readable, 0 unparsed).'), got.text);
   assert.ok(got.text.includes('| spec gap | 1 |'), got.text);
   assert.ok(got.text.indexOf('| cross-task contract | 1 |') < got.text.indexOf('| spec gap | 1 |'), 'PLAN_KINDS order');
   assert.ok(got.text.includes('| other | 0 |'), got.text);
@@ -1001,6 +1014,44 @@ test('the yield counts a timing-less run naming "3b Security" under 3b, and keep
   assert.strictEqual(got['3b'].unparsed, 1);
   assert.ok(!('3b Security' in got), Object.keys(got).join(','));
   assert.deepStrictEqual(got.delta, { runs: 0, agents: 0, confirmed: 0, rate: null, unparsed: 1 });
+});
+
+test('a lens named by its word folds to its id, whatever the case, hyphens or spaces; an unknown name stays verbatim', () => {
+  const dir = fresh('unit');
+  writeDecisions(dir, [
+    'Reproduction: lens "architecture" finding a.js:1 reproduced. Confirmed.',
+    'Reproduction: lens "Test quality" finding b.js:2 reproduced. Confirmed.',
+    'Reproduction: lens "Error handling" finding c.js:3 reproduced. Confirmed.',
+    'Reproduction: lens "error-handling" finding d.js:4 reproduced. Confirmed.',
+    'Reproduction: lens "Ownability" finding e.js:5 reproduced. Confirmed.',
+    'Reproduction: lens "gap-sweep" finding f.js:6 reproduced. Confirmed.',
+    '- AUTO 10:00:00 — lens "security" finding g.js:7 dropped: refuted by tiebreak:aaaaaaaaaaaa.',
+  ].join('\n'));
+  const v = readVerdicts({ name: 'u', dir }, fs);
+  assert.deepStrictEqual(v.confirmed.map((c) => c.lens), ['3e', '3f', '3c', '3c', '3g', 'gap-sweep']);
+  assert.deepStrictEqual(v.refuted.map((c) => c.lens), ['3b']);
+});
+
+test('the yield and the per-run rows count a word-named verdict under its lens id', () => {
+  const pipelines = fresh('pl');
+  ac61(pipelines, true);
+  writeDecisions(path.join(pipelines, '2026-11-19T2-spec-5'), 'Reproduction: lens "architecture" finding a.js:1 reproduced. Confirmed.\n');
+  const got = yieldOf(pipelines, 2).byLens;
+  assert.strictEqual(got['3e'].unparsed, 1);
+  assert.ok(!('architecture' in got), Object.keys(got).join(','));
+});
+
+test('the human-stop line is a rate over the run units with a plan review', async () => {
+  const pipelines = fresh('pl');
+  const projects = fresh('pr');
+  writeRun(pipelines, '2026-11-18T1-spec-1', { items: [item('p1', 'plan review', 'capable')], sessions: ['s1'] }, projects);
+  writeReport(projects, 's1', 'p1', 'No findings.');
+  writeRun(pipelines, '2026-11-18T2-adhoc-2');
+  writeRun(pipelines, '2026-11-18T3-adhoc-3');
+  writeDecisions(path.join(pipelines, '2026-11-18T1-spec-1'), `${KEPT}\n${threeA(1)}`);
+  writeDecisions(path.join(pipelines, '2026-11-18T2-adhoc-2'), `${RELEASED}\n${threeA(1)}`);
+  const got = await reviewsCli(pipelines, projects);
+  assert.ok(got.text.includes('Stopped to ask a human: 1 of 1 run units with a plan review (2 readable, 1 unparsed).'), got.text);
 });
 
 test('AC10.1 markdown', async () => {

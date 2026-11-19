@@ -294,7 +294,7 @@ const SECTIONS = [
       lines.push(`Re-reviews (not in the table): ${t.reReviews.n}${rr.length > 0 ? ` (${rr.join(', ')})` : ''}.`, '');
 
       const p = d.planReview;
-      lines.push('### Plan review', '', `Reviews: ${p.reviews}; with a finding: ${pct(p.withFindings)}; findings per review: ${mean(p.findingsPerReview)}; unparsed: ${p.unparsed}.`, `Stopped to ask a human: ${p.humanStops.runs} of ${p.humanStops.n} run units; ${p.humanStops.unparsed} unparsed.`, '');
+      lines.push('### Plan review', '', `Reviews: ${p.reviews}; with a finding: ${pct(p.withFindings)}; findings per review: ${mean(p.findingsPerReview)}; unparsed: ${p.unparsed}.`, `Stopped to ask a human: ${p.humanStops.runs} of ${p.humanStops.planReviewUnits} run units with a plan review (${p.humanStops.n} readable, ${p.humanStops.unparsed} unparsed).`, '');
       table('| Kind | Findings |', [...PLAN_KINDS, 'other'].filter((k) => k in p.byKind).map((k) => [k, String(p.byKind[k])]));
 
       const l = d.lens;

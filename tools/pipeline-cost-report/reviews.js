@@ -225,12 +225,30 @@ function walkRuns(runs, { since, until, fsImpl = fs } = {}) {
   });
 }
 
-// A verdict line quotes the lens as free text ("3b Security", "delta"). A name whose leading token is a lens id (the form
-// archive.js's LENS_RE takes, 3a..3j) is that id, so every collector counts it under the id; any other name is kept verbatim.
+// The lens names a verdict line may quote in place of the id, keyed by the lowercase hyphenated name. Source: the lens
+// headings in plugin/skills/review/step3-lens-dispatch.md ("### 3a: Convention Compliance" .. "### 3g: Ownability") and
+// code-mode-steps.md ("### 3h: UX Analysis"), plus the short forms real decisions.md files carry ("error", "errors").
+const LENS_NAME_IDS = {
+  convention: '3a', 'convention-compliance': '3a',
+  security: '3b',
+  error: '3c', errors: '3c', 'error-handling': '3c',
+  performance: '3d',
+  architecture: '3e',
+  'test-quality': '3f',
+  ownability: '3g',
+  ux: '3h', 'ux-analysis': '3h',
+};
+
+// A verdict line quotes the lens as free text ("3b Security", "architecture", "delta"). A name whose leading token is a
+// lens id (the form archive.js's LENS_RE takes, 3a..3j), or that is a lens's name (case, hyphens and spaces alike), is
+// that id, so every collector counts it under the id; any other name is kept verbatim.
 const LENS_ID_LEAD_RE = /^(3[a-j])(?![A-Za-z0-9])/;
 const lensIdOf = (name) => {
-  const m = LENS_ID_LEAD_RE.exec(String(name).trim());
-  return m ? m[1] : name;
+  const trimmed = String(name).trim();
+  const m = LENS_ID_LEAD_RE.exec(trimmed);
+  if (m) return m[1];
+  const byName = LENS_NAME_IDS[trimmed.toLowerCase().replace(/[\s_-]+/g, '-')];
+  return byName || name;
 };
 
 // One unit's decisions.md: its text (null when unreadable) and the locations the lens review confirmed, refuted or
@@ -267,6 +285,10 @@ function readVerdicts(unit, fsImpl = fs) {
 
 const HUMAN_STOP_KEPT_RE = /^- KEPT-PROMPT\b.*\bCommon Step 1\.6\b.*\bneeds-human\b/;
 const HUMAN_STOP_GATED_RE = /^- [A-Z][A-Z-]*\b.*\bCommon Step 1\.6\b.*\bneeds-human\b.*(?:HARD-GATE|question (?:comment )?posted)/;
+
+// A decisions.md line recording that plan review ran (Common Step 1.6): the denominator of the human-stop count, since a
+// unit with no such line never had a plan review to stop in.
+const PLAN_REVIEW_LINE_RE = /^- [A-Z][A-Z-]*\b.*\bCommon Step 1\.6\b/;
 
 // A decisions.md line recording that plan review stopped to ask a human (or, dispatched, posted the question).
 const isHumanStop = (line) => HUMAN_STOP_KEPT_RE.test(line) || HUMAN_STOP_GATED_RE.test(line);
@@ -334,7 +356,8 @@ function collectTaskReview(walkedRuns, { roots, fsImpl = fs } = {}) {
 
 // Plan reviews: the parsed reports, the share with a finding, findings per review and by kind, and the runs whose
 // decisions.md records a human stop. `verdictsByRun[i]` holds readVerdicts for each unit of walkedRuns[i]; a unit whose
-// decisions.md cannot be read is `unparsed`, and `n` counts the units that could be.
+// decisions.md cannot be read is `unparsed`, `n` counts the units that could be, and `planReviewUnits` those of them whose
+// log has a plan-review (Common Step 1.6) line (`runs` of `planReviewUnits` is the stop rate).
 function collectPlanReview(walkedRuns, verdictsByRun, { roots, fsImpl = fs } = {}) {
   let n = 0;
   let unparsed = 0;
@@ -357,7 +380,7 @@ function collectPlanReview(walkedRuns, verdictsByRun, { roots, fsImpl = fs } = {
       for (const [k, v] of Object.entries(parsed.byKind)) byKind[k] += v;
     }
   }
-  const stops = { runs: 0, n: 0, unparsed: 0 };
+  const stops = { runs: 0, n: 0, unparsed: 0, planReviewUnits: 0 };
   for (const units of verdictsByRun) {
     for (const v of units) {
       if (v.text == null) {
@@ -365,7 +388,9 @@ function collectPlanReview(walkedRuns, verdictsByRun, { roots, fsImpl = fs } = {
         continue;
       }
       stops.n += 1;
-      if (v.text.split(/\r?\n/).some(isHumanStop)) stops.runs += 1;
+      const lines = v.text.split(/\r?\n/);
+      if (lines.some((l) => PLAN_REVIEW_LINE_RE.test(l))) stops.planReviewUnits += 1;
+      if (lines.some(isHumanStop)) stops.runs += 1;
     }
   }
   return { reviews: n, n, unparsed, withFindings: share(withFindings, n), findingsPerReview: share(findings, n), byKind, humanStops: stops };
@@ -457,7 +482,9 @@ const VERDICT_KEYS = ['confirmed', 'pair', 'tiebreak', 'refuted', 'cantTell'];
 const zeroVerdicts = () => Object.fromEntries(VERDICT_KEYS.map((k) => [k, 0]));
 
 // One row per readable unit (`excluded === null`) with its confirmed (pair + tiebreak), refuted and can't-tell locations,
-// whole and by lens; an excluded unit (no decisions.md, or no review line in it) is `unparsed`, never a zero row.
+// whole and by lens; an excluded unit is `unparsed`, never a zero row. A unit is excluded when readRun reports
+// `no-decisions` (no decisions.md) or `no-review` (no review line in it), `decisions-unreadable` (decisions.md could
+// not be read), or readVerdicts reports `timing-unreadable` (its timing.json holds a malformed dispatch item).
 // `verdictsByRun[i]` holds readVerdicts for each unit of walkedRuns[i].
 function collectPerRun(walkedRuns, verdictsByRun) {
   const rows = [];
@@ -574,8 +601,9 @@ function collectOutcomes(verdictsByRun) {
 // cannot be read is unparsed for every lens the walk saw. A run with no usable timing.json adds 1 to `unparsed` for a lens
 // one of its readable units records a confirmed, refuted or can't-tell verdict for, and is otherwise passed over. A lens
 // with no agent in the walk is absent unless a run with no usable timing.json records a verdict for it (then it is
-// `{ runs: 0, agents: 0, confirmed: 0, rate: null, unparsed: k }`); the decisions.md files are read once per unit, only
-// for the runs that need them. `n` must be a positive integer, else a TypeError (an empty yield would read as "no lens ran").
+// `{ runs: 0, agents: 0, confirmed: 0, rate: null, unparsed: k }`); the decisions.md files are read at most once per unit:
+// for every run with no usable timing.json (whether or not a lens slot is still open), and for a run with usable timing
+// only when it holds agents for a lens whose slots are open. `n` must be a positive integer, else a TypeError (an empty yield would read as "no lens ran").
 function collectYield(yieldWalked, { n, fsImpl = fs } = {}) {
   if (!Number.isInteger(n) || n < 1) throw new TypeError(`collectYield: n must be a positive integer, got ${n}`);
   const byLens = {};
