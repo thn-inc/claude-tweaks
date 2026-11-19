@@ -689,6 +689,12 @@ test('collectReviews adds lens: { byTier, byLens, unreadable, perRun, outcomes, 
 // --- lens outcomes and the per-lens yield (Task 4) ---
 
 const DECISION_LINES = DECISIONS.split('\n');
+// A fixture line picked by a substring, so an edit to the shared fixture cannot silently re-point a test.
+const decisionLine = (needle) => {
+  const found = DECISION_LINES.filter((l) => l.includes(needle));
+  assert.strictEqual(found.length, 1, `fixture line for ${needle}`);
+  return found[0];
+};
 // The outcome figures of one decisions.md text read as one unit.
 function outcomesOf(text) {
   const dir = fresh('unit');
@@ -699,15 +705,15 @@ const pick = (o, keys) => Object.fromEntries(keys.map((k) => [k, o[k]]));
 
 test('classifyRouting reads the four real classes', () => {
   assert.strictEqual(classifyRouting('- AUTO 16:20:58 — Step 3 Routing: applied medium-severity security fix at plugin/skills/release/disposition.md:71. Reversibility: high (commit e4ce36e0c).'), 'fixed');
-  assert.strictEqual(classifyRouting(DECISION_LINES[10]), 'staged');
+  assert.strictEqual(classifyRouting(decisionLine('16:21:21')), 'staged');
   assert.strictEqual(classifyRouting('- AUTO 23:31:55 — Step 3 Routing: materiality-floor: Test quality at tests/bin-lib/wrap-up/engine-cli.test.js:707 routed below floor (tiebreak-cant-tell) → digest. Reversibility: high.'), 'deferred');
   assert.strictEqual(classifyRouting("- AUTO 07:05:57 — Step 3 Routing: Don't fix (refuted by tiebreak): low Architecture at plugin/bin/lib/hooks/worktree-reap.js:91 — three existing tests already fail on a quiet-set rename. Reversibility: high."), 'dismissed');
   assert.strictEqual(classifyRouting('- AUTO 18:09:05 — Review Console: Console item review-contested-1.md (Contested findings): dismissed — superseded. Reversibility: n/a.'), null);
-  assert.strictEqual(classifyRouting(DECISION_LINES[3]), null);
+  assert.strictEqual(classifyRouting(decisionLine('16:08:35')), null);
 });
 
 test('AC10.1: one fixed, one staged and one unrouted location print 50%, 50% and one unrouted', () => {
-  const text = [2, 5, 7, 9, 10].map((i) => DECISION_LINES[i]).join('\n');
+  const text = ['release-block.js:181 reproduced', 'release-block.md:3 confirmed by tiebreak', 'release-block-cli.test.js:413', '16:21:01', '16:21:21'].map(decisionLine).join('\n');
   const got = outcomesOf(text);
   assert.deepStrictEqual(pick(got, ['fixed', 'staged', 'dismissed', 'deferred', 'unrouted', 'n']), { fixed: 0.5, staged: 0.5, dismissed: 0, deferred: 0, unrouted: 1, n: 2 });
   assert.deepStrictEqual(pick(got.allRouted, ['fixed', 'staged', 'dismissed', 'deferred', 'n']), { fixed: 0.5, staged: 0.5, dismissed: 0, deferred: 0, n: 2 });
@@ -730,7 +736,7 @@ test('allRouted divides by every routed location, refuted ones included', () => 
 });
 
 test('with nothing routed the shares are null, and an excluded unit is unparsed', () => {
-  const none = outcomesOf(DECISION_LINES[0]);
+  const none = outcomesOf(decisionLine('lens "3a" finding plugin/skills/release/disposition.md:71'));
   assert.deepStrictEqual(pick(none, ['fixed', 'n', 'unrouted']), { fixed: null, n: 0, unrouted: 1 });
   assert.deepStrictEqual(pick(none.allRouted, ['fixed', 'n']), { fixed: null, n: 0 });
   const got = collectOutcomes([[readVerdicts({ name: 'u', dir: fresh('unit') }, fs)]]);
@@ -745,6 +751,16 @@ test("a location's first class by precedence wins", () => {
   ].join('\n');
   const got = outcomesOf(text);
   assert.deepStrictEqual(got.counts, { fixed: 1, staged: 0, deferred: 0, dismissed: 0 });
+});
+
+test('precedence, not line order: an applied line then a Don\'t fix line is fixed, a staged line then a deferred one is staged', () => {
+  const confirmed = 'Reproduction: lens "3a" finding a.js:1 reproduced. Confirmed.';
+  const applied = '- AUTO 10:00:05 — Step 3 Routing: applied low-severity fix at a.js:1. Reversibility: high (commit abc1234).';
+  const dismissed = "- AUTO 10:00:00 — Step 3 Routing: Don't fix (refuted by tiebreak): low X at a.js:1 — nope. Reversibility: high.";
+  const staged = '- STAGED 10:00:06 — Step 3 Routing: medium-severity architecture finding at a.js:1: x. Stage path: staged/b-1.md. Reversibility: high.';
+  const deferred = '- AUTO 10:00:07 — Step 3 Routing: materiality-floor: Test quality at a.js:1 routed below floor → digest. Reversibility: high.';
+  assert.deepStrictEqual(outcomesOf([confirmed, applied, dismissed].join('\n')).counts, { fixed: 1, staged: 0, deferred: 0, dismissed: 0 });
+  assert.deepStrictEqual(outcomesOf([confirmed, staged, deferred].join('\n')).counts, { fixed: 0, staged: 1, deferred: 0, dismissed: 0 });
 });
 
 // A run `name` with `agents` 3a lens agents (and one 3b agent when `with3b`) and `confirms` 3a confirmed lines in its decisions.
@@ -793,6 +809,30 @@ test('a run with no timing.json counts unparsed for a lens it shows ran, and is 
   const got = yieldOf(pipelines, 2).byLens;
   assert.deepStrictEqual(pick(got['3a'], ['runs', 'agents', 'confirmed', 'unparsed']), { runs: 2, agents: 4, confirmed: 3, unparsed: 1 });
   assert.strictEqual(got['3b'].unparsed, 0);
+});
+
+test('a lens only a run with no usable timing.json records a verdict for appears with no agents and its unparsed count', () => {
+  const pipelines = fresh('pl');
+  ac61(pipelines);
+  writeDecisions(path.join(pipelines, '2026-11-19T2-spec-5'), 'Reproduction: lens "9z" finding a.js:1 reproduced. Confirmed.\n');
+  assert.deepStrictEqual(yieldOf(pipelines, 2).byLens['9z'], { runs: 0, agents: 0, confirmed: 0, rate: null, unparsed: 1 });
+});
+
+test('a run whose timing.json cannot be parsed counts unparsed for a lens its decisions show ran', () => {
+  const pipelines = fresh('pl');
+  ac61(pipelines);
+  const dir = path.join(pipelines, '2026-11-19T3-spec-6');
+  writeDecisions(dir, threeA(1));
+  fs.writeFileSync(path.join(dir, 'timing.json'), '{');
+  const walked = walkRuns(listRuns(pipelines).runs, { since: null, until: null, fsImpl: fs });
+  assert.strictEqual(walked[walked.length - 1].timing, 'unparsed');
+  assert.deepStrictEqual(collectYield(walked, { n: 2, fsImpl: fs }).byLens['3a'], { runs: 2, agents: 4, confirmed: 3, rate: 0.75, unparsed: 1 });
+});
+
+test('collectYield throws a TypeError when n is not a positive integer', () => {
+  for (const bad of [undefined, 0, -1, 1.5, '2', NaN]) assert.throws(() => collectYield([], { n: bad }), TypeError);
+  assert.throws(() => collectYield([]), TypeError);
+  assert.throws(() => collectReviews({ runs: [], since: null, until: null, roots: [] }, { fsImpl: fs }), TypeError);
 });
 
 test('a run whose lens agents are unreadable is unparsed for every lens, never zero agents', () => {

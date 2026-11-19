@@ -554,8 +554,11 @@ function collectOutcomes(verdictsByRun) {
 // verdicts for the lens) until `n` are filled, and an unreadable one adds 1 to `unparsed`. A run whose lens agents
 // cannot be read is unparsed for every lens the walk saw. A run with no usable timing.json adds 1 to `unparsed` for a lens
 // one of its readable units records a confirmed, refuted or can't-tell verdict for, and is otherwise passed over. A lens
-// with no agent in the walk is absent; the decisions.md files are read once per unit, only for the runs that need them.
+// with no agent in the walk is absent unless a run with no usable timing.json records a verdict for it (then it is
+// `{ runs: 0, agents: 0, confirmed: 0, rate: null, unparsed: k }`); the decisions.md files are read once per unit, only
+// for the runs that need them. `n` must be a positive integer, else a TypeError (an empty yield would read as "no lens ran").
 function collectYield(yieldWalked, { n, fsImpl = fs } = {}) {
+  if (!Number.isInteger(n) || n < 1) throw new TypeError(`collectYield: n must be a positive integer, got ${n}`);
   const byLens = {};
   const entry = (lensName) => (byLens[lensName] = byLens[lensName] || { runs: 0, agents: 0, confirmed: 0, unparsed: 0 });
   const open = (lensName) => !byLens[lensName] || byLens[lensName].runs < n;
@@ -596,8 +599,9 @@ function collectYield(yieldWalked, { n, fsImpl = fs } = {}) {
   return { runs: n, byLens };
 }
 
-// The reviews section over the since..until window: the run walk is done once and the decisions.md files are read once
-// for every collector. `n` is the yield's slot count; the yield walk ignores `since` and stops at `until`.
+// The reviews section over the since..until window: the window walk and its decisions.md reads are shared by the window
+// collectors; the yield does its own walk (it ignores `since` and stops at `until`) and its own decisions reads. `n` is
+// the yield's slot count.
 function collectReviews({ runs, since, until, roots, n }, { fsImpl = fs } = {}) {
   const walked = walkRuns(runs, { since, until, fsImpl });
   const verdictsByRun = walked.map((w) => w.units.map((u) => readVerdicts(u, fsImpl)));
