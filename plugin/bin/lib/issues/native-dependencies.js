@@ -40,9 +40,10 @@ const {
 // and preflight-records.js's own native-mode call are the callers with no
 // other gh-invoking call site of their own to attach the flag to.
 // `onSnapshot` (optional; #5902) receives `(number, entry, { owner, repo, host,
-// fetchedAt })` once per number, in `numbers` order, only after the whole
-// response parsed — never on a throw. Each call is isolated: a throwing
-// callback never changes the returned Map or skips the other numbers.
+// fetchedAt })` once per unique number, in first-occurrence order, only after
+// the whole response parsed — never on a throw. Each call gets a copy of the
+// entry and is isolated: a mutating or throwing callback never changes the
+// returned Map or skips the other numbers.
 // `fetchedAt` comes from `now` (default `() => new Date()`), once per fetch.
 function fetchNativeDependencies({
   numbers, owner, repo, host, runner, onSnapshot, now = () => new Date(),
@@ -89,8 +90,8 @@ function fetchNativeDependencies({
     let fetchedAt = null;
     try { fetchedAt = now().toISOString(); } catch { /* an unusable clock never changes the result */ }
     if (fetchedAt !== null) {
-      for (const n of numbers) {
-        try { onSnapshot(n, result.get(n), { owner, repo, host, fetchedAt }); } catch { /* a sink never changes the result */ }
+      for (const n of new Set(numbers)) {
+        try { onSnapshot(n, structuredClone(result.get(n)), { owner, repo, host, fetchedAt }); } catch { /* a sink never changes the result */ }
       }
     }
   }

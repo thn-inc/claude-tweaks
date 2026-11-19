@@ -105,6 +105,39 @@ test('a throwing onSnapshot leaves the returned Map identical and still reaches 
   assert.deepStrictEqual(seen, [11, 12]);
 });
 
+test('a callback that mutates its entry leaves the returned Map unchanged', () => {
+  const map = fetchNativeDependencies({
+    numbers: [11, 12], owner: 'acme', repo: 'w', runner: twoRecords, now: fixedNow,
+    onSnapshot: (n, entry) => { entry.blockedBy.push(99); entry.openBlocker = 'mutated'; },
+  });
+  assert.deepStrictEqual([...map], [
+    [11, { blockedBy: [5], openBlocker: true, openBlockerIds: [5] }],
+    [12, { blockedBy: [], openBlocker: false, openBlockerIds: [] }],
+  ]);
+});
+
+test('a throwing clock makes zero onSnapshot calls and returns the complete Map', () => {
+  const calls = [];
+  let map;
+  assert.doesNotThrow(() => {
+    map = fetchNativeDependencies({
+      numbers: [11, 12], owner: 'acme', repo: 'w', runner: twoRecords,
+      now: () => { throw new Error('clock'); }, onSnapshot: (n) => calls.push(n),
+    });
+  });
+  assert.deepStrictEqual(calls, []);
+  assert.deepStrictEqual([...map], [...fetchNativeDependencies({ numbers: [11, 12], owner: 'acme', repo: 'w', runner: twoRecords })]);
+});
+
+test('a duplicated number calls onSnapshot once per unique number, first-occurrence order', () => {
+  const calls = [];
+  fetchNativeDependencies({
+    numbers: [11, 11, 12], owner: 'acme', repo: 'w', runner: twoRecords, now: fixedNow,
+    onSnapshot: (n) => calls.push(n),
+  });
+  assert.deepStrictEqual(calls, [11, 12]);
+});
+
 test('an absent onSnapshot returns the same Map as before', () => {
   const map = fetchNativeDependencies({ numbers: [11, 12], owner: 'acme', repo: 'w', runner: twoRecords });
   assert.deepStrictEqual([...map], [
