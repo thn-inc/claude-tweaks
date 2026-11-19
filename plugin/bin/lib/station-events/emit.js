@@ -86,21 +86,31 @@ function buildLine(event, deps = {}) {
   };
 }
 
-// Each absent dep falls back to the real one; `mainRoot` is resolved from the
-// cwd only when the caller passed none (an explicit null is kept and drops).
+function realStderr(s) {
+  return process.stderr.write(s);
+}
+
+function stderrOf(deps) {
+  return isPlainObject(deps) && typeof deps.stderr === 'function' ? deps.stderr : realStderr;
+}
+
+// Each absent dep falls back to the real one, resolved per append: an absent
+// (undefined) `mainRoot` resolves from the cwd now, an explicit null drops.
 function resolveDeps(deps) {
   const d = isPlainObject(deps) ? deps : {};
   return {
     fs: d.fs || fs,
     withLock: d.withLock || withLock,
-    mainRoot: Object.prototype.hasOwnProperty.call(d, 'mainRoot') ? d.mainRoot : mainCheckoutRoot(process.cwd()),
+    mainRoot: d.mainRoot !== undefined ? d.mainRoot : mainCheckoutRoot(process.cwd()),
     now: d.now || (() => new Date()),
-    stderr: d.stderr || ((s) => process.stderr.write(s)),
+    stderr: stderrOf(d),
   };
 }
 
+// The real deps, without `mainRoot`: it resolves from the cwd at append time,
+// so one realDeps() object stays correct across emits.
 function realDeps() {
-  return resolveDeps({});
+  return { fs, withLock, now: () => new Date(), stderr: realStderr };
 }
 
 function drop(d, reason) {
@@ -109,8 +119,9 @@ function drop(d, reason) {
 }
 
 function appendStationEvent(event, deps = {}) {
-  let d = { stderr: () => true };
+  let d = { stderr: realStderr };
   try {
+    d = { stderr: stderrOf(deps) };
     d = resolveDeps(deps);
     const line = buildLine(event, d);
     if (line === null) return drop(d, invalidReason(event) || 'at is not a valid date');

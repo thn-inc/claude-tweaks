@@ -51,7 +51,7 @@ One object per line, with exactly these fields:
 
 ## Reading the events
 
-- **Work segments vs visit boundaries.** `started` / `exited` events carrying `payload.step` are work segments (a driver step ran). Events carrying `payload.substep` are visit boundaries: at the merge station, `merge-ready` is `entered`, a `merge-confirm` that merged is `exited` `passed`, `merge-park` is `exited` `returned`. A `merge-confirm` whose detail starts with `armed` (auto-merge armed, not merged) is not a boundary, and `merge-call` is never mapped, because it also reports non-merges as `ok`. Pairing events into visits is the consumer's job (`deriveVisits`).
+- **Work segments vs visit boundaries.** `started` / `exited` events carrying `payload.step` are work segments (a driver step ran). Events carrying `payload.substep` are visit boundaries: at the merge station, `merge-ready` is `entered`, a `merge-confirm` that merged is `exited` `passed`, `merge-park` is `exited` `returned`. A `merge-confirm` whose detail starts with `armed` (auto-merge armed, not merged) is not a boundary, and `merge-call` is never mapped, because it also reports non-merges as `ok`. Pairing events into visits is the consumer's job: the dispatch scoreboard's `deriveVisits`, in `thn-inc/dispatch`, not this repo.
 - **Driver session binding.** For a driver run both the claim and the worker write a `session_bound`: the claim's names the host session, the worker's names the worker session. For `lane: driver`, the worker's `session_bound` supersedes the claim's.
 
 ## Failure posture

@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { scratchDir } = require('../../helpers/tmp-dir');
 const {
-  appendStationEvent, buildLine, eventKey, toRepoName, stationEventPath,
+  appendStationEvent, buildLine, eventKey, toRepoName, stationEventPath, realDeps,
 } = require('../../../plugin/bin/lib/station-events/emit');
 
 const FIXED_NOW = () => new Date('2026-11-19T08:00:00.000Z');
@@ -67,7 +67,53 @@ test('eventKey is deterministic', () => {
   assert.equal(a.eventKey, b.eventKey);
 });
 
-test('appends whole lines under the lock', () => {
+test('each append runs inside withLock on the sibling .lock path', () => {
+  const root = scratchDir('ct-station-events-');
+  const file = stationEventPath(root);
+  let appended = 0;
+  const countingFs = { ...fs, appendFileSync: (...args) => { appended += 1; return fs.appendFileSync(...args); } };
+  const calls = [];
+  const recordingLock = (lockPath, fn, opts) => {
+    const call = { lockPath, opts, before: appended };
+    calls.push(call);
+    const result = fn();
+    call.after = appended;
+    return result;
+  };
+  const { d } = deps(root, { fs: countingFs, withLock: recordingLock });
+  appendStationEvent(event(), d);
+  appendStationEvent(event({ kind: 'exited', outcome: 'passed' }), d);
+  assert.equal(calls.length, 2);
+  for (const [i, call] of calls.entries()) {
+    assert.equal(call.lockPath, `${file}.lock`);
+    assert.deepEqual(call.opts, { createParent: true });
+    assert.equal(call.before, i);
+    assert.equal(call.after, i + 1);
+  }
+  // a lock whose callback never runs appends nothing
+  const heldRoot = scratchDir('ct-station-events-');
+  const { d: held } = deps(heldRoot, { fs: countingFs, withLock: () => undefined });
+  const before = appended;
+  appendStationEvent(event(), held);
+  assert.equal(appended, before);
+  assert.equal(fs.existsSync(stationEventPath(heldRoot)), false);
+});
+
+test('a throw while resolving deps still writes one stderr line', () => {
+  const stderr = fakeStderr();
+  const throwing = { now: FIXED_NOW, stderr: stderr.write };
+  Object.defineProperty(throwing, 'mainRoot', { enumerable: true, get() { throw new Error('cwd gone'); } });
+  let result;
+  assert.doesNotThrow(() => { result = appendStationEvent(event(), throwing); });
+  assert.equal(result.written, false);
+  assert.equal(stderr.calls.length, 1);
+});
+
+test('realDeps leaves mainRoot to resolve at append time', () => {
+  assert.equal(realDeps().mainRoot, undefined);
+});
+
+test('appends whole lines under the real lock', () => {
   const root = scratchDir('ct-station-events-');
   const { stderr, d } = deps(root);
   assert.deepEqual(appendStationEvent(event(), d), { written: true });
