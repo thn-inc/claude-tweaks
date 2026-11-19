@@ -4641,6 +4641,21 @@ test('AC9.1 (#5414): docs/driver.md drops the self-commit carry-on and names the
   assert.ok(rights.includes('`fail`'), 'the HEAD bullet names the fail result');
 });
 
+test('docs (#5917): driver.md states the models key, its defaults and the refusal', () => {
+  const docs = readText(path.join(__dirname, '..', '..', '..', 'docs', 'driver.md'));
+  const start = docs.indexOf('\n## Worker models');
+  assert.notEqual(start, -1, 'the Worker models section exists');
+  const section = docs.slice(start, docs.indexOf('\n## ', start + 1));
+  for (const phrase of ['express-driver-models', 'implementer: standard', 'reviewer: capable', 'merge-check: standard', 'acceptance: standard', 'DRIVER_MODEL_REFUSED', "never the account's default model", 'writes no `worker` line', '`explorer` is not a key']) {
+    assert.ok(section.includes(phrase), `the Worker models section names ${phrase}`);
+  }
+  const events = docs.slice(docs.indexOf('\n## Event lines'), docs.indexOf('\n## ', docs.indexOf('\n## Event lines') + 1));
+  assert.ok(events.includes('`model`'), 'the Event lines paragraph names the model field');
+  const journey = readText(path.join(__dirname, '..', '..', '..', 'docs', 'journeys', 'resolve-a-policy-key.md'));
+  const redFlags = journey.split('\n').find((l) => l.startsWith('- **Red flags:**') && l.includes('`policyOnly` flat key'));
+  assert.ok(redFlags && redFlags.includes('`express-driver-models`'), 'the red-flags list names express-driver-models');
+});
+
 // Flag read n (1 = the baseline) is the n-th ls-files read of the run; AC8.1 (#5415) pins the order.
 const flaggedStop = (h, detail) => {
   assert.deepEqual([lastLine(h).stop.step, lastLine(h).status, lastLine(h).stop.class, lastLine(h).outcome], [STEP.review, 'fail', 'pre-push', 'express-escalated']);

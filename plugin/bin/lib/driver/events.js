@@ -3,7 +3,9 @@
 //
 // The step-name list below IS the event vocabulary: event lines carry `step` drawn from it,
 // plus FINAL_STEP for a record's closing line and BUDGET_STEP for a `--budget` run's summary
-// line (budget.js). Fields may be added to an event, never renamed.
+// line (budget.js). Fields may be added to an event, never renamed. The worker, review,
+// merge-check and merge-acceptance lines carry `model`, the requested alias, once a launch
+// resolved one (#5917); older lines lack it.
 //
 // This module holds no step logic. It holds:
 //   - the step, outcome and stop-class constants,
