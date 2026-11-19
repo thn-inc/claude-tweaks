@@ -48,7 +48,7 @@ function ensureLocalExclude(mainRoot, fsImpl = fs) {
     if (missing.length === 0) return true;
     fsImpl.mkdirSync(infoDir, { recursive: true });
     const lead = existing !== '' && !existing.endsWith('\n') ? '\n' : '';
-    fsImpl.appendFileSync(excludeFile, `${lead}${missing.map((e) => `${e}\n`).join('')}`);
+    fsImpl.appendFileSync(excludeFile, `${lead}${missing.join('\n')}\n`);
     return true;
   } catch {
     return false;
