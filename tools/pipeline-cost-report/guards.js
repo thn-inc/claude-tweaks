@@ -39,11 +39,8 @@ function eligible(run, fsImpl) {
   return !run.name.endsWith('-standalone') && hasTiming(run, fsImpl);
 }
 
-// A top-level run with no timing.json of its own, read from archive/{name} when that holds one.
-function resolveRun(run, fsImpl) {
-  if (run.archived || hasTiming(run, fsImpl)) return run;
-  const dir = path.join(path.dirname(run.dir), 'archive', run.name);
-  if (!hasTiming({ dir }, fsImpl)) return run;
+// The spec-{N} member directories of a run directory; empty when it cannot be read.
+function membersOf(dir, fsImpl) {
   const members = [];
   try {
     for (const e of fsImpl.readdirSync(dir, { withFileTypes: true })) {
@@ -53,7 +50,15 @@ function resolveRun(run, fsImpl) {
   } catch {
     // An unreadable archived copy keeps its timing.json read and no members.
   }
-  return { ...run, dir, members };
+  return members;
+}
+
+// A top-level run with no timing.json of its own, read from archive/{name} when that holds one.
+function resolveRun(run, fsImpl) {
+  if (run.archived || hasTiming(run, fsImpl)) return run;
+  const dir = path.join(path.dirname(run.dir), 'archive', run.name);
+  if (!hasTiming({ dir }, fsImpl)) return run;
+  return { ...run, dir, members: membersOf(dir, fsImpl) };
 }
 
 function compareByName(a, b) {
@@ -376,4 +381,4 @@ async function collectGuards({ runs, split, n, roots, repo }, { fsImpl = fs, gh 
   return { split, runs: n, before: await read(columns.before), after: await read(columns.after) };
 }
 
-module.exports = { selectColumns, resolveRun, parseReviewCounts, readTiming, readReport, collectWholeBranch, collectFirstPass, keyFilesOf, collectPostMergeBugs, collectGuards };
+module.exports = { selectColumns, resolveRun, membersOf, parseReviewCounts, readTiming, readReport, collectWholeBranch, collectFirstPass, keyFilesOf, collectPostMergeBugs, collectGuards };

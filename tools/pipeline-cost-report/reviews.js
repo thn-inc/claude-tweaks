@@ -1,7 +1,8 @@
 'use strict';
 // tools/pipeline-cost-report/reviews.js — the review-results readers of the cost report (#5925).
 //
-// This first slice holds three pure text parsers over a subagent's final report. Each returns null only for "could not
+// The module holds three pure text parsers over a subagent's final report, the run walk and the collectors that feed them
+// the runs' timing.json, decisions.md and transcripts. Each parser returns null only for "could not
 // parse" (a crash message, a report of another shape) and a zero-count result for "parsed, nothing found", so an
 // unreadable report is counted `unparsed` by its caller and never reads as a clean one. The formats, as the build saw them:
 //
@@ -26,15 +27,18 @@
 // so the dispatch figures are read from the parent's timing.json and only the decisions.md files are read per member.
 //
 // The run walk (walkRuns), the task-review and plan-review collectors and the human-stop count read the run's
-// timing.json, decisions.md and the subagents' transcripts, read-only. A human stop is a decisions.md line of either form:
+// timing.json, decisions.md and the subagents' transcripts, read-only. A human stop is a decisions.md line of one of
+// three forms, all naming `Common Step 1.6` and `needs-human`:
 //   - KEPT-PROMPT 08:28:18 — Common Step 1.6 (plan review): plan review: 2 needs-human spec gap(s) asked inline. Reversibility: n/a.
 //   - REFUSED 00:38:24 — Common Step 1.6 (plan review): plan review: 1 needs-human spec gap (…) — dispatched call cannot
 //     ask; question posted as issuecomment-6903297698; HARD-GATE plan-review-needs-human; …. Reversibility: n/a.
-// A line saying the gap was settled (`1 needs-human spec gap settled in a converged round`) is not one.
+//   - AUTO 23:02:28 — Common Step 1.6 (plan review): plan review returned 6 rows (1 needs-human spec gap). … the
+//     needs-human gate took the dispatched-call branch: question posted on the record. Reversibility: n/a.
+// (any status word may open the second and third; they match on `HARD-GATE` or `question [comment ]posted`.) A line saying the gap was settled (`1 needs-human spec gap settled in a converged round`) is not one.
 
 const fs = require('fs');
 const path = require('path');
-const { resolveRun, readTiming, readReport, parseReviewCounts } = require('./guards.js');
+const { resolveRun, membersOf, readTiming, readReport, parseReviewCounts } = require('./guards.js');
 const { readRun } = require('../review-replay/archive.js');
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
@@ -150,8 +154,6 @@ function parseLensReport(text) {
   return null;
 }
 
-const MEMBER_RE = /^spec-(\d+)$/;
-
 function exists(file, fsImpl) {
   try {
     fsImpl.statSync(file);
@@ -161,27 +163,17 @@ function exists(file, fsImpl) {
   }
 }
 
-// The spec-{N} member directories of a run directory; empty when it cannot be read.
-function membersOf(dir, fsImpl) {
-  const members = [];
-  try {
-    for (const e of fsImpl.readdirSync(dir, { withFileTypes: true })) {
-      const m = MEMBER_RE.exec(e.name);
-      if (m && e.isDirectory()) members.push({ id: Number(m[1]), dir: path.join(dir, e.name) });
-    }
-  } catch {
-    // An unreadable directory has no members.
-  }
-  return members;
-}
-
 // The units a run's decisions are read from: its members, else the run itself. A resolved top-level run with no
 // decisions.md whose archive/{name} copy holds one (a copy with no timing.json, which resolveRun leaves unresolved)
 // is read from that copy.
 function unitsOf(run, fsImpl) {
   let { dir, members } = run;
-  const archived = path.join(path.dirname(run.dir), 'archive', run.name);
-  if (!run.archived && members.length === 0 && archived !== dir && !exists(path.join(dir, 'decisions.md'), fsImpl) && exists(path.join(archived, 'decisions.md'), fsImpl)) {
+  const parent = path.dirname(run.dir);
+  const archived = path.join(parent, 'archive', run.name);
+  // Only a run still at the top level has an archive copy to fall back to; one already under archive/ (listed there, or
+  // resolved to its copy by resolveRun) would otherwise look for archive/archive/{name}.
+  const topLevel = path.basename(parent) !== 'archive';
+  if (topLevel && members.length === 0 && !exists(path.join(dir, 'decisions.md'), fsImpl) && exists(path.join(archived, 'decisions.md'), fsImpl)) {
     dir = archived;
     members = membersOf(archived, fsImpl);
   }
@@ -257,7 +249,7 @@ const reportOf = (walked, d, roots, fsImpl) => readReport({ roots, sessions: wal
 
 // Task reviews by model tier. A report with no verdict line, or no transcript, is `unparsed` and in neither share.
 // `items` sums the Critical/Important/Minor items of the needs-fixes reports whose items parsed; `minorOnly` is the
-// count of those with no Critical or Important item. Re-reviews are only counted, by tier.
+// count of those with no Critical or Important item and at least one Minor. Re-reviews are only counted, by tier.
 function collectTaskReview(walkedRuns, { roots, fsImpl = fs } = {}) {
   const tiers = {};
   const reReviews = { n: 0, byTier: {} };
@@ -294,7 +286,7 @@ function collectTaskReview(walkedRuns, { roots, fsImpl = fs } = {}) {
       t.critical += counts.critical;
       t.important += counts.important;
       t.minor += counts.minor;
-      if (counts.critical + counts.important === 0) t.minorOnly += 1;
+      if (counts.critical + counts.important === 0 && counts.minor > 0) t.minorOnly += 1;
     }
   }
   const byTier = {};

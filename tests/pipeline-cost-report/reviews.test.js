@@ -422,6 +422,36 @@ test('--since/--until bound the runs read; a null since has no lower bound', () 
   assert.deepStrictEqual(open.map((w) => w.run.name), ['2026-11-16T1-spec-1', '2026-11-17T1-spec-2']);
 });
 
+test('a needs-fixes report whose three headings read None is in items.n and minorOnly.of, not minorOnly.count', () => {
+  const pipelines = fresh('pl');
+  const projects = fresh('pr');
+  const run = writeRun(pipelines, '2026-11-18T1-spec-1', { items: [item('n1', 'task review', 'capable'), item('n2', 'task review', 'capable')], sessions: ['s1'] }, projects);
+  writeReport(projects, 's1', 'n1', '#### Critical\nNone.\n\n#### Important\nNone.\n\n#### Minor\nNone.\n\n**Task quality:** Needs fixes');
+  writeReport(projects, 's1', 'n2', task('needs-fixes-minor-only'));
+  const got = collectTaskReview(walkRuns([run], { since: null, until: null, fsImpl: fs }), { roots: [projects], fsImpl: fs }).byTier.capable;
+  assert.strictEqual(got.items.n, 2);
+  assert.deepStrictEqual(got.minorOnly, { count: 1, of: 2, share: 0.5 });
+});
+
+test('a run resolved to its archive copy does not look for archive/archive/{name}', () => {
+  const pipelines = fresh('pl');
+  const name = '2026-11-18T2-spec-2';
+  fs.mkdirSync(path.join(pipelines, name, 'work'), { recursive: true });
+  writeRun(path.join(pipelines, 'archive'), name);
+  writeDecisions(path.join(pipelines, 'archive', 'archive', name), `${KEPT}\n`);
+  const got = taskFigures(pipelines, fresh('pr'));
+  assert.deepStrictEqual(got.planReview.humanStops, { runs: 0, n: 0, unparsed: 1 });
+});
+
+test("a KEPT-PROMPT line in a multi-spec parent's own decisions.md is ignored", () => {
+  const pipelines = fresh('pl');
+  const parent = writeRun(pipelines, '2026-11-18T1-spec-1-2');
+  writeDecisions(parent.dir, `${KEPT}\n`);
+  for (const id of [1, 2]) writeDecisions(path.join(parent.dir, `spec-${id}`), `${SETTLED}\n`);
+  const got = taskFigures(pipelines, fresh('pr'));
+  assert.deepStrictEqual(got.planReview.humanStops, { runs: 0, n: 2, unparsed: 0 });
+});
+
 test('walkRuns sorts by date then name and reports timing state', () => {
   const pipelines = fresh('pl');
   const b = writeRun(pipelines, '2026-11-18T2-b');
