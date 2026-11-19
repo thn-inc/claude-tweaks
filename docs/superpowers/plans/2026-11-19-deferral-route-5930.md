@@ -99,6 +99,7 @@ git commit -m "Add the deferral routing function — one code home for the mater
 ### Task 2: The CLI, its tests, and its docs entry
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Create: `plugin/bin/deferral-route.js`
