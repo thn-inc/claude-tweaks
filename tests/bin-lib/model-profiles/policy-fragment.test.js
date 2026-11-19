@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { parsePolicyModelConfig, stripComment } = require('../../../plugin/bin/lib/model-profiles/policy-fragment');
+const { parsePolicyModelConfig, stripComment, modelProfilesEntry } = require('../../../plugin/bin/lib/model-profiles/policy-fragment');
 
 const SAMPLE = [
   'worktree-always: true',
@@ -72,4 +72,23 @@ test('stripComment cuts at the first # anywhere and drops a CRLF \\r (#4816)', (
   assert.strictEqual(stripComment('    model: opus#note'), '    model: opus');
   assert.strictEqual(stripComment('    effort: low'), '    effort: low');
   assert.strictEqual(stripComment('    effort: low\r'), '    effort: low');
+});
+
+test('modelProfilesEntry: present, absent and malformed', () => {
+  assert.deepStrictEqual(modelProfilesEntry('model-profiles:\n  standard:\n    model: opus\n'), { value: { standard: { model: 'opus' } }, source: 'policy' });
+  assert.deepStrictEqual(modelProfilesEntry(null), { value: null, source: 'default' });
+  assert.deepStrictEqual(modelProfilesEntry('autonomy: trusted\n'), { value: null, source: 'default' });
+  assert.deepStrictEqual(modelProfilesEntry('model-profiles:\n  standard:\n    speed: x\n'), { value: null, source: 'default', invalid: true });
+});
+
+test('modelProfilesEntry: a malformed sibling key never marks the block invalid', () => {
+  assert.deepStrictEqual(
+    modelProfilesEntry('frontier-run-cap: abc\nmodel-profiles:\n  standard:\n    model: haiku\n'),
+    { value: { standard: { model: 'haiku' } }, source: 'policy' },
+  );
+  assert.deepStrictEqual(modelProfilesEntry('frontier-run-cap: abc\n'), { value: null, source: 'default' });
+  assert.deepStrictEqual(
+    modelProfilesEntry('model-profiles:\n  standard:\n    effort: low\nfrontier-run-cap: 5 agents\n'),
+    { value: { standard: { effort: 'low' } }, source: 'policy' },
+  );
 });

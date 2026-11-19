@@ -62,4 +62,35 @@ function parsePolicyModelConfig(raw) {
   return out;
 }
 
-module.exports = { parsePolicyModelConfig, stripComment };
+// The `model-profiles` block's own text — its column-0 header line through the
+// line before the next non-blank column-0 line — or null when absent. The last
+// block wins, matching parsePolicyModelConfig's last-wins assignment.
+function cutModelProfilesBlock(raw) {
+  const lines = raw.split('\n');
+  let start = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!lines[i].startsWith(' ') && stripComment(lines[i]) === 'model-profiles:') start = i;
+  }
+  if (start === -1) return null;
+  let end = start + 1;
+  for (; end < lines.length; end += 1) {
+    const text = stripComment(lines[end]);
+    if (text.trim() && !text.startsWith(' ')) break;
+  }
+  return lines.slice(start, end).join('\n');
+}
+
+// The resolve-policy entry for the `model-profiles` key, shared by the CLI and
+// the driver's policy read. Only the block is parsed (#5917): a malformed
+// sibling key such as `frontier-run-cap: abc` never marks it invalid.
+function modelProfilesEntry(policyRaw) {
+  const block = policyRaw ? cutModelProfilesBlock(policyRaw) : null;
+  if (block === null) return { value: null, source: 'default' };
+  try {
+    return { value: parsePolicyModelConfig(block)['model-profiles'], source: 'policy' };
+  } catch {
+    return { value: null, source: 'default', invalid: true };
+  }
+}
+
+module.exports = { parsePolicyModelConfig, stripComment, modelProfilesEntry };
