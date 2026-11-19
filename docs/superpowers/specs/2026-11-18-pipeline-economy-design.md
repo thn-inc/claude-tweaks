@@ -186,6 +186,10 @@ Withdrawn on 2026-11-18. #5540 and #5541 already cut judges to about 3.6 per run
 
 ## Phase 6 — Work a run may file
 
+## Phase 6: Specified
+
+Records #5930 (the route decided in code), #5931 (the routing sites call it), #5932 (the digest-reasons policy value and the `CLAUDE.md` rule) and #5933 (the evidence line and the per-run cap), under parent #5934.
+
 The deferral gate (`plugin/skills/_shared/deferral-gate.md`) already makes fix-now the default and names a closed set of reasons. The materiality floor (`plugin/skills/_shared/materiality-floor.md`) already routes a deferred item to a digest when it would be filed at low size, low priority and low risk, and digest entries already expire. Two rules send agent-noticed work to new records anyway: `tangential` always files, and `pre-existing-outside-diff` files unless all three axes are low.
 
 - **Builds:**
@@ -194,7 +198,9 @@ The deferral gate (`plugin/skills/_shared/deferral-gate.md`) already makes fix-n
   - A policy value caps new records per run. Overflow goes to the digest.
   - `CLAUDE.md`'s "No implicit deferrals" is rewritten to match.
 - **What the digest does with them:** three un-promoted entries in one area become one proposed "Settle N findings" record (`plugin/skills/tidy/digest-sweep.md`), and an entry un-promoted for 90 days expires. Since 8 November 16 such records bundled 111 findings, about seven each, so the 215 would become about 30 records, fewer after expiry.
-- **Needs before it is specified:** a read of the code path that files a record from a run (`plugin/bin/console-filings.js`, `plugin/bin/lib/console/finding-filing.js`), to place the evidence check and the cap.
+- **What the filing path looks like:** no code decides the route today and no single function sees every filing; six skill sites apply the floor from prose. So the records build the decision as one command first, move the six sites onto it, and only then add the policy value, the evidence check and the cap.
+- **Decided while specifying:** evidence is a named test file or an existing record or incident number, checked for form only; an item that fails a check goes to the digest, never dropped; the cap is first come, first served; high and critical findings always file.
+- **Not covered:** the Review Console's can't-tell filings (`plugin/bin/console-filings.js`) follow their own rule and pass through neither the evidence check nor the cap.
 - **Done when:** over 20 runs, records filed per merged pull request are 0.5 or fewer.
 - **Expected effect:** the two largest deferral reasons, 215 of the reasons named, stop producing records.
 
