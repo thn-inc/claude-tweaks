@@ -1,0 +1,261 @@
+# Pipeline economy — design
+
+Date: 2026-11-18. Status: draft for approval.
+
+## Why
+
+The maintainer's direction, 2026-11-18: the plugin uses far too many tokens and too much process to get work done, and it generates more follow-up work than it finishes. Both must change, for this repository and for every project the plugin serves, including a factory that drives many repositories through Dispatch.
+
+Three earlier designs cut cost at the edges. The pipeline driver (`2026-11-11-pipeline-driver-design.md`) built a lane where code walks the steps. Process efficiency (`2026-11-15-process-efficiency-design.md`) cut tiebreak cost, guard refusals and polling. The run graph (`2026-11-17-standard-lane-run-graph-design.md`) gives the standard lane a selectable step list, and expects no effect on cost or time before its Phase 6. None of them sets which model does which job, widens the cheap lane, or limits the work a run files.
+
+What the transcripts and run directories show for 8 to 18 November 2026 (method in `## Evidence`):
+
+- All sessions in this project cost $18,851 at list prices and merged 164 pull requests: about $115 each, $78 of it in build sessions.
+- Main sessions are 41% of that spend, and 81% of main-session spend falls on turns whose prompt is over 200k tokens.
+- Opus is 63% of spend, Fable 24%, Sonnet 12%, Haiku 1%.
+- The driver lane built three records for $0.63 to $0.76 each. It admits 11% of build-authorized records and has not run since 12 November.
+- 586 records were created and 207 closed. 317 of the new records were filed by an agent deferring something out of a run.
+
+## Goals
+
+1. A record in the driver lane reaches a green pull request in a median of 10 minutes or less, for $1 or less at list price.
+2. The driver lane admits at least 60% of this repository's build-authorized ready records, up from 11%.
+3. Build-session cost per merged pull request in the standard lane falls by at least 35% from $78.
+4. Records filed by runs fall from 1.9 per merged pull request to 0.5 or fewer.
+5. Quality does not fall: the three guard measures in `### Quality guards` are no worse over the first 20 runs after each change.
+6. Every lever is a policy value that a factory can set for all repositories and a repository can set for itself.
+7. Every run records what it cost and which policy it ran under, in a file Dispatch can read.
+
+## Non-goals
+
+- Removing the whole-branch review or the paired lens reviewers. The evidence says both earn their cost.
+- Deleting or splitting skills.
+- Replacing the run graph. A rule here that leaves a step out is expressed as a `run-graph-rules` entry once that mechanism ships.
+- Changing how a spec is authored, beyond `## Phase 12`.
+- Real invoices. Dollars here are list-price equivalents of recorded token usage, used as one comparable unit.
+
+## Evidence
+
+Window: transcripts and run directories dated 2026-11-08 to 2026-11-18. Usage is the maximum per `message.id`, as `plugin/bin/lib/timing/transcript.js` reads it. Prices are the list prices of 2026-11-03, with Haiku's long-prompt rate applied per request over 100k tokens. A session's type is the first claude-tweaks skill it invoked, so a session that did several things is counted once.
+
+### Where the money goes
+
+| Cut | Figure |
+|---|---|
+| Total, 208 sessions | $18,851 |
+| Main sessions / subagents | $7,668 / $11,184 |
+| Opus subagents | $8,563 |
+| Fable main sessions | $3,955 |
+| Opus main sessions | $3,388 |
+| Sonnet subagents | $1,918 |
+| Haiku subagents | $104 |
+| By session type | flow 40%, dispatch 28%, specify 16%, capture 12%, release 2% |
+| Main-session spend on turns over 200k tokens | 81% |
+| Main-session cache writes | $3,035, of which $618 follow a model switch (162 turns, about 294k tokens each) and $568 follow an hour or more without a model call |
+| First-turn prompt, median | 66k main session, 51k in-session subagent, about 6k driver worker |
+
+Per standard-lane run, from `timing.json`, window-wide: the pipeline walker (the agent that carries a dispatch call through build, test, review and wrap-up) is about $17 and implementers about $6.
+
+The standard lane changed inside the window, so window-wide per-run figures overstate today's:
+
+| Runs dated | Runs | Median minutes | Median round trips | Median subagents | Median cache read |
+|---|---|---|---|---|---|
+| 8 to 12 November | 15 | 143 | 1,022 | 52 | 207M |
+| 13 to 15 November | 60 | 298 | 756 | 33 | 154M |
+| 16 to 18 November | 77 | 192 | 538 | 17 | 113M |
+
+Tiebreak judges fell from 9 to 15 per run to about 3.6 on 16 November, when judging moved to chunks of eight findings with `info` findings on Sonnet (#5540, #5541). A judge takes a median of half a minute.
+
+### Where the time goes
+
+- Standard lane: median 218 minutes, 718 tool round trips and 36 subagents per run. The time is the length of the chain of model-driven steps.
+- An implementer on Sonnet runs 16.5 minutes. About 9.4 are active: 3.5 model, 3.7 test commands, 2.2 other commands. The rest is idle time between its report and the fix request that follows the task review.
+- Driver lane: 21 to 31 minutes per record, of which the model worked 2.1 to 2.6. Each worker ran the whole suite (24,848 tests) three times, 4.5 to 10 minutes a run, with 37 to 40 failures each time. The driver's own test step then ran once more, scoped, in 2.3 to 5.3 minutes. No code reads whether the worker ran tests.
+
+### The driver lane
+
+- `drive.js --check` over all 142 build-authorized ready records admits 15.
+- Records refused, by reason (a record can carry several): size is not low 68, protected path 68, risk is not low 57, more than three Key Files 54, ceremony is not fast-lane 49, no Key Files 18, open pull request 14, open blocker 14.
+- Admitted if these stopped refusing: size and Key File count (policy values today) 24; plus ceremony 30; plus risk 40; plus protected paths 86; plus missing Key Files 104.
+- No driver call site passes a model. The worker, the reviewer and both judgment workers run on the account's default model.
+- 15 records are admissible today and none has been routed to the driver in six days. Dispatch routes only single-record groups. The cause of the rest is not yet known.
+
+### What the reviews return
+
+| Review | n | Result |
+|---|---|---|
+| Task review, Opus | 242 | 39% need fixes: 4 Critical, 169 Important, 391 Minor |
+| Task review, Sonnet | 209 | 13.5% need fixes: 40 Important, 70 Minor |
+| Whole-branch review | 103 | 70% report a Critical or Important issue after every task review passed; 2.38 Important per review |
+| Plan review | 103 | 99% find gaps, 5.2 per review; 43 runs stopped to ask a human |
+| Lens review | 96 runs | 799 confirmed findings, 8.3 per run; 63% fixed, 29% dismissed, 5% staged, 3% deferred |
+
+- Applied lens fixes were 452 low severity, 99 medium, none high.
+- The two lenses that run on Haiku (convention and test) produced 443 of the 799 confirmed findings. Lenses 3b and 3d produced 36 and 19 and return nothing over 70% of the time.
+- One reviewer of a pair alone would have raised 63% of the confirmed findings.
+- Of 453 implementation tasks, 43 went to Haiku. 91% of those were reviewed and 13% needed a fix round, against 51% for Sonnet at the same average output size. The walker chose the tier, so Haiku got tasks it judged mechanical.
+- No task changed tier after a failed round.
+
+Confounds: each lens has one fixed tier, so no Haiku-against-Sonnet comparison exists on the same lens. Opus task reviewers are given the riskier tasks.
+
+### Work filed by runs
+
+- Created 586, closed 207, open 804.
+- 317 of the 586 carry a `Defer-reason:`; 267 of those are open.
+- Reasons named: pre-existing-outside-diff 135, tangential 80, needs-human-decision 71, genuinely-larger 56, tiebreak-cant-tell 35, blocked-dependency 23, blocked-external 10.
+
+### Quality guards
+
+Every phase that changes a model, a lane or a review is checked against these three, over the 20 runs before and the 20 runs after:
+
+1. The share of whole-branch reviews that report a Critical or Important issue (70% today).
+2. The share of implementation tasks that pass their task review with no fix round (49% for Sonnet today).
+3. Bug records filed within 14 days that name a file a merged pull request changed. No baseline exists; Phase 1 measures it.
+
+### Not verified by the author
+
+The policy-resolution and Dispatch facts in `## Policy model` come from a code reading by a delegated agent and were not re-checked. The review counts were re-run and matched.
+
+## Policy model
+
+Today a key resolves from the run's `config.yml`, then the repository's `.claude-tweaks/policy.yml`, then the schema default. Nothing sits above the repository. Keys marked `policyOnly` ignore the run config.
+
+Dispatch already stores variables at instance, repository and environment scope and merges them into the environment of every run it starts. A job can name its model.
+
+This design adds one layer and one rule:
+
+- **Factory layer.** Read below the repository file and above the schema default. Delivered as an environment variable that carries the values, so it reaches cloud sandboxes, with a user-level file for interactive sessions.
+- **Ceilings take the stricter value.** For keys that bound spend, model tier, record size, risk and new records, the effective value is the stricter of factory and repository. Every other key keeps repository over factory.
+
+Every new behaviour in this design ships as a policy value whose default reproduces today. This repository opts in first. A default changes only after 20 runs with the value on show the quality guards no worse, the rule `2026-11-17-standard-lane-run-graph-design.md` sets for its own rules. Phases 2 and 3 are the exceptions: they fix defects and need no key.
+
+Key names below are proposals; the builder settles them with `.claude/skills/policy-key-addition`.
+
+## Phase 0 — Decisions
+
+Made by the maintainer on 2026-11-18:
+
+- Work a run notices is fixed in that run where the deferral gate allows. What it notices outside its diff, and ideas it has, are not fixed in the run and do not become new records. This narrows "No implicit deferrals" in `CLAUDE.md` for work a run notices.
+- Review lenses are chosen per run, not fixed.
+- Filing new work carries friction.
+- The tiers below, in this order.
+- The levers must be settable for a factory and per repository, and must suit projects other than this one.
+
+## Tier 1 — Quick wins
+
+## Phase 1 — Baseline report
+
+## Phase 1: Specified
+
+Records #5914 (spend, funnel and records sections), #5916 (the three quality guards) and #5925 (review results by role and tier), under parent #5913.
+
+- **Builds:** `tools/pipeline-cost-report.js`, maintainer-side. It reproduces every table in `## Evidence` from transcripts, run directories and the forge: spend by session type, model, main session or subagent and prompt size; cache re-writes by cause; the driver admission funnel with each refusal reason; review results by role and tier; records created, closed and deferred by reason; and guard 3.
+- **Done when:** one command prints the tables for a given window, and its output for 2026-11-08 to 2026-11-18 is committed beside this document as the baseline.
+- **Expected effect:** none on cost. Every later phase names its measure from this report.
+
+## Phase 2 — The driver worker stops running the suite
+
+## Phase 2: Specified
+
+Record #5915, under parent #5913.
+
+- **Builds:** the worker prompt in `plugin/bin/lib/driver/steps.js` tells the worker to run only the test files for the files it changed, by path, and never the suite. The worker's allowed commands lose `npm test`. The driver's test step stays the gate.
+- **Done when:** over five driver records, no worker transcript holds a whole-suite run and the worker step's median is five minutes or less.
+- **Expected effect:** 21 to 31 minutes per record becomes 6 to 10.
+
+## Phase 3 — Every driver role names its model
+
+## Phase 3: Specified
+
+Record #5917, under parent #5913.
+
+- **Builds:** a policy map from driver role to work profile, resolved through `plugin/bin/lib/model-profiles/`, so `model-profiles` and `model-ceiling` apply. Defaults: implementer Standard, reviewer Capable, merge-check and acceptance Standard. A launch with no resolved model is refused, as the review workflow already refuses a lens with none.
+- **Done when:** every `claude -p` launch in `plugin/bin/lib/driver/` carries `--model`, and a test fails when a role has no entry.
+- **Expected effect:** $0.63 to $0.76 per record becomes about $0.35, and no longer depends on the account's default model.
+
+## Phase 4 — Walker and session tiers
+
+- **State:** not specified as a new record. #4030 already is this change and stays open.
+- **Why it is not a quick win:** the first dispatch call was raised from Standard to Capable because on Standard the walker bypassed `/claude-tweaks:flow` in 6 of 10 firings (#3212, `plugin/skills/dispatch/task-prompt.md`). The second call is already Standard.
+- **Builds, when #4030 is taken:** the first call's profile as a policy value, with the bypass rate as a fourth guard; and the Pipeline Config Manifesto prints the session's own model and says when it is above `model-ceiling`.
+- **Expected effect:** unknown until the bypass rate is re-measured. Keeping build sessions off Fable saves about 7% of total spend; moving them to Sonnet about 23%, untested.
+
+## Phase 5 — Tiebreak floor (withdrawn)
+
+Withdrawn on 2026-11-18. #5540 and #5541 already cut judges to about 3.6 per run at half a minute each, about $1.30 per run. A floor would save little and would drop about five low-severity fixes per run.
+
+## Phase 6 — Work a run may file
+
+The deferral gate (`plugin/skills/_shared/deferral-gate.md`) already makes fix-now the default and names a closed set of reasons. The materiality floor (`plugin/skills/_shared/materiality-floor.md`) already routes a deferred item to a digest when it would be filed at low size, low priority and low risk, and digest entries already expire. Two rules send agent-noticed work to new records anyway: `tangential` always files, and `pre-existing-outside-diff` files unless all three axes are low.
+
+- **Builds:**
+  - A policy value under which a deferral an agent raises with `pre-existing-outside-diff` or `tangential` goes to the digest whatever its size, priority and risk. Human-typed capture is unaffected. High and critical findings keep filing.
+  - A record an agent files needs an evidence line: a failing test or a cited incident.
+  - A policy value caps new records per run. Overflow goes to the digest.
+  - `CLAUDE.md`'s "No implicit deferrals" is rewritten to match.
+- **What the digest does with them:** three un-promoted entries in one area become one proposed "Settle N findings" record (`plugin/skills/tidy/digest-sweep.md`), and an entry un-promoted for 90 days expires. Since 8 November 16 such records bundled 111 findings, about seven each, so the 215 would become about 30 records, fewer after expiry.
+- **Needs before it is specified:** a read of the code path that files a record from a run (`plugin/bin/console-filings.js`, `plugin/bin/lib/console/finding-filing.js`), to place the evidence check and the cap.
+- **Done when:** over 20 runs, records filed per merged pull request are 0.5 or fewer.
+- **Expected effect:** the two largest deferral reasons, 215 of the reasons named, stop producing records.
+
+## Tier 2 — Fast follows
+
+## Phase 7 — Driver admission by risk and path
+
+- **Builds:** two policy values: the highest risk label the driver admits, and whether a protected path refuses or requires the reviewer. With the reviewer on, a ceremony label other than fast-lane no longer refuses. A record admitted by any of these always ends at `pending-review` for a human merge. The protected-path list becomes a default a project can edit, with the factory able to set a floor.
+- **Done when:** a 20-record trial in this repository runs with the reviewer on, `express-driver-max-size: medium` and a raised `express-driver-max-key-files`, and the guards are no worse than the same records' lane today.
+- **Waits for:** Phases 2 and 3.
+- **Expected effect:** admission rises from 11% to about 61%.
+
+## Phase 8 — Admissible records reach the driver
+
+- **Builds:** the cause of the six-day gap, found and fixed. Dispatch routes each admitted member of a bundle group, not only single-record groups.
+- **Done when:** every record `drive.js --check` admits in a drain is driven or carries a logged reason.
+
+## Phase 9 — Implementer tier from the record
+
+- **Builds:** the implementer's profile comes from the record's labels in code: low size with one or two Key Files gets Fast, everything else Standard. A failed verify or a blocked report moves it up one profile, once. Applies to the driver, and to the standard lane's task loop through the run's config.
+- **Done when:** 20 tasks on Fast show a fix-round rate no higher than Standard's.
+- **Expected effect:** Opus implementers, about $3 per run, fall to near zero; mechanical tasks cost at most $0.34.
+
+## Phase 10 — Lenses chosen per run
+
+- **Builds:**
+  - A selection function, in code, from the diff's facts and each lens's confirmed-finding rate in this repository over its last 20 runs. No model chooses.
+  - Lens reviewers launched as lean workers, so a Haiku lens stays under 100k tokens.
+- **Waits for:** #5594.
+- **Done when:** confirmed findings per run are no lower than 8.3 with fewer lens agents.
+- **Expected effect:** lenses 3b and 3d run only where the diff calls for them.
+
+## Phase 11 — Factory layer and run facts
+
+- **Builds:** the layer and the ceiling rule in `## Policy model`; and in the run manifest (#5903): lane, model per role, tokens by model, list-price cost, minutes and a hash of the resolved policy.
+- **Done when:** a value set only in the factory layer resolves in a repository that does not set it, and Dispatch reads a run's cost from its manifest.
+
+## Tier 3 — Longer term
+
+## Phase 12 — The plan is made with the spec
+
+- **Builds:** `/claude-tweaks:specify` writes the task list and runs the plan review while a human is present. A record that carries a reviewed plan skips the build's plan step.
+- **Needs:** its own design.
+- **Expected effect:** the plan step (12 minutes, 11.7M tokens) and the 43 mid-run stops leave the build.
+
+## Phase 13 — The driver is the drain
+
+- **Builds:** `drive.js --budget` gains the drain-overlap hold and stop handling it lacks, so Dispatch can run it as a script job with no model session walking the queue.
+- **Waits for:** Phases 7 and 8.
+- **Expected effect:** the main session's share of cost, 41% today, goes to zero for driver records.
+
+## Phase 14 — Review replay
+
+- **Builds:** `tools/review-replay.js` arms that answer two questions on archived runs: what task reviews catch that the whole-branch review would not, and how each lens performs on Haiku, Sonnet and Opus.
+- **Expected effect:** none by itself. It decides whether task reviews stay and which tier each review needs.
+
+## Calls made in this document that were not discussed
+
+- Every new behaviour ships off by default and this repository opts in first.
+- Ceiling keys resolve to the stricter of factory and repository.
+- Phase 5 is withdrawn and Phase 4 is left to #4030, both on evidence found while specifying.
+- The driver's reviewer defaults to Capable and its judgment workers to Standard.
+- A record admitted under Phase 7 never merges by itself.
+- The baseline report is a maintained tool, not the scratch scripts that produced these numbers.
