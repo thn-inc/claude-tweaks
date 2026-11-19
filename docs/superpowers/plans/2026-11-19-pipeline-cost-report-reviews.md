@@ -15,7 +15,7 @@
 ## Global Constraints
 
 - No file under `plugin/` changes (AC11). `reviews.js` may `require` sibling `tools/` modules only.
-- The section honours `--since`, `--until` (both inclusive, UTC) and `--json`; `--runs <n>` (default 20, the CLI's existing `DEFAULT_RUNS`) sets the yield window.
+- The section honours `--since`, `--until` (both inclusive, UTC) and `--json`; `--runs <n>` (default 20, the CLI's existing `DEFAULT_RUNS`) sets the yield window. The yield alone ignores `--since` (it walks every listed run dated on or before `--until`), as `guards` is independent of the window.
 - A run's date is the leading `YYYY-MM-DD` of its directory name (`run.date` from `listRuns`). Runs are ordered by date, then full directory name.
 - Shares are fractions from 0 to 1 in `--json`, `null` when their denominator is 0; the markdown prints whole percents with `Math.round` and `none` for null. Per-agent and per-review means print with `toFixed(2)`.
 - Every figure carries the number of reports or runs it could not parse, and an unparsed item is in no share's numerator or denominator.
@@ -33,20 +33,26 @@ The four ASSUMPTIONs and the Current State were probed on 2026-11-19 against `.c
 3. **Plan-review human stop (confirmed).** Two fixed forms, both on `Common Step 1.6` and naming `needs-human`: `- KEPT-PROMPT 08:28:18 — Common Step 1.6 (plan review): plan review: 2 needs-human spec gap(s) asked inline. Reversibility: n/a.` and the dispatched-call form (`REFUSED`/`AUTO`) naming `HARD-GATE plan-review-needs-human` or `question posted`/`question comment posted`. A line that only mentions a settled gap (`amended spec and plan for 4 finding(s) (1 needs-human spec gap settled in a converged round …`) is not a stop. The pattern exists, so `humanStops` is always a number.
 4. **Run enumeration (confirmed).** `listRuns` returns `{ name, date, dir, archived, members: [{ id, dir }] }` and keeps the top-level copy of a name found in both places (`runs.js:49-56`). `guards.js`'s `resolveRun` (`guards.js:43-57`) re-points a top-level run with no `timing.json` at `archive/{name}` and re-lists its members there; this plan exports it. No member step is added in `reviews.js`.
 5. **Multi-spec timing (Current State reversed).** A member's `decisions.md` and `review-findings.json` sit in `spec-{N}/`, but a member's `timing.json` is a stub with no dispatches (`{"dispatches":{"notFound":"no transcript resolved"}, "transcripts": [] …}`), and the parent's `timing.json` lists every member's dispatches. Lens descriptions do not name the member (`Lens 3a convention A`), so lens agents cannot be split by member.
-6. **Routing outcomes (Current State reversed).** The four classes are the ones the record's own measurement script matched, keyed by the first `path:line` on the line (below, Task 4). That script's 63/29/5/3 split was a share of every routed location, refuted ones included, not of confirmed locations, so the section's shares will not reproduce it; over 2026-11-08..2026-11-18 the confirmed-location rule gives fixed 660, staged 149, deferred 47, dismissed 137 and 441 unrouted.
+6. **Routing outcomes (Current State reversed).** The four classes are the ones the record's own measurement script matched, keyed by the first `path:line` on the line (below, Task 4). That script's 63/29/5/3 split was a share of every routed location, refuted ones included, not of confirmed locations, so the confirmed-location shares will not reproduce it; over 2026-11-08..2026-11-18 the confirmed-location rule gives fixed 660, staged 149, deferred 47, dismissed 137 and 441 unrouted. By the user's plan-review decision (Deliverable 6 as amended), the section prints both splits: the confirmed-location shares, and beside them the same four shares over every routed location, refuted ones included.
 7. **Duplicate dispatch listings.** One agent can appear in two runs' `timing.json` (`a09d135d0b9a177c3` in `2026-11-19T073130-spec-5903` and `2026-11-19T073235-adhoc-standalone`).
 8. **Lens report format.** A `| Severity | Path:Line | Finding | Evidence |` table or `No findings.`; 25 reports open `No findings` and continue in prose with no row, 4 open `No findings` yet hold rows, 3 put `No findings.` after a prose paragraph. Lens reviewers ran on `fast` and `standard` only in that window (the UX lens 3g on `standard`).
 
-## Decisions the spec leaves open (made here)
+## Decisions (the user's at plan review, and those made here)
 
-- **Which directory feeds which figure** (from finding 5). Dispatch figures (task review, plan review, lens agents by tier and lens) are read once per run from the resolved run directory's `timing.json`, the parent's for a multi-spec run. Decision figures (per-run verdicts, outcomes, plan-review human stops) are read once per *run unit*: each `spec-{N}` member of a run that has members, else the run directory. The parent's own `decisions.md` is never read for them when it has members (AC8).
-- **Yield slots for a multi-spec run.** A multi-spec run is one slot. Its agents for a lens are the parent's lens agents for that lens; its confirmed count is the sum over its members; it is readable only when every member is readable (no member `excluded`), else it counts in `unparsed` and takes no slot.
+The first five bullets are the user's plan-review decisions (the spec's `## Plan Review Clarifications`; Deliverables 1, 6 and 7 as amended on the record). The rest are made here.
+
+- **Which directory feeds which figure** (user decision; from finding 5). Dispatch figures (task review, plan review, lens agents by tier and lens) are read once per run from the resolved run directory's `timing.json`, the parent's for a multi-spec run. Decision figures (per-run verdicts, outcomes, plan-review human stops) are read once per *run unit*: each `spec-{N}` member of a run that has members, else the run directory. The parent's own `decisions.md` and `review-findings.json` are never read when it has members (AC8).
+- **The yield's window** (user decision). The yield ignores `--since`, as `guards` does: it walks every listed run dated on or before `--until`, newest first (date, then name, descending), until `n` slots are filled. `collectReviews` therefore walks twice: the window walk (`since..until`) for every other figure, and the yield walk (`until` only) for the yield, each with its own `agentId` dedupe.
+- **Yield slots for a multi-spec run** (user decision). A multi-spec run is one slot. Its agents for a lens are the parent's lens agents for that lens; its confirmed count is the sum over its members; it is readable only when every member is readable (no member `excluded`), else it counts in `unparsed` and takes no slot.
+- **Two outcome splits** (user decision). `lens.outcomes` keeps Deliverable 6's shares over confirmed locations and adds `allRouted`: the same four shares over every location (distinct `path:line` of a readable unit) that has at least one classified routing line, confirmed or not, refuted ones included. That is the 2026-11-18 measurement's division, so 63/29/5/3 can be checked against it (rates, not counts).
+- **Exit code on a failed pipelines listing** (user decision). Under `--section all`, a failed default `--pipelines` listing makes the section `reviews: unavailable — {first line}` and leaves the exit code alone, as the CLI header documents for `Runs: unavailable`. Only `--section reviews` exits 1 on it.
+- **A run with no timing.json** (plan-review undecided-behaviour row). `readTiming` returns null for an absent file; such a run is kept, never dropped: its `timing` is `'missing'` with no dispatches, it counts in `window.noTiming` (printed beside `timingUnparsed`), and its units are still read for the decision figures. In the yield, a run whose timing is `'missing'` or `'unparsed'` cannot count agents, so for each lens whose slots are still open it adds 1 to that lens's `unparsed` when one of its readable units records a verdict (confirmed, refuted or can't tell) for that lens: the lens ran but its agents cannot be counted. With no such verdict, nothing shows the lens ran, and the run is passed over for that lens.
 - **Dedupe.** Each `agentId` is counted once in the whole section, in the first run (by date, then name) whose `timing.json` lists it. A dispatch with no `agentId` is kept and is unparsed when its report cannot be found.
 - **Task review** reads `role === 'task review'` only. `re-review` dispatches are counted per tier and printed beside the table. A report with no verdict line is unparsed. Items are counted only for `needs-fixes` reports; one with none of the three headings counts in `items.unparsed` but stays in the needs-fixes share. "Minor only" is `critical + important === 0 && minor > 0`, over the needs-fixes reports whose items parsed.
 - **Plan review kinds.** The Class cell is lowercased, `*`/`` ` ``/`_` removed, `-` turned into a space, `behavior` turned into `behaviour`, and matched against the four kinds; the JSON keys are `cross-task contract`, `undecided behaviour`, `spec gap`, `missing review risk` and `other`. An overflow row (any cell matching `/^\+(\d+) more\b/`) adds N findings, all to `other`. A finding row is a table row after the header whose first cell is a severity word.
 - **Lens report** is no-finding only when it holds no finding row and some line matches `/^[\s*_`>#-]*No findings?\b/im`; rows win over a "No findings" opening.
 - **Outcome classes** are the measurement script's patterns plus nothing else (Task 4); a confirmed location with no classified line is `unrouted`.
-- **`--section all`** runs the section. A pipelines listing failure makes it `reviews: unavailable — {first line}` and exits 1, as a requested `guards` section does.
+- **`--section all`** runs the section (see the exit-code decision above).
 
 ## Review Focus
 
@@ -54,7 +60,9 @@ The four ASSUMPTIONs and the Current State were probed on 2026-11-19 against `.c
 2. A multi-spec run's dispatches come from the parent while its verdicts come from the members, never both from one. Tests: `AC8.1: two spec members count two runs and none from the parent` (Task 3) and `a multi-spec run's dispatches are read once from the parent` (Task 2).
 3. A report or decisions file the tool cannot read is never a zero. Tests: `AC2.1`, `AC9.2`, `a unit with no review lines is unparsed for the verdict figures` (Tasks 2-3).
 4. The same agent listed by two runs' timing files is counted once. Test: `an agentId listed by two runs counts once` (Task 2).
-5. Adding the section must not change what the other sections print or pin. Tests: the updated `usage names every section key` and `sections are separated by a single blank line` in `cli.test.js` (Task 5).
+5. The yield ignores `--since` but every other figure honours it, and a run with no timing.json is counted, never silently dropped. Tests: `the yield ignores --since and stops at --until` (Task 4), `a run with no timing.json is counted, not dropped` (Task 2).
+6. A failed pipelines listing exits 1 only under `--section reviews`. Test: `a pipelines listing failure: --section reviews exits 1, --section all leaves the code alone` (Task 5).
+7. Adding the section must not change what the other sections print or pin. Tests: the updated `usage names every section key` and `sections are separated by a single blank line` in `cli.test.js` (Task 5).
 
 ---
 
@@ -246,12 +254,12 @@ git commit -m "Add the review report parsers to the cost report — refs #5925"
 **Interfaces:**
 - Consumes: Task 1's parsers; `guards.js` `resolveRun(run, fsImpl)`, `readTiming(dir, fsImpl)`, `readReport({ roots, sessions, agentId }, fsImpl)`, `parseReviewCounts(text)`; `archive.js` `readRun(dir, deps)`.
 - Produces:
-  - `walkRuns(runs, { since, until, fsImpl }) -> Walked[]`, `Walked = { run, items: Dispatch[], sessions: string[], timingUnparsed: boolean, units: [{ name, dir }] }`: runs dated `since..until`, each through `resolveRun`, sorted by date then name; `items` dropped of any `agentId` seen in an earlier run (or earlier in the same file); a `readTiming` throw sets `timingUnparsed` with empty items; `units` are the members (`${run.name}/spec-${id}`) or `[{ name: run.name, dir: run.dir }]`.
+  - `walkRuns(runs, { since, until, fsImpl }) -> Walked[]`, `Walked = { run, items: Dispatch[], sessions: string[], timing: 'ok' | 'missing' | 'unparsed', units: [{ name, dir }] }`: runs dated `since..until` (a null `since` has no lower bound, for the yield walk), each through `resolveRun`, sorted by date then name; `items` dropped of any `agentId` seen in an earlier run of the same walk (or earlier in the same file); `readTiming` returning null sets `timing: 'missing'` and a throw `timing: 'unparsed'`, both with empty items and sessions, and the run is kept either way; `units` are the members (`${run.name}/spec-${id}`) or `[{ name: run.name, dir: run.dir }]`.
   - `readVerdicts(unit, fsImpl) -> { name, excluded, text, confirmed, refuted, cantTell }`: `readRun(unit.dir, { fs: fsImpl, git: () => { throw new Error('reviews reads no git'); } })`; `excluded` is `readRun`'s (`no-decisions`, `decisions-unreadable`, `no-review`, or null); `text` is the decisions.md text or null when unreadable; `confirmed` is `[{ lens, path, line, how: 'pair' | 'tiebreak' }]` (`pairConfirmed`, then `verdicts` with `verdict === 'confirmed'`); `refuted` and `cantTell` are the matching `verdicts`. All three are empty when `excluded`.
   - `isHumanStop(line) -> boolean`.
   - `collectTaskReview(walked, { roots, fsImpl }) -> { byTier: { [tier]: { n, unparsed, approved, needsFixes, items: { critical, important, minor, n, unparsed }, minorOnly: { count, of, share } } }, reReviews: { n, byTier: { [tier]: number } } }`. A missing `tier` is `unknown`.
   - `collectPlanReview(walked, verdictsByRun, { roots, fsImpl }) -> { reviews, n, unparsed, withFindings, findingsPerReview, byKind, humanStops: { runs, n, unparsed } }` (`reviews === n`, the parsed reports).
-  - `collectReviews({ runs, since, until, n, roots }, { fsImpl }) -> { window: { since, until, runs, units, timingUnparsed }, taskReview, planReview }` (Tasks 3-4 add `lens`). It walks once and computes `verdictsByRun = walked.map((w) => w.units.map((u) => readVerdicts(u, fsImpl)))` once, for every collector.
+  - `collectReviews({ runs, since, until, n, roots }, { fsImpl }) -> { window: { since, until, runs, units, noTiming, timingUnparsed }, taskReview, planReview }` (Tasks 3-4 add `lens`). It walks the window once and computes `verdictsByRun = walked.map((w) => w.units.map((u) => readVerdicts(u, fsImpl)))` once, for every window collector; `noTiming` and `timingUnparsed` count the window's runs with `timing` `'missing'` and `'unparsed'`. Task 4 adds the separate yield walk.
 
 - [ ] **Step 1: Write the failing tests.** Fixture helpers in the test file: `writeRun(pipelines, name, { items, sessions }, projects)` and `writeReport(projects, session, agentId, text)` as in `guards.test.js` (report files under `slug-sub`); `item(agentId, role, tier, description)`; `runObj(pipelines, name)` building `{ name, date, dir, archived: false, members }` (members from any `spec-{N}` subdirectories). Tests:
   - `AC1.1: four capable task reviews, three needing fixes, one Minor-only`. One run, four `task review` dispatches on `capable`: reports `approved-unbolded`, `needs-fixes-important`, `needs-fixes-minor-only`, and `needs-fixes-important` again. Expect `byTier.capable` `n === 4`, `needsFixes === 0.75`, `approved === 0.25`, `minorOnly` `{ count: 1, of: 3, share: 1/3 }`, `items` `{ critical: 0, important: 2, minor: 7, n: 3, unparsed: 0 }`.
@@ -263,6 +271,7 @@ git commit -m "Add the review report parsers to the cost report — refs #5925"
   - `a top-level stub reads its archived copy`. The top-level `2026-11-18T2-spec-2` holds only `work/`; `archive/2026-11-18T2-spec-2/timing.json` lists one task review → `n === 1`.
   - `an agentId listed by two runs counts once`. Runs `2026-11-18T1-a` and `2026-11-18T2-b` both list task review `dup` → `n === 1`.
   - `a multi-spec run's dispatches are read once from the parent`. Parent `timing.json` lists two task reviews; members `spec-1` and `spec-2` each hold the real stub `{"dispatches":{"notFound":"no transcript resolved"},"transcripts":[]}` → `n === 2`, `window.units === 2`, `window.timingUnparsed === 0`.
+  - `a run with no timing.json is counted, not dropped`. Run `2026-11-18T1-spec-1` has a `timing.json` with one task review; run `2026-11-18T2-spec-2` holds only a `decisions.md` with the KEPT-PROMPT human-stop line; run `2026-11-18T3-spec-3` holds a `timing.json` reading `{` → `window` `{ runs: 3, units: 3, noTiming: 1, timingUnparsed: 1 }`, `taskReview.byTier.capable.n === 1`, and `planReview.humanStops.runs === 1` (the timing-less run's decisions are still read).
   - `--since/--until bound the runs read`. Runs dated `2026-11-16`, `2026-11-17`, `2026-11-19`, window `2026-11-17..2026-11-18` → only the 17th's task review is counted.
 
 - [ ] **Step 2: Run to verify it fails**
@@ -275,7 +284,7 @@ Expected: FAIL with `collectTaskReview is not a function` (and `resolveRun` unde
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `node tools/run-tests.js tests/pipeline-cost-report/reviews.test.js tests/pipeline-cost-report/guards.test.js`
-Expected: PASS (reviews 19 tests; guards unchanged and green).
+Expected: PASS (reviews 20 tests; guards unchanged and green).
 
 - [ ] **Step 5: Commit**
 
@@ -339,7 +348,7 @@ Expected: FAIL with `collectLensAgents is not a function`.
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `node tools/run-tests.js tests/pipeline-cost-report/reviews.test.js tests/review-replay/baseline.test.js`
-Expected: PASS (reviews 27 tests; the review-replay suite unchanged and green).
+Expected: PASS (reviews 28 tests; the review-replay suite unchanged and green).
 
 - [ ] **Step 5: Commit**
 
@@ -361,17 +370,20 @@ git commit -m "Add the lens agent and verdict figures to the cost report — ref
 - Consumes: Task 3's `lensAgentsOf`, Task 2's `walkRuns`/`readVerdicts`.
 - Produces:
   - `classifyRouting(line) -> 'fixed' | 'staged' | 'deferred' | 'dismissed' | null`.
-  - `collectOutcomes(verdictsByRun) -> { fixed, dismissed, staged, deferred, counts: { fixed, dismissed, staged, deferred }, unrouted, n, unparsed }`: shares over `n` (routed confirmed locations), null when `n === 0`; `unparsed` counts excluded units.
-  - `collectYield(walked, verdictsByRun, { n, fsImpl }) -> { runs: n, byLens: { [lens]: { runs, agents, confirmed, rate, unparsed } } }`.
-  - `collectReviews` adds `lens.outcomes` and `lens.yield`.
+  - `collectOutcomes(verdictsByRun) -> { fixed, dismissed, staged, deferred, counts: { fixed, dismissed, staged, deferred }, unrouted, n, unparsed, allRouted: { fixed, dismissed, staged, deferred, counts, n } }`: the top-level shares are over `n` (routed confirmed locations), null when `n === 0`; `allRouted` holds the same four shares over every distinct `path:line` of a readable unit that has a classified line, confirmed or not (refuted ones included), null when its `n === 0`; `unparsed` counts excluded units.
+  - `collectYield(yieldWalked, { n, fsImpl }) -> { runs: n, byLens: { [lens]: { runs, agents, confirmed, rate, unparsed } } }`, `yieldWalked` being `walkRuns(runs, { since: null, until, fsImpl })`; verdicts are read with `readVerdicts` only for the runs the walk reaches, once per unit.
+  - `collectReviews` adds `lens.outcomes` (from the window's `verdictsByRun`) and `lens.yield` (from the yield walk).
 
 - [ ] **Step 1: Write the failing tests.**
   - `classifyRouting reads the four real classes`: `fixed` for `- AUTO 16:20:58 — Step 3 Routing: applied medium-severity security fix at plugin/skills/release/disposition.md:71. Reversibility: high (commit e4ce36e0c).`; `staged` for the fixture's `STAGED 16:21:21` line; `deferred` for `- AUTO 23:31:55 — Step 3 Routing: materiality-floor: Test quality at tests/bin-lib/wrap-up/engine-cli.test.js:707 routed below floor (tiebreak-cant-tell) → digest. Reversibility: high.`; `dismissed` for `- AUTO 07:05:57 — Step 3 Routing: Don't fix (refuted by tiebreak): low Architecture at plugin/bin/lib/hooks/worktree-reap.js:91 — three existing tests already fail on a quiet-set rename. Reversibility: high.`; `null` for `- AUTO 18:09:05 — Review Console: Console item review-contested-1.md (Contested findings): dismissed — superseded. Reversibility: n/a.` and for the fixture's `STAGED 16:08:35 … not reproduced` line.
-  - `AC10.1: one fixed, one staged and one unrouted location print 50%, 50% and one unrouted`. A unit with three confirmed locations (fixture lines: 3f `release-block.js:181` reproduced, 3a `release-block.md:3` confirmed by tiebreak, 3f `release-block-cli.test.js:413` confirmed by tiebreak) and the fixture's `16:21:01` applied line and `16:21:21` STAGED line → `{ fixed: 0.5, staged: 0.5, dismissed: 0, deferred: 0, unrouted: 1, n: 2 }`.
-  - `the real decisions excerpt's outcomes`: the whole fixture → counts `{ fixed: 2, staged: 1, deferred: 0, dismissed: 0 }`, `unrouted: 1`; the location confirmed by three lenses (`disposition.md:71`) counts once.
+  - `AC10.1: one fixed, one staged and one unrouted location print 50%, 50% and one unrouted`. A unit with three confirmed locations (fixture lines: 3f `release-block.js:181` reproduced, 3a `release-block.md:3` confirmed by tiebreak, 3f `release-block-cli.test.js:413` confirmed by tiebreak) and the fixture's `16:21:01` applied line and `16:21:21` STAGED line → `{ fixed: 0.5, staged: 0.5, dismissed: 0, deferred: 0, unrouted: 1, n: 2 }`, and `allRouted` `{ fixed: 0.5, staged: 0.5, dismissed: 0, deferred: 0, n: 2 }`.
+  - `the real decisions excerpt's outcomes`: the whole fixture → counts `{ fixed: 2, staged: 1, deferred: 0, dismissed: 0 }`, `unrouted: 1`; the location confirmed by two lenses (`disposition.md:71`) counts once.
+  - `allRouted divides by every routed location, refuted ones included`: the whole fixture → `allRouted.counts` `{ fixed: 2, staged: 1, deferred: 0, dismissed: 1 }`, `allRouted.n === 4`, `allRouted.dismissed === 0.25` (the refuted `release-block.js:198` is dismissed there and absent from the confirmed split).
   - `a location's first class by precedence wins`: one location with a `Don't fix` line and a later `applied … fix at` line → `fixed`.
-  - `AC6.1: --runs 2 uses the two latest runs in which the lens ran`. Runs `2026-11-16T1-spec-1` (two `3a` agents, decisions with four 3a confirmations), `2026-11-17T1-spec-2` (two agents, one), `2026-11-18T1-spec-3` (two agents, two); `collectYield(…, { n: 2 })` → `byLens['3a']` `{ runs: 2, agents: 4, confirmed: 3, rate: 0.75, unparsed: 0 }` (all three runs would give 7/6, the earliest two 1.25).
+  - `AC6.1: --runs 2 uses the two latest runs in which the lens ran`. Runs `2026-11-16T1-spec-1` (two `3a` agents, decisions with four 3a confirmations), `2026-11-17T1-spec-2` (two agents, one), `2026-11-18T1-spec-3` (two agents, two); `collectYield(walkRuns(runs, { since: null, until: '2026-11-18' }), { n: 2 })` → `byLens['3a']` `{ runs: 2, agents: 4, confirmed: 3, rate: 0.75, unparsed: 0 }` (all three runs would give 7/6, the earliest two 1.25).
+  - `the yield ignores --since and stops at --until`: the AC6.1 runs plus `2026-11-20T1-spec-9` (two `3a` agents, five confirmations); `collectReviews({ since: '2026-11-18', until: '2026-11-18', n: 2, … })` → `lens.yield.byLens['3a']` `{ runs: 2, agents: 4, confirmed: 3, rate: 0.75 }` (the 17th counts though it is before `--since`; the 20th is after `--until`), while `lens.perRun.n === 1` (the window figures still honour `--since`).
   - `an unreadable run takes no yield slot and counts unparsed`: add `2026-11-19T1-spec-4` with two `3a` agents and a decisions.md with no review lines → `byLens['3a']` unchanged figures with `unparsed: 1`.
+  - `a run with no timing.json counts unparsed for a lens it shows ran, and is passed over for one it does not`: the AC6.1 runs, each also listing one `Lens 3b security A` agent, plus `2026-11-19T2-spec-5` with no `timing.json` and a decisions.md holding one `Reproduction: lens "3a" finding a.js:1 reproduced. Confirmed.` line → `byLens['3a']` `{ runs: 2, agents: 4, confirmed: 3, unparsed: 1 }` and `byLens['3b'].unparsed === 0`.
   - `a multi-spec run is one yield slot, readable only when every member is`: a parent with two `3a` agents and members holding one and two 3a confirmations → `{ runs: 1, agents: 2, confirmed: 3 }`; with one member's decisions.md removed → `{ runs: 0, unparsed: 1, rate: null }`.
   - `a lens with no agents is absent; an empty window gives an empty byLens`: a readable run with no `3b` agent adds no `byLens['3b']`; `collectYield([], [], { n: 20 })` gives `{ runs: 20, byLens: {} }`.
 
@@ -387,12 +399,12 @@ Expected: FAIL with `classifyRouting is not a function`.
   - `deferred`: `/→ digest|routed to digest|materiality-floor|routed below floor/i`
   - `dismissed`: `/dropped: refuted by tiebreak|→ declined|Don't fix|not fixed/i`
 
-  A classified line belongs to the first `/([\w./@-]+\.[\w]+):(\d+)/` match on it; a location's outcome is its highest class in the order fixed, staged, deferred, dismissed. Confirmed locations are the distinct `${path}:${line}` of a unit's `confirmed`; one with no classified line is `unrouted`. Yield: walk the window newest first (date, then name, descending); for each lens a run is a candidate when it has at least one lens agent for it (`lensAgentsOf`); a candidate whose units are all readable takes a slot (agents += its agents for the lens, confirmed += its units' confirmed for the lens) until `n` slots are filled; an unreadable candidate before that adds 1 to `unparsed`. Add the four routing excerpts to the header comment.
+  A classified line belongs to the first `/([\w./@-]+\.[\w]+):(\d+)/` match on it; a location's outcome is its highest class in the order fixed, staged, deferred, dismissed. Confirmed locations are the distinct `${path}:${line}` of a unit's `confirmed`; one with no classified line is `unrouted`. `allRouted` takes every distinct location of a readable unit with a classified line, by the same precedence. Yield: walk the yield walk (every listed run dated on or before `--until`, `--since` ignored) newest first (date, then name, descending); for each lens a run is a candidate when it has at least one lens agent for it (`lensAgentsOf`); a candidate whose units are all readable takes a slot (agents += its agents for the lens, confirmed += its units' confirmed for the lens) until `n` slots are filled; an unreadable candidate before that adds 1 to `unparsed`. A run whose `timing` is `'missing'` or `'unparsed'`, reached while a lens's slots are open, adds 1 to that lens's `unparsed` when one of its readable units records a confirmed, refuted or can't-tell verdict for the lens, and is otherwise passed over. Add the four routing excerpts to the header comment.
 
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `node tools/run-tests.js tests/pipeline-cost-report/reviews.test.js`
-Expected: PASS, 35 tests.
+Expected: PASS, 39 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -415,7 +427,7 @@ git commit -m "Add the lens outcome and yield figures to the cost report — ref
 
 **Interfaces:**
 - Consumes: `collectReviews` (Tasks 2-4), `ctx.runs` (`{ runs, … } | { error }`), `ctx.roots`, `ctx.since`, `ctx.until`, `ctx.opts.runs`, `ctx.deps.fs`.
-- Produces: the `reviews` entry in `SECTIONS`, appended after `guards`: `collect` throws `ctx.runs.error` when set, else returns `collectReviews({ runs: ctx.runs.runs, since: ctx.since, until: ctx.until, n: ctx.opts.runs || DEFAULT_RUNS, roots: ctx.roots }, { fsImpl: ctx.deps.fs })`; `failed: () => false`; `unreadable: () => 0`.
+- Produces: the `reviews` entry in `SECTIONS`, appended after `guards`: when `ctx.runs.error` is set, `collect` throws it under `--section reviews` (exit 1) and returns `{ error: ctx.runs.error }` under `--section all` (rendered `reviews: unavailable — …` by the shared `render`, exit code left alone — the user's plan-review decision); else it returns `collectReviews({ runs: ctx.runs.runs, since: ctx.since, until: ctx.until, n: ctx.opts.runs || DEFAULT_RUNS, roots: ctx.roots }, { fsImpl: ctx.deps.fs })`; `failed: () => false`; `unreadable: () => 0`.
 
 Return-shape widening (plan-authoring check): the report gains a `reviews` key and the usage line a section. `git grep -n -F -e "records|guards|all" -e "Guards: not run" -- tests` (run 2026-11-19) prints three lines; `guards.test.js:756` is an `includes` check the new section leaves true, and the two pins that change are `cli.test.js:390` (`'--section spend|funnel|records|guards|all]'` becomes `'--section spend|funnel|records|guards|reviews|all]'`) and `cli.test.js:140` (the separation regex now expects `Guards: not run — --split <YYYY-MM-DD> not given\.\n\n## Reviews\n` and, separately, that the reviews section's last line is followed by `\n\nRuns: `). `guards.test.js`'s `--section all without --split marks guards not run and exits 0` runs the new section over its fixture and must stay green unchanged.
 
@@ -423,28 +435,28 @@ Return-shape widening (plan-authoring check): the report gains a `reviews` key a
   - `AC1.1 markdown: 75% needing fixes and 1 of 3 Minor only`. The Task 2 AC1.1 fixture, `--section reviews --since 2026-11-18 --until 2026-11-18`: a `### Task review` table row starting `| capable | 4 | 25% | 75% |` and containing `| 1 of 3 |`, and its Unparsed cell `0; items 0`.
   - `AC3.1 markdown`: the line `Reviews: 2; with a finding: 50%; findings per review: 1.50; unparsed: 0.`
   - `AC4.1 markdown`: `### Lens review by lens` rows starting `| 3a | 2 | 50% | 1.00 |` and `| 3b | 2 | 100% | 0.00 |`, each ending with its unparsed count `| 0 |`; the line `Each lens runs on one fixed model profile, so this table compares lenses, not models.` under `### Lens review by tier`.
-  - `AC10.1 markdown`: the line `Of 2 routed confirmed locations: fixed 50%, dismissed 0%, staged 50%, deferred 0%; 1 unrouted (left out of the shares); 0 run units unparsed.`
-  - `AC6.1 --json: the 3a rate uses the two latest runs`. The Task 4 AC6.1 fixture, `--section reviews --since 2026-11-16 --until 2026-11-18 --runs 2 --json` → `reviews.lens.yield` `{ runs: 2, byLens: { '3a': { runs: 2, agents: 4, confirmed: 3, rate: 0.75, unparsed: 0 } } }`.
-  - `--json carries every figure under reviews with n and unparsed`. Keys: `reviews.window`, `reviews.taskReview.byTier`, `reviews.taskReview.reReviews`, `reviews.planReview.{reviews,n,unparsed,withFindings,findingsPerReview,byKind,humanStops}`, `reviews.lens.{byTier,byLens,perRun,outcomes,yield}`; `reviews.lens.yield.byLens['3a']` has exactly the keys `runs, agents, confirmed, rate, unparsed`.
+  - `AC10.1 markdown`: the line `Of 2 routed confirmed locations: fixed 50%, dismissed 0%, staged 50%, deferred 0%; 1 unrouted (left out of the shares); 0 run units unparsed.` and, below it, `Of 2 routed locations, refuted ones included (the 2026-11-18 measurement's division): fixed 50%, dismissed 0%, staged 50%, deferred 0%.`
+  - `AC6.1 --json: the 3a rate uses the two latest runs, whatever --since says`. The Task 4 AC6.1 fixture, `--section reviews --since 2026-11-18 --until 2026-11-18 --runs 2 --json` → `reviews.lens.yield` `{ runs: 2, byLens: { '3a': { runs: 2, agents: 4, confirmed: 3, rate: 0.75, unparsed: 0 } } }`; the markdown run prints `Up to 2 most recent runs per lens dated on or before 2026-11-18, whatever --since says.`
+  - `--json carries every figure under reviews with n and unparsed`. Keys: `reviews.window` (with `noTiming` and `timingUnparsed`), `reviews.taskReview.byTier`, `reviews.taskReview.reReviews`, `reviews.planReview.{reviews,n,unparsed,withFindings,findingsPerReview,byKind,humanStops}`, `reviews.lens.{byTier,byLens,perRun,outcomes,yield}`, `reviews.lens.outcomes.allRouted`; `reviews.lens.yield.byLens['3a']` has exactly the keys `runs, agents, confirmed, rate, unparsed`.
   - `the task-review and verdict notes print`: `The task-review tier follows the plan's review-risk flag, so the capable tier reviews the riskier tasks; the tiers are printed side by side, not compared.` and `"Confirmed" is the tiebreak judge's verdict or a pair's agreement, not ground truth.`
-  - `a pipelines listing failure makes the section unavailable and exits 1`: no `--pipelines`, `deps.git` throwing → output holds `reviews: unavailable —`, exit 1.
+  - `a pipelines listing failure: --section reviews exits 1, --section all leaves the code alone`: no `--pipelines`, `deps.git` throwing. `--section reviews` → output holds `reviews: unavailable — cannot resolve the pipelines directory`, exit 1. `--section all --all-projects --json` with the same deps → `json.reviews.error` matches `/cannot resolve the pipelines directory/`, no other section key carries an `error`, and exit 0 (mirrors `cli.test.js`'s `a failed default --pipelines lookup prints Runs: unavailable and leaves the exit code alone`; if the harness's funnel or records stub makes another section fail here, fix the stub in this test, not the assertion).
   - `--section reviews is accepted; an unknown section lists it`: `--section bogus` exits 2 and the usage holds `--section spend|funnel|records|guards|reviews|all]`.
 
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `node tools/run-tests.js tests/pipeline-cost-report/reviews.test.js`
-Expected: FAIL with `--section must be one of spend|funnel|records|guards|all`.
+Expected: FAIL with `--section must be one of spend|funnel|records|guards|all` (the CLI cases) and the Task 1-4 cases still green.
 
 - [ ] **Step 3: Implement.**
   - `SECTIONS`: the `reviews` entry above. Markdown render, in order, each table with no rows printing `none.` instead:
-    - `## Reviews`, then `{runs} runs dated {since} to {until} ({units} run units: a multi-spec run counts once per spec member for the verdict figures); {timingUnparsed} with an unreadable timing.json.`
+    - `## Reviews`, then `{runs} runs dated {since} to {until} ({units} run units: a multi-spec run counts once per spec member for the verdict figures); {noTiming} without a timing.json, {timingUnparsed} with an unreadable one.`
     - `### Task review`, the tier note above, then `| Tier | Reviews | Approved | Needs fixes | Critical | Important | Minor | Minor only | Unparsed |`; Minor only is `{count} of {of}`, Unparsed `{unparsed}; items {items.unparsed}`. Then `Re-reviews (not in the table): {n} ({tier} {k}, …).`
     - `### Plan review`, `Reviews: {reviews}; with a finding: {pct}; findings per review: {x.xx}; unparsed: {u}.`, `Stopped to ask a human: {runs} of {n} run units; {u} unparsed.`, then `| Kind | Findings |` in the order of `PLAN_KINDS`, then `other`.
     - `### Lens review by tier` (the profile note) and `### Lens review by lens`, both `| {Tier or Lens} | Agents | No finding | Findings per agent | Critical | High | Medium | Low | Info | Unparsed |` with per-agent means; tiers ordered `fast, standard, capable, frontier`, then others by name; lenses by name.
     - `### Lens verdicts`, the confirmed note, `| Run | Confirmed | Both reviewers | Tiebreak | Refuted | Can't tell |`, then the same columns per lens, then `Run units read: {n}; unparsed: {u}.`
-    - `### Lens outcomes`, the outcomes line above.
-    - `### Lens yield`, `Up to {runs} most recent runs per lens.`, `| Lens | Runs | Agents | Confirmed | Confirmed per agent | Unparsed |`.
-  - `USAGE`, the header comment's usage line and Sections list (a `reviews` paragraph: what it reads, the multi-spec rule, `--runs` for the yield, the listing-failure exit), and the two `docs/plugin-structure.md` entries (add `reviews` to the `--section` list, one clause on what it prints, and `reviews.js` to the module list).
+    - `### Lens outcomes`, the two outcomes lines above (a null share prints `none`).
+    - `### Lens yield`, `Up to {runs} most recent runs per lens dated on or before {until}, whatever --since says.`, `| Lens | Runs | Agents | Confirmed | Confirmed per agent | Unparsed |`.
+  - `USAGE`, the header comment's usage line and Sections list (a `reviews` paragraph: what it reads, the multi-spec rule, `--runs` for the yield and its independence from `--since`), the header's Exit codes paragraph (a pipelines listing failure exits 1 under `--section reviews` only; under `--section all` it prints `reviews: unavailable —` and leaves the code alone, like `Runs: unavailable`), and the two `docs/plugin-structure.md` entries (add `reviews` to the `--section` list, one clause on what it prints, and `reviews.js` to the module list).
   - Update the two `cli.test.js` pins as described above.
   - Re-read the `reviews.js` header comment against Deliverable 9: every format it parses, each with one real excerpt, and the multi-spec stub.
 
@@ -461,8 +473,8 @@ Expected: exit 0. An independent scratch count over the same runs with this plan
   - `planReview`: `reviews` 101, `unparsed` 5, 100 with a finding, 565 findings, `byKind` cross-task contract 181, undecided behaviour 128, spec gap 114, missing review risk 86, other 56; `humanStops` `{ runs: 94, n: 458, unparsed: 5 }`.
   - `lens.byTier`: fast `agents` 458, `unparsed` 16, 84 of 442 no-finding, 1,076 rows; standard `agents` 782, `unparsed` 22, 427 of 760 no-finding, 652 rows. `lens.byLens['3a']`: `agents` 232, `unparsed` 8, 47 no-finding.
   - `lens.perRun`: `n` 143, `unparsed` 320, totals pair 309, tiebreak 1,258, refuted 285, can't-tell 80; the row `2026-11-17T204803-spec-5881-5882-5883/spec-5882` is `{ confirmed: 14, pair: 4, tiebreak: 10, refuted: 4, cantTell: 2 }` (read by hand from that member's decisions.md).
-  - `lens.outcomes.counts`: fixed 660, staged 149, deferred 47, dismissed 137; `unrouted` 441.
-  - `lens.yield.byLens`: `3a` `{ runs: 20, agents: 46, confirmed: 62, unparsed: 6 }`, `3f` `{ runs: 20, agents: 46, confirmed: 56, unparsed: 6 }`.
+  - `lens.outcomes.counts`: fixed 660, staged 149, deferred 47, dismissed 137; `unrouted` 441. `lens.outcomes.allRouted`: no scratch count was taken; check its shares, not its counts, against the record's 2026-11-18 figures (fixed 63%, dismissed 29%, staged 5%, deferred 3%, top-level runs only), and explain any share more than 5 points off in the report.
+  - `lens.yield.byLens`: `3a` `{ runs: 20, agents: 46, confirmed: 62, unparsed: 6 }`, `3f` `{ runs: 20, agents: 46, confirmed: 56, unparsed: 6 }` — that count was bounded by the window; with the user's decision the yield walk is bounded by `--until` alone (here 2026-11-18, the same newest edge), and timing-less runs now add to `unparsed`, so `unparsed` may rise and the slot runs may differ; name each difference.
 
 This command reads the real archive only after Tasks 1-4 exist, so it is unverified at plan time.
 
@@ -486,8 +498,9 @@ Waived plugin/skills/review/step3-lens-dispatch.md: read only — the spec's Got
 | Deliverable 3 (plan review: share, per review, by kind with `other`, human stops) | 1 (parser), 2 |
 | Deliverable 4 (lens per tier and lens: agents, no-finding share, per-agent by severity) | 3 |
 | Deliverable 5 (per run and per lens: confirmed, pair, tiebreak, refuted, can't tell) | 3 |
-| Deliverable 6 (outcomes, `unrouted`) | 4 |
-| Deliverable 7 (`yield.byLens`, `--runs`, unreadable takes no slot, additive shape) | 4, 5 |
+| Deliverable 6 (outcomes, `unrouted`, and the all-routed split beside it) | 4, 5 (render) |
+| Deliverable 7 (`yield.byLens`, `--runs`, `--since` ignored and `--until` bounding, a multi-spec run one summed slot, unreadable takes no slot, additive shape) | 4, 5 |
+| Plan Review Clarifications (five user decisions) | Decisions section; 2 (parent timing), 4 (yield window, slots, two splits), 5 (exit code) |
 | Deliverable 8 (unparsed beside every figure) | 1-5 |
 | Deliverable 9 (tests on real-sample fixtures; header comment) | 1 (fixtures, header), 2-4 (header excerpts), 5 (final read) |
 | AC1.1 | 2, 5 |
