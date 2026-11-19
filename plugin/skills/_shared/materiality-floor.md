@@ -34,8 +34,8 @@ fails toward filing an ordinary issue, never toward the digest.
 
 `bin/deferral-route.js` is the floor's code home (its test pins the two sections above
 byte-equal). Every site routing an item that carries a gate `Defer-reason:` runs it instead of
-applying this prose; the five health sweeps, the tiebreak can't-tell digest, the console-backfill
-values and ledger narrowing follow their own rules:
+applying this prose. The five health sweeps (no gate reason) apply this prose directly; the
+tiebreak can't-tell digest, the console-backfill values and ledger narrowing follow their own rules:
 
 `node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} [--severity {severity}] --size {size} --priority {priority} --risk {risk} (--agent-raised | --human)`
 
@@ -117,8 +117,7 @@ this pipeline was already doing. Deliberately **not** added to `bin/lib/issues/r
 a producer-class marker specific to this Entry format field, so widening the gate's own closed
 vocabulary for it would blur a distinction the gate exists to keep — every other value in that
 vocabulary except `needs-verification` (the filed verification task's reason, below) answers "why
-did fix-now fail for an item this pipeline was already working on," which is not the question a
-proactive sweep's own fresh finding is answering. A future
+did fix-now fail for an item this pipeline was already working on." A future
 non-gate-routed adopter of this floor uses the same value.
 
 ### Tiebreak can't-tell value

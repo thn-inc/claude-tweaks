@@ -294,7 +294,8 @@ const FLOOR_NEEDLES = [
   ROUTE_FORM,
   'its test pins the two sections above byte-equal',
   'Every site routing an item that carries a gate `Defer-reason:` runs it',
-  'the five health sweeps, the tiebreak can\'t-tell digest, the console-backfill values and ledger narrowing follow their own rules',
+  'five health sweeps (no gate reason) apply this prose directly',
+  'the tiebreak can\'t-tell digest, the console-backfill values and ledger narrowing follow their own rules',
   'lowercase (`critical`, `high`, `medium`, `low`, `info`)',
   'Every routing site passes `--agent-raised`',
   '`verdict` (`file`, `digest` or `refused`) and `rule`',
@@ -878,7 +879,7 @@ test('Expiry\'s date fence runs: a run-id, a stamped line, the comment date, and
 });
 
 // --- #5931 Task 4: visual-review's Issue severities onto the command's (plan-review Decision 2) ---
-const VISUAL_SEVERITY_MAP = ['Critical `critical`', 'Major `medium`', 'Minor `low`', 'Cosmetic `info`', 'an agent row\'s lowercase word as-is, `high` as `medium`', 'none for an Idea'];
+const VISUAL_SEVERITY_MAP = ['Critical `critical`', 'Major `medium`', 'Minor `low`', 'Cosmetic `info`', 'an agent row\'s lowercase word as-is;', 'none for an Idea'];
 function visualSeverityProblems(text) {
   const defer = text.split('\n').find((l) => l.startsWith('- **Defer** (new work record — born-ready'));
   if (!defer) return ['the Issues Defer bullet is missing'];
@@ -920,5 +921,42 @@ for (const [name, prefix] of VISUAL_BRANCHES) {
     const mutated = text.split('\n').map((l) => (l.startsWith(prefix) ? l.split('deferral-route.js').join('') : l)).join('\n');
     assert.notEqual(mutated, text, `${name} bullet has no deferral-route.js`);
     assert.deepStrictEqual(visualBranchProblems(mutated), [`the ${name} bullet does not run deferral-route.js`]);
+  });
+}
+
+// an agent row's `high` keeps its word: the floor's Overrides clear `high`/`critical` rows, so a remap to `medium` would digest one
+test('#5931 visual-review passes an agent row\'s `high` as-is, never remapped to `medium`', () => {
+  const text = read('plugin/skills/visual-review/browser-review.md');
+  const defer = text.split('\n').find((l) => l.startsWith('- **Defer** (new work record — born-ready'));
+  assert.ok(defer && !defer.includes('`high` as `medium`'), 'the Issues Defer bullet remaps `high` as `medium`');
+});
+test('#5931 go-red: a `high` as `medium` remap in the Issues Defer bullet fails the pin', () => {
+  const text = read('plugin/skills/visual-review/browser-review.md');
+  const mutated = text.replace('lowercase word as-is;', 'lowercase word as-is, `high` as `medium`;');
+  assert.notEqual(mutated, text);
+  const defer = mutated.split('\n').find((l) => l.startsWith('- **Defer** (new work record — born-ready'));
+  assert.ok(defer.includes('`high` as `medium`'));
+});
+
+// review's Defer and Capture bullets and reflect's Capture bullet each run the command (the visual-review branch pin's pattern)
+const ROUTE_BULLETS = [
+  ['review Defer', 'plugin/skills/review/step3-routing.md', '- **Defer** (new work record — born-ready'],
+  ['review Capture', 'plugin/skills/review/step3-routing.md', '- **Capture** — the finding is'],
+  ['reflect Capture', 'plugin/skills/reflect/full-mode.md', '- **Capture** — the insight is'],
+];
+function routeBulletProblems(name, prefix, text) {
+  const line = text.split('\n').find((l) => l.startsWith(prefix));
+  if (!line) return [`the ${name} bullet is missing`];
+  return line.includes('deferral-route.js') ? [] : [`the ${name} bullet does not run deferral-route.js`];
+}
+for (const [name, file, prefix] of ROUTE_BULLETS) {
+  test(`#5931 the ${name} bullet runs deferral-route.js`, () => {
+    assert.deepStrictEqual(routeBulletProblems(name, prefix, read(file)), []);
+  });
+  test(`#5931 go-red: the ${name} bullet without deferral-route.js fails the bullet pin`, () => {
+    const text = read(file);
+    const mutated = text.split('\n').map((l) => (l.startsWith(prefix) ? l.split('deferral-route.js').join('') : l)).join('\n');
+    assert.notEqual(mutated, text, `${name} bullet has no deferral-route.js`);
+    assert.deepStrictEqual(routeBulletProblems(name, prefix, mutated), [`the ${name} bullet does not run deferral-route.js`]);
   });
 }

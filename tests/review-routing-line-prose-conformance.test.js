@@ -113,7 +113,7 @@ function recordProposalParagraph() {
 // Each clause is one literal the paragraph must carry, so removing it turns exactly that clause red.
 const RECORD_PROPOSAL_CLAUSES = [
   ['--id review-followup-1', 'stages under a review-followup id with a starting slot'],
-  ['--allocate', 'allocates the number'],
+  ['--file {proposal} --allocate', 'allocates the number'],
   ['from the path its first stdout line prints', 'takes {n} from the path stage-item.js prints'],
   ['a literal `{n}` passed to `--id` exits 2', 'warns that a literal {n} id exits 2'],
   ['Finding: {severity} {category}', 'writes the Finding: header line'],
@@ -196,6 +196,9 @@ test('#4484: the record-proposal paragraph cites a composer command that stages 
 });
 
 for (const [literal, fact] of RECORD_PROPOSAL_CLAUSES) {
+  test(`#5931 the clause that ${fact} occurs exactly once, so a second match cannot mask its loss`, () => {
+    assert.equal(recordProposalParagraph().split(literal).length - 1, 1, `"${literal}" must occur exactly once`);
+  });
   test(`#4484 go-red: removing the clause that ${fact} turns that clause red`, () => {
     const paragraph = recordProposalParagraph();
     const doctored = paragraph.split(literal).join('');
