@@ -33,8 +33,9 @@ const PRICES = {
 };
 
 // Claude Code writes `<synthetic>` assistant lines (zero usage) for API errors such as usage_limit_reached. They are
-// kept in `requests` (counted, unpriced) but are not model calls: they never serve as the previous call for the
-// family or idle-gap check and never use up a pending compaction marker. Any other unpriced id is a real call of an
+// kept in `requests` (zero cost) but are left out of every spend tally, `unpriced` included. They are not model
+// calls: they never serve as the previous call for the family or idle-gap check and never use up a pending
+// compaction marker. Any other unpriced id is a real call of an
 // unknown family and stays in the chain.
 const SYNTHETIC_MODEL = '<synthetic>';
 const HAIKU_LONG_PROMPT = 100000;
@@ -213,16 +214,19 @@ async function collectSpend({ roots, since, until, match = null }, { fsImpl = fs
     sessions: 0,
     unreadable: 0,
   };
-  const scans = new Map();
-  const scan = (file) => {
-    if (!scans.has(file)) scans.set(file, scanTranscript(file, { fsImpl }).then((value) => ({ value }), (error) => ({ error })));
-    return scans.get(file);
+  const failed = new Set();
+  const fail = (file) => {
+    if (!failed.has(file)) {
+      failed.add(file);
+      res.unreadable += 1;
+    }
   };
-  const list = (dir) => {
+  // optional: a missing directory is "nothing there", not a failure (a session dir need not have subagents/)
+  const list = (dir, optional = false) => {
     try {
       return fsImpl.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      res.unreadable += 1;
+    } catch (e) {
+      if (!(optional && e && e.code === 'ENOENT')) fail(dir);
       return [];
     }
   };
@@ -230,17 +234,20 @@ async function collectSpend({ roots, since, until, match = null }, { fsImpl = fs
     try {
       return fsImpl.statSync(file).mtimeMs >= startMs;
     } catch {
-      res.unreadable += 1;
+      fail(file);
       return null;
     }
   };
   const wanted = (cwd, slug) => !match || (cwd || slug).includes(match);
 
+  // returns how many of the requests were counted
   function tally(requests, sessionType, agent) {
+    let counted = 0;
     for (const r of requests) {
-      if (r.synthetic || r.model === SYNTHETIC_MODEL) continue;
+      if (r.model === SYNTHETIC_MODEL) continue;
       const t = Date.parse(r.ts);
       if (!(t >= startMs && t < endMs)) continue;
+      counted += 1;
       res.total += r.usd;
       add(res.bySessionType, sessionType, r.usd);
       add(res.byModel, r.family, r.usd);
@@ -257,18 +264,39 @@ async function collectSpend({ roots, since, until, match = null }, { fsImpl = fs
         res.unpriced.tokens += r.prompt + r.output;
       }
     }
+    return counted;
   }
 
-  async function readInto(file, slug, sessionTypeOf, agent) {
-    const got = await scan(file);
-    if (got.error) {
-      // the cache holds one outcome per file; a main that failed is counted where it is listed, below
-      return got;
+  // Main transcripts are scanned once; only { firstSkill, cwd } (or the failure) is kept, so a subagent can look its
+  // parent up without holding every request list in memory. A main inside the window is tallied as it is scanned.
+  const mainInfo = new Map();
+  function scanMain(file, slug, tallyIt) {
+    if (!mainInfo.has(file)) {
+      mainInfo.set(
+        file,
+        scanTranscript(file, { fsImpl }).then(
+          ({ cwd, firstSkill, requests }) => {
+            const type = firstSkill || NO_SKILL;
+            if (tallyIt && wanted(cwd, slug) && tally(requests, type, 'main') > 0) res.sessions += 1;
+            return { type };
+          },
+          () => {
+            fail(file);
+            return { error: true };
+          },
+        ),
+      );
     }
-    const { cwd, requests } = got.value;
-    if (!wanted(cwd, slug)) return got;
-    tally(requests, sessionTypeOf(got.value), agent);
-    return got;
+    return mainInfo.get(file);
+  }
+
+  async function scanSubagent(file, slug, sessionType) {
+    try {
+      const { cwd, requests } = await scanTranscript(file, { fsImpl });
+      if (wanted(cwd, slug)) tally(requests, sessionType, 'subagent');
+    } catch {
+      fail(file);
+    }
   }
 
   for (const root of roots) {
@@ -281,11 +309,7 @@ async function collectSpend({ roots, since, until, match = null }, { fsImpl = fs
 
       for (const session of mains) {
         const file = path.join(slugDir, `${session}.jsonl`);
-        const fresh = inWindow(file);
-        if (fresh !== true) continue;
-        const got = await readInto(file, slug, (v) => v.firstSkill || NO_SKILL, 'main');
-        if (got.error) res.unreadable += 1;
-        else if (wanted(got.value.cwd, slug)) res.sessions += 1;
+        if (inWindow(file) === true) await scanMain(file, slug, true);
       }
 
       for (const dirEntry of entries) {
@@ -293,10 +317,10 @@ async function collectSpend({ roots, since, until, match = null }, { fsImpl = fs
         const session = dirEntry.name;
         const subDir = path.join(slugDir, session, 'subagents');
         const files = [];
-        for (const e of list(subDir)) {
+        for (const e of list(subDir, true)) {
           if (e.isFile() && e.name.startsWith('agent-') && e.name.endsWith('.jsonl')) files.push(path.join(subDir, e.name));
           else if (e.isDirectory() && e.name === 'workflows') {
-            for (const wf of list(path.join(subDir, 'workflows'))) {
+            for (const wf of list(path.join(subDir, 'workflows'), true)) {
               if (!wf.isDirectory()) continue;
               const wfDir = path.join(subDir, 'workflows', wf.name);
               for (const a of list(wfDir)) if (a.isFile() && a.name.startsWith('agent-') && a.name.endsWith('.jsonl')) files.push(path.join(wfDir, a.name));
@@ -306,13 +330,11 @@ async function collectSpend({ roots, since, until, match = null }, { fsImpl = fs
         if (files.length === 0) continue;
         let parentType = UNATTRIBUTED;
         if (mains.has(session)) {
-          const parent = await scan(path.join(slugDir, `${session}.jsonl`));
-          if (parent.value) parentType = parent.value.firstSkill || NO_SKILL;
+          const parent = await scanMain(path.join(slugDir, `${session}.jsonl`), slug, false);
+          if (parent.type) parentType = parent.type;
         }
         for (const file of files) {
-          if (inWindow(file) !== true) continue;
-          const got = await readInto(file, slug, () => parentType, 'subagent');
-          if (got.error) res.unreadable += 1;
+          if (inWindow(file) === true) await scanSubagent(file, slug, parentType);
         }
       }
     }

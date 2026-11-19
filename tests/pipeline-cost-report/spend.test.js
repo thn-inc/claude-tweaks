@@ -384,7 +384,7 @@ test('match keeps only transcripts whose cwd contains the substring', async () =
   assert.strictEqual(r.sessions, 2);
 });
 
-test('re-writes are tallied by cause and unpriced models are counted apart from spend', async () => {
+test('a session-start write is tallied under its cause and unpriced models are counted apart from spend', async () => {
   const root = newRoot();
   put(path.join(root, 'slug-a', 's1.jsonl'), [
     asst('a', 'claude-opus-4-8', 0, { cache_creation_input_tokens: 100000 }),
@@ -413,4 +413,42 @@ test('cacheWrites tallies every cache write by cause, so its dollars sum to all 
   assert.strictEqual(r.cacheWrites['model switch'].requests, 1);
   const sum = Object.values(r.cacheWrites).reduce((s, e) => s + e.usd, 0);
   near(sum, requests[0].cacheWriteUsd + requests[1].cacheWriteUsd);
+});
+
+test('a session dir without subagents/ and a slug-level dir that is not a session are not unreadable', async () => {
+  const root = newRoot();
+  put(path.join(root, 'slug-a', 's1.jsonl'), [opusCall('a', 1)]);
+  put(path.join(root, 'slug-a', 's1', 'tool-results', 'out.json'), []);
+  fs.mkdirSync(path.join(root, 'slug-a', 'memory'), { recursive: true });
+  const r = await collectSpend({ roots: [root], ...WINDOW });
+  assert.strictEqual(r.unreadable, 0);
+  near(r.total, 4);
+});
+
+test('a parent transcript that fails to scan is counted unreadable once, even when its mtime is outside the window', async () => {
+  const root = newRoot();
+  const parent = put(path.join(root, 'slug-a', 's1.jsonl'), [typed(0, 'flow'), opusCall('a', 1)]);
+  const old = new Date('2026-10-01T00:00:00Z');
+  fs.utimesSync(parent, old, old);
+  put(path.join(root, 'slug-a', 's1', 'subagents', 'agent-x.jsonl'), [opusCall('b', 2, 500000)]);
+  put(path.join(root, 'slug-a', 's1', 'subagents', 'agent-y.jsonl'), [opusCall('c', 3, 500000)]);
+  const failRead = {
+    ...fs,
+    createReadStream: (f, ...rest) => {
+      if (f === parent) throw Object.assign(new Error('EIO'), { code: 'EIO' });
+      return fs.createReadStream(f, ...rest);
+    },
+  };
+  const r = await collectSpend({ roots: [root], ...WINDOW }, { fsImpl: failRead });
+  assert.strictEqual(r.unreadable, 1);
+  near(r.bySessionType.unattributed, 4);
+});
+
+test('sessions counts a main transcript only when one of its requests is in the window', async () => {
+  const root = newRoot();
+  const m = (id, iso) => ({ ...opusCall(id, 0, 500000), timestamp: iso });
+  put(path.join(root, 'slug-a', 'in.jsonl'), [m('a', '2026-11-10T00:00:00Z')]);
+  put(path.join(root, 'slug-a', 'out.jsonl'), [m('b', '2026-11-01T00:00:00Z')]);
+  const r = await collectSpend({ roots: [root], ...WINDOW });
+  assert.strictEqual(r.sessions, 1);
 });
