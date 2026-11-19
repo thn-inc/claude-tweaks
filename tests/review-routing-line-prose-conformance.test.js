@@ -158,6 +158,9 @@ test('#5931: the ledger-first paragraph writes and keeps each open review row\'s
   assert.deepEqual(missingSeverityTokenClauses(md), []);
 });
 for (const [literal, fact] of SEVERITY_TOKEN_CLAUSES) {
+  test(`#5931 the clause that ${fact} occurs exactly once, so a second copy cannot mask its loss`, () => {
+    assert.equal(ledgerFirstParagraph(md).split(literal).length - 1, 1, `"${literal}" must occur exactly once`);
+  });
   test(`#5931 go-red: removing the clause that ${fact} turns that clause red`, () => {
     const paragraph = ledgerFirstParagraph(md);
     const doctored = md.replace(paragraph, () => paragraph.split(literal).join(''));

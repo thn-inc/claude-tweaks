@@ -8,6 +8,11 @@ files:
   - plugin/skills/review/step3-routing.md
   - plugin/skills/wrap-up/residue-sweep.md
   - plugin/skills/wrap-up/leftover-routing.md
+  - plugin/skills/wrap-up/review-console.md
+  - plugin/skills/reflect/full-mode.md
+  - plugin/skills/visual-review/browser-review.md
+  - plugin/skills/release/disposition.md
+  - plugin/skills/_shared/ledger-format.md
 ---
 
 # Route a Deferred Finding in Code
@@ -42,10 +47,10 @@ files:
 
 ### 3. Act on the verdict at the skill's own routing site
 - **URL:** `plugin/skills/review/step3-routing.md`, `plugin/skills/release/disposition.md`, `plugin/skills/reflect/full-mode.md`, `plugin/skills/visual-review/browser-review.md`, `plugin/skills/wrap-up/residue-sweep.md`, `plugin/skills/wrap-up/leftover-routing.md`, and control mode's `belowFloor` in `_shared/ledger-format.md` and `wrap-up/review-console.md` step 10
-- **Action:** Run the command from `_shared/materiality-floor.md`'s `## Applying the floor`, then file a backlog record on `file`, log a digest entry on `digest`, and fix the call and re-run on `refused`.
+- **Action:** Run the command from `_shared/materiality-floor.md`'s `## Applying the floor`, then file a backlog record on `file` and log a digest entry on `digest`; on `refused` or any other outcome, leave the item open and report what the command printed, never re-running it or falling back to the floor's prose.
 - **Should feel:** The same answer wherever a deferral is routed; no site re-derives the floor from prose.
 - **Should understand:**
   - Every routing site reads the verdict; none decides the floor itself.
-  - A `refused` verdict is never treated as `digest` or `file`.
+  - A `refused` verdict is never digested; control mode, which must converge every item, files it.
   - An agent-supplied severity is passed through as given, not remapped to fit.
-- **Red flags:** A routing site that decides file-versus-digest without running the command; a `refused` verdict that gets filed or digested; two sites giving different verdicts for the same finding.
+- **Red flags:** A routing site that decides file-versus-digest without running the command; a `refused` verdict that gets digested, or that a non-control-mode site files; two sites giving different verdicts for the same finding.

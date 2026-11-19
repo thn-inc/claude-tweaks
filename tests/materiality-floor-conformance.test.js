@@ -14,7 +14,8 @@ const { spawnSync } = require('child_process');
 const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record');
 const { trustedJqSelect, untrustedJqNote } = require('../plugin/bin/lib/issues/comment-trust');
 const { readText } = require('./helpers/read-skill');
-const { sectionOf } = require('./helpers/conformance-asserts');
+const { sectionOf, lineStartingWith } = require('./helpers/conformance-asserts');
+const { run: routeCli } = require('../plugin/bin/deferral-route');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const read = (rel) => readText(path.join(REPO_ROOT, rel));
@@ -244,7 +245,7 @@ function assertDeferralSite(text, rel) {
 }
 
 for (const rel of DEFERRAL_SITES) {
-  test(`#5931 deferral site ${rel} runs the deferral-route.js command and follows its verdict`, () => {
+  test(`#5931 deferral site ${rel} carries the deferral-route.js command form, its flags and every verdict word`, () => {
     assertDeferralSite(read(rel), rel);
   });
 }
@@ -288,6 +289,34 @@ test('#5931 go-red: an override restated across a line wrap fails the deferral-s
   const restated = `${SAMPLE_SITE}\nA \`tangential\` reason always\nclears the floor.`;
   assert.deepStrictEqual(deferralSiteProblems(restated), ['restates a floor override']);
   assert.throws(() => assertDeferralSite(restated, 'sample'));
+});
+
+// Every documented command form, filled in, must parse and route through the real CLI: the prose pins
+// above compare text to text, so a renamed CLI flag would leave them green while every call refuses.
+const ROUTE_SPAN = /`(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/deferral-route\.js"[^`]*)`/g;
+function routeVerdict(span, severity) {
+  const filled = span
+    .replace('(--agent-raised | --human)', '--agent-raised')
+    .replace(/\[([^\]]*)\]/g, '$1')
+    .replace('{reason}', 'pre-existing-outside-diff')
+    .replace('{severity}', severity)
+    .replace(/\{(size|priority|risk)\}/g, 'low');
+  let out = '';
+  const code = routeCli(filled.split(/\s+/).slice(2), { stdout: (s) => { out += s; }, stderr: () => {} });
+  return { code, verdict: JSON.parse(out).verdict };
+}
+for (const rel of ['plugin/skills/_shared/materiality-floor.md', ...DEFERRAL_SITES]) {
+  test(`#5931 every deferral-route.js form ${rel} documents routes through the real CLI`, () => {
+    const spans = [...read(rel).matchAll(ROUTE_SPAN)].map((m) => m[1]);
+    assert.ok(spans.length > 0, `${rel} documents no deferral-route.js command form`);
+    for (const span of spans) {
+      assert.deepStrictEqual(routeVerdict(span, 'low'), { code: 0, verdict: 'digest' }, span);
+      if (span.includes('{severity}')) assert.deepStrictEqual(routeVerdict(span, 'high'), { code: 0, verdict: 'file' }, span);
+    }
+  });
+}
+test('#5931 go-red: a documented form with a flag the CLI does not accept is refused', () => {
+  assert.deepStrictEqual(routeVerdict(ROUTE_FORM.replace('--size', '--scale'), 'low'), { code: 2, verdict: 'refused' });
 });
 
 const FLOOR_NEEDLES = [
@@ -881,7 +910,7 @@ test('Expiry\'s date fence runs: a run-id, a stamped line, the comment date, and
 // --- #5931 Task 4: visual-review's Issue severities onto the command's (plan-review Decision 2) ---
 const VISUAL_SEVERITY_MAP = ['Critical `critical`', 'Major `medium`', 'Minor `low`', 'Cosmetic `info`', 'an agent row\'s lowercase word as-is;', 'none for an Idea'];
 function visualSeverityProblems(text) {
-  const defer = text.split('\n').find((l) => l.startsWith('- **Defer** (new work record — born-ready'));
+  const defer = lineStartingWith(text, '- **Defer** (new work record — born-ready');
   if (!defer) return ['the Issues Defer bullet is missing'];
   return VISUAL_SEVERITY_MAP.filter((m) => !defer.includes(m)).map((m) => `the Issues Defer bullet does not map ${m}`);
 }
@@ -921,7 +950,7 @@ for (const [name, prefix] of VISUAL_BRANCHES) {
 
 // an agent row's `high` keeps its word: the floor's Overrides clear `high`/`critical` rows, so a remap to `medium` would digest one
 function highRemapProblems(text) {
-  const defer = text.split('\n').find((l) => l.startsWith('- **Defer** (new work record — born-ready'));
+  const defer = lineStartingWith(text, '- **Defer** (new work record — born-ready');
   if (!defer) return ['the Issues Defer bullet is missing'];
   return defer.includes('`high` as `medium`') ? ['the Issues Defer bullet remaps `high` as `medium`'] : [];
 }
@@ -942,10 +971,12 @@ const ROUTE_BULLETS = [
   ['review Capture', 'plugin/skills/review/step3-routing.md', '- **Capture** — the finding is'],
   ['reflect Capture', 'plugin/skills/reflect/full-mode.md', '- **Capture** — the insight is'],
 ];
+// A bullet must also act on the verdict: name the `refused` branch itself, or follow the cited bullet's verdict.
 function routeBulletProblems(name, prefix, text) {
-  const line = text.split('\n').find((l) => l.startsWith(prefix));
+  const line = lineStartingWith(text, prefix);
   if (!line) return [`the ${name} bullet is missing`];
-  return line.includes('deferral-route.js') ? [] : [`the ${name} bullet does not run deferral-route.js`];
+  if (!line.includes('deferral-route.js')) return [`the ${name} bullet does not run deferral-route.js`];
+  return line.includes('`refused`') || line.includes('follow its verdict') ? [] : [`the ${name} bullet does not act on the verdict`];
 }
 for (const [name, file, prefix] of ROUTE_BULLETS) {
   test(`#5931 the ${name} bullet runs deferral-route.js`, () => {
@@ -956,5 +987,11 @@ for (const [name, file, prefix] of ROUTE_BULLETS) {
     const mutated = text.split('\n').map((l) => (l.startsWith(prefix) ? l.split('deferral-route.js').join('') : l)).join('\n');
     assert.notEqual(mutated, text, `${name} bullet has no deferral-route.js`);
     assert.deepStrictEqual(routeBulletProblems(name, prefix, mutated), [`the ${name} bullet does not run deferral-route.js`]);
+  });
+  test(`#5931 go-red: the ${name} bullet naming the command but not acting on its verdict fails the bullet pin`, () => {
+    const text = read(file);
+    const mutated = text.split('\n').map((l) => (l.startsWith(prefix) ? l.split('`refused`').join('').split('follow its verdict').join('') : l)).join('\n');
+    assert.notEqual(mutated, text, `${name} bullet acts on no verdict`);
+    assert.deepStrictEqual(routeBulletProblems(name, prefix, mutated), [`the ${name} bullet does not act on the verdict`]);
   });
 }
