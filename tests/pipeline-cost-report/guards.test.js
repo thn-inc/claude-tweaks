@@ -11,7 +11,7 @@ const os = require('os');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..', '..');
-const { selectColumns, parseReviewCounts, readTiming, readReport, collectWholeBranch, collectFirstPass } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'guards.js'));
+const { selectColumns, parseReviewCounts, readTiming, readReport, collectWholeBranch, collectFirstPass, keyFilesOf, collectPostMergeBugs } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'guards.js'));
 
 const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pcr-guards-'));
 after(() => fs.rmSync(DIR, { recursive: true, force: true }));
@@ -206,7 +206,7 @@ const task = (role, description, tier = 'standard', t = 1, parentAgentId = null)
   role,
   tier,
   parentAgentId,
-  startTs: `2026-11-18T10:00:0${t}Z`,
+  startTs: `2026-11-18T10:00:${String(t).padStart(2, '0')}Z`,
 });
 const impl = (description, tier, t, parent) => task('implementer', description, tier, t, parent);
 const rev = (description, tier, t, parent) => task('task review', description, tier, t, parent);
@@ -350,4 +350,120 @@ test('a timing.json with no dispatches.items counts one unparsed in guards 1 and
     assert.strictEqual(r.n, 0);
     assert.strictEqual(r.unparsed, 1);
   }
+});
+
+test('first pass tier follows startTs, not array order', () => {
+  const r = firstPass([
+    impl('Implement Task 1: a again', 'standard', 5),
+    impl('Implement Task 1: a', 'capable', 1),
+    rev('Review Task 1', 'capable', 6),
+  ]);
+  assert.strictEqual(r.byTier.capable.n, 1);
+  assert.strictEqual(r.byTier.standard, undefined);
+});
+
+test('keyFilesOf strips backticks, a trailing :line and a trailing note', () => {
+  const body = [
+    '## Overview', 'x', '### Key Files',
+    '- `tools/a.js` \u2014 adds x',
+    '- tools/b.js:42',
+    '- `tools/c.js:10-20` \u2014 note',
+    '',
+    '## Gotchas',
+    '- `tools/z.js`',
+  ].join('\n');
+  assert.deepStrictEqual(keyFilesOf(body), ['tools/a.js', 'tools/b.js', 'tools/c.js']);
+  assert.strictEqual(keyFilesOf('## Overview\nno files here'), null);
+});
+
+// A fake gh: prs is [{ number, mergedAt, files: [path] }], bugs is [{ number, createdAt, body }].
+function fakeGh(prs, bugs) {
+  const calls = [];
+  const gh = (args) => {
+    calls.push(args);
+    if (args[0] === 'pr' && args[1] === 'list') return JSON.stringify(prs.map(({ number, mergedAt }) => ({ number, mergedAt })));
+    if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ files: prs.find((p) => String(p.number) === args[2]).files.map((f) => ({ path: f })) });
+    if (args[0] === 'issue' && args[1] === 'list') return JSON.stringify(bugs);
+    throw new Error('unexpected gh call ' + args.join(' '));
+  };
+  return { gh, calls };
+}
+const keyBody = (...files) => ['## Overview', 'x', '### Key Files', ...files.map((f) => '- `' + f + '`')].join('\n');
+const col = (...dates) => dates.map((d) => ({ name: d + 'T1-spec-1', date: d, dir: '/x', archived: false, members: [] }));
+
+test('AC5.1: a bug 10 days after a merge counts; one 20 days after does not', () => {
+  const { gh } = fakeGh(
+    [{ number: 7, mergedAt: '2026-11-03T12:00:00Z', files: ['tools/a.js'] }],
+    [
+      { number: 100, createdAt: '2026-11-13T12:00:00Z', body: keyBody('tools/a.js') },
+      { number: 101, createdAt: '2026-11-23T12:00:00Z', body: keyBody('tools/a.js') },
+    ],
+  );
+  const r = collectPostMergeBugs(col('2026-11-01', '2026-11-05'), { repo: 'o/r', gh });
+  assert.deepStrictEqual(r, { count: 1, perPr: 1, mergedPrs: 1, unparsed: 0 });
+});
+
+test('guard 3 matches exactly and counts a bug once', () => {
+  const { gh } = fakeGh(
+    [
+      { number: 7, mergedAt: '2026-11-03T12:00:00Z', files: ['tools/a.js'] },
+      { number: 8, mergedAt: '2026-11-04T12:00:00Z', files: ['tools/a.js', 'tools/q.js'] },
+    ],
+    [
+      { number: 100, createdAt: '2026-11-10T12:00:00Z', body: keyBody('tools/a.js') },
+      { number: 101, createdAt: '2026-11-10T12:00:00Z', body: keyBody('tools/a.jsx') },
+      { number: 102, createdAt: '2026-11-02T12:00:00Z', body: keyBody('tools/a.js') },
+    ],
+  );
+  const r = collectPostMergeBugs(col('2026-11-01', '2026-11-05'), { repo: 'o/r', gh });
+  assert.strictEqual(r.count, 1);
+  assert.strictEqual(r.mergedPrs, 2);
+  assert.strictEqual(r.perPr, 0.5);
+  assert.strictEqual(r.unparsed, 0);
+});
+
+test('guard 3 window: created at the merge instant is out, exactly 14 days after is in; a longer path does not match', () => {
+  const { gh } = fakeGh(
+    [
+      { number: 7, mergedAt: '2026-11-03T12:00:00Z', files: ['tools/a.js'] },
+      { number: 8, mergedAt: '2026-11-03T12:00:00Z', files: ['tools/b.jsx'] },
+    ],
+    [
+      { number: 100, createdAt: '2026-11-03T12:00:00Z', body: keyBody('tools/a.js') },
+      { number: 101, createdAt: '2026-11-17T12:00:00Z', body: keyBody('tools/a.js') },
+      { number: 102, createdAt: '2026-11-10T12:00:00Z', body: keyBody('tools/b.js') },
+    ],
+  );
+  const r = collectPostMergeBugs(col('2026-11-01', '2026-11-05'), { repo: 'o/r', gh });
+  assert.strictEqual(r.count, 1);
+});
+
+test('guard 3: a bug with no Key Files section is unparsed', () => {
+  const { gh } = fakeGh(
+    [{ number: 7, mergedAt: '2026-11-03T12:00:00Z', files: ['tools/a.js'] }],
+    [{ number: 100, createdAt: '2026-11-10T12:00:00Z', body: 'just prose' }],
+  );
+  const r = collectPostMergeBugs(col('2026-11-01', '2026-11-05'), { repo: 'o/r', gh });
+  assert.strictEqual(r.unparsed, 1);
+  assert.strictEqual(r.count, 0);
+});
+
+test('guard 3 queries the column\'s merge window and 14 days past it', () => {
+  const { gh, calls } = fakeGh([], []);
+  const r = collectPostMergeBugs(col('2026-11-01', '2026-11-05'), { repo: 'o/r', gh });
+  const arg = (c, flag) => c[c.indexOf(flag) + 1];
+  const prList = calls.find((c) => c[0] === 'pr' && c[1] === 'list');
+  const issueList = calls.find((c) => c[0] === 'issue' && c[1] === 'list');
+  assert.strictEqual(arg(prList, '--search'), 'merged:2026-11-01..2026-11-05');
+  assert.strictEqual(arg(issueList, '--search'), 'created:2026-11-01..2026-11-19');
+  assert.strictEqual(arg(issueList, '--label'), 'type:bug');
+  for (const c of calls) assert.strictEqual(arg(c, '--repo'), 'o/r');
+  assert.deepStrictEqual(r, { count: 0, perPr: null, mergedPrs: 0, unparsed: 0 });
+});
+
+test('guard 3: an empty column makes no gh call and a gh throw propagates', () => {
+  const { gh, calls } = fakeGh([], []);
+  assert.deepStrictEqual(collectPostMergeBugs([], { repo: 'o/r', gh }), { count: 0, perPr: null, mergedPrs: 0, unparsed: 0 });
+  assert.strictEqual(calls.length, 0);
+  assert.throws(() => collectPostMergeBugs(col('2026-11-01'), { repo: 'o/r', gh: () => { throw new Error('boom'); } }), /boom/);
 });

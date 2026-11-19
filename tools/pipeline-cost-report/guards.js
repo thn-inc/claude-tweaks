@@ -9,10 +9,13 @@
 // its final report: the last assistant text block, or a later SubagentHandback message. parseReviewCounts counts
 // the top-level items under Critical/Important/Minor headings; null when none of the three headings is present.
 // collectWholeBranch is guard 1: the share of whole-branch reviews that found a Critical or Important issue.
-// Reports that cannot be found or parsed are counted `unparsed` and left out of the share. Read-only.
+// Reports that cannot be found or parsed are counted `unparsed` and left out of the share. collectFirstPass is guard 2
+// (tasks that needed no re-review); collectPostMergeBugs is guard 3 (bug records filed within 14 days of a merge that
+// changed a file the bug names under Key Files). Read-only.
 
 const fs = require('fs');
 const path = require('path');
+const { findSection } = require('../../plugin/bin/lib/markdown-blocks.js');
 
 const PIPELINE_NAME_RE = /(^|-)(spec|record)-/;
 const SEVERITY_RE = /^#{1,6}\s+(Critical|Important|Minor)\b/i;
@@ -257,4 +260,52 @@ function collectFirstPass(runs, { fsImpl = fs } = {}) {
   return { share: n ? passed / n : null, byTier, n, unparsed };
 }
 
-module.exports = { selectColumns, parseReviewCounts, readTiming, readReport, collectWholeBranch, collectFirstPass };
+const DAY_MS = 24 * 60 * 60 * 1000;
+const BUG_WINDOW_DAYS = 14;
+
+// The paths under a record body's `### Key Files` section; null when the body has no such section.
+function keyFilesOf(body) {
+  const section = findSection(String(body || ''), 'Key Files');
+  if (section === null) return null;
+  const files = [];
+  for (const line of section.split('\n')) {
+    const item = /^\s*[-*+]\s+(.*)$/.exec(line);
+    if (!item) continue;
+    const file = item[1].split(' \u2014 ')[0].replace(/`/g, '').trim().replace(/:\d+(-\d+)?$/, '');
+    if (file) files.push(file);
+  }
+  return files;
+}
+
+const dayPlus = (day, n) => new Date(Date.parse(`${day}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
+
+// Guard 3: bug records created after, and within 14 days of, a merged PR in the column whose changed files share a path
+// with the bug's Key Files. A bug is counted once however many PRs it matches; a bug with no Key Files section is
+// `unparsed`. `repo` is an owner/name string; a gh throw propagates.
+function collectPostMergeBugs(column, { repo, gh }) {
+  if (!column.length) return { count: 0, perPr: null, mergedPrs: 0, unparsed: 0 };
+  const from = column[0].date;
+  const to = column[column.length - 1].date;
+  const json = (args) => JSON.parse(String(gh(args)));
+  const prs = json(['pr', 'list', '--repo', repo, '--state', 'merged', '--search', `merged:${from}..${to}`, '--limit', '1000', '--json', 'number,mergedAt']);
+  const merged = prs.map((pr) => {
+    const view = json(['pr', 'view', String(pr.number), '--repo', repo, '--json', 'files']);
+    return { at: Date.parse(pr.mergedAt), files: new Set((view.files || []).map((f) => f.path)) };
+  });
+  const bugs = json(['issue', 'list', '--repo', repo, '--state', 'all', '--label', 'type:bug', '--search', `created:${from}..${dayPlus(to, BUG_WINDOW_DAYS)}`, '--limit', '1000', '--json', 'number,createdAt,body']);
+  let count = 0;
+  let unparsed = 0;
+  for (const bug of bugs) {
+    const keys = keyFilesOf(bug.body);
+    if (!keys) {
+      unparsed += 1;
+      continue;
+    }
+    const created = Date.parse(bug.createdAt);
+    const hit = merged.some((m) => m.at < created && created <= m.at + BUG_WINDOW_DAYS * DAY_MS && keys.some((k) => m.files.has(k)));
+    if (hit) count += 1;
+  }
+  return { count, perPr: merged.length ? count / merged.length : null, mergedPrs: merged.length, unparsed };
+}
+
+module.exports = { selectColumns, parseReviewCounts, readTiming, readReport, collectWholeBranch, collectFirstPass, keyFilesOf, collectPostMergeBugs };
