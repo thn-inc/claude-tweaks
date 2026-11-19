@@ -253,6 +253,15 @@ function readMap({ decl, mapPath, repoRoot, execImpl, fsImpl, knownAncestor = nu
   };
 }
 
+// True when a drift-refresh attempt marker exists and is younger than REFRESH_WINDOW_MS; an unreadable marker is "no attempt".
+function recentRefreshAttempt({ markerPath, fsImpl, now }) {
+  try {
+    return now - fsImpl.statSync(markerPath).mtimeMs < REFRESH_WINDOW_MS;
+  } catch {
+    return false;
+  }
+}
+
 // The impact context scope.js's selectScope reads, plus what the report shows.
 // A map problem with a declared impact.fetch runs `runFetch(command)` once
 // (→ {ran, exitCode, durationMs, timedOut, signal}); only a fetch that exits
@@ -263,14 +272,6 @@ function readMap({ decl, mapPath, repoRoot, execImpl, fsImpl, knownAncestor = nu
 // A usable map whose drift exceeds DRIFT_REFRESH_TESTS runs the fetch once too (#5947), at most once per
 // REFRESH_WINDOW_MS per checkout (a marker beside the shared map, written before the fetch so a failed or
 // timed-out attempt counts); the reload is adopted only if usable with no more drift, else the current map stands.
-function recentRefreshAttempt({ markerPath, fsImpl, now }) {
-  try {
-    return now - fsImpl.statSync(markerPath).mtimeMs < REFRESH_WINDOW_MS;
-  } catch {
-    return false;
-  }
-}
-
 function loadImpactContext({ decl, repoRoot, commonDir, execImpl = execFileSync, fsImpl = fs, runFetch = null, knownAncestor = null, now = Date.now() }) {
   const mapPath = resolveMapPath({ decl, commonDir, repoRoot });
   let state = readMap({ decl, mapPath, repoRoot, execImpl, fsImpl, knownAncestor });
