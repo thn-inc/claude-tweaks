@@ -71,8 +71,8 @@ test('materiality-floor.md states both overrides', () => {
   assert.ok(FLOOR.toLowerCase().includes('out of this contract') || FLOOR.toLowerCase().includes('/capture'));
 });
 
-test('materiality-floor.md states the severity override: a high or critical finding always clears the floor', () => {
-  assert.ok(FLOOR.includes('A finding carrying severity `high` or `critical` always clears the floor'));
+test('materiality-floor.md states the severity override: a high or critical finding files as an ordinary issue', () => {
+  assert.ok(FLOOR.includes('A finding carrying severity `high` or `critical` files as an ordinary issue'));
 });
 
 test('materiality-floor.md states the entry format line', () => {
@@ -363,6 +363,52 @@ test('#5931 go-red: dropping rule={rule} from the Audit line fails the floor che
   const mutated = FLOOR.split(', rule={rule}').join('');
   assert.notEqual(mutated, FLOOR);
   assert.deepStrictEqual(floorCommandProblems(mutated), ['the Audit line does not carry rule={rule}']);
+});
+
+// #5932 AC9: Overrides lists the precedence in order, names the digest lifecycle the policy relies on,
+// and no longer says a tangential reason "always clears the floor".
+const OVERRIDE_ORDER = [
+  '1. Human-typed `/capture` input files',
+  '2. A finding carrying severity `high` or `critical` files',
+  '3. An agent-raised item whose `Defer-reason:` is listed in policy key `deferral-digest-reasons`',
+  '4. `Defer-reason: tangential` files',
+];
+const OVERRIDE_LIFECYCLE = ['`tidy/digest-sweep.md`', 'promotion when three entries share an area', 'expiry after 90 days', "Changing either changes this policy's effect"];
+function overridesProblems(text) {
+  const section = sectionOf(text, '## Overrides').replace(/\s+/g, ' ');
+  const problems = [...OVERRIDE_ORDER, ...OVERRIDE_LIFECYCLE].filter((n) => !section.includes(n)).map((n) => `Overrides lacks ${n}`);
+  if (problems.length === 0) {
+    const at = OVERRIDE_ORDER.map((n) => section.indexOf(n));
+    if (at.some((i, k) => k > 0 && i < at[k - 1])) problems.push('Overrides lists the precedence out of order');
+  }
+  if (section.includes('always clears the floor')) problems.push('Overrides still says "always clears the floor"');
+  return problems;
+}
+const OVERRIDES = () => sectionOf(FLOOR, '## Overrides');
+test('#5932 AC9.1 Overrides lists the precedence in order and no longer says always clears the floor', () => {
+  assert.deepStrictEqual(overridesProblems(FLOOR), []);
+});
+for (const needle of [...OVERRIDE_ORDER, ...OVERRIDE_LIFECYCLE]) {
+  test(`#5932 go-red: ${needle} moved out of Overrides fails the check`, () => {
+    const sec = OVERRIDES();
+    const cut = sec.replace(flexible(needle), '');
+    assert.notEqual(cut, sec, `anchor ${needle} not in Overrides`);
+    const moved = `${FLOOR.replace(sec, () => cut)}\n${needle}\n`;
+    assert.deepStrictEqual(overridesProblems(moved), [`Overrides lacks ${needle}`]);
+  });
+}
+test('#5932 go-red: the policy item after the tangential item fails the order check', () => {
+  const sec = OVERRIDES();
+  const i3 = sec.indexOf('3. An agent-raised');
+  const i4 = sec.indexOf('4. `Defer-reason: tangential`');
+  assert.ok(i3 > 0 && i4 > i3);
+  const swapped = `${sec.slice(0, i3)}${sec.slice(i4)}\n${sec.slice(i3, i4)}`;
+  assert.deepStrictEqual(overridesProblems(FLOOR.replace(sec, () => swapped)), ['Overrides lists the precedence out of order']);
+});
+test('#5932 go-red: "always clears the floor" back in Overrides fails the check', () => {
+  const mutated = FLOOR.replace('files as an ordinary issue — a tangential', 'files as an ordinary issue and always clears the floor — a tangential');
+  assert.notEqual(mutated, FLOOR);
+  assert.deepStrictEqual(overridesProblems(mutated), ['Overrides still says "always clears the floor"']);
 });
 
 test('the five health sweeps state materiality-floor-before-cap-digest ordering', () => {

@@ -6,7 +6,7 @@
 // The prose pin reads the live materiality-floor.md on purpose [IL-80]:
 // route.js is the authority and the prose its explanation, so the pin's job
 // is to fail when the explanation drifts from the frozen text the code was
-// written against (base commit 05a65b7353).
+// written against (the Overrides text as rewritten by #5932).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -251,15 +251,21 @@ fails toward filing an ordinary issue, never toward the digest.
 
 const OVERRIDES_SECTION = `## Overrides
 
-- \`Defer-reason: tangential\` always clears the floor and files as an ordinary issue — a tangential
-  finding is a new idea the finding suggests, not residue of the current work, and ideas are
-  intent, not exhaust (\`_shared/deferral-gate.md\`'s vocabulary).
-- A finding carrying severity \`high\` or \`critical\` always clears the floor and files as an ordinary
-  issue. The three axes score the record's filing size, not the finding's severity, so without
-  this a small fix to a high-severity finding could be digested where no gate that blocks on it
-  (release Step 3's \`high-severity finding\` token) ever looks again.
-- Human-typed \`/capture\` input is out of this contract's scope entirely — human input is intent,
-  never exhaust, and never routes to the digest.
+Checked in this order, ahead of the floor; the first that applies decides:
+
+1. Human-typed \`/capture\` input files as an ordinary issue and is out of this contract's scope
+   entirely — human input is intent, never exhaust, and never routes to the digest.
+2. A finding carrying severity \`high\` or \`critical\` files as an ordinary issue. The three axes
+   score the record's filing size, not the finding's severity, so without this a small fix to a
+   high-severity finding could be digested where no gate that blocks on it (release Step 3's
+   \`high-severity finding\` token) ever looks again.
+3. An agent-raised item whose \`Defer-reason:\` is listed in policy key \`deferral-digest-reasons\`
+   (default empty; \`_shared/policy-schema-deferral-routing.md\`) goes to the digest whatever its
+   three axes, rule \`policy-reason\`. This relies on the digest lifecycle in \`tidy/digest-sweep.md\`:
+   promotion when three entries share an area, expiry after 90 days un-promoted. Changing either
+   changes this policy's effect.
+4. \`Defer-reason: tangential\` files as an ordinary issue — a tangential finding is a new idea the
+   finding suggests, not residue of the current work.
 `;
 
 function assertProsePinned(text) {
@@ -277,7 +283,7 @@ test('prose pin go-red: deleting the risk axis from the floor fails the pin', ()
   assert.notEqual(noRisk, text);
   assert.throws(() => assertProsePinned(noRisk));
 
-  const tangentialLine = '- `Defer-reason: tangential` always clears the floor and files as an ordinary issue — a tangential\n';
+  const tangentialLine = '4. `Defer-reason: tangential` files as an ordinary issue — a tangential finding is a new idea the\n';
   const noTangential = text.replace(tangentialLine, '');
   assert.notEqual(noTangential, text);
   assert.throws(() => assertProsePinned(noTangential));
