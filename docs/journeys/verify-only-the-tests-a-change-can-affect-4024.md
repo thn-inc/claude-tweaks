@@ -61,7 +61,9 @@ files:
 - **Should understand:**
   - A directory listing matches only an added or deleted path beneath it, because modifying a file does not change a listing. A probe of an ancestor directory also matches an add or a delete.
   - A test file edited after the map was traced (on main before the branch's base, say) runs too: its recorded reads may be stale. `scope.impact.driftTests` names these drifted tests and `driftSelected` counts them, and the `Impact:` line ends `, N drift` inside its parentheses when there are any. A test the branch itself changed is counted as a changed test, not as drift.
+  - When more than 50 tests would run as drift, the scoped run first runs the declaration's `fetch` once, at most once per ten minutes per checkout (a marker beside the shared map), and takes the newer map only if it is usable and leaves no more drift. A failed or no-op fetch keeps the current map. The report's `fetch` entry shows it ran.
 - **Red flags:**
+  - A scoped run that re-runs hundreds of drift tests from a map that a three-second fetch would have replaced.
   - A new file under a listed directory selecting only the tests that read it directly.
   - A changed test file running alone, without the guard tests that read it.
   - A test edited since the map's commit that is left out when a path it now reads changes.
@@ -92,4 +94,5 @@ files:
 - Updated during the build of #5119: verify.js now holds the suite slot itself, so under verify a Windows full-suite fallback runs inside verify's subset-lane slot rather than taking the full-suite lane.
 - Updated during the build of #4321: the verify event, and through it `timing.json`, now carries the impact outcome, including the paths that superseded a subset.
 - Updated during the build of #5319: a plain local `npm test` now runs the same impact selection, so step 4 notes it. The entry-point command is unchanged.
+- Updated during the build of #5947: a usable map that leaves more than 50 drift tests is refreshed with one rate-limited `fetch`, so a branch 50-200 commits behind no longer re-runs about 75% drift (593 of 1350 test files became 182 on this branch's own change).
 - Related: `declare-a-verify-scope-1924.md` (the declaration this extends) and `run-the-suite-alongside-sibling-sessions-3969.md` (the suite slot a subset run holds for less time).
