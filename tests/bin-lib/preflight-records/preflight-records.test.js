@@ -1678,3 +1678,32 @@ test('#5902: a failed native GraphQL fetch (exit 1) records no snapshot', () => 
   assert.equal(d.out.length, 0);
   assert.equal(calls, 0);
 });
+
+test('#5902: --records-json under native fetches nothing and records no snapshot; envelope and exit code match a run without the sink', () => {
+  const files = { '/r.json': JSON.stringify([720, 721, 722].map((n) => issue({ number: n, title: `R${n}`, body: specBody([`f${n}.js`]) }))) };
+  const argv = ['720', '721', '722', '--records-json', '/r.json'];
+  const plain = cliDeps({ runner: noGh, workLinks: 'native', files });
+  const plainCode = run(argv, plain.deps);
+  let calls = 0;
+  const d = cliDeps({ runner: noGh, workLinks: 'native', files });
+  d.deps.onSnapshot = () => { calls += 1; };
+  assert.equal(run(argv, d.deps), plainCode);
+  assert.equal(plainCode, 0);
+  assert.equal(calls, 0);
+  assert.equal(d.out.join(''), plain.out.join(''));
+  assert.equal(d.err.join(''), plain.err.join(''));
+});
+
+test('#5902: --prefetched-json under native still runs the native fetch and hands each candidate to deps.onSnapshot once', () => {
+  const runner = (args) => {
+    if (isGraphQL(args)) {
+      return JSON.stringify({ data: { repository: { i10: { number: 10, blockedBy: { nodes: [] } }, i11: { number: 11, blockedBy: { nodes: [{ number: 5, state: 'OPEN' }] } } } } });
+    }
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const seen = [];
+  const d = cliDeps({ runner, workLinks: 'native', stdin: JSON.stringify(prefetchedIssues()) });
+  d.deps.onSnapshot = (n, entry) => seen.push([n, entry.blockedBy]);
+  assert.equal(run(['10', '11', '--repo', 'acme/w', '--prefetched-json', '-'], d.deps), 0);
+  assert.deepEqual(seen, [[10, []], [11, [5]]]);
+});
