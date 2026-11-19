@@ -25,7 +25,8 @@
 // The run directory's anchor and the worktree's are one main checkout without a further check:
 // resolveTarget anchors the run directory to mainCheckoutRoot(cwd), and check 3 requires
 // mainCheckoutRoot(top) to equal that same root.
-// It writes nothing. Checks 1-4 read the file system directly, as policyStep's mainCheckoutRoot does;
+// It refuses before writing anything; its one write is the best-effort `lane: 'driver'` fill of the run's manifest.json (#5903).
+// Checks 1-4 read the file system directly, as policyStep's mainCheckoutRoot does;
 // check 5 is the one call through deps (a read).
 const fs = require('node:fs');
 const path = require('node:path');
@@ -89,6 +90,7 @@ function adoptRun({ runDir, cwd }, deps) {
     branch = '';
   }
   if (!branch) return { ok: false, why: 'adopted worktree has no branch (detached HEAD or unreadable)' };
+  try { require('../run-manifest/write').fillRunManifest(real, { lane: 'driver' }); } catch { /* never changes the adoption */ }
   return { ok: true, runDir: real, runId: path.basename(real), wt: top, branch, mainRoot: main };
 }
 
