@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { scratchDir } = require('../../helpers/tmp-dir');
+const { chmodDenialSkip } = require('../../helpers/root');
 const { writeFileAtomic } = require('../../../plugin/bin/lib/atomic-write');
 const {
   MANIFEST_FILE, MANIFEST_VERSION, LANES, CEREMONY_PROFILES, initRunManifest, fillRunManifest,
@@ -138,7 +139,7 @@ test('init into a missing run dir returns written:false, creates nothing, and wr
 });
 
 test('init on a read-only directory returns written:false, throws nothing, and writes exactly one stderr line',
-  { skip: process.platform === 'win32' || (process.getuid && process.getuid() === 0) }, (t) => {
+  chmodDenialSkip('running as root: chmod cannot deny access'), (t) => {
     const dir = runDir();
     fs.chmodSync(dir, 0o555);
     t.after(() => fs.chmodSync(dir, 0o755));
