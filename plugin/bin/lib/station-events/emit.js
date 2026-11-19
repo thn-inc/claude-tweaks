@@ -41,7 +41,9 @@ function ensureLocalExclude(mainRoot, fsImpl = fs) {
     } catch (err) {
       if (!err || err.code !== 'ENOENT') throw err;
     }
-    const present = new Set(existing.split('\n').map((l) => l.replace(/\r/g, '').trim()));
+    // Git strips only trailing spaces (and one `\r` before `\n`); a leading space or a
+    // trailing tab makes a different pattern, so no other normalization is allowed.
+    const present = new Set(existing.split('\n').map((l) => l.replace(/\r$/, '').replace(/ +$/, '')));
     const missing = EXCLUDE_ENTRIES.filter((e) => !present.has(e));
     if (missing.length === 0) return true;
     fsImpl.mkdirSync(infoDir, { recursive: true });

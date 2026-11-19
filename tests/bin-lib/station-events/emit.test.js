@@ -189,7 +189,10 @@ test('toRepoName maps a host-prefixed or bare slug to owner/name', () => {
 // #5957: the log and its lock are excluded locally at append time. Git children run
 // hermetic so a developer's global core.excludesFile cannot hide the log.
 function hermeticEnv() {
-  return { ...cleanGitEnv(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devNull };
+  return { ...cleanGitEnv(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devNull,
+    // GIT_CONFIG_GLOBAL does not stop git reading its default excludes file
+    // ($XDG_CONFIG_HOME/git/ignore, ~/.config/git/ignore); core.excludesFile does.
+    GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.excludesFile', GIT_CONFIG_VALUE_0: os.devNull };
 }
 
 function porcelain(dir) {
@@ -201,6 +204,12 @@ function excludeLines(root) {
 }
 
 test('AC1.1: an append in a repo with no station-events ignore rule leaves git status clean', () => {
+  // Control: in a fresh repo a hand-written log reads dirty, so a hiding environment fails loudly.
+  const control = scratchDir('ct-station-events-');
+  initRepo(control);
+  fs.mkdirSync(path.dirname(stationEventPath(control)), { recursive: true });
+  fs.writeFileSync(stationEventPath(control), '{}\n');
+  assert.notEqual(porcelain(control), '');
   const root = scratchDir('ct-station-events-');
   initRepo(root);
   const { stderr, d } = deps(root);
@@ -248,7 +257,34 @@ test('a missing info directory is created', () => {
   const root = scratchDir('ct-station-events-');
   initRepo(root);
   fs.rmSync(path.join(root, '.git', 'info'), { recursive: true, force: true });
+  const { d } = deps(root);
+  assert.deepEqual(appendStationEvent(event(), d), { written: true });
+  assert.deepEqual(excludeLines(root), [...EXCLUDE_ENTRIES]);
+  assert.equal(porcelain(root), '');
+});
+
+test('entries git would not match are appended exactly: leading space, trailing tab', () => {
+  const root = scratchDir('ct-station-events-');
+  initRepo(root);
+  const file = path.join(root, '.git', 'info', 'exclude');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const seeded = [` ${EXCLUDE_ENTRIES[0]}`, `${EXCLUDE_ENTRIES[1]}\t`];
+  fs.writeFileSync(file, seeded.join('\n') + '\n');
+  const { d } = deps(root);
+  assert.deepEqual(appendStationEvent(event(), d), { written: true });
+  assert.deepEqual(excludeLines(root), [...seeded, ...EXCLUDE_ENTRIES]);
+  assert.equal(porcelain(root), '');
+});
+
+test('entries with trailing spaces are present to git and not appended again', () => {
+  const root = scratchDir('ct-station-events-');
+  initRepo(root);
+  const file = path.join(root, '.git', 'info', 'exclude');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, EXCLUDE_ENTRIES.map((e) => `${e}  \n`).join(''));
+  const before = fs.readFileSync(file);
   assert.equal(ensureLocalExclude(root), true);
+  assert.deepEqual(fs.readFileSync(file), before);
   const { d } = deps(root);
   appendStationEvent(event(), d);
   assert.equal(porcelain(root), '');
@@ -266,15 +302,17 @@ test('no .git directory is a silent no-op', () => {
 test('an unwritable exclude never drops the event', () => {
   const root = scratchDir('ct-station-events-');
   initRepo(root);
+  let excludeHits = 0;
   const failingFs = {
     ...fs,
     appendFileSync: (p, ...a) => {
-      if (String(p).endsWith(path.join('info', 'exclude'))) throw new Error('EACCES');
+      if (String(p).endsWith(path.join('info', 'exclude'))) { excludeHits += 1; throw new Error('EACCES'); }
       return fs.appendFileSync(p, ...a);
     },
   };
   const { stderr, d } = deps(root, { fs: failingFs });
   assert.deepEqual(appendStationEvent(event(), d), { written: true });
+  assert.equal(excludeHits, 1);
   assert.equal(stderr.calls.length, 0);
   assert.equal(readLines(root).lines.length, 1);
 });
