@@ -67,6 +67,10 @@ const LEDGER_CLAIMS = [
   ['- `carried`:', 'the narrowing section does not handle the carried state'],
   ['Generic gate failure', 'the narrowing section does not stop a failed convergence with the Generic gate failure card'],
   ['Exit 2, 3 or 6', 'the narrowing section does not route exits 2 and 3 to the failure card'],
+  ['prints `digest` (`false` on `file`, `refused` or any other outcome', 'the control-mode paragraph does not set belowFloor from the deferral-route.js verdict'],
+  ['no `deferReason`: no call, `false`', 'the control-mode paragraph does not skip the command for an item with no deferReason'],
+  ["`{severity}` the row's `severity={severity}` token", "the control-mode paragraph does not read a row's severity token"],
+  ['else `high` for a `review`-phase row', 'the control-mode paragraph does not pass --severity high for a review row with no severity'],
 ];
 
 function convergeProblems(text) {
@@ -100,7 +104,9 @@ const STEP_10_CLAIMS = [
   ["id: 'insight-{row}'", "step 10 does not give an insight item the id insight-{row}"],
   ["status: 'open'", "step 10 does not give an insight item status 'open'"],
   ["Recommended-cell reason", "step 10 does not source an insight's deferReason from its Recommended cell"],
-  ['`belowFloor` judged per `_shared/materiality-floor.md`', 'step 10 does not judge an insight item belowFloor per the materiality floor'],
+  ["`belowFloor` from that paragraph's `deferral-route.js` call", 'step 10 does not set an insight item belowFloor from the deferral-route.js verdict'],
+  ['`false` on `refused` or any other outcome', 'step 10 does not set belowFloor false on a refused or unreadable verdict'],
+  ['no `deferReason`: no call, `false`', 'step 10 does not skip the command for an insight with no deferReason'],
   ['writes no ledger row', 'step 10 does not say an insight writes no ledger row'],
   ['as step 7 creates a `Q#`', 'step 10 does not create a filed insight the way step 7 creates a Q#'],
   ['`carried` → nothing more', 'step 10 does not settle a carried insight with nothing more'],
