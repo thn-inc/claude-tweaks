@@ -195,6 +195,59 @@ test('config.yml holds the 13 levers in canonical order, then the run pin, then 
   assert.ok(fs.statSync(path.join(fx.runDir, 'staged')).isDirectory(), 'staged/ created');
 });
 
+// --- run manifest fill (#5903) -----------------------------------------------
+
+const { initRunManifest, MANIFEST_FILE } = require('../../../plugin/bin/lib/run-manifest/write');
+const readManifest = (runDir) => JSON.parse(fs.readFileSync(path.join(runDir, MANIFEST_FILE), 'utf8'));
+const seedManifest = (runDir, lane) => initRunManifest(runDir, { lane, cwd: runDir }, {
+  gatherFacts: () => ({ pluginVersion: '6.200.0', policyHash: 'abc123', baseCommit: 'deadbeef', modelProfile: 'standard' }),
+  stderr: () => {},
+});
+
+test('writeManifesto fills the seeded manifest: ceremonyProfile is the ceremony-profile lever, lane is standard, the facts stay', () => {
+  for (const [ceremony, expected] of [['fast-lane', 'fast-lane'], ['standard', 'standard']]) {
+    const fx = fixture();
+    seedManifest(fx.runDir);
+    const { levers } = write(fx, { records: [{ n: 4027, ceremony, ceremonySource: 'label' }] });
+    assert.strictEqual(lever(levers, 'ceremony-profile').value, expected);
+    const m = readManifest(fx.runDir);
+    assert.strictEqual(m.ceremonyProfile, expected);
+    assert.strictEqual(m.lane, 'standard');
+    assert.strictEqual(m.pluginVersion, '6.200.0');
+    assert.strictEqual(m.baseCommit, 'deadbeef');
+  }
+});
+
+test('writeManifesto with no manifest creates one carrying only ceremonyProfile and lane; every other field stays null', () => {
+  const fx = fixture();
+  write(fx);
+  const m = readManifest(fx.runDir);
+  assert.strictEqual(m.lane, 'standard');
+  assert.strictEqual(m.ceremonyProfile, 'standard');
+  for (const key of ['pluginVersion', 'policyHash', 'baseCommit', 'modelProfile']) assert.strictEqual(m[key], null, key);
+});
+
+test('writeManifesto does not overwrite a known lane: an express or driver run keeps it', () => {
+  for (const lane of ['express', 'driver']) {
+    const fx = fixture();
+    seedManifest(fx.runDir, lane);
+    write(fx);
+    const m = readManifest(fx.runDir);
+    assert.strictEqual(m.lane, lane);
+    assert.strictEqual(m.ceremonyProfile, 'standard');
+  }
+});
+
+test('writeManifesto fills no lane when the config.yml write fails mid-batch', () => {
+  const fx = fixture({ decisions: CLAIM });
+  seedManifest(fx.runDir);
+  let n = 0;
+  const { setConfigLever } = require('../../../plugin/bin/lib/set-config/write');
+  const flaky = (args) => { if (++n === 5) throw new Error('EIO: simulated'); return setConfigLever(args); };
+  assert.throws(() => write(fx, { deps: { setConfigLever: flaky } }), /EIO/);
+  assert.strictEqual(readManifest(fx.runDir).lane, 'unknown');
+});
+
 test('an existing config.yml -> AdoptedRunError and nothing in the run dir changes', () => {
   const fx = fixture({ decisions: CLAIM, config: 'mode: auto\n' });
   const before = snapshot(fx.runDir);

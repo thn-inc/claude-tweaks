@@ -260,6 +260,9 @@ function writeManifesto({ runDir, records, levers, integrationModel = null, inte
     throw new Error(`could not write ${configPath} (${err && err.message ? err.message : err}) — `
       + (removed ? 'the partial config.yml was removed' : 'the partial config.yml could NOT be removed: delete it before re-running'), { cause: err });
   }
+  // The run manifest (#5903): a Manifesto-written run is the standard lane. ceremonyProfile already
+  // arrived through set-config's own fill. Best-effort — a failed fill changes nothing here.
+  try { require('../run-manifest/write').fillRunManifest(runDir, { lane: 'standard' }); } catch { /* never breaks the Manifesto write */ }
 
   const log = (status, step, text, reversibility = 'n/a') => append({ runDir, section: SECTION, entry: formatEntry({ status, now, step, text, reversibility }) });
   for (const r of records) {

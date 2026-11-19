@@ -95,6 +95,12 @@ function isManifestoAutoBatch(results) {
   return !!modeResult && modeResult.value === 'auto';
 }
 
+// True when the batch wrote every Manifesto lever, whatever the mode and whatever run pins ride along.
+function hasEveryManifestoLever(results) {
+  const keys = new Set(results.map((r) => r.key));
+  return MANIFESTO_LEVERS.every((lever) => keys.has(lever));
+}
+
 const USAGE = 'usage: set-config.js --run <run-dir> --key <lever> --value <value> [--help]\n' +
   '       set-config.js --run <run-dir> --set <lever1>=<value1>,<lever2>=<value2>,... [--help]\n';
 
@@ -220,6 +226,13 @@ function run(argv, overrides = {}) {
     const msg = `set-config.js: could not write config.yml (${err && err.message})${results.length ? ` — already written before the failure: ${results.map(r => r.key).join(', ')}` : ''}`;
     deps.stderr(`${msg}\n`);
     return 3;
+  }
+
+  // The run manifest (#5903): a batch carrying every Manifesto lever is the Manifesto's own write (any
+  // mode — confirm/hybrid and case-3 recovery write through this CLI), so the run is the standard lane.
+  // A partial batch (the ceremony downgrade, the express lane's configSet) never is. Best-effort.
+  if (batchMode && hasEveryManifestoLever(results)) {
+    try { require('./lib/run-manifest/write').fillRunManifest(target.dir, { lane: 'standard' }); } catch { /* never changes the outcome */ }
   }
 
   for (const r of results) {
