@@ -373,7 +373,7 @@ const OVERRIDE_ORDER = [
   '3. An agent-raised item whose `Defer-reason:` is listed in policy key `deferral-digest-reasons`',
   '4. `Defer-reason: tangential` files',
 ];
-const OVERRIDE_LIFECYCLE = ['`tidy/digest-sweep.md`', 'promotion when three entries share an area', 'expiry after 90 days', "Changing either changes this policy's effect"];
+const OVERRIDE_LIFECYCLE = ['`tidy/digest-sweep.md`', 'a promotion proposal, filed on approval, once three entries share an area', 'expiry after 90 days', "Changing either changes this policy's effect"];
 function overridesProblems(text) {
   const section = sectionOf(text, '## Overrides').replace(/\s+/g, ' ');
   const problems = [...OVERRIDE_ORDER, ...OVERRIDE_LIFECYCLE].filter((n) => !section.includes(n)).map((n) => `Overrides lacks ${n}`);
@@ -403,6 +403,26 @@ test('#5932 go-red: the policy item after the tangential item fails the order ch
   const i4 = sec.indexOf('4. `Defer-reason: tangential`');
   assert.ok(i3 > 0 && i4 > i3);
   const swapped = `${sec.slice(0, i3)}${sec.slice(i4)}\n${sec.slice(i3, i4)}`;
+  assert.deepStrictEqual(overridesProblems(FLOOR.replace(sec, () => swapped)), ['Overrides lists the precedence out of order']);
+});
+test('#5932 go-red: the severity item after the policy item fails the order check', () => {
+  const sec = OVERRIDES();
+  const i2 = sec.indexOf('2. A finding carrying');
+  const i3 = sec.indexOf('3. An agent-raised');
+  assert.ok(i2 > 0 && i3 > i2);
+  const i4 = sec.indexOf('4. `Defer-reason: tangential`');
+  const swapped = `${sec.slice(0, i2)}${sec.slice(i3, i4)}${sec.slice(i2, i3)}${sec.slice(i4)}`;
+  assert.notEqual(swapped, sec);
+  assert.deepStrictEqual(overridesProblems(FLOOR.replace(sec, () => swapped)), ['Overrides lists the precedence out of order']);
+});
+test('#5932 go-red: the human item after the severity item fails the order check', () => {
+  const sec = OVERRIDES();
+  const i1 = sec.indexOf('1. Human-typed');
+  const i2 = sec.indexOf('2. A finding carrying');
+  assert.ok(i1 > 0 && i2 > i1);
+  const i3 = sec.indexOf('3. An agent-raised');
+  const swapped = `${sec.slice(0, i1)}${sec.slice(i2, i3)}${sec.slice(i1, i2)}${sec.slice(i3)}`;
+  assert.notEqual(swapped, sec);
   assert.deepStrictEqual(overridesProblems(FLOOR.replace(sec, () => swapped)), ['Overrides lists the precedence out of order']);
 });
 test('#5932 go-red: "always clears the floor" back in Overrides fails the check', () => {

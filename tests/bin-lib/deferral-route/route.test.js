@@ -6,7 +6,8 @@
 // The prose pin reads the live materiality-floor.md on purpose [IL-80]:
 // route.js is the authority and the prose its explanation, so the pin's job
 // is to fail when the explanation drifts from the frozen text the code was
-// written against (the Overrides text as rewritten by #5932).
+// written against (the floor section at base commit 05a65b7353; the Overrides
+// text as rewritten by #5932).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -262,8 +263,8 @@ Checked in this order, ahead of the floor; the first that applies decides:
 3. An agent-raised item whose \`Defer-reason:\` is listed in policy key \`deferral-digest-reasons\`
    (default empty; \`_shared/policy-schema-deferral-routing.md\`) goes to the digest whatever its
    three axes, rule \`policy-reason\`. This relies on the digest lifecycle in \`tidy/digest-sweep.md\`:
-   promotion when three entries share an area, expiry after 90 days un-promoted. Changing either
-   changes this policy's effect.
+   a promotion proposal, filed on approval, once three entries share an area, expiry after 90 days
+   un-promoted. Changing either changes this policy's effect.
 4. \`Defer-reason: tangential\` files as an ordinary issue — a tangential finding is a new idea the
    finding suggests, not residue of the current work.
 `;
