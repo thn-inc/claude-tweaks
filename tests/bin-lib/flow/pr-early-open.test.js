@@ -1085,16 +1085,53 @@ const withEvents = (h, stationEvent) => {
   return events;
 };
 
-test('#5902: an opened PR records one started build event on the lowest-numbered record', async () => {
+test('#5902: an opened single-record PR records one started build event', async () => {
   const fx = cliFixture();
   const h = cliDeps(fx);
   const events = withEvents(h);
-  const argv = ['--run', fx.runDir, '--target', '#4031,#4027', '--fixes', '4031,#4027', '--title', 'T', '--summary-file', fx.summaryFile, '--worktree', fx.wt];
-  assert.equal(await run(argv, h.deps), 0, h.err.join(''));
+  assert.equal(await run(cliArgv(fx), h.deps), 0, h.err.join(''));
   assert.deepEqual(events, [{
     kind: 'started', station: 'build', recordNumber: 4027, repoName: REPO, runId: RUN_ID, sessionId: 'sess-pr', lane: 'unknown',
     payload: { fact: 'pr_opened', prNumber: 42, prUrl: URL42, outcome: 'opened' }, discriminator: 'pr:42',
   }]);
+});
+
+test('#5902: an opened multi-record PR records one started build event per record in --fixes', async () => {
+  const fx = cliFixture();
+  const h = cliDeps(fx);
+  const events = withEvents(h);
+  const argv = ['--run', fx.runDir, '--target', '#4031,#4027,#4029', '--fixes', '4031,#4027,4029', '--title', 'T', '--summary-file', fx.summaryFile, '--worktree', fx.wt];
+  assert.equal(await run(argv, h.deps), 0, h.err.join(''));
+  const payload = { fact: 'pr_opened', prNumber: 42, prUrl: URL42, outcome: 'opened' };
+  assert.deepEqual(events, [4031, 4027, 4029].map((recordNumber) => ({
+    kind: 'started', station: 'build', recordNumber, repoName: REPO, runId: RUN_ID, sessionId: 'sess-pr', lane: 'unknown',
+    payload, discriminator: 'pr:42',
+  })));
+});
+
+test('#5902: one throwing emission does not skip the other records', async () => {
+  const fx = cliFixture();
+  const h = cliDeps(fx);
+  const seen = [];
+  withEvents(h, (e) => { seen.push(e.recordNumber); if (e.recordNumber === 4031) throw new Error('emitter exploded'); });
+  const argv = ['--run', fx.runDir, '--target', '#4031,#4027', '--fixes', '4031,4027', '--title', 'T', '--summary-file', fx.summaryFile, '--worktree', fx.wt];
+  assert.equal(await run(argv, h.deps), 0, h.err.join(''));
+  assert.deepEqual(seen, [4031, 4027]);
+  assert.deepEqual(JSON.parse(h.out.join('')), { outcome: 'opened', number: 42, url: URL42 });
+});
+
+test('#5902: a repo slug that maps to no owner/name records no event', async () => {
+  const fx = cliFixture();
+  const h = cliDeps(fx);
+  h.deps.gh = ((inner) => (args, opts) => {
+    if (args[0] === 'repo' && args[1] === 'view') return JSON.stringify({ nameWithOwner: 'noslash', url: 'not a url', defaultBranchRef: { name: 'main' } });
+    return inner(args, opts);
+  })(h.deps.gh);
+  let calls = 0;
+  withEvents(h, () => { calls += 1; });
+  assert.equal(await run(cliArgv(fx), h.deps), 0, h.err.join(''));
+  assert.equal(JSON.parse(h.out.join('')).outcome, 'opened');
+  assert.equal(calls, 0);
 });
 
 test('#5902: a reopened PR records one started build event', async () => {

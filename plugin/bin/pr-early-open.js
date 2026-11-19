@@ -261,18 +261,22 @@ async function run(argv, overrides = {}) {
       writeBodyFile: deps.writeBodyFile,
       readFile: deps.readFile,
     });
-    // #5902: a PR this call opened or reopened is a build-station fact; a reused
-    // PR or a degrade writes nothing. Optional dep (absent = none), wrapped so a
-    // throwing emitter never changes stdout or the exit code.
-    if ((res.outcome === 'opened' || res.outcome === 'reopened') && typeof deps.stationEvent === 'function') {
-      try {
-        deps.stationEvent({
-          kind: 'started', station: 'build', recordNumber: Math.min(...fixes.map(Number)), repoName: toRepoName(repo),
-          runId, sessionId: deps.sessionId || null, lane: 'unknown',
-          payload: { fact: 'pr_opened', prNumber: res.number, prUrl: res.url, outcome: res.outcome },
-          discriminator: `pr:${res.number}`,
-        });
-      } catch { /* best-effort: the PR stands */ }
+    // #5902: a PR this call opened or reopened is a build-station fact for every
+    // record it fixes (one event each); a reused PR or a degrade writes nothing.
+    // Optional dep (absent = none); each emission wrapped so a throwing emitter
+    // never skips another record or changes stdout or the exit code.
+    const repoName = toRepoName(repo);
+    if ((res.outcome === 'opened' || res.outcome === 'reopened') && typeof deps.stationEvent === 'function' && repoName) {
+      const payload = { fact: 'pr_opened', prNumber: res.number, prUrl: res.url, outcome: res.outcome };
+      for (const n of fixes) {
+        try {
+          deps.stationEvent({
+            kind: 'started', station: 'build', recordNumber: Number(n), repoName,
+            runId, sessionId: deps.sessionId || null, lane: 'unknown',
+            payload: { ...payload }, discriminator: `pr:${res.number}`,
+          });
+        } catch { /* best-effort: the PR stands */ }
+      }
     }
     deps.stdout(`${JSON.stringify(res)}\n`);
     return OK_OUTCOMES.has(res.outcome) ? 0 : 3;

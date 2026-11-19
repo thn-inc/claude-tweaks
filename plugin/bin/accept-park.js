@@ -779,6 +779,7 @@ function parkSteps({ opts, deps, ctx, runDir, repoSpec, log }) {
           reason: PARK_REASON, link: prUrl, runner: ctx.gh, gitRunner: ctx.gitRunner, now: deps.now(),
         });
         // Only a real release ends the build visit; `already-released` is a repeat.
+        // lane stays 'unknown' (the emit default): park cannot know the lane, and lane is no eventKey input.
         if (r.outcome === 'released') {
           emit({
             kind: 'exited', station: 'build', outcome: outcomeForReleaseReason(PARK_REASON), recordNumber: n,
