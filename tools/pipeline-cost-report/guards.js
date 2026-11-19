@@ -56,9 +56,14 @@ function resolveRun(run, fsImpl) {
   return { ...run, dir, members };
 }
 
+function compareByName(a, b) {
+  if (a.name < b.name) return -1;
+  return a.name > b.name ? 1 : 0;
+}
+
 // { before: Run[], after: Run[] } — ineligible runs are in neither column.
 function selectColumns(runs, { split, n, fsImpl = fs } = {}) {
-  const sorted = runs.map((r) => resolveRun(r, fsImpl)).filter((r) => eligible(r, fsImpl)).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const sorted = runs.map((r) => resolveRun(r, fsImpl)).filter((r) => eligible(r, fsImpl)).sort(compareByName);
   const before = sorted.filter((r) => r.date < split);
   const after = sorted.filter((r) => r.date >= split);
   return { before: n > 0 ? before.slice(-n) : [], after: after.slice(0, Math.max(n, 0)) };
@@ -211,8 +216,9 @@ const RECORD_RE = /#(\d+)/;
 const FIX_WAVE_RE = /fix wave/i;
 
 // Guard 2: the share of tasks whose group holds no re-review. A task is keyed by run, parent agent, record and task
-// number; a dispatch naming no task is `unparsed`, except a fix-wave one (the final review's fixes), which is dropped. A dispatch naming no record joins the record that every record-naming implementer of its task number (same
-// parent) names; with none, or two different ones, it stays record-less. Groups that cannot be told apart or lack an
+// number; a dispatch naming no task is `unparsed`, except a fix-wave one (the final review's fixes), which is dropped.
+// A dispatch naming no record joins the record that every record-naming implementer of its task number (same parent)
+// names; with none, or two different ones, it stays record-less. Groups that cannot be told apart or lack an
 // implementer are counted `unparsed`, not tasks. A task's tier is that of its earliest implementer.
 function collectFirstPass(runs, { fsImpl = fs } = {}) {
   let unparsed = 0;
