@@ -12,7 +12,7 @@ const path = require('path');
 const { readText } = require('../helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..', '..');
-const { parseTaskVerdict, parsePlanReview, parseLensReport, walkRuns, readVerdicts, isHumanStop, collectTaskReview, collectPlanReview, collectReviews, lensAgentsOf, collectLensAgents, collectPerRun, classifyRouting, collectOutcomes, collectYield } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'reviews.js'));
+const { lensIdOf, parseTaskVerdict, parsePlanReview, parseLensReport, walkRuns, readVerdicts, isHumanStop, collectTaskReview, collectPlanReview, collectReviews, lensAgentsOf, collectLensAgents, collectPerRun, classifyRouting, collectOutcomes, collectYield } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'reviews.js'));
 const { parseReviewCounts, resolveRun } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'guards.js'));
 const { listRuns } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'runs.js'));
 
@@ -315,6 +315,17 @@ test('human stops: planReviewUnits counts only the units whose log has a Common 
   const walked = walkRuns([a, b, c], { since: null, until: null, fsImpl: fs });
   const got = collectPlanReview(walked, walked.map((w) => w.units.map((u) => readVerdicts(u, fs))), { roots: [], fsImpl: fs });
   assert.deepStrictEqual(got.humanStops, { runs: 1, n: 3, unparsed: 0, planReviewUnits: 2 });
+});
+
+test('human stops: a unit whose only Common Step 1.6 line is a SKIP is not a unit with a plan review', () => {
+  const pipelines = fresh('pl');
+  const a = writeRun(pipelines, '2026-11-18T1-spec-1');
+  const b = writeRun(pipelines, '2026-11-18T2-spec-2');
+  writeDecisions(a.dir, '- SKIP 14:54:02 — Common Step 1.6 plan review (skipped): condition: ceremony-profile fast-lane → fallback: no plan review. Reversibility: n/a.\n');
+  writeDecisions(b.dir, `${KEPT}\n`);
+  const walked = walkRuns([a, b], { since: null, until: null, fsImpl: fs });
+  const got = collectPlanReview(walked, walked.map((w) => w.units.map((u) => readVerdicts(u, fs))), { roots: [], fsImpl: fs });
+  assert.deepStrictEqual(got.humanStops, { runs: 1, n: 2, unparsed: 0, planReviewUnits: 1 });
 });
 
 test('readVerdicts reads confirmed, refuted and cant-tell locations and the decisions text', () => {
@@ -1030,6 +1041,21 @@ test('a lens named by its word folds to its id, whatever the case, hyphens or sp
   const v = readVerdicts({ name: 'u', dir }, fs);
   assert.deepStrictEqual(v.confirmed.map((c) => c.lens), ['3e', '3f', '3c', '3c', '3g', 'gap-sweep']);
   assert.deepStrictEqual(v.refuted.map((c) => c.lens), ['3b']);
+});
+
+test('lensIdOf resolves every lens-name table entry, in any case and with spaces for hyphens', () => {
+  const expected = {
+    convention: '3a', 'convention-compliance': '3a', security: '3b', 'error-handling': '3c', performance: '3d',
+    architecture: '3e', 'test-quality': '3f', ownability: '3g', 'ux-analysis': '3h',
+  };
+  for (const [name, id] of Object.entries(expected)) {
+    assert.strictEqual(lensIdOf(name), id, name);
+    assert.strictEqual(lensIdOf(name.toUpperCase().replace(/-/g, ' ')), id, name);
+  }
+});
+
+test('lensIdOf keeps an inherited object key verbatim', () => {
+  for (const name of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) assert.strictEqual(lensIdOf(name), name);
 });
 
 test('the yield and the per-run rows count a word-named verdict under its lens id', () => {

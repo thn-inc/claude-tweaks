@@ -227,17 +227,18 @@ function walkRuns(runs, { since, until, fsImpl = fs } = {}) {
 
 // The lens names a verdict line may quote in place of the id, keyed by the lowercase hyphenated name. Source: the lens
 // headings in plugin/skills/review/step3-lens-dispatch.md ("### 3a: Convention Compliance" .. "### 3g: Ownability") and
-// code-mode-steps.md ("### 3h: UX Analysis"), plus the short forms real decisions.md files carry ("error", "errors").
-const LENS_NAME_IDS = {
-  convention: '3a', 'convention-compliance': '3a',
-  security: '3b',
-  error: '3c', errors: '3c', 'error-handling': '3c',
-  performance: '3d',
-  architecture: '3e',
-  'test-quality': '3f',
-  ownability: '3g',
-  ux: '3h', 'ux-analysis': '3h',
-};
+// code-mode-steps.md ("### 3h: UX Analysis"), plus "convention", the short form real decisions.md files carry. A Map, so an
+// inherited key such as "constructor" never resolves.
+const LENS_NAME_IDS = new Map([
+  ['convention', '3a'], ['convention-compliance', '3a'],
+  ['security', '3b'],
+  ['error-handling', '3c'],
+  ['performance', '3d'],
+  ['architecture', '3e'],
+  ['test-quality', '3f'],
+  ['ownability', '3g'],
+  ['ux-analysis', '3h'],
+]);
 
 // A verdict line quotes the lens as free text ("3b Security", "architecture", "delta"). A name whose leading token is a
 // lens id (the form archive.js's LENS_RE takes, 3a..3j), or that is a lens's name (case, hyphens and spaces alike), is
@@ -247,7 +248,7 @@ const lensIdOf = (name) => {
   const trimmed = String(name).trim();
   const m = LENS_ID_LEAD_RE.exec(trimmed);
   if (m) return m[1];
-  const byName = LENS_NAME_IDS[trimmed.toLowerCase().replace(/[\s_-]+/g, '-')];
+  const byName = LENS_NAME_IDS.get(trimmed.toLowerCase().replace(/[\s_-]+/g, '-'));
   return byName || name;
 };
 
@@ -287,8 +288,8 @@ const HUMAN_STOP_KEPT_RE = /^- KEPT-PROMPT\b.*\bCommon Step 1\.6\b.*\bneeds-huma
 const HUMAN_STOP_GATED_RE = /^- [A-Z][A-Z-]*\b.*\bCommon Step 1\.6\b.*\bneeds-human\b.*(?:HARD-GATE|question (?:comment )?posted)/;
 
 // A decisions.md line recording that plan review ran (Common Step 1.6): the denominator of the human-stop count, since a
-// unit with no such line never had a plan review to stop in.
-const PLAN_REVIEW_LINE_RE = /^- [A-Z][A-Z-]*\b.*\bCommon Step 1\.6\b/;
+// unit with no such line never had a plan review to stop in. A SKIP line records a plan review that did not run.
+const PLAN_REVIEW_LINE_RE = /^- (?!SKIP\b)[A-Z][A-Z-]*\b.*\bCommon Step 1\.6\b/;
 
 // A decisions.md line recording that plan review stopped to ask a human (or, dispatched, posted the question).
 const isHumanStop = (line) => HUMAN_STOP_KEPT_RE.test(line) || HUMAN_STOP_GATED_RE.test(line);
@@ -671,4 +672,4 @@ function collectReviews({ runs, since, until, roots, n }, { fsImpl = fs } = {}) 
   };
 }
 
-module.exports = { SEVERITIES, PLAN_KINDS, parseTaskVerdict, parsePlanReview, parseLensReport, walkRuns, readVerdicts, isHumanStop, collectTaskReview, collectPlanReview, lensAgentsOf, collectLensAgents, collectPerRun, classifyRouting, collectOutcomes, collectYield, collectReviews };
+module.exports = { lensIdOf, SEVERITIES, PLAN_KINDS, parseTaskVerdict, parsePlanReview, parseLensReport, walkRuns, readVerdicts, isHumanStop, collectTaskReview, collectPlanReview, lensAgentsOf, collectLensAgents, collectPerRun, classifyRouting, collectOutcomes, collectYield, collectReviews };
