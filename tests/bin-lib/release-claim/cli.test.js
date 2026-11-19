@@ -656,3 +656,21 @@ test('#5902: a throwing stationEvent leaves stdout, the exit code and logged byt
   assert.equal(envelope(outB).logged, envelope(outA).logged);
   assert.equal(stderrOf(outB), stderrOf(outA), 'no extra stderr either');
 });
+
+test('#5902: a recording stationEvent leaves stdout, the exit code and stderr byte-identical', () => {
+  const runA = mkRun();
+  const outA = [];
+  const { d: plain } = deps({ content: live(RUN_DIR_NAME), out: outA, mainRoot: rootOf(runA) });
+  const codeA = run(['999', '--run', runA, '--reason', 'merged', '--link', 'https://x/1'], plain);
+
+  const runB = mkRun();
+  const outB = [];
+  const { d: recording } = deps({ content: live(RUN_DIR_NAME), out: outB, mainRoot: rootOf(runB) });
+  const events = withStationSpy(recording);
+  const codeB = run(['999', '--run', runB, '--reason', 'merged', '--link', 'https://x/1'], recording);
+
+  assert.equal(events.length, 1, 'the recorder saw the release');
+  assert.equal(codeB, codeA);
+  assert.equal(streamOf(outB, 'out'), streamOf(outA, 'out'), 'stdout is byte-identical');
+  assert.equal(stderrOf(outB), stderrOf(outA));
+});

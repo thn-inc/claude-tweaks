@@ -484,6 +484,16 @@ test('run: station events — a throwing stationEvent leaves stdout and exit cod
   assert.strictEqual(attempts, 5, 'every transition of every action is still attempted');
 });
 
+test('run: station events — a recording stationEvent leaves stdout and exit code byte-identical to a run without it', () => {
+  const actions = [{ issue: 1, addLabels: ['ready'] }, { issue: 2, addLabels: ['auto:build'] }];
+  const plain = fakeDeps({ readFile: () => JSON.stringify(actions) });
+  const plainCode = run(['actions.json'], plain);
+  const { deps, events } = stationDeps(actions);
+  assert.strictEqual(run(['actions.json'], deps), plainCode);
+  assert.strictEqual(deps.calls.stdout.join(''), plain.calls.stdout.join(''));
+  assert.strictEqual(events.length, 5, 'the recorder saw every transition');
+});
+
 test('run: station events — runId is the run dir basename with --run, and the discriminator ends with it', () => {
   const { deps, events } = stationDeps([{ issue: 118, addLabels: ['auto:build'] }]);
   assert.strictEqual(run(['actions.json', '--run', '/repo/.claude-tweaks/pipelines/run-1'], deps), 0);

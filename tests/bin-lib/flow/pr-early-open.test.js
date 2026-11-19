@@ -1172,3 +1172,23 @@ test('#5902: a throwing stationEvent leaves stdout and the exit code unchanged',
   assert.deepEqual(JSON.parse(h.out.join('')), { outcome: 'opened', number: 42, url: URL42 });
   assert.equal(h.err.join(''), '');
 });
+
+test('#5902: stdout and the exit code are byte-identical with stationEvent absent, recording and throwing', async () => {
+  const once = async (wire) => {
+    const fx = cliFixture();
+    const h = cliDeps(fx);
+    const events = wire ? wire(h) : null;
+    const code = await run(cliArgv(fx), h.deps);
+    return { code, out: h.out.join(''), err: h.err.join(''), events };
+  };
+  const plain = await once(null);
+  const recording = await once((h) => withEvents(h));
+  const throwing = await once((h) => withEvents(h, () => { throw new Error('emitter exploded'); }));
+  assert.equal(plain.code, 0, plain.err);
+  assert.equal(recording.events.length, 1, 'the recorder saw the emission');
+  for (const r of [recording, throwing]) {
+    assert.equal(r.code, plain.code);
+    assert.equal(r.out, plain.out);
+    assert.equal(r.err, plain.err);
+  }
+});

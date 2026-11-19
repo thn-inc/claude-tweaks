@@ -7282,6 +7282,37 @@ test('#5902 stdout and driver-events.jsonl are byte-identical with and without d
   assert.strictEqual(mirrored.files[path.join(MERGE_ARCHIVE, 'driver-events.jsonl')], bareFile);
 });
 
+// The cross-cutting failure-isolation proof (tests/bin-lib/station-events/failure-isolation.test.js
+// holds the CLI cases): the REAL emitter over a read-only main checkout.
+test('#5902 the real emitter over an unwritable main checkout: stdout, driver-events.jsonl and the final line unchanged; one stderr line per dropped event', async (t) => {
+  if (process.platform === 'win32') { t.skip('read-only directory not enforceable: win32'); return; }
+  if (process.getuid && process.getuid() === 0) { t.skip('read-only directory not enforceable: running as root'); return; }
+  const { appendStationEvent } = require(path.join(LIB, 'station-events', 'emit'));
+  const bare = mirrorRig(null);
+  const bareFinal = (await driveRecord(7, newShared(), bare.deps, STEPS)).final;
+  const bareFile = bare.files[path.join(MERGE_ARCHIVE, 'driver-events.jsonl')];
+  const ro = tmpDir('drive-station-ro-');
+  fs.chmodSync(ro, 0o555);
+  try {
+    const real = mirrorRig(null);
+    let calls = 0;
+    real.deps.stationEvent = (e) => { calls += 1; return appendStationEvent(e, { mainRoot: ro, stderr: real.deps.stderr }); };
+    const { final } = await driveRecord(7, newShared(), real.deps, STEPS);
+    assert.ok(calls > 0, 'the real emitter was reached');
+    assert.ok(bareFile, 'the events file exists');
+    assert.strictEqual(real.out.join(''), bare.out.join(''));
+    assert.strictEqual(real.files[path.join(MERGE_ARCHIVE, 'driver-events.jsonl')], bareFile);
+    assert.deepStrictEqual(final, bareFinal);
+    const errLines = real.err.join('').split('\n').filter(Boolean);
+    const drops = errLines.filter((l) => /^claude-tweaks: station event dropped: append failed: /.test(l));
+    assert.strictEqual(drops.length, calls, errLines.join('\n'));
+    assert.deepStrictEqual(errLines.filter((l) => !drops.includes(l)), bare.err.join('').split('\n').filter(Boolean));
+    assert.strictEqual(fs.existsSync(path.join(ro, '.claude-tweaks')), false, 'nothing was written');
+  } finally {
+    fs.chmodSync(ro, 0o755);
+  }
+});
+
 test('#5902 an interrupted worker still writes its final line and terminates when deps.stationEvent throws', async () => {
   const order = [];
   let release;

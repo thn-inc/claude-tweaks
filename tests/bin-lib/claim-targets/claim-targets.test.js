@@ -3362,6 +3362,23 @@ test('station: a stationEvent that throws leaves exit code, stdout and claimed i
   assert.deepEqual(JSON.parse(throwing.out).claimed, [720, 721]);
 });
 
+test('station: a recording stationEvent leaves exit code and stdout identical to a run without it', () => {
+  function once(record) {
+    const { ghApi } = claimFixture([720, 721]);
+    const { gh } = makeGh({});
+    const { deps, io } = baseDeps({ ghApi, gh });
+    const events = record ? withRecorder(deps) : null;
+    const code = run(['--run-id', 'r1', '--targets', '720,721'], deps);
+    return { code, out: io.out.join('\n'), events };
+  }
+  const plain = once(false);
+  const recording = once(true);
+
+  assert.equal(recording.events.length, 6, 'the recorder saw every event');
+  assert.equal(recording.code, plain.code);
+  assert.equal(recording.out, plain.out);
+});
+
 test('station: a rolled-back partial claim closes its build visit with exited build abandoned; --keep-going rolls back nothing', () => {
   const { ghApi } = makeGhApi({
     reads: {

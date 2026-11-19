@@ -1520,3 +1520,16 @@ test('#5902: a throwing stationEvent leaves the park stdout and exit code unchan
   assert.equal(strip(res.stdout), strip(base.stdout));
   assert.equal(res.stderr, base.stderr);
 });
+
+test('#5902: a recording stationEvent leaves the park stdout and exit code unchanged', async () => {
+  const plain = world({ records: { 7: { comments: [packetComment(7)] } } });
+  const base = await call(plain, parkArgv(plain));
+  const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+  const rec = recorder();
+  const res = await call(w, parkArgv(w), { stationEvent: rec.stationEvent });
+  assert.equal(rec.events.length, 2, 'both emissions were recorded');
+  assert.equal(res.code, base.code);
+  const strip = (s) => s.split(plain.state.root).join('ROOT').split(w.state.root).join('ROOT');
+  assert.equal(strip(res.stdout), strip(base.stdout));
+  assert.equal(res.stderr, base.stderr);
+});
