@@ -37,6 +37,17 @@ function unwritableRoot() {
   return dir;
 }
 
+// A writable main checkout whose existing `.claude-tweaks` is read-only: the recursive mkdir
+// succeeds, withLock cannot make its lock dir and fails open, and the append itself is refused.
+function readOnlyClaudeTweaksRoot() {
+  const root = scratchDir('station-rodir-', { realpath: true });
+  const dir = path.join(root, '.claude-tweaks');
+  fs.mkdirSync(dir);
+  fs.chmodSync(dir, 0o555);
+  readOnlyDirs.push(dir);
+  return root;
+}
+
 const DROP = /^claude-tweaks: station event dropped: append failed: /;
 const linesOf = (chunks) => chunks.join('').split('\n').filter(Boolean);
 
@@ -171,6 +182,31 @@ describe('an unwritable station file never changes a CLI result', () => {
       assert.equal(dropped.out.join(''), plain.out.join(''), 'stdout is byte-identical');
       assert.equal(dropped.emitter.calls, expectedEvents);
       assertDroppedOnce(dropped.emitter, root, dropped.err, plain.err);
+    });
+  }
+
+  const existingDirCases = [
+    ['claim-targets', claimOnce, 6],
+    ['release-claim', releaseOnce, 1],
+  ];
+  for (const [name, once, expectedEvents] of existingDirCases) {
+    test(`${name}: an existing read-only .claude-tweaks drops each event with one stderr line; stdout and exit code unchanged`, (t) => {
+      const skip = notEnforceable();
+      if (skip) { t.skip(skip); return; }
+      const plain = once(null);
+      const root = readOnlyClaudeTweaksRoot();
+      const dropped = once((stderr) => realEmitterAt(root, stderr));
+
+      assert.equal(plain.code, 0, linesOf(plain.err).join('\n'));
+      assert.equal(dropped.code, plain.code);
+      assert.equal(dropped.out.join(''), plain.out.join(''), 'stdout is byte-identical');
+      assert.equal(dropped.emitter.calls, expectedEvents);
+      const lines = linesOf(dropped.err);
+      const drops = lines.filter((l) => DROP.test(l));
+      assert.equal(drops.length, dropped.emitter.calls, lines.join('\n'));
+      for (const l of drops) assert.match(l, /EACCES.*station-events\.jsonl/, 'the append itself was refused, not the mkdir');
+      assert.deepEqual(lines.filter((l) => !DROP.test(l)), linesOf(plain.err));
+      assert.equal(fs.existsSync(stationEventPath(root)), false, 'no station-events.jsonl was created');
     });
   }
 });

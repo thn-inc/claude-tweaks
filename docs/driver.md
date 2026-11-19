@@ -135,7 +135,7 @@ Settle calls are step lines named `settle-escalate`, `settle-comment-pr`, `settl
 
 ## Station events
 
-The station file, `.claude-tweaks/station-events.jsonl` in the main checkout, is the contract other tools read; `driver-events.jsonl` is not. The driver mirrors its own step lines into it through the same sink (`started` and `exited` for `worker`, `test`, `review`, `pr`, `ci` and `merge`, plus a `session_bound` for every worker session and the merge-station boundaries from three merge sub-steps), and an unwritable file never changes a driver result. The line format, stations and failure posture are in [docs/reference/station-events.md](reference/station-events.md).
+The station file, `.claude-tweaks/station-events.jsonl` in the main checkout, is the contract other tools read; `driver-events.jsonl` is not. The driver mirrors its own step lines into it through the same sink (`started` and `exited` for `worker`, `test`, `review`, `pr`, `ci` and `merge`, plus a `session_bound` for every worker session, the review fix worker's included, and the merge-station boundaries from three merge sub-steps), and an unwritable file never changes a driver result. The line format, stations and failure posture are in [docs/reference/station-events.md](reference/station-events.md).
 
 ## The reviewer step
 
