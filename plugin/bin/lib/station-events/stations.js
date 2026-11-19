@@ -1,6 +1,7 @@
 // plugin/bin/lib/station-events/stations.js — the one home of every station,
 // lane, kind, outcome and mapping name a station event uses (#5902). A name
-// correction is a one-file change here; no call site spells a station itself.
+// correction is a one-file change here; no call site under plugin/bin spells a station itself
+// (tests/bin-lib/station-events/station-literal-conformance.test.js scans for it).
 // Reference: docs/reference/station-events.md.
 'use strict';
 

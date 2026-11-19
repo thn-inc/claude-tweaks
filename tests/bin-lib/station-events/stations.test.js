@@ -2,7 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  LABEL_TRANSITIONS, MERGE_SUBSTEP_TRANSITIONS,
+  STATION, STATIONS, SESSION_BOUND_STATION, PR_OPENED_FACT, PR_OPENED_TRANSITION, LABEL_TRANSITIONS, MERGE_SUBSTEP_TRANSITIONS,
   outcomeForReleaseReason, outcomeForDriverStatus, transitionsForLabel, releaseTransition,
 } =require('../../../plugin/bin/lib/station-events/stations');
 const { PARK_REASON } = require('../../../plugin/bin/lib/accept/park-grammar');
@@ -53,6 +53,16 @@ test('releaseTransition: a build release is exited build with the mapped outcome
   // Only the exact shaping fail is shaping: a build gate failure with a similar word still ends build.
   assert.equal(releaseTransition('failed: shaping-gate-test').outcome, 'failed');
   assert.equal(releaseTransition('shapedX: 1').outcome, 'returned');
+});
+
+test('STATION names every station once, in journey order, and the call-site helpers point at it', () => {
+  assert.deepEqual(STATIONS, ['intake', 'shape', 'authorize', 'release', 'build', 'test', 'review', 'polish', 'wrap-up', 'merge', 'accept']);
+  assert.deepEqual(Object.values(STATION), STATIONS);
+  assert.equal(STATION.BUILD, 'build');
+  assert.equal(STATION.WRAP_UP, 'wrap-up');
+  assert.equal(SESSION_BOUND_STATION, STATION.BUILD);
+  assert.deepEqual(PR_OPENED_TRANSITION, { kind: 'started', station: STATION.BUILD });
+  assert.equal(PR_OPENED_FACT, 'pr_opened');
 });
 
 test('outcomeForDriverStatus maps ok, fail and stop', () => {

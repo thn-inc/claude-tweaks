@@ -3,7 +3,7 @@
 // Step lines become a started/exited work segment; three merge sub-steps mark
 // the merge-station visit boundary. Names live in stations.js.
 'use strict';
-const { DRIVER_STEP_STATIONS, MERGE_SUBSTEP_TRANSITIONS, outcomeForDriverStatus } = require('./stations');
+const { DRIVER_STEP_STATIONS, MERGE_SUBSTEP_TRANSITIONS, SESSION_BOUND_STATION, outcomeForDriverStatus } = require('./stations');
 
 const own = (table, key) => typeof key === 'string' && Object.prototype.hasOwnProperty.call(table, key);
 const nonEmpty = (v) => typeof v === 'string' && v !== '';
@@ -26,10 +26,10 @@ function stationEventsFor(event, { repoName, runId } = {}) {
     const outcome = outcomeForDriverStatus(status);
     if (outcome !== null) out.push({ ...base, kind: 'exited', station, at: ts, outcome, payload: { step } });
     if (step === 'worker' && nonEmpty(event.sessionId)) {
-      out.push({ ...base, kind: 'session_bound', station: 'build', at: ts, sessionId: event.sessionId, payload: { step } });
+      out.push({ ...base, kind: 'session_bound', station: SESSION_BOUND_STATION, at: ts, sessionId: event.sessionId, payload: { step } });
     }
     if (step === 'review' && nonEmpty(event.fixSessionId)) {
-      out.push({ ...base, kind: 'session_bound', station: 'build', at: ts, sessionId: event.fixSessionId, payload: { step, fix: true } });
+      out.push({ ...base, kind: 'session_bound', station: SESSION_BOUND_STATION, at: ts, sessionId: event.fixSessionId, payload: { step, fix: true } });
     }
     return out;
   }

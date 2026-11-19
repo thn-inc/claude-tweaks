@@ -29,7 +29,7 @@ const { runClassified, isTimeoutError } = require('../shared-primitives');
 const { appendEntry, formatEntry, resolveTarget } = require('../log-decision/append');
 const { CLAIM_LOG_SECTION, CLAIM_LOG_STEP, claimLogText } = require('../log-decision/claim-log');
 const { toRepoName } = require('../station-events/emit');
-const { LANES, transitionsForLabel, outcomeForReleaseReason } = require('../station-events/stations');
+const { LANES, SESSION_BOUND_STATION, transitionsForLabel, releaseTransition } = require('../station-events/stations');
 const { tombstoneInFlightPr, refusalText } = claimStore;
 
 const BOT_IN_PROGRESS = 'bot:in-progress';
@@ -573,7 +573,7 @@ function run(argv, deps) {
   }
   function emitSessionBound(issue, claimedAt) {
     if (typeof deps.sessionId !== 'string' || deps.sessionId === '') return;
-    emitStation(issue, claimedAt, { kind: 'session_bound', station: 'build', discriminator: claimedAt });
+    emitStation(issue, claimedAt, { kind: 'session_bound', station: SESSION_BOUND_STATION, discriminator: claimedAt });
   }
   function emitInProgressTransition(issue, claimedAt) {
     for (const row of transitionsForLabel(BOT_IN_PROGRESS, 'added')) {
@@ -588,7 +588,7 @@ function run(argv, deps) {
     if (!claimedAtByIssue.has(issue)) return;
     const claimedAt = claimedAtByIssue.get(issue);
     emitStation(issue, claimedAt, {
-      kind: 'exited', station: 'build', outcome: outcomeForReleaseReason(ABORT_REASON),
+      ...releaseTransition(ABORT_REASON),
       payload: { reason: ABORT_REASON }, discriminator: `${claimedAt}:abort`,
     });
   }

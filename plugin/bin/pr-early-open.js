@@ -70,6 +70,7 @@ const { ghAvailable, parseRepo, repoSlug, ghOptions } = require('./lib/repo-reso
 const { sessionTmpPath } = require('./lib/session-tmp');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, isTimeoutError } = require('./lib/shared-primitives');
 const { appendStationEvent, toRepoName } = require('./lib/station-events/emit');
+const { PR_OPENED_FACT, PR_OPENED_TRANSITION } = require('./lib/station-events/stations');
 
 const USAGE = 'usage: pr-early-open.js --run <run-dir> --target "#N[,#M]" --fixes N[,M] --title <text> --summary-file <path>\n'
   + '         [--worktree <path>] [--base <branch>] [--next-step build] [--help]\n'
@@ -267,11 +268,11 @@ async function run(argv, overrides = {}) {
     // never skips another record or changes stdout or the exit code.
     const repoName = toRepoName(repo);
     if ((res.outcome === 'opened' || res.outcome === 'reopened') && typeof deps.stationEvent === 'function' && repoName) {
-      const payload = { fact: 'pr_opened', prNumber: res.number, prUrl: res.url, outcome: res.outcome };
+      const payload = { fact: PR_OPENED_FACT, prNumber: res.number, prUrl: res.url, outcome: res.outcome };
       for (const n of fixes) {
         try {
           deps.stationEvent({
-            kind: 'started', station: 'build', recordNumber: Number(n), repoName,
+            ...PR_OPENED_TRANSITION, recordNumber: Number(n), repoName,
             runId, sessionId: deps.sessionId || null, lane: 'unknown',
             payload: { ...payload }, discriminator: `pr:${res.number}`,
           });
