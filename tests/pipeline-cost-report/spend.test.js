@@ -170,6 +170,15 @@ test('a <synthetic> line neither switches the family nor uses up a pending compa
   assert.strictEqual((await scanTranscript(file)).requests[2].cause, 'compaction');
 });
 
+test('a leading <synthetic> line does not hide session start on the first real call', async () => {
+  const file = fixture([
+    asst('s', '<synthetic>', 0, {}),
+    asst('a', 'claude-opus-4-8', 1, { cache_creation_input_tokens: 60000 }),
+  ]);
+  const { requests } = await scanTranscript(file);
+  assert.deepStrictEqual(requests.map((r) => r.cause), ['ordinary growth', 'session start']);
+});
+
 test('model switch outranks compaction', async () => {
   const file = fixture([
     asst('a', 'claude-opus-4-8', 0, { cache_read_input_tokens: 1000 }),
