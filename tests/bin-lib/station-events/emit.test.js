@@ -2,7 +2,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { scratchDir } = require('../../helpers/tmp-dir');
@@ -189,10 +188,12 @@ test('toRepoName maps a host-prefixed or bare slug to owner/name', () => {
 // #5957: the log and its lock are excluded locally at append time. Git children run
 // hermetic so a developer's global core.excludesFile cannot hide the log.
 function hermeticEnv() {
-  return { ...cleanGitEnv(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devNull,
+  // The literal '/dev/null' (not os.devNull, which is '\\.\nul' on Windows) is the value
+  // git accepts on every platform (tests/git-config-null-device-conformance.test.js).
+  return { ...cleanGitEnv(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
     // GIT_CONFIG_GLOBAL does not stop git reading its default excludes file
     // ($XDG_CONFIG_HOME/git/ignore, ~/.config/git/ignore); core.excludesFile does.
-    GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.excludesFile', GIT_CONFIG_VALUE_0: os.devNull };
+    GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.excludesFile', GIT_CONFIG_VALUE_0: '/dev/null' };
 }
 
 function porcelain(dir) {
