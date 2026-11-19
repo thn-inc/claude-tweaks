@@ -570,7 +570,6 @@ function collectYield(yieldWalked, { n, fsImpl = fs } = {}) {
     if (w.timing !== 'ok') {
       const ran = new Set();
       for (const v of units()) {
-        if (v.excluded !== null) continue;
         for (const x of [...v.confirmed, ...v.refuted, ...v.cantTell]) ran.add(x.lens);
       }
       for (const lensName of ran) if (open(lensName)) entry(lensName).unparsed += 1;

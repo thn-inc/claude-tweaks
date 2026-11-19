@@ -808,7 +808,16 @@ test('a run with no timing.json counts unparsed for a lens it shows ran, and is 
   writeDecisions(path.join(pipelines, '2026-11-19T2-spec-5'), 'Reproduction: lens "3a" finding a.js:1 reproduced. Confirmed.\n');
   const got = yieldOf(pipelines, 2).byLens;
   assert.deepStrictEqual(pick(got['3a'], ['runs', 'agents', 'confirmed', 'unparsed']), { runs: 2, agents: 4, confirmed: 3, unparsed: 1 });
-  assert.strictEqual(got['3b'].unparsed, 0);
+  assert.deepStrictEqual(got['3b'], { runs: 2, agents: 2, confirmed: 0, rate: 0, unparsed: 0 });
+});
+
+test('runs with no usable timing.json or with unreadable lens agents, older than the filled slots, add no unparsed', () => {
+  const pipelines = fresh('pl');
+  ac61(pipelines);
+  writeDecisions(path.join(pipelines, '2026-11-10T1-spec-7'), threeA(1));
+  const bad = writeRun(pipelines, '2026-11-11T1-spec-8', { items: [null, lensItem('c', '3a', 'convention A', 'fast')] });
+  writeDecisions(bad.dir, threeA(1));
+  assert.deepStrictEqual(yieldOf(pipelines, 2).byLens['3a'], { runs: 2, agents: 4, confirmed: 3, rate: 0.75, unparsed: 0 });
 });
 
 test('a lens only a run with no usable timing.json records a verdict for appears with no agents and its unparsed count', () => {
