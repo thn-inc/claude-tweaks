@@ -452,3 +452,59 @@ test('sessions counts a main transcript only when one of its requests is in the 
   const r = await collectSpend({ roots: [root], ...WINDOW });
   assert.strictEqual(r.sessions, 1);
 });
+
+const errno = (code) => Object.assign(new Error(code), { code });
+
+test('a readdir failure on a slug dir is counted unreadable', async () => {
+  const root = newRoot();
+  put(path.join(root, 'slug-a', 's1.jsonl'), [opusCall('a', 1)]);
+  put(path.join(root, 'slug-b', 's2.jsonl'), [opusCall('b', 1, 500000)]);
+  const slugA = path.join(root, 'slug-a');
+  const failList = {
+    ...fs,
+    readdirSync: (d, ...rest) => {
+      if (d === slugA) throw errno('EACCES');
+      return fs.readdirSync(d, ...rest);
+    },
+  };
+  const r = await collectSpend({ roots: [root], ...WINDOW }, { fsImpl: failList });
+  assert.strictEqual(r.unreadable, 1);
+  near(r.total, 2);
+});
+
+test('only ENOENT on subagents/ means no subagents: any other readdir error is counted unreadable', async () => {
+  const root = newRoot();
+  put(path.join(root, 'slug-a', 's1.jsonl'), [typed(0, 'flow'), opusCall('a', 1)]);
+  put(path.join(root, 'slug-a', 's1', 'subagents', 'agent-x.jsonl'), [opusCall('b', 2, 500000)]);
+  const subDir = path.join(root, 'slug-a', 's1', 'subagents');
+  const failList = {
+    ...fs,
+    readdirSync: (d, ...rest) => {
+      if (d === subDir) throw errno('EACCES');
+      return fs.readdirSync(d, ...rest);
+    },
+  };
+  const r = await collectSpend({ roots: [root], ...WINDOW }, { fsImpl: failList });
+  assert.strictEqual(r.unreadable, 1);
+  near(r.total, 4);
+});
+
+test('a parent whose stat and read both fail is counted unreadable once, and its subagent is unattributed', async () => {
+  const root = newRoot();
+  const parent = put(path.join(root, 'slug-a', 's1.jsonl'), [typed(0, 'flow'), opusCall('a', 1)]);
+  put(path.join(root, 'slug-a', 's1', 'subagents', 'agent-x.jsonl'), [opusCall('b', 2, 500000)]);
+  const failBoth = {
+    ...fs,
+    statSync: (f, ...rest) => {
+      if (f === parent) throw errno('ENOENT');
+      return fs.statSync(f, ...rest);
+    },
+    createReadStream: (f, ...rest) => {
+      if (f === parent) throw errno('ENOENT');
+      return fs.createReadStream(f, ...rest);
+    },
+  };
+  const r = await collectSpend({ roots: [root], ...WINDOW }, { fsImpl: failBoth });
+  assert.strictEqual(r.unreadable, 1);
+  near(r.bySessionType.unattributed, 2);
+});

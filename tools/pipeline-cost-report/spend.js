@@ -267,8 +267,8 @@ async function collectSpend({ roots, since, until, match = null }, { fsImpl = fs
     return counted;
   }
 
-  // Main transcripts are scanned once; only { firstSkill, cwd } (or the failure) is kept, so a subagent can look its
-  // parent up without holding every request list in memory. A main inside the window is tallied as it is scanned.
+  // Main transcripts are scanned once; only { type } (the session type) or the failure is kept, so a subagent can look
+  // its parent up without holding every request list in memory. A main inside the window is tallied as it is scanned.
   const mainInfo = new Map();
   function scanMain(file, slug, tallyIt) {
     if (!mainInfo.has(file)) {
