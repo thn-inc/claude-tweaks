@@ -10,7 +10,13 @@ const { stripComment } = require('./model-profiles/policy-fragment');
 const { parseRiskPathGlobs } = require('./risk-path-globs');
 const { locatePolicyFile } = require('./policy-file');
 
+const { DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES } = require('./driver/roles');
+
 const PROFILE_NAMES = Object.keys(PROFILES);
+
+// express-driver-models (#5917): the four policy-settable driver roles' shipped profiles. `explorer` is not
+// here: its `standard` default lives only in roles.js's DRIVER_ROLE_PROFILES.
+const POLICY_DRIVER_DEFAULTS = Object.freeze(Object.fromEntries(POLICY_DRIVER_ROLES.map((role) => [role, DRIVER_ROLE_PROFILES[role]])));
 
 const POLICY_CATEGORIES = ['autonomy-trust', 'pipeline-behavior', 'merge-safety', 'health-sweeps', 'models', 'housekeeping'];
 
@@ -262,6 +268,8 @@ const POLICY_KEYS = [
   { key: 'frontier-run-cap', type: 'integer', default: 3, summary: "Caps how many Frontier model dispatches one pipeline run may use before falling back to a cheaper profile.", category: 'models', tier: 'advanced' },
   { key: 'model-ceiling', type: 'enum', values: PROFILE_NAMES, summary: "Sets the highest model profile a skill's own default may resolve to, without limiting a person's explicit choice.", category: 'models', tier: 'advanced' },
   { key: 'model-profiles', type: 'map', keys: PROFILE_NAMES, summary: "Lets a project override which model and effort level each named profile resolves to, replacing the shipped table row by row.", category: 'models', tier: 'advanced' },
+  // express-driver-models (#5917): a block of `role: profile` rows, read by parseDriverModels from policy.yml only, like risk-path-globs. policyOnly: it chooses the model autonomous machinery spends on, so a --run config never sets it. `keys` is the four policy-settable roles; `explorer` is not one, so a row naming it is a schema error.
+  { key: 'express-driver-models', type: 'map', keys: POLICY_DRIVER_ROLES, default: POLICY_DRIVER_DEFAULTS, policyOnly: true, summary: "Picks the work profile each pipeline driver worker role launches on; a role left out keeps its shipped default.", category: 'models', tier: 'advanced' },
   // Read from /claude-tweaks:research's own `## Input` --mode= flag (IL-24:
   // that file is authoritative for the vocabulary, not this schema).
   { key: 'research-mode', type: 'enum', values: ['quick', 'standard', 'deep', 'ultradeep'], summary: "Sets the default depth of a research run — quick, standard, deep, or ultradeep — when nothing else specifies one.", category: 'pipeline-behavior', tier: 'advanced' },
@@ -641,6 +649,46 @@ function deriveExpressDriverMaxLines(sources) {
   return value;
 }
 
+// express-driver-models (#5917): { present: false } | { present: true, ok: true, value } | { present: true, ok: false, raw }.
+// A column-0 `express-driver-models:` line opens the block; rows are two-space `role: profile` lines until the next
+// non-blank column-0 line. Anything else (inline value, second block, unknown or repeated role, unknown profile,
+// other indent) rejects the whole block. No row can hold `#`, so stripComment's cut is safe.
+function parseDriverModels(policyRaw) {
+  if (typeof policyRaw !== 'string') return { present: false };
+  const lines = policyRaw.split('\n');
+  const KEY = 'express-driver-models';
+  let present = false;
+  let ok = true;
+  const rows = {};
+  const rawLines = [];
+  let inBlock = false;
+  for (const line of lines) {
+    const text = stripComment(line);
+    const columnZero = text !== '' && !/^[ \t]/.test(text);
+    if (columnZero) {
+      inBlock = false;
+      if (text === `${KEY}:` || text.startsWith(`${KEY}:`)) {
+        if (present) ok = false; // a second block
+        present = true;
+        rawLines.push(text);
+        if (text !== `${KEY}:`) ok = false; // inline value
+        else inBlock = true;
+      }
+      continue;
+    }
+    if (!inBlock || text.trim() === '') continue;
+    rawLines.push(text);
+    const m = /^ {2}([a-z-]+):[ \t]*([a-z]+)$/.exec(text);
+    if (!m || !POLICY_DRIVER_ROLES.includes(m[1]) || !PROFILE_NAMES.includes(m[2]) || Object.hasOwn(rows, m[1])) {
+      ok = false;
+      continue;
+    }
+    rows[m[1]] = m[2];
+  }
+  if (!present) return { present: false };
+  return ok ? { present: true, ok: true, value: rows } : { present: true, ok: false, raw: rawLines.join('\n') };
+}
+
 function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid } = {}) {
   const sources = [
     { name: 'run-config', raw: typeof runConfigRaw === 'string' ? runConfigRaw : null },
@@ -689,6 +737,20 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid }
         result[requested] = { value: {}, source: 'default' };
       } else if (parsed.ok) {
         result[requested] = { value: parsed.value, source: 'policy' };
+      } else {
+        result[requested] = { value: null, source: 'default', invalid: true };
+        if (onInvalid) onInvalid(requested, parsed.raw);
+      }
+      continue;
+    }
+    // express-driver-models (#5917): a policyOnly block, read from policy.yml alone. Unset and rejected differ from
+    // risk-path-globs: unset resolves the four role defaults, a rejected block resolves null with invalid: true.
+    if (requested === 'express-driver-models') {
+      const parsed = parseDriverModels(policyRaw);
+      if (!parsed.present) {
+        result[requested] = { value: { ...POLICY_DRIVER_DEFAULTS }, source: 'default' };
+      } else if (parsed.ok) {
+        result[requested] = { value: { ...POLICY_DRIVER_DEFAULTS, ...parsed.value }, source: 'policy' };
       } else {
         result[requested] = { value: null, source: 'default', invalid: true };
         if (onInvalid) onInvalid(requested, parsed.raw);
@@ -1065,6 +1127,11 @@ function auditPolicy(repoRoot) {
   if (riskGlobs.present && !riskGlobs.ok && !invalidValues.some((row) => row.key === 'risk-path-globs')) {
     invalidValues.push({ key: 'risk-path-globs', value: riskGlobs.raw, expected: SCHEMA_BY_KEY.get('risk-path-globs') });
   }
+  // Same for express-driver-models (#5917): once, and never for a valid block.
+  const driverModels = parseDriverModels(policyRaw);
+  if (driverModels.present && !driverModels.ok && !invalidValues.some((row) => row.key === 'express-driver-models')) {
+    invalidValues.push({ key: 'express-driver-models', value: driverModels.raw, expected: SCHEMA_BY_KEY.get('express-driver-models') });
+  }
 
   // A recognized key still sitting in CLAUDE.md no longer applies to anything.
   // Its value is not audited — correcting a value nobody reads is not the fix;
@@ -1087,7 +1154,7 @@ function auditPolicy(repoRoot) {
 }
 
 module.exports = {
-  POLICY_KEYS, POLICY_CATEGORIES, BUILTIN_RISK_CATEGORIES, LIST_ELEMENT_PATTERNS, RENAMED_KEYS, auditPolicy, resolveValue, parseFlatLines, resolvePolicyKeys,
+  POLICY_KEYS, POLICY_CATEGORIES, BUILTIN_RISK_CATEGORIES, LIST_ELEMENT_PATTERNS, RENAMED_KEYS, auditPolicy, resolveValue, parseFlatLines, resolvePolicyKeys, parseDriverModels,
   detectIntegrationModel, resolveIntegrationModel, resolvePolicyConfig,
   GIT_REMOTE_PROBE_TIMEOUT_MS, FORGE_PROBE_ATTEMPTS, HOOK_FORGE_PROBE_TIMEOUT_MS, resolveForgeProbeTimeoutMs, formatForgeDegrade,
   FORGE_DEGRADE_REASONS, FORGE_DEGRADE_MEMO_TTL_MS,
