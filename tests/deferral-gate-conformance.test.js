@@ -535,6 +535,18 @@ test('both CLAUDE.md copies name the spec-shaped body in the no-implicit-deferra
   }
 });
 
+test("#5932 CLAUDE.md's no-implicit-deferrals bullet names the route command and this repo's digest reasons", () => {
+  const needles = ['bin/deferral-route.js', 'outside its diff', 'ideas a run has go to the digest'];
+  const check = (text) => {
+    const bullet = text.split('\n').find((l) => l.includes('**No implicit deferrals.**'));
+    assert.ok(bullet, 'bullet present');
+    for (const n of needles) assert.ok(bullet.includes(n), n);
+  };
+  const live = read('CLAUDE.md');
+  check(live);
+  for (const n of needles) assert.throws(() => check(live.split(n).join('')), assert.AssertionError);
+});
+
 test('no Capture pass-through still defers to a not-yet-landed #625 flag', () => {
   const offenders = [];
   const walk = (dir) => {
