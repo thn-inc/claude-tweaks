@@ -508,3 +508,10 @@ test('a parent whose stat and read both fail is counted unreadable once, and its
   assert.strictEqual(r.unreadable, 1);
   near(r.bySessionType.unattributed, 2);
 });
+
+test('byBucket lists its buckets smallest prompt first, not in the order they were first seen', async () => {
+  const root = newRoot();
+  put(path.join(root, 'slug-a', 's1.jsonl'), [opusCall('a', 1, 600000), opusCall('b', 2, 10000), opusCall('c', 3, 120000)]);
+  const r = await collectSpend({ roots: [root], ...WINDOW });
+  assert.deepStrictEqual(Object.keys(r.byBucket), ['<50', '100-150', '500-700']);
+});

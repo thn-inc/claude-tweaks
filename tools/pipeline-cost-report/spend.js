@@ -339,6 +339,8 @@ async function collectSpend({ roots, since, until, match = null }, { fsImpl = fs
       }
     }
   }
+  // Buckets are created as first seen; list them smallest prompt first so the rendered table reads as a distribution.
+  res.byBucket = Object.fromEntries(BUCKET_NAMES.filter((b) => b in res.byBucket).map((b) => [b, res.byBucket[b]]));
   return res;
 }
 
