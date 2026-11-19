@@ -122,7 +122,7 @@ const RECORD_PROPOSAL_CLAUSES = [
   ['session-tmp-resolve.js" --value review-followup-proposal.md', 'resolves a .md scratch path'],
   ['written `deferred`, its Resolution naming `staged/', 'writes the staged proposal ledger row deferred, naming its staged path'],
   ["Before composing, apply `_shared/materiality-floor.md`'s floor test", 'applies the materiality floor before composing'],
-  ['other than `tangential` goes to the digest container', 'routes a below-floor non-tangential finding to the digest'],
+  ['`digest` goes to the digest container', 'routes a digest verdict to the digest container'],
   ['(`isMaterialityDuplicate`)', 'runs the digest dedup check'],
   ['`AUTO … materiality-floor:` audit line', 'logs the materiality-floor audit line'],
   ['skips the compose, stage and composer-log steps', 'skips compose, stage and composer-log for a digest-routed finding'],
@@ -131,7 +131,8 @@ const RECORD_PROPOSAL_CLAUSES = [
   ['entry on `local-files`', 'names the specs/digest.md entry in the digest-routed ledger row on local-files'],
   ['when a run directory resolves', 'logs the audit line only when a run directory resolves'],
   ['end-of-run summary states the digest comment URL', 'states the digest comment URL and count in the end-of-run summary'],
-  ['A `tangential` finding, a `high` one, or one that clears the floor, is staged', 'stages a tangential, high or floor-clearing finding'],
+  ['A finding the command routes `file` is staged', 'stages a finding the command files'],
+  ['its Resolution keeping `severity={severity}`', 'keeps the severity token when a refused floor call leaves the row open'],
   ['A digest entry is not a work record', 'states a digest entry is not a work record'],
   ['A `high` finding never takes the digest branch', 'keeps a high finding off the digest branch, so its composer line reaches the release gate'],
   ['A non-zero `stage-item.js` exit stages nothing', 'leaves the ledger row open when staging fails'],
@@ -140,6 +141,36 @@ const RECORD_PROPOSAL_CLAUSES = [
   ['names the finding as `{category} at {file:line}`, never its text', 'keeps finding text out of the materiality-floor audit line'],
   ['the two exceptions to the "status `open`" wording', 'names both ledger-status exceptions'],
 ];
+
+// #5931: control mode reads an open review row's severity from its Resolution (_shared/ledger-format.md),
+// so the ledger-first paragraph must write the token and keep it while the row stays open.
+const SEVERITY_TOKEN_CLAUSES = [
+  ["`--resolution 'severity={severity}'`", 'appends a review row with its severity token'],
+  ['kept through each rewrite while it stays `open`', 'keeps the severity token through every open rewrite'],
+];
+const ledgerFirstParagraph = (text) => text.split('\n').find((l) => l.startsWith('**Ledger first, then the patch.**')) || '';
+const missingSeverityTokenClauses = (text) => {
+  const paragraph = ledgerFirstParagraph(text);
+  return SEVERITY_TOKEN_CLAUSES.filter(([literal]) => !paragraph.includes(literal)).map(([, fact]) => fact);
+};
+test('#5931: the ledger-first paragraph writes and keeps each open review row\'s severity token', () => {
+  assert.ok(ledgerFirstParagraph(md), 'the "Ledger first, then the patch." paragraph is missing');
+  assert.deepEqual(missingSeverityTokenClauses(md), []);
+});
+for (const [literal, fact] of SEVERITY_TOKEN_CLAUSES) {
+  test(`#5931 go-red: removing the clause that ${fact} turns that clause red`, () => {
+    const paragraph = ledgerFirstParagraph(md);
+    const doctored = md.replace(paragraph, () => paragraph.split(literal).join(''));
+    assert.notEqual(doctored, md, `anchor: "${literal}" not found — proof cannot discriminate`);
+    assert.deepEqual(missingSeverityTokenClauses(doctored), [fact]);
+  });
+}
+test('#5931 go-red: the severity clauses moved out of the ledger-first paragraph turn both red', () => {
+  const paragraph = ledgerFirstParagraph(md);
+  const stripped = SEVERITY_TOKEN_CLAUSES.reduce((p, [literal]) => p.split(literal).join(''), paragraph);
+  const moved = `${md.replace(paragraph, () => stripped)}\n${SEVERITY_TOKEN_CLAUSES.map(([literal]) => literal).join(' ')}\n`;
+  assert.deepEqual(missingSeverityTokenClauses(moved), SEVERITY_TOKEN_CLAUSES.map(([, fact]) => fact));
+});
 
 function missingRecordProposalClauses(paragraph) {
   return RECORD_PROPOSAL_CLAUSES.filter(([literal]) => !paragraph.includes(literal)).map(([, fact]) => fact);
