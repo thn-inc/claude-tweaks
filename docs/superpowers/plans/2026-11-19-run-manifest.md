@@ -43,8 +43,8 @@ Scope keywords: run-manifest, initRunManifest, fillRunManifest
 - Test: `tests/bin-lib/run-manifest/facts.test.js`
 
 **Interfaces:**
-- Consumes: `resolvePolicy`, `callerDeps` from `plugin/bin/resolve-policy.js`; `POLICY_KEYS` from `plugin/bin/lib/policy-schema.js`; `resolvePluginVersion(env)` from `plugin/bin/lib/plugin-version.js`; `runGit(cwd, args, opts)`-style wrapper from `plugin/bin/lib/hooks/git-exec.js` (read its real signature first: it returns `{ stdout, failure }`); `mainCheckoutRoot(cwd)` from `plugin/bin/lib/hooks/worktree-detect.js`.
-- Produces: `FORGE_DERIVED_POLICY_KEYS` (frozen `['integration-model', 'merge-verification']`, the one constant to edit if a key's resolution ever gains a network probe); `canonicalJson(value) -> string`; `gatherFacts({ cwd, env }, deps?) -> { pluginVersion: string|null, policyHash: string|null, baseCommit: string|null, modelProfile: {stance, ceiling}|null }` — each field computed independently inside its own try/catch, never throws.
+- Consumes: `resolvePolicy`, `callerDeps` from `plugin/bin/resolve-policy.js`; `POLICY_KEYS` from `plugin/bin/lib/policy-schema.js`; `resolvePluginVersion(env)` from `plugin/bin/lib/plugin-version.js`; `resolveIntegrationBranch(repoRoot, cache?, { env })` from `plugin/bin/lib/hooks/worktree-reap.js` (the shared resolver: the policy `integration-branch` pin, preferring `origin/{name}` when that remote-tracking ref exists, else the name `origin/HEAD` points at; returns a bare name, `origin/{name}`, or `null`; lazy-require it); `runGit(args, cwd, opts)` from `plugin/bin/lib/hooks/git-exec.js` (read its real signature first: it returns `{ stdout, failure }`); `mainCheckoutRoot(cwd)` from `plugin/bin/lib/hooks/worktree-detect.js`.
+- Produces: `FORGE_DERIVED_POLICY_KEYS` (frozen `['integration-model', 'merge-verification']`, the one constant to edit if a key's resolution ever gains a network probe); `canonicalJson(value) -> string`; `gatherFacts({ cwd, env? }, deps?) -> { pluginVersion: string|null, policyHash: string|null, baseCommit: string|null, modelProfile: {stance, ceiling}|null }` — each field computed independently inside its own try/catch, never throws. `env` defaults to `process.env`: callers pass the real process environment, never a stripped one (the driver mints with `env: {}`, which has no `CLAUDE_PLUGIN_ROOT` and no PATH for git).
 
 - [ ] **Step 1: Write the failing tests** in `tests/bin-lib/run-manifest/facts.test.js`, using `gitRepo()` from `tests/helpers/git-fixtures.js` for a real repo with a `.claude-tweaks/policy.yml` written per case:
   - `policyHash starts sha256: and is 64 hex after the prefix`.
@@ -55,6 +55,7 @@ Scope keywords: run-manifest, initRunManifest, fillRunManifest
   - `pluginVersion is null with CLAUDE_PLUGIN_ROOT unset, and the string version with a fixture plugin.json`.
   - `policyHash is null when policy.yml exists but cannot be read` (inject `deps.readFile` that throws a non-ENOENT error for the policy path; the real `readFileSafe` swallows errors, so the gatherer passes its own reader that returns `null` on ENOENT and rethrows otherwise).
   - `baseCommit is the 40-hex tip of origin/<pinned integration-branch>` (fixture: bare remote clone with `refs/remotes/origin/main` and `integration-branch: main` pinned), `falls back to origin/HEAD when unpinned`, `is null with no remote refs`, `is null outside a git repo`.
+  - `gatherFacts with env {} ignores the stripped env` (call with `{ cwd, env: undefined }` while `process.env.CLAUDE_PLUGIN_ROOT` points at a fixture plugin: `pluginVersion` is the fixture version).
   - `modelProfile reads model-stance and model-ceiling` (`{stance:'default', ceiling:null}` by default; pinned values come through).
   - `gatherFacts never throws and the other fields survive when one gatherer throws` (inject a throwing git dep).
 
@@ -63,7 +64,7 @@ Scope keywords: run-manifest, initRunManifest, fillRunManifest
 Run: `node --test tests/bin-lib/run-manifest/facts.test.js`
 Expected: FAIL with "Cannot find module '../../../plugin/bin/lib/run-manifest/facts'"
 
-- [ ] **Step 3: Implement `gatherFacts` and helpers in `plugin/bin/lib/run-manifest/facts.js`.** One `resolvePolicy({ keys }, deps)` call (`keys` = every `POLICY_KEYS` key not in `FORGE_DERIVED_POLICY_KEYS`, plus `model-stance`/`model-ceiling` are already in that list) feeds `policyHash` (sha256 over `canonicalJson` of `{key: entry.value ?? null}`), `modelProfile` and the `integration-branch` value for `baseCommit`. A non-zero `code` or a throw → `policyHash` and `modelProfile` both `null`. Policy is read from `deps.cwd` (the caller's checkout, so a worktree-local policy is honoured like every other resolve), via `callerDeps`-shaped deps with the ENOENT-tolerant reader. `baseCommit`: git in the main checkout (`mainCheckoutRoot(cwd)`), pinned branch → `rev-parse --verify --quiet refs/remotes/origin/{name}^{commit}`, else `symbolic-ref --quiet refs/remotes/origin/HEAD` then rev-parse that ref; accept only `/^[0-9a-f]{40}$/`, else `null`. Probe first (one scratch call) that listing the `map`-type keys (`model-profiles`, `risk-path-globs`) in `keys` does not make `resolvePolicy` error; if one does, hash it as `null` rather than dropping it from the key list.
+- [ ] **Step 3: Implement `gatherFacts` and helpers in `plugin/bin/lib/run-manifest/facts.js`.** One `resolvePolicy({ keys }, deps)` call (`keys` = every `POLICY_KEYS` key not in `FORGE_DERIVED_POLICY_KEYS`, plus `model-stance`/`model-ceiling` are already in that list) feeds `policyHash` (sha256 over `canonicalJson` of `{key: entry.value ?? null}`), `modelProfile` and the `integration-branch` value for `baseCommit`. A non-zero `code` or a throw → `policyHash` and `modelProfile` both `null`. Policy is read from `deps.cwd` (the caller's checkout, so a worktree-local policy is honoured like every other resolve), via `callerDeps`-shaped deps with the ENOENT-tolerant reader. `baseCommit`: `resolveIntegrationBranch(mainCheckoutRoot(cwd), null, { env })` names the ref (pin, else origin/HEAD), then one `git rev-parse --verify --quiet {ref}^{commit}` in the main checkout; accept only `/^[0-9a-f]{40}$/`, else `null`. The resolver already prefers `origin/{name}`, so no separate pin-parsing is written here. Probe first (one scratch call) that listing the `map`-type keys (`model-profiles`, `risk-path-globs`) in `keys` does not make `resolvePolicy` error; if one does, hash it as `null` rather than dropping it from the key list.
 
 - [ ] **Step 4: Run to verify it passes**
 
@@ -84,6 +85,8 @@ git commit -m "Add run-manifest fact gatherers — plugin version, policy hash, 
 
 ### Task 2: Manifest writer (`write.js`)
 
+**Review risk:** high
+
 **Files:**
 - Create: `plugin/bin/lib/run-manifest/write.js`
 - Test: `tests/bin-lib/run-manifest/write.test.js`
@@ -92,8 +95,8 @@ git commit -m "Add run-manifest fact gatherers — plugin version, policy hash, 
 - Consumes: `gatherFacts`, `canonicalJson` from Task 1; `writeFileAtomic` from `plugin/bin/lib/atomic-write.js`.
 - Produces:
   - `MANIFEST_FILE = 'manifest.json'`, `MANIFEST_VERSION = 1`, `LANES = ['standard','express','driver','unknown']`, `CEREMONY_PROFILES = ['fast-lane','standard']`.
-  - `initRunManifest(runDir: string, facts: { lane?: string, cwd?: string, env?: object }, deps?) -> { written: boolean }`. Writes `{runDir}/manifest.json` atomically with `v:1`, `runId`, `createdAt`, gathered facts, `lane` (default `'unknown'`, vocabulary-checked), `ceremonyProfile: null`. Never overwrites an existing file; never throws.
-  - `fillRunManifest(runDir: string, fields: { lane?, ceremonyProfile?, pluginVersion?, policyHash?, baseCommit?, modelProfile? }, deps?) -> { changed: string[] }`. Sets only fields currently `null` (and `lane` when it is `'unknown'`, since the mint writes `unknown` rather than `null`; the first known lane wins and a known lane is never overwritten), except `ceremonyProfile`, which is overwritten when the new value differs. Out-of-vocabulary `lane`/`ceremonyProfile` values are ignored. A missing manifest in an existing run directory is created by it with unknown fields `null` (facts gathered with `cwd = runDir`); a missing run directory is never created. Unknown fields and `v` in an existing file are preserved. A corrupt/non-object existing file is left untouched. Never throws.
+  - `initRunManifest(runDir: string, facts: { lane?: string, cwd?: string, env?: object }, deps?) -> { written: boolean }`. Writes `{runDir}/manifest.json` atomically with `v:1`, `runId`, `createdAt`, gathered facts (`gatherFacts({ cwd })`, so `env` defaults to `process.env`), `lane` (default `'unknown'`, vocabulary-checked), `ceremonyProfile: null`. Never overwrites an existing file; never throws. An `env` in `facts` is accepted only for tests; production callers omit it.
+  - `fillRunManifest(runDir: string, fields: { lane?, ceremonyProfile?, pluginVersion?, policyHash?, baseCommit?, modelProfile? }, deps?) -> { changed: string[] }`. Sets only fields currently `null` (and `lane` when it is `'unknown'`, since the mint writes `unknown` rather than `null`; the first known lane wins and a known lane is never overwritten, so an express run that escalates to the normal path stays `express`, and a run the driver adopted but later refused keeps `driver`: `lane` is the first route attempted), except `ceremonyProfile`, which is overwritten when the new value differs. Out-of-vocabulary `lane`/`ceremonyProfile` values are ignored. A missing manifest in an existing run directory is created by it with only the passed fields set and every other unknown field `null` (`lane` `'unknown'` unless passed); it gathers no facts, so a fill from `setConfigLever` or the express gate costs no policy read and no git call. A missing run directory is never created. Unknown fields and `v` in an existing file are preserved. A corrupt/non-object existing file is left untouched. Never throws.
   - `deps`: `{ gatherFacts, writeFileAtomic, readFileSync, existsSync, now, stderr }`, all defaulted, all injectable.
 
 - [ ] **Step 1: Write the failing tests** in `tests/bin-lib/run-manifest/write.test.js` (temp dirs, `os.tmpdir()` + `fs.mkdtempSync`, cleaned in `test.after`):
@@ -106,7 +109,7 @@ git commit -m "Add run-manifest fact gatherers — plugin version, policy hash, 
   - `fill replaces lane unknown with standard but never replaces driver or express`.
   - `fill overwrites ceremonyProfile when the value differs and changes no other field` (the downgrade case).
   - `fill ignores an out-of-vocabulary lane and ceremonyProfile`.
-  - `fill creates a missing manifest in an existing run dir with unknown fields null` and `fill does not create a missing run dir` (no directory appears; one stderr line).
+  - `fill creates a missing manifest in an existing run dir with only the passed fields set and every other unknown field null, and calls no gatherFacts` and `fill does not create a missing run dir` (no directory appears; one stderr line).
   - `fill leaves a corrupt manifest untouched` (garbage bytes, empty file, a JSON array) with one stderr line each.
   - `fill preserves v:2 and unknown fields` (file with `v:2, x:{a:1}`; fill lane; both survive).
   - `two sequential fills of different fields both survive`.
@@ -144,11 +147,11 @@ git commit -m "Add run-manifest writer — initRunManifest and fill-only-null fi
 - Test: `tests/hooks-resolve-run-dir-cli.test.js`
 
 **Interfaces:**
-- Consumes: `initRunManifest(runDir, { lane, cwd, env })` from Task 2.
+- Consumes: `initRunManifest(runDir, { lane, cwd })` from Task 2. The helper passes `resolve()`'s `cwd` but never its `env`: the driver mints with `env: {}` (`plugin/bin/lib/driver/steps.js` runDirStep), which would null `pluginVersion` and starve git of a PATH.
 - Produces: no new exports. After the directory exists, both creating branches call the init helper: standalone → `lane: 'unknown'`; spec-slug → `'driver'` when `/^drive-\d+$/.test(opts.specSlug)` else `'unknown'`. A call that returns `created:false` writes nothing (the init calls sit only inside the creating branches).
 
 - [ ] **Step 1: Write the failing tests.**
-  - `tests/hooks-run-dir-resolve.test.js`: extend the mkdir-only mint test (near `mkdir-only mints a bare run directory`) so it still asserts no `decisions.md`/`staged` and now also asserts `manifest.json` exists with `v:1`, `runId` equal to the basename, `lane:'unknown'`, `ceremonyProfile:null`; add `--spec-slug drive-5 writes lane driver`; `standalone mint still pre-populates staged/ and decisions.md and writes lane unknown`; `re-resolving an existing run writes no manifest and leaves an existing one byte-identical` (resolution steps 1-2); `a manifest write failure does not change the resolve result` (`t.mock.method(fs, 'renameSync', ...)` throwing `EACCES` only when the source path ends in `manifest.json.tmp-<pid>` shape, `ok` stays true and `path` unchanged).
+  - `tests/hooks-run-dir-resolve.test.js`: extend the mkdir-only mint test (near `mkdir-only mints a bare run directory`) so it still asserts no `decisions.md`/`staged` and now also asserts `manifest.json` exists with `v:1`, `runId` equal to the basename, `lane:'unknown'`, `ceremonyProfile:null`; add `--spec-slug drive-5 writes lane driver`; `a mint with env {} (the driver's call shape) still writes a non-null pluginVersion` (set `process.env.CLAUDE_PLUGIN_ROOT` to a fixture plugin for the test, restore after); `standalone mint still pre-populates staged/ and decisions.md and writes lane unknown`; `re-resolving an existing run writes no manifest and leaves an existing one byte-identical` (resolution steps 1-2); `a manifest write failure does not change the resolve result` (`t.mock.method(fs, 'renameSync', ...)` throwing `EACCES` only when the source path ends in `manifest.json.tmp-<pid>` shape, `ok` stays true and `path` unchanged).
   - `tests/hooks-resolve-run-dir-cli.test.js`: add `--create stdout is exactly the directory path with the manifest present, exit 0` (stdout equals `dir + '\n'` and `manifest.json` exists beside it).
 
 - [ ] **Step 2: Run to verify it fails**
@@ -156,7 +159,7 @@ git commit -m "Add run-manifest writer — initRunManifest and fill-only-null fi
 Run: `node --test tests/hooks-run-dir-resolve.test.js`
 Expected: FAIL with an assertion that `manifest.json` does not exist.
 
-- [ ] **Step 3: Add the hook.** In `resolve()` inside `if (opts.create) {`, define one helper `const mintManifest = (dir, lane) => require('../run-manifest/write').initRunManifest(dir, { lane, cwd, env });` (lazy require so hook hot paths that never mint do not load the policy resolver), call it right after `fs.mkdirSync(...)` / the `decisions.md` touch in the standalone branch and after `fs.mkdirSync(dir, { recursive: true })` in the spec-slug branch, before each `ok(dir, true)`. Update the spec-slug branch comment's "mkdir only" sentence to say it also writes `manifest.json`.
+- [ ] **Step 3: Add the hook.** In `resolve()` inside `if (opts.create) {`, define one helper `const mintManifest = (dir, lane) => require('../run-manifest/write').initRunManifest(dir, { lane, cwd });` (lazy require so hook hot paths that never mint do not load the policy resolver), call it right after `fs.mkdirSync(...)` / the `decisions.md` touch in the standalone branch and after `fs.mkdirSync(dir, { recursive: true })` in the spec-slug branch, before each `ok(dir, true)`. Update the spec-slug branch comment's "mkdir only" sentence to say it also writes `manifest.json`.
 
 - [ ] **Step 4: Run to verify it passes**
 
@@ -211,16 +214,18 @@ git commit -m "Pin manifest.json as not run initialization — resolveRunArg, or
 **Files:**
 - Modify: `plugin/bin/lib/set-config/write.js` (`setConfigLever`, after the config.yml write)
 - Modify: `plugin/bin/lib/flow/manifesto-write.js` (`writeManifesto`, after the lever loop)
+- Modify: `plugin/bin/set-config.js` (the `--set` batch path, after a successful batch)
 - Test: `tests/bin-lib/set-config/write.test.js` (locate with `ls tests/bin-lib/set-config` or `grep -rln setConfigLever tests`; create beside neighbours only if no suite exists)
 - Test: `tests/bin-lib/flow/manifesto-write.test.js`
 
 **Interfaces:**
 - Consumes: `fillRunManifest` from Task 2.
-- Produces: `setConfigLever({ runDir, key, value })` additionally calls `fillRunManifest(runDir, { ceremonyProfile: value })` when `key === 'ceremony-profile'` and the write succeeded; `writeManifesto` additionally calls `fillRunManifest(runDir, { lane: 'standard' })` after it writes `config.yml`. `writeManifesto` already writes `ceremony-profile` through `setConfigLever`, so the Manifesto's `ceremonyProfile` arrives through the set-config hook; the Manifesto fills only `lane`. Neither return value nor thrown errors change.
+- Produces: `setConfigLever({ runDir, key, value })` additionally calls `fillRunManifest(runDir, { ceremonyProfile: value })` when `key === 'ceremony-profile'` and the write succeeded; `writeManifesto` additionally calls `fillRunManifest(runDir, { lane: 'standard' })` after it writes `config.yml`. `writeManifesto` already writes `ceremony-profile` through `setConfigLever`, so the Manifesto's `ceremonyProfile` arrives through the set-config hook; the Manifesto fills only `lane`. `writeManifesto` is the `auto` fresh-run path only: the `confirm`/`hybrid` Manifesto, case-3 recovery and the by-hand fallback write `config.yml` through `plugin/bin/set-config.js --set` with all 13 `MANIFESTO_LEVERS`. So the `--set` batch path also calls `fillRunManifest(runDir, { lane: 'standard' })` after a successful batch whose keys include every `MANIFESTO_LEVERS` entry (any `mode`); a partial batch (the ceremony escape hatch's downgrade, the express lane's five-key `configSet`) never does. Neither return value, exit code nor thrown errors change.
 
 - [ ] **Step 1: Write the failing tests.**
   - set-config: `setting ceremony-profile fills manifest ceremonyProfile`, `a later ceremony-profile change overwrites ceremonyProfile and changes no other field`, `setting another key leaves manifest.json untouched`, `a fill failure does not change the set-config result` (inject/mock a throwing writer).
-  - manifesto-write (real set-config, real run dir from the existing `fixture()`; seed `manifest.json` via `initRunManifest`): after `writeManifesto` the manifest has `ceremonyProfile` equal to the `ceremony-profile` lever and `lane: 'standard'`; with no pre-existing manifest it is created with the rest `null`; an express/driver-known lane is not overwritten.
+  - manifesto-write (real set-config, real run dir from the existing `fixture()`; seed `manifest.json` via `initRunManifest`): after `writeManifesto` the manifest has `ceremonyProfile` equal to the `ceremony-profile` lever and `lane: 'standard'`; with no pre-existing manifest it is created with every other field `null`; an express/driver-known lane is not overwritten.
+  - set-config CLI (`plugin/bin/set-config.js`'s `run`, same fixture style as its existing suite — locate with `grep -rln "set-config" tests/*.test.js tests/bin-lib/set-config`): a full 13-lever `--set` batch with `mode=confirm` fills `lane: 'standard'` and `ceremonyProfile`; a partial `--set` batch with only `ceremony-profile=standard` fills `ceremonyProfile` and leaves `lane` untouched; the express `configSet` string leaves `lane` untouched.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -237,7 +242,7 @@ Expected: PASS. Then run the located set-config test file with `node --test`. Ex
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/set-config/write.js plugin/bin/lib/flow/manifesto-write.js tests/bin-lib/flow/manifesto-write.test.js <set-config test file>
+git add plugin/bin/lib/set-config/write.js plugin/bin/lib/flow/manifesto-write.js plugin/bin/set-config.js tests/bin-lib/flow/manifesto-write.test.js <set-config test file>
 git commit -m "Fill manifest ceremonyProfile from set-config and lane from the Manifesto (refs #5903)"
 ```
 (append the `Claude-Session:` trailer line)
@@ -245,6 +250,8 @@ git commit -m "Fill manifest ceremonyProfile from set-config and lane from the M
 ---
 
 ### Task 6: Fill hooks — express `gate` lane and driver `adoptRun` lane
+
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/express/cli.js` (`runGate`, after the verdicts are computed)
@@ -291,7 +298,7 @@ git commit -m "Fill manifest lane from the express gate and the driver's run ado
 **Interfaces:**
 - Consumes: the final field set and writer behaviour from Tasks 1-6. Produces: the contract page dispatch points at.
 
-- [ ] **Step 1: Write `docs/reference/run-manifest.md`.** Cover: purpose and who reads it (dispatch copies the object into each visit's `manifest`); the nine fields with type, meaning and which writer sets each (mint `initRunManifest` in `run-dir-resolve.js`; Manifesto lane; `setConfigLever` ceremonyProfile; express gate; driver adoption); the null/`unknown` = "not known yet or never known" reader rule; the fill rules (only-null, `lane: unknown` counts as unset and the first known lane wins, `ceremonyProfile` may change on a downgrade); the additive-only rule and `v`; `policyHash` is a fingerprint of resolved values at mint, excludes `integration-model` and `merge-verification` (forge-derived, can call `gh`), and does not reflect a mid-run `policy.yml` edit; `baseCommit` is the tip of `origin/{integration-branch}` at mint (the worktree itself starts from local HEAD plus a catch-up merge, so this is the integration tip the run builds on, not necessarily the worktree's first commit); archival moves the file with the run directory to `archive/{run-id}/`, readers must check both; it holds no secrets; it is not run initialization; the name is distinct from the multi-spec `manifest.yml`.
+- [ ] **Step 1: Write `docs/reference/run-manifest.md`.** Cover: purpose and who reads it (dispatch copies the object into each visit's `manifest`); the nine fields with type, meaning and which writer sets each (mint `initRunManifest` in `run-dir-resolve.js`; Manifesto lane; `setConfigLever` ceremonyProfile; express gate; driver adoption); the null/`unknown` = "not known yet or never known" reader rule; the fill rules (only-null, `lane: unknown` counts as unset and the first known lane wins, `ceremonyProfile` may change on a downgrade); `lane` means the first route attempted: an express run that escalates to the normal path stays `express`, and a record the driver adopted but then refused (policyStep, the origin-host gate) keeps `driver`; a manifest created by a fill (a run minted before this shipped, an adopted run) carries only the filled fields, the rest `null`; the Manifesto fills `lane: standard` from `writeManifesto` and from `set-config.js`'s full 13-lever `--set` batch; the additive-only rule and `v`; `policyHash` is a fingerprint of resolved values at mint, excludes `integration-model` and `merge-verification` (forge-derived, can call `gh`), and does not reflect a mid-run `policy.yml` edit; `baseCommit` is the tip of the integration branch at mint, resolved by `worktree-reap.js`'s `resolveIntegrationBranch` (the policy pin, preferring `origin/{name}`, else `origin/HEAD`); the worktree itself starts from local HEAD plus a catch-up merge of that same ref, so the two agree except when local HEAD carries unpushed commits or origin moved after the mint, and the field documents the integration tip the run builds on, not the worktree's first commit; archival moves the file with the run directory to `archive/{run-id}/`, readers must check both; it holds no secrets; it is not run initialization; the name is distinct from the multi-spec `manifest.yml`.
 
 - [ ] **Step 2: Add the structure-doc line** and keep the style of the neighbouring lines (module names, one-clause purpose, `#5903`).
 
