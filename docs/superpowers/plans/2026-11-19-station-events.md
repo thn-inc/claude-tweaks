@@ -31,6 +31,21 @@ Scope keywords: station-events, appendStationEvent, session_bound
 4. `bot:blocked` / `bot:parked` additions are not emitted: the emitter cannot know which station's visit they end.
 5. `express-lane.js` call paths emit nothing in this record; `express` stays a valid `lane` value.
 
+## Spec paths this plan deliberately does not edit
+
+Named in the spec's Technical Approach, left alone for the reasons in "Spec deviations": `plugin/bin/lib/release-claim/release.js` (the CLI emits instead), `plugin/bin/lib/issues/accept-entry.js` (it applies no label), `plugin/bin/lib/flow/pr-early-open.js` (the CLI emits instead), `plugin/bin/lib/driver/merge.js` (its sub-step lines already pass through the driver sink, so the mirror covers them), `plugin/bin/lib/hooks/worktree-detect.js` (read-only use, shared with #5903's run-dir work), `plugin/skills/_shared/label-bootstrap.md` (read for label names only), and `.claude-tweaks/station-events.jsonl` (the file the emitter writes, ignored by git).
+
+## Acceptance criteria map
+
+- After `claim-targets.js` claims record N, the file holds a `session_bound` event whose `recordNumber` is N and whose `sessionId` equals `CLAUDE_CODE_SESSION_ID`; claiming records 1, 2 and 3 in one session writes three such events with the same `sessionId` — Task 3.
+- A driver run's `driver-events.jsonl` and the station-event file agree: every `worker`, `test`, `review`, `pr`, `ci` and `merge` step that has a line in the first has a started and an exited event in the second, with the same record and run id, and the `session_bound` event names the worker's `session_id` — Tasks 8 and 9.
+- `resolve-blockers.js 12,13` emits two `kind: blockers` events and prints the same stdout and exit code as before; a record with a blocker in another repository carries it in `payload.crossRepoBlockers` — Tasks 5 and 6.
+- Every event passes a line-format check: valid JSON, a known `kind`, `at` in UTC, a deterministic `eventKey`; emitting the same transition twice yields one `eventKey` — Task 1.
+- Run from a linked worktree, the event lands in the main checkout's `.claude-tweaks/station-events.jsonl` — Task 1.
+- With the file unwritable (read-only directory), the claim, the release, `resolve-blockers.js` and a driver run still finish with their unchanged results and exit codes — Task 12.
+- No event is written by a skill prose step; `git grep -n "station-events" -- plugin/skills` matches no instruction to log — Task 2.
+- The full test suite and lint pass — `/build` Common Step 5.
+
 ## Review Focus
 
 - A `--budget` drain claiming records 1, 2, 3 in one session writes three `session_bound` events, same `sessionId` (Task 3).
@@ -130,7 +145,7 @@ Run: `node --test tests/init-bootstrap-gitignore.test.js` — first `git grep -l
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/bin-lib/claim-targets/claim-targets.test.js`
-Expected: FAIL (new assertions) — the pre-existing tests pass.
+Expected: FAIL after Step 1 (new assertions) — the pre-existing tests pass.
 
 - [ ] **Step 3: Implement** the `--lane` parse in `parseArgs` and `USAGE`, the emission block wrapped in try/catch, and `realDeps.stationEvent` in `plugin/bin/claim-targets.js`. `repoName` is `toRepoName(repoSlug)`. `claimedAt` comes from the same `payload` built at `claim-targets.js:646`.
 - [ ] **Step 4: Run test to verify it passes**
@@ -156,7 +171,7 @@ Expected: PASS (the CLI wiring test still sees `gitRunner`; add one case asserti
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/bin-lib/release-claim/cli.test.js`
-Expected: FAIL (new assertions)
+Expected: FAIL after Step 1 (new assertions)
 
 - [ ] **Step 3: Implement** the emission in `plugin/bin/release-claim.js` after the stdout payload is composed and before the `return`, in try/catch.
 - [ ] **Step 4: Run test to verify it passes**
@@ -208,7 +223,7 @@ Expected: PASS
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/resolve-blockers-cli.test.js`
-Expected: FAIL (new assertions)
+Expected: FAIL after Step 1 (new assertions)
 
 - [ ] **Step 3: Implement** the pass-through in `number-list-cli.js` (one line in the `fetch({...})` call) and the wiring in `resolve-blockers.js`.
 - [ ] **Step 4: Run test to verify it passes**
@@ -233,7 +248,7 @@ Run: `node --test tests/resolve-linked-prs-cli.test.js` — find the real name w
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/bin-lib/preflight-records/preflight-records.test.js`
-Expected: FAIL (new assertions)
+Expected: FAIL after Step 1 (new assertions)
 
 - [ ] **Step 3: Implement** the forwarding and the `realDeps.onSnapshot`.
 - [ ] **Step 4: Run test to verify it passes**
@@ -257,7 +272,7 @@ Expected: PASS
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/bin-lib/driver/worker.test.js`
-Expected: FAIL (new assertions)
+Expected: FAIL after Step 1 (new assertions)
 
 - [ ] **Step 3: Implement** the three one-line changes. Read the claim step's argv construction in `steps.js` first (`git grep -n "claim-targets" plugin/bin/lib/driver/steps.js`) and add the flag where the argv is built.
 - [ ] **Step 4: Run test to verify it passes**
@@ -311,7 +326,7 @@ Expected: PASS
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/apply-refine-labels.test.js`
-Expected: FAIL (new assertions)
+Expected: FAIL after Step 1 (new assertions)
 
 - [ ] **Step 3: Implement** the emission inside the `try` after `deps.gh(editArgs)`, in its own try/catch.
 - [ ] **Step 4: Run test to verify it passes**
@@ -335,7 +350,7 @@ Expected: PASS
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/accept-park-cli.test.js`
-Expected: FAIL (new assertions)
+Expected: FAIL after Step 1 (new assertions)
 
 - [ ] **Step 3: Implement** both emissions, each in its own try/catch.
 - [ ] **Step 4: Run test to verify it passes**
