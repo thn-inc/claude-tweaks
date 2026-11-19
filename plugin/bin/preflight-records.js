@@ -278,7 +278,7 @@ function loadFromGh(opts, numbers, deps) {
     if (!repoSpec) { deps.stderr('preflight-records.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return { code: 2 }; }
     try {
       dependencies = preflight.fetchNativeDependencies({
-        numbers, owner: repoSpec.owner, repo: repoSpec.repo, host: repoSpec.host, runner: nativeRecoveringRunner(deps.runner, numbers),
+        numbers, owner: repoSpec.owner, repo: repoSpec.repo, host: repoSpec.host, runner: nativeRecoveringRunner(deps.runner, numbers), onSnapshot: deps.onSnapshot,
       });
     } catch (err) {
       deps.stderr(`preflight-records.js: ${preflight.errorText(err)}\n`);
@@ -539,4 +539,17 @@ function run(argv, deps = realDeps) {
 
 module.exports = { run, parseArgs, parseRepo };
 
-if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
+// #5902: only the real process writes a `blockers` station event per fetched
+// number (work-links: native); the sink is built here so requiring this module never wires it.
+if (require.main === module) {
+  const { appendStationEvent } = require('./lib/station-events/emit');
+  const { makeBlockerSnapshotSink } = require('./lib/station-events/blockers');
+  process.exitCode = run(process.argv.slice(2), {
+    ...realDeps,
+    onSnapshot: makeBlockerSnapshotSink({
+      stationEvent: appendStationEvent,
+      sessionId: process.env.CLAUDE_CODE_SESSION_ID || null,
+      runId: null,
+    }),
+  });
+}

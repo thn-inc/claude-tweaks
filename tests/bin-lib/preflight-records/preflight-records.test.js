@@ -1609,3 +1609,72 @@ test('blocker-landing NOT_FOUND recovery returns the parsed response for a b{n} 
   assert.deepEqual(recoveredResponse(err, ['b5']), JSON.parse(err.stdout));
   assert.equal(recoveredResponse(err, ['i5']), null);
 });
+
+// --- blocker snapshot (#5902) -----------------------------------------------
+
+function snapshotRunner({ graphql } = {}) {
+  return (args) => {
+    for (const n of [720, 721, 722]) {
+      if (isIssueView(args, n)) return JSON.stringify(issue({ number: n, title: `R${n}`, body: specBody([`f${n}.js`]) }));
+    }
+    if (isGraphQL(args)) {
+      if (graphql) return graphql(args);
+      return JSON.stringify({
+        data: {
+          repository: {
+            i720: { number: 720, blockedBy: { nodes: [{ number: 700, state: 'OPEN' }] } },
+            i721: { number: 721, blockedBy: { nodes: [] } },
+            i722: { number: 722, blockedBy: { nodes: [{ number: 701, state: 'CLOSED' }] } },
+          },
+        },
+      });
+    }
+    throw new Error('unexpected ' + args.join(' '));
+  };
+}
+
+test('#5902: native mode hands each fetched record to deps.onSnapshot once; the envelope and exit code match a run without it', () => {
+  const plain = cliDeps({ runner: snapshotRunner(), workLinks: 'native' });
+  const plainCode = run(['720', '721', '722'], plain.deps);
+  const seen = [];
+  const withSink = cliDeps({ runner: snapshotRunner(), workLinks: 'native' });
+  withSink.deps.onSnapshot = (n, entry, ctx) => seen.push([n, entry, ctx]);
+  const code = run(['720', '721', '722'], withSink.deps);
+  assert.equal(code, plainCode);
+  assert.equal(code, 0);
+  assert.equal(withSink.out.join(''), plain.out.join(''));
+  assert.equal(withSink.err.join(''), plain.err.join(''));
+  assert.deepEqual(seen.map(([n]) => n), [720, 721, 722]);
+  assert.deepEqual(seen[0][1].blockedBy, [700]);
+  assert.equal(seen[0][2].owner, 'acme');
+  assert.equal(seen[0][2].repo, 'w');
+});
+
+test('#5902: body-text mode never calls deps.onSnapshot', () => {
+  const d = cliDeps({ runner: snapshotRunner(), workLinks: 'body-text' });
+  let calls = 0;
+  d.deps.onSnapshot = () => { calls += 1; };
+  assert.equal(run(['720', '721', '722'], d.deps), 0);
+  assert.equal(calls, 0);
+});
+
+test('#5902: a throwing deps.onSnapshot leaves the envelope and exit code unchanged', () => {
+  const plain = cliDeps({ runner: snapshotRunner(), workLinks: 'native' });
+  const plainCode = run(['720', '721', '722'], plain.deps);
+  let calls = 0;
+  const d = cliDeps({ runner: snapshotRunner(), workLinks: 'native' });
+  d.deps.onSnapshot = () => { calls += 1; throw new Error('sink boom'); };
+  assert.equal(run(['720', '721', '722'], d.deps), plainCode);
+  assert.equal(calls, 3);
+  assert.equal(d.out.join(''), plain.out.join(''));
+  assert.equal(d.err.join(''), plain.err.join(''));
+});
+
+test('#5902: a failed native GraphQL fetch (exit 1) records no snapshot', () => {
+  let calls = 0;
+  const d = cliDeps({ runner: snapshotRunner({ graphql: () => { throw new Error('Command failed: boom'); } }), workLinks: 'native' });
+  d.deps.onSnapshot = () => { calls += 1; };
+  assert.equal(run(['720', '721', '722'], d.deps), 1);
+  assert.equal(d.out.length, 0);
+  assert.equal(calls, 0);
+});
