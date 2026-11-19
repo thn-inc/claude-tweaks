@@ -876,3 +876,22 @@ test('Expiry\'s date fence runs: a run-id, a stamped line, the comment date, and
   assert.notStrictEqual(failed.status, 0, 'a failed gh read must fail the fence');
   assert.strictEqual(failed.stdout, '');
 });
+
+// --- #5931 Task 4: visual-review's Issue severities onto the command's (plan-review Decision 2) ---
+const VISUAL_SEVERITY_MAP = ['Critical `critical`', 'Major `medium`', 'Minor `low`', 'Cosmetic `info`', 'none for an Idea'];
+function visualSeverityProblems(text) {
+  const defer = text.split('\n').find((l) => l.startsWith('- **Defer** (new work record — born-ready'));
+  if (!defer) return ['the Issues Defer bullet is missing'];
+  return VISUAL_SEVERITY_MAP.filter((m) => !defer.includes(m)).map((m) => `the Issues Defer bullet does not map ${m}`);
+}
+test('#5931 visual-review maps its Issue severities onto the route command\'s', () => {
+  assert.deepStrictEqual(visualSeverityProblems(read('plugin/skills/visual-review/browser-review.md')), []);
+});
+for (const m of VISUAL_SEVERITY_MAP) {
+  test(`#5931 go-red: dropping ${m} fails the visual-review severity map`, () => {
+    const text = read('plugin/skills/visual-review/browser-review.md');
+    const mutated = text.split(m).join('');
+    assert.notEqual(mutated, text, `anchor ${m} not in browser-review.md`);
+    assert.deepStrictEqual(visualSeverityProblems(mutated), [`the Issues Defer bullet does not map ${m}`]);
+  });
+}
