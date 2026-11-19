@@ -7192,6 +7192,52 @@ test('#5232 adoptRun returns the adopted run for a linked worktree of the main c
   assert.equal(adoptModule().adoptRun({ runDir: ADOPT_RUN, cwd: sub }, h.deps).wt, ADOPT_WT);
 });
 
+// The adoption's lane fill (#5903): a run directory bound to ADOPT_WT, with the manifest the mint left.
+// `over` undefined leaves no manifest; an object writes the one the mint writes, with `over` applied.
+const boundRun = (over) => {
+  const { dir } = stateRun(ADOPT_STATE);
+  if (over === undefined) return { dir, minted: null };
+  const minted = { v: 1, runId: path.basename(dir), createdAt: '2026-11-15T00:00:00.000Z', lane: 'unknown', ceremonyProfile: null, pluginVersion: '1.2.3', policyHash: 'abc', baseCommit: 'def', modelProfile: 'standard', ...over };
+  fs.writeFileSync(path.join(dir, 'manifest.json'), `${JSON.stringify(minted, null, 2)}\n`);
+  return { dir, minted };
+};
+const readRunManifest = (dir) => JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
+
+test('#5903 adoptRun on a dispatch-minted run fills lane driver', () => {
+  const { dir, minted } = boundRun({});
+  const h = harness({ script: [[isAdoptBranchRead, `${ADOPT_BRANCH}\n`]] });
+  const result = adoptModule().adoptRun({ runDir: dir, cwd: ADOPT_WT }, h.deps);
+  assert.deepEqual(result, { ok: true, runDir: dir, runId: path.basename(dir), wt: ADOPT_WT, branch: ADOPT_BRANCH, mainRoot: ADOPT_MAIN });
+  assert.deepEqual(readRunManifest(dir), { ...minted, lane: 'driver' });
+});
+
+test('#5903 adoptRun keeps a known lane and fills a manifest the mint did not leave', () => {
+  const { dir: kept } = boundRun({ lane: 'standard' });
+  const { dir: bare } = boundRun();
+  const h = harness({ script: [[isAdoptBranchRead, `${ADOPT_BRANCH}\n`]] });
+  assert.equal(adoptModule().adoptRun({ runDir: kept, cwd: ADOPT_WT }, h.deps).ok, true);
+  assert.equal(readRunManifest(kept).lane, 'standard');
+  assert.equal(adoptModule().adoptRun({ runDir: bare, cwd: ADOPT_WT }, h.deps).ok, true);
+  assert.equal(readRunManifest(bare).lane, 'driver');
+});
+
+test('#5903 a refused adoption writes nothing', () => {
+  const cases = [
+    // check 4: the run-state.json names another worktree
+    [stateRun(`${JSON.stringify({ worktree: ADOPT_MAIN })}\n`), ADOPT_WT, []],
+    // check 3: the working directory is the main checkout
+    [stateRun(ADOPT_STATE), ADOPT_MAIN, []],
+    // check 5, the last one: a detached HEAD
+    [stateRun(ADOPT_STATE), ADOPT_WT, [[isAdoptBranchRead, '\n']]],
+  ];
+  for (const [{ dir, unchanged }, cwd, script] of cases) {
+    const h = harness({ script });
+    assert.equal(adoptModule().adoptRun({ runDir: dir, cwd }, h.deps).ok, false, dir);
+    assert.equal(fs.existsSync(path.join(dir, 'manifest.json')), false, dir);
+    unchanged();
+  }
+});
+
 test('#5232 a thrown guard is a refusal naming the error, exit 3', async () => {
   const h = harness({ deps: { cwd: () => ADOPT_WT, adoptRun: () => { throw new Error('guard exploded'); } } });
   assert.equal(await run(adoptArgv(ADOPT_RUN), h.deps), 3);
