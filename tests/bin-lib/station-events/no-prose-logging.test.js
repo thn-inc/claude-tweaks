@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { readText } = require('../../helpers/read-skill');
 
 // #5902: station events are written by code only. No skill prose may tell
 // anyone to log one, so the only skill file that names the station-event
@@ -36,7 +36,7 @@ function assertOnlySuggestionsFile(files) {
 }
 
 function suggestionBlock() {
-  const text = fs.readFileSync(path.join(ROOT, SUGGESTIONS), 'utf8');
+  const text = readText(path.join(ROOT, SUGGESTIONS));
   const start = text.indexOf('```gitignore');
   assert.ok(start >= 0, 'fenced gitignore block must exist');
   const end = text.indexOf('```', start + 3);
@@ -63,7 +63,7 @@ test('the matcher is red on an extra skill file and on a missing suggestions fil
 });
 
 test('the root .gitignore carries both station-event entries', () => {
-  const gitignore = fs.readFileSync(path.join(ROOT, '.gitignore'), 'utf8');
+  const gitignore = readText(path.join(ROOT, '.gitignore'));
   for (const entry of ENTRIES) assert.match(gitignore, lineRe(entry), `.gitignore lacks ${entry}`);
 });
 

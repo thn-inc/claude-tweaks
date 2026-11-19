@@ -11,6 +11,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { scratchDir } = require('../../helpers/tmp-dir');
+const { chmodDenialSkip } = require('../../helpers/root');
 const { appendStationEvent, buildLine, stationEventPath } = require('../../../plugin/bin/lib/station-events/emit');
 const { BLOCKER_SNAPSHOT_STATION } = require('../../../plugin/bin/lib/station-events/stations');
 const { makeBlockerSnapshotSink } = require('../../../plugin/bin/lib/station-events/blockers');
@@ -20,14 +21,11 @@ const resolveBlockers = require('../../../plugin/bin/resolve-blockers');
 
 const readOnlyDirs = [];
 after(() => {
-  for (const d of readOnlyDirs) fs.chmodSync(d, 0o755);
+  for (const d of readOnlyDirs) fs.chmodSync(d, 0o755); // root-safe: restores the fixture's own chmod
 });
 
-function notEnforceable() {
-  if (process.platform === 'win32') return 'read-only directory not enforceable: win32';
-  if (process.getuid && process.getuid() === 0) return 'read-only directory not enforceable: running as root';
-  return null;
-}
+// win32 and root never deny a read-only directory (tests/helpers/root.js).
+const DENIAL = chmodDenialSkip('read-only directory not enforceable: running as root');
 
 // A main checkout the emitter cannot write into: read-only before the call, restored in after().
 function unwritableRoot() {
@@ -170,9 +168,7 @@ describe('an unwritable station file never changes a CLI result', () => {
     ['resolve-blockers (onSnapshot)', resolveOnce, 2],
   ];
   for (const [name, once, expectedEvents] of cases) {
-    test(`${name}: stdout and exit code match a run without stationEvent; each dropped event is one stderr line`, (t) => {
-      const skip = notEnforceable();
-      if (skip) { t.skip(skip); return; }
+    test(`${name}: stdout and exit code match a run without stationEvent; each dropped event is one stderr line`, DENIAL, () => {
       const plain = once(null);
       const root = unwritableRoot();
       const dropped = once((stderr) => realEmitterAt(root, stderr));
@@ -190,9 +186,7 @@ describe('an unwritable station file never changes a CLI result', () => {
     ['release-claim', releaseOnce, 1],
   ];
   for (const [name, once, expectedEvents] of existingDirCases) {
-    test(`${name}: an existing read-only .claude-tweaks drops each event with one stderr line; stdout and exit code unchanged`, (t) => {
-      const skip = notEnforceable();
-      if (skip) { t.skip(skip); return; }
+    test(`${name}: an existing read-only .claude-tweaks drops each event with one stderr line; stdout and exit code unchanged`, DENIAL, () => {
       const plain = once(null);
       const root = readOnlyClaudeTweaksRoot();
       const dropped = once((stderr) => realEmitterAt(root, stderr));

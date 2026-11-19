@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync, execFileSync } = require('node:child_process');
 const { readText } = require('../../helpers/read-skill');
+const { chmodDenialSkip } = require('../../helpers/root');
 const { VERDICT_STEPS, verdictMarker } = require('../../../plugin/bin/lib/dispatch/merge-verdict');
 const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
@@ -7310,9 +7311,7 @@ test('#5902 stdout and driver-events.jsonl are byte-identical with and without d
 
 // The cross-cutting failure-isolation proof (tests/bin-lib/station-events/failure-isolation.test.js
 // holds the CLI cases): the REAL emitter over a read-only main checkout.
-test('#5902 the real emitter over an unwritable main checkout: stdout, driver-events.jsonl and the final line unchanged; one stderr line per dropped event', async (t) => {
-  if (process.platform === 'win32') { t.skip('read-only directory not enforceable: win32'); return; }
-  if (process.getuid && process.getuid() === 0) { t.skip('read-only directory not enforceable: running as root'); return; }
+test('#5902 the real emitter over an unwritable main checkout: stdout, driver-events.jsonl and the final line unchanged; one stderr line per dropped event', chmodDenialSkip('read-only directory not enforceable: running as root'), async () => {
   const { appendStationEvent } = require(path.join(LIB, 'station-events', 'emit'));
   const bare = mirrorRig(null);
   const bareFinal = (await driveRecord(7, newShared(), bare.deps, STEPS)).final;
@@ -7335,7 +7334,7 @@ test('#5902 the real emitter over an unwritable main checkout: stdout, driver-ev
     assert.deepStrictEqual(errLines.filter((l) => !drops.includes(l)), bare.err.join('').split('\n').filter(Boolean));
     assert.strictEqual(fs.existsSync(path.join(ro, '.claude-tweaks')), false, 'nothing was written');
   } finally {
-    fs.chmodSync(ro, 0o755);
+    fs.chmodSync(ro, 0o755); // root-safe: restores the fixture's own chmod
   }
 });
 
