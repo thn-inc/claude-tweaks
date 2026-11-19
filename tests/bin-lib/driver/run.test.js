@@ -7269,6 +7269,32 @@ test('#5902 a merged run mirrors every work step as started + exited, and binds 
     [['merge-ready', 'entered', undefined], ['merge-confirm', 'exited', 'passed']]);
 });
 
+// The mirror skips an armed merge-confirm by its free-text detail prefix. This drives the real
+// merge step to armed, so the detail comes from merge.js itself rather than a retyped literal.
+test('#5902 an armed merge-confirm (real merge.js detail) is no merge-station exit, and its detail starts with the pinned prefix', async () => {
+  const isPrViewOf = (fields) => (c) => c.kind === 'gh' && c.args[0] === 'pr' && c.args[1] === 'view' && c.args.includes(fields);
+  const seen = [];
+  const armed = mergeHarness({
+    deps: { stationEvent: (e) => seen.push(e) },
+    script: [
+      [(c) => c.kind === 'policyCore' && c.args.includes('merge-verification'),
+        { code: 0, result: { 'merge-verification': { value: 'merge-when-green', source: 'run-config' } }, invalidRaw: new Map(), degrades: new Map() }],
+      [isPrViewOf(GATE_FIELDS), JSON.stringify({ state: 'OPEN', mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', headRefOid: HEAD_SHA, statusCheckRollup: [PENDING_CHECK] })],
+      [isPrViewOf(CONFIRM_FIELDS), JSON.stringify({ state: 'OPEN', mergedAt: null, autoMergeRequest: { enabledAt: '2026-11-13T09:30:00Z', mergeMethod: 'SQUASH' }, statusCheckRollup: [PENDING_CHECK], mergeCommit: null })],
+    ],
+  });
+  const { final } = await driveRecord(7, newShared(), armed.deps, STEPS);
+  assert.strictEqual(final.outcome, 'armed');
+  const confirm = armed.lines().find((l) => l.step === 'merge-confirm');
+  assert.ok(confirm, 'the real armed run wrote a merge-confirm line');
+  const { MERGE_SUBSTEP_TRANSITIONS } = require('../../../plugin/bin/lib/station-events/stations');
+  assert.ok(confirm.detail.startsWith(MERGE_SUBSTEP_TRANSITIONS['merge-confirm'].skipDetailPrefix),
+    `merge.js's armed detail no longer starts with the prefix the mirror skips on: ${confirm.detail}`);
+  assert.deepStrictEqual(seen.filter((e) => e.payload.substep === 'merge-confirm'), [], 'an armed merge-confirm is not a merge-station exit');
+  assert.deepStrictEqual(seen.filter((e) => e.kind === 'exited' && e.station === 'merge' && e.payload.substep), [],
+    'no merge-station visit boundary exit for an armed merge');
+});
+
 test('#5902 stdout and driver-events.jsonl are byte-identical with and without deps.stationEvent', async () => {
   const bare = mirrorRig(null);
   await driveRecord(7, newShared(), bare.deps, STEPS);
