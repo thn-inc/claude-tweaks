@@ -30,8 +30,8 @@ const LIST_ELEMENT_PATTERNS = {
 
 // The explicit empty list on a list row with `emptyList: true` (#5932). A blank
 // value reads as unset (parseFlatLines), so `[]` is the only way a run config can
-// override a configured list with nothing. The same spelling console-resolve.js's
-// reader accepts.
+// override a configured list with nothing. console-resolve.js's base-branch reader
+// imports it.
 const EMPTY_LIST_RE = /^\[\s*\]$/;
 
 // A `string` row's optional `pattern` the whole value must also match. The
