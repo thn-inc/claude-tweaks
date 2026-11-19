@@ -174,4 +174,87 @@ function collectWholeBranch(runs, { roots, fsImpl = fs } = {}) {
   };
 }
 
-module.exports = { selectColumns, parseReviewCounts, readTiming, readReport, collectWholeBranch };
+const TASK_ROLES = new Set(['implementer', 'task review', 're-review']);
+const TASK_NUM_RE = /\bTask\s+(\d+)\b/i;
+const RECORD_RE = /#(\d+)/;
+
+// Guard 2: the share of tasks whose group holds no re-review. A task is keyed by run, parent agent, record and task
+// number. A dispatch naming no record joins the record that every record-naming implementer of its task number (same
+// parent) names; with none, or two different ones, it stays record-less. Groups that cannot be told apart or lack an
+// implementer are counted `unparsed`, not tasks. A task's tier is that of its earliest implementer.
+function collectFirstPass(runs, { fsImpl = fs } = {}) {
+  let unparsed = 0;
+  let passed = 0;
+  let n = 0;
+  const tiers = {};
+  for (const run of runs) {
+    let timing;
+    try {
+      timing = readTiming(run.dir, fsImpl);
+    } catch {
+      unparsed += 1;
+      continue;
+    }
+    if (!timing) continue;
+    const parsed = [];
+    for (const d of timing.items) {
+      if (!d || !TASK_ROLES.has(d.role)) continue;
+      const description = String(d.description || '');
+      const num = TASK_NUM_RE.exec(description);
+      if (!num) {
+        unparsed += 1;
+        continue;
+      }
+      const rec = RECORD_RE.exec(description);
+      parsed.push({ d, description, parent: d.parentAgentId || '', task: num[1], record: rec ? rec[1] : '' });
+    }
+    const lent = new Map();
+    for (const p of parsed) {
+      if (p.d.role !== 'implementer' || !p.record) continue;
+      const k = `${p.parent}\0${p.task}`;
+      if (!lent.has(k)) lent.set(k, new Set());
+      lent.get(k).add(p.record);
+    }
+    for (const p of parsed) {
+      const set = p.record ? null : lent.get(`${p.parent}\0${p.task}`);
+      if (set && set.size === 1) p.record = [...set][0];
+    }
+    const groups = new Map();
+    for (const p of parsed) {
+      const k = `${p.parent}\0${p.record}\0${p.task}`;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(p);
+    }
+    const multi = Array.isArray(run.members) && run.members.length > 1;
+    for (const group of groups.values()) {
+      const impls = group.filter((p) => p.d.role === 'implementer');
+      if (!impls.length) {
+        unparsed += 1;
+        continue;
+      }
+      if (multi && !group[0].record && new Set(impls.map((p) => p.description)).size >= 2) {
+        unparsed += 1;
+        continue;
+      }
+      const ts = (p) => (p.d.startTs ? String(p.d.startTs) : null);
+      let first = impls[0];
+      for (const p of impls.slice(1)) {
+        const a = ts(p);
+        const b = ts(first);
+        if (a !== null && (b === null || a < b)) first = p;
+      }
+      const tier = first.d.tier || 'unknown';
+      const ok = !group.some((p) => p.d.role === 're-review');
+      n += 1;
+      if (ok) passed += 1;
+      if (!tiers[tier]) tiers[tier] = { passed: 0, n: 0 };
+      tiers[tier].n += 1;
+      if (ok) tiers[tier].passed += 1;
+    }
+  }
+  const byTier = {};
+  for (const [tier, t] of Object.entries(tiers)) byTier[tier] = { share: t.passed / t.n, n: t.n };
+  return { share: n ? passed / n : null, byTier, n, unparsed };
+}
+
+module.exports = { selectColumns, parseReviewCounts, readTiming, readReport, collectWholeBranch, collectFirstPass };

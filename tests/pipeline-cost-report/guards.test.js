@@ -11,7 +11,7 @@ const os = require('os');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..', '..');
-const { selectColumns, parseReviewCounts, readTiming, readReport, collectWholeBranch } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'guards.js'));
+const { selectColumns, parseReviewCounts, readTiming, readReport, collectWholeBranch, collectFirstPass } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'guards.js'));
 
 const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pcr-guards-'));
 after(() => fs.rmSync(DIR, { recursive: true, force: true }));
@@ -156,6 +156,8 @@ test('readReport reads a SubagentHandback report', () => {
   assert.strictEqual(readReport({ roots: [projects], sessions: ['s1'], agentId: 'h1' }), '#### Important\n1. x');
   assert.strictEqual(readReport({ roots: [projects], sessions: ['s1'], agentId: 'h2' }), 'final');
   assert.strictEqual(readReport({ roots: [projects], sessions: ['s1'], agentId: 'nope' }), null);
+  // An unreadable root is skipped, not fatal.
+  assert.strictEqual(readReport({ roots: [path.join(projects, 'missing'), projects], sessions: ['s1'], agentId: 'h1' }), '#### Important\n1. x');
 });
 
 test('guard 1 also reads an unlabelled final review', () => {
@@ -194,4 +196,158 @@ test('readTiming: absent is null, unparseable throws, and an unparseable run cou
   assert.strictEqual(r.unparsed, 2);
   assert.strictEqual(r.n, 0);
   assert.strictEqual(r.share, null);
+});
+
+// Task-dispatch fixture: role, description, tier, startTs index, parent agent.
+let agentSeq = 0;
+const task = (role, description, tier = 'standard', t = 1, parentAgentId = null) => ({
+  agentId: `t${agentSeq++}`,
+  description,
+  role,
+  tier,
+  parentAgentId,
+  startTs: `2026-11-18T10:00:0${t}Z`,
+});
+const impl = (description, tier, t, parent) => task('implementer', description, tier, t, parent);
+const rev = (description, tier, t, parent) => task('task review', description, tier, t, parent);
+const rerev = (description, tier, t, parent) => task('re-review', description, tier, t, parent);
+
+function firstPass(items, { members = [], name = '2026-11-18T1-spec-1' } = {}) {
+  const pipelines = fresh('pl');
+  const run = { ...writeRun(pipelines, name, { items }), members };
+  return collectFirstPass([run], {});
+}
+
+test('AC3.1: three tasks, one re-reviewed, give 67% and the first implementer\'s tier', () => {
+  const r = firstPass([
+    impl('Implement Task 1: a', 'standard', 1),
+    rev('Review Task 1', 'capable', 2),
+    impl('Implement Task 2: b', 'capable', 3),
+    impl('Implement Task 2: b again', 'standard', 5),
+    rev('Review Task 2', 'capable', 6),
+    rerev('Re-review Task 2 fix round 1', 'capable', 7),
+    impl('Implement Task 3: c', 'standard', 6),
+    rev('Review Task 3', 'capable', 7),
+  ]);
+  assert.strictEqual(r.n, 3);
+  assert.strictEqual(Math.round(r.share * 100), 67);
+  assert.deepStrictEqual(r.byTier.standard, { share: 1, n: 2 });
+  assert.deepStrictEqual(r.byTier.capable, { share: 0, n: 1 });
+  assert.strictEqual(r.unparsed, 0);
+});
+
+test('AC4.1: task 1 of two runs counts twice', () => {
+  const pipelines = fresh('pl');
+  const mk = (name) => writeRun(pipelines, name, { items: [impl('Implement Task 1', 'standard', 1), rev('Review Task 1', 'capable', 2)] });
+  const r = collectFirstPass([mk('2026-11-18T1-spec-1'), mk('2026-11-18T2-spec-2')], {});
+  assert.strictEqual(r.n, 2);
+});
+
+test('first pass keys tasks by record number within a run', () => {
+  const r = firstPass([
+    impl('Implement #5830 Task 1', 'standard', 1),
+    impl('Implement #5863 Task 1', 'standard', 2),
+    rerev('Re-review Task 1 for #5863', 'capable', 3),
+  ]);
+  assert.strictEqual(r.n, 2);
+  assert.strictEqual(r.share, 0.5);
+});
+
+test('a dispatch naming no record inherits its task\'s one implementer\'s record', () => {
+  const r = firstPass([
+    impl('Implement #5830 Task 1', 'standard', 1),
+    rev('Review Task 1', 'capable', 2),
+    rerev('Re-review Task 1 fix round 1', 'capable', 3),
+  ]);
+  assert.strictEqual(r.n, 1);
+  assert.strictEqual(r.unparsed, 0);
+  assert.strictEqual(r.share, 0);
+});
+
+test('first pass keys tasks by parent agent', () => {
+  const r = firstPass([impl('Implement Task 1', 'standard', 1, 'p1'), impl('Implement Task 1', 'standard', 2, 'p2')]);
+  assert.strictEqual(r.n, 2);
+});
+
+test('a review group with no implementer is unparsed; an untasked task dispatch is unparsed', () => {
+  const r = firstPass([
+    rev('Review Task 4', 'capable', 1),
+    rerev('Re-review the final-review fix wave', 'capable', 2),
+    impl('Implement Task 1', 'standard', 3),
+    impl('Implement the fix wave', 'standard', 4),
+  ]);
+  assert.strictEqual(r.n, 1);
+  assert.strictEqual(r.unparsed, 3);
+});
+
+test('a re-dispatched implementer naming one record still lends it', () => {
+  const r = firstPass([
+    impl('Implement #5228 Task 5: a', 'standard', 1),
+    impl('Implement #5228 Task 5: a again', 'standard', 2),
+    rev('Review Task 5', 'capable', 3),
+    rerev('Re-review Task 5 fix round 1', 'capable', 4),
+  ]);
+  assert.strictEqual(r.n, 1);
+  assert.strictEqual(r.unparsed, 0);
+  assert.strictEqual(r.share, 0);
+  const two = firstPass([
+    impl('Implement #1 Task 1', 'standard', 1),
+    impl('Implement #2 Task 1', 'standard', 2),
+    rev('Review Task 1', 'capable', 3),
+  ]);
+  assert.strictEqual(two.n, 2);
+  assert.strictEqual(two.unparsed, 1);
+});
+
+test('a record-less multi-spec group with differing implementers is unparsed', () => {
+  const items = () => [
+    impl('Implement Task 1: macOS workflow skeleton', 'standard', 1),
+    impl('Implement Task 1: release-block check', 'standard', 2),
+    rerev('Re-review Task 1 fix round 1', 'capable', 3),
+    impl('Implement Task 2: x', 'standard', 4),
+    rev('Review Task 2', 'capable', 5),
+  ];
+  const multi = firstPass(items(), { members: ['spec-1', 'spec-2'] });
+  assert.strictEqual(multi.n, 1);
+  assert.strictEqual(multi.unparsed, 1);
+  assert.strictEqual(multi.share, 1);
+  const single = firstPass(items(), { members: ['spec-1'] });
+  assert.strictEqual(single.n, 2);
+  assert.strictEqual(single.unparsed, 0);
+});
+
+test('a task\'s tier is the earliest implementer\'s; an implementer with no startTs sorts last', () => {
+  const noTs = { ...impl('Implement Task 1: a', 'capable', 1), startTs: undefined };
+  const r = firstPass([noTs, impl('Implement Task 1: a again', 'standard', 2), rev('Review Task 1', 'capable', 3)]);
+  assert.deepStrictEqual(Object.keys(r.byTier), ['standard']);
+  const r2 = firstPass([impl('Implement Task 1: a', 'standard', 2), noTs, rev('Review Task 1', 'capable', 3)]);
+  assert.deepStrictEqual(Object.keys(r2.byTier), ['standard']);
+});
+
+test('guard 1 and 2 ignore a run with no timing.json', () => {
+  const dir = fresh('pl');
+  const run = { name: '2026-11-18T1-spec-1', date: '2026-11-18', dir, archived: false, members: [] };
+  for (const r of [collectWholeBranch([run], { roots: [] }), collectFirstPass([run], {})]) {
+    assert.strictEqual(r.n, 0);
+    assert.strictEqual(r.unparsed, 0);
+    assert.strictEqual(r.share, null);
+  }
+});
+
+test('corrupt timing.json counts one unparsed in guards 1 and 2', () => {
+  const dir = fresh('pl');
+  fs.writeFileSync(path.join(dir, 'timing.json'), '{');
+  const run = { name: '2026-11-18T1-spec-1', date: '2026-11-18', dir, archived: false, members: [] };
+  assert.strictEqual(collectWholeBranch([run], { roots: [] }).unparsed, 1);
+  assert.strictEqual(collectFirstPass([run], {}).unparsed, 1);
+});
+
+test('a timing.json with no dispatches.items counts one unparsed in guards 1 and 2', () => {
+  const dir = fresh('pl');
+  fs.writeFileSync(path.join(dir, 'timing.json'), '{"dispatches":{"notFound":"no subagents/ directory"}}');
+  const run = { name: '2026-11-18T1-spec-1', date: '2026-11-18', dir, archived: false, members: [] };
+  for (const r of [collectWholeBranch([run], { roots: [] }), collectFirstPass([run], {})]) {
+    assert.strictEqual(r.n, 0);
+    assert.strictEqual(r.unparsed, 1);
+  }
 });
