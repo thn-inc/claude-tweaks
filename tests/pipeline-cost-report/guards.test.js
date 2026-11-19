@@ -180,6 +180,27 @@ test('guard 1 also reads an unlabelled final review', () => {
   assert.strictEqual(r.unparsed, 0);
 });
 
+test('guard 1 reads an unlabelled whole-branch review and skips a final-review fix wave', () => {
+  const pipelines = fresh('pl');
+  const projects = fresh('pr');
+  const items = [
+    review('w1', 'Final review fix wave #5882', 'unlabelled'),
+    review('w2', 'Final review fix wave #5883', 'unlabelled'),
+    review('w3', 'Whole-branch final code review', 'unlabelled'),
+    review('w4', 'Final review for #5865', 'unlabelled'),
+    review('w5', 'Whole-branch review fix wave', 'unlabelled'),
+  ];
+  const run = writeRun(pipelines, '2026-11-18T1-spec-1', { items, sessions: ['s1'] }, projects);
+  for (const id of ['w1', 'w2', 'w5']) writeReport(projects, 's1', id, '#### Critical\n1. fix wave report\n');
+  writeReport(projects, 's1', 'w3', '#### Important\n1. a\n');
+  writeReport(projects, 's1', 'w4', '#### Minor\n1. b\n');
+  const r = collectWholeBranch([run], { roots: [projects] });
+  assert.strictEqual(r.n, 2);
+  assert.strictEqual(r.unparsed, 0);
+  assert.strictEqual(r.share, 0.5);
+  assert.strictEqual(r.meanCritical, 0);
+});
+
 test('readTiming: absent is null, unparseable throws, and an unparseable run counts unparsed', () => {
   const pipelines = fresh('pl');
   const empty = path.join(pipelines, 'x');
@@ -459,7 +480,7 @@ test('guard 3 queries the column\'s merge window and 14 days past it', () => {
   assert.deepStrictEqual(prList, ['pr', 'list', '--repo', 'o/r', '--state', 'merged', '--search', 'merged:2026-11-01..2026-11-05', '--limit', '1000', '--json', 'number,mergedAt']);
   assert.deepStrictEqual(prView, ['pr', 'view', '7', '--repo', 'o/r', '--json', 'files']);
   assert.deepStrictEqual(issueList, ['issue', 'list', '--repo', 'o/r', '--state', 'all', '--label', 'type:bug', '--search', 'created:2026-11-01..2026-11-19', '--limit', '1000', '--json', 'number,createdAt,body']);
-  assert.deepStrictEqual(r, { count: 0, perPr: 0,mergedPrs: 1, unparsed: 0 });
+  assert.deepStrictEqual(r, { count: 0, perPr: 0, mergedPrs: 1, unparsed: 0 });
 });
 
 test('guard 3: an empty column makes no gh call and a gh throw propagates', () => {
@@ -553,6 +574,8 @@ test('AC7.1: --json prints the figures under a guards key', async () => {
   assert.deepStrictEqual(g.before.wholeBranch, { share: 0.5, meanCritical: 0, meanImportant: 0.5, n: 4, unparsed: 0 });
   assert.strictEqual(g.before.firstPass.n, 3);
   assert.strictEqual(g.before.firstPass.unparsed, 0);
+  assert.strictEqual(Math.round(g.before.firstPass.share * 100), 67);
+  assert.ok(Math.abs(g.before.firstPass.share - 2 / 3) < 1e-9);
   assert.deepStrictEqual(g.before.firstPass.byTier.capable, { share: 0, n: 1 });
   assert.deepStrictEqual(g.before.postMergeBugs, { count: 1, perPr: 1, mergedPrs: 1, unparsed: 0 });
   assert.strictEqual(g.after.runCount, 2);

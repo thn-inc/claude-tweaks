@@ -137,7 +137,15 @@ function readReport({ roots, sessions, agentId }, fsImpl = fs) {
   return null;
 }
 
-const isWholeBranch = (d) => d && (d.role === 'whole-branch review' || (d.role === 'unlabelled' && /^final review\b/i.test(String(d.description || ''))));
+// A `whole-branch review` dispatch always counts. An unlabelled one counts when its description starts `final review`
+// or names `whole-branch`, unless it names a `fix wave` (the implementers that fix the review's findings).
+const isWholeBranch = (d) => {
+  if (!d) return false;
+  if (d.role === 'whole-branch review') return true;
+  if (d.role !== 'unlabelled') return false;
+  const text = String(d.description || '');
+  return (/^final review\b/i.test(text) || /whole-branch/i.test(text)) && !/fix wave/i.test(text);
+};
 
 function collectWholeBranch(runs, { roots, fsImpl = fs } = {}) {
   let n = 0;

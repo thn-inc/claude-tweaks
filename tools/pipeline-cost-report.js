@@ -39,7 +39,9 @@
 // transcript with no parseable line at all is counted once;
 // an unresolvable default --pipelines prints `Runs: unavailable` and leaves the code alone); 1 a section failed —
 // a forge read failed, or spend could not resolve the main checkout (that section prints
-// `{section}: unavailable — {first line}`; JSON `{ error }`); 2 malformed invocation.
+// `{section}: unavailable — {first line}`; JSON `{ error }`) — with --split set that includes a pipelines listing
+// failure (`guards: unavailable —`, though the Runs line still leaves the code alone) and a guard 3 forge failure (only
+// that cell reads unavailable); 2 malformed invocation, --section guards without --split included.
 //
 // Seam: run({ argv, deps }) resolves to the exit code; deps holds fs, gh(args) (stdout), check(n) (drive.js --check
 // stdout), git(args, {cwd}), now(), pluginVersion(), cwd, home and the log/err line writers.
