@@ -39,7 +39,7 @@ files:
 - **URL:** the envelope with `status: timeout`, `reason: wall-clock-ceiling`
 - **Action:** nothing to do during the wait. At the ceiling the launcher ends the worker and everything it started, then returns.
 - **Should feel:** bounded. The call always comes back, even when the worker does not.
-- **Should understand:** the envelope normally arrives after the worker has exited. If the worker survives the kill, the launcher gives up five seconds later and says so in `detail`, naming the process id. On POSIX the worker runs detached, so a run loop that is itself interrupted must end its workers. The pipeline driver launches every worker through `launchTracked` in `plugin/bin/lib/driver/launch.js`, which records the worker's handle so that `run.js`'s signal handler can end it; a new driver launch goes through it too, not through `launchWorker` directly.
+- **Should understand:** the envelope normally arrives after the worker has exited. If the worker survives the kill, the launcher gives up five seconds later and says so in `detail`, naming the process id. On POSIX the worker runs detached, so a run loop that is itself interrupted must end its workers. The pipeline driver launches every worker through `launchTracked` in `plugin/bin/lib/driver/launch.js`, which records the worker's handle so that `run.js`'s signal handler can end it; a new driver launch goes through it too, not through `launchWorker` directly. `launchTracked` resolves to `{ envelope, model }`, not the bare envelope, and a launcher throw after the model resolved is rethrown with `model` attached, so the caller's event line can still name the model (#5917).
 - **Red flags:** a launch that never returns, or a `timeout` envelope with worker processes still running and no `detail` saying so.
 
 ### 5. Check it against a real worker — a terminal
@@ -57,4 +57,5 @@ files:
 - Updated during build of #5915 (run `2026-11-19T062113-spec-5915-5917`): step 1 says `testCommand` is optional and that the driver passes only a targeted runner.
 - Updated during build of #5917 (run `2026-11-19T062113-spec-5915-5917`): step 1 says every driver launch names a policy-chosen model and refuses a role with none, and step 5 adds the per-role live probe.
 - Updated at wrap-up of #5915 (run `2026-11-19T062113-spec-5915-5917`): step 5's smoke test runs the driver's targeted test command instead of `npm test`.
+- Updated at wrap-up of #5917 (run `2026-11-19T062113-spec-5915-5917`): step 4 says `launchTracked` returns the model beside the envelope and attaches it to a launcher throw.
 - The rights, the sandbox settings and what the sandbox was observed to contain are recorded, with the CLI version and date of each probe, in the header comments of `plugin/bin/lib/driver/roles.js` and `plugin/bin/lib/driver/worker.js`.
