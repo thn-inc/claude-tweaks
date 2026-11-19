@@ -230,6 +230,7 @@ function deferralSiteProblems(text) {
     for (const flag of ['--size {size}', '--priority {priority}', '--risk {risk}', '--agent-raised']) {
       if (!holding.some((p) => p.includes(flag))) problems.push(`the command paragraph lacks ${flag}`);
     }
+    if (holding.some((p) => p.includes('--human'))) problems.push('the command paragraph passes --human');
     if (!holding.some((p) => p.includes('any other outcome'))) problems.push('the command paragraph does not handle any other outcome');
     for (const word of ['`file`', '`digest`', '`refused`']) {
       if (!holding.some((p) => p.includes(word))) problems.push(`the command paragraph does not name the ${word} verdict`);
@@ -253,6 +254,7 @@ const SITE_MUTATIONS = [
   [ROUTE_COMMAND, 'no paragraph holds the deferral-route.js command form'],
   ['--size {size}', 'the command paragraph lacks --size {size}'],
   ['{priority}', 'the command paragraph lacks --priority {priority}'],
+  ['--risk {risk}', 'the command paragraph lacks --risk {risk}'],
   ['--agent-raised', 'the command paragraph lacks --agent-raised'],
   ['any other outcome', 'the command paragraph does not handle any other outcome'],
   ['`file`', 'the command paragraph does not name the `file` verdict'],
@@ -276,6 +278,11 @@ test('#5931 go-red: the verdicts in another paragraph than the command fail the 
     'the command paragraph does not name the `digest` verdict',
     'the command paragraph does not name the `refused` verdict',
   ]);
+});
+test('#5931 go-red: a command paragraph passing --human fails the deferral-site check', () => {
+  const human = `${SAMPLE_SITE} | --human`;
+  assert.deepStrictEqual(deferralSiteProblems(human), ['the command paragraph passes --human']);
+  assert.throws(() => assertDeferralSite(human, 'sample'));
 });
 test('#5931 go-red: an override restated across a line wrap fails the deferral-site check', () => {
   const restated = `${SAMPLE_SITE}\nA \`tangential\` reason always\nclears the floor.`;
