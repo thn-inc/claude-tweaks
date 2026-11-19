@@ -395,7 +395,7 @@ const claimStep = defineStep(STEP.claim, STOP_CLASSES.CLAIM, async (ctx, deps) =
   ctx.claimDate = deps.date();
   ctx.runId = adopted ? adopted.runId : `${formatTimestamp(ctx.claimDate)}-drive-${n}`;
   const r = deps.node(binScript('claim-targets.js'),
-    ['--run-id', ctx.runId, '--targets', String(n), '--steps', 'build,test'],
+    ['--run-id', ctx.runId, '--targets', String(n), '--steps', 'build,test', '--lane', 'driver'],
     { cwd: mainRoot, timeout: CLI_TIMEOUT_MS, env: deps.env });
   // A recorded fact, not a side effect: the budget loop reads it to tell a contested claim (3) from
   // other claim failures (4, 5, an exit 0 that claimed nothing, a killed claim with a null exit, a
@@ -739,10 +739,15 @@ async function runImplementer(ctx, deps, { extraPrompt = '' } = {}) {
       denials,
       costUsd: orNull(envelope.costUsd),
       spendOverrun: envelope.spendOverrun === true,
+      sessionId: typeof envelope.sessionId === 'string' && envelope.sessionId !== '' ? envelope.sessionId : null,
     };
     // spendOverrun: an `ok` launch whose last turn crossed the spend ceiling (worker.js checks it
-    // between turns); present only when the envelope says so.
-    extra = { usage: ctx.worker.usage, turns: ctx.worker.turns, denials, ...(ctx.worker.spendOverrun ? { spendOverrun: true } : {}) };
+    // between turns); present only when the envelope says so. sessionId: present only when known.
+    extra = {
+      usage: ctx.worker.usage, turns: ctx.worker.turns, denials,
+      ...(ctx.worker.spendOverrun ? { spendOverrun: true } : {}),
+      ...(ctx.worker.sessionId !== null ? { sessionId: ctx.worker.sessionId } : {}),
+    };
   }
   const headStop = headFail(before, headOf(deps, ctx.wt), extra);
   if (headStop) return headStop;
