@@ -17,7 +17,7 @@
 
 const { routeDeferral } = require('./lib/deferral-route/route');
 
-const USAGE = 'usage: deferral-route.js --defer-reason <reason> (--agent-raised | --human) [--severity <critical|high|medium|low|info>] [--size <v>] [--priority <v>] [--risk <v>] [--help]\n';
+const USAGE = 'usage: deferral-route.js --defer-reason <reason> (--agent-raised | --human) [--severity <critical|high|medium|low|info>] [--size <v>] [--priority <v>] [--risk <v>] [--help]\nexit codes: 0 a verdict (file or digest) or --help; 2 refused (no exit 1).\n';
 const VALUE_FLAGS = { '--defer-reason': 'deferReason', '--severity': 'severity', '--size': 'size', '--priority': 'priority', '--risk': 'risk' };
 const ACCEPTED = '--defer-reason, --severity, --size, --priority, --risk, --agent-raised, --human, --help';
 const BOTH_OR_NEITHER = 'exactly one of --agent-raised or --human is required';

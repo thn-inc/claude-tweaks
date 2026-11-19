@@ -211,3 +211,37 @@ test('AC8.1 writes nothing and calls no gh', { skip: STUB_SKIP }, () => {
 test('AC8.2 in-process deps are stdout and stderr only', () => {
   assert.deepStrictEqual(Object.keys(realDeps).sort(), ['stderr', 'stdout']);
 });
+
+// AC8.1 can only see the child's cwd; this one catches a write to any path, by
+// trapping every fs mutation API while run() handles each verdict in-process.
+test('AC8.3 run() calls no fs mutation API on any path, for every verdict', () => {
+  const { run } = require(CLI);
+  const MUTATORS = ['writeFile', 'appendFile', 'mkdir', 'mkdtemp', 'rm', 'rmdir', 'unlink', 'rename', 'copyFile', 'cp', 'symlink', 'link', 'truncate', 'open', 'createWriteStream'];
+  const calls = [];
+  const restores = [];
+  const trap = (obj, name, label) => {
+    if (typeof obj[name] !== 'function') return;
+    const original = obj[name];
+    obj[name] = () => { calls.push(label); throw new Error(`fs mutation ${label} during run()`); };
+    restores.push(() => { obj[name] = original; });
+  };
+  for (const name of MUTATORS) {
+    trap(fs, name, `fs.${name}`);
+    trap(fs, `${name}Sync`, `fs.${name}Sync`);
+    trap(fs.promises, name, `fs.promises.${name}`);
+  }
+  const out = [];
+  const deps = { stdout: (s) => out.push(s), stderr: () => {} };
+  const codes = [];
+  try {
+    codes.push(run(['--defer-reason', 'pre-existing-outside-diff', ...LOW, '--agent-raised'], deps));
+    codes.push(run(['--defer-reason', 'tangential', ...LOW, '--agent-raised'], deps));
+    codes.push(run(['--defer-reason', 'not-a-reason', '--agent-raised'], deps));
+    codes.push(run(['--help'], deps));
+  } finally {
+    for (const restore of restores) restore();
+  }
+  assert.deepStrictEqual(calls, []);
+  assert.deepStrictEqual(codes, [0, 0, 2, 0]);
+  assert.equal(out.length, 4);
+});
