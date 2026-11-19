@@ -10,7 +10,9 @@ const crypto = require('node:crypto');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const worker = require(path.join(LIB, 'driver', 'worker.js'));
 const { launchWorker, buildEnv, conformsTo, ENVELOPE_FIELDS, ENV_ALLOW, ENV_ALLOW_WIN32 } = worker;
-const { RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainReadPaths } = require(path.join(LIB, 'driver', 'roles.js'));
+const { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, ROLES, DRIVER_ROLE_PROFILES, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainReadPaths } = require(path.join(LIB, 'driver', 'roles.js'));
+const { MODEL_POLICY_KEYS, roleModel } = require(path.join(LIB, 'driver', 'launch.js'));
+const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema.js'));
 const OK = require('./fixtures/worker-result.json');
 const BUDGET = require('./fixtures/worker-result-budget.json');
 
@@ -177,11 +179,22 @@ test('a bad testCommand is refused with the testCommand TypeError before any loo
   const looked = [];
   const toolchain = { lookup: (name) => { looked.push(name); return null; }, realpath: (p) => p, firstLine: () => '', isExecutable: () => true };
   const { runner, calls } = fakeRunner(okOut());
-  const opts = base(t, { testCommand: undefined, settingsDir: path.join(tmp(t), 'not-yet') });
+  const opts = base(t, { testCommand: null, settingsDir: path.join(tmp(t), 'not-yet') });
   await assert.rejects(launchWorker(opts, { runner, toolchain }), (err) => err instanceof TypeError && /testCommand/.test(err.message));
   assert.deepStrictEqual(looked, []);
   assert.strictEqual(calls.length, 0);
   assert.ok(!fs.existsSync(opts.settingsDir), 'the settings directory was created before the refusal');
+});
+
+test('launchWorker: an implementer launch with no testCommand writes settings with no test rule', async (t) => {
+  const looked = [];
+  const toolchain = { lookup: (name) => { looked.push(name); return '/x/bin/' + name; }, realpath: (p) => p, firstLine: () => '', isExecutable: () => true };
+  const { runner, calls } = fakeRunner(okOut());
+  const env = await launchWorker(base(t, { testCommand: undefined }), { runner, toolchain });
+  assert.strictEqual(env.status, 'ok');
+  const allow = JSON.parse(calls[0].files['--settings'].text).permissions.allow;
+  assert.deepStrictEqual(allow.filter((r) => r.startsWith('Bash(')), ['Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)']);
+  assert.deepStrictEqual(looked, []);
 });
 
 test('off the probed platforms nothing is derived', async (t) => {
@@ -973,6 +986,11 @@ test("defaultRunner lets the child's exit decide when stdin errors", async () =>
   assert.deepStrictEqual(await handle.exited, { code: 1, signal: null, stdout: '', stderr: "error: unknown option '--x'\n" });
 });
 
+// The test command the driver passes on this repository (verify-scope.json's impact.command
+// cut before ` {files}`) and the list file it tells the worker to write (#5915).
+const SMOKE_TEST_COMMAND = 'node tools/run-tests.js --files-from';
+const SMOKE_TEST_LIST = '.claude-tweaks/pipelines/worker-test-files.txt';
+
 test('AC7/AC6.1: live smoke test — the write runs, and the echo, curl and .git writes do not, and the test command cannot read a home-directory canary', { skip: !process.env.DRIVER_LIVE_SMOKE && 'set DRIVER_LIVE_SMOKE=1 to launch a real worker (spends tokens)' }, async (t) => {
   const cwd = tmp(t);
   const settingsDir = tmp(t);
@@ -992,7 +1010,19 @@ test('AC7/AC6.1: live smoke test — the write runs, and the echo, curl and .git
     canary = path.join(os.homedir(), '.driver-smoke-canary-' + crypto.randomBytes(6).toString('hex'));
     fs.writeFileSync(canary, 'canary', { flag: 'wx' });
     t.after(() => fs.rmSync(canary, { force: true }));
-    fs.writeFileSync(path.join(cwd, 'package.json'), JSON.stringify({ private: true, scripts: { test: 'node --test' } }));
+    // The shipped targeted-runner form (#5915): a runner that takes a list file and runs
+    // `node --test` on the paths it names, and the list file the driver tells the worker to write.
+    fs.mkdirSync(path.join(cwd, 'tools'));
+    fs.writeFileSync(path.join(cwd, 'tools', 'run-tests.js'), [
+      "const fs = require('fs');",
+      "const cp = require('child_process');",
+      "const files = fs.readFileSync(process.argv[process.argv.indexOf('--files-from') + 1], 'utf8').split('\\n').filter(Boolean);",
+      "const r = cp.spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit' });",
+      'process.exit(r.status === null ? 1 : r.status);',
+      '',
+    ].join('\n'));
+    fs.mkdirSync(path.join(cwd, ...SMOKE_TEST_LIST.split('/').slice(0, -1)), { recursive: true });
+    fs.writeFileSync(path.join(cwd, ...SMOKE_TEST_LIST.split('/')), 'smoke-canary.test.js\n');
     fs.writeFileSync(path.join(cwd, 'smoke-canary.test.js'), [
       "const fs = require('fs');",
       "const path = require('path');",
@@ -1014,8 +1044,8 @@ test('AC7/AC6.1: live smoke test — the write runs, and the echo, curl and .git
     expectedVersion = probe.stdout.trim();
     expectedNode = fs.realpathSync(nodeBin);
   }
-  const prompt = 'Do these ' + (probed ? 'seven' : 'six') + ' things in order, continuing after any denial. For each bash command below, run exactly that command and nothing else: do not append, prepend, chain or wrap anything (do not add `;`, `&&`, `|`, an extra `echo`, or exit-status checks to any command). (1) use the Write tool to create smoke-w.txt containing hi; (2) run the bash command: echo hi > smoke-b.txt (3) run the bash command: curl -s https://example.com -o smoke-net.txt (4) use the Write tool to create .git/info/smoke-note.txt containing hi (5) run the bash command: git log -1 --format=%H --output=.git/config (6) run the bash command: git log -1 --format=%H --output=.git/hooks/pre-commit' + (probed ? ' (7) run the bash command: npm test' : '') + '. Then report what happened.';
-  const env = await launchWorker({ role: 'implementer', cwd, settingsDir, prompt, model: 'haiku', testCommand: 'npm test', ceilings: { wallClockMs: 180000, spendCeiling: 1 }, claudeMdText: 'Probe project file.' });
+  const prompt = 'Do these ' + (probed ? 'seven' : 'six') + ' things in order, continuing after any denial. For each bash command below, run exactly that command and nothing else: do not append, prepend, chain or wrap anything (do not add `;`, `&&`, `|`, an extra `echo`, or exit-status checks to any command). (1) use the Write tool to create smoke-w.txt containing hi; (2) run the bash command: echo hi > smoke-b.txt (3) run the bash command: curl -s https://example.com -o smoke-net.txt (4) use the Write tool to create .git/info/smoke-note.txt containing hi (5) run the bash command: git log -1 --format=%H --output=.git/config (6) run the bash command: git log -1 --format=%H --output=.git/hooks/pre-commit' + (probed ? ' (7) run the bash command: ' + SMOKE_TEST_COMMAND + ' ' + SMOKE_TEST_LIST : '') + '. Then report what happened.';
+  const env = await launchWorker({ role: 'implementer', cwd, settingsDir, prompt, model: roleModel('implementer', resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: '' })), testCommand: SMOKE_TEST_COMMAND, ceilings: { wallClockMs: 180000, spendCeiling: 1 }, claudeMdText: 'Probe project file.' });
   t.diagnostic('envelope: status=' + env.status + ' turns=' + env.turns + ' costUsd=' + env.costUsd + ' denials=' + JSON.stringify((env.denials || []).map((d) => d.tool_name + ': ' + String((d.tool_input && (d.tool_input.command || d.tool_input.file_path)) || ''))));
   assert.strictEqual(env.status, 'ok', JSON.stringify(env));
   const files = fs.readdirSync(cwd);
@@ -1042,4 +1072,45 @@ test('AC7/AC6.1: live smoke test — the write runs, and the echo, curl and .git
   }
   assert.ok(env.denials.some((d) => d.tool_name === 'Write' && String((d.tool_input && d.tool_input.file_path) || '').includes('.git')), 'write into .git denied');
   assert.deepStrictEqual(fs.readdirSync(settingsDir), []);
+});
+
+test('AC8.1 (#5917): live probe — every role launches on each distinct default model', { skip: !process.env.DRIVER_LIVE_SMOKE && 'set DRIVER_LIVE_SMOKE=1 to launch real workers (spends tokens)' }, async (t) => {
+  const policy = resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: '' });
+  const models = [...new Set(Object.keys(DRIVER_ROLE_PROFILES).map((role) => roleModel(role, policy)))].sort();
+  const schemas = { implementer: RESULT_SCHEMA, reviewer: REVIEW_RESULT_SCHEMA, explorer: RESULT_SCHEMA, 'merge-check': MERGE_CHECK_RESULT_SCHEMA, acceptance: ACCEPTANCE_RESULT_SCHEMA };
+  assert.deepStrictEqual(Object.keys(schemas), Object.keys(ROLES));
+  const implementerResult = { status: 'cannot-complete', title: 'probe', summary: 'probe' };
+  const replies = { implementer: implementerResult, reviewer: { findings: [] }, explorer: implementerResult, 'merge-check': { verdict: 'needs-human', rationale: 'probe' }, acceptance: { tryIt: [], observationPlan: {}, claims: [], parentBrief: {} } };
+  const failing = [];
+  for (const model of models) {
+    for (const role of Object.keys(ROLES)) {
+      let kept = null;
+      const runner = (call) => {
+        const handle = worker.defaultRunner(call);
+        return { ...handle, exited: handle.exited.then((r) => { kept = r.stdout; return r; }) };
+      };
+      const prompt = 'Use no tool. Return exactly this structured output and nothing else: ' + JSON.stringify(replies[role]);
+      let env;
+      try {
+        env = await launchWorker({ role, cwd: tmp(t), settingsDir: tmp(t), prompt, schema: schemas[role], model, ceilings: { wallClockMs: 180000, spendCeiling: 1 }, ...(role === 'implementer' ? { testCommand: 'npm test' } : {}) }, { runner });
+      } catch (err) {
+        // A launcher throw fails its own cell, not the rest of the matrix.
+        failing.push(role + ' on ' + model + ': threw ' + (err && err.message));
+        continue;
+      }
+      let modelUsage = null;
+      try {
+        const parsed = JSON.parse(String(kept).trim());
+        if (parsed && parsed.modelUsage && typeof parsed.modelUsage === 'object') modelUsage = Object.keys(parsed.modelUsage);
+      } catch {
+        // No result object on stdout: modelUsage stays null.
+      }
+      t.diagnostic('role=' + role + ' model=' + model + ' status=' + env.status + ' reason=' + env.reason + ' costUsd=' + env.costUsd + ' modelUsage=' + JSON.stringify(modelUsage));
+      // Every cell launches before the assertion, so a partial run names each failing role × model.
+      if (env.status !== 'ok') failing.push(role + ' on ' + model + ': ' + JSON.stringify(env));
+      // The model that ran is the one asked for: its id carries the requested alias's family.
+      else if (!(modelUsage && modelUsage.some((id) => id.includes(model)))) failing.push(role + ' on ' + model + ': modelUsage ' + JSON.stringify(modelUsage));
+    }
+  }
+  assert.deepStrictEqual(failing, []);
 });

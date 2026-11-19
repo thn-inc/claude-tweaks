@@ -763,16 +763,16 @@ function ownErrorText(err, fallback) {
   return OWN_ERROR_RES.some((re) => re.test(message)) ? message : fallback;
 }
 
-// Launches the reviewer (see the header). Returns { envelope } or { stop: detail }.
+// Launches the reviewer (see the header). Returns { envelope, model, minutes, dollars } or { stop: detail }.
 async function launchReviewer(ctx, deps, diff) {
   const ceilings = readCeilings(ctx.shared.policy);
   if (ceilings.bad) return { stop: `reviewer ceiling not a positive number: ${ceilings.bad}` };
   const { minutes, dollars } = ceilings;
   const settingsDir = path.join(ctx.runDir, 'reviewer');
   deps.mkdirSync(settingsDir, { recursive: true });
-  let envelope;
+  let launched;
   try {
-    envelope = await launchTracked(ctx.shared, deps, { minutes, dollars }, {
+    launched = await launchTracked(ctx.shared, deps, { minutes, dollars }, {
       role: 'reviewer',
       cwd: ctx.wt,
       prompt: buildReviewerPrompt(ctx, { diff, changedFiles: ctx.changedFiles }),
@@ -781,9 +781,10 @@ async function launchReviewer(ctx, deps, diff) {
     });
   } catch (err) {
     // The launcher's or the runner's own message can name a path: fixed text and at most the code.
-    return { stop: `reviewer launch failed${codeSuffix(err)}` };
+    // A throw after the model resolved carries it (launchTracked), so the stop's line can still name it.
+    return { stop: `reviewer launch failed${codeSuffix(err)}`, ...(typeof err?.model === 'string' ? { model: err.model } : {}) };
   }
-  return { envelope, minutes, dollars };
+  return { envelope: launched.envelope, model: launched.model, minutes, dollars };
 }
 
 // The reviewer launch and the review pass (see the header). `result` is a StepResult only for a
@@ -798,7 +799,9 @@ async function reviewPass(ctx, deps, { testCommand, isRunArtifact, indexFlagChec
   let denials = [];
   let costUsd = null;
   let turns = null;
-  const extraOf = () => ({ ...counts, usage, denials, costUsd, turns });
+  // The reviewer's model, named once its launch returned (#5917); a line from before that keeps its keys.
+  let model = null;
+  const extraOf = () => ({ ...counts, usage, denials, costUsd, turns, ...(model !== null ? { model } : {}) });
   // The file written for the finding being judged, until it is kept or removed.
   let current = null;
   // Best effort: a removal that fails leaves the file for settle, and never replaces the stop's detail.
@@ -831,6 +834,7 @@ async function reviewPass(ctx, deps, { testCommand, isRunArtifact, indexFlagChec
       return stop(`git diff failed${codeSuffix(err)}`);
     }
     const launch = await launchReviewer(ctx, deps, diff);
+    if (launch.model) model = launch.model;
     if (shared.interrupted) return interrupted();
     if (launch.stop) return stop(launch.stop);
     const { envelope, minutes, dollars } = launch;
@@ -1073,7 +1077,8 @@ async function fixRound(ctx, deps, wiring, pass) {
     if (shared.interrupted) return interrupted();
     if (!launched || launched.status !== 'ok') {
       const status = launched && launched.status === 'stop' ? 'stop' : 'fail';
-      return end(status, `fix round launch: ${launched ? launched.detail : 'returned nothing'}`);
+      // A model refusal names its code (#5917); codeSuffix reads only an uppercase code, never worker text.
+      return end(status, `fix round launch: ${launched ? `${launched.detail}${codeSuffix(launched)}` : 'returned nothing'}`);
     }
 
     const sensitivePaths = sensitivePathsOf(shared.policy['merge-sensitive-paths']);

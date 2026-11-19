@@ -42,7 +42,8 @@ const DRIVER = path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'driver');
 const { confirmPassingVerdicts } = require(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'dispatch', 'merge-verdict.js'));
 const { loadMergeCheckRules, buildMergeCheckPrompt } = require(path.join(DRIVER, 'judgment-prompts.js'));
 const { blastFloor, diffFloor, launchAndValidate } = require(path.join(DRIVER, 'judgments.js'));
-const { WIN32_CLAUDE_BIN } = require(path.join(DRIVER, 'launch.js'));
+const { WIN32_CLAUDE_BIN, MODEL_POLICY_KEYS } = require(path.join(DRIVER, 'launch.js'));
+const { resolvePolicyKeys } = require(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
 
 const BLAST_RADIUS = path.join(__dirname, '..', 'plugin', 'bin', 'blast-radius.js');
 const USAGE = [
@@ -413,6 +414,14 @@ function bump(bucket, expected, runs, agree) {
 
 const newBucket = () => ({ fixtures: 0, runs: 0, agree: 0, byExpected: { 'auto-merge': { runs: 0, agree: 0 }, 'needs-human': { runs: 0, agree: 0 } } });
 
+// The hand-built policy a replayed launch reads: this run's two ceilings plus the driver's model keys at their
+// defaults (a real resolver reply), without which launchTracked refuses every launch for want of a model (#5917).
+const launchPolicy = (opts) => ({
+  'express-driver-wall-clock-minutes': { value: opts.minutes },
+  'express-driver-spend-ceiling-dollars': { value: opts.dollars },
+  ...resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: '' }),
+});
+
 // One fixture's launches: { verdicts, failures }. Only a launch that returned a valid verdict is a judged run; a failed
 // launch or an invalid envelope adds to `failures` and to no verdict, so it can never read as agreement.
 async function judgeFixture(fx, floor, opts, deps, rules) {
@@ -431,7 +440,7 @@ async function judgeFixture(fx, floor, opts, deps, rules) {
     // scratch checkout as the worktree; the policy carries this run's ceilings.
     const env = {
       deps: { ...deps, mkdirSync: (p, o) => deps.fs.mkdirSync(p, o), runner: deps.runner || ((call) => require(path.join(DRIVER, 'worker.js')).defaultRunner(call)) },
-      shared: { policy: { 'express-driver-wall-clock-minutes': { value: opts.minutes }, 'express-driver-spend-ceiling-dollars': { value: opts.dollars } }, activeWorker: null },
+      shared: { policy: launchPolicy(opts), activeWorker: null },
     };
     const ctx = { runDir: settingsDir, worktree: dir };
     const verdicts = [];
@@ -621,7 +630,7 @@ async function run({ argv, deps } = {}) {
   }
 }
 
-module.exports = { run, classifyReviewSection, scrubLocalPaths, reviewSectionText, hasDegradedMarker, verdictsOf, parseArgs };
+module.exports = { run, classifyReviewSection, scrubLocalPaths, reviewSectionText, hasDegradedMarker, verdictsOf, parseArgs, launchPolicy };
 
 if (require.main === module) {
   const deps = (() => {

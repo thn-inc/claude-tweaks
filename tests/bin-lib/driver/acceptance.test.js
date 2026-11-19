@@ -162,7 +162,14 @@ const os = require('node:os');
 const { readText } = require('../../helpers/read-skill');
 const { runAcceptance, renderTryIt, renderParentBrief, renderObservationPlan } = require(path.join(LIB, 'driver', 'acceptance'));
 const { renderPacket } = require(path.join(LIB, 'wrap-up', 'packet-render'));
-const { ACCEPTANCE_RESULT_SCHEMA } = require(path.join(LIB, 'driver', 'roles.js'));
+const { ACCEPTANCE_RESULT_SCHEMA, DRIVER_ROLE_PROFILES } = require(path.join(LIB, 'driver', 'roles.js'));
+const { MODEL_POLICY_KEYS, roleModel } = require(path.join(LIB, 'driver', 'launch.js'));
+const { PROFILES } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
+const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema.js'));
+const LAUNCH_POLICY = { 'express-driver-wall-clock-minutes': { value: 30 }, 'express-driver-spend-ceiling-dollars': { value: 5 }, ...resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: '' }) };
+test('the fixture policy carries the model keys a launch needs (#5917)', () => {
+  assert.strictEqual(roleModel('acceptance', LAUNCH_POLICY), PROFILES[DRIVER_ROLE_PROFILES.acceptance].model);
+});
 
 const roots = [];
 after(() => { for (const r of roots) fs.rmSync(r, { recursive: true, force: true }); });
@@ -277,7 +284,7 @@ function harness(route, over = {}) {
     platform: 'linux',
     env: { H: '1' },
   };
-  const shared = { activeWorker: null, policy: { 'express-driver-wall-clock-minutes': { value: 30 }, 'express-driver-spend-ceiling-dollars': { value: 5 } } };
+  const shared = { activeWorker: null, policy: { ...LAUNCH_POLICY } };
   const ctx = { record: 7, pr: 70, repo: 'o/r', branch: 'drive-7', base: 'main', head: 'drive-7', runDir, runRoot: root, mainCheckout: root, worktree };
   const env = { deps, shared, readFile: spec.readFile || ((p) => fs.readFileSync(p, 'utf8')) };
   const isForgeWrite = (c) => (c.kind === 'gh' && ((c.args[0] === 'issue' && ['comment', 'edit'].includes(c.args[1])) || (c.args[0] === 'pr' && c.args[1] === 'comment')
@@ -891,15 +898,36 @@ describe('runAcceptance: failures and bounds', () => {
     assert.strictEqual(h.events.length, 1);
     assert.strictEqual(h.events[0].step, 'merge-acceptance');
     assert.strictEqual(h.events[0].status, 'ok');
-    assert.deepStrictEqual(h.events[0].extra, { route: 'try-it-only' });
+    assert.deepStrictEqual(h.events[0].extra, { route: 'try-it-only', model: PROFILES.standard.model });
     assert.strictEqual(r.detail, h.events[0].detail);
   });
 
-  test('a failure after the route is known still reports the route', async () => {
+  test('a failure after the launch reports the route and the model (#5917)', async () => {
     const h = harness('no-parent-gated', { exit: { post: 4 } });
     const r = await h.run();
     assert.strictEqual(r.route, 'no-parent-gated');
-    assert.deepStrictEqual(h.events[0].extra, { route: 'no-parent-gated' });
+    assert.deepStrictEqual(h.events[0].extra, { route: 'no-parent-gated', model: PROFILES.standard.model });
+  });
+
+  test('the due-exceeds route reports its route and the model (#5917)', async () => {
+    const h = harness('due-exceeds', { existingLabels: ['accept:pending'] });
+    const r = await h.run();
+    assert.strictEqual(r.completed, true);
+    assert.deepStrictEqual(h.events[0].extra, { route: 'due-exceeds', model: PROFILES.standard.model });
+  });
+
+  test('a worker launch that throws after the model resolved still names it on the line (#5917)', async () => {
+    const h = harness('try-it-only', { envelope: new Error('spawn') });
+    await h.run();
+    assert.strictEqual(h.events[0].status, 'stop');
+    assert.deepStrictEqual(h.events[0].extra, { route: 'try-it-only', model: PROFILES.standard.model });
+  });
+
+  test('a run stopped before any launch carries no model key (#5917)', async () => {
+    const h = harness('try-it-only', { nodeThrows: 'resolve-policy.js' });
+    await h.run();
+    assert.strictEqual(h.launches().length, 0);
+    assert.deepStrictEqual(h.events[0].extra, { route: null });
   });
 
   test('the launch is the acceptance role with its own settings dir, the result schema and the ceilings', async () => {
