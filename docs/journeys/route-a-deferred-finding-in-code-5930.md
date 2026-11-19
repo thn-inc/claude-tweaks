@@ -14,6 +14,7 @@ files:
   - plugin/skills/visual-review/browser-review.md
   - plugin/skills/release/disposition.md
   - plugin/skills/_shared/ledger-format.md
+  - plugin/skills/reflect/SKILL.md
 ---
 
 # Route a Deferred Finding in Code
@@ -57,4 +58,6 @@ files:
   - Every routing site reads the verdict; none decides the floor itself.
   - A `refused` verdict is never digested; control mode, which must converge every item, files it.
   - An agent-supplied severity is passed through as given, not remapped to fit.
+  - Reflect's auto-mode tangential staging (`plugin/skills/reflect/SKILL.md`) is the one site that stages instead of leaving the item open: on `digest` it appends the idea to the digest and stages no Queue write; on `file`, `refused` or any other outcome it stages the candidate as before.
+  - A digest's label and ledger Resolution name the rule that sent it: `floor` reads below floor, `policy-reason` names `deferral-digest-reasons`.
 - **Red flags:** A routing site that decides file-versus-digest without running the command; a `refused` verdict that gets digested, or that a non-control-mode site files; two sites giving different verdicts for the same finding.
