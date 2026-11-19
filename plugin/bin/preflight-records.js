@@ -110,7 +110,7 @@ const {
   parseRepo, repoResolutionNote, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 const { appendStationEvent } = require('./lib/station-events/emit');
-const { makeBlockerSnapshotSink } = require('./lib/station-events/blockers');
+const { snapshotSinkOf } = require('./lib/station-events/blockers');
 
 const USAGE = 'usage: preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo [host/]owner/name] [--merge-gate] [--waves] [--integration-branch <name>] [--records-json <path>] [--prefetched-json <path>] [--blocker-landing] [--blocker-states-json <path>] [--help]\n';
 
@@ -200,17 +200,6 @@ const realDeps = {
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
-
-// The native fetch's per-record sink (#5902): an explicit `deps.onSnapshot` wins, else a
-// `blockers` station event per fetched number through `deps.stationEvent`; neither = none.
-function snapshotSinkOf(deps) {
-  if (deps.onSnapshot || typeof deps.stationEvent !== 'function') return deps.onSnapshot;
-  return makeBlockerSnapshotSink({
-    stationEvent: deps.stationEvent,
-    sessionId: process.env.CLAUDE_CODE_SESSION_ID || null,
-    runId: null,
-  });
-}
 
 // The deps-resolved work-links value, --work-links overriding it. Never throws.
 function resolveWorkLinks(opts, deps) {

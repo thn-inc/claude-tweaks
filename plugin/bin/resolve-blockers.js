@@ -44,7 +44,7 @@
 const { fetchNativeDependencies } = require('./lib/issues/native-dependencies');
 const { makeNumberListCli } = require('./lib/number-list-cli');
 const { appendStationEvent } = require('./lib/station-events/emit');
-const { makeBlockerSnapshotSink } = require('./lib/station-events/blockers');
+const { snapshotSinkOf } = require('./lib/station-events/blockers');
 
 const USAGE = 'usage: resolve-blockers.js <n>[,<n2>,...] [--repo [host/]owner/name] [--help]\n';
 
@@ -68,13 +68,7 @@ const realDeps = { ...numberListDeps, stationEvent: (e) => appendStationEvent(e)
 // A `blockers` station event per fetched number: with no explicit `onSnapshot`, the
 // sink is built from `deps.stationEvent`; neither present = no emission.
 function run(argv, deps = realDeps) {
-  if (deps.onSnapshot || typeof deps.stationEvent !== 'function') return runNumberList(argv, deps);
-  const onSnapshot = makeBlockerSnapshotSink({
-    stationEvent: deps.stationEvent,
-    sessionId: process.env.CLAUDE_CODE_SESSION_ID || null,
-    runId: null,
-  });
-  return runNumberList(argv, { ...deps, onSnapshot });
+  return runNumberList(argv, { ...deps, onSnapshot: snapshotSinkOf(deps) });
 }
 
 module.exports = { run, parseArgs, parseNumbers, realDeps, parseRepo: require('./lib/repo-resolve').parseRepo };

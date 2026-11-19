@@ -32,4 +32,15 @@ function makeBlockerSnapshotSink({ stationEvent, sessionId, runId } = {}) {
   };
 }
 
-module.exports = { makeBlockerSnapshotSink };
+// A CLI's deps -> the fetch's `onSnapshot`: an explicit `deps.onSnapshot` wins,
+// else a sink over `deps.stationEvent`; neither present = undefined (no emission).
+function snapshotSinkOf(deps) {
+  if (deps.onSnapshot || typeof deps.stationEvent !== 'function') return deps.onSnapshot;
+  return makeBlockerSnapshotSink({
+    stationEvent: deps.stationEvent,
+    sessionId: process.env.CLAUDE_CODE_SESSION_ID || null,
+    runId: null,
+  });
+}
+
+module.exports = { makeBlockerSnapshotSink, snapshotSinkOf };
