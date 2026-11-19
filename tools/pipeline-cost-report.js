@@ -65,8 +65,9 @@ const { collectFunnel, defaultGh, defaultCheck, readPluginVersion } = require('.
 const { collectRecords, countMergedPrs } = require('./pipeline-cost-report/records');
 const { listRuns, isDate } = require('./pipeline-cost-report/runs');
 const { collectGuards } = require('./pipeline-cost-report/guards');
-const { PLAN_KINDS, collectReviews } = require('./pipeline-cost-report/reviews');
+const { PLAN_KINDS, collectReviews, compareStrings } = require('./pipeline-cost-report/reviews');
 
+const pct = (s) => (s === null ? 'none' : `${Math.round(s * 100)}%`);
 const DEFAULT_RUNS = 20;
 const PLUGIN_ROOT = path.join(__dirname, '..', 'plugin');
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -211,7 +212,6 @@ const SECTIONS = [
     unreadable: () => 0,
     render(d) {
       if (d.skipped) return ['Guards: not run — --split <YYYY-MM-DD> not given.'];
-      const pct = (s) => (s === null ? 'none' : `${Math.round(s * 100)}%`);
       const mean = (v) => v.toFixed(2);
       const head = (label, c) => {
         if (c.runCount === 0) return `${label} (0 runs)`;
@@ -257,16 +257,15 @@ const SECTIONS = [
     failed: () => false,
     unreadable: () => 0,
     render(d) {
-      const pct = (s) => (s === null ? 'none' : `${Math.round(s * 100)}%`);
       const mean = (v) => (v === null || v === undefined ? 'none' : v.toFixed(2));
       const TIER_ORDER = ['fast', 'standard', 'capable', 'frontier'];
       const byTierOrder = (a, b) => {
         const ia = TIER_ORDER.indexOf(a);
         const ib = TIER_ORDER.indexOf(b);
         if (ia >= 0 || ib >= 0) return (ia < 0 ? TIER_ORDER.length : ia) - (ib < 0 ? TIER_ORDER.length : ib);
-        return a < b ? -1 : a > b ? 1 : 0;
+        return compareStrings(a, b);
       };
-      const byName = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+      const byName = compareStrings;
       const lines = [];
       // A table with no rows prints `none.` in place of the table.
       const table = (head, rows) => {

@@ -287,7 +287,7 @@ test('a plan review with no transcript is unparsed, not a clean review', () => {
   assert.strictEqual(got.findingsPerReview, null);
 });
 
-test('human stops: the two real forms count, a settled gap does not', () => {
+test('human stops: the KEPT, REFUSED and POSTED forms count, a settled gap does not', () => {
   assert.strictEqual(isHumanStop(KEPT), true);
   assert.strictEqual(isHumanStop(REFUSED), true);
   assert.strictEqual(isHumanStop(POSTED), true);
@@ -429,7 +429,7 @@ test('a run with no timing.json is counted, not dropped', () => {
   assert.deepStrictEqual({ runs: got.window.runs, units: got.window.units, noTiming: got.window.noTiming, timingUnparsed: got.window.timingUnparsed }, { runs: 3, units: 3, noTiming: 1, timingUnparsed: 1 });
   assert.strictEqual(got.taskReview.byTier.capable.n, 1);
   assert.strictEqual(got.planReview.humanStops.runs, 1);
-  assert.strictEqual(got.lens.unreadable, 0);
+  assert.strictEqual(got.lens.unreadable, 1); // the `{` run counts; the no-timing run does not
 });
 
 test('--since/--until bound the runs read; a null since has no lower bound', () => {
@@ -456,6 +456,18 @@ test('a needs-fixes report whose three headings read None is in items.n and mino
   const got = collectTaskReview(walkRuns([run], { since: null, until: null, fsImpl: fs }), { roots: [projects], fsImpl: fs }).byTier.capable;
   assert.strictEqual(got.items.n, 2);
   assert.deepStrictEqual(got.minorOnly, { count: 1, of: 2, share: 0.5 });
+});
+
+test('a needs-fixes report with no severity headings is in n and needsFixes, in items.unparsed and not items.n', () => {
+  const pipelines = fresh('pl');
+  const projects = fresh('pr');
+  const run = writeRun(pipelines, '2026-11-18T1-spec-1', { items: [item('u1', 'task review', 'capable')], sessions: ['s1'] }, projects);
+  writeReport(projects, 's1', 'u1', 'The change drifts from the spec in two places.\n\n**Task quality:** Needs fixes');
+  const got = collectTaskReview(walkRuns([run], { since: null, until: null, fsImpl: fs }), { roots: [projects], fsImpl: fs }).byTier.capable;
+  assert.strictEqual(got.n, 1);
+  assert.strictEqual(got.needsFixes, 1);
+  assert.deepStrictEqual(got.items, { critical: 0, important: 0, minor: 0, n: 0, unparsed: 1 });
+  assert.deepStrictEqual(got.minorOnly, { count: 0, of: 0, share: null });
 });
 
 test('a run resolved to its archive copy does not look for archive/archive/{name}', () => {
@@ -513,6 +525,13 @@ test('walkRuns sorts by date then name and reports timing state', () => {
 
 const lensItem = (agentId, lensName, kind, tier) => item(agentId, 'lens reviewer', tier, `Lens ${lensName} ${kind}`);
 const DECISIONS = readText(path.join(FIXTURES, 'decisions.md'));
+const DECISION_LINES = DECISIONS.split('\n');
+// A fixture line picked by a substring, so an edit to the shared fixture cannot silently re-point a test.
+const decisionLine = (needle) => {
+  const found = DECISION_LINES.filter((l) => l.includes(needle));
+  assert.strictEqual(found.length, 1, `fixture line for ${needle}`);
+  return found[0];
+};
 const lensFigures = (run, projects) => {
   const walked = walkRuns([run], { since: null, until: null, fsImpl: fs });
   return collectLensAgents(walked, { roots: [projects], fsImpl: fs });
@@ -574,7 +593,7 @@ test('the real decisions excerpt: confirmed, pair, tiebreak, refuted and can\'t-
   const run = writeRun(pipelines, '2026-11-18T1-spec-1');
   writeDecisions(run.dir, DECISIONS);
   const walked = walkRuns([run], { since: null, until: null, fsImpl: fs });
-  const got = collectPerRun(walked, walked.map((w) => w.units.map((u) => readVerdicts(u, fs))));
+  const got = collectPerRun(walked.map((w) => w.units.map((u) => readVerdicts(u, fs))));
   assert.deepStrictEqual(got.rows.map((r) => ({ confirmed: r.confirmed, pair: r.pair, tiebreak: r.tiebreak, refuted: r.refuted, cantTell: r.cantTell })), [{ confirmed: 5, pair: 3, tiebreak: 2, refuted: 1, cantTell: 1 }]);
   assert.deepStrictEqual(got.byLens['3a'], { confirmed: 2, pair: 1, tiebreak: 1, refuted: 1, cantTell: 0 });
   assert.strictEqual(got.byLens['3g'].cantTell, 1);
@@ -585,10 +604,9 @@ test('the real decisions excerpt: confirmed, pair, tiebreak, refuted and can\'t-
 test('AC5.1: one pair-confirmed, one tiebreak-confirmed, one refuted', () => {
   const pipelines = fresh('pl');
   const run = writeRun(pipelines, '2026-11-18T1-spec-1');
-  const lines = DECISIONS.split('\n');
-  writeDecisions(run.dir, [lines[0], lines[5], lines[6]].join('\n') + '\n');
+  writeDecisions(run.dir, [decisionLine('lens "3a" finding plugin/skills/release/disposition.md:71'), decisionLine('confirmed by tiebreak:2a37952f7854'), decisionLine('Tiebreak tiebreak:4e1515328d51')].join('\n') + '\n');
   const walked = walkRuns([run], { since: null, until: null, fsImpl: fs });
-  const got = collectPerRun(walked, walked.map((w) => w.units.map((u) => readVerdicts(u, fs))));
+  const got = collectPerRun(walked.map((w) => w.units.map((u) => readVerdicts(u, fs))));
   const r = got.rows[0];
   assert.deepStrictEqual({ confirmed: r.confirmed, pair: r.pair, tiebreak: r.tiebreak, refuted: r.refuted, cantTell: r.cantTell }, { confirmed: 2, pair: 1, tiebreak: 1, refuted: 1, cantTell: 0 });
 });
@@ -596,15 +614,16 @@ test('AC5.1: one pair-confirmed, one tiebreak-confirmed, one refuted', () => {
 test('AC8.1: two spec members count two runs and none from the parent', () => {
   const pipelines = fresh('pl');
   const parent = writeRun(pipelines, '2026-11-18T1-spec-1-2');
-  writeDecisions(parent.dir, `${DECISIONS.split('\n')[1]}\n`);
+  writeDecisions(parent.dir, `${decisionLine('lens "3b" finding plugin/skills/release/disposition.md:71')}\n`);
+  const memberLines = [decisionLine('lens "3a" finding plugin/skills/release/disposition.md:71'), decisionLine('lens "3f" finding plugin/bin/release-block.js:181')];
   for (const id of [1, 2]) {
     const dir = path.join(parent.dir, `spec-${id}`);
-    writeDecisions(dir, `${DECISIONS.split('\n')[0 + (id - 1) * 2]}\n`);
+    writeDecisions(dir, `${memberLines[id - 1]}\n`);
     fs.writeFileSync(path.join(dir, 'timing.json'), JSON.stringify(STUB));
     fs.writeFileSync(path.join(dir, 'review-findings.json'), '[]');
   }
   const walked = walkRuns(listRuns(pipelines).runs, { since: null, until: null, fsImpl: fs });
-  const got = collectPerRun(walked, walked.map((w) => w.units.map((u) => readVerdicts(u, fs))));
+  const got = collectPerRun(walked.map((w) => w.units.map((u) => readVerdicts(u, fs))));
   assert.strictEqual(got.n, 2);
   assert.deepStrictEqual(got.rows.map((r) => r.run), ['2026-11-18T1-spec-1-2/spec-1', '2026-11-18T1-spec-1-2/spec-2']);
   assert.strictEqual(got.totals.confirmed, 2);
@@ -617,7 +636,7 @@ test('a unit with no review lines is unparsed for the verdict figures, never zer
   writeRun(pipelines, '2026-11-18T2-spec-2');
   writeDecisions(a.dir, '- AUTO 10:00:00 — Step 1: started. Reversibility: n/a.\n');
   const walked = walkRuns(listRuns(pipelines).runs, { since: null, until: null, fsImpl: fs });
-  const got = collectPerRun(walked, walked.map((w) => w.units.map((u) => readVerdicts(u, fs))));
+  const got = collectPerRun(walked.map((w) => w.units.map((u) => readVerdicts(u, fs))));
   assert.deepStrictEqual({ n: got.n, unparsed: got.unparsed, rows: got.rows }, { n: 0, unparsed: 2, rows: [] });
 });
 
@@ -701,6 +720,18 @@ test('a null entry in dispatches.items makes the run unreadable for the lens fig
   assert.strictEqual(taskFigures(pipelines, projects).lens.unreadable, 1);
 });
 
+test('a run whose timing.json is not valid JSON is unreadable for the lens figures; a run with no timing.json is not', () => {
+  const pipelines = fresh('pl');
+  const bad = writeRun(pipelines, '2026-11-18T1-spec-1');
+  fs.writeFileSync(path.join(bad.dir, 'timing.json'), '{ not json');
+  const none = writeRun(pipelines, '2026-11-18T2-spec-2');
+  fs.rmSync(path.join(none.dir, 'timing.json'));
+  const walked = walkRuns([bad, none], { since: null, until: null, fsImpl: fs });
+  assert.deepStrictEqual(walked.map((w) => w.timing), ['unparsed', 'missing']);
+  assert.strictEqual(collectLensAgents([walked[0]], { roots: [], fsImpl: fs }).unreadable, 1);
+  assert.strictEqual(collectLensAgents([walked[1]], { roots: [], fsImpl: fs }).unreadable, 0);
+});
+
 test('collectReviews adds lens: { byTier, byLens, unreadable, perRun, outcomes, yield }', () => {
   const { pipelines, projects } = lensRun();
   const got = taskFigures(pipelines, projects);
@@ -712,13 +743,6 @@ test('collectReviews adds lens: { byTier, byLens, unreadable, perRun, outcomes, 
 
 // --- lens outcomes and the per-lens yield (Task 4) ---
 
-const DECISION_LINES = DECISIONS.split('\n');
-// A fixture line picked by a substring, so an edit to the shared fixture cannot silently re-point a test.
-const decisionLine = (needle) => {
-  const found = DECISION_LINES.filter((l) => l.includes(needle));
-  assert.strictEqual(found.length, 1, `fixture line for ${needle}`);
-  return found[0];
-};
 // The outcome figures of one decisions.md text read as one unit.
 function outcomesOf(text) {
   const dir = fresh('unit');
@@ -734,6 +758,12 @@ test('classifyRouting reads the four real classes', () => {
   assert.strictEqual(classifyRouting("- AUTO 07:05:57 — Step 3 Routing: Don't fix (refuted by tiebreak): low Architecture at plugin/bin/lib/hooks/worktree-reap.js:91 — three existing tests already fail on a quiet-set rename. Reversibility: high."), 'dismissed');
   assert.strictEqual(classifyRouting('- AUTO 18:09:05 — Review Console: Console item review-contested-1.md (Contested findings): dismissed — superseded. Reversibility: n/a.'), null);
   assert.strictEqual(classifyRouting(decisionLine('16:08:35')), null);
+});
+
+test('classifyRouting reads each alternative of the deferred and dismissed patterns', () => {
+  assert.strictEqual(classifyRouting('- AUTO 23:40:12 — Step 3 Routing: low Test quality at tests/bin-lib/wrap-up/engine-cli.test.js:707 routed to digest. Reversibility: high.'), 'deferred');
+  assert.strictEqual(classifyRouting('- AUTO 07:12:30 — Step 3 Routing: low Architecture at plugin/bin/lib/hooks/worktree-reap.js:91 → declined: not worth a change. Reversibility: high.'), 'dismissed');
+  assert.strictEqual(classifyRouting('- AUTO 07:13:02 — Step 3 Routing: low Architecture at plugin/bin/lib/hooks/worktree-reap.js:91 not fixed: existing behaviour. Reversibility: high.'), 'dismissed');
 });
 
 test('AC10.1: one fixed, one staged and one unrouted location print 50%, 50% and one unrouted', () => {
@@ -775,6 +805,18 @@ test("a location's first class by precedence wins", () => {
   ].join('\n');
   const got = outcomesOf(text);
   assert.deepStrictEqual(got.counts, { fixed: 1, staged: 0, deferred: 0, dismissed: 0 });
+});
+
+test('a confirmed location routed only as deferred, and another only as dismissed, count in deferred and dismissed', () => {
+  const text = [
+    'Reproduction: lens "3a" finding a.js:1 reproduced. Confirmed.',
+    'Reproduction: lens "3a" finding b.js:2 reproduced. Confirmed.',
+    '- AUTO 10:00:07 — Step 3 Routing: materiality-floor: Test quality at a.js:1 routed below floor → digest. Reversibility: high.',
+    "- AUTO 10:00:09 — Step 3 Routing: Don't fix (refuted by tiebreak): low X at b.js:2 — nope. Reversibility: high.",
+  ].join('\n');
+  const got = outcomesOf(text);
+  assert.deepStrictEqual(got.counts, { fixed: 0, staged: 0, deferred: 1, dismissed: 1 });
+  assert.deepStrictEqual(pick(got, ['deferred', 'dismissed', 'unrouted', 'n']), { deferred: 0.5, dismissed: 0.5, unrouted: 0, n: 2 });
 });
 
 test('precedence, not line order: an applied line then a Don\'t fix line is fixed, a staged line then a deferred one is staged', () => {
@@ -991,7 +1033,7 @@ test('readVerdicts: a unit whose timing.json readRun throws on is excluded timin
   const v = readVerdicts({ name: 'u', dir }, fs);
   assert.deepStrictEqual([v.excluded, v.confirmed, v.refuted, v.cantTell], ['timing-unreadable', [], [], []]);
   assert.strictEqual(v.text, threeA(1));
-  assert.deepStrictEqual(collectPerRun([[]], [[v]]).unparsed, 1);
+  assert.deepStrictEqual(collectPerRun([[v]]).unparsed, 1);
   assert.strictEqual(collectOutcomes([[v]]).unparsed, 1);
 });
 

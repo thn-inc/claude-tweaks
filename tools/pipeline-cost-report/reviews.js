@@ -52,7 +52,7 @@
 const fs = require('fs');
 const path = require('path');
 const { resolveRun, membersOf, readTiming, readReport, parseReviewCounts } = require('./guards.js');
-const { readRun, readCost } = require('../review-replay/archive.js');
+const { readRun, readCost, LENS_ID } = require('../review-replay/archive.js');
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
 const PLAN_KINDS = ['cross-task contract', 'undecided behaviour', 'spec gap', 'missing review risk'];
@@ -246,9 +246,9 @@ const LENS_NAME_IDS = new Map([
 ]);
 
 // A verdict line quotes the lens as free text ("3b Security", "architecture", "delta"). A name whose leading token is a
-// lens id (the form archive.js's LENS_RE takes, 3a..3j), or that is a lens's name (case, hyphens and spaces alike), is
-// that id, so every collector counts it under the id; any other name is kept verbatim.
-const LENS_ID_LEAD_RE = /^(3[a-j])(?![A-Za-z0-9])/;
+// lens id (archive.js's LENS_ID, the one source of the 3a..3j range), or that is a lens's name (case, hyphens and spaces
+// alike), is that id, so every collector counts it under the id; any other name is kept verbatim.
+const LENS_ID_LEAD_RE = new RegExp(`^(${LENS_ID})(?![A-Za-z0-9])`);
 const lensIdOf = (name) => {
   const trimmed = String(name).trim();
   const m = LENS_ID_LEAD_RE.exec(trimmed);
@@ -413,10 +413,10 @@ function isLensItem(d) {
 // when that agentId survived the walk's dedupe (is in `walked.items`), its tier from that item; one with no agentId is
 // kept, its tier from the item carrying the same description (readCost drops the description, so the k-th such agent
 // pairs with the k-th lens item that has no agentId, both in timing.json order). `unknown` when no item names a tier.
-// [] when readCost cannot read the run's timing.json.
-// A repeated agentId in one file matches once (its entry is consumed), as the walk keeps one item. A timing.json whose
-// items readCost cannot read (a null entry) is `unreadable`, not an empty run: `unreadable` means a run whose items the
-// walk read but readCost threw on, never a run with no timing.json (the walk's `timing` state holds that).
+// A repeated agentId in one file matches once (its entry is consumed), as the walk keeps one item. A run whose
+// timing.json exists but cannot be read is `unreadable`, not an empty run: either the walk could not parse it (`timing` is
+// 'unparsed', readCost returning null) or readCost threw on its items (a null entry). `unreadable` is never a run with no
+// timing.json (the walk's 'missing' state), which has no agents and is not unreadable.
 function readLensAgents(walked, fsImpl) {
   let cost;
   try {
@@ -424,7 +424,7 @@ function readLensAgents(walked, fsImpl) {
   } catch {
     return { agents: [], unreadable: true };
   }
-  if (!cost) return { agents: [], unreadable: false };
+  if (!cost) return { agents: [], unreadable: walked.timing === 'unparsed' };
   const byId = new Map();
   for (const d of walked.items) if (d && d.agentId != null) byId.set(d.agentId, d);
   const anonymous = walked.items.filter((d) => d && d.agentId == null && isLensItem(d));
@@ -446,8 +446,8 @@ const MEAN_KEYS = [...SEVERITIES, 'overflow'];
 // Lens reviewers by model tier and by lens. `agents` is every lens agent, `n` those whose report parsed (an agent with no
 // agentId is always unparsed), `noFinding` the share of the parsed with no row at all, `perAgent` the mean per parsed
 // agent of each severity, of `overflow` and of `total` (their sum); null when nothing parsed. `unreadable` counts the
-// runs whose items the walk read but readCost threw on (their agents are in no figure, never counted as zero); a run
-// with no timing.json is not one.
+// runs whose timing.json exists but cannot be read, whether the walk or readCost failed on it (their agents are in no
+// figure, never counted as zero); a run with no timing.json is not one.
 function collectLensAgents(walkedRuns, { roots, fsImpl = fs } = {}) {
   const groups = { byTier: {}, byLens: {} };
   const slot = (map, key) => (map[key] = map[key] || { agents: 0, n: 0, unparsed: 0, zero: 0, sums: Object.fromEntries(MEAN_KEYS.map((k) => [k, 0])) });
@@ -491,8 +491,8 @@ const zeroVerdicts = () => Object.fromEntries(VERDICT_KEYS.map((k) => [k, 0]));
 // whole and by lens; an excluded unit is `unparsed`, never a zero row. A unit is excluded when readRun reports
 // `no-decisions` (no decisions.md) or `no-review` (no review line in it), `decisions-unreadable` (decisions.md could
 // not be read), or readVerdicts reports `timing-unreadable` (its timing.json holds a malformed dispatch item).
-// `verdictsByRun[i]` holds readVerdicts for each unit of walkedRuns[i].
-function collectPerRun(walkedRuns, verdictsByRun) {
+// `verdictsByRun[i]` holds readVerdicts for each unit of a walked run.
+function collectPerRun(verdictsByRun) {
   const rows = [];
   const totals = zeroVerdicts();
   const byLens = {};
@@ -670,11 +670,11 @@ function collectReviews({ runs, since, until, roots, n }, { fsImpl = fs } = {}) 
     planReview: collectPlanReview(walked, verdictsByRun, { roots, fsImpl }),
     lens: {
       ...collectLensAgents(walked, { roots, fsImpl }),
-      perRun: collectPerRun(walked, verdictsByRun),
+      perRun: collectPerRun(verdictsByRun),
       outcomes: collectOutcomes(verdictsByRun),
       yield: collectYield(walkRuns(runs, { since: null, until, fsImpl }), { n, fsImpl }),
     },
   };
 }
 
-module.exports = { lensIdOf, SEVERITIES, PLAN_KINDS, parseTaskVerdict, parsePlanReview, parseLensReport, walkRuns, readVerdicts, isHumanStop, collectTaskReview, collectPlanReview, lensAgentsOf, collectLensAgents, collectPerRun, classifyRouting, collectOutcomes, collectYield, collectReviews };
+module.exports = { lensIdOf, compareStrings, SEVERITIES, PLAN_KINDS, parseTaskVerdict, parsePlanReview, parseLensReport, walkRuns, readVerdicts, isHumanStop, collectTaskReview, collectPlanReview, lensAgentsOf, collectLensAgents, collectPerRun, classifyRouting, collectOutcomes, collectYield, collectReviews };

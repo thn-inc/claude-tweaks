@@ -120,7 +120,9 @@ function readJson(deps, file) {
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const sum = (items, pick) => items.reduce((s, x) => s + pick(x), 0);
-const LENS_RE = /^(?:Review )?[Ll]ens (3[a-j])/;
+// The lens-id pattern (3a..3j): the one source, which the cost report's reviews.js builds its own lens-id match from.
+const LENS_ID = '3[a-j]';
+const LENS_RE = new RegExp(`^(?:Review )?[Ll]ens (${LENS_ID})`);
 const SIDE_RE = /\b(?:agent |reviewer )?\(?([AB])\)?\s*$/;
 const TIEBREAK_DESC_RE = /^Tiebreak/i;
 
@@ -285,4 +287,4 @@ function selectRuns(root, select, fs) {
   return { dirs: missing.length > 0 ? [] : select.map((n) => byName.get(n)), missing };
 }
 
-module.exports = { parseDecisions, matchVerdicts, readRun, readCost, listRuns, selectRuns };
+module.exports = { parseDecisions, matchVerdicts, readRun, readCost, listRuns, selectRuns, LENS_ID };
