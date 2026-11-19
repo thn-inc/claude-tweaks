@@ -82,6 +82,7 @@ const { gateOriginRepo, resolveRepoTarget } = require('../repo-resolve');
 const { isTimeoutError } = require('../shared-primitives');
 const { fenceFor } = require('../markdown-blocks');
 const { buildEnv } = require('./worker');
+const { assertTestCommand } = require('./roles');
 const { WIN32_CLAUDE_BIN, readCeilings, launchTracked } = require('./launch');
 const { openBlockerRefs } = require('../issues/record-dependencies');
 const { hasDriverEscalationMarker } = require('./settle');
@@ -96,7 +97,8 @@ const buildAuthority = require('../issues/build-authority');
 const typedCommand = require('../issues/typed-command');
 const { envTmpdir } = require('../session-tmp');
 
-// The worker's test command and the full verify invocation's `--cmd tests=…` value.
+// The full verify invocation's `--cmd tests=…` value and the review step's evidence-run test command; the
+// worker's own test command is workerTestCommand's (#5915).
 const TEST_COMMAND = 'npm test';
 // The plugin's bin/ directory (steps.js lives in bin/lib/driver), where the CLIs the steps run live.
 const BIN_DIR = path.join(__dirname, '..', '..');
@@ -568,7 +570,10 @@ const worktreeStep = defineStep(STEP.worktree, STOP_CLASSES.PRE_PUSH, async (ctx
 // The implementer's prompt. It goes to the worker's standard input, never its argv. The
 // record body comes last, fenced and labelled as data: the worker's narrow rights and
 // check's diff bounds are what contain it, so nothing here relies on the worker's trust.
-function workerPrompt(ctx, { minutes, dollars, maxLines }) {
+// `tests` is workerTestCommand's answer: the declared targeted command, or null, for which the line
+// says not to run tests. The list file sits under .claude-tweaks/pipelines/, which isRunArtifact keeps
+// out of the commit and the test step's tree check.
+function workerPrompt(ctx, { minutes, dollars, maxLines, tests }) {
   const { issue } = ctx;
   const title = String(issue.title || '').replace(/\s+/g, ' ').trim();
   const body = typeof issue.body === 'string' ? issue.body : '';
@@ -581,7 +586,9 @@ function workerPrompt(ctx, { minutes, dollars, maxLines }) {
     ...keyFiles,
     '',
     'Edit only the Key Files and test files.',
-    `Test command: ${TEST_COMMAND}`,
+    tests
+      ? `Tests: run only the test files that cover what you changed, by explicit path — write their repo-relative paths, one per line, to .claude-tweaks/pipelines/worker-test-files.txt and run \`${tests.declared}\` with {files} as that path. Never run the whole suite; the driver runs the full check after you finish.`
+      : 'Tests: do not run tests — the driver runs the project\'s check after it commits your change.',
     `Limits: the change stays within ${maxLines} implementation lines (the diff bound check applies; deleted test lines count toward it); the launch ends at ${minutes} minutes of wall clock or $${dollars} of spend.`,
     'When you finish, report status done (or cannot-complete), a one-line commit title and a one-to-two-sentence summary.',
     '',
@@ -686,6 +693,8 @@ function newIndexFlagStop(ctx, deps) {
 // throw path too.
 async function runImplementer(ctx, deps, { extraPrompt = '' } = {}) {
   const { shared } = ctx;
+  // Resolved first, so the HEAD read below stays the call immediately before the launch.
+  const tests = workerTestCommand(ctx, deps);
   const ceilings = readCeilings(shared.policy);
   if (ceilings.bad) return { status: 'fail', detail: `worker ceiling not a positive number: ${ceilings.bad}` };
   const { minutes, dollars } = ceilings;
@@ -708,8 +717,8 @@ async function runImplementer(ctx, deps, { extraPrompt = '' } = {}) {
     envelope = await launchTracked(shared, deps, { minutes, dollars }, {
       role: 'implementer',
       cwd: ctx.wt,
-      prompt: workerPrompt(ctx, { minutes, dollars, maxLines }) + extraPrompt,
-      testCommand: TEST_COMMAND,
+      prompt: workerPrompt(ctx, { minutes, dollars, maxLines, tests }) + extraPrompt,
+      ...(tests !== null ? { testCommand: tests.command } : {}),
       settingsDir,
     });
   } catch (err) {
@@ -857,6 +866,31 @@ function scopeBaseBlob(deps, wt, ref, scopeRel) {
     throw new Error(`could not resolve origin/${ref}: ${errorText(err)}`);
   }
   return null;
+}
+
+// The worker's targeted test command (#5915): origin/{ref}'s verify-scope.json `impact.command`, which
+// must end in ` {files}`, as { declared, command } where `command` is the declaration cut before that
+// suffix and passes roles.js's assertTestCommand; null when there is no usable declaration, a git read
+// or the parse throws included. Read from the base blob by object id, never the worktree copy, so no
+// worker edit or index flag steers it. Resolved once per record and cached on ctx.workerTestCommand
+// (undefined until then), so the review fix round's relaunch gets the same answer.
+const FILES_SUFFIX = ' {files}';
+function workerTestCommand(ctx, deps) {
+  if (ctx.workerTestCommand !== undefined) return ctx.workerTestCommand;
+  let tests = null;
+  try {
+    const sha = scopeBaseBlob(deps, ctx.wt, ctx.shared.ref, '.claude-tweaks/verify-scope.json');
+    const declared = sha === null ? null : JSON.parse(String(gitIn(deps, ctx.wt, ['cat-file', 'blob', sha]))).impact.command;
+    if (typeof declared === 'string' && declared.endsWith(FILES_SUFFIX)) {
+      const command = declared.slice(0, -FILES_SUFFIX.length);
+      assertTestCommand(command);
+      tests = { declared, command };
+    }
+  } catch {
+    tests = null;
+  }
+  ctx.workerTestCommand = tests;
+  return tests;
 }
 
 // The sha git would store for the worktree's bytes of the scope file; --no-filters so a clean
