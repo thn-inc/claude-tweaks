@@ -5,6 +5,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
@@ -52,7 +53,7 @@ test('the two copies of the signal are identical apart from each file\'s target 
 
 test('the shipped snippet reports a runaway section and a balanced file correctly', () => {
   const code = snippet(JUDGE);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hh-runaway-'));
+  const dir = scratchDir('hh-runaway-');
   const lines = (n, word) => Array.from({ length: n }, (_, i) => `${word} ${i}`).join('\n');
 
   const runaway = path.join(dir, 'runaway.md');
@@ -72,7 +73,7 @@ test('the shipped snippet reports a runaway section and a balanced file correctl
 
 test('the shipped snippet skips files under 50 lines and files with fewer than two ## sections', () => {
   const code = snippet(ANALYSIS);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hh-runaway-skip-'));
+  const dir = scratchDir('hh-runaway-skip-');
   const body = (n) => Array.from({ length: n }, (_, i) => `line ${i}`).join('\n');
   const cases = {
     'short.md': [`# T\n## A\n${body(10)}\n## B\n${body(10)}\n`, 'skip: under 50 lines'],
@@ -89,7 +90,7 @@ test('the shipped snippet skips files under 50 lines and files with fewer than t
 });
 
 test('the always-loaded budget default is still 150', () => {
-  const out = execFileSync(process.execPath, [path.join(ROOT, 'plugin/bin/resolve-policy.js'), 'harness-health-always-loaded-budget'], { cwd: fs.mkdtempSync(path.join(os.tmpdir(), 'hh-policy-')), encoding: 'utf8' });
+  const out = execFileSync(process.execPath, [path.join(ROOT, 'plugin/bin/resolve-policy.js'), 'harness-health-always-loaded-budget'], { cwd: scratchDir('hh-policy-'), encoding: 'utf8' });
   const resolved = JSON.parse(out)['harness-health-always-loaded-budget'];
   assert.deepStrictEqual(resolved, { value: 150, source: 'default' });
 });
@@ -101,7 +102,7 @@ test('init CLAUDE.md template states the specific-past-failure principle and cit
 });
 
 test('CRLF control (#3670): harness-health-runaway-section extracts the same snippet after a CRLF round-trip through readText()', (t) => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hh-runaway-crlf-'));
+  const tmp = scratchDir('hh-runaway-crlf-');
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   for (const rel of ['plugin/skills/harness-health/judge-procedure.md', 'plugin/skills/_shared/harness-health-analysis.md']) {
     const docPath = path.join(ROOT, rel);

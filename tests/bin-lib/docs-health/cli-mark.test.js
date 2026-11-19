@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -13,7 +14,7 @@ function cli(argv, opts) {
   return sweepCli(CLI, argv, opts);
 }
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-mark-')); }
+function tmp() { return scratchDir('docs-health-mark-'); }
 
 test('mark writes a declined status to the cache', () => {
   const root = tmp();

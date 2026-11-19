@@ -2,12 +2,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, readCommitScope, readGhTimeoutMs, readEfficiencyCeilings, readChangelogMaxReleases } = require('../plugin/bin/lib/policy');
 
 function tmpRepo() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-policy-'));
+  return scratchDir('ct-policy-');
 }
 function writePolicy(repo, content) {
   const dir = path.join(repo, '.claude-tweaks');
@@ -292,7 +293,7 @@ test('changelog-max-releases: a non-Error or empty-message throw still yields a 
 
 // --- #4492: readers fall back to the main checkout's policy.yml from a linked worktree ---
 function linkedWorktree(t, policy) {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'policy-wt-'));
+  const base = scratchDir('policy-wt-');
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const main = path.join(base, 'main');
   const wt = path.join(base, 'wt');

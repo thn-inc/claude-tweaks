@@ -8,6 +8,7 @@ const cp = require('child_process');
 // compound-failure test's `t.mock.method(cp, 'execFileSync', ...)` below.
 const { execFileSync } = cp;
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const {
@@ -53,7 +54,7 @@ function setWorktreeAlways(root, value) {
 // probe — gh exits 1 on a GraphQL error yet still prints the body). Any other
 // argv exits 1.
 function installGhPrWrapper({ list, view, viewMarker, graphql }) {
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-ghprwrap-'));
+  const wrapperDir = scratchDir('archive-merged-ghprwrap-');
   const wrapperPath = path.join(wrapperDir, 'gh');
   const cases = Object.entries(view).map(([n, pr]) => `    ${n}) ${ghJsonHeredoc(pr)}\n      ;;`).join('\n');
   const script = [
@@ -90,7 +91,7 @@ function installGhPrWrapper({ list, view, viewMarker, graphql }) {
 // list`/`gh pr view` to keep returning their own canned JSON (installGhWrapper
 // above always returns the same body regardless of subcommand).
 function installGhIssueStateWrapper(stateByNumber) {
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-ghissuewrap-'));
+  const wrapperDir = scratchDir('archive-merged-ghissuewrap-');
   const wrapperPath = path.join(wrapperDir, 'gh');
   const cases = Object.entries(stateByNumber)
     .map(([n, s]) => `    ${n}) echo '${JSON.stringify({ state: s })}' ;;`)
@@ -149,7 +150,7 @@ test('decideArchiveCore: console-residue keeps its place after the PR-state skip
 });
 
 function residueRunDir(consoleBody, { specBody } = {}) {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-residue-'));
+  const runDir = scratchDir('archive-merged-residue-');
   const put = (dir, body) => {
     fs.mkdirSync(path.join(dir, 'staged'), { recursive: true });
     fs.writeFileSync(path.join(dir, 'staged', 'review-debate-deviation.md'), 'x');
@@ -190,7 +191,7 @@ test('readConsoleState: an unresolved top-level console keeps precedence over re
   assert.strictEqual(readConsoleState(residueRunDir({ resolved: false, items: [heldItem('pending')] })), 'unresolved');
 });
 test('readConsoleState: no top-level console.json but a spec-N console holding an unacknowledged keep-staged item reads residue', () => {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-residue-spec-only-'));
+  const runDir = scratchDir('archive-merged-residue-spec-only-');
   const specDir = path.join(runDir, 'spec-4');
   fs.mkdirSync(path.join(specDir, 'staged'), { recursive: true });
   fs.writeFileSync(path.join(specDir, 'staged', 'review-debate-deviation.md'), 'x');
@@ -199,13 +200,13 @@ test('readConsoleState: no top-level console.json but a spec-N console holding a
   assert.strictEqual(readConsoleState(runDir), 'residue');
 });
 test('readConsoleState: no console anywhere still reads none', () => {
-  assert.strictEqual(readConsoleState(fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-residue-none-'))), 'none');
+  assert.strictEqual(readConsoleState(scratchDir('archive-merged-residue-none-')), 'none');
 });
 
 // #4172: a PR console's failed item is residue; executed/dropped items are not, and
 // consoleResidue names each open item as "{id} ({resolution})".
 function prConsoleRunDir(items) {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-residue-pr-'));
+  const runDir = scratchDir('archive-merged-residue-pr-');
   fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
     prNumber: 42, commentIds: ['IC_1'], executedAt: '2026-10-25T10:00:00.000Z', resolved: false,
     items: items.map(([id, outcome]) => ({ id, kind: 'staged', summary: id, outcome })),
@@ -244,7 +245,7 @@ test('consoleResidueHint: names only the unreadable console.json when no item is
 // `filing-pending` residue; the refusal names the default-selection `console-filings.js` re-run beside the ack.
 const PLANNED_FILED_LINE = '- AUTO 10:00:00 — Queue write: tiebreak:aaaaaaaaaaaa filed as #501 (work-fingerprint consolefinding-0123abcd). Reversibility: n/a.\n';
 function plannedFilingRunDir() {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-residue-filing-'));
+  const runDir = scratchDir('archive-merged-residue-filing-');
   fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
     resolved: true,
     mode: 'auto-resolve',
@@ -271,7 +272,7 @@ test('filingRerunRemedy is empty for a residue console with no planned filing (#
 // names the digest re-run plus the log remedy, beside the ack.
 const DIGESTED_LINE = '- AUTO 10:00:00 — Queue write: tiebreak:bbbbbbbbbbbb digested (work-fingerprint consolefinding-4567ef01). Reversibility: n/a.\n';
 function plannedDigestRunDir() {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-residue-digest-'));
+  const runDir = scratchDir('archive-merged-residue-digest-');
   fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
     resolved: true,
     mode: 'auto-resolve',
@@ -329,7 +330,7 @@ test('AC4.1: once the filed line is logged the run reads resolved (#4170)', () =
   assert.strictEqual(readConsoleState(runDir), 'resolved');
 });
 test('filingRerunRemedy names one re-run per unacknowledged console that holds an unfiled planned filing (#4170)', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-residue-filings-'));
+  const parent = scratchDir('archive-merged-residue-filings-');
   const [a, b, c, d] = ['aaaaaaaaaaaa', 'bbbbbbbbbbbb', 'cccccccccccc', 'dddddddddddd'].map((h) => `tiebreak:${h}`);
   const fp = { [a]: 'consolefinding-0123abcd', [b]: 'consolefinding-4567ef01', [c]: 'consolefinding-89abcdef', [d]: 'consolefinding-02468ace' };
   const item = (id) => ({ id, section: 'Low-confidence findings', resolution: 'filed', reason: 'r' });
@@ -970,7 +971,7 @@ test('AC5.3: the no-branch by-number path skips pr-not-found (not no-branch/no-w
 });
 
 test('AC5.2: trackStuckSkip escalates pr-not-found exactly once past the TTL with "stuck at pr-not-found" (#3543)', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-notfound-'));
+  const root = scratchDir('archive-merged-notfound-');
   const calls = [];
   const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
   const stuckDir = mkDirWithMtime(STRUCTURALLY_STUCK_TTL_MS * 2);
@@ -986,7 +987,7 @@ test('AC5.2: trackStuckSkip escalates pr-not-found exactly once past the TTL wit
 });
 
 test('#3543: a network-failure skip never escalates, even past the TTL', { skip: STUB_SKIP }, () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-netfail-'));
+  const root = scratchDir('archive-merged-netfail-');
   const calls = [];
   const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
   const oldDir = mkDirWithMtime(STRUCTURALLY_STUCK_TTL_MS * 2);
@@ -1030,7 +1031,7 @@ test('AC2.1: the clean-status sweep does not archive a status:clean run whose pr
 test('AC4.1: a run with no stamped pr.number resolves by branch and never calls gh pr view (#3416)', { skip: STUB_SKIP }, () => {
   const runId = '2026-08-31T090000-spec-3416-unstamped';
   const { root, runDir, featureSha } = fixtureActiveUnstampedMergedRun({ runId });
-  const viewMarker = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-viewmarker-')), 'pr-view-called');
+  const viewMarker = path.join(scratchDir('archive-merged-viewmarker-'), 'pr-view-called');
   const wrapper = installGhPrWrapper({
     list: [{ number: 101, state: 'MERGED', mergedAt: '2026-08-31T00:00:00Z', updatedAt: '2026-08-31T00:00:00Z', mergeCommit: { oid: featureSha } }],
     view: {},
@@ -1047,7 +1048,7 @@ test('AC4.1: a run with no stamped pr.number resolves by branch and never calls 
 });
 
 test('#1854: an auto-resolve console.json ({resolved:true, mode:"auto-resolve", …}) reads as resolved and archives, never console-never-rendered (#1932 AC6)', () => {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-auto-resolve-'));
+  const runDir = scratchDir('archive-merged-auto-resolve-');
   fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true, mode: 'auto-resolve', at: '2026-09-06T12:00:00.000Z', ceiling: 'unattended', items: [], merge: { resolution: 'merge', reason: 'x' } }));
   assert.strictEqual(readConsoleState(runDir), 'resolved');
   const decision = decideArchiveCore({ state: 'MERGED' }, readConsoleState(runDir));
@@ -1220,8 +1221,8 @@ test('archiveRunDir: an untracked twin-mv, reverted after a later sibling spec f
 // counts as differing (it still needs to move, not be silently dropped).
 test('compareWorkTwin: a file present at src but missing at the twin counts as differing', () => {
   const root = makeRepo();
-  const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-twin-src-'));
-  const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-twin-dest-'));
+  const srcDir = scratchDir('archive-merged-twin-src-');
+  const destDir = scratchDir('archive-merged-twin-dest-');
   fs.writeFileSync(path.join(srcDir, '1-spec.md'), '# spec\n');
   const result = compareWorkTwin(root, srcDir, destDir);
   assert.equal(result.identical, false);
@@ -1388,7 +1389,7 @@ test('archiveMerged: split-state run dir archives cleanly on one pass when workt
 // eligible kinds. ---
 
 test('classifyRunDir: none for a fresh, ordinary run dir with no distinguishing evidence', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-classify-'));
+  const dir = scratchDir('archive-merged-classify-');
   fs.writeFileSync(path.join(dir, 'config.yml'), 'mode: auto\n');
   const result = classifyRunDir({ dir, state: { status: 'active' }, worktrees: [] });
   assert.equal(result.kind, 'none');
@@ -1412,7 +1413,7 @@ test('classifyRunDir: orphaned-mint for a config.yml-less mint past the grace wi
 // acceptance criteria call for: an orphaned-mint-shaped mtime coinciding
 // with an ad-hoc-standalone dir's own superseded shape.
 test('classifyRunDir: adhoc-superseded takes precedence over orphaned-mint for an ad-hoc-standalone dir old enough for both windows', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-classify-adhoc-'));
+  const dir = scratchDir('archive-merged-classify-adhoc-');
   const adhocDir = `${dir}-adhoc-standalone`;
   fs.renameSync(dir, adhocDir);
   const state = { status: 'active', worktree: '/nonexistent/torn-down-worktree' };
@@ -1484,7 +1485,7 @@ test('recordNumbersFromSlug: null for a non-record slug (topic name, standalone,
 // A run dir named with a real run-dir slug, so the manifest-less path parses
 // its basename exactly as the sweep does.
 function mkRunRecordDir(slug) {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'run-record-set-'));
+  const base = scratchDir('run-record-set-');
   const dir = path.join(base, slug);
   fs.mkdirSync(dir);
   return dir;
@@ -1610,7 +1611,7 @@ test('inFlightRecords: no manifest yields []', () => {
 });
 
 function mkConfigOnlyDir(slugSuffix, ageMs) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-closedslug-'));
+  const dir = scratchDir('archive-merged-closedslug-');
   const named = `${dir}-${slugSuffix}`;
   fs.renameSync(dir, named);
   fs.writeFileSync(path.join(named, 'config.yml'), 'mode: auto\n');
@@ -1904,7 +1905,7 @@ const cantTellFiledLine = (fingerprint) => `${formatEntry({
 })}\n`;
 
 function seedCantTellRun({ autoMerge = true, extraLines = [], consoleJson = null, specDir = null } = {}) {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cant-tell-unfiled-'));
+  const runDir = scratchDir('cant-tell-unfiled-');
   const write = (dir, name, body) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, name), body); };
   const target = specDir ? path.join(runDir, specDir) : runDir;
   const lines = [...(autoMerge && !specDir ? [AUTO_MERGE_LINE] : []), cantTellVerdict(cantTellFinding.id), ...extraLines];
@@ -2052,7 +2053,7 @@ test('the clean-status sweep tracks a cant-tell-unfiled skip toward structurally
 // every call, so a lookup that bypasses the resolver surfaces as a marker file
 // and a network-failure skip — while the resolver's injected deps answer MERGED.
 function installFailingGhWithMarker() {
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-failgh-'));
+  const wrapperDir = scratchDir('archive-merged-failgh-');
   const marker = path.join(wrapperDir, 'gh-was-called');
   fs.writeFileSync(path.join(wrapperDir, 'gh'), `#!/bin/sh\ntouch "${marker}"\nexit 1\n`);
   fs.chmodSync(path.join(wrapperDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
@@ -2360,7 +2361,7 @@ test('archiveMerged: a dry run, a pass with no main checkout and an unreadable p
   const { mk } = ownerlessFixture(root);
   mk('2026-08-01T090001-record-1', { status: 'active', worktree: path.join(root, 'gone-1') });
   assert.equal('ownerlessNonClean' in archiveMerged({ cwd: root, dryRun: true, runVerdict: DEAD }), false);
-  assert.equal('ownerlessNonClean' in archiveMerged({ cwd: fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-norepo-')) }), false);
+  assert.equal('ownerlessNonClean' in archiveMerged({ cwd: scratchDir('archive-merged-norepo-') }), false);
 
   const blocked = fs.realpathSync(makeRepo());
   fs.mkdirSync(path.join(blocked, '.claude-tweaks'), { recursive: true });
@@ -2447,7 +2448,7 @@ test('AC6.1: twin-only archival commits only its own paths, never an unrelated s
   let env;
   let log = null;
   if (!STUB_SKIP) {
-    const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'git-shim-'));
+    const shimDir = scratchDir('git-shim-');
     t.after(() => fs.rmSync(shimDir, { recursive: true, force: true }));
     log = path.join(shimDir, 'argv.log');
     const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();

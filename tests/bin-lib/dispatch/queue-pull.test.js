@@ -8,6 +8,8 @@
 const { test, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir, isolateTmpdir } = require('../../helpers/tmp-dir');
+isolateTmpdir('ct-iso-queue-pull-');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync, execFileSync } = require('node:child_process');
@@ -201,7 +203,7 @@ test('#5227 oracle: orderBlob is null only for a missing health-state branch or 
 });
 
 test('#5227 oracle: withEscapeGuard rejects a run that moves the guarded repo HEAD', async () => {
-  const repo = gitRepo({ parent: fs.mkdtempSync(path.join(os.tmpdir(), 'qp-guard-')) });
+  const repo = gitRepo({ parent: scratchDir('qp-guard-') });
   try {
     assert.equal(await withEscapeGuard(repo, async () => 'kept'), 'kept');
     await assert.rejects(
@@ -504,7 +506,7 @@ test('#5227 truncate keeps only firing entries (Q28)', () => inOwnTmp((own) => {
 
 test('#5227 truncate: a throw prints "queue-pull: truncate: <message>" and the run continues', () => {
   const errs = [];
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-t2-trunc-'));
+  const dir = scratchDir('qp-t2-trunc-');
   try {
     const paths = { 'dispatch-exclusions.json': path.join(dir, 'missing-dir', 'x.json') };
     for (const name of END_WRITTEN_FILES) paths[name] = path.join(dir, name); // #5409: the truncate pass removes these first
@@ -2664,7 +2666,7 @@ for (const c of RANK_CASES) {
     assert.deepEqual(JSON.parse(oracle.pickText), c.expected);
     assert.equal(oracle.pickText, JSON.stringify(c.expected) + '\n');
     const sessionId = `qp-rank-${process.pid}-${rankSession += 1}`;
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-rank-case-'));
+    const dir = scratchDir('qp-rank-case-');
     try {
       const paths = seedModuleSession(sessionId, writeCaseFiles(dir, c));
       const pick = rankFromFiles({ sessionId, priority: c.priority });
@@ -2786,7 +2788,7 @@ test('AC6.3 oracle: a missing or malformed dispatch-groups.json fails the fence 
     assert.notEqual(oracle.status, 0, 'the fence exits non-zero');
     assert.equal(oracle.pickText, '', 'the redirect truncated the stale pick');
     const sessionId = `qp-rank-${process.pid}-${rankSession += 1}`;
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-rank-case-'));
+    const dir = scratchDir('qp-rank-case-');
     try {
       const paths = seedModuleSession(sessionId, writeCaseFiles(dir, { groups, exclusions: [] }));
       fs.writeFileSync(paths['dispatch-next-pick.json'], 'STALE\n');
@@ -3424,7 +3426,7 @@ function withPooled(scenario, record) {
 // the pull) }. Returns pull4's result plus the firing's decisions.md text (null when absent), the
 // numbers the injected check was asked about and the queue-order cache call counts.
 function pullNamed(scenario, o = {}) {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-named-run-'));
+  const runDir = scratchDir('qp-named-run-');
   const decisionsFile = path.join(runDir, 'decisions.md');
   if (o.decisions !== undefined) fs.writeFileSync(decisionsFile, o.decisions);
   const asked = [];
@@ -3527,7 +3529,7 @@ test('AC5.4: an admitted record whose body is not spec-shaped is excluded as not
 const TYPED_FIXTURES = path.join(REPO, 'tests', 'fixtures', 'typed-command');
 const capturedRows = (c) => JSON.parse(fs.readFileSync(path.join(TYPED_FIXTURES, `captured-${c}.json`), 'utf8'));
 function realPull(c, { pointer = true } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-typed-'));
+  const root = scratchDir('qp-typed-');
   try {
     const rows = capturedRows(c);
     const configDir = path.join(root, 'config');
@@ -3758,7 +3760,7 @@ test('#5584: with no named option the pull makes no record fetch and still reads
 // ---- #5584 CLI: --named / --run ----------------------------------------------------------------------
 // A stand-in main checkout: a `.git` directory, and one firing run dir under .claude-tweaks/pipelines.
 function withMainCheckout(fn) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'qp-main-')));
+  const root = fs.realpathSync(scratchDir('qp-main-'));
   try {
     fs.mkdirSync(path.join(root, '.git'));
     const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-1');
@@ -3800,7 +3802,7 @@ test('AC7.2: --named without --run, --run without --named, an empty or non-numer
 });
 
 test('AC7.3: a --run that names no run directory, or one resolveTarget refuses, exits 1 before gh is probed, and writes nothing', () => withMainCheckout(({ root, runDir }) => {
-  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'qp-outside-')));
+  const outside = fs.realpathSync(scratchDir('qp-outside-'));
   const linked = path.join(root, 'linked');
   fs.mkdirSync(path.join(linked, 'run-2'), { recursive: true });
   fs.writeFileSync(path.join(linked, '.git'), 'gitdir: /nowhere/.git/worktrees/linked\n');

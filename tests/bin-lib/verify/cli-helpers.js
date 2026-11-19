@@ -6,6 +6,7 @@ const os = require('os');
 const fs = require('fs');
 const { execFile, execFileSync } = require('child_process');
 const { fromTemplate } = require('../../helpers/git-template');
+const { scratchDir } = require('../../helpers/tmp-dir');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
 
@@ -18,7 +19,7 @@ function tmpDir() {
   // that a spawned child's own process.cwd() reports already resolved — an
   // unresolved mkdtemp path compared against a path the CLI derives from its
   // own cwd would spuriously mismatch on this platform alone.
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'verify-cli-test-')));
+  return scratchDir('verify-cli-test-', { realpath: true });
 }
 
 // With no `opts.env`, the child skips the machine-wide suite slot exactly as under

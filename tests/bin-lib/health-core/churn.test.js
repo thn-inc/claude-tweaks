@@ -2,13 +2,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { domainChurn } = require('../../../plugin/bin/lib/health-core/churn');
 const { initRepo } = require('../../helpers/git-fixtures');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'health-core-churn-')); }
+function tmp() { return scratchDir('health-core-churn-'); }
 
 function initGitRepo(root) {
   initRepo(root, { name: 'Test', email: 'test@test.com' });

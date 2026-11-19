@@ -29,6 +29,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -90,9 +91,9 @@ function spawn(cmdArgs, opts) {
 // the push/PR half of the lifecycle something real to push against without
 // touching the network (this record's own Technical Approach).
 function makeFixtureRepo() {
-  const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e2e-bare-'));
+  const bareDir = scratchDir('ct-e2e-bare-');
   fixtureGit(['init', '--bare', '-q', bareDir]);
-  const mainDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e2e-main-'));
+  const mainDir = scratchDir('ct-e2e-main-');
   initRepo(mainDir, { name: 'Fixture', email: 'fixture@example.com', branch: 'main' });
   fixtureGit(['-C', mainDir, 'commit', '--allow-empty', '-q', '-m', 'init']);
   const bareReal = fs.realpathSync(bareDir);

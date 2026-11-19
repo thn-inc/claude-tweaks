@@ -3,6 +3,7 @@
 
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { run } = require('../../tools/review-replay');
@@ -94,7 +95,7 @@ const chunkReply = (parts, status = 'DONE') => `${parts.map(([key, text]) => `Id
 // Runs extract into a fresh dir and rewrites the tree files; returns paths and the writers for journal and transcripts.
 // promptFor(label) is the text an agent's first user message holds (default: just the identity line).
 async function setup({ promptFor = (label) => `Replay judge ${label}.\n\nThe finding follows.`, arms = ARMS } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-score-'));
+  const root = scratchDir('rr-score-');
   const out = path.join(root, 'out');
   const transcripts = path.join(root, 'workflow');
   fs.mkdirSync(transcripts);

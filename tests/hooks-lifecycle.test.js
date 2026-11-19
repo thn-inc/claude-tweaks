@@ -3,13 +3,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const sessionEnd = require('../plugin/bin/lib/hooks/session-end');
 const preCompact = require('../plugin/bin/lib/hooks/pre-compact');
 
 function mkRun(state) {
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-lc-'));
+  const project = scratchDir('ct-lc-');
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.mkdirSync(run, { recursive: true });
   if (state) fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify(state));

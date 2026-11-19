@@ -6,6 +6,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('./tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
@@ -34,7 +35,7 @@ const CANNED = {
 };
 
 function tmp(t, prefix) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const dir = scratchDir(prefix);
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }

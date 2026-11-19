@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { POLICY_KEYS, RENAMED_KEYS, auditPolicy, resolveValue, resolvePolicyKeys } = require('../plugin/bin/lib/policy-schema');
@@ -10,7 +11,7 @@ const { runCliSync } = require('./helpers/run-cli');
 const { assertLastBump } = require('./helpers/last-bump');
 
 function tmpRepo() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-policy-schema-'));
+  return scratchDir('ct-policy-schema-');
 }
 function writePolicy(repo, content) {
   const dir = path.join(repo, '.claude-tweaks');
@@ -978,7 +979,7 @@ for (const { id, key, def, other, policyVal } of DRIVER_KEYS) {
 
   test(`${id} via the CLI: resolve-policy.js --run ignores a run config that sets ${key}`, () => {
     const repo = tmpRepo();
-    const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-driver-run-'));
+    const runDir = scratchDir('ct-driver-run-');
     try {
       fs.writeFileSync(path.join(runDir, 'config.yml'), `${key}: ${other}\n`);
       const r = driverCli(['--run', runDir, key], repo);
@@ -1016,7 +1017,7 @@ test('review-lens-dispatch resolves task by default and for an invalid value, wo
   }
   // Neither policyOnly nor policySourceExcluded: /claude-tweaks:review Step 3 resolves it with --run, so a run config sets it for one review.
   const repo = tmpRepo();
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-review-lens-run-'));
+  const runDir = scratchDir('ct-review-lens-run-');
   try {
     fs.writeFileSync(path.join(runDir, 'config.yml'), 'review-lens-dispatch: workflow\n');
     const r = driverCli(['--run', runDir, '--values', 'review-lens-dispatch'], repo);
@@ -1090,7 +1091,7 @@ const { resolvePolicyConfig, resolveIntegrationModel, resolveForgeProbeTimeoutMs
 
 function worktreeFixture(t, policy = 'integration-branch: develop\nworktree-always: true\n') {
   // realpath: the main-checkout lookup resolves symlinks (macOS /var -> /private/var).
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'policy-wt-')));
+  const base = fs.realpathSync(scratchDir('policy-wt-'));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const main = path.join(base, 'main');
   const wt = path.join(base, 'wt');

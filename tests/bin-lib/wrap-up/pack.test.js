@@ -3,6 +3,7 @@ const { test, after } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const { readText } = require('../../helpers/read-skill');
 
@@ -12,7 +13,7 @@ const {
 
 // A fixture run dir: run-state.json (pr + worktree), one materialized header, config.yml.
 function fixtureRunDir({ withPr = true, records = [1535] } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-'));
+  const dir = scratchDir('wrap-up-pack-');
   const state = { worktree: '/w/tree', status: 'active', sessionId: 's' };
   if (withPr) state.pr = { number: 1901, url: 'https://x/pull/1901', branch: 'b' };
   fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify(state));
@@ -26,8 +27,8 @@ function fixtureRunDir({ withPr = true, records = [1535] } = {}) {
 // worktree's mirror of the same `.claude-tweaks/pipelines/{run}` path — the
 // real pr-first shape, where the headers are committed on the feature branch.
 function mirrorFixture({ records = [1930], runName = '2026-09-06T000000-record-1930', alsoInMain = false } = {}) {
-  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-main-'));
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  const main = scratchDir('wrap-up-pack-main-');
+  const tree = scratchDir('wrap-up-pack-tree-');
   const rel = path.join('.claude-tweaks', 'pipelines', runName);
   const runDir = path.join(main, rel);
   fs.mkdirSync(runDir, { recursive: true });
@@ -119,7 +120,7 @@ const OPEN_REVIEW_LEDGER = `${LEDGER_HEAD}| 1 | review | a | open | — |`;
 // A worktree whose docs/plans/ holds the given {name: text} ledgers, plus a
 // run dir whose run-state.json points at that worktree.
 function treeWithLedgers(files, { records = [1535] } = {}) {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  const tree = scratchDir('wrap-up-pack-tree-');
   fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
   for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(tree, 'docs', 'plans', name), text);
   const runDir = fixtureRunDir({ records });
@@ -275,7 +276,7 @@ test('resolveInputs (a): the run dir\'s own headers win over the worktree mirror
 });
 
 test('resolveInputs (c): a parent multi-spec run dir resolves records from manifest.yml plus spec-*/work headers, and record stays null (#1930 review C1)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-multi-'));
+  const dir = scratchDir('wrap-up-pack-multi-');
   fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree' }));
   fs.writeFileSync(path.join(dir, 'manifest.yml'), [
     'multispec:', '  parent: 1904', '  specs:',
@@ -297,8 +298,8 @@ test('resolveRecords rung (c) worktree-mirrors spec-*/work headers when the main
   // feature branch, so it exists only inside the worktree's own working tree —
   // never in the main-checkout run dir --run anchors to. Observed live on
   // run 2026-09-14T000308-record-2283-2338 (#2391's Current State).
-  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-rungc-main-'));
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-rungc-tree-'));
+  const main = scratchDir('wrap-up-pack-rungc-main-');
+  const tree = scratchDir('wrap-up-pack-rungc-tree-');
   const rel = path.join('.claude-tweaks', 'pipelines', '2026-09-14T000308-record-2283-2338');
   const runDir = path.join(main, rel);
   fs.mkdirSync(runDir, { recursive: true });
@@ -322,7 +323,7 @@ test('resolveRecords rung (c) worktree-mirrors spec-*/work headers when the main
 });
 
 test('resolveRecords rung (c): the main-checkout run dir\'s own spec-*/work headers still win over the worktree mirror (#2391 — preserves the existing single-record/no-worktree case)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-rungc-own-'));
+  const dir = scratchDir('wrap-up-pack-rungc-own-');
   fs.mkdirSync(path.join(dir, 'spec-1', 'work'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'spec-1', 'work', '1-spec.md'), '---\nrecord: 1\n---\n');
   const deps = { readFile: (p) => fs.readFileSync(p, 'utf8'), readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } };
@@ -334,7 +335,7 @@ test('resolveRecords rung (c): the main-checkout run dir\'s own spec-*/work head
 test('pack.js exports resolveRecords (and headerRecords) so console/resolve.js can share the ladder instead of copying it (#2028)', () => {
   assert.strictEqual(typeof resolveRecords, 'function');
   assert.strictEqual(typeof headerRecords, 'function');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-export-'));
+  const dir = scratchDir('wrap-up-pack-export-');
   fs.writeFileSync(path.join(dir, 'manifest.yml'), [
     'multispec:', '  parent: 1904', '  specs:',
     '    - id: 1930', '      status: complete', '      subdir: spec-1930',
@@ -348,7 +349,7 @@ test('pack.js exports resolveRecords (and headerRecords) so console/resolve.js c
 });
 
 test('resolveInputs: no headers anywhere and no manifest → records [] and sources.records unavailable (#1930 review C1)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-bare-'));
+  const dir = scratchDir('wrap-up-pack-bare-');
   fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree' }));
   const inputs = resolveInputs({ runDir: dir, cwd: '/w/tree', deps: okDeps() });
   assert.deepStrictEqual(inputs.records, []);
@@ -359,7 +360,7 @@ test('resolveInputs: no headers anywhere and no manifest → records [] and sour
 // #5347: an express run writes no materialized header or manifest; its record
 // is the `spec:` line the lane's step 7 pins into the run dir's config.yml.
 function configOnlyRunDir(configText, name = 'wrap-up-pack-config-') {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), name));
+  const dir = scratchDir(name);
   fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree' }));
   if (configText !== null) fs.writeFileSync(path.join(dir, 'config.yml'), configText);
   return dir;
@@ -429,7 +430,7 @@ test('the config rung reads a CRLF config.yml', () => {
 });
 
 test('the config rung never runs for a multi-spec spec-{N} subdirectory', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-config-parent-'));
+  const parent = scratchDir('wrap-up-pack-config-parent-');
   const child = path.join(parent, 'spec-1931');
   fs.mkdirSync(child);
   fs.writeFileSync(path.join(child, 'config.yml'), 'spec: 1930\n');
@@ -462,7 +463,7 @@ test('memberRecords: header and manifest rungs name members; the config rung and
 });
 
 test('resolveInputs: a spec-* subdirectory whose own run-state.json lacks worktree/pr falls back to the parent run\'s (#1930 review C1)', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-parent-'));
+  const parent = scratchDir('wrap-up-pack-parent-');
   fs.writeFileSync(path.join(parent, 'run-state.json'), JSON.stringify({ worktree: '/w/tree', pr: { number: 1901 } }));
   const child = path.join(parent, 'spec-1930');
   fs.mkdirSync(path.join(child, 'work'), { recursive: true });
@@ -476,7 +477,7 @@ test('resolveInputs: a spec-* subdirectory whose own run-state.json lacks worktr
 });
 
 test('resolveInputs (#2858): a per-spec worktree wins over the parent\'s while a null per-spec pr is filled from it', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-precedence-'));
+  const parent = scratchDir('wrap-up-pack-precedence-');
   fs.writeFileSync(path.join(parent, 'run-state.json'), JSON.stringify({ worktree: '/parent/tree', pr: { number: 1901 } }));
   const child = path.join(parent, 'spec-1930');
   fs.mkdirSync(child, { recursive: true });
@@ -488,7 +489,7 @@ test('resolveInputs (#2858): a per-spec worktree wins over the parent\'s while a
 });
 
 test('resolveInputs (#2858): a non-spec run dir never borrows a parent directory\'s run-state.json, and a parent that contributes nothing is not the source', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-gate-'));
+  const parent = scratchDir('wrap-up-pack-gate-');
   fs.writeFileSync(path.join(parent, 'run-state.json'), JSON.stringify({ worktree: '/parent/tree', pr: { number: 1901 } }));
   const plain = path.join(parent, '2026-10-04T000000-record-1');
   fs.mkdirSync(plain, { recursive: true });
@@ -498,7 +499,7 @@ test('resolveInputs (#2858): a non-spec run dir never borrows a parent directory
   assert.strictEqual(inputs.pr, null);
   assert.strictEqual(inputs.sources.state, 'run-state.json');
 
-  const emptyParent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-emptyparent-'));
+  const emptyParent = scratchDir('wrap-up-pack-emptyparent-');
   fs.writeFileSync(path.join(emptyParent, 'run-state.json'), JSON.stringify({ status: 'active' }));
   const child = path.join(emptyParent, 'spec-1930');
   fs.mkdirSync(child, { recursive: true });
@@ -506,12 +507,12 @@ test('resolveInputs (#2858): a non-spec run dir never borrows a parent directory
   assert.strictEqual(resolveInputs({ runDir: child, cwd: '/elsewhere', deps: okDeps() }).sources.state, 'run-state.json');
 
   // No per-spec file at all: the only state there is came from the parent.
-  const exemptParent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-exemptparent-'));
+  const exemptParent = scratchDir('wrap-up-pack-exemptparent-');
   fs.writeFileSync(path.join(exemptParent, 'run-state.json'), JSON.stringify({ prExempt: 'initial-publish' }));
   const bare = path.join(exemptParent, 'spec-1930');
   fs.mkdirSync(bare, { recursive: true });
   assert.strictEqual(resolveInputs({ runDir: bare, cwd: '/elsewhere', deps: okDeps() }).sources.state, 'parent');
-  const noParent = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-noparent-')), 'spec-1930');
+  const noParent = path.join(scratchDir('wrap-up-pack-noparent-'), 'spec-1930');
   fs.mkdirSync(noParent, { recursive: true });
   assert.strictEqual(resolveInputs({ runDir: noParent, cwd: '/elsewhere', deps: okDeps() }).sources.state, 'unavailable');
 });
@@ -979,7 +980,7 @@ test('gatherPack: a probe that never settles is bounded by deps.probeTimeoutMs r
 });
 
 test('gatherPack: the ledger probe counts rows by status and phase from the worktree ledgers naming a record (#1930)', async () => {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  const tree = scratchDir('wrap-up-pack-tree-');
   fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
   fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-05-spec-1535-ledger.md'), [
     '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
@@ -1010,7 +1011,7 @@ test('gatherPack: the ledger probe counts rows by status and phase from the work
 // `open` (blocking) and a legitimate terminal status — never silently folded
 // into "terminal" the way it was before this fix.
 test('gatherPack: the ledger probe counts an out-of-enum status as unrecognized, not silently terminal (#2080)', async () => {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  const tree = scratchDir('wrap-up-pack-tree-');
   fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
   fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-05-spec-1535-ledger.md'), [
     '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
@@ -1034,7 +1035,7 @@ test('gatherPack: the ledger probe counts an out-of-enum status as unrecognized,
 });
 
 test('gatherPack: the ledger probe reports zero unrecognized rows when every status is in the closed enum (#2080)', async () => {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  const tree = scratchDir('wrap-up-pack-tree-');
   fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
   fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-05-spec-1535-ledger.md'), [
     '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
@@ -1052,7 +1053,7 @@ test('gatherPack: the ledger probe reports zero unrecognized rows when every sta
 // Helper for the #3327 tests: a worktree whose docs/plans holds the
 // given ledger files, wired into a fixture run dir, probed with only: ['ledger'].
 async function probeLedgers(files, { records = [1535] } = {}) {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  const tree = scratchDir('wrap-up-pack-tree-');
   fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
   for (const [name, rows] of Object.entries(files)) {
     fs.writeFileSync(path.join(tree, 'docs', 'plans', name), ['| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|', ...rows].join('\n'));
@@ -1269,7 +1270,7 @@ test('AC2.1: the run-dir ledger.md branch reports missingDeferReasonItems with l
 });
 
 test('gatherPack: a ledger whose DATE prefix contains the record number is not this record\'s ledger (#1930 review M5)', async () => {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  const tree = scratchDir('wrap-up-pack-tree-');
   fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
   // Record 26 must NOT match the '2026-' date prefix of a stranger's ledger…
   fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-05-spec-99-ledger.md'), '| # | Phase | Item | Status | Resolution |\n| 1 | review | a | open | — |');
@@ -1291,7 +1292,7 @@ test('gatherPack: a ledger whose DATE prefix contains the record number is not t
 // filter silently excluded it and reported 0 items even though the file held
 // genuinely open rows.
 test('gatherPack: the ledger probe locates a topic-slug-named ledger with no record number in the filename (#2563 AC1)', async () => {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  const tree = scratchDir('wrap-up-pack-tree-');
   fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
   fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-05-ledger-probe-slug-fix-ledger.md'), [
     '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
@@ -1312,7 +1313,7 @@ test('gatherPack: the ledger probe locates a topic-slug-named ledger with no rec
 // names the record at a boundary. Name matching cannot tell them apart, so
 // ownership by branch diff decides: only the ledger this branch added counts.
 test('AC2.1: one ledger added on the branch plus inherited ledgers counts only the added ledger\'s items', async () => {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  const tree = scratchDir('wrap-up-pack-tree-');
   fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
   // A fully-resolved stray ledger from an unrelated, already-merged run.
   fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-30-flow-spec-2704-2709-ledger.md'), [
@@ -1414,7 +1415,7 @@ test('no docs/plans ledgers reports zeros without consulting git', async () => {
 // and the docs/plans/ glob is never consulted, even when a stray docs/plans
 // ledger is also present.
 test('gatherPack: {run-dir}/ledger.md is authoritative over the docs/plans/ glob when it exists (#2563 AC4)', async () => {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  const tree = scratchDir('wrap-up-pack-tree-');
   fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
   fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-05-spec-1535-ledger.md'), '| # | Phase | Item | Status | Resolution |\n| 1 | review | a | open | — |');
   const runDir = fixtureRunDir({ records: [1535] });
@@ -1454,7 +1455,7 @@ test('gatherPack: a work-backend that is neither github-issues nor local-files m
 });
 
 test('gatherPack: work-backend local-files reads the local store, keeping only records whose every other blocker is closed (#1930 review I2)', async () => {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-local-'));
+  const tree = scratchDir('wrap-up-pack-local-');
   fs.mkdirSync(path.join(tree, 'specs'), { recursive: true });
   for (const f of ['1600-dependent.md', '1601-still-held.md', '9-open-blocker.md', '8-closed-blocker.md']) {
     fs.writeFileSync(path.join(tree, 'specs', f), '# x\n');
@@ -1481,7 +1482,7 @@ test('gatherPack: work-backend local-files reads the local store, keeping only r
 });
 
 test('gatherPack: local-files — a dependent\'s blocker file pruned between readdir and read counts as already gone, not a probe failure (#1930 review lens 3c)', async () => {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-local-race-'));
+  const tree = scratchDir('wrap-up-pack-local-race-');
   fs.mkdirSync(path.join(tree, 'specs'), { recursive: true });
   for (const f of ['1600-dependent.md', '8-vanishing-blocker.md']) fs.writeFileSync(path.join(tree, 'specs', f), '# x\n');
   const store = { 1600: { id: 1600, title: 'Dependent', facets: { blockedBy: [1535, 8], closed: false } } };
@@ -1506,7 +1507,7 @@ test('gatherPack: local-files — a dependent\'s blocker file pruned between rea
 });
 
 test('gatherPack: a ledger file archived between readdir and read is skipped, not a whole-probe failure (#1930 review lens 3c)', async () => {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-ledger-race-'));
+  const tree = scratchDir('wrap-up-pack-ledger-race-');
   fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
   const kept = '2026-09-05-spec-1535-ledger.md';
   const gone = '2026-09-04-spec-1535-old-ledger.md';
@@ -1530,7 +1531,7 @@ test('gatherPack: a ledger file archived between readdir and read is skipped, no
 });
 
 test('gatherPack: the record-scoped probes refuse an unresolved record set instead of returning a clean empty (#1930 review C2)', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-norecords-'));
+  const dir = scratchDir('wrap-up-pack-norecords-');
   fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree', pr: { number: 1901 } }));
   const execCalls = [];
   const gitCalls = [];
@@ -1706,7 +1707,7 @@ function mirrorWithHeader(headerText) {
 }
 
 test('AC1.1: a pack built from a manifest-only parent run dir has inputs.records non-empty and inputs.closingRecords empty', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-closing-manifest-'));
+  const dir = scratchDir('wrap-up-pack-closing-manifest-');
   fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree' }));
   fs.writeFileSync(path.join(dir, 'manifest.yml'), [
     'multispec:', '  parent: 1904', '  specs:',
@@ -1741,8 +1742,8 @@ test('closingRecords keeps records only for the two header rungs (Ruling R1, dec
 
 test('#3399: a worktree-manifest rung yields an empty closing set', () => {
   // The #2391 fixture shape: spec-2283/spec-2338 headers exist only in the worktree mirror.
-  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-closing-wm-main-'));
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-closing-wm-tree-'));
+  const main = scratchDir('wrap-up-pack-closing-wm-main-');
+  const tree = scratchDir('wrap-up-pack-closing-wm-tree-');
   const rel = path.join('.claude-tweaks', 'pipelines', '2026-09-14T000308-record-2283-2338');
   const runDir = path.join(main, rel);
   fs.mkdirSync(runDir, { recursive: true });
@@ -1780,7 +1781,7 @@ test('#4814 AC1.1: a record: line below the frontmatter never beats the filename
 });
 
 test('#3399: parkedAtShaping is true for a record when any of its header files carries the flag, one entry per record', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-closing-dup-'));
+  const dir = scratchDir('wrap-up-pack-closing-dup-');
   fs.mkdirSync(path.join(dir, 'work'));
   // The flagged file sorts first (CRLF frontmatter), so a last-file-wins read would lose it; the `record:` line wins over the filename, so 6-spec.md is record 5 too.
   fs.writeFileSync(path.join(dir, 'work', '5-spec.md'), '---\r\nrecord: 5\r\nparked-at-shaping: true\r\n---\r\n');
@@ -1952,7 +1953,7 @@ function commitFile(repo, name, text) {
 // cwd, not the ambient process.cwd() (whose own policy.yml would answer otherwise).
 test('defaultDeps(cwd): resolvePolicy falls back to the injected cwd when the toplevel lookup fails (#5379)', () => {
   const { cleanGitEnv } = require('../../helpers/git-fixtures');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pack-policy-cwd-'));
+  const dir = scratchDir('pack-policy-cwd-');
   try {
     fs.mkdirSync(path.join(dir, '.claude-tweaks'));
     fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-branch: injected-cwd-branch\n');
@@ -2002,7 +2003,7 @@ test('defaultDeps(cwd, { env }): the integration-branch policy is read through t
 test('defaultDeps(cwd, { env }): ghSync resolves GH_HOST from the origin read under env (#5379)', { skip: process.platform === 'win32' && 'sh stub' }, () => {
   const { cleanGitEnv } = require('../../helpers/git-fixtures');
   const { _resetGhHostCache } = require('../../../plugin/bin/lib/repo-resolve');
-  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pack-env-stub-'));
+  const stubDir = scratchDir('pack-env-stub-');
   fs.writeFileSync(path.join(stubDir, 'gh'), '#!/bin/sh\necho "$GH_HOST"\n', { mode: 0o755 });
   _resetGhHostCache();
   try {
@@ -2023,7 +2024,7 @@ test('defaultDeps(cwd, { env }): ghSync resolves GH_HOST from the origin read un
 const archTmpRoots = [];
 after(() => { for (const r of archTmpRoots) fs.rmSync(r, { recursive: true, force: true }); });
 function runTree(files) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-archived-'));
+  const root = scratchDir('wrap-up-pack-archived-');
   archTmpRoots.push(root);
   const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
   for (const [rel, text] of Object.entries(files)) {
@@ -2048,7 +2049,7 @@ test('AC1.1 resolveRecords: an archived-only flat header resolves the same recor
 });
 
 test('AC1.1 resolveRecords: an archived-only header in the worktree mirror resolves as worktree-headers', () => {
-  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-archived-main-'));
+  const main = scratchDir('wrap-up-pack-archived-main-');
   archTmpRoots.push(main);
   const liveTree = runTree({ [`${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7) });
   const archTree = runTree({ [`archive/${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7) });

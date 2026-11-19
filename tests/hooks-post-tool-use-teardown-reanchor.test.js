@@ -12,6 +12,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const post = require('../plugin/bin/lib/hooks/post-tool-use');
@@ -77,7 +78,7 @@ test('falls back to a generic re-anchor message when the main checkout root cann
   // ExitWorktree case (which resolves its target from ctx.cwd directly, no
   // git check) still warns, but with the generic fallback wording rather
   // than a `cd {path}` pointer.
-  const orphan = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ct-teardown-orphan-'));
+  const orphan = scratchDir('ct-teardown-orphan-');
   const input = { tool_name: 'ExitWorktree', tool_input: { action: 'remove' }, cwd: orphan };
   const out = post.run({ env: process.env, input, cwd: orphan });
   assert.ok(out.json && typeof out.json.systemMessage === 'string');

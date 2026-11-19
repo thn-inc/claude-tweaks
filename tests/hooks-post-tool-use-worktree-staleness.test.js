@@ -15,6 +15,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const cp = require('child_process');
@@ -162,7 +163,7 @@ test('does not fire for a tool other than EnterWorktree', () => {
 test('logs "clean" (not silently identical to a fetch failure) when the worktree is not behind', () => {
   const { main } = setupProject();
   const wt = harnessWorktreeOf(main);
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wts-run-'));
+  const runDir = scratchDir('ct-wts-run-');
   post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), ownedRun: { dir: runDir } }));
   const events = readEvents(runDir).filter((e) => e.type === 'worktree-staleness');
   assert.strictEqual(events.length, 1);
@@ -172,7 +173,7 @@ test('logs "clean" (not silently identical to a fetch failure) when the worktree
 test('emits no warning but a distinct log entry when the fetch fails (no such remote)', () => {
   const { main } = setupProject({ withOrigin: false });
   const wt = harnessWorktreeOf(main);
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wts-run-'));
+  const runDir = scratchDir('ct-wts-run-');
   const out = post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), ownedRun: { dir: runDir } }));
   assert.deepStrictEqual(out, {}, 'a fetch failure must never produce a warn message');
   const events = readEvents(runDir).filter((e) => e.type === 'worktree-staleness');
@@ -198,7 +199,7 @@ test('does not execute an injected --upload-pack value when integration-branch s
   // program actually executed. This test instead checks for the side effect
   // itself: does the injected program run at all?
   const { main } = setupProject();
-  const markerFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wts-marker-')), 'ran.txt');
+  const markerFile = path.join(scratchDir('ct-wts-marker-'), 'ran.txt');
   const markerScript = path.join(path.dirname(markerFile), 'marker.sh');
   fs.writeFileSync(markerScript, `#!/bin/sh\ntouch ${markerFile}\n`);
   fs.chmodSync(markerScript, 0o755); // root-safe: makes a marker script executable, not a permission-denial simulation
@@ -244,7 +245,7 @@ function withGitConfigEnv(vars, fn) {
 }
 
 function tempGitConfig(contents) {
-  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wlp-gitcfg-')), 'gitconfig');
+  const file = path.join(scratchDir('ct-wlp-gitcfg-'), 'gitconfig');
   fs.writeFileSync(file, contents);
   return file;
 }
@@ -338,7 +339,7 @@ test('#2476: a forced no-git failure on core.longpaths never warns and logs chec
   const err = new Error('spawn git ENOENT');
   err.code = 'ENOENT';
   mockConfigFailure(t, err);
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wlp-run-'));
+  const runDir = scratchDir('ct-wlp-run-');
   const out = post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), platform: 'win32', ownedRun: { dir: runDir } }));
   assert.deepStrictEqual(out, {}, 'a forced check failure must never produce the core.longpaths warning');
   const events = readEvents(runDir).filter((e) => e.type === 'windows-longpaths');
@@ -354,7 +355,7 @@ test('#2476: a forced timeout failure on core.longpaths never warns and logs che
   err.killed = true;
   err.signal = 'SIGTERM';
   mockConfigFailure(t, err);
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wlp-run-'));
+  const runDir = scratchDir('ct-wlp-run-');
   const out = post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), platform: 'win32', ownedRun: { dir: runDir } }));
   assert.deepStrictEqual(out, {}, 'a forced check failure must never produce the core.longpaths warning');
   const events = readEvents(runDir).filter((e) => e.type === 'windows-longpaths');
@@ -368,7 +369,7 @@ test('#2476: a forced spawn failure (EAGAIN) on core.longpaths never warns and l
   const err = new Error('spawn git EAGAIN');
   err.code = 'EAGAIN';
   mockConfigFailure(t, err);
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wlp-run-'));
+  const runDir = scratchDir('ct-wlp-run-');
   const out = post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), platform: 'win32', ownedRun: { dir: runDir } }));
   assert.deepStrictEqual(out, {}, 'a forced check failure must never produce the core.longpaths warning');
   const events = readEvents(runDir).filter((e) => e.type === 'windows-longpaths');
@@ -379,7 +380,7 @@ test('#2476: a forced spawn failure (EAGAIN) on core.longpaths never warns and l
 test('#2476: a real (non-forced) unset key still logs result: unset, distinct from check-failed', () => {
   const { main } = setupProject();
   const wt = harnessWorktreeOf(main);
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wlp-run-'));
+  const runDir = scratchDir('ct-wlp-run-');
   const out = runnerLikeGlobalConfig(() => isolatedGitConfig(
     () => post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), platform: 'win32', ownedRun: { dir: runDir } })),
   ));

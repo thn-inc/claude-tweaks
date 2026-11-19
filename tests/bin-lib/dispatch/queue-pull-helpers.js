@@ -61,6 +61,7 @@
 const { after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -118,7 +119,7 @@ const CLOSING_BODY = (tpath, ref) => `Closing: the named target ${tpath} no long
 // Runs the staged `gh issue comment <num> ...` line under bash with stub gh (logs its argv) and stub id
 // (drops a marker): the argv gh received, and whether anything but the quoted word ran `id`.
 function runStagedComment(proposalText, num) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-5317-'));
+  const dir = scratchDir('qp-5317-');
   try {
     const bin = path.join(dir, 'bin');
     fs.mkdirSync(bin);
@@ -565,7 +566,7 @@ function registerParityCleanup() {
 
 // Runs fn with TMPDIR (and the win32 spellings) pointed at a test-owned dir, never the host one.
 function inOwnTmp(fn) {
-  const own = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-t2-'));
+  const own = scratchDir('qp-t2-');
   const keys = ['TMPDIR', 'TEMP', 'TMP'];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   for (const k of keys) process.env[k] = own;

@@ -4,6 +4,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
@@ -21,7 +22,7 @@ const { resolveAll } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console'
 const sha = (t) => crypto.createHash('sha256').update(t).digest('hex');
 
 function fixture() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'memory-write-')));
+  const root = fs.realpathSync(scratchDir('memory-write-'));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
   initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }); git('commit', '-q', '--allow-empty', '-m', 'init');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-09-06T000000-record-7');
@@ -116,7 +117,7 @@ test('AC4.2: applying the reverse diff restores the prior content (trailing newl
 test('AC4.2: the reverse diff also restores the prior content from a memory directory outside any git repository', async (t) => {
   const fx = fixture();
   // The real memory directory sits outside any repository; the ceiling stops git discovering one above os.tmpdir().
-  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'memory-outside-')));
+  const outside = fs.realpathSync(scratchDir('memory-outside-'));
   t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
   fx.memoryDir = outside;
   fs.writeFileSync(path.join(outside, 'note.md'), 'a\nb\n');

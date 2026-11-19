@@ -7,12 +7,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const residue = require('../../../plugin/bin/lib/hooks/session-residue');
 
 function tmpProject() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-residue-'));
+  const dir = scratchDir('ct-residue-');
   fs.mkdirSync(path.join(dir, '.claude-tweaks', 'pipelines'), { recursive: true });
   return dir;
 }
@@ -516,7 +517,7 @@ test('#5377 collectStaleRuns env: an interrupted multi-spec run reaches checkRes
 test('#5377 lastCommitMs env: an unborn HEAD is recognised through the passed env', () => {
   const { execFileSync } = require('child_process');
   const { lastCommitMs } = require('../../../plugin/bin/lib/run-liveness/probes');
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sr5377-unborn-')));
+  const repo = fs.realpathSync(scratchDir('ct-sr5377-unborn-'));
   execFileSync('git', ['init', '-q', repo], { env: hookEnv() });
   const env = hookEnv();
   assert.strictEqual(withBrokenGitDir(() => lastCommitMs(repo, env)), null);

@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const { spawn, spawnSync, execFileSync } = require('child_process');
 const { slotEnv } = require('../../helpers/suite-slot-env');
 const { CLI, tmpDir, runCli, tmpGitRepo, passStampFiles, commitFile, baselineRepo, SUITE, PER_FILE, nestedRunEnv, headCommit } = require('./cli-helpers');
@@ -245,7 +246,7 @@ test('--baseline: a stale ct-verify-base-* scratch worktree from an earlier inte
   // check executes and before adjudication is even attempted — so a trivial
   // passing repo is enough; this test does not need a real baseline mismatch.
   const r = tmpGitRepo();
-  const staleParent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-')));
+  const staleParent = fs.realpathSync(scratchDir('ct-verify-base-'));
   const staleWt = path.join(staleParent, 'wt');
   r.git('worktree', 'add', '--detach', staleWt, 'HEAD');
   // verify.js names the path git's porcelain listing prints, which Git for Windows

@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { run, parseArgs, realDeps } = require('../../../plugin/bin/repair-claim');
@@ -12,7 +13,7 @@ const NOW = Date.parse('2026-08-16T12:00:00Z');
 const RUN_DIR_NAME = '2026-08-16T100000-spec-999';
 
 function mkRun() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'repc-'));
+  const root = scratchDir('repc-');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', RUN_DIR_NAME);
   fs.mkdirSync(runDir, { recursive: true });
   fs.mkdirSync(path.join(root, '.git'));

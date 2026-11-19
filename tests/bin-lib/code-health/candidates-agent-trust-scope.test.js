@@ -2,11 +2,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const path = require('node:path');
 const os = require('node:os');
 
 function tmp() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-agent-trust-'));
+  return scratchDir('codehealth-agent-trust-');
 }
 
 function write(root, rel, content) {

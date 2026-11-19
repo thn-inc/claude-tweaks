@@ -2,12 +2,13 @@
 'use strict';
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./tmp-dir');
 const os = require('os');
 const path = require('path');
 const { pathWithOnly } = require('./path-stub');
 
 function gitRepo({ remote } = {}) {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-intmodel-')));
+  const dir = fs.realpathSync(scratchDir('ct-intmodel-'));
   execFileSync('git', ['-C', dir, 'init', '-q']);
   if (remote) execFileSync('git', ['-C', dir, 'remote', 'add', 'origin', remote]);
   return dir;

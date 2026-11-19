@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { withEnvTripwire } = require('./helpers/env-tripwire');
@@ -11,7 +12,7 @@ const { runHookCli, hookEnv } = require('./helpers/hook-event');
 const sessionEnd = require('../plugin/bin/lib/hooks/session-end');
 const { resolvePluginVersion } = require('../plugin/bin/lib/plugin-version');
 
-const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-hook-event-')));
+const sandbox = fs.realpathSync(scratchDir('ct-hook-event-'));
 
 // Swaps session-end's run for `recorder`, restoring it afterwards.
 async function withRecorder(recorder, fn) {

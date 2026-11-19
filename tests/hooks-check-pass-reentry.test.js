@@ -10,6 +10,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { reentryFixture, reentryGit } = require('./helpers/reentry-fixture');
@@ -52,7 +53,7 @@ test('AC1.1: ineligible fixture (console.json present) -> same verdict JSON as c
 
 test('AC1.2: an unanchored --run exits non-zero with no JSON on stdout', async () => {
   const { root } = reentryFixture();
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-cpr-outside-'));
+  const outside = scratchDir('ct-cpr-outside-');
   const runDir2 = path.join(outside, '.claude-tweaks', 'pipelines', '2026-08-01T090000-spec-11-12');
   fs.mkdirSync(runDir2, { recursive: true });
   fs.writeFileSync(path.join(runDir2, 'run-state.json'), JSON.stringify({ status: 'active' }));
@@ -84,7 +85,7 @@ test('#3553: --online is threaded through (gh absent -> degrade named in detail;
   const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
   state.pr = { number: 7, url: 'https://example.test/pr/7', branch: 'feat-branch' };
   fs.writeFileSync(statePath, JSON.stringify(state));
-  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-cpr-bin-'));
+  const bin = scratchDir('ct-cpr-bin-');
   fs.symlinkSync(gitPath, path.join(bin, 'git'));
   const env = { PATH: bin };
   // real process: checkPassReentry takes no env: its gh lookup (and its git children) start on the process environment, so an in-process PATH stub would be skipped

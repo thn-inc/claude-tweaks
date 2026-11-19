@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
@@ -10,7 +11,7 @@ const { filterResultsByScope } = require('../../../plugin/bin/lib/residue/scope-
 const { initRepo } = require('../../helpers/git-fixtures');
 
 function makeFixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'residue-pipeline-runs-'));
+  const root = scratchDir('residue-pipeline-runs-');
   fs.mkdirSync(path.join(root, '.git')); // mainCheckoutRoot needs a repo marker
   fs.mkdirSync(path.join(root, '.claude-tweaks', 'pipelines'), { recursive: true });
   fs.mkdirSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive'), { recursive: true });
@@ -133,7 +134,7 @@ test('the archive/ directory itself is never reported', () => {
 });
 
 test('no .claude-tweaks/pipelines directory at all is a clean run with no findings', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'residue-pipeline-runs-empty-'));
+  const root = scratchDir('residue-pipeline-runs-empty-');
   fs.mkdirSync(path.join(root, '.git'));
   const { ran, findings } = probePipelineRuns({ cwd: root });
   assert.strictEqual(ran, true);

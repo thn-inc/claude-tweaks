@@ -2,6 +2,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -14,7 +15,7 @@ const { initRepo } = require('../../helpers/git-fixtures');
 
 // A fake main checkout with one run dir under .claude-tweaks/pipelines/.
 function mainRoot() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-'));
+  const root = scratchDir('flow-preflight-');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-09-06T000000-record-7');
   fs.mkdirSync(runDir, { recursive: true });
   return { root, runDir };
@@ -113,7 +114,7 @@ test('case 4: a missing dir and an unanchored dir each render the case-4 literal
   const a = computeAdoption({ runDir: missing, mainRoot: fx.root, cwd: fx.root, deps: deps(fx) });
   assert.strictEqual(a.case, 4);
   assert.strictEqual(a.note, ADOPTION_NOTES[4].replace('{path}', missing).replace('{does not exist | is not anchored to the main checkout}', 'does not exist'));
-  const shadow = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-shadow-'));
+  const shadow = scratchDir('flow-preflight-shadow-');
   const b = computeAdoption({ runDir: shadow, mainRoot: fx.root, cwd: fx.root, deps: deps(fx, { resolveTarget: () => ({ ok: false, reason: 'not-anchored' }) }) });
   assert.strictEqual(b.case, 4);
   assert.match(b.note, /is not anchored to the main checkout/);
@@ -327,7 +328,7 @@ test('specOnBranch falls back to a recursive spec-{N}/work/ listing when {run-di
 });
 
 test('defaultDeps().resolvePolicy applies computeDerivedDefaults, so merge-verification resolves to a value with no policy.yml (#1931 I2)', () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-derived-')));
+  const root = fs.realpathSync(scratchDir('flow-preflight-derived-'));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   git('commit', '-q', '--allow-empty', '-m', 'init');
@@ -340,7 +341,7 @@ test('defaultDeps().resolvePolicy applies computeDerivedDefaults, so merge-verif
 });
 
 test('defaultDeps().resolvePolicy hands the run config to computeDerivedDefaults: a merge-verification-only read under a run-pinned integration-model never spawns gh (#4578 AC13.1)', { skip: STUB_SKIP }, () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-runpin-')));
+  const root = fs.realpathSync(scratchDir('flow-preflight-runpin-'));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   git('commit', '-q', '--allow-empty', '-m', 'init');
@@ -366,7 +367,7 @@ test('defaultDeps().resolvePolicy hands the run config to computeDerivedDefaults
 });
 
 test('defaultDeps().resolvePolicy carries a degraded forge detection onto the integration-model entry (#4578 Q10 seam)', { skip: STUB_SKIP }, () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-degraded-')));
+  const root = fs.realpathSync(scratchDir('flow-preflight-degraded-'));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   git('commit', '-q', '--allow-empty', '-m', 'init');
@@ -792,7 +793,7 @@ test('AC9.1 specOnBranch returns null when a live listing throws', () => {
 });
 
 test('AC3.1 specOnBranch on a real repo branch whose last commit git-mv\'d the header', () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-mv-')));
+  const root = fs.realpathSync(scratchDir('flow-preflight-mv-'));
   const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.invalid' };
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env });
   git('init', '-q', '-b', 'main');

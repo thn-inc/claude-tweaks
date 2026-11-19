@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { hookEnv, runHookCli } = require('./helpers/hook-event');
@@ -12,7 +13,7 @@ const { parseTypedSkill, skillExists } = require('../plugin/bin/lib/hooks/user-p
 
 // #1130: never let an omitted cwd fall through to the spawned subprocess's
 // own process.cwd() — see tests/skill-invocation.test.js for the incident.
-const HOOK_SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ups-sandbox-'));
+const HOOK_SANDBOX = scratchDir('ct-ups-sandbox-');
 
 // #5377: runs hooks.js in-process through runHookCli. hookEnv blanks PIPELINE_RUN_DIR so an ambient
 // value in the invoking shell can't redirect fixture writes into a real run's events.jsonl —
@@ -24,7 +25,7 @@ async function runHook(args, { input = '', cwd = HOOK_SANDBOX, env = {} } = {}) 
 
 // Project with one active run; sessionId optional (absent = unowned run).
 function projectWithRun({ sessionId } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ups-'));
+  const dir = scratchDir('ct-ups-');
   const run = path.join(dir, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.mkdirSync(run, { recursive: true });
   const state = { status: 'active' };
@@ -126,7 +127,7 @@ test('unowned run: appends one event tagged attribution fallback', async () => {
 });
 
 test('no resolvable run: exits 0, writes nothing, pipelines dir absent', async () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ups-bare-'));
+  const bare = scratchDir('ct-ups-bare-');
   const r = await submit(bare, '/claude-tweaks:help');
   assert.strictEqual(r.code, 0);
   assert.strictEqual(fs.existsSync(path.join(bare, '.claude-tweaks')), false,
@@ -188,7 +189,7 @@ const NOW = new Date('2026-11-16T03:00:00.000Z');
 const FIXTURES = path.join(__dirname, 'fixtures', 'typed-command');
 
 function tmpRoot() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ups-tmp-'));
+  return scratchDir('ct-ups-tmp-');
 }
 
 function pointerFile(tmpdir, sessionId = SID) {
@@ -286,7 +287,7 @@ test('AC2.2: the eleven non-writing prompts and payloads write nothing', async (
 });
 
 test('AC2.3: a project with no run directory still writes the pointer', async () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ups-bare-'));
+  const bare = scratchDir('ct-ups-bare-');
   const tmpdir = tmpRoot();
   await submitDispatch(tmpdir, dispatchInput('/claude-tweaks:dispatch #12'), bare);
   assert.strictEqual(readPointerJson(tmpdir).records['12'].promptId, 'p-1');

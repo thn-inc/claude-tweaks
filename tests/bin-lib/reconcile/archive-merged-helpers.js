@@ -8,6 +8,7 @@ const cp = require('child_process');
 // compound-failure test's `t.mock.method(cp, 'execFileSync', ...)`.
 const { execFileSync } = cp;
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const {
@@ -83,7 +84,7 @@ function ghJsonHeredoc(value) {
 // any unmapped number exits 1. Without it, `gh issue view` keeps the catch-all
 // body this wrapper has always printed.
 function installGhWrapper(prsJson, issueStates = null) {
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-ghwrap-'));
+  const wrapperDir = scratchDir('archive-merged-ghwrap-');
   const wrapperPath = path.join(wrapperDir, 'gh');
   const issueBlock = issueStates ? [
     'if [ "$1" = "issue" ] && [ "$2" = "view" ]; then',
@@ -126,7 +127,7 @@ function installGhWrapper(prsJson, issueStates = null) {
 // into main, then the worktree removed (the branch ref stays). Returns the
 // feature tip sha. `commitEnv` overrides the feature commit's environment.
 function mergeFeatureBranch(root, branch, wtPrefix, commitEnv) {
-  const wt = fs.mkdtempSync(path.join(os.tmpdir(), wtPrefix));
+  const wt = scratchDir(wtPrefix);
   try {
     git(root, 'worktree', 'add', '-q', wt, '-b', branch);
     fs.writeFileSync(path.join(wt, 'feature.txt'), 'feature\n');
@@ -307,7 +308,7 @@ function fixtureAbandonedShippedRun({ runId, ownerSessionId, extraEventLines = [
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-branch: main\n');
 
   // The stamped worktree path: unique per call and absent, as a torn-down worktree's is.
-  const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-wt-'));
+  const wt = scratchDir('archive-merged-wt-');
   fs.rmSync(wt, { recursive: true, force: true });
 
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
@@ -327,7 +328,7 @@ const verdictOf = (verdict, over = {}) => () => ({
 });
 const DEAD = verdictOf('dead');
 function mkDirWithMtime(ageMs) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-stuck-'));
+  const dir = scratchDir('archive-merged-stuck-');
   if (ageMs) {
     const backdated = new Date(Date.now() - ageMs);
     fs.utimesSync(dir, backdated, backdated);
