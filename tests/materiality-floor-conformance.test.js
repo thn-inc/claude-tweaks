@@ -178,6 +178,7 @@ const ADOPTERS = [
   'plugin/skills/wrap-up/leftover-routing.md',
   'plugin/skills/reflect/full-mode.md',
   'plugin/skills/reflect/hindsight-mode.md',
+  'plugin/skills/reflect/SKILL.md',
   'plugin/skills/visual-review/browser-review.md',
   'plugin/skills/code-health/filing.md',
   'plugin/skills/docs-health/SKILL.md',
@@ -212,6 +213,7 @@ const ROUTE_FORM = `${ROUTE_COMMAND} [--severity {severity}] --size {size} --pri
 const DEFERRAL_SITES = [
   'plugin/skills/review/step3-routing.md',
   'plugin/skills/reflect/full-mode.md',
+  'plugin/skills/reflect/SKILL.md',
   'plugin/skills/wrap-up/residue-sweep.md',
   'plugin/skills/wrap-up/leftover-routing.md',
   'plugin/skills/visual-review/browser-review.md',
@@ -430,6 +432,37 @@ test('#5932 go-red: "always clears the floor" back in Overrides fails the check'
   assert.notEqual(mutated, FLOOR);
   assert.deepStrictEqual(overridesProblems(mutated), ['Overrides still says "always clears the floor"']);
 });
+
+// #5932 Decision 1: reflect's auto-mode tangential staging runs the route command; digest stages nothing.
+const REFLECT = read('plugin/skills/reflect/SKILL.md');
+const REFLECT_ROUTE_NEEDLES = [
+  '`{reason}` being `tangential`',
+  'stage nothing: no `staged/reflect-{n}.md`',
+  "never reaches the Review Console's Queue writes section",
+  'A digest write that fails is staged as on `file` instead',
+  'On `file`, stage it as the next paragraph describes',
+  '"Digest URL and count surfacing"',
+];
+const REFLECT_ROW_NEEDLES = ['Routed first by `bin/deferral-route.js`', 'On `digest`: a digest entry, nothing staged'];
+function reflectRouteProblems(text) {
+  const para = text.split(/\n[ \t]*\n/).map((p) => p.replace(/\s+/g, ' ')).find((p) => p.includes(ROUTE_COMMAND)) || '';
+  const row = text.split('\n').find((l) => l.startsWith('| Tangential idea')) || '';
+  return [
+    ...REFLECT_ROUTE_NEEDLES.filter((n) => !para.includes(n)).map((n) => `the routing paragraph lacks ${n}`),
+    ...REFLECT_ROW_NEEDLES.filter((n) => !row.includes(n)).map((n) => `the tangential row lacks ${n}`),
+  ];
+}
+test('#5932 reflect routes a tangential idea before staging it, and a digest verdict stages nothing', () => {
+  assert.deepStrictEqual(reflectRouteProblems(REFLECT), []);
+});
+for (const needle of [...REFLECT_ROUTE_NEEDLES, ...REFLECT_ROW_NEEDLES]) {
+  test(`#5932 go-red: ${needle} moved out of its paragraph or row fails the reflect check`, () => {
+    const cut = REFLECT.replace(flexible(needle), '');
+    assert.notEqual(cut, REFLECT, `anchor ${needle} not in reflect/SKILL.md`);
+    const where = REFLECT_ROW_NEEDLES.includes(needle) ? 'the tangential row' : 'the routing paragraph';
+    assert.deepStrictEqual(reflectRouteProblems(`${cut}\n\n${needle}\n`), [`${where} lacks ${needle}`]);
+  });
+}
 
 test('the five health sweeps state materiality-floor-before-cap-digest ordering', () => {
   const HEALTH_FILES = [
