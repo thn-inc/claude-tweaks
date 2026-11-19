@@ -53,10 +53,10 @@ const ADOPTION_NOTES = Object.freeze({
   1: 'Resuming existing run directory: {path}',
   2: 'Adopting minted run directory: {path}',
   3: 'Recovering inherited run directory: {path} (missing config.yml; backfilled {worktree registration | PR-early lifecycle | materialize commit} before proceeding).',
-  4: 'PIPELINE_RUN_DIR was set to {path}, which {does not exist | is not anchored to the main checkout} — created a fresh run directory instead.',
+  4: 'PIPELINE_RUN_DIR was set to {path}, which {does not exist | is not anchored to the main checkout | is not a pipeline run directory} — created a fresh run directory instead.',
 });
 const CASE3_PLACEHOLDER = '{worktree registration | PR-early lifecycle | materialize commit}';
-const CASE4_PLACEHOLDER = '{does not exist | is not anchored to the main checkout}';
+const CASE4_PLACEHOLDER = '{does not exist | is not anchored to the main checkout | is not a pipeline run directory}';
 
 // The CONFLICTING-run-PR note (#3014): GitHub suppresses workflow runs on a
 // PR whose merge state is dirty, so a conflicted run PR gets no CI until it is
@@ -160,7 +160,9 @@ function computeAdoption({ runDir, mainRoot, cwd, deps }) {
   if (!runDir) return { case: 5, note: null, path: null, anchored: false, hasConfig: false, hasOtherContent: false, specMaterialized: null, backfills: [] };
   const target = deps.resolveTarget({ runDir, cwd, mainRoot });
   if (!target.ok) {
-    const why = target.reason === 'missing' ? 'does not exist' : 'is not anchored to the main checkout';
+    let why = 'is not anchored to the main checkout';
+    if (target.reason === 'missing') why = 'does not exist';
+    else if (target.reason === 'not-a-run-dir') why = 'is not a pipeline run directory';
     return { case: 4, note: ADOPTION_NOTES[4].replace('{path}', runDir).replace(CASE4_PLACEHOLDER, why), path: runDir, anchored: false, hasConfig: false, hasOtherContent: false, specMaterialized: null, backfills: [] };
   }
   const real = target.dir;

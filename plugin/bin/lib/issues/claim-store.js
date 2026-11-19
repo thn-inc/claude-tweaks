@@ -584,7 +584,13 @@ function writeClaimBlob(deps, repoSlug, issueNumber, {
 // so a caller that must tell WHY the lookup could not answer (the bootstrap's
 // 422 re-read) can read the failure kind. `exists` is null = could not tell.
 function readClaimsBranch(ghApi, repoSlug) {
-  const result = ghApi([`repos/${repoSlug}/branches/${CLAIMS_BRANCH}`, '-q', '.name']);
+  return readBranchRaw(ghApi, repoSlug, CLAIMS_BRANCH);
+}
+
+// The branch-parameterized read behind `readClaimsBranch` and `createBranchContentsApi`'s
+// 422 re-read (the release-state store creates its own branch through the latter).
+function readBranchRaw(ghApi, repoSlug, branch) {
+  const result = ghApi([`repos/${repoSlug}/branches/${branch}`, '-q', '.name']);
   if (result.status === 404) return { exists: false, result };
   if (result.failure) return { exists: null, result };
   return { exists: true, result };
@@ -618,11 +624,11 @@ function apiRefusal(r) {
   };
 }
 
-// The contents-API leg of `ensureClaimsBranch`: create `CLAIMS_BRANCH` at the
-// default branch's tip via `POST git/refs`. A ref-creation 422 is ambiguous
-// (the branch already exists, or a ruleset forbids creating it), so only a
-// re-read of the branch settles it.
-function createClaimsBranchContentsApi(ghApi, repoSlug) {
+// The contents-API leg of `ensureClaimsBranch`: create `branch` (`CLAIMS_BRANCH`
+// here; the release-state store passes its own) at the default branch's tip via
+// `POST git/refs`. A ref-creation 422 is ambiguous (the branch already exists,
+// or a ruleset forbids creating it), so only a re-read of the branch settles it.
+function createBranchContentsApi(ghApi, repoSlug, branch) {
   const branchRead = ghApi([`repos/${repoSlug}`, '-q', '.default_branch']);
   if (branchRead.failure || branchRead.status) return apiRefusal(branchRead);
   const defaultBranch = String(branchRead.stdout || '').trim();
@@ -634,14 +640,14 @@ function createClaimsBranchContentsApi(ghApi, repoSlug) {
   if (!tipSha) return { ok: false, reason: `the default branch ${defaultBranch} reported no tip sha` };
   const r = ghApi([
     '--method', 'POST', `repos/${repoSlug}/git/refs`,
-    '-f', `ref=refs/heads/${CLAIMS_BRANCH}`,
+    '-f', `ref=refs/heads/${branch}`,
     '-f', `sha=${tipSha}`,
   ]);
   if (r.failure === null && r.status === null) return { ok: true, created: true };
   if (r.status === 422) {
     // Branch on the raw re-read, not on `exists` (which counts any failure-free,
     // non-404 answer as "there"): only a clean answer proves the lost race.
-    const { result } = readClaimsBranch(ghApi, repoSlug);
+    const { result } = readBranchRaw(ghApi, repoSlug, branch);
     if (result.failure === null && result.status === null) return { ok: true, created: false };
     const postRefusal = apiRefusal(r);
     if (result.status === 404) return postRefusal;
@@ -672,7 +678,7 @@ function ensureClaimsBranch(deps, repoSlug) {
     if (g.ok) return { ok: true, created: g.created, via: 'git' };
     reasons.push(`git: ${g.reason}`);
   }
-  const a = createClaimsBranchContentsApi(deps.ghApi, repoSlug);
+  const a = createBranchContentsApi(deps.ghApi, repoSlug, CLAIMS_BRANCH);
   if (a.ok) return { ok: true, created: a.created, via: 'contents-api' };
   reasons.push(`contents-api: ${a.reason}`);
   return { ok: false, reason: reasons.join('; '), ...(a.transient ? { transient: true, failure: a.failure } : {}) };
@@ -808,9 +814,11 @@ module.exports = {
   writeClaimBlob,
   claimsBranchExists,
   ensureClaimsBranch,
+  createBranchContentsApi,
   defaultGhApi,
   claimPath,
   classifyGhApiError,
+  ghErrorText,
   refusalText,
   tombstoneInFlightPr,
   staleClaimInFlightPr,

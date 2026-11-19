@@ -169,7 +169,7 @@ function anchorRunDir(runDir, deps, missingExitCode) {
     deps.stderr(`review-coordination.js: run dir does not exist: ${runDir}\n`);
     return { exitCode: missingExitCode };
   }
-  deps.stderr(`review-coordination.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+  deps.stderr(`review-coordination.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
   return { exitCode: 3 };
 }
 

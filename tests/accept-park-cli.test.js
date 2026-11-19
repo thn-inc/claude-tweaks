@@ -297,6 +297,25 @@ test('decide: a --run outside the main checkout is refused with exit 3', async (
   assert.equal(w.state.gh.length, 0);
 });
 
+test('#5830: decide, park and parked refuse a --run outside .claude-tweaks/pipelines with exit 3', async () => {
+  const w = world({ policy: 'control-mode: on\n', records: { 7: {} } });
+  const stray = path.join(w.state.root, 'plugin');
+  fs.mkdirSync(stray, { recursive: true });
+  // A config.yml the run's own agent could write must never be read from a directory that is no run.
+  fs.writeFileSync(path.join(stray, 'config.yml'), 'control-mode: off\n');
+  for (const argv of [
+    ['decide', '--run', stray, '--record', '7'],
+    ['park', '--run', stray, '--record', '7', '--pr', '12', '--head', HEAD, '--worktree', w.state.worktree],
+    ['parked', '--record', '7', '--run', stray],
+  ]) {
+    const res = await call(w, argv);
+    assert.equal(res.code, 3, `${argv[0]}: ${res.stderr}`);
+    assert.equal(res.stdout, '');
+    assert.match(res.stderr, /not a pipeline run directory/);
+  }
+  assert.equal(w.state.gh.length, 0);
+});
+
 // ---- decide: the diff tripwire (#4619) ----
 
 const TRIPWIRE_POLICY = `control-mode: on\nacceptance-target: dev\n${GLOBS}`;
@@ -511,14 +530,14 @@ test('two records share one diff', async () => {
   assert.deepEqual(w.state.edits.map((edit) => edit.record), ['2']);
 });
 
-test('control mode on in config.yml only still reads the globs', async () => {
+test('#5830: control mode on in config.yml only never reads the globs', async () => {
   const w = world({ policy: `acceptance-target: dev\n${GLOBS}`, diff: MIGRATION_DIFF, records: { 7: { body: 'Risk-flags: none\n' } } });
   fs.writeFileSync(path.join(w.state.runDir, 'config.yml'), 'control-mode: on\n');
   const res = await call(w, decideArgv(w));
   assert.equal(res.code, 0, res.stderr);
-  const { tripwire } = tripwireOf(res);
-  assert.deepEqual(tripwire.newFlags, ['migrations']);
-  assert.equal(tripwire.lines.some((line) => line.includes('path globs not configured')), false);
+  assert.deepEqual(withoutTripwire(JSON.parse(res.stdout)), { park: false, decisions: [{ record: 7, consulted: false, park: false, target: null, reason: null }] });
+  assert.equal(w.state.gh.length, 0, 'control mode stays off: no record read');
+  assert.equal(w.state.edits.length, 0);
 });
 
 test('a policy risk-categories extra is a category the tripwire can cross', async () => {
@@ -1069,13 +1088,22 @@ test('parked with control mode on and a failing gh is unknown, with and without 
   }
 });
 
-test("parked --run: the run's config.yml outranks policy.yml for control-mode", async () => {
+test("#5830: parked --run: the run's config.yml never outranks policy.yml for control-mode", async () => {
   const w = world({ policy: 'control-mode: off\n', records: {} });
   fs.writeFileSync(path.join(w.state.runDir, 'config.yml'), 'control-mode: on\n');
-  const withRun = await call(w, ['parked', '--record', '7', '--run', w.state.runDir], { gh: throwingGh.gh });
-  assert.equal(withRun.code, 6);
+  const withRun = await call(w, ['parked', '--record', '7', '--run', w.state.runDir], throwingGh);
+  assert.equal(withRun.code, 5);
+  assert.equal(withRun.stdout, 'not-parked\n');
   const withoutRun = await call(w, ['parked', '--record', '7'], throwingGh);
   assert.equal(withoutRun.code, 5);
+});
+
+test('#5830: parked --run keeps the project value when the run config says control-mode off', async () => {
+  const w = world({ policy: ON, records: {} });
+  fs.writeFileSync(path.join(w.state.runDir, 'config.yml'), 'control-mode: off\n');
+  const res = await call(w, ['parked', '--record', '7', '--run', w.state.runDir], { gh: throwingGh.gh });
+  assert.equal(res.code, 6);
+  assert.equal(res.stdout, 'unknown\n');
 });
 
 test('parked: an unreadable policy file is unknown; a refused --run exits 3', async () => {

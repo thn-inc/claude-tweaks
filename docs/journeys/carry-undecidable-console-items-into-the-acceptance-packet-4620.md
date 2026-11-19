@@ -18,7 +18,7 @@ files:
 
 **Persona:** the claude-tweaks maintainer who turned on `control-mode: on` so they only decide at two points, intent and acceptance. They want a finished run to leave nothing behind: no `pending` console items, no `keep-staged` files, no `open` ledger rows. A second persona is the wrap-up agent running the Review Console and the ledger gate in that run.
 **Goal:** every item the console or the ledger could not settle by policy ends as a decision the maintainer sees in the acceptance packet, instead of residue they have to find later.
-**Entry point:** a `/claude-tweaks:flow` or `/claude-tweaks:dispatch` run whose run config or `.claude-tweaks/policy.yml` sets `control-mode: on`, reaching `/claude-tweaks:wrap-up`.
+**Entry point:** a `/claude-tweaks:flow` or `/claude-tweaks:dispatch` run whose `.claude-tweaks/policy.yml` sets `control-mode: on` (a run config cannot — the key is `policyOnly`, #5830), reaching `/claude-tweaks:wrap-up`.
 **Success state:** the acceptance packet's Decisions left for you lists one line per carried item, `console-residue.js --run` reports nothing for the run, and every ledger row is `fixed`, `accepted` (digested) or `deferred` naming a staged proposal or a `carried to the acceptance packet as {factId}` fact.
 
 ## Steps

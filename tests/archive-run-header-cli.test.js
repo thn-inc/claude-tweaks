@@ -349,7 +349,6 @@ test('malformed invocations exit 2 with nothing on stdout and no git call', () =
     'a --run whose basename is not a run id': ['--run', path.join(f.pipelines, 'not-a-run-id')],
     'a glob character in the run id': ['--run', glob],
     'the pipelines/archive dir itself': ['--run', path.join(f.pipelines, 'archive')],
-    'the main checkout, outside pipelines': ['--run', f.main],
     'a spec segment that is not spec-{N}': ['--run', path.join(f.runDir, 'spec-x')],
     'spec-0': ['--run', path.join(f.runDir, 'spec-0')],
     'a segment below the spec dir': ['--run', path.join(f.runDir, 'spec-8', 'work')],
@@ -360,6 +359,12 @@ test('malformed invocations exit 2 with nothing on stdout and no git call', () =
     assert.equal(res.stdout, '', name);
     assert.match(res.stderr, /archive-run-header\.js: /, name);
   }
+  // The main checkout, outside .claude-tweaks/pipelines/, is no run dir at all: the shared guard
+  // (#5830) refuses it with the unanchored exit 3 before the run-id identity check that exits 2.
+  const outside = cli(f, ['--run', f.main]);
+  assert.equal(outside.code, 3, outside.stderr);
+  assert.equal(outside.stdout, '');
+  assert.match(outside.stderr, /archive-run-header\.js: /);
   assert.equal(f.head(), head);
   assert.equal(f.decisions(), '', 'nothing logged');
 });

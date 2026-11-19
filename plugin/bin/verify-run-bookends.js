@@ -297,7 +297,7 @@ function run(argv, deps) {
 // worktree-local shadow ([IL-127]); a refusal throws, which run() reports.
 function appendDecision({ runDir, entry }) {
   const target = resolveTarget({ runDir });
-  if (!target.ok) throw new Error(target.reason === 'missing' ? `run dir does not exist: ${runDir}` : `run dir is not anchored under the main checkout: ${runDir}`);
+  if (!target.ok) throw new Error(target.reason === 'missing' ? `run dir does not exist: ${runDir}` : `run dir is not anchored under the main checkout's .claude-tweaks/pipelines: ${runDir}`);
   return appendEntry({ runDir, entry });
 }
 

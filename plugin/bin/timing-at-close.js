@@ -6,7 +6,7 @@
 // Sanctioned-writer exit codes: 0 timing.json written or kept (its path on stdout; a spec-N
 // child of a multi-record run gets a one-line note instead — the parent's file covers it);
 // 2 malformed invocation; 3 the run dir is missing, not a directory, or not anchored under the
-// main checkout (a worktree-local shadow, [IL-127]: refused before any write, like the other
+// main checkout (a worktree-local shadow, or a directory outside pipelines/, [IL-127]: refused before any write, like the other
 // sanctioned writers), or timing.json could not be written (the run's decisions.md already holds
 // the SKIP line). No 1 at all.
 'use strict';
@@ -62,7 +62,7 @@ async function run(argv, deps = {}) {
     return 3;
   }
   if (!target.ok) {
-    deps.stderr(`timing-at-close.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — pass the main-checkout path (_shared/pipeline-run-dir.md's Anchoring section)\n`);
+    deps.stderr(`timing-at-close.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${o.run} — pass the main-checkout path (_shared/pipeline-run-dir.md's Anchoring section)\n`);
     return 3;
   }
   const r = await writeTimingAtClose(runDir, { tokens: true, env: deps.env, homeDir: deps.homeDir });

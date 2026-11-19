@@ -298,6 +298,26 @@ test('nonexistent --run dir: stderr warns decisions.md not written, exit still p
   assert.equal(envelope(out).logged, false);
 });
 
+// #5830: anchored under the main checkout but outside .claude-tweaks/pipelines/ — the
+// repair still goes through (exit per outcome), but decisions.md is refused.
+test('#5830: a --run dir inside the checkout but outside .claude-tweaks/pipelines/ is named not-a-pipeline-run-dir; exit per outcome, nothing written', () => {
+  const root = rootOf(mkRun());
+  const outsideDir = path.join(root, 'plugin', RUN_DIR_NAME);
+  fs.mkdirSync(outsideDir, { recursive: true });
+  const out = [];
+  const { d } = deps({
+    repairResult: {
+      outcome: 'repaired', state: 'unreadable', commentPosted: true, note: null, error: null,
+    },
+    out,
+    mainRoot: root,
+  });
+  assert.equal(run(['999', '--run', outsideDir, '--mode', 'release', '--reason', 'r'], d), 0);
+  assert.equal(envelope(out).logged, false);
+  assert.match(stderrOf(out), /decisions\.md not written — run dir is not a pipeline run directory/);
+  assert.equal(fs.existsSync(path.join(outsideDir, 'decisions.md')), false);
+});
+
 // --- 6. Wiring test ---
 
 test('realDeps wires the real git-CAS runner, the real gh runner, and the real repairClaim module function', () => {

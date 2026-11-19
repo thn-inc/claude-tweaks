@@ -996,7 +996,7 @@ async function run(argv, deps = {}) {
   if (!isDir) { stderr(`console-resolve.js: --run ${o.run} is not a directory\n${USAGE}\n`); return 2; }
   const target = resolveTarget({ runDir: o.run, cwd: cwd(), mainRoot: deps.mainRoot });
   if (!target.ok) {
-    stderr(`console-resolve.js: --run ${o.run} refused (${target.reason === 'missing' ? 'missing' : 'not anchored under the main checkout'}) — nothing written\n`);
+    stderr(`console-resolve.js: --run ${o.run} refused (${target.reason === 'missing' ? 'missing' : 'not anchored under the main checkout\'s .claude-tweaks/pipelines'}) — nothing written\n`);
     return 3;
   }
   const runDir = target.dir;
