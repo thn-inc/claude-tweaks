@@ -29,7 +29,7 @@ section reaching here, `{reason}` from the fix-exhaust gate above:
 `node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} --size {size} --priority {priority} --risk {risk} --agent-raised`.
 `digest` routes it to the digest container instead (log the contract's `AUTO` line when a run
 directory resolves; skip the steps below); `file` stages it as below; `refused` or any other
-outcome makes it an `open` ledger item for Phase 2's drill, naming the command's output.
+outcome makes it an `open` item for Phase 3's ledger gate, naming the command's output.
 This is not an exception to the never-created-directly rule above: a digest entry is an append to a
 shared container, not a work record (`_shared/materiality-floor.md`'s "The digest issue is a
 container, not a work record"), so nothing is filed on the user's record queue and that contract is
