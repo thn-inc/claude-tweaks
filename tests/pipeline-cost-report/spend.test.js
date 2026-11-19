@@ -4,7 +4,7 @@
 // price table, the Haiku long-prompt multiplier) and classifies cache re-writes by cause. Fixtures are JSONL
 // written to a temp dir.
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
@@ -14,6 +14,7 @@ const ROOT = path.join(__dirname, '..', '..');
 const { PRICES, familyOf, bucketOf, priceRequest, scanTranscript } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'spend.js'));
 
 const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pcr-'));
+after(() => fs.rmSync(DIR, { recursive: true, force: true }));
 let n = 0;
 function fixture(lines) {
   const file = path.join(DIR, `t${n++}.jsonl`);
@@ -145,6 +146,37 @@ test('a compaction marker applies to the next call only', async () => {
     asst('c', 'claude-opus-4-8', 3, { cache_creation_input_tokens: 60000 }),
   ]);
   assert.strictEqual((await scanTranscript(file)).requests[2].cause, 'ordinary growth');
+});
+
+test('a <synthetic> line is counted but is not the previous model call: the gap runs from the last real call', async () => {
+  const file = fixture([
+    asst('a', 'claude-opus-4-8', 0, { cache_read_input_tokens: 1000 }),
+    asst('s', '<synthetic>', 70, {}),
+    asst('b', 'claude-opus-4-8', 71, { cache_creation_input_tokens: 60000 }),
+  ]);
+  const { requests } = await scanTranscript(file);
+  assert.strictEqual(requests.length, 3);
+  assert.strictEqual(requests[1].family, 'unpriced');
+  assert.strictEqual(requests[2].cause, 'idle');
+});
+
+test('a <synthetic> line neither switches the family nor uses up a pending compaction marker', async () => {
+  const file = fixture([
+    asst('a', 'claude-opus-4-8', 0, { cache_read_input_tokens: 1000 }),
+    { type: 'system', subtype: 'compact_boundary', timestamp: at(1) },
+    asst('s', '<synthetic>', 2, {}),
+    asst('b', 'claude-opus-4-8', 3, { cache_creation_input_tokens: 60000 }),
+  ]);
+  assert.strictEqual((await scanTranscript(file)).requests[2].cause, 'compaction');
+});
+
+test('model switch outranks compaction', async () => {
+  const file = fixture([
+    asst('a', 'claude-opus-4-8', 0, { cache_read_input_tokens: 1000 }),
+    { type: 'system', subtype: 'compact_boundary', timestamp: at(1) },
+    asst('b', 'claude-sonnet-5-5', 2, { cache_creation_input_tokens: 60000 }),
+  ]);
+  assert.strictEqual((await scanTranscript(file)).requests[1].cause, 'model switch');
 });
 
 test('split pricing: 1-hour writes take the 1-hour column', async () => {

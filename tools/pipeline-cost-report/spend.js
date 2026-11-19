@@ -31,6 +31,11 @@ const PRICES = {
   },
 };
 
+// Claude Code writes `<synthetic>` assistant lines (zero usage) for API errors such as usage_limit_reached. They are
+// kept in `requests` (counted, unpriced) but are not model calls: they never serve as the previous call for the
+// family or idle-gap check and never use up a pending compaction marker. Any other unpriced id is a real call of an
+// unknown family and stays in the chain.
+const SYNTHETIC_MODEL = '<synthetic>';
 const HAIKU_LONG_PROMPT = 100000;
 const HAIKU_LONG_MULTIPLIER = 5;
 const REWRITE_MIN_TOKENS = 40000;
@@ -118,8 +123,9 @@ async function scanTranscript(file, { fsImpl = fs } = {}) {
     const usage = message.usage;
     let r = byId.get(message.id);
     if (!r) {
-      r = { id: message.id, ts: line.timestamp || null, model: message.model || '', input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, afterCompaction: compactionPending };
-      compactionPending = false;
+      const synthetic = message.model === SYNTHETIC_MODEL;
+      r = { id: message.id, ts: line.timestamp || null, model: message.model || '', synthetic, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, afterCompaction: compactionPending && !synthetic };
+      if (!synthetic) compactionPending = false;
       byId.set(message.id, r);
       out.requests.push(r);
     }
@@ -135,19 +141,19 @@ async function scanTranscript(file, { fsImpl = fs } = {}) {
   }
 
   let prev = null;
-  out.requests = out.requests.map((r, i) => {
+  out.requests = out.requests.map((r) => {
     const cacheWrite5m = r.cacheWrite - r.cacheWrite1h;
     const priced = priceRequest({ model: r.model, input: r.input, output: r.output, cacheRead: r.cacheRead, cacheWrite5m, cacheWrite1h: r.cacheWrite1h });
     const rewrite = r.cacheWrite > REWRITE_MIN_TOKENS && r.cacheWrite > priced.prompt / 2;
     let cause = 'ordinary growth';
     if (rewrite) {
       const gap = prev && r.ts && prev.ts ? Date.parse(r.ts) - Date.parse(prev.ts) : NaN;
-      if (i === 0) cause = 'session start';
+      if (!prev) cause = 'session start';
       else if (prev.family !== priced.family) cause = 'model switch';
       else if (r.afterCompaction) cause = 'compaction';
       else if (gap >= IDLE_MS) cause = 'idle';
     }
-    prev = { family: priced.family, ts: r.ts };
+    if (!r.synthetic) prev = { family: priced.family, ts: r.ts };
     return {
       id: r.id,
       ts: r.ts,
