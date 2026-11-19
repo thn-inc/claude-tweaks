@@ -129,7 +129,9 @@ function run(argv, deps = realDeps) {
   try { target = resolveTarget({ runDir, cwd: deps.cwd(), mainRoot: deps.mainRoot }); } catch { target = { ok: false, reason: 'missing' }; }
   if (!target.ok) {
     if (target.reason === 'not-anchored') {
-      deps.stderr(`repair-claim.js: decisions.md not written — run dir is not anchored under the main checkout (a worktree-local shadow): ${runDir} — see _shared/pipeline-run-dir.md\n`);
+      deps.stderr(`repair-claim.js: decisions.md not written — run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow): ${runDir} — see _shared/pipeline-run-dir.md\n`);
+    } else if (target.reason === 'not-a-run-dir') {
+      deps.stderr(`repair-claim.js: decisions.md not written — run dir is not a pipeline run directory (it must sit under .claude-tweaks/pipelines): ${runDir}\n`);
     } else {
       deps.stderr(`repair-claim.js: decisions.md not written — run dir does not exist: ${runDir}\n`);
     }

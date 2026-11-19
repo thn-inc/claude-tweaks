@@ -20,7 +20,7 @@
 // invocation (an unknown argument, missing --run/--name, a --name outside
 // the allowlist, --file and --delete both given or neither, an unreadable
 // --file — nothing is written on this code); 3 when the run dir is missing
-// or not anchored under the main checkout (a worktree-local shadow —
+// or not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/ —
 // _shared/pipeline-run-dir.md's Anchoring section, [IL-127]), or the file is
 // unwritable. No exit 1, like its four siblings.
 'use strict';
@@ -84,7 +84,7 @@ function run(argv, deps = realDeps) {
   }
   if (!target.ok) {
     if (target.reason === 'missing') deps.stderr(`write-run-artifact.js: run dir does not exist: ${o.run}\n`);
-    else deps.stderr(`write-run-artifact.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+    else deps.stderr(`write-run-artifact.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
     return 3;
   }
 

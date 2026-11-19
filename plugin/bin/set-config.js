@@ -25,8 +25,8 @@
 // key=value form, a key repeated within one `--set` batch, a key outside the
 // canonical Manifesto lever set and the run-pin set, or a value outside that
 // key's enum — batch or single, nothing is written on this exit code); 3 when
-// the run dir is missing or not anchored under the main checkout (a
-// worktree-local shadow — _shared/pipeline-run-dir.md's Anchoring section,
+// the run dir is missing or not anchored under the main checkout's .claude-tweaks/pipelines (a
+// worktree-local shadow, or a directory outside pipelines/ — _shared/pipeline-run-dir.md's Anchoring section,
 // [IL-127]), or config.yml is unwritable. config.yml is the third of the
 // sanctioned-write family: bin/log-decision.js (decisions.md), bin/stage-item.js (staged/),
 // this (config.yml levers — the ceremony escape hatch's downgrade path, and
@@ -207,7 +207,7 @@ function run(argv, overrides = {}) {
   }
   if (!target.ok) {
     if (target.reason === 'missing') deps.stderr(`set-config.js: run dir does not exist: ${o.run}\n`);
-    else deps.stderr(`set-config.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+    else deps.stderr(`set-config.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
     return 3;
   }
 

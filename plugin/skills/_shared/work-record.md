@@ -113,6 +113,7 @@ per-member), visually distinct from the graded dimensions above — see the Colo
 | Provenance (1) | `shaped:headless` | `CFD3D7` | Marks a record shaped by `/specify`'s headless `next` unit with no human review of the resulting spec body — absent means either a human shaped it, or it predates this feature. Writer: `/specify` `next` mode only, applied in the same call as `ready` — never on an interactively-shaped record. Readers: the grant gate (`evaluateGrantGate`, #969), `/backlog attention`, and `/assess-agent-autonomy`'s `grant-check.md` Step 2 Judge (weighs this provenance toward a conservative verdict, #969). Never blocks an interactive human grant. |
 | Priority (3, optional) | `priority:high`, `priority:medium`, `priority:low` | `B60205` / `FBCA04` / `C2E0C6` | dispatch ordering |
 | Container (1) | `digest` | `EEEEEE` | marks the rolling digest issue container for below-materiality-floor deferred findings, per `_shared/materiality-floor.md` |
+| Release gate (1) | `release-block` | `B4006E` | Presence-only: releases stop while any open record carries it (`_shared/release-block.md`). Set by `bin/release-block.js stamp` or a human; cleared by closing the record or removing the label |
 
 Retired names: `family:parent`, `framing:baked` (now `solution:unjustified`) — [IL-85] PERMANENT read-side support remains for adopter repos; removable only at a major version that drops pre-rename repo support.
 

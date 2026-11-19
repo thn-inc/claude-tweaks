@@ -369,7 +369,7 @@ const DISPOSITION_ROUTING = [
   [/unconfirmed[\s\S]{0,80}critical\/high[\s\S]{0,80}Defer/, 'an unconfirmed critical/high finding takes the same Defer'],
   [/declined \(unconfirmed: one reproduction agent of the pair\)/, 'an unconfirmed medium/low/info finding is declined, naming the pair'],
   [/declined \(contested: \{verdicts\}\)/, 'a contested finding is declined, naming the verdicts'],
-  [/covered by #\{n\}/, 'a finding an open record already covers is declined'],
+  [/An open record already covering the same file and defect[\s\S]{0,200}covered by #\{n\}/, 'a finding an open record already covers is declined'],
   [/`decisions\.md`-only `STAGED` line at critical\/high \| The same Defer/, 'a decisions.md-only critical/high line takes the same Defer'],
   [/declined \(unconfirmed: \{the line's own reason/, 'any other decisions.md-only line is declined with its own reason'],
   [/A file on a `proposal` roster row \| The same Defer path and Defer-reason/, 'a file on a proposal roster row takes the same Defer path and Defer-reason'],
@@ -387,7 +387,8 @@ const DISPOSITION_APPROVAL = [
   // Anchored on the AUTO prefix: the FAILED line also begins "Step 8 disposition: {staged path}".
   [/AUTO \{HH:MM:SS\} — Step 8 disposition: \{staged path\}/, 'the per-finding log line'],
   [/exactly one/, 'exactly one log line per finding'],
-  [/FAILED \{HH:MM:SS\} — Step 8 disposition:/, 'a failed write is a hand-composed FAILED line'],
+  // Anchored on the `{file|digest}` message: the release-block stamp failure also writes a FAILED line.
+  [/FAILED \{HH:MM:SS\} — Step 8 disposition: \{staged path\} — \{file\|digest\} failed/,'a failed write is a hand-composed FAILED line'],
   [/An unreadable `staged\/` or `decisions\.md`[\s\S]{0,40}takes the same line with `read failed: \{message\}`[\s\S]{0,200}counts toward `\{k\} failed`/, 'an unreadable staged/ or decisions.md takes the FAILED line with read failed and counts toward k failed'],
   [/skip[\s\S]{0,60}archiv/, 'any failure skips archival'],
   [/--dry-run[\s\S]{0,160}still runs/, 'disposition still runs under --dry-run'],

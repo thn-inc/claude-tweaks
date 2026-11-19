@@ -181,6 +181,12 @@ function fakeRun(scenario, { sessionDir } = {}) {
       if (sub.length === 3 && sub[0] === 'remote' && sub[1] === 'show' && sub[2] === 'origin') {
         return `* remote origin\n  Fetch URL: ${table.git.remoteUrl}\n  HEAD branch: ${scenario.headBranch || 'main'}\n`;
       }
+      // #5863: `rev-parse --verify --quiet origin/{branch}^{commit}` resolves only a branch origin holds.
+      if (sub.length === 4 && sub[0] === 'rev-parse' && sub[1] === '--verify' && sub[2] === '--quiet' && sub[3].endsWith('^{commit}')) {
+        const ref = sub[3].slice(0, -'^{commit}'.length);
+        if (originBranchFiles(scenario, ref.replace(/^origin\//, ''))) return `${'a'.repeat(40)}\n`;
+        throw fakeFailure(args, { status: 1, stdout: '', stderr: '' });
+      }
       if (sub.length === 3 && sub[0] === 'cat-file' && sub[1] === '-e') {
         const colon = sub[2].indexOf(':');
         const ref = sub[2].slice(0, colon);
@@ -695,6 +701,19 @@ const FAULTS = [
     scenario: () => Object.assign(withRecord(P1(), ghRecord(9017, {
       body: `**Doc:** docs/present.md | **Section:** fixture\n\n${withBody(9017)}`, labels: ['auto:build', 'ready', 'by:docs-health'],
     })), { gitFail: [['remote', 'show', 'origin']] }),
+  },
+  {
+    // #5863: origin's HEAD dangles after the clone, so `git remote show origin` prints `HEAD branch: (unknown)`: no origin/ ref
+    // resolves, so the target-missing pass skips. The unlanded-blocker pass still gets the branch; no such branch exists on
+    // GitHub, so its compare call answers 404.
+    id: 'F-headunknown', pass: 'target-missing',
+    scenario: () => {
+      const s = Object.assign(withRecord(P1(), ghRecord(9017, {
+        body: `**Doc:** docs/present.md | **Section:** fixture\n\n${withBody(9017)}`, labels: ['auto:build', 'ready', 'by:docs-health'],
+      })), { danglingHead: true });
+      s.gh.unshift({ argv: compareArgv(REPO_SLUG, '(unknown)'), stdout: '', stderr: 'gh: Not Found (HTTP 404)\n', status: 1 });
+      return s;
+    },
   },
   { id: 'F-prview', pass: 'shipped', scenario: () => failGh(P1(), PR_VIEW_5016_ARGV) },
   { id: 'F-landing', pass: 'blocker-landing', scenario: () => failGraphql(P1(), 'landing') },

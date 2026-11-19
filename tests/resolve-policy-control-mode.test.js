@@ -280,6 +280,18 @@ test('a policyOnly key ignores the --run overlay, and a sibling flat key still h
   );
 });
 
+// #5830: control-mode is the single human-in-control switch and a run's own agent writes its config.yml, so the overlay is closed in both directions.
+test('control-mode ignores the --run overlay both ways', () => {
+  assert.deepStrictEqual(
+    resolvePolicyKeys(['control-mode'], { policyRaw: 'control-mode: on\n', runConfigRaw: 'control-mode: off\n' })['control-mode'],
+    { value: 'on', source: 'policy' },
+  );
+  assert.deepStrictEqual(
+    resolvePolicyKeys(['control-mode'], { policyRaw: null, runConfigRaw: 'control-mode: on\n' })['control-mode'],
+    { value: 'off', source: 'default' },
+  );
+});
+
 test('risk-categories and risk-path-globs agree when a run config names a slug', () => {
   const policyRaw = 'risk-categories: pii\nrisk-path-globs:\n  pii: [a]\n';
   const out = resolvePolicyKeys(['risk-categories', 'risk-path-globs'], { policyRaw, runConfigRaw: 'risk-categories: other\n' });

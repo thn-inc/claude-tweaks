@@ -15,7 +15,7 @@
 // byte-identical duplicate — refused, the console dismisses it; reopen this exit-2
 // overload if a console step must retry an unreadable copy differently from
 // dismissing a duplicate); 3 when the run dir is missing or not anchored under
-// the main checkout (a worktree-local shadow — _shared/pipeline-run-dir.md's
+// the main checkout (a worktree-local shadow, or a directory outside pipelines/ — _shared/pipeline-run-dir.md's
 // Anchoring section, [IL-127]), or --out is unwritable. This is the
 // Sanctioned-writer vocabulary (no exit 1), though the run dir is only read: the
 // one write is the caller-named --out, a create-or-overwrite with no lock, so a
@@ -104,7 +104,7 @@ function run(argv, deps = realDeps) {
   }
   if (!target.ok) {
     if (target.reason === 'missing') deps.stderr(`shadow-dup-proposal.js: run dir does not exist: ${o.run}\n`);
-    else deps.stderr(`shadow-dup-proposal.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+    else deps.stderr(`shadow-dup-proposal.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
     return 3;
   }
 

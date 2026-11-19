@@ -127,6 +127,7 @@ function generateWorkflowYaml() {
   // the branch-name modules must not load on every PostToolUse.
   const { CLAIMS_BRANCH } = require('./issues/claims');
   const { HEALTH_STATE_BRANCH } = require('./health-core/durable-state');
+  const { RELEASE_STATE_BRANCH } = require('./release-state/store');
   const lines = [
     'name: Track issue fixes across branches',
     '',
@@ -137,6 +138,7 @@ function generateWorkflowYaml() {
     // Bookkeeping pushes never carry a fix; `!` patterns must follow '**'.
     `      - '!${CLAIMS_BRANCH}'`,
     `      - '!${HEALTH_STATE_BRANCH}'`,
+    `      - '!${RELEASE_STATE_BRANCH}'`,
     '',
     'permissions:',
     '  contents: read',
@@ -240,6 +242,7 @@ const PRIOR_OUTPUT_SHA256 = Object.freeze([
   'a05f433b8079c9147f6750bf8ef01a3a61de6c52f3c3c5d7db6ed7c582fdc561',
   'dba131107bd1224c9ff823bc5390401ace05c2ab1e33cc7ec4fea0c96efb9138',
   '89f9cc80110f35535fce118eb445d03de5e1c80886932a8c076138c0e270d1ae',
+  'df673d6fe95eb97c7009ef9ae0b9ae5465570868e5ae11934573334d96d129df',
 ]);
 
 // Strips a leading BOM, CRLF and trailing newlines before hashing, because a
