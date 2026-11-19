@@ -2,10 +2,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const { scratchDir } = require('../../helpers/tmp-dir');
+const { initRepo, cleanGitEnv, originWithTwoClones } = require('../../helpers/git-fixtures');
+const { classifyMirror } = require('../../../plugin/bin/lib/reconcile/classify');
 const {
-  appendStationEvent, buildLine, eventKey, toRepoName, stationEventPath,
+  appendStationEvent, buildLine, eventKey, toRepoName, stationEventPath, EXCLUDE_ENTRIES, ensureLocalExclude,
 } = require('../../../plugin/bin/lib/station-events/emit');
 
 const FIXED_NOW = () => new Date('2026-11-19T08:00:00.000Z');
@@ -180,4 +184,97 @@ test('toRepoName maps a host-prefixed or bare slug to owner/name', () => {
   assert.equal(toRepoName('github.com/o/n'), 'o/n');
   assert.equal(toRepoName('o/n'), 'o/n');
   assert.equal(toRepoName(''), null);
+});
+
+// #5957: the log and its lock are excluded locally at append time. Git children run
+// hermetic so a developer's global core.excludesFile cannot hide the log.
+function hermeticEnv() {
+  return { ...cleanGitEnv(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devNull };
+}
+
+function porcelain(dir) {
+  return execFileSync('git', ['-C', dir, 'status', '--porcelain'], { env: hermeticEnv(), encoding: 'utf8', windowsHide: true });
+}
+
+function excludeLines(root) {
+  return fs.readFileSync(path.join(root, '.git', 'info', 'exclude'), 'utf8').split(/\r?\n/).filter(Boolean);
+}
+
+test('AC1.1: an append in a repo with no station-events ignore rule leaves git status clean', () => {
+  const root = scratchDir('ct-station-events-');
+  initRepo(root);
+  const { stderr, d } = deps(root);
+  assert.deepEqual(appendStationEvent(event(), d), { written: true });
+  assert.equal(porcelain(root), '');
+  assert.equal(stderr.calls.length, 0);
+  assert.equal(readLines(root).lines.length, 1);
+});
+
+test('AC3.1: reconcile mirror reads the checkout clean after an append', () => {
+  const { work } = originWithTwoClones('ct-station-events-mirror-');
+  const file = stationEventPath(work);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, '{}\n');
+  assert.deepEqual(classifyMirror(work, 'main', { env: hermeticEnv() }), { state: 'dirty', failure: null });
+  fs.rmSync(file);
+  const { d } = deps(work);
+  assert.deepEqual(appendStationEvent(event(), d), { written: true });
+  assert.deepEqual(classifyMirror(work, 'main', { env: hermeticEnv() }), { state: 'current', failure: null });
+});
+
+test('the exclude entries are appended once, on their own lines', () => {
+  const root = scratchDir('ct-station-events-');
+  initRepo(root);
+  fs.mkdirSync(path.join(root, '.git', 'info'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.git', 'info', 'exclude'), '# mine\n*.swp');
+  const { d } = deps(root);
+  appendStationEvent(event(), d);
+  appendStationEvent(event(), d);
+  assert.deepEqual(excludeLines(root), ['# mine', '*.swp', ...EXCLUDE_ENTRIES]);
+});
+
+test('existing CRLF entries are not appended again', () => {
+  const root = scratchDir('ct-station-events-');
+  initRepo(root);
+  const file = path.join(root, '.git', 'info', 'exclude');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, EXCLUDE_ENTRIES.join('\r\n') + '\r\n');
+  const before = fs.readFileSync(file);
+  assert.equal(ensureLocalExclude(root), true);
+  assert.deepEqual(fs.readFileSync(file), before);
+});
+
+test('a missing info directory is created', () => {
+  const root = scratchDir('ct-station-events-');
+  initRepo(root);
+  fs.rmSync(path.join(root, '.git', 'info'), { recursive: true, force: true });
+  assert.equal(ensureLocalExclude(root), true);
+  const { d } = deps(root);
+  appendStationEvent(event(), d);
+  assert.equal(porcelain(root), '');
+});
+
+test('no .git directory is a silent no-op', () => {
+  const root = scratchDir('ct-station-events-');
+  assert.equal(ensureLocalExclude(root), false);
+  const { stderr, d } = deps(root);
+  assert.deepEqual(appendStationEvent(event(), d), { written: true });
+  assert.equal(fs.existsSync(path.join(root, '.git')), false);
+  assert.equal(stderr.calls.length, 0);
+});
+
+test('an unwritable exclude never drops the event', () => {
+  const root = scratchDir('ct-station-events-');
+  initRepo(root);
+  const failingFs = {
+    ...fs,
+    appendFileSync: (p, ...a) => {
+      if (String(p).endsWith(path.join('info', 'exclude'))) throw new Error('EACCES');
+      return fs.appendFileSync(p, ...a);
+    },
+  };
+  const { stderr, d } = deps(root, { fs: failingFs });
+  assert.deepEqual(appendStationEvent(event(), d), { written: true });
+  assert.equal(stderr.calls.length, 0);
+  assert.equal(readLines(root).lines.length, 1);
 });
