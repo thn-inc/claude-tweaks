@@ -202,7 +202,11 @@ const SECTIONS = [
       if (d.skipped) return ['Guards: not run — --split <YYYY-MM-DD> not given.'];
       const pct = (s) => (s === null ? 'none' : `${Math.round(s * 100)}%`);
       const mean = (v) => v.toFixed(2);
-      const head = (label, c) => (c.runCount > 0 ? `${label} (${c.runCount} runs, ${c.from} to ${c.to})` : `${label} (0 runs)`);
+      const head = (label, c) => {
+        if (c.runCount === 0) return `${label} (0 runs)`;
+        const missing = c.noTiming > 0 ? `, ${c.noTiming} without timing.json` : '';
+        return `${label} (${c.runCount} runs${missing}, ${c.from} to ${c.to})`;
+      };
       const whole = (c) => {
         const w = c.wholeBranch;
         return w.n > 0 ? `${pct(w.share)} of ${w.n}; mean ${mean(w.meanCritical)} critical, ${mean(w.meanImportant)} important; ${w.unparsed} unparsed` : `none of 0; ${w.unparsed} unparsed`;

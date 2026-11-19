@@ -1,8 +1,9 @@
 // tests/pipeline-cost-report/guards.test.js
 //
-// #5916: tools/pipeline-cost-report/guards.js picks the before/after run columns, parses whole-branch review
-// reports out of subagent transcripts, and computes guard 1 (the share of whole-branch reviews that found an issue).
-// Fixtures are temp dirs; nothing here spawns a process.
+// #5916: tools/pipeline-cost-report/guards.js picks the before/after run columns (reading an archived run's
+// timing.json when only a stub is left at the top level), parses whole-branch review reports out of subagent
+// transcripts, and computes the three guards (whole-branch reviews with an issue, tasks with no re-review, bug
+// records near a merge), plus the guards section through the CLI. Fixtures are temp dirs; nothing here spawns a process.
 'use strict';
 const { test, after } = require('node:test');
 const assert = require('node:assert');
@@ -11,7 +12,7 @@ const os = require('os');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..', '..');
-const { selectColumns, parseReviewCounts, readTiming, readReport, collectWholeBranch, collectFirstPass, keyFilesOf, collectPostMergeBugs } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'guards.js'));
+const { selectColumns, parseReviewCounts, readTiming, readReport, collectWholeBranch, collectFirstPass, keyFilesOf, collectPostMergeBugs, collectGuards } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'guards.js'));
 
 const { run: runCli } = require(path.join(ROOT, 'tools', 'pipeline-cost-report.js'));
 
@@ -201,6 +202,19 @@ test('guard 1 reads an unlabelled whole-branch review and skips a final-review f
   assert.strictEqual(r.meanCritical, 0);
 });
 
+test('guard 1 keeps a whole-branch-labelled review whose description names a fix wave', () => {
+  const pipelines = fresh('pl');
+  const projects = fresh('pr');
+  const items = [review('x1', 'Whole-branch review after fix wave', 'whole-branch review'), review('x2', 'Whole-branch review fix wave', 'unlabelled')];
+  const run = writeRun(pipelines, '2026-11-18T1-spec-1', { items, sessions: ['s1'] }, projects);
+  writeReport(projects, 's1', 'x1', '#### Important\n1. x\n');
+  writeReport(projects, 's1', 'x2', '#### Critical\n1. y\n');
+  const r = collectWholeBranch([run], { roots: [projects] });
+  assert.strictEqual(r.n, 1);
+  assert.strictEqual(r.share, 1);
+  assert.strictEqual(r.meanCritical, 0);
+});
+
 test('readTiming: absent is null, unparseable throws, and an unparseable run counts unparsed', () => {
   const pipelines = fresh('pl');
   const empty = path.join(pipelines, 'x');
@@ -295,12 +309,29 @@ test('first pass keys tasks by parent agent', () => {
 test('a review group with no implementer is unparsed; an untasked task dispatch is unparsed', () => {
   const r = firstPass([
     rev('Review Task 4', 'capable', 1),
-    rerev('Re-review the final-review fix wave', 'capable', 2),
     impl('Implement Task 1', 'standard', 3),
-    impl('Implement the fix wave', 'standard', 4),
+    impl('Implement the cleanup', 'standard', 4),
+    rev('Review the refactor', 'capable', 5),
   ]);
   assert.strictEqual(r.n, 1);
   assert.strictEqual(r.unparsed, 3);
+});
+
+test('an untasked fix-wave implementer, task review or re-review is dropped, not counted unparsed', () => {
+  const r = firstPass([
+    impl('Implement Task 1', 'standard', 1),
+    impl('Implement the fix wave', 'standard', 2),
+    rev('Review the final fix wave', 'capable', 3),
+    rerev('Re-review the final-review fix wave', 'capable', 4),
+    rerev('Scoped re-review of the final fix wave', 'capable', 5),
+  ]);
+  assert.strictEqual(r.n, 1);
+  assert.strictEqual(r.unparsed, 0);
+  assert.strictEqual(r.share, 1);
+  // A fix-wave dispatch that names a task still joins that task's group.
+  const tasked = firstPass([impl('Implement Task 1', 'standard', 1), rerev('Re-review Task 1 fix wave', 'capable', 2)]);
+  assert.strictEqual(tasked.n, 1);
+  assert.strictEqual(tasked.share, 0);
 });
 
 test('a re-dispatched implementer naming one record still lends it', () => {
@@ -347,7 +378,7 @@ test('a task\'s tier is the earliest implementer\'s; an implementer with no star
   assert.deepStrictEqual(Object.keys(r2.byTier), ['standard']);
 });
 
-test('guard 1 and 2 ignore a run with no timing.json', () => {
+test('guard 1 and 2 ignore a run with no timing.json anywhere', () => {
   const dir = fresh('pl');
   const run = { name: '2026-11-18T1-spec-1', date: '2026-11-18', dir, archived: false, members: [] };
   for (const r of [collectWholeBranch([run], { roots: [] }), collectFirstPass([run], {})]) {
@@ -355,6 +386,66 @@ test('guard 1 and 2 ignore a run with no timing.json', () => {
     assert.strictEqual(r.unparsed, 0);
     assert.strictEqual(r.share, null);
   }
+});
+
+// An archived run leaves a stub (only work/) at the top level; the full run, timing.json included, is under archive/.
+function stubRun(pipelines, name, { items = [], sessions = [] } = {}, projects = 'projects', members = []) {
+  fs.mkdirSync(path.join(pipelines, name, 'work'), { recursive: true });
+  const full = writeRun(path.join(pipelines, 'archive'), name, { items, sessions }, projects);
+  for (const m of members) fs.mkdirSync(path.join(full.dir, m), { recursive: true });
+  return { name, date: name.slice(0, 10), dir: path.join(pipelines, name), archived: false, members: [] };
+}
+const guardsOf = (runs, projects, split = '2026-11-19') => collectGuards({ runs, split, n: 5, roots: [projects], repo: async () => 'o/r' }, { gh: fakeGh([], []).gh });
+
+test('a top-level stub reads its timing.json from archive/ and the column counts the archived run\'s guards', async () => {
+  const pipelines = fresh('pl');
+  const projects = fresh('pr');
+  const stub = stubRun(pipelines, '2026-11-17T1-spec-1', { items: [review('a1'), impl('Implement Task 1', 'standard', 1), rev('Review Task 1', 'capable', 2)], sessions: ['s1'] }, projects);
+  writeReport(projects, 's1', 'a1', '#### Important\n1. x\n');
+  const g = await guardsOf([stub], projects);
+  assert.strictEqual(g.before.runCount, 1);
+  assert.strictEqual(g.before.noTiming, 0);
+  assert.strictEqual(g.before.wholeBranch.n, 1);
+  assert.strictEqual(g.before.wholeBranch.share, 1);
+  assert.strictEqual(g.before.firstPass.n, 1);
+  assert.strictEqual(g.after.noTiming, 0);
+});
+
+test('a stub of a non-pipeline name is eligible through its archived timing.json', () => {
+  const pipelines = fresh('pl');
+  const stub = stubRun(pipelines, '2026-11-17T1-x', {});
+  const standalone = stubRun(pipelines, '2026-11-17T2-x-standalone', {});
+  const { before } = selectColumns([stub, standalone], { split: '2026-11-19', n: 5 });
+  assert.deepStrictEqual(before.map((r) => r.name), ['2026-11-17T1-x']);
+});
+
+test('a stub resolved to its archived copy keeps that copy\'s members for the multi-spec rule', async () => {
+  const pipelines = fresh('pl');
+  const projects = fresh('pr');
+  const items = [impl('Implement Task 1: macOS workflow skeleton', 'standard', 1), impl('Implement Task 1: release-block check', 'standard', 2)];
+  const stub = stubRun(pipelines, '2026-11-17T1-spec-1', { items }, projects, ['spec-1', 'spec-2']);
+  const g = await guardsOf([stub], projects);
+  assert.strictEqual(g.before.firstPass.n, 0);
+  assert.strictEqual(g.before.firstPass.unparsed, 1);
+});
+
+test('noTiming counts eligible runs with no timing.json anywhere; a corrupt one is not counted', async () => {
+  const pipelines = fresh('pl');
+  const projects = fresh('pr');
+  const bareDir = (name, archived = false) => {
+    const dir = path.join(pipelines, name);
+    fs.mkdirSync(dir, { recursive: true });
+    return { name, date: name.slice(0, 10), dir, archived, members: [] };
+  };
+  const none = bareDir('2026-11-16T1-spec-1');
+  const archivedNone = bareDir('2026-11-16T2-spec-2', true);
+  const corrupt = bareDir('2026-11-16T3-spec-3');
+  fs.writeFileSync(path.join(corrupt.dir, 'timing.json'), '{');
+  const ok = writeRun(pipelines, '2026-11-17T1-spec-4');
+  const g = await guardsOf([none, archivedNone, corrupt, ok], projects);
+  assert.strictEqual(g.before.runCount, 4);
+  assert.strictEqual(g.before.noTiming, 2);
+  assert.strictEqual(g.before.wholeBranch.unparsed, 1);
 });
 
 test('corrupt timing.json counts one unparsed in guards 1 and 2', () => {
@@ -571,6 +662,7 @@ test('AC7.1: --json prints the figures under a guards key', async () => {
   assert.strictEqual(g.before.runCount, 2);
   assert.strictEqual(g.before.from, '2026-11-16');
   assert.strictEqual(g.before.to, '2026-11-17');
+  assert.strictEqual(g.before.noTiming, 0);
   assert.deepStrictEqual(g.before.wholeBranch, { share: 0.5, meanCritical: 0, meanImportant: 0.5, n: 4, unparsed: 0 });
   assert.strictEqual(g.before.firstPass.n, 3);
   assert.strictEqual(g.before.firstPass.unparsed, 0);
@@ -602,6 +694,16 @@ test('AC1.1/AC3.1: markdown prints 50% and 67%, each with its unparsed count', a
   assert.ok(rows.some((l) => /^\| First implementer tier \| Before \| After \|/.test(l)), r.text);
   assert.ok(rows.some((l) => /^\| capable \| 0% of 1 \|/.test(l)), r.text);
   assert.ok(rows.some((l) => /^\| standard \| 100% of 2 \|/.test(l)), r.text);
+});
+
+test('the guards header reports runs without a timing.json', async () => {
+  const fixture = cliFixture();
+  fs.mkdirSync(path.join(fixture.pipelines, '2026-11-16T2-spec-8'));
+  const r = await cli(GUARDS, { fixture });
+  assert.strictEqual(r.code, 0);
+  assert.ok(r.text.includes('| Guard | Before (2 runs, 1 without timing.json, 2026-11-16 to 2026-11-17) | After (2 runs, 2026-11-19 to 2026-11-20) |'), r.text);
+  const j = await cli([...GUARDS, '--json'], { fixture });
+  assert.strictEqual(JSON.parse(j.logs[0]).guards.before.noTiming, 1);
 });
 
 test('--section guards without a valid --split or --runs exits 2', async () => {

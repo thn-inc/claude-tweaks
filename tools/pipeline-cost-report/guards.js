@@ -1,10 +1,12 @@
 'use strict';
 // tools/pipeline-cost-report/guards.js — the quality-guard readers of the cost report (#5916).
 //
-// selectColumns drops runs that are not pipeline runs (a name with a `spec-`/`record-` segment, or a top-level
-// timing.json with a name not ending `-standalone`), then cuts the last `n` eligible runs dated before the split
-// and the first `n` dated on or after it, each in ascending name order. readTiming reads a run's top-level
-// timing.json: null when absent, a throw when present but unparseable or without a `dispatches.items` array.
+// selectColumns first resolves each top-level run that holds no timing.json to its archive/{name} copy when that has
+// one (archiving leaves a stub with only work/ at the top level; the run's dir and members then come from the copy),
+// drops runs that are not pipeline runs (a name with a `spec-`/`record-` segment, or a timing.json and a name not
+// ending `-standalone`), then cuts the last `n` eligible runs dated before the split and the first `n` dated on or
+// after it, each in ascending name order. readTiming reads a run's timing.json: null when absent, a throw when
+// present but unparseable or without a `dispatches.items` array.
 // readReport finds a subagent's transcript at {root}/{any slug}/{session}/subagents/agent-{id}.jsonl and returns
 // its final report: the last assistant text block, or a later SubagentHandback message. parseReviewCounts counts
 // the top-level items under Critical/Important/Minor headings; null when none of the three headings is present.
@@ -20,6 +22,7 @@ const { findSection } = require('../../plugin/bin/lib/markdown-blocks.js');
 const PIPELINE_NAME_RE = /(^|-)(spec|record)-/;
 const SEVERITY_RE = /^#{1,6}\s+(Critical|Important|Minor)\b/i;
 const HEADING_RE = /^#{1,6}\s/;
+const MEMBER_RE = /^spec-(\d+)$/;
 const ITEM_RE = /^(\d+[.)]|[-*+])\s+(.*)$/;
 
 function hasTiming(run, fsImpl) {
@@ -36,9 +39,26 @@ function eligible(run, fsImpl) {
   return !run.name.endsWith('-standalone') && hasTiming(run, fsImpl);
 }
 
+// A top-level run with no timing.json of its own, read from archive/{name} when that holds one.
+function resolveRun(run, fsImpl) {
+  if (run.archived || hasTiming(run, fsImpl)) return run;
+  const dir = path.join(path.dirname(run.dir), 'archive', run.name);
+  if (!hasTiming({ dir }, fsImpl)) return run;
+  const members = [];
+  try {
+    for (const e of fsImpl.readdirSync(dir, { withFileTypes: true })) {
+      const m = MEMBER_RE.exec(e.name);
+      if (m && e.isDirectory()) members.push({ id: Number(m[1]), dir: path.join(dir, e.name) });
+    }
+  } catch {
+    // An unreadable archived copy keeps its timing.json read and no members.
+  }
+  return { ...run, dir, members };
+}
+
 // { before: Run[], after: Run[] } — ineligible runs are in neither column.
 function selectColumns(runs, { split, n, fsImpl = fs } = {}) {
-  const sorted = runs.filter((r) => eligible(r, fsImpl)).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const sorted = runs.map((r) => resolveRun(r, fsImpl)).filter((r) => eligible(r, fsImpl)).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   const before = sorted.filter((r) => r.date < split);
   const after = sorted.filter((r) => r.date >= split);
   return { before: n > 0 ? before.slice(-n) : [], after: after.slice(0, Math.max(n, 0)) };
@@ -188,9 +208,10 @@ function collectWholeBranch(runs, { roots, fsImpl = fs } = {}) {
 const TASK_ROLES = new Set(['implementer', 'task review', 're-review']);
 const TASK_NUM_RE = /\bTask\s+(\d+)\b/i;
 const RECORD_RE = /#(\d+)/;
+const FIX_WAVE_RE = /fix wave/i;
 
 // Guard 2: the share of tasks whose group holds no re-review. A task is keyed by run, parent agent, record and task
-// number. A dispatch naming no record joins the record that every record-naming implementer of its task number (same
+// number; a dispatch naming no task is `unparsed`, except a fix-wave one (the final review's fixes), which is dropped. A dispatch naming no record joins the record that every record-naming implementer of its task number (same
 // parent) names; with none, or two different ones, it stays record-less. Groups that cannot be told apart or lack an
 // implementer are counted `unparsed`, not tasks. A task's tier is that of its earliest implementer.
 function collectFirstPass(runs, { fsImpl = fs } = {}) {
@@ -213,7 +234,7 @@ function collectFirstPass(runs, { fsImpl = fs } = {}) {
       const description = String(d.description || '');
       const num = TASK_NUM_RE.exec(description);
       if (!num) {
-        unparsed += 1;
+        if (!FIX_WAVE_RE.test(description)) unparsed += 1;
         continue;
       }
       const rec = RECORD_RE.exec(description);
@@ -333,6 +354,7 @@ async function collectGuards({ runs, split, n, roots, repo }, { fsImpl = fs, gh 
     }
     return {
       runCount: column.length,
+      noTiming: column.filter((r) => !hasTiming(r, fsImpl)).length,
       from: column.length ? column[0].date : null,
       to: column.length ? column[column.length - 1].date : null,
       wholeBranch: collectWholeBranch(column, { roots, fsImpl }),
