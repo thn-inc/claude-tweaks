@@ -287,6 +287,11 @@ function runGate(deps, flags) {
   const enabled = policy['express-lane'].value === true;
   const opts = { enabled, integrationModel: policy['integration-model'].value, sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']) };
   const verdicts = issues.map((issue) => evaluateRecordEligibility(issue, { ...opts, escalated: decisionsFile !== null && hasEscalation(decisionsText, issue.number) }));
+  // A gate the whole `--run` passes puts the run on the express route (#5903). Best-effort: a failed
+  // fill changes nothing below.
+  if (decisionsFile && verdicts.every((v) => v.eligible === true)) {
+    try { require('../run-manifest/write').fillRunManifest(path.dirname(decisionsFile), { lane: 'express' }, { stderr: deps.stderr }); } catch { /* never changes the gate's outcome */ }
+  }
   deps.stdout(`${JSON.stringify({ enabled, verdicts })}\n`);
   return 0;
 }

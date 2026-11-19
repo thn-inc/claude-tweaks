@@ -30,6 +30,9 @@ const { LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
 const IMPACT_MAP_VERSION = 1;
 const DEFAULT_MAP_NAME = 'claude-tweaks-test-impact.json';
 const KINDS = ['f', 's', 'd', 'c'];
+const DRIFT_REFRESH_TESTS = 50;
+const REFRESH_WINDOW_MS = 10 * 60 * 1000;
+const REFRESH_MARKER_NAME = 'claude-tweaks-test-impact.refresh-attempt';
 const SHA_RE = /^[0-9a-f]{40}$/;
 
 const sortedUnique = (list) => [...new Set(list)].sort();
@@ -250,6 +253,16 @@ function readMap({ decl, mapPath, repoRoot, execImpl, fsImpl, knownAncestor = nu
   };
 }
 
+// True when a drift-refresh attempt marker exists and is younger than REFRESH_WINDOW_MS; an unreadable marker is "no attempt".
+function recentRefreshAttempt({ markerPath, fsImpl, now }) {
+  try {
+    const age = now - fsImpl.statSync(markerPath).mtimeMs;
+    return age >= 0 && age < REFRESH_WINDOW_MS; // a future mtime (clock correction) never blocks
+  } catch {
+    return false;
+  }
+}
+
 // The impact context scope.js's selectScope reads, plus what the report shows.
 // A map problem with a declared impact.fetch runs `runFetch(command)` once
 // (→ {ran, exitCode, durationMs, timedOut, signal}); only a fetch that exits
@@ -257,7 +270,18 @@ function readMap({ decl, mapPath, repoRoot, execImpl, fsImpl, knownAncestor = nu
 // `knownAncestor` (optional sha): a commit the caller already proved is an ancestor of HEAD, with only git reads
 // since (#5773). The FIRST map read trusts it for a map commit equal to it; the reload after impact.fetch (a shell
 // command that can rewrite history) always asks git again. Absent, every map read asks git as before.
-function loadImpactContext({ decl, repoRoot, commonDir, execImpl = execFileSync, fsImpl = fs, runFetch = null, knownAncestor = null }) {
+// A usable map whose drift exceeds DRIFT_REFRESH_TESTS runs the fetch once too (#5947), at most once per
+// REFRESH_WINDOW_MS per checkout (a marker in the git common dir, shared by every worktree, written before the
+// fetch so a failed or timed-out attempt counts); the threshold and the adoption comparison count only the drift
+// selection would actually run (known to the map, present at HEAD); the reload is adopted only if usable with no
+// more such drift, else the current map stands.
+// The drift files selectImpactTests would actually run: known to the map and present at HEAD (null = unknown listing).
+function selectableDriftCount(drift, map, headTests) {
+  const atHead = headTests === null ? null : new Set(headTests);
+  return drift.filter((t) => Object.hasOwn(map.tests, t) && (atHead === null || atHead.has(t))).length;
+}
+
+function loadImpactContext({ decl, repoRoot, commonDir, execImpl = execFileSync, fsImpl = fs, runFetch = null, knownAncestor = null, now = Date.now() }) {
   const mapPath = resolveMapPath({ decl, commonDir, repoRoot });
   let state = readMap({ decl, mapPath, repoRoot, execImpl, fsImpl, knownAncestor });
   let fetch = null;
@@ -268,12 +292,28 @@ function loadImpactContext({ decl, repoRoot, commonDir, execImpl = execFileSync,
   // Only a usable map has a drift to read; an unreadable one fails closed like the head-test listing.
   let driftTests = [];
   let driftProblem = null;
+  const headTests = listHeadTests({ decl, repoRoot, execImpl, fsImpl });
   if (!state.problem) {
-    const drift = listDriftTests({ decl, repoRoot, commit: state.mapCommit, execImpl });
+    let drift = listDriftTests({ decl, repoRoot, commit: state.mapCommit, execImpl });
+    const markerPath = path.join(commonDir, REFRESH_MARKER_NAME);
+    if (drift !== null && selectableDriftCount(drift, state.map, headTests) > DRIFT_REFRESH_TESTS && decl.impact.fetch && runFetch && fetch === null
+      && !recentRefreshAttempt({ markerPath, fsImpl, now })) {
+      try { fsImpl.writeFileSync(markerPath, String(now)); } catch { /* an unwritable marker never blocks the load */ }
+      fetch = runFetch(decl.impact.fetch);
+      if (fetch.exitCode === 0) {
+        const next = readMap({ decl, mapPath, repoRoot, execImpl, fsImpl });
+        if (!next.problem) {
+          const nextDrift = listDriftTests({ decl, repoRoot, commit: next.mapCommit, execImpl });
+          if (nextDrift !== null && selectableDriftCount(nextDrift, next.map, headTests) <= selectableDriftCount(drift, state.map, headTests)) {
+            state = next;
+            drift = nextDrift;
+          }
+        }
+      }
+    }
     if (drift === null) driftProblem = 'map-drift-unreadable';
     else driftTests = drift;
   }
-  const headTests = listHeadTests({ decl, repoRoot, execImpl, fsImpl });
   // A listing that succeeded but names no test file (a sparse checkout, a pathspec oddity) would make
   // every reader "absent at HEAD" and a changed test select nothing — it fails closed like a failed one.
   let headProblem = null;
@@ -335,7 +375,7 @@ function checkoutImpactContext({ decl, cwd, runFetch = runImpactFetch, locate = 
 }
 
 module.exports = {
-  IMPACT_MAP_VERSION, DEFAULT_MAP_NAME, KINDS,
+  IMPACT_MAP_VERSION, DEFAULT_MAP_NAME, KINDS, DRIFT_REFRESH_TESTS, REFRESH_WINDOW_MS, REFRESH_MARKER_NAME,
   encodeImpactMap, parseImpactMap, under, selectImpactTests, mapProblem,
   gitLocations, resolveMapPath, loadImpactContext, lazyImpactContext, runImpactFetch, checkoutImpactContext,
 };

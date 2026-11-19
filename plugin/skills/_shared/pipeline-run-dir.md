@@ -28,14 +28,15 @@ substituted. Never creates a directory unless `--create` is passed.
   (`adoptionRefusal`, #1962/#4151). An absent `run-state.json` (a bare mint) is still adopted, and
   step 1's `PIPELINE_RUN_DIR` directory is never refused. A caller therefore must not use step 2 to
   re-find a run it has already closed (`close-run` makes it `clean`) — carry the path instead.
-- `--create` with `--spec-slug <s>` and no `--standalone`: the plain mkdir-only mint shape
+- `--create` with `--spec-slug <s>` and no `--standalone`: the plain mint shape
   `/flow` (`flow/steps-and-gates.md` case 4), `/claude-tweaks:dispatch` (`dispatch/SKILL.md` Step
-  4), and `flow/claim-targets.md`'s direct-invocation mint use — `config.yml`/`decisions.md` are
+  4), and `flow/claim-targets.md`'s direct-invocation mint use — a mkdir plus the run-start
+  `manifest.json` (not an initialization marker); `config.yml`/`decisions.md` are
   written later, by whichever step actually initializes the run.
 - `--create` with `--standalone <name>`: `_shared/run-dir-resolution.md`'s step 4
   standalone-auto-fallback shape — `{ISO-timestamp}-{name}-standalone/` (a `{name}` already
-  ending in `-standalone` is not suffixed twice), pre-populated with `decisions.md`
-  and `staged/`. Pass `--mode auto` too when the caller is on that step's standalone-auto
+  ending in `-standalone` is not suffixed twice), pre-populated with `decisions.md`,
+  `staged/` and the run-start `manifest.json` (none on a hook-minted `-adhoc-standalone` dir). Pass `--mode auto` too when the caller is on that step's standalone-auto
   allowlist (the command then refuses to create outside auto mode); omit `--mode` entirely for a
   caller that creates in every mode regardless — the two documented exceptions,
   `/claude-tweaks:wrap-up` and `/claude-tweaks:release`, each with its own clause above. Combined
