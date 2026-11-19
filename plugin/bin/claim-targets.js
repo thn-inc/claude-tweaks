@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // bin/claim-targets.js — group-claim CLI on the shared claim store.
-//   node bin/claim-targets.js --run-id <id> --targets <n,n,...> [--keep-going] [--run <run-dir>] [--steps <step,step,...>] [--resume-pr <url>] [--help]
+//   node bin/claim-targets.js --run-id <id> --targets <n,n,...> [--keep-going] [--run <run-dir>] [--steps <step,step,...>] [--resume-pr <url>] [--lane <lane>] [--help]
 // --steps with neither build nor test claims nothing (skipGuard: no-build-or-test).
 // --resume-pr re-claims a stale claim whose in-flight PR is exactly <url> (dispatch resume, #4588).
 // Exit 0 = all claimed (or, with --keep-going, partial; or skip-guarded); 2 = malformed
@@ -29,6 +29,7 @@ const {
   ghOptions, resolveRepoTarget, resolveGhHost, originUrl,
 } = require('./lib/repo-resolve');
 const { repoTargetOfRemote } = require('./lib/hooks/git-exec');
+const { appendStationEvent } = require('./lib/station-events/emit');
 
 // maxBuffer: the stale-claim check's `gh pr list --json url,body,...` carries
 // every open PR's body, which overflows Node's 1 MiB default (ENOBUFS) well
@@ -50,6 +51,8 @@ const realDeps = {
   hostname: os.hostname(),
   sessionId: process.env.CLAUDE_CODE_SESSION_ID || '',
   appendClaimLog: defaultAppendClaimLog,
+  // #5902: the claim's session_bound and bot:in-progress transition events.
+  stationEvent: (e) => appendStationEvent(e),
   // #4794: the origin-host gate's verdict ({ spec, refusal }), for run() to refuse an
   // unknown or SSH-alias origin before any gh call. `originUrl` carries the git timeout. The gate
   // is git-exec.js's repoTargetOfRemote (#5109), with its one loose fallback on: a remote the gate

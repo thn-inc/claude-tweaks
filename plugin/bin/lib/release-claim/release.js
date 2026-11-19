@@ -184,8 +184,11 @@ function releaseClaim({
   // original holder so the tombstone (and this function's own result) never
   // claims a false owner.
   let sweptFrom;
+  let heldClaimedAt;
   if (isHeld) {
-    const holder = JSON.parse(blob.content).runId;
+    const heldClaim = JSON.parse(blob.content);
+    const holder = heldClaim.runId;
+    if (typeof heldClaim.claimedAt === 'string' && heldClaim.claimedAt !== '') heldClaimedAt = heldClaim.claimedAt;
     const sweepOk = sweep && (classified.state === 'stale' || (classified.state === 'live' && sweep.issueClosed === true));
     if (holder !== runId && !sweepOk) { result.outcome = 'skipped-not-owner'; result.holder = holder; return result; }
     if (sweepOk && holder !== runId) sweptFrom = holder;
@@ -201,6 +204,9 @@ function releaseClaim({
       result.calls.push('put');
       result.outcome = 'released';
       if (sweptFrom) result.sweptFrom = sweptFrom;
+      // The released claim instance (#5902): a station event's discriminator names which claim a
+      // release ended, so a re-claim by the same run releases under a different key.
+      if (heldClaimedAt) result.claimedAt = heldClaimedAt;
     } catch (err) {
       if (!isAlreadyReleasedError(err)) { result.error = errorText(err); return result; }
       // A write CONFLICT is not by itself evidence that this claim was already
