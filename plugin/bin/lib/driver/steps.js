@@ -811,6 +811,7 @@ const WORKER_TEST_LIST_NOT_REMOVED = `the worker's test list file ${WORKER_TEST_
 // Removes the list file after an implementer launch; null when it is gone or was never written, else the
 // note for the step's detail. Never throws. The worker can make either parent a symlink, so the file is
 // removed only when both are real directories: an unlink through a symlink would land outside the worktree.
+// A symlink leaf is safe to remove: unlink removes the link itself, never its target.
 function removeWorkerTestList(ctx, deps) {
   try {
     const abs = path.join(ctx.wt, ...WORKER_TEST_LIST.split('/'));

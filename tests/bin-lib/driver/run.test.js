@@ -2733,7 +2733,7 @@ test('#5267: any difference beyond CRLF vs LF (a byte, a lone CR, a trailing new
   }
 });
 
-test('#5267: identical hashes never read either side (no cat-file, no readFile)', async () => {
+test('#5267: identical hashes make the test step read neither side (no cat-file, no readFile)', async () => {
   const h = harness({ script: [scopeIs('file'), scopeSame()] });
   await run(['#7'], h.deps);
   assert.equal(verifyCalls(h).length, 1);
@@ -4075,10 +4075,10 @@ test('#5915: the worker line names which path the test command took', async () =
 // The list file under the worktree, and script entries whose lstat answers it and its pipelines/ parent as
 // given (.claude-tweaks/ is a directory, which the test step reads too).
 const LIST_ABS = path.join(WT, '.claude-tweaks', 'pipelines', 'worker-test-files.txt');
-const listIs = (leaf, pipelines = 'directory') => [
+const listIs = (leaf, pipelines = 'directory', claudeTweaks = 'directory') => [
   [(c) => c.kind === 'lstatType' && c.args[0] === LIST_ABS, { type: leaf, code: null }],
   [(c) => c.kind === 'lstatType' && c.args[0] === path.join(WT, '.claude-tweaks', 'pipelines'), { type: pipelines, code: null }],
-  [(c) => c.kind === 'lstatType' && c.args[0] === path.join(WT, '.claude-tweaks'), { type: 'directory', code: null }],
+  [(c) => c.kind === 'lstatType' && c.args[0] === path.join(WT, '.claude-tweaks'), { type: claudeTweaks, code: null }],
 ];
 const LIST_NOTE = 'the worker\'s test list file .claude-tweaks/pipelines/worker-test-files.txt could not be removed';
 
@@ -4103,6 +4103,13 @@ test('#5915: the list file is removed after each implementer launch, once HEAD a
   assert.equal(fix.calls.filter((c) => c.kind === 'rmFile' && c.args[0] === LIST_ABS).length, 2, 'the fix-round launch too');
 });
 
+test('#5915: a launcher throw after the launch started still removes the list file', async () => {
+  const h = harness({ script: [scopeIs('file'), ...declares(DECL), ...listIs('file'), [on('worker'), new Error('launch blew up')]] });
+  await run(['#7'], h.deps);
+  assert.deepEqual(h.calls.filter((c) => c.kind === 'rmFile').map((c) => c.args[0]), [LIST_ABS]);
+  assert.deepEqual(stopOf(h).slice(0, 2), ['worker', 'fail']);
+});
+
 test('#5915: a list file that cannot be removed never changes the worker step\'s status', async () => {
   const eacces = () => { throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }); };
   const enoent = () => { throw Object.assign(new Error('ENOENT: gone'), { code: 'ENOENT' }); };
@@ -4123,6 +4130,13 @@ test('#5915: a list file that cannot be removed never changes the worker step\'s
     assert.deepEqual(unlinked, unlinks ? [LIST_ABS] : [], `${label}: unlink`);
     assert.equal(h.lines().find((l) => l.step === 'test').status, 'ok', `${label}: the record goes on`);
   }
+  // A symlinked .claude-tweaks refuses the same way; the test step reads that directory too, so it is the one parent whose record does not go on.
+  const unlinked = [];
+  const top = harness({ script: [scopeIs('file'), ...declares(DECL), ...listIs('file', 'directory', 'symlink')], deps: { rmFile: (p) => unlinked.push(p) } });
+  await run(['#7'], top.deps);
+  const topWorker = top.lines().find((l) => l.step === 'worker');
+  assert.deepEqual([topWorker.status, topWorker.detail], ['ok', LIST_NOTE]);
+  assert.deepEqual(unlinked, [], 'a symlinked .claude-tweaks: no unlink');
   // A note joins a detail the launch already gave, after it.
   const stopped = harness({ script: [scopeIs('file'), ...declares(DECL), ...listIs('file')], deps: { rmFile: eacces }, worker: { result: { status: 'cannot-complete', title: 't', summary: 'no room' } } });
   await run(['#7'], stopped.deps);
