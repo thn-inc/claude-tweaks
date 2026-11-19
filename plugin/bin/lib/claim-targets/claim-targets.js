@@ -29,7 +29,7 @@ const { runClassified, isTimeoutError } = require('../shared-primitives');
 const { appendEntry, formatEntry, resolveTarget } = require('../log-decision/append');
 const { CLAIM_LOG_SECTION, CLAIM_LOG_STEP, claimLogText } = require('../log-decision/claim-log');
 const { toRepoName } = require('../station-events/emit');
-const { LANES, transitionsForLabel } = require('../station-events/stations');
+const { LANES, transitionsForLabel, outcomeForReleaseReason } = require('../station-events/stations');
 const { tombstoneInFlightPr, refusalText } = claimStore;
 
 const BOT_IN_PROGRESS = 'bot:in-progress';
@@ -450,6 +450,7 @@ function run(argv, deps) {
     const { released, releaseFailed } = releaseClaimedThisRun(
       deps, repoSlug, opts.runId, [...claimedThisRun, ...extraToRelease],
     );
+    for (const issue of released) emitRollbackExit(issue);
     deps.stdout(JSON.stringify({ ...envelope, released, releaseFailed }));
     return exitCode;
   }
@@ -579,10 +580,22 @@ function run(argv, deps) {
       emitStation(issue, claimedAt, { ...row, discriminator: `${claimedAt}:${row.kind}:${row.station}` });
     }
   }
+  // `abort()`'s rollback ends the build visit of every record this run had
+  // claimed and actually released; an unverified extra target was never
+  // claimed here, so it has no `claimedAt` entry and emits nothing.
+  const claimedAtByIssue = new Map();
+  function emitRollbackExit(issue) {
+    if (!claimedAtByIssue.has(issue)) return;
+    const claimedAt = claimedAtByIssue.get(issue);
+    emitStation(issue, claimedAt, {
+      kind: 'exited', station: 'build', outcome: outcomeForReleaseReason(ABORT_REASON),
+      payload: { reason: ABORT_REASON }, discriminator: `${claimedAt}:abort`,
+    });
+  }
 
   for (let i = 0; i < targets.length; i += 1) {
     const issue = targets[i];
-    const read =claimStore.readClaimBlob(deps, repoSlug, issue, knownTip);
+    const read = claimStore.readClaimBlob(deps, repoSlug, issue, knownTip);
     if (read.failure) {
       knownTip = null;
       // A refused read is exit 7 (#4899); every other read failure stays exit 4.
@@ -778,13 +791,20 @@ function run(argv, deps) {
 
     claimedThisRun.push(issue);
     const claimMarker = parseJsonOrNull(payload.fileContent);
-    const claimedAt = claimMarker && typeof claimMarker.claimedAt === 'string' ? claimMarker.claimedAt : null;
+    const claimedAt = claimMarker && typeof claimMarker.claimedAt === 'string' && claimMarker.claimedAt !== ''
+      ? claimMarker.claimedAt : null;
+    if (claimedAt !== null) claimedAtByIssue.set(issue, claimedAt);
+    else if (typeof deps.stationEvent === 'function') {
+      deps.stderr(`claim-targets: station events skipped for #${issue} — claim payload has no claimedAt\n`);
+    }
     emitSessionBound(issue, claimedAt);
     if (resumeLink !== null) resumedPr.push({ issue, link: resumeLink });
 
     try {
       ensureAndAddLabel(deps.gh, issue);
-      emitInProgressTransition(issue, claimedAt);
+      // A `--resume-pr` re-claim never left `build`: a new session binds,
+      // but there is no release exit or build entry to record.
+      if (resumeLink === null) emitInProgressTransition(issue, claimedAt);
     } catch (e) {
       labelFailures.push({ issue, error: errText(e) });
     }
