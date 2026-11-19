@@ -22,25 +22,27 @@
 
 ## Decisions the spec leaves open (made here)
 
-The run-eligibility, task-key, guard-1-input and `--section all` rules below were decided by the user at plan review (the spec's `## Plan Review Clarifications`).
+The run-eligibility, task-key, guard-1-input and `--section all` rules below were decided by the user at plan review (the spec's `## Plan Review Clarifications`). The second plan review settled four refinements after that answered round (the spec's `Settled by plan review after an answered round:` lines): standalone runs, record-less multi-spec tasks, handback reports and re-dispatched implementers.
 
-- **Run eligibility** (user decision): only pipeline runs count toward `--runs n`. A run is eligible when its name matches `/(^|-)(spec|record)-/` or its directory holds a `timing.json`. Ineligible runs are dropped before the columns are cut, are in neither column and are not unparsed.
+- **Run eligibility** (user decision, refined at the second plan review): only pipeline runs count toward `--runs n`. A run is eligible when its name matches `/(^|-)(spec|record)-/`, or its directory holds a `timing.json` and its name does not end in `-standalone`. Real `*-adhoc-standalone` and `*-release-standalone` runs hold a `timing.json` and are still left out. Ineligible runs are dropped before the columns are cut, are in neither column and are not unparsed.
 - **Guard 1 input** (user decision): the dispatches with `role === 'whole-branch review'`, plus those with `role === 'unlabelled'` whose description matches `/^final review\b/i` (`Final review for #5865`).
-- **Task key** (user decision) = run name + `parentAgentId` (or `''`) + record number + task number. The record number is the first `#(\d+)` in the description. A dispatch whose description names no record inherits the record of the one `implementer` dispatch with that task number under the same parent; with zero or several such implementers it stays `''`. Real multi-spec runs (`2026-11-18T072534-spec-5879-5863-5865-5830`) name the record (`Implement #5830 Task 1`, `Implement #5863 Task 1`, both `parentAgentId: null`), and without it the two would merge. Task number regex: `/\bTask\s+(\d+)\b/i`.
-- **Task dispatches** are the roles `implementer`, `task review`, `re-review`. A `re-review` or `task review` with no task number reviews a fix wave (`Re-review the final-review fix wave`), not a task, and is ignored. An `implementer` with no task number counts 1 unparsed.
+- **Task key** (user decision, refined at the second plan review) = run name + `parentAgentId` (or `''`) + record number + task number. The record number is the first `#(\d+)` in the description. A dispatch whose description names no record inherits record R when every `implementer` dispatch with that task number under the same parent that names a record names R; with none, or with two different records named, it stays `''`. A re-dispatched implementer naming the same record twice therefore still lends its record. Real multi-spec runs (`2026-11-18T072534-spec-5879-5863-5865-5830`) name the record (`Implement #5830 Task 1`, `Implement #5863 Task 1`, both `parentAgentId: null`), and without it the two would merge. Task number regex: `/\bTask\s+(\d+)\b/i`.
+- **Record-less multi-spec groups** (second plan review): in a run with more than one member (`run.members.length > 1`), a task group whose record is `''` and whose `implementer` dispatches carry two or more distinct `description` strings is counted as 1 unparsed and is not a task. Real runs `2026-11-17T204803-spec-5881-5882-5883` (`Implement Task 1: macOS workflow skeleton`, `Implement Task 1: release-block check`) would otherwise merge two records' task 1.
+- **Task dispatches** are the roles `implementer`, `task review`, `re-review`. Any task dispatch with no task number counts 1 unparsed, as the spec's Gotcha says ("where no task number can be read, the dispatch group is unparsed"). That includes fix-wave dispatches such as `Re-review the final-review fix wave` and `Implement the fix wave`.
 - **Transcript lookup**: session ids are the basenames (no `.jsonl`) of `timing.json`'s `transcripts[].path`. The report file is `{root}/{any slug}/{session}/subagents/agent-{agentId}.jsonl` for any root in `ctx.roots`. The slug is not taken from `transcripts[].path`, because real runs differ: 5846's main transcript is under the worktree slug and its subagents are under the main-checkout slug.
-- **`timing.json`**: a run with no `timing.json` contributes nothing and is not unparsed (release and adhoc runs have none). One that exists but does not parse counts 1 unparsed in guard 1 and 1 in guard 2. Only the run's top-level `timing.json` is read; it already lists every member's dispatches.
+- **Report text** (second plan review): the report is the last assistant `text` block, or the `input.message` of the last assistant `tool_use` block named `SubagentHandback` when that block comes after the last `text` block. Real example: `Final review for #5865` (agent `a66e32f8d240c5ec5`) has no text block and reports through `SubagentHandback`.
+- **`timing.json`**: a run with no `timing.json` contributes nothing and is not unparsed. One that exists but does not parse, or parses but has no `dispatches.items` array (real `record-N` runs carry `dispatches: { notFound: ... }`), counts 1 unparsed in guard 1 and 1 in guard 2. Only the run's top-level `timing.json` is read; it already lists every member's dispatches.
 - **`--section all` without `--split`**: the guards section is `{ skipped: '--split not given' }` and renders `Guards: not run — --split <YYYY-MM-DD> not given.`. `--section guards` without `--split` is exit 2.
-- **Guard 3 forge failure** stays inside guards: that column's `postMergeBugs` is `{ error: firstLine }`, guards 1 and 2 still print, and the CLI exits 1 (the `failed(d)` hook).
+- **Guard 3 forge failure** stays inside guards: that column's `postMergeBugs` is `{ error: firstLine }`, guards 1 and 2 still print, and the CLI exits 1 (the `failed(d)` hook). Guard 3 resolves the repository itself, inside that same error handling: `collectGuards` takes the `ctx.repo` function (`--repo`, else `gh repo view`, as #5914's funnel and records sections resolve it) and awaits it only when a column has runs, so a failing `gh repo view` is a guard 3 error, never a section failure.
 - **Guard 3 window**: a bug record qualifies for a PR when `mergedAt < createdAt <= mergedAt + 14 days` and its Key Files share a path with that PR's files. PRs scanned: `merged:{from}..{to}`. Bug records fetched: `created:{from}..{to + 14 days}`. A bug record with no `### Key Files` section counts 1 unparsed, whatever its date.
 
 ## Review Focus
 
-1. A run with no `timing.json` (release or adhoc) must not inflate any unparsed count. Test: `guard 1 and 2 ignore a run with no timing.json` (Task 2).
-2. A `timing.json` that does not parse must be counted, not silently dropped. Test: `corrupt timing.json counts one unparsed in guards 1 and 2` (Task 2).
+1. A run with no `timing.json` must not inflate any unparsed count. Test: `guard 1 and 2 ignore a run with no timing.json` (Task 2).
+2. A `timing.json` that does not parse, or has no `dispatches.items` array, must be counted, not silently dropped. Tests: `corrupt timing.json counts one unparsed in guards 1 and 2` and `a timing.json with no dispatches.items counts one unparsed in guards 1 and 2` (Task 2).
 3. Indented sub-bullets under a severity heading, and top-level bullets in a later `###` section (`### Ledger triage`), are not issues. Test: `parseReviewCounts counts only top-level items up to the next heading` (Task 1).
 4. Two records' task 1 in one multi-spec run, both with `parentAgentId: null`, are two tasks. Test: `first pass keys tasks by record number within a run` (Task 2).
-5. A guard 3 forge failure must not blank guards 1 and 2. Test: `guard 3 gh failure keeps guards 1 and 2 and exits 1` (Task 4).
+5. A guard 3 forge failure, including a failing `gh repo view` when `--repo` is absent, must not blank guards 1 and 2. Tests: `guard 3 gh failure keeps guards 1 and 2 and exits 1` and `guard 3 resolves the repository itself; a failing gh repo view keeps guards 1 and 2` (Task 4).
 
 ---
 
@@ -58,8 +60,8 @@ The run-eligibility, task-key, guard-1-input and `--section all` rules below wer
 - Produces:
   - `selectColumns(runs, { split, n, fsImpl }) -> { before: Run[], after: Run[] }`. Both are in ascending `name` order. It first drops the runs the Run eligibility rule excludes; then `before` holds the last `n` eligible runs with `date < split`, `after` the first `n` with `date >= split`.
   - `parseReviewCounts(text) -> { critical, important, minor } | null`.
-  - `readTiming(runDir, fsImpl) -> { items: Dispatch[], sessions: string[] } | null`. It returns null when `timing.json` is absent (ENOENT) and throws when the file exists but does not parse. `Dispatch` is a `dispatches.items[]` entry (`agentId, description, role, tier, parentAgentId, startTs`).
-  - `readReport({ roots, sessions, agentId }, fsImpl) -> string | null`: the last assistant `text` block of the first `{root}/{slug}/{session}/subagents/agent-{agentId}.jsonl` that exists, or null when there is no file or no text block.
+  - `readTiming(runDir, fsImpl) -> { items: Dispatch[], sessions: string[] } | null`. It returns null when `timing.json` is absent (ENOENT) and throws when the file exists but does not parse or has no `dispatches.items` array. `Dispatch` is a `dispatches.items[]` entry (`agentId, description, role, tier, parentAgentId, startTs`).
+  - `readReport({ roots, sessions, agentId }, fsImpl) -> string | null`: the report of the first `{root}/{slug}/{session}/subagents/agent-{agentId}.jsonl` that exists: its last assistant `text` block, or the `input.message` of its last assistant `tool_use` block named `SubagentHandback` when that block comes after the last `text` block. Null when there is no file or neither block.
   - `collectWholeBranch(runs, { roots, fsImpl }) -> { share, meanCritical, meanImportant, n, unparsed }`. `share`, `meanCritical` and `meanImportant` are `null` when `n === 0`.
 
 - [ ] **Step 1: Write the failing tests** in `tests/pipeline-cost-report/guards.test.js`. Use the same header style as `cli.test.js`: a `mkdtempSync` DIR removed in `after`, and a `fresh(label)` helper. Add fixture helpers:
@@ -75,7 +77,8 @@ The run-eligibility, task-key, guard-1-input and `--section all` rules below wer
   - `guard 1: a missing transcript and an error reply are unparsed`. One dispatch has no report file. One report's text is `API Error 403`. One parsed report has 1 Critical item. Expect `n === 1`, `unparsed === 2`, `share === 1`, `meanCritical === 1`.
   - `AC6.1: --split 2026-11-19 --runs 2 picks the two latest before and two earliest on or after`. Runs: `2026-11-16T1-a`, `2026-11-17T1-a`, `2026-11-18T1-a`, `2026-11-19T1-a`, `2026-11-20T1-a`, passed in shuffled order. Expect before names `['2026-11-17T1-a','2026-11-18T1-a']` and after names `['2026-11-19T1-a','2026-11-20T1-a']`.
   - `selectColumns orders one date by full name and keeps a short column`. Runs: `2026-11-18T2-b`, `2026-11-18T1-a`, `2026-11-20T1-a`. With `split '2026-11-19', n 5`, before is `['2026-11-18T1-a','2026-11-18T2-b']` (length 2) and after is `['2026-11-20T1-a']`.
-  - `--runs counts only pipeline runs`. Runs: `2026-11-17T1-spec-1`, `2026-11-18T1-adhoc-standalone` (no `timing.json`), `2026-11-18T2-release-standalone` (no `timing.json`), `2026-11-18T3-x` (has a `timing.json`), `2026-11-18T4-record-2`. With `split '2026-11-19', n 3`, before is `['2026-11-17T1-spec-1','2026-11-18T3-x','2026-11-18T4-record-2']`.
+  - `--runs counts only pipeline runs`. Runs: `2026-11-17T1-spec-1`, `2026-11-18T1-adhoc-standalone` (has a `timing.json`), `2026-11-18T2-release-standalone` (no `timing.json`), `2026-11-18T3-x` (has a `timing.json`), `2026-11-18T4-record-2`, `2026-11-18T5-deepen-driver-standalone` (has a `timing.json`). With `split '2026-11-19', n 3`, before is `['2026-11-17T1-spec-1','2026-11-18T3-x','2026-11-18T4-record-2']`: a `-standalone` run is left out even with a `timing.json`.
+  - `readReport reads a SubagentHandback report`. One report file's last assistant lines are a `text` block `early note`, then a `tool_use` block `{ name: 'SubagentHandback', input: { message: '#### Important\n1. x' } }`. `readReport` returns `'#### Important\n1. x'`. A second file whose `SubagentHandback` block comes before a later `text` block `final` returns `'final'`.
   - `guard 1 also reads an unlabelled final review`. One run: a `whole-branch review` dispatch with one Important item, an `unlabelled` dispatch `Final review for #5865` with one Critical item, and an `unlabelled` dispatch `Implement Task 1` with a report holding a `#### Critical` item. Expect `n === 2`, `meanCritical === 0.5`, `unparsed === 0`.
 
 - [ ] **Step 2: Run to verify it fails**
@@ -88,7 +91,7 @@ Expected: FAIL with `Cannot find module` for `tools/pipeline-cost-report/guards.
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `node tools/run-tests.js tests/pipeline-cost-report/guards.test.js`
-Expected: PASS, 10 tests.
+Expected: PASS, 11 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -120,21 +123,24 @@ git commit -m "Add the whole-branch review guard to the cost report — refs #59
   - `first pass keys tasks by record number within a run`. One run holds `Implement #5830 Task 1`, `Implement #5863 Task 1` and `Re-review Task 1 for #5863`, all with `parentAgentId: null`. Expect `n === 2` and `share === 0.5`.
   - `a dispatch naming no record inherits its task's one implementer's record`. One run, `parentAgentId: null`: `Implement #5830 Task 1`, `Review Task 1` and `Re-review Task 1 fix round 1`. Expect `n === 1`, `unparsed === 0` and `share === 0`: the re-review joins #5830's task 1.
   - `first pass keys tasks by parent agent`. One run holds `Implement Task 1` twice, under `parentAgentId` `p1` and `p2`. Expect `n === 2`.
-  - `a review group with no implementer is unparsed; an untasked fix-wave re-review is ignored`. The dispatches are `Review Task 4` (no implementer for task 4), `Re-review the final-review fix wave`, `Implement Task 1` and `Implement the fix wave` (an implementer with no task number). Expect `n === 1` and `unparsed === 2`.
+  - `a review group with no implementer is unparsed; an untasked task dispatch is unparsed`. The dispatches are `Review Task 4` (no implementer for task 4), `Re-review the final-review fix wave` (a re-review with no task number), `Implement Task 1` and `Implement the fix wave` (an implementer with no task number). Expect `n === 1` and `unparsed === 3`.
+  - `a re-dispatched implementer naming one record still lends it`. One run, `parentAgentId: null`: `Implement #5228 Task 5: a`, `Implement #5228 Task 5: a again`, `Review Task 5` and `Re-review Task 5 fix round 1`. Expect `n === 1`, `unparsed === 0` and `share === 0`. A second run where task 1's implementers name `#1` and `#2` and `Review Task 1` names none: the review stays record `''`, so expect `n === 2` and `unparsed === 1`.
+  - `a record-less multi-spec group with differing implementers is unparsed`. One run whose `listRuns` entry has two `members`, `parentAgentId: null`: `Implement Task 1: macOS workflow skeleton`, `Implement Task 1: release-block check`, `Re-review Task 1 fix round 1`, plus `Implement Task 2: x` and `Review Task 2`. Expect `n === 1`, `unparsed === 1` and `share === 1`. The same dispatches in a run with one member give `n === 2` and `unparsed === 0`.
   - `guard 1 and 2 ignore a run with no timing.json`. One run directory has no `timing.json`. Expect `collectWholeBranch` and `collectFirstPass` to give `n === 0`, `unparsed === 0` and `share === null`.
   - `corrupt timing.json counts one unparsed in guards 1 and 2`. `timing.json` holds `{`. Each collector gives `unparsed === 1`.
+  - `a timing.json with no dispatches.items counts one unparsed in guards 1 and 2`. `timing.json` holds `{"dispatches":{"notFound":"no subagents/ directory"}}`. Each collector gives `n === 0` and `unparsed === 1`.
 
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `node tools/run-tests.js tests/pipeline-cost-report/guards.test.js`
 Expected: FAIL. `collectFirstPass is not a function`, and the corrupt-file test for `collectWholeBranch` fails if Task 1 did not catch the throw.
 
-- [ ] **Step 3: Implement `collectFirstPass`** under the Task key and Task dispatches rules in "Decisions the spec leaves open". If `collectWholeBranch` does not already catch a `readTiming` throw, make it do so and count 1 unparsed. A task passes when its group holds no `re-review` dispatch. Its tier is the `tier` of the implementer with the smallest `startTs`; a missing `startTs` sorts last.
+- [ ] **Step 3: Implement `collectFirstPass`** under the Task key, Record-less multi-spec groups and Task dispatches rules in "Decisions the spec leaves open". If `collectWholeBranch` does not already catch a `readTiming` throw, make it do so and count 1 unparsed. A task passes when its group holds no `re-review` dispatch. Its tier is the `tier` of the implementer with the smallest `startTs`; a missing `startTs` sorts last.
 
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `node tools/run-tests.js tests/pipeline-cost-report/guards.test.js`
-Expected: PASS, 18 tests.
+Expected: PASS, 22 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -185,7 +191,7 @@ Expected: FAIL with `keyFilesOf is not a function`.
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `node tools/run-tests.js tests/pipeline-cost-report/guards.test.js`
-Expected: PASS, 20 tests.
+Expected: PASS, 27 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -208,7 +214,7 @@ git commit -m "Add the post-merge bug guard to the cost report — refs #5916"
 **Interfaces:**
 - Consumes: Tasks 1-3, plus `ctx.runs` (`{ runs, unparsed, unreadable, missing } | { error }`), `ctx.roots`, `ctx.repo()` and `ctx.deps.gh`/`ctx.deps.fs`.
 - Produces:
-  - `collectGuards({ runs, split, n, roots, repo }, { fsImpl, gh }) -> { split, runs: n, before: Column, after: Column }`. A `Column` is `{ runCount, from, to, wholeBranch, firstPass, postMergeBugs }`. `from` and `to` are null for an empty column. `postMergeBugs` is `{ error }` on a `gh` throw.
+  - `collectGuards({ runs, split, n, roots, repo }, { fsImpl, gh }) -> { split, runs: n, before: Column, after: Column }`. `repo` is a function returning a promise of `owner/name` (the CLI passes `ctx.repo`); `collectGuards` awaits it per column inside guard 3's error handling, and only for a column with runs. A `Column` is `{ runCount, from, to, wholeBranch, firstPass, postMergeBugs }`. `from` and `to` are null for an empty column. `postMergeBugs` is `{ error }` on a `gh` throw or a rejected `repo()`.
   - The `guards` entry in `SECTIONS`: `failed(d)` is true when either column's `postMergeBugs.error` is set, and `unreadable()` returns 0.
 
 - [ ] **Step 1: Write the failing tests.** Drive them through `run({ argv, deps })` with a `harness`, as `cli.test.js` does. Use `--pipelines` pointing at a temp pipelines dir built with Task 1's `writeRun`, `--projects` pointing at a temp projects root, a fake `gh` and `--repo o/r`.
@@ -217,6 +223,7 @@ git commit -m "Add the post-merge bug guard to the cost report — refs #5916"
   - `--section guards without --split exits 2`, and also when `--split 2026-13-01` or `--runs 0`.
   - `--section all without --split marks guards not run`. The markdown holds `Guards: not run — --split <YYYY-MM-DD> not given.` and the exit is 0, with the other sections' fakes as in `cli.test.js`.
   - `guard 3 gh failure keeps guards 1 and 2 and exits 1`. `gh` throws on `pr list`. The exit is 1, the guard 1 and 2 rows still print, and the guard 3 cell reads `unavailable — {first line}`.
+  - `guard 3 resolves the repository itself; a failing gh repo view keeps guards 1 and 2`. No `--repo`. First, a fake `gh` answering `repo view` with `o/r`: every guard 3 call passes `--repo o/r`. Then a fake `gh` that throws on `repo view`: the exit is 1, the guard 1 and 2 rows still print, and the guard 3 cell reads `unavailable — {first line}`.
   - `a pipelines listing error makes the section unavailable`. With no `--pipelines` and `deps.git` throwing, `ctx.runs` is `{ error }`, so the output holds `guards: unavailable —` and the exit is 1.
 
 - [ ] **Step 2: Run to verify it fails**
@@ -226,7 +233,7 @@ Expected: FAIL with `--section must be one of spend|funnel|records|all`.
 
 - [ ] **Step 3: Implement.**
   - `parseArgs`: `--split` is validated with `isDate` and `--runs` as a positive integer (`/^[1-9]\d*$/`). `--section guards` without `--split` is an error.
-  - `SECTIONS`: add the `guards` entry. `collect` returns `{ skipped: '--split not given' }` when `opts.split` is unset and throws `ctx.runs.error` when it is set. A missing pipelines directory gives empty columns.
+  - `SECTIONS`: add the `guards` entry. `collect` returns `{ skipped: '--split not given' }` when `opts.split` is unset and throws `ctx.runs.error` when it is set. It passes `repo: ctx.repo` (the function, not its awaited value). A missing pipelines directory gives empty columns.
   - Markdown render: `## Guards`, then `Split {split}; up to {runs} runs per column.`. Then a table `| Guard | Before ({runCount} runs, {from} to {to}) | After (...) |` with three rows:
     - `Whole-branch reviews with a Critical or Important issue`: `{share%} of {n}; mean {c} critical, {i} important; {u} unparsed`
     - `Tasks with no re-review`: `{share%} of {n}; {u} unparsed`
