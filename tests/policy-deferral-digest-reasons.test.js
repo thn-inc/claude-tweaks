@@ -2,11 +2,11 @@
 // #5932: pins the deferral-digest-reasons policy key — a list of Defer-reason
 // values validated against DEFER_REASONS, with [] as the explicit empty list
 // (a new-key-only capability: the row's `emptyList: true`).
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
+const { scratchDir } = require('./helpers/tmp-dir');
 
 const {
   POLICY_KEYS, LIST_ELEMENT_PATTERNS, EMPTY_LIST_RE, resolvePolicyKeys, auditPolicy, resolvePolicyConfig,
@@ -15,16 +15,11 @@ const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record-payload');
 
 const KEY = 'deferral-digest-reasons';
 const LISTED = 'deferral-digest-reasons: pre-existing-outside-diff, tangential\n';
-
-const tempDirs = [];
-after(() => {
-  for (const dir of tempDirs) fs.rmSync(dir, { recursive: true, force: true });
-});
+const REPO_POLICY = path.join(__dirname, '..', '.claude-tweaks', 'policy.yml');
 
 // A throwaway project (outside any git repo) holding the given policy.yml text.
-function scratchDir(policyText) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'policy-defer-digest-'));
-  tempDirs.push(dir);
+function projectWithPolicy(policyText) {
+  const dir = scratchDir('policy-defer-digest-');
   fs.mkdirSync(path.join(dir, '.claude-tweaks'));
   fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), policyText);
   return dir;
@@ -82,7 +77,7 @@ test('#5932 AC6.1 an element outside the vocabulary, alone or beside valid reaso
 
 test('#5932 AC6.1 auditPolicy and resolvePolicyConfig report the invalid list, with the return shape unchanged', () => {
   for (const raw of ['not-a-reason', 'pre-existing-outside-diff, not-a-reason']) {
-    const dir = scratchDir(`${KEY}: ${raw}\n`);
+    const dir = projectWithPolicy(`${KEY}: ${raw}\n`);
     const rows = auditPolicy(dir).invalidValues.filter((r) => r.key === KEY);
     assert.strictEqual(rows.length, 1, raw);
     assert.strictEqual(rows[0].value, raw);
@@ -104,7 +99,7 @@ test('#5932 an explicit [] is the empty list, valid, not reported', () => {
     assert.deepStrictEqual(entry, { value: [], source: 'policy' }, JSON.stringify(raw));
     assert.deepStrictEqual(seen, [], JSON.stringify(raw));
   }
-  const dir = scratchDir(`${KEY}: []\n`);
+  const dir = projectWithPolicy(`${KEY}: []\n`);
   assert.deepStrictEqual(auditPolicy(dir).invalidValues.filter((r) => r.key === KEY), []);
 });
 
@@ -135,6 +130,12 @@ test('#5932 AC7.2 a run config [] overrides a non-empty policy.yml list', () => 
 test('#5932 a blank run-config value reads as unset and falls through to policy.yml', () => {
   const { entry } = resolveOne(KEY, { policyRaw: LISTED, runConfigRaw: `${KEY}:\n` });
   assert.deepStrictEqual(entry, { value: 'pre-existing-outside-diff, tangential', source: 'policy' });
+});
+
+test('#5932 AC8 this repository sets the list to pre-existing-outside-diff, tangential, and it resolves valid', () => {
+  const { entry, seen } = resolveOne(KEY, { policyRaw: fs.readFileSync(REPO_POLICY, 'utf8') });
+  assert.deepStrictEqual(entry, { value: 'pre-existing-outside-diff, tangential', source: 'policy' });
+  assert.deepStrictEqual(seen, []);
 });
 
 test("#5932 an invalid run-config value never cascades to policy.yml's list", () => {

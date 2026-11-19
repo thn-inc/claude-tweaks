@@ -138,11 +138,15 @@ function run(argv, deps = realDeps) {
     return 1;
   }
   const entry = out.result[DIGEST_KEY];
+  // The resolver returns this list key in two shapes (policy-schema.js resolveValue):
+  // an array ([] when unset, invalid, or the explicit `[]` the row's emptyList
+  // allows) or, for a configured list, the raw comma-separated string. Split only
+  // the string; an array is already the list.
   let digestReasons = [];
   if (entry.invalid) {
     deps.stderr(`deferral-route: warning: ${DIGEST_KEY} has invalid element "${firstBadElement(out.invalidRaw.get(DIGEST_KEY))}" — using the default (no reasons)\n`);
-  } else if (!Array.isArray(entry.value)) {
-    digestReasons = String(entry.value).split(',').map((reason) => reason.trim());
+  } else {
+    digestReasons = Array.isArray(entry.value) ? entry.value : String(entry.value).split(',').map((reason) => reason.trim());
   }
   const result = routeDeferral({ ...routeInput, digestReasons });
   deps.stdout(JSON.stringify({ ...result, input }) + '\n');
