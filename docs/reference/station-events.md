@@ -26,7 +26,11 @@ In journey order (`STATION` in `stations.js`). Each line is the reading this rep
 
 `{main checkout}/.claude-tweaks/station-events.jsonl`, where the main checkout is resolved with `mainCheckoutRoot` (`plugin/bin/lib/hooks/worktree-detect.js`) from the caller's cwd. An emit from a linked worktree writes to the main checkout's file, never a copy inside the worktree. When no main checkout resolves, the event is dropped.
 
-Each append is one `fs.appendFileSync` of a whole line (ending `\n`) inside `withLock` (`plugin/bin/lib/file-lock.js`) on the sibling lock directory `station-events.jsonl.lock`. The lock is fail-open: a lock timeout still appends. Both paths are gitignored. There is no rotation or compaction.
+Each append is one `fs.appendFileSync` of a whole line (ending `\n`) inside `withLock` (`plugin/bin/lib/file-lock.js`) on the sibling lock directory `station-events.jsonl.lock`. The lock is fail-open: a lock timeout still appends. There is no rotation or compaction.
+
+Each append first makes sure `{main checkout}/.git/info/exclude` lists both paths (`ensureLocalExclude`, `EXCLUDE_ENTRIES`), so a project whose `.gitignore` lacks them still reads clean to `git status --porcelain` and reconcile's mirror (#5957). `/init`'s `.gitignore` rows remain as belt-and-braces. `info/exclude` lives in the git common dir, so linked worktrees share it. The path deliberately stays put: the dispatch scoreboard reads it (#5951), and moving it would be a cross-repo contract change.
+
+Two limits. `info/exclude` hides only an untracked file, so a log already tracked in a project's index would still dirty it; none can exist, because each append writes the exclude entry before its first line and the log never shipped without it. And when `{main checkout}/.git` is a file rather than a directory (a submodule, or a `--separate-git-dir` checkout), `ensureLocalExclude` does nothing, so there only the `/init` `.gitignore` rows protect the checkout.
 
 ## Line format, v1
 
