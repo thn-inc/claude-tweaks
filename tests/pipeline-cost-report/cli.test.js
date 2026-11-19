@@ -126,6 +126,14 @@ test('AC7.1: --json prints one object holding the same figures as the Markdown o
   assert.strictEqual(json.spend.sessions, 3);
 });
 
+test('sections are separated by a single blank line, a section ending in a table included', async () => {
+  const h = harness();
+  assert.strictEqual(await run({ argv: h.base, deps: h.deps }), 0);
+  const text = h.logs.join('\n');
+  assert.match(text, /\| tangential \| 1 \| 1 \|\n\nRuns: /);
+  assert.ok(!text.includes('\n\n\n'), text);
+});
+
 test('--section limits the sections printed and collected', async () => {
   const h = harness();
   assert.strictEqual(await run({ argv: [...h.base, '--section', 'records', '--json'], deps: h.deps }), 0);

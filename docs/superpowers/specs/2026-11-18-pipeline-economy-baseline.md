@@ -1,6 +1,6 @@
 # Pipeline economy baseline
 
-Run: 2026-11-19, plugin 6.173.1, record #5914. The measured reference for the figures in the pipeline economy design's `## Evidence` (`2026-11-18-pipeline-economy-design.md`).
+Run: 2026-11-19, plugin 6.173.1, record #5914. The measured reference for the figures in the pipeline economy design's `## Evidence` (`docs/superpowers/specs/2026-11-18-pipeline-economy-design.md`, which landed on `main` through PR #5927, merge commit `eb4f4468ca2d79477ff3ff2a5081e6a07df3c1b5`; the "Design" column below is checkable against it once this branch is current with `main`).
 
 Command, from the worktree root:
 
@@ -13,6 +13,7 @@ node tools/pipeline-cost-report.js --since 2026-11-08 --until 2026-11-18 --match
 - **Session type** is the first claude-tweaks skill a session invoked; a session that did several things is counted once. Subagent spend is attributed to its parent session's type.
 - **`<synthetic>` lines** (Claude Code's records of API errors such as a usage limit) are left out of every spend tally.
 - **Funnel** is a point-in-time reading, stamped with its run date and plugin version (2026-11-19, 6.173.1); it is not bound to the window. It runs `drive.js --check` over every open record labelled `ready` + `auto:build`.
+- **Runs line:** `Runs: N in the window` counts the run directories under the main checkout's `.claude-tweaks/pipelines/` and its `archive/` whose names start with a date inside the window (a run in both is counted once); `undated` counts the names there with no leading date, across the whole directory rather than the window.
 - **Deferral rule** (decided at plan review): a record created in the window counts as deferred when any line of its body contains `Defer-reason:`, and its reason is the first word after the first occurrence. Prose that mentions `Defer-reason:` counts too, so the reason table includes words taken from such mentions: `line`, `and` and `from` below are not deferral reasons.
 
 ## Design figures beside the measured ones
@@ -26,12 +27,12 @@ node tools/pipeline-cost-report.js --since 2026-11-08 --until 2026-11-18 --match
 
 Why a measured value can differ:
 
-- **Spend:** transcripts are read live, so requests dated inside the window but written after the design's reading are counted; the design counted 208 sessions, the tool 206 main sessions with a request in the window under `--match claude-tweaks`.
+- **Spend:** likely explanation, not verified — transcripts are read live, so requests dated inside the window but written after the design's reading would be counted, and the session sets differ. The evidence is only that the design counted 208 sessions and the tool counts 206 main sessions with a request in the window under `--match claude-tweaks`; the design's session list was not re-derived, so neither cause is measured.
 - **Merged pull requests:** the tool reads every pull request merged in the window (`is:pr is:merged merged:2026-11-08..2026-11-18`). Per merged PR therefore reads $94.45 total and $63.15 build, against the design's $115 and $78.
-- **Deferral records:** records filed since the design was written (created rises from 586 to 597). The design's reason counts (pre-existing-outside-diff 135, tiebreak-cant-tell 35, …) sum to 410, more than its 317 records, so it counted every `Defer-reason:` in a body; the tool counts one reason per record.
-- **Records closed:** records closed in the window after the design's reading would raise it; the two readings agree.
+- **Deferral records:** records filed since the design was written (created rises from 586 to 597). The design's reason counts (pre-existing-outside-diff 135, tiebreak-cant-tell 35, …) sum to 410, more than its 317 records; the likely explanation is that it counted every `Defer-reason:` in a body, where the tool counts one reason per record (inferred from that sum alone, not from the design's method).
+- **Records closed:** both readings give 207, so nothing closed in the window since the design's reading changed the count.
 
-One cut differs by definition: the design's "$618 after a model switch (162 turns)" treated the call after a `<synthetic>` line as a model switch. A scratch probe over the same main transcripts reproduces that reading as 170 requests and $621.72; with `<synthetic>` lines left out, as here, a model switch is 17 requests and $50.92, and the other requests are classified by their remaining causes (idle, compaction, ordinary growth). The same probe puts main-session cache writes at $3,043.64, against the design's $3,035.
+One cut differs by definition: the design's "$618 after a model switch (162 turns)" treated the call after a `<synthetic>` line as a model switch. Recipe for the check: take every main transcript (not subagent files) under the default `--projects` roots whose project slug contains `claude-tweaks` and whose mtime is on or after 2026-11-08, read it with `scanTranscript` from `tools/pipeline-cost-report/spend.js`, and for each request timestamped in the window whose model family differs from the previous request's, count it and add its `cacheWriteUsd`. With a `<synthetic>` line kept in the previous-call chain (as a model of its own), that gives 170 requests and $621.72, the design's reading; with `<synthetic>` lines left out of the chain, as the tool does, 17 requests and $50.92, the tool's `model switch` row. The other requests are classified by their remaining causes (idle, compaction, ordinary growth). Summing `cacheWriteUsd` over every in-window request of the same transcripts gives main-session cache writes of $3,043.64, against the design's $3,035.
 
 ## Tool output
 
@@ -152,7 +153,6 @@ Created: 597; closed: 207; open now: 822; deferred: 322 (269 open, 53 closed).
 | and | 1 | 0 |
 | from | 0 | 1 |
 | console-backfill-confirmed-low | 1 | 0 |
-
 
 Runs: 431 in the window; 11 undated.
 Unreadable: 0

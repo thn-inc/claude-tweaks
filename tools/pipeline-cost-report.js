@@ -231,7 +231,12 @@ function render(report) {
     if (!(s.key in report)) continue;
     const d = report[s.key];
     if (d.error) lines.push(`${s.key}: unavailable — ${d.error}`, '');
-    else lines.push(...s.render(d), '');
+    else {
+      // one blank line between sections, whether or not a section's own lines end in one
+      const body = s.render(d);
+      while (body.length > 0 && body[body.length - 1] === '') body.pop();
+      lines.push(...body, '');
+    }
   }
   return lines;
 }
