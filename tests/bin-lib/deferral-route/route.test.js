@@ -63,7 +63,7 @@ test('vocabularies: SEVERITIES is the five finding severities', () => {
 
 test('constants: VERDICTS and RULES are the frozen closed lists', () => {
   assert.deepStrictEqual([...VERDICTS], ['file', 'digest', 'refused']);
-  assert.deepStrictEqual([...RULES], ['refused', 'human', 'severity', 'tangential', 'not-low', 'floor']);
+  assert.deepStrictEqual([...RULES], ['refused', 'human', 'severity', 'policy-reason', 'tangential', 'not-low', 'floor']);
   assert.ok(Object.isFrozen(VERDICTS));
   assert.ok(Object.isFrozen(RULES));
 });
@@ -130,6 +130,111 @@ test('not-low: case-variant and garbage axis values file', () => {
     assert.deepStrictEqual(routeDeferral({ deferReason: 'genuinely-larger', ...LOW, risk, agentRaised: true }),
       { verdict: 'file', rule: 'not-low' });
   }
+});
+
+// #5932: the policy-reason rule — a listed Defer-reason digests an agent-raised
+// item, behind the human and severity protections.
+const LIST = ['pre-existing-outside-diff', 'tangential'];
+
+function policyOracle(c, list) {
+  if (!c.agentRaised) return { verdict: 'file', rule: 'human' };
+  if (['high', 'critical'].includes(c.severity)) return { verdict: 'file', rule: 'severity' };
+  if (list.includes(c.deferReason)) return { verdict: 'digest', rule: 'policy-reason' };
+  return oracle(c);
+}
+
+function allCombinations() {
+  const axis = ['low', 'medium', 'high', undefined];
+  const severities = [...SEVERITIES, undefined];
+  const out = [];
+  for (const deferReason of DEFER_REASONS) {
+    for (const agentRaised of [true, false]) {
+      for (const size of axis) {
+        for (const priority of axis) {
+          for (const risk of axis) {
+            for (const severity of severities) {
+              out.push({ deferReason, severity, size, priority, risk, agentRaised });
+            }
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+const COMBINATIONS = allCombinations();
+
+test('#5932 AC1.1 an explicit empty digestReasons routes exactly as #5930', () => {
+  let count = 0;
+  for (const c of COMBINATIONS) {
+    assert.deepStrictEqual(routeDeferral({ ...c, digestReasons: [] }), oracle(c), JSON.stringify(c));
+    count += 1;
+  }
+  assert.equal(count, 5376);
+});
+
+test('#5932 exhaustive with a digest list: every combination matches the policy oracle', () => {
+  let count = 0;
+  for (const list of [LIST, [...DEFER_REASONS], ['genuinely-larger']]) {
+    for (const c of COMBINATIONS) {
+      const result = routeDeferral({ ...c, digestReasons: list });
+      assert.deepStrictEqual(result, policyOracle(c, list), JSON.stringify({ ...c, list }));
+      assert.ok(VERDICTS.includes(result.verdict), JSON.stringify(c));
+      count += 1;
+    }
+  }
+  assert.equal(count, 16128);
+});
+
+test('#5932 AC2.1 a listed pre-existing-outside-diff at size high, risk medium digests by policy-reason', () => {
+  const r = routeDeferral({ deferReason: 'pre-existing-outside-diff', size: 'high', risk: 'medium', agentRaised: true, digestReasons: LIST });
+  assert.deepStrictEqual(r, { verdict: 'digest', rule: 'policy-reason' });
+});
+
+test('#5932 AC3.1 a listed tangential digests by policy-reason', () => {
+  const r = routeDeferral({ deferReason: 'tangential', ...LOW, agentRaised: true, digestReasons: LIST });
+  assert.deepStrictEqual(r, { verdict: 'digest', rule: 'policy-reason' });
+});
+
+test('#5932 AC3.2 the same item from a human files by human', () => {
+  const r = routeDeferral({ deferReason: 'tangential', ...LOW, agentRaised: false, digestReasons: LIST });
+  assert.deepStrictEqual(r, { verdict: 'file', rule: 'human' });
+});
+
+test('#5932 AC4.1 a listed reason at severity high or critical files by severity', () => {
+  for (const severity of ['high', 'critical']) {
+    const r = routeDeferral({ deferReason: 'pre-existing-outside-diff', severity, ...LOW, agentRaised: true, digestReasons: LIST });
+    assert.deepStrictEqual(r, { verdict: 'file', rule: 'severity' });
+  }
+});
+
+test('#5932 AC5.1 an unlisted genuinely-larger at not-low axes files by not-low', () => {
+  const r = routeDeferral({ deferReason: 'genuinely-larger', size: 'high', priority: 'medium', risk: 'medium', agentRaised: true, digestReasons: LIST });
+  assert.deepStrictEqual(r, { verdict: 'file', rule: 'not-low' });
+});
+
+test('#5932 a refusal ignores digestReasons', () => {
+  const input = { deferReason: 'not-a-reason', agentRaised: true };
+  const withAll = routeDeferral({ ...input, digestReasons: [...DEFER_REASONS] });
+  assert.equal(withAll.verdict, 'refused');
+  assert.deepStrictEqual(withAll, routeDeferral({ ...input, digestReasons: [] }));
+});
+
+test('#5932 review focus 5: a string digestReasons never digests by substring', () => {
+  const digestReasons = 'pre-existing-outside-diff, tangential';
+  assert.deepStrictEqual(routeDeferral({ deferReason: 'pre-existing-outside-diff', ...LOW, agentRaised: true, digestReasons }),
+    { verdict: 'digest', rule: 'floor' });
+  assert.deepStrictEqual(routeDeferral({ deferReason: 'tangential', ...LOW, agentRaised: true, digestReasons }),
+    { verdict: 'file', rule: 'tangential' });
+});
+
+test('#5932 a non-DEFER_REASONS entry in digestReasons is inert', () => {
+  const digestReasons = ['not-a-reason'];
+  assert.deepStrictEqual(routeDeferral({ deferReason: 'genuinely-larger', ...LOW, agentRaised: true, digestReasons }),
+    { verdict: 'digest', rule: 'floor' });
+  assert.deepStrictEqual(routeDeferral({ deferReason: 'genuinely-larger', ...LOW, size: 'high', agentRaised: true, digestReasons }),
+    { verdict: 'file', rule: 'not-low' });
 });
 
 const FLOOR_SECTION = `## The floor

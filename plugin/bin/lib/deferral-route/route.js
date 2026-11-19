@@ -4,8 +4,10 @@
 // skills/_shared/materiality-floor.md is its explanation, and
 // tests/bin-lib/deferral-route/route.test.js pins that prose byte-equal.
 //
-// routeDeferral({ deferReason, severity, size, priority, risk, agentRaised })
+// routeDeferral({ deferReason, severity, size, priority, risk, agentRaised, digestReasons })
 //   -> { verdict, rule, reason? }   (reason only when verdict is 'refused')
+// digestReasons is optional (#5932): the resolved policy key deferral-digest-reasons,
+// an array of Defer-reason values; anything that is not an array counts as [].
 //
 // Rules, in order — the first match decides:
 //   refused    — deferReason missing or not in DEFER_REASONS; agentRaised not a
@@ -13,6 +15,8 @@
 //                that order, the first failing check names the reason)
 //   human      — agentRaised === false                     -> file
 //   severity   — severity 'high' or 'critical'             -> file
+//   policy-reason — deferReason in digestReasons (policy key deferral-digest-reasons)
+//                -> digest; explained in materiality-floor.md's Overrides section
 //   tangential — deferReason 'tangential'                  -> file
 //   not-low    — any of size, priority, risk !== 'low'     -> file
 //   floor      — otherwise                                 -> digest
@@ -22,13 +26,13 @@ const { DEFER_REASONS } = require('../issues/record');
 const { SEVERITIES } = require('../tiebreak');
 
 const VERDICTS = Object.freeze(['file', 'digest', 'refused']);
-const RULES = Object.freeze(['refused', 'human', 'severity', 'tangential', 'not-low', 'floor']);
+const RULES = Object.freeze(['refused', 'human', 'severity', 'policy-reason', 'tangential', 'not-low', 'floor']);
 
 function refused(reason) {
   return { verdict: 'refused', rule: 'refused', reason };
 }
 
-function routeDeferral({ deferReason, severity, size, priority, risk, agentRaised } = {}) {
+function routeDeferral({ deferReason, severity, size, priority, risk, agentRaised, digestReasons } = {}) {
   if (deferReason === undefined || deferReason === null) {
     return refused(`--defer-reason is required; one of: ${DEFER_REASONS.join(', ')}`);
   }
@@ -43,6 +47,7 @@ function routeDeferral({ deferReason, severity, size, priority, risk, agentRaise
   }
   if (agentRaised === false) return { verdict: 'file', rule: 'human' };
   if (severity === 'high' || severity === 'critical') return { verdict: 'file', rule: 'severity' };
+  if (Array.isArray(digestReasons) && digestReasons.includes(deferReason)) return { verdict: 'digest', rule: 'policy-reason' };
   if (deferReason === 'tangential') return { verdict: 'file', rule: 'tangential' };
   if (size !== 'low' || priority !== 'low' || risk !== 'low') return { verdict: 'file', rule: 'not-low' };
   return { verdict: 'digest', rule: 'floor' };
