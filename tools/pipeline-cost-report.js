@@ -149,7 +149,10 @@ const SECTIONS = [
       if (d.simulations.length > 0) {
         lines.push('| If these stopped refusing | Admitted |', '|---|---|');
         const bySet = [...d.simulations].sort((a, b) => b.admitted - a.admitted || a.set.join(', ').localeCompare(b.set.join(', ')));
-        for (const s of bySet) lines.push(`| ${s.set.join(', ')}${s.unseen && s.unseen.length > 0 ? ` (not seen: ${s.unseen.join(', ')})` : ''} | ${s.admitted} |`);
+        for (const s of bySet) {
+          const unseenNote = s.unseen && s.unseen.length > 0 ? ` (not seen: ${s.unseen.join(', ')})` : '';
+          lines.push(`| ${s.set.join(', ')}${unseenNote} | ${s.admitted} |`);
+        }
       }
       return lines;
     },
