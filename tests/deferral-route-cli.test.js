@@ -31,8 +31,9 @@ function verdictOf(...argv) {
 }
 
 test('AC1.1 floor digests, and echoes the inputs as given', () => {
-  const { code, json } = call('--defer-reason', 'pre-existing-outside-diff', ...LOW, '--agent-raised');
+  const { code, stderr, json } = call('--defer-reason', 'pre-existing-outside-diff', ...LOW, '--agent-raised');
   assert.equal(code, 0);
+  assert.equal(stderr, '');
   assert.deepStrictEqual(json, {
     verdict: 'digest',
     rule: 'floor',
@@ -105,8 +106,14 @@ test('review focus 3: a case-differing axis value files as not-low, never digest
 });
 
 test('review focus 4: empty values — reason and severity refuse, size files', () => {
-  assert.deepStrictEqual(verdictOf('--defer-reason', '', '--agent-raised'), { code: 2, verdict: 'refused', rule: 'refused' });
-  assert.deepStrictEqual(verdictOf('--defer-reason', 'tangential', '--severity', '', '--agent-raised'), { code: 2, verdict: 'refused', rule: 'refused' });
+  const emptyReason = call('--defer-reason', '', '--agent-raised');
+  assert.equal(emptyReason.code, 2);
+  assert.equal(emptyReason.json.verdict, 'refused');
+  assert.equal(emptyReason.json.reason, `--defer-reason "" is not one of: ${DEFER_REASONS.join(', ')}`);
+  const emptySeverity = call('--defer-reason', 'tangential', '--severity', '', '--agent-raised');
+  assert.equal(emptySeverity.code, 2);
+  assert.equal(emptySeverity.json.verdict, 'refused');
+  assert.equal(emptySeverity.json.reason, `--severity "" is not one of: ${SEVERITIES_TEXT}`);
   const { code, json } = call('--defer-reason', 'pre-existing-outside-diff', '--size', '', '--priority', 'low', '--risk', 'low', '--agent-raised');
   assert.equal(code, 0);
   assert.deepStrictEqual({ verdict: json.verdict, rule: json.rule, size: json.input.size }, { verdict: 'file', rule: 'not-low', size: '' });
@@ -134,6 +141,18 @@ test('refusals: both origins, neither origin, unknown flag', () => {
   assert.equal(unknown.json.reason, 'unknown flag --bogus; accepted: --defer-reason, --severity, --size, --priority, --risk, --agent-raised, --human, --help');
 });
 
+test('the both-origins refusal is raised where the second origin appears, so it beats a later unknown flag', () => {
+  const { code, json } = call('--agent-raised', '--human', '--bogus');
+  assert.equal(code, 2);
+  assert.equal(json.reason, 'exactly one of --agent-raised or --human is required');
+});
+
+test('a stray positional is an unknown argument, not an unknown flag', () => {
+  const { code, json } = call('tangential');
+  assert.equal(code, 2);
+  assert.equal(json.reason, 'unknown argument tangential; accepted: --defer-reason, --severity, --size, --priority, --risk, --agent-raised, --human, --help');
+});
+
 test('a parse refusal still carries every known flag in input; the first refusal decides the reason', () => {
   const { code, json } = call('--bogus', '--defer-reason', 'tangential', '--agent-raised');
   assert.equal(code, 2);
@@ -149,6 +168,12 @@ test('--help prints usage and exits 0', () => {
     assert.equal(res.stdout, USAGE);
     assert.equal(res.stderr, '');
   }
+});
+
+test('--help in flag position wins over an earlier parse refusal', () => {
+  const res = runCliSync(CLI, ['--bogus', '--help']);
+  assert.equal(res.code, 0);
+  assert.equal(res.stdout, USAGE);
 });
 
 test('--help counts only in flag position: a value flag followed by it refuses', () => {
@@ -178,6 +203,7 @@ test('AC8.1 writes nothing and calls no gh', { skip: STUB_SKIP }, () => {
     assert.equal(fs.existsSync(marker), false);
   } finally {
     restore();
+    fs.rmSync(marker, { force: true });
     fs.rmSync(cwd, { recursive: true, force: true });
   }
 });

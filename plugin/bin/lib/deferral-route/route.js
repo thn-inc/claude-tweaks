@@ -28,7 +28,7 @@ function refused(reason) {
   return { verdict: 'refused', rule: 'refused', reason };
 }
 
-function routeDeferral({ deferReason, severity, size, priority, risk, agentRaised }) {
+function routeDeferral({ deferReason, severity, size, priority, risk, agentRaised } = {}) {
   if (deferReason === undefined || deferReason === null) {
     return refused(`--defer-reason is required; one of: ${DEFER_REASONS.join(', ')}`);
   }

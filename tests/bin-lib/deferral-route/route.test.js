@@ -45,7 +45,7 @@ test('AC7.1 exhaustive: every combination matches the oracle and stays in the th
             for (const severity of severities) {
               const c = { deferReason, severity, size, priority, risk, agentRaised };
               const result = routeDeferral(c);
-              assert.deepStrictEqual({ verdict: result.verdict, rule: result.rule }, oracle(c), JSON.stringify(c));
+              assert.deepStrictEqual(result, oracle(c), JSON.stringify(c));
               assert.ok(VERDICTS.includes(result.verdict), JSON.stringify(c));
               count += 1;
             }
@@ -66,6 +66,12 @@ test('constants: VERDICTS and RULES are the frozen closed lists', () => {
   assert.deepStrictEqual([...RULES], ['refused', 'human', 'severity', 'tangential', 'not-low', 'floor']);
   assert.ok(Object.isFrozen(VERDICTS));
   assert.ok(Object.isFrozen(RULES));
+});
+
+test('a call with no argument is refused as data, never thrown', () => {
+  const r = routeDeferral();
+  assert.equal(r.verdict, 'refused');
+  assert.equal(r.reason, `--defer-reason is required; one of: ${DEFER_REASONS.join(', ')}`);
 });
 
 test('AC10.1 rule order: tangential at severity high reports severity', () => {

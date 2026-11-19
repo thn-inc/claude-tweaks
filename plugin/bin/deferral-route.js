@@ -54,13 +54,13 @@ function parseArgs(argv) {
       if (seen.has(token)) { refuse(`${token} given more than once`); continue; }
       seen.add(token);
       if (token === '--agent-raised') agentRaised = true; else human = true;
+      if (agentRaised && human) refuse(BOTH_OR_NEITHER);
       continue;
     }
-    refuse(`unknown flag ${token}; accepted: ${ACCEPTED}`);
+    refuse(`${token.startsWith('-') ? 'unknown flag' : 'unknown argument'} ${token}; accepted: ${ACCEPTED}`);
   }
-  if (agentRaised && human) refuse(BOTH_OR_NEITHER);
-  else if (agentRaised) input.agentRaised = true;
-  else if (human) input.agentRaised = false;
+  // Both origins were already refused where the second one appeared; input stays null then.
+  if (agentRaised !== human) input.agentRaised = agentRaised;
   return { help, reason, input };
 }
 
