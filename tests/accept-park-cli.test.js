@@ -1532,6 +1532,13 @@ test('#5902: an already-released claim records no exited build event', async () 
   assert.deepEqual(rec.events.filter((e) => e.station === 'build'), []);
 });
 
+// Each run builds its own temp root. Its stdout is JSON, so on Windows the root appears with doubled
+// backslashes: replace the raw form and the JSON-escaped form, or the two runs never compare equal.
+const stripRoots = (text, ...roots) => roots.reduce(
+  (acc, root) => acc.split(root).join('ROOT').split(JSON.stringify(root).slice(1, -1)).join('ROOT'),
+  text,
+);
+
 test('#5902: a throwing stationEvent leaves the park stdout and exit code unchanged', async () => {
   const plain = world({ records: { 7: { comments: [packetComment(7)] } } });
   const base = await call(plain, parkArgv(plain));
@@ -1540,7 +1547,7 @@ test('#5902: a throwing stationEvent leaves the park stdout and exit code unchan
   const res = await call(w, parkArgv(w), { stationEvent: () => { calls += 1; throw new Error('emitter exploded'); } });
   assert.equal(calls, 2, 'both emissions were attempted');
   assert.equal(res.code, base.code);
-  const strip = (s) => s.split(plain.state.root).join('ROOT').split(w.state.root).join('ROOT');
+  const strip = (s) => stripRoots(s, plain.state.root, w.state.root);
   assert.equal(strip(res.stdout), strip(base.stdout));
   assert.equal(res.stderr, base.stderr);
 });
@@ -1553,7 +1560,7 @@ test('#5902: a recording stationEvent leaves the park stdout and exit code uncha
   const res = await call(w, parkArgv(w), { stationEvent: rec.stationEvent });
   assert.equal(rec.events.length, 2, 'both emissions were recorded');
   assert.equal(res.code, base.code);
-  const strip = (s) => s.split(plain.state.root).join('ROOT').split(w.state.root).join('ROOT');
+  const strip = (s) => stripRoots(s, plain.state.root, w.state.root);
   assert.equal(strip(res.stdout), strip(base.stdout));
   assert.equal(res.stderr, base.stderr);
 });
