@@ -905,12 +905,7 @@ const VISUAL_BRANCHES = [
   ['Ideas Capture', '- **Capture** — the idea is'],
 ];
 function visualBranchProblems(text) {
-  const lines = text.split('\n');
-  return VISUAL_BRANCHES.flatMap(([name, prefix]) => {
-    const line = lines.find((l) => l.startsWith(prefix));
-    if (!line) return [`the ${name} bullet is missing`];
-    return line.includes('deferral-route.js') ? [] : [`the ${name} bullet does not run deferral-route.js`];
-  });
+  return VISUAL_BRANCHES.flatMap(([name, prefix]) => routeBulletProblems(name, prefix, text));
 }
 test('#5931 every visual-review filing branch runs deferral-route.js', () => {
   assert.deepStrictEqual(visualBranchProblems(read('plugin/skills/visual-review/browser-review.md')), []);
