@@ -35,6 +35,17 @@
 //   Bash command run without an allow rule (`touch` ran). With it set to false,
 //   `touch` was denied while `node --test`, `git status --short` and
 //   `git log --oneline -1` ran. This module therefore sets it to false.
+// - The implementer's test rule (#5915). It is now the project's declared targeted
+//   runner (`impact.command` cut before ` {files}`), or none: `implementerSettings`
+//   adds `Bash(<testCommand> *)` and `toolchainReadPaths` derives read paths only when
+//   a `testCommand` is given, and an absent one (`undefined`) means no test rule and
+//   no toolchain read path. On this repository `Bash(node tools/run-tests.js --files-from *)`
+//   admits a strict subset of what `Bash(npm test *)` admitted (`npm test -- <args>`
+//   passed the same arguments to `tools/run-tests.js`), so it widens no right; its
+//   write/exec flags (`--test-reporter`, `--test-reporter-destination`, listed test
+//   files) run inside the same sandbox as before. The new form and the
+//   no-`testCommand` launch are both unprobed live as of this commit; the #5915 AC5
+//   driver run is the planned probe.
 // - `sandbox.failIfUnavailable: true` comes from the documentation and was not
 //   exercised, because the sandbox was available on the probe host. A launch the CLI
 //   refuses because the sandbox is unavailable is expected to surface as
@@ -298,11 +309,12 @@ function assertReadPaths(readPaths, platform) {
 
 function implementerSettings({ testCommand, platform, readPaths = [] } = {}) {
   assertReadPaths(readPaths, platform);
-  assertTestCommand(testCommand);
+  if (testCommand !== undefined) assertTestCommand(testCommand);
   const sandboxed = SANDBOX_PROBED_PLATFORMS.includes(platform);
   const allow = ['Read', 'Edit', 'Write'];
   if (sandboxed) {
-    allow.push('Bash(' + testCommand + ' *)', 'Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)');
+    if (testCommand !== undefined) allow.push('Bash(' + testCommand + ' *)');
+    allow.push('Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)');
   }
   // A second layer, not the only one: with `dontAsk`, a closed allow list and
   // `autoAllowBashIfSandboxed: false`, these commands are already refused. The deny
@@ -407,6 +419,7 @@ function shebangInterpreter(line) {
 }
 
 function toolchainReadPaths(testCommand, deps = {}) {
+  if (testCommand === undefined) return [];
   assertTestCommand(testCommand);
   const real = resolveCommandWord(testCommand, deps);
   if (real === null) return [];

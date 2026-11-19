@@ -178,7 +178,7 @@ test('Minor: the exported tables are frozen, and the builders return fresh objec
 });
 
 test('Review focus: a testCommand that would corrupt the rule is refused', () => {
-  for (const bad of ['node --test)', 'node\n--test', '', 'a*b', undefined]) {
+  for (const bad of ['node --test)', 'node\n--test', '', 'a*b']) {
     assert.throws(() => implementerSettings({ testCommand: bad, platform: 'darwin' }), /testCommand/);
   }
 });
@@ -384,9 +384,10 @@ test('toolchainRoot returns null when lookup throws', () => {
   assert.strictEqual(toolchainRoot('node', fakeDeps({ lookupThrows: true })), null);
 });
 
-test('toolchainReadPaths refuses a bad testCommand before any seam runs', () => {
+test('toolchainReadPaths: an absent testCommand derives no read path, and a bad one is refused before any seam runs', () => {
   const d = fakeDeps({ lookup: { node: '/x/bin/node' } });
-  assert.throws(() => toolchainReadPaths(undefined, d), (e) => e instanceof TypeError && /testCommand/.test(e.message));
+  assert.deepStrictEqual(toolchainReadPaths(undefined, d), []);
+  assert.throws(() => toolchainReadPaths(null, d), (e) => e instanceof TypeError && /testCommand/.test(e.message));
   assert.throws(() => toolchainReadPaths('node -e', d), (e) => e instanceof TypeError && /testCommand/.test(e.message));
   assert.deepStrictEqual(d.calls, []);
 });
@@ -566,4 +567,30 @@ test('reopensHome is true for the root, a home, an ancestor of a home or of its 
   // One home as a string, and a realpath that throws, still guard the home as given.
   assert.strictEqual(reopensHome('/h', { home: '/h', realpath: () => { throw new Error('no'); } }), true);
   assert.strictEqual(reopensHome('/opt', { home: [] }), false);
+});
+
+test('implementerSettings: an absent testCommand adds no test rule and keeps the git rules', () => {
+  const absent = implementerSettings({ platform: 'darwin' });
+  const given = implementerSettings({ testCommand: 'node --test', platform: 'darwin' });
+  assert.deepStrictEqual(absent.permissions.allow, ['Read', 'Edit', 'Write', 'Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)']);
+  assert.deepStrictEqual(absent.permissions.deny, given.permissions.deny);
+  assert.deepStrictEqual(absent.sandbox, given.sandbox);
+});
+
+test('implementerSettings: null, \'\' and a non-string testCommand are still refused', () => {
+  for (const bad of [null, '', 5, {}, ['node']]) {
+    assert.throws(() => implementerSettings({ testCommand: bad, platform: 'darwin' }), /testCommand/, JSON.stringify(bad));
+  }
+});
+
+test('toolchainReadPaths: an absent testCommand derives no read path', () => {
+  const d = fakeDeps({ lookup: { node: '/x/bin/node', npm: '/x/bin/npm' } });
+  assert.deepStrictEqual(toolchainReadPaths(undefined, d), []);
+  assert.deepStrictEqual(d.calls, []);
+});
+
+test('implementerSettings: the targeted runner form composes its rule', () => {
+  const allow = implementerSettings({ testCommand: 'node tools/run-tests.js --files-from', platform: 'darwin' }).permissions.allow;
+  assert.ok(allow.includes('Bash(node tools/run-tests.js --files-from *)'));
+  assert.ok(!allow.some((r) => r.startsWith('Bash(npm')));
 });

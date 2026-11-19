@@ -148,11 +148,22 @@ test('a bad testCommand is refused with the testCommand TypeError before any loo
   const looked = [];
   const toolchain = { lookup: (name) => { looked.push(name); return null; }, realpath: (p) => p, firstLine: () => '', isExecutable: () => true };
   const { runner, calls } = fakeRunner(okOut());
-  const opts = base(t, { testCommand: undefined, settingsDir: path.join(tmp(t), 'not-yet') });
+  const opts = base(t, { testCommand: null, settingsDir: path.join(tmp(t), 'not-yet') });
   await assert.rejects(launchWorker(opts, { runner, toolchain }), (err) => err instanceof TypeError && /testCommand/.test(err.message));
   assert.deepStrictEqual(looked, []);
   assert.strictEqual(calls.length, 0);
   assert.ok(!fs.existsSync(opts.settingsDir), 'the settings directory was created before the refusal');
+});
+
+test('launchWorker: an implementer launch with no testCommand writes settings with no test rule', async (t) => {
+  const looked = [];
+  const toolchain = { lookup: (name) => { looked.push(name); return '/x/bin/' + name; }, realpath: (p) => p, firstLine: () => '', isExecutable: () => true };
+  const { runner, calls } = fakeRunner(okOut());
+  const env = await launchWorker(base(t, { testCommand: undefined }), { runner, toolchain });
+  assert.strictEqual(env.status, 'ok');
+  const allow = JSON.parse(calls[0].files['--settings'].text).permissions.allow;
+  assert.deepStrictEqual(allow.filter((r) => r.startsWith('Bash(')), ['Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)']);
+  assert.deepStrictEqual(looked, []);
 });
 
 test('off the probed platforms nothing is derived', async (t) => {
