@@ -113,11 +113,15 @@ test('case 4: a missing dir and an unanchored dir each render the case-4 literal
   const missing = path.join(fx.root, '.claude-tweaks', 'pipelines', 'nope');
   const a = computeAdoption({ runDir: missing, mainRoot: fx.root, cwd: fx.root, deps: deps(fx) });
   assert.strictEqual(a.case, 4);
-  assert.strictEqual(a.note, ADOPTION_NOTES[4].replace('{path}', missing).replace('{does not exist | is not anchored to the main checkout}', 'does not exist'));
+  assert.strictEqual(a.note, ADOPTION_NOTES[4].replace('{path}', missing).replace('{does not exist | is not anchored to the main checkout | is not a pipeline run directory}', 'does not exist'));
   const shadow = scratchDir('flow-preflight-shadow-');
   const b = computeAdoption({ runDir: shadow, mainRoot: fx.root, cwd: fx.root, deps: deps(fx, { resolveTarget: () => ({ ok: false, reason: 'not-anchored' }) }) });
   assert.strictEqual(b.case, 4);
   assert.match(b.note, /is not anchored to the main checkout/);
+  const d = computeAdoption({ runDir: shadow, mainRoot: fx.root, cwd: fx.root, deps: deps(fx, { resolveTarget: () => ({ ok: false, reason: 'not-a-run-dir' }) }) });
+  assert.strictEqual(d.case, 4);
+  assert.match(d.note, /which is not a pipeline run directory — created/);
+  assert.doesNotMatch(d.note, /not anchored/);
   const c = computeAdoption({ runDir: null, mainRoot: fx.root, cwd: fx.root, deps: deps(fx) });
   assert.deepStrictEqual({ case: c.case, note: c.note }, { case: 5, note: null });
 });
@@ -225,7 +229,7 @@ test('ADOPTION_NOTES carry the four prose literals with their placeholders (#193
   assert.strictEqual(ADOPTION_NOTES[1], 'Resuming existing run directory: {path}');
   assert.strictEqual(ADOPTION_NOTES[2], 'Adopting minted run directory: {path}');
   assert.strictEqual(ADOPTION_NOTES[3], 'Recovering inherited run directory: {path} (missing config.yml; backfilled {worktree registration | PR-early lifecycle | materialize commit} before proceeding).');
-  assert.strictEqual(ADOPTION_NOTES[4], 'PIPELINE_RUN_DIR was set to {path}, which {does not exist | is not anchored to the main checkout} — created a fresh run directory instead.');
+  assert.strictEqual(ADOPTION_NOTES[4], 'PIPELINE_RUN_DIR was set to {path}, which {does not exist | is not anchored to the main checkout | is not a pipeline run directory} — created a fresh run directory instead.');
 });
 
 test('case 3 with an empty backfill list renders `nothing` rather than an empty span (#1931 M2)', () => {

@@ -66,7 +66,7 @@ test('run: an anchored run dir → exit 0, the pack on stdout, wrap-up-pack.json
 
 test('run: --json inside the anchored target writes there instead of the run dir (#1930 review M3)', async () => {
   const { root, runDir } = mainCheckoutWithRun();
-  const dest = path.join(root, 'pack-copy.json');
+  const dest = path.join(runDir, 'work', 'pack-copy.json');
   const code = await run(['--run', runDir, '--json', dest], { cwd: () => root, mainRoot: root, stdout: () => {}, stderr: () => {}, packDeps: okProbeDeps });
   assert.strictEqual(code, 0);
   assert.ok(fs.existsSync(dest), '--json destination written');

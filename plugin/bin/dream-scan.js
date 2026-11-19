@@ -15,7 +15,7 @@
 //   including `--min-sessions` below the two-session floor — that floor is
 //   not configurable downward, by design (the record's own Gotchas: a
 //   single-session anomaly must never produce a proposal). Exit 3: --run-dir
-//   missing or not anchored under the main checkout (same anchoring rule as
+//   missing or not anchored under the main checkout's .claude-tweaks/pipelines (same anchoring rule as
 //   stage-item.js / log-decision.js — see _shared/pipeline-run-dir.md).
 //
 // Structural propose-only guarantee: this CLI's only writes are (a) the two
@@ -92,7 +92,7 @@ function run(argv, deps = realDeps) {
   }
   if (!target.ok) {
     if (target.reason === 'missing') deps.stderr(`dream-scan.js: run dir does not exist: ${o.runDir}\n`);
-    else deps.stderr(`dream-scan.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${o.runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+    else deps.stderr(`dream-scan.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${o.runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
     return 3;
   }
   const runDir = target.dir;

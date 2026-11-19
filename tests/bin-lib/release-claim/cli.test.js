@@ -336,6 +336,20 @@ test('failed PUT (500): exit 1, no comment, FAILED line still logged; missing ru
   assert.equal(fs.existsSync(path.join(shadowRunDir, 'decisions.md')), false);
 });
 
+// #5830: anchored under the main checkout but outside .claude-tweaks/pipelines/ — the
+// release still goes through (exit 0), but decisions.md is refused, never written there.
+test('#5830: a --run dir inside the checkout but outside .claude-tweaks/pipelines/ is named not-a-pipeline-run-dir; exit 0, nothing written', () => {
+  const root = rootOf(mkRun());
+  const outsideDir = path.join(root, 'plugin', RUN_DIR_NAME);
+  fs.mkdirSync(outsideDir, { recursive: true });
+  const out = [];
+  const { d } = deps({ content: live(RUN_DIR_NAME), out, mainRoot: root });
+  assert.equal(run(['999', '--run', outsideDir, '--reason', 'r'], d), 0);
+  assert.equal(envelope(out).logged, false);
+  assert.match(stderrOf(out), /decisions\.md not written — run dir is not a pipeline run directory/);
+  assert.equal(fs.existsSync(path.join(outsideDir, 'decisions.md')), false);
+});
+
 // #3198: target.ok is resolved before release.releaseClaim's own GitHub
 // round-trips run — if a concurrent archival removes runDir in that window,
 // the stale target.ok must not let the later appendEntry call recreate

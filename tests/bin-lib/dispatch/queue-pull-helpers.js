@@ -323,6 +323,13 @@ const FAULT_EXPECT = {
     stdout: [],
     drops: ['target-missing:9006', 'target-missing:9009', 'unlanded-blocker:9011'], adds: ['shipped:9006'],
   },
+  'F-headunknown': {
+    // #5863: `HEAD branch: (unknown)` skips only the target-missing pass. The unlanded-blocker pass still gets `(unknown)`: its
+    // compare call 404s, so it keeps #9011 with one `undetermined` line (read from a baseline run), where F-intbranch's empty branch skips the pass.
+    status: 0, stderr: [TARGET_MISSING_SKIPPED, 'AUTO — dispatch: #9006 excluded, shipped by merged PR #5006', 'AUTO — dispatch: #9011 kept — blocker #8001 landing undetermined (via probe-failed)'],
+    stdout: [],
+    drops: ['target-missing:9006', 'target-missing:9009', 'unlanded-blocker:9011'], adds: ['shipped:9006'],
+  },
   'F-prview': { status: 0, stderr: [PR_VIEW_FAILED(5016, 9016).trimEnd()], drops: [] },
   'F-landing': { status: 0, stderr: [LANDING_EXITED], drops: ['unlanded-blocker:9011'] },
   'F-inflight': { status: 0, stderr: [IN_FLIGHT_POOL_AUTO], drops: ['neighbour-in-flight:9013'] },
