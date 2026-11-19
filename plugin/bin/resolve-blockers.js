@@ -51,13 +51,26 @@ const { run, parseArgs, parseNumbers, realDeps } = makeNumberListCli({
   usage: USAGE,
   ghRequiredNote: '(work-links: native)',
   fetch: ({
-    numbers, owner, repo, host, runner,
+    numbers, owner, repo, host, runner, onSnapshot,
   }) => fetchNativeDependencies({
-    numbers, owner, repo, host, runner,
+    numbers, owner, repo, host, runner, onSnapshot,
   }),
   mapResult: (n, byNumber) => byNumber.get(n),
 });
 
 module.exports = { run, parseArgs, parseNumbers, parseRepo: require('./lib/repo-resolve').parseRepo };
 
-if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
+// #5902: only the real process writes a `blockers` station event per fetched
+// number; the sink is built here so requiring this module never wires it.
+if (require.main === module) {
+  const { appendStationEvent } = require('./lib/station-events/emit');
+  const { makeBlockerSnapshotSink } = require('./lib/station-events/blockers');
+  process.exitCode = run(process.argv.slice(2), {
+    ...realDeps,
+    onSnapshot: makeBlockerSnapshotSink({
+      stationEvent: appendStationEvent,
+      sessionId: process.env.CLAUDE_CODE_SESSION_ID || null,
+      runId: null,
+    }),
+  });
+}
