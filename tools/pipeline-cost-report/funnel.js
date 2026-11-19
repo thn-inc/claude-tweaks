@@ -86,7 +86,7 @@ async function collectFunnel({ repo, simulate = [] }, { gh, check, now, pluginVe
   const simulations = sets.map((set) => {
     const inSet = new Set(set);
     const admitted = readable.filter((v) => v.admitted || (v.keys.length > 0 && v.keys.every((k) => inSet.has(k)))).length;
-    return { set, admitted };
+    return { set, unseen: set.filter((k) => !(k in reasons)), admitted };
   });
 
   return {

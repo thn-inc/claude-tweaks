@@ -509,7 +509,7 @@ async function run({ argv, deps: given = {} }) {
   return 0;
 }
 
-module.exports = { run, collectRuns, recountRuns, median, summarize, isoWeek, reviewFilesOf };
+module.exports = { run, collectRuns, recountRuns, median, summarize, isoWeek, reviewFilesOf, isDate };
 
 if (require.main === module) {
   run({ argv: process.argv.slice(2) }).then((code) => { process.exitCode = code; }).catch((e) => {

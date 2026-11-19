@@ -125,6 +125,12 @@ test('AC7.1: --json prints one object holding the same figures as the Markdown o
   assert.match(text, /Prices dated 2026-11-03/);
   assert.match(text, /Session type is the first claude-tweaks skill a session invoked; a session that did several things is counted once\./);
   assert.strictEqual(json.spend.sessions, 3);
+
+  const byModel = Object.entries(json.spend.byModel);
+  assert.ok(byModel.length >= 2, 'the fixture prices more than one model');
+  for (const [model, usdValue] of byModel) assert.ok(text.includes(`| ${model} | $${usdValue.toFixed(2)} |`), `${model} row in\n${text}`);
+  const { created, closed, open } = json.records;
+  assert.ok(text.includes(`Created: ${created}; closed: ${closed}; open now: ${open};`), text);
 });
 
 test('sections are separated by a single blank line, a section ending in a table included', async () => {
@@ -148,7 +154,7 @@ test('--simulate values are comma-split and each --simulate is one set', async (
   const h = harness();
   assert.strictEqual(await run({ argv: [...h.base, '--section', 'funnel', '--simulate', 'protected path, other', '--json'], deps: h.deps }), 0);
   const json = JSON.parse(h.logs[0]);
-  assert.deepStrictEqual(json.funnel.simulations, [{ set: ['protected path', 'other'], admitted: 3 }]);
+  assert.deepStrictEqual(json.funnel.simulations, [{ set: ['protected path', 'other'], unseen: ['other'], admitted: 3 }]);
 });
 
 test('a forge read that throws prints {section}: unavailable, and the run exits 1', async () => {
@@ -179,13 +185,30 @@ test('--projects roots are deduplicated by real path', async () => {
   const h = harness();
   const link = path.join(fresh('link'), 'alias');
   fs.symlinkSync(h.projects, link, 'dir');
-  const missing = path.join(DIR, 'does-not-exist');
-  const argv = [...h.base, '--projects', link, '--projects', missing, '--section', 'spend', '--json'];
+  const argv = [...h.base, '--projects', link, '--section', 'spend', '--json'];
   assert.strictEqual(await run({ argv, deps: h.deps }), 0);
   const json = JSON.parse(h.logs[0]);
   assert.strictEqual(json.spend.total, 7);
   assert.strictEqual(json.spend.sessions, 3);
   assert.strictEqual(json.unreadable, 0);
+});
+
+test('an explicit --projects root that cannot be resolved is counted unreadable and the run exits 0; a missing default root is not', async () => {
+  const h = harness();
+  const missing = path.join(DIR, 'does-not-exist');
+  const argv = [...h.base, '--projects', missing, '--section', 'spend'];
+  assert.strictEqual(await run({ argv: [...argv, '--json'], deps: h.deps }), 0);
+  const json = JSON.parse(h.logs[0]);
+  assert.strictEqual(json.unreadable, 1);
+  assert.strictEqual(json.spend.total, 7);
+  const m = harness();
+  assert.strictEqual(await run({ argv, deps: m.deps }), 0);
+  assert.match(m.logs.join('\n'), /Unreadable:? 1\b/i);
+
+  const d = harness({ env: {} });
+  const defaults = d.base.filter((a, i, all) => a !== '--projects' && all[i - 1] !== '--projects');
+  assert.strictEqual(await run({ argv: [...defaults, '--section', 'spend', '--json'], deps: d.deps }), 0);
+  assert.strictEqual(JSON.parse(d.logs[0]).unreadable, 0);
 });
 
 test('listRuns keeps the top-level copy of a run that is also archived, counts undated names unparsed, and lists spec members', () => {
@@ -468,6 +491,37 @@ test('the funnel simulation table lists the most admitted first, ties by set tex
   });
   const rows = lines.filter((l) => /^\| [abz] \|/.test(l));
   assert.deepStrictEqual(rows, ['| z | 5 |', '| a | 2 |', '| b | 2 |']);
+});
+
+test('a simulated reason that never appears in the refusal tally is shown on its row as not seen', () => {
+  const { SECTIONS } = require(path.join(ROOT, 'tools', 'pipeline-cost-report.js'));
+  const funnel = SECTIONS.find((s) => s.key === 'funnel');
+  const lines = funnel.render({
+    runDate: '2026-11-18', pluginVersion: '9.9.9', checked: 9, admitted: 1, unreadable: 0, reasons: { a: 1 },
+    simulations: [{ set: ['a', 'typo'], unseen: ['typo'], admitted: 1 }, { set: ['a'], unseen: [], admitted: 1 }],
+  });
+  assert.ok(lines.includes('| a, typo (not seen: typo) | 1 |'), lines.join('\n'));
+  assert.ok(lines.includes('| a | 1 |'), lines.join('\n'));
+});
+
+test('the Markdown records section prints a Truncated line when the created total exceeds the rows read', async () => {
+  const base = fakeGh();
+  const h = harness({ gh: (args) => (args[0] === 'api' && args[1].includes('is:issue+created:') ? '1200\n' : base(args)) });
+  assert.strictEqual(await run({ argv: [...h.base, '--section', 'records'], deps: h.deps }), 0);
+  assert.ok(h.logs.join('\n').includes('Truncated: the deferral figures cover only the rows read (created).'), h.logs.join('\n'));
+  const ok = harness();
+  assert.strictEqual(await run({ argv: [...ok.base, '--section', 'records'], deps: ok.deps }), 0);
+  assert.ok(!ok.logs.join('\n').includes('Truncated:'));
+});
+
+test('a failed merged-PR count under --section spend exits 1 and prints the per-merged-PR line as unavailable', async () => {
+  const base = fakeGh();
+  const h = harness({ gh: (args) => { if (args[0] === 'api' && args[1].includes('is:pr+is:merged')) throw new Error('gh: HTTP 502\nsecond line'); return base(args); } });
+  assert.strictEqual(await run({ argv: [...h.base, '--section', 'spend'], deps: h.deps }), 1);
+  const text = h.logs.join('\n');
+  assert.ok(text.includes('Per merged PR: unavailable — gh: HTTP 502'), text);
+  assert.ok(text.includes('$7.00'), 'the rest of the spend section still renders');
+  assert.ok(!text.includes('second line'));
 });
 
 test('a --repo that is not the current checkout is refused for the funnel, and allowed where the funnel does not run', async () => {

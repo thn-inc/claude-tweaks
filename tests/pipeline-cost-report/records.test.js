@@ -97,6 +97,15 @@ test('a gh failure propagates', async () => {
   await assert.rejects(() => collectRecords(Q, { gh: () => { throw new Error('gh down'); } }), /gh down/);
 });
 
+test('an empty or whitespace gh stdout is a failure, not a count of zero', async () => {
+  for (const out of ['', '\n', '  \n']) {
+    const gh = () => out;
+    await assert.rejects(() => collectRecords(Q, { gh }), /no total_count/);
+    await assert.rejects(() => countMergedPrs(Q, { gh }), /no total_count/);
+  }
+  assert.strictEqual((await countMergedPrs(Q, { gh: () => '0\n' })).count, 0);
+});
+
 test('countMergedPrs counts merged pull requests in the window from total_count', async () => {
   const calls = [];
   const gh = fakeGh({ [SEARCH('is:pr+is:merged+merged:2026-11-08..2026-11-18')]: '202\n' }, calls);

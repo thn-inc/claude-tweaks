@@ -107,14 +107,18 @@ async function scanTranscript(file, { fsImpl = fs } = {}) {
   const byId = new Map();
   let compactionPending = false;
   const rl = readline.createInterface({ input: fsImpl.createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
+  let nonEmpty = 0;
+  let parsed = 0;
   for await (const raw of rl) {
     if (!raw) continue;
+    nonEmpty += 1;
     let line;
     try {
       line = JSON.parse(raw);
     } catch {
       continue;
     }
+    parsed += 1;
     if (!line || typeof line !== 'object') continue;
     if (out.cwd === null && typeof line.cwd === 'string' && line.cwd) out.cwd = line.cwd;
     if (out.firstSkill === null) out.firstSkill = skillOfLine(line);
@@ -140,6 +144,9 @@ async function scanTranscript(file, { fsImpl = fs } = {}) {
     }
     if (!r.model && message.model) r.model = message.model;
   }
+
+  // One malformed line among good ones is a live transcript cut mid-line; no parseable line at all is a corrupt file.
+  if (nonEmpty > 0 && parsed === 0) throw new Error(`no line of ${file} parses as JSON`);
 
   let prev = null;
   out.requests = out.requests.map((r) => {

@@ -10,18 +10,11 @@
 
 const fs = require('fs');
 const path = require('path');
+const { isDate } = require('../efficiency-report');
 
 const ARCHIVE = 'archive';
 const DATE_RE = /^(\d{4}-\d{2}-\d{2})(?!\d)/;
 const MEMBER_RE = /^spec-(\d+)$/;
-
-// A real calendar date (2026-02-30 and 2026-99-99 are not).
-function isDate(v) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(typeof v === 'string' ? v : '');
-  if (!m) return false;
-  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
-  return d.getUTCFullYear() === Number(m[1]) && d.getUTCMonth() === Number(m[2]) - 1 && d.getUTCDate() === Number(m[3]);
-}
 
 // { runs: [{ name, date, dir, archived, members: [{ id, dir }] }], unparsed, unreadable, missing }
 function listRuns(pipelinesDir, fsImpl = fs) {

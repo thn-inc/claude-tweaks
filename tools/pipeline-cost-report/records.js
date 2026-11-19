@@ -22,7 +22,8 @@ function deferReasonOf(body) {
 
 function searchCount(gh, repo, qualifiers) {
   const out = gh(['api', `search/issues?q=repo:${repo}+${qualifiers}&per_page=1`, '-q', '.total_count']);
-  const n = Number(String(out).trim());
+  const text = String(out).trim();
+  const n = text === '' ? NaN : Number(text);
   if (!Number.isInteger(n) || n < 0) throw new Error(`gh search returned no total_count for ${qualifiers}`);
   return n;
 }

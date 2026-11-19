@@ -82,6 +82,18 @@ test('the Haiku multiplier applies at a prompt strictly over 100,000 and to ever
   assert.ok(Math.abs(opus.usd - 0.8) < 1e-9);
 });
 
+test('a cache read is priced at the family read rate and counts toward the prompt size', () => {
+  const opus = priceRequest({ model: 'claude-opus-4-8', input: 0, output: 0, cacheRead: 1000000, cacheWrite5m: 0, cacheWrite1h: 0 });
+  assert.ok(Math.abs(opus.usd - 0.2) < 1e-9);
+  assert.strictEqual(opus.prompt, 1000000);
+  assert.strictEqual(opus.cacheWriteUsd, 0);
+  // 100,001 cache-read tokens alone push a Haiku prompt over the long-prompt threshold: every column takes the multiplier
+  const haiku = priceRequest({ model: 'claude-haiku-5', input: 0, output: 0, cacheRead: 100001, cacheWrite5m: 0, cacheWrite1h: 0 });
+  assert.strictEqual(haiku.prompt, 100001);
+  assert.ok(Math.abs(haiku.usd - (100001 * 0.01 * 5) / 1e6) < 1e-12);
+  assert.strictEqual(bucketOf(priceRequest({ model: 'claude-opus-4-8', input: 0, output: 0, cacheRead: 60000, cacheWrite5m: 0, cacheWrite1h: 0 }).prompt), '50-100');
+});
+
 test('AC4.1: a turn writing more than half its prompt and over 40,000 tokens to cache is a re-write; after a call on another family its cause is model switch', async () => {
   const file = fixture([
     asst('a', 'claude-opus-4-8', 0, { input_tokens: 100, cache_read_input_tokens: 5000 }),
@@ -104,6 +116,17 @@ test('a write at or under 40,000 tokens or half the prompt is ordinary growth', 
   ]);
   const { requests } = await scanTranscript(file);
   assert.deepStrictEqual(requests.map((r) => r.cause), ['ordinary growth', 'ordinary growth']);
+});
+
+test('a write over 40,000 tokens but at most half its prompt is ordinary growth, whatever else would classify it', async () => {
+  // 45,000 written of a 145,000-token prompt: over the token floor, under half the prompt
+  const big = { cache_creation_input_tokens: 45000, cache_read_input_tokens: 100000 };
+  const first = fixture([asst('a', 'claude-opus-4-8', 0, big)]);
+  assert.strictEqual((await scanTranscript(first)).requests[0].cause, 'ordinary growth');
+  const switched = fixture([asst('a', 'claude-opus-4-8', 0, { cache_read_input_tokens: 1000 }), asst('b', 'claude-sonnet-5-5', 1, big)]);
+  assert.strictEqual((await scanTranscript(switched)).requests[1].cause, 'ordinary growth');
+  const exactlyHalf = fixture([asst('a', 'claude-opus-4-8', 0, { cache_creation_input_tokens: 50000, cache_read_input_tokens: 50000 })]);
+  assert.strictEqual((await scanTranscript(exactlyHalf)).requests[0].cause, 'ordinary growth');
 });
 
 test('cause precedence: compaction, then idle', async () => {
@@ -251,6 +274,19 @@ test('firstSkill reads a typed command or a Skill call, whichever comes first', 
 test('malformed lines are skipped', async () => {
   const file = fixture(['{not json', asst('a', 'claude-opus-4-8', 0, { input_tokens: 7 })]);
   assert.strictEqual((await scanTranscript(file)).requests[0].input, 7);
+});
+
+test('a transcript with no line that parses as JSON is corrupt: scanTranscript rejects and collectSpend counts it unreadable once', async () => {
+  const garbage = fixture(['{not json', 'also not json', '']);
+  await assert.rejects(() => scanTranscript(garbage), /parses as JSON/);
+  const root = path.join(DIR, `garbage-root${n++}`);
+  fs.mkdirSync(path.join(root, 'slug-a'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'slug-a', 'bad.jsonl'), '{not json\nnope\n');
+  fs.writeFileSync(path.join(root, 'slug-a', 'cut.jsonl'), JSON.stringify(asst('a', 'claude-opus-4-8', 0, { input_tokens: 500000, output_tokens: 0 })) + '\n{"type":"assis');
+  fs.writeFileSync(path.join(root, 'slug-a', 'empty.jsonl'), '');
+  const r = await collectSpend({ roots: [root], since: new Date('2026-11-08T00:00:00Z'), until: new Date('2026-11-19T00:00:00Z'), match: null });
+  assert.strictEqual(r.unreadable, 1);
+  near(r.total, 2);
 });
 
 // --- collectSpend ---

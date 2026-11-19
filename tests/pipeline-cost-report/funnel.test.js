@@ -61,17 +61,25 @@ test('AC5.3: a named set admits every record whose every reason is in the set', 
     [verdict(true), verdict(true), verdict(false, ['size is not low', 'protected path: a']), verdict(false, ['protected path: b']), verdict(false, ['size is not low', 'record lacks auto:build'])],
     [['size is not low', 'protected path']],
   );
-  assert.deepStrictEqual(f.simulations, [{ set: ['size is not low', 'protected path'], admitted: 4 }]);
+  assert.deepStrictEqual(f.simulations, [{ set: ['size is not low', 'protected path'], unseen: [], admitted: 4 }]);
 });
 
 test('default simulations: one per distinct reason taken alone', async () => {
   const f = await run([verdict(true), verdict(false, ['a']), verdict(false, ['a', 'b']), verdict(false, ['b'])]);
-  assert.deepStrictEqual(f.simulations, [{ set: ['a'], admitted: 2 }, { set: ['b'], admitted: 2 }]);
+  assert.deepStrictEqual(f.simulations, [{ set: ['a'], unseen: [], admitted: 2 }, { set: ['b'], unseen: [], admitted: 2 }]);
+});
+
+test('a simulated reason that never appears in the refusal tally is recorded as unseen', async () => {
+  const f = await run([verdict(false, ['protected path: a'])], [['protected path', 'typo'], ['protected path']]);
+  assert.deepStrictEqual(f.simulations, [
+    { set: ['protected path', 'typo'], unseen: ['typo'], admitted: 1 },
+    { set: ['protected path'], unseen: [], admitted: 1 },
+  ]);
 });
 
 test('simulate names go through reasonKey', async () => {
   const f = await run([verdict(false, ['protected path: a/b.js'])], [['protected path: x']]);
-  assert.deepStrictEqual(f.simulations, [{ set: ['protected path'], admitted: 1 }]);
+  assert.deepStrictEqual(f.simulations, [{ set: ['protected path'], unseen: [], admitted: 1 }]);
 });
 
 test('a refused record with no reasons is never admitted by a set', async () => {

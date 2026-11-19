@@ -21,16 +21,19 @@
 //
 // The window is --since through --until, both inclusive, UTC; --until defaults to today, --since to --until minus 6
 // days. --projects is repeatable (default ~/.claude/projects, $CLAUDE_CONFIG_DIR/projects and every
-// ~/.claude-accounts/*/projects); roots are de-duplicated by real path and a root that does not exist is skipped.
+// ~/.claude-accounts/*/projects); roots are de-duplicated by real path, a default root that does not exist is skipped and
+// an explicit --projects root that cannot be resolved is counted in `unreadable`.
 // --pipelines defaults to {main checkout}/.claude-tweaks/pipelines, the main checkout being the dirname of
 // `git rev-parse --path-format=absolute --git-common-dir`. --repo defaults to `gh repo view`. The funnel always asks
 // `drive.js --check` about the current checkout's repository, so a `--section funnel|all` run whose --repo differs from
 // the current checkout's `gh repo view` answer is refused (exit 2). The tool only reads.
 //
 // Exit codes: 0 rendered (unreadable files and runs are counted in `unreadable`, not a failure; a single malformed
-// JSON line inside a transcript is skipped and not counted, because live transcripts routinely end mid-line;
-// an unresolvable default --pipelines prints `Runs: unavailable` and leaves the code alone); 1 a forge read
-// failed (that section prints `{section}: unavailable — {first line}`; JSON `{ error }`); 2 malformed invocation.
+// JSON line inside a transcript is skipped and not counted, because live transcripts routinely end mid-line, but a
+// transcript with no parseable line at all is counted once;
+// an unresolvable default --pipelines prints `Runs: unavailable` and leaves the code alone); 1 a section failed —
+// a forge read failed, or spend could not resolve the main checkout (that section prints
+// `{section}: unavailable — {first line}`; JSON `{ error }`); 2 malformed invocation.
 //
 // Seam: run({ argv, deps }) resolves to the exit code; deps holds fs, gh(args) (stdout), check(n) (drive.js --check
 // stdout), git(args, {cwd}), now(), pluginVersion(), cwd, home and the log/err line writers.
@@ -146,7 +149,7 @@ const SECTIONS = [
       if (d.simulations.length > 0) {
         lines.push('| If these stopped refusing | Admitted |', '|---|---|');
         const bySet = [...d.simulations].sort((a, b) => b.admitted - a.admitted || a.set.join(', ').localeCompare(b.set.join(', ')));
-        for (const s of bySet) lines.push(`| ${s.set.join(', ')} | ${s.admitted} |`);
+        for (const s of bySet) lines.push(`| ${s.set.join(', ')}${s.unseen && s.unseen.length > 0 ? ` (not seen: ${s.unseen.join(', ')})` : ''} | ${s.admitted} |`);
       }
       return lines;
     },
@@ -208,10 +211,12 @@ function parseArgs(args) {
   return { opts };
 }
 
-// Default roots, de-duplicated by real path; a root that does not exist is skipped.
+// Roots, de-duplicated by real path. A default root that does not exist is skipped; an explicit --projects root that
+// cannot be resolved is counted in `unresolved` (a typo must not read as an empty window).
 function resolveRoots(opts, deps) {
+  const explicit = opts.projects.length > 0;
   let candidates = opts.projects.map((p) => path.resolve(deps.cwd, p));
-  if (candidates.length === 0) {
+  if (!explicit) {
     candidates = [path.join(deps.home, '.claude', 'projects')];
     const configDir = deps.env && deps.env.CLAUDE_CONFIG_DIR;
     if (configDir) candidates.push(path.join(path.resolve(deps.cwd, configDir), 'projects'));
@@ -226,11 +231,13 @@ function resolveRoots(opts, deps) {
   }
   const seen = new Set();
   const roots = [];
+  let unresolved = 0;
   for (const c of candidates) {
     let real;
     try {
       real = deps.fs.realpathSync(c);
     } catch {
+      if (explicit) unresolved += 1;
       continue;
     }
     if (!seen.has(real)) {
@@ -238,7 +245,7 @@ function resolveRoots(opts, deps) {
       roots.push(real);
     }
   }
-  return roots;
+  return { roots, unresolved };
 }
 
 function mainCheckoutRoot(deps) {
@@ -348,9 +355,10 @@ async function run({ argv, deps: given = {} }) {
   }
 
   const scope = wants('spend') ? resolveScope(opts, deps) : null;
+  const { roots, unresolved } = resolveRoots(opts, deps);
   const ctx = {
     deps, opts, since, until, scope,
-    roots: resolveRoots(opts, deps),
+    roots,
     repo: repoOf,
   };
 
@@ -365,7 +373,7 @@ async function run({ argv, deps: given = {} }) {
 
   const report = { window: { since, until, ...(scope ? { match: scope.error ? { kind: scope.kind, value: null, error: scope.error } : { kind: scope.kind, value: scope.value } } : {}) }, priceTableDate: PRICES.date };
   let exit = 0;
-  let unreadable = 0;
+  let unreadable = wants('spend') ? unresolved : 0;
   for (const s of SECTIONS) {
     if (opts.section !== 'all' && opts.section !== s.key) continue;
     try {
