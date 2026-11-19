@@ -265,6 +265,19 @@ const ROLES = deepFreeze({
   acceptance: { tools: ['Read', 'Grep', 'Glob'], settings: false },
 });
 
+// The work profile each role launches on unless policy `express-driver-models` overrides
+// it (#5917). That policy may set only the POLICY_DRIVER_ROLES; `explorer` keeps its
+// code-only row. `launch.js` resolves the profile through `profiles.js`. A new role in
+// ROLES needs a row here (AC6.1).
+const DRIVER_ROLE_PROFILES = deepFreeze({
+  implementer: 'standard',
+  reviewer: 'capable',
+  explorer: 'standard',
+  'merge-check': 'standard',
+  acceptance: 'standard',
+});
+const POLICY_DRIVER_ROLES = deepFreeze(['implementer', 'reviewer', 'merge-check', 'acceptance']);
+
 function specFor(role) {
   if (!Object.prototype.hasOwnProperty.call(ROLES, role)) throw new Error('unknown role: ' + String(role));
   return ROLES[role];
@@ -473,4 +486,4 @@ function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeilin
   return args;
 }
 
-module.exports = { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, ROLES, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, assertTestCommand };
+module.exports = { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, ROLES, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, assertTestCommand };

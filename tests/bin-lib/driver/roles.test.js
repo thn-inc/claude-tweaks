@@ -4,7 +4,8 @@ const assert = require('node:assert');
 const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const { conformsTo } = require(path.join(LIB, 'driver', 'worker.js'));
-const { ROLES, RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling } = require(path.join(LIB, 'driver', 'roles.js'));
+const { ROLES, RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES } = require(path.join(LIB, 'driver', 'roles.js'));
+const { PROFILES } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
 
 const ALLOW_SANDBOXED = ['Read', 'Edit', 'Write', 'Bash(node --test *)', 'Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)'];
 const ALLOW_EDIT_ONLY = ['Read', 'Edit', 'Write'];
@@ -587,4 +588,25 @@ test('implementerSettings: the targeted runner form composes its rule', () => {
   const allow = implementerSettings({ testCommand: 'node tools/run-tests.js --files-from', platform: 'darwin' }).permissions.allow;
   assert.ok(allow.includes('Bash(node tools/run-tests.js --files-from *)'));
   assert.ok(!allow.some((r) => r.startsWith('Bash(npm')));
+});
+
+// One assertion function, shared by the pin and its go-red control.
+function assertEveryRoleHasProfile(roles, profiles) {
+  assert.deepStrictEqual(Object.keys(profiles).sort(), Object.keys(roles).sort());
+  for (const [role, profile] of Object.entries(profiles)) assert.ok(Object.hasOwn(PROFILES, profile), `${role}: ${profile}`);
+}
+test('AC6.1: every ROLES entry has a default profile', () => {
+  assertEveryRoleHasProfile(ROLES, DRIVER_ROLE_PROFILES);
+  assert.deepStrictEqual({ ...DRIVER_ROLE_PROFILES }, { implementer: 'standard', reviewer: 'capable', explorer: 'standard', 'merge-check': 'standard', acceptance: 'standard' });
+  assert.ok(Object.isFrozen(DRIVER_ROLE_PROFILES));
+});
+test('AC6.1 (go-red control): a role added to ROLES without a default fails the check', () => {
+  assert.throws(() => assertEveryRoleHasProfile({ ...ROLES, scout: { tools: ['Read'], settings: false } }, DRIVER_ROLE_PROFILES));
+  assert.throws(() => assertEveryRoleHasProfile(ROLES, { ...DRIVER_ROLE_PROFILES, reviewer: 'turbo' }));
+});
+test('POLICY_DRIVER_ROLES: exactly the four spec roles, each in ROLES', () => {
+  assert.deepStrictEqual([...POLICY_DRIVER_ROLES], ['implementer', 'reviewer', 'merge-check', 'acceptance']);
+  for (const r of POLICY_DRIVER_ROLES) assert.ok(Object.hasOwn(ROLES, r), r);
+  assert.ok(!POLICY_DRIVER_ROLES.includes('explorer'));
+  assert.ok(Object.isFrozen(POLICY_DRIVER_ROLES));
 });
