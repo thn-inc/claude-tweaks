@@ -392,6 +392,7 @@ test('#3198: run dir removed after target resolves but before the decisions.md w
 test('realDeps wires the real git-CAS runner and the real gh runner', () => {
   assert.equal(realDeps.gitRunner, claimsGitCas.defaultRunner, 'gitRunner is claims-git-cas.js\'s defaultRunner export');
   assert.equal(realDeps.runner, release.defaultRunner, 'runner is release.js\'s defaultRunner export');
+  assert.equal(typeof realDeps.stationEvent, 'function', '#5902: the station-event emitter is wired');
 });
 
 // The middle link of the same chain: `realDeps` holds the real git-CAS runner (test
@@ -554,4 +555,76 @@ test('#4495: a branchless claims remote exits 3 with a "nothing to release" note
   assert.equal(gitCalls.some((a) => a[0] === 'push'), false, 'a release never creates the branch');
   assert.equal(calls.some(isPut), false);
   assert.equal(calls.some(isComment), false, 'no false "Released by run" comment on a record this run never claimed');
+});
+
+// ---- #5902: the release transition station event --------------------------
+
+function withStationSpy(d) {
+  const events = [];
+  d.stationEvent = (e) => { events.push(e); };
+  d.sessionId = 'sess-1';
+  return events;
+}
+
+test('#5902: a released claim with --reason merged records one exited build passed event carrying the reason', () => {
+  const runDir = mkRun();
+  const out = [];
+  const { d } = deps({ content: live(RUN_DIR_NAME), out, mainRoot: rootOf(runDir) });
+  const events = withStationSpy(d);
+  assert.equal(run(['999', '--run', runDir, '--reason', 'merged', '--link', 'https://x/1'], d), 0);
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0], {
+    kind: 'exited', station: 'build', outcome: 'passed', recordNumber: 999, repoName: 'acme/w',
+    runId: RUN_DIR_NAME, sessionId: 'sess-1', lane: 'unknown',
+    payload: { reason: 'merged', link: 'https://x/1' }, discriminator: `release:${RUN_DIR_NAME}`,
+  });
+});
+
+test('#5902: --reason "never-started: x" records an abandoned exit; no --link carries link null', () => {
+  const runDir = mkRun();
+  const out = [];
+  const { d } = deps({ content: live(RUN_DIR_NAME), out, mainRoot: rootOf(runDir) });
+  const events = withStationSpy(d);
+  assert.equal(run(['999', '--run', runDir, '--reason', 'never-started: x'], d), 0);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].outcome, 'abandoned');
+  assert.deepEqual(events[0].payload, { reason: 'never-started: x', link: null });
+});
+
+test('#5902: skipped-not-owner and already-released record no station event', () => {
+  const notOwner = [];
+  const { d: d1 } = deps({ content: live('2026-08-16T110000-spec-999'), out: notOwner });
+  const ev1 = withStationSpy(d1);
+  assert.equal(run(['999', '--run', mkRun(), '--reason', 'merged'], d1), 4);
+  assert.deepEqual(ev1, [], 'skipped-not-owner emits nothing');
+
+  const already = [];
+  const { d: d2 } = deps({
+    content: live(RUN_DIR_NAME), contentAfterConflict: JSON.stringify({ released: true }), putThrows: 'HTTP 422 sha mismatch', out: already,
+  });
+  const ev2 = withStationSpy(d2);
+  assert.equal(run(['999', '--run', mkRun(), '--reason', 'merged'], d2), 3);
+  assert.equal(envelope(already).outcome, 'already-released');
+  assert.deepEqual(ev2, [], 'already-released emits nothing, so a repeat release writes nothing');
+});
+
+test('#5902: a throwing stationEvent leaves stdout, the exit code and logged byte-identical', () => {
+  const runA = mkRun();
+  const outA = [];
+  const { d: plain } = deps({ content: live(RUN_DIR_NAME), out: outA, mainRoot: rootOf(runA) });
+  const codeA = run(['999', '--run', runA, '--reason', 'merged', '--link', 'https://x/1'], plain);
+
+  const runB = mkRun();
+  const outB = [];
+  const { d: throwing } = deps({ content: live(RUN_DIR_NAME), out: outB, mainRoot: rootOf(runB) });
+  let thrown = 0;
+  throwing.stationEvent = () => { thrown += 1; throw new Error('emitter boom'); };
+  const codeB = run(['999', '--run', runB, '--reason', 'merged', '--link', 'https://x/1'], throwing);
+
+  assert.equal(thrown, 1, 'the emitter was reached');
+  assert.equal(codeB, codeA);
+  assert.equal(streamOf(outB, 'out'), streamOf(outA, 'out'), 'stdout is byte-identical');
+  assert.equal(envelope(outB).logged, true);
+  assert.equal(envelope(outB).logged, envelope(outA).logged);
+  assert.equal(stderrOf(outB), stderrOf(outA), 'no extra stderr either');
 });
