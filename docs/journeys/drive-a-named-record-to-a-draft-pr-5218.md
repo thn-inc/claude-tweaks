@@ -77,7 +77,7 @@ files:
   - A commit subject, PR body or event line that still carries a `www.` issue URL or an `owner/repo/issues/N` path, which would backlink the issue.
   - A worker transcript with a `gh`, `git commit` or `git push` call.
   - A worker transcript running the whole suite (a `# tests` total in the thousands), or a worker event with `tests: unreadable` when the declaration is on `origin`.
-  - A `worker` line with no `model` field, or a worker that ran on the account's default model after a model refusal.
+  - A `worker` line with no `model` field from a launch that started, or a worker that ran on the account's default model after a model refusal. A stop before the launch (HEAD unreadable before it) writes a `worker` line with no `model`, because no model was resolved yet.
   - A commit the worker made itself reaching the branch or the PR, or a fix round that carried on after its commit found nothing to commit.
   - A leftover branch silently reused.
   - A `review` line under the default policy and default lane bounds, or a pushed record whose reviewer finding never had a red evidence run.
@@ -186,3 +186,4 @@ files:
 - Updated during the build of #5232 (run `2026-11-15T173500-spec-5232`): step 1 names `--check`, `--run` and the `--in-flight-prs`/`--near-dup-pairs` hold, which dispatch's driver route uses.
 - Updated during the build of #5915 (run `2026-11-19T062113-spec-5915-5917`): step 3 says the worker runs targeted tests only, names the worker event's `tests` field, and adds a red flag for a whole-suite worker run.
 - Updated during the build of #5917 (run `2026-11-19T062113-spec-5915-5917`): step 2 lists the policy step's model refusals, and step 3 says the worker, review and judgment lines carry the requested `model`, with a matching red flag.
+- Updated at wrap-up of #5917: step 3's `model` red flag is narrowed to a launch that started, since a stop before the launch writes a `worker` line that resolved no model.
