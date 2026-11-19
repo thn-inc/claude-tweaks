@@ -65,19 +65,25 @@ const foldKind = (s) => s.toLowerCase().replace(/behavior/g, 'behaviour').replac
 const KIND_BY_FOLDED = new Map(PLAN_KINDS.map((k) => [foldKind(k), k]));
 
 // { findings, byKind } | null. `findings` is the table's rows plus every `+N more` overflow count; the overflow rows'
-// kind is unknown, so they land in `other` with every row whose Class is not one of PLAN_KINDS.
+// kind is unknown, so they land in `other` with every row whose Class is not one of PLAN_KINDS. A finding row is a row
+// after the `Severity` header whose first cell is a severity word; the table ends at the first non-`|` line, so a later
+// table is not read. A header with no row after it is null unless the text states `No findings`.
 function parsePlanReview(text) {
   const byKind = { other: 0 };
   for (const k of PLAN_KINDS) byKind[k] = 0;
   let findings = 0;
   let classCol = -1;
-  let table = false;
+  let header = false;
+  let rows = false;
   for (const line of String(text).split(/\r?\n/)) {
     const cells = cellsOf(line);
-    if (!cells) continue;
-    if (!table) {
+    if (!cells) {
+      if (header) break;
+      continue;
+    }
+    if (!header) {
       if (cells[0] && cells[0].toLowerCase() === 'severity') {
-        table = true;
+        header = true;
         classCol = cells.findIndex((c) => c.toLowerCase() === 'class');
       }
       continue;
@@ -87,20 +93,24 @@ function parsePlanReview(text) {
     if (more !== null) {
       findings += more;
       byKind.other += more;
+      rows = true;
       continue;
     }
+    if (!SEVERITIES.includes((cells[0] || '').toLowerCase())) continue;
     findings += 1;
+    rows = true;
     const kind = classCol >= 0 ? KIND_BY_FOLDED.get(foldKind(cells[classCol] || '')) : undefined;
     byKind[kind || 'other'] += 1;
   }
-  if (table) return { findings, byKind };
+  if (rows) return { findings, byKind };
   if (NO_FINDINGS_RE.test(String(text))) return { findings: 0, byKind };
   return null;
 }
 
 // { critical, high, medium, low, info, overflow } | null. A finding row is a `|`-row whose first cell is a severity
 // word; a row with a `+N more` cell adds N to `overflow` and is never counted as a finding. Rows win over a
-// `No findings` opening; with no table the report is parsed only when it states `No findings`.
+// `No findings` opening; with no row the report is parsed only when it states `No findings`, so a header with
+// nothing after it (a reply cut off) is null.
 function parseLensReport(text) {
   const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0, overflow: 0 };
   let table = false;
@@ -108,10 +118,7 @@ function parseLensReport(text) {
     const cells = cellsOf(line);
     if (!cells || !cells.length) continue;
     const first = cells[0].toLowerCase();
-    if (first === 'severity') {
-      table = true;
-      continue;
-    }
+    if (first === 'severity') continue;
     const more = overflowOf(cells);
     if (more !== null) {
       counts.overflow += more;

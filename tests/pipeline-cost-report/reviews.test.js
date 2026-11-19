@@ -74,6 +74,25 @@ test('parsePlanReview buckets an unknown kind and normalises case and hyphens', 
   assert.strictEqual(got.byKind['undecided behaviour'], 1);
 });
 
+const PLAN_HEAD = '| Severity | Class | Resolution | Path:Line | Finding | Evidence | Suggested resolution |\n|---|---|---|---|---|---|---|\n';
+
+test('parsePlanReview counts only the first table: a later unrelated table is not findings', () => {
+  const got = parsePlanReview(`${PLAN_HEAD}| low | spec gap | — | a.md:1 | f | e | s |\n\nRisk by task:\n\n| Task | Risk |\n|---|---|\n| 1 | high |\n| 2 | low |`);
+  assert.strictEqual(got.findings, 1);
+  assert.strictEqual(got.byKind['spec gap'], 1);
+  assert.strictEqual(got.byKind.other, 0);
+});
+
+test('parsePlanReview: a header with no row is unparsed unless "No findings" is stated', () => {
+  assert.strictEqual(parsePlanReview(PLAN_HEAD), null);
+  assert.deepStrictEqual(parsePlanReview(`${PLAN_HEAD}\nNo findings.`), { findings: 0, byKind: NO_KINDS });
+});
+
+test('parseLensReport: a header with no row is unparsed unless "No findings" is stated', () => {
+  assert.strictEqual(parseLensReport(LENS_HEAD), null);
+  assert.deepStrictEqual(parseLensReport(`${LENS_HEAD}\nNo findings.`), { critical: 0, high: 0, medium: 0, low: 0, info: 0, overflow: 0 });
+});
+
 test('parseLensReport counts rows by severity', () => {
   assert.deepStrictEqual(parseLensReport(lens('table')), { critical: 0, high: 0, medium: 1, low: 2, info: 0, overflow: 0 });
 });
