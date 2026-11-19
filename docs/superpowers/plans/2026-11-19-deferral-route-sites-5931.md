@@ -18,14 +18,15 @@ Check B classification (plan-audit's keyword walk): each hit was read or grepped
 
 - The CLI's real interface, read from `plugin/bin/deferral-route.js` and `plugin/bin/lib/deferral-route/route.js`: flags `--defer-reason <reason> (--agent-raised | --human) [--severity <critical|high|medium|low|info>] [--size <v>] [--priority <v>] [--risk <v>]`. An absent axis, or any value other than the exact string `low`, counts as not low and files (rule `not-low`). One JSON line on stdout: `{verdict: file|digest|refused, rule, reason (refused only), input}`. Exit 0 for `file`/`digest`, 2 for `refused`. There is no exit 1. `digest` is only ever rule `floor`.
 - Severity is case-sensitive: `--severity High` exits 2 (`{"verdict":"refused","rule":"refused","reason":"--severity \"High\" is not one of: critical, high, medium, low, info",...}`). Every site passes the lowercase word.
-- One command form, cited with the plugin-root placeholder (docs/skill-authoring.md, verbatim: "Skill prose that shells out to a plugin file writes `node "${CLAUDE_PLUGIN_ROOT}/bin/{cli}.js" …`"): `node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} [--severity {severity}] --size {size} --priority {priority} --risk {risk} --agent-raised`. Never `node plugin/bin/…`, never `process.env.CLAUDE_PLUGIN_ROOT`.
-- Every site passes `--agent-raised`. No site passes `--human`.
+- One command form, cited with the plugin-root placeholder (docs/skill-authoring.md, verbatim: "Skill prose that shells out to a plugin file writes `node "${CLAUDE_PLUGIN_ROOT}/bin/{cli}.js" …`"). The contract in `_shared/materiality-floor.md` documents the spec's form, origin flag included: `node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} [--severity {severity}] --size {size} --priority {priority} --risk {risk} (--agent-raised | --human)`. Each site writes the instance it runs, with `--agent-raised` in place of the alternation. Never `node plugin/bin/…`, never `process.env.CLAUDE_PLUGIN_ROOT`.
+- Every site passes `--agent-raised` (Deliverable 5); the contract says so in the sentence after the form. No site passes `--human`.
+- Severity source for control mode (plan-review finding, resolution chosen by the orchestrator): a ledger row (`| # | Phase | Item | Status | Resolution |`) has no severity column, so every `review`-phase row `review/step3-routing.md` writes `open` carries `severity={severity}` (lowercase) in its Resolution, kept through each rewrite while the row stays `open` (Task 2). Control mode passes `--severity` from that token; a `review`-phase row without one passes `--severity high`, so a possibly-high finding files and never digests past release Step 3's `high-severity finding` gate; any other phase passes none (Task 6). Probed: `checkLedgerStatus('open', 'severity=high')` returns `{"refusal":null,"incompleteDeferral":false}`, and `appendLedgerRow` writes `| 1 | review | x | open | severity=high |`, so the `ledger-row` append accepts the token. Rows that lose the token (the refused-proposal reopen in `wrap-up/refused-proposals.md` writes its own note) fall to the `high` default, which fails safe.
 - Verdict handling at every site: `file` → the site's existing filing path; `digest` → the site's existing digest path; `refused` or any other outcome (file missing, another non-zero exit, unparseable stdout) → the item stays open in the site's own sense, the site reports what the command printed, and it never falls back to judging the floor from prose. Per site, "open" is:
-  - review Step 3 — the finding's ledger row stays `open`, its Resolution quoting the output;
+  - review Step 3 — the finding's ledger row stays `open`, its Resolution keeping `severity={severity}` and quoting the output;
   - reflect — the insight stays unactioned in the batch table;
   - residue sweep — the drill offers neither "Route to a record" nor "Digest — below floor";
   - leftover routing — the section becomes an `open` ledger item for Phase 2's drill;
-  - control mode (`_shared/ledger-format.md`, and `wrap-up/review-console.md` step 10 for insight items) — `belowFloor: false`, so the item files or carries; an item with no `deferReason` gets no call and `belowFloor: false`;
+  - control mode (`_shared/ledger-format.md`, and `wrap-up/review-console.md` step 10 for insight items) — `belowFloor: false`, so the item files or carries; an item with no `deferReason` gets no call and `belowFloor: false`; a `review`-phase row with no `severity=` token is routed with `--severity high`;
   - release Step 8 disposition (`release/disposition.md`, which routes through review's Defer bullet) — a `file` failure per its own Failure section: the staged file stays where it is, a `FAILED … — file failed: {what the command printed}` line is written, it counts toward `{k} failed`, and Step 8 skips archival, so the next release run never adopts the directory with the finding unread.
 - No site restates the three-axis rule (`size:low` … `priority:low` … `risk:low`, the pattern at `tests/materiality-floor-conformance.test.js` line 198) or any override (`tangential`, severity). The command form uses `--size {size}`, never a `size:low` token.
 - `## The floor` and `## Overrides` in `_shared/materiality-floor.md` are pinned byte-equal by `tests/bin-lib/deferral-route/route.test.js` (lines 135-162, `sectionOf`, which slices to the next `## `). Never edit inside those two sections; the new section is inserted directly after `## Overrides`, so `sectionOf`'s slice of `## Overrides` ends at `## Applying the floor` with unchanged bytes.
@@ -36,27 +37,28 @@ Check B classification (plan-audit's keyword walk): each hit was read or grepped
 
   | File | Start | End | Delta |
   |---|---|---|---|
-  | `plugin/skills/_shared/materiality-floor.md` | 15413 | 15401 | -12 |
-  | `plugin/skills/review/step3-routing.md` | 39186 | 38774 | -412 |
+  | `plugin/skills/_shared/materiality-floor.md` | 15413 | 15408 | -5 |
+  | `plugin/skills/review/step3-routing.md` | 39186 | 39104 | -82 |
   | `plugin/skills/release/disposition.md` | 15590 | 15559 | -31 |
   | `plugin/skills/reflect/full-mode.md` | 39771 | 39716 | -55 |
   | `plugin/skills/visual-review/browser-review.md` | 27796 | 27532 | -264 |
   | `plugin/skills/wrap-up/residue-sweep.md` | 17222 | 17219 | -3 |
   | `plugin/skills/wrap-up/leftover-routing.md` | 16717 | 16715 | -2 |
-  | `plugin/skills/_shared/ledger-format.md` | 44944 | 44942 | -2 |
+  | `plugin/skills/_shared/ledger-format.md` | 44944 | 44939 | -5 |
   | `plugin/skills/wrap-up/review-console.md` | 44011 | 43996 | -15 |
 
-  Every file ends ≤ its start; the largest end size (ledger-format.md, 44942) leaves 7558 bytes under the rail. The margins on ledger-format.md (-2), leftover-routing.md (-2) and residue-sweep.md (-3) are thin: an implementer who rewords any replacement text re-measures before committing, and a file that ends above its start is a red step, not a PR note.
+  Every file ends ≤ its start; the largest end size (ledger-format.md, 44939) leaves 7561 bytes under the rail. The margins on leftover-routing.md (-2), residue-sweep.md (-3), materiality-floor.md (-5) and ledger-format.md (-5) are thin: an implementer who rewords any replacement text re-measures before committing, and a file that ends above its start is a red step, not a PR note.
 - Trim inventory (text removed beyond the floor restatement each task replaces, and why it is restatement):
   - `materiality-floor.md` `## Consumers` (heading + body, lines 204-212): a list of adopters, which `docs/skill-graph.md` states as edges (CLAUDE.md, "Every relationship between skills is stated once, in `docs/skill-graph.md`"); the health-sweep exception it implied moves into Applying the floor.
   - `materiality-floor.md` lines 8-9, ", and this file repeats that ordering deliberately because it is the predictable failure mode": rationale for the restatement itself, not an instruction; the operative rule before it (citing the file to skip a fix is a misuse; the hard gate still applies) stays verbatim.
   - `materiality-floor.md` line 151, "; `review/step3-routing.md` is the reference implementation": a per-adopter pointer; the instruction "Adopters cite this paragraph rather than restating it" stays.
+  - `materiality-floor.md` lines 120-121, "Its routing comes from the resolver's severity and recommendation split, not from the three-axis floor above.": the split is the section's own first sentence (lines 113-115), and "not from the three-axis floor" is now stated once, as a named exception, in Applying the floor.
   - `release/disposition.md` line 58, "a `high` or `critical` finding clears it by that file's severity override": the Overrides section restated; the command applies it from `--severity`. Line 65, ", so the materiality floor routes a small one to the digest": the floor restated.
-  - `ledger-format.md` lines 171-174, "Note what the reason is **not**: the console is no longer mode-gated — it runs in every mode, including interactive and standalone wrap-up. It is absent here because this is … invoked outside any `/flow` or `/wrap-up` run at all, so no wrap-up ever executes to render one.": history ("no longer"), kept as the tighter negative rule "because this … runs outside any `/flow` or `/wrap-up` run, never because of the mode". Line 177-178, ", since no run-dir log exists to write it to": restates line 169-170's "there is no `staged/` directory or `decisions.md` to write to". Line 174, "inline here instead": "instead" restates "in place of" later in the sentence.
+  - `ledger-format.md` lines 171-174, "Note what the reason is **not**: the console is no longer mode-gated — it runs in every mode, including interactive and standalone wrap-up. It is absent here because this is … invoked outside any `/flow` or `/wrap-up` run at all, so no wrap-up ever executes to render one.": history ("no longer"), kept as the tighter negative rule "as this … runs outside any `/flow` or `/wrap-up` run, never because of the mode". Line 177-178, ", since no run-dir log exists to write it to": restates line 169-170's "there is no `staged/` directory or `decisions.md` to write to". Line 174, "inline here instead": "instead" restates "in place of" later in the sentence. Lines 207-209, " exactly as today" (history) and "is true at `unattended` only; the fail-closed-to-asking rule stays correct wherever a human can actually answer." → "holds at `unattended` only.": the scope limit is kept verbatim in meaning, the rationale clause dropped. Not trimmed, though it looks like restatement: the `ledgerRouteRemainder` status-update parenthetical (lines 197-198) repeats the narrowing step's, but `tests/deferral-gate-conformance.test.js:388` counts at least 4 spec-qualified Defer/Keep path lines (scratch-run: trimming it fails that test, and AC6.1 keeps the file unmodified).
   - `review-console.md` step 10, "those two destinations resolve exclusively through this console's own separate `M#` (step 8) and `U#` (step 9) rows" → "only the `M#` (step 8) and `U#` (step 9) rows resolve them" (same rule, `only` for `exclusively`); "lives inside one staged file, not a console item" → "is not a console item" (the step's first sentence names the staged file); "(the call `_shared/ledger-format.md`'s control-mode paragraph gives)" → "per `_shared/ledger-format.md`'s control-mode paragraph (`console-resolve.js --converge`)".
   - `residue-sweep.md`: "in place of" → "instead of", "instead of a record" → "not a record", "for that item" dropped (the sentence's subject is that item). Its negative rule "never silently substituted after approval" is kept verbatim.
-- Pins checked for every trimmed phrase (`git grep -n -F` over `tests plugin/bin tools .claude/skills`, plus `plugin docs` for prose-held pins): `## Consumers`, `independent of which adopters`, `These adopter files route below-floor`, `full per-skill relationship`, `routed below floor`, `Adopters cite this paragraph`, `reference implementation`, `predictable failure mode`, `repeats that ordering`, `hard gate still applies unchanged`, `no longer mode-gated`, `Note what the reason is`, `so no wrap-up ever executes`, `It is absent here because`, `no run-dir log exists`, `behavior inline here`, `control-mode paragraph gives`, `is not left refused`, `filingFailed: true`, `Reflection insights (#2547)`, `informational only`, `cannot reach it`, `resolve exclusively through`, `own separate`, `lives inside one staged file`, `severity override`, `materiality-floor test`, `fails the floor`, `Digest — below floor`, `after the dedup check`, `treated as medium`, `routes a small one to the digest`, `for that item. This sweep`, `never silently substituted after approval`, `fails to clear the materiality floor`, `always clears the materiality floor`, `deliberately not an adopter`, `recommend-only-path rule`. Hits that are pins, each retargeted with an inventory verdict in its task: `tests/release-run-dir-lifecycle-conformance.test.js:368` (Task 2), `tests/review-routing-line-prose-conformance.test.js:125,134` (Task 2), `tests/control-mode-console-prose.test.js:103` (Task 6). Hits kept untouched: `tests/reflect-wrap-up-insights-staging-conformance.test.js:77-78` (step 10's D4/D5 needles "D4 (Memory) and D5 (Upstream) rows in this table are informational only" and "approving this step never writes a memory file or files upstream feedback on its own" stay verbatim), `tests/materiality-floor-conformance.test.js:79-82,335-345` (Audit-line prefix, Digest URL section), `tests/release-run-dir-lifecycle-conformance.test.js:367,376` (`Digest — below floor`, `else treated as medium for the floor test` stay). No other hit is a pin: `## Consumers` hits are other `_shared` files; the remaining hits are the edited files themselves and the five health sweeps.
-- Whole-change scratch run (plan time): all edits and test edits applied to a `git archive HEAD` extract, then `node tools/run-tests.js --files-from {list}` over every test file naming an edited file, the CLI or a skill-audit suite (8802 tests): 8769 pass, 9 fail. The same 6 files run on an unedited extract fail the same 9 tests (they need a `.git` the extract lacks: `first-call-artifact-check`, `demo-alias-conformance` ×2, `hooks-dispatch-prompt-gate`, `session-limit-degrade-conformance`, `untrusted-record-content-conformance`, `verify-scope-declaration` ×3), so the edits add no failure. The same test edits over unedited skill files: the 21 new `#5931` tests in `tests/materiality-floor-conformance.test.js` fail, 25 in `tests/control-mode-console-prose.test.js`, 28 in `tests/review-routing-line-prose-conformance.test.js`, 1 in `tests/release-run-dir-lifecycle-conformance.test.js`.
+- Pins checked for every trimmed phrase (`git grep -n -F` over `tests plugin/bin tools .claude/skills`, plus `plugin docs` for prose-held pins): `## Consumers`, `independent of which adopters`, `These adopter files route below-floor`, `full per-skill relationship`, `routed below floor`, `Adopters cite this paragraph`, `reference implementation`, `predictable failure mode`, `repeats that ordering`, `hard gate still applies unchanged`, `no longer mode-gated`, `Note what the reason is`, `so no wrap-up ever executes`, `It is absent here because`, `no run-dir log exists`, `behavior inline here`, `control-mode paragraph gives`, `is not left refused`, `filingFailed: true`, `Reflection insights (#2547)`, `informational only`, `cannot reach it`, `resolve exclusively through`, `own separate`, `lives inside one staged file`, `severity override`, `materiality-floor test`, `fails the floor`, `Digest — below floor`, `after the dedup check`, `treated as medium`, `routes a small one to the digest`, `for that item. This sweep`, `never silently substituted after approval`, `fails to clear the materiality floor`, `always clears the materiality floor`, `deliberately not an adopter`, `recommend-only-path rule`, `Its routing comes from the resolver`, `not from the three-axis floor`, `recommendation split`, `Nothing stays unresolved`, `fail-closed-to-asking`, `exactly as today`, `Ledger first, then the patch` (pinned by `tests/staged-patch-contract.test.js:88` as a presence check; the heading stays), `status \`open\`, phase \`review\`` (kept verbatim). Hits that are pins, each retargeted with an inventory verdict in its task: `tests/release-run-dir-lifecycle-conformance.test.js:368` (Task 2), `tests/review-routing-line-prose-conformance.test.js:125,134` (Task 2), `tests/control-mode-console-prose.test.js:103` (Task 6). Hits kept untouched: `tests/reflect-wrap-up-insights-staging-conformance.test.js:77-78` (step 10's D4/D5 needles "D4 (Memory) and D5 (Upstream) rows in this table are informational only" and "approving this step never writes a memory file or files upstream feedback on its own" stay verbatim), `tests/materiality-floor-conformance.test.js:79-82,335-345` (Audit-line prefix, Digest URL section), `tests/release-run-dir-lifecycle-conformance.test.js:367,376` (`Digest — below floor`, `else treated as medium for the floor test` stay). No other hit is a pin: `## Consumers` hits are other `_shared` files; the remaining hits are the edited files themselves and the five health sweeps.
+- Whole-change scratch run (plan time): all edits and test edits applied to a `git archive HEAD` extract, then `node tools/run-tests.js --files-from {list}` over every test file naming an edited file, the CLI or a skill-audit suite (8811 tests): 8778 pass, 9 fail. The same 6 files run on an unedited extract fail the same 9 tests (they need a `.git` the extract lacks: `first-call-artifact-check`, `demo-alias-conformance` ×2, `hooks-dispatch-prompt-gate`, `session-limit-degrade-conformance`, `untrusted-record-content-conformance`, `verify-scope-declaration` ×3), so the edits add no failure. The same test edits over unedited skill files: 23 tests fail in `tests/materiality-floor-conformance.test.js` (17 of them Task 1's), 27 in `tests/control-mode-console-prose.test.js`, 32 in `tests/review-routing-line-prose-conformance.test.js`, 1 in `tests/release-run-dir-lifecycle-conformance.test.js`.
 - Commit messages: `{Verb} {what} — {detail} (#5931)`, then a blank line, then `Claude-Session: https://claude.ai/code/session_016yg3znZfdV181e3d4oRJ3T` (a second `-m`). Stage specific files by path only (never `git add -A` / `.`). Never `git reset`, never `git stash`, never force push.
 - Tests: run targeted files with `node --test <file>` (one file), or `node tools/run-tests.js <files…>` for several (the repo's guard refuses a multi-file `node --test`). Never the full `npm test` suite.
 - Governing skill `.claude/skills/skill-prose-conformance-tests/SKILL.md`, quoted verbatim:
@@ -83,6 +85,8 @@ Checked against the files at plan time:
 - **Stale prose found by the behavior-change sweep:** `residue-sweep.md` lines 181-183 say `_shared/ledger-format.md` "is deliberately not an adopter of the floor … tracked on #1279". Control mode has consulted it since #4620, and after this change runs the command; Task 5 corrects the sentence.
 - `plugin/skills/reflect/hindsight-mode.md` line 53 points at `full-mode.md`'s Defer and Capture bullets, which stay where they are; no edit. `plugin/skills/intake/SKILL.md` line 71 is human input; not a site.
 - `tests/review-routing-line-prose-conformance.test.js`'s two retargeted rows sit at lines **125** and **134** (not 124/135).
+- **No severity on a ledger row:** the ledger table is `| # | Phase | Item | Status | Resolution |` (`plugin/bin/lib/stage-item/ledger.js`'s `appendLedgerRow`), so control mode cannot read a finding's severity today. `review/step3-routing.md` writes `review`-phase rows `open` at line 65 (High/Medium, before the patch), line 69 (a failed `stage-item.js`), line 73 (every staged finding) and line 122 (no valid reason, `auto`). Task 2 makes all of them carry `severity={severity}`; Task 6 reads it.
+- **Floor scope:** the tiebreak can't-tell digest (`materiality-floor.md` lines 111-127), the console-backfill values (lines 129-141) and ledger narrowing (`clearsFloor`, `ledger-format.md` lines 154-209) route by their own rules (spec Non-Goals), so Applying the floor names them as exceptions beside the five health sweeps.
 - Spec Data/API surface says "axis values `low`, `medium`, `high`": the CLI accepts any string for an axis (only `low` is low). Sites are told to pass `low`/`medium`/`high`; nothing breaks on other values.
 
 ## Prior plan reviewer's points (comment 7004714870)
@@ -90,13 +94,14 @@ Checked against the files at plan time:
 - Point 1 (two files would grow against AC5): settled by Decision 1 — no growth allowance; every file ends ≤ start (size table above, trim inventory above).
 - Point 2 (visual-review severity map): settled by Decision 2 — Critical `critical`, Major `medium`, Minor `low`, Cosmetic `info`; Task 4, its test literals and Review Focus 5 follow it.
 - The comment raises no other point.
+- Second plan review (on 93318c5b0), four findings: (1) control mode had no severity source for a ledger row — `severity={severity}` Resolution token written by every `open` review row (Task 2), read by control mode with a `review`-phase `high` default (Task 6); (2) Task 1 marked `Review risk: high`; (3) the contract documents `(--agent-raised | --human)` and says every routing site passes `--agent-raised` (Task 1); (4) Applying the floor is scoped to items carrying a gate `Defer-reason:`, naming the tiebreak can't-tell digest, the console-backfill values and ledger narrowing as exceptions beside the health sweeps (Task 1).
 
 ## Review Focus
 
 1. A findings table renders severity capitalized (`High`, `Critical`); passed through as-is, the CLI refuses with exit 2. Expected: the site passes the lowercase word. Pinned by Task 1's contract test (`lowercase (`critical`, …)` needle) and Task 4's visual-review mapping test.
 2. An axis the site cannot judge (an unstamped `priority`, an unscored item). Expected: passed as `medium`/`high`, never `low`, so the item files. Pinned by `## The floor`'s "counts as **not low**" sentence, byte-pinned by `tests/bin-lib/deferral-route/route.test.js`, and the CLI's `not-low` rule (its exhaustive test), which every site now reaches through the command.
 3. The command is not runnable (plugin root not substituted: `Cannot find module '/bin/deferral-route.js'`), or prints nothing parseable. Expected: the item stays open in the site's sense, never a prose fallback. Pinned at every deferral site by Task 1's `any other outcome` assertion, at release by Task 2's retargeted fact, at step 10 by Task 6's `` `false` on `refused` or any other outcome `` row.
-4. A control-mode item with no mapped `deferReason` (a ledger item, or an insight whose reason `refused-proposals.md` refused). Expected: no command call, `belowFloor: false`. Pinned by Task 6's `LEDGER_CLAIMS` and `STEP_10_CLAIMS` rows `` no `deferReason`: no call, `false` ``.
+4. A control-mode item missing an input: no mapped `deferReason` (a ledger item, or an insight whose reason `refused-proposals.md` refused), or a `review`-phase ledger row with no `severity=` token (a row reopened by `wrap-up/refused-proposals.md`, or one written before this change). Expected: no call and `belowFloor: false` for the first; `--severity high`, so it files, for the second. Pinned by Task 6's `LEDGER_CLAIMS` and `STEP_10_CLAIMS` rows `` no `deferReason`: no call, `false` `` and the `LEDGER_CLAIMS` row `` else `high` for a `review`-phase row ``; Task 2's `SEVERITY_TOKEN_CLAUSES` pin the writer side.
 5. A visual-review Issue whose three axes are all low. Expected: only a Critical always files (`--severity critical`, rule `severity`); a Major (`--severity medium`, performance-budget misses included) digests via rule `floor`. Pinned by Task 4's mapping test (the literals `Critical \`critical\`` and `Major \`medium\``) and the plan-time CLI probes in the Fact-check.
 
 ---
@@ -104,9 +109,10 @@ Checked against the files at plan time:
 ### Task 1: The floor contract names the command, and the conformance suite pins every site
 
 **Role:** judgment
+**Review risk:** high
 
 **Files:**
-- Modify: `plugin/skills/_shared/materiality-floor.md` (lines 8-9 intro tail; insert after line 32, the last line of `## Overrides`; line 151 Digest URL sentence; line 191 Audit line; lines 203-212 `## Consumers` removed)
+- Modify: `plugin/skills/_shared/materiality-floor.md` (lines 8-9 intro tail; insert after line 32, the last line of `## Overrides`; lines 120-121 tiebreak sentence; line 151 Digest URL sentence; line 191 Audit line; lines 203-212 `## Consumers` removed)
 - Test: `tests/materiality-floor-conformance.test.js` (one import after line 16; insert after line 202, the end of the no-restatement test)
 
 **Interfaces:**
@@ -120,7 +126,7 @@ Checked against the files at plan time:
 // Live corpus on purpose (skill-prose-conformance-tests' "documented convention ... against every future
 // addition" row): the claim is that each site's own prose carries the command, which no fixture can stand in for.
 const ROUTE_COMMAND = 'node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason}';
-const ROUTE_FORM = `${ROUTE_COMMAND} [--severity {severity}] --size {size} --priority {priority} --risk {risk} --agent-raised`;
+const ROUTE_FORM = `${ROUTE_COMMAND} [--severity {severity}] --size {size} --priority {priority} --risk {risk} (--agent-raised | --human)`;
 const DEFERRAL_SITES = [
   'plugin/skills/review/step3-routing.md',
   'plugin/skills/reflect/full-mode.md',
@@ -200,8 +206,10 @@ test('#5931 go-red: an override restated across a line wrap fails the deferral-s
 const FLOOR_NEEDLES = [
   ROUTE_FORM,
   'its test pins the two sections above byte-equal',
+  'Every site routing an item that carries a gate `Defer-reason:` runs it',
+  'the five health sweeps, the tiebreak can\'t-tell digest, the console-backfill values and ledger narrowing follow their own rules',
   'lowercase (`critical`, `high`, `medium`, `low`, `info`)',
-  '`--agent-raised` always, never `--human`',
+  'Every routing site passes `--agent-raised`',
   '`verdict` (`file`, `digest` or `refused`) and `rule`',
 ];
 const AUDIT_RULE = /^AUTO \{time\} — materiality-floor: \{item\} routed below floor \(\{defer-reason\}, rule=\{rule\}\) → digest\./m;
@@ -243,10 +251,10 @@ test('#5931 go-red: dropping rule={rule} from the Audit line fails the floor che
 Run: `git grep -n -F '## Applying the floor' -- plugin/skills/_shared/materiality-floor.md`
 Expected: FAIL — exit 1, no match (probed at plan time: exit 1).
 Run: `node --test tests/materiality-floor-conformance.test.js`
-Expected: FAIL after Step 1 — 15 tests fail (scratch run of this exact block over the unedited skill files): the six `#5931 deferral site …` tests (five with `["no paragraph holds the deferral-route.js command form","restates a floor override"]`, ledger-format.md with the first only), the contract test and the move-out control with `heading not found: ## Applying the floor`, the five needle go-red tests, the axis-placeholder control and the `rule={rule}` control on their missing anchor. (Task 4's block is not present yet; with it the scratch run counted 21.) The sample go-red tests pass. Every pre-existing test passes.
+Expected: FAIL after Step 1 — 17 tests fail (scratch run of this exact block over the unedited skill files): the six `#5931 deferral site …` tests (five with `["no paragraph holds the deferral-route.js command form","restates a floor override"]`, ledger-format.md with the first only), the contract test and the move-out control with `heading not found: ## Applying the floor`, the seven needle go-red tests, the axis-placeholder control and the `rule={rule}` control on their missing anchor. (Task 4's block is not present yet; with it the scratch run counted 23.) The sample go-red tests pass. Every pre-existing test passes.
 Write the full output to `$PIPELINE_RUN_DIR/evidence/5931-ac2-base-red.txt` (`mkdir -p "$PIPELINE_RUN_DIR/evidence"` first, the run dir's absolute path substituted, a plain Bash redirect) and log one entry: `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/build" --status AUTO --step "AC evidence" --text-file "{text-file}"`, the text file (written with the Write tool) holding one line: `AC2.2: node --test tests/materiality-floor-conformance.test.js before any site edit — 6 deferral-site tests fail, contract test fails; log at evidence/5931-ac2-base-red.txt`.
 
-- [ ] **Step 3: Edit `plugin/skills/_shared/materiality-floor.md`** — five replacements (scratch-applied; file ends at 15401 bytes):
+- [ ] **Step 3: Edit `plugin/skills/_shared/materiality-floor.md`** — six replacements (scratch-applied; file ends at 15408 bytes):
 
 (a) Lines 8-9: `gate still applies unchanged, and this file repeats that ordering deliberately because it is the` + newline + `predictable failure mode.` becomes `gate still applies unchanged.`
 
@@ -256,16 +264,20 @@ Write the full output to `$PIPELINE_RUN_DIR/evidence/5931-ac2-base-red.txt` (`mk
 ## Applying the floor
 
 `bin/deferral-route.js` is the floor's code home (its test pins the two sections above
-byte-equal). Every routing site but the five health sweeps (their findings carry no
-`Defer-reason:`) runs it instead of applying this prose:
+byte-equal). Every site routing an item that carries a gate `Defer-reason:` runs it instead of
+applying this prose; the five health sweeps, the tiebreak can't-tell digest, the console-backfill
+values and ledger narrowing follow their own rules:
 
-`node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} [--severity {severity}] --size {size} --priority {priority} --risk {risk} --agent-raised`
+`node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} [--severity {severity}] --size {size} --priority {priority} --risk {risk} (--agent-raised | --human)`
 
 `--severity` only when the item has one, lowercase (`critical`, `high`, `medium`, `low`, `info`);
-each axis `low`, `medium` or `high` as the site scores it; `--agent-raised` always, never
-`--human`. It prints `verdict` (`file`, `digest` or `refused`) and `rule`; the site routes the verdict.
+each axis `low`, `medium` or `high` as the site scores it. Every routing site passes
+`--agent-raised`: no typed input reaches one. It prints `verdict` (`file`, `digest` or
+`refused`) and `rule`.
 
 ````
+
+(b2) Lines 120-121: `finding never failed fix-now, so no gate reason describes the digest entry. Its routing comes from` + newline + `the resolver's severity and recommendation split, not from the three-axis floor above. Every other` becomes `finding never failed fix-now, so no gate reason describes the digest entry. Every other` on one line (the tiebreak's exception is now named in Applying the floor; its split is the section's own first sentence).
 
 (c) Lines 150-151: `Adopters cite this paragraph rather than restating` + newline + `it; \`review/step3-routing.md\` is the reference implementation. The five health sweeps additionally fold` becomes the same with `it. The five health sweeps additionally fold` on the second line.
 
@@ -276,7 +288,7 @@ each axis `low`, `medium` or `high` as the site scores it; `--agent-raised` alwa
 - [ ] **Step 4: Run and see the contract half pass**
 
 Run: `node tools/run-tests.js tests/materiality-floor-conformance.test.js tests/bin-lib/deferral-route/route.test.js`
-Expected: `route.test.js` PASS (both prose pins unchanged). In the conformance file every test passes except the six `#5931 deferral site …` tests, which still fail until Tasks 2-6. `wc -c plugin/skills/_shared/materiality-floor.md` prints 15401 (≤ 15413).
+Expected: `route.test.js` PASS (both prose pins unchanged). In the conformance file every test passes except the six `#5931 deferral site …` tests, which still fail until Tasks 2-6. `wc -c plugin/skills/_shared/materiality-floor.md` prints 15408 (≤ 15413).
 
 - [ ] **Step 5: Commit**
 
@@ -291,34 +303,74 @@ git commit -m "Name the deferral-route command in the materiality floor contract
 **Review risk:** high
 
 **Files:**
-- Modify: `plugin/skills/review/step3-routing.md:69` (staging paragraph), `:71` (digest paragraph), `:110` (Defer bullet), `:111` (Capture bullet)
+- Modify: `plugin/skills/review/step3-routing.md:65` (Ledger first, then the patch — the severity token), `:69` (staging paragraph), `:71` (digest paragraph), `:110` (Defer bullet), `:111` (Capture bullet)
 - Modify: `plugin/skills/release/disposition.md:58` (confirmed row), `:65` (proposal row)
-- Test: `tests/review-routing-line-prose-conformance.test.js` (`RECORD_PROPOSAL_CLAUSES`, lines 125 and 134); `tests/release-run-dir-lifecycle-conformance.test.js` (`DISPOSITION_ROUTING`, line 368)
+- Test: `tests/review-routing-line-prose-conformance.test.js` (`RECORD_PROPOSAL_CLAUSES`, lines 125 and 134, one new row; a new `SEVERITY_TOKEN_CLAUSES` block before `missingRecordProposalClauses`, line 144); `tests/release-run-dir-lifecycle-conformance.test.js` (`DISPOSITION_ROUTING`, line 368)
 
 **Interfaces:**
 - Consumes: Task 1's test `#5931 deferral site plugin/skills/review/step3-routing.md …`.
 
-Pin inventory, `RECORD_PROPOSAL_CLAUSES` (every literal the paragraph edit touches): `Before composing, apply \`_shared/materiality-floor.md\`'s floor test` — kept; `other than \`tangential\` goes to the digest container` (line 125) — retargeted to ``['`digest` goes to the digest container', 'routes a digest verdict to the digest container']``; `A \`tangential\` finding, a \`high\` one, or one that clears the floor, is staged` (line 134) — retargeted to ``['A finding the command routes `file` is staged', 'stages a finding the command files']``; `A \`high\` finding never takes the digest branch` — kept (still true, now via the command's severity rule); every other row untouched.
+Pin inventory, `RECORD_PROPOSAL_CLAUSES` (every literal the paragraph edit touches): `Before composing, apply \`_shared/materiality-floor.md\`'s floor test` — kept; `other than \`tangential\` goes to the digest container` (line 125) — retargeted to ``['`digest` goes to the digest container', 'routes a digest verdict to the digest container']``; `A \`tangential\` finding, a \`high\` one, or one that clears the floor, is staged` (line 134) — retargeted to ``['A finding the command routes `file` is staged', 'stages a finding the command files']``; `A \`high\` finding never takes the digest branch` — kept (still true, now via the command's severity rule); one new row ``['its Resolution keeping `severity={severity}`', 'keeps the severity token when a refused floor call leaves the row open']``; every other row untouched. `recordProposalParagraph` holds lines 69 and 71, not line 65, so line 65's token rule gets its own block (Step 1).
 
 Pin inventory, `DISPOSITION_ROUTING`: line 368 `` /a `high` or `critical` finding clears it by that file's severity override/ `` — retargeted to `` [/passing the finding's `--severity`/, 'a confirmed finding passes its own severity to the floor command'] `` (the override it named is the command's `severity` rule, which the finding's own `--severity` triggers), plus one new row `` [/`refused` or any other outcome is a `file` failure \(below\) naming what the command printed/, 'a refused or unreadable floor verdict is a file failure that leaves the file staged'] ``; line 367 `/Digest — below floor/`, line 376 `/else treated as medium for the floor test/` and line 377 `/A \`review-followup-\` file already holds a composed record, so after the floor test it is filed as written/` — kept (text unchanged); every other row untouched. `assertFactsAndGoRed` strips each pattern's first match and requires exactly that fact to go red, so each new pattern must match once (scratch run: it does).
 
-- [ ] **Step 1: Retarget the rows** in `tests/review-routing-line-prose-conformance.test.js` and `tests/release-run-dir-lifecycle-conformance.test.js` as listed above.
+- [ ] **Step 1: Retarget and add the rows** in `tests/review-routing-line-prose-conformance.test.js` and `tests/release-run-dir-lifecycle-conformance.test.js` as listed above, and insert before `function missingRecordProposalClauses(paragraph) {` (line 144):
+
+```js
+// #5931: control mode reads an open review row's severity from its Resolution (_shared/ledger-format.md),
+// so the ledger-first paragraph must write the token and keep it while the row stays open.
+const SEVERITY_TOKEN_CLAUSES = [
+  ["`--resolution 'severity={severity}'`", 'appends a review row with its severity token'],
+  ['kept through each rewrite while it stays `open`', 'keeps the severity token through every open rewrite'],
+];
+const ledgerFirstParagraph = (text) => text.split('\n').find((l) => l.startsWith('**Ledger first, then the patch.**')) || '';
+const missingSeverityTokenClauses = (text) => {
+  const paragraph = ledgerFirstParagraph(text);
+  return SEVERITY_TOKEN_CLAUSES.filter(([literal]) => !paragraph.includes(literal)).map(([, fact]) => fact);
+};
+test('#5931: the ledger-first paragraph writes and keeps each open review row\'s severity token', () => {
+  assert.ok(ledgerFirstParagraph(md), 'the "Ledger first, then the patch." paragraph is missing');
+  assert.deepEqual(missingSeverityTokenClauses(md), []);
+});
+for (const [literal, fact] of SEVERITY_TOKEN_CLAUSES) {
+  test(`#5931 go-red: removing the clause that ${fact} turns that clause red`, () => {
+    const paragraph = ledgerFirstParagraph(md);
+    const doctored = md.replace(paragraph, () => paragraph.split(literal).join(''));
+    assert.notEqual(doctored, md, `anchor: "${literal}" not found — proof cannot discriminate`);
+    assert.deepEqual(missingSeverityTokenClauses(doctored), [fact]);
+  });
+}
+test('#5931 go-red: the severity clauses moved out of the ledger-first paragraph turn both red', () => {
+  const paragraph = ledgerFirstParagraph(md);
+  const stripped = SEVERITY_TOKEN_CLAUSES.reduce((p, [literal]) => p.split(literal).join(''), paragraph);
+  const moved = `${md.replace(paragraph, () => stripped)}\n${SEVERITY_TOKEN_CLAUSES.map(([literal]) => literal).join(' ')}\n`;
+  assert.deepEqual(missingSeverityTokenClauses(moved), SEVERITY_TOKEN_CLAUSES.map(([, fact]) => fact));
+});
+```
 
 - [ ] **Step 2: Run and see it fail**
 
 Run: `git grep -n -F 'bin/deferral-route.js' -- plugin/skills/review/step3-routing.md plugin/skills/release/disposition.md`
 Expected: FAIL — exit 1, no match (probed at plan time: exit 1).
 Run: `node --test tests/review-routing-line-prose-conformance.test.js`
-Expected: FAIL after Step 1 — `the record-proposal paragraph is missing clauses` naming the two retargeted facts, and 28 tests fail in all (scratch run).
+Expected: FAIL after Step 1 — `the record-proposal paragraph is missing clauses` naming the three new or retargeted facts, the severity-token test and its two go-red tests, 32 tests in all (scratch run).
 Run: `node --test tests/release-run-dir-lifecycle-conformance.test.js`
 Expected: FAIL after Step 1 — `AC3.1: disposition.md routing table` reports `["a confirmed finding passes its own severity to the floor command","a refused or unreadable floor verdict is a file failure that leaves the file staged"]`; the other 49 tests pass (scratch run).
 
 - [ ] **Step 3: Edit both files.** Each paragraph and table row stays one physical line.
 
+`step3-routing.md` line 65, replace `(\`_shared/ledger-format.md\`'s Writer section; status \`open\`, phase \`review\`) before composing the staged patch — the verb's JSON \`row\` is the item number the patch's \`Ledger:\` field below points at, so the order matters: a patch composed first would have nothing to reference.` with:
+
+````text
+(`_shared/ledger-format.md`'s Writer section; status `open`, phase `review`, `--resolution 'severity={severity}'`) before composing the staged patch — the verb's JSON `row` is the item number the patch's `Ledger:` field below points at, so the order matters: a patch composed first would have nothing to reference. Every `review`-phase row this file writes `open` carries that `severity={severity}` token (the finding's lowercase severity) in its Resolution, kept through each rewrite while it stays `open`: control mode's floor call reads it (`_shared/ledger-format.md`).
+````
+
+(The rule covers line 69's failed-`stage-item.js` rewrite, line 73's staged-finding appends and line 122's no-valid-reason `open` item without editing those sentences.)
+
 `step3-routing.md` line 69, replace `Before composing, apply \`_shared/materiality-floor.md\`'s floor test to a low or medium finding: … A \`tangential\` finding, a \`high\` one, or one that clears the floor, is staged as follows.` (the four sentences from "Before composing" through "is staged as follows.") with:
 
 ````text
-Before composing, apply `_shared/materiality-floor.md`'s floor test with `node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} --severity {severity} --size {size} --priority {priority} --risk {risk} --agent-raised`, the axes scored as the Defer bullet scores them: `digest` goes to the digest container instead, per the next paragraph; `refused` or any other outcome stages nothing and leaves the finding's ledger row `open`, its Resolution quoting what the command printed. A `high` finding never takes the digest branch: the command files it, so its composer line carries the `high-severity finding` token release Step 3 blocks on. A finding the command routes `file` is staged as follows.
+Before composing, apply `_shared/materiality-floor.md`'s floor test with `node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} --severity {severity} --size {size} --priority {priority} --risk {risk} --agent-raised`, the axes scored as the Defer bullet scores them: `digest` goes to the digest container instead, per the next paragraph; `refused` or any other outcome stages nothing and leaves the finding's ledger row `open`, its Resolution keeping `severity={severity}` and quoting what the command printed. A `high` finding never takes the digest branch: the command files it, so its composer line carries the `high-severity finding` token release Step 3 blocks on. A finding the command routes `file` is staged as follows.
 ````
 
 Line 71, replace `A low or medium finding the floor test above routes here goes to the digest container` with `A finding the floor test above routes \`digest\` goes to the digest container`.
@@ -348,7 +400,7 @@ Before invoking capture, run the Defer bullet's `deferral-route.js` command and 
 - [ ] **Step 4: Run and see it pass**
 
 Run: `node tools/run-tests.js tests/materiality-floor-conformance.test.js tests/review-routing-line-prose-conformance.test.js tests/release-run-dir-lifecycle-conformance.test.js tests/deferral-gate-conformance.test.js`
-Expected: the step3-routing deferral-site test PASS; `review-routing-line-prose-conformance` and `release-run-dir-lifecycle-conformance` PASS in full; `deferral-gate-conformance` PASS unmodified; the other deferral-site tests still FAIL. `wc -c` prints 38774 for step3-routing.md (≤ 39186) and 15559 for disposition.md (≤ 15590).
+Expected: the step3-routing deferral-site test PASS; `review-routing-line-prose-conformance` and `release-run-dir-lifecycle-conformance` PASS in full; `deferral-gate-conformance` PASS unmodified; the other deferral-site tests still FAIL. `wc -c` prints 39104 for step3-routing.md (≤ 39186) and 15559 for disposition.md (≤ 15590).
 
 - [ ] **Step 5: Commit**
 
@@ -542,11 +594,11 @@ git commit -m "Route wrap-up residue and leftover deferrals through deferral-rou
 **Review risk:** high
 
 **Files:**
-- Modify: `plugin/skills/_shared/ledger-format.md:171-178` (Standalone run paragraph), `:211` (control-mode paragraph); `plugin/skills/wrap-up/review-console.md:123` (On approval step 10)
+- Modify: `plugin/skills/_shared/ledger-format.md:171-178` (Standalone run paragraph), `:207-209` (supervised/trusted fall-through), `:211` (control-mode paragraph); `plugin/skills/wrap-up/review-console.md:123` (On approval step 10)
 - Test: `tests/control-mode-console-prose.test.js` (`LEDGER_CLAIMS` lines 61-70, `STEP_10_CLAIMS` line 103)
 - Read only: `plugin/bin/lib/console/residue-convergence.js` — line 77's `item.belowFloor === true` is the consumer; its tests run unmodified in Step 4.
 
-Pin inventory: `STEP_10_CLAIMS` row 103 `` '`belowFloor` judged per `_shared/materiality-floor.md`' `` — retargeted to three rows: ``["`belowFloor` from that paragraph's `deferral-route.js` call", 'step 10 does not set an insight item belowFloor from the deferral-route.js verdict']``, ``['`false` on `refused` or any other outcome', 'step 10 does not set belowFloor false on a refused or unreadable verdict']``, ``['no `deferReason`: no call, `false`', 'step 10 does not skip the command for an insight with no deferReason']``. Every other `STEP_10_CLAIMS` row is kept; its needles (`--converge`, `source: 'insight'`, `id: 'insight-{row}'`, `status: 'open'`, `Recommended-cell reason`, `writes no ledger row`, `` as step 7 creates a `Q#` ``, `` `carried` → nothing more ``, `` `digested` → the digest entry only ``, `exit 2, 3 or 6`) all survive the edit, and the `GATE` literal on step 10 is untouched. `LEDGER_CLAIMS` gains two rows after line 69 (the narrowing slice runs from `#### Ledger narrowing` to `\nAfter Phase 1 (and, when the capability`, so it holds line 211): ``['prints `digest` (`false` on `file`, `refused` or any other outcome', 'the control-mode paragraph does not set belowFloor from the deferral-route.js verdict']`` and ``['no `deferReason`: no call, `false`', 'the control-mode paragraph does not skip the command for an item with no deferReason']``. The existing go-red loops (lines 81-87, 120-126) give every new row a message-matched control. `tests/reflect-wrap-up-insights-staging-conformance.test.js`'s step 10 needles (lines 71-78, 88) stay verbatim.
+Pin inventory: `STEP_10_CLAIMS` row 103 `` '`belowFloor` judged per `_shared/materiality-floor.md`' `` — retargeted to three rows: ``["`belowFloor` from that paragraph's `deferral-route.js` call", 'step 10 does not set an insight item belowFloor from the deferral-route.js verdict']``, ``['`false` on `refused` or any other outcome', 'step 10 does not set belowFloor false on a refused or unreadable verdict']``, ``['no `deferReason`: no call, `false`', 'step 10 does not skip the command for an insight with no deferReason']``. Every other `STEP_10_CLAIMS` row is kept; its needles (`--converge`, `source: 'insight'`, `id: 'insight-{row}'`, `status: 'open'`, `Recommended-cell reason`, `writes no ledger row`, `` as step 7 creates a `Q#` ``, `` `carried` → nothing more ``, `` `digested` → the digest entry only ``, `exit 2, 3 or 6`) all survive the edit, and the `GATE` literal on step 10 is untouched. `LEDGER_CLAIMS` gains two rows after line 69 (the narrowing slice runs from `#### Ledger narrowing` to `\nAfter Phase 1 (and, when the capability`, so it holds line 211): ``['prints `digest` (`false` on `file`, `refused` or any other outcome', 'the control-mode paragraph does not set belowFloor from the deferral-route.js verdict']`` and ``['no `deferReason`: no call, `false`', 'the control-mode paragraph does not skip the command for an item with no deferReason']``, plus two for the severity source: ``["`{severity}` the row's `severity={severity}` token", "the control-mode paragraph does not read a row's severity token"]`` and ``['else `high` for a `review`-phase row', 'the control-mode paragraph does not pass --severity high for a review row with no severity']``. The existing go-red loops (lines 81-87, 120-126) give every new row a message-matched control. `tests/reflect-wrap-up-insights-staging-conformance.test.js`'s step 10 needles (lines 71-78, 88) stay verbatim.
 
 - [ ] **Step 1: Edit the rows** in `tests/control-mode-console-prose.test.js` as listed.
 
@@ -555,7 +607,7 @@ Pin inventory: `STEP_10_CLAIMS` row 103 `` '`belowFloor` judged per `_shared/mat
 Run: `git grep -n -F 'deferral-route.js' -- plugin/skills/_shared/ledger-format.md plugin/skills/wrap-up/review-console.md`
 Expected: FAIL — exit 1, no match (probed at plan time: exit 1).
 Run: `node --test tests/control-mode-console-prose.test.js`
-Expected: FAIL after Step 1 — 25 tests fail (scratch run): `AC2.1: ledger-format.md routes every open item …` reports the two new messages; `AC2.1: review-console.md step 10 …` reports the three new step-10 messages; each existing go-red loop entry for those two sections fails because the new rows are still missing.
+Expected: FAIL after Step 1 — 27 tests fail (scratch run): `AC2.1: ledger-format.md routes every open item …` reports the four new messages; `AC2.1: review-console.md step 10 …` reports the three new step-10 messages; each existing go-red loop entry for those two sections fails because the new rows are still missing.
 Run: `node --test --test-name-pattern "deferral site plugin/skills/_shared/ledger-format.md" tests/materiality-floor-conformance.test.js`
 Expected: FAIL — `["no paragraph holds the deferral-route.js command form"]`.
 
@@ -564,21 +616,23 @@ Expected: FAIL — `["no paragraph holds the deferral-route.js command form"]`.
 `ledger-format.md` line 211, replace `` `belowFloor` judged per `_shared/materiality-floor.md`, `deferReason` per `wrap-up/residue-sweep.md`'s `remedy: record` mapping (omitted when no mapping applies) — `` with:
 
 ````text
-`deferReason` per `wrap-up/residue-sweep.md`'s `remedy: record` mapping (omitted when none applies), `belowFloor` `true` only when `node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} [--severity {severity}] --size {size} --priority {priority} --risk {risk} --agent-raised` prints `digest` (`false` on `file`, `refused` or any other outcome; no `deferReason`: no call, `false`) —
+`deferReason` per `wrap-up/residue-sweep.md`'s `remedy: record` mapping (omitted when none applies), `belowFloor` `true` only when `node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} [--severity {severity}] --size {size} --priority {priority} --risk {risk} --agent-raised` prints `digest` (`false` on `file`, `refused` or any other outcome; no `deferReason`: no call, `false`), `{severity}` the row's `severity={severity}` token, else `high` for a `review`-phase row, else omitted —
 ````
 
-(`{reason}` is the item's mapped `deferReason`; `--severity` only when the item records a finding severity, per `_shared/materiality-floor.md`'s Applying the floor.) The item JSON shape `{ "id", "source", "text", "status", "deferReason", "belowFloor" }` is unchanged.
+(`{reason}` is the item's mapped `deferReason`. The `high` default is the fail-safe for a review finding whose row lost or never had the token: it files, so it never digests past release Step 3's `high-severity finding` gate.) The item JSON shape `{ "id", "source", "text", "status", "deferReason", "belowFloor" }` is unchanged.
+
+`ledger-format.md` lines 207-209, replace `unchanged per-item drill below exactly as today. "Nothing stays unresolved" is true at \`unattended\`` + newline + `only; the fail-closed-to-asking rule stays correct wherever a human can actually answer.` with `unchanged per-item drill below. "Nothing stays unresolved" holds at \`unattended\` only.`
 
 `ledger-format.md` lines 171-174, replace `reconcile a staged file into a real record. Note what the reason is **not**: the console is no` through `` `/wrap-up` run at all, so no wrap-up ever executes to render one. Apply Phase 3's standalone `` with:
 
 ````text
-reconcile a staged file into a real record, because this `/claude-tweaks:ledger resolve` runs
+reconcile a staged file into a real record, as this `/claude-tweaks:ledger resolve` runs
 outside any `/flow` or `/wrap-up` run, never because of the mode. Apply Phase 3's standalone
 ````
 
 `ledger-format.md` lines 175-178, replace `behavior inline here instead —` with `behavior inline here —`, and `entry above, since no run-dir log exists to write it to.` with `entry above.` (the rest of those lines unchanged).
 
-`review-console.md` line 123 (step 10), three replacements:
+`review-console.md` line 123 (step 10), four replacements:
 - `converge it with \`console-resolve.js --converge\` (the call \`_shared/ledger-format.md\`'s control-mode paragraph gives) as` → `converge it per \`_shared/ledger-format.md\`'s control-mode paragraph (\`console-resolve.js --converge\`) as`
 - `` `belowFloor` judged per `_shared/materiality-floor.md`; `` → ``` `belowFloor` from that paragraph's `deferral-route.js` call (`false` on `refused` or any other outcome; no `deferReason`: no call, `false`); ``` — matching ledger-format.md's control-mode wording, so a row whose reason `refused-proposals.md` refused converges with `belowFloor: false` and no call.
 - `approving this step never writes a memory file or files upstream feedback on its own; those two destinations resolve exclusively through this console's own separate \`M#\` (step 8) and \`U#\` (step 9) rows.` → `approving this step never writes a memory file or files upstream feedback on its own; only the \`M#\` (step 8) and \`U#\` (step 9) rows resolve them.`
@@ -587,7 +641,7 @@ outside any `/flow` or `/wrap-up` run, never because of the mode. Apply Phase 3'
 - [ ] **Step 4: Run and see it pass (AC4.1)**
 
 Run: `node tools/run-tests.js tests/control-mode-console-prose.test.js tests/materiality-floor-conformance.test.js tests/bin-lib/console/residue-convergence.test.js tests/deferral-gate-conformance.test.js tests/ledger-reader-ownership-conformance.test.js tests/staged-patch-contract.test.js tests/reflect-wrap-up-insights-staging-conformance.test.js tests/console-resolve-conformance.test.js`
-Expected: PASS, every file — all six deferral-site tests now green; `residue-convergence.test.js` and `deferral-gate-conformance.test.js` unmodified. `wc -c` prints 44942 for ledger-format.md (≤ 44944) and 43996 for review-console.md (≤ 44011).
+Expected: PASS, every file — all six deferral-site tests now green; `residue-convergence.test.js` and `deferral-gate-conformance.test.js` unmodified. `wc -c` prints 44939 for ledger-format.md (≤ 44944) and 43996 for review-console.md (≤ 44011).
 Then the AC4.1 real-writer probe (plan-time run, recorded): spawn the CLI for `blocked-external` all axes low → `digest`; `blocked-external` priority medium → `file`; `not-a-reason` → exit 2 `refused`; map each to `belowFloor = verdict === 'digest'` and pass the items to the real `convergeResidue` (`plugin/bin/lib/console/residue-convergence.js`) with `compose: () => null`. Observed at plan time: `ledger-1: exit 0 verdict digest` → `digested`; `ledger-2: exit 0 verdict file` → `carried`; `ledger-3: exit 2 verdict refused` → `carried`. Re-run it from a scratch script (uncommitted), write its output to `$PIPELINE_RUN_DIR/evidence/5931-ac4-converge.txt`, and log an `AC evidence` entry as in Task 1 Step 2 naming `AC4.1`.
 
 - [ ] **Step 5: Commit**
@@ -633,7 +687,7 @@ Expected: one count each for `_shared/ledger-format.md`, `_shared/materiality-fl
 Run: `git grep -n -E "always clears|override clears" -- plugin/skills/review/step3-routing.md plugin/skills/reflect/full-mode.md plugin/skills/wrap-up/residue-sweep.md plugin/skills/wrap-up/leftover-routing.md plugin/skills/visual-review/browser-review.md plugin/skills/_shared/ledger-format.md`
 Expected: no output. Control, run first against base: `git grep -n -c -E "always clears|override clears" {base} -- plugin/skills/review/step3-routing.md plugin/skills/reflect/full-mode.md plugin/skills/visual-review/browser-review.md` prints 2, 1 and 3 (seen at plan time on 75322a921e), so the search can find its target.
 
-- [ ] **Step 5: AC5.1 sizes.** Run `wc -c` on the nine edited skill files and compare with the Global Constraints table: every file must end at or below its start (materiality-floor.md 15401 ≤ 15413, step3-routing.md 38774 ≤ 39186, disposition.md 15559 ≤ 15590, full-mode.md 39716 ≤ 39771, browser-review.md 27532 ≤ 27796, residue-sweep.md 17219 ≤ 17222, leftover-routing.md 16715 ≤ 16717, ledger-format.md 44942 ≤ 44944, review-console.md 43996 ≤ 44011). A file above its start is a failed step: trim restatement in that file per the trim-inventory rule and re-run, never report growth. The PR body's AC5 section lists each file's start → end bytes and the trim inventory. If an upstream merge landed in any of these files after planning, re-measure start with `git cat-file -s {base}:{path}` and end with `wc -c` before reporting (shared-contract-extraction's merge-time rule).
+- [ ] **Step 5: AC5.1 sizes.** Run `wc -c` on the nine edited skill files and compare with the Global Constraints table: every file must end at or below its start (materiality-floor.md 15408 ≤ 15413, step3-routing.md 39104 ≤ 39186, disposition.md 15559 ≤ 15590, full-mode.md 39716 ≤ 39771, browser-review.md 27532 ≤ 27796, residue-sweep.md 17219 ≤ 17222, leftover-routing.md 16715 ≤ 16717, ledger-format.md 44939 ≤ 44944, review-console.md 43996 ≤ 44011). A file above its start is a failed step: trim restatement in that file per the trim-inventory rule and re-run, never report growth. The PR body's AC5 section lists each file's start → end bytes and the trim inventory. If an upstream merge landed in any of these files after planning, re-measure start with `git cat-file -s {base}:{path}` and end with `wc -c` before reporting (shared-contract-extraction's merge-time rule).
 
 - [ ] **Step 6: Public-contract proof**
 
