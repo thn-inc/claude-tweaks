@@ -4006,6 +4006,28 @@ test('fix round: ctx.worker merges both launches: the fix title commits, cost an
   assert.equal(lastLine(failed).costUsd, 1.25);
 });
 
+test('fix round: the review event carries the fix worker\'s session as fixSessionId, and only when there is one', async () => {
+  const FIRST = '11111111-1111-4111-8111-111111111111';
+  const FIX = '22222222-2222-4222-8222-222222222222';
+  const firstLaunch = nthCall((c) => c.kind === 'worker' && c.args[0].role === 'implementer', 1, { ...ENVELOPE, sessionId: FIRST });
+  const h = fixRig({ script: [firstLaunch], fix: { sessionId: FIX } });
+  await run(['#7'], h.deps);
+  assert.deepEqual([reviewLines(h)[0].status, reviewLines(h)[0].fixSessionId], ['ok', FIX]);
+  assert.equal(h.lines().find((l) => l.step === 'worker').sessionId, FIRST, 'the first worker keeps its own session');
+  // A fix launch that fails still names its session on the review event.
+  const failed = fixRig({ fix: { status: 'fail', reason: 'exit', result: null, detail: 'x', sessionId: FIX } });
+  await run(['#7'], failed.deps);
+  assert.deepEqual([reviewLines(failed)[0].status, reviewLines(failed)[0].fixSessionId], ['fail', FIX]);
+  // A fix worker with no session id, and a review with no fix round: no fixSessionId key.
+  const unbound = fixRig();
+  await run(['#7'], unbound.deps);
+  assert.ok(!('fixSessionId' in reviewLines(unbound)[0]));
+  const noFix = fixRig({ findings: [] });
+  await run(['#7'], noFix.deps);
+  assert.equal(implementerCalls(noFix).length, 1, 'no fix round ran');
+  assert.ok(!('fixSessionId' in reviewLines(noFix)[0]));
+});
+
 test('fix round: a parent the fix worker turned into a symlink out of the worktree is refused, with no write', async () => {
   const parent = path.join(WT, 'tests', 'new');
   const outside = path.join(MAIN, 'outside');
