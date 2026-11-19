@@ -13,6 +13,7 @@ const { spawnSync } = require('child_process');
 
 const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record');
 const { trustedJqSelect, untrustedJqNote } = require('../plugin/bin/lib/issues/comment-trust');
+const { scratchDir } = require('./helpers/tmp-dir');
 const { readText } = require('./helpers/read-skill');
 const { sectionOf, lineStartingWith } = require('./helpers/conformance-asserts');
 const { run: routeCli } = require('../plugin/bin/deferral-route');
@@ -293,7 +294,9 @@ test('#5931 go-red: an override restated across a line wrap fails the deferral-s
 
 // Every documented command form, filled in, must parse and route through the real CLI: the prose pins
 // above compare text to text, so a renamed CLI flag would leave them green while every call refuses.
-const ROUTE_SPAN = /`(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/deferral-route\.js"[^`]*)`/g;
+// A cwd with no policy.yml, so the CLI's policy read resolves the empty default.
+const NO_POLICY_DIR = scratchDir('ct-materiality-nopolicy-');
+const ROUTE_SPAN =/`(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/deferral-route\.js"[^`]*)`/g;
 function routeVerdict(span, severity) {
   const filled = span
     .replace('(--agent-raised | --human)', '--agent-raised')
@@ -302,7 +305,7 @@ function routeVerdict(span, severity) {
     .replace('{severity}', severity)
     .replace(/\{(size|priority|risk)\}/g, 'low');
   let out = '';
-  const code = routeCli(filled.split(/\s+/).slice(2), { stdout: (s) => { out += s; }, stderr: () => {} });
+  const code = routeCli(filled.split(/\s+/).slice(2), { stdout: (s) => { out += s; }, stderr: () => {}, cwd: () => NO_POLICY_DIR, env: {} });
   return { code, verdict: JSON.parse(out).verdict };
 }
 for (const rel of ['plugin/skills/_shared/materiality-floor.md', ...DEFERRAL_SITES]) {

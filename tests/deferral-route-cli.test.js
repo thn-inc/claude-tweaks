@@ -17,12 +17,34 @@ const { realDeps, USAGE } = require(CLI);
 const LOW = ['--size', 'low', '--priority', 'low', '--risk', 'low'];
 const SEVERITIES_TEXT = 'critical, high, medium, low, info';
 
-function call(...argv) {
-  const res = runCliSync(CLI, argv);
+// A cwd with no .claude-tweaks/policy.yml: every call that is not about policy runs against it.
+const NO_POLICY = scratchDir('ct-deferral-route-nopolicy-');
+const LISTED = 'deferral-digest-reasons: pre-existing-outside-diff, tangential\n';
+
+// A project directory holding policy.yml and/or run/config.yml, removed at process exit.
+function project({ policy, runConfig }) {
+  const dir = scratchDir('ct-deferral-route-proj-', { realpath: true });
+  const runDir = path.join(dir, 'run');
+  fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
+  fs.mkdirSync(runDir, { recursive: true });
+  if (policy !== undefined) fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), policy);
+  if (runConfig !== undefined) fs.writeFileSync(path.join(runDir, 'config.yml'), runConfig);
+  return { dir, runDir };
+}
+
+// The resolver starts git, so the injected env carries PATH (and SystemRoot on Windows).
+const GIT_ENV = { PATH: process.env.PATH, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) };
+
+function callIn(cwd, ...argv) {
+  const res = runCliSync(CLI, argv, { cwd, env: GIT_ENV });
   const lines = res.stdout.split('\n');
   assert.equal(lines.pop(), '', 'stdout ends with a newline');
   assert.equal(lines.length, 1, 'exactly one stdout line');
   return { code: res.code, stderr: res.stderr, json: JSON.parse(lines[0]) };
+}
+
+function call(...argv) {
+  return callIn(NO_POLICY, ...argv);
 }
 
 function verdictOf(...argv) {
@@ -138,7 +160,7 @@ test('refusals: both origins, neither origin, unknown flag', () => {
   assert.equal(neither.json.reason, 'exactly one of --agent-raised or --human is required');
   const unknown = call('--defer-reason', 'tangential', '--agent-raised', '--bogus');
   assert.equal(unknown.code, 2);
-  assert.equal(unknown.json.reason, 'unknown flag --bogus; accepted: --defer-reason, --severity, --size, --priority, --risk, --agent-raised, --human, --help');
+  assert.equal(unknown.json.reason, 'unknown flag --bogus; accepted: --defer-reason, --severity, --size, --priority, --risk, --agent-raised, --human, --run, --help');
 });
 
 test('the both-origins refusal is raised where the second origin appears, so it beats a later unknown flag', () => {
@@ -150,7 +172,7 @@ test('the both-origins refusal is raised where the second origin appears, so it 
 test('a stray positional is an unknown argument, not an unknown flag', () => {
   const { code, json } = call('tangential');
   assert.equal(code, 2);
-  assert.equal(json.reason, 'unknown argument tangential; accepted: --defer-reason, --severity, --size, --priority, --risk, --agent-raised, --human, --help');
+  assert.equal(json.reason, 'unknown argument tangential; accepted: --defer-reason, --severity, --size, --priority, --risk, --agent-raised, --human, --run, --help');
 });
 
 test('a parse refusal still carries every known flag in input; the first refusal decides the reason', () => {
@@ -188,6 +210,134 @@ test('-h as a value is an ordinary value, refused by the function as a bad sever
   assert.equal(json.reason, `--severity "-h" is not one of: ${SEVERITIES_TEXT}`);
 });
 
+test('#5932 AC2.1 CLI: listed pre-existing-outside-diff at --size high --risk medium digests by policy-reason', () => {
+  const { dir } = project({ policy: LISTED });
+  const { code, stderr, json } = callIn(dir, '--defer-reason', 'pre-existing-outside-diff', '--size', 'high', '--risk', 'medium', '--agent-raised');
+  assert.equal(code, 0);
+  assert.equal(stderr, '');
+  assert.deepStrictEqual({ verdict: json.verdict, rule: json.rule }, { verdict: 'digest', rule: 'policy-reason' });
+});
+
+test('#5932 AC3.1 CLI: listed tangential digests; AC3.2 the same with --human files', () => {
+  const { dir } = project({ policy: LISTED });
+  const agent = callIn(dir, '--defer-reason', 'tangential', '--agent-raised');
+  assert.deepStrictEqual({ code: agent.code, verdict: agent.json.verdict, rule: agent.json.rule }, { code: 0, verdict: 'digest', rule: 'policy-reason' });
+  const human = callIn(dir, '--defer-reason', 'tangential', '--human');
+  assert.deepStrictEqual({ code: human.code, verdict: human.json.verdict, rule: human.json.rule }, { code: 0, verdict: 'file', rule: 'human' });
+});
+
+test('#5932 AC4.1 CLI: listed reason with --severity high files', () => {
+  const { dir } = project({ policy: LISTED });
+  const { code, json } = callIn(dir, '--defer-reason', 'pre-existing-outside-diff', '--severity', 'high', '--agent-raised');
+  assert.deepStrictEqual({ code, verdict: json.verdict, rule: json.rule }, { code: 0, verdict: 'file', rule: 'severity' });
+});
+
+test('#5932 AC5.1 CLI: genuinely-larger at --size high --priority medium --risk high files', () => {
+  const { dir } = project({ policy: LISTED });
+  const { code, json } = callIn(dir, '--defer-reason', 'genuinely-larger', '--size', 'high', '--priority', 'medium', '--risk', 'high', '--agent-raised');
+  assert.deepStrictEqual({ code, verdict: json.verdict, rule: json.rule }, { code: 0, verdict: 'file', rule: 'not-low' });
+});
+
+const warning = (bad) => `deferral-route: warning: deferral-digest-reasons has invalid element "${bad}" — using the default (no reasons)\n`;
+
+test('#5932 AC6.1 CLI: an invalid list warns once and still prints a verdict', () => {
+  for (const policy of ['deferral-digest-reasons: not-a-reason\n', 'deferral-digest-reasons: pre-existing-outside-diff, not-a-reason\n']) {
+    const { dir } = project({ policy });
+    const { code, stderr, json } = callIn(dir, '--defer-reason', 'pre-existing-outside-diff', '--size', 'high', '--agent-raised');
+    assert.deepStrictEqual({ code, verdict: json.verdict, rule: json.rule }, { code: 0, verdict: 'file', rule: 'not-low' }, policy);
+    assert.equal(stderr, warning('not-a-reason'), policy);
+  }
+});
+
+test('#5932 review focus 4: a near-miss element is named in the warning', () => {
+  for (const [value, bad] of [['Tangential', 'Tangential'], ['tangential,', '']]) {
+    const { dir } = project({ policy: `deferral-digest-reasons: ${value}\n` });
+    const { code, stderr, json } = callIn(dir, '--defer-reason', 'tangential', '--agent-raised');
+    assert.deepStrictEqual({ code, verdict: json.verdict, rule: json.rule }, { code: 0, verdict: 'file', rule: 'tangential' }, value);
+    assert.equal(stderr, warning(bad), value);
+  }
+});
+
+test('#5932 AC7.1 CLI: a run config overrides the repository\'s list for a call with --run', () => {
+  const { dir, runDir } = project({ policy: 'deferral-digest-reasons: tangential\n', runConfig: 'deferral-digest-reasons: genuinely-larger\n' });
+  const withRun = callIn(dir, '--defer-reason', 'genuinely-larger', '--size', 'high', '--agent-raised', '--run', runDir);
+  assert.deepStrictEqual({ code: withRun.code, verdict: withRun.json.verdict, rule: withRun.json.rule, stderr: withRun.stderr }, { code: 0, verdict: 'digest', rule: 'policy-reason', stderr: '' });
+  const without = callIn(dir, '--defer-reason', 'genuinely-larger', '--size', 'high', '--agent-raised');
+  assert.deepStrictEqual({ verdict: without.json.verdict, rule: without.json.rule }, { verdict: 'file', rule: 'not-low' });
+  const replaced = callIn(dir, '--defer-reason', 'tangential', '--agent-raised', '--run', runDir);
+  assert.deepStrictEqual({ verdict: replaced.json.verdict, rule: replaced.json.rule }, { verdict: 'file', rule: 'tangential' });
+});
+
+test('#5932 AC7.2 CLI: a run config [] overrides a non-empty repository list (amendment 3d)', () => {
+  const { dir, runDir } = project({ policy: LISTED, runConfig: 'deferral-digest-reasons: []\n' });
+  const calls = [
+    [['--defer-reason', 'pre-existing-outside-diff', '--size', 'high', '--agent-raised'], { verdict: 'file', rule: 'not-low' }, { verdict: 'digest', rule: 'policy-reason' }],
+    [['--defer-reason', 'pre-existing-outside-diff', '--size', 'low', '--priority', 'low', '--risk', 'low', '--agent-raised'], { verdict: 'digest', rule: 'floor' }, { verdict: 'digest', rule: 'policy-reason' }],
+    [['--defer-reason', 'tangential', '--agent-raised'], { verdict: 'file', rule: 'tangential' }, { verdict: 'digest', rule: 'policy-reason' }],
+  ];
+  for (const [argv, overridden, repo] of calls) {
+    const withRun = callIn(dir, ...argv, '--run', runDir);
+    assert.deepStrictEqual({ code: withRun.code, verdict: withRun.json.verdict, rule: withRun.json.rule, stderr: withRun.stderr }, { code: 0, ...overridden, stderr: '' }, argv.join(' '));
+    const without = callIn(dir, ...argv);
+    assert.deepStrictEqual({ verdict: without.json.verdict, rule: without.json.rule }, repo, `${argv.join(' ')} without --run`);
+  }
+});
+
+test('#5932 review focus 3 CLI: an invalid run-config value never falls back to policy.yml\'s list', () => {
+  const { dir, runDir } = project({ policy: LISTED, runConfig: 'deferral-digest-reasons: not-a-reason\n' });
+  const { code, stderr, json } = callIn(dir, '--defer-reason', 'tangential', '--agent-raised', '--run', runDir);
+  assert.deepStrictEqual({ code, verdict: json.verdict, rule: json.rule }, { code: 0, verdict: 'file', rule: 'tangential' });
+  assert.equal(stderr, warning('not-a-reason'));
+});
+
+test('#5932 review focus 1: a blank --run is refused', () => {
+  const base = ['--defer-reason', 'tangential', '--agent-raised'];
+  for (const tail of [['--run', ''], ['--run', '   '], ['--run']]) {
+    const { code, json } = call(...base, ...tail);
+    assert.equal(code, 2, tail.join('|'));
+    assert.equal(json.verdict, 'refused');
+    assert.equal(json.reason, '--run needs a value');
+  }
+  const twice = call(...base, '--run', 'a', '--run', 'b');
+  assert.equal(twice.code, 2);
+  assert.equal(twice.json.reason, '--run given more than once');
+});
+
+test('#5932 review focus 1: a missing --run dir is the resolver\'s exit 1, no verdict', () => {
+  const { dir } = project({});
+  const res = runCliSync(CLI, ['--defer-reason', 'tangential', '--agent-raised', '--run', path.join(dir, 'missing')], { cwd: dir, env: GIT_ENV });
+  assert.equal(res.code, 1);
+  assert.equal(res.stdout, '');
+  assert.ok(res.stderr.startsWith('deferral-route: --run dir does not exist or is not a directory:'), res.stderr);
+});
+
+test('#5932 review focus 2: a refusal wins over a missing --run dir (amendment 3c)', () => {
+  const { dir } = project({});
+  const missing = path.join(dir, 'missing');
+  const cases = [
+    [['--defer-reason', 'not-a-reason', '--agent-raised'], (r) => assert.ok(r.stderr.startsWith('--defer-reason "not-a-reason" is not one of:'), r.stderr)],
+    [['--defer-reason', 'tangential'], (r) => assert.equal(JSON.parse(r.stdout).reason, 'exactly one of --agent-raised or --human is required')],
+    [['--defer-reason', 'tangential', '--agent-raised', '--severity', 'bogus'], (r) => assert.ok(JSON.parse(r.stdout).reason.startsWith('--severity "bogus" is not one of:'))],
+    [['--defer-reason', 'tangential', '--agent-raised', '--size'], (r) => assert.equal(JSON.parse(r.stdout).reason, '--size needs a value')],
+  ];
+  for (const [argv, check] of cases) {
+    // The flag missing its value is last, so --run sits before it for that case.
+    const full = argv[argv.length - 1] === '--size' ? [...argv.slice(0, -1), '--run', missing, '--size'] : [...argv, '--run', missing];
+    const res = runCliSync(CLI, full, { cwd: dir, env: GIT_ENV });
+    assert.equal(res.code, 2, full.join(' '));
+    assert.equal(JSON.parse(res.stdout).verdict, 'refused');
+    assert.equal(res.stderr.split('\n').filter(Boolean).length, 1, 'one stderr line');
+    assert.ok(!res.stderr.includes('--run dir does not exist'), res.stderr);
+    check(res);
+  }
+  // Go-red: neither policy nor deps.cwd() is touched before a refusal.
+  const { run } = require(CLI);
+  const out = [];
+  const code = run(['--defer-reason', 'not-a-reason', '--agent-raised', '--run', missing], { stdout: (s) => out.push(s), stderr: () => {}, cwd: () => { throw new Error('cwd read'); }, env: {} });
+  assert.equal(code, 2);
+  assert.equal(JSON.parse(out.join('')).verdict, 'refused');
+});
+
 test('AC8.1 writes nothing and calls no gh', { skip: STUB_SKIP }, () => {
   const cwd = scratchDir('ct-deferral-route-');
   const marker = path.join(cwd, '..', `gh-called-${path.basename(cwd)}`);
@@ -208,8 +358,8 @@ test('AC8.1 writes nothing and calls no gh', { skip: STUB_SKIP }, () => {
   }
 });
 
-test('AC8.2 in-process deps are stdout and stderr only', () => {
-  assert.deepStrictEqual(Object.keys(realDeps).sort(), ['stderr', 'stdout']);
+test('AC8.2 in-process deps are cwd, env, stdout and stderr only', () => {
+  assert.deepStrictEqual(Object.keys(realDeps).sort(), ['cwd', 'env', 'stderr', 'stdout']);
 });
 
 // AC8.1 can only see the child's cwd; this one catches a write to any path, by
@@ -231,7 +381,7 @@ test('AC8.3 run() calls no fs mutation API on any path, for every verdict', () =
     trap(fs.promises, name, `fs.promises.${name}`);
   }
   const out = [];
-  const deps = { stdout: (s) => out.push(s), stderr: () => {} };
+  const deps = { stdout: (s) => out.push(s), stderr: () => {}, cwd: () => NO_POLICY, env: {} };
   const codes = [];
   try {
     codes.push(run(['--defer-reason', 'pre-existing-outside-diff', ...LOW, '--agent-raised'], deps));
