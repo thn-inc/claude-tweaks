@@ -81,6 +81,29 @@ test('modelProfilesEntry: present, absent and malformed', () => {
   assert.deepStrictEqual(modelProfilesEntry('model-profiles:\n  standard:\n    speed: x\n'), { value: null, source: 'default', invalid: true });
 });
 
+// The resolve-policy CLI read `model-profiles: {}` as a present, empty block before the block-only
+// reader (#5917); a header with an inline value still opens the block. Characterization.
+test('modelProfilesEntry: a header with an inline value still opens the block (pre-#5917 result)', () => {
+  assert.deepStrictEqual(modelProfilesEntry('model-profiles: {}\n'), { value: {}, source: 'policy' });
+  assert.deepStrictEqual(modelProfilesEntry('model-profiles: {}\n  standard:\n    model: haiku\n'), { value: { standard: { model: 'haiku' } }, source: 'policy' });
+});
+
+test('modelProfilesEntry: header variants (CRLF, trailing comment, two blocks)', () => {
+  const haiku = { value: { standard: { model: 'haiku' } }, source: 'policy' };
+  assert.deepStrictEqual(modelProfilesEntry('model-profiles:\r\n  standard:\r\n    model: haiku\r\n'), haiku);
+  assert.deepStrictEqual(modelProfilesEntry('model-profiles:   # note\n  standard:\n    model: haiku\n'), haiku);
+  // The last block wins, as parsePolicyModelConfig's last-wins assignment did.
+  assert.deepStrictEqual(
+    modelProfilesEntry('model-profiles:\n  standard:\n    model: haiku\nmodel-profiles:\n  capable:\n    model: opus\n'),
+    { value: { capable: { model: 'opus' } }, source: 'policy' },
+  );
+  // Only the last block is read, so a malformed first block no longer marks the key invalid.
+  assert.deepStrictEqual(
+    modelProfilesEntry('model-profiles:\n  standard:\n    speed: x\nmodel-profiles:\n  capable:\n    model: opus\n'),
+    { value: { capable: { model: 'opus' } }, source: 'policy' },
+  );
+});
+
 test('modelProfilesEntry: a malformed sibling key never marks the block invalid', () => {
   assert.deepStrictEqual(
     modelProfilesEntry('frontier-run-cap: abc\nmodel-profiles:\n  standard:\n    model: haiku\n'),

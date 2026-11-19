@@ -439,7 +439,7 @@ function parseFlatLines(raw) {
     // harness-health.scoped-rule-budget are dotted inputs), but new keys are
     // flat kebab-case per skills/_shared/policy-key-naming.md.
     // An indented line belongs to a nested block's own field (model-profiles'
-    // and risk-path-globs' rows, the two block keys) and must never be read as
+    // risk-path-globs' and express-driver-models' rows, the three block keys) and must never be read as
     // a flat key in its own right.
     if (/^\s/.test(rawLine)) continue;
     const line = rawLine.trim();
@@ -667,7 +667,7 @@ function parseDriverModels(policyRaw) {
     const columnZero = text !== '' && !/^[ \t]/.test(text);
     if (columnZero) {
       inBlock = false;
-      if (text === `${KEY}:` || text.startsWith(`${KEY}:`)) {
+      if (text.startsWith(`${KEY}:`)) {
         if (present) ok = false; // a second block
         present = true;
         rawLines.push(text);
@@ -831,7 +831,8 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid }
 // Shallow extractor for a nested `{topKey}:` block's first-level indented key
 // names — parseFlatLines only sees flat `key: value` lines, so a block-style
 // value (model-profiles, the one caller) is otherwise invisible to auditPolicy.
-// risk-path-globs, the other block key, has its own parser: bin/lib/risk-path-globs.js.
+// risk-path-globs and express-driver-models, the other block keys, have their own parsers
+// (bin/lib/risk-path-globs.js; parseDriverModels above).
 // Shares stripComment with the resolver (model-profiles/policy-fragment.js) so the
 // two never disagree on a comment (the old `/#.*$/` missed one on a CRLF line,
 // since `.` does not match `\r`, #4816).
@@ -1069,10 +1070,11 @@ function auditPolicy(repoRoot) {
   const claudeMdRaw = readFileSafe(path.join(repoRoot, 'CLAUDE.md'));
   const policyEntries = parseFlatLines(policyRaw);
   const claudeMdEntries = parseFlatLines(claudeMdRaw);
-  // model-profiles is one of two block-style (non-flat) keys; parseFlatLines
+  // model-profiles is one of three block-style (non-flat) keys; parseFlatLines
   // can't see it, so it's read separately and merged in under its own name —
-  // this never collides with a flat-line entry of the same key. The other,
-  // risk-path-globs, is checked by parseRiskPathGlobs after the flat loop below.
+  // this never collides with a flat-line entry of the same key. The others,
+  // risk-path-globs and express-driver-models, are checked by their own parsers
+  // after the flat loop below.
   const modelProfilesEntry = extractMapEntry(policyRaw, 'model-profiles');
   if (modelProfilesEntry !== undefined) policyEntries['model-profiles'] = modelProfilesEntry;
 

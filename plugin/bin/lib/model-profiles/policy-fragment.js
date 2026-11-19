@@ -64,12 +64,14 @@ function parsePolicyModelConfig(raw) {
 
 // The `model-profiles` block's own text — its column-0 header line through the
 // line before the next non-blank column-0 line — or null when absent. The last
-// block wins, matching parsePolicyModelConfig's last-wins assignment.
+// block wins, matching parsePolicyModelConfig's last-wins assignment. The header
+// is matched by prefix, so an inline value (`model-profiles: {}`) still opens a
+// block, as it does in parsePolicyModelConfig.
 function cutModelProfilesBlock(raw) {
   const lines = raw.split('\n');
   let start = -1;
   for (let i = 0; i < lines.length; i += 1) {
-    if (!lines[i].startsWith(' ') && stripComment(lines[i]) === 'model-profiles:') start = i;
+    if (!lines[i].startsWith(' ') && /^model-profiles:/.test(stripComment(lines[i]))) start = i;
   }
   if (start === -1) return null;
   let end = start + 1;

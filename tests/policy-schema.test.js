@@ -1043,6 +1043,8 @@ test('express-driver-models: a rejected block resolves null invalid, never a par
     assert.deepStrictEqual(seen, [MODELS], JSON.stringify(raw));
   }
   assert.deepStrictEqual(rModels('express-driver-models:\n  implementer: fast\nautonomy: trusted\n'), { value: { ...FOUR, implementer: 'fast' }, source: 'policy' });
+  // A following block's indented rows are not this block's rows: the next column-0 line closes it.
+  assert.deepStrictEqual(rModels('express-driver-models:\n  implementer: fast\nmodel-profiles:\n  standard:\n    model: opus\n'), { value: { ...FOUR, implementer: 'fast' }, source: 'policy' });
 });
 
 test('AC2.2: a run config block never sets express-driver-models', () => {
