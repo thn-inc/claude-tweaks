@@ -43,10 +43,14 @@
 
 const { fetchNativeDependencies } = require('./lib/issues/native-dependencies');
 const { makeNumberListCli } = require('./lib/number-list-cli');
+const { appendStationEvent } = require('./lib/station-events/emit');
+const { makeBlockerSnapshotSink } = require('./lib/station-events/blockers');
 
 const USAGE = 'usage: resolve-blockers.js <n>[,<n2>,...] [--repo [host/]owner/name] [--help]\n';
 
-const { run, parseArgs, parseNumbers, realDeps } = makeNumberListCli({
+const {
+  run: runNumberList, parseArgs, parseNumbers, realDeps: numberListDeps,
+} = makeNumberListCli({
   name: 'resolve-blockers.js',
   usage: USAGE,
   ghRequiredNote: '(work-links: native)',
@@ -58,19 +62,23 @@ const { run, parseArgs, parseNumbers, realDeps } = makeNumberListCli({
   mapResult: (n, byNumber) => byNumber.get(n),
 });
 
-module.exports = { run, parseArgs, parseNumbers, parseRepo: require('./lib/repo-resolve').parseRepo };
+// #5902: the station-event emitter; a caller that passes its own deps omits it (no emission).
+const realDeps = { ...numberListDeps, stationEvent: (e) => appendStationEvent(e) };
 
-// #5902: only the real process writes a `blockers` station event per fetched
-// number; the sink is built here so requiring this module never wires it.
-if (require.main === module) {
-  const { appendStationEvent } = require('./lib/station-events/emit');
-  const { makeBlockerSnapshotSink } = require('./lib/station-events/blockers');
-  process.exitCode = run(process.argv.slice(2), {
-    ...realDeps,
-    onSnapshot: makeBlockerSnapshotSink({
-      stationEvent: appendStationEvent,
-      sessionId: process.env.CLAUDE_CODE_SESSION_ID || null,
-      runId: null,
-    }),
+// A `blockers` station event per fetched number: with no explicit `onSnapshot`, the
+// sink is built from `deps.stationEvent`; neither present = no emission.
+function run(argv, deps = realDeps) {
+  if (deps.onSnapshot || typeof deps.stationEvent !== 'function') return runNumberList(argv, deps);
+  const onSnapshot = makeBlockerSnapshotSink({
+    stationEvent: deps.stationEvent,
+    sessionId: process.env.CLAUDE_CODE_SESSION_ID || null,
+    runId: null,
   });
+  return runNumberList(argv, { ...deps, onSnapshot });
+}
+
+module.exports = { run, parseArgs, parseNumbers, realDeps, parseRepo: require('./lib/repo-resolve').parseRepo };
+
+if (require.main === module) {
+  process.exitCode = run(process.argv.slice(2));
 }

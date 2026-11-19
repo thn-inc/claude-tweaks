@@ -184,6 +184,8 @@ function world({ policy, records = {}, worktrees, fail = {}, diff = 'M\0src/app.
     remoteUrl: () => 'https://github.com/o/r.git',
     tmpPath: (name) => path.join(root, name),
     now: () => Date.UTC(2026, 10, 16, 10, 0, 0),
+    // #5902: realDeps carries the real emitter; undefined here is "no emission" unless a test records.
+    stationEvent: undefined,
   };
   return { state, deps };
 }
@@ -1460,6 +1462,11 @@ const recorder = () => {
   return { events, stationEvent: (e) => { events.push(e); } };
 };
 const SESSION_ENV = { CLAUDE_CODE_SESSION_ID: 'sess-park' };
+
+test('#5902: realDeps wires a stationEvent emitter, so the real entry point emits', () => {
+  const { realDeps } = require('../plugin/bin/accept-park');
+  assert.equal(typeof realDeps.stationEvent, 'function', 'stationEvent is wired');
+});
 
 test('#5902: postPacket adding accept:pending records one entered accept event', async () => {
   const w = world({ records: { 7: { comments: [packetComment(7)] } } });

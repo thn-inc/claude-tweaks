@@ -9,3 +9,4 @@
 | 5 | build | SDD ruling — the PR discriminator collides on a double reopen in one run, an accepted determinism limit: ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | open | — |
 | 6 | build | SDD ruling — shaping-claim releases emit no station event: ratify or reverse at the Review Console (staged/sdd-ruling-6.md) | open | — |
 | 7 | build | Parked at Task 2: the station-events guard test uses git grep, which skips untracked files, and the init Migrate row triggers only while the .jsonl ignore line is absent; contestable, matches the house style of the earlier reconcile row, code stands | observation | — |
+| 8 | review | Review 3e (medium): best-effort station-event emit contract hand-copied at eight producers, release exited-build event built twice, toRepoName imported from the I/O module — Defer-reason: genuinely-larger (deepen pass) | deferred | staged/review-followup-1.md — record proposal, filed at the Review Console on approval |

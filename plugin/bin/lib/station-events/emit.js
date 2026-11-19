@@ -107,12 +107,6 @@ function resolveDeps(deps) {
   };
 }
 
-// The real deps, without `mainRoot`: it resolves from the cwd at append time,
-// so one realDeps() object stays correct across emits.
-function realDeps() {
-  return { fs, withLock, now: () => new Date(), stderr: realStderr };
-}
-
 function drop(d, reason) {
   try { d.stderr(`claude-tweaks: station event dropped: ${reason}\n`); } catch { /* the drop line is best-effort too */ }
   return { written: false, reason };
@@ -135,4 +129,4 @@ function appendStationEvent(event, deps = {}) {
   }
 }
 
-module.exports = { appendStationEvent, buildLine, eventKey, toRepoName, stationEventPath, realDeps };
+module.exports = { appendStationEvent, buildLine, eventKey, toRepoName, stationEventPath };

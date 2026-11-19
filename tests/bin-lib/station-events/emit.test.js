@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { scratchDir } = require('../../helpers/tmp-dir');
 const {
-  appendStationEvent, buildLine, eventKey, toRepoName, stationEventPath, realDeps,
+  appendStationEvent, buildLine, eventKey, toRepoName, stationEventPath,
 } = require('../../../plugin/bin/lib/station-events/emit');
 
 const FIXED_NOW = () => new Date('2026-11-19T08:00:00.000Z');
@@ -107,10 +107,6 @@ test('a throw while resolving deps still writes one stderr line', () => {
   assert.doesNotThrow(() => { result = appendStationEvent(event(), throwing); });
   assert.equal(result.written, false);
   assert.equal(stderr.calls.length, 1);
-});
-
-test('realDeps leaves mainRoot to resolve at append time', () => {
-  assert.equal(realDeps().mainRoot, undefined);
 });
 
 test('appends whole lines under the real lock', () => {

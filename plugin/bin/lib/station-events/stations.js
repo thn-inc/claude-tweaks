@@ -3,7 +3,13 @@
 // correction is a one-file change here; no call site under plugin/bin spells a station itself
 // (tests/bin-lib/station-events/station-literal-conformance.test.js scans for it).
 // Reference: docs/reference/station-events.md.
+// "The design" in the notes below is the factory floor design: docs/superpowers/specs/2026-11-18-factory-floor-design.md
+// in the thn-inc/dispatch repository (dispatch PR #1894) — its "The ledger: station events"
+// section and its station registry table. "Unconfirmed pending the design's Phase 0 fixtures"
+// marks a name or reading this file chose where that design does not pin it.
 'use strict';
+
+const { LABELS } = require('../issues/record-vocabulary');
 
 // Ordered: a record's journey from capture to acceptance. Call sites name a
 // station through STATION (or a helper below), never by string.
@@ -32,19 +38,22 @@ const KINDS = Object.freeze(['entered', 'started', 'exited', 'session_bound', 'b
 // Carried only on `exited`; every other kind writes `outcome: null`.
 const OUTCOMES = Object.freeze(['passed', 'failed', 'returned', 'skipped', 'abandoned']);
 
-// The station a `blockers` snapshot is filed under.
+// The station a `blockers` snapshot is filed under: blocker state decides whether an authorized
+// record can be released to build, the closest reading of where blocker state matters.
 // Unconfirmed reading: names are unconfirmed pending the design's Phase 0 fixtures.
-const BLOCKER_SNAPSHOT_STATION = 'authorize';
+const BLOCKER_SNAPSHOT_STATION = STATION.AUTHORIZE;
 
-// Driver step name -> station its started/exited work segment mirrors.
+// Driver step name -> station its started/exited work segment mirrors. `pr` -> `wrap-up`: opening
+// the PR is the driver's wrap-up step, and the design has no separate PR station (an unconfirmed
+// reading).
 // Names are unconfirmed pending the design's Phase 0 fixtures.
 const DRIVER_STEP_STATIONS = Object.freeze({
-  worker: 'build',
-  test: 'test',
-  review: 'review',
-  pr: 'wrap-up',
-  ci: 'merge',
-  merge: 'merge',
+  worker: STATION.BUILD,
+  test: STATION.TEST,
+  review: STATION.REVIEW,
+  pr: STATION.WRAP_UP,
+  ci: STATION.MERGE,
+  merge: STATION.MERGE,
 });
 
 // Driver step status -> exited outcome.
@@ -61,40 +70,42 @@ function outcomeForDriverStatus(status) {
 // `merge-call` is deliberately absent: it reports non-merges as `ok` too.
 // Names are unconfirmed pending the design's Phase 0 fixtures.
 const MERGE_SUBSTEP_TRANSITIONS = Object.freeze({
-  'merge-ready': Object.freeze({ kind: 'entered', station: 'merge', substep: 'merge-ready' }),
-  'merge-confirm': Object.freeze({ kind: 'exited', station: 'merge', outcome: 'passed', substep: 'merge-confirm', skipDetailPrefix: 'armed' }),
-  'merge-park': Object.freeze({ kind: 'exited', station: 'merge', outcome: 'returned', substep: 'merge-park' }),
+  'merge-ready': Object.freeze({ kind: 'entered', station: STATION.MERGE, substep: 'merge-ready' }),
+  'merge-confirm': Object.freeze({ kind: 'exited', station: STATION.MERGE, outcome: 'passed', substep: 'merge-confirm', skipDetailPrefix: 'armed' }),
+  'merge-park': Object.freeze({ kind: 'exited', station: STATION.MERGE, outcome: 'returned', substep: 'merge-park' }),
 });
 
-// Label edit -> the transitions it records, per the design's registry.
+// Label edit -> the transitions it records, per the design's registry. The `release` station
+// spans the authorized-but-unclaimed wait, from `auto:build` added to `bot:in-progress` added; a
+// claim release (releaseTransition below) is a different thing and exits `build`.
 // `bot:blocked` / `bot:parked` are absent: the emitter cannot know which
 // station's visit they end.
 // Names are unconfirmed pending the design's Phase 0 fixtures.
 const LABEL_TRANSITIONS = Object.freeze({
-  'needs:definition': Object.freeze({
-    removed: Object.freeze([{ kind: 'exited', station: 'intake', outcome: 'passed' }]),
+  [LABELS.NEEDS_DEFINITION]: Object.freeze({
+    removed: Object.freeze([{ kind: 'exited', station: STATION.INTAKE, outcome: 'passed' }]),
   }),
-  ready: Object.freeze({
+  [LABELS.READY]: Object.freeze({
     added: Object.freeze([
-      { kind: 'exited', station: 'intake', outcome: 'passed' },
-      { kind: 'exited', station: 'shape', outcome: 'passed' },
-      { kind: 'entered', station: 'authorize' },
+      { kind: 'exited', station: STATION.INTAKE, outcome: 'passed' },
+      { kind: 'exited', station: STATION.SHAPE, outcome: 'passed' },
+      { kind: 'entered', station: STATION.AUTHORIZE },
     ]),
   }),
-  'auto:build': Object.freeze({
+  [LABELS.AUTO_BUILD]: Object.freeze({
     added: Object.freeze([
-      { kind: 'exited', station: 'authorize', outcome: 'passed' },
-      { kind: 'entered', station: 'release' },
+      { kind: 'exited', station: STATION.AUTHORIZE, outcome: 'passed' },
+      { kind: 'entered', station: STATION.RELEASE },
     ]),
   }),
-  'bot:in-progress': Object.freeze({
+  [LABELS.BOT_IN_PROGRESS]: Object.freeze({
     added: Object.freeze([
-      { kind: 'exited', station: 'release', outcome: 'passed' },
-      { kind: 'entered', station: 'build' },
+      { kind: 'exited', station: STATION.RELEASE, outcome: 'passed' },
+      { kind: 'entered', station: STATION.BUILD },
     ]),
   }),
-  'accept:pending': Object.freeze({
-    added: Object.freeze([{ kind: 'entered', station: 'accept' }]),
+  [LABELS.ACCEPT_PENDING]: Object.freeze({
+    added: Object.freeze([{ kind: 'entered', station: STATION.ACCEPT }]),
   }),
 });
 

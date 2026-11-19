@@ -109,6 +109,8 @@ const { locatePolicyFile } = require('./lib/policy-file');
 const {
   parseRepo, repoResolutionNote, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
+const { appendStationEvent } = require('./lib/station-events/emit');
+const { makeBlockerSnapshotSink } = require('./lib/station-events/blockers');
 
 const USAGE = 'usage: preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo [host/]owner/name] [--merge-gate] [--waves] [--integration-branch <name>] [--records-json <path>] [--prefetched-json <path>] [--blocker-landing] [--blocker-states-json <path>] [--help]\n';
 
@@ -193,9 +195,22 @@ const realDeps = {
     const policyRaw = readFileSafe(locatePolicyFile(repoRoot()).path);
     return resolvePolicyKeys(['work-links'], { policyRaw, runConfigRaw: null })['work-links'].value;
   },
+  // #5902: the station-event emitter; a caller that passes its own deps omits it (no emission).
+  stationEvent: (e) => appendStationEvent(e),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
+
+// The native fetch's per-record sink (#5902): an explicit `deps.onSnapshot` wins, else a
+// `blockers` station event per fetched number through `deps.stationEvent`; neither = none.
+function snapshotSinkOf(deps) {
+  if (deps.onSnapshot || typeof deps.stationEvent !== 'function') return deps.onSnapshot;
+  return makeBlockerSnapshotSink({
+    stationEvent: deps.stationEvent,
+    sessionId: process.env.CLAUDE_CODE_SESSION_ID || null,
+    runId: null,
+  });
+}
 
 // The deps-resolved work-links value, --work-links overriding it. Never throws.
 function resolveWorkLinks(opts, deps) {
@@ -278,7 +293,7 @@ function loadFromGh(opts, numbers, deps) {
     if (!repoSpec) { deps.stderr('preflight-records.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return { code: 2 }; }
     try {
       dependencies = preflight.fetchNativeDependencies({
-        numbers, owner: repoSpec.owner, repo: repoSpec.repo, host: repoSpec.host, runner: nativeRecoveringRunner(deps.runner, numbers), onSnapshot: deps.onSnapshot,
+        numbers, owner: repoSpec.owner, repo: repoSpec.repo, host: repoSpec.host, runner: nativeRecoveringRunner(deps.runner, numbers), onSnapshot: snapshotSinkOf(deps),
       });
     } catch (err) {
       deps.stderr(`preflight-records.js: ${preflight.errorText(err)}\n`);
@@ -537,19 +552,8 @@ function run(argv, deps = realDeps) {
   return 0;
 }
 
-module.exports = { run, parseArgs, parseRepo };
+module.exports = { run, parseArgs, parseRepo, realDeps };
 
-// #5902: only the real process writes a `blockers` station event per fetched
-// number (work-links: native); the sink is built here so requiring this module never wires it.
 if (require.main === module) {
-  const { appendStationEvent } = require('./lib/station-events/emit');
-  const { makeBlockerSnapshotSink } = require('./lib/station-events/blockers');
-  process.exitCode = run(process.argv.slice(2), {
-    ...realDeps,
-    onSnapshot: makeBlockerSnapshotSink({
-      stationEvent: appendStationEvent,
-      sessionId: process.env.CLAUDE_CODE_SESSION_ID || null,
-      runId: null,
-    }),
-  });
+  process.exitCode = run(process.argv.slice(2));
 }

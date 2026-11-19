@@ -228,3 +228,26 @@ test('#5902: makeBlockerSnapshotSink wired as onSnapshot yields two valid blocke
     assert.equal(line.repoName, 'acme/widgets');
   }
 });
+
+test('#5902: realDeps wires a stationEvent emitter, so the real entry point emits', () => {
+  const { realDeps } = require('../plugin/bin/resolve-blockers');
+  assert.equal(typeof realDeps.stationEvent, 'function', 'stationEvent is wired');
+  assert.equal(typeof realDeps.runner, 'function', 'the number-list scaffold deps are still carried');
+});
+
+test('#5902: run builds the blocker sink from deps.stationEvent when no onSnapshot is passed', () => {
+  const events = [];
+  const deps = fakeDeps({ runner: twelveThirteen, stationEvent: (e) => events.push(e) });
+  assert.equal(run(['12,13'], deps), 0);
+  assert.deepEqual(events.map((e) => [e.kind, e.recordNumber, e.repoName]), [
+    ['blockers', 12, 'acme/widgets'], ['blockers', 13, 'acme/widgets'],
+  ]);
+});
+
+test('#5902: an explicit onSnapshot wins over deps.stationEvent', () => {
+  const events = [];
+  const { seen, onSnapshot } = snapshotRecorder();
+  assert.equal(run(['12,13'], fakeDeps({ runner: twelveThirteen, onSnapshot, stationEvent: (e) => events.push(e) })), 0);
+  assert.deepEqual(seen.map((s) => s.n), [12, 13]);
+  assert.deepEqual(events, []);
+});

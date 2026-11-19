@@ -20,6 +20,9 @@ function stationEventsFor(event, { repoName, runId } = {}) {
   const base = { repoName, recordNumber: event.record, lane: 'driver', runId, discriminator: `${step}@${ts}` };
   if (own(DRIVER_STEP_STATIONS, step)) {
     const station = DRIVER_STEP_STATIONS[step];
+    // The sink writes one line at step end, so `started.at` is back-computed as the line's `ts`
+    // minus `ms`. An unparseable `ts` makes isoOrNull return null and the emitter stamps the emit
+    // time instead (docs/reference/station-events.md).
     const endMs = Date.parse(ts);
     const ms = Number.isFinite(event.ms) ? event.ms : 0;
     const out = [{ ...base, kind: 'started', station, at: isoOrNull(endMs - ms), payload: { step } }];

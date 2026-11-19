@@ -161,6 +161,8 @@ const realDeps = {
   sessionId: process.env.CLAUDE_CODE_SESSION_ID || null,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
+  // #5902: the station-event emitter; a test that calls run() with its own deps omits it (no emission).
+  stationEvent: (e) => appendStationEvent(e),
 };
 
 // argv -> exit code. All I/O through deps so tests never touch gh, git, or the filesystem.
@@ -286,10 +288,9 @@ function run(argv, deps = realDeps) {
   return 0;
 }
 
-module.exports = { run, parseArgs, validateAction };
+module.exports = { run, parseArgs, validateAction, realDeps };
 
-// #5902: only the real process emits station events; requiring this module
-// never wires the real emitter.
+// #5902: the real emitter rides in realDeps, so only a run that defaults to them emits.
 if (require.main === module) {
-  process.exitCode = run(process.argv.slice(2), { ...realDeps, stationEvent: appendStationEvent });
+  process.exitCode = run(process.argv.slice(2));
 }

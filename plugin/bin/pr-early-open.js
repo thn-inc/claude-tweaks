@@ -131,6 +131,8 @@ const realDeps = {
     return p;
   },
   sessionId: process.env.CLAUDE_CODE_SESSION_ID || null,
+  // #5902: the station-event emitter; a caller that overrides it with undefined emits nothing.
+  stationEvent: (e) => appendStationEvent(e),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -289,10 +291,10 @@ async function run(argv, overrides = {}) {
   }
 }
 
-module.exports = { run, parseArgs };
+module.exports = { run, parseArgs, realDeps };
 
 if (require.main === module) {
-  run(process.argv.slice(2), { stationEvent: appendStationEvent }).then((code) => { process.exitCode = code; }, (err) => {
+  run(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (err) => {
     process.stderr.write(`pr-early-open.js: ${err && err.stack ? err.stack : err}\n`);
     process.exitCode = 1;
   });

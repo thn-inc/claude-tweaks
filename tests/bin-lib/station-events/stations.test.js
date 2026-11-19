@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   STATION, STATIONS, SESSION_BOUND_STATION, PR_OPENED_FACT, PR_OPENED_TRANSITION, LABEL_TRANSITIONS, MERGE_SUBSTEP_TRANSITIONS,
+  BLOCKER_SNAPSHOT_STATION, DRIVER_STEP_STATIONS,
   outcomeForReleaseReason, outcomeForDriverStatus, transitionsForLabel, releaseTransition,
 } = require('../../../plugin/bin/lib/station-events/stations');
 const { PARK_REASON } = require('../../../plugin/bin/lib/accept/park-grammar');
@@ -63,6 +64,18 @@ test('STATION names every station once, in journey order, and the call-site help
   assert.equal(SESSION_BOUND_STATION, STATION.BUILD);
   assert.deepEqual(PR_OPENED_TRANSITION, { kind: 'started', station: STATION.BUILD });
   assert.equal(PR_OPENED_FACT, 'pr_opened');
+});
+
+test('every station a table or constant names is a member of STATIONS', () => {
+  const named = [BLOCKER_SNAPSHOT_STATION, SESSION_BOUND_STATION, PR_OPENED_TRANSITION.station, ...Object.values(DRIVER_STEP_STATIONS)];
+  for (const t of Object.values(MERGE_SUBSTEP_TRANSITIONS)) named.push(t.station);
+  for (const entry of Object.values(LABEL_TRANSITIONS)) {
+    for (const list of Object.values(entry)) for (const t of list) named.push(t.station);
+  }
+  for (const r of ['merged: spec 1', 'abandoned', 'failed: test', 'parked', '']) named.push(releaseTransition(r).station);
+  // The tables are not empty: a refactor that dropped them would otherwise pass vacuously.
+  assert.ok(named.length >= 25, `expected at least 25 named stations, saw ${named.length}`);
+  for (const s of named) assert.ok(STATIONS.includes(s), `${s} is not in STATIONS`);
 });
 
 test('outcomeForDriverStatus maps ok, fail and stop', () => {

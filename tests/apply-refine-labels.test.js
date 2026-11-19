@@ -414,6 +414,11 @@ function stationDeps(actions, overrides = {}) {
 
 const triple = (e) => `${e.kind} ${e.station}${e.outcome ? ' ' + e.outcome : ''}`;
 
+test('#5902: realDeps wires a stationEvent emitter, so the real entry point emits', () => {
+  const { realDeps } = require('../plugin/bin/apply-refine-labels');
+  assert.strictEqual(typeof realDeps.stationEvent, 'function', 'stationEvent is wired');
+});
+
 test('run: station events — adding auto:build records exited authorize passed + entered release, with the full field set', () => {
   const { deps, events } = stationDeps([{ issue: 118, addLabels: ['auto:build'] }], { sessionId: 'sess-1' });
   assert.strictEqual(run(['actions.json'], deps), 0);

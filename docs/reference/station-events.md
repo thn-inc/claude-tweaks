@@ -2,9 +2,25 @@
 
 `station-events.jsonl` is an append-only log of station events: one JSON line each time claude-tweaks program code moves a record into, through or out of a station (intake, shape, authorize, release, build, test, review, polish, wrap-up, merge, accept). It is written locally, with no network call, no hub dependency and no policy key. A reader (the dispatch scoreboard) pairs the lines into station visits; the emitter only records facts.
 
-The code is `plugin/bin/lib/station-events/emit.js` (`appendStationEvent`, `buildLine`, `eventKey`, `toRepoName`, `stationEventPath`, `realDeps`) and `plugin/bin/lib/station-events/stations.js` (every station, lane, kind, outcome and mapping name). Tests: `tests/bin-lib/station-events/emit.test.js`.
+The code is `plugin/bin/lib/station-events/emit.js` (`appendStationEvent`, `buildLine`, `eventKey`, `toRepoName`, `stationEventPath`) and `plugin/bin/lib/station-events/stations.js` (every station, lane, kind, outcome and mapping name). Tests: `tests/bin-lib/station-events/emit.test.js`.
 
-> **Unconfirmed names.** Station, label and driver-step names are unconfirmed against the design's Phase 0 fixtures. They live only in `stations.js`, so a correction is a one-file change; no call site under `plugin/bin` spells a station itself (`tests/bin-lib/station-events/station-literal-conformance.test.js` fails when one does).
+> **Unconfirmed names.** Station, label and driver-step names are unconfirmed against the design's Phase 0 fixtures. "The design" is the factory floor design, `docs/superpowers/specs/2026-11-18-factory-floor-design.md` in the `thn-inc/dispatch` repository (dispatch PR #1894): its "The ledger: station events" section and its station registry table. They live only in `stations.js`, so a correction is a one-file change; no call site under `plugin/bin` spells a station itself (`tests/bin-lib/station-events/station-literal-conformance.test.js` fails when one does).
+
+## Stations
+
+In journey order (`STATION` in `stations.js`). Each line is the reading this repo's emitter uses, not a definition the design pins.
+
+- `intake`: the record exists but is not yet shaped; exited when `needs:definition` is removed or `ready` is added.
+- `shape`: `/specify` turns the record into spec shape; exited `passed` when `ready` is added.
+- `authorize`: `ready`, waiting for a human or policy to authorize the build; entered when `ready` is added, exited `passed` when `auto:build` is added. A blocker snapshot is filed here (`blockers`) because blocker state decides whether an authorized record can be released to build; an unconfirmed reading.
+- `release`: the authorized-but-unclaimed wait: entered when `auto:build` is added, exited `passed` when `bot:in-progress` is added (the claim lands). Distinct from a claim release, which exits `build`.
+- `build`: the record is claimed (`bot:in-progress`) and being built; a claim, its bound sessions, the draft-PR fact, the driver `worker` step and every claim release land here.
+- `test`: the driver's `test` step.
+- `review`: the driver's `review` step.
+- `polish`: named by the design; no producer writes it today.
+- `wrap-up`: the driver's `pr` step. Opening the PR is the driver's wrap-up step, and the design has no separate PR station; an unconfirmed reading.
+- `merge`: the driver's `ci` and `merge` steps and the merge sub-steps (`merge-ready`, `merge-confirm`, `merge-park`).
+- `accept`: the record awaits local acceptance; entered when `accept:pending` is added.
 
 ## File location
 
@@ -102,6 +118,7 @@ These transitions write no station event; the reconciler or a later record cover
 - `accept-entry.js`'s `labels` subcommand only prints label edits that skill prose applies with `gh issue edit`, so no `accept:*` verdict label emits; the reconciler keeps those.
 - Every producer except the driver mirror and a `claim-targets.js` run given `--lane` writes lane `unknown`: `release-claim.js`, `accept-park.js`, `pr-early-open.js`, `apply-refine-labels.js` and the blocker snapshot hardcode it, so a release or PR event of a driver run also carries `unknown`. `standard` and `express` are never written. `--lane` is accepted by `claim-targets.js` only; the driver is its one caller that passes it (`--lane driver`).
 - A release is emitted from `plugin/bin/release-claim.js` and `plugin/bin/accept-park.js`'s in-process release only, and only for a `released` result (an `already-released` repeat writes nothing). A shaping claim's release (`shaped: #n`, `routed: needs:definition #n`, `failed: shaping`) writes nothing: it never entered build, and the shape station has no `entered` producer to pair an exit with. `reconcile`'s `release-merged.js` path calls the library directly and emits nothing.
+- `plugin/bin/repair-claim.js` (`plugin/bin/lib/repair-claim/repair.js`) force-releases (`release` mode) or re-claims (`reclaim` mode) through the release library's helpers and emits nothing. It acts on an unreadable claim blob, so there is no readable `claimedAt` for the claim being repaired to key an event on.
 - `bot:blocked` / `bot:parked` additions emit nothing: the emitter cannot know which station's visit they end.
 - `express-lane.js` call paths emit nothing yet; `express` stays a valid lane.
 - `ready` applied by `/specify` (skill prose, not program code) emits nothing.

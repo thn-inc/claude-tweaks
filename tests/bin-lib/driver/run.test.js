@@ -6018,6 +6018,11 @@ test('realDeps.createJudgments builds the production supplier: a function from {
   assert.equal(typeof realDeps.createJudgments({ deps: {}, shared: {} }), 'function');
 });
 
+test('#5902: realDeps wires a stationEvent emitter, the production mirror sink', () => {
+  const { realDeps } = require(path.join(LIB, 'driver', 'run'));
+  assert.equal(typeof realDeps.stationEvent, 'function', 'stationEvent is wired');
+});
+
 test('mergeStep builds the supplier from deps.createJudgments over the merge deps and the run\'s shared state, and it beats deps.judgments', async () => {
   const seen = [];
   const judged = [];

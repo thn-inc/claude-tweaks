@@ -760,6 +760,8 @@ function cliDeps(fx, { list = [], lists = null, create = `${URL42}\n`, push = nu
     sleep: async () => {},
     now: () => NOW,
     writeBodyFile: (name, text) => { const p = path.join(fx.root, name); fs.writeFileSync(p, text); return p; },
+    // #5902: realDeps carries the real emitter; undefined here is "no emission" unless a test records.
+    stationEvent: undefined,
     stdout: (s) => out.push(s),
     stderr: (s) => err.push(s),
   };
@@ -1077,6 +1079,11 @@ test('CLI: --help prints usage and exits 0 before any probe', async () => {
 });
 
 // ---- station events (#5902) ----
+
+test('#5902: realDeps wires a stationEvent emitter, so the real entry point emits', () => {
+  const { realDeps } = require('../../../plugin/bin/pr-early-open');
+  assert.equal(typeof realDeps.stationEvent, 'function', 'stationEvent is wired');
+});
 
 const withEvents = (h, stationEvent) => {
   const events = [];

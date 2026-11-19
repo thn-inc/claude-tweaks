@@ -196,6 +196,8 @@ const realDeps = {
   },
   ghAvailable: ({ env, cwd } = {}) => require('./lib/repo-resolve').ghAvailable({ env, cwd }),
   pinGhHost: (repoSpec, { env, cwd } = {}) => pinExplicitRepoHost(repoSpec, { env, cwd }),
+  // #5902: the station-event emitter; a caller that overrides it with undefined emits nothing.
+  stationEvent: (e) => appendStationEvent(e),
   // `{ cwd, env, stderr, homeDir }` is the injected process context.
   gh: (args, { cwd, env, stderr, homeDir } = {}) => {
     const { ghOptions, injectedGhDeps } = require('./lib/repo-resolve');
@@ -958,4 +960,4 @@ async function run(argv, overrides = {}) {
 
 module.exports = { run, parseArgs, realDeps };
 
-if (require.main === module) run(process.argv.slice(2), { ...realDeps, stationEvent: appendStationEvent }).then((code) => { process.exitCode = code; });
+if (require.main === module) run(process.argv.slice(2)).then((code) => { process.exitCode = code; });

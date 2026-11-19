@@ -21,9 +21,6 @@ const BIN = path.join(__dirname, '..', '..', '..', 'plugin', 'bin');
 const HOME_REL = 'lib/station-events/stations.js';
 // plugin/bin .js files when this scan landed. Fewer means the walk lost files.
 const FILE_FLOOR = 120;
-// `station: '<name>'` sites in stations.js when this scan landed (the tables). Fewer means the
-// matcher stopped matching; the home file is scanned only to prove the matcher still sees them.
-const HOME_SITE_FLOOR = 12;
 const NAMES = STATIONS.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
 const SITE = new RegExp(`(?<![\\w$])['"]?station['"]?\\s*(?::|=(?![=>]))\\s*(['"\`])(?:${NAMES})\\1`, 'g');
 
@@ -100,23 +97,40 @@ test('a CRLF copy of a fixture gets the same sites', () => {
   assert.deepEqual(lines(lf.replace(/\n/g, '\r\n')), lines(lf));
 });
 
+// The walk's verdict over `files`: one line per stripper mis-parse or station site, stations.js
+// itself exempt. `read(rel)` returns a file's text, so a test can plant a file into the walk.
+function offendersIn(files, read) {
+  const offenders = [];
+  for (const rel of files) {
+    if (rel === HOME_REL) continue;
+    const { sites, verdict } = stationSites(read(rel));
+    if (verdict !== 'ok') offenders.push(`${rel}: ${STRIPPER_VERDICT_MESSAGES[verdict]}`);
+    for (const s of sites) offenders.push(`${rel}:${s.line}: ${s.text}`);
+  }
+  return offenders;
+}
+
 test('no plugin/bin file but stations.js spells a station name as a station value', () => {
   const files = listJs(BIN);
   assert.ok(files.length >= FILE_FLOOR, `expected at least ${FILE_FLOOR} plugin/bin files, saw ${files.length}: the walk lost files`);
   assert.ok(files.includes(HOME_REL), `${HOME_REL} is not under plugin/bin: the home file moved, update HOME_REL`);
-  const offenders = [];
-  let homeSites = 0;
-  for (const rel of files) {
-    const { sites, verdict } = stationSites(readText(path.join(BIN, rel)));
-    if (rel === HOME_REL) { homeSites = sites.length; continue; }
-    if (verdict !== 'ok') offenders.push(`${rel}: ${STRIPPER_VERDICT_MESSAGES[verdict]}`);
-    for (const s of sites) offenders.push(`${rel}:${s.line}: ${s.text}`);
-  }
-  assert.deepEqual(offenders, [], 'name the station through stations.js (STATION.*, SESSION_BOUND_STATION, releaseTransition, PR_OPENED_TRANSITION), not as a string');
-  assert.ok(homeSites >= HOME_SITE_FLOOR, `expected at least ${HOME_SITE_FLOOR} station sites in ${HOME_REL}, saw ${homeSites}: the matcher stopped matching`);
+  assert.deepEqual(offendersIn(files, (rel) => readText(path.join(BIN, rel))), [], 'name the station through stations.js (STATION.*, SESSION_BOUND_STATION, releaseTransition, PR_OPENED_TRANSITION), not as a string');
 });
 
+// The matcher's recall proof: the same walk and offenders aggregation, over a real file with a
+// station literal planted on a known line, must name that file and line.
 test('the same walk goes red when a call site spells a station', () => {
-  const planted = `${readText(path.join(BIN, 'release-claim.js'))}\nemit({ station: 'build' });\n`;
-  assert.equal(stationSites(planted).sites.length, 1);
+  const files = listJs(BIN);
+  const target = 'release-claim.js';
+  assert.ok(files.includes(target), `${target} is not under plugin/bin: update the planted file`);
+  const real = readText(path.join(BIN, target));
+  const plantedLine = real.split('\n').length + 1;
+  const offenders = offendersIn(files, (rel) => (rel === target
+    ? `${real}\nemit({ station: 'build' });\n`
+    : readText(path.join(BIN, rel))));
+  assert.deepEqual(offenders, [`${target}:${plantedLine}: emit({ station: 'build' });`]);
+});
+
+test('the home file is exempt from the walk', () => {
+  assert.deepEqual(offendersIn([HOME_REL], () => "emit({ station: 'build' });"), []);
 });
