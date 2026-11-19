@@ -27,7 +27,9 @@ Scope keywords: station-events, appendStationEvent, session_bound
 
 1. `accept-entry.js` emits nothing. Its `labels` subcommand only prints the edit lists (`verdictLabelEdits`); skill prose applies them with `gh issue edit`. An event there would record a transition no code performed. The `accept:*` verdict labels stay with the reconciler.
 2. The claim event carries `lane: unknown` unless the caller passes `--lane`. `/flow` claims before the express gate runs, so it cannot know its lane; only the driver passes `--lane driver`. Later events carry the real lane. No `/flow` prose changes.
-3. The release transition is emitted from `plugin/bin/release-claim.js` (the CLI, which holds `runId`, reason and repo), not `lib/release-claim/release.js`. `reconcile`'s `release-merged.js` releases without the CLI and emits nothing; the reconciler covers it.
+3. The release transition is emitted from `plugin/bin/release-claim.js` (the CLI, which holds `runId`, reason and repo) and from `plugin/bin/accept-park.js`'s in-process release (Task 11), not `lib/release-claim/release.js`, because that library is also called by `reconcile`'s `release-merged.js`, which has no `deps.stationEvent` and emits nothing; the reconciler covers it. Only an `outcome: released` result emits; `already-released` does not, so a repeat release writes nothing.
+6. Decided by the user at plan review: for a driver run both the claim and the worker write a `session_bound` (the claim's names the host session, the worker's names the worker session). Both are written; `docs/reference/station-events.md` states that for `lane: driver` the worker's `session_bound` supersedes the claim's.
+7. Merge-station events are facts, not visits. Step lines (`ci`, `merge`) mirror as `started`/`exited` work segments with `payload.step`; the visit boundary comes from sub-steps with `payload.substep` (`merge-ready` → `entered`; `merge-confirm` with a merged result → `exited` passed; `merge-park` → `exited` returned). `merge-call` is never mapped, because it also reports non-merges as `ok` (a timeout, a conflict hand-off, an `--auto` degrade). Pairing them into visits is the consumer's job (`deriveVisits`).
 4. `bot:blocked` / `bot:parked` additions are not emitted: the emitter cannot know which station's visit they end.
 5. `express-lane.js` call paths emit nothing in this record; `express` stays a valid `lane` value.
 
@@ -57,6 +59,8 @@ Named in the spec's Technical Approach, left alone for the reasons in "Spec devi
 ---
 
 ### Task 1: Emitter, station table, reference page
+
+**Review risk:** high
 
 **Files:**
 - Create: `plugin/bin/lib/station-events/emit.js`
@@ -88,10 +92,10 @@ Expected: FAIL with "Cannot find module" for `emit.js`
 - [ ] **Step 3: Implement `emit.js` and `stations.js`.** Append with one `fs.appendFileSync(file, line + '\n')` inside `withLock(file + '.lock', fn, { createParent: true })` after `fs.mkdirSync(dirname, { recursive: true })`. `stations.js` tables, each with a header comment saying names are unconfirmed pending the design's Phase 0 fixtures:
   - `DRIVER_STEP_STATIONS`: `worker→build`, `test→test`, `review→review`, `pr→wrap-up`, `ci→merge`, `merge→merge`.
   - `outcomeForDriverStatus`: `ok→passed`, `fail→failed`, `stop→returned`.
-  - `MERGE_SUBSTEP_TRANSITIONS`: `merge-ready→{kind: entered, station: merge}`, `merge-call→{kind: exited, station: merge}` (outcome from status), `merge-park→{kind: exited, station: merge, outcome: returned}`.
+  - `MERGE_SUBSTEP_TRANSITIONS`: `merge-ready→{kind: entered, station: merge}`; `merge-confirm→{kind: exited, station: merge, outcome: passed}` only when its detail does not start with `armed` (an armed auto-merge has not merged); `merge-park→{kind: exited, station: merge, outcome: returned}`. `merge-call` is deliberately absent (it reports non-merges as `ok`). Each entry also names the `payload.substep` it stamps.
   - `LABEL_TRANSITIONS` per the design registry: `needs:definition` removed → exited `intake` passed; `ready` added → exited `intake` passed, exited `shape` passed, entered `authorize`; `auto:build` added → exited `authorize` passed, entered `release`; `bot:in-progress` added → exited `release` passed, entered `build`; `accept:pending` added → entered `accept`.
   - `outcomeForReleaseReason`: `merged`/`pr-opened*` → `passed`; `never-started*`/`swept:*` → `abandoned`; `fail*` → `failed`; anything else → `returned`.
-- [ ] **Step 4: Write `docs/reference/station-events.md`** — the v1 field table, the kind and outcome sets, the eventKey rule and "consumers dedupe on `eventKey`", file location and the main-checkout rule, the lane values, that `blockers` is an addition to the design's four kinds and dispatch must accept it, the coverage gaps (the five deviations above plus `ready` by `/specify` and a standard-lane `gh pr merge` having no code emitter), and the unconfirmed-names warning. Add `.claude-tweaks/station-events.jsonl` and `.claude-tweaks/station-events.jsonl.lock` to `.gitignore` next to `wrap-up-outcomes.tsv`.
+- [ ] **Step 4: Write `docs/reference/station-events.md`** — the v1 field table, the kind and outcome sets, the eventKey rule and "consumers dedupe on `eventKey`", file location and the main-checkout rule, the lane values, that `blockers` is an addition to the design's four kinds and dispatch must accept it, that for `lane: driver` the worker's `session_bound` supersedes the claim's (the claim names the host session), that `started`/`exited` with `payload.step` are work segments while `payload.substep` events are visit boundaries, the coverage gaps (the deviations above plus `ready` by `/specify` and a standard-lane `gh pr merge` having no code emitter), and the unconfirmed-names warning. Add `.claude-tweaks/station-events.jsonl` and `.claude-tweaks/station-events.jsonl.lock` to `.gitignore` next to `wrap-up-outcomes.tsv`.
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `node --test tests/bin-lib/station-events/emit.test.js`
@@ -125,6 +129,8 @@ Run: `node --test tests/init-bootstrap-gitignore.test.js` — first `git grep -l
 
 ### Task 3: Claim — `session_bound` and the claim transition
 
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/claim-targets/claim-targets.js`
 - Modify: `plugin/bin/claim-targets.js`
@@ -132,12 +138,12 @@ Run: `node --test tests/init-bootstrap-gitignore.test.js` — first `git grep -l
 
 **Interfaces:**
 - Consumes: `appendStationEvent`, `toRepoName`, `LABEL_TRANSITIONS`/`transitionsForLabel('bot:in-progress', 'added')` from Task 1.
-- Produces: `run()` calls `deps.stationEvent(event)` (optional dep; absent = no emission) once per newly claimed record, immediately after `claimedThisRun.push(issue)` (`claim-targets.js:747`); `--lane <standard|express|driver|unknown>` flag (default `unknown`, anything else exit 2 with `USAGE`); `realDeps.stationEvent = (e) => appendStationEvent(e)`.
+- Produces: `run()` calls `deps.stationEvent(event)` (optional dep; absent = no emission): `session_bound` once per newly claimed record immediately after `claimedThisRun.push(issue)` (`claim-targets.js:747`), and the two `bot:in-progress` transition events inside the `try` after `ensureAndAddLabel(deps.gh, issue)` succeeds (`claim-targets.js:751`); `--lane <standard|express|driver|unknown>` flag (default `unknown`, anything else exit 2 with `USAGE`); `realDeps.stationEvent = (e) => appendStationEvent(e)`.
 
 - [ ] **Step 1: Write the failing tests** (append to the existing suite; `Expected: FAIL after Step 1`) with a fake `stationEvent` recording calls:
   - claiming `[5902]` records a `session_bound` event with `recordNumber: 5902`, `repoName` `acme/w`, `sessionId` equal to `deps.sessionId`, `runId` equal to `--run-id`, `lane: unknown`, `discriminator` equal to the claim payload's `claimedAt`.
   - claiming `[1,2,3]` records three `session_bound` events with one `sessionId`, in target order.
-  - each claim also records an `exited release passed` and an `entered build` event (the `bot:in-progress` transition).
+  - each claim whose `bot:in-progress` label add succeeded also records an `exited release passed` and an `entered build` event (the transition is the label's); when `deps.gh` fails the label add, those two are not recorded but `session_bound` still is; an `alreadyOwned` re-assert records nothing.
   - `--lane driver` stamps `lane: driver` on all of them; `--lane bogus` exits 2.
   - empty `sessionId` records the two transition events and no `session_bound`.
   - a contested, transient or `alreadyOwned` target records nothing.
@@ -165,9 +171,9 @@ Expected: PASS (the CLI wiring test still sees `gitRunner`; add one case asserti
 
 **Interfaces:**
 - Consumes: Task 1's `outcomeForReleaseReason`, `toRepoName`.
-- Produces: `run()` calls `deps.stationEvent` once after `release.releaseClaim` when `r.outcome` is a real release (not `skipped-not-owner`, `unreadable`, `failed`): `{ kind: 'exited', station: 'build', outcome: outcomeForReleaseReason(reason), runId, recordNumber: issue, payload: { reason, link } , discriminator: 'release:' + runId }`; `realDeps.stationEvent` wired as in Task 3.
+- Produces: `run()` calls `deps.stationEvent` once after `release.releaseClaim` only when `r.outcome === 'released'` (not `already-released`, `skipped-not-owner`, `unreadable`, `failed`): `{ kind: 'exited', station: 'build', outcome: outcomeForReleaseReason(reason), runId, recordNumber: issue, payload: { reason, link } , discriminator: 'release:' + runId }`; `realDeps.stationEvent` wired as in Task 3.
 
-- [ ] **Step 1: Write the failing tests** (`Expected: FAIL after Step 1`): a released claim with `--reason merged` records one `exited build passed` event carrying `payload.reason`; `--reason "never-started: x"` gives `abandoned`; an `skipped-not-owner` outcome records nothing; a throwing `stationEvent` leaves stdout and the exit code unchanged.
+- [ ] **Step 1: Write the failing tests** (`Expected: FAIL after Step 1`): a released claim with `--reason merged` records one `exited build passed` event carrying `payload.reason`; `--reason "never-started: x"` gives `abandoned`; `skipped-not-owner` and `already-released` outcomes record nothing; a throwing `stationEvent` leaves stdout and the exit code unchanged.
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/bin-lib/release-claim/cli.test.js`
@@ -266,7 +272,7 @@ Expected: PASS
 - Test: `tests/bin-lib/driver/run.test.js`
 
 **Interfaces:**
-- Produces: `classify()`'s envelope gains `sessionId` (`obj.session_id` when a non-empty string, else `null`); `runImplementer` copies it to `ctx.worker.sessionId` and into the `worker` step's `extra` as `sessionId` (only when non-null, like `spendOverrun`); the driver's claim step passes `--lane driver` to `claim-targets.js`. Fixture: `tests/bin-lib/driver/fixtures/worker-result.json` already carries `session_id`.
+- Produces: `classify()`'s `envelope()` gains `sessionId` (`obj.session_id` when a non-empty string, else `null`) and `ENVELOPE_FIELDS` (`worker.js:139`) gains `sessionId` as its last entry, with the two pins that assert it updated (`worker.test.js:49` compares `Object.keys(env)` to it, `worker.test.js:63` pins the literal list); `runImplementer` copies it to `ctx.worker.sessionId` and into the `worker` step's `extra` as `sessionId` (only when non-null, like `spendOverrun`); the driver's claim step passes `--lane driver` to `claim-targets.js`. Fixture: `tests/bin-lib/driver/fixtures/worker-result.json` already carries `session_id`.
 
 - [ ] **Step 1: Write the failing tests** (append): `launchWorker` over the fixture returns an envelope with `sessionId` equal to the fixture's `session_id`; a result with no `session_id` gives `null`; a driver run's `worker` event has `sessionId`; the claim step's `claim-targets.js` argv ends with `--lane driver`.
 - [ ] **Step 2: Run test to verify it fails**
@@ -286,6 +292,8 @@ Expected: PASS
 
 ### Task 9: Driver events mirror into station events
 
+**Review risk:** high
+
 **Files:**
 - Create: `plugin/bin/lib/station-events/driver-mirror.js`
 - Modify: `plugin/bin/lib/driver/run.js`
@@ -294,9 +302,9 @@ Expected: PASS
 
 **Interfaces:**
 - Consumes: `DRIVER_STEP_STATIONS`, `MERGE_SUBSTEP_TRANSITIONS`, `outcomeForDriverStatus` (Task 1).
-- Produces (`driver-mirror.js`): `stationEventsFor(event, { repoName, runId }) -> event[]` — pure. For a step line whose `step` is in `DRIVER_STEP_STATIONS` it returns a `started` event (`at` = `ts` minus `ms`) and an `exited` event (`at` = `ts`, outcome from `status`); if `event.sessionId` is present on a `worker` line it also returns a `session_bound`; for a `merge-*` sub-step in `MERGE_SUBSTEP_TRANSITIONS` it returns that one transition. Every event has `lane: 'driver'`, `runId`, `discriminator: step + '@' + ts`. Other steps return `[]`. `run.js` passes `deps.stationEvent` (optional) through a wrapper around the sink so every `sink.emit(...)` (`run.js:331,386,431,446`) also calls `deps.stationEvent` for each mirrored event, inside try/catch; `repoName` is `toRepoName(shared.ghRepo)`.
+- Produces (`driver-mirror.js`): `stationEventsFor(event, { repoName, runId }) -> event[]` — pure. For a step line whose `step` is in `DRIVER_STEP_STATIONS` it returns a `started` event (`at` = `ts` minus `ms`) and an `exited` event (`at` = `ts`, outcome from `status`); if `event.sessionId` is present on a `worker` line it also returns a `session_bound`; for a `merge-*` sub-step in `MERGE_SUBSTEP_TRANSITIONS` it returns that one transition (`merge-call` is not in the table and returns `[]`; `merge-confirm` returns an `exited` only when its `detail` does not start with `armed`). Step lines carry `payload.step`, sub-step events `payload.substep`. Every event has `lane: 'driver'`, `runId`, `discriminator: step + '@' + ts`. Other steps return `[]`. The wrapper never throws into the sink: `reportInterrupt` (`run.js:326-337`) emits and then calls `deps.terminate`, so a mirror failure must not skip the final line or the terminate. `run.js` passes `deps.stationEvent` (optional) through a wrapper around the sink so every `sink.emit(...)` (`run.js:331,386,431,446`) also calls `deps.stationEvent` for each mirrored event, inside try/catch; `repoName` is `toRepoName(shared.ghRepo)`.
 
-- [ ] **Step 1: Write the failing tests.** `driver-mirror.test.js`: a `worker` line with `ms: 4000` and `ts` gives `started` at `ts-4000ms` and `exited` at `ts`; `fail` → outcome `failed`; `stop` → `returned`; a `worker` line carrying `sessionId` adds one `session_bound` with it; `merge-ready`, `merge-call`, `merge-park` map per the table; `claim`, `policy`, `summary`, `final` return `[]`; a replay of the same line gives the same `eventKey`s. `run.test.js`: a driver run over the existing fake-deps harness with a recording `deps.stationEvent` — for every `worker`, `test`, `review`, `pr`, `ci` and `merge` line in the run's emitted events there is a `started` and an `exited` station event with the same record and run id, and the `session_bound` names the fixture's `session_id`.
+- [ ] **Step 1: Write the failing tests.** `driver-mirror.test.js`: a `worker` line with `ms: 4000` and `ts` gives `started` at `ts-4000ms` and `exited` at `ts`; `fail` → outcome `failed`; `stop` → `returned`; a `worker` line carrying `sessionId` adds one `session_bound` with it; `merge-ready`, `merge-confirm` (merged), `merge-park` map per the table; `merge-confirm` with an `armed…` detail, `merge-call` (every status), `claim`, `policy`, `summary`, `final` return `[]`; an interrupted run still emits its final line and calls `terminate` when `deps.stationEvent` throws; a replay of the same line gives the same `eventKey`s. `run.test.js`: a driver run over the existing fake-deps harness with a recording `deps.stationEvent` — for every `worker`, `test`, `review`, `pr`, `ci` and `merge` line in the run's emitted events there is a `started` and an `exited` station event with the same record and run id, and the `session_bound` names the fixture's `session_id`.
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/bin-lib/station-events/driver-mirror.test.js`
@@ -344,9 +352,9 @@ Expected: PASS
 - Test: `tests/bin-lib/flow/pr-early-open.test.js`
 
 **Interfaces:**
-- Produces: in `accept-park.js` `postPacket` (`accept-park.js:722`), after either branch returns anything but `'pending label present'`, one `entered accept` event (`discriminator: 'accept-pending:' + n + ':' + runDir basename`); in `pr-early-open.js` after `openPrEarly` resolves with outcome `opened` or `reopened`, one `{ kind: 'started', station: 'build', payload: { fact: 'pr_opened', prNumber, prUrl, outcome } , discriminator: 'pr:' + number }` (`lane: unknown`). Both through an optional `deps.stationEvent`, wired in each `realDeps`.
+- Produces: in `accept-park.js` `postPacket` (`accept-park.js:722`), after either branch returns anything but `'pending label present'`, one `entered accept` event (`discriminator: 'accept-pending:' + n + ':' + runDir basename`); in `accept-park.js`'s wired `releaseClaim` (`accept-park.js:222`, called at `:758` with `PARK_REASON`), one `exited build` event with `outcomeForReleaseReason(PARK_REASON)` and `payload.reason`, only when the result's `outcome === 'released'`; in `pr-early-open.js` after `openPrEarly` resolves with outcome `opened` or `reopened`, one `{ kind: 'started', station: 'build', payload: { fact: 'pr_opened', prNumber, prUrl, outcome } , discriminator: 'pr:' + number }` (`lane: unknown`). Both through an optional `deps.stationEvent`, wired in each `realDeps`.
 
-- [ ] **Step 1: Write the failing tests** (`Expected: FAIL after Step 1`): `postPacket` over a record with no pending label records one event; with the label already present records none; `pr-early-open` records one event for `opened`, none for `reused`, and none when `openPrEarly` returns a degrade; a throwing `stationEvent` changes neither stdout nor the exit code in either CLI. Find the `pr-early-open.js` CLI suite with `git grep -ln "pr-early-open.js" -- tests` and add the CLI cases there if `tests/bin-lib/flow/pr-early-open.test.js` covers the lib only.
+- [ ] **Step 1: Write the failing tests** (`Expected: FAIL after Step 1`): `postPacket` over a record with no pending label records one event; with the label already present records none; a park whose claim release returns `released` records one `exited build` event, and `already-released` records none; `pr-early-open` records one event for `opened`, none for `reused`, and none when `openPrEarly` returns a degrade; a throwing `stationEvent` changes neither stdout nor the exit code in either CLI. Find the `pr-early-open.js` CLI suite with `git grep -ln "pr-early-open.js" -- tests` and add the CLI cases there if `tests/bin-lib/flow/pr-early-open.test.js` covers the lib only.
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/accept-park-cli.test.js`
