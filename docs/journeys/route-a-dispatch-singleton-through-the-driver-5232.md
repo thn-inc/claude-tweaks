@@ -63,7 +63,7 @@ files:
     - the working directory is not a linked worktree of the main checkout;
     - `run-state.json` names another worktree;
     - HEAD is detached.
-  - A worktree on the integration branch itself passes that guard. The driver's policy step refuses it instead, before the claim: exit 1, a final line with outcome `refused`, and nothing written.
+  - A worktree on the integration branch itself passes that guard. The driver's policy step refuses it instead, before the claim: exit 1, a final line with outcome `refused`, and nothing written except the run's `manifest.json` lane, which the adoption has already filled as `driver` (`docs/reference/run-manifest.md`).
   - `--run` requires `--no-settle` and exactly one record.
 - **Red flags:**
   - A claim taken by dispatch before `--run`.

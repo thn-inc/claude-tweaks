@@ -167,7 +167,10 @@ function world({ policy, records = {}, worktrees, fail = {}, diff = 'M\0src/app.
     state.release.push(opts);
     const already = state.claims[opts.issueNumber] === 'released';
     state.claims[opts.issueNumber] = 'released';
-    return { outcome: already ? 'already-released' : 'released', calls: [], commentPosted: true, labelsRemoved: [], labelsFailed: [], note: null };
+    return {
+      outcome: already ? 'already-released' : 'released', calls: [], commentPosted: true, labelsRemoved: [], labelsFailed: [], note: null,
+      ...(already ? {} : { claimedAt: state.claimedAt || '2026-11-16T09:00:00.000Z' }),
+    };
   };
   const deps = {
     mainRoot: root,
@@ -181,6 +184,8 @@ function world({ policy, records = {}, worktrees, fail = {}, diff = 'M\0src/app.
     remoteUrl: () => 'https://github.com/o/r.git',
     tmpPath: (name) => path.join(root, name),
     now: () => Date.UTC(2026, 10, 16, 10, 0, 0),
+    // #5902: realDeps carries the real emitter; undefined here is "no emission" unless a test records.
+    stationEvent: undefined,
   };
   return { state, deps };
 }
@@ -1448,4 +1453,114 @@ test('no tripwire file parks as before', async () => {
   assert.equal(res.code, 0, res.stderr);
   assert.doesNotMatch(w.state.records[7].comments[0].body, /tripwire/);
   assert.deepEqual(JSON.parse(res.stdout).steps.map((s) => s.ok), [true, true, true, true, true]);
+});
+
+// ---- station events (#5902) ----
+
+const recorder = () => {
+  const events = [];
+  return { events, stationEvent: (e) => { events.push(e); } };
+};
+const SESSION_ENV = { CLAUDE_CODE_SESSION_ID: 'sess-park' };
+
+test('#5902: realDeps wires a stationEvent emitter, so the real entry point emits', () => {
+  const { realDeps } = require('../plugin/bin/accept-park');
+  assert.equal(typeof realDeps.stationEvent, 'function', 'stationEvent is wired');
+});
+
+test('#5902: postPacket adding accept:pending records one entered accept event', async () => {
+  const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+  const rec = recorder();
+  const res = await call(w, parkArgv(w), { stationEvent: rec.stationEvent, env: SESSION_ENV });
+  assert.equal(res.code, 0, res.stderr);
+  const entered = rec.events.filter((e) => e.station === 'accept');
+  assert.deepEqual(entered, [{
+    kind: 'entered', station: 'accept', recordNumber: 7, repoName: 'o/r', lane: 'unknown', runId: RUN_ID, sessionId: 'sess-park',
+    payload: { label: 'accept:pending' }, discriminator: `accept-pending:7:${RUN_ID}`,
+  }]);
+});
+
+test('#5902: postPacket posting a fresh packet records one entered accept event', async () => {
+  const w = world({ records: { 7: { comments: [] } } });
+  const rec = recorder();
+  const res = await call(w, parkArgv(w), { stationEvent: rec.stationEvent });
+  assert.equal(res.code, 0, res.stderr);
+  assert.equal(rec.events.filter((e) => e.kind === 'entered' && e.station === 'accept').length, 1);
+});
+
+test('#5902: postPacket with the pending label already present records no accept event', async () => {
+  const w = world({ records: { 7: { comments: [packetComment(7)], labels: ['accept:pending'] } } });
+  const rec = recorder();
+  const res = await call(w, parkArgv(w), { stationEvent: rec.stationEvent });
+  assert.equal(res.code, 0, res.stderr);
+  assert.deepEqual(rec.events.filter((e) => e.station === 'accept'), []);
+});
+
+test('#5902: a park whose claim release returns released records one exited build event', async () => {
+  const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+  const rec = recorder();
+  const res = await call(w, parkArgv(w), { stationEvent: rec.stationEvent, env: SESSION_ENV });
+  assert.equal(res.code, 0, res.stderr);
+  const exited = rec.events.filter((e) => e.station === 'build');
+  assert.deepEqual(exited, [{
+    kind: 'exited', station: 'build', outcome: 'passed', recordNumber: 7, repoName: 'o/r', lane: 'unknown', runId: RUN_ID,
+    sessionId: 'sess-park', payload: { reason: 'awaiting-local-acceptance' }, discriminator: `release:${RUN_ID}:2026-11-16T09:00:00.000Z`,
+  }]);
+});
+
+test('#5902: the park release discriminator names the released claim instance', async () => {
+  const keyFor = async (claimedAt) => {
+    const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+    w.state.claimedAt = claimedAt;
+    const rec = recorder();
+    const res = await call(w, parkArgv(w), { stationEvent: rec.stationEvent });
+    assert.equal(res.code, 0, res.stderr);
+    return rec.events.find((e) => e.kind === 'exited').discriminator;
+  };
+  const first = await keyFor('2026-11-16T09:00:00.000Z');
+  assert.equal(first, await keyFor('2026-11-16T09:00:00.000Z'), 'a replay keys the same');
+  assert.notEqual(first, await keyFor('2026-11-16T09:30:00.000Z'), 'a re-claim by the same run keys differently');
+});
+
+test('#5902: an already-released claim records no exited build event', async () => {
+  const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+  w.state.claims[7] = 'released';
+  const rec = recorder();
+  const res = await call(w, parkArgv(w), { stationEvent: rec.stationEvent });
+  assert.equal(res.code, 0, res.stderr);
+  assert.equal(JSON.parse(res.stdout).steps[3].detail, '#7: already-released');
+  assert.deepEqual(rec.events.filter((e) => e.station === 'build'), []);
+});
+
+// Each run builds its own temp root. Its stdout is JSON, so on Windows the root appears with doubled
+// backslashes: replace the raw form and the JSON-escaped form, or the two runs never compare equal.
+const stripRoots = (text, ...roots) => roots.reduce(
+  (acc, root) => acc.split(root).join('ROOT').split(JSON.stringify(root).slice(1, -1)).join('ROOT'),
+  text,
+);
+
+test('#5902: a throwing stationEvent leaves the park stdout and exit code unchanged', async () => {
+  const plain = world({ records: { 7: { comments: [packetComment(7)] } } });
+  const base = await call(plain, parkArgv(plain));
+  const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+  let calls = 0;
+  const res = await call(w, parkArgv(w), { stationEvent: () => { calls += 1; throw new Error('emitter exploded'); } });
+  assert.equal(calls, 2, 'both emissions were attempted');
+  assert.equal(res.code, base.code);
+  const strip = (s) => stripRoots(s, plain.state.root, w.state.root);
+  assert.equal(strip(res.stdout), strip(base.stdout));
+  assert.equal(res.stderr, base.stderr);
+});
+
+test('#5902: a recording stationEvent leaves the park stdout and exit code unchanged', async () => {
+  const plain = world({ records: { 7: { comments: [packetComment(7)] } } });
+  const base = await call(plain, parkArgv(plain));
+  const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+  const rec = recorder();
+  const res = await call(w, parkArgv(w), { stationEvent: rec.stationEvent });
+  assert.equal(rec.events.length, 2, 'both emissions were recorded');
+  assert.equal(res.code, base.code);
+  const strip = (s) => stripRoots(s, plain.state.root, w.state.root);
+  assert.equal(strip(res.stdout), strip(base.stdout));
+  assert.equal(res.stderr, base.stderr);
 });

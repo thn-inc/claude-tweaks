@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync, execFileSync } = require('node:child_process');
 const { readText } = require('../../helpers/read-skill');
+const { chmodDenialSkip } = require('../../helpers/root');
 const { VERDICT_STEPS, verdictMarker } = require('../../../plugin/bin/lib/dispatch/merge-verdict');
 const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
@@ -395,7 +396,7 @@ const ONE_NEW = 'skip-worktree or assume-unchanged newly set on 1 path(s) since 
 // The launcher's envelope for a worker that finished (worker.js's ENVELOPE_FIELDS).
 const ENVELOPE = Object.freeze({
   status: 'ok', reason: null, result: { status: 'done', title: 'Add the loop', summary: 'Adds the loop.' },
-  usage: { input_tokens: 10, output_tokens: 5 }, turns: 3, denials: [], spendOverrun: false, costUsd: 0.25, detail: null,
+  usage: { input_tokens: 10, output_tokens: 5 }, turns: 3, denials: [], spendOverrun: false, costUsd: 0.25, detail: null, sessionId: null,
 });
 
 const HEAD_SHA = 'a'.repeat(40);
@@ -1167,7 +1168,8 @@ test('claim and run-dir share one run id and write the canonical claim log', asy
   const runId = mintedRunId(h);
   const runDir = path.join(MAIN, '.claude-tweaks', 'pipelines', runId);
   const claim = calls(h, 'node', /claim-targets\.js$/)[0];
-  assert.deepEqual(claim.args.slice(1), ['--run-id', runId, '--targets', '7', '--steps', 'build,test']);
+  assert.deepEqual(claim.args.slice(1), ['--run-id', runId, '--targets', '7', '--steps', 'build,test', '--lane', 'driver']);
+  assert.deepEqual(claim.args.slice(-2), ['--lane', 'driver'], 'a driver claim names its lane');
   assert.ok(claim.args[0].endsWith(path.join('plugin', 'bin', 'claim-targets.js')));
   const mint = calls(h, 'resolveRunDir')[0].args[0];
   assert.ok(mint.now instanceof Date);
@@ -1542,7 +1544,7 @@ test('the worker step launches the implementer in the worktree with the policy c
   const mk = h.calls.findIndex((c) => c.kind === 'mkdirSync');
   assert.deepEqual(h.calls[mk].args, [path.join(runDir, 'worker'), { recursive: true }]);
   assert.ok(mk < h.calls.indexOf(workerCall(h)));
-  assert.deepEqual(ctx.worker, { title: 'Add the loop', summary: 'Adds the loop.', usage: ENVELOPE.usage, turns: 3, denials: [], costUsd: 0.25, spendOverrun: false });
+  assert.deepEqual(ctx.worker, { title: 'Add the loop', summary: 'Adds the loop.', usage: ENVELOPE.usage, turns: 3, denials: [], costUsd: 0.25, spendOverrun: false, sessionId: null });
   const line = h.lines().find((l) => l.step === 'worker');
   assert.deepEqual([line.status, line.usage, line.denials, line.model], ['ok', ENVELOPE.usage, [], M('standard')]);
   assert.deepEqual([line.turns, 'spendOverrun' in line], [3, false], 'turns always; spendOverrun only when the envelope says true');
@@ -3604,6 +3606,22 @@ test('ctx.worker.spendOverrun follows the envelope', async () => {
   assert.equal(ctx.worker.spendOverrun, true);
 });
 
+test('the worker event carries the envelope\'s sessionId, and has no sessionId key when there is none', async () => {
+  const SID = '00000000-0000-4000-8000-000000000000';
+  const bound = harness({ worker: { sessionId: SID } });
+  const { ctx } = await driveCapturing(bound);
+  assert.equal(ctx.worker.sessionId, SID);
+  assert.equal(bound.lines().find((l) => l.step === 'worker').sessionId, SID);
+  const failed = harness({ worker: { status: 'fail', reason: 'exit', result: null, detail: 'x', sessionId: SID } });
+  await run(['#7'], failed.deps);
+  const failedLine = failed.lines().find((l) => l.step === 'worker');
+  assert.deepEqual([failedLine.status, failedLine.sessionId], ['fail', SID], 'a failed launch still names its session');
+  const plain = harness();
+  const { ctx: plainCtx } = await driveCapturing(plain);
+  assert.equal(plainCtx.worker.sessionId, null);
+  assert.ok(!('sessionId' in plain.lines().find((l) => l.step === 'worker')), 'no sessionId key when the envelope has none');
+});
+
 test('AC4.1: draft PR with base, head and an express body written from the summary as it came', async () => {
   const h = harness({ worker: { result: { status: 'done', title: 'T', summary: 'A summary.' } } });
   await run(['#7'], h.deps);
@@ -4400,6 +4418,28 @@ test('fix round: ctx.worker merges both launches: the fix title commits, cost an
   const failed = fixRig({ fix: { status: 'fail', reason: 'exit', result: null, detail: 'x', costUsd: 1 } });
   await run(['#7'], failed.deps);
   assert.equal(lastLine(failed).costUsd, 1.25);
+});
+
+test('fix round: the review event carries the fix worker\'s session as fixSessionId, and only when there is one', async () => {
+  const FIRST = '11111111-1111-4111-8111-111111111111';
+  const FIX = '22222222-2222-4222-8222-222222222222';
+  const firstLaunch = nthCall((c) => c.kind === 'worker' && c.args[0].role === 'implementer', 1, { ...ENVELOPE, sessionId: FIRST });
+  const h = fixRig({ script: [firstLaunch], fix: { sessionId: FIX } });
+  await run(['#7'], h.deps);
+  assert.deepEqual([reviewLines(h)[0].status, reviewLines(h)[0].fixSessionId], ['ok', FIX]);
+  assert.equal(h.lines().find((l) => l.step === 'worker').sessionId, FIRST, 'the first worker keeps its own session');
+  // A fix launch that fails still names its session on the review event.
+  const failed = fixRig({ fix: { status: 'fail', reason: 'exit', result: null, detail: 'x', sessionId: FIX } });
+  await run(['#7'], failed.deps);
+  assert.deepEqual([reviewLines(failed)[0].status, reviewLines(failed)[0].fixSessionId], ['fail', FIX]);
+  // A fix worker with no session id, and a review with no fix round: no fixSessionId key.
+  const unbound = fixRig();
+  await run(['#7'], unbound.deps);
+  assert.ok(!('fixSessionId' in reviewLines(unbound)[0]));
+  const noFix = fixRig({ findings: [] });
+  await run(['#7'], noFix.deps);
+  assert.equal(implementerCalls(noFix).length, 1, 'no fix round ran');
+  assert.ok(!('fixSessionId' in reviewLines(noFix)[0]));
 });
 
 test('fix round: a parent the fix worker turned into a symlink out of the worktree is refused, with no write', async () => {
@@ -6406,6 +6446,11 @@ test('realDeps.createJudgments builds the production supplier: a function from {
   assert.equal(typeof realDeps.createJudgments({ deps: {}, shared: {} }), 'function');
 });
 
+test('#5902: realDeps wires a stationEvent emitter, the production mirror sink', () => {
+  const { realDeps } = require(path.join(LIB, 'driver', 'run'));
+  assert.equal(typeof realDeps.stationEvent, 'function', 'stationEvent is wired');
+});
+
 test('mergeStep builds the supplier from deps.createJudgments over the merge deps and the run\'s shared state, and it beats deps.judgments', async () => {
   const seen = [];
   const judged = [];
@@ -7620,10 +7665,215 @@ test('#5232 adoptRun returns the adopted run for a linked worktree of the main c
   assert.equal(adoptModule().adoptRun({ runDir: ADOPT_RUN, cwd: sub }, h.deps).wt, ADOPT_WT);
 });
 
+// The adoption's lane fill (#5903): a run directory bound to ADOPT_WT, with the manifest the mint left.
+// `over` undefined leaves no manifest; an object writes the one the mint writes, with `over` applied.
+const boundRun = (over) => {
+  const { dir } = stateRun(ADOPT_STATE);
+  if (over === undefined) return { dir, minted: null };
+  const minted = { v: 1, runId: path.basename(dir), createdAt: '2026-11-15T00:00:00.000Z', lane: 'unknown', ceremonyProfile: null, pluginVersion: '1.2.3', policyHash: 'abc', baseCommit: 'def', modelProfile: 'standard', ...over };
+  fs.writeFileSync(path.join(dir, 'manifest.json'), `${JSON.stringify(minted, null, 2)}\n`);
+  return { dir, minted };
+};
+const readRunManifest = (dir) => JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
+
+test('#5903 adoptRun on a dispatch-minted run fills lane driver', () => {
+  const { dir, minted } = boundRun({});
+  const h = harness({ script: [[isAdoptBranchRead, `${ADOPT_BRANCH}\n`]] });
+  const result = adoptModule().adoptRun({ runDir: dir, cwd: ADOPT_WT }, h.deps);
+  assert.deepEqual(result, { ok: true, runDir: dir, runId: path.basename(dir), wt: ADOPT_WT, branch: ADOPT_BRANCH, mainRoot: ADOPT_MAIN });
+  assert.deepEqual(readRunManifest(dir), { ...minted, lane: 'driver' });
+});
+
+test('#5903 adoptRun keeps a known lane and fills a manifest the mint did not leave', () => {
+  const { dir: kept } = boundRun({ lane: 'standard' });
+  const { dir: bare } = boundRun();
+  const h = harness({ script: [[isAdoptBranchRead, `${ADOPT_BRANCH}\n`]] });
+  assert.equal(adoptModule().adoptRun({ runDir: kept, cwd: ADOPT_WT }, h.deps).ok, true);
+  assert.equal(readRunManifest(kept).lane, 'standard');
+  assert.equal(adoptModule().adoptRun({ runDir: bare, cwd: ADOPT_WT }, h.deps).ok, true);
+  assert.equal(readRunManifest(bare).lane, 'driver');
+});
+
+test('#5903 a refused adoption writes nothing', () => {
+  const cases = [
+    // check 4: the run-state.json names another worktree
+    [stateRun(`${JSON.stringify({ worktree: ADOPT_MAIN })}\n`), ADOPT_WT, []],
+    // check 3: the working directory is the main checkout
+    [stateRun(ADOPT_STATE), ADOPT_MAIN, []],
+    // check 5, the last one: a detached HEAD
+    [stateRun(ADOPT_STATE), ADOPT_WT, [[isAdoptBranchRead, '\n']]],
+  ];
+  for (const [{ dir, unchanged }, cwd, script] of cases) {
+    const h = harness({ script });
+    assert.equal(adoptModule().adoptRun({ runDir: dir, cwd }, h.deps).ok, false, dir);
+    assert.equal(fs.existsSync(path.join(dir, 'manifest.json')), false, dir);
+    unchanged();
+  }
+});
+
 test('#5232 a thrown guard is a refusal naming the error, exit 3', async () => {
   const h = harness({ deps: { cwd: () => ADOPT_WT, adoptRun: () => { throw new Error('guard exploded'); } } });
   assert.equal(await run(adoptArgv(ADOPT_RUN), h.deps), 3);
   assert.equal(h.err.join(''), 'drive.js: --run refused: guard exploded\n');
   assert.deepEqual(h.out, []);
   assert.deepEqual(h.calls, []);
+});
+
+// --- #5902: driver events mirrored into station events -----------------------------------------
+
+const MIRROR_SID = 'sess-worker-5902';
+const MIRRORED_STEPS = ['worker', 'test', 'review', 'pr', 'ci', 'merge'];
+const mirrorRig = (stationEvent) => mergeHarness({
+  reconcile: archiveRunDir,
+  deps: stationEvent ? { stationEvent } : {},
+  script: [[(c) => c.kind === 'worker' && c.args[0].role === 'implementer', { ...ENVELOPE, sessionId: MIRROR_SID }]],
+});
+
+test('#5902 a merged run mirrors every work step as started + exited, and binds the worker session', async () => {
+  const seen = [];
+  const h = mirrorRig((e) => seen.push(e));
+  const { final } = await driveRecord(7, newShared(), h.deps, STEPS);
+  assert.strictEqual(final.outcome, 'merged');
+  const stepLines = h.lines().filter((l) => MIRRORED_STEPS.includes(l.step));
+  assert.ok(stepLines.length >= 5, `the run emitted its work steps: ${stepLines.map((l) => l.step)}`);
+  for (const l of stepLines) {
+    for (const kind of ['started', 'exited']) {
+      const match = seen.filter((e) => e.kind === kind && e.payload.step === l.step && e.discriminator === `${l.step}@${l.ts}`);
+      assert.strictEqual(match.length, 1, `${kind} for ${l.step}`);
+      assert.deepStrictEqual([match[0].recordNumber, match[0].runId, match[0].repoName, match[0].lane], [7, MERGE_RUN_ID, 'acme/widgets', 'driver']);
+    }
+  }
+  const bound = seen.filter((e) => e.kind === 'session_bound');
+  assert.deepStrictEqual(bound.map((e) => [e.sessionId, e.station, e.runId]), [[MIRROR_SID, 'build', MERGE_RUN_ID]]);
+  assert.deepStrictEqual(seen.filter((e) => e.payload.substep).map((e) => [e.payload.substep, e.kind, e.outcome]),
+    [['merge-ready', 'entered', undefined], ['merge-confirm', 'exited', 'passed']]);
+});
+
+// The mirror skips an armed merge-confirm by its free-text detail prefix. This drives the real
+// merge step to armed, so the detail comes from merge.js itself rather than a retyped literal.
+test('#5902 an armed merge-confirm (real merge.js detail) is no merge-station exit, and its detail starts with the pinned prefix', async () => {
+  const isPrViewOf = (fields) => (c) => c.kind === 'gh' && c.args[0] === 'pr' && c.args[1] === 'view' && c.args.includes(fields);
+  const seen = [];
+  const armed = mergeHarness({
+    deps: { stationEvent: (e) => seen.push(e) },
+    script: [
+      [(c) => c.kind === 'policyCore' && c.args.includes('merge-verification'),
+        { code: 0, result: { 'merge-verification': { value: 'merge-when-green', source: 'run-config' } }, invalidRaw: new Map(), degrades: new Map() }],
+      [isPrViewOf(GATE_FIELDS), JSON.stringify({ state: 'OPEN', mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', headRefOid: HEAD_SHA, statusCheckRollup: [PENDING_CHECK] })],
+      [isPrViewOf(CONFIRM_FIELDS), JSON.stringify({ state: 'OPEN', mergedAt: null, autoMergeRequest: { enabledAt: '2026-11-13T09:30:00Z', mergeMethod: 'SQUASH' }, statusCheckRollup: [PENDING_CHECK], mergeCommit: null })],
+    ],
+  });
+  const { final } = await driveRecord(7, newShared(), armed.deps, STEPS);
+  assert.strictEqual(final.outcome, 'armed');
+  const confirm = armed.lines().find((l) => l.step === 'merge-confirm');
+  assert.ok(confirm, 'the real armed run wrote a merge-confirm line');
+  const { MERGE_SUBSTEP_TRANSITIONS } = require('../../../plugin/bin/lib/station-events/stations');
+  assert.ok(confirm.detail.startsWith(MERGE_SUBSTEP_TRANSITIONS['merge-confirm'].skipDetailPrefix),
+    `merge.js's armed detail no longer starts with the prefix the mirror skips on: ${confirm.detail}`);
+  assert.deepStrictEqual(seen.filter((e) => e.payload.substep === 'merge-confirm'), [], 'an armed merge-confirm is not a merge-station exit');
+  assert.deepStrictEqual(seen.filter((e) => e.kind === 'exited' && e.station === 'merge' && e.payload.substep), [],
+    'no merge-station visit boundary exit for an armed merge');
+});
+
+test('#5902 stdout and driver-events.jsonl are byte-identical with and without deps.stationEvent', async () => {
+  const plain = mirrorRig(null);
+  await driveRecord(7, newShared(), plain.deps, STEPS);
+  const bareFile = plain.files[path.join(MERGE_ARCHIVE, 'driver-events.jsonl')];
+  let called = 0;
+  const mirrored = mirrorRig(() => { called += 1; throw new Error('station sink down'); });
+  await driveRecord(7, newShared(), mirrored.deps, STEPS);
+  assert.ok(called > 0, 'the mirror was called');
+  assert.ok(bareFile, 'the events file exists');
+  assert.strictEqual(mirrored.out.join(''), plain.out.join(''));
+  assert.strictEqual(mirrored.files[path.join(MERGE_ARCHIVE, 'driver-events.jsonl')], bareFile);
+});
+
+// The cross-cutting failure-isolation proof (tests/bin-lib/station-events/failure-isolation.test.js
+// holds the CLI cases): the REAL emitter over a read-only main checkout.
+test('#5902 the real emitter over an unwritable main checkout: stdout, driver-events.jsonl and the final line unchanged; one stderr line per dropped event', chmodDenialSkip('read-only directory not enforceable: running as root'), async () => {
+  const { appendStationEvent } = require(path.join(LIB, 'station-events', 'emit'));
+  const plain = mirrorRig(null);
+  const bareFinal = (await driveRecord(7, newShared(), plain.deps, STEPS)).final;
+  const bareFile = plain.files[path.join(MERGE_ARCHIVE, 'driver-events.jsonl')];
+  const ro = tmpDir('drive-station-ro-');
+  fs.chmodSync(ro, 0o555);
+  try {
+    const real = mirrorRig(null);
+    let calls = 0;
+    real.deps.stationEvent = (e) => { calls += 1; return appendStationEvent(e, { mainRoot: ro, stderr: real.deps.stderr }); };
+    const { final } = await driveRecord(7, newShared(), real.deps, STEPS);
+    assert.ok(calls > 0, 'the real emitter was reached');
+    assert.ok(bareFile, 'the events file exists');
+    assert.strictEqual(real.out.join(''), plain.out.join(''));
+    assert.strictEqual(real.files[path.join(MERGE_ARCHIVE, 'driver-events.jsonl')], bareFile);
+    assert.deepStrictEqual(final, bareFinal);
+    const errLines = real.err.join('').split('\n').filter(Boolean);
+    const drops = errLines.filter((l) => /^claude-tweaks: station event dropped: append failed: /.test(l));
+    assert.strictEqual(drops.length, calls, errLines.join('\n'));
+    assert.deepStrictEqual(errLines.filter((l) => !drops.includes(l)), plain.err.join('').split('\n').filter(Boolean));
+    assert.strictEqual(fs.existsSync(path.join(ro, '.claude-tweaks')), false, 'nothing was written');
+  } finally {
+    fs.chmodSync(ro, 0o755); // root-safe: restores the fixture's own chmod
+  }
+});
+
+test('#5902 an interrupted worker still writes its final line and terminates when deps.stationEvent throws', async () => {
+  const order = [];
+  let release;
+  const exited = new Promise((resolve) => { release = resolve; });
+  const handle = { pid: 99, kill: (sig) => { order.push(`kill:${sig}`); release(); }, exited };
+  let launched;
+  const started = new Promise((resolve) => { launched = resolve; });
+  let thrown = 0;
+  const h = harness({
+    deps: {
+      runner: () => handle,
+      terminate: (sig) => order.push(`terminate:${sig}`),
+      stationEvent: () => { thrown += 1; throw new Error('station sink down'); },
+    },
+    script: [[on('worker'), (c) => { c.args[1].runner({ file: 'claude' }); launched(); return exited.then(() => ENVELOPE); }]],
+  });
+  const done = run(['#7'], h.deps);
+  await started;
+  fireSoon(h, 'SIGINT');
+  assert.strictEqual(await done, 0);
+  const lines = h.lines();
+  assert.deepStrictEqual(lines.slice(-2).map((l) => [l.step, l.status]), [['worker', 'fail'], [FINAL_STEP, 'fail']]);
+  assert.ok(thrown >= 2, `the interrupt's worker line reached the throwing mirror: ${thrown}`);
+  assert.deepStrictEqual(order, ['kill:SIGTERM', 'terminate:SIGINT']);
+});
+
+test('#5902 a settled stop: the stop line mirrors, settle lines mirror nothing, and a throwing mirror leaves settle and the final line intact', async () => {
+  const seen = [];
+  const h = harness({ script: REDTESTS.script, deps: { stationEvent: (e) => seen.push(e) } });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepStrictEqual([final.step, final.settle, final.settleRow], [FINAL_STEP, 'done', 'pre-push']);
+  assert.ok(settleLines(h).length > 0, 'settle emitted its lines');
+  // Settle lines pass through the mirrored sink but map to no station today.
+  assert.deepStrictEqual(seen.filter((e) => String(e.payload.step).startsWith('settle-')), []);
+  const stopLine = h.lines().find((l) => l.step === 'test');
+  const ofStop = seen.filter((e) => e.discriminator === `test@${stopLine.ts}`).map((e) => [e.kind, e.station, e.outcome]);
+  assert.strictEqual(stopLine.status, 'stop', 'red tests stop the record');
+  assert.deepStrictEqual(ofStop, [['started', 'test', undefined], ['exited', 'test', 'returned']]);
+
+  let thrown = 0;
+  const throwing = harness({ script: REDTESTS.script, deps: { stationEvent: () => { thrown += 1; throw new Error('station sink down'); } } });
+  await run(['#7'], throwing.deps);
+  assert.ok(thrown > 0, 'the mirror was called');
+  assert.strictEqual(throwing.out.join(''), h.out.join(''), 'stdout, settle lines and final line included, is unchanged');
+  assert.deepStrictEqual(throwing.calls.filter(isSettleCall).length, h.calls.filter(isSettleCall).length);
+
+  // A signal between two steps is reported at the step about to start (test), through the same sink.
+  const between = [];
+  let hb = null;
+  hb = harness({
+    deps: { stationEvent: (e) => between.push(e), terminate: () => {} },
+    script: [[onGit('commit'), () => { hb.fx.committed = true; fireSoon(hb, 'SIGTERM'); return ''; }]],
+  });
+  await run(['#7'], hb.deps);
+  const interrupted = hb.lines().find((l) => l.step === 'test');
+  assert.strictEqual(interrupted.detail, 'interrupted by SIGTERM before test');
+  assert.deepStrictEqual(between.filter((e) => e.discriminator === `test@${interrupted.ts}`).map((e) => [e.kind, e.outcome]),
+    [['started', undefined], ['exited', 'failed']]);
 });

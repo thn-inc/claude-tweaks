@@ -51,6 +51,8 @@ const { defaultRunner: gitDefaultRunner } = require('./lib/issues/claims-git-cas
 const {
   parseRepo, ghAvailable, repoSlug, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
+const { appendStationEvent, toRepoName } = require('./lib/station-events/emit');
+const { releaseTransition } = require('./lib/station-events/stations');
 
 const USAGE = 'usage: release-claim.js <issue> --run <run-dir> --reason <reason> [--link <url>] [--remove-grants] [--remove-in-progress] [--keep-in-progress-label] [--repo [host/]owner/name] [--sweep] [--section "/<skill>"] [--step <text>] [--help]\n';
 const EXIT = { released: 0, 'already-released': 3, 'skipped-not-owner': 4, unreadable: 5, failed: 1 };
@@ -105,6 +107,9 @@ const realDeps = {
   mainRoot: undefined,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
+  sessionId: process.env.CLAUDE_CODE_SESSION_ID || '',
+  // #5902: the release's `exited build` transition event.
+  stationEvent: (e) => appendStationEvent(e),
 };
 
 function decisionText(issue, r, reason, link) {
@@ -194,6 +199,31 @@ function run(argv, deps = realDeps) {
     owner: repoSpec.owner, repo: repoSpec.repo, host: repoSpec.host, issueNumber: issue, runId, reason, link: o.link || undefined, sweep,
     removeGrants: o.removeGrants, removeInProgress, runner: deps.runner, gitRunner: deps.gitRunner, now: deps.now(),
   });
+  // #5902: only a real release ends the build visit; `already-released` is a
+  // repeat and writes nothing. Optional dep (absent = none), wrapped so a
+  // throwing emitter never changes stdout, `logged` or the exit code.
+  // A sweep closes the holder's visit, so the event carries the holder's runId
+  // (matching its entered/session_bound events) and names the sweeper in sweptBy.
+  // The holder's session is unknown, so sessionId is null; the sweeper's own
+  // session goes only to payload.sweptBySession.
+  // A shaping claim's release (`shaped:`, `routed:`, `failed: shaping`) makes no transition.
+  const transition = releaseTransition(reason);
+  if (r.outcome === 'released' && transition && typeof deps.stationEvent === 'function') {
+    try {
+      const visitRunId = r.sweptFrom || runId;
+      const ownSession = deps.sessionId || '';
+      const payload = { reason, link: o.link || null };
+      if (r.sweptFrom) {
+        payload.sweptBy = runId;
+        if (ownSession) payload.sweptBySession = ownSession;
+      }
+      deps.stationEvent({
+        ...transition, recordNumber: issue,
+        repoName: toRepoName(`${repoSpec.owner}/${repoSpec.repo}`), runId: visitRunId, sessionId: r.sweptFrom ? null : ownSession, lane: 'unknown',
+        payload, discriminator: `release:${visitRunId}:${r.claimedAt || ''}`,
+      });
+    } catch { /* best-effort: the release stands */ }
+  }
   for (const label of r.labelsFailed) {
     deps.stderr(`release-claim.js: warning — could not remove label ${label} on #${issue} (best-effort, continuing)\n`);
   }

@@ -62,7 +62,36 @@ test('AC5: an ok result fills every envelope field from the result', async (t) =
 });
 
 test('AC5: the envelope field names are pinned', () => {
-  assert.deepStrictEqual(ENVELOPE_FIELDS, ['status', 'reason', 'result', 'usage', 'turns', 'denials', 'spendOverrun', 'costUsd', 'detail']);
+  assert.deepStrictEqual(ENVELOPE_FIELDS, ['status', 'reason', 'result', 'usage', 'turns', 'denials', 'spendOverrun', 'costUsd', 'detail', 'sessionId']);
+});
+
+test('the envelope carries the result object\'s session_id as sessionId', async (t) => {
+  const { runner } = fakeRunner(okOut());
+  const env = await launchWorker(base(t), { runner });
+  assert.strictEqual(typeof OK.session_id, 'string');
+  assert.strictEqual(env.sessionId, OK.session_id);
+});
+
+test('sessionId is null when the result has no session_id, or one that is not a non-empty string', async (t) => {
+  const missing = { ...OK };
+  delete missing.session_id;
+  const { runner } = fakeRunner({ code: 0, stdout: JSON.stringify(missing) });
+  assert.strictEqual((await launchWorker(base(t), { runner })).sessionId, null);
+  for (const value of ['', 42, null, { id: 'x' }]) {
+    const { runner: r } = fakeRunner(okOut({ session_id: value }));
+    assert.strictEqual((await launchWorker(base(t), { runner: r })).sessionId, null, JSON.stringify(value));
+  }
+  const { runner: none } = fakeRunner({ code: 1, stdout: '', stderr: 'boom' });
+  assert.strictEqual((await launchWorker(base(t), { runner: none })).sessionId, null, 'no result object');
+});
+
+test('a failing envelope still carries the result object\'s sessionId', async (t) => {
+  const { runner } = fakeRunner({ code: 1, stdout: JSON.stringify({ ...OK, is_error: true, result: 'x' }) });
+  const env = await launchWorker(base(t), { runner });
+  assert.deepStrictEqual([env.status, env.reason, env.sessionId], ['fail', 'exit', OK.session_id]);
+  const { runner: schema } = fakeRunner(okOut({ structured_output: { status: 'maybe', title: 't', summary: 's' } }));
+  const bad = await launchWorker(base(t), { runner: schema });
+  assert.deepStrictEqual([bad.status, bad.reason, bad.sessionId], ['fail', 'schema', OK.session_id]);
 });
 
 test('AC5: a result that fails the schema is fail/schema', async (t) => {
@@ -680,6 +709,15 @@ test('AC4: at the ceiling a POSIX child gets SIGTERM and the envelope is timeout
   assert.strictEqual(env.reason, 'wall-clock-ceiling');
   assert.deepStrictEqual(kills, ['SIGTERM']);
   assert.strictEqual(delays[0], 1234);
+});
+
+test('a timeout envelope still carries the sessionId of a result the child printed', async (t) => {
+  let finish;
+  const exited = new Promise((resolve) => { finish = resolve; });
+  const runner = () => ({ pid: 4242, kill() { finish({ code: null, signal: 'SIGTERM', stdout: JSON.stringify(OK), stderr: '' }); }, exited });
+  const { timers } = instantTimers();
+  const env = await launchWorker(base(t, { platform: 'linux', ceilings: { wallClockMs: 1234 } }), { runner, timers });
+  assert.deepStrictEqual([env.status, env.reason, env.sessionId], ['timeout', 'wall-clock-ceiling', OK.session_id]);
 });
 
 test('AC4: a POSIX child that ignores SIGTERM gets SIGKILL after KILL_GRACE_MS', async (t) => {

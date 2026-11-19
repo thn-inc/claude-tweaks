@@ -7,7 +7,7 @@
 //
 // The envelope. Every launch resolves to one object with these fields, in this order
 // (ENVELOPE_FIELDS): status, reason, result, usage, turns, denials, spendOverrun,
-// costUsd, detail. Fields may be added, never renamed. `status` is `ok`, `fail` or
+// costUsd, detail, sessionId. Fields may be added, never renamed. `status` is `ok`, `fail` or
 // `timeout`; `reason` is null for `ok`, else one of `wall-clock-ceiling`,
 // `launch-error`, `spend-ceiling`, `exit` or `schema`. `result` is the worker's
 // structured output when status is `ok` and null otherwise. `ok` means only that a
@@ -40,7 +40,8 @@
 // the schema, or stdout that is not a result object after a zero exit: `schema`.
 // Anything else is `ok`. A "result object" is stdout that parses, after trimming, to
 // an object with `type: "result"`; whenever one exists, `usage`, `turns`, `denials`
-// and `costUsd` are read from it, and `spendOverrun` is true exactly when a spend
+// and `costUsd` are read from it, `sessionId` is its `session_id` when that is a
+// non-empty string (else null), and `spendOverrun` is true exactly when a spend
 // ceiling was given and the reported cost is above it. The free-text `result` string
 // is never parsed.
 //
@@ -145,7 +146,7 @@ const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, too
 
 // One string, split: tests/git-status-optional-locks.test.js reads an array literal
 // that starts with 'status' as a git argument list.
-const ENVELOPE_FIELDS = Object.freeze('status reason result usage turns denials spendOverrun costUsd detail'.split(' '));
+const ENVELOPE_FIELDS = Object.freeze('status reason result usage turns denials spendOverrun costUsd detail sessionId'.split(' '));
 const ENV_ALLOW = Object.freeze(['PATH', 'HOME', 'USER', 'TMPDIR', 'LANG', 'CLAUDE_CONFIG_DIR']);
 const ENV_ALLOW_WIN32 = Object.freeze([...ENV_ALLOW, 'USERPROFILE', 'USERNAME', 'APPDATA', 'LOCALAPPDATA', 'SystemRoot', 'ComSpec', 'PATHEXT', 'TEMP', 'TMP']);
 
@@ -268,6 +269,7 @@ function classify({ timedOut, timeoutDetail, spawnError, code, signal, stdout, s
     spendOverrun: obj !== null && typeof spendCeiling === 'number' && cost !== null && cost > spendCeiling,
     costUsd: cost,
     detail,
+    sessionId: obj && typeof obj.session_id === 'string' && obj.session_id !== '' ? obj.session_id : null,
   });
   const empty = typeof stdout !== 'string' || stdout.trim() === '';
 

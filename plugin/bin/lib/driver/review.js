@@ -1041,14 +1041,18 @@ const codeSuffix = (err) => (err && typeof err.code === 'string' && /^[A-Z0-9_]+
 async function fixRound(ctx, deps, wiring, pass) {
   const { commit, test, check, launchImplementer, testCommand, isRunArtifact, indexFlagCheck } = wiring;
   const { shared, wt, runDir } = ctx;
-  const { confirmed, extra } = pass;
+  const { confirmed } = pass;
+  // The fix worker's own session (a separate launch from the first worker's), once its launch has
+  // returned one: a new object over the pass's extra, never the pass's own, and only when known.
+  let fixSessionId = null;
+  const withFix = () => (fixSessionId ? { ...pass.extra, fixSessionId } : pass.extra);
   const named = (c) => `${normalizeEventText(c.path)}:${c.line} ${normalizeEventText(c.claim)}`;
   const end = (status, cause, { c, reason, stopClass } = {}) => ({
     status,
     stopClass: stopClass || STOP_CLASSES.PRE_PUSH,
     reason: reason || status,
     detail: `${cause}: ${c ? named(c) : confirmed.map(named).join('; ')}`,
-    extra,
+    extra: withFix(),
   });
   // A propagated step result keeps its status, reason and class.
   const propagate = (label, r) => end(r.status, `fix round ${label}: ${r.detail}`, { reason: r.reason, stopClass: r.stopClass });
@@ -1064,6 +1068,9 @@ async function fixRound(ctx, deps, wiring, pass) {
 
     const first = { worker: ctx.worker, changedFiles: ctx.changedFiles };
     const launched = await launchImplementer(ctx, deps, buildFixPrompt(confirmed));
+    // runImplementer's extra carries the session on every path an envelope came back, whatever its status.
+    const sid = launched?.extra?.sessionId;
+    if (typeof sid === 'string' && sid !== '') fixSessionId = sid;
     // runImplementer sets ctx.worker once an envelope came back, whatever its status.
     if (ctx.worker !== first.worker) ctx.worker = mergeWorker(first.worker, ctx.worker);
     if (shared.interrupted) return interrupted();
@@ -1147,7 +1154,7 @@ async function fixRound(ctx, deps, wiring, pass) {
     const checked = await check.run(ctx, deps);
     if (shared.interrupted) return interrupted();
     if (checked.status !== 'ok') return propagate('check', checked);
-    return { status: 'ok', detail: `${pass.detail}; fixed in one round`, extra };
+    return { status: 'ok', detail: `${pass.detail}; fixed in one round`, extra: withFix() };
   } catch (err) {
     return end('fail', `the fix round failed unexpectedly${codeSuffix(err)}`);
   }
