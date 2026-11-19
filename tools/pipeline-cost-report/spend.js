@@ -199,8 +199,11 @@ function addCount(map, key, usd) {
 // `until`'s UTC day, both inclusive; a request belongs to it by its own timestamp. A directory or file that cannot be
 // read (live sessions are reaped mid-scan) is counted in `unreadable` and the scan goes on. Roots are scanned as given;
 // de-duplicating aliased roots is the caller's job. Money figures are unrounded dollars. Synthetic API-error lines
-// carry no spend and are left out of every tally, `unpriced` included.
-async function collectSpend({ roots, since, until, match = null }, { fsImpl = fs } = {}) {
+// carry no spend and are left out of every tally, `unpriced` included. `match` keeps the transcripts whose working
+// directory (the slug when the transcript names none) contains that substring; `root` keeps those whose working
+// directory is that path or under it (a transcript naming no working directory is not kept); both given: both hold.
+// A session dir whose subagent files are all outside the window is skipped without reading its parent transcript.
+async function collectSpend({ roots, since, until, match = null, root: scopeRoot = null }, { fsImpl = fs } = {}) {
   const startMs = dayStart(since);
   const endMs = dayStart(until) + DAY_MS;
   const res = {
@@ -238,7 +241,8 @@ async function collectSpend({ roots, since, until, match = null }, { fsImpl = fs
       return null;
     }
   };
-  const wanted = (cwd, slug) => !match || (cwd || slug).includes(match);
+  const wanted = (cwd, slug) => (!match || (cwd || slug).includes(match))
+    && (!scopeRoot || (typeof cwd === 'string' && (cwd === scopeRoot || cwd.startsWith(scopeRoot + path.sep))));
 
   // returns how many of the requests were counted
   function tally(requests, sessionType, agent) {
@@ -327,15 +331,15 @@ async function collectSpend({ roots, since, until, match = null }, { fsImpl = fs
             }
           }
         }
-        if (files.length === 0) continue;
+        // Only subagent files in the window matter; an old session's parent is never read for them.
+        const live = files.filter((f) => inWindow(f) === true);
+        if (live.length === 0) continue;
         let parentType = UNATTRIBUTED;
         if (mains.has(session)) {
           const parent = await scanMain(path.join(slugDir, `${session}.jsonl`), slug, false);
           if (parent.type) parentType = parent.type;
         }
-        for (const file of files) {
-          if (inWindow(file) === true) await scanSubagent(file, slug, parentType);
-        }
+        for (const file of live) await scanSubagent(file, slug, parentType);
       }
     }
   }

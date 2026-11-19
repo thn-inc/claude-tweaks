@@ -10,7 +10,7 @@
 
 // A deferred record carries `Defer-reason: {word}` on any line, in any markup (`- **Defer-reason:** x`,
 // `` (`Defer-reason: x`) ``, `file.js:93 — Defer-reason: x`).
-const DEFER_RE = /Defer-reason:[`*]*[ \t]*([A-Za-z][A-Za-z-]*)?/;
+const DEFER_RE = /Defer-reason:[`*]*[ \t]*[`*]*([A-Za-z][A-Za-z-]*)?/;
 
 // The first word after the first `Defer-reason:`; `unnamed` when no word follows; null when the body has none.
 function deferReasonOf(body) {

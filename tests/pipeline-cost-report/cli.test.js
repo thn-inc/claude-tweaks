@@ -26,15 +26,15 @@ const fresh = (label) => {
 
 // Three main sessions on 2026-11-18: flow $4.00 (opus), dispatch $2.00 and specify $1.00 (sonnet). Total $7.00,
 // build (flow + dispatch) $6.00, flow alone $4.00, so a wrong build figure cannot equal the total or the flow share.
-function session(id, model, skill, inputTokens) {
-  return JSON.stringify({ type: 'assistant', timestamp: '2026-11-18T10:00:00Z', message: { id, model, content: [{ type: 'tool_use', name: 'Skill', input: { skill: `claude-tweaks:${skill}` } }], usage: { input_tokens: inputTokens, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } }) + '\n';
+function session(id, model, skill, inputTokens, cwd) {
+  return JSON.stringify({ type: 'assistant', timestamp: '2026-11-18T10:00:00Z', cwd, message: { id, model, content: [{ type: 'tool_use', name: 'Skill', input: { skill: `claude-tweaks:${skill}` } }], usage: { input_tokens: inputTokens, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } }) + '\n';
 }
-function writeProjects(root, { corrupt = false } = {}) {
+function writeProjects(root, { corrupt = false, cwd } = {}) {
   const slugDir = path.join(root, 'slug-a');
   fs.mkdirSync(slugDir, { recursive: true });
-  fs.writeFileSync(path.join(slugDir, 's1.jsonl'), session('m1', 'claude-opus-4-8', 'flow', 1000000));
-  fs.writeFileSync(path.join(slugDir, 's2.jsonl'), session('m2', 'claude-sonnet-4-6', 'dispatch', 1000000));
-  fs.writeFileSync(path.join(slugDir, 's3.jsonl'), session('m3', 'claude-sonnet-4-6', 'specify', 500000));
+  fs.writeFileSync(path.join(slugDir, 's1.jsonl'), session('m1', 'claude-opus-4-8', 'flow', 1000000, cwd));
+  fs.writeFileSync(path.join(slugDir, 's2.jsonl'), session('m2', 'claude-sonnet-4-6', 'dispatch', 1000000, cwd));
+  fs.writeFileSync(path.join(slugDir, 's3.jsonl'), session('m3', 'claude-sonnet-4-6', 'specify', 500000, cwd));
   if (corrupt) fs.writeFileSync(path.join(slugDir, 'bad.jsonl'), '{}\n');
   return root;
 }
@@ -80,14 +80,15 @@ const unreadableFs = () => ({
 function harness(extra = {}) {
   const logs = [];
   const errs = [];
-  const projects = writeProjects(fresh('proj'));
+  const main = fresh('main');
+  const projects = writeProjects(fresh('proj'), { cwd: main });
   const pipelines = fresh('pipes');
   const deps = {
     gh: fakeGh(),
     check: async (num) => VERDICTS[num],
     now: () => new Date('2026-11-19T12:00:00Z'),
     pluginVersion: () => '9.9.9',
-    git: () => path.join(fresh('main'), '.git'),
+    git: () => path.join(main, '.git'),
     cwd: ROOT,
     home: fresh('home'),
     log: (s) => logs.push(s),
@@ -95,7 +96,7 @@ function harness(extra = {}) {
     ...extra,
   };
   const base = ['--since', '2026-11-18', '--until', '2026-11-18', '--projects', projects, '--pipelines', pipelines];
-  return { deps, logs, errs, base, projects, pipelines };
+  return { deps, logs, errs, base, projects, pipelines, main };
 }
 
 test('AC7.1: --json prints one object holding the same figures as the Markdown output for every section', async () => {
@@ -163,13 +164,13 @@ test('a forge read that throws prints {section}: unavailable, and the run exits 
 
 test('AC8.2: an unreadable transcript is counted in the printed unreadable figure and the run exits 0', async () => {
   const h = harness({ fs: unreadableFs() });
-  writeProjects(h.projects, { corrupt: true });
+  writeProjects(h.projects, { corrupt: true, cwd: h.main });
   assert.strictEqual(await run({ argv: [...h.base, '--section', 'spend', '--json'], deps: h.deps }), 0);
   const json = JSON.parse(h.logs[0]);
   assert.strictEqual(json.unreadable, 1);
 
   const m = harness({ fs: unreadableFs() });
-  writeProjects(m.projects, { corrupt: true });
+  writeProjects(m.projects, { corrupt: true, cwd: m.main });
   assert.strictEqual(await run({ argv: [...m.base, '--section', 'spend'], deps: m.deps }), 0);
   assert.match(m.logs.join('\n'), /Unreadable:? 1\b/i);
 });
@@ -248,7 +249,7 @@ test('a missing pipelines directory prints not found and still exits 0', async (
   const dir = path.join(DIR, 'absent-pipes');
   const argv = h.base.map((a) => (a === h.pipelines ? dir : a));
   assert.strictEqual(await run({ argv: [...argv, '--section', 'records'], deps: h.deps }), 0);
-  assert.ok(h.logs.join('\n').includes(`not found: ${dir}`), h.logs.join('\n'));
+  assert.ok(h.logs.join('\n').includes(`Runs: not found: ${dir}`), h.logs.join('\n'));
 });
 
 test('spend.perMergedPr has null dollars when no PR merged', async () => {
@@ -379,4 +380,128 @@ test('a failed default --pipelines lookup prints Runs: unavailable and leaves th
 test('a value starting with a single dash is accepted; one starting with -- is not', () => {
   assert.strictEqual(parseArgs(['--match', '-foo']).opts.match, '-foo');
   assert.ok(parseArgs(['--match', '--json']).error);
+});
+
+// ---- fix wave: spend scope, JSON fields, headings, funnel/--repo, CLAUDE_CONFIG_DIR ----
+
+// h's three main-checkout sessions ($7), plus a worktree session ($2, sonnet) and one from another project
+// whose path only shares the checkout's prefix ($4, opus).
+function withForeignProjects(h) {
+  const wt = path.join(h.main, '.claude', 'worktrees', 'w1');
+  const other = `${h.main}-marketplace`;
+  fs.mkdirSync(path.join(h.projects, 'slug-wt'), { recursive: true });
+  fs.mkdirSync(path.join(h.projects, 'slug-other'), { recursive: true });
+  fs.writeFileSync(path.join(h.projects, 'slug-wt', 'w.jsonl'), session('m4', 'claude-sonnet-4-6', 'build', 1000000, wt));
+  fs.writeFileSync(path.join(h.projects, 'slug-other', 'o.jsonl'), session('m5', 'claude-opus-4-8', 'flow', 1000000, other));
+  return h;
+}
+
+test('default spend scope is the main checkout and its worktrees, not another project sharing its path prefix', async () => {
+  const h = withForeignProjects(harness());
+  assert.strictEqual(await run({ argv: [...h.base, '--section', 'spend', '--json'], deps: h.deps }), 0);
+  const json = JSON.parse(h.logs[0]);
+  assert.strictEqual(json.spend.total, 9);
+  assert.strictEqual(json.spend.sessions, 4);
+  assert.deepStrictEqual(json.window.match, { kind: 'path', value: h.main });
+});
+
+test('the Markdown header states the effective spend scope', async () => {
+  const h = withForeignProjects(harness());
+  assert.strictEqual(await run({ argv: [...h.base, '--section', 'spend'], deps: h.deps }), 0);
+  assert.ok(h.logs.join('\n').includes(`\nMatch: ${h.main} and its worktrees\n`), h.logs.join('\n'));
+});
+
+test('--all-projects widens the spend scope to every transcript', async () => {
+  const h = withForeignProjects(harness());
+  assert.strictEqual(await run({ argv: [...h.base, '--section', 'spend', '--all-projects', '--json'], deps: h.deps }), 0);
+  const json = JSON.parse(h.logs[0]);
+  assert.strictEqual(json.spend.total, 13);
+  assert.deepStrictEqual(json.window.match, { kind: 'all', value: null });
+  const md = harness();
+  withForeignProjects(md);
+  assert.strictEqual(await run({ argv: [...md.base, '--section', 'spend', '--all-projects'], deps: md.deps }), 0);
+  assert.ok(md.logs.join('\n').includes('\nMatch: all projects\n'));
+});
+
+test('--match replaces the default scope with a working-directory substring, and cannot be combined with --all-projects', async () => {
+  const h = withForeignProjects(harness());
+  assert.strictEqual(await run({ argv: [...h.base, '--section', 'spend', '--match', '-marketplace', '--json'], deps: h.deps }), 0);
+  const json = JSON.parse(h.logs[0]);
+  assert.strictEqual(json.spend.total, 4);
+  assert.deepStrictEqual(json.window.match, { kind: 'substring', value: '-marketplace' });
+  const m = harness();
+  assert.strictEqual(await run({ argv: [...m.base, '--match', 'x', '--all-projects'], deps: m.deps }), 2);
+});
+
+test('an unresolvable main checkout makes the spend section unavailable and names the way out', async () => {
+  const h = harness({ git: () => { throw new Error('fatal: not a git repository'); } });
+  assert.strictEqual(await run({ argv: [...h.base.slice(0, -2), '--pipelines', h.pipelines, '--section', 'spend', '--json'], deps: h.deps }), 1);
+  const json = JSON.parse(h.logs[0]);
+  assert.match(json.spend.error, /cannot resolve the main checkout.*--all-projects/);
+});
+
+test('--json carries priceTableDate', async () => {
+  const h = harness();
+  assert.strictEqual(await run({ argv: [...h.base, '--section', 'records', '--json'], deps: h.deps }), 0);
+  assert.strictEqual(JSON.parse(h.logs[0]).priceTableDate, '2026-11-03');
+});
+
+test('the cache-write table is headed "Cache writes by cause" and groups its token figures', () => {
+  const { SECTIONS } = require(path.join(ROOT, 'tools', 'pipeline-cost-report.js'));
+  const spend = SECTIONS.find((s) => s.key === 'spend');
+  const lines = spend.render({
+    total: 1, sessions: 1, bySessionType: {}, byModel: {}, byAgent: { main: 0, subagent: 0 }, byBucket: {},
+    cacheWrites: { 'ordinary growth': { requests: 1, tokens: 1234567, usd: 1 } },
+    unpriced: { requests: 0, tokens: 0 }, perMergedPr: { mergedPrs: 0 },
+  });
+  assert.ok(lines.includes('### Cache writes by cause'));
+  assert.ok(!lines.some((l) => l.includes('re-writes')));
+  assert.ok(lines.includes('| ordinary growth | 1 | 1,234,567 | $1.00 |'), lines.join('\n'));
+});
+
+test('the funnel simulation table lists the most admitted first, ties by set text', () => {
+  const { SECTIONS } = require(path.join(ROOT, 'tools', 'pipeline-cost-report.js'));
+  const funnel = SECTIONS.find((s) => s.key === 'funnel');
+  const lines = funnel.render({
+    runDate: '2026-11-18', pluginVersion: '9.9.9', checked: 9, admitted: 1, unreadable: 0, reasons: {},
+    simulations: [{ set: ['b'], admitted: 2 }, { set: ['z'], admitted: 5 }, { set: ['a'], admitted: 2 }],
+  });
+  const rows = lines.filter((l) => /^\| [abz] \|/.test(l));
+  assert.deepStrictEqual(rows, ['| z | 5 |', '| a | 2 |', '| b | 2 |']);
+});
+
+test('a --repo that is not the current checkout is refused for the funnel, and allowed where the funnel does not run', async () => {
+  const h = harness();
+  assert.strictEqual(await run({ argv: [...h.base, '--repo', 'other/repo'], deps: h.deps }), 2);
+  assert.match(h.errs.join('\n'), /--repo other\/repo is not this checkout's repository \(o\/r\)/);
+  assert.deepStrictEqual(h.logs, []);
+  const f = harness();
+  assert.strictEqual(await run({ argv: [...f.base, '--section', 'funnel', '--repo', 'other/repo'], deps: f.deps }), 2);
+  const r = harness();
+  assert.strictEqual(await run({ argv: [...r.base, '--section', 'records', '--repo', 'other/repo'], deps: r.deps }), 0);
+  const same = harness();
+  assert.strictEqual(await run({ argv: [...same.base, '--repo', 'O/R'], deps: same.deps }), 0);
+});
+
+test('usage documents the funnel and --repo rule and --all-projects', async () => {
+  const h = harness();
+  assert.strictEqual(await run({ argv: ['--help'], deps: h.deps }), 0);
+  assert.match(h.logs[0], /--all-projects/);
+  assert.match(h.logs[0], /funnel always checks the current checkout's repository/);
+});
+
+test('default project roots include $CLAUDE_CONFIG_DIR/projects, and a duplicate of ~/.claude/projects is counted once', async () => {
+  const h = harness();
+  const cfg = fresh('cfg');
+  writeProjects(path.join(cfg, 'projects'), { cwd: h.main });
+  const argv = h.base.filter((a, i, all) => a !== '--projects' && all[i - 1] !== '--projects');
+  h.deps.env = { CLAUDE_CONFIG_DIR: cfg };
+  assert.strictEqual(await run({ argv: [...argv, '--section', 'spend', '--json'], deps: h.deps }), 0);
+  assert.strictEqual(JSON.parse(h.logs[0]).spend.total, 7);
+
+  const d = harness();
+  writeProjects(path.join(d.deps.home, '.claude', 'projects'), { cwd: d.main });
+  d.deps.env = { CLAUDE_CONFIG_DIR: path.join(d.deps.home, '.claude') };
+  assert.strictEqual(await run({ argv: [...argv, '--section', 'spend', '--json'], deps: d.deps }), 0);
+  assert.strictEqual(JSON.parse(d.logs[0]).spend.total, 7);
 });

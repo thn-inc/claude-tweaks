@@ -3,8 +3,13 @@
 // tools/pipeline-cost-report.js — what the pipeline costs and what it produces, over a UTC day window (#5914).
 //
 //   node tools/pipeline-cost-report.js [--since <YYYY-MM-DD>] [--until <YYYY-MM-DD>] [--projects <dir>]...
-//     [--pipelines <dir>] [--match <substring>] [--section spend|funnel|records|all] [--repo <owner/name>]
-//     [--simulate <reason[,reason...]>]... [--json]
+//     [--pipelines <dir>] [--match <substring> | --all-projects] [--section spend|funnel|records|all]
+//     [--repo <owner/name>] [--simulate <reason[,reason...]>]... [--json]
+//
+// Spend scope: merged PRs and records are this repository's, so by default only transcripts whose working directory is
+// the main checkout or under it (its worktrees) are priced. `--match <substring>` replaces that with a substring of the
+// working-directory path; `--all-projects` prices every transcript under --projects. The effective scope is printed as
+// a `Match:` line and is `window.match` ({ kind: path|substring|all, value }) in --json.
 //
 // Sections (each one object under its own key in --json, so a later section is one more entry in SECTIONS):
 //   spend    prices the model requests in the Claude Code transcripts under --projects (tools/pipeline-cost-report/
@@ -15,10 +20,12 @@
 // The run directories under --pipelines are counted once (runs.js); `runs.inWindow` is the runs dated in the window.
 //
 // The window is --since through --until, both inclusive, UTC; --until defaults to today, --since to --until minus 6
-// days. --projects is repeatable (default ~/.claude/projects and every ~/.claude-accounts/*/projects); roots are
-// de-duplicated by real path and a root that does not exist is skipped. --pipelines defaults to
-// {main checkout}/.claude-tweaks/pipelines, the main checkout being the dirname of
-// `git rev-parse --path-format=absolute --git-common-dir`. --repo defaults to `gh repo view`. The tool only reads.
+// days. --projects is repeatable (default ~/.claude/projects, $CLAUDE_CONFIG_DIR/projects and every
+// ~/.claude-accounts/*/projects); roots are de-duplicated by real path and a root that does not exist is skipped.
+// --pipelines defaults to {main checkout}/.claude-tweaks/pipelines, the main checkout being the dirname of
+// `git rev-parse --path-format=absolute --git-common-dir`. --repo defaults to `gh repo view`. The funnel always asks
+// `drive.js --check` about the current checkout's repository, so a `--section funnel|all` run whose --repo differs from
+// the current checkout's `gh repo view` answer is refused (exit 2). The tool only reads.
 //
 // Exit codes: 0 rendered (unreadable files and runs are counted in `unreadable`, not a failure; a single malformed
 // JSON line inside a transcript is skipped and not counted, because live transcripts routinely end mid-line;
@@ -51,6 +58,7 @@ function defaultDeps() {
     pluginVersion: () => readPluginVersion(PLUGIN_ROOT),
     cwd: process.cwd(),
     home: os.homedir(),
+    env: process.env,
     log: (s) => process.stdout.write(`${s}\n`),
     err: (s) => process.stderr.write(`${s}\n`),
   };
@@ -71,8 +79,16 @@ const SECTIONS = [
   {
     key: 'spend',
     async collect(ctx) {
+      const { scope } = ctx;
+      if (scope.kind === 'path' && !scope.value) throw new Error(`cannot resolve the main checkout (${scope.error}); pass --match <substring> or --all-projects`);
       const spend = await collectSpend(
-        { roots: ctx.roots, since: toDate(ctx.since), until: toDate(ctx.until), match: ctx.opts.match || null },
+        {
+          roots: ctx.roots,
+          since: toDate(ctx.since),
+          until: toDate(ctx.until),
+          match: scope.kind === 'substring' ? scope.value : null,
+          root: scope.kind === 'path' ? scope.value : null,
+        },
         { fsImpl: ctx.deps.fs },
       );
       let perMergedPr;
@@ -99,7 +115,7 @@ const SECTIONS = [
       table('By model', byUsd(d.byModel).map(([k, v]) => [k, usd(v), share(v, d.total)]), '| Model | Spend | Share |');
       table('By agent', [['main', usd(d.byAgent.main), share(d.byAgent.main, d.total)], ['subagent', usd(d.byAgent.subagent), share(d.byAgent.subagent, d.total)]], '| Agent | Spend | Share |');
       table('By prompt size (thousand tokens)', Object.entries(d.byBucket).map(([k, v]) => [k, String(v.requests), usd(v.usd), share(v.usd, d.total)]), '| Prompt | Requests | Spend | Share |');
-      table('Cache re-writes by cause', Object.entries(d.cacheWrites).map(([k, v]) => [k, String(v.requests), String(v.tokens), usd(v.usd)]), '| Cause | Requests | Tokens | Spend |');
+      table('Cache writes by cause', Object.entries(d.cacheWrites).map(([k, v]) => [k, String(v.requests), v.tokens.toLocaleString('en-US'), usd(v.usd)]), '| Cause | Requests | Tokens | Spend |');
       if (d.unpriced.requests > 0) lines.push(`Unpriced: ${d.unpriced.requests} requests, ${d.unpriced.tokens} tokens (model family not in the price table).`, '');
       const p = d.perMergedPr;
       if (p.error) lines.push(`Per merged PR: unavailable — ${p.error}`);
@@ -129,7 +145,8 @@ const SECTIONS = [
       }
       if (d.simulations.length > 0) {
         lines.push('| If these stopped refusing | Admitted |', '|---|---|');
-        for (const s of d.simulations) lines.push(`| ${s.set.join(', ')} | ${s.admitted} |`);
+        const bySet = [...d.simulations].sort((a, b) => b.admitted - a.admitted || a.set.join(', ').localeCompare(b.set.join(', ')));
+        for (const s of bySet) lines.push(`| ${s.set.join(', ')} | ${s.admitted} |`);
       }
       return lines;
     },
@@ -156,7 +173,8 @@ const SECTIONS = [
 ];
 
 const SECTION_KEYS = SECTIONS.map((s) => s.key);
-const USAGE = `usage: node tools/pipeline-cost-report.js [--since <YYYY-MM-DD>] [--until <YYYY-MM-DD>] [--projects <dir>]... [--pipelines <dir>] [--match <substring>] [--section ${[...SECTION_KEYS, 'all'].join('|')}] [--repo <owner/name>] [--simulate <reason[,reason...]>]... [--json]`;
+const USAGE = `usage: node tools/pipeline-cost-report.js [--since <YYYY-MM-DD>] [--until <YYYY-MM-DD>] [--projects <dir>]... [--pipelines <dir>] [--match <substring> | --all-projects] [--section ${[...SECTION_KEYS, 'all'].join('|')}] [--repo <owner/name>] [--simulate <reason[,reason...]>]... [--json]
+  spend covers the main checkout and its worktrees unless --match or --all-projects widens it; the funnel always checks the current checkout's repository, so --repo must match it for --section funnel|all`;
 
 function parseArgs(args) {
   const opts = { section: 'all', projects: [], simulate: [] };
@@ -168,6 +186,7 @@ function parseArgs(args) {
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--json') opts.json = true;
+    else if (a === '--all-projects') opts.allProjects = true;
     else if (a === '--help' || a === '-h') opts.help = true;
     else if (a === '--since' || a === '--until') {
       const v = args[++i];
@@ -185,6 +204,7 @@ function parseArgs(args) {
     } else return { error: `unknown argument ${JSON.stringify(a)}` };
   }
   if (opts.simulate.some((set) => set.length === 0)) return { error: '--simulate needs at least one reason' };
+  if (opts.allProjects && opts.match) return { error: '--match and --all-projects cannot be combined' };
   return { opts };
 }
 
@@ -193,6 +213,8 @@ function resolveRoots(opts, deps) {
   let candidates = opts.projects.map((p) => path.resolve(deps.cwd, p));
   if (candidates.length === 0) {
     candidates = [path.join(deps.home, '.claude', 'projects')];
+    const configDir = deps.env && deps.env.CLAUDE_CONFIG_DIR;
+    if (configDir) candidates.push(path.join(path.resolve(deps.cwd, configDir), 'projects'));
     const accounts = path.join(deps.home, '.claude-accounts');
     let names = [];
     try {
@@ -219,10 +241,31 @@ function resolveRoots(opts, deps) {
   return roots;
 }
 
-function mainCheckoutPipelines(deps) {
+function mainCheckoutRoot(deps) {
   const commonDir = deps.git(['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: deps.cwd }).trim();
   if (!commonDir) throw new Error('empty output');
-  return path.join(path.dirname(commonDir), '.claude-tweaks', 'pipelines');
+  return path.dirname(commonDir);
+}
+
+function mainCheckoutPipelines(deps) {
+  return path.join(mainCheckoutRoot(deps), '.claude-tweaks', 'pipelines');
+}
+
+// The effective spend filter: --all-projects, else --match, else the main checkout (and so its worktrees).
+function resolveScope(opts, deps) {
+  if (opts.allProjects) return { kind: 'all', value: null };
+  if (opts.match) return { kind: 'substring', value: opts.match };
+  try {
+    return { kind: 'path', value: mainCheckoutRoot(deps) };
+  } catch (e) {
+    return { kind: 'path', value: null, error: firstLine(e) };
+  }
+}
+
+function scopeLine({ kind, value }) {
+  if (kind === 'all') return 'Match: all projects';
+  if (kind === 'substring') return `Match: working directory contains "${value}"`;
+  return value ? `Match: ${value} and its worktrees` : 'Match: unresolved (main checkout not found)';
 }
 
 function render(report) {
@@ -248,6 +291,7 @@ function renderMarkdown(report) {
     '',
     `${since} to ${until}, UTC, inclusive`,
     `Prices dated ${PRICES.date}`,
+    ...(report.window.match ? [scopeLine(report.window.match)] : []),
     SESSION_TYPE_NOTE,
     '',
   ];
@@ -255,7 +299,7 @@ function renderMarkdown(report) {
   const r = report.runs;
   if (r) {
     if (r.error) lines.push(`Runs: unavailable — ${r.error}`);
-    else if (r.missing) lines.push(`not found: ${r.dir}`);
+    else if (r.missing) lines.push(`Runs: not found: ${r.dir}`);
     else lines.push(`Runs: ${r.inWindow} in the window; ${r.unparsed} undated.`);
   }
   lines.push(`Unreadable: ${report.unreadable}`);
@@ -281,14 +325,33 @@ async function run({ argv, deps: given = {} }) {
     return 2;
   }
 
+  const wants = (key) => opts.section === 'all' || opts.section === key;
   let repoPromise = null;
+  const repoOf = () => {
+    if (!repoPromise) repoPromise = Promise.resolve().then(() => opts.repo || String(deps.gh(['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'])).trim());
+    return repoPromise;
+  };
+
+  // The funnel checks the current checkout's repository whatever --repo says, so a different --repo is refused.
+  if (opts.repo && wants('funnel')) {
+    let current;
+    try {
+      current = String(deps.gh(['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'])).trim();
+    } catch (e) {
+      deps.err(`pipeline-cost-report.js: cannot confirm --repo against the current checkout (${firstLine(e)})`);
+      return 1;
+    }
+    if (current.toLowerCase() !== opts.repo.toLowerCase()) {
+      deps.err(`pipeline-cost-report.js: --repo ${opts.repo} is not this checkout's repository (${current}); the funnel always checks the current checkout's repository. Run it from a checkout of ${opts.repo}, or use --section spend|records\n${USAGE}`);
+      return 2;
+    }
+  }
+
+  const scope = wants('spend') ? resolveScope(opts, deps) : null;
   const ctx = {
-    deps, opts, since, until,
+    deps, opts, since, until, scope,
     roots: resolveRoots(opts, deps),
-    repo: () => {
-      if (!repoPromise) repoPromise = Promise.resolve().then(() => opts.repo || String(deps.gh(['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'])).trim());
-      return repoPromise;
-    },
+    repo: repoOf,
   };
 
   // Run directories are listed once, before the sections, so a section's collect can read ctx.runs.
@@ -300,7 +363,7 @@ async function run({ argv, deps: given = {} }) {
     ctx.runs = { error: `cannot resolve the pipelines directory (${firstLine(e)}); pass --pipelines <dir>` };
   }
 
-  const report = { window: { since, until } };
+  const report = { window: { since, until, ...(scope ? { match: scope.error ? { kind: scope.kind, value: null, error: scope.error } : { kind: scope.kind, value: scope.value } } : {}) }, priceTableDate: PRICES.date };
   let exit = 0;
   let unreadable = 0;
   for (const s of SECTIONS) {

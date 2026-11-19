@@ -45,6 +45,8 @@ test('deferReasonOf reads the first word after the first Defer-reason: in any sh
   assert.strictEqual(deferReasonOf('Defer-reason: a\nDefer-reason: b'), 'a');
   assert.strictEqual(deferReasonOf('Defer-reason:'), 'unnamed');
   assert.strictEqual(deferReasonOf('Defer-reason: 123'), 'unnamed');
+  assert.strictEqual(deferReasonOf('Defer-reason: `tangential`'), 'tangential');
+  assert.strictEqual(deferReasonOf('Defer-reason: **tangential**'), 'tangential');
   assert.strictEqual(deferReasonOf('no marker'), null);
   assert.strictEqual(deferReasonOf(null), null);
 });
@@ -77,6 +79,18 @@ test('truncated: a body list shorter than the created total_count is marked', as
   assert.strictEqual(r.created, 1200);
   assert.ok(r.truncated.includes('created'));
   assert.strictEqual(r.deferred.total, 5);
+});
+
+test('a created count equal to the 1,000-row body list is not truncated', async () => {
+  const rows = Array.from({ length: 1000 }, (_, i) => ({ number: i + 1, state: 'OPEN', body: 'x' }));
+  const r = await collectRecords(Q, { gh: fakeGh(table('1000', rows)) });
+  assert.deepStrictEqual(r.truncated, []);
+});
+
+test('a state other than OPEN or CLOSED counts as closed (pinned: there is no third bucket)', async () => {
+  const rows = [{ number: 1, state: 'MERGED', body: 'Defer-reason: tangential' }, { number: 2, state: 'open', body: 'Defer-reason: tangential' }];
+  const r = await collectRecords(Q, { gh: fakeGh(table('2', rows)) });
+  assert.deepStrictEqual(r.byReason.tangential, { open: 1, closed: 1 });
 });
 
 test('a gh failure propagates', async () => {

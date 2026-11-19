@@ -515,3 +515,34 @@ test('byBucket lists its buckets smallest prompt first, not in the order they we
   const r = await collectSpend({ roots: [root], ...WINDOW });
   assert.deepStrictEqual(Object.keys(r.byBucket), ['<50', '100-150', '500-700']);
 });
+
+test('a session whose subagent files are all outside the window never has its parent transcript opened', async () => {
+  const root = newRoot();
+  const old = new Date('2026-10-01T00:00:00Z');
+  const parent = put(path.join(root, 'slug-a', 's1.jsonl'), [typed(0, 'flow'), opusCall('a', 1)]);
+  const sub = put(path.join(root, 'slug-a', 's1', 'subagents', 'agent-x.jsonl'), [opusCall('b', 2)]);
+  fs.utimesSync(parent, old, old);
+  fs.utimesSync(sub, old, old);
+  const opened = [];
+  const spy = { ...fs, createReadStream: (f, ...rest) => { opened.push(f); return fs.createReadStream(f, ...rest); } };
+  const r = await collectSpend({ roots: [root], ...WINDOW }, { fsImpl: spy });
+  assert.deepStrictEqual(opened, []);
+  assert.strictEqual(r.total, 0);
+  assert.strictEqual(r.unreadable, 0);
+});
+
+test('a non-ENOENT error on subagents/workflows is counted unreadable', async () => {
+  const root = newRoot();
+  put(path.join(root, 'slug-a', 's1.jsonl'), [typed(0, 'flow'), opusCall('a', 1)]);
+  put(path.join(root, 'slug-a', 's1', 'subagents', 'workflows', 'w1', 'agent-x.jsonl'), [opusCall('b', 2, 500000)]);
+  const wfDir = path.join(root, 'slug-a', 's1', 'subagents', 'workflows');
+  const failList = {
+    ...fs,
+    readdirSync: (d, ...rest) => {
+      if (d === wfDir) throw errno('EACCES');
+      return fs.readdirSync(d, ...rest);
+    },
+  };
+  const r = await collectSpend({ roots: [root], ...WINDOW }, { fsImpl: failList });
+  assert.strictEqual(r.unreadable, 1);
+});
