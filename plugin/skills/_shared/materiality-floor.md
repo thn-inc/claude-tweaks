@@ -5,8 +5,7 @@ an item that fails fix-now and carries a valid `Defer-reason:` from that gate's 
 reaches this floor. The floor never decides whether to fix — it only decides which container a
 *legitimately-deferred* item lands in. Citing this file as a reason to skip a fix, or to defer
 without a valid `Defer-reason:`, is a misuse of both contracts; `_shared/deferral-gate.md`'s hard
-gate still applies unchanged, and this file repeats that ordering deliberately because it is the
-predictable failure mode.
+gate still applies unchanged.
 
 ## The floor
 
@@ -30,6 +29,20 @@ fails toward filing an ordinary issue, never toward the digest.
   (release Step 3's `high-severity finding` token) ever looks again.
 - Human-typed `/capture` input is out of this contract's scope entirely — human input is intent,
   never exhaust, and never routes to the digest.
+
+## Applying the floor
+
+`bin/deferral-route.js` is the floor's code home (its test pins the two sections above
+byte-equal). Every site routing an item that carries a gate `Defer-reason:` runs it instead of
+applying this prose; the five health sweeps, the tiebreak can't-tell digest, the console-backfill
+values and ledger narrowing follow their own rules:
+
+`node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} [--severity {severity}] --size {size} --priority {priority} --risk {risk} (--agent-raised | --human)`
+
+`--severity` only when the item has one, lowercase (`critical`, `high`, `medium`, `low`, `info`);
+each axis `low`, `medium` or `high` as the site scores it. Every routing site passes
+`--agent-raised`: no typed input reaches one. It prints `verdict` (`file`, `digest` or
+`refused`) and `rule`.
 
 ## Entry format
 
@@ -117,8 +130,7 @@ when the tiebreak recommended `drop`. `/claude-tweaks:review`'s Step 3.7
 console's entry line carries a `<!-- console-finding: {fp} -->` marker, so a re-appearance in a
 later run dedupes to the existing entry by fingerprint. Like `direct-filing-sweep`, the digest
 entry's value is an Entry-format value only. Deliberately **not** in `DEFER_REASONS` — an unverified
-finding never failed fix-now, so no gate reason describes the digest entry. Its routing comes from
-the resolver's severity and recommendation split, not from the three-axis floor above. Every other
+finding never failed fix-now, so no gate reason describes the digest entry. Every other
 unattended can't-tell item files as a task instead, with `Defer-reason: needs-verification`: that
 value is in `DEFER_REASONS` because it is the filed verification task's reason (the bounded check
 that settles the finding), not a fix-now failure. #4679 reverses #3949's ruling that every
@@ -148,7 +160,7 @@ digest issue itself. A run that routes one or more findings states the digest co
 alongside the count; a run that routes none still states the count, as `0`, rather than
 omitting the line — an omitted line is indistinguishable from a caller that forgot to check,
 so silence is never the zero-case signal. Adopters cite this paragraph rather than restating
-it; `review/step3-routing.md` is the reference implementation. The five health sweeps additionally fold their own count into the existing
+it. The five health sweeps additionally fold their own count into the existing
 drain-rate-cap throttle line (`_shared/health-filing-digest.md`'s SUMMARIZE step) as a distinct
 `materiality: K` field, never combined with that line's own `digested: M` (cap-digest) count —
 the two mechanisms answer different questions and a reader diagnosing either needs its own
@@ -188,7 +200,7 @@ When a run directory resolves, routing additionally logs, per `_shared/auto-deci
 existing `AUTO` status, no new status word:
 
 ```
-AUTO {time} — materiality-floor: {item} routed below floor ({defer-reason}) → digest. Reversibility: high (entry remains promotable or re-filable from the digest at any time).
+AUTO {time} — materiality-floor: {item} routed below floor ({defer-reason}, rule={rule}) → digest. Reversibility: high (entry remains promotable or re-filable from the digest at any time).
 ```
 
 This is bookkeeping, not decision-worthy — no Review Console row per entry.
@@ -200,13 +212,3 @@ reason) and sat un-promoted for 90 days. Archival is a logged retention decision
 through that gate — the distinction that separates it from the silent skipping CLAUDE.md's "No
 implicit deferrals" rule forbids. `tidy/digest-sweep.md` performs this archival; see that file for
 the exact promotion and expiry procedures.
-
-## Consumers
-
-These adopter files route below-floor findings here: `review/step3-routing.md`,
-`wrap-up/residue-sweep.md`, `wrap-up/leftover-routing.md`, `reflect/full-mode.md`,
-`reflect/hindsight-mode.md`, `visual-review/browser-review.md`, and the five health sweeps
-(`ci-health`, `code-health`, `docs-health`, `harness-health`, `journey-health`) — see `docs/skill-graph.md` for
-the full per-skill relationship. `/tidy`'s digest sweep (`tidy/digest-sweep.md`) manages the
-container's lifecycle (cluster promotion + expiry) independent of which adopters are actively
-routing to it.

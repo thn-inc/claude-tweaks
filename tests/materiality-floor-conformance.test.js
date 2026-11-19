@@ -14,6 +14,7 @@ const { spawnSync } = require('child_process');
 const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record');
 const { trustedJqSelect, untrustedJqNote } = require('../plugin/bin/lib/issues/comment-trust');
 const { readText } = require('./helpers/read-skill');
+const { sectionOf } = require('./helpers/conformance-asserts');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const read = (rel) => readText(path.join(REPO_ROOT, rel));
@@ -199,6 +200,129 @@ test('no adopter file restates the floor\'s three-axis definition', () => {
       `${rel} appears to restate the floor's definition instead of citing it`,
     );
   }
+});
+
+// --- #5931: every deferral routing site applies the floor through bin/deferral-route.js ---
+// Live corpus on purpose (skill-prose-conformance-tests' "documented convention ... against every future
+// addition" row): the claim is that each site's own prose carries the command, which no fixture can stand in for.
+const ROUTE_COMMAND = 'node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason}';
+const ROUTE_FORM = `${ROUTE_COMMAND} [--severity {severity}] --size {size} --priority {priority} --risk {risk} (--agent-raised | --human)`;
+const DEFERRAL_SITES = [
+  'plugin/skills/review/step3-routing.md',
+  'plugin/skills/reflect/full-mode.md',
+  'plugin/skills/wrap-up/residue-sweep.md',
+  'plugin/skills/wrap-up/leftover-routing.md',
+  'plugin/skills/visual-review/browser-review.md',
+  'plugin/skills/_shared/ledger-format.md',
+];
+const OVERRIDE_RESTATEMENT = /always clears|override clears|other than `tangential`|non-`tangential`|is not `tangential`/;
+// A needle as a regex whose spaces match any whitespace run, so a hard-wrapped copy is found (and stripped) too.
+const flexible = (needle) => new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+'));
+
+// The paragraph(s) holding the command must carry its value placeholders, the origin flag, the three
+// verdicts and the any-other-outcome branch; the whole file must not restate an override.
+function deferralSiteProblems(text) {
+  const problems = [];
+  const paragraphs = text.split(/\n[ \t]*\n/).map((p) => p.replace(/\s+/g, ' '));
+  const holding = paragraphs.filter((p) => p.includes(ROUTE_COMMAND));
+  if (holding.length === 0) problems.push('no paragraph holds the deferral-route.js command form');
+  else {
+    for (const flag of ['--size {size}', '--priority {priority}', '--risk {risk}', '--agent-raised']) {
+      if (!holding.some((p) => p.includes(flag))) problems.push(`the command paragraph lacks ${flag}`);
+    }
+    if (!holding.some((p) => p.includes('any other outcome'))) problems.push('the command paragraph does not handle any other outcome');
+    for (const word of ['`file`', '`digest`', '`refused`']) {
+      if (!holding.some((p) => p.includes(word))) problems.push(`the command paragraph does not name the ${word} verdict`);
+    }
+  }
+  if (OVERRIDE_RESTATEMENT.test(text.replace(/\s+/g, ' '))) problems.push('restates a floor override');
+  return problems;
+}
+function assertDeferralSite(text, rel) {
+  assert.deepStrictEqual(deferralSiteProblems(text), [], `${rel} must apply the floor through bin/deferral-route.js`);
+}
+
+for (const rel of DEFERRAL_SITES) {
+  test(`#5931 deferral site ${rel} runs the deferral-route.js command and follows its verdict`, () => {
+    assertDeferralSite(read(rel), rel);
+  });
+}
+
+const SAMPLE_SITE = `Apply the floor with \`${ROUTE_COMMAND} --size {size} --priority {priority} --risk {risk} --agent-raised\`: \`digest\` digests, \`file\` files, \`refused\` or any other outcome stays open.`;
+const SITE_MUTATIONS = [
+  [ROUTE_COMMAND, 'no paragraph holds the deferral-route.js command form'],
+  ['--size {size}', 'the command paragraph lacks --size {size}'],
+  ['{priority}', 'the command paragraph lacks --priority {priority}'],
+  ['--agent-raised', 'the command paragraph lacks --agent-raised'],
+  ['any other outcome', 'the command paragraph does not handle any other outcome'],
+  ['`file`', 'the command paragraph does not name the `file` verdict'],
+  ['`digest`', 'the command paragraph does not name the `digest` verdict'],
+  ['`refused`', 'the command paragraph does not name the `refused` verdict'],
+];
+test('#5931 go-red: the sample site passes the deferral-site check', () => assertDeferralSite(SAMPLE_SITE, 'sample'));
+for (const [cut, expected] of SITE_MUTATIONS) {
+  test(`#5931 go-red: removing ${cut} fails the deferral-site check`, () => {
+    const mutated = SAMPLE_SITE.split(cut).join('');
+    assert.notEqual(mutated, SAMPLE_SITE, `anchor ${cut} not in the sample`);
+    assert.deepStrictEqual(deferralSiteProblems(mutated), [expected]);
+    assert.throws(() => assertDeferralSite(mutated, 'sample'));
+  });
+}
+test('#5931 go-red: the verdicts in another paragraph than the command fail the deferral-site check', () => {
+  const split = `Apply the floor with \`${ROUTE_COMMAND} --size {size} --priority {priority} --risk {risk} --agent-raised\`.\n\n\`digest\` digests, \`file\` files, \`refused\` or any other outcome stays open.`;
+  assert.deepStrictEqual(deferralSiteProblems(split), [
+    'the command paragraph does not handle any other outcome',
+    'the command paragraph does not name the `file` verdict',
+    'the command paragraph does not name the `digest` verdict',
+    'the command paragraph does not name the `refused` verdict',
+  ]);
+});
+test('#5931 go-red: an override restated across a line wrap fails the deferral-site check', () => {
+  const restated = `${SAMPLE_SITE}\nA \`tangential\` reason always\nclears the floor.`;
+  assert.deepStrictEqual(deferralSiteProblems(restated), ['restates a floor override']);
+  assert.throws(() => assertDeferralSite(restated, 'sample'));
+});
+
+const FLOOR_NEEDLES = [
+  ROUTE_FORM,
+  'its test pins the two sections above byte-equal',
+  'Every site routing an item that carries a gate `Defer-reason:` runs it',
+  'the five health sweeps, the tiebreak can\'t-tell digest, the console-backfill values and ledger narrowing follow their own rules',
+  'lowercase (`critical`, `high`, `medium`, `low`, `info`)',
+  'Every routing site passes `--agent-raised`',
+  '`verdict` (`file`, `digest` or `refused`) and `rule`',
+];
+const AUDIT_RULE = /^AUTO \{time\} — materiality-floor: \{item\} routed below floor \(\{defer-reason\}, rule=\{rule\}\) → digest\./m;
+function floorCommandProblems(text) {
+  const section = sectionOf(text, '## Applying the floor').replace(/\s+/g, ' ');
+  const problems = FLOOR_NEEDLES.filter((needle) => !section.includes(needle)).map((needle) => `Applying the floor lacks ${needle}`);
+  if (!AUDIT_RULE.test(text)) problems.push('the Audit line does not carry rule={rule}');
+  return problems;
+}
+test('#5931 materiality-floor.md names deferral-route.js as the code home and gives the one command form', () => {
+  assert.deepStrictEqual(floorCommandProblems(FLOOR), []);
+});
+for (const needle of FLOOR_NEEDLES) {
+  test(`#5931 go-red: dropping ${needle} fails the floor check`, () => {
+    const mutated = FLOOR.replace(flexible(needle), '');
+    assert.notEqual(mutated, FLOOR, `anchor ${needle} not in materiality-floor.md`);
+    assert.deepStrictEqual(floorCommandProblems(mutated), [`Applying the floor lacks ${needle}`]);
+  });
+}
+test('#5931 go-red: the command form moved out of Applying the floor fails the floor check', () => {
+  const mutated = `${FLOOR.replace(flexible(ROUTE_FORM), '')}\n\`${ROUTE_FORM}\`\n`;
+  assert.ok(mutated.includes(ROUTE_FORM));
+  assert.deepStrictEqual(floorCommandProblems(mutated), [`Applying the floor lacks ${ROUTE_FORM}`]);
+});
+test('#5931 go-red: dropping the axis placeholders from the command form fails the floor check', () => {
+  const mutated = FLOOR.split('--size {size} --priority {priority}').join('--size --priority');
+  assert.notEqual(mutated, FLOOR);
+  assert.deepStrictEqual(floorCommandProblems(mutated), [`Applying the floor lacks ${ROUTE_FORM}`]);
+});
+test('#5931 go-red: dropping rule={rule} from the Audit line fails the floor check', () => {
+  const mutated = FLOOR.split(', rule={rule}').join('');
+  assert.notEqual(mutated, FLOOR);
+  assert.deepStrictEqual(floorCommandProblems(mutated), ['the Audit line does not carry rule={rule}']);
 });
 
 test('the five health sweeps state materiality-floor-before-cap-digest ordering', () => {
