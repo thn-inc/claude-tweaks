@@ -252,6 +252,15 @@ describe('merge-check path', () => {
     assert.deepStrictEqual(ev[0].extra, { verdict: 'needs-human', floor: 'none' });
   });
 
+  test('a launch that throws after the model resolved still names it on the merge-check line (#5917)', async () => {
+    const h = harness({ envelope: new Error('spawn') });
+    assert.strictEqual((await judgeMergeCheck(h.env, h.ctx)).verdict, 'needs-human');
+    const ev = h.events.filter((e) => e.step === 'merge-check');
+    assert.strictEqual(ev.length, 1);
+    assert.strictEqual(ev[0].detail, 'merge-check launch failed');
+    assert.strictEqual(ev[0].extra.model, M('standard'));
+  });
+
   test('launchJudge: a refusal stops with the code in the text, any other launch error stays fixed text, a launch returns the model', async () => {
     const args = { role: 'merge-check', dir: 'merge-check', label: 'merge-check', prompt: 'p', schema: MERGE_CHECK_RESULT_SCHEMA };
     const refused = harness({ policy: { ...POLICY, 'express-driver-models': { value: { reviewer: 'capable' }, source: 'policy' } } });

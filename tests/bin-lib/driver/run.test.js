@@ -2030,17 +2030,26 @@ test('(#5415) a launcher throw after which a flag is set reports the flag', asyn
   assert.equal(lastLine(h).stop.detail, ONE_NEW);
 });
 
-test('#5917: a launcher throw that moved HEAD or set a flag still names the model on the worker line', async () => {
-  const thrown = [on('worker'), new Error('launch blew up')];
-  for (const [label, script] of [['HEAD moved', [thrown, nthCall(isHeadRead, 2, `${OTHER_SHA}\n`)]], ['flag set', [thrown, nthCall(isFlagRead, 2, NEW_FLAG_INDEX)]]]) {
-    const h = harness({ script });
-    await run(['#7'], h.deps);
-    const lines = h.lines().filter((l) => l.step === STEP.worker);
-    assert.equal(lines.length, 1, label);
-    assert.equal(lines[0].status, 'fail', label);
-    assert.equal(lines[0].model, M('standard'), label);
-    assert.ok('tests' in lines[0], `${label}: the line keeps the tests field`);
-  }
+// A launcher throw followed by a HEAD move or a new index flag: the stop's worker line still names the model (#5917).
+async function throwThenStopLine(after) {
+  const h = harness({ script: [[on('worker'), new Error('launch blew up')], after] });
+  await run(['#7'], h.deps);
+  const lines = h.lines().filter((l) => l.step === STEP.worker);
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].status, 'fail');
+  return lines[0];
+}
+
+test('#5917: a launcher throw that moved HEAD still names the model on the worker line', async () => {
+  const line = await throwThenStopLine(nthCall(isHeadRead, 2, `${OTHER_SHA}\n`));
+  assert.equal(line.model, M('standard'));
+  assert.ok('tests' in line, 'the line keeps the tests field');
+});
+
+test('#5917: a launcher throw that set a new index flag still names the model on the worker line', async () => {
+  const line = await throwThenStopLine(nthCall(isFlagRead, 2, NEW_FLAG_INDEX));
+  assert.equal(line.model, M('standard'));
+  assert.ok('tests' in line, 'the line keeps the tests field');
 });
 
 test('(#5415) an interrupt during a launch that also set a flag is reported as the interrupt', async () => {
