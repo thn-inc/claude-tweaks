@@ -7,6 +7,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { scratchDir } = require('./helpers/tmp-dir');
+const { readText } = require('./helpers/read-skill');
 
 const {
   POLICY_KEYS, LIST_ELEMENT_PATTERNS, EMPTY_LIST_RE, resolvePolicyKeys, auditPolicy, resolvePolicyConfig,
@@ -133,7 +134,7 @@ test('#5932 a blank run-config value reads as unset and falls through to policy.
 });
 
 test('#5932 AC8 this repository sets the list to pre-existing-outside-diff, tangential, and it resolves valid', () => {
-  const { entry, seen } = resolveOne(KEY, { policyRaw: fs.readFileSync(REPO_POLICY, 'utf8') });
+  const { entry, seen } = resolveOne(KEY, { policyRaw: readText(REPO_POLICY) });
   assert.deepStrictEqual(entry, { value: 'pre-existing-outside-diff, tangential', source: 'policy' });
   assert.deepStrictEqual(seen, []);
 });
