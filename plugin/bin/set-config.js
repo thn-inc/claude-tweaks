@@ -89,7 +89,7 @@ function isManifestoAutoBatch(results) {
   if (results.length < MANIFESTO_LEVERS.length) return false;
   const keys = new Set(results.map((r) => r.key));
   if (keys.size !== results.length) return false;
-  for (const lever of MANIFESTO_LEVERS) if (!keys.has(lever)) return false;
+  if (!hasEveryManifestoLever(results)) return false;
   for (const key of keys) if (!isConfigKey(key)) return false;
   const modeResult = results.find((r) => r.key === 'mode');
   return !!modeResult && modeResult.value === 'auto';
@@ -232,7 +232,7 @@ function run(argv, overrides = {}) {
   // mode — confirm/hybrid and case-3 recovery write through this CLI), so the run is the standard lane.
   // A partial batch (the ceremony downgrade, the express lane's configSet) never is. Best-effort.
   if (batchMode && hasEveryManifestoLever(results)) {
-    try { require('./lib/run-manifest/write').fillRunManifest(target.dir, { lane: 'standard' }); } catch { /* never changes the outcome */ }
+    try { require('./lib/run-manifest/write').fillRunManifest(target.dir, { lane: 'standard' }, { stderr: deps.stderr }); } catch { /* never changes the outcome */ }
   }
 
   for (const r of results) {

@@ -20,11 +20,14 @@ const fs = require('fs');
 const path = require('path');
 const { writeFileAtomic } = require('../atomic-write');
 const { canonicalJson, gatherFacts } = require('./facts');
+const { leverValues } = require('../set-config/write');
 
 const MANIFEST_FILE = 'manifest.json';
 const MANIFEST_VERSION = 1;
 const LANES = Object.freeze(['standard', 'express', 'driver', 'unknown']);
-const CEREMONY_PROFILES = Object.freeze(['fast-lane', 'standard']);
+// The run-config lever's own value sets, so a profile or stance added there is accepted here too.
+const CEREMONY_PROFILES = Object.freeze(leverValues('ceremony-profile'));
+const MODEL_STANCES = Object.freeze(leverValues('model-stance'));
 // The facts a fill sets only while they are still null.
 const FILL_ONLY_NULL = Object.freeze(['pluginVersion', 'policyHash', 'baseCommit', 'modelProfile']);
 // The shape each of those facts must have to be written; anything else is ignored.
@@ -33,7 +36,7 @@ const FILL_VALID = Object.freeze({
   policyHash: (v) => typeof v === 'string' && /^sha256:[0-9a-f]{64}$/.test(v),
   baseCommit: (v) => typeof v === 'string' && /^[0-9a-f]{40}$/.test(v),
   modelProfile: (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
-    && ['economy', 'default', 'max-rigor'].includes(v.stance)
+    && MODEL_STANCES.includes(v.stance)
     && (v.ceiling === null || typeof v.ceiling === 'string'),
 });
 // A multi-spec parent's per-spec child directory: one manifest lives at the top-level run dir.

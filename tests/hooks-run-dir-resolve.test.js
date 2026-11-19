@@ -507,6 +507,21 @@ test('plain spec-slug fallback with --create mkdir-only mints a bare run directo
   assert.strictEqual(manifest.ceremonyProfile, null);
 });
 
+// #5903: the mint gathers the run-start facts itself — policy hash, base commit, model profile.
+test('#5903: a --create mint records the policy hash, the integration tip as baseCommit, and the model profile', () => {
+  const main = gitRepo({ branch: 'main' });
+  fixtureGit(['-C', main, 'update-ref', 'refs/remotes/origin/main', 'HEAD']);
+  fixtureGit(['-C', main, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
+  const tip = String(fixtureGit(['-C', main, 'rev-parse', 'HEAD'])).trim();
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-89', create: true, now: new Date('2026-03-04T05:06:07Z') });
+  assert.strictEqual(out.ok, true);
+  const manifest = JSON.parse(fs.readFileSync(path.join(out.path, 'manifest.json'), 'utf8'));
+  assert.match(manifest.policyHash, /^sha256:[0-9a-f]{64}$/);
+  assert.strictEqual(manifest.baseCommit, tip);
+  assert.ok(['economy', 'default', 'max-rigor'].includes(manifest.modelProfile.stance), JSON.stringify(manifest.modelProfile));
+  assert.ok(Object.prototype.hasOwnProperty.call(manifest.modelProfile, 'ceiling'));
+});
+
 // #5903: the mint writes manifest.json beside the directory it creates.
 test('#5903: --spec-slug drive-5 --create writes lane driver in manifest.json', () => {
   const main = gitRepo();
