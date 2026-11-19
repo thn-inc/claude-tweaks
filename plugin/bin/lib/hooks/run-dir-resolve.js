@@ -338,8 +338,8 @@ function resolve(opts = {}) {
     const mintManifest = (dir, lane) => { if (opts.standalone !== 'adhoc') try { require('../run-manifest/write').initRunManifest(dir, { lane, cwd }); } catch { /* best-effort */ } };
     if (opts.standalone) {
       // The step-4 standalone-auto-fallback shape: {ts}-{name}-standalone,
-      // pre-populated with decisions.md and staged/ — byte-for-byte what the
-      // reference snippet's own standalone branch does. A {name} already ending in
+      // pre-populated with decisions.md and staged/ — the reference snippet's
+      // file set, plus manifest.json (#5903). A {name} already ending in
       // `-standalone` is used as-is, not suffixed twice (#4807).
       const name = opts.standalone.endsWith('-standalone') ? opts.standalone : `${opts.standalone}-standalone`;
       const dir = path.join(pipelinesRoot, `${formatTimestamp(now)}-${name}`);

@@ -14,7 +14,7 @@ const FACTS = {
   pluginVersion: '6.174.0',
   policyHash: `sha256:${'a'.repeat(64)}`,
   baseCommit: 'b'.repeat(40),
-  modelProfile: { stance: 'balanced', ceiling: 'frontier' },
+  modelProfile: { stance: 'default', ceiling: 'frontier' },
 };
 const NULL_FACTS = { pluginVersion: null, policyHash: null, baseCommit: null, modelProfile: null };
 const NINE_KEYS = [
@@ -253,6 +253,77 @@ test('fill creates a missing manifest in an existing run dir with only the passe
   const withLane = runDir();
   fillRunManifest(withLane, { lane: 'express' }, { stderr: () => {} });
   assert.equal(readManifest(withLane).lane, 'express');
+});
+
+test('fill creates no manifest on a missing manifest when nothing valid was passed', () => {
+  for (const fields of [{}, { lane: 'turbo' }, { lane: 'unknown' }, { ceremonyProfile: 'ludicrous' }]) {
+    const dir = runDir();
+    const { stderr, lines } = collector();
+    assert.deepEqual(fillRunManifest(dir, fields, { stderr }), { changed: [] }, JSON.stringify(fields));
+    assert.deepEqual(fs.readdirSync(dir), [], `${JSON.stringify(fields)}: no file is created`);
+    assert.deepEqual(lines, []);
+  }
+});
+
+test('fill into a multi-spec spec-N child dir creates no manifest, but fills one that already exists', () => {
+  const parent = scratchDir('run-manifest-write-');
+  const child = path.join(parent, 'spec-3');
+  fs.mkdirSync(child);
+  const { stderr, lines } = collector();
+  assert.deepEqual(fillRunManifest(child, { ceremonyProfile: 'fast-lane', lane: 'standard' }, { stderr }), { changed: [] });
+  assert.deepEqual(fs.readdirSync(child), [], 'a spec-N child dir is never given a manifest');
+  assert.deepEqual(lines, []);
+
+  const held = path.join(parent, 'spec-4');
+  fs.mkdirSync(held);
+  fs.writeFileSync(path.join(held, MANIFEST_FILE), JSON.stringify({ v: 1, lane: 'unknown', ceremonyProfile: null }));
+  assert.deepEqual(fillRunManifest(held, { ceremonyProfile: 'standard' }, { stderr }).changed, ['ceremonyProfile']);
+  assert.equal(readManifest(held).ceremonyProfile, 'standard');
+
+  // only the exact spec-N basename is a child dir: a run id ending in spec-N still gets its manifest
+  const run = runDir('spec-3');
+  assert.deepEqual(fillRunManifest(run, { lane: 'standard' }, { stderr }), { changed: ['lane'] });
+});
+
+test('fill accepts the four fill-only-null facts only in their documented shapes', () => {
+  const valid = {
+    pluginVersion: '6.174.0',
+    policyHash: `sha256:${'a'.repeat(64)}`,
+    baseCommit: 'b'.repeat(40),
+    modelProfile: { stance: 'max-rigor', ceiling: null },
+  };
+  const wrong = [
+    ['pluginVersion', 42],
+    ['pluginVersion', ''],
+    ['policyHash', 'sha256:abc'],
+    ['policyHash', 'a'.repeat(64)],
+    ['baseCommit', 'b'.repeat(39)],
+    ['baseCommit', 'B'.repeat(40)],
+    ['modelProfile', 'default'],
+    ['modelProfile', ['default']],
+    ['modelProfile', { stance: 'balanced', ceiling: null }],
+    ['modelProfile', { stance: 'default', ceiling: 7 }],
+  ];
+  for (const [key, value] of wrong) {
+    const dir = runDir();
+    initRunManifest(dir, { cwd: dir }, { gatherFacts: gather(NULL_FACTS), stderr: () => {} });
+    assert.deepEqual(fillRunManifest(dir, { [key]: value }, { stderr: () => {} }), { changed: [] }, `${key}=${JSON.stringify(value)}`);
+    assert.equal(readManifest(dir)[key], null, `${key}=${JSON.stringify(value)} is never written`);
+  }
+  const dir = runDir();
+  initRunManifest(dir, { cwd: dir }, { gatherFacts: gather(NULL_FACTS), stderr: () => {} });
+  assert.deepEqual(fillRunManifest(dir, valid, { stderr: () => {} }).changed.sort(), Object.keys(valid).sort());
+  assert.deepEqual(readManifest(dir).modelProfile, valid.modelProfile);
+});
+
+test('fill leaves a manifest whose content is JSON null untouched, with one stderr line', () => {
+  const dir = runDir();
+  fs.writeFileSync(path.join(dir, MANIFEST_FILE), 'null\n');
+  const { stderr, lines } = collector();
+  assert.deepEqual(fillRunManifest(dir, { lane: 'standard' }, { stderr }), { changed: [] });
+  assert.equal(manifestBytes(dir), 'null\n');
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /not a JSON object/);
 });
 
 test('fill does not create a missing run dir', () => {

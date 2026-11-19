@@ -481,6 +481,15 @@ test('manifest: a full batch never overwrites an already-known lane', () => {
   assert.equal(readManifest(runDir).lane, 'express');
 });
 
+test('manifest: a failing full --set batch (exit 3) fills no lane', () => {
+  const { main, runDir } = fixture();
+  fs.rmSync(path.join(runDir, 'config.yml'));
+  fs.mkdirSync(path.join(runDir, 'config.yml'));
+  const { deps } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--set', FULL_MANIFESTO_BATCH_AUTO], deps), 3);
+  assert.ok(!fs.existsSync(path.join(runDir, 'manifest.json')), 'a failed batch fills no lane, and creates no manifest');
+});
+
 test('manifest: a fill failure leaves the --set batch output, exit code and config.yml unchanged', () => {
   const { mock } = require('node:test');
   const runManifest = require('../../../plugin/bin/lib/run-manifest/write');

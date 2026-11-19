@@ -290,7 +290,7 @@ function runGate(deps, flags) {
   // A gate the whole `--run` passes puts the run on the express route (#5903). Best-effort: a failed
   // fill changes nothing below.
   if (decisionsFile && verdicts.every((v) => v.eligible === true)) {
-    try { require('../run-manifest/write').fillRunManifest(path.dirname(decisionsFile), { lane: 'express' }); } catch { /* never changes the gate's outcome */ }
+    try { require('../run-manifest/write').fillRunManifest(path.dirname(decisionsFile), { lane: 'express' }, { stderr: deps.stderr }); } catch { /* never changes the gate's outcome */ }
   }
   deps.stdout(`${JSON.stringify({ enabled, verdicts })}\n`);
   return 0;

@@ -310,15 +310,11 @@ test('a manifest fill failure leaves stdout and exit code unchanged', () => {
 
   fs.writeFileSync(manifestFile(fx), 'not json');
   const h = harness(fx);
-  const realWrite = process.stderr.write;
-  const dropped = [];
-  process.stderr.write = (chunk) => { dropped.push(String(chunk)); return true; };
-  let code;
-  try { code = run(['gate', '--records-json', file, '--run', fx.runDir], h.deps); } finally { process.stderr.write = realWrite; }
-  assert.match(dropped.join(''), /run-manifest: manifest\.json is not valid JSON/, 'the fill really failed');
+  const code = run(['gate', '--records-json', file, '--run', fx.runDir], h.deps);
+  assert.strictEqual(h.err.length, 1, 'the fill really failed, on the gate\'s one injected stderr channel');
+  assert.match(h.err[0], /run-manifest: manifest\.json is not valid JSON/);
   assert.strictEqual(code, 0);
   assert.strictEqual(h.out.join(''), clean.out.join(''));
-  assert.deepStrictEqual(h.err, []);
   assert.strictEqual(fs.readFileSync(manifestFile(fx), 'utf8'), 'not json', 'the unreadable manifest is left as it was');
 });
 

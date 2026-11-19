@@ -516,6 +516,16 @@ test('#5903: --spec-slug drive-5 --create writes lane driver in manifest.json', 
   assert.strictEqual(manifest.lane, 'driver');
 });
 
+test('#5903: near-miss --spec-slug values (drive-5x, drive-) write lane unknown, not driver', () => {
+  for (const specSlug of ['drive-5x', 'drive-']) {
+    const main = gitRepo();
+    const out = resolve({ cwd: main, env: {}, specSlug, create: true, now: new Date('2026-03-04T05:06:07Z') });
+    assert.strictEqual(out.ok, true, specSlug);
+    const manifest = JSON.parse(fs.readFileSync(path.join(out.path, 'manifest.json'), 'utf8'));
+    assert.strictEqual(manifest.lane, 'unknown', specSlug);
+  }
+});
+
 test('#5903: a mint with env {} (the driver\'s call shape) still writes a non-null pluginVersion', () => {
   const pluginRoot = scratchDir('ct-rdr-plugin-');
   fs.mkdirSync(path.join(pluginRoot, '.claude-plugin'), { recursive: true });

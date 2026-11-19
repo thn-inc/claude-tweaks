@@ -25,7 +25,8 @@
 // The run directory's anchor and the worktree's are one main checkout without a further check:
 // resolveTarget anchors the run directory to mainCheckoutRoot(cwd), and check 3 requires
 // mainCheckoutRoot(top) to equal that same root.
-// It refuses before writing anything; its one write is the best-effort `lane: 'driver'` fill of the run's manifest.json (#5903).
+// It refuses before writing anything; its one write is the best-effort `lane: 'driver'` fill of the
+// run's manifest.json (#5903).
 // Checks 1-4 read the file system directly, as policyStep's mainCheckoutRoot does;
 // check 5 is the one call through deps (a read).
 const fs = require('node:fs');

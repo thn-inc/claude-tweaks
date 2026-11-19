@@ -248,6 +248,19 @@ test('writeManifesto fills no lane when the config.yml write fails mid-batch', (
   assert.strictEqual(readManifest(fx.runDir).lane, 'unknown');
 });
 
+test('a writeManifesto failure after the ceremony-profile lever keeps the filled ceremonyProfile while config.yml is removed', () => {
+  const fx = fixture({ decisions: CLAIM });
+  seedManifest(fx.runDir);
+  const { setConfigLever } = require('../../../plugin/bin/lib/set-config/write');
+  const flaky = (args) => { if (args.key === 'merge-authorization') throw new Error('EIO: simulated'); return setConfigLever(args); };
+  assert.throws(() => write(fx, { deps: { setConfigLever: flaky } }), /EIO/);
+  assert.ok(!fs.readdirSync(fx.runDir).includes('config.yml'), 'partial config.yml rolled back');
+  // The fill rides setConfigLever, so it already landed; a re-run rewrites the same value.
+  const m = readManifest(fx.runDir);
+  assert.strictEqual(m.ceremonyProfile, 'standard');
+  assert.strictEqual(m.lane, 'unknown', 'the lane fill is after the whole batch, so it did not run');
+});
+
 test('an existing config.yml -> AdoptedRunError and nothing in the run dir changes', () => {
   const fx = fixture({ decisions: CLAIM, config: 'mode: auto\n' });
   const before = snapshot(fx.runDir);

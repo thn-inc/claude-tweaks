@@ -54,7 +54,6 @@ function gatherPolicyFacts({ cwd, env }, deps) {
     readFile: readFileOrNull(deps.readFile || ((p) => fs.readFileSync(p, 'utf8'))),
   };
   const out = resolvePolicy({ keys }, policyDeps);
-  if (out.code !== 0) return { policyHash: null, modelProfile: null };
   const values = {};
   for (const key of keys) {
     const entry = out.result[key];
@@ -75,10 +74,11 @@ function gatherBaseCommit({ cwd, env }, deps) {
   const { mainCheckoutRoot } = require('../hooks/worktree-detect');
   const root = mainCheckoutRoot(cwd);
   if (!root) return null;
-  const resolveBranch = deps.resolveIntegrationBranch || require('../hooks/worktree-reap').resolveIntegrationBranch;
+  const { resolveIntegrationBranch, bareIntegrationName } = require('../hooks/worktree-reap');
+  const resolveBranch = deps.resolveIntegrationBranch || resolveIntegrationBranch;
   const name = resolveBranch(root, null, { env });
   if (!name) return null;
-  const bare = name.replace(/^origin\//, '');
+  const bare = bareIntegrationName(name);
   const run = deps.runGit || require('../hooks/git-exec').runGit;
   const { stdout, failure } = run(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${bare}^{commit}`], root, { env });
   if (failure || !stdout) return null;

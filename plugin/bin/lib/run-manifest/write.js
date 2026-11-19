@@ -11,6 +11,9 @@
 // stderr line. manifest.json is not run initialization — it carries none of the files (decisions.md,
 // run-state.json, config.yml) whose presence makes a directory look like a started run.
 //
+// Both writes are best-effort and last-writer-wins: a fill is a read-modify-write with no lock, and
+// the atomic rename prevents only a torn file, not a lost update between two concurrent fills.
+//
 // Not the unrelated `manifest.yml` (flow/manifest.js) or acceptance-packet.js's manifest.json.
 'use strict';
 const fs = require('fs');
@@ -24,6 +27,17 @@ const LANES = Object.freeze(['standard', 'express', 'driver', 'unknown']);
 const CEREMONY_PROFILES = Object.freeze(['fast-lane', 'standard']);
 // The facts a fill sets only while they are still null.
 const FILL_ONLY_NULL = Object.freeze(['pluginVersion', 'policyHash', 'baseCommit', 'modelProfile']);
+// The shape each of those facts must have to be written; anything else is ignored.
+const FILL_VALID = Object.freeze({
+  pluginVersion: (v) => typeof v === 'string' && v.length > 0,
+  policyHash: (v) => typeof v === 'string' && /^sha256:[0-9a-f]{64}$/.test(v),
+  baseCommit: (v) => typeof v === 'string' && /^[0-9a-f]{40}$/.test(v),
+  modelProfile: (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
+    && ['economy', 'default', 'max-rigor'].includes(v.stance)
+    && (v.ceiling === null || typeof v.ceiling === 'string'),
+});
+// A multi-spec parent's per-spec child directory: one manifest lives at the top-level run dir.
+const SPEC_CHILD_DIR = /^spec-\d+$/;
 
 function defaults(deps = {}) {
   return {
@@ -54,6 +68,7 @@ function pick(vocabulary, value, fallback) {
 function initRunManifest(runDir, facts = {}, deps = {}) {
   const d = defaults(deps);
   try {
+    if (!d.existsSync(runDir)) throw new Error(`run directory does not exist, no manifest written: ${runDir}`);
     const file = path.join(runDir, MANIFEST_FILE);
     if (d.existsSync(file)) return { written: false };
     const gathered = d.gatherFacts({ cwd: facts.cwd || process.cwd(), env: facts.env });
@@ -118,13 +133,16 @@ function fillRunManifest(runDir, fields = {}, deps = {}) {
     if (!d.existsSync(runDir)) throw new Error(`run directory does not exist, no manifest written: ${runDir}`);
     const file = path.join(runDir, MANIFEST_FILE);
     const existing = readExisting(file, d);
+    // A spec-N child dir with no manifest of its own is never given one: it would nest a second,
+    // misleading manifest under the parent run's.
+    if (existing.missing && SPEC_CHILD_DIR.test(path.basename(runDir))) return { changed: [] };
     const manifest = existing.missing ? blankManifest(runDir, d) : existing.manifest;
     const input = fields || {};
     const changed = [];
 
     for (const key of FILL_ONLY_NULL) {
       const value = input[key];
-      if (value === undefined || value === null || manifest[key] != null) continue;
+      if (value === undefined || value === null || manifest[key] != null || !FILL_VALID[key](value)) continue;
       manifest[key] = value;
       changed.push(key);
     }
@@ -143,7 +161,7 @@ function fillRunManifest(runDir, fields = {}, deps = {}) {
       changed.push('ceremonyProfile');
     }
 
-    if (changed.length > 0 || existing.missing) d.writeFileAtomic(file, serialize(manifest));
+    if (changed.length > 0) d.writeFileAtomic(file, serialize(manifest));
     return { changed };
   } catch (err) {
     drop(d, err);
