@@ -442,13 +442,25 @@ test('run: station events — removing needs:definition records exited intake pa
   assert.strictEqual(events[0].discriminator, 'refine:9:removed:needs:definition:2023-11-14T22:13:20.000Z');
 });
 
-test('run: station events — one action adding and removing records both sets', () => {
+test('run: station events — one action adding ready and removing needs:definition exits intake once', () => {
   const { deps, events } = stationDeps([{ issue: 4, addLabels: ['ready'], removeLabels: ['needs:definition'] }]);
   assert.strictEqual(run(['actions.json'], deps), 0);
-  assert.deepStrictEqual(events.map(triple), [
-    'exited intake passed', 'exited shape passed', 'entered authorize', 'exited intake passed',
+  assert.deepStrictEqual(events.map(triple), ['exited intake passed', 'exited shape passed', 'entered authorize']);
+  assert.deepStrictEqual(events.map((e) => e.payload.direction), ['added', 'added', 'added']);
+});
+
+test('run: station events — two actions on one issue are not deduped against each other, and a distinct pair in one action still records both', () => {
+  const { deps, events } = stationDeps([
+    { issue: 4, removeLabels: ['needs:definition'] },
+    { issue: 4, addLabels: ['ready'] },
+    { issue: 5, addLabels: ['auto:build', 'bot:in-progress'] },
   ]);
-  assert.deepStrictEqual(events.map((e) => e.payload.direction), ['added', 'added', 'added', 'removed']);
+  assert.strictEqual(run(['actions.json'], deps), 0);
+  assert.deepStrictEqual(events.map((e) => `${e.recordNumber} ${triple(e)}`), [
+    '4 exited intake passed',
+    '4 exited intake passed', '4 exited shape passed', '4 entered authorize',
+    '5 exited authorize passed', '5 entered release', '5 exited release passed', '5 entered build',
+  ]);
 });
 
 test('run: station events — a label with no table row records nothing', () => {

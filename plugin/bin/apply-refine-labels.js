@@ -124,8 +124,14 @@ function emitLabelTransitions(deps, { issue, addLabels, removeLabels, repoName, 
     ...(addLabels || []).map((label) => ({ label, direction: 'added' })),
     ...(removeLabels || []).map((label) => ({ label, direction: 'removed' })),
   ];
+  // One action records a transition once: `ready` added and `needs:definition` removed both
+  // exit intake, and two identical `exited intake passed` events would be one fact written twice.
+  const recorded = new Set();
   for (const { label, direction } of edits) {
     for (const t of transitionsForLabel(label, direction)) {
+      const fact = `${t.kind}|${t.station}|${t.outcome || ''}`;
+      if (recorded.has(fact)) continue;
+      recorded.add(fact);
       try {
         deps.stationEvent({
           ...t,
