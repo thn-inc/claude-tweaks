@@ -204,14 +204,20 @@ function run(argv, deps = realDeps) {
   // throwing emitter never changes stdout, `logged` or the exit code.
   // A sweep closes the holder's visit, so the event carries the holder's runId
   // (matching its entered/session_bound events) and names the sweeper in sweptBy.
+  // The holder's session is unknown, so sessionId is null; the sweeper's own
+  // session goes only to payload.sweptBySession.
   if (r.outcome === 'released' && typeof deps.stationEvent === 'function') {
     try {
       const visitRunId = r.sweptFrom || runId;
+      const ownSession = deps.sessionId || '';
       const payload = { reason, link: o.link || null };
-      if (r.sweptFrom) payload.sweptBy = runId;
+      if (r.sweptFrom) {
+        payload.sweptBy = runId;
+        if (ownSession) payload.sweptBySession = ownSession;
+      }
       deps.stationEvent({
         kind: 'exited', station: 'build', outcome: outcomeForReleaseReason(reason), recordNumber: issue,
-        repoName: toRepoName(`${repoSpec.owner}/${repoSpec.repo}`), runId: visitRunId, sessionId: deps.sessionId || '', lane: 'unknown',
+        repoName: toRepoName(`${repoSpec.owner}/${repoSpec.repo}`), runId: visitRunId, sessionId: r.sweptFrom ? null : ownSession, lane: 'unknown',
         payload, discriminator: `release:${visitRunId}`,
       });
     } catch { /* best-effort: the release stands */ }

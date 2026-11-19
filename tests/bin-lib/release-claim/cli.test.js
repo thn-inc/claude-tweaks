@@ -622,7 +622,18 @@ test('#5902: a --sweep release closes the holder\'s visit — runId and discrimi
   assert.equal(events[0].runId, HOLDER);
   assert.equal(events[0].discriminator, `release:${HOLDER}`);
   assert.equal(events[0].outcome, 'abandoned');
-  assert.deepEqual(events[0].payload, { reason: 'swept: stale claim', link: null, sweptBy: RUN_DIR_NAME });
+  assert.equal(events[0].sessionId, null, 'the holder\'s session is unknown — never the sweeper\'s');
+  assert.deepEqual(events[0].payload, {
+    reason: 'swept: stale claim', link: null, sweptBy: RUN_DIR_NAME, sweptBySession: 'sess-1',
+  });
+
+  const out2 = [];
+  const { d: d2 } = deps({ content: staleForeign, issueState: 'OPEN', out: out2, mainRoot: rootOf(runDir) });
+  const events2 = withStationSpy(d2);
+  d2.sessionId = '';
+  assert.equal(run(['999', '--run', mkRun(), '--reason', 'swept: stale claim', '--sweep'], d2), 0);
+  assert.equal(events2[0].sessionId, null);
+  assert.equal('sweptBySession' in events2[0].payload, false, 'an empty sweeper session is left out');
 });
 
 test('#5902: a throwing stationEvent leaves stdout, the exit code and logged byte-identical', () => {
