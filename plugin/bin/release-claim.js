@@ -202,12 +202,17 @@ function run(argv, deps = realDeps) {
   // #5902: only a real release ends the build visit; `already-released` is a
   // repeat and writes nothing. Optional dep (absent = none), wrapped so a
   // throwing emitter never changes stdout, `logged` or the exit code.
+  // A sweep closes the holder's visit, so the event carries the holder's runId
+  // (matching its entered/session_bound events) and names the sweeper in sweptBy.
   if (r.outcome === 'released' && typeof deps.stationEvent === 'function') {
     try {
+      const visitRunId = r.sweptFrom || runId;
+      const payload = { reason, link: o.link || null };
+      if (r.sweptFrom) payload.sweptBy = runId;
       deps.stationEvent({
         kind: 'exited', station: 'build', outcome: outcomeForReleaseReason(reason), recordNumber: issue,
-        repoName: toRepoName(`${repoSpec.owner}/${repoSpec.repo}`), runId, sessionId: deps.sessionId || '', lane: 'unknown',
-        payload: { reason, link: o.link || null }, discriminator: `release:${runId}`,
+        repoName: toRepoName(`${repoSpec.owner}/${repoSpec.repo}`), runId: visitRunId, sessionId: deps.sessionId || '', lane: 'unknown',
+        payload, discriminator: `release:${visitRunId}`,
       });
     } catch { /* best-effort: the release stands */ }
   }

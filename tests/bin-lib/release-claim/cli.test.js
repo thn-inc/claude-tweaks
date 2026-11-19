@@ -608,6 +608,23 @@ test('#5902: skipped-not-owner and already-released record no station event', ()
   assert.deepEqual(ev2, [], 'already-released emits nothing, so a repeat release writes nothing');
 });
 
+test('#5902: a --sweep release closes the holder\'s visit — runId and discriminator are the holder\'s, sweptBy names the sweeper', () => {
+  const HOLDER = '2026-08-10T090000-spec-1';
+  const staleForeign = JSON.stringify({
+    runId: HOLDER, sessionId: 's', claimedAt: '2026-08-12T12:00:00.000Z', ttlHours: 72, host: 'h',
+  });
+  const runDir = mkRun();
+  const out = [];
+  const { d } = deps({ content: staleForeign, issueState: 'OPEN', out, mainRoot: rootOf(runDir) });
+  const events = withStationSpy(d);
+  assert.equal(run(['999', '--run', runDir, '--reason', 'swept: stale claim', '--sweep'], d), 0);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].runId, HOLDER);
+  assert.equal(events[0].discriminator, `release:${HOLDER}`);
+  assert.equal(events[0].outcome, 'abandoned');
+  assert.deepEqual(events[0].payload, { reason: 'swept: stale claim', link: null, sweptBy: RUN_DIR_NAME });
+});
+
 test('#5902: a throwing stationEvent leaves stdout, the exit code and logged byte-identical', () => {
   const runA = mkRun();
   const outA = [];
