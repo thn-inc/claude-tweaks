@@ -65,34 +65,7 @@ function pick(vocabulary, value, fallback) {
   return typeof value === 'string' && vocabulary.includes(value) ? value : fallback;
 }
 
-function initRunManifest(runDir, facts = {}, deps = {}) {
-  const d = defaults(deps);
-  try {
-    if (!d.existsSync(runDir)) throw new Error(`run directory does not exist, no manifest written: ${runDir}`);
-    const file = path.join(runDir, MANIFEST_FILE);
-    if (d.existsSync(file)) return { written: false };
-    const gathered = d.gatherFacts({ cwd: facts.cwd || process.cwd(), env: facts.env });
-    const manifest = {
-      v: MANIFEST_VERSION,
-      runId: path.basename(runDir),
-      createdAt: new Date(d.now()).toISOString(),
-      lane: pick(LANES, facts.lane, 'unknown'),
-      ceremonyProfile: null,
-      pluginVersion: gathered.pluginVersion ?? null,
-      policyHash: gathered.policyHash ?? null,
-      baseCommit: gathered.baseCommit ?? null,
-      modelProfile: gathered.modelProfile ?? null,
-    };
-    d.writeFileAtomic(file, serialize(manifest));
-    return { written: true };
-  } catch (err) {
-    drop(d, err);
-    return { written: false };
-  }
-}
-
-// The manifest a fill creates when the mint did not leave one: only the passed fields get values,
-// and no fact is gathered.
+// A manifest with every fact still unset; init and fill each set the fields they have.
 function blankManifest(runDir, d) {
   return {
     v: MANIFEST_VERSION,
@@ -105,6 +78,29 @@ function blankManifest(runDir, d) {
     baseCommit: null,
     modelProfile: null,
   };
+}
+
+function initRunManifest(runDir, facts = {}, deps = {}) {
+  const d = defaults(deps);
+  try {
+    if (!d.existsSync(runDir)) throw new Error(`run directory does not exist, no manifest written: ${runDir}`);
+    const file = path.join(runDir, MANIFEST_FILE);
+    if (d.existsSync(file)) return { written: false };
+    const gathered = d.gatherFacts({ cwd: facts.cwd || process.cwd(), env: facts.env });
+    const manifest = {
+      ...blankManifest(runDir, d),
+      lane: pick(LANES, facts.lane, 'unknown'),
+      pluginVersion: gathered.pluginVersion ?? null,
+      policyHash: gathered.policyHash ?? null,
+      baseCommit: gathered.baseCommit ?? null,
+      modelProfile: gathered.modelProfile ?? null,
+    };
+    d.writeFileAtomic(file, serialize(manifest));
+    return { written: true };
+  } catch (err) {
+    drop(d, err);
+    return { written: false };
+  }
 }
 
 function readExisting(file, d) {
@@ -136,6 +132,7 @@ function fillRunManifest(runDir, fields = {}, deps = {}) {
     // A spec-N child dir with no manifest of its own is never given one: it would nest a second,
     // misleading manifest under the parent run's.
     if (existing.missing && SPEC_CHILD_DIR.test(path.basename(runDir))) return { changed: [] };
+    // A manifest the mint did not leave starts blank: only the passed fields get values, no fact is gathered.
     const manifest = existing.missing ? blankManifest(runDir, d) : existing.manifest;
     const input = fields || {};
     const changed = [];
