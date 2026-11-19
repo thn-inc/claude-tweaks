@@ -8,6 +8,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { runCliSync, spawnCli } = require('./helpers/run-cli');
 const { scratchDir } = require('./helpers/tmp-dir');
+const { gitRepo } = require('./helpers/git-fixtures');
 const { installStub, STUB_SKIP } = require('./helpers/path-stub');
 const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record');
 
@@ -336,6 +337,36 @@ test('#5932 review focus 2: a refusal wins over a missing --run dir (amendment 3
   const code = run(['--defer-reason', 'not-a-reason', '--agent-raised', '--run', missing], { stdout: (s) => out.push(s), stderr: () => {}, cwd: () => { throw new Error('cwd read'); }, env: {} });
   assert.equal(code, 2);
   assert.equal(JSON.parse(out.join('')).verdict, 'refused');
+});
+
+test('#5932 a well-formed call whose working directory cannot be read is exit 1, no verdict', () => {
+  const { run } = require(CLI);
+  const out = [];
+  const err = [];
+  const code = run(['--defer-reason', 'tangential', '--agent-raised'], { stdout: (s) => out.push(s), stderr: (s) => err.push(s), cwd: () => { throw new Error('gone'); }, env: {} });
+  assert.equal(code, 1);
+  assert.deepStrictEqual(out, []);
+  assert.equal(err.length, 1);
+  assert.ok(err[0].startsWith('deferral-route: '), err[0]);
+});
+
+test('#5932 a relative --run resolves against the injected cwd, not the real one', () => {
+  const { dir } = project({ policy: 'deferral-digest-reasons: tangential\n', runConfig: 'deferral-digest-reasons: genuinely-larger\n' });
+  const { code, stderr, json } = callIn(dir, '--defer-reason', 'genuinely-larger', '--size', 'high', '--agent-raised', '--run', 'run');
+  assert.deepStrictEqual({ code, verdict: json.verdict, rule: json.rule, stderr }, { code: 0, verdict: 'digest', rule: 'policy-reason', stderr: '' });
+});
+
+test('#5932 the policy lookup uses the injected env: a GIT_DIR/GIT_WORK_TREE only in deps.env points it at another repo', () => {
+  const repo = gitRepo();
+  fs.mkdirSync(path.join(repo, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(repo, '.claude-tweaks', 'policy.yml'), 'deferral-digest-reasons: genuinely-larger\n');
+  const elsewhere = scratchDir('ct-deferral-route-elsewhere-', { realpath: true });
+  const argv = ['--defer-reason', 'genuinely-larger', '--size', 'high', '--agent-raised'];
+  const plain = runCliSync(CLI, argv, { cwd: elsewhere, env: GIT_ENV });
+  assert.equal(JSON.parse(plain.stdout).verdict, 'file', 'with no GIT_* the cwd has no policy');
+  const pointed = runCliSync(CLI, argv, { cwd: elsewhere, env: { ...GIT_ENV, GIT_DIR: path.join(repo, '.git'), GIT_WORK_TREE: repo } });
+  const json = JSON.parse(pointed.stdout);
+  assert.deepStrictEqual({ code: pointed.code, verdict: json.verdict, rule: json.rule }, { code: 0, verdict: 'digest', rule: 'policy-reason' });
 });
 
 test('AC8.1 writes nothing and calls no gh', { skip: STUB_SKIP }, () => {

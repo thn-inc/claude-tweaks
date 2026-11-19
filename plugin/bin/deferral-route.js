@@ -22,8 +22,9 @@
 // refusals (an unknown reason, a bad --severity, ...) exit 2 before any policy
 // read and before deps.cwd() is called; only a well-formed call reaches the
 // resolver.
-// Exit 0 a verdict (file or digest) or --help; 1 the resolver refused --run (its
-// message on stderr, nothing on stdout); 2 refused.
+// Exit 0 a verdict (file or digest) or --help; 1 the policy read failed (the
+// resolver refused --run, or the working directory could not be read; the message
+// on stderr, nothing on stdout); 2 refused.
 // Writes nothing and makes no gh call.
 'use strict';
 
@@ -31,7 +32,7 @@ const { routeDeferral } = require('./lib/deferral-route/route');
 const { resolvePolicy, callerDeps, EXIT_OK } = require('./resolve-policy');
 const { LIST_ELEMENT_PATTERNS } = require('./lib/policy-schema');
 
-const USAGE = 'usage: deferral-route.js --defer-reason <reason> (--agent-raised | --human) [--severity <critical|high|medium|low|info>] [--size <v>] [--priority <v>] [--risk <v>] [--run <dir>] [--help]\nexit codes: 0 a verdict (file or digest) or --help; 1 the policy resolver refused --run (stderr only, no verdict); 2 refused, which wins over a --run failure.\n';
+const USAGE = 'usage: deferral-route.js --defer-reason <reason> (--agent-raised | --human) [--severity <critical|high|medium|low|info>] [--size <v>] [--priority <v>] [--risk <v>] [--run <dir>] [--help]\nexit codes: 0 a verdict (file or digest) or --help; 1 the policy read failed (the resolver refused --run, or the working directory could not be read; stderr only, no verdict); 2 refused, which wins over a --run failure.\n';
 const VALUE_FLAGS = { '--defer-reason': 'deferReason', '--severity': 'severity', '--size': 'size', '--priority': 'priority', '--risk': 'risk' };
 const ACCEPTED = '--defer-reason, --severity, --size, --priority, --risk, --agent-raised, --human, --run, --help';
 const DIGEST_KEY = 'deferral-digest-reasons';

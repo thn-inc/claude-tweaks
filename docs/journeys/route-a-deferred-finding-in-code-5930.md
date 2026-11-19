@@ -44,7 +44,7 @@ files:
   - Exit 2 with `{"verdict":"refused","rule":"refused","reason":...}` on stdout is a malformed call, not a routing answer. A severity typo such as `High` is refused rather than read as not high, because reading it as not high could digest a critical finding.
   - `input` still echoes every flag as given, so the caller can see what it actually passed.
   - An omitted `--severity` is valid (reflect insights carry none) and counts as not high.
-  - Exit 1 with nothing on stdout means the policy resolver refused `--run`, with its message on stderr.
+  - Exit 1 with nothing on stdout means the policy read failed (the resolver refused `--run`, or the working directory could not be read), with the message on stderr.
   - A refusal is exit 2 even when `--run` is also bad: it is decided before any policy read.
   - An invalid `deferral-digest-reasons` value prints one stderr warning naming the bad element, and routes as if the key were unset.
 - **Red flags:** A refusal that exits 0; a reason that does not name the offending value; a `--severity` typo routed as `file` or `digest`.

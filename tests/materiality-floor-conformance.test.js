@@ -296,7 +296,7 @@ test('#5931 go-red: an override restated across a line wrap fails the deferral-s
 // above compare text to text, so a renamed CLI flag would leave them green while every call refuses.
 // A cwd with no policy.yml, so the CLI's policy read resolves the empty default.
 const NO_POLICY_DIR = scratchDir('ct-materiality-nopolicy-');
-const ROUTE_SPAN =/`(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/deferral-route\.js"[^`]*)`/g;
+const ROUTE_SPAN = /`(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/deferral-route\.js"[^`]*)`/g;
 function routeVerdict(span, severity) {
   const filled = span
     .replace('(--agent-raised | --human)', '--agent-raised')
