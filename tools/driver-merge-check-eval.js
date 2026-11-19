@@ -630,7 +630,7 @@ async function run({ argv, deps } = {}) {
   }
 }
 
-module.exports = { run, launchPolicy,classifyReviewSection, scrubLocalPaths, reviewSectionText, hasDegradedMarker, verdictsOf, parseArgs };
+module.exports = { run, classifyReviewSection, scrubLocalPaths, reviewSectionText, hasDegradedMarker, verdictsOf, parseArgs, launchPolicy };
 
 if (require.main === module) {
   const deps = (() => {

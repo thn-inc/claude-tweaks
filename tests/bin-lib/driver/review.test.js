@@ -16,11 +16,10 @@ const {
 const { lstatType, canonicalRealpath } = require(path.join(LIB, 'path-guard'));
 const { EXPRESS_MAX_KEY_FILES } = require(path.join(LIB, 'express', 'eligibility.js'));
 const { POLICY_KEYS } = require(path.join(LIB, 'policy-schema.js'));
-const { REVIEW_RESULT_SCHEMA, ROLES, composeArgs } = require(path.join(LIB, 'driver', 'roles.js'));
+const { REVIEW_RESULT_SCHEMA, ROLES, composeArgs, DRIVER_ROLE_PROFILES } = require(path.join(LIB, 'driver', 'roles.js'));
 const { conformsTo, superviseChild, launchWorker } = require(path.join(LIB, 'driver', 'worker.js'));
 const { neutralize } = require(path.join(LIB, 'driver', 'events.js'));
 const { MODEL_POLICY_KEYS, roleModel } = require(path.join(LIB, 'driver', 'launch.js'));
-const { DRIVER_ROLE_PROFILES } = require(path.join(LIB, 'driver', 'roles.js'));
 const { PROFILES } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
 const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema.js'));
 
@@ -915,7 +914,7 @@ const POLICY = Object.freeze({
 test('the fixture policy carries the model keys a launch needs (#5917)', () => {
   assert.strictEqual(roleModel('reviewer', POLICY), PROFILES[DRIVER_ROLE_PROFILES.reviewer].model);
 });
-const DIFF ='diff --git a/src/a.js b/src/a.js\n+module.exports = (a, b) => a - b;\n';
+const DIFF = 'diff --git a/src/a.js b/src/a.js\n+module.exports = (a, b) => a - b;\n';
 const HEAD_SHA = 'a'.repeat(40);
 const EXEC_PATH = path.resolve('/opt/node/bin/node');
 // Each verdict's frozen TAP and exit. `timeout` hangs until killed (its TAP would reproduce: the

@@ -7,11 +7,10 @@ const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const { formatEntry } = require(path.join(LIB, 'log-decision', 'append'));
 const { verdictText } = require(path.join(LIB, 'dispatch', 'merge-verdict'));
-const { MERGE_CHECK_RESULT_SCHEMA, composeArgs } = require(path.join(LIB, 'driver', 'roles.js'));
+const { MERGE_CHECK_RESULT_SCHEMA, composeArgs, DRIVER_ROLE_PROFILES } = require(path.join(LIB, 'driver', 'roles.js'));
 const { judgeMergeCheck, createJudgments } = require(path.join(LIB, 'driver', 'judgments.js'));
 const { DIFF_PROMPT_MAX_BYTES } = require(path.join(LIB, 'driver', 'review.js'));
 const { MODEL_POLICY_KEYS, roleModel } = require(path.join(LIB, 'driver', 'launch.js'));
-const { DRIVER_ROLE_PROFILES } = require(path.join(LIB, 'driver', 'roles.js'));
 const { PROFILES } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
 const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema.js'));
 
