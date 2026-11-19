@@ -7343,15 +7343,15 @@ test('#5902 an armed merge-confirm (real merge.js detail) is no merge-station ex
 });
 
 test('#5902 stdout and driver-events.jsonl are byte-identical with and without deps.stationEvent', async () => {
-  const bare = mirrorRig(null);
-  await driveRecord(7, newShared(), bare.deps, STEPS);
-  const bareFile = bare.files[path.join(MERGE_ARCHIVE, 'driver-events.jsonl')];
+  const plain = mirrorRig(null);
+  await driveRecord(7, newShared(), plain.deps, STEPS);
+  const bareFile = plain.files[path.join(MERGE_ARCHIVE, 'driver-events.jsonl')];
   let called = 0;
   const mirrored = mirrorRig(() => { called += 1; throw new Error('station sink down'); });
   await driveRecord(7, newShared(), mirrored.deps, STEPS);
   assert.ok(called > 0, 'the mirror was called');
   assert.ok(bareFile, 'the events file exists');
-  assert.strictEqual(mirrored.out.join(''), bare.out.join(''));
+  assert.strictEqual(mirrored.out.join(''), plain.out.join(''));
   assert.strictEqual(mirrored.files[path.join(MERGE_ARCHIVE, 'driver-events.jsonl')], bareFile);
 });
 
@@ -7359,9 +7359,9 @@ test('#5902 stdout and driver-events.jsonl are byte-identical with and without d
 // holds the CLI cases): the REAL emitter over a read-only main checkout.
 test('#5902 the real emitter over an unwritable main checkout: stdout, driver-events.jsonl and the final line unchanged; one stderr line per dropped event', chmodDenialSkip('read-only directory not enforceable: running as root'), async () => {
   const { appendStationEvent } = require(path.join(LIB, 'station-events', 'emit'));
-  const bare = mirrorRig(null);
-  const bareFinal = (await driveRecord(7, newShared(), bare.deps, STEPS)).final;
-  const bareFile = bare.files[path.join(MERGE_ARCHIVE, 'driver-events.jsonl')];
+  const plain = mirrorRig(null);
+  const bareFinal = (await driveRecord(7, newShared(), plain.deps, STEPS)).final;
+  const bareFile = plain.files[path.join(MERGE_ARCHIVE, 'driver-events.jsonl')];
   const ro = tmpDir('drive-station-ro-');
   fs.chmodSync(ro, 0o555);
   try {
@@ -7371,13 +7371,13 @@ test('#5902 the real emitter over an unwritable main checkout: stdout, driver-ev
     const { final } = await driveRecord(7, newShared(), real.deps, STEPS);
     assert.ok(calls > 0, 'the real emitter was reached');
     assert.ok(bareFile, 'the events file exists');
-    assert.strictEqual(real.out.join(''), bare.out.join(''));
+    assert.strictEqual(real.out.join(''), plain.out.join(''));
     assert.strictEqual(real.files[path.join(MERGE_ARCHIVE, 'driver-events.jsonl')], bareFile);
     assert.deepStrictEqual(final, bareFinal);
     const errLines = real.err.join('').split('\n').filter(Boolean);
     const drops = errLines.filter((l) => /^claude-tweaks: station event dropped: append failed: /.test(l));
     assert.strictEqual(drops.length, calls, errLines.join('\n'));
-    assert.deepStrictEqual(errLines.filter((l) => !drops.includes(l)), bare.err.join('').split('\n').filter(Boolean));
+    assert.deepStrictEqual(errLines.filter((l) => !drops.includes(l)), plain.err.join('').split('\n').filter(Boolean));
     assert.strictEqual(fs.existsSync(path.join(ro, '.claude-tweaks')), false, 'nothing was written');
   } finally {
     fs.chmodSync(ro, 0o755); // root-safe: restores the fixture's own chmod
