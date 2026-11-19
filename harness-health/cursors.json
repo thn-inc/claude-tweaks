@@ -49,7 +49,7 @@
   },
   "skill:transcript-payload-verification": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794833294077
+    "lastAuditedMs": 1795125611669
   },
   "skill:tidy": {
     "lastAuditedSha": null,
@@ -57,7 +57,7 @@
   },
   "skill:gh-api-module-pattern": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1795069679081
+    "lastAuditedMs": 1795125622107
   },
   "skill:skill-prose-conformance-tests": {
     "lastAuditedSha": null,
@@ -113,7 +113,7 @@
   },
   "skill:parse-signal-discipline": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794833295271
+    "lastAuditedMs": 1795125620042
   },
   "skill:scratch-worktree": {
     "lastAuditedSha": null,
@@ -169,7 +169,7 @@
   },
   "skill:windows-checkout-test-parity": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1795069676870
+    "lastAuditedMs": 1795118484014
   },
   "skill:node-test-output-evidence": {
     "lastAuditedSha": null,
@@ -293,10 +293,18 @@
   },
   "skill:git-ground-truth-test-env": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794949783306
+    "lastAuditedMs": 1795118481883
   },
   "skill:hook-event-in-process-tests": {
     "lastAuditedSha": null,
     "lastAuditedMs": 1794904850967
+  },
+  "skill:station-event-producer-addition": {
+    "lastAuditedSha": null,
+    "lastAuditedMs": 1795118474765
+  },
+  "skill:timing-procedure-read-counting": {
+    "lastAuditedSha": null,
+    "lastAuditedMs": 1795125617927
   }
 }
