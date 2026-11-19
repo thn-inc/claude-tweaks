@@ -48,7 +48,7 @@ tiebreak can't-tell digest, the console-backfill values and ledger narrowing fol
 `--severity` only when the item has one, lowercase (`critical`, `high`, `medium`, `low`, `info`);
 each axis `low`, `medium` or `high` as the site scores it. Every routing site passes
 `--agent-raised`: no typed input reaches one. It prints `verdict` (`file`, `digest` or
-`refused`) and `rule`.
+`refused`) and `rule`. On `digest` the label a human sees follows `rule`: `floor` shows "Digest — below floor", `policy-reason` shows "Digest — policy (`deferral-digest-reasons`)", and a ledger Resolution states the same reason.
 
 ## Entry format
 

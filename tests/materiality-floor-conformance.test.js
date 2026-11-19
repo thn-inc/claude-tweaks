@@ -333,6 +333,7 @@ const FLOOR_NEEDLES = [
   'lowercase (`critical`, `high`, `medium`, `low`, `info`)',
   'Every routing site passes `--agent-raised`',
   '`verdict` (`file`, `digest` or `refused`) and `rule`',
+  'On `digest` the label a human sees follows `rule`: `floor` shows "Digest — below floor", `policy-reason` shows "Digest — policy (`deferral-digest-reasons`)", and a ledger Resolution states the same reason.',
 ];
 const AUDIT_RULE = /^AUTO \{time\} — materiality-floor: \{item\} routed below floor \(\{defer-reason\}, rule=\{rule\}\) → digest\./m;
 function floorCommandProblems(text) {
@@ -1098,5 +1099,48 @@ for (const [name, file, prefix] of ROUTE_BULLETS) {
     const mutated = text.split('\n').map((l) => (l.startsWith(prefix) ? l.split('`refused`').join('').split('follow its verdict').join('') : l)).join('\n');
     assert.notEqual(mutated, text, `${name} bullet acts on no verdict`);
     assert.deepStrictEqual(routeBulletProblems(name, prefix, mutated), [`the ${name} bullet does not act on the verdict`]);
+  });
+}
+
+// #5932 final review: a `digest` the policy-reason rule prints is not "below the floor", so every label a human
+// approves and every ledger Resolution follows the printed `rule`. Each claim is pinned to its own line or
+// paragraph, with a deletion control and a move-out control per claim (a file-wide `includes` would stay green
+// after the clause left its site).
+const RULE_LABEL = '(rule `floor`) or "Digest — policy (`deferral-digest-reasons`)" (rule `policy-reason`)';
+const LABEL_SITES = [
+  { rel: 'plugin/skills/review/step3-routing.md', kind: 'line', start: '- **Defer** (new work record', needle: `${RULE_LABEL} instead of` },
+  { rel: 'plugin/skills/review/step3-routing.md', kind: 'line', start: '**Below the materiality floor — the digest instead.**', needle: 'the Resolution stating why it was digested — below the materiality floor on rule `floor`, listed in policy key `deferral-digest-reasons` on rule `policy-reason`' },
+  { rel: 'plugin/skills/reflect/full-mode.md', kind: 'line', start: '- **Defer** (new work record, `parked`)', needle: `${RULE_LABEL} instead of "Defer — {reason}"` },
+  { rel: 'plugin/skills/reflect/full-mode.md', kind: 'line', start: '- **Capture** — the insight is complex', needle: 'the same rule-matched label ("Digest — below floor" or "Digest — policy (`deferral-digest-reasons`)")' },
+  { rel: 'plugin/skills/visual-review/browser-review.md', kind: 'line', start: '- **Defer** (new work record — born-ready', needle: `${RULE_LABEL} in the Recommended column` },
+  { rel: 'plugin/skills/wrap-up/residue-sweep.md', kind: 'para', start: 'A finding the CLI marked `remedy: record`', needle: `${RULE_LABEL} instead of` },
+  { rel: 'plugin/skills/release/disposition.md', kind: 'line', start: '| A `confirmed` file, any severity', needle: `${RULE_LABEL}, appended only` },
+  { rel: 'plugin/skills/_shared/ledger-format.md', kind: 'line', start: '- `digested`:', needle: "when the item's route printed rule `floor`, or `digested by policy (deferral-digest-reasons) at {digest comment URL | specs/digest.md}` when it printed `policy-reason`" },
+  { rel: 'plugin/skills/_shared/ledger-format.md', kind: 'line', start: '**Control mode — every remaining item converges', needle: 'it means the route printed `digest`, whichever `rule`' },
+];
+function labelScope(text, { kind, start }) {
+  const units = kind === 'line' ? text.split('\n') : text.split(/\n[ \t]*\n/);
+  const found = units.map((u) => u.replace(/\s+/g, ' ')).filter((u) => u.startsWith(start));
+  return found.length === 1 ? found[0] : null;
+}
+function labelProblems(text, site) {
+  const scope = labelScope(text, site);
+  if (scope === null) return [`${site.rel}: scope ${site.start} is not exactly one ${site.kind}`];
+  return scope.includes(site.needle) ? [] : [`${site.rel}: ${site.start} lacks ${site.needle}`];
+}
+for (const site of LABEL_SITES) {
+  const text = read(site.rel);
+  test(`#5932 the digest label follows the printed rule: ${site.rel} ${site.start}`, () => {
+    assert.deepStrictEqual(labelProblems(text, site), []);
+  });
+  test(`#5932 go-red: dropping the rule-matched clause from ${site.rel} ${site.start} fails the label check`, () => {
+    const cut = text.replace(flexible(site.needle), '');
+    assert.notEqual(cut, text, `anchor ${site.needle} not in ${site.rel}`);
+    assert.deepStrictEqual(labelProblems(cut, site), [`${site.rel}: ${site.start} lacks ${site.needle}`]);
+  });
+  test(`#5932 go-red: the rule-matched clause moved out of ${site.rel} ${site.start} fails the label check`, () => {
+    const cut = text.replace(flexible(site.needle), '');
+    assert.notEqual(cut, text);
+    assert.deepStrictEqual(labelProblems(`${cut}\n\n${site.needle}\n`, site), [`${site.rel}: ${site.start} lacks ${site.needle}`]);
   });
 }

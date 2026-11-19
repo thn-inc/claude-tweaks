@@ -164,7 +164,7 @@ radius → `blocked-external`; a red suite this run cannot fix → `genuinely-la
 stays `open` for Phase 2's drill, where the human picks the value. A `remedy: record` item that
 reaches Phase 2's per-item drill first applies `_shared/materiality-floor.md`'s floor test with
 `node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} --size {size} --priority {priority} --risk {risk} --agent-raised`:
-on `digest` its Step 1 option is relabeled `"Digest — below floor"` instead of
+on `digest` its Step 1 option is relabeled `"Digest — below floor"` (rule `floor`) or "Digest — policy (`deferral-digest-reasons`)" (rule `policy-reason`) instead of
 `"Route to a record"`, so the human sees the actual destination before choosing it,
 never silently substituted after approval; choosing it appends a digest entry, not a record,
 skipping the composition below. `file` keeps the option; `refused` or any other outcome offers

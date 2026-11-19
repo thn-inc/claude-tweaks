@@ -69,6 +69,8 @@ const LEDGER_CLAIMS = [
   ['Exit 2, 3 or 6', 'the narrowing section does not route exits 2 and 3 to the failure card'],
   ['prints `digest` (`false` on `file`, `refused` or any other outcome', 'the control-mode paragraph does not set belowFloor from the deferral-route.js verdict'],
   ['no `deferReason`: no call, `false`', 'the control-mode paragraph does not skip the command for an item with no deferReason'],
+  ['it means the route printed `digest`, whichever `rule`', 'the control-mode paragraph does not say belowFloor means the route printed digest, whichever rule'],
+  ['`digested by policy (deferral-digest-reasons) at {digest comment URL | specs/digest.md}` when it printed `policy-reason`', 'the digested state does not word a policy-reason Resolution'],
   ["`{severity}` the row's `severity={severity}` token", "the control-mode paragraph does not read a row's severity token"],
   ['else `high` for a `review`-phase row', 'the control-mode paragraph does not pass --severity high for a review row with no severity'],
 ];
