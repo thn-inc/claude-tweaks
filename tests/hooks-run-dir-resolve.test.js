@@ -545,6 +545,23 @@ test('#5903: standalone mint still pre-populates staged/ and decisions.md and wr
   assert.strictEqual(manifest.runId, path.basename(out.path));
 });
 
+test('#5903: standalone \'adhoc\' mint writes no manifest.json and still pre-populates staged/ and decisions.md', () => {
+  const main = gitRepo();
+  const out = resolve({ cwd: main, env: {}, standalone: 'adhoc', create: true, now: new Date('2026-03-04T05:06:07Z') });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.created, true);
+  assert.ok(fs.statSync(path.join(out.path, 'staged')).isDirectory());
+  assert.ok(fs.existsSync(path.join(out.path, 'decisions.md')));
+  assert.ok(!fs.existsSync(path.join(out.path, 'manifest.json')), 'a hook-stamped ad-hoc dir carries no manifest');
+});
+
+test('#5903: a standalone mint with any other name (tidy) still writes lane unknown', () => {
+  const main = gitRepo();
+  const out = resolve({ cwd: main, env: {}, standalone: 'tidy', create: true, now: new Date('2026-03-04T05:06:07Z') });
+  const manifest = JSON.parse(fs.readFileSync(path.join(out.path, 'manifest.json'), 'utf8'));
+  assert.strictEqual(manifest.lane, 'unknown');
+});
+
 test('#5903: re-resolving an existing run writes no manifest and leaves an existing one byte-identical', () => {
   const main = gitRepo();
   // Resolution step 2 (a --standalone --spec-slug call adopts a matching run): no manifest appears.
