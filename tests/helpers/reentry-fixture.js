@@ -6,6 +6,7 @@
 // `feat-branch` commit is dated after the run dir's own start prefix, and a
 // complete two-spec (11, 12) manifest in an auto-mode run dir.
 const fs = require('fs');
+const { scratchDir } = require('./tmp-dir');
 const os = require('os');
 const path = require('path');
 const { fixtureGit, initRepo } = require('./git-fixtures');
@@ -28,7 +29,7 @@ function writeReentryManifest(runDir, statuses) {
 }
 
 function reentryFixture({ events = [EV_BUILD, EV_WRAPUP] } = {}) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-reentry-')));
+  const root = fs.realpathSync(scratchDir('ct-reentry-'));
   initRepo(root, { branch: 'trunk', name: 'T', email: 't@example.com' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
   reentryGit(root, 'add', 'a.txt');

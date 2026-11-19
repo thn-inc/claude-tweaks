@@ -4,6 +4,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -14,7 +15,7 @@ const { resolveTiebreak } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'tie
 const { formatEntry } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'log-decision', 'append'));
 
 function fixture({ decisions = '', staged = {}, headers = [] } = {}) {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-cm-'));
+  const runDir = scratchDir('console-resolve-cm-');
   fs.mkdirSync(path.join(runDir, 'staged'), { recursive: true });
   fs.mkdirSync(path.join(runDir, 'work'), { recursive: true });
   fs.writeFileSync(path.join(runDir, 'decisions.md'), decisions);

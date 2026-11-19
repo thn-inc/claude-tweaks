@@ -2,6 +2,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir, isolateTmpdir } = require('../../helpers/tmp-dir');
+isolateTmpdir('ct-iso-cli-');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -21,7 +23,7 @@ const { initRepo } = require('../../helpers/git-fixtures');
 const BIN_PATH = pathWithOnly(['git', 'node'], { exclude: ['gh'] });
 
 function mainCheckoutWithRun() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'release-preflight-cli-')));
+  const root = fs.realpathSync(scratchDir('release-preflight-cli-'));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); git('commit', '-q', '--allow-empty', '-m', 'init'); git('branch', '-M', 'main');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
@@ -78,10 +80,10 @@ test('AC 4c: no run dir at all → a fresh scratch dir under the temp dir, its p
 test('exit 3: --run not anchored under the main checkout, or a cwd outside any git checkout', async () => {
   const fx = mainCheckoutWithRun();
   const { d, err } = baseDeps(fx);
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'release-preflight-outside-'));
+  const outside = scratchDir('release-preflight-outside-');
   assert.strictEqual(await run(['--run', outside], d), 3);
   assert.match(err(), /refused/);
-  const nogit = fs.mkdtempSync(path.join(os.tmpdir(), 'release-preflight-nogit-'));
+  const nogit = scratchDir('release-preflight-nogit-');
   const { d: d2, err: err2 } = baseDeps({ root: nogit });
   d2.mainRoot = undefined;
   assert.strictEqual(await run([], d2), 3);

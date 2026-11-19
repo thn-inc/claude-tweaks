@@ -2,6 +2,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir, isolateTmpdir } = require('../../helpers/tmp-dir');
+isolateTmpdir('ct-iso-cli-');
 const os = require('os');
 const { execFileSync } = require('child_process');
 const path = require('path');
@@ -20,7 +22,7 @@ async function run(args, { env = cliEnv(), cwd, allowRealRunner } = {}) {
   return { status: r.code, stdout: r.stdout, stderr: r.stderr };
 }
 function tmpRun(copyFixture) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-'));
+  const dir = scratchDir('ct-timing-');
   if (copyFixture) for (const f of ['events.jsonl', 'manifest.yml']) fs.copyFileSync(path.join(FIX, f), path.join(dir, f));
   return dir;
 }
@@ -154,7 +156,7 @@ test('#1929: without any --transcript the table keeps its #1928 three-column sha
 
 test('#1929 AC4: --auto-transcript locates the run session transcript from run-state.json under a fixture home', async () => {
   const dir = tmpRun(true);
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-home-'));
+  const home = scratchDir('ct-timing-home-');
   const worktree = '/Users/x/Code/repo/.claude/worktrees/wt';
   const slugDir = path.join(home, '.claude', 'projects', '-Users-x-Code-repo--claude-worktrees-wt');
   fs.mkdirSync(slugDir, { recursive: true });
@@ -235,9 +237,9 @@ const SUB_EVENTS = readText(path.join(SUBFIX, '..', 'subagents-events.jsonl'));
 // events, and a tmp HOME holding a copy of the fixture session at the slug of
 // `worktree` (as the --auto-transcript test does).
 function subagentRun({ events = SUB_EVENTS } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-'));
+  const dir = scratchDir('ct-timing-');
   if (events !== null) fs.writeFileSync(path.join(dir, 'events.jsonl'), events);
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-home-'));
+  const home = scratchDir('ct-timing-home-');
   const slugDir = path.join(home, '.claude', 'projects', '-Users-x-Code-repo--claude-worktrees-wt');
   fs.mkdirSync(slugDir, { recursive: true });
   fs.cpSync(SUBFIX, slugDir, { recursive: true });
@@ -371,7 +373,7 @@ test('#3375: with several transcripts, one whose subagents/ directory is missing
 
 test('#3375 M2: the same transcript reached through a symlinked directory alias does not double-count dispatches', async () => {
   const s = subagentRun();
-  const alias = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-alias-')), 'link');
+  const alias = path.join(scratchDir('ct-timing-alias-'), 'link');
   fs.symlinkSync(s.slugDir, alias, 'dir');
   const r = await run(['--run', s.dir, '--markdown', '--transcript', s.transcript, '--transcript', path.join(alias, 'sess-1.jsonl')]);
   assert.equal(r.status, 0, r.stderr);
@@ -558,7 +560,7 @@ test('#4359: buildTiming rejects an unreadable events.jsonl with code EVENTS_UNR
 const TC_FIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'turn-classes');
 const TC_HAND = { edit: 1, read: 1, explore: 1, procedure: 1, bookkeeping: 1, orientation: 2, verify: 1, 'guard-refusal': 1, dispatch: 1, other: 1 };
 function tcRun() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-'));
+  const dir = scratchDir('ct-timing-');
   fs.copyFileSync(path.join(TC_FIX, 'events.jsonl'), path.join(dir, 'events.jsonl'));
   return dir;
 }
@@ -648,7 +650,7 @@ test('#4029 M1: a rewrite without --check-budgets carries the existing budget ve
 // so no test reaches real gh. On win32 a bare executable stub is not launchable: the lookup
 // then fails open, which every test here tolerates except the one that skips win32.
 function budgetTree({ config = 'ceremony-profile: fast-lane\n', policy = 'fast-lane-run-round-trip-ceiling: 5\n', git = true, ghAnswer = '[]' } = {}) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-budget-cli-')));
+  const root = fs.realpathSync(scratchDir('ct-budget-cli-'));
   fs.mkdirSync(path.join(root, 'stub-bin'));
   fs.writeFileSync(path.join(root, 'stub-bin', 'gh'), `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(ghAnswer)});\n`, { mode: 0o755 });
   if (git) fs.mkdirSync(path.join(root, '.git'));
@@ -816,7 +818,7 @@ test('#4029: a run dir with no .claude-tweaks ancestor records budget.skipped an
 // --- #5382 in-process entry contract -------------------------------------------
 
 test('AC9.1: a relative --run resolves against the injected cwd', async () => {
-  const parent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-parent-')));
+  const parent = fs.realpathSync(scratchDir('ct-timing-parent-'));
   fs.mkdirSync(path.join(parent, 'run'));
   for (const f of ['events.jsonl', 'manifest.yml']) fs.copyFileSync(path.join(FIX, f), path.join(parent, 'run', f));
   const r = await run(['--run', 'run', '--json'], { cwd: parent });
@@ -918,7 +920,7 @@ function autoFixture(configDir) {
 }
 
 test('--auto-transcript searches the injected HOME, never os.homedir()', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-home-'));
+  const home = scratchDir('ct-timing-home-');
   const dir = autoFixture(path.join(home, '.claude'));
   // runCli throws when os.homedir() is called while env.HOME is injected
   const r = await run(['--run', dir, '--markdown', '--auto-transcript'], { env: fixtureHomeEnv(home) });
@@ -927,16 +929,16 @@ test('--auto-transcript searches the injected HOME, never os.homedir()', async (
 });
 
 test('--auto-transcript honours CLAUDE_CONFIG_DIR given only in the injected env', async () => {
-  const cfg = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-cfg-')), 'cfg');
+  const cfg = path.join(scratchDir('ct-timing-cfg-'), 'cfg');
   const dir = autoFixture(cfg);
-  const otherHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-home-'));
+  const otherHome = scratchDir('ct-timing-home-');
   const r = await run(['--run', dir, '--markdown', '--auto-transcript'], { env: { ...fixtureHomeEnv(otherHome), CLAUDE_CONFIG_DIR: cfg } });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^\| review \| 8 \| — \| 116\/228 \| 0\.0 \| 3 \|$/m);
 });
 
 test('--auto-transcript on a closed run (worktree null) picks the worktreeAtClose slug, not the newest candidate (#5555)', async () => {
-  const cfg = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-cfg-')), 'cfg');
+  const cfg = path.join(scratchDir('ct-timing-cfg-'), 'cfg');
   const dir = tmpRun(true);
   const own = '/Users/x/Code/repo/.claude/worktrees/wt';
   const line = (input) => JSON.stringify({ timestamp: '2026-09-05T13:05:00.000Z', message: { role: 'assistant', id: `m${input}`, model: 'claude-test', content: [], usage: { input_tokens: input, output_tokens: 0 } } }) + '\n';
@@ -951,7 +953,7 @@ test('--auto-transcript on a closed run (worktree null) picks the worktreeAtClos
   const later = new Date(Date.now() + 60000);
   fs.utimesSync(other, later, later);
   fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ worktree: null, worktreeAtClose: own, sessionId: 'sess-9', status: 'clean' }));
-  const r = await run(['--run', dir, '--auto-transcript'], { env: { ...fixtureHomeEnv(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-home-'))), CLAUDE_CONFIG_DIR: cfg } });
+  const r = await run(['--run', dir, '--auto-transcript'], { env: { ...fixtureHomeEnv(scratchDir('ct-timing-home-')), CLAUDE_CONFIG_DIR: cfg } });
   assert.equal(r.status, 0, r.stderr);
   const t = JSON.parse(fs.readFileSync(path.join(dir, 'timing.json'), 'utf8'));
   assert.equal(t.totals.tokens.input, 11);

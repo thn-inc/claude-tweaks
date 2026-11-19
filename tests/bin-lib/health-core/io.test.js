@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { DEFAULT_IO, makeExec, resolveAgainst, fsPath, cwdOrUndefined } = require('../../../plugin/bin/lib/health-core/io');
@@ -33,7 +34,7 @@ test('cwdOrUndefined returns the injected cwd, or undefined when it throws', () 
 });
 
 test('makeExec writes a failing child\'s stderr to the injected stderr, never to process.stderr', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'health-core-io-'));
+  const dir = scratchDir('health-core-io-');
   let err = '';
   const exec = makeExec({ env: { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(dir) }, stderr: (t) => { err += t; } });
   const realWrite = process.stderr.write;
@@ -49,7 +50,7 @@ test('makeExec writes a failing child\'s stderr to the injected stderr, never to
 });
 
 test('makeExec thrown error carries execFileSync-shaped status, stdout, stderr and message', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'health-core-io-'));
+  const dir = scratchDir('health-core-io-');
   const exec = makeExec({ env: { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(dir) }, stderr: () => {} });
   let caught;
   try { exec('git', ['-C', dir, 'rev-parse', 'HEAD']); } catch (e) { caught = e; }

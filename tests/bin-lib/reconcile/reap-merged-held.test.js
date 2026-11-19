@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const cp = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { reapMerged } = require('../../../plugin/bin/lib/reconcile/reap-merged');
@@ -19,7 +20,7 @@ function git(cwd, ...args) {
 // Same shape as reap-merged.test.js's buildReapableFixture (not exported): a main checkout, one
 // harness-domain linked worktree, and a run dir whose run-state.json names that worktree.
 function buildReapableFixture() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-held-')));
+  const root = fs.realpathSync(scratchDir('reap-merged-held-'));
   initRepo(root, { branch: 'main', name: 't', email: 't@t' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'a\n');
   git(root, 'add', 'a.txt');

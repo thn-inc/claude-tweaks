@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { readText } = require('../../helpers/read-skill');
@@ -42,7 +43,7 @@ function writeTranscript(filePath, events) {
 }
 
 function tmpConfigDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'dream-'));
+  return scratchDir('dream-');
 }
 
 test('extractErrorFindings: correlates a tool_result error back to its tool_use and builds a signature', () => {

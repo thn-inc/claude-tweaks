@@ -5,6 +5,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
@@ -30,7 +31,7 @@ test('isFreshForgeDegradeMemo: fresh only for a finite past timestamp younger th
 
 const MEMO_T = 1700000000000;
 const MEMO_TTL = 60000;
-const memoRunDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4830-run-'));
+const memoRunDir = () => scratchDir('ct-4830-run-');
 const memoState = (run) => JSON.parse(fs.readFileSync(path.join(run, 'run-state.json'), 'utf8'));
 
 test('#4830 memo: a degrade stamps the memo; a second call inside the TTL spawns no gh and reports a memoized degrade', { skip: STUB_SKIP }, () => {
@@ -206,7 +207,7 @@ test('#4830 memo: a clean detection with no run-state.json writes nothing', { sk
 
 test('#4830 memo: a null runDir with the option set probes and writes nothing', { skip: STUB_SKIP }, () => {
   const repo = unpinnedRepoWithOrigin();
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4830-cwd-'));
+  const scratch = scratchDir('ct-4830-cwd-');
   const gh = fakeGh({ first: 'hang' });
   const cwd = process.cwd();
   try {
@@ -225,7 +226,7 @@ test('#4830 memo: a null runDir with the option set probes and writes nothing', 
 
 test('#4830 memo: an empty runDir with the option set probes and writes nothing', { skip: STUB_SKIP }, () => {
   const repo = unpinnedRepoWithOrigin();
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4830-cwd-'));
+  const scratch = scratchDir('ct-4830-cwd-');
   const gh = fakeGh({ first: 'hang' });
   const cwd = process.cwd();
   try {

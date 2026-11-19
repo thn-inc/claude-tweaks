@@ -22,6 +22,7 @@
 // tracer still sees the children. Every run sits inside withEscapeGuard on this checkout.
 // The gh fallback re-enters this module through shimMain(), so keep its top level cheap.
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -607,7 +608,7 @@ function ghShimScript({ shimDir, table }) {
 function createSandbox(scenario, { transport = 'gh', origin = null, name = scenario.name || 'sandbox', agent = {} } = {}) {
   installExitHooks();
   const table = shimTable(scenario);
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'qp-oracle-')));
+  const root = fs.realpathSync(scratchDir('qp-oracle-'));
   liveRoots.add(root);
   const cleanup = () => {
     fs.rmSync(root, { recursive: true, force: true });

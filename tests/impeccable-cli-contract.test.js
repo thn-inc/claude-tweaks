@@ -32,6 +32,8 @@ const path = require('path');
 const { checkVersion } = require('../tools/upstream-drift/checks');
 const { loadManifest } = require('../tools/upstream-drift/manifest');
 const { readText } = require('./helpers/read-skill');
+const { isolateTmpdir } = require('./helpers/tmp-dir');
+isolateTmpdir('ct-iso-impeccable-cli-contract-');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const FIXTURES = path.join(__dirname, 'fixtures', 'impeccable-cli');

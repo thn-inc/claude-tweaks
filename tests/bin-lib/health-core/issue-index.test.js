@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { loadIssueIndex } = require('../../../plugin/bin/lib/health-core/issue-index');
@@ -15,7 +16,7 @@ const { decide: codeHealthDecide } = require('../../../plugin/bin/lib/code-healt
 // implementation parameterized by toolName.
 
 function tmpFile(content) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'issue-index-'));
+  const dir = scratchDir('issue-index-');
   const file = path.join(dir, 'issues.json');
   fs.writeFileSync(file, content);
   return file;
@@ -35,7 +36,7 @@ test('routes every diagnostic to an injected stderr instead of process.stderr', 
 });
 
 test('a relative file is read against an injected cwd and diagnostics print the caller\'s spelling', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'issue-index-'));
+  const dir = scratchDir('issue-index-');
   fs.writeFileSync(path.join(dir, 'rel-issues.json'), JSON.stringify([{ number: 7, state: 'open', fingerprint: 'fp' }]));
   assert.deepStrictEqual(loadIssueIndex('rel-issues.json', 'code-health', { cwd: () => dir }), {
     fp: { number: 7, state: 'open', labels: [] },
@@ -53,7 +54,7 @@ const POSIX_KERNEL_ONLY = process.platform === 'win32'
   : false;
 
 test('a relative file keeps a \`..\` after a symlink for the kernel (not collapsed as text)', { skip: POSIX_KERNEL_ONLY }, () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'issue-index-'));
+  const root = scratchDir('issue-index-');
   fs.mkdirSync(path.join(root, 'other', 'deep'), { recursive: true });
   fs.writeFileSync(path.join(root, 'other', 'only-there.json'), JSON.stringify([{ number: 1, state: 'open', fingerprint: 'fp' }]));
   fs.symlinkSync(path.join(root, 'other', 'deep'), path.join(root, 'link'), 'dir');

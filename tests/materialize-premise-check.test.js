@@ -13,6 +13,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const path = require('path');
 const { gitRepo } = require('./helpers/git-fixtures');
 const { readText } = require('./helpers/read-skill');
@@ -403,7 +404,7 @@ test('AC1.1 (#4368): a trusted record with a fenced command before its own runs 
 });
 
 test('AC5.1: a command composed under root A reads unresolved from checkout B until B\'s file carries the anchor, then resolved', () => {
-  const A = fs.mkdtempSync(path.join(require('os').tmpdir(), 'premise-root-a-'));
+  const A = scratchDir('premise-root-a-');
   const command = buildPremiseCheck(
     { kind: 'patch', newString: 'ANCHOR-2857' },
     path.join(A, '.claude', 'skills', 'auth.md'),

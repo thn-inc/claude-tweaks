@@ -5,6 +5,7 @@ const { test } = require('node:test');
 require('./helpers/stub-token-pass').installTokenPassStub();
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { STRUCTURALLY_STUCK_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
@@ -77,7 +78,7 @@ async function archiveAsyncMergedRun(checks, extra = {}) {
     number: 3630100, state: 'MERGED', mergedAt: '2026-10-19T00:00:00Z', updatedAt: '2026-10-19T00:00:00Z',
     mergeCommit: { oid: NEW }, closingIssuesReferences: [],
   };
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-async-gh-'));
+  const dataDir = scratchDir('ct-recon-async-gh-');
   const issueLog = path.join(dataDir, 'issue-calls.log');
   const listing = path.join(dataDir, 'stuck-listing.json');
   if (extra.stuck) {
@@ -418,7 +419,7 @@ test('reconcile(): a scoped skipCacheStamp pass still persists the index entries
 // the real one). `checks: ['archive']` expands with mirror, so the fast shape calls the async
 // preflight; both are patched. `run(opts)` returns reconcile()'s result with the env restored.
 function dryRunFixture() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-4180-')));
+  const root = fs.realpathSync(scratchDir('ct-recon-4180-'));
   git(['init', '-q', '--initial-branch=main'], root);
   writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
@@ -427,7 +428,7 @@ function dryRunFixture() {
   git(['remote', 'add', 'origin', 'git@github.com:acme/w.git'], root);
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-branch: main\n');
-  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-4180-gh-'));
+  const logDir = scratchDir('ct-recon-4180-gh-');
   const ghLog = path.join(logDir, 'gh-calls.log');
   const ghScript = `#!/bin/sh\necho "$@" >> '${ghLog}'\nexit 1\n`;
   const preflight = require('../plugin/bin/lib/reconcile/preflight');
@@ -537,7 +538,7 @@ test('#4180 reconcile: a dry run over a pre-seeded cache leaves it byte-identica
 
 test('#4180 repairOriginHead: dryRun never runs set-head or stamps a failure, and a missing origin still reports null', () => {
   const { repairOriginHead } = require('../plugin/bin/lib/reconcile/origin-head');
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-oh-dry-'));
+  const root = scratchDir('ct-recon-oh-dry-');
   const calls = [];
   const withOrigin = (args) => { calls.push(args.join(' ')); return { stdout: 'https://example.invalid/r.git', failure: null, stderr: null }; };
   assert.deepStrictEqual(repairOriginHead(root, { runGit: withOrigin, dryRun: true }), { outcome: 'skipped', reason: 'dry-run' });
@@ -578,7 +579,7 @@ test('#4180 reconcile: an over-budget return after archive still reports a prune
 });
 
 test('#4180 reconcile: residueErrors is null when there is no repo', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-4180-norepo-'));
+  const dir = scratchDir('ct-recon-4180-norepo-');
   const r = await reconcile({ cwd: dir, checks: ['mirror'] });
   assert.deepEqual(r.skipped, [{ check: 'all', reason: 'no-repo' }]);
   assert.equal(r.residueErrors, null);

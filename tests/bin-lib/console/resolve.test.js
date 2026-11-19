@@ -3,6 +3,7 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert');
 const crypto = require('crypto');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -21,7 +22,7 @@ const { stagedDiffPaths, referenceRepairFloorReason, referenceRepairFloorHits, R
 function fixture({
   decisions = '', staged = {}, engineState = null, pack = null, headers = [], manifest = null, specHeaders = {}, config = null,
 } = {}) {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-'));
+  const runDir = scratchDir('console-resolve-');
   fs.mkdirSync(path.join(runDir, 'staged'), { recursive: true });
   fs.mkdirSync(path.join(runDir, 'work'), { recursive: true });
   fs.writeFileSync(path.join(runDir, 'decisions.md'), decisions);
@@ -1112,7 +1113,7 @@ test('AC2.1: a console.json written with the old 58-character id shape still rea
 });
 
 test('AC2.1: old-shape and new-shape decision ids coexist in one console.json — residue counts both and points both at decisions.md (#3816)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-'));
+  const dir = scratchDir('console-resolve-');
   fs.writeFileSync(path.join(dir, 'decisions.md'), SAME_PREFIX);
   const line = SUPERSEDED.split('\n')[1];
   const oldId = `decision:${line.slice(2, 60)}`;

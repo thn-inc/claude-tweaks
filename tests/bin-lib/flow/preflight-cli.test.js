@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -11,7 +12,7 @@ const { run } = require(CLI);
 const { initRepo } = require('../../helpers/git-fixtures');
 
 function mainCheckoutWithRun() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-cli-')));
+  const root = fs.realpathSync(scratchDir('flow-preflight-cli-'));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); git('commit', '-q', '--allow-empty', '-m', 'init');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-09-06T000000-record-7');
@@ -62,7 +63,7 @@ test('run: a BLOCKED freshness verdict is data — still exit 0 (#1931 AC3)', as
 
 test('run: a --run outside the main checkout exits 3 and writes nothing (#1931 AC4)', async () => {
   const fx = mainCheckoutWithRun();
-  const shadow = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-shadow-'));
+  const shadow = scratchDir('flow-preflight-shadow-');
   fs.writeFileSync(path.join(shadow, 'config.yml'), 'mode: auto\n');
   const { d, err } = baseDeps(fx);
   assert.strictEqual(await run(['--run', shadow, '--steps', 'review'], d), 3);
@@ -98,7 +99,7 @@ test('run: --json redirects the write inside the anchored target; a symlinked es
   assert.strictEqual(await run(['--run', fx.runDir, '--steps', 'review', '--json', dest], d), 0);
   assert.ok(fs.existsSync(dest));
   assert.ok(!fs.existsSync(path.join(fx.runDir, 'preflight.json')));
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-escape-'));
+  const outside = scratchDir('flow-preflight-escape-');
   fs.symlinkSync(outside, path.join(fx.runDir, 'escape'));
   assert.strictEqual(await run(['--run', fx.runDir, '--steps', 'review', '--json', path.join(fx.runDir, 'escape', 'p.json')], d), 3);
   assert.ok(!fs.existsSync(path.join(outside, 'p.json')));

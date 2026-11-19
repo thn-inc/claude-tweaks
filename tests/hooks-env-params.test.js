@@ -6,6 +6,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const cp = require('child_process');
@@ -19,7 +20,7 @@ const { hookEnv } = require('./helpers/hook-event');
 const { gitRepo } = require('./helpers/git-fixtures');
 const { withProcessEnv } = require('./helpers/process-env');
 
-const tmp = (label) => fs.mkdtempSync(path.join(os.tmpdir(), `ct-5377-${label}-`));
+const tmp = (label) => scratchDir(`ct-5377-${label}-`);
 
 test('requireEnv throws on a context without env and returns the object otherwise', () => {
   for (const bad of [{}, { env: null }, { env: 'x' }, undefined, null]) {

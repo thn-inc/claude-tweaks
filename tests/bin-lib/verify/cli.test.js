@@ -10,6 +10,8 @@ const { CLI, tmpDir, runCli, tmpGitRepo, nodeCmd, scopedRepo, stampOf, passStamp
 const verifyHelpers = require('./cli-helpers');
 const { pinnedGit: git } = require('../../helpers/pinned-git');
 const { warmCallStartsNoGit } = require('../../helpers/git-trace');
+const { isolateTmpdir } = require('../../helpers/tmp-dir');
+isolateTmpdir('ct-iso-cli-');
 
 const STAMP = 'claude-tweaks-verify-pass.json';
 

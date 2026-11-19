@@ -1,4 +1,5 @@
 'use strict';
+const { scratchDir } = require('../../helpers/tmp-dir');
 const { test } = require('node:test');
 const assert = require('node:assert');
 const {
@@ -285,7 +286,7 @@ test('createNamespacedState with env and no run builds its runner on makeExec: a
   const os = require('os');
   const fs = require('fs');
   const path = require('path');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ns-exec-'));
+  const dir = scratchDir('ns-exec-');
   let err = '';
   const ns = createNamespacedState('ns', [{ key: 'a', file: 'a.json', default: { d: 1 } }], {
     env: { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(dir) }, stderr: (t) => { err += t; },
@@ -304,7 +305,7 @@ test('createNamespacedState with only a stderr (no env, no run) captures a real 
   const os = require('os');
   const fs = require('fs');
   const path = require('path');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ns-stderr-only-'));
+  const dir = scratchDir('ns-stderr-only-');
   let err = '';
   const ns = createNamespacedState('ns', [{ key: 'a', file: 'a.json', default: { d: 1 } }], {
     stderr: (t) => { err += t; },
@@ -851,7 +852,7 @@ test('AC1.1: a tree entry named café.json round-trips through readTreeEntries a
   const path = require('node:path');
   const { writeIdentity } = require('../../helpers/git-fixtures');
   const g = (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'durable-state-z-'));
+  const dir = scratchDir('durable-state-z-');
   try {
     const origin = path.join(dir, 'origin.git');
     const clone = path.join(dir, 'clone');
@@ -894,7 +895,7 @@ test('a real repo round-trips multi-byte, multi-line JSON, an invalid-JSON file 
   const path = require('node:path');
   const { writeIdentity } = require('../../helpers/git-fixtures');
   const g = (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'durable-state-batch-'));
+  const dir = scratchDir('durable-state-batch-');
   try {
     const origin = path.join(dir, 'origin.git');
     const clone = path.join(dir, 'clone');

@@ -2,6 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
@@ -14,7 +15,7 @@ const { defaultResolvePolicy } = require(path.join(__dirname, '..', '..', '..', 
 // defaultResolvePolicy reads the repo root from the process cwd (its git seam passes no cwd),
 // so the test runs from inside the fixture repo and restores the cwd afterwards.
 test('defaultResolvePolicy hands the run config to computeDerivedDefaults: a merge-verification-only read under a run-pinned integration-model never spawns gh (#4578 AC13.1)', { skip: STUB_SKIP }, () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'express-policy-runpin-')));
+  const root = fs.realpathSync(scratchDir('express-policy-runpin-'));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
   initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
   git('commit', '-q', '--allow-empty', '-m', 'init');

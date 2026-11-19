@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { FIXTURE_RECORDS } = require('./fixtures');
@@ -15,7 +16,7 @@ function cli(args, opts = {}) {
 }
 
 function tmpJson(records) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'record-graph-cli-'));
+  const dir = scratchDir('record-graph-cli-');
   const file = path.join(dir, 'records.json');
   fs.writeFileSync(file, JSON.stringify(records));
   return file;
@@ -31,7 +32,7 @@ test('AC5.1: require() of record-graph.js prints nothing and leaves process.exit
 });
 
 test('AC9.1: a relative <json> path and --out resolve against the injected cwd', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'record-graph-cli-cwd-'));
+  const dir = scratchDir('record-graph-cli-cwd-');
   assert.notStrictEqual(fs.realpathSync(dir), fs.realpathSync(process.cwd()));
   fs.writeFileSync(path.join(dir, 'records.json'), JSON.stringify(FIXTURE_RECORDS));
   const res = cli(
@@ -87,7 +88,7 @@ test('render --format svg writes an svg fragment to stdout', () => {
 
 test('render --out writes the file instead of stdout', () => {
   const jsonPath = tmpJson(FIXTURE_RECORDS);
-  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'record-graph-cli-out-'));
+  const outDir = scratchDir('record-graph-cli-out-');
   const outPath = path.join(outDir, 'record-graph.d2');
   const result = cli([
     'render', jsonPath, '--format', 'd2', '--work-links', 'body-text', '--out', outPath,
@@ -101,7 +102,7 @@ test('render --out writes the file instead of stdout', () => {
 // A deleted working directory makes the real cwd() throw; absolute <json> and --out never needed it.
 test('render with absolute <json> and --out succeeds with an unreadable cwd, as before the entry contract', () => {
   const jsonPath = tmpJson(FIXTURE_RECORDS);
-  const outPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'record-graph-cli-nocwd-')), 'record-graph.d2');
+  const outPath = path.join(scratchDir('record-graph-cli-nocwd-'), 'record-graph.d2');
   const args = ['render', jsonPath, '--format', 'd2', '--work-links', 'body-text', '--generated-at', 'X'];
   const expected = cli(args).stdout;
   const result = cli([...args, '--out', outPath], {
@@ -152,7 +153,7 @@ test('render exits 2 with a clear message when the input file is missing', () =>
 });
 
 test('render exits 2 with a clear message when the input file is not valid JSON', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'record-graph-cli-bad-'));
+  const dir = scratchDir('record-graph-cli-bad-');
   const file = path.join(dir, 'records.json');
   fs.writeFileSync(file, '{not json at all');
   const error = runExpectingFailure(['render', file, '--format', 'd2', '--work-links', 'body-text']);

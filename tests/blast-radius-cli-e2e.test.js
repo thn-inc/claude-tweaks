@@ -2,6 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
@@ -36,7 +37,7 @@ function cli(args, opts = {}) {
 // (plugin file) and one test commit ahead, plus a policy.yml naming a
 // sensitive path.
 function makeFixtureRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'blast-radius-'));
+  const dir = scratchDir('blast-radius-');
   git(dir, 'init', '-b', 'main');
   writeIdentity(dir, { name: 'Test', email: 'test@example.invalid' });
   fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
@@ -111,7 +112,7 @@ test('e2e: nonexistent --run dir exits 1 with the bad-path message and NO stdout
 // true position); local `main` is then force-set back to the pre-unrelated-work
 // commit, exactly like a shared checkout whose local ref never got fetched.
 function makeStaleLocalMainFixture() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'blast-radius-stale-'));
+  const dir = scratchDir('blast-radius-stale-');
   git(dir, 'init', '-b', 'main');
   writeIdentity(dir, { name: 'Test', email: 'test@example.invalid' });
   fs.writeFileSync(path.join(dir, 'root.txt'), 'root\n');
@@ -170,7 +171,7 @@ test('AC5.1: require() of blast-radius.js prints nothing and leaves process.exit
 // CLI's cwd and has no main branch; repo B has main and a feature commit. B is named only
 // through GIT_DIR in the injected env, so the git child reads B only if it gets that env.
 test('AC9.1: the git child reads the repo named by the injected env, not the inherited one', () => {
-  const a = fs.mkdtempSync(path.join(os.tmpdir(), 'blast-radius-a-'));
+  const a = scratchDir('blast-radius-a-');
   git(a, 'init', '-b', 'trunk');
   writeIdentity(a, { name: 'Test', email: 'test@example.invalid' });
   fs.writeFileSync(path.join(a, 'a.txt'), 'a\n');
@@ -216,7 +217,7 @@ test('AC9.1: a relative --run that exists resolves against the injected cwd', ()
 // in the inherited directory, which GIT_DIR (injected) points away from any repository, so git's
 // own failure is what reaches stderr. A relative --run is not a directory, as fs.statSync gave.
 test('an unreadable cwd gives the same one-line failure and exit 1, never a stack trace', () => {
-  const noRepo = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'blast-radius-nocwd-')), 'none.git');
+  const noRepo = path.join(scratchDir('blast-radius-nocwd-'), 'none.git');
   const opts = {
     env: { ...CLI_ENV, GIT_DIR: noRepo },
     deps: { cwd: () => { throw Object.assign(new Error('ENOENT: process.cwd failed'), { code: 'ENOENT' }); } },
@@ -238,9 +239,9 @@ test('an unreadable cwd gives the same one-line failure and exit 1, never a stac
 // merge-base still resolves, so the policy root must fall back to the injected cwd D, a non-repo
 // directory that is not the process's cwd.
 test('AC9.1: the policy root falls back to the injected cwd when show-toplevel fails', () => {
-  const bare = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'blast-radius-bare-')), 'b.git');
+  const bare = path.join(scratchDir('blast-radius-bare-'), 'b.git');
   git(os.tmpdir(), 'clone', '--bare', makeFixtureRepo(), bare);
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'blast-radius-d-'));
+  const d = scratchDir('blast-radius-d-');
   fs.mkdirSync(path.join(d, '.claude-tweaks'));
   fs.writeFileSync(path.join(d, '.claude-tweaks', 'policy.yml'), 'auto-merge-max-lines: 7\n');
   assert.notStrictEqual(fs.realpathSync(d), fs.realpathSync(process.cwd()));

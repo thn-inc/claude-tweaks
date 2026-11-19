@@ -1,4 +1,5 @@
 'use strict';
+const { scratchDir } = require('./tmp-dir');
 // Shared probe for the batched-`gh` bound (#4815): what `timeout` does a consumer's `gh` call carry
 // when CLAUDE_TWEAKS_GH_TIMEOUT_MS holds `envValue`?
 //
@@ -50,7 +51,7 @@ function isolateExecBounds(extraKeys, fn) {
   const path = require('node:path');
   const saved = new Map([ENV_KEY, GIT_ENV_KEY, ...extraKeys].map((key) => [key, process.env[key]]));
   const originalCwd = process.cwd();
-  const emptyDir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-exec-bounds-'));
+  const emptyDir = scratchDir('ct-exec-bounds-', { realpath: true });
   const restore = () => {
     process.chdir(originalCwd);
     fs.rmSync(emptyDir, { recursive: true, force: true });

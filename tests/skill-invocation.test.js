@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { hookEnv, runHookCli } = require('./helpers/hook-event');
@@ -13,7 +14,7 @@ const { hookEnv, runHookCli } = require('./helpers/hook-event');
 // .claude-tweaks/pipelines/ from there write fixture events into REAL run
 // dirs (the #657 pollution incident). Calls that don't care about cwd get an
 // isolated, non-git sandbox instead.
-const HOOK_SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skillinv-sandbox-'));
+const HOOK_SANDBOX = scratchDir('ct-skillinv-sandbox-');
 
 // #5377: runs hooks.js in-process through runHookCli. hookEnv blanks PIPELINE_RUN_DIR so an ambient
 // value in the invoking shell can't redirect fixture writes into a real run's events.jsonl —
@@ -25,7 +26,7 @@ async function runHook(args, { input = '', cwd = HOOK_SANDBOX, env = {} } = {}) 
 
 // Project with one active run; sessionId optional (absent = unowned run).
 function projectWithRun({ sessionId } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-'));
+  const dir = scratchDir('ct-skill-');
   const run = path.join(dir, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.mkdirSync(run, { recursive: true });
   const state = { status: 'active' };
@@ -79,7 +80,7 @@ test('unowned run: appends one event tagged attribution fallback', async () => {
 });
 
 test('no resolvable run: exits 0, creates no file and no directory (pipelines dir absent)', async () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-bare-'));
+  const bare = scratchDir('ct-skill-bare-');
   const r = await runHook(['post-tool-use'], { input: skillPayload({ cwd: bare }), cwd: bare });
   assert.strictEqual(r.code, 0);
   assert.strictEqual(fs.existsSync(path.join(bare, '.claude-tweaks')), false,
@@ -87,7 +88,7 @@ test('no resolvable run: exits 0, creates no file and no directory (pipelines di
 });
 
 test('no resolvable run: existing-but-unmatched pipelines dir is byte-identical before/after', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-'));
+  const dir = scratchDir('ct-skill-');
   const pipelines = path.join(dir, '.claude-tweaks', 'pipelines');
   // Only a terminal (clean) run exists -> resolveRun finds no non-terminal run.
   const run = path.join(pipelines, '2026-07-01T090000-spec-1');

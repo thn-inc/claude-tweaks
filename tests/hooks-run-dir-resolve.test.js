@@ -11,6 +11,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const path = require('path');
 const { gitRepo, linkedWorktreeOf, harnessWorktreeOf, fixtureGit } = require('./helpers/git-fixtures');
 const { resolve, formatTimestamp, adoptionRefusal } = require('../plugin/bin/lib/hooks/run-dir-resolve');
@@ -534,7 +535,7 @@ test('--root-only prints the anchored main checkout root, ignoring every other f
 
 test('not a git repo at all: fails loud rather than silently resolving to something', () => {
   const os = require('os');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-rdr-norepo-'));
+  const dir = scratchDir('ct-rdr-norepo-');
   const out = resolve({ cwd: dir, env: {} });
   assert.strictEqual(out.ok, false);
   assert.match(out.message, /git repo|not a git/i);

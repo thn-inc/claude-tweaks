@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const net = require('net');
@@ -14,7 +15,7 @@ const { BEGIN_MARKER } = require('../../../plugin/bin/lib/ports/env-file');
 const { isFree } = require('../../../plugin/bin/lib/ports/probe');
 
 function tmpHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ports-registry-'));
+  return scratchDir('ports-registry-');
 }
 
 function tmpCheckout(home, name) {
@@ -192,7 +193,7 @@ test('status: prunes dead leases as a side effect and returns the pruned view', 
 
 // #1927: the registry's env write carries the lease line first.
 test('allocate: the written managed region starts with CLAUDE_TWEAKS_LEASE={base} and vars carries the pair first', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ports-registry-lease-'));
+  const home = scratchDir('ports-registry-lease-');
   const checkout = path.join(home, 'co'); fs.mkdirSync(checkout, { recursive: true });
   const result = await allocate(checkout, { services: ['web', 'api'], home, probe: async () => true });
   assert.deepEqual(result.vars[0], ['CLAUDE_TWEAKS_LEASE', String(result.base)]);

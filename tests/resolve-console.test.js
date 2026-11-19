@@ -6,6 +6,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -14,7 +15,7 @@ const {
 } = require('../plugin/bin/lib/reconcile/console-execute');
 
 function makeRunDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-console-'));
+  return scratchDir('ct-resolve-console-');
 }
 
 function writeConsoleJson(dir, overrides = {}) {

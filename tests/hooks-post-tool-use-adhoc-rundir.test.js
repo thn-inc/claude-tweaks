@@ -12,6 +12,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir, isolateTmpdir } = require('./helpers/tmp-dir');
+isolateTmpdir('ct-iso-hooks-post-tool-use-adho-');
 const path = require('path');
 const cp = require('child_process');
 const post = require('../plugin/bin/lib/hooks/post-tool-use');
@@ -122,7 +124,7 @@ test('AC1.1/AC1.2: stampAdHocRunDir writes the owner block', () => {
 test('does not stamp when ctx.ownedRun.dir already resolves (a formal pipeline already claimed this worktree)', () => {
   const main = gitRepo();
   const wt = harnessWorktreeOf(main);
-  const existingRun = fs.mkdtempSync(path.join(fs.mkdtempSync(path.join(require('os').tmpdir(), 'ct-owned-')), 'run-'));
+  const existingRun = fs.mkdtempSync(path.join(scratchDir('ct-owned-'), 'run-'));
   post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt), ownedRun: { dir: existingRun } }));
   assert.deepStrictEqual(adhocDirs(main), []);
 });
@@ -163,7 +165,7 @@ test('non-EnterWorktree trigger: does not stamp when this session already owns a
   cleanSessionTmp('sess-adhoc-nonEW-owned');
   const main = gitRepo();
   const wt = harnessWorktreeOf(main);
-  const existingRun = fs.mkdtempSync(path.join(fs.mkdtempSync(path.join(require('os').tmpdir(), 'ct-owned-')), 'run-'));
+  const existingRun = fs.mkdtempSync(path.join(scratchDir('ct-owned-'), 'run-'));
   post.run({
     env: process.env,
     input: { tool_name: 'Write', cwd: wt, session_id: 'sess-adhoc-nonEW-owned' },
@@ -301,7 +303,7 @@ test('ExitWorktree(remove) followed by a raw `git worktree add` in the same sess
 test('#2783: stamps even when ctx.ownedRun is only a fallback GUESS (an unrelated unowned run), not this session\'s own', () => {
   const main = gitRepo();
   const wt = harnessWorktreeOf(main);
-  const guess = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ct-guess-'));
+  const guess = scratchDir('ct-guess-');
   post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt), ownedRun: { dir: guess, attribution: 'fallback' }, sessionId: 'sess-2783-a' }));
   const dirs = adhocDirs(main);
   assert.strictEqual(dirs.length, 1);

@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { run, renderManifestoFyi } = require('../../../plugin/bin/set-config');
@@ -11,7 +12,7 @@ const { readText } = require('../../helpers/read-skill');
 // fake main checkout (.git directory) holding the real run dir, plus a
 // worktree-local shadow copy (.git FILE) that must be refused.
 function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sccli-'));
+  const root = scratchDir('sccli-');
   const main = path.join(root, 'main');
   const runDir = path.join(main, '.claude-tweaks', 'pipelines', '2026-08-20T090000-spec-12');
   const shadow = path.join(main, '.claude', 'worktrees', 'flow-spec-12', '.claude-tweaks', 'pipelines', '2026-08-20T090000-spec-12');

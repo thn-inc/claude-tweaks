@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -11,7 +12,7 @@ const {
 const { buildValidateFindingsUpdate } = require('../../../plugin/bin/lib/journey-health/cache');
 const { initRepo } = require('../../helpers/git-fixtures');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'journey-health-scope-')); }
+function tmp() { return scratchDir('journey-health-scope-'); }
 
 function writeJourney(root, name, filesFrontmatter) {
   const dir = path.join(root, 'docs', 'journeys');
