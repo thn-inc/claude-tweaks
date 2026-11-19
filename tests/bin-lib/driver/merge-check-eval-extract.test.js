@@ -10,7 +10,10 @@ const os = require('node:os');
 const path = require('node:path');
 const { formatEntry } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'log-decision', 'append'));
 const { verdictText, VERDICT_STEPS } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'dispatch', 'merge-verdict'));
-const { classifyReviewSection, scrubLocalPaths, run } = require(path.join(__dirname, '..', '..', '..', 'tools', 'driver-merge-check-eval.js'));
+const { classifyReviewSection, scrubLocalPaths, run, launchPolicy } = require(path.join(__dirname, '..', '..', '..', 'tools', 'driver-merge-check-eval.js'));
+const { roleModel } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'driver', 'launch.js'));
+const { DRIVER_ROLE_PROFILES } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'driver', 'roles.js'));
+const { PROFILES } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'model-profiles', 'profiles.js'));
 const { DIFF_PROMPT_MAX_BYTES } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'driver', 'review.js'));
 
 const roots = [];
@@ -120,6 +123,15 @@ describe('classifyReviewSection: degraded and absent summaries', () => {
   test('an empty section is no-review-summary', () => {
     assert.deepStrictEqual(classifyReviewSection('  \n'), { exclude: 'no-review-summary' });
     assert.deepStrictEqual(classifyReviewSection(null), { exclude: 'no-review-summary' });
+  });
+});
+
+describe('launchPolicy', () => {
+  test('the replay policy carries the ceilings and the model keys a launch needs (#5917)', () => {
+    const policy = launchPolicy({ minutes: 7, dollars: 3 });
+    assert.deepStrictEqual(policy['express-driver-wall-clock-minutes'], { value: 7 });
+    assert.deepStrictEqual(policy['express-driver-spend-ceiling-dollars'], { value: 3 });
+    assert.strictEqual(roleModel('merge-check', policy), PROFILES[DRIVER_ROLE_PROFILES['merge-check']].model);
   });
 });
 

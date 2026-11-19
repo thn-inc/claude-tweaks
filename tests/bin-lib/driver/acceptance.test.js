@@ -162,7 +162,14 @@ const os = require('node:os');
 const { readText } = require('../../helpers/read-skill');
 const { runAcceptance, renderTryIt, renderParentBrief, renderObservationPlan } = require(path.join(LIB, 'driver', 'acceptance'));
 const { renderPacket } = require(path.join(LIB, 'wrap-up', 'packet-render'));
-const { ACCEPTANCE_RESULT_SCHEMA } = require(path.join(LIB, 'driver', 'roles.js'));
+const { ACCEPTANCE_RESULT_SCHEMA, DRIVER_ROLE_PROFILES } = require(path.join(LIB, 'driver', 'roles.js'));
+const { MODEL_POLICY_KEYS, roleModel } = require(path.join(LIB, 'driver', 'launch.js'));
+const { PROFILES } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
+const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema.js'));
+const LAUNCH_POLICY = { 'express-driver-wall-clock-minutes': { value: 30 }, 'express-driver-spend-ceiling-dollars': { value: 5 }, ...resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: '' }) };
+test('the fixture policy carries the model keys a launch needs (#5917)', () => {
+  assert.strictEqual(roleModel('acceptance', LAUNCH_POLICY), PROFILES[DRIVER_ROLE_PROFILES.acceptance].model);
+});
 
 const roots = [];
 after(() => { for (const r of roots) fs.rmSync(r, { recursive: true, force: true }); });
@@ -277,7 +284,7 @@ function harness(route, over = {}) {
     platform: 'linux',
     env: { H: '1' },
   };
-  const shared = { activeWorker: null, policy: { 'express-driver-wall-clock-minutes': { value: 30 }, 'express-driver-spend-ceiling-dollars': { value: 5 } } };
+  const shared = { activeWorker: null, policy: { ...LAUNCH_POLICY } };
   const ctx = { record: 7, pr: 70, repo: 'o/r', branch: 'drive-7', base: 'main', head: 'drive-7', runDir, runRoot: root, mainCheckout: root, worktree };
   const env = { deps, shared, readFile: spec.readFile || ((p) => fs.readFileSync(p, 'utf8')) };
   const isForgeWrite = (c) => (c.kind === 'gh' && ((c.args[0] === 'issue' && ['comment', 'edit'].includes(c.args[1])) || (c.args[0] === 'pr' && c.args[1] === 'comment')

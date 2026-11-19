@@ -10,6 +10,10 @@ const { verdictText } = require(path.join(LIB, 'dispatch', 'merge-verdict'));
 const { MERGE_CHECK_RESULT_SCHEMA, composeArgs } = require(path.join(LIB, 'driver', 'roles.js'));
 const { judgeMergeCheck, createJudgments } = require(path.join(LIB, 'driver', 'judgments.js'));
 const { DIFF_PROMPT_MAX_BYTES } = require(path.join(LIB, 'driver', 'review.js'));
+const { MODEL_POLICY_KEYS, roleModel } = require(path.join(LIB, 'driver', 'launch.js'));
+const { DRIVER_ROLE_PROFILES } = require(path.join(LIB, 'driver', 'roles.js'));
+const { PROFILES } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
+const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema.js'));
 
 const roots = [];
 after(() => { for (const r of roots) fs.rmSync(r, { recursive: true, force: true }); });
@@ -18,7 +22,11 @@ const POLICY = {
   'express-driver-wall-clock-minutes': { value: 30 },
   'express-driver-spend-ceiling-dollars': { value: 5 },
   'auto-merge-max-lines': { value: 200 },
+  ...resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: '' }),
 };
+test('the fixture policy carries the model keys a launch needs (#5917)', () => {
+  assert.strictEqual(roleModel('merge-check', POLICY), PROFILES[DRIVER_ROLE_PROFILES['merge-check']].model);
+});
 const { OK_ENVELOPE, BAD_MERGE_CHECK_ENVELOPES } = require('../../helpers/merge-check-envelopes');
 
 // Fake deps recording every call; `node` routed by script basename; log-decision.js appends a real
