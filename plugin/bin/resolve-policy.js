@@ -65,7 +65,7 @@ const { execFileSync } = require('child_process');
 const { POLICY_KEYS, resolvePolicyConfig, formatForgeDegrade } = require('./lib/policy-schema');
 const { computeDerivedDefaults } = require('./lib/policy-derived-defaults');
 const { pickInjected } = require('./lib/repo-resolve');
-const { parsePolicyModelConfig } = require('./lib/model-profiles/policy-fragment');
+const { modelProfilesEntry } = require('./lib/model-profiles/policy-fragment');
 const { anchoredOrOutsideMessage } = require('./lib/run-dir-guard');
 const sharedPrimitives = require('./lib/shared-primitives');
 
@@ -160,21 +160,10 @@ function resolvePolicy({ keys, runDir = null, mcpReachable = false }, deps) {
   // model-profiles is a block-style key — policy-only (the --run
   // overlay never applies; run configs hold flat lever lines, not nested
   // blocks; risk-path-globs is policy-only the same way). Overwrite the flat
-  // resolver's placeholder entry via the dedicated fragment reader.
+  // resolver's placeholder entry via the dedicated fragment reader: only the
+  // block is parsed (#5917), so a malformed sibling key never marks it invalid.
   if (keys.includes('model-profiles')) {
-    try {
-      const parsed = parsePolicyModelConfig(policyRaw);
-      result['model-profiles'] = Object.prototype.hasOwnProperty.call(parsed, 'model-profiles')
-        ? { value: parsed['model-profiles'], source: 'policy' }
-        : { value: null, source: 'default' };
-    } catch {
-      // Any fragment-reader throw lands here — a malformed block, but also a
-      // malformed sibling model key (e.g. frontier-run-cap), since the reader
-      // parses all four model keys and its throws aren't sub-classified. Same
-      // present-but-rejected carve-out as flat keys; the key has no schema
-      // default — null is the documented absent shape.
-      result['model-profiles'] = { value: null, source: 'default', invalid: true };
-    }
+    result['model-profiles'] = modelProfilesEntry(policyRaw);
   }
 
   return { code: EXIT_OK, result, invalidRaw, degrades, root, policySource, policyPath };
