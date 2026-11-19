@@ -3,7 +3,7 @@
 // tools/pipeline-cost-report.js — what the pipeline costs and what it produces, over a UTC day window (#5914).
 //
 //   node tools/pipeline-cost-report.js [--since <YYYY-MM-DD>] [--until <YYYY-MM-DD>] [--projects <dir>]...
-//     [--pipelines <dir>] [--match <substring> | --all-projects] [--section spend|funnel|records|guards|all]
+//     [--pipelines <dir>] [--match <substring> | --all-projects] [--section spend|funnel|records|guards|reviews|all]
 //     [--split <YYYY-MM-DD>] [--runs <n>] [--repo <owner/name>] [--simulate <reason[,reason...]>]... [--json]
 //
 // Spend scope: merged PRs and records are this repository's, so by default only transcripts whose working directory is
@@ -23,6 +23,14 @@
 //            implementer tier), and bug records filed within 14 days of a merge touching their Key Files. Each figure
 //            carries its `unparsed` count. --split is required for --section guards; --section all without it skips guards
 //            (`{ skipped }`, exit unaffected). A guard 3 forge failure marks only that cell and exits 1.
+//   reviews  what the review steps found, read from the runs dated in the window (reviews.js): task reviews by model tier
+//            (verdict, items by severity, Minor-only), plan reviews (share with a finding, findings by kind, runs that
+//            stopped to ask a human), lens reviewers by tier and by lens, the lens verdicts (confirmed by a pair or a
+//            tiebreak, refuted, can't tell) per run and per lens, and what became of the confirmed locations. It reads each
+//            run's timing.json, the subagents' transcripts and decisions.md; a multi-spec run's dispatches come from its
+//            parent and its verdict figures count once per spec member. The lens yield (confirmed per agent) is the
+//            exception to the window: it takes the last --runs (default 20) runs per lens dated on or before --until,
+//            whatever --since says. Every figure carries its `unparsed` count.
 // The run directories under --pipelines are counted once (runs.js); `runs.inWindow` is the runs dated in the window.
 //
 // The window is --since through --until, both inclusive, UTC; --until defaults to today, --since to --until minus 6
@@ -41,7 +49,8 @@
 // a forge read failed, or spend could not resolve the main checkout (that section prints
 // `{section}: unavailable — {first line}`; JSON `{ error }`) — with --split set that includes a pipelines listing
 // failure (`guards: unavailable —`, though the Runs line still leaves the code alone) and a guard 3 forge failure (only
-// that cell reads unavailable); 2 malformed invocation, --section guards without --split included.
+// that cell reads unavailable) — and a pipelines listing failure under `--section reviews` (under `--section all` it
+// prints `reviews: unavailable —` and leaves the code alone, like `Runs: unavailable`); 2 malformed invocation, --section guards without --split included.
 //
 // Seam: run({ argv, deps }) resolves to the exit code; deps holds fs, gh(args) (stdout), check(n) (drive.js --check
 // stdout), git(args, {cwd}), now(), pluginVersion(), cwd, home and the log/err line writers.
@@ -55,6 +64,7 @@ const { collectFunnel, defaultGh, defaultCheck, readPluginVersion } = require('.
 const { collectRecords, countMergedPrs } = require('./pipeline-cost-report/records');
 const { listRuns, isDate } = require('./pipeline-cost-report/runs');
 const { collectGuards } = require('./pipeline-cost-report/guards');
+const { PLAN_KINDS, collectReviews } = require('./pipeline-cost-report/reviews');
 
 const DEFAULT_RUNS = 20;
 const PLUGIN_ROOT = path.join(__dirname, '..', 'plugin');
@@ -230,12 +240,100 @@ const SECTIONS = [
       return lines;
     },
   },
+  {
+    key: 'reviews',
+    async collect(ctx) {
+      if (ctx.runs.error) {
+        // --section all leaves the exit code alone, like `Runs: unavailable`; --section reviews fails.
+        if (ctx.opts.section === 'all') return { error: ctx.runs.error };
+        throw new Error(ctx.runs.error);
+      }
+      return collectReviews(
+        { runs: ctx.runs.runs, since: ctx.since, until: ctx.until, n: ctx.opts.runs || DEFAULT_RUNS, roots: ctx.roots },
+        { fsImpl: ctx.deps.fs },
+      );
+    },
+    failed: () => false,
+    unreadable: () => 0,
+    render(d) {
+      const pct = (s) => (s === null ? 'none' : `${Math.round(s * 100)}%`);
+      const mean = (v) => (v === null || v === undefined ? 'none' : v.toFixed(2));
+      const TIER_ORDER = ['fast', 'standard', 'capable', 'frontier'];
+      const byTierOrder = (a, b) => {
+        const ia = TIER_ORDER.indexOf(a);
+        const ib = TIER_ORDER.indexOf(b);
+        if (ia >= 0 || ib >= 0) return (ia < 0 ? TIER_ORDER.length : ia) - (ib < 0 ? TIER_ORDER.length : ib);
+        return a < b ? -1 : a > b ? 1 : 0;
+      };
+      const byName = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+      const lines = [];
+      // A table with no rows prints `none.` in place of the table.
+      const table = (head, rows) => {
+        if (rows.length === 0) {
+          lines.push('none.', '');
+          return;
+        }
+        lines.push(head, head.replace(/[^|]/g, '-'));
+        for (const r of rows) lines.push(`| ${r.join(' | ')} |`);
+        lines.push('');
+      };
+      const w = d.window;
+      lines.push('## Reviews', '', `${w.runs} runs dated ${w.since} to ${w.until} (${w.units} run units: a multi-spec run counts once per spec member for the verdict figures); ${w.noTiming} without a timing.json, ${w.timingUnparsed} with an unreadable one.`, '');
+
+      const t = d.taskReview;
+      lines.push('### Task review', '', "The task-review tier follows the plan's review-risk flag, so the capable tier reviews the riskier tasks; the tiers are printed side by side, not compared.", '');
+      table(
+        '| Tier | Reviews | Approved | Needs fixes | Critical | Important | Minor | Minor only | Unparsed |',
+        Object.keys(t.byTier).sort(byTierOrder).map((k) => {
+          const x = t.byTier[k];
+          return [k, String(x.n), pct(x.approved), pct(x.needsFixes), String(x.items.critical), String(x.items.important), String(x.items.minor), `${x.minorOnly.count} of ${x.minorOnly.of}`, `${x.unparsed}; items ${x.items.unparsed}`];
+        }),
+      );
+      const rr = Object.keys(t.reReviews.byTier).sort(byTierOrder).map((k) => `${k} ${t.reReviews.byTier[k]}`);
+      lines.push(`Re-reviews (not in the table): ${t.reReviews.n}${rr.length > 0 ? ` (${rr.join(', ')})` : ''}.`, '');
+
+      const p = d.planReview;
+      lines.push('### Plan review', '', `Reviews: ${p.reviews}; with a finding: ${pct(p.withFindings)}; findings per review: ${mean(p.findingsPerReview)}; unparsed: ${p.unparsed}.`, `Stopped to ask a human: ${p.humanStops.runs} of ${p.humanStops.n} run units; ${p.humanStops.unparsed} unparsed.`, '');
+      table('| Kind | Findings |', [...PLAN_KINDS, 'other'].filter((k) => k in p.byKind).map((k) => [k, String(p.byKind[k])]));
+
+      const l = d.lens;
+      const lensHead = (first) => `| ${first} | Agents | No finding | Findings per agent | Critical | High | Medium | Low | Info | Overflow | Unparsed |`;
+      const lensRows = (map, order) => Object.keys(map).sort(order).map((k) => {
+        const x = map[k];
+        const a = x.perAgent;
+        return [k, String(x.agents), pct(x.noFinding), mean(a && a.total), mean(a && a.critical), mean(a && a.high), mean(a && a.medium), mean(a && a.low), mean(a && a.info), mean(a && a.overflow), String(x.unparsed)];
+      });
+      lines.push('### Lens review by tier', '', 'Each lens runs on one fixed model profile, so this table compares lenses, not models.', '', `${l.unreadable} runs with unreadable lens dispatches, counted in no lens figure.`, '');
+      table(lensHead('Tier'), lensRows(l.byTier, byTierOrder));
+      lines.push('### Lens review by lens', '');
+      table(lensHead('Lens'), lensRows(l.byLens, byName));
+
+      const verdictHead = (first) => `| ${first} | Confirmed | Both reviewers | Tiebreak | Refuted | Can't tell |`;
+      const verdictRow = (name, x) => [name, String(x.confirmed), String(x.pair), String(x.tiebreak), String(x.refuted), String(x.cantTell)];
+      lines.push('### Lens verdicts', '', '"Confirmed" is the tiebreak judge\'s verdict or a pair\'s agreement, not ground truth.', '');
+      table(verdictHead('Run'), l.perRun.rows.map((r) => verdictRow(r.run, r)));
+      table(verdictHead('Lens'), Object.keys(l.perRun.byLens).sort(byName).map((k) => verdictRow(k, l.perRun.byLens[k])));
+      lines.push(`Run units read: ${l.perRun.n}; unparsed: ${l.perRun.unparsed}.`, '');
+
+      const o = l.outcomes;
+      const shares = (s) => ['fixed', 'dismissed', 'staged', 'deferred'].map((k) => `${k} ${pct(s[k])}`).join(', ');
+      lines.push('### Lens outcomes', '', `Of ${o.n} routed confirmed locations: ${shares(o)}; ${o.unrouted} unrouted (left out of the shares); ${o.unparsed} run units unparsed.`, `Of ${o.allRouted.n} routed locations, refuted ones included (the 2026-11-18 measurement's division): ${shares(o.allRouted)}.`, '');
+
+      lines.push('### Lens yield', '', `Up to ${l.yield.runs} most recent runs per lens dated on or before ${w.until}, whatever --since says.`, 'A run with no recorded verdict line (a fully clean review included) takes no slot and is counted unparsed.', '');
+      table('| Lens | Runs | Agents | Confirmed | Confirmed per agent | Unparsed |', Object.keys(l.yield.byLens).sort(byName).map((k) => {
+        const x = l.yield.byLens[k];
+        return [k, String(x.runs), String(x.agents), String(x.confirmed), mean(x.rate), String(x.unparsed)];
+      }));
+      return lines;
+    },
+  },
 ];
 
 const SECTION_KEYS = SECTIONS.map((s) => s.key);
 const USAGE = `usage: node tools/pipeline-cost-report.js [--since <YYYY-MM-DD>] [--until <YYYY-MM-DD>] [--projects <dir>]... [--pipelines <dir>] [--match <substring> | --all-projects] [--section ${[...SECTION_KEYS, 'all'].join('|')}] [--split <YYYY-MM-DD>] [--runs <n>] [--repo <owner/name>] [--simulate <reason[,reason...]>]... [--json]
   spend covers the main checkout and its worktrees unless --match or --all-projects widens it; the funnel always checks the current checkout's repository, so --repo must match it for --section funnel|all
-  guards compares the last --runs (default ${DEFAULT_RUNS}) pipeline runs dated before --split with the first --runs on or after it; --section guards needs --split, and --section all without it skips guards`;
+  guards compares the last --runs (default ${DEFAULT_RUNS}) pipeline runs dated before --split with the first --runs on or after it; --section guards needs --split, and --section all without it skips guards
+  reviews reads the review results of the runs dated in the window; --runs (default ${DEFAULT_RUNS}) sets only its lens yield, which takes the latest runs per lens dated on or before --until whatever --since says`;
 
 function parseArgs(args) {
   const opts = { section: 'all', projects: [], simulate: [] };

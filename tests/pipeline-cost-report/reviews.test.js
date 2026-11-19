@@ -873,3 +873,170 @@ test('a lens with no agents is absent; an empty window gives an empty byLens', (
   assert.deepStrictEqual(Object.keys(yieldOf(pipelines, 2).byLens), ['3a']);
   assert.deepStrictEqual(collectYield([], { n: 20 }), { runs: 20, byLens: {} });
 });
+
+// --- the reviews section through the CLI (Task 5) ---
+
+const { run: cliRun } = require(path.join(ROOT, 'tools', 'pipeline-cost-report.js'));
+
+function cliDeps(extra = {}) {
+  const logs = [];
+  const errs = [];
+  const main = fresh('main');
+  const deps = {
+    gh: (args) => (args[0] === 'repo' ? 'o/r\n' : args[0] === 'api' ? '0\n' : '[]'),
+    check: async () => '{"admitted":true,"reasons":[]}',
+    now: () => new Date('2026-11-19T12:00:00Z'),
+    pluginVersion: () => '9.9.9',
+    git: () => path.join(main, '.git'),
+    cwd: ROOT,
+    home: fresh('home'),
+    log: (s) => logs.push(s),
+    err: (s) => errs.push(s),
+    ...extra,
+  };
+  return { deps, logs, errs };
+}
+async function reviewsCli(pipelines, projects, flags = [], extra = {}) {
+  const h = cliDeps(extra);
+  const code = await cliRun({ argv: ['--section', 'reviews', '--since', '2026-11-18', '--until', '2026-11-18', '--pipelines', pipelines, '--projects', projects, '--repo', 'o/r', ...flags], deps: h.deps });
+  return { code, text: h.logs.join('\n'), errs: h.errs.join('\n') };
+}
+
+test('AC1.1 markdown: 75% needing fixes and 1 of 3 Minor only', async () => {
+  const { pipelines, projects } = fourTaskReviews();
+  const got = await reviewsCli(pipelines, projects);
+  assert.strictEqual(got.code, 0, got.errs);
+  assert.match(got.text, /^\| capable \| 4 \| 25% \| 75% \|.*\| 1 of 3 \|/m);
+  assert.ok(got.text.includes('| 1 of 3 | 0; items 0 |'), got.text);
+  assert.ok(got.text.includes('1 runs dated 2026-11-18 to 2026-11-18 (1 run units: a multi-spec run counts once per spec member for the verdict figures); 0 without a timing.json, 0 with an unreadable one.'), got.text);
+  assert.ok(got.text.includes('Re-reviews (not in the table): 0.'), got.text);
+});
+
+test('AC3.1 markdown', async () => {
+  const pipelines = fresh('pl');
+  const projects = fresh('pr');
+  writeRun(pipelines, '2026-11-18T1-spec-1', { items: [item('p1', 'plan review', 'capable'), item('p2', 'plan review', 'capable')], sessions: ['s1'] }, projects);
+  const rows = ['| Severity | Class | Resolution | Path:Line | Finding | Evidence | Suggested resolution |', '|---|---|---|---|---|---|---|', '| high | spec gap | — | a.md:1 | f | e | s |', '| medium | cross-task contract | — | a.md:2 | f | e | s |', '| low | undecided behaviour | — | a.md:3 | f | e | s |'];
+  writeReport(projects, 's1', 'p1', rows.join('\n'));
+  writeReport(projects, 's1', 'p2', 'No findings.');
+  writeDecisions(path.join(pipelines, '2026-11-18T1-spec-1'), `${KEPT}\n${threeA(1)}`);
+  const got = await reviewsCli(pipelines, projects);
+  assert.ok(got.text.includes('Reviews: 2; with a finding: 50%; findings per review: 1.50; unparsed: 0.'), got.text);
+  assert.ok(got.text.includes('Stopped to ask a human: 1 of 1 run units; 0 unparsed.'), got.text);
+  assert.ok(got.text.includes('| spec gap | 1 |'), got.text);
+  assert.ok(got.text.indexOf('| cross-task contract | 1 |') < got.text.indexOf('| spec gap | 1 |'), 'PLAN_KINDS order');
+  assert.ok(got.text.includes('| other | 0 |'), got.text);
+});
+
+test('AC4.1 markdown: lens rows per lens, the profile note under the tier table', async () => {
+  const { pipelines, projects } = lensRun();
+  const got = await reviewsCli(pipelines, projects);
+  assert.match(got.text, /^\| 3a \| 2 \| 50% \| 1\.00 \|.*\| 0 \|$/m);
+  assert.match(got.text, /^\| 3b \| 2 \| 100% \| 0\.00 \|.*\| 0 \|$/m);
+  assert.match(got.text, /### Lens review by tier\n\nEach lens runs on one fixed model profile, so this table compares lenses, not models\./);
+  assert.ok(got.text.indexOf('| fast |') < got.text.indexOf('| standard |'), 'tiers ordered fast first');
+  assert.ok(got.text.includes('0 runs with unreadable lens dispatches, counted in no lens figure.'), got.text);
+});
+
+test('a run whose lens dispatches cannot be read prints the unreadable line, never zero agents', async () => {
+  const pipelines = fresh('pl');
+  writeRun(pipelines, '2026-11-18T1-spec-1', { items: [null, lensItem('c', '3a', 'convention A', 'fast')] });
+  const got = await reviewsCli(pipelines, fresh('pr'), ['--json']);
+  assert.strictEqual(JSON.parse(got.text).reviews.lens.unreadable, 1);
+  const md = await reviewsCli(pipelines, fresh('pr'));
+  assert.ok(md.text.includes('1 runs with unreadable lens dispatches, counted in no lens figure.'), md.text);
+});
+
+test('AC10.1 markdown', async () => {
+  const pipelines = fresh('pl');
+  const run = writeRun(pipelines, '2026-11-18T1-spec-1');
+  writeDecisions(run.dir, ['release-block.js:181 reproduced', 'release-block.md:3 confirmed by tiebreak', 'release-block-cli.test.js:413', '16:21:01', '16:21:21'].map(decisionLine).join('\n'));
+  const got = await reviewsCli(pipelines, fresh('pr'));
+  assert.ok(got.text.includes('Of 2 routed confirmed locations: fixed 50%, dismissed 0%, staged 50%, deferred 0%; 1 unrouted (left out of the shares); 0 run units unparsed.'), got.text);
+  assert.ok(got.text.includes("Of 2 routed locations, refuted ones included (the 2026-11-18 measurement's division): fixed 50%, dismissed 0%, staged 50%, deferred 0%."), got.text);
+  assert.ok(got.text.indexOf('Of 2 routed confirmed') < got.text.indexOf('Of 2 routed locations'), 'confirmed line first');
+});
+
+test('with nothing routed the outcome shares print none, never 0%', async () => {
+  const pipelines = fresh('pl');
+  const run = writeRun(pipelines, '2026-11-18T1-spec-1');
+  writeDecisions(run.dir, decisionLine('lens "3a" finding plugin/skills/release/disposition.md:71'));
+  const got = await reviewsCli(pipelines, fresh('pr'));
+  assert.ok(got.text.includes('Of 0 routed confirmed locations: fixed none, dismissed none, staged none, deferred none; 1 unrouted'), got.text);
+});
+
+test('AC6.1 --json: the 3a rate uses the two latest runs, whatever --since says', async () => {
+  const pipelines = fresh('pl');
+  ac61(pipelines);
+  const got = await reviewsCli(pipelines, fresh('pr'), ['--runs', '2', '--json']);
+  assert.strictEqual(got.code, 0, got.errs);
+  const y = JSON.parse(got.text).reviews.lens.yield;
+  assert.deepStrictEqual(y, { runs: 2, byLens: { '3a': { runs: 2, agents: 4, confirmed: 3, rate: 0.75, unparsed: 0 } } });
+  const md = await reviewsCli(pipelines, fresh('pr'), ['--runs', '2']);
+  assert.ok(md.text.includes('Up to 2 most recent runs per lens dated on or before 2026-11-18, whatever --since says.'), md.text);
+  assert.ok(md.text.includes('A run with no recorded verdict line (a fully clean review included) takes no slot and is counted unparsed.'), md.text);
+  assert.match(md.text, /^\| 3a \| 2 \| 4 \| 3 \| 0\.75 \| 0 \|$/m);
+});
+
+test('a yield lens with no agent prints its confirmed per agent as none, never 0', async () => {
+  const pipelines = fresh('pl');
+  ac61(pipelines);
+  writeDecisions(path.join(pipelines, '2026-11-18T2-spec-5'), 'Reproduction: lens "9z" finding a.js:1 reproduced. Confirmed.\n');
+  const got = await reviewsCli(pipelines, fresh('pr'), ['--runs', '2']);
+  assert.match(got.text, /^\| 9z \| 0 \| 0 \| 0 \| none \| 1 \|$/m);
+});
+
+test('--json carries every figure under reviews with n and unparsed', async () => {
+  const pipelines = fresh('pl');
+  ac61(pipelines);
+  const got = await reviewsCli(pipelines, fresh('pr'), ['--runs', '2', '--json']);
+  const r = JSON.parse(got.text).reviews;
+  assert.deepStrictEqual(Object.keys(r.window).sort(), ['noTiming', 'runs', 'since', 'timingUnparsed', 'units', 'until']);
+  assert.deepStrictEqual(Object.keys(r.taskReview).sort(), ['byTier', 'reReviews']);
+  for (const k of ['reviews', 'n', 'unparsed', 'withFindings', 'findingsPerReview', 'byKind', 'humanStops']) assert.ok(k in r.planReview, k);
+  for (const k of ['byTier', 'byLens', 'unreadable', 'perRun', 'outcomes', 'yield']) assert.ok(k in r.lens, k);
+  assert.ok('allRouted' in r.lens.outcomes);
+  assert.deepStrictEqual(Object.keys(r.lens.yield.byLens['3a']).sort(), ['agents', 'confirmed', 'rate', 'runs', 'unparsed']);
+});
+
+test('the task-review and verdict notes print', async () => {
+  const { pipelines, projects } = fourTaskReviews();
+  const got = await reviewsCli(pipelines, projects);
+  assert.ok(got.text.includes("The task-review tier follows the plan's review-risk flag, so the capable tier reviews the riskier tasks; the tiers are printed side by side, not compared."), got.text);
+  assert.ok(got.text.includes('"Confirmed" is the tiebreak judge\'s verdict or a pair\'s agreement, not ground truth.'), got.text);
+});
+
+test('an empty table prints none.', async () => {
+  const pipelines = fresh('pl');
+  const got = await reviewsCli(pipelines, fresh('pr'));
+  assert.ok(got.text.includes('### Task review'), got.text);
+  assert.ok(!/^\| Tier \|/m.test(got.text), 'no table header without rows');
+  assert.ok(got.text.split('\n').filter((l) => l === 'none.').length >= 4, got.text);
+});
+
+test('a pipelines listing failure: --section reviews exits 1, --section all leaves the code alone', async () => {
+  const projects = fresh('pr');
+  const throwing = { git: () => { throw new Error('fatal: not a git repository'); } };
+  const h = cliDeps(throwing);
+  const code = await cliRun({ argv: ['--section', 'reviews', '--since', '2026-11-18', '--until', '2026-11-18', '--projects', projects, '--repo', 'o/r'], deps: h.deps });
+  assert.strictEqual(code, 1);
+  assert.ok(h.logs.join('\n').includes('reviews: unavailable — cannot resolve the pipelines directory'), h.logs.join('\n'));
+  const j = cliDeps(throwing);
+  const allCode = await cliRun({ argv: ['--section', 'all', '--all-projects', '--json', '--since', '2026-11-18', '--until', '2026-11-18', '--projects', projects, '--repo', 'o/r'], deps: j.deps });
+  const json = JSON.parse(j.logs.join('\n'));
+  assert.match(json.reviews.error, /cannot resolve the pipelines directory/);
+  for (const k of ['spend', 'funnel', 'records', 'guards']) assert.ok(!json[k].error, `${k}: ${json[k].error}`);
+  assert.strictEqual(allCode, 0);
+});
+
+test('--section reviews is accepted; an unknown section lists it', async () => {
+  const h = cliDeps();
+  assert.strictEqual(await cliRun({ argv: ['--section', 'bogus'], deps: h.deps }), 2);
+  assert.ok(h.errs.join('\n').includes('--section spend|funnel|records|guards|reviews|all]'), h.errs.join('\n'));
+});
+
+test('--runs 0 is refused by option validation, never an uncaught TypeError', async () => {
+  const h = cliDeps();
+  assert.strictEqual(await cliRun({ argv: ['--section', 'reviews', '--runs', '0'], deps: h.deps }), 2);
+  assert.ok(h.errs.join('\n').includes('--runs needs a positive integer'), h.errs.join('\n'));
+});
