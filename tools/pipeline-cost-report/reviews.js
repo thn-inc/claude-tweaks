@@ -27,6 +27,12 @@
 //   - AUTO 16:08:28 — Reproduction: lens "3a" finding plugin/skills/release/disposition.md:71 reproduced. Confirmed. Reversibility: high.
 //   - AUTO 16:17:17 — Reproduction: lens "3a" finding plugin/skills/_shared/release-block.md:3 confirmed by tiebreak:2a37952f7854. Confirmed. Reversibility: high.
 //
+// Its routing lines (classifyRouting) say what became of a location, one class each:
+//   fixed:     - AUTO 16:20:58 — Step 3 Routing: applied medium-severity security fix at plugin/skills/release/disposition.md:71. Reversibility: high (commit e4ce36e0c).
+//   staged:    - STAGED 16:21:21 — Step 3 Routing: medium-severity architecture finding at plugin/skills/_shared/release-block.md:3 (lens 3a, tiebreak-confirmed): …. Stage path: staged/build-deviation-1.md. Reversibility: high.
+//   deferred:  - AUTO 23:31:55 — Step 3 Routing: materiality-floor: Test quality at tests/bin-lib/wrap-up/engine-cli.test.js:707 routed below floor (tiebreak-cant-tell) → digest. Reversibility: high.
+//   dismissed: - AUTO 07:05:57 — Step 3 Routing: Don't fix (refuted by tiebreak): low Architecture at plugin/bin/lib/hooks/worktree-reap.js:91 — …. Reversibility: high.
+//
 // A multi-spec member's timing.json is a stub with no dispatches: {"dispatches":{"notFound":"no transcript resolved"}},
 // so the dispatch figures are read from the parent's timing.json and only the decisions.md files are read per member.
 //
@@ -359,7 +365,8 @@ function isLensItem(d) {
 // pairs with the k-th lens item that has no agentId, both in timing.json order). `unknown` when no item names a tier.
 // [] when readCost cannot read the run's timing.json.
 // A repeated agentId in one file matches once (its entry is consumed), as the walk keeps one item. A timing.json whose
-// items readCost cannot read (a null entry) is `unreadable`, not an empty run.
+// items readCost cannot read (a null entry) is `unreadable`, not an empty run: `unreadable` means a run whose items the
+// walk read but readCost threw on, never a run with no timing.json (the walk's `timing` state holds that).
 function readLensAgents(walked, fsImpl) {
   let cost;
   try {
@@ -389,7 +396,8 @@ const MEAN_KEYS = [...SEVERITIES, 'overflow'];
 // Lens reviewers by model tier and by lens. `agents` is every lens agent, `n` those whose report parsed (an agent with no
 // agentId is always unparsed), `noFinding` the share of the parsed with no row at all, `perAgent` the mean per parsed
 // agent of each severity, of `overflow` and of `total` (their sum); null when nothing parsed. `unreadable` counts the
-// runs whose timing.json readCost could not read (their agents are in no figure, never counted as zero).
+// runs whose items the walk read but readCost threw on (their agents are in no figure, never counted as zero); a run
+// with no timing.json is not one.
 function collectLensAgents(walkedRuns, { roots, fsImpl = fs } = {}) {
   const groups = { byTier: {}, byLens: {} };
   const slot = (map, key) => (map[key] = map[key] || { agents: 0, n: 0, unparsed: 0, zero: 0, sums: Object.fromEntries(MEAN_KEYS.map((k) => [k, 0])) });
@@ -464,9 +472,133 @@ function collectPerRun(walkedRuns, verdictsByRun) {
   return { rows, totals, byLens, n: rows.length, unparsed };
 }
 
+const FIXED_RE = /Step 3 Routing: applied .*fix at/i;
+const STAGED_RE = /^- STAGED .*Step 3 Routing: .*finding/i;
+const CONSOLE_ITEM_RE = /Console item/;
+const DEFERRED_RE = /→ digest|routed to digest|materiality-floor|routed below floor/i;
+const DISMISSED_RE = /dropped: refuted by tiebreak|→ declined|Don't fix|not fixed/i;
+const LOCATION_RE = /([\w./@-]+\.[\w]+):(\d+)/;
+const ROUTING_CLASSES = ['fixed', 'dismissed', 'staged', 'deferred'];
+const ROUTING_PRECEDENCE = ['fixed', 'staged', 'deferred', 'dismissed'];
+
+// What one decisions.md line says became of a finding: 'fixed' | 'staged' | 'deferred' | 'dismissed', or null for a
+// line that routes nothing (a Review Console item line included).
+function classifyRouting(line) {
+  if (FIXED_RE.test(line)) return 'fixed';
+  if (STAGED_RE.test(line)) return 'staged';
+  if (CONSOLE_ITEM_RE.test(line)) return null;
+  if (DEFERRED_RE.test(line)) return 'deferred';
+  if (DISMISSED_RE.test(line)) return 'dismissed';
+  return null;
+}
+
+// Map of `path:line` to its highest class (fixed, staged, deferred, dismissed): a classified line belongs to the first
+// location named on it.
+function routedLocations(text) {
+  const routed = new Map();
+  for (const line of text.split(/\r?\n/)) {
+    const cls = classifyRouting(line);
+    const loc = cls && LOCATION_RE.exec(line);
+    if (!loc) continue;
+    const key = `${loc[1]}:${loc[2]}`;
+    const have = routed.get(key);
+    if (!have || ROUTING_PRECEDENCE.indexOf(cls) < ROUTING_PRECEDENCE.indexOf(have)) routed.set(key, cls);
+  }
+  return routed;
+}
+
+const zeroCounts = () => Object.fromEntries(ROUTING_CLASSES.map((k) => [k, 0]));
+
+// { fixed, dismissed, staged, deferred (shares of n, null when n is 0), counts, n }.
+function routingShares(counts) {
+  const n = ROUTING_CLASSES.reduce((s, k) => s + counts[k], 0);
+  return { ...Object.fromEntries(ROUTING_CLASSES.map((k) => [k, share(counts[k], n)])), counts, n };
+}
+
+// What became of the confirmed locations. Per readable unit, a confirmed location (distinct `path:line` of its
+// `confirmed`) with a classified routing line is routed by that line's class, else `unrouted`; the top-level shares are
+// over the routed ones (`n`). `allRouted` is the same four shares over every distinct location of a readable unit with a
+// classified line, refuted ones included. An excluded unit is `unparsed`. `verdictsByRun[i]` holds readVerdicts for each
+// unit of a walked run.
+function collectOutcomes(verdictsByRun) {
+  const counts = zeroCounts();
+  const allCounts = zeroCounts();
+  let unrouted = 0;
+  let unparsed = 0;
+  for (const units of verdictsByRun) {
+    for (const v of units) {
+      if (v.excluded !== null || v.text == null) {
+        unparsed += 1;
+        continue;
+      }
+      const routed = routedLocations(v.text);
+      for (const cls of routed.values()) allCounts[cls] += 1;
+      const seen = new Set();
+      for (const c of v.confirmed) {
+        const key = `${c.path}:${c.line}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const cls = routed.get(key);
+        if (cls) counts[cls] += 1;
+        else unrouted += 1;
+      }
+    }
+  }
+  const { counts: c, n, ...shares } = routingShares(counts);
+  return { ...shares, counts: c, unrouted, n, unparsed, allRouted: routingShares(allCounts) };
+}
+
+// The yield per lens over the latest `n` runs in which the lens ran. `yieldWalked` is walkRuns(runs, { since: null,
+// until }), sorted oldest first and read newest first. For each lens a run is a candidate when it has at least one agent
+// for the lens; a candidate whose units are all readable takes a slot (its agents for the lens, its units' confirmed
+// verdicts for the lens) until `n` are filled, and an unreadable one adds 1 to `unparsed`. A run whose lens agents
+// cannot be read is unparsed for every lens the walk saw. A run with no usable timing.json adds 1 to `unparsed` for a lens
+// one of its readable units records a confirmed, refuted or can't-tell verdict for, and is otherwise passed over. A lens
+// with no agent in the walk is absent; the decisions.md files are read once per unit, only for the runs that need them.
+function collectYield(yieldWalked, { n, fsImpl = fs } = {}) {
+  const byLens = {};
+  const entry = (lensName) => (byLens[lensName] = byLens[lensName] || { runs: 0, agents: 0, confirmed: 0, unparsed: 0 });
+  const open = (lensName) => !byLens[lensName] || byLens[lensName].runs < n;
+  const reads = yieldWalked.map((w) => ({ w, read: readLensAgents(w, fsImpl) }));
+  const seenLenses = new Set(reads.flatMap(({ read }) => read.agents.map((a) => a.lens)));
+  for (const { w, read } of reads.reverse()) {
+    let verdicts = null;
+    const units = () => verdicts || (verdicts = w.units.map((u) => readVerdicts(u, fsImpl)));
+    if (w.timing !== 'ok') {
+      const ran = new Set();
+      for (const v of units()) {
+        if (v.excluded !== null) continue;
+        for (const x of [...v.confirmed, ...v.refuted, ...v.cantTell]) ran.add(x.lens);
+      }
+      for (const lensName of ran) if (open(lensName)) entry(lensName).unparsed += 1;
+      continue;
+    }
+    if (read.unreadable) {
+      for (const lensName of seenLenses) if (open(lensName)) entry(lensName).unparsed += 1;
+      continue;
+    }
+    const agentsBy = {};
+    for (const a of read.agents) agentsBy[a.lens] = (agentsBy[a.lens] || 0) + 1;
+    for (const [lensName, agents] of Object.entries(agentsBy)) {
+      if (!open(lensName)) continue;
+      const all = units();
+      const slot = entry(lensName);
+      if (all.some((v) => v.excluded !== null)) {
+        slot.unparsed += 1;
+        continue;
+      }
+      slot.runs += 1;
+      slot.agents += agents;
+      slot.confirmed += all.reduce((s, v) => s + v.confirmed.filter((c) => c.lens === lensName).length, 0);
+    }
+  }
+  for (const slot of Object.values(byLens)) slot.rate = share(slot.confirmed, slot.agents);
+  return { runs: n, byLens };
+}
+
 // The reviews section over the since..until window: the run walk is done once and the decisions.md files are read once
-// for every collector. `n` (the yield's slot count) is used by the yield walk, not here.
-function collectReviews({ runs, since, until, roots }, { fsImpl = fs } = {}) {
+// for every collector. `n` is the yield's slot count; the yield walk ignores `since` and stops at `until`.
+function collectReviews({ runs, since, until, roots, n }, { fsImpl = fs } = {}) {
   const walked = walkRuns(runs, { since, until, fsImpl });
   const verdictsByRun = walked.map((w) => w.units.map((u) => readVerdicts(u, fsImpl)));
   return {
@@ -480,8 +612,13 @@ function collectReviews({ runs, since, until, roots }, { fsImpl = fs } = {}) {
     },
     taskReview: collectTaskReview(walked, { roots, fsImpl }),
     planReview: collectPlanReview(walked, verdictsByRun, { roots, fsImpl }),
-    lens: { ...collectLensAgents(walked, { roots, fsImpl }), perRun: collectPerRun(walked, verdictsByRun) },
+    lens: {
+      ...collectLensAgents(walked, { roots, fsImpl }),
+      perRun: collectPerRun(walked, verdictsByRun),
+      outcomes: collectOutcomes(verdictsByRun),
+      yield: collectYield(walkRuns(runs, { since: null, until, fsImpl }), { n, fsImpl }),
+    },
   };
 }
 
-module.exports = { SEVERITIES, PLAN_KINDS, parseTaskVerdict, parsePlanReview, parseLensReport, walkRuns, readVerdicts, isHumanStop, collectTaskReview, collectPlanReview, lensAgentsOf, collectLensAgents, collectPerRun, collectReviews };
+module.exports = { SEVERITIES, PLAN_KINDS, parseTaskVerdict, parsePlanReview, parseLensReport, walkRuns, readVerdicts, isHumanStop, collectTaskReview, collectPlanReview, lensAgentsOf, collectLensAgents, collectPerRun, classifyRouting, collectOutcomes, collectYield, collectReviews };

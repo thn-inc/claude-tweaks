@@ -12,7 +12,7 @@ const path = require('path');
 const { readText } = require('../helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..', '..');
-const { parseTaskVerdict, parsePlanReview, parseLensReport, walkRuns, readVerdicts, isHumanStop, collectTaskReview, collectPlanReview, collectReviews, lensAgentsOf, collectLensAgents, collectPerRun } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'reviews.js'));
+const { parseTaskVerdict, parsePlanReview, parseLensReport, walkRuns, readVerdicts, isHumanStop, collectTaskReview, collectPlanReview, collectReviews, lensAgentsOf, collectLensAgents, collectPerRun, classifyRouting, collectOutcomes, collectYield } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'reviews.js'));
 const { parseReviewCounts, resolveRun } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'guards.js'));
 const { listRuns } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'runs.js'));
 
@@ -405,6 +405,7 @@ test('a run with no timing.json is counted, not dropped', () => {
   assert.deepStrictEqual({ runs: got.window.runs, units: got.window.units, noTiming: got.window.noTiming, timingUnparsed: got.window.timingUnparsed }, { runs: 3, units: 3, noTiming: 1, timingUnparsed: 1 });
   assert.strictEqual(got.taskReview.byTier.capable.n, 1);
   assert.strictEqual(got.planReview.humanStops.runs, 1);
+  assert.strictEqual(got.lens.unreadable, 0);
 });
 
 test('--since/--until bound the runs read; a null since has no lower bound', () => {
@@ -676,11 +677,150 @@ test('a null entry in dispatches.items makes the run unreadable for the lens fig
   assert.strictEqual(taskFigures(pipelines, projects).lens.unreadable, 1);
 });
 
-test('collectReviews adds lens: { byTier, byLens, unreadable, perRun }', () => {
+test('collectReviews adds lens: { byTier, byLens, unreadable, perRun, outcomes, yield }', () => {
   const { pipelines, projects } = lensRun();
   const got = taskFigures(pipelines, projects);
-  assert.deepStrictEqual(Object.keys(got.lens), ['byTier', 'byLens', 'unreadable', 'perRun']);
+  assert.deepStrictEqual(Object.keys(got.lens), ['byTier', 'byLens', 'unreadable', 'perRun', 'outcomes', 'yield']);
   assert.strictEqual(got.lens.unreadable, 0);
   assert.strictEqual(got.lens.byLens['3a'].agents, 2);
   assert.strictEqual(got.lens.perRun.unparsed, 1);
+});
+
+// --- lens outcomes and the per-lens yield (Task 4) ---
+
+const DECISION_LINES = DECISIONS.split('\n');
+// The outcome figures of one decisions.md text read as one unit.
+function outcomesOf(text) {
+  const dir = fresh('unit');
+  writeDecisions(dir, text);
+  return collectOutcomes([[readVerdicts({ name: 'u', dir }, fs)]]);
+}
+const pick = (o, keys) => Object.fromEntries(keys.map((k) => [k, o[k]]));
+
+test('classifyRouting reads the four real classes', () => {
+  assert.strictEqual(classifyRouting('- AUTO 16:20:58 — Step 3 Routing: applied medium-severity security fix at plugin/skills/release/disposition.md:71. Reversibility: high (commit e4ce36e0c).'), 'fixed');
+  assert.strictEqual(classifyRouting(DECISION_LINES[10]), 'staged');
+  assert.strictEqual(classifyRouting('- AUTO 23:31:55 — Step 3 Routing: materiality-floor: Test quality at tests/bin-lib/wrap-up/engine-cli.test.js:707 routed below floor (tiebreak-cant-tell) → digest. Reversibility: high.'), 'deferred');
+  assert.strictEqual(classifyRouting("- AUTO 07:05:57 — Step 3 Routing: Don't fix (refuted by tiebreak): low Architecture at plugin/bin/lib/hooks/worktree-reap.js:91 — three existing tests already fail on a quiet-set rename. Reversibility: high."), 'dismissed');
+  assert.strictEqual(classifyRouting('- AUTO 18:09:05 — Review Console: Console item review-contested-1.md (Contested findings): dismissed — superseded. Reversibility: n/a.'), null);
+  assert.strictEqual(classifyRouting(DECISION_LINES[3]), null);
+});
+
+test('AC10.1: one fixed, one staged and one unrouted location print 50%, 50% and one unrouted', () => {
+  const text = [2, 5, 7, 9, 10].map((i) => DECISION_LINES[i]).join('\n');
+  const got = outcomesOf(text);
+  assert.deepStrictEqual(pick(got, ['fixed', 'staged', 'dismissed', 'deferred', 'unrouted', 'n']), { fixed: 0.5, staged: 0.5, dismissed: 0, deferred: 0, unrouted: 1, n: 2 });
+  assert.deepStrictEqual(pick(got.allRouted, ['fixed', 'staged', 'dismissed', 'deferred', 'n']), { fixed: 0.5, staged: 0.5, dismissed: 0, deferred: 0, n: 2 });
+});
+
+test("the real decisions excerpt's outcomes", () => {
+  const got = outcomesOf(DECISIONS);
+  assert.deepStrictEqual(got.counts, { fixed: 2, staged: 1, deferred: 0, dismissed: 0 });
+  assert.strictEqual(got.unrouted, 1);
+  assert.strictEqual(got.n, 3);
+  assert.strictEqual(got.unparsed, 0);
+});
+
+test('allRouted divides by every routed location, refuted ones included', () => {
+  const got = outcomesOf(DECISIONS);
+  assert.deepStrictEqual(got.allRouted.counts, { fixed: 2, staged: 1, deferred: 0, dismissed: 1 });
+  assert.strictEqual(got.allRouted.n, 4);
+  assert.strictEqual(got.allRouted.dismissed, 0.25);
+  assert.strictEqual(got.dismissed, 0);
+});
+
+test('with nothing routed the shares are null, and an excluded unit is unparsed', () => {
+  const none = outcomesOf(DECISION_LINES[0]);
+  assert.deepStrictEqual(pick(none, ['fixed', 'n', 'unrouted']), { fixed: null, n: 0, unrouted: 1 });
+  assert.deepStrictEqual(pick(none.allRouted, ['fixed', 'n']), { fixed: null, n: 0 });
+  const got = collectOutcomes([[readVerdicts({ name: 'u', dir: fresh('unit') }, fs)]]);
+  assert.deepStrictEqual(pick(got, ['n', 'unparsed']), { n: 0, unparsed: 1 });
+});
+
+test("a location's first class by precedence wins", () => {
+  const text = [
+    'Reproduction: lens "3a" finding a.js:1 reproduced. Confirmed.',
+    "- AUTO 10:00:00 — Step 3 Routing: Don't fix (refuted by tiebreak): low X at a.js:1 — nope. Reversibility: high.",
+    '- AUTO 10:00:05 — Step 3 Routing: applied low-severity fix at a.js:1. Reversibility: high (commit abc1234).',
+  ].join('\n');
+  const got = outcomesOf(text);
+  assert.deepStrictEqual(got.counts, { fixed: 1, staged: 0, deferred: 0, dismissed: 0 });
+});
+
+// A run `name` with `agents` 3a lens agents (and one 3b agent when `with3b`) and `confirms` 3a confirmed lines in its decisions.
+const threeA = (n) => Array.from({ length: n }, (_, i) => `- AUTO 10:00:0${i} — Reproduction: lens "3a" finding f${i}.js:${i + 1} reproduced. Confirmed. Reversibility: high.`).join('\n') + '\n';
+function yieldRun(pipelines, name, { agents = 2, confirms = 0, text, with3b = false }) {
+  const items = [...Array.from({ length: agents }, (_, i) => lensItem(`${name}-a${i}`, '3a', `convention ${i}`, 'fast')), ...(with3b ? [lensItem(`${name}-b`, '3b', 'security A', 'standard')] : [])];
+  const run = writeRun(pipelines, name, { items });
+  writeDecisions(run.dir, text === undefined ? threeA(confirms) : text);
+  return run;
+}
+const yieldOf = (pipelines, n, until = null) => collectYield(walkRuns(listRuns(pipelines).runs, { since: null, until, fsImpl: fs }), { n, fsImpl: fs });
+function ac61(pipelines, with3b = false) {
+  yieldRun(pipelines, '2026-11-16T1-spec-1', { confirms: 4, with3b });
+  yieldRun(pipelines, '2026-11-17T1-spec-2', { confirms: 1, with3b });
+  yieldRun(pipelines, '2026-11-18T1-spec-3', { confirms: 2, with3b });
+}
+
+test('AC6.1: --runs 2 uses the two latest runs in which the lens ran', () => {
+  const pipelines = fresh('pl');
+  ac61(pipelines);
+  assert.deepStrictEqual(yieldOf(pipelines, 2, '2026-11-18').byLens['3a'], { runs: 2, agents: 4, confirmed: 3, rate: 0.75, unparsed: 0 });
+  assert.strictEqual(yieldOf(pipelines, 3, '2026-11-18').byLens['3a'].rate, 7 / 6);
+});
+
+test('the yield ignores --since and stops at --until', () => {
+  const pipelines = fresh('pl');
+  ac61(pipelines);
+  yieldRun(pipelines, '2026-11-20T1-spec-9', { confirms: 5 });
+  const got = collectReviews({ runs: listRuns(pipelines).runs, since: '2026-11-18', until: '2026-11-18', n: 2, roots: [] }, { fsImpl: fs });
+  const a = got.lens.yield.byLens['3a'];
+  assert.deepStrictEqual(pick(a, ['runs', 'agents', 'confirmed', 'rate']), { runs: 2, agents: 4, confirmed: 3, rate: 0.75 });
+  assert.strictEqual(got.lens.perRun.n, 1);
+});
+
+test('an unreadable run takes no yield slot and counts unparsed', () => {
+  const pipelines = fresh('pl');
+  ac61(pipelines);
+  yieldRun(pipelines, '2026-11-19T1-spec-4', { text: '- AUTO 10:00:00 — Step 1: started. Reversibility: n/a.\n' });
+  assert.deepStrictEqual(yieldOf(pipelines, 2).byLens['3a'], { runs: 2, agents: 4, confirmed: 3, rate: 0.75, unparsed: 1 });
+});
+
+test('a run with no timing.json counts unparsed for a lens it shows ran, and is passed over for one it does not', () => {
+  const pipelines = fresh('pl');
+  ac61(pipelines, true);
+  writeDecisions(path.join(pipelines, '2026-11-19T2-spec-5'), 'Reproduction: lens "3a" finding a.js:1 reproduced. Confirmed.\n');
+  const got = yieldOf(pipelines, 2).byLens;
+  assert.deepStrictEqual(pick(got['3a'], ['runs', 'agents', 'confirmed', 'unparsed']), { runs: 2, agents: 4, confirmed: 3, unparsed: 1 });
+  assert.strictEqual(got['3b'].unparsed, 0);
+});
+
+test('a run whose lens agents are unreadable is unparsed for every lens, never zero agents', () => {
+  const pipelines = fresh('pl');
+  ac61(pipelines, true);
+  const bad = writeRun(pipelines, '2026-11-19T1-spec-4', { items: [null, lensItem('c', '3a', 'convention A', 'fast')] });
+  writeDecisions(bad.dir, threeA(1));
+  const got = yieldOf(pipelines, 2).byLens;
+  assert.deepStrictEqual(pick(got['3a'], ['runs', 'agents', 'confirmed', 'unparsed']), { runs: 2, agents: 4, confirmed: 3, unparsed: 1 });
+  assert.strictEqual(got['3b'].unparsed, 1);
+});
+
+test('a multi-spec run is one yield slot, readable only when every member is', () => {
+  const pipelines = fresh('pl');
+  const parent = writeRun(pipelines, '2026-11-18T1-spec-1-2', { items: [lensItem('a0', '3a', 'convention A', 'fast'), lensItem('a1', '3a', 'convention B', 'fast')] });
+  for (const [id, confirms] of [[1, 1], [2, 2]]) {
+    const dir = path.join(parent.dir, `spec-${id}`);
+    writeDecisions(dir, threeA(confirms));
+    fs.writeFileSync(path.join(dir, 'timing.json'), JSON.stringify(STUB));
+  }
+  assert.deepStrictEqual(pick(yieldOf(pipelines, 2).byLens['3a'], ['runs', 'agents', 'confirmed']), { runs: 1, agents: 2, confirmed: 3 });
+  fs.rmSync(path.join(parent.dir, 'spec-2', 'decisions.md'));
+  assert.deepStrictEqual(yieldOf(pipelines, 2).byLens['3a'], { runs: 0, agents: 0, confirmed: 0, rate: null, unparsed: 1 });
+});
+
+test('a lens with no agents is absent; an empty window gives an empty byLens', () => {
+  const pipelines = fresh('pl');
+  ac61(pipelines);
+  assert.deepStrictEqual(Object.keys(yieldOf(pipelines, 2).byLens), ['3a']);
+  assert.deepStrictEqual(collectYield([], { n: 20 }), { runs: 20, byLens: {} });
 });
