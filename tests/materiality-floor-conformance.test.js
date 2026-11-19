@@ -441,9 +441,10 @@ const REFLECT_ROUTE_NEEDLES = [
   "never reaches the Review Console's Queue writes section",
   'A digest write that fails is staged as on `file` instead',
   'On `file`, stage it as the next paragraph describes',
+  'On `refused` or any other outcome, stage it the same way',
   '"Digest URL and count surfacing"',
 ];
-const REFLECT_ROW_NEEDLES = ['Routed first by `bin/deferral-route.js`', 'On `digest`: a digest entry, nothing staged'];
+const REFLECT_ROW_NEEDLES = ['Routed first by `bin/deferral-route.js`', 'On `digest`: a digest entry, nothing staged', 'Otherwise STAGED'];
 function reflectRouteProblems(text) {
   const para = text.split(/\n[ \t]*\n/).map((p) => p.replace(/\s+/g, ' ')).find((p) => p.includes(ROUTE_COMMAND)) || '';
   const row = text.split('\n').find((l) => l.startsWith('| Tangential idea')) || '';
@@ -614,6 +615,7 @@ const SUMMARY_SURFACING_ADOPTERS = [
   'plugin/skills/wrap-up/residue-sweep.md',
   'plugin/skills/wrap-up/leftover-routing.md',
   'plugin/skills/reflect/full-mode.md',
+  'plugin/skills/reflect/SKILL.md',
   'plugin/skills/visual-review/browser-review.md',
 ];
 
