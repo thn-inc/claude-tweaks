@@ -49,6 +49,12 @@ A probe round that needs new commits deletes the old refs (`git push origin --de
 
 Delete both `ci-probe/` refs once the evidence is recorded. Quote both run URLs, their durations and the attribution result in the PR body and the run's ledger, since the runs themselves age out.
 
+### After the merge: dispatch directly, but read the sha's state first
+
+Once the workflow is on the default branch and declares `workflow_dispatch`, no probe refs are needed: `gh workflow run <file> -f <input>=<value>` runs it. Before dispatching, read what the sha already has. `macos-release-check.yml`, `windows-regression.yml` and `test-impact-map.yml` key their dispatch concurrency group on the sha with `cancel-in-progress: false`, so a second dispatch on a sha that is already running waits behind the first, and a newer waiting run replaces an older waiting one. #5918 read the `macos-release-check` status's `state` and `target_url` on the main tip, found run 44467813539 already in flight (dispatched outside the pipeline), and adopted it instead of dispatching a duplicate.
+
+Give each outcome the workflow can report its own dispatch: a known-red sha for `failure` (run 44468325760), a malformed input for the validation stop (run 44468329814, which wrote no status). Wait on all the run ids from one background poll, as above.
+
 ### Forge semantics: a throwaway PR and issue, one body edit per variant
 
 The same rule covers GitHub's own behavior when a contract rests on it. #4199's record assumed GitHub keeps the closing link a PR makes when it is opened with `Fixes #N`. A probe disproved that before any code was written, and the plan was rebuilt on the observed table (probe PR #4234 against issue #4233).
@@ -73,6 +79,7 @@ The same rule covers GitHub's own behavior when a contract rests on it. #4199's 
 ## Reference
 
 - Workflow proven this way: `.github/workflows/windows-regression.yml` (#3316). Runs 39036270004 (clean, green) and 39036272580 (planted, red with exactly `tests/bin-lib/wrap-up/ledger-write.test.js` attributable)
+- Workflow proven by direct dispatch after merge: `.github/workflows/macos-release-check.yml` (#5918), results in one comment on #5881
 - Related skills: `windows-checkout-test-parity` (the Windows failure classes these runs exposed)
 - Origin: #3316's plan Task 4, rounds 1-3
 - Forge probe proven this way: #4199's closing-link premise (probe PR #4234, issue #4233); the guard it shaped is `plugin/bin/closing-links.js`
