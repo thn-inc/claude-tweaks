@@ -842,7 +842,7 @@ const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, de
     result = await runImplementer(ctx, deps, {});
   } catch (err) {
     if (err && typeof err.model === 'string') {
-      const detail = (err && err.message) || String(err);
+      const detail = err.message || String(err);
       // The removal note runImplementer's normal path appends, kept for the throw path too (#5915).
       const note = typeof err.testListNote === 'string' ? err.testListNote : null;
       return { status: 'fail', detail: note === null ? detail : `${detail}; ${note}`, extra: { tests: ctx.workerTestMode, model: err.model } };

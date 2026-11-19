@@ -42,6 +42,9 @@ const MODEL_REFUSED_CODE = 'DRIVER_MODEL_REFUSED';
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
+// True when the policy step marked this key's entry `invalid`.
+const isInvalidEntry = (policy, key) => Boolean(policy && policy[key] && policy[key].invalid === true);
+
 function refuse(role, why) {
   const err = new Error(`no model for driver role ${neutralize(String(role))}: ${why}`);
   err.code = MODEL_REFUSED_CODE;
@@ -68,7 +71,7 @@ function roleModel(role, policy) {
   // Both keys shape every role's resolution, so a malformed one fails the launch closed here, not
   // only in modelPolicyRefusal: an invalid model-ceiling reads as no ceiling and would launch unclamped.
   for (const key of ['model-profiles', 'model-ceiling']) {
-    if (policy && policy[key] && policy[key].invalid === true) throw refuse(role, `driver model policy invalid: ${key}`);
+    if (isInvalidEntry(policy, key)) throw refuse(role, `driver model policy invalid: ${key}`);
   }
   const resolvePolicy = {};
   const profiles = policy && policy['model-profiles'] && policy['model-profiles'].value;
@@ -86,7 +89,7 @@ function roleModel(role, policy) {
 // model key, else the first role that does not resolve.
 function modelPolicyRefusal(policy) {
   for (const key of MODEL_POLICY_KEYS) {
-    if (policy && policy[key] && policy[key].invalid === true) return `driver model policy invalid: ${key}`;
+    if (isInvalidEntry(policy, key)) return `driver model policy invalid: ${key}`;
   }
   for (const role of Object.keys(DRIVER_ROLE_PROFILES)) {
     try {
