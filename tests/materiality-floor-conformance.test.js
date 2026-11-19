@@ -1109,7 +1109,7 @@ for (const [name, file, prefix] of ROUTE_BULLETS) {
 const RULE_LABEL = '(rule `floor`) or "Digest — policy (`deferral-digest-reasons`)" (rule `policy-reason`)';
 const LABEL_SITES = [
   { rel: 'plugin/skills/review/step3-routing.md', kind: 'line', start: '- **Defer** (new work record', needle: `${RULE_LABEL} instead of` },
-  { rel: 'plugin/skills/review/step3-routing.md', kind: 'line', start: '**Below the materiality floor — the digest instead.**', needle: 'the Resolution stating why it was digested — below the materiality floor on rule `floor`, listed in policy key `deferral-digest-reasons` on rule `policy-reason`' },
+  { rel: 'plugin/skills/review/step3-routing.md', kind: 'line', start: '**A digest verdict — the digest instead.**', needle: 'the Resolution stating why it was digested — below the materiality floor on rule `floor`, listed in policy key `deferral-digest-reasons` on rule `policy-reason`' },
   { rel: 'plugin/skills/reflect/full-mode.md', kind: 'line', start: '- **Defer** (new work record, `parked`)', needle: `${RULE_LABEL} instead of "Defer — {reason}"` },
   { rel: 'plugin/skills/reflect/full-mode.md', kind: 'line', start: '- **Capture** — the insight is complex', needle: 'the same rule-matched label ("Digest — below floor" or "Digest — policy (`deferral-digest-reasons`)")' },
   { rel: 'plugin/skills/visual-review/browser-review.md', kind: 'line', start: '- **Defer** (new work record — born-ready', needle: `${RULE_LABEL} in the Recommended column` },

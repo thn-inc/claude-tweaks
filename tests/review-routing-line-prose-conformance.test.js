@@ -99,7 +99,7 @@ for (const c of CASES) {
 // #4484: the record proposal is two paragraphs, the staging steps and then their below-floor digest branch.
 // Neither is a `- **Label** —` bullet, so they get their own finder. Each paragraph is one physical line;
 // a wrapped paragraph reports every clause after the break as missing.
-const RECORD_PROPOSAL_LABELS = ['**Staging a record proposal', '**Below the materiality floor'];
+const RECORD_PROPOSAL_LABELS = ['**Staging a record proposal', '**A digest verdict'];
 
 function recordProposalParagraph() {
   const lines = md.split('\n');
