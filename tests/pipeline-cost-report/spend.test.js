@@ -1,7 +1,7 @@
 // tests/pipeline-cost-report/spend.test.js
 //
 // #5914: tools/pipeline-cost-report/spend.js prices transcript requests (max-per-message.id usage, per-family
-// price table, the Haiku long-prompt multiplier) and classifies cache re-writes by cause. Fixtures are JSONL
+// price table, the Haiku long-prompt multiplier) and classifies cache writes by cause. Fixtures are JSONL
 // written to a temp dir.
 'use strict';
 const { test, after } = require('node:test');
@@ -11,7 +11,7 @@ const os = require('os');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..', '..');
-const { PRICES, familyOf, bucketOf, priceRequest, scanTranscript, collectSpend } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'spend.js'));
+const { PRICES, isUnderRoot, familyOf, bucketOf, priceRequest, scanTranscript, collectSpend } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'spend.js'));
 
 const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pcr-'));
 after(() => fs.rmSync(DIR, { recursive: true, force: true }));
@@ -529,6 +529,17 @@ test('a session whose subagent files are all outside the window never has its pa
   assert.deepStrictEqual(opened, []);
   assert.strictEqual(r.total, 0);
   assert.strictEqual(r.unreadable, 0);
+});
+
+test('isUnderRoot matches a native Windows cwd against git\'s forward-slash root (path.win32), and keeps sibling prefixes out', () => {
+  const root = 'C:/Users/u/repo';
+  assert.ok(isUnderRoot('C:\\Users\\u\\repo', root, path.win32));
+  assert.ok(isUnderRoot('C:\\Users\\u\\repo\\.claude\\worktrees\\w1', root, path.win32));
+  assert.ok(!isUnderRoot('C:\\Users\\u\\repo-marketplace', root, path.win32));
+  assert.ok(!isUnderRoot('D:\\Users\\u\\repo', root, path.win32));
+  assert.ok(!isUnderRoot(null, root, path.win32));
+  assert.ok(isUnderRoot('/a/b/wt', '/a/b', path.posix));
+  assert.ok(!isUnderRoot('/a/b-x', '/a/b', path.posix));
 });
 
 test('a non-ENOENT error on subagents/workflows is counted unreadable', async () => {

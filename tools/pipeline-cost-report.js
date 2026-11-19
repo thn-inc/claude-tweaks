@@ -244,7 +244,7 @@ function resolveRoots(opts, deps) {
 function mainCheckoutRoot(deps) {
   const commonDir = deps.git(['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: deps.cwd }).trim();
   if (!commonDir) throw new Error('empty output');
-  return path.dirname(commonDir);
+  return path.resolve(path.dirname(commonDir));
 }
 
 function mainCheckoutPipelines(deps) {

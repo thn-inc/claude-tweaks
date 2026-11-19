@@ -9,7 +9,7 @@ node tools/pipeline-cost-report.js --since 2026-11-08 --until 2026-11-18
 ```
 
 - **Window:** UTC; `--since` and `--until` are inclusive whole days, and a message is counted by its own timestamp.
-- **Scope:** the default, the main checkout and its worktrees (`Match:` line below): a transcript counts when its working directory is `/Users/thomasholknielsen/Code Workspaces/claude-tweaks` or under it. The earlier reading used `--match claude-tweaks`, a substring of the working-directory path; it gives $19,078.41 over 206 sessions, and the extra 75 sessions and $41.43 are probe sessions run from scratchpad directories under `/private/tmp/claude-501/…claude-tweaks/` whose path contains the name. Merged pull requests are 202 either way.
+- **Scope:** the default, the main checkout and its worktrees (`Match:` line below): a transcript counts when its working directory is the main checkout or under it (the `Match:` path below is abbreviated: the home directory is written `~`). The earlier reading used `--match claude-tweaks`, a substring of the working-directory path; it gives $19,078.41 over 206 sessions, and the extra 75 sessions and $41.43 are probe sessions run from per-session scratch directories under the system temp root, whose path contains the name. Merged pull requests are 202 either way.
 - **Prices dated 2026-11-03.**
 - **Session type** is the first claude-tweaks skill a session invoked; a session that did several things is counted once. Subagent spend is attributed to its parent session's type.
 - **`<synthetic>` lines** (Claude Code's records of API errors such as a usage limit) are left out of every spend tally.
@@ -42,7 +42,7 @@ One cut differs by definition: the design's "$618 after a model switch (162 turn
 
 2026-11-08 to 2026-11-18, UTC, inclusive
 Prices dated 2026-11-03
-Match: /Users/thomasholknielsen/Code Workspaces/claude-tweaks and its worktrees
+Match: ~/Code Workspaces/claude-tweaks and its worktrees
 Session type is the first claude-tweaks skill a session invoked; a session that did several things is counted once.
 
 ## Spend

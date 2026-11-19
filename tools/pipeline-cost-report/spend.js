@@ -176,6 +176,14 @@ async function scanTranscript(file, { fsImpl = fs } = {}) {
   return out;
 }
 
+// Is `cwd` the directory `root` or inside it? `root` is normalized with the platform's resolve, because git prints
+// forward slashes on Windows (`C:/Users/u/repo`) while a transcript's cwd is native (`C:\Users\u\repo`).
+function isUnderRoot(cwd, root, pathImpl = path) {
+  if (typeof cwd !== 'string' || !cwd) return false;
+  const base = pathImpl.resolve(root);
+  return cwd === base || cwd.startsWith(base.endsWith(pathImpl.sep) ? base : base + pathImpl.sep);
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NO_SKILL = 'no skill invoked';
 const UNATTRIBUTED = 'unattributed';
@@ -241,8 +249,7 @@ async function collectSpend({ roots, since, until, match = null, root: scopeRoot
       return null;
     }
   };
-  const wanted = (cwd, slug) => (!match || (cwd || slug).includes(match))
-    && (!scopeRoot || (typeof cwd === 'string' && (cwd === scopeRoot || cwd.startsWith(scopeRoot + path.sep))));
+  const wanted = (cwd, slug) => (!match || (cwd || slug).includes(match)) && (!scopeRoot || isUnderRoot(cwd, scopeRoot));
 
   // returns how many of the requests were counted
   function tally(requests, sessionType, agent) {
@@ -348,4 +355,4 @@ async function collectSpend({ roots, since, until, match = null, root: scopeRoot
   return res;
 }
 
-module.exports = { PRICES, familyOf, bucketOf, priceRequest, scanTranscript, collectSpend };
+module.exports = { PRICES, isUnderRoot, familyOf, bucketOf, priceRequest, scanTranscript, collectSpend };
