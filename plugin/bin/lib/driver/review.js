@@ -1066,7 +1066,7 @@ async function fixRound(ctx, deps, wiring, pass) {
     const first = { worker: ctx.worker, changedFiles: ctx.changedFiles };
     const launched = await launchImplementer(ctx, deps, buildFixPrompt(confirmed));
     // runImplementer's extra carries the session on every path an envelope came back, whatever its status.
-    const sid = launched && launched.extra ? launched.extra.sessionId : undefined;
+    const sid = launched?.extra?.sessionId;
     if (typeof sid === 'string' && sid !== '') fixSessionId = sid;
     // runImplementer sets ctx.worker once an envelope came back, whatever its status.
     if (ctx.worker !== first.worker) ctx.worker = mergeWorker(first.worker, ctx.worker);

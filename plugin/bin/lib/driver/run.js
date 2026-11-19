@@ -382,9 +382,9 @@ async function settleStop(ctx, stop, record, shared, sink, deps) {
 // try/catch, so it never throws into a caller, never changes stdout or the jsonl, and never skips
 // the final line or reportInterrupt's terminate.
 function mirroredSink(sink, shared, deps) {
+  if (typeof deps.stationEvent !== 'function') return sink;
   const emit = (event) => {
     sink.emit(event);
-    if (typeof deps.stationEvent !== 'function') return;
     let mirrored = [];
     try {
       mirrored = stationEventsFor(event, { repoName: toRepoName(shared.ghRepo), runId: event.run });
