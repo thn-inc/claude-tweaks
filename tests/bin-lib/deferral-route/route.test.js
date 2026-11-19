@@ -109,6 +109,16 @@ test('refused: missing reason, non-boolean agentRaised, bad severity', () => {
     { verdict: 'digest', rule: 'floor' });
 });
 
+test('refused: the first failing check names the reason — reason, then origin, then severity', () => {
+  const reasons = DEFER_REASONS.join(', ');
+  assert.equal(routeDeferral({ deferReason: 'not-a-reason', severity: 'urgent', ...LOW, agentRaised: 'yes' }).reason,
+    `--defer-reason "not-a-reason" is not one of: ${reasons}`);
+  assert.equal(routeDeferral({ severity: 'urgent', ...LOW, agentRaised: 'yes' }).reason,
+    `--defer-reason is required; one of: ${reasons}`);
+  assert.equal(routeDeferral({ deferReason: 'genuinely-larger', severity: 'urgent', ...LOW, agentRaised: 'yes' }).reason,
+    'exactly one of --agent-raised or --human is required');
+});
+
 test('not-low: case-variant and garbage axis values file', () => {
   for (const risk of ['Low', 'zzz']) {
     assert.deepStrictEqual(routeDeferral({ deferReason: 'genuinely-larger', ...LOW, risk, agentRaised: true }),
