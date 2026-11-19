@@ -695,7 +695,7 @@ async function runImplementer(ctx, deps, opts = {}) {
   const launch = { started: false, note: null };
   let result;
   try {
-    result = await launchImplementer(ctx, deps, opts, launch);
+    result = await launchImplementerAndCheck(ctx, deps, opts, launch);
   } finally {
     // On a launcher throw too; the throw then propagates as it was.
     if (launch.started) launch.note = removeWorkerTestList(ctx, deps);
@@ -704,7 +704,7 @@ async function runImplementer(ctx, deps, opts = {}) {
   return { ...result, detail: result.detail ? `${result.detail}; ${launch.note}` : launch.note };
 }
 // runImplementer's launch and its checks; `launch.started` is set just before launchTracked is called.
-async function launchImplementer(ctx, deps, { extraPrompt = '' } = {}, launch) {
+async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '' } = {}, launch) {
   const { shared } = ctx;
   // Resolved first, so the HEAD read below stays the call immediately before the launch. Only where
   // the implementer has Bash (#5915): elsewhere it cannot run a command, so nothing is read.
