@@ -48,7 +48,7 @@ function membersOf(dir, fsImpl) {
       if (m && e.isDirectory()) members.push({ id: Number(m[1]), dir: path.join(dir, e.name) });
     }
   } catch {
-    // An unreadable archived copy keeps its timing.json read and no members.
+    // An unreadable directory has no members.
   }
   return members;
 }

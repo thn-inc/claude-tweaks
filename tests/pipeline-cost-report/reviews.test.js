@@ -443,6 +443,26 @@ test('a run resolved to its archive copy does not look for archive/archive/{name
   assert.deepStrictEqual(got.planReview.humanStops, { runs: 0, n: 0, unparsed: 1 });
 });
 
+test('a top-level multi-spec run reads its members, never the archive copy of its decisions', () => {
+  const pipelines = fresh('pl');
+  const name = '2026-11-18T1-spec-1-2';
+  const parent = writeRun(pipelines, name);
+  for (const id of [1, 2]) writeDecisions(path.join(parent.dir, `spec-${id}`), `${SETTLED}\n`);
+  writeDecisions(path.join(pipelines, 'archive', name), `${KEPT}\n`);
+  const got = taskFigures(pipelines, fresh('pr'));
+  assert.deepStrictEqual(got.planReview.humanStops, { runs: 0, n: 2, unparsed: 0 });
+});
+
+test('a top-level run with its own decisions.md never reads the archive copy', () => {
+  const pipelines = fresh('pl');
+  const name = '2026-11-18T1-spec-1';
+  const run = writeRun(pipelines, name);
+  writeDecisions(run.dir, `${SETTLED}\n`);
+  writeDecisions(path.join(pipelines, 'archive', name), `${KEPT}\n`);
+  const got = taskFigures(pipelines, fresh('pr'));
+  assert.deepStrictEqual(got.planReview.humanStops, { runs: 0, n: 1, unparsed: 0 });
+});
+
 test("a KEPT-PROMPT line in a multi-spec parent's own decisions.md is ignored", () => {
   const pipelines = fresh('pl');
   const parent = writeRun(pipelines, '2026-11-18T1-spec-1-2');
