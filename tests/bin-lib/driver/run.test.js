@@ -385,7 +385,7 @@ const ONE_NEW = 'skip-worktree or assume-unchanged newly set on 1 path(s) since 
 // The launcher's envelope for a worker that finished (worker.js's ENVELOPE_FIELDS).
 const ENVELOPE = Object.freeze({
   status: 'ok', reason: null, result: { status: 'done', title: 'Add the loop', summary: 'Adds the loop.' },
-  usage: { input_tokens: 10, output_tokens: 5 }, turns: 3, denials: [], spendOverrun: false, costUsd: 0.25, detail: null,
+  usage: { input_tokens: 10, output_tokens: 5 }, turns: 3, denials: [], spendOverrun: false, costUsd: 0.25, detail: null, sessionId: null,
 });
 
 const HEAD_SHA = 'a'.repeat(40);
@@ -1157,7 +1157,8 @@ test('claim and run-dir share one run id and write the canonical claim log', asy
   const runId = mintedRunId(h);
   const runDir = path.join(MAIN, '.claude-tweaks', 'pipelines', runId);
   const claim = calls(h, 'node', /claim-targets\.js$/)[0];
-  assert.deepEqual(claim.args.slice(1), ['--run-id', runId, '--targets', '7', '--steps', 'build,test']);
+  assert.deepEqual(claim.args.slice(1), ['--run-id', runId, '--targets', '7', '--steps', 'build,test', '--lane', 'driver']);
+  assert.deepEqual(claim.args.slice(-2), ['--lane', 'driver'], 'a driver claim names its lane');
   assert.ok(claim.args[0].endsWith(path.join('plugin', 'bin', 'claim-targets.js')));
   const mint = calls(h, 'resolveRunDir')[0].args[0];
   assert.ok(mint.now instanceof Date);
@@ -1532,7 +1533,7 @@ test('the worker step launches the implementer in the worktree with the policy c
   const mk = h.calls.findIndex((c) => c.kind === 'mkdirSync');
   assert.deepEqual(h.calls[mk].args, [path.join(runDir, 'worker'), { recursive: true }]);
   assert.ok(mk < h.calls.indexOf(workerCall(h)));
-  assert.deepEqual(ctx.worker, { title: 'Add the loop', summary: 'Adds the loop.', usage: ENVELOPE.usage, turns: 3, denials: [], costUsd: 0.25, spendOverrun: false });
+  assert.deepEqual(ctx.worker, { title: 'Add the loop', summary: 'Adds the loop.', usage: ENVELOPE.usage, turns: 3, denials: [], costUsd: 0.25, spendOverrun: false, sessionId: null });
   const line = h.lines().find((l) => l.step === 'worker');
   assert.deepEqual([line.status, line.usage, line.denials, 'model' in line], ['ok', ENVELOPE.usage, [], false]);
   assert.deepEqual([line.turns, 'spendOverrun' in line], [3, false], 'turns always; spendOverrun only when the envelope says true');
@@ -3488,6 +3489,22 @@ test('ctx.worker.spendOverrun follows the envelope', async () => {
   const over = harness({ worker: { spendOverrun: true } });
   const { ctx } = await driveCapturing(over);
   assert.equal(ctx.worker.spendOverrun, true);
+});
+
+test('the worker event carries the envelope\'s sessionId, and has no sessionId key when there is none', async () => {
+  const SID = '00000000-0000-4000-8000-000000000000';
+  const bound = harness({ worker: { sessionId: SID } });
+  const { ctx } = await driveCapturing(bound);
+  assert.equal(ctx.worker.sessionId, SID);
+  assert.equal(bound.lines().find((l) => l.step === 'worker').sessionId, SID);
+  const failed = harness({ worker: { status: 'fail', reason: 'exit', result: null, detail: 'x', sessionId: SID } });
+  await run(['#7'], failed.deps);
+  const failedLine = failed.lines().find((l) => l.step === 'worker');
+  assert.deepEqual([failedLine.status, failedLine.sessionId], ['fail', SID], 'a failed launch still names its session');
+  const plain = harness();
+  const { ctx: plainCtx } = await driveCapturing(plain);
+  assert.equal(plainCtx.worker.sessionId, null);
+  assert.ok(!('sessionId' in plain.lines().find((l) => l.step === 'worker')), 'no sessionId key when the envelope has none');
 });
 
 test('AC4.1: draft PR with base, head and an express body written from the summary as it came', async () => {
