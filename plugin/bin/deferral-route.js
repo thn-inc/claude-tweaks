@@ -57,8 +57,7 @@ function parseArgs(argv) {
       const next = argv[i + 1];
       if (next === undefined || next.startsWith('--') || next.trim() === '') {
         refuse('--run needs a value');
-        if (next === '--help') i++;
-        else if (next !== undefined && !next.startsWith('--')) i++;
+        if (next === '--help' || (next !== undefined && !next.startsWith('--'))) i++;
         continue;
       }
       i++;
