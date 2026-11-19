@@ -13,7 +13,7 @@ const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const DRIVE = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'drive.js');
 const {
   STEP_NAMES, SETTLE_STEP_NAMES, FINAL_STEP, BUDGET_STEP, STEP, OUTCOMES, STOP_CLASSES,
-  outcomeFor, neutralize, normalizeTitle, createEventSink, MERGE_STEP_NAMES,
+  outcomeFor, neutralize, normalizeTitle, createEventSink, MERGE_STEP_NAMES, WORKER_TEST_MODES,
 } = require(path.join(LIB, 'driver', 'events'));
 const { run, parseArgs, USAGE, driveRecord, newShared, interruptClass, reraiseAfterFlush } = require(path.join(LIB, 'driver', 'run'));
 const {
@@ -1662,7 +1662,9 @@ const withoutWorkerScopeReads = (cs) => {
   const first = cs.findIndex(isImplementerLaunch);
   return cs.filter((c, i) => !(i < first && isScopeReadInWt(c)));
 };
-const baselineCalls = (cs) => withoutFlagReads(withoutWorkerScopeReads(cs)).filter((c, i, a) => !isLaunchSideRead(a, i) && !isTestTreeRead(a, i) && !isBranchRead(c));
+// The worker test list file's removal check after each implementer launch (#5915): its lstat of the file itself.
+const isTestListRead = (c) => !!c && c.kind === 'lstatType' && c.args[0] === path.join(WT, '.claude-tweaks', 'pipelines', 'worker-test-files.txt');
+const baselineCalls = (cs) => withoutFlagReads(withoutWorkerScopeReads(cs)).filter((c, i, a) => !isLaunchSideRead(a, i) && !isTestTreeRead(a, i) && !isBranchRead(c) && !isTestListRead(c));
 const treeDetail = (n, named) => `the worktree differs from HEAD after the test step on ${n} path(s): ${named}`;
 // verify.js's reply that leaves `porcelain` in the tree (fx.dirty is listed once the commit has run).
 // `get` returns the harness: the script is built before `harness()` returns, so `h` is read at call time.
@@ -2142,17 +2144,18 @@ const K2 = ['detail', 'ms', 'record', 'run', 'status', 'step', 'ts'];
 const K3 = ['ciWaitMs', 'detail', 'ms', 'record', 'run', 'status', 'step', 'ts'];
 const K4 = ['ci', 'costUsd', 'denialCount', 'merge', 'ms', 'msTotal', 'msWithoutCi', 'outcome', 'pr', 'record', 'run', 'settle', 'settleFailed', 'settleRow', 'status', 'step', 'stop', 'ts', 'turns'];
 const K5 = ['costUsd', 'denials', 'detail', 'discarded', 'ms', 'record', 'reproduced', 'returned', 'run', 'status', 'step', 'ts', 'turns', 'usage'];
-// The admission line gained `authority` (#5584), the one field added since the capture.
+// The admission line gained `authority` (#5584) and the worker line `tests` (#5915), the fields added since the capture.
 const KA = ['authority', ...K0];
+const KW = [...K1, 'tests'].sort();
 const BASE_KEYS_PLAIN = [
   K0, K0, K0, KA, K0, K0,
-  K0, K1, K2, K2, K0, K0,
+  K0, KW, K2, K2, K0, K0,
   K2, K0, K0, K0, K3, K2,
   K2, K4,
 ];
 const BASE_KEYS_FIX = [
   K0, K0, K0, KA, K0, K0,
-  K0, K1, K2, K2, K0, K5,
+  K0, KW, K2, K2, K0, K5,
   K0, K2, K0, K0, K0, K3,
   K2, K2, K4,
 ];
@@ -2713,7 +2716,8 @@ const crlfRun = async (base, wtText, extra = []) => {
 test('#5267: a CRLF checkout of the unchanged scope file (different hash, equal after CRLF to LF) proceeds to verify.js', async () => {
   const h = await crlfRun('{\n  "a": 1\n}\n', '{\r\n  "a": 1\r\n}\r\n');
   assert.equal(verifyCalls(h).length, 1, 'verify runs');
-  const cat = gitCalls(h).find((c) => gitSub(c)[0] === 'cat-file');
+  // The test step's own read, after the launch: the worker test command's base-blob read (#5915) precedes it.
+  const cat = h.calls.slice(h.calls.indexOf(workerCall(h))).find((c) => c.kind === 'git' && gitSub(c)[0] === 'cat-file');
   assert.deepEqual(gitSub(cat), ['cat-file', 'blob', SCOPE_SHA]);
   assert.deepEqual(calls(h, 'readFile').map((c) => c.args[0]), [path.join(WT, SCOPE_REL)]);
 });
@@ -3932,6 +3936,8 @@ const DECL = JSON.stringify({ impact: { command: 'node tools/run-tests.js --file
 const CUT = 'node tools/run-tests.js --files-from';
 const WORKER_TEST_FILES = '.claude-tweaks/pipelines/worker-test-files.txt';
 const NO_TESTS_LINE = 'Tests: do not run tests — the driver runs the project\'s check after it commits your change.';
+const EDIT_LINE = 'Edit only the Key Files and test files.';
+const EDIT_LINE_LISTED = 'Edit only the Key Files and test files (the test list file below excepted).';
 // The scope file on origin/main, whose blob's bytes are `text`.
 const declares = (text) => [scopeSame(), [onGit('cat-file', 'blob', SCOPE_SHA), text]];
 const isCatBlob = onGit('cat-file', 'blob');
@@ -3949,6 +3955,8 @@ test('#5915 AC1: with a declared impact.command the prompt names it and no npm t
   assert.ok(opts.prompt.includes('Never run the whole suite'));
   assert.ok(!opts.prompt.split('\n').some((l) => l.startsWith('Test command: npm test')));
   assert.equal(opts.testCommand, CUT);
+  assert.ok(opts.prompt.split('\n').includes(EDIT_LINE_LISTED), 'the edit rule excepts the list file');
+  assert.ok(!opts.prompt.split('\n').includes(EDIT_LINE));
   assert.equal(h.lines().find((l) => l.step === 'test').status, 'ok', 'the run goes on to the test step');
 });
 
@@ -3958,6 +3966,8 @@ test('#5915 AC2: with no declaration the prompt says not to run tests and the la
   const opts = workerCall(h).args[0];
   assert.match(opts.prompt, /do not run tests/i);
   noDeclaration(opts);
+  assert.ok(opts.prompt.split('\n').includes(EDIT_LINE), 'the edit rule as it was');
+  assert.ok(!opts.prompt.includes('excepted'));
 });
 
 test('#5915 AC3: the composed settings never admit the whole suite', async () => {
@@ -4031,6 +4041,93 @@ test('#5915: the list file the prompt names is never staged', async () => {
   assert.ok(workerCall(h).args[0].prompt.includes(`to ${WORKER_TEST_FILES} and run \`node tools/run-tests.js --files-from {files}\``));
   const add = commitGit(h).find((c) => gitSub(c).includes('add'));
   assert.deepEqual(gitSub(add), ['--literal-pathspecs', 'add', '--', 'a.js']);
+});
+
+test('#5915: off the sandbox-probed platforms a declaration is never read: the no-tests prompt and no testCommand', async () => {
+  const h = harness({ script: [scopeIs('file'), ...declares(DECL)], deps: { platform: 'linux' } });
+  await run(['#7'], h.deps);
+  noDeclaration(workerCall(h).args[0]);
+  assert.ok(!h.calls.some(isCatBlob), 'no blob read in the whole run');
+  assert.ok(!h.calls.slice(0, h.calls.indexOf(workerCall(h))).some(blobCall('main')), 'no scope lookup before the launch');
+});
+
+test('#5915: the worker line names which path the test command took', async () => {
+  const boom = () => { throw Object.assign(new Error('fatal: bad object'), { status: 128 }); };
+  const cases = [
+    ['declared', [scopeIs('file'), ...declares(DECL)], {}],
+    ['none', [], {}],
+    ['none', declares('{}'), {}],
+    ['none', declares(JSON.stringify({ impact: { command: 'node $HOME/x.js {files}' } })), {}],
+    ['unreadable', [scopeIs('file'), scopeSame(), [isCatBlob, boom]], {}],
+    ['unreadable', [nthCall(blobCall('main'), 1, boom)], {}],
+    ['unreadable', declares('not json'), {}],
+    ['unsupported-platform', [scopeIs('file'), ...declares(DECL)], { platform: 'linux' }],
+  ];
+  for (const [i, [mode, script, deps]] of cases.entries()) {
+    const h = harness({ script, deps });
+    await run(['#7'], h.deps);
+    const worker = h.lines().find((l) => l.step === 'worker');
+    assert.deepEqual([worker.status, worker.tests], ['ok', mode], `case ${i}`);
+  }
+  assert.deepEqual(Object.values(WORKER_TEST_MODES), ['declared', 'none', 'unreadable', 'unsupported-platform']);
+});
+
+// The list file under the worktree, and script entries whose lstat answers it and its pipelines/ parent as
+// given (.claude-tweaks/ is a directory, which the test step reads too).
+const LIST_ABS = path.join(WT, '.claude-tweaks', 'pipelines', 'worker-test-files.txt');
+const listIs = (leaf, pipelines = 'directory') => [
+  [(c) => c.kind === 'lstatType' && c.args[0] === LIST_ABS, { type: leaf, code: null }],
+  [(c) => c.kind === 'lstatType' && c.args[0] === path.join(WT, '.claude-tweaks', 'pipelines'), { type: pipelines, code: null }],
+  [(c) => c.kind === 'lstatType' && c.args[0] === path.join(WT, '.claude-tweaks'), { type: 'directory', code: null }],
+];
+const LIST_NOTE = 'the worker\'s test list file .claude-tweaks/pipelines/worker-test-files.txt could not be removed';
+
+test('#5915: the list file is removed after each implementer launch, once HEAD and the flags are checked', async () => {
+  const h = harness({ script: [scopeIs('file'), ...declares(DECL), ...listIs('file')] });
+  await run(['#7'], h.deps);
+  const after = h.calls.slice(h.calls.indexOf(workerCall(h)) + 1);
+  const rm = after.findIndex((c) => c.kind === 'rmFile');
+  assert.deepEqual(after[rm].args, [LIST_ABS]);
+  assert.ok(isHeadReadInWt(after[0]) && after.slice(0, rm).some(isFlagReadInWt), 'after the HEAD and flag reads');
+  const worker = h.lines().find((l) => l.step === 'worker');
+  assert.deepEqual([worker.status, worker.detail], ['ok', undefined]);
+
+  // A symlink at the path is removed too: the unlink takes the link, never its target.
+  const link = harness({ script: [scopeIs('file'), ...declares(DECL), ...listIs('symlink')] });
+  await run(['#7'], link.deps);
+  assert.deepEqual(link.calls.filter((c) => c.kind === 'rmFile').map((c) => c.args[0]), [LIST_ABS]);
+  assert.equal(link.lines().find((l) => l.step === 'worker').detail, undefined);
+
+  const fix = fixRig({ script: [scopeIs('file'), ...declares(DECL), ...listIs('file')] });
+  assert.equal(await run(['#7'], fix.deps), 0);
+  assert.equal(fix.calls.filter((c) => c.kind === 'rmFile' && c.args[0] === LIST_ABS).length, 2, 'the fix-round launch too');
+});
+
+test('#5915: a list file that cannot be removed never changes the worker step\'s status', async () => {
+  const eacces = () => { throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }); };
+  const enoent = () => { throw Object.assign(new Error('ENOENT: gone'), { code: 'ENOENT' }); };
+  // [label, script, deps, the worker line's detail, whether an unlink is attempted]
+  const cases = [
+    ['an unlink that fails', listIs('file'), { rmFile: eacces }, LIST_NOTE, true],
+    ['an unlink that finds it gone', listIs('file'), { rmFile: enoent }, undefined, true],
+    ['an lstat that throws', [[(c) => c.kind === 'lstatType' && c.args[0] === LIST_ABS, eacces]], {}, LIST_NOTE, false],
+    ['a symlinked parent', listIs('file', 'symlink'), {}, LIST_NOTE, false],
+    ['a directory at the path', listIs('directory'), {}, LIST_NOTE, false],
+  ];
+  for (const [label, script, deps, detail, unlinks] of cases) {
+    const unlinked = [];
+    const h = harness({ script: [scopeIs('file'), ...declares(DECL), ...script], deps: { ...deps, rmFile: (p) => { unlinked.push(p); if (deps.rmFile) deps.rmFile(p); } } });
+    await run(['#7'], h.deps);
+    const worker = h.lines().find((l) => l.step === 'worker');
+    assert.deepEqual([worker.status, worker.detail], ['ok', detail], label);
+    assert.deepEqual(unlinked, unlinks ? [LIST_ABS] : [], `${label}: unlink`);
+    assert.equal(h.lines().find((l) => l.step === 'test').status, 'ok', `${label}: the record goes on`);
+  }
+  // A note joins a detail the launch already gave, after it.
+  const stopped = harness({ script: [scopeIs('file'), ...declares(DECL), ...listIs('file')], deps: { rmFile: eacces }, worker: { result: { status: 'cannot-complete', title: 't', summary: 'no room' } } });
+  await run(['#7'], stopped.deps);
+  const line = stopped.lines().find((l) => l.step === 'worker');
+  assert.deepEqual([line.status, line.detail], ['stop', `worker could not complete: no room; ${LIST_NOTE}`]);
 });
 
 // --- the push after a fix round (#5222, Task 8) ---------------------------------------

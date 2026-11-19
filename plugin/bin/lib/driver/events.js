@@ -7,6 +7,7 @@
 //
 // This module holds no step logic. It holds:
 //   - the step, outcome and stop-class constants,
+//   - the values of the worker step's `tests` field (WORKER_TEST_MODES, #5915),
 //   - the event sink (stdout line + {run-dir}/driver-events.jsonl),
 //   - the neutralizers for text the headless worker controls, so that text cannot close an
 //     issue (or backlink one), mention a user, open a code fence or an HTML comment, or break a
@@ -87,6 +88,17 @@ const OUTCOME_BY_CLASS = Object.freeze({
   [STOP_CLASSES.PRE_PUSH]: OUTCOMES.EXPRESS_ESCALATED,
   [STOP_CLASSES.BLOCKED]: OUTCOMES.BLOCKED,
   [STOP_CLASSES.NONE]: OUTCOMES.PENDING_REVIEW,
+});
+
+// The worker step's `tests` field (#5915): which path the worker's targeted test command took. `declared`:
+// origin/{ref}'s verify-scope.json gave a usable `impact.command`; `none`: no such file on origin, no
+// `impact.command`, or an unusable one; `unreadable`: a git read or the JSON parse threw; `unsupported-platform`:
+// the implementer has no Bash on this platform, so nothing was read.
+const WORKER_TEST_MODES = Object.freeze({
+  DECLARED: 'declared',
+  NONE: 'none',
+  UNREADABLE: 'unreadable',
+  UNSUPPORTED_PLATFORM: 'unsupported-platform',
 });
 
 function outcomeFor(stopClass) {
@@ -310,6 +322,6 @@ function createEventSink({ stdout, appendFile }) {
 
 module.exports = {
   CLI_TIMEOUT_MS, firstLine, errorText,
-  STEP_NAMES, SETTLE_STEP_NAMES, MERGE_STEP_NAMES, FINAL_STEP, BUDGET_STEP, STEP, OUTCOMES, STOP_CLASSES,
+  STEP_NAMES, SETTLE_STEP_NAMES, MERGE_STEP_NAMES, FINAL_STEP, BUDGET_STEP, STEP, OUTCOMES, STOP_CLASSES, WORKER_TEST_MODES,
   outcomeFor, yieldToEventLoop, neutralize, normalizeTitle, createEventSink,
 };

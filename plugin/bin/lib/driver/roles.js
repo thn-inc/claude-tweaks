@@ -45,7 +45,9 @@
 //   write/exec flags (`--test-reporter`, `--test-reporter-destination`, listed test
 //   files) run inside the same sandbox as before. The new form and the
 //   no-`testCommand` launch are both unprobed live as of this commit; the #5915 AC5
-//   driver run is the planned probe.
+//   driver run is the planned probe. For another project the rule is that project's own
+//   declared `impact.command` runner, contained by the same sandbox and read block, with
+//   that runner's write and exec flags unprobed: a stated residual the #5915 spec accepts.
 // - `sandbox.failIfUnavailable: true` comes from the documentation and was not
 //   exercised, because the sandbox was available on the probe host. A launch the CLI
 //   refuses because the sandbox is unavailable is expected to surface as
@@ -124,10 +126,12 @@
 // derived set has one of its own: when the first word or the shebang interpreter is a
 // real file directly in `<prefix>/bin`, the whole prefix is re-opened, e.g. `~/.cargo`
 // (which holds `credentials.toml`), `~/.local` (`share/`, `state/`), or `/usr/local`
-// under Intel Homebrew (`etc/`, `var/`). The driver's `npm test` derives narrow roots
-// under nvm, Homebrew, fnm and the official installer: under nvm on the probe host it
-// derives the one root `~/.nvm/versions/node/v22.23.2`, since npm's package directory
-// lies inside it and is dropped as covered. Narrowing the rule is tracked in #5320.
+// under Intel Homebrew (`etc/`, `var/`). The driver's test command was `npm test` before
+// #5915, and it derived narrow roots under nvm, Homebrew, fnm and the official installer:
+// under nvm on the probe host it derived the one root `~/.nvm/versions/node/v22.23.2`,
+// since npm's package directory lies inside it and is dropped as covered. This
+// repository's declared runner now starts with `node`, which the same derivation maps to
+// that same Node root (derived, not probed). Narrowing the rule is tracked in #5320.
 //
 // The read block, and what it rests on. Probed on Claude Code CLI 2.1.322, macOS,
 // 2026-11-12, under a subscription login with no TTY, using a test file the worker
@@ -151,7 +155,8 @@
 // derived at launch (`toolchainReadPaths`): the test command's toolchain root (the
 // directory above `bin/` of the binary's real path, else the binary's own directory)
 // plus the root of the interpreter its first word's shebang names, one level deep.
-// The shebang half exists because the driver's test command is `npm test`: npm's
+// The shebang half exists because the driver's test command was `npm test` before #5915
+// (a declared runner may start with a script too): npm's
 // real path, `…/lib/node_modules/npm/bin/npm-cli.js`, starts `#!/usr/bin/env node`,
 // and that `node` (`…/bin/node`) lies outside npm's own root. An `env` shebang is
 // parsed fail-safe: only known options are skipped, and an unknown option, `-P` or

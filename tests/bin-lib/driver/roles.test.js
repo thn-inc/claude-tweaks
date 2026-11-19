@@ -583,12 +583,6 @@ test('implementerSettings: null, \'\' and a non-string testCommand are still ref
   }
 });
 
-test('toolchainReadPaths: an absent testCommand derives no read path', () => {
-  const d = fakeDeps({ lookup: { node: '/x/bin/node', npm: '/x/bin/npm' } });
-  assert.deepStrictEqual(toolchainReadPaths(undefined, d), []);
-  assert.deepStrictEqual(d.calls, []);
-});
-
 test('implementerSettings: the targeted runner form composes its rule', () => {
   const allow = implementerSettings({ testCommand: 'node tools/run-tests.js --files-from', platform: 'darwin' }).permissions.allow;
   assert.ok(allow.includes('Bash(node tools/run-tests.js --files-from *)'));

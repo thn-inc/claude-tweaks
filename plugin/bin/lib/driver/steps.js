@@ -75,14 +75,14 @@
 // pr-checks envelope (headRunCount, trusted only when its headRefOid is that sha): a commit still
 // without one once the window has passed is recorded as `no-ci`, and an unreadable count is never `no-ci`.
 const path = require('node:path');
-const { STEP, STOP_CLASSES, neutralize, normalizeTitle, CLI_TIMEOUT_MS, firstLine, errorText } = require('./events');
+const { STEP, STOP_CLASSES, WORKER_TEST_MODES, neutralize, normalizeTitle, CLI_TIMEOUT_MS, firstLine, errorText } = require('./events');
 const { parseStatusPorcelainZ } = require('../git-z');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { gateOriginRepo, resolveRepoTarget } = require('../repo-resolve');
 const { isTimeoutError } = require('../shared-primitives');
 const { fenceFor } = require('../markdown-blocks');
 const { buildEnv } = require('./worker');
-const { assertTestCommand } = require('./roles');
+const { assertTestCommand, SANDBOX_PROBED_PLATFORMS } = require('./roles');
 const { WIN32_CLAUDE_BIN, readCeilings, launchTracked } = require('./launch');
 const { openBlockerRefs } = require('../issues/record-dependencies');
 const { hasDriverEscalationMarker } = require('./settle');
@@ -585,9 +585,9 @@ function workerPrompt(ctx, { minutes, dollars, maxLines, tests }) {
     'Key Files:',
     ...keyFiles,
     '',
-    'Edit only the Key Files and test files.',
+    tests ? 'Edit only the Key Files and test files (the test list file below excepted).' : 'Edit only the Key Files and test files.',
     tests
-      ? `Tests: run only the test files that cover what you changed, by explicit path — write their repo-relative paths, one per line, to .claude-tweaks/pipelines/worker-test-files.txt and run \`${tests.declared}\` with {files} as that path. Never run the whole suite; the driver runs the full check after you finish.`
+      ? `Tests: run only the test files that cover what you changed, by explicit path — write their repo-relative paths, one per line, to ${WORKER_TEST_LIST} and run \`${tests.declared}\` with {files} as that path. Never run the whole suite; the driver runs the full check after you finish.`
       : 'Tests: do not run tests — the driver runs the project\'s check after it commits your change.',
     `Limits: the change stays within ${maxLines} implementation lines (the diff bound check applies; deleted test lines count toward it); the launch ends at ${minutes} minutes of wall clock or $${dollars} of spend.`,
     'When you finish, report status done (or cannot-complete), a one-line commit title and a one-to-two-sentence summary.',
@@ -690,11 +690,27 @@ function newIndexFlagStop(ctx, deps) {
 // The body is shared with the review step's fix round, which appends `extraPrompt` to the same prompt.
 // HEAD is read on both sides of the launch, a launcher throw included: a moved or unreadable
 // HEAD is a `fail` naming only the shas. After an unmoved HEAD the index flags are checked, on the
-// throw path too.
-async function runImplementer(ctx, deps, { extraPrompt = '' } = {}) {
+// throw path too. Once those checks are done, the worker's test list file is removed (#5915).
+async function runImplementer(ctx, deps, opts = {}) {
+  const launch = { started: false, note: null };
+  let result;
+  try {
+    result = await launchImplementer(ctx, deps, opts, launch);
+  } finally {
+    // On a launcher throw too; the throw then propagates as it was.
+    if (launch.started) launch.note = removeWorkerTestList(ctx, deps);
+  }
+  if (launch.note === null) return result;
+  return { ...result, detail: result.detail ? `${result.detail}; ${launch.note}` : launch.note };
+}
+// runImplementer's launch and its checks; `launch.started` is set just before launchTracked is called.
+async function launchImplementer(ctx, deps, { extraPrompt = '' } = {}, launch) {
   const { shared } = ctx;
-  // Resolved first, so the HEAD read below stays the call immediately before the launch.
-  const tests = workerTestCommand(ctx, deps);
+  // Resolved first, so the HEAD read below stays the call immediately before the launch. Only where
+  // the implementer has Bash (#5915): elsewhere it cannot run a command, so nothing is read.
+  let tests = null;
+  if (SANDBOX_PROBED_PLATFORMS.includes(deps.platform)) tests = workerTestCommand(ctx, deps);
+  else ctx.workerTestMode = WORKER_TEST_MODES.UNSUPPORTED_PLATFORM;
   const ceilings = readCeilings(shared.policy);
   if (ceilings.bad) return { status: 'fail', detail: `worker ceiling not a positive number: ${ceilings.bad}` };
   const { minutes, dollars } = ceilings;
@@ -713,6 +729,7 @@ async function runImplementer(ctx, deps, { extraPrompt = '' } = {}) {
   const before = headOf(deps, ctx.wt);
   if (before === null) return { status: 'fail', detail: HEAD_BEFORE_UNREADABLE };
   let envelope;
+  launch.started = true;
   try {
     envelope = await launchTracked(shared, deps, { minutes, dollars }, {
       role: 'implementer',
@@ -775,12 +792,39 @@ async function runImplementer(ctx, deps, { extraPrompt = '' } = {}) {
   }
   return { status: 'ok', extra };
 }
-const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, (ctx, deps) => runImplementer(ctx, deps, {}));
+// The worker line also names which path the targeted test command took (`tests`, #5915).
+const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
+  const result = await runImplementer(ctx, deps, {});
+  return { ...result, extra: { ...(result.extra || {}), tests: ctx.workerTestMode } };
+});
 
 // Run artifacts the worktree may hold; never committed.
 const PIPELINES_DIR = '.claude-tweaks/pipelines';
 function isRunArtifact(p) {
   return p === PIPELINES_DIR || p.startsWith(`${PIPELINES_DIR}/`);
+}
+
+// The file the worker lists its test files in (#5915). It is untracked, so a leftover copy would make
+// merge.js's unforced `git worktree remove` fail where .gitignore does not cover the pipelines directory.
+const WORKER_TEST_LIST = `${PIPELINES_DIR}/worker-test-files.txt`;
+const WORKER_TEST_LIST_NOT_REMOVED = `the worker's test list file ${WORKER_TEST_LIST} could not be removed`;
+// Removes the list file after an implementer launch; null when it is gone or was never written, else the
+// note for the step's detail. Never throws. The worker can make either parent a symlink, so the file is
+// removed only when both are real directories: an unlink through a symlink would land outside the worktree.
+function removeWorkerTestList(ctx, deps) {
+  try {
+    const abs = path.join(ctx.wt, ...WORKER_TEST_LIST.split('/'));
+    const leaf = deps.lstatType(abs).type;
+    if (leaf === 'missing') return null;
+    if (leaf !== 'file' && leaf !== 'symlink') return WORKER_TEST_LIST_NOT_REMOVED;
+    for (const dir of ['.claude-tweaks', PIPELINES_DIR]) {
+      if (deps.lstatType(path.join(ctx.wt, ...dir.split('/'))).type !== 'directory') return WORKER_TEST_LIST_NOT_REMOVED;
+    }
+    deps.rmFile(abs);
+    return null;
+  } catch (err) {
+    return err && err.code === 'ENOENT' ? null : WORKER_TEST_LIST_NOT_REMOVED;
+  }
 }
 
 // The fail detail when git status cannot be read after the test step: fixed text, never git's words.
@@ -873,23 +917,34 @@ function scopeBaseBlob(deps, wt, ref, scopeRel) {
 // suffix and passes roles.js's assertTestCommand; null when there is no usable declaration, a git read
 // or the parse throws included. Read from the base blob by object id, never the worktree copy, so no
 // worker edit or index flag steers it. Resolved once per record and cached on ctx.workerTestCommand
-// (undefined until then), so the review fix round's relaunch gets the same answer.
+// (undefined until then), so the review fix round's relaunch gets the same answer. Which path it took
+// is set once beside it, on ctx.workerTestMode (events.js's WORKER_TEST_MODES), so a read that failed is
+// told apart from no declaration on the worker's event line.
 const FILES_SUFFIX = ' {files}';
 function workerTestCommand(ctx, deps) {
   if (ctx.workerTestCommand !== undefined) return ctx.workerTestCommand;
   let tests = null;
+  let mode = WORKER_TEST_MODES.NONE;
+  let parsed = null;
   try {
     const sha = scopeBaseBlob(deps, ctx.wt, ctx.shared.ref, '.claude-tweaks/verify-scope.json');
-    const declared = sha === null ? null : JSON.parse(String(gitIn(deps, ctx.wt, ['cat-file', 'blob', sha]))).impact.command;
-    if (typeof declared === 'string' && declared.endsWith(FILES_SUFFIX)) {
-      const command = declared.slice(0, -FILES_SUFFIX.length);
+    if (sha !== null) parsed = JSON.parse(String(gitIn(deps, ctx.wt, ['cat-file', 'blob', sha])));
+  } catch {
+    mode = WORKER_TEST_MODES.UNREADABLE;
+  }
+  const declared = parsed?.impact?.command;
+  if (typeof declared === 'string' && declared.endsWith(FILES_SUFFIX)) {
+    const command = declared.slice(0, -FILES_SUFFIX.length);
+    try {
       assertTestCommand(command);
       tests = { declared, command };
+      mode = WORKER_TEST_MODES.DECLARED;
+    } catch {
+      // An unusable command: the no-declaration path, mode `none`.
     }
-  } catch {
-    tests = null;
   }
   ctx.workerTestCommand = tests;
+  ctx.workerTestMode = mode;
   return tests;
 }
 

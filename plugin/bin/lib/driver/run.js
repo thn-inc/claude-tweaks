@@ -212,6 +212,7 @@ function newCtx(record, shared, { named = false } = {}) {
     record, named: named === true, runId: null, runDir: null, wt: null, indexFlags: null, branch: null, claimed: false, claimExit: null,
     created: { worktree: false, branch: false }, pushed: false, configWritten: false,
     pr: null, ci: null, ciWaitStartedAt: null, pushedAt: null, checkLogged: undefined, worker: null,
+    workerTestCommand: undefined, workerTestMode: undefined,
     eligibilityReasons: null, admissionReasons: null, typedCommandNote: null,
     summaryLogged: false, merge: null, events: null, eventsStdoutOnly: false, reviewer: null,
     shared,
