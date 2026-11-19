@@ -65,6 +65,11 @@ function roleModel(role, policy) {
   } else {
     throw refuse(role, 'no work profile in the role map');
   }
+  // Both keys shape every role's resolution, so a malformed one fails the launch closed here, not
+  // only in modelPolicyRefusal: an invalid model-ceiling reads as no ceiling and would launch unclamped.
+  for (const key of ['model-profiles', 'model-ceiling']) {
+    if (policy && policy[key] && policy[key].invalid === true) throw refuse(role, `driver model policy invalid: ${key}`);
+  }
   const resolvePolicy = {};
   const profiles = policy && policy['model-profiles'] && policy['model-profiles'].value;
   if (isPlainObject(profiles)) resolvePolicy['model-profiles'] = profiles;
@@ -93,11 +98,14 @@ function modelPolicyRefusal(policy) {
   return null;
 }
 
-// Launches one worker: the caller's opts plus the ceilings, the platform, the environment and, on
+// Launches one worker: the caller's opts plus the role's resolved model, the ceilings, the platform, the environment and, on
 // win32, WIN32_CLAUDE_BIN. Only the first runner call is the worker: on win32 the launcher's
 // ceiling kill runs taskkill through the same runner, and that handle must not replace the
 // worker's. shared.activeWorker is reset however the launch ends; a throw reaches the caller.
 async function launchTracked(shared, deps, { minutes, dollars }, opts) {
+  // Resolved before anything is touched: a refusal leaves the runner, the launcher and
+  // shared.activeWorker as they were. `model` follows the opts spread, so no caller can override it.
+  const model = roleModel(opts.role, shared.policy);
   let captured = false;
   const runner = (call) => {
     const handle = deps.runner(call);
@@ -110,6 +118,7 @@ async function launchTracked(shared, deps, { minutes, dollars }, opts) {
   try {
     return await deps.launchWorker({
       ...opts,
+      model,
       ceilings: { wallClockMs: minutes * 60000, spendCeiling: dollars },
       platform: deps.platform,
       env: deps.env,

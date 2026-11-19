@@ -11,7 +11,8 @@
 // detail? }) on stdout, held in memory until a step first sets ctx.runDir and from then
 // on appended to {run-dir}/driver-events.jsonl as well (events.js's sink). A step whose
 // result halts ends the record; an ok result with skip: true (a step that did not apply)
-// emits no line. Every record ends with a final line carrying the outcome word, the totals
+// emits no line, and neither does a non-ok result with noLine: true (a step that started nothing,
+// a launch-time model refusal), which still halts and becomes the record's stop. Every record ends with a final line carrying the outcome word, the totals
 // with and without the CI wait, the PR, the CI word, the worker's cost, turns and denial
 // count, and the structured stop. The outcome word is the merge result's own
 // (ctx.merge.outcome: `merged`, `armed` or `pending-review`) when the merge step ran and
@@ -429,7 +430,7 @@ async function driveWithCtx(record, shared, deps, steps, { named = false } = {})
         sink.bindRunDir(ctx.runDir);
         bound = true;
       }
-      if (result.skip !== true) sink.emit(eventFor(ctx, step.name, result, ms, deps));
+      if (result.skip !== true && result.noLine !== true) sink.emit(eventFor(ctx, step.name, result, ms, deps));
       if (result.halt) {
         stop = { name: step.name, result };
         break;

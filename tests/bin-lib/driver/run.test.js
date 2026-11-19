@@ -20,6 +20,10 @@ const {
   STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop, testTreeStop, TEST_TREE_UNREADABLE,
 } = require(path.join(LIB, 'driver', 'steps'));
 const { ENDED, STATUS_BY_ENDED } = require(path.join(LIB, 'driver', 'budget'));
+const { PROFILES } = require(path.join(LIB, 'model-profiles', 'profiles'));
+const { modelProfilesEntry } = require(path.join(LIB, 'model-profiles', 'policy-fragment'));
+const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema'));
+const M = (profile) => PROFILES[profile].model;
 const { rankNext } = require(path.join(LIB, 'dispatch', 'queue-pull'));
 // Polls taken before the first one at or past the settle window (the harness clock moves 1 per now(), ms per sleep).
 const WINDOW_POLLS = CI_SETTLE_WINDOW_MS / CI_POLL_INTERVAL_MS + 1;
@@ -345,6 +349,11 @@ const POLICY = {
   'express-driver-max-size': 'low',
   'express-driver-max-key-files': 3,
   'express-driver-max-lines': undefined,
+  // #5917's model keys, in launch.js's MODEL_POLICY_KEYS order (the step's request list ends with them): the four-role default map from the real resolver, and no
+  // model-profiles block or ceiling set.
+  'express-driver-models': resolvePolicyKeys(['express-driver-models'], { policyRaw: '' })['express-driver-models'].value,
+  'model-profiles': null,
+  'model-ceiling': null,
 };
 
 function issueFor(n) {
@@ -1524,7 +1533,7 @@ test('the worker step launches the implementer in the worktree with the policy c
   const [opts, d] = workerCall(h).args;
   assert.deepEqual({ ...opts, prompt: typeof opts.prompt }, {
     role: 'implementer', cwd: WT, prompt: 'string', ceilings: { wallClockMs: 20 * 60000, spendCeiling: 2.5 },
-    settingsDir: path.join(runDir, 'worker'), platform: 'darwin', env,
+    settingsDir: path.join(runDir, 'worker'), platform: 'darwin', env, model: M('standard'),
   });
   assert.equal('bin' in opts, false);
   assert.equal(typeof d.runner, 'function');
@@ -1634,6 +1643,94 @@ test('a worker that cannot complete stops at worker; a bad ceiling fails before 
     assert.match(f.stop.detail, new RegExp(Object.keys(policy)[0]));
     assert.equal(calls(bad, 'worker').length, 0);
   }
+});
+
+// --- the model each worker launches on (#5917) -------------------------------------------------
+
+const launchedModel = (h, role) => calls(h, 'worker').find((c) => c.args[0].role === role).args[0].model;
+// A policy reply for the model keys that carries the real resolver's entry for a malformed value.
+const modelKeyReply = (key, entry) => [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, k === key ? entry
+  : k === 'express-driver-max-lines' ? { value: POLICY['auto-merge-max-lines'], source: 'default' } : { value: POLICY[k], source: 'policy' }]))];
+
+test('AC1.1 (driver): the implementer and reviewer launches carry their default models', async () => {
+  const h = harness({ policy: { 'express-driver-review': 'on' } });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(launchedModel(h, 'implementer'), M('standard'));
+  assert.equal(launchedModel(h, 'reviewer'), M('capable'));
+});
+
+test('AC2.1 (driver): a policy row reaches the launch', async () => {
+  const h = harness({ policy: { 'express-driver-models': { ...POLICY['express-driver-models'], implementer: 'fast' } } });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(launchedModel(h, 'implementer'), M('fast'));
+});
+
+test('AC5.1 (driver): a launch-time refusal writes no worker line, the final line names the role', async () => {
+  const h = harness();
+  const shared = newShared();
+  await driveRecord(7, shared, h.deps);
+  // The pre-flight has passed for record 7; a later change to the map reaches record 8's launch only.
+  shared.policy['express-driver-models'] = { value: { reviewer: 'capable', 'merge-check': 'standard', acceptance: 'standard' }, source: 'policy' };
+  const callsBefore = h.calls.length;
+  const linesBefore = h.lines().length;
+  await driveRecord(8, shared, h.deps);
+  const calls8 = h.calls.slice(callsBefore);
+  const lines8 = h.lines().slice(linesBefore);
+  assert.equal(calls8.filter((c) => c.kind === 'worker').length, 0);
+  assert.equal(lines8.filter((l) => l.step === 'worker').length, 0);
+  assert.deepEqual(lines8.map((l) => l.step).slice(0, 4), ['policy', 'fetch', 'eligibility', 'admission']);
+  for (const step of ['claim', 'run-dir', 'worktree']) assert.ok(lines8.some((l) => l.step === step), step);
+  const final = lines8.at(-1);
+  assert.equal(final.step, FINAL_STEP);
+  assert.equal(final.stop.step, 'worker');
+  assert.equal(final.stop.class, 'pre-push');
+  assert.equal(final.stop.detail, 'no model for driver role implementer: no work profile in the role map');
+});
+
+test('a malformed frontier-run-cap never refuses a driver run', async () => {
+  const block = modelProfilesEntry('frontier-run-cap: abc\nmodel-profiles:\n  standard:\n    model: haiku\n').value;
+  const withBlock = harness({ policy: { 'model-profiles': block } });
+  assert.equal(await run(['#7'], withBlock.deps), 0);
+  assert.equal(launchedModel(withBlock, 'implementer'), M('fast'));
+  const empty = modelProfilesEntry('frontier-run-cap: abc\n').value;
+  assert.equal(empty, null);
+  const none = harness({ policy: { 'model-profiles': empty } });
+  assert.equal(await run(['#7'], none.deps), 0);
+  assert.equal(launchedModel(none, 'implementer'), M('standard'));
+});
+
+test('AC5.1 (driver): a role missing from the resolved map stops the run at the policy step, final line names it', async () => {
+  const h = harness({ policy: { 'express-driver-models': { reviewer: 'capable' } } });
+  assert.equal(await run(['#7'], h.deps), 1);
+  assert.equal(calls(h, 'worker').length, 0);
+  assert.equal(h.calls.filter((c) => c.kind === 'node' && /claim-targets\.js$/.test(c.args[0])).length, 0);
+  const final = lastLine(h);
+  assert.equal(final.outcome, 'refused');
+  assert.equal(final.stop.step, 'policy');
+  assert.equal(final.stop.detail, 'no model for driver role implementer: no work profile in the role map');
+});
+
+test('invalid model policy refuses the run before the claim', async () => {
+  const cases = [
+    ['express-driver-models', resolvePolicyKeys(['express-driver-models'], { policyRaw: 'express-driver-models:\n  implementer: turbo\n' })['express-driver-models']],
+    ['model-ceiling', resolvePolicyKeys(['model-ceiling'], { policyRaw: 'model-ceiling: huge\n' })['model-ceiling']],
+    ['model-profiles', modelProfilesEntry('model-profiles:\n  standard:\n    speed: x\n')],
+  ];
+  for (const [key, entry] of cases) {
+    assert.equal(entry.invalid, true, key);
+    const h = harness({ script: [modelKeyReply(key, entry)] });
+    assert.equal(await run(['#7'], h.deps), 1, key);
+    assert.equal(lastLine(h).stop.step, 'policy', key);
+    assert.equal(lastLine(h).stop.detail, `driver model policy invalid: ${key}`, key);
+    assert.equal(h.calls.filter((c) => c.kind === 'node' && /claim-targets\.js$/.test(c.args[0])).length, 0, key);
+  }
+});
+
+test('a model-profiles row naming a versioned id refuses at the policy step', async () => {
+  const h = harness({ policy: { 'model-profiles': { standard: { model: 'claude-sonnet-4-5' } } } });
+  assert.equal(await run(['#7'], h.deps), 1);
+  assert.equal(lastLine(h).stop.step, 'policy');
+  assert.match(lastLine(h).stop.detail, /^no model for driver role implementer: profile standard did not resolve/);
 });
 
 // HEAD reads on the implementer launch (#5414): the one before it and the one after it. The harness

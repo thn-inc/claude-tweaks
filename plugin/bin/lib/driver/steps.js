@@ -9,7 +9,7 @@
 //
 //   defineStep(name, stopClass, fn) -> { name, run }
 //     fn(ctx, deps) -> Promise<StepResult>, where
-//     StepResult = { status: 'ok'|'stop'|'fail', detail?, halt?, stopClass?, reason?, extra?, skip? }
+//     StepResult = { status: 'ok'|'stop'|'fail', detail?, halt?, stopClass?, reason?, extra?, skip?, noLine? }
 //   - `stop` means a gate said no; `fail` means a call failed.
 //   - `halt` defaults to `status !== 'ok'`; a step that must never end the record (a
 //     failed summary entry) returns `halt: false`.
@@ -18,6 +18,8 @@
 //     run.js's finalEvent maps a pre-push stop's reason through settle's toEscalationReason.
 //   - `extra` fields merge into the step's event line (never over its core fields).
 //   - `skip: true` (an ok result of a step that did not apply) emits no event line and does not halt.
+//   - `noLine: true` (a non-ok result of a step that started nothing, a launch-time model refusal) emits
+//     no event line but still halts and becomes the record's stop.
 //   - A throw from fn is `{ status: 'fail', detail: err.message }` with the step's class.
 //
 // The test step runs worker-authored code (the worker's test files) through verify.js. Containment
@@ -83,7 +85,7 @@ const { isTimeoutError } = require('../shared-primitives');
 const { fenceFor } = require('../markdown-blocks');
 const { buildEnv } = require('./worker');
 const { assertTestCommand, SANDBOX_PROBED_PLATFORMS } = require('./roles');
-const { WIN32_CLAUDE_BIN, readCeilings, launchTracked } = require('./launch');
+const { WIN32_CLAUDE_BIN, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE, readCeilings, launchTracked, modelPolicyRefusal } = require('./launch');
 const { openBlockerRefs } = require('../issues/record-dependencies');
 const { hasDriverEscalationMarker } = require('./settle');
 const { merge } = require('./merge');
@@ -116,11 +118,14 @@ const CI_SETTLE_WINDOW_MS = 2 * 60 * 1000;
 // `auto-merge-max-lines` is the express diff bound check enforces when the driver passes no --max-lines;
 // the worker's prompt states whichever bound check applies.
 // The three express-driver-max-* keys are the driver lane's bounds (#5224, laneBounds and driverLineBound).
+// The last three, express-driver-models, model-profiles and model-ceiling, are the model each worker
+// launches on (#5917, launch.js's roleModel); the policy step refuses a run whose roles do not resolve.
 const POLICY_KEYS = Object.freeze([
   'express-driver', 'express-driver-wall-clock-minutes', 'express-driver-spend-ceiling-dollars',
   'merge-sensitive-paths', 'integration-model', 'integration-branch', 'verify-suite-slots',
   'auto-merge-max-lines', 'express-driver-review',
   'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-lines',
+  ...MODEL_POLICY_KEYS,
 ]);
 // The one record read: its JSON feeds eligibility, admission, the worker and check.
 const ISSUE_JSON_FIELDS = 'number,title,body,labels,state,comments';
@@ -152,6 +157,8 @@ function defineStep(name, stopClass, fn) {
       reason: result.reason || result.status,
       extra: result.extra || {},
       skip: result.skip === true && result.status === 'ok',
+      // A refused step that wrote nothing emits no event line (run.js); an ok result never can.
+      noLine: result.noLine === true && result.status !== 'ok',
     };
   }
   return Object.freeze({ name, run: runStep });
@@ -208,6 +215,10 @@ const policyStep = defineStep(STEP.policy, STOP_CLASSES.REFUSED, async (ctx, dep
     if (lineBound.source !== 'default' && !(Number.isSafeInteger(lineBound.value) && lineBound.value >= 1)) {
       return fatal(`driver diff bound not an integer of at least 1: express-driver-max-lines (${JSON.stringify(lineBound.value)})`);
     }
+    // Every driver role's model is resolved before the claim (#5917): a role that cannot get one
+    // refuses the run here, naming the role or the key, with nothing written.
+    const modelWhy = modelPolicyRefusal(resolved);
+    if (modelWhy) return fatal(modelWhy);
     const { ref, why } = resolveIntegrationRef(resolved, mainRoot, deps);
     if (!ref) return fatal(`integration branch unresolvable: ${why}`);
     // Under --run (#5232) adopt.js cannot see the integration branch, so the check lives here, before
@@ -688,6 +699,8 @@ function newIndexFlagStop(ctx, deps) {
 // forward an interrupt to the worker's process group (headless-worker-launch, "What the
 // consumer owes").
 // The body is shared with the review step's fix round, which appends `extraPrompt` to the same prompt.
+// A model refusal (launch.js, #5917) returns a no-line `fail` at once: no process ran, so no HEAD or
+// flag re-read. Any other launcher throw keeps the HEAD/flag re-read and rethrow below.
 // HEAD is read on both sides of the launch, a launcher throw included: a moved or unreadable
 // HEAD is a `fail` naming only the shas. After an unmoved HEAD the index flags are checked, on the
 // throw path too. Once those checks are done, the worker's test list file is removed (#5915).
@@ -739,6 +752,12 @@ async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '' } = {}, l
       settingsDir,
     });
   } catch (err) {
+    // A model refusal (#5917) is thrown before any process starts: nothing ran, so nothing is swept
+    // or re-read, and the result carries noLine so the refusal writes no `worker` event line.
+    if (err && err.code === MODEL_REFUSED_CODE) {
+      launch.started = false;
+      return { status: 'fail', detail: err.message, noLine: true };
+    }
     // A launcher that throws may have moved HEAD: that is reported in place of the throw;
     // otherwise the throw is rethrown as it was.
     const headStop = headFail(before, headOf(deps, ctx.wt));

@@ -6,10 +6,12 @@ const assert = require('node:assert');
 const path = require('node:path');
 
 const lib = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
-const { roleModel, modelPolicyRefusal, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE } = require(path.join(lib, 'driver', 'launch'));
+const { roleModel, modelPolicyRefusal, launchTracked, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE } = require(path.join(lib, 'driver', 'launch'));
 const { DRIVER_ROLE_PROFILES } = require(path.join(lib, 'driver', 'roles'));
 const { PROFILES } = require(path.join(lib, 'model-profiles', 'profiles'));
 const { resolvePolicyKeys } = require(path.join(lib, 'policy-schema'));
+const { launchWorker } = require(path.join(lib, 'driver', 'worker'));
+const { scratchDir } = require('../../helpers/tmp-dir');
 const { modelProfilesEntry } = require(path.join(lib, 'model-profiles', 'policy-fragment'));
 
 const FOUR = { implementer: 'standard', reviewer: 'capable', 'merge-check': 'standard', acceptance: 'standard' };
@@ -88,4 +90,74 @@ test('modelPolicyRefusal: invalid keys, then per-role refusals, else null', () =
   assert.strictEqual(modelPolicyRefusal(policyFrom('model-ceiling: huge\n')), 'driver model policy invalid: model-ceiling');
   assert.match(modelPolicyRefusal(policyFrom('model-profiles:\n  standard:\n    model: claude-sonnet-4-5\n')),
     /^no model for driver role implementer: profile standard did not resolve \(unknown model/);
+});
+
+test('roleModel: an invalid model-profiles or model-ceiling refuses on its own, for every role', () => {
+  const cases = [
+    ['model-ceiling', policyFrom('model-ceiling: huge\n')],
+    ['model-profiles', policyFrom('model-profiles:\n  standard:\n    speed: x\n')],
+  ];
+  for (const [key, policy] of cases) {
+    assert.strictEqual(policy[key].invalid, true, key);
+    for (const role of Object.keys(DRIVER_ROLE_PROFILES)) {
+      assert.throws(() => roleModel(role, policy), refused(role, `driver model policy invalid: ${key}`), `${key} ${role}`);
+    }
+  }
+});
+
+// The real launcher with a recording runner: the argv a launchTracked call composes.
+async function composedArgs(role, policyRaw, runConfigRaw = null) {
+  let seen = null;
+  const shared = {
+    activeWorker: null,
+    policy: { ...resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw, runConfigRaw }), 'model-profiles': modelProfilesEntry(policyRaw) },
+  };
+  const deps = {
+    platform: 'linux',
+    env: {},
+    runner: (call) => { seen = call.args; return { pid: 1, kill() {}, exited: Promise.resolve({ code: 0, signal: null, stdout: '', stderr: '' }) }; },
+    launchWorker: (o, d) => launchWorker(o, d),
+  };
+  await launchTracked(shared, deps, { minutes: 1, dollars: 1 }, { role, cwd: scratchDir('launch-cwd-'), settingsDir: scratchDir('launch-settings-'), prompt: 'p' });
+  return seen;
+}
+const argModel = (args) => args[args.indexOf('--model') + 1];
+
+test('AC1.1: unset key composes --model <standard> for the implementer and <capable> for the reviewer', async () => {
+  const impl = await composedArgs('implementer', '');
+  assert.strictEqual(argModel(impl), M('standard'));
+  assert.strictEqual(impl.filter((a) => a === '--model').length, 1);
+  const rev = await composedArgs('reviewer', '');
+  assert.strictEqual(argModel(rev), M('capable'));
+  assert.strictEqual(rev.filter((a) => a === '--model').length, 1);
+});
+
+test('AC2.1: implementer: fast in policy.yml composes --model <fast>', async () => {
+  assert.strictEqual(argModel(await composedArgs('implementer', 'express-driver-models:\n  implementer: fast\n')), M('fast'));
+});
+
+test('AC2.2: the same block in config.yml composes the default model', async () => {
+  assert.strictEqual(argModel(await composedArgs('implementer', '', 'express-driver-models:\n  implementer: fast\n')), M('standard'));
+});
+
+test('AC3.1 (argv): model-ceiling standard launches the reviewer on <standard>', async () => {
+  assert.strictEqual(argModel(await composedArgs('reviewer', 'model-ceiling: standard\n')), M('standard'));
+});
+
+test('AC5.1: launchTracked refuses before any runner call', async () => {
+  let launches = 0;
+  let runs = 0;
+  const shared = { activeWorker: null, policy: policyFrom('') };
+  const deps = { platform: 'linux', env: {}, runner: () => { runs += 1; }, launchWorker: () => { launches += 1; } };
+  await assert.rejects(() => launchTracked(shared, deps, { minutes: 1, dollars: 1 }, { role: 'ghost', prompt: 'p' }),
+    (e) => e.code === MODEL_REFUSED_CODE && e.message.includes('ghost'));
+  assert.deepStrictEqual([launches, runs, shared.activeWorker], [0, 0, null]);
+});
+
+test('launchTracked: the resolved model wins over a model in the caller opts', async () => {
+  const shared = { activeWorker: null, policy: policyFrom('') };
+  let got = null;
+  const deps = { platform: 'linux', env: {}, runner: () => {}, launchWorker: (o) => { got = o; } };
+  await launchTracked(shared, deps, { minutes: 1, dollars: 1 }, { role: 'implementer', model: 'opus', prompt: 'p' });
+  assert.strictEqual(got.model, M('standard'));
 });
