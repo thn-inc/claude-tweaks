@@ -72,6 +72,8 @@ const { ghAvailable, remoteUrl, ghOptions } = require('../repo-resolve');
 const { lstatType, canonicalRealpath } = require('../path-guard');
 const { resolveAgainst } = require('../health-core/io');
 const { defaultResolvePolicy } = require('../express/policy');
+const { appendStationEvent, toRepoName } = require('../station-events/emit');
+const { stationEventsFor } = require('../station-events/driver-mirror');
 // Read through the module at call time: GH_TIMEOUT_MS is a lazy getter (a policy read).
 const sharedPrimitives = require('../shared-primitives');
 
@@ -374,10 +376,35 @@ async function settleStop(ctx, stop, record, shared, sink, deps) {
   };
 }
 
+// The sink with every emitted line also mirrored into station events (#5902) through the optional
+// deps.stationEvent (absent = no emission). The mirror runs after the real emit and inside its own
+// try/catch, so it never throws into a caller, never changes stdout or the jsonl, and never skips
+// the final line or reportInterrupt's terminate.
+function mirroredSink(sink, shared, deps) {
+  const emit = (event) => {
+    sink.emit(event);
+    if (typeof deps.stationEvent !== 'function') return;
+    let mirrored = [];
+    try {
+      mirrored = stationEventsFor(event, { repoName: toRepoName(shared.ghRepo), runId: event.run });
+    } catch {
+      // a station event is a report about the step, never part of it
+    }
+    for (const e of mirrored) {
+      try {
+        deps.stationEvent(e);
+      } catch {
+        // one failed station event drops only itself
+      }
+    }
+  };
+  return { ...sink, emit };
+}
+
 // One record through the table; resolves to `{ final, ctx }` — the final event (null when an
 // interrupt landed before its first step) and the record's context. `steps` is a test seam.
 async function driveWithCtx(record, shared, deps, steps, { named = false } = {}) {
-  const sink = createEventSink({ stdout: deps.stdout, appendFile: deps.appendFile });
+  const sink = mirroredSink(createEventSink({ stdout: deps.stdout, appendFile: deps.appendFile }), shared, deps);
   const ctx = newCtx(record, shared, { named });
   // The writer a step uses to emit sub-step lines (before its own result line) and to follow the
   // run directory when it moves; rebind(null) goes stdout-only.
@@ -713,6 +740,8 @@ const realDeps = {
   },
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
+  // #5902: the driver's step lines mirrored into {main checkout}/.claude-tweaks/station-events.jsonl.
+  stationEvent: (e) => appendStationEvent(e),
   ghAvailable: () => ghAvailable(),
   gitAvailable: () => {
     try {

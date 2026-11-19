@@ -7238,3 +7238,72 @@ test('#5232 a thrown guard is a refusal naming the error, exit 3', async () => {
   assert.deepEqual(h.out, []);
   assert.deepEqual(h.calls, []);
 });
+
+// --- #5902: driver events mirrored into station events -----------------------------------------
+
+const MIRROR_SID = 'sess-worker-5902';
+const MIRRORED_STEPS = ['worker', 'test', 'review', 'pr', 'ci', 'merge'];
+const mirrorRig = (stationEvent) => mergeHarness({
+  reconcile: archiveRunDir,
+  deps: stationEvent ? { stationEvent } : {},
+  script: [[(c) => c.kind === 'worker' && c.args[0].role === 'implementer', { ...ENVELOPE, sessionId: MIRROR_SID }]],
+});
+
+test('#5902 a merged run mirrors every work step as started + exited, and binds the worker session', async () => {
+  const seen = [];
+  const h = mirrorRig((e) => seen.push(e));
+  const { final } = await driveRecord(7, newShared(), h.deps, STEPS);
+  assert.equal(final.outcome, 'merged');
+  const stepLines = h.lines().filter((l) => MIRRORED_STEPS.includes(l.step));
+  assert.ok(stepLines.length >= 5, `the run emitted its work steps: ${stepLines.map((l) => l.step)}`);
+  for (const l of stepLines) {
+    for (const kind of ['started', 'exited']) {
+      const match = seen.filter((e) => e.kind === kind && e.payload.step === l.step && e.discriminator === `${l.step}@${l.ts}`);
+      assert.equal(match.length, 1, `${kind} for ${l.step}`);
+      assert.deepEqual([match[0].recordNumber, match[0].runId, match[0].repoName, match[0].lane], [7, MERGE_RUN_ID, 'acme/widgets', 'driver']);
+    }
+  }
+  const bound = seen.filter((e) => e.kind === 'session_bound');
+  assert.deepEqual(bound.map((e) => [e.sessionId, e.station, e.runId]), [[MIRROR_SID, 'build', MERGE_RUN_ID]]);
+  assert.deepEqual(seen.filter((e) => e.payload.substep).map((e) => [e.payload.substep, e.kind, e.outcome]),
+    [['merge-ready', 'entered', undefined], ['merge-confirm', 'exited', 'passed']]);
+});
+
+test('#5902 stdout and driver-events.jsonl are byte-identical with and without deps.stationEvent', async () => {
+  const bare = mirrorRig(null);
+  await driveRecord(7, newShared(), bare.deps, STEPS);
+  const bareFile = bare.files[path.join(MERGE_ARCHIVE, 'driver-events.jsonl')];
+  let called = 0;
+  const mirrored = mirrorRig(() => { called += 1; throw new Error('station sink down'); });
+  await driveRecord(7, newShared(), mirrored.deps, STEPS);
+  assert.ok(called > 0, 'the mirror was called');
+  assert.ok(bareFile, 'the events file exists');
+  assert.equal(mirrored.out.join(''), bare.out.join(''));
+  assert.equal(mirrored.files[path.join(MERGE_ARCHIVE, 'driver-events.jsonl')], bareFile);
+});
+
+test('#5902 an interrupted worker still writes its final line and terminates when deps.stationEvent throws', async () => {
+  const order = [];
+  let release;
+  const exited = new Promise((resolve) => { release = resolve; });
+  const handle = { pid: 99, kill: (sig) => { order.push(`kill:${sig}`); release(); }, exited };
+  let launched;
+  const started = new Promise((resolve) => { launched = resolve; });
+  let thrown = 0;
+  const h = harness({
+    deps: {
+      runner: () => handle,
+      terminate: (sig) => order.push(`terminate:${sig}`),
+      stationEvent: () => { thrown += 1; throw new Error('station sink down'); },
+    },
+    script: [[on('worker'), (c) => { c.args[1].runner({ file: 'claude' }); launched(); return exited.then(() => ENVELOPE); }]],
+  });
+  const done = run(['#7'], h.deps);
+  await started;
+  fireSoon(h, 'SIGINT');
+  assert.equal(await done, 0);
+  const lines = h.lines();
+  assert.deepEqual(lines.slice(-2).map((l) => [l.step, l.status]), [['worker', 'fail'], [FINAL_STEP, 'fail']]);
+  assert.ok(thrown >= 2, `the interrupt's worker line reached the throwing mirror: ${thrown}`);
+  assert.deepEqual(order, ['kill:SIGTERM', 'terminate:SIGINT']);
+});
