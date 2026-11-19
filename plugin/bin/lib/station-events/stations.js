@@ -92,13 +92,23 @@ function transitionsForLabel(label, direction) {
   return list.map((t) => ({ ...t }));
 }
 
-// Claim-release reason -> exited outcome of the visit the release ends.
+// Claim-release reason -> exited outcome of the visit the release ends. The families are the
+// real release vocabulary: `_shared/issue-claims.md`'s Release triggers table (`merged: spec N`,
+// `pr-opened: spec N`, `abandoned: spec N`, `failed: {gate}`, `swept: ...`), claim-targets'
+// `never-started: ...` rollback, accept-park's `awaiting-local-acceptance` (the build visit hands
+// forward into accept, so it passed) and the driver's `drive.js settle: {outcome} at {step}`.
+// An unrecognised reason stays `returned`.
 // Names are unconfirmed pending the design's Phase 0 fixtures.
+const word = (name) => new RegExp(`^${name}(?:[:\\s]|$)`);
+const RELEASE_PASSED = [word('merged'), word('pr-opened'), /^awaiting-local-acceptance$/, /^drive\.js settle: pending-review(?:\s|$)/];
+const RELEASE_ABANDONED = [word('abandoned'), word('never-started'), /^swept:/, /^drive\.js settle: refused(?:\s|$)/];
+const RELEASE_FAILED = [word('failed'), /^drive\.js settle: blocked(?:\s|$)/];
+
 function outcomeForReleaseReason(reason) {
   const r = typeof reason === 'string' ? reason : '';
-  if (r === 'merged' || r.startsWith('pr-opened')) return 'passed';
-  if (r.startsWith('never-started') || r.startsWith('swept:')) return 'abandoned';
-  if (r.startsWith('fail')) return 'failed';
+  if (RELEASE_PASSED.some((re) => re.test(r))) return 'passed';
+  if (RELEASE_ABANDONED.some((re) => re.test(r))) return 'abandoned';
+  if (RELEASE_FAILED.some((re) => re.test(r))) return 'failed';
   return 'returned';
 }
 

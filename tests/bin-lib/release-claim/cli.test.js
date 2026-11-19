@@ -591,6 +591,23 @@ test('#5902: --reason "never-started: x" records an abandoned exit; no --link ca
   assert.deepEqual(events[0].payload, { reason: 'never-started: x', link: null });
 });
 
+test('#5902: the real release reasons record the corrected outcome in the exited event', () => {
+  const cases = [
+    ['merged: spec 999', 'passed'], ['pr-opened: spec 999', 'passed'], ['abandoned: spec 999', 'abandoned'],
+    ['failed: local-ahead-of-origin', 'failed'], ['drive.js settle: pending-review at summary', 'passed'],
+    ['drive.js settle: blocked at test', 'failed'], ['drive.js settle: express-escalated at check', 'returned'],
+    ['drive.js settle: refused at admission', 'abandoned'], ['swept: issue closed', 'abandoned'],
+  ];
+  for (const [reason, outcome] of cases) {
+    const runDir = mkRun();
+    const { d } = deps({ content: live(RUN_DIR_NAME), out: [], mainRoot: rootOf(runDir) });
+    const events = withStationSpy(d);
+    assert.equal(run(['999', '--run', runDir, '--reason', reason], d), 0, reason);
+    assert.equal(events.length, 1, reason);
+    assert.equal(events[0].outcome, outcome, reason);
+  }
+});
+
 test('#5902: skipped-not-owner and already-released record no station event', () => {
   const notOwner = [];
   const { d: d1 } = deps({ content: live('2026-08-16T110000-spec-999'), out: notOwner });

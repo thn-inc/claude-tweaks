@@ -5,17 +5,39 @@ const {
   LABEL_TRANSITIONS, MERGE_SUBSTEP_TRANSITIONS,
   outcomeForReleaseReason, outcomeForDriverStatus, transitionsForLabel,
 } = require('../../../plugin/bin/lib/station-events/stations');
+const { PARK_REASON } = require('../../../plugin/bin/lib/accept/park-grammar');
+const { ABORT_REASON } = require('../../../plugin/bin/lib/claim-targets/claim-targets');
 
-test('outcomeForReleaseReason maps each reason family', () => {
-  assert.equal(outcomeForReleaseReason('merged'), 'passed');
-  assert.equal(outcomeForReleaseReason('pr-opened'), 'passed');
-  assert.equal(outcomeForReleaseReason('pr-opened:draft'), 'passed');
-  assert.equal(outcomeForReleaseReason('never-started'), 'abandoned');
-  assert.equal(outcomeForReleaseReason('swept:stale'), 'abandoned');
-  assert.equal(outcomeForReleaseReason('failed'), 'failed');
-  assert.equal(outcomeForReleaseReason('fail-test'), 'failed');
-  assert.equal(outcomeForReleaseReason('parked'), 'returned');
-  assert.equal(outcomeForReleaseReason(undefined), 'returned');
+// The strings below are the real release vocabulary: _shared/issue-claims.md's Release triggers
+// table, park-grammar.js's PARK_REASON, claim-targets.js's ABORT_REASON and settle.js's
+// `drive.js settle: {outcome} at {step}` (outcome words from driver/events.js's OUTCOME_BY_CLASS).
+test('outcomeForReleaseReason maps each real reason family', () => {
+  for (const r of ['merged: spec 5902', 'merged', 'merged PR #1627', 'pr-opened: spec 5902', 'pr-opened', 'pr-opened:draft',
+    PARK_REASON, 'drive.js settle: pending-review at summary']) {
+    assert.equal(outcomeForReleaseReason(r), 'passed', r);
+  }
+  for (const r of ['abandoned: spec 9', 'abandoned', ABORT_REASON, 'never-started', 'swept: stale claim', 'swept: issue closed', 'swept:stale',
+    'drive.js settle: refused at admission']) {
+    assert.equal(outcomeForReleaseReason(r), 'abandoned', r);
+  }
+  for (const r of ['failed: local-ahead-of-origin', 'failed: test', 'failed', 'drive.js settle: blocked at test', 'drive.js settle: blocked at claim']) {
+    assert.equal(outcomeForReleaseReason(r), 'failed', r);
+  }
+  assert.equal(outcomeForReleaseReason('drive.js settle: express-escalated at check'), 'returned');
+  for (const r of ['parked', 'fail-test', 'mergedX', 'merge', undefined, null, '']) {
+    assert.equal(outcomeForReleaseReason(r), 'returned', String(r));
+  }
+});
+
+test('outcomeForReleaseReason covers every outcome word settle.js can write', () => {
+  const { STOP_CLASSES, outcomeFor } = require('../../../plugin/bin/lib/driver/events');
+  const seen = new Set();
+  for (const cls of Object.values(STOP_CLASSES)) {
+    const word = outcomeFor(cls);
+    seen.add(outcomeForReleaseReason(`drive.js settle: ${word} at test`));
+  }
+  // Four words, four classes: passed (finished, pending review), abandoned (refused), failed (blocked), returned (escalated).
+  assert.deepEqual([...seen].sort(), ['abandoned', 'failed', 'passed', 'returned']);
 });
 
 test('outcomeForDriverStatus maps ok, fail and stop', () => {

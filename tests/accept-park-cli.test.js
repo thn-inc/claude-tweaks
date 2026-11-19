@@ -1493,7 +1493,7 @@ test('#5902: a park whose claim release returns released records one exited buil
   assert.equal(res.code, 0, res.stderr);
   const exited = rec.events.filter((e) => e.station === 'build');
   assert.deepEqual(exited, [{
-    kind: 'exited', station: 'build', outcome: 'returned', recordNumber: 7, repoName: 'o/r', lane: 'unknown', runId: RUN_ID,
+    kind: 'exited', station: 'build', outcome: 'passed', recordNumber: 7, repoName: 'o/r', lane: 'unknown', runId: RUN_ID,
     sessionId: 'sess-park', payload: { reason: 'awaiting-local-acceptance' }, discriminator: `release:${RUN_ID}`,
   }]);
 });
