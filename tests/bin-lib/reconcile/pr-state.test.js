@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -20,7 +21,7 @@ const REPO_ROOT = os.tmpdir();
 // same technique tests/bin-lib/reconcile/prune-remote.test.js already uses
 // for `git` (#820 review — pr-state.js had no test file at all before this).
 function installGhWrapper(jsonOrScript) {
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-ghwrap-'));
+  const wrapperDir = scratchDir('pr-state-ghwrap-');
   const wrapperPath = path.join(wrapperDir, 'gh');
   const body = typeof jsonOrScript === 'string' && jsonOrScript.startsWith('#!')
     ? jsonOrScript
@@ -117,7 +118,7 @@ test('resolvePrStateAsync: does not block the event loop (real concurrency, not 
   // files coexist no matter how fast or slow the machine is right now,
   // because it's an existence check, not a duration; a blocking regression
   // can never produce more than 1, for the single-threaded reason above.
-  const markerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-overlap-'));
+  const markerDir = scratchDir('pr-state-overlap-');
   const observationsPath = path.join(markerDir, 'observations');
   const wrapperScript = [
     '#!/bin/sh',
@@ -328,7 +329,7 @@ test('resolvePrStateByNumber: requests and returns mergeable/mergeStateStatus (#
   const pr = {
     number: 42, state: 'OPEN', mergedAt: null, updatedAt: '2026-01-01T00:00:00Z', mergeCommit: null, mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY',
   };
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-ghwrap-argv-'));
+  const wrapperDir = scratchDir('pr-state-ghwrap-argv-');
   const wrapperPath = path.join(wrapperDir, 'gh');
   const argvLog = path.join(wrapperDir, 'argv.log');
   fs.writeFileSync(wrapperPath, `#!/bin/sh\necho "$@" > "${argvLog}"\ncat <<'EOF'\n${JSON.stringify(pr)}\nEOF\n`);
@@ -367,7 +368,7 @@ test('resolveIssueStateByNumber: resolves the issue state by number', { skip: ST
 });
 
 test('resolveIssueStateByNumber: requests `issue view`, not `pr view`', { skip: STUB_SKIP }, () => {
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-ghwrap-issueview-'));
+  const wrapperDir = scratchDir('pr-state-ghwrap-issueview-');
   const wrapperPath = path.join(wrapperDir, 'gh');
   const argvLog = path.join(wrapperDir, 'argv.log');
   fs.writeFileSync(wrapperPath, `#!/bin/sh\necho "$@" > "${argvLog}"\ncat <<'EOF'\n${JSON.stringify({ state: 'OPEN' })}\nEOF\n`);
@@ -407,7 +408,7 @@ test('resolveIssueStateByNumber: malformed gh output -> network-failure, no thro
 // 'network-failure', and never throw (archive-merged.js's sweep and
 // github-pr-scan.md's forEach both rely on these resolvers never throwing).
 function installArgvSpy(json) {
-  const argvLog = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-ghwrap-guard-')), 'argv.log');
+  const argvLog = path.join(scratchDir('pr-state-ghwrap-guard-'), 'argv.log');
   const wrapper = installGhWrapper(`#!/bin/sh\necho "$@" >> "${argvLog}"\ncat <<'EOF'\n${JSON.stringify(json)}\nEOF\n`);
   return { called: () => fs.existsSync(argvLog), restore: wrapper.restore };
 }
@@ -526,7 +527,7 @@ const MERGED_PR_WITH_CLOSING_REFS = {
 };
 
 function installArgvLoggingGhWrapper(json) {
-  const argvLog = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-ghwrap-closing-')), 'argv.log');
+  const argvLog = path.join(scratchDir('pr-state-ghwrap-closing-'), 'argv.log');
   const { restore } = installGhWrapper(`#!/bin/sh\necho "$@" > "${argvLog}"\ncat <<'EOF'\n${JSON.stringify(json)}\nEOF\n`);
   return { argvLog, restore };
 }
@@ -566,7 +567,7 @@ const NOT_FOUND_BODY = '{"data":{"repository":{"pullRequest":null}},"errors":[{"
 
 // Fresh git repo whose origin makes repoTargetOf resolve `acme/w`.
 function makeOriginRepo(origin = 'git@github.com:acme/w.git') {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-origin-'));
+  const dir = scratchDir('pr-state-origin-');
   execFileSync('git', ['init', '-q'], { cwd: dir });
   execFileSync('git', ['remote', 'add', 'origin', origin], { cwd: dir });
   return dir;
@@ -576,7 +577,7 @@ function makeOriginRepo(origin = 'git@github.com:acme/w.git') {
 // prViewExit; `api graphql` appends one-arg-per-line argv to argvLog, prints
 // graphqlBody, and exits graphqlExit.
 function installProbeGhWrapper({ prViewStdout = '', prViewExit = 1, graphqlBody = '', graphqlExit = 1 }) {
-  const argvLog = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-probe-')), 'argv.log');
+  const argvLog = path.join(scratchDir('pr-state-probe-'), 'argv.log');
   const script = `#!/bin/sh
 if [ "$1 $2" = "pr view" ]; then
   cat <<'EOF'
@@ -666,7 +667,7 @@ test('#4794: resolvePrStatesBulk on an SSH-alias origin spawns nothing and retur
   const runner = (args) => { calls.push(args); return graphqlResponse([null]); };
   assert.equal(resolvePrStatesBulk(repo, ['feature'], { runner, gateDeps: GATE_DEPS }), 'unknown-host');
   assert.equal(calls.length, 0, 'a refused origin spawns no gh call');
-  const noOrigin = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-noorigin-'));
+  const noOrigin = scratchDir('pr-state-noorigin-');
   execFileSync('git', ['init', '-q'], { cwd: noOrigin });
   assert.equal(resolvePrStatesBulk(noOrigin, ['feature'], { runner, gateDeps: GATE_DEPS }), 'network-failure');
   assert.equal(calls.length, 0, 'an absent origin spawns no gh call either');
@@ -684,12 +685,12 @@ test('#4794: resolvePrStatesBulk on an admitted origin sends the bare owner/name
 // A gh stub that fails every call and logs its argv (one line per call), with GH_HOST deleted and
 // GH_CONFIG_DIR an empty temp dir so the developer's own gh config cannot decide the gate.
 function installFailingLoggedGh() {
-  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-faillog-'));
+  const logDir = scratchDir('pr-state-faillog-');
   const log = path.join(logDir, 'gh.log');
   const { restore: restorePath } = installGhWrapper(`#!/bin/sh\nprintf '%s\\n' "$*" >> "${log}"\nexit 1\n`);
   const saved = { GH_HOST: process.env.GH_HOST, GH_CONFIG_DIR: process.env.GH_CONFIG_DIR };
   delete process.env.GH_HOST;
-  process.env.GH_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-ghcfg-'));
+  process.env.GH_CONFIG_DIR = scratchDir('pr-state-ghcfg-');
   resetGhHostCache();
   return {
     graphqlLines: () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter((l) => l.startsWith('api graphql')) : []),

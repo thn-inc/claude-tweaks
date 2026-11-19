@@ -5,6 +5,7 @@ require('./helpers/stub-token-pass').installTokenPassStub();
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { classifyMirror } = require('../plugin/bin/lib/reconcile/classify');
@@ -223,7 +224,7 @@ test("git fetch origin {b}:{b} refuses a non-fast-forward local ref update (the 
   // never sees, via a throwaway worktree (so the checked-out branch is
   // untouched), while origin also advances independently.
   git(['checkout', '-q', '-b', 'someone-elses-work'], mainDir);
-  const scratchWorktree = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-scratch-'));
+  const scratchWorktree = scratchDir('ct-recon-scratch-');
   git(['worktree', 'add', '-q', scratchWorktree, 'main'], mainDir);
   fs.writeFileSync(path.join(scratchWorktree, 'c.txt'), 'local-only\n');
   git(['add', 'c.txt'], scratchWorktree);
@@ -252,7 +253,7 @@ test("git fetch origin {b}:{b} refuses a non-fast-forward local ref update (the 
 test('mirrorFastForward: fetch-based update not viable (branch checked out in another worktree) falls back to the original wrong-branch skip', () => {
   const { seedDir, mainDir } = pairedFixture();
   git(['checkout', '-q', '-b', 'someone-elses-work'], mainDir);
-  const otherWorktree = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-otherwt-'));
+  const otherWorktree = scratchDir('ct-recon-otherwt-');
   git(['worktree', 'add', '-q', otherWorktree, 'main'], mainDir);
 
   fs.writeFileSync(path.join(seedDir, 'b.txt'), 'two\n');
@@ -334,18 +335,18 @@ test('decideArchiveCore: PR not merged -> never archived regardless of console s
 });
 
 test('readConsoleState: absent file reads as none, not unresolved', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-console-'));
+  const dir = scratchDir('ct-recon-console-');
   assert.strictEqual(readConsoleState(dir), 'none');
 });
 
 test('readConsoleState: {resolved:true} reads as resolved', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-console-'));
+  const dir = scratchDir('ct-recon-console-');
   fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({ resolved: true }));
   assert.strictEqual(readConsoleState(dir), 'resolved');
 });
 
 test('readConsoleState: unparseable content fails closed to unresolved, never silently archived', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-console-'));
+  const dir = scratchDir('ct-recon-console-');
   fs.writeFileSync(path.join(dir, 'console.json'), '{not json');
   assert.strictEqual(readConsoleState(dir), 'unresolved');
 });
@@ -356,13 +357,13 @@ test('readConsoleState: unparseable content fails closed to unresolved, never si
 // every real console-carrying run. A non-empty `executedAt` is
 // console-execution's own completion stamp and must read as 'resolved' too.
 test('readConsoleState: {executedAt} with no resolved field reads as resolved', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-console-'));
+  const dir = scratchDir('ct-recon-console-');
   fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({ executedAt: '2026-08-20T10:00:00Z' }));
   assert.strictEqual(readConsoleState(dir), 'resolved');
 });
 
 test('readConsoleState: {} (neither resolved nor executedAt) reads as unresolved', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-console-'));
+  const dir = scratchDir('ct-recon-console-');
   fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({}));
   assert.strictEqual(readConsoleState(dir), 'unresolved');
 });
@@ -370,7 +371,7 @@ test('readConsoleState: {} (neither resolved nor executedAt) reads as unresolved
 // #1130 review: a whitespace-only executedAt is not a completion stamp — the
 // acceptance check trims before testing length, so it fails closed.
 test('readConsoleState: whitespace-only executedAt reads as unresolved', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-console-'));
+  const dir = scratchDir('ct-recon-console-');
   fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({ executedAt: '   ' }));
   assert.strictEqual(readConsoleState(dir), 'unresolved');
 });
@@ -544,7 +545,7 @@ test('localHasMerge: detached HEAD with local behind — still falls back to ori
 // --- archiveRunDir: real git fixture — the actual move/commit I/O, not just the pure decision table ---
 
 function runDirFixture() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-archive-')));
+  const root = fs.realpathSync(scratchDir('ct-recon-archive-'));
   git(['init', '-q', '--initial-branch=main'], root);
   writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
@@ -1162,7 +1163,7 @@ test('isWorktreeLocked: a path not registered in git worktree list at all is not
 // --- reconcile() orchestrator: offline degradation and model gating ---
 
 test('reconcile: local-merge project falls back to the legacy ancestry reap, skips mirror/release/archive (AC4-adjacent)', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-lm-'));
+  const dir = scratchDir('ct-recon-lm-');
   git(['init', '-q', '--initial-branch=main'], dir);
   writeIdentity(dir, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
@@ -1185,7 +1186,7 @@ test('reconcile: local-merge project falls back to the legacy ancestry reap, ski
 });
 
 test('reconcile: local-merge with no resolvable integration branch at all resolves no-remote, never crashes', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-lm-noib-'));
+  const dir = scratchDir('ct-recon-lm-noib-');
   git(['init', '-q'], dir);
   fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-model: local-merge\n');
@@ -1194,7 +1195,7 @@ test('reconcile: local-merge with no resolvable integration branch at all resolv
 });
 
 test('reconcile: no network / no remote resolves to no-remote, never crashes (AC4)', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-noremote-'));
+  const dir = scratchDir('ct-recon-noremote-');
   git(['init', '-q'], dir);
   fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
@@ -1207,7 +1208,7 @@ test('reconcile: no network / no remote resolves to no-remote, never crashes (AC
 // real reconcile() pass over a merged PR that leaves 3311 unclosed (its issue is
 // OPEN) must report the skip with the record list, not just the reason.
 test('reconcile: an archive merged-partial skip carries unclosed through to result.runs (#3503)', { skip: STUB_SKIP }, async () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-partial-')));
+  const root = fs.realpathSync(scratchDir('ct-recon-partial-'));
   git(['init', '-q', '--initial-branch=main'], root);
   writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
@@ -1254,7 +1255,7 @@ test('reconcile: an archive merged-partial skip carries unclosed through to resu
 // #3945 F6: index.js hands a tiebreak coverage skip's `missing` ids and `hint`
 // through to result.runs the same way, so the refusal names what to fix.
 test('reconcile: an archive tiebreak-coverage-missing skip carries missing and hint through to result.runs (#3945)', { skip: STUB_SKIP }, async () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-tiebreak-')));
+  const root = fs.realpathSync(scratchDir('ct-recon-tiebreak-'));
   git(['init', '-q', '--initial-branch=main'], root);
   writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
@@ -1300,13 +1301,13 @@ test('reconcile: an archive tiebreak-coverage-missing skip carries missing and h
 });
 
 test('reconcile: outside any repo resolves to no-repo, never crashes', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-norepo-'));
+  const dir = scratchDir('ct-recon-norepo-');
   const r = await reconcile({ cwd: dir });
   assert.deepStrictEqual(r.skipped, [{ check: 'all', reason: 'no-repo' }]);
 });
 
 test('reconcile: a non-canonical (dash-less) run-dir name is surfaced, never silently omitted (#848)', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-noncanon-'));
+  const dir = scratchDir('ct-recon-noncanon-');
   git(['init', '-q'], dir);
   fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
@@ -1322,7 +1323,7 @@ test('reconcile: a non-canonical (dash-less) run-dir name is surfaced, never sil
 });
 
 test('reconcile: checks filter excludes reap -> local-merge project runs nothing at all', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-checks-'));
+  const dir = scratchDir('ct-recon-checks-');
   git(['init', '-q', '--initial-branch=main'], dir);
   fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(

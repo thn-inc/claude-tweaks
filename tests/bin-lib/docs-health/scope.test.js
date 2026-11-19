@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -10,7 +11,7 @@ const { listJourneys } = require('../../../plugin/bin/lib/journey-health/scope')
 const { STALE_DAYS } = require('../../../plugin/bin/lib/docs-health/score');
 const { cleanGitEnv, initRepo, writeIdentity } = require('../../helpers/git-fixtures');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-scope-')); }
+function tmp() { return scratchDir('docs-health-scope-'); }
 
 function initGitRepo(root) {
   initRepo(root, { name: 'Test', email: 'test@test.com' });

@@ -3,6 +3,7 @@
 const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -21,7 +22,7 @@ const BASE_ENV = Object.freeze({ ...process.env });
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
 
 function mkRun(worktree, sessionId) {
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1run-'));
+  const project = scratchDir('ct-e1run-');
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.mkdirSync(run, { recursive: true });
   const state = worktree ? { status: 'active', worktree } : { status: 'active' };
@@ -33,7 +34,7 @@ function mkRun(worktree, sessionId) {
 // listRunDirs(ctx.cwd) can see siblings — mirrors two parallel /flow
 // terminals sharing one main checkout.
 function tmpProject() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1proj-'));
+  const dir = scratchDir('ct-e1proj-');
   fs.mkdirSync(path.join(dir, '.claude-tweaks', 'pipelines'), { recursive: true });
   return dir;
 }
@@ -221,7 +222,7 @@ test('ambiguity allows: no worktree assigned, non-repo dir, non-Bash tool, no ru
   const { run, state } = mkRun(null);
   assert.deepStrictEqual(pre.run({ env: BASE_ENV, input: bashInput('git commit -m "x"', wt), runDir: run, runState: state, cwd: wt }), {});
   const assigned = mkRun(wt);
-  const nonRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-nonrepo-'));
+  const nonRepo = scratchDir('ct-nonrepo-');
   assert.deepStrictEqual(pre.run({ env: BASE_ENV, input: bashInput('git commit -m "x"', nonRepo), runDir: assigned.run, runState: assigned.state, cwd: nonRepo }), {});
   assert.deepStrictEqual(pre.run({ env: BASE_ENV, input: { tool_name: 'Edit', tool_input: {}, cwd: wt }, runDir: assigned.run, runState: assigned.state, cwd: wt }), {});
   assert.deepStrictEqual(pre.run({ env: BASE_ENV, input: bashInput('git commit -m "x"', wt), runDir: null, runState: null, cwd: wt }), {});
@@ -332,7 +333,7 @@ test('deny reason substitutes CLAUDE_PLUGIN_ROOT when set, else keeps the litera
 });
 
 function linkedWorktreeOf(main) {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-wtparent-'));
+  const parent = scratchDir('ct-e1-wtparent-');
   const wt = path.join(parent, 'wt');
   execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt, '-b', `wt-branch-${path.basename(parent)}`]);
   return fs.realpathSync(wt);
@@ -550,7 +551,7 @@ test('powershell-opaque gate: policy off allows `-Command` from the main checkou
 // host git config.
 function cloneWithOrigin() {
   const origin = gitRepoWithCommit();
-  const local = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-clone-'));
+  const local = scratchDir('ct-e1-clone-');
   execFileSync('git', ['clone', '-q', origin, local]);
   const branch = execFileSync('git', ['-C', local, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim();
   return { local: fs.realpathSync(local), branch };
@@ -622,7 +623,7 @@ test('deny paths always carry exit: 0 — the deny signal is JSON permissionDeci
 });
 
 test('worktree-required: a policy file in an ancestor directory OUTSIDE the target repo does not leak in (repo-scoped, not filesystem-ancestor-scoped)', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-ancestor-'));
+  const parent = scratchDir('ct-e1-ancestor-');
   withPolicy(parent, 'worktree-always: true\n');
   const nestedRepo = path.join(parent, 'nested-repo');
   fs.mkdirSync(nestedRepo, { recursive: true });
@@ -1074,7 +1075,7 @@ test('isUntrackedOrIgnored fails closed on anything it cannot prove, and is giti
   // A path resolving outside repoRoot is a real git failure (exit 128, with
   // stderr) for check-ignore — indeterminate, not a clean negative, so it
   // must fail closed rather than being read as "not ignored".
-  const outsideRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-outside-'));
+  const outsideRepo = scratchDir('ct-e1-outside-');
   fs.writeFileSync(path.join(outsideRepo, 'x.txt'), 'x');
   assert.strictEqual(pre.isUntrackedOrIgnored(repo, path.join(outsideRepo, 'x.txt'), { env: BASE_ENV }), false,
     'a path outside repoRoot is a git fatal error, not a clean negative — fails closed');
@@ -1255,14 +1256,14 @@ test('hasMaterializeCommit: #1688 AC2 regression guard — the local default-bra
 
 test('AC9.3 hasMaterializeCommit returns false when git cannot run', () => {
   const runDir = runDirForId(MATERIALIZE_RUN_ID);
-  const missing = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-nogit-')), 'does-not-exist');
+  const missing = path.join(scratchDir('ct-e1-nogit-'), 'does-not-exist');
   assert.strictEqual(pre.hasMaterializeCommit(missing, runDir), false, 'a cwd git cannot spawn in reads as not materialized');
-  const notARepo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-norepo-')));
+  const notARepo = fs.realpathSync(scratchDir('ct-e1-norepo-'));
   assert.strictEqual(pre.hasMaterializeCommit(notARepo, runDir), false, 'git exiting 128 outside a repo reads as not materialized');
 });
 
 test('AC9.3 getMaterializedRecordNumbers returns [] on an unreadable run dir', () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-nums-')));
+  const root = fs.realpathSync(scratchDir('ct-e1-nums-'));
   const runDir = runDirForId(MATERIALIZE_RUN_ID);
   assert.deepStrictEqual(pre.getMaterializedRecordNumbers(path.join(root, 'does-not-exist'), runDir), []);
   // The run dir path is a regular file: every readdir under it fails with ENOTDIR.
@@ -1273,11 +1274,11 @@ test('AC9.3 getMaterializedRecordNumbers returns [] on an unreadable run dir', (
 });
 
 test('getMaterializedRecordNumbers walks only real spec-* directories: a spec-* symlink is skipped', { skip: process.platform === 'win32' && 'directory symlinks need privileges on Windows' }, () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-nums-')));
+  const root = fs.realpathSync(scratchDir('ct-e1-nums-'));
   const base = path.join(root, '.claude-tweaks', 'pipelines', MATERIALIZE_RUN_ID);
   fs.mkdirSync(path.join(base, 'spec-3', 'work'), { recursive: true });
   fs.writeFileSync(path.join(base, 'spec-3', 'work', '3-spec.md'), 'spec\n');
-  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-symtarget-'));
+  const elsewhere = scratchDir('ct-e1-symtarget-');
   fs.mkdirSync(path.join(elsewhere, 'work'));
   fs.writeFileSync(path.join(elsewhere, 'work', '9-spec.md'), 'spec\n');
   fs.symlinkSync(elsewhere, path.join(base, 'spec-9'), 'dir');
@@ -1378,7 +1379,7 @@ function writeHeaderFile(root, rel) {
 }
 
 test('AC1.1 getMaterializedRecordNumbers reads archived-only headers (flat and spec-{N})', () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-nums-')));
+  const root = fs.realpathSync(scratchDir('ct-e1-nums-'));
   writeHeaderFile(root, archivedHeaderRel(MATERIALIZE_RUN_ID, 'work/5-spec.md'));
   writeHeaderFile(root, archivedHeaderRel(MATERIALIZE_RUN_ID, 'spec-7/work/7-spec.md'));
   const nums = pre.getMaterializedRecordNumbers(root, runDirForId(MATERIALIZE_RUN_ID));
@@ -1386,7 +1387,7 @@ test('AC1.1 getMaterializedRecordNumbers reads archived-only headers (flat and s
 });
 
 test('AC1.1 getMaterializedRecordNumbers merges a run\'s live and archived headers by record, counting a duplicate once', () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-nums-')));
+  const root = fs.realpathSync(scratchDir('ct-e1-nums-'));
   writeHeaderFile(root, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/5-spec.md'));
   writeHeaderFile(root, archivedHeaderRel(MATERIALIZE_RUN_ID, 'work/5-spec.md')); // stale or mid-move copy
   writeHeaderFile(root, archivedHeaderRel(MATERIALIZE_RUN_ID, 'spec-6/work/6-spec.md'));
@@ -1596,7 +1597,7 @@ test('#4559: `git stash drop` from the main checkout is silent', () => {
 // machine, sibling sessions' dev servers included. The warning is run- and
 // location-independent, so every fixture runs in a plain temp dir (no git repo, no
 // policy file — which also keeps checkPowershellOpaqueCommand's deny out of the way).
-const killDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4548-'));
+const killDir = scratchDir('ct-4548-');
 const runKill = (cmd) => pre.run({ env: BASE_ENV, input: bashInput(cmd, killDir), runDir: null, runState: null, cwd: killDir });
 const assertKillWarning = (out) => {
   assert.ok(out.json, 'expected a hook response');
@@ -1890,7 +1891,7 @@ test('#3712: ceiling comes from the injected reader, not the run config', () => 
 
 test('#3712: a non-git cwd fails open even with autonomy: unattended in the run config', () => {
   const dir = consoleRun('unattended');
-  const notGit = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-nogit-')));
+  const notGit = fs.realpathSync(scratchDir('ct-nogit-'));
   const ctx = consoleCtx(dir, CONSOLE_Q);
   ctx.cwd = notGit;
   ctx.input = askInput(CONSOLE_Q, notGit);
@@ -2095,7 +2096,7 @@ after(() => {
   for (const d of movedScratch) fs.rmSync(d, { recursive: true, force: true });
 });
 function mk(prefix) {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const d = scratchDir(prefix);
   movedScratch.push(d);
   return d;
 }

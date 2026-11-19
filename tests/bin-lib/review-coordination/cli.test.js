@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { runCliSync, spawnCli } = require('../../helpers/run-cli');
@@ -14,7 +15,7 @@ function cli(args, opts = {}) {
 }
 
 function writeFixture(name, value) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-coord-'));
+  const dir = scratchDir('review-coord-');
   const p = path.join(dir, name);
   fs.writeFileSync(p, JSON.stringify(value));
   return p;
@@ -39,7 +40,7 @@ test('categorise-reproduction matches the library result exactly', () => {
 test('a relative input file resolves against the injected cwd', () => {
   const a = writeFixture('a.json', FINDINGS_A);
   const b = writeFixture('b.json', FINDINGS_B);
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'review-coord-cwd-')));
+  const dir = fs.realpathSync(scratchDir('review-coord-cwd-'));
   fs.copyFileSync(a, path.join(dir, 'a.json'));
   fs.copyFileSync(b, path.join(dir, 'b.json'));
   assert.notStrictEqual(dir, process.cwd());
@@ -131,7 +132,7 @@ function fakeDeps(cwd, mainRoot) {
 }
 
 function tmpDir(t) {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'review-coord-tb-'));
+  const d = scratchDir('review-coord-tb-');
   t.after(() => fs.rmSync(d, { recursive: true, force: true }));
   return d;
 }

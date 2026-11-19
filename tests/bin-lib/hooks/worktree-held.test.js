@@ -5,6 +5,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const {
@@ -119,7 +120,7 @@ test('holdVerdict: a probe that throws with a message equal to a dead detail is 
 });
 
 test('holdVerdict: a path that is not a worktree at all -> free', () => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'held-nowt-')));
+  const dir = fs.realpathSync(scratchDir('held-nowt-'));
   assert.equal(holdVerdict(dir), 'free');
 });
 

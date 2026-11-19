@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('node:os');
 
 const { pathToFileURL } = require('node:url');
@@ -38,7 +39,7 @@ function linkedName(dir) {
 // In-process through runCli (#5386); cwd defaults to process.cwd(), as the
 // spawned child it replaces inherited.
 async function runStatusline(input, env = {}, seedHome = () => {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-'));
+  const home = scratchDir('ct-sl-');
   try {
     seedHome(home);
     const res = await runCli(STATUSLINE, [], { env: { ...fixtureHomeEnv(home), ...env }, stdin: JSON.stringify(input) });
@@ -461,7 +462,7 @@ test('commonDirFromFs: GIT_DIR or GIT_COMMON_DIR in the env defers to git', () =
 
 // A temp dir whose `.git` FILE holds `content`; fn receives the dir.
 function withGitFile(content, fn) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-gitfile-'));
+  const dir = scratchDir('ct-sl-gitfile-');
   try {
     fs.writeFileSync(path.join(dir, '.git'), content);
     return fn(dir);
@@ -472,7 +473,7 @@ function withGitFile(content, fn) {
 
 // A fake gitdir whose `commondir` is a directory (EISDIR on read).
 function withEisdirCommondir(fn) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-eisdir-'));
+  const root = scratchDir('ct-sl-eisdir-');
   try {
     const gitdir = path.join(root, 'admin');
     fs.mkdirSync(path.join(gitdir, 'commondir'), { recursive: true });
@@ -1050,7 +1051,7 @@ test('readOriginRemote: fast:false skips the filesystem read and asks git', () =
 });
 
 test('readOriginRemote: an existing directory that is not a repo answers null (git exits non-zero)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-norepo-'));
+  const dir = scratchDir('ct-sl-norepo-');
   try {
     assert.strictEqual(sl.originUrlFromConfig(dir, READER_ENV), null);
     const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { env: READER_ENV }));
@@ -1155,7 +1156,7 @@ function readerInChild(call, p) {
 }
 
 test('commonDirFromFs: a FIFO at .git returns null promptly (git refuses it as not a regular file)', FIFO_OPTS, () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-fifo-'));
+  const dir = scratchDir('ct-sl-fifo-');
   try {
     execFileSync('mkfifo', [path.join(dir, '.git')]);
     // Real process: a blocking FIFO read would hang the test thread, so the reader runs in a child with its own timeout.
@@ -1264,7 +1265,7 @@ test('commonDirFromFs: env names match case-insensitively, as on win32', () => {
 // `~/.claude.json` (rootJson) and/or `~/.claude/.claude.json` (dotClaudeJson).
 // Caller removes the returned home.
 function makeAccountHome({ rootJson, dotClaudeJson } = {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-home-'));
+  const home = scratchDir('ct-sl-home-');
   fs.mkdirSync(path.join(home, '.claude', 'projects', 'foo'), { recursive: true });
   if (rootJson !== undefined) fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify(rootJson));
   if (dotClaudeJson !== undefined) {
@@ -1518,7 +1519,7 @@ test('colorByPct skips colors when NO_COLOR set', () => {
 // withSpecs below were structurally identical copies of this, differing
 // only in the mkdtemp prefix and the docs/plans vs specs subpath.
 function withFixtureDir(prefix, subpathSegments, files, fn) {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const cwd = scratchDir(prefix);
   const dir = path.join(cwd, ...subpathSegments);
   fs.mkdirSync(dir, { recursive: true });
   for (const [name, content] of Object.entries(files)) {
@@ -1544,7 +1545,7 @@ test('findOpenLedger returns null when no ledger files exist', () => {
 });
 
 test('findOpenLedger returns null when cwd has no docs/plans', () => {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-noplans-'));
+  const cwd = scratchDir('ct-noplans-');
   try {
     assert.strictEqual(sl.findOpenLedger(cwd), null);
   } finally {
@@ -1672,7 +1673,7 @@ test('findActiveSpec returns null when specs/ is empty', () => {
 });
 
 test('findActiveSpec returns null when specs/ does not exist', () => {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-nospecs-'));
+  const cwd = scratchDir('ct-nospecs-');
   try {
     assert.strictEqual(sl.findActiveSpec(cwd), null);
   } finally {
@@ -1853,7 +1854,7 @@ function writeSessionSegment(home, id, seg) {
 }
 
 function withSegmentHome(fn) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-seg-'));
+  const home = scratchDir('ct-sl-seg-');
   try {
     return fn(home);
   } finally {
@@ -1960,7 +1961,7 @@ test('end-to-end: NO_COLOR strips ANSI codes even at high context', async () => 
 // The in-process AC8.1 tests below share the fixture: `root` holds `dir` and
 // `home`, and `base` is process.env minus those four GIT_* names.
 async function withScriptFixture(fn) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-script-')));
+  const root = fs.realpathSync(scratchDir('ct-sl-script-'));
   const dir = path.join(root, 'proj');
   const home = path.join(root, 'home');
   fs.mkdirSync(dir);
@@ -2116,7 +2117,7 @@ test('main() with no arguments resolves 0 and renders the payload read from real
 
 // #1793 AC1: renderPorts and its toplevel-resolution helper.
 function tmpRepoDir(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return scratchDir(prefix);
 }
 function writeRegistry(home, leases) {
   fs.mkdirSync(path.join(home, '.claude-tweaks'), { recursive: true });
@@ -2224,7 +2225,7 @@ test('render launches exactly one child process — git status, no shell — in 
 });
 
 test('renderGit: unborn branch renders its name', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-unborn-'));
+  const dir = scratchDir('ct-sl-unborn-');
   try {
     execFileSync('git', ['init', '-q', '-b', 'trunk'], { cwd: dir });
     assert.strictEqual(renderGitPlain(dir), 'trunk');
@@ -2241,7 +2242,7 @@ test('renderGit: detached HEAD renders nothing', () => {
 });
 
 test('renderGit: a directory that is not a repo renders nothing', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-norepo-'));
+  const dir = scratchDir('ct-sl-norepo-');
   try {
     assert.strictEqual(renderGitPlain(dir), null);
   } finally {
@@ -2253,7 +2254,7 @@ test('rendered project and git segments are byte-identical with the fast paths o
   const GH = 'https://github.com/o/parity.git';
   const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   const inTmp = (prefix, setup) => (run) => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    const dir = scratchDir(prefix);
     try {
       setup(dir);
       return run(dir);

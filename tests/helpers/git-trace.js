@@ -14,6 +14,7 @@
 // GIT_TRACE2_EVENT is restored.
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -21,7 +22,7 @@ function warmCallStartsNoGit(warm, opts = {}) {
   const { traced = warm, track } = opts;
   const warmResult = warm();
   if (track) track(warmResult);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-gt-trace-'));
+  const dir = scratchDir('ct-gt-trace-');
   const prev = process.env.GIT_TRACE2_EVENT;
   let tracedResult;
   let files;

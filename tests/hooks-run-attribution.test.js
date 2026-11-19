@@ -17,6 +17,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -28,7 +29,7 @@ const { spawnCli } = require('./helpers/run-cli');
 const { hookEnv, runHookCli, HOOKS } = require('./helpers/hook-event');
 
 function project() {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-attr-')));
+  return fs.realpathSync(scratchDir('ct-attr-'));
 }
 
 // `id` doubles as the run-dir name's sort key — runs are selected newest-first

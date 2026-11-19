@@ -10,6 +10,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
@@ -46,7 +47,7 @@ const decl = (ci) => JSON.stringify({
 const CI_DECL = decl({ tests: { workflow: 'ci.yml', job: 'test' } });
 
 function tmpRoot(prefix = 'cwr-') {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return scratchDir(prefix);
 }
 
 function write(root, rel, text) {

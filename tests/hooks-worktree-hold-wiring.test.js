@@ -7,6 +7,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const sessionStart = require('../plugin/bin/lib/hooks/session-start');
@@ -34,7 +35,7 @@ const keys = (wt) => hold.readHolds(wt).map((e) => e.key);
 test('SessionStart in a linked worktree stamps a home hold', () => withPid(async () => {
   const main = gitRepo();
   const a = harnessWorktreeOf(main, 'wire-start');
-  const nodePathHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-hold-wire-'));
+  const nodePathHome = scratchDir('ct-hold-wire-');
   await sessionStart.run({ ...REAL, input: { session_id: 's1' }, runDir: null, runState: null, cwd: a, superpowersDeps: NO_INSTALL, nodePathHome });
   assert.deepStrictEqual(keys(a), [`s1__home__${process.pid}`]);
 }));
@@ -81,7 +82,7 @@ test('a throw out of the hold library never changes any of the four hook sites\'
     stampHoldForCwd: (wt) => sessionStart.run({
       ...REAL,
       input: { session_id: 's1' }, runDir: null, runState: null, cwd: wt, superpowersDeps: NO_INSTALL,
-      nodePathHome: fs.mkdtempSync(path.join(os.tmpdir(), 'ct-hold-throw-')),
+      nodePathHome: scratchDir('ct-hold-throw-'),
     }),
     releaseSessionHolds: (wt) => sessionEnd.run({ env: process.env, input: { session_id: 's1', reason: 'other' }, cwd: wt, ownedRun: null }),
     releaseAgentHolds: (wt) => subagentStop.run({ env: process.env, input: { session_id: 's1', agent_id: 'ag1' }, cwd: wt, ownedRun: null }),
@@ -101,11 +102,11 @@ test('SessionStart: a failed hold write leaves a worktree-hold-failed event in t
   const a = harnessWorktreeOf(main, 'wire-start-failed');
   const holdDir = hold.holdDirOf(a);
   fs.writeFileSync(holdDir, 'not a directory');
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-hold-failed-run-'));
+  const runDir = scratchDir('ct-hold-failed-run-');
   await sessionStart.run({
       ...REAL,
     input: { session_id: 's1' }, runDir: null, runState: null, cwd: a, superpowersDeps: NO_INSTALL,
-    nodePathHome: fs.mkdtempSync(path.join(os.tmpdir(), 'ct-hold-failed-home-')), ownedRun: { dir: runDir },
+    nodePathHome: scratchDir('ct-hold-failed-home-'), ownedRun: { dir: runDir },
   });
   const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
   assert.deepStrictEqual(events.filter((e) => e.type === 'worktree-hold-failed').map((e) => e.tool), ['SessionStart']);

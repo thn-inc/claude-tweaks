@@ -2,6 +2,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir, isolateTmpdir } = require('../../helpers/tmp-dir');
+isolateTmpdir('ct-iso-baseline-');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
@@ -11,7 +13,7 @@ const {
 } = require('../../../plugin/bin/lib/verify/baseline');
 
 function logFile(text) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-test-'));
+  const dir = scratchDir('baseline-test-');
   const p = path.join(dir, 'tests.log');
   fs.writeFileSync(p, text);
   return { dir, p };
@@ -35,7 +37,7 @@ const kindOf = (name) => (name.endsWith('-base-full') ? 'base-full' : (name.incl
 
 function fakes({ outcomes, existsAtBase = () => true, sameAtBase = () => true, inCheckout = () => true, throwOn = null, logs = {}, repoRoot = '/repo' }) {
   const calls = { runs: [], added: [], removed: [], batchBaseInfo: [] };
-  const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-fake-runs-'));
+  const logRoot = scratchDir('baseline-fake-runs-');
   // #5150: the scratch's HEAD is the sha its latest addWorktree call was given.
   let head = 'b'.repeat(40);
   const git = {
@@ -162,7 +164,7 @@ test('Review Focus 3: a base run killed by a signal (exitCode null) never counts
 
 test('#3063 AC2: an isolated run that times out is no evidence — the file stays attributable and is named in r.timedOut', async () => {
   const { p, dir } = logFile(SPEC(['tests/a.test.js']));
-  const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-timeout-test-'));
+  const logRoot = scratchDir('baseline-timeout-test-');
   const git = {
     repoRoot: () => '/repo',
     batchBaseInfo: (sha, files) => new Map(files.map((f) => [f, { exists: true, same: true }])),
@@ -486,7 +488,7 @@ const fileLevelBoth = (cwd, repoRoot) => fakes({
 });
 
 test('I2: a worktree nested in a checkout whose node_modules sits at an ancestor resolves deps — not baseline (#3043)', async () => {
-  const outer = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-outer-'));
+  const outer = scratchDir('baseline-outer-');
   fs.mkdirSync(path.join(outer, 'node_modules'));
   const wt = path.join(outer, '.claude', 'worktrees', 'rec');
   fs.mkdirSync(wt, { recursive: true });
@@ -507,7 +509,7 @@ test('I2: a set NODE_PATH resolves deps — a file-level failure on both sides i
 });
 
 test('file-level base failure + file-level HEAD failure but the checkout has node_modules: the scratch tree just lacks them, not baseline (#3043)', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-repo-'));
+  const root = scratchDir('baseline-repo-');
   fs.mkdirSync(path.join(root, 'node_modules'));
   const { p, dir } = logFile(FILE_LEVEL('tests/a.test.js'));
   const { git, runOne } = fakes({
@@ -528,8 +530,8 @@ test('file-level base failure + file-level HEAD failure but the checkout has nod
 // the scratch dir is realpath'd first, then reached through one deliberate
 // symlink hop, so the bug reproduces on every platform, not only macOS.
 test('#3167: a base worktree reached through a symlinked parent still classifies a same-site failure as baseline (realpath)', async () => {
-  const outer = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-head-'));
-  const realScratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-real-scratch-')));
+  const outer = scratchDir('baseline-head-');
+  const realScratch = fs.realpathSync(scratchDir('baseline-real-scratch-'));
   const wtDir = path.join(realScratch, 'wt');
   fs.mkdirSync(wtDir);
   const symParent = path.join(os.tmpdir(), `baseline-sym-scratch-${process.pid}-${Date.now()}`);
@@ -875,9 +877,9 @@ test('passing checks are ignored — only failed ones are adjudicated (#3043)', 
 });
 
 test('M1: a scratch worktree that survives cleanup is named on stderr with the manual removal command (#3043)', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-realgit-'));
+  const repo = scratchDir('baseline-realgit-');
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  const scratch = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-')), 'wt');
+  const scratch = path.join(scratchDir('ct-verify-base-'), 'wt');
   fs.mkdirSync(scratch);
   const warned = [];
   // `git worktree remove` refuses a non-worktree and the rm is a no-op, so the directory survives.
@@ -899,7 +901,7 @@ test('a working directory outside the repository root as git spells it is never 
 });
 
 test('realGit.resolveCommit reads a flag-shaped ref as a ref, never as a git option (#3043)', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-realgit-'));
+  const repo = scratchDir('baseline-realgit-');
   const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
   git('init', '-q');
   fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
@@ -911,7 +913,7 @@ test('realGit.resolveCommit reads a flag-shaped ref as a ref, never as a git opt
 });
 
 test('realGit.addWorktree removes its temp parent when `git worktree add` fails (#3043)', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-realgit-'));
+  const repo = scratchDir('baseline-realgit-');
   execFileSync('git', ['init', '-q'], { cwd: repo });
   const removed = [];
   const rg = realGit(repo, { rmSync: (dirPath, opts) => { removed.push(dirPath); fs.rmSync(dirPath, opts); } });
@@ -922,7 +924,7 @@ test('realGit.addWorktree removes its temp parent when `git worktree add` fails 
 });
 
 test('realGit.batchBaseInfo: existence and sameness for several files in one pass, root passed in rather than re-resolved (#3070)', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-realgit-'));
+  const repo = scratchDir('baseline-realgit-');
   const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
   git('init', '-q');
   fs.mkdirSync(path.join(repo, 'tests'));
@@ -940,7 +942,7 @@ test('realGit.batchBaseInfo: existence and sameness for several files in one pas
 });
 
 test('realGit.batchBaseInfo: a file present at base but missing from the working tree is same:false, never a thrown batch error (#3070)', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-realgit-'));
+  const repo = scratchDir('baseline-realgit-');
   const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
   git('init', '-q');
   fs.writeFileSync(path.join(repo, 'a.test.js'), 'one\n');
@@ -1043,13 +1045,13 @@ test('realGit.listWorktrees reads real `git worktree list` output, and findStale
   // that `git worktree list` reports already resolved — an unresolved
   // mkdtemp path would spuriously mismatch (same note as cli-helpers.js's own
   // tmpDir() helper).
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-realgit-')));
+  const repo = fs.realpathSync(scratchDir('baseline-realgit-'));
   execFileSync('git', ['init', '-q'], { cwd: repo });
   execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: repo });
-  const normalWt = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-normal-wt-')));
+  const normalWt = fs.realpathSync(scratchDir('baseline-normal-wt-'));
   fs.rmdirSync(normalWt);
   execFileSync('git', ['worktree', 'add', '--detach', normalWt, 'HEAD'], { cwd: repo });
-  const staleParent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-')));
+  const staleParent = fs.realpathSync(scratchDir('ct-verify-base-'));
   const staleWt = path.join(staleParent, 'wt');
   execFileSync('git', ['worktree', 'add', '--detach', staleWt, 'HEAD'], { cwd: repo });
   const rg = realGit(repo);
@@ -1066,7 +1068,7 @@ test('realGit.listWorktrees reads real `git worktree list` output, and findStale
 });
 
 test('realGit.listWorktrees returns an empty list rather than throwing outside a git repository (#3064)', () => {
-  const notARepo = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-not-a-repo-'));
+  const notARepo = scratchDir('baseline-not-a-repo-');
   assert.deepStrictEqual(realGit(notARepo).listWorktrees(), []);
 });
 
@@ -1127,7 +1129,7 @@ test('#3153 finding 2: an unmatched entry naming only a path absent from the che
 });
 
 test('#3153: realGit().inCheckout is true only for a relative path present under the given directory', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-incheckout-'));
+  const root = scratchDir('baseline-incheckout-');
   fs.mkdirSync(path.join(root, 'tests'));
   fs.writeFileSync(path.join(root, 'tests', 'a.test.js'), '');
   const g = realGit(root);
@@ -1578,7 +1580,7 @@ const SYMLINK_POSIX_ONLY = { skip: process.platform === 'win32' && 'symlink fixt
 const fallbackLine = (reason) => `verify.js: baseline scratch: the per-slot path is unavailable (${reason}) — using a fresh ct-verify-base-* path for this run\n`;
 function slotFixture(t) {
   const made = [];
-  const mk = (prefix) => { const d = realp(fs.mkdtempSync(path.join(os.tmpdir(), prefix))); made.push(d); return d; };
+  const mk = (prefix) => { const d = realp(scratchDir(prefix)); made.push(d); return d; };
   const repo = mk('baseline-slot-repo-');
   const tmpdir = mk('baseline-slot-tmp-');
   const S = mk('baseline-slot-lock-');

@@ -2,13 +2,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('../../../tests/helpers/tmp-dir');
 const path = require('node:path');
 const os = require('node:os');
 
 const { checkVersion, checkAssertions, replayFixtures, checkContentPins, isContentPinned, splitGlobPattern } = require('../checks');
 
 function tmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'upstream-drift-checks-'));
+  return scratchDir('upstream-drift-checks-');
 }
 
 function writeFile(root, relPath, content) {

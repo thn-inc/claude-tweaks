@@ -5,6 +5,7 @@
 // pinned is made once. The env is built per call, never cached: a template build appends
 // maintenance-off keys to process.env, and an early snapshot would miss them.
 const fs = require('fs');
+const { scratchDir } = require('./tmp-dir');
 const os = require('os');
 const path = require('path');
 const { fixtureGit } = require('./git-fixtures');
@@ -12,7 +13,7 @@ const { fixtureGit } = require('./git-fixtures');
 let emptyConfig;
 function emptyGitConfig() {
   if (!emptyConfig) {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-gt-cfg-'));
+    const dir = scratchDir('ct-gt-cfg-');
     emptyConfig = path.join(dir, 'empty');
     fs.writeFileSync(emptyConfig, '');
     process.on('exit', () => fs.rmSync(dir, { recursive: true, force: true }));

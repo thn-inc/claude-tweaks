@@ -12,6 +12,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -23,7 +24,7 @@ const journeyHealth = require(path.join(ROOT, 'plugin', 'bin', 'journey-health.j
 const docsHealth = require(path.join(ROOT, 'plugin', 'bin', 'docs-health.js'));
 
 function tmpRoot(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return scratchDir(prefix);
 }
 
 // churn-report reads durable state (readDurableState(root).runs) BEFORE its
@@ -36,9 +37,9 @@ function tmpRoot(prefix) {
 // createDurableState(skillName, ...) reads/writes runs.json under).
 function tmpGitRootWithOneRun(prefix, skillName) {
   const root = tmpRoot(prefix);
-  const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}bare-`));
+  const bareDir = scratchDir(`${prefix}bare-`);
   execFileSync('git', ['init', '--bare', '-q', bareDir]);
-  const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}seed-`));
+  const seedDir = scratchDir(`${prefix}seed-`);
   execFileSync('git', ['init', '-q', seedDir]);
   execFileSync('git', ['-C', seedDir, 'checkout', '-q', '-b', 'health-state']);
   fs.mkdirSync(path.join(seedDir, skillName), { recursive: true });

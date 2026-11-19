@@ -8,6 +8,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
@@ -51,7 +52,7 @@ test('reject: whitespace-only --run value degrades the same as empty', () => {
 
 test('accept: --run outside any checkout; nonexistent dir still exits 1 with the pre-existing message (AC 5)', () => {
   const main = gitRepo();
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'rpol-out-'));
+  const outside = scratchDir('rpol-out-');
   const ok = runResolver(['--run', outside, 'autonomy'], main);
   assert.strictEqual(ok.status, 0, ok.stderr);
   const missing = runResolver(['--run', path.join(outside, 'no-such'), 'autonomy'], main);
@@ -90,7 +91,7 @@ test('reject: --run inside an unrelated second repo (AC 10)', () => {
 });
 
 test('reject: no-repo-root cwd with --run inside some checkout — distinct message (AC 6)', () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'rpol-norepo-'));
+  const bare = scratchDir('rpol-norepo-');
   const repo = gitRepo();
   const res = runResolver(['--run', path.join(repo, 'run'), 'autonomy'], bare);
   assert.strictEqual(res.status, 1);

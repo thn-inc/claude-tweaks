@@ -7,6 +7,8 @@ const {
 } = require('../plugin/bin/lib/hooks/worktree-reap');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir, isolateTmpdir } = require('./helpers/tmp-dir');
+isolateTmpdir('ct-iso-hooks-worktree-reap-');
 const path = require('path');
 const { gitRepo, linkedWorktreeOf, harnessWorktreeOf } = require('./helpers/git-fixtures');
 
@@ -586,7 +588,7 @@ test('#1793: a removed path with no lease is a no-op release with no note', () =
   // registry.release() itself no-ops for an unknown path (#1791 AC6) — the
   // real release function proves the "no note" half of this without a fake.
   const { release } = require('../plugin/bin/lib/ports/registry');
-  const home = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ct-wt-ports-home-'));
+  const home = scratchDir('ct-wt-ports-home-');
   const res = reapWorktrees({ cwd: main, integration: base, releasePorts: (p) => release(p, { home }) });
   assert.deepStrictEqual(res.reaped, [wt]);
   assert.deepStrictEqual(res.portsRelease, []);

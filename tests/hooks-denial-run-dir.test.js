@@ -6,6 +6,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const ctxLib = require('../plugin/bin/lib/hooks/context');
@@ -27,7 +28,7 @@ test('isTrustedOwnedRun: session/env attribution is trusted, fallback and empty 
 
 test('resolveDenialRunDir: a trusted owned run is returned as-is, nothing minted', () => {
   const main = gitRepo();
-  const owned = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-owned-'));
+  const owned = scratchDir('ct-owned-');
   const r = ctxLib.resolveDenialRunDir({ env: process.env, input: { session_id: 'sess-drd-1' }, cwd: main, ownedRun: { dir: owned, attribution: 'session' } });
   assert.deepStrictEqual(r, { dir: owned, attribution: 'session' });
   assert.deepStrictEqual(adhocDirs(main), []);
@@ -35,7 +36,7 @@ test('resolveDenialRunDir: a trusted owned run is returned as-is, nothing minted
 
 test('resolveDenialRunDir: a fallback guess is NOT used when an ad-hoc dir can be minted', () => {
   const main = gitRepo();
-  const guess = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-guess-'));
+  const guess = scratchDir('ct-guess-');
   const r = ctxLib.resolveDenialRunDir({ env: process.env, input: { session_id: 'sess-drd-2' }, cwd: main, ownedRun: { dir: guess, attribution: 'fallback' } });
   const dirs = adhocDirs(main);
   assert.strictEqual(dirs.length, 1);
@@ -45,15 +46,15 @@ test('resolveDenialRunDir: a fallback guess is NOT used when an ad-hoc dir can b
 });
 
 test('resolveDenialRunDir: falls back to the guess (attribution kept) only when minting is impossible', () => {
-  const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-notrepo-'));
-  const guess = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-guess-'));
+  const notRepo = scratchDir('ct-notrepo-');
+  const guess = scratchDir('ct-guess-');
   const r = ctxLib.resolveDenialRunDir({ env: process.env, input: { session_id: 'sess-drd-3' }, cwd: notRepo, ownedRun: { dir: guess, attribution: 'fallback' } });
   assert.deepStrictEqual(r, { dir: guess, attribution: 'fallback' });
 });
 
 test('stampAdHocRunDirForDenial: a fallback-attributed ownedRun no longer short-circuits the mint', () => {
   const main = gitRepo();
-  const guess = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-guess-'));
+  const guess = scratchDir('ct-guess-');
   const stamped = ctxLib.stampAdHocRunDirForDenial({ env: process.env, input: { session_id: 'sess-drd-4' }, cwd: main, ownedRun: { dir: guess, attribution: 'fallback' } });
   assert.notStrictEqual(stamped, guess);
   assert.strictEqual(adhocDirs(main).length, 1);

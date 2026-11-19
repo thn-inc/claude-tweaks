@@ -4,12 +4,13 @@ const assert = require('node:assert');
 const { execFileSync, spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'code-health.js');
 
 function tmpRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'code-health-durable-'));
+  const dir = scratchDir('code-health-durable-');
   fs.writeFileSync(path.join(dir, 'a.js'), 'const x = 1;\n');
   return dir;
 }

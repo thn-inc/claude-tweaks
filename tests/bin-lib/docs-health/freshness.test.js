@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -10,7 +11,7 @@ const { STUB_SKIP, installStub } = require('../../helpers/path-stub');
 const { cleanGitEnv, initRepo, writeIdentity } = require('../../helpers/git-fixtures');
 
 function makeTmpGitRoot() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-freshness-'));
+  const root = scratchDir('docs-health-freshness-');
   initRepo(root, { name: 'Test', email: 'test@example.com', cwd: root });
   return root;
 }
@@ -165,7 +166,7 @@ test('checkTrackedFreshness spawns exactly one git subprocess for multiple track
   commitFile(root, 'src/c.ts', 'export const c = 1;\n');
 
   const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-  const countDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-git-count-'));
+  const countDir = scratchDir('fake-git-count-');
   const countFile = path.join(countDir, 'count.txt');
   fs.writeFileSync(countFile, '');
 
@@ -185,7 +186,7 @@ test('checkTrackedFreshness spawns exactly one git subprocess for multiple track
 
 test('checkTrackedFreshness runs git log with the injected env (#5381)', () => {
   const clean = cleanGitEnv(process.env);
-  const B = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-freshness-envB-'));
+  const B = scratchDir('docs-health-freshness-envB-');
   const git = (args) => execFileSync('git', ['-C', B, ...args], { env: clean, stdio: 'pipe' });
   git(['init', '-q']);
   writeIdentity(B, { name: 'Test', email: 'test@example.com' });
@@ -194,7 +195,7 @@ test('checkTrackedFreshness runs git log with the injected env (#5381)', () => {
   git(['add', '-A']);
   git(['commit', '-q', '-m', 'add a']);
   // A non-git root holding the same path: history is visible only via GIT_DIR.
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-freshness-envroot-'));
+  const root = scratchDir('docs-health-freshness-envroot-');
   fs.mkdirSync(path.join(root, 'src'), { recursive: true });
   fs.writeFileSync(path.join(root, 'src', 'a.ts'), 'export const a = 1;\n');
 

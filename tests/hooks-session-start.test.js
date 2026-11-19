@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const sessionStart = require('../plugin/bin/lib/hooks/session-start');
@@ -24,7 +25,7 @@ const NO_INSTALL = { readFile: () => { throw Object.assign(new Error('no install
 // ctx.nodePathHome names another home; every in-process run here passes a
 // temp one so no test writes the developer's real home. HOME itself is left
 // alone: the git commits below need the global identity in ~/.gitconfig.
-const NODE_PATH_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-nodepath-'));
+const NODE_PATH_HOME = scratchDir('ct-ss-nodepath-');
 // #5377: run() takes its environment, home and child starter from the context. These are the real ones;
 // `spawn` looks up child_process.spawn per call so a test that stubs it (cp.spawn = ...) is still seen.
 const HOME_DIR = () => os.homedir();
@@ -35,8 +36,8 @@ const runSessionStart = (ctx) => sessionStart.run({
 
 test('#5392: run() writes the node path under ctx.nodePathHome, never under HOME', async () => {
   const project = tmpProject();
-  const seamHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-seam-'));
-  const decoyHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-decoy-'));
+  const seamHome = scratchDir('ct-ss-seam-');
+  const decoyHome = scratchDir('ct-ss-decoy-');
   const prior = process.env.HOME;
   process.env.HOME = decoyHome;
   try {
@@ -50,7 +51,7 @@ test('#5392: run() writes the node path under ctx.nodePathHome, never under HOME
 });
 
 function tmpProject() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-'));
+  const dir = scratchDir('ct-ss-');
   fs.mkdirSync(path.join(dir, '.claude-tweaks', 'pipelines'), { recursive: true });
   return dir;
 }
@@ -395,7 +396,7 @@ test('worktree-always nudge appears when policy is on and session is not yet iso
 // --- #137: resolved-build line, complementing (not replacing) the routine preamble ---
 
 function tmpPluginRoot(version) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-plugin-'));
+  const dir = scratchDir('ct-ss-plugin-');
   fs.mkdirSync(path.join(dir, '.claude-plugin'), { recursive: true });
   if (version !== undefined) {
     fs.writeFileSync(path.join(dir, '.claude-plugin', 'plugin.json'), JSON.stringify({ version }));
@@ -418,7 +419,7 @@ test('resolveBuildLine returns null when CLAUDE_PLUGIN_ROOT is unset', () => {
 });
 
 test('resolveBuildLine returns null when plugin.json is missing or unreadable', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-noplugin-'));
+  const root = scratchDir('ct-ss-noplugin-');
   try {
     assert.strictEqual(sessionStart.resolveBuildLine({ CLAUDE_PLUGIN_ROOT: root }), null);
   } finally {
@@ -481,7 +482,7 @@ function git(args, cwd) {
 // integration branch fast-forwarded before additionalContext renders, with a
 // one-line reconcile summary when anything changed.
 test('SessionStart fast-forwards a behind-and-clean integration branch via reconcile(), and reports it in additionalContext (#408 AC1)', async () => {
-  const originDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-origin-'));
+  const originDir = scratchDir('ct-ss-origin-');
   git(['init', '-q', '--bare', '--initial-branch=main'], originDir);
   disableReceiveAutoGc(originDir);
 
@@ -489,7 +490,7 @@ test('SessionStart fast-forwards a behind-and-clean integration branch via recon
   // ever reads. Two independent pushers of sibling commits (both children
   // of the same parent) would diverge on the shared bare origin; having a
   // single writer avoids that entirely rather than working around it.
-  const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-seed-'));
+  const seedDir = scratchDir('ct-ss-seed-');
   git(['clone', '-q', originDir, seedDir]);
   writeIdentity(seedDir, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(seedDir, 'a.txt'), 'one\n');
@@ -506,7 +507,7 @@ test('SessionStart fast-forwards a behind-and-clean integration branch via recon
   git(['commit', '-q', '-m', 'policy'], seedDir);
   git(['push', '-q', 'origin', 'main'], seedDir);
 
-  const mainDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-main-'));
+  const mainDir = scratchDir('ct-ss-main-');
   git(['clone', '-q', originDir, mainDir]);
   writeIdentity(mainDir, { name: 'Test', email: 'test@example.com' });
 
@@ -532,7 +533,7 @@ test('#413: a run carrying an unresolved console.json never crashes SessionStart
   // network-failure/gh-absent skip path every other reconcile check already
   // takes, not the positive "answered console" path (covered by
   // tests/console-execute.test.js's pure decideConsoleExecute unit tests).
-  const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-console-')));
+  const project = fs.realpathSync(scratchDir('ct-ss-console-'));
   execFileSync('git', ['init', '-q', '--initial-branch=main'], { cwd: project });
   writeIdentity(project, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(project, 'a.txt'), 'one\n');
@@ -551,7 +552,7 @@ test('#413: a run carrying an unresolved console.json never crashes SessionStart
 });
 
 test('#561: a redTip finding from reconcile() renders as its own additionalContext line', async () => {
-  const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-redtip-')));
+  const project = fs.realpathSync(scratchDir('ct-ss-redtip-'));
   execFileSync('git', ['init', '-q', '--initial-branch=main'], { cwd: project });
   writeIdentity(project, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(project, 'a.txt'), 'one\n');
@@ -635,7 +636,7 @@ test('worktree-always nudge is absent when the session is already inside a linke
   withPolicy(project, 'worktree-always: true\n');
   execFileSync('git', ['-C', project, 'add', '.claude-tweaks/policy.yml']);
   execFileSync('git', ['-C', project, 'commit', '-m', 'policy', '-q']);
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-wt-'));
+  const parent = scratchDir('ct-ss-wt-');
   const wt = path.join(parent, 'wt');
   execFileSync('git', ['-C', project, 'worktree', 'add', '-q', wt, '-b', 'wt-branch']);
   const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: fs.realpathSync(wt) });
@@ -654,7 +655,7 @@ test('worktree-always banner reads ON from a sibling linked worktree when policy
   const project = gitProject();
   execFileSync('git', ['-C', project, 'commit', '--allow-empty', '-m', 'init', '-q']);
   withPolicy(project, 'worktree-always: true\n');
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-wt-'));
+  const parent = scratchDir('ct-ss-wt-');
   const wt = path.join(parent, 'wt');
   execFileSync('git', ['-C', project, 'worktree', 'add', '-q', wt, '-b', 'wt-branch-untracked']);
   try {
@@ -964,11 +965,11 @@ test('SessionStart renders a prior background pass\'s ledger-residue PR count an
 // must still spawn, because the STATUS file (not the reconcile cache) is
 // absent/stale.
 function prFirstRemoteFixture() {
-  const originDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-spawn-origin-'));
+  const originDir = scratchDir('ct-ss-spawn-origin-');
   git(['init', '-q', '--bare', '--initial-branch=main'], originDir);
   disableReceiveAutoGc(originDir);
 
-  const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-spawn-seed-'));
+  const seedDir = scratchDir('ct-ss-spawn-seed-');
   git(['clone', '-q', originDir, seedDir]);
   writeIdentity(seedDir, { name: 'Test', email: 'test@example.com' });
   fs.mkdirSync(path.join(seedDir, '.claude-tweaks'), { recursive: true });
@@ -977,7 +978,7 @@ function prFirstRemoteFixture() {
   git(['commit', '-q', '-m', 'seed'], seedDir);
   git(['push', '-q', 'origin', 'main'], seedDir);
 
-  const mainDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-spawn-main-'));
+  const mainDir = scratchDir('ct-ss-spawn-main-');
   git(['clone', '-q', originDir, mainDir]);
   writeIdentity(mainDir, { name: 'Test', email: 'test@example.com' });
   return mainDir;
@@ -1161,10 +1162,10 @@ test('SessionStart: a second session start inside the TTL short-circuits the inl
   // both or the async twin reaches a real `gh` call.
   preflight.ghHealthCheckAsync = async () => ({ ok: true, reason: null });
   try {
-    const originDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-ttl-origin-'));
+    const originDir = scratchDir('ct-ss-ttl-origin-');
     git(['init', '-q', '--bare', '--initial-branch=main'], originDir);
     disableReceiveAutoGc(originDir);
-    const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-ttl-seed-'));
+    const seedDir = scratchDir('ct-ss-ttl-seed-');
     git(['clone', '-q', originDir, seedDir]);
     writeIdentity(seedDir, { name: 'Test', email: 'test@example.com' });
     fs.mkdirSync(path.join(seedDir, '.claude-tweaks'), { recursive: true });
@@ -1179,7 +1180,7 @@ test('SessionStart: a second session start inside the TTL short-circuits the inl
     git(['commit', '-q', '-m', 'seed'], seedDir);
     git(['push', '-q', 'origin', 'main'], seedDir);
 
-    const mainDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-ttl-main-'));
+    const mainDir = scratchDir('ct-ss-ttl-main-');
     git(['clone', '-q', originDir, mainDir]);
     writeIdentity(mainDir, { name: 'Test', email: 'test@example.com' });
 
@@ -1252,7 +1253,7 @@ test('verdict banner: a throw from policy.resolveWorktreeAlways is swallowed —
 // `git rev-parse --abbrev-ref origin/HEAD` spawn rather than short-circuiting on
 // the policy value, so the cache has something real to coalesce.
 function fixtureRepoNoPolicy() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-spawn-')));
+  const root = fs.realpathSync(scratchDir('ct-ss-spawn-'));
   initRepo(root, { name: 'T', email: 't@example.com', branch: 'trunk' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
   execFileSync('git', ['-C', root, 'add', 'a.txt']);
@@ -1490,7 +1491,7 @@ test('#2027: envWriteError on an inactive result never renders the warning', asy
 // installed_plugins.json under a temp CLAUDE_CONFIG_DIR and injects it (plus a
 // fake homedir) through `superpowersDeps`, so none can read the real config.
 function mkSuperpowersWorld(project, { projectVersion, userVersion, rawFile, userInstallPath } = {}) {
-  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-sp-')));
+  const tmp = fs.realpathSync(scratchDir('ct-ss-sp-'));
   const config = path.join(tmp, 'config');
   fs.mkdirSync(path.join(config, 'plugins'), { recursive: true });
   const artifact = (name, version) => {

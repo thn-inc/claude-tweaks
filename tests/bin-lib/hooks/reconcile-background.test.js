@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { initRepo, writeIdentity } = require('../../helpers/git-fixtures');
@@ -12,7 +13,7 @@ const HOOKS = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'hooks.js'
 function git(args, cwd) { return execFileSync('git', args, { cwd, encoding: 'utf8' }); }
 
 test('reconcile-background: writes a status file with completedAt + summary, exits 0 even with no gh/remote', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-'));
+  const dir = scratchDir('ct-recon-bg-');
   git(['init', '-q', '--initial-branch=main'], dir);
   writeIdentity(dir, { name: 'T', email: 't@e.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'x');
@@ -37,7 +38,7 @@ test('reconcile-background: writes a status file with completedAt + summary, exi
 // anything, `completedAt` (a `Date.now()` millisecond value) would almost
 // certainly differ, so byte-identity is a reliable proxy for "did not run".
 test('reconcile-background: a second call within the freshness window is a no-op — it does not re-run reconcile() or touch the status file', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-nop-'));
+  const dir = scratchDir('ct-recon-bg-nop-');
   git(['init', '-q', '--initial-branch=main'], dir);
   writeIdentity(dir, { name: 'T', email: 't@e.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'x');
@@ -65,7 +66,7 @@ test('reconcile-background: a second call within the freshness window is a no-op
 // call) must make the CLI skip entirely: no status-file touch, lock left
 // untouched (not released by the loser).
 test('reconcile-background: a lock already held by a live process is never taken over — no status-file write, lock left in place', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-locked-'));
+  const dir = scratchDir('ct-recon-bg-locked-');
   git(['init', '-q', '--initial-branch=main'], dir);
   writeIdentity(dir, { name: 'T', email: 't@e.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'x');
@@ -90,7 +91,7 @@ test('reconcile-background: a lock already held by a live process is never taken
 // pass must complete and clean up its own lock afterward — no orphaned
 // .lock file left behind on the success path.
 test('reconcile-background: a stale (dead-pid) lock is reclaimed; a completed pass leaves no lock file behind', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-stale-lock-'));
+  const dir = scratchDir('ct-recon-bg-stale-lock-');
   git(['init', '-q', '--initial-branch=main'], dir);
   writeIdentity(dir, { name: 'T', email: 't@e.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'x');
@@ -120,7 +121,7 @@ test('reconcile-background: a stale (dead-pid) lock is reclaimed; a completed pa
 // this subcommand -> reconcile({sessionId}) -> archiveMerged's ownership
 // gate), not merely a unit test that passes sessionId as a function argument.
 function fixtureAbandonedShippedRun({ runId, ownerSessionId } = {}) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-owner-')));
+  const root = fs.realpathSync(scratchDir('ct-recon-bg-owner-'));
   initRepo(root, { name: 'T', email: 't@e.com', branch: 'main' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'a\n');
   git(['add', 'a.txt'], root);
@@ -134,7 +135,7 @@ function fixtureAbandonedShippedRun({ runId, ownerSessionId } = {}) {
   // under the default local-merge model.
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-branch: main\nintegration-model: pr-first\n');
 
-  const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-owner-wt-'));
+  const wt = scratchDir('ct-recon-bg-owner-wt-');
   git(['worktree', 'add', '-q', wt, '-b', 'feat-branch'], root);
   fs.writeFileSync(path.join(wt, 'feature.txt'), 'feature\n');
   execFileSync('git', ['add', 'feature.txt'], { cwd: wt, encoding: 'utf8' });
@@ -183,7 +184,7 @@ test('reconcile-background: the same abandoned interrupted run IS archived when 
   const { root, runDir } = fixtureAbandonedShippedRun({ runId, ownerSessionId: 'sess-1687-someone-else' });
 
   // #5555: the archive starts a detached token pass; point its transcript lookup at an empty fixture dir.
-  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-cfg-'));
+  const cfgDir = scratchDir('ct-recon-bg-cfg-');
   t.after(() => fs.rmSync(cfgDir, { recursive: true, force: true }));
   const env = { ...process.env, CLAUDE_CONFIG_DIR: cfgDir };
   delete env.CLAUDE_TWEAKS_SESSION_ID;
@@ -201,7 +202,7 @@ test('reconcile-background: the same abandoned interrupted run IS archived when 
 // so no git remote or `gh` is involved. process.cwd() is what that branch
 // reads, so the test switches into the fixture repo and back.
 async function backgroundSummaryFor(result) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-summary-'));
+  const dir = scratchDir('ct-recon-bg-summary-');
   git(['init', '-q', '--initial-branch=main'], dir);
   const { main } = require('../../../plugin/bin/hooks');
   const reconcileMod = require('../../../plugin/bin/lib/reconcile');
@@ -486,7 +487,7 @@ test('CLI_DEFERRED_CHECKS (bin/hooks.js) is a non-empty, duplicate-free subset o
 // #4032: the background pass runs under its own ceiling — the 18 s hot-path
 // default starved remote-prune/ledger-residue/reap on every pass.
 test('reconcile-background passes the background budget', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-budget-'));
+  const dir = scratchDir('ct-recon-bg-budget-');
   git(['init', '-q', '--initial-branch=main'], dir);
   const { main } = require('../../../plugin/bin/hooks');
   const reconcileMod = require('../../../plugin/bin/lib/reconcile');
@@ -512,7 +513,7 @@ test('reconcile-background passes the background budget', async () => {
 // must leave its reason in the status file — the detached process has no other
 // channel, and SessionStart surfaces it from there.
 test('reconcile-background: a pass that throws records failed + its message in the status file', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-throws-'));
+  const dir = scratchDir('ct-recon-bg-throws-');
   git(['init', '-q', '--initial-branch=main'], dir);
   const { main } = require('../../../plugin/bin/hooks');
   const reconcileMod = require('../../../plugin/bin/lib/reconcile');

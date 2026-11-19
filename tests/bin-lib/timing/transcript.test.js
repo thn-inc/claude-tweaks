@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { slugForCwd, locateTranscripts, readUsage, readPromptRows, isProcedurePath, subagentsDirFor, readDispatches, TRANSCRIPT_SLUG_RULE } = require('../../../plugin/bin/lib/timing/transcript');
@@ -26,7 +27,7 @@ test('#1929 AC1: slugForCwd reproduces the observed project-directory name (spac
 });
 
 function fakeHome() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-transcript-home-'));
+  const home = scratchDir('ct-transcript-home-');
   const projects = path.join(home, '.claude', 'projects');
   const slugDir = path.join(projects, slugForCwd('/Users/x/Code/repo/.claude/worktrees/wt'));
   fs.mkdirSync(slugDir, { recursive: true });
@@ -102,7 +103,7 @@ function withEnv(value, fn) {
 }
 
 function fakeConfigDir() {
-  const cfg = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-transcript-cfg-'));
+  const cfg = scratchDir('ct-transcript-cfg-');
   const slugDir = path.join(cfg, 'projects', slugForCwd(CWD));
   fs.mkdirSync(slugDir, { recursive: true });
   fs.writeFileSync(path.join(slugDir, 'sess-c.jsonl'), '{}\n');
@@ -116,10 +117,10 @@ test('AC1.1: with CLAUDE_CONFIG_DIR set, locateTranscripts returns the file unde
 });
 
 test('AC1.1 (symlinked root): a $CLAUDE_CONFIG_DIR/projects that is a symlink still yields its transcripts', () => {
-  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-transcript-real-'));
+  const real = scratchDir('ct-transcript-real-');
   fs.mkdirSync(path.join(real, slugForCwd(CWD)), { recursive: true });
   fs.writeFileSync(path.join(real, slugForCwd(CWD), 'sess-s.jsonl'), '{}\n');
-  const cfg = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-transcript-cfg-'));
+  const cfg = scratchDir('ct-transcript-cfg-');
   fs.symlinkSync(real, path.join(cfg, 'projects'));
   const out = withEnv(cfg, () => locateTranscripts({ cwd: CWD, sessionId: 'sess-s' }));
   assert.deepEqual(out.map((c) => c.path), [fs.realpathSync(path.join(real, slugForCwd(CWD), 'sess-s.jsonl'))]);
@@ -138,7 +139,7 @@ test('AC1.1: CLAUDE_CONFIG_DIR wins over homeDir when both are given', () => {
 
 test('explicit configDir wins over CLAUDE_CONFIG_DIR', () => {
   const cfg = fakeConfigDir();
-  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-transcript-empty-'));
+  const empty = scratchDir('ct-transcript-empty-');
   const out = withEnv(empty, () => locateTranscripts({ cwd: CWD, sessionId: 'sess-c', configDir: cfg }));
   assert.equal(out.length, 1);
   assert.equal(path.basename(out[0].path), 'sess-c.jsonl');
@@ -248,7 +249,7 @@ test('#4029 AC1.1: readUsage tags each tool_result with its turn class and marks
 });
 
 test('#4029: an orphan tool_result counts as other', async () => {
-  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-orphan-')), 's.jsonl');
+  const f = path.join(scratchDir('tc-orphan-'), 's.jsonl');
   fs.writeFileSync(f, JSON.stringify({ type: 'user', timestamp: '2026-10-24T10:00:00.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'never-seen', content: 'x' }] } }) + '\n');
   const rows = await readUsage(f);
   assert.equal(rows.length, 1);
@@ -258,7 +259,7 @@ test('#4029: an orphan tool_result counts as other', async () => {
 });
 
 test('#4029: contextTokens is the per-id max sum (streaming snapshot then final), on the first row only; id-less assistant rows each start a turn', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ctx-'));
+  const dir = scratchDir('tc-ctx-');
   const f = path.join(dir, 's.jsonl');
   const noId = JSON.stringify({ type: 'assistant', timestamp: '2026-10-24T10:02:00.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'x' }], usage: { input_tokens: 3, output_tokens: 1, cache_read_input_tokens: 4, cache_creation_input_tokens: 5 } } });
   fs.writeFileSync(f, [
@@ -273,7 +274,7 @@ test('#4029: contextTokens is the per-id max sum (streaming snapshot then final)
 });
 
 test('#4029: tool_result text parts are joined for the guard-refusal check, and a plain error stays a tool-classed call', async () => {
-  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-guard-')), 's.jsonl');
+  const f = path.join(scratchDir('tc-guard-'), 's.jsonl');
   const use = (id, command) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-24T10:00:00.000Z', message: { id: `m-${id}`, role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }], usage: {} } });
   const res = (id, content, isError) => JSON.stringify({ type: 'user', timestamp: '2026-10-24T10:00:05.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content, is_error: isError }] } });
   fs.writeFileSync(f, [
@@ -289,7 +290,7 @@ test('#4029: tool_result text parts are joined for the guard-refusal check, and 
 });
 
 test('readUsage counts per-file procedure reads on the tool_use row', async () => {
-  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pfiles-')), 's.jsonl');
+  const f = path.join(scratchDir('tc-pfiles-'), 's.jsonl');
   const file = 'plugin/skills/review/code-mode-steps.md';
   fs.writeFileSync(f, [
     JSON.stringify({ type: 'assistant', timestamp: '2026-11-16T10:00:00.000Z', message: { id: 'm1', role: 'assistant', content: [
@@ -307,7 +308,7 @@ test('readUsage counts per-file procedure reads on the tool_use row', async () =
 });
 
 test('#4359 I1: readUsage counts a Read and a sed of a context bundle under context/, adding no procedure bytes', async () => {
-  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pfiles-')), 's.jsonl');
+  const f = path.join(scratchDir('tc-pfiles-'), 's.jsonl');
   const bundle = '/main/.claude-tweaks/pipelines/2026-11-16T000452-record-4359/context/review-code-mode.md';
   fs.writeFileSync(f, [
     JSON.stringify({ type: 'assistant', timestamp: '2026-11-16T10:00:00.000Z', message: { id: 'm1', role: 'assistant', content: [
@@ -323,7 +324,7 @@ test('#4359 I1: readUsage counts a Read and a sed of a context bundle under cont
 });
 
 test('#4359: a bundle Read and sed under a main checkout inside a skills/ directory key under context/', async () => {
-  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pfiles-')), 's.jsonl');
+  const f = path.join(scratchDir('tc-pfiles-'), 's.jsonl');
   const bundle = '/home/u/skills/repo/.claude-tweaks/pipelines/run-a/context/lens-child.md';
   fs.writeFileSync(f, JSON.stringify({ type: 'assistant', timestamp: '2026-11-16T10:00:00.000Z', message: { id: 'm1', role: 'assistant', content: [
     { type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: bundle } },
@@ -334,7 +335,7 @@ test('#4359: a bundle Read and sed under a main checkout inside a skills/ direct
 });
 
 test('#4359 T2-1: a timestamp-less api-request-blob row carrying a skill Read adds no procedure read', async () => {
-  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pfiles-')), 's.jsonl');
+  const f = path.join(scratchDir('tc-pfiles-'), 's.jsonl');
   const read = (id) => ({ type: 'tool_use', id, name: 'Read', input: { file_path: 'plugin/skills/review/code-mode-steps.md' } });
   fs.writeFileSync(f, [
     JSON.stringify({ type: 'assistant', timestamp: '2026-11-16T10:00:00.000Z', message: { id: 'm1', role: 'assistant', content: [read('r1')], usage: {} } }),
@@ -363,7 +364,7 @@ const SESS = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'subagents-s
 const SUBDIR = subagentsDirFor(path.join(SESS, 'sess-1.jsonl'));
 
 function tmpSubagents() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-subagents-'));
+  return scratchDir('ct-subagents-');
 }
 function aLine(role, ts, id, model, usage) {
   const message = role === 'assistant'
@@ -757,7 +758,7 @@ function promptRow(promptId, content = TYPED_CONTENT) {
   };
 }
 function promptTranscript(lines) {
-  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-prompt-rows-')), 's.jsonl');
+  const f = path.join(scratchDir('ct-prompt-rows-'), 's.jsonl');
   fs.writeFileSync(f, lines.join('\n') + '\n');
   return f;
 }
@@ -846,7 +847,7 @@ test('#5584: readPromptRows throws EISDIR for a directory', () => {
 // {tmp}/sess-1/subagents — a real session shape, so the run file beside it
 // ({tmp}/sess-1/workflows/{runId}.json) never lands in a shared tmp dir.
 function tmpSessionSubagents() {
-  const sub = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wf-')), 'sess-1', 'subagents');
+  const sub = path.join(scratchDir('ct-wf-'), 'sess-1', 'subagents');
   fs.mkdirSync(sub, { recursive: true });
   return sub;
 }
@@ -1070,7 +1071,7 @@ function useLine(id, name) {
 }
 
 test('agentCalls counts Agent and Task results and not Workflow', async () => {
-  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-agentcalls-')), 's.jsonl');
+  const f = path.join(scratchDir('ct-agentcalls-'), 's.jsonl');
   const results = ['a', 't', 'w'].map((id) => ({ type: 'tool_result', tool_use_id: id, content: 'ok' }));
   fs.writeFileSync(f, [
     useLine('a', 'Agent'), useLine('t', 'Task'), useLine('w', 'Workflow'),
@@ -1084,7 +1085,7 @@ test('agentCalls counts Agent and Task results and not Workflow', async () => {
 });
 
 test('#5597 review focus 5: guard-refused Agent call adds no agentCalls', async () => {
-  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-agentcalls-')), 's.jsonl');
+  const f = path.join(scratchDir('ct-agentcalls-'), 's.jsonl');
   fs.writeFileSync(f, [
     useLine('a', 'Agent'),
     JSON.stringify({ type: 'user', timestamp: '2026-11-16T10:00:05.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a', content: 'This session is isolated in the worktree /repo', is_error: true }] } }),
@@ -1185,7 +1186,7 @@ test('#5597: a symlinked run file is not read, so its mismatching agentCount add
 // transcript: assistant tool_use { id, name: 'AskUserQuestion', input: { questions: [{ question, header, multiSelect, options }] } },
 // answered by a later user row's tool_result { tool_use_id, content: '<string>' }.
 function askTranscript(lines) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ask-'));
+  const dir = scratchDir('ct-ask-');
   const file = path.join(dir, 's.jsonl');
   fs.writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
   return { dir, file };

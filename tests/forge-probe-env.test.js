@@ -7,6 +7,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const {
@@ -25,7 +26,7 @@ const GHE_HOST = 'ghe.example.test';
 const CI_WORKFLOW = 'on:\n  pull_request:\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n';
 
 function tmp(prefix) {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `forge-probe-${prefix}-`)));
+  return fs.realpathSync(scratchDir(`forge-probe-${prefix}-`));
 }
 
 // A fixture git call that ignores any repo-locating variable the test process inherited.

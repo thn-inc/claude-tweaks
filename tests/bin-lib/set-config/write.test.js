@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { readText } = require('../../helpers/read-skill');
@@ -12,7 +13,7 @@ const {
 const REPO_ROOT = path.join(__dirname, '..', '..', '..');
 
 function fixtureRunDir() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'setcfg-'));
+  const root = scratchDir('setcfg-');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-08-20T090000-spec-12');
   fs.mkdirSync(runDir, { recursive: true });
   return runDir;

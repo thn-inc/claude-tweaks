@@ -16,6 +16,8 @@
 const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir, isolateTmpdir } = require('./helpers/tmp-dir');
+isolateTmpdir('ct-iso-hooks-gate-coverage-');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { GATE_COVERAGE } = require('../plugin/bin/lib/hooks/pre-tool-use');
@@ -43,7 +45,7 @@ const MAIN_F = path.resolve('/main/f.js');
 const TMP_DIRS_4303 = [];
 after(() => { for (const dir of TMP_DIRS_4303) fs.rmSync(dir, { recursive: true, force: true }); });
 const tmpDir4303 = (prefix) => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(require('os').tmpdir(), prefix)));
+  const dir = fs.realpathSync(scratchDir(prefix));
   TMP_DIRS_4303.push(dir);
   return dir;
 };
@@ -3653,7 +3655,7 @@ test('e2e #3080: bare redirection from a worktree-always main checkout is DENIED
   const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const os = require('os');
   const { execFileSync } = require('child_process');
-  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-3080-main-'));
+  const main = scratchDir('ct-3080-main-');
   execFileSync('git', ['-C', main, 'init', '-q']);
   fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
@@ -3681,7 +3683,7 @@ test('e2e #4149: a command past the cwd cap from a linked worktree is DENIED for
   const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const os = require('os');
   const { execFileSync } = require('child_process');
-  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4149-cap-')));
+  const tmp = fs.realpathSync(scratchDir('ct-4149-cap-'));
   const main = path.join(tmp, 'main');
   const wt = path.join(tmp, 'wt');
   fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
@@ -4301,7 +4303,7 @@ test('e2e #3989: a `>` in a heredoc body from a worktree-always main checkout is
   const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const os = require('os');
   const { execFileSync } = require('child_process');
-  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-3989-main-'));
+  const main = scratchDir('ct-3989-main-');
   execFileSync('git', ['-C', main, 'init', '-q']);
   fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');

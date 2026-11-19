@@ -23,13 +23,14 @@
 // `code` is mapped to `status` to match the spawnSync shape.
 
 const fs = require('fs');
+const { scratchDir } = require('./tmp-dir');
 const os = require('os');
 const path = require('path');
 const { runCliSync } = require('./run-cli');
 const { cleanGitEnv } = require('./git-fixtures');
 
 function sweepCli(cliPath, argv, opts = {}) {
-  const emptyCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'health-sweep-cwd-'));
+  const emptyCwd = scratchDir('health-sweep-cwd-');
   const prev = process.cwd();
   process.chdir(emptyCwd);
   try {

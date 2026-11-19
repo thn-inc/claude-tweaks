@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -21,7 +22,7 @@ function cliOut(argv, opts) {
   return res.stdout;
 }
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'journey-health-cli-validate-')); }
+function tmp() { return scratchDir('journey-health-cli-validate-'); }
 
 function finding(overrides = {}) {
   return {
@@ -42,9 +43,9 @@ function finding(overrides = {}) {
 // tests/bin-lib/harness-health/cli-validate-findings.test.js's
 // seedDurableRuns uses.
 function seedDurableRuns(root, runs) {
-  const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), 'journey-health-vf-bare-'));
+  const bareDir = scratchDir('journey-health-vf-bare-');
   execFileSync('git', ['init', '--bare', '-q', bareDir]);
-  const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'journey-health-vf-seed-'));
+  const seedDir = scratchDir('journey-health-vf-seed-');
   execFileSync('git', ['init', '-q', seedDir]);
   execFileSync('git', ['-C', seedDir, 'checkout', '-q', '-b', 'health-state']);
   fs.mkdirSync(path.join(seedDir, 'journey-health'), { recursive: true });

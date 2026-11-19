@@ -53,6 +53,24 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.174.0](https://github.com/thn-inc/claude-tweaks/compare/v6.173.1...v6.174.0) (2026-11-19)
+
+
+### Features
+
+* Run the full suite on GitHub's macOS runner and add a… ([#5881](https://github.com/thn-inc/claude-tweaks/issues/5881)) ([d64ba3c](https://github.com/thn-inc/claude-tweaks/commit/d64ba3cc1501b147eab76250ee8e36d9fd24909f)), closes [#5882](https://github.com/thn-inc/claude-tweaks/issues/5882) [#5883](https://github.com/thn-inc/claude-tweaks/issues/5883)
+
+
+### Bug Fixes
+
+* A per-run config or an arbitrary --run directory can… ([#5830](https://github.com/thn-inc/claude-tweaks/issues/5830)) ([f45a030](https://github.com/thn-inc/claude-tweaks/commit/f45a03067f5e158c6466ee3b0e451a7057b3ee30)), closes [#5863](https://github.com/thn-inc/claude-tweaks/issues/5863) [#5865](https://github.com/thn-inc/claude-tweaks/issues/5865) [#5879](https://github.com/thn-inc/claude-tweaks/issues/5879)
+
+### Highlights
+* Releases now stop while any open record carries the `release-block` label, naming each blocking record; closing the record or removing the label lifts the block.
+* A per-run config can no longer switch off the human-acceptance park gate, and the park and queue-pull commands now refuse a --run directory that is not a pipeline run directory.
+* `/claude-tweaks:dispatch` no longer excludes every record that names a file when the remote's default branch cannot be determined.
+* A gh-absent `/claude-tweaks:dispatch` queue pull no longer caches a queue order computed without a dependency it could not read.
+
 ## [6.173.1](https://github.com/thn-inc/claude-tweaks/compare/v6.173.0...v6.173.1) (2026-11-18)
 
 

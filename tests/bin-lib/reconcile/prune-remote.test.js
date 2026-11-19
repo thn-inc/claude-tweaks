@@ -49,6 +49,7 @@ test('decideRemotePrune: transport failures -> skip (fail closed)', () => {
 
 const { execFileSync, spawnSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { defaultRefExists } = require('../../../plugin/bin/lib/reconcile/prune-remote');
@@ -101,7 +102,7 @@ test('pruneRemote: refreshes origin before judging — a branch advanced from an
   const originUrl = git(dir, 'remote', 'get-url', 'origin').trim();
 
   // …but another machine pushes a further commit to the same remote branch.
-  const other = fs.mkdtempSync(path.join(os.tmpdir(), 'prune-remote-clone2-'));
+  const other = scratchDir('prune-remote-clone2-');
   git(other, 'clone', originUrl, 'c');
   const clone2 = path.join(other, 'c');
   git(clone2, 'config', 'user.email', 't@t');
@@ -181,7 +182,7 @@ test('pruneRemote: branch advanced after its squash merge (another clone pushed 
   const { dir, squash } = buildSquashMergedFixture();
   const originUrl = git(dir, 'remote', 'get-url', 'origin').trim();
 
-  const other = fs.mkdtempSync(path.join(os.tmpdir(), 'prune-remote-clone3-'));
+  const other = scratchDir('prune-remote-clone3-');
   git(other, 'clone', originUrl, 'c');
   const clone = path.join(other, 'c');
   git(clone, 'config', 'user.email', 't@t');
@@ -259,7 +260,7 @@ test('pruneRemote: branch attached to a live worktree is silently out of scope',
 // classify.js/shared-fetch.js, #820 D2). Intercept at the process-spawn
 // boundary instead: a `git` wrapper placed first on PATH.
 function installPushWrapper(failMultiBranch) {
-  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prune-remote-gitwrap-'));
+  const logDir = scratchDir('prune-remote-gitwrap-');
   const logFile = path.join(logDir, 'push-calls.log');
   fs.writeFileSync(logFile, '');
   const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
@@ -338,7 +339,7 @@ test('pruneRemote: batch fails; a branch already deleted before the fallback pus
 // checkRefExists reporting the ref is still present (or indeterminate, on a
 // bad connection) must never be read as success.
 function installAlwaysFailWrapper(branchToFail) {
-  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prune-remote-gitwrap2-'));
+  const logDir = scratchDir('prune-remote-gitwrap2-');
   const logFile = path.join(logDir, 'push-calls.log');
   fs.writeFileSync(logFile, '');
   const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();

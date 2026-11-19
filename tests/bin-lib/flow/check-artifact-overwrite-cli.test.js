@@ -7,6 +7,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -86,7 +87,7 @@ test('a bug in the check itself (not an ArtifactOverwriteCheckError) crashes lou
 });
 
 test('end-to-end against a real repo (no fake check) — clean walk exits 0', () => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-check-artifact-overwrite-cli-')));
+  const dir = fs.realpathSync(scratchDir('ct-check-artifact-overwrite-cli-'));
   const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8', timeout: 30000 });
   initRepo(dir, { name: 'Test', email: 't@example.invalid' });
   git('commit', '-q', '--allow-empty', '-m', 'base');
@@ -111,14 +112,14 @@ for (const name of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) delete proces
 const { manifestInit, transitionSpec } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'flow', 'manifest.js'));
 
 function runDirWith(manifestText) {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-cao-run-')));
+  const dir = fs.realpathSync(scratchDir('ct-cao-run-'));
   if (manifestText !== undefined) fs.writeFileSync(path.join(dir, 'manifest.yml'), manifestText);
   return dir;
 }
 
 // Real writer: manifestInit + transitionSpec with a pinned clock.
 function writtenManifestRun(transitions /* [[id, status, phase, iso], ...] */, ids = [10, 11]) {
-  const runDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-cao-manifest-')));
+  const runDir = fs.realpathSync(scratchDir('ct-cao-manifest-'));
   manifestInit({ runDir, specs: ids, parent: 'p/' });
   for (const [specId, status, phase, iso] of transitions) {
     const res = transitionSpec({ runDir, specId, status, phase, now: new Date(iso) });
@@ -142,7 +143,7 @@ function rewriteManifest(runDir, from, to) {
 
 // A repo whose commits carry pinned author AND committer dates and no refs trailer.
 function storyRepo() {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-cao-repo-')));
+  const dir = fs.realpathSync(scratchDir('ct-cao-repo-'));
   const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'] });
   initRepo(dir, { name: 'Test', email: 't@example.invalid' });
   git('commit', '-q', '--allow-empty', '-m', 'base');
@@ -311,7 +312,7 @@ test('a trailing bare --integration-ref is a malformed invocation (exit 2)', () 
 });
 
 test('end-to-end: a catch-up merge of upstream\'s journey exits 0 with --integration-ref and 1 without', (t) => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-cao-upstream-')));
+  const dir = fs.realpathSync(scratchDir('ct-cao-upstream-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'] });
   const write = (rel, content) => {
@@ -349,7 +350,7 @@ test('end-to-end: a catch-up merge of upstream\'s journey exits 0 with --integra
 });
 
 test('AC6.1: the check\'s git child takes the injected env — GIT_DIR in env aims it at repo B while cwd is repo A', (t) => {
-  const mk = (prefix) => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  const mk = (prefix) => fs.realpathSync(scratchDir(prefix));
   const a = mk('ct-cao-env-a-');
   const b = mk('ct-cao-env-b-');
   t.after(() => { fs.rmSync(a, { recursive: true, force: true }); fs.rmSync(b, { recursive: true, force: true }); });

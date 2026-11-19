@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const REPO_ROOT = path.join(__dirname, '..', '..', '..');
@@ -28,7 +29,7 @@ function callKind(a) {
 }
 
 function mkRun() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rc-'));
+  const root = scratchDir('rc-');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', RUN_DIR_NAME);
   fs.mkdirSync(runDir, { recursive: true });
   fs.mkdirSync(path.join(root, '.git'));
@@ -322,7 +323,7 @@ test('failed PUT (500): exit 1, no comment, FAILED line still logged; missing ru
   // A run dir that exists but sits under a worktree-local shadow (a linked
   // worktree's `.git` is a FILE, not a directory) must be refused, never
   // silently written to — [IL-127].
-  const shadowRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'rc-shadow-'));
+  const shadowRoot = scratchDir('rc-shadow-');
   const wt = path.join(shadowRoot, '.claude', 'worktrees', 'wt');
   const shadowRunDir = path.join(wt, '.claude-tweaks', 'pipelines', RUN_DIR_NAME);
   fs.mkdirSync(shadowRunDir, { recursive: true });

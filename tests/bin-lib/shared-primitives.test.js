@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../helpers/tmp-dir');
 const os = require('os');
 const { runClassified, runClassifiedAsync, isPathContained, toPosix, relativeDisplayId, ghTimeoutMsAt } = require('../../plugin/bin/lib/shared-primitives');
 const path = require('path');
@@ -249,7 +250,7 @@ function freshGhTimeoutMs() {
 }
 
 function withTempCwd(fn) {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-gh-timeout-'));
+  const dir = scratchDir('ct-gh-timeout-', { realpath: true });
   const originalCwd = process.cwd();
   process.chdir(dir);
   try {

@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -35,7 +36,7 @@ const kb = (b) => (b / 1024).toFixed(1);
 // Builds a scratch {tmp}/skills/{name}/SKILL.md fixture so findDescriptionHashHazards
 // can be proven against a synthetic corpus without touching the real skills/ tree.
 function makeFixtureRepo(skillName, descriptionLine) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'context-cost-hazard-'));
+  const root = scratchDir('context-cost-hazard-');
   const skillDir = path.join(root, 'skills', skillName);
   fs.mkdirSync(skillDir, { recursive: true });
   fs.writeFileSync(
@@ -47,7 +48,7 @@ function makeFixtureRepo(skillName, descriptionLine) {
 
 // A fresh scratch corpus root for the #1990 measurement tests.
 function tmpRoot(slug) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), `context-cost-${slug}-`));
+  return scratchDir(`context-cost-${slug}-`);
 }
 
 // The same, with `skills/_shared/` already created — where nearly every

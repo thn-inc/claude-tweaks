@@ -6,6 +6,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir, isolateTmpdir } = require('./helpers/tmp-dir');
+isolateTmpdir('ct-iso-hooks-post-tool-use-work-');
 const os = require('os');
 const path = require('path');
 const post = require('../plugin/bin/lib/hooks/post-tool-use');
@@ -100,7 +102,7 @@ test('a failed hold write leaves a worktree-hold-failed event in the owned run, 
   const main = gitRepo();
   const a = harnessWorktreeOf(main, 'hold-a');
   const holdDir = hold.holdDirOf(a);
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hold-failed-run-'));
+  const runDir = scratchDir('hold-failed-run-');
   const ctx = { ...enterCtx(a), ownedRun: { dir: runDir } };
   const clean = post.run(ctx);
   fs.rmSync(holdDir, { recursive: true });
