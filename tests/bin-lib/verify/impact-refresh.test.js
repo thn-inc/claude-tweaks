@@ -19,13 +19,23 @@ const MARKER = path.join(COMMON, REFRESH_MARKER_NAME);
 const NOW = 1_000_000_000;
 const DECL = { impact: { suite: 'tests', command: 'run {files}', tests: ['tests/**/*.test.js'], maxAgeCommits: 5, map: null, fetch: 'fetch-map' } };
 
+// The map knows a.test.js and d000..d099 (the "selectable" drift files); u### files are unknown to it.
+const KNOWN = Array.from({ length: 100 }, (_, i) => `tests/d${String(i).padStart(3, '0')}.test.js`);
+const UNKNOWN = Array.from({ length: 100 }, (_, i) => `tests/u${String(i).padStart(3, '0')}.test.js`); // at HEAD, not in the map
 const mapText = (commit) => JSON.stringify(encodeImpactMap({
-  commit, tracedAt: 't', exitCode: 0, node: 'v', tests: { 'tests/a.test.js': { f: ['src/x.js'] } },
+  commit, tracedAt: 't', exitCode: 0, node: 'v',
+  tests: Object.fromEntries(['tests/a.test.js', ...KNOWN].map((t) => [t, { f: ['src/x.js'] }])),
 }));
-const driftOf = (n) => Array.from({ length: n }, (_, i) => `tests/d${String(i).padStart(3, '0')}.test.js`).join('\0') + '\0';
+// A drift spec is a count of selectable files (known to the map, listed at HEAD), or { sel, unknown } to add
+// raw drift files the map does not know.
+const driftOf = (spec) => {
+  const { sel, unknown = 0 } = typeof spec === 'number' ? { sel: spec } : spec;
+  return [...KNOWN.slice(0, sel), ...Array.from({ length: unknown }, (_, i) => `tests/u${String(i).padStart(3, '0')}.test.js`)].join('\0') + '\0';
+};
 
-// opts: drift (by commit -> file count), distance (by commit), marker (mtime ms or undefined), statThrows, writeThrows.
-function world({ drift, distance = {}, marker, statThrows = false, writeThrows = false }) {
+// opts: drift (by commit -> drift spec), distance (by commit), marker (mtime ms or undefined), absentAtHead (drift
+// files ls-files omits), statThrows, writeThrows.
+function world({ drift, distance = {}, marker, absentAtHead = 0, statThrows = false, writeThrows = false }) {
   const files = { [MAP_PATH]: mapText(OLD) };
   const writes = [];
   const fsImpl = {
@@ -45,10 +55,11 @@ function world({ drift, distance = {}, marker, statThrows = false, writeThrows =
     },
   };
   const execImpl = (cmd, args) => {
-    if (args[0] === 'ls-files') return 'tests/a.test.js\0';
+    if (args[0] === 'ls-files') return ['tests/a.test.js', ...KNOWN.slice(absentAtHead), ...UNKNOWN].join('\0') + '\0';
     if (args[0] === 'merge-base') return '';
     if (args[0] === 'rev-list') return `${distance[args[3].split('..')[0]] ?? 2}\n`;
     if (args[0] === 'diff') return driftOf(drift[args[5]] ?? 0);
+    // (a drift file the map knows but ls-files omits is "absent at HEAD": the first `absentAtHead` of KNOWN)
     throw new Error(`unexpected git ${args.join(' ')}`);
   };
   return { files, writes, fsImpl, execImpl };
@@ -96,6 +107,42 @@ test('drift of exactly the threshold does not fetch', () => {
   assert.strictEqual(ctx.driftTests.length, 50);
   assert.strictEqual(ctx.fetch, null);
   assert.deepStrictEqual(w.writes, []);
+});
+
+test('raw drift above the threshold but not selectable (unknown to the map, or absent at HEAD) does not fetch', () => {
+  const unknown = world({ drift: { [OLD]: { sel: 10, unknown: 60 } } });
+  const f1 = fetcher(unknown);
+  const ctx1 = load(unknown, f1);
+  assert.strictEqual(f1.calls, 0);
+  assert.strictEqual(ctx1.driftTests.length, 70, 'the returned drift list stays raw');
+  const absent = world({ drift: { [OLD]: 60 }, absentAtHead: 20 });
+  const f2 = fetcher(absent);
+  load(absent, f2);
+  assert.strictEqual(f2.calls, 0, '60 raw, 40 present at HEAD');
+  const present = world({ drift: { [OLD]: 60, [NEW]: 1 }, absentAtHead: 9 });
+  const f3 = fetcher(present);
+  assert.strictEqual(load(present, f3).mapCommit, NEW);
+  assert.strictEqual(f3.calls, 1, '51 present at HEAD triggers');
+});
+
+test('adoption compares selectable drift, not raw drift', () => {
+  // The reload has more raw drift (70) but less selectable (10): adopted.
+  const lessSelectable = world({ drift: { [OLD]: 60, [NEW]: { sel: 10, unknown: 60 } } });
+  const ctx1 = load(lessSelectable, fetcher(lessSelectable));
+  assert.strictEqual(ctx1.mapCommit, NEW);
+  assert.strictEqual(ctx1.driftTests.length, 70);
+  // The reload has less raw drift (55) but more selectable (55 > 51): kept.
+  const moreSelectable = world({ drift: { [OLD]: { sel: 51, unknown: 40 }, [NEW]: 55 } });
+  const ctx2 = load(moreSelectable, fetcher(moreSelectable));
+  assert.strictEqual(ctx2.mapCommit, OLD);
+  assert.strictEqual(ctx2.driftTests.length, 91);
+});
+
+test('a future-dated marker (clock correction) does not block the fetch', () => {
+  const w = world({ drift: { [OLD]: 60, [NEW]: 1 }, marker: NOW + 5 * 60 * 1000 });
+  const f = fetcher(w);
+  assert.strictEqual(load(w, f).mapCommit, NEW);
+  assert.strictEqual(f.calls, 1);
 });
 
 test('a marker inside the window blocks the fetch; one older than the window allows it', () => {

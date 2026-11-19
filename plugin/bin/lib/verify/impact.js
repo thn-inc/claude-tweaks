@@ -256,7 +256,8 @@ function readMap({ decl, mapPath, repoRoot, execImpl, fsImpl, knownAncestor = nu
 // True when a drift-refresh attempt marker exists and is younger than REFRESH_WINDOW_MS; an unreadable marker is "no attempt".
 function recentRefreshAttempt({ markerPath, fsImpl, now }) {
   try {
-    return now - fsImpl.statSync(markerPath).mtimeMs < REFRESH_WINDOW_MS;
+    const age = now - fsImpl.statSync(markerPath).mtimeMs;
+    return age >= 0 && age < REFRESH_WINDOW_MS; // a future mtime (clock correction) never blocks
   } catch {
     return false;
   }
@@ -270,8 +271,16 @@ function recentRefreshAttempt({ markerPath, fsImpl, now }) {
 // since (#5773). The FIRST map read trusts it for a map commit equal to it; the reload after impact.fetch (a shell
 // command that can rewrite history) always asks git again. Absent, every map read asks git as before.
 // A usable map whose drift exceeds DRIFT_REFRESH_TESTS runs the fetch once too (#5947), at most once per
-// REFRESH_WINDOW_MS per checkout (a marker beside the shared map, written before the fetch so a failed or
-// timed-out attempt counts); the reload is adopted only if usable with no more drift, else the current map stands.
+// REFRESH_WINDOW_MS per checkout (a marker in the git common dir, shared by every worktree, written before the
+// fetch so a failed or timed-out attempt counts); the threshold and the adoption comparison count only the drift
+// selection would actually run (known to the map, present at HEAD); the reload is adopted only if usable with no
+// more such drift, else the current map stands.
+// The drift files selectImpactTests would actually run: known to the map and present at HEAD (null = unknown listing).
+function selectableDriftCount(drift, map, headTests) {
+  const atHead = headTests === null ? null : new Set(headTests);
+  return drift.filter((t) => Object.hasOwn(map.tests, t) && (atHead === null || atHead.has(t))).length;
+}
+
 function loadImpactContext({ decl, repoRoot, commonDir, execImpl = execFileSync, fsImpl = fs, runFetch = null, knownAncestor = null, now = Date.now() }) {
   const mapPath = resolveMapPath({ decl, commonDir, repoRoot });
   let state = readMap({ decl, mapPath, repoRoot, execImpl, fsImpl, knownAncestor });
@@ -283,10 +292,11 @@ function loadImpactContext({ decl, repoRoot, commonDir, execImpl = execFileSync,
   // Only a usable map has a drift to read; an unreadable one fails closed like the head-test listing.
   let driftTests = [];
   let driftProblem = null;
+  const headTests = listHeadTests({ decl, repoRoot, execImpl, fsImpl });
   if (!state.problem) {
     let drift = listDriftTests({ decl, repoRoot, commit: state.mapCommit, execImpl });
     const markerPath = path.join(commonDir, REFRESH_MARKER_NAME);
-    if (drift !== null && drift.length > DRIFT_REFRESH_TESTS && decl.impact.fetch && runFetch && fetch === null
+    if (drift !== null && selectableDriftCount(drift, state.map, headTests) > DRIFT_REFRESH_TESTS && decl.impact.fetch && runFetch && fetch === null
       && !recentRefreshAttempt({ markerPath, fsImpl, now })) {
       try { fsImpl.writeFileSync(markerPath, String(now)); } catch { /* an unwritable marker never blocks the load */ }
       fetch = runFetch(decl.impact.fetch);
@@ -294,7 +304,7 @@ function loadImpactContext({ decl, repoRoot, commonDir, execImpl = execFileSync,
         const next = readMap({ decl, mapPath, repoRoot, execImpl, fsImpl });
         if (!next.problem) {
           const nextDrift = listDriftTests({ decl, repoRoot, commit: next.mapCommit, execImpl });
-          if (nextDrift !== null && nextDrift.length <= drift.length) {
+          if (nextDrift !== null && selectableDriftCount(nextDrift, next.map, headTests) <= selectableDriftCount(drift, state.map, headTests)) {
             state = next;
             drift = nextDrift;
           }
@@ -304,7 +314,6 @@ function loadImpactContext({ decl, repoRoot, commonDir, execImpl = execFileSync,
     if (drift === null) driftProblem = 'map-drift-unreadable';
     else driftTests = drift;
   }
-  const headTests = listHeadTests({ decl, repoRoot, execImpl, fsImpl });
   // A listing that succeeded but names no test file (a sparse checkout, a pathspec oddity) would make
   // every reader "absent at HEAD" and a changed test select nothing — it fails closed like a failed one.
   let headProblem = null;

@@ -61,7 +61,7 @@ files:
 - **Should understand:**
   - A directory listing matches only an added or deleted path beneath it, because modifying a file does not change a listing. A probe of an ancestor directory also matches an add or a delete.
   - A test file edited after the map was traced (on main before the branch's base, say) runs too: its recorded reads may be stale. `scope.impact.driftTests` names these drifted tests and `driftSelected` counts them, and the `Impact:` line ends `, N drift` inside its parentheses when there are any. A test the branch itself changed is counted as a changed test, not as drift.
-  - When more than 50 tests would run as drift, the scoped run first runs the declaration's `fetch` once, at most once per ten minutes per checkout (a marker beside the shared map), and takes the newer map only if it is usable and leaves no more drift. A failed or no-op fetch keeps the current map. The report's `fetch` entry shows it ran.
+  - When more than 50 tests would run as drift, the scoped run first runs the declaration's `fetch` once, at most once per ten minutes per checkout (a marker in the git common dir, shared by every worktree), and takes the newer map only if it is usable and leaves no more drift. A failed or no-op fetch keeps the current map. The report's `fetch` entry shows it ran.
 - **Red flags:**
   - A scoped run that re-runs hundreds of drift tests from a map that a three-second fetch would have replaced.
   - A new file under a listed directory selecting only the tests that read it directly.
