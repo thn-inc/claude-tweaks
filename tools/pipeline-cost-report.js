@@ -265,7 +265,6 @@ const SECTIONS = [
         if (ia >= 0 || ib >= 0) return (ia < 0 ? TIER_ORDER.length : ia) - (ib < 0 ? TIER_ORDER.length : ib);
         return compareStrings(a, b);
       };
-      const byName = compareStrings;
       const lines = [];
       // A table with no rows prints `none.` in place of the table.
       const table = (head, rows) => {
@@ -306,13 +305,13 @@ const SECTIONS = [
       lines.push('### Lens review by tier', '', 'Each lens runs on one fixed model profile, so this table compares lenses, not models.', '', `${l.unreadable} runs with unreadable lens dispatches, counted in no lens figure.`, '');
       table(lensHead('Tier'), lensRows(l.byTier, byTierOrder));
       lines.push('### Lens review by lens', '');
-      table(lensHead('Lens'), lensRows(l.byLens, byName));
+      table(lensHead('Lens'), lensRows(l.byLens, compareStrings));
 
       const verdictHead = (first) => `| ${first} | Confirmed | Both reviewers | Tiebreak | Refuted | Can't tell |`;
       const verdictRow = (name, x) => [name, String(x.confirmed), String(x.pair), String(x.tiebreak), String(x.refuted), String(x.cantTell)];
       lines.push('### Lens verdicts', '', '"Confirmed" is the tiebreak judge\'s verdict or a pair\'s agreement, not ground truth.', '');
       table(verdictHead('Run'), l.perRun.rows.map((r) => verdictRow(r.run, r)));
-      table(verdictHead('Lens'), Object.keys(l.perRun.byLens).sort(byName).map((k) => verdictRow(k, l.perRun.byLens[k])));
+      table(verdictHead('Lens'), Object.keys(l.perRun.byLens).sort(compareStrings).map((k) => verdictRow(k, l.perRun.byLens[k])));
       lines.push(`Run units read: ${l.perRun.n}; unparsed: ${l.perRun.unparsed}.`, '');
 
       const o = l.outcomes;
@@ -320,7 +319,7 @@ const SECTIONS = [
       lines.push('### Lens outcomes', '', `Of ${o.n} routed confirmed locations: ${shares(o)}; ${o.unrouted} unrouted (left out of the shares); ${o.unparsed} run units unparsed.`, `Of ${o.allRouted.n} routed locations, refuted ones included (the 2026-11-18 measurement's division): ${shares(o.allRouted)}.`, '');
 
       lines.push('### Lens yield', '', `Up to ${l.yield.runs} most recent runs per lens dated on or before ${w.until}, whatever --since says.`, 'A run with no recorded verdict line (a fully clean review included) takes no slot and is counted unparsed.', '');
-      table('| Lens | Runs | Agents | Confirmed | Confirmed per agent | Unparsed |', Object.keys(l.yield.byLens).sort(byName).map((k) => {
+      table('| Lens | Runs | Agents | Confirmed | Confirmed per agent | Unparsed |', Object.keys(l.yield.byLens).sort(compareStrings).map((k) => {
         const x = l.yield.byLens[k];
         return [k, String(x.runs), String(x.agents), String(x.confirmed), mean(x.rate), String(x.unparsed)];
       }));
