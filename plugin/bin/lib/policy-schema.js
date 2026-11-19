@@ -9,6 +9,7 @@ const { PROFILES } = require('./model-profiles/profiles');
 const { stripComment } = require('./model-profiles/policy-fragment');
 const { parseRiskPathGlobs } = require('./risk-path-globs');
 const { locatePolicyFile } = require('./policy-file');
+const { DEFER_REASONS } = require('./issues/record-payload');
 
 const PROFILE_NAMES = Object.keys(PROFILES);
 
@@ -19,11 +20,19 @@ const POLICY_CATEGORIES = ['autonomy-trust', 'pipeline-behavior', 'merge-safety'
 const BUILTIN_RISK_CATEGORIES = ['migrations', 'auth', 'public-contract', 'irreversible-side-effect'];
 
 // A `list` row's optional `element` names the rule every comma-separated entry
-// must match (isValidValue). A list row with no `element` accepts any text.
+// must match (isValidValue): a login, a slug, or a defer-reason. A list row with
+// no `element` accepts any text.
 const LIST_ELEMENT_PATTERNS = {
   login: /^[A-Za-z0-9][A-Za-z0-9_-]*(\[bot\])?$/, // a GitHub user/org login, bot logins included
   slug: /^[a-z0-9][a-z0-9-]*$/,
+  'defer-reason': new RegExp(`^(?:${DEFER_REASONS.join('|')})$`), // a Defer-reason: value (#5932), built from DEFER_REASONS so the two never drift
 };
+
+// The explicit empty list on a list row with `emptyList: true` (#5932). A blank
+// value reads as unset (parseFlatLines), so `[]` is the only way a run config can
+// override a configured list with nothing. The same spelling console-resolve.js's
+// reader accepts.
+const EMPTY_LIST_RE = /^\[\s*\]$/;
 
 // A `string` row's optional `pattern` the whole value must also match. The
 // authority holds no `@`: policy.yml is committed, so a URL never carries a credential.
@@ -303,6 +312,8 @@ const POLICY_KEYS = [
   // #5119: reaches verify.js only as --default-suite-slots (verify.js never reads
   // policy.yml); a declared concurrency.suiteSlots wins. Not a Manifesto lever; policyOnly so a run config never sets it.
   { key: 'verify-suite-slots', type: 'integer', min: 1, default: 1, summary: "Sets how many test suites verify.js may run at once on one machine when verify-scope.json declares no concurrency.suiteSlots.", category: 'housekeeping', tier: 'advanced', policyOnly: true },
+  // #5932: read by bin/deferral-route.js (routeDeferral's policy-reason rule) through resolve-policy.js's resolvePolicy, so a run's config.yml overlays it via --run: neither policyOnly nor policySourceExcluded. Each element must be a DEFER_REASONS value; [] is the explicit empty list. Not a Manifesto lever.
+  { key: 'deferral-digest-reasons', type: 'list', default: [], element: 'defer-reason', emptyList: true, summary: "Defer-reasons that send an agent-raised deferral to the digest instead of a record; human input and high severity still file.", category: 'pipeline-behavior', tier: 'advanced' },
 ];
 
 const SCHEMA_BY_KEY = new Map(POLICY_KEYS.map((entry) => [entry.key, entry]));
@@ -503,6 +514,7 @@ function isValidValue(schemaEntry, value) {
       // must match; an empty entry (a trailing or doubled comma) never does.
       // A row with no `element` accepts anything, as before.
       if (schemaEntry.element === undefined) return true;
+      if (schemaEntry.emptyList === true && EMPTY_LIST_RE.test(value.trim())) return true;
       return value.split(',').every((entry) => LIST_ELEMENT_PATTERNS[schemaEntry.element].test(entry.trim()));
     case 'opaque':
       return true;
@@ -568,6 +580,7 @@ function resolveValue(key, rawValue) {
   // validating, so a quoted command validates and resolves unquoted.
   if (entry.allowWhitespace === true) strValue = stripMatchedQuotes(strValue.trim());
   if (!isValidValue(entry, strValue)) return entry.default;
+  if (entry.type === 'list' && entry.emptyList === true && EMPTY_LIST_RE.test(strValue.trim())) return [];
   if (entry.type === 'integer') return parseInt(strValue, 10);
   if (entry.type === 'boolean') return strValue === 'true';
   return entry.allowWhitespace === true ? strValue : rawValue;
@@ -1087,7 +1100,7 @@ function auditPolicy(repoRoot) {
 }
 
 module.exports = {
-  POLICY_KEYS, POLICY_CATEGORIES, BUILTIN_RISK_CATEGORIES, LIST_ELEMENT_PATTERNS, RENAMED_KEYS, auditPolicy, resolveValue, parseFlatLines, resolvePolicyKeys,
+  POLICY_KEYS, POLICY_CATEGORIES, BUILTIN_RISK_CATEGORIES, LIST_ELEMENT_PATTERNS, EMPTY_LIST_RE, RENAMED_KEYS, auditPolicy, resolveValue, parseFlatLines, resolvePolicyKeys,
   detectIntegrationModel, resolveIntegrationModel, resolvePolicyConfig,
   GIT_REMOTE_PROBE_TIMEOUT_MS, FORGE_PROBE_ATTEMPTS, HOOK_FORGE_PROBE_TIMEOUT_MS, resolveForgeProbeTimeoutMs, formatForgeDegrade,
   FORGE_DEGRADE_REASONS, FORGE_DEGRADE_MEMO_TTL_MS,

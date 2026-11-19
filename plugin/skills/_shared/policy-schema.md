@@ -35,6 +35,7 @@ The three human-facing fields every `POLICY_KEYS` row carries — `summary`, `ca
 | Auto-mode levers | `pipeline-behavior` |
 | Model profiles | `models` |
 | Efficiency budgets | `housekeeping` |
+| Deferral routing | `pipeline-behavior` |
 | Additional levers | `housekeeping` |
 
 ## Key naming
@@ -194,6 +195,14 @@ Registered by #4029; read by `readEfficiencyCeilings` in `bin/lib/policy.js` for
 | `standard-run-round-trip-ceiling` |
 | `standard-run-procedure-kb-ceiling` |
 | `standard-run-verify-minutes-ceiling` |
+
+## Deferral routing
+
+Registered by #5932; read by `bin/deferral-route.js`. Full row: `policy-schema-deferral-routing.md`.
+
+| Key |
+|---|
+| `deferral-digest-reasons` |
 
 ## Control mode
 
