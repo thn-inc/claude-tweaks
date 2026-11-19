@@ -7253,19 +7253,19 @@ test('#5902 a merged run mirrors every work step as started + exited, and binds 
   const seen = [];
   const h = mirrorRig((e) => seen.push(e));
   const { final } = await driveRecord(7, newShared(), h.deps, STEPS);
-  assert.equal(final.outcome, 'merged');
+  assert.strictEqual(final.outcome, 'merged');
   const stepLines = h.lines().filter((l) => MIRRORED_STEPS.includes(l.step));
   assert.ok(stepLines.length >= 5, `the run emitted its work steps: ${stepLines.map((l) => l.step)}`);
   for (const l of stepLines) {
     for (const kind of ['started', 'exited']) {
       const match = seen.filter((e) => e.kind === kind && e.payload.step === l.step && e.discriminator === `${l.step}@${l.ts}`);
-      assert.equal(match.length, 1, `${kind} for ${l.step}`);
-      assert.deepEqual([match[0].recordNumber, match[0].runId, match[0].repoName, match[0].lane], [7, MERGE_RUN_ID, 'acme/widgets', 'driver']);
+      assert.strictEqual(match.length, 1, `${kind} for ${l.step}`);
+      assert.deepStrictEqual([match[0].recordNumber, match[0].runId, match[0].repoName, match[0].lane], [7, MERGE_RUN_ID, 'acme/widgets', 'driver']);
     }
   }
   const bound = seen.filter((e) => e.kind === 'session_bound');
-  assert.deepEqual(bound.map((e) => [e.sessionId, e.station, e.runId]), [[MIRROR_SID, 'build', MERGE_RUN_ID]]);
-  assert.deepEqual(seen.filter((e) => e.payload.substep).map((e) => [e.payload.substep, e.kind, e.outcome]),
+  assert.deepStrictEqual(bound.map((e) => [e.sessionId, e.station, e.runId]), [[MIRROR_SID, 'build', MERGE_RUN_ID]]);
+  assert.deepStrictEqual(seen.filter((e) => e.payload.substep).map((e) => [e.payload.substep, e.kind, e.outcome]),
     [['merge-ready', 'entered', undefined], ['merge-confirm', 'exited', 'passed']]);
 });
 
@@ -7278,8 +7278,8 @@ test('#5902 stdout and driver-events.jsonl are byte-identical with and without d
   await driveRecord(7, newShared(), mirrored.deps, STEPS);
   assert.ok(called > 0, 'the mirror was called');
   assert.ok(bareFile, 'the events file exists');
-  assert.equal(mirrored.out.join(''), bare.out.join(''));
-  assert.equal(mirrored.files[path.join(MERGE_ARCHIVE, 'driver-events.jsonl')], bareFile);
+  assert.strictEqual(mirrored.out.join(''), bare.out.join(''));
+  assert.strictEqual(mirrored.files[path.join(MERGE_ARCHIVE, 'driver-events.jsonl')], bareFile);
 });
 
 test('#5902 an interrupted worker still writes its final line and terminates when deps.stationEvent throws', async () => {
@@ -7301,9 +7301,44 @@ test('#5902 an interrupted worker still writes its final line and terminates whe
   const done = run(['#7'], h.deps);
   await started;
   fireSoon(h, 'SIGINT');
-  assert.equal(await done, 0);
+  assert.strictEqual(await done, 0);
   const lines = h.lines();
-  assert.deepEqual(lines.slice(-2).map((l) => [l.step, l.status]), [['worker', 'fail'], [FINAL_STEP, 'fail']]);
+  assert.deepStrictEqual(lines.slice(-2).map((l) => [l.step, l.status]), [['worker', 'fail'], [FINAL_STEP, 'fail']]);
   assert.ok(thrown >= 2, `the interrupt's worker line reached the throwing mirror: ${thrown}`);
-  assert.deepEqual(order, ['kill:SIGTERM', 'terminate:SIGINT']);
+  assert.deepStrictEqual(order, ['kill:SIGTERM', 'terminate:SIGINT']);
+});
+
+test('#5902 a settled stop: the stop line mirrors, settle lines mirror nothing, and a throwing mirror leaves settle and the final line intact', async () => {
+  const seen = [];
+  const h = harness({ script: REDTESTS.script, deps: { stationEvent: (e) => seen.push(e) } });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepStrictEqual([final.step, final.settle, final.settleRow], [FINAL_STEP, 'done', 'pre-push']);
+  assert.ok(settleLines(h).length > 0, 'settle emitted its lines');
+  // Settle lines pass through the mirrored sink but map to no station today.
+  assert.deepStrictEqual(seen.filter((e) => String(e.payload.step).startsWith('settle-')), []);
+  const stopLine = h.lines().find((l) => l.step === 'test');
+  const ofStop = seen.filter((e) => e.discriminator === `test@${stopLine.ts}`).map((e) => [e.kind, e.station, e.outcome]);
+  assert.strictEqual(stopLine.status, 'stop', 'red tests stop the record');
+  assert.deepStrictEqual(ofStop, [['started', 'test', undefined], ['exited', 'test', 'returned']]);
+
+  let thrown = 0;
+  const throwing = harness({ script: REDTESTS.script, deps: { stationEvent: () => { thrown += 1; throw new Error('station sink down'); } } });
+  await run(['#7'], throwing.deps);
+  assert.ok(thrown > 0, 'the mirror was called');
+  assert.strictEqual(throwing.out.join(''), h.out.join(''), 'stdout, settle lines and final line included, is unchanged');
+  assert.deepStrictEqual(throwing.calls.filter(isSettleCall).length, h.calls.filter(isSettleCall).length);
+
+  // A signal between two steps is reported at the step about to start (test), through the same sink.
+  const between = [];
+  let hb = null;
+  hb = harness({
+    deps: { stationEvent: (e) => between.push(e), terminate: () => {} },
+    script: [[onGit('commit'), () => { hb.fx.committed = true; fireSoon(hb, 'SIGTERM'); return ''; }]],
+  });
+  await run(['#7'], hb.deps);
+  const interrupted = hb.lines().find((l) => l.step === 'test');
+  assert.strictEqual(interrupted.detail, 'interrupted by SIGTERM before test');
+  assert.deepStrictEqual(between.filter((e) => e.discriminator === `test@${interrupted.ts}`).map((e) => [e.kind, e.outcome]),
+    [['started', undefined], ['exited', 'failed']]);
 });
