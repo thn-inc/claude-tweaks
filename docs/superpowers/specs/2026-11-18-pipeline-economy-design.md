@@ -238,13 +238,14 @@ Added on 2026-11-19. It sits in Tier 1 and keeps the next free number so no othe
 
 - **Builds:**
   - A policy value with two settings. `inherit`, the default, sets no effort on a launch, as today. `profile` sets the effort the resolver returns on the launch itself: the Agent tool's `effort` for an agent launched in a session, and `--effort` for a driver worker.
-  - This repository sets `profile`, and sets Standard and Capable to `medium` through `model-profiles`, the effort most of their agents already run at. Frontier stays `high`.
+  - This repository sets `profile`, and sets Standard and Capable to `medium` through `model-profiles`. Frontier stays `high`. For Standard that is the effort its agents already run at. For Capable it lowers Opus agents launched from an Opus session, 1,573 of 1,606 of which ran at `high`; the maintainer chose it on 2026-11-19, to be judged over the 20 runs below.
+  - The log line dispatch writes for each first call names the effort beside the model, so a bypass can be tied to the effort it ran at.
   - `plugin/skills/_shared/subagent-dispatch-core.md` stops saying the Agent tool has no effort setting.
 - **Not built here:** a lower effort for any role, and a retry at a higher one. Those are Phases 9 and 14.
 - **Not covered:** agents started by the opt-in review workflow (`plugin/workflows/review-lens-fanout.js`). They run at the harness default, measured `medium`, and whether a workflow script can set an effort is not known.
 - **Waits for:** Phase 3 for the driver half, since a driver role has no profile until then.
 - **Done when:** over 20 runs with `profile` set, every subagent transcript on Sonnet, Opus or Fable records the effort the resolver returned, the guards are no worse, and no first dispatch call bypasses `/claude-tweaks:flow`. That call drops from `high` to `medium` in an Opus session, and on Standard it bypassed in 6 of 10 firings (#3212).
-- **Expected effect:** in this repository, agents on the session's own model move from `high` to `medium`. For task reviewers that was 1.6 minutes against 2.8. Cost per turn does not move. Effort becomes a setting a later phase can change and measure.
+- **Expected effect:** in this repository, agents on the session's own model move from `high` to `medium`. For task reviewers that was 1.6 minutes against 2.8. Opus implementers needed a fix round more often at `medium`, 59% against 39% on about 30 tasks each, which the second guard watches. Cost per turn does not move. Effort becomes a setting a later phase can change and measure.
 
 ## Tier 2 — Fast follows
 
