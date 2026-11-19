@@ -246,7 +246,7 @@ async function collectSpend({ roots, since, until, match = null }, { fsImpl = fs
       add(res.byModel, r.family, r.usd);
       res.byAgent[agent] += r.usd;
       addCount(res.byBucket, bucketOf(r.prompt), r.usd);
-      if (r.cacheWrite > REWRITE_MIN_TOKENS && r.cacheWrite > r.prompt / 2) {
+      if (r.cacheWrite > 0) {
         const e = res.cacheWrites[r.cause] || (res.cacheWrites[r.cause] = { requests: 0, tokens: 0, usd: 0 });
         e.requests += 1;
         e.tokens += r.cacheWrite;

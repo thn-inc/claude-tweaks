@@ -396,3 +396,21 @@ test('re-writes are tallied by cause and unpriced models are counted apart from 
   near(r.cacheWrites['session start'].usd, 0.5);
   assert.deepStrictEqual(r.unpriced, { requests: 1, tokens: 307 });
 });
+
+test('cacheWrites tallies every cache write by cause, so its dollars sum to all cache-write dollars in the window', async () => {
+  const root = newRoot();
+  const file = put(path.join(root, 'slug-a', 's1.jsonl'), [
+    asst('a', 'claude-opus-4-8', 0, { input_tokens: 95000, cache_creation_input_tokens: 5000 }),
+    asst('b', 'claude-sonnet-5-5', 1, { cache_read_input_tokens: 10000, cache_creation_input_tokens: 60000 }),
+  ]);
+  const { requests } = await scanTranscript(file);
+  const r = await collectSpend({ roots: [root], ...WINDOW });
+  near(r.cacheWrites['ordinary growth'].usd, requests[0].cacheWriteUsd);
+  assert.ok(r.cacheWrites['ordinary growth'].usd > 0);
+  assert.strictEqual(r.cacheWrites['ordinary growth'].requests, 1);
+  assert.strictEqual(r.cacheWrites['ordinary growth'].tokens, 5000);
+  near(r.cacheWrites['model switch'].usd, requests[1].cacheWriteUsd);
+  assert.strictEqual(r.cacheWrites['model switch'].requests, 1);
+  const sum = Object.values(r.cacheWrites).reduce((s, e) => s + e.usd, 0);
+  near(sum, requests[0].cacheWriteUsd + requests[1].cacheWriteUsd);
+});
