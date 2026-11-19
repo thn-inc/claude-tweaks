@@ -399,3 +399,95 @@ test('run: a later non-empty --run after an earlier empty --run logs normally an
   assert.strictEqual(deps.calls.appendEntry.length, 1);
   assert.strictEqual(deps.calls.appendEntry[0].runDir, RUN_DIR);
 });
+
+// #5902: label-protocol transitions emitted as station events after a
+// successful edit, through the optional deps.stationEvent.
+function stationDeps(actions, overrides = {}) {
+  const events = [];
+  const deps = fakeDeps({
+    readFile: () => JSON.stringify(actions),
+    stationEvent: (e) => { events.push(e); },
+    ...overrides,
+  });
+  return { deps, events };
+}
+
+const triple = (e) => `${e.kind} ${e.station}${e.outcome ? ' ' + e.outcome : ''}`;
+
+test('run: station events — adding auto:build records exited authorize passed + entered release, with the full field set', () => {
+  const { deps, events } = stationDeps([{ issue: 118, addLabels: ['auto:build'] }], { sessionId: 'sess-1' });
+  assert.strictEqual(run(['actions.json'], deps), 0);
+  assert.deepStrictEqual(events.map(triple), ['exited authorize passed', 'entered release']);
+  assert.deepStrictEqual(events[0], {
+    kind: 'exited', station: 'authorize', outcome: 'passed',
+    recordNumber: 118, repoName: 'acme/widgets', lane: 'unknown', runId: null, sessionId: 'sess-1',
+    payload: { label: 'auto:build', direction: 'added' },
+    discriminator: 'refine:118:added:auto:build:',
+  });
+  assert.strictEqual(events[1].outcome, undefined);
+});
+
+test('run: station events — adding ready records its three transitions', () => {
+  const { deps, events } = stationDeps([{ issue: 7, addLabels: ['ready'] }]);
+  assert.strictEqual(run(['actions.json'], deps), 0);
+  assert.deepStrictEqual(events.map(triple), ['exited intake passed', 'exited shape passed', 'entered authorize']);
+  assert.ok(events.every((e) => e.sessionId === null && e.lane === 'unknown'));
+});
+
+test('run: station events — removing needs:definition records exited intake passed', () => {
+  const { deps, events } = stationDeps([{ issue: 9, removeLabels: ['needs:definition'] }]);
+  assert.strictEqual(run(['actions.json'], deps), 0);
+  assert.deepStrictEqual(events.map(triple), ['exited intake passed']);
+  assert.deepStrictEqual(events[0].payload, { label: 'needs:definition', direction: 'removed' });
+  assert.strictEqual(events[0].discriminator, 'refine:9:removed:needs:definition:');
+});
+
+test('run: station events — one action adding and removing records both sets', () => {
+  const { deps, events } = stationDeps([{ issue: 4, addLabels: ['ready'], removeLabels: ['needs:definition'] }]);
+  assert.strictEqual(run(['actions.json'], deps), 0);
+  assert.deepStrictEqual(events.map(triple), [
+    'exited intake passed', 'exited shape passed', 'entered authorize', 'exited intake passed',
+  ]);
+  assert.deepStrictEqual(events.map((e) => e.payload.direction), ['added', 'added', 'added', 'removed']);
+});
+
+test('run: station events — a label with no table row records nothing', () => {
+  const { deps, events } = stationDeps([{ issue: 3, addLabels: ['priority:high'], removeLabels: ['bot:blocked'] }]);
+  assert.strictEqual(run(['actions.json'], deps), 0);
+  assert.deepStrictEqual(events, []);
+});
+
+test('run: station events — a failed edit records nothing and the action lands in failed', () => {
+  const { deps, events } = stationDeps([{ issue: 5, addLabels: ['auto:build'] }], {
+    gh: () => { throw new Error('HTTP 502'); },
+  });
+  assert.strictEqual(run(['actions.json'], deps), 0);
+  assert.deepStrictEqual(events, []);
+  const summary = JSON.parse(deps.calls.stdout.join(''));
+  assert.deepStrictEqual(summary.ok, []);
+  assert.strictEqual(summary.failed[0].issue, 5);
+});
+
+test('run: station events — a throwing stationEvent leaves stdout and exit code byte-identical to a run without it', () => {
+  const actions = [{ issue: 1, addLabels: ['ready'] }, { issue: 2, addLabels: ['auto:build'] }];
+  const plain = fakeDeps({ readFile: () => JSON.stringify(actions) });
+  const plainCode = run(['actions.json'], plain);
+  let attempts = 0;
+  const throwing = fakeDeps({
+    readFile: () => JSON.stringify(actions),
+    stationEvent: () => { attempts += 1; throw new Error('emitter boom'); },
+  });
+  const throwingCode = run(['actions.json'], throwing);
+  assert.strictEqual(throwingCode, plainCode);
+  assert.strictEqual(throwing.calls.stdout.join(''), plain.calls.stdout.join(''));
+  assert.deepStrictEqual(throwing.calls.gh, plain.calls.gh);
+  assert.strictEqual(attempts, 5, 'every transition of every action is still attempted');
+});
+
+test('run: station events — runId is the run dir basename with --run, and the discriminator ends with it', () => {
+  const { deps, events } = stationDeps([{ issue: 118, addLabels: ['auto:build'] }]);
+  assert.strictEqual(run(['actions.json', '--run', '/repo/.claude-tweaks/pipelines/run-1'], deps), 0);
+  assert.ok(events.length > 0);
+  assert.ok(events.every((e) => e.runId === 'run-1'));
+  assert.strictEqual(events[0].discriminator, 'refine:118:added:auto:build:run-1');
+});

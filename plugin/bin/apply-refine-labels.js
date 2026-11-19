@@ -31,6 +31,8 @@ const { appendEntry, formatEntry, hms } = require('./lib/log-decision/append');
 const {
   parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions, gateOriginRepo,
 } = require('./lib/repo-resolve');
+const { appendStationEvent, toRepoName } = require('./lib/station-events/emit');
+const { transitionsForLabel } = require('./lib/station-events/stations');
 
 const USAGE = 'usage: apply-refine-labels.js <actions.json> [--run <run-dir>] [--repo [host/]owner/name] [--help]\n';
 
@@ -108,6 +110,35 @@ function errMessage(err) {
   return [err && err.message, err && err.stderr, err && err.stdout].filter(Boolean).join(' ') || String(err);
 }
 
+// #5902: one station event per label-protocol transition of an applied edit.
+// Optional dep (absent = no emission); each call in its own try so a
+// throwing emitter never changes the batch. No clock in the discriminator,
+// so a replayed batch keys identically and dedupes.
+function emitLabelTransitions(deps, { issue, addLabels, removeLabels, repoFlag, runDir }) {
+  if (typeof deps.stationEvent !== 'function') return;
+  const runId = runDir ? path.basename(runDir) : null;
+  const edits = [
+    ...(addLabels || []).map((label) => ({ label, direction: 'added' })),
+    ...(removeLabels || []).map((label) => ({ label, direction: 'removed' })),
+  ];
+  for (const { label, direction } of edits) {
+    for (const t of transitionsForLabel(label, direction)) {
+      try {
+        deps.stationEvent({
+          ...t,
+          recordNumber: issue,
+          repoName: toRepoName(repoFlag),
+          lane: 'unknown',
+          runId,
+          sessionId: deps.sessionId || null,
+          payload: { label, direction },
+          discriminator: `refine:${issue}:${direction}:${label}:${runId || ''}`,
+        });
+      } catch { /* emission is best-effort — never fails the batch */ }
+    }
+  }
+}
+
 const realDeps = {
   gh: (args) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', windowsHide: true })),
   ghAvailable,
@@ -118,6 +149,7 @@ const realDeps = {
   isAnchored: (resolvedPath, mainRoot) => wtDetect.isAnchoredUnderRoot(resolvedPath, mainRoot),
   now: () => Date.now(),
   appendEntry,
+  sessionId: process.env.CLAUDE_CODE_SESSION_ID || null,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -204,6 +236,9 @@ function run(argv, deps = realDeps) {
         for (const l of action.addLabels || []) editArgs.push('--add-label', l);
         for (const l of action.removeLabels || []) editArgs.push('--remove-label', l);
         deps.gh(editArgs);
+        emitLabelTransitions(deps, {
+          issue: action.issue, addLabels: action.addLabels, removeLabels: action.removeLabels, repoFlag, runDir,
+        });
         logAuto(deps, runDir, `#${action.issue}: applied ${labelSummary}`);
       } catch (err) {
         editFailed = true;
@@ -239,4 +274,8 @@ function run(argv, deps = realDeps) {
 
 module.exports = { run, parseArgs, validateAction };
 
-if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
+// #5902: only the real process emits station events; requiring this module
+// never wires the real emitter.
+if (require.main === module) {
+  process.exitCode = run(process.argv.slice(2), { ...realDeps, stationEvent: appendStationEvent });
+}
