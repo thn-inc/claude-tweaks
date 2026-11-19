@@ -1,0 +1,38 @@
+---
+files:
+  - plugin/bin/deferral-route.js
+  - plugin/bin/lib/deferral-route/route.js
+  - plugin/skills/_shared/materiality-floor.md
+  - plugin/bin/lib/issues/record-payload.js
+  - plugin/bin/lib/tiebreak.js
+---
+
+# Route a Deferred Finding in Code
+
+**Persona:** A claude-tweaks skill session (review, reflect, wrap-up's residue sweep) that has already run the deferral gate's fix-now test on a finding, failed it, and holds one valid `Defer-reason:` — and now has to decide whether the finding is filed as a record or appended to the digest.
+**Goal:** Get that decision from one command instead of re-reading `_shared/materiality-floor.md`'s prose and applying it by hand.
+**Entry point:** A finding with a `Defer-reason:` from `_shared/deferral-gate.md`'s vocabulary, the calling skill's own judgement of how the record would be scored at filing time (`size`, `priority`, `risk`), the finding's severity if it has one, and whether the finding was raised by an agent or typed by a human.
+**Success state:** One JSON line naming the verdict (`file` or `digest`), the clause that decided it, and the inputs exactly as passed — or, for malformed input, a `refused` verdict naming what was wrong and what is accepted, exit 2.
+
+## Steps
+
+### 1. Ask for a verdict
+- **URL:** `node plugin/bin/deferral-route.js --defer-reason pre-existing-outside-diff --size low --priority low --risk low --agent-raised`
+- **Action:** Pass the reason, the three axes as the skill would score a fresh filing, `--severity` when the finding carries one, and exactly one of `--agent-raised` or `--human` (`--human` whenever the origin is unsure, because `--human` files).
+- **Should feel:** Like asking a referee, not consulting a rulebook. One line comes back and it is the whole answer.
+- **Should understand:**
+  - `{"verdict":"digest","rule":"floor",...}` means every condition for the digest held; `digest` only ever comes from the `floor` rule.
+  - `rule` names the first clause that decided, in a fixed order: `refused`, `human`, `severity`, `tangential`, `not-low`, `floor`. A tangential finding at severity `high` reports `severity`, not `tangential`.
+  - An axis passed as anything but the exact string `low` (`medium`, `Low`, omitted) counts as not low and files — it is never refused.
+  - The command writes nothing and calls no `gh`; acting on the verdict is still the caller's job.
+- **Red flags:** A `digest` verdict with any axis other than `low`; a `digest` for a `tangential` reason, a `high`/`critical` severity or `--human`; the command creating a file or a record.
+
+### 2. Read a refusal and fix the call
+- **URL:** `node plugin/bin/deferral-route.js --defer-reason not-a-reason --agent-raised` (or `--severity High`, `--agent-raised --human`, a flag with no value)
+- **Action:** Read the `reason` field (also printed alone on stderr), correct the argument it names, and re-run.
+- **Should feel:** Strict but specific — the message names the bad value and the accepted list, so the fix is a single edit.
+- **Should understand:**
+  - Exit 2 with `{"verdict":"refused","rule":"refused","reason":...}` on stdout is a malformed call, not a routing answer. A severity typo such as `High` is refused rather than read as not high, because reading it as not high could digest a critical finding.
+  - `input` still echoes every flag as given, so the caller can see what it actually passed.
+  - An omitted `--severity` is valid (reflect insights carry none) and counts as not high.
+- **Red flags:** A refusal that exits 0; a reason that does not name the offending value; a `--severity` typo routed as `file` or `digest`.
