@@ -437,6 +437,7 @@ test('#5932 go-red: "always clears the floor" back in Overrides fails the check'
 const REFLECT = read('plugin/skills/reflect/SKILL.md');
 const REFLECT_ROUTE_NEEDLES = [
   '`{reason}` being `tangential`',
+  'runs the integration-branch probe below first; a finding main already closed is neither digested nor staged, and gets that paragraph\'s `not filed` line',
   'stage nothing: no `staged/reflect-{n}.md`',
   "never reaches the Review Console's Queue writes section",
   'A digest write that fails is staged as on `file` instead',
