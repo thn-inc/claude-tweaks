@@ -544,7 +544,14 @@ test("#5932 CLAUDE.md's no-implicit-deferrals bullet names the route command and
   };
   const live = read('CLAUDE.md');
   check(live);
-  for (const n of needles) assert.throws(() => check(live.split(n).join('')), assert.AssertionError);
+  for (const n of needles) {
+    // deletion control: the needle is gone from the file
+    assert.throws(() => check(live.split(n).join('')), { message: n });
+    // move-out control: the needle stays in the file, on its own line outside the bullet
+    const moved = live.split('\n').map((l) => (l.includes('**No implicit deferrals.**') ? l.split(n).join('') + '\n' + n : l)).join('\n');
+    assert.ok(moved.includes(n), n);
+    assert.throws(() => check(moved), { message: n });
+  }
 });
 
 test('no Capture pass-through still defers to a not-yet-landed #625 flag', () => {
