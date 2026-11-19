@@ -422,7 +422,7 @@ test('run: station events — adding auto:build records exited authorize passed 
     kind: 'exited', station: 'authorize', outcome: 'passed',
     recordNumber: 118, repoName: 'acme/widgets', lane: 'unknown', runId: null, sessionId: 'sess-1',
     payload: { label: 'auto:build', direction: 'added' },
-    discriminator: 'refine:118:added:auto:build:',
+    discriminator: 'refine:118:added:auto:build:2023-11-14T22:13:20.000Z',
   });
   assert.strictEqual(events[1].outcome, undefined);
 });
@@ -439,7 +439,7 @@ test('run: station events — removing needs:definition records exited intake pa
   assert.strictEqual(run(['actions.json'], deps), 0);
   assert.deepStrictEqual(events.map(triple), ['exited intake passed']);
   assert.deepStrictEqual(events[0].payload, { label: 'needs:definition', direction: 'removed' });
-  assert.strictEqual(events[0].discriminator, 'refine:9:removed:needs:definition:');
+  assert.strictEqual(events[0].discriminator, 'refine:9:removed:needs:definition:2023-11-14T22:13:20.000Z');
 });
 
 test('run: station events — one action adding and removing records both sets', () => {
@@ -490,4 +490,45 @@ test('run: station events — runId is the run dir basename with --run, and the 
   assert.ok(events.length > 0);
   assert.ok(events.every((e) => e.runId === 'run-1'));
   assert.strictEqual(events[0].discriminator, 'refine:118:added:auto:build:run-1');
+});
+
+test('run: station events — a comment failure after a successful edit still records the label transitions; the action lands in failed with step comment', () => {
+  const { deps, events } = stationDeps([{ issue: 12, addLabels: ['auto:build'], commentFile: '/tmp/c.md' }], {
+    gh: (args) => { if (args[1] === 'comment') throw new Error('HTTP 500'); return ''; },
+  });
+  assert.strictEqual(run(['actions.json'], deps), 0);
+  assert.deepStrictEqual(events.map(triple), ['exited authorize passed', 'entered release']);
+  const summary = JSON.parse(deps.calls.stdout.join(''));
+  assert.deepStrictEqual(summary.ok, []);
+  assert.deepStrictEqual(summary.failed.map((f) => [f.issue, f.step]), [[12, 'comment']]);
+});
+
+test('run: station events — a host-qualified --repo reduces to owner/name on every event', () => {
+  const { deps, events } = stationDeps([{ issue: 118, addLabels: ['auto:build'] }]);
+  assert.strictEqual(run(['actions.json', '--repo', 'ghe.example.com/acme/widgets'], deps), 0);
+  assert.strictEqual(events.length, 2);
+  assert.ok(events.every((e) => e.repoName === 'acme/widgets'));
+});
+
+test('run: station events — a --repo the CLI accepts but that is not owner/name emits nothing and still applies the edit', () => {
+  const { deps, events } = stationDeps([{ issue: 118, addLabels: ['auto:build'] }]);
+  assert.strictEqual(run(['actions.json', '--repo', 'ac me/widgets'], deps), 0);
+  assert.deepStrictEqual(deps.calls.gh[0].slice(0, 5), ['issue', 'edit', '118', '--repo', 'ac me/widgets']);
+  assert.deepStrictEqual(JSON.parse(deps.calls.stdout.join('')).ok, [118]);
+  assert.deepStrictEqual(events, []);
+});
+
+test('run: station events — with no run dir the discriminator ends with the invocation start time; with --run it is clock-free', () => {
+  const discs = (argv, nowMs) => {
+    const { deps, events } = stationDeps([{ issue: 118, addLabels: ['auto:build'] }], { now: () => nowMs });
+    assert.strictEqual(run(argv, deps), 0);
+    return events.map((e) => e.discriminator);
+  };
+  const a = discs(['actions.json'], 1700000000000);
+  const b = discs(['actions.json'], 1700000999000);
+  assert.strictEqual(a[0], 'refine:118:added:auto:build:2023-11-14T22:13:20.000Z');
+  assert.notDeepStrictEqual(a, b);
+  const runArgv = ['actions.json', '--run', '/repo/.claude-tweaks/pipelines/run-1'];
+  assert.deepStrictEqual(discs(runArgv, 1700000000000), discs(runArgv, 1700000999000));
+  assert.strictEqual(discs(runArgv, 1700000000000)[0], 'refine:118:added:auto:build:run-1');
 });

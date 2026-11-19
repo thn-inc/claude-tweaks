@@ -112,11 +112,14 @@ function errMessage(err) {
 
 // #5902: one station event per label-protocol transition of an applied edit.
 // Optional dep (absent = no emission); each call in its own try so a
-// throwing emitter never changes the batch. No clock in the discriminator,
-// so a replayed batch keys identically and dedupes.
-function emitLabelTransitions(deps, { issue, addLabels, removeLabels, repoFlag, runDir }) {
-  if (typeof deps.stationEvent !== 'function') return;
+// throwing emitter never changes the batch. With a run dir the discriminator
+// is clock-free, so a replayed batch within a run dedupes; without one it ends
+// with the invocation's start time, so a later grant of the same label is a
+// distinct fact. A repo that does not reduce to owner/name emits nothing.
+function emitLabelTransitions(deps, { issue, addLabels, removeLabels, repoName, runDir, startedAt }) {
+  if (typeof deps.stationEvent !== 'function' || !repoName) return;
   const runId = runDir ? path.basename(runDir) : null;
+  const suffix = runId || startedAt || '';
   const edits = [
     ...(addLabels || []).map((label) => ({ label, direction: 'added' })),
     ...(removeLabels || []).map((label) => ({ label, direction: 'removed' })),
@@ -127,12 +130,12 @@ function emitLabelTransitions(deps, { issue, addLabels, removeLabels, repoFlag, 
         deps.stationEvent({
           ...t,
           recordNumber: issue,
-          repoName: toRepoName(repoFlag),
+          repoName,
           lane: 'unknown',
           runId,
           sessionId: deps.sessionId || null,
           payload: { label, direction },
-          discriminator: `refine:${issue}:${direction}:${label}:${runId || ''}`,
+          discriminator: `refine:${issue}:${direction}:${label}:${suffix}`,
         });
       } catch { /* emission is best-effort — never fails the batch */ }
     }
@@ -213,6 +216,11 @@ function run(argv, deps = realDeps) {
   }
   if (!repoSpec) { deps.stderr('apply-refine-labels.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return 2; }
   const repoFlag = repoSlug(repoSpec);
+  // #5902: computed once per invocation for the station-event emission; the
+  // injected deps.now() is the only clock, and a bad value never fails the batch.
+  const repoName = toRepoName(repoFlag);
+  let startedAt = null;
+  try { startedAt = new Date(deps.now()).toISOString(); } catch { startedAt = null; }
 
   const ok = [];
   const failed = [];
@@ -237,7 +245,7 @@ function run(argv, deps = realDeps) {
         for (const l of action.removeLabels || []) editArgs.push('--remove-label', l);
         deps.gh(editArgs);
         emitLabelTransitions(deps, {
-          issue: action.issue, addLabels: action.addLabels, removeLabels: action.removeLabels, repoFlag, runDir,
+          issue: action.issue, addLabels: action.addLabels, removeLabels: action.removeLabels, repoName, runDir, startedAt,
         });
         logAuto(deps, runDir, `#${action.issue}: applied ${labelSummary}`);
       } catch (err) {
