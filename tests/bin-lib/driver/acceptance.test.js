@@ -898,15 +898,22 @@ describe('runAcceptance: failures and bounds', () => {
     assert.strictEqual(h.events.length, 1);
     assert.strictEqual(h.events[0].step, 'merge-acceptance');
     assert.strictEqual(h.events[0].status, 'ok');
-    assert.deepStrictEqual(h.events[0].extra, { route: 'try-it-only' });
+    assert.deepStrictEqual(h.events[0].extra, { route: 'try-it-only', model: PROFILES.standard.model });
     assert.strictEqual(r.detail, h.events[0].detail);
   });
 
-  test('a failure after the route is known still reports the route', async () => {
+  test('a failure after the launch reports the route and the model (#5917)', async () => {
     const h = harness('no-parent-gated', { exit: { post: 4 } });
     const r = await h.run();
     assert.strictEqual(r.route, 'no-parent-gated');
-    assert.deepStrictEqual(h.events[0].extra, { route: 'no-parent-gated' });
+    assert.deepStrictEqual(h.events[0].extra, { route: 'no-parent-gated', model: PROFILES.standard.model });
+  });
+
+  test('a run stopped before any launch carries no model key (#5917)', async () => {
+    const h = harness('try-it-only', { nodeThrows: 'resolve-policy.js' });
+    await h.run();
+    assert.strictEqual(h.launches().length, 0);
+    assert.deepStrictEqual(h.events[0].extra, { route: null });
   });
 
   test('the launch is the acceptance role with its own settings dir, the result schema and the ceilings', async () => {
