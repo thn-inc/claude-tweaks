@@ -230,6 +230,10 @@ The deferral gate (`plugin/skills/_shared/deferral-gate.md`) already makes fix-n
 
 ## Phase 15 — A launched agent runs at the effort its profile names
 
+## Phase 15: Specified
+
+Records #5941 (the policy value and the launch setting for agents launched in a session) and #5942 (the same value on driver workers, blocked by #5941), under parent #5940.
+
 Added on 2026-11-19. It sits in Tier 1 and keeps the next free number so no other phase is renumbered.
 
 - **Builds:**
