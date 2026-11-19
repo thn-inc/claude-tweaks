@@ -285,4 +285,4 @@ function selectRuns(root, select, fs) {
   return { dirs: missing.length > 0 ? [] : select.map((n) => byName.get(n)), missing };
 }
 
-module.exports = { parseDecisions, matchVerdicts, readRun, listRuns, selectRuns };
+module.exports = { parseDecisions, matchVerdicts, readRun, readCost, listRuns, selectRuns };

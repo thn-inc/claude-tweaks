@@ -23,6 +23,10 @@
 //     | Severity | Path:Line | Finding | Evidence |
 //     | medium | plugin/bin/lib/run-manifest/write.js:27 | … | … |
 //
+// The per-run verdict figures count the lens verdict lines of a unit's decisions.md (archive.js's readRun reads them):
+//   - AUTO 16:08:28 — Reproduction: lens "3a" finding plugin/skills/release/disposition.md:71 reproduced. Confirmed. Reversibility: high.
+//   - AUTO 16:17:17 — Reproduction: lens "3a" finding plugin/skills/_shared/release-block.md:3 confirmed by tiebreak:2a37952f7854. Confirmed. Reversibility: high.
+//
 // A multi-spec member's timing.json is a stub with no dispatches: {"dispatches":{"notFound":"no transcript resolved"}},
 // so the dispatch figures are read from the parent's timing.json and only the decisions.md files are read per member.
 //
@@ -39,7 +43,7 @@
 const fs = require('fs');
 const path = require('path');
 const { resolveRun, membersOf, readTiming, readReport, parseReviewCounts } = require('./guards.js');
-const { readRun } = require('../review-replay/archive.js');
+const { readRun, readCost } = require('../review-replay/archive.js');
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
 const PLAN_KINDS = ['cross-task contract', 'undecided behaviour', 'spec gap', 'missing review risk'];
@@ -342,6 +346,110 @@ function collectPlanReview(walkedRuns, verdictsByRun, { roots, fsImpl = fs } = {
   return { reviews: n, n, unparsed, withFindings: share(withFindings, n), findingsPerReview: share(findings, n), byKind, humanStops: stops };
 }
 
+// Whether archive.js's readCost (whose LENS_RE is the lens identity) takes one timing item for a lens reviewer.
+function isLensItem(d) {
+  const one = { readFileSync: () => JSON.stringify({ dispatches: { items: [d] } }) };
+  const cost = readCost({ fs: one }, '.');
+  return cost !== null && cost.lensAgents.length > 0;
+}
+
+// The lens reviewers of one walked run, from its timing.json through readCost. An agent with an agentId is kept only
+// when that agentId survived the walk's dedupe (is in `walked.items`), its tier from that item; one with no agentId is
+// kept, its tier from the item carrying the same description (readCost drops the description, so the k-th such agent
+// pairs with the k-th lens item that has no agentId, both in timing.json order). `unknown` when no item names a tier.
+// [] when readCost cannot read the run's timing.json.
+function lensAgentsOf(walked, fsImpl = fs) {
+  const cost = readCost({ fs: fsImpl }, walked.run.dir);
+  if (!cost) return [];
+  const byId = new Map();
+  for (const d of walked.items) if (d && d.agentId != null) byId.set(d.agentId, d);
+  const anonymous = walked.items.filter((d) => d && d.agentId == null && isLensItem(d));
+  let k = 0;
+  const out = [];
+  for (const a of cost.lensAgents) {
+    const source = a.agentId != null ? byId.get(a.agentId) : anonymous[k++];
+    if (a.agentId != null && !source) continue;
+    out.push({ agentId: a.agentId, lens: a.lens, side: a.side, tier: (source && source.tier) || 'unknown' });
+  }
+  return out;
+}
+
+const MEAN_KEYS = [...SEVERITIES, 'overflow'];
+
+// Lens reviewers by model tier and by lens. `agents` is every lens agent, `n` those whose report parsed (an agent with no
+// agentId is always unparsed), `noFinding` the share of the parsed with no row at all, `perAgent` the mean per parsed
+// agent of each severity, of `overflow` and of `total` (their sum); null when nothing parsed.
+function collectLensAgents(walkedRuns, { roots, fsImpl = fs } = {}) {
+  const groups = { byTier: {}, byLens: {} };
+  const slot = (map, key) => (map[key] = map[key] || { agents: 0, n: 0, unparsed: 0, zero: 0, sums: Object.fromEntries(MEAN_KEYS.map((k) => [k, 0])) });
+  for (const w of walkedRuns) {
+    for (const a of lensAgentsOf(w, fsImpl)) {
+      const text = a.agentId == null ? null : readReport({ roots, sessions: w.sessions, agentId: a.agentId }, fsImpl);
+      const counts = text == null ? null : parseLensReport(text);
+      for (const [map, key] of [[groups.byTier, a.tier], [groups.byLens, a.lens]]) {
+        const g = slot(map, key);
+        g.agents += 1;
+        if (!counts) {
+          g.unparsed += 1;
+          continue;
+        }
+        g.n += 1;
+        const total = MEAN_KEYS.reduce((s, k) => s + counts[k], 0);
+        if (total === 0) g.zero += 1;
+        for (const k of MEAN_KEYS) g.sums[k] += counts[k];
+      }
+    }
+  }
+  const finish = (map) => {
+    const out = {};
+    for (const [key, g] of Object.entries(map)) {
+      const total = MEAN_KEYS.reduce((s, k) => s + g.sums[k], 0);
+      const perAgent = g.n === 0 ? null : { total: total / g.n, ...Object.fromEntries(MEAN_KEYS.map((k) => [k, g.sums[k] / g.n])) };
+      out[key] = { agents: g.agents, n: g.n, unparsed: g.unparsed, noFinding: share(g.zero, g.n), perAgent };
+    }
+    return out;
+  };
+  return { byTier: finish(groups.byTier), byLens: finish(groups.byLens) };
+}
+
+const VERDICT_KEYS = ['confirmed', 'pair', 'tiebreak', 'refuted', 'cantTell'];
+const zeroVerdicts = () => Object.fromEntries(VERDICT_KEYS.map((k) => [k, 0]));
+
+// One row per readable unit (`excluded === null`) with its confirmed (pair + tiebreak), refuted and can't-tell locations,
+// whole and by lens; an excluded unit (no decisions.md, or no review line in it) is `unparsed`, never a zero row.
+// `verdictsByRun[i]` holds readVerdicts for each unit of walkedRuns[i].
+function collectPerRun(walkedRuns, verdictsByRun) {
+  const rows = [];
+  const totals = zeroVerdicts();
+  const byLens = {};
+  let unparsed = 0;
+  for (const units of verdictsByRun) {
+    for (const v of units) {
+      if (v.excluded !== null) {
+        unparsed += 1;
+        continue;
+      }
+      const row = { run: v.name, ...zeroVerdicts(), byLens: {} };
+      const add = (lensName, key) => {
+        row[key] += 1;
+        totals[key] += 1;
+        for (const target of [row.byLens, byLens]) {
+          if (!target[lensName]) target[lensName] = zeroVerdicts();
+          target[lensName][key] += 1;
+        }
+      };
+      for (const c of v.confirmed) {
+        add(c.lens, 'confirmed');
+        add(c.lens, c.how);
+      }
+      for (const r of v.refuted) add(r.lens, 'refuted');
+      for (const c of v.cantTell) add(c.lens, 'cantTell');
+      rows.push(row);
+    }
+  }
+  return { rows, totals, byLens, n: rows.length, unparsed };
+}
+
 // The reviews section over the since..until window: the run walk is done once and the decisions.md files are read once
 // for every collector. `n` (the yield's slot count) is used by the yield walk, not here.
 function collectReviews({ runs, since, until, roots }, { fsImpl = fs } = {}) {
@@ -358,7 +466,8 @@ function collectReviews({ runs, since, until, roots }, { fsImpl = fs } = {}) {
     },
     taskReview: collectTaskReview(walked, { roots, fsImpl }),
     planReview: collectPlanReview(walked, verdictsByRun, { roots, fsImpl }),
+    lens: { ...collectLensAgents(walked, { roots, fsImpl }), perRun: collectPerRun(walked, verdictsByRun) },
   };
 }
 
-module.exports = { SEVERITIES, PLAN_KINDS, parseTaskVerdict, parsePlanReview, parseLensReport, walkRuns, readVerdicts, isHumanStop, collectTaskReview, collectPlanReview, collectReviews };
+module.exports = { SEVERITIES, PLAN_KINDS, parseTaskVerdict, parsePlanReview, parseLensReport, walkRuns, readVerdicts, isHumanStop, collectTaskReview, collectPlanReview, lensAgentsOf, collectLensAgents, collectPerRun, collectReviews };

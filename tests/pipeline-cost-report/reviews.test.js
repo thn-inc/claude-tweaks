@@ -12,7 +12,7 @@ const path = require('path');
 const { readText } = require('../helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..', '..');
-const { parseTaskVerdict, parsePlanReview, parseLensReport, walkRuns, readVerdicts, isHumanStop, collectTaskReview, collectPlanReview, collectReviews } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'reviews.js'));
+const { parseTaskVerdict, parsePlanReview, parseLensReport, walkRuns, readVerdicts, isHumanStop, collectTaskReview, collectPlanReview, collectReviews, lensAgentsOf, collectLensAgents, collectPerRun } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'reviews.js'));
 const { parseReviewCounts, resolveRun } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'guards.js'));
 const { listRuns } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'runs.js'));
 
@@ -482,4 +482,166 @@ test('walkRuns sorts by date then name and reports timing state', () => {
   assert.deepStrictEqual(walked.map((w) => [w.run.name, w.timing]), [['2026-11-17T1-c', 'missing'], ['2026-11-18T1-a', 'ok'], ['2026-11-18T2-b', 'ok']]);
   assert.deepStrictEqual(walked[0].items, []);
   assert.deepStrictEqual(walked[0].units, [{ name: '2026-11-17T1-c', dir: bare.dir }]);
+});
+
+// --- lens agents and per-run verdicts (Task 3) ---
+
+const lensItem = (agentId, lensName, kind, tier) => item(agentId, 'lens reviewer', tier, `Lens ${lensName} ${kind}`);
+const DECISIONS = readText(path.join(FIXTURES, 'decisions.md'));
+const lensFigures = (run, projects) => {
+  const walked = walkRuns([run], { since: null, until: null, fsImpl: fs });
+  return collectLensAgents(walked, { roots: [projects], fsImpl: fs });
+};
+
+function lensRun() {
+  const pipelines = fresh('pl');
+  const projects = fresh('pr');
+  const items = [lensItem('a1', '3a', 'convention A', 'fast'), lensItem('a2', '3a', 'convention B', 'fast'), lensItem('b1', '3b', 'security A', 'standard'), lensItem('b2', '3b', 'security B', 'standard')];
+  const run = writeRun(pipelines, '2026-11-18T1-spec-1', { items, sessions: ['s1'] }, projects);
+  writeReport(projects, 's1', 'a1', `${LENS_HEAD}| low | a.js:1 | x | y |\n| low | a.js:2 | x | y |`);
+  writeReport(projects, 's1', 'a2', 'No findings.');
+  writeReport(projects, 's1', 'b1', 'No findings.');
+  writeReport(projects, 's1', 'b2', 'No findings.');
+  return { pipelines, projects, run };
+}
+
+test('AC4.1: per-lens no-finding share and findings per agent', () => {
+  const { run, projects } = lensRun();
+  const got = lensFigures(run, projects);
+  assert.deepStrictEqual({ agents: got.byLens['3a'].agents, n: got.byLens['3a'].n, unparsed: got.byLens['3a'].unparsed, noFinding: got.byLens['3a'].noFinding, total: got.byLens['3a'].perAgent.total }, { agents: 2, n: 2, unparsed: 0, noFinding: 0.5, total: 1 });
+  assert.strictEqual(got.byLens['3b'].noFinding, 1);
+  assert.strictEqual(got.byLens['3b'].perAgent.total, 0);
+  assert.strictEqual(got.byTier.fast.perAgent.low, 1);
+  assert.strictEqual(got.byTier.standard.agents, 2);
+});
+
+test('AC9.2: a lens reviewer whose transcript is missing is unparsed and in neither part of the share', () => {
+  const { run, projects } = lensRun();
+  const timing = JSON.parse(fs.readFileSync(path.join(run.dir, 'timing.json'), 'utf8'));
+  timing.dispatches.items.push(lensItem('a3', '3a', 'convention C', 'fast'));
+  fs.writeFileSync(path.join(run.dir, 'timing.json'), JSON.stringify(timing));
+  const a = lensFigures(run, projects).byLens['3a'];
+  assert.deepStrictEqual({ agents: a.agents, n: a.n, unparsed: a.unparsed, noFinding: a.noFinding }, { agents: 3, n: 2, unparsed: 1, noFinding: 0.5 });
+});
+
+test('AC9.1: a "No findings" opening followed by prose counts as no-finding for its agent', () => {
+  const pipelines = fresh('pl');
+  const projects = fresh('pr');
+  const run = writeRun(pipelines, '2026-11-18T1-spec-1', { items: [lensItem('c1', '3c', 'error handling A', 'fast')], sessions: ['s1'] }, projects);
+  writeReport(projects, 's1', 'c1', lens('no-findings-then-prose'));
+  const c = lensFigures(run, projects).byLens['3c'];
+  assert.strictEqual(c.noFinding, 1);
+  assert.strictEqual(c.unparsed, 0);
+});
+
+test('overflow rows count in overflow and in the per-agent total', () => {
+  const pipelines = fresh('pl');
+  const projects = fresh('pr');
+  const run = writeRun(pipelines, '2026-11-18T1-spec-1', { items: [lensItem('o1', '3d', 'x A', 'fast')], sessions: ['s1'] }, projects);
+  writeReport(projects, 's1', 'o1', `${LENS_HEAD}| high | a.js:1 | x | y |\n| info | — | +3 more | — |`);
+  const d = lensFigures(run, projects).byLens['3d'];
+  assert.deepStrictEqual(d.perAgent, { total: 4, critical: 0, high: 1, medium: 0, low: 0, info: 0, overflow: 3 });
+  assert.strictEqual(d.noFinding, 0);
+});
+
+test('the real decisions excerpt: confirmed, pair, tiebreak, refuted and can\'t-tell', () => {
+  const pipelines = fresh('pl');
+  const run = writeRun(pipelines, '2026-11-18T1-spec-1');
+  writeDecisions(run.dir, DECISIONS);
+  const walked = walkRuns([run], { since: null, until: null, fsImpl: fs });
+  const got = collectPerRun(walked, walked.map((w) => w.units.map((u) => readVerdicts(u, fs))));
+  assert.deepStrictEqual(got.rows.map((r) => ({ confirmed: r.confirmed, pair: r.pair, tiebreak: r.tiebreak, refuted: r.refuted, cantTell: r.cantTell })), [{ confirmed: 5, pair: 3, tiebreak: 2, refuted: 1, cantTell: 1 }]);
+  assert.deepStrictEqual(got.byLens['3a'], { confirmed: 2, pair: 1, tiebreak: 1, refuted: 1, cantTell: 0 });
+  assert.strictEqual(got.byLens['3g'].cantTell, 1);
+  assert.deepStrictEqual(got.totals, { confirmed: 5, pair: 3, tiebreak: 2, refuted: 1, cantTell: 1 });
+  assert.deepStrictEqual([got.n, got.unparsed], [1, 0]);
+});
+
+test('AC5.1: one pair-confirmed, one tiebreak-confirmed, one refuted', () => {
+  const pipelines = fresh('pl');
+  const run = writeRun(pipelines, '2026-11-18T1-spec-1');
+  const lines = DECISIONS.split('\n');
+  writeDecisions(run.dir, [lines[0], lines[5], lines[6]].join('\n') + '\n');
+  const walked = walkRuns([run], { since: null, until: null, fsImpl: fs });
+  const got = collectPerRun(walked, walked.map((w) => w.units.map((u) => readVerdicts(u, fs))));
+  const r = got.rows[0];
+  assert.deepStrictEqual({ confirmed: r.confirmed, pair: r.pair, tiebreak: r.tiebreak, refuted: r.refuted, cantTell: r.cantTell }, { confirmed: 2, pair: 1, tiebreak: 1, refuted: 1, cantTell: 0 });
+});
+
+test('AC8.1: two spec members count two runs and none from the parent', () => {
+  const pipelines = fresh('pl');
+  const parent = writeRun(pipelines, '2026-11-18T1-spec-1-2');
+  writeDecisions(parent.dir, `${DECISIONS.split('\n')[1]}\n`);
+  for (const id of [1, 2]) {
+    const dir = path.join(parent.dir, `spec-${id}`);
+    writeDecisions(dir, `${DECISIONS.split('\n')[0 + (id - 1) * 2]}\n`);
+    fs.writeFileSync(path.join(dir, 'timing.json'), JSON.stringify(STUB));
+    fs.writeFileSync(path.join(dir, 'review-findings.json'), '[]');
+  }
+  const walked = walkRuns(listRuns(pipelines).runs, { since: null, until: null, fsImpl: fs });
+  const got = collectPerRun(walked, walked.map((w) => w.units.map((u) => readVerdicts(u, fs))));
+  assert.strictEqual(got.n, 2);
+  assert.deepStrictEqual(got.rows.map((r) => r.run), ['2026-11-18T1-spec-1-2/spec-1', '2026-11-18T1-spec-1-2/spec-2']);
+  assert.strictEqual(got.totals.confirmed, 2);
+  assert.strictEqual(got.byLens['3b'], undefined);
+});
+
+test('a unit with no review lines is unparsed for the verdict figures, never zero', () => {
+  const pipelines = fresh('pl');
+  const a = writeRun(pipelines, '2026-11-18T1-spec-1');
+  writeRun(pipelines, '2026-11-18T2-spec-2');
+  writeDecisions(a.dir, '- AUTO 10:00:00 — Step 1: started. Reversibility: n/a.\n');
+  const walked = walkRuns(listRuns(pipelines).runs, { since: null, until: null, fsImpl: fs });
+  const got = collectPerRun(walked, walked.map((w) => w.units.map((u) => readVerdicts(u, fs))));
+  assert.deepStrictEqual({ n: got.n, unparsed: got.unparsed, rows: got.rows }, { n: 0, unparsed: 2, rows: [] });
+});
+
+test('lens agents come from the parent of a multi-spec run and honour the dedupe', () => {
+  const pipelines = fresh('pl');
+  const projects = fresh('pr');
+  writeRun(pipelines, '2026-11-18T0-earlier', { items: [lensItem('a1', '3a', 'convention A', 'fast')], sessions: ['s1'] }, projects);
+  const parent = writeRun(pipelines, '2026-11-18T1-spec-1-2', { items: [lensItem('a1', '3a', 'convention A', 'fast'), lensItem('b1', '3b', 'security A', 'standard')], sessions: ['s1'] }, projects);
+  for (const id of [1, 2]) {
+    fs.mkdirSync(path.join(parent.dir, `spec-${id}`), { recursive: true });
+    fs.writeFileSync(path.join(parent.dir, `spec-${id}`, 'timing.json'), JSON.stringify(STUB));
+  }
+  writeReport(projects, 's1', 'a1', 'No findings.');
+  writeReport(projects, 's1', 'b1', 'No findings.');
+  const walked = walkRuns(listRuns(pipelines).runs, { since: null, until: null, fsImpl: fs });
+  const got = collectLensAgents(walked, { roots: [projects], fsImpl: fs });
+  assert.strictEqual(got.byLens['3a'].agents, 1);
+  assert.strictEqual(got.byLens['3b'].agents, 1);
+  assert.deepStrictEqual(walked.map((w) => lensAgentsOf(w, fs).map((a) => a.agentId)), [['a1'], ['b1']]);
+});
+
+test("a top-level stub's lens agents are read from its archived copy", () => {
+  const pipelines = fresh('pl');
+  const projects = fresh('pr');
+  fs.mkdirSync(path.join(pipelines, '2026-11-18T2-spec-2', 'work'), { recursive: true });
+  writeRun(path.join(pipelines, 'archive'), '2026-11-18T2-spec-2', { items: [lensItem('a1', '3a', 'convention A', 'fast')], sessions: ['s1'] }, projects);
+  writeReport(projects, 's1', 'a1', 'No findings.');
+  const walked = walkRuns(listRuns(pipelines).runs, { since: null, until: null, fsImpl: fs });
+  const a = collectLensAgents(walked, { roots: [projects], fsImpl: fs }).byLens['3a'];
+  assert.deepStrictEqual({ agents: a.agents, n: a.n, noFinding: a.noFinding }, { agents: 1, n: 1, noFinding: 1 });
+});
+
+test('a lens dispatch with no agentId is kept and unparsed', () => {
+  const pipelines = fresh('pl');
+  const noId = lensItem(null, '3b', 'security A', 'standard');
+  delete noId.agentId;
+  const run = writeRun(pipelines, '2026-11-18T1-spec-1', { items: [noId] });
+  const got = lensFigures(run, fresh('pr'));
+  const b = got.byLens['3b'];
+  assert.deepStrictEqual({ agents: b.agents, n: b.n, unparsed: b.unparsed }, { agents: 1, n: 0, unparsed: 1 });
+  assert.strictEqual(got.byTier.standard.agents, 1);
+  assert.strictEqual(b.perAgent, null);
+  assert.strictEqual(b.noFinding, null);
+});
+
+test('collectReviews adds lens: { byTier, byLens, perRun }', () => {
+  const { pipelines, projects } = lensRun();
+  const got = taskFigures(pipelines, projects);
+  assert.deepStrictEqual(Object.keys(got.lens), ['byTier', 'byLens', 'perRun']);
+  assert.strictEqual(got.lens.byLens['3a'].agents, 2);
+  assert.strictEqual(got.lens.perRun.unparsed, 1);
 });
