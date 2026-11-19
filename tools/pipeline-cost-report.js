@@ -20,7 +20,9 @@
 // {main checkout}/.claude-tweaks/pipelines, the main checkout being the dirname of
 // `git rev-parse --path-format=absolute --git-common-dir`. --repo defaults to `gh repo view`. The tool only reads.
 //
-// Exit codes: 0 rendered (unreadable files and runs are counted in `unreadable`, not a failure); 1 a forge read
+// Exit codes: 0 rendered (unreadable files and runs are counted in `unreadable`, not a failure; a single malformed
+// JSON line inside a transcript is skipped and not counted, because live transcripts routinely end mid-line;
+// an unresolvable default --pipelines prints `Runs: unavailable` and leaves the code alone); 1 a forge read
 // failed (that section prints `{section}: unavailable — {first line}`; JSON `{ error }`); 2 malformed invocation.
 //
 // Seam: run({ argv, deps }) resolves to the exit code; deps holds fs, gh(args) (stdout), check(n) (drive.js --check
@@ -33,9 +35,8 @@ const { execFileSync } = require('child_process');
 const { PRICES, collectSpend } = require('./pipeline-cost-report/spend');
 const { collectFunnel, defaultGh, defaultCheck, readPluginVersion } = require('./pipeline-cost-report/funnel');
 const { collectRecords, countMergedPrs } = require('./pipeline-cost-report/records');
-const { listRuns } = require('./pipeline-cost-report/runs');
+const { listRuns, isDate } = require('./pipeline-cost-report/runs');
 
-const USAGE = 'usage: node tools/pipeline-cost-report.js [--since <YYYY-MM-DD>] [--until <YYYY-MM-DD>] [--projects <dir>]... [--pipelines <dir>] [--match <substring>] [--section spend|funnel|records|all] [--repo <owner/name>] [--simulate <reason[,reason...]>]... [--json]';
 const PLUGIN_ROOT = path.join(__dirname, '..', 'plugin');
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SESSION_TYPE_NOTE = 'Session type is the first claude-tweaks skill a session invoked; a session that did several things is counted once.';
@@ -57,13 +58,6 @@ function defaultDeps() {
 
 const errText = (e) => String((e && e.message) || e);
 const firstLine = (e) => errText(e).split('\n')[0];
-
-function isDate(v) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(typeof v === 'string' ? v : '');
-  if (!m) return false;
-  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
-  return d.getUTCFullYear() === Number(m[1]) && d.getUTCMonth() === Number(m[2]) - 1 && d.getUTCDate() === Number(m[3]);
-}
 
 const toDate = (s) => new Date(`${s}T00:00:00Z`);
 const dayString = (ms) => new Date(ms).toISOString().slice(0, 10);
@@ -162,12 +156,13 @@ const SECTIONS = [
 ];
 
 const SECTION_KEYS = SECTIONS.map((s) => s.key);
+const USAGE = `usage: node tools/pipeline-cost-report.js [--since <YYYY-MM-DD>] [--until <YYYY-MM-DD>] [--projects <dir>]... [--pipelines <dir>] [--match <substring>] [--section ${[...SECTION_KEYS, 'all'].join('|')}] [--repo <owner/name>] [--simulate <reason[,reason...]>]... [--json]`;
 
 function parseArgs(args) {
   const opts = { section: 'all', projects: [], simulate: [] };
   const value = (i, flag) => {
     const v = args[i];
-    if (v === undefined || v === '' || v.startsWith('-')) return { error: `${flag} needs a value` };
+    if (v === undefined || v === '' || v.startsWith('--')) return { error: `${flag} needs a value` };
     return { v };
   };
   for (let i = 0; i < args.length; i++) {
@@ -291,6 +286,15 @@ async function run({ argv, deps: given = {} }) {
     },
   };
 
+  // Run directories are listed once, before the sections, so a section's collect can read ctx.runs.
+  let pipelinesDir = opts.pipelines ? path.resolve(deps.cwd, opts.pipelines) : null;
+  try {
+    if (!pipelinesDir) pipelinesDir = mainCheckoutPipelines(deps);
+    ctx.runs = { ...listRuns(pipelinesDir, deps.fs), pipelinesDir };
+  } catch (e) {
+    ctx.runs = { error: `cannot resolve the pipelines directory (${firstLine(e)}); pass --pipelines <dir>` };
+  }
+
   const report = { window: { since, until } };
   let exit = 0;
   let unreadable = 0;
@@ -307,21 +311,16 @@ async function run({ argv, deps: given = {} }) {
     }
   }
 
-  // Run directories: counted by date, once, whichever sections ran.
-  let pipelinesDir = opts.pipelines ? path.resolve(deps.cwd, opts.pipelines) : null;
-  try {
-    if (!pipelinesDir) pipelinesDir = mainCheckoutPipelines(deps);
-    const listed = listRuns(pipelinesDir, deps.fs);
-    unreadable += listed.unreadable;
+  // The `runs` entry is rendered from that same listing.
+  if (ctx.runs.error) report.runs = { error: ctx.runs.error };
+  else {
+    unreadable += ctx.runs.unreadable;
     report.runs = {
-      inWindow: listed.runs.filter((r) => r.date >= since && r.date <= until).length,
-      unparsed: listed.unparsed,
-      unreadable: listed.unreadable,
+      inWindow: ctx.runs.runs.filter((r) => r.date >= since && r.date <= until).length,
+      unparsed: ctx.runs.unparsed,
+      unreadable: ctx.runs.unreadable,
     };
-    if (listed.missing) Object.assign(report.runs, { missing: true, dir: pipelinesDir });
-  } catch (e) {
-    report.runs = { error: `cannot resolve the pipelines directory (${firstLine(e)}); pass --pipelines <dir>` };
-    exit = 1;
+    if (ctx.runs.missing) Object.assign(report.runs, { missing: true, dir: ctx.runs.pipelinesDir });
   }
   report.unreadable = unreadable;
 

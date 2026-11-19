@@ -24,15 +24,18 @@ const fresh = (label) => {
   return d;
 };
 
-// One main transcript: a `flow` session whose single opus request prices at exactly $4.00 on 2026-11-18.
+// Three main sessions on 2026-11-18: flow $4.00 (opus), dispatch $2.00 and specify $1.00 (sonnet). Total $7.00,
+// build (flow + dispatch) $6.00, flow alone $4.00, so a wrong build figure cannot equal the total or the flow share.
+function session(id, model, skill, inputTokens) {
+  return JSON.stringify({ type: 'assistant', timestamp: '2026-11-18T10:00:00Z', message: { id, model, content: [{ type: 'tool_use', name: 'Skill', input: { skill: `claude-tweaks:${skill}` } }], usage: { input_tokens: inputTokens, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } }) + '\n';
+}
 function writeProjects(root, { corrupt = false } = {}) {
   const slugDir = path.join(root, 'slug-a');
   fs.mkdirSync(slugDir, { recursive: true });
-  const lines = [
-    { type: 'assistant', timestamp: '2026-11-18T10:00:00Z', message: { id: 'm1', model: 'claude-opus-4-8', content: [{ type: 'tool_use', name: 'Skill', input: { skill: 'claude-tweaks:flow' } }], usage: { input_tokens: 1000000, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } },
-  ];
-  fs.writeFileSync(path.join(slugDir, 's1.jsonl'), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
-  if (corrupt) fs.writeFileSync(path.join(slugDir, 's2.jsonl'), '{}\n');
+  fs.writeFileSync(path.join(slugDir, 's1.jsonl'), session('m1', 'claude-opus-4-8', 'flow', 1000000));
+  fs.writeFileSync(path.join(slugDir, 's2.jsonl'), session('m2', 'claude-sonnet-4-6', 'dispatch', 1000000));
+  fs.writeFileSync(path.join(slugDir, 's3.jsonl'), session('m3', 'claude-sonnet-4-6', 'specify', 500000));
+  if (corrupt) fs.writeFileSync(path.join(slugDir, 'bad.jsonl'), '{}\n');
   return root;
 }
 
@@ -69,7 +72,7 @@ function fakeGh({ fail = false } = {}) {
 const unreadableFs = () => ({
   ...fs,
   createReadStream(file, ...rest) {
-    if (path.basename(file) === 's2.jsonl') throw Object.assign(new Error('EACCES: denied'), { code: 'EACCES' });
+    if (path.basename(file) === 'bad.jsonl') throw Object.assign(new Error('EACCES: denied'), { code: 'EACCES' });
     return fs.createReadStream(file, ...rest);
   },
 });
@@ -105,8 +108,8 @@ test('AC7.1: --json prints one object holding the same figures as the Markdown o
   const json = JSON.parse(js.logs[0]);
 
   for (const key of ['window', 'spend', 'funnel', 'records', 'unreadable']) assert.ok(key in json, key);
-  assert.strictEqual(json.spend.total, 4);
-  assert.ok(text.includes('$4.00'), text);
+  assert.strictEqual(json.spend.total, 7);
+  assert.ok(text.includes('$7.00'), text);
   assert.strictEqual(json.funnel.admitted, 2);
   assert.match(text, /admitted:? 2\b/i);
   assert.strictEqual(json.funnel.checked, 4);
@@ -114,13 +117,13 @@ test('AC7.1: --json prints one object holding the same figures as the Markdown o
   assert.strictEqual(json.records.deferred.total, 2);
   assert.match(text, /deferred:? 2\b/i);
   assert.strictEqual(json.spend.perMergedPr.mergedPrs, 2);
-  assert.strictEqual(json.spend.perMergedPr.total, 2);
-  assert.ok(text.includes('$2.00'), text);
-  assert.strictEqual(json.spend.perMergedPr.build, 2);
+  assert.strictEqual(json.spend.perMergedPr.total, 3.5);
+  assert.strictEqual(json.spend.perMergedPr.build, 3);
+  assert.ok(text.includes('Per merged PR (2 merged): $3.50 total, $3.00 build'), text);
   assert.match(text, /2026-11-18 to 2026-11-18, UTC, inclusive/);
   assert.match(text, /Prices dated 2026-11-03/);
   assert.match(text, /Session type is the first claude-tweaks skill a session invoked; a session that did several things is counted once\./);
-  assert.strictEqual(json.spend.sessions, 1);
+  assert.strictEqual(json.spend.sessions, 3);
 });
 
 test('--section limits the sections printed and collected', async () => {
@@ -171,8 +174,8 @@ test('--projects roots are deduplicated by real path', async () => {
   const argv = [...h.base, '--projects', link, '--projects', missing, '--section', 'spend', '--json'];
   assert.strictEqual(await run({ argv, deps: h.deps }), 0);
   const json = JSON.parse(h.logs[0]);
-  assert.strictEqual(json.spend.total, 4);
-  assert.strictEqual(json.spend.sessions, 1);
+  assert.strictEqual(json.spend.total, 7);
+  assert.strictEqual(json.spend.sessions, 3);
   assert.strictEqual(json.unreadable, 0);
 });
 
@@ -295,4 +298,77 @@ test('AC9.1 go-red control: the scan reports a file that names the tool', () => 
   fs.writeFileSync(hit, `// see ${NEEDLE}.js\n`);
   fs.writeFileSync(path.join(dir, 'clean.md'), 'nothing here\n');
   assert.deepStrictEqual(scan(dir).offenders, [hit]);
+});
+
+// ---- fix round 1 ----
+
+test('listRuns: a top-level copy that fails to read does not hide the archived copy', () => {
+  const p = fresh('hide');
+  const name = '2026-11-15T070442-spec-1';
+  fs.mkdirSync(path.join(p, name), { recursive: true });
+  fs.mkdirSync(path.join(p, 'archive', name, 'spec-1'), { recursive: true });
+  const top = path.join(p, name);
+  const r = listRuns(p, {
+    ...fs,
+    readdirSync(dir, opts) {
+      if (dir === top) throw Object.assign(new Error('ENOENT: moved'), { code: 'ENOENT' });
+      return fs.readdirSync(dir, opts);
+    },
+  });
+  assert.strictEqual(r.unreadable, 1);
+  assert.deepStrictEqual(r.runs.map((x) => [x.name, x.archived, x.members.length]), [[name, true, 1]]);
+});
+
+test('listRuns: a name is dated only when it starts with a real calendar date', () => {
+  const p = fresh('dates');
+  for (const name of ['2026-99-99-x', '2026-02-30-x', '2026-11-123-x', '2026-11-12', '2026-11-13T010101-spec-2']) fs.mkdirSync(path.join(p, name));
+  const r = listRuns(p);
+  assert.strictEqual(r.unparsed, 3);
+  assert.deepStrictEqual(r.runs.map((x) => x.date).sort(), ['2026-11-12', '2026-11-13']);
+});
+
+test('listRuns follows a symlink to a directory, and counts a dangling one unreadable', () => {
+  const p = fresh('sym');
+  const real = fresh('symreal');
+  fs.mkdirSync(path.join(real, 'spec-3'));
+  fs.symlinkSync(real, path.join(p, '2026-11-12T000000-spec-3'), 'dir');
+  fs.symlinkSync(path.join(DIR, 'no-such-target'), path.join(p, '2026-11-12T000001-spec-4'), 'dir');
+  const r = listRuns(p);
+  assert.deepStrictEqual(r.runs.map((x) => [x.name, x.members.map((m) => m.id)]), [['2026-11-12T000000-spec-3', [3]]]);
+  assert.strictEqual(r.unreadable, 1);
+});
+
+test('a section receives the run listing in ctx.runs, collected before the sections run', async () => {
+  const { SECTIONS } = require(path.join(ROOT, 'tools', 'pipeline-cost-report.js'));
+  const h = harness();
+  fs.mkdirSync(path.join(h.pipelines, '2026-11-18T010101-spec-5', 'spec-5'), { recursive: true });
+  let seen = null;
+  SECTIONS.push({ key: 'probe', collect: async (ctx) => { seen = ctx.runs; return {}; }, failed: () => false, unreadable: () => 0, render: () => ['probe'] });
+  try {
+    assert.strictEqual(await run({ argv: [...h.base, '--section', 'all'], deps: h.deps }), 0);
+  } finally {
+    SECTIONS.pop();
+  }
+  assert.deepStrictEqual(seen.runs.map((r) => [r.name, r.members.map((m) => m.id)]), [['2026-11-18T010101-spec-5', [5]]]);
+});
+
+test('usage names every section key', async () => {
+  const h = harness();
+  assert.strictEqual(await run({ argv: ['--section', 'bogus'], deps: h.deps }), 2);
+  assert.ok(h.errs.join('\n').includes('--section spend|funnel|records|all]'), h.errs.join('\n'));
+});
+
+test('a failed default --pipelines lookup prints Runs: unavailable and leaves the exit code alone', async () => {
+  const h = harness({ git: () => { throw new Error('fatal: not a git repository\nmore'); } });
+  const argv = h.base.slice(0, -2);
+  assert.strictEqual(await run({ argv: [...argv, '--section', 'records'], deps: h.deps }), 0);
+  assert.match(h.logs.join('\n'), /Runs: unavailable — cannot resolve the pipelines directory \(fatal: not a git repository\)/);
+  const j = harness({ git: () => { throw new Error('fatal'); } });
+  assert.strictEqual(await run({ argv: [...j.base.slice(0, -2), '--section', 'records', '--json'], deps: j.deps }), 0);
+  assert.match(JSON.parse(j.logs[0]).runs.error, /cannot resolve the pipelines directory/);
+});
+
+test('a value starting with a single dash is accepted; one starting with -- is not', () => {
+  assert.strictEqual(parseArgs(['--match', '-foo']).opts.match, '-foo');
+  assert.ok(parseArgs(['--match', '--json']).error);
 });

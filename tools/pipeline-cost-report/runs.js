@@ -12,8 +12,16 @@ const fs = require('fs');
 const path = require('path');
 
 const ARCHIVE = 'archive';
-const DATE_RE = /^(\d{4}-\d{2}-\d{2})/;
+const DATE_RE = /^(\d{4}-\d{2}-\d{2})(?!\d)/;
 const MEMBER_RE = /^spec-(\d+)$/;
+
+// A real calendar date (2026-02-30 and 2026-99-99 are not).
+function isDate(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(typeof v === 'string' ? v : '');
+  if (!m) return false;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return d.getUTCFullYear() === Number(m[1]) && d.getUTCMonth() === Number(m[2]) - 1 && d.getUTCDate() === Number(m[3]);
+}
 
 // { runs: [{ name, date, dir, archived, members: [{ id, dir }] }], unparsed, unreadable, missing }
 function listRuns(pipelinesDir, fsImpl = fs) {
@@ -33,17 +41,32 @@ function listRuns(pipelinesDir, fsImpl = fs) {
     if (!(e && e.code === 'ENOENT')) out.unreadable += 1;
   }
 
+  // A symlink to a directory is a directory; one that cannot be stat'ed is unreadable. null = not a directory.
+  const isDir = (entry, full) => {
+    if (entry.isDirectory()) return true;
+    if (!entry.isSymbolicLink()) return false;
+    try {
+      return fsImpl.statSync(full).isDirectory();
+    } catch {
+      out.unreadable += 1;
+      return null;
+    }
+  };
+
+  // A name is marked seen only once it has been read, so a top-level copy that fails to read (it just moved to
+  // archive/) does not hide the archived copy.
   const seen = new Set();
   const visit = (entries, base, isArchived) => {
     for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name === ARCHIVE || seen.has(entry.name)) continue;
-      seen.add(entry.name);
+      if (entry.name === ARCHIVE || seen.has(entry.name)) continue;
+      const dir = path.join(base, entry.name);
+      if (isDir(entry, dir) !== true) continue;
       const m = DATE_RE.exec(entry.name);
-      if (!m) {
+      if (!m || !isDate(m[1])) {
+        seen.add(entry.name);
         out.unparsed += 1;
         continue;
       }
-      const dir = path.join(base, entry.name);
       let inside;
       try {
         inside = fsImpl.readdirSync(dir, { withFileTypes: true });
@@ -51,10 +74,12 @@ function listRuns(pipelinesDir, fsImpl = fs) {
         out.unreadable += 1;
         continue;
       }
+      seen.add(entry.name);
       const members = [];
       for (const sub of inside) {
-        const mm = sub.isDirectory() ? MEMBER_RE.exec(sub.name) : null;
-        if (mm) members.push({ id: Number(mm[1]), dir: path.join(dir, sub.name) });
+        const subDir = path.join(dir, sub.name);
+        const mm = MEMBER_RE.exec(sub.name);
+        if (mm && isDir(sub, subDir) === true) members.push({ id: Number(mm[1]), dir: subDir });
       }
       out.runs.push({ name: entry.name, date: m[1], dir, archived: isArchived, members });
     }
@@ -64,4 +89,4 @@ function listRuns(pipelinesDir, fsImpl = fs) {
   return out;
 }
 
-module.exports = { listRuns };
+module.exports = { listRuns, isDate };
