@@ -1092,7 +1092,7 @@ test('#5902: an opened single-record PR records one started build event', async 
   assert.equal(await run(cliArgv(fx), h.deps), 0, h.err.join(''));
   assert.deepEqual(events, [{
     kind: 'started', station: 'build', recordNumber: 4027, repoName: REPO, runId: RUN_ID, sessionId: 'sess-pr', lane: 'unknown',
-    payload: { fact: 'pr_opened', prNumber: 42, prUrl: URL42, outcome: 'opened' }, discriminator: 'pr:42',
+    payload: { fact: 'pr_opened', prNumber: 42, prUrl: URL42, outcome: 'opened' }, discriminator: 'pr:42:opened',
   }]);
 });
 
@@ -1105,7 +1105,7 @@ test('#5902: an opened multi-record PR records one started build event per recor
   const payload = { fact: 'pr_opened', prNumber: 42, prUrl: URL42, outcome: 'opened' };
   assert.deepEqual(events, [4031, 4027, 4029].map((recordNumber) => ({
     kind: 'started', station: 'build', recordNumber, repoName: REPO, runId: RUN_ID, sessionId: 'sess-pr', lane: 'unknown',
-    payload, discriminator: 'pr:42',
+    payload, discriminator: 'pr:42:opened',
   })));
 });
 
@@ -1141,7 +1141,7 @@ test('#5902: a reopened PR records one started build event', async () => {
   assert.equal(await run(cliArgv(fx), h.deps), 0, h.err.join(''));
   assert.equal(JSON.parse(h.out.join('')).outcome, 'reopened');
   assert.deepEqual(events.map((e) => [e.kind, e.station, e.recordNumber, e.payload, e.discriminator]), [
-    ['started', 'build', 4027, { fact: 'pr_opened', prNumber: 7, prUrl: URL7, outcome: 'reopened' }, 'pr:7'],
+    ['started', 'build', 4027, { fact: 'pr_opened', prNumber: 7, prUrl: URL7, outcome: 'reopened' }, 'pr:7:reopened'],
   ]);
 });
 

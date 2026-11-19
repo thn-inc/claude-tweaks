@@ -167,7 +167,10 @@ function world({ policy, records = {}, worktrees, fail = {}, diff = 'M\0src/app.
     state.release.push(opts);
     const already = state.claims[opts.issueNumber] === 'released';
     state.claims[opts.issueNumber] = 'released';
-    return { outcome: already ? 'already-released' : 'released', calls: [], commentPosted: true, labelsRemoved: [], labelsFailed: [], note: null };
+    return {
+      outcome: already ? 'already-released' : 'released', calls: [], commentPosted: true, labelsRemoved: [], labelsFailed: [], note: null,
+      ...(already ? {} : { claimedAt: state.claimedAt || '2026-11-16T09:00:00.000Z' }),
+    };
   };
   const deps = {
     mainRoot: root,
@@ -1494,8 +1497,22 @@ test('#5902: a park whose claim release returns released records one exited buil
   const exited = rec.events.filter((e) => e.station === 'build');
   assert.deepEqual(exited, [{
     kind: 'exited', station: 'build', outcome: 'passed', recordNumber: 7, repoName: 'o/r', lane: 'unknown', runId: RUN_ID,
-    sessionId: 'sess-park', payload: { reason: 'awaiting-local-acceptance' }, discriminator: `release:${RUN_ID}`,
+    sessionId: 'sess-park', payload: { reason: 'awaiting-local-acceptance' }, discriminator: `release:${RUN_ID}:2026-11-16T09:00:00.000Z`,
   }]);
+});
+
+test('#5902: the park release discriminator names the released claim instance', async () => {
+  const keyFor = async (claimedAt) => {
+    const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+    w.state.claimedAt = claimedAt;
+    const rec = recorder();
+    const res = await call(w, parkArgv(w), { stationEvent: rec.stationEvent });
+    assert.equal(res.code, 0, res.stderr);
+    return rec.events.find((e) => e.kind === 'exited').discriminator;
+  };
+  const first = await keyFor('2026-11-16T09:00:00.000Z');
+  assert.equal(first, await keyFor('2026-11-16T09:00:00.000Z'), 'a replay keys the same');
+  assert.notEqual(first, await keyFor('2026-11-16T09:30:00.000Z'), 'a re-claim by the same run keys differently');
 });
 
 test('#5902: an already-released claim records no exited build event', async () => {

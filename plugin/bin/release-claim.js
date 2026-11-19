@@ -220,7 +220,7 @@ function run(argv, deps = realDeps) {
       deps.stationEvent({
         ...transition, recordNumber: issue,
         repoName: toRepoName(`${repoSpec.owner}/${repoSpec.repo}`), runId: visitRunId, sessionId: r.sweptFrom ? null : ownSession, lane: 'unknown',
-        payload, discriminator: `release:${visitRunId}`,
+        payload, discriminator: `release:${visitRunId}:${r.claimedAt || ''}`,
       });
     } catch { /* best-effort: the release stands */ }
   }

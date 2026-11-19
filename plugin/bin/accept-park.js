@@ -784,7 +784,7 @@ function parkSteps({ opts, deps, ctx, runDir, repoSpec, log }) {
         if (r.outcome === 'released' && transition) {
           emit({
             ...transition, recordNumber: n,
-            runId: path.basename(runDir), payload: { reason: PARK_REASON }, discriminator: `release:${path.basename(runDir)}`,
+            runId: path.basename(runDir), payload: { reason: PARK_REASON }, discriminator: `release:${path.basename(runDir)}:${r.claimedAt || ''}`,
           });
         }
         const released = r.outcome === 'released' || r.outcome === 'already-released';

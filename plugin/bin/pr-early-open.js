@@ -274,7 +274,7 @@ async function run(argv, overrides = {}) {
           deps.stationEvent({
             ...PR_OPENED_TRANSITION, recordNumber: Number(n), repoName,
             runId, sessionId: deps.sessionId || null, lane: 'unknown',
-            payload: { ...payload }, discriminator: `pr:${res.number}`,
+            payload: { ...payload }, discriminator: `pr:${res.number}:${res.outcome}`,
           });
         } catch { /* best-effort: the PR stands */ }
       }

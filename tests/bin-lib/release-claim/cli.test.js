@@ -576,8 +576,26 @@ test('#5902: a released claim with --reason merged records one exited build pass
   assert.deepEqual(events[0], {
     kind: 'exited', station: 'build', outcome: 'passed', recordNumber: 999, repoName: 'acme/w',
     runId: RUN_DIR_NAME, sessionId: 'sess-1', lane: 'unknown',
-    payload: { reason: 'merged', link: 'https://x/1' }, discriminator: `release:${RUN_DIR_NAME}`,
+    payload: { reason: 'merged', link: 'https://x/1' }, discriminator: `release:${RUN_DIR_NAME}:2026-08-16T11:00:00.000Z`,
   });
+});
+
+test('#5902: the release discriminator names the released claim instance — a re-claim by the same run releases under a new key, a replay under the same', () => {
+  const release = (claimedAt) => {
+    const runDir = mkRun();
+    const content = JSON.stringify({ runId: RUN_DIR_NAME, sessionId: 's', claimedAt, ttlHours: 72, host: 'h' });
+    const { d } = deps({ content, out: [], mainRoot: rootOf(runDir) });
+    const events = withStationSpy(d);
+    assert.equal(run(['999', '--run', runDir, '--reason', 'merged: spec 999'], d), 0);
+    return events[0];
+  };
+  const first = release('2026-08-16T11:00:00.000Z');
+  const reclaim = release('2026-08-16T11:30:00.000Z');
+  assert.equal(first.discriminator, release('2026-08-16T11:00:00.000Z').discriminator, 'a replay keys the same');
+  assert.notEqual(first.discriminator, reclaim.discriminator, 'a re-claim by the same run keys differently');
+  assert.equal(reclaim.discriminator, `release:${RUN_DIR_NAME}:2026-08-16T11:30:00.000Z`);
+  const { buildLine } = require('../../../plugin/bin/lib/station-events/emit');
+  assert.notEqual(buildLine(first).eventKey, buildLine(reclaim).eventKey, 'so the second release is not deduplicated away');
 });
 
 test('#5902: --reason "never-started: x" records an abandoned exit; no --link carries link null', () => {
@@ -658,7 +676,7 @@ test('#5902: a --sweep release closes the holder\'s visit — runId and discrimi
   assert.equal(run(['999', '--run', runDir, '--reason', 'swept: stale claim', '--sweep'], d), 0);
   assert.equal(events.length, 1);
   assert.equal(events[0].runId, HOLDER);
-  assert.equal(events[0].discriminator, `release:${HOLDER}`);
+  assert.equal(events[0].discriminator, `release:${HOLDER}:2026-08-12T12:00:00.000Z`);
   assert.equal(events[0].outcome, 'abandoned');
   assert.equal(events[0].sessionId, null, 'the holder\'s session is unknown — never the sweeper\'s');
   assert.deepEqual(events[0].payload, {
