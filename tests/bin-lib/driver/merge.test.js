@@ -23,6 +23,10 @@ const { readText } = require('../../helpers/read-skill');
 const { BAD_MERGE_CHECK_ENVELOPES } = require('../../helpers/merge-check-envelopes');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures');
 const { realDeps } = require(path.join(LIB, 'driver', 'run'));
+const { MODEL_POLICY_KEYS, roleModel } = require(path.join(LIB, 'driver', 'launch.js'));
+const { DRIVER_ROLE_PROFILES } = require(path.join(LIB, 'driver', 'roles.js'));
+const { PROFILES } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
+const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema.js'));
 
 const MAIN_NOW = new Date(2026, 10, 13, 9, 0, 0);
 const CLOCK_START = 1000;
@@ -2892,7 +2896,10 @@ test('AC13.1–AC13.3: express-lane.js verify exits 0 for fixture runs driven to
 
 // ---- AC10: the real judgment supplier (judgments.js, acceptance.js) behind merge() ----
 
-const POLICY_CEILINGS = { 'express-driver-wall-clock-minutes': { value: 30 }, 'express-driver-spend-ceiling-dollars': { value: 5 } };
+const POLICY_CEILINGS = { 'express-driver-wall-clock-minutes': { value: 30 }, 'express-driver-spend-ceiling-dollars': { value: 5 }, ...resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: '' }) };
+test('the fixture policy carries the model keys a launch needs (#5917)', () => {
+  assert.strictEqual(roleModel('merge-check', POLICY_CEILINGS), PROFILES[DRIVER_ROLE_PROFILES['merge-check']].model);
+});
 const TRY_IT_GROUP = { name: 'Run the thing', precondition: 'none', access: 'none', entryPoint: 'node bin/x.js', steps: ['Run it', 'Read the output'], expected: 'It prints ok' };
 
 // The replies the supplier's own reads and writes need, tried before the merge harness's defaults: the

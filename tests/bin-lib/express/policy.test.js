@@ -42,3 +42,24 @@ test('defaultResolvePolicy hands the run config to computeDerivedDefaults: a mer
   assert.strictEqual(calls, 0, 'the run pin decides merge-verification before any forge detection');
   assert.strictEqual(resolved['merge-verification'].value, 'off');
 });
+
+test('defaultResolvePolicy returns the model-profiles block the CLI returns (#5917)', { skip: STUB_SKIP }, () => {
+  const root = fs.realpathSync(scratchDir('express-policy-modelprofiles-'));
+  const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+  initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+  git('commit', '-q', '--allow-empty', '-m', 'init');
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'model-profiles:\n  standard:\n    model: opus\nmodel-ceiling: capable\n');
+  const savedCwd = process.cwd();
+  let resolved;
+  try {
+    process.chdir(root);
+    resolved = defaultResolvePolicy(['model-profiles', 'model-ceiling']);
+  } finally {
+    process.chdir(savedCwd);
+  }
+  assert.deepStrictEqual(resolved, {
+    'model-profiles': { value: { standard: { model: 'opus' } }, source: 'policy' },
+    'model-ceiling': { value: 'capable', source: 'policy' },
+  });
+});

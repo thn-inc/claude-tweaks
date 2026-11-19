@@ -124,6 +124,7 @@ These transitions write no station event; the reconciler or a later record cover
 - A release is emitted from `plugin/bin/release-claim.js` and `plugin/bin/accept-park.js`'s in-process release only, and only for a `released` result (an `already-released` repeat writes nothing). A shaping claim's release (`shaped: #n`, `routed: needs:definition #n`, `failed: shaping`) writes nothing: it never entered build, and the shape station has no `entered` producer to pair an exit with. `reconcile`'s `release-merged.js` path calls the library directly and emits nothing.
 - `plugin/bin/repair-claim.js` (`plugin/bin/lib/repair-claim/repair.js`) force-releases (`release` mode) or re-claims (`reclaim` mode) through the release library's helpers and emits nothing. It acts on an unreadable claim blob, so there is no readable `claimedAt` for the claim being repaired to key an event on.
 - `bot:blocked` / `bot:parked` additions emit nothing: the emitter cannot know which station's visit they end.
+- A driver worker launch refused for want of a model (#5917, `docs/driver.md`'s Worker models) writes no `worker` line, so the mirror emits no `build` segment for it; the record's stop reaches only the driver's final line.
 - `express-lane.js` call paths emit nothing yet; `express` stays a valid lane.
 - `ready` applied by `/specify` (skill prose, not program code) emits nothing.
 - A standard-lane `gh pr merge` has no code emitter, so its merge-station exit is not recorded.

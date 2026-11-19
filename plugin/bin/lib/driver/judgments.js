@@ -21,9 +21,9 @@ const { verdictText, VERDICT_STEPS, confirmFromFile } = require('../dispatch/mer
 const { runAcceptance: defaultRunAcceptance } = require('./acceptance');
 const { codeSuffix, DIFF_PROMPT_MAX_BYTES, truncateUtf8 } = require('./review');
 
-// One merge-check event.
-function emitEvent(deps, startedAt, verdict, floor, detail) {
-  emitStep(deps, 'merge-check', verdict === 'auto-merge' ? 'ok' : 'stop', startedAt, detail, { verdict, floor });
+// One merge-check event. `model` is the model the judge launch ran on (#5917); absent when no launch returned.
+function emitEvent(deps, startedAt, verdict, floor, detail, model) {
+  emitStep(deps, 'merge-check', verdict === 'auto-merge' ? 'ok' : 'stop', startedAt, detail, { verdict, floor, ...(model ? { model } : {}) });
 }
 
 // Step 1: the blast radius, run as the CLI. { floor, detail, summary }; floor is null when neither floor fires.
@@ -93,13 +93,13 @@ async function launchAndValidate({ deps, shared }, ctx, prompt) {
     role: 'merge-check', dir: 'merge-check', label: 'merge-check', prompt, schema: MERGE_CHECK_RESULT_SCHEMA,
   });
   if (launched.stop) return launched;
-  const { envelope } = launched;
+  const { envelope, model } = launched;
   const result = envelope && envelope.status === 'ok' ? envelope.result : undefined;
   if (!isPlainObject(result) || typeof result.verdict !== 'string'
     || (result.verdict !== 'auto-merge' && result.verdict !== 'needs-human')) {
-    return { stop: 'merge-check returned no valid verdict' };
+    return { stop: 'merge-check returned no valid verdict', model };
   }
-  return { verdict: result.verdict, rationale: typeof result.rationale === 'string' ? result.rationale : '' };
+  return { verdict: result.verdict, rationale: typeof result.rationale === 'string' ? result.rationale : '', model };
 }
 
 // Step 6: the one logged line, no --section (`latestVerdicts` reads file order). True on exit 0.
@@ -117,6 +117,7 @@ async function judgeMergeCheck(env, ctx) {
   let verdict = 'unconfirmed';
   let floor = 'none';
   let detail = '';
+  let model;
   try {
     deps = env.deps;
     const { readFile } = env;
@@ -142,6 +143,7 @@ async function judgeMergeCheck(env, ctx) {
         policy: { 'auto-merge-max-lines': blast.limits.lines, 'auto-merge-max-files': blast.limits.files }, checks: inputs.checks, reviewFindings: [], rules: rules.text,
       });
       const judged = await launchAndValidate(env, ctx, prompt);
+      model = judged.model;
       // A signal during the launch was already reported by run.js's handler: log nothing, emit nothing.
       if (isInterrupted(deps)) return { verdict: 'unconfirmed', floor, detail: 'interrupted' };
       if (judged.stop) {
@@ -152,16 +154,16 @@ async function judgeMergeCheck(env, ctx) {
         detail = judged.rationale ? reduceDetail(judged.rationale) : '';
       }
     }
-    return finish(deps, startedAt, ctx, env, reached, floor, detail);
+    return finish(deps, startedAt, ctx, env, reached, floor, detail, model);
   } catch (err) {
     const failed = `merge-check failed unexpectedly${codeSuffix(err)}`;
-    emitEvent(deps, startedAt, verdict, floor, failed);
+    emitEvent(deps, startedAt, verdict, floor, failed, model);
     return { verdict, floor, detail: failed };
   }
 }
 
 // Steps 6 to 8 for a verdict reached: log it, confirm an auto-merge from decisions.md, emit once.
-function finish(deps, startedAt, ctx, env, reached, floor, detail) {
+function finish(deps, startedAt, ctx, env, reached, floor, detail, model) {
   let verdict = reached;
   let logged;
   try {
@@ -185,7 +187,7 @@ function finish(deps, startedAt, ctx, env, reached, floor, detail) {
       detail = 'the logged verdict could not be confirmed';
     }
   }
-  emitEvent(deps, startedAt, verdict, floor, detail);
+  emitEvent(deps, startedAt, verdict, floor, detail, model);
   return { verdict, floor, detail: cleanDetail(detail) };
 }
 
