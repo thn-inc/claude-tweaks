@@ -50,7 +50,8 @@
 // `{section}: unavailable — {first line}`; JSON `{ error }`) — with --split set that includes a pipelines listing
 // failure (`guards: unavailable —`, though the Runs line still leaves the code alone) and a guard 3 forge failure (only
 // that cell reads unavailable) — and a pipelines listing failure under `--section reviews` (under `--section all` it
-// prints `reviews: unavailable —` and leaves the code alone, like `Runs: unavailable`); 2 malformed invocation, --section guards without --split included.
+// prints `reviews: unavailable —` and leaves the code alone, like `Runs: unavailable`); 2 malformed invocation,
+// --section guards without --split included.
 //
 // Seam: run({ argv, deps }) resolves to the exit code; deps holds fs, gh(args) (stdout), check(n) (drive.js --check
 // stdout), git(args, {cwd}), now(), pluginVersion(), cwd, home and the log/err line writers.

@@ -940,11 +940,67 @@ test('AC4.1 markdown: lens rows per lens, the profile note under the tier table'
 
 test('a run whose lens dispatches cannot be read prints the unreadable line, never zero agents', async () => {
   const pipelines = fresh('pl');
-  writeRun(pipelines, '2026-11-18T1-spec-1', { items: [null, lensItem('c', '3a', 'convention A', 'fast')] });
+  const bad = writeRun(pipelines, '2026-11-18T1-spec-1', { items: [null, lensItem('c', '3a', 'convention A', 'fast')] });
+  writeDecisions(bad.dir, threeA(1));
+  yieldRun(pipelines, '2026-11-18T2-spec-2', { agents: 2, confirms: 2 });
   const got = await reviewsCli(pipelines, fresh('pr'), ['--json']);
-  assert.strictEqual(JSON.parse(got.text).reviews.lens.unreadable, 1);
+  assert.strictEqual(got.code, 0, got.errs);
+  const r = JSON.parse(got.text).reviews;
+  assert.strictEqual(r.lens.unreadable, 1);
+  assert.strictEqual(r.lens.perRun.unparsed, 1);
+  assert.strictEqual(r.lens.perRun.n, 1);
+  assert.strictEqual(r.lens.perRun.totals.confirmed, 2);
+  assert.strictEqual(r.lens.outcomes.unparsed, 1);
+  assert.strictEqual(r.planReview.humanStops.n, 2);
+  assert.strictEqual(r.window.runs, 2);
+  assert.strictEqual(r.lens.byLens['3a'].agents, 2);
   const md = await reviewsCli(pipelines, fresh('pr'));
+  assert.strictEqual(md.code, 0, md.errs);
   assert.ok(md.text.includes('1 runs with unreadable lens dispatches, counted in no lens figure.'), md.text);
+  assert.ok(md.text.includes('Run units read: 1; unparsed: 1.'), md.text);
+});
+
+test('readVerdicts: a unit whose timing.json readRun throws on is excluded timing-unreadable, text kept', () => {
+  const dir = fresh('unit');
+  fs.writeFileSync(path.join(dir, 'timing.json'), JSON.stringify({ dispatches: { items: [null] } }));
+  writeDecisions(dir, threeA(1));
+  const v = readVerdicts({ name: 'u', dir }, fs);
+  assert.deepStrictEqual([v.excluded, v.confirmed, v.refuted, v.cantTell], ['timing-unreadable', [], [], []]);
+  assert.strictEqual(v.text, threeA(1));
+  assert.deepStrictEqual(collectPerRun([[]], [[v]]).unparsed, 1);
+  assert.strictEqual(collectOutcomes([[v]]).unparsed, 1);
+});
+
+test('a multi-spec yield run with a member whose timing.json readRun cannot read takes no slot and counts unparsed', () => {
+  const pipelines = fresh('pl');
+  const parent = writeRun(pipelines, '2026-11-18T1-spec-1-2', { items: [lensItem('a0', '3a', 'convention A', 'fast')] });
+  for (const id of [1, 2]) writeDecisions(path.join(parent.dir, `spec-${id}`), threeA(1));
+  fs.writeFileSync(path.join(parent.dir, 'spec-1', 'timing.json'), JSON.stringify({ dispatches: { items: [null] } }));
+  fs.writeFileSync(path.join(parent.dir, 'spec-2', 'timing.json'), JSON.stringify(STUB));
+  assert.deepStrictEqual(yieldOf(pipelines, 2).byLens['3a'], { runs: 0, agents: 0, confirmed: 0, rate: null, unparsed: 1 });
+});
+
+test('a verdict-line lens name led by a lens id counts under the id; any other name is kept verbatim', () => {
+  const dir = fresh('unit');
+  writeDecisions(dir, [
+    'Reproduction: lens "3b Security" finding a.js:1 reproduced. Confirmed.',
+    'Reproduction: lens "delta" finding b.js:2 reproduced. Confirmed.',
+    'Reproduction: lens "3bx" finding c.js:3 reproduced. Confirmed.',
+    '- AUTO 10:00:00 — lens "3c: errors" finding d.js:4 dropped: refuted by tiebreak:aaaaaaaaaaaa.',
+  ].join('\n'));
+  const v = readVerdicts({ name: 'u', dir }, fs);
+  assert.deepStrictEqual(v.confirmed.map((c) => c.lens), ['3b', 'delta', '3bx']);
+  assert.deepStrictEqual(v.refuted.map((c) => c.lens), ['3c']);
+});
+
+test('the yield counts a timing-less run naming "3b Security" under 3b, and keeps "delta" as its own lens', () => {
+  const pipelines = fresh('pl');
+  ac61(pipelines, true);
+  writeDecisions(path.join(pipelines, '2026-11-19T2-spec-5'), 'Reproduction: lens "3b Security" finding a.js:1 reproduced. Confirmed.\nReproduction: lens "delta" finding b.js:2 reproduced. Confirmed.\n');
+  const got = yieldOf(pipelines, 2).byLens;
+  assert.strictEqual(got['3b'].unparsed, 1);
+  assert.ok(!('3b Security' in got), Object.keys(got).join(','));
+  assert.deepStrictEqual(got.delta, { runs: 0, agents: 0, confirmed: 0, rate: null, unparsed: 1 });
 });
 
 test('AC10.1 markdown', async () => {
@@ -1011,7 +1067,8 @@ test('an empty table prints none.', async () => {
   const got = await reviewsCli(pipelines, fresh('pr'));
   assert.ok(got.text.includes('### Task review'), got.text);
   assert.ok(!/^\| Tier \|/m.test(got.text), 'no table header without rows');
-  assert.ok(got.text.split('\n').filter((l) => l === 'none.').length >= 4, got.text);
+  // task, lens by tier, lens by lens, verdicts by run, verdicts by lens, yield (the plan-kind table always has rows)
+  assert.strictEqual(got.text.split('\n').filter((l) => l === 'none.').length, 6, got.text);
 });
 
 test('a pipelines listing failure: --section reviews exits 1, --section all leaves the code alone', async () => {

@@ -27,7 +27,10 @@
 //   - AUTO 16:08:28 — Reproduction: lens "3a" finding plugin/skills/release/disposition.md:71 reproduced. Confirmed. Reversibility: high.
 //   - AUTO 16:17:17 — Reproduction: lens "3a" finding plugin/skills/_shared/release-block.md:3 confirmed by tiebreak:2a37952f7854. Confirmed. Reversibility: high.
 //
-// Its routing lines (classifyRouting) say what became of a location, one class each:
+// The quoted lens is free text in some runs (`lens "3b Security" finding …`): a name whose leading token is a lens id
+// (3a..3j) counts under that id, any other name (`delta`) is kept verbatim as its own lens.
+//
+// The decisions.md routing lines (classifyRouting) say what became of a location, one class each:
 //   fixed:     - AUTO 16:20:58 — Step 3 Routing: applied medium-severity security fix at plugin/skills/release/disposition.md:71. Reversibility: high (commit e4ce36e0c).
 //   staged:    - STAGED 16:21:21 — Step 3 Routing: medium-severity architecture finding at plugin/skills/_shared/release-block.md:3 (lens 3a, tiebreak-confirmed): …. Stage path: staged/build-deviation-1.md. Reversibility: high.
 //   deferred:  - AUTO 23:31:55 — Step 3 Routing: materiality-floor: Test quality at tests/bin-lib/wrap-up/engine-cli.test.js:707 routed below floor (tiebreak-cant-tell) → digest. Reversibility: high.
@@ -222,27 +225,43 @@ function walkRuns(runs, { since, until, fsImpl = fs } = {}) {
   });
 }
 
+// A verdict line quotes the lens as free text ("3b Security", "delta"). A name whose leading token is a lens id (the form
+// archive.js's LENS_RE takes, 3a..3j) is that id, so every collector counts it under the id; any other name is kept verbatim.
+const LENS_ID_LEAD_RE = /^(3[a-j])(?![A-Za-z0-9])/;
+const lensIdOf = (name) => {
+  const m = LENS_ID_LEAD_RE.exec(String(name).trim());
+  return m ? m[1] : name;
+};
+
 // One unit's decisions.md: its text (null when unreadable) and the locations the lens review confirmed, refuted or
-// could not judge. All three lists are empty when readRun excludes the unit.
+// could not judge. All three lists are empty when readRun excludes the unit. A unit whose timing.json readRun cannot read
+// (it throws on a malformed dispatch item) is `excluded: 'timing-unreadable'` with its text kept: unparsed wherever the
+// verdict figures count one, never a crash and never zero.
 function readVerdicts(unit, fsImpl = fs) {
   const noGit = () => {
     throw new Error('reviews reads no git');
   };
-  const read = readRun(unit.dir, { fs: fsImpl, git: noGit });
   let text = null;
   try {
     text = fsImpl.readFileSync(path.join(unit.dir, 'decisions.md'), 'utf8');
   } catch {
     text = null;
   }
+  let read;
+  try {
+    read = readRun(unit.dir, { fs: fsImpl, git: noGit });
+  } catch {
+    return { name: unit.name, excluded: 'timing-unreadable', text, confirmed: [], refuted: [], cantTell: [] };
+  }
   const out = { name: unit.name, excluded: read.excluded, text, confirmed: [], refuted: [], cantTell: [] };
   if (read.excluded) return out;
+  const named = (v) => ({ ...v, lens: lensIdOf(v.lens) });
   out.confirmed = [
-    ...read.pairConfirmed.map((p) => ({ lens: p.lens, path: p.path, line: p.line, how: 'pair' })),
-    ...read.verdicts.filter((v) => v.verdict === 'confirmed').map((v) => ({ lens: v.lens, path: v.path, line: v.line, how: 'tiebreak' })),
+    ...read.pairConfirmed.map((p) => ({ lens: lensIdOf(p.lens), path: p.path, line: p.line, how: 'pair' })),
+    ...read.verdicts.filter((v) => v.verdict === 'confirmed').map((v) => ({ lens: lensIdOf(v.lens), path: v.path, line: v.line, how: 'tiebreak' })),
   ];
-  out.refuted = read.verdicts.filter((v) => v.verdict === 'refuted');
-  out.cantTell = read.verdicts.filter((v) => v.verdict === 'cant-tell');
+  out.refuted = read.verdicts.filter((v) => v.verdict === 'refuted').map(named);
+  out.cantTell = read.verdicts.filter((v) => v.verdict === 'cant-tell').map(named);
   return out;
 }
 
