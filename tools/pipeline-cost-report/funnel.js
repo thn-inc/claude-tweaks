@@ -7,8 +7,8 @@
 // answers "how many records would be admitted if these reasons stopped refusing": a record counts when it is
 // admitted, or when it was refused for reasons that are all in the set.
 //
-// `checked` counts the records with a readable verdict (admitted + refused); a check that threw, timed out or
-// printed no `{admitted, reasons}` verdict is `unreadable` and is in neither `admitted` nor `reasons`.
+// `checked` is every listed record. A check that threw, timed out or printed no `{admitted, reasons}` verdict is
+// `unreadable`: counted in `checked`, but in neither `admitted` nor `reasons`.
 
 const fs = require('fs');
 const path = require('path');
@@ -90,7 +90,7 @@ async function collectFunnel({ repo, simulate = [] }, { gh, check, now, pluginVe
   });
 
   return {
-    checked: readable.length,
+    checked: verdicts.length,
     admitted: readable.filter((v) => v.admitted).length,
     unreadable: verdicts.length - readable.length,
     reasons,

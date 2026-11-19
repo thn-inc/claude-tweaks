@@ -69,6 +69,11 @@ test('default simulations: one per distinct reason taken alone', async () => {
   assert.deepStrictEqual(f.simulations, [{ set: ['a'], admitted: 2 }, { set: ['b'], admitted: 2 }]);
 });
 
+test('simulate names go through reasonKey', async () => {
+  const f = await run([verdict(false, ['protected path: a/b.js'])], [['protected path: x']]);
+  assert.deepStrictEqual(f.simulations, [{ set: ['protected path'], admitted: 1 }]);
+});
+
 test('a refused record with no reasons is never admitted by a set', async () => {
   const f = await run([verdict(false, [])], [['x']]);
   assert.strictEqual(f.simulations[0].admitted, 0);
@@ -78,7 +83,7 @@ test('unreadable: a check that throws, times out, or prints no admitted/reasons 
   const timeout = Object.assign(new Error('spawn timed out'), { killed: true, signal: 'SIGTERM' });
   const f = await run([new Error('boom'), timeout, 'not json', '{"record":4}', verdict(true), verdict(false, ['a'])]);
   assert.strictEqual(f.unreadable, 4);
-  assert.strictEqual(f.checked, 2);
+  assert.strictEqual(f.checked, 6);
   assert.strictEqual(f.admitted, 1);
   assert.deepStrictEqual(f.reasons, { a: 1 });
 });
