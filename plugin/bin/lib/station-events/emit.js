@@ -3,6 +3,8 @@
 // network, no hub, no policy key. Never throws and never changes a caller's
 // outcome — a refused or failed append is dropped with one stderr line.
 // Line format and rules: docs/reference/station-events.md.
+// #5957: the log stays at its path; each append lists it and its lock in the main
+// checkout's `.git/info/exclude` so an untracked log never reads as a dirty checkout.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -16,6 +18,41 @@ const REPO_NAME_RE = /^[^/\s]+\/[^/\s]+$/;
 
 function stationEventPath(mainRoot) {
   return path.join(mainRoot, '.claude-tweaks', 'station-events.jsonl');
+}
+
+// Git patterns, always `/`-separated, anchored at the checkout root.
+const EXCLUDE_ENTRIES = Object.freeze([
+  '/.claude-tweaks/station-events.jsonl',
+  '/.claude-tweaks/station-events.jsonl.lock',
+]);
+
+// Lists EXCLUDE_ENTRIES in `{mainRoot}/.git/info/exclude`, appending only the
+// missing ones. true when both are present afterwards; false when `.git` is not a
+// directory or any fs call threw. Never throws, writes nothing to stderr.
+function ensureLocalExclude(mainRoot, fsImpl = fs) {
+  try {
+    const gitDir = path.join(mainRoot, '.git');
+    if (!fsImpl.statSync(gitDir).isDirectory()) return false;
+    const infoDir = path.join(gitDir, 'info');
+    const excludeFile = path.join(infoDir, 'exclude');
+    let existing = '';
+    try {
+      existing = fsImpl.readFileSync(excludeFile, 'utf8');
+    } catch (err) {
+      if (!err || err.code !== 'ENOENT') throw err;
+    }
+    // Git strips only trailing spaces (and one `\r` before `\n`); a leading space or a
+    // trailing tab makes a different pattern, so no other normalization is allowed.
+    const present = new Set(existing.split('\n').map((l) => l.replace(/\r$/, '').replace(/ +$/, '')));
+    const missing = EXCLUDE_ENTRIES.filter((e) => !present.has(e));
+    if (missing.length === 0) return true;
+    fsImpl.mkdirSync(infoDir, { recursive: true });
+    const lead = existing !== '' && !existing.endsWith('\n') ? '\n' : '';
+    fsImpl.appendFileSync(excludeFile, `${lead}${missing.join('\n')}\n`);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // `[host/]owner/name` -> `owner/name` (its last two segments), else null.
@@ -122,11 +159,17 @@ function appendStationEvent(event, deps = {}) {
     if (typeof d.mainRoot !== 'string' || d.mainRoot === '') return drop(d, 'main checkout not resolvable');
     const file = stationEventPath(d.mainRoot);
     d.fs.mkdirSync(path.dirname(file), { recursive: true });
-    d.withLock(`${file}.lock`, () => d.fs.appendFileSync(file, `${JSON.stringify(line)}\n`), { createParent: true });
+    d.withLock(`${file}.lock`, () => {
+      // Inside the lock so two concurrent appends do not both read the exclude as missing
+      // and write its entries twice. The result is ignored on purpose: a failed exclude
+      // write must not drop the event, and the next append retries it.
+      ensureLocalExclude(d.mainRoot, d.fs);
+      d.fs.appendFileSync(file, `${JSON.stringify(line)}\n`);
+    }, { createParent: true });
     return { written: true };
   } catch (err) {
     return drop(d, `append failed: ${err && err.message ? err.message : String(err)}`);
   }
 }
 
-module.exports = { appendStationEvent, buildLine, eventKey, toRepoName, stationEventPath };
+module.exports = { appendStationEvent, buildLine, eventKey, toRepoName, stationEventPath, EXCLUDE_ENTRIES, ensureLocalExclude };
