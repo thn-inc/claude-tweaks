@@ -8,7 +8,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { runCliSync, spawnCli } = require('./helpers/run-cli');
 const { scratchDir } = require('./helpers/tmp-dir');
-const { gitRepo } = require('./helpers/git-fixtures');
+const { gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
 const { installStub, STUB_SKIP } = require('./helpers/path-stub');
 const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record');
 
@@ -22,11 +22,12 @@ const SEVERITIES_TEXT = 'critical, high, medium, low, info';
 const NO_POLICY = scratchDir('ct-deferral-route-nopolicy-');
 const LISTED = 'deferral-digest-reasons: pre-existing-outside-diff, tangential\n';
 
-// A project directory holding policy.yml and/or run/config.yml, removed at process exit.
+// A git repository holding policy.yml and/or a run directory under .claude-tweaks/pipelines/ (the only
+// place the CLI accepts --run, #5933), removed at process exit.
+const RUN_ID = '2026-11-19T000000-test';
 function project({ policy, runConfig }) {
-  const dir = scratchDir('ct-deferral-route-proj-', { realpath: true });
-  const runDir = path.join(dir, 'run');
-  fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
+  const dir = gitRepo();
+  const runDir = path.join(dir, '.claude-tweaks', 'pipelines', RUN_ID);
   fs.mkdirSync(runDir, { recursive: true });
   if (policy !== undefined) fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), policy);
   if (runConfig !== undefined) fs.writeFileSync(path.join(runDir, 'config.yml'), runConfig);
@@ -161,7 +162,7 @@ test('refusals: both origins, neither origin, unknown flag', () => {
   assert.equal(neither.json.reason, 'exactly one of --agent-raised or --human is required');
   const unknown = call('--defer-reason', 'tangential', '--agent-raised', '--bogus');
   assert.equal(unknown.code, 2);
-  assert.equal(unknown.json.reason, 'unknown flag --bogus; accepted: --defer-reason, --severity, --size, --priority, --risk, --agent-raised, --human, --run, --help');
+  assert.equal(unknown.json.reason, 'unknown flag --bogus; accepted: --defer-reason, --severity, --size, --priority, --risk, --agent-raised, --human, --evidence, --run, --help');
 });
 
 test('the both-origins refusal is raised where the second origin appears, so it beats a later unknown flag', () => {
@@ -173,7 +174,7 @@ test('the both-origins refusal is raised where the second origin appears, so it 
 test('a stray positional is an unknown argument, not an unknown flag', () => {
   const { code, json } = call('tangential');
   assert.equal(code, 2);
-  assert.equal(json.reason, 'unknown argument tangential; accepted: --defer-reason, --severity, --size, --priority, --risk, --agent-raised, --human, --run, --help');
+  assert.equal(json.reason, 'unknown argument tangential; accepted: --defer-reason, --severity, --size, --priority, --risk, --agent-raised, --human, --evidence, --run, --help');
 });
 
 test('a parse refusal still carries every known flag in input; the first refusal decides the reason', () => {
@@ -352,7 +353,7 @@ test('#5932 a well-formed call whose working directory cannot be read is exit 1,
 
 test('#5932 a relative --run resolves against the injected cwd, not the real one', () => {
   const { dir } = project({ policy: 'deferral-digest-reasons: tangential\n', runConfig: 'deferral-digest-reasons: genuinely-larger\n' });
-  const { code, stderr, json } = callIn(dir, '--defer-reason', 'genuinely-larger', '--size', 'high', '--agent-raised', '--run', 'run');
+  const { code, stderr, json } = callIn(dir, '--defer-reason', 'genuinely-larger', '--size', 'high', '--agent-raised', '--run', path.join('.claude-tweaks', 'pipelines', RUN_ID));
   assert.deepStrictEqual({ code, verdict: json.verdict, rule: json.rule, stderr }, { code: 0, verdict: 'digest', rule: 'policy-reason', stderr: '' });
 });
 
@@ -425,4 +426,266 @@ test('AC8.3 run() calls no fs mutation API on any path, for every verdict', () =
   assert.deepStrictEqual(calls, []);
   assert.deepStrictEqual(codes, [0, 0, 2, 0]);
   assert.equal(out.length, 4);
+});
+
+test('#5933 characterization AC1.1: with both keys unset, a call with --run routes as #5932 and writes no file', () => {
+  const { dir, runDir } = project({});
+  const { code, stderr, json } = callIn(dir, '--defer-reason', 'genuinely-larger', '--size', 'high', '--agent-raised', '--run', runDir);
+  assert.deepStrictEqual({ code, verdict: json.verdict, rule: json.rule, stderr }, { code: 0, verdict: 'file', rule: 'not-low', stderr: '' });
+  assert.deepStrictEqual(fs.readdirSync(runDir), []);
+});
+
+// #5933: the evidence requirement, the per-run filing cap, and the tally behind it.
+const REQ = 'filed-record-evidence: required\n';
+const CAP1 = 'run-filed-record-cap: 1\n';
+const NOT_LOW = ['--size', 'high'];
+const TALLY = 'deferral-route-tally.log';
+const GL = ['--defer-reason', 'genuinely-larger', '--agent-raised', ...NOT_LOW];
+
+function withTests(dir) {
+  fs.mkdirSync(path.join(dir, 'tests'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'tests', 'example.test.js'), '// fixture\n');
+}
+
+function tallyLines(runDir) {
+  try {
+    return fs.readFileSync(path.join(runDir, TALLY), 'utf8').split('\n').filter((line) => line !== '');
+  } catch (err) {
+    if (err.code === 'ENOENT') return [];
+    throw err;
+  }
+}
+
+function outcome(res) {
+  return { code: res.code, verdict: res.json.verdict, rule: res.json.rule };
+}
+
+// A second run directory under the same repo's pipelines directory, holding a config.yml.
+function runDirIn(dir, id) {
+  const runDir = path.join(dir, '.claude-tweaks', 'pipelines', id);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'deferral-digest-reasons: []\n');
+  return runDir;
+}
+
+test('#5933 AC2.1 CLI: required, genuinely-larger at not-low axes and no --evidence digests by no-evidence', () => {
+  const { dir } = project({ policy: REQ });
+  const res = callIn(dir, ...GL);
+  assert.deepStrictEqual({ ...outcome(res), stderr: res.stderr }, { code: 0, verdict: 'digest', rule: 'no-evidence', stderr: '' });
+});
+
+test('#5933 AC2.2 CLI: --evidence test:tests/example.test.js that exists in the fixture tree files', () => {
+  const { dir } = project({ policy: REQ });
+  withTests(dir);
+  const res = callIn(dir, ...GL, '--evidence', 'test:tests/example.test.js');
+  assert.deepStrictEqual({ ...outcome(res), stderr: res.stderr }, { code: 0, verdict: 'file', rule: 'not-low', stderr: '' });
+});
+
+test('#5933 AC3.1 CLI: test:../outside.js, test:missing.test.js and note:anything digest by no-evidence', () => {
+  const parent = scratchDir('ct-deferral-route-parent-', { realpath: true });
+  const dir = gitRepo({ parent });
+  fs.writeFileSync(path.join(parent, 'outside.js'), '// outside\n');
+  fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), REQ);
+  withTests(dir);
+  for (const evidence of ['test:../outside.js', 'test:missing.test.js', 'note:anything']) {
+    const res = callIn(dir, ...GL, '--evidence', evidence);
+    assert.deepStrictEqual(outcome(res), { code: 0, verdict: 'digest', rule: 'no-evidence' }, evidence);
+  }
+});
+
+test('#5933 AC3.2 CLI: a/../../outside.js, /etc/passwd, file:///etc/passwd, %2e%2e/outside.js, tests/ and an escaping symlink digest by no-evidence', () => {
+  const parent = scratchDir('ct-deferral-route-parent-', { realpath: true });
+  const dir = gitRepo({ parent });
+  const outside = path.join(parent, 'outside.js');
+  fs.writeFileSync(outside, '// outside\n');
+  fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), REQ);
+  withTests(dir);
+  fs.mkdirSync(path.join(dir, 'a'), { recursive: true });
+  const values = ['test:a/../../outside.js', 'test:/etc/passwd', 'test:%2e%2e/outside.js', 'test:tests/'];
+  if (process.platform !== 'win32') values.push('test:file:///etc/passwd');
+  try {
+    fs.symlinkSync(outside, path.join(dir, 'link.js'));
+    values.push('test:link.js');
+  } catch (err) {
+    if (err.code !== 'EPERM' && err.code !== 'EACCES') throw err;
+  }
+  for (const evidence of values) {
+    const res = callIn(dir, ...GL, '--evidence', evidence);
+    assert.deepStrictEqual(outcome(res), { code: 0, verdict: 'digest', rule: 'no-evidence' }, evidence);
+  }
+});
+
+test('#5933 AC4.1 CLI: ref:#1234 and ref:IL-85 file', () => {
+  const { dir } = project({ policy: REQ });
+  for (const evidence of ['ref:#1234', 'ref:IL-85']) {
+    const res = callIn(dir, ...GL, '--evidence', evidence);
+    assert.deepStrictEqual(outcome(res), { code: 0, verdict: 'file', rule: 'not-low' }, evidence);
+  }
+});
+
+test('#5933 AC4.2 CLI: ref:soon digests by no-evidence', () => {
+  const { dir } = project({ policy: REQ });
+  const res = callIn(dir, ...GL, '--evidence', 'ref:soon');
+  assert.deepStrictEqual(outcome(res), { code: 0, verdict: 'digest', rule: 'no-evidence' });
+});
+
+test('#5933 AC5.1 CLI: required, needs-human-decision with no evidence files', () => {
+  const { dir } = project({ policy: REQ });
+  const res = callIn(dir, '--defer-reason', 'needs-human-decision', '--agent-raised', ...NOT_LOW);
+  assert.deepStrictEqual(outcome(res), { code: 0, verdict: 'file', rule: 'not-low' });
+});
+
+test('#5933 AC6.1/AC6.2 CLI: cap 1 in one run dir — file, run-cap, severity high files, run-cap', () => {
+  const { dir, runDir } = project({ policy: CAP1 });
+  const base = [...GL, '--run', runDir];
+  const steps = [
+    [base, 'not-low', 1],
+    [base, 'run-cap', 1],
+    [[...base, '--severity', 'high'], 'severity', 2],
+    [base, 'run-cap', 2],
+  ];
+  for (const [argv, rule, lines] of steps) {
+    const res = callIn(dir, ...argv);
+    assert.equal(res.code, 0);
+    assert.equal(res.json.rule, rule, argv.join(' '));
+    assert.equal(tallyLines(runDir).length, lines, `tally after ${rule}`);
+  }
+  for (const line of tallyLines(runDir)) assert.match(line, /^\d{4}-\d{2}-\d{2}T[^\t]+\tgenuinely-larger\t(not-low|severity)$/);
+});
+
+test('#5933 AC7.1 CLI: two run dirs keep separate tallies, and a multi-spec member dir keeps its own', () => {
+  const { dir } = project({ policy: CAP1 });
+  const r1 = runDirIn(dir, 'run-one');
+  const r2 = runDirIn(dir, 'run-two');
+  assert.equal(callIn(dir, ...GL, '--run', r1).json.verdict, 'file');
+  assert.equal(callIn(dir, ...GL, '--run', r2).json.verdict, 'file');
+  assert.equal(callIn(dir, ...GL, '--run', r1).json.rule, 'run-cap');
+  assert.equal(tallyLines(r1).length, 1);
+  assert.equal(tallyLines(r2).length, 1);
+  const member = path.join(r1, 'spec-1');
+  fs.mkdirSync(member, { recursive: true });
+  fs.writeFileSync(path.join(member, 'config.yml'), 'deferral-digest-reasons: []\n');
+  assert.equal(callIn(dir, ...GL, '--run', member).json.verdict, 'file');
+  assert.equal(tallyLines(member).length, 1);
+  assert.equal(tallyLines(r1).length, 1, 'the parent run keeps its own count');
+});
+
+test('#5933 AC8.1 CLI: an unreadable tally exits 1 naming the path, no verdict', () => {
+  const { dir, runDir } = project({ policy: CAP1 });
+  fs.mkdirSync(path.join(runDir, TALLY));
+  const res = runCliSync(CLI, [...GL, '--run', runDir], { cwd: dir, env: GIT_ENV });
+  assert.equal(res.code, 1);
+  assert.equal(res.stdout, '');
+  assert.ok(res.stderr.includes(path.join(runDir, TALLY)), res.stderr);
+});
+
+test('#5933 AC8.1 CLI: an unappendable tally exits 1 naming the path, no verdict', { skip: process.getuid && process.getuid() === 0 }, () => {
+  const { dir, runDir } = project({ policy: CAP1 });
+  const tally = path.join(runDir, TALLY);
+  fs.writeFileSync(tally, '');
+  fs.chmodSync(tally, 0o444);
+  const res = runCliSync(CLI, [...GL, '--run', runDir], { cwd: dir, env: GIT_ENV });
+  assert.equal(res.code, 1);
+  assert.equal(res.stdout, '');
+  assert.ok(res.stderr.includes(tally), res.stderr);
+});
+
+test('#5933 AC10.1 CLI: cap reached, needs-human-decision digests by run-cap', () => {
+  const { dir, runDir } = project({ policy: CAP1 });
+  assert.equal(callIn(dir, ...GL, '--run', runDir).json.verdict, 'file');
+  const res = callIn(dir, '--defer-reason', 'needs-human-decision', '--agent-raised', ...NOT_LOW, '--run', runDir);
+  assert.deepStrictEqual(outcome(res), { code: 0, verdict: 'digest', rule: 'run-cap' });
+});
+
+test('#5933 AC10.2 CLI: the same with --human files and adds no tally line', () => {
+  const { dir, runDir } = project({ policy: CAP1 });
+  assert.equal(callIn(dir, ...GL, '--run', runDir).json.verdict, 'file');
+  const res = callIn(dir, '--defer-reason', 'needs-human-decision', '--human', ...NOT_LOW, '--run', runDir);
+  assert.deepStrictEqual(outcome(res), { code: 0, verdict: 'file', rule: 'human' });
+  assert.equal(tallyLines(runDir).length, 1);
+});
+
+test('#5933 AC11.1 CLI: a --run outside the main checkout\'s pipelines directory exits 1 naming the path, no verdict', () => {
+  const { dir } = project({ policy: CAP1 });
+  const withConfig = (target) => {
+    fs.mkdirSync(target, { recursive: true });
+    fs.writeFileSync(path.join(target, 'config.yml'), 'deferral-digest-reasons: []\n');
+    return target;
+  };
+  const outside = withConfig(scratchDir('ct-deferral-route-outside-', { realpath: true }));
+  // The gap the guard closes: the resolver alone accepts a run dir outside every checkout.
+  const { resolvePolicy, callerDeps } = require('../plugin/bin/resolve-policy');
+  assert.equal(resolvePolicy({ keys: ['deferral-digest-reasons'], runDir: outside }, callerDeps({ cwd: dir, env: GIT_ENV })).code, 0);
+  const inRepo = withConfig(path.join(dir, 'run'));
+  const sibling = withConfig(path.join(dir, '.claude-tweaks', 'pipelines-copy', 'run'));
+  // A worktree-local shadow of a real main-checkout run dir.
+  withConfig(path.join(dir, '.claude-tweaks', 'pipelines', 'run'));
+  const wt = linkedWorktreeOf(dir);
+  const shadow = withConfig(path.join(wt, '.claude-tweaks', 'pipelines', 'run'));
+  for (const [target, cwd] of [[outside, dir], [inRepo, dir], [sibling, dir], [shadow, wt]]) {
+    const res = runCliSync(CLI, [...GL, '--run', target], { cwd, env: GIT_ENV });
+    assert.equal(res.code, 1, target);
+    assert.equal(res.stdout, '', target);
+    assert.ok(res.stderr.includes(target), res.stderr);
+  }
+  assert.deepStrictEqual(fs.readdirSync(shadow), ['config.yml'], 'the shadow gains no tally file');
+});
+
+test('#5933 AC12.1 CLI: --evidence plugin/bin/example.js:10 digests by no-evidence', () => {
+  const { dir } = project({ policy: REQ });
+  const res = callIn(dir, ...GL, '--evidence', 'plugin/bin/example.js:10');
+  assert.deepStrictEqual(outcome(res), { code: 0, verdict: 'digest', rule: 'no-evidence' });
+});
+
+test('#5933 review focus 1: --run without a cap writes no tally; a cap without --run is no cap', () => {
+  const { dir, runDir } = project({ policy: 'filed-record-evidence: off\n' });
+  assert.equal(callIn(dir, ...GL, '--run', runDir).json.verdict, 'file');
+  assert.deepStrictEqual(fs.readdirSync(runDir), []);
+  const capped = project({ policy: CAP1 });
+  for (let i = 0; i < 2; i++) assert.equal(callIn(capped.dir, ...GL).json.verdict, 'file');
+  assert.deepStrictEqual(fs.readdirSync(capped.runDir), []);
+});
+
+test('#5933 review focus 2: invalid policy values warn once each and route with the default', () => {
+  const { dir, runDir } = project({ policy: 'filed-record-evidence: yes\nrun-filed-record-cap: two\n' });
+  const res = callIn(dir, ...GL, '--run', runDir);
+  assert.deepStrictEqual(outcome(res), { code: 0, verdict: 'file', rule: 'not-low' });
+  assert.equal(res.stderr, 'deferral-route: warning: filed-record-evidence has invalid value "yes" — using the default (off)\n'
+    + 'deferral-route: warning: run-filed-record-cap has invalid value "two" — using the default (no cap)\n');
+  assert.deepStrictEqual(fs.readdirSync(runDir), []);
+});
+
+test('#5933 review focus 3: --evidence ignored when off or exempt; refused when last or repeated; never echoed', () => {
+  assert.deepStrictEqual(outcome(call(...GL, '--evidence', 'note:x')), { code: 0, verdict: 'file', rule: 'not-low' });
+  const { dir } = project({ policy: REQ });
+  withTests(dir);
+  for (const evidence of ['TEST:tests/example.test.js', 'nothing']) {
+    const res = callIn(dir, ...GL, '--evidence', evidence);
+    assert.deepStrictEqual({ ...outcome(res), stderr: res.stderr }, { code: 0, verdict: 'digest', rule: 'no-evidence', stderr: '' }, evidence);
+  }
+  const last = callIn(dir, ...GL, '--evidence');
+  assert.equal(last.code, 2);
+  assert.equal(last.json.reason, '--evidence needs a value');
+  const twice = callIn(dir, ...GL, '--evidence', 'ref:#1', '--evidence', 'ref:#2');
+  assert.equal(twice.code, 2);
+  assert.equal(twice.json.reason, '--evidence given more than once');
+  const ok = callIn(dir, ...GL, '--evidence', 'ref:#1');
+  assert.deepStrictEqual(Object.keys(ok.json.input), ['deferReason', 'severity', 'size', 'priority', 'risk', 'agentRaised']);
+});
+
+test('#5933 review focus 5: a test: path resolves against the git top level, not the cwd', () => {
+  const { dir } = project({ policy: REQ });
+  withTests(dir);
+  const sub = path.join(dir, 'sub');
+  fs.mkdirSync(sub);
+  const res = callIn(sub, ...GL, '--evidence', 'test:tests/example.test.js');
+  assert.deepStrictEqual(outcome(res), { code: 0, verdict: 'file', rule: 'not-low' });
+});
+
+test('#5933 a refusal wins over an outside --run', () => {
+  const outside = scratchDir('ct-deferral-route-outside-', { realpath: true });
+  const res = runCliSync(CLI, ['--defer-reason', 'not-a-reason', '--agent-raised', '--run', outside], { cwd: NO_POLICY, env: GIT_ENV });
+  assert.equal(res.code, 2);
 });
