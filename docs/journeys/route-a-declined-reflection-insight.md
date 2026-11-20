@@ -39,4 +39,5 @@ files:
 - Created during build of #849 (declined-learning fingerprint store shared by `/feedback` session evaluation and `/wrap-up` curation)
 - Updated for #1033 (this journey's core premise: near-miss matching is no longer fingerprint-only — a subject scan over `listDeclined` now judges reworded repeats too, alongside the store's new `subject` field)
 - Updated for #4360 (the store is anchored at the main checkout, so a decline recorded from a worktree persists)
+- Updated for #5933 (step 2's digest recommendation takes its label from `_shared/materiality-floor.md`'s digest-label table, and an insight also digests when it lacks the evidence `filed-record-evidence` requires or passes `run-filed-record-cap`)
 - Related journeys: `file-upstream-feedback-in-batch` (the analogous decline-tracking behavior on the `/feedback` side of the same store)
