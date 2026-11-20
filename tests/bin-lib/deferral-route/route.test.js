@@ -11,7 +11,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { routeDeferral, VERDICTS, RULES } = require('../../../plugin/bin/lib/deferral-route/route');
+const { routeDeferral, VERDICTS, RULES, EVIDENCE_REASONS, EVIDENCE_EXEMPT_REASONS } = require('../../../plugin/bin/lib/deferral-route/route');
 const { DEFER_REASONS } = require('../../../plugin/bin/lib/issues/record');
 const { SEVERITIES } = require('../../../plugin/bin/lib/tiebreak');
 const { readText } = require('../../helpers/read-skill');
@@ -64,7 +64,7 @@ test('vocabularies: SEVERITIES is the five finding severities', () => {
 
 test('constants: VERDICTS and RULES are the frozen closed lists', () => {
   assert.deepStrictEqual([...VERDICTS], ['file', 'digest', 'refused']);
-  assert.deepStrictEqual([...RULES], ['refused', 'human', 'severity', 'policy-reason', 'tangential', 'not-low', 'floor']);
+  assert.deepStrictEqual([...RULES], ['refused', 'human', 'severity', 'policy-reason', 'tangential', 'not-low', 'floor', 'no-evidence', 'run-cap']);
   assert.ok(Object.isFrozen(VERDICTS));
   assert.ok(Object.isFrozen(RULES));
 });
@@ -236,6 +236,137 @@ test('#5932 a non-DEFER_REASONS entry in digestReasons is inert', () => {
     { verdict: 'digest', rule: 'floor' });
   assert.deepStrictEqual(routeDeferral({ deferReason: 'genuinely-larger', ...LOW, size: 'high', agentRaised: true, digestReasons }),
     { verdict: 'file', rule: 'not-low' });
+});
+
+// #5933: the no-evidence and run-cap frictions, after the floor, on an
+// agent-raised item that would file by tangential or not-low.
+const NEEDS_EVIDENCE = ['pre-existing-outside-diff', 'genuinely-larger', 'tangential'];
+
+function frictionOracle(c, list, f) {
+  const base = policyOracle(c, list);
+  if (base.verdict !== 'file' || !c.agentRaised || base.rule === 'severity') return base;
+  if (f.evidenceRequired && NEEDS_EVIDENCE.includes(c.deferReason) && !f.evidenceValid) return { verdict: 'digest', rule: 'no-evidence' };
+  if (f.cap !== undefined && f.filedCount >= f.cap) return { verdict: 'digest', rule: 'run-cap' };
+  return base;
+}
+
+const FRICTIONS = [
+  { evidenceRequired: false, evidenceValid: false, cap: undefined, filedCount: 0 },
+  { evidenceRequired: true, evidenceValid: false, cap: undefined, filedCount: 0 },
+  { evidenceRequired: true, evidenceValid: true, cap: undefined, filedCount: 0 },
+  { evidenceRequired: false, evidenceValid: false, cap: 1, filedCount: 0 },
+  { evidenceRequired: false, evidenceValid: false, cap: 1, filedCount: 1 },
+  { evidenceRequired: false, evidenceValid: false, cap: 0, filedCount: 0 },
+  { evidenceRequired: true, evidenceValid: false, cap: 1, filedCount: 1 },
+  { evidenceRequired: true, evidenceValid: true, cap: 1, filedCount: 2 },
+];
+
+test('#5933 characterization: friction inputs that are off change no verdict', () => {
+  let count = 0;
+  for (const list of [[], LIST]) {
+    for (const c of COMBINATIONS) {
+      const off = { evidenceRequired: false, evidenceValid: false, cap: undefined, filedCount: 99 };
+      assert.deepStrictEqual(routeDeferral({ ...c, digestReasons: list, ...off }), policyOracle(c, list), JSON.stringify(c));
+      count += 1;
+    }
+  }
+  assert.equal(count, 10752);
+});
+
+test('#5933 every DEFER_REASONS member is in exactly one evidence group', () => {
+  assert.deepStrictEqual([...EVIDENCE_REASONS], ['pre-existing-outside-diff', 'genuinely-larger', 'tangential']);
+  assert.deepStrictEqual([...EVIDENCE_EXEMPT_REASONS],
+    ['needs-human-decision', 'blocked-external', 'blocked-dependency', 'needs-verification']);
+  assert.deepStrictEqual(EVIDENCE_REASONS.filter((r) => EVIDENCE_EXEMPT_REASONS.includes(r)), []);
+  assert.deepStrictEqual([...EVIDENCE_REASONS, ...EVIDENCE_EXEMPT_REASONS].sort(), [...DEFER_REASONS].sort());
+  assert.ok(Object.isFrozen(EVIDENCE_REASONS));
+  assert.ok(Object.isFrozen(EVIDENCE_EXEMPT_REASONS));
+});
+
+test('#5933 exhaustive with frictions: every combination matches the friction oracle', () => {
+  let count = 0;
+  for (const list of [[], LIST]) {
+    for (const f of FRICTIONS) {
+      for (const c of COMBINATIONS) {
+        const result = routeDeferral({ ...c, digestReasons: list, ...f });
+        assert.deepStrictEqual(result, frictionOracle(c, list, f), JSON.stringify({ ...c, list, ...f }));
+        assert.ok(VERDICTS.includes(result.verdict), JSON.stringify(c));
+        count += 1;
+      }
+    }
+  }
+  assert.equal(count, 86016);
+});
+
+test('#5933 AC2.1 required: genuinely-larger at not-low axes without valid evidence digests by no-evidence', () => {
+  const r = routeDeferral({ deferReason: 'genuinely-larger', size: 'high', agentRaised: true, evidenceRequired: true, evidenceValid: false });
+  assert.deepStrictEqual(r, { verdict: 'digest', rule: 'no-evidence' });
+});
+
+test('#5933 AC2.2 with valid evidence it files', () => {
+  const r = routeDeferral({ deferReason: 'genuinely-larger', size: 'high', agentRaised: true, evidenceRequired: true, evidenceValid: true });
+  assert.deepStrictEqual(r, { verdict: 'file', rule: 'not-low' });
+});
+
+test('#5933 AC5.1 required: needs-human-decision with no evidence files', () => {
+  const r = routeDeferral({ deferReason: 'needs-human-decision', size: 'high', agentRaised: true, evidenceRequired: true, evidenceValid: false });
+  assert.deepStrictEqual(r, { verdict: 'file', rule: 'not-low' });
+});
+
+test('#5933 AC6.1 cap 1: the first would-file files and the second digests by run-cap', () => {
+  const input = { deferReason: 'genuinely-larger', size: 'high', agentRaised: true, cap: 1 };
+  assert.deepStrictEqual(routeDeferral({ ...input, filedCount: 0 }), { verdict: 'file', rule: 'not-low' });
+  assert.deepStrictEqual(routeDeferral({ ...input, filedCount: 1 }), { verdict: 'digest', rule: 'run-cap' });
+});
+
+test('#5933 AC6.2 severity high files past the cap, and the next plain call digests', () => {
+  const input = { deferReason: 'genuinely-larger', size: 'high', agentRaised: true, cap: 1 };
+  assert.deepStrictEqual(routeDeferral({ ...input, severity: 'high', filedCount: 1 }), { verdict: 'file', rule: 'severity' });
+  assert.deepStrictEqual(routeDeferral({ ...input, filedCount: 2 }), { verdict: 'digest', rule: 'run-cap' });
+});
+
+test('#5933 AC10.1 cap reached: an exempt needs-human-decision digests by run-cap', () => {
+  const r = routeDeferral({ deferReason: 'needs-human-decision', size: 'high', agentRaised: true, cap: 1, filedCount: 1 });
+  assert.deepStrictEqual(r, { verdict: 'digest', rule: 'run-cap' });
+});
+
+test('#5933 AC10.2 the same item from a human files', () => {
+  const r = routeDeferral({ deferReason: 'needs-human-decision', size: 'high', agentRaised: false, cap: 1, filedCount: 1 });
+  assert.deepStrictEqual(r, { verdict: 'file', rule: 'human' });
+});
+
+test('#5933 the floor and a policy reason beat the frictions', () => {
+  assert.deepStrictEqual(
+    routeDeferral({ deferReason: 'genuinely-larger', ...LOW, agentRaised: true, evidenceRequired: true, evidenceValid: false }),
+    { verdict: 'digest', rule: 'floor' });
+  assert.deepStrictEqual(
+    routeDeferral({ deferReason: 'tangential', ...LOW, agentRaised: true, digestReasons: LIST, cap: 0, filedCount: 0 }),
+    { verdict: 'digest', rule: 'policy-reason' });
+});
+
+test('#5933 cap 0 digests every agent-raised would-file item', () => {
+  for (const deferReason of DEFER_REASONS) {
+    assert.deepStrictEqual(routeDeferral({ deferReason, size: 'high', agentRaised: true, cap: 0, filedCount: 0 }),
+      { verdict: 'digest', rule: 'run-cap' }, deferReason);
+  }
+});
+
+test('#5933 guards: only true, and only a non-negative integer cap, count', () => {
+  const base = { deferReason: 'genuinely-larger', size: 'high', agentRaised: true };
+  assert.deepStrictEqual(routeDeferral({ ...base, evidenceRequired: 'true' }), { verdict: 'file', rule: 'not-low' });
+  assert.deepStrictEqual(routeDeferral({ ...base, evidenceRequired: true, evidenceValid: 'yes' }),
+    { verdict: 'digest', rule: 'no-evidence' });
+  for (const cap of ['1', -1, 1.5, null, NaN]) {
+    assert.deepStrictEqual(routeDeferral({ ...base, cap, filedCount: 5 }), { verdict: 'file', rule: 'not-low' }, String(cap));
+  }
+  assert.deepStrictEqual(routeDeferral({ ...base, cap: 1, filedCount: '9' }), { verdict: 'file', rule: 'not-low' });
+});
+
+test('#5933 a refusal ignores the friction inputs', () => {
+  const input = { deferReason: 'not-a-reason', agentRaised: true };
+  const withAll = routeDeferral({ ...input, evidenceRequired: true, evidenceValid: false, cap: 0, filedCount: 9 });
+  assert.equal(withAll.verdict, 'refused');
+  assert.deepStrictEqual(withAll, routeDeferral(input));
 });
 
 const FLOOR_SECTION = `## The floor
