@@ -322,6 +322,9 @@ const POLICY_KEYS = [
   { key: 'verify-suite-slots', type: 'integer', min: 1, default: 1, summary: "Sets how many test suites verify.js may run at once on one machine when verify-scope.json declares no concurrency.suiteSlots.", category: 'housekeeping', tier: 'advanced', policyOnly: true },
   // #5932: read by bin/deferral-route.js (routeDeferral's policy-reason rule) through resolve-policy.js's resolvePolicy, so a run's config.yml overlays it via --run: neither policyOnly nor policySourceExcluded. Each element must be a DEFER_REASONS value; [] is the explicit empty list. Not a Manifesto lever.
   { key: 'deferral-digest-reasons', type: 'list', default: [], element: 'defer-reason', emptyList: true, summary: "Defer-reasons that send an agent-raised deferral to the digest instead of a record; human input and high severity still file.", category: 'pipeline-behavior', tier: 'advanced' },
+  // #5933: read by bin/deferral-route.js through resolve-policy.js's resolvePolicy (routeDeferral's no-evidence and run-cap rules). policyOnly: both bound what a run may file, so a run's own config.yml must never loosen them (set-config.js writes neither). Not Manifesto levers.
+  { key: 'filed-record-evidence', type: 'enum', values: ['off', 'required'], default: 'off', policyOnly: true, summary: "Requires an agent-filed record of three Defer-reasons to name a test file or record; without it the item goes to the digest.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'run-filed-record-cap', type: 'integer', min: 0, policyOnly: true, summary: "Caps how many records one pipeline run's agents may file; past it an item goes to the digest. Leave it unset for no cap.", category: 'pipeline-behavior', tier: 'advanced' },
 ];
 
 const SCHEMA_BY_KEY = new Map(POLICY_KEYS.map((entry) => [entry.key, entry]));

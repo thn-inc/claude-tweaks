@@ -199,11 +199,13 @@ Registered by #4029; read by `readEfficiencyCeilings` in `bin/lib/policy.js` for
 
 ## Deferral routing
 
-Registered by #5932; read by `bin/deferral-route.js`. Full row: `policy-schema-deferral-routing.md`.
+Registered by #5932 and #5933; read by `bin/deferral-route.js`. Full rows: `policy-schema-deferral-routing.md`.
 
 | Key |
 |---|
 | `deferral-digest-reasons` |
+| `filed-record-evidence` |
+| `run-filed-record-cap` |
 
 ## Control mode
 
