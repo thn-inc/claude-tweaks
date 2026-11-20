@@ -53,6 +53,18 @@ test('a tally that cannot be read throws, never reads as 0', () => {
   });
 });
 
+test('a run dir that is a regular file throws ENOTDIR on read, never reads as 0', () => {
+  withDir((dir) => {
+    const notADir = path.join(dir, 'file');
+    fs.writeFileSync(notADir, 'x');
+    assert.throws(() => readTallyCount(notADir), (err) => {
+      assert.notEqual(err.code, 'ENOENT');
+      if (process.platform !== 'win32') assert.equal(err.code, 'ENOTDIR');
+      return true;
+    });
+  });
+});
+
 test('an append into a missing run dir throws ENOENT', () => {
   withDir((dir) => {
     assert.throws(
