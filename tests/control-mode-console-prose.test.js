@@ -144,8 +144,8 @@ const DIGEST_ALTERNATIVES = '{digest comment URL | specs/digest.md}';
 // The Ledger Resolution column of `_shared/materiality-floor.md`'s digest-label table (a template per digest rule).
 const DIGEST_LABEL_TABLE_RESOLUTIONS = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'materiality-floor.md'))
   .split('\n').filter((l) => /^\| `(floor|policy-reason|no-evidence|run-cap)` \|/.test(l))
-  .map((l) => l.split('|')[3].trim().replace(/^`|`$/g, ''));
-const BACKEND_LOCATIONS =['https://github.com/o/r/issues/9#issuecomment-123', 'specs/digest.md'];
+  .map((l) => ({ rule: l.split('|')[1].trim().replace(/`/g, ''), template: l.split('|')[3].trim().replace(/^`|`$/g, '') }));
+const BACKEND_LOCATIONS = ['https://github.com/o/r/issues/9#issuecomment-123', 'specs/digest.md'];
 
 function digestedRowProblems(text) {
   const bullet = narrowingSlice(text).split('\n').find((l) => l.startsWith('- `digested`:'));
@@ -155,21 +155,35 @@ function digestedRowProblems(text) {
   const status = m[1];
   // A literal Resolution in the bullet is checked as written; a cited one is every Ledger Resolution of the
   // digest-label table, since the printed `rule` picks the row.
-  const templates = m[3] || m[2] ? [m[3] || m[2]] : DIGEST_LABEL_TABLE_RESOLUTIONS;
+  const templates = m[3] || m[2] ? [{ rule: null, template: m[3] || m[2] }] : DIGEST_LABEL_TABLE_RESOLUTIONS;
   const problems = [];
-  for (const [template, location] of templates.flatMap((tpl) => BACKEND_LOCATIONS.map((l) => [tpl, l]))) {
-    const resolution = template.split(DIGEST_ALTERNATIVES).join(location).split('{where}').join(location);
-    const check = checkLedgerStatus(status, resolution, {});
-    if (check.refusal !== null || check.incompleteDeferral) problems.push(`the ledger writer does not accept the digested row for ${location}`);
-    const parsed = parseLedger(`| # | Phase | Item | Status | Resolution |\n|---|---|---|---|---|\n| 1 | build | a typo | ${status} | ${resolution} |\n`);
-    if (parsed.open + parsed.deferredUnstaged + parsed.missingDeferReason + parsed.unrecognized !== 0) problems.push(`parseLedger counts the digested row for ${location} as blocking`);
+  for (const { rule, template } of templates) {
+    for (const location of BACKEND_LOCATIONS) {
+      const via = rule === null ? '' : ` (rule ${rule})`;
+      const resolution = template.split(DIGEST_ALTERNATIVES).join(location).split('{where}').join(location);
+      const check = checkLedgerStatus(status, resolution, {});
+      if (check.refusal !== null || check.incompleteDeferral) problems.push(`the ledger writer does not accept the digested row for ${location}${via}`);
+      const parsed = parseLedger(`| # | Phase | Item | Status | Resolution |\n|---|---|---|---|---|\n| 1 | build | a typo | ${status} | ${resolution} |\n`);
+      if (parsed.open + parsed.deferredUnstaged + parsed.missingDeferReason + parsed.unrecognized !== 0) problems.push(`parseLedger counts the digested row for ${location}${via} as blocking`);
+    }
   }
-  return [...new Set(problems)];
+  return problems;
 }
 
 test('AC4.7: the digested ledger row is complete for the real writer and reader on both backends', () => {
   assert.strictEqual(DIGEST_LABEL_TABLE_RESOLUTIONS.length, 4, 'the digest-label table rows were not read');
   assert.deepStrictEqual(digestedRowProblems(LEDGER_FORMAT), []);
+});
+
+test('AC4.7 go-red: the cited digested bullet writing `deferred` is refused for every digest rule', () => {
+  const bullet = narrowingSlice(LEDGER_FORMAT).split('\n').find((l) => l.startsWith('- `digested`:'));
+  const mutated = LEDGER_FORMAT.replace(bullet, bullet.replace('write the row `accepted`', 'write the row `deferred`'));
+  assert.notStrictEqual(mutated, LEDGER_FORMAT, 'the cited bullet carries no `accepted` row to mutate');
+  const problems = digestedRowProblems(mutated);
+  for (const { rule } of DIGEST_LABEL_TABLE_RESOLUTIONS) {
+    // The writer takes a `deferred` row naming a comment URL as staged; only the local-files location is refused.
+    assert.ok(problems.includes(`the ledger writer does not accept the digested row for specs/digest.md (rule ${rule})`), `${rule}: ${problems.join('; ')}`);
+  }
 });
 
 test('AC4.7 go-red: the old `deferred` (`→ digest`) row is refused by the ledger writer', () => {

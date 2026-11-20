@@ -35,7 +35,7 @@ files:
 ### 3. No patch to stage — a record proposal (`staged/review-followup-{n}.md`)
 - **URL:** `plugin/skills/review/step3-routing.md`'s "Staging a record proposal" paragraph
 - **Action:** A finding the table routes AUTO or STAGED fails the deferral gate's fix-now criteria with a valid `Defer-reason:`. Its fix is a new work record, not a diff.
-  - **Low or medium, a digest verdict (below the materiality floor and not `tangential`, or a `Defer-reason:` listed in `deferral-digest-reasons`):** the finding goes to the digest with the floor's `AUTO … materiality-floor:` line, and its ledger row is written `accepted`. A `high` finding never takes this branch, so its staged line always carries `high-severity finding`.
+  - **Low or medium, a digest verdict (any rule in `_shared/materiality-floor.md`'s digest-label table):** the finding goes to the digest with the floor's `AUTO … materiality-floor:` line, and its ledger row is written `accepted`. A `high` finding never takes this branch, so its staged line always carries `high-severity finding`.
   - **Otherwise:**
     1. The agent writes the proposal (`Title:`/`Type:`/`Labels:`/`Defer-reason:`/`Finding:` header, a blank line, then the body) to a `.md` scratch path.
     2. It stages the file with `stage-item.js --id review-followup-1 … --allocate`.

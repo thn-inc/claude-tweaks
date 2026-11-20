@@ -1182,7 +1182,21 @@ function labelProblems(text, site) {
   return scope.includes(site.needle) ? [] : [`${site.rel}: ${site.start} lacks ${site.needle}`];
 }
 // #5933 Decision 2: a site cites the table and never restates a label, so a fifth rule is one table row.
-const DIGEST_LABELS = ['"Digest — below floor"', 'Digest — policy', 'Digest — no evidence', 'Digest — run cap'];
+const DIGEST_LABELS = ['Digest — below floor', 'Digest — policy', 'Digest — no evidence', 'Digest — run cap'];
+// Every deferral routing site's whole file, plus release's disposition table, carries no label either (the
+// label table's own file is the one home).
+const RESTATEMENT_FILES = [...DEFERRAL_SITES, 'plugin/skills/release/disposition.md'];
+const restatedInFile = (text, rel) => DIGEST_LABELS.filter((l) => text.replace(/\s+/g, ' ').includes(l)).map((l) => `${rel} restates ${l}`);
+for (const rel of RESTATEMENT_FILES) {
+  test(`#5933 no routing site file restates a digest label: ${rel}`, () => {
+    assert.deepStrictEqual(restatedInFile(read(rel), rel), []);
+  });
+  test(`#5933 go-red: a label pasted (and wrapped) into ${rel} fails the file-wide restatement check`, () => {
+    const text = read(rel);
+    const mutated = `${text}\nA hand-written Digest —\nrun cap label.\n`;
+    assert.deepStrictEqual(restatedInFile(mutated, rel), [`${rel} restates Digest — run cap`]);
+  });
+}
 function restatedLabels(text, site) {
   const scope = labelScope(text, site);
   return scope === null ? [`${site.rel}: scope ${site.start} is not exactly one ${site.kind}`] : DIGEST_LABELS.filter((l) => scope.includes(l)).map((l) => `${site.rel}: ${site.start} restates ${l}`);
@@ -1204,7 +1218,7 @@ for (const site of LABEL_SITES) {
   test(`#5933 go-red: pasting "Digest — below floor" into ${site.rel} ${site.start} fails the restatement check`, () => {
     const mutated = appendToScope(text, site, ' "Digest — below floor"');
     assert.notEqual(mutated, text);
-    assert.deepStrictEqual(restatedLabels(mutated, site), [`${site.rel}: ${site.start} restates "Digest — below floor"`]);
+    assert.deepStrictEqual(restatedLabels(mutated, site), [`${site.rel}: ${site.start} restates Digest — below floor`]);
   });
   test(`#5932 the digest label follows the printed rule: ${site.rel} ${site.start}`, () => {
     assert.deepStrictEqual(labelProblems(text, site), []);

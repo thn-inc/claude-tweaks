@@ -30,7 +30,7 @@ files:
 
 ### 1. Ask for a verdict
 - **URL:** `node plugin/bin/deferral-route.js --defer-reason pre-existing-outside-diff --size low --priority low --risk low --agent-raised`
-- **Action:** Pass the reason, the three axes as the skill would score a fresh filing, `--severity` when the finding carries one, and exactly one of `--agent-raised` or `--human` (`--human` whenever the origin is unsure, because `--human` files), `--evidence {kind}:{ref}` when the item carries an `Evidence:` line, `--run "$PIPELINE_RUN_DIR"` inside a pipeline run.
+- **Action:** Pass the reason, the three axes as the skill would score a fresh filing, `--severity` when the finding carries one, and exactly one of `--agent-raised` or `--human` (`--human` whenever the origin is unsure, because `--human` files), `--evidence {kind}:{ref}` when the item carries an `Evidence: test:…` or `Evidence: ref:…` line (a finding's file-and-line pointer is not one), `--run "$PIPELINE_RUN_DIR"` inside a pipeline run.
 - **Should feel:** Like asking a referee, not consulting a rulebook. One line comes back and it is the whole answer.
 - **Should understand:**
   - `digest` comes from rule `floor` (every floor condition held) or rule `policy-reason` (the reason is listed in policy key `deferral-digest-reasons`, whatever the axes); `digest` also comes from rule `no-evidence` (policy key `filed-record-evidence` requires evidence the call did not give) or rule `run-cap` (the run reached `run-filed-record-cap`).
@@ -50,7 +50,7 @@ files:
   - Exit 1 with nothing on stdout means the policy read failed (the resolver refused `--run`, or the working directory could not be read), with the message on stderr; `--run` outside the main checkout's `.claude-tweaks/pipelines/`, and a tally that cannot be read or appended, are exit 1 too.
   - A refusal is exit 2 even when `--run` is also bad: it is decided before any policy read.
   - An invalid `deferral-digest-reasons` value prints one stderr warning naming the bad element, and routes as if the key were unset.
-  - A `test:` evidence value whose git top level cannot be resolved prints one stderr warning, exits 0, and the evidence counts as invalid.
+  - With `filed-record-evidence: required`, one of the three evidence reasons and `--evidence test:…` given, a git top level that cannot be resolved prints one stderr warning, exits 0, and the evidence counts as invalid.
 - **Red flags:** A refusal that exits 0; a reason that does not name the offending value; a `--severity` typo routed as `file` or `digest`.
 
 ### 3. Act on the verdict at the skill's own routing site
