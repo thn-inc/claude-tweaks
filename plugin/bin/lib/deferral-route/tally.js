@@ -4,9 +4,10 @@
 // what the run-filed-record-cap policy key is compared against.
 //
 // Concurrency: the file is create-or-append with NO lock. The only write is a single `appendFileSync` of
-// one line, and each such append is atomic on a local filesystem. The count-then-append sequence in the caller is not: parallel
-// callers can each read the count before any of them appends, so under concurrency the cap is best-effort
-// and a run can file up to the cap plus the number of simultaneous callers.
+// one line, and each such append is atomic on a local filesystem. The count-then-append sequence in the
+// caller is not: parallel callers can each read the count before any of them appends, so under
+// concurrency the cap is best-effort and a run can file up to the cap plus the number of simultaneous
+// callers.
 //
 // The file is private to `deferral-route.js`; nothing else reads or writes it.
 //

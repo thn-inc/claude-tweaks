@@ -53,16 +53,21 @@ test('a tally that cannot be read throws, never reads as 0', () => {
   });
 });
 
-test('a run dir that is a regular file throws ENOTDIR on read, never reads as 0', () => {
+// Windows reports a path under a regular file as ENOENT, so the real fixture cannot produce ENOTDIR there.
+const NO_REAL_ENOTDIR = process.platform === 'win32' && 'win32 reports a path under a file as ENOENT';
+
+test('a run dir that is a regular file throws ENOTDIR on read, never reads as 0', { skip: NO_REAL_ENOTDIR }, () => {
   withDir((dir) => {
     const notADir = path.join(dir, 'file');
     fs.writeFileSync(notADir, 'x');
-    assert.throws(() => readTallyCount(notADir), (err) => {
-      assert.notEqual(err.code, 'ENOENT');
-      if (process.platform !== 'win32') assert.equal(err.code, 'ENOTDIR');
-      return true;
-    });
+    assert.throws(() => readTallyCount(notADir), (err) => err.code === 'ENOTDIR');
   });
+});
+
+test('an ENOTDIR from the read is rethrown, not read as 0 (every platform)', () => {
+  const err = Object.assign(new Error('x'), { code: 'ENOTDIR' });
+  const fsImpl = { readFileSync() { throw err; } };
+  assert.throws(() => readTallyCount('/any', { fsImpl }), (e) => e === err);
 });
 
 test('an append into a missing run dir throws ENOENT', () => {
