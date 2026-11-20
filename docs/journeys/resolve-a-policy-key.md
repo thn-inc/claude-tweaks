@@ -75,6 +75,7 @@ files:
 - **Red flags:** An empty line from the first run, which is the #4492 defect that sent draft PRs to the default branch. The note printed when the worktree has its own file. A submodule of a linked worktree reading the superproject's policy. A default-branch fallback from a linked worktree with no stderr warning.
 
 ## Origin
+- Step 3 updated during build of #5933 (`filed-record-evidence`, `run-filed-record-cap`) — both keys are `policyOnly`, so step 3's red flag lists them among the flat keys the `--run` overlay must never reach
 - Steps 3 and 6 updated at wrap-up of #5917 (`express-driver-models`): the key is a `policyOnly` block key, not a flat one, so step 3's red flag names it beside `model-profiles`, and step 6 gives its unset, valid and malformed answers
 - Step 3 updated during build of #5830 (`control-mode` policyOnly) — the key joins step 3's red-flag list of flat keys the `--run` overlay must never reach, in both directions: a run `config.yml` can no longer switch the human-in-control gate off, and the per-run opt-in to turn it on is dropped on purpose
 - Step 7 added during build of #4492 (policy locator falls back to the main checkout's `policy.yml` from a linked worktree); `files:` gains `plugin/bin/lib/policy-file.js` and `plugin/bin/pr-early-open.js`
