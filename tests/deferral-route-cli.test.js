@@ -305,7 +305,7 @@ test('#5932 review focus 1: a blank --run is refused', () => {
   assert.equal(twice.json.reason, '--run given more than once');
 });
 
-test('#5932 review focus 1: a missing --run dir is the resolver\'s exit 1, no verdict', () => {
+test('#5932 review focus 1: a missing --run dir is this CLI\'s exit 1, no verdict', () => {
   const { dir } = project({});
   const res = runCliSync(CLI, ['--defer-reason', 'tangential', '--agent-raised', '--run', path.join(dir, 'missing')], { cwd: dir, env: GIT_ENV });
   assert.equal(res.code, 1);
@@ -643,9 +643,41 @@ test('#5933 review focus 1: --run without a cap writes no tally; a cap without -
   const { dir, runDir } = project({ policy: 'filed-record-evidence: off\n' });
   assert.equal(callIn(dir, ...GL, '--run', runDir).json.verdict, 'file');
   assert.deepStrictEqual(fs.readdirSync(runDir), []);
-  const capped = project({ policy: CAP1 });
+  // A real cap of 0 digests at count 0, so ignoring it without --run is observable.
+  const capped = project({ policy: 'run-filed-record-cap: 0\n' });
   for (let i = 0; i < 2; i++) assert.equal(callIn(capped.dir, ...GL).json.verdict, 'file');
+  assert.equal(callIn(capped.dir, ...GL, '--run', capped.runDir).json.rule, 'run-cap');
   assert.deepStrictEqual(fs.readdirSync(capped.runDir), []);
+});
+
+test('#5933 an unresolvable git top level warns once and digests a test: value by no-evidence', () => {
+  const dir = scratchDir('ct-deferral-route-norepo-', { realpath: true });
+  fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), REQ);
+  withTests(dir);
+  const res = callIn(dir, ...GL, '--evidence', 'test:tests/example.test.js');
+  assert.deepStrictEqual(outcome(res), { code: 0, verdict: 'digest', rule: 'no-evidence' });
+  assert.equal(res.stderr, 'deferral-route: warning: could not resolve the git top level for test: evidence — treated as invalid\n');
+});
+
+test('#5933 --evidence \'\' is a value and invalid evidence: it digests by no-evidence', () => {
+  const { dir } = project({ policy: REQ });
+  const res = callIn(dir, ...GL, '--evidence', '');
+  assert.deepStrictEqual({ ...outcome(res), stderr: res.stderr }, { code: 0, verdict: 'digest', rule: 'no-evidence', stderr: '' });
+});
+
+test('#5933 the evidence git call uses the injected env: a GIT_DIR/GIT_WORK_TREE only in deps.env resolves the top level there', () => {
+  const repo = gitRepo();
+  fs.mkdirSync(path.join(repo, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(repo, '.claude-tweaks', 'policy.yml'), REQ);
+  withTests(repo);
+  const elsewhere = scratchDir('ct-deferral-route-elsewhere-', { realpath: true });
+  const argv = [...GL, '--evidence', 'test:tests/example.test.js'];
+  const plain = runCliSync(CLI, argv, { cwd: elsewhere, env: GIT_ENV });
+  assert.equal(JSON.parse(plain.stdout).verdict, 'file', 'with no GIT_* the elsewhere cwd has no policy, so no evidence is required');
+  const pointed = runCliSync(CLI, argv, { cwd: elsewhere, env: { ...GIT_ENV, GIT_DIR: path.join(repo, '.git'), GIT_WORK_TREE: repo } });
+  const json = JSON.parse(pointed.stdout);
+  assert.deepStrictEqual({ code: pointed.code, verdict: json.verdict, rule: json.rule, stderr: pointed.stderr }, { code: 0, verdict: 'file', rule: 'not-low', stderr: '' });
 });
 
 test('#5933 review focus 2: invalid policy values warn once each and route with the default', () => {

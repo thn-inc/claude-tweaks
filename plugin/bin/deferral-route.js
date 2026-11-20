@@ -165,7 +165,7 @@ function fail(deps, text) {
 // The evidence check for one --evidence value. Only the exact lowercase `test:` prefix needs the git top
 // level; every other value goes to checkEvidence with none, which accepts a well-formed `ref:` and rejects
 // the rest. An invalid value is treated as none, never refused.
-function evidenceVerdict(evidence, { cwd, env, git }) {
+function evidenceVerdict(evidence, { cwd, env, git, stderr }) {
   let topLevel = null;
   if (evidence.startsWith('test:')) {
     try {
@@ -173,6 +173,7 @@ function evidenceVerdict(evidence, { cwd, env, git }) {
     } catch {
       topLevel = null;
     }
+    if (topLevel === null) stderr('deferral-route: warning: could not resolve the git top level for test: evidence — treated as invalid\n');
   }
   return checkEvidence(evidence, { topLevel }).valid === true;
 }
@@ -229,7 +230,7 @@ function run(argv, deps = realDeps) {
 
   const evidenceRequired = !evidenceEntry.invalid && evidenceEntry.value === 'required';
   const evidenceValid = evidenceRequired && EVIDENCE_REASONS.includes(input.deferReason) && evidence !== null
-    ? evidenceVerdict(evidence, { cwd, env: deps.env, git: policyDeps.git })
+    ? evidenceVerdict(evidence, { cwd, env: deps.env, git: policyDeps.git, stderr: deps.stderr })
     : false;
 
   // The cap counts only with --run: the tally lives in the run directory.
