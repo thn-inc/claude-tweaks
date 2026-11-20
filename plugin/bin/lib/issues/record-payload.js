@@ -373,7 +373,7 @@ function specShapedBody({
   });
   const { origin, deferReason, evidence } = provenance || {};
   if (deferReason !== undefined) oneOf('deferReason', deferReason, DEFER_REASONS);
-  if (!isEmpty(evidence) && (typeof evidence !== 'string' || /[\r\n]/.test(evidence) || !EVIDENCE_KIND_RE.test(evidence))) {
+  if (!isEmpty(evidence) && (typeof evidence !== 'string' || KEY_FILE_LINE_BREAK_RE.test(evidence) || !EVIDENCE_KIND_RE.test(evidence))) {
     throw new Error('specShapedBody: provenance.evidence must be a single-line test:{path} or ref:{id}');
   }
   const block = (v) => (Array.isArray(v) ? v.join('\n\n') : v);

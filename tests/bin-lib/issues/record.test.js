@@ -1072,7 +1072,7 @@ test('#5933 empty, null and undefined evidence render no line', () => {
 
 test('#5933 a multi-line or non-string evidence throws', () => {
   const message = 'specShapedBody: provenance.evidence must be a single-line test:{path} or ref:{id}';
-  for (const evidence of ['ref:#1\nref:#2', 'ref:#1\r\nx', 42, ['ref:#1'], { kind: 'ref' }, true]) {
+  for (const evidence of ['ref:#1\nref:#2', 'ref:#1\r\nx', 'ref:#1 x', 'ref:#1\u0085x', 'ref:#1 x', 42, ['ref:#1'], { kind: 'ref' }, true]) {
     assert.throws(
       () => specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { evidence } }),
       { message },
