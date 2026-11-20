@@ -256,5 +256,8 @@
   },
   "doc:decisions/0032-whole-suite-runs-in-ci-local-runs-on-request": {
     "lastAuditedMs": 1794723207919
+  },
+  "doc:decisions/0033-hooks-launch-through-sh-so-windows-requires-git-bash": {
+    "lastAuditedMs": 1795155147695
   }
 }
