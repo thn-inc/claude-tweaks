@@ -12,8 +12,9 @@
 
 Scope keywords: filed-record-evidence, run-filed-record-cap, deferral-route-tally, checkEvidence, provenance.evidence, digest-label table
 
-## Fact-check of the spec (checked at plan time on base 2f7da5969a)
+## Fact-check of the spec (checked at plan time on base 2f7da5969a; re-checked on the merged tree 4fb37dacc)
 
+- **Revision 2 (after plan review round 1, the merge of origin/main through 3ff22a37e0, and the record's two `**Decision**` paragraphs).** Between 2f7da5969a and 4fb37dacc only `plugin/bin/lib/policy-schema.js`, `plugin/skills/_shared/policy-schema.md`, `policy-schema-coverage.md`, `policy-schema-model-profiles.md`, `docs/journeys/resolve-a-policy-key.md`, `tests/policy-schema.test.js` and one `init/bootstrap` file changed among the files this plan reads (`git diff --stat 2f7da5969a HEAD`); `route.js`, `route.test.js`, `deferral-route.js`, its CLI test, `materiality-floor-conformance.test.js`, `record-payload.js` and `record.test.js` are byte-unchanged, so 2f7da5969a stays a valid baseline for every `git diff 2f7da5969a` check below. Line numbers below are from 2f7da5969a: in the policy-schema files locate each edit by its quoted content (the `deferral-digest-reasons` row is now line 324, `POLICY_KEYS` is at 114). The round-1 amendments folded in: Task 4 carries `Review risk: high`; Task 5 states how an `--evidence` value that is neither `ref:` nor `test:` is handled, and adds `deferral-route.js` to `_shared/pipeline-run-dir.md`'s CLI list; Task 8's `--run` at the sites is settled by the Deliverable, no longer a flagged gap.
 - **#5932's `--run` has not shipped.** `git log --oneline -3 origin/main -- plugin/bin/deferral-route.js` printed nothing: the CLI exists only on this run's branch. Narrowing the `--run` values it accepts (AC11) breaks no released contract, so no expand-contract step is owed.
 - **The resolver's existing `--run` refusal does not cover AC11 (settled fact 3, probed).** `resolvePolicy` calls `anchoredOrOutsideMessage` → `worktree-detect.js`'s `checkRunDirAnchoredOrOutside` (lines 297-309). That accepts any path outside every checkout (`scan === 'none'`) and any path anchored anywhere in the main checkout. Only stage-item's `resolveTarget` (`plugin/bin/lib/stage-item/write.js` lines 50-66) adds `isUnderPipelines`. So the CLI adds the strict guard itself (Task 5). Task 5's AC11 test includes the outside-every-checkout fixture and asserts that `resolvePolicy` alone returns `code: 0` for it. That pins the gap the new guard closes.
 - **Nothing else counts a run's filings (settled fact 1).** Confirmed by grep at plan time. `Waived plugin/bin/lib/console/: the spec's ASSUMPTION grep (git grep -n -F "decisions.md" plugin/bin/lib/console/) was run at plan time; the tally file is new and private to deferral-route.js.`
@@ -26,9 +27,9 @@ Scope keywords: filed-record-evidence, run-filed-record-cap, deferral-route-tall
   - `routeDeferral` is called only by `plugin/bin/deferral-route.js` and `tests/bin-lib/deferral-route/route.test.js` (`git grep -n -F routeDeferral -- plugin tests tools`).
   - The CLI's `run` is called by `tests/deferral-route-cli.test.js` and by `tests/materiality-floor-conformance.test.js`'s `routeVerdict`. That one runs with a policy-free cwd and `env: {}`, so it reaches neither the evidence `git` call nor the tally.
   - `specShapedBody` gains an optional field. Its callers pass none, so their output is byte-identical (Task 6's characterization test).
-- **Spec gap 1: the sites do not pass `--run` (Behavioral-claim check).** The Technical Approach says "every routing site gets the cap without change". It does not hold as written. Each of the seven `DEFERRAL_SITES` (`tests/materiality-floor-conformance.test.js` lines 213-221) carries its own copy of the command, and none passes `--run`. Without `--run` there is no cap, so this repository's `run-filed-record-cap: 1` would never act. Task 8 adds `[--evidence {evidence}] [--run "$PIPELINE_RUN_DIR"]` to each site's command, and the code path that produces the effect is that flag. Flagged for plan review.
-- **Spec gap 2: digest labels.** #5932's final review pinned a per-site label for every digest rule (`LABEL_SITES`, `tests/materiality-floor-conformance.test.js` lines 1105-1146). The two new rules would leave all nine label sites without a label for `no-evidence` and `run-cap`. Task 7 puts one digest-label table (label and ledger Resolution per `rule`) in `materiality-floor.md`. Task 8 changes the nine sites to cite it, which states the mapping once (CLAUDE.md's Cross-references) instead of in nine places. Flagged for plan review as a design choice beyond the spec's Key Files.
-- **Who may set the keys.** Both are `policyOnly`, a decision `policy-key-addition` requires for every key. Both bound what a run may file, so the run's own `config.yml` must never loosen them, and `set-config.js` writes neither key. This differs from #5932's `deferral-digest-reasons`, which a run config may overlay. Flagged for plan review.
+- **The sites pass `--run` (settled by the Deliverable).** The Technical Approach says "every routing site gets the cap without change", but each of the seven `DEFERRAL_SITES` (`tests/materiality-floor-conformance.test.js` lines 213-221) carries its own copy of the command, and none passes `--run`; without `--run` there is no cap. The Deliverable "`materiality-floor.md`'s command form gains `--evidence` and `--run`" settles it: Task 8 adds `[--evidence {evidence}] [--run "$PIPELINE_RUN_DIR"]` to each site's command, and that flag is the code path that produces the effect.
+- **Digest labels (record Decision 2).** One digest-label table in `materiality-floor.md` names the label for every digest rule (`floor`, `policy-reason`, `no-evidence`, `run-cap`), and every routing site cites it instead of restating labels, replacing the per-site labels #5932 pinned (`LABEL_SITES`, `tests/materiality-floor-conformance.test.js` lines 1105-1146). Task 7 writes the table; Task 8 changes the nine label sites to cite it.
+- **Who may set the keys (record Decision 1).** Both are `policyOnly`: only `.claude-tweaks/policy.yml` sets them, a run's `config.yml` cannot, so a run never loosens the evidence rule or raises its own cap, and `set-config.js` writes neither key. `--run` still names the run directory for the tally and for `deferral-digest-reasons`' run overlay; it does not overlay these two keys. Task 1 pins it.
 
 ## Global Constraints
 
@@ -77,12 +78,13 @@ Scope keywords: filed-record-evidence, run-filed-record-cap, deferral-route-tall
 
   | File | Start | Planned change | Headroom after |
   |---|---|---|---|
-  | `plugin/skills/_shared/policy-schema.md` | 51340 | +~90 (two key-only rows, intro words) | ~1070 (98% of rail; key-only stubs as the spec requires) |
+  | `plugin/skills/_shared/policy-schema.md` | 51471 (merged tree; #5915 added 131 bytes) | +~90 (two key-only rows, intro words) | ~940 (98% of rail; key-only stubs as the spec requires) |
+  | `plugin/skills/_shared/pipeline-run-dir.md` | 24868 | +~0.4 KB (Task 5's CLI-list sentence) | ~27 KB |
   | `plugin/skills/_shared/policy-schema-deferral-routing.md` | 1725 | +~1.6 KB | ~49 KB |
   | `plugin/skills/_shared/materiality-floor.md` | 16016 | +~1.9 KB | ~34.6 KB |
   | `plugin/skills/_shared/deferral-gate.md` | 8141 | +~0.8 KB | ~43.5 KB |
   | `plugin/skills/_shared/ledger-format.md` | 45263 | −~0.1 KB (citation is shorter) | ~7.3 KB |
-  | `plugin/skills/_shared/policy-schema-coverage.md` | 44447 | +~50 | ~8 KB |
+  | `plugin/skills/_shared/policy-schema-coverage.md` | 44438 | +~50 | ~8 KB |
   | the other six site files | ≤ 39853 | about ±0.1 KB each | ≥ 12.6 KB |
 
 ## Review Focus
@@ -102,13 +104,13 @@ Scope keywords: filed-record-evidence, run-filed-record-cap, deferral-route-tall
 **Role:** integration
 
 **Files:**
-- Modify: `plugin/bin/lib/policy-schema.js` (two rows after `deferral-digest-reasons`, line 316, with one comment above them)
+- Modify: `plugin/bin/lib/policy-schema.js` (two rows after `deferral-digest-reasons`, line 324 on the merged tree, with one comment above them)
 - Modify: `plugin/skills/_shared/policy-schema.md` (the `## Deferral routing` stub, lines 199-205)
 - Modify: `plugin/skills/_shared/policy-schema-deferral-routing.md` (intro line 5; two table rows)
 - Modify: `plugin/skills/_shared/policy-schema-coverage.md:102` (the `policyOnly` list)
 - Modify: `docs/journeys/resolve-a-policy-key.md:47` (step 3 Red flags `policyOnly` list)
 - Modify: `.claude-tweaks/policy.yml` (two lines after line 19)
-- Modify: `tests/policy-schema.test.js:46-48` (113 → 115)
+- Modify: `tests/policy-schema.test.js:46-48` (114 → 116; the merge brought it to 114)
 - Test: `tests/policy-deferral-frictions.test.js` (new; precedent `tests/policy-deferral-digest-reasons.test.js`)
 - Waived `.claude/skills/policy-key-addition`: read for this task's Global Constraints quotes, no change (no new mechanism).
 
@@ -133,7 +135,7 @@ Scope keywords: filed-record-evidence, run-filed-record-cap, deferral-route-tall
     - `policyRaw: 'run-filed-record-cap: 1\nfiled-record-evidence: required\n'` with `runConfigRaw: 'run-filed-record-cap: 9\nfiled-record-evidence: off\n'` → `1`/`policy` and `required`/`policy`.
     - `runConfigRaw` alone → both from `default`.
   - `#5933 this repository sets filed-record-evidence: required and run-filed-record-cap: 1`: `resolvePolicyKeys` over `readText(REPO_POLICY)` gives `required` and `1`, both `source: 'policy'`, neither `invalid`.
-  - In `tests/policy-schema.test.js`, change line 46 to `// Last bump: 113 -> 115, #5933`, and lines 47-48 to `115`.
+  - In `tests/policy-schema.test.js`, change line 46 (today `// Last bump: 113 -> 114, #5932`) to `// Last bump: 114 -> 116, #5933`, and lines 47-48 to `116`.
   - Guard discrimination:
     - Deleting `min: 0` makes `'-1'` resolve `-1`, which is red.
     - Deleting `policyOnly: true` from either row turns the policyOnly test red.
@@ -364,6 +366,7 @@ git commit -m "Add the no-evidence and run-cap rules to routeDeferral — two fr
 ### Task 4: The run tally
 
 **Role:** integration
+**Review risk:** high (an unlocked tally file shared by parallel callers in one run: the count-then-append race is accepted as best-effort, so review the header's statement of it and that a single-line append is the only write)
 
 **Files:**
 - Create: `plugin/bin/lib/deferral-route/tally.js`
@@ -427,6 +430,7 @@ git commit -m "Add the deferral-route run tally — one appended line per agent-
   - new tests
 - Modify: `docs/plugin-structure.md` (line 78's module list, line 390's command entry)
 - Modify: `.claude/skills/gh-api-module-pattern/run-dir-boundary-guards.md` (shape 3's list of `stage-item/write.js` `resolveTarget` importers gains `deferral-route.js`, with its exit 1 stated)
+- Modify: `plugin/skills/_shared/pipeline-run-dir.md` (the CLI list: a sentence after the **Sanctioned-write CLIs** bullet's last line, `rather than re-deriving the predicate, as the third, fourth and fifth did.`, naming `bin/deferral-route.js`)
 - Read, no change: `plugin/bin/lib/stage-item/write.js` (`resolveTarget`), `plugin/bin/resolve-policy.js` (`resolvePolicy`, `callerDeps`, `EXIT_OK`), `plugin/bin/lib/health-core/io.js` (`resolveAgainst`)
 
 **Interfaces:**
@@ -458,8 +462,8 @@ git commit -m "Add the deferral-route run tally — one appended line per agent-
      - `raw` comes from `out.invalidRaw`.
   6. `evidenceRequired = evidence value === 'required'`.
   7. `evidenceValid` is computed only when `evidenceRequired && EVIDENCE_REASONS.includes(deferReason) && evidence !== null`. Otherwise it is `false`.
-     - A `ref:` value goes straight to `checkEvidence(evidence, { topLevel: null })`.
-     - A `test:` value first runs `callerDeps(…).git(['rev-parse', '--show-toplevel'], { cwd, env: deps.env }).trim()`. A throw gives `null`. The result is the `topLevel` for `checkEvidence`.
+     - A `test:` value (the exact lowercase prefix `test:`) first runs `callerDeps(…).git(['rev-parse', '--show-toplevel'], { cwd, env: deps.env }).trim()`. A throw gives `null`. The result is the `topLevel` for `checkEvidence`.
+     - Every other value — a `ref:` value, and every value that is neither `ref:` nor `test:` (no `:` at all such as `nothing`, another kind such as `note:x`, a case variant such as `TEST:x` or `Ref:#1`, a file-and-line pointer such as `plugin/bin/example.js:10`, or `''`) — goes straight to `checkEvidence(evidence, { topLevel: null })`, with no `git` call. `checkEvidence` returns `valid: true` only for a well-formed `ref:`; for the rest it returns `valid: false` (problem `empty`, `form` or `kind`), so `evidenceValid` is `false` and the item digests, rule `no-evidence`, exactly as if no `--evidence` were given. No such value is refused (exit 2) or reported on stderr: invalid evidence is treated as none (the spec's closed rule). `review focus 3` and AC3.1/AC12.1 pin `note:anything`, `TEST:tests/example.test.js` and the file-and-line pointer through the CLI.
   8. `cap` is the resolved integer only when `runDir` is set and the value is an integer. Then `filedCount = readTallyCount(target.dir)`. A throw → `deferral-route: cannot read run tally ${path.join(runDir, TALLY_FILE)}: ${err.message}\n`, exit 1.
   9. `result = routeDeferral({ …, evidenceRequired, evidenceValid, cap, filedCount })`.
   10. If `result.verdict === 'file' && input.agentRaised === true && cap !== undefined`, run `appendTally(target.dir, { reason: deferReason, rule: result.rule })`. A throw → `deferral-route: cannot append run tally ${path.join(runDir, TALLY_FILE)}: ${err.message}\n`, exit 1.
@@ -499,6 +503,7 @@ git commit -m "Add the deferral-route run tally — one appended line per agent-
   - `#5933 review focus 2: invalid policy values warn once each and route with the default`. Policy `filed-record-evidence: yes\nrun-filed-record-cap: two\n` with `--run`: `file`/`not-low`, with stderr exactly the two warning lines, and no tally file.
   - `#5933 review focus 3: --evidence ignored when off or exempt; refused when last or repeated; never echoed`:
     - `note:x` with no policy → `file`.
+    - With `REQ`, `genuinely-larger` at not-low axes: `--evidence TEST:tests/example.test.js` and `--evidence nothing` each → exit 0, `digest`/`no-evidence`, stderr `''` (an unrecognised value is invalid evidence, never a refusal).
     - `--evidence` last → refused, `--evidence needs a value`.
     - Twice → refused, `--evidence given more than once`.
     - `Object.keys(json.input)` stays the six keys.
@@ -539,6 +544,7 @@ These pass:
     - replaces `writes nothing` with `writes only the run tally`
     - replaces its exit-1 clause with the USAGE text's
   - `run-dir-boundary-guards.md`: in shape 3's parenthesis listing stage-item's `resolveTarget` importers, add `deferral-route.js` (#5933, which exits 1, its existing run-dir and policy failure code, since it has no 3 and no caller branches on a distinct run-dir code).
+  - `_shared/pipeline-run-dir.md`: directly after the Sanctioned-write CLIs bullet's sentence `rather than re-deriving the predicate, as the third, fourth and fifth did.`, append on the same bullet: `` `bin/deferral-route.js` (`--run`, #5933), which writes only its own `deferral-route-tally.log` and only with `run-filed-record-cap` set, imports the same `resolveTarget` but refuses with exit **1** — its run-dir and policy failure code, since it has no exit 3 and no caller branches on a distinct run-dir code. `` Before editing, `git grep -n -F "as the third, fourth and fifth did" -- tests` for a pin on that sentence; a byte pin there gets the same text appended in this commit.
   - Exit-code sweep: `git grep -n -e "deferral-route" -- plugin docs .claude/skills`. Every hit stating the CLI's exit codes or "writes nothing" is updated here or listed in Task 8: the journey and `materiality-floor.md`.
 
 Run, one at a time: `node --test tests/deferral-route-cli.test.js`, `node --test tests/bin-lib/deferral-route/route.test.js`, `node --test tests/materiality-floor-conformance.test.js`, `node --test tests/bin-lib/cli-entry-conformance.test.js`, `node --test tests/bin-lib/exit-code-conformance.test.js`, `node --test tests/path-guard-conformance.test.js`, `node --test tests/windows-hide-spawn-conformance.test.js`
@@ -554,7 +560,7 @@ Proof(public-contract): with `filed-record-evidence` and `run-filed-record-cap` 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/deferral-route.js tests/deferral-route-cli.test.js docs/plugin-structure.md .claude/skills/gh-api-module-pattern/run-dir-boundary-guards.md
+git add plugin/bin/deferral-route.js tests/deferral-route-cli.test.js docs/plugin-structure.md .claude/skills/gh-api-module-pattern/run-dir-boundary-guards.md plugin/skills/_shared/pipeline-run-dir.md
 git commit -m "Wire evidence and the run cap into deferral-route — --evidence, a --run anchored under the pipelines dir, and a tally line per agent-raised file verdict" -m "Refs #5933" -m "Claude-Session: https://claude.ai/code/session_016yg3znZfdV181e3d4oRJ3T"
 ```
 
@@ -853,7 +859,8 @@ Grep for the old behavior's phrases (`writes nothing`, `There is no exit 1`, `no
 | Gotcha: `policy-schema.md` key-only rows, full rows in the sub-file | Task 1 |
 | Gotcha: installed resolver probe | Task 1 Step 6 |
 | Gotcha: `--run` anchoring guard from the CLI wrapper contract | Task 5 (stage-item's `resolveTarget`) |
-| Spec gaps 1 and 2 (sites pass `--run`; labels for the new rules) | Task 8 |
+| Record Decision 1 (both keys `policyOnly`; `--run` does not overlay them) | Task 1 (policyOnly test) |
+| Record Decision 2 (one digest-label table every site cites) and the `--run` at each site | Task 7 (table), Task 8 (sites) |
 | AC1.1 | Task 3 (exhaustive blocks unmodified, Step 4 diff), Task 5 (characterization AC1.1) |
 | AC2.1, AC2.2 | Task 3 (function), Task 5 (CLI), Task 2 (AC2.2 path) |
 | AC3.1, AC3.2 | Task 2 (problems), Task 5 (CLI) |
