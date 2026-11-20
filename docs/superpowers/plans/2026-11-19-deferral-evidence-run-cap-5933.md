@@ -156,7 +156,7 @@ Expected: FAIL after Step 1. Every test fails: no row exists, and `policy.yml` l
   - `policy-schema.md`'s stub. The intro line becomes `Registered by #5932 and #5933; read by \`bin/deferral-route.js\`. Full rows: \`policy-schema-deferral-routing.md\`.` Add the rows `` | `filed-record-evidence` | `` and `` | `run-filed-record-cap` | `` under the existing one.
   - `policy-schema-deferral-routing.md` line 5 becomes: `Registered by #5932 (\`deferral-digest-reasons\`) and #5933 (\`filed-record-evidence\`, \`run-filed-record-cap\`). \`bin/deferral-route.js\` reads all three through \`bin/resolve-policy.js\`'s resolver, from \`policy.yml\`. A run's \`config.yml\` overlays \`deferral-digest-reasons\` when the call passes \`--run {dir}\`; the other two are \`policyOnly\`, so a run's own config never loosens them. None is a Manifesto lever. \`_shared/materiality-floor.md\`'s Overrides section and Applying the floor give their places in the precedence.` Append two rows in the same five columns:
     - `` | `filed-record-evidence` | `policy.yml` | `bin/deferral-route.js` | `off` | `off` or `required`. With `required`, an agent-raised item the route would file whose `Defer-reason:` is `pre-existing-outside-diff`, `genuinely-larger` or `tangential` needs `--evidence test:{path}` (a regular file whose real path is under the working tree's git top level) or `--evidence ref:{id}` (`#{digits}` or `IL-{digits}`); without valid evidence it goes to the digest, rule `no-evidence`. The other four reasons need none. Unset resolves `off`; any other value resolves `off` with `invalid: true`, and `bin/deferral-route.js` prints one stderr warning naming the key and the value. `policyOnly`: a run's `config.yml` value is ignored. | ``
-    - `` | `run-filed-record-cap` | `policy.yml` | `bin/deferral-route.js` | unset (no cap) | A non-negative integer. With a value and a call passing `--run {dir}`, `bin/deferral-route.js` appends one line to `{dir}/deferral-route-tally.log` for each agent-raised `file` verdict, and an item that would file once the tally holds that many lines goes to the digest, rule `run-cap`; a `high`/`critical` severity still files and is counted. `0` digests every such item. A call without `--run` is never capped. Unset resolves to no value; a negative or non-integer value resolves to no value with `invalid: true` and one stderr warning. `policyOnly`. | ``
+    - `` | `run-filed-record-cap` | `policy.yml` | `bin/deferral-route.js` | unset (no cap) | A non-negative integer. With a value and a call passing `--run {dir}`, `bin/deferral-route.js` appends one line to `{dir}/deferral-route-tally.log` for each agent-raised `file` verdict, and an item that would file once the tally holds that many lines goes to the digest, rule `run-cap`; a `high`/`critical` severity still files and is counted. `0` digests every such item. A call without `--run` is never capped. The tally is per `--run` directory: a multi-spec run's per-spec `spec-{N}/` directories keep separate tallies. Unset resolves to no value; a negative or non-integer value resolves to no value with `invalid: true` and one stderr warning. `policyOnly`. | ``
   - `policy-schema-coverage.md:102`: after `` `changelog-max-releases` `` insert `` , `filed-record-evidence` and `run-filed-record-cap` (#5933) ``. Keep the sentence's "are `policyOnly`" ending, and move its "and" so the list still reads correctly.
   - `resolve-a-policy-key.md:47`: after `` `changelog-max-releases`, #5563 `` insert `` ; `filed-record-evidence`, `run-filed-record-cap`, #5933 ``.
 
@@ -490,7 +490,7 @@ git commit -m "Add the deferral-route run tally — one appended line per agent-
   - `#5933 AC4.1 CLI: ref:#1234 and ref:IL-85 file`. `#5933 AC4.2 CLI: ref:soon digests by no-evidence`.
   - `#5933 AC5.1 CLI: required, needs-human-decision with no evidence files`.
   - `#5933 AC6.1/AC6.2 CLI: cap 1 in one run dir — file, run-cap, severity high files, run-cap`. Four calls of `genuinely-larger --size high --agent-raised --run R`, the third adding `--severity high`. The rules are `not-low`, `run-cap`, `severity`, `run-cap`. After each call, `tallyLines(R).length` is `1, 1, 2, 2`. Each line matches `/^\d{4}-\d{2}-\d{2}T[^\t]+\tgenuinely-larger\t(not-low|severity)$/`.
-  - `#5933 AC7.1 CLI: two run dirs keep separate tallies`. Two pipelines dirs `R1`, `R2` in one repo: R1 → `file`, R2 → `file`, R1 → `run-cap`. Each tally holds 1 line.
+  - `#5933 AC7.1 CLI: two run dirs keep separate tallies`. Two pipelines dirs `R1`, `R2` in one repo: R1 → `file`, R2 → `file`, R1 → `run-cap`. Each tally holds 1 line. Then a multi-spec member dir `R1/spec-1` (holding its own `config.yml`, accepted by `resolveTarget` as a nested run dir) → `file`, and its tally is `R1/spec-1/deferral-route-tally.log` with 1 line while R1's still holds 1 (plan review round 2: the tally is per `--run` directory).
   - `#5933 AC8.1 CLI: an unreadable tally exits 1 naming the path, no verdict` (the tally path is a directory). Then `an unappendable tally exits 1 naming the path, no verdict`: an empty tally `chmod 0o444`, skipped when `process.getuid && process.getuid() === 0`. Both give code 1, stdout `''`, and stderr including `path.join(R, 'deferral-route-tally.log')`.
   - `#5933 AC10.1 CLI: cap reached, needs-human-decision digests by run-cap` (one prior filing call). `#5933 AC10.2 CLI: the same with --human files and adds no tally line`.
   - `#5933 AC11.1 CLI: a --run outside the main checkout's pipelines directory exits 1 naming the path, no verdict`. Each fixture holds a `config.yml`, and each gives code 1, stdout `''`, and stderr including the path as passed:
@@ -577,9 +577,9 @@ git commit -m "Wire evidence and the run cap into deferral-route — --evidence,
 **Interfaces:**
 - Produces `specShapedBody({ …, provenance: { origin, deferReason, evidence } })`.
   - `evidence` absent, `null` or `''` → no line.
-  - A non-empty single-line string → an `Evidence: ${evidence}` part directly after the `Defer-reason:` part, or after `Origin:` when there is no reason.
-  - Anything else throws `specShapedBody: provenance.evidence must be a non-empty single-line string`.
-  - The form is not checked here: the CLI judges validity, and a body only records what the route was given.
+  - A non-empty single-line string whose text before the first `:` is exactly `test` or `ref` → an `Evidence: ${evidence}` part directly after the `Defer-reason:` part, or after `Origin:` when there is no reason.
+  - Anything else throws `specShapedBody: provenance.evidence must be a single-line test:{path} or ref:{id}` — a multi-line or non-string value, and also a value of any other kind, such as a file-and-line pointer (`src/x.js:10`) or `note:x`, so the `{kind}:{ref}` provenance slot never holds a review finding's file-and-line `Evidence:` (plan review round 2).
+  - Only the kind is checked here; the path or id form beyond it is the CLI's to judge, and a body records what the route was given.
 
 - [ ] **Step 1a: Characterization first.** Add `#5933 characterization: a provenance without evidence composes byte-identically`. Pin the full string of `specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { origin: 'o', deferReason: 'genuinely-larger' } })` as a literal, copied from a run of today's code. Run `node --test tests/bin-lib/issues/record.test.js`. Expected: PASS before the change. Its discrimination: emitting `Evidence: undefined` turns it red in Step 4.
 
@@ -589,6 +589,7 @@ git commit -m "Wire evidence and the run cap into deferral-route — --evidence,
     - `#5933 evidence with origin and no reason renders after Origin:`.
     - `#5933 empty, null and undefined evidence render no line`.
     - `#5933 a multi-line or non-string evidence throws`.
+    - `#5933 a file-and-line pointer or another kind of evidence throws, never renders`: `src/x.js:10`, `note:x` and `TEST:tests/a.test.js` each throw the message above, and `ref:#1` and `test:tests/a.test.js` each render.
   - In `deferral-gate-conformance.test.js`, add `EVIDENCE_NEEDLES`:
     - `` '- **Evidence** (#5933)' ``
     - `` '`Evidence: {kind}:{ref}`' ``
@@ -611,11 +612,11 @@ Run: `node --test tests/deferral-gate-conformance.test.js`
 Expected: FAIL, because the bullet is missing.
 
 - [ ] **Step 3: Implement and write.**
-  - `record-payload.js`: destructure `evidence`. Validate it with the same `isEmpty` and newline rule as `premiseCheck`. Push the part after the `Defer-reason:` push. Add `evidence?` to the `provenance` shape in the doc comment, and add `Evidence:` to the "Provenance lines" sentence.
+  - `record-payload.js`: destructure `evidence`. Validate it with the same `isEmpty` and newline rule as `premiseCheck`, plus the kind rule (`/^(?:test|ref):/`). Push the part after the `Defer-reason:` push. Add `evidence?` to the `provenance` shape in the doc comment, and add `Evidence:` to the "Provenance lines" sentence.
   - `deferral-gate.md`: insert after line 88:
 
 ````text
-- **Evidence** (#5933): an item may carry one `Evidence: {kind}:{ref}` line beside its `Defer-reason:` — inside a staged proposal's header block, and in a created record's provenance block right after `Defer-reason:` (`specShapedBody`'s `provenance.evidence`) — located **by key**, like the reason. A producer writes `Evidence: test:{path}`, naming a test file that covers the defect by its path from the repository's top level, or `Evidence: ref:{id}`, naming an existing record (`#{digits}`) or incident (`IL-{digits}`). A file-and-line pointer (`src/x.js:10`) is neither and is not evidence. A routing site passes the line's value as `bin/deferral-route.js --evidence` (`_shared/materiality-floor.md`'s Applying the floor), and a producer that routed with `--evidence` passes the same value as `provenance.evidence`.
+- **Evidence** (#5933): an item may carry one `Evidence: {kind}:{ref}` line beside its `Defer-reason:` — inside a staged proposal's header block, and in a created record's provenance block right after `Defer-reason:` (`specShapedBody`'s `provenance.evidence`) — located **by key**, like the reason. A producer writes `Evidence: test:{path}`, naming a test file that covers the defect by its path from the repository's top level, or `Evidence: ref:{id}`, naming an existing record (`#{digits}`) or incident (`IL-{digits}`). A file-and-line pointer (`src/x.js:10`) is neither and is not evidence. A routing site passes the line's value as `bin/deferral-route.js --evidence` (`_shared/materiality-floor.md`'s Applying the floor), and a producer that routed with `--evidence` passes the same value as `provenance.evidence`; `specShapedBody` refuses any other kind, a file-and-line pointer included.
 ````
 
 - [ ] **Step 4: Run and mutate**
@@ -655,7 +656,9 @@ Pin inventory, from `git grep -n -F` over `tests plugin` for each edited sentenc
   - `ROUTE_FORM` becomes `` `${ROUTE_COMMAND} [--severity {severity}] --size {size} --priority {priority} --risk {risk} [--evidence {evidence}] [--run "$PIPELINE_RUN_DIR"] (--agent-raised | --human)` ``.
   - In `routeVerdict`, before the generic bracket unwrap, add `.replace(/\[--(?:evidence|run) [^\]]*\]\s*/g, '')`. A documented `--run` is a site placeholder that no policy-free probe can resolve.
   - In `FLOOR_NEEDLES`, replace the line-336 needle with these, each copied from Step 3's block:
-    - `'`--evidence` only when the item carries an `Evidence:` line'`
+    - `'`--evidence` only when the item carries an `Evidence: test:…` or `Evidence: ref:…` line'`
+    - `'a finding's file-and-line `Evidence:` pointer is not one'`
+    - `'in a multi-spec run each member's `spec-{N}/` directory keeps its own tally'` (Step 3's block keeps every needle on one line; check that again after any rewrap)
     - `'`--run` only when a run directory resolves'`
     - `'since the command refuses a blank `--run`'`
     - `'**Two frictions after the floor (#5933).**'`
@@ -693,9 +696,10 @@ tiebreak can't-tell digest, the console-backfill values and ledger narrowing fol
 `node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} [--severity {severity}] --size {size} --priority {priority} --risk {risk} [--evidence {evidence}] [--run "$PIPELINE_RUN_DIR"] (--agent-raised | --human)`
 
 `--severity` only when the item has one, lowercase (`critical`, `high`, `medium`, `low`, `info`);
-each axis `low`, `medium` or `high` as the site scores it. `--evidence` only when the item carries an `Evidence:` line
+each axis `low`, `medium` or `high` as the site scores it.
+`--evidence` only when the item carries an `Evidence: test:…` or `Evidence: ref:…` line
 (`_shared/deferral-gate.md`'s "Where the reason lives"), passing that line's value; otherwise omit
-the flag. `--run` only when a run directory resolves (`_shared/pipeline-run-dir.md`); otherwise
+the flag — a finding's file-and-line `Evidence:` pointer is not one. `--run` only when a run directory resolves (`_shared/pipeline-run-dir.md`); otherwise
 omit it, since the command refuses a blank `--run`. Every routing site passes `--agent-raised`: no
 typed input reaches one. It prints `verdict` (`file`, `digest` or `refused`) and `rule`.
 
@@ -705,8 +709,10 @@ typed input reaches one. It prints `verdict` (`file`, `digest` or `refused`) and
 `Defer-reason:` is `pre-existing-outside-diff`, `genuinely-larger` or `tangential` and whose call
 passes no valid `--evidence` goes to the digest, rule `no-evidence`. With `run-filed-record-cap: {n}`
 and `--run`, an item goes to the digest, rule `run-cap`, once the run has given `{n}` `file` verdicts;
-a `high` or `critical` severity still files, and counts. The cap is first come, first served within a
-run: route each item when it comes up, and never hold items back or rank them to choose which ones file.
+a `high` or `critical` severity still files, and counts. The tally belongs to the run directory the
+call names: in a multi-spec run each member's `spec-{N}/` directory keeps its own tally.
+The cap is first come, first served within a run: route each item when it comes up, and
+never hold items back or rank them to choose which ones file.
 
 On `digest` the label a human sees, and the words of a ledger Resolution, follow `rule` — the
 digest-label table every routing site cites:
