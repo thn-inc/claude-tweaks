@@ -67,6 +67,8 @@ files:
   - `window` (including `match`);
   - `priceTableDate`;
   - the spend, funnel and records sections;
+  - `guards`, which reads `{ "skipped": "--split not given" }` unless `--split` is passed (`check-pipeline-quality-guards-5916.md`);
+  - `reviews` (`read-review-results-by-role-and-tier-5925.md`);
   - `runs`;
   - `unreadable`.
 
@@ -77,7 +79,7 @@ files:
   - A malformed flag exits 2.
   - The price table is dated. A figure measured under a newer table is not comparable at face value.
 - **Red flags:**
-  - Exit 0 while a section printed `unavailable`.
+  - Exit 0 while a section printed `unavailable`. One exception is by design: under `--section all` without `--split`, a pipelines directory that cannot be listed prints `reviews: unavailable —` and `Runs: unavailable` and leaves the code at 0.
   - A `priceTableDate` that differs from the baseline's, with no note beside the comparison.
 
 ## Origin

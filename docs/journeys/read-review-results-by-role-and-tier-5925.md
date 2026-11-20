@@ -66,7 +66,7 @@ Every share prints its denominator and unparsed count. The maintainer quotes the
 
 ### 4. Read lens findings by tier and by lens
 - **URL:** the `### Lens review by tier` and `### Lens review by lens` tables.
-- **Action:** compare the no-finding share and findings per agent across lenses `3a`..`3g`.
+- **Action:** compare the no-finding share and findings per agent across the lenses that ran: `3a`..`3g`, plus `3h` (UX analysis) in a run that dispatched it.
 - **Should feel:** like a lens comparison. The note says each lens runs on one fixed model profile, so the tier table compares lenses, not models.
 - **Should understand:**
   - A lens agent is a timing.json dispatch that review-replay's lens pattern matches, and is counted once per agentId.
