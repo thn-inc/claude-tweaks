@@ -175,14 +175,16 @@ test('AC4.7: the digested ledger row is complete for the real writer and reader 
   assert.deepStrictEqual(digestedRowProblems(LEDGER_FORMAT), []);
 });
 
-test('AC4.7 go-red: the cited digested bullet writing `deferred` is refused for every digest rule', () => {
+test('AC4.7 go-red: the cited digested bullet writing `open` is counted as blocking for every digest rule on both backends', () => {
   const bullet = narrowingSlice(LEDGER_FORMAT).split('\n').find((l) => l.startsWith('- `digested`:'));
-  const mutated = LEDGER_FORMAT.replace(bullet, bullet.replace('write the row `accepted`', 'write the row `deferred`'));
+  const mutated = LEDGER_FORMAT.replace(bullet, bullet.replace('write the row `accepted`', 'write the row `open`'));
   assert.notStrictEqual(mutated, LEDGER_FORMAT, 'the cited bullet carries no `accepted` row to mutate');
   const problems = digestedRowProblems(mutated);
   for (const { rule } of DIGEST_LABEL_TABLE_RESOLUTIONS) {
-    // The writer takes a `deferred` row naming a comment URL as staged; only the local-files location is refused.
-    assert.ok(problems.includes(`the ledger writer does not accept the digested row for specs/digest.md (rule ${rule})`), `${rule}: ${problems.join('; ')}`);
+    // An `open` row is a blocking ledger row wherever the digest entry lives, so both backends report it.
+    for (const location of BACKEND_LOCATIONS) {
+      assert.ok(problems.includes(`parseLedger counts the digested row for ${location} (rule ${rule}) as blocking`), `${rule} ${location}: ${problems.join('; ')}`);
+    }
   }
 });
 

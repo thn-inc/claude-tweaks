@@ -37,7 +37,7 @@ Never use these to leave an item open, defer it, or file it:
 - *"Pre-existing"* — a reported pre-existing defect in a file this build's diff touches goes through the fix-now test above like any other finding; pre-existence alone is never a defer reason. Only `pre-existing-outside-diff` (a file the diff does not touch) defers on pre-existence
 - *"Following plan verbatim"* — when plan code conflicts with `.claude/rules/` or CLAUDE.md don'ts, fix the violation; the plan was written before review-time context
 - *"A future plan (P2/P3/...) might want X"* — speculative; only defer for *known* downstream needs
-- *"Bundle of small items"* — items get classified individually, never as a group; below-floor **deferred** items are the one exception — they batch into the digest by design, per `_shared/materiality-floor.md`, which is a routing decision made after the gate, never a reason to skip a fix
+- *"Bundle of small items"* — items get classified individually, never as a group; **deferred** items the digest takes by any rule in `_shared/materiality-floor.md`'s digest-label table are the one exception — they batch into the digest by design, per that file, which is a routing decision made after the gate, never a reason to skip a fix
 - *"Premature without consumer signal"* — clear bugs and convention violations get fixed now
 - *"Plan-prescribed routing"* — if the plan said "X moves to P6," that's plan documentation, not a ledger event; remove the item entirely instead of deferring
 - *"Minor / outside that scope / not load-bearing"* — severity is never a defer reason; review's severity floors decide what blocks, not what gets fixed
