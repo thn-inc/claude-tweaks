@@ -491,6 +491,7 @@ test('#5933 AC3.1 CLI: test:../outside.js, test:missing.test.js and note:anythin
   for (const evidence of ['test:../outside.js', 'test:missing.test.js', 'note:anything']) {
     const res = callIn(dir, ...GL, '--evidence', evidence);
     assert.deepStrictEqual(outcome(res), { code: 0, verdict: 'digest', rule: 'no-evidence' }, evidence);
+    assert.equal(res.stderr, '', `${evidence}: invalid but resolvable evidence stays silent`);
   }
 });
 
@@ -514,6 +515,7 @@ test('#5933 AC3.2 CLI: a/../../outside.js, /etc/passwd, file:///etc/passwd, %2e%
   for (const evidence of values) {
     const res = callIn(dir, ...GL, '--evidence', evidence);
     assert.deepStrictEqual(outcome(res), { code: 0, verdict: 'digest', rule: 'no-evidence' }, evidence);
+    assert.equal(res.stderr, '', `${evidence}: invalid but resolvable evidence stays silent`);
   }
 });
 

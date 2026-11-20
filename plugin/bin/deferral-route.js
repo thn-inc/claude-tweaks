@@ -26,7 +26,9 @@
 // --evidence: `ref:{id}` is checked for form only; every other value except the exact
 // lowercase `test:` prefix is invalid evidence, treated as none and never refused. A
 // `test:` path resolves against `git rev-parse --show-toplevel` of the working directory
-// (checkEvidence, bin/lib/deferral-route/evidence.js).
+// (checkEvidence, bin/lib/deferral-route/evidence.js). When that top level cannot be
+// resolved, one stderr warning is printed and the item digests (rule no-evidence), exit 0;
+// invalid but resolvable evidence stays silent.
 // --run is anchored strictly (#5933): the directory must be a run directory under the
 // main checkout's .claude-tweaks/pipelines/, checked through stage-item's resolveTarget
 // (run-dir-boundary-guards shape 3's predicate). A directory outside the pipelines
