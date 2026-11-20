@@ -198,7 +198,7 @@ function run(argv, deps = realDeps) {
   try {
     cwd = deps.cwd();
     if (runDir !== null) {
-      target = resolveTarget({ runDir: resolveAgainst(cwd, runDir), cwd });
+      target = resolveTarget({ runDir: resolveAgainst(cwd, runDir), cwd, mainRoot: deps.mainRoot });
       if (!target.ok) {
         return fail(deps, target.reason === 'missing'
           ? `--run dir does not exist or is not a directory: ${runDir}`

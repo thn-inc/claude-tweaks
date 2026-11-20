@@ -209,7 +209,7 @@ test('no adopter file restates the floor\'s three-axis definition', () => {
 // Live corpus on purpose (skill-prose-conformance-tests' "documented convention ... against every future
 // addition" row): the claim is that each site's own prose carries the command, which no fixture can stand in for.
 const ROUTE_COMMAND = 'node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason}';
-const ROUTE_FORM = `${ROUTE_COMMAND} [--severity {severity}] --size {size} --priority {priority} --risk {risk} [--evidence {evidence}] [--run "$PIPELINE_RUN_DIR"] (--agent-raised | --human)`;
+const ROUTE_FORM = `${ROUTE_COMMAND} [--severity {severity}] --size {size} --priority {priority} --risk {risk} [--evidence '{evidence}'] [--run "$PIPELINE_RUN_DIR"] (--agent-raised | --human)`;
 const DEFERRAL_SITES = [
   'plugin/skills/review/step3-routing.md',
   'plugin/skills/reflect/full-mode.md',
@@ -231,7 +231,7 @@ function deferralSiteProblems(text) {
   const holding = paragraphs.filter((p) => p.includes(ROUTE_COMMAND));
   if (holding.length === 0) problems.push('no paragraph holds the deferral-route.js command form');
   else {
-    for (const flag of ['--size {size}', '--priority {priority}', '--risk {risk}', '[--evidence {evidence}]', '[--run "$PIPELINE_RUN_DIR"]', '--agent-raised']) {
+    for (const flag of ['--size {size}', '--priority {priority}', '--risk {risk}', "[--evidence '{evidence}']", '[--run "$PIPELINE_RUN_DIR"]', '--agent-raised']) {
       if (!holding.some((p) => p.includes(flag))) problems.push(`the command paragraph lacks ${flag}`);
     }
     if (holding.some((p) => p.includes('--human'))) problems.push('the command paragraph passes --human');
@@ -253,13 +253,13 @@ for (const rel of DEFERRAL_SITES) {
   });
 }
 
-const SAMPLE_SITE = `Apply the floor with \`${ROUTE_COMMAND} --size {size} --priority {priority} --risk {risk} [--evidence {evidence}] [--run "$PIPELINE_RUN_DIR"] --agent-raised\`: \`digest\` digests, \`file\` files, \`refused\` or any other outcome stays open.`;
+const SAMPLE_SITE = `Apply the floor with \`${ROUTE_COMMAND} --size {size} --priority {priority} --risk {risk} [--evidence '{evidence}'] [--run "$PIPELINE_RUN_DIR"] --agent-raised\`: \`digest\` digests, \`file\` files, \`refused\` or any other outcome stays open.`;
 const SITE_MUTATIONS = [
   [ROUTE_COMMAND, 'no paragraph holds the deferral-route.js command form'],
   ['--size {size}', 'the command paragraph lacks --size {size}'],
   ['{priority}', 'the command paragraph lacks --priority {priority}'],
   ['--risk {risk}', 'the command paragraph lacks --risk {risk}'],
-  ['[--evidence {evidence}]', 'the command paragraph lacks [--evidence {evidence}]'],
+  ["[--evidence '{evidence}']", "the command paragraph lacks [--evidence '{evidence}']"],
   ['[--run "$PIPELINE_RUN_DIR"]', 'the command paragraph lacks [--run "$PIPELINE_RUN_DIR"]'],
   ['--agent-raised', 'the command paragraph lacks --agent-raised'],
   ['any other outcome', 'the command paragraph does not handle any other outcome'],
@@ -277,7 +277,7 @@ for (const [cut, expected] of SITE_MUTATIONS) {
   });
 }
 test('#5931 go-red: the verdicts in another paragraph than the command fail the deferral-site check', () => {
-  const split = `Apply the floor with \`${ROUTE_COMMAND} --size {size} --priority {priority} --risk {risk} [--evidence {evidence}] [--run "$PIPELINE_RUN_DIR"] --agent-raised\`.\n\n\`digest\` digests, \`file\` files, \`refused\` or any other outcome stays open.`;
+  const split = `Apply the floor with \`${ROUTE_COMMAND} --size {size} --priority {priority} --risk {risk} [--evidence '{evidence}'] [--run "$PIPELINE_RUN_DIR"] --agent-raised\`.\n\n\`digest\` digests, \`file\` files, \`refused\` or any other outcome stays open.`;
   assert.deepStrictEqual(deferralSiteProblems(split), [
     'the command paragraph does not handle any other outcome',
     'the command paragraph does not name the `file` verdict',
@@ -302,11 +302,13 @@ test('#5931 go-red: an override restated across a line wrap fails the deferral-s
 const NO_POLICY_DIR = scratchDir('ct-materiality-nopolicy-');
 const ROUTE_SPAN = /`(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/deferral-route\.js"[^`]*)`/g;
 // `strip` removes the documented `--run` first: it is a site placeholder (`"$PIPELINE_RUN_DIR"`) that a
-// policy-free probe cannot resolve. `--evidence {evidence}` stays in, so a CLI rename of it is caught.
+// policy-free probe cannot resolve. `--evidence '{evidence}'` stays in, so a CLI rename of it is caught; its
+// shell quotes are dropped, since a shell would strip them before the value reached argv.
 function fillRoute(span, severity, strip = /\[--run [^\]]*\]\s*/g) {
   return span
     .replace('(--agent-raised | --human)', '--agent-raised')
     .replace(strip, '')
+    .replace("'{evidence}'", '{evidence}')
     .replace(/\[([^\]]*)\]/g, '$1')
     .replace('{reason}', 'pre-existing-outside-diff')
     .replace('{severity}', severity)
@@ -367,6 +369,7 @@ const FLOOR_NEEDLES = [
   '`verdict` (`file`, `digest` or `refused`) and `rule`',
   '`--evidence` only when the item carries an `Evidence: test:…` or `Evidence: ref:…` line',
   'a finding\'s file-and-line `Evidence:` pointer is not one',
+  'single-quoted and reaches the command line only when it matches, exactly and in full, `test:` followed by one or more characters from `A-Z a-z 0-9 . _ / -`, or `ref:#` followed by digits, or `ref:IL-` followed by digits; any other value is never put on the command line: omit the flag',
   'in a multi-spec run each member\'s `spec-{N}/` directory keeps its own tally',
   '`--run` only when a run directory resolves',
   'since the command refuses a blank `--run`',

@@ -10,6 +10,7 @@
 const nodePath = require('node:path');
 const { ORIGINS, TYPES, TIERS, CEREMONY_TIERS, PRIORITIES, LABELS } = require('./record-vocabulary');
 const { unfencedText, fencedLineMask } = require('../markdown-blocks');
+const { EVIDENCE_KINDS } = require('../deferral-route/evidence');
 
 // The closed Defer-reason: vocabulary — the code twin of
 // skills/_shared/deferral-gate.md's "Defer-reason: vocabulary" section
@@ -244,8 +245,9 @@ function keyFilePathProblem(filePath) {
   return null;
 }
 
-// The two kinds a provenance Evidence: line may carry (#5933); the text before the first colon.
-const EVIDENCE_KIND_RE = /^(?:test|ref):/;
+// The kinds a provenance Evidence: line may carry (#5933), built from the one vocabulary
+// `deferral-route/evidence.js` checks; the text before the first colon.
+const EVIDENCE_KIND_RE = new RegExp(`^(?:${EVIDENCE_KINDS.join('|')}):`);
 
 function isRepoRelativeKeyFilePath(filePath) {
   return keyFilePathProblem(filePath) === null;

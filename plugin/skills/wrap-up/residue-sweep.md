@@ -163,7 +163,7 @@ recorded worktree is one of those locks → `blocked-external`; an open PR outsi
 radius → `blocked-external`; a red suite this run cannot fix → `genuinely-larger`; anything else
 stays `open` for Phase 2's drill, where the human picks the value. A `remedy: record` item that
 reaches Phase 2's per-item drill first applies `_shared/materiality-floor.md`'s floor test with
-`node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} --size {size} --priority {priority} --risk {risk} [--evidence {evidence}] [--run "$PIPELINE_RUN_DIR"] --agent-raised`:
+`node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} --size {size} --priority {priority} --risk {risk} [--evidence '{evidence}'] [--run "$PIPELINE_RUN_DIR"] --agent-raised`:
 on `digest` its Step 1 option is relabeled the label `_shared/materiality-floor.md`'s digest-label table gives the printed `rule` instead of
 `"Route to a record"`, so the human sees the actual destination before choosing it,
 never silently substituted after approval; choosing it appends a digest entry, not a record,

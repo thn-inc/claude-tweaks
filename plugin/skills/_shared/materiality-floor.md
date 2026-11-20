@@ -43,13 +43,13 @@ byte-equal). Every site routing an item that carries a gate `Defer-reason:` runs
 applying this prose. The five health sweeps (no gate reason) apply this prose directly; the
 tiebreak can't-tell digest, the console-backfill values and ledger narrowing follow their own rules:
 
-`node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} [--severity {severity}] --size {size} --priority {priority} --risk {risk} [--evidence {evidence}] [--run "$PIPELINE_RUN_DIR"] (--agent-raised | --human)`
+`node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} [--severity {severity}] --size {size} --priority {priority} --risk {risk} [--evidence '{evidence}'] [--run "$PIPELINE_RUN_DIR"] (--agent-raised | --human)`
 
 `--severity` only when the item has one, lowercase (`critical`, `high`, `medium`, `low`, `info`);
 each axis `low`, `medium` or `high` as the site scores it.
 `--evidence` only when the item carries an `Evidence: test:…` or `Evidence: ref:…` line
 (`_shared/deferral-gate.md`'s "Where the reason lives"), passing that line's value; otherwise omit
-the flag — a finding's file-and-line `Evidence:` pointer is not one. `--run` only when a run directory resolves (`_shared/pipeline-run-dir.md`); otherwise
+the flag — a finding's file-and-line `Evidence:` pointer is not one. The value comes from text the plugin did not write, so it is single-quoted and reaches the command line only when it matches, exactly and in full, `test:` followed by one or more characters from `A-Z a-z 0-9 . _ / -`, or `ref:#` followed by digits, or `ref:IL-` followed by digits; any other value is never put on the command line: omit the flag, so the item counts as carrying no evidence. `--run` only when a run directory resolves (`_shared/pipeline-run-dir.md`); otherwise
 omit it, since the command refuses a blank `--run`. Every routing site passes `--agent-raised`: no
 typed input reaches one. It prints `verdict` (`file`, `digest` or `refused`) and `rule`.
 

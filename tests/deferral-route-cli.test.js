@@ -496,7 +496,7 @@ test('#5933 AC3.1 CLI: test:../outside.js, test:missing.test.js and note:anythin
   }
 });
 
-test('#5933 AC3.2 CLI: a/../../outside.js, /etc/passwd, file:///etc/passwd, %2e%2e/outside.js, tests/ and an escaping symlink digest by no-evidence', () => {
+test('#5933 AC3.2 CLI: a/../../outside.js, /etc/passwd, file:///etc/passwd, %2e%2e/outside.js, tests/ and an escaping symlink digest by no-evidence', (t) => {
   const parent = scratchDir('ct-deferral-route-parent-', { realpath: true });
   const dir = gitRepo({ parent });
   const outside = path.join(parent, 'outside.js');
@@ -512,6 +512,7 @@ test('#5933 AC3.2 CLI: a/../../outside.js, /etc/passwd, file:///etc/passwd, %2e%
     values.push('test:link.js');
   } catch (err) {
     if (err.code !== 'EPERM' && err.code !== 'EACCES') throw err;
+    t.diagnostic('symlinks unavailable: the escaping-symlink row was not run');
   }
   for (const evidence of values) {
     const res = callIn(dir, ...GL, '--evidence', evidence);

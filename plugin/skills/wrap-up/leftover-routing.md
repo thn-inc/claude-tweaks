@@ -26,7 +26,7 @@ Phase 1 guarantees a run directory (see `_shared/run-dir-resolution.md` for the 
 
 **Materiality floor, before composing.** Run `_shared/materiality-floor.md`'s floor test on each
 section reaching here, `{reason}` from the fix-exhaust gate above:
-`node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} --size {size} --priority {priority} --risk {risk} [--evidence {evidence}] [--run "$PIPELINE_RUN_DIR"] --agent-raised`.
+`node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} --size {size} --priority {priority} --risk {risk} [--evidence '{evidence}'] [--run "$PIPELINE_RUN_DIR"] --agent-raised`.
 `digest` routes it to the digest container instead (log the contract's `AUTO` line when a run
 directory resolves; skip the steps below); `file` stages it as below; `refused` or any other
 outcome makes it an `open` item for Phase 3's ledger gate (written by `hooks.js ledger-row`, per
