@@ -209,7 +209,7 @@ test('no adopter file restates the floor\'s three-axis definition', () => {
 // Live corpus on purpose (skill-prose-conformance-tests' "documented convention ... against every future
 // addition" row): the claim is that each site's own prose carries the command, which no fixture can stand in for.
 const ROUTE_COMMAND = 'node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason}';
-const ROUTE_FORM = `${ROUTE_COMMAND} [--severity {severity}] --size {size} --priority {priority} --risk {risk} (--agent-raised | --human)`;
+const ROUTE_FORM = `${ROUTE_COMMAND} [--severity {severity}] --size {size} --priority {priority} --risk {risk} [--evidence {evidence}] [--run "$PIPELINE_RUN_DIR"] (--agent-raised | --human)`;
 const DEFERRAL_SITES = [
   'plugin/skills/review/step3-routing.md',
   'plugin/skills/reflect/full-mode.md',
@@ -302,6 +302,8 @@ const ROUTE_SPAN = /`(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/deferral-route\.js"[^
 function routeVerdict(span, severity) {
   const filled = span
     .replace('(--agent-raised | --human)', '--agent-raised')
+    // A documented `--run` is a site placeholder that no policy-free probe can resolve; `--evidence` likewise.
+    .replace(/\[--(?:evidence|run) [^\]]*\]\s*/g, '')
     .replace(/\[([^\]]*)\]/g, '$1')
     .replace('{reason}', 'pre-existing-outside-diff')
     .replace('{severity}', severity)
@@ -324,6 +326,13 @@ test('#5931 go-red: a documented form with a flag the CLI does not accept is ref
   assert.deepStrictEqual(routeVerdict(ROUTE_FORM.replace('--size', '--scale'), 'low'), { code: 2, verdict: 'refused' });
 });
 
+// #5933 Decision 2: one digest-label table names the label and ledger Resolution for every digest rule.
+const DIGEST_LABEL_ROWS = [
+  '| `floor` | "Digest — below floor" | `below the materiality floor — digested at {where}` |',
+  '| `policy-reason` | "Digest — policy (`deferral-digest-reasons`)" | `digested by policy (deferral-digest-reasons) at {where}` |',
+  '| `no-evidence` | "Digest — no evidence (`filed-record-evidence`)" | `digested without evidence (filed-record-evidence) at {where}` |',
+  '| `run-cap` | "Digest — run cap (`run-filed-record-cap`)" | `digested over the run cap (run-filed-record-cap) at {where}` |',
+];
 const FLOOR_NEEDLES = [
   ROUTE_FORM,
   'its test pins the two sections above byte-equal',
@@ -333,7 +342,19 @@ const FLOOR_NEEDLES = [
   'lowercase (`critical`, `high`, `medium`, `low`, `info`)',
   'Every routing site passes `--agent-raised`',
   '`verdict` (`file`, `digest` or `refused`) and `rule`',
-  'On `digest` the label a human sees follows `rule`: `floor` shows "Digest — below floor", `policy-reason` shows "Digest — policy (`deferral-digest-reasons`)", and a ledger Resolution states the same reason.',
+  '`--evidence` only when the item carries an `Evidence: test:…` or `Evidence: ref:…` line',
+  'a finding\'s file-and-line `Evidence:` pointer is not one',
+  'in a multi-spec run each member\'s `spec-{N}/` directory keeps its own tally',
+  '`--run` only when a run directory resolves',
+  'since the command refuses a blank `--run`',
+  '**Two frictions after the floor (#5933).**',
+  'goes to the digest, rule `no-evidence`',
+  'goes to the digest, rule `run-cap`',
+  'a `high` or `critical` severity still files, and counts',
+  'The cap is first come, first served within a run',
+  'never hold items back or rank them to choose which ones file',
+  ...DIGEST_LABEL_ROWS,
+  '`{where}` is the digest comment URL on `work-backend: github-issues`, or `specs/digest.md` on `local-files`.',
 ];
 const AUDIT_RULE = /^AUTO \{time\} — materiality-floor: \{item\} routed below floor \(\{defer-reason\}, rule=\{rule\}\) → digest\./m;
 function floorCommandProblems(text) {
@@ -356,6 +377,14 @@ test('#5931 go-red: the command form moved out of Applying the floor fails the f
   const mutated = `${FLOOR.replace(flexible(ROUTE_FORM), '')}\n\`${ROUTE_FORM}\`\n`;
   assert.ok(mutated.includes(ROUTE_FORM));
   assert.deepStrictEqual(floorCommandProblems(mutated), [`Applying the floor lacks ${ROUTE_FORM}`]);
+});
+test('#5933 go-red: the label table moved out of Applying the floor fails the floor check', () => {
+  let mutated = FLOOR;
+  for (const row of DIGEST_LABEL_ROWS) mutated = mutated.replace(flexible(row), '');
+  assert.notEqual(mutated, FLOOR);
+  mutated = `${mutated}\n## Entry format\n\n${DIGEST_LABEL_ROWS.join('\n')}\n`;
+  assert.ok(DIGEST_LABEL_ROWS.every((row) => mutated.includes(row)));
+  assert.deepStrictEqual(floorCommandProblems(mutated), DIGEST_LABEL_ROWS.map((row) => `Applying the floor lacks ${row}`));
 });
 test('#5931 go-red: dropping the axis placeholders from the command form fails the floor check', () => {
   const mutated = FLOOR.split('--size {size} --priority {priority}').join('--size --priority');

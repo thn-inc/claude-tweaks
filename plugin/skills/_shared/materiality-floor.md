@@ -43,12 +43,38 @@ byte-equal). Every site routing an item that carries a gate `Defer-reason:` runs
 applying this prose. The five health sweeps (no gate reason) apply this prose directly; the
 tiebreak can't-tell digest, the console-backfill values and ledger narrowing follow their own rules:
 
-`node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} [--severity {severity}] --size {size} --priority {priority} --risk {risk} (--agent-raised | --human)`
+`node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} [--severity {severity}] --size {size} --priority {priority} --risk {risk} [--evidence {evidence}] [--run "$PIPELINE_RUN_DIR"] (--agent-raised | --human)`
 
 `--severity` only when the item has one, lowercase (`critical`, `high`, `medium`, `low`, `info`);
-each axis `low`, `medium` or `high` as the site scores it. Every routing site passes
-`--agent-raised`: no typed input reaches one. It prints `verdict` (`file`, `digest` or
-`refused`) and `rule`. On `digest` the label a human sees follows `rule`: `floor` shows "Digest — below floor", `policy-reason` shows "Digest — policy (`deferral-digest-reasons`)", and a ledger Resolution states the same reason.
+each axis `low`, `medium` or `high` as the site scores it.
+`--evidence` only when the item carries an `Evidence: test:…` or `Evidence: ref:…` line
+(`_shared/deferral-gate.md`'s "Where the reason lives"), passing that line's value; otherwise omit
+the flag — a finding's file-and-line `Evidence:` pointer is not one. `--run` only when a run directory resolves (`_shared/pipeline-run-dir.md`); otherwise
+omit it, since the command refuses a blank `--run`. Every routing site passes `--agent-raised`: no
+typed input reaches one. It prints `verdict` (`file`, `digest` or `refused`) and `rule`.
+
+**Two frictions after the floor (#5933).** An agent-raised item the rules above would file, on rule
+`tangential` or `not-low`, meets two policy checks in this order, both off by default
+(`_shared/policy-schema-deferral-routing.md`). With `filed-record-evidence: required`, an item whose
+`Defer-reason:` is `pre-existing-outside-diff`, `genuinely-larger` or `tangential` and whose call
+passes no valid `--evidence` goes to the digest, rule `no-evidence`. With `run-filed-record-cap: {n}`
+and `--run`, an item goes to the digest, rule `run-cap`, once the run has given `{n}` `file` verdicts;
+a `high` or `critical` severity still files, and counts. The tally belongs to the run directory the
+call names: in a multi-spec run each member's `spec-{N}/` directory keeps its own tally.
+The cap is first come, first served within a run: route each item when it comes up, and
+never hold items back or rank them to choose which ones file.
+
+On `digest` the label a human sees, and the words of a ledger Resolution, follow `rule` — the
+digest-label table every routing site cites:
+
+| `rule` | Label | Ledger Resolution |
+|---|---|---|
+| `floor` | "Digest — below floor" | `below the materiality floor — digested at {where}` |
+| `policy-reason` | "Digest — policy (`deferral-digest-reasons`)" | `digested by policy (deferral-digest-reasons) at {where}` |
+| `no-evidence` | "Digest — no evidence (`filed-record-evidence`)" | `digested without evidence (filed-record-evidence) at {where}` |
+| `run-cap` | "Digest — run cap (`run-filed-record-cap`)" | `digested over the run cap (run-filed-record-cap) at {where}` |
+
+`{where}` is the digest comment URL on `work-backend: github-issues`, or `specs/digest.md` on `local-files`.
 
 ## Entry format
 
