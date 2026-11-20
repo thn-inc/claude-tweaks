@@ -109,3 +109,4 @@ files:
 - Step 3 red flags updated for #5280 (`disposition.md`'s roster gained a `visual-review-late-` row, routed as a proposal ahead of the `visual-review-` skip-note row)
 - Step 6 updated for #4139 (the `--as` anchor re-runs Step 3's review-tree check instead of requiring `HEAD == origin/main`, and builds the override with `commit-tree` on the fetched tip so archive commits never reach origin)
 - Step 1 updated for #5370 (Step 3 runs `/claude-tweaks:test full` after the review-tree check and before the review marker — the one whole-suite run on the developer machine per version — and a failing test stops the release before the console)
+- Step 3 updated for #5933 (Step 8's digest disposition covers every rule in `_shared/materiality-floor.md`'s digest-label table, including the `no-evidence` and `run-cap` rules)
