@@ -43,9 +43,9 @@ test('POLICY_KEYS entries are unique', () => {
   assertLastBump(__filename);
   // Changes only with a recorded reason. Recompute by counting the merged list,
   // never by summing either side's delta (IL-99); history is `git log -L`.
-  // Last bump: 112 -> 113, #5932
-  assert.strictEqual(POLICY_KEYS.length, 113);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 113);
+  // Last bump: 113 -> 114, #5932
+  assert.strictEqual(POLICY_KEYS.length, 114);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 114);
 });
 
 test('express-lane keys resolve their defaults (#4025)', () => {
@@ -1002,6 +1002,119 @@ test('AC8.3: each ceiling\'s doc row states its unit', () => {
 test('AC11.4: the policyOnly bullet names every DRIVER_KEYS key', () => {
   const line = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema-coverage.md')).split('\n').find((l) => l.includes('are `policyOnly`'));
   for (const { key } of DRIVER_KEYS) assert.ok(line.includes('`' + key + '`'), key);
+});
+
+// #5917: express-driver-models, a policyOnly block key of per-role work profiles.
+const MODELS = 'express-driver-models';
+const FOUR = { implementer: 'standard', reviewer: 'capable', 'merge-check': 'standard', acceptance: 'standard' };
+const rModels = (policyRaw, runConfigRaw = null) => resolvePolicyKeys([MODELS], { policyRaw, runConfigRaw })[MODELS];
+const REJECTED = { value: null, source: 'default', invalid: true };
+
+test('express-driver-models: unset resolves the four spec roles\' defaults, no explorer', () => {
+  assert.deepStrictEqual(rModels(''), { value: FOUR, source: 'default' });
+  assert.ok(!Object.hasOwn(rModels('').value, 'explorer'));
+});
+
+test('AC2.1: a policy.yml block sets one role and keeps the others', () => {
+  const expected = { value: { ...FOUR, implementer: 'fast' }, source: 'policy' };
+  assert.deepStrictEqual(rModels('express-driver-models:\n  implementer: fast\n'), expected);
+  assert.deepStrictEqual(rModels('express-driver-models:\r\n  implementer: fast\r\n'), expected);
+  assert.deepStrictEqual(rModels('express-driver-models:   # note\r\n  reviewer: standard   # why\r\n'), { value: { ...FOUR, reviewer: 'standard' }, source: 'policy' });
+  assert.deepStrictEqual(rModels('express-driver-models:\n'), { value: FOUR, source: 'policy' });
+});
+
+test('express-driver-models: a rejected block resolves null invalid, never a partial map', () => {
+  const bad = [
+    'express-driver-models: fast\n',
+    'express-driver-models:\n  scout: fast\n',
+    'express-driver-models:\n  explorer: fast\n',
+    'express-driver-models:\n  implementer: fast\n  explorer: capable\n',
+    'express-driver-models:\n  implementer: turbo\n',
+    'express-driver-models:\n  implementer: fast\n  implementer: capable\n',
+    'express-driver-models:\n    implementer: fast\n',
+    'express-driver-models:\n\timplementer: fast\n',
+    'express-driver-models:\n  implementer:\n',
+    'express-driver-models:\n  implementer: fast\nexpress-driver-models:\n  reviewer: fast\n',
+  ];
+  for (const raw of bad) {
+    const seen = [];
+    const got = resolvePolicyKeys([MODELS], { policyRaw: raw, runConfigRaw: null, onInvalid: (k) => seen.push(k) })[MODELS];
+    assert.deepStrictEqual(got, REJECTED, JSON.stringify(raw));
+    assert.deepStrictEqual(seen, [MODELS], JSON.stringify(raw));
+  }
+  assert.deepStrictEqual(rModels('express-driver-models:\n  implementer: fast\nautonomy: trusted\n'), { value: { ...FOUR, implementer: 'fast' }, source: 'policy' });
+  // A following block's indented rows are not this block's rows: the next column-0 line closes it.
+  assert.deepStrictEqual(rModels('express-driver-models:\n  implementer: fast\nmodel-profiles:\n  standard:\n    model: opus\n'), { value: { ...FOUR, implementer: 'fast' }, source: 'policy' });
+});
+
+test('AC2.2: a run config block never sets express-driver-models', () => {
+  assert.deepStrictEqual(rModels('', 'express-driver-models:\n  implementer: fast\n'), { value: FOUR, source: 'default' });
+  assert.strictEqual(rModels('express-driver-models:\n  reviewer: standard\n', 'express-driver-models:\n  implementer: fast\n').value.implementer, 'standard');
+});
+
+test('AC2.2 via the CLI: resolve-policy.js --run ignores the block in config.yml', () => {
+  const repo = tmpRepo();
+  const runDir = scratchDir('ct-driver-models-run-');
+  try {
+    fs.writeFileSync(path.join(runDir, 'config.yml'), 'express-driver-models:\n  implementer: fast\n');
+    const r = driverCli(['--run', runDir, MODELS], repo);
+    assert.deepStrictEqual(JSON.parse(r.stdout)[MODELS], { value: FOUR, source: 'default' });
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test('express-driver-models: --values refuses it, as a block key', () => {
+  const repo = tmpRepo();
+  try {
+    const r = driverCli(['--values', MODELS], repo);
+    assert.notStrictEqual(r.status, 0);
+    assert.match(r.stderr, /--values does not support express-driver-models \(no scalar form\)/);
+  } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('express-driver-models: registered policyOnly, advanced, models, map keyed by the four policy roles', () => {
+  const row = POLICY_KEYS.find((k) => k.key === MODELS);
+  assert.strictEqual(row.type, 'map');
+  assert.strictEqual(row.policyOnly, true);
+  assert.strictEqual(row.tier, 'advanced');
+  assert.strictEqual(row.category, 'models');
+  assert.deepStrictEqual([...row.keys], ['implementer', 'reviewer', 'merge-check', 'acceptance']);
+  assert.deepStrictEqual({ ...row.default }, FOUR);
+  assert.ok(Object.isFrozen(row.default));
+});
+
+test('express-driver-models: auditPolicy flags an explorer row', () => {
+  const repo = tmpRepo();
+  try {
+    writePolicy(repo, 'express-driver-models:\n  explorer: fast\n');
+    const rows = auditPolicy(repo).invalidValues.filter((x) => x.key === MODELS);
+    assert.strictEqual(rows.length, 1);
+  } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('express-driver-models: auditPolicy flags a rejected block once and a valid one never', () => {
+  const cases = [['express-driver-models:\n  implementer: turbo\n', 1], ['express-driver-models: fast\n', 1], ['express-driver-models:\n  implementer: fast\n', 0]];
+  for (const [policy, count] of cases) {
+    const repo = tmpRepo();
+    try {
+      writePolicy(repo, policy);
+      const audit = auditPolicy(repo);
+      assert.strictEqual(audit.invalidValues.filter((x) => x.key === MODELS).length, count, policy);
+      assert.deepStrictEqual(audit.unrecognizedKeys, [], policy);
+    } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+  }
+});
+
+test('express-driver-models: the pre-change flat reader sees nothing of the block', () => {
+  const { parseFlatLines } = require('../plugin/bin/lib/policy-schema');
+  assert.deepStrictEqual(parseFlatLines('express-driver-models:\n  implementer: fast\n'), {});
+});
+
+test('AC11.4 (#5917): the policyOnly bullet names express-driver-models', () => {
+  const line = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema-coverage.md')).split('\n').find((l) => l.includes('are `policyOnly`'));
+  assert.ok(line.includes('`express-driver-models`'));
 });
 
 test('review-lens-dispatch resolves task by default and for an invalid value, workflow when set (#5599)', () => {

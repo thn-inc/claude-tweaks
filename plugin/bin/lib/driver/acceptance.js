@@ -303,11 +303,12 @@ async function judge(env, ctx, route, extra, endToEnd = false, preRead = null) {
     role: 'acceptance', dir: 'acceptance-worker', label: 'acceptance worker', prompt, schema: ACCEPTANCE_RESULT_SCHEMA,
   });
   if (launched.stop) return launched;
-  if (isInterrupted(env.deps)) return { stop: 'interrupted' };
-  const { envelope } = launched;
-  if (!envelope || envelope.status !== 'ok' || !isPlainObject(envelope.result)) return { stop: 'acceptance worker returned no valid result' };
+  // Every return from here on follows a launch that returned, so each carries its model (#5917).
+  const { envelope, model } = launched;
+  if (isInterrupted(env.deps)) return { stop: 'interrupted', model };
+  if (!envelope || envelope.status !== 'ok' || !isPlainObject(envelope.result)) return { stop: 'acceptance worker returned no valid result', model };
   const invalid = validateResult(route, envelope.result, endToEnd);
-  return invalid || { result: envelope.result, body: inputs.body };
+  return invalid ? { ...invalid, model } : { result: envelope.result, body: inputs.body, model };
 }
 
 // The verdict's parent: { read } with its title, body and comments, or { stop }.
@@ -394,6 +395,7 @@ function ensureLabels(env, ctx, names) {
 async function tryItOnly(env, ctx, state, decision, verdict, tmp) {
   if (verdict.state !== 'due') {
     const judged = await judge(env, ctx, decision.route, {});
+    if (judged.model) state.model = judged.model;
     if (judged.stop) return judged;
     const screened = screenWorkerText(judged.result, decision.route, null);
     if (screened) return screened;
@@ -402,6 +404,7 @@ async function tryItOnly(env, ctx, state, decision, verdict, tmp) {
   const parent = readParent(env, ctx, verdict);
   if (parent.stop) return parent;
   const judged = await judge(env, ctx, decision.route, parentInputs(parent.read, verdict), true);
+  if (judged.model) state.model = judged.model;
   if (judged.stop) return judged;
   const screened = screenWorkerText(judged.result, decision.route, judged.result.parentBrief.tryItEndToEnd);
   if (screened) return screened;
@@ -414,6 +417,7 @@ async function dueExceeds(env, ctx, state, decision, verdict, tmp) {
   if (found.stop) return found;
   const { parent, read } = found;
   const judged = await judge(env, ctx, decision.route, parentInputs(read, verdict), true);
+  if (judged.model) state.model = judged.model;
   if (judged.stop) return judged;
   const screened = screenWorkerText(judged.result, decision.route, judged.result.parentBrief.tryItEndToEnd);
   if (screened) return screened;
@@ -454,7 +458,7 @@ function testGuideClaims(groups) {
   })));
 }
 
-async function noParent(env, ctx, decision, tmp) {
+async function noParent(env, ctx, state, decision, tmp) {
   const files = Object.fromEntries(['facts.json', 'links.json', 'narrative.json', 'plan.md', 'packet.md', 'spec.md'].map((f) => [f.split('.')[0], path.join(tmp, f)]));
   // The record body is the spec on this lane (verification-brief.md's `--spec`): without it the packet's
   // acceptance criteria are not derived. It is read once, before the first gather, so the worker's facts
@@ -478,6 +482,7 @@ async function noParent(env, ctx, decision, tmp) {
     return { stop: 'gather output unreadable' };
   }
   const judged = await judge(env, ctx, decision.route, { facts }, false, inputs);
+  if (judged.model) state.model = judged.model;
   if (judged.stop) return judged;
   const { tryIt, observationPlan, claims } = judged.result;
   const links = tryIt.map((g, n) => ({ id: `entry-point-${n + 1}`, label: g.name, command: g.entryPoint }));
@@ -542,7 +547,7 @@ async function execute(env, ctx, state) {
   let out;
   if (decision.route === 'try-it-only') out = await tryItOnly(env, ctx, state, decision, gate.verdict, tmp);
   else if (decision.route === 'due-exceeds') out = await dueExceeds(env, ctx, state, decision, gate.verdict, tmp);
-  else out = await noParent(env, ctx, decision, tmp);
+  else out = await noParent(env, ctx, state, decision, tmp);
   return out.stop ? { stop: `${out.stop}${note}` } : { detail: `route ${decision.route} complete${note}` };
 }
 
@@ -563,7 +568,7 @@ async function runAcceptance(env, ctx) {
   // Untrusted marker comments that were not acted on are named, so a planted one is never silent.
   const skipped = state.skipped > 0 ? `; skipped ${state.skipped} untrusted comment(s)` : '';
   const raw = `${completed ? out.detail : out.stop}${skipped}`;
-  emitStep(deps, 'merge-acceptance', completed ? 'ok' : 'stop', startedAt, raw, { route: state.route });
+  emitStep(deps, 'merge-acceptance', completed ? 'ok' : 'stop', startedAt, raw, { route: state.route, ...(state.model ? { model: state.model } : {}) });
   return { completed, route: state.route, detail: cleanDetail(raw) };
 }
 

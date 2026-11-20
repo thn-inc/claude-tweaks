@@ -173,7 +173,7 @@ These resolve from `policy.yml`. `/claude-tweaks:init` does not generate them in
 
 ## Model profiles
 
-Registered by #219; the resolver, `bin/lib/model-profiles/profiles.js` (`resolve()`), reads four of these five (`model-stance`, `frontier-run-cap`, `model-ceiling`, `model-profiles`); `research-mode` is unrelated to it. Full canonical-home/owner-skill/default/meaning table: `policy-schema-model-profiles.md` (split out per IL-70 — merged branch content pushed this file over its ceiling).
+Registered by #219; the resolver, `bin/lib/model-profiles/profiles.js` (`resolve()`), reads four of these six (`model-stance`, `frontier-run-cap`, `model-ceiling`, `model-profiles`); `express-driver-models` (#5917) picks the profile each pipeline driver worker role resolves through it; `research-mode` is unrelated to it. Full canonical-home/owner-skill/default/meaning table: `policy-schema-model-profiles.md` (split out per IL-70 — merged branch content pushed this file over its ceiling).
 
 | Key |
 |---|
@@ -181,6 +181,7 @@ Registered by #219; the resolver, `bin/lib/model-profiles/profiles.js` (`resolve
 | `frontier-run-cap` |
 | `model-ceiling` |
 | `model-profiles` |
+| `express-driver-models` |
 | `research-mode` |
 
 ## Efficiency budgets
