@@ -32,6 +32,9 @@ function trySymlink(target, linkPath) {
 const HAS_LINKS = trySymlink(path.join(PARENT, 'outside.js'), path.join(ROOT, 'link.js'))
   && trySymlink(path.join(ROOT, 'tests', 'example.test.js'), path.join(ROOT, 'inlink.js'));
 
+const TOPLINK = path.join(PARENT, 'toplink');
+const HAS_TOPLINK = trySymlink(ROOT, TOPLINK);
+
 const HAS_COLON_NAMES = process.platform !== 'win32';
 if (HAS_COLON_NAMES) {
   fs.mkdirSync(path.join(ROOT, 'file:'), { recursive: true });
@@ -108,6 +111,13 @@ test('review focus 5: an in-tree symlink to a file is valid, a directory is not 
   assert.deepEqual(check('test:tests'), bad('not-a-file'));
   if (!HAS_LINKS) return t.skip('symlinks unavailable');
   assert.deepEqual(check('test:inlink.js'), { valid: true, kind: 'test', ref: 'inlink.js' });
+});
+
+test('a top level reached through a symlink is canonicalized before the containment check', (t) => {
+  if (!HAS_TOPLINK || !HAS_LINKS) return t.skip('symlinks unavailable');
+  assert.deepEqual(check('test:tests/example.test.js', TOPLINK), { valid: true, kind: 'test', ref: 'tests/example.test.js' });
+  assert.deepEqual(check('test:inlink.js', TOPLINK), { valid: true, kind: 'test', ref: 'inlink.js' });
+  assert.deepEqual(check('test:link.js', TOPLINK), bad('outside'));
 });
 
 test('guard discrimination: each test-path guard alone decides one existing in-tree target', (t) => {
