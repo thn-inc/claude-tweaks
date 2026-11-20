@@ -290,7 +290,7 @@ function readVerdicts(unit, fsImpl = fs) {
 }
 
 const HUMAN_STOP_KEPT_RE = /^- KEPT-PROMPT\b.*\bCommon Step 1\.6\b.*\bneeds-human\b/;
-const HUMAN_STOP_GATED_RE = /^- [A-Z][A-Z-]*\b.*\bCommon Step 1\.6\b.*\bneeds-human\b.*(?:HARD-GATE|question (?:comment )?posted)/;
+const HUMAN_STOP_GATED_RE = /^- (?!SKIP\b)[A-Z][A-Z-]*\b.*\bCommon Step 1\.6\b.*\bneeds-human\b.*(?:HARD-GATE|question (?:comment )?posted)/;
 
 // A decisions.md line recording that plan review ran (Common Step 1.6): the denominator of the human-stop count, since a
 // unit with no such line never had a plan review to stop in. A SKIP line records a plan review that did not run.

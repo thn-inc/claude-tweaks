@@ -287,6 +287,12 @@ test('a plan review with no transcript is unparsed, not a clean review', () => {
   assert.strictEqual(got.findingsPerReview, null);
 });
 
+test('human stops: a SKIP line naming needs-human and a posted question is not a stop', () => {
+  // A SKIP line records a plan review that did not run, so it is outside planReviewUnits and must never count as a stop.
+  const SKIP = '- SKIP 10:00:00 — Common Step 1.6: condition: needs-human question posted on #9 earlier → fallback: no plan review. Reversibility: n/a.';
+  assert.strictEqual(isHumanStop(SKIP), false);
+});
+
 test('human stops: the KEPT, REFUSED and POSTED forms count, a settled gap does not', () => {
   assert.strictEqual(isHumanStop(KEPT), true);
   assert.strictEqual(isHumanStop(REFUSED), true);
