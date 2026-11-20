@@ -231,7 +231,7 @@ function deferralSiteProblems(text) {
   const holding = paragraphs.filter((p) => p.includes(ROUTE_COMMAND));
   if (holding.length === 0) problems.push('no paragraph holds the deferral-route.js command form');
   else {
-    for (const flag of ['--size {size}', '--priority {priority}', '--risk {risk}', '--agent-raised']) {
+    for (const flag of ['--size {size}', '--priority {priority}', '--risk {risk}', '[--evidence {evidence}]', '[--run "$PIPELINE_RUN_DIR"]', '--agent-raised']) {
       if (!holding.some((p) => p.includes(flag))) problems.push(`the command paragraph lacks ${flag}`);
     }
     if (holding.some((p) => p.includes('--human'))) problems.push('the command paragraph passes --human');
@@ -253,12 +253,14 @@ for (const rel of DEFERRAL_SITES) {
   });
 }
 
-const SAMPLE_SITE = `Apply the floor with \`${ROUTE_COMMAND} --size {size} --priority {priority} --risk {risk} --agent-raised\`: \`digest\` digests, \`file\` files, \`refused\` or any other outcome stays open.`;
+const SAMPLE_SITE = `Apply the floor with \`${ROUTE_COMMAND} --size {size} --priority {priority} --risk {risk} [--evidence {evidence}] [--run "$PIPELINE_RUN_DIR"] --agent-raised\`: \`digest\` digests, \`file\` files, \`refused\` or any other outcome stays open.`;
 const SITE_MUTATIONS = [
   [ROUTE_COMMAND, 'no paragraph holds the deferral-route.js command form'],
   ['--size {size}', 'the command paragraph lacks --size {size}'],
   ['{priority}', 'the command paragraph lacks --priority {priority}'],
   ['--risk {risk}', 'the command paragraph lacks --risk {risk}'],
+  ['[--evidence {evidence}]', 'the command paragraph lacks [--evidence {evidence}]'],
+  ['[--run "$PIPELINE_RUN_DIR"]', 'the command paragraph lacks [--run "$PIPELINE_RUN_DIR"]'],
   ['--agent-raised', 'the command paragraph lacks --agent-raised'],
   ['any other outcome', 'the command paragraph does not handle any other outcome'],
   ['`file`', 'the command paragraph does not name the `file` verdict'],
@@ -275,7 +277,7 @@ for (const [cut, expected] of SITE_MUTATIONS) {
   });
 }
 test('#5931 go-red: the verdicts in another paragraph than the command fail the deferral-site check', () => {
-  const split = `Apply the floor with \`${ROUTE_COMMAND} --size {size} --priority {priority} --risk {risk} --agent-raised\`.\n\n\`digest\` digests, \`file\` files, \`refused\` or any other outcome stays open.`;
+  const split = `Apply the floor with \`${ROUTE_COMMAND} --size {size} --priority {priority} --risk {risk} [--evidence {evidence}] [--run "$PIPELINE_RUN_DIR"] --agent-raised\`.\n\n\`digest\` digests, \`file\` files, \`refused\` or any other outcome stays open.`;
   assert.deepStrictEqual(deferralSiteProblems(split), [
     'the command paragraph does not handle any other outcome',
     'the command paragraph does not name the `file` verdict',
@@ -310,9 +312,10 @@ function fillRoute(span, severity, strip = /\[--run [^\]]*\]\s*/g) {
     .replace('{severity}', severity)
     .replace(/\{(size|priority|risk)\}/g, 'low');
 }
+const routeArgv = (filled) => filled.split(/\s+/).slice(2);
 function runRoute(filled) {
   let out = '';
-  const code = routeCli(filled.split(/\s+/).slice(2), { stdout: (s) => { out += s; }, stderr: () => {}, cwd: () => NO_POLICY_DIR, env: {} });
+  const code = routeCli(Array.isArray(filled) ? filled : routeArgv(filled), { stdout: (s) => { out += s; }, stderr: () => {}, cwd: () => NO_POLICY_DIR, env: {} });
   return { code, out };
 }
 function routeVerdict(span, severity) {
@@ -334,11 +337,13 @@ for (const rel of ['plugin/skills/_shared/materiality-floor.md', ...DEFERRAL_SIT
 test('#5933 the documented --run flag reaches the CLI run-dir check', () => {
   const span = [...read('plugin/skills/_shared/materiality-floor.md').matchAll(ROUTE_SPAN)].map((m) => m[1]).find((s) => s.includes('--run'));
   assert.ok(span, 'materiality-floor.md documents no command form with --run');
-  // The never-matching strip keeps the `--run` placeholder; the quotes go because runRoute splits on whitespace.
-  const withRun = fillRoute(span, 'low', /(?!)/g).replace('"$PIPELINE_RUN_DIR"', `${NO_POLICY_DIR}/no-such-run-dir`);
-  assert.ok(withRun.includes('--run '), withRun);
-  assert.ok(!withRun.includes('PIPELINE_RUN_DIR'), withRun);
-  assert.deepStrictEqual(runRoute(withRun), { code: 1, out: '' });
+  // The never-matching strip keeps the `--run` placeholder. Split first, then put the path into its own argv
+  // element: a temp dir containing a space must not split into two arguments.
+  const runDir = `${NO_POLICY_DIR}/no-such-run-dir`;
+  const argv = routeArgv(fillRoute(span, 'low', /(?!)/g)).map((a) => (a === '"$PIPELINE_RUN_DIR"' ? runDir : a));
+  assert.strictEqual(argv[argv.indexOf('--run') + 1], runDir, argv.join(' '));
+  assert.ok(!argv.some((a) => a.includes('PIPELINE_RUN_DIR')), argv.join(' '));
+  assert.deepStrictEqual(runRoute(argv), { code: 1, out: '' });
 });
 test('#5931 go-red: a documented form with a flag the CLI does not accept is refused', () => {
   assert.deepStrictEqual(routeVerdict(ROUTE_FORM.replace('--size', '--scale'), 'low'), { code: 2, verdict: 'refused' });
@@ -1153,16 +1158,17 @@ for (const [name, file, prefix] of ROUTE_BULLETS) {
 // approves and every ledger Resolution follows the printed `rule`. Each claim is pinned to its own line or
 // paragraph, with a deletion control and a move-out control per claim (a file-wide `includes` would stay green
 // after the clause left its site).
-const RULE_LABEL = '(rule `floor`) or "Digest — policy (`deferral-digest-reasons`)" (rule `policy-reason`)';
+const LABEL_CITE = "the label `_shared/materiality-floor.md`'s digest-label table gives the printed `rule`";
+const RESOLUTION_CITE = "the Ledger Resolution `_shared/materiality-floor.md`'s digest-label table gives the printed `rule`";
 const LABEL_SITES = [
-  { rel: 'plugin/skills/review/step3-routing.md', kind: 'line', start: '- **Defer** (new work record', needle: `${RULE_LABEL} instead of` },
-  { rel: 'plugin/skills/review/step3-routing.md', kind: 'line', start: '**A digest verdict — the digest instead.**', needle: 'the Resolution stating why it was digested — below the materiality floor on rule `floor`, listed in policy key `deferral-digest-reasons` on rule `policy-reason`' },
-  { rel: 'plugin/skills/reflect/full-mode.md', kind: 'line', start: '- **Defer** (new work record, `parked`)', needle: `${RULE_LABEL} instead of "Defer — {reason}"` },
-  { rel: 'plugin/skills/reflect/full-mode.md', kind: 'line', start: '- **Capture** — the insight is complex', needle: 'the same rule-matched label ("Digest — below floor" or "Digest — policy (`deferral-digest-reasons`)")' },
-  { rel: 'plugin/skills/visual-review/browser-review.md', kind: 'line', start: '- **Defer** (new work record — born-ready', needle: `${RULE_LABEL} in the Recommended column` },
-  { rel: 'plugin/skills/wrap-up/residue-sweep.md', kind: 'para', start: 'A finding the CLI marked `remedy: record`', needle: `${RULE_LABEL} instead of` },
-  { rel: 'plugin/skills/release/disposition.md', kind: 'line', start: '| A `confirmed` file, any severity', needle: `${RULE_LABEL}, appended only` },
-  { rel: 'plugin/skills/_shared/ledger-format.md', kind: 'line', start: '- `digested`:', needle: "when the item's route printed rule `floor`, or `digested by policy (deferral-digest-reasons) at {digest comment URL | specs/digest.md}` when it printed `policy-reason`" },
+  { rel: 'plugin/skills/review/step3-routing.md', kind: 'line', start: '- **Defer** (new work record', needle: `${LABEL_CITE} instead of` },
+  { rel: 'plugin/skills/review/step3-routing.md', kind: 'line', start: '**A digest verdict — the digest instead.**', needle: `stating why it was digested — ${RESOLUTION_CITE} — and that it was` },
+  { rel: 'plugin/skills/reflect/full-mode.md', kind: 'line', start: '- **Defer** (new work record, `parked`)', needle: `${LABEL_CITE} instead of "Defer — {reason}"` },
+  { rel: 'plugin/skills/reflect/full-mode.md', kind: 'line', start: '- **Capture** — the insight is complex', needle: `the same rule-matched label (${LABEL_CITE})` },
+  { rel: 'plugin/skills/visual-review/browser-review.md', kind: 'line', start: '- **Defer** (new work record — born-ready', needle: `${LABEL_CITE} in the Recommended column` },
+  { rel: 'plugin/skills/wrap-up/residue-sweep.md', kind: 'para', start: 'A finding the CLI marked `remedy: record`', needle: `${LABEL_CITE} instead of` },
+  { rel: 'plugin/skills/release/disposition.md', kind: 'line', start: '| A `confirmed` file, any severity', needle: `${LABEL_CITE}, appended only` },
+  { rel: 'plugin/skills/_shared/ledger-format.md', kind: 'line', start: '- `digested`:', needle: `with ${RESOLUTION_CITE}.` },
   { rel: 'plugin/skills/_shared/ledger-format.md', kind: 'line', start: '**Control mode — every remaining item converges', needle: 'it means the route printed `digest`, whichever `rule`' },
 ];
 function labelScope(text, { kind, start }) {
@@ -1175,8 +1181,31 @@ function labelProblems(text, site) {
   if (scope === null) return [`${site.rel}: scope ${site.start} is not exactly one ${site.kind}`];
   return scope.includes(site.needle) ? [] : [`${site.rel}: ${site.start} lacks ${site.needle}`];
 }
+// #5933 Decision 2: a site cites the table and never restates a label, so a fifth rule is one table row.
+const DIGEST_LABELS = ['"Digest — below floor"', 'Digest — policy', 'Digest — no evidence', 'Digest — run cap'];
+function restatedLabels(text, site) {
+  const scope = labelScope(text, site);
+  return scope === null ? [`${site.rel}: scope ${site.start} is not exactly one ${site.kind}`] : DIGEST_LABELS.filter((l) => scope.includes(l)).map((l) => `${site.rel}: ${site.start} restates ${l}`);
+}
+// Appends `add` to the scope's own unit, never to an earlier unit that happens to share its first words.
+function appendToScope(text, { kind, start }, add) {
+  const sep = kind === 'line' ? /(\n)/ : /(\n[ \t]*\n)/;
+  const parts = text.split(sep);
+  const at = parts.findIndex((u, i) => i % 2 === 0 && u.replace(/\s+/g, ' ').startsWith(start));
+  assert.notStrictEqual(at, -1, `scope ${start} not found`);
+  parts[at] += add;
+  return parts.join('');
+}
 for (const site of LABEL_SITES) {
   const text = read(site.rel);
+  test(`#5933 no label site restates a digest label: ${site.rel} ${site.start}`, () => {
+    assert.deepStrictEqual(restatedLabels(text, site), []);
+  });
+  test(`#5933 go-red: pasting "Digest — below floor" into ${site.rel} ${site.start} fails the restatement check`, () => {
+    const mutated = appendToScope(text, site, ' "Digest — below floor"');
+    assert.notEqual(mutated, text);
+    assert.deepStrictEqual(restatedLabels(mutated, site), [`${site.rel}: ${site.start} restates "Digest — below floor"`]);
+  });
   test(`#5932 the digest label follows the printed rule: ${site.rel} ${site.start}`, () => {
     assert.deepStrictEqual(labelProblems(text, site), []);
   });

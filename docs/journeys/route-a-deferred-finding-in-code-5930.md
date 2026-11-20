@@ -2,6 +2,8 @@
 files:
   - plugin/bin/deferral-route.js
   - plugin/bin/lib/deferral-route/route.js
+  - plugin/bin/lib/deferral-route/evidence.js
+  - plugin/bin/lib/deferral-route/tally.js
   - plugin/bin/lib/policy-schema.js
   - plugin/skills/_shared/materiality-floor.md
   - plugin/bin/lib/issues/record-payload.js
@@ -28,14 +30,14 @@ files:
 
 ### 1. Ask for a verdict
 - **URL:** `node plugin/bin/deferral-route.js --defer-reason pre-existing-outside-diff --size low --priority low --risk low --agent-raised`
-- **Action:** Pass the reason, the three axes as the skill would score a fresh filing, `--severity` when the finding carries one, and exactly one of `--agent-raised` or `--human` (`--human` whenever the origin is unsure, because `--human` files).
+- **Action:** Pass the reason, the three axes as the skill would score a fresh filing, `--severity` when the finding carries one, and exactly one of `--agent-raised` or `--human` (`--human` whenever the origin is unsure, because `--human` files), `--evidence {kind}:{ref}` when the item carries an `Evidence:` line, `--run "$PIPELINE_RUN_DIR"` inside a pipeline run.
 - **Should feel:** Like asking a referee, not consulting a rulebook. One line comes back and it is the whole answer.
 - **Should understand:**
-  - `digest` comes from rule `floor` (every floor condition held) or rule `policy-reason` (the reason is listed in policy key `deferral-digest-reasons`, whatever the axes).
-  - `rule` names the first clause that decided, in a fixed order: `refused`, `human`, `severity`, `policy-reason`, `tangential`, `not-low`, `floor`. A tangential finding at severity `high` reports `severity`, not `tangential`.
+  - `digest` comes from rule `floor` (every floor condition held) or rule `policy-reason` (the reason is listed in policy key `deferral-digest-reasons`, whatever the axes); `digest` also comes from rule `no-evidence` (policy key `filed-record-evidence` requires evidence the call did not give) or rule `run-cap` (the run reached `run-filed-record-cap`).
+  - `rule` names the first clause that decided, in a fixed order: `refused`, `human`, `severity`, `policy-reason`, `tangential`, `not-low`, `floor`, then `no-evidence` and `run-cap` on an item that would file. A tangential finding at severity `high` reports `severity`, not `tangential`.
   - An axis passed as anything but the exact string `low` (`medium`, `Low`, omitted) counts as not low and files — it is never refused.
-  - The command writes nothing and calls no `gh`; acting on the verdict is still the caller's job.
-- **Red flags:** A `floor` digest with any axis other than `low`; a `digest` for `--human` or a `high`/`critical` severity; a `tangential` digest whose rule is not `policy-reason`; the command creating a file or a record.
+  - The command writes nothing and calls no `gh`, except one tally line in the `--run` directory per agent-raised `file` verdict when `run-filed-record-cap` is set; acting on the verdict is still the caller's job.
+- **Red flags:** A `floor` digest with any axis other than `low`; a `digest` for `--human` or a `high`/`critical` severity; a `tangential` digest whose rule is not `policy-reason`; a `no-evidence` digest for an exempt reason or a `--human` call; a `run-cap` digest without `--run`; a tally line for a digest or a `--human` verdict; the command creating a file or a record.
 
 ### 2. Read a refusal and fix the call
 - **URL:** `node plugin/bin/deferral-route.js --defer-reason not-a-reason --agent-raised` (or `--severity High`, `--agent-raised --human`, a flag with no value)
@@ -45,9 +47,10 @@ files:
   - Exit 2 with `{"verdict":"refused","rule":"refused","reason":...}` on stdout is a malformed call, not a routing answer. A severity typo such as `High` is refused rather than read as not high, because reading it as not high could digest a critical finding.
   - `input` still echoes every flag as given, so the caller can see what it actually passed.
   - An omitted `--severity` is valid (reflect insights carry none) and counts as not high.
-  - Exit 1 with nothing on stdout means the policy read failed (the resolver refused `--run`, or the working directory could not be read), with the message on stderr.
+  - Exit 1 with nothing on stdout means the policy read failed (the resolver refused `--run`, or the working directory could not be read), with the message on stderr; `--run` outside the main checkout's `.claude-tweaks/pipelines/`, and a tally that cannot be read or appended, are exit 1 too.
   - A refusal is exit 2 even when `--run` is also bad: it is decided before any policy read.
   - An invalid `deferral-digest-reasons` value prints one stderr warning naming the bad element, and routes as if the key were unset.
+  - A `test:` evidence value whose git top level cannot be resolved prints one stderr warning, exits 0, and the evidence counts as invalid.
 - **Red flags:** A refusal that exits 0; a reason that does not name the offending value; a `--severity` typo routed as `file` or `digest`.
 
 ### 3. Act on the verdict at the skill's own routing site
@@ -59,5 +62,5 @@ files:
   - A `refused` verdict is never digested; control mode, which must converge every item, files it.
   - An agent-supplied severity is passed through as given, not remapped to fit.
   - Reflect's auto-mode tangential staging (`plugin/skills/reflect/SKILL.md`) is the one site that stages instead of leaving the item open: on `digest` it appends the idea to the digest and stages no Queue write; on `file`, `refused` or any other outcome it stages the candidate as before.
-  - A digest's label and ledger Resolution name the rule that sent it: `floor` reads below floor, `policy-reason` names `deferral-digest-reasons`.
+  - A digest's label and ledger Resolution come from `_shared/materiality-floor.md`'s digest-label table, by the rule that sent it.
 - **Red flags:** A routing site that decides file-versus-digest without running the command; a `refused` verdict that gets digested, or that a non-control-mode site files; two sites giving different verdicts for the same finding.

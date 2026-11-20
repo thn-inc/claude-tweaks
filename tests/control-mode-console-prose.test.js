@@ -50,6 +50,8 @@ const LEDGER_FORMAT = readText(path.join(__dirname, '..', 'plugin', 'skills', '_
 const NARROWING = '#### Ledger narrowing';
 const TABLE_INTRO = '\nAfter Phase 1 (and, when the capability';
 
+const RESOLUTION_CITE_LITERAL = "the Ledger Resolution `_shared/materiality-floor.md`'s digest-label table gives the printed `rule`";
+
 function narrowingSlice(text) {
   const start = text.indexOf(NARROWING);
   assert.notStrictEqual(start, -1, `heading not found: ${NARROWING}`);
@@ -70,7 +72,7 @@ const LEDGER_CLAIMS = [
   ['prints `digest` (`false` on `file`, `refused` or any other outcome', 'the control-mode paragraph does not set belowFloor from the deferral-route.js verdict'],
   ['no `deferReason`: no call, `false`', 'the control-mode paragraph does not skip the command for an item with no deferReason'],
   ['it means the route printed `digest`, whichever `rule`', 'the control-mode paragraph does not say belowFloor means the route printed digest, whichever rule'],
-  ['`digested by policy (deferral-digest-reasons) at {digest comment URL | specs/digest.md}` when it printed `policy-reason`', 'the digested state does not word a policy-reason Resolution'],
+  [RESOLUTION_CITE_LITERAL, 'the digested state does not take its Resolution from the digest-label table'],
   ["`{severity}` the row's `severity={severity}` token", "the control-mode paragraph does not read a row's severity token"],
   ['else `high` for a `review`-phase row', 'the control-mode paragraph does not pass --severity high for a review row with no severity'],
 ];
@@ -139,27 +141,34 @@ for (const [needle, message] of STEP_10_CLAIMS) {
 const { checkLedgerStatus } = require(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'stage-item', 'ledger'));
 const { parseLedger } = require(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'wrap-up', 'pack'));
 const DIGEST_ALTERNATIVES = '{digest comment URL | specs/digest.md}';
-const BACKEND_LOCATIONS = ['https://github.com/o/r/issues/9#issuecomment-123', 'specs/digest.md'];
+// The Ledger Resolution column of `_shared/materiality-floor.md`'s digest-label table (a template per digest rule).
+const DIGEST_LABEL_TABLE_RESOLUTIONS = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'materiality-floor.md'))
+  .split('\n').filter((l) => /^\| `(floor|policy-reason|no-evidence|run-cap)` \|/.test(l))
+  .map((l) => l.split('|')[3].trim().replace(/^`|`$/g, ''));
+const BACKEND_LOCATIONS =['https://github.com/o/r/issues/9#issuecomment-123', 'specs/digest.md'];
 
 function digestedRowProblems(text) {
   const bullet = narrowingSlice(text).split('\n').find((l) => l.startsWith('- `digested`:'));
   if (!bullet) return ['no digested bullet'];
-  const m = /write the row `(\w+)`(?: \(`([^`]+)`\)| with Resolution `([^`]+)`)/.exec(bullet);
+  const m = /write the row `(\w+)`(?: \(`([^`]+)`\)| with Resolution `([^`]+)`| with the Ledger Resolution `_shared\/materiality-floor\.md`'s digest-label table)/.exec(bullet);
   if (!m) return ['the digested bullet prescribes no row status and Resolution'];
   const status = m[1];
-  const template = m[3] || m[2];
+  // A literal Resolution in the bullet is checked as written; a cited one is every Ledger Resolution of the
+  // digest-label table, since the printed `rule` picks the row.
+  const templates = m[3] || m[2] ? [m[3] || m[2]] : DIGEST_LABEL_TABLE_RESOLUTIONS;
   const problems = [];
-  for (const location of BACKEND_LOCATIONS) {
-    const resolution = template.split(DIGEST_ALTERNATIVES).join(location);
+  for (const [template, location] of templates.flatMap((tpl) => BACKEND_LOCATIONS.map((l) => [tpl, l]))) {
+    const resolution = template.split(DIGEST_ALTERNATIVES).join(location).split('{where}').join(location);
     const check = checkLedgerStatus(status, resolution, {});
     if (check.refusal !== null || check.incompleteDeferral) problems.push(`the ledger writer does not accept the digested row for ${location}`);
     const parsed = parseLedger(`| # | Phase | Item | Status | Resolution |\n|---|---|---|---|---|\n| 1 | build | a typo | ${status} | ${resolution} |\n`);
     if (parsed.open + parsed.deferredUnstaged + parsed.missingDeferReason + parsed.unrecognized !== 0) problems.push(`parseLedger counts the digested row for ${location} as blocking`);
   }
-  return problems;
+  return [...new Set(problems)];
 }
 
 test('AC4.7: the digested ledger row is complete for the real writer and reader on both backends', () => {
+  assert.strictEqual(DIGEST_LABEL_TABLE_RESOLUTIONS.length, 4, 'the digest-label table rows were not read');
   assert.deepStrictEqual(digestedRowProblems(LEDGER_FORMAT), []);
 });
 

@@ -363,8 +363,8 @@ const DISPOSITION_SCOPE = [
 const DISPOSITION_ROUTING = [
   [/review\/step3-routing\.md[\s\S]{0,120}Defer/, 'confirmed findings route through step3-routing.md\'s Defer bullet'],
   [/pre-existing-outside-diff/, 'the Defer-reason is pre-existing-outside-diff'],
-  [/_shared\/materiality-floor\.md/, 'the materiality floor is cited'],
-  [/Digest — below floor/, 'a below-floor finding is Digest — below floor'],
+  [/materiality-floor test \(`_shared\/materiality-floor\.md`\)/, 'the materiality floor is cited'],
+  [/digest-label table gives the printed `rule`/,'a digested finding takes the label the materiality floor\'s digest-label table gives'],
   [/passing the finding's `--severity`/, 'a confirmed finding passes its own severity to the floor command'],
   [/`refused` or any other outcome is a `file` failure \(below\) naming what the command printed/, 'a refused or unreadable floor verdict is a file failure that leaves the file staged'],
   [/unconfirmed[\s\S]{0,80}critical\/high[\s\S]{0,80}Defer/, 'an unconfirmed critical/high finding takes the same Defer'],
