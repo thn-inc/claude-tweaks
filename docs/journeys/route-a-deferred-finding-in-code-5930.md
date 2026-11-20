@@ -64,3 +64,7 @@ files:
   - Reflect's auto-mode tangential staging (`plugin/skills/reflect/SKILL.md`) is the one site that stages instead of leaving the item open: on `digest` it appends the idea to the digest and stages no Queue write; on `file`, `refused` or any other outcome it stages the candidate as before.
   - A digest's label and ledger Resolution come from `_shared/materiality-floor.md`'s digest-label table, by the rule that sent it.
 - **Red flags:** A routing site that decides file-versus-digest without running the command; a `refused` verdict that gets digested, or that a non-control-mode site files; two sites giving different verdicts for the same finding.
+
+## Origin
+- Created during build of #5930 (`deferral-route.js` and `routeDeferral`); the routing sites in step 3 moved onto the command in #5931; the `policy-reason` rule and `deferral-digest-reasons` added in #5932
+- Steps 1-3 updated during build of #5933: `--evidence` and `--run` in the call, the `no-evidence` and `run-cap` rules with their tally line, the exit-1 and top-level warning cases, and digest labels taken from `_shared/materiality-floor.md`'s digest-label table; `files:` gains `evidence.js` and `tally.js`
