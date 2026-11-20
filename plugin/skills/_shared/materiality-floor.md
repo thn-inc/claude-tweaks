@@ -58,10 +58,11 @@ typed input reaches one. It prints `verdict` (`file`, `digest` or `refused`) and
 (`_shared/policy-schema-deferral-routing.md`). With `filed-record-evidence: required`, an item whose
 `Defer-reason:` is `pre-existing-outside-diff`, `genuinely-larger` or `tangential` and whose call
 passes no valid `--evidence` goes to the digest, rule `no-evidence`. With `run-filed-record-cap: {n}`
-and `--run`, an item goes to the digest, rule `run-cap`, once the run has given `{n}` `file` verdicts;
+and `--run`, an item goes to the digest, rule `run-cap`, once the run's agent-raised calls have given `{n}` `file` verdicts;
 a `high` or `critical` severity still files, and counts. The tally belongs to the run directory the
 call names: in a multi-spec run each member's `spec-{N}/` directory keeps its own tally.
-The cap is first come, first served within a run: route each item when it comes up, and
+The cap is first come, first served within a run: route each item once, when it comes up (a repeated
+call for the same item counts again), and
 never hold items back or rank them to choose which ones file.
 
 On `digest` the label a human sees, and the words of a ledger Resolution, follow `rule` — the

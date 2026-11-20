@@ -299,17 +299,24 @@ test('#5931 go-red: an override restated across a line wrap fails the deferral-s
 // A cwd with no policy.yml, so the CLI's policy read resolves the empty default.
 const NO_POLICY_DIR = scratchDir('ct-materiality-nopolicy-');
 const ROUTE_SPAN = /`(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/deferral-route\.js"[^`]*)`/g;
-function routeVerdict(span, severity) {
-  const filled = span
+// `strip` removes the documented `--run` first: it is a site placeholder (`"$PIPELINE_RUN_DIR"`) that a
+// policy-free probe cannot resolve. `--evidence {evidence}` stays in, so a CLI rename of it is caught.
+function fillRoute(span, severity, strip = /\[--run [^\]]*\]\s*/g) {
+  return span
     .replace('(--agent-raised | --human)', '--agent-raised')
-    // A documented `--run` is a site placeholder that no policy-free probe can resolve; `--evidence` likewise.
-    .replace(/\[--(?:evidence|run) [^\]]*\]\s*/g, '')
+    .replace(strip, '')
     .replace(/\[([^\]]*)\]/g, '$1')
     .replace('{reason}', 'pre-existing-outside-diff')
     .replace('{severity}', severity)
     .replace(/\{(size|priority|risk)\}/g, 'low');
+}
+function runRoute(filled) {
   let out = '';
   const code = routeCli(filled.split(/\s+/).slice(2), { stdout: (s) => { out += s; }, stderr: () => {}, cwd: () => NO_POLICY_DIR, env: {} });
+  return { code, out };
+}
+function routeVerdict(span, severity) {
+  const { code, out } = runRoute(fillRoute(span, severity));
   return { code, verdict: JSON.parse(out).verdict };
 }
 for (const rel of ['plugin/skills/_shared/materiality-floor.md', ...DEFERRAL_SITES]) {
@@ -322,6 +329,17 @@ for (const rel of ['plugin/skills/_shared/materiality-floor.md', ...DEFERRAL_SIT
     }
   });
 }
+// The documented `--run` reaches the CLI's run-dir check: a path that does not exist exits 1 with nothing on
+// stdout; a renamed flag would be refused (exit 2) instead.
+test('#5933 the documented --run flag reaches the CLI run-dir check', () => {
+  const span = [...read('plugin/skills/_shared/materiality-floor.md').matchAll(ROUTE_SPAN)].map((m) => m[1]).find((s) => s.includes('--run'));
+  assert.ok(span, 'materiality-floor.md documents no command form with --run');
+  // The never-matching strip keeps the `--run` placeholder; the quotes go because runRoute splits on whitespace.
+  const withRun = fillRoute(span, 'low', /(?!)/g).replace('"$PIPELINE_RUN_DIR"', `${NO_POLICY_DIR}/no-such-run-dir`);
+  assert.ok(withRun.includes('--run '), withRun);
+  assert.ok(!withRun.includes('PIPELINE_RUN_DIR'), withRun);
+  assert.deepStrictEqual(runRoute(withRun), { code: 1, out: '' });
+});
 test('#5931 go-red: a documented form with a flag the CLI does not accept is refused', () => {
   assert.deepStrictEqual(routeVerdict(ROUTE_FORM.replace('--size', '--scale'), 'low'), { code: 2, verdict: 'refused' });
 });
@@ -382,7 +400,7 @@ test('#5933 go-red: the label table moved out of Applying the floor fails the fl
   let mutated = FLOOR;
   for (const row of DIGEST_LABEL_ROWS) mutated = mutated.replace(flexible(row), '');
   assert.notEqual(mutated, FLOOR);
-  mutated = `${mutated}\n## Entry format\n\n${DIGEST_LABEL_ROWS.join('\n')}\n`;
+  mutated = mutated.replace('## Entry format\n', `## Entry format\n\n${DIGEST_LABEL_ROWS.join('\n')}\n`);
   assert.ok(DIGEST_LABEL_ROWS.every((row) => mutated.includes(row)));
   assert.deepStrictEqual(floorCommandProblems(mutated), DIGEST_LABEL_ROWS.map((row) => `Applying the floor lacks ${row}`));
 });
