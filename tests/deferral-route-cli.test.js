@@ -8,6 +8,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { runCliSync, spawnCli } = require('./helpers/run-cli');
 const { scratchDir } = require('./helpers/tmp-dir');
+const { chmodDenialSkip } = require('./helpers/root');
 const { gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
 const { installStub, STUB_SKIP } = require('./helpers/path-stub');
 const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record');
@@ -583,7 +584,7 @@ test('#5933 AC8.1 CLI: an unreadable tally exits 1 naming the path, no verdict',
   assert.ok(res.stderr.includes(path.join(runDir, TALLY)), res.stderr);
 });
 
-test('#5933 AC8.1 CLI: an unappendable tally exits 1 naming the path, no verdict', { skip: process.getuid && process.getuid() === 0 }, () => {
+test('#5933 AC8.1 CLI: an unappendable tally exits 1 naming the path, no verdict', chmodDenialSkip('root: mode bits do not deny an append'), () => {
   const { dir, runDir } = project({ policy: CAP1 });
   const tally = path.join(runDir, TALLY);
   fs.writeFileSync(tally, '');
