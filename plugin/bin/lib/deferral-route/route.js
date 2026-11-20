@@ -13,7 +13,7 @@
 // count only when === true; cap only when a non-negative integer (the resolved
 // run-filed-record-cap; null or unset is no cap); a non-integer filedCount is 0.
 //
-// Rules, in order — the first match decides:
+// Rules, in order — the first match decides (tangential and not-low are then subject to the two frictions below):
 //   refused    — deferReason missing or not in DEFER_REASONS; agentRaised not a
 //                boolean; severity present but not in SEVERITIES (checked in
 //                that order, the first failing check names the reason)
@@ -24,10 +24,12 @@
 //   tangential — deferReason 'tangential'                  -> file
 //   not-low    — any of size, priority, risk !== 'low'     -> file
 //   floor      — otherwise                                 -> digest
+// The tangential and not-low outcomes are not final yet: before either returns 'file',
+// two frictions (#5933) can turn it into a digest, checked in this order. They never run
+// for refused, human, severity, policy-reason or floor, which have already returned:
 //   no-evidence — evidenceRequired, deferReason in EVIDENCE_REASONS, evidenceValid !== true -> digest
 //   run-cap    — cap set and filedCount >= cap             -> digest
-// no-evidence and run-cap apply only to an agent-raised item the earlier rules would
-// file (rule tangential or not-low), in that order. The caller counts (bin/deferral-route.js's
+// Otherwise the item files on the tangential or not-low rule. The caller counts (bin/deferral-route.js's
 // run tally), so high/critical severity files are counted though never capped.
 // Only the exact string 'low' is low; an absent severity counts as not high.
 
