@@ -9,3 +9,4 @@
 | 5 | build | SDD ruling — newest-first early stop for history liveness probes left to the selector record: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | — |
 | 6 | build | SDD ruling — third run-id timestamp parser left unconsolidated: ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | open | — |
 | 7 | build | SDD ruling — two reviewer-dropped ledger items fixed in the fix wave anyway: ratify or reverse at the Review Console (staged/sdd-ruling-6.md) | open | — |
+| 8 | build/skill | shared-contract-extraction's run-liveness consumer variant could name the docs consumer-count pins this build hit (reconcile-dispatch AC7.2 pins the removal-condition sentence verbatim, so a consumer clause must follow it, not edit it) — enrichment | observation | — |
