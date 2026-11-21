@@ -5,7 +5,7 @@ const fs = require('fs');
 const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
-const { slugForCwd, locateTranscripts, readUsage, readPromptRows, isProcedurePath, subagentsDirFor, readDispatches, TRANSCRIPT_SLUG_RULE } = require('../../../plugin/bin/lib/timing/transcript');
+const { slugForCwd, locateTranscripts, readUsage, mergeUsage, readPromptRows, isProcedurePath, subagentsDirFor, readDispatches, TRANSCRIPT_SLUG_RULE } = require('../../../plugin/bin/lib/timing/transcript');
 const { aggregateDispatches } = require('../../../plugin/bin/lib/timing/derive');
 
 // The developer's own CLAUDE_CONFIG_DIR would redirect every homeDir-only
@@ -1224,8 +1224,6 @@ test('#5556: an AskUserQuestion block with no input.questions gives questions []
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
-
-const { mergeUsage } = require('../../../plugin/bin/lib/timing/transcript');
 
 test('#5967: mergeUsage keeps the max of each field across lines of one message.id', () => {
   let m = mergeUsage(null, { input_tokens: 3, output_tokens: 5, cache_read_input_tokens: 1000, cache_creation_input_tokens: 0 });
