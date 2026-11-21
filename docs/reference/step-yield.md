@@ -8,6 +8,7 @@ The code is `plugin/bin/lib/timing/step-yield.js` (`deriveStepYield`, `writeStep
 
 - The dispatch scoreboard (unit 5.4 of `docs/superpowers/specs/2026-11-15-process-efficiency-design.md`), which lives in a separate repository and reads this file as its contract.
 - The Phase 6 done criterion and Phase 7 of the same design, which read the review counters (`findings`) and the per-step cost.
+- `plugin/bin/lib/review-lens/history.js` (#5998), which reads each closed run's per-lens counters as that lens's confirmed findings (`both` plus tiebreak `confirmed`, through its `confirmedCount`, which `tools/step-yield-report.js` also uses) for the lens history over the last 20 runs; a run's `lens-dispatch.json`, not this file, says which lenses ran.
 
 ## File location and when it is written
 
