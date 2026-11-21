@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const { conformsTo } = require(path.join(LIB, 'driver', 'worker.js'));
-const { ROLES, RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES } = require(path.join(LIB, 'driver', 'roles.js'));
+const { ROLES, RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, assertEffort, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES } = require(path.join(LIB, 'driver', 'roles.js'));
 const { PROFILES, EFFORT_SCALE } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
 
 const ALLOW_SANDBOXED = ['Read', 'Edit', 'Write', 'Bash(node --test *)', 'Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)'];
@@ -187,6 +187,13 @@ test('Minor: assertSpendCeiling is the one rule: undefined and positive finite n
   assert.doesNotThrow(() => assertSpendCeiling(undefined));
   assert.doesNotThrow(() => assertSpendCeiling(0.0001));
   for (const bad of [0, -1, NaN, Infinity, '2', null]) assert.throws(() => assertSpendCeiling(bad), RangeError, String(bad));
+});
+
+test('#5942: assertEffort accepts undefined, null and every EFFORT_SCALE level; anything else throws RangeError', () => {
+  assert.doesNotThrow(() => assertEffort(undefined));
+  assert.doesNotThrow(() => assertEffort(null));
+  for (const lvl of EFFORT_SCALE) assert.doesNotThrow(() => assertEffort(lvl), lvl);
+  for (const bad of ['extreme', 'HIGH', '', 1]) assert.throws(() => assertEffort(bad), RangeError, String(bad));
 });
 
 test('Minor: the exported tables are frozen, and the builders return fresh objects', () => {

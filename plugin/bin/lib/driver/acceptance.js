@@ -391,14 +391,19 @@ function ensureLabels(env, ctx, names) {
   return null;
 }
 
+// Records the launch's model and effort on the lane's state once a judge call resolved a model (#5917, #5942).
+function noteLaunch(state, judged) {
+  if (judged.model) {
+    state.model = judged.model;
+    state.effort = judged.effort ?? null;
+  }
+}
+
 // try-it-only: the record's Try it, plus the end-to-end variant when the parent gate is `due` below the floor.
 async function tryItOnly(env, ctx, state, decision, verdict, tmp) {
   if (verdict.state !== 'due') {
     const judged = await judge(env, ctx, decision.route, {});
-    if (judged.model) {
-    state.model = judged.model;
-    state.effort = judged.effort ?? null;
-  }
+    noteLaunch(state, judged);
     if (judged.stop) return judged;
     const screened = screenWorkerText(judged.result, decision.route, null);
     if (screened) return screened;
@@ -407,10 +412,7 @@ async function tryItOnly(env, ctx, state, decision, verdict, tmp) {
   const parent = readParent(env, ctx, verdict);
   if (parent.stop) return parent;
   const judged = await judge(env, ctx, decision.route, parentInputs(parent.read, verdict), true);
-  if (judged.model) {
-    state.model = judged.model;
-    state.effort = judged.effort ?? null;
-  }
+  noteLaunch(state, judged);
   if (judged.stop) return judged;
   const screened = screenWorkerText(judged.result, decision.route, judged.result.parentBrief.tryItEndToEnd);
   if (screened) return screened;
@@ -423,10 +425,7 @@ async function dueExceeds(env, ctx, state, decision, verdict, tmp) {
   if (found.stop) return found;
   const { parent, read } = found;
   const judged = await judge(env, ctx, decision.route, parentInputs(read, verdict), true);
-  if (judged.model) {
-    state.model = judged.model;
-    state.effort = judged.effort ?? null;
-  }
+  noteLaunch(state, judged);
   if (judged.stop) return judged;
   const screened = screenWorkerText(judged.result, decision.route, judged.result.parentBrief.tryItEndToEnd);
   if (screened) return screened;
@@ -491,10 +490,7 @@ async function noParent(env, ctx, state, decision, tmp) {
     return { stop: 'gather output unreadable' };
   }
   const judged = await judge(env, ctx, decision.route, { facts }, false, inputs);
-  if (judged.model) {
-    state.model = judged.model;
-    state.effort = judged.effort ?? null;
-  }
+  noteLaunch(state, judged);
   if (judged.stop) return judged;
   const { tryIt, observationPlan, claims } = judged.result;
   const links = tryIt.map((g, n) => ({ id: `entry-point-${n + 1}`, label: g.name, command: g.entryPoint }));

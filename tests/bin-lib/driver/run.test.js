@@ -351,8 +351,8 @@ const POLICY = {
   'express-driver-max-size': 'low',
   'express-driver-max-key-files': 3,
   'express-driver-max-lines': undefined,
-  // #5917's model keys, in launch.js's MODEL_POLICY_KEYS order (the step's request list ends with them): the four-role default map from the real resolver, and no
-  // model-profiles block or ceiling set.
+  // #5917's model keys (and #5942's model-effort), in launch.js's MODEL_POLICY_KEYS order (the step's request list ends with them): the four-role default map from the real resolver, no
+  // model-profiles block or ceiling set, and model-effort inherit.
   'express-driver-models': resolvePolicyKeys(['express-driver-models'], { policyRaw: '' })['express-driver-models'].value,
   'model-profiles': null,
   'model-ceiling': null,
@@ -2032,8 +2032,8 @@ test('(#5415) a launcher throw after which a flag is set reports the flag', asyn
 });
 
 // A launcher throw followed by a HEAD move or a new index flag: the stop's worker line still names the model (#5917).
-async function throwThenStopLine(after) {
-  const h = harness({ script: [[on('worker'), new Error('launch blew up')], after] });
+async function throwThenStopLine(after, policy) {
+  const h = harness({ policy, script: [[on('worker'), new Error('launch blew up')], after] });
   await run(['#7'], h.deps);
   const lines = h.lines().filter((l) => l.step === STEP.worker);
   assert.equal(lines.length, 1);
@@ -4053,6 +4053,18 @@ test('#5942: a launcher throw after resolution keeps effort on the worker line',
   assert.ok('effort' in moved && moved.effort === null, 'a moved HEAD after a throw keeps effort');
   const flagged = await throwThenStopLine(nthCall(isFlagRead, 2, NEW_FLAG_INDEX));
   assert.ok('effort' in flagged && flagged.effort === null, 'a new index flag after a throw keeps effort');
+  // Under profile the stops carry the level, so `launch.effort = err.effort ?? null` can go red.
+  const movedProfile = await throwThenStopLine(nthCall(isHeadRead, 2, `${OTHER_SHA}\n`), PROFILE_EFFORT);
+  assert.equal(movedProfile.effort, 'high', 'a moved HEAD after a throw names the level');
+  const flaggedProfile = await throwThenStopLine(nthCall(isFlagRead, 2, NEW_FLAG_INDEX), PROFILE_EFFORT);
+  assert.equal(flaggedProfile.effort, 'high', 'a new index flag after a throw names the level');
+});
+
+test('#5942: under model-effort profile a Fast implementer\'s worker line carries effort null', async () => {
+  const h = harness({ policy: { ...PROFILE_EFFORT, 'express-driver-models': FAST_IMPLEMENTER } });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [line] = workerLines(h);
+  assert.ok('effort' in line && line.effort === null, 'Fast and inherit are indistinguishable on the line');
 });
 
 test('#5942: a launch that returns no envelope still names its effort', async () => {
@@ -4126,7 +4138,7 @@ test('#5942 (fix round): a refused fix relaunch writes no worker line', async ()
 
 test('#5942 (fix round): a launcher throw that resolved still writes the fix worker line', async () => {
   const h = fixRig({
-    policy: { 'express-driver-review': 'on', ...PROFILE_EFFORT },
+    policy: { 'express-driver-review': 'on', ...PROFILE_EFFORT, ...MEDIUM_STANDARD },
     script: [[(c) => isImplementerLaunch(c) && implementerCalls(h).length === 2, new Error('fix launch blew up')]],
   });
   await run(['#7'], h.deps);
@@ -4137,7 +4149,7 @@ test('#5942 (fix round): a launcher throw that resolved still writes the fix wor
   assert.equal(fix.fix, true);
   assert.match(fix.detail, /fix launch blew up/);
   assert.equal(fix.model, implementerCalls(h)[1].args[0].model);
-  assert.equal(fix.effort, 'high');
+  assert.equal(fix.effort, 'medium', 'the level came from the thrown error, not the reviewer\'s default');
   assert.ok('tests' in fix);
   const [review] = reviewLines(h);
   assert.equal(review.status, 'fail');
@@ -4183,7 +4195,7 @@ test('#5942 (fix round): step-yield counts the fix worker line in the worker row
   const worker = row(STEP.worker);
   assert.equal(worker.count, 2);
   assert.ok(fix.ms >= 0 && fix.usage, 'the fixture\'s fix line carries ms and usage');
-  assert.equal(worker.minutes, (first.ms + fix.ms) / 60000);
+  assert.ok(Math.abs(worker.minutes - (first.ms + fix.ms) / 60000) < 1e-9);
   const tokens = (l) => Object.values(l.usage).reduce((a, n) => a + (Number.isFinite(n) ? n : 0), 0);
   assert.equal(worker.tokens, tokens(first) + tokens(fix));
   assert.equal(worker.failed, 0);
@@ -4925,18 +4937,27 @@ const assertEffortDocs = (docs) => {
   for (const phrase of ['`--effort`', '`model-effort: profile`', '`launchEffort`', '`worker.js`', '`fix: true`']) {
     assert.ok(docs.includes(phrase), `driver.md names ${phrase}`);
   }
-  const at = docs.indexOf('The `effort` field.');
+  const { at, end } = effortParagraphBounds(docs);
   assert.notEqual(at, -1, 'the effort field paragraph exists');
-  const next = docs.indexOf('\n', at);
-  assert.ok(docs.slice(at, next === -1 ? docs.length : next).includes('`null`'), 'the effort field paragraph names null');
+  const paragraph = docs.slice(at, end);
+  assert.ok(paragraph.includes('`null`'), 'the effort field paragraph names null');
+  for (const step of ['`merge-check`', '`merge-acceptance`']) {
+    assert.ok(paragraph.includes(step), `the effort field paragraph names ${step} as carrying effort`);
+  }
+};
+
+// The effort paragraph's start and end offsets (start -1 when absent).
+const effortParagraphBounds = (docs) => {
+  const at = docs.indexOf('The `effort` field.');
+  const next = at === -1 ? -1 : docs.indexOf('\n', at);
+  return { at, end: next === -1 ? docs.length : next };
 };
 
 test('docs (#5942): driver.md states the effort flag, when it is passed and the effort field', () => {
   const docs = readText(path.join(__dirname, '..', '..', '..', 'docs', 'driver.md'));
   assertEffortDocs(docs);
-  const at = docs.indexOf('The `effort` field.');
-  const next = docs.indexOf('\n', at);
-  const without = at === -1 ? docs : docs.slice(0, at) + docs.slice(next === -1 ? docs.length : next);
+  const { at, end } = effortParagraphBounds(docs);
+  const without = at === -1 ? docs : docs.slice(0, at) + docs.slice(end);
   assert.throws(() => assertEffortDocs(without), 'go-red: the text without the paragraph fails the assertions');
 });
 

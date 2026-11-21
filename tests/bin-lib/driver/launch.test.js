@@ -230,11 +230,22 @@ test('#5942: the resolved effort wins over an effort in the caller opts', async 
 });
 
 test("#5942: model-ceiling standard clamps the reviewer's effort with its model", async () => {
-  const args = await composedArgs('reviewer', 'model-effort: profile\nmodel-ceiling: standard\n');
-  const want = resolve(FOUR.reviewer, { policy: { 'model-effort': 'profile', 'model-ceiling': 'standard' }, unattended: true }).launchEffort;
+  // A capable row of effort max, so a clamped (high) and an unclamped (max) effort differ.
+  const args = await composedArgs('reviewer', 'model-effort: profile\nmodel-ceiling: standard\nmodel-profiles:\n  capable:\n    effort: max\n');
+  const want = resolve(FOUR.reviewer, {
+    policy: { 'model-effort': 'profile', 'model-ceiling': 'standard', 'model-profiles': { capable: { effort: 'max' } } },
+    unattended: true,
+  }).launchEffort;
   assert.strictEqual(argModel(args), M('standard'));
-  assert.strictEqual(typeof want, 'string');
+  assert.strictEqual(want, 'high');
   assert.strictEqual(argEffort(args), want);
+});
+
+test('#5942: an explorer under model-effort profile composes resolve().launchEffort', () => {
+  const policy = policyFrom('model-effort: profile\n');
+  const want = resolve('standard', { policy: { 'model-effort': 'profile' }, unattended: true }).launchEffort;
+  assert.strictEqual(typeof want, 'string');
+  assert.strictEqual(roleLaunch('explorer', policy).effort, want);
 });
 
 test('#5942: an invalid model-effort refuses every role', () => {

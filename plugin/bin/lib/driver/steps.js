@@ -839,9 +839,6 @@ async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '' } = {}, l
   }
   return { status: 'ok', extra };
 }
-// The worker line also names which path the targeted test command took (`tests`, #5915).
-// A launcher throw that carries the model it ran on (launchTracked) is reported as defineStep's own catch
-// would, plus the line's `tests` and `model`; any other throw propagates unchanged (#5917).
 // The `fail` result for a launcher throw that carries the model it ran on, shared by workerStep and the
 // fix round's relaunch line so the two cannot drift; null for any other throw (the caller rethrows).
 function launchThrowFail(ctx, err) {
@@ -851,6 +848,9 @@ function launchThrowFail(ctx, err) {
   const note = typeof err.testListNote === 'string' ? err.testListNote : null;
   return { status: 'fail', detail: note === null ? detail : `${detail}; ${note}`, extra: { tests: ctx.workerTestMode, model: err.model, effort: err.effort ?? null } };
 }
+// The worker line also names which path the targeted test command took (`tests`, #5915).
+// A launcher throw that carries the model it ran on (launchTracked) is reported as defineStep's own catch
+// would, plus the line's `tests` and `model`; any other throw propagates unchanged (#5917).
 const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
   let result;
   try {
