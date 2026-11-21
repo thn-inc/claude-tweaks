@@ -18,7 +18,7 @@ files:
 
 ### 1. Record a lens's dispatch — the review session
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" record-lens-dispatch --run "$PIPELINE_RUN_DIR" --lens {lens} --reviewers {1|2} --path {task|workflow} --status {completed|failed|blocked} --round {n}`
-- **Action:** run the call once the lens's verdict or failure is known, with the values `step3-lens-dispatch-record.md` maps from what happened: `completed` when both pair replies were `DONE`/`DONE_WITH_CONCERNS` (or a single-reviewer lens's one reply was usable), `blocked` when either reviewer's final reply was `BLOCKED`/`NEEDS_CONTEXT`, `failed` when the replies never came; `--path workflow` for a lens `settle-lens-replies` settled, `task` otherwise; lens 3h is always `--path task --reviewers 1`.
+- **Action:** run the call once the lens's verdict or failure is known, with the values `step3-lens-dispatch-record.md` maps from what happened: `completed` when both pair replies were `DONE`/`DONE_WITH_CONCERNS` (or a single-reviewer lens's one reply was usable), `blocked` when either reviewer's final reply was `BLOCKED`/`NEEDS_CONTEXT`, `failed` when the replies never came; `--path workflow` for a lens `settle-lens-replies` settled and for a `single-reviewer` workflow lens whose one reviewer was usable (`--reviewers 1`), `task` otherwise; lens 3h is always `--path task --reviewers 1`.
 - **Should feel:** one plain command per lens, recorded whatever any lens-selection policy says, with no hand-written JSON.
 - **Should understand:**
   - An identical repeat call is a no-op (`duplicate: true`), so a resumed review cannot double-count a lens.
@@ -42,7 +42,7 @@ files:
 
 ### 3. Compare with the maintainer report — the maintainer
 - **URL:** `node tools/step-yield-report.js "{main-checkout}/.claude-tweaks/pipelines/archive" --window 20`
-- **Action:** read the report's per-lens table; its confirmed counts come from the same shipped `confirmedCount` and `startedAtOf` the history reader uses.
+- **Action:** read the report's per-lens table, whose `both` and `tb-confirmed` columns sum to the history reader's confirmed count, and the `--window` step table, whose `confirmed` outcome runs come from the same shipped `confirmedCount` and whose window is ordered by the same `startedAtOf` the history reader uses.
 - **Should feel:** one definition of "confirmed" and of "most recent" across the shipped reader and the maintainer tool.
 - **Should understand:** the report totals findings across the archive; only the history reader knows which runs a lens ran in and found nothing.
 - **Red flags:** the report's per-lens table changing bytes for the same archive.
