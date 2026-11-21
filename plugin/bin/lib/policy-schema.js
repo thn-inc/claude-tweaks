@@ -605,14 +605,18 @@ function hasOwn(obj, key) {
 // in raw file contents as strings; no fs, no process state. Returns a plain
 // object keyed by each requested key name (never an array — IL-121), each
 // entry one of:
-//   { value, source }                      source: "run-config" | "policy" | "default"
+//   { value, source }                      source: "run-config" | "policy" | "factory" | "default"
 //   { value, source, "renamed-from": k }   value arrived via a RENAMED_KEYS migration
 //   { value: default, source: "default", invalid: true }   present-but-invalid at
 //                                          the winning source (never cascades;
 //                                          risk-path-globs: null, not its default)
 //   { error: "unknown-key" }               key in neither POLICY_KEYS nor RENAMED_KEYS
 // Precedence per key: run-config (only when runConfigRaw is a string, and never
-// for a policyOnly row) -> policy -> schema default. Alias normalization
+// for a policyOnly row) -> policy -> factory (factoryRaw, the merged user-wide
+// factory policy text — policy-factory.js reads it, this function never does;
+// an explicit value like policy, so integration-model's source !== "default"
+// guard counts it) -> schema default. A key in FACTORY_REFUSED_KEYS is skipped
+// in the factory source and reported through onInvalid. Alias normalization
 // happens per source, BEFORE precedence: old key alone -> migrate() contributes
 // under the new name with a renamed-from tag (a null migration contributes
 // nothing, but still tags renamed-from when the final resolution falls to the
@@ -705,10 +709,13 @@ function parseDriverModels(policyRaw) {
   return ok ? { present: true, ok: true, value: rows } : { present: true, ok: false, raw: rawLines.join('\n') };
 }
 
-function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid } = {}) {
+function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, factoryRaw, onInvalid } = {}) {
+  // Lazy: policy-factory.js requires this module at top level (require cycle).
+  const { FACTORY_REFUSED_KEYS } = require('./policy-factory');
   const sources = [
     { name: 'run-config', raw: typeof runConfigRaw === 'string' ? runConfigRaw : null },
     { name: 'policy', raw: typeof policyRaw === 'string' ? policyRaw : null },
+    { name: 'factory', raw: typeof factoryRaw === 'string' ? factoryRaw : null },
   ].map(({ name, raw }) => {
     const entries = parseFlatLines(raw);
     const values = { ...entries }; // canonical-name -> raw string value
@@ -790,8 +797,14 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid }
     // No schema default is itself null, so `?? null` only fires on absent.
     const defaultValue = schemaEntry.default ?? null;
     let resolved = null;
+    // A key a factory layer may not set: report it and leave that source out, so the
+    // entry resolves exactly as with no factory layer.
+    const factorySource = sources.find((source) => source.name === 'factory');
+    const factoryHoldsRefused = FACTORY_REFUSED_KEYS.includes(canonical) && hasOwn(factorySource.values, canonical);
+    if (factoryHoldsRefused && onInvalid) onInvalid(requested, factorySource.values[canonical]);
     for (const source of sources) {
       if (schemaEntry.policyOnly && source.name === 'run-config') continue;
+      if (factoryHoldsRefused && source.name === 'factory') continue;
       if (!hasOwn(source.values, canonical)) continue;
       const raw = source.values[canonical];
       if (isValidValue(schemaEntry, raw)) {
@@ -1042,7 +1055,10 @@ function detectIntegrationModel(repoRoot, opts = {}) {
 function resolveIntegrationModel(repoRoot, opts = {}) {
   // A non-string repoRoot locates no policy file and falls through to detection — deliberate.
   const policyRaw = readLocatedPolicy(repoRoot);
-  const resolved = resolvePolicyKeys(['integration-model'], { policyRaw, runConfigRaw: null });
+  // factoryRaw: a factory pin is explicit, so the source !== 'default' return below honours it without detection.
+  const { readFactoryPolicy } = require('./policy-factory'); // lazy: require cycle
+  const factoryRaw = readFactoryPolicy({ env: opts.env || process.env, homeDir: opts.homeDir }).raw;
+  const resolved = resolvePolicyKeys(['integration-model'], { policyRaw, runConfigRaw: null, factoryRaw });
   const entry = resolved['integration-model'];
   if (entry && entry.source !== 'default') return entry.value;
   return detectIntegrationModel(repoRoot, opts);
