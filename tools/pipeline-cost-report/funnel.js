@@ -109,7 +109,7 @@ function collectDriverRuns({ runs, since, until }, { fsImpl = fs } = {}) {
   return res;
 }
 
-async function collectDispatchFirings({ roots, since, until, match = null, root: scopeRoot = null }, { fsImpl = fs } = {}) {
+async function collectDispatchFirings({ roots, since, until, match = null, root: scopeRoot = null }, { fsImpl = fs, transcriptCache = null } = {}) {
   const startMs = Date.parse(since + 'T00:00:00Z');
   const endMs = Date.parse(until + 'T00:00:00Z') + DAY_MS;
   const res = { total: 0, reachedRoute: 0, byPluginVersion: {}, unreadable: 0 };
@@ -136,10 +136,17 @@ async function collectDispatchFirings({ roots, since, until, match = null, root:
           res.unreadable += 1;
           continue;
         }
-        let t;
-        try {
-          t = await scanTranscript(file, { fsImpl });
-        } catch {
+        let t = transcriptCache && transcriptCache.get(file);
+        if (!t) {
+          try {
+            const { cwd, firstSkill, firstTs, pluginVersion, reachedRoute } = await scanTranscript(file, { fsImpl });
+            t = { cwd, firstSkill, firstTs, pluginVersion, reachedRoute };
+          } catch {
+            t = { error: true };
+          }
+          if (transcriptCache) transcriptCache.set(file, t);
+        }
+        if (t.error) {
           res.unreadable += 1;
           continue;
         }
@@ -157,7 +164,7 @@ async function collectDispatchFirings({ roots, since, until, match = null, root:
 
 async function collectFunnel(
   { repo, simulate = [], runs = { runs: [] }, roots = [], since, until, match = null, root = null, scopeError = null },
-  { gh, check, now, pluginVersion, fsImpl = fs },
+  { gh, check, now, pluginVersion, fsImpl = fs, transcriptCache = null },
 ) {
   const listed = JSON.parse(gh(['issue', 'list', '--repo', repo, '--state', 'open', '--label', 'ready', '--label', 'auto:build', '--limit', '1000', '--json', 'number']));
   const numbers = listed.map((r) => r.number);
@@ -193,7 +200,7 @@ async function collectFunnel(
     runDate,
     pluginVersion,
     driverRuns: runs.error ? { error: runs.error } : collectDriverRuns({ runs: runs.runs, since: from, until: to }, { fsImpl }),
-    dispatchFirings: scopeError ? { error: scopeError } : await collectDispatchFirings({ roots, since: from, until: to, match, root }, { fsImpl }),
+    dispatchFirings: scopeError ? { error: scopeError } : await collectDispatchFirings({ roots, since: from, until: to, match, root }, { fsImpl, transcriptCache }),
   };
 }
 

@@ -246,7 +246,7 @@ function addCount(map, key, usd) {
 // directory (the slug when the transcript names none) contains that substring; `root` keeps those whose working
 // directory is that path or under it (a transcript naming no working directory is not kept); both given: both hold.
 // A session dir whose subagent files are all outside the window is skipped without reading its parent transcript.
-async function collectSpend({ roots, since, until, match = null, root: scopeRoot = null }, { fsImpl = fs } = {}) {
+async function collectSpend({ roots, since, until, match = null, root: scopeRoot = null }, { fsImpl = fs, transcriptCache = null } = {}) {
   const startMs = dayStart(since);
   const endMs = dayStart(until) + DAY_MS;
   const res = {
@@ -321,12 +321,14 @@ async function collectSpend({ roots, since, until, match = null, root: scopeRoot
       mainInfo.set(
         file,
         scanTranscript(file, { fsImpl }).then(
-          ({ cwd, firstSkill, requests }) => {
+          ({ cwd, firstSkill, firstTs, pluginVersion, reachedRoute, requests }) => {
+            if (transcriptCache) transcriptCache.set(file, { cwd, firstSkill, firstTs, pluginVersion, reachedRoute });
             const type = firstSkill || NO_SKILL;
             if (tallyIt && wanted(cwd, slug) && tally(requests, type, 'main') > 0) res.sessions += 1;
             return { type };
           },
           () => {
+            if (transcriptCache) transcriptCache.set(file, { error: true });
             fail(file);
             return { error: true };
           },

@@ -42,13 +42,19 @@ files:
 ### 2. See what the driver would admit — `--section funnel`
 - **URL:** `node tools/pipeline-cost-report.js --section funnel [--simulate <reason[,reason...]>]...`
 - **Action:** run `drive.js --check` against every open record labelled `ready` and `auto:build`. Count how many it admits, and tally refusal reasons by their key, so that two `protected path:` refusals for different files share one row. Each `--simulate` set reports how many records would be admitted if those reasons stopped refusing.
-- **Should feel:** like a what-if. The tool only reads: no record or label changes.
+- **Should feel:** like a what-if for the admission figures, and a measured count for the two activity figures. The tool only reads: no record or label changes.
 - **Should understand:**
   - `checked` counts every listed record, including those whose check failed or printed no verdict. Those are `unreadable`: in `checked`, but in neither `admitted` nor `reasons`.
   - The funnel always asks about the current checkout's repository. A `--repo` that names another repository is refused with exit 2.
+  - Besides the admission what-if, the funnel counts the driver's activity over the window, so it also honours `--since`/`--until`, and `--projects`/`--match`/`--all-projects` for the dispatch figure.
+  - `Driver runs` counts the run directories holding `driver-events.jsonl`: `dispatch-routed` are those whose manifest says lane `driver` and whose name is not `-drive-N`; the rest are `standalone`. It prints the date of the last one.
+  - `Dispatch firings` counts main transcripts whose first claude-tweaks skill is dispatch, how many of them reached the driver route (a `drive.js --check` call), and the plugin version each ran, in numeric version order with `unknown` last.
+  - When records are admitted yet no run in the window was dispatch-routed, a flag line reads `Admitted records were not driven: ...`. It is not printed when either figure is unavailable.
+  - The report's `Unreadable:` total is the sum of each section's own figure, so a transcript that both spend and the funnel could not read counts once per section; each section's own `unreadable` in `--json` does not change with `--section`.
 - **Red flags:**
   - `admitted` plus the refused records summing to more than `checked`.
   - A simulation admitting fewer records than `admitted`.
+  - `admitted` above zero, no dispatch-routed run listed and no `Admitted records were not driven` line: the flag line should have printed.
 
 ### 3. Count what runs filed — `--section records`
 - **URL:** `node tools/pipeline-cost-report.js --section records --since <date> --until <date>`

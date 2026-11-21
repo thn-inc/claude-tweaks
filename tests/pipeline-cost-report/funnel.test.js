@@ -505,12 +505,13 @@ test('unresolvable main checkout: Dispatch firings unavailable, funnel still ren
   }
 });
 
-test('plugin versions are listed sorted by version text, not by first sight', async () => {
+test('plugin versions are listed in numeric version order, not by text or first sight', async () => {
   const f = cliFixture();
   try {
     writeT(path.join(f.projects, 'slug', 'c.jsonl'), dispatchLines('2026-11-19T11:00:00Z', { version: '6.100.0' }).map((l) => l.split('/w/repo').join(f.main)));
+    writeT(path.join(f.projects, 'slug', 'g.jsonl'), dispatchLines('2026-11-19T12:00:00Z', { version: '6.99.0' }).map((l) => l.split('/w/repo').join(f.main)));
     assert.strictEqual(await cliRun({ argv: f.base, deps: f.depsFor() }), 0);
-    assert.ok(f.logs.join('\n').includes('by plugin version: 6.100.0 1, 6.175.0 1, unknown 1;'), f.logs.join('\n'));
+    assert.ok(f.logs.join('\n').includes('by plugin version: 6.99.0 1, 6.100.0 1, 6.175.0 1, unknown 1;'), f.logs.join('\n'));
   } finally {
     f.cleanup();
   }
@@ -540,5 +541,48 @@ test('unavailable firings print no flag line even when no run was dispatch-route
     assert.ok(!md.includes(NOT_DRIVEN) && !md.includes('undefined'), md);
   } finally {
     f.cleanup();
+  }
+});
+
+test('F1: --section funnel counts an unresolvable --projects root in unreadable', async () => {
+  const f = cliFixture();
+  try {
+    const missing = path.join(f.main, 'no-such-projects-root');
+    const argv = ['--since', '2026-11-08', '--until', '2026-11-21', '--projects', missing, '--pipelines', f.pipes, '--section', 'funnel', '--json'];
+    assert.strictEqual(await cliRun({ argv, deps: f.depsFor() }), 0);
+    assert.strictEqual(JSON.parse(f.logs.join('\n')).unreadable, 1);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('F4: under a shared transcript cache each main transcript is scanned once across spend and the funnel', async () => {
+  const { collectSpend } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'spend.js'));
+  const projects = firingFixture();
+  try {
+    fs.writeFileSync(path.join(projects, 'slug', 'bad.jsonl'), 'not json\n');
+    const args = { roots: [projects], since: new Date('2026-11-08T00:00:00Z'), until: new Date('2026-11-21T00:00:00Z') };
+    const fargs = { roots: [projects], ...WINDOW };
+    const counted = () => {
+      const opens = {};
+      return { opens, fsImpl: { ...fs, createReadStream: (f, o) => { opens[f] = (opens[f] || 0) + 1; return fs.createReadStream(f, o); } } };
+    };
+    const plain = counted();
+    const spendPlain = await collectSpend(args, { fsImpl: plain.fsImpl });
+    const firingsPlain = await collectDispatchFirings(fargs, { fsImpl: plain.fsImpl });
+    assert.ok(Object.values(plain.opens).every((n) => n === 2), JSON.stringify(plain.opens));
+
+    const shared = counted();
+    const transcriptCache = new Map();
+    const spendCached = await collectSpend(args, { fsImpl: shared.fsImpl, transcriptCache });
+    const firingsCached = await collectDispatchFirings(fargs, { fsImpl: shared.fsImpl, transcriptCache });
+    assert.strictEqual(Object.keys(shared.opens).length, 3);
+    assert.ok(Object.values(shared.opens).every((n) => n === 1), JSON.stringify(shared.opens));
+    assert.deepStrictEqual(firingsCached, firingsPlain);
+    assert.deepStrictEqual(spendCached, spendPlain);
+    assert.strictEqual(firingsCached.unreadable, 1);
+    assert.ok([...transcriptCache.values()].every((v) => v.error === true || !('requests' in v)));
+  } finally {
+    fs.rmSync(projects, { recursive: true, force: true });
   }
 });
