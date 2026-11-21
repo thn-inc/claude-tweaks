@@ -259,7 +259,7 @@ Proof(public-contract): the resolver envelope's source enum widens by one value,
 
 ### Task 6: Documentation
 
-**Role:** transcription
+**Role:** integration
 
 **Files:**
 - Modify: `plugin/skills/_shared/policy-schema-read-path.md` (9,786 B; headroom ~42.7 KB to the 52,500 B rail) — line 9's enum and precedence, plus a new `## Factory layer` section: variable and file names, env-over-file merge per key (whole block from the variable), new precedence, `source: 'factory'` is explicit like `policy`, per-row block merge and its source rule, the four refused keys and why (the spec's three reasons verbatim, plus `release-hook`: "an executed string specific to one repository", decided at plan review), the stderr lines, that `.claude-tweaks/policy.yml` stays the only repository config home, and the #5963/#4685 ruling from Task 5.
