@@ -115,7 +115,11 @@ const VERSION_RE = /^(\d+)\.(\d+)\.(\d+)$/;
 function compareVersions(a, b) {
   const pa = VERSION_RE.exec(a);
   const pb = VERSION_RE.exec(b);
-  if (pa && pb) for (let i = 1; i <= 3; i++) if (pa[i] !== pb[i]) return Number(pa[i]) - Number(pb[i]);
+  if (pa && pb) {
+    for (let i = 1; i <= 3; i++) {
+      if (pa[i] !== pb[i]) return Number(pa[i]) - Number(pb[i]);
+    }
+  }
   if (Boolean(pa) !== Boolean(pb)) return pa ? -1 : 1;
   return compareStrings(a, b);
 }
@@ -205,7 +209,7 @@ const SECTIONS = [
       );
     },
     failed: () => false,
-    unreadable: (d) => d.unreadable + ((d.driverRuns && d.driverRuns.unreadable) || 0) + ((d.dispatchFirings && d.dispatchFirings.unreadable) || 0),
+    unreadable: (d) => d.unreadable + (d.driverRuns?.unreadable || 0) + (d.dispatchFirings?.unreadable || 0),
     render(d) {
       const lines = ['## Funnel', '', `Driver admission, run ${d.runDate}, plugin ${d.pluginVersion}.`, '', `Checked: ${d.checked}; admitted: ${d.admitted}; unreadable: ${d.unreadable}.`];
       if (d.driverRuns) lines.push(...driverActivityLines(d));
