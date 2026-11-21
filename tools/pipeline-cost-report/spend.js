@@ -14,6 +14,12 @@
 // else ordinary growth. A request that is not a re-write is ordinary growth. The previous call is tracked
 // across the whole file, so calls before any reporting window still count.
 //
+// The same pass records three facts for the dispatch-firing count: `firstTs` (the first line that carries a string timestamp),
+// `pluginVersion` (the first `claude-tweaks vX.Y.Z @` in the raw line text — the SessionStart hook injects it inside
+// hook content, sometimes JSON-escaped, so it is matched before JSON.parse), and `reachedRoute`. Route evidence is
+// strict: only a Bash tool_use whose command passes isRouteCommand counts — `drive.js --check` mentioned in prose
+// or a file read into the transcript is not.
+//
 // Prices are dollars per million tokens, dated PRICES.date. An unrecognised model id is `unpriced`: counted
 // and returned with zero cost, never priced.
 
@@ -102,8 +108,25 @@ function isCompactionMarker(line) {
   return (line.type === 'system' && line.subtype === 'compact_boundary') || line.isCompactSummary === true;
 }
 
+const PLUGIN_VERSION_RE = /claude-tweaks v(\d+\.\d+\.\d+) @/;
+const CHECK_FLAG_RE = /(^|\s)--check(\s|$)/;
+
+// Does a Bash command show the session reached the pipeline driver route: a `drive.js --check` call, or the
+// `Driver route (skipped)` decision the skill logs when it declines the driver.
+function isRouteCommand(command) {
+  if (typeof command !== 'string') return false;
+  if (command.includes('drive.js') && CHECK_FLAG_RE.test(command)) return true;
+  return command.includes('log-decision.js') && command.includes('Driver route (skipped)');
+}
+
+function hasRouteCall(line) {
+  const content = line.message && line.message.content;
+  if (line.type !== 'assistant' || !Array.isArray(content)) return false;
+  return content.some((b) => b && b.type === 'tool_use' && b.name === 'Bash' && b.input && isRouteCommand(b.input.command));
+}
+
 async function scanTranscript(file, { fsImpl = fs } = {}) {
-  const out = { cwd: null, firstSkill: null, requests: [] };
+  const out = { cwd: null, firstSkill: null, firstTs: null, pluginVersion: null, reachedRoute: false, requests: [] };
   const byId = new Map();
   let compactionPending = false;
   const rl = readline.createInterface({ input: fsImpl.createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
@@ -112,6 +135,10 @@ async function scanTranscript(file, { fsImpl = fs } = {}) {
   for await (const raw of rl) {
     if (!raw) continue;
     nonEmpty += 1;
+    if (out.pluginVersion === null) {
+      const m = PLUGIN_VERSION_RE.exec(raw);
+      if (m) out.pluginVersion = m[1];
+    }
     let line;
     try {
       line = JSON.parse(raw);
@@ -122,6 +149,8 @@ async function scanTranscript(file, { fsImpl = fs } = {}) {
     if (!line || typeof line !== 'object') continue;
     if (out.cwd === null && typeof line.cwd === 'string' && line.cwd) out.cwd = line.cwd;
     if (out.firstSkill === null) out.firstSkill = skillOfLine(line);
+    if (out.firstTs === null && typeof line.timestamp === 'string' && line.timestamp) out.firstTs = line.timestamp;
+    if (!out.reachedRoute && hasRouteCall(line)) out.reachedRoute = true;
     if (isCompactionMarker(line)) compactionPending = true;
     const message = line.message;
     if (line.type !== 'assistant' || !message || typeof message.id !== 'string' || !message.usage) continue;
@@ -190,6 +219,12 @@ function isUnderRoot(cwd, root, pathImpl = path) {
   return cwd === base || cwd.startsWith(base.endsWith(pathImpl.sep) ? base : base + pathImpl.sep);
 }
 
+// The transcript scope `match`/`root` describe, as a (cwd, slug) predicate — shared with funnel.js so the dispatch-firing
+// figure keeps spend's scope (see collectSpend below).
+function transcriptScope({ match = null, root = null }) {
+  return (cwd, slug) => (!match || (cwd || slug).includes(match)) && (!root || isUnderRoot(cwd, root));
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NO_SKILL = 'no skill invoked';
 const UNATTRIBUTED = 'unattributed';
@@ -217,7 +252,7 @@ function addCount(map, key, usd) {
 // directory (the slug when the transcript names none) contains that substring; `root` keeps those whose working
 // directory is that path or under it (a transcript naming no working directory is not kept); both given: both hold.
 // A session dir whose subagent files are all outside the window is skipped without reading its parent transcript.
-async function collectSpend({ roots, since, until, match = null, root: scopeRoot = null }, { fsImpl = fs } = {}) {
+async function collectSpend({ roots, since, until, match = null, root: scopeRoot = null }, { fsImpl = fs, transcriptCache = null } = {}) {
   const startMs = dayStart(since);
   const endMs = dayStart(until) + DAY_MS;
   const res = {
@@ -255,7 +290,7 @@ async function collectSpend({ roots, since, until, match = null, root: scopeRoot
       return null;
     }
   };
-  const wanted = (cwd, slug) => (!match || (cwd || slug).includes(match)) && (!scopeRoot || isUnderRoot(cwd, scopeRoot));
+  const wanted = transcriptScope({ match, root: scopeRoot });
 
   // returns how many of the requests were counted
   function tally(requests, sessionType, agent) {
@@ -292,12 +327,14 @@ async function collectSpend({ roots, since, until, match = null, root: scopeRoot
       mainInfo.set(
         file,
         scanTranscript(file, { fsImpl }).then(
-          ({ cwd, firstSkill, requests }) => {
+          ({ cwd, firstSkill, firstTs, pluginVersion, reachedRoute, requests }) => {
+            transcriptCache?.set(file, { cwd, firstSkill, firstTs, pluginVersion, reachedRoute });
             const type = firstSkill || NO_SKILL;
             if (tallyIt && wanted(cwd, slug) && tally(requests, type, 'main') > 0) res.sessions += 1;
             return { type };
           },
           () => {
+            transcriptCache?.set(file, { error: true });
             fail(file);
             return { error: true };
           },
@@ -361,4 +398,4 @@ async function collectSpend({ roots, since, until, match = null, root: scopeRoot
   return res;
 }
 
-module.exports = { PRICES, isUnderRoot, familyOf, bucketOf, priceRequest, scanTranscript, collectSpend };
+module.exports = { PRICES, isUnderRoot, transcriptScope, familyOf, bucketOf, priceRequest, scanTranscript, isRouteCommand, collectSpend };
