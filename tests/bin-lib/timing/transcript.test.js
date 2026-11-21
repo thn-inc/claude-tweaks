@@ -1319,6 +1319,18 @@ test('locateTaskTranscripts: first line over FIRST_ENTRY_CAP: excluded, no throw
   assert.deepEqual(locate(cfg, ['s1']).paths, tpaths(sub, 'ok'));
 });
 
+test('locateTaskTranscripts: a first line past one 64 KiB read chunk is joined whole and attributed', () => {
+  // multi-chunk guard (readFirstLine's chunk join): a join that keeps only the first chunk, or drops a chunk's tail, loses the run id.
+  // `straddle` puts the run path across the 65536-byte chunk boundary; `far` puts it three chunks in.
+  const cfg = taskCfg();
+  const sub = taskSession(cfg, '-slug-a', 's1', [
+    { id: 'straddle', depth: 1, prompt: 'x'.repeat(65536 - 80) + ' ' + named(RUN) },
+    { id: 'far', depth: 1, prompt: 'y'.repeat(3 * 65536 + 100) + ' ' + named(RUN) },
+  ]);
+  assert.ok(fs.readFileSync(path.join(sub, 'agent-far.jsonl'), 'utf8').split('\n')[0].length < FIRST_ENTRY_CAP);
+  assert.deepEqual(locate(cfg, ['s1']).paths, tpaths(sub, 'far', 'straddle'));
+});
+
 test('locateTaskTranscripts: Windows-separator run dir in the prompt is attributed', () => {
   const cfg = taskCfg();
   const sub = taskSession(cfg, '-slug-a', 's1', [{ id: 'w', depth: 1, prompt: 'C:\\r\\.claude-tweaks\\pipelines\\' + RUN }]);

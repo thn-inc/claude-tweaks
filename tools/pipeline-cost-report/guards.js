@@ -117,7 +117,7 @@ function readTiming(runDir, fsImpl = fs) {
   for (const t of transcripts) {
     if (!t || typeof t.path !== 'string') continue;
     const parts = t.path.split(/[\\/]/);
-    // A Task-call agent file is {sessionId}/subagents/agent-{id}.jsonl: its session is the directory two up.
+    // A Task-call agent file is {sessionId}/subagents/agent-{id}.jsonl: its session is the parent of its `subagents/` directory.
     const isAgent = parts.length >= 3 && parts[parts.length - 2] === 'subagents' && /^agent-.+\.jsonl$/.test(parts[parts.length - 1]);
     const base = isAgent ? parts[parts.length - 3] : parts[parts.length - 1].replace(/\.jsonl$/, '');
     if (base && !sessions.includes(base)) sessions.push(base);

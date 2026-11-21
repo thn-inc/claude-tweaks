@@ -113,17 +113,19 @@ function runWindow(runDir, events, runState) {
 // `dispatches` value, before stripInternalFields.
 // { deadlineAt, signal } (both optional): past the deadline, or once the signal
 // aborts, reading stops and the result is null (not a dispatches value).
-// scopeDispatchesTo (optional, #5647): a non-empty array of agent transcript paths (a dispatched
-// run's attributed Task calls). It scopes per subagents directory: a directory read that holds at
-// least one of them keeps only the items whose parentAgentId chain (through that directory's items,
-// at most MAX_SCOPE_HOPS hops) reaches one, and drops those scoped agents themselves (their rows
-// are in totals.tokens); every other directory read (a resumer's own-slug session, say) keeps its
-// whole window view. Absent or empty: nothing is filtered.
+// scopeDispatchesTo (optional, #5647): an array of agent transcript paths (a dispatched run's
+// attributed Task calls; their rows are in totals.tokens, so they are never `dispatches` items).
+// The scope is chosen per subagents directory by how it was reached: a directory reached through
+// a path in `paths` that is not a scoped agent (the run's own-slug transcript) keeps its window
+// view minus the scoped agents; a directory reached only through scoped paths keeps only the items
+// whose parentAgentId chain (through that directory's items, at most MAX_SCOPE_HOPS hops) reaches
+// a scoped agent. Where one directory is both (a dispatcher session in its own worktree slug) the
+// own-slug rule wins. Absent or empty: nothing is filtered.
 const MAX_SCOPE_HOPS = 10;
-function scopeDirItems(items, scoped, resolveFrom) {
+function scopeDirItems(items, scoped, resolveFrom, ownSlug) {
   const real = (p) => { const abs = path.resolve(resolveFrom, p); return canonicalRealpath(abs) || abs; };
   const flagged = items.map((d) => ({ d, scoped: typeof d.transcriptPath === 'string' && scoped.has(real(d.transcriptPath)) }));
-  if (!flagged.some((f) => f.scoped)) return items;
+  if (ownSlug) return flagged.filter((f) => !f.scoped).map((f) => f.d);
   const byId = new Map(flagged.filter((f) => typeof f.d.agentId === 'string').map((f) => [f.d.agentId, f]));
   return flagged.filter((f) => {
     if (f.scoped) return false;
@@ -146,9 +148,10 @@ async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal
     try { return fs.lstatSync(dir).isSymbolicLink() ? dir : fs.realpathSync(dir); } catch { return dir; }
   };
   const dirs = [...new Set(paths.map(canonical))];
-  const scoped = Array.isArray(scopeDispatchesTo)
-    ? new Set(scopeDispatchesTo.map((p) => { const abs = path.resolve(cwd, p); return canonicalRealpath(abs) || abs; }))
-    : null;
+  const real = (p) => { const abs = path.resolve(cwd, p); return canonicalRealpath(abs) || abs; };
+  const scoped = Array.isArray(scopeDispatchesTo) && scopeDispatchesTo.length ? new Set(scopeDispatchesTo.map(real)) : null;
+  // Own-slug directories: reached through a path that is not a scoped Task call.
+  const ownDirs = scoped ? new Set(paths.filter((p) => !scoped.has(real(p))).map(canonical)) : null;
   const items = [];
   const reasons = [];
   let excludedOutsideWindow = 0;
@@ -159,7 +162,7 @@ async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal
     reasons.push(...r.value.dirNotes);
     if (r.value.notFound) { reasons.push(r.value.notFound); continue; }
     found += 1;
-    items.push(...(scoped ? scopeDirItems(r.value.items, scoped, cwd) : r.value.items));
+    items.push(...(scoped ? scopeDirItems(r.value.items, scoped, cwd, ownDirs.has(dir)) : r.value.items));
     excludedOutsideWindow += r.value.excludedOutsideWindow;
   }
   if (found === 0) return { notFound: reasons.length ? reasons.join('; ') : 'no transcript resolved' };

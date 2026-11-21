@@ -281,6 +281,9 @@ function exists(file, fsImpl) {
   }
 }
 
+// A Task-call agent transcript: {sid}/subagents/agent-{id}.jsonl (either separator).
+const AGENT_PATH_RE = /[\\/]subagents[\\/]agent-[^\\/]+\.jsonl$/;
+
 // --recount (#4359): rebuild each archived run's timing from the transcripts its timing.json lists
 // (phase-timing.js buildTiming, which writes nothing) and count its skill-file reads over every
 // phases[] bucket — `unattributed` is left out, since a dispatcher's session transcript also holds
@@ -317,9 +320,12 @@ async function recountRuns(archiveDir, { fsImpl, since, cwd, buildTiming }) {
     if (!paths.length) { skipped += 1; continue; }
     const state = readJson(path.join(dir, 'run-state.json'), fsImpl);
     const worktree = state && typeof state.worktree === 'string' && state.worktree ? state.worktree : null;
+    // A dispatched run's listed Task-call agent files ({sid}/subagents/agent-*.jsonl, #5647) scope its
+    // dispatches as at close; a run listing none is rebuilt unscoped.
+    const scopeDispatchesTo = paths.filter((p) => AGENT_PATH_RE.test(p));
     let timing;
     try {
-      timing = await buildTiming({ runDir: dir, paths, cwd, worktree });
+      timing = await buildTiming({ runDir: dir, paths, cwd, worktree, ...(scopeDispatchesTo.length ? { scopeDispatchesTo } : {}) });
     } catch (e) {
       failed.push({ run: entry, error: errText(e), eventsUnreadable: Boolean(e && e.code === EVENTS_UNREADABLE) });
       continue;

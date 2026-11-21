@@ -1453,6 +1453,31 @@ test('AC1.1 no rows in window: the SKIP names the Task-call transcripts', async 
   }
 });
 
+test('AC1.1 no worktree: a dispatched run whose run-state has worktree nulled and no worktreeAtClose still gets its totals', async () => {
+  // Red without it: ownTranscripts' worktree/sessionId early returns running before the dispatched lookup (that run never reaches
+  // locateTaskTranscripts). The real writer (record-worktree --dispatch, via dispatchedRun) stamps the dispatch ids; the worktree is then
+  // blanked with ctxLib.writeRunState, the shape a pre-#3023 close left (no worktreeAtClose existed then; null is its absent value).
+  const root = gitRepo();
+  try {
+    const cfg = path.join(root, 'cfg');
+    agentSession(cfg, root, 'sess-d1', [{ id: 't1', depth: 1, prompt: names(root, RUN_1), usage: A }]);
+    const { runDir } = await dispatchedRun(root, RUN_1);
+    ctxLib.writeRunState(runDir, { worktree: null, worktreeAtClose: null });
+    assert.equal((await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } })).status, 'written');
+    assert.deepStrictEqual(pickTokens(readTiming(runDir).totals.tokens), twice(A));
+    assert.deepStrictEqual(skipLines(runDir), []);
+    // And a miss names the no-worktree reason first, then the Task-call lookup.
+    const other = await dispatchedRun(root, RUN_2);
+    ctxLib.writeRunState(other.runDir, { worktree: null, worktreeAtClose: null });
+    assert.equal((await writeTimingAtClose(other.runDir, { env: { CLAUDE_CONFIG_DIR: cfg } })).status, 'written');
+    const skips = timingSkips(other.runDir);
+    assert.equal(skips.length, 1);
+    assert.ok(skips[0].includes(`no worktree or worktreeAtClose in run-state.json, and no Task-call transcript of session(s) sess-d1 names run ${RUN_2}`), skips[0]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('AC1.1 notes: an empty result carries the lookup notes', async () => {
   const root = gitRepo();
   try {
@@ -1484,22 +1509,28 @@ test('AC1.1 archive twin: attribution keys on the basename', async () => {
   }
 });
 
-test('AC1.1 dispatches scope is per directory: a resumer\'s own-slug subagents stay, the dispatcher\'s Task call is replaced by its descendants', async () => {
-  // Guard "a directory holding no attributed Task call is not filtered" (scopeDirItems' `some(scoped)` early return): filtering every directory turns this red (r1 would vanish).
+test('AC1.1 dispatches scope is per directory: the own-slug directory keeps its window view minus the attributed agents, the Task-call-only directory keeps descendants', async () => {
+  // Red without it: a provenance-blind scope (collectDispatches' ownDirs / scopeDirItems' ownSlug) -- treating S2's own-slug
+  // directory like a Task-call-only one drops r2 (no parent chain); treating S1's like an own-slug one keeps x1; and an
+  // attributed r1 left in `dispatches` double-counts its rows (they are in totals.tokens).
   const root = gitRepo();
   try {
     const cfg = path.join(root, 'cfg');
     agentSession(cfg, root, 'S1', [
       { id: 't1', depth: 1, prompt: names(root, RUN_1), usage: A },
       { id: 'c1', depth: 2, parent: 't1', usage: OTHER },
+      { id: 'x1', depth: 1, usage: OTHER },
     ]);
     const { runDir, wt } = await dispatchedRun(root, RUN_1, { sid: 'S1', resumeSid: 'S2' });
-    agentSession(cfg, wt, 'S2', [{ id: 'r1', depth: 1, usage: B }]);
+    agentSession(cfg, wt, 'S2', [
+      { id: 'r1', depth: 1, prompt: names(root, RUN_1), usage: B },
+      { id: 'r2', depth: 1, usage: OTHER },
+    ]);
     writeTranscript(cfg, wt, [B, B], 'S2');
     assert.equal((await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } })).status, 'written');
     const timing = readTiming(runDir);
-    assert.deepStrictEqual(timing.dispatches.items.map((d) => d.agentId).sort(), ['c1', 'r1']);
-    assert.deepStrictEqual(pickTokens(timing.totals.tokens), plus(twice(A), twice(B)));
+    assert.deepStrictEqual(timing.dispatches.items.map((d) => d.agentId).sort(), ['c1', 'r2']);
+    assert.deepStrictEqual(pickTokens(timing.totals.tokens), plus(twice(A), plus(twice(B), twice(B))));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

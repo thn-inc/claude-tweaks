@@ -8,8 +8,9 @@
 // pick — and, for a `dispatched: true` run, also from the depth-1 Task-call transcripts of its
 // dispatching and resuming sessions whose dispatch prompt names exactly this run (#5647;
 // transcript.js locateTaskTranscripts, a session-id lookup across every slug); its `dispatches`
-// view is then scoped to those Task calls' descendants. Two runs of one session never share rows:
-// the Task calls are attributed by run id and every row is clipped to the run's lifetime. Known
+// view is then scoped per subagents directory (run-timing.js scopeDirItems): the attributed Task
+// calls are dropped (their rows are in the totals), the own-slug directory keeps its window view,
+// a directory reached only through Task calls keeps just their descendants. Known
 // edge: a resuming session's depth-1 agents that do not name the run, and the resumer's main rows
 // when its transcript is not under the own slug, are not counted.
 // A timing.json that already has token totals is kept byte-identical; a
@@ -56,20 +57,21 @@ function ownTranscripts(runState, { env = {}, homeDir = os.homedir, runId } = {}
   try {
     const rs = runState && typeof runState === 'object' ? runState : {};
     const worktree = priorWorktree(rs);
-    if (!worktree) return { paths: [], taskCalls: [], reason: 'no worktree or worktreeAtClose in run-state.json' };
     const sid = rs.sessionId;
-    if (typeof sid !== 'string') return { paths: [], taskCalls: [], reason: 'no sessionId in run-state.json' };
+    const dispatched = rs.dispatched === true && typeof runId === 'string';
+    // Only the own-slug lookup needs a worktree and a sessionId; a dispatched run's Task-call lookup keys on session ids alone.
+    const missing = !worktree ? 'no worktree or worktreeAtClose in run-state.json' : typeof sid !== 'string' ? 'no sessionId in run-state.json' : null;
+    if (missing && !dispatched) return { paths: [], taskCalls: [], reason: missing };
     const configDir = (env && env.CLAUDE_CONFIG_DIR) || path.join(homeDir(), '.claude');
     // Looked up at call time so a test can stub it.
     const transcript = require('./transcript');
-    const found = transcript.locateTranscripts({ cwd: worktree, sessionId: sid, homeDir: null, configDir });
+    const found = missing ? [] : transcript.locateTranscripts({ cwd: worktree, sessionId: sid, homeDir: null, configDir });
     const own = found.length ? [found[0].path] : [];
-    const dispatched = rs.dispatched === true && typeof runId === 'string';
     const sessionIds = [...new Set([rs.dispatchSessionId, rs.sessionId].filter((v) => typeof v === 'string'))];
     const task = dispatched ? transcript.locateTaskTranscripts({ sessionIds, runId, configDir }) : { paths: [], notes: [] };
     const paths = [...own, ...task.paths];
     if (paths.length) return { paths, taskCalls: task.paths, reason: null };
-    const base = `no ${sid}.jsonl under the slug of ${worktree}`;
+    const base = missing || `no ${sid}.jsonl under the slug of ${worktree}`;
     if (!dispatched) return { paths: [], taskCalls: [], reason: base };
     const notes = task.notes.length ? ` (${task.notes.join('; ')})` : '';
     return { paths: [], taskCalls: [], reason: `${base}, and no Task-call transcript of session(s) ${sessionIds.join(', ')} names run ${runId}${notes}` };

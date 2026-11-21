@@ -247,6 +247,19 @@ test('readTiming: an agent transcript path yields its session id, deduped', () =
   assert.ok(readReport({ roots: [projects], sessions, agentId: 'a1' }));
 });
 
+test('readTiming: a backslash agent path yields its session id; a non-agent shape stays a basename', () => {
+  const pipelines = fresh('pl');
+  const run = writeRun(pipelines, '2026-11-18T1-spec-1');
+  // Red without it: dropping the backslash from the split, or the `subagents` / `agent-*` checks in isAgent, changes these.
+  const transcripts = [
+    'p\\slug\\s1\\subagents\\agent-a1.jsonl',
+    'p/slug/s3/subagents/foo.jsonl',
+    'p/slug/s4/agent-x.jsonl',
+  ].map((p) => ({ path: p }));
+  fs.writeFileSync(path.join(run.dir, 'timing.json'), JSON.stringify({ dispatches: { items: [] }, transcripts }));
+  assert.deepStrictEqual(readTiming(run.dir).sessions, ['s1', 'foo', 'agent-x']);
+});
+
 // Task-dispatch fixture: role, description, tier, startTs index, parent agent.
 let agentSeq = 0;
 const task = (role, description, tier = 'standard', t = 1, parentAgentId = null) => ({
