@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { PROFILES } = require('./model-profiles/profiles');
-const { stripComment } = require('./model-profiles/policy-fragment');
+const { stripComment, mergeBlockRows } = require('./model-profiles/policy-fragment');
 const { parseRiskPathGlobs } = require('./risk-path-globs');
 const { locatePolicyFile } = require('./policy-file');
 const { DEFER_REASONS } = require('./issues/record-payload');
@@ -710,25 +710,24 @@ function parseDriverModels(policyRaw) {
 }
 
 // A block key across the two block-bearing sources (#6006): each side is a parser reply ({ present: false } |
-// { present, ok: true, value } | { present, ok: false, raw }). Rows merge repo over factory; the source is 'factory'
-// only when the repo side adds no row of its own. A malformed side is reported through onInvalid and never hides a
-// valid one; only when no side resolves does the key come back invalid. Returns { rows, source } | { invalid } | null (unset).
+// { present, ok: true, value } | { present, ok: false, raw }). The row merge and source rule are mergeBlockRows'. A
+// malformed side is reported through onInvalid and never hides a valid one; only when no side resolves does the key
+// come back invalid. Returns { rows, source } | { invalid } | null (unset).
 function mergeBlockSides(key, repo, factory, onInvalid) {
   const repoOk = repo.present && repo.ok;
   const factoryOk = factory.present && factory.ok;
   if (repo.present && !repo.ok && onInvalid) onInvalid(key, repo.raw);
   if (factory.present && !factory.ok && onInvalid) onInvalid(key, factory.raw);
   if (!repoOk && !factoryOk) return repo.present || factory.present ? { invalid: true } : null;
-  const rows = { ...(factoryOk ? factory.value : {}), ...(repoOk ? repo.value : {}) };
-  const fromFactory = factoryOk && (!repoOk || (Object.keys(repo.value).length === 0 && Object.keys(factory.value).length > 0));
-  return { rows, source: fromFactory ? 'factory' : 'policy' };
+  return mergeBlockRows({ ok: repoOk, value: repo.value }, { ok: factoryOk, value: factory.value });
 }
 
-// The text whose risk-categories widens risk-path-globs' allowed slugs: policy.yml's when it holds a valid one, else the
-// factory's. riskAllowedSlugs returns BUILTIN_RISK_CATEGORIES itself when its text has no valid risk-categories.
+// The text whose risk-categories widens risk-path-globs' allowed slugs: any risk-categories line in policy.yml decides
+// alone (an invalid one leaves the built-ins, as it always did), and the factory's applies only when policy.yml has
+// none. A typo in policy.yml never activates a different value configured elsewhere (no cascade).
 function riskSlugsFor(policyRaw, factoryRaw) {
-  const fromPolicy = riskAllowedSlugs(policyRaw);
-  return fromPolicy === BUILTIN_RISK_CATEGORIES ? riskAllowedSlugs(factoryRaw) : fromPolicy;
+  const policyHasLine = parseFlatLines(typeof policyRaw === 'string' ? policyRaw : null)['risk-categories'] !== undefined;
+  return riskAllowedSlugs(policyHasLine ? policyRaw : factoryRaw);
 }
 
 function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, factoryRaw, onInvalid } = {}) {
@@ -772,8 +771,8 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, factoryRaw,
       continue;
     }
     // risk-path-globs is the other block-style key, resolved here from the
-    // policy source only (run configs hold flat lever lines, never blocks) by
-    // its own parser. A rejected block resolves to null, flagged invalid, never
+    // policy and factory sources (run configs hold flat lever lines, never blocks)
+    // by its own parser. A rejected block resolves to null, flagged invalid, never
     // to a partial map or the {} that means unset — the absent shape model-profiles
     // uses too, unlike the flat keys' schema default.
     if (requested === 'risk-path-globs') {
@@ -785,7 +784,7 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, factoryRaw,
       else result[requested] = { value: merged.rows, source: merged.source };
       continue;
     }
-    // express-driver-models (#5917): a policyOnly block, read from policy.yml alone. Unset and rejected differ from
+    // express-driver-models (#5917): a policyOnly block, read from policy.yml and the factory text, never a run config. Unset and rejected differ from
     // risk-path-globs: unset resolves the four role defaults, a rejected block resolves null with invalid: true.
     if (requested === 'express-driver-models') {
       // #6006: rows merge per role over the defaults, repo over factory (mergeBlockSides).

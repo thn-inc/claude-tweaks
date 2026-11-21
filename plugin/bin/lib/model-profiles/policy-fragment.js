@@ -92,9 +92,19 @@ function modelProfilesEntry(policyRaw, factoryRaw = null) {
     return repo.present || factory.present ? { value: null, source: 'default', invalid: true } : { value: null, source: 'default' };
   }
   // #6006: whole profile rows merge, repo over factory. A malformed side never hides a valid one.
-  const value = { ...(factory.ok ? factory.value : {}), ...(repo.ok ? repo.value : {}) };
-  const fromFactory = factory.ok && (!repo.ok || (Object.keys(repo.value).length === 0 && Object.keys(factory.value).length > 0));
-  return { value, source: fromFactory ? 'factory' : 'policy' };
+  const { rows, source } = mergeBlockRows(repo, factory);
+  return { value: rows, source };
+}
+
+// The row merge every block key shares (#6006; policy-schema.js's resolvePolicyKeys calls it for risk-path-globs and
+// express-driver-models). Each side is { ok, value } with value a row map; at least one side is ok. Rows merge repo over
+// factory; the source is 'factory' when the repo side adds no row and the factory side does (a block present but empty
+// on the repo side, or absent or malformed there), 'policy' otherwise.
+function mergeBlockRows(repo, factory) {
+  const repoRows = repo.ok ? repo.value : {};
+  const factoryRows = factory.ok ? factory.value : {};
+  const fromFactory = factory.ok && (!repo.ok || (Object.keys(repoRows).length === 0 && Object.keys(factoryRows).length > 0));
+  return { rows: { ...factoryRows, ...repoRows }, source: fromFactory ? 'factory' : 'policy' };
 }
 
 // One source's model-profiles block: { present: false } | { present: true, ok: true, value } | { present: true, ok: false }.
@@ -108,4 +118,4 @@ function readProfilesSide(raw) {
   }
 }
 
-module.exports = { parsePolicyModelConfig, stripComment, modelProfilesEntry };
+module.exports = { parsePolicyModelConfig, stripComment, modelProfilesEntry, mergeBlockRows };

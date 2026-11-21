@@ -273,7 +273,7 @@ test('both sides malformed resolves invalid and reports both', () => {
     onInvalid: risk.onInvalid,
   });
   assert.deepStrictEqual(r['risk-path-globs'], { value: null, source: 'default', invalid: true });
-  assert.strictEqual(risk.calls.length, 2);
+  assert.deepStrictEqual(risk.calls.map(([, raw]) => raw), ['risk-path-globs: x', 'risk-path-globs:\n  nope: [a]']);
   assert.deepStrictEqual(modelProfilesEntry(BAD_PROFILES, BAD_PROFILES), { value: null, source: 'default', invalid: true });
 });
 
@@ -296,11 +296,42 @@ test('factory risk-path-globs row naming a category defined only in policy.yml i
   assert.deepStrictEqual(merged['risk-path-globs'].value.payments, ['src/pay/**']);
 });
 
-test('a factory risk-categories widens the allowed slugs only when policy.yml has none valid', () => {
+test('a factory risk-categories widens the allowed slugs only when policy.yml has no risk-categories line', () => {
   const factoryRaw = 'risk-categories: payments\nrisk-path-globs:\n  payments: [src/pay/**]\n';
   assert.strictEqual(resolvePolicyKeys(['risk-path-globs'], { factoryRaw })['risk-path-globs'].source, 'factory');
   const policyOwns = resolvePolicyKeys(['risk-path-globs'], { policyRaw: 'risk-categories: other\n', factoryRaw });
   assert.deepStrictEqual(policyOwns['risk-path-globs'], { value: null, source: 'default', invalid: true });
+});
+
+test('an invalid policy.yml risk-categories never cascades to the factory one', () => {
+  const r = resolvePolicyKeys(['risk-path-globs'], {
+    policyRaw: 'risk-categories: Bad Slug!\n',
+    factoryRaw: 'risk-categories: payments\nrisk-path-globs:\n  payments: [p/**]\n',
+  });
+  assert.deepStrictEqual(r['risk-path-globs'], { value: null, source: 'default', invalid: true });
+});
+
+test('a block present but empty on the repo side resolves from the factory rows with source factory', () => {
+  const driver = resolvePolicyKeys(['express-driver-models'], {
+    policyRaw: 'express-driver-models:\n',
+    factoryRaw: 'express-driver-models:\n  implementer: fast\n',
+  });
+  assert.deepStrictEqual(driver['express-driver-models'], { value: { ...DRIVER_DEFAULTS, implementer: 'fast' }, source: 'factory' });
+  const risk = resolvePolicyKeys(['risk-path-globs'], {
+    policyRaw: 'risk-path-globs:\n',
+    factoryRaw: 'risk-path-globs:\n  auth: [a/**]\n',
+  });
+  assert.deepStrictEqual(risk['risk-path-globs'], { value: { auth: ['a/**'] }, source: 'factory' });
+  assert.deepStrictEqual(
+    modelProfilesEntry('model-profiles:\n', 'model-profiles:\n  fast:\n    model: haiku\n'),
+    { value: { fast: { model: 'haiku' } }, source: 'factory' },
+  );
+});
+
+test('a block empty on both sides keeps source policy', () => {
+  assert.deepStrictEqual(modelProfilesEntry('model-profiles:\n', 'model-profiles:\n'), { value: {}, source: 'policy' });
+  const driver = resolvePolicyKeys(['express-driver-models'], { policyRaw: 'express-driver-models:\n', factoryRaw: 'express-driver-models:\n' });
+  assert.deepStrictEqual(driver['express-driver-models'], { value: DRIVER_DEFAULTS, source: 'policy' });
 });
 
 test('AC10.1: a variable with an indented block resolves both rows', () => {
