@@ -123,6 +123,8 @@ function computeLevers({ mode, modeSource, records, resolved, preAuthorizeMerge 
     if (!entry || entry.error !== undefined || entry.value === null || entry.value === undefined) {
       throw new LeverError(`lever ${key} did not resolve${entry && entry.error ? ` (${entry.error})` : ''}`);
     }
+    // The resolver's source passes through to the Source column, `factory` (#6006) included; the two
+    // `=== 'default'` rules below leave a factory value as set, like a policy.yml one.
     const source = entry.source || 'default';
     // A merge-verification derived from a degraded forge detection (#4578): its
     // `off` came from the fallback local-merge, and pr-first-merge.md Step 2.5

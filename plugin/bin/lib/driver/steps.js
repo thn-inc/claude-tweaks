@@ -212,6 +212,7 @@ const policyStep = defineStep(STEP.policy, STOP_CLASSES.REFUSED, async (ctx, dep
     // value past 2^53 parses to an unsafe number): fatal here, before any record is claimed, whatever
     // the reviewer answer, so driverLineBound reads only a usable value.
     const lineBound = resolved['express-driver-max-lines'];
+    // `!== 'default'`: a factory value (#6006) is set explicitly, so it is checked like a policy.yml one.
     if (lineBound.source !== 'default' && !(Number.isSafeInteger(lineBound.value) && lineBound.value >= 1)) {
       return fatal(`driver diff bound not an integer of at least 1: express-driver-max-lines (${JSON.stringify(lineBound.value)})`);
     }
@@ -269,6 +270,7 @@ function laneBounds(policy) {
 // the prompt and check never disagree.
 function driverLineBound(ctx) {
   const { value, source } = ctx.shared.policy['express-driver-max-lines'];
+  // A factory-sourced bound (#6006) is set, not derived, so it is passed like a policy.yml one.
   return source !== 'default' && ctx.reviewer && ctx.reviewer.on === true ? value : null;
 }
 

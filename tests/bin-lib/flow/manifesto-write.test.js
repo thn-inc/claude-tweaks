@@ -342,6 +342,18 @@ test('writeManifesto: a degraded-sourced merge-verification lever writes wait an
   assert.ok(!fs.readFileSync(path.join(clean.runDir, 'decisions.md'), 'utf8').includes('derived from a degraded forge detection'));
 });
 
+test('manifesto-write: a factory lever renders Source factory', () => {
+  const { resolvePolicyKeys } = require('../../../plugin/bin/lib/policy-schema');
+  const fromFactory = resolvePolicyKeys(['tidy-aggressiveness', 'review-auto-apply-ceiling', 'autonomy'], {
+    factoryRaw: 'tidy-aggressiveness: conservative\nreview-auto-apply-ceiling: low\nautonomy: unattended\n',
+  });
+  const levers = computeLevers({ mode: 'auto', modeSource: 'default', records: ONE_STANDARD, resolved: resolved(fromFactory) });
+  assert.deepStrictEqual(lever(levers, 'tidy-aggressiveness'), { key: 'tidy-aggressiveness', value: 'conservative', source: 'factory' });
+  // A factory ceiling is set, not the default, so the unattended-default lift to medium does not apply.
+  assert.deepStrictEqual(lever(levers, 'review-auto-apply-ceiling'), { key: 'review-auto-apply-ceiling', value: 'low', source: 'factory' });
+  assert.match(renderFyi(levers), /\| Tidy aggressiveness \| conservative \| factory \|/i);
+});
+
 test('renderFyi shows a degraded-sourced lever with the source column degraded', () => {
   const levers = computeLevers({ mode: 'auto', modeSource: 'default', records: ONE_STANDARD, resolved: resolved({ 'merge-verification': { value: 'off', source: 'default', degraded: 'timeout' } }) });
   assert.match(renderFyi(levers), /\| Merge verification \| wait \| degraded \|/i);

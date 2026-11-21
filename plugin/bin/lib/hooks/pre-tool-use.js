@@ -1790,7 +1790,7 @@ function resolveRunPinnedIntegrationModel(mainRoot, runDir, opts = {}) {
   };
   const { root, result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['integration-model'], env: opts.env, homeDir: opts.homeDir });
   const entry = result['integration-model'];
-  // 'run-config' or 'policy' — either is an explicit pin and wins outright.
+  // 'run-config', 'policy' or 'factory' (#6006) — each is an explicit pin and wins outright.
   // 'default' (absent, or set-but-invalid) falls through to detection, the
   // same posture resolveIntegrationModel itself documents.
   if (entry && entry.source !== 'default') return entry.value;
