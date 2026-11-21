@@ -1,8 +1,28 @@
 {
-  "computedAt": "2026-11-21T18:12:39.411Z",
+  "computedAt": "2026-11-21T18:21:34.716Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
+      {
+        "number": 6003,
+        "updatedAt": "2026-11-21T18:20:11Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 6001,
+        "updatedAt": "2026-11-21T18:20:00Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 6000,
+        "updatedAt": "2026-11-21T18:20:06Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 5998,
+        "updatedAt": "2026-11-21T18:19:55Z",
+        "state": "OPEN"
+      },
       {
         "number": 5436,
         "updatedAt": "2026-11-15T13:34:00Z",
@@ -736,6 +756,78 @@
     ]
   },
   "groups": [
+    [
+      {
+        "body": "Surface: backend\nRisk-flags: none\n\n## Current State\n\nPhase 10 of `docs/superpowers/specs/2026-11-18-pipeline-economy-design.md` chooses review lenses per run from the diff's facts and \"each lens's confirmed-finding rate in this repository over its last 20 runs.\" No code computes that rate today.\n\n- `plugin/bin/lib/timing/step-yield.js` writes `step-yield.json` per run with `steps[].findings.byLens.<lens>.{raised,both,one,relabeled,tiebreak.byVerdict.*}` (`docs/reference/step-yield.md`). A lens gets a `byLens` entry only when a pair line or tiebreak line names it (`eachFindingScope`), so **a lens that was dispatched and found nothing leaves no trace there**. The rate's denominator (runs in which the lens ran) is not in the yield file.\n- `tools/step-yield-report.js` totals the yield across an archive, including a per-lens table. It is a maintainer tool under `tools/`, which does not ship (`docs/decisions/0015-*`), so a shipped selector cannot require it.\n- `timing.json`'s `dispatches.items[]` lists each agent with a free-text `description`, `tier` and tokens. Lens agents are identifiable there only through the description the session typed.\n- Design evidence (2026-11-08 to 18): 96 runs, 799 confirmed findings, 8.3 per run; lenses 3a and 3f (Haiku) produced 443; 3b and 3d produced 36 and 19 and return nothing over 70% of the time.\n\n## Deliverables\n\n1. A shipped module (proposed `plugin/bin/lib/review-lens/history.js`) that, given the pipelines root(s), returns per lens over the most recent N closed runs **in which that lens ran** (N default 20; \"closed\" = a run directory holding a readable `step-yield.json`; qualifying runs are filtered first, then the newest N are taken): runs counted, confirmed findings (`both` plus tiebreak `confirmed`, per `docs/reference/step-yield.md`), confirmed findings per run, and the share of runs with at least one confirmed finding. \"Most recent\" uses the run id's start time, as `tools/step-yield-report.js`'s `recent` rule does; a run whose id has no parseable start time is skipped and listed in the result, never silently dropped. The result shape is `{ lenses: { \"<lens>\": { runs, confirmed, perRun, shareWithFinding, insufficient } }, skipped: [{path, reason}], errors: [{path, reason}] }`. Lens ids are the Step 3 ids (3a to 3h), the same strings as `byLens` keys and as `lens-dispatch.json`'s `lens` values; both files carry a `v: 1` schema field.\n2. A per-run record of which lenses were dispatched: a file the review step writes into the run directory (proposed `lens-dispatch.json`: one entry per lens per review round, `{lens, reviewers: 1|2, path: task|workflow, round}`, a lens dispatched in several rounds counting as one qualifying run), written through one sanctioned run-directory writer the build chooses and names in the module header. History reads it as the denominator. For runs that predate it, derive \"ran\" from the run's own Step 3 decision lines or `timing.json` dispatch descriptions only where the evidence is unambiguous; otherwise the run does not count for that lens (never counted as \"ran, found nothing\"). Runs without `lens-dispatch.json` do not count for any lens: there is no legacy derivation from decision lines or `timing.json` descriptions. Until a lens has 20 qualifying runs it reads `insufficient` and the selector runs every tier lens. This warm-up is intended. `lens-dispatch.json` is written on every dispatch path whatever `review-lens-selection` says, so history builds up before anyone opts in.\n3. A result that says plainly when a lens has fewer than N qualifying runs (`insufficient: true` with the count), so the selector can fail toward running the lens.\n4. `tools/step-yield-report.js` reuses the shipped per-lens confirmed count instead of keeping its own copy, if the two would otherwise compute the same number.\n\n## Acceptance Criteria\n\n- [ ] Over a fixture archive where lens 3d ran in 25 runs and found confirmed findings in 5, the module reports 20 qualifying runs (the most recent 20), and the confirmed count and share computed over those 20.\n- [ ] A run where a lens was dispatched (per `lens-dispatch.json`) and produced no finding line counts as a qualifying run with 0 confirmed findings; a run with no dispatch evidence for that lens does not count at all. Each `lens-dispatch.json` entry also records the lens's completion status (`completed` | `failed` | `blocked`). A failed or BLOCKED dispatch is not a qualifying run, and a `reviewers: 1` dispatch is excluded from the rate because it cannot produce `both`.\n- [ ] A run with a `lens-dispatch.json` entry whose `step-yield.json` is missing or malformed is excluded from the count and listed in `errors`; it is never counted as 0 confirmed findings.\n- [ ] A lens with 7 qualifying runs is reported `insufficient: true` with `runs: 7`.\n- [ ] An unreadable root or a malformed `step-yield.json` is reported as such, never silently read as an empty archive (`parse-signal-discipline`).\n- [ ] A relabeled finding counts for the lens `step-yield.json` credits (`relabeled` is read as `docs/reference/step-yield.md` defines it), and a fixture row pins it.\n- [ ] The review step writes `lens-dispatch.json` on both the Task and the workflow dispatch paths (`plugin/skills/review/step3-lens-dispatch.md`, `step3-workflow-dispatch.md`), through a CLI, not a hand-typed file.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/review-lens/history.js` — new: per-lens rate over the last N runs\n- `plugin/bin/lib/timing/step-yield.js` — read-only consumer; exports already used by the report\n- `plugin/bin/write-run-artifact.js` — or a sibling sanctioned writer for `lens-dispatch.json`\n- `plugin/skills/review/step3-workflow-dispatch.md` — write the dispatch record on the workflow path\n- `plugin/skills/review/step3-lens-dispatch.md` — one pointer line only (file is 48,911 B, within 10% of the 52,500 B read rail)\n- `tools/step-yield-report.js` — reuse the shipped count; its per-lens table stays byte-identical before and after (a test pins it)\n\n## Gotchas\n\n- `step3-lens-dispatch.md` sits at 48,911 B, above the 47,250 B headroom line: put any new prose in a sub-file and add one pointer line.\n- Expand-contract: older runs have no `lens-dispatch.json`; the reader must work on an archive that mixes both.\n- Archived run directories sort lexically by id; a glob sorted by name puts `2026-08-20…record-590` after `…record-5770`. Order by parsed start time.\n\n## Decision Rationale\n\n- **Why a dispatch record and not the yield file alone.** The yield file has no entry for a lens that ran and found nothing, so a rate read from it alone would overstate every lens and never let 3b or 3d look idle.\n- **Why fail toward running.** Fewer than 20 qualifying runs is too little to skip a lens on; a skipped lens that would have found something leaves no trace.\n\nOrigin: Phase 10, `docs/superpowers/specs/2026-11-18-pipeline-economy-design.md`. Not blocked (the #5825 blocker was dropped by the maintainer on 2026-11-21; see #6005).\n\n\n<!-- work-fingerprint: pipeline-economy:phase-10-lens-history -->\nwork-fingerprint: pipeline-economy:phase-10-lens-history\n**Related:** #5929, #5668, #5824, #5836, #5828\n\n\n",
+        "createdAt": "2026-11-21T17:36:06Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 5998,
+        "state": "OPEN",
+        "title": "Read each review lens's confirmed-finding rate over this repository's last 20 runs",
+        "updatedAt": "2026-11-21T18:19:55Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
     [
       {
         "body": "**Related:** #5383 (its wrap-up staged all three changes below; they are coupled, so they are filed together)\n\nOrigin: wrap-up of #5383 (staged/skills-1.patch, staged/skills-2.md, staged/reflect-1.md)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\nBoth files of `.claude/skills/gh-api-module-pattern/` are over the 52,500-byte Read rail (`plugin/bin/lib/skill-audit/budgets.js` `RAIL_BYTES`), measured with `context-cost.js`'s `measuredBytes` at 33f635d03: `cli-wrapper-contract.md` 56,381 (over by 3,881), `SKILL.md` 53,799 (over by 1,299). Both were over before #5383, which grew them by 26 and 355 bytes. The `rail:` tests cover only the plugin's shipped skills, so CI never flags these.\n\n#5383's wrap-up found two additions `cli-wrapper-contract.md` needs, both of which grow it further:\n1. The relative-path and live-stdio rules. #5383's review fix wave (46a856cf1) resolved relative path arguments against `deps.cwd()` four different ways across five CLIs, and an unconditional `path.resolve(deps.cwd(), p)` broke a test because it read cwd for absolute paths too. release-local's hook needs inherited stdio for real callers, or an npm OTP prompt fails. The contract states neither rule.\n2. The env-only fixture proof in the conversion-proofs bullet sets `GIT_DIR` alone. That leaves `git rev-parse --show-toplevel` at the cwd repo (probed: `GIT_DIR` only prints A; `GIT_DIR` plus `GIT_WORK_TREE=<B>` prints B). The bullet also has no rule for observing the injected `cwd`: a stub that records `process.cwd()` per call, as #5383's digest-rollover AC6.1 fix does.\n\nThe diff staged for addition 2, from a real `git diff` (it applied cleanly at 33f635d03):\n\n```diff\ndiff --git a/.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md b/.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md\nindex e63de77d3..ffedfa987 100644\n--- a/.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md\n+++ b/.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md\n@@ -2,7 +2,7 @@\n \n - Logic lives in an exported `run(argv, deps)`; every side effect (`runner`, `ghAvailable`, `remoteUrl`, `stdout`, `stderr`) goes through `deps` so tests inject fakes. **Every** `deps` call that can throw (e.g. `remoteUrl` outside a git repo) is try/caught into the documented exit-code contract — an un-wrapped deps call is where #610's one post-review high landed.\n - **A CLI that tests call in-process meets the entry contract** (#5374; `plugin/bin/resolve-policy.js` is the worked example). It exports `run` and `realDeps`; `argv` is `process.argv.slice(2)`, and `run` returns an integer exit code or a Promise of one. The script entry is the file's last statement: `if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);`. The standard io keys, each present only when the CLI uses it, are `stdout(text)`, `stderr(text)`, `cwd()`, `env` (a plain object, read-only), `stdin()` (the whole input as a string) and `homeDir()`. Above the guard and in everything `run` calls there is no `process.exitCode`, `process.exit()`, `process.chdir()` or write to `process.env`. A relative path is resolved against `deps.cwd()`, never left to `path.resolve` or `fs`. Every child process is started with a `cwd` derived from `deps.cwd()` and with `env: deps.env`, and a library function on the CLI's path takes that `env` as an option whose default is the inherited environment, so a `gh` or `git` stub on an injected `PATH` is not skipped. The process-wide timeout knobs are the named exception: `plugin/bin/lib/shared-primitives.js`'s shared `gh`/`git` timeouts read `CLAUDE_TWEAKS_GH_TIMEOUT_MS`, `CLAUDE_TWEAKS_GIT_TIMEOUT_MS` and the `gh-timeout-ms` / `git-timeout-ms` keys of the `policy.yml` at the real working directory once per process, and `plugin/bin/lib/hooks/git-exec.js`'s `runGit` reads `CT_HOOKS_GIT_TIMEOUT_MS` from the real `process.env`, by design; an in-process test cannot set them through `env`, so a test of those knobs is a `spawnCli` test. Tests call the CLI through `tests/helpers/run-cli.js` (`runCli`, or `runCliSync` for a synchronous `run`), passing an absolute `cliPath`; the helper fails the test on a leaked `process.exitCode`, working directory, `process.env` key, signal listener, direct stdout/stderr write, or an `os.homedir()` call under an injected home; each converted CLI keeps one or two `spawnCli` smoke tests for the script entry, shebang and exit code. The helper's `env` defaults to `{}` and is the whole environment the CLI sees, so a CLI that starts `git` or `gh` needs `PATH` (and `SystemRoot` on Windows) in the `env` the test passes. Module-level state under `plugin/bin` (the forge probe's memos, for example) survives between in-process calls in one test file; a case that depends on it passes `fresh: true`, which clears `require.cache` under `plugin/bin` first. The helper fails closed: after merging `realDeps` with the test's fakes, it replaces a key named in `FAIL_CLOSED_KEYS` (`runner`, `gh`, `ghAvailable`, `runHook`, `spawn`) that still holds the CLI's real value with a function that throws, and records the reach so a CLI that catches the throw still fails the test; `allowRealRunner: true` lifts it for one call. The list is by key name: a `realDeps` key that can start `gh` or an arbitrary command carries one of those names, and a record converting a CLI whose `realDeps` holds such a seam under another name (for example `execFileSync`, `runPremiseCheck`) adds that name to `FAIL_CLOSED_KEYS` in the same change. A git-only seam (`git`, `gitRunner`) is deliberately not on the list: it runs real git against the injected `cwd` and `env`, which is the behaviour under test. `tests/bin-lib/cli-entry-conformance.test.js` pins the three structural rules (exports `run`, has the guard, no `process.exitCode`/`process.exit(` above it) for every top-level `plugin/bin/*.js`, with a `NOT_YET` list that only shrinks; `hooks.js` is the standing exception (its entry calls `process.exit(code)` and it has a require-time prefilter).\n-- **Converting an existing CLI to the entry contract takes two proofs the tests-side journey does not cover.** `docs/journeys/call-a-plugin-bin-cli-in-process-from-a-test-5374.md` starts from a CLI that already meets the contract; the `plugin/bin` side of the change needs these first. (1) Pin the script's output with real-process tests committed before the split, so the split is checked against the old behavior and not against itself: #5374 committed five `resolve-policy.js` script cases in `tests/resolve-policy-entry.test.js` (8fa20f94e) before splitting the file into a core and a printing `run` (75fb7d40e). (2) Prove that each `git` or `gh` child on the CLI's path got the injected `env` with an env-only fixture, not by reading the call: two repos, A with no remote and B with an `origin` and a recorded `origin/HEAD`, the CLI's `cwd` in A and `GIT_DIR=<B>/.git` only in the injected `env`, so a child that inherits the real environment reads A and a child that got `env: deps.env` reads B's remote (`forgePair` in `tests/forge-probe-env.test.js` and `tests/resolve-policy-entry.test.js`). Strip `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and `GIT_COMMON_DIR` from the fixture's own setup `git` calls, so a variable the test runner inherited cannot point them at the wrong repo. Find the ambient reads on a CLI's path by running each documented invocation through `runCliSync` and through `spawnCli` against the same fixture, with an injected `cwd`, `env` and `HOME` that differ from the real ones, and comparing the two results, not by reading the code: the read audit for `resolve-policy.js` (#5374) missed sites in four successive passes (plan, plan review, whole-branch review, review phase).\n+- **Converting an existing CLI to the entry contract takes two proofs the tests-side journey does not cover.** `docs/journeys/call-a-plugin-bin-cli-in-process-from-a-test-5374.md` starts from a CLI that already meets the contract; the `plugin/bin` side of the change needs these first. (1) Pin the script's output with real-process tests committed before the split, so the split is checked against the old behavior and not against itself: #5374 committed five `resolve-policy.js` script cases in `tests/resolve-policy-entry.test.js` (8fa20f94e) before splitting the file into a core and a printing `run` (75fb7d40e). (2) Prove that each `git` or `gh` child on the CLI's path got the injected `env` with an env-only fixture, not by reading the call: two repos, A with no remote and B with an `origin` and a recorded `origin/HEAD`, the CLI's `cwd` in A and `GIT_DIR=<B>/.git` only in the injected `env`, so a child that inherits the real environment reads A and a child that got `env: deps.env` reads B's remote (`forgePair` in `tests/forge-probe-env.test.js` and `tests/resolve-policy-entry.test.js`). A child that finds the repository root with `git rev-parse --show-toplevel` is not moved by `GIT_DIR` alone: git then takes the working directory as the work tree and still prints A, so put `GIT_WORK_TREE=<B>` beside it in the injected `env`; a child that reads only the repository (`--absolute-git-dir`, `log`, `remote get-url`) follows `GIT_DIR` alone (AC6.1 in `tests/risk-flags-cli.test.js`, #5383). The `cwd` half needs its own observation: a test named for an injected `cwd` whose stub never reads it stays green with the child's `cwd` option deleted, so have the stub append `process.cwd()` to a file on each call and assert every entry equals the injected directory, both sides through `path.resolve(fs.realpathSync(…))` (`gh-cwd.txt` in `tests/digest-rollover-cli.test.js`'s AC6.1 data-call test, #5383). Strip `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and `GIT_COMMON_DIR` from the fixture's own setup `git` calls, so a variable the test runner inherited cannot point them at the wrong repo. Find the ambient reads on a CLI's path by running each documented invocation through `runCliSync` and through `spawnCli` against the same fixture, with an injected `cwd`, `env` and `HOME` that differ from the real ones, and comparing the two results, not by reading the code: the read audit for `resolve-policy.js` (#5374) missed sites in four successive passes (plan, plan review, whole-branch review, review phase).\n - **A fail-closed branch around an injected dependency needs one test of the real dependency's failure shape, not only a stub that throws.** A stub proves the wrapper catches a throw, not that the real dependency ever throws. `plugin/bin/dispatch-resume.js`'s run-dir listing is the example: `read('run dir listing', …)` mapped a throw to exit 4, but the real `listRunDirsWithState` swallows a `readdirSync` failure into an empty listing, so the branch was unreachable and an unlistable pipelines dir passed the bound-run scan as clean (verdict and `--bound-run` modes) and could report this session's own lock as a live sibling. #4809 added `listRunDirsFailClosed` and the tests that drive the real dependency.\n - `require.main === module` guard sets `process.exitCode = run(...)` (never `process.exit`, which can truncate piped stdout). `--help` short-circuits before any availability probe. **This one is pinned mechanically, not by grep** — `tests/bin-lib/exit-code-conformance.test.js` (#1903) walks every `plugin/bin/**/*.js`, extracts the text each `require.main === module` guard governs, and fails on a direct `process.exit(...)` inside it. Three prior records (#1176, #1313, #1535) each closed one violation of this rule found by a manual sweep that missed another, which is why the sweep was replaced. A new guard needs no registration; a deliberate exception goes in that test's `ALLOWLIST` with its reason stated beside it (today: `bin/hooks.js`, whose stdout is a synchronous `fs.writeSync(1, …)` with nothing pending to flush, and `bin/lib/statusline-wrapper-source.js`, which deliberately hard-stops on a child process's own exit code).\n - **Precisely, the scan reads only a file's *last* `require.main === module` guard, and only the text that guard governs** — `extractGuard` takes the last regex match, then either a balanced `{…}` block or the bare statement up to its `;`. A file may hold more than one guard: `bin/hooks.js` has its Bash prefilter fast path (#3074) ahead of the real entry point at the bottom. The last guard is the entry point, since a guard that short-circuits before it must appear first, so a direct `process.exit(...)` in an earlier guard is not checked. `hooks.js`'s prefilter exit is safe because nothing has been written to stdout yet. An exit placed outside any guard is invisible to the scan in a file that also exports something. `hooks.js`'s allowlist entry covers the entry-point guard's `main(...).then((code) => process.exit(code))`, and `tests/bin-lib/exit-code-conformance.test.js` pins that the scan selects that guard, not the prefilter one.\n```\n\n## Deliverables\n\n- [ ] Move one lazy bullet group out of `cli-wrapper-contract.md` into a sibling file in the skill directory, leaving a one-line pointer bullet (the `status-as-data.md` / `run-dir-boundary-guards.md` pattern). The in-process entry contract and conversion proofs (lines 4-5 at 33f635d03, about 5.3 KB) are the candidate, since both additions land there. Do the same for one lazy section of `SKILL.md`.\n- [ ] Repoint every reference that names a moved bullet: `git grep -n cli-wrapper-contract -- tests plugin docs .claude`, including `tests/helpers/run-cli.js`'s `CONTRACT` constant and `docs/plugin-structure.md`.\n- [ ] Add the two contract rules in the moved group: (a) resolve a relative path argument where `run` consumes it, `path.isAbsolute(p) ? p : path.resolve(deps.cwd(), p)`, so an absolute path never reads cwd; (b) a child that may prompt on a terminal (a release hook, npm publish) gets `stdio: 'inherit'` when `deps.stdout`/`deps.stderr` are `realDeps`' own, and injected io gets a piped capture routed through deps (release-local.js `run()`'s `live` check).\n- [ ] Apply the conversion-proofs change above (the `GIT_WORK_TREE` pairing and the cwd-recording stub).\n\n## Acceptance Criteria\n\n- [ ] `cli-wrapper-contract.md` and `SKILL.md` each measure at or below `RAIL_BYTES` with `context-cost.js`'s `measuredBytes`, including the additions.\n- [ ] `git grep -n -F 'path.isAbsolute(p) ? p : path.resolve(deps.cwd(), p)' -- .claude/skills/gh-api-module-pattern/` and `git grep -n -F 'GIT_WORK_TREE' -- .claude/skills/gh-api-module-pattern/` each print a line.\n- [ ] Every `cli-wrapper-contract` reference found by the grep above resolves to a file and a bullet that exist.\n- [ ] Full `npm test` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md` — modify\n- `.claude/skills/gh-api-module-pattern/SKILL.md` — modify\n- `tests/helpers/run-cli.js` — verify\n- `docs/plugin-structure.md` — verify\n\n_Filed by `capture` via specShapedBody._",
@@ -11008,6 +11100,25 @@
       "number": 4591,
       "blockedBy": [
         4365
+      ]
+    },
+    {
+      "number": 6003,
+      "blockedBy": [
+        6001,
+        6000
+      ]
+    },
+    {
+      "number": 6001,
+      "blockedBy": [
+        5998
+      ]
+    },
+    {
+      "number": 6000,
+      "blockedBy": [
+        5942
       ]
     },
     {
