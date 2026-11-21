@@ -53,6 +53,14 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.176.0](https://github.com/thn-inc/claude-tweaks/compare/v6.175.0...v6.176.0) (2026-11-21)
+
+
+### Features
+
+* Decide a deferred item's route in code ([#5930](https://github.com/thn-inc/claude-tweaks/issues/5930)) ([60b511b](https://github.com/thn-inc/claude-tweaks/commit/60b511b4fa6ee872b61da400d47fdd0d86e73436)), closes [#5931](https://github.com/thn-inc/claude-tweaks/issues/5931) [#5932](https://github.com/thn-inc/claude-tweaks/issues/5932) [#5933](https://github.com/thn-inc/claude-tweaks/issues/5933)
+* Show in the cost report whether admitted records ever… ([#6012](https://github.com/thn-inc/claude-tweaks/issues/6012)) ([702b7c2](https://github.com/thn-inc/claude-tweaks/commit/702b7c2b40938183df5b3a84ad7df30585cb08dc))
+
 ## [6.175.0](https://github.com/thn-inc/claude-tweaks/compare/v6.174.0...v6.175.0) (2026-11-20)
 
 
