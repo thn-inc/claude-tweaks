@@ -509,8 +509,8 @@ test('AC: the per-lens table is byte-identical', () => {
 test('stepRow confirmed is both plus tiebreak confirmed', () => {
   const root = setup();
   const r = runCli([root, '--runs', '--json']);
-  const parsed = JSON.parse(r.out);
-  const list = Array.isArray(parsed) ? parsed : parsed.runs;
+  const list = JSON.parse(r.out).runs;
+  assert.ok(Array.isArray(list), r.out.slice(0, 400));
   const confirmedOf = (id) => {
     const found = list.find((x) => x.runId === id);
     assert.ok(found, id + ' in ' + r.out.slice(0, 400));
