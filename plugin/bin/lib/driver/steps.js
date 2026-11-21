@@ -118,8 +118,9 @@ const CI_SETTLE_WINDOW_MS = 2 * 60 * 1000;
 // `auto-merge-max-lines` is the express diff bound check enforces when the driver passes no --max-lines;
 // the worker's prompt states whichever bound check applies.
 // The three express-driver-max-* keys are the driver lane's bounds (#5224, laneBounds and driverLineBound).
-// The last three, express-driver-models, model-profiles and model-ceiling, are the model each worker
-// launches on (#5917, launch.js's roleModel); the policy step refuses a run whose roles do not resolve.
+// The last four, express-driver-models, model-profiles, model-ceiling and model-effort, are the model
+// and effort each worker launches with (#5917 and #5942, launch.js's roleLaunch); the policy step
+// refuses a run whose roles do not resolve.
 const POLICY_KEYS = Object.freeze([
   'express-driver', 'express-driver-wall-clock-minutes', 'express-driver-spend-ceiling-dollars',
   'merge-sensitive-paths', 'integration-model', 'integration-branch', 'verify-suite-slots',

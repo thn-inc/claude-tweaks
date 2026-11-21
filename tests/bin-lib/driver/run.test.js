@@ -356,6 +356,7 @@ const POLICY = {
   'express-driver-models': resolvePolicyKeys(['express-driver-models'], { policyRaw: '' })['express-driver-models'].value,
   'model-profiles': null,
   'model-ceiling': null,
+  'model-effort': 'inherit',
 };
 
 function issueFor(n) {
@@ -1536,7 +1537,7 @@ test('the worker step launches the implementer in the worktree with the policy c
   const [opts, d] = workerCall(h).args;
   assert.deepEqual({ ...opts, prompt: typeof opts.prompt }, {
     role: 'implementer', cwd: WT, prompt: 'string', ceilings: { wallClockMs: 20 * 60000, spendCeiling: 2.5 },
-    settingsDir: path.join(runDir, 'worker'), platform: 'darwin', env, model: M('standard'),
+    settingsDir: path.join(runDir, 'worker'), platform: 'darwin', env, model: M('standard'), effort: null,
   });
   assert.equal('bin' in opts, false);
   assert.equal(typeof d.runner, 'function');
