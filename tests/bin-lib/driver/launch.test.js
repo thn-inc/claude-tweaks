@@ -241,7 +241,7 @@ test("#5942: model-ceiling standard clamps the reviewer's effort with its model"
   assert.strictEqual(argEffort(args), want);
 });
 
-test('#5942: an explorer under model-effort profile composes resolve().launchEffort', () => {
+test('#5942: an explorer under model-effort profile resolves resolve().launchEffort as its launch effort', () => {
   const policy = policyFrom('model-effort: profile\n');
   const want = resolve('standard', { policy: { 'model-effort': 'profile' }, unattended: true }).launchEffort;
   assert.strictEqual(typeof want, 'string');

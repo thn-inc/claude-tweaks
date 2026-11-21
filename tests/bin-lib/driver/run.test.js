@@ -1721,6 +1721,7 @@ test('invalid model policy refuses the run before the claim', async () => {
     ['express-driver-models', resolvePolicyKeys(['express-driver-models'], { policyRaw: 'express-driver-models:\n  implementer: turbo\n' })['express-driver-models']],
     ['model-ceiling', resolvePolicyKeys(['model-ceiling'], { policyRaw: 'model-ceiling: huge\n' })['model-ceiling']],
     ['model-profiles', modelProfilesEntry('model-profiles:\n  standard:\n    speed: x\n')],
+    ['model-effort', resolvePolicyKeys(['model-effort'], { policyRaw: 'model-effort: fancy\n' })['model-effort']],
   ];
   for (const [key, entry] of cases) {
     assert.equal(entry.invalid, true, key);
@@ -1730,6 +1731,14 @@ test('invalid model policy refuses the run before the claim', async () => {
     assert.equal(lastLine(h).stop.detail, `driver model policy invalid: ${key}`, key);
     assert.equal(h.calls.filter((c) => c.kind === 'node' && /claim-targets\.js$/.test(c.args[0])).length, 0, key);
   }
+});
+
+test('#5942 AC8: a model-profiles row giving an unknown effort refuses at the policy step, before any worker', async () => {
+  const h = harness({ policy: { 'model-effort': 'profile', 'model-profiles': { standard: { effort: 'extreme' } } } });
+  assert.equal(await run(['#7'], h.deps), 1);
+  assert.equal(calls(h, 'worker').length, 0);
+  assert.equal(lastLine(h).stop.step, 'policy');
+  assert.match(lastLine(h).stop.detail, /^no model for driver role implementer: profile standard did not resolve/);
 });
 
 test('a model-profiles row naming a versioned id refuses at the policy step', async () => {
@@ -4017,7 +4026,7 @@ test('old readers tolerate the model field (#5917)', async () => {
 // --- the effort on the worker and review event lines (#5942, Task 4) ----------------------------
 const PROFILE_EFFORT = { 'model-effort': 'profile' };
 
-test('#5942 AC6.1: under model-effort profile every worker line\'s effort is the level its launch was given', async () => {
+test('#5942 AC6.1: under model-effort profile the implementer\'s worker line and the review line carry the level each launch was given', async () => {
   const h = fixRig({ policy: { 'express-driver-review': 'on', ...PROFILE_EFFORT } });
   assert.equal(await run(['#7'], h.deps), 0);
   const [line] = workerLines(h);
@@ -4958,7 +4967,7 @@ test('docs (#5942): driver.md states the effort flag, when it is passed and the 
   assertEffortDocs(docs);
   const { at, end } = effortParagraphBounds(docs);
   const without = at === -1 ? docs : docs.slice(0, at) + docs.slice(end);
-  assert.throws(() => assertEffortDocs(without), 'go-red: the text without the paragraph fails the assertions');
+  assert.throws(() => assertEffortDocs(without), assert.AssertionError, 'go-red: the text without the paragraph fails the assertions');
 });
 
 // Flag read n (1 = the baseline) is the n-th ls-files read of the run; AC8.1 (#5415) pins the order.
