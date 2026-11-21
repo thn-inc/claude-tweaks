@@ -93,6 +93,25 @@
 //   for `sonnet`, `claude-opus-5-5` for `opus`. The `AC7` smoke test passed in the same
 //   run on the implementer's default (`sonnet`); `AC7` prints no `modelUsage`, so its model
 //   is the alias it requested, not one the CLI reported.
+// - Launch effort (#5942). Re-probed on 2026-11-21 with Claude Code CLI 2.1.325 on macOS
+//   (darwin), under a subscription login, launched from a process with no TTY, every
+//   launch under `--safe-mode --restricted`:
+//   - sonnet with `--effort medium` recorded `medium`; with no flag recorded `medium`;
+//     with `--effort low` recorded `low`; with `--effort high` recorded `high`.
+//   - opus with no flag recorded `medium`; with `--effort high` recorded `high`.
+//   - haiku with `--effort high` was accepted and recorded `high` (the driver never
+//     passes one to a Fast resolution).
+//   - `--effort extreme` was not rejected: the CLI printed `Warning: Unknown --effort
+//     value 'extreme' — ignoring it and using the default effort. Valid values: low,
+//     medium, high, xhigh, max.` and the transcript recorded `medium`. That is why
+//     `composeArgs` refuses a level outside `EFFORT_SCALE` before any process starts.
+//   - An unknown flag (`--effort-bogus`) exited 1 with empty stdout: `launch-error` with
+//     the CLI's first stderr line, no retry.
+//   - So on this CLI a worker launched with no `--effort` (an event line's `effort: null`)
+//     runs at `medium` on sonnet and opus, and `--effort` takes effect under
+//     `--safe-mode --restricted`. `medium` against no flag does not discriminate; `low`
+//     and `high` do. Re-run: the opt-in `AC7.1 (#5942)` live probe in
+//     `tests/bin-lib/driver/worker.test.js`.
 //
 // On win32 the default `bin` of `claude` does not find an npm-installed `claude.cmd`;
 // a win32 caller passes `bin` explicitly.
