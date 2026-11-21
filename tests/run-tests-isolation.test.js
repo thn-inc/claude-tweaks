@@ -1931,6 +1931,14 @@ test('runnerChildEnv returns the runner\'s child env', () => {
   assert.deepStrictEqual(env, before, 'env is not mutated');
 });
 
+test('runnerChildEnv drops CLAUDE_TWEAKS_FACTORY_POLICY', () => {
+  const env = { PATH: '/bin', CLAUDE_TWEAKS_FACTORY_POLICY: 'model-stance: economy\n' };
+  const got = runnerChildEnv(env, { runRoot: path.join('/runs', 'r1'), templateDir: null });
+  assert.ok(!('CLAUDE_TWEAKS_FACTORY_POLICY' in got), Object.keys(got).join(', '));
+  assert.equal(got.PATH, '/bin');
+  assert.equal(env.CLAUDE_TWEAKS_FACTORY_POLICY, 'model-stance: economy\n', 'env is not mutated');
+});
+
 test('writeGitTemplateDir returns null when git fails', () => {
   withGitTemp((tmp) => {
     const git = () => { throw new Error('git is gone'); };

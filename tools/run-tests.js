@@ -749,7 +749,10 @@ function writeGitTemplateDir(dir, env, { git = (args, opts) => execFileSync('git
 // The env the runner hands its `node --test` child: `env` with maintenance off, the run's template
 // (when one was built), TMPDIR/TMP/TEMP and the repo-info store inside `runRoot`, and the slot-held mark.
 function runnerChildEnv(env, { runRoot, templateDir }) {
-  return { ...gitFixtureConfigEnv(env), ...(templateDir ? { GIT_TEMPLATE_DIR: templateDir } : {}), TMPDIR: runRoot, TMP: runRoot, TEMP: runRoot, CT_TEST_SUITE_SLOT_HELD: '1', CT_HOOKS_REPO_INFO_STORE: path.join(runRoot, 'repo-info-cache.json') };
+  // The factory layer (#6006) is the machine's own policy: a test run never inherits it, so a suite
+  // cannot pass or fail on the developer's variable.
+  const { CLAUDE_TWEAKS_FACTORY_POLICY: _factory, ...inherited } = env;
+  return { ...gitFixtureConfigEnv(inherited), ...(templateDir ? { GIT_TEMPLATE_DIR: templateDir } : {}), TMPDIR: runRoot, TMP: runRoot, TEMP: runRoot, CT_TEST_SUITE_SLOT_HELD: '1', CT_HOOKS_REPO_INFO_STORE: path.join(runRoot, 'repo-info-cache.json') };
 }
 
 module.exports = {

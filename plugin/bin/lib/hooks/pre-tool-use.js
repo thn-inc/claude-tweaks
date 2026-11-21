@@ -851,7 +851,7 @@ function readConsoleCeiling(runDir, cwd, { env } = {}) {
   if (top.failure) throw new Error(top.failure);
   const git = () => top.stdout;
   const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
-  const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['autonomy', 'control-mode'] });
+  const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['autonomy', 'control-mode'], env });
   return effectiveCeiling({ autonomyEntry: result.autonomy, controlModeEntry: result['control-mode'] }).ceiling;
 }
 
@@ -1788,7 +1788,7 @@ function resolveRunPinnedIntegrationModel(mainRoot, runDir, opts = {}) {
   const readFile = (p) => {
     try { return fs.readFileSync(p, 'utf8'); } catch { return null; }
   };
-  const { root, result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['integration-model'] });
+  const { root, result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['integration-model'], env: opts.env, homeDir: opts.homeDir });
   const entry = result['integration-model'];
   // 'run-config' or 'policy' — either is an explicit pin and wins outright.
   // 'default' (absent, or set-but-invalid) falls through to detection, the

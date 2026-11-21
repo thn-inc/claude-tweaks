@@ -1097,7 +1097,14 @@ function resolveIntegrationModel(repoRoot, opts = {}) {
 // without its own copy the main checkout's is read; `policyPath` is the file
 // read (null only for a non-string root) and `policySource` is `checkout` or
 // `main-checkout`.
-function resolvePolicyConfig({ git, readFile, runDir = null, keys, onInvalid, cwd }) {
+//
+// The factory layer (#6006) is read here too, below policy.yml: `env` (default the
+// inherited environment — hook rule 2) and `homeDir` locate CLAUDE_TWEAKS_FACTORY_POLICY and
+// ~/.claude-tweaks/factory-policy.yml. The factory read never goes through the caller's
+// `readFile` (the CLIs' swallows every error, so an unreadable factory file would read as
+// absent and warn nothing); `factoryReadFile` is a throwing reader (test seam). The return
+// adds `factoryRaw`, `factoryOrigin` and `factoryWarnings` (newline-terminated stderr lines).
+function resolvePolicyConfig({ git, readFile, runDir = null, keys, onInvalid, cwd, env = process.env, homeDir, factoryReadFile }) {
   let root;
   try {
     root = git(['rev-parse', '--show-toplevel']).trim();
@@ -1107,8 +1114,12 @@ function resolvePolicyConfig({ git, readFile, runDir = null, keys, onInvalid, cw
   const { path: policyPath, source: policySource } = locatePolicyFile(root);
   const policyRaw = policyPath === null ? null : readFile(policyPath);
   const runConfigRaw = runDir ? readFile(path.join(runDir, 'config.yml')) : null;
-  const result = resolvePolicyKeys(keys, { policyRaw, runConfigRaw, onInvalid });
-  return { root, policyRaw, runConfigRaw, result, policyPath, policySource };
+  const { readFactoryPolicy } = require('./policy-factory'); // lazy: require cycle
+  const { raw: factoryRaw, origin: factoryOrigin, warnings: factoryWarnings } = readFactoryPolicy({
+    env, homeDir, ...(factoryReadFile ? { readFile: factoryReadFile } : {}),
+  });
+  const result = resolvePolicyKeys(keys, { policyRaw, runConfigRaw, factoryRaw, onInvalid });
+  return { root, policyRaw, runConfigRaw, result, policyPath, policySource, factoryRaw, factoryOrigin, factoryWarnings };
 }
 
 function auditPolicy(repoRoot) {

@@ -9,7 +9,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { resolvePolicyKeys, resolveIntegrationModel } = require('../plugin/bin/lib/policy-schema');
 const { modelProfilesEntry } = require('../plugin/bin/lib/model-profiles/policy-fragment');
-const { FACTORY_POLICY_ENV, FACTORY_REFUSED_KEYS, readFactoryPolicy } = require('../plugin/bin/lib/policy-factory');
+const { FACTORY_POLICY_ENV, FACTORY_REFUSED_KEYS, FACTORY_POLICY_REL_PATH, readFactoryPolicy } = require('../plugin/bin/lib/policy-factory');
+const { run, realDeps } = require('../plugin/bin/resolve-policy');
+const { POLICY_KEYS } = require('../plugin/bin/lib/policy-schema');
 
 // ---------------------------------------------------------------------------
 // resolvePolicyKeys — factory as the third source (run-config -> policy -> factory -> default)
@@ -75,6 +77,7 @@ test('AC11.1-3: refused keys resolve as with no factory layer', () => {
     assert.strictEqual(r[key].source, 'default', key);
     assert.strictEqual(calls.length, 1, `${key}: onInvalid once`);
     assert.strictEqual(calls[0][0], key);
+    assert.strictEqual(calls[0][1], lines[key].slice(key.length + 2).trimEnd(), `${key}: onInvalid carries the raw value`);
   }
 });
 
@@ -343,4 +346,132 @@ test('AC10.1: a variable with an indented block resolves both rows', () => {
   assert.strictEqual(entry.value.implementer, 'fast');
   assert.strictEqual(entry.value.reviewer, 'capable');
   assert.strictEqual(entry.source, 'factory');
+});
+
+// ---------------------------------------------------------------------------
+// bin/resolve-policy.js — the CLI envelope and stderr lines (in-process run(argv, deps))
+// ---------------------------------------------------------------------------
+
+const CLEAN_ENV = { ...process.env };
+for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GH_HOST', 'GH_REPO', FACTORY_POLICY_ENV]) delete CLEAN_ENV[k];
+
+const scratch = [];
+test.after(() => { for (const d of scratch) fs.rmSync(d, { recursive: true, force: true }); });
+function tmp(prefix) {
+  const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `rp-factory-${prefix}-`)));
+  scratch.push(d);
+  return d;
+}
+function cliRepo({ policy, runConfig } = {}) {
+  const dir = tmp('repo');
+  require('node:child_process').execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir, env: CLEAN_ENV, stdio: 'ignore', windowsHide: true });
+  fs.mkdirSync(path.join(dir, '.claude-tweaks', 'pipelines', 'r'), { recursive: true });
+  if (policy !== undefined) fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), policy);
+  if (runConfig !== undefined) fs.writeFileSync(path.join(dir, '.claude-tweaks', 'pipelines', 'r', 'config.yml'), runConfig);
+  return dir;
+}
+function homeWith(factoryFile) {
+  const home = tmp('home');
+  if (factoryFile !== undefined) {
+    fs.mkdirSync(path.join(home, '.claude-tweaks'), { recursive: true });
+    fs.writeFileSync(path.join(home, FACTORY_POLICY_REL_PATH), factoryFile);
+  }
+  return home;
+}
+function cli(argv, { repo, home, variable } = {}) {
+  const out = []; const err = [];
+  const env = { ...CLEAN_ENV, ...(variable === undefined ? {} : { [FACTORY_POLICY_ENV]: variable }) };
+  const code = run(argv, { ...realDeps, cwd: () => repo, env, homeDir: () => home || homeWith(), stdout: (t) => out.push(t), stderr: (t) => err.push(t) });
+  return { code, stdout: out.join(''), stderr: err.join('') };
+}
+const NOTE = (origin, keys) => `resolve-policy: note — factory layer (${origin}) supplied ${keys}\n`;
+
+test('AC1: CLI prints the factory envelope', () => {
+  const repo = cliRepo();
+  const r = cli(['model-stance'], { repo, variable: 'model-stance: economy\n' });
+  assert.deepStrictEqual(r, { code: 0, stdout: '{"model-stance":{"value":"economy","source":"factory"}}\n', stderr: NOTE('env', 'model-stance') });
+  const viaPolicy = cli(['model-stance'], { repo: cliRepo({ policy: 'model-stance: max-rigor\n' }), variable: 'model-stance: economy\n' });
+  assert.deepStrictEqual(viaPolicy, { code: 0, stdout: '{"model-stance":{"value":"max-rigor","source":"policy"}}\n', stderr: '' });
+  const viaRun = cli(['--run', path.join('.claude-tweaks', 'pipelines', 'r'), 'model-stance'], {
+    repo: cliRepo({ policy: 'model-stance: max-rigor\n', runConfig: 'model-stance: default\n' }), variable: 'model-stance: economy\n',
+  });
+  assert.deepStrictEqual(viaRun, { code: 0, stdout: '{"model-stance":{"value":"default","source":"run-config"}}\n', stderr: '' });
+});
+
+test('AC2.1: the same three cases from factory-policy.yml under the injected home, no variable', () => {
+  const home = homeWith('model-stance: economy\n');
+  const r = cli(['model-stance'], { repo: cliRepo(), home });
+  assert.deepStrictEqual(r, { code: 0, stdout: '{"model-stance":{"value":"economy","source":"factory"}}\n', stderr: NOTE('file', 'model-stance') });
+  assert.strictEqual(cli(['model-stance'], { repo: cliRepo({ policy: 'model-stance: max-rigor\n' }), home }).stdout, '{"model-stance":{"value":"max-rigor","source":"policy"}}\n');
+  const viaRun = cli(['--run', path.join('.claude-tweaks', 'pipelines', 'r'), 'model-stance'], { repo: cliRepo({ runConfig: 'model-stance: default\n' }), home });
+  assert.deepStrictEqual(viaRun, { code: 0, stdout: '{"model-stance":{"value":"default","source":"run-config"}}\n', stderr: '' });
+});
+
+test('AC2.2: both present and disagreeing, the variable wins', () => {
+  const repo = cliRepo();
+  const both = homeWith('model-stance: max-rigor\nautonomy: trusted\n');
+  const r = cli(['model-stance,autonomy'], { repo, home: both, variable: 'model-stance: economy\n' });
+  assert.deepStrictEqual(JSON.parse(r.stdout), { 'model-stance': { value: 'economy', source: 'factory' }, autonomy: { value: 'trusted', source: 'factory' } });
+  assert.strictEqual(r.stderr, NOTE('env+file', 'model-stance, autonomy'));
+  const only = homeWith('model-stance: max-rigor\n');
+  const alone = cli(['model-stance'], { repo, home: only, variable: 'model-stance: economy\n' });
+  assert.strictEqual(alone.stdout, '{"model-stance":{"value":"economy","source":"factory"}}\n');
+  assert.strictEqual(alone.stderr, NOTE('env', 'model-stance'));
+});
+
+test('AC3.2: --values names the invalid factory value', () => {
+  const r = cli(['--values', 'model-stance'], { repo: cliRepo(), variable: 'model-stance: nonsense\n' });
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(r.stdout, 'default\n');
+  assert.strictEqual(r.stderr, 'resolve-policy: warning: model-stance has invalid value "nonsense" — using default "default"\n');
+});
+
+test('AC5.1: --all is byte-identical with no variable and no file', () => {
+  const repo = cliRepo({ policy: 'model-stance: max-rigor\n' });
+  const bare = cli(['--all'], { repo, home: homeWith() });
+  const again = cli(['--all'], { repo, home: tmp('empty-home') });
+  assert.strictEqual(bare.code, 0);
+  assert.strictEqual(bare.stderr, '');
+  assert.strictEqual(bare.stdout, again.stdout);
+  const parsed = JSON.parse(bare.stdout);
+  assert.deepStrictEqual(Object.keys(parsed), POLICY_KEYS.map((row) => row.key));
+  for (const [key, entry] of Object.entries(parsed)) assert.ok(['run-config', 'policy', 'default', undefined].includes(entry.source) || entry.error, `${key}: ${entry.source}`);
+  const expected = resolvePolicyKeys(['model-stance'], { policyRaw: 'model-stance: max-rigor\n' })['model-stance'];
+  assert.deepStrictEqual({ value: parsed['model-stance'].value, source: parsed['model-stance'].source }, expected);
+  const withFactory = cli(['--all'], { repo, variable: 'tidy-aggressiveness: aggressive\n' });
+  assert.strictEqual(JSON.parse(withFactory.stdout)['tidy-aggressiveness'].source, 'factory');
+});
+
+test('AC7.1, AC7.2: unreadable factory file resolves as absent, one warning line, nothing throws, exit 0', () => {
+  const home = tmp('home');
+  fs.mkdirSync(path.join(home, FACTORY_POLICY_REL_PATH), { recursive: true }); // a directory where the file belongs: EISDIR
+  const r = cli(['model-stance'], { repo: cliRepo(), home });
+  assert.deepStrictEqual(r, {
+    code: 0,
+    stdout: '{"model-stance":{"value":"default","source":"default"}}\n',
+    stderr: 'resolve-policy: warning: could not read ~/.claude-tweaks/factory-policy.yml (EISDIR) — factory file ignored\n',
+  });
+});
+
+test('AC11: refused keys warn once each, in JSON mode and --values mode', () => {
+  const variable = 'merge-authorization: pre-authorized\ncontrol-mode: on\ndeploy-command: echo hi\nrelease-hook: echo hi\nmodel-stance: economy\n';
+  const warn = (key) => `resolve-policy: warning: ${key} is not settable from the factory layer — ignored\n`;
+  for (const key of FACTORY_REFUSED_KEYS) {
+    const json = cli([key], { repo: cliRepo(), variable });
+    assert.strictEqual(json.code, 0, key);
+    assert.strictEqual(json.stderr, warn(key), `${key}: JSON mode, once`);
+    assert.strictEqual(JSON.parse(json.stdout)[key].source, 'default', key);
+    assert.strictEqual(cli(['--values', key, key], { repo: cliRepo(), variable }).stderr, warn(key), `${key}: --values mode, a repeated key warns once`);
+  }
+  const mixed = cli(['control-mode', 'model-stance'], { repo: cliRepo(), variable });
+  assert.strictEqual(mixed.stderr, warn('control-mode') + NOTE('env', 'model-stance'));
+  assert.strictEqual(cli(['model-stance'], { repo: cliRepo(), variable }).stderr, NOTE('env', 'model-stance'), 'an unrequested refused key stays silent');
+});
+
+test('factoryOrigin never appears on stdout', () => {
+  const r = cli(['model-stance', 'autonomy'], { repo: cliRepo(), variable: 'model-stance: economy\nautonomy: trusted\n' });
+  assert.ok(!r.stdout.includes('"factoryOrigin"') && !r.stdout.includes('env+file'), r.stdout);
+  assert.deepStrictEqual(Object.keys(JSON.parse(r.stdout)['model-stance']), ['value', 'source']);
+  const all = cli(['--all'], { repo: cliRepo(), variable: 'model-stance: economy\n' });
+  assert.ok(!all.stdout.includes('"factoryOrigin"'));
 });

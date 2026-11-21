@@ -57,12 +57,21 @@
 // succeeded; it forwards into detectIntegrationModel's mcpReachable override
 // for the integration-model key, and (via resolveIntegrationModel) for
 // merge-verification too whenever that key is derived in the same call.
+// The factory layer (#6006) — CLAUDE_TWEAKS_FACTORY_POLICY over ~/.claude-tweaks/factory-policy.yml,
+// resolving below policy.yml — writes stderr lines in every output mode (stdout and the exit
+// code unchanged; a factory-supplied entry only carries `source: 'factory'`), in this order after
+// the main-checkout note: the factory reader's warnings (an unreadable file, a variable block that
+// did not parse); one `resolve-policy: warning: {key} is not settable from the factory layer —
+// ignored` per requested refused key the factory text holds; and, when at least one requested key
+// resolved from it, `resolve-policy: note — factory layer ({origin}) supplied {keys}`. The origin
+// never appears on stdout.
 'use strict';
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { POLICY_KEYS, resolvePolicyConfig, formatForgeDegrade } = require('./lib/policy-schema');
+const { POLICY_KEYS, resolvePolicyConfig, formatForgeDegrade, parseFlatLines } = require('./lib/policy-schema');
+const { FACTORY_REFUSED_KEYS } = require('./lib/policy-factory');
 const { computeDerivedDefaults } = require('./lib/policy-derived-defaults');
 const { pickInjected } = require('./lib/repo-resolve');
 const { modelProfilesEntry } = require('./lib/model-profiles/policy-fragment');
@@ -98,7 +107,8 @@ function readFileSafe(filePath) {
 // detection, and returns { code: 0, result, invalidRaw, degrades } or
 // { code: 1, message } (message is the text after `resolve-policy: `). It prints
 // nothing. deps: cwd(), env, git(args, { cwd, env }), readFile(path), and optional
-// stderr(text) and homeDir() that the library lookups receive.
+// stderr(text), homeDir() and factoryReadFile(path) (a throwing reader) that the library
+// lookups receive. The factory file is read through factoryReadFile, never readFile.
 function resolvePolicy({ keys, runDir = null, mcpReachable = false }, deps) {
   const cwd = deps.cwd();
   // #1065: anchored-or-outside guard — runs before the existence check and any
@@ -126,13 +136,16 @@ function resolvePolicy({ keys, runDir = null, mcpReachable = false }, deps) {
   // #4141: the rejected raw value rides a side channel, so the entry shape
   // stays exactly as the JSON output documents it.
   const invalidRaw = new Map();
-  const { root, policyRaw, runConfigRaw, result, policyPath, policySource } = resolvePolicyConfig({
+  const { root, policyRaw, runConfigRaw, result, policyPath, policySource, factoryRaw, factoryOrigin, factoryWarnings } = resolvePolicyConfig({
     git: (args) => deps.git(args, { cwd, env: deps.env }),
     readFile: deps.readFile,
     runDir: runDirPath,
     keys,
     onInvalid: (key, raw) => invalidRaw.set(key, raw),
     cwd,
+    env: deps.env,
+    homeDir: deps.homeDir,
+    ...(deps.factoryReadFile ? { factoryReadFile: deps.factoryReadFile } : {}),
   });
 
   // integration-model / merge-verification have no static schema default
@@ -163,10 +176,15 @@ function resolvePolicy({ keys, runDir = null, mcpReachable = false }, deps) {
   // resolver's placeholder entry via the dedicated fragment reader: only the
   // block is parsed (#5917), so a malformed sibling key never marks it invalid.
   if (keys.includes('model-profiles')) {
-    result['model-profiles'] = modelProfilesEntry(policyRaw);
+    result['model-profiles'] = modelProfilesEntry(policyRaw, factoryRaw);
   }
 
-  return { code: EXIT_OK, result, invalidRaw, degrades, root, policySource, policyPath };
+  // Requested keys a factory may not set that its text nevertheless holds: resolvePolicyKeys
+  // ignored them, so say so once each.
+  const factoryHeld = factoryRaw === null ? {} : parseFlatLines(factoryRaw);
+  const factoryRefused = FACTORY_REFUSED_KEYS.filter((key) => keys.includes(key) && Object.prototype.hasOwnProperty.call(factoryHeld, key));
+
+  return { code: EXIT_OK, result, invalidRaw, degrades, root, policySource, policyPath, factoryOrigin, factoryWarnings, factoryRefused };
 }
 
 // The --values rule: an {error} entry and a null/undefined value (no-default key
@@ -178,15 +196,20 @@ function scalarValue(entry) {
 }
 
 // The stderr lines run writes for a successful core call, newline-terminated:
-// the degraded-forge lines in every mode, then (values only) one invalid-value
-// warning per requested key. out is { keys, result, invalidRaw, degrades, root,
-// policySource, policyPath }. When the policy was read from the main checkout
-// (#4492), the note line comes first, in every mode.
-function warningLines({ keys, result, invalidRaw, degrades, root, policySource, policyPath }, { values }) {
+// the factory lines and the degraded-forge lines in every mode, then (values only) one
+// invalid-value warning per requested key. out is { keys, result, invalidRaw, degrades,
+// root, policySource, policyPath, factoryOrigin, factoryWarnings, factoryRefused }. When the
+// policy was read from the main checkout (#4492), the note line comes first, in every mode;
+// then the factory reader's warnings, the refused-key warnings and the factory note (#6006).
+function warningLines({ keys, result, invalidRaw, degrades, root, policySource, policyPath, factoryOrigin = null, factoryWarnings = [], factoryRefused = [] }, { values }) {
   const lines = [];
   if (policySource === 'main-checkout') {
     lines.push(`resolve-policy: note — ${root} has no .claude-tweaks/policy.yml; read the main checkout's ${policyPath}\n`);
   }
+  lines.push(...factoryWarnings);
+  for (const key of factoryRefused) lines.push(`resolve-policy: warning: ${key} is not settable from the factory layer — ignored\n`);
+  const supplied = [...new Set(keys)].filter((key) => result[key] && result[key].source === 'factory');
+  if (supplied.length > 0) lines.push(`resolve-policy: note — factory layer (${factoryOrigin}) supplied ${supplied.join(', ')}\n`);
   // One stderr line per degraded key, in every output mode; stdout is unchanged.
   for (const key of ['integration-model', 'merge-verification']) {
     if (!degrades.has(key)) continue;
