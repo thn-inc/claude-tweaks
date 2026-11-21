@@ -432,3 +432,53 @@ test('#5556: timing.questions is [] with no ask, absent without tokens, and clip
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+// ---- #5647: scopeDispatchesTo ----
+// Guards -> tests: the non-empty check ("an empty or absent scope keeps all five"), the filter and its
+// chain walk ("keeps only descendants": g1 is two hops from t1), the drop of scoped items (t1 absent).
+function scopedSession() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-scope-'));
+  const sub = path.join(dir, 'sess', 'subagents');
+  fs.mkdirSync(sub, { recursive: true });
+  const main = path.join(dir, 'sess.jsonl');
+  fs.writeFileSync(main, '');
+  for (const [id, parent] of [['t1', null], ['c1', 't1'], ['g1', 'c1'], ['t2', null], ['c2', 't2']]) {
+    fs.writeFileSync(path.join(sub, `agent-${id}.meta.json`), JSON.stringify({ spawnDepth: parent ? 2 : 1, description: id, ...(parent ? { parentAgentId: parent } : {}) }));
+    fs.writeFileSync(path.join(sub, `agent-${id}.jsonl`), JSON.stringify({ timestamp: '2026-11-16T10:01:00.000Z', message: { role: 'assistant', id: `m-${id}`, model: 'claude-test', content: [], usage: { input_tokens: 1, output_tokens: 1 } } }) + '\n');
+  }
+  return { dir, sub, main };
+}
+
+test('scopeDispatchesTo keeps only descendants of the scoped agents', async () => {
+  const { dir, sub, main } = scopedSession();
+  try {
+    const d = await collectDispatches([main], [], dir, { scopeDispatchesTo: [path.join(fs.realpathSync(sub), 'agent-t1.jsonl')] });
+    assert.deepEqual(d.items.map((i) => i.agentId).sort(), ['c1', 'g1']);
+    assert.equal(Object.values(d.byRole).reduce((n, b) => n + b.dispatches, 0), 2);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('scopeDispatchesTo: an empty or absent scope keeps all five', async () => {
+  const { dir, main } = scopedSession();
+  try {
+    for (const opts of [{ scopeDispatchesTo: [] }, {}]) {
+      const d = await collectDispatches([main], [], dir, opts);
+      assert.deepEqual(d.items.map((i) => i.agentId).sort(), ['c1', 'c2', 'g1', 't1', 't2']);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('scopeDispatchesTo drops every scoped agent, even one whose parent is scoped too', async () => {
+  const { dir, sub, main } = scopedSession();
+  try {
+    const real = fs.realpathSync(sub);
+    const d = await collectDispatches([main], [], dir, { scopeDispatchesTo: ['t1', 'c1'].map((id) => path.join(real, `agent-${id}.jsonl`)) });
+    assert.deepEqual(d.items.map((i) => i.agentId), ['g1']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

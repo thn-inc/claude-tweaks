@@ -7,6 +7,11 @@
 // transcript — {configDir}/projects/{slug of the run's worktree}/{sessionId}.jsonl
 // — never from a projects-wide or newest-candidate search, so two runs of one
 // dispatch session (one session id, two worktrees) never read each other's.
+// A `dispatched: true` run also counts the depth-1 Task-call transcripts of its
+// dispatching and resuming sessions whose dispatch prompt names exactly this run
+// (#5647; transcript.js locateTaskTranscripts), and its `dispatches` view is scoped to
+// their descendants. Known edge: a resuming session's depth-1 agents that do not name
+// the run, and the resumer's main rows when its transcript is not under the own slug, are not counted.
 // A timing.json that already has token totals is kept byte-identical; a
 // spec-N child of a multi-record run is never written (the parent's file
 // covers the whole run). Token rows are clipped to the run's own lifetime
@@ -41,22 +46,35 @@ const NOTHING_WRITTEN = 'no timing.json written';
 // paths' own fallback catch); a run dir that is not a directory gets none.
 const { errText, logTimingSkip } = timingSkip;
 
-// runState, { env, homeDir } -> { paths, reason }. At most the one own path.
+// runState, { env, homeDir, runId } -> { paths, taskCalls, reason }. paths: the own-slug
+// transcript (if found) followed by taskCalls, the attributed Task-call transcripts (#5647):
+// only for a `dispatched === true` run and a string runId, else []. reason is null when paths is non-empty.
 // homeDir (a function) is called only when env has no CLAUDE_CONFIG_DIR.
-function ownTranscripts(runState, { env = {}, homeDir = os.homedir } = {}) {
+// Guard -> test (tests/bin-lib/timing/at-close.test.js): the `dispatched === true` check is
+// decided by "AC1.1 gate"; the `typeof runId === 'string'` check by "AC1.1 runId guard".
+function ownTranscripts(runState, { env = {}, homeDir = os.homedir, runId } = {}) {
   try {
     const rs = runState && typeof runState === 'object' ? runState : {};
     const worktree = priorWorktree(rs);
-    if (!worktree) return { paths: [], reason: 'no worktree or worktreeAtClose in run-state.json' };
+    if (!worktree) return { paths: [], taskCalls: [], reason: 'no worktree or worktreeAtClose in run-state.json' };
     const sid = rs.sessionId;
-    if (typeof sid !== 'string') return { paths: [], reason: 'no sessionId in run-state.json' };
+    if (typeof sid !== 'string') return { paths: [], taskCalls: [], reason: 'no sessionId in run-state.json' };
     const configDir = (env && env.CLAUDE_CONFIG_DIR) || path.join(homeDir(), '.claude');
     // Looked up at call time so a test can stub it.
-    const found = require('./transcript').locateTranscripts({ cwd: worktree, sessionId: sid, homeDir: null, configDir });
-    if (!found.length) return { paths: [], reason: `no ${sid}.jsonl under the slug of ${worktree}` };
-    return { paths: [found[0].path], reason: null };
+    const transcript = require('./transcript');
+    const found = transcript.locateTranscripts({ cwd: worktree, sessionId: sid, homeDir: null, configDir });
+    const own = found.length ? [found[0].path] : [];
+    const dispatched = rs.dispatched === true && typeof runId === 'string';
+    const sessionIds = [...new Set([rs.dispatchSessionId, rs.sessionId].filter((v) => typeof v === 'string'))];
+    const task = dispatched ? transcript.locateTaskTranscripts({ sessionIds, runId, configDir }) : { paths: [], notes: [] };
+    const paths = [...own, ...task.paths];
+    if (paths.length) return { paths, taskCalls: task.paths, reason: null };
+    const base = `no ${sid}.jsonl under the slug of ${worktree}`;
+    if (!dispatched) return { paths: [], taskCalls: [], reason: base };
+    const notes = task.notes.length ? ` (${task.notes.join('; ')})` : '';
+    return { paths: [], taskCalls: [], reason: `${base}, and no Task-call transcript of session(s) ${sessionIds.join(', ')} names run ${runId}${notes}` };
   } catch (err) {
-    return { paths: [], reason: `transcript lookup failed (${errText(err)})` };
+    return { paths: [], taskCalls: [], reason: `transcript lookup failed (${errText(err)})` };
   }
 }
 
@@ -274,11 +292,11 @@ async function writeTimingAtClose(runDir, { tokens = true, env = {}, homeDir = o
       result = p.done;
     } else {
       base = p.base;
-      const own = ownTranscripts(p.base.runState, { env, homeDir });
+      const own = ownTranscripts(p.base.runState, { env, homeDir, runId: path.basename(runDir) });
       const bound = boundMs ?? module.exports.TIMING_BOUND_MS;
       const deadlineAt = Date.now() + bound;
       const d = await deriveTiming(runDir, {
-        transcriptPaths: own.paths, wantTokens: own.paths.length > 0, cwd: runDir, deadlineAt, base: p.base, clipToRunWindow: true,
+        transcriptPaths: own.paths, wantTokens: own.paths.length > 0, cwd: runDir, deadlineAt, base: p.base, clipToRunWindow: true, scopeDispatchesTo: own.taskCalls,
       });
       if (!d.ok) {
         result = { status: 'failed', tokens: false, skip: `condition: timing could not be derived (${d.error}) → fallback: ${NOTHING_WRITTEN}` };
@@ -286,7 +304,7 @@ async function writeTimingAtClose(runDir, { tokens = true, env = {}, homeDir = o
         let skip = null;
         if (own.reason) skip = `condition: ${own.reason} → fallback: ${PHASE_ONLY}`;
         else if (d.deadlineHit) skip = `condition: transcript read passed the ${bound} ms time bound → fallback: ${PHASE_ONLY}`;
-        else if (!hasTokenTotals(d.timing)) skip = `condition: own transcript yielded no token totals (${d.notes.length ? d.notes.join('; ') : 'no usage tokens'}) → fallback: ${PHASE_ONLY}`;
+        else if (!hasTokenTotals(d.timing)) skip = `condition: ${own.taskCalls.length ? 'own and Task-call transcripts' : 'own transcript'} yielded no token totals (${d.notes.length ? d.notes.join('; ') : 'no usage tokens'}) → fallback: ${PHASE_ONLY}`;
         ({ dir, result } = write(runDir, d.timing, skip, deadlineAt, p.base.runState !== null));
       }
     }

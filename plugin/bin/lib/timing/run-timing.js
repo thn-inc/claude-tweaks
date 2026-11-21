@@ -113,7 +113,30 @@ function runWindow(runDir, events, runState) {
 // `dispatches` value, before stripInternalFields.
 // { deadlineAt, signal } (both optional): past the deadline, or once the signal
 // aborts, reading stops and the result is null (not a dispatches value).
-async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal = null, window: given, worktree = null } = {}) {
+// scopeDispatchesTo (optional, #5647): a non-empty array of agent transcript paths
+// (a dispatched run's attributed Task calls). Only the items whose parentAgentId chain
+// (through the items read, at most MAX_SCOPE_HOPS hops) reaches one of them are kept, and
+// those scoped items themselves are dropped (their rows are in totals.tokens). Absent or
+// empty: nothing is filtered.
+const MAX_SCOPE_HOPS = 10;
+function scopeItems(items, scopeDispatchesTo) {
+  const real = (p) => { const abs = path.resolve(p); return canonicalRealpath(abs) || abs; };
+  const scoped = new Set(scopeDispatchesTo.map(real));
+  const byId = new Map(items.filter((d) => typeof d.agentId === 'string').map((d) => [d.agentId, d]));
+  const isScoped = (d) => typeof d.transcriptPath === 'string' && scoped.has(real(d.transcriptPath));
+  return items.filter((d) => {
+    if (isScoped(d)) return false;
+    let cur = d;
+    for (let hop = 0; hop < MAX_SCOPE_HOPS; hop++) {
+      cur = typeof cur.parentAgentId === 'string' ? byId.get(cur.parentAgentId) : undefined;
+      if (!cur) return false;
+      if (isScoped(cur)) return true;
+    }
+    return false;
+  });
+}
+
+async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal = null, window: given, worktree = null, scopeDispatchesTo } = {}) {
   const window = given === undefined ? eventWindow(events) : given;
   // A symlinked subagents/ leaf keeps its own path, so readDispatches sees the
   // link and refuses it instead of reading wherever it points.
@@ -137,7 +160,8 @@ async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal
   }
   if (found === 0) return { notFound: reasons.length ? reasons.join('; ') : 'no transcript resolved' };
   // A direct (non-workflow) item keeps its pre-workflow shape: both keys null -> dropped.
-  const agg = aggregateDispatches(items.map((d) => {
+  const kept = Array.isArray(scopeDispatchesTo) && scopeDispatchesTo.length ? scopeItems(items, scopeDispatchesTo) : items;
+  const agg = aggregateDispatches(kept.map((d) => {
     if (d.workflowRunId !== null || d.workflowPhase !== null) return d;
     const { workflowRunId: _run, workflowPhase: _phase, ...direct } = d;
     return direct;
@@ -205,7 +229,9 @@ function derivePhaseTiming(runDir) {
 // bounding the run means no clipping. phase-timing.js never passes it.
 // worktree (default: the run-state's, see below) is the root the transcripts'
 // procedure reads key against; phase-timing.js's buildTiming passes its caller's.
-async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, deadlineAt = null, readUsageImpl, wantTokens, base: given, clipToRunWindow = false, worktree: givenWorktree } = {}) {
+// scopeDispatchesTo (default: none; the at-close writer passes a dispatched run's
+// attributed Task-call paths, #5647): see collectDispatches.
+async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, deadlineAt = null, readUsageImpl, wantTokens, base: given, clipToRunWindow = false, worktree: givenWorktree, scopeDispatchesTo } = {}) {
   const base = given || derivePhaseTiming(runDir);
   if (!base.ok) return base;
   const { timing, out, events, runState } = base;
@@ -244,7 +270,7 @@ async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, dea
     rows = rows.concat(kept);
   }
   // Computed before the join: each workflow agent's start places it in a phase's subagents (#5597).
-  const dispatches = await collectDispatches(transcriptPaths, events, at, clip ? { deadlineAt, window: clip, worktree } : { deadlineAt, worktree });
+  const dispatches = await collectDispatches(transcriptPaths, events, at, clip ? { deadlineAt, window: clip, worktree, scopeDispatchesTo } : { deadlineAt, worktree, scopeDispatchesTo });
   if (dispatches === null) return hit();
   const workflowStarts = (dispatches.items || []).filter((d) => d.workflowRunId != null && d.startTs).map((d) => d.startTs);
   const tokens = joinTokens(out.phases, rows, workflowStarts, { dispatchFileReads: dispatchFileReads(dispatches, transcriptPaths, at) });
