@@ -898,7 +898,7 @@ describe('runAcceptance: failures and bounds', () => {
     assert.strictEqual(h.events.length, 1);
     assert.strictEqual(h.events[0].step, 'merge-acceptance');
     assert.strictEqual(h.events[0].status, 'ok');
-    assert.deepStrictEqual(h.events[0].extra, { route: 'try-it-only', model: PROFILES.standard.model });
+    assert.deepStrictEqual(h.events[0].extra, { route: 'try-it-only', model: PROFILES.standard.model, effort: null });
     assert.strictEqual(r.detail, h.events[0].detail);
   });
 
@@ -906,21 +906,34 @@ describe('runAcceptance: failures and bounds', () => {
     const h = harness('no-parent-gated', { exit: { post: 4 } });
     const r = await h.run();
     assert.strictEqual(r.route, 'no-parent-gated');
-    assert.deepStrictEqual(h.events[0].extra, { route: 'no-parent-gated', model: PROFILES.standard.model });
+    assert.deepStrictEqual(h.events[0].extra, { route: 'no-parent-gated', model: PROFILES.standard.model, effort: null });
   });
 
   test('the due-exceeds route reports its route and the model (#5917)', async () => {
     const h = harness('due-exceeds', { existingLabels: ['accept:pending'] });
     const r = await h.run();
     assert.strictEqual(r.completed, true);
-    assert.deepStrictEqual(h.events[0].extra, { route: 'due-exceeds', model: PROFILES.standard.model });
+    assert.deepStrictEqual(h.events[0].extra, { route: 'due-exceeds', model: PROFILES.standard.model, effort: null });
   });
 
   test('a worker launch that throws after the model resolved still names it on the line (#5917)', async () => {
     const h = harness('try-it-only', { envelope: new Error('spawn') });
     await h.run();
     assert.strictEqual(h.events[0].status, 'stop');
-    assert.deepStrictEqual(h.events[0].extra, { route: 'try-it-only', model: PROFILES.standard.model });
+    assert.deepStrictEqual(h.events[0].extra, { route: 'try-it-only', model: PROFILES.standard.model, effort: null });
+  });
+
+  test('#5942: the merge-acceptance line carries effort on the happy path and after a launcher throw that resolved', async () => {
+    const profile = { ...LAUNCH_POLICY, ...resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: 'model-effort: profile\n' }) };
+    const ok = harness('try-it-only');
+    ok.env.shared.policy = profile;
+    await ok.run();
+    assert.strictEqual(ok.events[0].extra.effort, 'high');
+    assert.strictEqual(ok.events[0].extra.effort, ok.launches()[0].opts.effort);
+    const boom = harness('try-it-only', { envelope: new Error('spawn') });
+    boom.env.shared.policy = profile;
+    await boom.run();
+    assert.deepStrictEqual(boom.events[0].extra, { route: 'try-it-only', model: PROFILES.standard.model, effort: 'high' });
   });
 
   test('a run stopped before any launch carries no model key (#5917)', async () => {

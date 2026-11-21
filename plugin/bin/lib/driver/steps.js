@@ -706,7 +706,7 @@ function newIndexFlagStop(ctx, deps) {
 // HEAD is a `fail` naming only the shas. After an unmoved HEAD the index flags are checked, on the
 // throw path too. Once those checks are done, the worker's test list file is removed (#5915).
 async function runImplementer(ctx, deps, opts = {}) {
-  const launch = { started: false, note: null, model: null };
+  const launch = { started: false, note: null, model: null, effort: null };
   let result;
   let threw = false;
   let thrown;
@@ -725,7 +725,8 @@ async function runImplementer(ctx, deps, opts = {}) {
   }
   // Every result of a launch that resolved a model names it (#5917): no envelope and the HEAD and flag stops too.
   // A refusal never sets it. A thrown launcher carries it on the error (see workerStep).
-  if (launch.model) result = { ...result, extra: { ...(result.extra || {}), model: launch.model } };
+  // `effort` rides with it (#5942): a level, or null when no flag was passed.
+  if (launch.model) result = { ...result, extra: { ...(result.extra || {}), model: launch.model, effort: launch.effort } };
   if (launch.note === null) return result;
   return { ...result, detail: result.detail ? `${result.detail}; ${launch.note}` : launch.note };
 }
@@ -766,6 +767,7 @@ async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '' } = {}, l
     });
     ({ envelope } = launched);
     launch.model = launched.model;
+    launch.effort = launched.effort ?? null;
   } catch (err) {
     // A model refusal (#5917) is thrown before any process starts: nothing ran, so nothing is swept
     // or re-read, and the result carries noLine so the refusal writes no `worker` event line.
@@ -775,7 +777,10 @@ async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '' } = {}, l
       return { status: 'fail', detail: err.message, code: err.code, noLine: true };
     }
     // A throw after the model resolved carries it (launchTracked): the stops below name it too.
-    if (err && typeof err.model === 'string') launch.model = err.model;
+    if (err && typeof err.model === 'string') {
+      launch.model = err.model;
+      launch.effort = err.effort ?? null;
+    }
     // A launcher that throws may have moved HEAD: that is reported in place of the throw;
     // otherwise the throw is rethrown as it was.
     const headStop = headFail(before, headOf(deps, ctx.wt));
@@ -846,7 +851,7 @@ const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, de
       const detail = err.message || String(err);
       // The removal note runImplementer's normal path appends, kept for the throw path too (#5915).
       const note = typeof err.testListNote === 'string' ? err.testListNote : null;
-      return { status: 'fail', detail: note === null ? detail : `${detail}; ${note}`, extra: { tests: ctx.workerTestMode, model: err.model } };
+      return { status: 'fail', detail: note === null ? detail : `${detail}; ${note}`, extra: { tests: ctx.workerTestMode, model: err.model, effort: err.effort ?? null } };
     }
     throw err;
   }

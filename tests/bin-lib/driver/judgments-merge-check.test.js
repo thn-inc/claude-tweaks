@@ -261,16 +261,35 @@ describe('merge-check path', () => {
     assert.strictEqual(ev[0].extra.model, M('standard'));
   });
 
+  test('#5942: the merge-check line carries effort on the happy path and after a launcher throw that resolved', async () => {
+    const policy = { ...POLICY, ...resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: 'model-effort: profile\n' }) };
+    const ok = harness({ policy });
+    await judgeMergeCheck(ok.env, ok.ctx);
+    const okEvent = ok.events.find((e) => e.step === 'merge-check');
+    assert.strictEqual(okEvent.extra.effort, 'high');
+    assert.strictEqual(okEvent.extra.effort, ok.launches()[0].opts.effort);
+    const boom = harness({ policy, envelope: new Error('spawn') });
+    await judgeMergeCheck(boom.env, boom.ctx);
+    const boomEvent = boom.events.find((e) => e.step === 'merge-check');
+    assert.strictEqual(boomEvent.extra.model, M('standard'));
+    assert.strictEqual(boomEvent.extra.effort, 'high');
+    const unset = harness({ envelope: new Error('spawn') });
+    await judgeMergeCheck(unset.env, unset.ctx);
+    const unsetExtra = unset.events.find((e) => e.step === 'merge-check').extra;
+    assert.ok('effort' in unsetExtra && unsetExtra.effort === null);
+  });
+
   test('launchJudge: a refusal stops with the code in the text, any other launch error stays fixed text, a launch returns the model', async () => {
     const args = { role: 'merge-check', dir: 'merge-check', label: 'merge-check', prompt: 'p', schema: MERGE_CHECK_RESULT_SCHEMA };
     const refused = harness({ policy: { ...POLICY, 'express-driver-models': { value: { reviewer: 'capable' }, source: 'policy' } } });
     assert.deepStrictEqual(await launchJudge(refused.env, refused.ctx, args), { stop: 'merge-check launch failed (DRIVER_MODEL_REFUSED)' });
     const boom = harness({ envelope: new Error('secret words') });
     // A throw after the model resolved carries it, so the stop's line can still name it (#5917).
-    assert.deepStrictEqual(await launchJudge(boom.env, boom.ctx, args), { stop: 'merge-check launch failed', model: M('standard') });
+    assert.deepStrictEqual(await launchJudge(boom.env, boom.ctx, args), { stop: 'merge-check launch failed', model: M('standard'), effort: null });
     const fine = harness();
     const launched = await launchJudge(fine.env, fine.ctx, args);
     assert.strictEqual(launched.model, M('standard'));
+    assert.strictEqual(launched.effort, null);
     assert.strictEqual(launched.envelope.status, 'ok');
   });
 
@@ -293,7 +312,7 @@ describe('merge-check path', () => {
     const ev = h.events.filter((e) => e.step === 'merge-check');
     assert.strictEqual(ev.length, 1);
     assert.strictEqual(ev[0].status, 'stop');
-    assert.deepStrictEqual(ev[0].extra, { verdict: 'needs-human', floor: 'none', model: M('standard') });
+    assert.deepStrictEqual(ev[0].extra, { verdict: 'needs-human', floor: 'none', model: M('standard'), effort: null });
     assert.ok(ev[0].detail.length <= 200);
     const h2 = harness();
     await judgeMergeCheck(h2.env, h2.ctx);

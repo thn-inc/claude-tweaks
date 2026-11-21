@@ -2270,10 +2270,10 @@ const K3 = ['ciWaitMs', 'detail', 'ms', 'record', 'run', 'status', 'step', 'ts']
 const K4 = ['ci', 'costUsd', 'denialCount', 'merge', 'ms', 'msTotal', 'msWithoutCi', 'outcome', 'pr', 'record', 'run', 'settle', 'settleFailed', 'settleRow', 'status', 'step', 'stop', 'ts', 'turns'];
 const K5 = ['costUsd', 'denials', 'detail', 'discarded', 'ms', 'record', 'reproduced', 'returned', 'run', 'status', 'step', 'ts', 'turns', 'usage'];
 // The admission line gained `authority` (#5584), the worker line `tests` (#5915) and `model` (#5917), and the review
-// line `model` (#5917): the fields added since the capture.
+// line `model` (#5917), and both lines `effort` (#5942): the fields added since the capture.
 const KA = ['authority', ...K0];
-const KW = [...K1, 'model', 'tests'].sort();
-const K5M = [...K5, 'model'].sort();
+const KW = [...K1, 'effort', 'model', 'tests'].sort();
+const K5M = [...K5, 'effort', 'model'].sort();
 const BASE_KEYS_PLAIN = [
   K0, K0, K0, KA, K0, K0,
   K0, KW, K2, K2, K0, K0,
@@ -4007,6 +4007,74 @@ test('old readers tolerate the model field (#5917)', async () => {
     const without = readerRows(stripped);
     assert.equal(withModel.unparsed, 0, name);
     assert.deepEqual(withModel, without, name);
+    assert.deepEqual(lines.at(-1).stop, stripped.at(-1).stop, name);
+  }
+});
+
+// --- the effort on the worker and review event lines (#5942, Task 4) ----------------------------
+const PROFILE_EFFORT = { 'model-effort': 'profile' };
+
+test('#5942 AC6.1: under model-effort profile every worker line\'s effort is the level its launch was given', async () => {
+  const h = fixRig({ policy: { 'express-driver-review': 'on', ...PROFILE_EFFORT } });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [line] = workerLines(h);
+  const [first] = implementerCalls(h);
+  assert.equal(line.effort, 'high');
+  assert.equal(line.effort, first.args[0].effort);
+  const reviewerCall = h.calls.find((c) => c.kind === 'worker' && c.args[0].role === 'reviewer');
+  const [review] = reviewLines(h);
+  assert.equal(typeof reviewerCall.args[0].effort, 'string');
+  assert.equal(review.effort, reviewerCall.args[0].effort);
+});
+
+test('#5942 AC6.2: with the key unset the worker line\'s effort is null', async () => {
+  const h = harness();
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [line] = workerLines(h);
+  assert.ok('effort' in line, 'the field is present');
+  assert.equal(line.effort, null);
+  assert.equal(line.effort, workerCall(h).args[0].effort);
+});
+
+test('#5942: a launcher throw after resolution keeps effort on the worker line', async () => {
+  const thrown = harness({ policy: PROFILE_EFFORT, script: [[on('worker'), new Error('launch blew up')]] });
+  await run(['#7'], thrown.deps);
+  const [line] = workerLines(thrown);
+  assert.equal(line.effort, 'high');
+  assert.equal(line.model, M('standard'));
+  const unset = harness({ script: [[on('worker'), new Error('launch blew up')]] });
+  await run(['#7'], unset.deps);
+  assert.equal(workerLines(unset)[0].effort, null);
+  assert.ok('effort' in workerLines(unset)[0]);
+  const moved = await throwThenStopLine(nthCall(isHeadRead, 2, `${OTHER_SHA}\n`));
+  assert.ok('effort' in moved && moved.effort === null, 'a moved HEAD after a throw keeps effort');
+  const flagged = await throwThenStopLine(nthCall(isFlagRead, 2, NEW_FLAG_INDEX));
+  assert.ok('effort' in flagged && flagged.effort === null, 'a new index flag after a throw keeps effort');
+});
+
+test('#5942: a launch that returns no envelope still names its effort', async () => {
+  const h = harness({ policy: PROFILE_EFFORT, script: [[on('worker'), null]] });
+  await run(['#7'], h.deps);
+  assert.equal(workerLines(h)[0].effort, 'high');
+});
+
+test('#5942: old readers tolerate the effort field', async () => {
+  const h = fixRig({ policy: { 'express-driver-review': 'on', ...PROFILE_EFFORT } });
+  await run(['#7'], h.deps);
+  const thrown = harness({ policy: PROFILE_EFFORT, script: [[on('worker'), new Error('launch blew up')]] });
+  await run(['#7'], thrown.deps);
+  const readerRows = (lines) => {
+    const dir = tmpDir('effort-field-');
+    fs.writeFileSync(path.join(dir, 'driver-events.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    return driverStepsOf(dir, fs);
+  };
+  for (const [name, lines] of [['happy fix run', h.lines()], ['worker throw', thrown.lines()]]) {
+    assert.ok(lines.some((l) => 'effort' in l), `${name}: the run writes the effort field`);
+    const stripped = lines.map(({ effort, ...rest }) => rest);
+    const withEffort = readerRows(lines);
+    const without = readerRows(stripped);
+    assert.equal(withEffort.unparsed, 0, name);
+    assert.deepEqual(withEffort, without, name);
     assert.deepEqual(lines.at(-1).stop, stripped.at(-1).stop, name);
   }
 });
