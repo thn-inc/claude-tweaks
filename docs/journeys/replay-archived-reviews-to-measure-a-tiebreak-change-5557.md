@@ -82,3 +82,4 @@ files:
 ## Origin
 - Created during the build of #5557 (run `2026-11-16T000458-record-5557`, PR #5574). That build turned the 2026-11-15 scratch replay into this tested tool. The first live run against the nine 2026-11-15 runs is tracked in #5630.
 - Updated during the wrap-up of #5541: step 4 notes that `score` does not apply the escalation a review runs on a Standard-tier judge's raised finding.
+- Updated during the build of #5990 (run `2026-11-21T173038-spec-5990`, PR #6014). Step 2 adds the `effort=` arm key. Step 4 adds the recorded-effort check (`effort-mismatch`, `recordedEffort`) and its red flag. This is the effort arm of the pipeline economy design's Phase 14.
