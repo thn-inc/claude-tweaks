@@ -3,7 +3,8 @@
 // tools/review-replay.js — replays archived review runs through the tiebreak judge and scores the agreement (#5557).
 //
 //   node tools/review-replay.js baseline --runs <root> [--select <name,...>]
-//   node tools/review-replay.js extract --runs <root> --out <dir> --arm name=<id>,chunk=<n>,profile=<profile>,repeat=<n> ...
+//   node tools/review-replay.js extract --runs <root> --out <dir> --arm name=<id>,chunk=<n>,profile=<profile>[,effort=<low|medium|high|xhigh|max>],repeat=<n> ...
+//   An arm's `effort` replaces its profile's, and `score` checks it.
 //
 // baseline: reads every archived run directory under <root> and <root>/archive and prints one JSON object
 // { runs, excluded }: per run the recorded verdicts and how they matched the findings, the review head and base, the
@@ -39,7 +40,7 @@ const { VERDICT_CLASSES, RUN_RECORDS_DIR } = require('./review-replay/schema.js'
 
 const USAGE = [
   'usage: node tools/review-replay.js baseline --runs <root> [--select <name,...>]',
-  '       node tools/review-replay.js extract --runs <root> --out <dir> --arm name=<id>,chunk=<n>,profile=<profile>,repeat=<n> [--arm ...]',
+  '       node tools/review-replay.js extract --runs <root> --out <dir> --arm name=<id>,chunk=<n>,profile=<profile>[,effort=<low|medium|high|xhigh|max>],repeat=<n> [--arm ...]',
   '               [--select <name,...>] [--min-runs <n>] [--min-findings <n>] [--quota <sev>=<n>,...] [--template <path>] [--dispatch-core <path>]',
   '       node tools/review-replay.js score --out <extract dir> --transcripts <workflow dir> [--reference <arm>]',
   '       node tools/review-replay.js counterfactual --runs <root> --transcripts <dir> [--select <name,...>]',

@@ -15,7 +15,8 @@ const {
 
 const POSITIVE_INT = /^[1-9]\d*$/;
 const ARM_NAME = /^[A-Za-z0-9._-]+$/;
-const ARM_KEYS_ACCEPTED = new Set(['name', 'chunk', 'profile', 'repeat']);
+const ARM_KEYS_ACCEPTED = new Set(['name', 'chunk', 'profile', 'effort', 'repeat']);
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const HEAD_REASONS = ['no-fix-commit', 'fix-commit-not-in-clone'];
 const EXIT_SHORTFALL = 3;
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info', 'unknown'];
@@ -34,6 +35,9 @@ function parseArm(text, profiles) {
     if (!ARM_KEYS_ACCEPTED.has(key)) return { error: `--arm: unknown key "${key}" in "${text}"` };
     if (key === 'name' || key === 'profile') {
       arm[key] = value;
+    } else if (key === 'effort') {
+      if (!EFFORTS.includes(value)) return { error: `--arm: effort must be one of ${EFFORTS.join('|')}: "${value}" in "${text}"` };
+      arm.effort = value;
     } else {
       const n = positiveInt(`--arm ${key}`, value);
       if (n.error) return n;
@@ -227,7 +231,7 @@ function writeOutputs(c, deps) {
   const verdicts = {};
   const fixtureRuns = [];
   const manifestArms = arms.map((a) => ({
-    name: a.name, chunk: a.chunk, profile: a.profile, model: PROFILES[a.profile].model, effort: PROFILES[a.profile].effort, repeat: a.repeat, prompts: [],
+    name: a.name, chunk: a.chunk, profile: a.profile, model: PROFILES[a.profile].model, effort: a.effort !== undefined ? a.effort : PROFILES[a.profile].effort, repeat: a.repeat, prompts: [],
   }));
 
   for (const p of picked) {

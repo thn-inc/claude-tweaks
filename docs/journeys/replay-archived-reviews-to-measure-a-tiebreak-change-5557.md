@@ -33,11 +33,12 @@ files:
   - A failed judge counted as `cant-tell`.
 
 ### 2. Build the replay set — `extract` with the arms to compare
-- **URL:** `node tools/review-replay.js extract --runs .claude-tweaks/pipelines --out <extract dir> --arm name=single,chunk=1,profile=capable,repeat=1 --arm name=chunk8,chunk=8,profile=capable,repeat=1 [--select ...] [--min-runs n] [--min-findings n] [--quota sev=n,...]`
+- **URL:** `node tools/review-replay.js extract --runs .claude-tweaks/pipelines --out <extract dir> --arm name=single,chunk=1,profile=capable,repeat=1 --arm name=chunk8,chunk=8,profile=capable,effort=low,repeat=1 [--select ...] [--min-runs n] [--min-findings n] [--quota sev=n,...]`
 - **Action:** write, into a new empty directory, one source tree per run at the commit it reviewed. Then write the prompt files for each arm, built from today's `step3-tiebreak.md`, along with `manifest.json`, `fixture.json` and `archived-verdicts.json`.
 - **Should feel:** declarative. An arm is data (chunk size, profile, repeats), so comparing a new variant means adding another `--arm`.
 - **Should understand:**
   - Prompts never name the archived verdicts. A finding whose file is absent at the reviewed commit is excluded with `file-absent-at-head`, never written as a prompt.
+  - An arm may set `effort=` (`low`, `medium`, `high`, `xhigh`, `max`) to run its judges at another effort than its profile's, and `score` checks the effort each judge recorded (step 4).
   - An unmet `--min-findings` or `--quota` is a shortfall: exit 3, and no arm is written.
   - A run with no `context/review-dispatch.md` takes today's discipline lines, and the output counts those runs.
 - **Red flags:**
