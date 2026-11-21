@@ -839,6 +839,7 @@ async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '' } = {}, l
   }
   return { status: 'ok', extra };
 }
+
 // The `fail` result for a launcher throw that carries the model it ran on, shared by workerStep and the
 // fix round's relaunch line so the two cannot drift; null for any other throw (the caller rethrows).
 function launchThrowFail(ctx, err) {
