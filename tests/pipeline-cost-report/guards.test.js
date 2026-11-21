@@ -235,6 +235,18 @@ test('readTiming: absent is null, unparseable throws, and an unparseable run cou
   assert.strictEqual(r.share, null);
 });
 
+test('readTiming: an agent transcript path yields its session id, deduped', () => {
+  const pipelines = fresh('pl');
+  const projects = fresh('pr');
+  const run = writeRun(pipelines, '2026-11-18T1-spec-1');
+  const transcripts = ['p/slug/s1/subagents/agent-a1.jsonl', 'p/slug/s1/subagents/agent-a2.jsonl', 'p/slug/s2.jsonl'].map((p) => ({ path: p }));
+  fs.writeFileSync(path.join(run.dir, 'timing.json'), JSON.stringify({ dispatches: { items: [] }, transcripts }));
+  const { sessions } = readTiming(run.dir);
+  assert.deepStrictEqual(sessions, ['s1', 's2']);
+  writeReport(projects, 's1', 'a1', '#### Important\n1. x\n');
+  assert.ok(readReport({ roots: [projects], sessions, agentId: 'a1' }));
+});
+
 // Task-dispatch fixture: role, description, tier, startTs index, parent agent.
 let agentSeq = 0;
 const task = (role, description, tier = 'standard', t = 1, parentAgentId = null) => ({
