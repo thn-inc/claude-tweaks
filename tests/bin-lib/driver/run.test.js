@@ -4921,6 +4921,25 @@ test('docs (#5917): driver.md states the models key, its defaults and the refusa
   assert.ok(redFlags && redFlags.includes('`express-driver-models`'), 'the red-flags list names express-driver-models');
 });
 
+const assertEffortDocs = (docs) => {
+  for (const phrase of ['`--effort`', '`model-effort: profile`', '`launchEffort`', '`worker.js`', '`fix: true`']) {
+    assert.ok(docs.includes(phrase), `driver.md names ${phrase}`);
+  }
+  const at = docs.indexOf('The `effort` field.');
+  assert.notEqual(at, -1, 'the effort field paragraph exists');
+  const next = docs.indexOf('\n', at);
+  assert.ok(docs.slice(at, next === -1 ? docs.length : next).includes('`null`'), 'the effort field paragraph names null');
+};
+
+test('docs (#5942): driver.md states the effort flag, when it is passed and the effort field', () => {
+  const docs = readText(path.join(__dirname, '..', '..', '..', 'docs', 'driver.md'));
+  assertEffortDocs(docs);
+  const at = docs.indexOf('The `effort` field.');
+  const next = docs.indexOf('\n', at);
+  const without = at === -1 ? docs : docs.slice(0, at) + docs.slice(next === -1 ? docs.length : next);
+  assert.throws(() => assertEffortDocs(without), 'go-red: the text without the paragraph fails the assertions');
+});
+
 // Flag read n (1 = the baseline) is the n-th ls-files read of the run; AC8.1 (#5415) pins the order.
 const flaggedStop = (h, detail) => {
   assert.deepEqual([lastLine(h).stop.step, lastLine(h).status, lastLine(h).stop.class, lastLine(h).outcome], [STEP.review, 'fail', 'pre-push', 'express-escalated']);
