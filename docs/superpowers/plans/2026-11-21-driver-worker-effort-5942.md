@@ -259,6 +259,8 @@ In `run.test.js` (fix-round harness, `fixRig` or the helper the `BASE_LINES_FIX`
 - `#5942 (fix round): a launcher throw that resolved still writes the fix worker line` — fake launcher whose second implementer call throws after resolution: one `worker` line with `status: 'fail'`, `fix: true`, `model` and `effort` set; the record's `review` line still follows with its fix-round `fail` detail.
 - Update the fix-run `[step, status]` expectation and key-set expectation by inserting the one `['worker', …]` pair / key set before `review`; the plain run's constants stay unchanged (assert that in the commit body).
 
+- `#5942 (fix round): step-yield counts the fix worker line in the worker row` — copy `old readers tolerate the model field (#5917)`'s `driverStepsOf` shape over a fix run's lines: the `worker` row has `count: 2`, its minutes include the fix line's `ms`, and its tokens include the fix line's `usage`. Accepted as stated, not changed in `tools/step-yield-report.js`: the `worker` row is every implementer launch, and the fix line's `ms` also lies inside the `review` row's, the same overlap merge.js's sub-step lines already have with the `merge` row. A failed fix launch counts once in `worker.failed` and once in `review.failed`, since each line reports its own launch's outcome.
+
 In the driver-mirror test file:
 - `#5942: a fix-round worker line maps to no station events` — `stationEventsFor({ step: 'worker', fix: true, sessionId: 's2', status: 'ok', ts, ms, record: 1 }, …)` deep-equals `[]`; the same line without `fix` still yields `started`, `exited` and `session_bound` (go-red control: deleting the `fix` guard turns the first assertion red).
 
