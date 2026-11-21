@@ -66,7 +66,29 @@ test('alias in the variable wins over the new name in the file and keeps its spe
   assert.ok(!result.raw.includes('auto-merge-max-lines'));
 });
 
-test('within one source the last chunk of a key wins', () => {
+test('duplicate keys within the variable are all kept, so the resolver applies its own rules', () => {
+  const merged = read('auto-merge-max-lines: 30\nautomerge-max-lines: 20', homeWith('autonomy: trusted\n'));
+  assert.ok(merged.raw.includes('auto-merge-max-lines: 30') && merged.raw.includes('automerge-max-lines: 20'));
+  const resolve = (raw) => resolvePolicyKeys(['auto-merge-max-lines'], { policyRaw: raw })['auto-merge-max-lines'];
+  assert.deepEqual(resolve(merged.raw), resolve('auto-merge-max-lines: 30\nautomerge-max-lines: 20'));
+  assert.equal(resolve(merged.raw).value, 30);
+});
+
+test('two express-driver-models blocks in the variable are both kept against an unrelated file', () => {
+  const text = `${VALID_BLOCK('implementer', 'fast')}${VALID_BLOCK('reviewer', 'fast')}`;
+  const result = read(text, homeWith('autonomy: trusted\n'));
+  assert.equal(result.raw.split('express-driver-models:').length - 1, 2);
+  assert.equal(parseDriverModels(result.raw).ok, false);
+  assert.deepEqual(result.warnings, []);
+});
+
+test('the variable\'s key drops every chunk of the file\'s for it', () => {
+  const result = read('auto-merge-max-lines: 30', homeWith('auto-merge-max-lines: 1\nautomerge-max-lines: 2\nautonomy: trusted\n'));
+  assert.ok(!result.raw.includes(': 1') && !result.raw.includes(': 2'));
+  assert.deepEqual(parseFlatLines(result.raw), { 'auto-merge-max-lines': '30', autonomy: 'trusted' });
+});
+
+test('within one source the last flat chunk of a key still reads last', () => {
   const result = read('autonomy: trusted\nautonomy: unattended', homeWith('model-stance: economy\n'));
   assert.deepEqual(parseFlatLines(result.raw), { autonomy: 'unattended', 'model-stance': 'economy' });
 });
@@ -82,7 +104,29 @@ test('malformed model-profiles variable block is dropped for the file\'s', () =>
   const result = read('model-profiles:\n  fast:\n    bogus: x\n', homeWith('model-profiles:\n  fast:\n    model: haiku\n'));
   assert.ok(result.raw.includes('model: haiku'));
   assert.ok(!result.raw.includes('bogus'));
-  assert.equal(result.warnings.length, 1);
+  assert.deepEqual(result.warnings, ['resolve-policy: warning: model-profiles has invalid value "model-profiles:" in CLAUDE_TWEAKS_FACTORY_POLICY — using ~/.claude-tweaks/factory-policy.yml\'s block\n']);
+});
+
+test('both blocks malformed: the variable\'s block is kept, no drop warning', () => {
+  const result = read('express-driver-models:\n  bogus: fast\n', homeWith('express-driver-models:\n  nope: fast\n'));
+  assert.ok(result.raw.includes('bogus: fast'));
+  assert.deepEqual(result.warnings, []);
+});
+
+test('origin names the sources that supplied winning chunks', () => {
+  const envText = 'model-stance: economy';
+  const commentOnly = read(envText, homeWith('# nothing here\n'));
+  assert.deepEqual(commentOnly, { raw: envText, origin: 'env', warnings: [] });
+  const overridden = read('model-stance: economy\nautonomy: trusted\n', homeWith('model-stance: max-rigor\n'));
+  assert.equal(overridden.origin, 'env');
+  assert.equal(overridden.raw, 'model-stance: economy\nautonomy: trusted\n');
+  const fileOnlyWins = read('# just a comment', homeWith('autonomy: trusted\n'));
+  assert.deepEqual(fileOnlyWins, { raw: 'autonomy: trusted\n', origin: 'file', warnings: [] });
+});
+
+test('whitespace-only file plus a variable: origin env, raw is the variable verbatim', () => {
+  const envText = 'model-stance: economy # keep\n';
+  assert.deepEqual(read(envText, homeWith('  \n\n')), { raw: envText, origin: 'env', warnings: [] });
 });
 
 test('malformed variable map block with no file block is kept (nothing to fall back to)', () => {

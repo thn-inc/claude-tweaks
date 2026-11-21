@@ -54,21 +54,28 @@ function canonicalKey(key) {
   return entry && entry.replacedBy ? entry.replacedBy : key;
 }
 
-// Last chunk of a key wins within one source; Map keeps first-appearance order.
+// Every chunk of a key is kept, in order, so the resolver applies its own within-source
+// rules (a new name beats its alias, a second map block is invalid): the merge runs after
+// the resolver's RENAMED_KEYS normalization, not instead of it. Map keeps first-appearance order.
 function byCanonicalKey(text) {
   const map = new Map();
-  for (const chunk of splitTopLevelChunks(text)) map.set(canonicalKey(chunk.key), chunk);
+  for (const chunk of splitTopLevelChunks(text)) {
+    const key = canonicalKey(chunk.key);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(chunk);
+  }
   return map;
 }
 
 // A variable's map block that would not parse is dropped for the file's. risk-path-globs
 // is never judged here: its rows are checked against risk-categories, which only the
 // resolver can see.
-function isMalformedMapBlock(key, chunk) {
+function isMalformedMapBlock(key, chunks) {
   const entry = POLICY_KEYS.find((candidate) => candidate.key === key);
   if (!entry || entry.type !== 'map') return false;
-  if (key === 'express-driver-models') return parseDriverModels(chunk.text).ok === false;
-  if (key === 'model-profiles') return modelProfilesEntry(chunk.text).invalid === true;
+  const text = chunks.map((chunk) => chunk.text).join('\n');
+  if (key === 'express-driver-models') return parseDriverModels(text).ok === false;
+  if (key === 'model-profiles') return modelProfilesEntry(text).invalid === true;
   return false;
 }
 
@@ -98,17 +105,24 @@ function readFactoryPolicy({ env = process.env, homeDir, readFile = (p) => fs.re
 
   const envChunks = byCanonicalKey(fromEnv);
   const fileChunks = byCanonicalKey(fromFile);
-  const winners = [];
-  for (const [key, chunk] of envChunks) {
-    if (fileChunks.has(key) && isMalformedMapBlock(key, chunk)) {
-      warnings.push(`resolve-policy: warning: ${key} has invalid value "${chunk.text.split('\n')[0].trimEnd()}" in ${FACTORY_POLICY_ENV} — using ~/${FACTORY_POLICY_REL_PATH}'s block\n`);
-      winners.push(fileChunks.get(key));
+  const winners = []; // { from, chunks }
+  for (const [key, chunks] of envChunks) {
+    const dropped = fileChunks.has(key) && isMalformedMapBlock(key, chunks) && !isMalformedMapBlock(key, fileChunks.get(key));
+    if (dropped) {
+      warnings.push(`resolve-policy: warning: ${key} has invalid value "${chunks[0].text.split('\n')[0].trimEnd()}" in ${FACTORY_POLICY_ENV} — using ~/${FACTORY_POLICY_REL_PATH}'s block\n`);
+      winners.push({ from: 'file', chunks: fileChunks.get(key) });
     } else {
-      winners.push(chunk);
+      winners.push({ from: 'env', chunks });
     }
   }
-  for (const [key, chunk] of fileChunks) if (!envChunks.has(key)) winners.push(chunk);
-  const raw = `${winners.map((chunk) => chunk.text.replace(/\n$/, '')).join('\n')}\n`;
+  for (const [key, chunks] of fileChunks) if (!envChunks.has(key)) winners.push({ from: 'file', chunks });
+
+  // origin names the sources that supplied a winning chunk; when only one did, its text
+  // is the answer verbatim.
+  const sources = new Set(winners.map((winner) => winner.from));
+  if (sources.size === 0) return { raw: null, origin: null, warnings };
+  if (sources.size === 1) return sources.has('env') ? { raw: fromEnv, origin: 'env', warnings } : { raw: fromFile, origin: 'file', warnings };
+  const raw = `${winners.flatMap((winner) => winner.chunks).map((chunk) => chunk.text.replace(/\n$/, '')).join('\n')}\n`;
   return { raw, origin: 'env+file', warnings };
 }
 
