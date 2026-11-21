@@ -67,7 +67,8 @@ function agentIdentity(transcriptText) {
   return m ? m[1] : null;
 }
 
-// Messages deduplicated by id at their largest usage (mergeUsage's per-id max); seconds from the first to the last timestamp.
+// Messages deduplicated by id at their largest usage (mergeUsage's per-id max); seconds from the first to the last
+// timestamp.
 function transcriptCost(transcriptText, mergeUsage) {
   const messages = new Map();
   let first = null;
