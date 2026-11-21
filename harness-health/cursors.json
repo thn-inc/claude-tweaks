@@ -9,7 +9,7 @@
   },
   "library-shape:library-shape": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1795238207992
+    "lastAuditedMs": 1786281312841
   },
   "skill:policy-schema": {
     "lastAuditedSha": null,
@@ -49,7 +49,7 @@
   },
   "skill:transcript-payload-verification": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1795125611669
+    "lastAuditedMs": 1795292305793
   },
   "skill:tidy": {
     "lastAuditedSha": null,
@@ -65,7 +65,7 @@
   },
   "skill:shared-contract-extraction": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794793392421
+    "lastAuditedMs": 1795292309886
   },
   "skill:work-record-facet-rename": {
     "lastAuditedSha": null,
@@ -113,7 +113,7 @@
   },
   "skill:parse-signal-discipline": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1795125620042
+    "lastAuditedMs": 1795288300492
   },
   "skill:scratch-worktree": {
     "lastAuditedSha": null,
@@ -197,7 +197,7 @@
   },
   "skill:single-source-constant-guard": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794860888478
+    "lastAuditedMs": 1795292311929
   },
   "skill:mcp-agent-fetch-node-compute": {
     "lastAuditedSha": null,
@@ -225,7 +225,7 @@
   },
   "skill:lib-module-split": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794860887413
+    "lastAuditedMs": 1795292314022
   },
   "skill:.claude/skills/skill-prose-conformance-tests/SKILL.md": {
     "lastAuditedSha": null,
@@ -305,14 +305,10 @@
   },
   "skill:timing-procedure-read-counting": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1795125617927
+    "lastAuditedMs": 1795292307751
   },
   "skill:record-body-line-addition": {
     "lastAuditedSha": null,
     "lastAuditedMs": 1795165475326
-  },
-  "skill:health-sweep-addition": {
-    "lastAuditedSha": null,
-    "lastAuditedMs": 1795238203267
   }
 }
