@@ -267,7 +267,10 @@ test('firing window is the first timestamped line', async () => {
   const projects = firingFixture();
   try {
     writeT(path.join(projects, 'slug', 'd.jsonl'), [...dispatchLines('2026-11-07T23:00:00Z'), tline({ type: 'user', timestamp: '2026-11-09T00:00:00Z', message: { content: 'x' } })]);
+    writeT(path.join(projects, 'slug', 'e.jsonl'), dispatchLines('2026-11-22T00:00:00Z'));
     assert.deepStrictEqual(await collectDispatchFirings({ roots: [projects], ...WINDOW }), FIRINGS);
+    writeT(path.join(projects, 'slug', 'f.jsonl'), dispatchLines('2026-11-21T23:59:00Z'));
+    assert.strictEqual((await collectDispatchFirings({ roots: [projects], ...WINDOW })).total, 3);
   } finally {
     fs.rmSync(projects, { recursive: true, force: true });
   }
