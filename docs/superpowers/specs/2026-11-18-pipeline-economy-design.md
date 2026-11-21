@@ -251,10 +251,22 @@ Added on 2026-11-19. It sits in Tier 1 and keeps the next free number so no othe
 
 ## Phase 7 — Driver admission by risk and path
 
+## Phase 7: Specified
+
+Records #6018 (the risk ceiling, the ceremony relaxation and the `pending-review` stop for a widened admission), #6019 (the protected-path mode), #6020 (the protected-path list as an editable policy value) and #6021 (the 20-record trial), under parent #6017.
+
 - **Builds:** two policy values: the highest risk label the driver admits, and whether a protected path refuses or requires the reviewer. With the reviewer on, a ceremony label other than fast-lane no longer refuses. A record admitted by any of these always ends at `pending-review` for a human merge. The protected-path list becomes a default a project can edit, with the factory able to set a floor.
+- **Decided while specifying:**
+  - The risk ceiling takes `low`, `medium` or `high`. `high` is allowed, unlike `express-driver-max-size`, because every record admitted this way waits for a human merge.
+  - Ceremony relaxes only when `express-driver-review` is set to `on`, so the default `beyond-express` reproduces today without a third key.
+  - The merge stop recomputes the widenings from the record's live labels and stops when the driver's own list is missing, so it fails closed.
+  - Under `reviewer`, the protected paths that act at push or build time keep refusing: CI config, git hooks, `package.json` and agent settings. Only merge-time paths (hook code, shared contracts, `CODEOWNERS`, the policy and verify-scope files) pass behind the reviewer.
+  - The list is fully editable, removals included, and a removal reaches the express lane too. It resolves from the main checkout, so a record cannot widen its own run by editing `policy.yml`.
+  - The trial runs `/claude-tweaks:review` on each driven PR. Guard 1 compares its Critical-or-Important share with the 70% baseline, guard 3 is read 14 days after the last merge, and guard 2 does not apply.
+- **Not covered:** the factory floor for the list, and the stricter-of rule for the risk ceiling. Both wait for Phase 11's factory layer.
 - **Done when:** a 20-record trial in this repository runs with the reviewer on, `express-driver-max-size: medium` and a raised `express-driver-max-key-files`, and the guards are no worse than the same records' lane today.
-- **Waits for:** Phases 2 and 3.
-- **Expected effect:** admission rises from 11% to about 61%.
+- **Waits for:** Phases 2 and 3, both merged.
+- **Expected effect:** admission rises from 11% to about 61%. Keeping the build-time paths refused may land it lower.
 
 ## Phase 8 — Admissible records reach the driver
 
@@ -270,6 +282,10 @@ Added on 2026-11-19. It sits in Tier 1 and keeps the next free number so no othe
 - **Expected effect:** Opus implementers, about $3 per run, fall to near zero; mechanical tasks cost at most $0.34.
 
 ## Phase 10 — Lenses chosen per run
+
+## Phase 10: Specified
+
+Records #5998 (each lens's confirmed-finding rate over its last 20 runs, and a per-run record of which lenses ran), #6001 (the selection function, its CLI and the `review-lens-selection` key), #6000 (a read-only `lens-reviewer` driver worker role and a launcher) and #6003 (`review-lens-dispatch: worker`), under parent #6005. #6001 is blocked by #5998; #6003 is blocked by #6000 and #6001; all four wait on #5825, and #6000 also on #5942.
 
 - **Builds:**
   - A selection function, in code, from the diff's facts and each lens's confirmed-finding rate in this repository over its last 20 runs. No model chooses.
@@ -298,6 +314,18 @@ Added on 2026-11-19. It sits in Tier 1 and keeps the next free number so no othe
 - **Expected effect:** the main session's share of cost, 41% today, goes to zero for driver records.
 
 ## Phase 14 — Review replay
+
+## Phase 14: Specified
+
+Records #5990 (an effort key on a replay arm, and a refusal to score an agent that ran at another effort), #5991 (the lens reviewers, replayed across tiers and efforts) and #5992 (the task and whole-branch reviewers, and the task-versus-branch counterfactual), under parent #5989. #5991 is blocked by #5990 and #5992 by #5991.
+
+- **Decided while specifying:**
+  - A replay sends the archived reviewer's own prompt, rewritten to a clean two-commit repository, not a prompt rebuilt from today's templates, so an arm differs from the archive only in model and effort.
+  - Findings are matched by location (same path, lines within 5), not by a model judge; a finding with no location is reported as unlocated.
+  - The effort an arm asks for is checked against the effort the agent's transcript recorded, and a slot at another effort counts as not judged.
+  - The live replay run is not a record: it runs from an interactive session after #5992, as #5630 does for the tiebreak replay.
+- **Not covered:** choosing each review's tier and effort, which is that live run.
+- **Open:** #5991 and #5992 each carry a staged question, a control arm that shows how far a replay at the archived tier reproduces the archive, and their `ready` label is cleared until it is answered.
 
 - **Builds:** `tools/review-replay.js` arms that answer three questions on archived runs: what task reviews catch that the whole-branch review would not, how each lens performs on Haiku, Sonnet and Opus, and what each review finds at `low`, `medium` and `high` effort.
 - **Why reviews get no retry:** a review that misses a finding looks like a clean review, so nothing would trigger a second attempt. A review gets one fixed effort, chosen from the replay.
