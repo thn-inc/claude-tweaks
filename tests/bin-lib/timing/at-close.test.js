@@ -1483,3 +1483,24 @@ test('AC1.1 archive twin: attribution keys on the basename', async () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('AC1.1 dispatches scope is per directory: a resumer\'s own-slug subagents stay, the dispatcher\'s Task call is replaced by its descendants', async () => {
+  // Guard "a directory holding no attributed Task call is not filtered" (scopeDirItems' `some(scoped)` early return): filtering every directory turns this red (r1 would vanish).
+  const root = gitRepo();
+  try {
+    const cfg = path.join(root, 'cfg');
+    agentSession(cfg, root, 'S1', [
+      { id: 't1', depth: 1, prompt: names(root, RUN_1), usage: A },
+      { id: 'c1', depth: 2, parent: 't1', usage: OTHER },
+    ]);
+    const { runDir, wt } = await dispatchedRun(root, RUN_1, { sid: 'S1', resumeSid: 'S2' });
+    agentSession(cfg, wt, 'S2', [{ id: 'r1', depth: 1, usage: B }]);
+    writeTranscript(cfg, wt, [B, B], 'S2');
+    assert.equal((await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } })).status, 'written');
+    const timing = readTiming(runDir);
+    assert.deepStrictEqual(timing.dispatches.items.map((d) => d.agentId).sort(), ['c1', 'r1']);
+    assert.deepStrictEqual(pickTokens(timing.totals.tokens), plus(twice(A), twice(B)));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

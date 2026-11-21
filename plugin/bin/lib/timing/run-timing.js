@@ -113,27 +113,28 @@ function runWindow(runDir, events, runState) {
 // `dispatches` value, before stripInternalFields.
 // { deadlineAt, signal } (both optional): past the deadline, or once the signal
 // aborts, reading stops and the result is null (not a dispatches value).
-// scopeDispatchesTo (optional, #5647): a non-empty array of agent transcript paths
-// (a dispatched run's attributed Task calls). Only the items whose parentAgentId chain
-// (through the items read, at most MAX_SCOPE_HOPS hops) reaches one of them are kept, and
-// those scoped items themselves are dropped (their rows are in totals.tokens). Absent or
-// empty: nothing is filtered.
+// scopeDispatchesTo (optional, #5647): a non-empty array of agent transcript paths (a dispatched
+// run's attributed Task calls). It scopes per subagents directory: a directory read that holds at
+// least one of them keeps only the items whose parentAgentId chain (through that directory's items,
+// at most MAX_SCOPE_HOPS hops) reaches one, and drops those scoped agents themselves (their rows
+// are in totals.tokens); every other directory read (a resumer's own-slug session, say) keeps its
+// whole window view. Absent or empty: nothing is filtered.
 const MAX_SCOPE_HOPS = 10;
-function scopeItems(items, scopeDispatchesTo) {
-  const real = (p) => { const abs = path.resolve(p); return canonicalRealpath(abs) || abs; };
-  const scoped = new Set(scopeDispatchesTo.map(real));
-  const byId = new Map(items.filter((d) => typeof d.agentId === 'string').map((d) => [d.agentId, d]));
-  const isScoped = (d) => typeof d.transcriptPath === 'string' && scoped.has(real(d.transcriptPath));
-  return items.filter((d) => {
-    if (isScoped(d)) return false;
-    let cur = d;
+function scopeDirItems(items, scoped, resolveFrom) {
+  const real = (p) => { const abs = path.resolve(resolveFrom, p); return canonicalRealpath(abs) || abs; };
+  const flagged = items.map((d) => ({ d, scoped: typeof d.transcriptPath === 'string' && scoped.has(real(d.transcriptPath)) }));
+  if (!flagged.some((f) => f.scoped)) return items;
+  const byId = new Map(flagged.filter((f) => typeof f.d.agentId === 'string').map((f) => [f.d.agentId, f]));
+  return flagged.filter((f) => {
+    if (f.scoped) return false;
+    let cur = f;
     for (let hop = 0; hop < MAX_SCOPE_HOPS; hop++) {
-      cur = typeof cur.parentAgentId === 'string' ? byId.get(cur.parentAgentId) : undefined;
+      cur = typeof cur.d.parentAgentId === 'string' ? byId.get(cur.d.parentAgentId) : undefined;
       if (!cur) return false;
-      if (isScoped(cur)) return true;
+      if (cur.scoped) return true;
     }
     return false;
-  });
+  }).map((f) => f.d);
 }
 
 async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal = null, window: given, worktree = null, scopeDispatchesTo } = {}) {
@@ -145,6 +146,9 @@ async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal
     try { return fs.lstatSync(dir).isSymbolicLink() ? dir : fs.realpathSync(dir); } catch { return dir; }
   };
   const dirs = [...new Set(paths.map(canonical))];
+  const scoped = Array.isArray(scopeDispatchesTo)
+    ? new Set(scopeDispatchesTo.map((p) => { const abs = path.resolve(cwd, p); return canonicalRealpath(abs) || abs; }))
+    : null;
   const items = [];
   const reasons = [];
   let excludedOutsideWindow = 0;
@@ -155,13 +159,12 @@ async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal
     reasons.push(...r.value.dirNotes);
     if (r.value.notFound) { reasons.push(r.value.notFound); continue; }
     found += 1;
-    items.push(...r.value.items);
+    items.push(...(scoped ? scopeDirItems(r.value.items, scoped, cwd) : r.value.items));
     excludedOutsideWindow += r.value.excludedOutsideWindow;
   }
   if (found === 0) return { notFound: reasons.length ? reasons.join('; ') : 'no transcript resolved' };
   // A direct (non-workflow) item keeps its pre-workflow shape: both keys null -> dropped.
-  const kept = Array.isArray(scopeDispatchesTo) && scopeDispatchesTo.length ? scopeItems(items, scopeDispatchesTo) : items;
-  const agg = aggregateDispatches(kept.map((d) => {
+  const agg = aggregateDispatches(items.map((d) => {
     if (d.workflowRunId !== null || d.workflowPhase !== null) return d;
     const { workflowRunId: _run, workflowPhase: _phase, ...direct } = d;
     return direct;

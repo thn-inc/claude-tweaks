@@ -434,8 +434,9 @@ test('#5556: timing.questions is [] with no ask, absent without tokens, and clip
 });
 
 // ---- #5647: scopeDispatchesTo ----
-// Guards -> tests: the non-empty check ("an empty or absent scope keeps all five"), the filter and its
-// chain walk ("keeps only descendants": g1 is two hops from t1), the drop of scoped items (t1 absent).
+// Guards -> tests: the per-directory "holds a scoped agent" check ("an empty or absent scope keeps all
+// five", and at-close.test.js's per-directory case), the filter and its chain walk ("keeps only
+// descendants": g1 is two hops from t1), the drop of scoped items ("drops every scoped agent").
 function scopedSession() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-scope-'));
   const sub = path.join(dir, 'sess', 'subagents');
@@ -455,6 +456,7 @@ test('scopeDispatchesTo keeps only descendants of the scoped agents', async () =
     const d = await collectDispatches([main], [], dir, { scopeDispatchesTo: [path.join(fs.realpathSync(sub), 'agent-t1.jsonl')] });
     assert.deepEqual(d.items.map((i) => i.agentId).sort(), ['c1', 'g1']);
     assert.equal(Object.values(d.byRole).reduce((n, b) => n + b.dispatches, 0), 2);
+    assert.equal(Object.values(d.byTier).reduce((n, b) => n + b.dispatches, 0), 2);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

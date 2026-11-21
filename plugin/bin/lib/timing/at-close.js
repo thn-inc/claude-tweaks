@@ -3,15 +3,15 @@
 // Every closing path calls this module in-process: hooks.js close-run and
 // teardown-run, the reconciler's archiveRunDir (writePhaseTimingSync, which
 // never reads a transcript), and bin/timing-at-close.js (the background token
-// pass spawnTokenPass starts). Token totals come only from the run's own
-// transcript — {configDir}/projects/{slug of the run's worktree}/{sessionId}.jsonl
-// — never from a projects-wide or newest-candidate search, so two runs of one
-// dispatch session (one session id, two worktrees) never read each other's.
-// A `dispatched: true` run also counts the depth-1 Task-call transcripts of its
-// dispatching and resuming sessions whose dispatch prompt names exactly this run
-// (#5647; transcript.js locateTaskTranscripts), and its `dispatches` view is scoped to
-// their descendants. Known edge: a resuming session's depth-1 agents that do not name
-// the run, and the resumer's main rows when its transcript is not under the own slug, are not counted.
+// pass spawnTokenPass starts). Token totals come from the run's own transcript —
+// {configDir}/projects/{slug of the run's worktree}/{sessionId}.jsonl, never a newest-candidate
+// pick — and, for a `dispatched: true` run, also from the depth-1 Task-call transcripts of its
+// dispatching and resuming sessions whose dispatch prompt names exactly this run (#5647;
+// transcript.js locateTaskTranscripts, a session-id lookup across every slug); its `dispatches`
+// view is then scoped to those Task calls' descendants. Two runs of one session never share rows:
+// the Task calls are attributed by run id and every row is clipped to the run's lifetime. Known
+// edge: a resuming session's depth-1 agents that do not name the run, and the resumer's main rows
+// when its transcript is not under the own slug, are not counted.
 // A timing.json that already has token totals is kept byte-identical; a
 // spec-N child of a multi-record run is never written (the parent's file
 // covers the whole run). Token rows are clipped to the run's own lifetime
