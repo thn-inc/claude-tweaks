@@ -858,6 +858,29 @@ const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, de
   return { ...result, extra: { ...(result.extra || {}), tests: ctx.workerTestMode } };
 });
 
+// The review fix round's implementer relaunch (#5942): runs `run` (runImplementer; a test seam) and writes
+// the launch's own worker line through ctx.events.emit, so its `model` and `effort` are the launch's own
+// and sit before the review line. The line carries the worker step's keys plus `fix: true`. A refusal
+// (`noLine`) and a throw that resolved no model write none, as workerStep writes none; a throw that
+// carries `err.model` writes a `fail` line and rethrows unchanged. After an interrupt the signal handler
+// has already written the stop and final line, so no line is written. Returns the result unchanged.
+async function fixWorkerLaunch(ctx, deps, extraPrompt, run = runImplementer) {
+  const t0 = deps.now();
+  let result;
+  try {
+    result = await run(ctx, deps, { extraPrompt });
+  } catch (err) {
+    if (!ctx.shared.interrupted && err && typeof err.model === 'string') {
+      ctx.events.emit(STEP.worker, 'fail', deps.now() - t0, undefined, { tests: ctx.workerTestMode, model: err.model, effort: err.effort ?? null, fix: true });
+    }
+    throw err;
+  }
+  if (!ctx.shared.interrupted && result.noLine !== true) {
+    ctx.events.emit(STEP.worker, result.status, deps.now() - t0, result.detail, { ...(result.extra || {}), tests: ctx.workerTestMode, fix: true });
+  }
+  return result;
+}
+
 // Run artifacts the worktree may hold; never committed.
 const PIPELINES_DIR = '.claude-tweaks/pipelines';
 function isRunArtifact(p) {
@@ -1452,7 +1475,7 @@ const reviewStep = defineStep(STEP.review, STOP_CLASSES.PRE_PUSH, (ctx, deps) =>
   commit: commitStep,
   test: testStep,
   check: checkStep,
-  launchImplementer: (c, d, extraPrompt) => runImplementer(c, d, { extraPrompt }),
+  launchImplementer: (c, d, extraPrompt) => fixWorkerLaunch(c, d, extraPrompt),
   testCommand: TEST_COMMAND,
   isRunArtifact,
   indexFlagCheck: newIndexFlagStop,
@@ -1513,5 +1536,5 @@ const CHECK_STEPS = Object.freeze([policyStep, fetchStep, eligibilityStep, admis
 module.exports = {
   STEPS, CHECK_STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
   VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop,
-  testTreeStop, TEST_TREE_UNREADABLE,
+  testTreeStop, TEST_TREE_UNREADABLE, fixWorkerLaunch,
 };

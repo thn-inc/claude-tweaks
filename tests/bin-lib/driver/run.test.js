@@ -18,7 +18,7 @@ const {
 } = require(path.join(LIB, 'driver', 'events'));
 const { run, parseArgs, USAGE, driveRecord, newShared, interruptClass, reraiseAfterFlush } = require(path.join(LIB, 'driver', 'run'));
 const {
-  STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop, testTreeStop, TEST_TREE_UNREADABLE,
+  STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop, testTreeStop, TEST_TREE_UNREADABLE, fixWorkerLaunch,
 } = require(path.join(LIB, 'driver', 'steps'));
 const { ENDED, STATUS_BY_ENDED } = require(path.join(LIB, 'driver', 'budget'));
 const { PROFILES } = require(path.join(LIB, 'model-profiles', 'profiles'));
@@ -2232,7 +2232,7 @@ const BASE_CALLS_FIX = [
   'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType',
   'lstatType', 'lstatType', 'writeFileExclusive', 'lstatType', 'lstatType', 'lstatType',
   'mkdirSync', 'mkdirSync', 'runner', 'readFile', 'git --no-optional-locks',
-  'git --no-optional-locks', 'git rev-parse', 'mkdirSync', 'worker', 'lstatType', 'lstatType',
+  'git --no-optional-locks', 'git rev-parse', 'mkdirSync', 'worker', 'appendFile', 'lstatType', 'lstatType',
   'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType',
   'lstatType', 'lstatType', 'rmFile', 'lstatType', 'lstatType', 'lstatType', 'lstatType',
   'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'mkdirSync',
@@ -2256,7 +2256,7 @@ const BASE_LINES_PLAIN = [
 const BASE_LINES_FIX = [
   ['policy', 'ok'], ['fetch', 'ok'], ['eligibility', 'ok'], ['admission', 'ok'], ['claim', 'ok'],
   ['run-dir', 'ok'], ['worktree', 'ok'], ['worker', 'ok'], ['commit', 'ok'], ['test', 'ok'],
-  ['check', 'ok'], ['review', 'ok'], ['push', 'ok'], ['pr', 'ok'], ['record-pr', 'ok'],
+  ['check', 'ok'], ['worker', 'ok'], ['review', 'ok'], ['push', 'ok'], ['pr', 'ok'], ['record-pr', 'ok'],
   ['set-config', 'ok'], ['summary', 'ok'], ['ci', 'ok'], ['merge-entry', 'stop'], ['merge', 'ok'],
   ['final', 'ok'],
 ];
@@ -2274,6 +2274,8 @@ const K5 = ['costUsd', 'denials', 'detail', 'discarded', 'ms', 'record', 'reprod
 const KA = ['authority', ...K0];
 const KW = [...K1, 'effort', 'model', 'tests'].sort();
 const K5M = [...K5, 'effort', 'model'].sort();
+// The review fix round's own worker line (#5942): the worker line's keys plus `fix`.
+const KWF = [...KW, 'fix'].sort();
 const BASE_KEYS_PLAIN = [
   K0, K0, K0, KA, K0, K0,
   K0, KW, K2, K2, K0, K0,
@@ -2282,7 +2284,7 @@ const BASE_KEYS_PLAIN = [
 ];
 const BASE_KEYS_FIX = [
   K0, K0, K0, KA, K0, K0,
-  K0, KW, K2, K2, K0, K5M,
+  K0, KW, K2, K2, K0, KWF, K5M,
   K0, K2, K0, K0, K0, K3,
   K2, K2, K4,
 ];
@@ -3933,8 +3935,9 @@ const FAST_IMPLEMENTER = { ...POLICY['express-driver-models'], implementer: 'fas
 test('AC7.1: every worker line carries the model its launch was given', async () => {
   const h = fixRig({ policy: { 'express-driver-review': 'on', 'express-driver-models': FAST_IMPLEMENTER } });
   assert.equal(await run(['#7'], h.deps), 0);
-  assert.equal(workerLines(h).length, 1, 'one worker line, so the first is every one');
-  const [line] = workerLines(h);
+  assert.equal(workerLines(h).length, 2, 'the worker step and the fix relaunch (#5942)');
+  const [line, fixLine] = workerLines(h);
+  assert.equal(fixLine.model, implementerCalls(h)[1].args[0].model);
   assert.equal(line.model, M('fast'));
   assert.equal(line.model, implementerCalls(h)[0].args[0].model);
   const reviewerCall = h.calls.find((c) => c.kind === 'worker' && c.args[0].role === 'reviewer');
@@ -4077,6 +4080,113 @@ test('#5942: old readers tolerate the effort field', async () => {
     assert.deepEqual(withEffort, without, name);
     assert.deepEqual(lines.at(-1).stop, stripped.at(-1).stop, name);
   }
+});
+
+// --- the review fix round's own worker line (#5942, Task 5) -------------------------------------
+const MEDIUM_STANDARD = { 'model-profiles': { standard: { effort: 'medium' } } };
+
+test('#5942 AC6.1 (fix round): the fix relaunch writes its own worker line with its own effort', async () => {
+  const h = fixRig({ policy: { 'express-driver-review': 'on', ...PROFILE_EFFORT, ...MEDIUM_STANDARD } });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const lines = h.lines();
+  const workers = lines.filter((l) => l.step === STEP.worker);
+  assert.equal(workers.length, 2, 'the worker step and the fix relaunch');
+  const [first, fix] = workers;
+  assert.ok(!('fix' in first), 'the worker step\'s own line is not marked');
+  assert.equal(fix.fix, true);
+  assert.equal(fix.tests, first.tests);
+  const [call1, call2] = implementerCalls(h);
+  assert.equal(first.effort, 'medium');
+  assert.equal(fix.effort, 'medium');
+  assert.equal(fix.effort, call2.args[0].effort);
+  assert.equal(fix.model, call2.args[0].model);
+  assert.equal(lines[lines.indexOf(fix) + 1].step, STEP.review, 'the fix line sits immediately before the review line');
+  const [review] = reviewLines(h);
+  assert.equal(review.effort, 'high', 'the review line keeps the reviewer\'s own level');
+  assert.notEqual(review.effort, fix.effort);
+  assert.equal(call1.args[0].effort, 'medium');
+});
+
+test('#5942 (fix round): with model-effort unset the fix worker line\'s effort is null', async () => {
+  const h = fixRig();
+  assert.equal(await run(['#7'], h.deps), 0);
+  const fix = workerLines(h)[1];
+  assert.ok('effort' in fix && fix.effort === null);
+  assert.equal(fix.fix, true);
+});
+
+test('#5942 (fix round): a refused fix relaunch writes no worker line', async () => {
+  const emitted = [];
+  const ctx = { events: { emit: (...a) => emitted.push(a) }, shared: { interrupted: null }, workerTestMode: 'declared' };
+  const refusal = { status: 'fail', noLine: true, code: 'DRIVER_MODEL_REFUSED', detail: 'no model for driver role implementer' };
+  const out = await fixWorkerLaunch(ctx, { now: () => 0 }, 'x', async () => refusal);
+  assert.equal(out, refusal, 'the helper returns the result unchanged');
+  assert.deepEqual(emitted, []);
+});
+
+test('#5942 (fix round): a launcher throw that resolved still writes the fix worker line', async () => {
+  const h = fixRig({
+    policy: { 'express-driver-review': 'on', ...PROFILE_EFFORT },
+    script: [[(c) => isImplementerLaunch(c) && implementerCalls(h).length === 2, new Error('fix launch blew up')]],
+  });
+  await run(['#7'], h.deps);
+  const workers = workerLines(h);
+  assert.equal(workers.length, 2);
+  const fix = workers[1];
+  assert.equal(fix.status, 'fail');
+  assert.equal(fix.fix, true);
+  assert.equal(fix.model, implementerCalls(h)[1].args[0].model);
+  assert.equal(fix.effort, 'high');
+  assert.ok('tests' in fix);
+  const [review] = reviewLines(h);
+  assert.equal(review.status, 'fail');
+  assert.match(review.detail, /^the fix round failed unexpectedly: /);
+  const order = h.lines().map((l) => l.step);
+  assert.equal(order.lastIndexOf(STEP.review), order.lastIndexOf(STEP.worker) + 1, 'the review line follows the fix line');
+});
+
+test('#5942 (fix round): a throw without a resolved model writes no fix worker line and rethrows unchanged', async () => {
+  const emitted = [];
+  const ctx = { events: { emit: (...a) => emitted.push(a) }, shared: { interrupted: null }, workerTestMode: 'declared' };
+  const boom = new Error('before resolution');
+  await assert.rejects(fixWorkerLaunch(ctx, { now: () => 0 }, 'x', async () => { throw boom; }), (e) => e === boom);
+  assert.deepEqual(emitted, []);
+});
+
+test('#5942 (fix round): an interrupt during the fix launch writes no fix worker line', async () => {
+  const emitted = [];
+  const ctx = { events: { emit: (...a) => emitted.push(a) }, shared: { interrupted: null }, workerTestMode: 'declared' };
+  const flag = async () => { ctx.shared.interrupted = 'SIGTERM'; return { status: 'ok', extra: { model: 'm', effort: null } }; };
+  await fixWorkerLaunch(ctx, { now: () => 0 }, 'x', flag);
+  const thrown = async () => { ctx.shared.interrupted = 'SIGTERM'; throw Object.assign(new Error('killed'), { model: 'm', effort: 'high' }); };
+  await assert.rejects(fixWorkerLaunch(ctx, { now: () => 0 }, 'x', thrown), /killed/);
+  assert.deepEqual(emitted, []);
+});
+
+test('#5942 (fix round): step-yield counts the fix worker line in the worker row', async () => {
+  const h = fixRig({ policy: { 'express-driver-review': 'on', ...PROFILE_EFFORT } });
+  await run(['#7'], h.deps);
+  const dir = tmpDir('fix-worker-row-');
+  const write = (lines) => fs.writeFileSync(path.join(dir, 'driver-events.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+  write(h.lines());
+  const row = (name) => driverStepsOf(dir, fs).steps.find((s) => s.name === name);
+  const [first, fix] = workerLines(h);
+  const worker = row(STEP.worker);
+  assert.equal(worker.count, 2);
+  assert.ok(fix.ms >= 0 && fix.usage, 'the fixture\'s fix line carries ms and usage');
+  assert.equal(worker.minutes, (first.ms + fix.ms) / 60000);
+  const tokens = (l) => Object.values(l.usage).reduce((a, n) => a + (Number.isFinite(n) ? n : 0), 0);
+  assert.equal(worker.tokens, tokens(first) + tokens(fix));
+  assert.equal(worker.failed, 0);
+  // A failed fix launch counts once in the worker row and once in the review row.
+  let seenWorkers = 0;
+  const failedLines = h.lines().map((l) => {
+    if (l.step === STEP.worker) { seenWorkers += 1; return seenWorkers === 2 ? { ...l, status: 'fail' } : l; }
+    return l.step === STEP.review ? { ...l, status: 'fail' } : l;
+  });
+  write(failedLines);
+  assert.equal(row(STEP.worker).failed, 1);
+  assert.equal(row(STEP.review).failed, 1);
 });
 
 test('AC8: one fix round, in order', async () => {
