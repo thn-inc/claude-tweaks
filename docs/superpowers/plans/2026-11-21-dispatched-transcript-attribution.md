@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A dispatched run whose session transcript sits outside its own worktree slug gets `timing.json` token totals from the dispatching session's Task-call transcripts that name its run id, and from nothing else.
+**Goal:** A dispatched run's `timing.json` token totals count its own-slug transcript (when one exists) plus the dispatching and resuming sessions' Task-call transcripts that name its run id, and nothing else; its `dispatches` view lists only those Task calls' own descendants.
 
-**Architecture:** `plugin/bin/lib/timing/transcript.js` gains `locateTaskTranscripts`, which finds a session's depth-1 agent files whose dispatch prompt names exactly one pipeline run id. `plugin/bin/lib/timing/at-close.js`'s `ownTranscripts` calls it as a fallback, only for a `dispatched: true` run whose own-slug lookup found nothing, and hands the paths to `deriveTiming` unchanged (rows still clipped to the run window). The one maintainer tool that reads `transcripts[].path` back as a session id learns the agent-path shape.
+**Architecture:** `plugin/bin/lib/timing/transcript.js` gains `locateTaskTranscripts`, which finds a session's depth-1 agent files whose dispatch prompt names exactly one pipeline run id. For a `dispatched: true` run, `plugin/bin/lib/timing/at-close.js`'s `ownTranscripts` returns the own-slug hit (if any) together with those Task-call paths. `deriveTiming` reads them all, still clipping rows to the run window, and scopes `dispatches` to the Task calls' descendant agents (`plugin/bin/lib/timing/run-timing.js`). The one maintainer tool that reads `transcripts[].path` back as a session id learns the agent-path shape.
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`.
 
@@ -14,7 +14,7 @@ Scope keywords: ownTranscripts, locateTranscripts
 
 ## Global Constraints
 
-- Applies only when `run-state.json` has `dispatched: true` and the own-slug lookup (`{configDir}/projects/{slug(worktree)}/{sessionId}.jsonl`) found nothing. Every other run keeps today's behavior byte for byte: the existing AC9.1 and AC9.2 tests in `tests/bin-lib/timing/at-close.test.js` stay unchanged and green.
+- Applies only when `run-state.json` has `dispatched: true` (spec, Plan Review Clarifications: decided by the user). A non-dispatched run keeps today's behavior byte for byte: the existing AC9.1 and AC9.2 tests in `tests/bin-lib/timing/at-close.test.js` stay unchanged and green. A dispatched run with no attributed Task call is also unchanged, including its `dispatches` view.
 - Nothing in the resolver throws (`at-close.js`: "Nothing here throws: a failure is one SKIP line"). A failure is a reason string.
 - Under `plugin/bin/`, filesystem checks go through `plugin/bin/lib/path-guard` (`lstatType`, `resolveLeaf`, `canonicalRealpath`). Never use bare `fs.existsSync` or `fs.realpathSync` (`tests/path-guard-conformance.test.js`). No `child_process`.
 - `tools/` does not ship (`docs/decisions/0015-*`): `plugin/` never requires `tools/guard-refusals/transcripts.js`. The plugin's run-id regex lives in `transcript.js`.
@@ -25,20 +25,24 @@ Scope keywords: ownTranscripts, locateTranscripts
 
 **Decision: yes, attribute.** A dispatched run's orchestration happens in the dispatching session's Task calls (`build,test`, then `review,polish,wrap-up`, plus continuations). Each one is a `spawnDepth: 1` agent file under `{slug}/{sessionId}/subagents/`, and its first entry (the dispatch prompt) names the run dir. The rule is the subagent-inheritance case of `tools/guard-refusals/transcripts.js`: a subagent's calls belong to the run named when it was dispatched. It is applied per file, not per row, because ownership of a Task call does not change when it later reads a prior attempt's run dir.
 
+- **Union (decided by the user at plan review):** for a dispatched run, `paths` = the own-slug hit of `sessionId` (today's lookup, when it finds one) ∪ the Task-call files below. They are separate files, so no row is read twice. This changes the totals of the dispatched runs that have an own-slug transcript (41 of 240 November runs): today those count only the dispatcher's own main rows.
 - **Session ids:** the distinct strings among run-state `dispatchSessionId` and `sessionId`. `dispatchSessionId` is stamped only by `hooks.js record-worktree --dispatch` (`plugin/bin/hooks.js` ~746). A human resume overwrites `sessionId` but leaves it intact, so both sessions' Task calls count.
-- **Where:** `{sid}.jsonl` under any slug of `{configDir}/projects` (`locateTranscripts({ sessionId, cwd: null, homeDir: null, configDir })`, realpath-contained and sid-validated), then `subagentsDirFor(thatPath)`. A symlinked directory or file is never followed, and `subagents/workflows/` is not scanned.
+- **Where:** `{sid}.jsonl` under any slug of `{configDir}/projects` (`locateTranscripts({ sessionId, cwd: null, homeDir: null, configDir })`, realpath-contained and sid-validated). Every hit's `subagentsDirFor(hit)` is scanned, and results are deduped by real path. A symlinked directory or file is never followed, and `subagents/workflows/` is not scanned.
+- **`dispatches` scope:** when ≥1 Task-call file is attributed, `deriveTiming` keeps a `dispatches` item only when its `parentAgentId` chain (followed through the items read) reaches an attributed Task-call agent. The attributed agents themselves are dropped from `dispatches`, since their rows are in `totals.tokens`. So another run's agents in the same session and window never appear. Probed: all 297 nested agents in two real dispatched sessions chain to a depth-1 agent. A run with no attributed Task call keeps today's window view.
+- **Known edge (stated in the header):** a resuming session's depth-1 agents that do not name the run, and the resumer's main rows when its transcript is not under the own slug, are not counted. The second is the same gap as ledger row 1 (non-dispatched runs launched from the main checkout).
 - **Which files:** `agent-{id}.jsonl` counts when `agent-{id}.meta.json` parses with `spawnDepth === 1` exactly, and the file's first line (read at most `FIRST_ENTRY_CAP` = 1 MiB) parses as a `type: "user"` entry whose JSON text names exactly one run id, equal to `path.basename(runDir)`.
 - **Run id naming:** `/\.claude-tweaks[\\/]+pipelines[\\/]+(\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*)/g` over the line's raw text. A Windows path inside JSON text shows up as `\\`.
-- **Why depth 1 only:** nested agents (depth ≥ 2) already appear in `timing.json`'s `dispatches` view, the same way an own-slug run's nested agents do. `totals.tokens` keeps meaning "the orchestrating transcripts' rows" for both kinds of run.
+- **Why depth 1 only:** nested agents (depth ≥ 2) appear in `timing.json`'s `dispatches` view, the same way an own-slug run's nested agents do. `totals.tokens` keeps meaning "the orchestrating transcripts' rows" for both kinds of run.
 - **Evidence (probed 2026-11-21 over `~/.claude/projects`):** of 240 dispatched November runs, 41 have an own-slug transcript. Of the 199 whose session transcript sits elsewhere, 197 have ≥1 depth-1 agent whose first line names exactly that run, and 0 depth-1 agents name more than one run. Whole-file mentions are unusable: retries name their prior attempt's run dir, and many nested agents name no run.
-- **Reason when nothing is attributed:** `no {sid}.jsonl under the slug of {worktree}, and no Task-call transcript of session(s) {ids comma-joined} names run {runId}`.
+- **Reason when nothing is found at all** (no own-slug hit, no Task call): `no {sid}.jsonl under the slug of {worktree}, and no Task-call transcript of session(s) {ids comma-joined} names run {runId}`. When `locateTaskTranscripts` returned `notes`, they follow as `({notes joined by '; '})`. A partial result (some paths) logs nothing extra.
+- **Reason when the files read have no rows in the window:** at-close's third SKIP branch reads `own and Task-call transcripts yielded no token totals (…)` when Task-call paths were attributed, and keeps today's `own transcript yielded no token totals (…)` otherwise.
 
 ## Review Focus
 
 1. A dispatch prompt naming the run dir with Windows separators (`C:\\…\\.claude-tweaks\\pipelines\\{id}` in JSON text) is attributed. Task 1 pins this.
 2. A first line longer than the 1 MiB cap is not attributed and nothing throws. Task 1 pins this.
 3. An agent file whose `meta.json` is missing, malformed, or has no `spawnDepth` (an agent still being written, or a drifted layout) is not attributed. Task 1 pins this.
-4. A run resumed by a human (`sessionId` ≠ `dispatchSessionId`) counts both sessions' Task calls. Task 2 pins this.
+4. A run resumed by a human (`sessionId` ≠ `dispatchSessionId`), with the resumer's own-slug transcript present, counts that transcript plus the dispatching session's Task calls. Task 2 pins this.
 5. A token pass over the archive twin (`pipelines/archive/{id}`) attributes by the same basename. Task 2 pins this.
 
 ---
@@ -53,7 +57,7 @@ Scope keywords: ownTranscripts, locateTranscripts
 - Test: `tests/bin-lib/timing/transcript.test.js`
 
 **Interfaces:**
-- Produces: `locateTaskTranscripts({ sessionIds: string[], runId: string, configDir: string, fsImpl?: fs }) -> { paths: string[], notes: string[] }`. `paths` are sorted and deduped. `notes` holds one plain-text line per session id that yielded nothing (no `{sid}.jsonl`, no `subagents/` directory, a symlinked `subagents/`, or an invalid sid). It never throws.
+- Produces: `locateTaskTranscripts({ sessionIds: string[], runId: string, configDir: string, fsImpl?: fs }) -> { paths: string[], notes: string[] }`. `paths` are sorted and deduped by real path, across every slug's hit for each session id. `notes` holds one plain-text line per session id that yielded nothing (no `{sid}.jsonl`, no `subagents/` directory, a symlinked `subagents/`, or an invalid sid). Task 2 appends `notes` to its empty-result reason. It never throws.
 - Produces: `runIdsNamed(text: string) -> string[]` (distinct, in first-seen order) and `FIRST_ENTRY_CAP = 1048576`, both exported.
 - Consumes: the existing `locateTranscripts`, `subagentsDirFor`, `readMeta`, `lstatType`.
 
@@ -71,6 +75,7 @@ Add a fixture builder in the test file: `taskSession(cfg, slug, sid, agents)` wr
 - `Windows-separator run dir in the prompt is attributed`: the prompt is `'C:\\r\\.claude-tweaks\\pipelines\\' + RUN`, and the file is written via `JSON.stringify` so the text carries `\\`.
 - `symlinked agent file is not followed` and `symlinked subagents/ directory is not followed` (lstat guards). Skip on win32 the way the existing `[IL-150]` symlink test does.
 - `two session ids each contribute; paths sorted and deduped` (passing the same sid twice yields no duplicate).
+- `one session id under two slugs: both subagents/ dirs are scanned`: the same `{sid}.jsonl` sits under two slugs, each with one depth-1 agent naming RUN. Both paths are returned.
 - `an invalid session id ('../x') contributes nothing and no other slug is scanned`: a valid agent for RUN exists under a different sid. `paths` is `[]` and `notes` has one entry.
 - `workflow agents under subagents/workflows/ are not candidates`.
 - `runIdsNamed returns distinct ids in order, both separators`.
@@ -102,7 +107,9 @@ git commit -m "Add locateTaskTranscripts — a session's depth-1 agent files who
 **Review risk:** high
 
 **Files:**
-- Modify: `plugin/bin/lib/timing/at-close.js` (header lines 6-9; `ownTranscripts` lines 44-61; its call at line 277)
+- Modify: `plugin/bin/lib/timing/at-close.js` (header lines 6-9; `ownTranscripts` lines 44-61; its call at lines 277-281; the third SKIP branch at line 289)
+- Modify: `plugin/bin/lib/timing/run-timing.js` (`collectDispatches` lines 116-149 and `deriveTiming` lines 208-247: the `scopeDispatchesTo` option)
+- Test: `tests/bin-lib/timing/run-timing.test.js` (the scope filter, unit level)
 - Modify: `plugin/bin/timing-at-close.js:5` (comment: "from the run's own transcript" → own transcript, or a dispatched run's Task-call transcripts naming it)
 - Modify: `docs/plugin-structure.md:281` (same one-clause change)
 - Modify: `docs/journeys/read-where-a-pipeline-run-spent-its-minutes-1928.md:62` (the sentence "Tokens come only from the run's own `{sessionId}.jsonl` under its own worktree slug…" gains the dispatched case)
@@ -112,37 +119,40 @@ git commit -m "Add locateTaskTranscripts — a session's depth-1 agent files who
 
 **Interfaces:**
 - Consumes: `locateTaskTranscripts` (Task 1), looked up at call time through `require('./transcript')` like the existing `locateTranscripts` call, so a test can stub it.
-- Produces: `ownTranscripts(runState, { env?, homeDir?, runId? }) -> { paths, reason }`. `runId` is the run dir's basename. When `runId` is not a string, the fallback is skipped.
+- Produces: `ownTranscripts(runState, { env?, homeDir?, runId? }) -> { paths, taskCalls, reason }`. `paths` is the own-slug hit (if any) followed by `taskCalls`, which holds the attributed Task-call paths (`[]` for a non-dispatched run, or when `runId` is not a string). `reason` is null whenever `paths` is non-empty.
+- Produces: `deriveTiming(runDir, { …, scopeDispatchesTo?: string[] })` and `collectDispatches(paths, events, cwd, { …, scopeDispatchesTo })`. When `scopeDispatchesTo` is a non-empty array, `dispatches.items` keeps an item only when its `parentAgentId` chain (followed through the items read, at most 10 hops) reaches an item whose `transcriptPath` is in `scopeDispatchesTo`. The items in `scopeDispatchesTo` are dropped, and `byTier`/`byRole` are aggregated after the filter. When it is absent or empty, today's output is unchanged.
 
 - [ ] **Step 1: Write the failing tests**
 
 Fixture `dispatchedRun(root, id, { sid, resumeSid })`: `root = gitRepo()` (already imported). `runDir = {root}/.claude-tweaks/pipelines/{id}`, mkdir, then `writeEvents(runDir)`. Stamp it with the real writer: `runCli(HOOKS_JS, ['record-worktree', '--run', runDir, wt, '--dispatch'], { cwd: root, env: { CLAUDE_CODE_SESSION_ID: sid, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' } })` must exit 0. With `resumeSid`, a second `record-worktree` without `--dispatch` follows under that session id (the real resume path). Then `closeRunState(runDir, { explicit: true })`. Session transcripts go under a slug other than `slugForCwd(wt)`, for example `slugForCwd(root)`, the main checkout. Agent files are written with Task 1's shape, with assistant rows stamped 10:01 and 10:09. Ids: `RUN_1 = '2026-11-16T100000-record-1'`, `RUN_2 = '2026-11-16T100000-record-2'`.
 
-- `AC1.1: a dispatched run whose session transcript sits only under the main checkout slug gets token totals from the Task-call transcript that names its run id`: one session, a depth-1 agent naming RUN_1 (usage A), another naming RUN_2 (usage B), two run dirs. RUN_1's `totals.tokens` equal A's agent rows only and RUN_2's equal B's (`pickTokens` against the exact sums). No SKIP lines.
+- `AC1.1: a dispatched run whose session transcript sits only under the main checkout slug gets token totals from the Task-call transcript that names its run id`: one session holds a depth-1 agent `t1` naming RUN_1 (usage A), a depth-1 agent `t2` naming RUN_2 (usage B), a depth-2 agent `c1` with `parentAgentId: 't1'`, and a depth-2 agent `c2` with `parentAgentId: 't2'`, across two run dirs. RUN_1's `totals.tokens` equal A's agent rows only and RUN_2's equal B's (`pickTokens` against the exact sums). RUN_1's `dispatches.items.map(d => d.agentId)` deep-equals `['c1']` and RUN_2's equals `['c2']`. No SKIP lines.
 - `AC1.1: a dispatched run whose Task-call transcripts name a different run id gets none`: only an agent naming RUN_2 exists, so RUN_1 gets phase rows and no `totals.tokens` (`assertPhaseRows`, `Object.hasOwn(...,'tokens') === false`). It gets one SKIP that contains `and no Task-call transcript of session(s) {sid} names run 2026-11-16T100000-record-1`.
 - `AC1.1 gate: a non-dispatched run with a Task-call transcript naming it still gets none`: same files, stamped by `record-worktree` without `--dispatch`. The SKIP equals today's reason (`no {sid}.jsonl under the slug of {wt}`) with no "Task-call" clause. Deleting the `dispatched === true` check turns this red.
-- `AC1.1 priority: a dispatched run with an own-slug transcript keeps own-slug totals`: `writeTranscript(cfg, wt, [A, B], sid)` plus a depth-1 agent naming the run with usage OTHER. Totals equal `sum(A, B)`.
-- `AC1.1 resume: a resumed dispatched run counts both sessions' Task calls`: `sid` = 'S1' with an agent naming RUN_1 (usage A), and `resumeSid` = 'S2' with an agent naming RUN_1 (usage B), each under its own session. Totals equal the sum of both agents' rows.
+- `AC1.1 union: a dispatched run with an own-slug transcript counts it plus its Task calls`: `writeTranscript(cfg, wt, [A, B], sid)` plus a depth-1 agent of the same session naming the run with usage OTHER (two rows). Totals equal `sum(A, B)` plus both OTHER rows.
+- `AC1.1 resume: a resumed dispatched run counts the resumer's own-slug transcript and the dispatching session's Task calls`: `sid` = 'S1' with a depth-1 agent naming RUN_1 (usage A), and `resumeSid` = 'S2' with `writeTranscript(cfg, wt, [B, B], 'S2')` under the own slug. Totals equal both agent rows of A plus both B rows. A second case gives S2 a depth-1 agent naming RUN_1 in place of the own-slug transcript and expects the sum of both sessions' agent rows.
+- `AC1.1 no rows in window: the SKIP names the Task-call transcripts`: one depth-1 agent naming RUN_1 whose rows are stamped 2026-11-15. The run gets phase rows, no `totals.tokens`, and one SKIP containing `own and Task-call transcripts yielded no token totals`.
+- `AC1.1 notes: an empty result carries the lookup notes`: a dispatched run whose `dispatchSessionId` has no `{sid}.jsonl` anywhere. The SKIP contains the extended reason followed by `(` and Task 1's note for that session.
 - `AC1.1 archive twin: attribution keys on the basename`: run `writeTimingAtClose` on a run dir moved to `{pipelines}/archive/{RUN_1}` (`fs.renameSync` after close). Totals as in the first test.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `node --test --test-name-pattern "AC1\.1" tests/bin-lib/timing/at-close.test.js`
-Expected: FAIL after Step 1 — the positive test reports `totals.tokens` missing (the run got phase rows only); the gate and priority tests may already pass.
+Run: `node --test --test-name-pattern "AC1\.1|scopeDispatchesTo" tests/bin-lib/timing/at-close.test.js tests/bin-lib/timing/run-timing.test.js`
+Expected: FAIL after Step 1 — the positive test reports `totals.tokens` missing (the run got phase rows only); the gate test may already pass.
 
 - [ ] **Step 3: Implement the fallback in `ownTranscripts` and pass `runId: path.basename(runDir)` at the call**
 
-Keep the existing early returns (no worktree, no `sessionId`) and the own-slug lookup first. Only when that lookup is empty and `rs.dispatched === true` and `runId` is a string, call `locateTaskTranscripts` with the distinct strings of `[rs.dispatchSessionId, rs.sessionId]`. A non-empty result returns `{ paths, reason: null }`. An empty one returns the extended reason from the Design section. Rewrite the header's lines 6-9 contract to say the same thing in two sentences. Then make the three prose edits listed in Files.
+Keep the existing early returns (no worktree, no `sessionId`). Run the own-slug lookup. When `rs.dispatched === true` and `runId` is a string, also call `locateTaskTranscripts` with the distinct strings of `[rs.dispatchSessionId, rs.sessionId]`. `paths` = own hit (if any) followed by `taskCalls`. A non-empty `paths` returns `reason: null`. An empty one returns today's reason for a non-dispatched run, or the extended reason plus notes (Design section) for a dispatched one. At the call site, pass `scopeDispatchesTo: own.taskCalls` to `deriveTiming`, and pick the third SKIP branch's wording by `own.taskCalls.length`. In `collectDispatches`, apply the scope filter (Interfaces) before `aggregateDispatches`. Add a unit test in `run-timing.test.js`, `scopeDispatchesTo keeps only descendants of the scoped agents`, that drives `collectDispatches` over a subagents dir holding t1 (scoped), c1 (parent t1), g1 (parent c1), t2, and c2 (parent t2), and expects `['c1', 'g1']`. A second unit test expects an empty scope to return all five. Rewrite the header's lines 6-9 contract to say the same thing in two sentences, including the known resume edge. Then make the three prose edits listed in Files.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test tests/bin-lib/timing/at-close.test.js tests/bin-lib/timing/at-close-cli.test.js tests/path-guard-conformance.test.js`
+Run: `node --test tests/bin-lib/timing/at-close.test.js tests/bin-lib/timing/at-close-cli.test.js tests/bin-lib/timing/run-timing.test.js tests/path-guard-conformance.test.js`
 Expected: PASS (AC9.1 and AC9.2 unchanged)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/timing/at-close.js plugin/bin/timing-at-close.js tests/bin-lib/timing/at-close.test.js docs/plugin-structure.md docs/journeys/read-where-a-pipeline-run-spent-its-minutes-1928.md
+git add plugin/bin/lib/timing/at-close.js plugin/bin/lib/timing/run-timing.js plugin/bin/timing-at-close.js tests/bin-lib/timing/at-close.test.js tests/bin-lib/timing/run-timing.test.js docs/plugin-structure.md docs/journeys/read-where-a-pipeline-run-spent-its-minutes-1928.md
 git commit -m "Attribute a dispatched run's Task-call transcripts at close — the run id the prompt names"
 ```
 
@@ -156,7 +166,7 @@ git commit -m "Attribute a dispatched run's Task-call transcripts at close — t
 - Reader inventory of `timing.json` `transcripts`, from `grep -rn "\.transcripts\b\|transcripts\[" plugin tools perf tests`:
   - `guards.js readTiming` is a list-all reader: it turns each path into a session id. Changes here.
   - `tools/pipeline-cost-report/reviews.js:213-229` consumes `readTiming(...).sessions`. Fixed by this task; no edit.
-  - `tools/efficiency-report.js:331` reads a timing it rebuilds itself from its own paths, never the at-close file. No change.
+  - `tools/efficiency-report.js:306-331` reads the archived at-close `timing.json`, takes `transcripts[].path` and rebuilds through `buildTiming` with no clip. No change: an attributed Task-call file belongs wholly to its run, so an unclipped read of it counts only that run's rows. The rebuilt `dispatches` is the unscoped window view, which is today's behavior for every run. It reads only per-phase `procedureFiles`.
   - `plugin/bin/phase-timing.js:77,250,300` is its own `--transcript` argv. No change.
   - `plugin/bin/lib/timing/run-timing.js:262` is the writer. No change.
   - `tests/bin-lib/timing/{cli,run-timing}.test.js` and `tests/wait-polls/cli.test.js` assert their own fixtures. No change.
