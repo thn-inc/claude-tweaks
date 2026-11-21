@@ -53,6 +53,13 @@ test('launchEffort follows the diff ceiling', () => {
   assert.strictEqual(r.effort, 'high');
   assert.strictEqual(r.launchEffort, 'high');
 });
+test('launchEffort is read after the diff ceiling, not captured from the policy row', () => {
+  const policy = { 'model-effort': 'profile', 'model-profiles': { capable: { effort: 'low' } } };
+  const r = resolve('capable', { policy, diffFacts: { implFiles: 1, totalLines: 10 } });
+  assert.strictEqual(r.model, 'sonnet');
+  assert.strictEqual(r.effort, 'high');
+  assert.strictEqual(r.launchEffort, 'high');
+});
 test('launchEffort follows session-failure step-down to fast (null)', () => {
   const r = resolve('standard', { policy: { 'model-effort': 'profile' }, failedModels: new Set(['sonnet', 'opus']) });
   assert.strictEqual(r.model, 'haiku');

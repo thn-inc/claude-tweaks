@@ -269,7 +269,7 @@ const POLICY_KEYS = [
   // this — the ADR describes this plugin's own repo, not every consumer.
   { key: 'superpowers-plans-retention', type: 'enum', values: ['keep-forever', 'prune-after-wrapup', 'ask'], default: 'keep-forever', summary: "Decides whether finished planning files are kept (tidy may propose a bulk prune), pruned after wrap-up, or decided case by case.", category: 'housekeeping', tier: 'advanced' },
   // Model-profile resolver levers (#216's bin/lib/model-profiles/profiles.js is
-  // the runtime reader for these four key names — POLICY_KEYS_READ pins them;
+  // the runtime reader for these five key names — POLICY_KEYS_READ pins them;
   // registration here is schema/audit only, deliberately shallow (#219): this
   // file checks model-profiles' row keys are real profile names, never the
   // shape of a row's own fields — that's the resolver's job, at resolve time.
