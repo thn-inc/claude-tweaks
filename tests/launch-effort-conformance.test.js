@@ -20,7 +20,11 @@ const SKILLS_DIR = path.join(__dirname, '..', 'plugin', 'skills');
 
 // The phrasings by which a skill restates "pass the resolved model on the Agent call". One regex,
 // so the sweep and the detector cannot drift; each alternative has a fixture below.
-const MODEL_RESTATEMENT = /Agent tool's `model`|`model` parameter|pass `model` explicitly|pass the resolved `model`|returned `model` value/;
+const MODEL_RESTATEMENT = /Agent tool's `model`|`model` parameter|pass `model` explicitly|pass the resolved `model`|returned `model` value|passed as `model`/;
+
+// Sites that match MODEL_RESTATEMENT beside resolve-profile.js and are exempt by name. The workflow
+// script's agents are a Non-Goal of #5941: the script receives `model` per lens and sets no effort.
+const WORKFLOW_SCRIPT_EXEMPT = new Set(['_shared/subagent-output-contract.md']);
 
 function markdownUnder(dir) {
   const out = [];
@@ -71,13 +75,14 @@ test('no skill says the Agent tool lacks an effort parameter (AC7)', () => {
   assert.deepEqual(offenders, []);
 });
 
-test('the restatement detector matches each of its five phrasings', () => {
+test('the restatement detector matches each of its six phrasings', () => {
   for (const fixture of [
     "into the Agent tool's `model` parameter",
     'the returned `model` is a `model` parameter',
     'and pass `model` explicitly on every call',
     'pass the resolved `model` on that dispatch',
     'Pass the returned `model` value as',
+    'the profile, passed as `model` on the `Agent` call',
   ]) {
     assert.match(fixture, MODEL_RESTATEMENT, fixture);
   }
@@ -87,9 +92,9 @@ test('the restatement detector matches each of its five phrasings', () => {
 test('every site naming the Agent tool\'s model parameter beside resolve-profile.js names launchEffort (AC8)', () => {
   const sites = SKILL_FILES.filter((f) => {
     const text = readText(f);
-    return text.includes('resolve-profile.js') && MODEL_RESTATEMENT.test(text);
+    return text.includes('resolve-profile.js') && MODEL_RESTATEMENT.test(text) && !WORKFLOW_SCRIPT_EXEMPT.has(rel(f));
   });
-  assert.ok(sites.length >= 4, `site sweep found ${sites.length} sites, expected at least the four known`);
+  assert.ok(sites.length >= 5, `site sweep found ${sites.length} sites, expected at least the five known`);
   const missing = sites.filter((f) => !readText(f).includes('launchEffort')).map(rel);
   assert.deepEqual(missing, [], 'these files restate the model rule beside resolve-profile.js without launchEffort');
 });

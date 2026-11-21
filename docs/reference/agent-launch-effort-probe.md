@@ -6,7 +6,7 @@ Record #5941 (a launched agent runs at the effort its work profile names) passes
 - **Date measured:** 2026-11-21
 - **Launching session:** Opus 5.5 (`claude-opus-5-5`) at effort `high`
 - **Surface:** the Agent tool from that session; every launch is a `general-purpose` agent unless named. The measurement was taken centrally by the build.
-- **What "recorded" means:** the `"effort"` field on the agent's assistant turns in its subagent transcript (`grep -o '"effort":"[a-z]*"' <subagent transcript>.jsonl | sort -u`). Thinking text is not stored in the transcript, so the recorded effort is the effort the call ran at.
+- **What "recorded" means:** the `"effort"` field on the agent's assistant turns in its subagent transcript (`grep -o '"effort":"[a-z]*"' <subagent transcript>.jsonl | sort -u`). Thinking text is not stored in the transcript, so the field is evidence of the effort only as far as the run tracks it: the output-token rise under Output size shows it does.
 
 ## Results
 
