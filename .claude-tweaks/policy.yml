@@ -16,3 +16,6 @@ project-maturity: established
 specify-decomposition-log: true
 declare-claude-tweaks: false
 superpowers-plans-retention: prune-after-wrapup
+deferral-digest-reasons: pre-existing-outside-diff, tangential
+filed-record-evidence: required
+run-filed-record-cap: 1
