@@ -85,13 +85,26 @@ function cutModelProfilesBlock(raw) {
 // The resolve-policy entry for the `model-profiles` key, shared by the CLI and
 // the driver's policy read. Only the block is parsed (#5917): a malformed
 // sibling key such as `frontier-run-cap: abc` never marks it invalid.
-function modelProfilesEntry(policyRaw) {
-  const block = policyRaw ? cutModelProfilesBlock(policyRaw) : null;
-  if (block === null) return { value: null, source: 'default' };
+function modelProfilesEntry(policyRaw, factoryRaw = null) {
+  const repo = readProfilesSide(policyRaw);
+  const factory = readProfilesSide(factoryRaw);
+  if (!repo.ok && !factory.ok) {
+    return repo.present || factory.present ? { value: null, source: 'default', invalid: true } : { value: null, source: 'default' };
+  }
+  // #6006: whole profile rows merge, repo over factory. A malformed side never hides a valid one.
+  const value = { ...(factory.ok ? factory.value : {}), ...(repo.ok ? repo.value : {}) };
+  const fromFactory = factory.ok && (!repo.ok || (Object.keys(repo.value).length === 0 && Object.keys(factory.value).length > 0));
+  return { value, source: fromFactory ? 'factory' : 'policy' };
+}
+
+// One source's model-profiles block: { present: false } | { present: true, ok: true, value } | { present: true, ok: false }.
+function readProfilesSide(raw) {
+  const block = raw ? cutModelProfilesBlock(raw) : null;
+  if (block === null) return { present: false, ok: false };
   try {
-    return { value: parsePolicyModelConfig(block)['model-profiles'], source: 'policy' };
+    return { present: true, ok: true, value: parsePolicyModelConfig(block)['model-profiles'] };
   } catch {
-    return { value: null, source: 'default', invalid: true };
+    return { present: true, ok: false };
   }
 }
 

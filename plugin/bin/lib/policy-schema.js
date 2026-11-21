@@ -709,6 +709,28 @@ function parseDriverModels(policyRaw) {
   return ok ? { present: true, ok: true, value: rows } : { present: true, ok: false, raw: rawLines.join('\n') };
 }
 
+// A block key across the two block-bearing sources (#6006): each side is a parser reply ({ present: false } |
+// { present, ok: true, value } | { present, ok: false, raw }). Rows merge repo over factory; the source is 'factory'
+// only when the repo side adds no row of its own. A malformed side is reported through onInvalid and never hides a
+// valid one; only when no side resolves does the key come back invalid. Returns { rows, source } | { invalid } | null (unset).
+function mergeBlockSides(key, repo, factory, onInvalid) {
+  const repoOk = repo.present && repo.ok;
+  const factoryOk = factory.present && factory.ok;
+  if (repo.present && !repo.ok && onInvalid) onInvalid(key, repo.raw);
+  if (factory.present && !factory.ok && onInvalid) onInvalid(key, factory.raw);
+  if (!repoOk && !factoryOk) return repo.present || factory.present ? { invalid: true } : null;
+  const rows = { ...(factoryOk ? factory.value : {}), ...(repoOk ? repo.value : {}) };
+  const fromFactory = factoryOk && (!repoOk || (Object.keys(repo.value).length === 0 && Object.keys(factory.value).length > 0));
+  return { rows, source: fromFactory ? 'factory' : 'policy' };
+}
+
+// The text whose risk-categories widens risk-path-globs' allowed slugs: policy.yml's when it holds a valid one, else the
+// factory's. riskAllowedSlugs returns BUILTIN_RISK_CATEGORIES itself when its text has no valid risk-categories.
+function riskSlugsFor(policyRaw, factoryRaw) {
+  const fromPolicy = riskAllowedSlugs(policyRaw);
+  return fromPolicy === BUILTIN_RISK_CATEGORIES ? riskAllowedSlugs(factoryRaw) : fromPolicy;
+}
+
 function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, factoryRaw, onInvalid } = {}) {
   // Lazy: policy-factory.js requires this module at top level (require cycle).
   const { FACTORY_REFUSED_KEYS } = require('./policy-factory');
@@ -755,29 +777,22 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, factoryRaw,
     // to a partial map or the {} that means unset — the absent shape model-profiles
     // uses too, unlike the flat keys' schema default.
     if (requested === 'risk-path-globs') {
-      const parsed = parseRiskPathGlobs(policyRaw, riskAllowedSlugs(policyRaw));
-      if (!parsed.present) {
-        result[requested] = { value: {}, source: 'default' };
-      } else if (parsed.ok) {
-        result[requested] = { value: parsed.value, source: 'policy' };
-      } else {
-        result[requested] = { value: null, source: 'default', invalid: true };
-        if (onInvalid) onInvalid(requested, parsed.raw);
-      }
+      // #6006: rows merge per category, repo over factory (mergeBlockSides).
+      const slugs = riskSlugsFor(policyRaw, factoryRaw);
+      const merged = mergeBlockSides(requested, parseRiskPathGlobs(policyRaw, slugs), parseRiskPathGlobs(factoryRaw, slugs), onInvalid);
+      if (merged === null) result[requested] = { value: {}, source: 'default' };
+      else if (merged.invalid) result[requested] = { value: null, source: 'default', invalid: true };
+      else result[requested] = { value: merged.rows, source: merged.source };
       continue;
     }
     // express-driver-models (#5917): a policyOnly block, read from policy.yml alone. Unset and rejected differ from
     // risk-path-globs: unset resolves the four role defaults, a rejected block resolves null with invalid: true.
     if (requested === 'express-driver-models') {
-      const parsed = parseDriverModels(policyRaw);
-      if (!parsed.present) {
-        result[requested] = { value: { ...POLICY_DRIVER_DEFAULTS }, source: 'default' };
-      } else if (parsed.ok) {
-        result[requested] = { value: { ...POLICY_DRIVER_DEFAULTS, ...parsed.value }, source: 'policy' };
-      } else {
-        result[requested] = { value: null, source: 'default', invalid: true };
-        if (onInvalid) onInvalid(requested, parsed.raw);
-      }
+      // #6006: rows merge per role over the defaults, repo over factory (mergeBlockSides).
+      const merged = mergeBlockSides(requested, parseDriverModels(policyRaw), parseDriverModels(factoryRaw), onInvalid);
+      if (merged === null) result[requested] = { value: { ...POLICY_DRIVER_DEFAULTS }, source: 'default' };
+      else if (merged.invalid) result[requested] = { value: null, source: 'default', invalid: true };
+      else result[requested] = { value: { ...POLICY_DRIVER_DEFAULTS, ...merged.rows }, source: merged.source };
       continue;
     }
     // A request by an alias's old name resolves the replacement key. A

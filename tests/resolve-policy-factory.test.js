@@ -8,7 +8,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { resolvePolicyKeys, resolveIntegrationModel } = require('../plugin/bin/lib/policy-schema');
-const { FACTORY_POLICY_ENV, FACTORY_REFUSED_KEYS } = require('../plugin/bin/lib/policy-factory');
+const { modelProfilesEntry } = require('../plugin/bin/lib/model-profiles/policy-fragment');
+const { FACTORY_POLICY_ENV, FACTORY_REFUSED_KEYS, readFactoryPolicy } = require('../plugin/bin/lib/policy-factory');
 
 // ---------------------------------------------------------------------------
 // resolvePolicyKeys — factory as the third source (run-config -> policy -> factory -> default)
@@ -117,4 +118,198 @@ test('resolveIntegrationModel honours a factory pin without detection', () => {
     fs.rmSync(root, { recursive: true, force: true });
     fs.rmSync(home, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// block keys — express-driver-models, risk-path-globs, model-profiles merge per row
+// ---------------------------------------------------------------------------
+
+const DRIVER_DEFAULTS = resolvePolicyKeys(['express-driver-models'], {})['express-driver-models'].value;
+const BAD_DRIVER = 'express-driver-models:\n  scout: fast\n';
+const BAD_RISK = 'risk-path-globs:\n  nope: [a]\n';
+const BAD_PROFILES = 'model-profiles:\n  standard:\n    speed: x\n';
+const collect = () => {
+  const calls = [];
+  return { calls, onInvalid: (key, raw) => calls.push([key, raw]) };
+};
+
+// Characterization (build rule 9): the repo-only results the merge must keep.
+test('block keys with no factory side keep their repo-only results', () => {
+  const driver = (policyRaw) => resolvePolicyKeys(['express-driver-models'], { policyRaw })['express-driver-models'];
+  assert.deepStrictEqual(driver(undefined), { value: DRIVER_DEFAULTS, source: 'default' });
+  assert.deepStrictEqual(driver('express-driver-models:\n  implementer: fast\n'), { value: { ...DRIVER_DEFAULTS, implementer: 'fast' }, source: 'policy' });
+  assert.deepStrictEqual(driver('express-driver-models:\n'), { value: DRIVER_DEFAULTS, source: 'policy' });
+  assert.deepStrictEqual(driver(BAD_DRIVER), { value: null, source: 'default', invalid: true });
+  const risk = (policyRaw) => resolvePolicyKeys(['risk-path-globs'], { policyRaw })['risk-path-globs'];
+  assert.deepStrictEqual(risk(undefined), { value: {}, source: 'default' });
+  assert.deepStrictEqual(risk('risk-path-globs:\n  migrations: [db/**]\n'), { value: { migrations: ['db/**'] }, source: 'policy' });
+  assert.deepStrictEqual(risk(BAD_RISK), { value: null, source: 'default', invalid: true });
+  assert.deepStrictEqual(modelProfilesEntry(undefined), { value: null, source: 'default' });
+  assert.deepStrictEqual(modelProfilesEntry('model-profiles:\n  fast:\n    model: haiku\n'), { value: { fast: { model: 'haiku' } }, source: 'policy' });
+  assert.deepStrictEqual(modelProfilesEntry(BAD_PROFILES), { value: null, source: 'default', invalid: true });
+  assert.deepStrictEqual(modelProfilesEntry('model-profiles:\n  fast:\n    model: haiku\n', null), modelProfilesEntry('model-profiles:\n  fast:\n    model: haiku\n'));
+});
+
+test('AC4.1: express-driver-models merges per role', () => {
+  const r = resolvePolicyKeys(['express-driver-models'], {
+    policyRaw: 'express-driver-models:\n  reviewer: standard\n',
+    factoryRaw: 'express-driver-models:\n  implementer: fast\n  reviewer: capable\n',
+  });
+  const entry = r['express-driver-models'];
+  assert.strictEqual(entry.value.implementer, 'fast');
+  assert.strictEqual(entry.value.reviewer, 'standard');
+  assert.strictEqual(entry.source, 'policy');
+});
+
+test('express-driver-models from factory only reports source factory', () => {
+  const r = resolvePolicyKeys(['express-driver-models'], { factoryRaw: 'express-driver-models:\n  implementer: fast\n' });
+  assert.deepStrictEqual(r['express-driver-models'], { value: { ...DRIVER_DEFAULTS, implementer: 'fast' }, source: 'factory' });
+});
+
+test('AC4.2: model-profiles keeps a factory profile and a repo profile', () => {
+  const entry = modelProfilesEntry(
+    'model-profiles:\n  capable:\n    effort: high\n',
+    'model-profiles:\n  fast:\n    model: haiku\n',
+  );
+  assert.deepStrictEqual(entry, { value: { fast: { model: 'haiku' }, capable: { effort: 'high' } }, source: 'policy' });
+});
+
+test('model-profiles merges a whole profile row, not per field', () => {
+  const entry = modelProfilesEntry(
+    'model-profiles:\n  fast:\n    effort: low\n',
+    'model-profiles:\n  fast:\n    model: haiku\n  capable:\n    model: opus\n',
+  );
+  assert.deepStrictEqual(entry.value, { fast: { effort: 'low' }, capable: { model: 'opus' } });
+});
+
+test('model-profiles from factory only reports source factory', () => {
+  const entry = modelProfilesEntry(undefined, 'model-profiles:\n  fast:\n    model: haiku\n');
+  assert.deepStrictEqual(entry, { value: { fast: { model: 'haiku' } }, source: 'factory' });
+});
+
+test('risk-path-globs merges per category', () => {
+  const r = resolvePolicyKeys(['risk-path-globs'], {
+    policyRaw: 'risk-path-globs:\n  migrations: [db/**]\n',
+    factoryRaw: 'risk-path-globs:\n  migrations: [other/**]\n  auth: [src/auth/**]\n',
+  });
+  assert.deepStrictEqual(r['risk-path-globs'], { value: { auth: ['src/auth/**'], migrations: ['db/**'] }, source: 'policy' });
+});
+
+test('risk-path-globs from factory only reports source factory', () => {
+  const r = resolvePolicyKeys(['risk-path-globs'], { factoryRaw: 'risk-path-globs:\n  auth: [src/auth/**]\n' });
+  assert.deepStrictEqual(r['risk-path-globs'], { value: { auth: ['src/auth/**'] }, source: 'factory' });
+});
+
+test('malformed factory block never drops repo rows', () => {
+  const risk = collect();
+  const r = resolvePolicyKeys(['risk-path-globs'], {
+    policyRaw: 'risk-path-globs:\n  migrations: [db/**]\n',
+    factoryRaw: BAD_RISK,
+    onInvalid: risk.onInvalid,
+  });
+  assert.deepStrictEqual(r['risk-path-globs'], { value: { migrations: ['db/**'] }, source: 'policy' });
+  assert.deepStrictEqual(risk.calls.map(([key]) => key), ['risk-path-globs']);
+
+  const driver = collect();
+  const d = resolvePolicyKeys(['express-driver-models'], {
+    policyRaw: 'express-driver-models:\n  reviewer: standard\n',
+    factoryRaw: BAD_DRIVER,
+    onInvalid: driver.onInvalid,
+  });
+  assert.deepStrictEqual(d['express-driver-models'], { value: { ...DRIVER_DEFAULTS, reviewer: 'standard' }, source: 'policy' });
+  assert.deepStrictEqual(driver.calls.map(([key]) => key), ['express-driver-models']);
+
+  assert.deepStrictEqual(
+    modelProfilesEntry('model-profiles:\n  fast:\n    model: haiku\n', BAD_PROFILES),
+    { value: { fast: { model: 'haiku' } }, source: 'policy' },
+  );
+});
+
+test('malformed repo block resolves from factory rows', () => {
+  const risk = collect();
+  const r = resolvePolicyKeys(['risk-path-globs'], {
+    policyRaw: BAD_RISK,
+    factoryRaw: 'risk-path-globs:\n  auth: [src/auth/**]\n',
+    onInvalid: risk.onInvalid,
+  });
+  assert.deepStrictEqual(r['risk-path-globs'], { value: { auth: ['src/auth/**'] }, source: 'factory' });
+  assert.strictEqual(risk.calls.length, 1, 'the malformed repo side is still reported');
+
+  const d = resolvePolicyKeys(['express-driver-models'], {
+    policyRaw: BAD_DRIVER,
+    factoryRaw: 'express-driver-models:\n  implementer: fast\n',
+  });
+  assert.deepStrictEqual(d['express-driver-models'], { value: { ...DRIVER_DEFAULTS, implementer: 'fast' }, source: 'factory' });
+
+  assert.deepStrictEqual(
+    modelProfilesEntry(BAD_PROFILES, 'model-profiles:\n  fast:\n    model: haiku\n'),
+    { value: { fast: { model: 'haiku' } }, source: 'factory' },
+  );
+});
+
+test('malformed factory block with no repo block resolves invalid', () => {
+  const risk = collect();
+  assert.deepStrictEqual(
+    resolvePolicyKeys(['risk-path-globs'], { factoryRaw: BAD_RISK, onInvalid: risk.onInvalid })['risk-path-globs'],
+    { value: null, source: 'default', invalid: true },
+  );
+  assert.deepStrictEqual(risk.calls, [['risk-path-globs', 'risk-path-globs:\n  nope: [a]']]);
+
+  const driver = collect();
+  assert.deepStrictEqual(
+    resolvePolicyKeys(['express-driver-models'], { factoryRaw: BAD_DRIVER, onInvalid: driver.onInvalid })['express-driver-models'],
+    { value: null, source: 'default', invalid: true },
+  );
+  assert.deepStrictEqual(driver.calls.map(([key]) => key), ['express-driver-models']);
+
+  assert.deepStrictEqual(modelProfilesEntry(undefined, BAD_PROFILES), { value: null, source: 'default', invalid: true });
+});
+
+test('both sides malformed resolves invalid and reports both', () => {
+  const risk = collect();
+  const r = resolvePolicyKeys(['risk-path-globs'], {
+    policyRaw: 'risk-path-globs: x\n',
+    factoryRaw: BAD_RISK,
+    onInvalid: risk.onInvalid,
+  });
+  assert.deepStrictEqual(r['risk-path-globs'], { value: null, source: 'default', invalid: true });
+  assert.strictEqual(risk.calls.length, 2);
+  assert.deepStrictEqual(modelProfilesEntry(BAD_PROFILES, BAD_PROFILES), { value: null, source: 'default', invalid: true });
+});
+
+test('factory risk-path-globs row naming a category defined only in policy.yml is accepted', () => {
+  const r = resolvePolicyKeys(['risk-path-globs'], {
+    policyRaw: 'risk-categories: payments\n',
+    factoryRaw: 'risk-path-globs:\n  payments: [src/pay/**]\n',
+  });
+  assert.deepStrictEqual(r['risk-path-globs'].value.payments, ['src/pay/**']);
+  assert.strictEqual(r['risk-path-globs'].source, 'factory');
+
+  // The same block in the variable and the file: the variable's is kept and nothing is dropped.
+  const block = 'risk-path-globs:\n  payments: [src/pay/**]\n';
+  const { raw, warnings } = readFactoryPolicy({
+    env: { [FACTORY_POLICY_ENV]: block, HOME: '/h' },
+    readFile: () => block,
+  });
+  assert.deepStrictEqual(warnings, []);
+  const merged = resolvePolicyKeys(['risk-path-globs'], { policyRaw: 'risk-categories: payments\n', factoryRaw: raw });
+  assert.deepStrictEqual(merged['risk-path-globs'].value.payments, ['src/pay/**']);
+});
+
+test('a factory risk-categories widens the allowed slugs only when policy.yml has none valid', () => {
+  const factoryRaw = 'risk-categories: payments\nrisk-path-globs:\n  payments: [src/pay/**]\n';
+  assert.strictEqual(resolvePolicyKeys(['risk-path-globs'], { factoryRaw })['risk-path-globs'].source, 'factory');
+  const policyOwns = resolvePolicyKeys(['risk-path-globs'], { policyRaw: 'risk-categories: other\n', factoryRaw });
+  assert.deepStrictEqual(policyOwns['risk-path-globs'], { value: null, source: 'default', invalid: true });
+});
+
+test('AC10.1: a variable with an indented block resolves both rows', () => {
+  const { raw } = readFactoryPolicy({
+    env: { [FACTORY_POLICY_ENV]: 'express-driver-models:\n  implementer: fast\n  reviewer: capable' },
+    homeDir: () => null,
+  });
+  const entry = resolvePolicyKeys(['express-driver-models'], { factoryRaw: raw })['express-driver-models'];
+  assert.strictEqual(entry.value.implementer, 'fast');
+  assert.strictEqual(entry.value.reviewer, 'capable');
+  assert.strictEqual(entry.source, 'factory');
 });
