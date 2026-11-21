@@ -299,6 +299,18 @@ Added on 2026-11-19. It sits in Tier 1 and keeps the next free number so no othe
 
 ## Phase 14 — Review replay
 
+## Phase 14: Specified
+
+Records #5990 (an effort key on a replay arm, and a refusal to score an agent that ran at another effort), #5991 (the lens reviewers, replayed across tiers and efforts) and #5992 (the task and whole-branch reviewers, and the task-versus-branch counterfactual), under parent #5989. #5991 is blocked by #5990 and #5992 by #5991.
+
+- **Decided while specifying:**
+  - A replay sends the archived reviewer's own prompt, rewritten to a clean two-commit repository, not a prompt rebuilt from today's templates, so an arm differs from the archive only in model and effort.
+  - Findings are matched by location (same path, lines within 5), not by a model judge; a finding with no location is reported as unlocated.
+  - The effort an arm asks for is checked against the effort the agent's transcript recorded, and a slot at another effort counts as not judged.
+  - The live replay run is not a record: it runs from an interactive session after #5992, as #5630 does for the tiebreak replay.
+- **Not covered:** choosing each review's tier and effort, which is that live run.
+- **Open:** #5991 and #5992 each carry a staged question, a control arm that shows how far a replay at the archived tier reproduces the archive, and their `ready` label is cleared until it is answered.
+
 - **Builds:** `tools/review-replay.js` arms that answer three questions on archived runs: what task reviews catch that the whole-branch review would not, how each lens performs on Haiku, Sonnet and Opus, and what each review finds at `low`, `medium` and `high` effort.
 - **Why reviews get no retry:** a review that misses a finding looks like a clean review, so nothing would trigger a second attempt. A review gets one fixed effort, chosen from the replay.
 - **Expected effect:** none by itself. It decides whether task reviews stay and which tier and effort each review needs.
