@@ -2152,3 +2152,88 @@ test('--help names settle-lens-replies', () => {
   assert.strictEqual(run(['--help'], deps), 0);
   assert.ok(out.join('').includes('settle-lens-replies <result.json> --ctx-id <id> [--run <dir> --only confirmed|unconfirmed [--hold <file>]]'));
 });
+
+// ---- #5998: record-lens-dispatch writes lens-dispatch.json ----
+
+const LD_ARGS = ['--lens', '3d', '--reviewers', '2', '--path', 'workflow', '--status', 'completed', '--round', '2'];
+
+function recordLens(runDir, main, args, env) {
+  const { deps, out, err } = fakeDeps(main);
+  if (env) deps.env = env;
+  const code = run(['record-lens-dispatch', '--run', runDir, ...args], deps);
+  return { code, out: out.join(''), err: err.join('') };
+}
+
+test('record-lens-dispatch writes an entry into an anchored run dir and prints {path, entry, duplicate}', (t) => {
+  const { main, runDir } = anchoredRunDir(t);
+  const first = recordLens(runDir, main, LD_ARGS);
+  assert.strictEqual(first.code, 0, first.err);
+  const printed = JSON.parse(first.out);
+  assert.strictEqual(printed.path, path.join(fs.realpathSync(runDir), 'lens-dispatch.json'));
+  assert.deepStrictEqual(printed.entry, { lens: '3d', reviewers: 2, path: 'workflow', round: 2, status: 'completed' });
+  assert.strictEqual(printed.duplicate, false);
+  const second = recordLens(runDir, main, LD_ARGS);
+  assert.strictEqual(second.code, 0, second.err);
+  assert.strictEqual(JSON.parse(second.out).duplicate, true);
+});
+
+test('record-lens-dispatch defaults --round to 1', (t) => {
+  const { main, runDir } = anchoredRunDir(t);
+  const res = recordLens(runDir, main, ['--lens', '3a', '--reviewers', '1', '--path', 'task', '--status', 'blocked']);
+  assert.strictEqual(res.code, 0, res.err);
+  assert.strictEqual(JSON.parse(res.out).entry.round, 1);
+});
+
+test('record-lens-dispatch refuses malformed flags with exit 2 and writes nothing', (t) => {
+  const { main, runDir } = anchoredRunDir(t);
+  const ok = ['--lens', '3a', '--reviewers', '1', '--path', 'task', '--status', 'completed'];
+  const without = (flag) => { const i = ok.indexOf(flag); return [...ok.slice(0, i), ...ok.slice(i + 2)]; };
+  const over = (flag, value) => { const i = ok.indexOf(flag); return [...ok.slice(0, i + 1), value, ...ok.slice(i + 2)]; };
+  const cases = [
+    without('--lens'), over('--lens', '3z'), over('--lens', '__proto__'), over('--reviewers', '3'),
+    over('--path', 'agent'), over('--status', 'done'), [...ok, '--round', '0'], [...ok, '--round', 'x'],
+    [...ok, '--lens', '3b'], [...ok, 'stray'],
+  ];
+  for (const args of cases) {
+    const res = recordLens(runDir, main, args);
+    assert.strictEqual(res.code, 2, args.join(' '));
+    assert.strictEqual(res.out, '', args.join(' '));
+    assert.ok(!fs.existsSync(path.join(runDir, 'lens-dispatch.json')), args.join(' '));
+  }
+});
+
+test('record-lens-dispatch exits 3 for an unanchored or missing run dir', (t) => {
+  const d = tmpDir(t);
+  const runDir = path.join(d, 'run');
+  fs.mkdirSync(runDir);
+  assert.strictEqual(recordLens(runDir, d, LD_ARGS).code, 3);
+  assert.ok(!fs.existsSync(path.join(runDir, 'lens-dispatch.json')));
+  assert.strictEqual(recordLens(path.join(d, 'nope'), d, LD_ARGS).code, 3);
+});
+
+test('record-lens-dispatch exits 3 when the existing file is malformed', (t) => {
+  const { main, runDir } = anchoredRunDir(t);
+  const file = path.join(runDir, 'lens-dispatch.json');
+  fs.writeFileSync(file, 'not json');
+  const res = recordLens(runDir, main, LD_ARGS);
+  assert.strictEqual(res.code, 3);
+  assert.match(res.err, /could not record lens-dispatch\.json/);
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), 'not json');
+});
+
+test('record-lens-dispatch exits 3 when the lock is held', (t) => {
+  const { main, runDir } = anchoredRunDir(t);
+  const lock = path.join(runDir, '.lens-dispatch.lock');
+  fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, '.owner'), String(process.pid));
+  const res = recordLens(runDir, main, LD_ARGS, { CLAUDE_TWEAKS_LOCK_WAIT_MS: '0' });
+  assert.strictEqual(res.code, 3);
+  assert.match(res.err, /could not record lens-dispatch\.json/);
+  assert.ok(!fs.existsSync(path.join(runDir, 'lens-dispatch.json')));
+});
+
+test('--help names record-lens-dispatch', () => {
+  const { deps, out } = fakeDeps(process.cwd());
+  assert.strictEqual(run(['--help'], deps), 0);
+  assert.ok(out.join('').includes('record-lens-dispatch --run <dir> --lens <3a..3h> --reviewers 1|2 --path task|workflow --status completed|failed|blocked [--round <n>]'));
+});
