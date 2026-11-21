@@ -146,8 +146,9 @@ function abortError() {
 // per-line sum is right — each field keeps its max across the id's lines. The
 // 1-hour cache-write split comes from the line holding the largest cache write
 // (clamped to that write); the rest of the write is 5-minute. prev is null on
-// an id's first line. Pure: never mutates prev or usage. Shared with the
-// maintainer-side cost report and review replay.
+// an id's first line. Pure: never mutates prev or usage. Shared with
+// context-gauge.js's tail read and the maintainer-side cost report and
+// review replay.
 // (prev: UsageMax | null, usage: object | undefined) -> UsageMax
 function mergeUsage(prev, usage) {
   const u = usage || {};
