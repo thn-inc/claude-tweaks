@@ -107,6 +107,16 @@ test('malformed model-profiles variable block is dropped for the file\'s', () =>
   assert.deepEqual(result.warnings, ['resolve-policy: warning: model-profiles has invalid value "model-profiles:" in CLAUDE_TWEAKS_FACTORY_POLICY — using ~/.claude-tweaks/factory-policy.yml\'s block\n']);
 });
 
+test('the variable\'s chunks are judged joined: two valid blocks are invalid together and drop for the file\'s', () => {
+  const result = read(`${VALID_BLOCK('implementer', 'fast')}${VALID_BLOCK('reviewer', 'fast')}`, homeWith(VALID_BLOCK('acceptance', 'capable')));
+  assert.deepEqual(parseDriverModels(result.raw).value, { acceptance: 'capable' });
+  assert.deepEqual(result.warnings, ['resolve-policy: warning: express-driver-models has invalid value "express-driver-models:" in CLAUDE_TWEAKS_FACTORY_POLICY — using ~/.claude-tweaks/factory-policy.yml\'s block\n']);
+});
+
+test('both sources comment-only: nothing contributes, raw and origin are null', () => {
+  assert.deepEqual(read('# only a comment', homeWith('# also a comment\n')), { raw: null, origin: null, warnings: [] });
+});
+
 test('both blocks malformed: the variable\'s block is kept, no drop warning', () => {
   const result = read('express-driver-models:\n  bogus: fast\n', homeWith('express-driver-models:\n  nope: fast\n'));
   assert.ok(result.raw.includes('bogus: fast'));
