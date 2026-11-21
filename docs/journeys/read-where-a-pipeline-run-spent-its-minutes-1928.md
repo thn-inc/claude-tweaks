@@ -7,6 +7,7 @@ files:
   - plugin/bin/phase-timing.js
   - plugin/bin/lib/timing/run-timing.js
   - plugin/bin/lib/timing/at-close.js
+  - plugin/bin/lib/timing/transcript.js
   - plugin/bin/timing-at-close.js
   - plugin/bin/hooks.js
   - plugin/bin/lib/reconcile/archive-merged.js
