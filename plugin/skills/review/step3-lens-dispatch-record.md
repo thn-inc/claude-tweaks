@@ -6,7 +6,7 @@ The yield file has no entry for a lens that ran and found nothing, so a lens's c
 
 ## When
 
-Once per lens per Step 3 round, when a run directory exists. A standalone review (no run directory) records nothing. Call right after the lens's verdict is known — after its first `categorise-reproduction` or `settle-lens-replies` call, or once its failure is final after the one retry.
+Once per lens per Step 3 round, when a run directory exists. A standalone review (no run directory) records nothing. Call right after the lens's verdict is known — after its first `categorise-reproduction` or `settle-lens-replies` call, or once its failure is final (after the retry, where the Task path gives one: unavailable and timed-out agents get none).
 
 ## Command
 
@@ -21,8 +21,8 @@ It prints one JSON line `{path, entry, duplicate}`.
 - `--lens`: the Step 3 id, `3a` to `3h`.
 - `--reviewers`: the reviewers dispatched for the lens — `2` for a reproduction pair, `1` for a low-tier single-read agent (`step3-tier-variants.md`) and for 3h.
 - `--status`:
-  - `completed` — the lens reached its pair verdict from two usable replies (its `categorise-reproduction --only confirmed` call ran, or `settle-lens-replies` listed it under `settled`), or a single-reviewer lens (low tier, 3h) returned a usable reply.
-  - `blocked` — a reviewer replied `BLOCKED` or `NEEDS_CONTEXT` and the lens reached no pair verdict.
+  - `completed` — both of a pair's final replies were `DONE` or `DONE_WITH_CONCERNS` and the lens reached its pair verdict (its `categorise-reproduction --only confirmed` call ran, or `settle-lens-replies` listed it under `settled`), or a single-reviewer lens (low tier, 3h) returned a usable reply.
+  - `blocked` — either reviewer's final reply was `BLOCKED` or `NEEDS_CONTEXT`, even when `categorise-reproduction` still ran on the pair with the blocked reply as the unreproduced side: a blocked dispatch is not a qualifying run.
   - `failed` — the lens's replies never came: a session limit twice, unavailable, timed out, or the partner-died single-read degrade (`step3-tier-variants.md`).
 - `--path`: the path whose replies settled the lens.
   - `workflow` — a lens `settle-lens-replies` settled, and a `needsSession` lens with reason `single-reviewer` whose one workflow reviewer was usable (settled by the low-tier single-read rule, nothing re-dispatched: `--reviewers 1 --status completed`).
