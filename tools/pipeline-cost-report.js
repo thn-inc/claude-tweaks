@@ -15,7 +15,13 @@
 //   spend    prices the model requests in the Claude Code transcripts under --projects (tools/pipeline-cost-report/
 //            spend.js), by session type, model, agent kind, prompt-size bucket and cache-write cause, and per merged PR.
 //   funnel   asks the driver (`drive.js --check`) which open ready + auto:build records it would admit, and why not
-//            (funnel.js). `checked` is every listed record, unreadable ones included.
+//            (funnel.js). `checked` is every listed record, unreadable ones included. It also counts the driver's activity
+//            over the window: `driverRuns` (run directories holding driver-events.jsonl, split into dispatch-routed — a
+//            manifest with lane driver, a run not named -drive-N — and standalone, with the latest run date) and
+//            `dispatchFirings` (main transcripts whose first claude-tweaks skill is dispatch, how many reached the driver
+//            route, by plugin version), the latter under the same scope as spend. When records are admitted yet no run was
+//            dispatch-routed, a flag line says admitted records were not driven. Unreadable run dirs and transcripts add
+//            to the report's `unreadable`, not the funnel's own.
 //   records  counts records created, closed, open and deferred in the window from the forge (records.js).
 //   guards   three quality guards over two columns of pipeline runs, the last --runs (default 20) dated before --split
 //            and the first --runs dated on or after it, independent of the window (guards.js): the share of whole-branch
@@ -100,6 +106,20 @@ const share = (part, whole) => (whole > 0 ? `${Math.round((part / whole) * 100)}
 
 // ---- sections: { key, collect(ctx) -> data (throws on a forge failure), failed(data), render(data) -> lines } ----
 
+// The driver's activity over the window, and the flag line when admitted records exist but nothing was routed to it.
+function driverActivityLines(d) {
+  const { driverRuns: r, dispatchFirings: f } = d;
+  const lines = [''];
+  lines.push(r.error ? `Driver runs: unavailable — ${r.error}` : `Driver runs: ${r.total} (${r.dispatchRouted} dispatch-routed, ${r.standalone} standalone); last ${r.last || 'none'}; unreadable: ${r.unreadable}.`);
+  if (f.error) lines.push(`Dispatch firings: unavailable — ${f.error}`);
+  else {
+    const versions = Object.entries(f.byPluginVersion).sort((a, b) => compareStrings(a[0], b[0])).map(([v, n]) => `${v} ${n}`).join(', ') || 'none';
+    lines.push(`Dispatch firings: ${f.total}; reached the driver route: ${f.reachedRoute}; by plugin version: ${versions}; unreadable: ${f.unreadable}.`);
+  }
+  if (d.admitted > 0 && !r.error && !f.error && r.dispatchRouted === 0) lines.push('', `Admitted records were not driven: ${f.total} dispatch firings in the window, ${f.reachedRoute} reached the driver route.`);
+  return lines;
+}
+
 const SECTIONS = [
   {
     key: 'spend',
@@ -153,15 +173,28 @@ const SECTIONS = [
     key: 'funnel',
     async collect(ctx) {
       const repoRoot = ctx.deps.cwd;
+      const { scope } = ctx;
       return collectFunnel(
-        { repo: await ctx.repo(), simulate: ctx.opts.simulate || [] },
-        { gh: ctx.deps.gh, check: ctx.deps.check || defaultCheck(PLUGIN_ROOT, repoRoot), now: ctx.deps.now, pluginVersion: ctx.deps.pluginVersion() },
+        {
+          repo: await ctx.repo(),
+          simulate: ctx.opts.simulate || [],
+          runs: ctx.runs,
+          roots: ctx.roots,
+          since: ctx.since,
+          until: ctx.until,
+          match: scope.kind === 'substring' ? scope.value : null,
+          root: scope.kind === 'path' ? scope.value : null,
+          scopeError: scope.kind === 'path' && !scope.value ? `cannot resolve the main checkout (${scope.error}); pass --match <substring> or --all-projects` : null,
+        },
+        { gh: ctx.deps.gh, check: ctx.deps.check || defaultCheck(PLUGIN_ROOT, repoRoot), now: ctx.deps.now, pluginVersion: ctx.deps.pluginVersion(), fsImpl: ctx.deps.fs },
       );
     },
     failed: () => false,
-    unreadable: (d) => d.unreadable,
+    unreadable: (d) => d.unreadable + ((d.driverRuns && d.driverRuns.unreadable) || 0) + ((d.dispatchFirings && d.dispatchFirings.unreadable) || 0),
     render(d) {
-      const lines = ['## Funnel', '', `Driver admission, run ${d.runDate}, plugin ${d.pluginVersion}.`, '', `Checked: ${d.checked}; admitted: ${d.admitted}; unreadable: ${d.unreadable}.`, ''];
+      const lines = ['## Funnel', '', `Driver admission, run ${d.runDate}, plugin ${d.pluginVersion}.`, '', `Checked: ${d.checked}; admitted: ${d.admitted}; unreadable: ${d.unreadable}.`];
+      if (d.driverRuns) lines.push(...driverActivityLines(d));
+      lines.push('');
       const reasons = Object.entries(d.reasons).sort((a, b) => b[1] - a[1]);
       if (reasons.length > 0) {
         lines.push('| Refusal reason | Records |', '|---|---|');
@@ -518,7 +551,7 @@ async function run({ argv, deps: given = {} }) {
     }
   }
 
-  const scope = wants('spend') ? resolveScope(opts, deps) : null;
+  const scope = wants('spend') || wants('funnel') ? resolveScope(opts, deps) : null;
   const { roots, unresolved } = resolveRoots(opts, deps);
   const ctx = {
     deps, opts, since, until, scope,

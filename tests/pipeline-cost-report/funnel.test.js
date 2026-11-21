@@ -327,3 +327,180 @@ test('collectFunnel returns driverRuns and dispatchFirings, or { error } when gi
     fs.rmSync(projects, { recursive: true, force: true });
   }
 });
+
+// ---- driver activity through the CLI (#6012): the Driver runs / Dispatch firings lines and the flag line ----
+const { run: cliRun } = require(path.join(ROOT, 'tools', 'pipeline-cost-report.js'));
+
+const FLAG = (t, r) => `Admitted records were not driven: ${t} dispatch firings in the window, ${r} reached the driver route.`;
+const NOT_DRIVEN = 'Admitted records were not driven';
+
+// A main checkout, a projects root with AC2's two dispatch sessions (cwd = the main checkout) and a pipelines dir with
+// AC1's runs (or an empty one); `admitted` records are listed and the check admits them all.
+const cliFixture = ({ admitted = 15, runs = true, sessions = true } = {}) => {
+  const main = tmp();
+  const projects = tmp();
+  const pipes = runs ? driverFixture() : tmp();
+  if (sessions) {
+    const at = (ts, o) => dispatchLines(ts, o).map((l) => l.split('/w/repo').join(main));
+    writeT(path.join(projects, 'slug', 'a.jsonl'), at('2026-11-19T09:00:00Z', { route: true, version: '6.175.0' }));
+    writeT(path.join(projects, 'slug', 'b.jsonl'), at('2026-11-19T10:00:00Z'));
+  }
+  const logs = [];
+  const errs = [];
+  const home = tmp();
+  const cleanup = () => {
+    for (const d of [main, projects, pipes, home]) fs.rmSync(d, { recursive: true, force: true });
+  };
+  const base = ['--since', '2026-11-08', '--until', '2026-11-21', '--projects', projects, '--pipelines', pipes, '--section', 'funnel'];
+  const depsFor = (extra = {}) => ({
+    gh: (args) => (args[0] === 'repo' ? 'o/r\n' : JSON.stringify(Array.from({ length: admitted }, (_, i) => ({ number: i + 1 })))),
+    check: async () => verdict(true),
+    now: () => new Date('2026-11-21T12:00:00Z'),
+    pluginVersion: () => '9.9.9',
+    git: () => path.join(main, '.git'),
+    cwd: main,
+    home,
+    log: (s) => logs.push(s),
+    err: (s) => errs.push(s),
+    ...extra,
+  });
+  return { main, projects, pipes, logs, errs, base, depsFor, cleanup };
+};
+const gitFails = () => {
+  throw new Error('not a git repository');
+};
+
+test('AC3.1: admitted records with only standalone runs print the flag line with the fixture counts', async () => {
+  const f = cliFixture({ runs: false });
+  try {
+    mkRun(f.pipes, '2026-11-12T190721-drive-4351');
+    assert.strictEqual(await cliRun({ argv: f.base, deps: f.depsFor() }), 0);
+    const md = f.logs.join('\n');
+    assert.ok(md.includes(FLAG(2, 1)), md);
+    assert.ok(md.includes('Driver runs: 1 (0 dispatch-routed, 1 standalone); last 2026-11-12; unreadable: 0.'), md);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('AC3.2: one dispatch-routed run in the window silences the flag line', async () => {
+  const f = cliFixture({ runs: false });
+  try {
+    mkRun(f.pipes, '2026-11-12T190721-drive-4351');
+    mkRun(f.pipes, 'archive/2026-11-19T090000-record-5270', { lane: 'driver' });
+    assert.strictEqual(await cliRun({ argv: f.base, deps: f.depsFor() }), 0);
+    const md = f.logs.join('\n');
+    assert.ok(!md.includes(NOT_DRIVEN), md);
+    assert.ok(md.includes('Driver runs: 2 (1 dispatch-routed, 1 standalone)'), md);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('AC4.1: --json carries driverRuns and dispatchFirings with the Markdown figures', async () => {
+  const f = cliFixture();
+  try {
+    assert.strictEqual(await cliRun({ argv: [...f.base, '--json'], deps: f.depsFor() }), 0);
+    const json = JSON.parse(f.logs.join('\n'));
+    assert.deepStrictEqual(json.funnel.driverRuns, { total: 3, dispatchRouted: 1, standalone: 2, last: '2026-11-19', unreadable: 0 });
+    assert.deepStrictEqual(json.funnel.dispatchFirings, FIRINGS);
+    f.logs.length = 0;
+    assert.strictEqual(await cliRun({ argv: f.base, deps: f.depsFor() }), 0);
+    const md = f.logs.join('\n');
+    assert.ok(md.includes('Driver runs: 3 (1 dispatch-routed, 2 standalone); last 2026-11-19; unreadable: 0.'), md);
+    assert.ok(md.includes('Dispatch firings: 2; reached the driver route: 1; by plugin version: 6.175.0 1, unknown 1; unreadable: 0.'), md);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('AC5.1: an unparseable transcript adds to the report unreadable figure and the run exits 0', async () => {
+  const f = cliFixture();
+  try {
+    fs.writeFileSync(path.join(f.projects, 'slug', 'bad.jsonl'), 'not json\n');
+    assert.strictEqual(await cliRun({ argv: [...f.base, '--json'], deps: f.depsFor() }), 0);
+    const json = JSON.parse(f.logs.join('\n'));
+    assert.strictEqual(json.funnel.dispatchFirings.unreadable, 1);
+    assert.strictEqual(json.unreadable, 1);
+    assert.strictEqual(json.funnel.unreadable, 0);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('AC6.1: admitted records with no run dirs and no transcripts print the zero flag line', async () => {
+  const f = cliFixture({ runs: false, sessions: false });
+  try {
+    assert.strictEqual(await cliRun({ argv: f.base, deps: f.depsFor() }), 0);
+    const md = f.logs.join('\n');
+    assert.ok(md.includes(FLAG(0, 0)), md);
+    assert.ok(md.includes('Driver runs: 0 (0 dispatch-routed, 0 standalone); last none; unreadable: 0.'), md);
+    assert.ok(md.includes('Dispatch firings: 0; reached the driver route: 0; by plugin version: none; unreadable: 0.'), md);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('no admitted records: no flag line even with no driver runs', async () => {
+  const f = cliFixture({ admitted: 0, runs: false, sessions: false });
+  try {
+    assert.strictEqual(await cliRun({ argv: f.base, deps: f.depsFor() }), 0);
+    assert.ok(!f.logs.join('\n').includes(NOT_DRIVEN));
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('foreign dispatch session: one outside the main checkout is not counted under the default scope', async () => {
+  const f = cliFixture();
+  try {
+    writeT(path.join(f.projects, 'other', 'x.jsonl'), dispatchLines('2026-11-19T11:00:00Z').map((l) => l.split('/w/repo').join(`${f.main}-marketplace`)));
+    assert.strictEqual(await cliRun({ argv: [...f.base, '--json'], deps: f.depsFor() }), 0);
+    assert.strictEqual(JSON.parse(f.logs.join('\n')).funnel.dispatchFirings.total, 2);
+    f.logs.length = 0;
+    assert.strictEqual(await cliRun({ argv: [...f.base, '--all-projects', '--json'], deps: f.depsFor() }), 0);
+    assert.strictEqual(JSON.parse(f.logs.join('\n')).funnel.dispatchFirings.total, 3);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('dispatch firings are counted once when a projects root is passed twice through a symlink', async () => {
+  const f = cliFixture();
+  const linkDir = tmp();
+  try {
+    const link = path.join(linkDir, 'link');
+    fs.symlinkSync(f.projects, link);
+    assert.strictEqual(await cliRun({ argv: [...f.base, '--projects', link, '--json'], deps: f.depsFor() }), 0);
+    assert.strictEqual(JSON.parse(f.logs.join('\n')).funnel.dispatchFirings.total, 2);
+  } finally {
+    fs.rmSync(linkDir, { recursive: true, force: true });
+    f.cleanup();
+  }
+});
+
+test('pipelines unavailable: prints Driver runs: unavailable, no flag line, exit unchanged', async () => {
+  const f = cliFixture();
+  try {
+    const argv = f.base.filter((a, i, all) => a !== '--pipelines' && all[i - 1] !== '--pipelines');
+    assert.strictEqual(await cliRun({ argv: [...argv, '--all-projects'], deps: f.depsFor({ git: gitFails }) }), 0);
+    const md = f.logs.join('\n');
+    assert.ok(md.includes('Driver runs: unavailable — cannot resolve the pipelines directory'), md);
+    assert.ok(md.includes('Dispatch firings: 2;'), md);
+    assert.ok(!md.includes(NOT_DRIVEN), md);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('unresolvable main checkout: Dispatch firings unavailable, funnel still renders', async () => {
+  const f = cliFixture();
+  try {
+    assert.strictEqual(await cliRun({ argv: f.base, deps: f.depsFor({ git: gitFails }) }), 0);
+    const md = f.logs.join('\n');
+    assert.ok(md.includes('Dispatch firings: unavailable — cannot resolve the main checkout (not a git repository); pass --match <substring> or --all-projects'), md);
+    assert.ok(!md.includes(NOT_DRIVEN), md);
+  } finally {
+    f.cleanup();
+  }
+});
