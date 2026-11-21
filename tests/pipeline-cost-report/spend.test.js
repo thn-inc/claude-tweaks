@@ -601,6 +601,7 @@ test('scanTranscript: a Bash drive.js --check call is route evidence; prose and 
   assert.strictEqual((await scanTranscript(fixture([bash('node "/p/bin/drive.js" #5270')]))).reachedRoute, false);
   assert.strictEqual((await scanTranscript(fixture([{ type: 'user', message: { content: 'run `drive.js --check #5270` first' } }]))).reachedRoute, false);
   assert.strictEqual((await scanTranscript(fixture([{ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: '/x/drive.js --check' } }] } }]))).reachedRoute, false);
+  assert.strictEqual((await scanTranscript(fixture([{ type: 'user', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'node "/p/bin/drive.js" --check 5270' } }] } }]))).reachedRoute, false);
 });
 
 test('scanTranscript: pluginVersion is the first claude-tweaks v{X.Y.Z} @ match in the raw text, else null', async () => {

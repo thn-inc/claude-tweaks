@@ -14,7 +14,7 @@
 // else ordinary growth. A request that is not a re-write is ordinary growth. The previous call is tracked
 // across the whole file, so calls before any reporting window still count.
 //
-// The same pass records three facts for the dispatch-firing count: `firstTs` (the first line's string timestamp),
+// The same pass records three facts for the dispatch-firing count: `firstTs` (the first line that carries a string timestamp),
 // `pluginVersion` (the first `claude-tweaks vX.Y.Z @` in the raw line text — the SessionStart hook injects it inside
 // hook content, sometimes JSON-escaped, so it is matched before JSON.parse), and `reachedRoute`. Route evidence is
 // strict: only a Bash tool_use whose command passes isRouteCommand counts — `drive.js --check` mentioned in prose
