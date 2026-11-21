@@ -63,6 +63,7 @@ files:
 - **Should understand:**
   - Only `verdict:cant-tell` and `evidence-unverified` settle as `cant-tell`. Every other non-verdict reason is notJudged.
   - When an arm's effort is not null (its `effort=`, or its profile's: `high` for standard, capable and frontier), every judge's turns must have recorded exactly that effort. A judge that recorded another, mixed or none is `effort-mismatch`, and `recordedEffort` per arm shows what was recorded. Synthetic error entries (`<synthetic>`) are ignored.
+  - `effortFieldsDiffer` per arm counts the judges with a turn whose `perTurnEffort` differs from its `effort`. It is a report only: the check above reads `effort` alone, so a non-zero count does not cause `effort-mismatch`.
   - Tokens from an agent with no identity line are reported in `unidentifiedCost`, never dropped.
   - `score` settles every arm the way a review settles a Capable judge's reply. It does not run the escalation a review applies to a Standard judge's reply (#5541): in a `profile=standard` arm, a reply that raises a finding to `medium` or higher is scored on the Standard judge's own verdict, where a review would discard it and judge the finding again at Capable.
 - **Red flags:**
