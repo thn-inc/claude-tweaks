@@ -1,38 +1,8 @@
 {
-  "computedAt": "2026-11-17T05:59:36.178Z",
+  "computedAt": "2026-11-21T18:12:39.411Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
-      {
-        "number": 5773,
-        "updatedAt": "2026-11-17T05:32:14Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5772,
-        "updatedAt": "2026-11-17T03:31:44Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5771,
-        "updatedAt": "2026-11-16T17:52:25Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5770,
-        "updatedAt": "2026-11-16T20:14:57Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5768,
-        "updatedAt": "2026-11-16T23:20:15Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5580,
-        "updatedAt": "2026-11-16T00:32:54Z",
-        "state": "OPEN"
-      },
       {
         "number": 5436,
         "updatedAt": "2026-11-15T13:34:00Z",
@@ -46,81 +16,6 @@
       {
         "number": 5430,
         "updatedAt": "2026-11-15T13:35:14Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5409,
-        "updatedAt": "2026-11-17T05:12:52Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5324,
-        "updatedAt": "2026-11-17T00:43:21Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5317,
-        "updatedAt": "2026-11-17T05:12:46Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5316,
-        "updatedAt": "2026-11-17T05:12:41Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5315,
-        "updatedAt": "2026-11-17T05:12:36Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5314,
-        "updatedAt": "2026-11-17T05:12:32Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5313,
-        "updatedAt": "2026-11-17T05:12:27Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5312,
-        "updatedAt": "2026-11-17T05:12:22Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5311,
-        "updatedAt": "2026-11-17T05:12:17Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5310,
-        "updatedAt": "2026-11-17T05:12:11Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5309,
-        "updatedAt": "2026-11-17T05:12:06Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5307,
-        "updatedAt": "2026-11-17T05:12:01Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5306,
-        "updatedAt": "2026-11-17T05:11:55Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5305,
-        "updatedAt": "2026-11-17T05:11:50Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5304,
-        "updatedAt": "2026-11-17T03:57:29Z",
         "state": "OPEN"
       },
       {
@@ -241,11 +136,6 @@
       {
         "number": 4622,
         "updatedAt": "2026-11-16T10:02:13Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4619,
-        "updatedAt": "2026-11-16T19:25:14Z",
         "state": "OPEN"
       },
       {
@@ -840,168 +730,12 @@
       },
       {
         "number": 5584,
-        "updatedAt": "2026-11-16T20:13:14Z",
+        "updatedAt": "2026-11-17T07:55:08Z",
         "state": "CLOSED"
       }
     ]
   },
   "groups": [
-    [
-      {
-        "body": "**Related:** #5324, #5297\n\nVerified-as-of: c059556fc34954c27371c25ebd65f99e79a4eb0a\n\n## Current State\n\nA full-suite profile on main at 8646f7c (2026-11-16, `node tools/run-tests.js --full`, git trace2 per test file) counted 59,448 git processes. Fixture setup (`init`, `config`, `add`, `commit`) is 14,732 of them (25%) across 274 test files, 76 of which start 50 or more.\n\n- `git config` alone is 3,409 processes. Nearly all are an identity pair run right after an init: `config user.name Test` 660, `config user.email test@example.com` 550, `config user.name t` 457, `config user.email t@t` 317.\n- `git init` is 3,579 processes at 17–19 ms of CPU each on the measuring machine, because the default template copies the sample hooks into every new repo. With an empty template directory an init costs 13.5 ms.\n- Measured on one five-process fixture (init, config, config, add, commit): writing the identity straight into `.git/config` and using an empty template directory cut it from 61 ms to 38 ms of CPU.\n\nAt c059556f, 131 files under `tests/` mention `user.name` or `user.email`: 78 under `tests/bin-lib/` (215 sites), 49 top-level test files (147 sites) and 4 helpers (10 sites). 41 files already pass the identity inline as `-c user.name=...`, which costs no extra process.\n\n`tests/helpers/git-fixtures.js` holds the shared builders (`gitRepo`, `committedRepo`, `fixtureGit`). `tools/run-tests.js` already injects environment into its child tree (`gitFixtureConfigEnv`, `TMPDIR`), and `tests/helpers/git-template.js` sets the same kind of default for a bare `node --test` run.\n\nSibling records own these files, and this record leaves them alone: `tests/hooks-pre-tool-use.test.js`, `tests/hooks-pre-tool-use-forge-memo.test.js` and `tests/bin-lib/verify/cli-helpers.js` (#5324); `tests/bin-lib/reconcile/prune-remote.test.js`, `tests/bin-lib/pre-review-catchup/cli.test.js` and `tests/bin-lib/issues/claims-git-cas.test.js`; everything under `tests/bin-lib/learned-skills/` and `tests/helpers/learned-skills-capture.js`; `tests/statusline.test.js`, `tests/bin-lib/reconcile/archive-merged.test.js`, `tests/bin-lib/reconcile/archive-merged-record-guards.test.js` and `tests/bin-lib/staged-patch/stack-check.test.js`.\n\n## Deliverables\n\n1. A helper in `tests/helpers/git-fixtures.js` that makes a repository with one git process: it runs `git init` (optional branch, optional bare) and writes the identity into the repository's config file with `fs`, giving the same `user.name` and `user.email` values a `git config` call would. A second export writes the identity into an existing repository's config for callers that init some other way.\n2. Every `git init` in a runner child uses an empty template directory, set once in `tools/run-tests.js`'s child environment, with the same default applied for a bare `node --test` run by the helper module. Tests that write into `.git/hooks/` or `.git/info/` without creating the directory keep working (ship those two empty directories in the template, or fix the callers). Tests that assert on template content (a sample hook, `description`, `info/exclude`) are found and kept green.\n3. Every fixture `git config user.name` / `git config user.email` process in the test tree is replaced by the helper, except in the sibling-owned files listed in Current State and in tests where a `git config` call is itself the behaviour under test. The name and email each fixture commits with stay the same.\n4. A suite test that keeps it that way: it scans the test tree for a spawned `config user.name` or `config user.email` and fails on any outside a per-file allowlist whose entries each carry a reason. The sibling-owned files start on the allowlist with their record number as the reason.\n5. The PR body reports, for the touched files, total git processes and `git config` processes before and after.\n\n## Acceptance Criteria\n\n- [ ] The helper starts exactly one git process for an init with an identity, shown by a trace2 test in the style of `tests/helpers-git-template.test.js`.\n- [ ] A fresh fixture repo made in a runner child, and one made under a bare `node --test` run that loads the helper module, holds no `.git/hooks/*.sample` file. A test asserts both.\n- [ ] A traced run of the swept files shows zero `git config user.name` and `git config user.email` processes outside the allowlist.\n- [ ] The scan test in deliverable 4 goes red when one swept call site is restored. The PR body quotes that red output.\n- [ ] The counts come from `GIT_TRACE2_EVENT=<absolute path of an empty directory>` around `CT_TEST_CONCURRENCY=6 node tools/run-tests.js --files-from <list>`, with the before count taken at the branch's merge-base with main and the after count at HEAD, back to back on the same machine.\n- [ ] Every touched test file reports the same test names and the same number of tests as before, all passing. No assertion is removed or loosened, no test is deleted, skipped or merged, and test concurrency is unchanged.\n- [ ] The full suite and the Windows regression job pass.\n\n**Decision (2026-11-16, record author).** \"Same tests\" means no existing test is deleted, skipped, renamed, merged or loosened. A test count may grow by tests this record itself adds, in an existing file or in a new one. Where another sentence of this record reads more strictly, this paragraph wins. Where this record's wording leaves a choice between a literal reading and its aim (fewer git processes, with coverage kept), take the aim, say so in the PR body, and do not stop to ask.\n\n**Decision (2026-11-16, record author), Deliverable 2.** #5768 may ship a runner-written git template directory (exported as `GIT_TEMPLATE_DIR`, holding a `config` that switches maintenance off). If it has merged when this record builds, build on that directory instead of adding a second one: a template with no sample hooks then already exists, and what remains here is the `.git/hooks/` and `.git/info/` directory check, the tests that assert on template content, and the same default for a bare `node --test` run.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/helpers/git-fixtures.js` — one-process init helper and identity writer\n- `tests/helpers/git-template.js` — empty template directory default for a bare node --test run\n- `tools/run-tests.js` — empty template directory in the child environment\n- `tests/helpers/reconcile-fixtures.js` — use the identity writer in the template builds\n- `tests/bin-lib/wrap-up/facts.test.js` — replace the identity config calls (20 sites)\n- `tests/hooks-session-start.test.js` — replace the identity config calls (18 sites)\n- `tests/console-execute.test.js` — replace the identity config calls (10 sites)\n- `tests/bin-lib/hooks/reconcile-background.test.js` — replace the identity config calls (10 sites)\n- `tests/bin-lib/flow/check-artifact-overwrite-cli.test.js` — replace the identity config calls (10 sites)\n- `tests/helpers-git-template.test.js` — trace2 and template-directory tests for the helper\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-16T15:52:26Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
-            "name": "size:high",
-            "description": "Scoring: large change — consider decomposition before building",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          }
-        ],
-        "number": 5771,
-        "state": "OPEN",
-        "title": "Give test fixtures a one-process repo init and remove the per-fixture git config identity calls",
-        "updatedAt": "2026-11-16T17:52:25Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "high",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n**Related:** #5225, #5232, #5556, #5554, #4031, #4030, #3381, #5292, #5262, #4118\nRisk-flags: none\n\n## Current State\n\nA pipeline run takes one of four lanes, and only one of them is a program.\n\n- **Standard lane.** `/claude-tweaks:flow` runs `build`, `test`, `review`, `polish`, `wrap-up`, with `stories` inserted when the build changed UI files (`plugin/skills/flow/steps-and-gates.md`, Allowed Steps). A model walks the steps from skill prose. `/claude-tweaks:dispatch` splits the same list into two calls, `build,test` then `review,polish,wrap-up`.\n- **Fast lane.** The same steps under `ceremony-profile: fast-lane`, less the skips in `plugin/skills/_shared/ceremony-profile.md`.\n- **Prose express lane.** `plugin/skills/_shared/express-lane.md`: one agent, no `/claude-tweaks:flow` frame.\n- **Driver lane.** `plugin/bin/drive.js`. Its run is a fixed list of 19 step objects (`STEPS`, `plugin/bin/lib/driver/steps.js:1288`; names in `STEP_NAMES`, `plugin/bin/lib/driver/events.js:25`) that one loop in `plugin/bin/lib/driver/run.js` runs in order. A step may return `skip`. No function chooses steps from record facts: eligibility and admission (`plugin/bin/lib/express/eligibility.js`, `plugin/bin/lib/driver/admission.js`) decide whether a record enters the lane at all, and the lane's bounds are policy values (`express-driver-max-size`, `express-driver-max-key-files`, `express-driver-max-lines`).\n\nWhich steps a standard or fast-lane run takes is decided in several places, none of them one function:\n\n- `/claude-tweaks:specify` stamps a `ceremony:*` label from `assess-agent-autonomy`'s `ceremony-check` mode, a model judgment over the record's text (`docs/decisions/0006-ceremony-tiering-owned-by-specify.md`). `plugin/bin/lib/flow/manifesto-write.js` folds it into the run's `config.yml` as `ceremony-profile`.\n- `plugin/bin/lib/dispatch/ceremony-derive.js` (`computeDiffFacts`, `deriveCeremonyProfile`) narrows `standard` to `fast-lane` at wrap-up when the diff touched no implementation file. `plugin/skills/wrap-up/SKILL.md`'s Ceremony escape hatch is the only way back up.\n- The roster in `ceremony-profile.md` has 10 skip rows, 11 never-skipped rows and 20 rows of mentions that are not skips. `tests/ceremony-profile-roster.test.js` pins it against every skill file. 36 files under `plugin/skills/` and 7 under `plugin/bin/` name `ceremony-profile`; 17 skill files cite the roster by file name.\n- Other selectors sit outside the roster: the `stories` trigger on UI file changes and the `polish` skip on a non-frontend record (`flow/steps-and-gates.md`), the plan-writing skip in `plugin/skills/build/micro-plan.md`, review effort in `plugin/skills/review/review-effort-derivation.md`, `resolve-profile.js --diff-facts`, and `plan-audit.js --count-tasks`, which feeds the single-task skip of the whole-branch review.\n\nThe phases code recognises are `PHASES` in `plugin/bin/lib/timing/derive.js:24` (`call-1`, `call-2`, `build`, `plan`, `tasks`, `test`, `review`, `polish`, `wrap-up`, `merge`) and the 12 nested skills in `NESTED_PARENT` in the same file.\n\nThe stops no mode may silence are the \"HARD-GATE / BLOCKED / STOP conditions\" row of `plugin/skills/_shared/auto-mode-contract.md`. Three of them sit inside steps the roster lets the fast lane skip: `/claude-tweaks:review` Step 1 (roster tag `review-step-1`), the plan audit's hard fails (`plan-audit`) and the plan-review spec gap (`plan-review`). So a HARD-GATE today is a stop that fires when its step runs, not a promise that the step runs.\n\nMeasured on 2026-11-16 (scratch scripts over one machine's run directories and the open records; re-derive before relying on a number):\n\n- 1,616 closed runs are named `spec-`, `record-` or `drive-`. The 100 most recent closed between 2026-11-03 and 2026-11-15: 92 standard, 3 fast-lane, 3 driver, 1 prose express, 1 with no profile. 72 of the 100 have `timing.json`, 71 with token totals; none of the 3 driver runs has one. None has `step-yield.json`, because #5556 is not built.\n- Whole archive, closed runs: 995 standard (300 with `timing.json`), 394 fast-lane (94), 3 driver (0), 1 prose express (1). The 20th most recent fast-lane run closed on 2026-10-31.\n- A prose express run and a driver run both write `ceremony-profile: fast-lane` to `config.yml`: `express-lane.js check` prints the value (`plugin/bin/lib/express/cli.js:352`) and both lanes write it. So `config.yml` alone does not tell the three lanes apart. Both also log an `Express lane check:` line in `decisions.md`; only a driver run directory has `driver-events.jsonl`.\n- The `timing.json` files of those 100 runs also hold phases outside `PHASES`: `call-3` to `call-6`, `specify`, `visualize` and `dispatch`.\n- Of 544 open `ready` records: 385 have no `ceremony:*` label, 411 have no `Surface:` line, 510 have no `Risk-flags:` line, 51 have no Key Files, 5 have no `type:*` label, 3 have no `size:*` and 3 no `risk:*`, and 6 carry `size:small`, which is not one of `low`, `medium`, `high`.\n- Task count exists only once a plan exists (`plan-audit.js --count-tasks`), and changed paths only once the build has run (`computeDiffFacts`).\n\nDesign: `docs/superpowers/specs/2026-11-15-process-efficiency-design.md`, Phase 7. It extends `docs/superpowers/specs/2026-11-11-pipeline-driver-design.md`; the driver's usage page is `docs/driver.md`. This record is blocked by #5556, which writes the step yield file and `tools/step-yield-report.js`. The driver's Phase 4 (#5221) closed on 2026-11-15 and is not a blocker.\n\n## Deliverables\n\n1. **The design doc.** One new file, `docs/superpowers/specs/YYYY-MM-DD-standard-lane-run-graph-design.md`, dated the day it is written, with the section shape of the two designs named above: Why, Goals, Non-goals, the design itself, phases as `## Phase N` sections, Left to the builder, and Calls made in this document that were not discussed. Status line: `draft for approval`.\n2. **Evidence.** Per-step cost against yield, per lane, from the step yield data over at least the 100 most recent closed runs. Every number has the command that produced it beside it.\n3. **Step vocabulary.** The closed list of steps a run can take. A vocabulary step is the smallest unit the function may include or leave out on its own; anything that always runs with its parent is part of the parent.\n4. **Selection function.** The function from record facts (type, size, risk, surface, changed paths, task count) to the ordered steps a run takes. It selects from the vocabulary and is code. No model writes or edits the graph, because record text is untrusted input.\n5. **Assertions.** The steps no record may skip, each as an assertion inside the function, with its reason.\n6. **Loops.** Where a step may run again, and the bound on each.\n7. **Roster replacement.** What replaces `ceremony-profile.md`'s skip roster, and how a run in flight on the previous plugin release keeps working while both forms exist.\n8. **Scope and handoff.** What the doc does not decide, and phases written so `/claude-tweaks:specify` can decompose them. This record does not run `/claude-tweaks:specify` and files no record for a phase.\n\n**Decision rule for any further gap (author, 2026-11-16).** Where this record leaves a choice between readings and no Decision above settles it, the build does not stop for it. It takes the reading that, in this order: keeps a run on the previous plugin release working; puts the rule in code and not in skill prose; stays inside this record's Key Files. It states the choice in the PR body. A criterion that can only be observed after a merge or a release is met by filing one parked measurement record through `/claude-tweaks:capture` that carries the check and its bound.\n\n## Acceptance Criteria\n\n- [ ] AC1: `git ls-files 'docs/superpowers/specs/*-standard-lane-run-graph-design.md'` prints one path. `git diff --name-only` against the merge base lists that file and, only under the condition in the Technical Approach, `tools/step-yield-report.js` and its test. Nothing under `plugin/` is in the diff.\n- [ ] AC2: The doc has an Evidence section with a table of cost (minutes, tokens, agents) against yield (what #5556's file records as produced) per step and per lane. It states the date, the oldest and newest run in the window, the run count per lane, and how many runs had `null` cost fields. Each number names its source command, and each command is in the repository or printed whole in the doc.\nDecided 2026-11-16: the Evidence table is keyed by the units the data has: the yield file's step entries for the prose lanes, and the driver's own step names for the driver lane. The Step vocabulary table has a column naming the Evidence row that covers each vocabulary step. A vocabulary step with no row of its own is marked \"not measured separately\", and any rule about it is \"unchanged from today\" under AC13.\n- [ ] AC3: The window is at least the 100 most recent closed runs. A lane with fewer than 20 runs in that window is widened to its own 20 most recent closed runs; a lane with fewer than 20 closed runs in the whole archive is reported with its count, and the doc says no rule rests on it. The doc states the rule that assigns a run to a lane, and that rule tells a prose express run, a driver run and a fast-lane run apart.\nDecided 2026-11-16: `tools/step-yield-report.js` applies the lane rule, so the source command reproduces it. A run directory with `driver-events.jsonl` is a driver run. Otherwise one whose `decisions.md` has an `Express lane check:` line with `proceed` is a prose express run. Otherwise the lane is the `ceremony-profile` value in `config.yml`, or `none` when there is none. A run whose express attempt escalated therefore counts under the lane it finished in. The driver lane's per-step minutes and tokens come from `driver-events.jsonl` (`ms`, `usage`), because none of the 3 closed driver runs has a `timing.json`. Minutes, tokens and agents for the other lanes are the yield file's per-step fields (#5556, Deliverable 2).\n- [ ] AC4: The doc has one table headed \"Step vocabulary\": name, what the step does, who performs it (program or model), the skill or CLI that is its body today, and what it produces. Every name in `PHASES` and `NESTED_PARENT`, every name in `STEP_NAMES`, every step in `flow/steps-and-gates.md`'s Allowed Steps table and every row of the roster's two step tables is placed: either it is a vocabulary step or part of one, or it is in a \"Not a step\" table with a reason. The PR body carries the placement list and reports none unplaced.\nThe two step tables are `## Skips by profile` and `## Never skipped`. The rows of `## Mentions that are not skips` are not placed under this criterion; AC10 covers that table.\n- [ ] AC5: The doc has an Inputs table. For each of type, size, risk, surface, changed paths and task count, and any input it adds: where the value comes from (the label family or body line, and the function that parses it today), when it is first known (before the run, after the plan, after the build), and the function's result when the value is absent, unreadable, or outside its vocabulary (`size:small` is the worked example). None of those three results is a graph with fewer steps than the same record gets with the value present and at its most cautious.\nDecided 2026-11-16: an input's most cautious value is the one for which the function returns the most steps, and the Inputs table names it for each input. Changed paths enter the function only as a closed set of classes; the doc gives the path-to-class mapping, starting from `classifyDiffFiles` (`plugin/bin/lib/issues/blast-radius.js`) and `computeDiffFacts`. Task count enters as an integer compared with stated thresholds, and a value that is not a non-negative integer counts as absent. Inputs combine by union: a step is in the graph when any input's rule requires it, so no input removes a step another input requires. A fact that does not exist yet at an evaluation point is not absent: each step is decided at the last evaluation point before it would run, from the facts that exist by then.\n- [ ] AC6: The doc states the points in a run at which the function is evaluated, and that a later evaluation may add steps to the remainder of the run or leave it unchanged. If it may also remove a step, the doc lists which steps and why. An asserted step is never removed.\nThe doc reports, for the open `ready` records on the day it is written, how many get each distinct graph at the first evaluation, with the command that counted them. It states the expected effect on the two targets of #4031 as an expectation, including the case where most records keep today's graph.\n- [ ] AC7: The doc gives the function's signature. Its output is a list of vocabulary step names. No input is free text. Each input that comes from a model judgment or from record text (today the `ceremony:*` label and the `Risk-flags:` line) is listed with the closed set of values it may take, and the doc shows that no value of it removes an asserted step. The doc states that the function's safety rests on the assertions and not on the accuracy of its inputs, and says what corrects a wrong label after a run.\n- [ ] AC8: The doc has a \"Never skipped\" table. Every row of the roster's `## Never skipped` table and every stop in the contract's HARD-GATE row appears in it or in a list of rows it drops, each drop with a reason. Each kept row has the assertion as a condition on the function's output, the reason, and what happens when a fact combination would violate it, by the rule below. The doc states, for each of the three HARD-GATEs that sit inside a fast-lane skip, whether its step is now in every graph.\nDecided 2026-11-16: every evaluation checks the assertions. At the first, before any step runs, a violation refuses the run with one line naming the assertion, and nothing is written. At a later evaluation a violation never stops or fails the run: the remainder of the graph from the previous evaluation stays in force, which still satisfies every assertion because no evaluation may remove an asserted step (AC6), and one `SKIP` line naming the assertion is logged. The doc states both cases.\n- [ ] AC9: The doc has a \"Loops\" table that covers at least the review fix wave, the verify retry, the plan-review rounds, the polish re-verify, the driver's reviewer fix round and the CI wait. Each row has a numeric bound (a count or a time), the outcome when the bound is reached, and today's bound with the file that states it. No row's bound is \"until green\" or empty. The doc says the graph has no other cycle.\n- [ ] AC10: The doc says what happens to each of: the roster's three tables, the `ceremony:*` labels, the `config.yml` `ceremony-profile` key, the `ceremony-check` mode, `ceremony-derive.js`, the wrap-up escape hatch, `tests/ceremony-profile-roster.test.js`, and decision 0006. Each is kept, replaced (by what), or removed (under what condition).\n- [ ] AC11: The doc has a mixed-version table with at least these rows: a run started on the previous release and continued by the new code at each resume point (the second dispatch call, `/claude-tweaks:flow #N wrap-up`, the close and reconcile paths); a run started on the new release and continued by a previous-release session; a record labelled `ceremony:fast-lane` before the change and built after it. Each row says what the reader finds in the run directory and what it does. No row ends in a failed or restarted run. The old form's removal condition is stated with the current value of whatever it counts and what drives that value to the condition. It names its data source and what that source cannot see: cloud routine runs, other machines, and consumer projects on an older release.\n- [ ] AC12: The doc states which program walks the graph for a standard-lane run. It compares at least two options, `drive.js` walking it with model workers for the judgment steps, and `/claude-tweaks:flow` calling the function and walking the result, and gives the reason for its choice. It quotes each Non-goal and Anti-goal of the driver design that the choice changes.\nThe Step vocabulary table (AC4) also has a \"reads\" column: the run-directory files and earlier steps' outputs each step consumes. For every step the function can leave out, the doc names each kept step that reads its output and says what that reader does when the output is absent.\n- [ ] AC13: Every rule in the function that leaves a step out, or shortens one, carries one of three marks: \"evidenced\", with the number from the Evidence section it rests on; \"risk accepted\"; or \"unchanged from today\", which matches today's behaviour.\nDecided 2026-11-16: a number justifies leaving a step out, or shortening it, only when it is a rate over at least 20 runs in which the step ran: how often the step changed the outcome (a confirmed finding, a failed gate, a fix commit). The rule cites the rate and the run count. A rule that rests on a step having produced nothing in n runs is not decided by the doc: it is marked \"risk accepted\" with n and listed in the decisions section for the maintainer (AC16). The doc has a \"Today's graph\" table, the steps a run takes today for each combination of profile and the selectors listed in Current State, and a rule marked unchanged is checked against it.\n- [ ] AC14: The doc has a section on what it does not decide. It says the doc builds nothing, and that the prose express lane and the driver's admission and bounds for express-sized records are unchanged.\n- [ ] AC15: `git grep -n -F \"read through a summary\" -- 'docs/superpowers/specs/*-standard-lane-run-graph-design.md'` prints nothing. If the doc cites arXiv 2603.22386, the citation gives the section number and a sentence quoted from the paper itself, read at the source. Otherwise the doc does not cite it.\n- [ ] AC16: Each `## Phase N` section states what it builds, the files it touches, its done criterion, and what it waits for. The doc has a decisions section, in the form of the process-efficiency design's Phase 0, for anything only the maintainer can decide, each with a recommendation. `git grep -n -E \"TBD|TODO|to be decided\" -- 'docs/superpowers/specs/*-standard-lane-run-graph-design.md'` prints nothing.\n- [ ] AC17: The doc names the `main` commit it was written against. It has an \"Open records\" table that gives #3381, #5292, #5262, #4118, #5232, #5225 and #4030, and any record found for Phase 4 or Phase 6 of the process-efficiency design, one of three dispositions: superseded by a named phase, waited for by a named phase, or independent. It states whether the run graph has a prose contract with pinned tests or code as its statement of record with a usage page. Each phase that adds text to a skill file of 47,250 bytes or more says what it removes from that file.\n- [ ] AC18: For every rule marked \"evidenced\" or \"risk accepted\", the doc names the policy value that turns it on, states that the value's default reproduces today's graph, and states the condition under which the default changes or the value is removed. The phase that opts this repository in is a separate phase and waits for the release that carries the rule.\n\n## Technical Approach\n\nWork in this order: evidence, vocabulary, function and assertions, loops, roster replacement, phases. A rule written before its number exists is a guess.\n\nWrite the doc directly from the evidence. Do not invoke `/superpowers:brainstorming`: its installed version (7.0.2) stops for a human to approve the design doc and has no non-interactive form. The maintainer approves this doc by reading the merged draft and running `/claude-tweaks:specify` on it.\n\nEvidence. Run `tools/step-yield-report.js --json` over the pipelines root of the main checkout. That tool computes yield in memory for a run that has no yield file, so runs closed before #5556 shipped are covered; their cost fields are `null` where the run has no `timing.json`. If its output has no per-run rows, or lacks what is needed to pick the 100 most recent closed runs and assign a lane, add that to the tool in this PR, with a test sized like `tests/efficiency-report.test.js`. That is the only code this record may change. If the tool's output differs from the two assumptions in Gotchas in any other way, the remedy is the same: change the tool in this PR. No number in the doc comes from a command that is neither in the repository nor printed whole in the doc. The driver lane's per-step numbers come from `driver-events.jsonl`, which carries `ms` and `usage` per step (AC3).\n\nVocabulary. Start from these sources and place every name: `flow/steps-and-gates.md`'s Allowed Steps; the step headings of `plugin/skills/build/SKILL.md`, `plugin/skills/test/SKILL.md`, `plugin/skills/review/code-mode-steps.md` and `plugin/skills/wrap-up/SKILL.md`; `PHASES` and `NESTED_PARENT`; `STEP_NAMES`; and the roster's ten skip tags (`review-step-1`, `review-step-1.6`, `review-step-4`, `plan-audit`, `plan-review`, `architecture-alignment`, `reflect-light-mode`, `red-team-persona`, `sdd-whole-branch-review`, `polish`). `call-N` phases are containers for a dispatch call, and `red-team-persona` runs at `/claude-tweaks:specify`, before any run; expect both in \"Not a step\".\n\nWalker. The process-efficiency design calls this doc an extension of the driver design. AC12's comparison settles whether that means `drive.js` walks the standard-lane graph.\n\nFunction. Treat every existing selector listed in Current State as a rule to carry over, replace or drop, and say which. Separate two things today's text mixes: a step that must be in every graph, and a stop that must fire when its step is in the graph.\n\nLoops. Two bounds are already stated: the polish re-verify runs at most once per run (`flow/steps-and-gates.md`, \"Re-verify one-cycle cap\"), and the driver's reviewer gets one fix round (`docs/driver.md`, \"One fix round\"). `CI_WAIT_BOUND_MS` and `VERIFY_TIMEOUT_MS` in `plugin/bin/lib/driver/steps.js` are 30 minutes each. Find the rest in `plugin/skills/review/step3-routing.md`, `plugin/skills/review/code-mode-steps.md`, `plugin/skills/build/dispatch.md`, `plugin/skills/build/plan-review.md`, `plugin/skills/test/SKILL.md` and `plugin/skills/_shared/pr-first-merge.md`.\n\nRoster replacement. Decision 0.1 of the process-efficiency design binds every phase the doc proposes: a change must not break a run in flight on the previous release, because sessions run mixed plugin versions. A changed contract is added, its consumers are migrated, and the old form is removed under a recorded condition.\n\n### Key Files\n\n- `docs/superpowers/specs/YYYY-MM-DD-standard-lane-run-graph-design.md` — new; the design doc\n- `tools/step-yield-report.js` — from #5556; changed only to add per-run rows or the lane rule of AC3 when its output lacks them\n\n## Gotchas\n\n- This record builds no part of the run graph. A change under `plugin/` or to any skill file fails AC1.\n- \"A model-generated graph per task\" is in the process-efficiency design's Not planned table. Do not reopen it.\n- The numbers above come from one machine. Cloud routine runs are not in its run directories, and this repository's own development sessions are most of them. Say so in the Evidence section.\nDecided 2026-11-16: a rule that gives any record fewer steps than it gets today sits behind a policy value whose default reproduces today's graph. A consumer project keeps today's graph until it opts in. This repository opts in as its own phase, after the release that carries the rule is the installed plugin. AC18 checks this.\n- The files a later phase would edit are near the 52,500-byte read limit for skill prose: `plugin/skills/review/code-mode-steps.md` is 52,358 bytes, `plugin/skills/dispatch/SKILL.md` 52,088, `plugin/skills/flow/SKILL.md` 51,935, `plugin/skills/build/SKILL.md` 49,343 and `plugin/skills/_shared/auto-mode-contract.md` 47,500. A phase that adds text to one of them says what it removes from the same file.\n- `tests/ceremony-profile-roster.test.js` and other tests pin skill prose. A phase that rewords the roster or a citing file says the full suite must pass, and names `.claude/skills/skill-prose-conformance-tests` and `.claude/skills/shared-contract-extraction` for its builder. Phases that add a driver step, a policy key or a removal name `.claude/skills/driver-step-addition`, `.claude/skills/policy-key-addition` and `.claude/skills/removal-condition-execution`.\n- The driver has no prose contract and no test that pins prose, on purpose (driver design, Anti-goals). The standard lane is prose with pinned tests. Say which convention the run graph follows.\n- Open records change the roster or its inputs: #3381 and #5292 list `ceremony-profile.md` in their Key Files, and #5262 and #4118 are about records with no `ceremony:*` label. For each, the doc says whether a phase supersedes it, waits for it, or is independent. This record edits none of them.\nAC17 checks the open-record dispositions, the named commit, the convention and the rule for a near-limit file from these Gotchas.\n- #5232 and the sub-issues of #5225 are changing `plugin/bin/drive.js` and `plugin/bin/lib/driver/`. Write against the driver as it is on `main` and name the commit in the doc.\n- Phase 4 (unit 4.2, a gate CLI for `journeys`, `visual-review` and `design-wrapper`) and Phase 6 (review fan-out as a plugin workflow) of the process-efficiency design change steps the vocabulary names. Check for their records when writing, and treat 4.2's gate verdict as an input to the function, not a second selector.\n- #4030 owns the model profile of the dispatched build agent. The vocabulary may record today's profile per step; it changes none.\n- #4031's targets (median wall time of 15 minutes or less, 120 round trips or fewer) are the umbrella goal. State what each phase is expected to move, as an expectation, not a criterion.\n- ASSUMPTION — verify at build: `tools/step-yield-report.js` takes a pipelines root and `--json` and computes yield in memory for runs with no yield file — confirm via its usage text once #5556 lands.\n- ASSUMPTION — verify at build: `step-yield.json` has one entry per phase from `derivePhases`, so a driver run's entries are skill phases and not driver steps — confirm via `docs/reference/step-yield.md` once #5556 lands.\n\n## Release Note\n\nNo user-visible change: added a design for choosing each pipeline run's steps from facts about its record.\n\n\n<!-- work-fingerprint: process-efficiency:run-graph-design -->\nwork-fingerprint: process-efficiency:run-graph-design",
-        "createdAt": "2026-11-15T23:27:58Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 5580,
-        "state": "OPEN",
-        "title": "Design the standard-lane run graph: steps chosen per record by code, and what replaces the ceremony skip roster",
-        "updatedAt": "2026-11-16T00:32:54Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
     [
       {
         "body": "**Related:** #5383 (its wrap-up staged all three changes below; they are coupled, so they are filed together)\n\nOrigin: wrap-up of #5383 (staged/skills-1.patch, staged/skills-2.md, staged/reflect-1.md)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\nBoth files of `.claude/skills/gh-api-module-pattern/` are over the 52,500-byte Read rail (`plugin/bin/lib/skill-audit/budgets.js` `RAIL_BYTES`), measured with `context-cost.js`'s `measuredBytes` at 33f635d03: `cli-wrapper-contract.md` 56,381 (over by 3,881), `SKILL.md` 53,799 (over by 1,299). Both were over before #5383, which grew them by 26 and 355 bytes. The `rail:` tests cover only the plugin's shipped skills, so CI never flags these.\n\n#5383's wrap-up found two additions `cli-wrapper-contract.md` needs, both of which grow it further:\n1. The relative-path and live-stdio rules. #5383's review fix wave (46a856cf1) resolved relative path arguments against `deps.cwd()` four different ways across five CLIs, and an unconditional `path.resolve(deps.cwd(), p)` broke a test because it read cwd for absolute paths too. release-local's hook needs inherited stdio for real callers, or an npm OTP prompt fails. The contract states neither rule.\n2. The env-only fixture proof in the conversion-proofs bullet sets `GIT_DIR` alone. That leaves `git rev-parse --show-toplevel` at the cwd repo (probed: `GIT_DIR` only prints A; `GIT_DIR` plus `GIT_WORK_TREE=<B>` prints B). The bullet also has no rule for observing the injected `cwd`: a stub that records `process.cwd()` per call, as #5383's digest-rollover AC6.1 fix does.\n\nThe diff staged for addition 2, from a real `git diff` (it applied cleanly at 33f635d03):\n\n```diff\ndiff --git a/.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md b/.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md\nindex e63de77d3..ffedfa987 100644\n--- a/.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md\n+++ b/.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md\n@@ -2,7 +2,7 @@\n \n - Logic lives in an exported `run(argv, deps)`; every side effect (`runner`, `ghAvailable`, `remoteUrl`, `stdout`, `stderr`) goes through `deps` so tests inject fakes. **Every** `deps` call that can throw (e.g. `remoteUrl` outside a git repo) is try/caught into the documented exit-code contract — an un-wrapped deps call is where #610's one post-review high landed.\n - **A CLI that tests call in-process meets the entry contract** (#5374; `plugin/bin/resolve-policy.js` is the worked example). It exports `run` and `realDeps`; `argv` is `process.argv.slice(2)`, and `run` returns an integer exit code or a Promise of one. The script entry is the file's last statement: `if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);`. The standard io keys, each present only when the CLI uses it, are `stdout(text)`, `stderr(text)`, `cwd()`, `env` (a plain object, read-only), `stdin()` (the whole input as a string) and `homeDir()`. Above the guard and in everything `run` calls there is no `process.exitCode`, `process.exit()`, `process.chdir()` or write to `process.env`. A relative path is resolved against `deps.cwd()`, never left to `path.resolve` or `fs`. Every child process is started with a `cwd` derived from `deps.cwd()` and with `env: deps.env`, and a library function on the CLI's path takes that `env` as an option whose default is the inherited environment, so a `gh` or `git` stub on an injected `PATH` is not skipped. The process-wide timeout knobs are the named exception: `plugin/bin/lib/shared-primitives.js`'s shared `gh`/`git` timeouts read `CLAUDE_TWEAKS_GH_TIMEOUT_MS`, `CLAUDE_TWEAKS_GIT_TIMEOUT_MS` and the `gh-timeout-ms` / `git-timeout-ms` keys of the `policy.yml` at the real working directory once per process, and `plugin/bin/lib/hooks/git-exec.js`'s `runGit` reads `CT_HOOKS_GIT_TIMEOUT_MS` from the real `process.env`, by design; an in-process test cannot set them through `env`, so a test of those knobs is a `spawnCli` test. Tests call the CLI through `tests/helpers/run-cli.js` (`runCli`, or `runCliSync` for a synchronous `run`), passing an absolute `cliPath`; the helper fails the test on a leaked `process.exitCode`, working directory, `process.env` key, signal listener, direct stdout/stderr write, or an `os.homedir()` call under an injected home; each converted CLI keeps one or two `spawnCli` smoke tests for the script entry, shebang and exit code. The helper's `env` defaults to `{}` and is the whole environment the CLI sees, so a CLI that starts `git` or `gh` needs `PATH` (and `SystemRoot` on Windows) in the `env` the test passes. Module-level state under `plugin/bin` (the forge probe's memos, for example) survives between in-process calls in one test file; a case that depends on it passes `fresh: true`, which clears `require.cache` under `plugin/bin` first. The helper fails closed: after merging `realDeps` with the test's fakes, it replaces a key named in `FAIL_CLOSED_KEYS` (`runner`, `gh`, `ghAvailable`, `runHook`, `spawn`) that still holds the CLI's real value with a function that throws, and records the reach so a CLI that catches the throw still fails the test; `allowRealRunner: true` lifts it for one call. The list is by key name: a `realDeps` key that can start `gh` or an arbitrary command carries one of those names, and a record converting a CLI whose `realDeps` holds such a seam under another name (for example `execFileSync`, `runPremiseCheck`) adds that name to `FAIL_CLOSED_KEYS` in the same change. A git-only seam (`git`, `gitRunner`) is deliberately not on the list: it runs real git against the injected `cwd` and `env`, which is the behaviour under test. `tests/bin-lib/cli-entry-conformance.test.js` pins the three structural rules (exports `run`, has the guard, no `process.exitCode`/`process.exit(` above it) for every top-level `plugin/bin/*.js`, with a `NOT_YET` list that only shrinks; `hooks.js` is the standing exception (its entry calls `process.exit(code)` and it has a require-time prefilter).\n-- **Converting an existing CLI to the entry contract takes two proofs the tests-side journey does not cover.** `docs/journeys/call-a-plugin-bin-cli-in-process-from-a-test-5374.md` starts from a CLI that already meets the contract; the `plugin/bin` side of the change needs these first. (1) Pin the script's output with real-process tests committed before the split, so the split is checked against the old behavior and not against itself: #5374 committed five `resolve-policy.js` script cases in `tests/resolve-policy-entry.test.js` (8fa20f94e) before splitting the file into a core and a printing `run` (75fb7d40e). (2) Prove that each `git` or `gh` child on the CLI's path got the injected `env` with an env-only fixture, not by reading the call: two repos, A with no remote and B with an `origin` and a recorded `origin/HEAD`, the CLI's `cwd` in A and `GIT_DIR=<B>/.git` only in the injected `env`, so a child that inherits the real environment reads A and a child that got `env: deps.env` reads B's remote (`forgePair` in `tests/forge-probe-env.test.js` and `tests/resolve-policy-entry.test.js`). Strip `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and `GIT_COMMON_DIR` from the fixture's own setup `git` calls, so a variable the test runner inherited cannot point them at the wrong repo. Find the ambient reads on a CLI's path by running each documented invocation through `runCliSync` and through `spawnCli` against the same fixture, with an injected `cwd`, `env` and `HOME` that differ from the real ones, and comparing the two results, not by reading the code: the read audit for `resolve-policy.js` (#5374) missed sites in four successive passes (plan, plan review, whole-branch review, review phase).\n+- **Converting an existing CLI to the entry contract takes two proofs the tests-side journey does not cover.** `docs/journeys/call-a-plugin-bin-cli-in-process-from-a-test-5374.md` starts from a CLI that already meets the contract; the `plugin/bin` side of the change needs these first. (1) Pin the script's output with real-process tests committed before the split, so the split is checked against the old behavior and not against itself: #5374 committed five `resolve-policy.js` script cases in `tests/resolve-policy-entry.test.js` (8fa20f94e) before splitting the file into a core and a printing `run` (75fb7d40e). (2) Prove that each `git` or `gh` child on the CLI's path got the injected `env` with an env-only fixture, not by reading the call: two repos, A with no remote and B with an `origin` and a recorded `origin/HEAD`, the CLI's `cwd` in A and `GIT_DIR=<B>/.git` only in the injected `env`, so a child that inherits the real environment reads A and a child that got `env: deps.env` reads B's remote (`forgePair` in `tests/forge-probe-env.test.js` and `tests/resolve-policy-entry.test.js`). A child that finds the repository root with `git rev-parse --show-toplevel` is not moved by `GIT_DIR` alone: git then takes the working directory as the work tree and still prints A, so put `GIT_WORK_TREE=<B>` beside it in the injected `env`; a child that reads only the repository (`--absolute-git-dir`, `log`, `remote get-url`) follows `GIT_DIR` alone (AC6.1 in `tests/risk-flags-cli.test.js`, #5383). The `cwd` half needs its own observation: a test named for an injected `cwd` whose stub never reads it stays green with the child's `cwd` option deleted, so have the stub append `process.cwd()` to a file on each call and assert every entry equals the injected directory, both sides through `path.resolve(fs.realpathSync(…))` (`gh-cwd.txt` in `tests/digest-rollover-cli.test.js`'s AC6.1 data-call test, #5383). Strip `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and `GIT_COMMON_DIR` from the fixture's own setup `git` calls, so a variable the test runner inherited cannot point them at the wrong repo. Find the ambient reads on a CLI's path by running each documented invocation through `runCliSync` and through `spawnCli` against the same fixture, with an injected `cwd`, `env` and `HOME` that differ from the real ones, and comparing the two results, not by reading the code: the read audit for `resolve-policy.js` (#5374) missed sites in four successive passes (plan, plan review, whole-branch review, review phase).\n - **A fail-closed branch around an injected dependency needs one test of the real dependency's failure shape, not only a stub that throws.** A stub proves the wrapper catches a throw, not that the real dependency ever throws. `plugin/bin/dispatch-resume.js`'s run-dir listing is the example: `read('run dir listing', …)` mapped a throw to exit 4, but the real `listRunDirsWithState` swallows a `readdirSync` failure into an empty listing, so the branch was unreachable and an unlistable pipelines dir passed the bound-run scan as clean (verdict and `--bound-run` modes) and could report this session's own lock as a live sibling. #4809 added `listRunDirsFailClosed` and the tests that drive the real dependency.\n - `require.main === module` guard sets `process.exitCode = run(...)` (never `process.exit`, which can truncate piped stdout). `--help` short-circuits before any availability probe. **This one is pinned mechanically, not by grep** — `tests/bin-lib/exit-code-conformance.test.js` (#1903) walks every `plugin/bin/**/*.js`, extracts the text each `require.main === module` guard governs, and fails on a direct `process.exit(...)` inside it. Three prior records (#1176, #1313, #1535) each closed one violation of this rule found by a manual sweep that missed another, which is why the sweep was replaced. A new guard needs no registration; a deliberate exception goes in that test's `ALLOWLIST` with its reason stated beside it (today: `bin/hooks.js`, whose stdout is a synchronous `fs.writeSync(1, …)` with nothing pending to flush, and `bin/lib/statusline-wrapper-source.js`, which deliberately hard-stops on a child process's own exit code).\n - **Precisely, the scan reads only a file's *last* `require.main === module` guard, and only the text that guard governs** — `extractGuard` takes the last regex match, then either a balanced `{…}` block or the bare statement up to its `;`. A file may hold more than one guard: `bin/hooks.js` has its Bash prefilter fast path (#3074) ahead of the real entry point at the bottom. The last guard is the entry point, since a guard that short-circuits before it must appear first, so a direct `process.exit(...)` in an earlier guard is not checked. `hooks.js`'s prefilter exit is safe because nothing has been written to stdout yet. An exit placed outside any guard is invisible to the scan in a file that also exports something. `hooks.js`'s allowlist entry covers the entry-point guard's `main(...).then((code) => process.exit(code))`, and `tests/bin-lib/exit-code-conformance.test.js` pins that the scan selects that guard, not the prefilter one.\n```\n\n## Deliverables\n\n- [ ] Move one lazy bullet group out of `cli-wrapper-contract.md` into a sibling file in the skill directory, leaving a one-line pointer bullet (the `status-as-data.md` / `run-dir-boundary-guards.md` pattern). The in-process entry contract and conversion proofs (lines 4-5 at 33f635d03, about 5.3 KB) are the candidate, since both additions land there. Do the same for one lazy section of `SKILL.md`.\n- [ ] Repoint every reference that names a moved bullet: `git grep -n cli-wrapper-contract -- tests plugin docs .claude`, including `tests/helpers/run-cli.js`'s `CONTRACT` constant and `docs/plugin-structure.md`.\n- [ ] Add the two contract rules in the moved group: (a) resolve a relative path argument where `run` consumes it, `path.isAbsolute(p) ? p : path.resolve(deps.cwd(), p)`, so an absolute path never reads cwd; (b) a child that may prompt on a terminal (a release hook, npm publish) gets `stdio: 'inherit'` when `deps.stdout`/`deps.stderr` are `realDeps`' own, and injected io gets a piped capture routed through deps (release-local.js `run()`'s `live` check).\n- [ ] Apply the conversion-proofs change above (the `GIT_WORK_TREE` pairing and the cwd-recording stub).\n\n## Acceptance Criteria\n\n- [ ] `cli-wrapper-contract.md` and `SKILL.md` each measure at or below `RAIL_BYTES` with `context-cost.js`'s `measuredBytes`, including the additions.\n- [ ] `git grep -n -F 'path.isAbsolute(p) ? p : path.resolve(deps.cwd(), p)' -- .claude/skills/gh-api-module-pattern/` and `git grep -n -F 'GIT_WORK_TREE' -- .claude/skills/gh-api-module-pattern/` each print a line.\n- [ ] Every `cli-wrapper-contract` reference found by the grep above resolves to a file and a bullet that exist.\n- [ ] Full `npm test` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md` — modify\n- `.claude/skills/gh-api-module-pattern/SKILL.md` — modify\n- `tests/helpers/run-cli.js` — verify\n- `docs/plugin-structure.md` — verify\n\n_Filed by `capture` via specShapedBody._",
