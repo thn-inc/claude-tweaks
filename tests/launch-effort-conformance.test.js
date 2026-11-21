@@ -90,7 +90,9 @@ test('the restatement detector matches each of its seven phrasings', () => {
   assert.doesNotMatch('the model profile is resolved once', MODEL_RESTATEMENT);
 });
 
-const matchesSweep = (text) => text.includes('resolve-profile.js') && MODEL_RESTATEMENT.test(text);
+function matchesSweep(text) {
+  return text.includes('resolve-profile.js') && MODEL_RESTATEMENT.test(text);
+}
 
 // (relativePath, text) pairs -> the paths that restate the model rule beside resolve-profile.js
 // without naming launchEffort. File-level granularity, workflow-script exemption applied.
