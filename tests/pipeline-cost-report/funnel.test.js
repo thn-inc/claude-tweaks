@@ -504,3 +504,41 @@ test('unresolvable main checkout: Dispatch firings unavailable, funnel still ren
     f.cleanup();
   }
 });
+
+test('plugin versions are listed sorted by version text, not by first sight', async () => {
+  const f = cliFixture();
+  try {
+    writeT(path.join(f.projects, 'slug', 'c.jsonl'), dispatchLines('2026-11-19T11:00:00Z', { version: '6.100.0' }).map((l) => l.split('/w/repo').join(f.main)));
+    assert.strictEqual(await cliRun({ argv: f.base, deps: f.depsFor() }), 0);
+    assert.ok(f.logs.join('\n').includes('by plugin version: 6.100.0 1, 6.175.0 1, unknown 1;'), f.logs.join('\n'));
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a corrupt run manifest adds to the report unreadable figure, not the funnel one', async () => {
+  const f = cliFixture();
+  try {
+    fs.writeFileSync(path.join(f.pipes, 'archive', '2026-11-19T090000-record-5270', 'manifest.json'), '{');
+    assert.strictEqual(await cliRun({ argv: [...f.base, '--json'], deps: f.depsFor() }), 0);
+    const json = JSON.parse(f.logs.join('\n'));
+    assert.strictEqual(json.funnel.driverRuns.unreadable, 1);
+    assert.strictEqual(json.funnel.unreadable, 0);
+    assert.strictEqual(json.unreadable, 1);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('unavailable firings print no flag line even when no run was dispatch-routed', async () => {
+  const f = cliFixture({ runs: false });
+  try {
+    mkRun(f.pipes, '2026-11-12T190721-drive-4351');
+    assert.strictEqual(await cliRun({ argv: f.base, deps: f.depsFor({ git: gitFails }) }), 0);
+    const md = f.logs.join('\n');
+    assert.ok(md.includes('Dispatch firings: unavailable'), md);
+    assert.ok(!md.includes(NOT_DRIVEN) && !md.includes('undefined'), md);
+  } finally {
+    f.cleanup();
+  }
+});
