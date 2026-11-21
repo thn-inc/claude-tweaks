@@ -6,6 +6,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { scratchDir } = require('../../helpers/tmp-dir');
+const { chmodDenialSkip } = require('../../helpers/root');
 const { readLensHistory, confirmedCount, startedAtOf, DEFAULT_N } = require('../../../plugin/bin/lib/review-lens/history');
 const { appendLensDispatch, LENS_IDS, LENS_DISPATCH_FILE } = require('../../../plugin/bin/lib/review-lens/dispatch-record');
 const { SCHEMA_VERSION, deriveStepYield, writeStepYield } = require('../../../plugin/bin/lib/timing/step-yield');
@@ -259,7 +260,7 @@ test('archive twin: under two roots with equal evidence the first root is kept',
   assert.deepStrictEqual(res.skipped, [{ path: second, reason: `duplicate run id (kept ${first})` }]);
 });
 
-test('a run dir whose spec members cannot be listed is an error, never a run without members', { skip: process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0) ? 'POSIX directory modes are not enforced here (win32 or root)' : false }, () => {
+test('a run dir whose spec members cannot be listed is an error, never a run without members', chmodDenialSkip('root ignores directory mode bits'), () => {
   const r = root();
   const dir = makeRun(r, id(1, 1), { yieldObj: { '3a': { both: 1 } }, dispatch: [entry('3a')], specDispatch: { 1: [entry('3a')] } });
   fs.chmodSync(dir, 0o311); // traversable, not listable: files read fine, the readdir fails with EACCES
