@@ -2189,15 +2189,24 @@ test('record-lens-dispatch refuses malformed flags with exit 2 and writes nothin
   const ok = ['--lens', '3a', '--reviewers', '1', '--path', 'task', '--status', 'completed'];
   const without = (flag) => { const i = ok.indexOf(flag); return [...ok.slice(0, i), ...ok.slice(i + 2)]; };
   const over = (flag, value) => { const i = ok.indexOf(flag); return [...ok.slice(0, i + 1), value, ...ok.slice(i + 2)]; };
+  const lensMsg = 'lens must be one of 3a, 3b, 3c, 3d, 3e, 3f, 3g, 3h';
   const cases = [
-    without('--lens'), over('--lens', '3z'), over('--lens', '__proto__'), over('--reviewers', '3'),
-    over('--path', 'agent'), over('--status', 'done'), [...ok, '--round', '0'], [...ok, '--round', 'x'],
-    [...ok, '--lens', '3b'], [...ok, 'stray'],
+    [without('--lens'), 'record-lens-dispatch needs --lens'],
+    [over('--lens', '3z'), lensMsg],
+    [over('--lens', '__proto__'), lensMsg],
+    [over('--reviewers', '3'), 'reviewers must be 1 or 2'],
+    [over('--path', 'agent'), 'path must be one of task, workflow'],
+    [over('--status', 'done'), 'status must be one of completed, failed, blocked'],
+    [[...ok, '--round', '0'], '--round must be a positive integer, got "0"'],
+    [[...ok, '--round', 'x'], '--round must be a positive integer, got "x"'],
+    [[...ok, '--lens', '3b'], '--lens given more than once'],
+    [[...ok, 'stray'], 'record-lens-dispatch takes no positional argument'],
   ];
-  for (const args of cases) {
+  for (const [args, message] of cases) {
     const res = recordLens(runDir, main, args);
     assert.strictEqual(res.code, 2, args.join(' '));
     assert.strictEqual(res.out, '', args.join(' '));
+    assert.strictEqual(res.err, `review-coordination.js: ${message}\n`, args.join(' '));
     assert.ok(!fs.existsSync(path.join(runDir, 'lens-dispatch.json')), args.join(' '));
   }
 });

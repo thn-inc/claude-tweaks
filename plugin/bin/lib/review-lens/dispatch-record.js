@@ -1,8 +1,9 @@
 'use strict';
 
 // lens-dispatch.json — the per-run record of which review lens reviewers were dispatched and how each ended
-// (#5998). It is the denominator of the per-lens review-history rate: a lens that was dispatched and failed
-// or blocked still counts, so a lost entry silently shrinks the rate.
+// (#5998). It is the denominator of the per-lens review-history rate: only a `completed` entry with
+// `reviewers: 2` qualifies for that rate; failed, blocked and single-reviewer entries are recorded but never
+// counted, so a lost entry silently shrinks the rate.
 //
 // The one sanctioned writer is `bin/review-coordination.js record-lens-dispatch`; nothing hand-types this file
 // and no other writer appends to it. The write is a locked read-modify-write (`{runDir}/.lens-dispatch.lock`,
@@ -14,8 +15,10 @@
 //   reviewers  1 or 2 — how many reviewers the lens was dispatched with
 //   path       'task' (Task-tool dispatch) or 'workflow' (the review-lens-fanout workflow)
 //   round      integer >= 1 — the review round
-//   status     'completed' (the reviewer(s) returned), 'failed' (the dispatch errored or returned nothing
-//              usable), 'blocked' (the reviewer reported BLOCKED / NEEDS_CONTEXT)
+//   status     'completed' (both of a pair's final replies were DONE / DONE_WITH_CONCERNS, or a single-reviewer
+//              lens's one reply was usable), 'blocked' (either reviewer's final reply was BLOCKED / NEEDS_CONTEXT,
+//              even when categorise-reproduction still ran), 'failed' (the replies never came)
+//              (plugin/skills/review/step3-lens-dispatch-record.md is the writer-side definition)
 // An identical entry already present is not appended again (idempotent on a retried call).
 //
 // A malformed existing file is an `error` state, never absence, and an append never overwrites it.
@@ -54,7 +57,7 @@ function readLensDispatch(dir) {
   try {
     raw = fs.readFileSync(path.join(dir, LENS_DISPATCH_FILE), 'utf8');
   } catch (err) {
-    if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) return { state: 'absent' };
+    if (err && err.code === 'ENOENT') return { state: 'absent' };
     return { state: 'error', reason: `unreadable (${(err && err.code) || 'unknown'})` };
   }
   let doc;

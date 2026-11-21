@@ -48,11 +48,13 @@ test('AC1.1: 25 qualifying runs for 3d report the newest 20', () => {
   const r = root();
   const withFinding = new Set([4, 5, 21, 22, 23]);
   for (let i = 1; i <= 25; i++) {
-    // Record numbers alternate so name order differs from time order (…-record-590 later than …-record-5770).
-    makeRun(r, id(i, i % 2 ? 5770 + i : 590 + i), { dispatch: [entry('3d')], yieldObj: withFinding.has(i) ? { '3d': { both: 1 } } : {} });
+    // Run ids start with the timestamp, so name order equals time order; the selection must therefore not lean on
+    // readdir order. Each finding run k confirms k, so only the newest 20 (days 6..25: runs 21, 22, 23) sum to 66;
+    // the oldest 20 would sum to 9 (runs 4, 5).
+    makeRun(r, id(i, i % 2 ? 5770 + i : 590 + i), { dispatch: [entry('3d')], yieldObj: withFinding.has(i) ? { '3d': { both: i } } : {} });
   }
   const res = history(r);
-  assert.deepStrictEqual(res.lenses['3d'], { runs: 20, confirmed: 3, perRun: 0.15, shareWithFinding: 0.15, insufficient: false });
+  assert.deepStrictEqual(res.lenses['3d'], { runs: 20, confirmed: 66, perRun: 3.3, shareWithFinding: 0.15, insufficient: false });
   assert.deepStrictEqual(res.errors, []);
   assert.strictEqual(DEFAULT_N, 20);
 });
@@ -234,6 +236,43 @@ test('an archived twin counts once, from the kept copy', () => {
   assert.ok(res2.skipped.some((s) => s.path === a && s.reason.includes(b)));
 });
 
+test('archive twin: the copy with close evidence wins over the archive copy without it', () => {
+  const r = root();
+  const id1 = id(1, 1);
+  const rootCopy = makeRun(r, id1, { dispatch: [entry('3a')], state: 'clean', yieldObj: { '3a': { both: 1 } } });
+  const archCopy = makeRun(path.join(r, 'archive'), id1, { dispatch: [entry('3a')], state: 'active', yieldObj: 'missing' });
+  const res = history(r);
+  assert.strictEqual(res.lenses['3a'].runs, 1);
+  assert.strictEqual(res.lenses['3a'].confirmed, 1);
+  assert.deepStrictEqual(res.skipped, [{ path: archCopy, reason: `duplicate run id (kept ${rootCopy})` }]);
+  assert.deepStrictEqual(res.errors, []);
+});
+
+test('archive twin: under two roots with equal evidence the first root is kept', () => {
+  const r1 = root();
+  const r2 = root();
+  const id1 = id(1, 1);
+  const first = makeRun(r1, id1, { dispatch: [entry('3a')], yieldObj: { '3a': { both: 2 } } });
+  const second = makeRun(r2, id1, { dispatch: [entry('3a')], yieldObj: { '3a': { both: 7 } } });
+  const res = history([r1, r2]);
+  assert.strictEqual(res.lenses['3a'].confirmed, 2);
+  assert.deepStrictEqual(res.skipped, [{ path: second, reason: `duplicate run id (kept ${first})` }]);
+});
+
+test('a run dir whose spec members cannot be listed is an error, never a run without members', { skip: process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0) ? 'POSIX directory modes are not enforced here (win32 or root)' : false }, () => {
+  const r = root();
+  const dir = makeRun(r, id(1, 1), { yieldObj: { '3a': { both: 1 } }, dispatch: [entry('3a')], specDispatch: { 1: [entry('3a')] } });
+  fs.chmodSync(dir, 0o311); // traversable, not listable: files read fine, the readdir fails with EACCES
+  try {
+    const res = history(r);
+    assert.deepStrictEqual(res.errors, [{ path: dir, reason: 'unreadable spec members (EACCES)' }]);
+    assert.strictEqual(res.lenses['3a'].runs, 0);
+    assert.deepStrictEqual(res.skipped, []);
+  } finally {
+    fs.chmodSync(dir, 0o755);
+  }
+});
+
 test('a malformed dispatch file is an error, not absence', () => {
   const r = root();
   const dir = makeRun(r, id(1, 1), { rawDispatch: '{"v":2,"entries":[]}' });
@@ -296,14 +335,25 @@ test('real writers: a derived step-yield.json and a recorded dispatch', () => {
   assert.strictEqual(res.lenses['3a'].confirmed, 1);
 });
 
-test('the default liveness is runLiveness', () => {
+test('the default liveness is runLiveness: a clean run with a fresh owner heartbeat is not closed', () => {
   const r = root();
-  const d = new Date(Date.now() - 30 * 60 * 1000);
-  const p = (n) => String(n).padStart(2, '0');
-  const runId = `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}-record-1`;
-  makeRun(r, runId, { dispatch: [entry('3a')], state: 'clean', yieldObj: {} });
+  const dir = makeRun(r, id(1, 1), { dispatch: [entry('3a')], state: 'clean', yieldObj: {} });
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({
+    status: 'clean', owner: { sessionId: 's-1', heartbeatAt: new Date().toISOString() },
+  }));
   const res = readLensHistory({ roots: [r] });
-  assert.strictEqual(res.lenses['3a'].runs, 1);
+  assert.strictEqual(res.lenses['3a'].runs, 0);
+  assert.deepStrictEqual(res.skipped, [{ path: dir, reason: 'run not closed' }]);
+  assert.deepStrictEqual(res.errors, []);
+});
+
+test('a stale owner heartbeat leaves a clean run closed under the default liveness', () => {
+  const r = root();
+  const dir = makeRun(r, id(1, 1), { dispatch: [entry('3a')], state: 'clean', yieldObj: {} });
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({
+    status: 'clean', owner: { sessionId: 's-1', heartbeatAt: new Date(Date.now() - 24 * 3600 * 1000).toISOString() },
+  }));
+  assert.strictEqual(readLensHistory({ roots: [r] }).lenses['3a'].runs, 1);
 });
 
 test('argument validation', () => {

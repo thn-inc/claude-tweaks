@@ -8,7 +8,7 @@ const { readText } = require('./helpers/read-skill');
 
 // #4419-#4421 (under #3979) removed private liveness probes from four plugin/bin
 // callers. Each now answers "is this run live?" through a sanctioned path, not a
-// probe of its own. This scan fails if a retired probe comes back in any of the four.
+// probe of its own. This scan fails if a retired probe comes back in any of the five.
 //
 // Banned, in the five scanned files (SCANNED, in order):
 //   - the names isDeadRunDir, lockVerdict, isPidAlive, lockInUse and lastCommitMs;
@@ -461,6 +461,17 @@ function consumerListGaps(text, { count = true } = {}) {
   if (!text.includes('review-lens/history.js')) gaps.push('history route');
   return gaps;
 }
+
+// The removal condition for the 72-hour legacy route must say history reads unknown and dead alike as closed.
+const FROZEN_REMOVAL = 'After the route is removed, fallback (b) still classifies those owner-less `interrupted` runs as `abandoned-interrupted` at the same 72 hours, so removing it changes no archive decision.';
+const removalClauseGaps = (text) => (text.includes('reads \`unknown\` and \`dead\` alike as closed') ? [] : ['removal-condition clause']);
+
+test('the removal conditions say history reads unknown and dead alike as closed', () => {
+  for (const rel of ['docs/hooks.md', 'docs/reconcile-checks.md']) {
+    assert.deepEqual(removalClauseGaps(readText(path.join(REPO, rel))), [], rel);
+  }
+  assert.deepEqual(removalClauseGaps(FROZEN_REMOVAL), ['removal-condition clause']);
+});
 
 test('every consumer list names review-lens/history.js', () => {
   for (const rel of ['docs/hooks.md', 'docs/plugin-structure.md']) {

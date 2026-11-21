@@ -19,6 +19,7 @@
 // listed in `skipped` ("run not closed"), never counted and never an error; a closed run whose yield is missing or not a
 // schemaVersion-1 yield is an `errors` entry, never read as 0. A run with no dispatch file is never counted, but a
 // malformed yield in it is still reported (errors if closed, skipped if not).
+// A run dir that cannot be listed for its spec-N members is an `errors` entry and is excluded (never read as a run without members).
 // Multi-member rule: two or more dispatch sources holding entries for a lens exclude the run for that lens (`skipped`).
 // Archive-twin rule: one run id under a root and `{root}/archive` (or two roots) counts once — the copy with a clean
 // run-state or a step-yield wins, then `archive/`, then the first root; the other is `skipped`.
@@ -145,14 +146,16 @@ function dedupe(found, skipped) {
   return kept;
 }
 
-// Dispatch sources of a run: the parent file and each spec-N child. [{ name, dir, read }].
+// Dispatch sources of a run: the parent file and each spec-N child. { sources: [{ name, dir, read }] } or, when
+// the run dir cannot be listed for its spec-N members, { error: code } — never read as "no members".
 function dispatchSources(dir) {
-  const sources = [{ name: LENS_DISPATCH_FILE, dir, read: readLensDispatch(dir) }];
   const children = childDirs(dir);
-  const specs = (children.names || []).filter((n) => /^spec-\d+$/.test(n))
+  if (children.error) return { error: children.error };
+  const sources = [{ name: LENS_DISPATCH_FILE, dir, read: readLensDispatch(dir) }];
+  const specs = children.names.filter((n) => /^spec-\d+$/.test(n))
     .sort((a, b) => Number(a.slice(5)) - Number(b.slice(5)));
   for (const n of specs) sources.push({ name: n, dir: path.join(dir, n), read: readLensDispatch(path.join(dir, n)) });
-  return sources;
+  return { sources };
 }
 
 const newestFirst = (a, b) => {
@@ -178,7 +181,9 @@ function readLensHistory({ roots, n = DEFAULT_N, liveness } = {}) {
 
   for (const run of dedupe(collectRunDirs(roots, errors), skipped)) {
     const { dir, name } = run;
-    const sources = dispatchSources(dir);
+    const listed = dispatchSources(dir);
+    if (listed.error) { errors.push({ path: dir, reason: `unreadable spec members (${listed.error})` }); continue; }
+    const { sources } = listed;
     const anyDispatch = sources.some((s) => s.read.state !== 'absent');
 
     if (!anyDispatch) {

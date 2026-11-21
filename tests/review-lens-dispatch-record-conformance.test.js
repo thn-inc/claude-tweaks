@@ -51,8 +51,8 @@ function assertSingleReviewerRecords(text) {
 }
 
 function assertBlockedRule(text) {
-  assert.match(text, /`blocked` — either reviewer's final reply was `BLOCKED` or `NEEDS_CONTEXT`, even when `categorise-reproduction` still ran/);
-  assert.match(text, /`completed` — both of a pair's final replies were `DONE` or `DONE_WITH_CONCERNS`/);
+  assert.ok(/`blocked` — either reviewer's final reply was `BLOCKED` or `NEEDS_CONTEXT`, even when `categorise-reproduction` still ran/.test(text), 'blocked rule missing');
+  assert.ok(/`completed` — both of a pair's final replies were `DONE` or `DONE_WITH_CONCERNS`/.test(text), 'completed rule missing');
 }
 
 test('AC8.1: step3-lens-dispatch.md points at the record sub-file', () => {
@@ -70,13 +70,23 @@ test('AC8.1: step3-workflow-dispatch.md records settled lenses through the CLI',
   const live = readText(WORKFLOW);
   assertSettleRecords(live);
   assertSingleReviewerRecords(live);
+  // Each assertion goes red on its own: a live-text variant that drops only the verb name, or only `--path workflow`.
+  const settle = settleSection(live);
+  assert.ok(settle.includes('--path workflow') && settle.includes('record-lens-dispatch'));
+  assert.throws(() => assertSettleRecords(live.replace(settle, settle.replaceAll('record-lens-dispatch', ''))), /Settle must record through record-lens-dispatch/);
+  assert.throws(() => assertSettleRecords(live.replace(settle, settle.replaceAll('--path workflow', ''))), /Settle must pass --path workflow/);
   assert.throws(() => assertSettleRecords(FROZEN_SETTLE));
   assert.throws(() => assertSingleReviewerRecords(FROZEN_SINGLE));
 });
 
 test('the sub-file pins the blocked/completed ruling for a pair with a blocked reviewer', () => {
-  assertBlockedRule(readText(RECORD));
+  const live = readText(RECORD);
+  assertBlockedRule(live);
   assert.throws(() => assertBlockedRule(FROZEN_STATUS));
+  // Each assertion goes red on its own: a live-text variant that drops only one clause.
+  const without = (clause) => { assert.ok(live.includes(clause), clause); return live.replaceAll(clause, ''); };
+  assert.throws(() => assertBlockedRule(without("either reviewer's final reply was `BLOCKED` or `NEEDS_CONTEXT`, even when `categorise-reproduction` still ran")), /blocked rule missing/);
+  assert.throws(() => assertBlockedRule(without("both of a pair's final replies were `DONE` or `DONE_WITH_CONCERNS`")), /completed rule missing/);
 });
 
 test('AC8.1: the sub-file names every status, path and reviewers value and the verb', () => {

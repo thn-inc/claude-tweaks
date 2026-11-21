@@ -33,18 +33,31 @@ test('absent file reads absent', () => {
 
 test('malformed files are errors, never absence', () => {
   const cases = [
-    'not json',
-    '{"v":2,"entries":[]}',
-    '{"v":1,"entries":{}}',
-    '{"v":1,"entries":[{"lens":"3z","reviewers":2,"path":"task","round":1,"status":"completed"}]}',
+    ['not json', 'unparseable'],
+    ['[]', 'not an object'],
+    ['{"v":2,"entries":[]}', 'v must be 1'],
+    ['{"v":1,"entries":{}}', 'entries is not an array'],
+    ['{"v":1,"entries":[{"lens":"3z","reviewers":2,"path":"task","round":1,"status":"completed"}]}', 'entry 0: lens must be one of 3a, 3b, 3c, 3d, 3e, 3f, 3g, 3h'],
+    ['{"v":1,"entries":[null]}', 'entry 0: entry must be an object'],
   ];
-  for (const text of cases) {
+  for (const [text, reason] of cases) {
     const dir = scratchDir('lens-dispatch-');
     fs.writeFileSync(path.join(dir, LENS_DISPATCH_FILE), text);
     const got = readLensDispatch(dir);
     assert.strictEqual(got.state, 'error', text);
-    assert.match(got.reason, /unparseable|v|entries|entry 0/, text);
+    assert.strictEqual(got.reason, reason, text);
   }
+});
+
+test('a lens-dispatch.json path that is not readable as a file is an error, never absence', () => {
+  const dir = scratchDir('lens-dispatch-');
+  fs.writeFileSync(path.join(dir, 'blocker'), 'x');
+  // A file where a directory should be: reading blocker/lens-dispatch.json fails with ENOTDIR.
+  assert.deepStrictEqual(readLensDispatch(path.join(dir, 'blocker')), { state: 'error', reason: 'unreadable (ENOTDIR)' });
+  // A directory in place of the file fails with EISDIR.
+  const dir2 = scratchDir('lens-dispatch-');
+  fs.mkdirSync(path.join(dir2, LENS_DISPATCH_FILE));
+  assert.deepStrictEqual(readLensDispatch(dir2), { state: 'error', reason: 'unreadable (EISDIR)' });
 });
 
 test('append refuses to overwrite a malformed file', () => {
@@ -65,7 +78,7 @@ test('entryProblem refuses bad fields', () => {
 
 test('append refuses a vanished run dir and does not create it', () => {
   const runDir = path.join(scratchDir('lens-dispatch-'), 'gone');
-  assert.throws(() => appendLensDispatch({ runDir, entry: BASE }));
+  assert.throws(() => appendLensDispatch({ runDir, entry: BASE }), (err) => err.message === `run dir does not exist: ${runDir}`);
   assert.strictEqual(fs.existsSync(runDir), false);
 });
 

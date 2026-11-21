@@ -101,8 +101,8 @@
 // never overwritten), with one stderr line. It writes no decisions.md line.
 // Exit 0 ok; 2 malformed invocation (a blank resolve-tiebreak --run included) or unreadable/invalid input (check-coverage:
 // also a run dir that does not exist); 3 run dir unanchored (write-findings, check-coverage, resolve-tiebreak --run,
-// categorise-reproduction --run, log-reproduction-judgment, settle-lens-replies --run), or missing (write-findings,
-// resolve-tiebreak --run, categorise-reproduction --run, log-reproduction-judgment, settle-lens-replies --run, record-lens-dispatch).
+// categorise-reproduction --run, log-reproduction-judgment, settle-lens-replies --run, record-lens-dispatch), or missing (write-findings,
+// resolve-tiebreak --run, categorise-reproduction --run, log-reproduction-judgment, settle-lens-replies --run, record-lens-dispatch), or the append failed (record-lens-dispatch, a held lock included).
 'use strict';
 
 const fs = require('node:fs');
