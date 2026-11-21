@@ -1,6 +1,6 @@
 // tests/bin-lib/model-profiles/policy-keys-registration.test.js
 //
-// #219: pins POLICY_KEYS_READ (profiles.js's authoritative export of the four
+// #219: pins POLICY_KEYS_READ (profiles.js's authoritative export of the five
 // resolver-read policy.yml keys) against POLICY_KEYS (policy-schema.js's
 // registry). If a future rename lands in profiles.js without a matching
 // registration here, this goes red rather than silently drifting — the
