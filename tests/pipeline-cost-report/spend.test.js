@@ -593,3 +593,23 @@ test('a non-ENOENT error on subagents/workflows is counted unreadable', async ()
   const r = await collectSpend({ roots: [root], ...WINDOW }, { fsImpl: failList });
   assert.strictEqual(r.unreadable, 1);
 });
+
+test('scanTranscript: a Bash drive.js --check call is route evidence; prose and other tools are not', async () => {
+  const bash = (command) => ({ type: 'assistant', timestamp: '2026-11-19T09:00:00Z', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command } }] } });
+  assert.strictEqual((await scanTranscript(fixture([bash('node "/p/bin/drive.js" --check 5270')]))).reachedRoute, true);
+  assert.strictEqual((await scanTranscript(fixture([bash('node "/p/bin/log-decision.js" --run "/r" --status SKIP --step "Driver route (skipped)" --text x')]))).reachedRoute, true);
+  assert.strictEqual((await scanTranscript(fixture([bash('node "/p/bin/drive.js" #5270')]))).reachedRoute, false);
+  assert.strictEqual((await scanTranscript(fixture([{ type: 'user', message: { content: 'run `drive.js --check #5270` first' } }]))).reachedRoute, false);
+  assert.strictEqual((await scanTranscript(fixture([{ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: '/x/drive.js --check' } }] } }]))).reachedRoute, false);
+});
+
+test('scanTranscript: pluginVersion is the first claude-tweaks v{X.Y.Z} @ match in the raw text, else null', async () => {
+  const hook = (v) => ({ type: 'attachment', attachment: { content: `rules...\n\nclaude-tweaks v${v} @ /cache/claude-tweaks/${v}` } });
+  assert.strictEqual((await scanTranscript(fixture([hook('6.175.0'), hook('6.170.0')]))).pluginVersion, '6.175.0');
+  assert.strictEqual((await scanTranscript(fixture([{ type: 'user', message: { content: 'claude-tweaks v{X.Y.Z} @' } }]))).pluginVersion, null);
+});
+
+test('scanTranscript: firstTs is the first line carrying a timestamp', async () => {
+  assert.strictEqual((await scanTranscript(fixture([{ type: 'last-prompt' }, { type: 'user', timestamp: '2026-11-15T23:06:00Z', message: { content: 'x' } }, { type: 'user', timestamp: '2026-11-16T00:00:00Z', message: { content: 'y' } }]))).firstTs, '2026-11-15T23:06:00Z');
+  assert.strictEqual((await scanTranscript(fixture([{ type: 'last-prompt' }]))).firstTs, null);
+});
