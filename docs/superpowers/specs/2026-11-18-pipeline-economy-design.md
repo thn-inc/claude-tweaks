@@ -292,7 +292,7 @@ Records #5998 (each lens's confirmed-finding rate over its last 20 runs, and a p
 ## Phase 12 — The plan is made with the spec
 
 - **Builds:** `/claude-tweaks:specify` writes the task list and runs the plan review while a human is present. A record that carries a reviewed plan skips the build's plan step.
-- **Needs:** its own design.
+- **Design:** `2026-11-21-plan-with-spec-design.md` (draft for approval).
 - **Expected effect:** the plan step (12 minutes, 11.7M tokens) and the 43 mid-run stops leave the build.
 
 ## Phase 13 — The driver is the drain
