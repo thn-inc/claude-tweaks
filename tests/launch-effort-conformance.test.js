@@ -20,7 +20,7 @@ const SKILLS_DIR = path.join(__dirname, '..', 'plugin', 'skills');
 
 // The phrasings by which a skill restates "pass the resolved model on the Agent call". One regex,
 // so the sweep and the detector cannot drift; each alternative has a fixture below.
-const MODEL_RESTATEMENT = /Agent tool's `model`|`model` parameter|pass `model` explicitly|pass the resolved `model`|returned `model` value|passed as `model`/;
+const MODEL_RESTATEMENT = /Agent tool's `model`|`model` parameter|pass `model` explicitly|pass the resolved `model`|returned `model` value|passed as `model`|pass the printed `model` field/;
 
 // Sites that match MODEL_RESTATEMENT beside resolve-profile.js and are exempt by name. The workflow
 // script's agents are a Non-Goal of #5941: the script receives `model` per lens and sets no effort.
@@ -75,7 +75,7 @@ test('no skill says the Agent tool lacks an effort parameter (AC7)', () => {
   assert.deepEqual(offenders, []);
 });
 
-test('the restatement detector matches each of its six phrasings', () => {
+test('the restatement detector matches each of its seven phrasings', () => {
   for (const fixture of [
     "into the Agent tool's `model` parameter",
     'the returned `model` is a `model` parameter',
@@ -83,20 +83,43 @@ test('the restatement detector matches each of its six phrasings', () => {
     'pass the resolved `model` on that dispatch',
     'Pass the returned `model` value as',
     'the profile, passed as `model` on the `Agent` call',
+    'and pass the printed `model` field. `reviewers` is 2',
   ]) {
     assert.match(fixture, MODEL_RESTATEMENT, fixture);
   }
   assert.doesNotMatch('the model profile is resolved once', MODEL_RESTATEMENT);
 });
 
+const matchesSweep = (text) => text.includes('resolve-profile.js') && MODEL_RESTATEMENT.test(text);
+
+// (relativePath, text) pairs -> the paths that restate the model rule beside resolve-profile.js
+// without naming launchEffort. File-level granularity, workflow-script exemption applied.
+function offendersOf(pairs) {
+  return pairs
+    .filter(([p, text]) => matchesSweep(text) && !WORKFLOW_SCRIPT_EXEMPT.has(p) && !text.includes('launchEffort'))
+    .map(([p]) => p);
+}
+
 test('every site naming the Agent tool\'s model parameter beside resolve-profile.js names launchEffort (AC8)', () => {
-  const sites = SKILL_FILES.filter((f) => {
-    const text = readText(f);
-    return text.includes('resolve-profile.js') && MODEL_RESTATEMENT.test(text) && !WORKFLOW_SCRIPT_EXEMPT.has(rel(f));
-  });
+  const sites = SKILL_FILES.filter((f) => matchesSweep(readText(f)) && !WORKFLOW_SCRIPT_EXEMPT.has(rel(f)));
   assert.ok(sites.length >= 5, `site sweep found ${sites.length} sites, expected at least the five known`);
-  const missing = sites.filter((f) => !readText(f).includes('launchEffort')).map(rel);
+  const missing = offendersOf(SKILL_FILES.map((f) => [rel(f), readText(f)]));
   assert.deepEqual(missing, [], 'these files restate the model rule beside resolve-profile.js without launchEffort');
+});
+
+test('the AC8 sweep flags a restating text without launchEffort and passes one that has it', () => {
+  const restating = 'run resolve-profile.js and pass the resolved `model` on that dispatch';
+  assert.deepEqual(offendersOf([['a.md', restating]]), ['a.md']);
+  assert.deepEqual(offendersOf([['a.md', `${restating}, and launchEffort as effort`]]), []);
+  assert.deepEqual(offendersOf([['a.md', 'pass the resolved `model` with no resolver named']]), []);
+  assert.deepEqual(offendersOf([['_shared/subagent-output-contract.md', restating]]), []);
+});
+
+test('each workflow-script exemption still matches the sweep (stale-check)', () => {
+  for (const p of WORKFLOW_SCRIPT_EXEMPT) {
+    const text = readText(path.join(SKILLS_DIR, p));
+    assert.ok(matchesSweep(text), `${p} no longer matches the sweep predicates; drop it from WORKFLOW_SCRIPT_EXEMPT`);
+  }
 });
 
 module.exports = { MODEL_RESTATEMENT };

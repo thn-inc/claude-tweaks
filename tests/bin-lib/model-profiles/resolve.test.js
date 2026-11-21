@@ -74,6 +74,11 @@ test('model-effort is a closed rule: any other value throws', () => {
   }
 });
 
+test('an empty model-effort is unset: inherit, launchEffort null, no throw', () => {
+  const r = resolve('standard', { policy: { 'model-effort': '' } });
+  assert.strictEqual(r.launchEffort, null);
+});
+
 test('policy row overrides the table; partial rows merge field-wise', () => {
   const policy = { 'model-profiles': { standard: { model: 'opus', effort: 'low' } } };
   const r = resolve('standard', { policy });

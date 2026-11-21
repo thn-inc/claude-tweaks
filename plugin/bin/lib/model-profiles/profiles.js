@@ -72,7 +72,7 @@ function resolve(profile, opts = {}) {
   const policy = opts.policy || {};
   const stance = opts.stance || policy['model-stance'] || 'default';
   if (!STANCES.includes(stance)) throw new Error(`unknown stance "${stance}"`);
-  const effortMode = policy['model-effort'] === undefined ? 'inherit' : policy['model-effort'];
+  const effortMode = policy['model-effort'] || 'inherit';
   if (effortMode !== 'inherit' && effortMode !== 'profile') throw new Error(`unknown model-effort "${effortMode}"`);
 
   let model = PROFILES[profile].model;
