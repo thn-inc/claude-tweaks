@@ -593,3 +593,20 @@ test('a non-ENOENT error on subagents/workflows is counted unreadable', async ()
   const r = await collectSpend({ roots: [root], ...WINDOW }, { fsImpl: failList });
   assert.strictEqual(r.unreadable, 1);
 });
+
+test('a pluginRoot without transcript.js fails collectSpend loudly instead of counting every transcript unreadable', async () => {
+  const root = newRoot();
+  put(path.join(root, 'slug-a', 's1.jsonl'), [typed(0, 'flow'), opusCall('a', 1)]);
+  const emptyPlugin = fs.mkdtempSync(path.join(DIR, 'plugin-'));
+  await assert.rejects(() => collectSpend({ roots: [root], ...WINDOW }, { pluginRoot: emptyPlugin }), /transcript\.js/);
+});
+
+test('a transcript.js under pluginRoot that does not export mergeUsage fails collectSpend with the loader error, not MODULE_NOT_FOUND', async () => {
+  const root = newRoot();
+  put(path.join(root, 'slug-a', 's1.jsonl'), [typed(0, 'flow'), opusCall('a', 1)]);
+  const badPlugin = fs.mkdtempSync(path.join(DIR, 'plugin-'));
+  const dir = path.join(badPlugin, 'bin', 'lib', 'timing');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'transcript.js'), 'module.exports = {};');
+  await assert.rejects(() => collectSpend({ roots: [root], ...WINDOW }, { pluginRoot: badPlugin }), /does not export mergeUsage/);
+});
