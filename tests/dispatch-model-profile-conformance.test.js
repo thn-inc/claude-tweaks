@@ -120,7 +120,8 @@ test('each Task call tells the dispatcher to set the effort parameter from launc
     const sentence = after.slice(0, after.indexOf('\n\n'));
     assert.match(sentence, /`profile\.launchEffort`/);
     assert.match(sentence, /`effort` parameter/);
+    assert.match(sentence, /when it is not `null`, and leave it unset when it is\.$/);
   }
 });
 
-module.exports ={ sections, fencedBlock, profileOf };
+module.exports = { sections, fencedBlock, profileOf };
