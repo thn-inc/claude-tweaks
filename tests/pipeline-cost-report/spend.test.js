@@ -593,3 +593,10 @@ test('a non-ENOENT error on subagents/workflows is counted unreadable', async ()
   const r = await collectSpend({ roots: [root], ...WINDOW }, { fsImpl: failList });
   assert.strictEqual(r.unreadable, 1);
 });
+
+test('a pluginRoot without transcript.js fails collectSpend loudly instead of counting every transcript unreadable', async () => {
+  const root = newRoot();
+  put(path.join(root, 'slug-a', 's1.jsonl'), [typed(0, 'flow'), opusCall('a', 1)]);
+  const emptyPlugin = fs.mkdtempSync(path.join(DIR, 'plugin-'));
+  await assert.rejects(() => collectSpend({ roots: [root], ...WINDOW }, { pluginRoot: emptyPlugin }), /transcript\.js/);
+});

@@ -100,8 +100,17 @@ function isCompactionMarker(line) {
   return (line.type === 'system' && line.subtype === 'compact_boundary') || line.isCompactSummary === true;
 }
 
+// A misconfigured pluginRoot must fail the run loudly: left to scanTranscript, collectSpend's per-file catch would
+// count every transcript unreadable instead.
+function loadMergeUsage(pluginRoot) {
+  const file = path.join(pluginRoot, 'bin', 'lib', 'timing', 'transcript.js');
+  const { mergeUsage } = require(file);
+  if (typeof mergeUsage !== 'function') throw new Error(`${file} does not export mergeUsage`);
+  return mergeUsage;
+}
+
 async function scanTranscript(file, { fsImpl = fs, pluginRoot = PLUGIN_ROOT } = {}) {
-  const { mergeUsage } = require(path.join(pluginRoot, 'bin', 'lib', 'timing', 'transcript.js'));
+  const mergeUsage = loadMergeUsage(pluginRoot);
   const out = { cwd: null, firstSkill: null, requests: [] };
   const byId = new Map();
   let compactionPending = false;
@@ -210,6 +219,7 @@ function addCount(map, key, usd) {
 // directory is that path or under it (a transcript naming no working directory is not kept); both given: both hold.
 // A session dir whose subagent files are all outside the window is skipped without reading its parent transcript.
 async function collectSpend({ roots, since, until, match = null, root: scopeRoot = null }, { fsImpl = fs, pluginRoot = PLUGIN_ROOT } = {}) {
+  loadMergeUsage(pluginRoot);
   const startMs = dayStart(since);
   const endMs = dayStart(until) + DAY_MS;
   const res = {
