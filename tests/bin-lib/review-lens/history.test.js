@@ -1,6 +1,7 @@
 'use strict';
 // plugin/bin/lib/review-lens/history.js (#5998): the per-lens confirmed-finding rate over the last N runs.
-// Every test passes a `liveness` stub returning 'dead' unless it says otherwise, so none spawns a real probe.
+// Every test passes a `liveness` stub returning 'dead' unless it says otherwise; only the two default-liveness tests
+// near the end omit it, on purpose, to pin that the default is runLiveness.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -58,6 +59,25 @@ test('AC1.1: 25 qualifying runs for 3d report the newest 20', () => {
   assert.deepStrictEqual(res.lenses['3d'], { runs: 20, confirmed: 66, perRun: 3.3, shareWithFinding: 0.15, insufficient: false });
   assert.deepStrictEqual(res.errors, []);
   assert.strictEqual(DEFAULT_N, 20);
+});
+
+test('qualifying runs are filtered before the newest N are taken, and a run counts only for the lenses it dispatched', () => {
+  const r = root();
+  // The 20 oldest 3d runs qualify; the 5 newest 3d dispatches failed. Taking the newest 20 first would leave 15.
+  for (let i = 1; i <= 20; i++) makeRun(r, id(i, i), { dispatch: [entry('3d')], yieldObj: { '3d': { both: 1 } } });
+  for (let i = 21; i <= 25; i++) makeRun(r, id(i, i), { dispatch: [entry('3d', { status: 'failed' }), entry('3a')], yieldObj: { '3d': { both: 9 } } });
+  const res = history(r);
+  assert.deepStrictEqual(res.lenses['3d'], { runs: 20, confirmed: 20, perRun: 1, shareWithFinding: 1, insufficient: false });
+  assert.strictEqual(res.lenses['3a'].runs, 5);
+  assert.strictEqual(res.lenses['3b'].runs, 0);
+});
+
+test('a lens that failed in one round and completed in another qualifies once', () => {
+  const r = root();
+  makeRun(r, id(1, 1), { dispatch: [entry('3c', { status: 'failed' }), entry('3c', { round: 2 })], yieldObj: { '3c': { both: 2 } } });
+  const c = history(r).lenses['3c'];
+  assert.strictEqual(c.runs, 1);
+  assert.strictEqual(c.confirmed, 2);
 });
 
 test('AC2.1/AC2.2: a dispatched lens with no finding line counts 0; no evidence does not count', () => {

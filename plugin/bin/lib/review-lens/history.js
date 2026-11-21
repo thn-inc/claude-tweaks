@@ -38,7 +38,7 @@ const DEFAULT_N = 20;
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const num = (v) => (Number.isFinite(v) ? v : 0);
 
-// Must equal tools/step-yield-report.js stepRow's `confirmed` expression.
+// The one `confirmed` definition: tools/step-yield-report.js imports it for its per-lens table.
 function confirmedCount(findings) {
   if (!isObject(findings)) return 0;
   const verdicts = findings.tiebreak && findings.tiebreak.byVerdict;
