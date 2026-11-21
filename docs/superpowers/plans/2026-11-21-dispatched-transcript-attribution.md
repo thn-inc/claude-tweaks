@@ -10,7 +10,7 @@
 
 **Spec:** `.claude-tweaks/pipelines/2026-11-21T181802-spec-5647/work/5647-spec.md` (record #5647).
 
-Scope keywords: ownTranscripts, locateTranscripts, transcripts[].path, own slug
+Scope keywords: ownTranscripts, locateTranscripts
 
 ## Global Constraints
 
@@ -78,7 +78,7 @@ Add a fixture builder in the test file: `taskSession(cfg, slug, sid, agents)` wr
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test --test-name-pattern "locateTaskTranscripts|runIdsNamed" tests/bin-lib/timing/transcript.test.js`
-Expected: FAIL with `TypeError: locateTaskTranscripts is not a function`
+Expected: FAIL after Step 1 — `TypeError: locateTaskTranscripts is not a function`
 
 - [ ] **Step 3: Implement `locateTaskTranscripts`, `runIdsNamed`, `FIRST_ENTRY_CAP` in `plugin/bin/lib/timing/transcript.js`**
 
@@ -106,7 +106,8 @@ git commit -m "Add locateTaskTranscripts — a session's depth-1 agent files who
 - Modify: `plugin/bin/timing-at-close.js:5` (comment: "from the run's own transcript" → own transcript, or a dispatched run's Task-call transcripts naming it)
 - Modify: `docs/plugin-structure.md:281` (same one-clause change)
 - Modify: `docs/journeys/read-where-a-pipeline-run-spent-its-minutes-1928.md:62` (the sentence "Tokens come only from the run's own `{sessionId}.jsonl` under its own worktree slug…" gains the dispatched case)
-- No change: `docs/hooks.md` ("Who writes `timing.json`" never states the own-slug rule; it says "the run's transcript"). `docs/superpowers/plans/2026-11-16-timing-at-close.md` is a historical plan.
+- No change: `docs/hooks.md` ("Who writes `timing.json`" never states the own-slug rule; it says "the run's transcript"). `docs/superpowers/plans/2026-11-16-timing-at-close.md`, `docs/superpowers/plans/2026-11-16-typed-dispatch-build-authority-5584.md` and `CHANGELOG.md` are history.
+- No change (Check B, other callers of the unchanged `locateTranscripts`): `plugin/bin/phase-timing.js:261` (`--auto-transcript`, a mid-run view; the at-close writer recomputes any file without token totals), `plugin/bin/lib/timing/context-gauge.js:204,221` and `plugin/bin/lib/issues/typed-command.js:238` (already look a session up by id across every slug — the precedent this design follows), `tools/typed-command-probe.js`, `tests/bin-lib/path-guard/callers-characterization.test.js`, `tests/bin-lib/driver/fixtures/merge-check-verdicts.json` (fixture text).
 - Test: `tests/bin-lib/timing/at-close.test.js`
 
 **Interfaces:**
@@ -127,7 +128,7 @@ Fixture `dispatchedRun(root, id, { sid, resumeSid })`: `root = gitRepo()` (alrea
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test --test-name-pattern "AC1\.1" tests/bin-lib/timing/at-close.test.js`
-Expected: FAIL. The positive test reports `totals.tokens` missing (the run got phase rows only); the gate and priority tests may already pass.
+Expected: FAIL after Step 1 — the positive test reports `totals.tokens` missing (the run got phase rows only); the gate and priority tests may already pass.
 
 - [ ] **Step 3: Implement the fallback in `ownTranscripts` and pass `runId: path.basename(runDir)` at the call**
 
@@ -170,7 +171,7 @@ git commit -m "Attribute a dispatched run's Task-call transcripts at close — t
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `node --test --test-name-pattern "agent transcript path" tests/pipeline-cost-report/guards.test.js`
-Expected: FAIL. `sessions` is `['agent-a1', 'agent-a2', 's2']`.
+Expected: FAIL after Step 1 — `sessions` is `['agent-a1', 'agent-a2', 's2']`.
 
 - [ ] **Step 3: Implement the agent-path case in `readTiming`**
 
