@@ -488,6 +488,22 @@ test('scopeDispatchesTo: a directory reached through an own-slug path keeps its 
   }
 });
 
+test('scopeDispatchesTo: agents in a parentAgentId cycle never reach a scoped agent and are excluded', async () => {
+  // Red without it: the chain walk's last-resort `return false` (hop cap / cycle) mutated to `return true` keeps x and y.
+  const { dir, sub } = scopedSession();
+  try {
+    for (const [id, parent] of [['x', 'y'], ['y', 'x']]) {
+      fs.writeFileSync(path.join(sub, `agent-${id}.meta.json`), JSON.stringify({ spawnDepth: 2, description: id, parentAgentId: parent }));
+      fs.writeFileSync(path.join(sub, `agent-${id}.jsonl`), JSON.stringify({ timestamp: '2026-11-16T10:01:00.000Z', message: { role: 'assistant', id: `m-${id}`, model: 'claude-test', content: [], usage: { input_tokens: 1, output_tokens: 1 } } }) + '\n');
+    }
+    const t1 = path.join(fs.realpathSync(sub), 'agent-t1.jsonl');
+    const d = await collectDispatches([t1], [], dir, { scopeDispatchesTo: [t1] });
+    assert.deepEqual(d.items.map((i) => i.agentId).sort(), ['c1', 'g1']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('scopeDispatchesTo drops every scoped agent, even one whose parent is scoped too', async () => {
   const { dir, sub } = scopedSession();
   try {

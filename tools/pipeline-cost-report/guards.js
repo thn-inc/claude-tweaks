@@ -18,6 +18,7 @@
 const fs = require('fs');
 const path = require('path');
 const { findSection } = require('../../plugin/bin/lib/markdown-blocks.js');
+const { isAgentTranscriptPath } = require('../../plugin/bin/lib/timing/transcript');
 
 const PIPELINE_NAME_RE = /(^|-)(spec|record)-/;
 const SEVERITY_RE = /^#{1,6}\s+(Critical|Important|Minor)\b/i;
@@ -118,7 +119,7 @@ function readTiming(runDir, fsImpl = fs) {
     if (!t || typeof t.path !== 'string') continue;
     const parts = t.path.split(/[\\/]/);
     // A Task-call agent file is {sessionId}/subagents/agent-{id}.jsonl: its session is the parent of its `subagents/` directory.
-    const isAgent = parts.length >= 3 && parts[parts.length - 2] === 'subagents' && /^agent-.+\.jsonl$/.test(parts[parts.length - 1]);
+    const isAgent = isAgentTranscriptPath(t.path);
     const base = isAgent ? parts[parts.length - 3] : parts[parts.length - 1].replace(/\.jsonl$/, '');
     if (base && !sessions.includes(base)) sessions.push(base);
   }

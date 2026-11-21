@@ -1478,6 +1478,13 @@ test('AC1.1 no worktree: a dispatched run whose run-state has worktree nulled an
   }
 });
 
+test('AC1.1 gate: a non-dispatched run with no worktree returns its reason without reading homeDir', () => {
+  // Red without it: deleting ownTranscripts' `missing && !dispatched` early return -- homeDir() then runs (env has no
+  // CLAUDE_CONFIG_DIR) and its throw turns the reason into "transcript lookup failed".
+  const r = ownTranscripts({ sessionId: SID, dispatched: false }, { env: {}, homeDir: () => { throw new Error('homeDir read'); }, runId: RUN_1 });
+  assert.deepStrictEqual(r, { paths: [], taskCalls: [], reason: 'no worktree or worktreeAtClose in run-state.json' });
+});
+
 test('AC1.1 notes: an empty result carries the lookup notes', async () => {
   const root = gitRepo();
   try {

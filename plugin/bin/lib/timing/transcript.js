@@ -425,6 +425,13 @@ function readPromptRows(filePath, promptId, { fsImpl = fs, chunkBytes = 65536, k
   return rows;
 }
 
+// A Task-call agent transcript path: {…}/subagents/agent-{id}.jsonl, either separator (a path
+// from another platform's timing.json included). A pure string test; no fs.
+function isAgentTranscriptPath(p) {
+  const parts = String(p).split(/[\\/]/);
+  return parts.length >= 3 && parts[parts.length - 2] === 'subagents' && /^agent-.+\.jsonl$/.test(parts[parts.length - 1]);
+}
+
 // transcriptPath -> the session's {sessionId}/subagents directory: the sibling
 // directory for a main transcript, or the containing directory for a
 // subagent's own agent-{id}.jsonl (what /dispatch passes via --transcript),
@@ -669,4 +676,4 @@ async function scanAgentDir(dir, names, { fsImpl, window, worktree, signal = nul
   return { built, ids: ids.size, excluded };
 }
 
-module.exports = { TRANSCRIPT_SLUG_RULE, slugForCwd, locateTranscripts, readUsage, readPromptRows, isProcedurePath, resultBytes, statTranscriptOrThrow, subagentsDirFor, readDispatches, locateTaskTranscripts, runIdsNamed, FIRST_ENTRY_CAP };
+module.exports = { TRANSCRIPT_SLUG_RULE, slugForCwd, locateTranscripts, readUsage, readPromptRows, isProcedurePath, resultBytes, statTranscriptOrThrow, subagentsDirFor, readDispatches, isAgentTranscriptPath, locateTaskTranscripts, runIdsNamed, FIRST_ENTRY_CAP };

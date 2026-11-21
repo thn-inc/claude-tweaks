@@ -40,6 +40,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { parseFlatLines } = require('../plugin/bin/lib/policy-schema');
 const { buildTiming, EVENTS_UNREADABLE } = require('../plugin/bin/phase-timing');
+const { isAgentTranscriptPath } = require('../plugin/bin/lib/timing/transcript');
 
 const USAGE = 'usage: node tools/efficiency-report.js [--archive <dir>] [--json] [--recount] [--since <YYYY-MM-DD>]';
 const NO_PROFILE = 'none';
@@ -281,9 +282,6 @@ function exists(file, fsImpl) {
   }
 }
 
-// A Task-call agent transcript: {sid}/subagents/agent-{id}.jsonl (either separator).
-const AGENT_PATH_RE = /[\\/]subagents[\\/]agent-[^\\/]+\.jsonl$/;
-
 // --recount (#4359): rebuild each archived run's timing from the transcripts its timing.json lists
 // (phase-timing.js buildTiming, which writes nothing) and count its skill-file reads over every
 // phases[] bucket — `unattributed` is left out, since a dispatcher's session transcript also holds
@@ -322,7 +320,7 @@ async function recountRuns(archiveDir, { fsImpl, since, cwd, buildTiming }) {
     const worktree = state && typeof state.worktree === 'string' && state.worktree ? state.worktree : null;
     // A dispatched run's listed Task-call agent files ({sid}/subagents/agent-*.jsonl, #5647) scope its
     // dispatches as at close; a run listing none is rebuilt unscoped.
-    const scopeDispatchesTo = paths.filter((p) => AGENT_PATH_RE.test(p));
+    const scopeDispatchesTo = paths.filter(isAgentTranscriptPath);
     let timing;
     try {
       timing = await buildTiming({ runDir: dir, paths, cwd, worktree, ...(scopeDispatchesTo.length ? { scopeDispatchesTo } : {}) });
