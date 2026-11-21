@@ -722,7 +722,7 @@ function mergeBlockSides(key, repo, factory, onInvalid) {
   return mergeBlockRows({ ok: repoOk, value: repo.value }, { ok: factoryOk, value: factory.value });
 }
 
-// The text whose risk-categories widens risk-path-globs' allowed slugs: any risk-categories line in policy.yml decides
+// The text whose risk-categories widens risk-path-globs' allowed slugs: any non-empty risk-categories line in policy.yml decides
 // alone (an invalid one leaves the built-ins, as it always did), and the factory's applies only when policy.yml has
 // none. A typo in policy.yml never activates a different value configured elsewhere (no cascade).
 function riskSlugsFor(policyRaw, factoryRaw) {
@@ -772,9 +772,10 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, factoryRaw,
     }
     // risk-path-globs is the other block-style key, resolved here from the
     // policy and factory sources (run configs hold flat lever lines, never blocks)
-    // by its own parser. A rejected block resolves to null, flagged invalid, never
-    // to a partial map or the {} that means unset — the absent shape model-profiles
-    // uses too, unlike the flat keys' schema default.
+    // by its own parser. A rejected block never hides the other source's valid
+    // rows; only when neither source resolves does the key come back null, flagged
+    // invalid — never a partial map or the {} that means unset (the absent shape
+    // model-profiles uses too, unlike the flat keys' schema default).
     if (requested === 'risk-path-globs') {
       // #6006: rows merge per category, repo over factory (mergeBlockSides).
       const slugs = riskSlugsFor(policyRaw, factoryRaw);
@@ -785,7 +786,8 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, factoryRaw,
       continue;
     }
     // express-driver-models (#5917): a policyOnly block, read from policy.yml and the factory text, never a run config. Unset and rejected differ from
-    // risk-path-globs: unset resolves the four role defaults, a rejected block resolves null with invalid: true.
+    // risk-path-globs: unset resolves the four role defaults, and null with invalid: true comes back only when neither
+    // source's block resolves (a rejected block on one side leaves the other side's rows).
     if (requested === 'express-driver-models') {
       // #6006: rows merge per role over the defaults, repo over factory (mergeBlockSides).
       const merged = mergeBlockSides(requested, parseDriverModels(policyRaw), parseDriverModels(factoryRaw), onInvalid);
@@ -856,14 +858,16 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, factoryRaw,
     // policy.yml — a standing project default would silently make a
     // this-run-only decision into a permanent one, defeating whatever
     // per-run property the key exists to protect (for merge-authorization,
-    // "a human decided, live, for this run"). Only a source other than
-    // policy.yml (today, only run-config — the `pre-authorize-merge` /flow
-    // token or a live Manifesto confirm/hybrid override answer) may set it; a
-    // policy.yml value is discarded, falling back to the schema default
-    // exactly as if nothing had set it at all.
+    // "a human decided, live, for this run"). The factory layer (#6006) is a
+    // standing default too, so it is excluded the same way. Only run-config
+    // (the `pre-authorize-merge` /flow token or a live Manifesto
+    // confirm/hybrid override answer) may set it; a policy.yml or factory
+    // value is discarded, falling back to the schema default exactly as if
+    // nothing had set it at all. (merge-authorization is also in
+    // FACTORY_REFUSED_KEYS, which skips its factory value before this guard.)
     // Registering a second such lever needs only this flag on its POLICY_KEYS
     // entry — no change here or in auditPolicy()'s matching category below.
-    if (schemaEntry.policySourceExcluded && resolved.source === 'policy') {
+    if (schemaEntry.policySourceExcluded && (resolved.source === 'policy' || resolved.source === 'factory')) {
       resolved = { value: defaultValue, source: 'default' };
     }
     result[requested] = resolved;
@@ -1056,16 +1060,20 @@ function detectIntegrationModel(repoRoot, opts = {}) {
 }
 
 // Full integration-model resolution for a caller that just wants the answer
-// — explicit policy.yml value (ordinary validation, wins outright) else the
-// computed forge-detection default, in one call. The shared entry point for
+// — an explicit policy.yml value, else a factory-layer pin (#6006; both by
+// ordinary validation, either wins outright), else the computed
+// forge-detection default, in one call. The shared entry point for
 // both bin/resolve-policy.js's CLI and bin/lib/reconcile/index.js (#407),
 // which needs the identical resolution in-process rather than shelling out
 // to the CLI. Never returns null: falls through to detection whenever the
 // key isn't cleanly set (absent, or set-but-invalid — a typo'd value still
 // gets a usable default here, unlike the raw resolvePolicyKeys/CLI path,
 // which surfaces `invalid: true` for a caller that wants to report it).
-// `opts` (optional) forwards unchanged to detectIntegrationModel — see that
-// function's own comment for the mcpReachable override contract.
+// `opts` (optional): `opts.env` (default the inherited environment),
+// `opts.homeDir` and `opts.factoryReadFile` (a throwing reader, test seam)
+// drive the factory read; `opts` then forwards unchanged to
+// detectIntegrationModel — see that function's own comment for the
+// mcpReachable override contract.
 function resolveIntegrationModel(repoRoot, opts = {}) {
   // A non-string repoRoot locates no policy file and falls through to detection — deliberate.
   const policyRaw = readLocatedPolicy(repoRoot);

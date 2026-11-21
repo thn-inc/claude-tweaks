@@ -299,6 +299,22 @@ test('factory risk-path-globs row naming a category defined only in policy.yml i
   assert.deepStrictEqual(merged['risk-path-globs'].value.payments, ['src/pay/**']);
 });
 
+test('factory risk-path-globs row naming a category neither source declares is rejected', () => {
+  const alone = collect();
+  const r = resolvePolicyKeys(['risk-path-globs'], { factoryRaw: 'risk-path-globs:\n  payments: [p/**]\n', onInvalid: alone.onInvalid });
+  assert.deepStrictEqual(r['risk-path-globs'], { value: null, source: 'default', invalid: true });
+  assert.deepStrictEqual(alone.calls, [['risk-path-globs', 'risk-path-globs:\n  payments: [p/**]']]);
+  // Beside a valid repo block the factory block is still rejected, and the repo rows stand.
+  const beside = collect();
+  const withRepo = resolvePolicyKeys(['risk-path-globs'], {
+    policyRaw: 'risk-path-globs:\n  migrations: [db/**]\n',
+    factoryRaw: 'risk-path-globs:\n  payments: [p/**]\n',
+    onInvalid: beside.onInvalid,
+  });
+  assert.deepStrictEqual(withRepo['risk-path-globs'], { value: { migrations: ['db/**'] }, source: 'policy' });
+  assert.deepStrictEqual(beside.calls.map(([key]) => key), ['risk-path-globs']);
+});
+
 test('a factory risk-categories widens the allowed slugs only when policy.yml has no risk-categories line', () => {
   const factoryRaw = 'risk-categories: payments\nrisk-path-globs:\n  payments: [src/pay/**]\n';
   assert.strictEqual(resolvePolicyKeys(['risk-path-globs'], { factoryRaw })['risk-path-globs'].source, 'factory');
@@ -496,4 +512,19 @@ test('resolvePolicy reads the factory file through deps.factoryReadFile', () => 
   });
   assert.deepStrictEqual(out.result['model-stance'], { value: 'economy', source: 'factory' });
   assert.deepStrictEqual(seen, [path.join('/fake-home', FACTORY_POLICY_REL_PATH)]);
+});
+
+// merge-verification alone resolves integration-model through resolveIntegrationModel (pickInjected
+// carries deps.factoryReadFile there), so the injected reader sees both factory reads.
+test('resolvePolicy hands deps.factoryReadFile to the merge-verification integration-model read', () => {
+  const { resolvePolicy } = require('../plugin/bin/resolve-policy');
+  const repo = cliRepo();
+  const seen = [];
+  const out = resolvePolicy({ keys: ['merge-verification'] }, {
+    ...realDeps, cwd: () => repo, env: { ...CLEAN_ENV }, homeDir: () => '/fake-home',
+    factoryReadFile: (p) => { seen.push(p); return 'integration-model: local-merge\n'; },
+  });
+  assert.deepStrictEqual(out.result['merge-verification'], { value: 'off', source: 'default' });
+  const factoryPath = path.join('/fake-home', FACTORY_POLICY_REL_PATH);
+  assert.deepStrictEqual(seen, [factoryPath, factoryPath]);
 });
