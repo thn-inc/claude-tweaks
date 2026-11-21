@@ -96,6 +96,17 @@ function transcriptCost(transcriptText) {
   return sum;
 }
 
+// The effort an agent's turns recorded: the one value every assistant entry carries in its top-level `effort` field, 'mixed'
+// when they carry more than one, 'unrecorded' when there is no assistant entry or any lacks it. `fieldsDiffer` is true when
+// an entry's `perTurnEffort` differs from its `effort`; classification reads `effort` alone.
+function transcriptEffort(transcriptText) {
+  const turns = parseLines(transcriptText).filter((e) => e && e.type === 'assistant');
+  const fieldsDiffer = turns.some((e) => typeof e.perTurnEffort === 'string' && e.perTurnEffort !== e.effort);
+  if (turns.length === 0 || turns.some((e) => typeof e.effort !== 'string')) return { effort: 'unrecorded', fieldsDiffer };
+  const distinct = new Set(turns.map((e) => e.effort));
+  return { effort: distinct.size > 1 ? 'mixed' : [...distinct][0], fieldsDiffer };
+}
+
 function readJson(fsImpl, file) {
   return JSON.parse(fsImpl.readFileSync(file, 'utf8'));
 }
@@ -126,6 +137,7 @@ function readJournal(fsImpl, file) {
 function identifyAgents(fsImpl, dir, started, slots) {
   let unidentified = 0;
   const costs = [];
+  const efforts = [];
   const unidentifiedCost = emptyCost();
   for (const agentId of started) {
     const file = path.join(dir, `agent-${agentId}.jsonl`);
@@ -142,10 +154,13 @@ function identifyAgents(fsImpl, dir, started, slots) {
       addCost(unidentifiedCost, text === null ? emptyCost() : transcriptCost(text));
       continue;
     }
+    const recorded = transcriptEffort(text);
     slot.agents.push(agentId);
+    slot.efforts.push(recorded.effort);
     costs.push({ arm: slot.arm.name, cost: transcriptCost(text) });
+    efforts.push({ arm: slot.arm.name, ...recorded });
   }
-  return { unidentified, costs, unidentifiedCost };
+  return { unidentified, costs, efforts, unidentifiedCost };
 }
 
 // The tree root's prefix removed from every path a reply cites: the forward-slash spelling the prompt's Location line
@@ -189,11 +204,11 @@ function score(opts, deps) {
   const slots = new Map();
   for (const arm of manifest.arms) {
     for (let repeat = 1; repeat <= arm.repeat; repeat += 1) {
-      for (const prompt of arm.prompts) slots.set(armLabel(arm.name, repeat, prompt.name), { arm, repeat, prompt, agents: [], reply: null });
+      for (const prompt of arm.prompts) slots.set(armLabel(arm.name, repeat, prompt.name), { arm, repeat, prompt, agents: [], efforts: [], reply: null });
     }
   }
   const { started, results } = readJournal(fsImpl, path.join(opts.transcripts, JOURNAL_FILE));
-  const { unidentified, costs, unidentifiedCost } = identifyAgents(fsImpl, opts.transcripts, started, slots);
+  const { unidentified, costs, efforts, unidentifiedCost } = identifyAgents(fsImpl, opts.transcripts, started, slots);
   // An unidentified agent cannot be tied to a prompt, so the reason `unidentified-agent` goes to the first N prompts (in
   // manifest order) that have no identified agent, N being the number of unidentified agents; any other prompt without
   // an identified agent was never started, or started with no reply, and is `no-reply`.
@@ -222,10 +237,16 @@ function score(opts, deps) {
       bySeverity: {},
       vsReference: arm.name === reference ? null : tally(),
       cost: emptyCost(),
+      recordedEffort: {},
+      effortFieldsDiffer: 0,
     };
     verdictsByArm[arm.name] = new Map();
   }
   for (const { arm, cost } of costs) addCost(arms[arm].cost, cost);
+  for (const { arm, effort, fieldsDiffer } of efforts) {
+    bump(arms[arm].recordedEffort, effort);
+    if (fieldsDiffer) arms[arm].effortFieldsDiffer += 1;
+  }
 
   for (const slot of slots.values()) {
     const a = arms[slot.arm.name];
@@ -240,6 +261,8 @@ function score(opts, deps) {
       // The tree guard above checks the directory; a cited file missing inside it would otherwise settle as cant-tell.
       if (!fsImpl.existsSync(path.join(run.tree, finding.path))) settled = { verdict: null, reason: 'file-absent-in-tree' };
       else if (text === null) settled = { verdict: null, reason: slot.noReply };
+      // An arm that sets an effort is only scored from judges whose every turn recorded exactly that effort.
+      else if (slot.arm.effort !== null && slot.efforts.some((e) => e !== slot.arm.effort)) settled = { verdict: null, reason: 'effort-mismatch' };
       else if (sections && sections.get(id).state !== 'ok') settled = { verdict: null, reason: 'chunk-split' };
       else settled = settleReply(finding, sections ? sections.get(id).text : text, run.tree, io);
       if (settled.verdict === null) {
@@ -284,4 +307,4 @@ function score(opts, deps) {
   return Object.values(arms).some((a) => a.notJudged > 0) ? EXIT_NOT_CLEAN : 0;
 }
 
-module.exports = { score, settleReply, agentIdentity, stripTree };
+module.exports = { score, settleReply, agentIdentity, stripTree, transcriptEffort };
