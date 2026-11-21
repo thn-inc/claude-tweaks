@@ -426,7 +426,7 @@ test('AC3.2: --values names the invalid factory value', () => {
   assert.strictEqual(r.stderr, 'resolve-policy: warning: model-stance has invalid value "nonsense" — using default "default"\n');
 });
 
-test('AC5.1: --all is byte-identical with no variable and no file', () => {
+test('AC5.1: --all with no variable and no file is deterministic, stays on repo sources, and differs only when a factory supplies a key', () => {
   const repo = cliRepo({ policy: 'model-stance: max-rigor\n' });
   const bare = cli(['--all'], { repo, home: homeWith() });
   const again = cli(['--all'], { repo, home: tmp('empty-home') });
@@ -474,4 +474,26 @@ test('factoryOrigin never appears on stdout', () => {
   assert.deepStrictEqual(Object.keys(JSON.parse(r.stdout)['model-stance']), ['value', 'source']);
   const all = cli(['--all'], { repo: cliRepo(), variable: 'model-stance: economy\n' });
   assert.ok(!all.stdout.includes('"factoryOrigin"'));
+});
+
+test('resolveIntegrationModel reads the factory through an injected factoryReadFile', () => {
+  const seen = [];
+  const out = resolveIntegrationModel('/nonexistent-repo-root', {
+    env: {}, homeDir: () => '/fake-home',
+    factoryReadFile: (p) => { seen.push(p); return 'integration-model: local-merge\n'; },
+  });
+  assert.strictEqual(out, 'local-merge');
+  assert.deepStrictEqual(seen, [path.join('/fake-home', FACTORY_POLICY_REL_PATH)]);
+});
+
+test('resolvePolicy reads the factory file through deps.factoryReadFile', () => {
+  const { resolvePolicy } = require('../plugin/bin/resolve-policy');
+  const repo = cliRepo();
+  const seen = [];
+  const out = resolvePolicy({ keys: ['model-stance'] }, {
+    ...realDeps, cwd: () => repo, env: { ...CLEAN_ENV }, homeDir: () => '/fake-home',
+    factoryReadFile: (p) => { seen.push(p); return 'model-stance: economy\n'; },
+  });
+  assert.deepStrictEqual(out.result['model-stance'], { value: 'economy', source: 'factory' });
+  assert.deepStrictEqual(seen, [path.join('/fake-home', FACTORY_POLICY_REL_PATH)]);
 });

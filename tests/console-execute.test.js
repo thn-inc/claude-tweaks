@@ -983,3 +983,34 @@ test('sdd-ruling leaf: resolve.js re-exports the same objects (#4060)', () => {
   assert.strictEqual(resolve.SDD_RULING_REASONS, leaf.SDD_RULING_REASONS);
   assert.strictEqual(resolve.sddRulingDeferralReason, leaf.sddRulingDeferralReason);
 });
+
+// #6006: the veto window read reaches the factory layer through the injected env (a hook event's
+// context), never the live process env or HOME. The grant is pending for 2h: the 24h default
+// withholds it, a factory `grant-veto-window-hours: 1` (in the injected env only) matures it.
+test('consoleExecuteDetect: grant-veto-window-hours resolves from the injected env\'s factory layer (#6006)', { skip: process.platform === 'win32' }, async () => {
+  const dir = fs.realpathSync(scratchDir('ct-ce-veto-'));
+  git(['init', '-q', '--initial-branch=main'], dir);
+  writeIdentity(dir, { name: 'Test', email: 'test@example.com' });
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
+  git(['add', 'a.txt'], dir);
+  git(['commit', '-q', '-m', 'seed'], dir);
+  const runDir = path.join(dir, '.claude-tweaks', 'pipelines', '2026-01-01T000000-test');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify(mergeRowConsoleJson()));
+  const since = new Date(Date.now() - 2 * 3600 * 1000).toISOString().replace(/\.\d+Z$/, 'Z');
+  const pr = { comments: RESOLVED_COMMENTS, body: 'Fixes #7' };
+  const issue = {
+    labels: [{ name: 'auto:build' }, { name: 'auto:merge-pending' }],
+    comments: [{ body: `<!-- grant-mode-audit: date=${since} auto-merge=pending -->`, url: 'https://x/issues/7#c1', author: { login: 'owner' }, authorAssociation: 'OWNER' }],
+  };
+  const wrapperDir = scratchDir('ct-ce-ghwrap-');
+  fs.writeFileSync(path.join(wrapperDir, 'gh'), `#!/bin/sh\ncase "$1" in\n  pr) cat <<'EOF'\n${JSON.stringify(pr)}\nEOF\n  ;;\n  issue) cat <<'EOF'\n${JSON.stringify(issue)}\nEOF\n  ;;\nesac\n`);
+  fs.chmodSync(path.join(wrapperDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const base = { ...process.env, PATH: `${wrapperDir}${path.delimiter}${process.env.PATH}`, HOME: scratchDir('ct-ce-home-'), USERPROFILE: '' };
+  delete base.CLAUDE_TWEAKS_FACTORY_POLICY;
+  const bare = await consoleExecuteDetect({ cwd: dir, env: base });
+  assert.ok(bare.ready[0].mergeGrantGap, `default 24h window withholds a 2h-old grant: ${JSON.stringify(bare)}`);
+  const withFactory = await consoleExecuteDetect({ cwd: dir, env: { ...base, CLAUDE_TWEAKS_FACTORY_POLICY: 'grant-veto-window-hours: 1\n' } });
+  assert.ok(!withFactory.ready[0].mergeGrantGap, `factory 1h window matures it: ${JSON.stringify(withFactory)}`);
+});

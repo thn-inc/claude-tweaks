@@ -110,7 +110,7 @@ function defaultResolvePolicy(keys, cwd, env) {
   const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, ...(env ? { env } : {}) });
   const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
   try {
-    const { result } = resolvePolicyConfig({ git, readFile, keys, cwd });
+    const { result } = resolvePolicyConfig({ git, readFile, keys, cwd, ...(env ? { env } : {}) });
     for (const key of keys) {
       const entry = result[key];
       out[key] = !entry || entry.error !== undefined || entry.value === null || entry.value === undefined ? '' : String(entry.value);

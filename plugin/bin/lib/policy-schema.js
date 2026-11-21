@@ -1071,7 +1071,7 @@ function resolveIntegrationModel(repoRoot, opts = {}) {
   const policyRaw = readLocatedPolicy(repoRoot);
   // factoryRaw: a factory pin is explicit, so the source !== 'default' return below honours it without detection.
   const { readFactoryPolicy } = require('./policy-factory'); // lazy: require cycle
-  const factoryRaw = readFactoryPolicy({ env: opts.env || process.env, homeDir: opts.homeDir }).raw;
+  const factoryRaw = readFactoryPolicy({ env: opts.env || process.env, homeDir: opts.homeDir, ...(opts.factoryReadFile ? { readFile: opts.factoryReadFile } : {}) }).raw;
   const resolved = resolvePolicyKeys(['integration-model'], { policyRaw, runConfigRaw: null, factoryRaw });
   const entry = resolved['integration-model'];
   if (entry && entry.source !== 'default') return entry.value;

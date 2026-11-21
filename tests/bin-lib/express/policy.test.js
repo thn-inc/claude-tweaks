@@ -73,8 +73,11 @@ test('express policy merges a factory model-profiles row', { skip: STUB_SKIP }, 
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'model-profiles:\n  standard:\n    model: opus\n');
   const KEY = 'CLAUDE_TWEAKS_FACTORY_POLICY';
   const savedEnv = process.env[KEY];
+  const savedHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
   const savedCwd = process.cwd();
   process.env[KEY] = 'model-profiles:\n  fast:\n    model: haiku\n';
+  process.env.HOME = fs.realpathSync(scratchDir('express-policy-home-'));
+  process.env.USERPROFILE = process.env.HOME;
   let resolved;
   try {
     process.chdir(root);
@@ -82,6 +85,7 @@ test('express policy merges a factory model-profiles row', { skip: STUB_SKIP }, 
   } finally {
     process.chdir(savedCwd);
     if (savedEnv === undefined) delete process.env[KEY]; else process.env[KEY] = savedEnv;
+    for (const [k, v] of Object.entries(savedHome)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
   assert.deepStrictEqual(resolved['model-profiles'].value, { standard: { model: 'opus' }, fast: { model: 'haiku' } });
 });
