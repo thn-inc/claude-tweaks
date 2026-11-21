@@ -219,6 +219,12 @@ function isUnderRoot(cwd, root, pathImpl = path) {
   return cwd === base || cwd.startsWith(base.endsWith(pathImpl.sep) ? base : base + pathImpl.sep);
 }
 
+// The transcript scope `match`/`root` describe, as a (cwd, slug) predicate — shared with funnel.js so the dispatch-firing
+// figure keeps spend's scope (see collectSpend below).
+function transcriptScope({ match = null, root = null }) {
+  return (cwd, slug) => (!match || (cwd || slug).includes(match)) && (!root || isUnderRoot(cwd, root));
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NO_SKILL = 'no skill invoked';
 const UNATTRIBUTED = 'unattributed';
@@ -284,7 +290,7 @@ async function collectSpend({ roots, since, until, match = null, root: scopeRoot
       return null;
     }
   };
-  const wanted = (cwd, slug) => (!match || (cwd || slug).includes(match)) && (!scopeRoot || isUnderRoot(cwd, scopeRoot));
+  const wanted = transcriptScope({ match, root: scopeRoot });
 
   // returns how many of the requests were counted
   function tally(requests, sessionType, agent) {
@@ -392,4 +398,4 @@ async function collectSpend({ roots, since, until, match = null, root: scopeRoot
   return res;
 }
 
-module.exports = { PRICES, isUnderRoot, familyOf, bucketOf, priceRequest, scanTranscript, isRouteCommand, collectSpend };
+module.exports = { PRICES, isUnderRoot, transcriptScope, familyOf, bucketOf, priceRequest, scanTranscript, isRouteCommand, collectSpend };

@@ -23,7 +23,8 @@
 const fs = require('fs');
 const path = require('path');
 const { execFile, execFileSync } = require('child_process');
-const { scanTranscript, isUnderRoot } = require('./spend');
+const { scanTranscript, transcriptScope } = require('./spend');
+const { MANIFEST_FILE } = require('../../plugin/bin/lib/run-manifest/write.js');
 
 const CHECK_CONCURRENCY = 4;
 const CHECK_TIMEOUT_MS = 120000;
@@ -96,9 +97,9 @@ function collectDriverRuns({ runs, since, until }, { fsImpl = fs } = {}) {
     res.total += 1;
     if (res.last === null || run.date > res.last) res.last = run.date;
     let routed = false;
-    if (!STANDALONE_NAME_RE.test(run.name) && entries.includes('manifest.json')) {
+    if (!STANDALONE_NAME_RE.test(run.name) && entries.includes(MANIFEST_FILE)) {
       try {
-        routed = JSON.parse(fsImpl.readFileSync(path.join(run.dir, 'manifest.json'), 'utf8')).lane === 'driver';
+        routed = JSON.parse(fsImpl.readFileSync(path.join(run.dir, MANIFEST_FILE), 'utf8')).lane === 'driver';
       } catch {
         res.unreadable += 1;
       }
@@ -121,7 +122,7 @@ async function collectDispatchFirings({ roots, since, until, match = null, root:
       return [];
     }
   };
-  const wanted = (cwd, slug) => (!match || (cwd || slug).includes(match)) && (!scopeRoot || isUnderRoot(cwd, scopeRoot));
+  const wanted = transcriptScope({ match, root: scopeRoot });
   for (const root of roots) {
     for (const slugEntry of list(root)) {
       if (!slugEntry.isDirectory()) continue;

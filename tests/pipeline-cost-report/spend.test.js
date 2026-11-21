@@ -598,6 +598,7 @@ test('scanTranscript: a Bash drive.js --check call is route evidence; prose and 
   const bash = (command) => ({ type: 'assistant', timestamp: '2026-11-19T09:00:00Z', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command } }] } });
   assert.strictEqual((await scanTranscript(fixture([bash('node "/p/bin/drive.js" --check 5270')]))).reachedRoute, true);
   assert.strictEqual((await scanTranscript(fixture([bash('node "/p/bin/log-decision.js" --run "/r" --status SKIP --step "Driver route (skipped)" --text x')]))).reachedRoute, true);
+  assert.strictEqual((await scanTranscript(fixture([bash('node "/p/bin/log-decision.js" --run "/r" --status AUTO --step "Step 2.8" --text x')]))).reachedRoute, false);
   assert.strictEqual((await scanTranscript(fixture([bash('node "/p/bin/drive.js" #5270')]))).reachedRoute, false);
   assert.strictEqual((await scanTranscript(fixture([{ type: 'user', message: { content: 'run `drive.js --check #5270` first' } }]))).reachedRoute, false);
   assert.strictEqual((await scanTranscript(fixture([{ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: '/x/drive.js --check' } }] } }]))).reachedRoute, false);

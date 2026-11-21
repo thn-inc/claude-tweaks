@@ -182,6 +182,17 @@ test('out-of-window run: a driver run dated before since is not counted and does
   }
 });
 
+test('window bounds are inclusive: runs dated exactly since and exactly until are counted', () => {
+  const pipes = driverFixture();
+  try {
+    mkRun(pipes, '2026-11-08T000000-drive-8');
+    mkRun(pipes, '2026-11-21T235959-drive-21');
+    assert.deepStrictEqual(collectDriverRuns({ runs: listRuns(pipes).runs, ...WINDOW }), { total: 5, dispatchRouted: 1, standalone: 4, last: '2026-11-21', unreadable: 0 });
+  } finally {
+    fs.rmSync(pipes, { recursive: true, force: true });
+  }
+});
+
 test('corrupt manifest: counts standalone and adds one to unreadable', () => {
   const pipes = driverFixture();
   try {
@@ -271,6 +282,8 @@ test('firing window is the first timestamped line', async () => {
     assert.deepStrictEqual(await collectDispatchFirings({ roots: [projects], ...WINDOW }), FIRINGS);
     writeT(path.join(projects, 'slug', 'f.jsonl'), dispatchLines('2026-11-21T23:59:00Z'));
     assert.strictEqual((await collectDispatchFirings({ roots: [projects], ...WINDOW })).total, 3);
+    writeT(path.join(projects, 'slug', 'g.jsonl'), dispatchLines('2026-11-08T00:00:00Z'));
+    assert.strictEqual((await collectDispatchFirings({ roots: [projects], ...WINDOW })).total, 4);
   } finally {
     fs.rmSync(projects, { recursive: true, force: true });
   }
