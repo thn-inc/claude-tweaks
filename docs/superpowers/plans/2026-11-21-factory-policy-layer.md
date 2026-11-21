@@ -14,7 +14,8 @@
 
 ## Global Constraints
 
-- Names are final (the spec's proposal, checked against `.claude/skills/policy-key-addition`: no policy key is added, so its naming test does not apply): `FACTORY_POLICY_ENV = 'CLAUDE_TWEAKS_FACTORY_POLICY'`, `FACTORY_POLICY_REL_PATH = '.claude-tweaks/factory-policy.yml'` (relative to the home directory), `FACTORY_REFUSED_KEYS = ['merge-authorization', 'control-mode', 'deploy-command']`, all exported from `plugin/bin/lib/policy-factory.js`.
+- Names are final (the spec's proposal, checked against `.claude/skills/policy-key-addition`: no policy key is added, so its naming test does not apply): `FACTORY_POLICY_ENV = 'CLAUDE_TWEAKS_FACTORY_POLICY'`, `FACTORY_POLICY_REL_PATH = '.claude-tweaks/factory-policy.yml'` (relative to the home directory), `FACTORY_REFUSED_KEYS = ['merge-authorization', 'control-mode', 'deploy-command', 'release-hook']` (`release-hook` decided by the user at plan review — the spec's `## Plan Review Clarifications`), all exported from `plugin/bin/lib/policy-factory.js`.
+- The multi-line variable format stands (decided at plan review); the Dispatch storage check already ran at Spec Step 3 and is in the spec's clarifications — no task re-probes it.
 - Precedence per key: run-config (skipped for a `policyOnly` row) → policy → factory → schema default. Every key, ceiling keys included, keeps repository over factory (#6008 changes ceilings, not this record).
 - `resolvePolicyKeys` stays pure: it takes `factoryRaw` as a string argument and never reads `process.env`, the home directory or the file system. Only `policy-factory.js` touches env and files.
 - No variable and no file → every existing assertion passes unchanged and `resolve-policy.js --all` output is byte-identical (AC5).
@@ -59,8 +60,9 @@
 Rules the tests pin:
 - Variable empty or whitespace-only → absent. Home unresolvable → file absent, no read.
 - Only one source present → `raw` is that source's text **verbatim** (no re-serialization), `origin` `env` or `file`.
-- Both present → merge on canonical key name: a chunk's key maps through `RENAMED_KEYS` (`replacedBy` non-null → that name; retired `replacedBy: null` keeps its own name), and the winning chunk keeps its original text so the resolver still migrates and tags `renamed-from`. Per canonical key the variable's chunk wins over the file's; within one source the last chunk of a key wins. Exception: for a `type: 'map'` key present in both, a variable chunk that does not parse (`express-driver-models` → `parseDriverModels(chunk).ok === false`; `risk-path-globs` → `parseRiskPathGlobs(chunk, riskAllowedSlugs(envText)).ok === false`; `model-profiles` → `modelProfilesEntry(chunk).invalid === true`) is dropped, the file's chunk wins, and the block warning line is pushed. `raw` = winning chunks joined with `\n` (variable-order first, then file-only keys in file order) plus a trailing `\n`; `origin` `env+file`.
+- Both present → merge on canonical key name: a chunk's key maps through `RENAMED_KEYS` (`replacedBy` non-null → that name; retired `replacedBy: null` keeps its own name), and the winning chunk keeps its original text so the resolver still migrates and tags `renamed-from`. Per canonical key the variable's chunk wins over the file's; within one source the last chunk of a key wins. Exception: for a `type: 'map'` key present in both, a variable chunk that does not parse (`express-driver-models` → `parseDriverModels(chunk).ok === false`; `model-profiles` → `modelProfilesEntry(chunk).invalid === true`) is dropped, the file's chunk wins, and the block warning line is pushed. `raw` = winning chunks joined with `\n` (variable-order first, then file-only keys in file order) plus a trailing `\n`; `origin` `env+file`.
 - File ENOENT (including a dangling symlink) → absent, silent. Any other error code (EISDIR, EACCES) → absent plus the could-not-read warning with that code. A symlink to a readable file is read.
+- `risk-path-globs` is never dropped here: the reader cannot see `policy.yml`'s `risk-categories`, so the variable's block always wins over the file's and Task 3 validates its rows against the resolved categories.
 - Refusal is not applied here — `raw` carries refused keys; Task 2 refuses them.
 
 - [ ] **Step 1: Write the failing tests** in `tests/bin-lib/policy-factory.test.js` (temp dirs via `fs.mkdtempSync(os.tmpdir())`, homeDir injected as `() => dir`):
@@ -114,7 +116,7 @@ Rules:
   - `AC3.1: invalid factory value resolves default, invalid, onInvalid` — `factoryRaw: 'model-stance: nonsense\n'` → entry `{ value: <schema default>, source: 'default', invalid: true }` and `onInvalid` called with `('model-stance', 'nonsense')`.
   - `invalid policy value does not cascade to factory` — policy `model-stance: bogus`, factory `economy` → `source: 'default', invalid: true`.
   - `AC8.2: factory-only autonomy trusted derives housekeeping-auto-merge true` — `{ value: true, source: 'default' }`.
-  - `AC11.1-3: refused keys resolve as with no factory layer` — for each of `merge-authorization: pre-authorized`, `control-mode: on`, `deploy-command: echo hi`: entry deep-equals `resolvePolicyKeys([k], {})[k]` and `onInvalid` called once with that key.
+  - `AC11.1-3: refused keys resolve as with no factory layer` — for each of `merge-authorization: pre-authorized`, `control-mode: on`, `deploy-command: echo hi`, `release-hook: echo hi`: entry deep-equals `resolvePolicyKeys([k], {})[k]` and `onInvalid` called once with that key.
   - `refused key beside a legal key: legal key applies` — `factoryRaw: 'control-mode: on\nmodel-stance: economy\n'`.
   - `AC12.1: owned-owners from the factory layer only` — `factoryRaw: 'owned-owners: acme\n'` → `{ value: 'acme', source: 'factory' }` (the list key's resolved shape is the raw string; assert against `resolvePolicyKeys(['owned-owners'], { policyRaw: 'owned-owners: acme\n' })`'s value with `source` swapped).
   - `renamed alias in factory text tags renamed-from` — `factoryRaw: 'automerge-max-lines: 12\n'` → `{ value: 12, source: 'factory', 'renamed-from': 'automerge-max-lines' }`.
@@ -133,6 +135,7 @@ Rules:
 ### Task 3: Per-row block-key merge
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/policy-schema.js` (`risk-path-globs` and `express-driver-models` branches in `resolvePolicyKeys`)
@@ -147,7 +150,7 @@ Rules (all three keys; "repo side" = parsed from `policyRaw`, "factory side" = p
 - `source`: `'factory'` when every configured row came from the factory side, `'policy'` otherwise.
 - Factory side malformed → `onInvalid(key, factoryParsed.raw)` (policy-fragment: no onInvalid — just ignore the factory side), result from the repo side as today (never drops repo rows, no `invalid` flag when the repo side resolved).
 - Repo side absent or malformed, factory side valid → factory rows, `source: 'factory'`; a malformed repo side still calls `onInvalid` with its raw.
-- Both malformed → today's invalid shape (`null`, `source: 'default'`, `invalid: true`). Neither present → today's unset shape.
+- Both malformed, **or repo side absent and factory side malformed** → today's invalid shape (`null`, `source: 'default'`, `invalid: true`) with `onInvalid(key, factoryParsed.raw)` (for `model-profiles`: `{ value: null, source: 'default', invalid: true }`), matching AC3's flat-key rule. Neither present → today's unset shape.
 - `risk-path-globs` allowed slugs for both sides: `riskAllowedSlugs` over the resolved `risk-categories` text — `policyRaw` if it holds a valid `risk-categories`, else `factoryRaw`'s (unchanged when factoryRaw is null).
 
 - [ ] **Step 1: Write the failing tests** (block section):
@@ -156,6 +159,8 @@ Rules (all three keys; "repo side" = parsed from `policyRaw`, "factory side" = p
   - `AC4.2: model-profiles keeps a factory profile and a repo profile` — factory profile `fast` with `model: haiku`, repo profile `capable` with `effort: high` → `modelProfilesEntry(policyRaw, factoryRaw).value` has both keys, `source: 'policy'`.
   - `risk-path-globs merges per category` and `malformed factory block never drops repo rows` (repo `migrations: [db/**]`, factory malformed → repo value, `source: 'policy'`, `onInvalid` called with `risk-path-globs`).
   - `malformed repo block resolves from factory rows` → `source: 'factory'`, no `invalid`.
+  - `malformed factory block with no repo block resolves invalid` — each of the three keys → `invalid: true`, `onInvalid` called (not the silent unset shape).
+  - `factory risk-path-globs row naming a category defined only in policy.yml is accepted` — policy `risk-categories: payments`, factory `risk-path-globs:\n  payments: [src/pay/**]\n` → `value.payments` deep-equals `['src/pay/**']`, `source: 'factory'`; and through `readFactoryPolicy` with the same block in both the variable and the file, the variable's block is kept (no drop warning).
   - `AC10.1: a variable with an indented block resolves both rows` — `readFactoryPolicy({ env: { CLAUDE_TWEAKS_FACTORY_POLICY: 'express-driver-models:\n  implementer: fast\n  reviewer: capable' } }).raw` fed as `factoryRaw` → both roles set.
   - `modelProfilesEntry(policyRaw) one-argument result unchanged` for a valid, a malformed and an absent block.
 
@@ -178,6 +183,7 @@ Rules (all three keys; "repo side" = parsed from `policyRaw`, "factory side" = p
 - Modify: `plugin/bin/lib/policy-schema.js:1050-1082` (`resolvePolicyConfig`)
 - Modify: `plugin/bin/resolve-policy.js` (`resolvePolicy`, `warningLines`, header comment)
 - Modify: `plugin/bin/lib/hooks/pre-tool-use.js:854` (`readConsoleCeiling` passes `env`), `:1791` (`resolveRunPinnedIntegrationModel` passes `opts.env`, `opts.homeDir`)
+- Modify: `plugin/bin/lib/express/policy.js:39-42` (take `factoryRaw` from `resolvePolicyConfig`'s return and call `modelProfilesEntry(policyRaw, factoryRaw)`, so one express run reads one policy)
 - Modify: `tools/run-tests.js:751-753` (`runnerChildEnv` drops `CLAUDE_TWEAKS_FACTORY_POLICY`)
 - Test: `tests/resolve-policy-factory.test.js` (CLI section), `tests/bin-lib/run-manifest/facts.test.js`, `tests/run-tests-isolation.test.js`
 - Waived plugin/skills/_shared/policy-schema.md: never edited — 51,537 B against the rail; Task 6 documents the layer in policy-schema-read-path.md instead.
@@ -187,7 +193,7 @@ Rules (all three keys; "repo side" = parsed from `policyRaw`, "factory side" = p
 
 **Interfaces:**
 - Consumes: `readFactoryPolicy` (Task 1), `resolvePolicyKeys` `factoryRaw` (Task 2), `modelProfilesEntry(policyRaw, factoryRaw)` (Task 3).
-- Produces: `resolvePolicyConfig({ git, readFile, runDir, keys, onInvalid, cwd, env, homeDir })` → adds `factoryRaw`, `factoryOrigin`, `factoryWarnings` to its return. `env` defaults to `process.env` (hook rule 2); `homeDir` optional. `resolvePolicy(...)` returns `factoryOrigin`, `factoryWarnings`, `factoryRefused` (requested keys in `FACTORY_REFUSED_KEYS` present in `parseFlatLines(factoryRaw)`), passing `env: deps.env, homeDir: deps.homeDir`. `warningLines` order: main-checkout note, factory reader warnings, refused-key warnings, factory note, degraded lines, `--values` invalid lines.
+- Produces: `resolvePolicyConfig({ git, readFile, runDir, keys, onInvalid, cwd, env, homeDir })` → adds `factoryRaw`, `factoryOrigin`, `factoryWarnings` to its return. `env` defaults to `process.env` (hook rule 2); `homeDir` optional; an optional `factoryReadFile` (throwing reader, Task 1's contract) defaults to Task 1's `fs.readFileSync` default. The factory read **never** uses the caller's `readFile`: `resolve-policy.js`'s `readFileSafe` (and `policy-schema.js:428`'s) swallows every error, so EISDIR would read as absent and AC7's warning would never fire. `resolvePolicy` passes `deps.factoryReadFile` through when present. `resolvePolicy(...)` returns `factoryOrigin`, `factoryWarnings`, `factoryRefused` (requested keys in `FACTORY_REFUSED_KEYS` present in `parseFlatLines(factoryRaw)`), passing `env: deps.env, homeDir: deps.homeDir`. `warningLines` order: main-checkout note, factory reader warnings, refused-key warnings, factory note, degraded lines, `--values` invalid lines.
 
 - [ ] **Step 1: Write the failing tests:**
   - CLI section of `tests/resolve-policy-factory.test.js`, in-process via `run(argv, deps)` with a temp git repo (`tests/resolve-policy-entry.test.js`'s fixture pattern) and `deps = { ...realDeps, cwd: () => repo, env: { ...ENV, CLAUDE_TWEAKS_FACTORY_POLICY: … }, homeDir: () => home, stdout, stderr }` capturing output:
@@ -199,6 +205,7 @@ Rules (all three keys; "repo side" = parsed from `policyRaw`, "factory side" = p
     - `AC7.1, AC7.2: unreadable factory file resolves as absent, one warning line, nothing throws, exit 0`.
     - `AC11: refused keys warn once each, in JSON mode and --values mode`.
     - `factoryOrigin never appears on stdout`.
+  - `tests/bin-lib/express/policy.test.js`: `express policy merges a factory model-profiles row` — injected env carries a `model-profiles` block → the express policy's `model-profiles` value holds the factory profile.
   - `tests/bin-lib/run-manifest/facts.test.js`:
     - `AC6.1: a factory-set hashed key changes policyHash` — `gatherFacts({ cwd: repo, env: { ...base, CLAUDE_TWEAKS_FACTORY_POLICY: 'tidy-aggressiveness: aggressive' } })` vs without → hashes differ.
     - `AC9.1: driver mint records the policyHash resolvePolicy computes with the parent's variable` — `// real process: the criterion is about the minting process's own environment`: spawn `node -e` (one script file under the test's temp dir) that calls `require(runDirResolve).resolveRunDir({ cwd: repo, env: {}, specSlug: 'drive-1', create: true })` with `CLAUDE_TWEAKS_FACTORY_POLICY` set in the child env; compare the written `manifest.json`'s `policyHash` with in-process `gatherFacts({ cwd: repo, env: sameEnv }).policyHash`.
@@ -217,6 +224,7 @@ Rules (all three keys; "repo side" = parsed from `policyRaw`, "factory side" = p
 ### Task 5: Every `source` consumer
 
 **Role:** judgment
+**Review risk:** high
 
 **Files** (each read; either a one-line comment saying why `factory` is handled correctly, or the named change; each gets a test whose entry comes from a real `resolvePolicyKeys(…, { factoryRaw })` reply, in that module's existing test file):
 - Modify: `plugin/bin/lib/release-preflight/pack.js` — line 29, **change** `CONFIG_SOURCES` to `new Set(['policy', 'run-config', 'factory'])`: line 210 reads `integration-model` as the release engine only from a configured source, and a factory pin is configured (update the "Either config source counts" comment to name three).
@@ -246,7 +254,7 @@ Rules (all three keys; "repo side" = parsed from `policyRaw`, "factory side" = p
 - [ ] **Step 4: Run** every touched module's test file — Expected: PASS.
 - [ ] **Step 5: Commit** — `git commit -m "Treat a factory value as explicit at every source consumer (#6006)"`.
 
-Proof(auth): FACTORY_REFUSED_KEYS keeps merge-authorization, control-mode and deploy-command out of the factory layer (AC11 tests in Task 2 and Task 4), autonomy and the trust lists come only from the factory's own environment or the user's home file — never from pull-request content — and refuse/precedence tests pin repository-over-factory for every key.
+Proof(auth): FACTORY_REFUSED_KEYS keeps merge-authorization, control-mode, deploy-command and release-hook out of the factory layer (AC11 tests in Task 2 and Task 4), autonomy and the trust lists come only from the factory's own environment or the user's home file — never from pull-request content — and refuse/precedence tests pin repository-over-factory for every key.
 Proof(public-contract): the resolver envelope's source enum widens by one value, 'factory'; AC5.1 pins --all byte-identical with no variable and no file, Task 5 updates every consumer that branches on source (CONFIG_SOURCES gains 'factory'), and Task 6 documents the value in every prose enum.
 
 ### Task 6: Documentation
@@ -254,7 +262,7 @@ Proof(public-contract): the resolver envelope's source enum widens by one value,
 **Role:** transcription
 
 **Files:**
-- Modify: `plugin/skills/_shared/policy-schema-read-path.md` (9,786 B; headroom ~42.7 KB to the 52,500 B rail) — line 9's enum and precedence, plus a new `## Factory layer` section: variable and file names, env-over-file merge per key (whole block from the variable), new precedence, `source: 'factory'` is explicit like `policy`, per-row block merge and its source rule, the three refused keys and why (the spec's three reasons verbatim), the stderr lines, that `.claude-tweaks/policy.yml` stays the only repository config home, and the #5963/#4685 ruling from Task 5.
+- Modify: `plugin/skills/_shared/policy-schema-read-path.md` (9,786 B; headroom ~42.7 KB to the 52,500 B rail) — line 9's enum and precedence, plus a new `## Factory layer` section: variable and file names, env-over-file merge per key (whole block from the variable), new precedence, `source: 'factory'` is explicit like `policy`, per-row block merge and its source rule, the four refused keys and why (the spec's three reasons verbatim, plus `release-hook`: "an executed string specific to one repository", decided at plan review), the stderr lines, that `.claude-tweaks/policy.yml` stays the only repository config home, and the #5963/#4685 ruling from Task 5.
 - Modify: `plugin/skills/_shared/auto-decision-log.md:126` (`run-config | policy | factory | default`), `plugin/skills/_shared/auto-mode-contract.md:63` (47,704 B; +11 B stays under the rail), `plugin/skills/flow/manifesto.md:80` (pack source enum) and its `## Source values` table (new row: `` | `factory` | From the factory layer — `CLAUDE_TWEAKS_FACTORY_POLICY` or `~/.claude-tweaks/factory-policy.yml` (resolver envelope `source: "factory"`) | ``).
 - Modify: `docs/plugin-structure.md` — one `plugin/bin/lib/policy-factory.js` line beside `policy-file.js` (line 145).
 - Never `plugin/skills/_shared/policy-schema.md` (51,537 B against the rail).
