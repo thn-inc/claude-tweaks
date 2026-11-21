@@ -53,6 +53,12 @@ function slugForCwd(cwd) {
 
 function statOrNull(fsImpl, p) { try { return fsImpl.statSync(p); } catch { return null; } }
 
+// value -> the session id when it is a plain file-name token (no "/" and no
+// ".."), else null. Shared by locateTranscripts and locateTaskTranscripts.
+function sessionIdToken(value) {
+  return typeof value === 'string' && /^[A-Za-z0-9._-]+$/.test(value) && !value.includes('..') ? value : null;
+}
+
 // { cwd?, sessionId?, homeDir?, configDir?, fsImpl? } -> [{ path, mtimeMs }] newest first.
 // The projects root is {configDir}/projects; configDir defaults to
 // $CLAUDE_CONFIG_DIR (an empty value counts as unset), else {homeDir}/.claude (#3458).
@@ -63,7 +69,7 @@ function statOrNull(fsImpl, p) { try { return fsImpl.statSync(p); } catch { retu
 // listing) — the whole call returns [] instead.
 function locateTranscripts({ cwd, sessionId, homeDir = os.homedir(), configDir = process.env.CLAUDE_CONFIG_DIR || path.join(homeDir, '.claude'), fsImpl = fs } = {}) {
   const sessionIdGiven = typeof sessionId === 'string';
-  const sid = sessionIdGiven && /^[A-Za-z0-9._-]+$/.test(sessionId) && !sessionId.includes('..') ? sessionId : null;
+  const sid = sessionIdToken(sessionId);
   if (sessionIdGiven && !sid) return [];
   if (!cwd && !sid) return [];
   const projects = path.join(configDir, 'projects');
@@ -157,7 +163,7 @@ function locateTaskTranscripts({ sessionIds, runId, configDir, fsImpl = fs } = {
     try {
       const problems = [];
       let scanned = false;
-      const valid = typeof sid === 'string' && /^[A-Za-z0-9._-]+$/.test(sid) && !sid.includes('..');
+      const valid = sessionIdToken(sid) !== null;
       // locateTranscripts realpath-contains every hit.
       const hits = valid ? locateTranscripts({ sessionId: sid, cwd: null, homeDir: null, configDir, fsImpl }) : [];
       if (!valid) problems.push('invalid session id');
@@ -178,15 +184,22 @@ function locateTaskTranscripts({ sessionIds, runId, configDir, fsImpl = fs } = {
           if (!m) continue;
           const file = path.join(dir, n);
           const metaFile = path.join(dir, `agent-${m[1]}.meta.json`);
-          if (lstatType(file, { fsImpl }).type !== 'file' || lstatType(metaFile, { fsImpl }).type !== 'file') continue;
+          // Red without it: "symlinked agent file is not followed".
+          if (lstatType(file, { fsImpl }).type !== 'file') continue;
+          // Red without it: "symlinked meta file is not followed".
+          if (lstatType(metaFile, { fsImpl }).type !== 'file') continue;
           const { meta } = readMeta(fsImpl, metaFile);
+          // Red without it: "depth-2 agent ..." and "meta without spawnDepth, malformed meta, missing meta ...".
           if (!meta || meta.spawnDepth !== 1) continue;
+          // Red without the null return: "first line over FIRST_ENTRY_CAP ...".
           const line = readFirstLine(fsImpl, file);
           if (line === null) continue;
           let entry;
           try { entry = JSON.parse(line); } catch { continue; }
+          // Red without it: "first line not a user entry, or unparseable ...".
           if (!entry || entry.type !== 'user') continue;
           const ids = runIdsNamed(line);
+          // `length !== 1` red: "prompt naming this run and another run ..."; `ids[0] !== runId` red: "prompt naming only another run ...".
           if (ids.length !== 1 || ids[0] !== runId) continue;
           // hit.path is already a real path and neither directory nor file is a
           // symlink (lstat above), so `file` is the real path the set dedupes on.

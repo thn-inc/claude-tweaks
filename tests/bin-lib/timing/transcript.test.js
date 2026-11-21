@@ -1280,7 +1280,7 @@ test('locateTaskTranscripts: meta without spawnDepth, malformed meta, missing me
 });
 
 test('locateTaskTranscripts: prompt naming this run and another run is excluded', () => {
-  // exactly-one guard: goes red if `named.length !== 1` is relaxed to `includes(runId)`.
+  // exactly-one guard: goes red if `ids.length !== 1` is relaxed to `includes(runId)`.
   const cfg = taskCfg();
   const sub = taskSession(cfg, '-slug-a', 's1', [
     { id: 'ok', depth: 1, prompt: named(RUN) },
@@ -1290,7 +1290,7 @@ test('locateTaskTranscripts: prompt naming this run and another run is excluded'
 });
 
 test('locateTaskTranscripts: prompt naming only another run is excluded', () => {
-  // equality guard: goes red if `named[0] !== runId` is deleted.
+  // equality guard: goes red if `ids[0] !== runId` is deleted.
   const cfg = taskCfg();
   taskSession(cfg, '-slug-a', 's1', [{ id: 'o', depth: 1, prompt: named(OTHER_RUN) }]);
   assert.deepEqual(locate(cfg, ['s1']).paths, []);
@@ -1334,6 +1334,16 @@ test('locateTaskTranscripts: symlinked agent file is not followed', { skip: proc
   const outside = path.join(cfg, 'outside.jsonl');
   fs.writeFileSync(outside, JSON.stringify({ type: 'user', message: { content: named(RUN) } }) + '\n');
   fs.symlinkSync(outside, path.join(sub, 'agent-real.jsonl'));
+  assert.deepEqual(locate(cfg, ['s1']).paths, tpaths(sub, 'ok'));
+});
+
+test('locateTaskTranscripts: symlinked meta file is not followed', { skip: process.platform === 'win32' }, () => {
+  // meta lstat guard: goes red if the `type !== 'file'` check on the meta file is deleted.
+  const cfg = taskCfg();
+  const sub = taskSession(cfg, '-slug-a', 's1', [{ id: 'ok', depth: 1, prompt: named(RUN) }, { id: 'x', depth: 1, prompt: named(RUN), meta: null }]);
+  const outside = path.join(cfg, 'outside.meta.json');
+  fs.writeFileSync(outside, JSON.stringify({ spawnDepth: 1 }));
+  fs.symlinkSync(outside, path.join(sub, 'agent-x.meta.json'));
   assert.deepEqual(locate(cfg, ['s1']).paths, tpaths(sub, 'ok'));
 });
 
@@ -1385,6 +1395,7 @@ test("locateTaskTranscripts: an invalid session id ('../x') contributes nothing 
   const r = locate(cfg, ['../x']);
   assert.deepEqual(r.paths, []);
   assert.equal(r.notes.length, 1);
+  assert.match(r.notes[0], /invalid/);
 });
 
 test('locateTaskTranscripts: a session without a transcript or subagents/ directory yields one note and no throw', () => {
