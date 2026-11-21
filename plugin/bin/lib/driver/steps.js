@@ -842,17 +842,22 @@ async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '' } = {}, l
 // The worker line also names which path the targeted test command took (`tests`, #5915).
 // A launcher throw that carries the model it ran on (launchTracked) is reported as defineStep's own catch
 // would, plus the line's `tests` and `model`; any other throw propagates unchanged (#5917).
+// The `fail` result for a launcher throw that carries the model it ran on, shared by workerStep and the
+// fix round's relaunch line so the two cannot drift; null for any other throw (the caller rethrows).
+function launchThrowFail(ctx, err) {
+  if (!err || typeof err.model !== 'string') return null;
+  const detail = err.message || String(err);
+  // The removal note runImplementer's normal path appends, kept for the throw path too (#5915).
+  const note = typeof err.testListNote === 'string' ? err.testListNote : null;
+  return { status: 'fail', detail: note === null ? detail : `${detail}; ${note}`, extra: { tests: ctx.workerTestMode, model: err.model, effort: err.effort ?? null } };
+}
 const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
   let result;
   try {
     result = await runImplementer(ctx, deps, {});
   } catch (err) {
-    if (err && typeof err.model === 'string') {
-      const detail = err.message || String(err);
-      // The removal note runImplementer's normal path appends, kept for the throw path too (#5915).
-      const note = typeof err.testListNote === 'string' ? err.testListNote : null;
-      return { status: 'fail', detail: note === null ? detail : `${detail}; ${note}`, extra: { tests: ctx.workerTestMode, model: err.model, effort: err.effort ?? null } };
-    }
+    const failed = launchThrowFail(ctx, err);
+    if (failed !== null) return failed;
     throw err;
   }
   return { ...result, extra: { ...(result.extra || {}), tests: ctx.workerTestMode } };
@@ -870,9 +875,8 @@ async function fixWorkerLaunch(ctx, deps, extraPrompt, run = runImplementer) {
   try {
     result = await run(ctx, deps, { extraPrompt });
   } catch (err) {
-    if (!ctx.shared.interrupted && err && typeof err.model === 'string') {
-      ctx.events.emit(STEP.worker, 'fail', deps.now() - t0, undefined, { tests: ctx.workerTestMode, model: err.model, effort: err.effort ?? null, fix: true });
-    }
+    const failed = ctx.shared.interrupted ? null : launchThrowFail(ctx, err);
+    if (failed !== null) ctx.events.emit(STEP.worker, failed.status, deps.now() - t0, failed.detail, { ...failed.extra, fix: true });
     throw err;
   }
   if (!ctx.shared.interrupted && result.noLine !== true) {

@@ -1177,8 +1177,8 @@ const PROFILE_POLICY = Object.freeze({ ...POLICY, ...resolvePolicyKeys(MODEL_POL
 
 test('#5942: the reviewer line carries effort on the happy path and after a launcher throw', async () => {
   const unset = passRig({ findings: [] });
-  const ok = await unset.run();
-  assert.ok('effort' in ok.extra && ok.extra.effort === null, 'unset: effort is null');
+  const unsetOut = await unset.run();
+  assert.ok('effort' in unsetOut.extra && unsetOut.extra.effort === null, 'unset: effort is null');
   const happy = passRig({ findings: [] });
   happy.ctx.shared.policy = PROFILE_POLICY;
   const out = await happy.run();

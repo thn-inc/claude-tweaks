@@ -4135,6 +4135,7 @@ test('#5942 (fix round): a launcher throw that resolved still writes the fix wor
   const fix = workers[1];
   assert.equal(fix.status, 'fail');
   assert.equal(fix.fix, true);
+  assert.match(fix.detail, /fix launch blew up/);
   assert.equal(fix.model, implementerCalls(h)[1].args[0].model);
   assert.equal(fix.effort, 'high');
   assert.ok('tests' in fix);
@@ -4151,6 +4152,14 @@ test('#5942 (fix round): a throw without a resolved model writes no fix worker l
   const boom = new Error('before resolution');
   await assert.rejects(fixWorkerLaunch(ctx, { now: () => 0 }, 'x', async () => { throw boom; }), (e) => e === boom);
   assert.deepEqual(emitted, []);
+});
+
+test('#5942 (fix round): the throw-path line carries the worker step\'s detail, test-list note included', async () => {
+  const emitted = [];
+  const ctx = { events: { emit: (...a) => emitted.push(a) }, shared: { interrupted: null }, workerTestMode: 'declared' };
+  const err = Object.assign(new Error('killed'), { model: 'm', effort: 'high', testListNote: 'list not removed' });
+  await assert.rejects(fixWorkerLaunch(ctx, { now: () => 0 }, 'x', async () => { throw err; }), (e) => e === err);
+  assert.deepEqual(emitted, [['worker', 'fail', 0, 'killed; list not removed', { tests: 'declared', model: 'm', effort: 'high', fix: true }]]);
 });
 
 test('#5942 (fix round): an interrupt during the fix launch writes no fix worker line', async () => {
