@@ -62,12 +62,12 @@ files:
 - **Should feel:** trustworthy. Exit 0 means every finding was judged by every arm. Exit 3 means some were not, and those are listed in `notJudged` by reason: `no-reply`, `chunk-split`, `unidentified-agent`, `file-absent-in-tree`, `effort-mismatch`, or a settle reason such as `status:BLOCKED`.
 - **Should understand:**
   - Only `verdict:cant-tell` and `evidence-unverified` settle as `cant-tell`. Every other non-verdict reason is notJudged.
-  - When an arm sets an effort, every judge's turns must have recorded exactly that effort. A judge that recorded another, mixed or none is `effort-mismatch`, and `recordedEffort` per arm shows what was recorded.
+  - When an arm's effort is not null (its `effort=`, or its profile's: `high` for standard, capable and frontier), every judge's turns must have recorded exactly that effort. A judge that recorded another, mixed or none is `effort-mismatch`, and `recordedEffort` per arm shows what was recorded. Synthetic error entries (`<synthetic>`) are ignored.
   - Tokens from an agent with no identity line are reported in `unidentifiedCost`, never dropped.
   - `score` settles every arm the way a review settles a Capable judge's reply. It does not run the escalation a review applies to a Standard judge's reply (#5541): in a `profile=standard` arm, a reply that raises a finding to `medium` or higher is scored on the Standard judge's own verdict, where a review would discard it and judge the finding again at Capable.
 - **Red flags:**
   - Agreement that rose because notJudged findings were scored.
-  - An `effort=` arm that exits 0 while its `recordedEffort` shows another effort.
+  - An arm with a non-null effort that exits 0 while its `recordedEffort` shows another effort.
   - A missing run tree that settles as `cant-tell` instead of exiting 1.
 
 ### 5. Check the lenses' overlap — `counterfactual` (optional)

@@ -456,7 +456,7 @@ function loSet(s, over = {}) {
   s.journal(Object.keys(judges), results);
 }
 
-test('AC4.1: a slot of an effort=low arm whose turns all recorded medium is notJudged under effort-mismatch, and score exits 3', async () => {
+test('#5990 AC4.1: a slot of an effort=low arm whose turns all recorded medium is notJudged under effort-mismatch, and score exits 3', async () => {
   const s = await setup({ arms: LO_ARMS });
   try {
     loSet(s, { 'ag-1': { effort: 'medium' } });
@@ -470,7 +470,7 @@ test('AC4.1: a slot of an effort=low arm whose turns all recorded medium is notJ
   }
 });
 
-test('AC4.2: the same slot with turns recording low is scored', async () => {
+test('#5990 AC4.2: the same slot with turns recording low is scored', async () => {
   const s = await setup({ arms: LO_ARMS });
   try {
     loSet(s);
@@ -484,7 +484,7 @@ test('AC4.2: the same slot with turns recording low is scored', async () => {
   }
 });
 
-test('AC5.1: a slot whose agent recorded no effort is effort-mismatch and counted unrecorded', async () => {
+test('#5990 AC5.1: a slot whose agent recorded no effort is effort-mismatch and counted unrecorded', async () => {
   const s = await setup({ arms: LO_ARMS });
   try {
     loSet(s, { 'ag-2': { effort: undefined } });
@@ -502,6 +502,7 @@ test('partial effort is unrecorded', async () => {
   try {
     loSet(s, { 'ag-2': { effort: ['low', undefined] } });
     const r = await s.score();
+    assert.equal(r.code, 3);
     assert.deepEqual(r.json.arms.lo.notJudgedByReason, { 'effort-mismatch': 1 });
     assert.equal(r.json.arms.lo.recordedEffort.unrecorded, 1);
   } finally {
@@ -514,6 +515,7 @@ test('turns that disagree are mixed and a mismatch', async () => {
   try {
     loSet(s, { 'ag-2': { effort: ['low', 'medium'] } });
     const r = await s.score();
+    assert.equal(r.code, 3);
     assert.deepEqual(r.json.arms.lo.notJudgedByReason, { 'effort-mismatch': 1 });
     assert.equal(r.json.arms.lo.recordedEffort.mixed, 1);
   } finally {
@@ -545,6 +547,48 @@ test('a slot with no reply stays no-reply, not effort-mismatch', async () => {
   }
 });
 
+test('synthetic error entries between low turns do not make a judge unrecorded', async () => {
+  const s = await setup({ arms: LO_ARMS });
+  try {
+    loSet(s, { 'ag-2': { synthetic: 2 } });
+    const r = await s.score();
+    assert.equal(r.code, 0, r.deps.errs.join('\n'));
+    assert.equal(r.json.arms.lo.judged, 4);
+    assert.deepEqual(r.json.arms.lo.recordedEffort, { low: 4 });
+    assert.equal(r.json.arms.lo.effortFieldsDiffer, 0);
+  } finally {
+    s.cleanup();
+  }
+});
+
+test('a judge whose only assistant entries are synthetic is unrecorded and a mismatch', async () => {
+  const s = await setup({ arms: LO_ARMS });
+  try {
+    loSet(s, { 'ag-2': { messages: [], synthetic: 2 } });
+    const r = await s.score();
+    assert.equal(r.code, 3);
+    assert.deepEqual(r.json.arms.lo.notJudgedByReason, { 'effort-mismatch': 1 });
+    assert.equal(r.json.arms.lo.recordedEffort.unrecorded, 1);
+  } finally {
+    s.cleanup();
+  }
+});
+
+test('a slot of two identified agents, one low with a reply and one medium without, is effort-mismatch', async () => {
+  const s = await setup({ arms: LO_ARMS });
+  try {
+    loSet(s);
+    s.agent('ag-5', armLabel('lo', 1, 'run-a--0'), { messages: ONE_MSG, seconds: 10, effort: 'medium' });
+    s.journal(['ag-1', 'ag-2', 'ag-3', 'ag-4', 'ag-5'], { 'ag-1': reply('a1', 'confirmed'), 'ag-2': reply('a2', 'confirmed'), 'ag-3': reply('b1', 'confirmed'), 'ag-4': reply('b2', 'refuted') });
+    const r = await s.score();
+    assert.equal(r.code, 3);
+    assert.deepEqual(r.json.arms.lo.notJudgedByReason, { 'effort-mismatch': 1 });
+    assert.deepEqual(r.json.arms.lo.recordedEffort, { low: 4, medium: 1 });
+  } finally {
+    s.cleanup();
+  }
+});
+
 test('an arm with null effort is never checked but still reports recordedEffort', async () => {
   const s = await setup();
   try {
@@ -565,4 +609,7 @@ test('transcriptEffort classifies a transcript as one value, mixed or unrecorded
   assert.deepEqual(transcriptEffort(t(a('low'), a('high'))), { effort: 'mixed', fieldsDiffer: false });
   assert.deepEqual(transcriptEffort(t(a('low'), a(undefined))), { effort: 'unrecorded', fieldsDiffer: false });
   assert.deepEqual(transcriptEffort(t(a('low', 'high'))), { effort: 'low', fieldsDiffer: true });
+  const syn = { type: 'assistant', perTurnEffort: 'high', isApiErrorMessage: true, message: { model: '<synthetic>' } };
+  assert.deepEqual(transcriptEffort(t(a('low'), syn, a('low'))), { effort: 'low', fieldsDiffer: false });
+  assert.deepEqual(transcriptEffort(t({ type: 'user' }, syn)), { effort: 'unrecorded', fieldsDiffer: false });
 });

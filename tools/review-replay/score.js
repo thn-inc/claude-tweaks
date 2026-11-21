@@ -98,9 +98,10 @@ function transcriptCost(transcriptText) {
 
 // The effort an agent's turns recorded: the one value every assistant entry carries in its top-level `effort` field, 'mixed'
 // when they carry more than one, 'unrecorded' when there is no assistant entry or any lacks it. `fieldsDiffer` is true when
-// an entry's `perTurnEffort` differs from its `effort`; classification reads `effort` alone.
+// an entry's `perTurnEffort` differs from its `effort`; classification reads `effort` alone. Claude Code's own error entries
+// (model `<synthetic>`, `isApiErrorMessage`) never carry `effort` and are not a turn of the judge, so they are left out.
 function transcriptEffort(transcriptText) {
-  const turns = parseLines(transcriptText).filter((e) => e && e.type === 'assistant');
+  const turns = parseLines(transcriptText).filter((e) => e && e.type === 'assistant' && !(e.message && e.message.model === '<synthetic>') && e.isApiErrorMessage !== true);
   const fieldsDiffer = turns.some((e) => typeof e.perTurnEffort === 'string' && e.perTurnEffort !== e.effort);
   if (turns.length === 0 || turns.some((e) => typeof e.effort !== 'string')) return { effort: 'unrecorded', fieldsDiffer };
   const distinct = new Set(turns.map((e) => e.effort));

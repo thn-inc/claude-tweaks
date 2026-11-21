@@ -449,7 +449,7 @@ test('a --dispatch-core without discipline lines is a runtime failure that names
   }
 });
 
-test('AC1.1: an arm with effort=low writes model opus and effort low', async () => {
+test('#5990 AC1.1: an arm with effort=low writes model opus and effort low', async () => {
   const x = await extractInto([], { arms: ['--arm', 'name=lo,chunk=1,profile=capable,repeat=1,effort=low'] });
   try {
     assert.equal(x.code, 0, x.deps.errs.join('\n'));
@@ -462,11 +462,11 @@ test('AC1.1: an arm with effort=low writes model opus and effort low', async () 
   }
 });
 
-test('AC2.1: effort=fast exits 2 and stderr names fast; every real effort is accepted', async () => {
+test('#5990 AC2.1: effort=fast exits 2 and stderr names fast; every real effort is accepted', async () => {
   const bad = await extractInto([], { arms: ['--arm', 'name=x,profile=capable,effort=fast'] });
   try {
     assert.equal(bad.code, 2);
-    assert.match(bad.deps.errs.join('\n'), /fast/);
+    assert.match(bad.deps.errs.join('\n'), /effort must be one of [^:]*: "fast"/);
   } finally {
     bad.cleanup();
   }
@@ -480,12 +480,22 @@ test('AC2.1: effort=fast exits 2 and stderr names fast; every real effort is acc
   }
 });
 
-test('AC3.1: an arm without effort= writes the same manifest arm as before', async () => {
+test('#5990 AC3.1: an arm without effort= writes the same manifest arm as before', async () => {
   const x = await extractInto([], { arms: ['--arm', 'name=s,chunk=1,profile=standard,repeat=1'] });
   try {
     assert.equal(x.code, 0, x.deps.errs.join('\n'));
     const { prompts, ...rest } = x.json(schema.MANIFEST_FILE).arms[0];
     assert.equal(JSON.stringify(rest), JSON.stringify({ name: 's', chunk: 1, profile: 'standard', model: PROFILES.standard.model, effort: PROFILES.standard.effort, repeat: 1 }));
+  } finally {
+    x.cleanup();
+  }
+});
+
+test('an empty effort= exits 2 and stderr shows the empty value', async () => {
+  const x = await extractInto([], { arms: ['--arm', 'name=x,profile=capable,effort='] });
+  try {
+    assert.equal(x.code, 2);
+    assert.match(x.deps.errs.join('\n'), /: ""/);
   } finally {
     x.cleanup();
   }
