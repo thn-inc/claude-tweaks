@@ -1500,6 +1500,20 @@ test('AC1.1 notes: an empty result carries the lookup notes', async () => {
   }
 });
 
+test('AC1.1 no session ids: the SKIP says no session id was recorded, not an empty session list', () => {
+  // Red without the `!sessionIds.length` branch: the reason reads "of session(s)  names run …".
+  const root = gitRepo();
+  try {
+    const cfg = path.join(root, 'cfg');
+    fs.mkdirSync(path.join(cfg, 'projects'), { recursive: true });
+    const r = ownTranscripts({ dispatched: true, dispatchSessionId: null }, { env: { CLAUDE_CONFIG_DIR: cfg }, runId: RUN_1 });
+    assert.deepEqual(r.paths, []);
+    assert.equal(r.reason, `no worktree or worktreeAtClose in run-state.json, and no dispatchSessionId or sessionId in run-state.json to look up Task-call transcripts of run ${RUN_1}`);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('AC1.1 archive twin: attribution keys on the basename', async () => {
   const root = gitRepo();
   try {

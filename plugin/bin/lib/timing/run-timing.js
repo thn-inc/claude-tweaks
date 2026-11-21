@@ -104,6 +104,30 @@ function runWindow(runDir, events, runState) {
   };
 }
 
+const MAX_SCOPE_HOPS = 10;
+function realPathFrom(resolveFrom, p) {
+  const abs = path.resolve(resolveFrom, p);
+  return canonicalRealpath(abs) || abs;
+}
+
+// One subagents directory's items under scopeDispatchesTo (collectDispatches's comment below
+// states the rule): ownSlug true drops only the scoped agents; false keeps only their descendants.
+function scopeDirItems(items, scoped, resolveFrom, ownSlug) {
+  const flagged = items.map((d) => ({ d, scoped: typeof d.transcriptPath === 'string' && scoped.has(realPathFrom(resolveFrom, d.transcriptPath)) }));
+  if (ownSlug) return flagged.filter((f) => !f.scoped).map((f) => f.d);
+  const byId = new Map(flagged.filter((f) => typeof f.d.agentId === 'string').map((f) => [f.d.agentId, f]));
+  return flagged.filter((f) => {
+    if (f.scoped) return false;
+    let cur = f;
+    for (let hop = 0; hop < MAX_SCOPE_HOPS; hop++) {
+      cur = typeof cur.d.parentAgentId === 'string' ? byId.get(cur.d.parentAgentId) : undefined;
+      if (!cur) return false;
+      if (cur.scoped) return true;
+    }
+    return false;
+  }).map((f) => f.d);
+}
+
 // paths: the resolved transcript paths; events: parsed events.jsonl rows. The
 // window is eventWindow's (no event with a ts -> the whole session), or the given
 // { window } (deriveTiming's run window when it clips). Subagents dirs are deduped by fs.realpathSync (path.resolve when
@@ -121,28 +145,6 @@ function runWindow(runDir, events, runState) {
 // whose parentAgentId chain (through that directory's items, at most MAX_SCOPE_HOPS hops) reaches
 // a scoped agent. Where one directory is both (a dispatcher session in its own worktree slug) the
 // own-slug rule wins. Absent or empty: nothing is filtered.
-const MAX_SCOPE_HOPS = 10;
-function realPathFrom(resolveFrom, p) {
-  const abs = path.resolve(resolveFrom, p);
-  return canonicalRealpath(abs) || abs;
-}
-
-function scopeDirItems(items, scoped, resolveFrom, ownSlug) {
-  const flagged = items.map((d) => ({ d, scoped: typeof d.transcriptPath === 'string' && scoped.has(realPathFrom(resolveFrom, d.transcriptPath)) }));
-  if (ownSlug) return flagged.filter((f) => !f.scoped).map((f) => f.d);
-  const byId = new Map(flagged.filter((f) => typeof f.d.agentId === 'string').map((f) => [f.d.agentId, f]));
-  return flagged.filter((f) => {
-    if (f.scoped) return false;
-    let cur = f;
-    for (let hop = 0; hop < MAX_SCOPE_HOPS; hop++) {
-      cur = typeof cur.d.parentAgentId === 'string' ? byId.get(cur.d.parentAgentId) : undefined;
-      if (!cur) return false;
-      if (cur.scoped) return true;
-    }
-    return false;
-  }).map((f) => f.d);
-}
-
 async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal = null, window: given, worktree = null, scopeDispatchesTo } = {}) {
   const window = given === undefined ? eventWindow(events) : given;
   // A symlinked subagents/ leaf keeps its own path, so readDispatches sees the

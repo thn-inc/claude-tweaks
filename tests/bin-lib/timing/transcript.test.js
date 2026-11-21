@@ -5,7 +5,7 @@ const fs = require('fs');
 const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
-const { slugForCwd, locateTranscripts, readUsage, readPromptRows, isProcedurePath, subagentsDirFor, readDispatches, locateTaskTranscripts, runIdsNamed, FIRST_ENTRY_CAP, TRANSCRIPT_SLUG_RULE } = require('../../../plugin/bin/lib/timing/transcript');
+const { slugForCwd, locateTranscripts, readUsage, readPromptRows, isProcedurePath, subagentsDirFor, readDispatches, locateTaskTranscripts, runIdsNamed, RUN_ID_NAMED_RE, FIRST_ENTRY_CAP, TRANSCRIPT_SLUG_RULE } = require('../../../plugin/bin/lib/timing/transcript');
 const { aggregateDispatches } = require('../../../plugin/bin/lib/timing/derive');
 
 // The developer's own CLAUDE_CONFIG_DIR would redirect every homeDir-only
@@ -1434,4 +1434,10 @@ test('runIdsNamed returns distinct ids in order, both separators', () => {
   const text = `a /x/.claude-tweaks/pipelines/${OTHER_RUN}/ b C:\\\\r\\\\.claude-tweaks\\\\pipelines\\\\${RUN} c .claude-tweaks/pipelines/${OTHER_RUN}`;
   assert.deepEqual(runIdsNamed(text), [OTHER_RUN, RUN]);
   assert.deepEqual(runIdsNamed('no run here'), []);
+});
+
+test('RUN_ID_NAMED_RE captures the canonical run-id shape', () => {
+  const { RUN_ID_SHAPE } = require('../../../plugin/bin/lib/issues/claim-store');
+  const body = RUN_ID_SHAPE.source.replace(/^\^/, '').replace(/\$$/, '');
+  assert.ok(RUN_ID_NAMED_RE.source.includes(`(${body})`), `RUN_ID_NAMED_RE (${RUN_ID_NAMED_RE.source}) no longer captures RUN_ID_SHAPE's body (${body})`);
 });

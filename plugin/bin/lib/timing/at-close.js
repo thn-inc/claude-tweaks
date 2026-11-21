@@ -75,6 +75,7 @@ function ownTranscripts(runState, { env = {}, homeDir = os.homedir, runId } = {}
     if (paths.length) return { paths, taskCalls: task.paths, reason: null };
     const base = missing || `no ${sid}.jsonl under the slug of ${worktree}`;
     if (!dispatched) return { paths: [], taskCalls: [], reason: base };
+    if (!sessionIds.length) return { paths: [], taskCalls: [], reason: `${base}, and no dispatchSessionId or sessionId in run-state.json to look up Task-call transcripts of run ${runId}` };
     const notes = task.notes.length ? ` (${task.notes.join('; ')})` : '';
     return { paths: [], taskCalls: [], reason: `${base}, and no Task-call transcript of session(s) ${sessionIds.join(', ')} names run ${runId}${notes}` };
   } catch (err) {

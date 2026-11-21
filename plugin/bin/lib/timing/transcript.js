@@ -112,6 +112,9 @@ function locateTranscripts({ cwd, sessionId, homeDir = os.homedir(), configDir =
 
 // Run ids a text names as `.claude-tweaks/pipelines/{id}` (either separator; a
 // Windows path inside JSON text carries `\\`) -> distinct ids, first-seen order.
+// The captured id is claim-store.js's canonical RUN_ID_SHAPE without its anchors, pinned by
+// transcript.test.js's "RUN_ID_NAMED_RE captures the canonical run-id shape". The maintainer-side
+// tools/guard-refusals/transcripts.js keeps its own copy, since plugin/ never requires tools/.
 const RUN_ID_NAMED_RE = /\.claude-tweaks[\\/]+pipelines[\\/]+(\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*)/g;
 function runIdsNamed(text) {
   const ids = [];
@@ -676,4 +679,4 @@ async function scanAgentDir(dir, names, { fsImpl, window, worktree, signal = nul
   return { built, ids: ids.size, excluded };
 }
 
-module.exports = { TRANSCRIPT_SLUG_RULE, slugForCwd, locateTranscripts, readUsage, readPromptRows, isProcedurePath, resultBytes, statTranscriptOrThrow, subagentsDirFor, readDispatches, isAgentTranscriptPath, locateTaskTranscripts, runIdsNamed, FIRST_ENTRY_CAP };
+module.exports = { TRANSCRIPT_SLUG_RULE, slugForCwd, locateTranscripts, readUsage, readPromptRows, isProcedurePath, resultBytes, statTranscriptOrThrow, subagentsDirFor, readDispatches, isAgentTranscriptPath, locateTaskTranscripts, runIdsNamed, RUN_ID_NAMED_RE, FIRST_ENTRY_CAP };
