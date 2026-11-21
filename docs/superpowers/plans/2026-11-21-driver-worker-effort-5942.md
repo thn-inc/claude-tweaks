@@ -27,7 +27,7 @@ Waived AC7.2: a build-process rule, not code behavior — the probe ran and pass
 - Quoted from `.claude/skills/driver-step-addition` (`docs/driver.md` row): "Copied by hand. A few tests in `run.test.js` pin named rules in it (the `AC9.1` docs tests, and #5454's tree-stop test), so a change to a pinned rule's wording updates its test too".
 - Waived `.claude/skills/headless-worker-launch`: read only, its rules are quoted above. Waived `.claude/skills/driver-step-addition`: read only, quoted above. Waived `plugin/bin/lib/model-profiles/profiles.js`: read only (Task 3 imports `resolve`/`EFFORT_SCALE`; its unknown-effort throw is what AC8 rests on, unchanged).
 - Premise check (logged at Spec Step 3): no driver step retries or continues a worker launch (`grep -n "retry\|continuation" plugin/bin/lib/driver/*.js` finds none), so the spec's "a one-retry relaunch and a continuation included" names no launch today. The one relaunch the driver makes is the review step's fix round (`review.js` `fixRound` → `wiring.launchImplementer` → `runImplementer` → `launchTracked`).
-- Quoted from the spec's **Decision** (plan review, 2026-11-21, answered by the user): "The review step's fix round relaunches the implementer (`review.js` `fixRound` → `runImplementer` → `launchTracked`), and that relaunch writes its own `driver-events.jsonl` worker line carrying the effort it was launched with, the same way a one-retry relaunch or a continuation does. The `review` line carries only the reviewer's effort. The two levels can differ: with `model-profiles: standard: effort: medium`, the fix-round relaunch runs at `medium` while the reviewer (capable) runs at `high`, and each line must record its own launch's level. Not a `fixEffort` key on the `review` line, and not "one level per step line"." Task 4b implements it.
+- Quoted from the spec's **Decision** (plan review, 2026-11-21, answered by the user): "The review step's fix round relaunches the implementer (`review.js` `fixRound` → `runImplementer` → `launchTracked`), and that relaunch writes its own `driver-events.jsonl` worker line carrying the effort it was launched with, the same way a one-retry relaunch or a continuation does. The `review` line carries only the reviewer's effort. The two levels can differ: with `model-profiles: standard: effort: medium`, the fix-round relaunch runs at `medium` while the reviewer (capable) runs at `high`, and each line must record its own launch's level. Not a `fixEffort` key on the `review` line, and not "one level per step line"." Task 5 implements it.
 - The fix-round worker line is a sub-step line written through `ctx.events.emit` (run.js's `driveWithCtx`: "The writer a step uses to emit sub-step lines (before its own result line)"), the same channel merge.js's sub-steps use, so it lands before the `review` line and `STEP_NAMES` stays unchanged. It carries `fix: true`. The station mirror (`plugin/bin/lib/station-events/driver-mirror.js`) maps a `worker` line with `fix: true` to no station events: the `review` line already binds the fix session (`fixSessionId`, `payload.fix: true`), and a second `worker` visit or `session_bound` would supersede the first worker's binding (`docs/reference/station-events.md`: "For `lane: driver`, the worker's `session_bound` supersedes the claim's").
 
 ## Review Focus
@@ -36,7 +36,7 @@ Waived AC7.2: a build-process rule, not code behavior — the probe ran and pass
 2. A launcher throw after resolution must still put `effort` on the worker, review, merge-check and merge-acceptance lines (the #5917 regression class quoted above). Tests in Task 4.
 3. An invalid `model-effort` policy entry (the resolver's `invalid: true`, e.g. `model-effort: fancy`) must refuse the run at the policy step, not launch flagless: an invalid key read as `inherit` would hide a typo. Test in Task 3.
 4. `model-effort: profile` with `model-ceiling: standard` on the reviewer: `effort` is whatever `resolve()` returns as `launchEffort` after the clamp. The clamp (`profiles.js` stage 5) takes the ceiling profile's shipped `PROFILES` row, not a `model-profiles` override, so the test compares against `resolve()`'s own answer, never a hand-picked level. Test in Task 3.
-6. The fix round's implementer relaunch writes its own `worker` line (`fix: true`) before the `review` line, with the fix launch's `effort`, and the station mirror maps it to nothing. Tests in Task 4b.
+6. The fix round's implementer relaunch writes its own `worker` line (`fix: true`) before the `review` line, with the fix launch's `effort`, and the station mirror maps it to nothing. Tests in Task 5.
 5. Old readers of `driver-events.jsonl` (`driverStepsOf`) parse lines carrying `effort` identically to lines without it. Test in Task 4.
 
 ---
@@ -208,7 +208,7 @@ In `run.test.js` (the harness's worker fake receives the launcher opts; read `op
 - `#5942: old readers tolerate the effort field` — copy `old readers tolerate the model field (#5917)`, stripping `effort`.
 - Update `KW` to `[...K1, 'effort', 'model', 'tests'].sort()` and `K5M` to `[...K5, 'effort', 'model'].sort()` with the comment line naming #5942.
 
-Proof(public-contract): the `BASE_KEYS_PLAIN`/`BASE_KEYS_FIX` comparisons, captured on pre-#5917 code, now differ from the run only by `effort` beside `model` on the worker and review lines, and the `BASE_LINES_*`/`BASE_CALLS_*` comparisons stay unchanged and green after this task, so every pre-existing key and call keeps its value and order (Task 4b then inserts exactly one `['worker', status]` pair before the `review` pair of the fix run's lines, and nothing else).
+Proof(public-contract): the `BASE_KEYS_PLAIN`/`BASE_KEYS_FIX` comparisons, captured on pre-#5917 code, now differ from the run only by `effort` beside `model` on the worker and review lines, and the `BASE_LINES_*`/`BASE_CALLS_*` comparisons stay unchanged and green after this task, so every pre-existing key and call keeps its value and order (Task 5 then inserts exactly one `['worker', status]` pair before the `review` pair of the fix run's lines, and nothing else).
 In `review.test.js`: the reviewer's line carries `effort` on the happy path and on a reviewer launcher throw (copy the existing `model`-on-throw case).
 In `judgments-merge-check.test.js` and `acceptance.test.js`: the `merge-check` and `merge-acceptance` lines carry `effort` on the happy path and after a launcher throw that resolved (copy each file's `model` cases).
 
@@ -233,7 +233,7 @@ git -C "$WT" commit -m "Name each worker launch's effort on its event line — #
 
 ---
 
-### Task 4b: The fix round's implementer relaunch writes its own `worker` line
+### Task 5: The fix round's implementer relaunch writes its own `worker` line
 
 **Role:** integration
 **Review risk:** high
@@ -285,7 +285,7 @@ git -C "$WT" commit -m "Write the review fix round's own worker line with its ef
 
 ---
 
-### Task 5: `docs/driver.md` documents the flag and the field
+### Task 6: `docs/driver.md` documents the flag and the field
 
 **Role:** integration
 
@@ -294,7 +294,7 @@ git -C "$WT" commit -m "Write the review fix round's own worker line with its ef
 - Test: `tests/bin-lib/driver/run.test.js` (a docs test beside `docs (#5917): driver.md states the models key, its defaults and the refusal`)
 
 **Interfaces:**
-- Consumes: Tasks 1-4's behavior.
+- Consumes: Tasks 1-5's behavior.
 - Produces: none.
 
 - [ ] **Step 1: Write the failing test** `docs (#5942): driver.md states the effort flag, when it is passed and the effort field` — reads `docs/driver.md` and asserts it contains each literal: `` `--effort` ``, `` `model-effort: profile` ``, `` `launchEffort` ``, `` The `effort` field. ``, `` `null` `` within that paragraph, `worker.js`, `` `fix: true` ``. Factor the assertions into one function and add a go-red control that runs it against the text with the new paragraph removed and expects it to throw.
