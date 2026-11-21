@@ -259,5 +259,8 @@
   },
   "doc:decisions/0033-hooks-launch-through-sh-so-windows-requires-git-bash": {
     "lastAuditedMs": 1795155147695
+  },
+  "doc:decisions/0034-this-repository-deletes-each-runs-plan-at-wrap-up": {
+    "lastAuditedMs": 1795241674965
   }
 }
