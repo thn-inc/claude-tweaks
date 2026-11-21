@@ -27,6 +27,14 @@
 // Claude Code CLI 2.1.325 and is not documented either. Agents a workflow
 // agent starts itself (spawnDepth > 1) are read only when their files sit in
 // the same run directory.
+// Task-call attribution (#5647): a dispatched run's orchestration happens in
+// the dispatching session's Task calls, so locateTaskTranscripts attributes a
+// session's depth-1 agent files (agent-{id}.meta.json spawnDepth === 1 exactly)
+// to a run when the file's first line (the dispatch prompt, at most
+// FIRST_ENTRY_CAP bytes) is a type "user" entry naming exactly one pipeline run
+// id, equal to the requested one. It is decided per file, never per row;
+// nested (depth >= 2) agents, subagents/workflows/ and any symlinked directory
+// or file are not candidates.
 'use strict';
 const fs = require('fs');
 const os = require('os');
@@ -94,6 +102,103 @@ function locateTranscripts({ cwd, sessionId, homeDir = os.homedir(), configDir =
     for (const d of dirs) push(path.join(projects, d, `${sid}.jsonl`));
   }
   return out.sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
+// Run ids a text names as `.claude-tweaks/pipelines/{id}` (either separator; a
+// Windows path inside JSON text carries `\\`) -> distinct ids, first-seen order.
+const RUN_ID_NAMED_RE = /\.claude-tweaks[\\/]+pipelines[\\/]+(\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*)/g;
+function runIdsNamed(text) {
+  const ids = [];
+  for (const m of String(text).matchAll(RUN_ID_NAMED_RE)) if (!ids.includes(m[1])) ids.push(m[1]);
+  return ids;
+}
+
+const FIRST_ENTRY_CAP = 1048576; // 1 MiB: a first line longer than this is never attributed
+
+// fsImpl, file -> the file's first line as text, or null when it is longer than
+// FIRST_ENTRY_CAP bytes or cannot be read. Never throws.
+function readFirstLine(fsImpl, file) {
+  let fd;
+  try {
+    fd = fsImpl.openSync(file, 'r');
+    const chunk = Buffer.alloc(65536);
+    const parts = [];
+    let total = 0;
+    let pos = 0;
+    for (;;) {
+      const n = fsImpl.readSync(fd, chunk, 0, chunk.length, pos);
+      if (n === 0) break;
+      pos += n;
+      const nl = chunk.subarray(0, n).indexOf(0x0a);
+      const take = nl === -1 ? n : nl;
+      total += take;
+      if (total > FIRST_ENTRY_CAP) return null;
+      parts.push(Buffer.from(chunk.subarray(0, take)));
+      if (nl !== -1) break;
+    }
+    return Buffer.concat(parts).toString('utf8');
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) { try { fsImpl.closeSync(fd); } catch { /* nothing to release */ } }
+  }
+}
+
+// { sessionIds, runId, configDir, fsImpl? } -> { paths, notes } (#5647). The
+// depth-1 agent transcripts of each session whose dispatch prompt names exactly
+// runId (rule in the header). Every slug holding {sid}.jsonl is scanned; paths
+// are sorted and deduped; notes holds one line per session id that yielded no
+// scannable subagents/ directory (invalid id, no {sid}.jsonl, no or symlinked
+// subagents/). Never throws.
+function locateTaskTranscripts({ sessionIds, runId, configDir, fsImpl = fs } = {}) {
+  const found = new Set();
+  const notes = [];
+  for (const sid of new Set(Array.isArray(sessionIds) ? sessionIds : [])) {
+    try {
+      const problems = [];
+      let scanned = false;
+      const valid = typeof sid === 'string' && /^[A-Za-z0-9._-]+$/.test(sid) && !sid.includes('..');
+      // locateTranscripts realpath-contains every hit.
+      const hits = valid ? locateTranscripts({ sessionId: sid, cwd: null, homeDir: null, configDir, fsImpl }) : [];
+      if (!valid) problems.push('invalid session id');
+      else if (hits.length === 0) problems.push(`no ${sid}.jsonl found`);
+      for (const hit of hits) {
+        const dir = subagentsDirFor(hit.path);
+        // The {sid}/ directory must not be a symlink either: checking subagents/
+        // alone would follow it out of the projects root.
+        const sessionType = lstatType(path.dirname(dir), { fsImpl }).type;
+        const dirType = sessionType === 'directory' ? lstatType(dir, { fsImpl }).type : sessionType;
+        if (dirType === 'symlink') { problems.push(`symlinked directory not followed for ${hit.path}`); continue; }
+        if (dirType !== 'directory') { problems.push(`no subagents/ directory for ${hit.path}`); continue; }
+        let names;
+        try { names = fsImpl.readdirSync(dir); } catch { problems.push(`subagents/ directory not readable at ${dir}`); continue; }
+        scanned = true;
+        for (const n of names) {
+          const m = /^agent-(.+)\.jsonl$/.exec(n);
+          if (!m) continue;
+          const file = path.join(dir, n);
+          const metaFile = path.join(dir, `agent-${m[1]}.meta.json`);
+          if (lstatType(file, { fsImpl }).type !== 'file' || lstatType(metaFile, { fsImpl }).type !== 'file') continue;
+          const { meta } = readMeta(fsImpl, metaFile);
+          if (!meta || meta.spawnDepth !== 1) continue;
+          const line = readFirstLine(fsImpl, file);
+          if (line === null) continue;
+          let entry;
+          try { entry = JSON.parse(line); } catch { continue; }
+          if (!entry || entry.type !== 'user') continue;
+          const ids = runIdsNamed(line);
+          if (ids.length !== 1 || ids[0] !== runId) continue;
+          // hit.path is already a real path and neither directory nor file is a
+          // symlink (lstat above), so `file` is the real path the set dedupes on.
+          found.add(file);
+        }
+      }
+      if (!scanned) notes.push(`session ${sid}: ${problems.join('; ')}`);
+    } catch (err) {
+      notes.push(`session ${sid}: Task-call lookup failed (${(err && err.code) || 'EUNKNOWN'})`);
+    }
+  }
+  return { paths: [...found].sort(), notes };
 }
 
 // isProcedurePath lives in turn-class.js (#4029) and is re-exported below
@@ -551,4 +656,4 @@ async function scanAgentDir(dir, names, { fsImpl, window, worktree, signal = nul
   return { built, ids: ids.size, excluded };
 }
 
-module.exports = { TRANSCRIPT_SLUG_RULE, slugForCwd, locateTranscripts, readUsage, readPromptRows, isProcedurePath, resultBytes, statTranscriptOrThrow, subagentsDirFor, readDispatches };
+module.exports = { TRANSCRIPT_SLUG_RULE, slugForCwd, locateTranscripts, readUsage, readPromptRows, isProcedurePath, resultBytes, statTranscriptOrThrow, subagentsDirFor, readDispatches, locateTaskTranscripts, runIdsNamed, FIRST_ENTRY_CAP };
