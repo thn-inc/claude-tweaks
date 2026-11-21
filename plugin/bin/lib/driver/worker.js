@@ -162,7 +162,7 @@ const crypto = require('crypto');
 const cp = require('node:child_process');
 const { launchSpec } = require('../impeccable-engine');
 const { isAncestorOrSelf, resolveTarget, canonicalRealpath } = require('../path-guard');
-const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainReadPaths, reopensHome, composeArgs, assertSpendCeiling } = require('./roles');
+const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainReadPaths, reopensHome, composeArgs, assertSpendCeiling, assertEffort } = require('./roles');
 
 // One string, split: tests/git-status-optional-locks.test.js reads an array literal
 // that starts with 'status' as a git argument list.
@@ -518,12 +518,13 @@ function realToolchainDeps(env, { userHome = passwdHome() } = {}) {
 async function launchWorker(opts, deps = defaultDeps()) {
   const {
     role, cwd, prompt, ceilings = {}, testCommand, claudeMdText, settingsDir,
-    platform = process.platform, env = process.env, schema = RESULT_SCHEMA, model, bin = 'claude',
+    platform = process.platform, env = process.env, schema = RESULT_SCHEMA, model, effort, bin = 'claude',
   } = opts;
   const runner = deps && deps.runner;
   if (typeof runner !== 'function') throw new TypeError('deps.runner is required');
   const spendCeiling = ceilings.spendCeiling;
   assertSpendCeiling(spendCeiling);
+  assertEffort(effort);
   const wallClockMs = ceilings.wallClockMs;
   if (!(typeof wallClockMs === 'number' && Number.isFinite(wallClockMs) && wallClockMs > 0 && wallClockMs <= MAX_TIMER_MS)) {
     throw new RangeError('ceilings.wallClockMs must be a finite number above zero and at most ' + MAX_TIMER_MS + ', got ' + String(wallClockMs));
@@ -574,7 +575,7 @@ async function launchWorker(opts, deps = defaultDeps()) {
       appendPromptFile = stem + '.append.md';
       writeExclusive(appendPromptFile, claudeMdText, written);
     }
-    const args = composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, platform });
+    const args = composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, effort, platform });
     const childEnv = buildEnv(env, platform);
     const launch = launchSpec(bin, args, platform, childEnv);
     let outcome;
