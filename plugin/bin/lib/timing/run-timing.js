@@ -122,9 +122,13 @@ function runWindow(runDir, events, runState) {
 // a scoped agent. Where one directory is both (a dispatcher session in its own worktree slug) the
 // own-slug rule wins. Absent or empty: nothing is filtered.
 const MAX_SCOPE_HOPS = 10;
+function realPathFrom(resolveFrom, p) {
+  const abs = path.resolve(resolveFrom, p);
+  return canonicalRealpath(abs) || abs;
+}
+
 function scopeDirItems(items, scoped, resolveFrom, ownSlug) {
-  const real = (p) => { const abs = path.resolve(resolveFrom, p); return canonicalRealpath(abs) || abs; };
-  const flagged = items.map((d) => ({ d, scoped: typeof d.transcriptPath === 'string' && scoped.has(real(d.transcriptPath)) }));
+  const flagged = items.map((d) => ({ d, scoped: typeof d.transcriptPath === 'string' && scoped.has(realPathFrom(resolveFrom, d.transcriptPath)) }));
   if (ownSlug) return flagged.filter((f) => !f.scoped).map((f) => f.d);
   const byId = new Map(flagged.filter((f) => typeof f.d.agentId === 'string').map((f) => [f.d.agentId, f]));
   return flagged.filter((f) => {
@@ -148,10 +152,9 @@ async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal
     try { return fs.lstatSync(dir).isSymbolicLink() ? dir : fs.realpathSync(dir); } catch { return dir; }
   };
   const dirs = [...new Set(paths.map(canonical))];
-  const real = (p) => { const abs = path.resolve(cwd, p); return canonicalRealpath(abs) || abs; };
-  const scoped = Array.isArray(scopeDispatchesTo) && scopeDispatchesTo.length ? new Set(scopeDispatchesTo.map(real)) : null;
+  const scoped = Array.isArray(scopeDispatchesTo) && scopeDispatchesTo.length ? new Set(scopeDispatchesTo.map((p) => realPathFrom(cwd, p))) : null;
   // Own-slug directories: reached through a path that is not a scoped Task call.
-  const ownDirs = scoped ? new Set(paths.filter((p) => !scoped.has(real(p))).map(canonical)) : null;
+  const ownDirs = scoped ? new Set(paths.filter((p) => !scoped.has(realPathFrom(cwd, p))).map(canonical)) : null;
   const items = [];
   const reasons = [];
   let excludedOutsideWindow = 0;

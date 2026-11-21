@@ -60,7 +60,9 @@ function ownTranscripts(runState, { env = {}, homeDir = os.homedir, runId } = {}
     const sid = rs.sessionId;
     const dispatched = rs.dispatched === true && typeof runId === 'string';
     // Only the own-slug lookup needs a worktree and a sessionId; a dispatched run's Task-call lookup keys on session ids alone.
-    const missing = !worktree ? 'no worktree or worktreeAtClose in run-state.json' : typeof sid !== 'string' ? 'no sessionId in run-state.json' : null;
+    let missing = null;
+    if (!worktree) missing = 'no worktree or worktreeAtClose in run-state.json';
+    else if (typeof sid !== 'string') missing = 'no sessionId in run-state.json';
     if (missing && !dispatched) return { paths: [], taskCalls: [], reason: missing };
     const configDir = (env && env.CLAUDE_CONFIG_DIR) || path.join(homeDir(), '.claude');
     // Looked up at call time so a test can stub it.
