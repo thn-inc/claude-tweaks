@@ -115,12 +115,12 @@ async function setup({ promptFor = (label) => `Replay judge ${label}.\n\nThe fin
   // every entry, or an array per entry (undefined omits the field); perTurnEffort defaults to the effort value.
   function agent(agentId, label, { messages = [], seconds = 0, identity = true, effort, perTurnEffort = effort, synthetic = 0 } = {}) {
     const pick = (v, i) => (Array.isArray(v) ? v[i] : v);
+    const fields = (j) => ({ ...(pick(effort, j) === undefined ? {} : { effort: pick(effort, j) }), ...(pick(perTurnEffort, j) === undefined ? {} : { perTurnEffort: pick(perTurnEffort, j) }) });
     const t0 = Date.parse('2026-01-01T00:00:00Z');
     const text = promptFor(label);
     const entries = [{ type: 'user', timestamp: new Date(t0).toISOString(), message: { role: 'user', content: identity ? text : 'no identity here' } }];
     messages.forEach(([id, o, cr, cc], i) => {
       const at = new Date(t0 + (i + 1) * seconds * 1000 / Math.max(messages.length, 1)).toISOString();
-      const fields = (j) => ({ ...(pick(effort, j) === undefined ? {} : { effort: pick(effort, j) }), ...(pick(perTurnEffort, j) === undefined ? {} : { perTurnEffort: pick(perTurnEffort, j) }) });
       entries.push({ type: 'assistant', ...fields(2 * i), timestamp: at, message: { id, usage: { output_tokens: 1, cache_read_input_tokens: cr, cache_creation_input_tokens: cc } } });
       entries.push({ type: 'assistant', ...fields(2 * i + 1), timestamp: at, message: { id, usage: { output_tokens: o, cache_read_input_tokens: cr, cache_creation_input_tokens: cc } } });
     });
