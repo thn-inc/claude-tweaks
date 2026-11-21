@@ -139,3 +139,188 @@ test('readPluginVersion reads .claude-plugin/plugin.json', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ---- driver activity (#6012): driverRuns and dispatchFirings ----
+const { collectDriverRuns, collectDispatchFirings } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'funnel.js'));
+const { listRuns } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'runs.js'));
+const { fillRunManifest, LANES } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'run-manifest', 'write.js'));
+
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'pcr-fn-act-'));
+const mkRun = (pipes, rel, { events = true, lane = null } = {}) => {
+  const dir = path.join(pipes, ...rel.split('/'));
+  fs.mkdirSync(dir, { recursive: true });
+  if (events) fs.writeFileSync(path.join(dir, 'driver-events.jsonl'), '{}\n');
+  if (lane) fillRunManifest(dir, { lane });
+  return dir;
+};
+const driverFixture = () => {
+  const pipes = tmp();
+  mkRun(pipes, '2026-11-12T190721-drive-4351');
+  mkRun(pipes, 'archive/2026-11-19T090000-record-5270', { lane: 'driver' });
+  mkRun(pipes, 'archive/2026-11-15T090000-record-5300');
+  return pipes;
+};
+const WINDOW = { since: '2026-11-08', until: '2026-11-21' };
+
+test('AC1.1: driverRuns counts standalone and dispatch-routed runs in the window', () => {
+  const pipes = driverFixture();
+  try {
+    assert.deepStrictEqual(collectDriverRuns({ runs: listRuns(pipes).runs, ...WINDOW }), { total: 3, dispatchRouted: 1, standalone: 2, last: '2026-11-19', unreadable: 0 });
+  } finally {
+    fs.rmSync(pipes, { recursive: true, force: true });
+  }
+});
+
+test('out-of-window run: a driver run dated before since is not counted and does not set last', () => {
+  const pipes = driverFixture();
+  try {
+    mkRun(pipes, '2026-11-01T000000-drive-1');
+    mkRun(pipes, '2026-11-25T000000-drive-2');
+    assert.deepStrictEqual(collectDriverRuns({ runs: listRuns(pipes).runs, ...WINDOW }), { total: 3, dispatchRouted: 1, standalone: 2, last: '2026-11-19', unreadable: 0 });
+  } finally {
+    fs.rmSync(pipes, { recursive: true, force: true });
+  }
+});
+
+test('corrupt manifest: counts standalone and adds one to unreadable', () => {
+  const pipes = driverFixture();
+  try {
+    fs.writeFileSync(path.join(pipes, 'archive', '2026-11-19T090000-record-5270', 'manifest.json'), '{');
+    assert.deepStrictEqual(collectDriverRuns({ runs: listRuns(pipes).runs, ...WINDOW }), { total: 3, dispatchRouted: 0, standalone: 3, last: '2026-11-19', unreadable: 1 });
+  } finally {
+    fs.rmSync(pipes, { recursive: true, force: true });
+  }
+});
+
+test('a non-driver lane manifest counts standalone, without unreadable', () => {
+  const pipes = tmp();
+  try {
+    const other = LANES.find((l) => l !== 'driver' && l !== 'unknown');
+    mkRun(pipes, '2026-11-19T090000-record-1', { lane: other });
+    assert.strictEqual(JSON.parse(fs.readFileSync(path.join(pipes, '2026-11-19T090000-record-1', 'manifest.json'), 'utf8')).lane, other);
+    assert.deepStrictEqual(collectDriverRuns({ runs: listRuns(pipes).runs, ...WINDOW }), { total: 1, dispatchRouted: 0, standalone: 1, last: '2026-11-19', unreadable: 0 });
+  } finally {
+    fs.rmSync(pipes, { recursive: true, force: true });
+  }
+});
+
+test('a -drive-N run name is standalone even when its manifest says lane driver', () => {
+  const pipes = tmp();
+  try {
+    mkRun(pipes, '2026-11-18T000000-drive-7', { lane: 'driver' });
+    assert.deepStrictEqual(collectDriverRuns({ runs: listRuns(pipes).runs, ...WINDOW }), { total: 1, dispatchRouted: 0, standalone: 1, last: '2026-11-18', unreadable: 0 });
+  } finally {
+    fs.rmSync(pipes, { recursive: true, force: true });
+  }
+});
+
+test('a run directory without driver-events.jsonl is not a driver run', () => {
+  const pipes = tmp();
+  try {
+    mkRun(pipes, '2026-11-18T000000-spec-1', { events: false, lane: 'driver' });
+    assert.deepStrictEqual(collectDriverRuns({ runs: listRuns(pipes).runs, ...WINDOW }), { total: 0, dispatchRouted: 0, standalone: 0, last: null, unreadable: 0 });
+  } finally {
+    fs.rmSync(pipes, { recursive: true, force: true });
+  }
+});
+
+// transcript fixtures
+const tline = (o) => JSON.stringify(o);
+const dispatchLines = (ts, { route = false, version = null } = {}) => [
+  tline({ type: 'assistant', timestamp: ts, cwd: '/w/repo', message: { id: 'm1', model: 'claude-sonnet-5', content: [{ type: 'tool_use', name: 'Skill', input: { skill: 'claude-tweaks:dispatch' } }] } }),
+  ...(version ? [tline({ type: 'attachment', timestamp: ts, attachment: { text: `claude-tweaks v${version} @ /x` } })] : []),
+  ...(route ? [tline({ type: 'assistant', timestamp: ts, message: { id: 'm2', content: [{ type: 'tool_use', name: 'Bash', input: { command: 'node "/p/bin/drive.js" --check 5270' } }] } })] : []),
+];
+const writeT = (file, lines) => {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, lines.join('\n') + '\n');
+};
+const firingFixture = () => {
+  const projects = tmp();
+  writeT(path.join(projects, 'slug', 'a.jsonl'), dispatchLines('2026-11-19T09:00:00Z', { route: true, version: '6.175.0' }));
+  writeT(path.join(projects, 'slug', 'b.jsonl'), dispatchLines('2026-11-19T10:00:00Z'));
+  return projects;
+};
+const FIRINGS = { total: 2, reachedRoute: 1, byPluginVersion: { '6.175.0': 1, unknown: 1 }, unreadable: 0 };
+
+test('AC2.1: dispatchFirings counts dispatch sessions, the route reached, and plugin versions', async () => {
+  const projects = firingFixture();
+  try {
+    assert.deepStrictEqual(await collectDispatchFirings({ roots: [projects], ...WINDOW }), FIRINGS);
+  } finally {
+    fs.rmSync(projects, { recursive: true, force: true });
+  }
+});
+
+test('a subagent transcript and a non-dispatch session are not dispatch firings', async () => {
+  const projects = firingFixture();
+  try {
+    writeT(path.join(projects, 'slug', 'a', 'subagents', 'agent-x.jsonl'), dispatchLines('2026-11-19T09:00:00Z', { route: true }));
+    writeT(path.join(projects, 'slug', 'c.jsonl'), [tline({ type: 'assistant', timestamp: '2026-11-19T09:00:00Z', message: { id: 'm', content: [{ type: 'tool_use', name: 'Skill', input: { skill: 'claude-tweaks:flow' } }] } })]);
+    assert.deepStrictEqual(await collectDispatchFirings({ roots: [projects], ...WINDOW }), FIRINGS);
+  } finally {
+    fs.rmSync(projects, { recursive: true, force: true });
+  }
+});
+
+test('firing window is the first timestamped line', async () => {
+  const projects = firingFixture();
+  try {
+    writeT(path.join(projects, 'slug', 'd.jsonl'), [...dispatchLines('2026-11-07T23:00:00Z'), tline({ type: 'user', timestamp: '2026-11-09T00:00:00Z', message: { content: 'x' } })]);
+    assert.deepStrictEqual(await collectDispatchFirings({ roots: [projects], ...WINDOW }), FIRINGS);
+  } finally {
+    fs.rmSync(projects, { recursive: true, force: true });
+  }
+});
+
+test('firing scope: match and root narrow the count like collectSpend', async () => {
+  const projects = firingFixture();
+  try {
+    assert.strictEqual((await collectDispatchFirings({ roots: [projects], ...WINDOW, match: 'nope' })).total, 0);
+    assert.strictEqual((await collectDispatchFirings({ roots: [projects], ...WINDOW, match: 'repo' })).total, 2);
+    assert.strictEqual((await collectDispatchFirings({ roots: [projects], ...WINDOW, root: '/elsewhere' })).total, 0);
+    assert.strictEqual((await collectDispatchFirings({ roots: [projects], ...WINDOW, root: '/w/repo' })).total, 2);
+  } finally {
+    fs.rmSync(projects, { recursive: true, force: true });
+  }
+});
+
+test('AC5.1: a run directory that vanishes or a transcript that fails to parse adds to unreadable and is not counted', async () => {
+  const pipes = driverFixture();
+  const projects = firingFixture();
+  try {
+    const runs = listRuns(pipes).runs;
+    const gone = runs.find((r) => r.name.includes('record-5270')).dir;
+    const fsImpl = {
+      ...fs,
+      readdirSync: (p, o) => {
+        if (p === gone) throw Object.assign(new Error('gone'), { code: 'ENOENT' });
+        return fs.readdirSync(p, o);
+      },
+    };
+    assert.deepStrictEqual(collectDriverRuns({ runs, ...WINDOW }, { fsImpl }), { total: 2, dispatchRouted: 0, standalone: 2, last: '2026-11-15', unreadable: 1 });
+    fs.writeFileSync(path.join(projects, 'slug', 'bad.jsonl'), 'not json\n');
+    assert.deepStrictEqual(await collectDispatchFirings({ roots: [projects], ...WINDOW }), { ...FIRINGS, unreadable: 1 });
+  } finally {
+    fs.rmSync(pipes, { recursive: true, force: true });
+    fs.rmSync(projects, { recursive: true, force: true });
+  }
+});
+
+test('collectFunnel returns driverRuns and dispatchFirings, or { error } when given one', async () => {
+  const pipes = driverFixture();
+  const projects = firingFixture();
+  try {
+    const base = await run([verdict(true)]);
+    const ok = await collectFunnel({ repo: 'o/r', runs: listRuns(pipes), roots: [projects], since: '2026-11-08', until: '2026-11-21' }, deps([verdict(true)]));
+    assert.deepStrictEqual(ok.driverRuns, { total: 3, dispatchRouted: 1, standalone: 2, last: '2026-11-19', unreadable: 0 });
+    assert.deepStrictEqual(ok.dispatchFirings, FIRINGS);
+    const bad = await collectFunnel({ repo: 'o/r', runs: { error: 'x' }, scopeError: 'y' }, deps([verdict(true)]));
+    assert.deepStrictEqual(bad.driverRuns, { error: 'x' });
+    assert.deepStrictEqual(bad.dispatchFirings, { error: 'y' });
+    for (const k of ['checked', 'admitted', 'unreadable', 'reasons', 'simulations', 'runDate', 'pluginVersion']) assert.deepStrictEqual(bad[k], base[k]);
+  } finally {
+    fs.rmSync(pipes, { recursive: true, force: true });
+    fs.rmSync(projects, { recursive: true, force: true });
+  }
+});
