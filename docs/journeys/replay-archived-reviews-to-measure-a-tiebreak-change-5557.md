@@ -10,6 +10,7 @@ files:
   - tools/review-replay/replay.workflow.js
   - plugin/skills/review/step3-tiebreak.md
   - plugin/bin/lib/tiebreak.js
+  - plugin/bin/lib/timing/transcript.js
 ---
 
 # Replay Archived Reviews to Measure a Tiebreak Change

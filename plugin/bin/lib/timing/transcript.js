@@ -175,12 +175,13 @@ function mergeUsage(prev, usage) {
 // turnStart (true on the first assistant row of each message.id and on any
 // assistant row without a string id), and contextTokens (inputTokens +
 // cacheRead + cacheCreate on turnStart rows, taken after the stream closes so
-// it reflects the per-id max, which is mergeUsage's; 0 elsewhere). procedureFiles ({ [skills/… or
-// context/… key]: count }, {} when none) is counted on the assistant row
-// holding the tool_use: a Read adds 1 to readFileKey(file_path), a Bash 1 per
-// bashProcedureFiles entry (#4359). User rows also carry agentCalls
-// (#5597): the tool_result blocks classed dispatch whose call was Agent or
-// Task — so a Workflow call counts in turnClasses.dispatch but not here.
+// it reflects the per-id max, which is mergeUsage's; 0 elsewhere).
+// procedureFiles ({ [skills/… or context/… key]: count }, {} when none) is
+// counted on the assistant row holding the tool_use: a Read adds 1 to
+// readFileKey(file_path), a Bash 1 per bashProcedureFiles entry (#4359). User
+// rows also carry agentCalls (#5597): the tool_result blocks classed dispatch
+// whose call was Agent or Task — so a Workflow call counts in
+// turnClasses.dispatch but not here.
 // An assistant row holding AskUserQuestion tool_use blocks also carries asks
 // ([{ id, ts, questions: string[] }]) and a user row holding a tool_result for
 // such an id carries answers ([{ id, ts }]); rows with neither have no such key (#5556).
