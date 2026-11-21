@@ -137,7 +137,7 @@ async function collectDispatchFirings({ roots, since, until, match = null, root:
           res.unreadable += 1;
           continue;
         }
-        let t = transcriptCache && transcriptCache.get(file);
+        let t = transcriptCache?.get(file);
         if (!t) {
           try {
             const { cwd, firstSkill, firstTs, pluginVersion, reachedRoute } = await scanTranscript(file, { fsImpl });
@@ -145,7 +145,7 @@ async function collectDispatchFirings({ roots, since, until, match = null, root:
           } catch {
             t = { error: true };
           }
-          if (transcriptCache) transcriptCache.set(file, t);
+          transcriptCache?.set(file, t);
         }
         if (t.error) {
           res.unreadable += 1;

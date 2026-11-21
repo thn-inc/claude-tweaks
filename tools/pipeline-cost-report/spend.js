@@ -328,13 +328,13 @@ async function collectSpend({ roots, since, until, match = null, root: scopeRoot
         file,
         scanTranscript(file, { fsImpl }).then(
           ({ cwd, firstSkill, firstTs, pluginVersion, reachedRoute, requests }) => {
-            if (transcriptCache) transcriptCache.set(file, { cwd, firstSkill, firstTs, pluginVersion, reachedRoute });
+            transcriptCache?.set(file, { cwd, firstSkill, firstTs, pluginVersion, reachedRoute });
             const type = firstSkill || NO_SKILL;
             if (tallyIt && wanted(cwd, slug) && tally(requests, type, 'main') > 0) res.sessions += 1;
             return { type };
           },
           () => {
-            if (transcriptCache) transcriptCache.set(file, { error: true });
+            transcriptCache?.set(file, { error: true });
             fail(file);
             return { error: true };
           },
