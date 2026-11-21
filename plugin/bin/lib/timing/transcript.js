@@ -140,6 +140,34 @@ function abortError() {
   return e;
 }
 
+// The one max-per-message.id usage rule (#5967): Claude Code writes one JSONL
+// line per content block of an assistant turn under the same message.id, and
+// usage grows while a response streams, so neither the first line nor a
+// per-line sum is right — each field keeps its max across the id's lines. The
+// 1-hour cache-write split comes from the line holding the largest cache write
+// (clamped to that write); the rest of the write is 5-minute. prev is null on
+// an id's first line. Pure: never mutates prev or usage. Shared with the
+// maintainer-side cost report and review replay.
+// (prev: UsageMax | null, usage: object | undefined) -> UsageMax
+function mergeUsage(prev, usage) {
+  const u = usage || {};
+  const base = prev || { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, cacheWrite1h: 0, cacheWrite5m: 0 };
+  const write = Number(u.cache_creation_input_tokens) || 0;
+  const cacheCreate = Math.max(base.cacheCreate, write);
+  let cacheWrite1h = base.cacheWrite1h;
+  if (!prev || write > prev.cacheCreate) {
+    cacheWrite1h = Math.min(write, Number(u.cache_creation && u.cache_creation.ephemeral_1h_input_tokens) || 0);
+  }
+  return {
+    input: Math.max(base.input, Number(u.input_tokens) || 0),
+    output: Math.max(base.output, Number(u.output_tokens) || 0),
+    cacheRead: Math.max(base.cacheRead, Number(u.cache_read_input_tokens) || 0),
+    cacheCreate,
+    cacheWrite1h,
+    cacheWrite5m: cacheCreate - cacheWrite1h,
+  };
+}
+
 // path, { fsImpl?, worktree?, signal? } -> Promise<rows>. Streams line by line;
 // malformed lines (bad JSON, no timestamp, no message.role) are skipped.
 // Every row also carries (#4029): turnClasses ({ [class]: count }, sparse — a
@@ -147,7 +175,7 @@ function abortError() {
 // turnStart (true on the first assistant row of each message.id and on any
 // assistant row without a string id), and contextTokens (inputTokens +
 // cacheRead + cacheCreate on turnStart rows, taken after the stream closes so
-// it reflects the per-id max; 0 elsewhere). procedureFiles ({ [skills/… or
+// it reflects the per-id max, which is mergeUsage's; 0 elsewhere). procedureFiles ({ [skills/… or
 // context/… key]: count }, {} when none) is counted on the assistant row
 // holding the tool_use: a Read adds 1 to readFileKey(file_path), a Bash 1 per
 // bashProcedureFiles entry (#4359). User rows also carry agentCalls
@@ -180,6 +208,7 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null, signal = null
   // final count. Per id, the first row carries the max of each usage field and
   // every later line is zeroed (#1929 whole-branch review fix 1; #3375 C1).
   const firstRowById = new Map();
+  const usageById = new Map(); // message.id -> mergeUsage's running UsageMax
   const stream = fsImpl.createReadStream(filePath, { encoding: 'utf8' });
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
   let onAbort = null;
@@ -229,13 +258,17 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null, signal = null
             // (stop_reason null, a tiny output_tokens) and close it with the
             // settled count; keep the max per field on the first row and
             // zero this one (#3375 final review C1).
-            for (const field of ['inputTokens', 'outputTokens', 'cacheRead', 'cacheCreate']) {
-              firstRow[field] = Math.max(firstRow[field], row[field]);
-              row[field] = 0;
-            }
+            const merged = mergeUsage(usageById.get(msg.id), u);
+            usageById.set(msg.id, merged);
+            firstRow.inputTokens = merged.input;
+            firstRow.outputTokens = merged.output;
+            firstRow.cacheRead = merged.cacheRead;
+            firstRow.cacheCreate = merged.cacheCreate;
+            for (const field of ['inputTokens', 'outputTokens', 'cacheRead', 'cacheCreate']) row[field] = 0;
             row.turnStart = false;
           } else {
             firstRowById.set(msg.id, row);
+            usageById.set(msg.id, mergeUsage(null, u));
           }
         }
       } else {
@@ -551,4 +584,4 @@ async function scanAgentDir(dir, names, { fsImpl, window, worktree, signal = nul
   return { built, ids: ids.size, excluded };
 }
 
-module.exports = { TRANSCRIPT_SLUG_RULE, slugForCwd, locateTranscripts, readUsage, readPromptRows, isProcedurePath, resultBytes, statTranscriptOrThrow, subagentsDirFor, readDispatches };
+module.exports = { TRANSCRIPT_SLUG_RULE, slugForCwd, locateTranscripts, mergeUsage, readUsage, readPromptRows, isProcedurePath, resultBytes, statTranscriptOrThrow, subagentsDirFor, readDispatches };
