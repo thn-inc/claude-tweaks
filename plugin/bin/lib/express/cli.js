@@ -1,6 +1,6 @@
 // bin/lib/express/cli.js — the express lane's (#4025) deterministic spine:
 // bin/express-lane.js is a thin entry over run(argv, deps). Prose statement of
-// record is skills/_shared/express-lane.md. Five verbs:
+// record is skills/_shared/express-lane.md. Six verbs:
 //   gate      eligibility verdicts (evaluateRecordEligibility) for one live-fetched
 //             record (--issue, always the fresh labels) or an agent-fetched array
 //             (--records-json, the gh-absent MCP path: zero gh calls, no gh probe);
@@ -21,6 +21,10 @@
 //   samples   merged express PRs owing a post-merge review, reviewed ones dropped:
 //             global ordinals over every express merge, comments fetched only inside
 //             a lookback, at most a fixed number of reviews per firing.
+//   plan-lane which plan-less lane (driver, express, micro-plan) a record's bounds admit —
+//             driver/plan-lane.js's needsNoPlan verdict for one record (--issue, live, or
+//             --record-json, the gh-absent MCP path), one JSON line, exit 0 whatever the lane;
+//             advisory, for /specify and humans (#6053).
 // Escalation is only possible before the push: escalate, and check's escalation
 // branches, refuse (exit 1, nothing written) once run-state.json carries `pr`.
 // Exit codes (Combined-2 base plus the sanctioned writers' 3): 0 success — gate and
@@ -40,12 +44,12 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification } = require('./eligibility');
 const { selectReviewSamples, isReviewed, fixesRecords, isExpressPr, EXPRESS_MARKER_KEY } = require('./sampling');
-const { extractKeyFiles } = require('../issues/grouping');
+const { extractKeyFiles, extractKeyFileEntries } = require('../issues/grouping');
 const { gatherDiffFiles, resolveBlastRadiusConfig } = require('../blast-radius-cli');
 const { checkFirstCallStamp } = require('../dispatch/first-call-artifact-check');
 const { formatEntry, appendEntry, parseEntry, resolveTarget } = require('../log-decision/append');
 const { hasCanonicalClaimLogFor } = require('../log-decision/claim-log');
-const { sensitivePathsOf, defaultGit, defaultReadFile, defaultResolvePolicy } = require('./policy');
+const { expressGateOptions, defaultGit, defaultReadFile, defaultResolvePolicy } = require('./policy');
 const { ghAvailable, ghOptions } = require('../repo-resolve');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 // Read through the module at call time: GH_TIMEOUT_MS is a lazy getter (a policy read).
@@ -57,6 +61,7 @@ const USAGE = [
   '       express-lane.js escalate --run <dir> --issue <n> --reason <failing-test|out-of-bounds|gate-denial|express-error> --detail-file <file>',
   '       express-lane.js verify --run <dir> --issue <n>',
   '       express-lane.js samples [--every <n>] [--repo owner/name]',
+  '       express-lane.js plan-lane (--issue <n> | --record-json <file>) [--repo owner/name]',
   "       --max-lines: the pipeline driver's implementation-line bound (bin/drive.js); absent, check applies auto-merge-max-lines",
   "       --protected-paths reviewer: the pipeline driver's flag (bin/drive.js); merge-time protected paths are reported in bounds.protectedPaths, not refused",
   'exit: 0 success (gate/check: verdict JSON on stdout whatever it is); 1 verify found an artifact missing, an escalation was refused',
@@ -100,6 +105,7 @@ const VERB_FLAGS = {
   escalate: ['--run', '--issue', '--reason', '--detail-file'],
   verify: ['--run', '--issue'],
   samples: ['--every', '--repo'],
+  'plan-lane': ['--issue', '--record-json', '--repo'],
 };
 
 class UsageError extends Error {}
@@ -139,6 +145,14 @@ function parseArgs(argv) {
     need('--run', '--issue');
     if ((flags['--integration-branch'] === undefined) === (flags['--base'] === undefined)) {
       throw new UsageError('check takes exactly one of --integration-branch or --base');
+    }
+  }
+  if (verb === 'plan-lane') {
+    if ((flags['--issue'] === undefined) === (flags['--record-json'] === undefined)) {
+      throw new UsageError('plan-lane takes exactly one of --issue or --record-json');
+    }
+    if (flags['--repo'] !== undefined && flags['--issue'] === undefined) {
+      throw new UsageError('plan-lane takes --repo only with --issue');
     }
   }
   if (verb === 'escalate') need('--run', '--issue', '--reason', '--detail-file');
@@ -286,8 +300,8 @@ function runGate(deps, flags) {
     deps.stderr(`express-lane.js: could not read policy or decisions.md: ${err && err.message}\n`);
     return 1;
   }
-  const enabled = policy['express-lane'].value === true;
-  const opts = { enabled, integrationModel: policy['integration-model'].value, sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']) };
+  const opts = expressGateOptions(policy);
+  const { enabled } = opts;
   const verdicts = issues.map((issue) => evaluateRecordEligibility(issue, { ...opts, escalated: decisionsFile !== null && hasEscalation(decisionsText, issue.number) }));
   // A gate the whole `--run` passes puts the run on the express route (#5903). Best-effort: a failed
   // fill changes nothing below.
@@ -472,7 +486,36 @@ function runSamples(deps, flags) {
   }
 }
 
-const HANDLERS = { gate: runGate, check: runCheck, escalate: runEscalate, verify: runVerify, samples: runSamples };
+// The plan-lane verdict (#6053) for one record: advisory, exit 0 whatever the lane.
+function runPlanLane(deps, flags) {
+  // Required here, not at the top: plan-lane.js loads the driver's review/worker/launch graph, which
+  // the other verbs never need, and driver/settle.js loads this file (express/queue.js's lazy-require rule).
+  const { needsNoPlan, POLICY_KEYS: PLAN_LANE_POLICY_KEYS } = require('../driver/plan-lane');
+  let rec;
+  if (flags['--record-json'] !== undefined) {
+    rec = readJsonFile(deps, '--record-json', flags['--record-json']);
+    if (!validRecord(rec)) throw new UsageError('--record-json must hold a {number, body, labels} record');
+  } else if (!ghPresent(deps)) {
+    deps.stderr('express-lane.js: `gh` is required for plan-lane --issue — fetch through MCP and pass --record-json instead\n');
+    return 2;
+  } else {
+    try { rec = fetchIssue(deps, flags, flags['--issue']); } catch (err) {
+      deps.stderr(`express-lane.js: could not fetch #${flags['--issue']}: ${err && err.message}\n`);
+      return 1;
+    }
+  }
+  let policy;
+  try { policy = deps.resolvePolicy([...PLAN_LANE_POLICY_KEYS], { runDir: null }); } catch (err) {
+    deps.stderr(`express-lane.js: could not read policy: ${err && err.message}\n`);
+    return 1;
+  }
+  const keyFiles = typeof rec.body === 'string' ? extractKeyFileEntries(rec.body) : null;
+  const { lane, reason } = needsNoPlan({ labels: rec.labels, keyFiles, body: rec.body, policy });
+  deps.stdout(`${JSON.stringify({ number: rec.number, lane, reason })}\n`);
+  return 0;
+}
+
+const HANDLERS = { gate: runGate, check: runCheck, escalate: runEscalate, verify: runVerify, samples: runSamples, 'plan-lane': runPlanLane };
 
 function run(argv, deps = realDeps) {
   if (argv.includes('--help') || argv.includes('-h')) { deps.stdout(USAGE); return 0; }

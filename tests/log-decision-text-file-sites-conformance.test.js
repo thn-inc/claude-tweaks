@@ -48,6 +48,10 @@ const SITES = [
   { id: 'E1', file: 'plugin/skills/_shared/pr-early-run-lifecycle.md', content: 'holding that one line' },
   { id: 'Q1', file: 'plugin/skills/build/plan-authoring-checks.md', content: 'holding one line carrying the criterion it covers' },
   { id: 'R3', file: 'plugin/skills/build/plan-review.md', content: 'settled after an answered round: {finding} — chose {reading taken}; not {reading not taken}' },
+  { id: 'R4', file: 'plugin/skills/build/plan-review-asked-classes.md', content: 'Settled at planning: {finding} — chose {reading}; not {other reading}' },
+  { id: 'R5', file: 'plugin/skills/build/plan-review-asked-classes.md', content: 'condition: risk-flags.js add exited {code} ({stderr line}) → fallback: question asked without the flag' },
+  { id: 'R6', file: 'plugin/skills/build/plan-review-asked-classes.md', content: 'condition: {control-mode|risk-categories} read failed ({reason}) → fallback: declared categories are the four built-ins' },
+  { id: 'R7', file: 'plugin/skills/build/plan-review-asked-classes.md', content: 'condition: risk-flags.js add exited {code} ({stderr line}) on an answered row → fallback: answered row settled without the flag' },
 ];
 
 const collapse = (text) => text.replace(/\s+/g, ' ');

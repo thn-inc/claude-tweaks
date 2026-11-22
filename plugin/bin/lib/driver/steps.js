@@ -89,7 +89,7 @@ const { WIN32_CLAUDE_BIN, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE, readCeilings, l
 const { openBlockerRefs } = require('../issues/record-dependencies');
 const { hasDriverEscalationMarker } = require('./settle');
 const { merge } = require('./merge');
-const { sensitivePathsOf } = require('../express/policy');
+const { laneBounds, eligibilityOptions } = require('./lane-bounds');
 const { widenings } = require('../express/eligibility');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
 const { reviewRecord, treeDelta } = require('./review');
@@ -118,7 +118,7 @@ const CI_SETTLE_WINDOW_MS = 2 * 60 * 1000;
 // Read once per run, in the policy step.
 // `auto-merge-max-lines` is the express diff bound check enforces when the driver passes no --max-lines;
 // the worker's prompt states whichever bound check applies.
-// The three express-driver-max-* keys are the driver lane's bounds (#5224, laneBounds and driverLineBound).
+// The three express-driver-max-* keys are the driver lane's bounds (#5224, lane-bounds.js's laneBounds and this file's driverLineBound).
 // express-driver-protected-paths (#6019) is not a bound: `reviewer` lets a merge-time protected Key File
 // through eligibility and check, behind the reviewer step and a human merge.
 // The last four, express-driver-models, model-profiles, model-ceiling and model-effort, are the model
@@ -263,11 +263,6 @@ const fetchStep = defineStep(STEP.fetch, STOP_CLASSES.REFUSED, async (ctx, deps)
   return { status: 'ok' };
 });
 
-// The driver lane's record bounds (#5224), as eligibility and admission both get them.
-function laneBounds(policy) {
-  return { sizeCeiling: policy['express-driver-max-size'].value, maxKeyFiles: policy['express-driver-max-key-files'].value };
-}
-
 // The implementation-line bound for check's --max-lines (#5224): express-driver-max-lines when it is
 // set (its source is not the default) and the reviewer is on for the record, else null, so check reads
 // auto-merge-max-lines itself (the express bound is read in one place only). The policy step has already
@@ -283,27 +278,6 @@ function driverLineBound(ctx) {
 // for this record, so a protected path never passes without the reviewer.
 function driverProtectedPathsFlag(ctx) {
   return ctx.shared.policy['express-driver-protected-paths'].value === 'reviewer' && Boolean(ctx.reviewer) && ctx.reviewer.on === true;
-}
-
-// The options the eligibility step hands deps.evaluateRecordEligibility, lane bounds included, so a
-// caller that pre-screens a record (the budget loop) asks the same question the step does.
-function eligibilityOptions(policy) {
-  const bounds = laneBounds(policy);
-  return {
-    enabled: true,
-    allowAbsentCeremony: true,
-    integrationModel: policy['integration-model'].value,
-    sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']),
-    sizeCeiling: bounds.sizeCeiling,
-    maxKeyFiles: bounds.maxKeyFiles,
-    riskCeiling: policy['express-driver-max-risk'].value,
-    // Ceremony widening is allowed only with the reviewer forced on (#6018's Decision Rationale: the
-    // default beyond-express must reproduce today, and a ceremony-widened record needs the reviewer).
-    allowAnyCeremony: policy['express-driver-review'].value === 'on',
-    // Follows the key alone (#6019): admission's widened rule and reviewRequired supply the reviewer
-    // requirement, since a `protected-path` widening is a non-empty widenedBy.
-    protectedPathsNeedReviewer: policy['express-driver-protected-paths'].value === 'reviewer',
-  };
 }
 
 // Ports express-lane.md's Eligibility section, with the driver's relaxed ceremony gate and the lane

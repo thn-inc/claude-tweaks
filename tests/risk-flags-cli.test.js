@@ -951,3 +951,92 @@ test('facts allows --spec-file and --plan-file to be one file: both are inputs, 
   assert.strictEqual(r.code, 0);
   assert.strictEqual(fs.readFileSync(both, 'utf8'), FACTS_SPEC);
 });
+
+// #6051: the add verb — plan review's add-only writer; no classifier floor, never removes.
+const addVerb = (body, args) => viaFile('add', body, args);
+
+test('AC4.2: add appends the named slug to an existing flag set and never drops one', () => {
+  const r = addVerb('# t\n\nSurface: infra\nRisk-flags: migrations\n\n## Overview\nmentions auth tokens\n', ['--add', 'public-contract']);
+  assert.equal(r.code, 0);
+  assert.deepEqual(r.out.flags, ['migrations', 'public-contract']);
+  assert.deepEqual(r.out.added, ['public-contract']);
+  assert.deepEqual(parseRiskFlags(r.body).flags, ['migrations', 'public-contract']);
+});
+
+test('AC4.2: add runs no classifier floor — prose naming auth adds nothing beyond --add', () => {
+  const body = '# t\n\nSurface: infra\nRisk-flags: none\n\n## Overview\nrotate the auth session token\n\n## Acceptance Criteria\n- [ ] rotate the auth session token\n';
+  assert.ok(classify(body).out.flags.some((flag) => flag.slug === 'auth'), 'the floor trips on this prose');
+  const r = addVerb(body, ['--add', 'migrations']);
+  assert.equal(r.code, 0);
+  assert.deepEqual(r.out.flags, ['migrations']);
+});
+
+test('AC4.2: add on a slug the body already carries is a no-op for the flag line', () => {
+  const input = '# t\n\nSurface: infra\nRisk-flags: auth\n\n## Overview\n';
+  const r = addVerb(input, ['--add', 'auth']);
+  assert.equal(r.code, 0);
+  assert.deepEqual(r.out.flags, ['auth']);
+  assert.deepEqual(r.out.added, []);
+  assert.equal(r.out.unconfirmed, false);
+  assert.equal(r.body, input, 'the body is byte-unchanged');
+  assert.match(r.body, /^Risk-flags: auth$/m);
+  assert.doesNotMatch(r.body, /Risk-flags-unconfirmed/);
+});
+
+test('add with control mode on puts a policy extra on the line', () => {
+  const body = '# t\n\nSurface: infra\nRisk-flags: migrations\n\n## Overview\n';
+  const on = repoWithPolicy(`control-mode: on\n${POLICY_BODY}`);
+  const onRun = addVerb(body, ['--add', 'pii', '--repo-root', on]);
+  assert.equal(onRun.code, 0);
+  assert.deepEqual(onRun.out.added, ['pii']);
+  assert.match(onRun.body, /^Risk-flags: migrations, pii$/m);
+});
+
+test('add with control mode off refuses a policy extra: exit 2, body byte-unchanged', () => {
+  const body = '# t\n\nSurface: infra\nRisk-flags: migrations\n\n## Overview\n';
+  const off = repoWithPolicy(POLICY_BODY);
+  const offRun = addVerb(body, ['--add', 'pii', '--repo-root', off]);
+  assert.equal(offRun.code, 2);
+  assert.match(offRun.stderr, /not a known category/);
+  assert.equal(offRun.body, body);
+});
+
+test('add on an unreadable flag line widens it and still only adds', () => {
+  const r = addVerb('# t\n\nSurface: infra\nRisk-flags: ???\n\n## Overview\n', ['--add', 'auth']);
+  assert.equal(r.code, 0);
+  for (const slug of ['migrations', 'auth', 'public-contract', 'irreversible-side-effect']) assert.ok(r.out.flags.includes(slug), slug);
+  assert.deepEqual(r.out.added, []);
+  assert.equal(r.out.status, 'unknown');
+  assert.match(r.body, /^Risk-flags: migrations, auth, public-contract, irreversible-side-effect$/m, 'the widened line is still written');
+  assert.match(r.body, /^Risk-flags-unconfirmed: true$/m);
+});
+
+test('add refuses an unknown slug and a missing --add', () => {
+  const body = '# t\n\nSurface: infra\nRisk-flags: migrations\n\n## Overview\n';
+  const unknown = addVerb(body, ['--add', 'zzz-unknown']);
+  assert.equal(unknown.code, 2);
+  assert.match(unknown.stderr, /not a known category/);
+  assert.equal(unknown.body, body);
+  const missing = addVerb(body, []);
+  assert.equal(missing.code, 2);
+  assert.match(missing.stderr, /--add/);
+  assert.equal(missing.body, body);
+});
+
+test('add on a body with no Risk-flags line inserts the line and the unconfirmed marker', () => {
+  const r = addVerb('# t\n\nSurface: infra\n\n## Overview\n', ['--add', 'migrations']);
+  assert.equal(r.code, 0);
+  assert.deepEqual(r.out.flags, ['migrations']);
+  assert.deepEqual(r.out.added, ['migrations']);
+  assert.equal(r.out.unconfirmed, true);
+  assert.equal(r.out.status, 'unclassified');
+  assert.match(r.body, /^Risk-flags: migrations$/m);
+  assert.match(r.body, /^Risk-flags-unconfirmed: true$/m);
+});
+
+test('add writes the unconfirmed marker', () => {
+  const r = addVerb('# t\n\nSurface: infra\nRisk-flags: none\n\n## Overview\n', ['--add', 'migrations']);
+  assert.equal(r.code, 0);
+  assert.match(r.body, /^Risk-flags-unconfirmed: true$/m);
+  assert.equal(r.out.unconfirmed, true);
+});
