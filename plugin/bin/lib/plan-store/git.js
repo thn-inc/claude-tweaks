@@ -40,22 +40,21 @@ function reasonOf(err) {
   return stderr || (err && err.message) || 'git failed';
 }
 
-function resolveCommit(g, rev) {
+function verifyRev(g, rev) {
   try {
-    const out = String(g(['rev-parse', '--verify', '--quiet', '--end-of-options', `${rev}^{commit}`])).trim();
+    const out = String(g(['rev-parse', '--verify', '--quiet', '--end-of-options', rev])).trim();
     return out || null;
   } catch {
     return null;
   }
 }
 
+function resolveCommit(g, rev) {
+  return verifyRev(g, `${rev}^{commit}`);
+}
+
 function localRef(g, ref) {
-  try {
-    const out = String(g(['rev-parse', '--verify', '--quiet', '--end-of-options', ref])).trim();
-    return out || null;
-  } catch {
-    return null;
-  }
+  return verifyRev(g, ref);
 }
 
 // ls-remote prints same-tail refs too (refs/archive/<ref>); keep only the exact ref.
