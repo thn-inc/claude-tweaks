@@ -42,6 +42,16 @@ test('AC4.11: a run-config autonomy beats a policy.yml control-mode', () => {
   assert.deepStrictEqual(e, { ceiling: 'supervised', controlMode: true, source: 'explicit' });
 });
 
+test('AC8.1: factory-only autonomy trusted is an explicit ceiling', () => {
+  const r = resolvePolicyKeys(['autonomy'], { factoryRaw: 'autonomy: trusted\n' });
+  assert.strictEqual(r.autonomy.source, 'factory');
+  assert.deepStrictEqual(effectiveCeiling({ autonomyEntry: r.autonomy }), { ceiling: 'trusted', controlMode: false, source: 'explicit' });
+  // Explicit beats a repository control-mode implication, as a policy.yml autonomy does; the
+  // implication is the top tier, so a factory value can only lower the ceiling here.
+  const withMode = resolvePolicyKeys(['autonomy', 'control-mode'], { policyRaw: 'control-mode: on\n', factoryRaw: 'autonomy: supervised\n' });
+  assert.deepStrictEqual(effectiveCeiling({ autonomyEntry: withMode.autonomy, controlModeEntry: withMode['control-mode'] }), { ceiling: 'supervised', controlMode: true, source: 'explicit' });
+});
+
 test('invalid autonomy with control mode on resolves supervised, never the implication', () => {
   const e = eff('control-mode: on\nautonomy: supervsed\n');
   assert.deepStrictEqual(e, { ceiling: 'supervised', controlMode: true, source: 'invalid-autonomy' });

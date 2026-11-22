@@ -5500,6 +5500,33 @@ test('(#5224) through the real resolver: a malformed express-driver-max-lines fa
   assert.equal(final.stop.detail, `driver diff bound not an integer of at least 1: express-driver-max-lines (${JSON.stringify(huge.value)})`);
 });
 
+// #6006: a factory express-driver-max-lines is a set value, exactly as a policy.yml one is.
+const factoryLineReply = (raw, review) => {
+  const { resolvePolicyKeys } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
+  const reply = resolvePolicyKeys(['express-driver-max-lines'], { factoryRaw: `express-driver-max-lines: ${raw}\n` })['express-driver-max-lines'];
+  assert.strictEqual(reply.source, 'factory', raw);
+  return [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, k === 'express-driver-max-lines'
+    ? reply
+    : { value: { ...POLICY, 'express-driver-review': review }[k], source: 'policy' }]))];
+};
+
+test('driver steps: a factory express-driver-max-lines bound is explicit', async () => {
+  const huge = harness({ script: [factoryLineReply('9007199254740993', 'on')] });
+  assert.equal(await run(['#7'], huge.deps), 1);
+  const final = huge.lines().at(-1);
+  assert.deepStrictEqual([final.stop.step, final.status, final.outcome], ['policy', 'fail', 'refused']);
+  assert.match(final.stop.detail, /^driver diff bound not an integer of at least 1: express-driver-max-lines/);
+});
+
+test('driver steps: a factory express-driver-max-lines bound reaches check when the reviewer is on', async () => {
+  const reviewed = harness({ script: [factoryLineReply('120', 'on')] });
+  assert.equal(await run(['#7'], reviewed.deps), 0);
+  assert.deepStrictEqual(checkFlags(reviewed), [['--max-lines', '120']]);
+  const unreviewed = harness({ script: [factoryLineReply('120', 'off')] });
+  assert.equal(await run(['#7'], unreviewed.deps), 0);
+  assert.deepStrictEqual(checkFlags(unreviewed), [null]);
+});
+
 test('(#5224) the fix round of a widened record passes the driver bound to its second check', async () => {
   const h = fixRig({
     policy: { ...WIDENED, 'express-driver-review': 'on', 'express-driver-max-lines': 120 },

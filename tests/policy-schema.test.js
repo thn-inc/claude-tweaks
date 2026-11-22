@@ -781,6 +781,32 @@ test('merge-authorization is the one POLICY_KEYS entry currently flagged policyS
   assert.deepStrictEqual(flagged, ['merge-authorization']);
 });
 
+// #6006: a key a run decides live is both excluded from the standing sources and refused from the
+// factory layer, so the refused-key warning names every factory value the exclusion would discard.
+test('every policySourceExcluded row in POLICY_KEYS is in FACTORY_REFUSED_KEYS', () => {
+  const { FACTORY_REFUSED_KEYS } = require('../plugin/bin/lib/policy-factory');
+  const flagged = POLICY_KEYS.filter((k) => k.policySourceExcluded === true).map((k) => k.key);
+  assert.ok(flagged.length > 0, 'at least one flagged row, or this check is vacuous');
+  assert.deepStrictEqual(flagged.filter((key) => !FACTORY_REFUSED_KEYS.includes(key)), []);
+});
+
+// #6006: merge-authorization, the one flagged row, is also factory-refused, so only a temporarily
+// flagged row reaches the guard with a factory value. The flag is restored before the test returns.
+test('a policySourceExcluded row is set neither from policy.yml nor from the factory layer, only from a run config', () => {
+  const row = POLICY_KEYS.find((k) => k.key === 'design-ceremony');
+  assert.ok(row && !row.policySourceExcluded && !row.policyOnly);
+  row.policySourceExcluded = true;
+  try {
+    const resolve = (raws) => resolvePolicyKeys(['design-ceremony'], raws)['design-ceremony'];
+    assert.deepStrictEqual(resolve({ factoryRaw: 'design-ceremony: fast-lane\n' }), { value: 'standard', source: 'default' });
+    assert.deepStrictEqual(resolve({ policyRaw: 'design-ceremony: fast-lane\n' }), { value: 'standard', source: 'default' });
+    assert.deepStrictEqual(resolve({ runConfigRaw: 'design-ceremony: fast-lane\n', factoryRaw: 'design-ceremony: standard\n' }), { value: 'fast-lane', source: 'run-config' });
+  } finally {
+    delete row.policySourceExcluded;
+  }
+  assert.deepStrictEqual(resolvePolicyKeys(['design-ceremony'], { factoryRaw: 'design-ceremony: fast-lane\n' })['design-ceremony'], { value: 'fast-lane', source: 'factory' });
+});
+
 test('mixed policy.yml + CLAUDE.md content is read independently, both audited together', () => {
   const repo = tmpRepo();
   writePolicy(repo, 'dispatch-retry-ceiling: 5\nmade-up-lever: 1\n');
