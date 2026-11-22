@@ -577,7 +577,7 @@ test('Deliverable 8: work-record.md names specify as a decision-comment writer a
 test('planning.md headings appear in order', () => {
   const text = planning();
   const heads = ['## Which records are planned', '## Per-record step', '## Planner prompt', '## Reviewer dispatch',
-    '## Routing', '## Hold', '## Batches', '## Read-back and outcome'];
+    '## Routing', '## Hold', '## Batches', '## Decomposition', '## Read-back and outcome'];
   const at = heads.map((h) => text.indexOf(`\n${h}\n`));
   assert.ok(at.every((i) => i !== -1), `missing heading: ${heads.filter((h, i) => at[i] === -1)}`);
   assert.deepEqual([...at].sort((a, b) => a - b), at);
@@ -599,6 +599,11 @@ const SHAPING_FILES = {
   'plugin/skills/specify/shaping-mode.md': ['Under `work-backend: github-issues` only, resolve `plan-at-specify`', 'Any other backend, any other output, or a failed call skips every `plan-at-specify` block and shaping runs as written.'],
   'plugin/skills/specify/shaping-mode-stamping.md': ['When `shaping-mode.md`\'s Planning at specify paragraph read `planning.md`', 'Otherwise skip this paragraph.'],
   'plugin/skills/specify/shaping-mode-readback.md': ['When `shaping-mode.md`\'s Planning at specify paragraph read `planning.md`', 'Otherwise skip this paragraph.'],
+};
+const DECOMPOSITION_FILES = {
+  'plugin/skills/specify/decomposition-mode-closeout.md': ['Under `work-backend: github-issues` only, resolve `plan-at-specify` once', 'Any other backend, any other output, or a failed call skips this paragraph and decomposition runs as written.'],
+  'plugin/skills/specify/mechanical-handoff.md': ['Under `work-backend: github-issues` only, resolve `plan-at-specify` before composing the prompt', 'With any other output, or a failed call, the prompt is unchanged and this paragraph\'s remaining steps are skipped.'],
+  'plugin/skills/specify/SKILL.md': ['Under `plan-at-specify: on`', 'Otherwise skip this paragraph.'],
 };
 const GATE_START = '<!-- plan-at-specify:start -->';
 const GATE_END = '<!-- plan-at-specify:end -->';
@@ -629,6 +634,12 @@ test('AC1.1: each shaping file holds one gated plan-at-specify block and no plan
   }
 });
 
+test('AC1.1: each decomposition file holds one gated plan-at-specify block and no planning text outside it', () => {
+  for (const [rel, phrases] of Object.entries(DECOMPOSITION_FILES)) {
+    assert.deepEqual(gateProblems(shapingText(rel), phrases), [], rel);
+  }
+});
+
 test('AC1.1: no other specify file except planning.md names the planning step', () => {
   const fs = require('node:fs');
   const dir = path.join(ROOT, 'plugin/skills/specify');
@@ -641,7 +652,7 @@ test('AC1.1: no other specify file except planning.md names the planning step', 
     }
   })(dir);
   assert.ok(files.length > 20, `directory walk found ${files.length} files`);
-  const skip = new Set([...Object.keys(SHAPING_FILES), PLANNING_REL].map((r) => path.join(ROOT, r)));
+  const skip = new Set([...Object.keys(SHAPING_FILES), ...Object.keys(DECOMPOSITION_FILES), PLANNING_REL].map((r) => path.join(ROOT, r)));
   for (const p of files) {
     if (skip.has(p)) continue;
     const text = readText(p);
@@ -719,4 +730,179 @@ test('Fix 2: the readback block replaces only the ready-present and no-needs:* a
   pinned(blockOf('plugin/skills/specify/shaping-mode-readback.md'), [
     f('for a held record its assertions replace only the `ready`-present assertion in the first bullet below and the no-`needs:*` bullet (the first bullet\'s scoring-label and `shaped:headless` assertions still apply)'),
   ], 'readback block');
+});
+
+const decomposition = () => sectionOf(planning(), '## Decomposition');
+
+test('Deliverable 6: the decomposition entry takes N sub-issues, never a parent, and returns one outcome each', () => {
+  pinned(decomposition(), [
+    f('Called by `decomposition-mode-closeout.md`\'s `plan-at-specify` paragraph, in specify\'s own session'),
+    f('never inside `mechanical-handoff.md`\'s subagent'),
+    f('every non-parent sub-issue Step 3 created this run'),
+    f('A sub-issue Step 3 resumed rather than created is not planned this pass'),
+    f('A sub-issue Step 5 left with a staged finding is planned too'),
+    f('a record carrying the `parent-issue` label is never planned and gets no outcome row'),
+    f('`planned`'), f('`held`'), f('`no-ref`'),
+    f('A sub-issue a plan-less lane took is `skipped`, Detail `{lane} lane ({reason})`'),
+  ], 'decomposition entry');
+});
+
+test('Task 1 fix 2: a failed body write is skipped, and a failed label call or comment post takes ## Hold\'s failed row', () => {
+  pinned(decomposition(), [
+    f('A failed body write is `skipped`, Detail `write failed: {reason}`'),
+    f('that sub-issue is neither planned nor written, and is `skipped`, Detail `fetch failed: {reason}`'),
+    f('a held sub-issue whose comment post fails takes `## Hold`\'s `failed — hold comment not posted ({reason}); re-run /claude-tweaks:specify #{n}` row'),
+    f('A failed label call takes the same row'),
+  ], 'decomposition write failures');
+});
+
+test('Task 1 fix 3: a skipped sub-issue is written only to remove a Plan: line', () => {
+  pinned(decomposition(), [
+    f('A `skipped` sub-issue is written only to remove a `Plan:` line, otherwise not at all'),
+  ], 'decomposition skipped write');
+});
+
+test('Task 1 fix 4: decomposition read-back drops the Held bullet\'s shaped:headless assertion', () => {
+  pinned(decomposition(), [
+    f('without the Held bullet\'s `shaped:headless` assertion, since decomposition never stamps it'),
+  ], 'decomposition read-back');
+});
+
+test('AC3.1 + Deliverable 7: each body is re-fetched from the forge after Step 6, so red-team edits are what the reviewer reads', () => {
+  pinned(decomposition(), [
+    f('re-fetch each sub-issue\'s body and labels from the forge'),
+    f('after Step 6, or after the handoff returns'),
+    f('so Step 5\'s red-team edits are in the body the planner and reviewer read'),
+  ], 'decomposition body');
+});
+
+test('Deliverable 1: planners and reviewers fan out per ## Batches, with one question batch for every sub-issue', () => {
+  pinned(decomposition(), [
+    f('as `## Batches` runs them'),
+    f('one batch table and one set of chunked questions covering every sub-issue'),
+  ], 'decomposition fan-out');
+});
+
+test('Deliverable 2: one more body write, then the hold label edit as a separate call; a held sibling holds no dependent; ready is never added', () => {
+  pinned(decomposition(), [
+    f('one more body write per sub-issue'),
+    f('`gh issue edit {n} --body-file "{body}"`'),
+    f('then, as a separate call after it lands'),
+    f('`--remove-label ready --add-label "needs:decision"`'),
+    f('A held sibling does not hold the sub-issues that depend on it'),
+    f('Planning never adds `ready`'),
+  ], 'decomposition write');
+});
+
+test('Deliverable 9: headless decomposition asks nothing and holds', () => {
+  pinned(decomposition(), [
+    f('With no human reachable (`/sweep`\'s specify drain, a Routine)'),
+    f('the question batch is not asked'),
+  ], 'decomposition headless');
+});
+
+test('AC2.1 + Deliverable 4: the outcomes map to Step 9\'s ### Planning table', () => {
+  pinned(decomposition(), [
+    f('`### Planning`'),
+    f('| Record | Outcome | Detail |'),
+    f('A planning failure is `skipped`'),
+  ], 'decomposition outcomes');
+});
+
+test('AC4.1: the closeout block runs after Step 6, before Step 7, and a delegated subagent skips it', () => {
+  const rel = 'plugin/skills/specify/decomposition-mode-closeout.md';
+  const text = shapingText(rel);
+  const b = text.indexOf(GATE_START);
+  assert.ok(b > text.indexOf('## Step 6: Record Self-Review') && b < text.indexOf('## Step 7:'), 'closeout block position');
+  pinned(blockOf(rel), [
+    f('Only when it prints `on`, and only in specify\'s own session'),
+    f('run its `## Decomposition` entry now, before Step 7'),
+    f('A subagent whose dispatch prompt says its caller plans skips this paragraph'),
+    f('Step 9\'s summary then carries the `### Planning` section'),
+    f('resolve-policy.js" --values plan-at-specify'),
+  ], 'closeout block');
+});
+
+test('AC4.1 + Deliverable 8: the handoff never plans — the dispatcher says so in the prompt, plans after it returns, and appends the outcomes', () => {
+  const rel = 'plugin/skills/specify/mechanical-handoff.md';
+  const text = shapingText(rel);
+  const fence = fenceAfter(text, '## Dispatch prompt');
+  for (const t of PLANNING_TOKENS) assert.ok(!fence.includes(t), `dispatch prompt names ${t}`);
+  const b = text.indexOf(GATE_START);
+  assert.ok(b > text.indexOf(fence) + fence.length && b < text.indexOf('`[Use: Standard]`'), 'handoff block position');
+  pinned(blockOf(rel), [
+    f('add these two lines as the last lines of the prompt\'s Task scope'),
+    f('Planning is not yours: your caller plans every sub-issue after you return, so skip the `plan-at-specify` paragraph in `decomposition-mode-closeout.md` and ask no planning question.'),
+    f('After your summary and before your status line, add one line `Resumed: #a, #b` naming every sub-issue Step 3 resumed rather than created, or `Resumed: none`.'),
+    f('this rule comes before the status rule that follows'),
+    f('over the Work Units Created refs minus the refs on that `Resumed:` line'),
+    f('`Not planned: the handoff reply carried no Resumed: line.`'),
+    f('`Not planned: the handoff returned {status} with no Work Units Created table.`'),
+    f('The subagent\'s summary shape is unchanged.'),
+    f('Once the handoff returns `STATUS: DONE` or `DONE_WITH_CONCERNS`'),
+    f('Any other status plans nothing: the appended `### Planning` section, under the same opening line, gets a `skipped` row with Detail `handoff {status}`'),
+    f('run `planning.md`\'s `## Decomposition` entry in this session'),
+    f('append its `### Planning` section to the returned summary'),
+    f('Planned in specify\'s own session after the handoff returned; the handoff planned nothing.'),
+  ], 'handoff block');
+});
+
+test('Deliverable 1: SKILL.md\'s decomposition paragraph points at the two blocks, and policy-schema names their readers', () => {
+  const rel = 'plugin/skills/specify/SKILL.md';
+  const text = shapingText(rel);
+  const b = text.indexOf(GATE_START);
+  assert.ok(b > text.indexOf('## Decomposition mode (') && b < text.indexOf('\n## ', text.indexOf('## Decomposition mode (') + 1), 'SKILL.md block position');
+  pinned(blockOf(rel), [
+    f('`decomposition-mode-closeout.md`\'s `plan-at-specify` paragraph plans each non-parent sub-issue after Step 6'),
+    f('`mechanical-handoff.md`\'s `plan-at-specify` paragraph'),
+  ], 'SKILL.md block');
+  const row = readText(path.join(ROOT, 'plugin/skills/_shared/policy-schema.md')).split('\n').find((l) => l.startsWith('| `plan-at-specify` |'));
+  for (const r of ['specify/decomposition-mode-closeout.md', 'specify/mechanical-handoff.md']) assert.ok(row.includes(r), `readers cell lacks ${r}`);
+  pinned(row, [f('decomposition mode plan each created non-parent sub-issue after Step 6')], 'policy row');
+});
+
+test('Final fix 1: a held sub-issue is left out of every /flow command, and all-held recommends re-shaping the first', () => {
+  pinned(decomposition(), [
+    f('This step also applies `## Read-back and outcome`\'s Next Actions rule: a held sub-issue is left out of every `/claude-tweaks:flow` command'),
+    f('when every sub-issue this pass plans is held, the recommended line is `/claude-tweaks:specify #{n}` for the first held one'),
+  ], 'decomposition Next Actions');
+});
+
+test('Final fix 2: the origin-set carve-out\'s in-place write counts as created this run', () => {
+  pinned(decomposition(), [
+    f('The origin-set carve-out\'s in-place write onto `$ORIGIN_RECORD_NUM` (`record-creation-subissues.md`) counts as created this run'),
+  ], 'decomposition origin set');
+});
+
+test('Final fix 3 + 6: the body write is shape-checked first, and a Plan: line removal sends the re-fetched forge body', () => {
+  pinned(decomposition(), [
+    f('compose-record.js" --check "{body}"` first, as `shaping-mode-stamping.md`\'s Compose-then-write-once runs it'),
+    f('Detail `write failed: pre-write shape check ({reason})`'),
+    f('sends the forge body re-fetched just before it with only its `Plan:` line removed, never `{body}`'),
+    f('which after a planning failure already carries the `## Overview` that `## Per-record step`\'s step 1 inserted'),
+  ], 'decomposition write checks');
+});
+
+test('Final fix 4 + 7: a read-back failure is skipped, and a held sub-issue\'s body write or read-back failure takes ## Hold\'s failed row', () => {
+  pinned(decomposition(), [
+    f('A read-back mismatch is `skipped`, Detail `read-back failed: {reason}`'),
+    f('`failed — body write failed ({reason}); re-run /claude-tweaks:specify #{n}`'),
+    f('`failed — read-back failed ({reason}); re-run /claude-tweaks:specify #{n}`'),
+    f('so the re-run asks its held questions again'),
+  ], 'decomposition failure rows');
+});
+
+test('Final fix 5 + 8: the handoff block relays the conflict warning, and a reply with no Resumed: line plans nothing whatever its status', () => {
+  pinned(blockOf('plugin/skills/specify/mechanical-handoff.md'), [
+    f('Relay a stderr warning the call prints, which names a conflict with `planning-decisions`, as a one-line notice.'),
+    f('A reply with no `Resumed:` line, whatever its status, plans nothing'),
+    f('for each Work Units Created ref minus the `Resumed:` refs'),
+    f('appends, in place of either line above, only the one line'),
+  ], 'handoff block fixes');
+});
+
+test('Final fix 10: SKILL.md keeps both decomposition planning paths in this session', () => {
+  pinned(blockOf('plugin/skills/specify/SKILL.md'), [
+    f('Either way planning runs in this session, never inside the handoff.'),
+  ], 'SKILL.md block');
 });
