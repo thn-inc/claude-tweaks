@@ -44,6 +44,7 @@ const path = require('path');
 const { deriveStepYield, STEP_YIELD_FILE, SCHEMA_VERSION, ownGet, ownSet } = require('../plugin/bin/lib/timing/step-yield');
 const { parseEntry } = require('../plugin/bin/lib/log-decision/append');
 const { parseFlatLines } = require('../plugin/bin/lib/policy-schema');
+const { confirmedCount, startedAtOf } = require('../plugin/bin/lib/review-lens/history');
 
 const VERDICTS = ['confirmed', 'refuted', 'cant-tell', 'unsettled'];
 const OUTCOMES = ['confirmed', 'drop', 'digest', 'console', 'none'];
@@ -203,16 +204,6 @@ function closedOf(dir, fsImpl) {
   return isObject(state) && state.status === 'clean';
 }
 
-// The run id's leading YYYY-MM-DDTHHMMSS read as UTC -> an ISO string, or null when it is not a real instant.
-function startedAtOf(runId) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})(\d{2})/.exec(runId);
-  if (!m) return null;
-  const [y, mo, d, h, mi, s] = m.slice(1).map(Number);
-  const t = new Date(Date.UTC(y, mo - 1, d, h, mi, s));
-  const ok = t.getUTCFullYear() === y && t.getUTCMonth() === mo - 1 && t.getUTCDate() === d && t.getUTCHours() === h && t.getUTCMinutes() === mi && t.getUTCSeconds() === s;
-  return ok ? t.toISOString() : null;
-}
-
 // driver-events.jsonl -> the driver's own steps, or null when the run has none.
 function driverStepsOf(dir, fsImpl) {
   const text = readText(fsImpl, path.join(dir, DRIVER_EVENTS_FILE));
@@ -245,7 +236,6 @@ function stepRow(s) {
   // A tokens object whose every field is null (step-yield.js writes `tk.input ?? null`) is unknown cost, not 0.
   const t = isObject(s.tokens) && !TOKEN_KEYS.every((k) => s.tokens[k] === null || s.tokens[k] === undefined) ? s.tokens : null;
   const f = isObject(s.findings) ? s.findings : null;
-  const verdicts = f && f.tiebreak && f.tiebreak.byVerdict;
   const commits = isObject(s.commits) ? num(s.commits.commit) : 0;
   const minutes = num(s.minutes);
   return {
@@ -258,7 +248,7 @@ function stepRow(s) {
     fixCommits: PRODUCT_PHASES.includes(s.phase) ? 0 : commits,
     verifyFail: isObject(s.verify) ? num(s.verify.fail) : 0,
     raised: f ? num(f.raised) : 0,
-    confirmed: f ? num(f.both) + num(verdicts && verdicts.confirmed) : 0,
+    confirmed: confirmedCount(f),
   };
 }
 
