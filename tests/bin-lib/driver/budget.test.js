@@ -21,6 +21,8 @@ const POLICY_RESOLVED = Object.freeze({
   // #5224's lane bounds, which eligibilityOptions hands the eligibility call.
   'express-driver-max-size': { value: 'low' },
   'express-driver-max-key-files': { value: 3 },
+  'express-driver-review': { value: 'beyond-express' },
+  'express-driver-max-risk': { value: 'low' },
 });
 const DEFAULT_FACTS = Object.freeze({ final: null, outcome: 'pending-review', claimed: true, claimExit: 0 });
 const EMPTY_PULL = Object.freeze({ groups: [], exclusions: [] });
