@@ -38,6 +38,7 @@ const VALUE_HEADS = [
   'typed command not accepted',
   'size ceiling unreadable',
   'Key File limit unreadable',
+  'risk ceiling unreadable',
   'express-driver value not recognised',
 ];
 
@@ -227,4 +228,4 @@ function defaultCheck(pluginRoot, repoRoot) {
     });
 }
 
-module.exports = { reasonKey, collectFunnel, collectDriverRuns, collectDispatchFirings, readPluginVersion, defaultGh, defaultCheck, CHECK_CONCURRENCY };
+module.exports = { reasonKey, parseVerdict, collectFunnel, collectDriverRuns, collectDispatchFirings, readPluginVersion, defaultGh, defaultCheck, CHECK_CONCURRENCY };

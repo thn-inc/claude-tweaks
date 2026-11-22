@@ -10,7 +10,7 @@ const os = require('os');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..', '..');
-const { reasonKey, collectFunnel, readPluginVersion } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'funnel.js'));
+const { reasonKey, parseVerdict, collectFunnel, readPluginVersion } = require(path.join(ROOT, 'tools', 'pipeline-cost-report', 'funnel.js'));
 
 const NOW = () => new Date('2026-11-19T10:00:00Z');
 const gh = (count) => () => JSON.stringify(Array.from({ length: count }, (_, i) => ({ number: i + 1 })));
@@ -36,6 +36,16 @@ test('reasonKey cuts only the heads that embed a value', () => {
   assert.strictEqual(reasonKey('express-driver value not recognised: foo'), 'express-driver value not recognised');
   assert.strictEqual(reasonKey('express-driver split: issue number is odd'), 'express-driver split: issue number is odd');
   assert.strictEqual(reasonKey('size is not low'), 'size is not low');
+  assert.strictEqual(reasonKey('risk ceiling unreadable: Medium'), 'risk ceiling unreadable');
+  assert.strictEqual(reasonKey('risk is not low or medium'), 'risk is not low or medium');
+});
+
+test('AC7.1 (#6018, parseVerdict half): parseVerdict reads a verdict line that carries widenedBy', () => {
+  assert.deepStrictEqual(parseVerdict('noise\n{"record":5,"admitted":true,"reasons":[],"widenedBy":["risk"]}\n'), { admitted: true, keys: [] });
+  assert.deepStrictEqual(
+    parseVerdict('{"record":5,"admitted":false,"reasons":["risk ceiling unreadable: x"],"widenedBy":[]}'),
+    { admitted: false, keys: ['risk ceiling unreadable'] },
+  );
 });
 
 test('AC5.1: funnel prints the admitted count', async () => {
