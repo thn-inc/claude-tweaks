@@ -22,11 +22,33 @@
 // agent-{id}.jsonl). A transcript with no table is unreadable, reported and kept out of the shares
 // (tools/review-replay/counterfactual.js).
 //
+// extract-reviews: replays the archived lens reviewers (--role lens) rather than the tiebreak judge. Reads the archived run
+// directories under --runs and each lens dispatch's transcript under --transcripts (its prompt and its reply), and writes,
+// under <dir>, a clean two-commit repository per run and range (repos/{run}--r{k}/repo), each slot's rewritten context
+// bundle, spec and procedure copies beside it, one prompt per arm and slot, reviews-manifest.json, reviews-fixture.json
+// and archived-reports.json (tools/review-replay/reviews-extract.js). The archived shas and the worktree and main-checkout
+// paths in a prompt are rewritten to the replay's; a path to another run's directory in a prompt or a copy is replaced
+// with [run-directory path removed] (a relative mention of another run in diff text stays), and an archived worktree,
+// main-checkout or own-run path left after rewriting excludes the slot as `unrewritten-path`. No archived reply text or
+// decisions.md verdict line reaches a prompt, a repository or a copy. Alongside the --arm arms, a control arm reruns the
+// slots at the tier and effort they were archived at: `control` when every selected slot shares one (tier, effort),
+// otherwise `control.{tier}.{effort|none}` per group. A user arm named `control` or `control.*` exits 2.
+//
+// score-reviews: reads the Workflow's replies from --transcripts and, per arm and lens, prints the confirmed findings the
+// replay reviewers raised (recall, per slot and summed; a slot whose unit has no decisions.md adds to
+// `confirmedMissingSource`, not to the recall), the archived reviewers' rows they raised, the rows no archived reviewer
+// raised (`new`) and the reference arm's rows they also raised. `fidelity` per lens aggregates every control arm's recall of
+// the archived rows, the figure an arm's numbers are read against; `fixture.byLens` repeats what the extraction selected
+// and excluded per lens (tools/review-replay/reviews-score.js). A reply that is missing, recorded at another effort than its
+// arm's, or not a lens report is notJudged; a `No findings` reply is a scored review with zero rows.
+//
 // Exit codes (as tools/driver-merge-check-eval.js): 0 ok; 1 a runtime failure; 2 a malformed invocation; 3 not a clean
 // result (extract shortfall or empty set, score with any notJudged, counterfactual with an unreadable transcript, a
-// lens with one reviewer or no pair at all).
+// lens with one reviewer or no pair at all; extract-reviews with no replayable slot or fewer than --min-reviews, and
+// score-reviews with any notJudged).
 //
 // Seam: run({ argv, deps }) returns the exit code. deps: fs, git(args) -> stdout (throws), writeTree(head, destDir),
+// writeRepo(base, head, dest, { originRefs }) -> { base, head } (makeWriteRepo(cwd): the two-commit repository),
 // log(line), err(line), pluginRoot.
 
 const fs = require('fs');
@@ -46,6 +68,9 @@ const USAGE = [
   '               [--select <name,...>] [--min-runs <n>] [--min-findings <n>] [--quota <sev>=<n>,...] [--template <path>] [--dispatch-core <path>]',
   '       node tools/review-replay.js score --out <extract dir> --transcripts <workflow dir> [--reference <arm>]',
   '       node tools/review-replay.js counterfactual --runs <root> --transcripts <dir> [--select <name,...>]',
+  '       node tools/review-replay.js extract-reviews --runs <root> --out <dir> --role lens --transcripts <dir> --arm name=<id>,profile=<profile>[,effort=<low|medium|high|xhigh|max>],repeat=<n> [--arm ...]',
+  '               [--select <name,...>] [--lens <id,...>] [--max-per-lens <n>] [--min-reviews <n>]',
+  '       node tools/review-replay.js score-reviews --out <dir> --transcripts <workflow dir> [--reference <arm>]',
 ].join('\n');
 const COMMAND_FLAGS = {
   baseline: new Set(['--runs', '--select']),

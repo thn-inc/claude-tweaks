@@ -356,3 +356,12 @@ test('an unknown --role exits 2', async () => {
   assert.equal(code, 2);
   assert.match(deps.errs.join('\n'), /--role/);
 });
+
+test('USAGE names both new commands', async () => {
+  const deps = makeDeps();
+  const code = await run({ argv: [], deps });
+  assert.equal(code, 2);
+  const err = deps.errs.join('\n');
+  assert.ok(err.includes('extract-reviews --runs <root> --out <dir> --role lens'), err);
+  assert.ok(err.includes('score-reviews --out <dir> --transcripts <workflow dir>'), err);
+});
