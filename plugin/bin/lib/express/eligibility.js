@@ -241,7 +241,8 @@ function evaluateRecordEligibility(issue, opts) {
   if (isFrontend(body, keyFiles)) reasons.push(REASONS.frontend);
   for (const p of keyFiles) {
     const sensitive = isSensitivePath(canonicalPath(p), sensitivePaths);
-    if (protectedPathsNeedReviewer === true ? (isProtectedPath(p) && (isBuildTimeProtectedPath(p) || sensitive)) : isProtectedPath(p)) reasons.push(REASONS.protectedPath(p));
+    const leftForReviewer = protectedPathsNeedReviewer === true && !isBuildTimeProtectedPath(p) && !sensitive;
+    if (isProtectedPath(p) && !leftForReviewer) reasons.push(REASONS.protectedPath(p));
     if (sensitive) reasons.push(REASONS.sensitivePath(p));
   }
   if (!shapeGate(body).ok) reasons.push(REASONS.notShaped);
