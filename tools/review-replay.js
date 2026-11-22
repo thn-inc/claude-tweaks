@@ -52,6 +52,37 @@ const COMMAND_FLAGS = {
   counterfactual: new Set(['--runs', '--select', '--transcripts']),
 };
 
+// A clean repository at `dest` holding `base` then `head` of `sourceCwd` as two commits ("base", "head") with a fixed
+// identity and date, so the same pair always yields the same replay shas. Returns { base, head }, the replay shas;
+// each `originRefs` name gets refs/remotes/origin/{name} at the replay base.
+function makeWriteRepo(sourceCwd) {
+  const FIXED = { GIT_AUTHOR_NAME: 'review-replay', GIT_AUTHOR_EMAIL: 'review-replay@localhost', GIT_COMMITTER_NAME: 'review-replay', GIT_COMMITTER_EMAIL: 'review-replay@localhost', GIT_AUTHOR_DATE: '2000-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2000-01-01T00:00:00Z' };
+  return (base, head, dest, { originRefs = [] } = {}) => {
+    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
+    Object.assign(env, FIXED);
+    const git = (args) => String(execFileSync('git', ['-c', 'commit.gpgsign=false', ...args], { cwd: dest, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })).trim();
+    const extractTree = (rev) => {
+      const archive = execFileSync('git', ['archive', rev, '--', '.', `:(exclude)${RUN_RECORDS_DIR}`], { cwd: sourceCwd, maxBuffer: 1 << 30, windowsHide: true });
+      // cwd, not -C: Git's GNU tar reads a drive-letter path ("D:\...") as host:path and fails to open it on Windows.
+      execFileSync('tar', ['-x', '-f', '-'], { cwd: dest, input: archive, windowsHide: true });
+    };
+    fs.mkdirSync(dest, { recursive: true });
+    git(['init', '-q', '-b', 'replay']);
+    extractTree(base);
+    git(['add', '-A']);
+    git(['commit', '-q', '--allow-empty', '-m', 'base']);
+    const replayBase = git(['rev-parse', 'HEAD']);
+    git(['rm', '-rq', '--cached', '.']);
+    for (const entry of fs.readdirSync(dest)) if (entry !== '.git') fs.rmSync(path.join(dest, entry), { recursive: true, force: true });
+    extractTree(head);
+    git(['add', '-A']);
+    git(['commit', '-q', '--allow-empty', '-m', 'head']);
+    const replayHead = git(['rev-parse', 'HEAD']);
+    for (const name of originRefs) git(['update-ref', `refs/remotes/origin/${name}`, replayBase]);
+    return { base: replayBase, head: replayHead };
+  };
+}
+
 function defaultDeps() {
   const cwd = process.cwd(); // the repo the CLI runs in, captured once
   const git = (args) => String(execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000, maxBuffer: 256 * 1024 * 1024, windowsHide: true }));
@@ -65,6 +96,7 @@ function defaultDeps() {
       // cwd, not -C: Git's GNU tar reads a drive-letter path ("D:\...") as host:path and fails to open it on Windows.
       execFileSync('tar', ['-x', '-f', '-'], { cwd: destDir, input: archive, windowsHide: true });
     },
+    writeRepo: makeWriteRepo(cwd),
     log: (s) => process.stdout.write(`${s}\n`),
     err: (s) => process.stderr.write(`${s}\n`),
     pluginRoot: path.join(__dirname, '..', 'plugin'),
@@ -148,7 +180,7 @@ async function run({ argv, deps } = {}) {
   }
 }
 
-module.exports = { run, parseArgs, defaultDeps };
+module.exports = { run, parseArgs, defaultDeps, makeWriteRepo };
 
 if (require.main === module) {
   run({ argv: process.argv.slice(2), deps: defaultDeps() }).then((code) => { process.exitCode = code; });
