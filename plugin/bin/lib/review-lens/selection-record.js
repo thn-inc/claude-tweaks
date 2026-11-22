@@ -126,9 +126,11 @@ function listRuns(roots) {
 }
 
 // Newest first: the parent id's timestamp, then the parent id, then the higher member.
-const newestFirst = (x, y) => (x.startedAt !== y.startedAt ? (x.startedAt < y.startedAt ? 1 : -1)
-  : x.parent !== y.parent ? (x.parent < y.parent ? 1 : -1)
-    : y.member - x.member);
+function newestFirst(x, y) {
+  if (x.startedAt !== y.startedAt) return x.startedAt < y.startedAt ? 1 : -1;
+  if (x.parent !== y.parent) return x.parent < y.parent ? 1 : -1;
+  return y.member - x.member;
+}
 
 function readSkipStreaks({ roots, excludeRunId } = {}) {
   if (!Array.isArray(roots) || roots.length === 0 || !roots.every((r) => typeof r === 'string' && r !== '')) {
