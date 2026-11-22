@@ -21,6 +21,7 @@ const { redactOrWithhold } = require('../walkthrough/redact');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { SECTIONS: CONSOLE_SECTIONS, decisionLineHash } = require('../console/resolve');
 const { DECISION_RENDER_FIELDS } = require('../console/decision-facts');
+const { escapeRegExp } = require('../shared-primitives');
 
 // The text is read up to a line terminator (`.` stops at one) and trimmed after, and
 // what follows it must be whitespace. A trailing `\s*$` in the pattern is quadratic on a
@@ -64,6 +65,11 @@ const LOW_CONFIDENCE_NOTE_RE = /Staged to Review Console as low-confidence.*?(?:
 const REVERSIBILITY_CLAUSE_RE = /Reversibility:.*?(?:\.(?=\s|$)|$)/;
 const DECISION_LEAD_IN = ' — ';
 const SETTLED_RESOLUTIONS = Object.freeze(['dismissed', 'dropped']);
+// The shared line grammar, planning-decisions.md's Line forms. Its one section heading is
+// read by exact match; a settled line counts only at column 0, bare or behind `- `.
+const PLANNING_DECISIONS_HEADING = '## Planning Decisions';
+const SETTLED_PLANNING_PREFIX = 'Settled at planning:';
+const SETTLED_PLANNING_RE = new RegExp(`^(?:- )?${escapeRegExp(SETTLED_PLANNING_PREFIX)}`);
 // `Title: x`, `- Finding: x`, `- **Finding:** x`, the shapes archived staged files use.
 const stagedFieldRe = (name) => new RegExp(`^(?:[-*]\\s+)?(?:\\*\\*)?${name}(?:\\*\\*)?:(?:\\*\\*)?[ \\t]*(\\S.*)$`, 'm');
 const TITLE_FIELD_RE = stagedFieldRe('Title');
@@ -192,14 +198,39 @@ function stagedFindingText(text) {
   return lines[0] ?? null;
 }
 
-function lowConfidenceFindings({ items, findings, decisions }, readStaged) {
+// The settled lines of each `## Planning Decisions` section in a spec. A section runs to
+// the next `## ` line, so specify's section and the build's are both read. Nothing
+// continues onto a following line.
+function settledPlanningLines(specText) {
+  if (typeof specText !== 'string') return [];
+  const lines = [];
+  let inSection = false;
+  for (const line of linesOutsideFences(specText)) {
+    if (line.trimEnd() === PLANNING_DECISIONS_HEADING) {
+      inSection = true;
+    } else if (line.startsWith('## ')) {
+      inSection = false;
+    } else if (inSection && SETTLED_PLANNING_RE.test(line)) {
+      lines.push(line.replace(/^- /, '').trimEnd());
+    }
+  }
+  return lines;
+}
+
+// The Review Console's low-confidence items, then the settled planning lines of each
+// record's spec, numbered on in that order.
+function lowConfidenceFindings(
+  { items, findings, decisions },
+  readStaged,
+  { records = [], readSpec = () => null } = {},
+) {
   let linesByHash = null;
-  return items
+  const consoleTexts = items
     // A settled staged file keeps its section. A can't-tell verdict keeps its item,
     // even at a `dropped` default: an agent that could not tell settled nothing.
     .filter((item) => item.section === CONSOLE_SECTIONS.LOW
       && (item.tiebreak || !SETTLED_RESOLUTIONS.includes(item.resolution)))
-    .map(({ id }, index) => {
+    .map(({ id }) => {
       const decision = DECISION_ID_RE.exec(id);
       let text;
       if (decision) {
@@ -210,8 +241,10 @@ function lowConfidenceFindings({ items, findings, decisions }, readStaged) {
       } else {
         text = stagedFindingText(readStaged(id));
       }
-      return { n: index + 1, text: text ?? id };
+      return text ?? id;
     });
+  const settled = records.flatMap((n) => settledPlanningLines(readSpec(n)));
+  return [...consoleTexts, ...settled].map((text, index) => ({ n: index + 1, text }));
 }
 
 // ---- QA and verify inputs ----
@@ -620,6 +653,9 @@ function readPacket(comments) {
 module.exports = {
   parseAcceptanceCriteria,
   lowConfidenceFindings,
+  settledPlanningLines,
+  PLANNING_DECISIONS_HEADING,
+  SETTLED_PLANNING_PREFIX,
   qaSelectionFromDecisions,
   expectedChecksFromDeclaration,
   parseStoryFile,
