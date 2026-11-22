@@ -730,9 +730,30 @@ test('Deliverable 6: the decomposition entry takes N sub-issues, never a parent,
     f('every non-parent sub-issue Step 3 created this run'),
     f('A sub-issue Step 3 resumed rather than created is not planned this pass'),
     f('A sub-issue Step 5 left with a staged finding is planned too'),
-    f('A record carrying the `parent-issue` label is never planned and gets no outcome row'),
-    f('`planned`'), f('`held`'), f('`skipped`'), f('`no-ref`'),
+    f('a record carrying the `parent-issue` label is never planned and gets no outcome row'),
+    f('`planned`'), f('`held`'), f('`no-ref`'),
+    f('A sub-issue a plan-less lane took is `skipped`, Detail `{lane} lane ({reason})`'),
   ], 'decomposition entry');
+});
+
+test('Task 1 fix 2: a failed body write is skipped, and a failed label call or comment post takes ## Hold\'s failed row', () => {
+  pinned(decomposition(), [
+    f('A failed body write is `skipped`, Detail `write failed: {reason}`'),
+    f('a held sub-issue whose comment post fails takes `## Hold`\'s `failed — hold comment not posted ({reason}); re-run /claude-tweaks:specify #{n}` row'),
+    f('A failed label call takes the same row'),
+  ], 'decomposition write failures');
+});
+
+test('Task 1 fix 3: a skipped sub-issue is written only to remove a Plan: line', () => {
+  pinned(decomposition(), [
+    f('A `skipped` sub-issue is written only to remove a `Plan:` line, otherwise not at all'),
+  ], 'decomposition skipped write');
+});
+
+test('Task 1 fix 4: decomposition read-back drops the Held bullet\'s shaped:headless assertion', () => {
+  pinned(decomposition(), [
+    f('without the Held bullet\'s `shaped:headless` assertion, since decomposition never stamps it'),
+  ], 'decomposition read-back');
 });
 
 test('AC3.1 + Deliverable 7: each body is re-fetched from the forge after Step 6, so red-team edits are what the reviewer reads', () => {
