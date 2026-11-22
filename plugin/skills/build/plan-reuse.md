@@ -2,6 +2,13 @@
 
 Read only from `build/SKILL.md`'s "Before Spec Step 3" pointer, once `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values plan-at-specify` prints `on`. `{worktree}` is the worktree root (the project root under current-branch), `{n}` the record, and `{spec}` the worktree's copy of `{run-dir}/work/{n}-spec.md` as `build/SKILL.md` defines it (`{run-dir}` is `$PIPELINE_RUN_DIR`, which a multi-spec run sets to its `spec-{N}/` subdirectory), that run-dir-relative path under `{worktree}` — never the main checkout's copy.
 
+## Preconditions
+
+In order, each its own plain call; a hit returns to Spec Step 3 as written:
+
+1. When Spec Step 2 found a stale plan `{plan}` (the stale-plan route), `git log --diff-filter=A --format=%s -1 -- "{plan}"` prints the subject of the commit that added it (run once at plan time against the #6060 plan: printed `Add the #6060 build plan — …`). A subject starting with `Add the plan reviewed at specify` means this file already committed that plan: return to Spec Step 3, logging nothing.
+2. When the materialize envelope for this record reported `template.changed: true`, skip reuse (Spec Step 3's template version delta needs a new plan, #1840): log `--status SKIP --section "/build" --step "Spec Step 2 (plan reuse)" --text "condition: template changed since filing → fallback: new plan written at Spec Step 3" --reversibility n/a`, then return to Spec Step 3.
+
 ## Probe
 
 Resolve `{line-file}` with `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value plan-reuse-line-{n}.txt`, then run this fence verbatim (run once at plan time against the real #6060 spec: printed `{"plan":"absent"}`):
@@ -29,7 +36,7 @@ In order, the first failure wins, each its own plain call from the worktree:
 
 ## All checks valid
 
-`cp "{read-path}" "docs/superpowers/plans/{basename}"` (`{basename}` is `{read-path}`'s basename), `git add` that path, `git commit -m "Add the plan reviewed at specify ({commit})"`. Then, with a run dir, three `log-decision.js` calls (`--section "/build"`):
+`mkdir -p "docs/superpowers/plans"` (a project that never wrote a plan has no such directory), then `cp "{read-path}" "docs/superpowers/plans/{basename}"` (`{basename}` is `{read-path}`'s basename), `git add` that path, `git commit -m "Add the plan reviewed at specify ({commit})"`, each its own plain call. A failed `mkdir`, copy, `git add` or commit is an infrastructure fault, not a verdict on the plan: a BLOCKED stop — report the error and log no reuse verdict; Spec Step 3 is not entered from here. Otherwise, with a run dir, three `log-decision.js` calls (`--section "/build"`):
 
 - `--status AUTO --step "Spec Step 2 (plan reuse)" --text "reused the plan reviewed at specify ({commit}), committed as {sha}" --reversibility high`
 - `--status SKIP --step "Spec Step 3" --text "condition: plan reviewed at specify ({commit}) → fallback: stored plan reused, no new plan written" --reversibility n/a`

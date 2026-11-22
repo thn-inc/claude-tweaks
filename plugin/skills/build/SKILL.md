@@ -95,7 +95,7 @@ Proceed to Spec Step 3.
 
 #### Before Spec Step 3: a plan reviewed at specify (#6060)
 
-When a branch above proceeds to Spec Step 3 (the stale-plan route only when the plan found was not added by an `Add the plan reviewed at specify` commit), first run `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values plan-at-specify`. Only when it prints `on`, read `plan-reuse.md` in this skill's directory and follow it: a stored plan that still checks valid is committed into the worktree and Spec Step 3 and Common Step 1.6 are skipped; a failed check re-plans at Spec Step 3. Any other output, or a spec with no `Plan:` line, changes nothing and logs nothing. A resumed build whose reused plan is committed takes the existing-plan branch above; if that plan is stale it goes to Spec Step 3 as written, with no reuse verdict logged.
+When a branch above proceeds to Spec Step 3 (the stale-plan route only when the plan found was not added by an `Add the plan reviewed at specify` commit, checked first thing there), first run `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values plan-at-specify`. Only when it prints `on`, read `plan-reuse.md` in this skill's directory and follow it: a stored plan that still checks valid is committed into the worktree and Spec Step 3 and Common Step 1.6 are skipped; a failed check re-plans at Spec Step 3. Any other output, or a spec with no `Plan:` line, changes nothing and logs nothing. A resumed build whose reused plan is committed takes the existing-plan branch above; if that plan is stale it goes to Spec Step 3 as written, with no reuse verdict logged.
 
 ### Spec Step 2.5: Classify and Seed Manual Steps
 

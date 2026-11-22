@@ -158,10 +158,16 @@ const FACTS = [
   [/ASSUMPTION — verify at build:/, 'premise probes still run'],
   [/logs nothing/, 'absent line logs nothing (AC1.1)'],
   [/Common Step 1\.5 runs as today/, 'plan audit still runs'],
-  [/infrastructure fault[^\n]*a BLOCKED stop[^\n]*log no reuse verdict/, 'non-zero probe exit is a BLOCKED stop, logs no verdict'],
+  [/infrastructure fault \(an unreadable spec[^\n]*a BLOCKED stop[^\n]*log no reuse verdict/, 'non-zero probe exit is a BLOCKED stop, logs no verdict'],
   [/copy of `\{run-dir\}\/work\/\{n\}-spec\.md`[^\n]*`spec-\{N\}\/`/, 'spec path is the worktree copy of the run-dir file, multi-spec aware'],
   [/`\{worktree\}` is the worktree root/, 'worktree defined'],
   [/neither re-probes nor re-logs/, 'premise probes not repeated at Spec Step 3'],
+  [/git log --diff-filter=A --format=%s -1 -- "\{plan\}"/, 'stale-plan exclusion command'],
+  [/starting with `Add the plan reviewed at specify`[^\n]*return to Spec Step 3, logging nothing/, 'a plan this check committed goes to Spec Step 3 silently'],
+  [/`template\.changed: true`/, 'template-changed precondition'],
+  [/condition: template changed since filing → fallback: new plan written at Spec Step 3/, 'template-changed SKIP text'],
+  [/mkdir -p "docs\/superpowers\/plans"/, 'plans directory created before the copy'],
+  [/failed `mkdir`, copy, `git add` or commit is an infrastructure fault[^\n]*a BLOCKED stop[^\n]*log no reuse verdict/, 'a failed commit step is a BLOCKED stop, logs no verdict'],
 ];
 
 test('AC2.2/AC3.1: plan-reuse.md states every check, log line and failure reason', () => {
@@ -191,6 +197,14 @@ test('AC5.1: plan-reuse.md says a resumed build takes the existing-plan branch a
   assert.notStrictEqual(moved, text);
   const inSection = sectionOf(moved, '## Resumed build');
   assert.throws(() => assert.match(inSection, /never runs again/), /never runs again/);
+});
+
+test('AC5.1: the Resumed build section says a stale committed plan goes to Spec Step 3 with no reuse verdict', () => {
+  const CLAIM = /A stale plan this check committed[^\n]*goes to Spec Step 3 as written[^\n]*logs no reuse verdict/;
+  assert.match(sectionOf(text, '## Resumed build'), CLAIM);
+  const moved = text.replace(/[^\n]*A stale plan this check committed[^\n]*/, '').replace('## Probe\n', '## Probe\nA stale plan this check committed goes to Spec Step 3 as written, and this file logs no reuse verdict.\n');
+  assert.notStrictEqual(moved, text);
+  assert.throws(() => assert.match(sectionOf(moved, '## Resumed build'), CLAIM), /did not match/);
 });
 
 // ---- Task 2: the SKILL.md pointer, Common Step 1.6 and plan-review.md skip text ----
