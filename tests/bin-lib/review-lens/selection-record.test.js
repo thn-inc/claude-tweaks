@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { scratchDir } = require('../../helpers/tmp-dir');
+const { chmodDenialSkip } = require('../../helpers/root');
 const { LENS_IDS } = require('../../../plugin/bin/lib/review-lens/dispatch-record');
 const { TIER_LENSES } = require('../../../plugin/bin/lib/review-lens/select');
 const { LENS_SELECTION_FILE, writeLensSelection, readLensSelection, readSkipStreaks } = require('../../../plugin/bin/lib/review-lens/selection-record');
@@ -120,6 +121,7 @@ test('a document whose selected and skipped do not partition the tier is malform
     bad(['3b', '3c', '3a', '3f', '3d', '3e', '3g', '3h'], [sk('3d')]), // overlap
     bad(['3b', '3b', '3a', '3f', '3d', '3e', '3g', '3h'], []), // duplicate
     bad(['3b', '3c', '3a', '3f', '3d', '3e'], [sk('3g'), sk('3h')], 'medium'), // lenses outside the tier
+    bad(['3b', '3c', '3a', '3d'], [], 'medium'), // the right count, one lens outside the tier in place of 3f
   ]) {
     fs.writeFileSync(path.join(root, LENS_SELECTION_FILE), text);
     assert.strictEqual(readLensSelection(root).state, 'error', text);
@@ -155,7 +157,7 @@ test('the scan stops once every streak has ended: a malformed file older than th
   assert.strictEqual(readSkipStreaks({ roots: [root2] }).ok, false);
 });
 
-test('an archive twin holding the file beats a live twin without one; otherwise archive beats live', () => {
+test('a live twin holding the file beats an archive twin without one; otherwise archive beats live', () => {
   const root = scratchDir('sel-twin2-');
   makeRun(root, ID(4), sel('high', ['3d'])); // live copy holds the file, the archive twin has none
   makeRun(path.join(root, 'archive'), ID(4));
@@ -188,4 +190,57 @@ test('a symlinked pipelines root and archive are read through; an archive that i
   const r = readSkipStreaks({ roots: [fileArchive] });
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.byLens['3d'], 1);
+});
+
+test('I2: multi-spec member runs count as runs, dated by their parent', () => {
+  const root = scratchDir('sel-member-');
+  const parent = makeRun(root, ID(5));
+  makeRun(parent, 'spec-1', sel('high', ['3d']));
+  makeRun(parent, 'spec-2', sel('high', ['3d']));
+  makeRun(root, ID(4), sel('high', ['3d']));
+  makeRun(root, ID(3), sel('high', []));
+  assert.strictEqual(readSkipStreaks({ roots: [root] }).byLens['3d'], 3);
+  // The current member is excluded by its run-relative identity; the basename `spec-2` excludes nothing.
+  assert.strictEqual(readSkipStreaks({ roots: [root], excludeRunId: `${ID(5)}/spec-2` }).byLens['3d'], 2);
+  assert.strictEqual(readSkipStreaks({ roots: [root], excludeRunId: 'spec-2' }).byLens['3d'], 3);
+  // A directory that is not a spec-N member is not a run.
+  makeRun(parent, 'evidence', sel('high', ['3d']));
+  assert.strictEqual(readSkipStreaks({ roots: [root] }).byLens['3d'], 3);
+});
+
+test('I2: members order by number under their parent; a member twin in archive/ counts once', () => {
+  const root = scratchDir('sel-member-order-');
+  const parent = makeRun(root, ID(5));
+  makeRun(parent, 'spec-2', sel('high', ['3d']));
+  makeRun(parent, 'spec-10', sel('high', [])); // member 10 ran after member 2: it is the newest and ends the streak
+  assert.strictEqual(readSkipStreaks({ roots: [root] }).byLens['3d'], 0);
+  const root2 = scratchDir('sel-member-twin-');
+  makeRun(makeRun(root2, ID(5)), 'spec-1', sel('high', ['3d']));
+  makeRun(makeRun(path.join(root2, 'archive'), ID(5)), 'spec-1', sel('high', ['3d']));
+  makeRun(root2, ID(4), sel('high', []));
+  assert.strictEqual(readSkipStreaks({ roots: [root2] }).byLens['3d'], 1);
+});
+
+test('I2: a run whose members cannot be listed is ok:false once the scan reaches it', chmodDenialSkip('root bypasses mode bits'), () => {
+  const root = scratchDir('sel-member-deny-');
+  makeRun(root, ID(5), sel('high', ['3d']));
+  const locked = makeRun(root, ID(4));
+  fs.chmodSync(locked, 0o311);
+  try {
+    const r = readSkipStreaks({ roots: [root] });
+    assert.strictEqual(r.ok, false);
+    assert.match(r.reason, /unreadable spec members/);
+    // Older than every ended streak: never reached.
+    const root2 = scratchDir('sel-member-deny2-');
+    makeRun(root2, ID(5), sel('high', []));
+    const old = makeRun(root2, ID(4));
+    fs.chmodSync(old, 0o311);
+    try {
+      assert.strictEqual(readSkipStreaks({ roots: [root2] }).ok, true);
+    } finally {
+      fs.chmodSync(old, 0o755); // root-safe
+    }
+  } finally {
+    fs.chmodSync(locked, 0o755); // root-safe
+  }
 });

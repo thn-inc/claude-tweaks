@@ -230,7 +230,7 @@ test('exit 2: a --run outside the main checkout pipelines is refused by the anch
   assert.ok(!fs.existsSync(path.join(outside, 'lens-selection.json')));
 });
 
-test('exit 1 and no stdout when the log write fails', () => {
+test('exit 1 and no stdout when the log write fails; the record was written first', () => {
   const w = world();
   seedHistory(w, '3d');
   commitFile(w, 'docs/a.md', 'prose only\n');
@@ -238,5 +238,135 @@ test('exit 1 and no stdout when the log write fails', () => {
   const r = call(w, argsFor(w, 'high'));
   assert.strictEqual(r.code, 1);
   assert.strictEqual(r.stdout, '');
-  assert.ok(!fs.existsSync(path.join(w.runDir, 'lens-selection.json')));
+  assert.match(r.stderr, /could not log the lens selection/);
+  const written = JSON.parse(fs.readFileSync(path.join(w.runDir, 'lens-selection.json'), 'utf8'));
+  assert.deepStrictEqual(written.skipped.map((s) => s.lens), ['3d']);
+});
+
+test('exit 1, no stdout and no decisions.md line when the record write fails', () => {
+  const w = world();
+  seedHistory(w, '3d');
+  commitFile(w, 'docs/a.md', 'prose only\n');
+  fs.mkdirSync(path.join(w.runDir, 'lens-selection.json', 'blocker'), { recursive: true });
+  const r = call(w, argsFor(w, 'high'));
+  assert.strictEqual(r.code, 1);
+  assert.strictEqual(r.stdout, '');
+  assert.match(r.stderr, /could not write the lens selection/);
+  assert.ok(!fs.existsSync(path.join(w.runDir, 'decisions.md')), 'nothing logged without a record');
+});
+
+test('a relative --run resolves against the cwd', () => {
+  const w = world();
+  commitFile(w, 'docs/a.md', 'prose only\n');
+  const r = call(w, ['--run', path.relative(w.dir, w.runDir), '--tier', 'high', '--base', w.base]);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.ok(fs.existsSync(path.join(w.runDir, 'lens-selection.json')));
+});
+
+test('a policy.yml that cannot be read (a directory) -> full tier set, fallback naming riskPathTouched', () => {
+  const w = world();
+  seedHistory(w, '3b');
+  commitFile(w, 'docs/a.md', 'prose only\n');
+  fs.mkdirSync(path.join(w.dir, '.claude-tweaks', 'policy.yml'));
+  const r = call(w, argsFor(w, 'low'));
+  assert.strictEqual(r.code, 0, r.stderr);
+  const printed = JSON.parse(r.stdout);
+  assert.deepStrictEqual(printed.selected, lensesOf('low'));
+  assert.ok(printed.fallback && /riskPathTouched: risk-path-globs unreadable/.test(printed.fallback), printed.fallback);
+  const lines = decisions(w).split('\n').filter((l) => l.startsWith('- '));
+  assert.strictEqual(lines.length, 1);
+  assert.match(lines[0], /^- AUTO .*riskPathTouched/);
+});
+
+test('an unreadable pipelines root (no read bit) selects the full tier set and logs why', chmodDenialSkip('root bypasses mode bits'), () => {
+  const w = world();
+  seedHistory(w, '3d');
+  commitFile(w, 'docs/a.md', 'prose only\n');
+  fs.chmodSync(w.pipelines, 0o311);
+  try {
+    const r = call(w, argsFor(w, 'high'));
+    assert.strictEqual(r.code, 0, r.stderr);
+    const printed = JSON.parse(r.stdout);
+    assert.deepStrictEqual(printed.selected, lensesOf('high'));
+    assert.ok(printed.fallback && /unreadable root/.test(printed.fallback), printed.fallback);
+  } finally {
+    fs.chmodSync(w.pipelines, 0o755); // root-safe
+  }
+});
+
+test('a facts failure and a history failure are both named in the fallback; a thrown read by its message', () => {
+  const throwing = () => { throw new Error('history boom'); };
+  const fallbackOf = (w, base, extraDeps = {}) => {
+    const out = [];
+    const code = run(['--run', w.runDir, '--tier', 'low', '--base', base], { cwd: () => w.dir, env: {}, stdout: (s) => out.push(s), stderr: () => {}, now: () => 0, ...extraDeps });
+    assert.strictEqual(code, 0);
+    const printed = JSON.parse(out.join(''));
+    assert.deepStrictEqual(printed.selected, lensesOf('low'));
+    return printed.fallback;
+  };
+  const w = world();
+  const both = fallbackOf(w, 'no-such-ref-xyz', { readLensHistory: throwing });
+  assert.match(both, /^facts unavailable: paths: .*no-such-ref-xyz[\s\S]*; lens history unreadable: history boom$/);
+  assert.ok(!both.includes('history is not an object'), both);
+  assert.strictEqual(fallbackOf(world(), w.base, { readLensHistory: throwing }), 'lens history unreadable: history boom');
+  // A history that reads but is malformed is named beside the facts reason too.
+  const malformed = fallbackOf(world(), 'no-such-ref-xyz', { readLensHistory: () => ({ lenses: {} }) });
+  assert.match(malformed, /no-such-ref-xyz[\s\S]*; history has no entry for lens 3b$/);
+});
+
+test('I3: --risk-flags reads the Risk-flags: line grammar — none and empty are no flags, a quoted pair is flagged', () => {
+  const w = world();
+  seedHistory(w, '3b');
+  commitFile(w, 'docs/a.md', 'prose only\n');
+  const skipped = (extra) => {
+    const r = call(w, argsFor(w, 'low', extra));
+    assert.strictEqual(r.code, 0, `${extra.join(' ')}: ${r.stderr}`);
+    return JSON.parse(r.stdout).skipped.map((s) => s.lens);
+  };
+  assert.deepStrictEqual(skipped(['--risk-flags', 'none']), ['3b'], 'none is no flags');
+  assert.deepStrictEqual(skipped(['--risk-flags', ' none ']), ['3b'], 'a padded none is no flags');
+  assert.deepStrictEqual(skipped(['--risk-flags', '']), ['3b'], 'an empty value is no flags');
+  assert.deepStrictEqual(skipped(['--risk-flags', 'auth, public-contract']), [], 'a quoted two-flag value');
+  assert.deepStrictEqual(skipped(['--risk-flags', 'Auth!']), [], 'a malformed value reads as flagged');
+  assert.deepStrictEqual(skipped(['--risk-flags', 'malformed']), [], 'step3-lens-selection.md\'s stand-in for an unsafe value reads as flagged');
+  assert.deepStrictEqual(skipped(['--risk-flags', 'none, auth']), [], 'none beside a slug is malformed, flagged');
+  const multi = call(w, argsFor(w, 'low', ['--risk-flags', 'auth\nnone']));
+  assert.strictEqual(multi.code, 2);
+  assert.strictEqual(multi.stdout, '');
+  assert.strictEqual(call(w, ['--run', w.runDir, '--tier', 'low', '--base', w.base, '--risk-flags']).code, 2, 'a trailing flag with no value');
+});
+
+test('I2: a multi-spec member run counts its sibling members and leaves itself out by run-relative identity', () => {
+  const w = world();
+  seedHistory(w, '3d');
+  commitFile(w, 'docs/a.md', 'prose only\n');
+  const skip3d = { tier: 'high', selected: lensesOf('high').filter((l) => l !== '3d'), skipped: [{ lens: '3d', reason: '3d: below floor' }], fallback: null };
+  for (const m of ['spec-1', 'spec-2']) {
+    fs.mkdirSync(path.join(w.runDir, m));
+    writeLensSelection(path.join(w.runDir, m), skip3d);
+  }
+  // The current member already holds a selection that ran 3d (a re-run): it must not end the streak.
+  const current = path.join(w.runDir, 'spec-3');
+  fs.mkdirSync(current);
+  writeLensSelection(current, { tier: 'high', selected: [...lensesOf('high')], skipped: [], fallback: null });
+  const r = call(w, ['--run', current, '--tier', 'high', '--base', w.base]);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.ok(JSON.parse(r.stdout).selected.includes('3d'), 'two skipped sibling reviews force the third');
+});
+
+test('AC9.2: a committed ledger-plus-spec (bookkeeping-only) diff gets the rules as written', () => {
+  const w = world();
+  seedHistory(w, '3b');
+  seedHistory(w, '3d');
+  commitFile(w, 'docs/plans/x-ledger.md', '| # | Item | Status |\n|---|---|---|\n| 1 | a | open |\n');
+  commitFile(w, '.claude-tweaks/work/1-spec.md', '# 1: spec\n\nWords.\n');
+  const r = call(w, argsFor(w, 'high'));
+  assert.strictEqual(r.code, 0, r.stderr);
+  const below = (l) => `${l}: share 0 over its last 20 runs is below floor 0.4; no diff fact calls for it (0 of 3 reviews since it last ran)`;
+  assert.deepStrictEqual(JSON.parse(r.stdout), {
+    tier: 'high',
+    selected: ['3c', '3a', '3f', '3e', '3g', '3h'],
+    skipped: [{ lens: '3b', reason: below('3b') }, { lens: '3d', reason: below('3d') }],
+    fallback: null,
+  });
 });
