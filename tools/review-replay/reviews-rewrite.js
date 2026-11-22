@@ -132,9 +132,11 @@ function rewriteShas(text, map) {
 function rewriteText(text, { mainRoot, runName, repoPath, replacements = {}, shaMap = {} }) {
   const t = String(text);
   const root = escapeRe(requireRoot(mainRoot));
-  const { inputs } = runInputsOf(t, { mainRoot, runName });
+  const { inputs, unknown } = runInputsOf(t, { mainRoot, runName });
+  // Any run-directory path the scan finds may be replaced, an unknown one included; the literal alternative runs
+  // first, so a replaced worktree-prefixed path never loses its prefix to the worktree rewrite.
   // Longest match first so a path never loses its tail to a shorter one.
-  const literals = [...new Set(inputs.map((i) => i.match))]
+  const literals = [...new Set([...inputs.map((i) => i.match), ...unknown])]
     .filter((m) => Object.prototype.hasOwnProperty.call(replacements, m))
     .sort((a, b) => b.length - a.length);
   const mapSha = shaMapper(shaMap);
@@ -166,8 +168,9 @@ function unrewrittenPaths(text, { mainRoot, runName, outDir }) {
     const spans = new RegExp(`${escapeRe(out)}${OUT_TAIL}`, 'g');
     for (const m of t.matchAll(spans)) skip.push([m.index, m.index + m[0].length]);
   }
-  const re = new RegExp(
-    `(?:${escapeRe(root)}|${escapeRe(PIPELINES + runName)})(?:/${PATH_END}*|${PATH_END_LOOKAHEAD})`, 'g');
+  const tail = `(?:/${PATH_END}*|${PATH_END_LOOKAHEAD})`;
+  const re = new RegExp(`(?:${escapeRe(root)}|${escapeRe(PIPELINES + runName)})${tail}`, 'g');
+  const ownRun = new RegExp(`${escapeRe(PIPELINES + runName)}${tail}`, 'g');
   const found = [];
   let j = 0; // spans and mentions both arrive in text order, so one forward walk pairs them
   for (const m of t.matchAll(re)) {
@@ -175,7 +178,12 @@ function unrewrittenPaths(text, { mainRoot, runName, outDir }) {
     // aside), so `{outDir}:/etc` or a list joining another path is still flagged.
     const end = m.index + trimPunct(m[0]).length;
     while (j < skip.length && skip[j][1] <= m.index) j++;
-    if (j < skip.length && skip[j][0] <= m.index && end <= skip[j][1]) continue;
+    if (j < skip.length && skip[j][0] <= m.index && end <= skip[j][1]) {
+      // The exemption covers main-checkout leaks only: the archived run's own directory is
+      // flagged wherever it sits, inside the output directory included.
+      for (const own of m[0].matchAll(ownRun)) found.push(own[0]);
+      continue;
+    }
     found.push(m[0]);
   }
   return found;

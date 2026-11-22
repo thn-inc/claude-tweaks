@@ -55,7 +55,8 @@ function parseReviewsOptions(opts, profiles, efforts) {
   }
   const requested = {};
   if (opts.lens !== undefined) {
-    const lenses = String(opts.lens).split(',').map((s) => s.trim()).filter(Boolean);
+    // A lens is named as the slots name it: `3b`, `3b Security` and `security` are all 3b.
+    const lenses = String(opts.lens).split(',').map((s) => s.trim()).filter(Boolean).map(lensIdOf);
     const bad = lenses.find((l) => !LENS_ARG.test(l));
     if (lenses.length === 0 || bad !== undefined) return { error: `--lens must be lens ids (${LENS_ID}), comma-separated: "${opts.lens}"` };
     requested.lens = lenses;
@@ -81,7 +82,9 @@ function readJsonOrNull(fs, file) {
 function dispatchesOf(dir, fs) {
   let members = [];
   try {
-    members = fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() && e.name.startsWith('spec-')).map((e) => e.name).sort();
+    // spec-2 before spec-10: by member number, not by name.
+    members = fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() && /^spec-\d+$/.test(e.name)).map((e) => e.name)
+      .sort((a, b) => Number(a.slice(5)) - Number(b.slice(5)));
   } catch {
     members = [];
   }
@@ -124,13 +127,15 @@ function unitOf(r, inputs) {
   return member ? { key: `${r.run}/${member}`, dir: path.join(r.dir, member) } : { key: r.run, dir: r.dir };
 }
 
-// The findings decisions.md confirmed for one lens of a unit: reproduced pairs and tiebreak-confirmed verdicts.
+// The findings decisions.md confirmed for one lens of a unit: reproduced pairs and tiebreak-confirmed verdicts. A unit
+// with no readable decisions.md (a member's; readRun already required the run's own) has none, and says so in
+// `confirmedSource: 'missing'`, so an empty list there is never read as a review that confirmed nothing.
 function confirmedOf(unitDir, lens, fs) {
-  let text = '';
+  let text;
   try {
     text = fs.readFileSync(path.join(unitDir, 'decisions.md'), 'utf8');
   } catch {
-    text = '';
+    return { findings: [], unlocated: 0, confirmedSource: 'missing' };
   }
   const d = parseDecisions(text);
   const all = [
@@ -160,8 +165,9 @@ function renderSlot(s, { mainRoot, out, repoDir, shaMap, arms }) {
   }
   const copies = [];
   for (const { file, source } of copyPath.values()) {
-    const { inputs } = runInputsOf(source, { mainRoot, runName, copy: true });
-    const replacements = {};
+    const { inputs, unknown } = runInputsOf(source, { mainRoot, runName, copy: true });
+    // A path the copy names that is no input of this slot never stays live: decisions.md, another run's directory.
+    const replacements = Object.fromEntries(unknown.map((u) => [u, REMOVED]));
     for (const c of inputs) {
       const own = c.kind === 'scratch' ? undefined : copyPath.get(inputKey(c));
       replacements[c.match] = own ? toPosix(own.file) : REMOVED;
@@ -379,6 +385,11 @@ function writeOutputs(w, deps) {
     const shaMap = { [s.archivedBase]: s.repo.replayBase, [s.archivedHead]: s.repo.replayHead };
     const slotArms = [...userArms, ...controls.filter((a) => a.slots.has(s))];
     const texts = renderSlot(s, { mainRoot: c.mainRoot, out, repoDir: s.repo.dir, shaMap, arms: slotArms });
+    // Check 8 ran before the replay shas existed: the texts as written must pass it too, or nothing more is written.
+    for (const t of [...texts.copies, ...texts.prompts]) {
+      const left = unrewrittenPaths(t.text, { mainRoot: c.mainRoot, runName: s.run.run, outDir: out });
+      if (left.length > 0) throw new Error(`${t.file} still names ${left[0]} after its shas were mapped`);
+    }
     for (const copy of texts.copies) fs.writeFileSync(copy.file, copy.text);
     const name = `${s.run.run}/${s.name}`;
     const repoPath = path.join(s.repo.dir, 'repo');

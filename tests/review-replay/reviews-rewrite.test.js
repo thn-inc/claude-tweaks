@@ -248,3 +248,28 @@ test('trailing punctuation is trimmed as a whole run, colon included', () => {
   const o = { mainRoot, runName: 'R', outDir: main + '/out' };
   assert.deepStrictEqual(rw.unrewrittenPaths('see ' + main + '/out/a: ok', o), []);
 });
+
+test('rewriteText replaces an unknown run-directory path the caller names, worktree prefix and all', () => {
+  const own = main + '/.claude-tweaks/pipelines/R/decisions.md';
+  const wt = main + '/.claude/worktrees/w/.claude-tweaks/pipelines/R/decisions.md';
+  const other = main + '/.claude-tweaks/pipelines/OTHER/review-ctx/context.md';
+  const wtOther = main + '/.claude/worktrees/w/.claude-tweaks/pipelines/OTHER/x.md';
+  const gone = '[run-directory path removed]';
+  const text = [own, wt, other, wtOther, 'see .claude-tweaks/pipelines/OTHER/decisions.md'].join('\n');
+  const { unknown } = rw.runInputsOf(text, { ...opts, copy: true });
+  assert.deepStrictEqual(unknown, [own, wt, other, wtOther]);
+  const replacements = Object.fromEntries(unknown.map((u) => [u, gone]));
+  const out = rw.rewriteText(text, { ...full, replacements });
+  assert.strictEqual(out, [gone, gone, gone, gone, 'see .claude-tweaks/pipelines/OTHER/decisions.md'].join('\n'));
+  assert.deepStrictEqual(rw.unrewrittenPaths(out, { mainRoot, runName: 'R', outDir: '/out' }), []);
+  // With no replacement named, an unknown path stays and is flagged.
+  assert.strictEqual(rw.rewriteText(own, full), own);
+});
+
+test('an own-run mention inside the output directory is still flagged', () => {
+  const o = { mainRoot, runName: 'R', outDir: main + '/out' };
+  assert.deepStrictEqual(rw.unrewrittenPaths(main + '/out/repos/k/repo/.claude-tweaks/pipelines/R/decisions.md', o), ['.claude-tweaks/pipelines/R/decisions.md']);
+  assert.deepStrictEqual(rw.unrewrittenPaths('x ' + main + '/out/.claude-tweaks/pipelines/R y', o), ['.claude-tweaks/pipelines/R']);
+  assert.deepStrictEqual(rw.unrewrittenPaths(main + '/out/.claude-tweaks/pipelines/RR/x', o), []);
+  assert.deepStrictEqual(rw.unrewrittenPaths(main + '/out/repos/k/repo/src/a.js', o), []);
+});

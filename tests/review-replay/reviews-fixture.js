@@ -49,7 +49,8 @@ function lensPrompt({ mainRoot, worktree, run, lens, scratch, B, H, extra = [], 
 //   edges:     one dispatch per remaining exclusion reason (e-noside unlabelled, e-tier no-archived-tier, e-notx
 //              no-transcript, e-nosha no-sha-range, e-gone unknown commit, e-leak a main-checkout path no rewrite
 //              covers), a fast/low slot naming origin/main and only the head (e-fast), a standard slot with no
-//              recorded effort (e-high), and a spec-2 member whose own timing.json holds one slot (e-m2)
+//              recorded effort (e-high), a spec-2 member whose own timing.json holds one slot (e-m2), and a spec-10
+//              member with no decisions.md of its own (e-m10)
 function buildReviewsFixture(root, { decisions = false, gone = false, repeat = false, edges = false } = {}) {
   const mainRoot = path.join(root, 'main checkout', 'repo');
   const runsRoot = path.join(mainRoot, '.claude-tweaks', 'pipelines');
@@ -79,6 +80,10 @@ function buildReviewsFixture(root, { decisions = false, gone = false, repeat = f
   put(path.join(runDir, 'review-ctx', 'context.md'), [
     `Review head: ${H}`,
     `Spec: ${mainRoot}/.claude-tweaks/pipelines/${RUN}/work/9-spec.md`,
+    // Run-directory paths that are no input of any slot: each one becomes [run-directory path removed] in a copy.
+    `Verdicts: ${mainRoot}/.claude-tweaks/pipelines/${RUN}/decisions.md`,
+    `Worktree verdicts: ${worktree}/.claude-tweaks/pipelines/${RUN}/decisions.md`,
+    `Earlier run: ${mainRoot}/.claude-tweaks/pipelines/2025-01-01T000000-spec-1/review-ctx/context.md`,
     'diff --git a/src/a.js b/src/a.js',
     '+see .claude-tweaks/pipelines/2025-01-01T000000-spec-1/decisions.md',
     '',
@@ -133,6 +138,13 @@ function buildReviewsFixture(root, { decisions = false, gone = false, repeat = f
     const memberItems = [];
     dispatch(memberItems, { agentId: 'e-m2', description: 'Review lens 3g ownability A', lens: '3g', scratch: '3g-a', member: 'spec-2', reply: 'No findings.' });
     put(path.join(memberDir, 'timing.json'), `${JSON.stringify({ dispatches: { items: memberItems } }, null, 2)}\n`);
+    // spec-10 sorts after spec-2 by number, and has no decisions.md of its own.
+    const member10 = path.join(runDir, 'spec-10');
+    put(path.join(member10, 'review-ctx', 'context.md'), `Member 10 bundle at ${H}\n`);
+    put(path.join(member10, 'work', '9-spec.md'), '# 9: the member-10 spec\n');
+    const member10Items = [];
+    dispatch(member10Items, { agentId: 'e-m10', description: 'Review lens 3i ux A', lens: '3i', scratch: '3i-a', member: 'spec-10', reply: 'No findings.' });
+    put(path.join(member10, 'timing.json'), `${JSON.stringify({ dispatches: { items: member10Items } }, null, 2)}\n`);
   }
   put(path.join(runDir, 'timing.json'), `${JSON.stringify({ dispatches: { items } }, null, 2)}\n`);
 

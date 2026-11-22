@@ -10,6 +10,9 @@ const { toPosix } = schema;
 const { scratchDir } = require('../helpers/tmp-dir');
 const { runWorkflow } = require('./helpers');
 const { buildReviewsFixture, RUN, RUN_GONE } = require('./reviews-fixture');
+const { unrewrittenPaths } = require('../../tools/review-replay/reviews-rewrite');
+
+const REMOVED = '[run-directory path removed]';
 
 const PLUGIN_ROOT = path.join(__dirname, '..', '..', 'plugin');
 const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
@@ -128,8 +131,64 @@ test('AC4.1/AC4.2: no archived row text or tiebreak line reaches a prompt, repo 
   const context = read(copies.find((c) => c.endsWith('3a-a--context.md')));
   assert.ok(context.includes('+see .claude-tweaks/pipelines/2025-01-01T000000-spec-1/decisions.md\n'), context);
   assert.ok(context.includes(`Spec: ${toPosix(copies.find((c) => c.endsWith('3a-a--9-spec.md')))}\n`), 'the bundle names the slot copy of the spec');
+  for (const label of ['Verdicts', 'Worktree verdicts', 'Earlier run']) assert.ok(context.includes(`${label}: ${REMOVED}\n`), `${label}:\n${context}`);
   const { excluded } = x.json(schema.REVIEWS_FIXTURE_FILE);
   assert.deepEqual(excluded.filter((e) => e.reason === 'unrewritten-path'), []);
+});
+
+test('AC4: with --out under the main checkout, no copy keeps the archived run\'s own directory', async () => {
+  const out = path.join(fx.mainRoot, 'replay-out');
+  const deps = makeDeps();
+  const code = await run({ argv: ['extract-reviews', '--runs', fx.runsRoot, '--out', out, '--role', 'lens', '--transcripts', fx.transcripts, '--arm', 'name=haiku,profile=fast'], deps });
+  try {
+    assert.equal(code, 0, deps.errs.join('\n'));
+    const fixture = JSON.parse(read(path.join(out, schema.REVIEWS_FIXTURE_FILE)));
+    assert.deepEqual(fixture.excluded.filter((e) => e.reason === 'unrewritten-path'), []);
+    assert.equal(fixture.slots.length, 4);
+    const repoDir = path.join(out, 'repos', `${RUN}--r1`);
+    const copies = fs.readdirSync(repoDir).filter((n) => n.includes('--')).map((n) => path.join(repoDir, n));
+    const prompts = JSON.parse(read(path.join(out, schema.REVIEWS_MANIFEST_FILE))).arms.flatMap((a) => a.prompts.map((p) => p.file));
+    for (const f of [...copies, ...prompts]) {
+      const text = read(f);
+      assert.equal(count(text, `.claude-tweaks/pipelines/${RUN}`), 0, f);
+      assert.equal(count(text, toPosix(fx.mainRoot)), count(text, `${toPosix(out)}/`), `${f}: the main checkout is named only as the output directory`);
+      assert.deepEqual(unrewrittenPaths(text, { mainRoot: fx.mainRoot, runName: RUN, outDir: out }), [], f);
+    }
+    const context = read(path.join(repoDir, '3a-a--context.md'));
+    for (const label of ['Verdicts', 'Worktree verdicts', 'Earlier run']) assert.ok(context.includes(`${label}: ${REMOVED}\n`), `${label}:\n${context}`);
+  } finally {
+    fs.rmSync(out, { recursive: true, force: true });
+  }
+});
+
+test('--lens takes a lens name as the slots name it', async () => {
+  const x = await extractReviews({ extra: ['--lens', 'security', '--max-per-lens', '1'] });
+  ok(x);
+  const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+  assert.deepEqual(fixture.slots.map((s) => s.name), [`${RUN}/3b-a`]);
+  assert.deepEqual(fixture.requested.lens, ['3b']);
+});
+
+test('a written text that fails the leak check after its shas are mapped is a runtime failure', async () => {
+  // A replay head whose text, spliced after the bundle's own prefix, spells the main checkout out: check 8 (run on the
+  // archived shas) cannot see it, so only the write-time check stands between it and a written copy.
+  const sRoot = scratchDir('rr-reviews-splice-');
+  const sx = buildReviewsFixture(sRoot);
+  const bundle = path.join(sx.runsRoot, RUN, 'review-ctx', 'context.md');
+  fs.appendFileSync(bundle, `Spliced: ${path.dirname(sx.mainRoot)}/${sx.H}\n`);
+  const tail = path.basename(sx.mainRoot);
+  const real = makeWriteRepo(sx.mainRoot);
+  const out = path.join(sRoot, 'out');
+  const deps = {
+    ...makeDeps(),
+    git: (args) => execFileSync('git', args, { cwd: sx.mainRoot, env: cleanEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
+    writeRepo: (...args) => ({ ...real(...args), head: tail }),
+  };
+  const code = await run({ argv: ['extract-reviews', '--runs', sx.runsRoot, '--out', out, '--role', 'lens', '--transcripts', sx.transcripts, '--arm', 'name=haiku,profile=fast'], deps });
+  assert.equal(code, 1);
+  assert.match(deps.errs.join('\n'), /still names .* after its shas were mapped/);
+  assert.match(deps.errs.join('\n'), /is now partial; remove it before re-running extract-reviews/);
+  assert.ok(!fs.existsSync(path.join(out, schema.REVIEWS_MANIFEST_FILE)));
 });
 
 test('archived rows are stored repo-relative', async () => {
@@ -270,8 +329,8 @@ test('the other exclusion reasons, a control arm per archived tier and effort, o
   });
   const manifest = json(schema.REVIEWS_MANIFEST_FILE);
   assert.deepEqual(manifest.arms.map((a) => [a.name, a.profile, a.model, a.effort, a.prompts.map((p) => p.name)]), [
-    ['haiku', 'fast', 'haiku', null, ['3a-a', '3a-b', '3b-a', '3f-a', '3h-a', '3g-a'].map((n) => `${RUN}/${n}`)],
-    ['control.standard.medium', 'standard', 'sonnet', 'medium', ['3a-a', '3a-b', '3b-a', '3g-a'].map((n) => `${RUN}/${n}`)],
+    ['haiku', 'fast', 'haiku', null, ['3a-a', '3a-b', '3b-a', '3f-a', '3h-a', '3g-a', '3i-a'].map((n) => `${RUN}/${n}`)],
+    ['control.standard.medium', 'standard', 'sonnet', 'medium', ['3a-a', '3a-b', '3b-a', '3g-a', '3i-a'].map((n) => `${RUN}/${n}`)],
     ['control.fast.low', 'fast', 'haiku', 'low', [`${RUN}/3f-a`]],
     ['control.standard.high', 'standard', 'sonnet', 'high', [`${RUN}/3h-a`]],
   ]);
@@ -284,6 +343,7 @@ test('the other exclusion reasons, a control arm per archived tier and effort, o
   const reports = json(schema.REPORTS_FILE);
   assert.equal(reports.reports[`${RUN}/3g-a`].unitKey, `${RUN}/spec-2`);
   assert.deepEqual(reports.confirmed[`${RUN}/spec-2`], { '3g': { findings: [{ path: 'src/b.js', line: 2, how: 'pair' }], unlocated: 0 } });
+  assert.deepEqual(reports.confirmed[`${RUN}/spec-10`], { '3i': { findings: [], unlocated: 0, confirmedSource: 'missing' } }, 'a member with no decisions.md says so');
   const m2Prompt = read(manifest.arms[0].prompts.find((p) => p.name === `${RUN}/3g-a`).file);
   assert.ok(m2Prompt.includes(toPosix(path.join(out, 'repos', `${RUN}--r1`, '3g-a--context.md'))), m2Prompt);
   assert.equal(read(path.join(out, 'repos', `${RUN}--r1`, '3g-a--context.md')), `Member bundle at ${repo.replayHead}\n`);
