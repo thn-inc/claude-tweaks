@@ -32,7 +32,7 @@ files:
 
 ### 2. Watch it choose — the queue pull and the pre-screen
 - **URL:** stderr while the run starts. Per-record event lines on stdout appear only for records the loop hands to the per-record path.
-- **Action:** let the loop pull the queue and rank it. Each round is a fresh pull, followed by the module's `next` ranking. The order is dispatch's own, and the grouping is the one dispatch applies under the project's `express-lane` value.
+- **Action:** let the loop pull the queue and rank it. Each round is a fresh pull, followed by the module's `next` ranking. The order is dispatch's own, and the grouping is the one dispatch applies under the project's `express-lane` and `express-driver` values (with `express-driver` `split` or `on`, a fast-lane record the driver would take stays a singleton, #6011).
 - **Should feel:** cheap where it can be. Records that the pulled data already rules out cost no live fetch, no claim and no budget.
 - **Should understand:**
   - The pre-screen calls the eligibility function with the per-record path's own options. It can skip a record but never admit one: an admitted record still goes through fetch, eligibility, admission and claim.
