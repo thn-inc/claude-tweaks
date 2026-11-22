@@ -13,7 +13,6 @@ const { shapeGate, liftMetadata } = require('../issues/materialize-format');
 const { parseRiskFlags } = require('../issues/record-risk-flags');
 const { fileMatchesFrontendPredicate } = require('../design-detect/index');
 const { classifyDiffFiles, isSensitivePath } = require('../issues/blast-radius');
-
 const { CEREMONY_TIERS } = require('../issues/record-vocabulary');
 
 const EXPRESS_MAX_KEY_FILES = 3;
@@ -66,15 +65,15 @@ function isInsideLaneBounds({ size, keyFiles, bounds }) {
   return sizeWithinCeiling(size, bounds.sizeCeiling) && keyFilesWithinLimit(keyFiles, bounds.maxKeyFiles);
 }
 
-// Reasons for the two bounds the driver lane can widen. REASONS.size and
-// REASONS.tooManyKeyFiles are built from these at the express defaults, so the express
+// Reasons for the three bounds the driver lane can widen (risk, size, Key Files). REASONS.risk,
+// REASONS.size and REASONS.tooManyKeyFiles are built from these at the express defaults, so the express
 // strings cannot drift from the parameterised ones.
 const BOUND_REASONS = Object.freeze({
   risk: (ceiling) => (isReadableRiskCeiling(ceiling)
     ? `risk is not ${RISK_CEILINGS[ceiling].join(' or ')}`
     : BOUND_REASONS.riskCeilingUnreadable(ceiling)),
   riskCeilingUnreadable: (v) => `risk ceiling unreadable: ${String(v)}`,
-  // A ceiling that is not a SIZE_CEILINGS key gets the unreadable reason, never a throw.
+  // A ceiling that is not a RISK_CEILINGS / SIZE_CEILINGS key gets the unreadable reason, never a throw.
   size: (ceiling) => (isReadableSizeCeiling(ceiling)
     ? `size is not ${SIZE_CEILINGS[ceiling].join(' or ')}`
     : BOUND_REASONS.sizeCeilingUnreadable(ceiling)),
@@ -236,7 +235,7 @@ function evaluateRecordEligibility(issue, opts) {
 // names risk:medium or risk:high under a readable ceiling, 'ceremony' when anyCeremony === true and a
 // label names a recognised tier other than fast-lane. It scans every label name, never the parsed
 // facets (which keep only the last match), so a dual-labelled record answers the same in any order.
-// Pure: admission, review, the driver steps, merge.js and the queue pull all call it.
+// Pure: the driver steps, merge.js and the queue pull call it; admission and review read its result.
 function widenings({ labels, riskCeiling, anyCeremony } = {}) {
   const names = normalizeLabelNames(labels || []);
   const out = [];

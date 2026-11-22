@@ -503,6 +503,8 @@ test('AC5.1, AC5.3 (#6018, eligibility half): allowAnyCeremony passes a recognis
   for (const cer of [['ceremony:fastlane'], ['Ceremony:standard'], ['ceremony:standard', 'ceremony:fastlane']]) {
     assert.ok(evaluateRecordEligibility(mk(...cer), opts).reasons.includes(REASONS.ceremony), cer.join());
   }
+  // No ceremony label at all: allowAnyCeremony alone does not relax it (no allowAbsentCeremony here).
+  assert.ok(evaluateRecordEligibility(mk(), { ...OPTS, allowAnyCeremony: true }).reasons.includes(REASONS.ceremony));
   for (const v of ['true', 1]) {
     assert.ok(evaluateRecordEligibility(mk('ceremony:standard'), { ...DRIVER, allowAnyCeremony: v }).reasons.includes(REASONS.ceremony), String(v));
   }
