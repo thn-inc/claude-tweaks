@@ -93,7 +93,7 @@ function expressQueuePolicy(deps = {}) {
     if (driver.preScreen(issue, driver.eligibility, { evaluateRecordEligibility }).verdict !== 'pass') return false;
     const keyFiles = driver.extractKeyFiles(issue);
     if (!Array.isArray(keyFiles)) return false;
-    const widenedBy = widenings({ labels: issue.labels, riskCeiling: driver.eligibility.riskCeiling, anyCeremony: driver.eligibility.allowAnyCeremony });
+    const widenedBy = widenings({ labels: issue.labels, riskCeiling: driver.eligibility.riskCeiling, anyCeremony: driver.eligibility.allowAnyCeremony, keyFiles, protectedPathsNeedReviewer: driver.eligibility.protectedPathsNeedReviewer });
     const reviewerOn = driver.reviewRequired({ issue, keyFiles, policyValue: driver.reviewPolicy, widenedBy }).on;
     return driver.reviewerGateReason({ labels: issue.labels, keyFiles, bounds: driver.bounds, reviewerOn }) === null
       && driver.widenedReviewerReason({ widenedBy, reviewerOn }) === null;

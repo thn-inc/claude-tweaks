@@ -321,3 +321,31 @@ test('#6018: under beyond-express a risk-widened record turns the reviewer on an
   const p = expressQueuePolicy({ resolvePolicy: policy({ ...WIDENED_POLICY, 'express-driver-review': 'beyond-express' }).resolvePolicy });
   assert.equal(p.keepSingleton(MEDIUM_RISK), true);
 });
+
+// #6019: the driver half asks the protected-path question the eligibility step asks.
+const PROTECTED_POLICY = { ...WIDENED_POLICY, 'express-driver-max-risk': 'low', 'express-driver-protected-paths': 'reviewer' };
+const withKeyFile = (file) => ({ ...ELIGIBLE, body: BODY.replace('plugin/skills/init/claude-md-template.md', file) });
+const PROTECTED_KEY_FILE = withKeyFile('plugin/hooks/x.js');
+
+test('#6019: under reviewer with the reviewer on, a protected-Key-File record is driver-routable', () => {
+  const sink = stderrSink();
+  const p = expressQueuePolicy({ resolvePolicy: policy(PROTECTED_POLICY).resolvePolicy, stderr: sink.stderr });
+  assert.equal(p.keepSingleton(PROTECTED_KEY_FILE), true);
+  assert.deepStrictEqual(sink.lines, []);
+});
+
+test('#6019: under reviewer with the reviewer off, the protected-Key-File record is not driver-routable', () => {
+  const p = expressQueuePolicy({ resolvePolicy: policy({ ...PROTECTED_POLICY, 'express-driver-review': 'off' }).resolvePolicy });
+  assert.equal(p.keepSingleton(PROTECTED_KEY_FILE), false);
+  assert.equal(p.keepSingleton(ELIGIBLE), true);
+});
+
+test('#6019: with the key refuse the protected-Key-File record keeps today\'s answer', () => {
+  const p = expressQueuePolicy({ resolvePolicy: policy({ ...PROTECTED_POLICY, 'express-driver-protected-paths': 'refuse' }).resolvePolicy });
+  assert.equal(p.keepSingleton(PROTECTED_KEY_FILE), false);
+});
+
+test('#6019: a build-time Key File is never driver-routable under reviewer', () => {
+  const p = expressQueuePolicy({ resolvePolicy: policy(PROTECTED_POLICY).resolvePolicy });
+  assert.equal(p.keepSingleton(withKeyFile('.github/workflows/ci.yml')), false);
+});
