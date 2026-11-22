@@ -6,7 +6,8 @@
 // record) is read from the `### Key Files` subsection its body already carries.
 'use strict';
 
-const { normalizeLabelNames, extractSection } = require('./record');
+const { normalizeLabelNames } = require('./record');
+const { findSection } = require('../markdown-blocks');
 
 // A path referenced by at least this many items, OR at least this fraction
 // of the batch (whichever is larger — see the max() below), is treated as a
@@ -431,34 +432,54 @@ const BACKTICKED_RE = /`([^`]+)`/;
 // still carrying the unfilled template must not union with every other one.
 const TEMPLATE_PLACEHOLDER_RE = /^\{.*\}$/;
 
-// Extracts the paths listed under a body's `### Key Files` subsection, or []
-// when the body has no such subsection — the documented absence case, not an
-// error (skills/specify/decomposition-mode.md: records without one "contribute
-// nothing to the map — skip silently"). Boundary-finding (tolerates `##`..`####`
-// so a re-nested body still parses; the section always ends at the next heading
-// of any level — Gotchas routinely names files in backticks, and scraping those
-// would union records on an incidental mention) comes from record.js's shared
-// extractSection, at its own default options — the same h2-h4/any-heading-stop
-// shape this function always used.
-function extractKeyFilesSection(body) {
-  const section = extractSection(body, 'Key Files');
-  if (!section) return [];
+// Reads a body's `### Key Files` subsection into {entries, unparsed}, or null when
+// the body has no such subsection — the documented absence case, not an error
+// (skills/specify/decomposition-mode.md: records without one "contribute nothing
+// to the map — skip silently"). null, "present but empty" ({entries: [], unparsed:
+// 0}) and "present but unreadable" (unparsed > 0) stay three distinct shapes: a
+// caller that needs to tell an unreadable section from an empty one (the micro-plan
+// gate) must not read them through extractKeyFilesSection's flat list.
+// Boundary-finding (tolerates `##`..`####` so a re-nested body still parses; the
+// section always ends at the next heading of any level — Gotchas routinely names
+// files in backticks, and scraping those would union records on an incidental
+// mention) comes from markdown-blocks.js's shared findSection, at its own default
+// options — the same h2-h4/any-heading-stop shape extractSection reads.
+// `unparsed` counts list items with no backticked span, template-placeholder or empty-span
+// items (no entry is produced for them), plus 1 when the section has non-blank text but no
+// list item at all.
+function extractKeyFileEntries(body) {
+  const section = findSection(body, 'Key Files');
+  if (section === null) return null;
 
-  const files = [];
+  const entries = [];
+  let unparsed = 0;
+  let sawListItem = false;
   for (const line of section.split('\n')) {
     const item = LIST_ITEM_RE.exec(line);
     if (!item) continue;
+    sawListItem = true;
     // First backticked span wins: it drops the trailing annotation, and an item
     // naming an alternative (``- `a/tests/` or `tests/` ``) yields the primary
     // path rather than both. Matching the annotation would also re-introduce
     // code-health's comma-splitting bug on "(modify — Step 1, Step 2)".
     const backticked = BACKTICKED_RE.exec(item[1]);
-    if (!backticked) continue;
+    if (!backticked) { unparsed += 1; continue; }
     const file = backticked[1].trim();
-    if (!file || TEMPLATE_PLACEHOLDER_RE.test(file)) continue;
-    files.push(file);
+    // An unfilled template item or an empty span names no file: no entry, but the
+    // section was not read, so it counts as unparsed (an unfilled template must not pass a gate).
+    if (!file || TEMPLATE_PLACEHOLDER_RE.test(file)) { unparsed += 1; continue; }
+    entries.push({ path: file, note: item[1].slice(backticked.index + backticked[0].length).trim() });
   }
-  return files;
+  if (!sawListItem && section.trim() !== '') unparsed += 1;
+  return { entries, unparsed };
+}
+
+// The paths listed under a body's `### Key Files` subsection, or [] when the body
+// has no such subsection. A flat view of extractKeyFileEntries for the callers
+// (file-overlap grouping, implementer tiering) that only need the paths.
+function extractKeyFilesSection(body) {
+  const r = extractKeyFileEntries(body);
+  return r ? r.entries.map((e) => e.path) : [];
 }
 
 // issue: { labels } shaped like `gh api .../issues/{n}` output. True when
@@ -613,4 +634,4 @@ function selectGroupsForExplicitList(requestedNumbers, groups, batchSize) {
   return { selectedGroups, deferredByCap, notFound };
 }
 
-module.exports = { groupByFileOverlap, GROUP_SIZE_GUARD_DEFAULT, partitionGroupsBySizeGuard, bundleFastLaneSingletons, FASTLANE_BUNDLE_CAP_DEFAULT, extractKeyFiles, extractKeyFilesSection, expectsKeyFilesSection, parseExplicitIssueList, selectGroupsForExplicitList, hasOrigin, detectCrossPRFileOverlap, CROSS_PR_HUB_MIN_COUNT, CROSS_PR_HUB_FRACTION, directOverlaps, findInFlightNeighbours, buildDispatchGroups };
+module.exports = { groupByFileOverlap, GROUP_SIZE_GUARD_DEFAULT, partitionGroupsBySizeGuard, bundleFastLaneSingletons, FASTLANE_BUNDLE_CAP_DEFAULT, extractKeyFiles, extractKeyFilesSection, extractKeyFileEntries, expectsKeyFilesSection, parseExplicitIssueList, selectGroupsForExplicitList, hasOrigin, detectCrossPRFileOverlap, CROSS_PR_HUB_MIN_COUNT, CROSS_PR_HUB_FRACTION, directOverlaps, findInFlightNeighbours, buildDispatchGroups };

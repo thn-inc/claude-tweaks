@@ -42,7 +42,8 @@ const STORY_PATH_RE = /(^|\/)stories\/.*\.ya?ml$/;
 // #3477: run `2026-10-17T194130-record-3005` (#3005's four prose files plus
 // one test) derived `fast-lane` when it should not have.
 // The directory names are exported so tests can pin the prose twins that
-// restate them (`build/micro-plan.md`, `wrap-up/ceremony-derivation.md`).
+// restate them (`micro-plan-gate.js`'s header comment and
+// `wrap-up/ceremony-derivation.md`).
 // isTestPath also consults it (#3680): a prose file under a `skills/test/`
 // directory would otherwise match TEST_PATH_RE and understate implementation
 // blast radius in merge-check.
