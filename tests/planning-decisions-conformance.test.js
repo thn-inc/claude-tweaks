@@ -20,6 +20,14 @@ const section = (heading) => sectionOf(text(), heading);
 // A literal as a regex that tolerates a hard wrap at any space.
 const lit = (s) => new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+'));
 
+// Fragments required in order within one paragraph: a hard wrap may fall at any space or between
+// fragments, but a blank line (a paragraph boundary) never bridges two of them.
+const WRAP_SPACE = '(?: |\\n(?!\\n))';
+const WITHIN_PARAGRAPH = '(?:[^\\n]|\\n(?!\\n))*?';
+const paragraph = (...fragments) => new RegExp(fragments
+  .map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, WRAP_SPACE))
+  .join(WITHIN_PARAGRAPH));
+
 function assertFacts(region, patterns, label) {
   const missing = missingFactsOf(patterns)(region);
   assert.deepEqual(missing, [], `${label}: missing ${missing.join(' | ')}`);
@@ -48,7 +56,7 @@ const DOUBT_PATTERNS = [
 // stripping one leaves the other, and another paragraph's `public-contract` cannot satisfy it.
 const BORDERLINE_PATTERNS = [
   [/\*\*Doubt example:\*\*/, 'Doubt example: label'],
-  [/a question about whether a `decisions\.md` line says `skipped` or `not run`[^\n]*not plainly fall in `public-contract`, so it is settled\./, 'borderline row is settled, not public-contract'],
+  [paragraph('a question about whether a `decisions.md` line says `skipped` or `not run`', 'not plainly fall in `public-contract`, so it is settled.'), 'borderline row is settled, not public-contract'],
 ];
 
 const LINE_FORM_PATTERNS = [
@@ -68,10 +76,10 @@ const RECOMMENDATION_PATTERNS = [
 ];
 
 const EXAMPLE_PATTERNS = [
-  [/\*\*Settled, #4265\.\*\*[^\n]*`error` string[^\n]*Reading A[^\n]*Reading B[^\n]*Neither falls in a category the record flags, and the `releaseFailed` string is read only by the plugin's own skills, so it does not plainly fall in `public-contract`\.[^\n]*Reading A is closer to stated intent/, '#4265 settled: two readings, both category checks, the chosen one'],
-  [/\*\*Settled, #4786\.\*\*[^\n]*does not say which of them carries the one-sentence pointer[^\n]*Reading A[^\n]*Reading B: `plugin\/skills\/dispatch\/task-prompt\.md`[^\n]*Neither falls in a category the record flags, and a pointer sentence is no interface an outside caller depends on, so it does not plainly fall in `public-contract`\.[^\n]*Reading A changes fewer observable contracts[^\n]*chose docs\/hooks\.md; not plugin\/skills\/dispatch\/task-prompt\.md`/, '#4786 settled: two readings, both category checks, the chosen one in full'],
-  [/\*\*Asked, migration\.\*\*[^\n]*drops the old column in this release or the next[^\n]*class \(b\), `migrations`/, 'migration question asked as class (b)'],
-  [/\*\*Asked, auth\.\*\*[^\n]*unauthenticated caller may read a run's decisions[^\n]*class \(b\), `auth`/, 'auth question asked as class (b)'],
+  [paragraph('**Settled, #4265.**', '`error` string', 'Reading A', 'Reading B', "Neither falls in a category the record flags, and the `releaseFailed` string is read only by the plugin's own skills, so it does not plainly fall in `public-contract`.", 'Reading A is closer to stated intent'), '#4265 settled: two readings, both category checks, the chosen one'],
+  [paragraph('**Settled, #4786.**', 'does not say which of them carries the one-sentence pointer', 'Reading A', 'Reading B: `plugin/skills/dispatch/task-prompt.md`', 'Neither falls in a category the record flags, and a pointer sentence is no interface an outside caller depends on, so it does not plainly fall in `public-contract`.', 'Reading A changes fewer observable contracts', 'chose docs/hooks.md; not plugin/skills/dispatch/task-prompt.md`'), '#4786 settled: two readings, both category checks, the chosen one in full'],
+  [paragraph('**Asked, migration.**', 'drops the old column in this release or the next', 'class (b), `migrations`'), 'migration question asked as class (b)'],
+  [paragraph('**Asked, auth.**', "unauthenticated caller may read a run's decisions", 'class (b), `auth`'), 'auth question asked as class (b)'],
 ];
 
 test('the six sections Task 4 cites exist, in order', () => {

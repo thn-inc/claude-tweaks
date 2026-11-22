@@ -1023,6 +1023,17 @@ test('add refuses an unknown slug and a missing --add', () => {
   assert.equal(missing.body, body);
 });
 
+test('add on a body with no Risk-flags line inserts the line and the unconfirmed marker', () => {
+  const r = addVerb('# t\n\nSurface: infra\n\n## Overview\n', ['--add', 'migrations']);
+  assert.equal(r.code, 0);
+  assert.deepEqual(r.out.flags, ['migrations']);
+  assert.deepEqual(r.out.added, ['migrations']);
+  assert.equal(r.out.unconfirmed, true);
+  assert.equal(r.out.status, 'unclassified');
+  assert.match(r.body, /^Risk-flags: migrations$/m);
+  assert.match(r.body, /^Risk-flags-unconfirmed: true$/m);
+});
+
 test('add writes the unconfirmed marker', () => {
   const r = addVerb('# t\n\nSurface: infra\nRisk-flags: none\n\n## Overview\n', ['--add', 'migrations']);
   assert.equal(r.code, 0);

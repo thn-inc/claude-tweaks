@@ -6,6 +6,7 @@ const path = require('node:path');
 
 const { readText } = require('./helpers/read-skill');
 const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
+const { ASKED_CLASSES_TEXT } = require('./helpers/planning-decisions-clauses');
 // #3377: /build Common Step 1.6 (build/plan-review.md) adds a HARD-GATE — a
 // plan-review needs-human spec gap stops before Task 1 in every mode. A
 // HARD-GATE `auto` never silences must be registered in the contract's
@@ -97,7 +98,6 @@ test('AC5.2: the consumer list is complete', () => {
 });
 
 // The bare clause text is what the pin matches; the full clause adds the `; ` separator, so the control can cut it whole.
-const ASKED_CLASSES_TEXT = 'under `planning-decisions: asked-classes`, only a row `_shared/planning-decisions.md` asks, #6051)';
 const ASKED_CLASSES_CLAUSE = `; ${ASKED_CLASSES_TEXT}`;
 const NARROWING_MSG = 'the HARD-GATE row lacks the asked-classes narrowing clause (#6051)';
 const narrowsUnderAskedClasses = (row) => row.includes(ASKED_CLASSES_TEXT);

@@ -12,6 +12,11 @@ const CLASS_CLAUSES = [
   'No reading keeps every Acceptance Criterion and recorded decision intact',
 ];
 
+// The clause auto-mode-contract.md's plan-review needs-human HARD-GATE row ends with under
+// `planning-decisions: asked-classes` (closing paren included). One copy for the convergence and
+// hard-gate conformance suites.
+const ASKED_CLASSES_TEXT = 'under `planning-decisions: asked-classes`, only a row `_shared/planning-decisions.md` asks, #6051)';
+
 const normalize = (s) => s.replace(/\s+/g, ' ').toLowerCase();
 
 // files: Map<relPath, text>. Returns every relPath whose whitespace-collapsed, lowercased text
@@ -27,4 +32,4 @@ function classStatementSites(files) {
   return out;
 }
 
-module.exports = { CLASS_CLAUSES, classStatementSites };
+module.exports = { CLASS_CLAUSES, ASKED_CLASSES_TEXT, classStatementSites };
