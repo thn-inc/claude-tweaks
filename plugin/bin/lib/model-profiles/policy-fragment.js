@@ -1,6 +1,6 @@
 // bin/lib/model-profiles/policy-fragment.js
 //
-// Minimal hand-rolled reader for the resolver's four policy keys, from policy.yml
+// Minimal hand-rolled reader for the resolver's five policy keys, from policy.yml
 // or factory-layer text (POLICY_KEYS_READ in ./profiles.js). bin/lib/policy-schema.js's
 // parseFlatLines is deliberately flat-only; the nested model-profiles map
 // needs this dedicated reader. No YAML library — the plugin ships zero
@@ -28,7 +28,7 @@ function parsePolicyModelConfig(raw) {
     const m = /^([A-Za-z-]+):\s*(.*)$/.exec(line);
     if (!m) continue;
     const [, key, value] = m;
-    if (key === 'model-stance' || key === 'model-ceiling') {
+    if (key === 'model-stance' || key === 'model-ceiling' || key === 'model-effort') {
       out[key] = value.trim();
     } else if (key === 'frontier-run-cap') {
       const n = Number.parseInt(value.trim(), 10);
@@ -54,7 +54,7 @@ function parsePolicyModelConfig(raw) {
         break; // dedent — nested block ended
       }
       // Resume the outer scan ON the dedented line, not after it: a flat key
-      // following the block is still one of the four we read.
+      // following the block is still one of the five we read.
       i = j - 1;
       out[key] = map;
     }

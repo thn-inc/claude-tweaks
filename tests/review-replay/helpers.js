@@ -111,15 +111,21 @@ async function setup({ promptFor = (label) => `Replay judge ${label}.\n\nThe fin
 
   // An agent's transcript: the identity prompt first, then assistant messages [id, output, cacheRead, cacheCreate], each
   // preceded by a streamed partial of the same id carrying a smaller output count.
-  function agent(agentId, label, { messages = [], seconds = 0, identity = true } = {}) {
+  // `effort` / `perTurnEffort` become the top-level fields a real transcript writes on each assistant entry: a string for
+  // every entry, or an array per entry (undefined omits the field); perTurnEffort defaults to the effort value.
+  function agent(agentId, label, { messages = [], seconds = 0, identity = true, effort, perTurnEffort = effort, synthetic = 0 } = {}) {
+    const pick = (v, i) => (Array.isArray(v) ? v[i] : v);
+    const fields = (j) => ({ ...(pick(effort, j) === undefined ? {} : { effort: pick(effort, j) }), ...(pick(perTurnEffort, j) === undefined ? {} : { perTurnEffort: pick(perTurnEffort, j) }) });
     const t0 = Date.parse('2026-01-01T00:00:00Z');
     const text = promptFor(label);
     const entries = [{ type: 'user', timestamp: new Date(t0).toISOString(), message: { role: 'user', content: identity ? text : 'no identity here' } }];
     messages.forEach(([id, o, cr, cc], i) => {
       const at = new Date(t0 + (i + 1) * seconds * 1000 / Math.max(messages.length, 1)).toISOString();
-      entries.push({ type: 'assistant', timestamp: at, message: { id, usage: { output_tokens: 1, cache_read_input_tokens: cr, cache_creation_input_tokens: cc } } });
-      entries.push({ type: 'assistant', timestamp: at, message: { id, usage: { output_tokens: o, cache_read_input_tokens: cr, cache_creation_input_tokens: cc } } });
+      entries.push({ type: 'assistant', ...fields(2 * i), timestamp: at, message: { id, usage: { output_tokens: 1, cache_read_input_tokens: cr, cache_creation_input_tokens: cc } } });
+      entries.push({ type: 'assistant', ...fields(2 * i + 1), timestamp: at, message: { id, usage: { output_tokens: o, cache_read_input_tokens: cr, cache_creation_input_tokens: cc } } });
     });
+    // `synthetic` appends that many Claude Code error entries: model <synthetic>, isApiErrorMessage, a perTurnEffort, no effort.
+    for (let k = 0; k < synthetic; k += 1) entries.push({ type: 'assistant', perTurnEffort: 'low', isApiErrorMessage: true, message: { id: `syn-${k}`, model: '<synthetic>', usage: { output_tokens: 0 } } });
     jsonl(path.join(transcripts, `agent-${agentId}.jsonl`), entries);
   }
   const journal = (startedIds, results) => jsonl(path.join(transcripts, 'journal.jsonl'), [

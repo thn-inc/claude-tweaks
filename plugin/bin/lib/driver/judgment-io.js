@@ -79,21 +79,21 @@ function readRecordAndDiff(deps, ctx, { files = false } = {}) {
 }
 
 // Launches one read-only worker with the run's ceilings and its own settings dir under the run dir.
-// { envelope, model } or { stop }; `label` names the worker in the stop.
+// { envelope, model, effort } or { stop, model?, effort? }; `label` names the worker in the stop.
 async function launchJudge({ deps, shared }, ctx, { role, dir, label, prompt, schema }) {
   const ceilings = readCeilings(shared.policy);
   if (ceilings.bad) return { stop: `${label} ceiling is not a positive number` };
   const settingsDir = path.join(ctx.runDir, dir);
   try {
     deps.mkdirSync(settingsDir, { recursive: true });
-    const { envelope, model } = await launchTracked(shared, deps, { minutes: ceilings.minutes, dollars: ceilings.dollars }, {
+    const { envelope, model, effort } = await launchTracked(shared, deps, { minutes: ceilings.minutes, dollars: ceilings.dollars }, {
       role, cwd: ctx.worktree, prompt, schema, settingsDir,
     });
-    return { envelope, model };
+    return { envelope, model, effort: effort ?? null };
   } catch (err) {
     // A model refusal names its code (#5917); any other error stays fixed text, never the error's words.
     // A throw after the model resolved carries it (launchTracked), so the stop's line can still name it.
-    return { stop: `${label} launch failed${err && err.code === MODEL_REFUSED_CODE ? ` (${err.code})` : ''}`, ...(typeof err?.model === 'string' ? { model: err.model } : {}) };
+    return { stop: `${label} launch failed${err && err.code === MODEL_REFUSED_CODE ? ` (${err.code})` : ''}`, ...(typeof err?.model === 'string' ? { model: err.model, effort: err.effort ?? null } : {}) };
   }
 }
 
