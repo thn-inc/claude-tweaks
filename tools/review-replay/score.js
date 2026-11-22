@@ -67,8 +67,9 @@ function agentIdentity(transcriptText) {
   return m ? m[1] : null;
 }
 
-// Messages deduplicated by id at their largest usage; seconds from the first to the last timestamp.
-function transcriptCost(transcriptText) {
+// Messages deduplicated by id at their largest usage (mergeUsage's per-id max); seconds from the first to the last
+// timestamp.
+function transcriptCost(transcriptText, mergeUsage) {
   const messages = new Map();
   let first = null;
   let last = null;
@@ -79,12 +80,7 @@ function transcriptCost(transcriptText) {
       if (last === null || t > last) last = t;
     }
     if (e && e.type === 'assistant' && e.message && e.message.id && e.message.usage) {
-      const u = e.message.usage;
-      const p = messages.get(e.message.id) || { output: 0, cacheRead: 0, cacheCreate: 0 };
-      p.output = Math.max(p.output, u.output_tokens || 0);
-      p.cacheRead = Math.max(p.cacheRead, u.cache_read_input_tokens || 0);
-      p.cacheCreate = Math.max(p.cacheCreate, u.cache_creation_input_tokens || 0);
-      messages.set(e.message.id, p);
+      messages.set(e.message.id, mergeUsage(messages.get(e.message.id) || null, e.message.usage));
     }
   }
   const sum = { requests: messages.size, output: 0, cacheRead: 0, cacheCreate: 0, seconds: first === null ? 0 : Math.round((last - first) / 1000) };
@@ -136,7 +132,7 @@ function readJournal(fsImpl, file) {
 }
 
 // Which replay slot (arm, repeat, prompt) each started agent judged, read from its own transcript.
-function identifyAgents(fsImpl, dir, started, slots) {
+function identifyAgents(fsImpl, dir, started, slots, mergeUsage) {
   let unidentified = 0;
   const costs = [];
   const efforts = [];
@@ -153,13 +149,13 @@ function identifyAgents(fsImpl, dir, started, slots) {
     const slot = parsed ? slots.get(armLabel(parsed.arm, parsed.repeat, parsed.name)) : undefined;
     if (!slot) {
       unidentified += 1;
-      addCost(unidentifiedCost, text === null ? emptyCost() : transcriptCost(text));
+      addCost(unidentifiedCost, text === null ? emptyCost() : transcriptCost(text, mergeUsage));
       continue;
     }
     const recorded = transcriptEffort(text);
     slot.agents.push(agentId);
     slot.efforts.push(recorded.effort);
-    costs.push({ arm: slot.arm.name, cost: transcriptCost(text) });
+    costs.push({ arm: slot.arm.name, cost: transcriptCost(text, mergeUsage) });
     efforts.push({ arm: slot.arm.name, ...recorded });
   }
   return { unidentified, costs, efforts, unidentifiedCost };
@@ -174,6 +170,7 @@ function stripTree(text, treeRoot) {
 function score(opts, deps) {
   const fsImpl = deps.fs;
   const { resolveTiebreak, splitChunkReply } = require(path.join(deps.pluginRoot, 'bin', 'lib', 'tiebreak.js'));
+  const { mergeUsage } = require(path.join(deps.pluginRoot, 'bin', 'lib', 'timing', 'transcript.js'));
   const io = { fs: fsImpl, resolveTiebreak };
   const manifest = readJson(fsImpl, path.join(opts.out, MANIFEST_FILE));
   const problems = validateManifest(manifest);
@@ -210,7 +207,7 @@ function score(opts, deps) {
     }
   }
   const { started, results } = readJournal(fsImpl, path.join(opts.transcripts, JOURNAL_FILE));
-  const { unidentified, costs, efforts, unidentifiedCost } = identifyAgents(fsImpl, opts.transcripts, started, slots);
+  const { unidentified, costs, efforts, unidentifiedCost } = identifyAgents(fsImpl, opts.transcripts, started, slots, mergeUsage);
   // An unidentified agent cannot be tied to a prompt, so the reason `unidentified-agent` goes to the first N prompts (in
   // manifest order) that have no identified agent, N being the number of unidentified agents; any other prompt without
   // an identified agent was never started, or started with no reply, and is `no-reply`.
