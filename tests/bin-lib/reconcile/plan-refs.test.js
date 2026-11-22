@@ -244,14 +244,13 @@ test('planRefs: a number past the GraphQL 32-bit Int is left out of the query, s
   assert.doesNotMatch(buildIssueStateQuery([huge]), /issue\(number/);
   assert.match(buildIssueStateQuery([2147483647]), /issue\(number:2147483647\)/);
   const f = makeFakes({ refs: [5, huge], states: { 5: 'CLOSED' } });
-  const okGh = f.gh;
   // A fake gh that rejects the whole query (a non-NOT_FOUND error) when it names an out-of-range number.
   const gh = (args) => {
     const q = args.find((a) => a.startsWith('query='));
     if ([...q.matchAll(/issue\(number:(\d+)\)/g)].some((m) => Number(m[1]) > 2147483647)) {
       return JSON.stringify({ errors: [{ type: 'INVALID', message: 'Int cannot represent non 32-bit signed integer value' }] });
     }
-    return okGh(args);
+    return f.gh(args);
   };
   const r = planRefs({ cwd: '/x', git: f.git, gh, readBackend: noLocal });
   assert.deepEqual(r.entries.map((e) => [e.record, e.action, e.reason]), [
