@@ -21,6 +21,7 @@
 //   run-filed-record-cap (#5933, policyOnly, integer >= 0, no default) — the most
 //     filed records one run takes; over it an agent-raised item digests (rule run-cap).
 //   An invalid value of either new key prints one stderr line, then routes with its default.
+//   A warning for a value the factory layer supplied (#6006) adds ` in the factory layer` after the quoted value.
 // The values come from policy, never from a flag, and this file adds no policy-file
 // path logic of its own.
 // --evidence: `ref:{id}` is checked for form only; every other value except the exact
@@ -216,19 +217,21 @@ function run(argv, deps = realDeps) {
   // an array ([] when unset, invalid, or the explicit `[]` the row's emptyList
   // allows) or, for a configured list, the raw comma-separated string. Split only
   // the string; an array is already the list.
+  // A rejected raw the factory layer supplied says so (#6006), the way resolve-policy's warning does.
+  const where = (key) => (out.invalidFrom.get(key) === 'factory' ? ' in the factory layer' : '');
   let digestReasons = [];
   if (entry.invalid) {
-    deps.stderr(`deferral-route: warning: ${DIGEST_KEY} has invalid element "${firstBadElement(out.invalidRaw.get(DIGEST_KEY))}" — using the default (no reasons)\n`);
+    deps.stderr(`deferral-route: warning: ${DIGEST_KEY} has invalid element "${firstBadElement(out.invalidRaw.get(DIGEST_KEY))}"${where(DIGEST_KEY)} — using the default (no reasons)\n`);
   } else {
     digestReasons = Array.isArray(entry.value) ? entry.value : String(entry.value).split(',').map((reason) => reason.trim());
   }
   const evidenceEntry = out.result[EVIDENCE_KEY];
   if (evidenceEntry.invalid) {
-    deps.stderr(`deferral-route: warning: ${EVIDENCE_KEY} has invalid value "${out.invalidRaw.get(EVIDENCE_KEY)}" — using the default (off)\n`);
+    deps.stderr(`deferral-route: warning: ${EVIDENCE_KEY} has invalid value "${out.invalidRaw.get(EVIDENCE_KEY)}"${where(EVIDENCE_KEY)} — using the default (off)\n`);
   }
   const capEntry = out.result[CAP_KEY];
   if (capEntry.invalid) {
-    deps.stderr(`deferral-route: warning: ${CAP_KEY} has invalid value "${out.invalidRaw.get(CAP_KEY)}" — using the default (no cap)\n`);
+    deps.stderr(`deferral-route: warning: ${CAP_KEY} has invalid value "${out.invalidRaw.get(CAP_KEY)}"${where(CAP_KEY)} — using the default (no cap)\n`);
   }
 
   const evidenceRequired = !evidenceEntry.invalid && evidenceEntry.value === 'required';
