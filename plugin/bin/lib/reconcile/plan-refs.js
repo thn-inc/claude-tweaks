@@ -13,7 +13,9 @@
 // Never throws: every outcome is an entry, or a `failure` string when the whole
 // check could not run. Under `work-backend: local-files` there are no GitHub
 // records to be closed, so the check ends `local-files-backend`. gh may be
-// absent (local-merge runs no gh preflight): `gh-absent`, no push.
+// absent (local-merge runs no gh preflight): `gh-absent`, no push. No `origin`
+// remote at all ends `no-origin`; a configured origin whose listing fails ends
+// `ls-remote-failed`.
 'use strict';
 const { execFileSyncTimed } = require('./timing');
 const shared = require('../shared-primitives');
@@ -126,6 +128,12 @@ function planRefs({ cwd, dryRun, git, gh, readBackend } = {}) {
     try {
       listing = runGit(['ls-remote', DEFAULT_REMOTE, `${PLAN_REF_PREFIX}*`]); // git-path-read: not a path list (ref names)
     } catch {
+      // A missing origin is not a network fault: probe the remote's URL, and name it so.
+      try {
+        runGit(['remote', 'get-url', DEFAULT_REMOTE]);
+      } catch {
+        return { entries: [], failure: 'no-origin' };
+      }
       return { entries: [], failure: 'ls-remote-failed' };
     }
     const refs = listPlanRefs(listing);

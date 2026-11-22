@@ -144,10 +144,24 @@ test('planRefs: ls-remote failure aborts with a reported failure', () => {
   const calls = { gh: 0 };
   const r = planRefs({
     cwd: '/x', readBackend: noLocal,
-    git: () => { throw new Error('no remote'); },
+    git: (args) => {
+      if (args[0] === 'remote') return URL;
+      throw new Error('ls-remote failed');
+    },
     gh: () => { calls.gh++; return ''; },
   });
   assert.deepEqual(r, { entries: [], failure: 'ls-remote-failed' });
+  assert.equal(calls.gh, 0);
+});
+
+test('planRefs: no origin remote is reported as no-origin', () => {
+  const calls = { gh: 0 };
+  const r = planRefs({
+    cwd: '/x', readBackend: noLocal,
+    git: () => { throw new Error('fatal: No such remote'); },
+    gh: () => { calls.gh++; return ''; },
+  });
+  assert.deepEqual(r, { entries: [], failure: 'no-origin' });
   assert.equal(calls.gh, 0);
 });
 

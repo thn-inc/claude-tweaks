@@ -985,7 +985,8 @@ the evidence bar is strict:
   and the entry is `delete-failed`, carrying git's reason as `detail`.
 - **Dry run.** `would-delete` entries; nothing is pushed.
 - **Whole-check failures** land in `skipped` as `{check: 'plan-refs', reason}`: `local-files-backend`
-  (no GitHub records to be closed), `ls-remote-failed`, `origin-unresolvable`, `gh-absent` (no push),
+  (no GitHub records to be closed), `no-origin` (no `origin` remote at all — the URL probe fails too),
+  `ls-remote-failed` (origin is configured but its listing fails), `origin-unresolvable`, `gh-absent` (no push),
   `unexpected-error`. The check never throws.
 - **Backend.** Runs under `pr-first` on the background tier, and under `local-merge` as a fallback
   beside `reap`'s; it is not in the `local-merge-model` skip list. The unscoped CLI defers it to the

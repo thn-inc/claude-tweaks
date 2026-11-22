@@ -1202,7 +1202,7 @@ test('reconcile: local-merge project falls back to the legacy ancestry reap, ski
   assert.deepStrictEqual(r.worktrees, []); // legacy reap ran, found zero worktrees to consider
   // plan-refs runs as the local-merge fallback; this fixture has no origin, so its ls-remote fails.
   assert.deepStrictEqual(r.skipped, [
-    { check: 'plan-refs', reason: 'ls-remote-failed' },
+    { check: 'plan-refs', reason: 'no-origin' },
     { check: 'mirror,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' },
   ]);
 });
