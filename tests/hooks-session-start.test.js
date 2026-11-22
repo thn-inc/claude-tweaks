@@ -768,11 +768,23 @@ test('SessionStart surfaces a prior background pass failed plan-ref deletions, a
   fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
   const statusFile = path.join(project, '.claude-tweaks', 'reconcile-background-status.json');
   fs.writeFileSync(statusFile, JSON.stringify({ completedAt: Date.now(), surfaced: false, summary: { reaped: 1, planRefsDeleteFailed: 3 } }));
-  let out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
-  assert.match(out.json.hookSpecificOutput.additionalContext, /3 plan ref deletion\(s\) failed on origin — .*reconcile --checks plan-refs --dry-run/);
-  fs.writeFileSync(statusFile, JSON.stringify({ completedAt: Date.now(), surfaced: false, summary: { reaped: 1, planRefsDeleteFailed: 0 } }));
-  out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
-  assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /plan ref deletion/);
+  const root = tmpPluginRoot();
+  const orig = process.env.CLAUDE_PLUGIN_ROOT;
+  try {
+    process.env.CLAUDE_PLUGIN_ROOT = root;
+    let out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+    const hint = out.json.hookSpecificOutput.additionalContext;
+    assert.match(hint, /3 plan ref deletion\(s\) failed on origin — /);
+    assert.ok(hint.includes(`node "${root}/bin/hooks.js" reconcile --checks plan-refs`), 'hint runs the plugin-root hooks.js, not a repo-relative path');
+    assert.doesNotMatch(hint, /--dry-run/);
+    assert.doesNotMatch(hint, / node plugin\/bin\/hooks\.js/);
+    fs.writeFileSync(statusFile, JSON.stringify({ completedAt: Date.now(), surfaced: false, summary: { reaped: 1, planRefsDeleteFailed: 0 } }));
+    out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+    assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /plan ref deletion/);
+  } finally {
+    if (orig === undefined) delete process.env.CLAUDE_PLUGIN_ROOT;
+    else process.env.CLAUDE_PLUGIN_ROOT = orig;
+  }
 });
 
 test('SessionStart surfaces a prior background pass that failed, with its reason (#4032)', async () => {
