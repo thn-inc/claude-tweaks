@@ -187,7 +187,7 @@ test('I1: a re-run skips a held question the body already answers, and writes no
 
 test('L14 + I1: with no answer given in this run and a valid kept plan, the amend and change test are skipped', () => {
   pinned(sec('## Kept plan'), [
-    f('With no answer given in this run, skip `## Amend and change test` and go to `## Write` with `{plan}` as read'),
+    f('With no answer given in this run, skip `## Amend and change test` and go on with `{plan}` as read (`## Write`, or `## Re-hold` after a `Leave for later`)'),
   ], 'no-answer skip');
   pinned(sec('## Amend and change test'), [
     f('one row per answer given in this run'),
@@ -209,11 +209,21 @@ test('M1: the answer resolves superseded specify holds with the newest', () => {
 test('M2: the label decision uses a fresh planning-hold.js read taken just before (c)', () => {
   const region = sec('## Write');
   pinned(region, [
-    f('re-fetch the comments to `{comments-file}` and re-run `planning-hold.js` to `{hold-file}` as `SKILL.md`\'s case 1 routing does'),
+    f('re-fetch the comments to `{comments-file}` and re-run `planning-hold.js` on it to `{hold-fresh}` (`--value specify-answer-hold-fresh-{n}.json`), never over `{hold-file}`, as `SKILL.md`\'s case 1 routing does'),
     f('take `otherUnresolved` and `supersededHolds` from that fresh line'),
-    f('counts as `otherUnresolved` above 0 and keeps the routing-time `supersededHolds`'),
+    f('is the kept branch: it counts as `otherUnresolved` above 0, resolves `{hold-file}`\'s `supersededHolds`, and its outcome is `answered — {k} planning question(s); needs:decision kept (decision comments could not be re-read)`'),
   ], 'fresh read');
   provenOrder(region, ['--body-file "{body}"', 'and re-run `planning-hold.js`', '**Resolved:** answered via']);
+});
+
+// R1: the fresh re-run never overwrites the routing-time {hold-file}, which the kept branch, Re-hold (d) and the read-back still read.
+const overwritesHoldFile = (region) => /planning-hold\.js`[^.;]*? to `\{hold-file\}`/.test(region);
+test('R1: the fresh planning-hold.js re-run writes its own path, never {hold-file}', () => {
+  const region = sec('## Write');
+  assert.equal(overwritesHoldFile(region), false);
+  const mutated = region.replace('on it to `{hold-fresh}`', 'on it to `{hold-file}`');
+  assert.notEqual(mutated, region);
+  assert.equal(overwritesHoldFile(mutated), true);
 });
 
 // L11: every forge call in the write, re-hold and read-back paths names its gh-absent transport.
@@ -235,7 +245,7 @@ test('L11: each write and the read-back fetch cite _shared/github-write-transpor
   pinned(bulletOf(rehold, '(b)'), [f(`\`issue_write\` (update mode) ${T}`)], 're-hold b');
   pinned(bulletOf(rehold, '(c)'), [f(`\`add_issue_comment\` ${T}`)], 're-hold c');
   pinned(bulletOf(rehold, '(d)'), [f('as `## Write` (c) edits it')], 're-hold d');
-  pinned(sec('## Read-back and outcome'), [f(`\`issue_read\` \`get\` and \`get_comments\` ${T}`)], 'read-back');
+  pinned(sec('## Read-back and outcome'), [f(`gh absent, ${T}, write \`issue_read\` \`get_comments\`\'s array to \`{readback-file}\` and \`get\`\'s \`body\` to \`{readback-body}\` and its \`labels\` to \`{readback-labels}\` (\`--value specify-answer-readback-labels-{n}.json\`), each with the Write tool`)], 'read-back');
 });
 
 test('L13: the read-back names a session-tmp path for every file it passes', () => {
@@ -296,9 +306,9 @@ test('Review Focus 3: another unit\'s open decision comment keeps needs:decision
 
 test('Review Focus 2: Leave for later keeps answers and re-holds the rest', () => {
   pinned(sec('## Ask'), [
-    f('with no question answered in this run, write nothing at all'),
+    f('with no question answered in this run or in `{body}`, write nothing at all'),
     f('`held — {k} planning question(s) still open`'),
-    f('the record takes `## Re-hold` with the rest'),
+    f('With some answered, in this run or in `{body}`, `## Kept plan` and `## Amend and change test` run on this run\'s answers and the record takes `## Re-hold` with the rest, so a failed re-hold is retried'),
   ], 'leave for later');
   pinned(sec('## Amend and change test'), [
     f('never `planning.md`\'s `## Hold`'),
@@ -337,10 +347,13 @@ test('writer-reader: planning.md\'s hold template parses as held through plannin
   assert.equal(readPlanningHold(comment(noHeldBy)).reason, 'not-planning');
 });
 
-// Fix round 1: Next Actions splits three ways by outcome. Each bullet is found by its own label;
+// Fix round 1 (+ R2's kept branch): Next Actions splits four ways by outcome. Each bullet is found by its own label;
 // the still-needs:decision bullet names the other comments and recommends no command.
 const NA_FLOW = '`/claude-tweaks:flow #{n}`';
 const NA_SPECIFY = '`/claude-tweaks:specify #{n}`';
+const KEPT_OUTCOME = '`answered — {k} planning question(s); needs:decision kept (decision comments could not be re-read)`';
+const KEPT_HAND = 'check the record\'s decision comments and remove `needs:decision` by hand once none is unresolved';
+const KEPT_WHY = 'because a re-run would shape the record and resolve another unit\'s comment unanswered';
 function nextActionsProblems(region) {
   const bullet = (label) => region.split('\n').filter((l) => l.startsWith(`- **${label}:**`));
   const problems = [];
@@ -352,6 +365,11 @@ function nextActionsProblems(region) {
   const ready = one('`ready`');
   const still = one('Still needs:decision');
   const held = one('Held or failed');
+  const kept = one('Kept needs:decision');
+  if (kept && !kept.includes(KEPT_OUTCOME)) problems.push('kept: outcome');
+  if (kept && !kept.includes(KEPT_HAND)) problems.push('kept: by hand');
+  if (kept && !kept.includes(KEPT_WHY)) problems.push('kept: why');
+  if (kept.includes(NA_SPECIFY) || kept.includes(NA_FLOW)) problems.push('kept: recommends a command');
   if (ready && !(ready.includes('the `answered — …, ready` outcome') && ready.includes(NA_FLOW))) problems.push('ready: flow');
   if (ready.includes(NA_SPECIFY)) problems.push('ready: specify');
   if (still && !still.includes('`answered — {k} planning question(s); still needs:decision ({m} other decision comment(s))`')) problems.push('still: outcome');
@@ -385,6 +403,13 @@ test('Fix round 1: Next Actions splits ready → flow, still needs:decision → 
   red(region.replace(ready, `${ready} Or ${NA_SPECIFY}.`), 'ready: specify');
   red(region.replace(ready, ready.replace(NA_FLOW, 'nothing')), 'ready: flow');
   red(region.replace(still, ''), 'bullet count: Still needs:decision');
+  const kept = lineOf('Kept needs:decision');
+  red(region.replace(kept, `${kept} Then run ${NA_SPECIFY}.`), 'kept: recommends a command');
+  red(region.replace(kept, `${kept} Then run ${NA_FLOW}.`), 'kept: recommends a command');
+  red(region.replace(KEPT_OUTCOME, '`answered`'), 'kept: outcome');
+  red(region.replace(KEPT_HAND, 'look at it'), 'kept: by hand');
+  red(region.replace(KEPT_WHY, 'because'), 'kept: why');
+  red(region.replace(kept, ''), 'bullet count: Kept needs:decision');
 });
 
 const ANSWER_HEADS = ['## Inputs', '## Ask', '## Kept plan', '## Amend and change test', '## Write', '## Re-hold', '## Read-back and outcome'];
