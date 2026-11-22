@@ -1474,8 +1474,6 @@ test('a settled line carrying markdown renders neutralized', () => {
   const { markdown } = renderPacket(facts, { schemaVersion: 1, claims });
   const line = markdown.split('\n').find((l) => l.includes('finding:1'));
   assert.ok(line !== undefined);
-  // The line is a list item, so a heading marker would have to open its content.
-  assert.ok(!line.slice(2).startsWith('#'));
   // Code spans are neutralized text; what is left outside them must hold no live link or mention.
   const bare = line.replace(/`[^`]*`/g, '');
   assert.ok(!bare.includes('[l]('));

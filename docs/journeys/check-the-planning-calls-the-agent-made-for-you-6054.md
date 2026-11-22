@@ -2,6 +2,7 @@
 files:
   - plugin/bin/lib/wrap-up/packet-gather.js
   - plugin/bin/acceptance-packet.js
+  - plugin/bin/lib/run-header.js
   - plugin/skills/_shared/acceptance-packet.md
   - plugin/skills/_shared/planning-decisions.md
   - plugin/skills/wrap-up/verification-brief.md
@@ -51,4 +52,5 @@ files:
 
 ## Origin
 - Created during the build of #6054 (run `2026-11-22T171233-spec-6054`): `settledPlanningLines` and the `{ records, readSpec }` parameter of `lowConfidenceFindings` in `lib/wrap-up/packet-gather.js`, the `readSpec` seam in `acceptance-packet.js`'s `readLowConfidence`, `_shared/acceptance-packet.md`'s Least confident line, and the `--run`/`--spec` clauses in `wrap-up/verification-brief.md`.
+- Updated at the wrap-up of #6054: `files:` gains `plugin/bin/lib/run-header.js`, since review's fix wave made `readSpec` take every spec location `headerFileCandidates` resolves (flat or `spec-{n}/`, live or archived), the locations Step 1 names.
 - Related journeys: `answer-a-plan-review-question-3377.md` covers the questions plan review still asks. `carry-undecidable-console-items-into-the-acceptance-packet-4620.md` covers the packet's Decisions left for you section. `accept-built-work-via-demo.md` covers the acceptance verdict itself.
