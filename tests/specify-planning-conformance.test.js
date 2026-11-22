@@ -861,8 +861,8 @@ test('Deliverable 1: SKILL.md\'s decomposition paragraph points at the two block
 
 test('Final fix 1: a held sub-issue is left out of every /flow command, and all-held recommends re-shaping the first', () => {
   pinned(decomposition(), [
-    f('Step 4 also applies that section\'s Next Actions rule: a held sub-issue is left out of every `/claude-tweaks:flow` command'),
-    f('when every planned sub-issue is held, the recommended line is `/claude-tweaks:specify #{n}` for the first held one'),
+    f('This step also applies `## Read-back and outcome`\'s Next Actions rule: a held sub-issue is left out of every `/claude-tweaks:flow` command'),
+    f('when every sub-issue this pass plans is held, the recommended line is `/claude-tweaks:specify #{n}` for the first held one'),
   ], 'decomposition Next Actions');
 });
 
@@ -894,6 +894,8 @@ test('Final fix 5 + 8: the handoff block relays the conflict warning, and a repl
   pinned(blockOf('plugin/skills/specify/mechanical-handoff.md'), [
     f('Relay a stderr warning the call prints, which names a conflict with `planning-decisions`, as a one-line notice.'),
     f('A reply with no `Resumed:` line, whatever its status, plans nothing'),
+    f('for each Work Units Created ref minus the `Resumed:` refs'),
+    f('appends, in place of either line above, only the one line'),
   ], 'handoff block fixes');
 });
 
