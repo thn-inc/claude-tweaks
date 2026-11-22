@@ -133,6 +133,10 @@ Entered from Resolve-the-input case 2 (design doc path), case 3 (topic matching 
 
 Read `decomposition-mode.md` in this skill's directory now, for the interactive Steps — 1, 2, 2.6 (the collapse decision: whether this decomposition gets a parent record at all), 2.5 (design pre-steps), and 2.5d (diagram suggestion). **Do not also read `decomposition-mode-closeout.md` yet** — decomposition decision-making (Steps 1-2.5) never needs its mechanical content (#801); that file's own trailer hands off to it for the mechanical Steps 3 through 9 once the interactive steps resolve, split at the interactive/mechanical boundary (#832; originally #611's Step 4/5 split). Every step that predates either split kept its number, so cross-references naming a step by number still resolve; Step 2.6 is a later addition, not a renumbering. The interactive steps delegate onward to `design-pre-steps.md` (Step 2.5); the mechanical steps delegate to `record-creation.md` + `record-creation-subissues.md` (Step 3, split #1346) + `record-creation-linking.md` (Step 4, #1346) and `red-team.md` (Step 5) — delegate the mechanical range to a subagent via `mechanical-handoff.md`'s canonical prompt instead of hand-authoring one. When Step 9 completes, continue at `## Next Actions` below. Shaping mode's own procedure never runs on this path.
 
+<!-- plan-at-specify:start -->
+**Planning at specify (#6057).** Under `plan-at-specify: on`, `decomposition-mode-closeout.md`'s `plan-at-specify` paragraph plans each non-parent sub-issue after Step 6; when the mechanical range is delegated, `mechanical-handoff.md`'s `plan-at-specify` paragraph plans them after the handoff returns. Either way planning runs in this session, never inside the handoff. Otherwise skip this paragraph.
+<!-- plan-at-specify:end -->
+
 ## Routine Configuration
 
 `/specify` ships a routine template (`skills/specify/routine-template.yml`) whose prompt is bare `/claude-tweaks:specify` — the headless drain form (#967, #1491), adopting `specify-budget`'s default of 5 records per firing. Instantiate it for the current project with:
