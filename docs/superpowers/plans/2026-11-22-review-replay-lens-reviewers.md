@@ -38,7 +38,7 @@ These override the spec's Current State where the two disagree. Each is logged a
 ## Review Focus
 
 1. A main-checkout path with a space in it (this repository's own `Code Workspaces`): path matching is prefix-based, never whitespace tokenizing. Pinned in Task 2 (`rewrite handles a main-checkout path containing a space`).
-2. A run-directory path named inside a copied context bundle or spec (the diff headers in a bundle; a spec that quotes `.claude-tweaks/pipelines/...`): rewritten to the slot's copy when one exists, else replaced by `[run-directory path removed]`. Never left live, and never a reason to exclude. Pinned in Task 4 (AC4 test).
+2. A run-directory path named inside a copied context bundle or spec. If it is absolute (under the main checkout or a worktree) or names the archived run's own directory, it is rewritten to the slot's copy when one exists, else replaced by `[run-directory path removed]`, and it is never left live. A relative mention of another run in diff text is left unchanged, so the replayed diff is the archived diff (plan-review decision 2). Neither case is a reason to exclude. Pinned in Task 4 (AC4 test, with a generic mention in the fixture bundle).
 3. An abbreviated archived sha that is also a prefix of an unrelated hex token, such as a blob id in the bundle's `index abc1234..def5678` lines: only word-bounded tokens of 7+ hex characters that prefix a mapped archived sha are rewritten. Pinned in Task 2 (`sha rewrite leaves unrelated hex tokens`).
 4. The same lens/side dispatched twice in one run (a fix-wave re-review): the second slot is named `{lens}-{side}.2`, never colliding or overwriting. Pinned in Task 4 (`a repeated lens/side dispatch gets its own slot`).
 5. A replay agent that cites the clean repository's absolute path in its rows: `stripTree(text, repoPath)` runs before parsing, so its rows match archived repo-relative paths. Pinned in Task 5 (`rows citing the absolute repo path still score`).
@@ -87,6 +87,7 @@ Expected: PASS, 0 failures.
 ### Task 2: Prompt rewriting — `reviews-rewrite.js` (pure)
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Create: `tools/review-replay/reviews-rewrite.js`
@@ -97,14 +98,14 @@ Expected: PASS, 0 failures.
 - Produces:
   - `rangeOf(text) -> { base: string|null, head: string|null }`. `base`: group 1 of `/\b([0-9a-f]{7,40})\.\.\.(?:HEAD\b|[0-9a-f]{7,40}\b)/`, else `/\bbase\s+([0-9a-f]{7,40})\b/i`. `head`: `/\.\.\.([0-9a-f]{7,40})\b/`, else `/\bHEAD(?:\s+at)?\s+([0-9a-f]{7,40})\b/`. First match wins.
   - `originRefsOf(text) -> string[]`: distinct `origin/{name}` names (`/\borigin\/([A-Za-z0-9._\/-]+?)(?=\.\.\.|[\s`'"),]|$)/g`).
-  - `runInputsOf(text, { mainRoot, runName }) -> { inputs: [{ match, member: string|null, rel, kind }], unknown: string[] }`. It finds every occurrence of `.claude-tweaks/pipelines/{seg}/{rest}`, optionally prefixed by `mainRoot` or by a worktree path under `{mainRoot}/.claude/worktrees/{name}`. `rest` runs up to the first character in `` \s"'`) ``, with trailing `.,;:` stripped. `seg` must equal `runName`, else the path goes in `unknown`. A leading `spec-{N}/` in `rest` becomes `member`. `kind` is `bundle` (`review-ctx/context.md`, `delta-ctx/context.md`), `spec` (`work/{name}.md`), `procedure` (`context/{name}.md`), `scratch` (`review-ctx/agent-scratch/{name}[/…]`, `delta-ctx/agent-scratch/{name}[/…]`), or goes in `unknown`.
+  - `runInputsOf(text, { mainRoot, runName, copy = false }) -> { inputs: [{ match, member: string|null, rel, kind }], unknown: string[] }`. It finds every occurrence of `.claude-tweaks/pipelines/{seg}/{rest}`, optionally prefixed by `mainRoot` or by a worktree path under `{mainRoot}/.claude/worktrees/{name}`. `rest` runs up to the first character in `` \s"'`) ``, with trailing `.,;:` stripped. `seg` must equal `runName`, else the path goes in `unknown`. The exception is `copy: true`, used for context bundles and spec copies: there a relative occurrence (no `mainRoot` or worktree prefix) whose `seg` is not `runName` is skipped, landing in neither list (plan-review decision 2). A leading `spec-{N}/` in `rest` becomes `member`. `kind` is `bundle` (`review-ctx/context.md`, `delta-ctx/context.md`), `spec` (`work/{name}.md`), `procedure` (`context/{name}.md`), `scratch` (`review-ctx/agent-scratch/{name}[/…]`, `delta-ctx/agent-scratch/{name}[/…]`), or goes in `unknown`.
   - `stripEffortLines(text) -> string`: removes lines matching `/^\[Effort: (low|medium|high|xhigh|max) — [^\]]*\]\s*$/m` (global).
   - `rewriteShas(text, map) -> string`. `map` is `{ archivedSha40: replaySha40 }`. A word-bounded `[0-9a-f]{7,40}` token that is a prefix of a key becomes the mapped sha cut to the token's length. Any other token is unchanged.
   - `rewriteText(text, { mainRoot, runName, repoPath, replacements, shaMap }) -> string`:
     - every `inputs[].match` becomes `replacements[match]`;
     - every `{mainRoot}/.claude/worktrees/{name}` becomes `repoPath`, where `{name}` is `[A-Za-z0-9._+-]+`;
     - then `rewriteShas`.
-  - `unrewrittenPaths(text, { mainRoot }) -> string[]`: the substrings still naming `{mainRoot}/`, `/.claude/worktrees/`, or `.claude-tweaks/pipelines/`.
+  - `unrewrittenPaths(text, { mainRoot, runName, outDir }) -> string[]`: the substrings still naming `{mainRoot}/` (worktrees sit under it) or `.claude-tweaks/pipelines/{runName}/`. Occurrences inside `{outDir}/` are not counted, since the output directory may itself sit under the main checkout. This is the spec's `unrewritten-path` as clarified (plan-review decision 2).
 
 - [ ] **Step 1: Write the failing tests** `tests/review-replay/reviews-rewrite.test.js`, one `test()` each:
   - `rangeOf reads git diff X...Y`: `rangeOf('SCOPE: git diff ' + B + '...' + H)` deepEquals `{ base: B, head: H }`.
@@ -113,7 +114,9 @@ Expected: PASS, 0 failures.
   - `rangeOf returns nulls for a symbolic range`: `'git diff origin/main...HEAD'` gives `{base:null, head:null}`. `originRefsOf` of the same text deepEquals `['main']`.
   - `runInputsOf classifies the four kinds`, with `mainRoot = '/m/Code Workspaces/repo'`, run `R`, and the text naming: `{main}/.claude-tweaks/pipelines/R/review-ctx/context.md`; `{main}/.claude/worktrees/w/.claude-tweaks/pipelines/R/work/9-spec.md`; `{main}/.claude-tweaks/pipelines/R/context/lens-child.md`; `{main}/.claude-tweaks/pipelines/R/spec-2/review-ctx/agent-scratch/3b-a`. Kinds are `bundle`, `spec`, `procedure`, `scratch`, the last with `member === 'spec-2'`, and `unknown` is `[]`.
   - `runInputsOf reports decisions.md and another run as unknown`: `…/pipelines/R/decisions.md` and `…/pipelines/OTHER/review-ctx/context.md` both land in `unknown`.
-  - `rewrite handles a main-checkout path containing a space`: `rewriteText` on `git -C "{main}/.claude/worktrees/w" diff` gives `git -C "/out/repos/k/repo" diff`, and `unrewrittenPaths(result, { mainRoot })` is `[]`.
+  - `rewrite handles a main-checkout path containing a space`: `rewriteText` on `git -C "{main}/.claude/worktrees/w" diff` gives `git -C "/out/repos/k/repo" diff`, and `unrewrittenPaths(result, { mainRoot, runName: 'R', outDir: '/out' })` is `[]`.
+  - `copy mode skips another run's relative mention`: `runInputsOf('see .claude-tweaks/pipelines/OTHER/decisions.md', { mainRoot, runName: 'R', copy: true })` deepEquals `{ inputs: [], unknown: [] }`. The same text without `copy` lands in `unknown`, and `{mainRoot}/.claude-tweaks/pipelines/OTHER/x.md` lands in `unknown` in both modes.
+  - `unrewrittenPaths ignores the output directory`: with `outDir = mainRoot + '/out'`, the text `mainRoot + '/out/repos/k/repo'` gives `[]`, and `mainRoot + '/src/a.js'` gives one entry.
   - `sha rewrite maps full and abbreviated shas`: with map `{[B]: RB, [H]: RH}`, `'x ' + B + ' y ' + H.slice(0,7)` gives `'x ' + RB + ' y ' + RH.slice(0,7)`.
   - `sha rewrite leaves unrelated hex tokens`: `'index ' + B.slice(0,6) + 'f..deadbeef1'` is unchanged, when `B.slice(0,6)+'f'` is not a prefix of `B`.
   - `stripEffortLines removes only the resolver line`: `'a\n[Effort: high — apply high-level reasoning depth to this task.]\nb'` gives `'a\nb'`, and `'see [Effort: high] above'` is unchanged.
@@ -188,7 +191,8 @@ Expected: PASS, 0 failures.
   - `archived-reports.json` holds `{ schemaVersion, reports, confirmed, runRows }`:
     - `reports`: `{ [slotName]: { lens, side, run, unitKey, counts, rows: [{sev,path,line}] } }`;
     - `confirmed`: `{ [unitKey]: { [lens]: { findings: [{path,line,how}], unlocated } } }`, where `unitKey` is the run name, or `{run}/spec-{N}` for a member unit. Confirmed findings belong to the lens as a pair, not to one side, so both sides' slots share one entry;
-    - `runRows`: `{ [run]: [{lens,path,line}] }`, every archived row of every lens slot in that run.
+    - `runRows`: `{ [run]: [{lens,path,line}] }`, the archived rows of every lens dispatch in that run whose archived reply parses (check 4 passed). This holds whatever happens to the dispatch afterwards: a later exclusion, `--lens` or `--max-per-lens` does not remove its rows. `new` is "near no archived row of any lens in that run".
+  - Archived rows (in `reports` and `runRows`) are parsed after `stripTree` removes every worktree path the prompt names (`{mainRoot}/.claude/worktrees/{name}`) and then `mainRoot`, so a row the archived reviewer cited by absolute path is stored repo-relative, as replay rows are.
   - `reviews-fixture.json` holds `{ schemaVersion, role, requested, totals: { reviews, byLens }, excluded: [{run, agentId?, lens?, side?, reason}], repos: [{key, run, path, archivedBase, archivedHead, replayBase, replayHead}], slots: [{name, run, unit, lens, side, agentId, repoKey, archivedTier, archivedEffort, controlArm}] }`.
 
 **Rules the implementer cannot infer:**
@@ -212,6 +216,7 @@ Expected: PASS, 0 failures.
 - Copies:
   - A `bundle` copy is the source text through `rewriteText`, where each run-directory path is mapped to this slot's copy of that kind when one exists, else to the literal `[run-directory path removed]`.
   - `spec` and `procedure` copies go through the same rewrite.
+  - A copy's run-directory paths come from `runInputsOf(copyText, { mainRoot, runName, copy: true })`. Prompts use the default `copy: false`. Every `unrewrittenPaths` call passes `{ mainRoot, runName, outDir: opts.out }`.
   - Every copy and every prompt passes `unrewrittenPaths` after rewriting, or the slot is excluded `unrewritten-path`.
 - Prompt per arm: `stripEffortLines`, then `rewriteText` with the arm's scratch dir as the `scratch` replacement.
 - `--arm`: `parseArm` with the profile table. A `chunk` other than 1 is exit 2 (`--arm: chunk does not apply to extract-reviews`). An `isControlArm` name is exit 2. Duplicate names are exit 2.
@@ -227,13 +232,13 @@ Expected: PASS, 0 failures.
   - Run dir `{repo}/.claude-tweaks/pipelines/2026-11-01T000000-spec-9`:
     - `decisions.md` with one `Reproduction: lens "3a correctness" finding src/a.js:10 reproduced` line and one `lens "3b security" finding src/b.js:4 confirmed by tiebreak:abcdefabcdef` line;
     - `timing.json`, whose `dispatches.items` holds four `role:'lens reviewer'` items, `Review lens 3a correctness A`, `… B`, `Review lens 3b security A`, `Review lens 3b security B`, all with `tier:'standard'` and agentIds `l3a-a`, `l3a-b`, `l3b-a`, `l3b-b`;
-    - `review-ctx/context.md`, whose text names H and the run's `work/9-spec.md` path;
+    - `review-ctx/context.md`, whose text names H, the run's `work/9-spec.md` path, and one diff line `+see .claude-tweaks/pipelines/2025-01-01T000000-spec-1/decisions.md` (another run, relative: a generic mention);
     - `work/9-spec.md`;
     - `packet-inputs/manifest.json` `{mergeBase: B}`.
   - Transcripts under `{root}/projects/slug/sess/subagents/agent-{id}.jsonl`. Each holds a `user` prompt in the shape of the 2026-11-21 lens prompt: worktree `{repo}/.claude/worktrees/flow-spec-9` inside `git -C "…"`, `Diff scope: base {B} ... HEAD {H}`, the context bundle path, the spec path under the worktree, a `SCRATCH:` agent-scratch path, and a `[Effort: medium — …]` line. Each also holds an assistant reply with `effort:'medium'`:
     - `l3a-a`: `| Severity | Path:Line | Finding | Evidence |` with `| high | src/a.js:10 | archived-row-alpha | e |`;
     - `l3a-b`: `No findings.`;
-    - `l3b-a`: a row at `src/b.js:4` with text `archived-row-beta`;
+    - `l3b-a`: a row cited as `{worktree}/src/b.js:4` (absolute) with text `archived-row-beta`;
     - `l3b-b`: unparseable prose.
   - `variant` options to add:
     - a fifth dispatch whose prompt names `…/pipelines/{run}/decisions.md` (`l3c-a`);
@@ -245,7 +250,8 @@ Expected: PASS, 0 failures.
   - `AC1.1/AC1.2: one clean repository per review with two commits and the archived file list`: run with two arms (`name=haiku,profile=fast` and `name=sonnet,profile=standard`). There is exactly one `repos/*/repo` (both arms and every slot of the one run share it), its `git log --format=%s` is `head\nbase`, and its `git diff {replayBase}...{replayHead} --stat` lists the same file names as `git diff B...H --stat` in the fixture repo.
   - `AC2.1/AC2.2: no prompt names an archived sha or a fixture path`: no prompt file contains `B`, `H`, `B.slice(0,7)`, the worktree path or `mainRoot`. Each prompt contains its prompt entry's `repo` and the `replayBase`/`replayHead` of `reviews-fixture.json` `repos[0]`.
   - `AC3.1/AC3.2/AC3.3: decisions.md and a gone run input are excluded`: `excluded` has `{agentId:'l3c-a', reason:'unknown-run-input'}` and `{agentId:'l3d-a', reason:'run-input-gone'}`, and no prompt file under `prompts/` has a name containing `3c-a` or `2026-11-02T000000-spec-9`.
-  - `AC4.1/AC4.2: no archived row text or tiebreak line reaches a prompt, repo or copy`: a recursive read of every file under `prompts/` and `repos/` (`.git` excluded) finds none of `archived-row-alpha`, `archived-row-beta` or `confirmed by tiebreak`, and every file matching `repos/*/*--*` (the copies) contains `.claude-tweaks/pipelines` 0 times.
+  - `AC4.1/AC4.2: no archived row text or tiebreak line reaches a prompt, repo or copy`: a recursive read of every file under `prompts/` and `repos/` (`.git` excluded) finds none of `archived-row-alpha`, `archived-row-beta` or `confirmed by tiebreak`. Every file matching `repos/*/*--*` (the copies) contains `mainRoot` 0 times and `.claude-tweaks/pipelines/2026-11-01T000000-spec-9` 0 times. The context copy still contains the generic line `+see .claude-tweaks/pipelines/2025-01-01T000000-spec-1/decisions.md` unchanged, and no slot is excluded `unrewritten-path`.
+  - `archived rows are stored repo-relative`: the `archived-reports.json` `reports` entry for `3b-a` has `rows[0].path === 'src/b.js'`, and `runRows['2026-11-01T000000-spec-9']` includes the row of `l3c-a`, which is excluded `unknown-run-input` but whose reply parses (give `l3c-a` a one-row table reply at `src/b.js:7`).
   - `l3b-b is excluded as report-unparsed` (`reason:'report-unparsed'`).
   - `AC9.1: one --arm writes the user arm and control`: `reviews-manifest.json` `arms.map(a=>a.name)` deepEquals `['haiku','control']`, the control arm carries `model:'sonnet'`, `effort:'medium'` and `profile:'standard'`, and `validateReviewsManifest` returns `[]`.
   - `a repeated lens/side dispatch gets its own slot`: prompt names include `2026-11-01T000000-spec-9/3a-a` and `2026-11-01T000000-spec-9/3a-a.2`.
@@ -274,7 +280,7 @@ Expected: PASS, 0 failures.
 **Interfaces:**
 - Consumes: Task 1 exports; `parseLensReport`; Task 4's three output files and the prompt entry shape `{file,name,run,lens,side,repo}`.
 - Produces: `scoreReviews(opts, deps) -> exitCode`. It prints one JSON object:
-  `{ notes: [string, string, string], reference, fidelity: { [lens]: {caught, of, share} }, unidentifiedAgents, unidentifiedCost, arms: { [arm]: { scored, notJudged, notJudgedByReason, lenses: { [lens]: { reviews, rowsBySeverity, confirmed: {caught, of, unlocated}, archived: {caught, of}, new, vsReference: {raised, of}|null, fidelity, byRepeat?: { [r]: {caught, of} } } }, cost, minutes, recordedEffort, effortFieldsDiffer } } }`
+  `{ notes: [string, string, string], reference, fixture: { byLens: { [lens]: { selected, excludedByReason } } }, fidelity: { [lens]: {caught, of, share} }, unidentifiedAgents, unidentifiedCost, arms: { [arm]: { scored, notJudged, notJudgedByReason, lenses: { [lens]: { reviews, rowsBySeverity, confirmed: {caught, of, unlocated}, archived: {caught, of}, new, vsReference: {raised, of}|null, fidelity, byRepeat?: { [r]: {caught, of} } } }, cost, minutes, recordedEffort, effortFieldsDiffer } } }`
   - The three `notes` are, verbatim:
     - `Confirmed recall rewards an arm that behaves like the archive: the confirmed set comes from the archived tier's own output.`
     - `A new row is neither noise nor signal until sampled.`
@@ -288,9 +294,10 @@ Expected: PASS, 0 failures.
   2. `arm.effort !== null` and some recorded effort `!== arm.effort` → `effort-mismatch`
   3. `parseLensReport(text) === null` → `could-not-parse`, where `text = stripTree(reply, prompt.repo)`
   Otherwise the slot is scored. `rows = parseFindings(text)?.rows ?? []`, and `rowsBySeverity` adds `parseLensReport(text)` counts (overflow included).
-- `confirmed`: per repeat, per `archived-reports.json` `confirmed[unitKey][lens]` entry. A located finding is caught when some row from any scored slot of that (unitKey, lens) in that repeat is `near(row, f.path, f.line)`, whichever side or `.k` slot raised it. `of` is the located findings count and `unlocated` is copied, so the two sides of one lens count a finding once, not twice. The lens totals sum over unit keys and repeats. A (unitKey, lens) whose slots are all notJudged in a repeat adds nothing to `of` for that repeat: a review that was not judged is never a found-nothing review.
+- `confirmed` is per slot, summed (plan-review decision 1). Each scored slot is scored against `archived-reports.json` `confirmed[reports[slot].unitKey][lens]`. A located finding is caught when one of that slot's own rows is `near(row, f.path, f.line)`. The slot adds the located findings count to `of`, its caught count to `caught`, and the entry's `unlocated` to `unlocated`. The lens figure sums its scored slots and repeats, so a lens with two slots and one finding reads `of 2`. A notJudged slot adds nothing: a review that was not judged is never a found-nothing review.
 - `archived`: the archived rows of this slot caught by some replay row (`near`).
 - `new`: replay rows not `near` any `runRows[run]` entry.
+- `fixture.byLens` is read from `reviews-fixture.json`. `selected` counts `slots` per lens. `excludedByReason` counts `excluded` entries per lens and reason, covering only entries that carry a `lens`, since run-level exclusions and `unlabelled-dispatch` have none. This is the spec's "scored and excluded counts per lens from the fixture".
 - `vsReference`: for each repeat pair (every repeat of this arm × every repeat of the reference, as `score.js` pairs verdicts), the reference rows for the same prompt name that this arm's rows are `near`. It is `null` for the reference arm itself. `--reference` defaults to the first arm for which `isControlArm` is false, and an unknown name is exit 2.
 - `byRepeat` appears only when `arm.repeat > 1`, holding `confirmed` per repeat.
 - `fidelity[lens]` is `archived` summed over every control arm. Each arm's `lenses[lens].fidelity` copies it.
@@ -298,8 +305,10 @@ Expected: PASS, 0 failures.
 - Exit 3 when any arm has `notJudged > 0`, else 0. A validator problem is exit 1.
 
 - [ ] **Step 1: Write the failing tests** `tests/review-replay/reviews-score.test.js`. They run `extract-reviews` on the Task 4 fixture with `--arm name=near,profile=fast --arm name=far,profile=fast`, then write a workflow dir (`journal.jsonl` + `agent-{id}.jsonl`, each first user message `Replay judge {label}.`, each assistant entry `effort` set to its arm's effort, with `null` arms omitting the field) and run `score-reviews`:
-  - `AC5.1: a row 3 lines off is caught, a far row is not`: arm `near`'s `3a-a` slot replies `| high | src/a.js:13 | x | e |` and its other `3a` slots reply `No findings.`. Every `3a` slot of arm `far` replies `| high | src/a.js:30 | x | e |`. The fixture's one confirmed `3a` finding is `src/a.js:10`, so `arms.near.lenses['3a'].confirmed` deepEquals `{caught:1, of:1, unlocated:0}` and `arms.far.lenses['3a'].confirmed` deepEquals `{caught:0, of:1, unlocated:0}`.
-  - `AC5.2: the NEAR_LINES boundary`: a row at line 15 is caught (`|15-10| = 5`) and a row at line 16 is not.
+  - `AC5.1: a row 3 lines off is caught, a far row is not`: extract with `--lens 3a --max-per-lens 1`, so each arm has exactly one `3a` slot (`3a-a`, the first `3a` dispatch in file order). Arm `near`'s reply is `| high | src/a.js:13 | x | e |` and arm `far`'s is `| high | src/a.js:30 | x | e |`. The fixture's one confirmed `3a` finding is `src/a.js:10`, so `arms.near.lenses['3a'].confirmed` deepEquals `{caught:1, of:1, unlocated:0}` and `arms.far.lenses['3a'].confirmed` deepEquals `{caught:0, of:1, unlocated:0}`.
+  - `AC5.2: the NEAR_LINES boundary`: on the same one-slot extraction, a row at line 15 is caught (`|15-10| = 5`) and a row at line 16 is not.
+  - `per-slot recall sums the sides`: on a full extraction (slots `3a-a`, `3a-a.2` and `3a-b`), where every `3a` reply of arm `near` is `| high | src/a.js:13 | x | e |`, `arms.near.lenses['3a'].confirmed` deepEquals `{caught:3, of:3, unlocated:0}`.
+  - `fixture counts per lens`: the output's `fixture.byLens['3b']` deepEquals `{ selected: 1, excludedByReason: { 'report-unparsed': 1 } }`.
   - `AC6.1: an unparseable reply is could-not-parse and exits 3`: one slot's reply is `I looked around.`, so `notJudgedByReason['could-not-parse'] === 1` and the exit code is 3.
   - `AC6.2: No findings is a scored review with zero rows`: every reply is a table or `No findings.`, and the one `3b` slot (`3b-a`; `l3b-b` was excluded at extract) replies `No findings.`. The exit code is 0, `lenses['3b'].reviews === 1`, and `rowsBySeverity` for `3b` sums to 0.
   - `effort-mismatch`: an `effort=low` arm whose agent recorded `medium` lands under `notJudgedByReason['effort-mismatch']`.
