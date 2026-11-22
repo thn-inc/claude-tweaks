@@ -10,7 +10,9 @@
 
 **Spec:** `.claude-tweaks/pipelines/2026-11-22T104506-spec-5991/work/5991-spec.md` (record #5991)
 
-Scope keywords: extract-reviews, score-reviews, reviews-manifest, writeRepo
+Scope keywords: extractReviews, scoreReviews, REVIEWS_MANIFEST_FILE, makeWriteRepo
+
+Waived tools/pipeline-cost-report/reviews.js: read only — Task 4 and Task 5 import its `parseLensReport` and `lensIdOf` unchanged (premise correction 1)
 
 ## Global Constraints
 
@@ -45,6 +47,8 @@ These override the spec's Current State where the two disagree. Each is logged a
 
 ### Task 1: Shared contract — schema keys, validator and the exports the new modules reuse
 
+**Role:** integration
+
 **Files:**
 - Modify: `tools/review-replay/schema.js`
 - Modify: `tools/review-replay/counterfactual.js` (exports only)
@@ -72,15 +76,17 @@ These override the spec's Current State where the two disagree. Each is logged a
   - `isControlArm('control') === true`, `isControlArm('control.standard.medium') === true`, `isControlArm('controls') === false`.
   - Every new export listed in Interfaces is a function or value (`typeof … !== 'undefined'`).
 - [ ] **Step 2: Run test to verify it fails**
-  Run: `node --test tests/review-replay/reviews-schema.test.js`
-  Expected: FAIL — `validateReviewsManifest is not a function`.
+Run: `node --test tests/review-replay/reviews-schema.test.js`
+Expected: FAIL — `validateReviewsManifest is not a function`.
 - [ ] **Step 3: Implement.** `validateReviewsManifest` mirrors `validateManifest`'s `keyProblems` walk over the three key lists. It adds the `kind` check, the `repeat` positive-integer check, and `prompts must be an array`. The other files only gain names in `module.exports`, with no logic changes.
 - [ ] **Step 4: Run tests to verify they pass**
-  Run: `node --test tests/review-replay/reviews-schema.test.js tests/review-replay/counterfactual.test.js tests/review-replay/score.test.js tests/review-replay/extract.test.js`
-  Expected: PASS, 0 failures.
+Run: `node --test tests/review-replay/reviews-schema.test.js tests/review-replay/counterfactual.test.js tests/review-replay/score.test.js tests/review-replay/extract.test.js`
+Expected: PASS, 0 failures.
 - [ ] **Step 5: Commit** — `Add the reviews manifest schema and export the parsers the lens replay reuses` with `refs #5991`.
 
 ### Task 2: Prompt rewriting — `reviews-rewrite.js` (pure)
+
+**Role:** integration
 
 **Files:**
 - Create: `tools/review-replay/reviews-rewrite.js`
@@ -112,15 +118,17 @@ These override the spec's Current State where the two disagree. Each is logged a
   - `sha rewrite leaves unrelated hex tokens`: `'index ' + B.slice(0,6) + 'f..deadbeef1'` is unchanged, when `B.slice(0,6)+'f'` is not a prefix of `B`.
   - `stripEffortLines removes only the resolver line`: `'a\n[Effort: high — apply high-level reasoning depth to this task.]\nb'` gives `'a\nb'`, and `'see [Effort: high] above'` is unchanged.
 - [ ] **Step 2: Run test to verify it fails**
-  Run: `node --test tests/review-replay/reviews-rewrite.test.js`
-  Expected: FAIL — `Cannot find module '../../tools/review-replay/reviews-rewrite'`.
+Run: `node --test tests/review-replay/reviews-rewrite.test.js`
+Expected: FAIL — `Cannot find module '../../tools/review-replay/reviews-rewrite'`.
 - [ ] **Step 3: Implement** the six functions with the signatures above. Escape `mainRoot` for regex use (`/[.*+?^${}()|[\]\\]/g`). Match on the forward-slash spelling (`toPosix` from `schema.js`).
 - [ ] **Step 4: Run test to verify it passes**
-  Run: `node --test tests/review-replay/reviews-rewrite.test.js`
-  Expected: PASS, 0 failures.
+Run: `node --test tests/review-replay/reviews-rewrite.test.js`
+Expected: PASS, 0 failures.
 - [ ] **Step 5: Commit** — `Add review-replay prompt rewriting for archived lens prompts` with `refs #5991`.
 
 ### Task 3: The clean-repository builder — `deps.writeRepo`
+
+**Role:** integration
 
 **Files:**
 - Modify: `tools/review-replay.js` (add `makeWriteRepo`, wire `writeRepo` into `defaultDeps`)
@@ -141,15 +149,18 @@ These override the spec's Current State where the two disagree. Each is logged a
   - `writeRepo(B, H, d1, {originRefs:['main']})`: `git -C d1 log --format=%s` is `head\nbase`; `git -C d1 diff {base}...{head} --name-only` is `src/a.js\nsrc/b.js`; `git -C d1 log -1 --format=%an` is `review-replay`; `d1/.claude-tweaks/pipelines` does not exist; `git -C d1 rev-parse origin/main` equals the returned `base`.
   - `writeRepo(B, H, d2)` returns the same `{base, head}` as for d1 (reproducible shas).
 - [ ] **Step 2: Run test to verify it fails**
-  Run: `node --test tests/review-replay/write-repo.test.js`
-  Expected: FAIL — `makeWriteRepo is not a function`.
+Run: `node --test tests/review-replay/write-repo.test.js`
+Expected: FAIL — `makeWriteRepo is not a function`.
 - [ ] **Step 3: Implement** `makeWriteRepo` in `tools/review-replay.js` with `execFileSync` (`windowsHide: true`, `cwd` never `-C` for `tar`, as `writeTree`'s comment explains). In `defaultDeps`, set `writeRepo: makeWriteRepo(cwd)`.
 - [ ] **Step 4: Run tests to verify they pass**
-  Run: `node --test tests/review-replay/write-repo.test.js tests/review-replay/write-tree.test.js`
-  Expected: PASS, 0 failures.
+Run: `node --test tests/review-replay/write-repo.test.js tests/review-replay/write-tree.test.js`
+Expected: PASS, 0 failures.
 - [ ] **Step 5: Commit** — `Add the review-replay clean-repository builder for lens replays` with `refs #5991`.
 
 ### Task 4: `extract-reviews` — selection, repositories, prompts, outputs, control arm
+
+**Role:** judgment
+**Review risk:** high
 
 **Files:**
 - Create: `tools/review-replay/reviews-extract.js`
@@ -174,8 +185,9 @@ These override the spec's Current State where the two disagree. Each is logged a
     - `reviews-manifest.json`, `reviews-fixture.json`, `archived-reports.json`.
   - The manifest arm is `{name, profile, model: PROFILES[profile].model, effort: arm.effort ?? PROFILES[profile].effort, repeat, prompts}`.
   - A prompt entry is `{file, name: '{run}/{lens}-{side}[.k]', run, lens, side, repo}`.
-  - `archived-reports.json` holds `{ schemaVersion, reports, runRows }`:
-    - `reports`: `{ [slotName]: { lens, side, unit, counts, rows: [{sev,path,line}], confirmed: [{path,line,how}], unlocated } }`;
+  - `archived-reports.json` holds `{ schemaVersion, reports, confirmed, runRows }`:
+    - `reports`: `{ [slotName]: { lens, side, run, unitKey, counts, rows: [{sev,path,line}] } }`;
+    - `confirmed`: `{ [unitKey]: { [lens]: { findings: [{path,line,how}], unlocated } } }`, where `unitKey` is the run name, or `{run}/spec-{N}` for a member unit. Confirmed findings belong to the lens as a pair, not to one side, so both sides' slots share one entry;
     - `runRows`: `{ [run]: [{lens,path,line}] }`, every archived row of every lens slot in that run.
   - `reviews-fixture.json` holds `{ schemaVersion, role, requested, totals: { reviews, byLens }, excluded: [{run, agentId?, lens?, side?, reason}], repos: [{key, run, path, archivedBase, archivedHead, replayBase, replayHead}], slots: [{name, run, unit, lens, side, agentId, repoKey, archivedTier, archivedEffort, controlArm}] }`.
 
@@ -192,8 +204,8 @@ These override the spec's Current State where the two disagree. Each is logged a
   7. every input's source file must exist, read from `{runDir}/{member ? member + '/' : ''}{rel}`, scratch excepted (`run-input-gone`)
   8. after rewriting, `unrewrittenPaths` non-empty (`unrewritten-path`).
   A dispatch that passes all eight is a slot. `--lens` filters slots, and `--max-per-lens` caps slots per lens in run order. Both apply after the checks, and neither one produces an exclusion.
-- `unit`: the slot's run-directory paths all naming one `spec-{N}` member make the unit that member dir. Otherwise the unit is the run dir. Confirmed findings for the slot are `parseDecisions` of `{unit}/decisions.md`, keeping:
-  - `pairConfirmed` entries with `lensIdOf(lens) === slot.lens` (`how: 'pair'`);
+- `unit`: the slot's run-directory paths all naming one `spec-{N}` member make the unit that member dir. Otherwise the unit is the run dir. The confirmed findings for (unit, lens) are `parseDecisions` of `{unit}/decisions.md`, keeping:
+  - `pairConfirmed` entries whose `lensIdOf(lens)` is the lens id (`how: 'pair'`);
   - `verdicts` with `verdict === 'confirmed'` and the same lens (`how: 'tiebreak'`).
   A finding whose `line` is not finite counts in `unlocated`.
 - A second dispatch of the same (run, lens, side) is named with suffix `.2`, a third `.3`.
@@ -210,7 +222,7 @@ These override the spec's Current State where the two disagree. Each is logged a
 - `--min-reviews` counts selected slots. Unmet, or zero slots, means exit 3: print `{shortfall:{requested, available}, excluded}` to stderr and write nothing.
 - A write failure after selection: exit 1 with the "is now partial" message, exactly as `extract` does.
 
-- [ ] **Step 1: Write the fixture builder** `tests/review-replay/reviews-fixture.js` exporting `buildReviewsFixture(root) -> { mainRoot, runsRoot, transcripts, runName, B, H, worktree }`. It creates:
+- [ ] **Step 1: Write the fixture builder and the failing tests.** The fixture builder `tests/review-replay/reviews-fixture.js` exports `buildReviewsFixture(root) -> { mainRoot, runsRoot, transcripts, runName, B, H, worktree }`. It creates:
   - A git repo at `{root}/main checkout/repo` (the space is deliberate) with explicit identity and a filtered env. Commit B is `src/a.js` 20 lines. Commit H is `src/a.js` changed and `src/b.js` added.
   - Run dir `{repo}/.claude-tweaks/pipelines/2026-11-01T000000-spec-9`:
     - `decisions.md` with one `Reproduction: lens "3a correctness" finding src/a.js:10 reproduced` line and one `lens "3b security" finding src/b.js:4 confirmed by tiebreak:abcdefabcdef` line;
@@ -223,28 +235,36 @@ These override the spec's Current State where the two disagree. Each is logged a
     - `l3a-b`: `No findings.`;
     - `l3b-a`: a row at `src/b.js:4` with text `archived-row-beta`;
     - `l3b-b`: unparseable prose.
-  - `variant` options to add: a fifth dispatch whose prompt names `…/pipelines/{run}/decisions.md` (`l3c-a`); a sixth whose context bundle path is a deleted `review-ctx/gone.md` named as `review-ctx/context.md` in a second run dir that has no such file (`l3d-a`); and a repeated `Review lens 3a correctness A` dispatch (`l3a-a2`).
-- [ ] **Step 2: Write the failing tests** `tests/review-replay/reviews-extract.test.js`. Each runs `run({argv:['extract-reviews','--runs',runsRoot,'--out',out,'--role','lens','--transcripts',transcripts,'--arm','name=haiku,profile=fast', …], deps})` with deps holding the real `fs`, a `git` bound to the fixture repo, `writeRepo: makeWriteRepo(repo)`, and `pluginRoot`:
-  - `AC1: one clean repository per review with two commits and the archived file list`: there is exactly one `repos/*/repo`, `git log --format=%s` is `head\nbase`, and `git diff {replayBase}...{replayHead} --name-only` is `src/a.js\nsrc/b.js`.
-  - `AC2: no prompt names an archived sha or a fixture path`: no prompt file contains `B`, `H`, the worktree path or `mainRoot`. Each contains its repo path and the replay shas from `reviews-fixture.json` `repos[0]`.
-  - `AC3: decisions.md and a gone run input are excluded`: `excluded` has `{agentId:'l3c-a', reason:'unknown-run-input'}` and `{agentId:'l3d-a', reason:'run-input-gone'}`, and neither has a prompt file.
-  - `AC4: no archived row text or tiebreak line reaches a prompt, repo or copy`: a recursive read of `prompts/`, `repos/` and the copies finds none of `archived-row-alpha`, `archived-row-beta` or `confirmed by tiebreak`, and every copy matches `.claude-tweaks/pipelines` 0 times.
+  - `variant` options to add:
+    - a fifth dispatch whose prompt names `…/pipelines/{run}/decisions.md` (`l3c-a`);
+    - a second run dir `2026-11-02T000000-spec-9`, with its own `decisions.md` holding one `Reproduction:` line (so `readRun` does not exclude it) and one dispatch (`l3d-a`) whose prompt names that run's `review-ctx/context.md`, a file the builder never writes;
+    - a repeated `Review lens 3a correctness A` dispatch (`l3a-a2`).
+    Every variant dispatch has `tier:'standard'` and an `effort:'medium'` reply.
+
+  The tests go in `tests/review-replay/reviews-extract.test.js`. Each runs `run({argv:['extract-reviews','--runs',runsRoot,'--out',out,'--role','lens','--transcripts',transcripts,'--arm','name=haiku,profile=fast', …], deps})`, with deps holding the real `fs`, a `git` bound to the fixture repo, `writeRepo: makeWriteRepo(repo)` and `pluginRoot`. Repositories, copies and prompts are written only for slots that pass every check, so an excluded dispatch leaves no repository behind.
+  - `AC1.1/AC1.2: one clean repository per review with two commits and the archived file list`: run with two arms (`name=haiku,profile=fast` and `name=sonnet,profile=standard`). There is exactly one `repos/*/repo` (both arms and every slot of the one run share it), its `git log --format=%s` is `head\nbase`, and its `git diff {replayBase}...{replayHead} --stat` lists the same file names as `git diff B...H --stat` in the fixture repo.
+  - `AC2.1/AC2.2: no prompt names an archived sha or a fixture path`: no prompt file contains `B`, `H`, `B.slice(0,7)`, the worktree path or `mainRoot`. Each prompt contains its prompt entry's `repo` and the `replayBase`/`replayHead` of `reviews-fixture.json` `repos[0]`.
+  - `AC3.1/AC3.2/AC3.3: decisions.md and a gone run input are excluded`: `excluded` has `{agentId:'l3c-a', reason:'unknown-run-input'}` and `{agentId:'l3d-a', reason:'run-input-gone'}`, and no prompt file under `prompts/` has a name containing `3c-a` or `2026-11-02T000000-spec-9`.
+  - `AC4.1/AC4.2: no archived row text or tiebreak line reaches a prompt, repo or copy`: a recursive read of every file under `prompts/` and `repos/` (`.git` excluded) finds none of `archived-row-alpha`, `archived-row-beta` or `confirmed by tiebreak`, and every file matching `repos/*/*--*` (the copies) contains `.claude-tweaks/pipelines` 0 times.
   - `l3b-b is excluded as report-unparsed` (`reason:'report-unparsed'`).
-  - `AC9 (extract half): one --arm writes the user arm and control`: `reviews-manifest.json` `arms.map(a=>a.name)` deepEquals `['haiku','control']`, and the control arm carries `model:'sonnet'`, `effort:'medium'`, `profile:'standard'`. `validateReviewsManifest` returns `[]`.
+  - `AC9.1: one --arm writes the user arm and control`: `reviews-manifest.json` `arms.map(a=>a.name)` deepEquals `['haiku','control']`, the control arm carries `model:'sonnet'`, `effort:'medium'` and `profile:'standard'`, and `validateReviewsManifest` returns `[]`.
   - `a repeated lens/side dispatch gets its own slot`: prompt names include `2026-11-01T000000-spec-9/3a-a` and `2026-11-01T000000-spec-9/3a-a.2`.
-  - `AC7: the workflow launches one agent per arm × repeat × prompt`: `runWorkflow(manifest)` (helpers.js) calls equal the sum of `prompts.length * repeat` over arms, and each call's `opts.model`/`effort` equals its arm's.
+  - `AC7.1: the workflow launches one agent per arm × repeat × prompt`: the number of `runWorkflow(manifest)` (helpers.js) calls equals the sum of `prompts.length * repeat` over arms, and each call's `opts.model`/`effort` equals its arm's.
   - `the effort line is gone and the scratch is a new empty directory`: no prompt contains `[Effort:`, and the prompt's `SCRATCH:` path exists under `{out}/scratch/haiku/` and is empty.
   - `--arm name=control,profile=fast exits 2`; `--arm name=x,chunk=2,profile=fast exits 2`; `--min-reviews 99 exits 3 and writes no manifest`.
-- [ ] **Step 3: Run tests to verify they fail**
-  Run: `node --test tests/review-replay/reviews-extract.test.js`
-  Expected: FAIL — `unknown command: extract-reviews`.
-- [ ] **Step 4: Implement** `extractReviews` per the rules above, and wire the command in `tools/review-replay.js` (`COMMAND_FLAGS['extract-reviews']`, the required-flags table).
-- [ ] **Step 5: Run tests to verify they pass**
-  Run: `node --test tests/review-replay/reviews-extract.test.js tests/review-replay/extract.test.js tests/review-replay/workflow.test.js tests/review-replay/no-plugin-reference.test.js`
-  Expected: PASS, 0 failures.
-- [ ] **Step 6: Commit** — `Add review-replay extract-reviews: replay archived lens reviewers in clean repositories` with `refs #5991`.
+- [ ] **Step 2: Run tests to verify they fail**
+Run: `node --test tests/review-replay/reviews-extract.test.js`
+Expected: FAIL — `unknown command: extract-reviews`.
+- [ ] **Step 3: Implement** `extractReviews` per the rules above, and wire the command in `tools/review-replay.js` (`COMMAND_FLAGS['extract-reviews']`, the required-flags table).
+- [ ] **Step 4: Run tests to verify they pass**
+Run: `node --test tests/review-replay/reviews-extract.test.js tests/review-replay/extract.test.js tests/review-replay/workflow.test.js tests/review-replay/no-plugin-reference.test.js`
+Expected: PASS, 0 failures.
+- [ ] **Step 5: Commit** — `Add review-replay extract-reviews: replay archived lens reviewers in clean repositories` with `refs #5991`.
 
 ### Task 5: `score-reviews`
+
+**Role:** judgment
+**Review risk:** high
 
 **Files:**
 - Create: `tools/review-replay/reviews-score.js`
@@ -268,7 +288,7 @@ These override the spec's Current State where the two disagree. Each is logged a
   2. `arm.effort !== null` and some recorded effort `!== arm.effort` → `effort-mismatch`
   3. `parseLensReport(text) === null` → `could-not-parse`, where `text = stripTree(reply, prompt.repo)`
   Otherwise the slot is scored. `rows = parseFindings(text)?.rows ?? []`, and `rowsBySeverity` adds `parseLensReport(text)` counts (overflow included).
-- `confirmed.caught`: archived confirmed findings for the slot with some row `near(row, f.path, f.line)`. `of` is the located confirmed count; `unlocated` is copied. The `a` and `b` slots of one lens each count against the same confirmed set, and their tallies add.
+- `confirmed`: per repeat, per `archived-reports.json` `confirmed[unitKey][lens]` entry. A located finding is caught when some row from any scored slot of that (unitKey, lens) in that repeat is `near(row, f.path, f.line)`, whichever side or `.k` slot raised it. `of` is the located findings count and `unlocated` is copied, so the two sides of one lens count a finding once, not twice. The lens totals sum over unit keys and repeats. A (unitKey, lens) whose slots are all notJudged in a repeat adds nothing to `of` for that repeat: a review that was not judged is never a found-nothing review.
 - `archived`: the archived rows of this slot caught by some replay row (`near`).
 - `new`: replay rows not `near` any `runRows[run]` entry.
 - `vsReference`: for each repeat pair (every repeat of this arm × every repeat of the reference, as `score.js` pairs verdicts), the reference rows for the same prompt name that this arm's rows are `near`. It is `null` for the reference arm itself. `--reference` defaults to the first arm for which `isControlArm` is false, and an unknown name is exit 2.
@@ -278,24 +298,26 @@ These override the spec's Current State where the two disagree. Each is logged a
 - Exit 3 when any arm has `notJudged > 0`, else 0. A validator problem is exit 1.
 
 - [ ] **Step 1: Write the failing tests** `tests/review-replay/reviews-score.test.js`. They run `extract-reviews` on the Task 4 fixture with `--arm name=near,profile=fast --arm name=far,profile=fast`, then write a workflow dir (`journal.jsonl` + `agent-{id}.jsonl`, each first user message `Replay judge {label}.`, each assistant entry `effort` set to its arm's effort, with `null` arms omitting the field) and run `score-reviews`:
-  - `AC5: a row 3 lines off is caught, a far row is not`: both `3a` slots (a and b) of arm `near` reply `| high | src/a.js:13 | x | e |`, and both of arm `far` reply `| high | src/a.js:30 | x | e |`. The fixture's one confirmed `3a` finding is `src/a.js:10`, and each slot counts against it, so `arms.near.lenses['3a'].confirmed` deepEquals `{caught:2, of:2, unlocated:0}` and `arms.far.lenses['3a'].confirmed` deepEquals `{caught:0, of:2, unlocated:0}`.
-  - `AC5: the NEAR_LINES boundary`: line 15 is caught (`|15-10| = 5`) and line 16 is not.
-  - `AC6: an unparseable reply is could-not-parse and exits 3`: one slot's reply is `I looked around.`, so `notJudgedByReason['could-not-parse'] === 1` and the exit code is 3.
-  - `AC6: No findings is a scored review with zero rows`: every reply is a table or `No findings.`, so the exit code is 0, that slot's lens has `reviews` ≥ 1, and `rowsBySeverity` totals 0 for it.
+  - `AC5.1: a row 3 lines off is caught, a far row is not`: arm `near`'s `3a-a` slot replies `| high | src/a.js:13 | x | e |` and its other `3a` slots reply `No findings.`. Every `3a` slot of arm `far` replies `| high | src/a.js:30 | x | e |`. The fixture's one confirmed `3a` finding is `src/a.js:10`, so `arms.near.lenses['3a'].confirmed` deepEquals `{caught:1, of:1, unlocated:0}` and `arms.far.lenses['3a'].confirmed` deepEquals `{caught:0, of:1, unlocated:0}`.
+  - `AC5.2: the NEAR_LINES boundary`: a row at line 15 is caught (`|15-10| = 5`) and a row at line 16 is not.
+  - `AC6.1: an unparseable reply is could-not-parse and exits 3`: one slot's reply is `I looked around.`, so `notJudgedByReason['could-not-parse'] === 1` and the exit code is 3.
+  - `AC6.2: No findings is a scored review with zero rows`: every reply is a table or `No findings.`, and the one `3b` slot (`3b-a`; `l3b-b` was excluded at extract) replies `No findings.`. The exit code is 0, `lenses['3b'].reviews === 1`, and `rowsBySeverity` for `3b` sums to 0.
   - `effort-mismatch`: an `effort=low` arm whose agent recorded `medium` lands under `notJudgedByReason['effort-mismatch']`.
-  - `AC9 (score half): fidelity per lens from the control arm`: the output has `fidelity['3a']` with `caught`/`of`, and every arm's `lenses['3a'].fidelity` deepEquals it.
+  - `AC9.2: fidelity per lens from the control arm`: the output has `fidelity['3a']` with `caught`/`of`, and every arm's `lenses['3a'].fidelity` deepEquals it.
   - `rows citing the absolute repo path still score`: a reply row `| high | {repoPath}/src/a.js:10 | x | e |` is caught.
   - `the output opens with the three notes`: `notes` deepEquals the three strings above.
 - [ ] **Step 2: Run tests to verify they fail**
-  Run: `node --test tests/review-replay/reviews-score.test.js`
-  Expected: FAIL — `unknown command: score-reviews`.
+Run: `node --test tests/review-replay/reviews-score.test.js`
+Expected: FAIL — `unknown command: score-reviews`.
 - [ ] **Step 3: Implement** `scoreReviews` and wire the command.
 - [ ] **Step 4: Run tests to verify they pass**
-  Run: `node --test tests/review-replay/reviews-score.test.js tests/review-replay/score.test.js tests/review-replay/no-plugin-reference.test.js`
-  Expected: PASS, 0 failures.
+Run: `node --test tests/review-replay/reviews-score.test.js tests/review-replay/score.test.js tests/review-replay/no-plugin-reference.test.js`
+Expected: PASS, 0 failures.
 - [ ] **Step 5: Commit** — `Add review-replay score-reviews: recall against confirmed findings, fidelity from the control arm` with `refs #5991`.
 
 ### Task 6: Usage, header, journey and structure doc
+
+**Role:** integration
 
 **Files:**
 - Modify: `tools/review-replay.js` (header comment and `USAGE`)
@@ -308,14 +330,14 @@ These override the spec's Current State where the two disagree. Each is logged a
 
 - [ ] **Step 1: Write the failing test** `USAGE names both new commands`: running with no argv gives an `err` that contains `extract-reviews --runs <root> --out <dir> --role lens` and `score-reviews --out <dir> --transcripts <workflow dir>`.
 - [ ] **Step 2: Run test to verify it fails**
-  Run: `node --test tests/review-replay/reviews-extract.test.js`
-  Expected: FAIL — the USAGE assertion.
+Run: `node --test tests/review-replay/reviews-extract.test.js`
+Expected: FAIL — the USAGE assertion.
 - [ ] **Step 3: Write.**
   - The header gets one paragraph per command, in the existing paragraphs' shape: what it reads, what it writes, the control arm and `fidelity`, and the two exit-3 cases.
   - `USAGE` gets the two lines, with every flag from Tasks 4-5.
   - The journey follows `docs/journeys/replay-archived-reviews-to-measure-a-tiebreak-change-5557.md`'s shape. Its frontmatter `files:` lists the four new tool modules, `tools/review-replay.js`, `replay.workflow.js` and `schema.js`. Its steps are 1 extract-reviews, 2 the Workflow run on `reviews-manifest.json`, and 3 score-reviews. Each step's Should understand states the exclusion reasons, that `notJudged` is never a found-nothing review, and that an arm's numbers are read against `control`'s fidelity. The two notes about recall and new rows, and the two-commit caveat, go in step 3. Origin is `Created during the build of #5991 (run 2026-11-22T104506-spec-5991)`.
   - `docs/plugin-structure.md`: extend the existing `tools/review-replay.js` bullet with `extract-reviews`/`score-reviews` in one clause.
-- [ ] **Step 4: Run tests to verify they pass**
-  Run: `node --test tests/review-replay/reviews-extract.test.js tests/review-replay/no-plugin-reference.test.js`
-  Expected: PASS, 0 failures.
+- [ ] **Step 4: Run tests to verify they pass (AC8.1: `no-plugin-reference.test.js` still passes)**
+Run: `node --test tests/review-replay/reviews-extract.test.js tests/review-replay/no-plugin-reference.test.js`
+Expected: PASS, 0 failures.
 - [ ] **Step 5: Commit** — `Document review-replay extract-reviews and score-reviews — usage, header, journey` with `refs #5991`.
