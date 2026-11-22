@@ -115,6 +115,17 @@ A claim of the form "X does not do Y" (a denied-twice call does not end the firi
 
 **Retiring a claim's wording across several copies needs a ban and a positive twin, each proved per copy.** When a change rewords one claim everywhere it is restated, a sweep that bans the old phrasing passes any third phrasing: a copy reworded to neither the old nor the new text can still say the old thing and stays green. Pair the ban with a positive pin that every site carries the replacement wording, over the same site map. `tests/foreground-execution-instruction.test.js` (#3722) does this twice: over its `claimSites()` map, `UNQUALIFIED` bans the "never re-woken" family while `QUALIFIED` requires "cannot count on being re-woken" at every site; and `STATUS_ONLY` bans the bare-`STATUS:` re-wake answer while `SHARED_RULE`, spread into each copy's own fact list, requires the whole-final-reply wording. Prove each half per site, not once: doctor exactly one site in memory (append the banned phrase, or strip the required one) and assert the predicate returns exactly `[name]`, with an `assert.notEqual` on the doctored text so a strip that matched nothing cannot pass. The ban's go-red proof appends the exact banned phrase, so it proves only that spelling; the positive twin is what catches a reworded copy — the ruling #3722's build review recorded for its `STATUS_ONLY` proof.
 
+## A policy-gated opt-in spread across several files, with no frozen base
+
+When an opt-in policy key adds prose to several existing files of one skill and the default path is not frozen as a fixture (unlike `SKILL.md`'s expand-contract Decision Framework row), pin the gating itself. `tests/specify-planning-conformance.test.js` does this for `plan-at-specify` across #6056's three shaping files and #6057's three decomposition files:
+
+1. Each file carries exactly one `<!-- {key}:start -->` … `<!-- {key}:end -->` block whose first or last sentence is the gate (an opening sentence that resolves the key under one backend, or a closing `Otherwise skip this paragraph.`). A per-file map (`SHAPING_FILES`, `DECOMPOSITION_FILES`) names each file's gate phrases.
+2. One helper (`gateProblems`) returns a problem list per file: `block count` for a missing, reversed or repeated marker, `leak: {token}` for an opt-in token outside the block, and `gate: {phrase}` for a gate phrase missing inside it, compared whitespace-collapsed because the block hard-wraps.
+3. A walk over every other `.md` file in the skill directory asserts none names an opt-in token, with a floor on the file count so an empty walk cannot pass. Its skip set is the union of the per-file maps plus the opt-in's own sub-file (`planning.md`), so a file that gains a block must join a map in the same change or the walk fails on it.
+4. One go-red control per problem kind on a live file, each guarded by `assert.notEqual` and checked for that problem's own string: append a token after the block, delete the end marker, delete a gate phrase.
+
+The gate check does not know position: pin where each block sits (after the step it belongs to, before the next) in a separate ordering test, as the suite's position assertions do.
+
 ## Reference instances
 
 Suites that model the patterns in `SKILL.md`, each annotated with what it shows:
