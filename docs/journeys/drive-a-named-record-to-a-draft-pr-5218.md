@@ -130,6 +130,7 @@ files:
 - **URL:** the `merge-entry` … `merge-*` sub-step event lines, the `merge` event line, and the final line's `merge: { outcome, reason, mergeCommit, postMerge }` field
 - **Action:** read the `merge` field. After a green CI wait, a record without `auto:merge` reads `pending-review` / `not-authorized`, and a deps object with no supplier reads `pending-review` / `no-supplier` with no call made at all. The step runs only after the CI wait ended `green`. The driver then:
   - re-reads the record's live labels for `auto:merge`;
+  - stops a widened record at `pending-review` / `widened-admission` (#6018) before any judgment worker launches: one admitted above `risk:low` or with a non-fast-lane ceremony, one whose live labels now widen it, or one whose run carries no readable widening list;
   - with `--in-flight-prs`, holds at `pending-review` (`drain-overlap` or `near-duplicate`) on an overlapping in-flight PR, in the `merge-overlap` line, before any judgment worker launches;
   - takes the judgment supplier's verdict (a read-only merge-check worker, then a read-only acceptance worker whose Try it, packet or parent brief the driver's own code posts) and confirms the verdict line in `decisions.md`;
   - checks closing links and composes the subject;
@@ -137,6 +138,7 @@ files:
   - reads the merge state and checks, then merges, arms or stops.
 - **Should feel:** guarded. Every refusal that can be decided before the costly mark-ready is decided before it, and a merge goes out only against the head the driver's own checks covered.
 - **Should understand:**
+  - A widened record never merges on its own, even with `auto:merge`. The `merge-entry` detail names the source: `admitted widened by risk` for the run's own list, `live labels widen by ceremony (not at admission)` for a label added since. The labels are checked again right before the merge call, and a widening label added during the judgment workers or the CI watch stops at `merge-call` with `widened by … at the pre-merge read`. The `--check` verdict line (step 2) shows the same list as `widenedBy`.
   - A CI wait that ended in any word other than `green` skips the step, with or without a supplier. The `merge` event line then reads `not entered: ci {word}`, the final line carries no `merge` field, and nothing is called.
   - The outcome is `merged`, `armed` or `pending-review`.
     - `armed` means the forge holds the merge, and the reconciler finishes cleanup on merged evidence.
@@ -160,6 +162,7 @@ files:
   - The pending label the driver applies is `accept:pending`, on the parent for a `due` gate above the oversight floor and on the record for an above-floor record with no parent.
 - **Red flags:**
   - A merge or ready call for a record without `auto:merge`, or after a judgment worker's verdict that was not a confirmed `auto-merge`.
+  - A judgment worker launched, or a ready or merge call made, for a widened record (#6018): one carrying `risk:medium`/`risk:high` or a non-fast-lane ceremony label, or whose run has no readable widening list.
   - A merge after a red or pending read.
   - A `--match-head-commit` other than the checked head.
   - `--admin` or `--delete-branch` anywhere.
@@ -189,3 +192,4 @@ files:
 - Updated during the build of #5917 (run `2026-11-19T062113-spec-5915-5917`): step 2 lists the policy step's model refusals, and step 3 says the worker, review and judgment lines carry the requested `model`, with a matching red flag.
 - Updated at wrap-up of #5917: step 3's `model` red flag is narrowed to a launch that started, since a stop before the launch writes a `worker` line that resolved no model.
 - Updated during the build of #5942 (run `2026-11-21T171056-spec-5941-5942`): step 2 adds the `model-effort` and unknown-effort refusals, and step 3 says the launch lines carry `effort` and that the review fix round writes its own `worker` line (`fix: true`), with a matching red flag.
+- Updated during the build of #6018 (run `2026-11-22T105528-record-6018`): step 2 names `express-driver-max-risk` among the lane bounds, step 3 says the review step also runs for a record admitted widened, and step 7 adds the `widened-admission` stop at merge entry and at the pre-merge read.
