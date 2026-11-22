@@ -9,3 +9,5 @@
 | 5 | wrap-up | Reflect: no plan-authoring check enumerates a write step's per-call failure outcomes (the 10 final-review gaps) | deferred | Defer-reason: tangential — routed below floor to digest #5046 (issuecomment-7086773057) |
 | 6 | wrap-up | Reflect: SDD dispatches lacked the worktree shell constraint, 11 wd-guard-refusal events | accepted | Already tracked by open records #5335 and #4243; not refiled |
 | 7 | wrap-up | Reflect: handoff child ran context-gauge with one step left and rewrote handoff.json | accepted | Already tracked by open records #5401 and #5138; not refiled |
+| 8 | wrap-up | pr — PR #6095 — this run's own pr-first PR; disposition is Phase 4's merge decision | observation | — |
+| 9 | wrap-up | suite — residue probe not run (skipped via --no-suite in the fact pack); suite state taken from the verify pass and PR #6095 CI, green at 15656f157 | observation | — |
