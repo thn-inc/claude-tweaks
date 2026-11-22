@@ -1,6 +1,6 @@
 ---
 name: lock-race-test-seam
-description: Use when adding or reviewing a test that claims a writer holds a lock (plugin/bin/lib/file-lock.js) across a read-modify-write, so that two concurrent writers cannot lose a row. Covers why a two-child-process test cannot prove the lock, the injected read seam that can, and the revert check that shows the test goes red. Keywords - file-lock, withLock, race test, lost update, appendRow, settleRow, read seam, interleave, LOCK_TIMEOUT.
+description: Use when adding or reviewing a test that claims a writer holds a lock (plugin/bin/lib/file-lock.js) across a read-modify-write, so that two concurrent writers cannot lose a row, or that claims a git compare-and-swap (update-ref with an expected old value, a push under --force-with-lease) refuses a concurrent writer. Covers why a two-child-process test cannot prove the lock, the injected read seam that can, the git-runner interleave seam for a ref CAS, and the revert check that shows the test goes red. Keywords - file-lock, withLock, race test, lost update, appendRow, settleRow, read seam, interleave, LOCK_TIMEOUT, update-ref, compare-and-swap, force-with-lease, plan-store.
 ---
 
 # Lock race test seam
@@ -21,6 +21,10 @@ Inject a read seam into the locked function (`appendRow({ readLedger })` in `plu
 ## Prove it goes red
 
 Delete the `withLock` wrapper (or the lock acquisition) and run the seam test: the interleaved append must succeed, the assertion on `LOCK_TIMEOUT` must fail. A race test not run against the lock-removed code has not been shown to test the lock.
+
+## A git compare-and-swap instead of a file lock
+
+The guard can be git's own compare-and-swap rather than `withLock`: `git update-ref <ref> <new> <old>` (an empty `<old>` requires the ref to be absent), or a push under `--force-with-lease={ref}:{sha}`. Two racing processes have the same startup problem, so interleave in-process through the injected git runner: on the first call whose argv carries the guarded verb (`update-ref`, `push`), the wrapper moves the ref itself (`update-ref` in the same checkout, or a push from a second clone) and then delegates to real git. Assert the guarded write lost (failed, or for a write whose push already landed, reported its local ref unmoved) and that the ref still names the interloper's sha. `tests/bin-lib/plan-store/store.test.js` is the worked example for `plugin/bin/lib/plan-store/store.js`'s `writePlan`: "a local writer moving the ref between the prior read and update-ref loses cleanly", one case per push mode so each reports its own red, and "two racing writers: the loser exits no-ref and the winner's ref stands" for the lease. To prove the local case goes red, drop the expected-old argument from the `update-ref` call: the move then succeeds over the interloper and the assertion on the interloper's sha fails.
 
 ## Anti-patterns
 

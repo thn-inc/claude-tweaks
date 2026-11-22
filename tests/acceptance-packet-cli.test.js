@@ -384,6 +384,80 @@ test('no --run reads no decisions log and no findings', (t) => {
   assert.deepEqual(idsOf(facts, 'finding'), []);
 });
 
+// ---- gather: settled planning lines (#6054) ----
+
+const PLANNING = '## Planning Decisions';
+const SETTLED_ONE = 'Settled at planning: alpha — chose x; not y';
+const SETTLED_TWO = 'Settled at planning: beta — chose p; not q';
+const specWithSettled = `# Spec\n\n${PLANNING}\n${SETTLED_ONE}\n${SETTLED_TWO}\n`;
+
+test('gather lists settled planning lines from the run dir\'s materialized spec', (t) => {
+  const ws = workspace(t);
+  writeText(path.join(ws.runDir, 'work', '7-spec.md'), specWithSettled);
+  const { facts } = gather(ws, ['--run', ws.runDir]);
+  assert.deepEqual(idsOf(facts, 'finding'), ['finding:1', 'finding:2']);
+  assert.deepEqual(facts.facts.filter((f) => f.kind === 'finding').map((f) => f.text), [SETTLED_ONE, SETTLED_TWO]);
+});
+
+test('gather falls back to --spec for the record\'s own spec', (t) => {
+  const ws = workspace(t);
+  const spec = writeText(ws.file('spec.md'), `${PLANNING}\n${SETTLED_ONE}\n`);
+  const { facts } = gather(ws, ['--run', ws.runDir, '--spec', spec]);
+  assert.deepEqual(idsOf(facts, 'finding'), ['finding:1']);
+  assert.equal(factOf(facts, 'finding:1').text, SETTLED_ONE);
+});
+
+test('gather reads a spec in the multi-spec spec-{n}/work layout', (t) => {
+  const ws = workspace(t);
+  writeText(path.join(ws.runDir, 'spec-7', 'work', '7-spec.md'), specWithSettled);
+  const { facts } = gather(ws, ['--run', ws.runDir]);
+  assert.deepEqual(idsOf(facts, 'finding'), ['finding:1', 'finding:2']);
+});
+
+test('gather reads the archived run dir\'s spec when the live run dir has none', (t) => {
+  const ws = workspace(t);
+  writeText(path.join(ws.root, '.claude-tweaks', 'pipelines', 'archive', 'run-1', 'work', '7-spec.md'), specWithSettled);
+  const { facts } = gather(ws, ['--run', ws.runDir]);
+  assert.deepEqual(idsOf(facts, 'finding'), ['finding:1', 'finding:2']);
+});
+
+test('the run dir\'s spec wins over --spec when both carry settled lines', (t) => {
+  const ws = workspace(t);
+  writeText(path.join(ws.runDir, 'work', '7-spec.md'), `${PLANNING}\n${SETTLED_ONE}\n`);
+  const spec = writeText(ws.file('spec.md'), `${PLANNING}\n${SETTLED_TWO}\n`);
+  const { facts } = gather(ws, ['--run', ws.runDir, '--spec', spec]);
+  assert.deepEqual(facts.facts.filter((f) => f.kind === 'finding').map((f) => f.text), [SETTLED_ONE]);
+});
+
+test('gather with no run dir reads --spec', (t) => {
+  const ws = workspace(t);
+  const spec = writeText(ws.file('spec.md'), `${PLANNING}\n${SETTLED_ONE}\n`);
+  const { facts } = gather(ws, ['--spec', spec]);
+  assert.deepEqual(idsOf(facts, 'finding'), ['finding:1']);
+});
+
+test('a spec with no Planning Decisions, or a missing or unreadable one, leaves the facts unchanged', (t) => {
+  const ws = workspace(t);
+  // The evidence facts are compared; partial notes say whether a spec was found, which is not this claim.
+  const baseline = gather(ws, ['--run', ws.runDir]).facts.facts;
+  const plain = writeText(ws.file('plain.md'), '# Spec\n\nNo planning section here.\n');
+  assert.deepEqual(gather(ws, ['--run', ws.runDir, '--spec', plain]).facts.facts, baseline);
+  assert.deepEqual(gather(ws, ['--run', ws.runDir, '--spec', ws.file('absent.md')]).facts.facts, baseline);
+  // A directory at the spec path: readFile throws, and the read must come back null, not throw.
+  fs.mkdirSync(path.join(ws.runDir, 'work', '7-spec.md'), { recursive: true });
+  assert.deepEqual(gather(ws, ['--run', ws.runDir]).facts.facts, baseline);
+});
+
+test('unreadable console findings still list the settled lines', (t) => {
+  const ws = workspace(t);
+  writeText(path.join(ws.runDir, 'decisions.md'), `${stagedLow('src/open.js:9')}\n`);
+  writeText(path.join(ws.runDir, 'work', '7-spec.md'), specWithSettled);
+  const denied = () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); };
+  const { facts } = gather(ws, ['--run', ws.runDir], { readdir: denied });
+  assert.deepEqual(idsOf(facts, 'finding'), ['finding:1', 'finding:2']);
+  assert.ok(facts.partial.includes('review findings not read — low-confidence findings not listed'));
+});
+
 test('Q13: a logged selection with no QA record states the gap', (t) => {
   const ws = workspace(t);
   writeText(path.join(ws.runDir, 'decisions.md'), '- AUTO 10:00:00 — QA scoped: 2/9.\n');

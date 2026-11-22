@@ -112,11 +112,13 @@ const POLICY_KEYS = [
   { key: 'express-driver', type: 'enum', values: ['off', 'split', 'on'], default: 'off', policyOnly: true, summary: "Routes admitted records to the pipeline driver: off, on, or split by record-number parity.", category: 'merge-safety', tier: 'advanced' },
   { key: 'express-driver-wall-clock-minutes', type: 'integer', min: 1, default: 30, policyOnly: true, summary: "Wall-clock ceiling in minutes for each driver worker launch, not the whole record.", category: 'merge-safety', tier: 'advanced' },
   { key: 'express-driver-spend-ceiling-dollars', type: 'integer', min: 1, default: 10, policyOnly: true, summary: "Spend ceiling in whole dollars for each driver worker launch, not the whole record.", category: 'merge-safety', tier: 'advanced' },
-  { key: 'express-driver-review', type: 'enum', values: ['off', 'on', 'beyond-express'], default: 'beyond-express', policyOnly: true, summary: "Whether the pipeline driver runs its evidence reviewer: off, on, or only for records beyond the express bounds.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'express-driver-review', type: 'enum', values: ['off', 'on', 'beyond-express'], default: 'beyond-express', policyOnly: true, summary: "Whether the driver runs its reviewer: off, on (also admits any recognised ceremony label), or only past express bounds or above low risk.", category: 'merge-safety', tier: 'advanced' },
   // #5224: the driver's lane bounds — policyOnly like its siblings, since they bound what autonomous machinery may take on. A record beyond the express bounds is admitted only with the reviewer step on. express-driver-max-lines is a Shape B derived default (_shared/policy-schema-read-path.md): the base default 40 equals auto-merge-max-lines' own, and resolvePolicyKeys derives the value from the resolved auto-merge-max-lines whenever it resolves source 'default' (deriveExpressDriverMaxLines); the driver reads source !== 'default' to decide whether to pass check --max-lines.
   { key: 'express-driver-max-size', type: 'enum', values: ['low', 'medium'], default: 'low', policyOnly: true, summary: "Largest size label the driver admits into its lane: low (the express bound) or medium; size:high is never admitted.", category: 'merge-safety', tier: 'advanced' },
   { key: 'express-driver-max-key-files', type: 'integer', min: 1, default: 3, policyOnly: true, summary: "Most Key Files a record may list for the driver to admit it; the default equals the express lane's own limit.", category: 'merge-safety', tier: 'advanced' },
   { key: 'express-driver-max-lines', type: 'integer', min: 1, default: 40, policyOnly: true, summary: "Diff-line bound the driver's check applies to a record the reviewer step is on for; unset, the express bound applies.", category: 'merge-safety', tier: 'advanced' },
+  // #6018: the highest risk label the driver admits. policyOnly because it bounds what autonomous machinery may take on, so a --run config never widens it. A record admitted above risk:low is admitted only with the reviewer step on and always stops at pending-review for a human merge. Factory decision (#6006): factory-settable (not in FACTORY_REFUSED_KEYS), safe as a user-wide default because a widened record needs the reviewer on and always ends at a human merge.
+  { key: 'express-driver-max-risk', type: 'enum', values: ['low', 'medium', 'high'], default: 'low', policyOnly: true, summary: "Highest risk label the driver will take on: low, medium or high; above low it needs the reviewer step and a human merge.", category: 'merge-safety', tier: 'advanced' },
   { key: 'auto-merge-max-lines', type: 'integer', default: 40, summary: "Bounds how large a diff an unattended merge will accept before a human is required — a weighted guideline, not a hard cutoff.", category: 'merge-safety', tier: 'core' },
   { key: 'auto-merge-max-files', type: 'integer', default: 2, summary: "Bounds how many changed files an unattended merge will accept before a human is required — the same weighted guideline, by file count.", category: 'merge-safety', tier: 'core' },
   { key: 'merge-sensitive-paths', type: 'list', default: [], summary: "Lists path patterns that always require a human to sign off on a merge, no matter how small the change looks.", category: 'merge-safety', tier: 'advanced' },
@@ -329,6 +331,10 @@ const POLICY_KEYS = [
   // #5933: read by bin/deferral-route.js through resolve-policy.js's resolvePolicy (routeDeferral's no-evidence and run-cap rules). policyOnly: both bound what a run may file, so a run's own config.yml must never loosen them (set-config.js writes neither). Not Manifesto levers.
   { key: 'filed-record-evidence', type: 'enum', values: ['off', 'required'], default: 'off', policyOnly: true, summary: "Requires an agent-filed record of three Defer-reasons to name a test file or record; without it the item goes to the digest.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'run-filed-record-cap', type: 'integer', min: 0, policyOnly: true, summary: "Caps how many records one pipeline run's agents may file; past it an item goes to the digest. Leave it unset for no cap.", category: 'pipeline-behavior', tier: 'advanced' },
+  // #6051: read only by build/plan-review.md's pointer, through resolve-policy.js --values with no --run, so policyOnly (no per-run route; not a Manifesto lever, so auto-mode-contract.md's new-lever checklist does not apply). Not policySourceExcluded: a standing opt-in is the point. Factory-settable: a user-wide preference for fewer planning questions is safe, since it only changes which gaps are asked and an older build ignores an unknown key. Its first consumer lands in this same PR, so no "Not yet used." marker.
+  { key: 'planning-decisions', type: 'enum', values: ['ask-all', 'asked-classes'], default: 'ask-all', policyOnly: true, summary: "Lets plan review settle low-level planning questions itself under asked-classes and ask only the high-impact ones; ask-all asks every gap.", category: 'pipeline-behavior', tier: 'advanced' },
+  // #6056: read only by specify/shaping-mode.md's Planning at specify paragraph, through resolve-policy.js --values with no --run, so policyOnly (no per-run route). /claude-tweaks:specify has no Manifesto, so it is not a Manifesto lever and auto-mode-contract.md's new-lever checklist does not apply. Not policySourceExcluded: a standing opt-in is the point. Factory-settable: a user-wide opt-in only moves planning to shaping time, and an older build ignores an unknown key. resolvePolicyKeys refuses `on` while planning-decisions resolves ask-all (planningDecisionsFrom): the entry resolves `off`, keeps its source and gains conflict: 'planning-decisions'; resolve-policy.js warns on stderr. Its first consumer lands in this same PR, so no "Not yet used." marker.
+  { key: 'plan-at-specify', type: 'enum', values: ['off', 'on'], default: 'off', policyOnly: true, summary: "Writes, reviews and stores a record's plan while specify shapes it; needs planning-decisions set to asked-classes.", category: 'pipeline-behavior', tier: 'advanced' },
 ];
 
 const SCHEMA_BY_KEY = new Map(POLICY_KEYS.map((entry) => [entry.key, entry]));
@@ -646,17 +652,21 @@ function hasOwn(obj, key) {
 // explicit attribution surface tidy Step 7.5 reads (#581); never tag a
 // distinct source for a derived value.
 function deriveHousekeepingAutoMerge(sources) {
-  const schemaEntry = SCHEMA_BY_KEY.get('autonomy');
-  let autonomy = schemaEntry.default;
-  for (const source of sources) {
-    if (!hasOwn(source.values, 'autonomy')) continue;
-    const raw = source.values.autonomy;
-    // Mirrors the main loop's invalid handling: an invalid value resolves the
-    // schema default, never the next source's value.
-    if (isValidValue(schemaEntry, raw)) autonomy = resolveValue('autonomy', raw);
-    break;
-  }
+  const autonomy = firstSourceValue(sources, 'autonomy');
   return autonomy === 'trusted' || autonomy === 'unattended';
+}
+
+// The one first-source-wins read the derived keys share (#6056 review): the first source holding
+// `key` (after `skip`) wins, and an invalid value resolves the key's schema default, never the next
+// source's value, mirroring the main loop's invalid handling.
+function firstSourceValue(sources, key, skip = () => false) {
+  const schemaEntry = SCHEMA_BY_KEY.get(key);
+  for (const source of sources) {
+    if (skip(source) || !hasOwn(source.values, key)) continue;
+    const raw = source.values[key];
+    return isValidValue(schemaEntry, raw) ? resolveValue(key, raw) : schemaEntry.default;
+  }
+  return schemaEntry.default;
 }
 
 // express-driver-max-lines' effective default (#5224, Shape B): the resolved
@@ -667,15 +677,16 @@ function deriveHousekeepingAutoMerge(sources) {
 // is not policyOnly, so the --run overlay reaches this read, as it reaches
 // express-lane.js check.
 function deriveExpressDriverMaxLines(sources) {
-  const schemaEntry = SCHEMA_BY_KEY.get('auto-merge-max-lines');
-  let value = schemaEntry.default;
-  for (const source of sources) {
-    if (!hasOwn(source.values, 'auto-merge-max-lines')) continue;
-    const raw = source.values['auto-merge-max-lines'];
-    if (isValidValue(schemaEntry, raw)) value = resolveValue('auto-merge-max-lines', raw);
-    break;
-  }
-  return value;
+  return firstSourceValue(sources, 'auto-merge-max-lines');
+}
+
+// The planning-decisions read plan-at-specify's refusal makes (#6056), through firstSourceValue:
+// run-config skipped (the key is policyOnly), and the factory source skipped when the key is in
+// FACTORY_REFUSED_KEYS, as the main loop skips it. refusedKeys is resolvePolicyKeys' lazily
+// required FACTORY_REFUSED_KEYS (require cycle with policy-factory.js). Returns 'ask-all' | 'asked-classes'.
+function planningDecisionsFrom(sources, refusedKeys) {
+  return firstSourceValue(sources, 'planning-decisions', (source) => source.name === 'run-config'
+    || (source.name === 'factory' && refusedKeys.includes('planning-decisions')));
 }
 
 // express-driver-models (#5917): { present: false } | { present: true, ok: true, value } | { present: true, ok: false, raw }.
@@ -886,6 +897,11 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, factoryRaw,
     // entry — no change here or in auditPolicy()'s matching category below.
     if (schemaEntry.policySourceExcluded && (resolved.source === 'policy' || resolved.source === 'factory')) {
       resolved = { value: defaultValue, source: 'default' };
+    }
+    // #6056: plan-at-specify needs planning-decisions: asked-classes. `on` beside ask-all resolves
+    // `off`, keeps its source, and carries the conflict for resolve-policy.js's warning.
+    if (canonical === 'plan-at-specify' && resolved.value === 'on' && planningDecisionsFrom(sources, FACTORY_REFUSED_KEYS) === 'ask-all') {
+      resolved = { ...resolved, value: 'off', conflict: 'planning-decisions' };
     }
     result[requested] = resolved;
   }
