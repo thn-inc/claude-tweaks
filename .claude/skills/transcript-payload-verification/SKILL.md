@@ -90,11 +90,12 @@ Record #371 ran exactly this against `PostToolUse`/`Skill` and pinned five separ
 it, including two the reference docs did not state:
 `.claude-tweaks/pipelines/archive/2026-08-13T201329-spec-371-372-373/spec-371/work/task0-findings.md`
 holds the verbatim payload lines, and `plugin/bin/lib/hooks/skill-invocation.js`'s header comment
-carries the distilled `(a)`-`(e)` results. Run one scenario per branch your code will take — that
-capture is still the only *observed* `agent_type` value in this repo (`"general-purpose"`, a bare
-built-in with no namespace), so the namespaced `plugin:agent-name` form that
-`plugin/bin/lib/hooks/subagent-stop.js`'s `isExemptAgentType` branches on (#1596) rests on the
-hooks reference doc alone, with no captured instance behind it.
+carries the distilled `(a)`-`(e)` results. Run one scenario per branch your code will take. Every
+`agent_type` captured in this repo since is bare, with no namespace: `"general-purpose"`
+(`docs/reference/pretooluse-agent-tool-probe.md`, `docs/reference/blocking-wait-probe.md`) and
+`"workflow-subagent"` (`docs/reference/workflow-tool-probe.md`). So the namespaced
+`plugin:agent-name` form that `plugin/bin/lib/hooks/subagent-stop.js`'s `isExemptAgentType`
+branches on (#1596) rests on the hooks reference doc alone, with no captured instance behind it.
 
 **A second branch on the same footing (#2036).** That same file now also no-ops a `SubagentStop`
 whose `agent_transcript_path` equals the same event's own `transcript_path`. The shape was
@@ -103,7 +104,9 @@ plainly the dispatcher's own async-wait narration — and pinned by hand-built f
 `tests/hooks-log-modules.test.js`, never read off a captured hook-input envelope. Two branches in
 one file now rest on inference, and the throwaway-hook recipe above settles both in a single
 capture session: run it the next time `subagent-stop.js` is opened, with one scenario per branch
-(a real dispatched subagent, and a dispatcher ending its turn on an async wait).
+(a real dispatched subagent, and a dispatcher ending its turn on an async wait). The first is now
+captured: `docs/reference/blocking-wait-probe.md`'s observed `SubagentStop` envelope carries an
+`agent_transcript_path` distinct from `transcript_path`. The async-wait case is still uncaptured.
 
 **A harness-authored text field captures one wording on one tool (#2783).**
 `plugin/bin/lib/hooks/post-tool-use-failure.js` rests on the same recipe. A headless `claude -p -w`
@@ -145,6 +148,15 @@ spawned from inside a Claude Code session removes that session's variables (`CLA
 environment, so it runs as a fresh top-level session rather than a child that could inherit the
 parent's session id. `docs/reference/pretooluse-updatedinput-worktree-guard.md` (#4028) took the same
 `--plugin-dir` route against the real `plugin/` directory.
+
+**One exception: a typed event that copies a payload field verbatim.** `session-end.js` writes the
+payload's `reason` into every `session-end` event, so the run directories already hold a real
+sample of that one field. Tally it from the main checkout before branching on it:
+`grep -rh '"type":"session-end"' .claude-tweaks/pipelines --include=events.jsonl | grep -oE '"reason":"[a-z_]+"' | sort | uniq -c`.
+#4960's `/clear` carve-out in `session-end.js` branches on `reason === 'clear'`; the tally confirms
+that value occurs, and also shows a `resume` value the carve-out does not name. The sample covers
+only sessions that owned a run and only the fields an event copies; for any other input field the
+throwaway hook above is still the route.
 
 ## A fixture is a claim, not ground truth
 
@@ -246,6 +258,16 @@ or idle-gap check, and never lets it use up a pending compaction marker;
 `plugin/bin/lib/timing/transcript.js` skips the same line when naming a transcript's model. Before
 chaining on "the previous call", or counting calls, grep a real store for `"model":"<synthetic>"`
 and decide which tallies such a line belongs in.
+
+**A rule over every assistant line meets the same lines (#5990).** `transcriptEffort` in
+`tools/review-replay/score.js` reads a judge's effort from each assistant line's top-level `effort`
+field and returns `unrecorded` when any line lacks it. A `<synthetic>` error line carries
+`perTurnEffort` but never `effort`, so one rate-limit line would have scored a judge that ran at the
+right effort as `effort-mismatch`. The spec had asserted that every assistant line carries `effort`
+from a probe of one transcript, and only the whole-branch review caught the gap (PR #6014). So a
+rule of the form "every turn has X" or "no turn differs" is a third case for the grep above,
+beside chaining and counting: probe the shape on a transcript that holds a `<synthetic>` line, and
+decide whether the rule ranges over it.
 
 ## One Claude Code version does not speak for another
 
