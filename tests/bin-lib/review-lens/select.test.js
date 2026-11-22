@@ -80,7 +80,7 @@ test('tuned constants (#6001 build replay)', () => {
     assert.strictEqual(CALLED_FOR[l](factsOf({ kinds: { test: true } }).facts), true, `${l} test`);
     assert.strictEqual(CALLED_FOR[l](proseOnly().facts), false, `${l} prose-only`);
   }
-  assert.strictEqual(CALLED_FOR['3c'](factsOf({ riskPathTouched: true }).facts), true, '3c risk path');
+  for (const l of ['3b', '3c']) assert.strictEqual(CALLED_FOR[l](factsOf({ riskPathTouched: true }).facts), true, `${l} risk path`);
 });
 
 test('AC2.1: docs-only diff at high with 3d below the floor selects no 3d', () => {
@@ -228,7 +228,7 @@ test('above-floor lens runs on every diff it applies to', () => {
   assert.ok(r.selected.includes('3a'), '3a applies to any non-empty diff');
   const d = sel({ history: historyOf({ '3d': { share: 0.9 } }) });
   assert.ok(!d.selected.includes('3d'));
-  assert.strictEqual(reasonOf(d, '3d'), '3d: share 0.9 ≥ floor 0.4, but the diff has no source change it applies to');
+  assert.strictEqual(reasonOf(d, '3d'), '3d: share 0.9 ≥ floor 0.4, but the diff has no source change it applies to and no diff fact calls for it');
   const s = sel({ facts: sourceDiff(), history: historyOf({ '3d': { share: 0.9 } }) });
   assert.ok(s.selected.includes('3d'));
   // At exactly the floor the lens is above it.
@@ -238,7 +238,82 @@ test('above-floor lens runs on every diff it applies to', () => {
   assert.match(reasonOf(atProse, '3d'), /≥ floor/);
   // An empty diff: nothing applies to 3a, so it is skipped with the applies reason.
   const empty = sel({ facts: factsOf() });
-  assert.match(reasonOf(empty, '3a'), /^3a: share 0\.9 ≥ floor 0\.4, but the diff has no changed path it applies to$/);
+  assert.match(reasonOf(empty, '3a'), /^3a: share 0\.9 ≥ floor 0\.4, but the diff has no changed path it applies to and no diff fact calls for it$/);
+});
+
+test('I1: an above-floor lens runs on a diff a fact calls for it on, as a below-floor one does', () => {
+  // A prose-only change to a protected path: 3b, 3c and 3e are called for by riskPathTouched, but do not apply.
+  const risky = factsOf({ paths: [{ path: 'plugin/skills/_shared/a.md', status: 'M', kind: 'prose' }], kinds: { prose: true }, riskPathTouched: true });
+  const high = sel({ facts: risky, history: historyOf() });
+  const low = sel({ facts: risky, history: historyOf(Object.fromEntries(LENS_IDS.map((id) => [id, { share: 0.1 }]))) });
+  assert.deepStrictEqual(low.selected, ['3b', '3c', '3e', '3h']);
+  for (const l of low.selected) assert.ok(high.selected.includes(l), `${l} at share 0.9`);
+  // A workflow change on a risk path: 3e is called for, and applies to no source or new file.
+  const wf = factsOf({ paths: [{ path: '.github/workflows/ci.yml', status: 'M', kind: 'workflow' }], kinds: { workflow: true }, executableContent: true, riskPathTouched: true });
+  assert.ok(sel({ facts: wf }).selected.includes('3e'));
+});
+
+// Every combination of the boolean facts, plus an empty or non-empty `paths`. `riskFlags` is left empty: computeFacts
+// folds a Risk-flag into riskPathTouched, which the combinations already cover.
+function* everyFactCombination() {
+  const bools = ['executableContent', 'shellInvocationAdded', 'inputHandlingAdded', 'errorHandlingTouched', 'riskPathTouched', 'newFiles', 'newModules', 'perCallPath', 'loopSpawn'];
+  const kinds = ['prose', 'source', 'test', 'config', 'workflow'];
+  const bits = bools.length + kinds.length + 1;
+  for (let n = 0; n < 2 ** bits; n++) {
+    const on = (i) => Boolean(n & (1 << i));
+    yield factsOf({
+      ...Object.fromEntries(bools.map((b, i) => [b, on(i)])),
+      kinds: Object.fromEntries(kinds.map((k, i) => [k, on(bools.length + i)])),
+      paths: on(bits - 1) ? [{ path: 'x', status: 'M', kind: 'config' }] : [],
+    });
+  }
+}
+
+test('I1: CALLED_FOR implies selected, at any share, over every combination of facts', () => {
+  const above = historyOf();
+  const below = historyOf(Object.fromEntries(LENS_IDS.map((id) => [id, { share: 0.1 }])));
+  let checked = 0;
+  for (const facts of everyFactCombination()) {
+    const called = LENS_IDS.filter((l) => CALLED_FOR[l](facts.facts));
+    if (called.length === 0) continue;
+    for (const history of [above, below]) {
+      const r = sel({ facts, history });
+      const missed = called.filter((l) => !r.selected.includes(l));
+      if (missed.length > 0) assert.fail(`${missed} called for but skipped: ${JSON.stringify(facts.facts)}`);
+    }
+    checked++;
+  }
+  assert.ok(checked > 1000, `${checked} combinations checked`);
+});
+
+test('a fact or kind that is present but not a boolean is a fallback, never read as false', () => {
+  for (const name of ['executableContent', 'riskPathTouched', 'loopSpawn']) {
+    for (const bad of [undefined, null, 'true', 1]) {
+      const facts = proseOnly();
+      facts.facts[name] = bad;
+      const r = sel({ facts, history: historyOf({ '3d': { share: 0.1 } }) });
+      assert.deepStrictEqual(r.selected, FULL, `${name}=${bad}`);
+      assert.strictEqual(r.fallback, `facts unavailable: ${name} is not a boolean`);
+    }
+  }
+  const noSource = proseOnly();
+  delete noSource.facts.kinds.source;
+  assert.strictEqual(sel({ facts: noSource }).fallback, 'facts unavailable: kinds.source is not a boolean');
+  const strKind = proseOnly();
+  strKind.facts.kinds.test = 'yes';
+  assert.strictEqual(sel({ facts: strKind }).fallback, 'facts unavailable: kinds.test is not a boolean');
+});
+
+test('failed facts and a malformed history are both named, facts first', () => {
+  const r = sel({ facts: { ok: false, fact: 'paths', reason: 'bad revision' }, history: null });
+  assert.strictEqual(r.fallback, 'facts unavailable: paths: bad revision; history is not an object');
+});
+
+test('fallback text never prints undefined', () => {
+  assert.strictEqual(sel({ facts: { ok: false } }).fallback, 'facts unavailable: unnamed fact: no reason given');
+  assert.strictEqual(sel({ facts: { ok: false, fact: 'paths', reason: '' } }).fallback, 'facts unavailable: paths: no reason given');
+  assert.strictEqual(sel({ history: historyOf({}, [{ reason: 'unreadable root (EACCES)' }]) }).fallback, 'history unreadable root (EACCES)');
+  assert.strictEqual(sel({ history: historyOf({}, [{ path: '/r', reason: 'unreadable root (EACCES)' }]) }).fallback, 'history unreadable root (EACCES) at /r');
 });
 
 test('forced run every FORCE_EVERY reviews', () => {
@@ -285,7 +360,9 @@ test('APPLIES and CALLED_FOR: each predicate reads its named facts', () => {
   assert.strictEqual(CALLED_FOR['3a'](f({ kinds: { test: true } })), true);
   assert.strictEqual(CALLED_FOR['3a'](f({ kinds: { prose: true } })), false);
   assert.strictEqual(CALLED_FOR['3b'](f({ riskPathTouched: true })), true);
-  assert.strictEqual(CALLED_FOR['3b'](f({ riskFlags: ['auth'] })), true);
+  // computeFacts folds any Risk-flag into riskPathTouched (facts.test.js), so 3b and 3c read only that fact.
+  assert.strictEqual(CALLED_FOR['3b'](f({ riskFlags: ['auth'], riskPathTouched: true })), true);
+  for (const l of ['3b', '3c']) assert.strictEqual(CALLED_FOR[l](f({ riskFlags: ['auth'] })), false, `${l} reads riskPathTouched, not riskFlags`);
   assert.strictEqual(CALLED_FOR['3b'](f({ executableContent: true, shellInvocationAdded: true })), true);
   assert.strictEqual(CALLED_FOR['3b'](f({ executableContent: true, inputHandlingAdded: true })), true);
   assert.strictEqual(CALLED_FOR['3b'](f({ shellInvocationAdded: true, inputHandlingAdded: true })), false);
@@ -322,11 +399,11 @@ test('AC9.1: a bookkeeping-only diff gets the rules as written', () => {
     selected: ['3a', '3h'],
     skipped: [
       { lens: '3b', reason: '3b: share 0.1 over its last 20 runs is below floor 0.4; no diff fact calls for it (0 of 3 reviews since it last ran)' },
-      { lens: '3c', reason: '3c: share 0.9 ≥ floor 0.4, but the diff has no executable content it applies to' },
-      { lens: '3f', reason: '3f: share 0.9 ≥ floor 0.4, but the diff has no source or test change it applies to' },
+      { lens: '3c', reason: '3c: share 0.9 ≥ floor 0.4, but the diff has no executable content it applies to and no diff fact calls for it' },
+      { lens: '3f', reason: '3f: share 0.9 ≥ floor 0.4, but the diff has no source or test change it applies to and no diff fact calls for it' },
       { lens: '3d', reason: '3d: share 0.1 over its last 20 runs is below floor 0.4; no diff fact calls for it (0 of 3 reviews since it last ran)' },
-      { lens: '3e', reason: '3e: share 0.9 ≥ floor 0.4, but the diff has no source change or new file it applies to' },
-      { lens: '3g', reason: '3g: share 0.9 ≥ floor 0.4, but the diff has no source, test or executable content it applies to' },
+      { lens: '3e', reason: '3e: share 0.9 ≥ floor 0.4, but the diff has no source change or new file it applies to and no diff fact calls for it' },
+      { lens: '3g', reason: '3g: share 0.9 ≥ floor 0.4, but the diff has no source, test or executable content it applies to and no diff fact calls for it' },
     ],
     fallback: null,
   });
