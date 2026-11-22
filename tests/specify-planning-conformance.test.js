@@ -648,6 +648,7 @@ test('Deliverable 9: the shaping-mode block resolves the key once, read-only of 
   pinned(blockOf('plugin/skills/specify/shaping-mode.md'), [
     f('Under `work-backend: github-issues` only, resolve `plan-at-specify` once per invocation, before the first record'),
     f('Only when it prints `on`, read `planning.md`'),
+    f('plus a per-record hold-state capture before `shaping-mode-stamping.md`\'s `needs:*` bullet'),
     f('resolve-policy.js" --values plan-at-specify'),
     f('Relay a stderr warning the call prints'),
   ], 'shaping-mode block');
@@ -659,7 +660,8 @@ test('Carry A: planning captures the hold state with its own call before the nee
     f('for each record, before that bullet runs, make one call: `gh issue view {n} --json labels,comments`'),
     f('whether the record carries `needs:decision`, and whether the newest unresolved decision comment from a trusted author (selected by the same trusted-author and unresolved rule as that bullet\'s queries) has a body carrying `Held-by: specify-planning`'),
     f('The held re-review above uses these captured facts, never a re-fetch after the resolve.'),
-    f('A failed capture call counts as not held, so the record re-plans normally rather than reusing a plan silently.'),
+    f('A failed capture call counts as held for the reuse decision: a valid stored plan is still fetched and re-reviewed (steps 5-9) as the held re-review above says'),
+    f('a record that was not actually held gets one extra review, and a failed `plan-store.js read` still re-plans.'),
     f('When the record\'s captured hold state (below) says it carries `needs:decision`'),
   ], 'held read order');
 });
