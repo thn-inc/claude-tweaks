@@ -856,4 +856,49 @@ test('Deliverable 1: SKILL.md\'s decomposition paragraph points at the two block
   ], 'SKILL.md block');
   const row = readText(path.join(ROOT, 'plugin/skills/_shared/policy-schema.md')).split('\n').find((l) => l.startsWith('| `plan-at-specify` |'));
   for (const r of ['specify/decomposition-mode-closeout.md', 'specify/mechanical-handoff.md']) assert.ok(row.includes(r), `readers cell lacks ${r}`);
+  pinned(row, [f('decomposition mode plan each created non-parent sub-issue after Step 6')], 'policy row');
+});
+
+test('Final fix 1: a held sub-issue is left out of every /flow command, and all-held recommends re-shaping the first', () => {
+  pinned(decomposition(), [
+    f('Step 4 also applies that section\'s Next Actions rule: a held sub-issue is left out of every `/claude-tweaks:flow` command'),
+    f('when every planned sub-issue is held, the recommended line is `/claude-tweaks:specify #{n}` for the first held one'),
+  ], 'decomposition Next Actions');
+});
+
+test('Final fix 2: the origin-set carve-out\'s in-place write counts as created this run', () => {
+  pinned(decomposition(), [
+    f('The origin-set carve-out\'s in-place write onto `$ORIGIN_RECORD_NUM` (`record-creation-subissues.md`) counts as created this run'),
+  ], 'decomposition origin set');
+});
+
+test('Final fix 3 + 6: the body write is shape-checked first, and a Plan: line removal sends the re-fetched forge body', () => {
+  pinned(decomposition(), [
+    f('compose-record.js" --check "{body}"` first, as `shaping-mode-stamping.md`\'s Compose-then-write-once runs it'),
+    f('Detail `write failed: pre-write shape check ({reason})`'),
+    f('sends the forge body re-fetched just before it with only its `Plan:` line removed, never `{body}`'),
+    f('which after a planning failure already carries the `## Overview` that `## Per-record step`\'s step 1 inserted'),
+  ], 'decomposition write checks');
+});
+
+test('Final fix 4 + 7: a read-back failure is skipped, and a held sub-issue\'s body write or read-back failure takes ## Hold\'s failed row', () => {
+  pinned(decomposition(), [
+    f('A read-back mismatch is `skipped`, Detail `read-back failed: {reason}`'),
+    f('`failed — body write failed ({reason}); re-run /claude-tweaks:specify #{n}`'),
+    f('`failed — read-back failed ({reason}); re-run /claude-tweaks:specify #{n}`'),
+    f('so the re-run asks its held questions again'),
+  ], 'decomposition failure rows');
+});
+
+test('Final fix 5 + 8: the handoff block relays the conflict warning, and a reply with no Resumed: line plans nothing whatever its status', () => {
+  pinned(blockOf('plugin/skills/specify/mechanical-handoff.md'), [
+    f('Relay a stderr warning the call prints, which names a conflict with `planning-decisions`, as a one-line notice.'),
+    f('A reply with no `Resumed:` line, whatever its status, plans nothing'),
+  ], 'handoff block fixes');
+});
+
+test('Final fix 10: SKILL.md keeps both decomposition planning paths in this session', () => {
+  pinned(blockOf('plugin/skills/specify/SKILL.md'), [
+    f('Either way planning runs in this session, never inside the handoff.'),
+  ], 'SKILL.md block');
 });
