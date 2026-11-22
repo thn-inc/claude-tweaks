@@ -30,6 +30,7 @@
 // log(line), err(line), pluginRoot.
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { readRun, selectRuns, matchVerdicts } = require('./review-replay/archive.js');
@@ -59,7 +60,7 @@ function makeWriteRepo(sourceCwd) {
   const FIXED = { GIT_AUTHOR_NAME: 'review-replay', GIT_AUTHOR_EMAIL: 'review-replay@localhost', GIT_COMMITTER_NAME: 'review-replay', GIT_COMMITTER_EMAIL: 'review-replay@localhost', GIT_AUTHOR_DATE: '2000-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2000-01-01T00:00:00Z' };
   return (base, head, dest, { originRefs = [] } = {}) => {
     const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
-    Object.assign(env, FIXED);
+    Object.assign(env, FIXED, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devNull });
     const git = (args) => String(execFileSync('git', ['-c', 'commit.gpgsign=false', ...args], { cwd: dest, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })).trim();
     const extractTree = (rev) => {
       const archive = execFileSync('git', ['archive', rev, '--', '.', `:(exclude)${RUN_RECORDS_DIR}`], { cwd: sourceCwd, maxBuffer: 1 << 30, windowsHide: true });
@@ -69,13 +70,13 @@ function makeWriteRepo(sourceCwd) {
     fs.mkdirSync(dest, { recursive: true });
     git(['init', '-q', '-b', 'replay']);
     extractTree(base);
-    git(['add', '-A']);
+    git(['add', '-A', '-f']);
     git(['commit', '-q', '--allow-empty', '-m', 'base']);
     const replayBase = git(['rev-parse', 'HEAD']);
-    git(['rm', '-rq', '--cached', '.']);
+    git(['rm', '-rq', '--cached', '--ignore-unmatch', '.']);
     for (const entry of fs.readdirSync(dest)) if (entry !== '.git') fs.rmSync(path.join(dest, entry), { recursive: true, force: true });
     extractTree(head);
-    git(['add', '-A']);
+    git(['add', '-A', '-f']);
     git(['commit', '-q', '--allow-empty', '-m', 'head']);
     const replayHead = git(['rev-parse', 'HEAD']);
     for (const name of originRefs) git(['update-ref', `refs/remotes/origin/${name}`, replayBase]);
