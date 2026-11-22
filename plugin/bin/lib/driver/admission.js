@@ -33,7 +33,8 @@
 //   beyond the express bounds and the reviewer on      admitted by this rule
 //   beyond the express bounds and the reviewer not on  refused, reviewerOff
 //   inside the express bounds                          the rule does not apply
-// A widened record (#6018) is one the caller admitted above low risk or a non-fast-lane ceremony;
+// A widened record (#6018, #6019) is one the caller admitted above low risk, with a non-fast-lane ceremony or
+// with a protected Key File;
 // `widenedBy` is eligibility.js's widenings() answer, computed by the caller (absent reads as none):
 //   widened and the reviewer on                        admitted by this rule
 //   widened and the reviewer not on                    refused, reviewerOffWidened
@@ -71,7 +72,7 @@ const ADMISSION_REASONS = Object.freeze({
   commentsUnreadable: 'record comments unreadable',
   routingUnknown: (value) => `express-driver value not recognised: ${value}`,
   reviewerOff: 'record is beyond the express bounds and the reviewer step is off for it',
-  reviewerOffWidened: 'record is admitted beyond low risk or fast-lane ceremony and the reviewer step is off for it',
+  reviewerOffWidened: 'record is admitted widened (above low risk, with a non-fast-lane ceremony or a protected Key File) and the reviewer step is off for it',
   reviewerUnreadable: 'reviewer-on answer unreadable',
   widenedUnreadable: 'record widening facts unreadable',
   boundsUnreadable: 'lane bounds unreadable',

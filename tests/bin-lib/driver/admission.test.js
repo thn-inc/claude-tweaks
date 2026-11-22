@@ -78,7 +78,7 @@ test('AC3.7: ADMISSION_REASONS exports exactly the documented keys', () => {
     'escalatedByDriver', 'commentsUnreadable', 'reviewerOff', 'reviewerUnreadable', 'boundsUnreadable', 'keyFilesUnreadable',
     'reviewerOffWidened', 'widenedUnreadable',
   ].sort());
-  assert.strictEqual(R.reviewerOffWidened, 'record is admitted beyond low risk or fast-lane ceremony and the reviewer step is off for it');
+  assert.strictEqual(R.reviewerOffWidened, 'record is admitted widened (above low risk, with a non-fast-lane ceremony or a protected Key File) and the reviewer step is off for it');
   assert.strictEqual(R.widenedUnreadable, 'record widening facts unreadable');
   assert.ok(Object.isFrozen(R));
   assert.strictEqual(R.noBuildGrant, 'record lacks auto:build');
@@ -471,6 +471,8 @@ test('AC3.1 (#6018): a widened record with the reviewer off is refused with the 
   assert.deepStrictEqual(reasonsFor({ widenedBy: ['risk'], reviewerOn: false }), [R.reviewerOffWidened]);
   assert.deepStrictEqual(reasonsFor({ widenedBy: ['ceremony'], reviewerOn: false }), [R.reviewerOffWidened]);
   assert.deepStrictEqual(reasonsFor({ widenedBy: ['risk', 'ceremony'], reviewerOn: false }), [R.reviewerOffWidened]);
+  assert.deepStrictEqual(reasonsFor({ widenedBy: ['protected-path'], reviewerOn: false }), [R.reviewerOffWidened]);
+  assert.ok(!reasonsFor({ widenedBy: ['protected-path'], reviewerOn: true }).includes(R.reviewerOffWidened));
   assert.deepStrictEqual(evaluateAdmission({ ...ADMIT, widenedBy: ['risk'], reviewerOn: true }), { admitted: true, reasons: [] });
   assert.deepStrictEqual(evaluateAdmission({ ...ADMIT, widenedBy: [], reviewerOn: false }), { admitted: true, reasons: [] });
   // A non-boolean reviewerOn is the unreadable reason alone, not also the widened refusal.

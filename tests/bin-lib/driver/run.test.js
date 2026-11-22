@@ -352,6 +352,7 @@ const POLICY = {
   'express-driver-max-key-files': 3,
   'express-driver-max-lines': undefined,
   'express-driver-max-risk': 'low',
+  'express-driver-protected-paths': 'refuse',
   // #5917's model keys (and #5942's model-effort), in launch.js's MODEL_POLICY_KEYS order (the step's request list ends with them): the four-role default map from the real resolver, no
   // model-profiles block or ceiling set, and model-effort inherit.
   'express-driver-models': resolvePolicyKeys(['express-driver-models'], { policyRaw: '' })['express-driver-models'].value,
@@ -409,6 +410,13 @@ const checkProceed = (over = {}) => ({
   bounds: { withinBounds: true, violations: [], implLines: 3, changedFiles: ['a.js'] }, ...over,
 });
 
+// cli.js's usage error for a --protected-paths value other than `reviewer`; null when the call is fine.
+function badProtectedFlag(c) {
+  const i = c.args.indexOf('--protected-paths');
+  if (i === -1 || c.args[i + 1] === 'reviewer') return null;
+  return { code: 2, stdout: '', stderr: `express-lane.js: --protected-paths must be reviewer, got "${c.args[i + 1]}"` };
+}
+
 function defaultScript(over, fx) {
   const policy = { ...POLICY, ...(over.policy || {}) };
   return [
@@ -453,7 +461,8 @@ function defaultScript(over, fx) {
     // The test, check and push steps' happy path: green tests, a check that proceeds with
     // HEAD_SHA, a HEAD that is that sha, a push that lands.
     [on('node', /verify\.js$/), { code: 0, stdout: '', stderr: '' }],
-    [on('node', /express-lane\.js$/, 'check'), { code: 0, stderr: '', stdout: JSON.stringify(checkProceed()) }],
+    // Like the real CLI (#6019): --protected-paths takes only `reviewer`.
+    [on('node', /express-lane\.js$/, 'check'), (c) => (badProtectedFlag(c) || { code: 0, stderr: '', stdout: JSON.stringify(checkProceed()) })],
     [onGit('push'), ''],
     // The settle calls (settle.js, #5219): the escalate and release CLIs succeed, the forge
     // writes land, the worktree list shows nothing registered, and a probe for the branch finds
@@ -727,7 +736,7 @@ test('eligibility runs with the relaxed ceremony gate and the policy values', as
   assert.deepEqual(issue, issueFor(7));
   assert.deepStrictEqual(opts, {
     enabled: true, allowAbsentCeremony: true, integrationModel: 'local-merge', sensitivePaths: ['plugin/bin/**', 'docs/**'],
-    sizeCeiling: 'low', maxKeyFiles: 3, riskCeiling: 'low', allowAnyCeremony: false,
+    sizeCeiling: 'low', maxKeyFiles: 3, riskCeiling: 'low', allowAnyCeremony: false, protectedPathsNeedReviewer: false,
   });
 });
 
@@ -5404,7 +5413,7 @@ test('(#5224) the eligibility step passes the size ceiling and Key File limit it
   await run(['#7'], plain.deps);
   assert.deepStrictEqual(calls(plain, 'eligibility')[0].args[1], {
     enabled: true, allowAbsentCeremony: true, integrationModel: 'pr-first', sensitivePaths: [], sizeCeiling: 'low', maxKeyFiles: 3,
-    riskCeiling: 'low', allowAnyCeremony: false,
+    riskCeiling: 'low', allowAnyCeremony: false, protectedPathsNeedReviewer: false,
   });
   assert.deepStrictEqual(admissionInputs(plain)[0].bounds, { sizeCeiling: 'low', maxKeyFiles: EXPRESS_MAX_KEY_FILES });
 });
@@ -6508,14 +6517,15 @@ test('budget pre-screen: eligibilityOptions is exactly what the eligibility step
 // --- the driver's risk ceiling and ceremony relaxation through the driver (#6018) -------------
 
 // A record whose labels the test names outright (spec-shaped body, so Key Files pass), read by the real gates.
+// keyFiles is a count of src/f{i}.js paths or an array of the Key File paths themselves.
 const widenIssue = (labels, keyFiles = 1) => [on('gh', 'issue', 'view'), (c) => JSON.stringify({
   ...issueFor(Number(c.args.at(-1))),
-  body: boundsBody(Array.from({ length: keyFiles }, (_, i) => `src/f${i}.js`)),
+  body: boundsBody(Array.isArray(keyFiles) ? keyFiles : Array.from({ length: keyFiles }, (_, i) => `src/f${i}.js`)),
   labels: labels.map((name) => ({ name })),
 })];
 const WIDEN_LABELS = ['size:low', 'type:task', 'auto:build'];
-async function widenCheck(policy, labels, extra = {}) {
-  const h = harness({ policy, script: [widenIssue(labels), ...REAL_GATES], ...extra });
+async function widenCheck(policy, labels, extra = {}, keyFiles = 1) {
+  const h = harness({ policy, script: [widenIssue(labels, keyFiles), ...REAL_GATES], ...extra });
   assert.equal(await run(['--check', '#7'], h.deps), 0);
   assertWriteFree(h.calls, h.writes());
   const lines = h.out.join('').split('\n').filter(Boolean);
@@ -6645,6 +6655,123 @@ test('mergeStep hands ctx.widenedBy to merge (#6018)', async () => {
   assert.equal(final.merge.reason, 'widened-admission');
   const stop = h.lines().find((l) => l.step === 'merge-entry' && l.status === 'stop');
   assert.equal(stop.detail, 'widened-admission: admitted widened by risk');
+});
+
+// --- a protected Key File behind the reviewer (#6019) -----------------------------------------
+
+const REVIEWER_ON = { 'express-driver-protected-paths': 'reviewer', 'express-driver-review': 'on' };
+const FAST = ['risk:low', 'ceremony:fast-lane', ...WIDEN_LABELS];
+const MERGE_TIME = ['plugin/hooks/x.js', 'hooks.js', 'a/hooks.sh', 'plugin/skills/_shared/a.md', 'CODEOWNERS', '.claude-tweaks/policy.yml', '.claude-tweaks/verify-scope.json'];
+const BUILD_TIME = ['.github/workflows/ci.yml', '.gitlab-ci.yml', '.circleci/config.yml', '.githooks/pre-commit', '.husky/pre-commit', 'package.json', '.claude/settings.json', '.mcp.json'];
+const protectedCheck = (protectedPaths, over = {}) => [on('node', /express-lane\.js$/, 'check'), (c) => badProtectedFlag(c) || {
+  code: 0, stderr: '', stdout: JSON.stringify(checkProceed({ ...over, bounds: { withinBounds: true, violations: [], implLines: 3, changedFiles: ['a.js'], ...(protectedPaths === undefined ? {} : { protectedPaths }) } })),
+}];
+const protectedArgs = (h) => checkCalls(h).map((c) => (c.args.indexOf('--protected-paths') === -1 ? null : c.args.slice(c.args.indexOf('--protected-paths'))));
+const widenedStop = async (script, deps) => {
+  const h = mergeHarness({ policy: REVIEWER_ON, deps, script: [...script, ...REAL_GATES], reconcile: archiveRunDir });
+  const { final } = await driveRecord(7, newShared(), h.deps, STEPS);
+  return { h, final, stop: h.lines().find((l) => l.step === 'merge-entry' && l.status === 'stop') };
+};
+
+test('AC1.2 (#6019): with the key unset or refuse, --check refuses a hooks/, .github/ or package.json Key File exactly as before', async () => {
+  for (const p of ['plugin/hooks/x.js', '.github/workflows/ci.yml', 'package.json']) {
+    const refuse = await widenCheck({ 'express-driver-protected-paths': 'refuse' }, FAST, {}, [p]);
+    const unset = await widenCheck({ 'express-driver-protected-paths': undefined }, FAST, {}, [p]);
+    assert.deepStrictEqual(refuse.verdict, unset.verdict, p);
+    assert.equal(refuse.verdict.admitted, false, p);
+    assert.ok(refuse.verdict.reasons.includes(`protected path: ${p}`), p);
+    assert.deepStrictEqual(refuse.verdict.widenedBy, [], p);
+  }
+});
+
+test('AC2.1, AC7.2 (#6019): with reviewer and the reviewer on, --check admits a protected Key File with widenedBy [protected-path]', async () => {
+  const { verdict } = await widenCheck(REVIEWER_ON, FAST, {}, ['plugin/hooks/x.js']);
+  assert.deepStrictEqual(verdict, { record: 7, admitted: true, reasons: [], widenedBy: ['protected-path'] });
+});
+
+test('AC2.2 (#6019): with reviewer and express-driver-review off, --check refuses with the widened reviewer-off reason', async () => {
+  const { verdict } = await widenCheck({ ...REVIEWER_ON, 'express-driver-review': 'off' }, FAST, {}, ['plugin/hooks/x.js']);
+  assert.equal(verdict.admitted, false);
+  assert.deepStrictEqual(verdict.reasons, [ADMISSION_REASONS.reviewerOffWidened]);
+  assert.deepStrictEqual(verdict.widenedBy, ['protected-path']);
+});
+
+test('AC2.3 (#6019): under beyond-express the protected-path widening turns the reviewer on', async () => {
+  const { verdict, h } = await widenCheck({ 'express-driver-protected-paths': 'reviewer', 'express-driver-review': 'beyond-express' }, FAST, {}, ['plugin/hooks/x.js']);
+  assert.deepStrictEqual(verdict, { record: 7, admitted: true, reasons: [], widenedBy: ['protected-path'] });
+  assert.deepStrictEqual(h.reviewerCalls.map((o) => o.widenedBy), [['protected-path']]);
+});
+
+test('AC10.2 (#6019): each merge-time family Key File is admitted under reviewer with the reviewer on', async () => {
+  for (const p of MERGE_TIME) {
+    const { verdict } = await widenCheck(REVIEWER_ON, FAST, {}, [p]);
+    assert.deepStrictEqual(verdict, { record: 7, admitted: true, reasons: [], widenedBy: ['protected-path'] }, p);
+  }
+});
+
+test('AC9.4 (#6019): each build-time family Key File refuses under reviewer with the reviewer on', async () => {
+  for (const p of BUILD_TIME) {
+    const { verdict } = await widenCheck(REVIEWER_ON, FAST, {}, [p]);
+    assert.equal(verdict.admitted, false, p);
+    assert.ok(verdict.reasons.includes(`protected path: ${p}`), p);
+  }
+});
+
+test('AC8.1 (#6019): check gets --protected-paths reviewer only when the key is reviewer and the reviewer is on', async () => {
+  for (const [key, isOn, expected] of [['reviewer', true, [['--protected-paths', 'reviewer']]], ['reviewer', false, [null]], ['refuse', true, [null]], ['refuse', false, [null]]]) {
+    const h = harness({ policy: { 'express-driver-protected-paths': key }, reviewRequired: () => ({ on: isOn, reason: 'sentinel' }), script: [widenIssue(FAST), ...REAL_GATES] });
+    await run(['#7'], h.deps);
+    assert.deepStrictEqual(protectedArgs(h), expected, `${key} ${isOn}`);
+  }
+});
+
+test('#6019: a check that rejects --protected-paths as an unknown argument (an older build) ends the record blocked with no push', async () => {
+  const older = [on('node', /express-lane\.js$/, 'check'), (c) => (c.args.includes('--protected-paths')
+    ? { code: 2, stdout: '', stderr: 'express-lane.js: unknown argument for check: --protected-paths' }
+    : { code: 0, stderr: '', stdout: JSON.stringify(checkProceed()) })];
+  const h = harness({ policy: REVIEWER_ON, script: [older, widenIssue(FAST), ...REAL_GATES] });
+  await run(['#7'], h.deps);
+  assert.equal(finals(h)[0].outcome, 'blocked');
+  assert.equal(checkCalls(h).length, 1);
+  assert.equal(stepsRun(h).includes('push'), false);
+  assert.equal(h.calls.some((c) => c.kind === 'git' && c.args.includes('push')), false);
+});
+
+test('AC4.2 (#6019): a check that reports a protected path adds protected-path and the merge step stops at widened-admission without the supplier', async () => {
+  for (const reported of [['plugin/hooks/x.test.js'], ['plugin/hooks/old.js']]) {
+    const seen = [];
+    const { final, stop } = await widenedStop([protectedCheck(reported), widenIssue([...FAST, 'auto:merge'], ['src/f0.js'])],
+      { judgments: async () => { seen.push('called'); return { mergeCheck: { verdict: 'auto-merge' }, acceptance: { completed: true } }; } });
+    assert.deepStrictEqual(seen, [], reported[0]);
+    assert.equal(final.merge.reason, 'widened-admission', reported[0]);
+    assert.equal(stop.detail, 'widened-admission: admitted widened by protected-path', reported[0]);
+  }
+});
+
+test('#6019: a protected Key File record whose check also reports protected paths keeps one protected-path', async () => {
+  const { h, stop } = await widenedStop([protectedCheck(['plugin/hooks/x.js']), widenIssue([...FAST, 'auto:merge'], ['plugin/hooks/x.js'])]);
+  assert.deepStrictEqual(h.lines().find((l) => l.step === STEP.eligibility).widenedBy, ['protected-path']);
+  assert.equal(stop.detail, 'widened-admission: admitted widened by protected-path');
+});
+
+test('#6019: under the flag a check envelope with no protectedPaths array fails closed to protected-path', async () => {
+  const { final, stop } = await widenedStop([protectedCheck(undefined), widenIssue([...FAST, 'auto:merge'], ['src/f0.js'])]);
+  assert.equal(final.merge.reason, 'widened-admission');
+  assert.equal(stop.detail, 'widened-admission: admitted widened by protected-path');
+});
+
+test('#6019: without the flag a check envelope with no protectedPaths array leaves widenedBy alone', async () => {
+  const h = mergeHarness({ script: [protectedCheck(undefined), widenIssue([...FAST, 'auto:merge'], ['src/f0.js']), ...REAL_GATES], reconcile: archiveRunDir });
+  const { final } = await driveRecord(7, newShared(), h.deps, STEPS);
+  assert.notEqual(final.merge.reason, 'widened-admission');
+});
+
+test('#6019: the logged:false fallback proceed line carries the protected-path note, neutralized, before the runner stamp', async () => {
+  const odd = 'plugin/hooks/o\nld.js';
+  const h = harness({ policy: REVIEWER_ON, script: [protectedCheck(['plugin/hooks/x.test.js', odd], { logged: false }), widenIssue(FAST), ...REAL_GATES] });
+  await run(['#7'], h.deps);
+  assert.equal(h.files[Object.keys(h.files).find((f) => f.endsWith('check-proceed.txt'))],
+    `#7 proceed — 1 changed file(s), 3 implementation line(s) within bounds; protected path(s) left for the reviewer and a human merge: plugin/hooks/x.test.js, ${neutralize(odd)}; runner stamp verifies HEAD ${HEAD_SHA}.\n`);
 });
 
 // --- --budget through run() (record #5229) ----------------------------------------------------

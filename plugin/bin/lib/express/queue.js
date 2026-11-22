@@ -12,7 +12,7 @@ const { groupingMode } = require('../dispatch/queue-order');
 const DISABLED = Object.freeze({ enabled: false, grouping: groupingMode(false), keepSingleton: () => false });
 
 const FIRST_KEYS = ['express-lane', 'express-driver'];
-const SECOND_KEYS = ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-review'];
+const SECOND_KEYS = ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-protected-paths', 'express-driver-review'];
 const ROUTINGS = ['on', 'off', 'split'];
 
 const collapse = (value) => String(value).replace(/\s+/g, ' ');

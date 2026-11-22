@@ -76,8 +76,8 @@
 // rule (eligibility.js's isBeyondExpressBounds, which admission shares), on when the size label is
 // not `low` or the Key Files (the eligibility verdict's own extraction; a non-array counts as
 // beyond) exceed EXPRESS_MAX_KEY_FILES. A record inside those bounds is also on when the caller
-// passes a non-empty `widenedBy` (#6018: admitted above low risk or a non-fast-lane ceremony,
-// eligibility.js's widenings()), and on when `widenedBy` is neither absent nor an array of strings
+// passes a non-empty `widenedBy` (#6018, #6019: admitted above low risk, with a non-fast-lane ceremony or
+// with a protected Key File, eligibility.js's widenings(); it may carry `protected-path` too), and on when `widenedBy` is neither absent nor an array of strings
 // (admission.js's isReadableWidenedBy); an absent or empty one keeps the inside-bounds off answer.
 // The run asks it once per record, in the eligibility step (ctx.reviewer, #5224), and admission, the
 // check flag and reviewRecord all read that one answer; reviewRecord never calls it, and fails closed
@@ -318,7 +318,7 @@ function classifyEvidenceRun({ code, timedOut, tap }) {
 
 // Whether the reviewer runs for this record. keyFiles is the eligibility verdict's own
 // extractKeyFiles result (ctx.keyFiles).
-// widenedBy is eligibility.js's widenings() answer; absent reads as none.
+// widenedBy is eligibility.js's widenings() answer (risk, ceremony and/or protected-path); absent reads as none.
 function reviewRequired({ issue, keyFiles, policyValue, widenedBy } = {}) {
   if (policyValue === 'off') return { on: false, reason: 'express-driver-review is off' };
   if (policyValue === 'on') return { on: true, reason: 'express-driver-review is on' };
