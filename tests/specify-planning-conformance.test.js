@@ -326,8 +326,35 @@ test('the reviewer is dispatched as plan-review.md dispatches it', () => {
     f('never `fork`'),
     f('`resolve-profile.js capable`'),
     f('A table whose header lacks the Recommended reading column is unusable.'),
-    f('`{audit residue}` is filled from step 4\'s last audit JSON'),
+    f('fill the Audit residue line\'s placeholder from step 4\'s last audit JSON'),
+    f('a row whose Class is none of the five is logged only, like a `low` row'),
   ], 'reviewer dispatch');
+});
+
+test('fix round 1: routing never drops a low needs-human row, answers like build, and auto alone is not headless', () => {
+  pinned(sectionOf(planning(), '## Routing'), [
+    f('**`low` and `info` rows** of the four amendment classes amend nothing'),
+    f('a needs-human row is routed below at any severity, `low` and `info` included'),
+    f('`auto` alone does not make a run headless'),
+    f('a run in `auto` with a reachable human still asks, because these questions are build\'s plan-review needs-human gate moved to specify time'),
+    f('handled as `build/plan-review-asked-classes.md`\'s Routing step 2 handles it'),
+    f('`Decided by the user at planning:` lines in place of its plan-review ones'),
+    f('the `risk-flags.js add` and `Proof({slug}):` amendment when the answered row is class (b) and its category is not yet flagged'),
+  ], 'routing fixes');
+  pinned(sectionOf(planning(), '## Per-record step'), [
+    f('settled lines, decided lines, intent-resolvable clarification lines or flag additions'),
+  ], 'step 7 trigger');
+});
+
+test('go-red: a change made only in plan-review.md is reported', () => {
+  const rb = reviewBlock();
+  const edited = rb.replace('Find five classes of problem, and only these:', 'Find six classes of problem, and only these:');
+  assert.notEqual(edited, rb);
+  assert.ok(briefProblems(edited, planningBrief()).includes('shared list incomplete'));
+  const fromLine = BRIEF_DIFFERENCES[0].from;
+  const gone = rb.replace(fromLine, '- Spec: elsewhere');
+  assert.notEqual(gone, rb);
+  assert.ok(briefProblems(gone, planningBrief()).includes(`difference not applied: ${fromLine}`));
 });
 
 test('AC2.2 + AC3.1 + AC4.1: routing settles detail rows silently, asks each asked row once, and asks nothing headless', () => {
