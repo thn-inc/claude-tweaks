@@ -303,12 +303,12 @@ async function judge(env, ctx, route, extra, endToEnd = false, preRead = null) {
     role: 'acceptance', dir: 'acceptance-worker', label: 'acceptance worker', prompt, schema: ACCEPTANCE_RESULT_SCHEMA,
   });
   if (launched.stop) return launched;
-  // Every return from here on follows a launch that returned, so each carries its model (#5917).
-  const { envelope, model } = launched;
-  if (isInterrupted(env.deps)) return { stop: 'interrupted', model };
-  if (!envelope || envelope.status !== 'ok' || !isPlainObject(envelope.result)) return { stop: 'acceptance worker returned no valid result', model };
+  // Every return from here on follows a launch that returned, so each carries its model (#5917) and effort (#5942).
+  const { envelope, model, effort } = launched;
+  if (isInterrupted(env.deps)) return { stop: 'interrupted', model, effort };
+  if (!envelope || envelope.status !== 'ok' || !isPlainObject(envelope.result)) return { stop: 'acceptance worker returned no valid result', model, effort };
   const invalid = validateResult(route, envelope.result, endToEnd);
-  return invalid ? { ...invalid, model } : { result: envelope.result, body: inputs.body, model };
+  return invalid ? { ...invalid, model, effort } : { result: envelope.result, body: inputs.body, model, effort };
 }
 
 // The verdict's parent: { read } with its title, body and comments, or { stop }.
@@ -391,11 +391,19 @@ function ensureLabels(env, ctx, names) {
   return null;
 }
 
+// Records the launch's model and effort on the lane's state once a judge call resolved a model (#5917, #5942).
+function noteLaunch(state, judged) {
+  if (judged.model) {
+    state.model = judged.model;
+    state.effort = judged.effort ?? null;
+  }
+}
+
 // try-it-only: the record's Try it, plus the end-to-end variant when the parent gate is `due` below the floor.
 async function tryItOnly(env, ctx, state, decision, verdict, tmp) {
   if (verdict.state !== 'due') {
     const judged = await judge(env, ctx, decision.route, {});
-    if (judged.model) state.model = judged.model;
+    noteLaunch(state, judged);
     if (judged.stop) return judged;
     const screened = screenWorkerText(judged.result, decision.route, null);
     if (screened) return screened;
@@ -404,7 +412,7 @@ async function tryItOnly(env, ctx, state, decision, verdict, tmp) {
   const parent = readParent(env, ctx, verdict);
   if (parent.stop) return parent;
   const judged = await judge(env, ctx, decision.route, parentInputs(parent.read, verdict), true);
-  if (judged.model) state.model = judged.model;
+  noteLaunch(state, judged);
   if (judged.stop) return judged;
   const screened = screenWorkerText(judged.result, decision.route, judged.result.parentBrief.tryItEndToEnd);
   if (screened) return screened;
@@ -417,7 +425,7 @@ async function dueExceeds(env, ctx, state, decision, verdict, tmp) {
   if (found.stop) return found;
   const { parent, read } = found;
   const judged = await judge(env, ctx, decision.route, parentInputs(read, verdict), true);
-  if (judged.model) state.model = judged.model;
+  noteLaunch(state, judged);
   if (judged.stop) return judged;
   const screened = screenWorkerText(judged.result, decision.route, judged.result.parentBrief.tryItEndToEnd);
   if (screened) return screened;
@@ -482,7 +490,7 @@ async function noParent(env, ctx, state, decision, tmp) {
     return { stop: 'gather output unreadable' };
   }
   const judged = await judge(env, ctx, decision.route, { facts }, false, inputs);
-  if (judged.model) state.model = judged.model;
+  noteLaunch(state, judged);
   if (judged.stop) return judged;
   const { tryIt, observationPlan, claims } = judged.result;
   const links = tryIt.map((g, n) => ({ id: `entry-point-${n + 1}`, label: g.name, command: g.entryPoint }));
@@ -568,7 +576,7 @@ async function runAcceptance(env, ctx) {
   // Untrusted marker comments that were not acted on are named, so a planted one is never silent.
   const skipped = state.skipped > 0 ? `; skipped ${state.skipped} untrusted comment(s)` : '';
   const raw = `${completed ? out.detail : out.stop}${skipped}`;
-  emitStep(deps, 'merge-acceptance', completed ? 'ok' : 'stop', startedAt, raw, { route: state.route, ...(state.model ? { model: state.model } : {}) });
+  emitStep(deps, 'merge-acceptance', completed ? 'ok' : 'stop', startedAt, raw, { route: state.route, ...(state.model ? { model: state.model, effort: state.effort ?? null } : {}) });
   return { completed, route: state.route, detail: cleanDetail(raw) };
 }
 

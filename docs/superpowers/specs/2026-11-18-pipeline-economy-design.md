@@ -275,6 +275,19 @@ Records #6018 (the risk ceiling, the ceremony relaxation and the `pending-review
 
 ## Phase 9 — Implementer tier from the record
 
+## Phase 9: Specified
+
+Records #5996 (the rule, the step-up, the `implementer-tier` policy value and its CLI), #5997 (the driver launches the record's profile and relaunches once one profile up), #5999 (the standard lane takes its profile from the CLI and escalates once) and #6002 (the effort ladder), under parent #5995. #5997 and #5999 are blocked by #5996; #6002 is blocked by #5941, #5942, #5997 and #5999.
+
+- **Decided while specifying:**
+  - One policy value, `implementer-tier`: `lane`, the default, keeps each lane's current rule; `record` applies this phase's rule in both lanes. This repository opts in. A `size:high` record gets Standard, not Capable.
+  - One Key File counter for both lanes: distinct paths in the record's `### Key Files`; a directory entry rules out Fast.
+  - Driver: only a worker that cannot complete, or red tests, triggers the relaunch; it works on top of what the first attempt left, then commits and re-tests. Ceilings stay per launch, so the worst case is three implementer launches per record.
+  - Standard lane: a `BLOCKED` report, or a failed re-review of a task's first fix round, sends that task to a fresh implementer one profile up, once; `decisions.md` holds the once-per-task count.
+  - Effort ladder: the starting effort follows `risk:` (`low` → `low`, `medium` → `medium`, higher → the profile's own, never above `high`). Red tests or a failed fix round raise the effort one step first; `BLOCKED` or a worker that cannot complete step the profile directly. At most two escalations.
+  - Per-task `**Role:**` markers and the `profile=` token keep overriding the record rule.
+- **Done-when caveat:** tasks started at `low` are `risk:low`, so the `low`-versus-`medium` comparison is made within a size band, adds a fix-rounds-per-task guard, and reads as cost per risk class rather than a pure effort effect.
+
 - **Builds:** the implementer's profile comes from the record's labels in code: low size with one or two Key Files gets Fast, everything else Standard. A failed verify or a blocked report moves it up one profile, once. Applies to the driver, and to the standard lane's task loop through the run's config.
   - Once Phase 15 has landed, a step up may be an effort before it is a model: the first attempt runs at the lowest effort the record's labels allow, and a failed verify raises the effort, then the profile. Only an implementer gets this, because a test or a review shows its failure.
 - **Waits for:** Phase 15 for the effort half.

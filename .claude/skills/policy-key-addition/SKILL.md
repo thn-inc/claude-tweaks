@@ -28,6 +28,8 @@ Two flags mirror each other. Pick by which source must never set the key:
 
 Every new key gets this decision, even when the answer is neither flag. A key whose every consumer reads `policy.yml` directly, never through `resolve-policy.js --run`, is `policyOnly`: an overlay would let `resolve-policy.js --run` report a value no consumer reads. `verify-suite-slots` (#5119, read by `verify.js` only as a flag) and `changelog-max-releases` (#5563, read by both release engines through `policy.js`'s `readChangelogMaxReleases`) are the instances. #5563 first shipped with neither flag, and review caught it (row 12, `6b69def51`). Say the decision in the comment above the row, as both of those do.
 
+Decide from the new key's own routes, never by copying a sibling in its family. `model-stance` carries no flag because it has a per-run route (`resolve-profile.js --stance`, and Manifesto lever 10 writes it to the run config). `model-effort`, which the same resolver reads beside it, has neither route, so it is `policyOnly`. #5941 first gave `model-effort` no flag to match `model-stance`, and the final review caught it (`4de9b6b416`, pinned in `tests/policy.test.js`).
+
 ## Validation flags
 
 - **`string`** is non-blank and whitespace-free by default. `allowWhitespace: true` opts a command-shaped value out of the whitespace rule (`release-hook`, `deploy-command`). Add `closedQuote: true` beside it: `parseFlatLines` cuts at any `#`, so a quoted value holding one is cut mid-quote, and `closedQuote` makes the leftover unclosed quote invalid rather than a truncated command. `release-hook` keeps its older contract without it.
