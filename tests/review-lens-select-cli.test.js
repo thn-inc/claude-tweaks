@@ -144,7 +144,7 @@ test('streaks unreadable: logs the streak reason as one AUTO line, selection has
   assert.match(lines[0], /^- AUTO .*Step 3 lens selection: skip streaks unreadable.*2026-11-21T100000-record-9/);
 });
 
-test('a skip streak from earlier runs forces the lens (the run itself is excluded)', () => {
+test('a skip streak from earlier runs forces the lens', () => {
   const w = world();
   seedHistory(w, '3d');
   commitFile(w, 'docs/a.md', 'prose only\n');

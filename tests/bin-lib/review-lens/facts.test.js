@@ -79,7 +79,7 @@ test('AC10.1: low-tier executable-content fact matches step3-tier-variants.md', 
   }
 });
 
-test('an interHunkContext git config does not shift line numbers; context lines advance both counters', () => {
+test('an interHunkContext git config does not change the facts (the explicit flag wins); a patch that still carries context lines keeps line numbers right', () => {
   const r = diffRepo({ 'docs/a.md': lines('l1', 'l2', 'l3', 'l4', '```', 'code', '```') },
     { 'docs/a.md': lines('l1', 'L2', 'l3', 'l4', '```', 'code', 'more', '```') });
   const env = { ...process.env, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'diff.interHunkContext', GIT_CONFIG_VALUE_0: '5' };
