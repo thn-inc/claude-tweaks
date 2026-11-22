@@ -300,7 +300,8 @@ test('with an exists predicate, a foreign path is flagged only when its checkout
   const wt = live + '/flow-spec-9';
   assert.deepStrictEqual(rw.unrewrittenPaths('WORKTREE: ' + wt, o), [wt]);
   assert.deepStrictEqual(rw.unrewrittenPaths("+  root: '/p/.claude-tweaks/pipelines/r1'", o), []);
-  assert.deepStrictEqual(asked, [live, '/p/.claude-tweaks/pipelines']);
+  // Which prefixes were asked about, not in what order or how often: a probe order is an implementation detail.
+  assert.deepStrictEqual([...new Set(asked)].sort(), [live, '/p/.claude-tweaks/pipelines'].sort());
   // The predicate never widens the barrier past the existing checks, and is not asked about them.
   asked.length = 0;
   assert.deepStrictEqual(rw.unrewrittenPaths(main + '/.claude/worktrees/w', { mainRoot, runName: 'R', outDir: '/out', exists }), [main + '/.claude/worktrees/w']);
