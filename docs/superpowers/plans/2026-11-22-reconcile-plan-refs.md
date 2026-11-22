@@ -47,7 +47,7 @@
   - `decidePlanRef({ record: number, state: 'OPEN'|'CLOSED'|undefined }) -> { action: 'delete'|'skip', reason: 'record-closed'|'record-open'|'state-unreadable' }` — pure.
   - `planRefs({ cwd, dryRun, git, gh, readBackend } = {}) -> { entries: Array<{ ref, record, action: 'delete'|'would-delete'|'skip', reason, detail? }>, failure: string|null }` — never throws. `git(args) -> stdout` and `gh(args) -> stdout` are injectable runners that throw on non-zero exit (the error may carry `.stdout`/`.stderr`); defaults run `git -C root …` / `gh …` via `execFileSyncTimed` with `windowsHide: true`. `readBackend(root)` defaults to `readWorkBackend`.
 
-- [ ] **Step 1: Write the failing tests** in `tests/bin-lib/reconcile/plan-refs.test.js`, every runner a fake (no network, no real remote). Required tests and assertions:
+- [ ] **Step 1: Write the failing tests (AC1.1, AC2.1, AC3.1, AC5.1, AC5.2, AC5.3)** in `tests/bin-lib/reconcile/plan-refs.test.js`, every runner a fake (no network, no real remote). Required tests and assertions:
   - `listPlanRefs: keeps exact-integer refs only` — input lines `aaa\trefs/claude-tweaks/plans/12`, `bbb\trefs/claude-tweaks/plans/0`, `ccc\trefs/claude-tweaks/plans/007`, `ddd\trefs/claude-tweaks/plans/12abc`, `eee\trefs/claude-tweaks/plans/5/x`, `fff\trefs/claude-tweaks/plans/3^{}`, `ggg\trefs/heads/main`, a CRLF line `hhh\trefs/claude-tweaks/plans/4\r`, blank lines → `[{ref:'refs/claude-tweaks/plans/4', record:4, sha:'hhh'}, {ref:'refs/claude-tweaks/plans/12', record:12, sha:'aaa'}]`.
   - `buildIssueStateQuery: aliases each record, omits invalid ones` — `[7, 0, 'x', 9]` → contains `i0: issue(number:7){ number state }` and `i3: issue(number:9){ number state }`, no `i1`/`i2`, and `query($owner:String!,$name:String!)`.
   - `parseIssueStateResponse: keeps only exact-number CLOSED/OPEN nodes` — records `[1,2,3,4,5]`, data `{i0:{number:1,state:'CLOSED'}, i1:{number:2,state:'OPEN'}, i2:{number:99,state:'CLOSED'}, i3:null, i4:{number:5,state:'closed'}}` → Map `{1:'CLOSED', 2:'OPEN'}` only.
@@ -110,7 +110,9 @@ git commit -m "Add plan-refs reconcile check — delete a closed record's plan r
 - Consumes: Task 1's `planRefs({ cwd, dryRun }) -> { entries, failure }`.
 - Produces: `reconcile()` result key `planRefs: null | Array<entry>`; check name `'plan-refs'` in `ALL_CHECKS`, `DISPATCH_ORDER`, `BACKGROUND_CHECKS`, `CLI_DEFERRED_CHECKS`; local-merge skip string becomes `'mirror,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,plan-refs,console'`. No `PREREQUISITES` entry (the check lists `origin` itself and reads no state another check produces).
 
-- [ ] **Step 1: Append the failing tests** to `tests/bin-lib/reconcile/plan-refs.test.js`:
+Waived AC4.1: the whole suite is /build Common Step 5's verification run over the finished branch, not a per-task step.
+
+- [ ] **Step 1: Append the failing tests (AC3.1, AC5.3)** to `tests/bin-lib/reconcile/plan-refs.test.js`:
   - `index: plan-refs is registered on the background tier, deferred from the unscoped CLI, dispatched between ledger-residue and reap` — `ALL_CHECKS.includes('plan-refs')`; `require('…/plugin/bin/hooks.js').BACKGROUND_CHECKS` and `.CLI_DEFERRED_CHECKS` include it (export `CLI_DEFERRED_CHECKS` from `hooks.js` if not already exported); in `index.js`'s source, `checks.includes('plan-refs')` sits after `checks.includes('ledger-residue')` and before `checks.includes('reap')`.
   - `index: requesting plan-refs under pr-first sets result.planRefs to an array; not requesting it leaves null` — same fixture shape as `ledger-residue.test.js`'s `index: requesting ledger-residue under pr-first…` test (a local bare origin, stubbed preflight), `checks: ['plan-refs']`.
   - `index: a plan-refs failure lands in skipped` — with `CLAUDE.md` declaring `work-backend: local-files` in the fixture, `skipped` contains `{ check: 'plan-refs', reason: 'local-files-backend' }`.
