@@ -40,7 +40,7 @@ files:
 - **Action:** Let the subagent create, link, red-team and self-review the sub-issues, then return its Step 9 summary.
 - **Should feel:** Identical to step 1 from your side. The subagent never plans and never asks a planning question. Planning happens after it returns, in the main session.
 - **Should understand:**
-  - Under `on`, the subagent's prompt tells it that planning is not its job and asks for one `Resumed: #a, #b` (or `Resumed: none`) line after its summary. The caller plans the Work Units Created refs minus those.
+  - Under `on`, the subagent's prompt tells it that planning is not its job and asks for one `Resumed: #a, #b` (or `Resumed: none`) line after its summary and before its status line. The caller plans the Work Units Created refs minus those.
   - A reply with no `Resumed:` line plans nothing. A `NEEDS_CONTEXT` or `BLOCKED` return plans nothing either: each created sub-issue gets a `skipped` row with Detail `handoff {status}`, because its body may not have reached Step 6.
   - The appended `### Planning` section opens with "Planned in specify's own session after the handoff returned; the handoff planned nothing."
 - **Red flags:** A planning question inside the subagent. Resumed sub-issues planned. A non-DONE handoff whose sub-issues get plans anyway.
@@ -52,9 +52,8 @@ files:
 - **Should understand:**
   - `planned`: a `Plan:` line was stored, or a valid one was kept.
   - `held`: an asked-class question is unanswered, so the sub-issue lost `ready` and gained `needs:decision` (the label edit is a separate call after the body write).
-  - `skipped`: a plan-less lane took it (`{lane} lane ({reason})`), planning failed (`planning failed: {reason}`), or a write, shape check or read-back failed. A skipped sub-issue's body is written only to remove a stale `Plan:` line.
-  - `no-ref`: `plan-store.js` reported no ref, so the decisions are kept with no `Plan:` line.
-  - A held sub-issue whose body write, label call or comment post fails shows `## Hold`'s `failed — …; re-run /claude-tweaks:specify #{n}` row, so its questions come back on the re-run.
+  - `skipped`: a plan-less lane took it (`{lane} lane ({reason})`), planning failed (`planning failed: {reason}`), re-fetching its body and labels failed (`fetch failed: {reason}`, so it is neither planned nor written), or a write, shape check or read-back failed. A skipped sub-issue's body is written only to remove a stale `Plan:` line.  - `no-ref`: `plan-store.js` reported no ref, so the decisions are kept with no `Plan:` line.
+  - A held sub-issue whose body write, label call, comment post or read-back fails shows `## Hold`'s `failed — …; re-run /claude-tweaks:specify #{n}` row, so its questions come back on the re-run.
   - Planning never adds `ready`. A sub-issue Step 5 left without it (a staged red-team finding) is still planned but stays without `ready`.
 - **Red flags:** A created sub-issue with no row. A `ready` sub-issue with an unanswered planning question. A held sub-issue listed in a `/claude-tweaks:flow` Next Actions line.
 
