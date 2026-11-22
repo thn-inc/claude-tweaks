@@ -105,3 +105,4 @@ A removed function's tests mix assertions about the function itself with asserti
 - `shared-contract-extraction` step 6: proving a retirement by its citations.
 - `skill-prose-conformance-tests`: absence assertions fail open; sweep roots include `.claude/skills/`.
 - Pending conditions: `plugin/skills/_shared/policy-deprecations.md`, `plugin/skills/{backlog,dispatch,specify}/deprecated-aliases.md`, `Removal condition:` comments under `plugin/bin/`.
+- Pending contract steps recorded in an ADR: the ADR names the removal condition and the parked record that holds it, and the code says only `contract step (#N)` or `expand half`, so the Overview's `removal condition` grep misses them. Also run `git grep -n -i -e 'contract step' -e 'expand half' -- plugin/ docs/decisions/`. Current hits: ADR 0035 (`plugin/bin/lib/issues/trust.js`'s `revocationOnly`, held by #5717) and ADR 0029 (the `demo:*` labels, contract step #4625).
