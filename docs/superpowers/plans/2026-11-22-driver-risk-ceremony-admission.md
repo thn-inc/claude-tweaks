@@ -93,7 +93,7 @@ Expected: PASS
 - Modify: `plugin/bin/lib/express/eligibility.js`
 - Test: `tests/bin-lib/express/eligibility.test.js`
 - Read (no change): `plugin/bin/lib/express/cli.js` — express-lane caller of `evaluateRecordEligibility`; passes no driver option, so AC1.2 pins it unchanged
-- Read (no change): `plugin/bin/lib/express/queue.js` — same
+- Read (no change): `plugin/bin/lib/express/queue.js` — its express half passes no driver option (AC1.2); its driver half is Task 8
 
 **Interfaces:**
 - Produces (exported from `eligibility.js`):
@@ -194,9 +194,9 @@ Expected: PASS
   - `test('AC3.2 (#6018): --check with ceiling medium and express-driver-review off refuses risk:medium with the widened reviewer-off reason', …)` — reasons equal `[ADMISSION_REASONS.reviewerOffWidened]`.
   - `test('AC5.1 (#6018): express-driver-review on admits ceremony:standard with widenedBy [ceremony]', …)`.
   - `test('AC5.2, AC5.3 (#6018): beyond-express (also with a size-widened record whose reviewer is on) and off refuse ceremony:standard with the ceremony reason; ceremony:fastlane refuses under every reviewer value', …)` — for `beyond-express` with `express-driver-max-size: 'medium'` and `size:medium`, and for `off`, reasons contain `'ceremony is not fast-lane'`; `ceremony:fastlane` under `on`, `beyond-express`, `off` likewise.
-  - `test('AC10 (#6018): a malformed express-driver-max-risk value (Medium) falls back to low — --check refuses risk:medium exactly as with the key unset', …)` — feed the harness the policy the resolver returns for `express-driver-max-risk: Medium` (`{ value: 'low', source: 'default', invalid: true }`, taken from `resolvePolicyKeys` on that `policyRaw`, not hand-built), reviewer `on`, record `risk:medium`: the verdict line deep-equals the one printed with the key unset (`admitted: false`, reasons containing `REASONS.risk`, `widenedBy: []`).
+  - `test('AC10.1 (#6018): a malformed express-driver-max-risk value (Medium) falls back to low — --check refuses risk:medium exactly as with the key unset', …)` — feed the harness the policy the resolver returns for `express-driver-max-risk: Medium` (`{ value: 'low', source: 'default', invalid: true }`, taken from `resolvePolicyKeys` on that `policyRaw`, not hand-built), reviewer `on`, record `risk:medium`: the verdict line deep-equals the one printed with the key unset (`admitted: false`, reasons containing `REASONS.risk`, `widenedBy: []`).
   - `test('AC7.1 (#6018): the --check verdict line carries widenedBy and an unwidened record prints widenedBy []', …)` — default policy, eligible record: line is `{ record, admitted: true, reasons: [], widenedBy: [] }`.
-  - `test('AC11 (#6018, driver half): a record labelled risk:low and risk:medium, in either order, is admitted under ceiling medium with widenedBy [risk]', …)` — reviewer `on`.
+  - `test('AC11.1 (#6018, driver half): a record labelled risk:low and risk:medium, in either order, is admitted under ceiling medium with widenedBy [risk]', …)` — reviewer `on`.
   - `test('Review Focus 4 (#6018): a size:medium risk:medium record is widened by risk only', …)` — policy max-size `medium`, max-risk `medium`, review `beyond-express`: `widenedBy` is `['risk']`.
   - `test('the eligibility event names widenedBy only for a widened record (#6018)', …)` — drive one widened and one unwidened record through the existing STEPS harness to the eligibility event: the widened line has `widenedBy: ['risk']`, the unwidened one has no `widenedBy` key.
   - `test('mergeStep hands ctx.widenedBy to merge (#6018)', …)` — a captured `mctx.widenedBy` equals the ctx's list.
@@ -235,7 +235,7 @@ Proof(auth): merge.test.js's widened-admission tests assert that a record carryi
   - `test('AC9.1 (#6018): risk:medium with widenedBy unset, a string, or [] stops at widened-admission and never calls the supplier', …)` — labels `auto:build`, `auto:merge`, `risk:medium`; ctx variants: `widenedBy` deleted, `widenedBy: 'risk'`, `widenedBy: []`; each → `pending-review` / `widened-admission`, no `judgments` call, `assertNoReadyNoMerge(h)`.
   - `test('Review Focus 1 (#6018): a ceremony:standard live label with widenedBy [] stops at widened-admission', …)`.
   - `test('a ceremony:fast-lane, risk:low record with widenedBy [] is not widened (#6018)', …)` → `merged`.
-  - `test('AC11 (#6018): risk:low plus risk:medium, in either order, with widenedBy [] stops at widened-admission', …)` — both label orders, each → `pending-review` / `widened-admission`, no `judgments` call.
+  - `test('AC11.1 (#6018, merge half): risk:low plus risk:medium, in either order, with widenedBy [] stops at widened-admission', …)` — both label orders, each → `pending-review` / `widened-admission`, no `judgments` call.
   - Bump `SPEC_REASONS` with `'widened-admission'` and its length assertion `28` → `29`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -301,3 +301,36 @@ Run: `node --test tests/bin-lib/driver/merge.test.js tests/bin-lib/driver/run.te
 Expected: PASS (driver.md pins still hold)
 
 - [ ] **Step 3: Commit** `Document the driver's risk ceiling, ceremony relaxation and widened-admission stop`
+
+### Task 8: The queue pull's driver half asks the driver's widened question
+
+**Role:** integration
+**Review risk:** high
+
+Added at resume (plan audit Check B, after merging origin/main): #6011 landed `plugin/bin/lib/express/queue.js`, whose driver half calls `eligibilityOptions(policy)` with a policy resolved from its own `SECOND_KEYS`. After Task 4 `eligibilityOptions` reads `policy['express-driver-max-risk'].value`, which the real resolver never returns for a key it was not asked for, so the call would throw inside queue.js's load `try` and silently disable the driver half for every pull ("driver modules failed to load"). The half must also ask the driver's whole question: a widened record is driver-routable only with the reviewer on.
+
+**Files:**
+- Modify: `plugin/bin/lib/express/queue.js` (`SECOND_KEYS` line 15; `driverRoutable` lines 89-96; header comment)
+- Test: `tests/bin-lib/express/queue.test.js` (the `SECOND_KEYS` call pin at line 61; new tests)
+
+**Interfaces:**
+- Consumes: `widenings` (Task 2); `reviewRequired`'s `widenedBy` (Task 3); `eligibilityOptions`'s `riskCeiling`/`allowAnyCeremony` (Task 4).
+- Produces: `SECOND_KEYS` gains `'express-driver-max-risk'` after `'express-driver-max-key-files'`. `driverRoutable` computes `widenedBy = widenings({ labels: issue.labels, riskCeiling: driver.eligibility.riskCeiling, anyCeremony: driver.eligibility.allowAnyCeremony })`, passes it to `reviewRequired`, and answers `false` when `widenedBy` is non-empty and the reviewer is off (admission's `reviewerOffWidened` rule), besides today's `reviewerGateReason` check.
+
+- [ ] **Step 1: Write the failing tests** in `tests/bin-lib/express/queue.test.js`
+  - Update the `calls` pin at line 61 to include `'express-driver-max-risk'`.
+  - `test('#6018: the driver half resolves express-driver-max-risk, so the real resolver shape never throws', …)` — use a resolver that, like the real one, returns entries only for the keys it was asked for (so a missing key makes `eligibilityOptions` throw on `.value`); assert the second call's `keys` include `'express-driver-max-risk'`, and that with `express-driver: 'on'`, `express-driver-max-risk: 'medium'`, `express-driver-review: 'on'`, a `risk:medium`, `size:low`, `ceremony:fast-lane` record is kept a singleton (`keepSingleton` true) and no `express-driver: driver modules failed to load` line is written.
+  - `test('#6018: a risk-widened record is not driver-routable with express-driver-review off', …)` — same record, `express-driver-review: 'off'` → `keepSingleton` false.
+  - `test('#6018: with express-driver-max-risk unset the driver half keeps today's answer for risk:medium', …)` — value `'low'` → `keepSingleton(MEDIUM_RISK)` false.
+
+- [ ] **Step 2: Run the tests to verify they fail**
+Run: `node --test tests/bin-lib/express/queue.test.js`
+Expected: FAIL after Step 1 (`SECOND_KEYS` lacks the key; a risk:medium record is not routable)
+
+- [ ] **Step 3: Implement** as the Interfaces block states; import `widenings` from `./eligibility`.
+
+- [ ] **Step 4: Run the tests to verify they pass**
+Run: `node --test tests/bin-lib/express/queue.test.js tests/bin-lib/dispatch/queue-pull.test.js tests/bin-lib/dispatch/queue-order.test.js`
+Expected: PASS
+
+- [ ] **Step 5: Commit** `Ask the driver's widened question in the queue pull's driver half — resolve express-driver-max-risk`
