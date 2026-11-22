@@ -145,6 +145,13 @@ test('an unreadable working directory returns a code instead of throwing', (t) =
   const ck = call(['check', '--line', w.line, '--spec-file', abs('spec.md'), '--base', 'HEAD']);
   assert.strictEqual(ck.code, 1);
   assert.deepStrictEqual(verdict(ck), { valid: false, failed: 'ref' });
+  // An absolute --repo-root never reads the working directory: pinned by counting cwd() calls.
+  let calls = 0;
+  const counting = { cwd: () => { calls += 1; throw new Error('ENOENT'); } };
+  const ok = runCliSync(CLI, ['check', '--line', w.line, '--spec-file', abs('spec.md'), '--base', 'HEAD', '--repo-root', fx.work], { cwd: fx.work, env, deps: counting });
+  assert.strictEqual(ok.code, 0, ok.stderr);
+  assert.deepStrictEqual(verdict(ok), { valid: true, failed: null });
+  assert.strictEqual(calls, 0);
 });
 
 test('a local ref failure after a successful push exits 0 with a warning', (t) => {

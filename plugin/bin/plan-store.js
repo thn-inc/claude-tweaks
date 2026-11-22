@@ -166,7 +166,7 @@ function runRead(v, deps) {
 
 function runCheck(v, deps, line) {
   const print = (verdict, code) => { deps.stdout(`${JSON.stringify(verdict)}\n`); return code; };
-  const repo = openRepo(deps, () => (v.repoRoot === undefined ? deps.cwd() : path.resolve(deps.cwd(), v.repoRoot)));
+  const repo = openRepo(deps, () => (v.repoRoot === undefined ? deps.cwd() : path.isAbsolute(v.repoRoot) ? path.resolve(v.repoRoot) : path.resolve(deps.cwd(), v.repoRoot)));
   if (repo.error) {
     deps.stderr(`${NAME}: not a usable git repository: ${repo.error}\n`);
     return print({ valid: false, failed: 'ref' }, 1);
