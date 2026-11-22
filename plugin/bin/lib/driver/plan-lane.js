@@ -22,8 +22,9 @@
 // here; the express bounds likewise through the express gate's expressGateOptions.
 // reviewRequired and admission get the eligibility verdict's own Key File paths and the record's
 // widenings (#6018: above low risk under `express-driver-max-risk`, or a non-fast-lane ceremony when
-// `express-driver-review` is `on`, or a merge-time protected Key File under `express-driver-protected-paths: reviewer`, #6019), as steps.js's eligibility step does. Every input those helpers
-// read is a label, the body or a policy value, so shaping time reads the answer the driver will.
+// `express-driver-review` is `on`, or a merge-time protected Key File under
+// `express-driver-protected-paths: reviewer`, #6019), as steps.js's eligibility step does. Every
+// input those helpers read is a label, the body or a policy value, so shaping time reads the answer the driver will.
 // lane-bounds.js is a leaf module, so this file never loads steps.js.
 //
 // Precedence: driver, then express, then micro-plan. Fail closed: every input is validated before

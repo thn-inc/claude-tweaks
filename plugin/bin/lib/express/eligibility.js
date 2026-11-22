@@ -187,7 +187,8 @@ function isFrontend(body, keyFiles) {
 // allowAnyCeremony (#6018) are driver-only too: riskCeiling admits risk labels up to the ceiling
 // (an unreadable one refuses), and allowAnyCeremony === true admits any recognised ceremony:* tier.
 // protectedPathsNeedReviewer (#6019) is driver-only: only a literal true stops refusing a protected
-// Key File that is not build-time (isBuildTimeProtectedPath); the merge-sensitive check is unchanged.
+// Key File that is not build-time (isBuildTimeProtectedPath) and not merge-sensitive; a protected
+// and merge-sensitive Key File keeps both reasons, as in evaluateDiffBounds.
 function evaluateRecordEligibility(issue, opts) {
   const {
     enabled, integrationModel, sensitivePaths = [], escalated = false, allowAbsentCeremony = false,
@@ -239,8 +240,9 @@ function evaluateRecordEligibility(issue, opts) {
   }
   if (isFrontend(body, keyFiles)) reasons.push(REASONS.frontend);
   for (const p of keyFiles) {
-    if (protectedPathsNeedReviewer === true ? isBuildTimeProtectedPath(p) : isProtectedPath(p)) reasons.push(REASONS.protectedPath(p));
-    if (isSensitivePath(canonicalPath(p), sensitivePaths)) reasons.push(REASONS.sensitivePath(p));
+    const sensitive = isSensitivePath(canonicalPath(p), sensitivePaths);
+    if (protectedPathsNeedReviewer === true ? (isProtectedPath(p) && (isBuildTimeProtectedPath(p) || sensitive)) : isProtectedPath(p)) reasons.push(REASONS.protectedPath(p));
+    if (sensitive) reasons.push(REASONS.sensitivePath(p));
   }
   if (!shapeGate(body).ok) reasons.push(REASONS.notShaped);
   if (escalated === true) reasons.push(REASONS.escalated);
@@ -252,8 +254,9 @@ function evaluateRecordEligibility(issue, opts) {
 // Which of the driver's two widened rules a record actually relies on (#6018): 'risk' when a label
 // names risk:medium or risk:high under a readable ceiling, 'ceremony' when anyCeremony === true and a
 // label names a recognised tier other than fast-lane, and 'protected-path' (#6019, last) when
-// protectedPathsNeedReviewer === true and some Key File in the keyFiles array is protected. It scans every label name, never the parsed
-// facets (which keep only the last match), so a dual-labelled record answers the same in any order.
+// protectedPathsNeedReviewer === true and some Key File in the keyFiles array is protected. It scans
+// every label name, never the parsed facets (which keep only the last match), so a dual-labelled
+// record answers the same in any order.
 // Pure: the driver steps, merge.js and the queue pull call it; admission and review read its result.
 function widenings({ labels, riskCeiling, anyCeremony, keyFiles, protectedPathsNeedReviewer } = {}) {
   const names = normalizeLabelNames(labels || []);

@@ -26,7 +26,7 @@ const oneLine = (err) => collapse(err && err.message);
 // to three of these per pull) should not pay for a disabled feature. `enabled` is
 // the express half's flag; the driver half is on for `express-driver` `on` or
 // `split`, and keeps a record the driver would route (routing, eligibility and
-// reviewer rules, a risk- or ceremony-widened record needing the reviewer on, the
+// reviewer rules, a risk-, ceremony- or protected-path-widened record needing the reviewer on, the
 // driver modules loaded only then). A failed resolution, or an
 // `express-driver` value that is not on/off/split, behaves as disabled for the
 // whole pull (fail toward bundling, the pre-#4025 behavior) with one stderr line;

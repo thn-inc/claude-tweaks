@@ -76,8 +76,9 @@
 // rule (eligibility.js's isBeyondExpressBounds, which admission shares), on when the size label is
 // not `low` or the Key Files (the eligibility verdict's own extraction; a non-array counts as
 // beyond) exceed EXPRESS_MAX_KEY_FILES. A record inside those bounds is also on when the caller
-// passes a non-empty `widenedBy` (#6018, #6019: admitted above low risk, with a non-fast-lane ceremony or
-// with a protected Key File, eligibility.js's widenings(); it may carry `protected-path` too), and on when `widenedBy` is neither absent nor an array of strings
+// passes a non-empty `widenedBy` (#6018, #6019: eligibility.js's widenings(), admitted above low risk,
+// with a non-fast-lane ceremony or with a protected Key File; a check-time `protected-path` may be
+// added after eligibility), and on when `widenedBy` is neither absent nor an array of strings
 // (admission.js's isReadableWidenedBy); an absent or empty one keeps the inside-bounds off answer.
 // The run asks it once per record, in the eligibility step (ctx.reviewer, #5224), and admission, the
 // check flag and reviewRecord all read that one answer; reviewRecord never calls it, and fails closed

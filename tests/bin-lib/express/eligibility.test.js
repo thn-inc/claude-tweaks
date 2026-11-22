@@ -611,6 +611,15 @@ test('AC6.1 (#6019): a merge-sensitive Key File refuses under the option exactly
   assert.ok(a.reasons.includes('merge-sensitive path: src/a.js'));
 });
 
+test('AC6.1 (#6019): a protected and merge-sensitive Key File keeps both reasons under the option', () => {
+  const r = withKey('plugin/hooks/x.js');
+  const a = evaluateRecordEligibility(r, { ...REVIEWER, sensitivePaths: ['plugin/hooks/**'] });
+  const b = evaluateRecordEligibility(r, { ...DRIVER, sensitivePaths: ['plugin/hooks/**'] });
+  assert.deepStrictEqual(a.reasons, b.reasons);
+  assert.ok(a.reasons.includes('protected path: plugin/hooks/x.js'));
+  assert.ok(a.reasons.includes('merge-sensitive path: plugin/hooks/x.js'));
+});
+
 test('widenings protected-path (#6019)', () => {
   const k = ['plugin/hooks/x.js'];
   assert.deepStrictEqual(widenings({ labels: ELIGIBLE_LABELS, keyFiles: k }), []);

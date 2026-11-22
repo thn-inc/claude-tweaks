@@ -490,7 +490,10 @@ function defaultScript(over, fx) {
       // #6018: a policy of undefined is the key unset, which the resolver answers as its default.
       : k === 'express-driver-max-risk' && policy[k] === undefined
         ? { value: 'low', source: 'default' }
-        : { value: policy[k], source: 'policy' }]))],
+        // #6019: an unset protected-paths key resolves to the real resolver's default reply.
+        : k === 'express-driver-protected-paths' && policy[k] === undefined
+          ? resolvePolicyKeys([k], { policyRaw: '' })[k]
+          : { value: policy[k], source: 'policy' }]))],
     [on('gh', 'issue', 'view'), (c) => JSON.stringify(issueFor(Number(c.args.at(-1))))],
     [on('git', 'symbolic-ref'), 'origin/main\n'],
     [on('eligibility'), (c) => ({ number: c.args[0].number, eligible: true, reasons: [], keyFiles: ['a.js'], ...pick(over.eligibility, c) })],

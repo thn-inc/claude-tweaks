@@ -33,8 +33,8 @@
 //   beyond the express bounds and the reviewer on      admitted by this rule
 //   beyond the express bounds and the reviewer not on  refused, reviewerOff
 //   inside the express bounds                          the rule does not apply
-// A widened record (#6018, #6019) is one the caller admitted above low risk, with a non-fast-lane ceremony or
-// with a protected Key File;
+// A widened record (#6018, #6019) is one the caller admitted above low risk, with a non-fast-lane
+// ceremony or with a protected Key File;
 // `widenedBy` is eligibility.js's widenings() answer, computed by the caller (absent reads as none):
 //   widened and the reviewer on                        admitted by this rule
 //   widened and the reviewer not on                    refused, reviewerOffWidened
