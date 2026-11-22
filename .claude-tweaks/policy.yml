@@ -10,6 +10,10 @@ integration-model: pr-first
 housekeeping-auto-merge: true
 express-lane: true
 express-driver: on
+# implementer-tier (#5995): record runs a size:low record with one or two Key Files on Fast, every other record on Standard.
+# Revert signal: over the first 20 implementation tasks on Fast, a share needing a fix round higher than Standard's over
+# the same runs (tools/pipeline-cost-report.js's review-results-by-role-and-tier table) means set this back to lane.
+implementer-tier: record
 project-maturity: established
 # release-hook: <command run after the local engine tags a release — local-merge only; under pr-first the release: published workflow is the hook — it needs a PAT, GITHUB_TOKEN-created releases do not trigger it>
 # release-train: false

@@ -43,9 +43,9 @@ test('POLICY_KEYS entries are unique', () => {
   assertLastBump(__filename);
   // Changes only with a recorded reason. Recompute by counting the merged list,
   // never by summing either side's delta (IL-99); history is `git log -L`.
-  // Last bump: 114 -> 116, #5933
-  assert.strictEqual(POLICY_KEYS.length, 116);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 116);
+  // Last bump: 116 -> 117, #5996
+  assert.strictEqual(POLICY_KEYS.length, 117);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 117);
 });
 
 test('express-lane keys resolve their defaults (#4025)', () => {
