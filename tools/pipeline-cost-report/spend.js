@@ -4,10 +4,10 @@
 // scanTranscript streams a transcript's raw JSONL lines and returns one Request per message.id, in transcript
 // order. Per message.id it keeps the maximum of input_tokens, output_tokens, cache_read_input_tokens and
 // cache_creation_input_tokens across the lines that repeat the id (the usage grows while a response streams, so
-// neither the first line nor a per-line sum is right) — the same rule as plugin/bin/lib/timing/transcript.js's
-// readUsage. It does not call readUsage because readUsage drops what this report needs: the 5-minute / 1-hour
-// cache-write split (usage.cache_creation), the compaction marker, and message.id itself. The split is read from
-// the line holding the largest cache write; a line without one prices all of the write at the 5-minute rate.
+// neither the first line nor a per-line sum is right), and the 5-minute / 1-hour cache-write split read from the
+// line holding the largest cache write. Both are mergeUsage's (plugin/bin/lib/timing/transcript.js), loaded via
+// the `pluginRoot` dep: a line without a split prices all of the write at the 5-minute rate. The compaction
+// marker and message.id are tracked here.
 //
 // Each Request also carries `cause`, why a cache re-write (write > 40,000 tokens and > half the prompt) happened,
 // first match wins: session start, model switch, compaction, idle (>= 1 hour since the previous model call),
@@ -26,6 +26,8 @@
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
+
+const PLUGIN_ROOT = path.join(__dirname, '..', '..', 'plugin');
 
 // [input, output, cache read, 5-minute cache write, 1-hour cache write]
 const PRICES = {
@@ -73,10 +75,6 @@ function priceRequest(u) {
   return { usd, cacheWriteUsd, prompt, family };
 }
 
-function num(v) {
-  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
-}
-
 function textOf(content) {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
@@ -108,6 +106,15 @@ function isCompactionMarker(line) {
   return (line.type === 'system' && line.subtype === 'compact_boundary') || line.isCompactSummary === true;
 }
 
+// A misconfigured pluginRoot must fail the run loudly: left to scanTranscript, collectSpend's per-file catch would
+// count every transcript unreadable instead.
+function loadMergeUsage(pluginRoot) {
+  const file = path.join(pluginRoot, 'bin', 'lib', 'timing', 'transcript.js');
+  const { mergeUsage } = require(file);
+  if (typeof mergeUsage !== 'function') throw new Error(`${file} does not export mergeUsage`);
+  return mergeUsage;
+}
+
 const PLUGIN_VERSION_RE = /claude-tweaks v(\d+\.\d+\.\d+) @/;
 const CHECK_FLAG_RE = /(^|\s)--check(\s|$)/;
 
@@ -125,7 +132,8 @@ function hasRouteCall(line) {
   return content.some((b) => b && b.type === 'tool_use' && b.name === 'Bash' && b.input && isRouteCommand(b.input.command));
 }
 
-async function scanTranscript(file, { fsImpl = fs } = {}) {
+async function scanTranscript(file, { fsImpl = fs, pluginRoot = PLUGIN_ROOT } = {}) {
+  const mergeUsage = loadMergeUsage(pluginRoot);
   const out = { cwd: null, firstSkill: null, firstTs: null, pluginVersion: null, reachedRoute: false, requests: [] };
   const byId = new Map();
   let compactionPending = false;
@@ -158,19 +166,12 @@ async function scanTranscript(file, { fsImpl = fs } = {}) {
     let r = byId.get(message.id);
     if (!r) {
       const synthetic = message.model === SYNTHETIC_MODEL;
-      r = { id: message.id, ts: line.timestamp || null, model: message.model || '', synthetic, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, afterCompaction: compactionPending && !synthetic };
+      r = { id: message.id, ts: line.timestamp || null, model: message.model || '', synthetic, usage: null, afterCompaction: compactionPending && !synthetic };
       if (!synthetic) compactionPending = false;
       byId.set(message.id, r);
       out.requests.push(r);
     }
-    r.input = Math.max(r.input, num(usage.input_tokens));
-    r.output = Math.max(r.output, num(usage.output_tokens));
-    r.cacheRead = Math.max(r.cacheRead, num(usage.cache_read_input_tokens));
-    const write = num(usage.cache_creation_input_tokens);
-    if (write > r.cacheWrite) {
-      r.cacheWrite = write;
-      r.cacheWrite1h = Math.min(write, num(usage.cache_creation && usage.cache_creation.ephemeral_1h_input_tokens));
-    }
+    r.usage = mergeUsage(r.usage, usage);
     if (!r.model && message.model) r.model = message.model;
   }
 
@@ -179,9 +180,9 @@ async function scanTranscript(file, { fsImpl = fs } = {}) {
 
   let prev = null;
   out.requests = out.requests.map((r) => {
-    const cacheWrite5m = r.cacheWrite - r.cacheWrite1h;
-    const priced = priceRequest({ model: r.model, input: r.input, output: r.output, cacheRead: r.cacheRead, cacheWrite5m, cacheWrite1h: r.cacheWrite1h });
-    const rewrite = r.cacheWrite > REWRITE_MIN_TOKENS && r.cacheWrite > priced.prompt / 2;
+    const { input, output, cacheRead, cacheCreate: cacheWrite, cacheWrite1h, cacheWrite5m } = r.usage;
+    const priced = priceRequest({ model: r.model, input, output, cacheRead, cacheWrite5m, cacheWrite1h });
+    const rewrite = cacheWrite > REWRITE_MIN_TOKENS && cacheWrite > priced.prompt / 2;
     let cause = 'ordinary growth';
     if (rewrite) {
       const gap = prev && r.ts && prev.ts ? Date.parse(r.ts) - Date.parse(prev.ts) : NaN;
@@ -196,12 +197,12 @@ async function scanTranscript(file, { fsImpl = fs } = {}) {
       ts: r.ts,
       model: r.model,
       family: priced.family,
-      input: r.input,
-      output: r.output,
-      cacheRead: r.cacheRead,
-      cacheWrite: r.cacheWrite,
+      input,
+      output,
+      cacheRead,
+      cacheWrite,
       cacheWrite5m,
-      cacheWrite1h: r.cacheWrite1h,
+      cacheWrite1h,
       prompt: priced.prompt,
       usd: priced.usd,
       cacheWriteUsd: priced.cacheWriteUsd,
@@ -252,7 +253,11 @@ function addCount(map, key, usd) {
 // directory (the slug when the transcript names none) contains that substring; `root` keeps those whose working
 // directory is that path or under it (a transcript naming no working directory is not kept); both given: both hold.
 // A session dir whose subagent files are all outside the window is skipped without reading its parent transcript.
-async function collectSpend({ roots, since, until, match = null, root: scopeRoot = null }, { fsImpl = fs, transcriptCache = null } = {}) {
+async function collectSpend(
+  { roots, since, until, match = null, root: scopeRoot = null },
+  { fsImpl = fs, pluginRoot = PLUGIN_ROOT, transcriptCache = null } = {},
+) {
+  loadMergeUsage(pluginRoot);
   const startMs = dayStart(since);
   const endMs = dayStart(until) + DAY_MS;
   const res = {
@@ -326,7 +331,7 @@ async function collectSpend({ roots, since, until, match = null, root: scopeRoot
     if (!mainInfo.has(file)) {
       mainInfo.set(
         file,
-        scanTranscript(file, { fsImpl }).then(
+        scanTranscript(file, { fsImpl, pluginRoot }).then(
           ({ cwd, firstSkill, firstTs, pluginVersion, reachedRoute, requests }) => {
             transcriptCache?.set(file, { cwd, firstSkill, firstTs, pluginVersion, reachedRoute });
             const type = firstSkill || NO_SKILL;
@@ -346,7 +351,7 @@ async function collectSpend({ roots, since, until, match = null, root: scopeRoot
 
   async function scanSubagent(file, slug, sessionType) {
     try {
-      const { cwd, requests } = await scanTranscript(file, { fsImpl });
+      const { cwd, requests } = await scanTranscript(file, { fsImpl, pluginRoot });
       if (wanted(cwd, slug)) tally(requests, sessionType, 'subagent');
     } catch {
       fail(file);
