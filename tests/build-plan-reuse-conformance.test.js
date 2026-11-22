@@ -158,7 +158,7 @@ const FACTS = [
   [/--step "Spec Step 3" --text "condition: plan reviewed at specify \(\{commit\}\)/, 'Spec Step 3 SKIP'],
   [/--step "Common Step 1\.6 \(plan review\)" --text "condition: plan reviewed at specify \(\{commit\}\)/, 'Common Step 1.6 SKIP'],
   [/--status AUTO[^\n]*--step "Spec Step 2 \(plan reuse\)"/, 'reuse AUTO line'],
-  [/condition: plan-reuse failed: \{reason\}/, 'failure SKIP'],
+  [/`--run "\$PIPELINE_RUN_DIR" --status SKIP --step "Spec Step 2 \(plan reuse\)" --text "condition: plan-reuse failed: \{reason\}/, 'failure SKIP, with --run'],
   [/names another record/, 'record mismatch fails ref'],
   [/`Settled at planning:`[^\n]*`Decided by the user at planning:`/, 'planning-decision lines feed the re-plan'],
   [/planning decision departed:/, 'departure log'],
@@ -172,9 +172,12 @@ const FACTS = [
   [/git log --diff-filter=A --format=%s -1 -- "\{plan\}"/, 'stale-plan exclusion command'],
   [/starting with `Add the plan reviewed at specify`[^\n]*return to Spec Step 3, logging nothing/, 'a plan this check committed goes to Spec Step 3 silently'],
   [/`template\.changed: true`/, 'template-changed precondition'],
-  [/condition: template changed since filing → fallback: new plan written at Spec Step 3/, 'template-changed SKIP text'],
+  [/`--run "\$PIPELINE_RUN_DIR" --status SKIP --section "\/build" --step "Spec Step 2 \(plan reuse\)" --text "condition: template changed since filing → fallback: new plan written at Spec Step 3/, 'template-changed SKIP text, with --run'],
   [/mkdir -p "docs\/superpowers\/plans"/, 'plans directory created before the copy'],
   [/failed `mkdir`, copy, `git add` or commit is an infrastructure fault[^\n]*a BLOCKED stop[^\n]*log no reuse verdict/, 'a failed commit step is a BLOCKED stop, logs no verdict'],
+  // log-decision.js exits 2 without --run, so every log spec pins it (ff0cb81cf added the five missing ones).
+  [/three `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/log-decision\.js" --run "\$PIPELINE_RUN_DIR"` calls/, 'reuse log calls share a --run prefix'],
+  [/log-decision\.js" --run "\$PIPELINE_RUN_DIR" --status AUTO --section "\/build" --step "Spec Step 3" --text-file/, 'departure AUTO carries --run'],
 ];
 
 test('AC2.2/AC3.1: plan-reuse.md states every check, log line and failure reason', () => {

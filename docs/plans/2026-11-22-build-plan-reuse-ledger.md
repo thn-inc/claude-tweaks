@@ -30,3 +30,5 @@
 | 26 | wrap-up | Reflect (Approach): the stale-plan route re-entered the reuse check (AC5), caught at Task 2 review (c164dfde99) | accepted | Don't capture — already in memory plan-authoring-pitfalls (competing-case fixtures) |
 | 27 | wrap-up | Reflect (Fresh start): a bin/plan-reuse.js CLI printing one {valid, reason} verdict would make every failure route executable | accepted | digested by policy (deferral-digest-reasons) at https://github.com/thn-inc/claude-tweaks/issues/5046#issuecomment-7086837105 |
 | 28 | wrap-up | Reflect (Friction): 7 wd-guard-refusals (session, heredoc/compound shapes) + 1 genuine ask-user-question | accepted | Don't capture — memory worktree-guard-refusals already holds the rule; operator lapse, no plugin defect |
+| 29 | wrap-up | pr — PR #6093 — this run's own pr-first PR; disposition is Phase 4's merge decision | observation | Phase 4 Review Console decides merge/arm/park |
+| 30 | wrap-up | residue probe suite — ran: false (skipped via --no-suite, fact pack) | observation | suite state comes from the verify pass stamp: CI run 45074177819 green; PR head 10bd8d4e2 CI green (test run 45077469908) |
