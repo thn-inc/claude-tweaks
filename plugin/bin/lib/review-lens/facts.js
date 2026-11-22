@@ -13,16 +13,18 @@
 //   shellInvocationAdded, inputHandlingAdded, errorHandlingTouched, riskPathTouched, riskFlags, newFiles, newModules,
 //   perCallPath, loopSpawn }.
 //
-// executableContent (lens 3b/3c at `low`) — the definition is `plugin/skills/review/step3-tier-variants.md`'s "No
-// executable content": true when any changed path is not prose (.md/.markdown/.txt), or any changed line of a prose
+// Which lens reads which fact is select.js's APPLIES / CALLED_FOR; it is not restated here.
+//
+// executableContent — the definition is `plugin/skills/review/step3-tier-variants.md`'s "No executable content" (the
+// `low`-tier skip): true when any changed path is not prose (.md/.markdown/.txt), or any changed line of a prose
 // file — added or deleted (plan-review clarification: "changed line" covers deletions) — sits inside a fenced code
 // block (an added line judged against the post-image's fences, a deleted line against the pre-image's), or reads as a
 // command to run (`isExecutableProseLine`). Fence state comes from the whole file, never the -U0 hunk alone.
-// shellInvocationAdded (lens 3c, 3e): an added source line spawns a process. inputHandlingAdded (lens 3b, 3c): an added
-// source line reads argv/env/stdin/a file or joins a non-literal path. errorHandlingTouched (lens 3c): an added source
-// line adds try/catch/throw/exit handling. These three read added lines of `source` files only.
-// loopSpawn (lens 3d): a spawn line and an enclosing loop in a source file's post-image, at least one of the two added.
-// perCallPath (lens 3d): a changed source path that runs on every hook or test call (PER_CALL_PATH_RES).
+// shellInvocationAdded: an added source line spawns a process. inputHandlingAdded: an added source line reads
+// argv/env/stdin/a file or joins a non-literal path. errorHandlingTouched: an added source line adds
+// try/catch/throw/exit handling. These three read added lines of `source` files only.
+// loopSpawn: a spawn line and an enclosing loop in a source file's post-image, at least one of the two added.
+// perCallPath: a changed source path that runs on every hook or test call (PER_CALL_PATH_RES).
 // newFiles / newModules: a path added (status A or C) / an added `source` file.
 //
 // riskPathTouched — Reading A (#6001 plan-review decision): any protected path (`express/eligibility.js`'s
@@ -45,7 +47,7 @@ const FACT_NAMES = Object.freeze([
   'riskPathTouched', 'riskFlags', 'newFiles', 'newModules', 'perCallPath', 'loopSpawn',
 ]);
 
-const KIND_NAMES = ['prose', 'source', 'test', 'config', 'workflow'];
+const KIND_NAMES = Object.freeze(['prose', 'source', 'test', 'config', 'workflow']);
 // How far above a spawn line a loop header is searched (and the converse for a header added around a spawn).
 const LOOP_LOOKBACK_LINES = 40;
 const PER_CALL_PATH_RES = [/(^|\/)hooks\.(?:js|sh)$/, /(^|\/)lib\/hooks\//, /(^|\/)tools\/run-tests\.js$/, /(^|\/)bin\/verify\.js$/];
@@ -95,17 +97,23 @@ function handlesInput(l) {
   return false;
 }
 
-const indentOf = (l) => l.length - l.trimStart().length;
+// Leading indentation in columns, a tab advancing to the next multiple of 4 (CommonMark's tab stop).
+function indentOf(l) {
+  let col = 0;
+  for (const ch of l.slice(0, l.length - l.trimStart().length)) col = ch === '\t' ? col + 4 - (col % 4) : col + 1;
+  return col;
+}
 
 // Line numbers inside a fenced code block (markers included), CommonMark-style: a run of 3+ backticks or tildes opens,
 // a run of the same char at least as long with nothing after it closes (an opener takes any indentation; a closer at most 3 more than its opener's, else it is content). An unclosed fence runs to the end.
-// Any leading indentation is accepted: this repo's skill prose nests fences inside list items (4+ spaces).
+// Any leading indentation is accepted: this repo's skill prose nests fences inside list items (4+ spaces). Lines split
+// on \r?\n, so a CRLF file's trailing \r never hides a fence marker.
 const FENCE_OPEN_RE = /^[ \t]*(`{3,}|~{3,})(.*)$/;
 function fencedLineNumbers(text) {
   const inside = new Set();
   let open = null;
   let openIndent = 0;
-  text.split('\n').forEach((line, i) => {
+  text.split(/\r?\n/).forEach((line, i) => {
     const n = i + 1;
     if (open === null) {
       const m = FENCE_OPEN_RE.exec(line);
@@ -153,7 +161,6 @@ function defaultGit(cwd) {
     encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
   });
 }
-
 
 // A spawn line with an enclosing loop header (walking the indentation ancestors upward, within the lookback), at least
 // one of the two on an added line.
@@ -263,4 +270,4 @@ function computeFacts({ cwd, base, head = 'HEAD', riskFlags = [], riskPolicy, gi
   return { ok: true, facts };
 }
 
-module.exports = { FACT_NAMES, computeFacts, classifyPathKind, isExecutableProseLine, LOOP_LOOKBACK_LINES, PER_CALL_PATH_RES };
+module.exports = { FACT_NAMES, KIND_NAMES, computeFacts, classifyPathKind, isExecutableProseLine, LOOP_LOOKBACK_LINES, PER_CALL_PATH_RES };
