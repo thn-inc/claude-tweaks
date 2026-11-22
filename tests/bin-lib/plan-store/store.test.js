@@ -70,6 +70,8 @@ test('AC6.1 a second write replaces the ref with the newer plan', (t) => {
 test("AC6.2 the old commit is no longer the ref's target", (t) => {
   const { fx, g, write } = setup(t);
   const a = write();
+  fx.commit(fx.work, 'moved.txt');
+  fx.run(fx.work, ['push', '-q', 'origin', 'main']);
   const b = write({ planBytes: PLAN_B });
   assert.strictEqual(b.ok, true);
   assert.notStrictEqual(localRef(g, REF), a.commit);
@@ -107,7 +109,7 @@ test('AC7.1 a failed push leaves the local ref at its prior value and the remote
 test("two racing writers: the loser exits no-ref and the winner's ref stands", (t) => {
   let raced = false;
   const pushes = [];
-  const { fx, write } = setup(t, (fx2, args, opts) => {
+  const { fx, g, write } = setup(t, (fx2, args, opts) => {
     if (args.includes('push') && !raced) {
       raced = true;
       pushes.push(args);
@@ -118,7 +120,9 @@ test("two racing writers: the loser exits no-ref and the winner's ref stands", (
   const r = write();
   assert.strictEqual(r.ok, false);
   assert.strictEqual(r.kind, 'no-ref');
+  assert.match(r.reason, /^push lost the lease on refs\/claude-tweaks\/plans\/7: /);
   assert.match(r.reason, /stale info|rejected/);
+  assert.strictEqual(localRef(g, REF), null);
   const otherHead = fx.run(fx.other, ['rev-parse', 'HEAD']).trim();
   assert.strictEqual(remoteRef(fx).split('\t')[0], otherHead);
   assert.strictEqual(pushes.length, 1);
@@ -137,6 +141,7 @@ test('a local ref failure after a successful push still succeeds', (t) => {
   const b = write({ planBytes: PLAN_B });
   assert.strictEqual(b.ok, true, JSON.stringify(b));
   assert.strictEqual(b.localRefUpdated, false);
+  assert.ok(typeof b.localRefReason === 'string' && b.localRefReason.length > 0);
   assert.strictEqual(remoteRef(fx).split('\t')[0], b.commit);
   assert.strictEqual(localRef(g, REF), a.commit);
   const c = write({ planBytes: PLAN_B, push: false });
@@ -205,6 +210,54 @@ test('the scratch index is removed on success and failure', (t) => {
   plantHook(fx);
   assert.strictEqual(write({ planBytes: PLAN_B }).ok, false);
   assert.deepStrictEqual(leftovers(), []);
+});
+
+test('a build failure removes the scratch index too', (t) => {
+  const { g, write } = setup(t, (fx2, args, opts) => {
+    if (args.includes('write-tree')) throw new Error('boom write-tree');
+    return defaultGit(args, opts);
+  });
+  const r = write();
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.kind, 'no-ref');
+  assert.match(r.reason, /boom write-tree/);
+  assert.deepStrictEqual(fs.readdirSync(absoluteGitDir(g)).filter((e) => e.startsWith('plan-store-index-')), []);
+  assert.strictEqual(localRef(g, REF), null);
+});
+
+test('invalid record, basename and planBytes are kind invalid and create no ref', (t) => {
+  const { fx, g, write } = setup(t);
+  for (const over of [{ record: 0 }, { basename: 'a/b.md' }, { basename: '-x.md' }, { planBytes: 'text' }]) {
+    const r = write(over);
+    assert.strictEqual(r.ok, false, JSON.stringify(over));
+    assert.strictEqual(r.kind, 'invalid', JSON.stringify(over));
+  }
+  assert.strictEqual(localRef(g, REF), null);
+  assert.strictEqual(remoteRef(fx), '');
+});
+
+test('a local writer moving the ref between the prior read and update-ref loses cleanly', (t) => {
+  for (const push of [false, true]) {
+    let interloper = null;
+    const { fx, g, write } = setup(t, (fx2, args, opts) => {
+      if (args.includes('update-ref') && !interloper) {
+        interloper = fx2.run(fx2.work, ['rev-parse', 'HEAD']).trim();
+        fx2.run(fx2.work, ['update-ref', REF, interloper]);
+      }
+      return defaultGit(args, opts);
+    });
+    const r = write({ push });
+    assert.ok(interloper, 'interloper ran');
+    assert.strictEqual(localRef(g, REF), interloper, `push:${push}`);
+    if (push) {
+      assert.strictEqual(r.ok, true, JSON.stringify(r));
+      assert.strictEqual(r.localRefUpdated, false);
+      assert.strictEqual(remoteRef(fx).split('\t')[0], r.commit);
+    } else {
+      assert.strictEqual(r.ok, false, JSON.stringify(r));
+      assert.strictEqual(r.kind, 'no-ref');
+    }
+  }
 });
 
 test('readPlan refuses a ref that names another commit, and a missing ref', (t) => {

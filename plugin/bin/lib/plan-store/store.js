@@ -70,7 +70,7 @@ function writePlan({ g, remote = DEFAULT_REMOTE, push, record, basename, planByt
   try {
     g(['update-ref', '-m', 'plan-store write', ref, commit, prior || '']);
   } catch (err) {
-    if (push) return { ok: true, ref, commit, localRefUpdated: false };
+    if (push) return { ok: true, ref, commit, localRefUpdated: false, localRefReason: reasonOf(err) };
     return { ok: false, kind: 'no-ref', reason: reasonOf(err) };
   }
   return { ok: true, ref, commit, localRefUpdated: true };
