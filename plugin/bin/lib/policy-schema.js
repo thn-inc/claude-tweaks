@@ -610,7 +610,12 @@ function hasOwn(obj, key) {
 //   { value: default, source: "default", invalid: true }   present-but-invalid at
 //                                          the winning source (never cascades;
 //                                          risk-path-globs: null, not its default)
+//   { value, source: "factory", repoInvalid: true }   a block key whose policy.yml
+//                                          block is malformed, resolved from the
+//                                          factory's rows (#6006)
 //   { error: "unknown-key" }               key in neither POLICY_KEYS nor RENAMED_KEYS
+// onInvalid(key, raw, sourceName) receives each rejected raw value; sourceName is
+// "run-config", "policy" or "factory" (the factory for a refused key, too).
 // Precedence per key: run-config (only when runConfigRaw is a string, and never
 // for a policyOnly row) -> policy -> factory (factoryRaw, the merged user-wide
 // factory policy text — policy-factory.js reads it, this function never does;
@@ -712,15 +717,21 @@ function parseDriverModels(policyRaw) {
 // A block key across the two block-bearing sources (#6006): each side is a parser reply ({ present: false } |
 // { present, ok: true, value } | { present, ok: false, raw }). The row merge and source rule are mergeBlockRows'. A
 // malformed side is reported through onInvalid and never hides a valid one; only when no side resolves does the key
-// come back invalid. Returns { rows, source } | { invalid } | null (unset).
+// come back invalid. Returns { rows, source, repoInvalid } | { invalid } | null (unset); repoInvalid is true when a
+// malformed repo block yielded to the factory's rows.
 function mergeBlockSides(key, repo, factory, onInvalid) {
   const repoOk = repo.present && repo.ok;
   const factoryOk = factory.present && factory.ok;
-  if (repo.present && !repo.ok && onInvalid) onInvalid(key, repo.raw);
-  if (factory.present && !factory.ok && onInvalid) onInvalid(key, factory.raw);
+  if (repo.present && !repo.ok && onInvalid) onInvalid(key, repo.raw, 'policy');
+  if (factory.present && !factory.ok && onInvalid) onInvalid(key, factory.raw, 'factory');
   if (!repoOk && !factoryOk) return repo.present || factory.present ? { invalid: true } : null;
-  return mergeBlockRows({ ok: repoOk, value: repo.value }, { ok: factoryOk, value: factory.value });
+  const merged = mergeBlockRows({ ok: repoOk, value: repo.value }, { ok: factoryOk, value: factory.value });
+  return { ...merged, repoInvalid: repo.present && !repo.ok };
 }
+
+// A merged block's entry. repoInvalid is additive and appears only beside factory rows, so an entry with no
+// factory side keeps exactly { value, source }.
+const blockEntry = (value, merged) => ({ value, source: merged.source, ...(merged.repoInvalid ? { repoInvalid: true } : {}) });
 
 // The text whose risk-categories widens risk-path-globs' allowed slugs: any non-empty risk-categories line in policy.yml decides
 // alone (an invalid one leaves the built-ins, as it always did), and the factory's applies only when policy.yml has
@@ -782,7 +793,7 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, factoryRaw,
       const merged = mergeBlockSides(requested, parseRiskPathGlobs(policyRaw, slugs), parseRiskPathGlobs(factoryRaw, slugs), onInvalid);
       if (merged === null) result[requested] = { value: {}, source: 'default' };
       else if (merged.invalid) result[requested] = { value: null, source: 'default', invalid: true };
-      else result[requested] = { value: merged.rows, source: merged.source };
+      else result[requested] = blockEntry(merged.rows, merged);
       continue;
     }
     // express-driver-models (#5917): a policyOnly block, read from policy.yml and the factory text, never a run config. Unset and rejected differ from
@@ -793,7 +804,7 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, factoryRaw,
       const merged = mergeBlockSides(requested, parseDriverModels(policyRaw), parseDriverModels(factoryRaw), onInvalid);
       if (merged === null) result[requested] = { value: { ...POLICY_DRIVER_DEFAULTS }, source: 'default' };
       else if (merged.invalid) result[requested] = { value: null, source: 'default', invalid: true };
-      else result[requested] = { value: { ...POLICY_DRIVER_DEFAULTS, ...merged.rows }, source: merged.source };
+      else result[requested] = blockEntry({ ...POLICY_DRIVER_DEFAULTS, ...merged.rows }, merged);
       continue;
     }
     // A request by an alias's old name resolves the replacement key. A
@@ -817,7 +828,7 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, factoryRaw,
     // entry resolves exactly as with no factory layer.
     const factorySource = sources.find((source) => source.name === 'factory');
     const factoryHoldsRefused = FACTORY_REFUSED_KEYS.includes(canonical) && hasOwn(factorySource.values, canonical);
-    if (factoryHoldsRefused && onInvalid) onInvalid(requested, factorySource.values[canonical]);
+    if (factoryHoldsRefused && onInvalid) onInvalid(requested, factorySource.values[canonical], 'factory');
     for (const source of sources) {
       if (schemaEntry.policyOnly && source.name === 'run-config') continue;
       if (factoryHoldsRefused && source.name === 'factory') continue;
@@ -831,7 +842,7 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, factoryRaw,
         resolved = { value: defaultValue, source: 'default', invalid: true };
         // Side channel for a caller that reports the rejected raw value (#4141);
         // the entry shape above is unchanged.
-        if (onInvalid) onInvalid(requested, raw);
+        if (onInvalid) onInvalid(requested, raw, source.name);
       }
       if (hasOwn(source.renamedFrom, canonical)) resolved['renamed-from'] = source.renamedFrom[canonical];
       break;

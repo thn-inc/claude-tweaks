@@ -91,9 +91,10 @@ function modelProfilesEntry(policyRaw, factoryRaw = null) {
   if (!repo.ok && !factory.ok) {
     return repo.present || factory.present ? { value: null, source: 'default', invalid: true } : { value: null, source: 'default' };
   }
-  // #6006: whole profile rows merge, repo over factory. A malformed side never hides a valid one.
+  // #6006: whole profile rows merge, repo over factory. A malformed side never hides a valid one; a malformed
+  // repo block that yields to the factory's rows is marked repoInvalid (additive, as resolvePolicyKeys' block keys).
   const { rows, source } = mergeBlockRows(repo, factory);
-  return { value: rows, source };
+  return { value: rows, source, ...(repo.present && !repo.ok ? { repoInvalid: true } : {}) };
 }
 
 // The row merge every block key shares (#6006; policy-schema.js's resolvePolicyKeys calls it for risk-path-globs and

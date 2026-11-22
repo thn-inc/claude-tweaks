@@ -64,7 +64,8 @@
 // did not parse); one `resolve-policy: warning: {key} is not settable from the factory layer —
 // ignored` per requested refused key the factory text holds; and, when at least one requested key
 // resolved from it, `resolve-policy: note — factory layer ({origin}) supplied {keys}`. The origin
-// never appears on stdout.
+// never appears on stdout. Under --values, an invalid value from the factory layer gets the
+// invalid-value warning with ` in the factory layer` after the quoted value.
 'use strict';
 const fs = require('fs');
 const os = require('os');
@@ -135,13 +136,15 @@ function resolvePolicy({ keys, runDir = null, mcpReachable = false }, deps) {
   // have written one yet; readFileSafe's null simply means no overlay.
   // #4141: the rejected raw value rides a side channel, so the entry shape
   // stays exactly as the JSON output documents it.
+  // invalidFrom names the source each rejected raw came from (#6006), so the warning can name the factory layer.
   const invalidRaw = new Map();
+  const invalidFrom = new Map();
   const { root, policyRaw, runConfigRaw, result, policyPath, policySource, factoryRaw, factoryOrigin, factoryWarnings } = resolvePolicyConfig({
     git: (args) => deps.git(args, { cwd, env: deps.env }),
     readFile: deps.readFile,
     runDir: runDirPath,
     keys,
-    onInvalid: (key, raw) => invalidRaw.set(key, raw),
+    onInvalid: (key, raw, sourceName) => { invalidRaw.set(key, raw); invalidFrom.set(key, sourceName); },
     cwd,
     env: deps.env,
     homeDir: deps.homeDir,
@@ -184,7 +187,7 @@ function resolvePolicy({ keys, runDir = null, mcpReachable = false }, deps) {
   const factoryHeld = factoryRaw === null ? {} : parseFlatLines(factoryRaw);
   const factoryRefused = FACTORY_REFUSED_KEYS.filter((key) => keys.includes(key) && Object.prototype.hasOwnProperty.call(factoryHeld, key));
 
-  return { code: EXIT_OK, result, invalidRaw, degrades, root, policySource, policyPath, factoryOrigin, factoryWarnings, factoryRefused };
+  return { code: EXIT_OK, result, invalidRaw, invalidFrom, degrades, root, policySource, policyPath, factoryOrigin, factoryWarnings, factoryRefused };
 }
 
 // The --values rule: an {error} entry and a null/undefined value (no-default key
@@ -197,11 +200,13 @@ function scalarValue(entry) {
 
 // The stderr lines run writes for a successful core call, newline-terminated:
 // the factory lines and the degraded-forge lines in every mode, then (values only) one
-// invalid-value warning per requested key. out is { keys, result, invalidRaw, degrades,
+// invalid-value warning per requested key. out is { keys, result, invalidRaw, invalidFrom, degrades,
 // root, policySource, policyPath, factoryOrigin, factoryWarnings, factoryRefused }. When the
 // policy was read from the main checkout (#4492), the note line comes first, in every mode;
 // then the factory reader's warnings, the refused-key warnings and the factory note (#6006).
-function warningLines({ keys, result, invalidRaw, degrades, root, policySource, policyPath, factoryOrigin = null, factoryWarnings = [], factoryRefused = [] }, { values }) {
+// An invalid value the factory layer supplied says so (` in the factory layer` after the value);
+// every other source's line is unchanged.
+function warningLines({ keys, result, invalidRaw, invalidFrom = new Map(), degrades, root, policySource, policyPath, factoryOrigin = null, factoryWarnings = [], factoryRefused = [] }, { values }) {
   const lines = [];
   if (policySource === 'main-checkout') {
     lines.push(`resolve-policy: note — ${root} has no .claude-tweaks/policy.yml; read the main checkout's ${policyPath}\n`);
@@ -225,7 +230,8 @@ function warningLines({ keys, result, invalidRaw, degrades, root, policySource, 
       const entry = result[key];
       if (!entry || !entry.invalid) continue;
       const shownDefault = entry.value ?? '(none)';
-      lines.push(`resolve-policy: warning: ${key} has invalid value "${invalidRaw.get(key)}" — using default "${shownDefault}"\n`);
+      const where = invalidFrom.get(key) === 'factory' ? ' in the factory layer' : '';
+      lines.push(`resolve-policy: warning: ${key} has invalid value "${invalidRaw.get(key)}"${where} — using default "${shownDefault}"\n`);
     }
   }
   return lines;

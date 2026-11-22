@@ -845,13 +845,14 @@ const REVIEW_CONSOLE_HEADER = 'Review Console';
 // that CLI, a git failure throws here instead of letting resolvePolicyConfig guess
 // process.cwd() — the gate then fails open rather than reading some other
 // checkout's policy.yml.
-function readConsoleCeiling(runDir, cwd, { env } = {}) {
+// `homeDir` (the context's) locates the factory file, as resolveRunPinnedIntegrationModel's does.
+function readConsoleCeiling(runDir, cwd, { env, homeDir } = {}) {
   ctxLib.assertEnvObject(env, 'readConsoleCeiling');
   const top = runGit(['rev-parse', '--show-toplevel'], cwd, { env });
   if (top.failure) throw new Error(top.failure);
   const git = () => top.stdout;
   const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
-  const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['autonomy', 'control-mode'], env });
+  const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['autonomy', 'control-mode'], env, homeDir });
   return effectiveCeiling({ autonomyEntry: result.autonomy, controlModeEntry: result['control-mode'] }).ceiling;
 }
 
@@ -870,7 +871,7 @@ function checkReviewConsoleAskGate(ctx, deps = {}) {
   if (ctxLib.classifyOwnership({ sessionId, cwd }, ctxLib.readRunState(ownedRun.dir), { env: ctx.env }) !== 'mine') return {};
   let ceiling;
   try {
-    ceiling = (deps.readConsoleCeiling || readConsoleCeiling)(ownedRun.dir, cwd, { env: ctx.env });
+    ceiling = (deps.readConsoleCeiling || readConsoleCeiling)(ownedRun.dir, cwd, { env: ctx.env, homeDir: ctx.homeDir });
   } catch {
     return {};
   }

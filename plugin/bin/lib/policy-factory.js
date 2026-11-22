@@ -9,11 +9,13 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { POLICY_KEYS, RENAMED_KEYS, parseDriverModels } = require('./policy-schema');
+const { POLICY_KEYS, RENAMED_KEYS, parseDriverModels, parseFlatLines } = require('./policy-schema');
 const { modelProfilesEntry } = require('./model-profiles/policy-fragment');
 
 const FACTORY_POLICY_ENV = 'CLAUDE_TWEAKS_FACTORY_POLICY';
 const FACTORY_POLICY_REL_PATH = '.claude-tweaks/factory-policy.yml';
+// Names another factory file in place of ~/FACTORY_POLICY_REL_PATH; tools/run-tests.js sets it for every suite.
+const FACTORY_POLICY_FILE_ENV = 'CT_FACTORY_POLICY_FILE';
 // Keys a factory layer may never set: each is a per-run human decision or an executed
 // command, so a user-wide file or variable must not stand in for it.
 const FACTORY_REFUSED_KEYS = ['merge-authorization', 'control-mode', 'deploy-command', 'release-hook'];
@@ -57,10 +59,13 @@ function canonicalKey(key) {
 // Every chunk of a key is kept, in order, so the resolver applies its own within-source
 // rules (a new name beats its alias, a second map block is invalid): the merge runs after
 // the resolver's RENAMED_KEYS normalization, not instead of it. Map keeps first-appearance order.
+// A flat chunk the resolver's parseFlatLines does not see (an empty value, a quoted key) sets nothing, so it is
+// left out and never hides the other source's value; a map key's chunk is the block parsers' to judge.
 function byCanonicalKey(text) {
   const map = new Map();
   for (const chunk of splitTopLevelChunks(text)) {
     const key = canonicalKey(chunk.key);
+    if (!isMapKey(key) && !Object.prototype.hasOwnProperty.call(parseFlatLines(chunk.text), chunk.key)) continue;
     if (!map.has(key)) map.set(key, []);
     map.get(key).push(chunk);
   }
@@ -70,24 +75,38 @@ function byCanonicalKey(text) {
 // A variable's map block that would not parse is dropped for the file's. risk-path-globs
 // is never judged here: its rows are checked against risk-categories, which only the
 // resolver can see.
-function isMalformedMapBlock(key, chunks) {
+function isMapKey(key) {
   const entry = POLICY_KEYS.find((candidate) => candidate.key === key);
-  if (!entry || entry.type !== 'map') return false;
+  return Boolean(entry) && entry.type === 'map';
+}
+
+function isMalformedMapBlock(key, chunks) {
+  if (!isMapKey(key)) return false;
   const text = chunks.map((chunk) => chunk.text).join('\n');
   if (key === 'express-driver-models') return parseDriverModels(text).ok === false;
   if (key === 'model-profiles') return modelProfilesEntry(text).invalid === true;
   return false;
 }
 
-function readFactoryFile(env, homeDir, readFile) {
+// The factory file's path and the name its warning shows: FACTORY_POLICY_FILE_ENV from the injected env when set
+// (the CT_HOOKS_REPO_INFO_STORE precedent, so a test run never reads the machine's own file; a relative value turns
+// the file off rather than resolving against the cwd), else the file under the home directory. null: no file.
+function factoryFilePath(env, homeDir) {
+  const override = env[FACTORY_POLICY_FILE_ENV];
+  if (typeof override === 'string' && override !== '') return path.isAbsolute(override) ? { file: override, shown: override } : null;
   const home = typeof homeDir === 'function' ? homeDir() : env.HOME || env.USERPROFILE;
-  if (!home) return { text: null, warning: null };
+  return home ? { file: path.join(home, FACTORY_POLICY_REL_PATH), shown: `~/${FACTORY_POLICY_REL_PATH}` } : null;
+}
+
+function readFactoryFile(env, homeDir, readFile) {
+  const located = factoryFilePath(env, homeDir);
+  if (located === null) return { text: null, warning: null };
   try {
-    return { text: readFile(path.join(home, FACTORY_POLICY_REL_PATH)), warning: null };
+    return { text: readFile(located.file), warning: null };
   } catch (err) {
     if (err && err.code === 'ENOENT') return { text: null, warning: null };
     const code = (err && err.code) || 'UNKNOWN';
-    return { text: null, warning: `resolve-policy: warning: could not read ~/${FACTORY_POLICY_REL_PATH} (${code}) — factory file ignored\n` };
+    return { text: null, warning: `resolve-policy: warning: could not read ${located.shown} (${code}) — factory file ignored\n` };
   }
 }
 
@@ -126,4 +145,4 @@ function readFactoryPolicy({ env = process.env, homeDir, readFile = (p) => fs.re
   return { raw, origin: 'env+file', warnings };
 }
 
-module.exports = { FACTORY_POLICY_ENV, FACTORY_POLICY_REL_PATH, FACTORY_REFUSED_KEYS, readFactoryPolicy, splitTopLevelChunks };
+module.exports = { FACTORY_POLICY_ENV, FACTORY_POLICY_FILE_ENV, FACTORY_POLICY_REL_PATH, FACTORY_REFUSED_KEYS, readFactoryPolicy, splitTopLevelChunks };

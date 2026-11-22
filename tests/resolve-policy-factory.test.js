@@ -9,7 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { resolvePolicyKeys, resolveIntegrationModel } = require('../plugin/bin/lib/policy-schema');
 const { modelProfilesEntry } = require('../plugin/bin/lib/model-profiles/policy-fragment');
-const { FACTORY_POLICY_ENV, FACTORY_REFUSED_KEYS, FACTORY_POLICY_REL_PATH, readFactoryPolicy } = require('../plugin/bin/lib/policy-factory');
+const { FACTORY_POLICY_ENV, FACTORY_POLICY_FILE_ENV, FACTORY_REFUSED_KEYS, FACTORY_POLICY_REL_PATH, readFactoryPolicy } = require('../plugin/bin/lib/policy-factory');
 const { run, realDeps } = require('../plugin/bin/resolve-policy');
 const { POLICY_KEYS } = require('../plugin/bin/lib/policy-schema');
 
@@ -235,19 +235,46 @@ test('malformed repo block resolves from factory rows', () => {
     factoryRaw: 'risk-path-globs:\n  auth: [src/auth/**]\n',
     onInvalid: risk.onInvalid,
   });
-  assert.deepStrictEqual(r['risk-path-globs'], { value: { auth: ['src/auth/**'] }, source: 'factory' });
+  // Final review Minor 5: the additive repoInvalid marker carries the malformed repo side to JSON consumers;
+  // `invalid` keeps meaning "degraded to the schema default", so it stays off.
+  assert.deepStrictEqual(r['risk-path-globs'], { value: { auth: ['src/auth/**'] }, source: 'factory', repoInvalid: true });
   assert.strictEqual(risk.calls.length, 1, 'the malformed repo side is still reported');
 
   const d = resolvePolicyKeys(['express-driver-models'], {
     policyRaw: BAD_DRIVER,
     factoryRaw: 'express-driver-models:\n  implementer: fast\n',
   });
-  assert.deepStrictEqual(d['express-driver-models'], { value: { ...DRIVER_DEFAULTS, implementer: 'fast' }, source: 'factory' });
+  assert.deepStrictEqual(d['express-driver-models'], { value: { ...DRIVER_DEFAULTS, implementer: 'fast' }, source: 'factory', repoInvalid: true });
 
   assert.deepStrictEqual(
     modelProfilesEntry(BAD_PROFILES, 'model-profiles:\n  fast:\n    model: haiku\n'),
-    { value: { fast: { model: 'haiku' } }, source: 'factory' },
+    { value: { fast: { model: 'haiku' } }, source: 'factory', repoInvalid: true },
   );
+});
+
+test('repoInvalid is set only when a malformed repo block yields to factory rows', () => {
+  // An empty-but-valid repo block yielding to the factory is not malformed.
+  assert.deepStrictEqual(
+    resolvePolicyKeys(['express-driver-models'], { policyRaw: 'express-driver-models:\n', factoryRaw: 'express-driver-models:\n  implementer: fast\n' })['express-driver-models'],
+    { value: { ...DRIVER_DEFAULTS, implementer: 'fast' }, source: 'factory' },
+  );
+  // A malformed repo block with no factory side degrades as before: invalid, no marker.
+  assert.deepStrictEqual(resolvePolicyKeys(['risk-path-globs'], { policyRaw: BAD_RISK })['risk-path-globs'], { value: null, source: 'default', invalid: true });
+  assert.deepStrictEqual(modelProfilesEntry(BAD_PROFILES, null), { value: null, source: 'default', invalid: true });
+  // Both malformed: invalid, no marker.
+  assert.deepStrictEqual(modelProfilesEntry(BAD_PROFILES, BAD_PROFILES), { value: null, source: 'default', invalid: true });
+});
+
+test('repoInvalid reaches resolve-policy.js JSON for each block key', () => {
+  const repo = cliRepo({ policy: `${BAD_DRIVER}${BAD_RISK}${BAD_PROFILES}` });
+  const variable = 'express-driver-models:\n  implementer: fast\nrisk-path-globs:\n  auth: [src/auth/**]\nmodel-profiles:\n  fast:\n    model: haiku\n';
+  const r = cli(['express-driver-models,risk-path-globs,model-profiles'], { repo, variable });
+  const parsed = JSON.parse(r.stdout);
+  for (const key of ['express-driver-models', 'risk-path-globs', 'model-profiles']) {
+    assert.strictEqual(parsed[key].source, 'factory', key);
+    assert.strictEqual(parsed[key].repoInvalid, true, key);
+    assert.strictEqual(parsed[key].invalid, undefined, key);
+  }
 });
 
 test('malformed factory block with no repo block resolves invalid', () => {
@@ -368,8 +395,9 @@ test('AC10.1: a variable with an indented block resolves both rows', () => {
 // bin/resolve-policy.js — the CLI envelope and stderr lines (in-process run(argv, deps))
 // ---------------------------------------------------------------------------
 
+// The runner's FACTORY_POLICY_FILE_ENV is dropped too: these cases read the factory file under an injected home.
 const CLEAN_ENV = { ...process.env };
-for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GH_HOST', 'GH_REPO', FACTORY_POLICY_ENV]) delete CLEAN_ENV[k];
+for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GH_HOST', 'GH_REPO', FACTORY_POLICY_ENV, FACTORY_POLICY_FILE_ENV]) delete CLEAN_ENV[k];
 
 const scratch = [];
 test.after(() => { for (const d of scratch) fs.rmSync(d, { recursive: true, force: true }); });
@@ -439,7 +467,20 @@ test('AC3.2: --values names the invalid factory value', () => {
   const r = cli(['--values', 'model-stance'], { repo: cliRepo(), variable: 'model-stance: nonsense\n' });
   assert.strictEqual(r.code, 0);
   assert.strictEqual(r.stdout, 'default\n');
-  assert.strictEqual(r.stderr, 'resolve-policy: warning: model-stance has invalid value "nonsense" — using default "default"\n');
+  // Final review Minor 4: the existing line, naming the factory layer as the value's source.
+  assert.strictEqual(r.stderr, 'resolve-policy: warning: model-stance has invalid value "nonsense" in the factory layer — using default "default"\n');
+});
+
+test('AC3.2, AC5: a policy.yml-sourced invalid value keeps the line byte-identical, a factory layer present or not', () => {
+  const line = 'resolve-policy: warning: model-stance has invalid value "nonsense" — using default "default"\n';
+  const repo = cliRepo({ policy: 'model-stance: nonsense\n' });
+  assert.strictEqual(cli(['--values', 'model-stance'], { repo }).stderr, line);
+  // The repo's value wins precedence, so the factory value behind it is never the rejected one.
+  assert.strictEqual(cli(['--values', 'model-stance'], { repo, variable: 'model-stance: also-bad\n' }).stderr, line);
+  // A run-config invalid value is not the factory's either.
+  const runRepo = cliRepo({ runConfig: 'model-stance: nonsense\n' });
+  const viaRun = cli(['--values', '--run', path.join('.claude-tweaks', 'pipelines', 'r'), 'model-stance'], { repo: runRepo, variable: 'model-stance: economy\n' });
+  assert.strictEqual(viaRun.stderr, line);
 });
 
 test('AC5.1: --all with no variable and no file is deterministic, stays on repo sources, and differs only when a factory supplies a key', () => {

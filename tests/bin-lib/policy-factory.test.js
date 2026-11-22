@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { scratchDir } = require('../helpers/tmp-dir');
 const {
-  FACTORY_POLICY_ENV, FACTORY_POLICY_REL_PATH, FACTORY_REFUSED_KEYS, readFactoryPolicy, splitTopLevelChunks,
+  FACTORY_POLICY_ENV, FACTORY_POLICY_FILE_ENV, FACTORY_POLICY_REL_PATH, FACTORY_REFUSED_KEYS, readFactoryPolicy, splitTopLevelChunks,
 } = require('../../plugin/bin/lib/policy-factory');
 const { parseFlatLines, parseDriverModels, resolvePolicyKeys } = require('../../plugin/bin/lib/policy-schema');
 
@@ -209,6 +209,56 @@ test('a non-ENOENT read error without a code still warns', () => {
   const result = readFactoryPolicy({ env: { HOME: '/h' }, readFile: () => { throw new Error('boom'); } });
   assert.equal(result.raw, null);
   assert.deepEqual(result.warnings, ['resolve-policy: warning: could not read ~/.claude-tweaks/factory-policy.yml (UNKNOWN) — factory file ignored\n']);
+});
+
+// The test-isolation override (#6006 final review): CT_FACTORY_POLICY_FILE, read from the injected env, names
+// the factory file in place of ~/.claude-tweaks/factory-policy.yml, the way CT_HOOKS_REPO_INFO_STORE relocates
+// the repo-info store. tools/run-tests.js points it at a path that does not exist.
+test('CT_FACTORY_POLICY_FILE: an absolute path in the injected env replaces the home file, a homeDir function included', () => {
+  assert.equal(FACTORY_POLICY_FILE_ENV, 'CT_FACTORY_POLICY_FILE');
+  const seen = [];
+  const readFile = (p) => { seen.push(p); return 'autonomy: trusted\n'; };
+  const override = path.join(path.sep, 'iso', 'factory.yml');
+  const result = readFactoryPolicy({ env: { HOME: '/h', [FACTORY_POLICY_FILE_ENV]: override }, homeDir: () => '/injected', readFile });
+  assert.deepEqual(seen, [override]);
+  assert.deepEqual(result, { raw: 'autonomy: trusted\n', origin: 'file', warnings: [] });
+});
+
+test('CT_FACTORY_POLICY_FILE: a path that does not exist reads as no file, silently, whatever the home holds', () => {
+  const home = homeWith('model-stance: economy\n');
+  const missing = path.join(scratchDir('factory-override-'), 'absent.yml');
+  assert.deepEqual(readFactoryPolicy({ env: { [FACTORY_POLICY_FILE_ENV]: missing }, homeDir: () => home }), { raw: null, origin: null, warnings: [] });
+  assert.deepEqual(readFactoryPolicy({ env: { HOME: home, [FACTORY_POLICY_FILE_ENV]: missing } }), { raw: null, origin: null, warnings: [] });
+});
+
+test('CT_FACTORY_POLICY_FILE: a relative value turns the file off (never read against the cwd); an empty one is unset', () => {
+  const seen = [];
+  const readFile = (p) => { seen.push(p); return 'autonomy: trusted\n'; };
+  assert.deepEqual(readFactoryPolicy({ env: { HOME: '/h', [FACTORY_POLICY_FILE_ENV]: 'factory.yml' }, readFile }), { raw: null, origin: null, warnings: [] });
+  assert.deepEqual(seen, []);
+  readFactoryPolicy({ env: { HOME: '/h', [FACTORY_POLICY_FILE_ENV]: '' }, readFile });
+  assert.deepEqual(seen, [path.join('/h', FACTORY_POLICY_REL_PATH)]);
+});
+
+test('CT_FACTORY_POLICY_FILE: an unreadable override names its own path in the warning', () => {
+  const dir = scratchDir('factory-override-');
+  const result = readFactoryPolicy({ env: { [FACTORY_POLICY_FILE_ENV]: dir } }); // a directory: EISDIR
+  assert.deepEqual(result, { raw: null, origin: null, warnings: [`resolve-policy: warning: could not read ${dir} (EISDIR) — factory file ignored\n`] });
+});
+
+// Final review Minor 2: a variable chunk the resolver's parseFlatLines does not see (an empty value, a quoted key)
+// must not hide the file's value for that key.
+test('an empty variable value for a key does not hide the file\'s value', () => {
+  const { raw, origin } = read('model-stance:\n', homeWith('model-stance: economy\n'));
+  assert.equal(resolvePolicyKeys(['model-stance'], { factoryRaw: raw })['model-stance'].value, 'economy');
+  assert.equal(origin, 'file');
+});
+
+test('a quoted variable key does not hide the file\'s value', () => {
+  const { raw } = read('"model-stance": max-rigor\nautonomy: trusted\n', homeWith('model-stance: economy\n'));
+  const resolved = resolvePolicyKeys(['model-stance', 'autonomy'], { factoryRaw: raw });
+  assert.equal(resolved['model-stance'].value, 'economy');
+  assert.equal(resolved.autonomy.value, 'trusted');
 });
 
 test('CRLF factory text resolves like policy.yml', () => {
