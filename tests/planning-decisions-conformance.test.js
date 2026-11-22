@@ -39,7 +39,7 @@ const CLASS_PATTERNS = [
   [lit('When it plainly falls in a category the record does not flag, the flag is added first through `bin/risk-flags.js add` (add, never drop), the question is asked, and the plan owes that flag\'s Check G proof.'), '(b) unflagged category: add the flag first'],
   [lit('**(c) Contradiction.** No reading keeps every Acceptance Criterion and recorded decision intact.'), '(c) contradiction'],
   [lit('A row whose readings all break an Acceptance Criterion or recorded decision is (c) whatever its topic.'), '(c) whatever its topic'],
-  [lit('The classifier is the build\'s plan review (the controller), never the reviewer.'), 'classifier is the controller'],
+  [lit('The classifier is the controller — the build\'s plan review, or `/claude-tweaks:specify`\'s planning step — never the reviewer.'), 'classifier is the controller'],
   [lit('Every other question is settled: among readings that keep every Acceptance Criterion and recorded decision intact, take the one closer to stated intent (the criterion-as-written reading when the row came from a criterion change).'), 'settled path'],
   [lit('When two readings keep every Acceptance Criterion and recorded decision intact and sit equally close to the stated intent (the record body and its design doc), take the one that changes fewer observable contracts.'), 'tie-break'],
   [lit('A settled question is never asked in any posture (`auto`, `confirm`, `interactive`, `hybrid`).'), 'settled: never asked in any posture'],
