@@ -36,10 +36,10 @@ function defaultReadFile(p) {
 // integration-model costs a `git remote get-url` + `gh repo view` probe, so callers on a
 // hot path request only the keys they need).
 function defaultResolvePolicy(keys, { runDir = null } = {}) {
-  const { root, policyRaw, runConfigRaw, result } = resolvePolicyConfig({ git: defaultGit, readFile: defaultReadFile, runDir, keys });
+  const { root, policyRaw, runConfigRaw, factoryRaw, result } = resolvePolicyConfig({ git: defaultGit, readFile: defaultReadFile, runDir, keys });
   const resolved = computeDerivedDefaults(result, keys, root, { runConfigRaw });
   // model-profiles is a policy-only block the flat resolver cannot read (#5917).
-  if (keys.includes('model-profiles')) resolved['model-profiles'] = modelProfilesEntry(policyRaw);
+  if (keys.includes('model-profiles')) resolved['model-profiles'] = modelProfilesEntry(policyRaw, factoryRaw);
   return resolved;
 }
 

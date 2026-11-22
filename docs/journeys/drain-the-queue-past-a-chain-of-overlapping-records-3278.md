@@ -23,7 +23,7 @@ files:
 
 ### 1. Pull the queue into per-record groups
 - **URL:** `plugin/bin/lib/dispatch/queue-pull.js` (cache-miss grouping, run by Step 2's `bin/queue-pull.js` call); `plugin/bin/lib/issues/grouping.js` `buildDispatchGroups`
-- **Action:** The queue pull groups the eligible records with `buildDispatchGroups`. Each record becomes its own group. Fast-lane singletons are bundled only with records they share no linking file with. A cached `order.json` written before this change carries no `grouping: 'per-record'` stamp, so `cacheUsable` rejects it and the groups are recomputed.
+- **Action:** The queue pull groups the eligible records with `buildDispatchGroups`. Each record becomes its own group. Fast-lane singletons are bundled only with records they share no linking file with, and with `express-lane` or `express-driver` on, a record the express lane or the driver would take stays out of bundles and dispatches as its own group. A cached `order.json` written before this change carries no `grouping: 'per-record'` stamp, so `cacheUsable` rejects it and the groups are recomputed.
 - **Should feel:** Unremarkable. The queue simply has as many candidate groups as it has eligible records.
 - **Should understand:** Sharing a file with a record that shares a file with a third record no longer joins all three. Only a direct, live conflict holds a record back (step 2).
 - **Red flags:** A group of more than one record that is not a fast-lane bundle. An `oversized` exclusion on a non-bundle group. A stale cached order reused after upgrade (groups of the old transitive shape). A `: No such file or directory` line on stderr during the pull (#3024: in the retained script it meant a redirect to an undeclared `$DISPATCH_*` variable).

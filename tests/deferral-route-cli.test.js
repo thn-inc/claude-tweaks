@@ -693,6 +693,30 @@ test('#5933 review focus 2: invalid policy values warn once each and route with 
   assert.deepStrictEqual(fs.readdirSync(runDir), []);
 });
 
+// #6006: an invalid value the factory layer supplied says so in the warning; a policy.yml one stays as it was.
+const FACTORY_INVALID = 'deferral-digest-reasons: not-a-reason\nfiled-record-evidence: yes\nrun-filed-record-cap: two\n';
+
+test('#6006 an invalid value from the factory layer names the layer in each of the three warnings', () => {
+  const res = runCliSync(CLI, ['--defer-reason', 'genuinely-larger', '--size', 'high', '--priority', 'medium', '--risk', 'high', '--agent-raised'], {
+    cwd: NO_POLICY, env: { ...GIT_ENV, CLAUDE_TWEAKS_FACTORY_POLICY: FACTORY_INVALID },
+  });
+  assert.equal(res.code, 0);
+  assert.equal(res.stderr, 'deferral-route: warning: deferral-digest-reasons has invalid element "not-a-reason" in the factory layer — using the default (no reasons)\n'
+    + 'deferral-route: warning: filed-record-evidence has invalid value "yes" in the factory layer — using the default (off)\n'
+    + 'deferral-route: warning: run-filed-record-cap has invalid value "two" in the factory layer — using the default (no cap)\n');
+});
+
+test('#6006 the same invalid values from policy.yml leave the three warnings byte-identical, factory layer set or not', () => {
+  const plain = 'deferral-route: warning: deferral-digest-reasons has invalid element "not-a-reason" — using the default (no reasons)\n'
+    + 'deferral-route: warning: filed-record-evidence has invalid value "yes" — using the default (off)\n'
+    + 'deferral-route: warning: run-filed-record-cap has invalid value "two" — using the default (no cap)\n';
+  const { dir } = project({ policy: FACTORY_INVALID });
+  const argv = ['--defer-reason', 'genuinely-larger', '--size', 'high', '--priority', 'medium', '--risk', 'high', '--agent-raised'];
+  assert.equal(runCliSync(CLI, argv, { cwd: dir, env: GIT_ENV }).stderr, plain);
+  // policy.yml outranks the factory layer, so a factory value that is also invalid is never the rejected one.
+  assert.equal(runCliSync(CLI, argv, { cwd: dir, env: { ...GIT_ENV, CLAUDE_TWEAKS_FACTORY_POLICY: FACTORY_INVALID } }).stderr, plain);
+});
+
 test('#5933 review focus 3: --evidence ignored when off or exempt; refused when last or repeated; never echoed', () => {
   assert.deepStrictEqual(outcome(call(...GL, '--evidence', 'note:x')), { code: 0, verdict: 'file', rule: 'not-low' });
   const { dir } = project({ policy: REQ });

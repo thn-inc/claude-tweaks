@@ -283,6 +283,7 @@ function buildProbes({ runDirReal, runId, mainRoot, cwd, config, state, deps, ex
         }
         const entry = resolved[key];
         if (!entry || entry.error !== undefined) return { key, value: null, source: null, error: entry && entry.error ? String(entry.error) : 'unresolved' };
+        // The resolver's source passes through into preflight.json unchanged (`factory` included, #6006).
         return { key, value: entry.value === undefined ? null : entry.value, source: entry.source || 'default' };
       });
     },

@@ -332,7 +332,7 @@ When mechanizing a prose heuristic into a deterministic check:
     blanks comments to spaces before its callers' scans count tokens. Its
     callers, by test-file stem: `accept-label-reader`, `accept-monotonic`, `backfill-cli`, `below-floor-parent-close`, `ci-health-skill-agnostic`, `cli`, `cli-entry`, `evaluate-maturation-build-label`, `exit-code`, `fixture-identity-config-scan`, `gate-fragments`, `gh-host-seam`, `git-status-optional-locks`,
     `hooks-event-env`, `hooks-event-process-ceiling`, `hooks-harness-refusal`, `hooks-pre-tool-use`, `lens-reply`, `markdown-blocks`, `merge`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit-call-sites`, `porcelain-cwd-compare`, `post-merge`,
-    `precondition`, `raw-markdown-read`, `recording-no-embed`, `release-notes`, `risk-flags-writer`, `run`, `run-header`, `run-liveness-callers`, `settle`, `staged-id-producers`, `station-literal`, `statusline-no-shell`, `subprocess-timing`, `timeout-source`, `tmp-dir-cleanup`, `trust-policy-keys`, `wall-clock-budget`,
+    `precondition`, `raw-markdown-read`, `recording-no-embed`, `release-notes`, `risk-flags-writer`, `run`, `run-header`, `run-liveness-callers`, `settle`, `staged-id-producers`, `station-literal`, `statusline-no-shell`, `step-yield-report-shared-count`, `subprocess-timing`, `timeout-source`, `tmp-dir-cleanup`, `trust-policy-keys`, `wall-clock-budget`,
     `windows-hide-spawn` and `wrap-up-learned-skills-pr`.
     `tests/strip-comments-callers-twin.test.js` pins this list and the helper header's to the
     tree. It models regex literals (#3585); its residual
@@ -385,7 +385,7 @@ When mechanizing a prose heuristic into a deterministic check:
     arm, classified by the thrown error's shape, and pin "main probe times out, precondition probe
     succeeds" with its own assertion (`tests/verify-run-bookends.test.js`'s
     `catFileTimeoutRevParseOk`).
-Items 17-30 live in `fix-shape-late-items.md` in this skill's directory, with their numbers
+Items 17-32 live in `fix-shape-late-items.md` in this skill's directory, with their numbers
 kept. Read it when your case matches one of these:
 
 17. **A start/end snapshot guard sees only the window between its two reads, and each value it records has an unsafe direction.**
@@ -402,6 +402,8 @@ kept. Read it when your case matches one of these:
 28. **A parser that fails closed owes a cheap precondition that proves the signal absent, so its gaps cost only on inputs that could hold the signal.**
 29. **A producer handing a file to another tool owes its parse verdict across that boundary, because the consumer reads the file, not the producer's envelope.**
 30. **A reader that feeds several independent checks owes each could-not-read reason the field it concerns, so a consumer suppresses only the checks that read that field.**
+31. **A signal line read from an append-only log is also quoted or carried forward by later writers, so a counting reader keys on a measured writer-label allow-list, not on any label before the token.**
+32. **A map keyed by text parsed from a log line or event owes own-property reads and writes, because the parsed key can be `__proto__` or `constructor`.**
 
 ## When to use
 

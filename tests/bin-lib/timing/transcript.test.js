@@ -5,7 +5,7 @@ const fs = require('fs');
 const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
-const { slugForCwd, locateTranscripts, readUsage, readPromptRows, isProcedurePath, subagentsDirFor, readDispatches, TRANSCRIPT_SLUG_RULE } = require('../../../plugin/bin/lib/timing/transcript');
+const { slugForCwd, locateTranscripts, readUsage, mergeUsage, readPromptRows, isProcedurePath, subagentsDirFor, readDispatches, locateTaskTranscripts, runIdsNamed, RUN_ID_NAMED_RE, FIRST_ENTRY_CAP, TRANSCRIPT_SLUG_RULE } = require('../../../plugin/bin/lib/timing/transcript');
 const { aggregateDispatches } = require('../../../plugin/bin/lib/timing/derive');
 
 // The developer's own CLAUDE_CONFIG_DIR would redirect every homeDir-only
@@ -1223,4 +1223,266 @@ test('#5556: an AskUserQuestion block with no input.questions gives questions []
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('#5967: mergeUsage keeps the max of each field across lines of one message.id', () => {
+  let m = mergeUsage(null, { input_tokens: 3, output_tokens: 5, cache_read_input_tokens: 1000, cache_creation_input_tokens: 0 });
+  m = mergeUsage(m, { output_tokens: 40 });
+  m = mergeUsage(m, { output_tokens: 900, input_tokens: 1 });
+  assert.deepEqual(m, { input: 3, output: 900, cacheRead: 1000, cacheCreate: 0, cacheWrite1h: 0, cacheWrite5m: 0 });
+});
+test('#5967 RF1: the largest write with no cache_creation object is all 5-minute', () => {
+  assert.deepEqual(mergeUsage(null, { cache_creation_input_tokens: 500 }), { input: 0, output: 0, cacheRead: 0, cacheCreate: 500, cacheWrite1h: 0, cacheWrite5m: 500 });
+});
+test('#5967 RF2: the 1-hour split is read from the largest-write line only', () => {
+  let m = mergeUsage(null, { cache_creation_input_tokens: 800, cache_creation: { ephemeral_1h_input_tokens: 300 } });
+  m = mergeUsage(m, { cache_creation_input_tokens: 100, cache_creation: { ephemeral_1h_input_tokens: 100 } });
+  assert.equal(m.cacheWrite1h, 300);
+  assert.equal(m.cacheWrite5m, 500);
+});
+test('#5967 RF3: a 1-hour figure above the write is clamped to the write', () => {
+  const m = mergeUsage(null, { cache_creation_input_tokens: 50, cache_creation: { ephemeral_1h_input_tokens: 90 } });
+  assert.equal(m.cacheWrite1h, 50);
+  assert.equal(m.cacheWrite5m, 0);
+});
+test('#5967 RF5: absent or non-number usage is all zeros and prev is not mutated', () => {
+  const zero = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, cacheWrite1h: 0, cacheWrite5m: 0 };
+  assert.deepEqual(mergeUsage(null, undefined), zero);
+  assert.deepEqual(mergeUsage(null, { output_tokens: null }), zero);
+  const prev = { ...zero, output: 7 };
+  mergeUsage(prev, { output_tokens: 9 });
+  assert.equal(prev.output, 7);
+});
+test('#5967: readUsage lands the max of every field on the first row of an id when later lines grow them', async () => {
+  const dir = tmpSubagents();
+  const f = path.join(dir, 'agent-5967.jsonl');
+  fs.writeFileSync(f, [
+    snapLine('2026-10-17T10:00:05.000Z', 'mg1', null, [1, 2, 3, 4], 'thinking'),
+    snapLine('2026-10-17T10:00:09.000Z', 'mg1', 'end_turn', [10, 20, 30, 40], 'text'),
+  ].join('\n') + '\n');
+  const rows = await readUsage(f);
+  assert.deepEqual(rows.map((r) => [r.inputTokens, r.outputTokens, r.cacheRead, r.cacheCreate]), [[10, 20, 30, 40], [0, 0, 0, 0]]);
+});
+test('#5967: mergeUsage keeps the first largest-write line\'s 1-hour split when a later write ties it', () => {
+  let m = mergeUsage(null, { cache_creation_input_tokens: 800, cache_creation: { ephemeral_1h_input_tokens: 300 } });
+  m = mergeUsage(m, { cache_creation_input_tokens: 800, cache_creation: { ephemeral_1h_input_tokens: 700 } });
+  assert.equal(m.cacheWrite1h, 300);
+  assert.equal(m.cacheWrite5m, 500);
+});
+
+// ---- #5647: locateTaskTranscripts — a session's depth-1 Task-call agents naming one run ----
+
+const RUN = '2026-11-16T100000-record-1';
+const OTHER_RUN = '2026-11-16T100000-record-2';
+const named = (id) => '/m/.claude-tweaks/pipelines/' + id;
+
+// agents: [{ id, depth, prompt, meta }]; meta null omits the file, a string writes it raw.
+function taskSession(cfg, slug, sid, agents) {
+  const slugDir = path.join(cfg, 'projects', slug);
+  const subDir = path.join(slugDir, sid, 'subagents');
+  fs.mkdirSync(subDir, { recursive: true });
+  fs.writeFileSync(path.join(slugDir, `${sid}.jsonl`), aLine('assistant', '2026-11-16T10:00:00.000Z', 'main', 'claude-opus-5-5', [1, 1, 1, 1]) + '\n');
+  for (const a of agents) {
+    const meta = a.meta === undefined ? { spawnDepth: a.depth, description: a.id } : a.meta;
+    if (meta !== null) fs.writeFileSync(path.join(subDir, `agent-${a.id}.meta.json`), typeof meta === 'string' ? meta : JSON.stringify(meta));
+    const first = a.rawFirst !== undefined ? a.rawFirst : JSON.stringify({ type: 'user', message: { role: 'user', content: a.prompt } });
+    fs.writeFileSync(path.join(subDir, `agent-${a.id}.jsonl`), first + '\n' + aLine('assistant', '2026-11-16T10:00:01.000Z', `m-${a.id}`, 'claude-sonnet-5', [1, 1, 1, 1]) + '\n');
+  }
+  return subDir;
+}
+const taskCfg = () => scratchDir('ct-task-cfg-');
+const tpaths = (subDir, ...ids) => ids.map((i) => fs.realpathSync(path.join(subDir, `agent-${i}.jsonl`)));
+const locate = (cfg, sessionIds, runId = RUN) => locateTaskTranscripts({ sessionIds, runId, configDir: cfg });
+
+test('locateTaskTranscripts: attributes a depth-1 agent whose prompt names exactly this run', () => {
+  const cfg = taskCfg();
+  const sub = taskSession(cfg, '-slug-a', 's1', [{ id: 't1', depth: 1, prompt: 'Run build in ' + named(RUN) }]);
+  const r = locate(cfg, ['s1']);
+  assert.deepEqual(r.paths, tpaths(sub, 't1'));
+  assert.deepEqual(r.notes, []);
+});
+
+test('locateTaskTranscripts: depth-2 agent naming the run is excluded', () => {
+  // spawnDepth guard: goes red on the depth-2 agent if `meta.spawnDepth !== 1` is deleted.
+  const cfg = taskCfg();
+  const sub = taskSession(cfg, '-slug-a', 's1', [
+    { id: 't1', depth: 1, prompt: named(RUN) },
+    { id: 't2', depth: 2, prompt: named(RUN) },
+  ]);
+  assert.deepEqual(locate(cfg, ['s1']).paths, tpaths(sub, 't1'));
+});
+
+test('locateTaskTranscripts: meta without spawnDepth, malformed meta, missing meta: each excluded', () => {
+  // meta guard: goes red here if the `!meta` / spawnDepth check is deleted.
+  const cfg = taskCfg();
+  const sub = taskSession(cfg, '-slug-a', 's1', [
+    { id: 'ok', depth: 1, prompt: named(RUN) },
+    { id: 'nodepth', meta: { description: 'x' }, prompt: named(RUN) },
+    { id: 'bad', meta: '{not json', prompt: named(RUN) },
+    { id: 'none', meta: null, prompt: named(RUN) },
+  ]);
+  assert.deepEqual(locate(cfg, ['s1']).paths, tpaths(sub, 'ok'));
+});
+
+test('locateTaskTranscripts: prompt naming this run and another run is excluded', () => {
+  // exactly-one guard: goes red if `ids.length !== 1` is relaxed to `includes(runId)`.
+  const cfg = taskCfg();
+  const sub = taskSession(cfg, '-slug-a', 's1', [
+    { id: 'ok', depth: 1, prompt: named(RUN) },
+    { id: 'both', depth: 1, prompt: named(RUN) + ' retry of ' + named(OTHER_RUN) },
+  ]);
+  assert.deepEqual(locate(cfg, ['s1']).paths, tpaths(sub, 'ok'));
+});
+
+test('locateTaskTranscripts: prompt naming only another run is excluded', () => {
+  // equality guard: goes red if `ids[0] !== runId` is deleted.
+  const cfg = taskCfg();
+  taskSession(cfg, '-slug-a', 's1', [{ id: 'o', depth: 1, prompt: named(OTHER_RUN) }]);
+  assert.deepEqual(locate(cfg, ['s1']).paths, []);
+});
+
+test('locateTaskTranscripts: first line not a user entry, or unparseable: excluded', () => {
+  // type guard: goes red on `asst` if `entry.type !== 'user'` is deleted.
+  const cfg = taskCfg();
+  const sub = taskSession(cfg, '-slug-a', 's1', [
+    { id: 'ok', depth: 1, prompt: named(RUN) },
+    { id: 'asst', depth: 1, rawFirst: JSON.stringify({ type: 'assistant', message: { content: named(RUN) } }) },
+    { id: 'junk', depth: 1, rawFirst: 'not json ' + named(RUN) },
+  ]);
+  assert.deepEqual(locate(cfg, ['s1']).paths, tpaths(sub, 'ok'));
+});
+
+test('locateTaskTranscripts: first line over FIRST_ENTRY_CAP: excluded, no throw', () => {
+  // cap guard: goes red if the `total > FIRST_ENTRY_CAP` return is deleted.
+  const cfg = taskCfg();
+  const pad = 'x'.repeat(FIRST_ENTRY_CAP + 10);
+  const sub = taskSession(cfg, '-slug-a', 's1', [
+    { id: 'ok', depth: 1, prompt: named(RUN) },
+    { id: 'big', depth: 1, prompt: named(RUN) + ' ' + pad },
+  ]);
+  assert.equal(FIRST_ENTRY_CAP, 1048576);
+  assert.deepEqual(locate(cfg, ['s1']).paths, tpaths(sub, 'ok'));
+});
+
+test('locateTaskTranscripts: a first line past one 64 KiB read chunk is joined whole and attributed', () => {
+  // multi-chunk guard (readFirstLine's chunk join): a join that keeps only the first chunk, or drops a chunk's tail, loses the run id.
+  // `straddle` puts the run path across the 65536-byte chunk boundary; `far` puts it three chunks in.
+  const cfg = taskCfg();
+  const sub = taskSession(cfg, '-slug-a', 's1', [
+    { id: 'straddle', depth: 1, prompt: 'x'.repeat(65536 - 80) + ' ' + named(RUN) },
+    { id: 'far', depth: 1, prompt: 'y'.repeat(3 * 65536 + 100) + ' ' + named(RUN) },
+  ]);
+  assert.ok(fs.readFileSync(path.join(sub, 'agent-far.jsonl'), 'utf8').split('\n')[0].length < FIRST_ENTRY_CAP);
+  assert.deepEqual(locate(cfg, ['s1']).paths, tpaths(sub, 'far', 'straddle'));
+});
+
+test('locateTaskTranscripts: Windows-separator run dir in the prompt is attributed', () => {
+  const cfg = taskCfg();
+  const sub = taskSession(cfg, '-slug-a', 's1', [{ id: 'w', depth: 1, prompt: 'C:\\r\\.claude-tweaks\\pipelines\\' + RUN }]);
+  assert.match(fs.readFileSync(path.join(sub, 'agent-w.jsonl'), 'utf8').split('\n')[0], /pipelines\\\\2026/); // JSON text carries a doubled backslash
+  assert.deepEqual(locate(cfg, ['s1']).paths, tpaths(sub, 'w'));
+});
+
+test('locateTaskTranscripts: symlinked agent file is not followed', { skip: process.platform === 'win32' }, () => {
+  // file lstat guard: goes red if the `type !== 'file'` check on the agent file is deleted.
+  const cfg = taskCfg();
+  const sub = taskSession(cfg, '-slug-a', 's1', [{ id: 'ok', depth: 1, prompt: named(RUN) }, { id: 'real', depth: 1, prompt: named(RUN) }]);
+  fs.rmSync(path.join(sub, 'agent-real.jsonl'));
+  const outside = path.join(cfg, 'outside.jsonl');
+  fs.writeFileSync(outside, JSON.stringify({ type: 'user', message: { content: named(RUN) } }) + '\n');
+  fs.symlinkSync(outside, path.join(sub, 'agent-real.jsonl'));
+  assert.deepEqual(locate(cfg, ['s1']).paths, tpaths(sub, 'ok'));
+});
+
+test('locateTaskTranscripts: symlinked meta file is not followed', { skip: process.platform === 'win32' }, () => {
+  // meta lstat guard: goes red if the `type !== 'file'` check on the meta file is deleted.
+  const cfg = taskCfg();
+  const sub = taskSession(cfg, '-slug-a', 's1', [{ id: 'ok', depth: 1, prompt: named(RUN) }, { id: 'x', depth: 1, prompt: named(RUN), meta: null }]);
+  const outside = path.join(cfg, 'outside.meta.json');
+  fs.writeFileSync(outside, JSON.stringify({ spawnDepth: 1 }));
+  fs.symlinkSync(outside, path.join(sub, 'agent-x.meta.json'));
+  assert.deepEqual(locate(cfg, ['s1']).paths, tpaths(sub, 'ok'));
+});
+
+test('locateTaskTranscripts: symlinked subagents/ directory is not followed', { skip: process.platform === 'win32' }, () => {
+  // dir lstat guard: goes red if the `dirType === 'symlink'` branch is deleted.
+  const cfg = taskCfg();
+  const sub = taskSession(cfg, '-slug-a', 's1', [{ id: 'a', depth: 1, prompt: named(RUN) }]);
+  const realSub = path.join(path.dirname(sub), 'real-subagents');
+  fs.renameSync(sub, realSub);
+  fs.symlinkSync(realSub, sub);
+  const r = locate(cfg, ['s1']);
+  assert.deepEqual(r.paths, []);
+  assert.equal(r.notes.length, 1);
+  assert.match(r.notes[0], /symlink/);
+});
+
+test('locateTaskTranscripts: symlinked session directory is not followed', { skip: process.platform === 'win32' }, () => {
+  // session-dir lstat guard: goes red if the `{sid}/` lstat check is deleted.
+  const cfg = taskCfg();
+  const sub = taskSession(cfg, '-slug-a', 's1', [{ id: 'a', depth: 1, prompt: named(RUN) }]);
+  const sessDir = path.dirname(sub);
+  const moved = path.join(cfg, 'elsewhere');
+  fs.renameSync(sessDir, moved);
+  fs.symlinkSync(moved, sessDir);
+  const r = locate(cfg, ['s1']);
+  assert.deepEqual(r.paths, []);
+  assert.equal(r.notes.length, 1);
+});
+
+test('locateTaskTranscripts: two session ids each contribute; paths sorted and deduped', () => {
+  const cfg = taskCfg();
+  const subB = taskSession(cfg, '-slug-a', 'sB', [{ id: 'b1', depth: 1, prompt: named(RUN) }]);
+  const subA = taskSession(cfg, '-slug-a', 'sA', [{ id: 'a1', depth: 1, prompt: named(RUN) }]);
+  const r = locate(cfg, ['sB', 'sA', 'sB']);
+  assert.deepEqual(r.paths, [...tpaths(subA, 'a1'), ...tpaths(subB, 'b1')].sort());
+  assert.equal(r.paths.length, 2);
+});
+
+test('locateTaskTranscripts: one session id under two slugs: both subagents/ dirs are scanned', () => {
+  const cfg = taskCfg();
+  const s1 = taskSession(cfg, '-slug-a', 's1', [{ id: 'a1', depth: 1, prompt: named(RUN) }]);
+  const s2 = taskSession(cfg, '-slug-b', 's1', [{ id: 'b1', depth: 1, prompt: named(RUN) }]);
+  assert.deepEqual(locate(cfg, ['s1']).paths, [...tpaths(s1, 'a1'), ...tpaths(s2, 'b1')].sort());
+});
+
+test("locateTaskTranscripts: an invalid session id ('../x') contributes nothing and no other slug is scanned", () => {
+  const cfg = taskCfg();
+  taskSession(cfg, '-slug-a', 'x', [{ id: 'a1', depth: 1, prompt: named(RUN) }]);
+  const r = locate(cfg, ['../x']);
+  assert.deepEqual(r.paths, []);
+  assert.equal(r.notes.length, 1);
+  assert.match(r.notes[0], /invalid/);
+});
+
+test('locateTaskTranscripts: a session without a transcript or subagents/ directory yields one note and no throw', () => {
+  const cfg = taskCfg();
+  fs.mkdirSync(path.join(cfg, 'projects', '-slug-a'), { recursive: true });
+  fs.writeFileSync(path.join(cfg, 'projects', '-slug-a', 'bare.jsonl'), '{}\n');
+  const r = locate(cfg, ['missing', 'bare']);
+  assert.deepEqual(r.paths, []);
+  assert.equal(r.notes.length, 2);
+  assert.deepEqual(locateTaskTranscripts({}), { paths: [], notes: [] });
+});
+
+test('locateTaskTranscripts: workflow agents under subagents/workflows/ are not candidates', () => {
+  const cfg = taskCfg();
+  const sub = taskSession(cfg, '-slug-a', 's1', [{ id: 'ok', depth: 1, prompt: named(RUN) }]);
+  const wf = path.join(sub, 'workflows', 'wf1');
+  fs.mkdirSync(wf, { recursive: true });
+  fs.writeFileSync(path.join(wf, 'agent-w1.meta.json'), JSON.stringify({ spawnDepth: 1 }));
+  fs.writeFileSync(path.join(wf, 'agent-w1.jsonl'), JSON.stringify({ type: 'user', message: { content: named(RUN) } }) + '\n');
+  assert.deepEqual(locate(cfg, ['s1']).paths, tpaths(sub, 'ok'));
+});
+
+test('runIdsNamed returns distinct ids in order, both separators', () => {
+  const text = `a /x/.claude-tweaks/pipelines/${OTHER_RUN}/ b C:\\\\r\\\\.claude-tweaks\\\\pipelines\\\\${RUN} c .claude-tweaks/pipelines/${OTHER_RUN}`;
+  assert.deepEqual(runIdsNamed(text), [OTHER_RUN, RUN]);
+  assert.deepEqual(runIdsNamed('no run here'), []);
+});
+
+test('RUN_ID_NAMED_RE captures the canonical run-id shape', () => {
+  const { RUN_ID_SHAPE } = require('../../../plugin/bin/lib/issues/claim-store');
+  const body = RUN_ID_SHAPE.source.replace(/^\^/, '').replace(/\$$/, '');
+  assert.ok(RUN_ID_NAMED_RE.source.includes(`(${body})`), `RUN_ID_NAMED_RE (${RUN_ID_NAMED_RE.source}) no longer captures RUN_ID_SHAPE's body (${body})`);
 });

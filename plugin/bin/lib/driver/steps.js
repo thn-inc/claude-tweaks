@@ -118,8 +118,9 @@ const CI_SETTLE_WINDOW_MS = 2 * 60 * 1000;
 // `auto-merge-max-lines` is the express diff bound check enforces when the driver passes no --max-lines;
 // the worker's prompt states whichever bound check applies.
 // The three express-driver-max-* keys are the driver lane's bounds (#5224, laneBounds and driverLineBound).
-// The last three, express-driver-models, model-profiles and model-ceiling, are the model each worker
-// launches on (#5917, launch.js's roleModel); the policy step refuses a run whose roles do not resolve.
+// The last four, express-driver-models, model-profiles, model-ceiling and model-effort, are the model
+// and effort each worker launches with (#5917 and #5942, launch.js's roleLaunch); the policy step
+// refuses a run whose roles do not resolve.
 const POLICY_KEYS = Object.freeze([
   'express-driver', 'express-driver-wall-clock-minutes', 'express-driver-spend-ceiling-dollars',
   'merge-sensitive-paths', 'integration-model', 'integration-branch', 'verify-suite-slots',
@@ -212,6 +213,7 @@ const policyStep = defineStep(STEP.policy, STOP_CLASSES.REFUSED, async (ctx, dep
     // value past 2^53 parses to an unsafe number): fatal here, before any record is claimed, whatever
     // the reviewer answer, so driverLineBound reads only a usable value.
     const lineBound = resolved['express-driver-max-lines'];
+    // `!== 'default'`: a factory value (#6006) is set explicitly, so it is checked like a policy.yml one.
     if (lineBound.source !== 'default' && !(Number.isSafeInteger(lineBound.value) && lineBound.value >= 1)) {
       return fatal(`driver diff bound not an integer of at least 1: express-driver-max-lines (${JSON.stringify(lineBound.value)})`);
     }
@@ -269,6 +271,7 @@ function laneBounds(policy) {
 // the prompt and check never disagree.
 function driverLineBound(ctx) {
   const { value, source } = ctx.shared.policy['express-driver-max-lines'];
+  // A factory-sourced bound (#6006) is set, not derived, so it is passed like a policy.yml one.
   return source !== 'default' && ctx.reviewer && ctx.reviewer.on === true ? value : null;
 }
 
@@ -705,7 +708,7 @@ function newIndexFlagStop(ctx, deps) {
 // HEAD is a `fail` naming only the shas. After an unmoved HEAD the index flags are checked, on the
 // throw path too. Once those checks are done, the worker's test list file is removed (#5915).
 async function runImplementer(ctx, deps, opts = {}) {
-  const launch = { started: false, note: null, model: null };
+  const launch = { started: false, note: null, model: null, effort: null };
   let result;
   let threw = false;
   let thrown;
@@ -724,7 +727,8 @@ async function runImplementer(ctx, deps, opts = {}) {
   }
   // Every result of a launch that resolved a model names it (#5917): no envelope and the HEAD and flag stops too.
   // A refusal never sets it. A thrown launcher carries it on the error (see workerStep).
-  if (launch.model) result = { ...result, extra: { ...(result.extra || {}), model: launch.model } };
+  // `effort` rides with it (#5942): a level, or null when no flag was passed.
+  if (launch.model) result = { ...result, extra: { ...(result.extra || {}), model: launch.model, effort: launch.effort } };
   if (launch.note === null) return result;
   return { ...result, detail: result.detail ? `${result.detail}; ${launch.note}` : launch.note };
 }
@@ -765,6 +769,7 @@ async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '' } = {}, l
     });
     ({ envelope } = launched);
     launch.model = launched.model;
+    launch.effort = launched.effort ?? null;
   } catch (err) {
     // A model refusal (#5917) is thrown before any process starts: nothing ran, so nothing is swept
     // or re-read, and the result carries noLine so the refusal writes no `worker` event line.
@@ -774,7 +779,10 @@ async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '' } = {}, l
       return { status: 'fail', detail: err.message, code: err.code, noLine: true };
     }
     // A throw after the model resolved carries it (launchTracked): the stops below name it too.
-    if (err && typeof err.model === 'string') launch.model = err.model;
+    if (err && typeof err.model === 'string') {
+      launch.model = err.model;
+      launch.effort = err.effort ?? null;
+    }
     // A launcher that throws may have moved HEAD: that is reported in place of the throw;
     // otherwise the throw is rethrown as it was.
     const headStop = headFail(before, headOf(deps, ctx.wt));
@@ -833,6 +841,16 @@ async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '' } = {}, l
   }
   return { status: 'ok', extra };
 }
+
+// The `fail` result for a launcher throw that carries the model it ran on, shared by workerStep and the
+// fix round's relaunch line so the two cannot drift; null for any other throw (the caller rethrows).
+function launchThrowFail(ctx, err) {
+  if (!err || typeof err.model !== 'string') return null;
+  const detail = err.message || String(err);
+  // The removal note runImplementer's normal path appends, kept for the throw path too (#5915).
+  const note = typeof err.testListNote === 'string' ? err.testListNote : null;
+  return { status: 'fail', detail: note === null ? detail : `${detail}; ${note}`, extra: { tests: ctx.workerTestMode, model: err.model, effort: err.effort ?? null } };
+}
 // The worker line also names which path the targeted test command took (`tests`, #5915).
 // A launcher throw that carries the model it ran on (launchTracked) is reported as defineStep's own catch
 // would, plus the line's `tests` and `model`; any other throw propagates unchanged (#5917).
@@ -841,16 +859,34 @@ const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, de
   try {
     result = await runImplementer(ctx, deps, {});
   } catch (err) {
-    if (err && typeof err.model === 'string') {
-      const detail = err.message || String(err);
-      // The removal note runImplementer's normal path appends, kept for the throw path too (#5915).
-      const note = typeof err.testListNote === 'string' ? err.testListNote : null;
-      return { status: 'fail', detail: note === null ? detail : `${detail}; ${note}`, extra: { tests: ctx.workerTestMode, model: err.model } };
-    }
+    const failed = launchThrowFail(ctx, err);
+    if (failed !== null) return failed;
     throw err;
   }
   return { ...result, extra: { ...(result.extra || {}), tests: ctx.workerTestMode } };
 });
+
+// The review fix round's implementer relaunch (#5942): runs `run` (runImplementer; a test seam) and writes
+// the launch's own worker line through ctx.events.emit, so its `model` and `effort` are the launch's own
+// and sit before the review line. The line carries the worker step's keys plus `fix: true`. A refusal
+// (`noLine`) and a throw that resolved no model write none, as workerStep writes none; a throw that
+// carries `err.model` writes a `fail` line and rethrows unchanged. After an interrupt the signal handler
+// has already written the stop and final line, so no line is written. Returns the result unchanged.
+async function fixWorkerLaunch(ctx, deps, extraPrompt, run = runImplementer) {
+  const t0 = deps.now();
+  let result;
+  try {
+    result = await run(ctx, deps, { extraPrompt });
+  } catch (err) {
+    const failed = ctx.shared.interrupted ? null : launchThrowFail(ctx, err);
+    if (failed !== null) ctx.events.emit(STEP.worker, failed.status, deps.now() - t0, failed.detail, { ...failed.extra, fix: true });
+    throw err;
+  }
+  if (!ctx.shared.interrupted && result.noLine !== true) {
+    ctx.events.emit(STEP.worker, result.status, deps.now() - t0, result.detail, { ...(result.extra || {}), tests: ctx.workerTestMode, fix: true });
+  }
+  return result;
+}
 
 // Run artifacts the worktree may hold; never committed.
 const PIPELINES_DIR = '.claude-tweaks/pipelines';
@@ -1446,7 +1482,7 @@ const reviewStep = defineStep(STEP.review, STOP_CLASSES.PRE_PUSH, (ctx, deps) =>
   commit: commitStep,
   test: testStep,
   check: checkStep,
-  launchImplementer: (c, d, extraPrompt) => runImplementer(c, d, { extraPrompt }),
+  launchImplementer: (c, d, extraPrompt) => fixWorkerLaunch(c, d, extraPrompt),
   testCommand: TEST_COMMAND,
   isRunArtifact,
   indexFlagCheck: newIndexFlagStop,
@@ -1507,5 +1543,5 @@ const CHECK_STEPS = Object.freeze([policyStep, fetchStep, eligibilityStep, admis
 module.exports = {
   STEPS, CHECK_STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
   VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop,
-  testTreeStop, TEST_TREE_UNREADABLE,
+  testTreeStop, TEST_TREE_UNREADABLE, fixWorkerLaunch,
 };

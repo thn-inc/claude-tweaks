@@ -15,7 +15,13 @@
 //   spend    prices the model requests in the Claude Code transcripts under --projects (tools/pipeline-cost-report/
 //            spend.js), by session type, model, agent kind, prompt-size bucket and cache-write cause, and per merged PR.
 //   funnel   asks the driver (`drive.js --check`) which open ready + auto:build records it would admit, and why not
-//            (funnel.js). `checked` is every listed record, unreadable ones included.
+//            (funnel.js). `checked` is every listed record, unreadable ones included. It also counts the driver's activity
+//            over the window: `driverRuns` (run directories holding driver-events.jsonl, split into dispatch-routed — a
+//            manifest with lane driver, a run not named -drive-N — and standalone, with the latest run date) and
+//            `dispatchFirings` (main transcripts whose first claude-tweaks skill is dispatch, how many reached the driver
+//            route, by plugin version), the latter under the same scope as spend. When records are admitted yet no run was
+//            dispatch-routed, a flag line says admitted records were not driven. Unreadable run dirs and transcripts add
+//            to the report's `unreadable`, not the funnel's own.
 //   records  counts records created, closed, open and deferred in the window from the forge (records.js).
 //   guards   three quality guards over two columns of pipeline runs, the last --runs (default 20) dated before --split
 //            and the first --runs dated on or after it, independent of the window (guards.js): the share of whole-branch
@@ -42,7 +48,8 @@
 // `drive.js --check` about the current checkout's repository, so a `--section funnel|all` run whose --repo differs from
 // the current checkout's `gh repo view` answer is refused (exit 2). The tool only reads.
 //
-// Exit codes: 0 rendered (unreadable files and runs are counted in `unreadable`, not a failure; a single malformed
+// Exit codes: 0 rendered (unreadable files and runs are counted in `unreadable`, not a failure; the report's total is the
+// sum of each section's own figure, so one transcript both spend and the funnel read counts once per section; a single malformed
 // JSON line inside a transcript is skipped and not counted, because live transcripts routinely end mid-line, but a
 // transcript with no parseable line at all is counted once;
 // an unresolvable default --pipelines prints `Runs: unavailable` and leaves the code alone); 1 a section failed —
@@ -100,12 +107,44 @@ const share = (part, whole) => (whole > 0 ? `${Math.round((part / whole) * 100)}
 
 // ---- sections: { key, collect(ctx) -> data (throws on a forge failure), failed(data), render(data) -> lines } ----
 
+// The message for a scope whose main checkout did not resolve, or null when it did.
+const scopeErrorText = (scope) => (scope.kind === 'path' && !scope.value ? `cannot resolve the main checkout (${scope.error}); pass --match <substring> or --all-projects` : null);
+
+// X.Y.Z numerically; any other key (`unknown`) after every version, ties by text.
+const VERSION_RE = /^(\d+)\.(\d+)\.(\d+)$/;
+function compareVersions(a, b) {
+  const pa = VERSION_RE.exec(a);
+  const pb = VERSION_RE.exec(b);
+  if (pa && pb) {
+    for (let i = 1; i <= 3; i++) {
+      if (pa[i] !== pb[i]) return Number(pa[i]) - Number(pb[i]);
+    }
+  }
+  if (Boolean(pa) !== Boolean(pb)) return pa ? -1 : 1;
+  return compareStrings(a, b);
+}
+
+// The driver's activity over the window, and the flag line when admitted records exist but nothing was routed to it.
+function driverActivityLines(d) {
+  const { driverRuns: r, dispatchFirings: f } = d;
+  const lines = [''];
+  lines.push(r.error ? `Driver runs: unavailable — ${r.error}` : `Driver runs: ${r.total} (${r.dispatchRouted} dispatch-routed, ${r.standalone} standalone); last ${r.last || 'none'}; unreadable: ${r.unreadable}.`);
+  if (f.error) lines.push(`Dispatch firings: unavailable — ${f.error}`);
+  else {
+    const versions = Object.entries(f.byPluginVersion).sort((a, b) => compareVersions(a[0], b[0])).map(([v, n]) => `${v} ${n}`).join(', ') || 'none';
+    lines.push(`Dispatch firings: ${f.total}; reached the driver route: ${f.reachedRoute}; by plugin version: ${versions}; unreadable: ${f.unreadable}.`);
+  }
+  if (d.admitted > 0 && !r.error && !f.error && r.dispatchRouted === 0) lines.push('', `Admitted records were not driven: ${f.total} dispatch firings in the window, ${f.reachedRoute} reached the driver route.`);
+  return lines;
+}
+
 const SECTIONS = [
   {
     key: 'spend',
     async collect(ctx) {
       const { scope } = ctx;
-      if (scope.kind === 'path' && !scope.value) throw new Error(`cannot resolve the main checkout (${scope.error}); pass --match <substring> or --all-projects`);
+      const scopeError = scopeErrorText(scope);
+      if (scopeError) throw new Error(scopeError);
       const spend = await collectSpend(
         {
           roots: ctx.roots,
@@ -114,7 +153,7 @@ const SECTIONS = [
           match: scope.kind === 'substring' ? scope.value : null,
           root: scope.kind === 'path' ? scope.value : null,
         },
-        { fsImpl: ctx.deps.fs },
+        { fsImpl: ctx.deps.fs, pluginRoot: PLUGIN_ROOT, transcriptCache: ctx.transcriptCache },
       );
       let perMergedPr;
       try {
@@ -153,15 +192,28 @@ const SECTIONS = [
     key: 'funnel',
     async collect(ctx) {
       const repoRoot = ctx.deps.cwd;
+      const { scope } = ctx;
       return collectFunnel(
-        { repo: await ctx.repo(), simulate: ctx.opts.simulate || [] },
-        { gh: ctx.deps.gh, check: ctx.deps.check || defaultCheck(PLUGIN_ROOT, repoRoot), now: ctx.deps.now, pluginVersion: ctx.deps.pluginVersion() },
+        {
+          repo: await ctx.repo(),
+          simulate: ctx.opts.simulate || [],
+          runs: ctx.runs,
+          roots: ctx.roots,
+          since: ctx.since,
+          until: ctx.until,
+          match: scope.kind === 'substring' ? scope.value : null,
+          root: scope.kind === 'path' ? scope.value : null,
+          scopeError: scopeErrorText(scope),
+        },
+        { gh: ctx.deps.gh, check: ctx.deps.check || defaultCheck(PLUGIN_ROOT, repoRoot), now: ctx.deps.now, pluginVersion: ctx.deps.pluginVersion(), fsImpl: ctx.deps.fs, transcriptCache: ctx.transcriptCache },
       );
     },
     failed: () => false,
-    unreadable: (d) => d.unreadable,
+    unreadable: (d) => d.unreadable + (d.driverRuns?.unreadable || 0) + (d.dispatchFirings?.unreadable || 0),
     render(d) {
-      const lines = ['## Funnel', '', `Driver admission, run ${d.runDate}, plugin ${d.pluginVersion}.`, '', `Checked: ${d.checked}; admitted: ${d.admitted}; unreadable: ${d.unreadable}.`, ''];
+      const lines = ['## Funnel', '', `Driver admission, run ${d.runDate}, plugin ${d.pluginVersion}.`, '', `Checked: ${d.checked}; admitted: ${d.admitted}; unreadable: ${d.unreadable}.`];
+      if (d.driverRuns) lines.push(...driverActivityLines(d));
+      lines.push('');
       const reasons = Object.entries(d.reasons).sort((a, b) => b[1] - a[1]);
       if (reasons.length > 0) {
         lines.push('| Refusal reason | Records |', '|---|---|');
@@ -330,7 +382,7 @@ const SECTIONS = [
 
 const SECTION_KEYS = SECTIONS.map((s) => s.key);
 const USAGE = `usage: node tools/pipeline-cost-report.js [--since <YYYY-MM-DD>] [--until <YYYY-MM-DD>] [--projects <dir>]... [--pipelines <dir>] [--match <substring> | --all-projects] [--section ${[...SECTION_KEYS, 'all'].join('|')}] [--split <YYYY-MM-DD>] [--runs <n>] [--repo <owner/name>] [--simulate <reason[,reason...]>]... [--json]
-  spend covers the main checkout and its worktrees unless --match or --all-projects widens it; the funnel always checks the current checkout's repository, so --repo must match it for --section funnel|all
+  spend and the funnel's dispatch firings cover the main checkout and its worktrees unless --match or --all-projects widens it; the funnel always checks the current checkout's repository, so --repo must match it for --section funnel|all
   guards compares the last --runs (default ${DEFAULT_RUNS}) pipeline runs dated before --split with the first --runs on or after it; --section guards needs --split, and --section all without it skips guards
   reviews reads the review results of the runs dated in the window; --runs (default ${DEFAULT_RUNS}) sets only its lens yield, which takes the latest runs per lens dated on or before --until whatever --since says`;
 
@@ -518,12 +570,14 @@ async function run({ argv, deps: given = {} }) {
     }
   }
 
-  const scope = wants('spend') ? resolveScope(opts, deps) : null;
+  const scope = wants('spend') || wants('funnel') ? resolveScope(opts, deps) : null;
   const { roots, unresolved } = resolveRoots(opts, deps);
   const ctx = {
     deps, opts, since, until, scope,
     roots,
     repo: repoOf,
+    // One projection per main transcript, shared by spend and the funnel so `--section all` scans each once.
+    transcriptCache: new Map(),
   };
 
   // Run directories are listed once, before the sections, so a section's collect can read ctx.runs.
@@ -537,7 +591,7 @@ async function run({ argv, deps: given = {} }) {
 
   const report = { window: { since, until, ...(scope ? { match: scope.error ? { kind: scope.kind, value: null, error: scope.error } : { kind: scope.kind, value: scope.value } } : {}) }, priceTableDate: PRICES.date };
   let exit = 0;
-  let unreadable = wants('spend') ? unresolved : 0;
+  let unreadable = wants('spend') || wants('funnel') ? unresolved : 0;
   for (const s of SECTIONS) {
     if (opts.section !== 'all' && opts.section !== s.key) continue;
     try {

@@ -5,6 +5,7 @@ files:
   - plugin/bin/lib/policy-schema.js
   - plugin/bin/lib/policy.js
   - plugin/bin/lib/policy-file.js
+  - plugin/bin/lib/policy-factory.js
   - plugin/bin/pr-early-open.js
   - plugin/bin/hooks.sh
   - plugin/bin/lib/risk-path-globs.js
@@ -18,10 +19,10 @@ files:
 
 # Resolve a Policy Key Through the Canonical Read Path
 
-**Persona:** claude-tweaks skill author (or a maintainer of a project using the plugin) who wants proof that policy resolution honors the documented precedence chain — run config, then `policy.yml`, then schema default — rather than trusting each skill's prose to have re-implemented it correctly.
+**Persona:** claude-tweaks skill author (or a maintainer of a project using the plugin) who wants proof that policy resolution honors the documented precedence chain — run config, then `policy.yml`, then the factory layer, then schema default — rather than trusting each skill's prose to have re-implemented it correctly.
 **Goal:** Watch one key resolve under three configurations and confirm the returned `{value, source}` envelope changes exactly as `plugin/skills/_shared/policy-schema-read-path.md` §Canonical read path says it will.
 **Entry point:** A terminal at a project checkout root (any repo with — or even without — a `.claude-tweaks/policy.yml`).
-**Success state:** Three JSON objects whose `source` fields read `default`, `policy`, and `run-config` respectively, plus one `renamed-from` resolution proving the alias table is live, plus one `--all` snapshot whose every row carries `{value, source}` decorated with schema metadata, plus one direct-from-`policy.yml` read proving the enforcement hook honors the same alias table the CLI does, plus three `risk-path-globs` reads (unset, valid block, typo'd block) whose answers — `{}` from `default`, the slug-to-glob map from `policy`, and `null` flagged `invalid` — are each distinct.
+**Success state:** Three JSON objects whose `source` fields read `default`, `policy`, and `run-config` respectively, plus one `renamed-from` resolution proving the alias table is live, plus one `--all` snapshot whose every row carries `{value, source}` decorated with schema metadata, plus one direct-from-`policy.yml` read proving the enforcement hook honors the same alias table the CLI does, plus three `risk-path-globs` reads (unset, valid block, typo'd block) whose answers — `{}` from `default`, the slug-to-glob map from `policy`, and `null` flagged `invalid` — are each distinct, plus one `source: "factory"` read and one refused factory key that resolves as if unset.
 
 ## Steps
 
@@ -44,7 +45,7 @@ files:
 - **Action:** Run with `--run` pointing at an active pipeline run directory whose `config.yml` sets the requested lever.
 - **Should feel:** Deterministic layering — the run's Manifesto answer wins over the project default, and `source: "run-config"` says so.
 - **Should understand:** This is the whole precedence chain made mechanical: run config beats `policy.yml` beats the schema default, per key, in one call. A run dir that exists but has no `config.yml` yet is not an error — the overlay is simply absent.
-- **Red flags:** A nonexistent `--run` dir resolving anything (must exit 1 with a stderr message); the overlay applying to `model-profiles` (policy-only by contract) or `express-driver-models` (#5917, a `policyOnly` block key) or to a `policyOnly` flat key (`control-mode`, #5830, in both directions: a run config neither switches it off nor on; `deploy-command`, `owned-owners`, `trusted-authors`, `risk-categories`, #4609; `verify-suite-slots`, #5119; `express-driver`, `express-driver-wall-clock-minutes`, `express-driver-spend-ceiling-dollars`, #5216; `express-driver-review`, #5222; `express-driver-max-size`, `express-driver-max-key-files`, `express-driver-max-lines`, #5224; `changelog-max-releases`, #5563; `filed-record-evidence`, `run-filed-record-cap`, #5933). Running this step from a **linked worktree** with a *relative* `--run` (or one pointing inside any checkout other than the main one) exits 1 with a "resolves outside the main checkout" message naming the resolved path — that is the anchored-or-outside guard (#1065, the `[IL-127]` shadow-copy protection) working as designed, not a defect; a `$PIPELINE_RUN_DIR` resolved per `_shared/pipeline-run-dir.md` is always anchored under the main checkout and passes, as does any path outside every checkout.
+- **Red flags:** A nonexistent `--run` dir resolving anything (must exit 1 with a stderr message); the overlay applying to `model-profiles` (policy-only by contract) or `express-driver-models` (#5917, a `policyOnly` block key) or to a `policyOnly` flat key (`control-mode`, #5830, in both directions: a run config neither switches it off nor on; `deploy-command`, `owned-owners`, `trusted-authors`, `risk-categories`, #4609; `verify-suite-slots`, #5119; `express-driver`, `express-driver-wall-clock-minutes`, `express-driver-spend-ceiling-dollars`, #5216; `express-driver-review`, #5222; `express-driver-max-size`, `express-driver-max-key-files`, `express-driver-max-lines`, #5224; `changelog-max-releases`, #5563; `filed-record-evidence`, `run-filed-record-cap`, #5933; `model-effort`, #5941). Running this step from a **linked worktree** with a *relative* `--run` (or one pointing inside any checkout other than the main one) exits 1 with a "resolves outside the main checkout" message naming the resolved path — that is the anchored-or-outside guard (#1065, the `[IL-127]` shadow-copy protection) working as designed, not a defect; a `$PIPELINE_RUN_DIR` resolved per `_shared/pipeline-run-dir.md` is always anchored under the main checkout and passes, as does any path outside every checkout.
 
 ### 4. Snapshot the whole config — `--all`
 - **URL:** `node plugin/bin/resolve-policy.js --all`
@@ -74,7 +75,28 @@ files:
 - **Should understand:** The first run prints `develop`. Stderr gets one line: `resolve-policy: note — {root} has no .claude-tweaks/policy.yml; read the main checkout's {policyPath}`. The same note appears in every output mode, and stdout is unchanged. In-process callers read it from `resolvePolicyConfig`'s `policySource: "main-checkout"` and `policyPath`. Every policy reader goes through one locator, `plugin/bin/lib/policy-file.js`'s `locatePolicyFile`, so every key and every caller gets this fallback, not just this CLI (#4492). On the second run the worktree's own file wins outright and the main checkout's file is not read. Run from the main checkout, the command behaves exactly as before. A root counts as a linked worktree only when its gitdir's parent is exactly `<main>/.git/worktrees`, so a submodule inside a linked worktree keeps its own policy. If no `integration-branch` is set anywhere, `plugin/bin/pr-early-open.js` run from a linked worktree still opens the draft PR against the GitHub default branch, but first warns on stderr: `pr-early-open.js: warning: no integration-branch found (…) — the draft PR targets the GitHub default branch "{base}" from linked worktree {root}`.
 - **Red flags:** An empty line from the first run, which is the #4492 defect that sent draft PRs to the default branch. The note printed when the worktree has its own file. A submodule of a linked worktree reading the superproject's policy. A default-branch fallback from a linked worktree with no stderr warning.
 
+### 8. Supply a value from the factory layer — `CLAUDE_TWEAKS_FACTORY_POLICY` / `~/.claude-tweaks/factory-policy.yml`
+- **URL:** `CLAUDE_TWEAKS_FACTORY_POLICY="model-stance: economy" node plugin/bin/resolve-policy.js model-stance`
+- **Action:** Run it in a checkout whose `policy.yml` does not set `model-stance`; then add `model-stance: max-rigor` to `policy.yml` and run again; then run it with `CLAUDE_TWEAKS_FACTORY_POLICY="deploy-command: echo hi"` and request `deploy-command`. Put the same text in `~/.claude-tweaks/factory-policy.yml` instead of the variable to see the file path.
+- **Should feel:** Like a user-wide default that every repository inherits, and that a repository can always override without anything being said twice.
+- **Should understand:**
+  - The first run prints `{"model-stance":{"value":"economy","source":"factory"}}`. Stderr says `resolve-policy: note — factory layer (env) supplied model-stance`, with `file` or `env+file` as the origin when the file contributed. Precedence is now run config, then `policy.yml`, then the factory layer, then the schema default (#6006). A `factory` source counts as set, exactly like `policy`.
+  - The second run answers `max-rigor` from `policy`, and no note prints.
+  - `merge-authorization`, `control-mode`, `deploy-command` and `release-hook` are refused. The third run resolves as if the factory layer were silent and writes `resolve-policy: warning: deploy-command is not settable from the factory layer — ignored`.
+  - Block keys (`model-profiles`, `risk-path-globs`, `express-driver-models`) merge per row, the repository row over the factory row. A factory block that does not parse, beside a usable `policy.yml` block, leaves the repository's rows in force and writes `resolve-policy: warning: {key} has a malformed block in the factory layer — ignored, using the repository's rows` in every output mode.
+  - An invalid flat factory value resolves the schema default with `invalid: true`. Only `--values` names it on stderr, as `resolve-policy: warning: {key} has invalid value "{raw}" in the factory layer — using default "{default}"`; the JSON and `--all` forms write no such line, as in step 2.
+  - Under `tools/run-tests.js` and `tests/helpers/tmp-dir.js`, `CT_FACTORY_POLICY_FILE` points the file at a path that does not exist, so a developer's own factory file never reaches a test run.
+  - The full rules are in `_shared/policy-schema-read-path.md`'s `## Factory layer`.
+- **Red flags:**
+  - A refused key taking its factory value.
+  - A factory value overriding a `policy.yml` value.
+  - A factory value reported as `source: "default"`, which would re-run forge detection or derivations meant only for unset keys.
+  - A factory-sourced invalid value warning as if `policy.yml` held it.
+  - A malformed factory block marking a usable `policy.yml` block invalid, or being dropped with no stderr line.
+  - A test run that changes when `~/.claude-tweaks/factory-policy.yml` exists.
+
 ## Origin
+- Step 8 added during build of #6006 (factory policy layer): `source: "factory"`, the new precedence, the four refused keys, per-row block merge, the factory-named invalid warning and the test-run `CT_FACTORY_POLICY_FILE` relocation; the persona and success state gain the layer and `files:` gains `plugin/bin/lib/policy-factory.js`
 - Step 3 updated during build of #5933 (`filed-record-evidence`, `run-filed-record-cap`) — both keys are `policyOnly`, so step 3's red flag lists them among the flat keys the `--run` overlay must never reach
 - Steps 3 and 6 updated at wrap-up of #5917 (`express-driver-models`): the key is a `policyOnly` block key, not a flat one, so step 3's red flag names it beside `model-profiles`, and step 6 gives its unset, valid and malformed answers
 - Step 3 updated during build of #5830 (`control-mode` policyOnly) — the key joins step 3's red-flag list of flat keys the `--run` overlay must never reach, in both directions: a run `config.yml` can no longer switch the human-in-control gate off, and the per-run opt-in to turn it on is dropped on purpose

@@ -158,6 +158,19 @@ test('AC 6: integration-model unset → engine, releasePr and hook all degrade n
   assert.strictEqual(bad.engine.ok, false);
 });
 
+// #6006: the factory layer reaches the pack through deps.env (no HOME, so no factory file is read).
+test('release-preflight: a factory integration-model pin is a configured engine', async () => {
+  const factoryEnv = { CLAUDE_TWEAKS_FACTORY_POLICY: 'integration-model: local-merge\n' };
+  const pinned = await gatherReleasePreflight({ cwd: ROOT, deps: { ...fakeDeps({ policy: '' }).deps, env: factoryEnv } });
+  assert.deepStrictEqual([pinned.engine.ok, pinned.engine.value, pinned.ciTip.value], [true, 'local-merge', 'n/a']);
+  // policy.yml still beats the factory pin.
+  const repo = await gatherReleasePreflight({ cwd: ROOT, deps: { ...fakeDeps().deps, env: factoryEnv } });
+  assert.strictEqual(repo.engine.value, 'pr-first');
+  // An invalid factory value is not a configured engine.
+  const bad = await gatherReleasePreflight({ cwd: ROOT, deps: { ...fakeDeps({ policy: '' }).deps, env: { CLAUDE_TWEAKS_FACTORY_POLICY: 'integration-model: gitlab\n' } } });
+  assert.match(bad.engine.error, /integration-model unresolved/);
+});
+
 test('ruling 3: without origin/{branch} the tip is refs/heads/{branch}; integration-branch policy renames it', async () => {
   const { deps, calls } = fakeDeps({ noOriginRef: true, policy: 'integration-model: local-merge\nintegration-branch: develop\n' });
   const pack = await gatherReleasePreflight({ cwd: ROOT, deps });
