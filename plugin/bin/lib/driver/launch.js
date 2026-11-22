@@ -8,6 +8,8 @@
 // steps.js and review.js both require it; review.js never requires steps.js.
 // The model each launch gets is resolved here (#5917), from `express-driver-models` and the
 // shared `model-profiles` / `model-ceiling` policy keys, never left to the account default.
+// So is its launch effort (#5942): `model-effort: profile` passes resolve()'s `launchEffort` as
+// `--effort`; unset (`inherit`) or a profile with no effort for that model launches at the harness default.
 
 const { DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES } = require('./roles');
 const { resolve } = require('../model-profiles/profiles');
@@ -36,7 +38,7 @@ function readCeilings(policy) {
   return { minutes, dollars };
 }
 
-const MODEL_POLICY_KEYS = Object.freeze(['express-driver-models', 'model-profiles', 'model-ceiling']);
+const MODEL_POLICY_KEYS = Object.freeze(['express-driver-models', 'model-profiles', 'model-ceiling', 'model-effort']);
 const MODEL_REFUSED_CODE = 'DRIVER_MODEL_REFUSED';
 
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
@@ -51,11 +53,12 @@ function refuse(role, why) {
   return err;
 }
 
-// One role's model (a family alias) from the policy step's `{ [key]: { value, source } }`. A
-// policy-settable role reads its profile from `express-driver-models`; any other role in
+// One role's launch values, `{ model, effort }`: the model (a family alias) and the launch effort
+// (`resolve().launchEffort`, a string or null), from the policy step's `{ [key]: { value, source } }`.
+// A policy-settable role reads its profile from `express-driver-models`; any other role in
 // DRIVER_ROLE_PROFILES (`explorer`) takes its code-only default. Anything unreadable throws a
 // DRIVER_MODEL_REFUSED error naming the role: the launch never falls back to the account default.
-function roleModel(role, policy) {
+function roleLaunch(role, policy) {
   let profile;
   if (POLICY_DRIVER_ROLES.includes(role)) {
     const entry = policy && policy['express-driver-models'];
@@ -68,9 +71,9 @@ function roleModel(role, policy) {
   } else {
     throw refuse(role, 'no work profile in the role map');
   }
-  // Both keys shape every role's resolution, so a malformed one fails the launch closed here, not
+  // These keys shape every role's resolution, so a malformed one fails the launch closed here, not
   // only in modelPolicyRefusal: an invalid model-ceiling reads as no ceiling and would launch unclamped.
-  for (const key of ['model-profiles', 'model-ceiling']) {
+  for (const key of ['model-profiles', 'model-ceiling', 'model-effort']) {
     if (isInvalidEntry(policy, key)) throw refuse(role, `driver model policy invalid: ${key}`);
   }
   const resolvePolicy = {};
@@ -78,12 +81,18 @@ function roleModel(role, policy) {
   if (isPlainObject(profiles)) resolvePolicy['model-profiles'] = profiles;
   const ceiling = policy && policy['model-ceiling'] && policy['model-ceiling'].value;
   if (typeof ceiling === 'string' && ceiling !== '') resolvePolicy['model-ceiling'] = ceiling;
+  const effortMode = policy && policy['model-effort'] && policy['model-effort'].value;
+  if (typeof effortMode === 'string' && effortMode !== '') resolvePolicy['model-effort'] = effortMode;
   try {
-    return resolve(profile, { policy: resolvePolicy, unattended: true }).model;
+    const r = resolve(profile, { policy: resolvePolicy, unattended: true });
+    return { model: r.model, effort: r.launchEffort };
   } catch (err) {
     throw refuse(role, `profile ${neutralize(String(profile))} did not resolve (${neutralize(err.message)})`);
   }
 }
+
+// One role's model alone: roleLaunch's `model`.
+const roleModel = (role, policy) => roleLaunch(role, policy).model;
 
 // The reason a driver launch cannot get a model from this policy, or null: the first invalid
 // model key, else the first role that does not resolve.
@@ -93,7 +102,7 @@ function modelPolicyRefusal(policy) {
   }
   for (const role of Object.keys(DRIVER_ROLE_PROFILES)) {
     try {
-      roleModel(role, policy);
+      roleLaunch(role, policy);
     } catch (err) {
       return err.message;
     }
@@ -101,15 +110,15 @@ function modelPolicyRefusal(policy) {
   return null;
 }
 
-// Launches one worker: the caller's opts plus the role's resolved model, the ceilings, the platform, the environment and, on
+// Launches one worker: the caller's opts plus the role's resolved model and effort, the ceilings, the platform, the environment and, on
 // win32, WIN32_CLAUDE_BIN. Only the first runner call is the worker: on win32 the launcher's
 // ceiling kill runs taskkill through the same runner, and that handle must not replace the
 // worker's. shared.activeWorker is reset however the launch ends; a throw reaches the caller.
-// Resolves `{ envelope, model }`; a launcher throw is rethrown with `model` attached.
+// Resolves `{ envelope, model, effort }`; a launcher throw is rethrown with `model` and `effort` attached.
 async function launchTracked(shared, deps, { minutes, dollars }, opts) {
   // Resolved before anything is touched: a refusal leaves the runner, the launcher and
-  // shared.activeWorker as they were. `model` follows the opts spread, so no caller can override it.
-  const model = roleModel(opts.role, shared.policy);
+  // shared.activeWorker as they were. `model` and `effort` follow the opts spread, so no caller can override them.
+  const { model, effort } = roleLaunch(opts.role, shared.policy);
   let captured = false;
   const runner = (call) => {
     const handle = deps.runner(call);
@@ -123,21 +132,23 @@ async function launchTracked(shared, deps, { minutes, dollars }, opts) {
     const envelope = await deps.launchWorker({
       ...opts,
       model,
+      effort,
       ceilings: { wallClockMs: minutes * 60000, spendCeiling: dollars },
       platform: deps.platform,
       env: deps.env,
       ...(deps.platform === 'win32' ? { bin: WIN32_CLAUDE_BIN } : {}),
     }, { runner });
-    return { envelope, model };
+    return { envelope, model, effort };
   } catch (err) {
-    // A throw after the model resolved carries it, so the caller's event line can still name it. A
-    // refusal from roleModel above never reaches here, so it carries no `model`.
+    // A throw after the launch values resolved carries them, so the caller's event line can still name
+    // them. A refusal from roleLaunch above never reaches here, so it carries neither.
     const e = err instanceof Error ? err : new Error(String(err));
     e.model = model;
+    e.effort = effort;
     throw e;
   } finally {
     shared.activeWorker = null;
   }
 }
 
-module.exports = { WIN32_CLAUDE_BIN, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE, readCeilings, roleModel, modelPolicyRefusal, launchTracked };
+module.exports = { WIN32_CLAUDE_BIN, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE, readCeilings, roleLaunch, roleModel, modelPolicyRefusal, launchTracked };

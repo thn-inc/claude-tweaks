@@ -269,7 +269,7 @@ const POLICY_KEYS = [
   // this — the ADR describes this plugin's own repo, not every consumer.
   { key: 'superpowers-plans-retention', type: 'enum', values: ['keep-forever', 'prune-after-wrapup', 'ask'], default: 'keep-forever', summary: "Decides whether finished planning files are kept (tidy may propose a bulk prune), pruned after wrap-up, or decided case by case.", category: 'housekeeping', tier: 'advanced' },
   // Model-profile resolver levers (#216's bin/lib/model-profiles/profiles.js is
-  // the runtime reader for these four key names — POLICY_KEYS_READ pins them;
+  // the runtime reader for these five key names — POLICY_KEYS_READ pins them;
   // registration here is schema/audit only, deliberately shallow (#219): this
   // file checks model-profiles' row keys are real profile names, never the
   // shape of a row's own fields — that's the resolver's job, at resolve time.
@@ -277,8 +277,12 @@ const POLICY_KEYS = [
   { key: 'frontier-run-cap', type: 'integer', default: 3, summary: "Caps how many Frontier model dispatches one pipeline run may use before falling back to a cheaper profile.", category: 'models', tier: 'advanced' },
   { key: 'model-ceiling', type: 'enum', values: PROFILE_NAMES, summary: "Sets the highest model profile a skill's own default may resolve to, without limiting a person's explicit choice.", category: 'models', tier: 'advanced' },
   { key: 'model-profiles', type: 'map', keys: PROFILE_NAMES, summary: "Lets a project override which model and effort level each named profile resolves to, replacing the shipped table row by row.", category: 'models', tier: 'advanced' },
+  // model-effort (#5941): policyOnly — every consumer reads policy.yml directly (resolve-profile.js), never a --run overlay, and no per-run route exists (model-stance has Manifesto lever 10 and --stance; this key does not), so an overlay would report a value no consumer reads.
+  { key: 'model-effort', type: 'enum', values: ['inherit', 'profile'], default: 'inherit', policyOnly: true, summary: "Chooses whether a launched agent runs at the harness default effort or at the effort its work profile resolves to.", category: 'models', tier: 'advanced' },
   // express-driver-models (#5917): a block of `role: profile` rows, read by parseDriverModels from policy.yml only, like risk-path-globs. policyOnly: it chooses the model autonomous machinery spends on, so a --run config never sets it. `keys` is the four policy-settable roles; `explorer` is not one, so a row naming it is a schema error.
   { key: 'express-driver-models', type: 'map', keys: POLICY_DRIVER_ROLES, default: POLICY_DRIVER_DEFAULTS, policyOnly: true, summary: "Picks the work profile each pipeline driver worker role launches on; a role left out keeps its shipped default.", category: 'models', tier: 'advanced' },
+  // implementer-tier (#5996): read by plugin/bin/implementer-tier.js. Resolved per run, so not policyOnly: one run may try `record` through its config.yml without changing the project file. Not policySourceExcluded: a standing project opt-in is the point. Not a Manifesto lever, so _shared/auto-mode-contract.md's new-lever checklist does not apply. No build calls the CLI yet; #5997 (driver) and #5999 (standard lane) wire the first consumers and drop the `Not yet used` marker and the NOT_YET_USED entry.
+  { key: 'implementer-tier', type: 'enum', values: ['lane', 'record'], default: 'lane', summary: "Not yet used. Picks an implementer's work profile from the record's size and Key File count, or from size alone as today.", category: 'models', tier: 'advanced' },
   // Read from /claude-tweaks:research's own `## Input` --mode= flag (IL-24:
   // that file is authoritative for the vocabulary, not this schema).
   { key: 'research-mode', type: 'enum', values: ['quick', 'standard', 'deep', 'ultradeep'], summary: "Sets the default depth of a research run — quick, standard, deep, or ultradeep — when nothing else specifies one.", category: 'pipeline-behavior', tier: 'advanced' },
