@@ -21,6 +21,7 @@ const { archiveMerged, prefetchArchivePrStates } = require('./archive-merged');
 const { archiveBranches } = require('./archive-branches');
 const { pruneRemote } = require('./prune-remote');
 const { ledgerResidue } = require('./ledger-residue');
+const { planRefs } = require('./plan-refs');
 const { consoleExecuteDetect } = require('./console-execute');
 const { sharedFetch, sharedFetchAsync } = require('./shared-fetch');
 const { repairOriginHead } = require('./origin-head');
@@ -37,14 +38,14 @@ const {
 } = timing;
 
 // Execution order (mirror, red-tip, console, release, post-merge, archive,
-// archive-branches, remote-prune, ledger-residue, reap) is significant — see the ordering
+// archive-branches, remote-prune, ledger-residue, plan-refs, reap) is significant — see the ordering
 // comment above the release/archive/archive-branches/reap dispatch below.
 // red-tip runs immediately after mirror specifically so it reads the ref the
 // shared fetch (shared-fetch.js, #820 D2 — formerly mirror-ff.js's own
 // fetch) just refreshed, rather than fetching a second time (#561). This
 // array is the requested-subset default only; it is never iterated to
 // determine dispatch order.
-const ALL_CHECKS = ['mirror', 'red-tip', 'reap', 'release', 'post-merge', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'console'];
+const ALL_CHECKS = ['mirror', 'red-tip', 'reap', 'release', 'post-merge', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'plan-refs', 'console'];
 
 // `skipped[].reason` values meaning reconcile() returned without running the
 // checks it was asked for (#4032) — the unscoped CLI treats a pass carrying any
@@ -105,7 +106,7 @@ function expandChecks(checks) {
 // declined-store prune, the integration-branch and origin/HEAD git children, the forge probe and the model probe;
 // absent, each reads the inherited environment as before. They also reach the pr-first checks FAST_CHECKS names:
 // the preflight, the shared fetch, mirror, red-tip and console.
-// -> { mirror, redTip, worktrees, claims, postMerge, runs, branches, remoteBranches, ledgerResidue, console, residuePlan, residueErrors, skipped, timings }
+// -> { mirror, redTip, worktrees, claims, postMerge, runs, branches, remoteBranches, ledgerResidue, planRefs, console, residuePlan, residueErrors, skipped, timings }
 // A dry run writes neither the cache nor GitHub (#4180): `residuePlan` lists what the residue
 // tracking would have done (an array on a dry run when archive ran, null otherwise), and
 // `residueErrors` lists the escalate/resolve failures recorded on tracked entries plus this
@@ -159,7 +160,7 @@ async function reconcileInner(opts, state) {
   const requestedChecks = Array.isArray(opts.checks) && opts.checks.length ? opts.checks : ALL_CHECKS;
   let checks = expandChecks(requestedChecks);
   const cwd = opts.cwd || process.cwd();
-  const result = { mirror: null, redTip: null, worktrees: null, claims: null, postMerge: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, residuePlan: null, residueErrors: null, skipped: [] };
+  const result = { mirror: null, redTip: null, worktrees: null, claims: null, postMerge: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, planRefs: null, console: null, residuePlan: null, residueErrors: null, skipped: [] };
 
   // Declined-learning store prune (#1399) — local, gitignored bookkeeping unrelated to git/
   // GitHub reachability, so it runs unconditionally on every reconcile pass regardless of
@@ -274,12 +275,13 @@ async function reconcileInner(opts, state) {
   if (opts.homeDir !== undefined) modelOpts.homeDir = opts.homeDir;
   const model = resolveModel(root, modelOpts);
   if (model !== 'pr-first') {
-    // local-merge / no-forge: only `reap` has a defined fallback here — the
-    // long-standing content-identical ancestry check worktree-reap.js has
-    // always run (#407's Non-Goals: no local-merge behavior change). mirror
-    // (nothing to fast-forward toward — there is no PR-lifecycle mirror
-    // under this model), release, and archive have no local-merge
-    // equivalent and stay skipped.
+    // local-merge / no-forge: only `reap` and `plan-refs` have a defined
+    // fallback here — `reap` runs the long-standing content-identical ancestry
+    // check worktree-reap.js has always run (#407's Non-Goals: no local-merge
+    // behavior change); `plan-refs` runs its closed-record ref deletion (#6055)
+    // through the same path a pr-first pass uses. mirror (nothing to
+    // fast-forward toward — there is no PR-lifecycle mirror under this model),
+    // release, and archive have no local-merge equivalent and stay skipped.
     if (checks.includes('reap')) {
       const legacy = timePhaseSync('reap', () => legacyReapWorktrees({ cwd: root, integration, dryRun, now: opts.now }));
       result.worktrees = legacy.reaped.map((p) => ({ path: p, action: 'reaped' }))
@@ -290,6 +292,14 @@ async function reconcileInner(opts, state) {
       // entry with a count rather than one of the per-path ones above.
       if (legacy.deferred) {
         result.skipped.push({ check: 'reap', reason: 'deferred', count: legacy.deferred });
+      }
+    }
+    if (checks.includes('plan-refs')) {
+      const r = timePhaseSync('plan-refs', () => planRefs({ cwd: root, dryRun }));
+      if (r.failure) {
+        result.skipped.push({ check: 'plan-refs', reason: r.failure });
+      } else {
+        result.planRefs = r.entries;
       }
     }
     result.skipped.push({ check: 'mirror,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' });
@@ -430,7 +440,7 @@ async function reconcileInner(opts, state) {
   // handed to archive only: `reap` removes worktrees and lists afresh itself,
   // and nothing before it in the dispatch order changes the worktree set.
   const runIntegrityCache = opts.cache || { worktreeList: new Map(), integrationBranch: new Map() };
-  const DISPATCH_ORDER = ['mirror', 'red-tip', 'console', 'release', 'post-merge', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'reap'];
+  const DISPATCH_ORDER = ['mirror', 'red-tip', 'console', 'release', 'post-merge', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'plan-refs', 'reap'];
   function overBudget(remainingFromHere) {
     if (!budget.exceeded()) return false;
     const notYetRun = remainingFromHere.filter((c) => checks.includes(c));
@@ -649,7 +659,20 @@ async function reconcileInner(opts, state) {
     }
   }
 
+  // Reads origin directly (ls-remote, then one GraphQL batch per chunk) and needs
+  // no state another check produces, so it has no PREREQUISITES entry. Runs before
+  // reap, which stays last (see the ordering comment above the dispatch).
   if (overBudget(DISPATCH_ORDER.slice(9))) return result;
+  if (checks.includes('plan-refs')) {
+    const r = timePhaseSync('plan-refs', () => planRefs({ cwd: root, dryRun }));
+    if (r.failure) {
+      result.skipped.push({ check: 'plan-refs', reason: r.failure });
+    } else {
+      result.planRefs = r.entries;
+    }
+  }
+
+  if (overBudget(DISPATCH_ORDER.slice(10))) return result;
   if (checks.includes('reap')) {
     // #644 review fix: pass the caller's actual `cwd`, not the already-
     // resolved `root` every other dispatch line above uses. reapMerged's own
