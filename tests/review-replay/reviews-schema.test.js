@@ -33,6 +33,15 @@ test('validateReviewsManifest rejects repeat 0 and a non-array prompts', () => {
   assert.ok(schema.validateReviewsManifest(manifest({ arms: [{ ...arm, prompts: 'x' }] })).some((p) => p.includes('prompts must be an array')));
 });
 
+test('validateReviewsManifest reports a missing kind once, a fractional repeat and non-object arms or prompts', () => {
+  const { kind, ...noKind } = manifest();
+  const missing = schema.validateReviewsManifest(noKind).filter((p) => p.includes('missing key kind'));
+  assert.strictEqual(missing.length, 1);
+  assert.ok(schema.validateReviewsManifest(manifest({ arms: [{ ...arm, repeat: 1.5 }] })).some((p) => p.includes('repeat must be a positive integer')));
+  assert.ok(schema.validateReviewsManifest(manifest({ arms: [null] })).some((p) => p.includes('arms[0]: not an object')));
+  assert.ok(schema.validateReviewsManifest(manifest({ arms: [{ ...arm, prompts: [null] }] })).some((p) => p.includes('prompts[0]: not an object')));
+});
+
 test('isControlArm matches control and control.* only', () => {
   assert.strictEqual(schema.isControlArm('control'), true);
   assert.strictEqual(schema.isControlArm('control.standard.medium'), true);
