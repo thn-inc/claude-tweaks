@@ -53,6 +53,24 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.176.0](https://github.com/thn-inc/claude-tweaks/compare/v6.175.0...v6.176.0) (2026-11-22)
+
+
+### Features
+
+* Add a factory policy layer below the repository's… ([#6006](https://github.com/thn-inc/claude-tweaks/issues/6006)) ([483adc1](https://github.com/thn-inc/claude-tweaks/commit/483adc1d58d370d20e8dc54512884ae94f061994))
+* Decide a deferred item's route in code ([#5930](https://github.com/thn-inc/claude-tweaks/issues/5930)) ([60b511b](https://github.com/thn-inc/claude-tweaks/commit/60b511b4fa6ee872b61da400d47fdd0d86e73436)), closes [#5931](https://github.com/thn-inc/claude-tweaks/issues/5931) [#5932](https://github.com/thn-inc/claude-tweaks/issues/5932) [#5933](https://github.com/thn-inc/claude-tweaks/issues/5933)
+* Keep driver-routable records out of dispatch's fast-lane… ([#6011](https://github.com/thn-inc/claude-tweaks/issues/6011)) ([fe1c307](https://github.com/thn-inc/claude-tweaks/commit/fe1c307e8d318d19c49ea02b34c67a29462387b9))
+* Let a review-replay arm set its effort, and refuse to… ([#5990](https://github.com/thn-inc/claude-tweaks/issues/5990)) ([2601ef2](https://github.com/thn-inc/claude-tweaks/commit/2601ef2d8d3dc989e83dc9b303f111c6b7f707e1))
+* Pick an implementer's work profile from its record in code ([#5996](https://github.com/thn-inc/claude-tweaks/issues/5996)) ([c06b835](https://github.com/thn-inc/claude-tweaks/commit/c06b835c849a5c191cd7963df0caee14fcd70cc5))
+* Set a launched agent's effort from its resolved profile ([#5941](https://github.com/thn-inc/claude-tweaks/issues/5941)) ([d7aa780](https://github.com/thn-inc/claude-tweaks/commit/d7aa7806053ff87a47fcd0aca25b930b246afdee)), closes [#5942](https://github.com/thn-inc/claude-tweaks/issues/5942)
+* Show in the cost report whether admitted records ever… ([#6012](https://github.com/thn-inc/claude-tweaks/issues/6012)) ([702b7c2](https://github.com/thn-inc/claude-tweaks/commit/702b7c2b40938183df5b3a84ad7df30585cb08dc))
+
+
+### Bug Fixes
+
+* /specify near-duplicate check appends single-signal… ([#4702](https://github.com/thn-inc/claude-tweaks/issues/4702)) ([f6310ae](https://github.com/thn-inc/claude-tweaks/commit/f6310aed920a90a5b62d35be3c045140f4f0d57a)), closes [#4703](https://github.com/thn-inc/claude-tweaks/issues/4703)
+
 ## [6.175.0](https://github.com/thn-inc/claude-tweaks/compare/v6.174.0...v6.175.0) (2026-11-20)
 
 
