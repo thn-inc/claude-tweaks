@@ -412,6 +412,33 @@ test('asked-classes retires the converged round and the Plan Review Clarificatio
   ]);
 });
 
+// Fix round 1: the declared set follows the shared doubt rule's control-mode rule (the one
+// risk-flags.js add reads extras by), a blocking branch commits settled rows and flag additions
+// early while a present human's settled rows join the post-answer sequence, and a failed add
+// writes no Proof line.
+test('fix round 1: step 1 reads the declared categories by the doubt rule\'s control-mode rule, built-ins only on a failed read', () => {
+  assertFacts(subText(), [
+    'follow `## Doubt rule`\'s control-mode rule',
+    'node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values control-mode`, and only when it prints `on`',
+    'When either read fails or prints nothing, the declared set is the four built-ins only.',
+  ]);
+});
+
+test('fix round 1: a present human\'s mixed reply joins the post-answer sequence; only blocking branches commit early', () => {
+  assertFacts(subText(), [
+    'With a present human, the settled rows wait for the answers and join `plan-review.md`\'s single post-answer amendment sequence',
+    'Only the branches that block — a dispatched call and a `parallel`-wave member — commit early',
+    'Every non-settled amendment row in those branches stays unapplied, as today.',
+  ]);
+});
+
+test('fix round 1: in a blocking branch the flag addition rides the early commit, and a failed add writes no Proof line', () => {
+  assertFacts(subText(), [
+    'the `add` edit and its `Proof({slug}):` plan line ride in step 5\'s early commit, before the question comment is posted.',
+    'A failed `add` writes no `Proof` line.',
+  ]);
+});
+
 test('AC5.1: the sub-file cites the shared rule rather than restating the classes', () => {
   const text = readText(SUB_PATH);
   assert.ok(text.includes('_shared/planning-decisions.md'), 'the sub-file must cite _shared/planning-decisions.md');

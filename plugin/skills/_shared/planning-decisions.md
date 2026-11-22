@@ -28,6 +28,8 @@ A settled question is never asked in any posture (`auto`, `confirm`, `interactiv
 
 Class (b) is bounded to the declared categories: the four built-ins (`migrations`, `auth`, `public-contract`, `irreversible-side-effect`) plus policy `risk-categories`. A question that does not plainly fall in one is settled, never asked.
 
+Policy `risk-categories` extras count as declared only when policy `control-mode` resolves `on`, the rule `bin/risk-flags.js add` reads them by; with control mode off the declared categories are the four built-ins alone.
+
 Plainly means the question is about the category's own subject: a schema or data migration, who may authenticate or what an unauthenticated caller may reach, an interface outside callers depend on, or a side effect that cannot be reversed. Touching a file that such a subject also touches is not enough.
 
 ## Line forms
