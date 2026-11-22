@@ -27,6 +27,7 @@ files:
   - A gap the spec's own text settles is fixed by an additive `## Plan Review Clarifications` section in the in-run spec and posted once as a comment on the record; the record body is never edited and nothing is staged.
   - Undecided-behaviour and cross-task findings amend the plan; the plan audit re-runs once and the review itself never repeats.
   - A `fast-lane` record or a trivial plan skips the step (roster tag `plan-review`), with a `SKIP` line in the run's `decisions.md`.
+  - Under `plan-at-specify: on`, a build that reuses the plan already reviewed at `/claude-tweaks:specify` skips the step too, with a `SKIP` line whose condition reads `plan reviewed at specify ({commit})`; that plan's questions were asked while the record was shaped (`build-a-record-whose-plan-was-reviewed-at-specify-6060.md`).
 - **Red flags:**
   - An existing Acceptance Criterion edited or loosened by the review.
   - A reviewer reply that could not be read being treated as "No findings."
@@ -70,5 +71,6 @@ files:
 - Created during build of #3377, part of the "Build dispatch cost shape" decomposition (origin #3229) — in a measured 10-task build, 3 of the 5 Important final-review findings were spec or plan gaps found only after all the code was written.
 - Updated by #4958: a resumed build's plan review converges after one answered round instead of stopping round after round (10 plan-review attempts across 7 records in the 2026-10-31 dispatch firing produced no implementation), and dispatched questions ask for a `**Decision**` paragraph.
 - Updated by #6051: an opt-in `planning-decisions: asked-classes` policy value settles every needs-human gap except design-level, hard-to-undo and contradictory ones (#5292 counted 271 plan-review questions over 157 of 714 runs); the default `ask-all` leaves steps 1-4 exactly as described above.
+- Updated at the wrap-up of #6060: under `plan-at-specify: on`, a build that reuses the plan reviewed at specify skips this review, so step 1 names that skip beside the fast-lane and trivial-plan ones.
 - Pinned by `tests/build-plan-review-conformance.test.js`, `tests/planning-decisions-conformance.test.js`, `tests/plan-review-hard-gate-conformance.test.js`, `tests/plan-review-dispatch-relay-conformance.test.js` and `tests/plan-review-convergence-conformance.test.js`.
 - Related: `merge-small-adjacent-tasks-at-plan-time-3379.md` and `add-a-fast-lane-skip-to-the-roster-1926.md`, other plan-time steps of the same build.
