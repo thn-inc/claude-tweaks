@@ -340,8 +340,15 @@ Records #6006 (the factory layer in the resolver), #6007 (every other policy rea
 ## Phase 12 — The plan is made with the spec
 
 - **Builds:** `/claude-tweaks:specify` writes the task list and runs the plan review while a human is present. A record that carries a reviewed plan skips the build's plan step.
-- **Needs:** its own design.
 - **Expected effect:** the plan step (12 minutes, 11.7M tokens) and the 43 mid-run stops leave the build.
+
+## Phase 12: Specified
+
+Records #6051 (the asked-classes split: `_shared/planning-decisions.md`, the `planning-decisions` policy value and build-time plan review routing), #6052 (the plan store: `plan-store.js`, the `Plan:` body line, the spec hash and the staleness verdict), #6053 (the plan-less lane predicate), #6054 (the acceptance packet lists every `Settled at planning:` call), #6055 (reconcile deletes a closed record's plan ref), #6056 (specify plans and reviews in shaping mode under `plan-at-specify`), #6057 (the same in decomposition mode), #6059 (an interactive `/specify` answers a record held for a planning question) and #6060 (`/build` reuses a valid specify-time plan), under parent #6050, which supersedes #5292. #6054 is blocked by #6051; #6055 by #6052; #6056 by #6051, #6052, #6053 and #4702; #6057 and #6059 by #6056; #6060 by #6052 and #6056. #6052 and #6060 carry an unresolved fail-closed finding and are not `ready` until it is settled.
+
+- **Builds:** two policy values, `planning-decisions: ask-all | asked-classes` and `plan-at-specify: off | on`, both defaulting to today's behaviour. Plan review asks the human only design-level, hard-to-undo (a flagged risk category) or contradictory questions and settles the rest, listing each call at acceptance. Specify writes and reviews the plan with dispatched agents, stores it on `refs/claude-tweaks/plans/{n}`, and `/build` reuses it when a mechanical check says it is still valid.
+- **Done when:** over the first 20 records built with `plan-at-specify: on`, no build stopped at plan review on a question outside the asked classes, the build's median minutes fell by at least 10, the three quality guards are no worse, and the share of specify-time plans the build reused is recorded (under 50% means the design is revisited before the default changes).
+- **Waits for:** #4702, which edits `shaping-mode.md`.
 
 ## Phase 13 — The driver is the drain
 
