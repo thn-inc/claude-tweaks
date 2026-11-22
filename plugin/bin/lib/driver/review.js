@@ -782,9 +782,9 @@ async function launchReviewer(ctx, deps, diff) {
   } catch (err) {
     // The launcher's or the runner's own message can name a path: fixed text and at most the code.
     // A throw after the model resolved carries it (launchTracked), so the stop's line can still name it.
-    return { stop: `reviewer launch failed${codeSuffix(err)}`, ...(typeof err?.model === 'string' ? { model: err.model } : {}) };
+    return { stop: `reviewer launch failed${codeSuffix(err)}`, ...(typeof err?.model === 'string' ? { model: err.model, effort: err.effort ?? null } : {}) };
   }
-  return { envelope: launched.envelope, model: launched.model, minutes, dollars };
+  return { envelope: launched.envelope, model: launched.model, effort: launched.effort ?? null, minutes, dollars };
 }
 
 // The reviewer launch and the review pass (see the header). `result` is a StepResult only for a
@@ -800,8 +800,10 @@ async function reviewPass(ctx, deps, { testCommand, isRunArtifact, indexFlagChec
   let costUsd = null;
   let turns = null;
   // The reviewer's model, named once its launch returned (#5917); a line from before that keeps its keys.
+  // `effort` (#5942) rides with it: a level, or null when no flag was passed.
   let model = null;
-  const extraOf = () => ({ ...counts, usage, denials, costUsd, turns, ...(model !== null ? { model } : {}) });
+  let effort = null;
+  const extraOf = () => ({ ...counts, usage, denials, costUsd, turns, ...(model !== null ? { model, effort } : {}) });
   // The file written for the finding being judged, until it is kept or removed.
   let current = null;
   // Best effort: a removal that fails leaves the file for settle, and never replaces the stop's detail.
@@ -834,7 +836,10 @@ async function reviewPass(ctx, deps, { testCommand, isRunArtifact, indexFlagChec
       return stop(`git diff failed${codeSuffix(err)}`);
     }
     const launch = await launchReviewer(ctx, deps, diff);
-    if (launch.model) model = launch.model;
+    if (launch.model) {
+      model = launch.model;
+      effort = launch.effort ?? null;
+    }
     if (shared.interrupted) return interrupted();
     if (launch.stop) return stop(launch.stop);
     const { envelope, minutes, dollars } = launch;

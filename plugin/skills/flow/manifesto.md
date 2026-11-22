@@ -77,7 +77,7 @@ The template below is the **`confirm` / `hybrid` (approval-gate)** rendering —
 **In default `auto` mode, render the FYI variant instead:** show the same preview + policy-levers tables, but change the heading to `### Pipeline Config (auto)`, drop the approval call entirely, and close with a single line — `→ proceeding (no approval needed) · run with \`confirm\` to review/override`. Then continue to Step 4. Do not wait for input.
 <!-- /when -->
 
-**Lever values come from the pack (#1931).** When `{run-dir}/preflight.json` reports `preflight.adoption.value.case === 1` (an adopted run directory that already carried `config.yml` — `steps-and-gates.md`'s adoption section ran `flow-preflight.js`), fill the policy-levers table's Recommended column from `preflight.levers` (`value`) and the log line's source from its `source` (`run-config` | `policy` | `default`; `ceremony-profile`'s source is `header`), and lever 1 from the pack's `mode`; do not re-resolve any lever with `resolve-policy.js`. A lever entry carrying `error` renders its Recommended cell as `unresolved` and is logged, never guessed. Adoption cases 2, 3, and 5 have no `config.yml` to read yet: they compute the levers fresh from the precedence chain and write `config.yml`, exactly as this file already describes.
+**Lever values come from the pack (#1931).** When `{run-dir}/preflight.json` reports `preflight.adoption.value.case === 1` (an adopted run directory that already carried `config.yml` — `steps-and-gates.md`'s adoption section ran `flow-preflight.js`), fill the policy-levers table's Recommended column from `preflight.levers` (`value`) and the log line's source from its `source` (`run-config` | `policy` | `factory` | `default`; `ceremony-profile`'s source is `header`), and lever 1 from the pack's `mode`; do not re-resolve any lever with `resolve-policy.js`. A lever entry carrying `error` renders its Recommended cell as `unresolved` and is logged, never guessed. Adoption cases 2, 3, and 5 have no `config.yml` to read yet: they compute the levers fresh from the precedence chain and write `config.yml`, exactly as this file already describes.
 
 ```markdown
 ### Pipeline Config Manifesto
@@ -132,6 +132,7 @@ I've pre-filled recommendations from project policy + sensible defaults. The Rec
 |---|---|
 | `arg` | Set by an explicit CLI argument in `$ARGUMENTS` |
 | `policy` | From `.claude-tweaks/policy.yml`'s `auto-mode:` key (resolver envelope `source: "policy"`) |
+| `factory` | From the factory layer — `CLAUDE_TWEAKS_FACTORY_POLICY` or `~/.claude-tweaks/factory-policy.yml` (resolver envelope `source: "factory"`); applies to the policy levers and to the Mode row when `auto-mode` resolved from it |
 | `dispatch` | Mode only: Step 1 rung 2 (`dispatched: true`) — render `auto (dispatched run)`; log `source: dispatch binding` |
 | `default` | Hardcoded sensible default |
 | `header` | Locked by the materialized header (`materialize.md`) — e.g. `surface:`/`design-intent:` (a header list locks the record, never lever 4, which stays single-valued) — or, for `ceremony-profile`, by the record's `ceremony:*` label, else the Manifesto's ceremony-check verdict — or the record body's `Surface:`/`Design-intent:` metadata lines (e.g., `design-intent:` set on every record in the run) |

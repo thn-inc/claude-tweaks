@@ -845,13 +845,14 @@ const REVIEW_CONSOLE_HEADER = 'Review Console';
 // that CLI, a git failure throws here instead of letting resolvePolicyConfig guess
 // process.cwd() — the gate then fails open rather than reading some other
 // checkout's policy.yml.
-function readConsoleCeiling(runDir, cwd, { env } = {}) {
+// `homeDir` (the context's) locates the factory file, as resolveRunPinnedIntegrationModel's does.
+function readConsoleCeiling(runDir, cwd, { env, homeDir } = {}) {
   ctxLib.assertEnvObject(env, 'readConsoleCeiling');
   const top = runGit(['rev-parse', '--show-toplevel'], cwd, { env });
   if (top.failure) throw new Error(top.failure);
   const git = () => top.stdout;
   const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
-  const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['autonomy', 'control-mode'] });
+  const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['autonomy', 'control-mode'], env, homeDir });
   return effectiveCeiling({ autonomyEntry: result.autonomy, controlModeEntry: result['control-mode'] }).ceiling;
 }
 
@@ -870,7 +871,7 @@ function checkReviewConsoleAskGate(ctx, deps = {}) {
   if (ctxLib.classifyOwnership({ sessionId, cwd }, ctxLib.readRunState(ownedRun.dir), { env: ctx.env }) !== 'mine') return {};
   let ceiling;
   try {
-    ceiling = (deps.readConsoleCeiling || readConsoleCeiling)(ownedRun.dir, cwd, { env: ctx.env });
+    ceiling = (deps.readConsoleCeiling || readConsoleCeiling)(ownedRun.dir, cwd, { env: ctx.env, homeDir: ctx.homeDir });
   } catch {
     return {};
   }
@@ -1788,9 +1789,9 @@ function resolveRunPinnedIntegrationModel(mainRoot, runDir, opts = {}) {
   const readFile = (p) => {
     try { return fs.readFileSync(p, 'utf8'); } catch { return null; }
   };
-  const { root, result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['integration-model'] });
+  const { root, result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['integration-model'], env: opts.env, homeDir: opts.homeDir });
   const entry = result['integration-model'];
-  // 'run-config' or 'policy' — either is an explicit pin and wins outright.
+  // 'run-config', 'policy' or 'factory' (#6006) — each is an explicit pin and wins outright.
   // 'default' (absent, or set-but-invalid) falls through to detection, the
   // same posture resolveIntegrationModel itself documents.
   if (entry && entry.source !== 'default') return entry.value;

@@ -29,10 +29,10 @@ files:
 
 ### 2. Read each part and pass them joined — `dispatch/SKILL.md` Step 5
 - **URL:** —
-- **Action:** **Dispatching session** `cat`s each path in the envelope's `chunks` with one plain command per part, then sends the parts in order, joined by the envelope's `join` (one newline), as the Task prompt, with `profile.model` as `model`.
+- **Action:** **Dispatching session** `cat`s each path in the envelope's `chunks` with one plain command per part, then sends the parts in order, joined by the envelope's `join` (one newline), as the Task prompt, with `profile.model` as `model` and, when `profile.launchEffort` is not `null`, that value as the Agent tool's `effort` (left unset when it is `null`; #5941).
 - **Should feel:** Plain copying, with no judgement call left in it: the text is not summarized or reflowed.
 - **Should understand:** The join of the parts is byte-identical to the file at `out`, and the first line carries the `[dispatch-prompt: {run-id} {call}]` marker the gate keys on. The wording is load-bearing, because the four-value status line and output formats downstream skills parse are in it.
-- **Red flags:** Parts read out of order or with a part skipped; a trailing newline added or dropped; the marker line trimmed.
+- **Red flags:** Parts read out of order or with a part skipped; a trailing newline added or dropped; the marker line trimmed; an `effort` set on the call when `profile.launchEffort` is `null`, or left off when it is not.
 
 ### 3. The Agent call the gate allows — `bin/lib/hooks/dispatch-prompt-gate.js`, `plugin/hooks/hooks.json`
 - **URL:** —
@@ -66,4 +66,5 @@ files:
 - Created during build of #4589 (render every dispatch Task prompt through a CLI and gate the resend). Steps 1-5 built in this session.
 - Updated during build of #5255: step 5. A render failure ends the firing; a second deny still moves on.
 - Updated during wrap-up of #5255: step 6 added. The maintainer reads the relayed render-failure stop and, on a headless firing, its one notification, which visits `dispatch/reporting.md` from `files:`.
+- Updated during wrap-up of #5941 (run `2026-11-21T171056-spec-5941-5942`): step 2 passes the envelope's `profile.launchEffort` as the Agent tool's `effort` when it is not `null`, with a matching red flag.
 - Related: `resume-a-stalled-dispatched-build-4588.md` (the resume first call is rendered with `--resume-verdict`), `clear-the-two-call-gate-for-a-dispatched-group-2775.md` (the gate between the calls), `compose-a-per-run-context-bundle-1988.md` (the bundles composed before each render), `audit-dispatch-first-call-model-3224.md` (the model read from the envelope's `profile`)

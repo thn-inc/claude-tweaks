@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { scratchDir } = require('../../helpers/tmp-dir');
 const { gitRepo, fixtureGit, cleanGitEnv, initRepo } = require('../../helpers/git-fixtures');
 const facts = require('../../../plugin/bin/lib/run-manifest/facts');
@@ -87,6 +88,38 @@ test('changing only integration-model does not change the hash', () => {
   const b = gatherFacts({ cwd: localMerge, env: baseEnv }).policyHash;
   assert.ok(a);
   assert.equal(a, b);
+});
+
+// The factory layer (#6006) is part of the policy a run resolved, so it is part of the hash. The home
+// directory is an empty temp dir: the machine's own ~/.claude-tweaks/factory-policy.yml must not decide.
+test('AC6.1: a factory-set hashed key changes policyHash', () => {
+  const dir = repoWithPolicy('');
+  const env = { ...baseEnv, HOME: scratchDir('run-manifest-home-'), USERPROFILE: '' };
+  delete env.CLAUDE_TWEAKS_FACTORY_POLICY;
+  const without = gatherFacts({ cwd: dir, env }).policyHash;
+  const withFactory = gatherFacts({ cwd: dir, env: { ...env, CLAUDE_TWEAKS_FACTORY_POLICY: 'tidy-aggressiveness: aggressive' } }).policyHash;
+  assert.ok(without && withFactory);
+  assert.notEqual(without, withFactory);
+});
+
+test('AC9.1: driver mint records the policyHash resolvePolicy computes with the parent\'s variable', () => {
+  const dir = repoWithPolicy('');
+  const env = { ...baseEnv, ...cleanGitEnv(), HOME: scratchDir('run-manifest-home-'), USERPROFILE: '', CLAUDE_TWEAKS_FACTORY_POLICY: 'tidy-aggressiveness: aggressive' };
+  const script = path.join(scratchDir('run-manifest-script-'), 'mint.js');
+  const resolveModule = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'hooks', 'run-dir-resolve.js');
+  fs.writeFileSync(script, `const r = require(${JSON.stringify(resolveModule)}).resolve({ cwd: ${JSON.stringify(dir)}, env: {}, specSlug: 'drive-1', create: true });\nprocess.stdout.write(JSON.stringify(r));\n`);
+  // real process: the criterion is about the minting process's own environment
+  const child = spawnSync(process.execPath, [script], { env, encoding: 'utf8', windowsHide: true });
+  assert.equal(child.status, 0, child.stderr);
+  const minted = JSON.parse(child.stdout);
+  assert.equal(minted.ok, true, minted.message);
+  const manifest = JSON.parse(fs.readFileSync(path.join(minted.path, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.lane, 'driver');
+  assert.match(manifest.policyHash, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(manifest.policyHash, gatherFacts({ cwd: dir, env }).policyHash);
+  const unset = { ...env };
+  delete unset.CLAUDE_TWEAKS_FACTORY_POLICY;
+  assert.notEqual(manifest.policyHash, gatherFacts({ cwd: dir, env: unset }).policyHash, 'the variable is what the hash reflects');
 });
 
 test('canonicalJson sorts keys at every depth and emits no whitespace', () => {

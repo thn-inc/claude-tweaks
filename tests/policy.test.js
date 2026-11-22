@@ -276,6 +276,11 @@ test('changelog-max-releases: the schema row is an integer >= 0, default 0, read
   assert.strictEqual(row.default, 0);
   assert.strictEqual(row.policyOnly, true, 'both engines read policy.yml directly, so a run config must never carry a value for it');
 });
+
+test('model-effort is policyOnly: resolve-profile.js reads policy.yml directly and no per-run route exists (#5941)', () => {
+  const row = require('../plugin/bin/lib/policy-schema').POLICY_KEYS.find((k) => k.key === 'model-effort');
+  assert.strictEqual(row.policyOnly, true);
+});
 test('changelog-max-releases: an unreadable policy file is reported, not read as 0 silently', () => {
   const r = readChangelogMaxReleases(() => { throw new Error('EISDIR: illegal operation on a directory'); });
   assert.strictEqual(r.count, 0);

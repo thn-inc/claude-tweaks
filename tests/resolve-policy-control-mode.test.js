@@ -306,12 +306,13 @@ test('AC4.8: isControlModeOn is true only for the exact string on', () => {
   }
 });
 
-// Control-mode keys no plugin code acts on yet; the #4608 leaves wire them
-// (policy-schema.js's Control mode comment names which). The record that wires
-// a key removes it from this list and drops "Not yet used" from its summary.
-const NOT_YET_USED = ['deploy-reach', 'deploy-command', 'deploy-live-workflow', 'deploy-version-url', 'dev-base-url', 'dev-test-account', 'deploy-wait-seconds', 'deploy-poll-seconds', 'trusted-authors'];
+// Keys that land before their consumer: no plugin code acts on them yet, and the
+// record that wires a key (the #4608 leaves for the control-mode keys, #5997/#5999
+// for `implementer-tier`) removes it from this list and drops "Not yet used" from
+// its summary.
+const NOT_YET_USED = ['deploy-reach', 'deploy-command', 'deploy-live-workflow', 'deploy-version-url', 'dev-base-url', 'dev-test-account', 'deploy-wait-seconds', 'deploy-poll-seconds', 'trusted-authors', 'implementer-tier'];
 
-test('every control-mode key nothing consumes yet says so in its summary (#4816)', () => {
+test('every key that landed before its consumer says so in its summary (#4816)', () => {
   for (const key of NOT_YET_USED) {
     const row = POLICY_KEYS.find((r) => r.key === key);
     assert.ok(row, `${key} missing from POLICY_KEYS`);
