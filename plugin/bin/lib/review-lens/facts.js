@@ -165,7 +165,7 @@ function defaultGit(cwd) {
 // A spawn line with an enclosing loop header (walking the indentation ancestors upward, within the lookback), at least
 // one of the two on an added line.
 function hasLoopSpawn(text, addedNs) {
-  const all = text.split('\n');
+  const all = text.split(/\r?\n/);
   for (let i = 0; i < all.length; i++) {
     if (!isSpawnLine(all[i])) continue;
     const spawnAdded = addedNs.has(i + 1);

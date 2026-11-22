@@ -212,6 +212,10 @@ test('exit 2 on a bad --tier, a missing --base, an unknown flag, a missing run d
     ['--run', w.runDir, '--tier', 'high', '--base', w.base, '--bogus', 'x'],
     ['--tier', 'high', '--base', w.base],
     ['--run', path.join(w.pipelines, 'no-such-run'), '--tier', 'high', '--base', w.base],
+    // Only --risk-flags takes an empty value; every other flag still refuses one.
+    ['--run', w.runDir, '--tier', 'high', '--base', ''],
+    ['--run', w.runDir, '--tier', '', '--base', w.base],
+    ['--run', '', '--tier', 'high', '--base', w.base],
   ]) {
     const r = call(w, args);
     assert.strictEqual(r.code, 2, args.join(' '));
@@ -309,6 +313,9 @@ test('a facts failure and a history failure are both named in the fallback; a th
   assert.match(both, /^facts unavailable: paths: .*no-such-ref-xyz[\s\S]*; lens history unreadable: history boom$/);
   assert.ok(!both.includes('history is not an object'), both);
   assert.strictEqual(fallbackOf(world(), w.base, { readLensHistory: throwing }), 'lens history unreadable: history boom');
+  // A thrown message is inserted literally: `$&`, `$\`` and `$'` are not replacement patterns.
+  const dollars = () => { throw new Error("EACCES /p/$&/$`/$'"); };
+  assert.strictEqual(fallbackOf(world(), w.base, { readLensHistory: dollars }), "lens history unreadable: EACCES /p/$&/$`/$'");
   // A history that reads but is malformed is named beside the facts reason too.
   const malformed = fallbackOf(world(), 'no-such-ref-xyz', { readLensHistory: () => ({ lenses: {} }) });
   assert.match(malformed, /no-such-ref-xyz[\s\S]*; history has no entry for lens 3b$/);

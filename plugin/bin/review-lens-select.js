@@ -140,7 +140,7 @@ function run(argv, deps = {}) {
 
   const selection = selectLenses({ tier: o.tier, facts, history, streaks });
   // A thrown history read reaches select.js as `null`; its fallback names the throw instead (beside a facts reason).
-  if (historyError) selection.fallback = selection.fallback.replace(historyProblem(null), historyError);
+  if (historyError) selection.fallback = selection.fallback.replace(historyProblem(null), () => historyError);
 
   const items = [];
   if (selection.fallback) {

@@ -124,6 +124,15 @@ test('AC2.2 facts: git call inside a per-file loop in plugin/bin sets loopSpawn 
   assert.strictEqual(f.perCallPath, false);
 });
 
+test('loopSpawn reads a CRLF source file the same way', () => {
+  const crlf = (...l) => `${l.join('\r\n')}\r\n`;
+  const loop = (...body) => crlf('function a() {', '  for (const f of files) {', ...body, '  }', '}');
+  assert.strictEqual(factsOf({ 'plugin/bin/lib/x.js': loop('    work(f);') },
+    { 'plugin/bin/lib/x.js': loop('    work(f);', "    execFileSync('git', ['log', f]);") }).loopSpawn, true);
+  assert.strictEqual(factsOf({ 'plugin/bin/lib/x.js': crlf('function a() {', '  for (const f of files) {', '    work(f);', '  }', '}') },
+    { 'plugin/bin/lib/x.js': crlf('function a() {', '  for (const f of files) {', '    work(f);', '  }', "  execFileSync('git', ['log']);", '}') }).loopSpawn, false);
+});
+
 test('loopSpawn when a spawn is added inside an existing loop, and the converse', () => {
   const loop = (...body) => lines('function a() {', '  for (const f of files) {', ...body, '  }', '}');
   assert.strictEqual(factsOf({ 'plugin/bin/lib/x.js': loop('    work(f);') },
