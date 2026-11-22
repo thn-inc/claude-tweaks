@@ -55,8 +55,10 @@ files:
   - The spec hash covers the `##` sections from `## Overview` through `## Planning Decisions`. Editing `Risk-flags:`, `**Related:**`, `Blocked by` or the fingerprint lines does not invalidate the plan; editing a covered section does.
   - `files` fails when the base changed any Modify or Test path the plan names since the plan commit's parent, and also when the plan names none.
   - Anything `check` cannot determine reads `valid: false`, never valid. A malformed `--line` exits 2 and still prints a `valid: false` verdict.
-- **Red flags:** `valid: true` after a covered section changed; `valid: true` for a plan that names no files; a verdict object with keys other than `valid` and `failed`.
+- **Red flags:** `valid: true` after a covered section changed; `valid: true` for a plan that names no files; a verdict object with keys other than `valid` and `failed`; `--line` and `--line-file` both accepted in one call, or neither, or an unreadable `--line-file` exiting anything but 2.
 
 ## Origin
 
 Built for record #6052 (the plan store). The specify writer and the build reader that call it are later records; #6055 deletes refs of closed records and imports `PLAN_REF_PREFIX` and `parsePlanRefName` from `plan-store.js`.
+
+Step 4 updated for #6056 (the specify writer, `plan-a-record-while-shaping-it-6056.md`): `check` takes `--line-file` as the exclusive alternative to `--line`, so a `Plan:` line copied from an editable record body never reaches a command line.
