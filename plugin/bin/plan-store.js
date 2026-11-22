@@ -27,7 +27,7 @@ const { PLAN_REF_PREFIX, parsePlanRefName } = require('./lib/plan-store/ref');
 const { makeGit, defaultGit } = require('./lib/plan-store/git');
 const { writePlan, readPlan } = require('./lib/plan-store/store');
 const { checkPlan, CHECK_ORDER } = require('./lib/plan-store/check');
-const { composePlanLine, parsePlanLine, specHash } = require('./lib/issues/plan-line');
+const { composePlanLine, parsePlanLine, specHash, COMMIT_RE } = require('./lib/issues/plan-line');
 const { readWorkBackend } = require('./lib/work-backend');
 const { fsPath } = require('./lib/health-core/io');
 
@@ -64,7 +64,6 @@ const REQUIRED = {
 // hash's, the base the base's. Anything else (an unknown flag, --repo-root) prevents every check.
 const CHECK_OF = { line: 'ref', specFile: 'hash', base: 'base', repoRoot: 'ref' };
 const RECORD_RE = /^[1-9]\d*$/;
-const COMMIT_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 // Errors are {msg, check}; `check` names the first-failing check a malformed check invocation prevents.
 function parseArgs(argv) {

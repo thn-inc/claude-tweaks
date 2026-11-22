@@ -63,6 +63,13 @@ test('AC3.2 an unchanged pair is valid', (t) => {
   assert.deepStrictEqual(check(), { valid: true, failed: null });
 });
 
+test('a fetch error reads failed: ref even when the local ref still names the commit', (t) => {
+  const { check } = setup(t);
+  // The local ref matches the line (writePlan moved it), so only the failed fetch can make this invalid.
+  assert.deepStrictEqual(check({ fetch: false, remote: 'no-such-remote' }), { valid: true, failed: null });
+  assert.deepStrictEqual(check({ remote: 'no-such-remote' }), { valid: false, failed: 'ref' });
+});
+
 test('AC3.2 a base moved only by an unrelated edit or a Create path stays valid', (t) => {
   const { check, move, fx } = setup(t);
   const b1 = move(() => put(fx.work, 'src/c.js', '// changed\n'));

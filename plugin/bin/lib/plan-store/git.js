@@ -110,12 +110,16 @@ function planCommitFile(g, commit) {
   }
 }
 
-function changedPaths(g, from, to) {
+// The paths changed between `from` and `to`. With `paths`, the diff is limited to them (each a
+// literal pathspec, so a glob character in a plan's path matches only itself), which bounds the
+// output by what the caller asks about rather than by how far `to` has drifted from `from`.
+function changedPaths(g, from, to, paths) {
   try {
-    const raw = g(['diff', '--no-renames', '--name-status', '-z', '--no-ext-diff', '--end-of-options', from, to]);
-    const paths = new Set();
-    for (const entry of parseNameStatusZ(raw)) for (const p of entry.paths) paths.add(p);
-    return { ok: true, paths };
+    const limit = paths ? ['--', ...paths.map((p) => `:(literal)${p}`)] : [];
+    const raw = g(['diff', '--no-renames', '--name-status', '-z', '--no-ext-diff', '--end-of-options', from, to, ...limit]);
+    const changed = new Set();
+    for (const entry of parseNameStatusZ(raw)) for (const p of entry.paths) changed.add(p);
+    return { ok: true, paths: changed };
   } catch (err) {
     return { ok: false, reason: reasonOf(err) };
   }

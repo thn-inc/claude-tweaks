@@ -27,7 +27,11 @@ const { fencedLineMask } = require('../markdown-blocks');
 const { FP_RE_WORK, FP_RE_WORK_PLAIN } = require('./record-fingerprint');
 const { RISK_FLAG_LINE_KEYS } = require('./record-risk-flags');
 
-// The ten prefixes. The three Risk-flags keys come from record-risk-flags.js's
+// The ten prefixes, the preamble metadata lines spec #6052 Deliverable 3 enumerates: lines other
+// pipeline steps write or rewrite on the record (facets, cross-links, risk flags, acceptance target)
+// without changing what the spec asks to build, so editing one alone does not invalidate a reviewed
+// plan. A line not listed here is hashed; a new metadata line joins this list only when the spec
+// says so, since adding a prefix is the change that could hide a real content edit. The three Risk-flags keys come from record-risk-flags.js's
 // RISK_FLAG_LINE_KEYS; record-risk-flags.test.js feeds each key through that module's own
 // readers, so a key the readers stop recognizing fails there rather than drifting here.
 const SPEC_HASH_EXCLUDED_PREFIXES = [
@@ -104,4 +108,4 @@ function specHash(text) {
   return crypto.createHash('sha256').update(body, 'utf8').digest('hex');
 }
 
-module.exports = { composePlanLine, parsePlanLine, specHash, SPEC_HASH_EXCLUDED_PREFIXES };
+module.exports = { composePlanLine, parsePlanLine, specHash, SPEC_HASH_EXCLUDED_PREFIXES, COMMIT_RE };

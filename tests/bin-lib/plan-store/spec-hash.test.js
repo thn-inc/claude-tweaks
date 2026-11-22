@@ -65,6 +65,13 @@ test('AC3.4 Risk-flags and Related edits keep the hash', () => {
   assert.strictEqual(specHash(sub(SPEC, 'status: ready', 'status: shipped')), base);
 });
 
+test('a Blocked by line that is not a well-formed dependency is hashed', () => {
+  const base = specHash(SPEC);
+  for (const line of ['Blocked by someone', 'Blocked by #', 'Blocked by o/r', 'Blocked byte #9']) {
+    assert.notStrictEqual(specHash(sub(SPEC, 'We chose option A.', `We chose option A.\n${line}`)), base, line);
+  }
+});
+
 test('sections after Planning Decisions are not covered', () => {
   const base = specHash(SPEC);
   assert.strictEqual(specHash(sub(SPEC, 'The user typed this.', 'Edited.')), base);

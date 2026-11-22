@@ -56,6 +56,10 @@ function writePlan({ g, remote = DEFAULT_REMOTE, push, record, basename, planByt
   }
 
   if (push) {
+    // The lease expects the sha ls-remote saw on the remote, not the local ref, which can lag a
+    // writer in another clone. An empty expected value (`<ref>:`) means the ref must not exist yet,
+    // so a first write and a replace are both refused if anyone moved the ref since ls-remote.
+    // Same idiom as claims-git-cas.js's writeClaimBlobGit and release-state/store.js's writeStateGit.
     try {
       g(['push', '--no-verify', '-q', remote, `${commit}:${ref}`, `--force-with-lease=${ref}:${observed.sha || ''}`]);
     } catch (err) {
@@ -67,6 +71,10 @@ function writePlan({ g, remote = DEFAULT_REMOTE, push, record, basename, planByt
     }
   }
 
+  // Move the local ref only now, as a compare-and-swap against the value read above (`''` means it
+  // must still be absent), so a concurrent local writer makes this fail instead of being overwritten.
+  // After a push the remote is the store, so a failed move still succeeds with a warning (plan-review
+  // Reading B, plan-store.js's USAGE); without a push the local ref is the store, so it is no-ref.
   try {
     g(['update-ref', '-m', 'plan-store write', ref, commit, prior || '']);
   } catch (err) {

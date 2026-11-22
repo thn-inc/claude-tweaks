@@ -38,9 +38,13 @@ function checkPlan(opts) {
     if (!baseSha) return { valid: false, failed: 'base' };
 
     running = 'files';
+    // A plan naming no Modify or Test path cannot be shown fresh against any base, so it fails
+    // toward a re-plan (spec AC3) rather than reading vacuously valid.
     const named = namedPaths(file.bytes.toString('utf8'));
     if (named.length === 0) return { valid: false, failed: 'files' };
-    const changed = changedPaths(g, file.parent, baseSha);
+    // The plan commit's parent is the base the plan was reviewed against: writePlan commits the plan
+    // onto `--base` (store.js), so parent..base is exactly the drift the plan has not seen.
+    const changed = changedPaths(g, file.parent, baseSha, named);
     if (!changed.ok || named.some((p) => changed.paths.has(p))) return { valid: false, failed: 'files' };
 
     return { valid: true, failed: null };

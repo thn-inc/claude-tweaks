@@ -175,6 +175,22 @@ test('changedPaths uses --no-renames', (t) => {
   assert.strictEqual(changedPaths(g, 'nonexistent-rev', after).ok, false);
 });
 
+test('changedPaths with paths reports only those paths, each as a literal pathspec', (t) => {
+  const { fx, g, calls } = setup(t);
+  fx.commit(fx.work, 'a.txt');
+  fx.commit(fx.work, 'c.txt');
+  const before = fx.run(fx.work, ['rev-parse', 'HEAD']).trim();
+  fx.run(fx.work, ['mv', 'a.txt', 'b.txt']);
+  fx.run(fx.work, ['rm', '-q', 'c.txt']);
+  fx.run(fx.work, ['commit', '-q', '-m', 'mv and rm']);
+  const after = fx.run(fx.work, ['rev-parse', 'HEAD']).trim();
+  const r = changedPaths(g, before, after, ['a.txt', '*.md']);
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual([...r.paths], ['a.txt'], 'b.txt and c.txt changed too, but only a.txt was asked about');
+  const argv = calls.filter((a) => a.includes('--name-status')).pop();
+  assert.deepStrictEqual(argv.slice(argv.indexOf('--')), ['--', ':(literal)a.txt', ':(literal)*.md']);
+});
+
 test('absoluteGitDir returns the repo git dir, and an inherited GIT_DIR never redirects it', (t) => {
   const { fx, env } = setup(t);
   const decoy = path.join(fx.other, '.git');
