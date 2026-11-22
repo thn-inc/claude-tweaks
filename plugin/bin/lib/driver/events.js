@@ -5,7 +5,10 @@
 // plus FINAL_STEP for a record's closing line and BUDGET_STEP for a `--budget` run's summary
 // line (budget.js). Fields may be added to an event, never renamed. The worker, review,
 // merge-check and merge-acceptance lines carry `model`, the requested alias, once a launch
-// resolved one (#5917); older lines lack it.
+// resolved one (#5917), and `effort`, the `--effort` level that launch was given or null when no flag
+// was passed (#5942); older lines lack both. The review fix round's implementer relaunch writes its
+// own `worker` line with `fix: true` and its own launch's `model` and `effort` (#5942); the `review`
+// line carries only the reviewer's.
 //
 // This module holds no step logic. It holds:
 //   - the step, outcome and stop-class constants,

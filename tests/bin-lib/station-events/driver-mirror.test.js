@@ -47,6 +47,14 @@ test('a review line carrying fixSessionId adds one session_bound naming the fix 
   assert.equal(stationEventsFor(line({ step: 'review' }), ID).filter((e) => e.kind === 'session_bound').length, 0);
 });
 
+test('#5942: a fix-round worker line maps to no station events', () => {
+  assert.deepEqual(stationEventsFor(line({ fix: true, sessionId: 's2' }), ID), []);
+  // Control: the same line without `fix` still opens and closes the segment and binds its session.
+  assert.deepEqual(kinds(stationEventsFor(line({ sessionId: 's2' }), ID)), [['started', 'build', undefined], ['exited', 'build', 'passed'], ['session_bound', 'build', undefined]]);
+  // Only a worker line is dropped: a `fix` flag on another step's line changes nothing.
+  assert.equal(stationEventsFor(line({ step: 'review', fix: true }), ID).length, 2);
+});
+
 test('merge sub-steps: ready enters, a merged confirm exits passed, a park exits returned', () => {
   assert.deepEqual(kinds(stationEventsFor(line({ step: 'merge-ready', detail: 'PR undrafted' }), ID)), [['entered', 'merge', undefined]]);
   const confirm = stationEventsFor(line({ step: 'merge-confirm', detail: 'merged, unit concluded SUCCESS' }), ID);

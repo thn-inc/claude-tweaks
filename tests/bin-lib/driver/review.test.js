@@ -1173,6 +1173,29 @@ test('#5917: a reviewer launch that throws after the model resolved still names 
   assert.strictEqual(out.extra.model, roleModel('reviewer', POLICY));
 });
 
+const PROFILE_POLICY = Object.freeze({ ...POLICY, ...resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: 'model-effort: profile\n' }) });
+
+test('#5942: the reviewer line carries effort on the happy path and after a launcher throw', async () => {
+  const unset = passRig({ findings: [] });
+  const unsetOut = await unset.run();
+  assert.ok('effort' in unsetOut.extra && unsetOut.extra.effort === null, 'unset: effort is null');
+  const happy = passRig({ findings: [] });
+  happy.ctx.shared.policy = PROFILE_POLICY;
+  const out = await happy.run();
+  assert.strictEqual(out.extra.effort, 'high');
+  assert.strictEqual(out.extra.model, roleModel('reviewer', PROFILE_POLICY));
+  const thrown = passRig({ findings: [reviewFinding(0)] });
+  thrown.ctx.shared.policy = PROFILE_POLICY;
+  thrown.deps.launchWorker = async () => { throw Object.assign(new Error('spawn failed'), { code: 'EACCES' }); };
+  const stop = await thrown.run();
+  assert.strictEqual(stop.result.extra.effort, 'high');
+  assert.strictEqual(stop.extra.effort, 'high');
+  const bare = passRig({ findings: [reviewFinding(0)] });
+  bare.deps.launchWorker = async () => { throw Object.assign(new Error('spawn failed'), { code: 'EACCES' }); };
+  const bareStop = await bare.run();
+  assert.ok('effort' in bareStop.extra && bareStop.extra.effort === null);
+});
+
 test('AC2: an envelope fail, timeout or unparseable result stops at the review step', async () => {
   const cases = [
     [{ ...okEnvelope([]), status: 'fail', reason: 'exit', result: null, detail: 'boom\nfixes #4 for @x' }, 'reviewer fail/exit: boom for @​x'],
@@ -1443,7 +1466,7 @@ test('AC7, AC12: a mid-pass stop has fixed counts and takes back every evidence 
   assert.strictEqual(out.result.detail, 'the evidence run changed the tree outside the evidence files: second.txt');
   // The finding the pass stopped on, and those after it, are not counted.
   assert.deepStrictEqual(out.counts, { returned: 3, reproduced: 1, discarded: 0 });
-  assert.deepStrictEqual(out.extra, { returned: 3, reproduced: 1, discarded: 0, usage: { input_tokens: 7 }, denials: [], costUsd: 0.1, turns: 2, model: roleModel('reviewer', POLICY) });
+  assert.deepStrictEqual(out.extra, { returned: 3, reproduced: 1, discarded: 0, usage: { input_tokens: 7 }, denials: [], costUsd: 0.1, turns: 2, model: roleModel('reviewer', POLICY), effort: null });
   assert.deepStrictEqual(out.result.extra, out.extra);
   // The current file first, then the confirmed ones, newest first, with the directories the pass made.
   assert.deepStrictEqual(ofKind(rig.calls, 'rmFile').map((c) => c.p), [at('tests/new/r1.test.js'), at('tests/new/r0.test.js')]);
@@ -1734,9 +1757,9 @@ test('AC12: counts add up', async () => {
   assert.strictEqual(out.result, null);
   assert.deepStrictEqual(out.counts, { returned: 7, reproduced: 1, discarded: 6 });
   assert.strictEqual(out.counts.returned, out.counts.reproduced + out.counts.discarded);
-  assert.deepStrictEqual(Object.keys(out.extra).sort(), ['costUsd', 'denials', 'discarded', 'model', 'reproduced', 'returned', 'turns', 'usage']);
+  assert.deepStrictEqual(Object.keys(out.extra).sort(), ['costUsd', 'denials', 'discarded', 'effort', 'model', 'reproduced', 'returned', 'turns', 'usage']);
   assert.deepStrictEqual(out.extra, {
-    model: roleModel('reviewer', POLICY),
+    model: roleModel('reviewer', POLICY), effort: null,
     returned: 7, reproduced: 1, discarded: 6, usage: { input_tokens: 7 }, costUsd: 0.1, turns: 2,
     denials: [{ tool_name: 'Read', tool_input: neutralize(JSON.stringify(denials[0].tool_input)) }],
   });
@@ -1745,7 +1768,7 @@ test('AC12: counts add up', async () => {
   // that failed after spending reports its cost and turns.
   const stopped = passRig({ envelope: { ...okEnvelope([]), status: 'fail', reason: 'exit', result: null, denials, usage: null, costUsd: 0.25, turns: 3 } });
   const s = await stopped.run();
-  assert.deepStrictEqual(Object.keys(s.extra).sort(), ['costUsd', 'denials', 'discarded', 'model', 'reproduced', 'returned', 'turns', 'usage']);
+  assert.deepStrictEqual(Object.keys(s.extra).sort(), ['costUsd', 'denials', 'discarded', 'effort', 'model', 'reproduced', 'returned', 'turns', 'usage']);
   assert.deepStrictEqual(s.result.extra, s.extra);
   assert.deepStrictEqual([s.extra.costUsd, s.extra.turns], [0.25, 3]);
   // An envelope that reports neither gives null for both, as for usage.
@@ -1839,7 +1862,7 @@ test('review: a raw error from a dep after an evidence write is a stop that take
   assert.strictEqual(out.result.detail, 'the review pass failed unexpectedly (EACCES)');
   assert.doesNotMatch(JSON.stringify(out), /SECRET|wt/);
   assert.deepStrictEqual(out.confirmed, []);
-  assert.deepStrictEqual(out.extra, { returned: 1, reproduced: 0, discarded: 0, usage: { input_tokens: 7 }, denials: [], costUsd: 0.1, turns: 2, model: roleModel('reviewer', POLICY) });
+  assert.deepStrictEqual(out.extra, { returned: 1, reproduced: 0, discarded: 0, usage: { input_tokens: 7 }, denials: [], costUsd: 0.1, turns: 2, model: roleModel('reviewer', POLICY), effort: null });
   assert.strictEqual(ofKind(rig.calls, 'rmFile').length, 1, 'the written file was removed');
   assert.strictEqual(rig.types.get(at('tests/new/r0.test.js')), undefined);
 });
