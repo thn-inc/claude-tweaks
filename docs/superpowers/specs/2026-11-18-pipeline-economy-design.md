@@ -273,7 +273,32 @@ Records #6018 (the risk ceiling, the ceremony relaxation and the `pending-review
 - **Builds:** the cause of the six-day gap, found and fixed. Dispatch routes each admitted member of a bundle group, not only single-record groups.
 - **Done when:** every record `drive.js --check` admits in a drain is driven or carries a logged reason.
 
+## Phase 8: Specified
+
+Records #6011 (keep driver-routable records out of fast-lane bundles) and #6012 (the cost report shows whether admitted records reached the driver), no parent; #5571 extended with the drain check.
+
+The six-day gap had no code-defect cause. The 12 November driver runs were started by hand (`drive-N` run directories). Dispatch's route (#5232) first shipped in v6.171.0, which was never installed: the plugin cache went from 6.170.0 to 6.172.0 on 17 November. All 18 dispatch sessions from 15 November 23:06 to 17 November 07:27 ran v6.170.0, which has no route. No dispatch firing ran from 17 November 07:27 to 21 November, and no run directory holds a `Driver route (skipped)` line. On 21 November `drive.js --check` admitted 15 of 142 records, and a grouping replay put all 15 in singleton groups.
+
+- **Builds:**
+  - #6011: the queue pull keeps a record the driver would take out of fast-lane bundles, so it reaches the route as a singleton group.
+  - #6012: the cost report's funnel section counts driver runs (dispatch-routed and standalone) and dispatch firings by plugin version, and flags admitted records that nothing routed.
+  - #5571: the live drain must also drive, or log a skip for, every admitted group it selects.
+- **Phase 7 depends on #6011.** Raising `express-driver-max-size` to `medium` without it bundles fast-lane records the driver would take.
+
 ## Phase 9 — Implementer tier from the record
+
+## Phase 9: Specified
+
+Records #5996 (the rule, the step-up, the `implementer-tier` policy value and its CLI), #5997 (the driver launches the record's profile and relaunches once one profile up), #5999 (the standard lane takes its profile from the CLI and escalates once) and #6002 (the effort ladder), under parent #5995. #5997 and #5999 are blocked by #5996; #6002 is blocked by #5941, #5942, #5997 and #5999.
+
+- **Decided while specifying:**
+  - One policy value, `implementer-tier`: `lane`, the default, keeps each lane's current rule; `record` applies this phase's rule in both lanes. This repository opts in. A `size:high` record gets Standard, not Capable.
+  - One Key File counter for both lanes: distinct paths in the record's `### Key Files`; a directory entry rules out Fast.
+  - Driver: only a worker that cannot complete, or red tests, triggers the relaunch; it works on top of what the first attempt left, then commits and re-tests. Ceilings stay per launch, so the worst case is three implementer launches per record.
+  - Standard lane: a `BLOCKED` report, or a failed re-review of a task's first fix round, sends that task to a fresh implementer one profile up, once; `decisions.md` holds the once-per-task count.
+  - Effort ladder: the starting effort follows `risk:` (`low` → `low`, `medium` → `medium`, higher → the profile's own, never above `high`). Red tests or a failed fix round raise the effort one step first; `BLOCKED` or a worker that cannot complete step the profile directly. At most two escalations.
+  - Per-task `**Role:**` markers and the `profile=` token keep overriding the record rule.
+- **Done-when caveat:** tasks started at `low` are `risk:low`, so the `low`-versus-`medium` comparison is made within a size band, adds a fix-rounds-per-task guard, and reads as cost per risk class rather than a pure effort effect.
 
 - **Builds:** the implementer's profile comes from the record's labels in code: low size with one or two Key Files gets Fast, everything else Standard. A failed verify or a blocked report moves it up one profile, once. Applies to the driver, and to the standard lane's task loop through the run's config.
   - Once Phase 15 has landed, a step up may be an effort before it is a model: the first attempt runs at the lowest effort the record's labels allow, and a failed verify raises the effort, then the profile. Only an implementer gets this, because a test or a review shows its failure.
@@ -295,6 +320,17 @@ Records #5998 (each lens's confirmed-finding rate over its last 20 runs, and a p
 - **Expected effect:** lenses 3b and 3d run only where the diff calls for them.
 
 ## Phase 11 — Factory layer and run facts
+
+## Phase 11: Specified
+
+Records #6006 (the factory layer in the resolver), #6007 (every other policy reader sees it), #6008 (the ceiling rule), #6009 (tokens by model, list-price cost and minutes in the run manifest) and #6010 (model and effort per role in the run manifest), under parent #6004. #6007 is blocked by #6006, #6008 by #6006 and #6007, #6009 by #5647 and #5967, and #6010 by #6009 and #5647.
+
+- **Decided while specifying:**
+  - The factory layer is the variable `CLAUDE_TWEAKS_FACTORY_POLICY`, carrying text in `policy.yml`'s own format, and the file `~/.claude-tweaks/factory-policy.yml`. The variable wins over the file per key, and block keys merge per row.
+  - The factory layer may not set `merge-authorization`, `control-mode` or `deploy-command`. Every other key is settable, `autonomy` and the trust lists included.
+  - A ceiling bounds repository and run-config values, never the schema default: a factory value above the default is a deliberate override of the default.
+  - The manifest stays at `v: 1`, because its Compatibility rule adds fields without a bump. Cost re-reads the transcripts' per-request rows and leaves `timing.json` unchanged. A partial cost may be replaced once by a complete one.
+- **Not covered:** Dispatch reading the cost fields. Its manifest parser stores nine named fields and ignores the rest (thn-inc/dispatch #1958), so that half of the done-when is a change in thn-inc/dispatch.
 
 - **Builds:** the layer and the ceiling rule in `## Policy model`; and in the run manifest (#5903): lane, model and effort per role, tokens by model, list-price cost, minutes and a hash of the resolved policy.
 - **Done when:** a value set only in the factory layer resolves in a repository that does not set it, and Dispatch reads a run's cost from its manifest.

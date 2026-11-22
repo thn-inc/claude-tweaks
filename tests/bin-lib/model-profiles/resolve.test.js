@@ -8,7 +8,75 @@ test('table default resolves with source default', () => {
   assert.deepStrictEqual(resolve('standard', {}), {
     model: 'sonnet', effort: 'high', source: 'default',
     effortLine: '[Effort: high — apply high-level reasoning depth to this task.]',
+    launchEffort: null,
   });
+});
+
+const { parsePolicyModelConfig } = require('../../../plugin/bin/lib/model-profiles/policy-fragment');
+
+const EFFORT_LINE = (e) => `[Effort: ${e} — apply ${e}-level reasoning depth to this task.]`;
+test('unset key leaves the four existing fields byte-identical', () => {
+  const before = { fast: ['haiku', null, ''], standard: ['sonnet', 'high'], capable: ['opus', 'high'], frontier: ['fable', 'high'] };
+  for (const [p, [model, effort]] of Object.entries(before)) {
+    for (const policy of [{}, { 'model-effort': 'inherit' }]) {
+      assert.deepStrictEqual(resolve(p, { policy }), { model, effort, source: 'default', effortLine: effort ? EFFORT_LINE(effort) : '', launchEffort: null });
+    }
+  }
+});
+test('profile binds launchEffort to the resolved effort', () => {
+  const policy = { 'model-effort': 'profile' };
+  for (const p of ['standard', 'capable', 'frontier']) assert.strictEqual(resolve(p, { policy }).launchEffort, 'high');
+  assert.strictEqual(resolve('fast', { policy }).launchEffort, null);
+});
+test('launchEffort follows a policy row and a stance', () => {
+  const policy = { 'model-effort': 'profile', 'model-profiles': { capable: { effort: 'medium' } } };
+  assert.deepStrictEqual([resolve('capable', { policy }).effort, resolve('capable', { policy }).launchEffort], ['medium', 'medium']);
+  const econ = resolve('capable', { policy, stance: 'economy' });
+  assert.deepStrictEqual([econ.effort, econ.launchEffort], ['low', 'low']);
+});
+test('launchEffort follows the ceiling', () => {
+  const r = resolve('capable', { policy: { 'model-effort': 'profile', 'model-ceiling': 'standard' } });
+  assert.strictEqual(r.model, 'sonnet'); assert.strictEqual(r.launchEffort, r.effort);
+});
+test('a fast row with an effort yields that effort', () => {
+  assert.strictEqual(resolve('fast', { policy: { 'model-effort': 'profile', 'model-profiles': { fast: { effort: 'medium' } } } }).launchEffort, 'medium');
+});
+test('a trailing comment on the model-effort line still reads profile', () => {
+  const policy = parsePolicyModelConfig('model-effort: profile   # note\n');
+  assert.strictEqual(policy['model-effort'], 'profile');
+  assert.strictEqual(resolve('standard', { policy }).launchEffort, 'high');
+});
+test('launchEffort follows the diff ceiling', () => {
+  const r = resolve('capable', { policy: { 'model-effort': 'profile' }, diffFacts: { implFiles: 1, totalLines: 10 } });
+  assert.strictEqual(r.source, 'diff-ceiling');
+  assert.strictEqual(r.model, 'sonnet');
+  assert.strictEqual(r.effort, 'high');
+  assert.strictEqual(r.launchEffort, 'high');
+});
+test('launchEffort is read after the diff ceiling, not captured from the policy row', () => {
+  const policy = { 'model-effort': 'profile', 'model-profiles': { capable: { effort: 'low' } } };
+  const r = resolve('capable', { policy, diffFacts: { implFiles: 1, totalLines: 10 } });
+  assert.strictEqual(r.model, 'sonnet');
+  assert.strictEqual(r.effort, 'high');
+  assert.strictEqual(r.launchEffort, 'high');
+});
+test('launchEffort follows session-failure step-down to fast (null)', () => {
+  const r = resolve('standard', { policy: { 'model-effort': 'profile' }, failedModels: new Set(['sonnet', 'opus']) });
+  assert.strictEqual(r.model, 'haiku');
+  assert.strictEqual(r.launchEffort, null);
+});
+test('launchEffort follows max-rigor', () => {
+  assert.strictEqual(resolve('capable', { policy: { 'model-effort': 'profile' }, stance: 'max-rigor' }).launchEffort, 'xhigh');
+});
+test('model-effort is a closed rule: any other value throws', () => {
+  for (const bad of ['Profile', 'sometimes']) {
+    assert.throws(() => resolve('standard', { policy: { 'model-effort': bad } }), new RegExp(`unknown model-effort "${bad}"`));
+  }
+});
+
+test('an empty model-effort is unset: inherit, launchEffort null, no throw', () => {
+  const r = resolve('standard', { policy: { 'model-effort': '' } });
+  assert.strictEqual(r.launchEffort, null);
 });
 
 test('policy row overrides the table; partial rows merge field-wise', () => {

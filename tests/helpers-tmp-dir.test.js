@@ -68,3 +68,30 @@ test('isolateTmpdir points TMPDIR/TMP/TEMP and os.tmpdir() at a directory remove
   assert.equal(r.inside.length, 1, 'the child process wrote into the isolated tmpdir');
   assert.deepEqual(left, []);
 });
+
+// #6006: tools/run-tests.js points CT_FACTORY_POLICY_FILE at a missing file; a bare `node --test` has no runner, so
+// loading this helper supplies the same kind of path (the CT_HOOKS_REPO_INFO_STORE precedent in git-template.js).
+test('applyFactoryFileFallback gives an unset or empty CT_FACTORY_POLICY_FILE an absolute path that does not exist', () => {
+  const { applyFactoryFileFallback } = require('./helpers/tmp-dir');
+  for (const env of [{}, { CT_FACTORY_POLICY_FILE: '' }]) {
+    applyFactoryFileFallback(env);
+    assert.ok(path.isAbsolute(env.CT_FACTORY_POLICY_FILE), JSON.stringify(env));
+    assert.equal(fs.existsSync(env.CT_FACTORY_POLICY_FILE), false, 'the fallback names a file that is never created');
+  }
+});
+
+test('applyFactoryFileFallback never replaces a value the runner already set', () => {
+  const { applyFactoryFileFallback } = require('./helpers/tmp-dir');
+  const set = path.join(os.tmpdir(), 'runner-set', 'factory-policy.absent.yml');
+  const env = { CT_FACTORY_POLICY_FILE: set, OTHER: 'kept' };
+  applyFactoryFileFallback(env);
+  assert.deepEqual(env, { CT_FACTORY_POLICY_FILE: set, OTHER: 'kept' });
+});
+
+test('loading the helper applies the fallback to the process environment when the variable is unset', () => {
+  const run = (envOverride) => execFileSync(process.execPath, ['-e', `require(${JSON.stringify(HELPER)}); console.log(process.env.CT_FACTORY_POLICY_FILE || '')`], {
+    env: { ...process.env, CT_FACTORY_POLICY_FILE: '', ...envOverride }, encoding: 'utf8',
+  }).trim();
+  assert.ok(path.isAbsolute(run({})), 'an empty variable gets the fallback');
+  assert.equal(run({ CT_FACTORY_POLICY_FILE: '/runner/set/it.yml' }), '/runner/set/it.yml');
+});

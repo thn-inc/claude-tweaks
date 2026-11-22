@@ -2020,6 +2020,35 @@ test('defaultDeps(cwd, { env }): ghSync resolves GH_HOST from the origin read un
   }
 });
 
+// #6006: the factory layer is read from the injected env, never the runner's. HOME is an empty scratch dir,
+// so the variable is the only factory source; the dir is no repository (GIT_CEILING_DIRECTORIES), so no
+// policy.yml outranks it.
+function factoryEnv(dir, factoryText) {
+  const { cleanGitEnv } = require('../../helpers/git-fixtures');
+  return { ...cleanGitEnv(), GIT_CEILING_DIRECTORIES: path.dirname(dir), HOME: scratchDir('pack-factory-home-'), CLAUDE_TWEAKS_FACTORY_POLICY: factoryText };
+}
+
+test('gatherPack: a pack gathered with an injected env resolves that env\'s factory value (#6006)', async () => {
+  const dir = scratchDir('pack-factory-cwd-');
+  const runDir = scratchDir('pack-factory-run-');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ worktree: dir, status: 'active', sessionId: 's' }));
+  const env = factoryEnv(dir, 'integration-branch: factory-branch\n');
+  const pack = await gatherPack({ runDir, cwd: dir, only: [], deps: packDefaultDeps()(dir, { env }) });
+  assert.strictEqual(pack.inputs.policy.integrationBranch, 'factory-branch');
+  assert.strictEqual(pack.inputs.integrationBranch, 'factory-branch');
+});
+
+test('defaultDeps(cwd, { env }): the blast-radius policy read resolves the injected env\'s factory value (#6006)', () => {
+  const dir = scratchDir('pack-factory-br-');
+  const git = (args) => {
+    if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return `${dir}\n`;
+    return args[0] === 'diff' ? '' : 'abc123\n';
+  };
+  const env = factoryEnv(dir, 'auto-merge-max-lines: 7\nmerge-sensitive-paths: secrets/**\n');
+  const out = packDefaultDeps()(dir, { env }).computeBlastRadius({ base: 'abc123' }, { git });
+  assert.deepStrictEqual([out.config.autoMergeMaxLines, out.config.mergeSensitivePaths], [7, ['secrets/**']]);
+});
+
 // #3974: the record ladder reads a header at its live or its archived location.
 const archTmpRoots = [];
 after(() => { for (const r of archTmpRoots) fs.rmSync(r, { recursive: true, force: true }); });

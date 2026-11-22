@@ -93,6 +93,25 @@
 //   for `sonnet`, `claude-opus-5-5` for `opus`. The `AC7` smoke test passed in the same
 //   run on the implementer's default (`sonnet`); `AC7` prints no `modelUsage`, so its model
 //   is the alias it requested, not one the CLI reported.
+// - Launch effort (#5942). Re-probed on 2026-11-21 with Claude Code CLI 2.1.325 on macOS
+//   (darwin), under a subscription login, launched from a process with no TTY, every
+//   launch under `--safe-mode --restricted`:
+//   - sonnet with `--effort medium` recorded `medium`; with no flag recorded `medium`;
+//     with `--effort low` recorded `low`; with `--effort high` recorded `high`.
+//   - opus with no flag recorded `medium`; with `--effort high` recorded `high`.
+//   - haiku with `--effort high` was accepted and recorded `high` (the driver never
+//     passes one to a Fast resolution).
+//   - `--effort extreme` was not rejected: the CLI printed `Warning: Unknown --effort
+//     value 'extreme' — ignoring it and using the default effort. Valid values: low,
+//     medium, high, xhigh, max.` and the transcript recorded `medium`. That is why
+//     `composeArgs` refuses a level outside `EFFORT_SCALE` before any process starts.
+//   - An unknown flag (`--effort-bogus`) exited 1 with empty stdout: `launch-error` with
+//     the CLI's first stderr line, no retry.
+//   - So on this CLI a worker launched with no `--effort` (an event line's `effort: null`)
+//     runs at `medium` on sonnet and opus, and `--effort` takes effect under
+//     `--safe-mode --restricted`. `medium` against no flag does not discriminate; `low`
+//     and `high` do. Re-run: the opt-in `AC7.1 (#5942)` live probe in
+//     `tests/bin-lib/driver/worker.test.js`.
 //
 // On win32 the default `bin` of `claude` does not find an npm-installed `claude.cmd`;
 // a win32 caller passes `bin` explicitly.
@@ -143,7 +162,7 @@ const crypto = require('crypto');
 const cp = require('node:child_process');
 const { launchSpec } = require('../impeccable-engine');
 const { isAncestorOrSelf, resolveTarget, canonicalRealpath } = require('../path-guard');
-const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainReadPaths, reopensHome, composeArgs, assertSpendCeiling } = require('./roles');
+const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainReadPaths, reopensHome, composeArgs, assertSpendCeiling, assertEffort } = require('./roles');
 
 // One string, split: tests/git-status-optional-locks.test.js reads an array literal
 // that starts with 'status' as a git argument list.
@@ -499,12 +518,13 @@ function realToolchainDeps(env, { userHome = passwdHome() } = {}) {
 async function launchWorker(opts, deps = defaultDeps()) {
   const {
     role, cwd, prompt, ceilings = {}, testCommand, claudeMdText, settingsDir,
-    platform = process.platform, env = process.env, schema = RESULT_SCHEMA, model, bin = 'claude',
+    platform = process.platform, env = process.env, schema = RESULT_SCHEMA, model, effort, bin = 'claude',
   } = opts;
   const runner = deps && deps.runner;
   if (typeof runner !== 'function') throw new TypeError('deps.runner is required');
   const spendCeiling = ceilings.spendCeiling;
   assertSpendCeiling(spendCeiling);
+  assertEffort(effort);
   const wallClockMs = ceilings.wallClockMs;
   if (!(typeof wallClockMs === 'number' && Number.isFinite(wallClockMs) && wallClockMs > 0 && wallClockMs <= MAX_TIMER_MS)) {
     throw new RangeError('ceilings.wallClockMs must be a finite number above zero and at most ' + MAX_TIMER_MS + ', got ' + String(wallClockMs));
@@ -555,7 +575,7 @@ async function launchWorker(opts, deps = defaultDeps()) {
       appendPromptFile = stem + '.append.md';
       writeExclusive(appendPromptFile, claudeMdText, written);
     }
-    const args = composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, platform });
+    const args = composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, effort, platform });
     const childEnv = buildEnv(env, platform);
     const launch = launchSpec(bin, args, platform, childEnv);
     let outcome;

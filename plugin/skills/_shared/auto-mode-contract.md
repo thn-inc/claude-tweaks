@@ -60,7 +60,7 @@ Only level 1 is checked in prose — the skill inspects its own invocation argum
 node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --run "$PIPELINE_RUN_DIR" <key>
 ```
 
-The resolver walks run `config.yml` → `policy.yml` → schema default in one step; the `source` field in its JSON envelope (`run-config | policy | default`) reports which level decided. (`${CLAUDE_PLUGIN_ROOT}` is a model-resolved placeholder — substitution contract in `docs/skill-authoring.md`'s "Plugin-root references (`CLAUDE_PLUGIN_ROOT`)" section.) Manifesto-lever read sites cite this section and call the resolver; they do not re-execute the chain in prose.
+The resolver walks run `config.yml` → `policy.yml` → factory layer → schema default in one step; the `source` field in its JSON envelope (`run-config | policy | factory | default`) reports which level decided. (`${CLAUDE_PLUGIN_ROOT}` is a model-resolved placeholder — substitution contract in `docs/skill-authoring.md`'s "Plugin-root references (`CLAUDE_PLUGIN_ROOT`)" section.) Manifesto-lever read sites cite this section and call the resolver; they do not re-execute the chain in prose.
 
 When in doubt: ask once at the Config Manifesto, then never again for the rest of the pipeline.
 

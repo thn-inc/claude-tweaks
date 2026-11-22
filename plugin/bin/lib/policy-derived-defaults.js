@@ -40,7 +40,8 @@ const { detectIntegrationModel, resolveIntegrationModel, resolvePolicyKeys } = r
 const { deriveMergeVerification } = require('./merge-verification');
 const { pickInjected } = require('./repo-resolve');
 
-// The run's integration-model pin (a valid run-config value), else null.
+// The run's integration-model pin (a valid run-config value), else null. Only the run overlay is read
+// here: a policy.yml or factory pin (#6006) is honoured by resolveModel's own resolution.
 function runPinnedIntegrationModel(runConfigRaw) {
   if (typeof runConfigRaw !== 'string') return null;
   const entry = resolvePolicyKeys(['integration-model'], { policyRaw: null, runConfigRaw })['integration-model'];
@@ -72,7 +73,8 @@ function computeDerivedDefaults(result, keys, root, deps = {}) {
   // integration-model has no static schema default (skills/_shared/integration-
   // model.md) — an absent value (not a typo'd/invalid one; `invalid: true`
   // stays visible as an error, never silently overwritten) is computed via
-  // forge detection instead of a literal.
+  // forge detection instead of a literal. A factory pin (#6006) is not
+  // 'default', so it runs no detection.
   if (keys.includes('integration-model')) {
     const entry = result['integration-model'];
     if (entry && entry.source === 'default' && !entry.invalid) {
@@ -90,12 +92,13 @@ function computeDerivedDefaults(result, keys, root, deps = {}) {
   // value (never an invalid one; `invalid: true` stays visible) is derived by
   // bin/lib/merge-verification.js's four-branch ladder, whose prose statement
   // of record is skills/_shared/policy-schema-coverage.md's coverage block.
+  // A factory value (#6006) is not 'default', so it is kept, never derived.
   if (keys.includes('merge-verification')) {
     const entry = result['merge-verification'];
     if (entry && entry.source === 'default' && !entry.invalid) {
       // Reuse this call's own integration-model result whenever it was
       // resolved above — it already reflects the full run-config -> policy ->
-      // schema-default precedence (including any explicit pin, which
+      // factory -> schema-default precedence (including any explicit pin, which
       // detectIntegrationModel/resolveIntegrationModel below have no way to
       // see) and already applied mcpReachable when it computed a forge-
       // detected default. Re-deriving from scratch instead — forwarding

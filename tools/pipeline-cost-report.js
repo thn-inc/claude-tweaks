@@ -153,7 +153,7 @@ const SECTIONS = [
           match: scope.kind === 'substring' ? scope.value : null,
           root: scope.kind === 'path' ? scope.value : null,
         },
-        { fsImpl: ctx.deps.fs, transcriptCache: ctx.transcriptCache },
+        { fsImpl: ctx.deps.fs, pluginRoot: PLUGIN_ROOT, transcriptCache: ctx.transcriptCache },
       );
       let perMergedPr;
       try {

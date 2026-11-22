@@ -10,6 +10,7 @@ files:
   - tools/review-replay/replay.workflow.js
   - plugin/skills/review/step3-tiebreak.md
   - plugin/bin/lib/tiebreak.js
+  - plugin/bin/lib/timing/transcript.js
 ---
 
 # Replay Archived Reviews to Measure a Tiebreak Change
@@ -33,11 +34,12 @@ files:
   - A failed judge counted as `cant-tell`.
 
 ### 2. Build the replay set — `extract` with the arms to compare
-- **URL:** `node tools/review-replay.js extract --runs .claude-tweaks/pipelines --out <extract dir> --arm name=single,chunk=1,profile=capable,repeat=1 --arm name=chunk8,chunk=8,profile=capable,repeat=1 [--select ...] [--min-runs n] [--min-findings n] [--quota sev=n,...]`
+- **URL:** `node tools/review-replay.js extract --runs .claude-tweaks/pipelines --out <extract dir> --arm name=single,chunk=1,profile=capable,repeat=1 --arm name=chunk8,chunk=8,profile=capable,effort=low,repeat=1 [--select ...] [--min-runs n] [--min-findings n] [--quota sev=n,...]`
 - **Action:** write, into a new empty directory, one source tree per run at the commit it reviewed. Then write the prompt files for each arm, built from today's `step3-tiebreak.md`, along with `manifest.json`, `fixture.json` and `archived-verdicts.json`.
 - **Should feel:** declarative. An arm is data (chunk size, profile, repeats), so comparing a new variant means adding another `--arm`.
 - **Should understand:**
   - Prompts never name the archived verdicts. A finding whose file is absent at the reviewed commit is excluded with `file-absent-at-head`, never written as a prompt.
+  - An arm may set `effort=` (`low`, `medium`, `high`, `xhigh`, `max`) to run its judges at another effort than its profile's, and `score` checks the effort each judge recorded (step 4).
   - An unmet `--min-findings` or `--quota` is a shortfall: exit 3, and no arm is written.
   - A run with no `context/review-dispatch.md` takes today's discipline lines, and the output counts those runs.
 - **Red flags:**
@@ -57,14 +59,17 @@ files:
 - **Action:** settle every reply through `plugin/bin/lib/tiebreak.js`, the same settle a review runs. The output gives:
   - agreement with the archived verdicts, in total, per archived class and per severity;
   - each arm's agreement with the reference arm;
-  - agents and tokens per arm, read from `message.usage` in each `agent-{id}.jsonl` and deduplicated by `message.id`.
-- **Should feel:** trustworthy. Exit 0 means every finding was judged by every arm. Exit 3 means some were not, and those are listed in `notJudged` by reason: `no-reply`, `chunk-split`, `unidentified-agent`, `file-absent-in-tree`, or a settle reason such as `status:BLOCKED`.
+  - agents and tokens per arm, read from `message.usage` in each `agent-{id}.jsonl`, with each `message.id` counted once at the maximum of each usage field across its lines.
+- **Should feel:** trustworthy. Exit 0 means every finding was judged by every arm. Exit 3 means some were not, and those are listed in `notJudged` by reason: `no-reply`, `chunk-split`, `unidentified-agent`, `file-absent-in-tree`, `effort-mismatch`, or a settle reason such as `status:BLOCKED`.
 - **Should understand:**
   - Only `verdict:cant-tell` and `evidence-unverified` settle as `cant-tell`. Every other non-verdict reason is notJudged.
+  - When an arm's effort is not null (its `effort=`, or its profile's: `high` for standard, capable and frontier), every judge's turns must have recorded exactly that effort. A judge that recorded another, mixed or none is `effort-mismatch`, and `recordedEffort` per arm shows what was recorded. Synthetic error entries (`<synthetic>`) are ignored.
+  - `effortFieldsDiffer` per arm counts the judges with a turn whose `perTurnEffort` differs from its `effort`. It is a report only: the check above reads `effort` alone, so a non-zero count does not cause `effort-mismatch`.
   - Tokens from an agent with no identity line are reported in `unidentifiedCost`, never dropped.
   - `score` settles every arm the way a review settles a Capable judge's reply. It does not run the escalation a review applies to a Standard judge's reply (#5541): in a `profile=standard` arm, a reply that raises a finding to `medium` or higher is scored on the Standard judge's own verdict, where a review would discard it and judge the finding again at Capable.
 - **Red flags:**
   - Agreement that rose because notJudged findings were scored.
+  - An arm with a non-null effort that exits 0 while its `recordedEffort` shows another effort.
   - A missing run tree that settles as `cant-tell` instead of exiting 1.
 
 ### 5. Check the lenses' overlap — `counterfactual` (optional)
@@ -79,3 +84,4 @@ files:
 ## Origin
 - Created during the build of #5557 (run `2026-11-16T000458-record-5557`, PR #5574). That build turned the 2026-11-15 scratch replay into this tested tool. The first live run against the nine 2026-11-15 runs is tracked in #5630.
 - Updated during the wrap-up of #5541: step 4 notes that `score` does not apply the escalation a review runs on a Standard-tier judge's raised finding.
+- Updated during the build of #5990 (run `2026-11-21T173038-spec-5990`, PR #6014). Step 2 adds the `effort=` arm key. Step 4 adds the recorded-effort check (`effort-mismatch`, `recordedEffort`) and its red flag. This is the effort arm of the pipeline economy design's Phase 14.

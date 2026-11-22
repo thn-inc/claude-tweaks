@@ -169,6 +169,15 @@ test('a single lever failing to resolve degrades that entry only (#1931 Gotcha)'
   assert.deepStrictEqual(bad, { key: 'model-stance', value: null, source: null, error: 'unknown-key' });
 });
 
+test('a factory-sourced lever passes through the levers probe as source factory (#6006)', async () => {
+  const { resolvePolicyKeys } = require('../../../plugin/bin/lib/policy-schema');
+  const fx = mainRoot();
+  seedCase1(fx);
+  const d = deps(fx, { resolvePolicy: (keys) => resolvePolicyKeys(keys, { factoryRaw: 'model-stance: economy\n' }) });
+  const pack = await gatherPreflight({ runDir: fx.runDir, steps: ['review'], cwd: fx.root, mainRoot: fx.root, deps: d });
+  assert.deepStrictEqual(pack.levers.value.find((l) => l.key === 'model-stance'), { key: 'model-stance', value: 'economy', source: 'factory' });
+});
+
 test('one probe throwing degrades only its field, and the probes run concurrently (#1931)', async () => {
   const fx = mainRoot();
   seedCase1(fx);
