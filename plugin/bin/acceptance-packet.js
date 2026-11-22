@@ -621,7 +621,13 @@ function readLowConfidence(runDir, deps, notes, { record, spec }) {
     if (materialized === null && n === record && spec !== undefined) return readTextOrNull(deps, spec);
     return materialized;
   };
-  const entries = lowConfidenceFindings(consoleItems, readStaged, { records: [record], readSpec });
+  let entries;
+  try {
+    entries = lowConfidenceFindings(consoleItems, readStaged, { records: [record], readSpec });
+  } catch {
+    if (!notes.includes(FINDINGS_NOT_READ)) notes.push(FINDINGS_NOT_READ);
+    return null;
+  }
   return entries.length === 0 && !consoleRead ? null : entries;
 }
 

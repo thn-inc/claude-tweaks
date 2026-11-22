@@ -243,8 +243,8 @@ function lowConfidenceFindings(
       }
       return text ?? id;
     });
-  const settled = records.flatMap((n) => settledPlanningLines(readSpec(n)));
-  return [...consoleTexts, ...settled].map((text, index) => ({ n: index + 1, text }));
+  const settled = records.flatMap((n) => settledPlanningLines(readSpec(n)).map((text) => ({ text, source: 'planning-decisions' })));
+  return [...consoleTexts.map((text) => ({ text })), ...settled].map((entry, index) => ({ n: index + 1, ...entry }));
 }
 
 // ---- QA and verify inputs ----
@@ -585,8 +585,8 @@ function gatherPacketFacts(inputs) {
     ...checkFacts(inputs.report, inputs.expectedChecks),
     ...acFacts,
     ...stories,
-    ...(inputs.lowConfidence ?? []).map(({ n, text }) => ({
-      id: `finding:${n}`, kind: 'finding', status: 'passed', source: 'review', text,
+    ...(inputs.lowConfidence ?? []).map(({ n, text, source }) => ({
+      id: `finding:${n}`, kind: 'finding', status: 'passed', source: source ?? 'review', text,
     })),
     ...linkOutcomes.flatMap(({ fact }) => (fact ? [fact] : [])),
     deployFact(inputs.deploy),

@@ -1411,7 +1411,11 @@ test('entries number on after the console entries', () => {
     lowConfidenceFindings({ items, findings: [], decisions: '' }, () => 'Title: console one', {
       records: [7], readSpec: (n) => (n === 7 ? spec : null),
     }),
-    [{ n: 1, text: 'console one' }, { n: 2, text: SETTLED_A }, { n: 3, text: SETTLED_B }],
+    [
+      { n: 1, text: 'console one' },
+      { n: 2, text: SETTLED_A, source: 'planning-decisions' },
+      { n: 3, text: SETTLED_B, source: 'planning-decisions' },
+    ],
   );
 });
 
@@ -1421,8 +1425,22 @@ test('several records read each spec, in record order', () => {
     lowConfidenceFindings({ items: [], findings: [], decisions: '' }, () => null, {
       records: [7, 9], readSpec: (n) => specs[n],
     }),
-    [{ n: 1, text: SETTLED_A }, { n: 2, text: SETTLED_B }],
+    [
+      { n: 1, text: SETTLED_A, source: 'planning-decisions' },
+      { n: 2, text: SETTLED_B, source: 'planning-decisions' },
+    ],
   );
+});
+
+test('a gathered settled-line fact is sourced to planning decisions, a console finding to review', () => {
+  const items = [{ id: 'review-unconfirmed-1.md', section: 'Low-confidence findings' }];
+  const spec = `${PD}\n${SETTLED_A}\n`;
+  const lowConfidence = lowConfidenceFindings(
+    { items, findings: [], decisions: '' }, () => 'Title: console one', { records: [7], readSpec: () => spec },
+  );
+  const facts = gather({ lowConfidence });
+  assert.equal(factOf(facts, 'finding:1').source, 'review');
+  assert.equal(factOf(facts, 'finding:2').source, 'planning-decisions');
 });
 
 test('a missing spec adds nothing', () => {
@@ -1462,7 +1480,7 @@ test('a settled line carrying markdown renders neutralized', () => {
 
 // readPacket
 
-const V1 ='<!-- acceptance-packet: v1 -->';
+const V1 = '<!-- acceptance-packet: v1 -->';
 const comment = (over) => ({ id: over.url || 'c', body: `${V1}\nbody`, authorAssociation: 'MEMBER', ...over });
 
 test('AC2b readPacket', () => {
