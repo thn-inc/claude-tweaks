@@ -5,7 +5,9 @@
 // sweep, through `adHocSessionLiveness` (#4179), and its `abandoned-interrupted`
 // kind, through `defaultRunVerdict` (#4421), plus `blocksResume`'s two resume
 // callers (#4420), and teardown-run's `--merged` foreign-owner override (#5293: only a `dead`
-// verdict proceeds — the one consumer acting destructively on another session's run).
+// verdict proceeds — the one consumer acting destructively on another session's run), and
+// review-lens/history.js's closed check (#5998: only `live` reads as not closed, for a run its file
+// test has not already ruled not closed; `unknown` and `dead` read alike as closed).
 // runIdMs and LIVE_PROBES are exported so reconcile's abandoned-interrupted decision reuses
 // them rather than copying (#4421).
 //
