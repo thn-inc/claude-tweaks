@@ -96,6 +96,7 @@ files:
   - A test run that changes when `~/.claude-tweaks/factory-policy.yml` exists.
 
 ## Origin
+- Step 3 updated during build of #6056 (`plan-at-specify`) — the key is `policyOnly`, so step 3's red flag lists it; set `on` beside a `planning-decisions` that resolves `ask-all`, it resolves `off` with an additive `conflict` field and one stderr warning
 - Step 8 added during build of #6006 (factory policy layer): `source: "factory"`, the new precedence, the four refused keys, per-row block merge, the factory-named invalid warning and the test-run `CT_FACTORY_POLICY_FILE` relocation; the persona and success state gain the layer and `files:` gains `plugin/bin/lib/policy-factory.js`
 - Step 3 updated during build of #5933 (`filed-record-evidence`, `run-filed-record-cap`) — both keys are `policyOnly`, so step 3's red flag lists them among the flat keys the `--run` overlay must never reach
 - Steps 3 and 6 updated at wrap-up of #5917 (`express-driver-models`): the key is a `policyOnly` block key, not a flat one, so step 3's red flag names it beside `model-profiles`, and step 6 gives its unset, valid and malformed answers

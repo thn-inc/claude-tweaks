@@ -1159,6 +1159,12 @@ test('AC11.4 (#5917): the policyOnly bullet names express-driver-models', () => 
   assert.ok(line.includes('`express-driver-models`'));
 });
 
+test('#6056: the policyOnly bullet names plan-at-specify', () => {
+  const line = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema-coverage.md')).split('\n').find((l) => l.includes('are `policyOnly`'));
+  assert.ok(line, 'the policyOnly bullet is missing');
+  assert.ok(line.includes('`plan-at-specify` (#6056)'), 'the policyOnly bullet does not name plan-at-specify');
+});
+
 test('review-lens-dispatch resolves task by default and for an invalid value, workflow when set (#5599)', () => {
   const cases = [[null, 'task'], ['review-lens-dispatch: sideways\n', 'task'], ['review-lens-dispatch: workflow\n', 'workflow']];
   for (const [policy, expected] of cases) {
