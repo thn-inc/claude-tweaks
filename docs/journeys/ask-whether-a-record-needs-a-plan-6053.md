@@ -22,7 +22,7 @@ files:
 
 ### 1. Ask about a live record
 - **URL:** `plugin/bin/express-lane.js plan-lane --issue {n} [--repo owner/name]`; `plugin/bin/lib/express/cli.js` (`runPlanLane`)
-- **Action:** The maintainer runs the verb against a record number. It fetches the record's fresh labels and body through `gh`, resolves exactly the policy keys the predicate reads (`POLICY_KEYS`: `express-driver`, `express-driver-max-size`, `express-driver-max-key-files`, `express-driver-max-risk`, `express-driver-review`, `express-lane`, `integration-model`, `merge-sensitive-paths`), and prints the verdict.
+- **Action:** The maintainer runs the verb against a record number. It fetches the record's fresh labels and body through `gh`, resolves exactly the policy keys the predicate reads (`POLICY_KEYS`: `express-driver`, `express-driver-max-size`, `express-driver-max-key-files`, `express-driver-max-risk`, `express-driver-review`, `express-driver-protected-paths`, `express-lane`, `integration-model`, `merge-sensitive-paths`), and prints the verdict.
 - **Should feel:** Like asking one closed question and getting one line back. No claim, no label write, no run directory, nothing to clean up.
 - **Should understand:** The answer follows this checkout's policy: a project with `express-driver: on` can read `driver` for a record that `off` would send elsewhere. Exit 1 means the fetch or the policy read failed; exit 2 is a usage error (both or neither of `--issue` and `--record-json`, `--repo` without `--issue`) or `gh` absent with `--issue`.
 - **Red flags:** Any write to GitHub or the run directory. A verdict that changes when only `auto:build`, `auto:merge-pending`, `bot:*` or `parked` labels change, or when the record gains a `Blocked by #N` line.

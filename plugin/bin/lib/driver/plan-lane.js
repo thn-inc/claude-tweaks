@@ -22,7 +22,7 @@
 // here; the express bounds likewise through the express gate's expressGateOptions.
 // reviewRequired and admission get the eligibility verdict's own Key File paths and the record's
 // widenings (#6018: above low risk under `express-driver-max-risk`, or a non-fast-lane ceremony when
-// `express-driver-review` is `on`), as steps.js's eligibility step does. Every input those helpers
+// `express-driver-review` is `on`, or a merge-time protected Key File under `express-driver-protected-paths: reviewer`, #6019), as steps.js's eligibility step does. Every input those helpers
 // read is a label, the body or a policy value, so shaping time reads the answer the driver will.
 // lane-bounds.js is a leaf module, so this file never loads steps.js.
 //
@@ -45,7 +45,7 @@ const { laneBounds, eligibilityOptions } = require('./lane-bounds');
 
 const POLICY_KEYS = Object.freeze([
   'express-driver', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-review',
-  'express-lane', 'integration-model', 'merge-sensitive-paths',
+  'express-driver-protected-paths', 'express-lane', 'integration-model', 'merge-sensitive-paths',
 ]);
 
 const PLAN_LANE_REASONS = Object.freeze({
@@ -64,6 +64,7 @@ const PLAN_LANE_REASONS = Object.freeze({
 const R = PLAN_LANE_REASONS;
 const DRIVER_ROUTINGS = ['off', 'split', 'on'];
 const REVIEW_VALUES = ['off', 'on', 'beyond-express'];
+const PROTECTED_PATHS_VALUES = ['refuse', 'reviewer'];
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 // sensitivePathsOf reads any other value as no sensitive paths, so it is refused here first.
@@ -82,6 +83,7 @@ function policyReadable(policy) {
   const value = (key) => policy[key].value;
   return DRIVER_ROUTINGS.includes(value('express-driver'))
     && REVIEW_VALUES.includes(value('express-driver-review'))
+    && PROTECTED_PATHS_VALUES.includes(value('express-driver-protected-paths'))
     && isReadableSizeCeiling(value('express-driver-max-size'))
     && isReadableKeyFileLimit(value('express-driver-max-key-files'))
     && isReadableRiskCeiling(value('express-driver-max-risk'))
@@ -108,7 +110,8 @@ function insideDriverBounds(issue, policy) {
   const opts = eligibilityOptions(policy);
   const eligibility = evaluateRecordEligibility(issue, { ...opts, escalated: false });
   if (!eligibility.eligible) return false;
-  const widenedBy = widenings({ labels: issue.labels, riskCeiling: opts.riskCeiling, anyCeremony: opts.allowAnyCeremony });
+  const widenedBy = widenings({ labels: issue.labels, riskCeiling: opts.riskCeiling, anyCeremony: opts.allowAnyCeremony,
+    keyFiles: eligibility.keyFiles, protectedPathsNeedReviewer: opts.protectedPathsNeedReviewer });
   const reviewer = reviewRequired({ issue, keyFiles: eligibility.keyFiles, policyValue: policy['express-driver-review'].value, widenedBy });
   return evaluateAdmission({
     state: 'OPEN',

@@ -34,6 +34,7 @@ const POLICY_DEFAULTS = {
   'express-driver-max-key-files': 5,
   'express-driver-max-risk': 'low',
   'express-driver-review': 'beyond-express',
+  'express-driver-protected-paths': 'refuse',
   'express-lane': true,
   'integration-model': 'pr-first',
   'merge-sensitive-paths': [],
@@ -58,7 +59,7 @@ const MICRO_FILES = ['plugin/bin/lib/plan-lane-fixture/m0.js', 'tests/plan-lane-
 test('POLICY_KEYS and PLAN_LANE_REASONS are frozen and name the stable codes', () => {
   assert.deepStrictEqual([...POLICY_KEYS], [
     'express-driver', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-review',
-    'express-lane', 'integration-model', 'merge-sensitive-paths',
+    'express-driver-protected-paths', 'express-lane', 'integration-model', 'merge-sensitive-paths',
   ]);
   assert.ok(Object.isFrozen(POLICY_KEYS));
   assert.ok(Object.isFrozen(R));
@@ -153,6 +154,8 @@ test('AC6.3: an unreadable bound or policy entry reads null, policy-unreadable',
     'max-risk toString': policy({ 'express-driver-max-risk': 'toString' }),
     'express-driver sometimes': policy({ 'express-driver': 'sometimes' }),
     'express-driver-review maybe': policy({ 'express-driver-review': 'maybe' }),
+    'protected-paths Reviewer': policy({ 'express-driver-protected-paths': 'Reviewer' }),
+    'protected-paths invalid: true': { ...policy(), 'express-driver-protected-paths': { value: 'refuse', source: 'default', invalid: true } },
     'express-lane "true"': policy({ 'express-lane': 'true' }),
     'integration-model empty': policy({ 'integration-model': '' }),
     'integration-model null': policy({ 'integration-model': null }),
@@ -178,6 +181,16 @@ test('AC6.3: an unreadable bound or policy entry reads null, policy-unreadable',
   for (const [name, pol] of Object.entries(cases)) {
     await t.test(name, () => assert.deepStrictEqual(run(pol), unreadable));
   }
+});
+
+test('#6019: a merge-time protected Key File reads driver only under reviewer with the reviewer on', () => {
+  const hookFiles = ['plugin/hooks/x.js'];
+  const labels = ['risk:low', 'size:low', 'ceremony:fast-lane', 'type:task'];
+  const read = (pol, files = hookFiles) => verdictFor({ labels, keyFiles: files, pol: policy({ 'express-driver-review': 'on', 'express-lane': false, ...pol }) }).lane;
+  assert.strictEqual(read({ 'express-driver-protected-paths': 'reviewer' }), 'driver');
+  assert.notStrictEqual(read({ 'express-driver-protected-paths': 'reviewer', 'express-driver-review': 'off' }), 'driver');
+  assert.notStrictEqual(read({ 'express-driver-protected-paths': 'refuse' }), 'driver');
+  assert.notStrictEqual(read({ 'express-driver-protected-paths': 'reviewer' }, ['.github/workflows/ci.yml']), 'driver');
 });
 
 test('AC6.3: an unreadable bound on a record the express lane takes reads null, never express (Review Focus 2)', () => {
