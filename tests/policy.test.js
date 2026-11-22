@@ -352,3 +352,61 @@ test('planning-decisions resolves ask-all when unset and when invalid (#6051)', 
   assert.strictEqual(good.value, 'asked-classes');
   assert.strictEqual(good.source, 'policy');
 });
+
+// #6056: plan-at-specify — shaping-time planning, refused while planning-decisions is ask-all.
+const PLAN_AT_SPECIFY_CONFLICT_LINE = 'resolve-policy: warning: plan-at-specify is on but planning-decisions is ask-all — using "off"; set planning-decisions: asked-classes to plan at /claude-tweaks:specify\n';
+const resolvePlanAtSpecify = (opts) => require('../plugin/bin/lib/policy-schema').resolvePolicyKeys(['plan-at-specify'], opts)['plan-at-specify'];
+
+test('plan-at-specify is policyOnly, defaults to off, offers exactly off and on, and is factory-settable (#6056)', () => {
+  const row = require('../plugin/bin/lib/policy-schema').POLICY_KEYS.find((k) => k.key === 'plan-at-specify');
+  const { FACTORY_REFUSED_KEYS } = require('../plugin/bin/lib/policy-factory');
+  assert.ok(row, 'plan-at-specify row exists');
+  assert.strictEqual(row.policyOnly, true);
+  assert.strictEqual(row.default, 'off');
+  assert.deepStrictEqual(row.values, ['off', 'on']);
+  assert.strictEqual(row.category, 'pipeline-behavior');
+  assert.strictEqual(row.tier, 'advanced');
+  assert.ok(!row.summary.startsWith('Not yet used'));
+  assert.ok(!row.policySourceExcluded);
+  assert.ok(!FACTORY_REFUSED_KEYS.includes('plan-at-specify'));
+});
+
+test('AC1.1: plan-at-specify resolves off when unset, when off, and when malformed, with no conflict field (#6056)', () => {
+  assert.deepStrictEqual(resolvePlanAtSpecify({ policyRaw: '' }), { value: 'off', source: 'default' });
+  assert.deepStrictEqual(resolvePlanAtSpecify({ policyRaw: 'plan-at-specify: off\n' }), { value: 'off', source: 'policy' });
+  const bad = resolvePlanAtSpecify({ policyRaw: 'plan-at-specify: yes\n' });
+  assert.strictEqual(bad.value, 'off');
+  assert.strictEqual(bad.invalid, true);
+  assert.ok(!('conflict' in bad));
+});
+
+test('Deliverable 9: on with planning-decisions ask-all (unset, explicit or malformed) resolves off with the conflict, source kept (#6056)', () => {
+  const refused = { value: 'off', source: 'policy', conflict: 'planning-decisions' };
+  assert.deepStrictEqual(resolvePlanAtSpecify({ policyRaw: 'plan-at-specify: on\n' }), refused);
+  assert.deepStrictEqual(resolvePlanAtSpecify({ policyRaw: 'plan-at-specify: on\nplanning-decisions: ask-all\n' }), refused);
+  assert.deepStrictEqual(resolvePlanAtSpecify({ policyRaw: 'plan-at-specify: on\nplanning-decisions: ask-some\n' }), refused);
+});
+
+test('Deliverable 9: on with asked-classes resolves on, from the policy or the factory layer (#6056)', () => {
+  assert.deepStrictEqual(resolvePlanAtSpecify({ policyRaw: 'plan-at-specify: on\nplanning-decisions: asked-classes\n' }), { value: 'on', source: 'policy' });
+  assert.deepStrictEqual(resolvePlanAtSpecify({ policyRaw: 'plan-at-specify: on\n', factoryRaw: 'planning-decisions: asked-classes\n' }), { value: 'on', source: 'policy' });
+  assert.deepStrictEqual(resolvePlanAtSpecify({ factoryRaw: 'plan-at-specify: on\nplanning-decisions: asked-classes\n' }), { value: 'on', source: 'factory' });
+});
+
+test('a run config sets neither plan-at-specify nor the planning-decisions it is checked against (#6056)', () => {
+  assert.deepStrictEqual(
+    resolvePlanAtSpecify({ policyRaw: 'plan-at-specify: on\n', runConfigRaw: 'planning-decisions: asked-classes\n' }),
+    { value: 'off', source: 'policy', conflict: 'planning-decisions' },
+  );
+  assert.deepStrictEqual(resolvePlanAtSpecify({ policyRaw: '', runConfigRaw: 'plan-at-specify: on\nplanning-decisions: asked-classes\n' }), { value: 'off', source: 'default' });
+});
+
+test('Deliverable 9: warningLines names the conflict in every mode, from a real resolvePolicyKeys reply (#6056)', () => {
+  const { resolvePolicyKeys } = require('../plugin/bin/lib/policy-schema');
+  const { warningLines } = require('../plugin/bin/resolve-policy');
+  const keys = ['plan-at-specify'];
+  const conflicted = { keys, result: resolvePolicyKeys(keys, { policyRaw: 'plan-at-specify: on\n' }), invalidRaw: new Map(), degrades: new Map() };
+  for (const values of [true, false]) assert.deepStrictEqual(warningLines(conflicted, { values }), [PLAN_AT_SPECIFY_CONFLICT_LINE]);
+  const clean = { ...conflicted, result: resolvePolicyKeys(keys, { policyRaw: 'plan-at-specify: on\nplanning-decisions: asked-classes\n' }) };
+  for (const values of [true, false]) assert.deepStrictEqual(warningLines(clean, { values }), []);
+});

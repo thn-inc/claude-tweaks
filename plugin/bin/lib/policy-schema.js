@@ -333,6 +333,8 @@ const POLICY_KEYS = [
   { key: 'run-filed-record-cap', type: 'integer', min: 0, policyOnly: true, summary: "Caps how many records one pipeline run's agents may file; past it an item goes to the digest. Leave it unset for no cap.", category: 'pipeline-behavior', tier: 'advanced' },
   // #6051: read only by build/plan-review.md's pointer, through resolve-policy.js --values with no --run, so policyOnly (no per-run route; not a Manifesto lever, so auto-mode-contract.md's new-lever checklist does not apply). Not policySourceExcluded: a standing opt-in is the point. Factory-settable: a user-wide preference for fewer planning questions is safe, since it only changes which gaps are asked and an older build ignores an unknown key. Its first consumer lands in this same PR, so no "Not yet used." marker.
   { key: 'planning-decisions', type: 'enum', values: ['ask-all', 'asked-classes'], default: 'ask-all', policyOnly: true, summary: "Lets plan review settle low-level planning questions itself under asked-classes and ask only the high-impact ones; ask-all asks every gap.", category: 'pipeline-behavior', tier: 'advanced' },
+  // #6056: read only by specify/shaping-mode.md's Planning at specify paragraph, through resolve-policy.js --values with no --run, so policyOnly (no per-run route). /claude-tweaks:specify has no Manifesto, so it is not a Manifesto lever and auto-mode-contract.md's new-lever checklist does not apply. Not policySourceExcluded: a standing opt-in is the point. Factory-settable: a user-wide opt-in only moves planning to shaping time, and an older build ignores an unknown key. resolvePolicyKeys refuses `on` while planning-decisions resolves ask-all (planningDecisionsFrom): the entry resolves `off`, keeps its source and gains conflict: 'planning-decisions'; resolve-policy.js warns on stderr. Its first consumer lands in this same PR, so no "Not yet used." marker.
+  { key: 'plan-at-specify', type: 'enum', values: ['off', 'on'], default: 'off', policyOnly: true, summary: "Writes, reviews and stores a record's plan while specify shapes it; needs planning-decisions set to asked-classes.", category: 'pipeline-behavior', tier: 'advanced' },
 ];
 
 const SCHEMA_BY_KEY = new Map(POLICY_KEYS.map((entry) => [entry.key, entry]));
@@ -682,6 +684,23 @@ function deriveExpressDriverMaxLines(sources) {
   return value;
 }
 
+// The planning-decisions read plan-at-specify's refusal makes (#6056): the first
+// source holding the key wins, run-config skipped (the key is policyOnly), and an
+// invalid value resolves the schema default, never the next source's value, as in
+// the main loop and the two derive helpers above. Returns 'ask-all' | 'asked-classes'.
+function planningDecisionsFrom(sources) {
+  const schemaEntry = SCHEMA_BY_KEY.get('planning-decisions');
+  let value = schemaEntry.default;
+  for (const source of sources) {
+    if (source.name === 'run-config') continue;
+    if (!hasOwn(source.values, 'planning-decisions')) continue;
+    const raw = source.values['planning-decisions'];
+    if (isValidValue(schemaEntry, raw)) value = resolveValue('planning-decisions', raw);
+    break;
+  }
+  return value;
+}
+
 // express-driver-models (#5917): { present: false } | { present: true, ok: true, value } | { present: true, ok: false, raw }.
 // A column-0 `express-driver-models:` line opens the block; rows are two-space `role: profile` lines until the next
 // non-blank column-0 line. Anything else (inline value, second block, unknown or repeated role, unknown profile,
@@ -890,6 +909,11 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, factoryRaw,
     // entry — no change here or in auditPolicy()'s matching category below.
     if (schemaEntry.policySourceExcluded && (resolved.source === 'policy' || resolved.source === 'factory')) {
       resolved = { value: defaultValue, source: 'default' };
+    }
+    // #6056: plan-at-specify needs planning-decisions: asked-classes. `on` beside ask-all resolves
+    // `off`, keeps its source, and carries the conflict for resolve-policy.js's warning.
+    if (canonical === 'plan-at-specify' && resolved.value === 'on' && planningDecisionsFrom(sources) === 'ask-all') {
+      resolved = { ...resolved, value: 'off', conflict: 'planning-decisions' };
     }
     result[requested] = resolved;
   }
