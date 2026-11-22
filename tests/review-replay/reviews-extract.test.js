@@ -100,6 +100,7 @@ test('AC3.1/AC3.2/AC3.3: decisions.md and a gone run input are excluded', async 
   assert.deepEqual(reasonOf('l3d-a'), ['run-input-gone']);
   assert.deepEqual(excluded.find((e) => e.agentId === 'l3c-a'), { run: RUN, agentId: 'l3c-a', lens: '3c', side: 'a', reason: 'unknown-run-input' });
   assert.deepEqual(reasonOf('impl-1'), [], 'a dispatch that is not a lens reviewer is never an exclusion');
+  assert.equal(excluded[0].run, RUN_GONE, 'runs are read newest first');
   const promptFiles = filesUnder(path.join(x.out, 'prompts')).map((f) => path.relative(x.out, f));
   assert.ok(promptFiles.length > 0);
   for (const f of promptFiles) assert.ok(!f.includes('3c-a') && !f.includes(RUN_GONE), f);
@@ -251,6 +252,42 @@ test('--lens and --max-per-lens select slots in run order without adding exclusi
   assert.ok(x.json(schema.REPORTS_FILE).runRows[RUN].some((r) => r.lens === '3b'), 'runRows keep every parsed dispatch');
   assert.deepEqual(fixture.excluded.map((e) => e.agentId).sort(), ['l3b-b', 'l3c-a', 'l3d-a']);
   assert.deepEqual(fixture.requested, { lens: ['3a'], maxPerLens: 1 });
+});
+
+test('the other exclusion reasons, a control arm per archived tier and effort, origin refs and a member unit', async () => {
+  const eRoot = scratchDir('rr-reviews-edges-');
+  const ex = buildReviewsFixture(eRoot, { edges: true });
+  const out = path.join(eRoot, 'out');
+  const deps = { ...makeDeps(), git: (args) => execFileSync('git', args, { cwd: ex.mainRoot, env: cleanEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }), writeRepo: makeWriteRepo(ex.mainRoot) };
+  const code = await run({ argv: ['extract-reviews', '--runs', ex.runsRoot, '--out', out, '--role', 'lens', '--transcripts', ex.transcripts, '--arm', 'name=haiku,profile=fast'], deps });
+  assert.equal(code, 0, deps.errs.join('\n'));
+  const json = (name) => JSON.parse(fs.readFileSync(path.join(out, name), 'utf8'));
+  const fixture = json(schema.REVIEWS_FIXTURE_FILE);
+  const reasons = Object.fromEntries(fixture.excluded.map((e) => [e.agentId, e.reason]));
+  assert.deepEqual(reasons, {
+    'l3b-b': 'report-unparsed', 'e-tier': 'no-archived-tier', 'e-notx': 'no-transcript', 'e-nosha': 'no-sha-range',
+    'e-gone': 'commit-not-in-clone', 'e-leak': 'unrewritten-path', 'e-noside': 'unlabelled-dispatch',
+  });
+  const manifest = json(schema.REVIEWS_MANIFEST_FILE);
+  assert.deepEqual(manifest.arms.map((a) => [a.name, a.profile, a.model, a.effort, a.prompts.map((p) => p.name)]), [
+    ['haiku', 'fast', 'haiku', null, ['3a-a', '3a-b', '3b-a', '3f-a', '3h-a', '3g-a'].map((n) => `${RUN}/${n}`)],
+    ['control.standard.medium', 'standard', 'sonnet', 'medium', ['3a-a', '3a-b', '3b-a', '3g-a'].map((n) => `${RUN}/${n}`)],
+    ['control.fast.low', 'fast', 'haiku', 'low', [`${RUN}/3f-a`]],
+    ['control.standard.high', 'standard', 'sonnet', 'high', [`${RUN}/3h-a`]],
+  ]);
+  assert.deepEqual(schema.validateReviewsManifest(manifest), []);
+  const repo = fixture.repos[0];
+  assert.equal(fixture.repos.length, 1);
+  assert.equal(gitIn(repo.path)('rev-parse', 'refs/remotes/origin/main'), repo.replayBase, 'the origin/main a prompt names resolves to the replay base');
+  const m2 = fixture.slots.find((s) => s.agentId === 'e-m2');
+  assert.equal(m2.unit, `${RUN}/spec-2`);
+  const reports = json(schema.REPORTS_FILE);
+  assert.equal(reports.reports[`${RUN}/3g-a`].unitKey, `${RUN}/spec-2`);
+  assert.deepEqual(reports.confirmed[`${RUN}/spec-2`], { '3g': { findings: [{ path: 'src/b.js', line: 2, how: 'pair' }], unlocated: 0 } });
+  const m2Prompt = read(manifest.arms[0].prompts.find((p) => p.name === `${RUN}/3g-a`).file);
+  assert.ok(m2Prompt.includes(toPosix(path.join(out, 'repos', `${RUN}--r1`, '3g-a--context.md'))), m2Prompt);
+  assert.equal(read(path.join(out, 'repos', `${RUN}--r1`, '3g-a--context.md')), `Member bundle at ${repo.replayHead}\n`);
+  for (const p of manifest.arms.flatMap((a) => a.prompts)) assert.ok(!read(p.file).includes(ex.mainRoot), p.file);
 });
 
 test('an unknown --role exits 2', async () => {

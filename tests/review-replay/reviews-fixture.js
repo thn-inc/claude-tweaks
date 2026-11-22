@@ -22,17 +22,18 @@ const jsonl = (entries) => `${entries.map((e) => JSON.stringify(e)).join('\n')}\
 
 // A lens prompt in the shape of the 2026-11-21 lens prompts: the worktree inside `git -C "…"`, the diff scope, the
 // context bundle, the spec under the worktree, a per-agent SCRATCH path and an Effort line.
-function lensPrompt({ mainRoot, worktree, run, lens, scratch, B, H, extra = [] }) {
-  const runDir = `${mainRoot}/.claude-tweaks/pipelines/${run}`;
+// `member` puts the bundle, spec and scratch under that spec-{N} member; `scope` replaces the diff scope line.
+function lensPrompt({ mainRoot, worktree, run, lens, scratch, B, H, extra = [], member = null, scope = `Diff scope: base ${B} (merge-base) ... HEAD ${H}` }) {
+  const runDir = `${mainRoot}/.claude-tweaks/pipelines/${run}${member ? `/${member}` : ''}`;
   return [
     `You are a read-only code reviewer for lens ${lens} on record #9's branch.`,
     '',
     `WORKTREE: ${worktree}`,
     `Before your first file operation run \`pwd\` and \`git -C "${worktree}" rev-parse --show-toplevel\`; the toplevel must be that path.`,
     '',
-    `Diff scope: base ${B} (merge-base) ... HEAD ${H}`,
+    scope,
     `Shared context bundle (the full diff first, then per-file sections): ${runDir}/review-ctx/context.md — Read it in chunks.`,
-    `Record spec (Deliverables, ACs, Gotchas): ${worktree}/.claude-tweaks/pipelines/${run}/work/9-spec.md.`,
+    `Record spec (Deliverables, ACs, Gotchas): ${worktree}/.claude-tweaks/pipelines/${run}${member ? `/${member}` : ''}/work/9-spec.md.`,
     ...extra,
     `SCRATCH: ${runDir}/review-ctx/agent-scratch/${scratch} — any probe script or fixture goes there, never in the repository tree.`,
     '[Effort: medium — apply medium-level reasoning depth to this task.]',
@@ -45,7 +46,11 @@ function lensPrompt({ mainRoot, worktree, run, lens, scratch, B, H, extra = [] }
 //   decisions: a fifth dispatch (l3c-a) whose prompt names the run's decisions.md
 //   gone:      a second run dir whose one dispatch (l3d-a) names a context bundle that was never written
 //   repeat:    a second `Review lens 3a correctness A` dispatch (l3a-a2)
-function buildReviewsFixture(root, { decisions = false, gone = false, repeat = false } = {}) {
+//   edges:     one dispatch per remaining exclusion reason (e-noside unlabelled, e-tier no-archived-tier, e-notx
+//              no-transcript, e-nosha no-sha-range, e-gone unknown commit, e-leak a main-checkout path no rewrite
+//              covers), a fast/low slot naming origin/main and only the head (e-fast), a standard slot with no
+//              recorded effort (e-high), and a spec-2 member whose own timing.json holds one slot (e-m2)
+function buildReviewsFixture(root, { decisions = false, gone = false, repeat = false, edges = false } = {}) {
   const mainRoot = path.join(root, 'main checkout', 'repo');
   const runsRoot = path.join(mainRoot, '.claude-tweaks', 'pipelines');
   const transcripts = path.join(root, 'projects');
@@ -84,12 +89,13 @@ function buildReviewsFixture(root, { decisions = false, gone = false, repeat = f
   const subagents = path.join(transcripts, 'slug', 'sess', 'subagents');
   const items = [];
   // One lens dispatch: its timing.json item and its transcript (the prompt, then a reply recorded at effort medium).
-  const dispatch = (dir, { agentId, description, lens, scratch, reply, run = RUN, extra }) => {
-    dir.push({ agentId, description, tier: 'standard', role: 'lens reviewer', tokens: { output: 1 } });
-    const prompt = lensPrompt({ mainRoot, worktree, run, lens, scratch, B, H, extra });
+  const dispatch = (dir, { agentId, description, lens, scratch, reply, run = RUN, extra, tier = 'standard', effort = 'medium', member, scope, transcript = true }) => {
+    dir.push({ agentId, description, tier, role: 'lens reviewer', tokens: { output: 1 } });
+    if (!transcript) return;
+    const prompt = lensPrompt({ mainRoot, worktree, run, lens, scratch, B, H, extra, member, scope });
     put(path.join(subagents, `agent-${agentId}.jsonl`), jsonl([
       { type: 'user', message: { role: 'user', content: prompt } },
-      { type: 'assistant', effort: 'medium', message: { role: 'assistant', content: [{ type: 'text', text: reply }] } },
+      { type: 'assistant', ...(effort === null ? {} : { effort }), message: { role: 'assistant', content: [{ type: 'text', text: reply }] } },
     ]));
   };
   const table = (...rows) => ['| Severity | Path:Line | Finding | Evidence |', '|---|---|---|---|', ...rows].join('\n');
@@ -108,6 +114,26 @@ function buildReviewsFixture(root, { decisions = false, gone = false, repeat = f
     });
   }
   if (repeat) dispatch(items, { agentId: 'l3a-a2', description: 'Review lens 3a correctness A', lens: '3a', scratch: '3a-a2', reply: 'No findings.' });
+  if (edges) {
+    const e = (agentId, lens, over) => dispatch(items, { agentId, description: `Review lens ${lens} edge A`, lens, scratch: `${lens}-a`, reply: 'No findings.', ...over });
+    e('e-tier', '3e', { tier: 'turbo' });
+    e('e-notx', '3e', { transcript: false });
+    e('e-nosha', '3e', { scope: 'SCOPE: the diff origin/main...HEAD in that worktree.' });
+    e('e-gone', '3e', { scope: `Diff scope: base ${'d'.repeat(40)} (merge-base) ... HEAD ${H}` });
+    e('e-leak', '3e', { extra: [`Notes: ${mainRoot}/notes/review.md`] });
+    e('e-noside', '3e', { description: 'Review lens 3e edge' });
+    // The prompt names only the head: the base comes from the run's recorded merge base.
+    e('e-fast', '3f', { tier: 'fast', effort: 'low', scope: `SCOPE: git diff origin/main...HEAD (HEAD ${H}).` });
+    // No effort recorded: the archived effort is the tier's own (standard: high).
+    e('e-high', '3h', { effort: null });
+    const memberDir = path.join(runDir, 'spec-2');
+    put(path.join(memberDir, 'decisions.md'), '- AUTO 12:00:00 — Reproduction: lens "3g" finding src/b.js:2 reproduced. Confirmed. Reversibility: high.\n');
+    put(path.join(memberDir, 'review-ctx', 'context.md'), `Member bundle at ${H}\n`);
+    put(path.join(memberDir, 'work', '9-spec.md'), '# 9: the member spec\n');
+    const memberItems = [];
+    dispatch(memberItems, { agentId: 'e-m2', description: 'Review lens 3g ownability A', lens: '3g', scratch: '3g-a', member: 'spec-2', reply: 'No findings.' });
+    put(path.join(memberDir, 'timing.json'), `${JSON.stringify({ dispatches: { items: memberItems } }, null, 2)}\n`);
+  }
   put(path.join(runDir, 'timing.json'), `${JSON.stringify({ dispatches: { items } }, null, 2)}\n`);
 
   if (gone) {
