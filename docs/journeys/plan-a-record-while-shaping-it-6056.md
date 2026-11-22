@@ -52,7 +52,7 @@ files:
 - **Should understand:**
   - A planned record keeps the `shaped` outcome with Detail `planned (Plan: {short commit})`.
   - When the plan store refuses (no ref), the Detail reads `planned, no Plan: line: plan-store exit {code} (…)`. The decisions are kept and the plan is redone at build.
-  - A planning failure writes the record as `off` would, with Detail `not planned: {reason}`, and never stops a batch.
+  - A planning failure writes the record as `off` would, with Detail `not planned: {reason}`, and never stops a batch. A held record's planning failure keeps it held instead: no `Plan:` line, its held questions carried over verbatim, outcome `held — planning failed: {reason}`.
 - **Red flags:** A `ready` record with an unanswered planning question. A `Plan:` line typed by hand instead of `plan-store.js write`'s `line`. Two `Plan:` lines.
 
 ### 5. Pick up a held record later — slash command
