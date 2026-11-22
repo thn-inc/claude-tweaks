@@ -3613,7 +3613,14 @@ test('AC11.1 (#6018, merge half): risk:low plus risk:medium, in either order, wi
 
 test('the widening union lists ctx.widenedBy first, then live-label widenings, without duplicates (#6018)', async () => {
   const { r } = await assertWidenedStop(widenedLabels('risk:high', 'ceremony:standard'), { ...CTX, widenedBy: ['size', 'risk'] });
-  assert.equal(r.detail, 'admitted widened by size, risk, ceremony');
+  assert.equal(r.detail, 'admitted widened by size, risk; live labels widen by ceremony (not at admission)');
+});
+
+test('the widened detail words the admission list and the live-label recompute apart (#6018)', async () => {
+  const live = await assertWidenedStop(widenedLabels('risk:medium'), { ...CTX, widenedBy: [] });
+  assert.equal(live.r.detail, 'live labels widen by risk (not at admission)');
+  const admitted = await assertWidenedStop(widenedLabels('risk:medium'), { ...CTX, widenedBy: ['risk'] });
+  assert.equal(admitted.r.detail, 'admitted widened by risk');
 });
 
 test('a non-string widenedBy entry stops as unreadable, not as an empty detail (#6018)', async () => {

@@ -255,7 +255,15 @@ async function entry(s) {
   // Size widening (#5224) is not read.
   if (!Array.isArray(ctx.widenedBy) || !ctx.widenedBy.every((w) => typeof w === 'string')) return stop(s, 'merge-entry', 'widened-admission', 'widening list missing or unreadable');
   const widened = [...new Set([...ctx.widenedBy, ...widenings({ labels: labels.names, riskCeiling: 'high', anyCeremony: true })])];
-  if (widened.length) return stop(s, 'merge-entry', 'widened-admission', `admitted widened by ${widened.join(', ')}`);
+  if (widened.length) {
+    // Word the two sources apart: an entry the admission recorded was admitted widened; one only the
+    // live-label recompute added was not widened at admission (a label changed since).
+    const live = widened.filter((w) => !ctx.widenedBy.includes(w));
+    const parts = [];
+    if (ctx.widenedBy.length) parts.push(`admitted widened by ${ctx.widenedBy.join(', ')}`);
+    if (live.length) parts.push(`live labels widen by ${live.join(', ')} (not at admission)`);
+    return stop(s, 'merge-entry', 'widened-admission', parts.join('; '));
+  }
   if (ctx.summaryLogged !== true) return stop(s, 'merge-entry', 'summary-entry-missing', 'the summary decision entry was not logged');
   const notPrFirst = readIntegrationModel(s);
   if (notPrFirst) return stop(s, 'merge-entry', 'not-pr-first', notPrFirst);
