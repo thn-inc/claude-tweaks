@@ -1933,7 +1933,7 @@ async function runReconcileSummary(argv, deps) {
   // #644 Deliverable 3 — the plain one-line residue summary
   // `/claude-tweaks:flow`'s closing report shells out for. Composed
   // without re-running the background checks (release/post-merge/archive/
-  // archive-branches/remote-prune/ledger-residue/reap already ran off the hot path via
+  // archive-branches/remote-prune/ledger-residue/plan-refs/reap already ran off the hot path via
   // `reconcile-background`, most recently under `session-start.js`) —
   // this reads that persisted `summary.archived` count plus the residue
   // cache both `archive`/`reap` already maintain (Deliverable 2), and
@@ -2014,7 +2014,7 @@ async function runReconcileBackground(argv, deps) {
   // also stamps it moments before this process starts — reusing it here
   // would make this process (and the spawn-gate that decided to launch it)
   // see a false "fresh" from a pass that never touched
-  // release/post-merge/archive/archive-branches/remote-prune/ledger-residue/reap, and the
+  // release/post-merge/archive/archive-branches/remote-prune/ledger-residue/plan-refs/reap, and the
   // background checks would never run. Caught by task review against a
   // real pr-first remote (#820 Task 10 fix-up); reconcile()'s own
   // lastRunAt/cache.js contract is untouched by this fix.
@@ -2096,6 +2096,8 @@ async function runReconcileBackground(argv, deps) {
       archived: (r.runs || []).filter((x) => x.action === 'archived').length,
       archivedBranches: (r.branches || []).filter((b) => b.kind === 'branch' && (b.action === 'delete' || b.action === 'tag-and-delete')).length,
       prunedRemote: (r.remoteBranches || []).filter((b) => b.action === 'delete').length,
+      // Closed records' plan refs deleted on origin (#6055) — a shared-state push, so surfaced like prunedRemote.
+      planRefsDeleted: (r.planRefs || []).filter((e) => e.action === 'delete').length,
       // Distinct removal PRs opened this pass (#3812) — at most one today.
       ledgerResiduePrOpened: new Set((r.ledgerResidue || []).filter((e) => e.action === 'pr-opened').map((e) => e.prNumber)).size,
       // Residue ledgers left on the integration branch and why, minus the

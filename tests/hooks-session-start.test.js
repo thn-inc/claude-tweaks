@@ -753,13 +753,14 @@ test('SessionStart renders a prior background pass\'s reaped/branch/remote-prune
   const project = gitProject();
   fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(project, '.claude-tweaks', 'reconcile-background-status.json'), JSON.stringify({
-    completedAt: Date.now(), surfaced: false, summary: { reaped: 1, archivedBranches: 2, prunedRemote: 3 },
+    completedAt: Date.now(), surfaced: false, summary: { reaped: 1, archivedBranches: 2, prunedRemote: 3, planRefsDeleted: 2 },
   }));
   const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.match(
     out.json.hookSpecificOutput.additionalContext,
-    /background reconcile \(from a prior session\) — 1 finished worktree\(s\) removed \(already merged\); 2 local branch\(es\) archived\/deleted; 3 merged remote branch\(es\) deleted on origin\./,
+    /background reconcile \(from a prior session\) — 1 finished worktree\(s\) removed \(already merged\); 2 local branch\(es\) archived\/deleted; 3 merged remote branch\(es\) deleted on origin; /,
   );
+  assert.match(out.json.hookSpecificOutput.additionalContext, /2 closed record plan ref\(s\) deleted on origin/);
 });
 
 test('SessionStart surfaces a prior background pass that failed, with its reason (#4032)', async () => {

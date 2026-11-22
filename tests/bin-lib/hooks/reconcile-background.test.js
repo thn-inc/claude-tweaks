@@ -228,6 +228,8 @@ test('reconcile-background summary: counts each check\'s taken entries (characte
     runs: [{ action: 'archived' }],
     branches: [{ kind: 'branch', action: 'delete' }, { kind: 'branch', action: 'tag-and-delete' }, { kind: 'tag', action: 'delete' }],
     remoteBranches: [{ action: 'delete' }, { action: 'delete' }, { action: 'skip' }],
+    // Two would-delete, one delete: a count that read would-delete instead of delete would say 2, not 1.
+    planRefs: [{ action: 'delete' }, { action: 'skip' }, { action: 'would-delete' }, { action: 'would-delete' }],
     worktrees: [{ action: 'reaped' }, { action: 'skipped', path: '/w/a', reason: 'pr-open' }, { action: 'skipped', path: '/w/b', reason: 'in use by a live session' }],
     skipped: [{ check: 'release', reason: 'x' }],
   });
@@ -235,6 +237,7 @@ test('reconcile-background summary: counts each check\'s taken entries (characte
   assert.equal(summary.archived, 1);
   assert.equal(summary.archivedBranches, 2);
   assert.equal(summary.prunedRemote, 2);
+  assert.equal(summary.planRefsDeleted, 1);
   assert.equal(summary.reaped, 1);
   assert.deepEqual(summary.notableWorktrees, [{ path: '/w/a', reason: 'pr-open' }]);
   assert.deepEqual(summary.skipped, [{ check: 'release', reason: 'x' }]);
