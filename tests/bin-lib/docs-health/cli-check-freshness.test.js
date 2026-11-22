@@ -2,12 +2,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
 const { sweepCli } = require('../../helpers/health-sweep-cli');
-const { cleanGitEnv } = require('../../helpers/git-fixtures');
+const { cleanGitEnv, writeIdentity } = require('../../helpers/git-fixtures');
 const { seedDurableState } = require('../health-core/seed-durable-state');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'docs-health.js');
@@ -20,14 +21,13 @@ function cli(argv, opts) {
 const GIT_OPTS = { env: cleanGitEnv(process.env) };
 
 function makeTmpRoot() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-cli-check-freshness-plain-'));
+  return scratchDir('docs-health-cli-check-freshness-plain-');
 }
 
 function makeTmpGitRoot() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-cli-check-freshness-'));
+  const root = scratchDir('docs-health-cli-check-freshness-');
   execFileSync('git', ['init', '-q'], { cwd: root, ...GIT_OPTS });
-  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root, ...GIT_OPTS });
-  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root, ...GIT_OPTS });
+  writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   return root;
 }
 
@@ -80,7 +80,7 @@ test('check-freshness resolves a relative path against --root, not the invoking 
   fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
   fs.writeFileSync(path.join(root, 'docs', 'tracked.md'), '---\nfiles:\n  - src/nope.ts\n---\n\n# Doc\n');
 
-  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-cli-check-freshness-elsewhere-'));
+  const elsewhere = scratchDir('docs-health-cli-check-freshness-elsewhere-');
   const res = cli(['check-freshness', 'docs/tracked.md', '--root', root], { cwd: elsewhere });
   assert.strictEqual(res.status, 0, `stderr: ${res.stderr}`);
   const parsed = JSON.parse(res.stdout);

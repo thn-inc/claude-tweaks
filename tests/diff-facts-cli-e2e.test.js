@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { runCliSync, spawnCli } = require('./helpers/run-cli');
+const { writeIdentity } = require('./helpers/git-fixtures');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'diff-facts.js');
 
@@ -44,8 +45,7 @@ function initRepo(prefix) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   fixtureDirs.push(dir);
   git(dir, 'init', '-b', 'main');
-  git(dir, 'config', 'user.email', 'test@example.invalid');
-  git(dir, 'config', 'user.name', 'Test');
+  writeIdentity(dir, { name: 'Test', email: 'test@example.invalid' });
   return dir;
 }
 

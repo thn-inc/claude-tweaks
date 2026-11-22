@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -30,7 +31,7 @@ test('bookkeeping-stamps gate: main checkout (not a linked worktree) -> allow re
   const main = gitRepo();
   commitMaterializedSpec(main, path.join('work', '991-spec.md'));
   const { run } = mkRunDir(projectDir(), null, undefined);
-  const out = pre.run({ input: editInput(path.join(main, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: main });
+  const out = pre.run({ env: process.env, input: editInput(path.join(main, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: main });
   assert.deepStrictEqual(out, {});
 });
 
@@ -40,7 +41,7 @@ test('bookkeeping-stamps gate: worktree stamped, resolveIntegrationModel stubbed
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const { run } = mkRunDir(projectDir(), wt, undefined);
   const out = pre.run(
-    { input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
     { resolveIntegrationModel: () => 'pr-first' },
   );
   assert.ok(out.json, 'expected a deny result once integration-model resolves pr-first with no PR recorded');
@@ -66,7 +67,7 @@ test('bookkeeping-stamps gate (#2920): worktree stamped, pr-first stubbed, no PR
   const target = path.join(wt, 'scratch', 'pr-body.md');
   const { run } = mkRunDir(projectDir(), wt, undefined);
   const out = pre.run(
-    { input: editInput(target), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { env: process.env, input: editInput(target), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
     { resolveIntegrationModel: () => 'pr-first' },
   );
   assert.deepStrictEqual(out, {}, 'a Write to a gitignored path must not be denied — it cannot affect the branch the PR stamp protects');
@@ -84,7 +85,7 @@ test('bookkeeping-stamps gate (#2920): same state, a Write to a TRACKED/not-igno
   fs.writeFileSync(path.join(wt, '.gitignore'), 'scratch/\n');
   const { run } = mkRunDir(projectDir(), wt, undefined);
   const out = pre.run(
-    { input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
     { resolveIntegrationModel: () => 'pr-first' },
   );
   assert.ok(out.json, 'a tracked/not-ignored target must still be denied — the new exemption must not widen past gitignored paths');
@@ -102,7 +103,7 @@ test('bookkeeping-stamps gate (#2920): a RELATIVE target path matching a gitigno
   fs.mkdirSync(path.join(wt, 'scratch'), { recursive: true });
   const { run } = mkRunDir(projectDir(), wt, undefined);
   const out = pre.run(
-    { input: editInput(path.join('scratch', 'pr-body.md')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { env: process.env, input: editInput(path.join('scratch', 'pr-body.md')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
     { resolveIntegrationModel: () => 'pr-first' },
   );
   assert.ok(out.json, 'a relative target must not be exempted — isUntrackedOrIgnored (like isPolicyFile/isPipelineBookkeeping) requires an absolute path');
@@ -113,7 +114,7 @@ test('bookkeeping-stamps gate (#989): worktree stamped, pr-first stubbed, a push
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined);
   const branch = execFileSync('git', ['-C', wt, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
   // #1800: the #989 exemption now additionally requires Step 1's outcome line
@@ -130,7 +131,7 @@ test('bookkeeping-stamps gate (#989): worktree stamped, pr-first stubbed, a push
   // supposed to make Step 6 non-skippable, a chicken-and-egg regression that
   // makes Step 6 structurally impossible to ever complete.
   const out = pre.run(
-    { input: bashInput(`git push origin ${branch}`, wt), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { env: process.env, input: bashInput(`git push origin ${branch}`, wt), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
     { resolveIntegrationModel: () => 'pr-first' },
   );
   assert.deepStrictEqual(out, {}, 'the initial publish push must not be denied — it is the prerequisite record-pr cannot exist without');
@@ -140,7 +141,7 @@ test('bookkeeping-stamps gate (#1800): worktree stamped, pr-first stubbed, a pus
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined);
   const branch = execFileSync('git', ['-C', wt, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
   // No decisions.md written at all -- Step 1 never ran (or never logged),
@@ -148,7 +149,7 @@ test('bookkeeping-stamps gate (#1800): worktree stamped, pr-first stubbed, a pus
   // push straight through with no record of whether Step 1's `gh pr list`
   // reuse/reopen check ever happened.
   const out = pre.run(
-    { input: bashInput(`git push origin ${branch}`, wt), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { env: process.env, input: bashInput(`git push origin ${branch}`, wt), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
     { resolveIntegrationModel: () => 'pr-first' },
   );
   assert.ok(out.json, 'expected a deny result — no Step 1 outcome line for this branch in decisions.md');
@@ -168,13 +169,13 @@ test('bookkeeping-stamps gate (#1800 review finding): a Step 1 line logged for a
   // satisfy branch `{branch}`'s own precondition, defeating the "keep it
   // attempt-specific" guarantee this file's Gotchas section calls for.
   const main = gitRepo();
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-wtparent-'));
+  const parent = scratchDir('ct-bsg-wtparent-');
   const wt = path.join(parent, 'wt');
   const branch = `wt-branch-${path.basename(parent)}`;
   execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt, '-b', branch]);
   const wtReal = fs.realpathSync(wt);
   commitMaterializedSpec(wtReal, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wtReal, undefined);
   // Seed a Step 1 line for a DIFFERENT branch (`{branch}-retry`) that has
   // THIS branch as a strict prefix -- never for `{branch}` itself.
@@ -183,7 +184,7 @@ test('bookkeeping-stamps gate (#1800 review finding): a Step 1 line logged for a
     `## /build\n- AUTO 09:00:00 — PR-early run lifecycle: no existing PR for ${branch}-retry; creating. Reversibility: n/a.\n`,
   );
   const out = pre.run(
-    { input: bashInput(`git push origin ${branch}`, wtReal), runDir: run, runState: { status: 'active', worktree: wtReal }, cwd: wtReal },
+    { env: process.env, input: bashInput(`git push origin ${branch}`, wtReal), runDir: run, runState: { status: 'active', worktree: wtReal }, cwd: wtReal },
     { resolveIntegrationModel: () => 'pr-first' },
   );
   assert.ok(out.json, 'expected a deny -- the logged line names a different (longer) branch, not this one');
@@ -200,7 +201,7 @@ test('bookkeeping-stamps gate (#1800): Step 1\'s reuse-open line satisfies the #
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined);
   const branch = execFileSync('git', ['-C', wt, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
   fs.writeFileSync(
@@ -208,7 +209,7 @@ test('bookkeeping-stamps gate (#1800): Step 1\'s reuse-open line satisfies the #
     `## /build\n- AUTO 09:00:00 — PR-early run lifecycle: reusing open PR #42 for ${branch}. Reversibility: high.\n`,
   );
   const out = pre.run(
-    { input: bashInput(`git push origin ${branch}`, wt), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { env: process.env, input: bashInput(`git push origin ${branch}`, wt), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
     { resolveIntegrationModel: () => 'pr-first' },
   );
   assert.deepStrictEqual(out, {}, 'a logged reuse-open line for this branch must satisfy the precondition');
@@ -218,7 +219,7 @@ test('bookkeeping-stamps gate (#1800): Step 1\'s reopen line satisfies the #989 
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined);
   const branch = execFileSync('git', ['-C', wt, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
   fs.writeFileSync(
@@ -226,7 +227,7 @@ test('bookkeeping-stamps gate (#1800): Step 1\'s reopen line satisfies the #989 
     `## /build\n- AUTO 09:00:00 — PR-early run lifecycle: reopened PR #42 for ${branch} (retry). Reversibility: high.\n`,
   );
   const out = pre.run(
-    { input: bashInput(`git push origin ${branch}`, wt), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { env: process.env, input: bashInput(`git push origin ${branch}`, wt), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
     { resolveIntegrationModel: () => 'pr-first' },
   );
   assert.deepStrictEqual(out, {}, 'a logged reopen line for this branch must satisfy the precondition');
@@ -268,7 +269,7 @@ test('AC1.1 (#3012): a paraphrased Step 1 line satisfies the #989 exemption prec
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined);
   const branch = execFileSync('git', ['-C', wt, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
   fs.writeFileSync(
@@ -276,7 +277,7 @@ test('AC1.1 (#3012): a paraphrased Step 1 line satisfies the #989 exemption prec
     `## /build\n- AUTO 09:00:00 — PR-early run lifecycle: no existing PR found for \`${branch}\`, creating. Reversibility: n/a.\n`,
   );
   const out = pre.run(
-    { input: bashInput(`git push origin ${branch}`, wt), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { env: process.env, input: bashInput(`git push origin ${branch}`, wt), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
     { resolveIntegrationModel: () => 'pr-first' },
   );
   assert.deepStrictEqual(out, {}, 'a paraphrased Step 1 line naming this branch must satisfy the precondition');
@@ -296,7 +297,7 @@ test('AC1.1 (#3012): a push-only PR-early line (Step 2, no Step 1 outcome) does 
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined);
   const branch = execFileSync('git', ['-C', wt, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
   fs.writeFileSync(
@@ -304,7 +305,7 @@ test('AC1.1 (#3012): a push-only PR-early line (Step 2, no Step 1 outcome) does 
     `## /build\n- AUTO 03:50:57 — PR-early run lifecycle Step 2 (push): pushed ${branch} to origin and opened draft PR #2393. Reversibility: high.\n`,
   );
   const out = pre.run(
-    { input: bashInput(`git push origin ${branch}`, wt), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { env: process.env, input: bashInput(`git push origin ${branch}`, wt), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
     { resolveIntegrationModel: () => 'pr-first' },
   );
   assert.ok(out.json, "expected a deny -- the line records the push, not Step 1's outcome");
@@ -318,12 +319,12 @@ test('bookkeeping-stamps gate (#1860): a worktree branch created via `-b {branch
   // remote-tracking ref -- reproducing what `worktree.baseRef: fresh`
   // (EnterWorktree's default, used for every pipeline worktree this plugin
   // creates) actually does: `git worktree add -b {branch} {path} origin/main`.
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-bare-'));
+  const bare = scratchDir('ct-bsg-bare-');
   execFileSync('git', ['init', '-q', '--bare', bare]);
   execFileSync('git', ['-C', main, 'remote', 'add', 'origin', bare]);
   execFileSync('git', ['-C', main, 'push', '-q', 'origin', 'HEAD:refs/heads/main']);
   execFileSync('git', ['-C', main, 'fetch', '-q', 'origin']);
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-wtparent-'));
+  const parent = scratchDir('ct-bsg-wtparent-');
   const wt = path.join(parent, 'wt');
   const branchName = `wt-branch-${path.basename(parent)}`;
   // Branching FROM the remote-tracking ref (not from local HEAD, unlike
@@ -333,7 +334,7 @@ test('bookkeeping-stamps gate (#1860): a worktree branch created via `-b {branch
   execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt, '-b', branchName, 'origin/main']);
   const wtReal = fs.realpathSync(wt);
   commitMaterializedSpec(wtReal, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wtReal, undefined);
   // Fixture sanity: @{u} must resolve successfully here (to origin/main), NOT
   // fail with a git error -- the pre-#1860 bug required a git-error exit to
@@ -349,7 +350,7 @@ test('bookkeeping-stamps gate (#1860): a worktree branch created via `-b {branch
     `## /build\n- AUTO 09:00:00 — PR-early run lifecycle: no existing PR for ${branchName}; creating. Reversibility: n/a.\n`,
   );
   const out = pre.run(
-    { input: bashInput(`git push origin ${branchName}`, wtReal), runDir: run, runState: { status: 'active', worktree: wtReal }, cwd: wtReal },
+    { env: process.env, input: bashInput(`git push origin ${branchName}`, wtReal), runDir: run, runState: { status: 'active', worktree: wtReal }, cwd: wtReal },
     { resolveIntegrationModel: () => 'pr-first' },
   );
   assert.deepStrictEqual(
@@ -371,10 +372,10 @@ test('bookkeeping-stamps gate (#989): worktree stamped, pr-first stubbed, a push
   // that would reopen exactly the "keep pushing forever, never open the PR"
   // gap IL-131 exists to close, only shifted from Edit/commit onto push.
   execFileSync('git', ['-C', wt, 'push', '-u', 'origin', branch], { stdio: 'ignore' });
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined);
   const out = pre.run(
-    { input: bashInput(`git push origin ${branch}`, wt), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { env: process.env, input: bashInput(`git push origin ${branch}`, wt), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
     { resolveIntegrationModel: () => 'pr-first' },
   );
   assert.ok(out.json, 'a push of an already-tracked branch with no PR recorded and no degrade logged must still deny');
@@ -392,7 +393,7 @@ test('bookkeeping-stamps gate: worktree stamped, pr-first stubbed, degrade alrea
     '## /build\n- AUTO 09:00:00 — PR-early run lifecycle: push of wt-branch to origin FAILED (network); run proceeds local-only, no PR opened. Reversibility: n/a.\n',
   );
   const out = pre.run(
-    { input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
     { resolveIntegrationModel: () => 'pr-first' },
   );
   assert.deepStrictEqual(out, {});
@@ -404,7 +405,7 @@ test('bookkeeping-stamps gate: worktree stamped, resolveIntegrationModel stubbed
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const { run } = mkRunDir(projectDir(), wt, undefined);
   const out = pre.run(
-    { input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
     { resolveIntegrationModel: () => 'local-merge' },
   );
   assert.deepStrictEqual(out, {});
@@ -415,7 +416,7 @@ test('bookkeeping-stamps gate: through pre.run() with the real (unstubbed) resol
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const { run } = mkRunDir(projectDir(), wt, undefined);
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt });
   assert.deepStrictEqual(out, {});
 });
 
@@ -425,7 +426,7 @@ test('bookkeeping-stamps gate: worktree stamped AND pr recorded -> allow regardl
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const { run } = mkRunDir(projectDir(), wt, undefined, { pr: { number: 991, url: 'https://github.com/example/example/pull/991' } });
   const out = pre.run(
-    { input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt, pr: { number: 991, url: 'x' } }, cwd: wt },
+    { env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt, pr: { number: 991, url: 'x' } }, cwd: wt },
     { resolveIntegrationModel: () => 'pr-first' },
   );
   assert.deepStrictEqual(out, {});
@@ -450,7 +451,7 @@ test('bookkeeping-stamps gate: decisions.md exists but has no matching PR-early 
   const { run } = mkRunDir(projectDir(), wt, undefined);
   fs.writeFileSync(path.join(run, 'decisions.md'), '## /build\n- AUTO 14:32:14 — unrelated entry.\n');
   const out = pre.run(
-    { input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
     { resolveIntegrationModel: () => 'pr-first' },
   );
   assert.ok(out.json, 'expected a deny result — decisions.md exists but has no PR-early degrade line');
@@ -470,6 +471,7 @@ test('regression (IL-131 recurrence, records #118/#893): a build agent that mate
   // The first tool call after materialize: an Edit to some already-satisfied
   // file, exactly the "nothing further to implement" shortcut IL-131 describes.
   const out = pre.run({
+    env: process.env,
     input: editInput(path.join(wt, 'plugin', 'skills', 'build', 'SKILL.md')),
     runDir: run,
     runState: { status: 'active' },
@@ -483,6 +485,7 @@ test('regression (IL-131 recurrence, records #118/#893): a build agent that mate
   // Simulate remediation: run record-worktree, retry the same edit.
   fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'active', worktree: wt }));
   const retry = pre.run({
+    env: process.env,
     input: editInput(path.join(wt, 'plugin', 'skills', 'build', 'SKILL.md')),
     runDir: run,
     runState: { status: 'active', worktree: wt },
@@ -505,7 +508,7 @@ test('bookkeeping-stamps gate (C2 discrimination): a DIFFERENT run-id\'s materia
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '777-spec.md'), '2026-08-01T000000-record-777');
   const { run } = mkRunDir(projectDir(), null, undefined); // basename is RUN_ID, not the committed run
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
   assert.deepStrictEqual(out, {}, 'another run\'s materialize commit must not arm this run\'s gate');
 });
 
@@ -521,7 +524,7 @@ test('bookkeeping-stamps gate (C1/C2 discrimination): a legacy top-level work/{n
   execFileSync('git', ['-C', wt, 'add', '-f', path.join('work', '499-spec.md')]);
   execFileSync('git', ['-C', wt, 'commit', '-m', 'legacy top-level spec', '-q']);
   const { run } = mkRunDir(projectDir(), null, undefined);
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
   assert.deepStrictEqual(out, {}, 'a pre-anchoring top-level work/ spec must not arm the gate');
 });
 
@@ -534,7 +537,7 @@ test('bookkeeping-stamps gate: a non-work file committed inside this run\'s own 
   execFileSync('git', ['-C', wt, 'add', '-f', path.join('.claude-tweaks', 'pipelines', RUN_ID, 'decisions.md')]);
   execFileSync('git', ['-C', wt, 'commit', '-m', 'log', '-q']);
   const { run } = mkRunDir(projectDir(), null, undefined);
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
   assert.deepStrictEqual(out, {}, 'only work/{n}-spec.md (or spec-*/work/*) is the materialize sentinel');
 });
 
@@ -546,6 +549,7 @@ test('bookkeeping-stamps gate (I1): a provably foreign-owned run warns instead o
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const { run } = mkRunDir(projectDir(), null, 'owner-session');
   const out = pre.run({
+    env: process.env,
     input: { ...editInput(path.join(wt, 'src', 'x.js')), session_id: 'caller-session' },
     runDir: run,
     runState: { status: 'active', sessionId: 'owner-session' },
@@ -562,6 +566,7 @@ test('bookkeeping-stamps gate (I1): identity missing on either side still denies
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const { run } = mkRunDir(projectDir(), null, 'owner-session');
   const out = pre.run({
+    env: process.env,
     input: editInput(path.join(wt, 'src', 'x.js')), // no session_id on the caller side
     runDir: run,
     runState: { status: 'active', sessionId: 'owner-session' },
@@ -578,6 +583,7 @@ test('bookkeeping-stamps gate (I1): the pr-first branch warns instead of denying
   const { run } = mkRunDir(projectDir(), wt, 'owner-session');
   const out = pre.run(
     {
+      env: process.env,
       input: { ...editInput(path.join(wt, 'src', 'x.js')), session_id: 'caller-session' },
       runDir: run,
       runState: { status: 'active', worktree: wt, sessionId: 'owner-session' },
@@ -611,11 +617,12 @@ test('bookkeeping-stamps gate (#1259): a caller whose OWN resolved run differs f
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, null, undefined); // unstamped: no worktree, no sessionId
   const ownRun = path.join(project, '.claude-tweaks', 'pipelines', 'sibling-own-run');
   fs.mkdirSync(ownRun, { recursive: true });
   const out = pre.run({
+    env: process.env,
     input: editInput(path.join(wt, 'src', 'x.js')),
     runDir: run,
     runState: { status: 'active' },
@@ -632,9 +639,10 @@ test('bookkeeping-stamps gate (#1259): ownedRun matching ctx.runDir (the ordinar
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, null, undefined);
   const out = pre.run({
+    env: process.env,
     input: editInput(path.join(wt, 'src', 'x.js')),
     runDir: run,
     runState: { status: 'active' },
@@ -649,12 +657,13 @@ test('bookkeeping-stamps gate (#1259): a distinct ownedRun does NOT loosen the P
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined); // worktree already stamped -> PR-stamp branch
   const ownRun = path.join(project, '.claude-tweaks', 'pipelines', 'sibling-own-run');
   fs.mkdirSync(ownRun, { recursive: true });
   const out = pre.run(
     {
+      env: process.env,
       input: editInput(path.join(wt, 'src', 'x.js')),
       runDir: run,
       runState: { status: 'active', worktree: wt },
@@ -714,10 +723,11 @@ test('#1798 Task 0: runState.sessionId unset + a covered call whose caller sessi
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined); // worktree stamped, sessionId genuinely never recorded
   const out = pre.run(
     {
+      env: process.env,
       input: { ...editInput(path.join(wt, 'src', 'x.js')), session_id: 'genuine-owner-session' },
       runDir: run,
       runState: { status: 'active', worktree: wt },
@@ -740,10 +750,11 @@ test('#1798: a bookkeeping-stamp-deny event on the record-pr branch carries owne
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined);
   pre.run(
     {
+      env: process.env,
       input: { ...editInput(path.join(wt, 'src', 'x.js')), session_id: 'caller-session-1' },
       runDir: run,
       runState: { status: 'active', worktree: wt },
@@ -761,9 +772,10 @@ test('#1798: a bookkeeping-stamp-deny event on the record-worktree branch also c
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, null, 'owner-session-42'); // no worktree stamped -> record-worktree branch
   pre.run({
+    env: process.env,
     input: { ...editInput(path.join(wt, 'src', 'x.js')), session_id: 'owner-session-42' },
     runDir: run,
     runState: { status: 'active', sessionId: 'owner-session-42' },
@@ -827,6 +839,7 @@ test('bookkeeping-stamps gate (#1520, real resolveRun): a stale same-session sib
   // — proving #815's actual failure mode (a silently-allowed second commit
   // with no record-worktree ever called) is closed end-to-end.
   const out = pre.run({
+    env: process.env,
     input: editInput(path.join(wt, 'src', 'x.js')),
     runDir: run,
     runState: null,
@@ -883,6 +896,7 @@ test('bookkeeping-stamps gate (#2783 G1): a session-owned ad-hoc twin bound to t
   // — even though ownedRun.dir !== ctx.runDir, because the mismatch is only
   // the session's own ad-hoc placeholder, not a distinct recorded run.
   const out = pre.run({
+    env: process.env,
     input: editInput(path.join(wt, 'src', 'x.js')),
     runDir,
     runState: null,
@@ -904,11 +918,11 @@ test('bookkeeping-stamps gate (I2.1): an Edit to the run dir\'s own decisions.md
   // the worktree being enforced — the exemption has to resolve the target's
   // own repo root, not assume the worktree's.
   const { run } = mkRunDir(main, null, undefined);
-  const exempt = pre.run({ input: editInput(path.join(run, 'decisions.md')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  const exempt = pre.run({ env: process.env, input: editInput(path.join(run, 'decisions.md')), runDir: run, runState: { status: 'active' }, cwd: wt });
   assert.deepStrictEqual(exempt, {}, 'a write into .claude-tweaks/pipelines/ must not be denied by this gate');
   // Control: the same scenario with an ordinary code file still denies, so the
   // exemption above is the reason for the allow, not a broken fixture.
-  const denied = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  const denied = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
   assert.ok(denied.json && denied.json.hookSpecificOutput, 'control: a non-exempt target must still be denied');
   assert.strictEqual(denied.json.hookSpecificOutput.permissionDecision, 'deny');
 });
@@ -919,7 +933,7 @@ test('bookkeeping-stamps gate (I2.1): the PR-stamp deny message names bin/log-de
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const { run } = mkRunDir(projectDir(), wt, undefined);
   const out = pre.run(
-    { input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
     { resolveIntegrationModel: () => 'pr-first' },
   );
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /bin\/log-decision\.js/);
@@ -935,6 +949,7 @@ test('bookkeeping-stamps gate (I2.2): a Bash git commit targeting an unrelated r
   execFileSync('git', ['-C', foreign, 'add', 'a.txt']);
   const { run } = mkRunDir(projectDir(), null, undefined);
   const out = pre.run({
+    env: process.env,
     input: bashInput(`git -C ${shellQuote(foreign)} commit -m "unrelated"`, wt),
     runDir: run,
     runState: { status: 'active' },
@@ -950,6 +965,7 @@ test('bookkeeping-stamps gate (I2.2): one in-project git target is enough to kee
   const foreign = gitRepo();
   const { run } = mkRunDir(projectDir(), null, undefined);
   const out = pre.run({
+    env: process.env,
     input: bashInput(`git -C ${shellQuote(foreign)} commit -m "unrelated" && git commit -m "ours"`, wt),
     runDir: run,
     runState: { status: 'active' },
@@ -966,9 +982,10 @@ test('bookkeeping-stamps gate (I2.3, #1678): an Edit to a path outside any git r
   // A plain mkdtemp dir with no `git init` — provably outside any git repo,
   // the same shape as a Claude Code session scratchpad directory
   // (/private/tmp/claude-<uid>/<slug>/<session-id>/scratchpad/**).
-  const scratchpad = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-scratch-'));
+  const scratchpad = scratchDir('ct-bsg-scratch-');
   const { run } = mkRunDir(projectDir(), null, undefined);
   const out = pre.run({
+    env: process.env,
     input: editInput(path.join(scratchpad, 'pr-body.md')),
     runDir: run,
     runState: { status: 'active' },
@@ -984,6 +1001,7 @@ test('bookkeeping-stamps gate (I2.3, #1678): an Edit to a path inside an unrelat
   const foreign = gitRepo();
   const { run } = mkRunDir(projectDir(), null, undefined);
   const out = pre.run({
+    env: process.env,
     input: editInput(path.join(foreign, 'notes.md')),
     runDir: run,
     runState: { status: 'active' },
@@ -998,6 +1016,7 @@ test('bookkeeping-stamps gate (I2.3, #1678): control — an Edit whose target is
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const { run } = mkRunDir(projectDir(), null, undefined);
   const out = pre.run({
+    env: process.env,
     input: editInput(path.join(wt, 'src', 'x.js')),
     runDir: run,
     runState: { status: 'active' },
@@ -1030,6 +1049,7 @@ test('bookkeeping-stamps gate (I2.3, #1678): an UNPROVABLE target answer (indete
   let out;
   try {
     out = pre.run({
+      env: process.env,
       input: editInput(targetPath),
       runDir: run,
       runState: { status: 'active' },
@@ -1053,7 +1073,7 @@ test('bookkeeping-stamps gate (I2.3, #1678, review finding): the "provably not a
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const scratchpad = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-scratch-'));
+  const scratchpad = scratchDir('ct-bsg-scratch-');
   const { run } = mkRunDir(projectDir(), null, undefined);
   const realMainCheckoutRoot = wtDetect.mainCheckoutRoot;
   wtDetect.mainCheckoutRoot = (p, ...rest) => {
@@ -1063,6 +1083,7 @@ test('bookkeeping-stamps gate (I2.3, #1678, review finding): the "provably not a
   let out;
   try {
     out = pre.run({
+      env: process.env,
       input: editInput(path.join(scratchpad, 'pr-body.md')),
       runDir: run,
       runState: { status: 'active' },
@@ -1088,11 +1109,12 @@ test('bookkeeping-stamps gate (I2.3, #1678, review finding): a symlink located o
   const realFile = path.join(wt, 'src', 'x.js');
   fs.mkdirSync(path.dirname(realFile), { recursive: true });
   fs.writeFileSync(realFile, 'existing content\n');
-  const scratchpad = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-scratch-'));
+  const scratchpad = scratchDir('ct-bsg-scratch-');
   const link = path.join(scratchpad, 'link.js');
   fs.symlinkSync(realFile, link);
   const { run } = mkRunDir(projectDir(), null, undefined);
   const out = pre.run({
+    env: process.env,
     input: editInput(link),
     runDir: run,
     runState: { status: 'active' },
@@ -1106,11 +1128,12 @@ test('bookkeeping-stamps gate (I2.3, #1678, review finding): a dangling symlink 
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const scratchpad = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-scratch-'));
+  const scratchpad = scratchDir('ct-bsg-scratch-');
   const link = path.join(scratchpad, 'dangling-link.js');
   fs.symlinkSync(path.join(scratchpad, 'nothing-here.js'), link);
   const { run } = mkRunDir(projectDir(), null, undefined);
   const out = pre.run({
+    env: process.env,
     input: editInput(link),
     runDir: run,
     runState: { status: 'active' },
@@ -1131,7 +1154,7 @@ test('bookkeeping-stamps gate (I3): the run\'s config.yml pin is read — pinned
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   const { run } = mkRunDir(main, wt, undefined);
   fs.writeFileSync(path.join(run, 'config.yml'), 'integration-model: pr-first\n');
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt });
   assert.ok(out.json, 'expected a deny once the run pins pr-first');
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /pr-first/);
@@ -1145,7 +1168,7 @@ test('bookkeeping-stamps gate (I3): the run\'s pin beats policy.yml — pinned l
   fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
   const { run } = mkRunDir(main, wt, undefined);
   fs.writeFileSync(path.join(run, 'config.yml'), 'integration-model: local-merge\n');
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt });
   assert.deepStrictEqual(out, {}, 'a run pinned local-merge must never be denied for a PR it will never have');
 });
 
@@ -1156,7 +1179,7 @@ test('bookkeeping-stamps gate (I3): with no run pin, policy.yml still wins over 
   fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
   const { run } = mkRunDir(main, wt, undefined); // no config.yml
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt });
   assert.ok(out.json, 'expected a deny — policy.yml pins pr-first and nothing overrides it');
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
 });
@@ -1194,9 +1217,9 @@ test('bookkeeping-stamps gate (I5): both stamps present adds no repo-inspection 
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
 
-  const baseline = withSpawnCount(() => pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: null, runState: null, cwd: wt }));
+  const baseline = withSpawnCount(() => pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: null, runState: null, cwd: wt }));
   assert.deepStrictEqual(baseline.out, {});
 
   // (#2636) All three stamps (worktree, pr, claimExempt) must be present for
@@ -1204,6 +1227,7 @@ test('bookkeeping-stamps gate (I5): both stamps present adds no repo-inspection 
   // the claim-log branch is reachable in this steady state too.
   const { run } = mkRunDir(project, wt, undefined, { pr: { number: 1 }, claimExempt: true });
   const shortCircuit = withSpawnCount(() => pre.run({
+    env: process.env,
     input: editInput(path.join(wt, 'src', 'x.js')),
     runDir: run,
     runState: {
@@ -1222,6 +1246,7 @@ test('bookkeeping-stamps gate (I5): both stamps present adds no repo-inspection 
   // spawns than baseline, proving baseline isn't already saturated.
   const { run: controlRun } = mkRunDir(project, wt, undefined);
   const control = withSpawnCount(() => pre.run({
+    env: process.env,
     input: editInput(path.join(wt, 'src', 'x.js')),
     runDir: controlRun,
     runState: { status: 'active', worktree: wt },
@@ -1243,7 +1268,7 @@ test('bookkeeping-stamps gate (#4830 AC2): an expired memo at the gate re-probes
   const { run } = mkRunDir(project, wt, undefined, { forgeDegradedAt: before });
   const gh = fakeGh({ first: 'hang' });
   try {
-    const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: readRunState(run), cwd: wt });
+    const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: readRunState(run), cwd: wt });
     assert.deepStrictEqual(out, {});
     assert.strictEqual(gh.count(), 2, 'the expired memo re-probes: two bounded attempts');
     const persisted = readRunState(run);
@@ -1314,6 +1339,7 @@ test('bookkeeping-stamps gate (#1460): an unrelated dangling run (materialize co
   const scratchWt = linkedWorktreeOf(main);
 
   const out = pre.run({
+    env: process.env,
     input: editInput(path.join(scratchWt, 'src', 'x.js')),
     runDir: run,
     runState: { status: 'interrupted' },
@@ -1348,6 +1374,7 @@ test('bookkeeping-stamps gate (#1460 control): the same dangling-run shape still
   fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'interrupted' }));
 
   const out = pre.run({
+    env: process.env,
     input: editInput(path.join(ownWt, 'src', 'x.js')),
     runDir: run,
     runState: { status: 'interrupted' },
@@ -1390,7 +1417,7 @@ function archivedGateFixture(shape) {
   }
   const { run } = mkRunDir(projectDir(), wt, undefined);
   const out = pre.run(
-    { input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
     { resolveIntegrationModel: () => 'pr-first' },
   );
   return { out, wt, run };
@@ -1428,7 +1455,7 @@ test('bookkeeping-stamps gate (#3974): an archived-only header under github-issu
   execFileSync('git', ['-C', wt, 'add', '-f', archivedRel]);
   execFileSync('git', ['-C', wt, 'commit', '-m', 'Archive run', '-q']);
   const { run } = mkRunDir(projectDir(), null, undefined);
-  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  const out = pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
   assert.ok(out.json, 'expected a claim-log deny');
   const spec = out.json.hookSpecificOutput;
   assert.strictEqual(spec.permissionDecision, 'deny');

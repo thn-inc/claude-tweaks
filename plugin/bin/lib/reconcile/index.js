@@ -100,12 +100,11 @@ function expandChecks(checks) {
   return out;
 }
 
-// opts: { dryRun?: boolean, checks?: string[], cwd?: string, env?: object, sessionId?: string, budgetMs?: number, forgeProbeTimeoutMs?: number }
-// `env` (#5376), when set, is the environment of the git children that resolve the integration
-// branch and probe the origin remote (the no-repo/no-remote gate); absent, they inherit process.env.
-// The checks past that gate still inherit process.env. The gate is as far as #5376's in-process tests
-// reach (tests/reconcile-dispatch.test.js keeps every in-process call on a no-remote fixture, so none
-// gets past it); threading `env` to every check's git and gh children is tracked as #5606.
+// opts: { dryRun?: boolean, checks?: string[], cwd?: string, env?: object, homeDir?: function, sessionId?: string, budgetMs?: number, forgeProbeTimeoutMs?: number }
+// `env` and `homeDir` (a hook event's context, #5377; `env` alone for #5376's in-process verb tests) reach the
+// declined-store prune, the integration-branch and origin/HEAD git children, the forge probe and the model probe;
+// absent, each reads the inherited environment as before. They also reach the pr-first checks FAST_CHECKS names:
+// the preflight, the shared fetch, mirror, red-tip and console.
 // -> { mirror, redTip, worktrees, claims, postMerge, runs, branches, remoteBranches, ledgerResidue, console, residuePlan, residueErrors, skipped, timings }
 // A dry run writes neither the cache nor GitHub (#4180): `residuePlan` lists what the residue
 // tracking would have done (an array on a dry run when archive ran, null otherwise), and
@@ -113,8 +112,8 @@ function expandChecks(checks) {
 // pass's prune failures; it rides on EVERY return path that resolved a repo root (an early or
 // over-budget return included), and stays null only when there is no repo.
 // `sessionId`, when the caller has one, threads through to archiveMerged's
-// own `isAbandonedInterrupted` ownership check (archive-merged.js) — omitted
-// (undefined), archiveMerged falls back to its own
+// own `abandoned-interrupted` classification's ownership check
+// (archive-merged.js) — omitted (undefined), archiveMerged falls back to its own
 // `process.env.CLAUDE_CODE_SESSION_ID` default, unchanged from before this
 // option existed.
 // This module is gh-CLI-only by design (a Node subprocess cannot reach an
@@ -164,14 +163,16 @@ async function reconcileInner(opts, state) {
 
   // Declined-learning store prune (#1399) — local, gitignored bookkeeping unrelated to git/
   // GitHub reachability, so it runs unconditionally on every reconcile pass regardless of
-  // `checks`, the integration model, or whether this even resolves to a repo — the store's
-  // lock and file resolve from this pass's `cwd` to its main checkout (#4360, #5376: the store's
-  // `deps.cwd` anchor), so an in-process caller with its own cwd never prunes the store of the
-  // process's own checkout. Best-effort: a prune failure never blocks the rest of the pass.
+  // `checks`, the integration model, or whether this even resolves to a repo — the store's own
+  // path resolves from the cwd given to it to the main checkout (#4360; no root param on this module
+  // today, matching every existing caller: /feedback and /reflect never pass one either), so this
+  // passes the pass's own `cwd` and `env` (#5376, #5377), not `root`: an in-process caller never prunes
+  // the store of the process's own checkout. Best-effort: a prune failure never blocks the rest of the pass.
   // #4180: skipped on a dry run — the prune rewrites the store file (and takes its lock directory).
+  const gitEnvOpts = opts.env ? { env: opts.env } : {};
   if (!dryRun) {
     try {
-      require('../declined-learning/store').pruneDeclines({}, { cwd });
+      require('../declined-learning/store').pruneDeclines({}, { cwd, ...gitEnvOpts });
     } catch {
       /* best-effort — never break reconcile over declined-learning maintenance */
     }
@@ -219,7 +220,6 @@ async function reconcileInner(opts, state) {
   // its own `origin/${integration}` ref or issues `git fetch origin
   // {integration}` on the assumption that `integration` is bare — normalize
   // once here so the whole module keeps that contract.
-  const gitEnvOpts = opts.env ? { env: opts.env } : {};
   let integration = bareIntegrationName(resolveIntegrationBranch(root, opts.cache, gitEnvOpts));
   // #3132: a fresh clone can lack refs/remotes/origin/HEAD even with a
   // working `origin` — repair it once here (reconcile already does network
@@ -269,6 +269,9 @@ async function reconcileInner(opts, state) {
   if (opts.forgeProbeTimeoutMs !== undefined && opts.forgeProbeTimeoutMs !== null) {
     modelOpts.timeoutMs = opts.forgeProbeTimeoutMs;
   }
+  // A hook event's context env and homeDir reach the forge probe's git and gh children (#5377).
+  if (opts.env !== undefined) modelOpts.env = opts.env;
+  if (opts.homeDir !== undefined) modelOpts.homeDir = opts.homeDir;
   const model = resolveModel(root, modelOpts);
   if (model !== 'pr-first') {
     // local-merge / no-forge: only `reap` has a defined fallback here — the
@@ -310,6 +313,10 @@ async function reconcileInner(opts, state) {
   // so a test's `require('./preflight').ghHealthCheck = fn` monkeypatch
   // actually reaches this call site.
   const ghDependentChecks = checks.filter((c) => c !== 'mirror');
+  // A hook event's env, homeDir and cwd for the gh and git children below (#5377); undefined leaves each call as it was.
+  const injected = opts.env !== undefined ? { env: opts.env, ...(opts.homeDir !== undefined ? { homeDir: opts.homeDir } : {}) } : {};
+  // The preflight child runs where the pass was told to run (the declined-store prune's cwd), as it ran in the process's own directory before #5377; no `cwd` key when the caller passed none.
+  const ghInjected = opts.env !== undefined ? { ...injected, ...(opts.cwd ? { cwd: opts.cwd } : {}) } : undefined;
   // #872: the FAST_CHECKS shape (mirror requested, remote-prune not — the
   // same "mirror only" shape shared-fetch.js's own header names) runs this
   // preflight and the shared git fetch below concurrently via Promise.all,
@@ -355,11 +362,11 @@ async function reconcileInner(opts, state) {
   } else if (ghDependentChecks.length) {
     if (fastChecksShape) {
       [health, concurrentFetch] = await Promise.all([
-        require('./preflight').ghHealthCheckAsync(),
-        sharedFetchAsync(root, { integration }),
+        require('./preflight').ghHealthCheckAsync(ghInjected),
+        sharedFetchAsync(root, { integration, ...injected }),
       ]);
     } else {
-      health = require('./preflight').ghHealthCheck();
+      health = require('./preflight').ghHealthCheck(ghInjected);
     }
   }
   // Deliberately NOT written here — mirror's own dispatch (further below)
@@ -476,7 +483,7 @@ async function reconcileInner(opts, state) {
   // PREREQUISITES edit that drops that entry.
   const fetchRan = wantsMirror || wantsRemotePrune;
   if (fetchRan) {
-    const fetched = concurrentFetch || sharedFetch(root, { integration, mirror: wantsMirror, remotePrune: wantsRemotePrune });
+    const fetched = concurrentFetch || sharedFetch(root, { integration, mirror: wantsMirror, remotePrune: wantsRemotePrune, ...injected });
     if (fetched.failure) {
       sharedFetchOk = false;
       const affected = ['mirror', 'red-tip', 'remote-prune'].filter((c) => checks.includes(c));
@@ -486,7 +493,7 @@ async function reconcileInner(opts, state) {
     result.skipped.push({ check: 'red-tip', reason: 'no-fetch-this-pass' });
   }
   if (checks.includes('mirror') && sharedFetchOk) {
-    result.mirror = timePhaseSync('mirror', () => mirrorFastForward(root, integration, { skipFetch: true, dryRun }));
+    result.mirror = timePhaseSync('mirror', () => mirrorFastForward(root, integration, { skipFetch: true, dryRun, ...injected }));
   }
 
   // Detection only — never mutates repo/run state. Reads origin/{integration}
@@ -504,6 +511,7 @@ async function reconcileInner(opts, state) {
   if (checks.includes('red-tip') && sharedFetchOk && fetchRan) {
     result.redTip = timePhaseSync('red-tip', () => redTipCheck(root, integration, {
       onSkip: (reason) => result.skipped.push({ check: 'red-tip', reason }),
+      ...injected,
     }));
   }
 
@@ -513,7 +521,7 @@ async function reconcileInner(opts, state) {
   // worktree-list join nor merged-PR evidence, unlike the three that follow.
   if (overBudget(DISPATCH_ORDER.slice(2))) return result;
   if (checks.includes('console')) {
-    result.console = await timePhase('console', () => consoleExecuteDetect({ cwd: root }));
+    result.console = await timePhase('console', () => consoleExecuteDetect({ cwd: root, ...injected }));
   }
 
   // Ordering is load-bearing, not incidental: release, archive, and

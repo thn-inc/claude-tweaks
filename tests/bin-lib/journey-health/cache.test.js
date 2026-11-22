@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -8,7 +9,7 @@ const {
   cachePath, readCache, writeCache, createDurable,
 } = require('../../../plugin/bin/lib/journey-health/cache');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'journey-health-cache-')); }
+function tmp() { return scratchDir('journey-health-cache-'); }
 
 test('readCache returns {} when the cache file does not exist', () => {
   const root = tmp();

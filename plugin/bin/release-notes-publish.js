@@ -17,6 +17,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { run: publish } = require('./lib/release-notes-publish.js');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives.js');
+const { locatePolicyFile } = require('./lib/policy-file.js');
 const { ghOptions, injectedGhDeps, pickInjected } = require('./lib/repo-resolve.js');
 
 const USAGE = 'usage: release-notes-publish.js [--root <dir>]\nexit 0 applied/no-op; 1 a gh/git call failed';
@@ -75,7 +76,7 @@ function run(argv, deps) {
     git: (args) => deps.git(args, { cwd: root, env: deps.env }),
     readFile: (p) => deps.readFile(path.join(root, p)),
     writeFile: (p, text) => deps.writeFile(path.join(root, p), text),
-    readPolicy: () => deps.readPolicy(path.join(root, '.claude-tweaks', 'policy.yml')),
+    readPolicy: () => deps.readPolicy(locatePolicyFile(root).path),
     stdout: deps.stdout,
     stderr: deps.stderr,
   });

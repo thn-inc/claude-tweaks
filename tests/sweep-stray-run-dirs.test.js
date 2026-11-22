@@ -4,12 +4,14 @@ require('./helpers/stub-token-pass').installTokenPassStub();
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const {
   sweep, hasTrackedWork, foldEventsJsonl, listStrayRunDirs,
 } = require('../plugin/bin/sweep-stray-run-dirs');
 const { runCliSync, spawnCli } = require('./helpers/run-cli');
+const { initRepo } = require('./helpers/git-fixtures');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'sweep-stray-run-dirs.js');
 
@@ -22,10 +24,8 @@ function trackedFiles(root) {
 }
 
 function makeRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-strays-'));
-  git(dir, 'init', '-b', 'main');
-  git(dir, 'config', 'user.email', 't@t');
-  git(dir, 'config', 'user.name', 't');
+  const dir = scratchDir('sweep-strays-');
+  initRepo(dir, { name: 't', email: 't@t', branch: 'main', cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
   git(dir, 'add', 'a.txt');
   git(dir, 'commit', '-m', 'init');
@@ -58,7 +58,7 @@ test('hasTrackedWork: an inherited GIT_DIR naming a linked worktree does not red
   const root = fs.realpathSync(makeRepo());
   const rel = '.claude-tweaks/pipelines/2026-08-01T090000-spec-1';
   commitPath(root, `${rel}/work/1-spec.md`, '# 1\n');
-  const wtParent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-strays-wt-')));
+  const wtParent = fs.realpathSync(scratchDir('sweep-strays-wt-'));
   const wt = path.join(wtParent, 'wt');
   git(root, 'worktree', 'add', '-b', 'feat', wt);
   git(wt, 'rm', '--cached', '-q', `${rel}/work/1-spec.md`);
@@ -282,7 +282,7 @@ test('AC4.1: in-process with a fixture cwd sweeps only under that directory', ()
     commitPath(b, `${PIPELINES}/${runId}/work/1-spec.md`, '# 1\n');
     // Guard: a dry run first, so a `run` that ignores deps.cwd() fails here (it would otherwise sweep
     // and commit in whichever checkout contains the test runner's cwd) before anything is written to git.
-    const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-strays-guard-'));
+    const logDir = scratchDir('sweep-strays-guard-');
     try {
       const guard = runCliSync(CLI, ['--dry-run', '--log', path.join(logDir, 'guard.log')], { cwd: a, env: cleanEnv() });
       assert.equal(guard.stdout.split('\n')[0], `root: ${a}`);
@@ -304,15 +304,13 @@ test('AC4.1: in-process with a fixture cwd sweeps only under that directory', ()
 });
 
 test('AC8.1: a relative --root and --log resolve against deps.cwd()', () => {
-  const parent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-strays-cwd-')));
+  const parent = fs.realpathSync(scratchDir('sweep-strays-cwd-'));
   const stray = path.join(process.cwd(), 'sweep-rel.log');
   const strayExisted = fs.existsSync(stray);
   try {
     const root = path.join(parent, 'repo');
     fs.mkdirSync(root);
-    git(root, 'init', '-b', 'main');
-    git(root, 'config', 'user.email', 't@t');
-    git(root, 'config', 'user.name', 't');
+    initRepo(root, { name: 't', email: 't@t', branch: 'main', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     commitPath(root, `${PIPELINES}/2026-08-01T090000-spec-1/work/1-spec.md`, '# 1\n');
     const res = runCliSync(CLI, ['--root', 'repo', '--log', 'sweep-rel.log'], { cwd: parent, env: cleanEnv() });
     assert.equal(res.code, 0);
@@ -329,7 +327,7 @@ test('AC8.1: a relative --root and --log resolve against deps.cwd()', () => {
 test('an absolute --root and --log work when deps.cwd() throws (deleted cwd)', () => {
   withRepos(1, (root) => {
     commitPath(root, `${PIPELINES}/2026-08-01T090000-spec-1/work/1-spec.md`, '# 1\n');
-    const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-strays-deleted-cwd-'));
+    const logDir = scratchDir('sweep-strays-deleted-cwd-');
     try {
       const deletedCwd = () => { throw Object.assign(new Error('ENOENT: process.cwd failed'), { code: 'ENOENT' }); };
       const res = runCliSync(CLI, ['--dry-run', '--root', root, '--log', path.join(logDir, 'sweep.log')], {
@@ -390,7 +388,7 @@ test('AC8.1: git children get the injected env — a failing commit in deps.env 
   withRepos(1, (root) => {
     const runId = '2026-08-01T090000-spec-1';
     commitPath(root, `${PIPELINES}/${runId}/work/1-spec.md`, '# 1\n');
-    const traceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-strays-trace-'));
+    const traceDir = scratchDir('sweep-strays-trace-');
     try {
       const trace = path.join(traceDir, 'trace.txt');
       const res = runCliSync(CLI, ['--root', root, '--log', path.join(traceDir, 'sweep.log')], {
@@ -412,7 +410,7 @@ test('AC8.1: every git child on the archive path runs under the injected env (GI
   withRepos(1, (root) => {
     const runId = '2026-08-01T090000-spec-1';
     commitPath(root, `${PIPELINES}/${runId}/work/1-spec.md`, '# 1\n');
-    const traceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-strays-trace-'));
+    const traceDir = scratchDir('sweep-strays-trace-');
     try {
       const trace = path.join(traceDir, 'trace.txt');
       const res = runCliSync(CLI, ['--root', root, '--log', path.join(traceDir, 'sweep.log')], {
@@ -433,7 +431,7 @@ test('AC8.1: the identical-twin resolution children run under the injected env t
     const runId = '2026-08-01T090000-spec-1';
     commitPath(root, `${PIPELINES}/${runId}/work/1-spec.md`, '# 1\n');
     commitPath(root, `${PIPELINES}/archive/${runId}/work/1-spec.md`, '# 1\n');
-    const traceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-strays-trace-'));
+    const traceDir = scratchDir('sweep-strays-trace-');
     try {
       const trace = path.join(traceDir, 'trace.txt');
       const res = runCliSync(CLI, ['--root', root, '--log', path.join(traceDir, 'sweep.log')], {
@@ -453,7 +451,7 @@ test('AC8.1: the identical-twin resolution children run under the injected env t
 // subcommands that wrote a trace line (those given in `watch`, in trace order). A git child that did not
 // get deps.env writes nothing, so a missing entry names the child that lost the env.
 function traceSweep(root, watch, extraEnv = {}) {
-  const traceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-strays-trace-'));
+  const traceDir = scratchDir('sweep-strays-trace-');
   try {
     const trace = path.join(traceDir, 'trace.txt');
     const res = runCliSync(CLI, ['--root', root, '--log', path.join(traceDir, 'sweep.log')], {

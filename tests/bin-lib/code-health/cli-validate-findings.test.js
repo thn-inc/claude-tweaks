@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -13,7 +14,7 @@ const { cleanGitEnv } = require('../../helpers/git-fixtures');
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'code-health.js');
 
 function tmp() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-vf-'));
+  return scratchDir('codehealth-vf-');
 }
 
 // In-process (#5381), with the file-protocol-only git guard and a throwaway real cwd — see tests/helpers/health-sweep-cli.js.

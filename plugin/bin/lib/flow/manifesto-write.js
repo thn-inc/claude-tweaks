@@ -53,11 +53,13 @@ const HEADER_RE = /^(?:# Auto-Decision Log\b|Pipeline config snapshot:)/m;
 // The keys resolved through preflight's resolvePolicy: preflight's LEVER_KEYS
 // minus ceremony-profile (folded from the records, source `header`) and
 // merge-authorization (always `ask` here — never a policy.yml value), plus
-// `autonomy` (the review-auto-apply-ceiling rule reads it) and the run pin.
+// `autonomy` (the review-auto-apply-ceiling rule reads it), the run pin, and
+// `auto-mode` (a `policy` mode source names the layer that set it, #6006).
 const POLICY_REQUEST_KEYS = Object.freeze([
   ...LEVER_KEYS.filter((k) => k !== 'ceremony-profile' && k !== 'merge-authorization'),
   'autonomy',
   'integration-model',
+  'auto-mode',
 ]);
 
 class ManifestoInputError extends Error {
@@ -87,7 +89,8 @@ function checkRecords(records) {
 
 // manifesto.md's Merge authorization row: the `pre-authorize-merge` token is
 // refused on a dispatch-bound run (run-state.json `dispatched: true` — a
-// dispatched record's merge authority is its `auto:merge` label) and on a
+// dispatched record's merge authority is its `auto:merge` label together with
+// a live `auto:build`) and on a
 // multi-record run (its consolidated console owns the merge decision).
 // -> null (no token, or the token applies) | 'dispatch-bound' | 'multi-record'.
 function mergeAuthorizationRefusal({ preAuthorizeMerge, dispatched, records }) {
@@ -95,6 +98,16 @@ function mergeAuthorizationRefusal({ preAuthorizeMerge, dispatched, records }) {
   if (dispatched === true) return 'dispatch-bound';
   if (Array.isArray(records) && records.length > 1) return 'multi-record';
   return null;
+}
+
+// The mode lever's Source: flow Step 1's rung, except that rung 3 (`policy`, read with
+// --values, which drops the source) names the layer auto-mode resolved from — `factory`
+// for a factory-only value (#6006). Any other entry keeps `policy`, the rung the caller named.
+const MODE_POLICY_LAYERS = Object.freeze(['policy', 'factory']);
+function modeSourceOf(modeSource, autoModeEntry) {
+  if (modeSource !== 'policy') return modeSource;
+  const layer = autoModeEntry && autoModeEntry.error === undefined ? autoModeEntry.source : null;
+  return MODE_POLICY_LAYERS.includes(layer) ? layer : 'policy';
 }
 
 // { mode, modeSource, records, resolved, preAuthorizeMerge?, dispatched? } ->
@@ -108,7 +121,7 @@ function computeLevers({ mode, modeSource, records, resolved, preAuthorizeMerge 
   const res = resolved || {};
   const autonomy = res.autonomy && res.autonomy.value;
   return MANIFESTO_LEVERS.map((key) => {
-    if (key === 'mode') return { key, value: mode, source: modeSource };
+    if (key === 'mode') return { key, value: mode, source: modeSourceOf(modeSource, res['auto-mode']) };
     if (key === 'ceremony-profile') {
       return { key, value: records.every((r) => r.ceremony === 'fast-lane') ? 'fast-lane' : 'standard', source: 'header' };
     }
@@ -122,6 +135,8 @@ function computeLevers({ mode, modeSource, records, resolved, preAuthorizeMerge 
     if (!entry || entry.error !== undefined || entry.value === null || entry.value === undefined) {
       throw new LeverError(`lever ${key} did not resolve${entry && entry.error ? ` (${entry.error})` : ''}`);
     }
+    // The resolver's source passes through to the Source column, `factory` (#6006) included; the two
+    // `=== 'default'` rules below leave a factory value as set, like a policy.yml one.
     const source = entry.source || 'default';
     // A merge-verification derived from a degraded forge detection (#4578): its
     // `off` came from the fallback local-merge, and pr-first-merge.md Step 2.5
@@ -259,6 +274,9 @@ function writeManifesto({ runDir, records, levers, integrationModel = null, inte
     throw new Error(`could not write ${configPath} (${err && err.message ? err.message : err}) — `
       + (removed ? 'the partial config.yml was removed' : 'the partial config.yml could NOT be removed: delete it before re-running'), { cause: err });
   }
+  // The run manifest (#5903): a Manifesto-written run is the standard lane. ceremonyProfile already
+  // arrived through set-config's own fill. Best-effort — a failed fill changes nothing here.
+  try { require('../run-manifest/write').fillRunManifest(runDir, { lane: 'standard' }); } catch { /* never breaks the Manifesto write */ }
 
   const log = (status, step, text, reversibility = 'n/a') => append({ runDir, section: SECTION, entry: formatEntry({ status, now, step, text, reversibility }) });
   for (const r of records) {

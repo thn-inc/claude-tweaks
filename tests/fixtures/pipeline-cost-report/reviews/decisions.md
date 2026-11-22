@@ -1,0 +1,11 @@
+- AUTO 16:08:28 — Reproduction: lens "3a" finding plugin/skills/release/disposition.md:71 reproduced. Confirmed. Reversibility: high.
+- AUTO 16:08:28 — Reproduction: lens "3b" finding plugin/skills/release/disposition.md:71 reproduced. Confirmed. Reversibility: high.
+- AUTO 16:08:28 — Reproduction: lens "3f" finding plugin/bin/release-block.js:181 reproduced. Confirmed. Reversibility: high.
+- STAGED 16:08:35 — Reproduction: lens "3a" finding plugin/skills/_shared/release-block.md:3 not reproduced. Staged to Review Console as low-confidence. Reversibility: high.
+- AUTO 16:14:12 — Tiebreak tiebreak:39ef8ab99aa3: lens "3g" finding plugin/bin/release-block.js:162 digested: evidence-unverified. Severity: info. Reversibility: high.
+- AUTO 16:17:17 — Reproduction: lens "3a" finding plugin/skills/_shared/release-block.md:3 confirmed by tiebreak:2a37952f7854. Confirmed. Reversibility: high.
+- AUTO 16:17:17 — Tiebreak tiebreak:4e1515328d51: lens "3a" finding plugin/bin/release-block.js:198 dropped: refuted by tiebreak. Evidence: plugin/bin/release-block.js:198 " return unreadable(deps, `could not read`);". Severity: low. Reversibility: high.
+- AUTO 16:17:21 — Reproduction: lens "3f" finding tests/release-block-cli.test.js:413 confirmed by tiebreak:c125a0a31cf5. Confirmed. Reversibility: high.
+- AUTO 16:20:58 — Step 3 Routing: applied medium-severity security fix at plugin/skills/release/disposition.md:71. Reversibility: high (commit e4ce36e0c).
+- AUTO 16:21:01 — Step 3 Routing: applied low-severity test-quality fix at plugin/bin/release-block.js:181. Reversibility: high (commit e4ce36e0c).
+- STAGED 16:21:21 — Step 3 Routing: medium-severity architecture finding at plugin/skills/_shared/release-block.md:3 (lens 3a, tiebreak-confirmed): the release-block check is keyed on Step 1's engine or work-backend. Stage path: staged/build-deviation-1.md. Reversibility: high.

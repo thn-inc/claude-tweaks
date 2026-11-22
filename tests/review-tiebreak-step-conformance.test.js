@@ -12,6 +12,7 @@ const { readText } = require('./helpers/read-skill');
 const { missingFactsOf, assertEachPatternGoesRed, assertEveryMatchGoesRed, globalOf, lineStartingWith, sectionOf } = require('./helpers/conformance-asserts');
 const { buildFindingsArtifact, resolveTiebreak, checkTiebreakCoverage, findingId, CHUNK_MAX, judgeTier, planChunks } = require('../plugin/bin/lib/tiebreak');
 const { formatEntry } = require('../plugin/bin/lib/log-decision/append');
+const { coincidence } = require('../plugin/bin/lib/reproduction-log');
 const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
 const { categoriseReproduction, findingsMatch, LINE_TOLERANCE_REPRODUCTION_WIDE } = require('../plugin/bin/lib/coordination');
 const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record');
@@ -1179,7 +1180,7 @@ function consoleLowItems(decisions) {
       readFile: (p) => fs.readFileSync(p, 'utf8'),
       readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
       gitApplyCheck: () => ({ ok: true }),
-      readGrants: (numbers) => Object.fromEntries(numbers.map((n) => [n, { labels: ['auto:merge'], pendingSince: null }])),
+      readGrants: (numbers) => Object.fromEntries(numbers.map((n) => [n, { labels: ['auto:build', 'auto:merge'], pendingSince: null }])),
       now: () => Date.parse('2026-10-22T12:00:00Z'),
     };
     return resolveAll({ runDir, policy: 'console-auto', deps }).items.filter((i) => i.section === 'Low-confidence findings');
@@ -1260,12 +1261,14 @@ test('the resolve-tiebreak failure-line assertions can go red', () => {
 
 // Final re-review residuals: every unconfirmed source keeps a console-visible line, and the
 // two "run the sweep once" sentences name Step 3.7's re-run.
-const nearLocationLine = (texts) => documentedTemplate(texts.step3, ['share a location but not substance']);
+// The share-a-location line comes from its composer (#5595), not the prose; a doctored texts.nearLocation stands in for it.
+const NEAR_LOCATION_LINE = formatEntry({ ...coincidence({ lens: '3b', path: 'src/a.js', lineA: 4, lineB: 6 }), now: new Date(2026, 9, 22, 10, 0, 0) });
+const nearLocationLine = (texts) => texts.nearLocation || NEAR_LOCATION_LINE;
 const partnerDiedParagraph = (texts) => lineStartingWith(texts.tierVariants, '> **Reproduction-pair partner dies or is unavailable.**');
 const PER_FINDING_LINE = /per-finding (?:`unconfirmed` )?line/;
 function residualProblems(texts) {
   const problems = [];
-  if (consoleLowItems(`${instantiate(nearLocationLine(texts))}\n`).length !== 1) problems.push('nearLocation line does not surface');
+  if (consoleLowItems(`${nearLocationLine(texts)}\n`).length !== 1) problems.push('nearLocation line does not surface');
   if (!PER_FINDING_LINE.test(hungParagraph(texts))) problems.push('hung-agent findings get no per-finding line');
   if (!PER_FINDING_LINE.test(partnerDiedParagraph(texts))) problems.push('partner-died findings get no per-finding line');
   if (!/Step 3\.7 re-runs it/.test(texts.step3)) problems.push('step3 sweep says once without the Step 3.7 re-run');
@@ -1281,7 +1284,7 @@ test('nearLocation, hung-agent and partner-died findings stay console-visible; t
 test('each console-visibility and sweep re-run assertion can go red', () => {
   const live = liveTexts();
   const cases = [
-    [{ step3: live.step3.replace('both staged unconfirmed.', 'both staged.') }, 'nearLocation line does not surface'],
+    [{ nearLocation: NEAR_LOCATION_LINE.replace('both staged unconfirmed.', 'both staged.') }, 'nearLocation line does not surface'],
     [{ step3: live.step3.replace(", plus `step3-tier-variants.md`'s low-tier per-finding line for each finding it reports.", '') }, 'hung-agent findings get no per-finding line'],
     [{ tierVariants: live.tierVariants.replace(' plus the low-tier per-finding `unconfirmed` line for each of its findings,', '') }, 'partner-died findings get no per-finding line'],
     [{ step3: live.step3.replace('; Step 3.7 re-runs it once for its own waves (`step3-tiebreak.md`).', '.') }, 'step3 sweep says once without the Step 3.7 re-run'],
@@ -1299,20 +1302,14 @@ test('each console-visibility and sweep re-run assertion can go red', () => {
 // --- Failure paths: every failing call has a stated next move, so no finding loses its verdict silently ---
 
 const AUTO_DECISION_LOG = path.join(SKILLS, '_shared', 'auto-decision-log.md');
-const COORDINATION_CLI = path.join(__dirname, '..', 'plugin', 'bin', 'review-coordination.js');
-const PLUGIN_STRUCTURE = path.join(__dirname, '..', 'docs', 'plugin-structure.md');
 const failurePathTexts = () => ({
   ...liveTexts(),
   coordination: coordinationText(),
   adlog: readText(AUTO_DECISION_LOG),
-  cli: readText(COORDINATION_CLI),
-  structure: readText(PLUGIN_STRUCTURE),
 });
 const refutationStep5Of = (texts) => refutationStep5(texts.debate);
 const coordinationNoInlineLine = (texts) => lineStartingWith(texts.coordination, 'No outcome is "ask the user inline."');
 const statusSemantics = (texts) => sliceSection(texts.adlog, '\n## Status semantics\n', '\n## ');
-const refutationVerb = (texts) => sliceSection(texts.cli, "if (command === 'resolve-refutation')", "if (command === 'resolve-tiebreak')");
-const coordinationCliDocLine = (texts) => lineStartingWith(texts.structure, 'node plugin/bin/review-coordination.js');
 
 const FAILURE_PATHS = [
   // The failure log lines carry branch text, so they ride --text-file.
@@ -1343,13 +1340,10 @@ const FAILURE_PATHS = [
   [refutationStep5Of, /a non-zero `resolve-tiebreak` exit \(no `outcome`\) → the candidate is downgraded to `unconfirmed`/, 'a refutation resolver crash downgrades the candidate'],
   [refutationStep5Of, /`\{cause\}` `resolve-tiebreak exited \{exit\}`/, 'the downgrade cause names the resolver exit'],
   [refutationStep5Of, /never treats a crashed resolver as a surviving finding/, 'a crashed resolver never leaves a surviving finding'],
-  // Shared docs and the retired verb.
+  // Shared docs.
   [coordinationNoInlineLine, /On `\/review` they first go to its tiebreak \(`review\/step3-tiebreak\.md`\)/, "/review's unconfirmed findings go to its tiebreak first"],
   [coordinationNoInlineLine, /the caller's Review Console handles what is left/, 'the Review Console handles what the tiebreak leaves'],
   [statusSemantics, /`STAGED` lines \(low-confidence, unconfirmed, contested, debate\) need no `staged\/` file[^\n]*`plugin\/bin\/lib\/console\/resolve\.js`'s `coordinationItems`/, "review's coordination STAGED lines need no staged file"],
-  [refutationVerb, /No skill prose invokes it since #3947/, 'resolve-refutation records that no skill prose invokes it'],
-  [refutationVerb, /remove it with `resolveRefutation` and its tests once #3950/, 'resolve-refutation records its removal condition'],
-  [coordinationCliDocLine, /`resolve-refutation` \(unused since #3947\)/, 'the command reference marks resolve-refutation unused'],
 ];
 const failurePathsMissing = sectionFactsMissing(FAILURE_PATHS);
 

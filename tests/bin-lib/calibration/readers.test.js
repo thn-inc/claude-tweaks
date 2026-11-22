@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { readTsv } = require('../../../plugin/bin/lib/calibration/tsv-reader.js');
@@ -10,7 +11,7 @@ const { readEventsKinds } = require('../../../plugin/bin/lib/calibration/events-
 const { appendTelemetry } = require('../../../plugin/bin/lib/wrap-up/engine-record.js');
 
 function tmpFile(name) {
-  return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'calib-')), name);
+  return path.join(scratchDir('calib-'), name);
 }
 
 test('readTsv parses rows, counts malformed lines, and returns null for a missing file', () => {

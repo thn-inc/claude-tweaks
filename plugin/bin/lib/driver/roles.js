@@ -35,6 +35,25 @@
 //   Bash command run without an allow rule (`touch` ran). With it set to false,
 //   `touch` was denied while `node --test`, `git status --short` and
 //   `git log --oneline -1` ran. This module therefore sets it to false.
+// - The implementer's test rule (#5915). It is now the project's declared targeted
+//   runner (`impact.command` cut before ` {files}`), or none: `implementerSettings`
+//   adds `Bash(<testCommand> *)` and `toolchainReadPaths` derives read paths only when
+//   a `testCommand` is given, and an absent one (`undefined`) means no test rule and
+//   no toolchain read path. On this repository `Bash(node tools/run-tests.js --files-from *)`
+//   admits a strict subset of what `Bash(npm test *)` admitted (`npm test -- <args>`
+//   passed the same arguments to `tools/run-tests.js`), so it widens no right; its
+//   write/exec flags (`--test-reporter`, `--test-reporter-destination`, listed test
+//   files) run inside the same sandbox as before. Probed on 2026-11-19 with Claude
+//   Code CLI 2.1.325 on macOS (darwin), under a subscription login, launched from a
+//   process with no TTY, through the AC7 live smoke test in
+//   `tests/bin-lib/driver/worker.test.js`: with `testCommand` set to
+//   `node tools/run-tests.js --files-from`, the worker ran that command on a list file
+//   and the test file it named ran on the `node` that `PATH` names, while its read of a
+//   home-directory canary failed with `EPERM`. With `testCommand: 'npm test'` and the
+//   same prompt, the same command was denied and nothing ran. The no-`testCommand`
+//   launch is still unprobed live; the #5915 AC5 driver run is its planned probe. For another project the rule is that project's own
+//   declared `impact.command` runner, contained by the same sandbox and read block, with
+//   that runner's write and exec flags unprobed: a stated residual the #5915 spec accepts.
 // - `sandbox.failIfUnavailable: true` comes from the documentation and was not
 //   exercised, because the sandbox was available on the probe host. A launch the CLI
 //   refuses because the sandbox is unavailable is expected to surface as
@@ -113,10 +132,12 @@
 // derived set has one of its own: when the first word or the shebang interpreter is a
 // real file directly in `<prefix>/bin`, the whole prefix is re-opened, e.g. `~/.cargo`
 // (which holds `credentials.toml`), `~/.local` (`share/`, `state/`), or `/usr/local`
-// under Intel Homebrew (`etc/`, `var/`). The driver's `npm test` derives narrow roots
-// under nvm, Homebrew, fnm and the official installer: under nvm on the probe host it
-// derives the one root `~/.nvm/versions/node/v22.23.2`, since npm's package directory
-// lies inside it and is dropped as covered. Narrowing the rule is tracked in #5320.
+// under Intel Homebrew (`etc/`, `var/`). The driver's test command was `npm test` before
+// #5915, and it derived narrow roots under nvm, Homebrew, fnm and the official installer:
+// under nvm on the probe host it derived the one root `~/.nvm/versions/node/v22.23.2`,
+// since npm's package directory lies inside it and is dropped as covered. This
+// repository's declared runner now starts with `node`, which the same derivation maps to
+// that same Node root (derived, not probed). Narrowing the rule is tracked in #5320.
 //
 // The read block, and what it rests on. Probed on Claude Code CLI 2.1.322, macOS,
 // 2026-11-12, under a subscription login with no TTY, using a test file the worker
@@ -140,7 +161,8 @@
 // derived at launch (`toolchainReadPaths`): the test command's toolchain root (the
 // directory above `bin/` of the binary's real path, else the binary's own directory)
 // plus the root of the interpreter its first word's shebang names, one level deep.
-// The shebang half exists because the driver's test command is `npm test`: npm's
+// The shebang half exists because the driver's test command was `npm test` before #5915
+// (a declared runner may start with a script too): npm's
 // real path, `…/lib/node_modules/npm/bin/npm-cli.js`, starts `#!/usr/bin/env node`,
 // and that `node` (`…/bin/node`) lies outside npm's own root. An `env` shebang is
 // parsed fail-safe: only known options are skipped, and an unknown option, `-P` or
@@ -173,6 +195,7 @@
 
 const path = require('node:path');
 const { isAncestorOrSelf } = require('../path-guard');
+const { EFFORT_SCALE } = require('../model-profiles/profiles');
 
 function deepFreeze(value) {
   if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -249,6 +272,19 @@ const ROLES = deepFreeze({
   acceptance: { tools: ['Read', 'Grep', 'Glob'], settings: false },
 });
 
+// The work profile each role launches on unless policy `express-driver-models` overrides
+// it (#5917). That policy may set only the POLICY_DRIVER_ROLES; `explorer` keeps its
+// code-only row. `launch.js` resolves the profile through `profiles.js`. A new role in
+// ROLES needs a row here (AC6.1).
+const DRIVER_ROLE_PROFILES = deepFreeze({
+  implementer: 'standard',
+  reviewer: 'capable',
+  explorer: 'standard',
+  'merge-check': 'standard',
+  acceptance: 'standard',
+});
+const POLICY_DRIVER_ROLES = deepFreeze(['implementer', 'reviewer', 'merge-check', 'acceptance']);
+
 function specFor(role) {
   if (!Object.prototype.hasOwnProperty.call(ROLES, role)) throw new Error('unknown role: ' + String(role));
   return ROLES[role];
@@ -298,11 +334,12 @@ function assertReadPaths(readPaths, platform) {
 
 function implementerSettings({ testCommand, platform, readPaths = [] } = {}) {
   assertReadPaths(readPaths, platform);
-  assertTestCommand(testCommand);
+  if (testCommand !== undefined) assertTestCommand(testCommand);
   const sandboxed = SANDBOX_PROBED_PLATFORMS.includes(platform);
   const allow = ['Read', 'Edit', 'Write'];
   if (sandboxed) {
-    allow.push('Bash(' + testCommand + ' *)', 'Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)');
+    if (testCommand !== undefined) allow.push('Bash(' + testCommand + ' *)');
+    allow.push('Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)');
   }
   // A second layer, not the only one: with `dontAsk`, a closed allow list and
   // `autoAllowBashIfSandboxed: false`, these commands are already refused. The deny
@@ -407,6 +444,7 @@ function shebangInterpreter(line) {
 }
 
 function toolchainReadPaths(testCommand, deps = {}) {
+  if (testCommand === undefined) return [];
   assertTestCommand(testCommand);
   const real = resolveCommandWord(testCommand, deps);
   if (real === null) return [];
@@ -428,6 +466,14 @@ function assertSpendCeiling(value) {
   }
 }
 
+// The one effort rule, shared by composeArgs and the launcher: absent (undefined or null)
+// passes; anything else must be a level of the model-profiles scale.
+function assertEffort(value) {
+  if (value !== undefined && value !== null && !EFFORT_SCALE.includes(value)) {
+    throw new RangeError('effort must be one of ' + EFFORT_SCALE.join(', ') + ', got ' + String(value));
+  }
+}
+
 // The tools a role launches with on a platform: Bash is dropped for a role that carries
 // generated settings when the platform is not sandbox-probed. A fresh array each call.
 function toolsFor(role, platform) {
@@ -436,7 +482,7 @@ function toolsFor(role, platform) {
   return spec.tools.filter((tool) => !(tool === 'Bash' && spec.settings && !sandboxed));
 }
 
-function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, platform } = {}) {
+function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, effort, platform } = {}) {
   const spec = specFor(role);
   if (spec.settings && (typeof settingsFile !== 'string' || settingsFile === '')) {
     throw new Error('settingsFile is required for role ' + role + ' and must be a non-empty string');
@@ -445,6 +491,7 @@ function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeilin
     throw new Error('schema is required and must be an object');
   }
   assertSpendCeiling(spendCeiling);
+  assertEffort(effort);
   if (typeof platform !== 'string' || platform === '') throw new TypeError('platform is required and must be a non-empty string');
   const args = ['-p', '--safe-mode', '--restricted', '--tools', toolsFor(role, platform).join(','), '--disable-slash-commands', '--strict-mcp-config'];
   if (spec.settings) args.push('--settings', settingsFile);
@@ -452,7 +499,8 @@ function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeilin
   if (appendPromptFile) args.push('--append-system-prompt-file', appendPromptFile);
   if (spendCeiling !== undefined) args.push('--max-budget-usd', String(spendCeiling));
   if (model) args.push('--model', model);
+  if (effort !== undefined && effort !== null) args.push('--effort', effort);
   return args;
 }
 
-module.exports = { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, ROLES, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling };
+module.exports = { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, ROLES, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, assertEffort, assertTestCommand };

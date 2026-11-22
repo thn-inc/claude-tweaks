@@ -77,7 +77,7 @@ acceptance-labeling guard below — beyond that, only `step-6-auto.md`'s tier ga
 4.8 ran: re-fetch the PR's `isDraft`, `statusCheckRollup`, `autoMergeRequest`, and unresolved
 thread count fresh, plus the head-sha workflow runs (`_shared/pr-first-merge.md` Step 2.5's
 `gh run list --commit {headRefOid}` read — a head run not yet `completed` is not green), and
-re-check the grant (every linked record still carries `auto:merge`, or
+re-check the grant (every linked record still carries `auto:build` and `auto:merge`, or
 `housekeeping-auto-merge` is still set) before doing anything. If any gate no longer holds — a new
 commit landed, a check regressed, a thread reopened, the grant was revoked — this is a silent
 no-op: skip it, don't error, and don't report it as armed in the applied-report either, exactly as
@@ -87,6 +87,8 @@ When judging `statusCheckRollup`, use the same non-blocking conclusion set
 `_shared/github-pr-scan.md` item 9 defines (`SUCCESS`, `SKIPPED`, `NEUTRAL` — a `SUCCESS`-only
 check treats a job whose own `if:` condition is false, e.g. a default-branch-only cleanup job,
 as a permanent regression); do not re-derive it.
+
+**Parked for local acceptance — record-linked flavor only, first.** Run `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" parked --record {n}` on each `Fixes` record, never with `--run` (the repo-root policy is the sweep's authority). Any exit but 5 — hold, not armed: never run Step 3, never run the labeling guard below. Report `Held (not armed): PR #{n} — parked awaiting local acceptance` for exit 0 and `Held (not armed): PR #{n} — park state not confirmed (exit {code})` otherwise, and recommend `/claude-tweaks:accept #{record}`. Every `parked` exit 5: run `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" decide --record {n}[,{m}…] --head {headRefOid}` over every `Fixes` record (the PR's head oid), also never with `--run` (control mode off prints `consulted:false` and reads no record; under control mode `decide` may append a tripwire flag to the record and fetches the head by oid when it is not local). Only exit 0 with `park:false` continues; `park:true` holds the same way, reporting `Held (not armed): PR #{n} — local acceptance target, never parked; recommend /claude-tweaks:accept #{record}` followed, when the decision's `tripwire.lines` is non-empty, by those lines verbatim (the tripwire's reason; the sweep posts no packet, so this report is where the maintainer reads it), and a non-zero exit holds as `park state not confirmed (exit {code})`. This pair is the record-linked arm's Step 2.9 gate.
 
 **Acceptance labeling — record-linked flavor only, before Step 3.** Green says nothing about whether
 acceptance labeling (`demo:pending`, the Try it walkthrough) landed, and the merge closes every `Fixes`

@@ -2,12 +2,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { deriveTestVerdict } = require('../../../plugin/bin/lib/dispatch/artifact-verdict');
 
 function tmpFile(content) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-artifact-verdict-'));
+  const dir = scratchDir('ct-artifact-verdict-');
   const file = path.join(dir, 'raw-output.log');
   fs.writeFileSync(file, content);
   return file;

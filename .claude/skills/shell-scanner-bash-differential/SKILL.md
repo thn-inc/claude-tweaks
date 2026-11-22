@@ -69,6 +69,10 @@ When a scanner fix needs a new marker or state that more than one consumer of `f
 
 Bash decides where a word lands; the program decides what the word means. macOS's `/bin/cp` and `/bin/mv` are BSD: they stop option parsing at the first operand, so in `cp a b -S .bak` or `cp a b -t d e` every later word, a dash word included, is an operand. GNU coreutils (`gcp`/`gmv` in `/opt/homebrew/bin`) permutes and reads those words as options. #4449 modelled the GNU reading only, and review found BSD writing e/a and e/b for `cp a b -t d e` and -v/a for `cp a b -v`. For a program with both builds, run each case under both (link `/bin/cp` and `/opt/homebrew/bin/gcp` as `cp` in two stub dirs) and report every reading's destination when they differ, since the gate cannot know which build the session's PATH resolves. A reading whose build rejects the command outright (an option BSD lacks before the first operand) writes nothing and is dropped. A destination word that starts with `-` is a file to the program, but `isUnresolvable` drops any such word as a flag, so report it as `./-x`.
 
+### A new consumer of the segment walker is replayed over recorded commands
+
+A classifier built on the walker's exports (`forEachCommandSegment`, `forEachShellSegment`) judges its own question over the same segments, and its table tests hold only the shapes its author imagined. #5547's `tools/direct-test-run-guard.js` passed its tables and two reviews; a read-only replay of every Bash call recorded for this repository since 2026-11-02 (223,044 calls, 174,192 distinct, 7,336 transcript files) then found 3 false denies (a heredoc body line starting with `for`) and about 400 printed replacement lines the runner would refuse (a quoted glob, files in another checkout, a directory beside files, a cut substitution). Before the final review, replay the recorded Bash commands from the local transcript store (`$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects`, the store `tools/guard-refusals.js` reads) through the consumer's throwing inner function (`judgeOrThrow`), never its catching wrapper, which turns a throw into a silent allow. Count denies and throws, take an independent count of the shape the consumer targets (a plain regex for `node … --test`) and sample the allowed ones, and feed every command the consumer prints back through the parser that will read it. The replay reads commands; it never runs one.
+
 ## Decision Framework
 
 | Situation | Do |
@@ -98,7 +102,8 @@ Bash decides where a word lands; the program decides what the word means. macOS'
 This session's Bash guard refuses heredocs, `cd` chains and any argument containing a `git` token. Write the drivers as scratchpad node scripts and run them with `node <script>`:
 - bash verdict: `runBash(bash, cmd, { cwd, stubDir, root, guardRepo })` from the Bounded bash verdict block below, then read the stub's log and the files it wrote. Repeat with `/opt/homebrew/bin/bash`. After the last case, call `sweepSurvivors()` and report any pids it returns.
 - base comparison: `git worktree add --detach <scratch> <base>`, then `require(<scratch>/plugin/bin/lib/hooks/git-command.js)` beside the branch copy and diff `fileWriteTargets(cmd, cwd)`.
-- mutant: edit a copy in a scratch worktree and run `node --test tests/hooks-gate-coverage.test.js tests/hooks-git-command.test.js tests/hooks-bash-prefilter.test.js tests/teardown-gate.test.js` there.
+- mutant: edit a copy in a scratch worktree and run `node tools/run-tests.js tests/hooks-gate-coverage.test.js tests/hooks-git-command.test.js tests/hooks-bash-prefilter.test.js tests/teardown-gate.test.js` there. A mutation loop or script calls that same command once per mutant, from inside the mutant's own checkout (add `--test-reporter=tap` to parse the result); it never starts `node --test` itself. Each call takes the machine-wide subset slot, so it can queue behind other sessions' runs; a handful of mutants are quicker checked by hand, one single-file `node --test <file>` per mutant.
+- mutant of a linearity row: a mutant expected to slow the scan never goes through `tools/run-tests.js`. A quadratic mutant makes the perf file run for minutes, and the run holds the machine-wide subset slot against every other session for that long (#5794: about 20 minutes, four runs queued). Measure it with the perf file's own driver from a scratch script that takes no suite slot, under a spawn timeout, and compare the ratio with the row's bound. Before running it, read the row's payload and check the mutant is super-linear in the dimension that payload grows: a mutant on the first-word read survives a row whose payload grows its second word.
 
 ### Bounded bash verdict
 
@@ -314,10 +319,20 @@ Orphaned oracle shells: `pgrep -lf '[r]unBash-'` lists every bash a driver run l
 
 - **Every shell and every awk.** Run the shell side under each POSIX shell found on PATH (sh, dash, bash) and each awk (BWK awk on macOS, mawk on Debian/Ubuntu, gawk on Fedora/Arch and in Git Bash). A variant that is absent, or that cannot be measured on a platform, is skipped with a named reason, never dropped silently.
 - **Bytes, not characters.** JS `\s` matches non-ASCII whitespace. awk under a UTF-8 locale behaves differently across implementations, so run awk with `LC_ALL=C` and spell each non-ASCII whitespace character as its UTF-8 byte sequence (`\302\240` for U+00A0, and so on).
+- **The shell side's own matching is locale-bound too.** Under a UTF-8 locale bash 3.2 (macOS `/bin/sh`) reads `é` as inside `[A-Za-z]`, so `*[!A-Za-z0-9_.+-]*` misses a non-ASCII word and it reads as plain, and bash 3.2 and 5 count `${#v}` in characters while dash counts bytes. Set `LC_ALL=C` around the shell copy's scan and put the caller's `LC_ALL` back afterwards (`direct_test_run_guard_needs_node` in `tools/direct-test-run-guard.sh`, #5794), and run the differential under a UTF-8 locale as well as `C`.
 - **An oracle-drift guard.** Each fixture states its expected verdict. Assert the JS oracle still returns it before comparing the shell, so a change to the JS side fails as `oracle drift`, not as a confusing shell mismatch.
 - **Go-red controls per pinned literal.** For each literal the copy depends on (a whitespace member such as `\r`, an alias key), copy the script, mutate that one literal, and assert the parity check fails on the fixture that pins it.
 
 Worked example: `tests/hooks-launcher.test.js`, `AC9_FIXTURES` with `assertPolicyParity` (the `perShell` and `perAwk` `hooks.sh AC9` tests and the `\r` go-red).
+
+### Superset prefilter twin
+
+`tools/direct-test-run-guard.sh` (#5794) is a different kind of twin: a sh prefilter that skips node only for a call its JS classifier (`tools/direct-test-run-guard.js`) can never deny. It is a deliberate superset of the classifier, not an equal copy, so parity fixtures do not prove it. It needs these instead:
+
+- **Derive the skip from program positions.** Skip only when every fragment starts with a plain word that is none of the classifier's program words. A filter on text such as `--test` is unsound, because the classifier also reads script files the call runs.
+- **Pin the word list both ways.** The sh word list equals the classifier's exported set (`PROGRAM_WORDS`), and every word the classifier compares inline (`=== 'npx'`, `=== 'find'`) is in that set. Scan the classifier's source for the inline comparisons, with a floor of known words, and exempt a state-only word such as `cd` by name (`#5794 AC6.1` in `tests/direct-test-run-guard.test.js`).
+- **Run every denied case through the prefilter.** Each command the classifier's own tests see denied must reach node, and a replay of recorded commands shows no command is skipped that the classifier denies under any oracle configuration.
+- **Test the downstream process failing.** A prefilter that hands a call on to another process is tested with that process exiting non-zero, failing to load and missing, asserting the hook command's own exit status and stdout. Never `exec` the downstream process from a hook entry that promises exit 0: `exec` gives the hook that process's status. The first version returned status 1 for a guard node could not load, and every fault test had a recorder guard that exits 0 behind the prefilter (`#5794 AC5.2`, fixed in 550e984a6a).
 
 ## Anti-Patterns
 

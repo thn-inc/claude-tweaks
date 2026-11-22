@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync, execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -14,7 +15,7 @@ const { defaultRunner, PREMISE_SELF_CHECK_TIMEOUT_MS } = require('../../../plugi
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'harness-health.js');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'harness-health-vf-')); }
+function tmp() { return scratchDir('harness-health-vf-'); }
 
 // In-process (#5380), with the file-protocol-only git guard — see tests/helpers/health-sweep-cli.js.
 const cli = (argv, opts) => sweepCli(CLI, argv, opts);
@@ -34,9 +35,9 @@ function runValidateFindings(root, findingsFile, extraArgs = [], opts = {}) {
 // uses for cursors, and tests/bin-lib/code-health/churn-v2.test.js uses for
 // its own runs.json.
 function seedDurableRuns(root, runs) {
-  const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-health-vf-bare-'));
+  const bareDir = scratchDir('harness-health-vf-bare-');
   execFileSync('git', ['init', '--bare', '-q', bareDir]);
-  const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-health-vf-seed-'));
+  const seedDir = scratchDir('harness-health-vf-seed-');
   execFileSync('git', ['init', '-q', seedDir]);
   execFileSync('git', ['-C', seedDir, 'checkout', '-q', '-b', 'health-state']);
   fs.mkdirSync(path.join(seedDir, 'harness-health'), { recursive: true });

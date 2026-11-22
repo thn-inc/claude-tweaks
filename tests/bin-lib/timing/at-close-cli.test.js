@@ -8,18 +8,20 @@ const { runCli, spawnCli } = require('../../helpers/run-cli');
 const { gitRepo, linkedWorktreeOf } = require('../../helpers/git-fixtures');
 const { readTiming, pickTokens } = require('../../helpers/close-timing');
 const transcript = require('../../../plugin/bin/lib/timing/transcript');
+const stepYield = require('../../../plugin/bin/lib/timing/step-yield');
 const ctxLib = require('../../../plugin/bin/lib/hooks/context');
 const { closeRunState } = require('../../../plugin/bin/lib/hooks/close-run-state');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'timing-at-close.js');
 const SID = 'sess-5555-cli';
 
-// A real git repo: the CLI refuses a run dir that is not anchored under a main checkout, so every
-// run dir here lives inside one and the CLI is run with that repo as its cwd.
+// A real git repo: the CLI refuses a run dir that is not anchored under a main checkout and sitting
+// under its .claude-tweaks/pipelines/ (#5830), so every run dir here lives there and the CLI is run
+// with that repo as its cwd.
 function tmpRoot() { return gitRepo(); }
 
 function closedRun(root, name, worktree) {
-  const runDir = path.join(root, name);
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', name);
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(path.join(runDir, 'events.jsonl'), [
     { skill: 'claude-tweaks:build', ts: '2026-11-16T10:00:00.000Z', type: 'skill_invoked' },
@@ -108,6 +110,30 @@ test('a closed run with its transcript: exit 0, timing.json path on stdout, toke
   }
 });
 
+test('AC6.1: the token pass rewrites step-yield.json whole beside the timing.json it wrote', async () => {
+  const root = tmpRoot();
+  try {
+    const cfg = path.join(root, 'cfg');
+    const wt = path.join(root, 'wt');
+    const runDir = closedRun(root, 'run', wt);
+    writeTranscript(cfg, wt);
+    const file = path.join(runDir, 'step-yield.json');
+    fs.writeFileSync(file, '{"stale":true}');
+    const r = await runCli(CLI, ['--run', runDir], { env: { CLAUDE_CONFIG_DIR: cfg }, cwd: root });
+    assert.equal(r.code, 0);
+    const y = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.equal(Object.hasOwn(y, 'stale'), false);
+    assert.equal(y.schemaVersion, stepYield.SCHEMA_VERSION);
+    assert.ok(y.steps.length > 0);
+    // A second pass keeps timing.json and still leaves a whole yield.
+    fs.writeFileSync(file, '{"stale":true');
+    assert.equal((await runCli(CLI, ['--run', runDir], { env: { CLAUDE_CONFIG_DIR: cfg }, cwd: root })).code, 0);
+    assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).schemaVersion, stepYield.SCHEMA_VERSION);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('a relative --run resolves against deps.cwd()', async () => {
   const root = tmpRoot();
   try {
@@ -115,7 +141,7 @@ test('a relative --run resolves against deps.cwd()', async () => {
     const wt = path.join(root, 'wt');
     const runDir = closedRun(root, 'run', wt);
     writeTranscript(cfg, wt);
-    const r = await runCli(CLI, ['--run', 'run'], { env: { CLAUDE_CONFIG_DIR: cfg }, cwd: root });
+    const r = await runCli(CLI, ['--run', path.join('.claude-tweaks', 'pipelines', 'run')], { env: { CLAUDE_CONFIG_DIR: cfg }, cwd: root });
     assert.equal(r.code, 0);
     assert.equal(r.stdout, path.join(runDir, 'timing.json') + '\n');
   } finally {

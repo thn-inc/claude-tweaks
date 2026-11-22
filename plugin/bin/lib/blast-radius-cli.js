@@ -41,7 +41,9 @@ function defaultReadFile(filePath) {
   }
 }
 
-function resolveBlastRadiusConfig({ git, readFile, runDir, cwd }) {
+// env/homeDir are optional (#6006): they locate the factory policy layer; left undefined,
+// resolvePolicyConfig reads the inherited environment, as before.
+function resolveBlastRadiusConfig({ git, readFile, runDir, cwd, env, homeDir }) {
   let resolved;
   try {
     ({ result: resolved } = resolvePolicyConfig({
@@ -49,6 +51,8 @@ function resolveBlastRadiusConfig({ git, readFile, runDir, cwd }) {
       readFile,
       runDir,
       cwd,
+      env,
+      homeDir,
       keys: ['merge-sensitive-paths', 'auto-merge-max-lines', 'auto-merge-max-files'],
     }));
   } catch (err) {
@@ -137,7 +141,7 @@ function computeBlastRadius(opts = {}, deps = {}) {
   const { runDir = null } = opts;
 
   const { mergeBase, files } = gatherDiffFiles(opts, deps);
-  const config = resolveBlastRadiusConfig({ git, readFile, runDir, cwd: deps.cwd });
+  const config = resolveBlastRadiusConfig({ git, readFile, runDir, cwd: deps.cwd, env: deps.env, homeDir: deps.homeDir });
   const summary = blastRadiusSummary(classifyDiffFiles(files, config.mergeSensitivePaths));
   return { mergeBase, config, summary };
 }

@@ -70,7 +70,7 @@ test('the queue-pull module\'s named-target exclusion excludes exactly the synth
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-named-target-fixture-'));
   const sessionId = `named-target-fixture-${process.pid}-${path.basename(scratch)}`;
   const errs = [];
-  const ctx = makeContext({ sessionId, cwd: repo }, { spawnCli: fakeCli(scratch), stdout: () => {}, stderr: (s) => errs.push(s), tmpName: () => path.join(scratch, 'proposal.md') });
+  const ctx = makeContext({ sessionId, cwd: repo }, { spawnCli: fakeCli(scratch), stdout: () => {}, stderr: (s) => errs.push(s) });
   t.after(() => {
     fs.rmSync(path.dirname(ctx.paths['dispatch-groups.json']), { recursive: true, force: true });
     fs.rmSync(scratch, { recursive: true, force: true });

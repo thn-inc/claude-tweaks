@@ -3,9 +3,11 @@
 // key (console/resolve.js's findingKey/lineKeys), so a line naming several findings can never be settled and
 // stays as residue. Detection is by grammar — a plural `findings` subject (a count, a lens noun phrase, or the
 // marker's own subject) or two `lens … finding` clauses — with the location shape shared with that reader
-// (console/finding-path.js), and lineKeys's two-location coincidence clause exempted. Pure, no I/O.
+// (console/finding-path.js), and lineKeys's two-location coincidence clause exempted: both locations readable by
+// that grammar, or both on one path (an extension-less `Makefile:30 / Makefile:31`, #5595) with a numeric line
+// each. Pure, no I/O.
 // The word windows below were sized against the real archive. Before widening or narrowing one, run this from the
-// main checkout's root; the refused count (124 of 1414 lines on 2026-11-01) should move only by the lines you meant:
+// main checkout's root; the refused count (125 of 3198 lines on 2026-11-16) should move only by the lines you meant:
 //   node -e "const fs=require('fs'),{aggregateReproductionProblem:f}=require('./plugin/bin/lib/log-decision/aggregate-reproduction'),d=process.argv[1];let n=0,r=0;for(const p of fs.readdirSync(d,{recursive:true}))if(/(^|\/)decisions\.md$/.test(p))for(const l of fs.readFileSync(d+'/'+p,'utf8').split('\n')){const m=/^- STAGED \d\d:\d\d:\d\d — (.*)$/.exec(l);if(m&&/\breproduction:\s/i.test(m[1])){n++;if(f({status:'STAGED',text:m[1]}))r++}}console.log(n,r)" .claude-tweaks/pipelines
 'use strict';
 
@@ -34,6 +36,14 @@ const PLURAL_SUBJECT_RES = [
 // finding`, four archive lines), so a qualified second clause still counts.
 const LENS_FINDING_RE = new RegExp(String.raw`\b${LENS}\s+(?:[\w-]+\s+)?finding\b`, 'gi');
 
+// A parsed coincidence clause whose two locations are one non-empty path, each with a numeric line. The second
+// location runs through `share a location` (parseCoincidence), so that tail is dropped before the split.
+function sharesPath(co) {
+  const a = /^(.+):\d+$/.exec(co.first);
+  const b = /^(.+):\d+(?=\s+share a location$)/i.exec(co.second);
+  return a !== null && b !== null && a[1] === b[1];
+}
+
 // null when the entry may be written; otherwise the refusal reason. The entry is checked as formatEntry
 // writes it (`{step}: {text}`), so a marker split between --step and --text is still seen.
 function aggregateReproductionProblem({ status, step, text }) {
@@ -47,10 +57,11 @@ function aggregateReproductionProblem({ status, step, text }) {
   // the real paths, before PATH_RE: parseCoincidence needs each location's `:line`, which a neutralized `PATH` has
   // absorbed (pinned by cli.test.js's `accepts the documented coincidence line (lens with spaces)`).
   // A clause whose location FINDING_PATH cannot read (`src/a:9`) still parses, but lineKeys leaves that line open, so
-  // it is not exempt.
+  // it is not exempt — unless both locations share one path and carry a numeric line (`Makefile:30 / Makefile:31`):
+  // the composer (reproduction-log.js) writes exactly that for a path with no extension, one line per coincidence.
   const marked = entry.slice(at);
   const co = parseCoincidence(marked);
-  const coincidence = co !== null && readsLocation(co.first) && readsLocation(co.second);
+  const coincidence = co !== null && ((readsLocation(co.first) && readsLocation(co.second)) || sharesPath(co));
   const tail = coincidence ? `${marked.slice(0, co.index)} ${marked.slice(co.index + co.length)}` : marked;
   // Neutralize paths so a path containing `findings` never counts as the plural subject.
   const bare = tail.replace(PATH_RE, 'PATH');

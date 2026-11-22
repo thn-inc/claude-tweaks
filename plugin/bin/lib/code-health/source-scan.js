@@ -19,10 +19,10 @@ const SOURCE_EXTS = new Set(['.js', '.ts', '.tsx', '.jsx', '.mjs', '.cjs']);
 
 // True if `relFile`'s basename matches this repo's own test-discovery
 // naming convention — `*.test.js`/`*.test.ts`/etc., the pattern
-// `package.json`'s `test` script discovers via its single recursive
-// `find tests tools/upstream-drift/tests -name '*.test.js'` (not an
-// enumerated glob list) and the one `node --test <dir>` itself
-// recognizes when given a directory to walk. A file matching this is
+// `package.json`'s `test` script discovers (it runs `node tools/run-tests.js`,
+// which walks `DEFAULT_ROOTS` — `tests`, `tools/upstream-drift/tests` — for
+// `*.test.js`, not an enumerated glob list) and the one `node --test <dir>`
+// itself recognizes when given a directory to walk. A file matching this is
 // discovered by the test runner's own glob, never by a `require`/`import`
 // specifier naming it — so it is never a genuine file-orphan candidate (see
 // candidates-dead-code.js's module header Coverage block). Name-based rather

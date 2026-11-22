@@ -4,25 +4,27 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const { readText } = require('../../helpers/read-skill');
 const { chmodDenialSkip } = require('../../helpers/root');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
 const CLI = path.join(ROOT, 'plugin', 'bin', 'console-resolve.js');
 const { run, parseArgs } = require(CLI);
-const { wholeFileDiff, planMemoryWrite, MEMORY_DIFF_CAP_BYTES } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'memory-write'));
+const { wholeFileDiff, planMemoryWrite, MEMORY_DIFF_CAP_BYTES, MEMORY_REVERT_COMMAND } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'memory-write'));
 const { resolveAll } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'resolve'));
 
 const sha = (t) => crypto.createHash('sha256').update(t).digest('hex');
 
 function fixture() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'memory-write-')));
+  const root = fs.realpathSync(scratchDir('memory-write-'));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
-  git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't'); git('commit', '-q', '--allow-empty', '-m', 'init');
+  initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }); git('commit', '-q', '--allow-empty', '-m', 'init');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-09-06T000000-record-7');
   fs.mkdirSync(path.join(runDir, 'staged'), { recursive: true });
   fs.writeFileSync(path.join(runDir, 'decisions.md'), '');
@@ -58,10 +60,16 @@ function diffOf(text) {
   return `${out.join('\n')}\n`;
 }
 
-function revert(fx, text) {
+function revert(fx, text, ceiling) {
   const patch = path.join(fx.root, 'revert.patch');
   fs.writeFileSync(patch, diffOf(text));
-  execFileSync('git', ['apply', '-R', '--unidiff-zero', patch], { cwd: fx.memoryDir, windowsHide: true });
+  // Run the one constant the CLI prints, under the autocrlf a Windows install sets: `git apply` writes
+  // through autocrlf even outside a repository (#5694).
+  const gitconfig = path.join(fx.root, 'autocrlf.gitconfig');
+  fs.writeFileSync(gitconfig, '[core]\n\tautocrlf = true\n');
+  const [bin, ...args] = MEMORY_REVERT_COMMAND.split(' ');
+  assert.strictEqual(bin, 'git');
+  execFileSync(bin, [...args, patch], { cwd: fx.memoryDir, env: { ...process.env, GIT_CONFIG_GLOBAL: gitconfig, GIT_CONFIG_NOSYSTEM: '1', ...(ceiling ? { GIT_CEILING_DIRECTORIES: ceiling } : {}) }, windowsHide: true });
 }
 
 test('wholeFileDiff: header, ranges and no-newline markers', () => {
@@ -104,6 +112,18 @@ test('AC4.2: applying the reverse diff restores the prior content (trailing newl
   assert.strictEqual((await write(fx, 'new.md', 'hello\n')).code, 0);
   revert(fx, decisions(fx));
   assert.strictEqual(fs.existsSync(path.join(fx.memoryDir, 'new.md')), false);
+});
+
+test('AC4.2: the reverse diff also restores the prior content from a memory directory outside any git repository', async (t) => {
+  const fx = fixture();
+  // The real memory directory sits outside any repository; the ceiling stops git discovering one above os.tmpdir().
+  const outside = fs.realpathSync(scratchDir('memory-outside-'));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  fx.memoryDir = outside;
+  fs.writeFileSync(path.join(outside, 'note.md'), 'a\nb\n');
+  assert.strictEqual((await write(fx, 'note.md', 'a\nc\n')).code, 0);
+  revert(fx, decisions(fx), path.dirname(outside));
+  assert.strictEqual(fs.readFileSync(path.join(outside, 'note.md'), 'utf8'), 'a\nb\n');
 });
 
 const BIG = `${'x'.repeat(100)}\n`.repeat(250);
@@ -252,11 +272,11 @@ test('a decisions.md that cannot be written exits 3 after the target was written
   assert.match(r.err, new RegExp(`wrote ${path.join(fx.memoryDir, 'note.md').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}, but the decisions.md entry could not be written`));
 });
 
-test('the entry head tells the reader how to reverse: strip the indent, git apply -R, from the memory directory', async () => {
+test('the entry head tells the reader how to reverse: strip the indent, git apply -R with autocrlf off, from the memory directory', async () => {
   const fx = fixture();
   assert.strictEqual((await write(fx, 'n.md', 'x\n')).code, 0);
   const head = decisions(fx).split('\n').find((l) => l.includes('Memory write'));
-  for (const part of ['strip the 4-space indent', 'git apply -R --unidiff-zero', 'from the memory directory']) assert.ok(head.includes(part), part);
+  for (const part of ['strip the 4-space indent', `${MEMORY_REVERT_COMMAND} {patch}`, 'git -c core.autocrlf=false apply -R --unidiff-zero {patch}', 'from the memory directory']) assert.ok(head.includes(part), part);
 });
 
 test('parseArgs: --memory-write needs its two companions, takes no other flag, and no other shape takes them', () => {

@@ -4,18 +4,19 @@
 // failing test files: at the base commit in a scratch detached worktree, and
 // — for files existing at base but not proven failing there — once more in
 // isolation at HEAD. A file failing at base is baseline; one passing in
-// isolation at HEAD is flaky; the rest, including every file absent at base,
-// are attributable. Fails closed: anything not classified with evidence (no
-// extractable file, a failing entry naming no test file, a fail-fast skip, a
-// spawn error, a base run with no numeric exit) is never "fails at base" — a
-// base run counts only when its own log names the file as failing with every
-// test that fails in it at HEAD, and a file is flaky only when its isolated
-// log shows tests ran and passed. An isolated run that fails a test base does
-// not cover gets one retry (#3111) before being called attributable — when
-// the retry's own failures are covered by base (or it passes cleanly), the
-// extra failure did not reproduce and is reported flaky instead. git and
-// runOne are injected so the tests never touch a real repo; realGit is the
-// CLI's seam.
+// isolation at HEAD is flaky (a file whose full-run failure is wholly
+// file-level — killed or timed out — included); the rest, including every
+// file absent at base, are attributable. Fails closed: anything not classified
+// with evidence (no extractable file, a failing entry naming no test file, a
+// fail-fast skip, a spawn error, a base run with no numeric exit) is never
+// "fails at base" — a base run counts only when its own log names the file as
+// failing with every test that fails in it at HEAD, and a file is flaky only
+// when its isolated log shows tests ran and passed. An isolated run that fails
+// a test base does not cover gets one retry (#3111) before being called
+// attributable — when the retry's own failures are covered by base (or it
+// passes cleanly), the extra failure did not reproduce and is reported flaky
+// instead. git and runOne are injected so the tests never touch a real repo;
+// realGit is the CLI's seam.
 'use strict';
 
 const crypto = require('crypto');
@@ -42,7 +43,12 @@ function slotScratchPath({ tmpdir, commonDir, slotBase, slot }) {
 
 // `warn` and `rmSync` are injectable so a test can force a failed cleanup; `tmpdir` is where
 // every scratch worktree is made, so a test can keep them out of the real temp dir.
-function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs.rmSync, tmpdir = os.tmpdir() } = {}) {
+// `locations` (#5773), when given, is `(cwd) -> { toplevel, commonDir }` and answers repoRoot() and
+// slotWorktree's common dir in place of their own `git rev-parse`; the caller owns when that answer
+// goes stale. Without it every call asks git, exactly as before.
+function realGit(cwd, {
+  warn = (line) => process.stderr.write(line), rmSync = fs.rmSync, tmpdir = os.tmpdir(), locations = null,
+} = {}) {
   // `input`, when given, is piped to the child's stdin (the two batch-check
   // / hash-object calls below); every other call site passes none, and stdin
   // stays closed exactly as it did before `input` existed.
@@ -88,8 +94,9 @@ function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs
     if (base === null) return { reason: 'no-slot-lock-dir' };
     let commonDir = null;
     try {
-      const out = git(['rev-parse', '--git-common-dir']);
-      if (out !== '') commonDir = canonicalRealpath(path.resolve(cwd, out));
+      // The provider's commonDir is already absolute; path.resolve keeps an absolute path as is.
+      const out = locations === null ? git(['rev-parse', '--git-common-dir']) : locations(cwd).commonDir;
+      if (out !== '' && out !== null) commonDir = canonicalRealpath(path.resolve(cwd, out));
     } catch { /* not a repository: null */ }
     if (commonDir === null) return { reason: 'no-common-dir' };
     const root = path.join(tmpdir, 'ct-verify-base');
@@ -122,7 +129,11 @@ function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs
     return { dir, leftover: registered || leaf !== 'missing' };
   };
   return {
-    repoRoot: () => git(['rev-parse', '--show-toplevel']),
+    repoRoot: () => {
+      const toplevel = locations === null ? null : locations(cwd).toplevel;
+      // No answer from the provider (not a work tree): ask git, so the error text is git's own.
+      return toplevel === null ? git(['rev-parse', '--show-toplevel']) : toplevel;
+    },
     resolveCommit: (ref) => {
       // --end-of-options: a ref spelled like a flag is a (non-existent) ref, never a git option.
       try { return git(['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`]) || null; } catch { return null; }
@@ -686,7 +697,10 @@ async function adjudicate({
     // Flaky is symmetric evidence: the isolated run exited 0, its log accounts
     // for itself (nothing cancelled), tests actually ran and passed (an
     // all-skipped run is not clean — `echo {file}` proves nothing), and every
-    // test that failed in the full run shows its own pass there.
+    // test that failed in the full run shows its own pass there. A wholly
+    // file-level full-run failure (a killed or timed-out child — the spec
+    // reporter cannot tell which) names no test to show a pass for, so the
+    // clean isolated run is the evidence (#4424).
     const ranCleanly = (r, k) => {
       if (!r || r.exitCode !== 0) return false;
       const text = readLog(r.logPath);
@@ -696,7 +710,9 @@ async function adjudicate({
       const counts = parseCounts(text, family);
       if (!(counts.tests > 0 && counts.pass > 0 && counts.fail === 0)) return false;
       const tree = testTree(text, family);
-      return tree.wellFormed && work[k].headTests.length > 0 && work[k].headTests.every(passedIn(tree));
+      if (!tree.wellFormed) return false;
+      if (work[k].headFileLevel) return true;
+      return work[k].headTests.length > 0 && work[k].headTests.every(passedIn(tree));
     };
     // Baseline after an isolated HEAD run: the isolated log (same accounting
     // guards, nothing cancelled, naming only this file, never a file-level

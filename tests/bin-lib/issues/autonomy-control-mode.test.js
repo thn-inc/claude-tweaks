@@ -42,6 +42,16 @@ test('AC4.11: a run-config autonomy beats a policy.yml control-mode', () => {
   assert.deepStrictEqual(e, { ceiling: 'supervised', controlMode: true, source: 'explicit' });
 });
 
+test('AC8.1: factory-only autonomy trusted is an explicit ceiling', () => {
+  const r = resolvePolicyKeys(['autonomy'], { factoryRaw: 'autonomy: trusted\n' });
+  assert.strictEqual(r.autonomy.source, 'factory');
+  assert.deepStrictEqual(effectiveCeiling({ autonomyEntry: r.autonomy }), { ceiling: 'trusted', controlMode: false, source: 'explicit' });
+  // Explicit beats a repository control-mode implication, as a policy.yml autonomy does; the
+  // implication is the top tier, so a factory value can only lower the ceiling here.
+  const withMode = resolvePolicyKeys(['autonomy', 'control-mode'], { policyRaw: 'control-mode: on\n', factoryRaw: 'autonomy: supervised\n' });
+  assert.deepStrictEqual(effectiveCeiling({ autonomyEntry: withMode.autonomy, controlModeEntry: withMode['control-mode'] }), { ceiling: 'supervised', controlMode: true, source: 'explicit' });
+});
+
 test('invalid autonomy with control mode on resolves supervised, never the implication', () => {
   const e = eff('control-mode: on\nautonomy: supervsed\n');
   assert.deepStrictEqual(e, { ceiling: 'supervised', controlMode: true, source: 'invalid-autonomy' });
@@ -60,9 +70,24 @@ test('an errored entry counts as absent', () => {
   assert.deepStrictEqual(off, { ceiling: 'unattended', controlMode: false, source: 'explicit' });
 });
 
+const strip = ({ ownedUpstreamFiling, ...rest }) => rest;
+
+test('AC8.2: ownedUpstreamFiling is control mode alone, at every ceiling', () => {
+  for (const c of [null, undefined, 'supervised', 'trusted', 'unattended', 'bogus']) {
+    assert.strictEqual(bookkeepingPermissions(c, { controlMode: true }).ownedUpstreamFiling, true, String(c));
+    assert.strictEqual(bookkeepingPermissions(c).ownedUpstreamFiling, false, String(c));
+    assert.strictEqual(bookkeepingPermissions(c, { controlMode: false }).ownedUpstreamFiling, false, String(c));
+  }
+});
+
+test('control mode widens nothing but ownedUpstreamFiling', () => {
+  assert.deepStrictEqual(strip(bookkeepingPermissions(null, { controlMode: true })), strip(bookkeepingPermissions('unattended')));
+  assert.deepStrictEqual(strip(bookkeepingPermissions('supervised', { controlMode: true })), strip(bookkeepingPermissions('supervised')));
+});
+
 test('bookkeepingPermissions(ceiling, { controlMode }) composes for a missing ceiling only', () => {
-  assert.deepStrictEqual(bookkeepingPermissions(null, { controlMode: true }), bookkeepingPermissions('unattended'));
-  assert.deepStrictEqual(bookkeepingPermissions('supervised', { controlMode: true }), bookkeepingPermissions('supervised'));
+  assert.deepStrictEqual(strip(bookkeepingPermissions(null, { controlMode: true })), strip(bookkeepingPermissions('unattended')));
+  assert.deepStrictEqual(strip(bookkeepingPermissions('supervised', { controlMode: true })), strip(bookkeepingPermissions('supervised')));
   assert.deepStrictEqual(bookkeepingPermissions(undefined, {}), bookkeepingPermissions('supervised'));
   assert.deepStrictEqual(bookkeepingPermissions('bogus'), bookkeepingPermissions('supervised'));
 });
@@ -76,6 +101,6 @@ test('resolveCeiling: controlMode sits below every explicit source', () => {
 });
 
 test('an unrecognized ceiling stays supervised under control mode; only an absent one lifts to unattended', () => {
-  assert.deepStrictEqual(bookkeepingPermissions('supervsed', { controlMode: true }), bookkeepingPermissions('supervised'));
-  assert.deepStrictEqual(bookkeepingPermissions(undefined, { controlMode: true }), bookkeepingPermissions('unattended'));
+  assert.deepStrictEqual(strip(bookkeepingPermissions('supervsed', { controlMode: true })), strip(bookkeepingPermissions('supervised')));
+  assert.deepStrictEqual(strip(bookkeepingPermissions(undefined, { controlMode: true })), strip(bookkeepingPermissions('unattended')));
 });

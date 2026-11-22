@@ -308,3 +308,22 @@ Lazy-loaded from `SKILL.md`'s "The fix shape" section; the numbering continues t
     "unparsed" for reasons no check can work around (no `on:`, no `jobs:`). Pin one reason per
     region against a check that does not read that region: it must still report. Matching reason
     text is the stopgap; region-tagged reasons from one reader are the structural fix (#5444).
+
+31. **A signal line read from an append-only log is also quoted or carried forward by later writers, so a counting reader keys on a measured writer-label allow-list, not on any label before the token.** A
+    decisions log is appended by many writers, and a later writer (a wrap-up carry-forward, a
+    routing note) quotes an earlier signal line inside its own text. A reader that counts a line as
+    a signal wherever its token follows any label counts the quotation too. #5556's pair-line
+    reader (`plugin/bin/lib/timing/pair-lines.js`) first accepted any head, then restricted both
+    the strict and loose heads to `WRITER_LABEL`, the labels the archive's real writers use
+    (measured over the archived runs, not recalled). Build the allow-list from the archive, pin a
+    quoted copy of a signal line as not counted, and expect a legacy form (no-seconds clock, hyphen
+    separator, bare date) to need its own measured widening rather than a looser head.
+
+32. **A map keyed by text parsed from a log line or event owes own-property reads and writes, because the parsed key can be `__proto__` or `constructor`.** On a plain
+    object, `__proto__` as a key vanishes (the assignment sets the prototype) and `constructor`
+    reads an inherited function, so a count for either is dropped or corrupted. #5556's
+    `step-yield.js` hit it on lens and event-type keys, review found it, and a second site of the
+    same class (`countGuardEvents` reading `GUARD_TYPES[e.type]`) turned up in the follow-up. Read
+    with `Object.hasOwn`, write with `Object.defineProperty` (`ownGet`/`ownSet`), and keep the
+    ordinary `{}` so `deepStrictEqual` against expected objects still holds. Grep every lookup
+    keyed by parsed text when fixing one, and pin `__proto__` and `constructor` keys through each.

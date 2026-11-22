@@ -11,7 +11,8 @@
 // detail? }) on stdout, held in memory until a step first sets ctx.runDir and from then
 // on appended to {run-dir}/driver-events.jsonl as well (events.js's sink). A step whose
 // result halts ends the record; an ok result with skip: true (a step that did not apply)
-// emits no line. Every record ends with a final line carrying the outcome word, the totals
+// emits no line, and neither does a non-ok result with noLine: true (a step that started nothing,
+// a launch-time model refusal), which still halts and becomes the record's stop. Every record ends with a final line carrying the outcome word, the totals
 // with and without the CI wait, the PR, the CI word, the worker's cost, turns and denial
 // count, and the structured stop. The outcome word is the merge result's own
 // (ctx.merge.outcome: `merged`, `armed` or `pending-review`) when the merge step ran and
@@ -32,7 +33,8 @@
 // Every side effect goes through `deps` (gh-api-module-pattern's CLI wrapper contract);
 // realDeps below is the real set. #5216's admission module and eligibility option are
 // required lazily inside realDeps, so --help, a malformed invocation and the tests never
-// load them.
+// load them; station-events/emit.js and driver-mirror.js (#5902) load eagerly, since every
+// sink emit mirrors through them.
 //
 // ASSUMPTION (spec #5218, Gotchas) — answered at build: a fresh unlocked worktree IS reap-eligible: bin/lib/hooks/worktree-reap.js reaps a `free` (unlocked) worktree under .claude/worktrees/ whose branch is merged into, or content-identical with, the integration branch and that holds no local-only content, which a new one cut from the integration branch is until the worker's first write. The driver therefore creates its worktree locked, with its own pid in the lock reason (steps.js, the worktree step), so the lock reads `in-use` while the driver lives. The reaper's 24h grace applies only to an `orphaned` verdict (the driver's pid is dead and the lock is still present). A cleared lock reads `free`, with no grace: a tree still content-identical with the integration branch and holding no local-only content is reaped at the next SessionStart. Unchanged: reconcile/archive-merged.js only counts ownerless runs (countOwnerlessNonClean); tidy/scan-procedures.md keeps unmerged worktrees and acts only after its Step 6 approval.
 //
@@ -72,6 +74,8 @@ const { ghAvailable, remoteUrl, ghOptions } = require('../repo-resolve');
 const { lstatType, canonicalRealpath } = require('../path-guard');
 const { resolveAgainst } = require('../health-core/io');
 const { defaultResolvePolicy } = require('../express/policy');
+const { appendStationEvent, toRepoName } = require('../station-events/emit');
+const { stationEventsFor } = require('../station-events/driver-mirror');
 // Read through the module at call time: GH_TIMEOUT_MS is a lazy getter (a policy read).
 const sharedPrimitives = require('../shared-primitives');
 
@@ -86,7 +90,7 @@ const USAGE = [
   'Takes each named record, one at a time and in order, from admission to a draft PR with',
   'CI read. Prints one JSON event line per step on stdout (and, once the run directory',
   'exists, to {run-dir}/driver-events.jsonl); each record ends with a final line carrying',
-  'its outcome: pending-review, express-escalated, blocked, refused, merged or armed. A record merges only when it carries auto:merge and the merge-check and acceptance judgment workers both clear it.',
+  'its outcome: pending-review, express-escalated, blocked, refused, merged or armed. A record merges only when it carries auto:merge and auto:build and the merge-check and acceptance judgment workers both clear it.',
   'Exit codes (Combined-2):',
   '  0  every named record reached its final event, whatever its outcome; with --budget, the loop ended normally (budget spent, queue exhausted, a claim stop on claim-targets.js exit 2, 6 or 7, or express-driver off), whatever each record\'s outcome',
   '  1  when the policy, or the run\'s repository or integration branch, cannot be resolved and no further record is attempted; with --budget, also a failed queue pull',
@@ -205,12 +209,15 @@ function newShared() {
   return { policy: null, ref: null, mainRoot: null, repo: null, ghRepo: null, fatal: false, activeWorker: null, current: null, interrupted: false, settle: true, adopted: null, inFlightPrsFile: null, nearDupPairsFile: null };
 }
 
-function newCtx(record, shared) {
+// `named` (#5584): the record was given on drive.js's command line, so a typed command may stand in
+// for its `auto:build` grant at admission; a record the --budget loop picked never is.
+function newCtx(record, shared, { named = false } = {}) {
   return {
-    record, runId: null, runDir: null, wt: null, indexFlags: null, branch: null, claimed: false, claimExit: null,
+    record, named: named === true, runId: null, runDir: null, wt: null, indexFlags: null, branch: null, claimed: false, claimExit: null,
     created: { worktree: false, branch: false }, pushed: false, configWritten: false,
     pr: null, ci: null, ciWaitStartedAt: null, pushedAt: null, checkLogged: undefined, worker: null,
-    eligibilityReasons: null, admissionReasons: null,
+    workerTestCommand: undefined, workerTestMode: undefined,
+    eligibilityReasons: null, admissionReasons: null, typedCommandNote: null,
     summaryLogged: false, merge: null, events: null, eventsStdoutOnly: false, reviewer: null,
     shared,
   };
@@ -372,11 +379,36 @@ async function settleStop(ctx, stop, record, shared, sink, deps) {
   };
 }
 
+// The sink with every emitted line also mirrored into station events (#5902) through the optional
+// deps.stationEvent (absent = no emission). The mirror runs after the real emit and inside its own
+// try/catch, so it never throws into a caller, never changes stdout or the jsonl, and never skips
+// the final line or reportInterrupt's terminate.
+function mirroredSink(sink, shared, deps) {
+  if (typeof deps.stationEvent !== 'function') return sink;
+  const emit = (event) => {
+    sink.emit(event);
+    let mirrored = [];
+    try {
+      mirrored = stationEventsFor(event, { repoName: toRepoName(shared.ghRepo), runId: event.run });
+    } catch {
+      // a station event is a report about the step, never part of it
+    }
+    for (const e of mirrored) {
+      try {
+        deps.stationEvent(e);
+      } catch {
+        // one failed station event drops only itself
+      }
+    }
+  };
+  return { ...sink, emit };
+}
+
 // One record through the table; resolves to `{ final, ctx }` — the final event (null when an
 // interrupt landed before its first step) and the record's context. `steps` is a test seam.
-async function driveWithCtx(record, shared, deps, steps) {
-  const sink = createEventSink({ stdout: deps.stdout, appendFile: deps.appendFile });
-  const ctx = newCtx(record, shared);
+async function driveWithCtx(record, shared, deps, steps, { named = false } = {}) {
+  const sink = mirroredSink(createEventSink({ stdout: deps.stdout, appendFile: deps.appendFile }), shared, deps);
+  const ctx = newCtx(record, shared, { named });
   // The writer a step uses to emit sub-step lines (before its own result line) and to follow the
   // run directory when it moves; rebind(null) goes stdout-only.
   ctx.events = {
@@ -426,7 +458,7 @@ async function driveWithCtx(record, shared, deps, steps) {
         sink.bindRunDir(ctx.runDir);
         bound = true;
       }
-      if (result.skip !== true) sink.emit(eventFor(ctx, step.name, result, ms, deps));
+      if (result.skip !== true && result.noLine !== true) sink.emit(eventFor(ctx, step.name, result, ms, deps));
       if (result.halt) {
         stop = { name: step.name, result };
         break;
@@ -456,8 +488,8 @@ async function driveWithCtx(record, shared, deps, steps) {
 // One record through the table; resolves to its final event (null when an interrupt landed
 // before its first step) plus the claim facts the budget loop counts from: whether the claim
 // was obtained and its run dir minted, and the claim step's exit code.
-async function driveRecord(record, shared, deps, steps = STEPS) {
-  const { final, ctx } = await driveWithCtx(record, shared, deps, steps);
+async function driveRecord(record, shared, deps, steps = STEPS, { named = false } = {}) {
+  const { final, ctx } = await driveWithCtx(record, shared, deps, steps, { named });
   return {
     final,
     outcome: final ? final.outcome : null,
@@ -473,7 +505,8 @@ async function driveRecord(record, shared, deps, steps = STEPS) {
 // ctx.admissionReasons stay null until then). An eligibility stop still runs admission, so every
 // reason is reported. No claim, run directory, worktree or forge write is in CHECK_STEPS.
 async function checkRecord(n, shared, deps, steps = CHECK_STEPS) {
-  const ctx = newCtx(n, shared);
+  // The record is on drive.js's command line, so it is named (#5584), as the drive loop names its records.
+  const ctx = newCtx(n, shared, { named: true });
   let admitted = true;
   let last = null;
   const noVerdict = (name, status, detail) => {
@@ -492,7 +525,9 @@ async function checkRecord(n, shared, deps, steps = CHECK_STEPS) {
   if (!Array.isArray(ctx.eligibilityReasons) || !Array.isArray(ctx.admissionReasons)) {
     return noVerdict(last ? last.name : 'none', 'no-verdict', 'the eligibility and admission verdicts were not both read');
   }
-  deps.stdout(`${JSON.stringify({ record: n, admitted, reasons: [...ctx.eligibilityReasons, ...ctx.admissionReasons] })}\n`);
+  // A refused typed command's words follow the admission reasons as one more string (#5584).
+  const typedNote = typeof ctx.typedCommandNote === 'string' ? [ctx.typedCommandNote] : [];
+  deps.stdout(`${JSON.stringify({ record: n, admitted, reasons: [...ctx.eligibilityReasons, ...ctx.admissionReasons, ...typedNote] })}\n`);
   return 0;
 }
 
@@ -599,7 +634,7 @@ async function run(argv, deps) {
       return await runBudget(parsed.budget, shared, deps, { driveOne: (n) => driveRecord(n, shared, deps) });
     }
     for (const record of parsed.records) {
-      await driveRecord(record, shared, deps);
+      await driveRecord(record, shared, deps, STEPS, { named: true });
       // A signal queued during the record's last synchronous call is delivered only when the
       // event loop turns; without this turn the unsubscribe below would drop it (exit 0).
       await yieldToEventLoop();
@@ -636,6 +671,9 @@ const realDeps = {
     timeout: remoteWrite === true ? sharedPrimitives.GIT_PUSH_TIMEOUT_MS : sharedPrimitives.GIT_TIMEOUT_MS,
     maxBuffer: MAX_BUFFER, windowsHide: true,
   }),
+  // The live GIT_TIMEOUT_MS (env, then policy, then the default), read at call time: the merge
+  // step's park budget counts accept-park.js's own git calls, which run under this same bound.
+  gitTimeoutMs: () => sharedPrimitives.GIT_TIMEOUT_MS,
   // A plugin/bin CLI under this Node; never throws on a non-zero exit.
   // The child gets the env the caller passes (steps pass deps.env); a call that omits `env`
   // falls back to process.env.
@@ -648,6 +686,12 @@ const realDeps = {
   resolvePolicyCore: (opts, coreDeps) => require('../../resolve-policy').resolvePolicy(opts, coreDeps),
   evaluateRecordEligibility: (issue, opts) => require('../express/eligibility').evaluateRecordEligibility(issue, opts),
   evaluateAdmission: (input) => require('./admission').evaluateAdmission(input),
+  // The build grant at admission (#5584): the one rule, the transcript check it asks inside a
+  // session, and whether stdin is a terminal (the rule's outside-a-session condition). The terminal
+  // test is a getter, so requiring this module never opens process.stdin.
+  resolveBuildAuthority: require('../issues/build-authority').resolveBuildAuthority,
+  readTypedCommand: (opts) => require('../issues/typed-command').readTypedCommand(opts),
+  get stdinIsTTY() { return process.stdin.isTTY === true; },
   // The record's one reviewer answer (#5224), asked by the eligibility step.
   reviewRequired: (opts) => require('./review').reviewRequired(opts),
   fetchNativeDependencies: (opts) => require('../issues/native-dependencies').fetchNativeDependencies(opts),
@@ -699,6 +743,8 @@ const realDeps = {
   },
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
+  // #5902: the driver's step lines mirrored into {main checkout}/.claude-tweaks/station-events.jsonl.
+  stationEvent: (e) => appendStationEvent(e),
   ghAvailable: () => ghAvailable(),
   gitAvailable: () => {
     try {

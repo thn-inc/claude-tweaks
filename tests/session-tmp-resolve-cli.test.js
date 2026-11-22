@@ -10,6 +10,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
+const { scratchDir, isolateTmpdir } = require('./helpers/tmp-dir');
+isolateTmpdir('ct-iso-session-tmp-resolve-cli-');
 const os = require('node:os');
 const path = require('node:path');
 const { formatPrintedPath } = require('../plugin/bin/session-tmp-resolve.js');
@@ -165,7 +167,7 @@ test('AC2.1: --value reads the session id from the injected env, not process.env
 });
 
 test('AC9.1: the temp root comes from the injected env TMPDIR', () => {
-  const T = fs.mkdtempSync(path.join(os.tmpdir(), 'st-resolve-'));
+  const T = scratchDir('st-resolve-');
   try {
     const { code, stdout } = runCliSync(CLI, ['--value', 'x.json'], {
       env: { CLAUDE_CODE_SESSION_ID: 's2', TMPDIR: T, TMP: T, TEMP: T },
@@ -178,7 +180,7 @@ test('AC9.1: the temp root comes from the injected env TMPDIR', () => {
 });
 
 test('AC9.1: with no session id the fallback path also uses the injected env TMPDIR', () => {
-  const T = fs.mkdtempSync(path.join(os.tmpdir(), 'st-resolve-'));
+  const T = scratchDir('st-resolve-');
   try {
     const { code, stdout } = runCliSync(CLI, ['--value', 'x.json'], { env: { TMPDIR: T, TMP: T, TEMP: T } });
     assert.equal(code, 0);

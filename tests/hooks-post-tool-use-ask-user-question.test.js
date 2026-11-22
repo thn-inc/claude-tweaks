@@ -7,17 +7,18 @@
 //
 // `tool_response` for this tool is NOT the SDK's structured
 // `AskUserQuestionOutput` object (`{questions, answers}`) — real captured
-// transcripts (see evals/NOTES.md's "AskUserQuestion input/output shapes"
-// section's Correction) show it is always a plain natural-language string
-// with a varying prefix/suffix, and the embedded question text can contain
-// unescaped nested double quotes, making it unsafe to regex-parse into a
-// structured per-question answer map. So there is no per-question `answer`
-// field — only the whole-event `response` string, extracted via this file's
-// existing `extractToolResponseText` helper.
+// transcripts (see docs/reference/agent-sdk-payload-notes.md's
+// "AskUserQuestion input/output shapes" section's Correction) show it is
+// always a plain natural-language string with a varying prefix/suffix, and
+// the embedded question text can contain unescaped nested double quotes,
+// making it unsafe to regex-parse into a structured per-question answer map.
+// So there is no per-question `answer` field — only the whole-event `response`
+// string, extracted via this file's existing `extractToolResponseText` helper.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const post = require('../plugin/bin/lib/hooks/post-tool-use');
@@ -30,20 +31,21 @@ function readEvents(runDir) {
 }
 
 function makeRunDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-auq-run-'));
+  return scratchDir('ct-auq-run-');
 }
 
 function askCtx({ toolInput, toolResponse, ownedRun } = {}) {
   const input = { tool_name: 'AskUserQuestion' };
   if (toolInput !== undefined) input.tool_input = toolInput;
   if (toolResponse !== undefined) input.tool_response = toolResponse;
-  return { input, cwd: '/does/not/matter', ownedRun };
+  return { input, cwd: '/does/not/matter', env: process.env, ownedRun };
 }
 
 test('logs questions (header, question, option labels) and the raw response text — real captured payload (Example 1)', () => {
   // Real tool_input/tool_response pair, captured verbatim from a live
-  // session transcript — see evals/NOTES.md's AskUserQuestion Correction
-  // (single question, plain recommended-option answer).
+  // session transcript — see docs/reference/agent-sdk-payload-notes.md's
+  // AskUserQuestion Correction (single question, plain recommended-option
+  // answer).
   const runDir = makeRunDir();
   const toolInput = {
     questions: [
@@ -136,7 +138,7 @@ test('logs response: null when tool_response is absent or malformed, and never t
 
 test('does not fire for a tool other than AskUserQuestion', () => {
   const runDir = makeRunDir();
-  const out = post.run({ input: { tool_name: 'ExitWorktree' }, cwd: '/x', ownedRun: { dir: runDir } });
+  const out = post.run({ env: process.env, input: { tool_name: 'ExitWorktree' }, cwd: '/x', ownedRun: { dir: runDir } });
   assert.deepStrictEqual(out, {});
   assert.ok(!fs.existsSync(path.join(runDir, 'events.jsonl')), 'no event file should be created');
 });
@@ -233,4 +235,21 @@ test('#1410: the event lands in an older, worktree-compatible sibling run instea
   assert.strictEqual(events.length, 1);
   assert.strictEqual(events[0].attribution, 'fallback');
   assert.ok(!fs.existsSync(path.join(foreignRun, 'events.jsonl')), "the foreign sibling's run must never receive this session's event");
+});
+
+test('#5556: the event carries toolUseId from the hook input, null when absent or not a string', () => {
+  const toolInput = { questions: [{ question: 'Q?', header: 'H', options: [{ label: 'a' }] }] };
+  const withId = makeRunDir();
+  const noId = makeRunDir();
+  const badId = makeRunDir();
+  const ctxWith = askCtx({ toolInput, toolResponse: 'r', ownedRun: { dir: withId } });
+  ctxWith.input.tool_use_id = 'toolu_q1';
+  post.run(ctxWith);
+  post.run(askCtx({ toolInput, toolResponse: 'r', ownedRun: { dir: noId } }));
+  const ctxBad = askCtx({ toolInput, toolResponse: 'r', ownedRun: { dir: badId } });
+  ctxBad.input.tool_use_id = 42;
+  post.run(ctxBad);
+  assert.strictEqual(readEvents(withId).find((e) => e.type === 'ask-user-question').toolUseId, 'toolu_q1');
+  assert.strictEqual(readEvents(noId).find((e) => e.type === 'ask-user-question').toolUseId, null);
+  assert.strictEqual(readEvents(badId).find((e) => e.type === 'ask-user-question').toolUseId, null);
 });

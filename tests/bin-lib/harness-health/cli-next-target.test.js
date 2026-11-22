@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -12,7 +13,7 @@ const { sweepCli } = require('../../helpers/health-sweep-cli');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'harness-health.js');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'harness-health-nt-')); }
+function tmp() { return scratchDir('harness-health-nt-'); }
 
 // In-process (#5380), with the file-protocol-only git guard — see tests/helpers/health-sweep-cli.js.
 const cli = (argv, opts) => sweepCli(CLI, argv, opts);
@@ -203,10 +204,10 @@ test('next-target (bare, no --kind) never surfaces a memory target even when MEM
 // process.env.PATH is never touched (installStub would), so a CLI that ignored
 // its injected env would run the real git and log nothing — the test would fail.
 function makeGitSpy() {
-  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-health-nt-gitspy-'));
+  const logDir = scratchDir('harness-health-nt-gitspy-');
   const logFile = path.join(logDir, 'git-calls.log');
   const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-health-nt-gitstub-'));
+  const stubDir = scratchDir('harness-health-nt-gitstub-');
   const shim = path.join(stubDir, 'git');
   fs.writeFileSync(shim, `#!/bin/sh\necho "$@" >> "${logFile}"\nexec "${realGit}" "$@"\n`);
   fs.chmodSync(shim, 0o755); // root-safe: exec-bit stub, not a denial simulation

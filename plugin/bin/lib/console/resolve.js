@@ -9,7 +9,7 @@
 
 const crypto = require('crypto');
 const path = require('path');
-const { evaluateMaturation } = require('../issues/grant-maturation');
+const { evaluateMaturation, withheldGrant } = require('../issues/grant-maturation');
 const { resolveRecords, memberRecords } = require('../wrap-up/pack');
 const {
   SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction,
@@ -17,7 +17,9 @@ const {
 const { REFERENCE_REPAIR_REASONS, referenceRepairHoldReason, referenceFindingsByFile, readableGlobs } = require('./reference-repair');
 const { planFilings, planDigestsBesideFilings, isDropRecommended } = require('./finding-filing');
 const { UNRESOLVED_RESOLUTIONS } = require('./residue');
-const { decisionFactFor } = require('./decision-facts');
+const { decisionFactFor, upstreamDecisionFact } = require('./decision-facts');
+const { bookkeepingPermissions } = require('../issues/autonomy');
+const { UPSTREAM_FILING_TARGET, upstreamFilingRoute, parseStagedUpstream } = require('../issues/upstream-ownership');
 const { FINDING_PATH_CLASS, FINDING_LENS_CLASS, FINDING_PATH, FINDING_LOCATION, FINDING_LENS, parseCoincidence } = require('./finding-path');
 const { FINDINGS_ARTIFACT, VERDICT_LINE_END } = require('../tiebreak');
 const { parseCategory, isApplicableReflect, parseReflectDestination, deferReasonProblem } = require('./reflect-destination');
@@ -65,7 +67,11 @@ const SECTION_MAP = [
   [/^review-unconfirmed-/, SECTIONS.LOW],
   [/^review-(contested|debate)-/, SECTIONS.CONTESTED],
   [/\.patch$/, SECTIONS.PENDING],
-  [/^(polish-suggestion|visual-review|design-decision|build-deviation|simplify|deepen|sdd-ruling)-/, SECTIONS.PENDING],
+  [/^(polish-suggestion|visual-review|build-deviation|simplify|deepen|sdd-ruling)-/, SECTIONS.PENDING],
+  // design-decision- (#4038): design-wrapper/modes/review.md Step 5.5 stages it with no
+  // diff and a `Remedy:` naming a human-run upstream command (DESIGN.md stays
+  // upstream-owned), so there is nothing to apply — it resolves pending.
+  [/^design-decision-/, SECTIONS.PENDING, 'design-decision-human-remedy'],
   // sibling-premise-disproof- (#3488): bin/materialize.js stages it as a note for a
   // human to read, not a change to apply — so it resolves pending.
   [/^sibling-premise-disproof-/, SECTIONS.PENDING, 'sibling-premise-disproof-note'],
@@ -118,7 +124,8 @@ const SECTION_MAP = [
 const CANONICAL_PREFIXES = [
   'review-unconfirmed-',
   'review-contested-', 'review-debate-',
-  'polish-suggestion-', 'visual-review-', 'design-decision-', 'build-deviation-', 'simplify-', 'deepen-', 'sdd-ruling-',
+  'polish-suggestion-', 'visual-review-', 'build-deviation-', 'simplify-', 'deepen-', 'sdd-ruling-',
+  'design-decision-',
   'sibling-premise-disproof-', 'plan-citation-', 'translation-',
   'wrap-up-skill-', 'skills-',
   'wrap-up-doc-', 'tidy-doc-', 'docs-',
@@ -140,7 +147,7 @@ const CANONICAL_PREFIXES = [
 // entry is [pattern over the id without its extension, why the console never sees it].
 // An id on this list must NOT also classify mapped (resolve.test.js pins the disjointness).
 const STAGING_EXEMPTIONS = Object.freeze([
-  [/^release-held(\.|$)/, "/claude-tweaks:release's standalone run dir; surfaced by release's own Step 4 console (release/console.md), never by wrap-up's console-resolve.js"],
+  [/^release-held(\.|$)/, "/claude-tweaks:release's standalone run dir; surfaced by release's own Step 8 summary (release/SKILL.md; a Step 1.5 hold never renders the Step 4 console), never by wrap-up's console-resolve.js"],
   [/^dispatch-target-missing-/, "/claude-tweaks:dispatch's `*-dispatch-standalone` run dir (queue-pull-script.md); dispatch renders no Review Console"],
   [/^shipped-close-/, "the same dispatch-standalone firing run dir (queue-pull-script.md's #1984 shipped-candidate pass); no Review Console"],
   [/^dream-proposal-/, "harness-health's `*-dream-standalone` run dir (dream-pass.md); report-only, `report.md` is its surface"],
@@ -447,6 +454,7 @@ function mergeResolution(snapshot, deps) {
     const g = snapshot.grants[n] || { labels: [], pendingSince: null };
     const labels = g.labels || [];
     const mat = evaluateMaturation({
+      hasBuildLabel: labels.includes('auto:build'),
       hasMergeLabel: labels.includes('auto:merge'),
       hasPendingLabel: labels.includes('auto:merge-pending'),
       pendingSince: g.pendingSince || null,
@@ -457,10 +465,14 @@ function mergeResolution(snapshot, deps) {
       // #3358: name the untrusted marker comments ghReadGrants passed over, so an
       // unknown-age grant is not mistaken for "never granted".
       const passedOver = Array.isArray(g.skippedUntrusted) && g.skippedUntrusted.length ? ` — ${g.skippedUntrusted.join('; ')}` : '';
-      return { resolution: 'leave-open', reason: `#${n} lacks auto:merge and a matured auto:merge-pending (${mat.reason})${passedOver}` };
+      const withheld = withheldGrant(mat, labels);
+      if (withheld.missing === 'build-grant') {
+        return { resolution: 'leave-open', reason: `#${n}: ${withheld.detail}${passedOver}` };
+      }
+      return { resolution: 'leave-open', reason: `#${n} lacks auto:merge and a matured auto:merge-pending (${withheld.detail})${passedOver}` };
     }
   }
-  return { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' };
+  return { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' };
 }
 
 // ---- tiebreak verdicts are a finding's final outcome (#3949) ----
@@ -980,6 +992,42 @@ function runIdOf(runDir) {
 const CARRIED_RESOLUTION = 'carried';
 const CARRY_FROM = Object.freeze([...UNRESOLVED_RESOLUTIONS, 'refused']);
 
+// Control mode (#4621): a wrap-up upstream-feedback item the stance files is filed only into a repo this
+// project owns; any other target is held and carried to the packet as a decision fact. Hand-off drafts
+// (`upstream-draft-*`) are `pending` and keep the carry above. deps.upstreamOwnership() is read lazily, once,
+// and only when such an item exists; absent, throwing or empty it leaves every target owner-unresolved.
+const UPSTREAM_OWNERSHIP_NONE = Object.freeze({ ownerContext: null, ownedOwners: Object.freeze([]) });
+
+function routeUpstreamItems(items, { snapshot, deps, runDir, facts }) {
+  // `unattended` is the ceiling resolveAll runs at; ownedUpstreamFiling comes from controlMode alone, so any
+  // ceiling would give the same permission here.
+  const permissions = bookkeepingPermissions('unattended', { controlMode: true });
+  const textByName = new Map(snapshot.staged.map((s) => [s.name, s.text]));
+  let ownership = null;
+  const readOwnership = () => {
+    if (ownership !== null) return ownership;
+    try {
+      ownership = (typeof deps.upstreamOwnership === 'function' && deps.upstreamOwnership()) || UPSTREAM_OWNERSHIP_NONE;
+    } catch {
+      ownership = UPSTREAM_OWNERSHIP_NONE;
+    }
+    return ownership;
+  };
+  return items.map((it) => {
+    if (it.section !== SECTIONS.UPSTREAM || it.resolution !== 'filed' || !it.id.startsWith('wrap-up-upstream-')) return it;
+    const { ownerContext, ownedOwners } = readOwnership();
+    // An unreadable file has no text, which parseStagedUpstream reads as '' — no target line, so it holds as external.
+    const staged = parseStagedUpstream(textByName.get(it.id));
+    const verdict = upstreamFilingRoute({ permissions, targetRepo: staged.targetRepo, ownerContext, ownedOwners, filingTarget: UPSTREAM_FILING_TARGET });
+    if (verdict.route === 'file') return { ...it, reason: `control mode: owned target ${verdict.targetRepo} — filed with no prompt` };
+    // Only `file` files: any other verdict holds (reason `external` when it names none), so an unexpected one fails closed.
+    const reason = verdict.reason || 'external';
+    const fact = upstreamDecisionFact({ id: it.id, targetRepo: staged.targetRepo, title: staged.title, body: staged.body, reason, runDir, staged: true });
+    facts.push(fact);
+    return { ...it, resolution: CARRIED_RESOLUTION, carriedFrom: 'filed', reason: `carried to the acceptance packet as ${fact.id} — held: ${reason}` };
+  });
+}
+
 function resolveAll({ runDir, policy, deps, controlMode }) {
   if (policy !== 'console-auto') throw new RangeError(`unsupported policy: ${policy} (expected console-auto)`);
   const snapshot = readSnapshot({ runDir, deps });
@@ -995,6 +1043,8 @@ function resolveAll({ runDir, policy, deps, controlMode }) {
   // above (#4679), so the carry and the digest routing below never touch the same item.
   const decisionFacts = [];
   if (controlMode === true) {
+    // Before the carry below, so a held upstream item (now `carried`) is not carried twice.
+    items = routeUpstreamItems(items, { snapshot, deps, runDir, facts: decisionFacts });
     items = items.map((it) => {
       if (!CARRY_FROM.includes(it.resolution)) return it;
       const fact = decisionFactFor(it, { runDir, staged: stagedIds.has(it.id) });
@@ -1017,4 +1067,4 @@ function resolveAll({ runDir, policy, deps, controlMode }) {
   return result;
 }
 
-module.exports = { CARRIED_RESOLUTION, CARRY_FROM, UNATTENDED_SHADOWED_DROP_REASON, decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction, RATIFY_FILES_RECORD_REASON, REFERENCE_REPAIR_REASONS, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };
+module.exports = { CARRIED_RESOLUTION, CARRY_FROM, UNATTENDED_SHADOWED_DROP_REASON, decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction, RATIFY_FILES_RECORD_REASON, REFERENCE_REPAIR_REASONS, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs, findingKey, lineKeys };

@@ -5,6 +5,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir, isolateTmpdir } = require('./helpers/tmp-dir');
+isolateTmpdir('ct-iso-hooks-launcher-');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -96,7 +98,7 @@ require('node:test').after(() => {
 });
 
 function tmp(prefix) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const dir = scratchDir(prefix);
   TMP_DIRS.push(dir);
   return dir;
 }

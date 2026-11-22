@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -8,14 +9,12 @@ const { listDocs, extractDomainPaths, domainChurn, selectTarget } = require('../
 const { listTargets } = require('../../../plugin/bin/lib/harness-health/scope');
 const { listJourneys } = require('../../../plugin/bin/lib/journey-health/scope');
 const { STALE_DAYS } = require('../../../plugin/bin/lib/docs-health/score');
-const { cleanGitEnv } = require('../../helpers/git-fixtures');
+const { cleanGitEnv, initRepo, writeIdentity } = require('../../helpers/git-fixtures');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-scope-')); }
+function tmp() { return scratchDir('docs-health-scope-'); }
 
 function initGitRepo(root) {
-  execFileSync('git', ['-C', root, 'init', '-q']);
-  execFileSync('git', ['-C', root, 'config', 'user.email', 'test@test.com']);
-  execFileSync('git', ['-C', root, 'config', 'user.name', 'Test']);
+  initRepo(root, { name: 'Test', email: 'test@test.com' });
 }
 
 function commit(root, msg) {
@@ -299,8 +298,7 @@ test('selectTarget passes env to domainChurn (#5381)', () => {
   const B = tmp();
   const git = (args) => execFileSync('git', ['-C', B, ...args], { env: clean, stdio: 'pipe' });
   git(['init', '-q']);
-  git(['config', 'user.email', 'test@test.com']);
-  git(['config', 'user.name', 'Test']);
+  writeIdentity(B, { name: 'Test', email: 'test@test.com' });
   fs.mkdirSync(path.join(B, 'src'), { recursive: true });
   fs.writeFileSync(path.join(B, 'src', 'x.ts'), 'export const x = 1;\n');
   git(['add', '-A']);

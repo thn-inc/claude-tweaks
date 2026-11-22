@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('node:os');
 
 const { pathToFileURL } = require('node:url');
@@ -14,6 +15,9 @@ const { readText } = require('./helpers/read-skill');
 const { fixtureHomeEnv } = require('./helpers/fixture-home');
 const { runCli, spawnCli } = require('./helpers/run-cli');
 const { chmodDenialSkip } = require('./helpers/root');
+const { committedRepo, repoWithOrigin, linkedWorktreeProject, worktreeShapes, trySymlink } = require('./helpers/statusline-fixtures');
+const { warmCallStartsNoGit } = require('./helpers/git-trace');
+const { pinnedGit: git } = require('./helpers/pinned-git');
 
 // The project segment wraps text in OSC 8 hyperlinks (\x1b]8;;URL\x07text\x1b]8;;\x07).
 // Assertions about segment order/content strip those wrappers first; the link
@@ -35,7 +39,7 @@ function linkedName(dir) {
 // In-process through runCli (#5386); cwd defaults to process.cwd(), as the
 // spawned child it replaces inherited.
 async function runStatusline(input, env = {}, seedHome = () => {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-'));
+  const home = scratchDir('ct-sl-');
   try {
     seedHome(home);
     const res = await runCli(STATUSLINE, [], { env: { ...fixtureHomeEnv(home), ...env }, stdin: JSON.stringify(input) });
@@ -69,15 +73,8 @@ test('parseStatusBranch: empty or unparseable output reports no branch', () => {
 });
 
 test('renderGit: uses the passed cwd rather than the process-wide cwd', () => {
-  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-git-'));
+  const repoDir = committedRepo({ branch: 'feature/isolated-branch' });
   try {
-    execFileSync('git', ['init', '-q', '-b', 'feature/isolated-branch'], { cwd: repoDir });
-    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repoDir });
-    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repoDir });
-    fs.writeFileSync(path.join(repoDir, 'file.txt'), 'hello\n');
-    execFileSync('git', ['add', 'file.txt'], { cwd: repoDir });
-    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repoDir });
-
     // The real process cwd (this repo checkout) is on a different branch, so if renderGit
     // ever regresses to relying on execSync's implicit process.cwd() instead of the passed
     // cwd, this would report the wrong (or no) branch instead of the isolated repo's.
@@ -99,14 +96,7 @@ test('renderGit: uses the passed cwd rather than the process-wide cwd', () => {
 
 // A throwaway repo on `main` with one committed file (file.txt). Caller removes it.
 function makeCommittedRepo() {
-  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-git-'));
-  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repoDir });
-  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repoDir });
-  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repoDir });
-  fs.writeFileSync(path.join(repoDir, 'file.txt'), 'hello\n');
-  execFileSync('git', ['add', 'file.txt'], { cwd: repoDir });
-  execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repoDir });
-  return repoDir;
+  return committedRepo();
 }
 
 // renderGit with colors off, so assertions compare plain text.
@@ -315,17 +305,7 @@ test('githubRepoUrl rejects a remote whose path carries a control character', ()
 
 // Fixture: an init'd repo with one commit and, optionally, an origin remote.
 function withRepo(remoteUrl, fn) {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-repo-'));
-  const repoDir = path.join(base, 'glyph-project');
-  fs.mkdirSync(repoDir);
-  const git = (args) => execFileSync('git', args, { cwd: repoDir, encoding: 'utf8' });
-  git(['init', '-q', '-b', 'main']);
-  git(['config', 'user.email', 'test@example.com']);
-  git(['config', 'user.name', 'Test']);
-  fs.writeFileSync(path.join(repoDir, 'README.md'), 'hi');
-  git(['add', '.']);
-  git(['commit', '-q', '-m', 'init']);
-  if (remoteUrl) git(['remote', 'add', 'origin', remoteUrl]);
+  const { base, repoDir } = repoWithOrigin(remoteUrl);
   try {
     return fn(repoDir);
   } finally {
@@ -356,19 +336,7 @@ test('renderProject: repo with no origin remote renders no glyph', () => {
 });
 
 test('renderProject: resolves a linked worktree to the main project name', () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-wt-'));
-  const mainDir = path.join(base, 'real-project-name');
-  fs.mkdirSync(mainDir);
-  const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8' });
-  git(['init', '-q', '-b', 'main'], mainDir);
-  git(['config', 'user.email', 'test@example.com'], mainDir);
-  git(['config', 'user.name', 'Test'], mainDir);
-  fs.writeFileSync(path.join(mainDir, 'README.md'), 'hi');
-  git(['add', '.'], mainDir);
-  git(['commit', '-q', '-m', 'init'], mainDir);
-  git(['remote', 'add', 'origin', 'git@github.com:owner/real-project.git'], mainDir);
-  const worktreeDir = path.join(base, 'worktree-branch-name');
-  git(['worktree', 'add', '-q', worktreeDir, '-b', 'feature'], mainDir);
+  const { base, mainDir, worktreeDir } = linkedWorktreeProject();
   try {
     // EnterWorktree pivots workspace.project_dir to the worktree path — the
     // statusline must still surface the real project's name, not the
@@ -382,25 +350,11 @@ test('renderProject: resolves a linked worktree to the main project name', () =>
       `${linkedName(fs.realpathSync(mainDir))} ${color.link('https://github.com/owner/real-project', '')}`,
     );
   } finally {
-    git(['worktree', 'remove', '--force', worktreeDir], mainDir);
     fs.rmSync(base, { recursive: true, force: true });
   }
 });
 
 const NO_SYMLINK = 'this host refuses to create a symlink (EPERM)';
-
-// Creating a symlink needs a privilege on win32 that CI runners hold and a
-// developer machine may not. Returns false on that EPERM, so the caller skips its
-// symlink case instead of failing in setup.
-function trySymlink(target, link) {
-  try {
-    fs.symlinkSync(target, link);
-    return true;
-  } catch (err) {
-    if (err.code === 'EPERM') return false;
-    throw err;
-  }
-}
 
 // Fixture for the spawn-free main-checkout resolution: one mkdtemp base holding
 // a main repo, an absolute linked worktree, a --relative-paths worktree (null
@@ -409,46 +363,11 @@ function trySymlink(target, link) {
 // symlink to the absolute worktree (null when the host refuses symlinks).
 // fn receives { base, main, wt, relWt, sub, link }.
 function withWorktrees(fn) {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-shapes-'));
-  const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  const init = (dir) => {
-    fs.mkdirSync(dir);
-    git(['init', '-q', '-b', 'main'], dir);
-    git(['config', 'user.email', 'test@example.com'], dir);
-    git(['config', 'user.name', 'Test'], dir);
-    fs.writeFileSync(path.join(dir, 'README.md'), 'hi');
-    git(['add', '.'], dir);
-    git(['commit', '-q', '-m', 'init'], dir);
-  };
-  const main = path.join(base, 'main-repo');
-  const inner = path.join(base, 'inner-repo');
-  init(main);
-  init(inner);
-  const wt = path.join(base, 'abs-wt');
-  git(['worktree', 'add', '-q', wt, '-b', 'a'], main);
-  const relMain = path.join(base, 'rel-main');
-  init(relMain);
-  let relWt = null;
+  const f = worktreeShapes();
   try {
-    const p = path.join(base, 'rel-wt');
-    git(['worktree', 'add', '-q', '--relative-paths', p, '-b', 'b'], relMain);
-    relWt = p;
-  } catch {
-    relWt = null;
-  }
-  // A forward-slash spelling: Git for Windows writes a backslash path into the main
-  // config as an escaped `url = D:\\a\\...`, and the reader defers to git on any backslash.
-  const innerUrl = inner.split(path.sep).join('/');
-  git(['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', innerUrl, 'sub'], main);
-  const sub = path.join(main, 'sub');
-  const linkPath = path.join(base, 'link-wt');
-  const link = trySymlink(wt, linkPath) ? linkPath : null;
-  try {
-    return fn({ base, main, wt, relWt, sub, link });
+    return fn(f);
   } finally {
-    try { git(['worktree', 'remove', '--force', wt], main); } catch {}
-    if (relWt) { try { git(['worktree', 'remove', '--force', relWt], relMain); } catch {} }
-    fs.rmSync(base, { recursive: true, force: true });
+    fs.rmSync(f.base, { recursive: true, force: true });
   }
 }
 
@@ -543,7 +462,7 @@ test('commonDirFromFs: GIT_DIR or GIT_COMMON_DIR in the env defers to git', () =
 
 // A temp dir whose `.git` FILE holds `content`; fn receives the dir.
 function withGitFile(content, fn) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-gitfile-'));
+  const dir = scratchDir('ct-sl-gitfile-');
   try {
     fs.writeFileSync(path.join(dir, '.git'), content);
     return fn(dir);
@@ -554,7 +473,7 @@ function withGitFile(content, fn) {
 
 // A fake gitdir whose `commondir` is a directory (EISDIR on read).
 function withEisdirCommondir(fn) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-eisdir-'));
+  const root = scratchDir('ct-sl-eisdir-');
   try {
     const gitdir = path.join(root, 'admin');
     fs.mkdirSync(path.join(gitdir, 'commondir'), { recursive: true });
@@ -1132,7 +1051,7 @@ test('readOriginRemote: fast:false skips the filesystem read and asks git', () =
 });
 
 test('readOriginRemote: an existing directory that is not a repo answers null (git exits non-zero)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-norepo-'));
+  const dir = scratchDir('ct-sl-norepo-');
   try {
     assert.strictEqual(sl.originUrlFromConfig(dir, READER_ENV), null);
     const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { env: READER_ENV }));
@@ -1237,7 +1156,7 @@ function readerInChild(call, p) {
 }
 
 test('commonDirFromFs: a FIFO at .git returns null promptly (git refuses it as not a regular file)', FIFO_OPTS, () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-fifo-'));
+  const dir = scratchDir('ct-sl-fifo-');
   try {
     execFileSync('mkfifo', [path.join(dir, '.git')]);
     // Real process: a blocking FIFO read would hang the test thread, so the reader runs in a child with its own timeout.
@@ -1316,7 +1235,7 @@ test('commonDirFromFs: a FIFO main config returns null promptly', FIFO_OPTS, () 
       // Real process: a blocking FIFO read would hang the test thread, so the reader runs in a child with its own timeout.
       assert.strictEqual(readerInChild('sl.commonDirFromFs(p, {})', f.wt), null);
     } finally {
-      fs.rmSync(cfg); // git blocks on it too, and the fixture's cleanup runs git
+      fs.rmSync(cfg); // git blocks on it too
     }
   });
 });
@@ -1346,7 +1265,7 @@ test('commonDirFromFs: env names match case-insensitively, as on win32', () => {
 // `~/.claude.json` (rootJson) and/or `~/.claude/.claude.json` (dotClaudeJson).
 // Caller removes the returned home.
 function makeAccountHome({ rootJson, dotClaudeJson } = {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-home-'));
+  const home = scratchDir('ct-sl-home-');
   fs.mkdirSync(path.join(home, '.claude', 'projects', 'foo'), { recursive: true });
   if (rootJson !== undefined) fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify(rootJson));
   if (dotClaudeJson !== undefined) {
@@ -1600,7 +1519,7 @@ test('colorByPct skips colors when NO_COLOR set', () => {
 // withSpecs below were structurally identical copies of this, differing
 // only in the mkdtemp prefix and the docs/plans vs specs subpath.
 function withFixtureDir(prefix, subpathSegments, files, fn) {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const cwd = scratchDir(prefix);
   const dir = path.join(cwd, ...subpathSegments);
   fs.mkdirSync(dir, { recursive: true });
   for (const [name, content] of Object.entries(files)) {
@@ -1626,7 +1545,7 @@ test('findOpenLedger returns null when no ledger files exist', () => {
 });
 
 test('findOpenLedger returns null when cwd has no docs/plans', () => {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-noplans-'));
+  const cwd = scratchDir('ct-noplans-');
   try {
     assert.strictEqual(sl.findOpenLedger(cwd), null);
   } finally {
@@ -1754,7 +1673,7 @@ test('findActiveSpec returns null when specs/ is empty', () => {
 });
 
 test('findActiveSpec returns null when specs/ does not exist', () => {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-nospecs-'));
+  const cwd = scratchDir('ct-nospecs-');
   try {
     assert.strictEqual(sl.findActiveSpec(cwd), null);
   } finally {
@@ -1935,7 +1854,7 @@ function writeSessionSegment(home, id, seg) {
 }
 
 function withSegmentHome(fn) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-seg-'));
+  const home = scratchDir('ct-sl-seg-');
   try {
     return fn(home);
   } finally {
@@ -2042,7 +1961,7 @@ test('end-to-end: NO_COLOR strips ANSI codes even at high context', async () => 
 // The in-process AC8.1 tests below share the fixture: `root` holds `dir` and
 // `home`, and `base` is process.env minus those four GIT_* names.
 async function withScriptFixture(fn) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-script-')));
+  const root = fs.realpathSync(scratchDir('ct-sl-script-'));
   const dir = path.join(root, 'proj');
   const home = path.join(root, 'home');
   fs.mkdirSync(dir);
@@ -2198,7 +2117,7 @@ test('main() with no arguments resolves 0 and renders the payload read from real
 
 // #1793 AC1: renderPorts and its toplevel-resolution helper.
 function tmpRepoDir(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return scratchDir(prefix);
 }
 function writeRegistry(home, leases) {
   fs.mkdirSync(path.join(home, '.claude-tweaks'), { recursive: true });
@@ -2306,7 +2225,7 @@ test('render launches exactly one child process — git status, no shell — in 
 });
 
 test('renderGit: unborn branch renders its name', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-unborn-'));
+  const dir = scratchDir('ct-sl-unborn-');
   try {
     execFileSync('git', ['init', '-q', '-b', 'trunk'], { cwd: dir });
     assert.strictEqual(renderGitPlain(dir), 'trunk');
@@ -2323,7 +2242,7 @@ test('renderGit: detached HEAD renders nothing', () => {
 });
 
 test('renderGit: a directory that is not a repo renders nothing', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-norepo-'));
+  const dir = scratchDir('ct-sl-norepo-');
   try {
     assert.strictEqual(renderGitPlain(dir), null);
   } finally {
@@ -2335,7 +2254,7 @@ test('rendered project and git segments are byte-identical with the fast paths o
   const GH = 'https://github.com/o/parity.git';
   const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   const inTmp = (prefix, setup) => (run) => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    const dir = scratchDir(prefix);
     try {
       setup(dir);
       return run(dir);
@@ -2394,4 +2313,41 @@ test('rendered project and git segments are byte-identical with the fast paths o
   });
   assert.strictEqual(compared.length, 11);
   assert.deepStrictEqual(launches.filter((l) => l.fn === 'exec' || l.fn === 'execSync'), []);
+});
+
+// #5846: the statusline fixtures are templates (#5772) — a warm-up call may build, a further call starts no
+// git process, and the worktreeShapes copy holds its own paths. They live here because this file's own tests
+// already build every one of these templates.
+const cleanupAfter = (t, dirs) => t.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
+for (const [name, make, dirsOf] of [
+  ['committedRepo()', () => committedRepo(), (d) => [d]],
+  ["committedRepo({ branch: 'feature/isolated-branch' })", () => committedRepo({ branch: 'feature/isolated-branch' }), (d) => [d]],
+  ["repoWithOrigin('git@github.com:owner/repo.git')", () => repoWithOrigin('git@github.com:owner/repo.git'), (r) => [r.base]],
+  ['repoWithOrigin(null)', () => repoWithOrigin(null), (r) => [r.base]],
+  ['worktreeShapes()', () => worktreeShapes(), (r) => [r.base]],
+  ['linkedWorktreeProject()', () => linkedWorktreeProject(), (r) => [r.base]],
+]) {
+  test(`AC3.1: statusline ${name}: a second call starts no git process`, (t) => {
+    warmCallStartsNoGit(make, { track: (r) => cleanupAfter(t, dirsOf(r)) });
+  });
+}
+
+test('worktreeShapes copy: link points at this copy\'s wt, and wt and sub resolve inside this copy', (t) => {
+  const { base, wt, sub, link } = worktreeShapes();
+  cleanupAfter(t, [base]);
+  const realBase = fs.realpathSync(base);
+  const inside = (p) => p.startsWith(realBase + path.sep);
+  if (link !== null) assert.strictEqual(fs.realpathSync(link), fs.realpathSync(wt));
+  for (const dir of [wt, sub]) {
+    const common = fs.realpathSync(path.resolve(dir, git(dir, ['rev-parse', '--git-common-dir'])));
+    assert.ok(inside(common), `${dir}: ${common} is outside ${realBase}`);
+  }
+  const gitmodules = path.join(base, 'main-repo', '.gitmodules');
+  if (fs.existsSync(gitmodules)) {
+    const urls = [...fs.readFileSync(gitmodules, 'utf8').matchAll(/^\s*url\s*=\s*(.+?)\s*$/gm)].map((m) => m[1]);
+    assert.ok(urls.length > 0, 'control: .gitmodules names a url');
+    for (const url of urls) {
+      assert.ok(inside(fs.realpathSync(path.resolve(url))), `.gitmodules url ${url} is outside ${realBase}`);
+    }
+  }
 });

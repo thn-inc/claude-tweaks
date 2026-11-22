@@ -3,6 +3,8 @@ files:
   - plugin/skills/review/step3-lens-dispatch.md
   - plugin/skills/review/step3-cross-lens-corroboration.md
   - plugin/skills/_shared/multi-agent-coordination.md
+  - plugin/bin/review-coordination.js
+  - plugin/bin/lib/reproduction-log.js
 ---
 
 # Drop a Refuted "Code Is Missing" Claim
@@ -31,13 +33,14 @@ files:
 - **Should feel:** settled. A one-command check answered the claim, so it never became a judgment call left for a human.
 - **Should understand:**
   - The check passes only when the named construct appears in the claimed form: defined, exported, or taking that parameter. A bare token match elsewhere in the file does not count.
-  - Found → the claim is refuted, logged `AUTO … Not staged.`, and dropped.
+  - Found → the claim is refuted, logged `AUTO … Not staged.`, and dropped. The session does not type that line: it writes `{ kind: "absence-refuted", path, symbol, command, foundAt }` to a file and runs `review-coordination.js log-reproduction-judgment`, which composes the line (#5595), and holds the finding out of the pair's `--only unconfirmed` call with `--hold`.
   - Not found, or an ambiguous hit → it stays `unconfirmed`, is staged as before, and goes on to Step 3.7's tiebreak.
   - At `medium`, the check runs before the cross-lens corroboration pass, so a refuted claim is never cross-lens input.
   - The check only refutes. Raising a finding to `confirmed` takes a `confirmed` Step 3.7 tiebreak verdict (`get-a-verdict-on-every-unverified-review-finding-3947.md`).
 - **Red flags:**
   - A real defect ("`foo()` is missing parameter `timeout`") is logged as refuted because `timeout` appears in some other function.
   - The check reads the plan, spec or review bundle instead of the live file.
+  - The refuted claim also gets a `not reproduced` STAGED line, because it was not held out of the `--only unconfirmed` call.
 
 ### 3. Work through the Low-confidence section — the Wrap-Up Review Console
 - **URL:** the Review Console's Low-confidence subsection
@@ -51,4 +54,5 @@ files:
 ## Origin
 - Created during the build of #3329. On #3249's review, one agent of lens 3a's reproduction pair returned `BLOCKED`, naming functions, exports and parameters as missing at line numbers drawn from the record's own materialized plan. Every one already existed in the live worktree. The pair mechanism flagged the disagreement but treated it as low-confidence, so it could have sent a human after a gap that did not exist.
 - The fix added a dispatch-prompt warning against inferring code state from plan or spec listings. It also added a ground-truth check that refutes a contradicted absence claim before it is staged, recorded the refuted outcome in `_shared/multi-agent-coordination.md`'s Mode 1 table, and placed the check before the `medium`-tier cross-lens pass.
+- Updated during the build of #5595: the refuted line is now composed by `log-reproduction-judgment` instead of typed by the session.
 - Related journeys: `confirm-paraphrased-findings-across-reproduction-pairs-3418.md` (the anchor and substance matcher) and `trust-a-defect-several-review-lenses-flagged-3604.md` (cross-lens corroboration).

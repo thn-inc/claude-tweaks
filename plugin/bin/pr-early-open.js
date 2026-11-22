@@ -15,7 +15,10 @@
 // whitespace is refused (exit 2) rather than silently replaced; else the
 // GitHub default branch, rank 5's GitHub-default half of
 // _shared/integration-branch.md (a worktree's current
-// branch is a throwaway, never a base). --worktree defaults to run-state.json's
+// branch is a throwaway, never a base). That last fallback, taken from a linked
+// worktree (no policy.yml key in the worktree, the main checkout, or the run's
+// config.yml), prints one warning on stderr naming the base and the worktree;
+// stdout and the exit code are unchanged. --worktree defaults to run-state.json's
 // `worktree`, then the cwd. The summary is read from a file (written with the
 // Write tool), so record text never passes through a shell; one trailing
 // newline is stripped. The body goes to the session temp path
@@ -39,7 +42,7 @@
 //        stale recorded PR (Resume found it closed or gone) is cleared to
 //        `pr: null` on a degrade, so nothing reads the closed PR as live.
 //      2 malformed invocation; a --run that is missing, not anchored under the
-//        main checkout (a worktree-local shadow, or outside every checkout), or
+//        main checkout (a worktree-local shadow, or a directory outside pipelines/, or outside every checkout), or
 //        whose basename is not a run id; an unreadable --summary-file; an
 //        integration-branch value holding whitespace; or gh absent — take the
 //        MCP path in pr-early-run-lifecycle.md's "gh absent" row.
@@ -62,9 +65,12 @@ const { appendEntry } = require('./lib/log-decision/append');
 const ctxLib = require('./lib/hooks/context');
 const { resolveTarget } = require('./lib/stage-item/write');
 const { resolvePolicyConfig, POLICY_KEYS } = require('./lib/policy-schema');
+const { isLinkedWorktreeRoot } = require('./lib/policy-file');
 const { ghAvailable, parseRepo, repoSlug, ghOptions } = require('./lib/repo-resolve');
 const { sessionTmpPath } = require('./lib/session-tmp');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, isTimeoutError } = require('./lib/shared-primitives');
+const { appendStationEvent, toRepoName } = require('./lib/station-events/emit');
+const { PR_OPENED_FACT, PR_OPENED_TRANSITION } = require('./lib/station-events/stations');
 
 const USAGE = 'usage: pr-early-open.js --run <run-dir> --target "#N[,#M]" --fixes N[,M] --title <text> --summary-file <path>\n'
   + '         [--worktree <path>] [--base <branch>] [--next-step build] [--help]\n'
@@ -112,6 +118,7 @@ const realDeps = {
   }),
   sleep: (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
   now: () => Date.now(),
+  isLinkedWorktreeRoot,
   mainRoot: undefined, // resolveTarget derives the main-checkout anchor from cwd
   resolveTarget,
   readFile: (p) => fs.readFileSync(p, 'utf8'),
@@ -123,6 +130,9 @@ const realDeps = {
     fs.writeFileSync(p, text);
     return p;
   },
+  sessionId: process.env.CLAUDE_CODE_SESSION_ID || null,
+  // #5902: the station-event emitter; a caller that overrides it with undefined emits nothing.
+  stationEvent: (e) => appendStationEvent(e),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -157,7 +167,7 @@ async function run(argv, overrides = {}) {
   if (!target.ok) {
     return usageError(target.reason === 'missing'
       ? `--run dir does not exist or is not a directory: ${o.run}`
-      : `--run ${o.run} is not anchored under the main checkout (a worktree-local shadow, or outside every checkout) — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
+      : `--run ${o.run} is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/, or outside every checkout) — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
   }
   const runDir = target.dir;
   const runId = path.basename(runDir);
@@ -196,12 +206,14 @@ async function run(argv, overrides = {}) {
     // null; refuse it rather than quietly opening the PR against the GitHub
     // default instead. The raw value rides onInvalid, as in resolve-policy.js.
     let configured = null;
+    let policyRoot = null;
     if (!o.base) {
       let rejected = null;
-      const { result } = resolvePolicyConfig({
+      const { result, root } = resolvePolicyConfig({
         git: (args) => git(args), readFile: readFileSafe, runDir, keys: ['integration-branch'],
         onInvalid: (key, raw) => { rejected = raw; },
       });
+      policyRoot = root;
       const entry = result['integration-branch'];
       const raw = entry && entry.value;
       configured = typeof raw === 'string' && raw.trim() ? raw.trim() : null;
@@ -220,6 +232,9 @@ async function run(argv, overrides = {}) {
 
     const base = o.base || configured || (view && view.defaultBranchRef && view.defaultBranchRef.name) || null;
     if (!base) return internal('could not resolve the integration branch (no --base, no integration-branch key, no GitHub default branch)');
+    if (!o.base && !configured && policyRoot && deps.isLinkedWorktreeRoot(policyRoot)) {
+      deps.stderr(`pr-early-open.js: warning: no integration-branch found (this worktree's policy.yml, the main checkout's, or the run's config.yml) — the draft PR targets the GitHub default branch "${base}" from linked worktree ${policyRoot}\n`);
+    }
 
     const res = await openPrEarly({
       runDir, worktree, branch, repo, base, target: o.target, fixes, title: o.title, summary,
@@ -249,6 +264,23 @@ async function run(argv, overrides = {}) {
       writeBodyFile: deps.writeBodyFile,
       readFile: deps.readFile,
     });
+    // #5902: a PR this call opened or reopened is a build-station fact for every
+    // record it fixes (one event each); a reused PR or a degrade writes nothing.
+    // Optional dep (absent = none); each emission wrapped so a throwing emitter
+    // never skips another record or changes stdout or the exit code.
+    const repoName = toRepoName(repo);
+    if ((res.outcome === 'opened' || res.outcome === 'reopened') && typeof deps.stationEvent === 'function' && repoName) {
+      const payload = { fact: PR_OPENED_FACT, prNumber: res.number, prUrl: res.url, outcome: res.outcome };
+      for (const n of fixes) {
+        try {
+          deps.stationEvent({
+            ...PR_OPENED_TRANSITION, recordNumber: Number(n), repoName,
+            runId, sessionId: deps.sessionId || null, lane: 'unknown',
+            payload: { ...payload }, discriminator: `pr:${res.number}:${res.outcome}`,
+          });
+        } catch { /* best-effort: the PR stands */ }
+      }
+    }
     deps.stdout(`${JSON.stringify(res)}\n`);
     return OK_OUTCOMES.has(res.outcome) ? 0 : 3;
   } catch (e) {
@@ -259,7 +291,7 @@ async function run(argv, overrides = {}) {
   }
 }
 
-module.exports = { run, parseArgs };
+module.exports = { run, parseArgs, realDeps };
 
 if (require.main === module) {
   run(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (err) => {

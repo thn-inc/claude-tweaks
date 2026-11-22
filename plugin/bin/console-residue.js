@@ -17,7 +17,7 @@
 // without a value or with an empty one, --require-verify with --ack or --ack-all,
 // --ack without --run, --ack-all with --run or --ack, neither --run nor
 // --ack-all); 3 --run
-// missing or not anchored under the main checkout ([IL-127]), or a console.json
+// missing or not anchored under the main checkout's .claude-tweaks/pipelines ([IL-127]), or a console.json
 // that could not be written (the remaining consoles are still tried, and the
 // summary line says how many failed). A missing --run whose basename exists
 // under the main checkout's pipelines/archive/ (a path printed before the run
@@ -177,7 +177,7 @@ function run(argv, deps = {}) {
     }
   }
   if (!target.ok) {
-    stderr(`console-residue.js: --run ${o.run} refused (${target.reason === 'missing' ? 'missing' : 'not anchored under the main checkout'}) — nothing written\n`);
+    stderr(`console-residue.js: --run ${o.run} refused (${target.reason === 'missing' ? 'missing' : 'not anchored under the main checkout\'s .claude-tweaks/pipelines'}) — nothing written\n`);
     return 3;
   }
   const found = readRunResidue(target.dir);
