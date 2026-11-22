@@ -20,9 +20,10 @@ function namedPaths(planText) {
   return [...seen];
 }
 
-function checkPlan({ g, remote = DEFAULT_REMOTE, fetch, line, currentSpecHash, base }) {
+function checkPlan(opts) {
   let running = CHECK_ORDER[0];
   try {
+    const { g, remote = DEFAULT_REMOTE, fetch, line, currentSpecHash, base } = opts ?? {};
     // ref: the plan is fetchable, the ref names the line's commit, and the commit is a well-formed plan commit.
     if (fetch && !fetchRef(g, remote, line.ref).ok) return { valid: false, failed: 'ref' };
     if (localRef(g, line.ref) !== line.commit) return { valid: false, failed: 'ref' };
@@ -30,7 +31,7 @@ function checkPlan({ g, remote = DEFAULT_REMOTE, fetch, line, currentSpecHash, b
     if (!file.ok) return { valid: false, failed: 'ref' };
 
     running = 'hash';
-    if (currentSpecHash === null || currentSpecHash !== line.specHash) return { valid: false, failed: 'hash' };
+    if (typeof currentSpecHash !== 'string' || currentSpecHash !== line.specHash) return { valid: false, failed: 'hash' };
 
     running = 'base';
     const baseSha = resolveCommit(g, base);

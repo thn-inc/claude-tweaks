@@ -150,3 +150,41 @@ test('the result holds exactly the two keys', (t) => {
   assert.deepStrictEqual(Object.keys(check()).sort(), ['failed', 'valid']);
   assert.deepStrictEqual(Object.keys(check({ base: 'deadbeef' })).sort(), ['failed', 'valid']);
 });
+
+test('checkPlan never throws on a missing or null argument', () => {
+  assert.deepStrictEqual(checkPlan(), { valid: false, failed: 'ref' });
+  assert.deepStrictEqual(checkPlan(null), { valid: false, failed: 'ref' });
+});
+
+test('an undefined current hash against a line with no specHash reads failed: hash', (t) => {
+  const { check, line } = setup(t);
+  const { specHash, ...noHash } = line;
+  assert.deepStrictEqual(check({ line: noHash, currentSpecHash: undefined }), { valid: false, failed: 'hash' });
+});
+
+// check.js copies the git functions at load time, so a stub must be in place before it loads.
+function loadWithGit(t, overrides) {
+  const gitPath = require.resolve('../../../plugin/bin/lib/plan-store/git');
+  const checkPath = require.resolve('../../../plugin/bin/lib/plan-store/check');
+  const savedGit = require.cache[gitPath];
+  const savedCheck = require.cache[checkPath];
+  t.after(() => {
+    require.cache[gitPath] = savedGit;
+    require.cache[checkPath] = savedCheck;
+  });
+  delete require.cache[checkPath];
+  require.cache[gitPath] = { ...savedGit, exports: { ...savedGit.exports, ...overrides } };
+  return require(checkPath);
+}
+
+test('a throw in the base check reads failed: base', (t) => {
+  const { line, g } = setup(t);
+  const stubbed = loadWithGit(t, { resolveCommit: () => { throw new Error('boom'); } });
+  assert.deepStrictEqual(stubbed.checkPlan({ g, fetch: false, line, currentSpecHash: H, base: 'HEAD' }), { valid: false, failed: 'base' });
+});
+
+test('a throw in the files check reads failed: files', (t) => {
+  const { line, g, base } = setup(t);
+  const stubbed = loadWithGit(t, { changedPaths: () => { throw new Error('boom'); } });
+  assert.deepStrictEqual(stubbed.checkPlan({ g, fetch: false, line, currentSpecHash: H, base }), { valid: false, failed: 'files' });
+});
