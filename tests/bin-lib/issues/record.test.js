@@ -1733,3 +1733,8 @@ test('partitionByOpenNativeBlockers names a foreign open blocker by its qualifie
   const { excluded } = partitionByOpenNativeBlockers([{ number: 12 }], { i12: depNode('acme/w', [blk(5, 'other/repo', 'OPEN')]) });
   assert.deepStrictEqual(excluded, [{ number: 12, blockedBy: ['other/repo#5'] }]);
 });
+test('#6052: record.js re-exports the Plan: line API', () => {
+  const record = require('../../../plugin/bin/lib/issues/record');
+  const planLine = require('../../../plugin/bin/lib/issues/plan-line');
+  for (const k of ['parsePlanLine', 'composePlanLine', 'specHash']) assert.strictEqual(record[k], planLine[k], k);
+});

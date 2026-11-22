@@ -486,6 +486,10 @@ the declared set: `parseTripwireFlags` is its one reader and `addTripwireRiskFla
 
 One body-metadata line (#4615, grammar in `specify/spec-template.md`): `Acceptance-target: local`, a per-item acceptance override. `parseAcceptanceTarget` (`bin/lib/issues/record.js`) is the one reader: an absent line is no override, and a malformed line or any value but `local` reads invalid, which resolves to `local` (`bin/lib/accept/target.js`). `/claude-tweaks:specify`'s interactive path is the only writer; never hand-edit the line. The reader reports a `dev` line as well-formed; `accept/target.js` rejects it as `invalid-input`. `local-files` carries it in the body, never in `facets`.
 
+## Plan line
+
+One body-metadata line (#6052): `Plan: refs/claude-tweaks/plans/{n} {plan-commit-sha} spec-sha256:{hash}`, a stored plan pinned to the spec text it was written against. `parsePlanLine` (`bin/lib/issues/record.js`) is the one reader. `bin/plan-store.js write` is the one writer path; never hand-edit the line. An absent line means no stored plan. A malformed line reads `check`'s `valid: false`, so the caller re-plans. `local-files` carries it in the body, never in `facets`.
+
 ## Type
 
 The canonical Type enum is `bug | feature | task`. Two expressions, governed by the
