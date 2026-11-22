@@ -83,7 +83,8 @@ files:
   - The first run prints `{"model-stance":{"value":"economy","source":"factory"}}`. Stderr says `resolve-policy: note — factory layer (env) supplied model-stance`, with `file` or `env+file` as the origin when the file contributed. Precedence is now run config, then `policy.yml`, then the factory layer, then the schema default (#6006). A `factory` source counts as set, exactly like `policy`.
   - The second run answers `max-rigor` from `policy`, and no note prints.
   - `merge-authorization`, `control-mode`, `deploy-command` and `release-hook` are refused. The third run resolves as if the factory layer were silent and writes `resolve-policy: warning: deploy-command is not settable from the factory layer — ignored`.
-  - Block keys (`model-profiles`, `risk-path-globs`, `express-driver-models`) merge per row, the repository row over the factory row. An invalid factory value warns `… has invalid value "{raw}" in the factory layer — using default …`.
+  - Block keys (`model-profiles`, `risk-path-globs`, `express-driver-models`) merge per row, the repository row over the factory row. A factory block that does not parse, beside a usable `policy.yml` block, leaves the repository's rows in force and writes `resolve-policy: warning: {key} has a malformed block in the factory layer — ignored, using the repository's rows` in every output mode.
+  - An invalid flat factory value resolves the schema default with `invalid: true`. Only `--values` names it on stderr, as `resolve-policy: warning: {key} has invalid value "{raw}" in the factory layer — using default "{default}"`; the JSON and `--all` forms write no such line, as in step 2.
   - Under `tools/run-tests.js` and `tests/helpers/tmp-dir.js`, `CT_FACTORY_POLICY_FILE` points the file at a path that does not exist, so a developer's own factory file never reaches a test run.
   - The full rules are in `_shared/policy-schema-read-path.md`'s `## Factory layer`.
 - **Red flags:**
@@ -91,6 +92,7 @@ files:
   - A factory value overriding a `policy.yml` value.
   - A factory value reported as `source: "default"`, which would re-run forge detection or derivations meant only for unset keys.
   - A factory-sourced invalid value warning as if `policy.yml` held it.
+  - A malformed factory block marking a usable `policy.yml` block invalid, or being dropped with no stderr line.
   - A test run that changes when `~/.claude-tweaks/factory-policy.yml` exists.
 
 ## Origin
