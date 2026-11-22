@@ -12,6 +12,7 @@ files:
   - plugin/skills/reflect/SKILL.md
   - plugin/skills/wrap-up/leftover-routing.md
   - plugin/skills/build/micro-plan.md
+  - plugin/bin/lib/issues/micro-plan-gate.js
   - plugin/bin/lib/issues/grouping.js
 ---
 
@@ -46,10 +47,10 @@ files:
 - **Red flags:** A captured body whose Key Files bullets vanish from the filed record; a producer passing an absolute path and the compose throwing.
 
 ### 4. See the fast path taken at build time
-- **URL:** `plugin/skills/build/micro-plan.md` (Applicability gate), `{run-dir}/work/{n}-spec.md`, `{run-dir}/decisions.md`
+- **URL:** `plugin/skills/build/micro-plan.md` (Applicability gate), `plugin/bin/lib/issues/micro-plan-gate.js` (`countImplementationFiles`, `MAX_IMPLEMENTATION_FILES`), `{run-dir}/work/{n}-spec.md`, `{run-dir}/decisions.md`
 - **Action:** Dispatch a `ceremony:fast-lane`, `size:low` record whose Key Files names one implementation file (plus, optionally, its test).
 - **Should feel:** A one-file fix goes straight to a one-task plan — no writing-plans dispatch, no plan audit.
-- **Should understand:** Condition 3 counts implementation files only (tests, `*.test.*`/`*.spec.*`, markdown that is not prompt prose such as `docs/**`, and a top-level `docs/plans/*.html` diagram (#4187) excluded; markdown under `skills/`, `agents/`, or `commands/` counts as implementation — the same split `computeDiffFacts` applies, #3477), and `extractKeyFilesSection` returns the bullets' backticked paths. A record with no Key Files section still falls through ("could not parse" is never "parsed to zero"). A record carrying a kept risk flag (a `Risk-flags:` line naming a slug, or one that cannot be read) also falls through, by condition 4 (#4618), because the micro-plan has no audited `Proof(<slug>)` line.
+- **Should understand:** Condition 3's counting rule lives in `micro-plan-gate.js`, which `micro-plan.md` cites instead of restating. It counts implementation files only (tests, `*.test.*`/`*.spec.*`, markdown that is not prompt prose such as `docs/**`, and a top-level `docs/plans/*.html` diagram (#4187) excluded; markdown under `skills/`, `agents/`, or `commands/` counts as implementation — the same split `computeDiffFacts` applies, #3477), and skips an entry whose note marks it read-only (`read only`, `read-only`, or a `no change(s)` that ends the note or a clause). `extractKeyFilesSection` returns the bullets' backticked paths; `extractKeyFileEntries` keeps each bullet's note and counts the bullets it could not read. A record with no Key Files section, or with a bullet that names no backticked path or an unfilled `{template}` one, still falls through ("could not parse" is never "parsed to zero"). A record carrying a kept risk flag (a `Risk-flags:` line naming a slug, or one that cannot be read) also falls through, by condition 4 (#4618), because the micro-plan has no audited `Proof(<slug>)` line.
 - **Red flags:** `decisions.md` shows a full `/superpowers:writing-plans` dispatch for a fast-lane single-file record that carries Key Files and no kept risk flag; `extractKeyFilesSection` returning `[]` on a body that visibly has the section.
 
 ## Origin

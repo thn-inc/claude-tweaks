@@ -20,6 +20,17 @@ function sensitivePathsOf(entry) {
   return Array.isArray(raw) ? raw : String(raw || '').split(',').map((s) => s.trim()).filter(Boolean);
 }
 
+// The express gate's record options from the resolved express-lane, integration-model and
+// merge-sensitive-paths entries: cli.js's gate verb and the plan-lane predicate
+// (driver/plan-lane.js) read the express bounds from here, so a new bound reaches both.
+function expressGateOptions(policy) {
+  return {
+    enabled: policy['express-lane'].value === true,
+    integrationModel: policy['integration-model'].value,
+    sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']),
+  };
+}
+
 function defaultGit(args, opts = {}) {
   return execFileSync('git', args, { cwd: opts.cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: sharedPrimitives.GIT_TIMEOUT_MS, windowsHide: true });
 }
@@ -43,4 +54,4 @@ function defaultResolvePolicy(keys, { runDir = null } = {}) {
   return resolved;
 }
 
-module.exports = { sensitivePathsOf, defaultGit, defaultReadFile, defaultResolvePolicy };
+module.exports = { sensitivePathsOf, expressGateOptions, defaultGit, defaultReadFile, defaultResolvePolicy };
