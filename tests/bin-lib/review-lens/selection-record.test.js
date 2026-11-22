@@ -109,3 +109,83 @@ test('an unreadable root is ok:false; a root with no selection files is ok:true 
   assert.deepStrictEqual(readSkipStreaks({ roots: [empty] }), { ok: true, byLens: Object.fromEntries(LENS_IDS.map((l) => [l, 0])) });
   assert.throws(() => readSkipStreaks({ roots: [] }), TypeError);
 });
+
+test('a document whose selected and skipped do not partition the tier is malformed, never a streak end', () => {
+  const root = scratchDir('sel-part-');
+  const bad = (selected, skipped, tier = 'high') => JSON.stringify({ v: 1, tier, selected, skipped, fallback: null });
+  const sk = (l) => ({ lens: l, reason: 'r' });
+  for (const text of [
+    bad([], []), // empty lists
+    bad(['3b', '3c', '3a', '3f', '3d', '3e', '3g'], []), // 3h missing
+    bad(['3b', '3c', '3a', '3f', '3d', '3e', '3g', '3h'], [sk('3d')]), // overlap
+    bad(['3b', '3b', '3a', '3f', '3d', '3e', '3g', '3h'], []), // duplicate
+    bad(['3b', '3c', '3a', '3f', '3d', '3e'], [sk('3g'), sk('3h')], 'medium'), // lenses outside the tier
+  ]) {
+    fs.writeFileSync(path.join(root, LENS_SELECTION_FILE), text);
+    assert.strictEqual(readLensSelection(root).state, 'error', text);
+  }
+  const run = makeRun(root, ID(5), sel('high', ['3d']));
+  fs.writeFileSync(path.join(run, LENS_SELECTION_FILE), bad([], []));
+  const r = readSkipStreaks({ roots: [root] });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.reason, /lens-selection\.json/);
+});
+
+test('writeLensSelection refuses a malformed selection and writes nothing', () => {
+  const root = scratchDir('sel-wr-');
+  assert.throws(() => writeLensSelection(root, { tier: 'high', selected: [], skipped: [], fallback: null }), TypeError);
+  assert.throws(() => writeLensSelection(root, { tier: 'nope', selected: [], skipped: [], fallback: null }), TypeError);
+  assert.strictEqual(fs.existsSync(path.join(root, LENS_SELECTION_FILE)), false);
+});
+
+test('the scan stops once every streak has ended: a malformed file older than that leaves ok:true', () => {
+  const root = scratchDir('sel-old-');
+  makeRun(root, ID(5), sel('high', ['3d']));
+  makeRun(root, ID(4), sel('high', []));
+  const old = makeRun(root, ID(3));
+  fs.writeFileSync(path.join(old, LENS_SELECTION_FILE), '{oops');
+  const r = readSkipStreaks({ roots: [root] });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.byLens['3d'], 1);
+  // a lens that has not ended yet (a low-tier history never reaches 3d) keeps the scan going into the malformed file
+  const root2 = scratchDir('sel-old2-');
+  makeRun(root2, ID(5), sel('low'));
+  const old2 = makeRun(root2, ID(3));
+  fs.writeFileSync(path.join(old2, LENS_SELECTION_FILE), '{oops');
+  assert.strictEqual(readSkipStreaks({ roots: [root2] }).ok, false);
+});
+
+test('an archive twin holding the file beats a live twin without one; otherwise archive beats live', () => {
+  const root = scratchDir('sel-twin2-');
+  makeRun(root, ID(4), sel('high', ['3d'])); // live copy holds the file, the archive twin has none
+  makeRun(path.join(root, 'archive'), ID(4));
+  makeRun(root, ID(3), sel('high', ['3d'])); // both twins hold a file: archive wins
+  makeRun(path.join(root, 'archive'), ID(3), sel('high', []));
+  const r = readSkipStreaks({ roots: [root] });
+  // ID(4) -> skips 3d (the live copy's file); ID(3) -> archive copy selects 3d, so the streak ends at 1
+  assert.strictEqual(r.byLens['3d'], 1);
+});
+
+test('a symlinked pipelines root and archive are read through; an archive that is a file is ignored', (t) => {
+  if (process.platform === 'win32') return t.skip('symlink creation needs privileges on Windows');
+  const base = scratchDir('sel-link-');
+  const real = path.join(base, 'real');
+  makeRun(real, ID(4), sel('high', ['3d']));
+  makeRun(path.join(real, 'archive'), ID(3), sel('high', ['3d']));
+  const link = path.join(base, 'link');
+  fs.symlinkSync(real, link, 'dir');
+  assert.strictEqual(readSkipStreaks({ roots: [link] }).byLens['3d'], 2);
+  const realArchive = path.join(base, 'elsewhere');
+  makeRun(realArchive, ID(2), sel('high', ['3d']));
+  const root = path.join(base, 'root');
+  makeRun(root, ID(4), sel('high', ['3d']));
+  fs.symlinkSync(realArchive, path.join(root, 'archive'), 'dir');
+  assert.strictEqual(readSkipStreaks({ roots: [root] }).byLens['3d'], 2);
+  const fileArchive = path.join(base, 'filearch');
+  makeRun(fileArchive, ID(4), sel('high', ['3d']));
+  fs.writeFileSync(path.join(fileArchive, 'archive'), 'not a directory');
+  // history.js (childDirs) treats ENOTDIR as a missing archive, not an error; so does this reader.
+  const r = readSkipStreaks({ roots: [fileArchive] });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.byLens['3d'], 1);
+});

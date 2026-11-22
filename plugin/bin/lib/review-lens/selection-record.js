@@ -13,12 +13,17 @@
 // readSkipStreaks({ roots, excludeRunId }) -> { ok: true, byLens } | { ok: false, reason }: per lens, how many
 // consecutive newest runs skipped it. Runs are ordered by the run id's leading UTC timestamp, newest first (ties by
 // run id; undated ids and runs with no lens-selection.json are ignored). For each run, a lens its tier allows
-// (TIER_LENSES) is either skipped (the streak grows) or not (selected, including every lens of a fallback run: the
-// streak ends); a lens its tier excludes neither grows nor ends the streak. `byLens` holds a non-negative integer for
-// every lens of LENS_IDS, 0 included — select.js forces a lens missing from it. One malformed lens-selection.json
+// (TIER_LENSES) is either skipped (the streak grows) or selected (including every lens of a fallback run: the
+// streak ends); a lens its tier excludes neither grows nor ends the streak. A document is valid only when `selected`
+// and `skipped` partition TIER_LENSES[tier] exactly (select.js's guarantee), so a lens counts as having run only
+// because it is in `selected`. `byLens` holds a non-negative integer for every lens of LENS_IDS, 0 included —
+// select.js forces a lens missing from it. The scan stops once every lens's streak has ended, so a malformed file
+// older than that cannot change a count and is never read. A malformed lens-selection.json inside the counted window
 // or an unreadable root/archive makes the whole result `ok: false` (select.js then forces every below-floor lens:
-// the safe direction, never a streak of 0). A run id under a root and `{root}/archive` counts once (first root, then
-// the live copy over `archive/`, as history.js's twin rule).
+// the safe direction, never a streak of 0). Roots and `archive/` are read through symlinks and a missing or
+// non-directory `archive/` is simply absent, as history.js reads them. A run id under a root and `{root}/archive`
+// counts once: the copy holding a lens-selection.json wins, then `archive/` over the live copy, then the first root
+// (history.js's twin order, with this file as the evidence).
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -35,6 +40,8 @@ const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 const codeOf = (err) => (err && err.code) || 'unknown';
 
 function writeLensSelection(runDir, selection) {
+  const problem = docProblem({ v: SELECTION_SCHEMA_VERSION, ...selection });
+  if (problem) throw new TypeError(`invalid lens selection: ${problem}`);
   writeFileAtomic(path.join(runDir, LENS_SELECTION_FILE), JSON.stringify({ v: SELECTION_SCHEMA_VERSION, ...selection }, null, 2) + '\n');
 }
 
@@ -48,6 +55,11 @@ function docProblem(doc) {
     return 'skipped must be an array of {lens, reason}';
   }
   if (doc.fallback !== null && typeof doc.fallback !== 'string') return 'fallback must be null or a string';
+  const all = [...doc.selected, ...doc.skipped.map((s) => s.lens)];
+  const tierSet = TIER_LENSES[doc.tier];
+  if (all.length !== tierSet.length || new Set(all).size !== all.length || !all.every((l) => tierSet.includes(l))) {
+    return `selected and skipped must partition the ${doc.tier} tier's lenses (${tierSet.join(', ')})`;
+  }
   return null;
 }
 
@@ -77,13 +89,11 @@ function listRuns(roots) {
   const found = [];
   for (const [rootIndex, root] of roots.entries()) {
     for (const [dir, archive] of [[root, false], [path.join(root, 'archive'), true]]) {
-      const type = lstatType(dir);
-      if (type.type === 'missing' && archive) continue;
-      if (type.type !== 'directory') return { problem: `${archive ? 'unreadable archive' : 'unreadable root'} ${dir} (${type.code || type.type})` };
       let names;
       try {
         names = fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory() && d.name !== 'archive').map((d) => d.name);
       } catch (err) {
+        if (archive && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) continue;
         return { problem: `${archive ? 'unreadable archive' : 'unreadable root'} ${dir} (${codeOf(err)})` };
       }
       for (const name of names) found.push({ dir: path.join(dir, name), name, archive, rootIndex });
@@ -98,26 +108,36 @@ function readSkipStreaks({ roots, excludeRunId } = {}) {
   }
   const listed = listRuns(roots);
   if (listed.problem) return { ok: false, reason: listed.problem };
-  const byName = new Map();
-  for (const run of listed.found.sort((a, b) => (Number(a.archive) - Number(b.archive)) || (a.rootIndex - b.rootIndex))) {
-    if (!byName.has(run.name)) byName.set(run.name, run);
+  const groups = new Map();
+  for (const run of listed.found) {
+    if (!groups.has(run.name)) groups.set(run.name, []);
+    groups.get(run.name).push(run);
   }
-  const runs = [...byName.values()]
+  const hasFile = (r) => (readLensSelection(r.dir).state !== 'absent' ? 1 : 0);
+  const kept = [];
+  for (const group of groups.values()) {
+    if (group.length === 1) { kept.push(group[0]); continue; }
+    const ranked = group.map((r) => ({ r, file: hasFile(r) }))
+      .sort((x, y) => (y.file - x.file) || (Number(y.r.archive) - Number(x.r.archive)) || (x.r.rootIndex - y.r.rootIndex));
+    kept.push(ranked[0].r);
+  }
+  const runs = kept
     .filter((r) => r.name !== excludeRunId)
     .map((r) => ({ ...r, startedAt: startedAtOf(r.name) }))
     .filter((r) => r.startedAt !== null)
-    .sort((a, b) => (a.startedAt < b.startedAt ? 1 : a.startedAt > b.startedAt ? -1 : (a.name < b.name ? 1 : -1)));
+    .sort((x, y) => (x.startedAt < y.startedAt ? 1 : x.startedAt > y.startedAt ? -1 : (x.name < y.name ? 1 : -1)));
   const byLens = Object.fromEntries(LENS_IDS.map((l) => [l, 0]));
   const ended = new Set();
   for (const run of runs) {
+    if (ended.size === LENS_IDS.length) break;
     const read = readLensSelection(run.dir);
     if (read.state === 'absent') continue;
     if (read.state === 'error') return { ok: false, reason: `${path.join(run.dir, LENS_SELECTION_FILE)} is malformed (${read.reason})` };
-    const skipped = new Set(read.doc.skipped.map((s) => s.lens));
+    const selected = new Set(read.doc.selected);
     for (const lens of TIER_LENSES[read.doc.tier]) {
       if (ended.has(lens)) continue;
-      if (skipped.has(lens)) byLens[lens] += 1;
-      else ended.add(lens);
+      if (selected.has(lens)) ended.add(lens);
+      else byLens[lens] += 1;
     }
   }
   return { ok: true, byLens };
