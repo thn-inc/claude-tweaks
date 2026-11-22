@@ -10,27 +10,24 @@ that single task directly from the already-materialized spec instead.
 All four must hold, checked in this order (cheapest first, except condition 4, appended last so the numbers other files cite stay stable):
 
 1. The materialized header (`{run-dir}/work/{n}-spec.md`'s frontmatter, `skills/flow/materialize.md`)
-   carries `ceremony: fast-lane`.
-2. The same header carries `size: low`.
+   carries `ceremony: fast-lane` — the `ceremony` input of `evaluateMicroPlanGate` (`fast-lane-ceremony`).
+2. The same header carries `size: low` — its `size` input (`low-size`).
 3. The spec body's `### Key Files` section (under `## Technical Approach`, spec-template's own
-   heading) names **at most one implementation file** — count every listed path except one under
-   `tests/`, matching `*.test.*`/`*.spec.*`, or itself a `*.md` path that is not prompt prose (markdown under `skills/`, `agents/`, or `commands/` counts as implementation; the same test/docs
-   exclusion `bin/lib/dispatch/ceremony-derive.js`'s `computeDiffFacts` already applies to a diff,
-   read here against the spec's own file list instead of a diff), or a top-level `docs/plans/*.html` diagram (not nested). Zero implementation files still
-   qualifies (a docs-only or test-only record) — the gate is "at most one," not "exactly one."
-   An entry whose own description marks it read-only (`read only`, `read-only`, `no change`) is
-   not counted either: the build reads it and changes nothing, so it adds no task structure. #3696's
-   one-file fix went through the full `/superpowers:writing-plans` path because
-   `check-staged-stack.js — CLI exit path (read only, no change)` was counted as a second file.
+   heading) names no more implementation files than `MAX_IMPLEMENTATION_FILES`, counted by
+   `countImplementationFiles` in `bin/lib/issues/micro-plan-gate.js`, whose header comment says
+   which entries count and which do not (tests, non-prompt docs, read-only entries). Zero implementation
+   files still qualifies (a docs-only or test-only record) (`implementation-file-limit`).
 4. The spec body does not carry a risk flag: `parseRiskFlags` (`bin/lib/issues/record-risk-flags.js`)
    returns no flags. A `Risk-flags:` line naming any slug, or a line that cannot be read (it reads
    as every category flagged), carries a risk flag; `Risk-flags: none` and no line do not. A
    variant spelling of the key (any case; `-`, `_`, a space or no separator), such as
    `risk-flags:` or `Risk_flags:`, counts as unreadable. A flagged record falls through, because this path's composed plan has no audited
-   `Proof(<slug>)` step.
+   `Proof(<slug>)` step (`no-risk-flag`).
 
-**Any other header shape** — `ceremony: standard`, `size: medium`/`high`/absent, or two or more
-implementation files in `### Key Files`, or a spec body that carries a risk flag — **falls through to today's path unchanged**: proceed to
+Conditions 3 and 4 are decided by `evaluateMicroPlanGate` in `bin/lib/issues/micro-plan-gate.js`; read them from there, not from a copy here.
+
+**Any other header shape** — `ceremony: standard`, `size: medium`/`high`/absent, or more implementation files in `### Key Files`
+than condition 3 allows, or a spec body that carries a risk flag — **falls through to today's path unchanged**: proceed to
 Spec Step 3's `/superpowers:writing-plans` invocation exactly as before. A `### Key Files` section
 this step cannot parse (missing entirely, or not a plain list) also falls through — never guess a
 count from an absent or malformed section; per `parse-signal-discipline`, "could not parse" and
@@ -98,7 +95,7 @@ audit-skip rule, since every micro-plan is by definition composed under that sam
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP \
   --section "/build" --step "Spec Step 3 (skipped)" \
-  --text "condition: ceremony=fast-lane, size=low, <=1 implementation file in ### Key Files, no risk flag → fallback: micro-plan composed directly at {plan-path}" --reversibility n/a
+  --text "condition: ceremony=fast-lane, size=low, implementation-file limit met, no risk flag → fallback: micro-plan composed directly at {plan-path}" --reversibility n/a
 ```
 
 Standalone `/build` (no run dir): list the skip in the Step 7 handoff instead

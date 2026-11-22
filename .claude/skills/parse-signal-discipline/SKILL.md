@@ -331,7 +331,7 @@ When mechanizing a prose heuristic into a deterministic check:
     `plugin/bin/lib/strip-comments.js`, re-exported by `tests/helpers/strip-comments.js`)
     blanks comments to spaces before its callers' scans count tokens. Its
     callers, by test-file stem: `accept-label-reader`, `accept-monotonic`, `backfill-cli`, `below-floor-parent-close`, `ci-health-skill-agnostic`, `cli`, `cli-entry`, `evaluate-maturation-build-label`, `exit-code`, `fixture-identity-config-scan`, `gate-fragments`, `gh-host-seam`, `git-status-optional-locks`,
-    `hooks-event-env`, `hooks-event-process-ceiling`, `hooks-harness-refusal`, `hooks-pre-tool-use`, `lens-reply`, `markdown-blocks`, `merge`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit-call-sites`, `porcelain-cwd-compare`, `post-merge`,
+    `hooks-event-env`, `hooks-event-process-ceiling`, `hooks-harness-refusal`, `hooks-pre-tool-use`, `lens-reply`, `markdown-blocks`, `merge`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit-call-sites`, `plan-line-writer`, `porcelain-cwd-compare`, `post-merge`,
     `precondition`, `raw-markdown-read`, `recording-no-embed`, `release-notes`, `risk-flags-writer`, `run`, `run-header`, `run-liveness-callers`, `settle`, `staged-id-producers`, `station-literal`, `statusline-no-shell`, `step-yield-report-shared-count`, `subprocess-timing`, `timeout-source`, `tmp-dir-cleanup`, `trust-policy-keys`, `wall-clock-budget`,
     `windows-hide-spawn` and `wrap-up-learned-skills-pr`.
     `tests/strip-comments-callers-twin.test.js` pins this list and the helper header's to the
