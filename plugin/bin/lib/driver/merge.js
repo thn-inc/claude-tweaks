@@ -1111,7 +1111,7 @@ async function mergeCall(s, mode) {
   // path either: the same widest recompute as the entry's (#6018).
   const lateWidened = widenings({ labels: labels.names, riskCeiling: 'high', anyCeremony: true });
   if (lateWidened.length) {
-    return stop(s, 'merge-call', 'widened-admission', `admitted widened by ${lateWidened.join(', ')} at the pre-merge read`);
+    return stop(s, 'merge-call', 'widened-admission', `widened by ${lateWidened.join(', ')} at the pre-merge read`);
   }
   const auto = mode === 'auto';
   try {

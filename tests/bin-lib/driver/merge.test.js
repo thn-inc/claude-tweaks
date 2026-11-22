@@ -3624,6 +3624,7 @@ test('a widening label added between entry and the pre-merge read stops at merge
     assert.equal(h.calls.filter(isLabelRead).length, 2);
     noMerge(h);
     assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-call', 'stop']);
+    assert.equal(r.detail, `widened by ${added.startsWith('risk') ? 'risk' : 'ceremony'} at the pre-merge read`);
   }
 });
 
