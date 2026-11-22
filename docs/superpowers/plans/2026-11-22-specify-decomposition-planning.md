@@ -24,7 +24,7 @@
 ## Review Focus
 
 1. A kept parent appears in Step 9's Work Units Created table — it must be filtered by its re-fetched `parent-issue` label, never planned, and never get an outcome row (Task 1 test "Deliverable 6").
-2. A sub-issue Step 5 left without `ready` (a staged red-team finding) — planning must never add `ready` back; a planned one stays as it was, a held one only gains `needs:decision` (Task 1 test "Deliverable 2").
+2. A sub-issue Step 5 left without `ready` (a staged red-team finding) — it is planned (plan review decision 1), and planning must never add `ready` back; a planned one stays as it was, a held one only gains `needs:decision` (Task 1 tests "Deliverable 6" and "Deliverable 2").
 3. A held sub-issue whose sibling is blocked by it — the dependent is still planned (Task 1 test "Deliverable 2").
 4. A delegated run with the key `on` — the subagent reads the closeout file and must skip its block because the dispatch prompt says so, not by resolving the key itself (Task 2 and Task 3 tests).
 5. A run with no human reachable (`/sweep`'s specify drain, a Routine) — nothing is asked and every asked row holds (Task 1 test "Deliverable 9").
@@ -55,7 +55,9 @@ test('Deliverable 6: the decomposition entry takes N sub-issues, never a parent,
   pinned(decomposition(), [
     f('Called by `decomposition-mode-closeout.md`\'s `plan-at-specify` paragraph, in specify\'s own session'),
     f('never inside `mechanical-handoff.md`\'s subagent'),
-    f('every non-parent sub-issue Step 3 created or resumed this run'),
+    f('every non-parent sub-issue Step 3 created this run'),
+    f('A sub-issue Step 3 resumed rather than created is not planned this pass'),
+    f('A sub-issue Step 5 left with a staged finding is planned too'),
     f('A record carrying the `parent-issue` label is never planned and gets no outcome row'),
     f('`planned`'), f('`held`'), f('`skipped`'), f('`no-ref`'),
   ], 'decomposition entry');
@@ -113,7 +115,7 @@ Expected: FAIL after Step 1 — `heading not found: ## Decomposition` in each ne
 - [ ] **Step 3: Write `## Decomposition` in `plugin/skills/specify/planning.md`**
 
 One section, placed after `## Batches` and before `## Read-back and outcome`, containing every pinned literal above and stating, in this order:
-1. Who calls it and where (the two pinned sentences); input = every non-parent sub-issue Step 3 created or resumed this run; parent exclusion by the re-fetched `parent-issue` label.
+1. Who calls it and where (the two pinned sentences); input = every non-parent sub-issue Step 3 created this run; parent exclusion by the re-fetched `parent-issue` label. "A sub-issue Step 3 resumed rather than created is not planned this pass" (it gets no outcome row; `/claude-tweaks:specify #{n}` re-shapes and plans it — decomposition mode has no `needs:*` resolve for an earlier hold, plan review finding 4). "A sub-issue Step 5 left with a staged finding is planned too": its `ready` stays cleared, and resolving the finding later changes the body, so `plan-store.js check`'s spec hash makes the next shape or build re-plan rather than reuse the stale plan (plan review decision 1).
 2. Body: re-fetch each sub-issue's body and labels from the forge (`gh issue view {n} --json body,labels`, or `issue_read` when `gh` is absent) after Step 6, or after the handoff returns, writing the body to the path `session-tmp-resolve.js --value specify-plan-body-{n}.md` prints — that file is the record's `{body}`; the lane file's labels are the re-fetched labels as they stand (Step 3 already stamped them). The pinned red-team sentence.
 3. Run, as `## Batches` runs them: the hold-state capture, the lane predicate, the reuse check, then `## Per-record step` steps 1-8 for each sub-issue still to be planned, with the pinned one-batch sentence; `## Routing`'s Asking governs the questions, and its headless rule plus the pinned Deliverable 9 sentences govern a run with no human reachable.
 4. Write (replaces step 9 and Compose-then-write-once's write for decomposition): the pinned one-more-body-write sentence and command; a held sub-issue then gets the pinned separate label call (bootstrap `needs:decision` per `_shared/label-bootstrap.md`; drop `--remove-label ready` when the sub-issue does not carry it) and `## Hold`'s comment; the held-sibling sentence; "Planning never adds `ready`" (a sub-issue Step 5 left without it stays without it).
@@ -208,6 +210,7 @@ git commit -m "Plan sub-issues after Step 6 in decomposition mode under plan-at-
 ### Task 3: Gated block in `mechanical-handoff.md`
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/specify/mechanical-handoff.md` (after the `## Dispatch prompt` fence's closing line, before the `` `[Use: Standard]` `` paragraph)
@@ -239,6 +242,7 @@ test('AC4.1 + Deliverable 8: the handoff never plans — the dispatcher says so 
     f('add this sentence as the last line of the prompt\'s Task scope'),
     f('Planning is not yours: your caller plans every sub-issue after you return, so skip the `plan-at-specify` paragraph in `decomposition-mode-closeout.md` and ask no planning question.'),
     f('Once the handoff returns `STATUS: DONE` or `DONE_WITH_CONCERNS`'),
+    f('Any other status plans nothing: each sub-issue the summary lists as created gets a `skipped` row with Detail `handoff {status}`'),
     f('run `planning.md`\'s `## Decomposition` entry in this session'),
     f('append its `### Planning` section to the returned summary'),
     f('Planned in specify\'s own session after the handoff returned; the handoff planned nothing.'),
@@ -261,7 +265,7 @@ Insert exactly:
 
 > Planning is not yours: your caller plans every sub-issue after you return, so skip the `plan-at-specify` paragraph in `decomposition-mode-closeout.md` and ask no planning question.
 
-With any other output the prompt is unchanged. Once the handoff returns `STATUS: DONE` or `DONE_WITH_CONCERNS`, read `planning.md` in this skill's directory, run `planning.md`'s `## Decomposition` entry in this session over the Work Units Created refs, and append its `### Planning` section to the returned summary before relaying it, opening with the line "Planned in specify's own session after the handoff returned; the handoff planned nothing." The returned summary's own shape is unchanged.
+With any other output the prompt is unchanged. Once the handoff returns `STATUS: DONE` or `DONE_WITH_CONCERNS`, read `planning.md` in this skill's directory, run `planning.md`'s `## Decomposition` entry in this session over the Work Units Created refs, and append its `### Planning` section to the returned summary before relaying it, opening with the line "Planned in specify's own session after the handoff returned; the handoff planned nothing." Any other status plans nothing: each sub-issue the summary lists as created gets a `skipped` row with Detail `handoff {status}`, since its body may not have reached Step 6. The returned summary's own shape is unchanged.
 <!-- plan-at-specify:end -->
 ```
 
