@@ -321,6 +321,17 @@ Records #5998 (each lens's confirmed-finding rate over its last 20 runs, and a p
 
 ## Phase 11 — Factory layer and run facts
 
+## Phase 11: Specified
+
+Records #6006 (the factory layer in the resolver), #6007 (every other policy reader sees it), #6008 (the ceiling rule), #6009 (tokens by model, list-price cost and minutes in the run manifest) and #6010 (model and effort per role in the run manifest), under parent #6004. #6007 is blocked by #6006, #6008 by #6006 and #6007, #6009 by #5647 and #5967, and #6010 by #6009 and #5647.
+
+- **Decided while specifying:**
+  - The factory layer is the variable `CLAUDE_TWEAKS_FACTORY_POLICY`, carrying text in `policy.yml`'s own format, and the file `~/.claude-tweaks/factory-policy.yml`. The variable wins over the file per key, and block keys merge per row.
+  - The factory layer may not set `merge-authorization`, `control-mode` or `deploy-command`. Every other key is settable, `autonomy` and the trust lists included.
+  - A ceiling bounds repository and run-config values, never the schema default: a factory value above the default is a deliberate override of the default.
+  - The manifest stays at `v: 1`, because its Compatibility rule adds fields without a bump. Cost re-reads the transcripts' per-request rows and leaves `timing.json` unchanged. A partial cost may be replaced once by a complete one.
+- **Not covered:** Dispatch reading the cost fields. Its manifest parser stores nine named fields and ignores the rest (thn-inc/dispatch #1958), so that half of the done-when is a change in thn-inc/dispatch.
+
 - **Builds:** the layer and the ceiling rule in `## Policy model`; and in the run manifest (#5903): lane, model and effort per role, tokens by model, list-price cost, minutes and a hash of the resolved policy.
 - **Done when:** a value set only in the factory layer resolves in a repository that does not set it, and Dispatch reads a run's cost from its manifest.
 
