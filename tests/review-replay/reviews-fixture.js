@@ -53,7 +53,9 @@ function lensPrompt({ mainRoot, worktree, run, lens, scratch, B, H, extra = [], 
 //              member with no decisions.md of its own (e-m10)
 //   twin:      with edges, e-m10 reviews lens 3g side A as e-m2 does, in its own unit
 //   lead:      an excluded first dispatch before l3a-a (l3a-a0, report-unparsed) and before l3b-a (l3b-a0, no-transcript)
-function buildReviewsFixture(root, { decisions = false, gone = false, repeat = false, edges = false, twin = false, lead = false } = {}) {
+//   memberLead: with edges, an excluded first dispatch per member slot: e-m2-0 (3g A, report-unparsed) listed in the
+//              run's own timing.json but whose prompt names spec-2, and e-m10-0 (3i A, no transcript) listed in spec-10's
+function buildReviewsFixture(root, { decisions = false, gone = false, repeat = false, edges = false, twin = false, lead = false, memberLead = false } = {}) {
   const mainRoot = path.join(root, 'main checkout', 'repo');
   const runsRoot = path.join(mainRoot, '.claude-tweaks', 'pipelines');
   const transcripts = path.join(root, 'projects');
@@ -139,6 +141,7 @@ function buildReviewsFixture(root, { decisions = false, gone = false, repeat = f
     e('e-fast', '3f', { tier: 'fast', effort: 'low', scope: `SCOPE: git diff origin/main...HEAD (HEAD ${H}).` });
     // No effort recorded: the archived effort is the tier's own (standard: high).
     e('e-high', '3h', { effort: null });
+    if (memberLead) dispatch(items, { agentId: 'e-m2-0', description: 'Review lens 3g ownability A', lens: '3g', scratch: '3g-a0', member: 'spec-2', reply: 'I looked around.' });
     const memberDir = path.join(runDir, 'spec-2');
     put(path.join(memberDir, 'decisions.md'), '- AUTO 12:00:00 — Reproduction: lens "3g" finding src/b.js:2 reproduced. Confirmed. Reversibility: high.\n');
     put(path.join(memberDir, 'review-ctx', 'context.md'), `Member bundle at ${H}\n`);
@@ -151,6 +154,7 @@ function buildReviewsFixture(root, { decisions = false, gone = false, repeat = f
     put(path.join(member10, 'review-ctx', 'context.md'), `Member 10 bundle at ${H}\n`);
     put(path.join(member10, 'work', '9-spec.md'), '# 9: the member-10 spec\n');
     const member10Items = [];
+    if (memberLead) dispatch(member10Items, { agentId: 'e-m10-0', description: 'Review lens 3i ux A', lens: '3i', scratch: '3i-a0', member: 'spec-10', reply: '', transcript: false });
     const m10 = twin ? { description: 'Review lens 3g ownability A', lens: '3g', scratch: '3g-a' } : { description: 'Review lens 3i ux A', lens: '3i', scratch: '3i-a' };
     dispatch(member10Items, { agentId: 'e-m10', ...m10, member: 'spec-10', reply: 'No findings.' });
     put(path.join(member10, 'timing.json'), `${JSON.stringify({ dispatches: { items: member10Items } }, null, 2)}\n`);

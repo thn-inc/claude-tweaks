@@ -319,6 +319,19 @@ test('a slot ordinal counts every labelled dispatch, excluded ones included', as
   assert.deepEqual(fixture.slots.map((s) => [s.name, s.ordinal]), [[`${RUN}/3a-a`, 2], [`${RUN}/3a-b`, 1], [`${RUN}/3b-a`, 2]]);
 });
 
+test('an excluded dispatch counts in the unit its prompt names, else the member that listed it', async () => {
+  const mRoot = scratchDir('rr-reviews-mlead-');
+  const mx = buildReviewsFixture(mRoot, { edges: true, memberLead: true });
+  const out = path.join(mRoot, 'out');
+  const deps = { ...makeDeps(), git: (args) => execFileSync('git', args, { cwd: mx.mainRoot, env: cleanEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }), writeRepo: makeWriteRepo(mx.mainRoot) };
+  const code = await run({ argv: ['extract-reviews', '--runs', mx.runsRoot, '--out', out, '--role', 'lens', '--transcripts', mx.transcripts, '--arm', 'name=haiku,profile=fast', '--lens', '3g,3i'], deps });
+  assert.equal(code, 0, deps.errs.join('\n'));
+  const fixture = JSON.parse(read(path.join(out, schema.REVIEWS_FIXTURE_FILE)));
+  const reasons = Object.fromEntries(fixture.excluded.map((e) => [e.agentId, e.reason]));
+  assert.deepEqual([reasons['e-m2-0'], reasons['e-m10-0']], ['report-unparsed', 'no-transcript']);
+  assert.deepEqual(fixture.slots.map((s) => [s.agentId, s.unit, s.ordinal]), [['e-m2', `${RUN}/spec-2`, 2], ['e-m10', `${RUN}/spec-10`, 2]]);
+});
+
 test('AC7.1: the workflow launches one agent per arm × repeat × prompt', async () => {
   const x = await extractReviews({ arms: ['--arm', 'name=haiku,profile=fast,repeat=2', '--arm', 'name=sonnet,profile=standard,effort=low'] });
   ok(x);
