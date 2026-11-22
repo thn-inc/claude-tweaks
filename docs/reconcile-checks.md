@@ -8,7 +8,7 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
 `plugin/bin/lib/hooks/`.
 
 - **Dispatch order is significant, not incidental.** `index.js` runs `mirror → red-tip → console →
-  release → post-merge → archive → archive-branches → remote-prune → ledger-residue → reap`, reap
+  release → post-merge → archive → archive-branches → remote-prune → ledger-residue → plan-refs → reap`, reap
   deliberately last because it physically removes worktrees — running it earlier would make every
   later check's live `git worktree list`-derived branch lookup fail for exactly the runs `reap` just
   finished with. `post-merge` sits immediately before `archive` because it hands archive the run
@@ -65,7 +65,7 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
 - **The fast/background split (#820 D8).** `bin/lib/hooks/session-start.js`'s `FAST_CHECKS`
   (`mirror`, `red-tip`, `console` — cheap read/detect, run inline on every SessionStart) and
   `bin/hooks.js`'s `BACKGROUND_CHECKS` (`release`, `post-merge`, `archive`, `archive-branches`, `remote-prune`,
-  `ledger-residue`, `reap` — write-only/janitorial, run in a detached `reconcile-background` child
+  `ledger-residue`, `plan-refs`, `reap` — write-only/janitorial, run in a detached `reconcile-background` child
   process) must **partition `ALL_CHECKS` exactly** — no overlap, nothing silently dropped. A new
   check has to join one list or the other.
   The unscoped `hooks.js reconcile` CLI defers three of the seven to that same background pass
@@ -457,9 +457,9 @@ main loop, landed via #1962/#2226/#2228/#2231):
 skill — it cannot reach an agent session's MCP tools, only `gh`. When `gh` is absent (a cloud
 Routine sandbox with GitHub MCP tools instead of the CLI), every GitHub-dependent check —
 `red-tip`, `reap`, `release`, `post-merge`, `archive`, `archive-branches`, `remote-prune`, `ledger-residue`,
-`console` — is skipped
+`plan-refs`, `console` — is skipped
 via the preflight gate (`ghHealthCheck`/`ghHealthCheckAsync`, `preflight.js`), reported as
-`{"skipped":[{"check":"red-tip,reap,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,console","reason":"preflight-gh-absent"}]}`.
+`{"skipped":[{"check":"red-tip,reap,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,plan-refs,console","reason":"preflight-gh-absent"}]}`.
 `mirror` is the one exception — pure git, no `gh` call — and keeps running.
 
 This is an **accepted gap, not a bug to fix here**: unlike `/claude-tweaks:dispatch`'s own queue-pull
@@ -967,6 +967,32 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   120 s ceiling lets finish. A live-network wall-time property of this repo's state, so verified by
   this measurement rather than a committed `npm test` assertion; re-measure after changing any
   contract above.
+
+## Plan refs (#6055)
+
+`plan-refs.js` deletes `refs/claude-tweaks/plans/{n}` on origin once record `{n}` is CLOSED. A
+plan ref is shared state on origin and a pushed deletion is unrecoverable from this checkout, so
+the evidence bar is strict:
+
+- **Listing.** `git ls-remote origin 'refs/claude-tweaks/plans/*'`. Only a ref whose name parses as
+  an exact positive integer counts (`parsePlanRefName`); a non-hex sha claims no record, and the
+  first valid sha per record wins.
+- **State.** One aliased GraphQL batch per 50 records, made in the same call immediately before the
+  pushes. Only a proven `CLOSED` deletes. An open record, a PR number, a missing issue, or a
+  truncated or errored chunk keeps the ref (`record-open`, `state-unreadable`).
+- **Lease.** Each delete is `git push --force-with-lease=<ref>:<sha>` on the sha `ls-remote`
+  observed, so a plan re-written between the listing and the push survives: the push is rejected
+  and the entry is `delete-failed`, carrying git's reason as `detail`.
+- **Dry run.** `would-delete` entries; nothing is pushed.
+- **Whole-check failures** land in `skipped` as `{check: 'plan-refs', reason}`: `local-files-backend`
+  (no GitHub records to be closed), `ls-remote-failed`, `origin-unresolvable`, `gh-absent` (no push),
+  `unexpected-error`. The check never throws.
+- **Backend.** Runs under `pr-first` on the background tier, and under `local-merge` as a fallback
+  beside `reap`'s; it is not in the `local-merge-model` skip list. The unscoped CLI defers it to the
+  background pass with the other three CLI-deferred checks; an explicit `--checks plan-refs` runs
+  it inline.
+- **No prerequisite.** It lists `origin` itself and reads no state another check produces, so it
+  has no `PREREQUISITES` entry.
 
 ## Referenced by
 

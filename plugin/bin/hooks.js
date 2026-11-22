@@ -68,14 +68,14 @@ const EVENTS = ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', '
 // export) so a test can assert the two lists partition ALL_CHECKS exactly —
 // no overlap, nothing silently dropped when a check is added to one list and
 // not the other.
-const BACKGROUND_CHECKS = ['release', 'post-merge', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'reap'];
+const BACKGROUND_CHECKS = ['release', 'post-merge', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'plan-refs', 'reap'];
 
 // The janitorial checks an UNSCOPED `reconcile` CLI call hands to the detached
-// background pass instead of running inline (#4032) — the three whose cost
-// (an all-refs fetch, per-branch PR lookups, residue-ledger scans) dominated
-// the CLI's wall time. A subset of BACKGROUND_CHECKS; an explicit `--checks`
-// call is never deferred.
-const CLI_DEFERRED_CHECKS = ['archive-branches', 'remote-prune', 'ledger-residue'];
+// background pass instead of running inline (#4032) — the four whose cost
+// (an all-refs fetch, per-branch PR lookups, residue-ledger scans, plan-ref
+// listing and GraphQL batches) dominated the CLI's wall time. A subset of
+// BACKGROUND_CHECKS; an explicit `--checks` call is never deferred.
+const CLI_DEFERRED_CHECKS = ['archive-branches', 'remote-prune', 'ledger-residue', 'plan-refs'];
 
 // String-literal per-event requires — not a computed `require('./lib/hooks/' +
 // event)` — so every `bin/lib/hooks/*.js` module resolves statically inside
@@ -1912,7 +1912,7 @@ async function runReconcile(argv, deps) {
       out.background = background;
     }
   } catch {
-    out = { mirror: null, redTip: null, worktrees: null, claims: null, postMerge: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, residuePlan: null, residueErrors: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }], timings: null };
+    out = { mirror: null, redTip: null, worktrees: null, claims: null, postMerge: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, planRefs: null, console: null, residuePlan: null, residueErrors: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }], timings: null };
     if (!checksList.length) out.background = { checks: CLI_DEFERRED_CHECKS, spawned: false, reason: 'not-converged' };
   }
   if (jsonOut) {

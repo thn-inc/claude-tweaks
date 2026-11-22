@@ -191,3 +191,112 @@ test('planRefs: an absent gh is a reported failure', () => {
   assert.deepEqual(r, { entries: [], failure: 'gh-absent' });
   assert.equal(f.calls.pushes.length, 0);
 });
+
+// ---- registration (index.js dispatch, hooks.js lists, format-summary) ----
+
+const fs = require('fs');
+const path = require('path');
+const { execFileSync } = require('child_process');
+const { scratchDir } = require('../../helpers/tmp-dir');
+const { initRepo } = require('../../helpers/git-fixtures');
+const { readText } = require('../../helpers/read-skill');
+const { reconcile, ALL_CHECKS } = require('../../../plugin/bin/lib/reconcile');
+const { formatSummary } = require('../../../plugin/bin/lib/reconcile/format-summary');
+
+function gitIn(cwd, ...args) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+// A working checkout with a bare origin on main, pr-first forced by policy.
+function makeRepo({ claudeMd = null } = {}) {
+  const origin = scratchDir('plan-refs-origin-');
+  gitIn(origin, 'init', '--bare', '-b', 'main');
+  const dir = scratchDir('plan-refs-');
+  initRepo(dir, { branch: 'main', name: 't', email: 't@t' });
+  if (claudeMd !== null) fs.writeFileSync(path.join(dir, 'CLAUDE.md'), claudeMd);
+  fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\nintegration-branch: main\n');
+  gitIn(dir, 'add', '-A');
+  gitIn(dir, 'commit', '-m', 'init');
+  gitIn(dir, 'remote', 'add', 'origin', origin);
+  gitIn(dir, 'push', '-u', 'origin', 'main');
+  return { dir, origin };
+}
+
+// Stub the preflight's gh health probe for the duration of fn (ledger-residue.test.js's pattern).
+async function withGhHealthy(fn) {
+  const preflight = require('../../../plugin/bin/lib/reconcile/preflight');
+  const original = preflight.ghHealthCheck;
+  preflight.ghHealthCheck = () => ({ ok: true, reason: null });
+  try {
+    return await fn();
+  } finally {
+    preflight.ghHealthCheck = original;
+  }
+}
+
+test('index: plan-refs is registered on the background tier, deferred from the unscoped CLI, dispatched between ledger-residue and reap', () => {
+  const hooks = require('../../../plugin/bin/hooks');
+  assert.ok(ALL_CHECKS.includes('plan-refs'));
+  assert.ok(hooks.BACKGROUND_CHECKS.includes('plan-refs'));
+  assert.ok(hooks.CLI_DEFERRED_CHECKS.includes('plan-refs'));
+  const src = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'reconcile', 'index.js'));
+  const lastIndex = (needle) => src.lastIndexOf(needle);
+  assert.ok(lastIndex("checks.includes('ledger-residue')") < lastIndex("checks.includes('plan-refs')"), 'plan-refs dispatch must follow ledger-residue');
+  assert.ok(lastIndex("checks.includes('plan-refs')") < lastIndex("checks.includes('reap')"), 'plan-refs dispatch must precede reap');
+  assert.ok(src.includes("'ledger-residue', 'plan-refs', 'reap'"), 'DISPATCH_ORDER must list ledger-residue, plan-refs, reap adjacently');
+});
+
+test('index: requesting plan-refs under pr-first sets result.planRefs to an array; not requesting it leaves null', async () => {
+  const { dir } = makeRepo();
+  await withGhHealthy(async () => {
+    const withDispatch = await reconcile({ cwd: dir, checks: ['plan-refs'] });
+    assert.ok(Array.isArray(withDispatch.planRefs), 'plan-refs requested under pr-first must set planRefs to an array, not stay null');
+    const withoutDispatch = await reconcile({ cwd: dir, checks: ['mirror'] });
+    assert.strictEqual(withoutDispatch.planRefs, null, 'plan-refs not requested must leave planRefs null');
+  });
+});
+
+test('index: a plan-refs failure lands in skipped', async () => {
+  const { dir } = makeRepo({ claudeMd: 'work-backend: local-files\n' });
+  await withGhHealthy(async () => {
+    const r = await reconcile({ cwd: dir, checks: ['plan-refs'] });
+    assert.deepStrictEqual(r.skipped.filter((s) => s.check === 'plan-refs'), [{ check: 'plan-refs', reason: 'local-files-backend' }]);
+    assert.strictEqual(r.planRefs, null);
+  });
+});
+
+test('index: under local-merge plan-refs still runs and stays out of the local-merge skip string', async () => {
+  const { dir } = makeRepo();
+  const localMerge = () => 'local-merge';
+  const r = await reconcile({ cwd: dir, checks: ['plan-refs'], resolveIntegrationModel: localMerge });
+  assert.ok(Array.isArray(r.planRefs), 'plan-refs must run as a local-merge fallback');
+  const skip = r.skipped.find((s) => s.reason === 'local-merge-model');
+  assert.ok(skip, 'the local-merge skip entry must be present');
+  assert.strictEqual(skip.check, 'mirror,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,console');
+  const reaped = await reconcile({ cwd: dir, checks: ['reap'], resolveIntegrationModel: localMerge });
+  assert.strictEqual(reaped.planRefs, null, 'reap alone under local-merge must leave planRefs null');
+});
+
+test('formatSummary renders plan-refs taken, planned and skipped lines', () => {
+  const out = formatSummary({
+    mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null, skipped: null,
+    planRefs: [
+      { ref: `${P}1`, record: 1, action: 'delete', reason: 'record-closed' },
+      { ref: `${P}2`, record: 2, action: 'would-delete', reason: 'record-closed' },
+      // Two planned entries, one taken: a dry-run row that counted `delete` instead of `would-delete` would read 1, not 2.
+      { ref: `${P}4`, record: 4, action: 'would-delete', reason: 'record-closed' },
+      { ref: `${P}3`, record: 3, action: 'skip', reason: 'record-open' },
+    ],
+  });
+  assert.ok(out.includes('deleted: 1 plan ref'), out);
+  assert.ok(out.includes('to delete (dry run): 2 plan refs'), out);
+  assert.ok(out.includes('skipped: 1 plan ref (record-open 1)'), out);
+});
+
+test('hooks.js reconcile-threw fallback carries planRefs', () => {
+  const src = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'hooks.js'));
+  const line = src.split('\n').find((l) => l.includes("reason: 'reconcile-threw'"));
+  assert.ok(line, 'the reconcile-threw fallback literal must exist');
+  assert.ok(line.includes('planRefs: null'), line);
+});
