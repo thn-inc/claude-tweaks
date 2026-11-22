@@ -152,6 +152,8 @@ than restated:
 **Command:** `{paste-ready, fully-qualified}`
 ```
 
+Specify's planning hold is this comment with a `Held-by: specify-planning` line and a held-questions block, written by `specify/planning.md`'s `## Hold` and read by `bin/planning-hold.js`; `/claude-tweaks:specify #{n}` answers it.
+
 `{unit}` is the literal skill/mode name that wrote it (`backlog-refine`, `backlog-grant`, `tidy`, `specify`) —
 this is what lets a later reader (and Phase 6's tidy loop-safety rule) tell which unit's proposal a
 given comment is.
