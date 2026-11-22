@@ -171,6 +171,36 @@ function stripTree(text, treeRoot) {
   return [`${toPosix(treeRoot)}/`, `${treeRoot}/`, `${treeRoot}${path.sep}`].reduce((t, prefix) => t.split(prefix).join(''), text);
 }
 
+// Every replay slot (arm, repeat, prompt; keyed by armLabel, in manifest order) with the agents identified for it, their
+// recorded efforts, its reply (null when none) and the reason a slot with no reply has, read from the workflow
+// directory's journal.jsonl and agent transcripts. Also the unidentified count and cost, and each identified agent's
+// cost and effort per arm.
+function replaySlots(fsImpl, transcriptsDir, arms) {
+  const slots = new Map();
+  for (const arm of arms) {
+    for (let repeat = 1; repeat <= arm.repeat; repeat += 1) {
+      for (const prompt of arm.prompts) slots.set(armLabel(arm.name, repeat, prompt.name), { arm, repeat, prompt, agents: [], efforts: [], reply: null });
+    }
+  }
+  const { started, results } = readJournal(fsImpl, path.join(transcriptsDir, JOURNAL_FILE));
+  const { unidentified, costs, efforts, unidentifiedCost } = identifyAgents(fsImpl, transcriptsDir, started, slots);
+  // An unidentified agent cannot be tied to a prompt, so the reason `unidentified-agent` goes to the first N prompts (in
+  // manifest order) that have no identified agent, N being the number of unidentified agents; any other prompt without
+  // an identified agent was never started, or started with no reply, and is `no-reply`.
+  let unidentifiedLeft = unidentified;
+  for (const slot of slots.values()) {
+    slot.noReply = 'no-reply';
+    if (slot.agents.length === 0 && unidentifiedLeft > 0) {
+      slot.noReply = 'unidentified-agent';
+      unidentifiedLeft -= 1;
+    }
+  }
+  for (const slot of slots.values()) {
+    for (const agentId of slot.agents) if (results.has(agentId)) slot.reply = results.get(agentId);
+  }
+  return { slots, unidentified, costs, efforts, unidentifiedCost };
+}
+
 function score(opts, deps) {
   const fsImpl = deps.fs;
   const { resolveTiebreak, splitChunkReply } = require(path.join(deps.pluginRoot, 'bin', 'lib', 'tiebreak.js'));
@@ -203,28 +233,7 @@ function score(opts, deps) {
   }
 
   const runs = new Map(fixture.runs.map((r) => [r.run, r]));
-  const slots = new Map();
-  for (const arm of manifest.arms) {
-    for (let repeat = 1; repeat <= arm.repeat; repeat += 1) {
-      for (const prompt of arm.prompts) slots.set(armLabel(arm.name, repeat, prompt.name), { arm, repeat, prompt, agents: [], efforts: [], reply: null });
-    }
-  }
-  const { started, results } = readJournal(fsImpl, path.join(opts.transcripts, JOURNAL_FILE));
-  const { unidentified, costs, efforts, unidentifiedCost } = identifyAgents(fsImpl, opts.transcripts, started, slots);
-  // An unidentified agent cannot be tied to a prompt, so the reason `unidentified-agent` goes to the first N prompts (in
-  // manifest order) that have no identified agent, N being the number of unidentified agents; any other prompt without
-  // an identified agent was never started, or started with no reply, and is `no-reply`.
-  let unidentifiedLeft = unidentified;
-  for (const slot of slots.values()) {
-    slot.noReply = 'no-reply';
-    if (slot.agents.length === 0 && unidentifiedLeft > 0) {
-      slot.noReply = 'unidentified-agent';
-      unidentifiedLeft -= 1;
-    }
-  }
-  for (const slot of slots.values()) {
-    for (const agentId of slot.agents) if (results.has(agentId)) slot.reply = results.get(agentId);
-  }
+  const { slots, unidentified, costs, efforts, unidentifiedCost } = replaySlots(fsImpl, opts.transcripts, manifest.arms);
 
   const arms = {};
   const verdictsByArm = {};
@@ -309,4 +318,7 @@ function score(opts, deps) {
   return Object.values(arms).some((a) => a.notJudged > 0) ? EXIT_NOT_CLEAN : 0;
 }
 
-module.exports = { score, settleReply, agentIdentity, stripTree, transcriptEffort, transcriptCost, readJournal, identifyAgents, parseLines, messageText };
+module.exports = {
+  score, settleReply, agentIdentity, stripTree, transcriptEffort, transcriptCost, readJournal, identifyAgents, parseLines, messageText,
+  replaySlots, readJson, emptyCost, addCost,
+};

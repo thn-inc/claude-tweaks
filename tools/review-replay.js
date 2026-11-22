@@ -36,6 +36,7 @@ const { readRun, selectRuns, matchVerdicts } = require('./review-replay/archive.
 const { extract } = require('./review-replay/extract.js');
 const { extractReviews } = require('./review-replay/reviews-extract.js');
 const { score } = require('./review-replay/score.js');
+const { scoreReviews } = require('./review-replay/reviews-score.js');
 const { counterfactual } = require('./review-replay/counterfactual.js');
 const { VERDICT_CLASSES, RUN_RECORDS_DIR } = require('./review-replay/schema.js');
 
@@ -52,6 +53,7 @@ const COMMAND_FLAGS = {
   score: new Set(['--out', '--transcripts', '--reference']),
   counterfactual: new Set(['--runs', '--select', '--transcripts']),
   'extract-reviews': new Set(['--runs', '--out', '--role', '--arm', '--select', '--lens', '--max-per-lens', '--min-reviews', '--transcripts']),
+  'score-reviews': new Set(['--out', '--transcripts', '--reference']),
 };
 
 // A clean repository at `dest` holding `base` then `head` of `sourceCwd` as two commits ("base", "head") with a fixed
@@ -119,7 +121,7 @@ function parseArgs(argv) {
     if (arg === '--arm') opts.arms = [...(opts.arms || []), value];
     else opts[arg.slice(2)] = value;
   }
-  const required = { score: ['out', 'transcripts'], counterfactual: ['runs', 'transcripts'], 'extract-reviews': ['runs', 'out', 'role', 'transcripts'] }[command] || ['runs'];
+  const required = { score: ['out', 'transcripts'], counterfactual: ['runs', 'transcripts'], 'extract-reviews': ['runs', 'out', 'role', 'transcripts'], 'score-reviews': ['out', 'transcripts'] }[command] || ['runs'];
   for (const key of required) if (!opts[key]) return { error: `${command} requires --${key}` };
   if (opts.select !== undefined) {
     opts.select = opts.select.split(',').map((s) => s.trim()).filter(Boolean);
@@ -176,6 +178,7 @@ async function run({ argv, deps } = {}) {
     const { command } = parsed.opts;
     if (command === 'extract') return extract(parsed.opts, d);
     if (command === 'extract-reviews') return extractReviews(parsed.opts, d);
+    if (command === 'score-reviews') return scoreReviews(parsed.opts, d);
     if (command === 'counterfactual') return counterfactual(parsed.opts, d);
     return command === 'score' ? score(parsed.opts, d) : baseline(parsed.opts, d);
   } catch (e) {
