@@ -2,6 +2,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { run } = require('../plugin/bin/backlog-grant-gate');
+const { isolateTmpdir } = require('./helpers/tmp-dir');
+isolateTmpdir('ct-iso-backlog-grant-gate-cli-');
 
 // The only gh calls this CLI makes: three fetches keyed by args[3] (the
 // ready-labeled candidate pool, the parent-issue pull, and the historical
@@ -201,7 +203,7 @@ test('native work-links with no --repo and no resolvable remote exits 2', () => 
     remoteUrl: () => { throw new Error('no remote'); },
   });
   assert.strictEqual(run([], d), 2);
-  assert.match(d.err.join(''), /could not resolve owner\/repo/);
+  assert.match(d.err.join(''), /could not resolve owner\/repo — pass --repo \[host\/\]owner\/name/);
 });
 
 // --- Trust policy plumbing: policy.yml -> resolvePolicyKeys -> computeOutlook -> trustRows (#5291) ---

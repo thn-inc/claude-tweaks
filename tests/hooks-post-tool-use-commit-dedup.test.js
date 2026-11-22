@@ -38,6 +38,7 @@ function makeRunDir() {
 
 function runPost(repo, runDir, command) {
   return post.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command }, cwd: repo },
     runDir, runState: { status: 'active' }, ownedRun: { dir: runDir, attribution: 'session' }, cwd: repo,
   });

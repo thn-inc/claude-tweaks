@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -176,7 +177,7 @@ test('parseBatchResponse: a missing alias and a missing pageInfo are absent', ()
 // ---- fetchBatch ----
 
 const SLUG_REPO = (() => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pr-state-batch-'));
+  const dir = scratchDir('ct-pr-state-batch-');
   execFileSync('git', ['init', '-q'], { cwd: dir, windowsHide: true });
   execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/thn-inc/claude-tweaks.git'], { cwd: dir, windowsHide: true });
   return dir;
@@ -228,7 +229,7 @@ test('fetchBatch: no keys spawns nothing; no origin slug returns empty maps with
   const runner = async () => { spawned += 1; return '{}'; };
   const none = await fetchBatch(SLUG_REPO, { numbers: [], heads: [] }, { runner, env: {} });
   assert.equal(none.byNumber.size + none.byHead.size, 0);
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pr-state-batch-bare-'));
+  const bare = scratchDir('ct-pr-state-batch-bare-');
   execFileSync('git', ['init', '-q'], { cwd: bare, windowsHide: true });
   const noSlug = await fetchBatch(bare, { numbers: [1], heads: ['b'] }, { runner, env: {} });
   assert.equal(noSlug.byNumber.size + noSlug.byHead.size, 0);
@@ -237,7 +238,7 @@ test('fetchBatch: no keys spawns nothing; no origin slug returns empty maps with
 
 test('fetchBatch: an origin off github.com (or unparseable) makes zero runner calls', async () => {
   for (const url of ['https://ghe.example.com/thn-inc/claude-tweaks.git', 'git@ghe.example.com:thn-inc/claude-tweaks.git', 'ssh://git@github.com/thn-inc/claude-tweaks.git']) {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pr-state-batch-host-'));
+    const dir = scratchDir('ct-pr-state-batch-host-');
     execFileSync('git', ['init', '-q'], { cwd: dir, windowsHide: true });
     execFileSync('git', ['remote', 'add', 'origin', url], { cwd: dir, windowsHide: true });
     let spawned = 0;
@@ -246,7 +247,7 @@ test('fetchBatch: an origin off github.com (or unparseable) makes zero runner ca
     assert.equal(out.byNumber.size + out.byHead.size, 0, url);
   }
   // Control: an ssh-form github.com origin still batches.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pr-state-batch-host-'));
+  const dir = scratchDir('ct-pr-state-batch-host-');
   execFileSync('git', ['init', '-q'], { cwd: dir, windowsHide: true });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: dir, windowsHide: true });
   const seen = [];

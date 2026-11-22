@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -19,7 +20,7 @@ test('sanitizeId: accepts kind-n shapes and safe stems, rejects path traversal a
 });
 
 test('resolveTarget: run dir under mainRoot ok; linked-worktree shadow not-anchored; missing dir', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'si-'));
+  const root = scratchDir('si-');
   const main = path.join(root, 'main');
   const wt = path.join(main, '.claude', 'worktrees', 'wt');
   const good = path.join(main, '.claude-tweaks', 'pipelines', 'run-a');
@@ -36,21 +37,21 @@ test('resolveTarget: run dir under mainRoot ok; linked-worktree shadow not-ancho
 });
 
 test('writeStagedItem: creates staged/ and writes <id><ext> from the source extension', () => {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'si-run-'));
+  const runDir = scratchDir('si-run-');
   const r = writeStagedItem({ runDir, id: 'review-2', sourcePath: '/tmp/whatever.patch', content: 'diff --git a b\n' });
   assert.equal(r.file, path.join(runDir, 'staged', 'review-2.patch'));
   assert.equal(fs.readFileSync(r.file, 'utf8'), 'diff --git a b\n');
 });
 
 test('writeStagedSidecar: creates staged/ and writes <id>.json regardless of the sibling item extension', () => {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'si-sidecar-'));
+  const runDir = scratchDir('si-sidecar-');
   const r = writeStagedSidecar({ runDir, id: 'tidy-claim-releases-1', content: '[{"tag":"claim"}]' });
   assert.equal(r.file, path.join(runDir, 'staged', 'tidy-claim-releases-1.json'));
   assert.equal(fs.readFileSync(r.file, 'utf8'), '[{"tag":"claim"}]');
 });
 
 test('writeStagedItem: no extension on source writes id with no extension; overwrite replaces content', () => {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'si-run2-'));
+  const runDir = scratchDir('si-run2-');
   writeStagedItem({ runDir, id: 'leftover-my-slug', sourcePath: '/tmp/body', content: 'first\n' });
   const r = writeStagedItem({ runDir, id: 'leftover-my-slug', sourcePath: '/tmp/body', content: 'second\n' });
   assert.equal(r.file, path.join(runDir, 'staged', 'leftover-my-slug'));
@@ -69,7 +70,7 @@ test('writeStagedItem: no extension on source writes id with no extension; overw
 // next test pins that this default (non-allocate) behavior is unchanged.
 
 test('writeStagedItem: without allocate, a numbered-looking id still overwrites in place (materialize.js-style identity key)', () => {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'si-noalloc-'));
+  const runDir = scratchDir('si-noalloc-');
   writeStagedItem({
     runDir, id: 'premise-satisfied-2770', sourcePath: '/tmp/a.md', content: 'first check\n',
   });
@@ -82,7 +83,7 @@ test('writeStagedItem: without allocate, a numbered-looking id still overwrites 
 });
 
 test('writeStagedItem: allocate:true on a numbered-kind id collision reallocates to the next free slot — neither write is lost', () => {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'si-realloc-'));
+  const runDir = scratchDir('si-realloc-');
   const first = writeStagedItem({
     runDir, id: 'build-deviation-1', sourcePath: '/tmp/a.md', content: 'first\n', allocate: true,
   });
@@ -99,7 +100,7 @@ test('writeStagedItem: allocate:true on a numbered-kind id collision reallocates
 });
 
 test('writeStagedItem: allocate:true reallocation skips an id a sibling writer already claimed, not just requested-n+1', () => {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'si-realloc2-'));
+  const runDir = scratchDir('si-realloc2-');
   writeStagedItem({
     runDir, id: 'build-deviation-1', sourcePath: '/tmp/a.md', content: 'one\n', allocate: true,
   });
@@ -117,7 +118,7 @@ test('writeStagedItem: allocate:true reallocation skips an id a sibling writer a
 });
 
 test('writeStagedItem: allocate:true requires a "{kind}-{n}" id — throws on a bare/slug id', () => {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'si-realloc-badid-'));
+  const runDir = scratchDir('si-realloc-badid-');
   assert.throws(
     () => writeStagedItem({
       runDir, id: 'leftover-my-slug', sourcePath: '/tmp/a.md', content: 'x\n', allocate: true,
@@ -127,7 +128,7 @@ test('writeStagedItem: allocate:true requires a "{kind}-{n}" id — throws on a 
 });
 
 test('writeStagedItem: allocate:true reallocation also protects the sidecar pairing via the returned id', () => {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'si-realloc-sidecar-'));
+  const runDir = scratchDir('si-realloc-sidecar-');
   writeStagedItem({
     runDir, id: 'tidy-claim-releases-1', sourcePath: '/tmp/a.json', content: '{"a":1}', allocate: true,
   });
@@ -140,7 +141,7 @@ test('writeStagedItem: allocate:true reallocation also protects the sidecar pair
 });
 
 test('writeStagedItem: two real OS processes racing the same allocate:true numbered-kind id both survive (no lost update)', async () => {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'si-realloc-mp-'));
+  const runDir = scratchDir('si-realloc-mp-');
   const writeModule = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'stage-item', 'write.js');
 
   const WORKERS = 6;
@@ -185,21 +186,21 @@ test('writeStagedItem: two real OS processes racing the same allocate:true numbe
 // never runs — the `.git`-is-a-FILE check on its own is the only thing standing
 // between a linked-worktree (or submodule) run dir and a false `ok: true`.
 test('resolveTarget: with mainRoot explicitly null, the .git-is-a-FILE check alone gates a linked worktree', () => {
-  const wtRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'si-nullroot-wt-'));
+  const wtRoot = scratchDir('si-nullroot-wt-');
   const wt = path.join(wtRoot, '.claude', 'worktrees', 'wt');
   const wtRun = path.join(wt, '.claude-tweaks', 'pipelines', 'run-a');
   fs.mkdirSync(wtRun, { recursive: true });
   fs.writeFileSync(path.join(wt, '.git'), 'gitdir: ../../../.git/worktrees/wt\n');
   assert.deepEqual(resolveTarget({ runDir: wtRun, mainRoot: null }), { ok: false, reason: 'not-anchored' });
 
-  const mainTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'si-nullroot-main-'));
+  const mainTmp = scratchDir('si-nullroot-main-');
   const main = path.join(mainTmp, 'main');
   const mainRun = path.join(main, '.claude-tweaks', 'pipelines', 'run-b');
   fs.mkdirSync(mainRun, { recursive: true });
   fs.mkdirSync(path.join(main, '.git'));
   assert.equal(resolveTarget({ runDir: mainRun, mainRoot: null }).ok, true);
 
-  const orphanRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'si-nullroot-orphan-'));
+  const orphanRoot = scratchDir('si-nullroot-orphan-');
   const orphanRun = path.join(orphanRoot, 'run-c');
   fs.mkdirSync(orphanRun, { recursive: true });
   assert.deepEqual(resolveTarget({ runDir: orphanRun, mainRoot: null }), { ok: false, reason: 'not-anchored' });

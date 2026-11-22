@@ -2,10 +2,12 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { STUB_SKIP } = require('../../helpers/path-stub');
 const { sweepCli } = require('../../helpers/health-sweep-cli');
+const { writeIdentity } = require('../../helpers/git-fixtures');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'journey-health.js');
 
@@ -18,7 +20,7 @@ function runNextTarget(args, root, opts = {}) {
   return JSON.parse(res.stdout);
 }
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'journey-health-cli-next-')); }
+function tmp() { return scratchDir('journey-health-cli-next-'); }
 
 // Wraps `git` with a logging shim on a PATH handed to the in-process call, so a test can count
 // how many times the CLI shells out to git (fetch/show), without needing a real GitHub-hosted
@@ -27,10 +29,10 @@ function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'journey-health-cl
 // env would run the real git and log nothing — the test would fail. Mirrors
 // tests/bin-lib/harness-health/cli-next-target.test.js's makeGitSpy.
 function makeGitSpy() {
-  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'journey-health-nt-gitspy-'));
+  const logDir = scratchDir('journey-health-nt-gitspy-');
   const logFile = path.join(logDir, 'git-calls.log');
   const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'journey-health-nt-gitstub-'));
+  const stubDir = scratchDir('journey-health-nt-gitstub-');
   const shim = path.join(stubDir, 'git');
   fs.writeFileSync(shim, `#!/bin/sh\necho "$@" >> "${logFile}"\nexec "${realGit}" "$@"\n`);
   fs.chmodSync(shim, 0o755); // root-safe: exec-bit stub, not a denial simulation
@@ -42,9 +44,9 @@ function makeGitSpy() {
 // without needing live GitHub credentials. Mirrors
 // tests/bin-lib/harness-health/cli-next-target.test.js's seedDurableCursors.
 function seedDurableCursors(root, cursors) {
-  const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), 'journey-health-nt-bare-'));
+  const bareDir = scratchDir('journey-health-nt-bare-');
   execFileSync('git', ['init', '--bare', '-q', bareDir]);
-  const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'journey-health-nt-seed-'));
+  const seedDir = scratchDir('journey-health-nt-seed-');
   execFileSync('git', ['init', '-q', seedDir]);
   execFileSync('git', ['-C', seedDir, 'checkout', '-q', '-b', 'health-state']);
   fs.mkdirSync(path.join(seedDir, 'journey-health'), { recursive: true });
@@ -138,8 +140,7 @@ test('four next-target -> validate-findings cycles against a permanently broken 
   fs.rmSync(path.join(root, 'src', 'a-flow.tsx'));
   seedDurableCursors(root, {});
   // commit-tree (writeDurableState's write path) needs a committer identity.
-  execFileSync('git', ['-C', root, 'config', 'user.email', 'test@example.com']);
-  execFileSync('git', ['-C', root, 'config', 'user.name', 'test']);
+  writeIdentity(root, { name: 'test', email: 'test@example.com' });
 
   const findingsFile = path.join(root, 'findings.json');
   fs.writeFileSync(findingsFile, '[]');

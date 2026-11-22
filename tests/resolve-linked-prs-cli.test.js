@@ -94,7 +94,31 @@ test('success: one runner call, a number-keyed JSON line on stdout, exit 0', () 
   assert.equal(deps.calls.runner.length, 1, 'exactly one gh api graphql call');
   assert.equal(deps.calls.stderr.length, 0, 'success path writes nothing to stderr');
   assert.equal(deps.calls.stdout.length, 1, 'exactly one stdout write');
-  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: 1572, mentions: [], hasClosingPRReference: true } });
+  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: 1572, mentions: [], hasClosingPRReference: true, lastShapedAt: null } });
+});
+
+test('#5722: the CLI prints lastShapedAt beside openPR, mentions and hasClosingPRReference', () => {
+  const deps = fakeDeps({
+    runner: () => JSON.stringify({
+      data: {
+        repository: {
+          i1224: {
+            number: 1224,
+            closedByPullRequestsReferences: { nodes: [] },
+            labelEvents: { nodes: [
+              { createdAt: '2026-11-16T10:50:38Z', label: { name: 'ready' } },
+              { createdAt: '2026-11-16T10:51:03Z', label: { name: 'auto:build' } },
+            ] },
+          },
+        },
+      },
+    }),
+  });
+  const code = run(['1224'], deps);
+  assert.equal(code, 0);
+  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), {
+    1224: { openPR: null, mentions: [], hasClosingPRReference: false, lastShapedAt: '2026-11-16T10:51:03Z' },
+  });
 });
 
 test('success: owner/repo parsed from the origin remote when --repo is absent', () => {
@@ -112,7 +136,7 @@ test('success: no linked PR reports openPR null', () => {
   });
   const code = run(['1224'], deps);
   assert.equal(code, 0);
-  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: null, mentions: [], hasClosingPRReference: false } });
+  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: null, mentions: [], hasClosingPRReference: false, lastShapedAt: null } });
 });
 
 test('success: a merged (not open) linked PR reports openPR null', () => {
@@ -123,7 +147,7 @@ test('success: a merged (not open) linked PR reports openPR null', () => {
   });
   const code = run(['1224'], deps);
   assert.equal(code, 0);
-  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: null, mentions: [], hasClosingPRReference: true } });
+  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: null, mentions: [], hasClosingPRReference: true, lastShapedAt: null } });
 });
 
 test('success: a comma list of numbers resolves in ONE runner call, one key per requested number', () => {
@@ -143,8 +167,8 @@ test('success: a comma list of numbers resolves in ONE runner call, one key per 
   assert.equal(code, 0);
   assert.equal(deps.calls.runner.length, 1, 'one aliased call covers the whole list, never one call per number');
   assert.deepEqual(JSON.parse(deps.calls.stdout[0]), {
-    1224: { openPR: 1572, mentions: [], hasClosingPRReference: true },
-    257: { openPR: null, mentions: [], hasClosingPRReference: false },
+    1224: { openPR: 1572, mentions: [], hasClosingPRReference: true, lastShapedAt: null },
+    257: { openPR: null, mentions: [], hasClosingPRReference: false, lastShapedAt: null },
   });
 });
 

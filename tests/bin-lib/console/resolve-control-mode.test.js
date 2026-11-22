@@ -4,6 +4,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -14,7 +15,7 @@ const { resolveTiebreak } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'tie
 const { formatEntry } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'log-decision', 'append'));
 
 function fixture({ decisions = '', staged = {}, headers = [] } = {}) {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-cm-'));
+  const runDir = scratchDir('console-resolve-cm-');
   fs.mkdirSync(path.join(runDir, 'staged'), { recursive: true });
   fs.mkdirSync(path.join(runDir, 'work'), { recursive: true });
   fs.writeFileSync(path.join(runDir, 'decisions.md'), decisions);
@@ -28,7 +29,7 @@ function deps(overrides = {}) {
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
     gitApplyCheck: () => ({ ok: true }),
-    readGrants: (numbers) => Object.fromEntries(numbers.map((n) => [n, { labels: ['auto:merge'], pendingSince: null }])),
+    readGrants: (numbers) => Object.fromEntries(numbers.map((n) => [n, { labels: ['auto:build', 'auto:merge'], pendingSince: null }])),
     now: () => Date.parse('2026-09-06T12:00:00Z'),
     sensitivePaths: [],
     ...overrides,

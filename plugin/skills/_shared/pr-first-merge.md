@@ -292,11 +292,11 @@ never suggest bypassing protection.
 
 ## Step 2.9: Local acceptance park (control mode)
 
-Before Step 3, for each `Fixes` record: `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" parked --record {n} --run "$PIPELINE_RUN_DIR"`, then `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" decide --run "$PIPELINE_RUN_DIR" --record {n}[,{m}…]`; `--run` follows Step 2.5's per-merged-run rule. Unless `parked` exits 5 and `decide` exits 0 with `park:false`: never run Step 3; report `pending-review` and read `_shared/local-acceptance-park.md`.
+Before Step 3, for each `Fixes` record: `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" parked --record {n} --run "$PIPELINE_RUN_DIR"`, then `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" decide --run "$PIPELINE_RUN_DIR" --record {n}[,{m}…] --head {headRefOid} [--classification {file}]`; `--run` follows Step 2.5's per-merged-run rule; classify first per `_shared/tripwire-classification.md`. Unless `parked` exits 5 and `decide` exits 0 with `park:false`: never run Step 3; report `pending-review` and read `_shared/local-acceptance-park.md`.
 
 ## Step 3: Attempt auto-merge, degrading on specific failure signatures
 
-No fence below runs until Step 2.9 lets the merge through (`parked` exit 5, `decide` exit 0 with `park:false`), whichever Step 2.5 route led here; tidy's record-linked arm runs both without `--run`. Exempt: a caller with no `Fixes` record (tidy's housekeeping arm) or one running Step 3 alone behind its own `parked` guard (dispatch close-out, `/claude-tweaks:accept`).
+No fence below runs until Step 2.9 lets the merge through, whichever Step 2.5 route led here. Exempt: a caller with no `Fixes` record (tidy's housekeeping arm) or one running Step 3 alone behind its own `parked` guard (dispatch close-out, `/claude-tweaks:accept`).
 
 **Creation-time caller:** tidy's Step 7.5 arm runs Step 2.5, then these fences where it routes; Red path, Conflict path and ready+comment degrades become leave-unarmed + report (`tidy/step-7-5-worktree-always.md`).
 
@@ -309,15 +309,15 @@ gh pr merge {pr-number} --repo {owner}/{repo} --auto --squash -t {title-arg} --b
 ```
 
 `{tag}` is `auto-merge` for the dispatch/headless path (`dispatch/settle-and-merge.md`'s Auto-merge
-gate), `fast-lane` for the interactive single-record short-circuit triggered by a live `auto:merge`
-label, or `manifesto-authorized` for the same short-circuit triggered instead by the
-`merge-authorization` Manifesto lever with no label present (`wrap-up/review-console.md`,
-`wrap-up/manifesto-authorized-merge.md`) — `/help`'s
+gate), `fast-lane` for the interactive single-record short-circuit triggered by live
+`auto:merge` and `auto:build` labels, or `manifesto-authorized` for the same short-circuit
+triggered by the `merge-authorization` Manifesto lever with no label present
+(`wrap-up/review-console.md`, `wrap-up/manifesto-authorized-merge.md`) — `/help`'s
 auto-merged-this-week metric (`_shared/github-pr-scan-triage.md` `triage-queue` item 3) keys on all
 three. `{issue-list}` is the record numbers — the manifest's `complete` specs only for a bundle
 (#2015; rest release via their own `never-started:`/`abandoned:` reason). `human-approved`:
 `dispatch/close-out.md`'s human-confirmed merge (that metric excludes it). `{scope}`
-resolves inside the composer from the `commit-scope`/`commit-scope-paths` policy keys (`_shared/policy-schema.md`) over the PR's own changed files (`gh pr diff --name-only` behind `--pr` — no checkout needed, so later-session callers such as `dispatch/close-out.md` and `tidy` compose the same subject); an explicit `--scope {scope}` overrides both. The composer writes
+resolves inside the composer from the `commit-scope`/`commit-scope-paths` policy keys (`_shared/policy-schema.md`) over the PR's own changed files (`gh pr diff --name-only` behind `--pr` — no checkout needed, so later callers such as `dispatch/close-out.md` and `tidy` compose the same subject); an explicit `--scope {scope}` overrides both. The composer writes
 the Conventional-Commits subject and one `Fixes #{n}` line per record, `Refs #{n}` for a
 `{keep-open}` one: the comma-joined `{issue-list}` numbers on a `Refs` line of the post-refresh
 PR body (`closing-links.js --mode pre-merge`'s `keepOpen`, or `parseFixesSpan(body).refs`);

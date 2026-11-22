@@ -9,9 +9,9 @@
 // sync when CLAUDE.md's own documented SKILL.md house-structure convention
 // changes.
 //
-// All four health skills' test files now consume this module: docs-health
+// All five health skills' test files now consume this module: docs-health
 // migrated first (2026-07-20 review-findings fix, Task 5), and code-health,
-// harness-health, and journey-health followed. The three late migrations
+// harness-health, and journey-health followed; ci-health's was written against it. The three late migrations
 // mattered for correctness, not just duplication: harness-health's and
 // journey-health's copies still used a bare body.indexOf(), which made their
 // ordering assertion vacuous (see sectionIndex below).

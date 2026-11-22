@@ -2,12 +2,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, readCommitScope, readGhTimeoutMs, readEfficiencyCeilings, readChangelogMaxReleases } = require('../plugin/bin/lib/policy');
 
 function tmpRepo() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-policy-'));
+  return scratchDir('ct-policy-');
 }
 function writePolicy(repo, content) {
   const dir = path.join(repo, '.claude-tweaks');
@@ -275,6 +276,11 @@ test('changelog-max-releases: the schema row is an integer >= 0, default 0, read
   assert.strictEqual(row.default, 0);
   assert.strictEqual(row.policyOnly, true, 'both engines read policy.yml directly, so a run config must never carry a value for it');
 });
+
+test('model-effort is policyOnly: resolve-profile.js reads policy.yml directly and no per-run route exists (#5941)', () => {
+  const row = require('../plugin/bin/lib/policy-schema').POLICY_KEYS.find((k) => k.key === 'model-effort');
+  assert.strictEqual(row.policyOnly, true);
+});
 test('changelog-max-releases: an unreadable policy file is reported, not read as 0 silently', () => {
   const r = readChangelogMaxReleases(() => { throw new Error('EISDIR: illegal operation on a directory'); });
   assert.strictEqual(r.count, 0);
@@ -292,7 +298,7 @@ test('changelog-max-releases: a non-Error or empty-message throw still yields a 
 
 // --- #4492: readers fall back to the main checkout's policy.yml from a linked worktree ---
 function linkedWorktree(t, policy) {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'policy-wt-'));
+  const base = scratchDir('policy-wt-');
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const main = path.join(base, 'main');
   const wt = path.join(base, 'wt');

@@ -560,21 +560,23 @@ test('long-s and dotless-i: runtime extraction and the prefilter model agree (GN
 test('push trigger excludes the plugin bookkeeping branches, named from their constants', () => {
   const { CLAIMS_BRANCH } = require('../plugin/bin/lib/issues/claims');
   const { HEALTH_STATE_BRANCH } = require('../plugin/bin/lib/health-core/durable-state');
+  const { RELEASE_STATE_BRANCH } = require('../plugin/bin/lib/release-state/store');
   assert.strictEqual(CLAIMS_BRANCH, 'claims-registry');
   assert.strictEqual(HEALTH_STATE_BRANCH, 'health-state');
+  assert.strictEqual(RELEASE_STATE_BRANCH, 'release-state');
   const lines = generateWorkflowYaml().split('\n');
   const start = lines.indexOf('  push:');
   assert.ok(start >= 0, 'push: trigger present');
   const rest = lines.slice(start + 1);
   const block = rest.slice(0, rest.indexOf(''));
   const items = block.filter((l) => l.startsWith('      - ')).map((l) => l.slice('      - '.length));
-  assert.deepStrictEqual(items, ["'**'", `'!${CLAIMS_BRANCH}'`, `'!${HEALTH_STATE_BRANCH}'`]);
+  assert.deepStrictEqual(items, ["'**'", `'!${CLAIMS_BRANCH}'`, `'!${HEALTH_STATE_BRANCH}'`, `'!${RELEASE_STATE_BRANCH}'`]);
 });
 
 const normalisedDigest = (text) =>
   crypto.createHash('sha256').update(text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\n+$/, '')).digest('hex');
 const PRE_5152_FIXTURE = readText(path.join(__dirname, 'fixtures', 'track-issue-fixes-pre-5152.yml'));
-const PINNED_CURRENT_DIGEST = 'df673d6fe95eb97c7009ef9ae0b9ae5465570868e5ae11934573334d96d129df';
+const PINNED_CURRENT_DIGEST = '50f49a2f8b4dadf79f1a7f641f3434f53ea1fa680d58e72981a3cd84d14f3eb2';
 
 test('classifyExistingWorkflow: current generator output', () => {
   const current = generateWorkflowYaml();
@@ -641,9 +643,10 @@ test('every released version of the workflow file still classifies as current or
 test("Step 16's prose names the excluded bookkeeping branches by their constants' values", () => {
   const { CLAIMS_BRANCH } = require('../plugin/bin/lib/issues/claims');
   const { HEALTH_STATE_BRANCH } = require('../plugin/bin/lib/health-core/durable-state');
+  const { RELEASE_STATE_BRANCH } = require('../plugin/bin/lib/release-state/store');
   const prose = readText(path.join(__dirname, '..', 'plugin/skills/init/bootstrap/step-16-non-default-branch-issue-tracking.md'));
-  assert.ok(prose.includes(`${CLAIMS_BRANCH} and ${HEALTH_STATE_BRANCH} bookkeeping branches`), 'the hand-edited-file question names both branches');
-  assert.ok(prose.includes(`\`${CLAIMS_BRANCH}\` and \`${HEALTH_STATE_BRANCH}\` bookkeeping branches`), 'the job description names both branches');
+  assert.ok(prose.includes(`${CLAIMS_BRANCH}, ${HEALTH_STATE_BRANCH} and ${RELEASE_STATE_BRANCH} bookkeeping branches`), 'the hand-edited-file question names all three branches');
+  assert.ok(prose.includes(`\`${CLAIMS_BRANCH}\`, \`${HEALTH_STATE_BRANCH}\` and \`${RELEASE_STATE_BRANCH}\` bookkeeping branches`), 'the job description names all three branches');
 });
 
 test("Step 16's outcome bullets are exactly the values classifyExistingWorkflow returns", () => {
@@ -660,13 +663,13 @@ test('the checked-in .github/workflows/track-issue-fixes.yml is the generator ou
   assert.strictEqual(checkedIn, generateWorkflowYaml() + '\n');
 });
 
-test('PRIOR_OUTPUT_SHA256 holds five distinct digests and excludes the current output', () => {
+test('PRIOR_OUTPUT_SHA256 holds six distinct digests and excludes the current output', () => {
   assert.strictEqual(
     PRIOR_OUTPUT_SHA256.length,
-    5,
+    6,
     'digest count changed — append the previous digest to PRIOR_OUTPUT_SHA256, update this expected count and PINNED_CURRENT_DIGEST',
   );
-  assert.strictEqual(new Set(PRIOR_OUTPUT_SHA256).size, 5);
+  assert.strictEqual(new Set(PRIOR_OUTPUT_SHA256).size, 6);
   for (const d of PRIOR_OUTPUT_SHA256) assert.match(d, /^[0-9a-f]{64}$/);
   assert.ok(!PRIOR_OUTPUT_SHA256.includes(normalisedDigest(generateWorkflowYaml())));
 });

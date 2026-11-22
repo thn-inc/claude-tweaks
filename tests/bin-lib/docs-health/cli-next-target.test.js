@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -16,7 +17,7 @@ function cli(argv, opts) {
   return sweepCli(CLI, argv, opts);
 }
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-nt-')); }
+function tmp() { return scratchDir('docs-health-nt-'); }
 function runNextTarget(args, root) {
   const res = cli(['next-target', '--root', root, ...args]);
   assert.strictEqual(res.status, 0, `stderr: ${res.stderr}`);

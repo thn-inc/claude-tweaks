@@ -28,14 +28,15 @@ substituted. Never creates a directory unless `--create` is passed.
   (`adoptionRefusal`, #1962/#4151). An absent `run-state.json` (a bare mint) is still adopted, and
   step 1's `PIPELINE_RUN_DIR` directory is never refused. A caller therefore must not use step 2 to
   re-find a run it has already closed (`close-run` makes it `clean`) — carry the path instead.
-- `--create` with `--spec-slug <s>` and no `--standalone`: the plain mkdir-only mint shape
+- `--create` with `--spec-slug <s>` and no `--standalone`: the plain mint shape
   `/flow` (`flow/steps-and-gates.md` case 4), `/claude-tweaks:dispatch` (`dispatch/SKILL.md` Step
-  4), and `flow/claim-targets.md`'s direct-invocation mint use — `config.yml`/`decisions.md` are
+  4), and `flow/claim-targets.md`'s direct-invocation mint use — a mkdir plus the run-start
+  `manifest.json` (not an initialization marker); `config.yml`/`decisions.md` are
   written later, by whichever step actually initializes the run.
 - `--create` with `--standalone <name>`: `_shared/run-dir-resolution.md`'s step 4
   standalone-auto-fallback shape — `{ISO-timestamp}-{name}-standalone/` (a `{name}` already
-  ending in `-standalone` is not suffixed twice), pre-populated with `decisions.md`
-  and `staged/`. Pass `--mode auto` too when the caller is on that step's standalone-auto
+  ending in `-standalone` is not suffixed twice), pre-populated with `decisions.md`,
+  `staged/` and the run-start `manifest.json` (none on a hook-minted `-adhoc-standalone` dir). Pass `--mode auto` too when the caller is on that step's standalone-auto
   allowlist (the command then refuses to create outside auto mode); omit `--mode` entirely for a
   caller that creates in every mode regardless — the two documented exceptions,
   `/claude-tweaks:wrap-up` and `/claude-tweaks:release`, each with its own clause above. Combined
@@ -233,7 +234,8 @@ argument still holds there.
   resolved path inside any git checkout must be anchored under the main checkout resolved from
   cwd; a path outside any checkout is accepted as-is, no flag needed. Rejection exits 1, these
   CLIs' documented invocation-failure code — a deliberate, stated deviation from the family's
-  exit 2.
+  exit 2. `bin/implementer-tier.js` (#5996) delegates its `--run` to `resolvePolicy`'s same guard
+  and existence check but keeps the family's exit 2 on a refusal.
 
 - **Sanctioned-write CLIs** — `bin/log-decision.js`, `bin/stage-item.js`, `bin/set-config.js`
   (`--run`, refs #1376), `bin/set-verify-expectations.js` (`--run`, refs #2764), and `bin/write-run-artifact.js` (`--run`, refs #3044) — the run-dir writers a worktree-isolated session invokes when tool-level
@@ -241,9 +243,14 @@ argument still holds there.
   strict anchored-under-the-main-checkout rule, but through `bin/lib/stage-item/write.js`'s
   exported `resolveTarget` rather than `worktree-detect.js` directly, and refuses with exit **3**
   — their documented run-dir-failure code, kept distinct from their exit 2 (malformed
-  invocation), with its own two messages ("run dir does not exist" versus "not anchored under
-  the main checkout (a worktree-local shadow)"). A further writer imports that `resolveTarget`
-  rather than re-deriving the predicate, as the third, fourth and fifth did.
+  invocation), with its own three messages ("run dir does not exist", "not anchored under
+  the main checkout's .claude-tweaks/pipelines (a worktree-local shadow)", and "not a pipeline
+  run directory"). The guard also requires the real path to sit strictly inside the main
+  checkout's `.claude-tweaks/pipelines/` (`bin/lib/run-dir-guard.js`'s `isUnderPipelines`), so a
+  directory that is anchored but elsewhere in the checkout (`plugin/`, `docs/`) is refused with
+  the third message (`not-a-run-dir`) before any `config.yml` in it is read or anything is written.
+  A further writer imports that `resolveTarget`
+  rather than re-deriving the predicate, as the third, fourth and fifth did. `bin/deferral-route.js` (`--run`, #5933), which writes only its own `deferral-route-tally.log` and only with `run-filed-record-cap` set, imports the same `resolveTarget` but refuses with exit **1** — its run-dir and policy failure code, since it has no exit 3 and no caller branches on a distinct run-dir code.
 
 - **The composer CLI** — `bin/compose-context.js` (`--run`, #1988) — writes
   `{run}/context/{step}.md` yet takes the resolver family's anchored-or-outside rule

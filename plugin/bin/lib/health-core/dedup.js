@@ -2,12 +2,13 @@
 
 // Decide what to do with a freshly-fingerprinted finding given the current
 // issue index and local cache. Pure — no I/O, no network, and asserted so by
-// tests/bin-lib/health-core/purity.test.js. Consumed by the three health
+// tests/bin-lib/health-core/purity.test.js. Consumed by the four health
 // sweeps below only — bin/lib/residue/ does not require this module; it
 // relies on fingerprint.js and finding-validation.js instead.
 //
 // Shared by harness-health, journey-health, and docs-health (byte-identical
-// wrapper across the three today). code-health keeps its own decide() in
+// wrapper across the three today), and called directly by ci-audit.js's
+// validate-findings with no local cache. code-health keeps its own decide() in
 // bin/lib/code-health/dedup.js — it needs a `threshold`/`risk` comparison and
 // a `remember` action (findings below the risk threshold are tracked but not
 // filed) that this propose-then-approve cache vocabulary has no equivalent

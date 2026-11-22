@@ -43,7 +43,7 @@ const REMOVER_ALLOWED = new Set([WRITER_MODULE, 'plugin/bin/lib/issues/record.js
 // prefix naming a function, not the line), but it may follow a `\n`, `\r` or `\t` escape
 // as written in source (`'...\nRisk-flags: x'`), where the escape's letter is glued to it,
 // or the hex and unicode spellings of a line break (`\x0a`, `\u000a`, `\u{a}`, and `d` for `\r`).
-const RISK_LINE = /(?:(?<![A-Za-z0-9_$])|(?<=\\(?:[nrt]|x0[ad]|u000[ad]|u\{[ad]\})))risk[-_ ]?flags(?:[-_ ]unconfirmed)?\s*:/gi;
+const RISK_LINE = /(?:(?<![A-Za-z0-9_$])|(?<=\\(?:[nrt]|x0[ad]|u000[ad]|u\{[ad]\})))risk[-_ ]?flags(?:[-_ ](?:unconfirmed|added[-_ ]by[-_ ]tripwire))?\s*:/gi;
 const REMOVER = /\b(?:removeRiskFlags?|confirmRiskFlags?)\b/g;
 
 function lineAt(text, offset) {
@@ -183,6 +183,12 @@ test('AC5.6: a planted marker literal is flagged at its exact line', () => {
     shape('plugin/bin/lib/x.js', "const a = 1;\nconst m = 'Risk-flags-unconfirmed: true';\n"),
     [[2, 'line-literal']],
   );
+});
+
+test('a planted tripwire-line literal is flagged at its exact line, and is allowed in the writer module', () => {
+  const src = "const a = 1;\nconst t = `Risk-flags-added-by-tripwire: ${x}`;\n";
+  assert.deepStrictEqual(shape('plugin/bin/lib/accept/x.js', src), [[2, 'line-literal']]);
+  assert.deepStrictEqual(shape('plugin/bin/lib/issues/record-risk-flags.js', src), []);
 });
 
 test('a spelling variant of the line key in a literal is flagged', () => {

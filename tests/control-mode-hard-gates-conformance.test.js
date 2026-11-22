@@ -25,6 +25,7 @@ const GATES = [
   ['build plan audit', '`/build` Common Step 1.5 plan audit hard-fails'],
   ['multi-spec boundary freshness', 'multi-spec boundary-freshness escalation'],
   ['release Step 4 gates', "`/release` Step 4's two gates"],
+  ['release-block stop', "`/release` Step 1.5's release-block stop"],
   ['test PR-bookkeeping precondition', '`/test` Step 0 (PR-bookkeeping precondition check)'],
   ['adopted-branch collision', 'adopted-branch collision stop'],
   ['plan-review spec gap', 'plan-review needs-human spec gap'],

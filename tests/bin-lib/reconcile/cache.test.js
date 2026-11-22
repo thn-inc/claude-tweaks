@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const {
@@ -13,7 +14,7 @@ const {
 const { gateOriginRepo } = require('../../../plugin/bin/lib/repo-resolve');
 
 function tmpRoot() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-cache-'));
+  return scratchDir('ct-recon-cache-');
 }
 
 test('readCache: absent file reads as empty defaults, not a throw', () => {
@@ -301,7 +302,7 @@ test('trackResidue: never throws when escalate itself throws (best-effort)', () 
 });
 
 test('trackResidue: forwards an injected `runner` into the escalate call', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reconcile-cache-runner-'));
+  const root = scratchDir('reconcile-cache-runner-');
   const calls = [];
   const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
   const runner = () => '[]';
@@ -330,7 +331,7 @@ function assertOwnedPathPredicate(pathExists, root) {
 }
 
 test('#4202 trackResidue: passes a checkout-scoped pathExists into the escalate call', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reconcile-cache-pathexists-'));
+  const root = scratchDir('reconcile-cache-pathexists-');
   const calls = [];
   const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
   for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
@@ -341,7 +342,7 @@ test('#4202 trackResidue: passes a checkout-scoped pathExists into the escalate 
 });
 
 test('trackResidue: omitting `runner` is unaffected — escalate receives runner: undefined, same as before this change', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reconcile-cache-runner-'));
+  const root = scratchDir('reconcile-cache-runner-');
   const calls = [];
   const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
   for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
@@ -419,7 +420,7 @@ test('pruneResidueFailures: reason-agnostic — a structurally-stuck entry whose
 });
 
 test('pruneResidueFailures: forwards an injected `runner` into the resolve call', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reconcile-cache-prune-runner-'));
+  const root = scratchDir('reconcile-cache-prune-runner-');
   const gonePath = path.join(root, 'gone-runner');
   for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
     recordResidueFailure(root, 'move-failed', gonePath, { lastError: 'x' });

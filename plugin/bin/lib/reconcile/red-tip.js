@@ -11,7 +11,7 @@
 'use strict';
 const { execFileSyncTimed } = require('./timing');
 const { runGit } = require('../hooks/git-exec');
-const { ghOptions } = require('../repo-resolve');
+const { ghOptions, injectedGhDeps } = require('../repo-resolve');
 
 const FETCH_TIMEOUT_MS = 5000;
 // Conclusions that count as red. `in_progress`/`queued` are status values,
@@ -85,7 +85,8 @@ function parseCheckRunLines(stdout) {
 }
 
 // I/O: one paginated `gh api` call, newest-run-per-check fields only.
-function fetchCheckRuns(repoRoot, sha) {
+// `inj` ({ env, homeDir }, optional): a hook event's context (#5377), the environment gh runs in and reads its host from.
+function fetchCheckRuns(repoRoot, sha, inj = {}) {
   let stdout;
   const args = [
     'api', '--paginate',
@@ -96,7 +97,7 @@ function fetchCheckRuns(repoRoot, sha) {
     stdout = execFileSyncTimed(
       'gh',
       args,
-      ghOptions(args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true }),
+      ghOptions(args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true, ...(inj.env ? { env: inj.env } : {}) }, injectedGhDeps(inj)),
     );
   } catch (e) {
     if (e && e.code === 'ENOENT') return { ok: false, reason: 'gh-absent' };
@@ -121,13 +122,13 @@ function fetchCheckRuns(repoRoot, sha) {
 // forever, with zero observable trace anywhere (#561 review finding,
 // reproduced by both Error-Handling-lens agents). Callers that don't pass
 // `onSkip` see byte-identical behavior to before this fix.
-function redTipCheck(repoRoot, integration, { onSkip } = {}) {
-  const tip = runGit(['rev-parse', `origin/${integration}`], repoRoot);
+function redTipCheck(repoRoot, integration, { onSkip, env, homeDir } = {}) {
+  const tip = runGit(['rev-parse', `origin/${integration}`], repoRoot, env ? { env } : undefined);
   if (tip.failure) {
     if (onSkip) onSkip('no-integration-ref');
     return null;
   }
-  const fetch = fetchCheckRuns(repoRoot, tip.stdout);
+  const fetch = fetchCheckRuns(repoRoot, tip.stdout, { env, homeDir });
   if (!fetch.ok) {
     if (onSkip) onSkip(fetch.reason);
     return null;

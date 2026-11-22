@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const {
@@ -12,7 +13,7 @@ const { readText } = require('../../helpers/read-skill');
 
 // Temp dir name deliberately contains a space — the composed command
 // shQuotes the target path, and this proves the quoting survives a real shell.
-function tmpWithSpace() { return fs.mkdtempSync(path.join(os.tmpdir(), 'premise self-check-')); }
+function tmpWithSpace() { return scratchDir('premise self-check-'); }
 
 test('exit 0 reads as unresolved (keep the line)', () => {
   assert.strictEqual(premiseReadsUnresolved('cmd', { root: '/', runner: () => 0 }), true);

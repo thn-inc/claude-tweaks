@@ -5,6 +5,7 @@ files:
   - tests/run-tests-isolation.test.js
   - plugin/bin/lib/deps.js
   - tests/helpers/git-template.js
+  - tests/helpers/git-fixtures.js
   - docs/plugin-structure.md
 ---
 
@@ -29,11 +30,14 @@ files:
   - `node --test` runs with `--test-concurrency` set to half the cores, or cores minus 1 when `CI` is set.
   - Its tests' git sees `maintenance.auto=false` and `gc.auto=0`, appended as `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` after any `GIT_CONFIG_COUNT` entries the caller already exported.
   - Its tests' hooks see `CT_HOOKS_REPO_INFO_STORE` pointing at `repo-info-cache.json` inside that same run root, so fixture repos never land in the user's real `~/.claude-tweaks/repo-info-cache.json`. A bare `node --test` run of a suite that loads `tests/helpers/git-template.js` gets a fresh temp store instead, when the variable is unset.
+  - Its tests never see the developer's factory policy layer: the runner drops `CLAUDE_TWEAKS_FACTORY_POLICY` and points `CT_FACTORY_POLICY_FILE` at a path inside the run root that never exists, so `~/.claude-tweaks/factory-policy.yml` is not read (#6006).
   - The common fixture repos are built once per test process and copied per test (`tests/helpers/git-template.js`), so a copy starts no git process.
-  - A push into a local bare origin is the one exception to the env config: git's local transport strips `GIT_CONFIG_*` from the receiving side, so `git-receive-pack` still starts `maintenance run --auto` unless the origin's own config sets `receive.autogc = false` (`disableReceiveAutoGc` in `tests/helpers/git-template.js`).
+  - Env config does not reach the receiving side of a local push (git's local transport strips `GIT_CONFIG_*`), so the runner also exports `GIT_TEMPLATE_DIR` pointing at a template in the run root. Every repo a test creates with `git init` or `git clone`, a bare origin included, carries `maintenance.auto=false`, `gc.auto=0` and `receive.autogc=false` in its own config, and `git-receive-pack` starts no maintenance.
+  - That template ships an empty `hooks/` (no `*.sample` files) and keeps `info/` and `description`, so an init copies no sample hooks. A bare `node --test` run of a suite that loads `tests/helpers/git-template.js` builds the same template for itself at load, one `git init`, unless it is a runner child that already has one.
+  - Fixture repos write their committer identity straight into `.git/config` (`initRepo` / `writeIdentity` in `tests/helpers/git-fixtures.js`), so no fixture spends a `git config user.name`/`user.email` process; `tests/fixture-identity-config-scan.test.js` fails on a new one outside its allowlist.
 - **Red flags:**
   - New `ct-wtd-*`, `verify-cli-test-*` and similar fixture dirs appearing directly in the real tmpdir after the run. They should exist only inside the run's own root.
-  - `git maintenance run --auto` processes showing up under the run in a process capture. Check first for a test that pushes into a bare origin it built without `disableReceiveAutoGc`.
+  - `git maintenance run --auto` processes showing up under the run in a process capture. Check first for a test that builds its repos with `GIT_TEMPLATE_DIR` dropped or overridden in its env, so they miss the runner's template keys.
   - Temp fixture directories appearing as entries in the real `~/.claude-tweaks/repo-info-cache.json` after a runner-driven run.
 
 ### 2. Start a second run while one is already running
@@ -98,4 +102,6 @@ files:
 - Updated during build of #5294: step 1 now covers the hooks' repoInfo store pointed into the run root, so a suite run never writes fixture answers into the user's real store.
 - Updated during build of #5547: step 1 now covers test files named on the runner's command line, which a repo-local guard steers multi-file direct runs to.
 - Updated at wrap-up of #5547: step 4 now covers a per-run `--test-concurrency=<n>` on the runner's command line.
+- Updated during build of #5768: step 1 now covers the runner's per-run git template (`GIT_TEMPLATE_DIR`), which carries the maintenance-off keys and `receive.autogc=false` into every repo a test creates. Step 1's maintenance red flag now points at a test that drops or overrides the template. A traced full run went from 759 maintenance processes to 0.
+- Updated during build of #5771: step 1 now covers the sample-free runner template, the same template for a bare `node --test` run, and fixture identities written without a `git config` process.
 - Related: `act-on-a-red-wall-clock-budget-scan-3491.md` (another constraint on tests that run under load).

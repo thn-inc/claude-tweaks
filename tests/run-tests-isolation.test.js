@@ -17,7 +17,8 @@ const ROOT = path.join(__dirname, '..');
 const {
   resolveConcurrency, resolveSlots, listTestFiles, buildTestArgs,
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
-  subsetFallbackReason, gitFixtureConfigEnv, NODE_TEST_VALUE_FLAGS, parseRunnerOperands, canonicalPath,
+  subsetFallbackReason, gitFixtureConfigEnv, appendGitConfigEnv, writeGitTemplateDir, GIT_TEMPLATE_CONFIG, NODE_TEST_VALUE_FLAGS, parseRunnerOperands, canonicalPath,
+  runnerChildEnv, isTemplateSampleHook, leftoverEntries, summarizeLeftovers, leftoverWarning, RUN_ROOT_OWN_ENTRIES,
 } = require(path.join(ROOT, 'tools', 'run-tests.js'));
 
 test('resolveConcurrency defaults to half the cores, at least 1', () => {
@@ -1273,6 +1274,22 @@ test('gitFixtureConfigEnv returns an unchanged copy when GIT_CONFIG_COUNT is not
   assert.deepStrictEqual(input, copy, 'the input env must not be mutated');
 });
 
+test('appendGitConfigEnv appends the given pairs after inherited entries', () => {
+  const input = {
+    GIT_CONFIG_COUNT: '2',
+    GIT_CONFIG_KEY_0: 'core.autocrlf', GIT_CONFIG_VALUE_0: 'true',
+    GIT_CONFIG_KEY_1: 'maintenance.auto', GIT_CONFIG_VALUE_1: 'false',
+  };
+  const copy = { ...input };
+  assert.deepStrictEqual(appendGitConfigEnv(input, [['branch.main.remote', 'origin']]), {
+    GIT_CONFIG_COUNT: '3',
+    GIT_CONFIG_KEY_0: 'core.autocrlf', GIT_CONFIG_VALUE_0: 'true',
+    GIT_CONFIG_KEY_1: 'maintenance.auto', GIT_CONFIG_VALUE_1: 'false',
+    GIT_CONFIG_KEY_2: 'branch.main.remote', GIT_CONFIG_VALUE_2: 'origin',
+  });
+  assert.deepStrictEqual(input, copy, 'the input env must not be mutated');
+});
+
 test('gitFixtureConfigEnv: real git reads maintenance.auto=false from the returned env', () => {
   const out = execFileSync('git', ['config', '--get', 'maintenance.auto'], {
     env: gitFixtureConfigEnv(process.env), encoding: 'utf8',
@@ -1655,5 +1672,368 @@ test('AC6.1 AC6.2: a directory root, --files-from, --full and --shard still run 
       assert.match(whole.stdout, TESTS_RAN(3), `${args.join(' ')}: ${whole.stdout}`);
     }
     assert.deepStrictEqual(SLOT_LOCKS(sb.slotDir), []);
+  });
+});
+
+// ---- #5768: the runner writes a git template directory whose config turns maintenance off, so every
+// repository a test creates carries the settings in its own config (env-carried config does not reach
+// receive-pack on a local push, product code that scrubs env config, or a test that overwrites the count).
+const gitOut = (args, env) => spawnSync('git', args, { env, encoding: 'utf8', windowsHide: true });
+const gitSucceeds = (args, env) => {
+  const r = gitOut(args, env);
+  assert.strictEqual(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+  return r.stdout.trim();
+};
+// process.env minus every template / env-config key, so the helper's own settings are the only source.
+function envWithoutGitConfig() {
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) if (k === 'GIT_TEMPLATE_DIR' || k.startsWith('GIT_CONFIG_')) delete env[k];
+  return env;
+}
+function withGitTemp(fn) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'run-tests-git-template-'));
+  try {
+    return fn(tmp);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+// A real empty file, never os.devNull: Git for Windows rejects that as a config path.
+function emptyGlobalConfig(tmp) {
+  const p = path.join(tmp, 'empty-gitconfig');
+  fs.writeFileSync(p, '');
+  return p;
+}
+const cfgOf = (dir, key) => {
+  const r = gitOut(['config', '--file', path.join(dir, 'config'), '--get', key], envWithoutGitConfig());
+  return r.status === 0 ? r.stdout.trim() : null;
+};
+
+test('AC1.1: writeGitTemplateDir writes the maintenance-off keys and keeps git\'s default template files', () => {
+  withGitTemp((tmp) => {
+    const dir = path.join(tmp, 'tpl');
+    assert.strictEqual(writeGitTemplateDir(dir, envWithoutGitConfig()), dir);
+    assert.strictEqual(cfgOf(dir, 'maintenance.auto'), 'false');
+    assert.strictEqual(cfgOf(dir, 'gc.auto'), '0');
+    assert.strictEqual(cfgOf(dir, 'receive.autogc'), 'false');
+    assert.strictEqual(cfgOf(dir, 'core.bare'), null);
+    assert.ok(fs.statSync(path.join(dir, 'info')).isDirectory());
+    assert.ok(fs.statSync(path.join(dir, 'hooks')).isDirectory());
+    assert.ok(!fs.existsSync(`${dir}-src`) && !fs.existsSync(`${dir}-empty-gitconfig`), 'scratch paths are removed');
+  });
+});
+
+test('AC1.1: a repo initialized from the template carries the keys, bare and non-bare', () => {
+  withGitTemp((tmp) => {
+    const dir = path.join(tmp, 'tpl');
+    assert.strictEqual(writeGitTemplateDir(dir, envWithoutGitConfig()), dir);
+    const env = { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: dir, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: emptyGlobalConfig(tmp) };
+    for (const [name, flags, bare] of [['plain', [], 'false'], ['bare', ['--bare'], 'true']]) {
+      const repo = path.join(tmp, name);
+      gitSucceeds(['init', '-q', ...flags, repo], env);
+      assert.strictEqual(gitSucceeds(['-C', repo, 'config', '--local', '--get', 'maintenance.auto'], env), 'false', name);
+      assert.strictEqual(gitSucceeds(['-C', repo, 'config', '--local', '--get', 'core.bare'], env), bare, name);
+    }
+  });
+});
+
+test('writeGitTemplateDir keeps an inherited GIT_TEMPLATE_DIR\'s files and config ahead of its own keys', () => {
+  withGitTemp((tmp) => {
+    const inherited = path.join(tmp, 'inherited');
+    fs.mkdirSync(path.join(inherited, 'info'), { recursive: true });
+    fs.writeFileSync(path.join(inherited, 'config'), '[core]\n\tct-probe = yes');
+    fs.writeFileSync(path.join(inherited, 'info', 'marker'), 'm');
+    fs.writeFileSync(path.join(inherited, 'stray'), 's'); // an inherited entry outside hooks/info/description
+    const dir = path.join(tmp, 'tpl');
+    assert.strictEqual(writeGitTemplateDir(dir, { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: inherited }), dir);
+    assert.ok(fs.existsSync(path.join(dir, 'info', 'marker')));
+    assert.ok(fs.existsSync(path.join(dir, 'stray')));
+    assert.strictEqual(cfgOf(dir, 'core.ct-probe'), 'yes');
+    assert.strictEqual(cfgOf(dir, 'maintenance.auto'), 'false');
+  });
+});
+
+test('writeGitTemplateDir ignores an inherited GIT_DIR and object-store variables', () => {
+  withGitTemp((tmp) => {
+    const other = path.join(tmp, 'other');
+    gitSucceeds(['init', '-q', other], { ...envWithoutGitConfig(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: emptyGlobalConfig(tmp) });
+    const gitDir = path.join(other, '.git');
+    const third = path.join(tmp, 'third');
+    fs.mkdirSync(third);
+    const listing = () => fs.readdirSync(path.join(gitDir, 'objects'), { recursive: true }).map(String).sort();
+    const configBefore = fs.readFileSync(path.join(gitDir, 'config'));
+    const listingBefore = listing();
+    const env = { ...envWithoutGitConfig(), GIT_DIR: gitDir, GIT_OBJECT_DIRECTORY: path.join(gitDir, 'objects'), GIT_ALTERNATE_OBJECT_DIRECTORIES: third };
+    const dir = path.join(tmp, 'tpl');
+    assert.strictEqual(writeGitTemplateDir(dir, env), dir);
+    assert.ok(fs.readFileSync(path.join(gitDir, 'config')).equals(configBefore), 'the other repo\'s config is untouched');
+    assert.deepStrictEqual(listing(), listingBefore);
+    assert.deepStrictEqual(fs.readdirSync(third), []);
+    // With the GIT_* drop reverted, git reinitializes the other repo and dir keeps only `config`.
+    assert.ok(fs.existsSync(path.join(dir, 'info', 'exclude')));
+    assert.ok(fs.statSync(path.join(dir, 'hooks')).isDirectory());
+  });
+});
+
+test('writeGitTemplateDir falls back to git\'s default when the inherited GIT_TEMPLATE_DIR is missing or its config is unreadable', () => {
+  withGitTemp((tmp) => {
+    const missing = path.join(tmp, 'tpl-missing');
+    assert.strictEqual(writeGitTemplateDir(missing, { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: path.join(tmp, 'nope') }), missing);
+    assert.ok(fs.existsSync(path.join(missing, 'info', 'exclude')));
+    assert.strictEqual(cfgOf(missing, 'maintenance.auto'), 'false');
+
+    // `config` as a directory: a read that throws on every platform; the template's files must survive.
+    const inherited = path.join(tmp, 'inherited');
+    fs.mkdirSync(path.join(inherited, 'config'), { recursive: true });
+    fs.mkdirSync(path.join(inherited, 'info'));
+    fs.writeFileSync(path.join(inherited, 'info', 'marker'), 'm');
+    fs.writeFileSync(path.join(inherited, 'stray'), 's'); // an inherited entry outside hooks/info/description
+    const dir = path.join(tmp, 'tpl-unreadable');
+    assert.strictEqual(writeGitTemplateDir(dir, { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: inherited }), dir);
+    assert.ok(fs.existsSync(path.join(dir, 'info', 'marker')));
+    assert.ok(fs.existsSync(path.join(dir, 'stray')), 'every inherited entry is copied, on the init-failure path too');
+    assert.ok(fs.statSync(path.join(dir, 'config')).isFile(), 'the unreadable config directory is not copied: config is rebuilt as a file');
+    assert.strictEqual(cfgOf(dir, 'maintenance.auto'), 'false');
+  });
+});
+
+test('writeGitTemplateDir ignores the developer\'s init.templateDir', () => {
+  withGitTemp((tmp) => {
+    const devTpl = path.join(tmp, 'dev-template');
+    fs.mkdirSync(path.join(devTpl, 'info'), { recursive: true });
+    fs.writeFileSync(path.join(devTpl, 'info', 'dev-marker'), 'd');
+    // Forward slashes: git config values treat a backslash as an escape.
+    const devPath = devTpl.split(path.sep).join('/');
+    const globalCfg = path.join(tmp, 'dev-gitconfig');
+    fs.writeFileSync(globalCfg, `[init]\n\ttemplateDir = ${devPath}\n`);
+    const env = {
+      ...envWithoutGitConfig(),
+      GIT_CONFIG_GLOBAL: globalCfg,
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'init.templateDir',
+      GIT_CONFIG_VALUE_0: devPath,
+    };
+    const control = path.join(tmp, 'control');
+    gitSucceeds(['init', '-q', control], env);
+    assert.ok(fs.existsSync(path.join(control, '.git', 'info', 'dev-marker')), 'the fixture really sets a template');
+    const dir = path.join(tmp, 'tpl');
+    assert.strictEqual(writeGitTemplateDir(dir, env), dir);
+    assert.ok(!fs.existsSync(path.join(dir, 'info', 'dev-marker')));
+    assert.ok(fs.existsSync(path.join(dir, 'info', 'exclude')), 'git\'s built-in default template');
+  });
+});
+
+test('writeGitTemplateDir ignores an init.templateDir set in the developer\'s own ~/.gitconfig', () => {
+  withGitTemp((tmp) => {
+    const devTpl = path.join(tmp, 'dev-template');
+    fs.mkdirSync(path.join(devTpl, 'info'), { recursive: true });
+    fs.writeFileSync(path.join(devTpl, 'info', 'dev-marker'), 'd');
+    const home = path.join(tmp, 'home');
+    fs.mkdirSync(home);
+    fs.writeFileSync(path.join(home, '.gitconfig'), `[init]\n\ttemplateDir = ${devTpl.split(path.sep).join('/')}\n`);
+    // No GIT_CONFIG_GLOBAL / GIT_CONFIG_COUNT: the template reaches git only through the home directory.
+    const env = { ...envWithoutGitConfig(), HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config') };
+    const control = path.join(tmp, 'control');
+    gitSucceeds(['init', '-q', control], env);
+    assert.ok(fs.existsSync(path.join(control, '.git', 'info', 'dev-marker')), 'the fixture really sets a template through ~/.gitconfig');
+    const dir = path.join(tmp, 'tpl');
+    assert.strictEqual(writeGitTemplateDir(dir, env), dir);
+    assert.ok(!fs.existsSync(path.join(dir, 'info', 'dev-marker')));
+    assert.ok(fs.existsSync(path.join(dir, 'info', 'exclude')), 'git\'s built-in default template');
+  });
+});
+
+test('writeGitTemplateDir does not append its keys twice to a nested runner\'s template config', () => {
+  withGitTemp((tmp) => {
+    const outer = path.join(tmp, 'outer');
+    assert.strictEqual(writeGitTemplateDir(outer, envWithoutGitConfig()), outer);
+    const dir = path.join(tmp, 'tpl');
+    assert.strictEqual(writeGitTemplateDir(dir, { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: outer }), dir);
+    for (const [key, value] of [['maintenance.auto', 'false'], ['gc.auto', '0'], ['receive.autogc', 'false']]) {
+      const r = gitOut(['config', '--file', path.join(dir, 'config'), '--get-all', key], envWithoutGitConfig());
+      assert.strictEqual(r.stdout.trim(), value, `${key} is set exactly once to ${value}: ${r.stdout}`);
+    }
+    const repo = path.join(tmp, 'repo');
+    const env = { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: dir, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: emptyGlobalConfig(tmp) };
+    gitSucceeds(['init', '-q', repo], env);
+    gitSucceeds(['-C', repo, 'config', 'gc.auto', '1'], env);
+  });
+});
+
+test('AC2.1: writeGitTemplateDir ships empty hooks/ and an info/ dir, and drops an inherited template\'s sample hooks', () => {
+  withGitTemp((tmp) => {
+    const dir = path.join(tmp, 'tpl');
+    assert.strictEqual(writeGitTemplateDir(dir, envWithoutGitConfig()), dir);
+    assert.ok(fs.statSync(path.join(dir, 'hooks')).isDirectory());
+    const hooks = fs.readdirSync(path.join(dir, 'hooks'));
+    assert.deepStrictEqual(hooks.filter((n) => n.endsWith('.sample')), [], `no sample hook: ${hooks.join(', ')}`);
+    assert.ok(fs.statSync(path.join(dir, 'info')).isDirectory());
+    assert.ok(fs.existsSync(path.join(dir, 'info', 'exclude')));
+
+    const inherited = path.join(tmp, 'inherited');
+    fs.mkdirSync(path.join(inherited, 'hooks'), { recursive: true });
+    fs.writeFileSync(path.join(inherited, 'hooks', 'pre-commit.sample'), '#!/bin/sh\n');
+    fs.writeFileSync(path.join(inherited, 'hooks', 'post-checkout'), '#!/bin/sh\n');
+    const fromInherited = path.join(tmp, 'tpl-inherited');
+    assert.strictEqual(writeGitTemplateDir(fromInherited, { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: inherited }), fromInherited);
+    assert.deepStrictEqual(fs.readdirSync(path.join(fromInherited, 'hooks')), ['post-checkout']);
+  });
+});
+
+test('writeGitTemplateDir ships an empty hooks/ even when the inherited template has none', () => {
+  withGitTemp((tmp) => {
+    const inherited = path.join(tmp, 'inherited');
+    fs.mkdirSync(path.join(inherited, 'info'), { recursive: true });
+    const dir = path.join(tmp, 'tpl-inherited');
+    assert.strictEqual(writeGitTemplateDir(dir, { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: inherited }), dir);
+    assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'hooks')), []);
+    assert.ok(fs.statSync(path.join(dir, 'info')).isDirectory());
+  });
+});
+
+// Node 20's fs.cpSync hands its filter a namespaced `src` on win32, so a plain dirname compare
+// against the inherited template's hooks dir never matched there and its samples were kept.
+test('isTemplateSampleHook matches a sample hook given as a namespaced win32 path', () => {
+  const hooksDir = 'C:\\ci\\tpl\\hooks';
+  const ns = (leaf) => `\\\\?\\C:\\ci\\tpl\\hooks\\${leaf}`;
+  assert.strictEqual(isTemplateSampleHook(ns('pre-commit.sample'), hooksDir, path.win32), true);
+  assert.strictEqual(isTemplateSampleHook('C:\\ci\\tpl\\hooks\\pre-commit.sample', hooksDir, path.win32), true);
+  assert.strictEqual(isTemplateSampleHook(ns('pre-commit.sample'), `\\\\?\\${hooksDir}`, path.win32), true);
+  assert.strictEqual(isTemplateSampleHook(ns('post-checkout'), hooksDir, path.win32), false);
+  assert.strictEqual(isTemplateSampleHook(`\\\\?\\C:\\ci\\tpl\\hooks\\sub\\x.sample`, hooksDir, path.win32), false);
+  assert.strictEqual(isTemplateSampleHook(`\\\\?\\C:\\ci\\tpl\\info\\x.sample`, hooksDir, path.win32), false);
+  assert.strictEqual(isTemplateSampleHook('/t/hooks/pre-commit.sample', '/t/hooks', path.posix), true);
+  assert.strictEqual(isTemplateSampleHook('/t/hooks/post-checkout', '/t/hooks', path.posix), false);
+  assert.strictEqual(isTemplateSampleHook('/t/info/x.sample', '/t/hooks', path.posix), false);
+});
+
+test('runnerChildEnv returns the runner\'s child env', () => {
+  const env = { PATH: '/bin', TMPDIR: '/old', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'a.b', GIT_CONFIG_VALUE_0: 'c', GIT_TEMPLATE_DIR: '/outer-tpl' };
+  const before = { ...env };
+  const runRoot = path.join('/runs', 'r1');
+  const common = {
+    PATH: '/bin',
+    GIT_CONFIG_COUNT: '3',
+    GIT_CONFIG_KEY_0: 'a.b', GIT_CONFIG_VALUE_0: 'c',
+    GIT_CONFIG_KEY_1: 'maintenance.auto', GIT_CONFIG_VALUE_1: 'false',
+    GIT_CONFIG_KEY_2: 'gc.auto', GIT_CONFIG_VALUE_2: '0',
+    TMPDIR: runRoot, TMP: runRoot, TEMP: runRoot,
+    CT_TEST_SUITE_SLOT_HELD: '1',
+    CT_HOOKS_REPO_INFO_STORE: path.join(runRoot, 'repo-info-cache.json'),
+    CT_FACTORY_POLICY_FILE: path.join(runRoot, 'factory-policy.absent.yml'),
+  };
+  assert.deepStrictEqual(runnerChildEnv(env, { runRoot, templateDir: '/tpl' }), { ...common, GIT_TEMPLATE_DIR: '/tpl' });
+  // No template: the inherited GIT_TEMPLATE_DIR passes through untouched, as the runner always did.
+  assert.deepStrictEqual(runnerChildEnv(env, { runRoot, templateDir: null }), { ...common, GIT_TEMPLATE_DIR: '/outer-tpl' });
+  const noTpl = { ...env };
+  delete noTpl.GIT_TEMPLATE_DIR;
+  const got = runnerChildEnv(noTpl, { runRoot, templateDir: null });
+  assert.ok(!('GIT_TEMPLATE_DIR' in got), Object.keys(got).join(', '));
+  assert.deepStrictEqual(env, before, 'env is not mutated');
+});
+
+test('runnerChildEnv drops CLAUDE_TWEAKS_FACTORY_POLICY', () => {
+  const env = { PATH: '/bin', CLAUDE_TWEAKS_FACTORY_POLICY: 'model-stance: economy\n' };
+  const got = runnerChildEnv(env, { runRoot: path.join('/runs', 'r1'), templateDir: null });
+  assert.ok(!('CLAUDE_TWEAKS_FACTORY_POLICY' in got), Object.keys(got).join(', '));
+  assert.equal(got.PATH, '/bin');
+  assert.equal(env.CLAUDE_TWEAKS_FACTORY_POLICY, 'model-stance: economy\n', 'env is not mutated');
+});
+
+// #6006 final review: the factory file under HOME is the machine's own policy too. The runner relocates it to a
+// path inside the run root that never exists (an inherited value is replaced), so readFactoryPolicy reads no file.
+test('runnerChildEnv points CT_FACTORY_POLICY_FILE at a missing path in the run root, so the home factory file is never read', () => {
+  const { readFactoryPolicy, FACTORY_POLICY_FILE_ENV } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'policy-factory.js'));
+  withGitTemp((tmp) => {
+    const home = path.join(tmp, 'home');
+    fs.mkdirSync(path.join(home, '.claude-tweaks'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude-tweaks', 'factory-policy.yml'), 'model-stance: economy\n');
+    const runRoot = path.join(tmp, 'run');
+    fs.mkdirSync(runRoot);
+    assert.strictEqual(readFactoryPolicy({ env: { HOME: home } }).origin, 'file', 'control: the home file is readable');
+    const got = runnerChildEnv({ PATH: '/bin', HOME: home, [FACTORY_POLICY_FILE_ENV]: path.join(tmp, 'elsewhere.yml') }, { runRoot, templateDir: null });
+    const file = got[FACTORY_POLICY_FILE_ENV];
+    assert.strictEqual(path.dirname(file), runRoot, file);
+    assert.strictEqual(fs.existsSync(file), false, file);
+    assert.deepStrictEqual(readFactoryPolicy({ env: got }), { raw: null, origin: null, warnings: [] });
+  });
+});
+
+test('writeGitTemplateDir returns null when git fails', () => {
+  withGitTemp((tmp) => {
+    const git = () => { throw new Error('git is gone'); };
+    assert.strictEqual(writeGitTemplateDir(path.join(tmp, 'tpl'), envWithoutGitConfig(), { git }), null);
+    const seen = [];
+    assert.strictEqual(writeGitTemplateDir(path.join(tmp, 'tpl2'), envWithoutGitConfig(), { git, onError: (err) => seen.push(err.message) }), null);
+    assert.deepStrictEqual(seen, ['git is gone']);
+  });
+});
+
+test('run-tests.js gives the suite a GIT_TEMPLATE_DIR inside its run root whose config turns maintenance off', async () => {
+  await withSandbox(...PROBE, (sb) => {
+    const env = { ...sb.env };
+    delete env.GIT_TEMPLATE_DIR;
+    const result = runRunner(sb, { env, timeout: 120000 });
+    assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+    const recorded = JSON.parse(fs.readFileSync(sb.probeOut, 'utf8'));
+    assert.strictEqual(typeof recorded.gitTemplateDir, 'string');
+    assert.strictEqual(path.dirname(recorded.gitTemplateDir), recorded.tmpdir);
+    assert.strictEqual(typeof recorded.gitTemplateConfig, 'string');
+    assert.ok(recorded.gitTemplateConfig.endsWith(GIT_TEMPLATE_CONFIG), recorded.gitTemplateConfig);
+  });
+});
+
+// The post-run census: what a suite leaves at the top of its TMPDIR is what a direct `node --test` run would
+// leave in the real tmpdir (597,912 entries on one dev machine, 2026-11-18), so the runner names it.
+test('leftoverEntries lists the top-level entries a run left, minus the ones the runner itself made', () => {
+  const names = [...RUN_ROOT_OWN_ENTRIES, 'zeta-AbCdEf', 'alpha-123456'];
+  assert.deepStrictEqual(leftoverEntries('/run/root', { readdirSync: () => names }), ['alpha-123456', 'zeta-AbCdEf']);
+  assert.deepStrictEqual(leftoverEntries('/run/root', { readdirSync: () => [...RUN_ROOT_OWN_ENTRIES] }), []);
+});
+
+test('leftoverEntries reports nothing for a missing or unreadable run root, never throwing', () => {
+  const boom = () => { throw Object.assign(new Error('gone'), { code: 'ENOENT' }); };
+  assert.deepStrictEqual(leftoverEntries('/run/root', { readdirSync: boom }), []);
+});
+
+test('summarizeLeftovers groups by the name minus its six random characters, most entries first', () => {
+  const names = ['ct-wtd-aaaaaa', 'ct-wtd-bbbbbb', 'ct-wtd-cccccc', 'console-resolve-dddddd', 'console-resolve-eeeeee', 'short', 'ab-xxxxxx'];
+  assert.deepStrictEqual(summarizeLeftovers(names), [
+    { prefix: 'ct-wtd-', count: 3 },
+    { prefix: 'console-resolve-', count: 2 },
+    { prefix: 'ab-', count: 1 },
+    { prefix: 'short', count: 1 },
+  ]);
+});
+
+test('leftoverWarning is null for a clean run and otherwise one line with the count and the biggest prefixes', () => {
+  assert.strictEqual(leftoverWarning([]), null);
+  const line = leftoverWarning(['a-111111', 'a-222222', 'b-333333']);
+  assert.ok(!line.includes('\n'));
+  assert.match(line, /^run-tests\.js: warning: the run left 3 top-level entries in its TMPDIR/);
+  assert.ok(line.endsWith(': a-* x2, b-* x1'), line);
+});
+
+test('leftoverWarning caps the prefixes it names and says how many it left out', () => {
+  const names = Array.from({ length: 5 }, (_, i) => `p${i}-abcdef`);
+  const line = leftoverWarning(names, { limit: 2 });
+  assert.ok(line.endsWith('p0-* x1, p1-* x1, and 3 more prefixes'), line);
+});
+
+test('run-tests.js warns on stderr, without failing, when a suite leaves entries in its TMPDIR', async () => {
+  await withSandbox('leak-probe.fixture.js', 'leak.test.js', (sb) => {
+    const result = runRunner(sb, { timeout: 120000 });
+    assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stderr, /run-tests\.js: warning: the run left 3 top-level entries in its TMPDIR/);
+    assert.match(result.stderr, /leaky-a-\* x2, leaky-b-\* x1/);
+    assert.deepStrictEqual(fs.readdirSync(path.join(sb.childTmp, 'ct-test-runs')), [], 'the run root is still removed');
+  });
+});
+
+test('run-tests.js prints no leftover warning for a suite that leaves nothing', async () => {
+  await withSandbox(...PROBE, (sb) => {
+    const result = runRunner(sb, { timeout: 120000 });
+    assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+    assert.ok(!result.stderr.includes('top-level entries in its TMPDIR'), result.stderr);
   });
 });

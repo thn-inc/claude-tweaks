@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -8,7 +9,7 @@ const { sweepCli } = require('../../helpers/health-sweep-cli');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'journey-health.js');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'journey-health-cli-mark-')); }
+function tmp() { return scratchDir('journey-health-cli-mark-'); }
 
 // In-process (#5380), with the file-protocol-only git guard — see tests/helpers/health-sweep-cli.js.
 const cli = (argv, opts) => sweepCli(CLI, argv, opts);

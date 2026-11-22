@@ -13,9 +13,11 @@
 //   error-message prefix ("{name}: ...").
 // - usage: the full "usage: ..." string, newline-terminated, printed on
 //   --help and appended after every parse-error message.
-// - fetch({ numbers, owner, repo, runner }): the per-CLI GraphQL call
+// - fetch({ numbers, owner, repo, host, runner, onSnapshot }): the per-CLI GraphQL call
 //   (fetchNativeDependencies / fetchLinkedPRs) — returns a Map keyed by
 //   number, or throws on a GraphQL/transport failure (mapped to exit 3).
+//   `onSnapshot` is deps.onSnapshot, passed through untouched; only
+//   resolve-blockers.js uses it (#5902), the other fetches ignore it.
 // - mapResult(n, fetched): projects fetch's returned Map into this
 //   number's result value — usually `(n, byNumber) => byNumber.get(n)`,
 //   since both existing CLIs already store the per-record shape they want
@@ -114,7 +116,7 @@ function makeNumberListCli({
       if (gated.refusal) { deps.stderr(`${name}: ${gated.refusal}\n`); return 2; }
       repoSpec = gated.spec;
     }
-    if (!repoSpec) { deps.stderr(`${name}: could not resolve owner/repo — pass --repo owner/name\n`); return 2; }
+    if (!repoSpec) { deps.stderr(`${name}: could not resolve owner/repo — pass --repo [host/]owner/name\n`); return 2; }
     if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
     const { owner, repo, host } = repoSpec;
     // #2538 Deliverable 3 — visible only for a resolved non-github.com host;
@@ -125,7 +127,7 @@ function makeNumberListCli({
     let fetched;
     try {
       fetched = fetch({
-        numbers, owner, repo, host, runner: deps.runner,
+        numbers, owner, repo, host, runner: deps.runner, onSnapshot: deps.onSnapshot,
       });
     } catch (err) {
       deps.stderr(`${name}: ${err && err.message ? err.message : String(err)}\n`);

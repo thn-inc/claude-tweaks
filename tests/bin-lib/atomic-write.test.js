@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { writeFileAtomic } = require('../../plugin/bin/lib/atomic-write');
@@ -80,7 +81,7 @@ test('writeFileAtomic: on success, unlink is never called', () => {
 });
 
 test('writeFileAtomic: real-filesystem round-trip — writes the file with correct content and leaves no stray tmp file', () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'atomic-write-'));
+  const tmpDir = scratchDir('atomic-write-');
   const outPath = path.join(tmpDir, 'out.txt');
 
   writeFileAtomic(outPath, 'hello world');

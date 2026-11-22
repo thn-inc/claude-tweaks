@@ -1,11 +1,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { readCache, writeCache, cachePath } = require('../../../plugin/bin/lib/code-health/cache');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-cache-')); }
+function tmp() { return scratchDir('codehealth-cache-'); }
 
 test('readCache returns {} when no cache file exists', () => {
   assert.deepStrictEqual(readCache(tmp()), {});

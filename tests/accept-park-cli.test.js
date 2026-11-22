@@ -19,6 +19,9 @@ const RUN_ID = '2026-11-16T10-00-00Z-accept-park';
 const HEAD = 'abc1234def5678';
 const BASE = '0123abcd'.repeat(5);
 const ON = 'control-mode: on\n';
+const DIFF_TIP = 'd'.repeat(40);
+const MERGE_BASE = 'e'.repeat(40);
+const GLOBS = 'risk-path-globs:\n  migrations: [migrations/**]\n';
 
 const PACKET = renderPacket(
   { schemaVersion: 1, record: 7, partial: [], surface: null, allowedHosts: ['http://localhost:3000'], refused: [], facts: [
@@ -41,7 +44,7 @@ function packetComment(n, index = 1) {
 
 // The fake world: records (body, labels, comments), the node children, the worktree list and the
 // claims. Every call is recorded; an unknown call shape throws, as real gh would refuse it.
-function world({ policy, records = {}, worktrees, fail = {} } = {}) {
+function world({ policy, records = {}, worktrees, fail = {}, diff = 'M\0src/app.js\0', headMissing = 0 } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'accept-park-')));
   tempDirs.push(root);
   fs.mkdirSync(path.join(root, '.git'));
@@ -52,6 +55,7 @@ function world({ policy, records = {}, worktrees, fail = {} } = {}) {
   const state = {
     root, runDir, worktree,
     records: Object.fromEntries(Object.entries(records).map(([n, r]) => [n, { body: '', labels: [], comments: [], ...r }])),
+    edits: [],
     worktrees: worktrees ?? [root, worktree],
     claims: {},
     gh: [], spawn: [], git: [], release: [],
@@ -61,8 +65,10 @@ function world({ policy, records = {}, worktrees, fail = {} } = {}) {
     if (!r) throw new Error(`HTTP 404: no issue ${n}`);
     return r;
   };
+  // A string fails as gh and git do, its text on stderr; an Error is thrown as given.
   const failIf = (name) => {
-    if (fail[name] !== undefined) throw new Error(fail[name]);
+    if (fail[name] instanceof Error) throw fail[name];
+    if (fail[name] !== undefined) throw Object.assign(new Error(fail[name]), { stderr: `${fail[name]}\n`, status: 1 });
   };
   const gh = (args) => {
     state.gh.push(args);
@@ -87,6 +93,13 @@ function world({ policy, records = {}, worktrees, fail = {} } = {}) {
     if (noun === 'pr' && verb === 'view' && flag === '--json' && value === 'baseRefOid') {
       failIf('view:baseRefOid');
       return JSON.stringify({ baseRefOid: BASE });
+    }
+    if (noun === 'issue' && verb === 'edit' && flag === '--body-file') {
+      failIf('bodyEdit');
+      const r = record(n);
+      r.body = fs.readFileSync(value, 'utf8');
+      state.edits.push({ record: n, body: r.body });
+      return '';
     }
     if (noun === 'issue' && verb === 'edit' && flag === '--add-label') {
       const r = record(n);
@@ -116,10 +129,31 @@ function world({ policy, records = {}, worktrees, fail = {} } = {}) {
     throw new Error(`unexpected spawn ${name} ${args.join(' ')}`);
   };
   const porcelain = () => state.worktrees.map((p) => `worktree ${p}\nHEAD ${'0'.repeat(40)}\nbranch refs/heads/x\n`).join('\n');
+  let headMisses = headMissing;
   const git = (args) => {
     state.git.push(args);
     assert.deepEqual(args.slice(0, 2), ['-C', root]);
     const rest = args.slice(2);
+    if (rest[0] === 'rev-parse' && rest[1] === '--verify') {
+      if (headMisses > 0) {
+        headMisses -= 1;
+        throw new Error('');
+      }
+      return `${rest.at(-1).replace('^{commit}', '')}\n`;
+    }
+    if (rest[0] === 'fetch') {
+      failIf(`fetch:${rest.at(-1)}`);
+      return '';
+    }
+    if (rest.join(' ') === 'rev-parse --abbrev-ref origin/HEAD') return 'origin/main\n';
+    if (rest[0] === 'merge-base') {
+      failIf('mergeBase');
+      return `${MERGE_BASE}\n`;
+    }
+    if (rest[0] === 'diff') {
+      failIf('diff');
+      return diff;
+    }
     if (rest.join(' ') === 'worktree list --porcelain') return porcelain();
     if (rest[0] === 'worktree' && rest[1] === 'remove') {
       const target = rest.at(-1);
@@ -133,7 +167,10 @@ function world({ policy, records = {}, worktrees, fail = {} } = {}) {
     state.release.push(opts);
     const already = state.claims[opts.issueNumber] === 'released';
     state.claims[opts.issueNumber] = 'released';
-    return { outcome: already ? 'already-released' : 'released', calls: [], commentPosted: true, labelsRemoved: [], labelsFailed: [], note: null };
+    return {
+      outcome: already ? 'already-released' : 'released', calls: [], commentPosted: true, labelsRemoved: [], labelsFailed: [], note: null,
+      ...(already ? {} : { claimedAt: state.claimedAt || '2026-11-16T09:00:00.000Z' }),
+    };
   };
   const deps = {
     mainRoot: root,
@@ -147,6 +184,8 @@ function world({ policy, records = {}, worktrees, fail = {} } = {}) {
     remoteUrl: () => 'https://github.com/o/r.git',
     tmpPath: (name) => path.join(root, name),
     now: () => Date.UTC(2026, 10, 16, 10, 0, 0),
+    // #5902: realDeps carries the real emitter; undefined here is "no emission" unless a test records.
+    stationEvent: undefined,
   };
   return { state, deps };
 }
@@ -154,6 +193,10 @@ function world({ policy, records = {}, worktrees, fail = {} } = {}) {
 const call = (w, argv, extra = {}) => runCli(CLI, argv, { cwd: w.state.root, deps: { ...w.deps, ...extra } });
 const parkArgv = (w, extra = []) => ['park', '--run', w.state.runDir, '--record', '7', '--pr', '12', '--head', HEAD, '--worktree', w.state.worktree, ...extra];
 const issueViews = (w) => w.state.gh.filter((a) => a[0] === 'issue' && a[1] === 'view');
+const decideArgv = (w, extra = [], records = '7') => ['decide', '--run', w.state.runDir, '--record', records, '--head', DIFF_TIP, ...extra];
+// The old four-key decision shape: a decision without its tripwire field.
+const withoutTripwire = ({ park, decisions }) => ({ park, decisions: decisions.map(({ tripwire, ...rest }) => rest) });
+const gitCalls = (w, verb) => w.state.git.map((a) => a.slice(2)).filter((a) => a[0] === verb);
 
 // ---- decide ----
 
@@ -179,14 +222,14 @@ test('AC2a.2: decide with no policy file at all reads no record', async () => {
 
 test('decide parks a control-mode record with no flags and no override', async () => {
   const on = world({ policy: 'control-mode: on\n', records: { 7: { body: 'Plain body.\n' } } });
-  const res = await call(on, ['decide', '--run', on.state.runDir, '--record', '7']);
+  const res = await call(on, decideArgv(on));
   assert.equal(res.code, 0, res.stderr);
-  assert.deepEqual(JSON.parse(res.stdout), { park: true, decisions: [{ record: 7, consulted: true, park: true, target: 'local', reason: 'default' }] });
+  assert.deepEqual(withoutTripwire(JSON.parse(res.stdout)), { park: true, decisions: [{ record: 7, consulted: true, park: true, target: 'local', reason: 'default' }] });
 
   const dev = world({ policy: 'control-mode: on\nacceptance-target: dev\n', records: { 7: { body: 'Plain body.\n' } } });
-  const devRes = await call(dev, ['decide', '--run', dev.state.runDir, '--record', '7']);
+  const devRes = await call(dev, decideArgv(dev));
   assert.equal(devRes.code, 0, devRes.stderr);
-  assert.deepEqual(JSON.parse(devRes.stdout), { park: false, decisions: [{ record: 7, consulted: true, park: false, target: 'dev', reason: 'policy' }] });
+  assert.deepEqual(withoutTripwire(JSON.parse(devRes.stdout)), { park: false, decisions: [{ record: 7, consulted: true, park: false, target: 'dev', reason: 'policy' }] });
 });
 
 test('decide reads the override and the risk-flag lines from the record body', async () => {
@@ -197,7 +240,7 @@ test('decide reads the override and the risk-flag lines from the record body', a
     3: { body: 'Risk-flags: autth\n\n## Current State\n' },
     4: { body: 'Nothing here.\n' },
   } });
-  const res = await call(w, ['decide', '--run', w.state.runDir, '--record', '1,2,3,4']);
+  const res = await call(w, decideArgv(w, [], '1,2,3,4'));
   assert.equal(res.code, 0, res.stderr);
   const { park, decisions } = JSON.parse(res.stdout);
   assert.equal(park, true);
@@ -211,9 +254,9 @@ test('decide reads the override and the risk-flag lines from the record body', a
 
 test('decide: an invalid acceptance-target value fails closed to local', async () => {
   const w = world({ policy: 'control-mode: on\nacceptance-target: staging\n', records: { 7: { body: '' } } });
-  const res = await call(w, ['decide', '--run', w.state.runDir, '--record', '7']);
+  const res = await call(w, decideArgv(w));
   assert.equal(res.code, 0, res.stderr);
-  assert.deepEqual(JSON.parse(res.stdout).decisions[0], { record: 7, consulted: true, park: true, target: 'local', reason: 'invalid-input' });
+  assert.deepEqual(withoutTripwire(JSON.parse(res.stdout)).decisions[0], { record: 7, consulted: true, park: true, target: 'local', reason: 'invalid-input' });
 });
 
 test('decide: a record that will not read exits 1 and its decision fails closed', async () => {
@@ -243,9 +286,9 @@ test('I1: decide without --run reads the repo-root policy.yml alone', async () =
   assert.equal(off.state.gh.length, 0, 'control mode off reads no record');
 
   const on = world({ policy: 'control-mode: on\n', records: { 7: { body: 'Plain body.\n' } } });
-  const onRes = await call(on, ['decide', '--record', '7']);
+  const onRes = await call(on, ['decide', '--record', '7', '--head', DIFF_TIP]);
   assert.equal(onRes.code, 0, onRes.stderr);
-  assert.deepEqual(JSON.parse(onRes.stdout), { park: true, decisions: [{ record: 7, consulted: true, park: true, target: 'local', reason: 'default' }] });
+  assert.deepEqual(withoutTripwire(JSON.parse(onRes.stdout)), { park: true, decisions: [{ record: 7, consulted: true, park: true, target: 'local', reason: 'default' }] });
 });
 
 test('decide: a --run outside the main checkout is refused with exit 3', async () => {
@@ -257,6 +300,506 @@ test('decide: a --run outside the main checkout is refused with exit 3', async (
   assert.equal(res.code, 3);
   assert.equal(res.stdout, '');
   assert.equal(w.state.gh.length, 0);
+});
+
+test('#5830: decide, park and parked refuse a --run outside .claude-tweaks/pipelines with exit 3', async () => {
+  const w = world({ policy: 'control-mode: on\n', records: { 7: {} } });
+  const stray = path.join(w.state.root, 'plugin');
+  fs.mkdirSync(stray, { recursive: true });
+  // A config.yml the run's own agent could write must never be read from a directory that is no run.
+  fs.writeFileSync(path.join(stray, 'config.yml'), 'control-mode: off\n');
+  for (const argv of [
+    ['decide', '--run', stray, '--record', '7'],
+    ['park', '--run', stray, '--record', '7', '--pr', '12', '--head', HEAD, '--worktree', w.state.worktree],
+    ['parked', '--record', '7', '--run', stray],
+  ]) {
+    const res = await call(w, argv);
+    assert.equal(res.code, 3, `${argv[0]}: ${res.stderr}`);
+    assert.equal(res.stdout, '');
+    assert.match(res.stderr, /not a pipeline run directory/);
+  }
+  assert.equal(w.state.gh.length, 0);
+});
+
+// ---- decide: the diff tripwire (#4619) ----
+
+const TRIPWIRE_POLICY = `control-mode: on\nacceptance-target: dev\n${GLOBS}`;
+const MIGRATION_DIFF = 'A\0migrations/001_add_users.sql\0';
+const tripwireOf = (res, index = 0) => JSON.parse(res.stdout).decisions[index];
+
+test('AC1.1: decide appends migrations, writes the tripwire line and parks', async () => {
+  const w = world({ policy: TRIPWIRE_POLICY, diff: MIGRATION_DIFF, records: { 7: { body: 'Risk-flags: none\n\n## Current State\n' } } });
+  const res = await call(w, decideArgv(w));
+  assert.equal(res.code, 0, res.stderr);
+  assert.equal(w.state.gh.filter((a) => a[0] === 'issue' && a[1] === 'edit').length, 1);
+  assert.equal(w.state.edits.length, 1);
+  assert.match(w.state.edits[0].body, /^Risk-flags: migrations$/m);
+  assert.match(w.state.edits[0].body, /^Risk-flags-added-by-tripwire: migrations$/m);
+  const decision = tripwireOf(res);
+  assert.equal(decision.park, true);
+  assert.equal(decision.target, 'local');
+  assert.equal(decision.reason, 'risk-flag');
+  assert.deepEqual(decision.tripwire.newFlags, ['migrations']);
+  assert.equal(decision.tripwire.appendFailed, false);
+  assert.match(decision.tripwire.lines[0], /^tripwire: the diff crosses migrations \(migrations\/\*\*: migrations\/001_add_users\.sql\)/);
+});
+
+test('AC2.1: a declared crossing writes nothing', async () => {
+  const w = world({ policy: TRIPWIRE_POLICY, diff: MIGRATION_DIFF, records: { 7: { body: 'Risk-flags: migrations\n\n## Current State\n' } } });
+  const res = await call(w, decideArgv(w));
+  assert.equal(res.code, 0, res.stderr);
+  assert.equal(w.state.gh.filter((a) => a[0] === 'issue' && a[1] === 'edit').length, 0);
+  assert.deepEqual(tripwireOf(res).tripwire.newFlags, []);
+  assert.equal(tripwireOf(res).reason, 'risk-flag');
+});
+
+test('AC7.1: no --head under control mode is could-not-run and parks', async () => {
+  const w = world({ policy: TRIPWIRE_POLICY, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const res = await call(w, ['decide', '--run', w.state.runDir, '--record', '7']);
+  assert.equal(res.code, 0, res.stderr);
+  const decision = tripwireOf(res);
+  assert.equal(decision.park, true);
+  assert.equal(decision.reason, 'tripwire');
+  assert.deepEqual(decision.tripwire.lines, ['tripwire could not run: no --head given']);
+  assert.equal(w.state.git.length, 0);
+});
+
+test('AC7.1: a malformed risk-path-globs block is could-not-run', async () => {
+  const w = world({ policy: 'control-mode: on\nacceptance-target: dev\nrisk-path-globs:\n  migrations: x\n', records: { 7: { body: 'Risk-flags: none\n' } } });
+  const res = await call(w, decideArgv(w));
+  assert.equal(res.code, 0, res.stderr);
+  const decision = tripwireOf(res);
+  assert.equal(decision.tripwire.status, 'could-not-run');
+  assert.equal(decision.reason, 'tripwire');
+  assert.match(decision.tripwire.lines[0], /^tripwire could not run: risk-path-globs is not a map/);
+});
+
+test('AC7.1: a head missing after one fetch is could-not-run', async () => {
+  const w = world({ policy: TRIPWIRE_POLICY, headMissing: Infinity, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const res = await call(w, decideArgv(w));
+  assert.equal(res.code, 0, res.stderr);
+  assert.deepEqual(gitCalls(w, 'fetch'), [['fetch', '--no-tags', 'origin', DIFF_TIP]]);
+  const decision = tripwireOf(res);
+  assert.equal(decision.reason, 'tripwire');
+  assert.match(decision.tripwire.lines[0], /not available locally/);
+  assert.equal(gitCalls(w, 'diff').length, 0);
+});
+
+test('a head present after the fetch runs the diff', async () => {
+  const w = world({ policy: TRIPWIRE_POLICY, diff: MIGRATION_DIFF, headMissing: 1, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const res = await call(w, decideArgv(w, ['--base', 'origin/main']));
+  assert.equal(res.code, 0, res.stderr);
+  assert.deepEqual(gitCalls(w, 'fetch'), [['fetch', '--no-tags', 'origin', DIFF_TIP]]);
+  assert.equal(gitCalls(w, 'diff').length, 1);
+  assert.deepEqual(tripwireOf(res).tripwire.newFlags, ['migrations']);
+});
+
+test('AC7.2: absent risk-path-globs with acceptance-target dev resolves dev', async () => {
+  const w = world({ policy: 'control-mode: on\nacceptance-target: dev\n', records: { 7: { body: 'Risk-flags: none\n' } } });
+  const res = await call(w, decideArgv(w));
+  assert.equal(res.code, 0, res.stderr);
+  const decision = tripwireOf(res);
+  assert.equal(decision.park, false);
+  assert.equal(decision.target, 'dev');
+  assert.deepEqual(decision.tripwire.lines, ['tripwire: path globs not configured', 'tripwire: agent classification not run']);
+});
+
+test('AC7.6: a failed flag append still parks local and reports it', async () => {
+  const w = world({ policy: TRIPWIRE_POLICY, diff: MIGRATION_DIFF, fail: { bodyEdit: 'HTTP 502' }, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const res = await call(w, decideArgv(w));
+  assert.equal(res.code, 0, res.stderr);
+  assert.match(res.stderr, /could not write the tripwire flags to #7 \(HTTP 502\)/);
+  const decision = tripwireOf(res);
+  assert.equal(decision.park, true);
+  assert.equal(decision.tripwire.appendFailed, true);
+  assert.ok(decision.tripwire.lines.includes('tripwire: the flag write failed (HTTP 502), so this run is local'), decision.tripwire.lines.join('\n'));
+  assert.equal(fs.readdirSync(w.state.root).some((name) => name.includes('tripwire')), false, 'the temp body file is removed');
+});
+
+// Only the tripwire's own re-read asks for the body alone; the first read asks for more fields.
+const rereadAs = (w, reread) => ({
+  gh: (args) => {
+    if (args[0] === 'issue' && args[1] === 'view' && args[4] === 'body') return reread(args);
+    return w.deps.gh(args);
+  },
+});
+
+test('a body re-read that fails names its reason, parks local and edits nothing', async () => {
+  const cases = [
+    ['issue view returned no body', () => '{}'],
+    ['issue view returned no body', () => 'null'],
+    ['issue view output unparseable', () => 'not json'],
+    ['issue view output unparseable', () => ''],
+    ['HTTP 502', () => { throw Object.assign(new Error(`Command failed: gh /secret/path`), { stderr: 'HTTP 502\n', status: 1 }); }],
+  ];
+  for (const [reason, reread] of cases) {
+    const w = world({ policy: TRIPWIRE_POLICY, diff: MIGRATION_DIFF, records: { 7: { body: 'Risk-flags: none\n' } } });
+    const res = await call(w, decideArgv(w), rereadAs(w, reread));
+    assert.equal(res.code, 0, res.stderr);
+    assert.ok(res.stderr.includes(`could not write the tripwire flags to #7 (${reason})`), res.stderr);
+    const decision = tripwireOf(res);
+    assert.equal(decision.park, true);
+    assert.equal(decision.tripwire.appendFailed, true);
+    assert.ok(decision.tripwire.lines.includes(`tripwire: the flag write failed (${reason}), so this run is local`), decision.tripwire.lines.join('\n'));
+    assert.equal(w.state.gh.some((a) => a[0] === 'issue' && a[1] === 'edit'), false, 'no edit after a failed re-read');
+    assert.equal(res.stdout.includes('unknown error'), false);
+  }
+});
+
+test('a body that gained the flags since the first read makes no gh issue edit call', async () => {
+  const w = world({ policy: TRIPWIRE_POLICY, diff: MIGRATION_DIFF, records: { 7: { body: 'Risk-flags: none\n' } } });
+  let rereads = 0;
+  const flagged = 'Risk-flags: migrations\nRisk-flags-added-by-tripwire: migrations\n\n## Current State\n';
+  const res = await call(w, decideArgv(w), rereadAs(w, () => { rereads += 1; return JSON.stringify({ body: flagged }); }));
+  assert.equal(res.code, 0, res.stderr);
+  assert.equal(rereads, 1, 'the re-read ran');
+  assert.equal(w.state.gh.some((a) => a[0] === 'issue' && a[1] === 'edit'), false);
+  assert.ok(!tripwireOf(res).tripwire.appendFailed);
+});
+
+test('a CRLF stderr keeps no carriage return in the stderr line or the packet line', async () => {
+  const stderr = 'HTTP 502\r\nhint: more\r\n';
+  const w = world({ policy: TRIPWIRE_POLICY, diff: MIGRATION_DIFF, fail: { bodyEdit: Object.assign(new Error('x'), { stderr, status: 1 }) }, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const res = await call(w, decideArgv(w));
+  assert.equal(res.code, 0, res.stderr);
+  assert.ok(res.stderr.includes('(HTTP 502) — this run is local'), JSON.stringify(res.stderr));
+  assert.ok(tripwireOf(res).tripwire.lines.includes('tripwire: the flag write failed (HTTP 502), so this run is local'), tripwireOf(res).tripwire.lines.join('\n'));
+  assert.equal(res.stderr.includes('\r') || res.stdout.includes('\r'), false);
+});
+
+test('an absolute path in git stderr or a plain Error never reaches the packet line', async () => {
+  const lock = "fatal: Unable to create '/Users/me/Code Workspaces/repo/.git/refs/remotes/origin/main.lock': File exists.";
+  const failing = world({ policy: TRIPWIRE_POLICY, fail: { 'fetch:main': lock }, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const res = await call(failing, decideArgv(failing));
+  assert.equal(res.code, 0, res.stderr);
+  assert.deepEqual(tripwireOf(res).tripwire.lines, ['tripwire could not run: git fetch of main failed: fatal: Unable to create \\<path\\>: File exists.']);
+  assert.equal(JSON.stringify(res).includes('/Users/me'), false);
+
+  const plain = world({ policy: TRIPWIRE_POLICY, diff: MIGRATION_DIFF, fail: { bodyEdit: new Error('assertSlugs: not a slug at /Users/me/repo/x.js') }, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const plainRes = await call(plain, decideArgv(plain));
+  assert.equal(plainRes.code, 0, plainRes.stderr);
+  assert.ok(tripwireOf(plainRes).tripwire.lines.includes('tripwire: the flag write failed (assertSlugs: not a slug at \\<path\\>), so this run is local'), tripwireOf(plainRes).tripwire.lines.join('\n'));
+  assert.equal(JSON.stringify(plainRes).includes('/Users/me'), false);
+});
+
+test('AC3.1: --classification auth adds auth via agent', async () => {
+  const w = world({ policy: 'control-mode: on\nacceptance-target: dev\n', records: { 7: { body: 'Risk-flags: none\n' } } });
+  const file = path.join(w.state.root, 'classification.json');
+  fs.writeFileSync(file, JSON.stringify([{ category: 'auth', evidence: 'login handler changed' }]));
+  const res = await call(w, decideArgv(w, ['--classification', file]));
+  assert.equal(res.code, 0, res.stderr);
+  const decision = tripwireOf(res);
+  assert.deepEqual(decision.tripwire.newFlags, ['auth']);
+  assert.deepEqual(decision.tripwire.crossed, [{ category: 'auth', via: 'agent', evidence: 'login handler changed' }]);
+  assert.equal(decision.park, true);
+  assert.match(w.state.edits[0].body, /^Risk-flags-added-by-tripwire: auth$/m);
+});
+
+test('--classification that will not read or parse is a malformed classification', async () => {
+  const w = world({ policy: 'control-mode: on\nacceptance-target: dev\n', records: { 7: { body: 'Risk-flags: none\n' } } });
+  const bad = path.join(w.state.root, 'bad.json');
+  fs.writeFileSync(bad, '{not json');
+  for (const file of [bad, path.join(w.state.root, 'absent.json')]) {
+    const res = await call(w, decideArgv(w, ['--classification', file]));
+    assert.equal(res.code, 0, res.stderr);
+    assert.deepEqual(tripwireOf(res).tripwire.lines, ['tripwire could not run: agent classification malformed']);
+    assert.equal(tripwireOf(res).reason, 'tripwire');
+  }
+});
+
+test('AC9.1: a trusted removal comment names the removal', async () => {
+  const comment = (authorAssociation) => ({ body: 'Risk flag migrations removed by the maintainer during shaping', authorAssociation });
+  const trusted = world({ policy: TRIPWIRE_POLICY, diff: MIGRATION_DIFF, records: { 7: { body: 'Risk-flags: none\n', comments: [comment('OWNER')] } } });
+  const res = await call(trusted, decideArgv(trusted));
+  assert.equal(res.code, 0, res.stderr);
+  assert.ok(tripwireOf(res).tripwire.lines.some((line) => line.includes('you removed the migrations flag at intent')), tripwireOf(res).tripwire.lines.join('\n'));
+
+  const untrusted = world({ policy: TRIPWIRE_POLICY, diff: MIGRATION_DIFF, records: { 7: { body: 'Risk-flags: none\n', comments: [comment('NONE')] } } });
+  const other = await call(untrusted, decideArgv(untrusted));
+  assert.equal(other.code, 0, other.stderr);
+  assert.equal(tripwireOf(other).tripwire.lines.some((line) => line.includes('you removed')), false);
+  assert.deepEqual(tripwireOf(other).tripwire.newFlags, ['migrations']);
+});
+
+test('two records share one diff', async () => {
+  const w = world({ policy: TRIPWIRE_POLICY, diff: MIGRATION_DIFF, records: {
+    1: { body: 'Risk-flags: migrations\n' },
+    2: { body: 'Risk-flags: none\n' },
+  } });
+  const res = await call(w, decideArgv(w, [], '1,2'));
+  assert.equal(res.code, 0, res.stderr);
+  assert.equal(gitCalls(w, 'merge-base').length, 1);
+  assert.equal(gitCalls(w, 'diff').length, 1);
+  assert.deepEqual(tripwireOf(res, 0).tripwire.newFlags, []);
+  assert.deepEqual(tripwireOf(res, 1).tripwire.newFlags, ['migrations']);
+  assert.deepEqual(w.state.edits.map((edit) => edit.record), ['2']);
+});
+
+test('#5830: control mode on in config.yml only never reads the globs', async () => {
+  const w = world({ policy: `acceptance-target: dev\n${GLOBS}`, diff: MIGRATION_DIFF, records: { 7: { body: 'Risk-flags: none\n' } } });
+  fs.writeFileSync(path.join(w.state.runDir, 'config.yml'), 'control-mode: on\n');
+  const res = await call(w, decideArgv(w));
+  assert.equal(res.code, 0, res.stderr);
+  assert.deepEqual(withoutTripwire(JSON.parse(res.stdout)), { park: false, decisions: [{ record: 7, consulted: false, park: false, target: null, reason: null }] });
+  assert.equal(w.state.gh.length, 0, 'control mode stays off: no record read');
+  assert.equal(w.state.edits.length, 0);
+});
+
+test('a policy risk-categories extra is a category the tripwire can cross', async () => {
+  const policy = 'control-mode: on\nacceptance-target: dev\nrisk-categories: payments\nrisk-path-globs:\n  payments: [payments/**]\n';
+  const w = world({ policy, diff: 'M\0payments/charge.js\0', records: { 7: { body: 'Risk-flags: none\n' } } });
+  const res = await call(w, decideArgv(w));
+  assert.equal(res.code, 0, res.stderr);
+  assert.deepEqual(tripwireOf(res).tripwire.newFlags, ['payments']);
+  assert.match(w.state.edits[0].body, /^Risk-flags: payments$/m);
+});
+
+test('a derived base is fetched before merge-base', async () => {
+  const w = world({ policy: TRIPWIRE_POLICY, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const res = await call(w, decideArgv(w));
+  assert.equal(res.code, 0, res.stderr);
+  const argvs = w.state.git.map((a) => a.slice(2));
+  const fetchAt = argvs.findIndex((a) => a.join(' ') === 'fetch --no-tags origin main');
+  const mergeBaseAt = argvs.findIndex((a) => a[0] === 'merge-base');
+  assert.ok(fetchAt !== -1 && fetchAt < mergeBaseAt, JSON.stringify(argvs));
+  assert.deepEqual(argvs[mergeBaseAt], ['merge-base', '--end-of-options', 'origin/main', DIFF_TIP]);
+});
+
+test('integration-branch names the derived base', async () => {
+  const w = world({ policy: `${TRIPWIRE_POLICY}integration-branch: develop\n`, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const res = await call(w, decideArgv(w));
+  assert.equal(res.code, 0, res.stderr);
+  assert.deepEqual(gitCalls(w, 'fetch'), [['fetch', '--no-tags', 'origin', 'develop']]);
+  assert.deepEqual(gitCalls(w, 'merge-base')[0], ['merge-base', '--end-of-options', 'origin/develop', DIFF_TIP]);
+  assert.equal(gitCalls(w, 'rev-parse').some((a) => a.includes('--abbrev-ref')), false);
+});
+
+test('a failing base fetch is could-not-run; --base given makes no base fetch', async () => {
+  const failing = world({ policy: TRIPWIRE_POLICY, fail: { 'fetch:main': 'fatal: unable to access origin\nsecond line' }, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const res = await call(failing, decideArgv(failing));
+  assert.equal(res.code, 0, res.stderr);
+  assert.equal(tripwireOf(res).reason, 'tripwire');
+  assert.deepEqual(tripwireOf(res).tripwire.lines, ['tripwire could not run: git fetch of main failed: fatal: unable to access origin']);
+  assert.equal(gitCalls(failing, 'merge-base').length, 0);
+
+  const given = world({ policy: TRIPWIRE_POLICY, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const ok = await call(given, decideArgv(given, ['--base', 'origin/main']));
+  assert.equal(ok.code, 0, ok.stderr);
+  assert.equal(gitCalls(given, 'fetch').length, 0);
+  assert.equal(gitCalls(given, 'rev-parse').some((a) => a.includes('--abbrev-ref')), false);
+});
+
+test('a failed merge-base or diff names the step', async () => {
+  const mb = world({ policy: TRIPWIRE_POLICY, fail: { mergeBase: 'fatal: no merge base' }, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const mbRes = await call(mb, decideArgv(mb));
+  assert.deepEqual(tripwireOf(mbRes).tripwire.lines, ['tripwire could not run: git merge-base failed: fatal: no merge base']);
+  const df = world({ policy: TRIPWIRE_POLICY, fail: { diff: 'fatal: bad object' }, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const dfRes = await call(df, decideArgv(df));
+  assert.deepEqual(tripwireOf(dfRes).tripwire.lines, ['tripwire could not run: git diff failed: fatal: bad object']);
+  const un = world({ policy: TRIPWIRE_POLICY, diff: 'Z\0x\0', records: { 7: { body: 'Risk-flags: none\n' } } });
+  const unRes = await call(un, decideArgv(un));
+  assert.deepEqual(tripwireOf(unRes).tripwire.lines, ['tripwire could not run: git diff output unparseable']);
+  assert.equal(tripwireOf(unRes).reason, 'tripwire');
+});
+
+test('a failed packet-facts write exits 1 with the decision printed', async () => {
+  const w = world({ policy: TRIPWIRE_POLICY, records: { 7: { body: 'Risk-flags: none\n' } } });
+  fs.writeFileSync(path.join(w.state.runDir, 'packet-facts'), 'not a directory');
+  const res = await call(w, decideArgv(w));
+  assert.equal(res.code, 1);
+  assert.equal(res.stdout.split('\n').filter(Boolean).length, 1);
+  assert.equal(JSON.parse(res.stdout).decisions.length, 1);
+  assert.match(res.stderr, /tripwire-7\.json/);
+});
+
+test('a re-run after an earlier append still states the crossing', async () => {
+  const body = 'Risk-flags: migrations\nRisk-flags-added-by-tripwire: migrations\n\n## Current State\n';
+  const w = world({ policy: TRIPWIRE_POLICY, diff: MIGRATION_DIFF, records: { 7: { body } } });
+  const res = await call(w, decideArgv(w));
+  assert.equal(res.code, 0, res.stderr);
+  assert.equal(w.state.gh.filter((a) => a[0] === 'issue' && a[1] === 'edit').length, 0);
+  assert.ok(tripwireOf(res).tripwire.lines.some((line) => line.startsWith('tripwire: the diff crosses migrations')), tripwireOf(res).tripwire.lines.join('\n'));
+});
+
+test('a flag append and then a re-run through the same body writes once', async () => {
+  const w = world({ policy: TRIPWIRE_POLICY, diff: MIGRATION_DIFF, records: { 7: { body: 'Risk-flags: none\n' } } });
+  assert.equal((await call(w, decideArgv(w))).code, 0);
+  const second = await call(w, decideArgv(w));
+  assert.equal(second.code, 0, second.stderr);
+  assert.equal(w.state.edits.length, 1);
+  assert.ok(tripwireOf(second).tripwire.lines.some((line) => line.startsWith('tripwire: the diff crosses migrations')));
+});
+
+test('--run writes packet-facts/tripwire-{n}.json', async () => {
+  const w = world({ policy: TRIPWIRE_POLICY, diff: MIGRATION_DIFF, records: { 7: { body: 'Risk-flags: none\n' }, 8: { body: 'Risk-flags: migrations\n' } } });
+  const res = await call(w, decideArgv(w, [], '7,8'));
+  assert.equal(res.code, 0, res.stderr);
+  for (const n of [7, 8]) {
+    const written = JSON.parse(fs.readFileSync(path.join(w.state.runDir, 'packet-facts', `tripwire-${n}.json`), 'utf8'));
+    assert.deepEqual(written, { record: n, lines: tripwireOf(res, n - 7).tripwire.lines });
+  }
+});
+
+test('no packet-facts file for an unread record or without --run', async () => {
+  const w = world({ policy: TRIPWIRE_POLICY, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const res = await call(w, ['decide', '--run', w.state.runDir, '--record', '7,9', '--head', DIFF_TIP]);
+  assert.equal(res.code, 1);
+  assert.equal(fs.existsSync(path.join(w.state.runDir, 'packet-facts', 'tripwire-7.json')), true);
+  assert.equal(fs.existsSync(path.join(w.state.runDir, 'packet-facts', 'tripwire-9.json')), false);
+  assert.equal(Object.hasOwn(JSON.parse(res.stdout).decisions[1], 'tripwire'), false);
+
+  const bare = world({ policy: TRIPWIRE_POLICY, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const bareRes = await call(bare, ['decide', '--record', '7', '--head', DIFF_TIP]);
+  assert.equal(bareRes.code, 0, bareRes.stderr);
+  assert.equal(fs.existsSync(path.join(bare.state.runDir, 'packet-facts')), false);
+});
+
+test('the git argv carries --end-of-options and -z', async () => {
+  const w = world({ policy: TRIPWIRE_POLICY, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const res = await call(w, decideArgv(w, ['--base', 'origin/main']));
+  assert.equal(res.code, 0, res.stderr);
+  assert.deepEqual(gitCalls(w, 'rev-parse'), [['rev-parse', '--verify', '--quiet', '--end-of-options', `${DIFF_TIP}^{commit}`]]);
+  assert.deepEqual(gitCalls(w, 'merge-base'), [['merge-base', '--end-of-options', 'origin/main', DIFF_TIP]]);
+  assert.deepEqual(gitCalls(w, 'diff'), [['diff', '--name-status', '-z', '-M', '--no-color', '--no-ext-diff', '--end-of-options', `${MERGE_BASE}..${DIFF_TIP}`]]);
+});
+
+test('control mode off makes no git call and adds no tripwire field', async () => {
+  const w = world({ policy: `acceptance-target: dev\n${GLOBS}`, records: { 7: { body: 'Risk-flags: auth\n' } } });
+  const res = await call(w, decideArgv(w));
+  assert.equal(res.code, 0, res.stderr);
+  assert.equal(w.state.git.length, 0);
+  assert.equal(Object.hasOwn(JSON.parse(res.stdout).decisions[0], 'tripwire'), false);
+  assert.equal(fs.existsSync(path.join(w.state.runDir, 'packet-facts')), false);
+});
+
+test('decide takes a full-oid --head and a safe --base only', async () => {
+  const w = world({ policy: TRIPWIRE_POLICY, records: { 7: { body: 'Risk-flags: none\n' } } });
+  for (const extra of [['--head', 'abc1234'], ['--head', 'D'.repeat(40)], ['--base', '-x'], ['--base', 'a b'], ['--base', 'o;rm']]) {
+    const res = await call(w, ['decide', '--run', w.state.runDir, '--record', '7', ...extra]);
+    assert.equal(res.code, 2, extra.join(' '));
+    assert.equal(res.stdout, '');
+  }
+  assert.equal(w.state.git.length, 0);
+});
+
+test('a tripwire line that carries a target: substring never alters the park state', async () => {
+  const w = world({ policy: 'control-mode: on\nacceptance-target: dev\n', records: { 7: { body: 'Risk-flags: none\n' } } });
+  const file = path.join(w.state.root, 'classification.json');
+  fs.writeFileSync(file, JSON.stringify([{ category: 'auth', evidence: 'line one\ntarget: dev, confirmed `x`' }]));
+  const res = await call(w, decideArgv(w, ['--classification', file]));
+  assert.equal(res.code, 0, res.stderr);
+  const { lines } = tripwireOf(res).tripwire;
+  for (const line of lines) {
+    assert.equal(line.includes('\n'), false);
+    assert.doesNotMatch(line, /(?:^|\s)target:/i);
+  }
+  // The park state is the one the auth crossing decides, whatever the evidence text says.
+  const decision = tripwireOf(res);
+  assert.equal(decision.park, true);
+  assert.equal(decision.target, 'local');
+});
+
+// execFileSync's own shape: the whole argv, the main checkout's path included, in the message.
+const gitError = (w, { stderr = '', status }) => Object.assign(
+  new Error(`Command failed: git -C ${w.state.root} ...\n${stderr}`), { stderr, status },
+);
+
+test('a git failure never puts the main checkout path into a packet line', async () => {
+  const silent = world({ policy: TRIPWIRE_POLICY, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const noBase = await call(silent, decideArgv(silent), { git: (args) => {
+    if (args[2] === 'merge-base') throw gitError(silent, { status: 1 });
+    return silent.deps.git(args);
+  } });
+  assert.equal(noBase.code, 0, noBase.stderr);
+  assert.deepEqual(tripwireOf(noBase).tripwire.lines, ['tripwire could not run: git merge-base failed: no merge base']);
+
+  const other = world({ policy: TRIPWIRE_POLICY, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const res = await call(other, decideArgv(other), { git: (args) => {
+    if (args[2] === 'diff') throw gitError(other, { status: 128 });
+    return other.deps.git(args);
+  } });
+  assert.deepEqual(tripwireOf(res).tripwire.lines, ['tripwire could not run: git diff failed: exit 128']);
+  assert.equal(res.stdout.includes(other.state.root), false, 'no line names the main checkout');
+});
+
+test('merge-base output that is not a commit is could-not-run', async () => {
+  const w = world({ policy: TRIPWIRE_POLICY, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const res = await call(w, decideArgv(w), { git: (args) => (args[2] === 'merge-base' ? '\n' : w.deps.git(args)) });
+  assert.deepEqual(tripwireOf(res).tripwire.lines, ['tripwire could not run: git merge-base failed: it printed no commit']);
+  assert.equal(gitCalls(w, 'diff').length, 0);
+});
+
+test('the real git runner takes a diff larger than the default 1 MiB buffer', () => {
+  const { realDeps } = require('../plugin/bin/accept-park');
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'accept-park-buffer-')));
+  tempDirs.push(dir);
+  const file = path.join(dir, 'big.txt');
+  fs.writeFileSync(file, 'x'.repeat(2 * 1024 * 1024));
+  realDeps.git(['init', '-q', dir], { cwd: dir });
+  const oid = realDeps.git(['-C', dir, 'hash-object', '-w', '--end-of-options', file], { cwd: dir }).trim();
+  assert.equal(realDeps.git(['-C', dir, 'cat-file', 'blob', oid], { cwd: dir }).length, 2 * 1024 * 1024);
+});
+
+test('a fetch that hits a sibling\'s ref lock is retried once, after a pause', async () => {
+  const lock = (w) => gitError(w, { stderr: "error: cannot lock ref 'refs/remotes/origin/main': is at a but expected b\n", status: 1 });
+  const once = world({ policy: TRIPWIRE_POLICY, diff: MIGRATION_DIFF, records: { 7: { body: 'Risk-flags: none\n' } } });
+  let locked = 1;
+  const pauses = [];
+  const res = await call(once, decideArgv(once), { sleep: (ms) => pauses.push(ms), git: (args) => {
+    if (args[2] === 'fetch' && locked-- > 0) {
+      once.state.git.push(args);
+      throw lock(once);
+    }
+    return once.deps.git(args);
+  } });
+  assert.equal(res.code, 0, res.stderr);
+  assert.deepEqual(gitCalls(once, 'fetch'), [['fetch', '--no-tags', 'origin', 'main'], ['fetch', '--no-tags', 'origin', 'main']]);
+  assert.deepEqual(pauses, [1000]);
+  assert.deepEqual(tripwireOf(res).tripwire.newFlags, ['migrations']);
+
+  const twice = world({ policy: TRIPWIRE_POLICY, records: { 7: { body: 'Risk-flags: none\n' } } });
+  const stuck = await call(twice, decideArgv(twice), { sleep: () => {}, git: (args) => {
+    if (args[2] === 'fetch') {
+      twice.state.git.push(args);
+      throw lock(twice);
+    }
+    return twice.deps.git(args);
+  } });
+  assert.equal(gitCalls(twice, 'fetch').length, 2, 'one retry, no more');
+  assert.match(tripwireOf(stuck).tripwire.lines[0], /^tripwire could not run: git fetch of main failed: error: cannot lock ref/);
+
+  const plain = world({ policy: TRIPWIRE_POLICY, fail: { 'fetch:main': 'fatal: unable to access origin' }, records: { 7: { body: 'Risk-flags: none\n' } } });
+  await call(plain, decideArgv(plain), { sleep: () => assert.fail('a non-lock failure is not retried') });
+  assert.equal(gitCalls(plain, 'fetch').length, 1);
+});
+
+test('the diff is read before any record body, and the edit goes onto the body as it reads right before it', async () => {
+  const w = world({ policy: TRIPWIRE_POLICY, diff: MIGRATION_DIFF, records: { 7: { body: 'Risk-flags: none\n\n## Current State\n' } } });
+  const order = [];
+  const res = await call(w, decideArgv(w), {
+    git: (args) => { order.push('git'); return w.deps.git(args); },
+    gh: (args) => {
+      if (args[0] === 'issue' && args[1] === 'view') order.push('view');
+      // A concurrent edit lands between the first read and the tripwire's edit.
+      if (args[1] === 'view' && args[4] === 'body') w.state.records[7].body = 'Risk-flags: auth\nAcceptance-target: local\n\n## Current State\n';
+      return w.deps.gh(args);
+    },
+  });
+  assert.equal(res.code, 0, res.stderr);
+  assert.ok(order.indexOf('view') > order.lastIndexOf('git'), order.join(','));
+  assert.equal(w.state.edits.length, 1);
+  assert.equal(w.state.edits[0].body, 'Risk-flags: migrations, auth\nRisk-flags-added-by-tripwire: migrations\nAcceptance-target: local\n\n## Current State\n');
+});
+
+test('a JSON null classification file is unreadable and forces local', async () => {
+  const w = world({ policy: 'control-mode: on\nacceptance-target: dev\n', records: { 7: { body: 'Risk-flags: none\n' } } });
+  const file = path.join(w.state.root, 'null.json');
+  fs.writeFileSync(file, 'null');
+  const res = await call(w, decideArgv(w, ['--classification', file]));
+  assert.equal(res.code, 0, res.stderr);
+  assert.deepEqual(tripwireOf(res).tripwire.lines, ['tripwire could not run: agent classification malformed']);
+  assert.equal(tripwireOf(res).target, 'local');
+  assert.equal(tripwireOf(res).reason, 'tripwire');
 });
 
 // ---- park ----
@@ -550,13 +1093,22 @@ test('parked with control mode on and a failing gh is unknown, with and without 
   }
 });
 
-test("parked --run: the run's config.yml outranks policy.yml for control-mode", async () => {
+test("#5830: parked --run: the run's config.yml never outranks policy.yml for control-mode", async () => {
   const w = world({ policy: 'control-mode: off\n', records: {} });
   fs.writeFileSync(path.join(w.state.runDir, 'config.yml'), 'control-mode: on\n');
-  const withRun = await call(w, ['parked', '--record', '7', '--run', w.state.runDir], { gh: throwingGh.gh });
-  assert.equal(withRun.code, 6);
+  const withRun = await call(w, ['parked', '--record', '7', '--run', w.state.runDir], throwingGh);
+  assert.equal(withRun.code, 5);
+  assert.equal(withRun.stdout, 'not-parked\n');
   const withoutRun = await call(w, ['parked', '--record', '7'], throwingGh);
   assert.equal(withoutRun.code, 5);
+});
+
+test('#5830: parked --run keeps the project value when the run config says control-mode off', async () => {
+  const w = world({ policy: ON, records: {} });
+  fs.writeFileSync(path.join(w.state.runDir, 'config.yml'), 'control-mode: off\n');
+  const res = await call(w, ['parked', '--record', '7', '--run', w.state.runDir], { gh: throwingGh.gh });
+  assert.equal(res.code, 6);
+  assert.equal(res.stdout, 'unknown\n');
 });
 
 test('parked: an unreadable policy file is unknown; a refused --run exits 3', async () => {
@@ -827,4 +1379,188 @@ test('script entry: --help exits 0 and a malformed call exits 2', () => {
 
 test('the acceptance-target key is wired', () => {
   assert.doesNotMatch(POLICY_KEYS.find((k) => k.key === 'acceptance-target').summary, /^Not yet used/);
+});
+
+// ---- park: tripwire lines (#4619) ----
+
+const TRIPWIRE_LINE = 'tripwire: the diff crosses migrations (migrations/\\*\\*: migrations/001.sql), which nobody flagged, so this run is local';
+const writeTripwireFile = (w, content, n = 7) => {
+  const dir = path.join(w.state.runDir, 'packet-facts');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `tripwire-${n}.json`), content);
+};
+
+test('park writes the run\'s tripwire lines into the packet', async () => {
+  const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+  writeTripwireFile(w, JSON.stringify({ record: 7, lines: [TRIPWIRE_LINE, 'tripwire: second'] }));
+  const res = await call(w, parkArgv(w));
+  assert.equal(res.code, 0, res.stderr);
+  const body = w.state.records[7].comments[0].body;
+  assert.ok(body.split('\n').includes(TRIPWIRE_LINE));
+  assert.ok(body.split('\n').includes('tripwire: second'));
+  assert.deepEqual(parkStateOf(body), { parked: true, target: 'local', reason: 'awaiting-local-acceptance', headSha: HEAD, baseSha: BASE });
+});
+
+test('park with an empty tripwire lines list removes an earlier tip\'s lines', async () => {
+  const stale = require('../plugin/bin/lib/accept/park').writeParkDeployStatus(PACKET, { headSha: HEAD, baseSha: BASE, notes: ['tripwire: stale'] }).body;
+  const w = world({ records: { 7: { comments: [{ ...packetComment(7), body: stale }] } } });
+  writeTripwireFile(w, JSON.stringify({ record: 7, lines: [] }));
+  const res = await call(w, parkArgv(w));
+  assert.equal(res.code, 0, res.stderr);
+  assert.doesNotMatch(w.state.records[7].comments[0].body, /tripwire/);
+});
+
+test('an unparseable tripwire file fails step 2', async () => {
+  for (const content of ['{not json', JSON.stringify({ record: 7, lines: 'tripwire: x' }), JSON.stringify({ record: 7, lines: [4] }), JSON.stringify({ record: 7 }), 'null']) {
+    const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+    writeTripwireFile(w, content);
+    const res = await call(w, parkArgv(w));
+    assert.equal(res.code, 1, content);
+    const result = JSON.parse(res.stdout);
+    assert.equal(result.outcome, 'park-failed');
+    assert.deepEqual(result.steps.map((s) => s.ok), [true, false]);
+    assert.match(result.steps[1].detail, /tripwire lines unreadable: /);
+    assert.equal(w.state.spawn.length, 0, 'nothing archived');
+    assert.equal(w.state.gh.filter((a) => a[0] === 'api' && a[1] === 'graphql').length, 0, 'no edit');
+  }
+});
+
+test('a tripwire file written for another record fails step 2', async () => {
+  const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+  writeTripwireFile(w, JSON.stringify({ record: 8, lines: [TRIPWIRE_LINE] }));
+  const res = await call(w, parkArgv(w));
+  assert.equal(res.code, 1);
+  const result = JSON.parse(res.stdout);
+  assert.deepEqual(result.steps.map((s) => s.ok), [true, false]);
+  assert.match(result.steps[1].detail, /tripwire lines unreadable: the file is for record 8, not #7/);
+  assert.doesNotMatch(w.state.records[7].comments[0].body, /tripwire/);
+});
+
+test('a tripwire file the park cannot read for another reason fails step 2 with the reason', async () => {
+  const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+  writeTripwireFile(w, '{}');
+  const res = await call(w, parkArgv(w), { readFile: (file) => {
+    if (file.endsWith('tripwire-7.json')) throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+    return fs.readFileSync(file, 'utf8');
+  } });
+  assert.equal(res.code, 1);
+  assert.match(JSON.parse(res.stdout).steps[1].detail, /tripwire lines unreadable: EACCES/);
+});
+
+test('no tripwire file parks as before', async () => {
+  const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+  const res = await call(w, parkArgv(w));
+  assert.equal(res.code, 0, res.stderr);
+  assert.doesNotMatch(w.state.records[7].comments[0].body, /tripwire/);
+  assert.deepEqual(JSON.parse(res.stdout).steps.map((s) => s.ok), [true, true, true, true, true]);
+});
+
+// ---- station events (#5902) ----
+
+const recorder = () => {
+  const events = [];
+  return { events, stationEvent: (e) => { events.push(e); } };
+};
+const SESSION_ENV = { CLAUDE_CODE_SESSION_ID: 'sess-park' };
+
+test('#5902: realDeps wires a stationEvent emitter, so the real entry point emits', () => {
+  const { realDeps } = require('../plugin/bin/accept-park');
+  assert.equal(typeof realDeps.stationEvent, 'function', 'stationEvent is wired');
+});
+
+test('#5902: postPacket adding accept:pending records one entered accept event', async () => {
+  const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+  const rec = recorder();
+  const res = await call(w, parkArgv(w), { stationEvent: rec.stationEvent, env: SESSION_ENV });
+  assert.equal(res.code, 0, res.stderr);
+  const entered = rec.events.filter((e) => e.station === 'accept');
+  assert.deepEqual(entered, [{
+    kind: 'entered', station: 'accept', recordNumber: 7, repoName: 'o/r', lane: 'unknown', runId: RUN_ID, sessionId: 'sess-park',
+    payload: { label: 'accept:pending' }, discriminator: `accept-pending:7:${RUN_ID}`,
+  }]);
+});
+
+test('#5902: postPacket posting a fresh packet records one entered accept event', async () => {
+  const w = world({ records: { 7: { comments: [] } } });
+  const rec = recorder();
+  const res = await call(w, parkArgv(w), { stationEvent: rec.stationEvent });
+  assert.equal(res.code, 0, res.stderr);
+  assert.equal(rec.events.filter((e) => e.kind === 'entered' && e.station === 'accept').length, 1);
+});
+
+test('#5902: postPacket with the pending label already present records no accept event', async () => {
+  const w = world({ records: { 7: { comments: [packetComment(7)], labels: ['accept:pending'] } } });
+  const rec = recorder();
+  const res = await call(w, parkArgv(w), { stationEvent: rec.stationEvent });
+  assert.equal(res.code, 0, res.stderr);
+  assert.deepEqual(rec.events.filter((e) => e.station === 'accept'), []);
+});
+
+test('#5902: a park whose claim release returns released records one exited build event', async () => {
+  const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+  const rec = recorder();
+  const res = await call(w, parkArgv(w), { stationEvent: rec.stationEvent, env: SESSION_ENV });
+  assert.equal(res.code, 0, res.stderr);
+  const exited = rec.events.filter((e) => e.station === 'build');
+  assert.deepEqual(exited, [{
+    kind: 'exited', station: 'build', outcome: 'passed', recordNumber: 7, repoName: 'o/r', lane: 'unknown', runId: RUN_ID,
+    sessionId: 'sess-park', payload: { reason: 'awaiting-local-acceptance' }, discriminator: `release:${RUN_ID}:2026-11-16T09:00:00.000Z`,
+  }]);
+});
+
+test('#5902: the park release discriminator names the released claim instance', async () => {
+  const keyFor = async (claimedAt) => {
+    const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+    w.state.claimedAt = claimedAt;
+    const rec = recorder();
+    const res = await call(w, parkArgv(w), { stationEvent: rec.stationEvent });
+    assert.equal(res.code, 0, res.stderr);
+    return rec.events.find((e) => e.kind === 'exited').discriminator;
+  };
+  const first = await keyFor('2026-11-16T09:00:00.000Z');
+  assert.equal(first, await keyFor('2026-11-16T09:00:00.000Z'), 'a replay keys the same');
+  assert.notEqual(first, await keyFor('2026-11-16T09:30:00.000Z'), 'a re-claim by the same run keys differently');
+});
+
+test('#5902: an already-released claim records no exited build event', async () => {
+  const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+  w.state.claims[7] = 'released';
+  const rec = recorder();
+  const res = await call(w, parkArgv(w), { stationEvent: rec.stationEvent });
+  assert.equal(res.code, 0, res.stderr);
+  assert.equal(JSON.parse(res.stdout).steps[3].detail, '#7: already-released');
+  assert.deepEqual(rec.events.filter((e) => e.station === 'build'), []);
+});
+
+// Each run builds its own temp root. Its stdout is JSON, so on Windows the root appears with doubled
+// backslashes: replace the raw form and the JSON-escaped form, or the two runs never compare equal.
+const stripRoots = (text, ...roots) => roots.reduce(
+  (acc, root) => acc.split(root).join('ROOT').split(JSON.stringify(root).slice(1, -1)).join('ROOT'),
+  text,
+);
+
+test('#5902: a throwing stationEvent leaves the park stdout and exit code unchanged', async () => {
+  const plain = world({ records: { 7: { comments: [packetComment(7)] } } });
+  const base = await call(plain, parkArgv(plain));
+  const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+  let calls = 0;
+  const res = await call(w, parkArgv(w), { stationEvent: () => { calls += 1; throw new Error('emitter exploded'); } });
+  assert.equal(calls, 2, 'both emissions were attempted');
+  assert.equal(res.code, base.code);
+  const strip = (s) => stripRoots(s, plain.state.root, w.state.root);
+  assert.equal(strip(res.stdout), strip(base.stdout));
+  assert.equal(res.stderr, base.stderr);
+});
+
+test('#5902: a recording stationEvent leaves the park stdout and exit code unchanged', async () => {
+  const plain = world({ records: { 7: { comments: [packetComment(7)] } } });
+  const base = await call(plain, parkArgv(plain));
+  const w = world({ records: { 7: { comments: [packetComment(7)] } } });
+  const rec = recorder();
+  const res = await call(w, parkArgv(w), { stationEvent: rec.stationEvent });
+  assert.equal(rec.events.length, 2, 'both emissions were recorded');
+  assert.equal(res.code, base.code);
+  const strip = (s) => stripRoots(s, plain.state.root, w.state.root);
+  assert.equal(strip(res.stdout), strip(base.stdout));
+  assert.equal(res.stderr, base.stderr);
 });

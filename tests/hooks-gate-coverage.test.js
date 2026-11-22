@@ -16,6 +16,8 @@
 const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir, isolateTmpdir } = require('./helpers/tmp-dir');
+isolateTmpdir('ct-iso-hooks-gate-coverage-');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { GATE_COVERAGE } = require('../plugin/bin/lib/hooks/pre-tool-use');
@@ -24,6 +26,7 @@ const { WRITE_SHAPES, fileWriteTargets, forEachShellSegment, gitTargets, mkdirTa
 const { shouldRunFull } = require('../plugin/bin/lib/hooks/bash-prefilter');
 const { readText } = require('./helpers/read-skill');
 const { shellQuote } = require('./helpers/shell-quote');
+const { initRepo } = require('./helpers/git-fixtures');
 
 const runsFull = (event, command) => shouldRunFull(event, { tool_name: 'Bash', tool_input: { command } });
 function bashGroupOf(group) {
@@ -42,7 +45,7 @@ const MAIN_F = path.resolve('/main/f.js');
 const TMP_DIRS_4303 = [];
 after(() => { for (const dir of TMP_DIRS_4303) fs.rmSync(dir, { recursive: true, force: true }); });
 const tmpDir4303 = (prefix) => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(require('os').tmpdir(), prefix)));
+  const dir = fs.realpathSync(scratchDir(prefix));
   TMP_DIRS_4303.push(dir);
   return dir;
 };
@@ -381,9 +384,7 @@ test('#976 AC1: `git mv` inside a worktree-always project triggers the same E1 d
   const osMod = require('os');
   const { execFileSync } = require('child_process');
   const main = fsMod.mkdtempSync(path.join(osMod.tmpdir(), 'ct-976-main-'));
-  execFileSync('git', ['-C', main, 'init', '-q']);
-  execFileSync('git', ['-C', main, 'config', 'user.email', 't@example.com']);
-  execFileSync('git', ['-C', main, 'config', 'user.name', 'T']);
+  initRepo(main, { name: 'T', email: 't@example.com' });
   fsMod.writeFileSync(path.join(main, 'a.txt'), 'x\n');
   execFileSync('git', ['-C', main, 'add', 'a.txt']);
   execFileSync('git', ['-C', main, 'commit', '-q', '-m', 'init']);
@@ -391,6 +392,7 @@ test('#976 AC1: `git mv` inside a worktree-always project triggers the same E1 d
   fsMod.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
 
   const out = preToolUse.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: 'git mv a.txt b.txt' }, cwd: main },
     runDir: null,
     runState: null,
@@ -3653,12 +3655,13 @@ test('e2e #3080: bare redirection from a worktree-always main checkout is DENIED
   const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const os = require('os');
   const { execFileSync } = require('child_process');
-  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-3080-main-'));
+  const main = scratchDir('ct-3080-main-');
   execFileSync('git', ['-C', main, 'init', '-q']);
   fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
   const decisionFor = (command) => {
     const out = preToolUse.run({
+      env: process.env,
       input: { tool_name: 'Bash', tool_input: { command }, cwd: main },
       runDir: null, runState: null, ownedRun: {}, cwd: main,
     });
@@ -3680,7 +3683,7 @@ test('e2e #4149: a command past the cwd cap from a linked worktree is DENIED for
   const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const os = require('os');
   const { execFileSync } = require('child_process');
-  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4149-cap-')));
+  const tmp = fs.realpathSync(scratchDir('ct-4149-cap-'));
   const main = path.join(tmp, 'main');
   const wt = path.join(tmp, 'wt');
   fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
@@ -3692,6 +3695,7 @@ test('e2e #4149: a command past the cwd cap from a linked worktree is DENIED for
   git('worktree', 'add', '-q', wt);
   const decisionFor = (command) => {
     const out = preToolUse.run({
+      env: process.env,
       input: { tool_name: 'Bash', tool_input: { command }, cwd: wt },
       runDir: null, runState: null, ownedRun: {}, cwd: wt,
     });
@@ -3730,6 +3734,7 @@ function linkedWorktree4303({ nested = false, policy = true } = {}) {
   git('worktree', 'add', '-q', wt);
   const outputFor = (command, cwd = wt) => {
     const out = preToolUse.run({
+      env: process.env,
       input: { tool_name: 'Bash', tool_input: { command }, cwd },
       runDir: null, runState: null, ownedRun: {}, cwd,
     });
@@ -4207,6 +4212,7 @@ test('e2e #4303: past the cwd cap with no policy file anywhere, a relative write
   const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const plain = tmpDir4303('ct-4303-plain-');
   const out = preToolUse.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: `${groups4303(16)}echo x > out.txt` }, cwd: plain },
     runDir: null, runState: null, ownedRun: {}, cwd: plain,
   });
@@ -4297,12 +4303,13 @@ test('e2e #3989: a `>` in a heredoc body from a worktree-always main checkout is
   const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const os = require('os');
   const { execFileSync } = require('child_process');
-  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-3989-main-'));
+  const main = scratchDir('ct-3989-main-');
   execFileSync('git', ['-C', main, 'init', '-q']);
   fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
   const decisionFor = (command) => {
     const out = preToolUse.run({
+      env: process.env,
       input: { tool_name: 'Bash', tool_input: { command }, cwd: main },
       runDir: null, runState: null, ownedRun: {}, cwd: main,
     });

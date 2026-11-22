@@ -1,0 +1,194 @@
+# macOS release check (#5881, the release gate of #5838): the full suite on
+# GitHub's standard macos-latest runner, dispatchable against any sha.
+#
+# Triggers: workflow_dispatch with a `sha` input (the real use), and
+# pull_request limited to this file's own path (so edits to it are proven
+# before merge). Only a dispatch run posts a commit status; a pull_request run
+# posts none.
+#
+# Three jobs, split so the code under test never holds the token that writes
+# its own verdict. `pending` (ubuntu, statuses: write; dispatch only) validates
+# the sha input and posts `pending`. `suite` (macos, contents: read) runs the
+# whole suite on that sha with a read-only token. `verdict` (ubuntu,
+# statuses: write; dispatch only) maps the suite step's outcome to the final
+# state. Neither status writer runs the repo's code.
+#
+# The verdict is a COMMIT STATUS on the input sha, not a check run: a check run
+# from a dispatch attaches to the ref's head, not to the sha that was tested.
+# Context: macos-release-check. States:
+#   pending  the run is in progress
+#   success  the suite passed
+#   failure  the suite step ran and failed
+#   error    the run could not test the sha (an earlier step failed, the run
+#            was cancelled or timed out, or the macOS runner was lost), so there
+#            is no verdict on the code
+#
+# Read it with exactly this call (empty output means missing, never success;
+# never read the combined /status state, which shows `pending` with zero
+# statuses):
+#   gh api repos/{owner}/{repo}/commits/{sha}/statuses --jq '[.[] | select(.context=="macos-release-check")][0].state'
+#
+# What a reader can see:
+# - A sha never dispatched has no status. Neither does a dispatched sha that is
+#   not a commit in this repo: the pending POST returns 422 and the run stops.
+# - `pending` appears once the ubuntu `pending` job starts, usually seconds
+#   after the dispatch. Until then the read returns empty, or the sha's
+#   previous verdict.
+# - A force-cancel, a cancel that lands inside the `pending` job, a lost
+#   ubuntu runner or a failed verdict POST can leave `pending` for good. Bound
+#   the wait and treat an expired `pending` as error.
+# - To tie a read to your own dispatch, compare the status's target_url (this
+#   run's URL) or created_at.
+#
+# Cost: free on this public repo; about $0.062/min if the repo were private.
+# Standard runner only (no larger runner).
+name: macos-release-check
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/macos-release-check.yml
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Commit sha to check (40 hex characters)
+        required: true
+        type: string
+
+# Workflow-level, so the jobs of one run share a group and are not serialized
+# or cancelled against each other. GitHub keeps at most one pending run per
+# group and replaces it with a newer one even when in-progress runs are never
+# cancelled, so a second dispatch on one sha replaces a waiting one.
+concurrency:
+  group: macos-release-check-${{ github.event_name }}-${{ inputs.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions: {}
+
+env:
+  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+jobs:
+  pending:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+    outputs:
+      sha: ${{ steps.validate.outputs.sha }}
+    steps:
+      - name: Validate sha
+        id: validate
+        shell: bash
+        env:
+          SHA_INPUT: ${{ inputs.sha }}
+        run: |
+          if [[ ! "$SHA_INPUT" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::sha input is not a 40-hex commit sha"
+            printf 'sha input: %q\n' "$SHA_INPUT"
+            exit 1
+          fi
+          sha=$(printf '%s' "$SHA_INPUT" | tr '[:upper:]' '[:lower:]')
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Mark pending
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.validate.outputs.sha }}
+        run: |
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$SHA" \
+            -f state=pending \
+            -f context=macos-release-check \
+            -f target_url="$RUN_URL" \
+            -f description="macOS full suite running"
+
+  suite:
+    name: full suite (macos-latest, node ${{ matrix.node }})
+    needs: pending
+    # pending is skipped on pull_request; on dispatch the suite runs only after a
+    # valid sha was marked pending. !cancelled(), not always(), so a cancelled
+    # run does not start the suite.
+    if: ${{ !cancelled() && (needs.pending.result == 'success' || github.event_name == 'pull_request') }}
+    runs-on: macos-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    # Matrix job outputs are last-writer-wins; a dispatch has one matrix entry,
+    # and verdict runs on dispatch only, so the outcome it reads is that entry's.
+    outputs:
+      outcome: ${{ steps.suite.outcome }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20 is the repo's CI Node; 22 is what the local macOS run uses.
+        node: ${{ github.event_name == 'pull_request' && fromJSON('[20,22]') || fromJSON('[22]') }}
+    env:
+      SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || needs.pending.outputs.sha }}
+      # Several suites build git fixtures that commit; CI runners have no git identity.
+      GIT_AUTHOR_NAME: ci
+      GIT_AUTHOR_EMAIL: ci@invalid.example
+      GIT_COMMITTER_NAME: ci
+      GIT_COMMITTER_EMAIL: ci@invalid.example
+      # reconcile()'s GitHub-health preflight (plugin/bin/lib/reconcile/preflight.js,
+      # #820) shells to `gh api rate_limit` before any dispatch that doesn't stub
+      # it; an unauthenticated `gh` reads as "GitHub unreachable". Read-only here.
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.SHA }}
+          fetch-depth: 0
+          # No test pushes to origin, and this public repo fetches anonymously.
+          persist-credentials: false
+      - name: Confirm checked-out sha
+        shell: bash
+        run: |
+          head=$(git rev-parse HEAD)
+          echo "HEAD=$head"
+          echo "SHA=$SHA"
+          test "$head" = "$SHA"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Run the whole suite
+        id: suite
+        shell: bash
+        run: |
+          # shell: bash runs with pipefail, so the step exits with npm's status, not tee's.
+          npm test --silent -- --full | tee "$RUNNER_TEMP/suite.log"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: suite-log-node-${{ matrix.node }}
+          path: ${{ runner.temp }}/suite.log
+          retention-days: 7
+          if-no-files-found: warn
+
+  verdict:
+    needs: [pending, suite]
+    if: always() && github.event_name == 'workflow_dispatch' && needs.pending.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+    steps:
+      - name: Record verdict
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.pending.outputs.sha }}
+          # Empty when the suite job never started, was cancelled, timed out or
+          # lost its runner: all map to error.
+          SUITE_OUTCOME: ${{ needs.suite.outputs.outcome }}
+        run: |
+          case "$SUITE_OUTCOME" in
+            success) state=success; desc="macOS full suite passed" ;;
+            failure) state=failure; desc="macOS full suite failed" ;;
+            *) state=error; desc="macOS full suite did not run to a verdict" ;;
+          esac
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$SHA" \
+            -f state="$state" \
+            -f context=macos-release-check \
+            -f target_url="$RUN_URL" \
+            -f description="$desc"

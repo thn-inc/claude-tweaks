@@ -7,7 +7,7 @@
 // so a worktree-isolated session's compound-Bash refusal on hand-rolling `gh api graphql` with bound
 // variables has a single-command escape hatch here too. Zero runtime npm deps.
 //
-// Usage: resolve-foreign-blockers.js <owner/name#N>[,<owner/name#N2>,...] [--repo owner/name] [--help]
+// Usage: resolve-foreign-blockers.js <owner/name#N>[,<owner/name#N2>,...] [--repo [host/]owner/name] [--help]
 // A comma-joined list (no spaces) batches every ref into ONE aliased GraphQL call — never more than one
 // gh call regardless of how many refs are passed. The list is deduplicated case-insensitively, keyed by
 // the lowercased 'owner/name#N'. A ref whose number is above 2147483647 (GraphQL's Int ceiling) is
@@ -30,7 +30,7 @@ const { fetchCrossRepoStates } = require('./lib/issues/cross-repo-states');
 const { distinctCrossRepoRefs } = require('./lib/issues/cross-repo-refs');
 const { makeNumberListCli } = require('./lib/number-list-cli');
 
-const USAGE = 'usage: resolve-foreign-blockers.js <owner/name#N>[,<owner/name#N2>,...] [--repo owner/name] [--help]\n';
+const USAGE = 'usage: resolve-foreign-blockers.js <owner/name#N>[,<owner/name#N2>,...] [--repo [host/]owner/name] [--help]\n';
 
 // 'a/b#1,A/B#1,c/d#2' -> ['a/b#1', 'c/d#2'] (distinct crossRepoKeys), or null on any entry that is
 // not a well-formed owner/name#N. The number's range is checked by fetchCrossRepoStates, not here.
