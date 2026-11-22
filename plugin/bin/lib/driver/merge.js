@@ -27,6 +27,7 @@ const { confirmFromFile } = require('../dispatch/merge-verdict');
 const { classifyRollup, normalizeEntry } = require('../pr-checks/classify');
 const { ensureLabelPayload } = require('../issues/labels');
 const { LABELS } = require('../issues/record-vocabulary');
+const { widenings } = require('../express/eligibility');
 const { parseWorktreeList, findWorktreeEntry } = require('../hooks/worktree-reap');
 const { safeReal } = require('../hooks/worktree-detect');
 const { callerDeps, scalarValue, EXIT_OK } = require('../../resolve-policy');
@@ -229,6 +230,8 @@ async function consultSupplier(s) {
 
 // Entry, in the order the spec fixes. Each refusal is `pending-review` with no label, comment,
 // ready or merge call made. The supplier check comes first and makes no call of any kind.
+// A widened admission (#6018) stops right after the two authorization checks: no judgment worker
+// launches and nothing merges.
 async function entry(s) {
   const { ctx, deps } = s;
   s.stage = 'merge-entry';
@@ -244,6 +247,23 @@ async function entry(s) {
   if (labels.unreadable) return stop(s, 'merge-entry', 'labels-unreadable', labels.unreadable);
   if (!labels.names.includes(AUTHORIZING_LABEL)) return stop(s, 'merge-entry', 'not-authorized', `record lacks ${AUTHORIZING_LABEL}`);
   if (!labels.names.includes(LABELS.AUTO_BUILD)) return stop(s, 'merge-entry', 'not-authorized', `record lacks ${LABELS.AUTO_BUILD}`);
+  // The widening list is the admission's (ctx.widenedBy, an array the eligibility step sets) unioned
+  // with a recompute from the live labels at the widest options (riskCeiling 'high', anyCeremony true):
+  // any live risk:medium/risk:high or recognised non-fast-lane ceremony label now is a widening, whatever
+  // the run's policy, since such a record was either admitted widened or had its labels changed after
+  // admission. A missing list, or one that is not an array of strings, is unreadable and stops too.
+  // Size widening (#5224) is not read.
+  if (!Array.isArray(ctx.widenedBy) || !ctx.widenedBy.every((w) => typeof w === 'string')) return stop(s, 'merge-entry', 'widened-admission', 'widening list missing or unreadable');
+  const widened = [...new Set([...ctx.widenedBy, ...widenings({ labels: labels.names, riskCeiling: 'high', anyCeremony: true })])];
+  if (widened.length) {
+    // Word the two sources apart: an entry the admission recorded was admitted widened; one only the
+    // live-label recompute added was not widened at admission (a label changed since).
+    const live = widened.filter((w) => !ctx.widenedBy.includes(w));
+    const parts = [];
+    if (ctx.widenedBy.length) parts.push(`admitted widened by ${ctx.widenedBy.join(', ')}`);
+    if (live.length) parts.push(`live labels widen by ${live.join(', ')} (not at admission)`);
+    return stop(s, 'merge-entry', 'widened-admission', parts.join('; '));
+  }
   if (ctx.summaryLogged !== true) return stop(s, 'merge-entry', 'summary-entry-missing', 'the summary decision entry was not logged');
   const notPrFirst = readIntegrationModel(s);
   if (notPrFirst) return stop(s, 'merge-entry', 'not-pr-first', notPrFirst);
@@ -1095,6 +1115,12 @@ async function mergeCall(s, mode) {
   if (!labels.names.includes(LABELS.AUTO_BUILD)) {
     return stop(s, 'merge-call', 'not-authorized', `record lacks ${LABELS.AUTO_BUILD} at the pre-merge read`);
   }
+  // A widening label added since entry (during the supplier call or the watch) cannot take the merge
+  // path either: the same widest recompute as the entry's (#6018).
+  const lateWidened = widenings({ labels: labels.names, riskCeiling: 'high', anyCeremony: true });
+  if (lateWidened.length) {
+    return stop(s, 'merge-call', 'widened-admission', `widened by ${lateWidened.join(', ')} at the pre-merge read`);
+  }
   const auto = mode === 'auto';
   try {
     deps.ghCreate(['pr', 'merge', String(ctx.pr), '--repo', ctx.repo, ...(auto ? ['--auto'] : []), '--squash',
@@ -1590,7 +1616,7 @@ const REASONS = Object.freeze([
   'state-read-failed', 'pr-not-open', 'moving-target', 'checks-read-failed', 'check-failed', 'checks-pending-timeout',
   'draft-skip-without-ready-trigger', 'conflict', 'merge-refused', 'drain-overlap', 'near-duplicate',
   'in-flight-unreadable', 'in-flight-read-failed', 'awaiting-local-acceptance', 'park-failed', 'already-parked', 'park-state-unknown',
-  'unclassified',
+  'widened-admission', 'unclassified',
 ]);
 const PREFIXED_REASONS = Object.freeze(['check-failed', 'draft-skip-without-ready-trigger']);
 

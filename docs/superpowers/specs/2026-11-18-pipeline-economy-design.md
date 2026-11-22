@@ -273,6 +273,18 @@ Records #6018 (the risk ceiling, the ceremony relaxation and the `pending-review
 - **Builds:** the cause of the six-day gap, found and fixed. Dispatch routes each admitted member of a bundle group, not only single-record groups.
 - **Done when:** every record `drive.js --check` admits in a drain is driven or carries a logged reason.
 
+## Phase 8: Specified
+
+Records #6011 (keep driver-routable records out of fast-lane bundles) and #6012 (the cost report shows whether admitted records reached the driver), no parent; #5571 extended with the drain check.
+
+The six-day gap had no code-defect cause. The 12 November driver runs were started by hand (`drive-N` run directories). Dispatch's route (#5232) first shipped in v6.171.0, which was never installed: the plugin cache went from 6.170.0 to 6.172.0 on 17 November. All 18 dispatch sessions from 15 November 23:06 to 17 November 07:27 ran v6.170.0, which has no route. No dispatch firing ran from 17 November 07:27 to 21 November, and no run directory holds a `Driver route (skipped)` line. On 21 November `drive.js --check` admitted 15 of 142 records, and a grouping replay put all 15 in singleton groups.
+
+- **Builds:**
+  - #6011: the queue pull keeps a record the driver would take out of fast-lane bundles, so it reaches the route as a singleton group.
+  - #6012: the cost report's funnel section counts driver runs (dispatch-routed and standalone) and dispatch firings by plugin version, and flags admitted records that nothing routed.
+  - #5571: the live drain must also drive, or log a skip for, every admitted group it selects.
+- **Phase 7 depends on #6011.** Raising `express-driver-max-size` to `medium` without it bundles fast-lane records the driver would take.
+
 ## Phase 9 — Implementer tier from the record
 
 ## Phase 9: Specified
@@ -309,6 +321,17 @@ Records #5998 (each lens's confirmed-finding rate over its last 20 runs, and a p
 
 ## Phase 11 — Factory layer and run facts
 
+## Phase 11: Specified
+
+Records #6006 (the factory layer in the resolver), #6007 (every other policy reader sees it), #6008 (the ceiling rule), #6009 (tokens by model, list-price cost and minutes in the run manifest) and #6010 (model and effort per role in the run manifest), under parent #6004. #6007 is blocked by #6006, #6008 by #6006 and #6007, #6009 by #5647 and #5967, and #6010 by #6009 and #5647.
+
+- **Decided while specifying:**
+  - The factory layer is the variable `CLAUDE_TWEAKS_FACTORY_POLICY`, carrying text in `policy.yml`'s own format, and the file `~/.claude-tweaks/factory-policy.yml`. The variable wins over the file per key, and block keys merge per row.
+  - The factory layer may not set `merge-authorization`, `control-mode` or `deploy-command`. Every other key is settable, `autonomy` and the trust lists included.
+  - A ceiling bounds repository and run-config values, never the schema default: a factory value above the default is a deliberate override of the default.
+  - The manifest stays at `v: 1`, because its Compatibility rule adds fields without a bump. Cost re-reads the transcripts' per-request rows and leaves `timing.json` unchanged. A partial cost may be replaced once by a complete one.
+- **Not covered:** Dispatch reading the cost fields. Its manifest parser stores nine named fields and ignores the rest (thn-inc/dispatch #1958), so that half of the done-when is a change in thn-inc/dispatch.
+
 - **Builds:** the layer and the ceiling rule in `## Policy model`; and in the run manifest (#5903): lane, model and effort per role, tokens by model, list-price cost, minutes and a hash of the resolved policy.
 - **Done when:** a value set only in the factory layer resolves in a repository that does not set it, and Dispatch reads a run's cost from its manifest.
 
@@ -317,8 +340,15 @@ Records #5998 (each lens's confirmed-finding rate over its last 20 runs, and a p
 ## Phase 12 — The plan is made with the spec
 
 - **Builds:** `/claude-tweaks:specify` writes the task list and runs the plan review while a human is present. A record that carries a reviewed plan skips the build's plan step.
-- **Needs:** its own design.
 - **Expected effect:** the plan step (12 minutes, 11.7M tokens) and the 43 mid-run stops leave the build.
+
+## Phase 12: Specified
+
+Records #6051 (the asked-classes split: `_shared/planning-decisions.md`, the `planning-decisions` policy value and build-time plan review routing), #6052 (the plan store: `plan-store.js`, the `Plan:` body line, the spec hash and the staleness verdict), #6053 (the plan-less lane predicate), #6054 (the acceptance packet lists every `Settled at planning:` call), #6055 (reconcile deletes a closed record's plan ref), #6056 (specify plans and reviews in shaping mode under `plan-at-specify`), #6057 (the same in decomposition mode), #6059 (an interactive `/specify` answers a record held for a planning question) and #6060 (`/build` reuses a valid specify-time plan), under parent #6050, which supersedes #5292. #6054 is blocked by #6051; #6055 by #6052; #6056 by #6051, #6052, #6053 and #4702; #6057 and #6059 by #6056; #6060 by #6052 and #6056. #6052 and #6060 carry an unresolved fail-closed finding and are not `ready` until it is settled.
+
+- **Builds:** two policy values, `planning-decisions: ask-all | asked-classes` and `plan-at-specify: off | on`, both defaulting to today's behaviour. Plan review asks the human only design-level, hard-to-undo (a flagged risk category) or contradictory questions and settles the rest, listing each call at acceptance. Specify writes and reviews the plan with dispatched agents, stores it on `refs/claude-tweaks/plans/{n}`, and `/build` reuses it when a mechanical check says it is still valid.
+- **Done when:** over the first 20 records built with `plan-at-specify: on`, no build stopped at plan review on a question outside the asked classes, the build's median minutes fell by at least 10, the three quality guards are no worse, and the share of specify-time plans the build reused is recorded (under 50% means the design is revisited before the default changes).
+- **Waits for:** #4702, which edits `shaping-mode.md`.
 
 ## Phase 13 — The driver is the drain
 

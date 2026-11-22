@@ -259,6 +259,16 @@ or idle-gap check, and never lets it use up a pending compaction marker;
 chaining on "the previous call", or counting calls, grep a real store for `"model":"<synthetic>"`
 and decide which tallies such a line belongs in.
 
+**A rule over every assistant line meets the same lines (#5990).** `transcriptEffort` in
+`tools/review-replay/score.js` reads a judge's effort from each assistant line's top-level `effort`
+field and returns `unrecorded` when any line lacks it. A `<synthetic>` error line carries
+`perTurnEffort` but never `effort`, so one rate-limit line would have scored a judge that ran at the
+right effort as `effort-mismatch`. The spec had asserted that every assistant line carries `effort`
+from a probe of one transcript, and only the whole-branch review caught the gap (PR #6014). So a
+rule of the form "every turn has X" or "no turn differs" is a third case for the grep above,
+beside chaining and counting: probe the shape on a transcript that holds a `<synthetic>` line, and
+decide whether the rule ranges over it.
+
 ## One Claude Code version does not speak for another
 
 The same event can reach a transcript through a different carrier on a different release, so a
