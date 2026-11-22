@@ -90,12 +90,15 @@ test('pointer: resolves review-lens-selection and reads step3-lens-selection.md 
 
 // ---- the sub-file ----
 
+const PROSE_SKIP_REPLACED = [/"skip a lens if it doesn't apply to this change type" and the `low`-tier no-executable-content skip do not apply/, 'the prose skip rule and the low-tier skip are replaced under adaptive'];
 const SUB_FACTS = [
   [/only when `review-lens-selection` resolves `adaptive`/, 'the file is read only when the key resolves adaptive'],
-  [/bin\/review-lens-select\.js" --run "\$PIPELINE_RUN_DIR" --tier \{tier\} --base \{base\} \[--risk-flags \{risk-flags\}\]/, 'the one CLI call with its flags'],
-  [/leave the flag out when the record has none/, '--risk-flags is omitted, never empty'],
+  [/bin\/review-lens-select\.js" --run "\$PIPELINE_RUN_DIR" --tier \{tier\} --base \{base\} \[--risk-flags "\{risk-flags\}"\]/, 'the one CLI call with its flags, the risk-flags value quoted'],
+  [/leave the flag out when the record has no `Risk-flags:` line; `none` or an empty value reads as no flags too/, '--risk-flags is omitted without a line, and none or empty read as no flags'],
+  [/A value holding anything but lowercase letters, digits, `-`, `,` and spaces goes in as `"malformed"`, which reads as flagged/, 'an unsafe value never reaches the shell and reads as flagged'],
+  [/Standalone \(no run directory\), skip the CLI, which needs `--run`: dispatch the tier's whole lens set/, 'standalone skips the CLI and dispatches the tier set'],
   [/Dispatch exactly the lenses in `selected`, on every path: the Task dispatch, and the `lenses` the workflow/, 'the Task path and the workflow lenses args read the same selected set (AC6.2)'],
-  [/"skip a lens if it doesn't apply to this change type" and the `low`-tier no-executable-content skip do not apply/, 'the prose skip rule and the low-tier skip are replaced under adaptive'],
+  PROSE_SKIP_REPLACED,
   [/When the CLI exits 1 or 2, or its output is not one parseable JSON line, dispatch the full tier set and log one `AUTO` line, never a `SKIP`/, 'a CLI failure dispatches the full tier set with one AUTO line, never a SKIP'],
   [/--status AUTO --step "Step 3 lens selection" --text "review-lens-select exit \{n\}: full tier set dispatched"/, 'the AUTO line names the exit'],
   [/The CLI is not run again\. The workflow path's Task fallback reads the same output/, 'the CLI runs once per review and the workflow fallback reuses its output'],
@@ -117,11 +120,22 @@ test('AC6.2: the Task path and the workflow lenses args read the same CLI output
 
 test('adaptive replaces the prose skip rule', () => {
   const sub = read(SUB_FILE);
-  assert.match(sub, /do not apply/);
+  assert.match(sub, PROSE_SKIP_REPLACED[0], PROSE_SKIP_REPLACED[1]);
   const variants = read(VARIANTS);
   const FACTS = [[/Under `review-lens-selection: adaptive` the CLI's `executableContent` fact replaces this skip \(`step3-lens-selection\.md`\); under `tier` it is unchanged\./, 'the low-tier paragraph names adaptive and keeps tier unchanged']];
   assert.deepEqual(missingFactsOf(FACTS)(variants), []);
   assertEachPatternGoesRed(variants, FACTS, missingFactsOf(FACTS));
+});
+
+test("code-mode-steps.md's prose skip rule names adaptive as its exception at every site", () => {
+  const text = read('plugin/skills/review/code-mode-steps.md');
+  const QUALIFIER = '(not under `review-lens-selection: adaptive` — `step3-lens-selection.md`)';
+  const sites = text.split('\n').filter((l) => /[Ss]kip (?:review )?lenses that don't apply to the type of change/.test(l));
+  assert.equal(sites.length, 2, 'the two prose skip sites');
+  for (const l of sites) assert.ok(l.includes(QUALIFIER), `unqualified prose skip rule: ${l}`);
+  const mutated = text.replace(` ${QUALIFIER}`, '');
+  assert.notEqual(mutated, text);
+  assert.ok(mutated.split('\n').filter((l) => /[Ss]kip (?:review )?lenses that don't apply/.test(l)).some((l) => !l.includes(QUALIFIER)), 'dropping one qualifier must be caught');
 });
 
 test('fallback: a non-zero CLI exit dispatches the full tier set', () => {
