@@ -50,4 +50,5 @@ files:
 
 ## Origin
 - Created during `/claude-tweaks:build` of record #6053 (2026-11-22). The `/specify` call that consumes the verdict is a separate record (#6053's Non-Goals).
+- Updated during the build of #6019 (run `2026-11-22T163434-record-6019`): the verb also resolves `express-driver-protected-paths`, and under `reviewer` a record whose protected Key Files are all merge-time families reads `driver` only with the reviewer step on for it.
 - Related journeys: `ship-a-small-record-on-the-express-lane-4025.md` (the express lane this answers for), `drive-a-named-record-to-a-draft-pr-5218.md` (the driver lane), `give-an-agent-filed-record-a-key-files-list-2975.md` (the `### Key Files` section all three lanes read).
