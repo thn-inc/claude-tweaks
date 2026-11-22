@@ -6,7 +6,7 @@ const path = require('node:path');
 const {
   EXPRESS_MAX_KEY_FILES, REASONS, isProtectedPath, evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification,
   BOUND_REASONS, SIZE_CEILINGS, isBeyondExpressBounds, isInsideLaneBounds, isReadableSizeCeiling, isReadableKeyFileLimit,
-  RISK_CEILINGS, isReadableRiskCeiling, widenings,
+  RISK_CEILINGS, isReadableRiskCeiling, widenings, BUILD_TIME_PROTECTED_RES, isBuildTimeProtectedPath,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'express', 'eligibility.js'));
 const { resolveBlastRadiusConfig } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'blast-radius-cli.js'));
 const { POLICY_KEYS } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
@@ -549,4 +549,120 @@ test('widenings (#6018)', () => {
   assert.deepStrictEqual(w([{ name: 'risk:medium' }, { name: 'ceremony:standard' }], { riskCeiling: 'medium', anyCeremony: true }), ['risk', 'ceremony']);
   assert.deepStrictEqual(w([{ name: 'risk:low' }, { name: 'risk:medium' }], { riskCeiling: 'low' }), ['risk']);
   for (const riskCeiling of ['Medium', null, 'toString', undefined]) assert.deepStrictEqual(w(['risk:high'], { riskCeiling }), [], String(riskCeiling));
+});
+
+// #6019: the pipeline driver may take a merge-time protected path behind its reviewer; build-time families still refuse.
+const REVIEWER = { ...DRIVER, protectedPathsNeedReviewer: true };
+const MERGE_TIME = ['plugin/hooks/x.js', 'hooks.js', 'a/hooks.sh', 'plugin/skills/_shared/a.md', 'CODEOWNERS', '.claude-tweaks/policy.yml', '.claude-tweaks/verify-scope.json'];
+const BUILD_TIME = ['.github/workflows/ci.yml', '.gitlab-ci.yml', '.circleci/config.yml', '.githooks/pre-commit', '.husky/pre-commit', 'package.json', '.claude/settings.json', '.mcp.json'];
+const withKey = (p) => record(ELIGIBLE_LABELS, [p]);
+
+test("AC1.1 (#6019, eligibility half): without the option, or with it false, a hooks/, .github/ or package.json Key File gives today's verdict", () => {
+  for (const p of ['plugin/hooks/x.js', '.github/workflows/ci.yml', 'package.json']) {
+    const r = withKey(p);
+    const today = evaluateRecordEligibility(r, DRIVER);
+    assert.ok(today.reasons.includes(`protected path: ${p}`), p);
+    assert.deepStrictEqual(evaluateRecordEligibility(r, { ...DRIVER, protectedPathsNeedReviewer: false }), today);
+    assert.deepStrictEqual(evaluateRecordEligibility(r, { ...DRIVER, protectedPathsNeedReviewer: 'true' }), today);
+    assert.ok(evaluateRecordEligibility(r, OPTS).reasons.includes(`protected path: ${p}`), p);
+  }
+});
+
+test('AC10.1 (#6019, eligibility half): under the option each merge-time Key File is eligible and widens by protected-path', () => {
+  for (const p of MERGE_TIME) {
+    const r = withKey(p);
+    assert.strictEqual(evaluateRecordEligibility(r, REVIEWER).eligible, true, p);
+    assert.deepStrictEqual(widenings({ labels: r.labels, keyFiles: [p], protectedPathsNeedReviewer: true }), ['protected-path'], p);
+  }
+});
+
+test('AC9.1 (#6019, eligibility half): under the option each build-time Key File still refuses with protected path', () => {
+  for (const p of [...BUILD_TIME, './.github/workflows/ci.yml', 'plugin/x/../../.github/ci.yml', '.github\\ci.yml']) {
+    assert.ok(evaluateRecordEligibility(withKey(p), REVIEWER).reasons.includes(`protected path: ${p}`), p);
+  }
+  for (const p of BUILD_TIME) assert.strictEqual(isBuildTimeProtectedPath(p), true, p);
+  for (const p of [...MERGE_TIME, 'src/a.js']) assert.strictEqual(isBuildTimeProtectedPath(p), false, p);
+});
+
+test('BUILD_TIME_PROTECTED_RES is frozen and inside the protected list (#6019)', () => {
+  assert.ok(Object.isFrozen(BUILD_TIME_PROTECTED_RES));
+  assert.strictEqual(BUILD_TIME_PROTECTED_RES.length, 8);
+  for (const p of [...BUILD_TIME, ...MERGE_TIME]) assert.strictEqual(isProtectedPath(p), true, p);
+  for (const p of MERGE_TIME) assert.strictEqual(isBuildTimeProtectedPath(p), false, p);
+  for (const p of BUILD_TIME) assert.strictEqual(isBuildTimeProtectedPath(p), true, p);
+  const probes = [...BUILD_TIME, ...MERGE_TIME, 'src/a.js'];
+  for (const re of BUILD_TIME_PROTECTED_RES) assert.ok(probes.some((q) => re.test(q)), String(re));
+});
+
+test('AC6.1 (#6019): a merge-sensitive Key File refuses under the option exactly as without it', () => {
+  const r = withKey('src/a.js');
+  const a = evaluateRecordEligibility(r, { ...REVIEWER, sensitivePaths: ['src/**'] });
+  const b = evaluateRecordEligibility(r, { ...DRIVER, sensitivePaths: ['src/**'] });
+  assert.deepStrictEqual(a.reasons, b.reasons);
+  assert.ok(a.reasons.includes('merge-sensitive path: src/a.js'));
+});
+
+test('widenings protected-path (#6019)', () => {
+  const k = ['plugin/hooks/x.js'];
+  assert.deepStrictEqual(widenings({ labels: ELIGIBLE_LABELS, keyFiles: k }), []);
+  assert.deepStrictEqual(widenings({ labels: ELIGIBLE_LABELS, keyFiles: k, protectedPathsNeedReviewer: false }), []);
+  assert.deepStrictEqual(widenings({ labels: ELIGIBLE_LABELS, keyFiles: ['src/a.js'], protectedPathsNeedReviewer: true }), []);
+  assert.deepStrictEqual(widenings({ labels: ELIGIBLE_LABELS, keyFiles: 'plugin/hooks/x.js', protectedPathsNeedReviewer: true }), []);
+  assert.deepStrictEqual(widenings({ labels: ELIGIBLE_LABELS, protectedPathsNeedReviewer: true }), []);
+  assert.deepStrictEqual(widenings({ labels: ['risk:medium'], riskCeiling: 'medium', keyFiles: k, protectedPathsNeedReviewer: true }), ['risk', 'protected-path']);
+});
+
+test('AC3.1 (#6019, bounds half): reportProtectedPaths moves a merge-time Key File into protectedPaths', () => {
+  const p = 'plugin/skills/_shared/a.md';
+  const o = { ...BOUNDS, keyFiles: [p] };
+  const on = evaluateDiffBounds([f(p, 10)], { ...o, reportProtectedPaths: true });
+  assert.strictEqual(on.withinBounds, true);
+  assert.deepStrictEqual(on.protectedPaths, [p]);
+  assert.deepStrictEqual(on.violations, []);
+  const off = evaluateDiffBounds([f(p, 10)], o);
+  assert.deepStrictEqual(off.violations, [`protected path: ${p}`]);
+  assert.strictEqual('protectedPaths' in off, false);
+  assert.strictEqual('protectedPaths' in evaluateDiffBounds([f(p, 10)], { ...o, reportProtectedPaths: 'true' }), false);
+});
+
+test('AC4.1 (#6019, bounds half): a protected test file no Key File named is reported under the option', () => {
+  const out = evaluateDiffBounds([f('src/a.js', 5), f('plugin/hooks/x.test.js', 30)], { ...BOUNDS, keyFiles: ['src/a.js'], reportProtectedPaths: true });
+  assert.strictEqual(out.withinBounds, true);
+  assert.deepStrictEqual(out.protectedPaths, ['plugin/hooks/x.test.js']);
+});
+
+test('AC5.1 (#6019): a rename whose oldPath is protected is reported under the option and refused without it', () => {
+  const renamed = { ...f('src/new.js', 3), oldPath: 'plugin/hooks/old.js' };
+  const o = { ...BOUNDS, keyFiles: ['src/new.js'] };
+  const on = evaluateDiffBounds([renamed], { ...o, reportProtectedPaths: true });
+  assert.strictEqual(on.withinBounds, true);
+  assert.deepStrictEqual(on.protectedPaths, ['plugin/hooks/old.js']);
+  assert.ok(evaluateDiffBounds([renamed], o).violations.includes('protected path: plugin/hooks/old.js'));
+  const ci = { ...f('src/new.js', 3), oldPath: '.github/workflows/ci.yml' };
+  const out = evaluateDiffBounds([ci], { ...o, reportProtectedPaths: true });
+  assert.ok(out.violations.includes('protected path: .github/workflows/ci.yml'));
+  assert.deepStrictEqual(out.protectedPaths, []);
+});
+
+test('protectedPaths lists each path once, in encounter order (#6019)', () => {
+  const a = { ...f('plugin/hooks/a.js', 3), oldPath: 'plugin/hooks/b.js' };
+  const b = { ...f('plugin/hooks/b.js', 3), oldPath: 'plugin/hooks/a.js' };
+  const out = evaluateDiffBounds([a, b], { ...BOUNDS, keyFiles: ['plugin/hooks/a.js', 'plugin/hooks/b.js'], reportProtectedPaths: true });
+  assert.deepStrictEqual(out.protectedPaths, ['plugin/hooks/a.js', 'plugin/hooks/b.js']);
+});
+
+test('AC7.1 (#6019): a path both protected and merge-sensitive stays a violation under the option', () => {
+  const p = 'plugin/hooks/x.js';
+  const out = evaluateDiffBounds([f(p, 3)], { ...BOUNDS, keyFiles: [p], sensitivePaths: ['plugin/hooks/**'], reportProtectedPaths: true });
+  assert.ok(out.violations.includes(`protected path: ${p}`));
+  assert.ok(out.violations.includes(`merge-sensitive path: ${p}`));
+  assert.deepStrictEqual(out.protectedPaths, []);
+});
+
+test('AC9.2 (#6019, bounds half): build-time paths stay violations under the option', () => {
+  for (const p of BUILD_TIME) {
+    const out = evaluateDiffBounds([f(p, 1)], { ...BOUNDS, keyFiles: [p], reportProtectedPaths: true });
+    assert.ok(out.violations.includes(`protected path: ${p}`), p);
+    assert.deepStrictEqual(out.protectedPaths, [], p);
+  }
 });
