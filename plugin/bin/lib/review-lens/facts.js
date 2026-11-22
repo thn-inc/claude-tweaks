@@ -48,7 +48,7 @@ const FACT_NAMES = Object.freeze([
 const KIND_NAMES = ['prose', 'source', 'test', 'config', 'workflow'];
 // How far above a spawn line a loop header is searched (and the converse for a header added around a spawn).
 const LOOP_LOOKBACK_LINES = 40;
-const PER_CALL_PATH_RES = [/(^|\/)hooks\.js$/, /(^|\/)lib\/hooks\//, /(^|\/)tools\/run-tests\.js$/, /(^|\/)bin\/verify\.js$/];
+const PER_CALL_PATH_RES = [/(^|\/)hooks\.(?:js|sh)$/, /(^|\/)lib\/hooks\//, /(^|\/)tools\/run-tests\.js$/, /(^|\/)bin\/verify\.js$/];
 
 const PROSE_EXT_RE = /\.(?:md|markdown|txt)$/i;
 const WORKFLOW_RE = /(^|\/)\.github\/workflows\//;
@@ -63,9 +63,9 @@ function classifyPathKind(p) {
   return 'config';
 }
 
-// An executable prose line: a `node -e`, or a command a reader would run — leading or backticked git/gh/npm/npx/bash/
-// curl/`sh -c`, or a `$ ` prompt line. Alternations are fixed words; the backtick body is one negated class.
-const CMD = '(?:git|gh|npm|npx|bash|curl|node\\s+-e|sh\\s+-c)';
+// An executable prose line: step3-tier-variants.md's "a `git`, `gh`, or other shell invocation" — leading or backticked
+// git/gh/npm/npx/bash/curl/any `node`/python/python3/pwsh/`sh -c`, a `node -e` anywhere, or a `$ ` prompt line. Alternations are fixed words; the backtick body is one negated class.
+const CMD = '(?:git|gh|npm|npx|bash|curl|node|python3?|pwsh|sh\\s+-c)';
 const LEADING_CMD_RE = new RegExp(`^[ \\t]*(?:\\$[ \\t]+)?${CMD}[ \\t]`);
 const PROMPT_RE = /^[ \t]*\$[ \t]+\S/;
 const BACKTICK_CMD_RE = new RegExp(`\`[ \\t]*(?:\\$[ \\t]+)?${CMD}\\b[^\`]*\``);
@@ -76,7 +76,9 @@ function isExecutableProseLine(line) {
   return LEADING_CMD_RE.test(s) || PROMPT_RE.test(s) || BACKTICK_CMD_RE.test(s) || NODE_E_RE.test(s);
 }
 
-const SPAWN_RE = /\bchild_process\b|\b(?:execFileSync|execSync|spawnSync|spawn|exec)\(/;
+// A spawn: the child_process module, execFileSync/execSync/spawnSync/spawn/execFile on any receiver, and `exec(` bare or on a
+// child_process receiver (`cp`, `childProcess`, `child_process`). Another receiver's `.exec(` (a RegExp) is not a spawn.
+const SPAWN_RE = /\bchild_process\b|\b(?:execFileSync|execSync|spawnSync|spawn|execFile)\(|(?<![\w$.])exec\(|\b(?:cp|childProcess)\.exec\(/;
 const GIT_ARGV_RE = /['"`](?:git|gh)['"`][ \t]*,/;
 const INPUT_RE = /\bprocess\.(?:argv|env)\b|\breadFileSync\b|\bstdin\b/;
 const PATH_CALL_RE = /\bpath\.(?:join|resolve)\(([^)]*)\)/g;
@@ -94,8 +96,9 @@ function handlesInput(l) {
 }
 
 // Line numbers inside a fenced code block (markers included), CommonMark-style: a run of 3+ backticks or tildes opens,
-// a run of the same char at least as long with nothing after it closes. An unclosed fence runs to the end.
-const FENCE_OPEN_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+// a run of the same char at least as long with nothing after it closes (indentation ignored on both). An unclosed fence runs to the end.
+// Any leading indentation is accepted: this repo's skill prose nests fences inside list items (4+ spaces).
+const FENCE_OPEN_RE = /^[ \t]*(`{3,}|~{3,})(.*)$/;
 function fencedLineNumbers(text) {
   const inside = new Set();
   let open = null;
@@ -115,7 +118,7 @@ function fencedLineNumbers(text) {
 
 const HUNK_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
-// Per `diff --git` section of a -U0 patch: { added: [{n, text}], deleted: [{n, text}] }, n the post-/pre-image line.
+// Per `diff --git` section of a -U0 patch (context lines, which a user's `diff.interHunkContext` can add despite -U0, advance both counters): { added: [{n, text}], deleted: [{n, text}] }, n the post-/pre-image line.
 function parsePatch(patch) {
   const sections = [];
   let cur = null;
@@ -135,7 +138,8 @@ function parsePatch(patch) {
       oldN = Number(h[1]);
       newN = Number(h[3]);
       inHunk = true;
-    } else if (inHunk && line[0] === '+') cur.added.push({ n: newN++, text: line.slice(1) });
+    } else if (inHunk && line[0] === ' ') { oldN++; newN++; }
+    else if (inHunk && line[0] === '+') cur.added.push({ n: newN++, text: line.slice(1) });
     else if (inHunk && line[0] === '-') cur.deleted.push({ n: oldN++, text: line.slice(1) });
   }
   return sections;
@@ -196,7 +200,8 @@ function computeFacts({ cwd, base, head = 'HEAD', riskFlags = [], riskPolicy, gi
       kind: classifyPathKind(r.paths[r.paths.length - 1]),
     }));
     stage = 'addedLines';
-    sections = parsePatch(run(['diff', '-U0', '--no-color', '-M', '--no-ext-diff', '--end-of-options', range, '--']));
+    sections = parsePatch(run(['diff', '-U0', '--inter-hunk-context=0', '--no-color', '-M', '--no-ext-diff', '--end-of-options', range, '--']));
+    // A file<->symlink typechange prints two sections for one entry, so it lands here and keeps the full tier set (safe).
     if (sections.length !== entries.length) throw new Error(`diff sections (${sections.length}) do not match changed paths (${entries.length})`);
   } catch (err) {
     return fail(err);
@@ -237,6 +242,7 @@ function computeFacts({ cwd, base, head = 'HEAD', riskFlags = [], riskPolicy, gi
       && hasLoopSpawn(show(head, e.path), new Set(added.map((l) => l.n)))));
     compute('perCallPath', () => entries.some((e) => e.kind === 'source' && PER_CALL_PATH_RES.some((re) => re.test(e.path))));
     compute('riskPathTouched', () => {
+      if (riskPolicy === undefined) throw new Error('riskPolicy is missing: pass readRiskPolicy\'s result (or { error })');
       if (riskPolicy && riskPolicy.error) throw new Error(`risk-path-globs unreadable: ${riskPolicy.error}`);
       const controlMode = Boolean(riskPolicy && riskPolicy.controlMode === true);
       if (controlMode && riskPolicy.globsInvalid) throw new Error('risk-path-globs is invalid while control mode is on');

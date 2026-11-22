@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { committedRepo } = require('../../helpers/git-fixtures');
 const { computeFacts, classifyPathKind, isExecutableProseLine, FACT_NAMES } = require('../../../plugin/bin/lib/review-lens/facts');
 
@@ -33,9 +34,11 @@ function diffRepo(base, head, { renames = [] } = {}) {
   return { ...repo, base: baseSha };
 }
 
+const OFF = { controlMode: false, pathGlobs: {}, globsInvalid: false };
+
 function factsOf(base, head, opts = {}, extra = {}) {
   const r = diffRepo(base, head, opts);
-  const out = computeFacts({ cwd: r.dir, base: r.base, ...extra });
+  const out = computeFacts({ cwd: r.dir, base: r.base, riskPolicy: OFF, ...extra });
   assert.strictEqual(out.ok, true, JSON.stringify(out));
   return out.facts;
 }
@@ -55,11 +58,32 @@ test('AC10.1: low-tier executable-content fact matches step3-tier-variants.md', 
     ['a deleted line that sat inside a fence', { 'docs/a.md': proseBase },
       { 'docs/a.md': lines('# T', '', '```', '```', 'tail') }, true],
     ['a deleted git line', { 'docs/a.md': lines('# T', 'git status', 'end') }, { 'docs/a.md': lines('# T', 'end') }, true],
+    ['a list-nested fenced line that is not itself a command', { 'docs/a.md': lines('- step', '    ```bash', '    ls', '    ```') },
+      { 'docs/a.md': lines('- step', '    ```bash', '    ls -la', '    ```') }, true],
+    ['a node script command', { 'docs/a.md': lines('# T') }, { 'docs/a.md': lines('# T', 'Run `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --local` first') }, true],
+    ['a leading node command', { 'docs/a.md': lines('# T') }, { 'docs/a.md': lines('# T', 'node bin/x.js --y') }, true],
+    ['a python3 command', { 'docs/a.md': lines('# T') }, { 'docs/a.md': lines('# T', 'Use `python3 x.py` here') }, true],
     ['a deleted plain line', { 'docs/a.md': lines('# T', 'words', 'end') }, { 'docs/a.md': lines('# T', 'end') }, false],
   ];
   for (const [name, base, head, want] of cases) {
     assert.strictEqual(factsOf(base, head).executableContent, want, name);
   }
+});
+
+test('an interHunkContext git config does not shift line numbers; context lines advance both counters', () => {
+  const r = diffRepo({ 'docs/a.md': lines('l1', 'l2', 'l3', 'l4', '```', 'code', '```') },
+    { 'docs/a.md': lines('l1', 'L2', 'l3', 'l4', '```', 'code', 'more', '```') });
+  const env = { ...process.env, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'diff.interHunkContext', GIT_CONFIG_VALUE_0: '5' };
+  const git = (args) => execFileSync('git', ['-C', r.dir, ...args], { encoding: 'utf8', env, maxBuffer: 1 << 26 });
+  const out = computeFacts({ cwd: r.dir, base: r.base, riskPolicy: OFF, git });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.facts.executableContent, true);
+  // The parser alone: a patch that still carries context lines (flag ignored) keeps line numbers right.
+  const patch = ['diff --git a/docs/a.md b/docs/a.md', '@@ -2,5 +2,6 @@', ' l2', '-x', '+L2', ' l4', ' ```', ' code', '+more', ' ```'].join('\n');
+  const fake = (args) => (args.includes('--name-status') ? 'M\0docs/a.md\0' : args[0] === 'show' ? lines('l1', 'l2', 'l3', 'l4', '```', 'code', 'more', '```') : patch);
+  const parsed = computeFacts({ cwd: '.', base: 'b', riskPolicy: OFF, git: fake });
+  assert.strictEqual(parsed.ok, true);
+  assert.strictEqual(parsed.facts.executableContent, true);
 });
 
 test('classifies path kinds', () => {
@@ -115,6 +139,7 @@ test('perCallPath for hook and runner paths', () => {
     assert.strictEqual(factsOf({ [p]: '1;\n' }, { [p]: '2;\n' }).perCallPath, true, p);
   }
   assert.strictEqual(factsOf({ 'docs/lib/hooks/readme.md': 'a\n' }, { 'docs/lib/hooks/readme.md': 'b\n' }).perCallPath, false);
+  assert.strictEqual(factsOf({ 'plugin/bin/hooks.sh': 'a\n' }, { 'plugin/bin/hooks.sh': 'b\n' }).perCallPath, true);
   assert.strictEqual(factsOf({ 'plugin/bin/other.js': '1;\n' }, { 'plugin/bin/other.js': '2;\n' }).perCallPath, false);
 });
 
@@ -130,6 +155,36 @@ test('riskPathTouched from protected paths, Risk-flags and risk-path-globs under
   const flagged = factsOf(...auth, {}, { riskPolicy: off, riskFlags: ['public-contract'] });
   assert.strictEqual(flagged.riskPathTouched, true);
   assert.deepStrictEqual(flagged.riskFlags, ['public-contract']);
+});
+
+test('a missing riskPolicy fails riskPathTouched', () => {
+  const r = diffRepo({ 'a.js': '1;\n' }, { 'a.js': '2;\n' });
+  const out = computeFacts({ cwd: r.dir, base: r.base });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.fact, 'riskPathTouched');
+  assert.match(out.reason, /riskPolicy/);
+});
+
+test('a rename out of a protected path counts through its old path', () => {
+  const f = factsOf({ 'plugin/skills/_shared/x.md': lines('a', 'b', 'c', 'd') }, {}, { renames: [['plugin/skills/_shared/x.md', 'docs/x.md']] });
+  assert.strictEqual(f.paths[0].path, 'docs/x.md');
+  assert.strictEqual(f.riskPathTouched, true);
+});
+
+test('deleting a fenced line from a renamed prose file judges the old path pre-image', () => {
+  const body = lines('# T', 'intro words here', '```', 'code one', 'code two', '```', 'tail');
+  const f = factsOf({ 'old.md': body }, { 'docs/new.md': lines('# T', 'intro words here', '```', 'code two', '```', 'tail') }, { renames: [['old.md', 'docs/new.md']] });
+  assert.strictEqual(f.paths[0].status, 'R');
+  assert.strictEqual(f.executableContent, true);
+});
+
+test('a regex .exec( is not a spawn; bare exec(, cp.exec( and child_process.exec( are', () => {
+  const spawn = (line) => factsOf({ 'a.js': '1;\n' }, { 'a.js': `1;\n${line}\n` }).shellInvocationAdded;
+  assert.strictEqual(spawn('const m = re.exec(x);'), false);
+  assert.strictEqual(spawn("exec('ls');"), true);
+  assert.strictEqual(spawn("cp.exec('ls');"), true);
+  assert.strictEqual(spawn("child_process.exec('ls');"), true);
+  assert.strictEqual(spawn("cp.execFileSync('ls');"), true);
 });
 
 test('newFiles/newModules', () => {
@@ -205,14 +260,14 @@ test('a deleted line is judged against the merge-base pre-image, not the base ti
   r.git('checkout', '-q', '-b', 'topic', b0);
   fs.writeFileSync(doc, lines('# T', '```', '```', 'tail'));
   r.git('commit', '-q', '-am', 'topic');
-  const out = computeFacts({ cwd: r.dir, base: side, head: 'topic' });
+  const out = computeFacts({ cwd: r.dir, base: side, head: 'topic', riskPolicy: OFF });
   assert.strictEqual(out.ok, true);
   assert.strictEqual(out.facts.executableContent, true);
 });
 
 test('empty diff (base == head) is computable and all false', () => {
   const r = diffRepo({ 'a.md': 'x\n' }, {});
-  const out = computeFacts({ cwd: r.dir, base: r.base, head: r.base });
+  const out = computeFacts({ cwd: r.dir, base: r.base, head: r.base, riskPolicy: OFF });
   assert.strictEqual(out.ok, true);
   const f = out.facts;
   assert.deepStrictEqual(f.paths, []);
