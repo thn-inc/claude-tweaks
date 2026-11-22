@@ -162,10 +162,26 @@ test('AC12.1: --run is validated even when --rule skips the policy value', () =>
 
 test('AC12.2: a repeated flag exits 2 naming it', () => {
   const file = LOW_TWO();
-  refused(['--spec-file', file, '--rule', 'lane', '--rule', 'record'], 2, '--rule');
-  refused(['--spec-file', file, '--spec-file', file, '--rule', 'lane'], 2, '--spec-file');
-  refused(['--spec-file', file, '--rule', 'lane', '--run', tmpDir(), '--run', tmpDir()], 2, '--run');
-  refused(['--spec-file', file, '--rule', 'lane', '--from', 'fast', '--from', 'fast'], 2, '--from');
+  refused(['--spec-file', file, '--rule', 'lane', '--rule', 'record'], 2, '--rule given more than once');
+  refused(['--spec-file', file, '--spec-file', file, '--rule', 'lane'], 2, '--spec-file given more than once');
+  refused(['--spec-file', file, '--rule', 'lane', '--run', tmpDir(), '--run', tmpDir()], 2, '--run given more than once');
+  refused(['--spec-file', file, '--rule', 'lane', '--from', 'fast', '--from', 'fast'], 2, '--from given more than once');
+});
+
+test('an invalid implementer-tier value in the run config.yml exits 1 naming the value', () => {
+  const project = scratchProject('');
+  const runDir = tmpDir();
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'implementer-tier: bogus\n');
+  refused(['--spec-file', LOW_TWO(), '--run', runDir], 1, 'bogus', project);
+});
+
+test('a relative --run resolves against the injected cwd', () => {
+  const dir = scratchProject('implementer-tier: record\n');
+  fs.mkdirSync(path.join(dir, 'run2'));
+  fs.writeFileSync(path.join(dir, 'run2', 'config.yml'), 'implementer-tier: lane\n');
+  const out = ok(['--spec-file', LOW_TWO(), '--run', 'run2'], dir);
+  assert.strictEqual(out.rule, 'lane');
+  refused(['--spec-file', LOW_TWO(), '--run', 'no-such-run'], 2, 'does not exist', dir);
 });
 
 test('a valid --run passes and --rule still wins', () => {
@@ -186,9 +202,13 @@ test('invocation errors exit 2 with no stdout', () => {
   refused(['--spec-file', file, '--rule', 'sometimes'], 2, 'sometimes');
   refused(['--spec-file', file, '--rule', 'lane', '--from', 'huge'], 2, 'huge');
   refused(['--spec-file', file, '--bogus'], 2, '--bogus');
-  refused(['--spec-file', file, '--rule'], 2, '--rule');
-  refused(['--spec-file', file, '--rule', '--run'], 2, '--rule');
-  refused(['--spec-file', file, '--rule', '  '], 2, '--rule');
+  refused(['--spec-file', file, '--rule'], 2, '--rule requires a value');
+  refused(['--spec-file', file, '--rule', '--run'], 2, '--rule requires a value');
+  refused(['--spec-file', file, '--rule', '  '], 2, '--rule requires a value');
+  refused(['--spec-file', '  ', '--rule', 'lane'], 2, '--spec-file requires a value');
+  refused(['--spec-file', '--rule', 'lane'], 2, '--spec-file requires a value');
+  refused(['--spec-file', file, '--rule', 'lane', '--run', '  '], 2, '--run requires a value');
+  refused(['--spec-file', file, '--rule', 'lane', '--from', '--run'], 2, '--from requires a value');
 });
 
 test('a glob Key Files entry counts like a directory', () => {
@@ -203,4 +223,39 @@ test('script entry: exact stdout bytes, exit 0, empty stderr', () => {
   assert.strictEqual(res.code, 0);
   assert.strictEqual(res.stderr, '');
   assert.strictEqual(res.stdout, '{"profile":"fast","stepUp":"standard","rule":"lane","size":"low","keyFileCount":2}\n');
+});
+
+test('run() calls no fs mutation API, for success, refusal and --run calls', () => {
+  const { run, realDeps } = require(CLI);
+  const MUTATORS = ['writeFile', 'appendFile', 'mkdir', 'mkdtemp', 'rm', 'rmdir', 'unlink', 'rename', 'copyFile', 'cp', 'symlink', 'link', 'truncate', 'open', 'createWriteStream'];
+  const project = scratchProject('implementer-tier: record\n');
+  const runDir = tmpDir();
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'implementer-tier: lane\n');
+  const file = LOW_TWO();
+  const calls = [];
+  const restores = [];
+  const trap = (obj, name, label) => {
+    if (typeof obj[name] !== 'function') return;
+    const original = obj[name];
+    obj[name] = () => { calls.push(label); throw new Error(`fs mutation ${label} during run()`); };
+    restores.push(() => { obj[name] = original; });
+  };
+  for (const name of MUTATORS) {
+    trap(fs, name, `fs.${name}`);
+    trap(fs, `${name}Sync`, `fs.${name}Sync`);
+    trap(fs.promises, name, `fs.promises.${name}`);
+  }
+  const codes = [];
+  try {
+    const deps = { ...realDeps, stdout: () => {}, stderr: () => {}, cwd: () => project, env: ENV };
+    codes.push(run(['--spec-file', file, '--rule', 'lane'], deps));
+    codes.push(run(['--spec-file', file], deps));
+    codes.push(run(['--spec-file', file, '--run', runDir], deps));
+    codes.push(run(['--spec-file', path.join(project, 'missing.md')], deps));
+    codes.push(run(['--bogus'], deps));
+  } finally {
+    for (const restore of restores) restore();
+  }
+  assert.deepStrictEqual(calls, []);
+  assert.deepStrictEqual(codes, [0, 0, 0, 1, 2]);
 });
