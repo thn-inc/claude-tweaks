@@ -205,6 +205,16 @@ test('a homeDir function wins over env.HOME', () => {
   assert.deepEqual(seen, [path.join('/injected', FACTORY_POLICY_REL_PATH)]);
 });
 
+test('a homeDir function that throws reads as no file, silently, and the variable still supplies the layer', () => {
+  const homeDir = () => { throw new Error('ENOENT: no passwd entry'); };
+  const readFile = () => { throw new Error('must not be read'); };
+  assert.deepEqual(readFactoryPolicy({ env: {}, homeDir, readFile }), { raw: null, origin: null, warnings: [] });
+  assert.deepEqual(
+    readFactoryPolicy({ env: { [FACTORY_POLICY_ENV]: 'autonomy: trusted\n' }, homeDir, readFile }),
+    { raw: 'autonomy: trusted\n', origin: 'env', warnings: [] },
+  );
+});
+
 test('a non-ENOENT read error without a code still warns', () => {
   const result = readFactoryPolicy({ env: { HOME: '/h' }, readFile: () => { throw new Error('boom'); } });
   assert.equal(result.raw, null);

@@ -94,7 +94,12 @@ function isMalformedMapBlock(key, chunks) {
 function factoryFilePath(env, homeDir) {
   const override = env[FACTORY_POLICY_FILE_ENV];
   if (typeof override === 'string' && override !== '') return path.isAbsolute(override) ? { file: override, shown: override } : null;
-  const home = typeof homeDir === 'function' ? homeDir() : env.HOME || env.USERPROFILE;
+  let home;
+  try {
+    home = typeof homeDir === 'function' ? homeDir() : env.HOME || env.USERPROFILE;
+  } catch {
+    return null; // a home lookup that throws (os.homedir() with no HOME and no passwd entry) is no home: no file, never thrown
+  }
   return home ? { file: path.join(home, FACTORY_POLICY_REL_PATH), shown: `~/${FACTORY_POLICY_REL_PATH}` } : null;
 }
 
