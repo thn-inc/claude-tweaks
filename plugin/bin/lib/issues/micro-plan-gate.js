@@ -29,7 +29,7 @@
 // second file.
 //
 // Parse-signal discipline: an absent or partly unparsed Key Files section (keyFileEntries null,
-// or unparsed > 0) and a Risk-flags line that cannot be read are reported as `unreadable`, never
+// or unparsed > 0) and a Risk-flags line that cannot be read (or a non-string body) are reported as `unreadable`, never
 // folded into a pass or into a failed condition. An unreadable input cannot be judged, so its
 // condition is left out of `failed`; `passes` is false either way.
 
@@ -38,7 +38,9 @@ const { parseRiskFlags } = require('./record-risk-flags');
 
 const MICRO_PLAN_CONDITIONS = Object.freeze(['fast-lane-ceremony', 'low-size', 'implementation-file-limit', 'no-risk-flag']);
 const MAX_IMPLEMENTATION_FILES = 1;
-const READ_ONLY_NOTE_RE = /\b(read[ -]only|no change)\b/i;
+// `no change` marks read-only only when not followed by to/in/for: "(modify — no change to
+// callers)" describes an edit, not a read-only entry.
+const READ_ONLY_NOTE_RE = /\b(read[ -]only|no change(?!\s+(?:to|in|for)\b))/i;
 
 // entries: [{path, note}] (extractKeyFileEntries's shape) -> number of implementation files.
 function countImplementationFiles(entries) {
@@ -53,7 +55,7 @@ function countImplementationFiles(entries) {
 function evaluateMicroPlanGate({ ceremony, size, keyFileEntries, body } = {}) {
   const keyFilesReadable = !!keyFileEntries && keyFileEntries.unparsed === 0;
   const risk = parseRiskFlags(body);
-  const riskReadable = risk.status !== 'unknown';
+  const riskReadable = typeof body === 'string' && risk.status !== 'unknown';
 
   const holds = {
     'fast-lane-ceremony': () => ceremony === 'fast-lane',

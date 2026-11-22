@@ -742,24 +742,29 @@ test('extractKeyFileEntries counts a list item with no backticked span as unpars
   assert.deepStrictEqual(extractKeyFileEntries('### Key Files\n\n- `a.js` — ok\n- plain/b.js\n'), { entries: [{ path: 'a.js', note: '— ok' }], unparsed: 1 });
 });
 
-test('extractKeyFileEntries splits the first backticked span from its note and skips template placeholders', () => {
+test('extractKeyFileEntries splits the first backticked span from its note and counts a template placeholder as unparsed', () => {
   assert.deepStrictEqual(
     extractKeyFileEntries('### Key Files\n\n- `plugin/a.js` — new predicate\n- `{path}` — {what changes}\n'),
-    { entries: [{ path: 'plugin/a.js', note: '— new predicate' }], unparsed: 0 },
+    { entries: [{ path: 'plugin/a.js', note: '— new predicate' }], unparsed: 1 },
   );
 });
 
-test('extractKeyFilesSection is the path view of extractKeyFileEntries', () => {
-  const bodies = [
-    '## Technical Approach\n\n### Key Files\n\n- `src/only.js` — the change\n',
-    '## Current State\n\nno key files here\n',
-    '### Key Files\n\n- `a.js`\n- plain.js\n- `{path}` — x\n* `b.js` (modify, c)\n\n### Gotchas\n\n- `z.js`\n',
-    '### Key Files\n\n- `a/tests/` or `tests/`\n',
+test('extractKeyFileEntries reads an unfilled template section as unparsed 1, not as empty', () => {
+  assert.deepStrictEqual(extractKeyFileEntries('### Key Files\n\n- `{path}` — {what changes}\n'), { entries: [], unparsed: 1 });
+});
+
+// Expected values are what extractKeyFilesSection returned at e11c6e29c (before extractKeyFileEntries), so they
+// pin that the path view stayed byte-identical, including for a placeholder-only and an empty section.
+test('extractKeyFilesSection keeps its pre-extractKeyFileEntries results', () => {
+  const cases = [
+    ['## Technical Approach\n\n### Key Files\n\n- `src/only.js` — the change\n', ['src/only.js']],
+    ['## Current State\n\nno key files here\n', []],
+    ['### Key Files\n\n- `a.js`\n- plain.js\n- `{path}` — x\n* `b.js` (modify, c)\n\n### Gotchas\n\n- `z.js`\n', ['a.js', 'b.js']],
+    ['### Key Files\n\n- `a/tests/` or `tests/`\n', ['a/tests/']],
+    ['### Key Files\n\n- `{path}` — {what changes}\n', []],
+    ['### Key Files\n\n### Gotchas\n\n- `x.js`\n', []],
   ];
-  for (const b of bodies) {
-    const r = extractKeyFileEntries(b);
-    assert.deepStrictEqual(extractKeyFilesSection(b), r ? r.entries.map((e) => e.path) : []);
-  }
+  for (const [body, expected] of cases) assert.deepStrictEqual(extractKeyFilesSection(body), expected);
 });
 
 // ── expectsKeyFilesSection (#661) ──────────────────────────────────────────────

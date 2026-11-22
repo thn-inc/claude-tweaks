@@ -38,6 +38,10 @@ test('countImplementationFiles skips entries whose note marks them read-only (#3
   assert.strictEqual(countImplementationFiles([entry('bin/a.js', '— NO CHANGE')]), 0);
   assert.strictEqual(countImplementationFiles([entry('bin/a.js', '— read only')]), 0);
   assert.strictEqual(countImplementationFiles([entry('bin/a.js', '— already changed')]), 1);
+  assert.strictEqual(countImplementationFiles([entry('plugin/bin/a.js', '(modify — no change to callers)')]), 1);
+  assert.strictEqual(countImplementationFiles([entry('plugin/bin/a.js', '(modify — no change in output format)')]), 1);
+  assert.strictEqual(countImplementationFiles([entry('plugin/bin/a.js', '(modify — no change for old callers)')]), 1);
+  assert.strictEqual(countImplementationFiles([entry('plugin/bin/a.js', '(no change.)')]), 0);
 });
 
 test('the #3696 shape passes the gate: one real file plus a read-only second one', () => {
@@ -103,4 +107,28 @@ test('a malformed Risk-flags line is unreadable', () => {
   const body = 'Risk_flags: auth\n';
   assert.strictEqual(parseRiskFlags(body).status, 'unknown');
   assert.deepStrictEqual(evaluateMicroPlanGate({ ...PASSING(), body }), { passes: false, failed: [], unreadable: 'risk-flags' });
+});
+
+test('an unfilled template Key Files section is unreadable (end to end with extractKeyFileEntries)', () => {
+  const { extractKeyFileEntries } = require('../../../plugin/bin/lib/issues/grouping');
+  const keyFileEntries = extractKeyFileEntries('### Key Files\n\n- `{path}` — {what changes}\n');
+  assert.deepStrictEqual(evaluateMicroPlanGate({ ...PASSING(), keyFileEntries }), { passes: false, failed: [], unreadable: 'key-files' });
+});
+
+test('a non-string body fails closed as unreadable risk-flags', () => {
+  for (const body of [undefined, null, 42, {}]) {
+    assert.deepStrictEqual(evaluateMicroPlanGate({ ...PASSING(), body }), { passes: false, failed: [], unreadable: 'risk-flags' });
+  }
+});
+
+test('an unreadable input still reports the other failing conditions', () => {
+  assert.deepStrictEqual(
+    evaluateMicroPlanGate({ ...PASSING(), ceremony: 'standard', keyFileEntries: null }),
+    { passes: false, failed: ['fast-lane-ceremony'], unreadable: 'key-files' },
+  );
+});
+
+test('when Key Files and risk flags are both unreadable, key-files is reported', () => {
+  const r = evaluateMicroPlanGate({ ...PASSING(), keyFileEntries: null, body: 'Risk_flags: auth\n' });
+  assert.deepStrictEqual(r, { passes: false, failed: [], unreadable: 'key-files' });
 });

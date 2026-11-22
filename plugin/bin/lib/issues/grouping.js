@@ -444,8 +444,9 @@ const TEMPLATE_PLACEHOLDER_RE = /^\{.*\}$/;
 // files in backticks, and scraping those would union records on an incidental
 // mention) comes from markdown-blocks.js's shared findSection, at its own default
 // options — the same h2-h4/any-heading-stop shape extractSection reads.
-// `unparsed` counts list items with no backticked span, plus 1 when the section has
-// non-blank text but no list item at all; a template-placeholder item is not counted.
+// `unparsed` counts list items with no backticked span, template-placeholder or empty-span
+// items (no entry is produced for them), plus 1 when the section has non-blank text but no
+// list item at all.
 function extractKeyFileEntries(body) {
   const section = findSection(body, 'Key Files');
   if (section === null) return null;
@@ -464,7 +465,9 @@ function extractKeyFileEntries(body) {
     const backticked = BACKTICKED_RE.exec(item[1]);
     if (!backticked) { unparsed += 1; continue; }
     const file = backticked[1].trim();
-    if (!file || TEMPLATE_PLACEHOLDER_RE.test(file)) continue;
+    // An unfilled template item or an empty span names no file: no entry, but the
+    // section was not read, so it counts as unparsed (an unfilled template must not pass a gate).
+    if (!file || TEMPLATE_PLACEHOLDER_RE.test(file)) { unparsed += 1; continue; }
     entries.push({ path: file, note: item[1].slice(backticked.index + backticked[0].length).trim() });
   }
   if (!sawListItem && section.trim() !== '') unparsed += 1;
