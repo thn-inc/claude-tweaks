@@ -15,12 +15,17 @@
 // records to be closed, so the check ends `local-files-backend`. gh may be
 // absent (local-merge runs no gh preflight): `gh-absent`, no push. No `origin`
 // remote at all ends `no-origin`; a configured origin whose listing fails ends
-// `ls-remote-failed`.
+// `ls-remote-failed`. gh availability is checked before any network call.
+//
+// Record numbers and plan refs share origin's repo: the plan store pushes to `origin`
+// (plan-store/ref.js's DEFAULT_REMOTE) and every work-record CLI resolves its repo from
+// origin through gateOriginRepo, so reading record states from origin's owner/name here
+// is the same derivation, not a second one (#6055 review).
 'use strict';
 const { execFileSyncTimed } = require('./timing');
 const shared = require('../shared-primitives');
 const { readWorkBackend } = require('../work-backend');
-const { gateOriginRepo, ghOptions } = require('../repo-resolve');
+const { gateOriginRepo, ghOptions, ghAvailable } = require('../repo-resolve');
 const { repoPinnedEnv } = require('../hooks/git-exec');
 const { PLAN_REF_PREFIX, DEFAULT_REMOTE, parsePlanRefName } = require('../plan-store/ref');
 
@@ -104,7 +109,7 @@ function defaultGit(root) {
 function defaultGh(root) {
   return (args) => execFileSyncTimed('gh', args, ghOptions(args, {
     cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: shared.GH_TIMEOUT_MS, windowsHide: true,
+    timeout: shared.GH_BATCH_TIMEOUT_MS, windowsHide: true, // the 50-alias batch, as pr-state-batch.js's
   }));
 }
 
@@ -116,13 +121,18 @@ function firstLine(err) {
   return lines.find((l) => /^(?:!|error:|fatal:)/.test(l)) || lines[0] || 'push failed';
 }
 
-function planRefs({ cwd, dryRun, git, gh, readBackend } = {}) {
+function planRefs({ cwd, dryRun, git, gh, readBackend, ghAvailableFn } = {}) {
   try {
     const root = cwd || process.cwd();
     const runGit = git || defaultGit(root);
     const runGh = gh || defaultGh(root);
     const backend = (readBackend || readWorkBackend)(root);
     if (backend === 'local-files') return { entries: [], failure: 'local-files-backend' };
+
+    // gh first: without it the pass could only list and probe origin over the network for nothing.
+    // An injected gh runner is its own availability answer (hermetic tests).
+    const haveGh = ghAvailableFn || (gh ? () => true : () => ghAvailable({ cwd: root }));
+    if (!haveGh()) return { entries: [], failure: 'gh-absent' };
 
     let listing;
     try {
@@ -170,7 +180,8 @@ function planRefs({ cwd, dryRun, git, gh, readBackend } = {}) {
         entries.push({ ref, record, action: 'would-delete', reason: verdict.reason });
       } else {
         try {
-          runGit(['push', `--force-with-lease=${ref}:${sha}`, DEFAULT_REMOTE, `:${ref}`]);
+          // --no-verify, -q: as plan-store/store.js's write — a consumer pre-push hook must not gate a ref delete
+          runGit(['push', '--no-verify', '-q', `--force-with-lease=${ref}:${sha}`, DEFAULT_REMOTE, `:${ref}`]);
           entries.push({ ref, record, action: 'delete', reason: verdict.reason });
         } catch (e) {
           entries.push({ ref, record, action: 'skip', reason: 'delete-failed', detail: firstLine(e) });

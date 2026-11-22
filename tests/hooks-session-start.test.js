@@ -763,6 +763,18 @@ test('SessionStart renders a prior background pass\'s reaped/branch/remote-prune
   assert.match(out.json.hookSpecificOutput.additionalContext, /2 closed record plan ref\(s\) deleted on origin/);
 });
 
+test('SessionStart surfaces a prior background pass failed plan-ref deletions, and stays silent at zero', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  const statusFile = path.join(project, '.claude-tweaks', 'reconcile-background-status.json');
+  fs.writeFileSync(statusFile, JSON.stringify({ completedAt: Date.now(), surfaced: false, summary: { reaped: 1, planRefsDeleteFailed: 3 } }));
+  let out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(out.json.hookSpecificOutput.additionalContext, /3 plan ref deletion\(s\) failed on origin — .*reconcile --checks plan-refs --dry-run/);
+  fs.writeFileSync(statusFile, JSON.stringify({ completedAt: Date.now(), surfaced: false, summary: { reaped: 1, planRefsDeleteFailed: 0 } }));
+  out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /plan ref deletion/);
+});
+
 test('SessionStart surfaces a prior background pass that failed, with its reason (#4032)', async () => {
   const project = gitProject();
   fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });

@@ -421,6 +421,7 @@ async function run(ctx) {
         if (s.archivedBranches) lines.push(`${s.archivedBranches} local branch(es) archived/deleted`);
         if (s.prunedRemote) lines.push(`${s.prunedRemote} merged remote branch(es) deleted on origin`);
         if (s.planRefsDeleted) lines.push(`${s.planRefsDeleted} closed record plan ref(s) deleted on origin`);
+        if (s.planRefsDeleteFailed) lines.push(`${s.planRefsDeleteFailed} plan ref deletion(s) failed on origin — tell the user once; the command is theirs to run, never run it yourself: node plugin/bin/hooks.js reconcile --checks plan-refs --dry-run`);
         if (s.ledgerResiduePrOpened) lines.push(`${s.ledgerResiduePrOpened} residue-ledger removal PR(s) opened on origin`);
         // Residue ledgers left on the integration branch and why — pre-filtered
         // by the background CLI through ledger-residue.js's QUIET_SKIP_REASONS.

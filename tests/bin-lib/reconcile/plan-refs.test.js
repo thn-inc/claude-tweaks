@@ -69,7 +69,7 @@ function makeFakes({ refs, states = {}, ghThrowAt = {}, pushThrow = {} }) {
     if (args[0] === 'remote') return URL;
     if (args[0] === 'push') {
       calls.pushes.push(args);
-      const n = Number(args[3].slice(1 + P.length));
+      const n = Number(args[5].slice(1 + P.length));
       if (pushThrow[n]) throw Object.assign(new Error('push failed'), { stderr: pushThrow[n] });
       return '';
     }
@@ -98,7 +98,7 @@ test('planRefs: closed deleted, open kept, unreadable kept', () => {
   assert.deepEqual(r.entries.map((e) => [e.record, e.action, e.reason]), [
     [1, 'delete', 'record-closed'], [2, 'skip', 'record-open'], [3, 'skip', 'state-unreadable'],
   ]);
-  assert.deepEqual(f.calls.pushes, [['push', `--force-with-lease=${P}1:${sha(1)}`, 'origin', `:${P}1`]]);
+  assert.deepEqual(f.calls.pushes, [['push', '--no-verify', '-q', `--force-with-lease=${P}1:${sha(1)}`, 'origin', `:${P}1`]]);
 });
 
 test('planRefs: a rejected lease push reports delete-failed and keeps going', () => {
@@ -108,7 +108,7 @@ test('planRefs: a rejected lease push reports delete-failed and keeps going', ()
   assert.equal(r.entries[0].reason, 'delete-failed');
   assert.match(r.entries[0].detail, /stale info/);
   assert.doesNotMatch(r.entries[0].detail, /^To /);
-  assert.deepEqual(f.calls.pushes[1], ['push', `--force-with-lease=${P}4:${sha(4)}`, 'origin', `:${P}4`]);
+  assert.deepEqual(f.calls.pushes[1], ['push', '--no-verify', '-q', `--force-with-lease=${P}4:${sha(4)}`, 'origin', `:${P}4`]);
   assert.equal(r.entries[1].action, 'delete');
   assert.equal(r.entries[1].reason, 'record-closed');
 });
@@ -204,6 +204,32 @@ test('planRefs: an absent gh is a reported failure', () => {
   const r = planRefs({ cwd: '/x', git: f.git, gh: f.gh, readBackend: noLocal });
   assert.deepEqual(r, { entries: [], failure: 'gh-absent' });
   assert.equal(f.calls.pushes.length, 0);
+});
+
+test('planRefs: gh missing is answered before any network call', () => {
+  const f = makeFakes({ refs: [1], states: { 1: 'CLOSED' } });
+  const r = planRefs({ cwd: '/x', git: f.git, gh: f.gh, readBackend: noLocal, ghAvailableFn: () => false });
+  assert.deepEqual(r, { entries: [], failure: 'gh-absent' });
+  assert.equal(f.calls.git.length, 0);
+  assert.equal(f.calls.gh.length, 0);
+});
+
+test('planRefs: the GraphQL batch runs under the batch timeout, not the 5 s one', () => {
+  const shared = require('../../../plugin/bin/lib/shared-primitives');
+  const cp = require('child_process');
+  const seen = [];
+  const orig = cp.execFileSync;
+  cp.execFileSync = (cmd, args, o) => { seen.push({ cmd, timeout: o && o.timeout }); return JSON.stringify({ data: { repository: {} } }); };
+  try {
+    const f = makeFakes({ refs: [1] });
+    // default gh runner, injected git
+    planRefs({ cwd: process.cwd(), git: f.git, readBackend: noLocal, ghAvailableFn: () => true });
+  } finally {
+    cp.execFileSync = orig;
+  }
+  const gh = seen.find((c) => c.cmd === 'gh');
+  assert.ok(gh, 'default gh runner was invoked');
+  assert.equal(gh.timeout, shared.GH_BATCH_TIMEOUT_MS);
 });
 
 // ---- registration (index.js dispatch, hooks.js lists, format-summary) ----
@@ -313,4 +339,29 @@ test('hooks.js reconcile-threw fallback carries planRefs', () => {
   const line = src.split('\n').find((l) => l.includes("reason: 'reconcile-threw'"));
   assert.ok(line, 'the reconcile-threw fallback literal must exist');
   assert.ok(line.includes('planRefs: null'), line);
+});
+
+// ---- end to end: a real delete against a local bare origin (git real, gh injected) ----
+
+test('planRefs: a real delete removes the closed record ref from the bare origin and keeps the open one', () => {
+  const { dir, origin } = makeRepo();
+  const head = gitIn(dir, 'rev-parse', 'HEAD').trim();
+  gitIn(dir, 'push', 'origin', `${head}:${P}5`);
+  gitIn(dir, 'push', 'origin', `${head}:${P}6`);
+  // gh is injected, and origin's URL must parse for the owner/name gate, so the remote URL read answers a GitHub URL
+  // while every other git call runs for real against the bare origin.
+  const realGit = (args) => (args[0] === 'remote' ? URL : gitIn(dir, ...args));
+  const states = { 5: 'CLOSED', 6: 'OPEN' };
+  const gh = (args) => {
+    const q = args.find((a) => a.startsWith('query=')).slice('query='.length);
+    const repo = {};
+    for (const m of q.matchAll(/(i\d+): issue\(number:(\d+)\)/g)) repo[m[1]] = { number: Number(m[2]), state: states[m[2]] };
+    return JSON.stringify({ data: { repository: repo } });
+  };
+  const r = planRefs({ cwd: dir, git: realGit, gh, readBackend: noLocal });
+  assert.equal(r.failure, null);
+  assert.deepEqual(r.entries.map((e) => [e.record, e.action]), [[5, 'delete'], [6, 'skip']]);
+  const left = gitIn(dir, 'ls-remote', origin, `${P}*`);
+  assert.doesNotMatch(left, new RegExp(`${P}5\\b`));
+  assert.match(left, new RegExp(`${P}6\\b`));
 });

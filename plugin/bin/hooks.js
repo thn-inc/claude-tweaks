@@ -2098,6 +2098,8 @@ async function runReconcileBackground(argv, deps) {
       prunedRemote: (r.remoteBranches || []).filter((b) => b.action === 'delete').length,
       // Closed records' plan refs deleted on origin (#6055) — a shared-state push, so surfaced like prunedRemote.
       planRefsDeleted: (r.planRefs || []).filter((e) => e.action === 'delete').length,
+      // A persistent delete failure (no push rights, a protected ref) would otherwise retry silently every pass.
+      planRefsDeleteFailed: (r.planRefs || []).filter((e) => e.reason === 'delete-failed').length,
       // Distinct removal PRs opened this pass (#3812) — at most one today.
       ledgerResiduePrOpened: new Set((r.ledgerResidue || []).filter((e) => e.action === 'pr-opened').map((e) => e.prNumber)).size,
       // Residue ledgers left on the integration branch and why, minus the
