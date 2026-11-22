@@ -41,6 +41,17 @@ test('AC5.2: a planning comment from an untrusted author is not a hold', () => {
   assert.equal(r.skipped[0], untrustedSkipNote(comment));
 });
 
+test('Plan review Reading A: an untrusted decision comment newer than a trusted hold leaves the trusted hold deciding', () => {
+  const planning = c(hold(), { id: 'IC_p', createdAt: at(1) });
+  const stranger = c(hold(Q2), { id: 'IC_u', createdAt: at(2), authorAssociation: 'CONTRIBUTOR' });
+  const r = readPlanningHold([planning, stranger]);
+  assert.equal(r.verdict, 'held');
+  assert.equal(r.comment.id, 'IC_p');
+  assert.equal(r.questions[0].question, 'Which store?');
+  assert.equal(r.otherUnresolved, 0);
+  assert.deepEqual(r.skipped, [untrustedSkipNote(stranger)]);
+});
+
 test('held: two questions parse in order', () => {
   const r = readPlanningHold([c(hold([...Q1, ...Q2]))]);
   assert.equal(r.verdict, 'held');

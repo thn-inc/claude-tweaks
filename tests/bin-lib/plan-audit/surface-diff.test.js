@@ -71,6 +71,11 @@ test('an amend that drops a citation reports the clause as uncovered', () => {
   assert.strictEqual(r.changed, true);
 });
 
+test('a path re-spelled with ./ in a CRLF amend is the same file', () => {
+  const after = plan({ files: ['- Modify: `./plugin/a.js`', '- Test: `tests/a.test.js`'] }).replace(/\n/g, '\r\n');
+  assert.deepStrictEqual(surfaceDiff(SPEC, plan(), after).files, { added: [], removed: [] });
+});
+
 test('a reworded task with the same paths and citations is unchanged', () => {
   const after = plan({ testLines: ['Reworded: AC1.1 AC2.1 still asserted here'], extra: ['New prose paragraph.'] });
   assert.strictEqual(surfaceDiff(SPEC, plan(), after).changed, false);

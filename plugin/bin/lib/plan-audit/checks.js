@@ -656,10 +656,13 @@ function checkE(specText, planText) {
 
 // ── surfaceDiff (#6059) ────────────────────────────────────────────────────
 // Did an amend change the plan's file list or its AC coverage? `changed` gates whether plan
-// review re-runs. Files compare the sets of `path` values extractFileEntries finds; coverage
-// compares each spec clause's checkE status (covered | waived | uncovered) before vs after.
+// review re-runs. Files compare the sets of `path` values extractFileEntries finds (LF text,
+// normalizeRepoPath on both sides, as Check F lists them); coverage compares each spec
+// clause's checkE status (covered | waived | uncovered) before vs after.
 function surfaceDiff(specText, beforePlanText, afterPlanText) {
-  const paths = (text) => new Set(extractFileEntries(text).map((e) => e.path));
+  const paths = (text) => new Set(
+    extractFileEntries(text.replace(/\r\n?/g, '\n')).map((e) => normalizeRepoPath(e.path)),
+  );
   const before = paths(beforePlanText);
   const after = paths(afterPlanText);
   const added = [...after].filter((p) => !before.has(p)).sort();
