@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node:test`, `tests/helpers/run-cli.js` (`runCliSync`, `spawnCli`).
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-21T183643-record-5996/work/5996-spec.md` (record #5996)
+**Spec:** `.claude-tweaks/pipelines/2026-11-22T083122-record-5996/work/5996-spec.md` (record #5996)
 
 Scope keywords: implementerProfile, stepUp
 
@@ -27,7 +27,7 @@ Waived _shared/subagent-dispatch-core.md: untouched — the profile table it hol
 - `plugin/bin/lib/model-profiles/profiles.js` stays untouched (the spec allows exporting `PROFILE_ORDER` only if reused; this plan does not reuse it — `PROFILE_ORDER` includes `frontier`, which `stepUp` must never return). `tests/bin-lib/model-profiles/table-pinning.test.js`'s table is not edited.
 - Byte budget: `plugin/skills/_shared/policy-schema.md` is 51,537 B against `RAIL_BYTES` 52,500 B (963 B headroom); Task 2 adds about 110 B there (key-only row plus one clause), leaving about 850 B. The full row goes in `plugin/skills/_shared/policy-schema-model-profiles.md` (3,789 B; about 4,600 B after).
 - Test commands use the repo runner: `node tools/run-tests.js {file}` (a bare `node --test` is denied by the repo guard).
-- Commit style: `{Verb} {what} — {detail}`, ending `refs #5996`, plus the trailer `Claude-Session: https://claude.ai/code/session_01QXpjcU5HK22sdy3f7Fo6UV`.
+- Commit style: `{Verb} {what} — {detail}`, ending `refs #5996`, plus the trailer `Claude-Session: https://claude.ai/code/session_019fFofWb6WhRbkTgvMCDnKP`.
 
 Governing skills, quoted verbatim:
 
@@ -58,6 +58,8 @@ This CLI uses the *Payload-1/Invocation-2* family: the spec file and the policy 
 - A header `size:` value with trailing whitespace (`size: low  `) — reads as `low`, not as malformed (Task 3 test: trailing whitespace).
 - A `size:` line appearing in the body (below the first `#` heading), not the header — must not be read as the record's size (Task 3 test: body size line ignored).
 - `--run` naming a directory that does not exist (a typo'd run id) — refused, never read as "no run config" (Task 3 test: missing `--run` dir exits 2 via `resolvePolicy`'s existence check).
+- `--run` passed together with `--rule` — still validated (the spec's Decision, Reading B, AC 12): a missing run dir exits 2 even though `--rule` skips the policy value (Task 3 test: AC12.1).
+- A flag given twice (`--rule lane --rule record`) — a malformed invocation (exit 2), never last-value-wins (Task 3 test: AC12.2).
 - A relative `--spec-file` path — resolved against the injected cwd, not the process cwd (Task 3 test: relative path).
 
 ---
@@ -213,11 +215,12 @@ git commit -m "Register the implementer-tier policy key — lane default, this r
 ### Task 3: The `implementer-tier.js` CLI
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Create: `plugin/bin/implementer-tier.js`
 - Test: `tests/bin-lib/model-profiles/implementer-tier-cli.test.js`
-- Modify: `docs/plugin-structure.md` (the `plugin/bin/lib/model-profiles/` entry, line 39, and a command line beside `resolve-profile.js`'s, line 400)
+- Modify: `docs/plugin-structure.md` (the `plugin/bin/lib/model-profiles/` entry, line 39, and a command line directly after `resolve-profile.js`'s, line 401)
 
 **Interfaces:**
 - Consumes: Task 1's `keyFileCount`, `implementerProfile`, `stepUp`, `POLICY_KEY`, `RULES`, `SIZES`; `resolvePolicy({ keys, runDir }, deps) -> { code: 0, result, invalidRaw } | { code: 1, message }` and `realDeps` from `plugin/bin/resolve-policy.js`; `resolveAgainst(cwd, p)` from `plugin/bin/lib/health-core/io.js`; `PROFILES` from `profiles.js` (valid `--from` values).
@@ -246,6 +249,9 @@ Tests (each asserts exit code, and for success the parsed JSON; for failure `std
 - Neither `size:` nor `effort:` under `--rule lane` → `size: null`, `profile: null`, `stepUp: null`; under `--rule record` → `profile: 'standard'`.
 - Two `size:` lines → exit 1, stderr names `size`.
 - Review Focus: `size: low  ` (trailing spaces) → `size: 'low'`; a `size: high` line placed in the body below `# 1: Title` with the header carrying `size: low` → `size: 'low'`; a relative `--spec-file spec.md` with `cwd` = its tmp dir resolves; `--run {tmp}/no-such-run` (a directory that does not exist, outside any checkout) with no `--rule` → exit 2, stdout `''`, stderr includes `does not exist` (`resolvePolicy`'s existence refusal — deterministic in a worktree and in a main checkout alike, unlike the anchored-or-outside guard, whose verdict on an in-repo path depends on which checkout runs the suite).
+- `AC12.1`: the `size: low` + two-file fixture with `--rule lane --run {tmp}/no-such-run` (a directory that does not exist, outside any checkout) → exit 2, stdout `''`, stderr includes `{tmp}/no-such-run` — `--run` is validated even when `--rule` skips the policy value (the spec's Decision, Reading B).
+- `AC12.2`: `--rule lane --rule record` → exit 2, stdout `''`, stderr includes `--rule`; likewise a repeated `--spec-file`, `--run` and `--from` each exit 2 naming the flag.
+- `--rule lane --run {runDir}` where `{runDir}` exists (outside any checkout) and its `config.yml` says `implementer-tier: record` → exit 0, `rule: 'lane'` (a valid `--run` passes and `--rule` still wins).
 - Invocation errors → exit 2, stdout `''`: no `--spec-file`; `--rule sometimes`; `--from huge`; an unknown flag `--bogus`; `--rule` with no value.
 - Spawned smoke test: `spawnCli(CLI, ['--spec-file', fixture, '--rule', 'lane'], …)` on the `size: low` + two-file fixture → exit 0, stderr `''`, stdout exactly `'{"profile":"fast","stepUp":"standard","rule":"lane","size":"low","keyFileCount":2}\n'`.
 
@@ -256,13 +262,13 @@ Expected: FAIL — the CLI file `plugin/bin/implementer-tier.js` does not exist 
 
 - [ ] **Step 3: Implement `plugin/bin/implementer-tier.js`** (`#!/usr/bin/env node`, `'use strict'`).
 
-Header comment: purpose (#5996), usage line, the JSON shape, the *Payload-1/Invocation-2* exit family (0 printed; 1 unreadable spec file, malformed header — a `size:`/`effort:` value outside `low`/`medium`/`high` or a repeated line — or an invalid resolved `implementer-tier` from `policy.yml` or the run's `config.yml`; 2 malformed invocation — missing `--spec-file`, unknown flag, flag without value, invalid `--rule`/`--from`, or a `--run` that `resolvePolicy` refuses), and that with `--rule` no policy is read (`--run` is then not read either).
+Header comment: purpose (#5996), usage line, the JSON shape, the *Payload-1/Invocation-2* exit family (0 printed; 1 unreadable spec file, malformed header — a `size:`/`effort:` value outside `low`/`medium`/`high` or a repeated line — or an invalid resolved `implementer-tier` from `policy.yml` or the run's `config.yml`; 2 malformed invocation — missing `--spec-file`, unknown flag, flag without value, a flag given twice, invalid `--rule`/`--from`, or a `--run` that `resolvePolicy` refuses), and that `--run` is validated even when `--rule` is passed (the spec's Decision, Reading B: a mistyped run id never passes silently), while the resolved policy value is then ignored.
 
 Behaviour:
-- Parse flags `--spec-file`, `--rule`, `--run`, `--from` (each takes a value; a missing value, a value starting `--`, or a blank value is exit 2, as `resolve-profile.js`'s `requireValue` does). Validate `--rule` ∈ `RULES` and `--from` ∈ `Object.keys(PROFILES)` before any read.
+- Parse flags `--spec-file`, `--rule`, `--run`, `--from` (each takes a value; a missing value, a value starting `--`, or a blank value is exit 2, as `resolve-profile.js`'s `requireValue` does; a flag seen a second time is exit 2 `implementer-tier: {flag} given more than once`). Validate `--rule` ∈ `RULES` and `--from` ∈ `Object.keys(PROFILES)` before any read.
 - Read the spec with `fs.readFileSync(resolveAgainst(deps.cwd(), specFile), 'utf8')` in a try/catch → exit 1 `implementer-tier: cannot read spec file {specFile}: {err.message}`.
 - Header block: the CRLF-normalized lines before the first blank line or the first line matching `/^#{1,6}\s/`. Collect the `^size:\s*(.*?)\s*$` matches; if none, the `^effort:\s*(.*?)\s*$` matches. More than one match of the line read → exit 1 naming the field; a value not in `SIZES` → exit 1 naming the value; none → `size` `undefined` (printed as `null`).
-- `rule`: `--rule` when given; else `resolvePolicy({ keys: [POLICY_KEY], runDir: run ?? null }, deps)`: `code !== 0` → exit 2 with its `message`; `result[POLICY_KEY].invalid === true` → exit 1 `implementer-tier: invalid implementer-tier value "{invalidRaw.get(POLICY_KEY)}" — expected lane or record`; else `result[POLICY_KEY].value`.
+- `rule`: call `resolvePolicy({ keys: [POLICY_KEY], runDir: run ?? null }, deps)` whenever `--rule` is absent **or** `--run` is given — one validator for `--run` (its anchored-or-outside guard and existence check), never a second copy of them in this CLI. `code !== 0` → exit 2 with its `message` (this is how `--rule lane --run {missing}` exits 2, AC 12). Then, when `--rule` was given, `rule` is `--rule` and the resolved policy value is ignored (an invalid `policy.yml` value does not fail a `--rule` call); otherwise `result[POLICY_KEY].invalid === true` → exit 1 `implementer-tier: invalid implementer-tier value "{invalidRaw.get(POLICY_KEY)}" — expected lane or record`; else `result[POLICY_KEY].value`. With `--rule` and no `--run`, `resolvePolicy` is not called.
 - Compute `keyFileCount(text)`, `profile = implementerProfile({ size, keyFileCount, rule })`, `stepUp(from ?? profile)`; print the JSON line in the fixed key order; exit 0. Any throw from Task 1's functions → exit 1 with its message.
 - `realDeps` = `{ ...require('./resolve-policy').realDeps }` (cwd, env, homeDir, git, readFile, stdout, stderr). Entry guard as the contract states.
 
@@ -275,7 +281,7 @@ Proof(public-contract): the new `implementer-tier` key (values `lane`/`record`, 
 
 - [ ] **Step 5: Real-input probe** (record each printed line in the task report):
 
-Run: `node plugin/bin/implementer-tier.js --spec-file ".claude-tweaks/pipelines/2026-11-21T183643-record-5996/work/5996-spec.md"`
+Run: `node plugin/bin/implementer-tier.js --spec-file ".claude-tweaks/pipelines/2026-11-22T083122-record-5996/work/5996-spec.md"`
 Expected: `{"profile":"standard","stepUp":"capable","rule":"record","size":"medium","keyFileCount":9}`
 
 Run: `node plugin/bin/implementer-tier.js --spec-file ".claude-tweaks/pipelines/2026-11-16T063159-record-5541/work/5541-spec.md" --rule lane`
@@ -303,6 +309,6 @@ git commit -m "Add the implementer-tier CLI — profile and step-up from a mater
 |---|---|
 | AC1.1–AC1.3, AC2.1, AC3.1, AC4.1, AC4.2, AC5.1, AC10.1–AC10.3 | Task 1 tests |
 | AC9.1 | Task 2 registration test + go-red check |
-| AC6.1–AC6.3, AC7.1, AC7.2, AC8.1–AC8.3, AC11.1, AC11.2 | Task 3 tests |
+| AC6.1–AC6.3, AC7.1, AC7.2, AC8.1–AC8.3, AC11.1, AC11.2, AC12.1, AC12.2 | Task 3 tests |
 
 Waived AC8.4: the Gotchas' installed-release check passed (6.175.0 tolerates the unknown key — this run's `decisions.md`), so the `policy.yml` line ships and the `"rule":"lane"` fallback clause never applies.
