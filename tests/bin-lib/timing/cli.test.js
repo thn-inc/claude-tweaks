@@ -537,6 +537,25 @@ test('#4359: buildTiming returns what run() writes, and writes nothing', async (
   assert.deepEqual(built.unattributed.procedureFiles, { 'skills/review/code-mode-steps.md': 1 });
 });
 
+test('#5647: buildTiming passes scopeDispatchesTo through, so a dispatched run\'s Task calls are not dispatches items', async () => {
+  // Red without it: the option dropped in buildTiming's deriveTiming call -- t1 and x1 would stay in dispatches.
+  const { buildTiming } = require(CLI);
+  const src = path.join(__dirname, '..', '..', 'fixtures', 'efficiency-report', 'recount');
+  const dir = tmpRun(false);
+  for (const f of ['events.jsonl', 'run-state.json']) fs.copyFileSync(path.join(src, 'archive', '2027-02-01T090000-run-a', f), path.join(dir, f));
+  const sub = path.join(scratchDir('ct-bt-scope-'), 's1', 'subagents');
+  fs.mkdirSync(sub, { recursive: true });
+  for (const [id, parent] of [['t1', null], ['c1', 't1'], ['x1', null]]) {
+    fs.writeFileSync(path.join(sub, `agent-${id}.meta.json`), JSON.stringify({ spawnDepth: parent ? 2 : 1, description: id, ...(parent ? { parentAgentId: parent } : {}) }));
+    fs.writeFileSync(path.join(sub, `agent-${id}.jsonl`), JSON.stringify({ timestamp: '2027-02-01T09:02:00.000Z', message: { role: 'assistant', id: `m-${id}`, model: 'claude-test', content: [], usage: { input_tokens: 1, output_tokens: 1 } } }) + '\n');
+  }
+  const agents = ['t1', 'c1', 'x1'].map((id) => path.join(sub, `agent-${id}.jsonl`));
+  const ids = async (paths, extra) => (await buildTiming({ runDir: dir, paths, cwd: dir, worktree: null, ...extra })).dispatches.items.map((d) => d.agentId).sort();
+  assert.deepEqual(await ids(agents, {}), ['c1', 't1', 'x1']);
+  // recountRuns passes the agent-shaped transcript paths as both `paths` and the scope.
+  assert.deepEqual(await ids([agents[0]], { scopeDispatchesTo: [agents[0]] }), ['c1']);
+});
+
 test('#4359: buildTiming reads run-state.json worktree when none is given, and an explicit null wins', async () => {
   const { buildTiming } = require(CLI);
   const src = path.join(__dirname, '..', '..', 'fixtures', 'efficiency-report', 'recount');

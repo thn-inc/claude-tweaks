@@ -98,6 +98,25 @@ test('second call resolves the standard profile', () => {
   assert.strictEqual(log.profileCalls[0][0], 'standard');
 });
 
+test('envelope profile carries launchEffort from the resolver', () => {
+  for (const launchEffort of ['medium', null]) {
+    const runDir = mkRun();
+    const { deps, log } = harness({
+      resolveProfile: () => ({ model: 'opus', effort: 'medium', source: 'policy', effortLine: '…', launchEffort }),
+    });
+    assert.strictEqual(run(['--call', 'first', ...base(runDir)], deps), 0);
+    assert.deepStrictEqual(envelope(log).profile,
+      { name: 'capable', model: 'opus', effort: 'medium', source: 'policy', launchEffort });
+  }
+});
+
+test('envelope launchEffort is null when the resolver omits it', () => {
+  const runDir = mkRun();
+  const { deps, log } = harness();
+  assert.strictEqual(run(['--call', 'first', ...base(runDir)], deps), 0);
+  assert.strictEqual(envelope(log).profile.launchEffort, null);
+});
+
 test('AC1.1: --next-steps renders a continuation through parseNextSteps', () => {
   const runDir = mkRun();
   const count = (s, t) => s.split(t).length - 1;

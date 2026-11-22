@@ -1920,6 +1920,7 @@ test('runnerChildEnv returns the runner\'s child env', () => {
     TMPDIR: runRoot, TMP: runRoot, TEMP: runRoot,
     CT_TEST_SUITE_SLOT_HELD: '1',
     CT_HOOKS_REPO_INFO_STORE: path.join(runRoot, 'repo-info-cache.json'),
+    CT_FACTORY_POLICY_FILE: path.join(runRoot, 'factory-policy.absent.yml'),
   };
   assert.deepStrictEqual(runnerChildEnv(env, { runRoot, templateDir: '/tpl' }), { ...common, GIT_TEMPLATE_DIR: '/tpl' });
   // No template: the inherited GIT_TEMPLATE_DIR passes through untouched, as the runner always did.
@@ -1929,6 +1930,33 @@ test('runnerChildEnv returns the runner\'s child env', () => {
   const got = runnerChildEnv(noTpl, { runRoot, templateDir: null });
   assert.ok(!('GIT_TEMPLATE_DIR' in got), Object.keys(got).join(', '));
   assert.deepStrictEqual(env, before, 'env is not mutated');
+});
+
+test('runnerChildEnv drops CLAUDE_TWEAKS_FACTORY_POLICY', () => {
+  const env = { PATH: '/bin', CLAUDE_TWEAKS_FACTORY_POLICY: 'model-stance: economy\n' };
+  const got = runnerChildEnv(env, { runRoot: path.join('/runs', 'r1'), templateDir: null });
+  assert.ok(!('CLAUDE_TWEAKS_FACTORY_POLICY' in got), Object.keys(got).join(', '));
+  assert.equal(got.PATH, '/bin');
+  assert.equal(env.CLAUDE_TWEAKS_FACTORY_POLICY, 'model-stance: economy\n', 'env is not mutated');
+});
+
+// #6006 final review: the factory file under HOME is the machine's own policy too. The runner relocates it to a
+// path inside the run root that never exists (an inherited value is replaced), so readFactoryPolicy reads no file.
+test('runnerChildEnv points CT_FACTORY_POLICY_FILE at a missing path in the run root, so the home factory file is never read', () => {
+  const { readFactoryPolicy, FACTORY_POLICY_FILE_ENV } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'policy-factory.js'));
+  withGitTemp((tmp) => {
+    const home = path.join(tmp, 'home');
+    fs.mkdirSync(path.join(home, '.claude-tweaks'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude-tweaks', 'factory-policy.yml'), 'model-stance: economy\n');
+    const runRoot = path.join(tmp, 'run');
+    fs.mkdirSync(runRoot);
+    assert.strictEqual(readFactoryPolicy({ env: { HOME: home } }).origin, 'file', 'control: the home file is readable');
+    const got = runnerChildEnv({ PATH: '/bin', HOME: home, [FACTORY_POLICY_FILE_ENV]: path.join(tmp, 'elsewhere.yml') }, { runRoot, templateDir: null });
+    const file = got[FACTORY_POLICY_FILE_ENV];
+    assert.strictEqual(path.dirname(file), runRoot, file);
+    assert.strictEqual(fs.existsSync(file), false, file);
+    assert.deepStrictEqual(readFactoryPolicy({ env: got }), { raw: null, origin: null, warnings: [] });
+  });
 });
 
 test('writeGitTemplateDir returns null when git fails', () => {

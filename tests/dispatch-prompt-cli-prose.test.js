@@ -59,6 +59,7 @@ function assertStep5(text) {
     '`cat` each envelope `chunks` file with one plain command',
     'joined by one newline',
     'profile.model',
+    'profile.launchEffort',
     'never paraphrase, summarize or fill it by hand',
     'resend it unchanged, once',
   ], 'SKILL.md Step 5');

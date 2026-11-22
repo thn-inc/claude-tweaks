@@ -3,6 +3,8 @@ files:
   - plugin/bin/lib/timing/transcript.js
   - plugin/bin/lib/timing/derive.js
   - plugin/bin/phase-timing.js
+  - plugin/bin/lib/timing/run-timing.js
+  - plugin/bin/lib/timing/at-close.js
   - plugin/skills/wrap-up/summary-template.md
   - plugin/skills/flow/summary-template.md
   - plugin/skills/flow/multispec-summary.md
@@ -55,6 +57,7 @@ files:
   - The run window runs from the run's first to its last `events.jsonl` timestamp, not counting a `worktree-reaped` event (it fires hours after the session ends). Dispatches entirely outside it belong to other work in the same session and are excluded.
   - A run with no events reports the whole session and says `whole session — no run events`.
   - A not-found dispatch carries no numbers in any bucket. An orphan transcript (no meta) still counts, under `unlabelled`.
+  - A dispatched run's `timing.json` written at close (#5647) also reads the `subagents/` directories of its dispatching and resuming sessions. The Task calls whose prompt names the run are left out of these tables, because their tokens are already in `totals.tokens`, so they are not missing dispatches. From a directory reached only through those calls, only the agents they started are kept, so another record's agents in the same session are not counted. The run's own-slug directory keeps the window rule above, minus those Task calls.
 - **Red flags:** A dispatch that you know ran, appearing in neither a table nor a line.
 
 ### 4. Compare against the baseline
@@ -72,3 +75,5 @@ files:
 ## Origin
 
 Built by #3375 (multi-spec run `2026-10-17T144508-spec-3375-3380`) — part of the "Build dispatch cost shape" decomposition from #3229. #3413 (run `2026-10-19T044738-record-3413`) moved the Dispatches render rules out of the three summary templates into `_shared/timing-render.md`, which all three now cite; the rendered output is unchanged. #5597 (run `2026-11-16T003729-record-5597`) added agents started by a workflow script and their run-directory lines.
+
+#5647 (run `2026-11-21T181802-spec-5647`) scoped a dispatched run's at-close `dispatches` to the Task calls that ran it.

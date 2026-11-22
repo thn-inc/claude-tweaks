@@ -187,6 +187,18 @@ test('AC9.1: the git child reads the repo named by the injected env, not the inh
   assert.strictEqual(JSON.parse(res.stdout).mergeBase, baseSha);
 });
 
+// #6006: the policy read takes the factory layer from the injected env. HOME is an empty scratch dir, so
+// the variable is the only factory source; the fixture's policy.yml leaves auto-merge-max-lines unset.
+test('the policy read resolves a factory value from the injected env (#6006)', () => {
+  const dir = makeFixtureRepo();
+  const res = cli(['--integration-branch', 'main'], {
+    cwd: dir,
+    env: { ...CLI_ENV, HOME: scratchDir('blast-radius-home-'), CLAUDE_TWEAKS_FACTORY_POLICY: 'auto-merge-max-lines: 7\n' },
+  });
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.strictEqual(JSON.parse(res.stdout).config.autoMergeMaxLines, 7);
+});
+
 test('AC9.1: a relative --run that does not exist prints the argument as given', () => {
   const dir = makeFixtureRepo();
   const res = cli(['--integration-branch', 'main', '--run', 'nope'], { cwd: dir });

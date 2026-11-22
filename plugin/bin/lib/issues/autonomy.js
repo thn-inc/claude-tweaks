@@ -86,6 +86,8 @@ function effectiveCeiling({ cliArg, autonomyEntry, controlModeEntry } = {}) {
   const controlMode = isControlModeOn(mode ? mode.value : undefined);
   if (isCeiling(cliArg)) return { ceiling: cliArg, controlMode, source: 'cli' };
   if (autonomy && autonomy.invalid === true) return { ceiling: 'supervised', controlMode, source: 'invalid-autonomy' };
+  // A factory autonomy (#6006) is explicit like a policy.yml one, so it outranks the control-mode
+  // implication; that implication is the top tier, so there a factory value can only lower the ceiling.
   const explicit = autonomy && autonomy.source !== 'default' && isCeiling(autonomy.value);
   if (explicit) return { ceiling: autonomy.value, controlMode, source: 'explicit' };
   if (controlMode) return { ceiling: resolveCeiling({ controlMode }), controlMode, source: 'control-mode' };
