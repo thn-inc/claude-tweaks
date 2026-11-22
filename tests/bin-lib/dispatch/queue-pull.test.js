@@ -3455,7 +3455,7 @@ test('AC9.1 (#6011): a files-transport pull with the driver half on writes each 
   };
   // Disjoint non-protected Key Files per record, so the control bundles; the paths sit beside the ones Task 2's tests use.
   const fastMedium = (n) => ({
-    ...mcpRecord(n, withBody(n).replace(`- \`plugin/bin/fixture-${n}.js\``, `-\`plugin/skills/init/claude-md-template-${n}.md\`\n- \`plugin/skills/init/rules-template-${n}.md\``)),
+    ...mcpRecord(n, withBody(n).replace(`- \`plugin/bin/fixture-${n}.js\``, `- \`plugin/skills/init/claude-md-template-${n}.md\`\n- \`plugin/skills/init/rules-template-${n}.md\``)),
     labels: ['auto:build', 'ready', 'ceremony:fast-lane', 'risk:low', 'size:medium', 'type:task'].map((name) => ({ name })),
   });
   const scenario = () => {
