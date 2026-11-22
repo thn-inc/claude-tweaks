@@ -550,3 +550,116 @@ test('Ruling A + B: Routing keeps the plan-review answered forms, limits the sub
     f('a failed `add` on an answered row asks nothing'),
   ], 'routing rulings');
 });
+
+// AC1: under plan-at-specify: off, shaping mode is unchanged. Every planning sentence in the three
+// shaping files sits inside one marker block whose instruction is the gate; nothing outside the
+// blocks, and nothing in any other specify file but planning.md, names the planning step.
+const SHAPING_FILES = {
+  'plugin/skills/specify/shaping-mode.md': ['Only when it prints `on` under `work-backend: github-issues`', 'Any other output, or a failed call, skips every `plan-at-specify` block and shaping runs as written.'],
+  'plugin/skills/specify/shaping-mode-stamping.md': ['When `shaping-mode.md`\'s Planning at specify paragraph read `planning.md`', 'Otherwise skip this paragraph.'],
+  'plugin/skills/specify/shaping-mode-readback.md': ['When `shaping-mode.md`\'s Planning at specify paragraph read `planning.md`', 'Otherwise skip this paragraph.'],
+};
+const GATE_START = '<!-- plan-at-specify:start -->';
+const GATE_END = '<!-- plan-at-specify:end -->';
+const PLANNING_TOKENS = ['plan-at-specify', 'planning.md', 'plan-store', 'Planning Decisions', 'Plan: '];
+const collapse = (s) => s.replace(/\s+/g, ' ');
+
+function gateProblems(text, gatePhrases) {
+  const s = text.indexOf(GATE_START);
+  const e = text.indexOf(GATE_END);
+  if (s === -1 || e === -1 || e < s || text.indexOf(GATE_START, s + 1) !== -1 || text.indexOf(GATE_END, e + 1) !== -1) return ['block count'];
+  const block = text.slice(s, e + GATE_END.length);
+  const outside = text.slice(0, s) + text.slice(e + GATE_END.length);
+  const problems = [];
+  for (const t of PLANNING_TOKENS) if (outside.includes(t)) problems.push(`leak: ${t}`);
+  const flat = collapse(block);
+  for (const p of gatePhrases) if (!flat.includes(collapse(p))) problems.push(`gate: ${p}`);
+  return problems;
+}
+const shapingText = (rel) => readText(path.join(ROOT, rel));
+const blockOf = (rel) => {
+  const t = shapingText(rel);
+  return t.slice(t.indexOf(GATE_START), t.indexOf(GATE_END) + GATE_END.length);
+};
+
+test('AC1.1: each shaping file holds one gated plan-at-specify block and no planning text outside it', () => {
+  for (const [rel, phrases] of Object.entries(SHAPING_FILES)) {
+    assert.deepEqual(gateProblems(shapingText(rel), phrases), [], rel);
+  }
+});
+
+test('AC1.1: no other specify file except planning.md names the planning step', () => {
+  const fs = require('node:fs');
+  const dir = path.join(ROOT, 'plugin/skills/specify');
+  const files = [];
+  (function walk(d) {
+    for (const ent of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, ent.name);
+      if (ent.isDirectory()) walk(p);
+      else if (ent.name.endsWith('.md')) files.push(p);
+    }
+  })(dir);
+  assert.ok(files.length > 20, `directory walk found ${files.length} files`);
+  const skip = new Set([...Object.keys(SHAPING_FILES), PLANNING_REL].map((r) => path.join(ROOT, r)));
+  for (const p of files) {
+    if (skip.has(p)) continue;
+    const text = readText(p);
+    for (const t of PLANNING_TOKENS) assert.ok(!text.includes(t), `${path.relative(ROOT, p)} names ${t}`);
+  }
+});
+
+test('go-red: the gate checks report a leak, a missing marker and a missing gate phrase', () => {
+  const stamp = 'plugin/skills/specify/shaping-mode-stamping.md';
+  const text = shapingText(stamp);
+  const leaked = text + '\nread planning.md now\n';
+  assert.notEqual(leaked, text);
+  assert.ok(gateProblems(leaked, SHAPING_FILES[stamp]).includes('leak: planning.md'));
+  const noEnd = text.replace(GATE_END, '');
+  assert.notEqual(noEnd, text);
+  assert.ok(gateProblems(noEnd, SHAPING_FILES[stamp]).includes('block count'));
+  const noGate = text.replace('Otherwise skip this paragraph.', '');
+  assert.notEqual(noGate, text);
+  assert.ok(gateProblems(noGate, SHAPING_FILES[stamp]).includes('gate: Otherwise skip this paragraph.'));
+});
+
+test('the pointer blocks sit where they run', () => {
+  const at = (t, s, from = 0) => { const i = t.indexOf(s, from); assert.notEqual(i, -1, `not found: ${s}`); return i; };
+  const stamping = shapingText('plugin/skills/specify/shaping-mode-stamping.md');
+  const sb = at(stamping, GATE_START);
+  const gh = at(stamping, '**`work-backend: github-issues`:**');
+  assert.ok(sb > gh && sb < at(stamping, '```bash', gh), 'stamping block position');
+  const readback = shapingText('plugin/skills/specify/shaping-mode-readback.md');
+  const rb = at(readback, GATE_START);
+  assert.ok(rb > at(readback, '### Read-back verification') && rb < at(readback, 'Assert, against the re-fetched result:'), 'readback block position');
+  const shaping = shapingText('plugin/skills/specify/shaping-mode.md');
+  const mb = at(shaping, GATE_START);
+  const par = at(shaping, '> **Parallel execution:**');
+  assert.ok(mb > par && mb < at(shaping, '\n---\n', par), 'shaping-mode block position');
+});
+
+test('Deliverable 3: a planned record\'s check and write read its own body file, not the shared one', () => {
+  pinned(blockOf('plugin/skills/specify/shaping-mode-stamping.md'), [
+    f('the `--check` and the write\'s `--body-file` below read its `{body}` in place of `$SPECIFY_SHAPED_BODY`'),
+    f('(in a batch, that record\'s own copy)'),
+  ], 'stamping block');
+});
+
+test('Deliverable 9: the shaping-mode block resolves the key once, read-only of --run, and relays the conflict warning', () => {
+  pinned(blockOf('plugin/skills/specify/shaping-mode.md'), [
+    f('Resolve `plan-at-specify` once per invocation, before the first record'),
+    f('resolve-policy.js" --values plan-at-specify'),
+    f('Relay a stderr warning the call prints'),
+  ], 'shaping-mode block');
+});
+
+test('Carry A: planning reads the hold state from the fetched record, before the needs:* resolve', () => {
+  pinned(sectionOf(planning(), '## Which records are planned'), [
+    f('reads both from the record as fetched, before `shaping-mode-stamping.md`\'s `needs:*` bullet and live-comment resolution run'),
+  ], 'held read order');
+});
+
+test('Carry B: a bare-drain hold also asserts shaped:headless at read-back', () => {
+  pinned(sectionOf(planning(), '## Read-back and outcome'), [
+    f('hold entered via bare drain also carries `shaped:headless`'),
+  ], 'held headless');
+});

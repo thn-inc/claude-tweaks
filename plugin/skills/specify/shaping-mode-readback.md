@@ -66,6 +66,10 @@ Immediately after each record's write lands — the `gh issue edit`/`writeRecord
 - **`work-backend: github-issues`:** `gh issue view {n} --json labels,body`.
 - **`work-backend: local-files`:** `readRecord(path)` (`bin/lib/issues/local-store.js`), re-reading from disk.
 
+<!-- plan-at-specify:start -->
+When `shaping-mode.md`'s Planning at specify paragraph read `planning.md`, apply its `## Read-back and outcome` to this record too: for a held record its assertions replace the `ready` and no-`needs:*` bullets below, and its outcome words join Actions Performed's and Next Actions'. Otherwise skip this paragraph.
+<!-- plan-at-specify:end -->
+
 Assert, against the re-fetched result:
 - `ready` is present, plus every scoring label this record's stamp step (above) added or already carried (`risk:*`, `size:*`, `ceremony:*`, Type). When this pass was entered via the `next` form's headless posture, `shaped:headless` is present too — the atomicity guarantee above is only as good as this check catching a partial write of the two-flag call.
 - The six spec-shaped sections (`## Current State`, `## Deliverables`, `## Acceptance Criteria`, `## Release Note`, `## Technical Approach`, `## Gotchas`) plus `## Original request` are all present in the re-fetched body.
