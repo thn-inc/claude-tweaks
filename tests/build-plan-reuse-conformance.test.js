@@ -134,6 +134,13 @@ test('AC2.1/AC3.1: a stored plan checks valid against the materialized spec, and
   assert.strictEqual(ok.code, 0, ok.stderr);
   assert.strictEqual(ok.stdout.trim(), '{"valid":true,"failed":null}');
 
+  // Check 3: read prints {"path": …}, and that path holds the stored plan under its own basename.
+  const rd = runCliSync(PLAN_STORE, ['read', '--record', '7', '--commit', commit, '--out', path.join(fx.work, 'read')], { cwd: fx.work, env });
+  assert.strictEqual(rd.code, 0, rd.stderr);
+  const readPath = JSON.parse(rd.stdout).path;
+  assert.strictEqual(path.basename(readPath), BASENAME);
+  assert.strictEqual(fs.readFileSync(readPath, 'utf8'), PLAN);
+
   fs.writeFileSync(specPath, materialized.replace('The overview says one thing.', 'The overview now says another.'));
   const bad = check();
   assert.strictEqual(bad.code, 1);
@@ -224,6 +231,9 @@ test('AC1.1: the template-changed skip comes after the probe outcomes, so an abs
   const permuted = text.replace(tLine, '').replace('## Probe\n', `## Probe\n${tLine}`);
   assert.notStrictEqual(permuted, text);
   assert.throws(() => requireOrder(permuted), /must come after the absent outcome/);
+  const belowChecks = text.replace(tLine, '').replace('\n## Checks\n', `\n## Checks\n${tLine}`);
+  assert.notStrictEqual(belowChecks, text);
+  assert.throws(() => requireOrder(belowChecks), /must come before ## Checks/);
   const absent = text.replace(ABSENT, '- `{"plan":"none"}`');
   assert.notStrictEqual(absent, text);
   assert.throws(() => requireOrder(absent), /marker missing/);
