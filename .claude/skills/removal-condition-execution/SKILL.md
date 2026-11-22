@@ -71,6 +71,7 @@ A removed function's tests mix assertions about the function itself with asserti
 | a code comment, a test title, a test comment | rewrite; behavior unchanged unless the record says otherwise |
 | a test assertion | re-anchor (a sentinel) or retarget (a pin); delete it outright only when what it pins was deleted too, or a surviving test you cite already pins it |
 | `docs/incident-log.md`, `CHANGELOG.md`, archived run `work/*.md`, `docs/superpowers/plans/*` | leave: history, not live guidance |
+| an accepted decision record in `docs/decisions/`, a `docs/plans/*-ledger.md` | leave: a decision record is superseded rather than edited (ADR-0013); a new decision record states the removal (#5561 left 0012 and 0015 and added 0035) |
 | an unrelated step with the same number (Step 3.5 also exists in review, backlog refine, journeys, docs-health, routine status, attention mode) | leave |
 
 ## Project Conventions
