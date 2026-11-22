@@ -188,3 +188,9 @@ test('a throw in the files check reads failed: files', (t) => {
   const stubbed = loadWithGit(t, { changedPaths: () => { throw new Error('boom'); } });
   assert.deepStrictEqual(stubbed.checkPlan({ g, fetch: false, line, currentSpecHash: H, base }), { valid: false, failed: 'files' });
 });
+
+test('AC3.6 a ref naming a commit that is not a one-file plan commit reads failed: ref', (t) => {
+  const { fx, check, line, base } = setup(t);
+  fx.run(fx.work, ['update-ref', line.ref, base]);
+  assert.deepStrictEqual(check({ fetch: false, line: { ...line, commit: base } }), { valid: false, failed: 'ref' });
+});
