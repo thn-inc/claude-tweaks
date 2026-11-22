@@ -873,7 +873,7 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   `null` when the summarizer itself faulted: measurement never changes what a pass does.
   `hooks.js`'s `reconcile-threw` fallback carries `timings: null` for the same shape reason.
 - **Phase names** are `setup`, `mirror`, `red-tip`, `console`, `release`, `post-merge`, `archive`,
-  `archive-branches`, `remote-prune`, `ledger-residue`, `reap` and `finalize`; only phases that ran
+  `archive-branches`, `remote-prune`, `ledger-residue`, `plan-refs`, `reap` and `finalize`; only phases that ran
   appear. `setup` is the residual — wall time outside every timed phase — so an early return still
   reports where its time went. `subprocessMs` can exceed `ms` for a phase that runs subprocesses
   concurrently (the `gh-pool.js` mappers), so read it as cost, not as a share of the phase.
@@ -938,25 +938,26 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   loop and every per-dir `checkRunIntegrity` spawn `git worktree list` once between them. `reap`
   lists afresh itself, since it removes worktrees.
 - **CLI deferral.** The unscoped `hooks.js reconcile` runs `ALL_CHECKS` minus `CLI_DEFERRED_CHECKS`
-  (`archive-branches`, `remote-prune`, `ledger-residue` — `archive-branches`' and `remote-prune`'s
-  per-branch GraphQL lookups measured 14.8 s and 20.4 s, and `remote-prune` needs the all-refs fetch) and hands those to the detached `reconcile-background`
+  (`archive-branches`, `remote-prune`, `ledger-residue`, `plan-refs` — `archive-branches`' and `remote-prune`'s
+  per-branch GraphQL lookups measured 14.8 s and 20.4 s, `remote-prune` needs the all-refs fetch, and `plan-refs` lists
+  and writes remote refs) and hands those to the detached `reconcile-background`
   pass through `background-spawn.js`'s `spawnBackgroundIfStale`, gated by that pass's own status
   file, as SessionStart does. The JSON gains `background: { checks, spawned, reason }`
   (`reason`: `spawned`, `fresh`, `spawn-failed`, `no-root`, `dry-run`, `not-converged`) and a
-  `skipped` entry `deferred-to-background` for the three; an explicit `--checks` call is never
+  `skipped` entry `deferred-to-background` for the four; an explicit `--checks` call is never
   deferred and carries neither. Nothing is spawned when the pass did not converge —
   `NOT_CONVERGED_REASONS` (`no-repo`, `no-remote`, `fresh-cache`, `local-merge-model`,
   `preflight-gh-absent`, `preflight-github-unreachable`, `reconcile-threw`); report-only skips such
   as `non-canonical-run-dir` or `budget-exceeded` do not count — nor under `--dry-run`, which
-  therefore previews none of the three (`skipped` still names them; `background.reason` reads
+  therefore previews none of the four (`skipped` still names them; `background.reason` reads
   `dry-run`, saying nothing was handed over; an explicit `--checks … --dry-run` previews them). The
   background pass runs under `BACKGROUND_BUDGET_MS` (`budget.js`, 120 s) because the 18 s hot-path
   ceiling skipped its last three checks every pass. Without `remote-prune` the inline set is
   mirror-only-shaped, so the unscoped CLI now takes `mirror`'s single-ref `git fetch origin
   {integration}` (5 s `FETCH_TIMEOUT_MS`, concurrent with preflight) where it used to run
   `fetch --prune origin` (10 s); other `refs/remotes/origin/*` refs refresh when the background
-  pass's `--prune` fetch runs. `/tidy`'s Reconcile-first call names all ten
-  checks explicitly, because the unscoped call defers three.
+  pass's `--prune` fetch runs. `/tidy`'s Reconcile-first call names all eleven
+  checks explicitly, because the unscoped call defers four.
 - **Measured (AC1.1, #4032).** `node plugin/bin/hooks.js reconcile --json`, 20 sequential unscoped
   calls against this repo's main checkout (live network, HEAD baf2964, 2026-10-25): wall time min
   6786 / p50 7266 / p90 7931 / max 8845 ms, against about 52.5 s before (63 s in the record).
