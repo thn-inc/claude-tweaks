@@ -883,3 +883,78 @@ test('AC4.1: the USAGE check line names --max-lines as the driver flag', () => {
   assert.ok(USAGE.includes('[--repo owner/name] [--max-lines <n>]'));
   assert.match(USAGE, /--max-lines: the pipeline driver's implementation-line bound/);
 });
+
+// --- check --protected-paths reviewer (#6019) -----------------------------------
+
+function protectedArgv(fx, keyFile, extra = []) {
+  seedRunState(fx);
+  const rec = { ...record(7), body: body([keyFile]) };
+  return ['check', '--run', fx.runDir, '--issue', '7', '--base', 'abc123', '--record-json', fx.file('r7.json', JSON.stringify(rec)), ...extra];
+}
+
+function protectedHarness(fx, p) {
+  return harness(fx, { git: fakeGit(fx, numstat([[3, 1, p]])), blastRadiusConfig: () => ({ mergeSensitivePaths: [], autoMergeMaxLines: 40, autoMergeMaxFiles: 2 }) });
+}
+
+test('AC3.1 (#6019): check --protected-paths reviewer on a diff changing a listed _shared Key File proceeds and reports the path', () => {
+  const p = 'plugin/skills/_shared/a.md';
+  const fx = fixture();
+  const h = protectedHarness(fx, p);
+  assert.strictEqual(run(protectedArgv(fx, p, ['--protected-paths', 'reviewer']), h.deps), 0);
+  const res = h.json();
+  assert.strictEqual(res.action, 'proceed');
+  assert.strictEqual(res.bounds.withinBounds, true);
+  assert.deepStrictEqual(res.bounds.protectedPaths, [p]);
+  assert.match(decisions(fx), /protected path\(s\) left for the reviewer and a human merge: plugin\/skills\/_shared\/a\.md/);
+});
+
+test('AC3.2 (#6019): the same diff without the flag escalates out-of-bounds naming the protected path', () => {
+  const p = 'plugin/skills/_shared/a.md';
+  const fx = fixture();
+  const h = protectedHarness(fx, p);
+  assert.strictEqual(run(protectedArgv(fx, p), h.deps), 0);
+  const res = h.json();
+  assert.strictEqual(res.action, 'escalate');
+  assert.strictEqual(res.reason, 'out-of-bounds');
+  assert.ok(res.detail.includes(`protected path: ${p}`));
+});
+
+test('#6019: a --protected-paths value other than reviewer is a usage error', () => {
+  const p = 'plugin/skills/_shared/a.md';
+  for (const v of ['refuse', 'Reviewer', 'on']) {
+    const fx = fixture();
+    const h = protectedHarness(fx, p);
+    assert.strictEqual(run(protectedArgv(fx, p, ['--protected-paths', v]), h.deps), 2, v);
+    assert.match(h.err.join(''), /--protected-paths/, v);
+    assert.strictEqual(h.out.join(''), '', v);
+  }
+  const fx = fixture();
+  const h = protectedHarness(fx, p);
+  assert.strictEqual(run(protectedArgv(fx, p, ['--protected-paths']), h.deps), 2);
+  assert.match(h.err.join(''), /--protected-paths requires a value/);
+});
+
+test('AC9.3 (#6019, check half): with the flag a build-time Key File change still escalates', () => {
+  const p = '.github/workflows/ci.yml';
+  const fx = fixture();
+  const h = protectedHarness(fx, p);
+  assert.strictEqual(run(protectedArgv(fx, p, ['--protected-paths', 'reviewer']), h.deps), 0);
+  const res = h.json();
+  assert.strictEqual(res.action, 'escalate');
+  assert.ok(res.detail.includes(`protected path: ${p}`));
+});
+
+test('#6019: the proceed line is unchanged when the flag finds no protected path', () => {
+  const fx = fixture();
+  const h = harness(fx);
+  assert.strictEqual(run(checkArgv(fx, ['--protected-paths', 'reviewer']), h.deps), 0);
+  const res = h.json();
+  assert.strictEqual(res.action, 'proceed');
+  assert.deepStrictEqual(res.bounds.protectedPaths, []);
+  assert.doesNotMatch(decisions(fx), /left for the reviewer/);
+});
+
+test('#6019: the USAGE check line names --protected-paths reviewer as the driver flag', () => {
+  assert.ok(USAGE.includes('[--max-lines <n>] [--protected-paths reviewer]'));
+  assert.match(USAGE, /^ {7}--protected-paths reviewer:/m);
+});
