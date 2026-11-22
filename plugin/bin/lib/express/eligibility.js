@@ -116,23 +116,25 @@ const REASONS = Object.freeze({
 // build time, before any merge, so no merge-time review can vouch for them (BUILD_TIME_PROTECTED_RES).
 // The rest (hook code, `skills/_shared/`, CODEOWNERS, policy, verify-scope) act only once merged, so the
 // driver may take them behind its reviewer; the express lane never does.
-const PROTECTED_PATH_RES = [
-  /(^|\/)hooks\//,
-  /(^|\/)hooks\.js$/,
-  /(^|\/)hooks\.sh$/,
-  /(^|\/)skills\/_shared\//,
-  /(^|\/)\.github\//,
-  /(^|\/)\.gitlab-ci\.yml$/,
-  /(^|\/)\.circleci\//,
-  /(^|\/)\.githooks\//,
-  /(^|\/)\.husky\//,
-  /(^|\/)CODEOWNERS$/,
-  /(^|\/)package\.json$/,
-  /(^|\/)\.claude\/settings[^/]*\.json$/,
-  /(^|\/)\.mcp\.json$/,
-  /(^|\/)\.claude-tweaks\/policy\.yml$/,
-  /(^|\/)\.claude-tweaks\/verify-scope\.json$/,
-];
+// Each family declares its kind once: buildTime true acts before a merge (see the harm model above).
+const PROTECTED_FAMILIES = Object.freeze([
+  Object.freeze({ re: /(^|\/)hooks\//, buildTime: false }),
+  Object.freeze({ re: /(^|\/)hooks\.js$/, buildTime: false }),
+  Object.freeze({ re: /(^|\/)hooks\.sh$/, buildTime: false }),
+  Object.freeze({ re: /(^|\/)skills\/_shared\//, buildTime: false }),
+  Object.freeze({ re: /(^|\/)\.github\//, buildTime: true }),
+  Object.freeze({ re: /(^|\/)\.gitlab-ci\.yml$/, buildTime: true }),
+  Object.freeze({ re: /(^|\/)\.circleci\//, buildTime: true }),
+  Object.freeze({ re: /(^|\/)\.githooks\//, buildTime: true }),
+  Object.freeze({ re: /(^|\/)\.husky\//, buildTime: true }),
+  Object.freeze({ re: /(^|\/)CODEOWNERS$/, buildTime: false }),
+  Object.freeze({ re: /(^|\/)package\.json$/, buildTime: true }),
+  Object.freeze({ re: /(^|\/)\.claude\/settings[^/]*\.json$/, buildTime: true }),
+  Object.freeze({ re: /(^|\/)\.mcp\.json$/, buildTime: true }),
+  Object.freeze({ re: /(^|\/)\.claude-tweaks\/policy\.yml$/, buildTime: false }),
+  Object.freeze({ re: /(^|\/)\.claude-tweaks\/verify-scope\.json$/, buildTime: false }),
+]);
+const PROTECTED_PATH_RES = PROTECTED_FAMILIES.map((fam) => fam.re);
 
 // A path in comparison form: `\` as `/`, `.` and `..` segments resolved, no leading `./`.
 // A Key File comes from record text, so `plugin/skills/x/../_shared/a.md` must be judged
@@ -147,18 +149,9 @@ function isProtectedPath(path) {
   return PROTECTED_PATH_RES.some((re) => re.test(normalized));
 }
 
-// The PROTECTED_PATH_RES families that act before a merge (#6019); each is the same regex as its
-// PROTECTED_PATH_RES entry (a test pins the sources equal), applied only to a path also protected.
-const BUILD_TIME_PROTECTED_RES = Object.freeze([
-  /(^|\/)\.github\//,
-  /(^|\/)\.gitlab-ci\.yml$/,
-  /(^|\/)\.circleci\//,
-  /(^|\/)\.githooks\//,
-  /(^|\/)\.husky\//,
-  /(^|\/)package\.json$/,
-  /(^|\/)\.claude\/settings[^/]*\.json$/,
-  /(^|\/)\.mcp\.json$/,
-]);
+// The families declared buildTime above, derived from PROTECTED_FAMILIES (#6019) so a new family must
+// declare its kind; applied only to a path also protected.
+const BUILD_TIME_PROTECTED_RES = Object.freeze(PROTECTED_FAMILIES.filter((fam) => fam.buildTime).map((fam) => fam.re));
 
 function isBuildTimeProtectedPath(path) {
   if (!isProtectedPath(path)) return false;
@@ -341,5 +334,5 @@ function expressMergeVerification(resolved) {
 module.exports = {
   EXPRESS_MAX_KEY_FILES, isBeyondExpressBounds, isInsideLaneBounds, isReadableSizeCeiling, isReadableKeyFileLimit, SIZE_CEILINGS,
   RISK_CEILINGS, isReadableRiskCeiling, widenings,
-  BOUND_REASONS, REASONS, isProtectedPath, BUILD_TIME_PROTECTED_RES, isBuildTimeProtectedPath, evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification,
+  BOUND_REASONS, REASONS, isProtectedPath, PROTECTED_FAMILIES, BUILD_TIME_PROTECTED_RES, isBuildTimeProtectedPath, evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification,
 };

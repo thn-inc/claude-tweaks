@@ -6,7 +6,7 @@ const path = require('node:path');
 const {
   EXPRESS_MAX_KEY_FILES, REASONS, isProtectedPath, evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification,
   BOUND_REASONS, SIZE_CEILINGS, isBeyondExpressBounds, isInsideLaneBounds, isReadableSizeCeiling, isReadableKeyFileLimit,
-  RISK_CEILINGS, isReadableRiskCeiling, widenings, BUILD_TIME_PROTECTED_RES, isBuildTimeProtectedPath,
+  RISK_CEILINGS, isReadableRiskCeiling, widenings, BUILD_TIME_PROTECTED_RES, isBuildTimeProtectedPath, PROTECTED_FAMILIES,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'express', 'eligibility.js'));
 const { resolveBlastRadiusConfig } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'blast-radius-cli.js'));
 const { POLICY_KEYS } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
@@ -590,8 +590,17 @@ test('BUILD_TIME_PROTECTED_RES is frozen and inside the protected list (#6019)',
   for (const p of [...BUILD_TIME, ...MERGE_TIME]) assert.strictEqual(isProtectedPath(p), true, p);
   for (const p of MERGE_TIME) assert.strictEqual(isBuildTimeProtectedPath(p), false, p);
   for (const p of BUILD_TIME) assert.strictEqual(isBuildTimeProtectedPath(p), true, p);
-  const probes = [...BUILD_TIME, ...MERGE_TIME, 'src/a.js'];
-  for (const re of BUILD_TIME_PROTECTED_RES) assert.ok(probes.some((q) => re.test(q)), String(re));
+  // Partition: every protected family is matched by at least one probe, and its kind agrees with the
+  // probes that match it; a new family with no probe (or a wrong kind) goes red here.
+  for (const fam of PROTECTED_FAMILIES) {
+    const hitsBuild = BUILD_TIME.filter((q) => fam.re.test(q));
+    const hitsMerge = MERGE_TIME.filter((q) => fam.re.test(q));
+    assert.ok(hitsBuild.length + hitsMerge.length > 0, `no probe for ${fam.re}`);
+    assert.strictEqual(hitsBuild.length > 0, fam.buildTime, `kind of ${fam.re}`);
+    assert.strictEqual(hitsMerge.length > 0, !fam.buildTime, `kind of ${fam.re}`);
+  }
+  assert.strictEqual(PROTECTED_FAMILIES.length, 15);
+  assert.deepStrictEqual(BUILD_TIME_PROTECTED_RES, PROTECTED_FAMILIES.filter((fam) => fam.buildTime).map((fam) => fam.re));
 });
 
 test('AC6.1 (#6019): a merge-sensitive Key File refuses under the option exactly as without it', () => {
