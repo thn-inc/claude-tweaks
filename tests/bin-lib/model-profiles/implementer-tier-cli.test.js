@@ -128,7 +128,17 @@ test('no size and no effort: lane gives nulls, record gives standard', () => {
 
 test('two size lines exit 1 naming size', () => {
   const file = writeSpec(spec({ header: 'size: low\nsize: high\n' }));
-  refused(['--spec-file', file, '--rule', 'lane'], 1, 'size');
+  refused(['--spec-file', file, '--rule', 'lane'], 1, 'given more than once');
+});
+
+test('a blank line ends the header: a size line after it is not read', () => {
+  const file = writeSpec('---\nrecord: 1\n\nsize: high\n---\n# 1: Title\n');
+  assert.strictEqual(ok(['--spec-file', file, '--rule', 'lane']).size, null);
+});
+
+test('a CRLF header reads its size and still ends at the CRLF blank line', () => {
+  const file = writeSpec('---\r\nrecord: 1\r\nsize: low\r\n\r\nsize: high\r\n# 1: Title\r\n');
+  assert.strictEqual(ok(['--spec-file', file, '--rule', 'lane']).size, 'low');
 });
 
 test('trailing spaces on the size value are trimmed', () => {

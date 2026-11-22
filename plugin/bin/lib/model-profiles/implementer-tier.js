@@ -13,12 +13,13 @@
 
 const { inspect } = require('node:util');
 const { extractKeyFilesSection } = require('../issues/grouping');
-const { PROFILES } = require('./profiles');
+const { PROFILES, PROFILE_ORDER } = require('./profiles');
 
 const POLICY_KEY = 'implementer-tier';
 const RULES = ['lane', 'record'];
 const SIZES = ['low', 'medium', 'high'];
-const LADDER = ['fast', 'standard', 'capable'];
+// The step-up ladder stops at capable: frontier is never a step-up target.
+const LADDER = PROFILE_ORDER.filter((p) => p !== 'frontier');
 const LANE_PROFILE = { low: 'fast', medium: 'standard', high: 'capable' };
 
 // A directory, a glob, or a brace list names several files at once.

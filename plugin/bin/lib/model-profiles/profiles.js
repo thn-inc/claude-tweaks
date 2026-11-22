@@ -182,4 +182,4 @@ function resolve(profile, opts = {}) {
   return { model, effort, source, effortLine: effortLine(effort) };
 }
 
-module.exports = { PROFILES, EFFORT_SCALE, POLICY_KEYS_READ, effortLine, resolve };
+module.exports = { PROFILES, PROFILE_ORDER, EFFORT_SCALE, POLICY_KEYS_READ, effortLine, resolve };
