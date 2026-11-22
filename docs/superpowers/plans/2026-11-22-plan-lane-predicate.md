@@ -40,7 +40,8 @@ Waived AC5.1: `npm test` passing is Common Step 5's verification run, not a task
 
 ### Task 1: Micro-plan gate in code
 
-**Role:** integration · **Review risk:** high
+**Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/issues/grouping.js` (add `extractKeyFileEntries`; `extractKeyFilesSection` becomes a map over it)
@@ -85,7 +86,8 @@ Expected: PASS
 
 ### Task 2: The plan-lane predicate
 
-**Role:** judgment · **Review risk:** high
+**Role:** judgment
+**Review risk:** high
 
 **Files:**
 - Create: `plugin/bin/lib/driver/plan-lane.js`
@@ -130,7 +132,7 @@ Expected: PASS
 
 ### Task 3: `plan-lane` verb on express-lane.js
 
-**Role:** integration · **Review risk:** medium
+**Role:** integration
 
 **Files:**
 - Modify: `plugin/bin/lib/express/cli.js` (verb, USAGE line, VERB_FLAGS, HANDLERS, header comment "Five verbs" → six)
@@ -160,7 +162,7 @@ Expected: PASS
 
 ### Task 4: micro-plan.md cites the code
 
-**Role:** integration · **Review risk:** medium
+**Role:** integration
 
 **Files:**
 - Modify: `plugin/skills/build/micro-plan.md` (condition 3, the fall-through paragraph's count, the SKIP log text)
