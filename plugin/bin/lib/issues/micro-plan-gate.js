@@ -65,7 +65,9 @@ function evaluateMicroPlanGate({ ceremony, size, keyFileEntries, body } = {}) {
     'no-risk-flag': () => !riskReadable || risk.flags.length === 0,
   };
   const failed = MICRO_PLAN_CONDITIONS.filter((id) => !holds[id]());
-  const unreadable = !keyFilesReadable ? 'key-files' : (!riskReadable ? 'risk-flags' : null);
+  let unreadable = null;
+  if (!keyFilesReadable) unreadable = 'key-files';
+  else if (!riskReadable) unreadable = 'risk-flags';
   return { passes: failed.length === 0 && unreadable === null, failed, unreadable };
 }
 

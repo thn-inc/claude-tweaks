@@ -147,11 +147,13 @@ function parseArgs(argv) {
       throw new UsageError('check takes exactly one of --integration-branch or --base');
     }
   }
-  if (verb === 'plan-lane' && (flags['--issue'] === undefined) === (flags['--record-json'] === undefined)) {
-    throw new UsageError('plan-lane takes exactly one of --issue or --record-json');
-  }
-  if (verb === 'plan-lane' && flags['--repo'] !== undefined && flags['--issue'] === undefined) {
-    throw new UsageError('plan-lane takes --repo only with --issue');
+  if (verb === 'plan-lane') {
+    if ((flags['--issue'] === undefined) === (flags['--record-json'] === undefined)) {
+      throw new UsageError('plan-lane takes exactly one of --issue or --record-json');
+    }
+    if (flags['--repo'] !== undefined && flags['--issue'] === undefined) {
+      throw new UsageError('plan-lane takes --repo only with --issue');
+    }
   }
   if (verb === 'escalate') need('--run', '--issue', '--reason', '--detail-file');
   if (verb === 'verify') need('--run', '--issue');
