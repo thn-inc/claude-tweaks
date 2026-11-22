@@ -94,6 +94,8 @@ const CATEGORIES = [
   { key: 'branches', unit: 'tag', verb: 'aged out', takenActions: ['aged-out'], skipActions: ['skip'], kindFilter: (e) => e.kind === 'tag' },
   { key: 'remoteBranches', unit: 'remote branch', verb: 'pruned', takenActions: ['delete'], skipActions: ['skip'] },
   { key: 'ledgerResidue', unit: 'residue ledger', verb: 'removal PR opened', takenActions: ['pr-opened'], skipActions: ['skip'] },
+  { key: 'planRefs', unit: 'plan ref', verb: 'deleted', takenActions: ['delete'], skipActions: ['skip'] },
+  { key: 'planRefs', unit: 'plan ref', verb: 'to delete (dry run)', takenActions: ['would-delete'], skipActions: [] },
 ];
 
 function scopedEntries(cat, arr) {
