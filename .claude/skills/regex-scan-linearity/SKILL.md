@@ -59,6 +59,10 @@ A scan that re-reads the input once per match is the same cost without a regex: 
 - **A `lastIndexOf` or `indexOf` that is not bounded to the line.** Searching back from a line's end with no lower bound walks to the start of the text, so it is quadratic on multi-line input (24c205dc5, `latestSeparator`'s `$?` search). `lastIndexOf`'s second argument is an upper bound on the match start, not a lower bound, so slice the line first (`text.slice(start, end).lastIndexOf(status)`).
 - **A perf file with only a one-long-line case.** The per-task cases all ran one long line, which the unbounded search handles in one pass, so only the whole-branch review's multi-line input exposed it. Put a many-lines case (`'git x\n'.repeat(40000)`) beside the one-long-line case.
 
+#5996's brace-list matcher for a record's `Key Files` (`plugin/bin/lib/model-profiles/implementer-tier.js`, `perf/implementer-tier-linearity.test.js`) met a shape the three above do not name:
+
+- **Two negated classes around a literal separator.** `\{[^}]*,[^}]*\}` is polynomial on an unclosed `{` followed by many commas, because the first class can also consume the `,` the pattern then looks for. Exclude the separator and both braces from the first class (`\{[^{},]*,[^{}]*\}`), so each `,` has one place to match, and probe it with `'{' + ','.repeat(n)`.
+
 ### A cap after the call does not bound the call
 
 A length cap applied to a regex's output (a slice, a truncate, a max-chars) does not bound the regex. #5222's `normalizeEventText` cut reviewer text to `EVENT_TEXT_MAX_CHARS` only after calling `normalizeTitle`, whose `/(?:\s*\.)+\s*$/` is shape 1: 80,000 dots took about 25 s. The commit step ran the same helper on the implementer's unbounded title. The bug got through build and two rounds of review, and only the high-tier reproduction lens caught it.
