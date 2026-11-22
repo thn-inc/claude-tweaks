@@ -614,3 +614,18 @@ test('carryTripwireFlags carries the prior body\'s line onto a re-shaped body, m
   assert.strictEqual(carryTripwireFlags('Risk-flags: auth\n\n## O\n', 'Risk-flags: auth\n\n## O\n'), 'Risk-flags: auth\n\n## O\n', 'no prior line: byte-identical');
   assert.strictEqual(carryTripwireFlags('Risk-flags: auth\r\n\r\n## O\r\n', prior), `Risk-flags: auth\r\n${TW} auth\r\n\r\n## O\r\n`);
 });
+
+// RISK_FLAG_LINE_KEYS (#6052) feeds issues/plan-line.js's spec-hash exclusions; the module's
+// own regexes hold the same strings, so each exported key is fed through the module's readers.
+test('RISK_FLAG_LINE_KEYS name the lines the module reads', () => {
+  const { RISK_FLAG_LINE_KEYS: KEYS } = require('../../../plugin/bin/lib/issues/record-risk-flags');
+  assert.strictEqual(KEYS.length, 3);
+  const none = parseRiskFlags(`${KEYS[0]} none\n\n## O\n`);
+  assert.strictEqual(none.status, 'ok');
+  assert.deepStrictEqual(none.flags, []);
+  const auth = parseRiskFlags(`${KEYS[0]} auth\n${KEYS[1]} true\n\n## O\n`);
+  assert.strictEqual(auth.status, 'ok');
+  assert.deepStrictEqual(auth.flags, ['auth']);
+  assert.strictEqual(auth.unconfirmed, true);
+  assert.deepStrictEqual(parseTripwireFlags(`${KEYS[2]} auth\n\n## O\n`), { status: 'ok', flags: ['auth'] });
+});

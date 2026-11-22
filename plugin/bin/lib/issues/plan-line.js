@@ -27,8 +27,9 @@ const { fencedLineMask } = require('../markdown-blocks');
 const { FP_RE_WORK, FP_RE_WORK_PLAIN } = require('./record-fingerprint');
 const { RISK_FLAG_LINE_KEYS } = require('./record-risk-flags');
 
-// The ten prefixes. The three Risk-flags keys come from record-risk-flags.js, the one
-// writer of that line, so a key change there moves the hash exclusions with it.
+// The ten prefixes. The three Risk-flags keys come from record-risk-flags.js's
+// RISK_FLAG_LINE_KEYS; record-risk-flags.test.js feeds each key through that module's own
+// readers, so a key the readers stop recognizing fails there rather than drifting here.
 const SPEC_HASH_EXCLUDED_PREFIXES = [
   'Surface:', 'Design-intent:', 'Ui-stack:', 'Visual-reference:', 'Parent:',
   ...RISK_FLAG_LINE_KEYS,
