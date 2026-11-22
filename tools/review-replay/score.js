@@ -309,4 +309,4 @@ function score(opts, deps) {
   return Object.values(arms).some((a) => a.notJudged > 0) ? EXIT_NOT_CLEAN : 0;
 }
 
-module.exports = { score, settleReply, agentIdentity, stripTree, transcriptEffort, transcriptCost, readJournal, identifyAgents };
+module.exports = { score, settleReply, agentIdentity, stripTree, transcriptEffort, transcriptCost, readJournal, identifyAgents, parseLines, messageText };

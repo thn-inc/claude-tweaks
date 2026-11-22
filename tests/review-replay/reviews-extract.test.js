@@ -1,0 +1,261 @@
+'use strict';
+const { test, before } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
+const { execFileSync } = require('child_process');
+const { run, makeWriteRepo } = require('../../tools/review-replay');
+const schema = require('../../tools/review-replay/schema');
+const { toPosix } = schema;
+const { scratchDir } = require('../helpers/tmp-dir');
+const { runWorkflow } = require('./helpers');
+const { buildReviewsFixture, RUN, RUN_GONE } = require('./reviews-fixture');
+
+const PLUGIN_ROOT = path.join(__dirname, '..', '..', 'plugin');
+const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
+const gitIn = (cwd) => (...args) => execFileSync('git', args, { cwd, env: cleanEnv(), encoding: 'utf8', windowsHide: true }).trim();
+
+let fx;
+let root;
+before(() => {
+  root = scratchDir('rr-reviews-');
+  fx = buildReviewsFixture(root, { decisions: true, gone: true, repeat: true });
+});
+
+function makeDeps() {
+  const logs = [];
+  const errs = [];
+  const git = (args) => execFileSync('git', args, { cwd: fx.mainRoot, env: cleanEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  return { fs, git, writeRepo: makeWriteRepo(fx.mainRoot), pluginRoot: PLUGIN_ROOT, log: (s) => logs.push(s), err: (s) => errs.push(s), logs, errs };
+}
+
+let outN = 0;
+// Runs extract-reviews into a fresh --out; `arms` replaces the one default arm.
+async function extractReviews({ arms = ['--arm', 'name=haiku,profile=fast'], extra = [] } = {}) {
+  outN += 1;
+  const out = path.join(root, `out-${outN}`);
+  const deps = makeDeps();
+  const code = await run({ argv: ['extract-reviews', '--runs', fx.runsRoot, '--out', out, '--role', 'lens', '--transcripts', fx.transcripts, ...arms, ...extra], deps });
+  const json = (name) => JSON.parse(fs.readFileSync(path.join(out, name), 'utf8'));
+  return { code, deps, out, json };
+}
+
+const memo = (f) => {
+  let p;
+  return () => (p || (p = f()));
+};
+const oneArm = memo(() => extractReviews());
+const twoArms = memo(() => extractReviews({ arms: ['--arm', 'name=haiku,profile=fast', '--arm', 'name=sonnet,profile=standard'] }));
+
+// Every file under `dir`, recursively, leaving out .git directories.
+const filesUnder = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+  if (e.name === '.git') return [];
+  const full = path.join(dir, e.name);
+  return e.isDirectory() ? filesUnder(full) : [full];
+});
+const read = (f) => fs.readFileSync(f, 'utf8');
+const count = (text, needle) => text.split(needle).length - 1;
+const ok = (x) => assert.equal(x.code, 0, x.deps.errs.join('\n'));
+
+test('AC1.1/AC1.2: one clean repository per review with two commits and the archived file list', async () => {
+  const x = await twoArms();
+  ok(x);
+  const repos = fs.readdirSync(path.join(x.out, 'repos')).filter((d) => fs.existsSync(path.join(x.out, 'repos', d, 'repo')));
+  assert.deepEqual(repos, [`${RUN}--r1`]);
+  const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+  assert.equal(fixture.repos.length, 1);
+  const repo = fixture.repos[0];
+  assert.equal(repo.path, path.join(x.out, 'repos', `${RUN}--r1`, 'repo'));
+  assert.deepEqual([repo.archivedBase, repo.archivedHead], [fx.B, fx.H]);
+  const inRepo = gitIn(repo.path);
+  assert.equal(inRepo('log', '--format=%s'), 'head\nbase');
+  const names = (stat) => stat.split('\n').slice(0, -1).map((l) => l.split('|')[0].trim());
+  const replayed = names(inRepo('diff', `${repo.replayBase}...${repo.replayHead}`, '--stat'));
+  assert.deepEqual(replayed, names(gitIn(fx.mainRoot)('diff', `${fx.B}...${fx.H}`, '--stat')));
+  assert.deepEqual(replayed, ['src/a.js', 'src/b.js']);
+  const manifest = x.json(schema.REVIEWS_MANIFEST_FILE);
+  for (const arm of manifest.arms) for (const p of arm.prompts) assert.equal(p.repo, repo.path, `${arm.name} ${p.name}`);
+});
+
+test('AC2.1/AC2.2: no prompt names an archived sha or a fixture path', async () => {
+  const x = await twoArms();
+  ok(x);
+  const { replayBase, replayHead } = x.json(schema.REVIEWS_FIXTURE_FILE).repos[0];
+  const prompts = x.json(schema.REVIEWS_MANIFEST_FILE).arms.flatMap((a) => a.prompts);
+  assert.ok(prompts.length > 0);
+  for (const p of prompts) {
+    const text = read(p.file);
+    for (const needle of [fx.B, fx.H, fx.B.slice(0, 7), fx.worktree, fx.mainRoot]) assert.ok(!text.includes(needle), `${p.file} names ${needle}`);
+    assert.ok(text.includes(toPosix(p.repo)), `${p.file} names its repo`);
+    assert.ok(text.includes(replayBase) && text.includes(replayHead), `${p.file} names the replay shas`);
+  }
+});
+
+test('AC3.1/AC3.2/AC3.3: decisions.md and a gone run input are excluded', async () => {
+  const x = await oneArm();
+  ok(x);
+  const { excluded } = x.json(schema.REVIEWS_FIXTURE_FILE);
+  const reasonOf = (agentId) => excluded.filter((e) => e.agentId === agentId).map((e) => e.reason);
+  assert.deepEqual(reasonOf('l3c-a'), ['unknown-run-input']);
+  assert.deepEqual(reasonOf('l3d-a'), ['run-input-gone']);
+  assert.deepEqual(excluded.find((e) => e.agentId === 'l3c-a'), { run: RUN, agentId: 'l3c-a', lens: '3c', side: 'a', reason: 'unknown-run-input' });
+  assert.deepEqual(reasonOf('impl-1'), [], 'a dispatch that is not a lens reviewer is never an exclusion');
+  const promptFiles = filesUnder(path.join(x.out, 'prompts')).map((f) => path.relative(x.out, f));
+  assert.ok(promptFiles.length > 0);
+  for (const f of promptFiles) assert.ok(!f.includes('3c-a') && !f.includes(RUN_GONE), f);
+  assert.ok(!fs.existsSync(path.join(x.out, 'scratch', 'haiku', RUN_GONE)));
+});
+
+test('AC4.1/AC4.2: no archived row text or tiebreak line reaches a prompt, repo or copy', async () => {
+  const x = await oneArm();
+  ok(x);
+  const files = [...filesUnder(path.join(x.out, 'prompts')), ...filesUnder(path.join(x.out, 'repos'))];
+  assert.ok(files.length > 0);
+  for (const f of files) {
+    const text = read(f);
+    for (const needle of ['archived-row-alpha', 'archived-row-beta', 'confirmed by tiebreak']) assert.ok(!text.includes(needle), `${f} holds ${needle}`);
+  }
+  const copies = fs.readdirSync(path.join(x.out, 'repos')).flatMap((d) => fs.readdirSync(path.join(x.out, 'repos', d))
+    .filter((n) => n.includes('--')).map((n) => path.join(x.out, 'repos', d, n)));
+  assert.ok(copies.some((c) => c.endsWith('3a-a--context.md')), copies.join('\n'));
+  assert.ok(copies.some((c) => c.endsWith('3a-a--9-spec.md')), copies.join('\n'));
+  for (const c of copies) {
+    const text = read(c);
+    assert.equal(count(text, fx.mainRoot), 0, c);
+    assert.equal(count(text, `.claude-tweaks/pipelines/${RUN}`), 0, c);
+  }
+  const context = read(copies.find((c) => c.endsWith('3a-a--context.md')));
+  assert.ok(context.includes('+see .claude-tweaks/pipelines/2025-01-01T000000-spec-1/decisions.md\n'), context);
+  assert.ok(context.includes(`Spec: ${toPosix(copies.find((c) => c.endsWith('3a-a--9-spec.md')))}\n`), 'the bundle names the slot copy of the spec');
+  const { excluded } = x.json(schema.REVIEWS_FIXTURE_FILE);
+  assert.deepEqual(excluded.filter((e) => e.reason === 'unrewritten-path'), []);
+});
+
+test('archived rows are stored repo-relative', async () => {
+  const x = await oneArm();
+  ok(x);
+  const reports = x.json(schema.REPORTS_FILE);
+  assert.equal(reports.schemaVersion, schema.SCHEMA_VERSION);
+  const b = reports.reports[`${RUN}/3b-a`];
+  assert.deepEqual(b.rows, [{ sev: 'medium', path: 'src/b.js', line: 4 }]);
+  assert.deepEqual([b.lens, b.side, b.run, b.unitKey], ['3b', 'a', RUN, RUN]);
+  assert.deepEqual(reports.reports[`${RUN}/3a-a`].counts, { critical: 0, high: 1, medium: 0, low: 0, info: 0, overflow: 0 });
+  assert.deepEqual(reports.reports[`${RUN}/3a-b`].rows, []);
+  assert.ok(reports.runRows[RUN].some((r) => r.lens === '3c' && r.path === 'src/b.js' && r.line === 7), JSON.stringify(reports.runRows));
+  assert.ok(reports.runRows[RUN].some((r) => r.lens === '3b' && r.path === 'src/b.js' && r.line === 4));
+  assert.deepEqual(reports.confirmed[RUN], {
+    '3a': { findings: [{ path: 'src/a.js', line: 10, how: 'pair' }], unlocated: 0 },
+    '3b': { findings: [{ path: 'src/b.js', line: 4, how: 'tiebreak' }], unlocated: 0 },
+  });
+});
+
+test('l3b-b is excluded as report-unparsed', async () => {
+  const x = await oneArm();
+  ok(x);
+  const { excluded, slots } = x.json(schema.REVIEWS_FIXTURE_FILE);
+  assert.deepEqual(excluded.find((e) => e.agentId === 'l3b-b'), { run: RUN, agentId: 'l3b-b', lens: '3b', side: 'b', reason: 'report-unparsed' });
+  assert.ok(!slots.some((s) => s.agentId === 'l3b-b'));
+});
+
+test('AC9.1: one --arm writes the user arm and control', async () => {
+  const x = await oneArm();
+  ok(x);
+  const manifest = x.json(schema.REVIEWS_MANIFEST_FILE);
+  assert.deepEqual(manifest.arms.map((a) => a.name), ['haiku', 'control']);
+  const [haiku, control] = manifest.arms;
+  assert.deepEqual([haiku.profile, haiku.model, haiku.effort, haiku.repeat], ['fast', 'haiku', null, 1]);
+  assert.deepEqual([control.profile, control.model, control.effort, control.repeat], ['standard', 'sonnet', 'medium', 1]);
+  assert.deepEqual(control.prompts.map((p) => p.name), haiku.prompts.map((p) => p.name));
+  assert.equal(manifest.kind, schema.REVIEWS_KIND);
+  assert.deepEqual(schema.validateReviewsManifest(manifest), []);
+  const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+  assert.deepEqual(fixture.slots.map((s) => [s.name, s.archivedTier, s.archivedEffort, s.controlArm, s.unit, s.repoKey]), [
+    [`${RUN}/3a-a`, 'standard', 'medium', 'control', RUN, `${RUN}--r1`],
+    [`${RUN}/3a-b`, 'standard', 'medium', 'control', RUN, `${RUN}--r1`],
+    [`${RUN}/3b-a`, 'standard', 'medium', 'control', RUN, `${RUN}--r1`],
+    [`${RUN}/3a-a.2`, 'standard', 'medium', 'control', RUN, `${RUN}--r1`],
+  ]);
+  assert.deepEqual(fixture.totals, { reviews: 4, byLens: { '3a': 3, '3b': 1 } });
+  assert.equal(haiku.prompts[0].file, path.join(x.out, 'prompts', 'haiku', RUN, '3a-a.md'));
+  assert.deepEqual(Object.keys(haiku.prompts[0]), schema.REVIEWS_PROMPT_KEYS);
+});
+
+test('a repeated lens/side dispatch gets its own slot', async () => {
+  const x = await oneArm();
+  ok(x);
+  const names = x.json(schema.REVIEWS_MANIFEST_FILE).arms[0].prompts.map((p) => p.name);
+  assert.ok(names.includes(`${RUN}/3a-a`) && names.includes(`${RUN}/3a-a.2`), names.join(', '));
+  const slots = x.json(schema.REVIEWS_FIXTURE_FILE).slots;
+  assert.deepEqual(slots.filter((s) => s.lens === '3a' && s.side === 'a').map((s) => s.agentId), ['l3a-a', 'l3a-a2']);
+});
+
+test('AC7.1: the workflow launches one agent per arm × repeat × prompt', async () => {
+  const x = await extractReviews({ arms: ['--arm', 'name=haiku,profile=fast,repeat=2', '--arm', 'name=sonnet,profile=standard,effort=low'] });
+  ok(x);
+  const manifest = x.json(schema.REVIEWS_MANIFEST_FILE);
+  const { calls } = await runWorkflow(manifest);
+  assert.equal(calls.length, manifest.arms.reduce((n, a) => n + a.prompts.length * a.repeat, 0));
+  assert.ok(calls.length > 0);
+  const byName = new Map(manifest.arms.map((a) => [a.name, a]));
+  for (const c of calls) {
+    const arm = byName.get(c.opts.label.split('|')[0]);
+    assert.equal(c.opts.model, arm.model);
+    assert.equal(c.opts.effort === undefined ? null : c.opts.effort, arm.effort);
+  }
+  assert.deepEqual(manifest.arms.map((a) => [a.name, a.effort, a.repeat]), [['haiku', null, 2], ['sonnet', 'low', 1], ['control', 'medium', 1]]);
+});
+
+test('the effort line is gone and the scratch is a new empty directory', async () => {
+  const x = await oneArm();
+  ok(x);
+  const prompts = x.json(schema.REVIEWS_MANIFEST_FILE).arms.flatMap((a) => a.prompts);
+  for (const p of prompts) assert.ok(!read(p.file).includes('[Effort:'), p.file);
+  const haiku = x.json(schema.REVIEWS_MANIFEST_FILE).arms[0].prompts[0];
+  const scratch = /SCRATCH: (\S+)/.exec(read(haiku.file))[1];
+  assert.equal(scratch, toPosix(path.join(x.out, 'scratch', 'haiku', RUN, '3a-a', '3a-a')));
+  assert.ok(fs.statSync(scratch).isDirectory());
+  assert.deepEqual(fs.readdirSync(scratch), []);
+});
+
+test('--arm name=control,profile=fast exits 2', async () => {
+  const x = await extractReviews({ arms: ['--arm', 'name=control,profile=fast'] });
+  assert.equal(x.code, 2);
+  assert.ok(!fs.existsSync(x.out));
+  const y = await extractReviews({ arms: ['--arm', 'name=control.standard.medium,profile=fast'] });
+  assert.equal(y.code, 2);
+});
+
+test('--arm name=x,chunk=2,profile=fast exits 2', async () => {
+  const x = await extractReviews({ arms: ['--arm', 'name=x,chunk=2,profile=fast'] });
+  assert.equal(x.code, 2);
+  assert.match(x.deps.errs.join('\n'), /--arm: chunk does not apply to extract-reviews/);
+});
+
+test('--min-reviews 99 exits 3 and writes no manifest', async () => {
+  const x = await extractReviews({ extra: ['--min-reviews', '99'] });
+  assert.equal(x.code, 3);
+  assert.ok(!fs.existsSync(path.join(x.out, schema.REVIEWS_MANIFEST_FILE)));
+  assert.ok(!fs.existsSync(x.out));
+  const report = JSON.parse(x.deps.errs.join('\n'));
+  assert.deepEqual(report.shortfall, { requested: { minReviews: 99 }, available: { reviews: 4, byLens: { '3a': 3, '3b': 1 } } });
+  assert.ok(report.excluded.some((e) => e.agentId === 'l3b-b'));
+});
+
+test('--lens and --max-per-lens select slots in run order without adding exclusions', async () => {
+  const x = await extractReviews({ extra: ['--lens', '3a', '--max-per-lens', '1'] });
+  ok(x);
+  const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+  assert.deepEqual(fixture.slots.map((s) => s.name), [`${RUN}/3a-a`]);
+  assert.deepEqual(Object.keys(x.json(schema.REPORTS_FILE).reports), [`${RUN}/3a-a`]);
+  assert.deepEqual(Object.keys(x.json(schema.REPORTS_FILE).confirmed[RUN]), ['3a']);
+  assert.ok(x.json(schema.REPORTS_FILE).runRows[RUN].some((r) => r.lens === '3b'), 'runRows keep every parsed dispatch');
+  assert.deepEqual(fixture.excluded.map((e) => e.agentId).sort(), ['l3b-b', 'l3c-a', 'l3d-a']);
+  assert.deepEqual(fixture.requested, { lens: ['3a'], maxPerLens: 1 });
+});
+
+test('an unknown --role exits 2', async () => {
+  const deps = makeDeps();
+  const code = await run({ argv: ['extract-reviews', '--runs', fx.runsRoot, '--out', path.join(root, 'out-role'), '--role', 'judge', '--transcripts', fx.transcripts, '--arm', 'name=haiku,profile=fast'], deps });
+  assert.equal(code, 2);
+  assert.match(deps.errs.join('\n'), /--role/);
+});

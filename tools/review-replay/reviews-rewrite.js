@@ -103,6 +103,12 @@ function runInputsOf(text, { mainRoot, runName, copy = false }) {
   return { inputs, unknown };
 }
 
+// The distinct worktree paths `{mainRoot}/.claude/worktrees/{name}` the text names, in text order.
+function worktreePathsOf(text, { mainRoot }) {
+  const re = new RegExp(`${escapeRe(requireRoot(mainRoot))}/\\.claude/worktrees/${WORKTREE_NAME}`, 'g');
+  return [...new Set([...String(text).matchAll(re)].map((m) => m[0]))];
+}
+
 function stripEffortLines(text) {
   return String(text).replace(/^\[Effort: (?:low|medium|high|xhigh|max) — [^\]]*\][ \t\r]*$\n?/gm, '');
 }
@@ -175,4 +181,4 @@ function unrewrittenPaths(text, { mainRoot, runName, outDir }) {
   return found;
 }
 
-module.exports = { rangeOf, originRefsOf, runInputsOf, stripEffortLines, rewriteShas, rewriteText, unrewrittenPaths };
+module.exports = { rangeOf, originRefsOf, runInputsOf, worktreePathsOf, stripEffortLines, rewriteShas, rewriteText, unrewrittenPaths };

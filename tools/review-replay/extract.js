@@ -290,4 +290,4 @@ function writeOutputs(c, deps) {
   return 0;
 }
 
-module.exports = { extract, parseExtractOptions, parseArm };
+module.exports = { extract, parseExtractOptions, parseArm, positiveInt, isEmptyOrAbsent, writeJson };
