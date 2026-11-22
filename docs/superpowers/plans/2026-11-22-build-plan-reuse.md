@@ -139,6 +139,7 @@ Expected: FAIL (`plugin/skills/build/plan-reuse.md` does not exist; `readText` t
 ### Task 2: SKILL.md pointer, Common Step 1.6 and plan-review.md skip text, graph and policy rows
 
 **Role:** integration
+**Review risk:** high (decision logic: the policy gate and the Common Step 1.6 skip condition)
 
 **Files:**
 - Modify: `plugin/skills/build/SKILL.md` (Spec Step 2: new `#### Before Spec Step 3: a plan reviewed at specify (#6060)` paragraph after `#### If no plan exists:`'s body, before `### Spec Step 2.5`; Common Step 1.6 stub: one clause)
