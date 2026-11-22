@@ -14,7 +14,7 @@
 // deletions}[]`) and the run's current `ceremony-profile` value.
 // isPromptProsePath and PROMPT_PROSE_DIRS live in blast-radius.js (#3680: its isTestPath
 // shares the prose classification); they are re-exported below so the prose-twin pin
-// (`build/micro-plan.md`, `wrap-up/ceremony-derivation.md`) still reads them through this module.
+// (`issues/micro-plan-gate.js`'s header, `wrap-up/ceremony-derivation.md`) still reads them through this module.
 const { classifyDiffFiles, blastRadiusSummary, isPromptProsePath, PROMPT_PROSE_DIRS } = require('../issues/blast-radius');
 
 // Docs-only surface: markdown that is not prompt prose, plus the

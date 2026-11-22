@@ -17,16 +17,18 @@
 //
 // Counting rule (condition 3). Every listed path counts as an implementation file except one
 // under `tests/`, one matching `*.test.*`/`*.spec.*`, a `*.md` path that is not prompt prose
-// (markdown under skills/, agents/ or commands/ counts as implementation), or a top-level
+// (markdown under `skills/`, `agents/`, or `commands/` counts as implementation), or a top-level
 // `docs/plans/*.html` diagram — the same test/docs exclusion computeDiffFacts applies to a
 // diff, read here against the spec's own file list. Zero implementation files still qualifies
 // (a docs-only or test-only record): the gate is "at most one", not "exactly one".
 //
-// Read-only entries (#3696). An entry whose own note marks it read-only (`read only`,
-// `read-only`, `no change`, any case) is not counted: the build reads it and changes nothing,
-// so it adds no task structure. #3696's one-file fix went through the full writing-plans path
-// because `check-staged-stack.js — CLI exit path (read only, no change)` was counted as a
-// second file.
+// Read-only entries (#3696). An entry whose own note marks it read-only is not counted: the
+// build reads it and changes nothing, so it adds no task structure. A note marks it read-only,
+// in any case, only through `read only` or `read-only`, or through a `no change` or `no changes`
+// that ends the note or a clause (followed by `)`, `,`, `.`, `;` or the note's end). Any other
+// phrasing counts the entry: `(modify — no change to callers)` is an edit. #3696's one-file
+// fix went through the full writing-plans path because
+// `check-staged-stack.js — CLI exit path (read only, no change)` was counted as a second file.
 //
 // Parse-signal discipline: an absent or partly unparsed Key Files section (keyFileEntries null,
 // or unparsed > 0) and a Risk-flags line that cannot be read (or a non-string body) are reported as `unreadable`, never
@@ -38,9 +40,8 @@ const { parseRiskFlags } = require('./record-risk-flags');
 
 const MICRO_PLAN_CONDITIONS = Object.freeze(['fast-lane-ceremony', 'low-size', 'implementation-file-limit', 'no-risk-flag']);
 const MAX_IMPLEMENTATION_FILES = 1;
-// `no change` marks read-only only when not followed by to/in/for: "(modify — no change to
-// callers)" describes an edit, not a read-only entry.
-const READ_ONLY_NOTE_RE = /\b(read[ -]only|no change(?!\s+(?:to|in|for)\b))/i;
+// The header's read-only rule; it fails closed, so a phrasing it does not name counts the entry.
+const READ_ONLY_NOTE_RE = /\bread[ -]only\b|\bno changes?\b\s*(?:[),.;]|$)/i;
 
 // entries: [{path, note}] (extractKeyFileEntries's shape) -> number of implementation files.
 function countImplementationFiles(entries) {

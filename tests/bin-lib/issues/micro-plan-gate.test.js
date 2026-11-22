@@ -38,10 +38,20 @@ test('countImplementationFiles skips entries whose note marks them read-only (#3
   assert.strictEqual(countImplementationFiles([entry('bin/a.js', '— NO CHANGE')]), 0);
   assert.strictEqual(countImplementationFiles([entry('bin/a.js', '— read only')]), 0);
   assert.strictEqual(countImplementationFiles([entry('bin/a.js', '— already changed')]), 1);
-  assert.strictEqual(countImplementationFiles([entry('plugin/bin/a.js', '(modify — no change to callers)')]), 1);
-  assert.strictEqual(countImplementationFiles([entry('plugin/bin/a.js', '(modify — no change in output format)')]), 1);
-  assert.strictEqual(countImplementationFiles([entry('plugin/bin/a.js', '(modify — no change for old callers)')]), 1);
   assert.strictEqual(countImplementationFiles([entry('plugin/bin/a.js', '(no change.)')]), 0);
+  assert.strictEqual(countImplementationFiles([entry('plugin/bin/a.js', '(no changes)')]), 0);
+});
+
+test('countImplementationFiles counts a `no change` that does not end the note or a clause (fails closed)', () => {
+  for (const note of [
+    '(modify — no change to callers)',
+    '(modify — no changes to callers)',
+    '(modify — no change other than the import)',
+    '(modify — no change of behaviour)',
+    '(modify — no change in output format)',
+  ]) {
+    assert.strictEqual(countImplementationFiles([entry('plugin/bin/a.js', note)]), 1, note);
+  }
 });
 
 test('the #3696 shape passes the gate: one real file plus a read-only second one', () => {
