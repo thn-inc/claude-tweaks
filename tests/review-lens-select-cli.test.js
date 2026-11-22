@@ -42,10 +42,10 @@ function seedHistory(w, lens, n = 20) {
     }));
   }
 }
-function call(w, args) {
+function call(w, args, cwdDir = w.dir) {
   const out = [];
   const err = [];
-  const code = run(args, { cwd: () => w.dir, env: {}, stdout: (s) => out.push(s), stderr: (s) => err.push(s), now: () => Date.UTC(2026, 10, 22, 12, 0, 0) });
+  const code = run(args, { cwd: () => cwdDir, env: {}, stdout: (s) => out.push(s), stderr: (s) => err.push(s), now: () => Date.UTC(2026, 10, 22, 12, 0, 0) });
   return { code, stdout: out.join(''), stderr: err.join('') };
 }
 const argsFor = (w, tier, extra = []) => ['--run', w.runDir, '--tier', tier, '--base', w.base, ...extra];
@@ -215,12 +215,15 @@ test('exit 2 on a bad --tier, a missing --base, an unknown flag, a missing run d
     // Only --risk-flags takes an empty value; every other flag still refuses one.
     ['--run', w.runDir, '--tier', 'high', '--base', ''],
     ['--run', w.runDir, '--tier', '', '--base', w.base],
-    ['--run', '', '--tier', 'high', '--base', w.base],
   ]) {
     const r = call(w, args);
     assert.strictEqual(r.code, 2, args.join(' '));
     assert.strictEqual(r.stdout, '');
   }
+  // An empty --run resolves to the cwd; with the cwd a valid run dir it must still be refused, not accepted.
+  const empty = call(w, ['--run', '', '--tier', 'high', '--base', w.base], w.runDir);
+  assert.strictEqual(empty.code, 2);
+  assert.strictEqual(empty.stdout, '');
   assert.ok(!fs.existsSync(path.join(w.runDir, 'lens-selection.json')));
 });
 
@@ -312,10 +315,12 @@ test('a facts failure and a history failure are both named in the fallback; a th
   const both = fallbackOf(w, 'no-such-ref-xyz', { readLensHistory: throwing });
   assert.match(both, /^facts unavailable: paths: .*no-such-ref-xyz[\s\S]*; lens history unreadable: history boom$/);
   assert.ok(!both.includes('history is not an object'), both);
-  assert.strictEqual(fallbackOf(world(), w.base, { readLensHistory: throwing }), 'lens history unreadable: history boom');
+  const own = world(); // its own base: a sha from another fixture repo only resolves when both commits share a second
+  assert.strictEqual(fallbackOf(own, own.base, { readLensHistory: throwing }), 'lens history unreadable: history boom');
   // A thrown message is inserted literally: `$&`, `$\`` and `$'` are not replacement patterns.
   const dollars = () => { throw new Error("EACCES /p/$&/$`/$'"); };
-  assert.strictEqual(fallbackOf(world(), w.base, { readLensHistory: dollars }), "lens history unreadable: EACCES /p/$&/$`/$'");
+  const own2 = world();
+  assert.strictEqual(fallbackOf(own2, own2.base, { readLensHistory: dollars }), "lens history unreadable: EACCES /p/$&/$`/$'");
   // A history that reads but is malformed is named beside the facts reason too.
   const malformed = fallbackOf(world(), 'no-such-ref-xyz', { readLensHistory: () => ({ lenses: {} }) });
   assert.match(malformed, /no-such-ref-xyz[\s\S]*; history has no entry for lens 3b$/);
