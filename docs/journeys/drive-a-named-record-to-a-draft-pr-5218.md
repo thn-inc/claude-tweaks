@@ -45,7 +45,7 @@ files:
 - **Should feel:** free. A refusal costs one record fetch and writes nothing: no claim, no run directory, no worktree.
 - **Should understand:**
   - These events carry `run: null` and reach stdout only, because no run directory exists yet. The record is fetched once, and that same JSON feeds every later gate.
-  - Eligibility applies the driver's lane bounds (`express-driver-max-size`, `express-driver-max-key-files`; `docs/driver.md`'s Lane bounds). They default to the express lane's values, so a project that sets neither sees the express refusals unchanged.
+  - Eligibility applies the driver's lane bounds (`express-driver-max-size`, `express-driver-max-key-files`, and `express-driver-max-risk`; `docs/driver.md`'s Lane bounds). They default to the express lane's values, so a project that sets neither sees the express refusals unchanged.
   - A record beyond the express bounds (a size label other than `low`, or more than 3 Key Files) gets through only when the reviewer step is on for it. With the reviewer off, admission refuses it with `record is beyond the express bounds and the reviewer step is off for it`. If such a record is inside the lane bounds but fails another eligibility rule, the eligibility stop's detail names eligibility's reasons first and then that reviewer reason, so one refusal shows both fixes.
 - **Red flags:**
   - A run directory, claim or worktree left behind for a refused record.
