@@ -437,7 +437,7 @@ test('fix round 1: a present human\'s mixed reply joins the post-answer sequence
 test('fix round 2: a blocking reply whose rows are all asked still commits step 3\'s flag addition early', () => {
   assertFacts(subText(), [
     'whenever they hold settled rows or step 3\'s flag additions',
-    'A blocking reply whose rows are all asked still gets this commit when step 3 added a flag, holding only that flag edit and its `Proof` line.',
+    'A blocking reply whose rows are all asked still gets this commit when step 3 added a flag, holding only those flag edits and their `Proof` lines.',
   ]);
 });
 
@@ -445,6 +445,36 @@ test('fix round 1: in a blocking branch the flag addition rides the early commit
   assertFacts(subText(), [
     'the `add` edit and its `Proof({slug}):` plan line ride in step 5\'s early commit, before the question comment is posted.',
     'A failed `add` writes no `Proof` line.',
+  ]);
+});
+
+// Fix wave (final review): a blocking branch's question comment carries the flag to the record
+// body (the resumed run re-materializes the spec from it), an answered round adds a flag the
+// answer left off, a flag-only early commit re-audits with no record comment, and a failed
+// policy read logs a SKIP.
+test('fix wave: a blocking branch\'s question comment asks the answerer to add the flag to the record body', () => {
+  assertFacts(subText(), [
+    'the question comment for each row step 3 flagged names `{slug}` and tells the answerer to add `{slug}` to the record body\'s `Risk-flags:` line along with their `**Decision**` paragraph',
+  ]);
+});
+
+test('fix wave: an answered round still runs step 3\'s add, without asking, for a declared category the spec does not keep', () => {
+  assertFacts(subText(), [
+    'also runs step 3\'s `risk-flags.js add` without asking, and adds its `Proof({slug}):` plan line',
+    'so an answer recorded without the flag still leaves the implementing build owing that flag\'s Check G proof',
+  ]);
+});
+
+test('fix wave: a flag-only early commit still re-audits and posts no amendment record comment', () => {
+  assertFacts(subText(), [
+    'When no settled row exists, the re-audit (`plan-audit.js … --spec`) still runs on the amended pair, and no amendment record comment is posted, because the question comment carries the flag.',
+  ]);
+});
+
+test('fix wave: a failed or empty policy read in step 1 logs one SKIP', () => {
+  assertFacts(subText(), [
+    'A failed or empty read logs one `SKIP`',
+    'condition: {control-mode|risk-categories} read failed ({reason}) → fallback: declared categories are the four built-ins',
   ]);
 });
 

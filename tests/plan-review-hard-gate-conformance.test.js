@@ -96,9 +96,11 @@ test('AC5.2: the consumer list is complete', () => {
   }
 });
 
-const ASKED_CLASSES_CLAUSE = '; under `planning-decisions: asked-classes`, only a row `_shared/planning-decisions.md` asks, #6051)';
+// The bare clause text is what the pin matches; the full clause adds the `; ` separator, so the control can cut it whole.
+const ASKED_CLASSES_TEXT = 'under `planning-decisions: asked-classes`, only a row `_shared/planning-decisions.md` asks, #6051)';
+const ASKED_CLASSES_CLAUSE = `; ${ASKED_CLASSES_TEXT}`;
 const NARROWING_MSG = 'the HARD-GATE row lacks the asked-classes narrowing clause (#6051)';
-const narrowsUnderAskedClasses = (row) => row.includes(ASKED_CLASSES_CLAUSE.slice(2));
+const narrowsUnderAskedClasses = (row) => row.includes(ASKED_CLASSES_TEXT);
 
 test('the HARD-GATE row narrows the plan-review gate under asked-classes by pointing at _shared/planning-decisions.md (#6051)', () => {
   assert.ok(narrowsUnderAskedClasses(contractRow()), NARROWING_MSG);

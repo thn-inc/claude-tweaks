@@ -50,6 +50,7 @@ const SITES = [
   { id: 'R3', file: 'plugin/skills/build/plan-review.md', content: 'settled after an answered round: {finding} — chose {reading taken}; not {reading not taken}' },
   { id: 'R4', file: 'plugin/skills/build/plan-review-asked-classes.md', content: 'Settled at planning: {finding} — chose {reading}; not {other reading}' },
   { id: 'R5', file: 'plugin/skills/build/plan-review-asked-classes.md', content: 'condition: risk-flags.js add exited {code} ({stderr line}) → fallback: question asked without the flag' },
+  { id: 'R6', file: 'plugin/skills/build/plan-review-asked-classes.md', content: 'condition: {control-mode|risk-categories} read failed ({reason}) → fallback: declared categories are the four built-ins' },
 ];
 
 const collapse = (text) => text.replace(/\s+/g, ' ');
