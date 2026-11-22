@@ -40,7 +40,11 @@ function fenceAfter(text, heading) {
   return '';
 }
 
-const beforeFirstSection = (text) => text.slice(0, text.indexOf('\n## Which records are planned\n'));
+const beforeFirstSection = (text) => {
+  const at = text.indexOf('\n## Which records are planned\n');
+  assert.notEqual(at, -1, 'heading not found: ## Which records are planned');
+  return text.slice(0, at);
+};
 const f = (s, fact) => [lit(s), fact || s];
 
 test('AC1.1: planning.md opens with the gate and the ask-all refusal', () => {
@@ -173,6 +177,36 @@ test('Review finding 4: the fallback rules are pinned', () => {
     f('`BLOCKED`, no status line, no `PLAN:` line, or a `PLAN:` path outside `{checkout}`, after that one re-dispatch, means planning failed.'),
     f('followed by the decisions table (finding, class, decision) when routing produced one, and, when step 4 sent one, the audit\'s JSON line.'),
   ], 'reply rules and amend table');
+});
+
+test('review fixes: fetched labels, the stored Plan: line and the PLAN: path never reach a command line', () => {
+  pinned(sectionOf(planning(), '## Which records are planned'), [
+    f('Label names are fetched text, so they never go on the command line'),
+    f('-- "{lane-file}" {n} "{body}" "{labels-file}"'),
+    f('The line is record-body text, so it never goes on the command line'),
+    f('plan-store.js" check --line-file "{plan-line-file}"'),
+  ], 'untrusted text through files');
+  assert.ok(!planning().includes('"{labels}"'), 'labels interpolated into a command');
+  assert.ok(!planning().includes('--line "{plan-line}"'), 'Plan: line interpolated into a command');
+  pinned(sectionOf(planning(), '## Planner prompt'), [
+    f('The containment check compares real paths (symlinks followed, `..` normalized) and fails closed.'),
+    f('anything but `inside` — a path that does not resolve included — is outside'),
+  ], 'PLAN: containment');
+});
+
+test('review fix: a held record whose planning fails stays held, never ready', () => {
+  pinned(sectionOf(planning(), '## Per-record step'), [
+    f('**A held record\'s planning failure keeps it held.**'),
+    f('it takes `## Hold` instead of the `off` write'),
+    f('the captured hold comment\'s block copied verbatim'),
+    f('`held — planning failed: {reason}`'),
+  ], 'held planning failure');
+});
+
+test('review fix: the auto-mode contract registers the planning stop', () => {
+  const contract = readText(path.join(ROOT, 'plugin/skills/_shared/auto-mode-contract.md'));
+  assert.ok(contract.includes('`/specify` shaping mode\'s planning questions under `plan-at-specify: on` (`specify/planning.md`\'s Asking, #6056)'),
+    'auto-mode-contract.md does not register specify planning as an exempt stop');
 });
 
 test('the planner is a Standard, clean-room dispatch that stops writing-plans before its Execution Handoff', () => {

@@ -387,6 +387,8 @@ test('Deliverable 9: on with planning-decisions ask-all (unset, explicit or malf
   assert.deepStrictEqual(resolvePlanAtSpecify({ policyRaw: 'plan-at-specify: on\nplanning-decisions: ask-some\n' }), refused);
   // An invalid planning-decisions resolves the default (ask-all), never the next source's value.
   assert.deepStrictEqual(resolvePlanAtSpecify({ policyRaw: 'plan-at-specify: on\nplanning-decisions: ask-some\n', factoryRaw: 'planning-decisions: asked-classes\n' }), refused);
+  // A factory-sourced on is refused the same way, keeping the factory source.
+  assert.deepStrictEqual(resolvePlanAtSpecify({ factoryRaw: 'plan-at-specify: on\n' }), { ...refused, source: 'factory' });
 });
 
 test('Deliverable 9: on with asked-classes resolves on, from the policy or the factory layer (#6056)', () => {

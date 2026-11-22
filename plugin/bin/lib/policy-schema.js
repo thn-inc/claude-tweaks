@@ -652,17 +652,21 @@ function hasOwn(obj, key) {
 // explicit attribution surface tidy Step 7.5 reads (#581); never tag a
 // distinct source for a derived value.
 function deriveHousekeepingAutoMerge(sources) {
-  const schemaEntry = SCHEMA_BY_KEY.get('autonomy');
-  let autonomy = schemaEntry.default;
-  for (const source of sources) {
-    if (!hasOwn(source.values, 'autonomy')) continue;
-    const raw = source.values.autonomy;
-    // Mirrors the main loop's invalid handling: an invalid value resolves the
-    // schema default, never the next source's value.
-    if (isValidValue(schemaEntry, raw)) autonomy = resolveValue('autonomy', raw);
-    break;
-  }
+  const autonomy = firstSourceValue(sources, 'autonomy');
   return autonomy === 'trusted' || autonomy === 'unattended';
+}
+
+// The one first-source-wins read the derived keys share (#6056 review): the first source holding
+// `key` (after `skip`) wins, and an invalid value resolves the key's schema default, never the next
+// source's value, mirroring the main loop's invalid handling.
+function firstSourceValue(sources, key, skip = () => false) {
+  const schemaEntry = SCHEMA_BY_KEY.get(key);
+  for (const source of sources) {
+    if (skip(source) || !hasOwn(source.values, key)) continue;
+    const raw = source.values[key];
+    return isValidValue(schemaEntry, raw) ? resolveValue(key, raw) : schemaEntry.default;
+  }
+  return schemaEntry.default;
 }
 
 // express-driver-max-lines' effective default (#5224, Shape B): the resolved
@@ -673,35 +677,16 @@ function deriveHousekeepingAutoMerge(sources) {
 // is not policyOnly, so the --run overlay reaches this read, as it reaches
 // express-lane.js check.
 function deriveExpressDriverMaxLines(sources) {
-  const schemaEntry = SCHEMA_BY_KEY.get('auto-merge-max-lines');
-  let value = schemaEntry.default;
-  for (const source of sources) {
-    if (!hasOwn(source.values, 'auto-merge-max-lines')) continue;
-    const raw = source.values['auto-merge-max-lines'];
-    if (isValidValue(schemaEntry, raw)) value = resolveValue('auto-merge-max-lines', raw);
-    break;
-  }
-  return value;
+  return firstSourceValue(sources, 'auto-merge-max-lines');
 }
 
-// The planning-decisions read plan-at-specify's refusal makes (#6056): the first source holding
-// the key wins, run-config skipped (the key is policyOnly), and an invalid value resolves the
-// schema default, never the next source's value, as in the main loop and the two derive helpers
-// above. The factory source is skipped when the key is in FACTORY_REFUSED_KEYS, as the main loop
-// skips it. refusedKeys is resolvePolicyKeys' lazily required FACTORY_REFUSED_KEYS (require cycle
-// with policy-factory.js). Returns 'ask-all' | 'asked-classes'.
+// The planning-decisions read plan-at-specify's refusal makes (#6056), through firstSourceValue:
+// run-config skipped (the key is policyOnly), and the factory source skipped when the key is in
+// FACTORY_REFUSED_KEYS, as the main loop skips it. refusedKeys is resolvePolicyKeys' lazily
+// required FACTORY_REFUSED_KEYS (require cycle with policy-factory.js). Returns 'ask-all' | 'asked-classes'.
 function planningDecisionsFrom(sources, refusedKeys) {
-  const schemaEntry = SCHEMA_BY_KEY.get('planning-decisions');
-  let value = schemaEntry.default;
-  for (const source of sources) {
-    if (source.name === 'run-config') continue;
-    if (source.name === 'factory' && refusedKeys.includes('planning-decisions')) continue;
-    if (!hasOwn(source.values, 'planning-decisions')) continue;
-    const raw = source.values['planning-decisions'];
-    if (isValidValue(schemaEntry, raw)) value = resolveValue('planning-decisions', raw);
-    break;
-  }
-  return value;
+  return firstSourceValue(sources, 'planning-decisions', (source) => source.name === 'run-config'
+    || (source.name === 'factory' && refusedKeys.includes('planning-decisions')));
 }
 
 // express-driver-models (#5917): { present: false } | { present: true, ok: true, value } | { present: true, ok: false, raw }.

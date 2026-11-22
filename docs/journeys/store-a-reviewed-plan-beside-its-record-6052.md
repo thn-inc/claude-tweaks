@@ -49,7 +49,7 @@ files:
 
 ### 4. Ask whether the plan is still valid — terminal
 - **URL:** `node plugin/bin/plan-store.js check --line '{Plan: line}' --spec-file {spec} --base {sha} [--repo-root {dir}]`
-- **Action:** Run `check` with the record's current spec and the commit the build would start from.
+- **Action:** Run `check` with the record's current spec and the commit the build would start from. A caller holding the line from a record body passes `--line-file {file}` instead, so the line never reaches a command line.
 - **Should feel:** Like a yes/no with a reason. Exit 0 with `{"valid":true,"failed":null}`, or exit 1 with `failed` naming the first failing check in order: `ref`, `hash`, `base`, `files`.
 - **Should understand:**
   - The spec hash covers the `##` sections from `## Overview` through `## Planning Decisions`. Editing `Risk-flags:`, `**Related:**`, `Blocked by` or the fingerprint lines does not invalidate the plan; editing a covered section does.

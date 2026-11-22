@@ -271,6 +271,28 @@ test('AC3.1 a malformed --line exits 2 with valid: false', (t) => {
   assert.deepStrictEqual(verdict(both), { valid: false, failed: CHECK_ORDER[0] });
 });
 
+test('--line-file reads the line from a file, and needs exactly one of --line and --line-file', (t) => {
+  const { fx, cli, written } = setup(t);
+  const w = written();
+  fs.writeFileSync(path.join(fx.other, 'line.txt'), `${w.line}\n`);
+  const fromFile = cli(fx.other, ['check', '--line-file', 'line.txt', '--spec-file', 'spec.md', '--base', 'HEAD']);
+  assert.strictEqual(fromFile.code, 0, fromFile.stderr);
+  assert.deepStrictEqual(verdict(fromFile), { valid: true, failed: null });
+  fs.writeFileSync(path.join(fx.other, 'bad.txt'), 'Plan: $(touch pwned)\n');
+  const bad = cli(fx.other, ['check', '--line-file', 'bad.txt', '--spec-file', 'spec.md', '--base', 'HEAD']);
+  assert.strictEqual(bad.code, 2);
+  assert.deepStrictEqual(verdict(bad), { valid: false, failed: 'ref' });
+  const missing = cli(fx.other, ['check', '--line-file', 'absent.txt', '--spec-file', 'spec.md', '--base', 'HEAD']);
+  assert.strictEqual(missing.code, 2);
+  assert.match(missing.stderr, /could not read --line-file/);
+  const both = cli(fx.other, ['check', '--line', w.line, '--line-file', 'line.txt', '--spec-file', 'spec.md', '--base', 'HEAD']);
+  assert.strictEqual(both.code, 2);
+  assert.match(both.stderr, /mutually exclusive/);
+  const neither = cli(fx.other, ['check', '--spec-file', 'spec.md', '--base', 'HEAD']);
+  assert.strictEqual(neither.code, 2);
+  assert.deepStrictEqual(verdict(neither), { valid: false, failed: 'ref' });
+});
+
 test('local-files: write prints the line and keeps the ref local', (t) => {
   const { fx, cli, written, remote } = setup(t);
   for (const dir of [fx.work, fx.other]) fs.writeFileSync(path.join(dir, 'CLAUDE.md'), '## Work records\n\nwork-backend: local-files\n');
