@@ -124,14 +124,14 @@ test('planCommitFile reads a one-file plan commit', (t) => {
 
   const outside = commitFiles(fx, { 'docs/other/x.md': 'x' });
   assert.strictEqual(planCommitFile(g, outside).ok, false);
-  // A sibling directory whose name merely starts with the plan dir: only the startsWith clause refuses it.
+  // A sibling file whose name merely starts with the plan dir's name: only the startsWith clause refuses it.
   const sibling = commitFiles(fx, { 'docs/superpowers/plans-x.md': 'x' });
   const sib = planCommitFile(g, sibling);
   assert.strictEqual(sib.ok, false);
   assert.match(sib.reason, /not directly under/);
 
   // A deletion of an existing plan file: the status check refuses it, with its own reason.
-  const added =commitFiles(fx, { 'docs/superpowers/plans/gone.md': 'x' });
+  const added = commitFiles(fx, { 'docs/superpowers/plans/gone.md': 'x' });
   fx.run(fx.work, ['reset', '-q', '--hard', added]);
   fx.run(fx.work, ['rm', '-q', '--', 'docs/superpowers/plans/gone.md']);
   fx.run(fx.work, ['commit', '-q', '-m', 'delete plan']);

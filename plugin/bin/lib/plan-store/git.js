@@ -128,5 +128,5 @@ function absoluteGitDir(g) {
 }
 
 module.exports = {
-  defaultGit, makeGit, resolveCommit, localRef, lsRemoteRef, fetchRef, planCommitFile, changedPaths, absoluteGitDir,
+  defaultGit, makeGit, reasonOf, resolveCommit, localRef, lsRemoteRef, fetchRef, planCommitFile, changedPaths, absoluteGitDir,
 };

@@ -9,12 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { planRefName, isPlanBasename, PLAN_DIR, DEFAULT_REMOTE } = require('./ref');
-const { resolveCommit, localRef, lsRemoteRef, fetchRef, planCommitFile, absoluteGitDir } = require('./git');
-
-function reasonOf(err) {
-  const stderr = err && err.stderr != null ? String(err.stderr).trim() : '';
-  return stderr || (err && err.message) || 'git failed';
-}
+const { resolveCommit, localRef, lsRemoteRef, fetchRef, planCommitFile, absoluteGitDir, reasonOf } = require('./git');
 
 function writePlan({ g, remote = DEFAULT_REMOTE, push, record, basename, planBytes, base }) {
   let ref;
