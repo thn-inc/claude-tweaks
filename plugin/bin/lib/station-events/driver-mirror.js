@@ -18,6 +18,9 @@ function stationEventsFor(event, { repoName, runId } = {}) {
   if (event === null || typeof event !== 'object') return [];
   const { step, ts, status } = event;
   const base = { repoName, recordNumber: event.record, lane: 'driver', runId, discriminator: `${step}@${ts}` };
+  // The review fix round's own worker line (#5942) is not a work segment: the review line already spans it
+  // and binds the fix session through `fixSessionId`.
+  if (step === 'worker' && event.fix === true) return [];
   if (own(DRIVER_STEP_STATIONS, step)) {
     const station = DRIVER_STEP_STATIONS[step];
     // The sink writes one line at step end, so `started.at` is back-computed as the line's `ts`
