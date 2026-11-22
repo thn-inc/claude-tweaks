@@ -34,9 +34,13 @@ function caseOne() {
 
 test('D1: case 1 routes a held needs:decision record to planning-answer.md', () => {
   pinned(caseOne(), [
-    f('when the fetched labels carry `needs:decision`'),
+    f('Under `work-backend: github-issues`, when the fetched labels carry `needs:decision`'),
+    f('`gh issue view {n} --json comments > "{comments-file}"`'),
+    f('`issue_read` `get_comments` (`perPage: 100`) per `_shared/github-write-transport.md`'),
     f('planning-hold.js" --comments-file'),
+    f('print every `skipped` line'),
     f('read `planning-answer.md` in this skill\'s directory and follow it instead of shaping mode'),
+    f('passing it `{n}`, the fetched body and `{hold-file}`'),
   ], 'routing');
 });
 
@@ -66,8 +70,10 @@ test('Review Focus 5: a batch with a held element fails whole', () => {
 test('case 5 applies the routing by reference', () => {
   const text = skill();
   const from = text.indexOf('5. **Backlog reference**');
+  const to = text.indexOf('**Ambiguous input handling');
   assert.notEqual(from, -1, 'case 5 start not found');
-  pinned(text.slice(from), [
+  assert.ok(to > from, 'Ambiguous input handling not found after case 5');
+  pinned(text.slice(from, to), [
     f('also apply case 1\'s **planning-hold routing** by reference'),
   ], 'case 5');
 });
@@ -152,14 +158,94 @@ test('AC1.1: the answer path asks only the held questions and ends ready, needs:
     f('replacing a lone `No planning questions arose.` line'),
   ], 'ask');
   pinned(sec('## Read-back and outcome'), [
-    f('`gh issue view {n} --json labels,body,comments`'),
+    f('`gh issue view {n} --json labels,body,comments > "{readback-file}"` (`--value specify-answer-readback-{n}.json`'),
     f('`ready` present and `needs:decision` absent'),
-    f('the answered hold comment carries `**Resolved:**`'),
+    f('the answered hold comment carries `**Resolved:**`, as does each `supersededHolds` comment'),
     f('the body has exactly one `Plan:` line equal to the printed `line`'),
     f('against the re-fetched body and `{base}` prints `{"valid": true}`'),
     f('`answered — {k} planning question(s), ready (Plan: {short commit})`'),
-    f('Next Actions recommends `/claude-tweaks:flow #{n}`'),
+    f('ready` outcome, recommend `/claude-tweaks:flow #{n}`'),
   ], 'read-back');
+});
+
+test('L15: the ready bullet uses the bare imperative like its siblings', () => {
+  const region = sec('## Read-back and outcome');
+  const problems = (r) => r.split('\n').filter((l) => l.startsWith('- **') && l.includes('Next Actions recommends')).map(() => 'third person');
+  assert.equal(region.split('\n').filter((l) => l.startsWith('- **`ready`:**')).length, 1);
+  assert.deepEqual(problems(region), []);
+  const mutated = region.replace('outcome, recommend `/claude-tweaks:flow', 'outcome, Next Actions recommends `/claude-tweaks:flow');
+  assert.notEqual(mutated, region);
+  assert.deepEqual(problems(mutated), ['third person']);
+});
+
+test('I1: a re-run skips a held question the body already answers, and writes no second line', () => {
+  pinned(sec('## Ask'), [
+    f('skip each one `{body}` already answers with a `Decided by the user at planning: {question} — chose` line'),
+    f('None left to ask (zero questions, or every one already answered): ask nothing and go to `## Kept plan`'),
+  ], 'already answered');
+});
+
+test('L14 + I1: with no answer given in this run and a valid kept plan, the amend and change test are skipped', () => {
+  pinned(sec('## Kept plan'), [
+    f('With no answer given in this run, skip `## Amend and change test` and go to `## Write` with `{plan}` as read'),
+  ], 'no-answer skip');
+  pinned(sec('## Amend and change test'), [
+    f('one row per answer given in this run'),
+  ], 'this-run rows');
+  // The skip sits on the valid branch: it comes after the valid verdict and before the re-plan sentence.
+  const region = sec('## Kept plan');
+  provenOrder(region, ['`{"valid": true}` →', 'With no answer given in this run', 'A missing line, any other verdict or exit, or a failed read re-plans']);
+});
+
+test('M1: the answer resolves superseded specify holds with the newest', () => {
+  pinned(sec('## Write'), [
+    f('to the hold comment `comment.id` names and to each `supersededHolds` comment'),
+  ], 'write superseded');
+  pinned(sec('## Re-hold'), [
+    f('to the old hold comment and to each `supersededHolds` comment'),
+  ], 're-hold superseded');
+});
+
+test('M2: the label decision uses a fresh planning-hold.js read taken just before (c)', () => {
+  const region = sec('## Write');
+  pinned(region, [
+    f('re-fetch the comments to `{comments-file}` and re-run `planning-hold.js` to `{hold-file}` as `SKILL.md`\'s case 1 routing does'),
+    f('take `otherUnresolved` and `supersededHolds` from that fresh line'),
+    f('counts as `otherUnresolved` above 0 and keeps the routing-time `supersededHolds`'),
+  ], 'fresh read');
+  provenOrder(region, ['--body-file "{body}"', 'and re-run `planning-hold.js`', '**Resolved:** answered via']);
+});
+
+// L11: every forge call in the write, re-hold and read-back paths names its gh-absent transport.
+const bulletOf = (region, label) => {
+  const lines = region.split('\n').filter((l) => l.startsWith(`- **${label}`));
+  assert.equal(lines.length, 1, `bullet ${label}`);
+  return lines[0];
+};
+test('L11: each write and the read-back fetch cite _shared/github-write-transport.md', () => {
+  const write = sec('## Write');
+  const rehold = sec('## Re-hold');
+  const T = 'per `_shared/github-write-transport.md`';
+  pinned(bulletOf(write, '(b)'), [f(`\`issue_write\` (update mode) ${T}`)], 'write b');
+  pinned(bulletOf(write, '(c)'), [
+    f(`\`issue_write\` (update mode, the complete label array) ${T}`),
+    f('`_shared/github-write-transport.md` maps no MCP call for the comment edit: with `gh` absent it fails, and the label stays'),
+  ], 'write c');
+  pinned(bulletOf(write, '(d)'), [f(`\`issue_write\` (update mode, the complete label array) ${T}`)], 'write d');
+  pinned(bulletOf(rehold, '(b)'), [f(`\`issue_write\` (update mode) ${T}`)], 're-hold b');
+  pinned(bulletOf(rehold, '(c)'), [f(`\`add_issue_comment\` ${T}`)], 're-hold c');
+  pinned(bulletOf(rehold, '(d)'), [f('as `## Write` (c) edits it')], 're-hold d');
+  pinned(sec('## Read-back and outcome'), [f(`\`issue_read\` \`get\` and \`get_comments\` ${T}`)], 'read-back');
+});
+
+test('L13: the read-back names a session-tmp path for every file it passes', () => {
+  // {readback-file}'s path is pinned with the fetch in AC1.1's read-back pattern.
+  pinned(sec('## Read-back and outcome'), [
+    f('`planning-hold.js --comments-file "{readback-file}"`'),
+    f('`{readback-body}` (`--value specify-answer-readback-body-{n}.md`)'),
+    f('the printed `line` to `{plan-line-file}`'),
+    f('plan-store.js check --line-file "{plan-line-file}" --spec-file "{readback-body}" --base {base}'),
+  ], 'read-back paths');
 });
 
 test('AC2.1: no plan review runs unless --surface-diff reports a change', () => {
@@ -191,7 +277,7 @@ test('D8: a missing or stale kept plan re-plans with the decided lines binding i
 
 test('D10: writes run plan, body, comment+label, ready in that order', () => {
   const region = sec('## Write');
-  provenOrder(region, ['plan-store.js" write', '--body-file "{body}"', '--remove-label "needs:decision"', '--add-label ready']);
+  provenOrder(region, ['plan-store.js" write', '--body-file "{body}"', '**Resolved:** answered via', '--remove-label "needs:decision"', '--add-label ready']);
   pinned(region, [
     f('stopping at the first failure with `failed — {step} ({reason}); re-run /claude-tweaks:specify #{n}`'),
     f('Any non-zero exit stops: there is no no-ref fallback here'),
@@ -210,7 +296,7 @@ test('Review Focus 3: another unit\'s open decision comment keeps needs:decision
 
 test('Review Focus 2: Leave for later keeps answers and re-holds the rest', () => {
   pinned(sec('## Ask'), [
-    f('with no question answered yet, write nothing at all'),
+    f('with no question answered in this run, write nothing at all'),
     f('`held — {k} planning question(s) still open`'),
     f('the record takes `## Re-hold` with the rest'),
   ], 'leave for later');
@@ -224,12 +310,6 @@ test('Review Focus 2: Leave for later keeps answers and re-holds the rest', () =
     f('Posting before resolving keeps a newest unresolved planning hold on the record whichever call fails'),
     f('`held — {j} answered, {k} re-held`'),
   ], 're-hold');
-});
-
-test('Review Focus 4: zero questions skips asking', () => {
-  pinned(sec('## Ask'), [
-    f('Zero questions: ask nothing and go to `## Kept plan`'),
-  ], 'zero questions');
 });
 
 test('writer-reader: planning.md\'s hold template parses as held through planning-hold.js', () => {
@@ -276,7 +356,7 @@ function nextActionsProblems(region) {
   if (ready.includes(NA_SPECIFY)) problems.push('ready: specify');
   if (still && !still.includes('`answered — {k} planning question(s); still needs:decision ({m} other decision comment(s))`')) problems.push('still: outcome');
   if (still && !still.includes('its URL and its `<!-- needs-decision: {unit} -->` unit, for its owner to resolve')) problems.push('still: names comments');
-  if (still && !still.includes('unresolved trusted decision comments other than the one just resolved')) problems.push('still: source');
+  if (still && !still.includes('unresolved trusted decision comments other than those just resolved')) problems.push('still: source');
   if (still && !still.includes('recommend neither `/claude-tweaks:specify` nor `/claude-tweaks:flow`')) problems.push('still: neither');
   if (still.includes(NA_SPECIFY) || still.includes(NA_FLOW)) problems.push('still: recommends a command');
   if (held && !(held.includes('`held — …` or `failed — …`') && held.includes(NA_SPECIFY))) problems.push('held: specify');
@@ -299,7 +379,7 @@ test('Fix round 1: Next Actions splits ready → flow, still needs:decision → 
   red(region.replace(still, `${still} Then run ${NA_FLOW}.`), 'still: recommends a command');
   red(region.replace('recommend neither `/claude-tweaks:specify` nor `/claude-tweaks:flow`', 'recommend nothing'), 'still: neither');
   red(region.replace('its URL and its `<!-- needs-decision: {unit} -->` unit, for its owner to resolve', 'for review'), 'still: names comments');
-  red(region.replace('unresolved trusted decision comments other than the one just resolved', 'all comments'), 'still: source');
+  red(region.replace('unresolved trusted decision comments other than those just resolved', 'all comments'), 'still: source');
   red(region.replace(held, `${held} Or ${NA_FLOW}.`), 'held: flow');
   red(region.replace(held, held.replace(NA_SPECIFY, 'nothing')), 'held: specify');
   red(region.replace(ready, `${ready} Or ${NA_SPECIFY}.`), 'ready: specify');
