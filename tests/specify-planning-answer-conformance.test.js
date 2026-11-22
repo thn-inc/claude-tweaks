@@ -248,6 +248,14 @@ test('L11: each write and the read-back fetch cite _shared/github-write-transpor
   pinned(sec('## Read-back and outcome'), [f(`gh absent, ${T}, write \`issue_read\` \`get_comments\`\'s array to \`{readback-file}\` and \`get\`\'s \`body\` to \`{readback-body}\` and its \`labels\` to \`{readback-labels}\` (\`--value specify-answer-readback-labels-{n}.json\`), each with the Write tool`)], 'read-back');
 });
 
+test('review: gh absent writes nothing, and a hold with no question re-plans', () => {
+  pinned(sec('## Inputs'), [
+    f('With `gh` absent, write nothing and stop here'),
+    f('The outcome is `held — answering needs gh (no MCP mapping for the hold-comment edit)`'),
+  ], 'gh-absent refusal');
+  pinned(sec('## Kept plan'), [f('A `{hold-file}` holding no question re-plans whatever the check prints')], 'empty hold re-plans');
+});
+
 test('L13: the read-back names a session-tmp path for every file it passes', () => {
   // {readback-file}'s path is pinned with the fetch in AC1.1's read-back pattern.
   pinned(sec('## Read-back and outcome'), [

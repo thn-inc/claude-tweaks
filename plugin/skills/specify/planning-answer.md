@@ -4,6 +4,8 @@ Read only from `SKILL.md`'s Resolve-the-input case 1, on a `held` verdict from `
 
 ## Inputs
 
+With `gh` absent, write nothing and stop here: `## Write` (c) and `## Re-hold` (d) edit the hold comment, which `_shared/github-write-transport.md` maps no MCP call for, so every run would store the plan and rewrite the body before failing. The outcome is `held — answering needs gh (no MCP mapping for the hold-comment edit)`.
+
 Write the fetched body with the Write tool to `{held-body}`, the path `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-answer-held-{n}.md` prints, and copy it to `{body}` (`--value specify-answer-body-{n}.md`). The kept `Plan:` line is the body's one line starting `Plan: ` above its first `##` heading; none, or more than one, counts as missing. When `{body}` lacks `## Overview` or `## Planning Decisions` (a hold whose planning failed), add them as `planning.md`'s `## Per-record step` step 1 does. This path runs none of shaping mode's steps: no framing, ceremony or risk-flag pass, and no compose.
 
 ## Ask
@@ -22,7 +24,7 @@ Run `planning.md`'s `## Per-record step` step 2 for `{base}` and `{checkout}`; o
 node "${CLAUDE_PLUGIN_ROOT}/bin/plan-store.js" check --line-file "{plan-line-file}" --spec-file "{held-body}" --base {base}
 ```
 
-`{"valid": true}` → `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-store.js" read --record {n} --commit {commit} --out "{checkout}"` (`{commit}` from the line); its printed `path` is `{plan}`, and `cp` copies it to `{plan-before}` (`--value specify-answer-plan-before-{n}.md`), never a Read. With no answer given in this run, skip `## Amend and change test` and go on with `{plan}` as read (`## Write`, or `## Re-hold` after a `Leave for later`): no amend, no change test, no review. A missing line, any other verdict or exit, or a failed read re-plans: `## Per-record step` steps 3-7 on `{body}`, whose decided lines bind the planner, so plan review runs; skip `## Amend and change test`, and the Detail records `re-planned: {failed check}`.
+A `{hold-file}` holding no question re-plans whatever the check prints: `planning.md`'s held planning failure writes such a hold when its capture found no block, so its questions were lost and plan review must re-derive them. `{"valid": true}` → `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-store.js" read --record {n} --commit {commit} --out "{checkout}"` (`{commit}` from the line); its printed `path` is `{plan}`, and `cp` copies it to `{plan-before}` (`--value specify-answer-plan-before-{n}.md`), never a Read. With no answer given in this run, skip `## Amend and change test` and go on with `{plan}` as read (`## Write`, or `## Re-hold` after a `Leave for later`): no amend, no change test, no review. A missing line, any other verdict or exit, or a failed read re-plans: `## Per-record step` steps 3-7 on `{body}`, whose decided lines bind the planner, so plan review runs; skip `## Amend and change test`, and the Detail records `re-planned: {failed check}`.
 
 ## Amend and change test
 
