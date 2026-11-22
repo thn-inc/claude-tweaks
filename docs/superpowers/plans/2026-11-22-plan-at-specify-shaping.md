@@ -305,6 +305,7 @@ git commit -m "Pin that a Plan: line changes no body parser's verdict — AC8 of
 ### Task 4: `planning.md` — gate, predicate, per-record step, planner prompt and its upstream pin
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Create: `plugin/skills/specify/planning.md`
@@ -326,6 +327,7 @@ git commit -m "Pin that a Plan: line changes no body parser's verdict — AC8 of
 - `Deliverable 7: the predicate calls needsNoPlan through express-lane.js plan-lane on the post-write labels` over `## Which records are planned`: `lit('express-lane.js" plan-lane --record-json')`, `lit('`needsNoPlan` (`bin/lib/driver/plan-lane.js`)')`, `lit('the fetched labels plus this pass\'s stamps')`, `lit('A non-zero exit, no JSON line, or `lane: null` plans the record.')`.
 - `AC5.1: a record a plan-less lane takes gets no plan and no Plan: line, logged` over the same section: `lit('A non-null `lane` means the record is not planned: no plan, no `Plan:` line')`, `lit('`not planned: {lane} lane ({reason})`')`.
 - `Deliverable 8: a stored plan is reused only when plan-store.js check says valid` over the same section: `lit('plan-store.js" check --line')`, `lit('`{"valid": true}` (exit 0) keeps that line')`, `lit('Any other verdict or exit re-plans')`.
+- `Plan Review Clarification: a held record re-reviews its reused plan before ready` over the same section: `lit('**A held record re-reviews its reused plan.**')`, `lit('carries `Held-by: specify-planning`, a valid check still keeps the plan, but skips only steps 3-4')`, `lit('plan-store.js" read --record {n} --commit {commit} --out "{checkout}"')`, `lit('then run steps 5-9 on it, so its questions are asked again, or held again when headless, before `ready` is stamped')`, `lit('A failed read re-plans.')`.
 - `Deliverable 2: the per-record step runs compose, planner, audit, reviewer, route, amend, store, write in order` — `const ORDER = ['1. **Body.**', '2. **Base and checkout.**', '3. **Planner.**', '4. **Audit.**', '5. **Reviewer.**', '6. **Route.**', '7. **Amend.**', '8. **Store.**', '9. **Write.**', 'git fetch origin {integration-branch}', 'git worktree add --detach', 'plan-audit.js" "{plan}" --spec "{body}"', 'plan-store.js" write --record {n}']`; `orderProblems(section)` returns `['missing: …']` per absent anchor and `['order']` when the step labels (first nine) or the four commands are not each in ascending index; assert `[]` on `sectionOf(planning(), '## Per-record step')`. Control: swap `3. **Planner.**` and `5. **Reviewer.**` labels in a copy → `['order']`.
 - `Deliverable 2: the base is fetched first, the checkout is read-only, open Prerequisites do not skip planning` over `## Per-record step`: `lit('whose sha is `{base}`, the plan\'s base')`, `lit('The checkout\'s tracked files are read-only: the plan is the one file written there.')`, `lit('Open Prerequisites do not skip planning.')`, `lit('git worktree remove --force "{checkout}"')`.
 - `Review Focus 1: a body with no ## Overview gets one, because the spec hash refuses it` over `## Per-record step`: `lit('insert one directly above `## Current State`')`, `lit('refuses a spec with no Overview')`.
@@ -369,6 +371,8 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/plan-store.js" check --line "{plan-line}" --spec
 ```
 
 `{"valid": true}` (exit 0) keeps that line: skip steps 3-8, remove the checkout, and carry the line into the write. Any other verdict or exit re-plans, and the new line replaces the old one.
+
+**A held record re-reviews its reused plan.** When the record carries `needs:decision` and its newest unresolved decision comment from a trusted author (read as `shaping-mode-stamping.md`'s `needs:*` bullet reads it) carries `Held-by: specify-planning`, a valid check still keeps the plan, but skips only steps 3-4: fetch it with `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-store.js" read --record {n} --commit {commit} --out "{checkout}"` (`{commit}` from the `Plan:` line; its printed `path` is `{plan}`), then run steps 5-9 on it, so its questions are asked again, or held again when headless, before `ready` is stamped. A failed read re-plans.
 
 ## Per-record step
 
@@ -583,7 +587,7 @@ git commit -m "Add specify's plan reviewer and routing — brief pinned to plan-
 - Control `go-red: a template without the Held-by line is read as no hold` — remove `Held-by: specify-planning\n` from the filled copy (assert it changed) → `parseHeldQuestions(copy).heldBy === false`; and a copy with one `  Option: ` line removed throws `/held-questions block malformed/`.
 - `AC3.2 + AC4.1 + Deliverable 4: a hold writes the body and plan, drops ready and adds needs:decision without removing it in the same call` over `sectionOf(planning(), '## Hold')`: `lit('is left without `ready`')`, `lit('omit `--add-label ready`, add `--remove-label ready` when the record carries it, add `--add-label "needs:decision"`')`, `lit('omit `--remove-label "needs:decision"`')`, `lit('with its settled lines, its decided lines and its plan stored')`, `lit('Every value is one line: a newline inside reviewer text becomes a space.')`.
 - `Deliverable 3 + 10: a batch defers writes, fans planners and reviewers out, asks once, and holds per record` over `sectionOf(planning(), '## Batches')`: `lit('defers every record\'s write')`, `lit('with the planners dispatched in one message')`, `lit('with the reviewers dispatched in one message')`, `lit('one batch table and the chunked questions covering every record\'s asked rows together')`, `lit('A hold is per record; the rest of the batch proceeds.')`, `lit('`SKILL.md`\'s "a loop never a fan-out" still governs the record writes')`.
-- `AC2.1 + AC5.1: read-back asserts the Plan: line or the hold, and the outcome words` over `sectionOf(planning(), '## Read-back and outcome')`: `lit('exactly one `Plan:` line, equal to the `line` `plan-store.js write` printed')`, `lit('in place of that file\'s `ready` and no-`needs:*` assertions')`, `lit('`held — needs:decision ({k} planning question(s))`')`, `lit('A held record is never in a `/claude-tweaks:flow` command')`, `lit('bare drain\'s Release reason stays `shaped: #{n}`')`, `lit('**Not planned:** no `Plan:` line was written this pass.')`.
+- `AC2.1 + AC5.1: read-back asserts the Plan: line or the hold, and the outcome words` over `sectionOf(planning(), '## Read-back and outcome')`: `lit('exactly one `Plan:` line, equal to the `line` `plan-store.js write` printed')`, `lit('in place of that file\'s `ready` and no-`needs:*` assertions')`, `lit('`held — needs:decision ({k} planning question(s))`')`, `lit('the hold comment is posted before this read-back runs')`, `lit('`gh issue view {n} --json labels,body,comments`')`, `lit('A held record is never in a `/claude-tweaks:flow` command')`, `lit('bare drain\'s Release reason stays `shaped: #{n}`')`, `lit('**Not planned:** no `Plan:` line was written this pass.')`.
 - `planning.md headings appear in order` — `## Which records are planned`, `## Per-record step`, `## Planner prompt`, `## Reviewer dispatch`, `## Routing`, `## Hold`, `## Batches`, `## Read-back and outcome`, ascending indices.
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -633,7 +637,7 @@ A comma list or range defers every record's write: the per-record loop runs each
 Read from `shaping-mode-readback.md`'s `plan-at-specify` block, per record:
 
 - **Planned:** the re-fetched body carries exactly one `Plan:` line, equal to the `line` `plan-store.js write` printed, plus `## Overview` and `## Planning Decisions`.
-- **Held:** `ready` is absent and `needs:decision` present, in place of that file's `ready` and no-`needs:*` assertions, and the newest unresolved decision comment from a trusted author carries `Held-by: specify-planning`.
+- **Held:** the hold comment is posted before this read-back runs, and a held record is re-fetched with `gh issue view {n} --json labels,body,comments` in place of that file's `labels,body` fetch. `ready` is absent and `needs:decision` present, in place of that file's `ready` and no-`needs:*` assertions, and the newest unresolved decision comment from a trusted author (filtered as `shaping-mode-stamping.md`'s `needs:*` bullet filters them) carries `Held-by: specify-planning`.
 - **Not planned:** no `Plan:` line was written this pass.
 
 In Actions Performed, a planned or not-planned record keeps the `shaped` outcome, its Detail adding `planned (Plan: {short commit})`, `planned, no Plan: line: …` or `not planned: …`; a held record's outcome is `held — needs:decision ({k} planning question(s))`. A held record is never in a `/claude-tweaks:flow` command `SKILL.md`'s Next Actions renders; when every record is held, the recommended line is `/claude-tweaks:specify #{n}` for the first held record. Under `--chained` and bare drain the held outcome is the returned or reported outcome, and bare drain's Release reason stays `shaped: #{n}`.
@@ -693,6 +697,7 @@ const PLANNING_TOKENS = ['plan-at-specify', 'planning.md', 'plan-store', 'Planni
 - `AC1.1: no other specify file except planning.md names the planning step` — every `plugin/skills/specify/*.md` not in `SHAPING_FILES` and not `planning.md` contains no `PLANNING_TOKENS` entry; assert the directory walk found more than 20 files.
 - Controls (each doctors a copy, asserts it differs, and matches its own problem): appending `'\nread planning.md now\n'` → includes `'leak: planning.md'`; removing `GATE_END` → includes `'block count'`; removing the stamping block's `Otherwise skip this paragraph.` → includes `'gate: Otherwise skip this paragraph.'`.
 - `the pointer blocks sit where they run` — in `shaping-mode-stamping.md`, the block's index is after the `**`work-backend: github-issues`:**` line and before the first `` ```bash `` after it; in `shaping-mode-readback.md`, after `### Read-back verification` and before `Assert, against the re-fetched result:`; in `shaping-mode.md`, after the `> **Parallel execution:**` line and before the first `\n---\n`.
+- `Deliverable 3: a planned record's check and write read its own body file, not the shared one` over the `shaping-mode-stamping.md` block: `lit('the `--check` and the write\'s `--body-file` below read its `{body}` in place of `$SPECIFY_SHAPED_BODY`')`, `lit('(in a batch, that record\'s own copy)')`.
 - `Deliverable 9: the shaping-mode block resolves the key once, read-only of --run, and relays the conflict warning` over the `shaping-mode.md` block: `lit('Resolve `plan-at-specify` once per invocation, before the first record')`, `lit('resolve-policy.js" --values plan-at-specify')`, `lit('Relay a stderr warning the call prints')`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -716,7 +721,7 @@ First run `git fetch origin main` and `git log origin/main --oneline -3 -- plugi
 
 ```markdown
 <!-- plan-at-specify:start -->
-When `shaping-mode.md`'s Planning at specify paragraph read `planning.md`, run its `## Per-record step` here, once `### Risk flags` has settled the body file and before the `--check` below; it may add `## Overview`, `## Planning Decisions` and a `Plan:` line to that file, and its `## Hold` changes this call's labels for a held record. Otherwise skip this paragraph.
+When `shaping-mode.md`'s Planning at specify paragraph read `planning.md`, run its `## Per-record step` here, once `### Risk flags` has settled the body file and before the `--check` below; it may add `## Overview`, `## Planning Decisions` and a `Plan:` line to that file, and its `## Hold` changes this call's labels for a held record. When it ran, the `--check` and the write's `--body-file` below read its `{body}` in place of `$SPECIFY_SHAPED_BODY` (in a batch, that record's own copy). Otherwise skip this paragraph.
 <!-- plan-at-specify:end -->
 ```
 
