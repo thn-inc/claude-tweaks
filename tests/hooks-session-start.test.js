@@ -784,6 +784,7 @@ test('SessionStart surfaces a prior background pass failed plan-ref deletions, a
   } finally {
     if (orig === undefined) delete process.env.CLAUDE_PLUGIN_ROOT;
     else process.env.CLAUDE_PLUGIN_ROOT = orig;
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
