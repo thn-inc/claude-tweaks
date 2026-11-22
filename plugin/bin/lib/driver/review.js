@@ -77,7 +77,7 @@
 // not `low` or the Key Files (the eligibility verdict's own extraction; a non-array counts as
 // beyond) exceed EXPRESS_MAX_KEY_FILES. A record inside those bounds is also on when the caller
 // passes a non-empty `widenedBy` (#6018: admitted above low risk or a non-fast-lane ceremony,
-// eligibility.js's widenings()), and on when `widenedBy` is neither absent nor an array; an absent
+// eligibility.js's widenings()), and on when `widenedBy` is neither absent nor an array of strings (admission.js's isReadableWidenedBy); an absent
 // or empty one keeps the inside-bounds off answer. The run asks it once
 // per record, in the eligibility step (ctx.reviewer, #5224), and admission, the check flag and
 // reviewRecord all read that one answer; reviewRecord never calls it, and fails closed (a
@@ -235,6 +235,7 @@ const { STOP_CLASSES, neutralize, normalizeTitle } = require('./events');
 const { fenceFor } = require('../markdown-blocks');
 const { REVIEW_RESULT_SCHEMA } = require('./roles');
 const { sensitivePathsOf } = require('../express/policy');
+const { isReadableWidenedBy } = require('./admission');
 
 const MAX_FINDINGS = 5;
 const EVIDENCE_PATH_MAX_CHARS = 200;
@@ -323,8 +324,8 @@ function reviewRequired({ issue, keyFiles, policyValue, widenedBy } = {}) {
   if (policyValue === 'on') return { on: true, reason: 'express-driver-review is on' };
   const { size } = parseRecordFacets((issue && issue.labels) || []);
   if (!isBeyondExpressBounds({ size, keyFiles })) {
-    if (Array.isArray(widenedBy) && widenedBy.length > 0) return { on: true, reason: `admitted widened by ${widenedBy.join(', ')}` };
-    if (widenedBy !== undefined && !Array.isArray(widenedBy)) return { on: true, reason: 'widening facts unreadable' };
+    if (!isReadableWidenedBy(widenedBy)) return { on: true, reason: 'widening facts unreadable' };
+    if (widenedBy !== undefined && widenedBy.length > 0) return { on: true, reason: `admitted widened by ${widenedBy.join(', ')}` };
     return { on: false, reason: `size:low and ${keyFiles.length} Key Files are inside the express bounds` };
   }
   // Beyond: the reason names the first rule the record breaks.

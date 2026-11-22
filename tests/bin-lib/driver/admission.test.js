@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
-const { ADMISSION_REASONS: R, evaluateAdmission, reviewerGateReason } = require(path.join(LIB, 'driver', 'admission.js'));
+const { ADMISSION_REASONS: R, evaluateAdmission, reviewerGateReason, widenedReviewerReason, isReadableWidenedBy } = require(path.join(LIB, 'driver', 'admission.js'));
 const { evaluateRecordEligibility } = require(path.join(LIB, 'express', 'eligibility.js'));
 const { reviewRequired } = require(path.join(LIB, 'driver', 'review.js'));
 const {
@@ -480,8 +480,24 @@ test('AC3.1 (#6018): a widened record with the reviewer off is refused with the 
 });
 
 test('widenedBy unreadable refuses with its own reason (#6018)', () => {
-  for (const widenedBy of ['risk', null, {}, 3, true]) {
+  for (const widenedBy of ['risk', null, {}, 3, true, ['risk', 1], [null]]) {
     assert.deepStrictEqual(reasonsFor({ widenedBy }), [R.widenedUnreadable], JSON.stringify(widenedBy));
   }
   assert.ok(evaluateAdmission({ ...ADMIT, widenedBy: 'risk', reviewerOn: false }).reasons.includes(R.widenedUnreadable));
+});
+
+test('widenedReviewerReason is the widened rule alone (#6018)', () => {
+  assert.strictEqual(widenedReviewerReason({ widenedBy: ['risk'], reviewerOn: false }), R.reviewerOffWidened);
+  assert.strictEqual(widenedReviewerReason({ widenedBy: ['risk'], reviewerOn: true }), null);
+  assert.strictEqual(widenedReviewerReason({ widenedBy: [], reviewerOn: false }), null);
+  assert.strictEqual(widenedReviewerReason({ widenedBy: undefined, reviewerOn: false }), null);
+  assert.strictEqual(widenedReviewerReason({ reviewerOn: false }), null);
+  assert.strictEqual(widenedReviewerReason({ widenedBy: ['risk'], reviewerOn: null }), null);
+  for (const widenedBy of ['risk', null, {}, ['risk', 1], [null]]) {
+    assert.strictEqual(widenedReviewerReason({ widenedBy, reviewerOn: true }), R.widenedUnreadable, JSON.stringify(widenedBy));
+  }
+  assert.strictEqual(widenedReviewerReason(null), null);
+  assert.strictEqual(widenedReviewerReason(undefined), null);
+  assert.strictEqual(isReadableWidenedBy(['risk', 'ceremony']), true);
+  assert.strictEqual(isReadableWidenedBy([1]), false);
 });

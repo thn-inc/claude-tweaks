@@ -1988,7 +1988,7 @@ test('reviewRequired: off still decides alone for a widened record; unreadable w
   const issue = { labels: [{ name: 'size:low' }] };
   assert.deepStrictEqual(reviewRequired({ issue, keyFiles: ['a.js'], policyValue: 'off', widenedBy: ['risk'] }), { on: false, reason: 'express-driver-review is off' });
   assert.deepStrictEqual(reviewRequired({ issue, keyFiles: ['a.js'], policyValue: 'on', widenedBy: ['risk'] }), { on: true, reason: 'express-driver-review is on' });
-  for (const widenedBy of ['risk', null, {}, 3]) {
+  for (const widenedBy of ['risk', null, {}, 3, ['risk', 1], [null], [1]]) {
     assert.deepStrictEqual(reviewRequired({ issue, keyFiles: ['a.js'], policyValue: 'beyond-express', widenedBy }), { on: true, reason: 'widening facts unreadable' }, JSON.stringify(widenedBy));
   }
   // A record beyond the express bounds keeps today's reasons whatever the widening says.

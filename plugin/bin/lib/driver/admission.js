@@ -38,7 +38,9 @@
 //   widened and the reviewer on                        admitted by this rule
 //   widened and the reviewer not on                    refused, reviewerOffWidened
 //   `widenedBy` not an array of strings                refused, widenedUnreadable
-// A record beyond the driver's bounds adds nothing here: eligibility owns that refusal. A
+// The widened rule checks no bounds. isReadableWidenedBy is its one readability test, shared with
+// review.js's reviewRequired; widenedReviewerReason is the rule alone, for queue.js's driver half.
+// A record beyond the driver's bounds adds nothing to this express-bounds rule: eligibility owns that refusal. A
 // `reviewerOn` that is not a boolean, unreadable bounds (not an object, a ceiling that is not a
 // SIZE_CEILINGS key, a limit that is not a safe integer of at least 1) and a `keyFiles` that is
 // not an array each refuse with their own reason, never read as "off" or "none".
@@ -111,6 +113,19 @@ function reviewerGateReason(facts) {
   return beyond && inside && reviewerOn === false ? R.reviewerOff : null;
 }
 
+// widenedBy as the caller passes it: absent reads as none (a caller from before #6018); otherwise an
+// array whose elements are all strings.
+function isReadableWidenedBy(widenedBy) {
+  return widenedBy === undefined || (Array.isArray(widenedBy) && widenedBy.every((w) => typeof w === 'string'));
+}
+
+// { widenedBy, reviewerOn } -> R.widenedUnreadable, R.reviewerOffWidened, or null.
+function widenedReviewerReason(facts) {
+  const { widenedBy, reviewerOn } = (facts && typeof facts === 'object') ? facts : {};
+  if (!isReadableWidenedBy(widenedBy)) return R.widenedUnreadable;
+  return widenedBy !== undefined && widenedBy.length > 0 && reviewerOn === false ? R.reviewerOffWidened : null;
+}
+
 // { number, state, labels, openBlockerRefs, openLinkedPRs, routing, driverEscalated, keyFiles,
 //   bounds: { sizeCeiling, maxKeyFiles }, reviewerOn, buildAuthority, widenedBy } -> { admitted, reasons }.
 // `buildAuthority` is build-authority.js's resolveBuildAuthority answer (#5584): exactly 'typed'
@@ -156,12 +171,10 @@ function evaluateAdmission(facts) {
   if (!Array.isArray(keyFiles)) reasons.push(R.keyFilesUnreadable);
   const reviewer = reviewerGateReason({ labels, keyFiles, bounds, reviewerOn });
   if (reviewer) reasons.push(reviewer);
-  // undefined is a caller from before #6018: no widening.
-  const widened = widenedBy === undefined ? [] : widenedBy;
-  if (!Array.isArray(widened) || !widened.every((w) => typeof w === 'string')) reasons.push(R.widenedUnreadable);
-  else if (widened.length > 0 && reviewerOn === false) reasons.push(R.reviewerOffWidened);
+  const widenedReason = widenedReviewerReason({ widenedBy, reviewerOn });
+  if (widenedReason) reasons.push(widenedReason);
 
   return { admitted: reasons.length === 0, reasons };
 }
 
-module.exports = { ADMISSION_REASONS, evaluateAdmission, reviewerGateReason, routingReason };
+module.exports = { ADMISSION_REASONS, evaluateAdmission, reviewerGateReason, routingReason, isReadableWidenedBy, widenedReviewerReason };
