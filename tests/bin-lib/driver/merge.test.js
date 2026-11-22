@@ -57,7 +57,7 @@ function fixture(realMain) {
   };
   const ctx = {
     record: 7, pr: 9, repo: 'o/r', branch: 'drive-7', base: 'main', head: 'a'.repeat(40),
-    runDir, runRoot: main, mainCheckout: main, worktree, summaryLogged: true,
+    runDir, runRoot: main, mainCheckout: main, worktree, summaryLogged: true, widenedBy: [],
   };
   return { main, runDir, worktree, decisions, writeDecisions, ctx };
 }
@@ -2774,7 +2774,7 @@ const reasonOk = (site) => (site.literal === null
   ? REASON_PASSTHROUGHS[site.shape].includes(site.expr)
   : (site.literal.endsWith(':') ? PREFIXED_REASONS.includes(site.literal.slice(0, -1)) : isReason(site.literal)));
 
-test('REASONS: the frozen closed set is the spec\'s 26 reasons plus unclassified, and isReason reads both prefix forms', () => {
+test('REASONS: the frozen closed set is the spec\'s 29 reasons plus unclassified, and isReason reads both prefix forms', () => {
   assert.ok(Object.isFrozen(REASONS) && Object.isFrozen(PREFIXED_REASONS));
   // The spec's closed list (Acceptance Criteria, "Closed rule"), word for word and in its order; a
   // `:{…}` form is held in REASONS by its stem and listed in PREFIXED_REASONS.
@@ -2787,8 +2787,10 @@ test('REASONS: the frozen closed set is the spec\'s 26 reasons plus unclassified
     'drain-overlap', 'near-duplicate', 'in-flight-unreadable', 'in-flight-read-failed',
     // #4615: the local acceptance park's four words (pr-first-merge.md Step 2.9).
     'awaiting-local-acceptance', 'park-failed', 'already-parked', 'park-state-unknown',
+    // #6018: a widened admission stops at the merge entry.
+    'widened-admission',
   ];
-  assert.equal(SPEC_REASONS.length, 28);
+  assert.equal(SPEC_REASONS.length, 29);
   const stem = (w) => w.replace(/:\{[a-z]+\}$/, '');
   assert.deepEqual([...REASONS], [...SPEC_REASONS.map(stem), 'unclassified']);
   assert.deepEqual([...PREFIXED_REASONS], SPEC_REASONS.filter((w) => w.includes(':')).map(stem));
@@ -3546,4 +3548,102 @@ test('AC2.1, AC2.2: auto:build removed before the pre-merge read stops not-autho
   assert.equal(r.detail, 'record lacks auto:build at the pre-merge read');
   noMerge(h);
   assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-call', 'stop']);
+});
+
+// #6018: a record admitted widened (risk above low, a non-fast-lane ceremony) never merges on its own.
+const widenedLabels = (...extra) => [{ name: 'auto:build' }, { name: 'auto:merge' }, ...extra.map((name) => ({ name }))];
+async function assertWidenedStop(labels, ctx) {
+  const h = mergeHarness({ labels });
+  const r = await merge(ctx, h.deps);
+  assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'widened-admission', mergeCommit: null, postMerge: null });
+  assert.ok(!kindsOf(h).includes('judgments'), 'no judgment worker launches');
+  assertNoReadyNoMerge(h);
+  return { h, r };
+}
+
+test('AC6.1 (#6018): a widened record stops at pending-review, widened-admission, before the supplier', async () => {
+  const { h, r } = await assertWidenedStop(widenedLabels('risk:low'), { ...CTX, widenedBy: ['risk'] });
+  assert.match(r.detail, /risk/);
+  assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-entry', 'stop']);
+});
+
+test('AC6.2 (#6018): widenedBy [] with unwidened live labels takes today\'s path', async () => {
+  const h = mergeHarness({ labels: widenedLabels('bug') });
+  const r = await merge({ ...CTX, widenedBy: [] }, h.deps);
+  assert.equal(r.outcome, 'merged');
+});
+
+test('AC9.1 (#6018): risk:medium with widenedBy unset, a string, or [] stops at widened-admission and never calls the supplier', async () => {
+  const unset = { ...CTX };
+  delete unset.widenedBy;
+  for (const ctx of [unset, { ...CTX, widenedBy: 'risk' }, { ...CTX, widenedBy: [] }]) {
+    await assertWidenedStop(widenedLabels('risk:medium'), ctx);
+  }
+});
+
+test('an unset or non-array widenedBy stops even with unwidened labels (#6018)', async () => {
+  const unset = { ...CTX };
+  delete unset.widenedBy;
+  for (const ctx of [unset, { ...CTX, widenedBy: null }, { ...CTX, widenedBy: 'risk' }]) {
+    const { r } = await assertWidenedStop(widenedLabels('bug'), ctx);
+    assert.match(r.detail, /missing or unreadable/);
+  }
+});
+
+test('Review Focus 1 (#6018): a ceremony:standard live label with widenedBy [] stops at widened-admission', async () => {
+  const { r } = await assertWidenedStop(widenedLabels('ceremony:standard'), { ...CTX, widenedBy: [] });
+  assert.match(r.detail, /ceremony/);
+});
+
+test('ceremony:standard plus ceremony:fast-lane, in either order, with widenedBy [] stops at widened-admission (#6018)', async () => {
+  await assertWidenedStop(widenedLabels('ceremony:standard', 'ceremony:fast-lane'), { ...CTX, widenedBy: [] });
+  await assertWidenedStop(widenedLabels('ceremony:fast-lane', 'ceremony:standard'), { ...CTX, widenedBy: [] });
+});
+
+test('a ceremony:fast-lane, risk:low record with widenedBy [] is not widened (#6018)', async () => {
+  const h = mergeHarness({ labels: widenedLabels('ceremony:fast-lane', 'risk:low') });
+  const r = await merge({ ...CTX, widenedBy: [] }, h.deps);
+  assert.equal(r.outcome, 'merged');
+});
+
+test('AC11.1 (#6018, merge half): risk:low plus risk:medium, in either order, with widenedBy [] stops at widened-admission', async () => {
+  await assertWidenedStop(widenedLabels('risk:low', 'risk:medium'), { ...CTX, widenedBy: [] });
+  await assertWidenedStop(widenedLabels('risk:medium', 'risk:low'), { ...CTX, widenedBy: [] });
+});
+
+test('the widening union lists ctx.widenedBy first, then live-label widenings, without duplicates (#6018)', async () => {
+  const { r } = await assertWidenedStop(widenedLabels('risk:high', 'ceremony:standard'), { ...CTX, widenedBy: ['risk'] });
+  assert.equal(r.detail, 'admitted widened by risk; live labels widen by ceremony (not at admission)');
+});
+
+test('the widened detail words the admission list and the live-label recompute apart (#6018)', async () => {
+  const live = await assertWidenedStop(widenedLabels('risk:medium'), { ...CTX, widenedBy: [] });
+  assert.equal(live.r.detail, 'live labels widen by risk (not at admission)');
+  const admitted = await assertWidenedStop(widenedLabels('risk:medium'), { ...CTX, widenedBy: ['risk'] });
+  assert.equal(admitted.r.detail, 'admitted widened by risk');
+});
+
+test('a non-string widenedBy entry stops as unreadable, not as an empty detail (#6018)', async () => {
+  for (const widenedBy of [[null], [1], ['risk', {}]]) {
+    const { r } = await assertWidenedStop(widenedLabels('bug'), { ...CTX, widenedBy });
+    assert.match(r.detail, /missing or unreadable/);
+  }
+});
+
+test('a widening label added between entry and the pre-merge read stops at merge-call with no merge call (#6018)', async () => {
+  for (const added of ['risk:medium', 'risk:high', 'ceremony:standard']) {
+    const h = mergeHarness({ labels: seq(AUTO_MERGE, [...AUTO_MERGE, { name: added }]) });
+    const r = await merge({ ...CTX, widenedBy: [] }, h.deps);
+    assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'widened-admission', mergeCommit: null, postMerge: null }, added);
+    assert.equal(h.calls.filter(isLabelRead).length, 2);
+    noMerge(h);
+    assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-call', 'stop']);
+    assert.equal(r.detail, `widened by ${added.startsWith('risk') ? 'risk' : 'ceremony'} at the pre-merge read`);
+  }
+});
+
+test('the widened stop precedes summary-entry-missing and the integration-model read (#6018)', async () => {
+  const { h } = await assertWidenedStop(widenedLabels('risk:medium'), { ...CTX, summaryLogged: false, widenedBy: ['risk'] });
+  assert.ok(!kindsOf(h).includes('policyCore'), 'no policy read before the stop');
+  await assertWidenedStop(widenedLabels('risk:medium'), { ...CTX, summaryLogged: false, widenedBy: [] });
 });
