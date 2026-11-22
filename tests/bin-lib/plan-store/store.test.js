@@ -236,8 +236,8 @@ test('invalid record, basename and planBytes are kind invalid and create no ref'
   assert.strictEqual(remoteRef(fx), '');
 });
 
-test('a local writer moving the ref between the prior read and update-ref loses cleanly', (t) => {
-  for (const push of [false, true]) {
+for (const push of [false, true]) {
+  test(`a local writer moving the ref between the prior read and update-ref loses cleanly (push:${push})`, (t) => {
     let interloper = null;
     const { fx, g, write } = setup(t, (fx2, args, opts) => {
       if (args.includes('update-ref') && !interloper) {
@@ -257,8 +257,8 @@ test('a local writer moving the ref between the prior read and update-ref loses 
       assert.strictEqual(r.ok, false, JSON.stringify(r));
       assert.strictEqual(r.kind, 'no-ref');
     }
-  }
-});
+  });
+}
 
 test('readPlan refuses a ref that names another commit, and a missing ref', (t) => {
   const { g, write } = setup(t);
