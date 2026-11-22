@@ -141,7 +141,7 @@ actual reader rather than by deleting the write.
 ### Decision-comment template
 
 The canonical shape for a `needs:decision` residue comment — cited by every writer
-(`backlog/grant-lane-decision.md`, `backlog/refine-headless.md`, `tidy/decision-markers.md`) rather
+(`backlog/grant-lane-decision.md`, `backlog/refine-headless.md`, `tidy/decision-markers.md`, `specify/planning.md`'s `## Hold`) rather
 than restated:
 
 ```
@@ -152,7 +152,7 @@ than restated:
 **Command:** `{paste-ready, fully-qualified}`
 ```
 
-`{unit}` is the literal skill/mode name that wrote it (`backlog-refine`, `backlog-grant`, `tidy`) —
+`{unit}` is the literal skill/mode name that wrote it (`backlog-refine`, `backlog-grant`, `tidy`, `specify`) —
 this is what lets a later reader (and Phase 6's tidy loop-safety rule) tell which unit's proposal a
 given comment is.
 

@@ -339,7 +339,7 @@ test('fix round 1: routing never drops a low needs-human row, answers like build
     f('a run in `auto` with a reachable human still asks, because these questions are build\'s plan-review needs-human gate moved to specify time'),
     f('handled as `build/plan-review-asked-classes.md`\'s Routing step 2 handles it'),
     f('definition of a recorded decision, under which `Decided by the user at plan review:` lines'),
-    f('the `risk-flags.js add` and `Proof({slug}):` amendment when the answered row is class (b) and its category is not yet flagged'),
+    f('(this file\'s, never `/build`\'s). That handling includes the `risk-flags.js add` and `Proof({slug}):` amendment when the answered row is class (b) and its category is not yet flagged'),
   ], 'routing fixes');
   pinned(sectionOf(planning(), '## Per-record step'), [
     f('settled lines, decided lines, intent-resolvable clarification lines or flag additions'),
@@ -411,7 +411,7 @@ function parseHeldQuestions(comment) {
   let cur = null;
   const close = () => {
     if (!cur) return;
-    if (cur.options.length !== 2 || cur.recommended === null) throw bad();
+    if (cur.options.length !== 2 || cur.recommended === null || cur.recommended !== cur.options[0]) throw bad();
     questions.push(cur);
   };
   for (const line of lines.slice(s + 1, e)) {
@@ -425,6 +425,7 @@ function parseHeldQuestions(comment) {
     } else throw bad();
   }
   close();
+  if (questions.length === 0) throw bad();
   return { heldBy, questions };
 }
 
@@ -474,6 +475,12 @@ test('go-red: a template without the Held-by line is read as no hold', () => {
   assert.notEqual(noOption, filled);
   assert.throws(() => parseHeldQuestions(noOption), /held-questions block malformed/);
   assert.throws(() => parseHeldQuestions(filled.replace(HELD_QUESTIONS.end, '')), /held-questions block malformed/);
+  const wrongRec = filled.replace('  Recommended: docs/hooks.md', '  Recommended: plugin/skills/dispatch/task-prompt.md');
+  assert.notEqual(wrongRec, filled);
+  assert.throws(() => parseHeldQuestions(wrongRec), /held-questions block malformed/);
+  const emptyBlock = filled.replace(/- Question:[\s\S]*?(?=<!-- held-questions:end)/, '');
+  assert.notEqual(emptyBlock, filled);
+  assert.throws(() => parseHeldQuestions(emptyBlock), /held-questions block malformed/);
 });
 
 test('AC3.2 + AC4.1 + Deliverable 4: a hold writes the body and plan, drops ready and adds needs:decision without removing it in the same call', () => {
@@ -486,6 +493,8 @@ test('AC3.2 + AC4.1 + Deliverable 4: a hold writes the body and plan, drops read
     f('omit `--remove-label "needs:decision"`'),
     f('with its settled lines, its decided lines and its plan stored'),
     f('Every value is one line: a newline inside reviewer text becomes a space.'),
+    f('`failed — hold comment not posted ({reason}); re-run /claude-tweaks:specify #{n}`, because `shaping-mode-stamping.md`\'s `needs:*` bullet clears the label a failed post leaves behind'),
+    f('A hold entered via bare drain keeps the `shaped:headless` stamp: add `--add-label "shaped:headless"` to the same call'),
   ], 'hold');
 });
 
@@ -503,6 +512,7 @@ test('Deliverable 3 + 10: a batch defers writes, fans planners and reviewers out
 test('AC2.1 + AC5.1: read-back asserts the Plan: line or the hold, and the outcome words', () => {
   pinned(sectionOf(planning(), '## Read-back and outcome'), [
     f('exactly one `Plan:` line, equal to the `line` `plan-store.js write` printed'),
+    f('The re-fetched body carries `## Overview` and `## Planning Decisions`, and exactly one `Plan:` line equal to the `line` `plan-store.js write` printed, except that it carries no `Plan:` line when `plan-store.js` took the no-ref outcome (exit 3 or any other non-zero exit, per step 8)'),
     f('in place of that file\'s `ready` and no-`needs:*` assertions'),
     f('`held — needs:decision ({k} planning question(s))`'),
     f('the hold comment is posted before this read-back runs'),
@@ -511,6 +521,16 @@ test('AC2.1 + AC5.1: read-back asserts the Plan: line or the hold, and the outco
     f('bare drain\'s Release reason stays `shaped: #{n}`'),
     f('**Not planned:** no `Plan:` line was written this pass.'),
   ], 'read-back');
+});
+
+test('Deliverable 8: work-record.md names specify as a decision-comment writer and unit', () => {
+  const wr = readText(path.join(ROOT, 'plugin/skills/_shared/work-record.md'));
+  const from = wr.indexOf('\n### Decision-comment template\n');
+  assert.notEqual(from, -1, 'template heading not found');
+  pinned(wr.slice(from, wr.indexOf('\n**Resolution rule.**', from)), [
+    f('`tidy/decision-markers.md`, `specify/planning.md`\'s `## Hold`) rather'),
+    f('(`backlog-refine`, `backlog-grant`, `tidy`, `specify`)'),
+  ], 'work-record decision template');
 });
 
 test('planning.md headings appear in order', () => {
