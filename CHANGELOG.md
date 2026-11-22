@@ -71,6 +71,22 @@ Three conventions follow from how this repo works, and all are visible below:
 
 * /specify near-duplicate check appends single-signal… ([#4702](https://github.com/thn-inc/claude-tweaks/issues/4702)) ([f6310ae](https://github.com/thn-inc/claude-tweaks/commit/f6310aed920a90a5b62d35be3c045140f4f0d57a)), closes [#4703](https://github.com/thn-inc/claude-tweaks/issues/4703)
 
+### Highlights
+* Transcript usage is read by one shared reader, so the cost report, review replay and timing figures agree.
+* Stop /specify from listing unrelated single-signal near-duplicates as Related records, while keeping deep-overlap duplicates.
+* Recommend a runnable next step after /specify when the shaped record is still blocked.
+* Added a factory policy layer, set by an environment variable or a user-level file, that supplies policy values to every repository that does not set them itself.
+* Records the pipeline driver can build now reach it as their own dispatch group instead of being folded into a fast-lane bundle.
+* Added a setting that picks a build's implementer model from the record's size and file count, so small, narrow changes run on the cheapest model and no record defaults to the most expensive one.
+* Maintainer tooling only, nothing ships: the review replay can run an arm at a chosen effort and refuses to score a replay agent that did not run at it.
+* Added a policy setting that makes a launched agent run at the effort its work profile names, instead of an effort that depended on which model the session was using.
+* Made pipeline driver workers launch at the effort their role's work profile names when the project sets `model-effort: profile`.
+* The maintainer cost report now shows whether admitted records ever reached the pipeline driver, not only how many were admitted.
+* Added a command that decides in code whether a deferred finding becomes a record or a digest entry, matching today's rule.
+* Moved the choice between filing a deferred finding and adding it to the digest from skill prose into one command that every pipeline step calls.
+* Added a policy setting that sends chosen kinds of agent-noticed follow-up work to the digest instead of filing each as a new record.
+* Added two optional limits on follow-up work a pipeline run files: each record must name its evidence, and a run can file only a set number of records.
+
 ## [6.175.0](https://github.com/thn-inc/claude-tweaks/compare/v6.174.0...v6.175.0) (2026-11-20)
 
 
