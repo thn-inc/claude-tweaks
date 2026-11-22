@@ -432,6 +432,15 @@ test('fix round 1: a present human\'s mixed reply joins the post-answer sequence
   ]);
 });
 
+// Fix round 2: the early commit's condition is settled rows OR flag additions, so an all-asked
+// blocking reply with an unflagged class (b) row still commits its flag edit.
+test('fix round 2: a blocking reply whose rows are all asked still commits step 3\'s flag addition early', () => {
+  assertFacts(subText(), [
+    'whenever they hold settled rows or step 3\'s flag additions',
+    'A blocking reply whose rows are all asked still gets this commit when step 3 added a flag, holding only that flag edit and its `Proof` line.',
+  ]);
+});
+
 test('fix round 1: in a blocking branch the flag addition rides the early commit, and a failed add writes no Proof line', () => {
   assertFacts(subText(), [
     'the `add` edit and its `Proof({slug}):` plan line ride in step 5\'s early commit, before the question comment is posted.',
