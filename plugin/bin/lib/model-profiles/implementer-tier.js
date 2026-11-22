@@ -30,7 +30,9 @@ const MULTI_FILE_FLOOR = 3;
 // null-prototype object as themselves and never throws (JSON.stringify prints
 // NaN as null and throws on a BigInt; String() flattens arrays and throws on a
 // null-prototype object).
-const describe = (v) => (typeof v === 'string' ? JSON.stringify(v) : inspect(v));
+function describe(v) {
+  return typeof v === 'string' ? JSON.stringify(v) : inspect(v);
+}
 
 function namesSeveralFiles(p) {
   return p.endsWith('/') || p.includes('*') || p.includes('?') || BRACE_LIST_RE.test(p);
