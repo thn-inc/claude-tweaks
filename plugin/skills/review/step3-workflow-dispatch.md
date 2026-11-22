@@ -4,7 +4,7 @@ Read from `step3-lens-dispatch.md`'s workflow-dispatch pointer only when `review
 
 ## When this applies
 
-The key resolved `workflow`. This file covers the agent lenses that use the reproduction-pair mechanism (3a-3g) and are in scope at the resolved tier. Lens 3h is never sent through the script: it is one agent with its own procedure (`ux-analysis.md`), dispatched as the Task path dispatches it. The workflow path is used at any diff size; the Task path's "sequential in the main thread" case for a diff under 10 files does not apply here. With no such lens in scope (the `low`-tier no-executable-content skip), no call is made.
+The key resolved `workflow`. This file covers the agent lenses that use the reproduction-pair mechanism (3a-3g) and are in scope at the resolved tier. Lens 3h is never sent through the script: it is one agent with its own procedure (`ux-analysis.md`), dispatched as the Task path dispatches it. The workflow path is used at any diff size; the Task path's "sequential in the main thread" case for a diff under 10 files does not apply here. With no such lens in scope (the `low`-tier no-executable-content skip, or under `adaptive` none in `selected`), no call is made. When `review-lens-selection` resolves `adaptive`, the lenses are the CLI's `selected` set (3a-3g only), from the one run `step3-lens-selection.md` describes, not the tier's full set.
 
 ## Availability
 
@@ -12,7 +12,7 @@ The session has the tool when `Workflow` is among its tools, or `ToolSearch` wit
 
 ## Compose
 
-For each lens, compose its brief exactly as `step3-lens-dispatch.md` composes a Task brief: the scope and the context bundle path, the `SHELL DISCIPLINE:` and `READ-ONLY REVIEW:` lines, the `Path:Line`, finding-anchor, coverage-anchor, over-budget-bundle and code-state rules, lens 3f's scratch-checkout steps, the lens's questions, the byte-identical Calibration/Output block, and at `xhigh`/`max` the `effortLine` after it (`step3-tier-variants.md`). One thing differs: both reviewers of a lens get one string, so the brief cannot name a per-agent scratch path. In place of the Task path's `SCRATCH:` line, write this one, with `{ctx-dir}` and `{lens}` filled in literally, and keep the Scratch-rule citation and the Bash-only instruction the Task path puts beside it:
+For each lens (under `adaptive`, each lens in `selected`), compose its brief exactly as `step3-lens-dispatch.md` composes a Task brief: the scope and the context bundle path, the `SHELL DISCIPLINE:` and `READ-ONLY REVIEW:` lines, the `Path:Line`, finding-anchor, coverage-anchor, over-budget-bundle and code-state rules, lens 3f's scratch-checkout steps, the lens's questions, the byte-identical Calibration/Output block, and at `xhigh`/`max` the `effortLine` after it (`step3-tier-variants.md`). One thing differs: both reviewers of a lens get one string, so the brief cannot name a per-agent scratch path. In place of the Task path's `SCRATCH:` line, write this one, with `{ctx-dir}` and `{lens}` filled in literally, and keep the Scratch-rule citation and the Bash-only instruction the Task path puts beside it:
 
 `SCRATCH: make your own scratch directory — run mkdir -p {ctx-dir}/agent-scratch as one call, then mktemp -d {ctx-dir}/agent-scratch/{lens}-XXXXXX as another, and use the path it prints as your scratch path.`
 
@@ -50,7 +50,7 @@ Resolve the line's text file with one plain call, `node "${CLAUDE_PLUGIN_ROOT}/b
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/review" --status SKIP --step "Step 3 lens dispatch (workflow fallback)" --text-file "{path-S}" --reversibility n/a
 ```
 
-It writes `SKIP {HH:MM:SS} — Step 3 lens dispatch (workflow fallback): condition: {condition} → fallback: Task lens dispatch. Reversibility: n/a.` Standalone (no run directory), put the same sentence in the review report instead. Then dispatch the lenses as `step3-lens-dispatch.md` says for the Task path: every lens under conditions 1 and 2, lenses 3a–3g only under conditions 3–5. Under conditions 4 and 5 the workflow reviewers may already have run, so that review pays for its lenses twice; the `SKIP` line names the condition. With the key at `task` this file is never read and no line is written.
+It writes `SKIP {HH:MM:SS} — Step 3 lens dispatch (workflow fallback): condition: {condition} → fallback: Task lens dispatch. Reversibility: n/a.` Standalone (no run directory), put the same sentence in the review report instead. Then dispatch the lenses as `step3-lens-dispatch.md` says for the Task path: every lens under conditions 1 and 2, lenses 3a–3g only under conditions 3–5. Under `adaptive`, "every lens" and "lenses 3a–3g" mean the CLI's `selected` set (intersected with 3a–3g under conditions 3–5), never the full tier set, and the Task path reads that same output rather than running the CLI again. Under conditions 4 and 5 the workflow reviewers may already have run, so that review pays for its lenses twice; the `SKIP` line names the condition. With the key at `task` this file is never read and no line is written.
 
 ## Settle
 

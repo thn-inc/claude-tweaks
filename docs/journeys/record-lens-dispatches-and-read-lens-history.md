@@ -48,5 +48,5 @@ files:
 - **Red flags:** the report's per-lens table changing bytes for the same archive.
 
 ## Origin
-- Created during the build of #5998 (Phase 10 of the pipeline economy design), which added `plugin/bin/lib/review-lens/dispatch-record.js`, the `review-coordination.js record-lens-dispatch` verb, `plugin/bin/lib/review-lens/history.js`, and the Step 3 recording prose in `plugin/skills/review/step3-lens-dispatch-record.md`. No caller of `readLensHistory` ships yet; the lens selector is a later Phase 10 record.
+- Created during the build of #5998 (Phase 10 of the pipeline economy design), which added `plugin/bin/lib/review-lens/dispatch-record.js`, the `review-coordination.js record-lens-dispatch` verb, `plugin/bin/lib/review-lens/history.js`, and the Step 3 recording prose in `plugin/skills/review/step3-lens-dispatch-record.md`. `plugin/bin/review-lens-select.js` calls `readLensHistory` (#6001).
 - Related journeys: `settle-a-lens-fan-out-in-one-call-5598.md` (the workflow settle call whose settled lenses step 1 records) and `run-review-lenses-through-a-workflow-5599.md` (the workflow path).
