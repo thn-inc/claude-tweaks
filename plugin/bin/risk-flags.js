@@ -8,6 +8,7 @@
 //   node bin/risk-flags.js classify --body-file <f> [--prior-body-file <f>] [--add a,b] [--repo-root <dir>]
 //   node bin/risk-flags.js settle   --body-file <f> [--prior-body-file <f>] [--add a,b] (--headless | --answers-file <f>) [--repo-root <dir>]
 //   node bin/risk-flags.js confirm  --body-file <f> --answers-file <f> [--repo-root <dir>]
+//   node bin/risk-flags.js add      --body-file <f> --add a,b [--repo-root <dir>]
 //   node bin/risk-flags.js facts    --spec-file <f> [--plan-file <f>] --flags-out <f> --proofs-out <f> [--repo-root <dir>]
 //   node bin/risk-flags.js log-removals --run <dir> --site specify|backlog [--removed a,b]
 //
@@ -26,6 +27,13 @@
 // confirm   The human batch for /backlog refine: answers apply to the body's existing
 //           flags only, no classifier runs, nothing is added. A body with no flag line stays
 //           byte-identical (status `unclassified`).
+// add       The add-only writer: appends exactly the --add slugs to --body-file's flag line through
+//           addRiskFlags (unconfirmed marker written; an unreadable line is widened, as the writer
+//           does) and rewrites the file in place. It runs no classifier floor and never removes a
+//           flag, so prose naming a category adds nothing beyond --add (`settle --add` re-runs the
+//           floor). /build's plan review is its caller (build/plan-review-asked-classes.md). Prints
+//           { flags, added, unconfirmed, status }: `flags` after the write, `added` the --add slugs
+//           the body did not already carry, `status` the entry status of the body as read.
 // Both writing verbs print { flags, removed, unconfirmed, status, refused }. `status` is the
 // entry status (`unknown` when the body's line, or for `settle` the prior body's, is
 // unreadable). Reading A: on an `unknown` entry no answer is applied, the widened set
@@ -93,6 +101,7 @@ const { riskFlagEntries } = require('./lib/issues/risk-flag-facts');
 const USAGE = 'usage: risk-flags.js classify --body-file <f> [--prior-body-file <f>] [--add a,b] [--repo-root <dir>]\n'
   + '       risk-flags.js settle --body-file <f> [--prior-body-file <f>] [--add a,b] (--headless | --answers-file <f>) [--repo-root <dir>]\n'
   + '       risk-flags.js confirm --body-file <f> --answers-file <f> [--repo-root <dir>]\n'
+  + '       risk-flags.js add --body-file <f> --add a,b [--repo-root <dir>]\n'
   + '       risk-flags.js facts --spec-file <f> [--plan-file <f>] --flags-out <f> --proofs-out <f> [--repo-root <dir>]\n'
   + '       risk-flags.js log-removals --run <dir> --site specify|backlog [--removed a,b]\n'
   + '  answers file: JSON object { "<slug>": "keep" | "remove" }\n'
@@ -121,6 +130,7 @@ const VERB_FLAGS = {
   classify: ['--body-file', '--prior-body-file', '--add', '--repo-root'],
   settle: ['--body-file', '--prior-body-file', '--add', '--headless', '--answers-file', '--repo-root'],
   confirm: ['--body-file', '--answers-file', '--repo-root'],
+  add: ['--body-file', '--add', '--repo-root'],
   facts: ['--spec-file', '--plan-file', '--flags-out', '--proofs-out', '--repo-root'],
   'log-removals': ['--run', '--site', '--removed'],
 };
@@ -145,7 +155,7 @@ function parseSlugList(flag, value) {
 function parseArgs(argv) {
   const [verb, ...rest] = argv;
   if (verb === '--help' || verb === '-h') return { help: true };
-  if (verb === undefined) return { error: 'a verb is required: classify, settle, confirm, facts or log-removals' };
+  if (verb === undefined) return { error: 'a verb is required: classify, settle, confirm, add, facts or log-removals' };
   if (!Object.hasOwn(VERB_FLAGS, verb)) return { error: `unknown verb: ${verb}` };
   const o = {
     verb, bodyFile: null, priorBodyFile: null, add: null, answersFile: null, run: null, repoRoot: null, headless: false,
@@ -185,6 +195,7 @@ function parseArgs(argv) {
   if (o.bodyFile === null) return { error: '--body-file <path> is required' };
   if (verb === 'settle' && o.headless === (o.answersFile !== null)) return { error: 'settle needs exactly one of --headless and --answers-file <path>' };
   if (verb === 'confirm' && o.answersFile === null) return { error: 'confirm needs --answers-file <path>' };
+  if (verb === 'add' && o.add === null) return { error: 'add needs --add a,b' };
   const add = parseSlugList('--add', o.add);
   if (add.error) return { error: add.error };
   o.add = add.slugs;
@@ -522,14 +533,16 @@ function run(argv, overrides = {}) {
   const extraCategories = policy.extraCategories;
   const known = unique([...BUILTIN_RISK_CATEGORIES, ...extraCategories]);
 
-  // confirm runs no classifier: it acts on the flags the body already carries.
+  // confirm and add run no classifier: confirm acts on the flags the body already carries, add on --add alone.
   let floor = { flags: [], missingSections: [] };
   if (o.verb !== 'confirm') {
-    try {
-      floor = classifyRiskFlags(body, { extraCategories, pathGlobs: policy.pathGlobs });
-    } catch (err) {
-      if (!(err instanceof TypeError)) throw err;
-      return fail(2, `policy-invalid: ${repoRoot} (${errMsg(err)})`);
+    if (o.verb !== 'add') {
+      try {
+        floor = classifyRiskFlags(body, { extraCategories, pathGlobs: policy.pathGlobs });
+      } catch (err) {
+        if (!(err instanceof TypeError)) throw err;
+        return fail(2, `policy-invalid: ${repoRoot} (${errMsg(err)})`);
+      }
     }
     const unknownAdd = o.add.find((slug) => !known.includes(slug));
     if (unknownAdd !== undefined) return fail(2, `--add names ${JSON.stringify(unknownAdd)}, which is not a known category (${known.join(', ')})`);
@@ -542,6 +555,18 @@ function run(argv, overrides = {}) {
     return emit({
       flags: floor.flags, kept, entry, missingSections: floor.missingSections,
       controlMode: policy.controlMode, extraCategories, globsInvalid: policy.globsInvalid, known,
+    });
+  }
+
+  if (o.verb === 'add') {
+    const own = record.parseRiskFlags(body, { extraCategories });
+    const next = record.addRiskFlags(body, o.add, { unconfirmed: true, extraCategories });
+    if (next !== body) {
+      try { deps.writeFile(at(deps, o.bodyFile), next); } catch (err) { return fail(3, `body-unwritable: ${o.bodyFile} (${errMsg(err)})`); }
+    }
+    const final = record.parseRiskFlags(next, { extraCategories });
+    return emit({
+      flags: final.flags, added: o.add.filter((slug) => !own.flags.includes(slug)), unconfirmed: final.unconfirmed, status: own.status,
     });
   }
 
