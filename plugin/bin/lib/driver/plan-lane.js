@@ -17,11 +17,14 @@
 //                                not a bound; `off` means the driver lane never matches
 //
 // The driver bounds are read through the helpers the driver's own eligibility and admission steps
-// use (lane-bounds.js's eligibilityOptions and laneBounds, evaluateRecordEligibility, reviewRequired,
-// evaluateAdmission), never re-derived, so a change to admission's bounds is followed here; the
-// express bounds likewise through the express gate's expressGateOptions.
-// reviewRequired and admission get the eligibility verdict's own Key File paths, as steps.js's
-// eligibility step does. lane-bounds.js is a leaf module, so this file never loads steps.js.
+// use (lane-bounds.js's eligibilityOptions and laneBounds, evaluateRecordEligibility, widenings,
+// reviewRequired, evaluateAdmission), never re-derived, so a change to admission's bounds is followed
+// here; the express bounds likewise through the express gate's expressGateOptions.
+// reviewRequired and admission get the eligibility verdict's own Key File paths and the record's
+// widenings (#6018: above low risk under `express-driver-max-risk`, or a non-fast-lane ceremony when
+// `express-driver-review` is `on`), as steps.js's eligibility step does. Every input those helpers
+// read is a label, the body or a policy value, so shaping time reads the answer the driver will.
+// lane-bounds.js is a leaf module, so this file never loads steps.js.
 //
 // Precedence: driver, then express, then micro-plan. Fail closed: every input is validated before
 // any lane is tried, so a missing, unreadable or malformed input returns lane null with its own
@@ -32,14 +35,16 @@
 const { normalizeLabelNames, parseRecordFacets, LABELS } = require('../issues/record');
 const { parseRiskFlags } = require('../issues/record-risk-flags');
 const { evaluateMicroPlanGate } = require('../issues/micro-plan-gate');
-const { evaluateRecordEligibility, isReadableSizeCeiling, isReadableKeyFileLimit } = require('../express/eligibility');
+const {
+  evaluateRecordEligibility, isReadableSizeCeiling, isReadableKeyFileLimit, isReadableRiskCeiling, widenings,
+} = require('../express/eligibility');
 const { expressGateOptions } = require('../express/policy');
 const { evaluateAdmission } = require('./admission');
 const { reviewRequired } = require('./review');
 const { laneBounds, eligibilityOptions } = require('./lane-bounds');
 
 const POLICY_KEYS = Object.freeze([
-  'express-driver', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-review',
+  'express-driver', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-review',
   'express-lane', 'integration-model', 'merge-sensitive-paths',
 ]);
 
@@ -79,6 +84,7 @@ function policyReadable(policy) {
     && REVIEW_VALUES.includes(value('express-driver-review'))
     && isReadableSizeCeiling(value('express-driver-max-size'))
     && isReadableKeyFileLimit(value('express-driver-max-key-files'))
+    && isReadableRiskCeiling(value('express-driver-max-risk'))
     && typeof value('express-lane') === 'boolean'
     && typeof value('integration-model') === 'string' && value('integration-model') !== ''
     && isReadableSensitivePaths(value('merge-sensitive-paths'));
@@ -102,7 +108,8 @@ function insideDriverBounds(issue, policy) {
   const opts = eligibilityOptions(policy);
   const eligibility = evaluateRecordEligibility(issue, { ...opts, escalated: false });
   if (!eligibility.eligible) return false;
-  const reviewer = reviewRequired({ issue, keyFiles: eligibility.keyFiles, policyValue: policy['express-driver-review'].value });
+  const widenedBy = widenings({ labels: issue.labels, riskCeiling: opts.riskCeiling, anyCeremony: opts.allowAnyCeremony });
+  const reviewer = reviewRequired({ issue, keyFiles: eligibility.keyFiles, policyValue: policy['express-driver-review'].value, widenedBy });
   return evaluateAdmission({
     state: 'OPEN',
     labels: issue.labels,
@@ -114,6 +121,7 @@ function insideDriverBounds(issue, policy) {
     keyFiles: eligibility.keyFiles,
     bounds: laneBounds(policy),
     reviewerOn: reviewer.on,
+    widenedBy,
     buildAuthority: 'typed',
   }).admitted;
 }

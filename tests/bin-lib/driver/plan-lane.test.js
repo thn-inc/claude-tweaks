@@ -6,7 +6,7 @@ const { execFileSync } = require('node:child_process');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const { POLICY_KEYS, PLAN_LANE_REASONS: R, needsNoPlan } = require(path.join(LIB, 'driver', 'plan-lane.js'));
 const { extractKeyFileEntries } = require(path.join(LIB, 'issues', 'grouping.js'));
-const { evaluateRecordEligibility } = require(path.join(LIB, 'express', 'eligibility.js'));
+const { evaluateRecordEligibility, widenings } = require(path.join(LIB, 'express', 'eligibility.js'));
 const { evaluateAdmission } = require(path.join(LIB, 'driver', 'admission.js'));
 const { reviewRequired } = require(path.join(LIB, 'driver', 'review.js'));
 const { eligibilityOptions } = require(path.join(LIB, 'driver', 'lane-bounds.js'));
@@ -32,6 +32,7 @@ const POLICY_DEFAULTS = {
   'express-driver': 'on',
   'express-driver-max-size': 'medium',
   'express-driver-max-key-files': 5,
+  'express-driver-max-risk': 'low',
   'express-driver-review': 'beyond-express',
   'express-lane': true,
   'integration-model': 'pr-first',
@@ -56,7 +57,7 @@ const MICRO_FILES = ['plugin/bin/lib/plan-lane-fixture/m0.js', 'tests/plan-lane-
 
 test('POLICY_KEYS and PLAN_LANE_REASONS are frozen and name the stable codes', () => {
   assert.deepStrictEqual([...POLICY_KEYS], [
-    'express-driver', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-review',
+    'express-driver', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-review',
     'express-lane', 'integration-model', 'merge-sensitive-paths',
   ]);
   assert.ok(Object.isFrozen(POLICY_KEYS));
@@ -148,6 +149,8 @@ test('AC6.3: an unreadable bound or policy entry reads null, policy-unreadable',
     'max-size toString': policy({ 'express-driver-max-size': 'toString' }),
     'max-key-files 0': policy({ 'express-driver-max-key-files': 0 }),
     'max-key-files "5"': policy({ 'express-driver-max-key-files': '5' }),
+    'max-risk huge': policy({ 'express-driver-max-risk': 'huge' }),
+    'max-risk toString': policy({ 'express-driver-max-risk': 'toString' }),
     'express-driver sometimes': policy({ 'express-driver': 'sometimes' }),
     'express-driver-review maybe': policy({ 'express-driver-review': 'maybe' }),
     'express-lane "true"': policy({ 'express-lane': 'true' }),
@@ -167,6 +170,11 @@ test('AC6.3: an unreadable bound or policy entry reads null, policy-unreadable',
   // even when the value it carries is a valid default.
   cases['invalid: true on a valid default'] = { ...policy(), 'express-driver-max-size': { value: 'medium', source: 'default', invalid: true } };
   cases['error field on a valid value'] = { ...policy(), 'express-driver': { value: 'on', source: 'policy', error: 'bad value' } };
+  // #6018's two keys, the same way.
+  cases['max-risk invalid: true on a valid default'] = { ...policy(), 'express-driver-max-risk': { value: 'low', source: 'default', invalid: true } };
+  cases['max-risk error field'] = { ...policy(), 'express-driver-max-risk': { value: 'medium', source: 'policy', error: 'bad value' } };
+  cases['review invalid: true on a valid default'] = { ...policy(), 'express-driver-review': { value: 'beyond-express', source: 'default', invalid: true } };
+  cases['review error field'] = { ...policy(), 'express-driver-review': { value: 'on', source: 'policy', error: 'bad value' } };
   for (const [name, pol] of Object.entries(cases)) {
     await t.test(name, () => assert.deepStrictEqual(run(pol), unreadable));
   }
@@ -242,30 +250,44 @@ const PARITY_RECORDS = [
   // `schema` above is not a built-in category, so that row reads as unreadable; this one is a readable kept flag.
   { name: 'kept built-in risk flag', labels: ['risk:low', 'size:low', 'type:task'], files: backendFiles(1), opts: { riskFlags: 'Risk-flags: migrations' } },
   { name: 'medium no-ceremony 4 KF with noise', labels: ['risk:low', 'size:medium', 'type:feature', ...NOISE], files: backendFiles(4) },
+  // #6018's widenings: risk above low, and a recognised ceremony other than fast-lane.
+  { name: 'risk medium fast-lane 1 KF', labels: ['risk:medium', 'size:low', 'ceremony:fast-lane', 'type:task'], files: backendFiles(1) },
+  { name: 'risk medium no-ceremony 4 KF', labels: ['risk:medium', 'size:medium', 'type:feature'], files: backendFiles(4) },
+  { name: 'risk high no-ceremony 1 KF', labels: ['risk:high', 'size:low', 'type:task'], files: backendFiles(1) },
+  { name: 'ceremony standard medium 4 KF', labels: ['risk:low', 'size:medium', 'ceremony:standard', 'type:feature'], files: backendFiles(4) },
+  { name: 'stray ceremony beside standard', labels: ['risk:low', 'size:low', 'ceremony:standard', 'ceremony:fastlane', 'type:task'], files: backendFiles(1) },
 ];
+
+// The policies both parity tests run every record under: the reviewer's three values, and #6018's risk
+// ceiling and ceremony widening under each reviewer value that changes what they admit.
+const PARITY_POLICIES = {
+  'review beyond-express': policy(),
+  'review off': policy({ 'express-driver-review': 'off' }),
+  'review on, split, low ceiling, 3 KF': policy({ 'express-driver-review': 'on', 'express-driver': 'split', 'express-driver-max-size': 'low', 'express-driver-max-key-files': 3 }),
+  'review on, max-risk high': policy({ 'express-driver-review': 'on', 'express-driver-max-risk': 'high' }),
+  'review beyond-express, max-risk medium': policy({ 'express-driver-max-risk': 'medium' }),
+  'review off, max-risk high': policy({ 'express-driver-review': 'off', 'express-driver-max-risk': 'high' }),
+};
 
 // Spec Deliverable 5: with grants, blockers and PRs neutralised, the predicate's driver verdict equals
 // the bounds portion of eligibility + admission for the same record and policy, computed here from
 // the real modules.
 test('AC1.1 parity: the driver verdict equals eligibility + admission with grants, blockers and PRs neutralised', () => {
-  const policies = {
-    'review beyond-express': policy(),
-    'review off': policy({ 'express-driver-review': 'off' }),
-    'review on, split, low ceiling, 3 KF': policy({ 'express-driver-review': 'on', 'express-driver': 'split', 'express-driver-max-size': 'low', 'express-driver-max-key-files': 3 }),
-  };
   const sides = { driver: 0, notDriver: 0 };
   for (const rec of PARITY_RECORDS) {
-    for (const [polName, pol] of Object.entries(policies)) {
+    for (const [polName, pol] of Object.entries(PARITY_POLICIES)) {
       const b = body(rec.files, rec.opts);
       const neutral = rec.labels.filter((l) => !/^(auto|bot):/.test(l) && l !== 'parked');
       const opts = eligibilityOptions(pol);
       const eligibility = evaluateRecordEligibility({ body: b, labels: neutral }, opts);
-      const reviewer = reviewRequired({ issue: { labels: neutral }, keyFiles: eligibility.keyFiles, policyValue: pol['express-driver-review'].value });
+      // As steps.js's eligibility step computes it: an eligible record's widenings, none for a refused one.
+      const widenedBy = eligibility.eligible ? widenings({ labels: neutral, riskCeiling: opts.riskCeiling, anyCeremony: opts.allowAnyCeremony }) : [];
+      const reviewer = reviewRequired({ issue: { labels: neutral }, keyFiles: eligibility.keyFiles, policyValue: pol['express-driver-review'].value, widenedBy });
       const admission = evaluateAdmission({
         state: 'OPEN', labels: neutral, openBlockerRefs: [], openLinkedPRs: [],
         routing: pol['express-driver'].value === 'split' ? 'on' : pol['express-driver'].value, driverEscalated: false,
         keyFiles: eligibility.keyFiles, bounds: { sizeCeiling: opts.sizeCeiling, maxKeyFiles: opts.maxKeyFiles },
-        reviewerOn: reviewer.on, buildAuthority: 'typed',
+        reviewerOn: reviewer.on, widenedBy, buildAuthority: 'typed',
       });
       const expected = eligibility.eligible && admission.admitted;
       const got = needsNoPlan({ labels: rec.labels, keyFiles: extractKeyFileEntries(b), body: b, policy: pol });
@@ -280,6 +302,36 @@ test('AC1.1 parity: the reviewer rule is load-bearing — beyond-express records
   const pol = policy({ 'express-driver-review': 'off' });
   assert.notStrictEqual(verdictFor({ labels: DRIVER_LABELS, keyFiles: DRIVER_FILES, pol }).lane, 'driver');
   assert.strictEqual(verdictFor({ labels: EXPRESS_LABELS, keyFiles: MICRO_FILES, pol }).lane, 'driver');
+});
+
+// #6018: the driver's risk ceiling is `express-driver-max-risk`, read through eligibilityOptions.
+test('#6018: a record above express-driver-max-risk does not read driver; at or below it, it does', () => {
+  const medium = ['risk:medium', 'size:medium', 'type:feature'];
+  const high = ['risk:high', 'size:medium', 'type:feature'];
+  const at = (labels, ceiling) => verdictFor({ labels, keyFiles: DRIVER_FILES, pol: policy({ 'express-driver-max-risk': ceiling }) }).lane;
+  assert.notStrictEqual(at(medium, 'low'), 'driver');
+  assert.notStrictEqual(at(high, 'medium'), 'driver');
+  assert.strictEqual(at(medium, 'medium'), 'driver');
+  assert.strictEqual(at(high, 'high'), 'driver');
+});
+
+// #6018: a risk-widened record is admitted only with the reviewer on, so `express-driver-review: off`
+// refuses it at admission (reviewerOffWidened) even though eligibility passes it.
+test('#6018: a risk-widened record with express-driver-review off does not read driver', () => {
+  const labels = ['risk:medium', 'size:low', 'ceremony:fast-lane', 'type:task'];
+  const pol = policy({ 'express-driver-max-risk': 'medium', 'express-driver-review': 'off', 'express-lane': false });
+  assert.notStrictEqual(verdictFor({ labels, keyFiles: EXPRESS_FILES, pol }).lane, 'driver');
+  // Control: the same record with the reviewer on reads driver.
+  assert.strictEqual(verdictFor({ labels, keyFiles: EXPRESS_FILES, pol: policy({ 'express-driver-max-risk': 'medium', 'express-driver-review': 'on' }) }).lane, 'driver');
+});
+
+// #6018: `express-driver-review: on` admits any recognised ceremony:* tier; off and beyond-express do not.
+test('#6018: a ceremony:standard record in bounds reads driver only with express-driver-review on', () => {
+  const labels = ['risk:low', 'size:medium', 'ceremony:standard', 'type:feature'];
+  const at = (review) => verdictFor({ labels, keyFiles: DRIVER_FILES, pol: policy({ 'express-driver-review': review }) });
+  assert.deepStrictEqual(at('on'), { lane: 'driver', reason: 'inside-driver-bounds' });
+  assert.notStrictEqual(at('off').lane, 'driver');
+  assert.notStrictEqual(at('beyond-express').lane, 'driver');
 });
 
 // The driver's real eligibility and admission steps, run with fake deps that neutralise only what the
@@ -303,11 +355,10 @@ test('AC1.1 parity: the driver verdict equals the real eligibility and admission
     date: () => new Date(0),
     stdinIsTTY: false,
   };
-  const policies = {
-    'review beyond-express': policy(),
-    'review off': policy({ 'express-driver-review': 'off' }),
-    'review on, low ceiling, 3 KF': policy({ 'express-driver-review': 'on', 'express-driver-max-size': 'low', 'express-driver-max-key-files': 3 }),
-  };
+  // The real admission step reads routing from the policy itself, so split's parity would refuse
+  // record 7; `on` stands in for it here, as needsNoPlan reads split.
+  const policies = Object.fromEntries(Object.entries(PARITY_POLICIES)
+    .map(([name, pol]) => [name, { ...pol, 'express-driver': { value: 'on', source: 'policy' } }]));
   const sides = { driver: 0, notDriver: 0 };
   for (const rec of PARITY_RECORDS) {
     for (const [polName, pol] of Object.entries(policies)) {

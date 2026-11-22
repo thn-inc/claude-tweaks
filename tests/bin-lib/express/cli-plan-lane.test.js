@@ -28,7 +28,7 @@ const record = (number, labels = LABELS, b = body()) => ({ number, title: `recor
 
 // Express and driver lanes off, so the micro-plan gate is the lane that answers.
 const POLICY = {
-  'express-driver': 'off', 'express-driver-max-size': 'medium', 'express-driver-max-key-files': 5,
+  'express-driver': 'off', 'express-driver-max-size': 'medium', 'express-driver-max-key-files': 5, 'express-driver-max-risk': 'low',
   'express-driver-review': 'beyond-express', 'express-lane': false, 'integration-model': 'pr-first', 'merge-sensitive-paths': [],
 };
 
