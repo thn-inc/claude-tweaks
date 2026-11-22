@@ -1,0 +1,171 @@
+'use strict';
+
+// Review lens selection (#6001): which of `/claude-tweaks:review` Step 3's lenses a review dispatches, decided from
+// the tier's lens set, the diff facts (`facts.js`), the per-lens history (`history.js`) and the skip streaks. Pure:
+// no I/O, and no model chooses — every rule below is a named constant.
+//
+// selectLenses({ tier, facts, history, streaks }) -> { tier, selected: [lens], skipped: [{lens, reason}], fallback }
+//   tier     one of TIERS; anything else throws TypeError.
+//   facts    computeFacts' envelope as returned: { ok: true, facts } | { ok: false, fact, reason }. It is unwrapped
+//            once and the inner object is what every APPLIES / CALLED_FOR predicate reads.
+//   history  readLensHistory's result: { lenses: {id: {runs, confirmed, perRun, shareWithFinding, insufficient}},
+//            skipped, errors }.
+//   streaks  { ok: true, byLens: {id: n} } | { ok: false, reason } — n is the reviews since the lens last ran.
+// `selected` and `skipped` are in TIER_LENSES order; every tier lens is in exactly one of them. `fallback` is null, or
+// the reason the full tier set was returned.
+//
+// Rules, per lens of TIER_LENSES[tier] (the tier's set is the ceiling — a lens outside it is never added):
+//   1. Fallback: facts not `ok` (or a malformed envelope), or historyProblem(history) non-null -> the full tier set,
+//      `skipped: []`, `fallback` = the reason. Never read as "no facts call for anything".
+//   2. The lens's history is `insufficient` -> selected.
+//   3. shareWithFinding >= SHARE_FLOOR -> selected iff APPLIES[lens](facts); else skipped
+//      "{lens}: share {s} ≥ floor {f}, but the diff has no {APPLIES_WHAT[lens]} it applies to".
+//   4. Below the floor -> selected iff CALLED_FOR[lens](facts) or the streak forces it (streaks not ok, or the lens's
+//      count is not a non-negative integer, or it is >= FORCE_EVERY - 1); else skipped
+//      "{lens}: share {s} over its last {runs} runs is below floor {f}; no diff fact calls for it ({k} of {FORCE_EVERY}
+//      reviews since it last ran)".
+//
+// historyProblem(history, lenses = LENS_IDS) -> reason | null: not an object; `lenses` not an object; a lens asked
+// about has no entry; an entry's `runs` is not a non-negative integer or `insufficient` not a boolean; an
+// `insufficient: false` entry whose `shareWithFinding` is not a finite number in [0, 1]; `errors` not an array, an
+// entry without a string `reason`, or an `unreadable root` / `unreadable archive` entry (a whole root or archive lost,
+// so the 20-run window is not the real one). An `insufficient: true` entry with `shareWithFinding: null` is the
+// zero-run shape, never malformed; per-run errors (`unreadable spec members`, `step-yield.json missing`, …) exclude
+// only their run and leave the history usable (#6001 Review Focus 1).
+//
+// Constants and their sources:
+//   TIERS, TIER_LENSES — `plugin/skills/review/step3-lens-dispatch.md`'s tier table, verbatim and in its order.
+//   SHARE_FLOOR = 0.3 — initial; replaced by Task 5's replay.
+//   FORCE_EVERY = 5 — initial; replaced by Task 5's replay.
+//   APPLIES, CALLED_FOR — initial; replaced by Task 5's replay. (3h is always applicable and always called for: it
+//     keeps its own QA-data gate in Step 3.)
+
+const { FACT_NAMES } = require('./facts');
+const { LENS_IDS } = require('./dispatch-record');
+
+const TIERS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']);
+const FULL_SET = Object.freeze(['3b', '3c', '3a', '3f', '3d', '3e', '3g', '3h']);
+const TIER_LENSES = Object.freeze({
+  low: Object.freeze(['3b', '3c']),
+  medium: Object.freeze(['3b', '3c', '3a', '3f']),
+  high: FULL_SET,
+  xhigh: FULL_SET,
+  max: FULL_SET,
+});
+
+const SHARE_FLOOR = 0.3;
+const FORCE_EVERY = 5;
+
+const APPLIES = Object.freeze({
+  '3a': (f) => f.paths.length > 0,
+  '3b': (f) => f.executableContent,
+  '3c': (f) => f.executableContent,
+  '3d': (f) => f.kinds.source,
+  '3e': (f) => f.kinds.source || f.newFiles,
+  '3f': (f) => f.kinds.source || f.kinds.test,
+  '3g': (f) => f.kinds.source || f.kinds.test || f.executableContent,
+  '3h': () => true,
+});
+
+// What each APPLIES predicate looks for, named in the rule-3 skip reason.
+const APPLIES_WHAT = Object.freeze({
+  '3a': 'changed path',
+  '3b': 'executable content',
+  '3c': 'executable content',
+  '3d': 'source change',
+  '3e': 'source change or new file',
+  '3f': 'source or test change',
+  '3g': 'source, test or executable content',
+  '3h': 'change',
+});
+
+const CALLED_FOR = Object.freeze({
+  '3a': (f) => f.kinds.source || f.kinds.test,
+  '3b': (f) => f.riskPathTouched || f.riskFlags.length > 0 || (f.executableContent && (f.shellInvocationAdded || f.inputHandlingAdded)),
+  '3c': (f) => f.shellInvocationAdded || f.inputHandlingAdded || f.errorHandlingTouched,
+  '3d': (f) => f.perCallPath || f.loopSpawn,
+  '3e': (f) => f.newModules || f.riskPathTouched,
+  '3f': (f) => f.kinds.test || f.newModules,
+  '3g': (f) => f.newModules,
+  '3h': () => true,
+});
+
+const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const own = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+const WHOLE_WINDOW_LOST_RE = /^unreadable (?:root|archive) \(/;
+
+function historyProblem(history, lenses = LENS_IDS) {
+  if (!isObject(history)) return 'history is not an object';
+  if (!isObject(history.lenses)) return 'history lenses is not an object';
+  for (const lens of lenses) {
+    if (!own(history.lenses, lens) || !isObject(history.lenses[lens])) return `history has no entry for lens ${lens}`;
+    const e = history.lenses[lens];
+    if (!Number.isInteger(e.runs) || e.runs < 0) return `history lens ${lens}: runs is not a non-negative integer`;
+    if (typeof e.insufficient !== 'boolean') return `history lens ${lens}: insufficient is not a boolean`;
+    if (!e.insufficient) {
+      const s = e.shareWithFinding;
+      if (typeof s !== 'number' || !Number.isFinite(s) || s < 0 || s > 1) {
+        return `history lens ${lens}: shareWithFinding is not a number in [0, 1]`;
+      }
+    }
+  }
+  if (history.errors !== undefined && !Array.isArray(history.errors)) return 'history errors is not an array';
+  for (const err of history.errors || []) {
+    if (!isObject(err) || typeof err.reason !== 'string') return 'history errors holds an entry without a reason';
+    if (WHOLE_WINDOW_LOST_RE.test(err.reason)) return `history ${err.reason} at ${err.path}`;
+  }
+  return null;
+}
+
+// The inner facts object, or { problem } when the envelope cannot be read as computed facts.
+function unwrapFacts(envelope) {
+  if (!isObject(envelope)) return { problem: 'facts unavailable: no facts envelope' };
+  if (envelope.ok === false) return { problem: `facts unavailable: ${envelope.fact}: ${envelope.reason}` };
+  const f = envelope.facts;
+  if (envelope.ok !== true || !isObject(f)) return { problem: 'facts unavailable: malformed facts envelope' };
+  for (const name of FACT_NAMES) {
+    if (!own(f, name)) return { problem: `facts unavailable: ${name} missing` };
+  }
+  if (!isObject(f.kinds)) return { problem: 'facts unavailable: kinds is not an object' };
+  if (!Array.isArray(f.paths)) return { problem: 'facts unavailable: paths is not an array' };
+  if (!Array.isArray(f.riskFlags)) return { problem: 'facts unavailable: riskFlags is not an array' };
+  return { facts: f };
+}
+
+// The count the streak reader gave, or null when it gave none usable (the safe direction: forced).
+function streakOf(streaks, lens) {
+  if (!isObject(streaks) || streaks.ok !== true || !isObject(streaks.byLens)) return null;
+  const k = own(streaks.byLens, lens) ? streaks.byLens[lens] : undefined;
+  return Number.isInteger(k) && k >= 0 ? k : null;
+}
+
+function selectLenses({ tier, facts, history, streaks } = {}) {
+  if (typeof tier !== 'string' || !TIERS.includes(tier)) throw new TypeError(`tier must be one of ${TIERS.join(', ')}`);
+  const lenses = TIER_LENSES[tier];
+  const unwrapped = unwrapFacts(facts);
+  const problem = unwrapped.problem || historyProblem(history, lenses);
+  if (problem) return { tier, selected: [...lenses], skipped: [], fallback: problem };
+
+  const f = unwrapped.facts;
+  const selected = [];
+  const skipped = [];
+  for (const lens of lenses) {
+    const h = history.lenses[lens];
+    if (h.insufficient) { selected.push(lens); continue; }
+    const s = h.shareWithFinding;
+    if (s >= SHARE_FLOOR) {
+      if (APPLIES[lens](f)) selected.push(lens);
+      else skipped.push({ lens, reason: `${lens}: share ${s} ≥ floor ${SHARE_FLOOR}, but the diff has no ${APPLIES_WHAT[lens]} it applies to` });
+      continue;
+    }
+    const k = streakOf(streaks, lens);
+    if (CALLED_FOR[lens](f) || k === null || k >= FORCE_EVERY - 1) { selected.push(lens); continue; }
+    skipped.push({
+      lens,
+      reason: `${lens}: share ${s} over its last ${h.runs} runs is below floor ${SHARE_FLOOR}; no diff fact calls for it (${k} of ${FORCE_EVERY} reviews since it last ran)`,
+    });
+  }
+  return { tier, selected, skipped, fallback: null };
+}
+
+module.exports = { TIERS, TIER_LENSES, SHARE_FLOOR, FORCE_EVERY, APPLIES, APPLIES_WHAT, CALLED_FOR, historyProblem, selectLenses };
