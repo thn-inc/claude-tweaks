@@ -29,6 +29,14 @@ test('reviews-rewrite scans stay linear on adversarial input', () => {
   rw.unrewrittenPaths(`${mainRoot}/${'.'.repeat(200000)}x`, { mainRoot, runName: 'R', outDir: `${mainRoot}/out` });
   rw.runInputsOf(`${mainRoot}/.claude-tweaks/pipelines/R/work/${'.'.repeat(200000)}x`, { mainRoot, runName: 'R' });
   rw.stripEffortLines(`[Effort: high — x]${' '.repeat(200000)}y`);
+  // The single-pass rewrite and the outDir span walk (fix round 4).
+  const rp = `${mainRoot}/out/repos/k/repo`;
+  const ctx = `${mainRoot}/.claude-tweaks/pipelines/R/review-ctx/context.md`;
+  rw.rewriteText(`${mainRoot}/.claude/worktrees/w ${sha} ${ctx} ${mainRoot} `.repeat(20000),
+    { mainRoot, runName: 'R', repoPath: rp, replacements: { [ctx]: `${rp}/ctx.md` }, shaMap: { [sha]: sha } });
+  rw.rewriteText(`${mainRoot}/.claude/worktrees/${'.'.repeat(200000)}`, { mainRoot, runName: 'R', repoPath: rp, replacements: {}, shaMap: {} });
+  rw.unrewrittenPaths(`${mainRoot}/out/x `.repeat(40000), { mainRoot, runName: 'R', outDir: `${mainRoot}/out` });
+  rw.unrewrittenPaths(`${mainRoot}/out/${'a'.repeat(200000)},${mainRoot}/src`, { mainRoot, runName: 'R', outDir: `${mainRoot}/out` });
   const elapsed = performance.now() - start;
   assert.ok(elapsed < 1000, `scans took ${elapsed.toFixed(0)}ms — a regex here must not backtrack`);
 });

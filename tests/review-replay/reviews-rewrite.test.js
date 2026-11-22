@@ -208,3 +208,43 @@ test('an empty or filesystem-root mainRoot is rejected', () => {
 test('stripEffortLines keeps a following blank line', () => {
   assert.strictEqual(rw.stripEffortLines('a\n[Effort: low — x.]\n\nb'), 'a\n\nb');
 });
+
+test('a path under the main checkout is not the bare root: left in place and flagged', () => {
+  const o = { mainRoot, runName: 'R', outDir: '/out' };
+  const out = rw.rewriteText('read ' + main + '/src/a.js and ' + main + '/', full);
+  assert.strictEqual(out, 'read ' + main + '/src/a.js and ' + main + '/');
+  assert.deepStrictEqual(rw.unrewrittenPaths(out, o), [main + '/src/a.js', main + '/']);
+});
+
+test('no rewrite step re-matches text an earlier step produced', () => {
+  // Task 4's repo path carries the archived shas' 7-char prefixes; neither it nor a
+  // replacement value under the main checkout may be rewritten a second time.
+  const repoPath = main + '/out/repos/R--' + B.slice(0, 7) + '-' + H.slice(0, 7) + '/repo';
+  const p = main + '/.claude-tweaks/pipelines/R/review-ctx/context.md';
+  const value = main + '/out/repos/k/ctx/context.md';
+  const o = { mainRoot, runName: 'R', repoPath, replacements: { [p]: value }, shaMap: { [B]: RB, [H]: RH } };
+  const out = rw.rewriteText('git -C ' + main + '/.claude/worktrees/w diff ' + B + ' read ' + p + ' in ' + main, o);
+  assert.strictEqual(out, 'git -C ' + repoPath + ' diff ' + RB + ' read ' + value + ' in ' + repoPath);
+  assert.deepStrictEqual(rw.unrewrittenPaths(out, { mainRoot, runName: 'R', outDir: main + '/out' }), []);
+  assert.strictEqual(rw.rewriteText('at ' + B + ' in ' + main, { ...full, shaMap: { [B]: RB } }), 'at ' + RB + ' in /out/repos/k/repo');
+});
+
+test('an outDir span ends at a separator, so a joined path is still flagged', () => {
+  for (const m of [main, '/m/repo']) {
+    const o = { mainRoot: m, runName: 'R', outDir: m + '/out' };
+    for (const sep of [',', ':', ';', '|']) {
+      assert.strictEqual(rw.unrewrittenPaths(m + '/out/x' + sep + m + '/src/a.js', o).length, 1, m + sep);
+    }
+    assert.strictEqual(rw.unrewrittenPaths(m + '/out/x,.claude-tweaks/pipelines/R/decisions.md', o).length, 1, m);
+    assert.deepStrictEqual(rw.unrewrittenPaths(m + '/out/x/y-1.2_z+w', o), [], m);
+    assert.deepStrictEqual(rw.unrewrittenPaths(m + '/src/a.js ' + m + '/out/x', o), [m + '/src/a.js'], m);
+  }
+});
+
+test('trailing punctuation is trimmed as a whole run, colon included', () => {
+  const p = main + '/.claude-tweaks/pipelines/R/review-ctx/context.md';
+  assert.strictEqual(rw.runInputsOf('read ' + p + '...,;:', opts).inputs[0].match, p);
+  assert.strictEqual(rw.runInputsOf('read ' + p + ':', opts).inputs[0].match, p);
+  const o = { mainRoot, runName: 'R', outDir: main + '/out' };
+  assert.deepStrictEqual(rw.unrewrittenPaths('see ' + main + '/out/a: ok', o), []);
+});
