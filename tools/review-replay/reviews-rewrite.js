@@ -11,9 +11,17 @@ const PATH_END = '[^\\s"\'`)]';
 const PIPELINES = '.claude-tweaks/pipelines/';
 // A worktree name never ends in '.', so a sentence's full stop stays outside the match.
 const WORKTREE_NAME = '[A-Za-z0-9._+-]*[A-Za-z0-9_+-]';
-const PATH_END_LOOKAHEAD = '(?=[\\s"\'`)]|$)';
+// A path ends at whitespace, a quote, a backtick, `)` or end of text, with sentence
+// punctuation (`.,;:`) allowed in between, as runInputsOf already strips it.
+const PATH_END_LOOKAHEAD = '(?=[.,;:]*(?:[\\s"\'`)]|$))';
 // Forward slashes, no trailing slash: `M/` would build `M//` and blind every scan.
 const normRoot = (p) => toPosix(p).replace(/\/+$/, '');
+// A root that normalises to '' (the filesystem root) would match everywhere.
+function requireRoot(mainRoot) {
+  const root = normRoot(mainRoot);
+  if (!root) throw new Error('mainRoot must not be empty or the filesystem root');
+  return root;
+}
 
 function rangeOf(text) {
   const t = String(text);
@@ -99,7 +107,7 @@ function rewriteText(text, { mainRoot, runName, repoPath, replacements = {}, sha
   for (const match of matches) {
     if (Object.prototype.hasOwnProperty.call(replacements, match)) out = out.split(match).join(replacements[match]);
   }
-  const root = escapeRe(normRoot(mainRoot));
+  const root = escapeRe(requireRoot(mainRoot));
   out = out.replace(new RegExp(`${root}/\\.claude/worktrees/${WORKTREE_NAME}`, 'g'), () => repoPath);
   out = out.replace(new RegExp(`${root}${PATH_END_LOOKAHEAD}`, 'g'), () => repoPath);
   return rewriteShas(out, shaMap);
@@ -107,7 +115,7 @@ function rewriteText(text, { mainRoot, runName, repoPath, replacements = {}, sha
 
 function unrewrittenPaths(text, { mainRoot, runName, outDir }) {
   const t = String(text);
-  const root = normRoot(mainRoot);
+  const root = requireRoot(mainRoot);
   const out = outDir ? normRoot(outDir) : '';
   // The output directory is exempt only when it lies strictly under the main checkout; an
   // outDir equal to or containing mainRoot would hide every leak, so it fails closed.

@@ -162,6 +162,30 @@ test('a worktree name does not eat a sentence full stop', () => {
   assert.strictEqual(rw.rewriteText(main + '/.claude/worktrees/flow-1.2', full), '/out/repos/k/repo');
 });
 
+test('sentence punctuation after a bare root or run dir counts as a path end', () => {
+  const o = { mainRoot, runName: 'R', outDir: '/out' };
+  for (const p of ['.', ',', ';', ':', '.)', '...']) {
+    assert.strictEqual(rw.rewriteText('cd ' + main + p + ' Then', full), 'cd /out/repos/k/repo' + p + ' Then');
+    assert.deepStrictEqual(rw.unrewrittenPaths('cd ' + main + p + ' Then', o), [main], p);
+    assert.deepStrictEqual(rw.unrewrittenPaths('see .claude-tweaks/pipelines/R' + p + ' x', o), ['.claude-tweaks/pipelines/R'], p);
+  }
+  assert.deepStrictEqual(rw.unrewrittenPaths('end ' + main + '.', o), [main]);
+});
+
+test('a dotted continuation is not a bare root or run dir', () => {
+  const o = { mainRoot, runName: 'R', outDir: '/out' };
+  assert.strictEqual(rw.rewriteText(main + '.x/y and ' + main + '.bak', full), main + '.x/y and ' + main + '.bak');
+  assert.deepStrictEqual(rw.unrewrittenPaths(main + '.x/y ' + main + '.bak', o), []);
+  assert.deepStrictEqual(rw.unrewrittenPaths('.claude-tweaks/pipelines/R.x/y', o), []);
+});
+
+test('an empty or filesystem-root mainRoot is rejected', () => {
+  for (const bad of ['/', '', '//']) {
+    assert.throws(() => rw.rewriteText('a b', { ...full, mainRoot: bad }), /mainRoot/);
+    assert.throws(() => rw.unrewrittenPaths('a b', { mainRoot: bad, runName: 'R', outDir: '/out' }), /mainRoot/);
+  }
+});
+
 test('stripEffortLines keeps a following blank line', () => {
   assert.strictEqual(rw.stripEffortLines('a\n[Effort: low — x.]\n\nb'), 'a\n\nb');
 });
