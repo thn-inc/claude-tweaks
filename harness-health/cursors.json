@@ -61,7 +61,7 @@
   },
   "skill:skill-prose-conformance-tests": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1795386507131
+    "lastAuditedMs": 1795386766299
   },
   "skill:shared-contract-extraction": {
     "lastAuditedSha": null,
@@ -310,5 +310,9 @@
   "skill:record-body-line-addition": {
     "lastAuditedSha": null,
     "lastAuditedMs": 1795165475326
+  },
+  "skill:superpowers-step-override": {
+    "lastAuditedSha": null,
+    "lastAuditedMs": 1795386772289
   }
 }
