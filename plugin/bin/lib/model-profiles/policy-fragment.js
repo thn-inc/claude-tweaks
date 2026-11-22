@@ -85,9 +85,11 @@ function cutModelProfilesBlock(raw) {
 // The resolve-policy entry for the `model-profiles` key, shared by the CLI and
 // the driver's policy read. Only the block is parsed (#5917): a malformed
 // sibling key such as `frontier-run-cap: abc` never marks it invalid.
-function modelProfilesEntry(policyRaw, factoryRaw = null) {
+function modelProfilesEntry(policyRaw, factoryRaw = null, onInvalid = null) {
   const repo = readProfilesSide(policyRaw);
   const factory = readProfilesSide(factoryRaw);
+  // A malformed factory block never changes the entry beside a valid repo block, so say so through the caller's channel.
+  if (factory.present && !factory.ok && onInvalid) onInvalid('model-profiles', null, 'factory');
   if (!repo.ok && !factory.ok) {
     return repo.present || factory.present ? { value: null, source: 'default', invalid: true } : { value: null, source: 'default' };
   }

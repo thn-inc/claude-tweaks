@@ -62,7 +62,9 @@
 // code unchanged; a factory-supplied entry only carries `source: 'factory'`), in this order after
 // the main-checkout note: the factory reader's warnings (an unreadable file, a variable block that
 // did not parse); one `resolve-policy: warning: {key} is not settable from the factory layer —
-// ignored` per requested refused key the factory text holds; and, when at least one requested key
+// ignored` per requested refused key the resolver skipped; one `resolve-policy: warning: {key} has a
+// malformed block in the factory layer — ignored, using the repository's rows` per requested block key
+// whose factory block did not parse beside a usable repository block; and, when at least one requested key
 // resolved from it, `resolve-policy: note — factory layer ({origin}) supplied {keys}`. The origin
 // never appears on stdout. Under --values, an invalid value from the factory layer gets the
 // invalid-value warning with ` in the factory layer` after the quoted value.
@@ -71,7 +73,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { POLICY_KEYS, resolvePolicyConfig, formatForgeDegrade, parseFlatLines } = require('./lib/policy-schema');
+const { POLICY_KEYS, resolvePolicyConfig, formatForgeDegrade } = require('./lib/policy-schema');
 const { FACTORY_REFUSED_KEYS } = require('./lib/policy-factory');
 const { computeDerivedDefaults } = require('./lib/policy-derived-defaults');
 const { pickInjected } = require('./lib/repo-resolve');
@@ -139,12 +141,19 @@ function resolvePolicy({ keys, runDir = null, mcpReachable = false }, deps) {
   // invalidFrom names the source each rejected raw came from (#6006), so the warning can name the factory layer.
   const invalidRaw = new Map();
   const invalidFrom = new Map();
+  // The resolver decides which keys the factory layer may not set; the CLI only reports that decision.
+  const refusedReported = new Set();
+  const onInvalid = (key, raw, sourceName) => {
+    invalidRaw.set(key, raw);
+    invalidFrom.set(key, sourceName);
+    if (sourceName === 'factory' && FACTORY_REFUSED_KEYS.includes(key)) refusedReported.add(key);
+  };
   const { root, policyRaw, runConfigRaw, result, policyPath, policySource, factoryRaw, factoryOrigin, factoryWarnings } = resolvePolicyConfig({
     git: (args) => deps.git(args, { cwd, env: deps.env }),
     readFile: deps.readFile,
     runDir: runDirPath,
     keys,
-    onInvalid: (key, raw, sourceName) => { invalidRaw.set(key, raw); invalidFrom.set(key, sourceName); },
+    onInvalid,
     cwd,
     env: deps.env,
     homeDir: deps.homeDir,
@@ -179,13 +188,11 @@ function resolvePolicy({ keys, runDir = null, mcpReachable = false }, deps) {
   // resolver's placeholder entry via the dedicated fragment reader: only the
   // block is parsed (#5917), so a malformed sibling key never marks it invalid.
   if (keys.includes('model-profiles')) {
-    result['model-profiles'] = modelProfilesEntry(policyRaw, factoryRaw);
+    result['model-profiles'] = modelProfilesEntry(policyRaw, factoryRaw, onInvalid);
   }
 
-  // Requested keys a factory may not set that its text nevertheless holds: resolvePolicyKeys
-  // ignored them, so say so once each.
-  const factoryHeld = factoryRaw === null ? {} : parseFlatLines(factoryRaw);
-  const factoryRefused = FACTORY_REFUSED_KEYS.filter((key) => keys.includes(key) && Object.prototype.hasOwnProperty.call(factoryHeld, key));
+  // Requested keys the resolver ignored because a factory may not set them: say so once each.
+  const factoryRefused = FACTORY_REFUSED_KEYS.filter((key) => refusedReported.has(key));
 
   return { code: EXIT_OK, result, invalidRaw, invalidFrom, degrades, root, policySource, policyPath, factoryOrigin, factoryWarnings, factoryRefused };
 }
@@ -213,6 +220,12 @@ function warningLines({ keys, result, invalidRaw, invalidFrom = new Map(), degra
   }
   lines.push(...factoryWarnings);
   for (const key of factoryRefused) lines.push(`resolve-policy: warning: ${key} is not settable from the factory layer — ignored\n`);
+  // A malformed factory block beside a usable repository block changes nothing in the entry, so the entry carries no
+  // `invalid`; the key still gets one line.
+  for (const key of new Set(keys)) {
+    if (!BLOCK_KEYS.includes(key) || invalidFrom.get(key) !== 'factory' || (result[key] && result[key].invalid)) continue;
+    lines.push(`resolve-policy: warning: ${key} has a malformed block in the factory layer — ignored, using the repository's rows\n`);
+  }
   const supplied = [...new Set(keys)].filter((key) => result[key] && result[key].source === 'factory');
   if (supplied.length > 0) lines.push(`resolve-policy: note — factory layer (${factoryOrigin}) supplied ${supplied.join(', ')}\n`);
   // One stderr line per degraded key, in every output mode; stdout is unchanged.

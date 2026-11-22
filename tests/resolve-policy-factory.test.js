@@ -525,6 +525,32 @@ test('AC11: refused keys warn once each, in JSON mode and --values mode', () => 
   assert.strictEqual(cli(['model-stance'], { repo: cliRepo(), variable }).stderr, NOTE('env', 'model-stance'), 'an unrequested refused key stays silent');
 });
 
+test('--all writes the factory note and one refused-key line per refused key', () => {
+  const note = cli(['--all'], { repo: cliRepo(), variable: 'tidy-aggressiveness: aggressive\n' });
+  assert.ok(note.stderr.split('\n').includes(NOTE('env', 'tidy-aggressiveness').trimEnd()), note.stderr);
+  const warn = 'resolve-policy: warning: control-mode is not settable from the factory layer — ignored';
+  const refused = cli(['--all'], { repo: cliRepo(), variable: 'control-mode: on\n' });
+  assert.strictEqual(refused.stderr.split('\n').filter((line) => line === warn).length, 1, refused.stderr);
+  assert.strictEqual(JSON.parse(refused.stdout)['control-mode'].source, 'default');
+});
+
+test('a malformed factory block beside a valid repo block warns once and the repo rows still resolve', () => {
+  const warn = (key) => `resolve-policy: warning: ${key} has a malformed block in the factory layer — ignored, using the repository's rows\n`;
+  const repoDriver = 'express-driver-models:\n  implementer: fast\n';
+  const driver = cli(['express-driver-models'], { repo: cliRepo({ policy: repoDriver }), variable: BAD_DRIVER });
+  assert.strictEqual(driver.stderr, warn('express-driver-models'));
+  assert.deepStrictEqual(JSON.parse(driver.stdout)['express-driver-models'], { value: { ...DRIVER_DEFAULTS, implementer: 'fast' }, source: 'policy' });
+  const risk = cli(['risk-path-globs'], { repo: cliRepo({ policy: 'risk-path-globs:\n  migrations: [db/**]\n' }), variable: BAD_RISK });
+  assert.strictEqual(risk.stderr, warn('risk-path-globs'));
+  assert.deepStrictEqual(JSON.parse(risk.stdout)['risk-path-globs'], { value: { migrations: ['db/**'] }, source: 'policy' });
+  const profiles = cli(['model-profiles'], { repo: cliRepo({ policy: 'model-profiles:\n  fast:\n    model: haiku\n' }), variable: BAD_PROFILES });
+  assert.strictEqual(profiles.stderr, warn('model-profiles'));
+  assert.deepStrictEqual(JSON.parse(profiles.stdout)['model-profiles'], { value: { fast: { model: 'haiku' } }, source: 'policy' });
+  const all = cli(['--all'], { repo: cliRepo({ policy: repoDriver }), variable: BAD_DRIVER });
+  assert.ok(all.stderr.split('\n').includes(warn('express-driver-models').trimEnd()), all.stderr);
+  assert.strictEqual(cli(['express-driver-models'], { repo: cliRepo({ policy: repoDriver }) }).stderr, '', 'no factory side, no line');
+});
+
 test('factoryOrigin never appears on stdout', () => {
   const r = cli(['model-stance', 'autonomy'], { repo: cliRepo(), variable: 'model-stance: economy\nautonomy: trusted\n' });
   assert.ok(!r.stdout.includes('"factoryOrigin"') && !r.stdout.includes('env+file'), r.stdout);
