@@ -251,8 +251,9 @@ async function entry(s) {
   // with a recompute from the live labels at the widest options (riskCeiling 'high', anyCeremony true):
   // any live risk:medium/risk:high or recognised non-fast-lane ceremony label now is a widening, whatever
   // the run's policy, since such a record was either admitted widened or had its labels changed after
-  // admission. A missing or non-array list is unreadable and stops too. Size widening (#5224) is not read.
-  if (!Array.isArray(ctx.widenedBy)) return stop(s, 'merge-entry', 'widened-admission', 'widening list missing or unreadable');
+  // admission. A missing list, or one that is not an array of strings, is unreadable and stops too.
+  // Size widening (#5224) is not read.
+  if (!Array.isArray(ctx.widenedBy) || !ctx.widenedBy.every((w) => typeof w === 'string')) return stop(s, 'merge-entry', 'widened-admission', 'widening list missing or unreadable');
   const widened = [...new Set([...ctx.widenedBy, ...widenings({ labels: labels.names, riskCeiling: 'high', anyCeremony: true })])];
   if (widened.length) return stop(s, 'merge-entry', 'widened-admission', `admitted widened by ${widened.join(', ')}`);
   if (ctx.summaryLogged !== true) return stop(s, 'merge-entry', 'summary-entry-missing', 'the summary decision entry was not logged');
@@ -1105,6 +1106,12 @@ async function mergeCall(s, mode) {
   }
   if (!labels.names.includes(LABELS.AUTO_BUILD)) {
     return stop(s, 'merge-call', 'not-authorized', `record lacks ${LABELS.AUTO_BUILD} at the pre-merge read`);
+  }
+  // A widening label added since entry (during the supplier call or the watch) cannot take the merge
+  // path either: the same widest recompute as the entry's (#6018).
+  const lateWidened = widenings({ labels: labels.names, riskCeiling: 'high', anyCeremony: true });
+  if (lateWidened.length) {
+    return stop(s, 'merge-call', 'widened-admission', `admitted widened by ${lateWidened.join(', ')} at the pre-merge read`);
   }
   const auto = mode === 'auto';
   try {

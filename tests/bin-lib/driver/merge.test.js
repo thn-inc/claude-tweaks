@@ -2767,7 +2767,7 @@ const reasonOk = (site) => (site.literal === null
   ? REASON_PASSTHROUGHS[site.shape].includes(site.expr)
   : (site.literal.endsWith(':') ? PREFIXED_REASONS.includes(site.literal.slice(0, -1)) : isReason(site.literal)));
 
-test('REASONS: the frozen closed set is the spec\'s 26 reasons plus unclassified, and isReason reads both prefix forms', () => {
+test('REASONS: the frozen closed set is the spec\'s 29 reasons plus unclassified, and isReason reads both prefix forms', () => {
   assert.ok(Object.isFrozen(REASONS) && Object.isFrozen(PREFIXED_REASONS));
   // The spec's closed list (Acceptance Criteria, "Closed rule"), word for word and in its order; a
   // `:{…}` form is held in REASONS by its stem and listed in PREFIXED_REASONS.
@@ -3607,6 +3607,24 @@ test('AC11.1 (#6018, merge half): risk:low plus risk:medium, in either order, wi
 test('the widening union lists ctx.widenedBy first, then live-label widenings, without duplicates (#6018)', async () => {
   const { r } = await assertWidenedStop(widenedLabels('risk:high', 'ceremony:standard'), { ...CTX, widenedBy: ['size', 'risk'] });
   assert.equal(r.detail, 'admitted widened by size, risk, ceremony');
+});
+
+test('a non-string widenedBy entry stops as unreadable, not as an empty detail (#6018)', async () => {
+  for (const widenedBy of [[null], [1], ['risk', {}]]) {
+    const { r } = await assertWidenedStop(widenedLabels('bug'), { ...CTX, widenedBy });
+    assert.match(r.detail, /missing or unreadable/);
+  }
+});
+
+test('a widening label added between entry and the pre-merge read stops at merge-call with no merge call (#6018)', async () => {
+  for (const added of ['risk:medium', 'risk:high', 'ceremony:standard']) {
+    const h = mergeHarness({ labels: seq(AUTO_MERGE, [...AUTO_MERGE, { name: added }]) });
+    const r = await merge({ ...CTX, widenedBy: [] }, h.deps);
+    assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'widened-admission', mergeCommit: null, postMerge: null }, added);
+    assert.equal(h.calls.filter(isLabelRead).length, 2);
+    noMerge(h);
+    assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-call', 'stop']);
+  }
 });
 
 test('the widened stop precedes summary-entry-missing and the integration-model read (#6018)', async () => {
