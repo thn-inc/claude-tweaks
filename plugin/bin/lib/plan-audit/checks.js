@@ -675,8 +675,8 @@ function surfaceDiff(specText, beforePlanText, afterPlanText) {
   const was = statuses(beforePlanText);
   const now = statuses(afterPlanText);
   const acCoverage = [];
-  for (const [id, before_] of was) {
-    if (now.get(id) !== before_) acCoverage.push({ id, before: before_, after: now.get(id) });
+  for (const [id, prev] of was) {
+    if (now.get(id) !== prev) acCoverage.push({ id, before: prev, after: now.get(id) });
   }
   return {
     changed: added.length > 0 || removed.length > 0 || acCoverage.length > 0,

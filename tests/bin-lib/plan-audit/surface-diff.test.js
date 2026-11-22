@@ -68,6 +68,7 @@ test('an amend that drops a citation reports the clause as uncovered', () => {
   const after = plan({ testLines: ['AC1.1'] });
   const r = surfaceDiff(SPEC, plan(), after);
   assert.deepStrictEqual(r.acCoverage, [{ id: 'AC2.1', before: 'covered', after: 'uncovered' }]);
+  assert.strictEqual(r.changed, true);
 });
 
 test('a reworded task with the same paths and citations is unchanged', () => {
@@ -120,6 +121,22 @@ test('CLI: prints {"surfaceDiff": ...} on one line and exits 0; an unreadable be
     const missing = runCliSync(CLI, [after, '--surface-diff', path.join(dir, 'nope.md'), '--spec', spec], { env: { ...process.env } });
     assert.strictEqual(missing.code, 2);
     assert.match(missing.stderr, /cannot read before-plan file/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('CLI: --surface-diff without --spec is refused with exit 2 and prints no JSON', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'surface-diff-'));
+  try {
+    const before = path.join(dir, 'before.md');
+    const after = path.join(dir, 'after.md');
+    fs.writeFileSync(before, plan());
+    fs.writeFileSync(after, plan());
+    const r = runCliSync(CLI, [after, '--surface-diff', before], { env: { ...process.env } });
+    assert.strictEqual(r.code, 2);
+    assert.match(r.stderr, /--surface-diff requires --spec/);
+    assert.strictEqual(r.stdout, '');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
