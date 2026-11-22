@@ -74,6 +74,14 @@ line of your reply — must read exactly `STATUS: DONE` (or DONE_WITH_CONCERNS /
 BLOCKED).
 ```
 
+<!-- plan-at-specify:start -->
+**Planning at specify (#6057).** Under `work-backend: github-issues` only, resolve `plan-at-specify` before composing the prompt: `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values plan-at-specify`. When it prints `on`, add this sentence as the last line of the prompt's Task scope:
+
+> Planning is not yours: your caller plans every sub-issue after you return, so skip the `plan-at-specify` paragraph in `decomposition-mode-closeout.md` and ask no planning question.
+
+With any other output the prompt is unchanged. Once the handoff returns `STATUS: DONE` or `DONE_WITH_CONCERNS`, read `planning.md` in this skill's directory, run `planning.md`'s `## Decomposition` entry in this session over the Work Units Created refs, and append its `### Planning` section to the returned summary before relaying it, opening with the line "Planned in specify's own session after the handoff returned; the handoff planned nothing." Any other status plans nothing: each sub-issue the summary lists as created gets a `skipped` row with Detail `handoff {status}`, since its body may not have reached Step 6. The returned summary's own shape is unchanged.
+<!-- plan-at-specify:end -->
+
 `[Use: Standard]` — resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard`.
 This is a whole-procedure execution dispatch (record creation through commit), not a lightweight
 fan-out, so it warrants Standard rather than Fast; it is a single dispatch, not a fan-out, so the

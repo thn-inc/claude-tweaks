@@ -602,6 +602,7 @@ const SHAPING_FILES = {
 };
 const DECOMPOSITION_FILES = {
   'plugin/skills/specify/decomposition-mode-closeout.md': ['Under `work-backend: github-issues` only, resolve `plan-at-specify` once', 'Any other backend, any other output, or a failed call skips this paragraph and decomposition runs as written.'],
+  'plugin/skills/specify/mechanical-handoff.md': ['Under `work-backend: github-issues` only, resolve `plan-at-specify` before composing the prompt', 'With any other output the prompt is unchanged.'],
 };
 const GATE_START = '<!-- plan-at-specify:start -->';
 const GATE_END = '<!-- plan-at-specify:end -->';
@@ -818,4 +819,22 @@ test('AC4.1: the closeout block runs after Step 6, before Step 7, and a delegate
     f('Step 9\'s summary then carries the `### Planning` section'),
     f('resolve-policy.js" --values plan-at-specify'),
   ], 'closeout block');
+});
+
+test('AC4.1 + Deliverable 8: the handoff never plans — the dispatcher says so in the prompt, plans after it returns, and appends the outcomes', () => {
+  const rel = 'plugin/skills/specify/mechanical-handoff.md';
+  const text = shapingText(rel);
+  const fence = fenceAfter(text, '## Dispatch prompt');
+  for (const t of PLANNING_TOKENS) assert.ok(!fence.includes(t), `dispatch prompt names ${t}`);
+  const b = text.indexOf(GATE_START);
+  assert.ok(b > text.indexOf(fence) + fence.length && b < text.indexOf('`[Use: Standard]`'), 'handoff block position');
+  pinned(blockOf(rel), [
+    f('add this sentence as the last line of the prompt\'s Task scope'),
+    f('Planning is not yours: your caller plans every sub-issue after you return, so skip the `plan-at-specify` paragraph in `decomposition-mode-closeout.md` and ask no planning question.'),
+    f('Once the handoff returns `STATUS: DONE` or `DONE_WITH_CONCERNS`'),
+    f('Any other status plans nothing: each sub-issue the summary lists as created gets a `skipped` row with Detail `handoff {status}`'),
+    f('run `planning.md`\'s `## Decomposition` entry in this session'),
+    f('append its `### Planning` section to the returned summary'),
+    f('Planned in specify\'s own session after the handoff returned; the handoff planned nothing.'),
+  ], 'handoff block');
 });
