@@ -5,6 +5,7 @@ files:
   - plugin/bin/lib/driver/steps.js
   - plugin/bin/lib/driver/admission.js
   - plugin/bin/lib/express/eligibility.js
+  - plugin/bin/lib/express/cli.js
   - plugin/bin/lib/driver/events.js
   - plugin/bin/lib/driver/settle.js
   - plugin/bin/lib/driver/merge.js
