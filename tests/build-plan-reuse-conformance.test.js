@@ -207,6 +207,28 @@ test('AC5.1: the Resumed build section says a stale committed plan goes to Spec 
   assert.throws(() => assert.match(sectionOf(moved, '## Resumed build'), CLAIM), /did not match/);
 });
 
+test('AC1.1: the template-changed skip comes after the probe outcomes, so an absent Plan: line logs nothing', () => {
+  const ABSENT = '- `{"plan":"absent"}`';
+  const TEMPLATE = '`template.changed: true`';
+  const requireOrder = (doc) => {
+    const a = doc.indexOf(ABSENT);
+    const t = doc.indexOf(TEMPLATE);
+    assert.notStrictEqual(a, -1, 'marker missing: absent outcome');
+    assert.notStrictEqual(t, -1, 'marker missing: template check');
+    assert.ok(t > a, 'the template check must come after the absent outcome');
+    assert.ok(t > doc.indexOf('\n## Probe\n'), 'the template check must come after the probe heading');
+    assert.ok(t < doc.indexOf('\n## Checks\n'), 'the template check must come before ## Checks');
+  };
+  requireOrder(text);
+  const tLine = /[^\n]*`template\.changed: true`[^\n]*\n/.exec(text)[0];
+  const permuted = text.replace(tLine, '').replace('## Probe\n', `## Probe\n${tLine}`);
+  assert.notStrictEqual(permuted, text);
+  assert.throws(() => requireOrder(permuted), /must come after the absent outcome/);
+  const absent = text.replace(ABSENT, '- `{"plan":"none"}`');
+  assert.notStrictEqual(absent, text);
+  assert.throws(() => requireOrder(absent), /marker missing/);
+});
+
 // ---- Task 2: the SKILL.md pointer, Common Step 1.6 and plan-review.md skip text ----
 const SKILL_FILE = path.join(ROOT, 'plugin', 'skills', 'build', 'SKILL.md');
 const REVIEW_FILE = path.join(ROOT, 'plugin', 'skills', 'build', 'plan-review.md');

@@ -4,10 +4,7 @@ Read only from `build/SKILL.md`'s "Before Spec Step 3" pointer, once `node "${CL
 
 ## Preconditions
 
-In order, each its own plain call; a hit returns to Spec Step 3 as written:
-
-1. When Spec Step 2 found a stale plan `{plan}` (the stale-plan route), `git log --diff-filter=A --format=%s -1 -- "{plan}"` prints the subject of the commit that added it (run once at plan time against the #6060 plan: printed `Add the #6060 build plan — …`). A subject starting with `Add the plan reviewed at specify` means this file already committed that plan: return to Spec Step 3, logging nothing.
-2. When the materialize envelope for this record reported `template.changed: true`, skip reuse (Spec Step 3's template version delta needs a new plan, #1840): log `--status SKIP --section "/build" --step "Spec Step 2 (plan reuse)" --text "condition: template changed since filing → fallback: new plan written at Spec Step 3" --reversibility n/a`, then return to Spec Step 3.
+When Spec Step 2 found a stale plan `{plan}` (the stale-plan route), `git log --diff-filter=A --format=%s -1 -- "{plan}"` prints the subject of the commit that added it (run once at plan time against the #6060 plan: printed `Add the #6060 build plan — …`). A subject starting with `Add the plan reviewed at specify` means this file already committed that plan: return to Spec Step 3, logging nothing.
 
 ## Probe
 
@@ -22,6 +19,7 @@ Outcomes:
 - `{"plan":"absent"}` — return to Spec Step 3 as written; this file logs nothing (AC1.1).
 - `ok: false` — failed `malformed Plan line` (the only parse failure).
 - `ok: true` but `record` is not `{n}` (the line names another record's plan) — failed `ref`.
+- `ok: true` and `record` is `{n}`, but the materialize envelope for this record reported `template.changed: true` — skip reuse (Spec Step 3's template version delta needs a new plan, #1840): log `--status SKIP --section "/build" --step "Spec Step 2 (plan reuse)" --text "condition: template changed since filing → fallback: new plan written at Spec Step 3" --reversibility n/a`, then return to Spec Step 3. Only a present, parseable line reaches this check; an absent one never does.
 - A non-zero exit, or output that is none of the three JSON shapes above, is an infrastructure fault (an unreadable spec or an unwritable session temp, right after Spec Step 1 read the spec), not a verdict on the plan: a BLOCKED stop — report the error and log no reuse verdict; Spec Step 3 is not entered from here.
 
 ## Checks
