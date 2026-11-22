@@ -654,6 +654,37 @@ function checkE(specText, planText) {
   };
 }
 
+// ── surfaceDiff (#6059) ────────────────────────────────────────────────────
+// Did an amend change the plan's file list or its AC coverage? `changed` gates whether plan
+// review re-runs. Files compare the sets of `path` values extractFileEntries finds; coverage
+// compares each spec clause's checkE status (covered | waived | uncovered) before vs after.
+function surfaceDiff(specText, beforePlanText, afterPlanText) {
+  const paths = (text) => new Set(extractFileEntries(text).map((e) => e.path));
+  const before = paths(beforePlanText);
+  const after = paths(afterPlanText);
+  const added = [...after].filter((p) => !before.has(p)).sort();
+  const removed = [...before].filter((p) => !after.has(p)).sort();
+  const statuses = (planText) => {
+    const r = checkE(specText, planText);
+    const m = new Map();
+    for (const c of r.covered) m.set(c.id, 'covered');
+    for (const c of r.waived) m.set(c.id, 'waived');
+    for (const c of r.uncovered) m.set(c.id, 'uncovered');
+    return m;
+  };
+  const was = statuses(beforePlanText);
+  const now = statuses(afterPlanText);
+  const acCoverage = [];
+  for (const [id, before_] of was) {
+    if (now.get(id) !== before_) acCoverage.push({ id, before: before_, after: now.get(id) });
+  }
+  return {
+    changed: added.length > 0 || removed.length > 0 || acCoverage.length > 0,
+    files: { added, removed },
+    acCoverage,
+  };
+}
+
 // ── Check: unknown per-task marker value (#3378) ───────────────────────────
 // Warn-only, like Check E: `ok` reports whether any finding exists, but
 // `--task-markers` (bin/plan-audit.js) never turns this into an exit-code
@@ -779,5 +810,5 @@ function checkG(specText, planText, { extraCategories = [], planPath = null } = 
 
 module.exports = {
   checkA, checkB, checkC, checkD, checkE, checkF, checkG, headroomCheck, looksPassing, isGovernedMdPath,
-  refusedVcsMutation, commandSegments, checkPremiseRefs, checkTaskMarkers,
+  refusedVcsMutation, commandSegments, checkPremiseRefs, checkTaskMarkers, surfaceDiff,
 };
