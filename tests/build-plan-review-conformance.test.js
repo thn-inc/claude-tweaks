@@ -494,6 +494,21 @@ test('targeted fix: answered-round rows count as settled rows for a blocking bra
   ]);
 });
 
+test('clarification: an answered-round row also gets step 4\'s AUTO line and record comment', () => {
+  assertFacts(subText(), [
+    'Each answered-round row also gets step 4\'s `AUTO` line and record comment: one `AUTO` per row through the same `--text-file "{text-file}"` form, `{text-file}` holding its `Decided by the user at planning:` line',
+    'decision-text-{run-id}-planning-answered-{k}.md` prints, `{k}` numbering this reply\'s answered rows from 1',
+    'and that line rides the same record comment',
+  ]);
+});
+
+test('clarification: {k} in both flag tmp names numbers that step\'s flagged rows in this reply from 1', () => {
+  assertFacts(subText(), [
+    'decision-text-{run-id}-planning-flag-{k}.md` prints (`{k}` numbering this step\'s flagged rows in this reply from 1)',
+    'decision-text-{run-id}-planning-answered-flag-{k}.md` prints (`{k}` numbering this step\'s answered rows flagged in this reply from 1)',
+  ]);
+});
+
 test('AC5.1: the sub-file cites the shared rule rather than restating the classes', () => {
   const text = readText(SUB_PATH);
   assert.ok(text.includes('_shared/planning-decisions.md'), 'the sub-file must cite _shared/planning-decisions.md');
