@@ -112,13 +112,13 @@ Expected: PASS
   - `test('AC2.3 (#6018): riskCeiling high admits risk:high', …)`: eligible.
   - `test('riskCeiling unreadable refuses with its own reason, never a fallback (#6018)', …)`: for `'Medium'`, `'critical'`, `null`, `'toString'` the reasons contain `` `risk ceiling unreadable: ${String(v)}` `` even for a `risk:low` record.
   - `test('AC5.1, AC5.3 (#6018, eligibility half): allowAnyCeremony passes a recognised ceremony label; an unrecognised spelling still refuses', …)`: with `{ ...DRIVER, allowAnyCeremony: true }`, `ceremony:standard` is eligible; `ceremony:fastlane` alone, `Ceremony:standard` alone, and `ceremony:standard` together with `ceremony:fastlane` each give `REASONS.ceremony`; only a literal `true` relaxes (`'true'`, `1` do not).
-  - `test('widenings (#6018)', …)` asserting exactly: `widenings({ labels: ['risk:medium'], riskCeiling: 'medium' })` → `['risk']`; `['risk:low']` with `'medium'` → `[]`; `['risk:high']` with `'high'` → `['risk']`; AC11: `['risk:low', 'risk:medium']` and `['risk:medium', 'risk:low']` each with `'medium'` and with `'low'` → `['risk']`; `['risk:low', 'ceremony:standard']` with `anyCeremony: true` → `['ceremony']`, with `anyCeremony: false` or absent → `[]`; `['ceremony:fast-lane']` with `anyCeremony: true` → `[]`; no ceremony label → `[]`; `['risk:medium', 'ceremony:standard']`, `'medium'`, `anyCeremony: true` → `['risk', 'ceremony']`; gh `{ name }` objects give the same answers as strings; an unreadable `riskCeiling` → no `risk`.
+  - `test('widenings (#6018)', …)` asserting exactly: `widenings({ labels: ['risk:medium'], riskCeiling: 'medium' })` → `['risk']`; `['risk:low']` with `'medium'` → `[]`; `['risk:high']` with `'high'` → `['risk']`; AC11: `['risk:low', 'risk:medium']` and `['risk:medium', 'risk:low']` each with `'medium'` and with `'low'` → `['risk']`; `['risk:low', 'ceremony:standard']` with `anyCeremony: true` → `['ceremony']`, with `anyCeremony: false` or absent → `[]`; `['ceremony:fast-lane']` with `anyCeremony: true` → `[]`; `['ceremony:standard', 'ceremony:fast-lane']` and `['ceremony:fast-lane', 'ceremony:standard']` with `anyCeremony: true` → `['ceremony']`; no ceremony label → `[]`; `['risk:medium', 'ceremony:standard']`, `'medium'`, `anyCeremony: true` → `['risk', 'ceremony']`; gh `{ name }` objects give the same answers as strings; an unreadable `riskCeiling` → no `risk`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 Run: `node --test tests/bin-lib/express/eligibility.test.js`
 Expected: FAIL after Step 1 (`widenings` / `RISK_CEILINGS` not exported)
 
-- [ ] **Step 3: Implement** in `eligibility.js`, mirroring `SIZE_CEILINGS` / `isReadableSizeCeiling` / `BOUND_REASONS.size`. The risk rule becomes: `riskCeiling === undefined` → today's `facets.risk !== 'low'` push; unreadable → `riskCeilingUnreadable`; else `!RISK_CEILINGS[riskCeiling].includes(facets.risk)` → `BOUND_REASONS.risk(riskCeiling)`. `allowAnyCeremony === true` adds one more way for `ceremonyOk`: at least one label name matches `/^ceremony:/i` and every such name is exactly `ceremony:{t}` for a `t` in `CEREMONY_TIERS` (import from `../issues/record-vocabulary`). `widenings` returns `'risk'` when `isReadableRiskCeiling(riskCeiling)` and any label name is exactly `risk:medium` or `risk:high` — it scans every `risk:*` name, never `facets.risk`, which keeps only the last match (spec Gotcha, AC11); the ceiling does not otherwise gate it, so the eligibility step's answer agrees with merge.js's widest-option recompute for a dual-labelled record; `'ceremony'` when `anyCeremony === true` and `facets.ceremony` is non-null and not `fast-lane`. Update the comment above `evaluateRecordEligibility` to name both new options (#6018).
+- [ ] **Step 3: Implement** in `eligibility.js`, mirroring `SIZE_CEILINGS` / `isReadableSizeCeiling` / `BOUND_REASONS.size`. The risk rule becomes: `riskCeiling === undefined` → today's `facets.risk !== 'low'` push; unreadable → `riskCeilingUnreadable`; else `!RISK_CEILINGS[riskCeiling].includes(facets.risk)` → `BOUND_REASONS.risk(riskCeiling)`. `allowAnyCeremony === true` adds one more way for `ceremonyOk`: at least one label name matches `/^ceremony:/i` and every such name is exactly `ceremony:{t}` for a `t` in `CEREMONY_TIERS` (import from `../issues/record-vocabulary`). `widenings` returns `'risk'` when `isReadableRiskCeiling(riskCeiling)` and any label name is exactly `risk:medium` or `risk:high` — it scans every `risk:*` name, never `facets.risk`, which keeps only the last match (spec Gotcha, AC11); the ceiling does not otherwise gate it, so the eligibility step's answer agrees with merge.js's widest-option recompute for a dual-labelled record; `'ceremony'` when `anyCeremony === true` and any label name is exactly `ceremony:{t}` for a `t` in `CEREMONY_TIERS` other than `fast-lane` — again scanning every name, never `facets.ceremony` (last match only), so `['ceremony:standard', 'ceremony:fast-lane']` widens in either order (plan review, 2026-11-22). Update the comment above `evaluateRecordEligibility` to name both new options (#6018).
 
 - [ ] **Step 4: Run the tests to verify they pass**
 Run: `node --test tests/bin-lib/express/eligibility.test.js tests/bin-lib/express/cli.test.js tests/bin-lib/express/queue.test.js`
@@ -168,12 +168,15 @@ Expected: PASS
 ### Task 4: Driver wiring — policy read, `ctx.widenedBy`, the `--check` line and the merge context
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/driver/steps.js` (`POLICY_KEYS` 124-130, `eligibilityOptions` 278-288, `eligibilityStep` 295-311, `admissionStep` 354-366, `mergeStep` 1500-1506)
 - Modify: `plugin/bin/lib/driver/run.js` (`newCtx` 214-224, `checkRecord` 530)
 - Test: `tests/bin-lib/driver/run.test.js` (the `POLICY` fixture at 339-360)
 - Test: `tests/bin-lib/driver/budget.test.js` (`POLICY_RESOLVED` at 18-25)
+- Modify: `plugin/bin/lib/express/queue.js` (`SECOND_KEYS` line 15 only — gains `'express-driver-max-risk'` after `'express-driver-max-key-files'`, so this commit never leaves the queue pull's driver half throwing on `eligibilityOptions`; Task 8 does the rest)
+- Test: `tests/bin-lib/express/queue.test.js` (the `calls` pin at line 61 gains the key)
 - Read (no change): `plugin/bin/lib/driver/budget.js` — its pre-screen calls `eligibilityOptions(shared.policy)` (line 155), so it inherits both new options with no edit
 
 **Interfaces:**
@@ -181,7 +184,7 @@ Expected: PASS
 - Produces:
   - `POLICY_KEYS` gains `'express-driver-max-risk'` right after `'express-driver-max-lines'`.
   - `eligibilityOptions(policy)` adds `riskCeiling: policy['express-driver-max-risk'].value` and `allowAnyCeremony: policy['express-driver-review'].value === 'on'` (the budget pre-screen inherits both through this one function).
-  - `eligibilityStep` sets `ctx.widenedBy = widenings({ labels: ctx.issue.labels, riskCeiling: opts.riskCeiling, anyCeremony: opts.allowAnyCeremony })` (with `opts = eligibilityOptions(policy)`) before the `reviewRequired` call, passes `widenedBy: ctx.widenedBy` to it, and on its `ok` result returns `extra: { widenedBy: ctx.widenedBy }` only when the list is non-empty (an unwidened record's event line is unchanged).
+  - `eligibilityStep` sets `ctx.widenedBy = widenings({ labels: ctx.issue.labels, riskCeiling: opts.riskCeiling, anyCeremony: opts.allowAnyCeremony })` (with `opts = eligibilityOptions(policy)`) before the `reviewRequired` call — set to `[]` instead when the eligibility verdict refuses (`!verdict.eligible`), so `--check` never reports a widening for a record it refused (a refused record never reaches merge, so this narrows nothing) — passes `widenedBy: ctx.widenedBy` to it, and on its `ok` result returns `extra: { widenedBy: ctx.widenedBy }` only when the list is non-empty (an unwidened record's event line is unchanged).
   - `admissionStep` passes `widenedBy: ctx.widenedBy` to `deps.evaluateAdmission`.
   - `newCtx` gains `widenedBy: null`.
   - `checkRecord` prints `{ record, admitted, reasons, widenedBy }` with `widenedBy` = `ctx.widenedBy` when an array, else `[]`.
@@ -209,7 +212,7 @@ Expected: FAIL after Step 1 (`widenedBy` missing from the verdict line; `express
 - [ ] **Step 3: Implement** as the Interfaces block states; import `widenings` from `../express/eligibility`.
 
 - [ ] **Step 4: Run the tests to verify they pass**
-Run: `node --test tests/bin-lib/driver/run.test.js tests/bin-lib/driver/budget.test.js tests/bin-lib/driver/admission.test.js tests/bin-lib/driver/review.test.js`
+Run: `node --test tests/bin-lib/driver/run.test.js tests/bin-lib/driver/budget.test.js tests/bin-lib/driver/admission.test.js tests/bin-lib/driver/review.test.js tests/bin-lib/express/queue.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Commit** `Wire the driver's widenings through eligibility, admission, --check and merge`
@@ -234,6 +237,7 @@ Proof(auth): merge.test.js's widened-admission tests assert that a record carryi
   - `test('AC6.2 (#6018): widenedBy [] with unwidened live labels takes today's path', …)` — `{ ...CTX, widenedBy: [] }`, labels `bug`, `auto:build`, `auto:merge` → `outcome: 'merged'`.
   - `test('AC9.1 (#6018): risk:medium with widenedBy unset, a string, or [] stops at widened-admission and never calls the supplier', …)` — labels `auto:build`, `auto:merge`, `risk:medium`; ctx variants: `widenedBy` deleted, `widenedBy: 'risk'`, `widenedBy: []`; each → `pending-review` / `widened-admission`, no `judgments` call, `assertNoReadyNoMerge(h)`.
   - `test('Review Focus 1 (#6018): a ceremony:standard live label with widenedBy [] stops at widened-admission', …)`.
+  - `test('ceremony:standard plus ceremony:fast-lane, in either order, with widenedBy [] stops at widened-admission (#6018)', …)` — both label orders → `pending-review` / `widened-admission`, no `judgments` call.
   - `test('a ceremony:fast-lane, risk:low record with widenedBy [] is not widened (#6018)', …)` → `merged`.
   - `test('AC11.1 (#6018, merge half): risk:low plus risk:medium, in either order, with widenedBy [] stops at widened-admission', …)` — both label orders, each → `pending-review` / `widened-admission`, no `judgments` call.
   - Bump `SPEC_REASONS` with `'widened-admission'` and its length assertion `28` → `29`.
@@ -279,7 +283,7 @@ Expected: PASS
 
 ### Task 7: Driver docs
 
-**Role:** transcription
+**Role:** integration
 
 **Files:**
 - Modify: `docs/driver.md` (line 19 `--check` line; the reviewer table row for `beyond-express` near line 150; `### Lane bounds` 167-177; `## The merge step` entry order and `REASONS` list, lines 183 and 197)
@@ -310,22 +314,21 @@ Expected: PASS (driver.md pins still hold)
 Added at resume (plan audit Check B, after merging origin/main): #6011 landed `plugin/bin/lib/express/queue.js`, whose driver half calls `eligibilityOptions(policy)` with a policy resolved from its own `SECOND_KEYS`. After Task 4 `eligibilityOptions` reads `policy['express-driver-max-risk'].value`, which the real resolver never returns for a key it was not asked for, so the call would throw inside queue.js's load `try` and silently disable the driver half for every pull ("driver modules failed to load"). The half must also ask the driver's whole question: a widened record is driver-routable only with the reviewer on.
 
 **Files:**
-- Modify: `plugin/bin/lib/express/queue.js` (`SECOND_KEYS` line 15; `driverRoutable` lines 89-96; header comment)
-- Test: `tests/bin-lib/express/queue.test.js` (the `SECOND_KEYS` call pin at line 61; new tests)
+- Modify: `plugin/bin/lib/express/queue.js` (`driverRoutable` lines 89-96; header comment — `SECOND_KEYS` already gained the key in Task 4)
+- Test: `tests/bin-lib/express/queue.test.js` (new tests)
 
 **Interfaces:**
 - Consumes: `widenings` (Task 2); `reviewRequired`'s `widenedBy` (Task 3); `eligibilityOptions`'s `riskCeiling`/`allowAnyCeremony` (Task 4).
-- Produces: `SECOND_KEYS` gains `'express-driver-max-risk'` after `'express-driver-max-key-files'`. `driverRoutable` computes `widenedBy = widenings({ labels: issue.labels, riskCeiling: driver.eligibility.riskCeiling, anyCeremony: driver.eligibility.allowAnyCeremony })`, passes it to `reviewRequired`, and answers `false` when `widenedBy` is non-empty and the reviewer is off (admission's `reviewerOffWidened` rule), besides today's `reviewerGateReason` check.
+- Produces: `driverRoutable` computes `widenedBy = widenings({ labels: issue.labels, riskCeiling: driver.eligibility.riskCeiling, anyCeremony: driver.eligibility.allowAnyCeremony })`, passes it to `reviewRequired`, and answers `false` when `widenedBy` is non-empty and the reviewer is off (admission's `reviewerOffWidened` rule), besides today's `reviewerGateReason` check.
 
 - [ ] **Step 1: Write the failing tests** in `tests/bin-lib/express/queue.test.js`
-  - Update the `calls` pin at line 61 to include `'express-driver-max-risk'`.
   - `test('#6018: the driver half resolves express-driver-max-risk, so the real resolver shape never throws', …)` — use a resolver that, like the real one, returns entries only for the keys it was asked for (so a missing key makes `eligibilityOptions` throw on `.value`); assert the second call's `keys` include `'express-driver-max-risk'`, and that with `express-driver: 'on'`, `express-driver-max-risk: 'medium'`, `express-driver-review: 'on'`, a `risk:medium`, `size:low`, `ceremony:fast-lane` record is kept a singleton (`keepSingleton` true) and no `express-driver: driver modules failed to load` line is written.
   - `test('#6018: a risk-widened record is not driver-routable with express-driver-review off', …)` — same record, `express-driver-review: 'off'` → `keepSingleton` false.
   - `test('#6018: with express-driver-max-risk unset the driver half keeps today's answer for risk:medium', …)` — value `'low'` → `keepSingleton(MEDIUM_RISK)` false.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 Run: `node --test tests/bin-lib/express/queue.test.js`
-Expected: FAIL after Step 1 (`SECOND_KEYS` lacks the key; a risk:medium record is not routable)
+Expected: FAIL after Step 1 (a risk:medium record under ceiling medium is not routable; a widened record with the reviewer off is)
 
 - [ ] **Step 3: Implement** as the Interfaces block states; import `widenings` from `./eligibility`.
 
