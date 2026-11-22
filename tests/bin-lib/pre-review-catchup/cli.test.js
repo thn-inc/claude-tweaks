@@ -3,7 +3,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
-const { catchupFixture } = require('./fixtures');
+const { catchupFixture, CATCHUP_SHAPES } = require('./fixtures');
+const { pinnedGit: git } = require('../../helpers/pinned-git');
+const { warmCallStartsNoGit } = require('../../helpers/git-trace');
 const { readText } = require('../../helpers/read-skill');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
 const { run, parseArgs } = require('../../../plugin/bin/pre-review-catchup');
@@ -534,4 +536,53 @@ test('the CLI shell itself appends through formatEntry and appendEntry', () => {
   assert.match(src, /require\('\.\/lib\/log-decision\/append'\)/);
   assert.match(src, /formatEntry\(/);
   assert.match(src, /appendEntry/);
+});
+
+// #5846: catchupFixture is a template (#5769) — a warm-up call may build, a further call starts no git
+// process — and its copies carry the shape setup. They live here because this file's own tests already
+// build the no-shape template and every shape's.
+for (const shape of [undefined, ...CATCHUP_SHAPES]) {
+  test(`AC4.1: pre-review-catchup catchupFixture${shape ? ` ${shape}` : ''}: a second call starts no git process`, () => {
+    const make = () => catchupFixture(shape);
+    warmCallStartsNoGit(make, { track: (r) => roots.push(r.root) });
+  });
+}
+
+test('catchupFixture rejects an unknown shape, inherited object keys included', () => {
+  for (const shape of ['no-such-shape', 'constructor', '__proto__']) {
+    assert.throws(() => catchupFixture(shape), /unknown shape/, shape);
+  }
+});
+
+test('a catchupFixture copy is on feat with origin/main equal to main in work and other', () => {
+  const f = catchupFixture();
+  roots.push(f.root);
+  assert.strictEqual(git(f.work, ['symbolic-ref', '--short', 'HEAD']), 'feat');
+  const main = git(f.work, ['rev-parse', 'main']);
+  assert.strictEqual(git(f.work, ['rev-parse', 'origin/main']), main);
+  assert.strictEqual(git(f.other, ['rev-parse', 'origin/main']), main);
+  assert.strictEqual(git(f.other, ['rev-parse', 'main']), main);
+  assert.strictEqual(f.head(), git(f.work, ['rev-parse', 'HEAD']));
+});
+
+test('a catchupFixture shape copy holds the shape setup: a feat edit in work, an unfetched upstream commit on origin only when the shape pushes', () => {
+  for (const shape of CATCHUP_SHAPES) {
+    const f = catchupFixture(shape);
+    roots.push(f.root);
+    assert.strictEqual(git(f.work, ['rev-list', '--count', 'main..HEAD']), '1', shape);
+    // The file content each shape's setup leaves: work's own edit, and upstream's pushed edit as `other` last saw origin.
+    const line = (text, n) => text.split('\n')[n - 1];
+    const workA = fs.readFileSync(path.join(f.work, 'a.txt'), 'utf8');
+    const upstreamA = () => git(f.other, ['show', 'origin/main:a.txt']);
+    if (shape === 'conflicting-edit') {
+      assert.strictEqual(line(workA, 3), 'FEAT', shape);
+      assert.strictEqual(line(upstreamA(), 3), 'UPSTREAM', shape);
+    } else {
+      assert.strictEqual(line(workA, 1), 'F1', shape);
+      if (shape === 'feat-edit-overlapping-upstream') assert.strictEqual(line(upstreamA(), 5), 'O5', shape);
+    }
+    git(f.work, ['fetch', '-q', 'origin']);
+    const upstream = git(f.work, ['rev-list', '--count', 'main..origin/main']);
+    assert.strictEqual(upstream, shape === 'feat-edit-only' ? '0' : '1', shape);
+  }
 });

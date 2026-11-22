@@ -18,7 +18,7 @@ const {
   resolveConcurrency, resolveSlots, listTestFiles, buildTestArgs,
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
   subsetFallbackReason, gitFixtureConfigEnv, appendGitConfigEnv, writeGitTemplateDir, GIT_TEMPLATE_CONFIG, NODE_TEST_VALUE_FLAGS, parseRunnerOperands, canonicalPath,
-  runnerChildEnv, isTemplateSampleHook,
+  runnerChildEnv, isTemplateSampleHook, leftoverEntries, summarizeLeftovers, leftoverWarning, RUN_ROOT_OWN_ENTRIES,
 } = require(path.join(ROOT, 'tools', 'run-tests.js'));
 
 test('resolveConcurrency defaults to half the cores, at least 1', () => {
@@ -1920,6 +1920,7 @@ test('runnerChildEnv returns the runner\'s child env', () => {
     TMPDIR: runRoot, TMP: runRoot, TEMP: runRoot,
     CT_TEST_SUITE_SLOT_HELD: '1',
     CT_HOOKS_REPO_INFO_STORE: path.join(runRoot, 'repo-info-cache.json'),
+    CT_FACTORY_POLICY_FILE: path.join(runRoot, 'factory-policy.absent.yml'),
   };
   assert.deepStrictEqual(runnerChildEnv(env, { runRoot, templateDir: '/tpl' }), { ...common, GIT_TEMPLATE_DIR: '/tpl' });
   // No template: the inherited GIT_TEMPLATE_DIR passes through untouched, as the runner always did.
@@ -1929,6 +1930,33 @@ test('runnerChildEnv returns the runner\'s child env', () => {
   const got = runnerChildEnv(noTpl, { runRoot, templateDir: null });
   assert.ok(!('GIT_TEMPLATE_DIR' in got), Object.keys(got).join(', '));
   assert.deepStrictEqual(env, before, 'env is not mutated');
+});
+
+test('runnerChildEnv drops CLAUDE_TWEAKS_FACTORY_POLICY', () => {
+  const env = { PATH: '/bin', CLAUDE_TWEAKS_FACTORY_POLICY: 'model-stance: economy\n' };
+  const got = runnerChildEnv(env, { runRoot: path.join('/runs', 'r1'), templateDir: null });
+  assert.ok(!('CLAUDE_TWEAKS_FACTORY_POLICY' in got), Object.keys(got).join(', '));
+  assert.equal(got.PATH, '/bin');
+  assert.equal(env.CLAUDE_TWEAKS_FACTORY_POLICY, 'model-stance: economy\n', 'env is not mutated');
+});
+
+// #6006 final review: the factory file under HOME is the machine's own policy too. The runner relocates it to a
+// path inside the run root that never exists (an inherited value is replaced), so readFactoryPolicy reads no file.
+test('runnerChildEnv points CT_FACTORY_POLICY_FILE at a missing path in the run root, so the home factory file is never read', () => {
+  const { readFactoryPolicy, FACTORY_POLICY_FILE_ENV } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'policy-factory.js'));
+  withGitTemp((tmp) => {
+    const home = path.join(tmp, 'home');
+    fs.mkdirSync(path.join(home, '.claude-tweaks'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude-tweaks', 'factory-policy.yml'), 'model-stance: economy\n');
+    const runRoot = path.join(tmp, 'run');
+    fs.mkdirSync(runRoot);
+    assert.strictEqual(readFactoryPolicy({ env: { HOME: home } }).origin, 'file', 'control: the home file is readable');
+    const got = runnerChildEnv({ PATH: '/bin', HOME: home, [FACTORY_POLICY_FILE_ENV]: path.join(tmp, 'elsewhere.yml') }, { runRoot, templateDir: null });
+    const file = got[FACTORY_POLICY_FILE_ENV];
+    assert.strictEqual(path.dirname(file), runRoot, file);
+    assert.strictEqual(fs.existsSync(file), false, file);
+    assert.deepStrictEqual(readFactoryPolicy({ env: got }), { raw: null, origin: null, warnings: [] });
+  });
 });
 
 test('writeGitTemplateDir returns null when git fails', () => {
@@ -1952,5 +1980,60 @@ test('run-tests.js gives the suite a GIT_TEMPLATE_DIR inside its run root whose 
     assert.strictEqual(path.dirname(recorded.gitTemplateDir), recorded.tmpdir);
     assert.strictEqual(typeof recorded.gitTemplateConfig, 'string');
     assert.ok(recorded.gitTemplateConfig.endsWith(GIT_TEMPLATE_CONFIG), recorded.gitTemplateConfig);
+  });
+});
+
+// The post-run census: what a suite leaves at the top of its TMPDIR is what a direct `node --test` run would
+// leave in the real tmpdir (597,912 entries on one dev machine, 2026-11-18), so the runner names it.
+test('leftoverEntries lists the top-level entries a run left, minus the ones the runner itself made', () => {
+  const names = [...RUN_ROOT_OWN_ENTRIES, 'zeta-AbCdEf', 'alpha-123456'];
+  assert.deepStrictEqual(leftoverEntries('/run/root', { readdirSync: () => names }), ['alpha-123456', 'zeta-AbCdEf']);
+  assert.deepStrictEqual(leftoverEntries('/run/root', { readdirSync: () => [...RUN_ROOT_OWN_ENTRIES] }), []);
+});
+
+test('leftoverEntries reports nothing for a missing or unreadable run root, never throwing', () => {
+  const boom = () => { throw Object.assign(new Error('gone'), { code: 'ENOENT' }); };
+  assert.deepStrictEqual(leftoverEntries('/run/root', { readdirSync: boom }), []);
+});
+
+test('summarizeLeftovers groups by the name minus its six random characters, most entries first', () => {
+  const names = ['ct-wtd-aaaaaa', 'ct-wtd-bbbbbb', 'ct-wtd-cccccc', 'console-resolve-dddddd', 'console-resolve-eeeeee', 'short', 'ab-xxxxxx'];
+  assert.deepStrictEqual(summarizeLeftovers(names), [
+    { prefix: 'ct-wtd-', count: 3 },
+    { prefix: 'console-resolve-', count: 2 },
+    { prefix: 'ab-', count: 1 },
+    { prefix: 'short', count: 1 },
+  ]);
+});
+
+test('leftoverWarning is null for a clean run and otherwise one line with the count and the biggest prefixes', () => {
+  assert.strictEqual(leftoverWarning([]), null);
+  const line = leftoverWarning(['a-111111', 'a-222222', 'b-333333']);
+  assert.ok(!line.includes('\n'));
+  assert.match(line, /^run-tests\.js: warning: the run left 3 top-level entries in its TMPDIR/);
+  assert.ok(line.endsWith(': a-* x2, b-* x1'), line);
+});
+
+test('leftoverWarning caps the prefixes it names and says how many it left out', () => {
+  const names = Array.from({ length: 5 }, (_, i) => `p${i}-abcdef`);
+  const line = leftoverWarning(names, { limit: 2 });
+  assert.ok(line.endsWith('p0-* x1, p1-* x1, and 3 more prefixes'), line);
+});
+
+test('run-tests.js warns on stderr, without failing, when a suite leaves entries in its TMPDIR', async () => {
+  await withSandbox('leak-probe.fixture.js', 'leak.test.js', (sb) => {
+    const result = runRunner(sb, { timeout: 120000 });
+    assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stderr, /run-tests\.js: warning: the run left 3 top-level entries in its TMPDIR/);
+    assert.match(result.stderr, /leaky-a-\* x2, leaky-b-\* x1/);
+    assert.deepStrictEqual(fs.readdirSync(path.join(sb.childTmp, 'ct-test-runs')), [], 'the run root is still removed');
+  });
+});
+
+test('run-tests.js prints no leftover warning for a suite that leaves nothing', async () => {
+  await withSandbox(...PROBE, (sb) => {
+    const result = runRunner(sb, { timeout: 120000 });
+    assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+    assert.ok(!result.stderr.includes('top-level entries in its TMPDIR'), result.stderr);
   });
 });

@@ -2,12 +2,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { run, parseArgs, defaultDeps, writeInsideRoot } = require('../../../plugin/bin/release-local.js');
 const { readText } = require('../../helpers/read-skill');
 
-const mkTmpDir = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+const mkTmpDir = (prefix) => scratchDir(prefix);
 
 // #2791: the same real fixture files manifest.test.js's own round-trip tests read,
 // reused here so the CLI-level dry-run assertions exercise byte-identical content

@@ -27,6 +27,14 @@
 // Claude Code CLI 2.1.325 and is not documented either. Agents a workflow
 // agent starts itself (spawnDepth > 1) are read only when their files sit in
 // the same run directory.
+// Task-call attribution (#5647): a dispatched run's orchestration happens in
+// the dispatching session's Task calls, so locateTaskTranscripts attributes a
+// session's depth-1 agent files (agent-{id}.meta.json spawnDepth === 1 exactly)
+// to a run when the file's first line (the dispatch prompt, at most
+// FIRST_ENTRY_CAP bytes) is a type "user" entry naming exactly one pipeline run
+// id, equal to the requested one. It is decided per file, never per row;
+// nested (depth >= 2) agents, subagents/workflows/ and any symlinked directory
+// or file are not candidates.
 'use strict';
 const fs = require('fs');
 const os = require('os');
@@ -45,6 +53,12 @@ function slugForCwd(cwd) {
 
 function statOrNull(fsImpl, p) { try { return fsImpl.statSync(p); } catch { return null; } }
 
+// value -> the session id when it is a plain file-name token (no "/" and no
+// ".."), else null. Shared by locateTranscripts and locateTaskTranscripts.
+function sessionIdToken(value) {
+  return typeof value === 'string' && /^[A-Za-z0-9._-]+$/.test(value) && !value.includes('..') ? value : null;
+}
+
 // { cwd?, sessionId?, homeDir?, configDir?, fsImpl? } -> [{ path, mtimeMs }] newest first.
 // The projects root is {configDir}/projects; configDir defaults to
 // $CLAUDE_CONFIG_DIR (an empty value counts as unset), else {homeDir}/.claude (#3458).
@@ -55,7 +69,7 @@ function statOrNull(fsImpl, p) { try { return fsImpl.statSync(p); } catch { retu
 // listing) — the whole call returns [] instead.
 function locateTranscripts({ cwd, sessionId, homeDir = os.homedir(), configDir = process.env.CLAUDE_CONFIG_DIR || path.join(homeDir, '.claude'), fsImpl = fs } = {}) {
   const sessionIdGiven = typeof sessionId === 'string';
-  const sid = sessionIdGiven && /^[A-Za-z0-9._-]+$/.test(sessionId) && !sessionId.includes('..') ? sessionId : null;
+  const sid = sessionIdToken(sessionId);
   if (sessionIdGiven && !sid) return [];
   if (!cwd && !sid) return [];
   const projects = path.join(configDir, 'projects');
@@ -94,6 +108,113 @@ function locateTranscripts({ cwd, sessionId, homeDir = os.homedir(), configDir =
     for (const d of dirs) push(path.join(projects, d, `${sid}.jsonl`));
   }
   return out.sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
+// Run ids a text names as `.claude-tweaks/pipelines/{id}` (either separator; a
+// Windows path inside JSON text carries `\\`) -> distinct ids, first-seen order.
+// The captured id is claim-store.js's canonical RUN_ID_SHAPE without its anchors, pinned by
+// transcript.test.js's "RUN_ID_NAMED_RE captures the canonical run-id shape". The maintainer-side
+// tools/guard-refusals/transcripts.js keeps its own copy, since plugin/ never requires tools/.
+const RUN_ID_NAMED_RE = /\.claude-tweaks[\\/]+pipelines[\\/]+(\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*)/g;
+function runIdsNamed(text) {
+  const ids = [];
+  for (const m of String(text).matchAll(RUN_ID_NAMED_RE)) if (!ids.includes(m[1])) ids.push(m[1]);
+  return ids;
+}
+
+const FIRST_ENTRY_CAP = 1048576; // 1 MiB: a first line longer than this is never attributed
+
+// fsImpl, file -> the file's first line as text, or null when it is longer than
+// FIRST_ENTRY_CAP bytes or cannot be read. Never throws.
+function readFirstLine(fsImpl, file) {
+  let fd;
+  try {
+    fd = fsImpl.openSync(file, 'r');
+    const chunk = Buffer.alloc(65536);
+    const parts = [];
+    let total = 0;
+    let pos = 0;
+    for (;;) {
+      const n = fsImpl.readSync(fd, chunk, 0, chunk.length, pos);
+      if (n === 0) break;
+      pos += n;
+      const nl = chunk.subarray(0, n).indexOf(0x0a);
+      const take = nl === -1 ? n : nl;
+      total += take;
+      if (total > FIRST_ENTRY_CAP) return null;
+      parts.push(Buffer.from(chunk.subarray(0, take)));
+      if (nl !== -1) break;
+    }
+    return Buffer.concat(parts).toString('utf8');
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) { try { fsImpl.closeSync(fd); } catch { /* nothing to release */ } }
+  }
+}
+
+// { sessionIds, runId, configDir, fsImpl? } -> { paths, notes } (#5647). The
+// depth-1 agent transcripts of each session whose dispatch prompt names exactly
+// runId (rule in the header). Every slug holding {sid}.jsonl is scanned; paths
+// are sorted and deduped; notes holds one line per session id that yielded no
+// scannable subagents/ directory (invalid id, no {sid}.jsonl, no or symlinked
+// subagents/). Never throws.
+function locateTaskTranscripts({ sessionIds, runId, configDir, fsImpl = fs } = {}) {
+  const found = new Set();
+  const notes = [];
+  for (const sid of new Set(Array.isArray(sessionIds) ? sessionIds : [])) {
+    try {
+      const problems = [];
+      let scanned = false;
+      const valid = sessionIdToken(sid) !== null;
+      // locateTranscripts realpath-contains every hit.
+      const hits = valid ? locateTranscripts({ sessionId: sid, cwd: null, homeDir: null, configDir, fsImpl }) : [];
+      if (!valid) problems.push('invalid session id');
+      else if (hits.length === 0) problems.push(`no ${sid}.jsonl found`);
+      for (const hit of hits) {
+        const dir = subagentsDirFor(hit.path);
+        // The {sid}/ directory must not be a symlink either: checking subagents/
+        // alone would follow it out of the projects root.
+        const sessionType = lstatType(path.dirname(dir), { fsImpl }).type;
+        const dirType = sessionType === 'directory' ? lstatType(dir, { fsImpl }).type : sessionType;
+        if (dirType === 'symlink') { problems.push(`symlinked directory not followed for ${hit.path}`); continue; }
+        if (dirType !== 'directory') { problems.push(`no subagents/ directory for ${hit.path}`); continue; }
+        let names;
+        try { names = fsImpl.readdirSync(dir); } catch { problems.push(`subagents/ directory not readable at ${dir}`); continue; }
+        scanned = true;
+        for (const n of names) {
+          const m = /^agent-(.+)\.jsonl$/.exec(n);
+          if (!m) continue;
+          const file = path.join(dir, n);
+          const metaFile = path.join(dir, `agent-${m[1]}.meta.json`);
+          // Red without it: "symlinked agent file is not followed".
+          if (lstatType(file, { fsImpl }).type !== 'file') continue;
+          // Red without it: "symlinked meta file is not followed".
+          if (lstatType(metaFile, { fsImpl }).type !== 'file') continue;
+          const { meta } = readMeta(fsImpl, metaFile);
+          // Red without it: "depth-2 agent ..." and "meta without spawnDepth, malformed meta, missing meta ...".
+          if (!meta || meta.spawnDepth !== 1) continue;
+          // Red without the null return: "first line over FIRST_ENTRY_CAP ...".
+          const line = readFirstLine(fsImpl, file);
+          if (line === null) continue;
+          let entry;
+          try { entry = JSON.parse(line); } catch { continue; }
+          // Red without it: "first line not a user entry, or unparseable ...".
+          if (!entry || entry.type !== 'user') continue;
+          const ids = runIdsNamed(line);
+          // `length !== 1` red: "prompt naming this run and another run ..."; `ids[0] !== runId` red: "prompt naming only another run ...".
+          if (ids.length !== 1 || ids[0] !== runId) continue;
+          // hit.path is already a real path and neither directory nor file is a
+          // symlink (lstat above), so `file` is the real path the set dedupes on.
+          found.add(file);
+        }
+      }
+      if (!scanned) notes.push(`session ${sid}: ${problems.join('; ')}`);
+    } catch (err) {
+      notes.push(`session ${sid}: Task-call lookup failed (${(err && err.code) || 'EUNKNOWN'})`);
+    }
+  }
+  return { paths: [...found].sort(), notes };
 }
 
 // isProcedurePath lives in turn-class.js (#4029) and is re-exported below
@@ -140,6 +261,35 @@ function abortError() {
   return e;
 }
 
+// The one max-per-message.id usage rule (#5967): Claude Code writes one JSONL
+// line per content block of an assistant turn under the same message.id, and
+// usage grows while a response streams, so neither the first line nor a
+// per-line sum is right — each field keeps its max across the id's lines. The
+// 1-hour cache-write split comes from the line holding the largest cache write
+// (clamped to that write); the rest of the write is 5-minute. prev is null on
+// an id's first line. Pure: never mutates prev or usage. Shared with
+// context-gauge.js's tail read and the maintainer-side cost report and
+// review replay.
+// (prev: UsageMax | null, usage: object | undefined) -> UsageMax
+function mergeUsage(prev, usage) {
+  const u = usage || {};
+  const base = prev || { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, cacheWrite1h: 0, cacheWrite5m: 0 };
+  const write = Number(u.cache_creation_input_tokens) || 0;
+  const cacheCreate = Math.max(base.cacheCreate, write);
+  let cacheWrite1h = base.cacheWrite1h;
+  if (!prev || write > prev.cacheCreate) {
+    cacheWrite1h = Math.min(write, Number(u.cache_creation && u.cache_creation.ephemeral_1h_input_tokens) || 0);
+  }
+  return {
+    input: Math.max(base.input, Number(u.input_tokens) || 0),
+    output: Math.max(base.output, Number(u.output_tokens) || 0),
+    cacheRead: Math.max(base.cacheRead, Number(u.cache_read_input_tokens) || 0),
+    cacheCreate,
+    cacheWrite1h,
+    cacheWrite5m: cacheCreate - cacheWrite1h,
+  };
+}
+
 // path, { fsImpl?, worktree?, signal? } -> Promise<rows>. Streams line by line;
 // malformed lines (bad JSON, no timestamp, no message.role) are skipped.
 // Every row also carries (#4029): turnClasses ({ [class]: count }, sparse — a
@@ -147,12 +297,13 @@ function abortError() {
 // turnStart (true on the first assistant row of each message.id and on any
 // assistant row without a string id), and contextTokens (inputTokens +
 // cacheRead + cacheCreate on turnStart rows, taken after the stream closes so
-// it reflects the per-id max; 0 elsewhere). procedureFiles ({ [skills/… or
-// context/… key]: count }, {} when none) is counted on the assistant row
-// holding the tool_use: a Read adds 1 to readFileKey(file_path), a Bash 1 per
-// bashProcedureFiles entry (#4359). User rows also carry agentCalls
-// (#5597): the tool_result blocks classed dispatch whose call was Agent or
-// Task — so a Workflow call counts in turnClasses.dispatch but not here.
+// it reflects the per-id max, which is mergeUsage's; 0 elsewhere).
+// procedureFiles ({ [skills/… or context/… key]: count }, {} when none) is
+// counted on the assistant row holding the tool_use: a Read adds 1 to
+// readFileKey(file_path), a Bash 1 per bashProcedureFiles entry (#4359). User
+// rows also carry agentCalls (#5597): the tool_result blocks classed dispatch
+// whose call was Agent or Task — so a Workflow call counts in
+// turnClasses.dispatch but not here.
 // An assistant row holding AskUserQuestion tool_use blocks also carries asks
 // ([{ id, ts, questions: string[] }]) and a user row holding a tool_result for
 // such an id carries answers ([{ id, ts }]); rows with neither have no such key (#5556).
@@ -180,6 +331,7 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null, signal = null
   // final count. Per id, the first row carries the max of each usage field and
   // every later line is zeroed (#1929 whole-branch review fix 1; #3375 C1).
   const firstRowById = new Map();
+  const usageById = new Map(); // message.id -> mergeUsage's running UsageMax
   const stream = fsImpl.createReadStream(filePath, { encoding: 'utf8' });
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
   let onAbort = null;
@@ -229,13 +381,17 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null, signal = null
             // (stop_reason null, a tiny output_tokens) and close it with the
             // settled count; keep the max per field on the first row and
             // zero this one (#3375 final review C1).
-            for (const field of ['inputTokens', 'outputTokens', 'cacheRead', 'cacheCreate']) {
-              firstRow[field] = Math.max(firstRow[field], row[field]);
-              row[field] = 0;
-            }
+            const merged = mergeUsage(usageById.get(msg.id), u);
+            usageById.set(msg.id, merged);
+            firstRow.inputTokens = merged.input;
+            firstRow.outputTokens = merged.output;
+            firstRow.cacheRead = merged.cacheRead;
+            firstRow.cacheCreate = merged.cacheCreate;
+            for (const field of ['inputTokens', 'outputTokens', 'cacheRead', 'cacheCreate']) row[field] = 0;
             row.turnStart = false;
           } else {
             firstRowById.set(msg.id, row);
+            usageById.set(msg.id, mergeUsage(null, u));
           }
         }
       } else {
@@ -305,6 +461,13 @@ function readPromptRows(filePath, promptId, { fsImpl = fs, chunkBytes = 65536, k
     fsImpl.closeSync(fd);
   }
   return rows;
+}
+
+// A Task-call agent transcript path: {…}/subagents/agent-{id}.jsonl, either separator (a path
+// from another platform's timing.json included). A pure string test; no fs.
+function isAgentTranscriptPath(p) {
+  const parts = String(p).split(/[\\/]/);
+  return parts.length >= 3 && parts[parts.length - 2] === 'subagents' && /^agent-.+\.jsonl$/.test(parts[parts.length - 1]);
 }
 
 // transcriptPath -> the session's {sessionId}/subagents directory: the sibling
@@ -551,4 +714,4 @@ async function scanAgentDir(dir, names, { fsImpl, window, worktree, signal = nul
   return { built, ids: ids.size, excluded };
 }
 
-module.exports = { TRANSCRIPT_SLUG_RULE, slugForCwd, locateTranscripts, readUsage, readPromptRows, isProcedurePath, resultBytes, statTranscriptOrThrow, subagentsDirFor, readDispatches };
+module.exports = { TRANSCRIPT_SLUG_RULE, slugForCwd, locateTranscripts, mergeUsage, readUsage, readPromptRows, isProcedurePath, resultBytes, statTranscriptOrThrow, subagentsDirFor, readDispatches, isAgentTranscriptPath, locateTaskTranscripts, runIdsNamed, RUN_ID_NAMED_RE, FIRST_ENTRY_CAP };

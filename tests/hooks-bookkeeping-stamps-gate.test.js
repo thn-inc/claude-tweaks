@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -113,7 +114,7 @@ test('bookkeeping-stamps gate (#989): worktree stamped, pr-first stubbed, a push
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined);
   const branch = execFileSync('git', ['-C', wt, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
   // #1800: the #989 exemption now additionally requires Step 1's outcome line
@@ -140,7 +141,7 @@ test('bookkeeping-stamps gate (#1800): worktree stamped, pr-first stubbed, a pus
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined);
   const branch = execFileSync('git', ['-C', wt, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
   // No decisions.md written at all -- Step 1 never ran (or never logged),
@@ -168,13 +169,13 @@ test('bookkeeping-stamps gate (#1800 review finding): a Step 1 line logged for a
   // satisfy branch `{branch}`'s own precondition, defeating the "keep it
   // attempt-specific" guarantee this file's Gotchas section calls for.
   const main = gitRepo();
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-wtparent-'));
+  const parent = scratchDir('ct-bsg-wtparent-');
   const wt = path.join(parent, 'wt');
   const branch = `wt-branch-${path.basename(parent)}`;
   execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt, '-b', branch]);
   const wtReal = fs.realpathSync(wt);
   commitMaterializedSpec(wtReal, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wtReal, undefined);
   // Seed a Step 1 line for a DIFFERENT branch (`{branch}-retry`) that has
   // THIS branch as a strict prefix -- never for `{branch}` itself.
@@ -200,7 +201,7 @@ test('bookkeeping-stamps gate (#1800): Step 1\'s reuse-open line satisfies the #
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined);
   const branch = execFileSync('git', ['-C', wt, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
   fs.writeFileSync(
@@ -218,7 +219,7 @@ test('bookkeeping-stamps gate (#1800): Step 1\'s reopen line satisfies the #989 
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined);
   const branch = execFileSync('git', ['-C', wt, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
   fs.writeFileSync(
@@ -268,7 +269,7 @@ test('AC1.1 (#3012): a paraphrased Step 1 line satisfies the #989 exemption prec
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined);
   const branch = execFileSync('git', ['-C', wt, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
   fs.writeFileSync(
@@ -296,7 +297,7 @@ test('AC1.1 (#3012): a push-only PR-early line (Step 2, no Step 1 outcome) does 
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined);
   const branch = execFileSync('git', ['-C', wt, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
   fs.writeFileSync(
@@ -318,12 +319,12 @@ test('bookkeeping-stamps gate (#1860): a worktree branch created via `-b {branch
   // remote-tracking ref -- reproducing what `worktree.baseRef: fresh`
   // (EnterWorktree's default, used for every pipeline worktree this plugin
   // creates) actually does: `git worktree add -b {branch} {path} origin/main`.
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-bare-'));
+  const bare = scratchDir('ct-bsg-bare-');
   execFileSync('git', ['init', '-q', '--bare', bare]);
   execFileSync('git', ['-C', main, 'remote', 'add', 'origin', bare]);
   execFileSync('git', ['-C', main, 'push', '-q', 'origin', 'HEAD:refs/heads/main']);
   execFileSync('git', ['-C', main, 'fetch', '-q', 'origin']);
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-wtparent-'));
+  const parent = scratchDir('ct-bsg-wtparent-');
   const wt = path.join(parent, 'wt');
   const branchName = `wt-branch-${path.basename(parent)}`;
   // Branching FROM the remote-tracking ref (not from local HEAD, unlike
@@ -333,7 +334,7 @@ test('bookkeeping-stamps gate (#1860): a worktree branch created via `-b {branch
   execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt, '-b', branchName, 'origin/main']);
   const wtReal = fs.realpathSync(wt);
   commitMaterializedSpec(wtReal, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wtReal, undefined);
   // Fixture sanity: @{u} must resolve successfully here (to origin/main), NOT
   // fail with a git error -- the pre-#1860 bug required a git-error exit to
@@ -371,7 +372,7 @@ test('bookkeeping-stamps gate (#989): worktree stamped, pr-first stubbed, a push
   // that would reopen exactly the "keep pushing forever, never open the PR"
   // gap IL-131 exists to close, only shifted from Edit/commit onto push.
   execFileSync('git', ['-C', wt, 'push', '-u', 'origin', branch], { stdio: 'ignore' });
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined);
   const out = pre.run(
     { env: process.env, input: bashInput(`git push origin ${branch}`, wt), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
@@ -616,7 +617,7 @@ test('bookkeeping-stamps gate (#1259): a caller whose OWN resolved run differs f
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, null, undefined); // unstamped: no worktree, no sessionId
   const ownRun = path.join(project, '.claude-tweaks', 'pipelines', 'sibling-own-run');
   fs.mkdirSync(ownRun, { recursive: true });
@@ -638,7 +639,7 @@ test('bookkeeping-stamps gate (#1259): ownedRun matching ctx.runDir (the ordinar
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, null, undefined);
   const out = pre.run({
     env: process.env,
@@ -656,7 +657,7 @@ test('bookkeeping-stamps gate (#1259): a distinct ownedRun does NOT loosen the P
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined); // worktree already stamped -> PR-stamp branch
   const ownRun = path.join(project, '.claude-tweaks', 'pipelines', 'sibling-own-run');
   fs.mkdirSync(ownRun, { recursive: true });
@@ -722,7 +723,7 @@ test('#1798 Task 0: runState.sessionId unset + a covered call whose caller sessi
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined); // worktree stamped, sessionId genuinely never recorded
   const out = pre.run(
     {
@@ -749,7 +750,7 @@ test('#1798: a bookkeeping-stamp-deny event on the record-pr branch carries owne
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined);
   pre.run(
     {
@@ -771,7 +772,7 @@ test('#1798: a bookkeeping-stamp-deny event on the record-worktree branch also c
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, null, 'owner-session-42'); // no worktree stamped -> record-worktree branch
   pre.run({
     env: process.env,
@@ -981,7 +982,7 @@ test('bookkeeping-stamps gate (I2.3, #1678): an Edit to a path outside any git r
   // A plain mkdtemp dir with no `git init` — provably outside any git repo,
   // the same shape as a Claude Code session scratchpad directory
   // (/private/tmp/claude-<uid>/<slug>/<session-id>/scratchpad/**).
-  const scratchpad = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-scratch-'));
+  const scratchpad = scratchDir('ct-bsg-scratch-');
   const { run } = mkRunDir(projectDir(), null, undefined);
   const out = pre.run({
     env: process.env,
@@ -1072,7 +1073,7 @@ test('bookkeeping-stamps gate (I2.3, #1678, review finding): the "provably not a
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const scratchpad = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-scratch-'));
+  const scratchpad = scratchDir('ct-bsg-scratch-');
   const { run } = mkRunDir(projectDir(), null, undefined);
   const realMainCheckoutRoot = wtDetect.mainCheckoutRoot;
   wtDetect.mainCheckoutRoot = (p, ...rest) => {
@@ -1108,7 +1109,7 @@ test('bookkeeping-stamps gate (I2.3, #1678, review finding): a symlink located o
   const realFile = path.join(wt, 'src', 'x.js');
   fs.mkdirSync(path.dirname(realFile), { recursive: true });
   fs.writeFileSync(realFile, 'existing content\n');
-  const scratchpad = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-scratch-'));
+  const scratchpad = scratchDir('ct-bsg-scratch-');
   const link = path.join(scratchpad, 'link.js');
   fs.symlinkSync(realFile, link);
   const { run } = mkRunDir(projectDir(), null, undefined);
@@ -1127,7 +1128,7 @@ test('bookkeeping-stamps gate (I2.3, #1678, review finding): a dangling symlink 
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const scratchpad = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-scratch-'));
+  const scratchpad = scratchDir('ct-bsg-scratch-');
   const link = path.join(scratchpad, 'dangling-link.js');
   fs.symlinkSync(path.join(scratchpad, 'nothing-here.js'), link);
   const { run } = mkRunDir(projectDir(), null, undefined);
@@ -1216,7 +1217,7 @@ test('bookkeeping-stamps gate (I5): both stamps present adds no repo-inspection 
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
 
   const baseline = withSpawnCount(() => pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: null, runState: null, cwd: wt }));
   assert.deepStrictEqual(baseline.out, {});

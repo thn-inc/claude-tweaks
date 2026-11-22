@@ -172,7 +172,7 @@ function readLever(s) {
     const entry = out.result['merge-verification'];
     if (entry && typeof entry === 'object' && !entry.error && typeof entry.value === 'string') {
       raw = entry.value;
-      source = entry.source || 'unresolved';
+      source = entry.source || 'unresolved'; // passes through to the event and log lines only (`factory` included, #6006)
     }
   }
   s.valueRaw = raw;

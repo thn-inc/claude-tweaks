@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const { EventEmitter } = require('events');
 
 const {
@@ -33,7 +34,7 @@ test('workerCap: cores / (2 * slots), floored, never below 1 (#5119)', () => {
 // process.env, which this suite's runner sets CT_TEST_SUITE_SLOT_HELD=1 in) and a fake `proc`
 // whose `exit` only records its code.
 function tmpSlotDir() {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'verify-slot-test-')));
+  return fs.realpathSync(scratchDir('verify-slot-test-'));
 }
 function fakeProc() {
   const proc = new EventEmitter();

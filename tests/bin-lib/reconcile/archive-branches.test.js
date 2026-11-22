@@ -142,6 +142,7 @@ test('encodeArchiveTagSuffix: a branch with no "/" or "%" passes through unchang
 
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { archiveBranches } = require('../../../plugin/bin/lib/reconcile/archive-branches');
@@ -154,7 +155,7 @@ function git(cwd, ...args) {
 }
 
 function makeRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-branches-'));
+  const dir = scratchDir('archive-branches-');
   initRepo(dir, { branch: 'main', name: 't', email: 't@t' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
   git(dir, 'add', 'a.txt');

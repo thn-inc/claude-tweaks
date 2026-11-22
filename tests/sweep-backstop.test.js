@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const path = require('path');
 const os = require('os');
 const { execFileSync } = require('child_process');
@@ -68,7 +69,7 @@ function isolateItem9(script, { candidatesPath, inputPath }, sep = path.sep) {
 function assertAllSyntaxValid(scripts, label) {
   assert.ok(scripts.length > 0, `expected at least one node -e script in ${label}`);
   for (const [i, script] of scripts.entries()) {
-    const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sweep-syntax-')), `script-${i}.js`);
+    const tmp = path.join(scratchDir('ct-sweep-syntax-'), `script-${i}.js`);
     // A scan fence carries the `{resolved-limit}` placeholder an agent substitutes literally (#4820); `node --check` needs a number.
     fs.writeFileSync(tmp, script.replaceAll('{resolved-limit}', '1000'));
     assert.doesNotThrow(
@@ -110,7 +111,7 @@ test("item 9's green-check filter treats SKIPPED as non-blocking, not a failure 
     'expected the first item-9 script to be the candidate filter (writes $PR_SCAN_UNARMED_CANDIDATES)',
   );
 
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-item9-filter-'));
+  const tmpDir = scratchDir('ct-item9-filter-');
   const inputPath = path.join(tmpDir, 'pr-scan-unarmed.json');
   const candidatesPath = path.join(tmpDir, 'pr-scan-unarmed-candidates.json');
 
@@ -193,7 +194,7 @@ test('item 9 also recognizes wrap-up-residue-pr as a mechanical-housekeeping mar
 
 test("item 9's filter script treats a wrap-up-residue-pr-marked PR as a housekeeping candidate (finding regression)", () => {
   const filterScript = extractNodeScripts(ITEM9)[0];
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-item9-residue-'));
+  const tmpDir = scratchDir('ct-item9-residue-');
   const inputPath = path.join(tmpDir, 'pr-scan-unarmed.json');
   const candidatesPath = path.join(tmpDir, 'pr-scan-unarmed-candidates.json');
   const isolatedScript = isolateItem9(filterScript, { candidatesPath, inputPath });
@@ -220,7 +221,7 @@ test("item 9's filter script treats a wrap-up-residue-pr-marked PR as a housekee
 test("item 9's filter never offers a wrap-up-skills-pr PR, even with a run marker and a granted record", () => {
   assert.match(ITEM9, /<!-- wrap-up-skills-pr -->[^\n]*never/);
   const filterScript = extractNodeScripts(ITEM9)[0];
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-item9-skills-'));
+  const tmpDir = scratchDir('ct-item9-skills-');
   try {
     const inputPath = path.join(tmpDir, 'pr-scan-unarmed.json');
     const candidatesPath = path.join(tmpDir, 'pr-scan-unarmed-candidates.json');
@@ -339,7 +340,7 @@ test("the resume file takes {run-id} from the claim blob runId, never from the P
 function runItem10Evaluation({ claimRows, labelled = [], labelledText, prsText = '[]', extraEnv = {} }) {
   const scripts = extractNodeScripts(ITEM10).filter((s) => s.includes('$PR_SCAN_UNSETTLED_CLAIMS'));
   assert.equal(scripts.length, 1, 'item 10 must carry exactly one evaluation script');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sweep-item10-'));
+  const dir = scratchDir('ct-sweep-item10-');
   try {
     const claimsPath = path.join(dir, 'claims.jsonl');
     const labelledPath = path.join(dir, 'labelled.json');
@@ -446,7 +447,7 @@ test('item 10: a stale claim past the threshold with no PR is judged like a live
 // PATH prints one fixed commit date per case, so the real gh is never called. Skipped on
 // win32: a `#!/bin/sh` shim does not run there.
 function runItem10WithFakeGh(committedDate) {
-  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sweep-fakegh-'));
+  const binDir = scratchDir('ct-sweep-fakegh-');
   try {
     const gh = path.join(binDir, 'gh');
     const progress = JSON.stringify({ comments: [], commits: [{ committedDate }] });

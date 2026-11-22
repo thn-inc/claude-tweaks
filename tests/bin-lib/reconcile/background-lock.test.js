@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const {
@@ -9,7 +10,7 @@ const {
 } = require('../../../plugin/bin/lib/reconcile/background-lock');
 
 function tmpRoot() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bg-lock-'));
+  return scratchDir('ct-bg-lock-');
 }
 
 test('acquireBackgroundLock: acquires cleanly when no lock exists, writes pid+startedAt', () => {

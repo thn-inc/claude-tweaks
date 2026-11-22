@@ -123,7 +123,7 @@ The bracketed field is **always last** — after the existing optional `{; commi
 
 **"Consulted" means every lever whose value the logging site's own procedure read to make this decision — including levers read by a sub-skill this procedure invokes on this path** — a weighted or advisory input counts; a lever the procedure never read does not. The field cites levers consulted, not which one alone decided.
 
-- **Source words:** `run-config | policy | default` (matching `resolve-policy.js`'s envelope `source`), plus `arg` for a value set by an explicit CLI/skill argument override. No other source words.
+- **Source words:** `run-config | policy | factory | default` (matching `resolve-policy.js`'s envelope `source`), plus `arg` for a value set by an explicit CLI/skill argument override. No other source words.
 - **Statuses:** any status (`AUTO`/`STAGED`/`KEPT-PROMPT`/`SCANNED`) whose decision consulted a lever carries the field; HARD-GATE stops and other non-policy decisions never carry it — attribution on a non-policy decision is noise that erodes the signal.
 - **Keys are literal:** copy lever names from `POLICY_KEYS` (`bin/lib/policy-schema.js`) verbatim; never paraphrase.
 - **List-valued levers** render the configured comma-joined string truncated at 60 chars with `…`; an unset list renders `[]`.
@@ -204,7 +204,7 @@ For the very first entry of a pipeline run, `/flow` (or the first standalone ski
 per the Entry schema above; when `--section` is passed, the entry is placed under the `## /{skill}`
 heading (creating it when absent), otherwise appended at EOF. It refuses to write with exit `3`
 when the run dir is missing, not anchored under `$RUN_ROOT` (`_shared/pipeline-run-dir.md`'s
-Anchoring section — i.e. a worktree-local shadow), or unwritable, so a worktree-local shadow is
+Anchoring section — i.e. a worktree-local shadow, or a directory outside pipelines/), or unwritable, so a worktree-local shadow is
 never written silently:
 
 ```bash

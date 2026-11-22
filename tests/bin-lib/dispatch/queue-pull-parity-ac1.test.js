@@ -42,20 +42,20 @@ describe('#5227 parity (AC1)', { skip: oracleSkip(), timeout: 600_000 }, () => {
     });
   }
 
-  test('AC1.2: normalize substitutes only the sandbox root and the run id; the staged target-missing ids are byte-equal on both sides (deterministic temp names)', (t) => {
+  test('AC1.2: normalize substitutes only the sandbox root and the run id; the staged target-missing ids are byte-equal on both sides', (t) => {
     for (const cfg of MATRIX) {
       const { oracle, module } = R[cfg.name];
       assert.deepEqual(Object.keys(module.staged), Object.keys(oracle.staged), `${cfg.name}: the staged names, before any normalization`);
     }
     for (const name of ['S1-gh-miss', 'S1-files-miss']) {
       const names = Object.keys(R[name].oracle.staged);
-      assert.ok(names.some((n) => /^dispatch-target-missing-9009\.qp\d{8}$/.test(n)), `${name}: the mktemp suffix names the item (D2): ${names}`);
+      assert.ok(names.includes('dispatch-target-missing-9009.md'), `${name}: the target-missing item is staged as .md: ${names}`);
     }
     assert.ok(Object.keys(R['S1-gh-miss'].oracle.staged).includes('shipped-close-9010.md'));
     const sb = R['S1-gh-miss'].oracle.sandbox;
-    const sample = `${sb.root}/proj/.claude-tweaks/pipelines/${RUN_DIR_NAME}/staged x 2026-11-12T12:00:00.000Z ${sb.root}-not tmp.qp00000001`;
-    assert.equal(normalize(sample, sb), '<SCR>/proj/.claude-tweaks/pipelines/<RUN>/staged x 2026-11-12T12:00:00.000Z <SCR>-not tmp.qp00000001',
-      'the clock and the temp names are left as they are');
+    const sample = `${sb.root}/proj/.claude-tweaks/pipelines/${RUN_DIR_NAME}/staged x 2026-11-12T12:00:00.000Z ${sb.root}-not`;
+    assert.equal(normalize(sample, sb), '<SCR>/proj/.claude-tweaks/pipelines/<RUN>/staged x 2026-11-12T12:00:00.000Z <SCR>-not',
+      'the clock is left as it is');
     for (const [side, r] of sides(R['S1-gh-miss'])) assert.equal(r.orderBlob.computedAt, '2026-11-12T12:00:00.000Z', `${side}: the frozen clock, not a normalization`);
     t.diagnostic(`AC1 matrix: ${MATRIX.length} pairs (${MATRIX.length * 2} runs), pool ${POOL}, wall ${timing.ms} ms`);
   });

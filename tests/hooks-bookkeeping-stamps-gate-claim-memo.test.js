@@ -5,6 +5,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -98,7 +99,7 @@ test('bookkeeping-stamps gate (#2571 unit): a spec-{N}-shaped runDir with no run
   // the per-spec branch must not fire; falls through to the ordinary
   // single-record pathspec rooted at "spec-991" itself, which finds nothing
   // (no materialize commit landed anywhere in this fixture).
-  const orphanParent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-orphan-'));
+  const orphanParent = scratchDir('ct-bsg-orphan-');
   assert.strictEqual(pre.hasMaterializeCommit(wt, path.join(orphanParent, 'spec-991')), false);
 });
 
@@ -432,7 +433,7 @@ test('bookkeeping-stamps gate (#1258): local-merge steady state — first resolu
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
 
   const baseline = withSpawnCount(() => pre.run({ env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: null, runState: null, cwd: wt }));
   assert.deepStrictEqual(baseline.out, {});
@@ -489,7 +490,7 @@ test('bookkeeping-stamps gate (#1258): pr-first with degrade already logged also
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined);
   fs.writeFileSync(
     path.join(run, 'decisions.md'),
@@ -508,7 +509,7 @@ test('bookkeeping-stamps gate (#1258): a caught model-resolution exception never
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined);
   const out = pre.run(
     { env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
@@ -527,7 +528,7 @@ test('bookkeeping-stamps gate (#4578 Q5): a degraded detection never persists pr
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined);
   const out = pre.run(
     { env: process.env, input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
@@ -552,7 +553,7 @@ test('bookkeeping-stamps gate (#4578 Q5): the override receives an onDegrade cal
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   const { run } = mkRunDir(project, wt, undefined);
   let got;
   const out = pre.run(

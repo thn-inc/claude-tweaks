@@ -6,6 +6,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const cp = require('child_process');
+const { warmCallStartsNoGit } = require('./helpers/git-trace');
 
 const HELPER = require.resolve('./helpers/git-fixtures');
 
@@ -115,4 +116,31 @@ test('fixtureGit leaves a spawn-level ENOBUFS (no signal: not a maxBuffer overfl
     (err) => err === spawnFailure && !/maxBuffer/.test(err.message),
     'rethrown unchanged',
   );
+});
+
+// The per-test repo builders sit on templates (#5297): after one warm-up call
+// (which may build), a further call starts no git process. #5846: these tests live
+// here, where the file's own tests build gitRepo().
+for (const [name, make] of [
+  ['git-fixtures gitRepo()', () => require('./helpers/git-fixtures').gitRepo()],
+  ['git-fixtures gitRepo({ branch })', () => require('./helpers/git-fixtures').gitRepo({ branch: 'trunk' })],
+]) {
+  test(`${name}: a second call starts no git process`, (t) => {
+    const fs = require('fs');
+    warmCallStartsNoGit(make, { track: (d) => t.after(() => fs.rmSync(d, { recursive: true, force: true })) });
+  });
+}
+
+test('git-fixtures gitRepo({ branch }) keeps the requested branch', (t) => {
+  const fs = require('fs');
+  const gitFixtures = require('./helpers/git-fixtures');
+  const { pinnedGit: git } = require('./helpers/pinned-git');
+  const dir = gitFixtures.gitRepo({ branch: 'trunk' });
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  assert.strictEqual(git(dir, ['symbolic-ref', '--short', 'HEAD']), 'trunk');
+});
+
+test('AC4.1: originWithTwoClones with a seed and no key throws', () => {
+  const gitFixtures = require('./helpers/git-fixtures');
+  assert.throws(() => gitFixtures.originWithTwoClones('ct-gt-otc-', { seed: () => {} }), /seed needs a key/);
 });

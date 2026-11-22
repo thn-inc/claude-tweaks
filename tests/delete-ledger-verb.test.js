@@ -6,6 +6,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -24,7 +25,7 @@ async function runHook(args, { cwd } = {}) {
 }
 
 function gitRoot() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-delledger-')));
+  const root = fs.realpathSync(scratchDir('ct-delledger-'));
   git(['init', '-q', '--initial-branch=main'], root);
   writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
@@ -95,7 +96,7 @@ test('delete-ledger: an explicit --ledger naming a missing file keeps the plain 
 test('delete-ledger: unattributable arm — a non-git run-state worktree prints "cannot attribute" and keeps the ledger', async () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
-  const nonGit = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-delledger-nongit-')));
+  const nonGit = fs.realpathSync(scratchDir('ct-delledger-nongit-'));
   fs.mkdirSync(path.join(nonGit, 'docs', 'plans'), { recursive: true });
   const ledger = path.join(nonGit, 'docs', 'plans', '2026-08-14-x-ledger.md');
   fs.writeFileSync(ledger, '# Open Items\n');
@@ -146,7 +147,7 @@ test('delete-ledger: --ledger explicitly overrides resolution, deleting the name
 test('delete-ledger: --ledger naming a file outside the run dir and worktree is refused, nothing deleted', async () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
-  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-delledger-outside-')));
+  const outside = fs.realpathSync(scratchDir('ct-delledger-outside-'));
   const victim = path.join(outside, 'victim-ledger.md');
   fs.writeFileSync(victim, '# keep me\n');
   const result = await runHook(['delete-ledger', '--run', runDir, '--ledger', victim], { cwd: root });
@@ -187,7 +188,7 @@ const LEFT_ON_DISK = {
     return { args: ['delete-ledger', '--run', runDir], stdout: new RegExp(`^claude-tweaks: delete-ledger: failed to delete ${path.join(runDir, 'ledger.md').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\(.+\\)\\n$`) };
   },
   rejected: (root, runDir) => {
-    const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-delledger-outside-')));
+    const outside = fs.realpathSync(scratchDir('ct-delledger-outside-'));
     const victim = path.join(outside, 'victim-ledger.md');
     fs.writeFileSync(victim, '# keep me\n');
     return { args: ['delete-ledger', '--run', runDir, '--ledger', victim], stdout: `claude-tweaks: delete-ledger: --ledger ${victim} rejected (outside the run directory and worktree) — ledger not deleted\n` };
@@ -200,7 +201,7 @@ const LEFT_ON_DISK = {
     return { args: ['delete-ledger', '--run', runDir], stdout: `claude-tweaks: delete-ledger: 2 candidate ledgers found, cannot pick one — pass --ledger <path> explicitly:\n  ${path.join(plans, 'a-ledger.md')}\n  ${path.join(plans, 'b-ledger.md')}\nLedger not deleted.\n` };
   },
   unattributable: (root, runDir) => {
-    const nonGit = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-delledger-nongit-')));
+    const nonGit = fs.realpathSync(scratchDir('ct-delledger-nongit-'));
     fs.mkdirSync(path.join(nonGit, 'docs', 'plans'), { recursive: true });
     fs.writeFileSync(path.join(nonGit, 'docs', 'plans', '2026-08-14-x-ledger.md'), '# Open Items\n');
     fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: nonGit }));
@@ -282,7 +283,7 @@ for (const report of ['rejected', 'ambiguous', 'unattributable']) {
 
 test('AC3.1: a run dir that is not anchored under a checkout logs nothing', async () => {
   const root = gitRoot();
-  const loose = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-delledger-loose-')));
+  const loose = fs.realpathSync(scratchDir('ct-delledger-loose-'));
   fs.mkdirSync(path.join(loose, 'ledger.md'));
   const result = await runHookFull(['delete-ledger'], { cwd: root, env: { PIPELINE_RUN_DIR: loose } });
   assert.strictEqual(result.code, 0);
@@ -372,7 +373,7 @@ test('#5375: delete-ledger --ledger <relative> deletes against the injected cwd 
 function ownershipFixture({ inherited }) {
   const root = gitRoot();
   const runDir = runDirFixture(root);
-  const worktree = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-delledger-nongit-')));
+  const worktree = fs.realpathSync(scratchDir('ct-delledger-nongit-'));
   const rel = 'docs/plans/2026-08-14-x-ledger.md';
   const ledger = path.join(worktree, ...rel.split('/'));
   fs.mkdirSync(path.dirname(ledger), { recursive: true });

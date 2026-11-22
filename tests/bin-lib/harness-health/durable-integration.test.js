@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const { execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 
 const { sweepCli } = require('../../helpers/health-sweep-cli');
@@ -13,7 +14,7 @@ const { initRepo } = require('../../helpers/git-fixtures');
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'harness-health.js');
 
 function tmpRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-health-durable-'));
+  const dir = scratchDir('harness-health-durable-');
   return dir;
 }
 

@@ -5,6 +5,7 @@
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('./tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
@@ -40,7 +41,7 @@ const read = (repo, rel) => lf(fs.readFileSync(path.join(repo, rel), 'utf8'));
 let hostEol; // undefined until first resolved; null when unset
 function hostAutocrlf() {
   if (hostEol !== undefined) return hostEol;
-  const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'ls-capture-host-'));
+  const probe = scratchDir('ls-capture-host-');
   try {
     sh(probe, ['init', '-q']);
     try { hostEol = String(realDeps.git(['-C', probe, 'config', '--get', 'core.autocrlf'])).trim() || null; } catch { hostEol = null; }
@@ -118,7 +119,7 @@ function scenario(t, kind, autocrlf) {
     templates.set(key, tpl);
   }
   const tpl = templates.get(key);
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ls-matrix-')));
+  const repo = fs.realpathSync(scratchDir('ls-matrix-'));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   fs.cpSync(tpl.f.repo, repo, { recursive: true });
   const rebase = (p) => path.join(repo, path.relative(tpl.f.repo, p));
@@ -321,6 +322,8 @@ function faultyDeps(s, faults, fired) {
   return {
     ...baseDeps,
     git: (a, o) => {
+      // `diffs` counts `--binary` diffs that reach git: capture() wraps deps in withReadCache above this
+      // seam, so a cache hit never gets here and the second diff to reach git is not always the second asked.
       if (a.includes('--binary') && ++diffs === 2 && has('re-diff')) throw boom('re-diff');
       if (a.includes('checkout') && has('checkout')) throw boom('checkout');
       if (a.includes('rm') && a.includes('--cached') && has('rm-cached')) throw boom('rm-cached');

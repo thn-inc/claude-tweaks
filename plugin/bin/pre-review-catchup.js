@@ -89,7 +89,7 @@ function appendLine(deps, runDir, entry) {
     if (!target.ok) {
       return target.reason === 'missing'
         ? `run dir does not exist: ${runDir}`
-        : `run dir is not anchored under the main checkout (a worktree-local shadow): ${runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`;
+        : `run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`;
     }
     deps.appendDecision({ runDir, section: SECTION, entry });
     return '';

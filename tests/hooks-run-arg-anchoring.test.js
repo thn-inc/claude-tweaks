@@ -13,6 +13,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { gitRepo, linkedWorktreeOf, hookEnv } = require('./helpers/git-fixtures');
@@ -141,7 +142,7 @@ test('reject: --run resolves under a directory with no git repo ancestor at all 
   // the ancestor chain) is a DIFFERENT failure than "exists, but resolves
   // outside a KNOWN main checkout" — a bare mkdtempSync dir with no git init
   // reproduces it without needing a git-repo fixture at all.
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-hooks-norepo-'));
+  const bare = scratchDir('ct-hooks-norepo-');
   const runDirPath = mkRunDir(bare, ['.claude-tweaks', 'pipelines', '2026-01-01T000000-spec-793']);
   const out = await runRecordWorktree(['--run', runDirPath, bare], bare);
   assert.match(out.stdout, /could not determine the git repository root/i);
@@ -169,7 +170,7 @@ function assertFallbackAdopted(out) {
 test('#1183: reject — an arbitrary non-repo directory with a stray config.yml is not adopted via the #280 fallback', async () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
-  const stray = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wtd-stray-'));
+  const stray = scratchDir('ct-wtd-stray-');
   fs.writeFileSync(path.join(stray, 'config.yml'), '');
   const out = await runRecordWorktree(['--run', stray, wt], wt);
   assertShadowRejected(out);

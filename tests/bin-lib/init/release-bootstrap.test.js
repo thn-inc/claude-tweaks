@@ -2,12 +2,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const rb = require('../../../plugin/bin/lib/init/release-bootstrap');
 const { chmodDenialSkip } = require('../../helpers/root');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'release-bootstrap-')); }
+function tmp() { return scratchDir('release-bootstrap-'); }
 function write(root, rel, content) {
   const full = path.join(root, rel);
   fs.mkdirSync(path.dirname(full), { recursive: true });

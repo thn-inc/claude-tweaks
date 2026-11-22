@@ -107,7 +107,7 @@ function run(argv, deps = {}) {
   const root = path.resolve(cwd(), o.root);
   const target = resolveTarget({ runDir: path.resolve(cwd(), o.run), cwd: root, mainRoot: deps.mainRoot });
   if (!target.ok) {
-    stderr(`release-tip-check.js: run dir ${o.run} refused (${target.reason === 'missing' ? 'missing' : 'not anchored under the main checkout'}) — nothing read or written\n`);
+    stderr(`release-tip-check.js: run dir ${o.run} refused (${target.reason === 'missing' ? 'missing' : 'not anchored under the main checkout\'s .claude-tweaks/pipelines'}) — nothing read or written\n`);
     return 3;
   }
   const runDir = path.dirname(target.file);

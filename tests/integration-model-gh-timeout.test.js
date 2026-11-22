@@ -8,6 +8,22 @@ const { detectIntegrationModel } = require('../plugin/bin/lib/policy-schema');
 const { STUB_SKIP } = require('./helpers/path-stub');
 const { fakeGh } = require('./helpers/fake-gh');
 const { gitRepo, GH_REMOTE, withTimeoutEnv } = require('./helpers/integration-model');
+const { captureGhTimeout } = require('./helpers/gh-timeout-probe');
+
+test('detectIntegrationModel\'s gh probe passes timeout 12000 under CLAUDE_TWEAKS_GH_TIMEOUT_MS=12000 (AC regression guard)', () => {
+  const dir = gitRepo({ remote: GH_REMOTE });
+  const policySchemaPath = require.resolve('../plugin/bin/lib/policy-schema');
+  const seen = captureGhTimeout({
+    envValue: '12000',
+    modulePaths: [policySchemaPath],
+    reply: '{"owner":{"login":"o"},"name":"n"}',
+    exercise: (setEnv) => {
+      setEnv();
+      require('../plugin/bin/lib/policy-schema').detectIntegrationModel(dir);
+    },
+  });
+  assert.strictEqual(seen, 12000);
+});
 
 test('detectIntegrationModel: CLAUDE_TWEAKS_GH_TIMEOUT_MS=20000 with no policy key outlasts an 8 s gh -> pr-first (AC2.1)', { skip: STUB_SKIP }, () => {
   const dir = gitRepo({ remote: GH_REMOTE });

@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
@@ -16,7 +17,7 @@ const RUN_ID = '2026-09-29T154722-record-2806';
 const NOW = Date.parse('2026-09-29T16:00:00Z');
 
 function mkRunDir() {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-first-call-check-'));
+  const parent = scratchDir('ct-first-call-check-');
   return path.join(parent, RUN_ID);
 }
 
@@ -189,7 +190,7 @@ test('fails naming the one unmaterialized member of an otherwise-materialized gr
 });
 
 test('passes when headers exist only in the worktree mirror of the run dir (pr-first shape, #2775)', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-first-call-mirror-'));
+  const root = scratchDir('ct-first-call-mirror-');
   const runDir = path.join(root, 'main', '.claude-tweaks', 'pipelines', RUN_ID);
   const worktree = path.join(root, 'wt');
   const deps = localMergeGroup(runDir, [2806], { worktree });
@@ -200,7 +201,7 @@ test('passes when headers exist only in the worktree mirror of the run dir (pr-f
 });
 
 test('passes when the header lives under work/ (not spec-{n}/work/) in the worktree mirror -- the pr-first singleton shape (#2775)', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-first-call-mirror-singleton-'));
+  const root = scratchDir('ct-first-call-mirror-singleton-');
   const runDir = path.join(root, 'main', '.claude-tweaks', 'pipelines', RUN_ID);
   const worktree = path.join(root, 'wt');
   const deps = localMergeGroup(runDir, [2806], { worktree });
@@ -281,7 +282,7 @@ test('an earlier failure still wins over a missing claim line (#3577)', () => {
 // ---- #3226: `repairable` classification of a missing-config first call ----
 
 function repoRootWithPolicy(policyText) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-first-call-repo-'));
+  const root = scratchDir('ct-first-call-repo-');
   if (policyText !== null) {
     fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
     fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), policyText);
@@ -811,7 +812,7 @@ test('a verifying stamp with no reportPath string is report-missing, never a pas
 });
 
 test('the default report check passes only a regular file -- a directory named report.json is report-missing', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-stamp-report-'));
+  const dir = scratchDir('ct-stamp-report-');
   const asFile = path.join(dir, 'file-report.json');
   fs.writeFileSync(asFile, '{}');
   const asDir = path.join(dir, 'dir-report.json');
@@ -827,7 +828,7 @@ test('the default report check passes only a regular file -- a directory named r
 
 test('the default stampStatus spawns verify.js with the recorded worktree as cwd, not the test process cwd', () => {
   const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8', windowsHide: true }).trim();
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-stamp-repo-'));
+  const repo = scratchDir('ct-stamp-repo-');
   git(['init', '-q'], repo);
   git(['-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '--allow-empty', '-m', 'init'], repo);
   const head = git(['rev-parse', 'HEAD'], repo);
@@ -880,7 +881,7 @@ test('a complete composition supersedes the single stamp\'s missing reportPath',
 // verify.js spawn — the only test where the guard sees the field names verify.js actually prints.
 test('a complete composition from real --stamp-suite chunks verifies through the default verify.js spawn', () => {
   const VERIFY = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-stamp-composed-')));
+  const repo = fs.realpathSync(scratchDir('ct-stamp-composed-'));
   const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', windowsHide: true }).trim();
   initRepo(repo, { name: 'first-call test', email: 'first-call-test@example.invalid', cwd: repo, encoding: 'utf8', windowsHide: true });
   const decl = { checks: { tests: { unit: 'node -e 0', other: 'node -e 0' } }, rules: [{ match: 'src/**', suites: ['unit'], static: true }] };

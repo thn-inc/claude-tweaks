@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -10,7 +11,7 @@ const { toPosix } = require('../../../plugin/bin/lib/shared-primitives');
 const { chmodDenialSkip } = require('../../helpers/root');
 const { cleanGitEnv, initRepo, writeIdentity } = require('../../helpers/git-fixtures');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-scope-')); }
+function tmp() { return scratchDir('codehealth-scope-'); }
 
 function initGitRepo(root) {
   initRepo(root, { name: 'Test', email: 'test@test.com' });

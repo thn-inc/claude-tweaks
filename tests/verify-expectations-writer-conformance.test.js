@@ -8,6 +8,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { readText } = require('./helpers/read-skill');
@@ -62,7 +63,7 @@ test('the Oversight-floor gate snippet in verification-brief.md runs and records
   const snippet = oversightSnippet(doc);
   assert.ok(snippet.includes(`${CLI_CALL} --oversight-exempt {N}`), `unexpected snippet: ${snippet}`);
 
-  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'vexp-conf-'));
+  const main = scratchDir('vexp-conf-');
   const runDir = path.join(main, '.claude-tweaks', 'pipelines', '2026-08-20T090000-spec-12');
   fs.mkdirSync(runDir, { recursive: true });
   fs.mkdirSync(path.join(main, '.git'));
@@ -78,7 +79,7 @@ test('the Oversight-floor gate snippet in verification-brief.md runs and records
 
 test('CRLF control (#3670): verify-expectations-writer-conformance extracts the same result after a CRLF round-trip through readText()', (t) => {
   const DOC_PATH = path.join(ROOT, 'plugin/skills/wrap-up/verification-brief.md');
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-expectations-crlf-'));
+  const tmp = scratchDir('verify-expectations-crlf-');
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   const lf = readText(DOC_PATH);
   const crlf = lf.replace(/\n/g, '\r\n');

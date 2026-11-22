@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { makeRetryQueueCommands } = require('../../../plugin/bin/lib/health-core/retry-cli');
@@ -94,7 +95,7 @@ test('update dequeues successes and enqueues failures, printing entries that jus
     ],
   });
   const { update } = makeRetryQueueCommands(ds);
-  const resultsPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-')), 'results.json');
+  const resultsPath = path.join(scratchDir('retry-cli-'), 'results.json');
   fs.writeFileSync(resultsPath, JSON.stringify([
     { fingerprint: 'stuck', payload: { title: 'Stuck' }, ok: false, error: 'still failing' },
     { fingerprint: 'fresh', payload: { title: 'Fresh' }, ok: true },
@@ -124,7 +125,7 @@ test('update reports each escalated fingerprint exactly once even when the mutat
     3, // simulate 3 CAS attempts (2 rejected, 1 finally accepted) before success
   );
   const { update } = makeRetryQueueCommands(ds);
-  const resultsPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-')), 'results.json');
+  const resultsPath = path.join(scratchDir('retry-cli-'), 'results.json');
   fs.writeFileSync(resultsPath, JSON.stringify([
     { fingerprint: 'stuck', payload: { title: 'Stuck' }, ok: false, error: 'still failing' },
   ]));
@@ -141,7 +142,7 @@ test('update prints [] AND returns exit code 1, leaving process.exitCode untouch
     ],
   });
   const { update } = makeRetryQueueCommands(ds);
-  const resultsPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-')), 'results.json');
+  const resultsPath = path.join(scratchDir('retry-cli-'), 'results.json');
   fs.writeFileSync(resultsPath, JSON.stringify([
     { fingerprint: 'stuck', payload: { title: 'Stuck' }, ok: false, error: 'still failing' },
   ]));
@@ -156,7 +157,7 @@ test('update prints [] AND returns exit code 1, leaving process.exitCode untouch
 });
 
 test('drain returns 0 and writes through an injected io', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-'));
+  const root = scratchDir('retry-cli-');
   let out = '';
   let err = '';
   const seen = [];
@@ -173,7 +174,7 @@ test('drain returns 0 and writes through an injected io', () => {
 });
 
 test('update returns 0 on success and 2 on a missing results path, writing through an injected io', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-'));
+  const root = scratchDir('retry-cli-');
   let out = '';
   let err = '';
   const cmds = makeRetryQueueCommands({
@@ -192,7 +193,7 @@ test('update returns 0 on success and 2 on a missing results path, writing throu
 test('update skips a malformed (e.g. null) results entry instead of crashing, and still processes well-formed siblings in the same batch', () => {
   const ds = fakeDurableState({ retryQueue: [] });
   const { update } = makeRetryQueueCommands(ds);
-  const resultsPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-')), 'results.json');
+  const resultsPath = path.join(scratchDir('retry-cli-'), 'results.json');
   fs.writeFileSync(resultsPath, JSON.stringify([
     null,
     { fingerprint: 'good', payload: { title: 'Good' }, ok: false, error: 'timeout' },
@@ -228,7 +229,7 @@ test('update reports an escalated fingerprint only on the firing it first crosse
     ],
   });
   const { update } = makeRetryQueueCommands(ds);
-  const resultsPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-')), 'results.json');
+  const resultsPath = path.join(scratchDir('retry-cli-'), 'results.json');
   fs.writeFileSync(resultsPath, JSON.stringify([
     { fingerprint: 'stuck', payload: { title: 'Stuck' }, ok: false, error: 'still failing' },
   ]));
@@ -249,7 +250,7 @@ test('update reports an escalated fingerprint only on the firing it first crosse
 test('update prints [] when nothing crosses the escalation threshold', () => {
   const ds = fakeDurableState({ retryQueue: [] });
   const { update } = makeRetryQueueCommands(ds);
-  const resultsPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-')), 'results.json');
+  const resultsPath = path.join(scratchDir('retry-cli-'), 'results.json');
   fs.writeFileSync(resultsPath, JSON.stringify([{ fingerprint: 'new', payload: { title: 'New' }, ok: false, error: 'timeout' }]));
   const out = captureStdout(() => update({ root: '/repo', _: ['update', resultsPath] }));
   assert.deepStrictEqual(JSON.parse(out), []);
@@ -258,7 +259,7 @@ test('update prints [] when nothing crosses the escalation threshold', () => {
 // A relative results path is read against the injected cwd, and a failure message
 // prints it exactly as the caller spelled it (not an absolute rebased path).
 test('update reads a relative results path against the injected cwd and prints that spelling in its error', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-'));
+  const root = scratchDir('retry-cli-');
   let out = '';
   let err = '';
   const cmds = makeRetryQueueCommands({
@@ -296,7 +297,7 @@ const POSIX_KERNEL_ONLY = process.platform === 'win32'
   : false;
 
 test('update keeps a trailing slash on a file path for the kernel: still exit 1 (ENOTDIR), not a silent []', { skip: POSIX_KERNEL_ONLY }, () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-'));
+  const root = scratchDir('retry-cli-');
   fs.writeFileSync(path.join(root, 'results.json'), '[]');
   const r = updateAgainst(root, 'results.json/');
   assert.strictEqual(r.code, 1);
@@ -305,7 +306,7 @@ test('update keeps a trailing slash on a file path for the kernel: still exit 1 
 });
 
 test('update leaves a `..` after a symlink to the kernel: link/../x resolves through the link target', { skip: POSIX_KERNEL_ONLY }, () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-'));
+  const root = scratchDir('retry-cli-');
   fs.mkdirSync(path.join(root, 'other', 'deep'), { recursive: true });
   fs.writeFileSync(path.join(root, 'other', 'only-there.json'), '[]');
   fs.symlinkSync(path.join(root, 'other', 'deep'), path.join(root, 'link'), 'dir');

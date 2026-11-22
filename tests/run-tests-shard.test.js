@@ -7,6 +7,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir, isolateTmpdir } = require('./helpers/tmp-dir');
+isolateTmpdir('ct-iso-run-tests-shard-');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
@@ -177,7 +179,7 @@ test('the durations reporter records each test file\'s summary, relative and sor
 // node truncates a reporter destination when the run starts, and the suite itself reads the committed
 // durations file, so a recording lands only when the run ends.
 test('finishRecording replaces the file only for a finished run that wrote something', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'run-tests-record-'));
+  const tmp = scratchDir('run-tests-record-');
   try {
     const out = path.join(tmp, 'durations.json');
     const partial = durationsPartialPath(out, 4242);
@@ -207,7 +209,7 @@ test('the durations reporter refuses to write an empty file', () => {
 // End to end through the CLI: a fixture root of tiny test files, run as two shards, each writes the
 // name of the file that ran; together they ran every file exactly once.
 test('run-tests.js --shard runs a disjoint slice per shard that together covers the root', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'run-tests-shard-'));
+  const tmp = scratchDir('run-tests-shard-');
   try {
     const root = path.join(tmp, 'suite');
     const out = path.join(tmp, 'ran');

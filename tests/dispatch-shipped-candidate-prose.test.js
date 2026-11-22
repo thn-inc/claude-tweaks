@@ -68,18 +68,24 @@ test('#4432: SKILL.md states the release rule and its accepted false negative', 
   assert.match(DISPATCH_SKILL, /shaping-only release/);
 });
 
+test('#5722: SKILL.md states the shaping-or-grant downgrade', () => {
+  assert.match(DISPATCH_SKILL, /#5722/);
+  assert.match(DISPATCH_SKILL, /shaped to `ready` or granted `auto:build` after/);
+});
+
 test('dispatch/SKILL.md stays under the read-limit rail', () => {
   const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
   assert.ok(Buffer.byteLength(DISPATCH_SKILL) <= RAIL_BYTES);
 });
 
-// The module's shipped pass run alone over records 7 (the #4432 shape) and 8 (same PR shape, no
-// release): each has a merged mention whose title matches its own, strong on title evidence alone.
-// `claim(n)` answers the claim read the pass makes for a release time. hooks.js answers no run dir,
-// so nothing is staged; nothing is probed, so no gh call is made.
+// The module's shipped pass over records 7 (the #4432 shape) and 8 (same PR shape, no release): each
+// has a merged mention whose title matches its own, strong on title evidence alone. `claim(n)` answers
+// the claim read the pass makes for a release time. The neighbour-in-flight pass runs omitted and on
+// files (no gh call): it prints the pull's one claim line, which carries the shipped list (#5304).
+// hooks.js answers no run dir, so nothing is staged; nothing is probed, so no gh call is made.
 function runShippedPass(t, claim) {
   const errs = [];
-  const ctx = makeContext({ sessionId: `dispatch-shipped-release-${crypto.randomBytes(6).toString('hex')}` }, {
+  const ctx = makeContext({ sessionId: `dispatch-shipped-release-${crypto.randomBytes(6).toString('hex')}`, transport: 'files', omit: ['neighbour-in-flight'] }, {
     stderr: (s) => errs.push(s),
     stdout: () => {},
     createClaimReader: () => ({ read: claim }),
@@ -95,7 +101,7 @@ function runShippedPass(t, claim) {
   fs.writeFileSync(ctx.paths['dispatch-groups.json'], JSON.stringify([[record(7), record(8)]]));
   fs.writeFileSync(ctx.paths['dispatch-linked-prs.json'], JSON.stringify({ 7: { mentions: [mention] }, 8: { mentions: [mention] } }));
   fs.writeFileSync(ctx.paths['dispatch-exclusions.json'], '[]');
-  runPasses(PASSES.filter((p) => p.id === 'shipped'), ctx);
+  runPasses(PASSES.filter((p) => p.id === 'shipped' || p.id === 'neighbour-in-flight'), ctx);
   return {
     stderr: errs.join(''),
     finalGroups: JSON.parse(fs.readFileSync(ctx.paths['dispatch-groups.json'], 'utf8')),

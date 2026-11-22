@@ -310,11 +310,12 @@ test('a journey files: entry not in canonical shape is unmatchable: journeys pro
 // --- parseJourneyText / readJourneys (IO layer) ---
 
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
 function journeyRoot(files) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-gate-j-'));
+  const root = scratchDir('ct-skill-gate-j-');
   for (const [rel, text] of Object.entries(files)) {
     const p = path.join(root, 'docs', 'journeys', rel);
     fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -350,7 +351,7 @@ test('parseJourneyText: a list the reader would cut short or a fence it would mi
 });
 
 test('readJourneys: a missing docs/journeys is no journeys', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-gate-j-'));
+  const root = scratchDir('ct-skill-gate-j-');
   assert.deepEqual(gate.readJourneys(root), { journeys: [] });
 });
 
@@ -382,8 +383,8 @@ test('readJourneys: inline files: value and an unclosed fence are errors naming 
 });
 
 test('readJourneys: an outside directory is never listed', (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-gate-j-'));
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-gate-out-'));
+  const root = scratchDir('ct-skill-gate-j-');
+  const outside = scratchDir('ct-skill-gate-out-');
   fs.mkdirSync(path.join(root, 'docs'));
   try {
     fs.symlinkSync(outside, path.join(root, 'docs', 'journeys'));
@@ -424,7 +425,7 @@ test('readJourneys: a symlink inside the checkout is read; outside and dangling 
   const root = journeyRoot({});
   const inside = path.join(root, 'shared.md');
   fs.writeFileSync(inside, '---\nfiles:\n  - a.js\n---\n');
-  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-gate-out-'));
+  const outsideDir = scratchDir('ct-skill-gate-out-');
   const outside = path.join(outsideDir, 'o.md');
   fs.writeFileSync(outside, '---\nfiles:\n  - a.js\n---\n');
   const dir = path.join(root, 'docs', 'journeys');
@@ -446,7 +447,7 @@ test('readJourneys: a symlink inside the checkout is read; outside and dangling 
 // --- gate() ---
 
 test('gate: an unresolvable base is cannot tell; a throwing rule is cannot tell, on one line', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-skill-gate-g-'));
+  const root = scratchDir('ct-skill-gate-g-');
   const execFails = () => { throw new Error('fatal: not a git repository\nsecond line'); };
   const a = gate.gate({ skill: 'journeys', integrationBranch: 'main', root, execImpl: execFails });
   assertCannotTell(a);

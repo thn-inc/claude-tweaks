@@ -13,7 +13,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/skill-gate.js" --skill <skill> [--mode <mode>] [
 - `--files` — the caller's already-resolved changed-file list, comma-joined (a path containing a comma is split at it and each piece is judged as its own path, so the verdict for that path is unreliable). `--integration-branch` — the ref `_shared/integration-branch.md` resolves; the gate resolves the branch's changed files itself. Pass one of the two; `pre-build` takes neither (no diff exists yet).
 - `--run`, `--section`, `--step` — all three together when the step has a run directory; a `skip` then appends one `SKIP` line to its `decisions.md`.
 
-Exit 0 for either decision; 2 for a malformed invocation (usage on stderr); 3 when `--run` is missing or not anchored under the main checkout. Output is one JSON line: `{decision, reason, journeys?, logged?}`.
+Exit 0 for either decision; 2 for a malformed invocation (usage on stderr); 3 when `--run` is missing or not anchored under the main checkout's .claude-tweaks/pipelines. Output is one JSON line: `{decision, reason, journeys?, logged?}`.
 
 ## Result handling
 

@@ -151,6 +151,11 @@ function setConfigLever({ runDir, key, value }) {
     }
   }
   fs.writeFileSync(file, lines.join('\n') + '\n');
+  // The run manifest (#5903) tracks the latest ceremony verdict. Best-effort: a failed fill never
+  // changes this write's outcome. Required lazily so the many callers that never touch it stay light.
+  if (key === 'ceremony-profile') {
+    try { require('../run-manifest/write').fillRunManifest(runDir, { ceremonyProfile: value }); } catch { /* never breaks the lever write */ }
+  }
   return { file, previous };
 }
 

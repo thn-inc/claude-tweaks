@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const { execFileSync } = require('child_process');
 
@@ -287,7 +288,7 @@ test('usableAnchor guards a dash-prefixed anchor with --end-of-options so it can
 // tip at cut time. preBranchFiles (each [rel, content]) commit to trunk before
 // the cut, so both branches start from them.
 function mergeRepo(preBranchFiles = []) {
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'merge-narrowing-')));
+  const repo = fs.realpathSync(scratchDir('merge-narrowing-'));
   const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   initRepo(repo, { name: 'verify test', email: 'verify-test@example.invalid', branch: 'trunk', cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   const write = (rel, content) => {

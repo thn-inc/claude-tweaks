@@ -32,7 +32,7 @@ const { formatEntry } = require('../log-decision/append');
 const { neutralizeClosingPhrases } = require('../flow/closing-links');
 const { GIT_TIMEOUT_MS, GIT_PUSH_TIMEOUT_MS } = require('../shared-primitives');
 const {
-  UsageError, realDeps, gitEnv, readManifest, writeManifest, skillLabel, stageEntry, LOG_SECTION, STEP, rowLabel, entryFindings, oneLine, firstStderrLine,
+  UsageError, realDeps, gitEnv, readManifest, writeManifest, skillLabel, stageEntry, headShortReader, LOG_SECTION, STEP, rowLabel, entryFindings, oneLine, firstStderrLine,
 } = require('./learned-skills');
 const { STATUS, patchDir, localPatchPath } = require('./layout');
 
@@ -179,11 +179,11 @@ function stagedCopyOf(entry, copies, deps) {
 }
 
 // Stages one entry through the shared writer. Returns { ok: true, row } or { ok: false, error }.
-function stageOne({ runDir, worktree, entry, reason, deps }) {
+function stageOne({ runDir, worktree, entry, reason, deps, headShort }) {
   try {
     const patch = deps.readFile(entry.patch);
     const res = stageEntry({
-      runDir, worktree, entry: { target: entry.target, summary: entry.summary, patch, patchFile: entry.patch, findings: entryFindings(entry) }, reason,
+      runDir, worktree, entry: { target: entry.target, summary: entry.summary, patch, patchFile: entry.patch, findings: entryFindings(entry) }, reason, headShort,
     }, deps);
     entry.status = STATUS.STAGED;
     entry.stagePath = res.stagePath;
@@ -196,9 +196,9 @@ function stageOne({ runDir, worktree, entry, reason, deps }) {
   }
 }
 
-function stageAll({ runDir, worktree, entries, reason, deps, out }) {
+function stageAll({ runDir, worktree, entries, reason, deps, out, headShort }) {
   for (const entry of entries) {
-    const r = stageOne({ runDir, worktree, entry, reason, deps });
+    const r = stageOne({ runDir, worktree, entry, reason, deps, headShort });
     if (r.ok) out.staged.push(r.row);
     else (out.failed = out.failed || []).push(r.error);
   }
@@ -218,6 +218,7 @@ function recordManifest(runDir, manifest, deps, out) {
 function stage({ runDir, worktree, reason, mergeBase }, overrides = {}) {
   const deps = { ...realDeps, ...overrides };
   checkCommon({ runDir, worktree });
+  const headShort = headShortReader(worktree, deps);
   const why = oneLine(reason);
   if (!why) throw new UsageError('reason is required');
   const base = checkMergeBase(mergeBase);
@@ -226,7 +227,7 @@ function stage({ runDir, worktree, reason, mergeBase }, overrides = {}) {
   const { todo, superseded, already } = triage({ runDir, worktree, mergeBase: base, manifest, deps });
   if (superseded.length) out.superseded = superseded;
   out.staged.push(...already);
-  stageAll({ runDir, worktree, entries: todo, reason: why, deps, out });
+  stageAll({ runDir, worktree, entries: todo, reason: why, deps, out, headShort });
   if (todo.length || superseded.length || already.length) recordManifest(runDir, manifest, deps, out);
   return out;
 }
@@ -266,6 +267,7 @@ function prBody(records, entries) {
 function land({ runDir, worktree, record, integrationBranch, mergeBase }, overrides = {}) {
   const deps = { ...realDeps, ...overrides };
   checkCommon({ runDir, worktree });
+  const headShort = headShortReader(worktree, deps);
   const records = normalizeRecords(record);
   if (typeof integrationBranch !== 'string' || !integrationBranch.trim() || integrationBranch.startsWith('-')) {
     throw new UsageError('integrationBranch must be a branch name');
@@ -299,7 +301,7 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
   }
 
   const downgradeAll = (entries, why) => {
-    stageAll({ runDir, worktree, entries, reason: why, deps, out });
+    stageAll({ runDir, worktree, entries, reason: why, deps, out, headShort });
     return finish();
   };
 
@@ -409,7 +411,7 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
         const why = step === 'git apply --check'
           ? `the patch no longer applies to ${tip ? branch : `origin/${integrationBranch}`} (git apply --check: ${firstStderrLine(err)})`
           : `could not build the commit (${step}: ${firstStderrLine(err)})`;
-        stageAll({ runDir, worktree, entries: [entry], reason: why, deps, out });
+        stageAll({ runDir, worktree, entries: [entry], reason: why, deps, out, headShort });
       }
     }
     if (!built.length) return finish();
@@ -423,7 +425,7 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
         pushed = true;
       } catch (err) {
         // The new commits are staged; reused commits already sit on the open PR's branch, so they land.
-        stageAll({ runDir, worktree, entries: fresh.map((b) => b.entry), reason: `push of ${branch} failed (${firstStderrLine(err)})`, deps, out });
+        stageAll({ runDir, worktree, entries: fresh.map((b) => b.entry), reason: `push of ${branch} failed (${firstStderrLine(err)})`, deps, out, headShort });
         built.splice(0, built.length, ...built.filter((b) => b.reused));
         if (!built.length) return finish();
       }

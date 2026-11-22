@@ -10,6 +10,7 @@ const { localHasMerge } = require('../../plugin/bin/lib/reconcile/archive-merged
 const { installStub } = require('./path-stub');
 const { fromTemplate, fromTemplateSet, disableReceiveAutoGc } = require('./git-template');
 const { writeIdentity } = require('./git-fixtures');
+const { scratchDir } = require('./tmp-dir');
 
 const HOOKS =path.join(__dirname, '..', '..', 'plugin', 'bin', 'hooks.js');
 
@@ -161,7 +162,7 @@ async function reconcileWithAsyncMerge(checks, extra = {}) {
 // `no-remote`, so the verb's output shape is exercised without any live
 // state being reachable.
 function noRemoteFixture(slug) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), slug));
+  const dir = scratchDir(slug);
   git(['init', '-q'], dir);
   fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
@@ -193,7 +194,7 @@ function writePolicyViaSeedAndPull(seedDir, mainDir, contents) {
 // while an in-flight reconcile() still has fetches to issue would silently
 // stop logging them, and the count assertion would pass for the wrong reason.
 async function withFetchArgvLog(fn) {
-  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-fetchargv-'));
+  const logDir = scratchDir('ct-recon-fetchargv-');
   const logFile = path.join(logDir, 'fetch-argv.log');
   fs.writeFileSync(logFile, '');
   const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();

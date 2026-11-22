@@ -31,6 +31,8 @@ const { appendEntry, formatEntry, hms } = require('./lib/log-decision/append');
 const {
   parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions, gateOriginRepo,
 } = require('./lib/repo-resolve');
+const { appendStationEvent, toRepoName } = require('./lib/station-events/emit');
+const { transitionsForLabel } = require('./lib/station-events/stations');
 
 const USAGE = 'usage: apply-refine-labels.js <actions.json> [--run <run-dir>] [--repo [host/]owner/name] [--help]\n';
 
@@ -108,6 +110,44 @@ function errMessage(err) {
   return [err && err.message, err && err.stderr, err && err.stdout].filter(Boolean).join(' ') || String(err);
 }
 
+// #5902: one station event per label-protocol transition of an applied edit.
+// Optional dep (absent = no emission); each call in its own try so a
+// throwing emitter never changes the batch. With a run dir the discriminator
+// is clock-free, so a replayed batch within a run dedupes; without one it ends
+// with the invocation's start time, so a later grant of the same label is a
+// distinct fact. A repo that does not reduce to owner/name emits nothing.
+function emitLabelTransitions(deps, { issue, addLabels, removeLabels, repoName, runDir, startedAt }) {
+  if (typeof deps.stationEvent !== 'function' || !repoName) return;
+  const runId = runDir ? path.basename(runDir) : null;
+  const suffix = runId || startedAt || '';
+  const edits = [
+    ...(addLabels || []).map((label) => ({ label, direction: 'added' })),
+    ...(removeLabels || []).map((label) => ({ label, direction: 'removed' })),
+  ];
+  // One action records a transition once: `ready` added and `needs:definition` removed both
+  // exit intake, and two identical `exited intake passed` events would be one fact written twice.
+  const recorded = new Set();
+  for (const { label, direction } of edits) {
+    for (const t of transitionsForLabel(label, direction)) {
+      const fact = `${t.kind}|${t.station}|${t.outcome || ''}`;
+      if (recorded.has(fact)) continue;
+      recorded.add(fact);
+      try {
+        deps.stationEvent({
+          ...t,
+          recordNumber: issue,
+          repoName,
+          lane: 'unknown',
+          runId,
+          sessionId: deps.sessionId || null,
+          payload: { label, direction },
+          discriminator: `refine:${issue}:${direction}:${label}:${suffix}`,
+        });
+      } catch { /* emission is best-effort — never fails the batch */ }
+    }
+  }
+}
+
 const realDeps = {
   gh: (args) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', windowsHide: true })),
   ghAvailable,
@@ -118,8 +158,11 @@ const realDeps = {
   isAnchored: (resolvedPath, mainRoot) => wtDetect.isAnchoredUnderRoot(resolvedPath, mainRoot),
   now: () => Date.now(),
   appendEntry,
+  sessionId: process.env.CLAUDE_CODE_SESSION_ID || null,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
+  // #5902: the station-event emitter; a test that calls run() with its own deps omits it (no emission).
+  stationEvent: (e) => appendStationEvent(e),
 };
 
 // argv -> exit code. All I/O through deps so tests never touch gh, git, or the filesystem.
@@ -181,6 +224,11 @@ function run(argv, deps = realDeps) {
   }
   if (!repoSpec) { deps.stderr('apply-refine-labels.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return 2; }
   const repoFlag = repoSlug(repoSpec);
+  // #5902: computed once per invocation for the station-event emission; the
+  // injected deps.now() is the only clock, and a bad value never fails the batch.
+  const repoName = toRepoName(repoFlag);
+  let startedAt = null;
+  try { startedAt = new Date(deps.now()).toISOString(); } catch { startedAt = null; }
 
   const ok = [];
   const failed = [];
@@ -204,6 +252,9 @@ function run(argv, deps = realDeps) {
         for (const l of action.addLabels || []) editArgs.push('--add-label', l);
         for (const l of action.removeLabels || []) editArgs.push('--remove-label', l);
         deps.gh(editArgs);
+        emitLabelTransitions(deps, {
+          issue: action.issue, addLabels: action.addLabels, removeLabels: action.removeLabels, repoName, runDir, startedAt,
+        });
         logAuto(deps, runDir, `#${action.issue}: applied ${labelSummary}`);
       } catch (err) {
         editFailed = true;
@@ -237,6 +288,9 @@ function run(argv, deps = realDeps) {
   return 0;
 }
 
-module.exports = { run, parseArgs, validateAction };
+module.exports = { run, parseArgs, validateAction, realDeps };
 
-if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
+// #5902: the real emitter rides in realDeps, so only a run that defaults to them emits.
+if (require.main === module) {
+  process.exitCode = run(process.argv.slice(2));
+}
