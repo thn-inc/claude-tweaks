@@ -16,6 +16,8 @@
 const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir, isolateTmpdir } = require('./helpers/tmp-dir');
+isolateTmpdir('ct-iso-hooks-gate-coverage-');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { GATE_COVERAGE } = require('../plugin/bin/lib/hooks/pre-tool-use');
@@ -24,6 +26,7 @@ const { WRITE_SHAPES, fileWriteTargets, forEachShellSegment, gitTargets, mkdirTa
 const { shouldRunFull } = require('../plugin/bin/lib/hooks/bash-prefilter');
 const { readText } = require('./helpers/read-skill');
 const { shellQuote } = require('./helpers/shell-quote');
+const { initRepo } = require('./helpers/git-fixtures');
 
 const runsFull = (event, command) => shouldRunFull(event, { tool_name: 'Bash', tool_input: { command } });
 function bashGroupOf(group) {
@@ -42,7 +45,7 @@ const MAIN_F = path.resolve('/main/f.js');
 const TMP_DIRS_4303 = [];
 after(() => { for (const dir of TMP_DIRS_4303) fs.rmSync(dir, { recursive: true, force: true }); });
 const tmpDir4303 = (prefix) => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(require('os').tmpdir(), prefix)));
+  const dir = fs.realpathSync(scratchDir(prefix));
   TMP_DIRS_4303.push(dir);
   return dir;
 };
@@ -170,6 +173,13 @@ for (const [label, name, from, to] of [
       `${name} and the heredoc paragraph in skills/_shared/policy-schema-coverage.md have diverged`);
   });
 }
+
+test('#4448: policy-schema-coverage.md names exactly the words git-command.js\'s STRIPPED_PREFIX_WORDS holds', () => {
+  const words = proseList(readText(SCHEMA), 'redirections, and the words ', ' with their options');
+  assert.strictEqual(new Set(words).size, words.length, `the prose names a stripped prefix twice: ${words.join(', ')}`);
+  assert.deepStrictEqual([...words].sort(), [...gitCommand.STRIPPED_PREFIX_WORDS].sort(),
+    'STRIPPED_PREFIX_WORDS and the stripped-prefix sentence in skills/_shared/policy-schema-coverage.md have diverged');
+});
 
 test('GATE_COVERAGE is frozen, so a caller cannot mutate the contract at runtime', () => {
   assert.ok(Object.isFrozen(GATE_COVERAGE));
@@ -374,9 +384,7 @@ test('#976 AC1: `git mv` inside a worktree-always project triggers the same E1 d
   const osMod = require('os');
   const { execFileSync } = require('child_process');
   const main = fsMod.mkdtempSync(path.join(osMod.tmpdir(), 'ct-976-main-'));
-  execFileSync('git', ['-C', main, 'init', '-q']);
-  execFileSync('git', ['-C', main, 'config', 'user.email', 't@example.com']);
-  execFileSync('git', ['-C', main, 'config', 'user.name', 'T']);
+  initRepo(main, { name: 'T', email: 't@example.com' });
   fsMod.writeFileSync(path.join(main, 'a.txt'), 'x\n');
   execFileSync('git', ['-C', main, 'add', 'a.txt']);
   execFileSync('git', ['-C', main, 'commit', '-q', '-m', 'init']);
@@ -384,6 +392,7 @@ test('#976 AC1: `git mv` inside a worktree-always project triggers the same E1 d
   fsMod.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
 
   const out = preToolUse.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: 'git mv a.txt b.txt' }, cwd: main },
     runDir: null,
     runState: null,
@@ -578,9 +587,21 @@ for (const [cmd, files] of [
   ['cp a b -t d e', ['d', 'e']], ['mv a b -t d e', ['d', 'e']], ['cp a -t/main', ['/main', '-t/main']],
   ['cp a b -v', ['b', '-v']], ['cp a b --suffix=.bak', ['b', '--suffix=.bak']],
   ['cp a b --sparse always', ['b', 'always']], ['cp a b --no-preserve mode', ['b', 'mode']],
-  ['cp a b -S', ['b', '-S']], ['cp a b --suffix', ['b', '--suffix']],
 ]) {
   test(`#4449: \`${cmd}\` reports the GNU destination and the BSD destination`, () => {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), files.map((f) => path.resolve('/r', f)));
+  });
+}
+// #4449: a trailing -S or --suffix with no value is not a GNU destination. GNU coreutils 9.12 `gcp a b
+// -S` and `gcp a b --suffix` exit 1 ("option requires an argument -- 'S'" and "option '--suffix'
+// requires an argument") and write nothing, while macOS's BSD /bin/cp a b -S exits 1 with `cp: -S: Not
+// a directory`, reading -S as its destination. So -S is the BSD reading's destination (written only if
+// a directory -S exists) and b is the GNU reading's over-read: the gate denies a write that GNU never
+// makes, which only over-denies.
+for (const [cmd, files] of [
+  ['cp a b -S', ['b', '-S']], ['cp a b --suffix', ['b', '--suffix']],
+]) {
+  test(`#4449: \`${cmd}\` reports the BSD destination and over-reads b, which GNU never writes`, () => {
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), files.map((f) => path.resolve('/r', f)));
   });
 }
@@ -975,6 +996,148 @@ test('#4149 with #4210: a heredoc inside a quoted "$( … )" is judged by the su
   assert.deepStrictEqual(fileWriteTargets("git commit -m \"$(cat <<'EOF'\nfix: a > b, it's done\nEOF\n)\"", '/r'), []);
 });
 
+// #4246: a `<<` inside an unquoted `${ … }` is word text, not an opener, so no body is cut out
+// and the `: > /M/zz` line runs as a command. bash 3.2 and 5 write /M/zz for the first case; zsh
+// does not (it reads the `<<` as an opener there). For the second, bash 3.2 and zsh write /M/zz and
+// bash 5 does not (it reads the `<<` after the `$(cat` as an opener). Side with the shells that write.
+test('#4246: a `<<` inside an unquoted ${ … } is literal text, not a heredoc opener', () => {
+  for (const command of ['echo ${x:-<<EOF}\n: > /M/zz\nEOF}', 'echo ${x:-$(cat <<EOF)}\n: > /M/zz\nEOF']) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/M/zz') }], command);
+  }
+});
+
+// #4246: a heredoc opened before a multi-line `${ … }` has its body planned after the line that
+// holds the closing `}`, which is how bash reads it. bash 3.2, bash 5 and zsh all write nothing
+// here: `: > /M/zz` is the heredoc's body. Base planned the body at the span's first newline, so
+// the body line read as a command and base reported /M/zz.
+test('#4246: a heredoc opened before a multi-line ${ … } keeps its body after the closing line', () => {
+  assert.deepStrictEqual(fileWriteTargets('cat <<EOF; echo ${x:-a\nb}\n: > /M/zz\nEOF', '/r'), []);
+});
+
+// #4246 guard pin: only a closed `${ … }` is skipped. bash 3.2, bash 5 and zsh all write nothing
+// for an unclosed one (a syntax error), and the scanner keeps the opener line's bodies as their own
+// chunks, tagged `shell` for a shell reader, so a writer behind it is still found. Skipping an
+// unclosed span would emit the rest of the command as one raw run and return no bodies at all.
+test('#4246: only a closed ${ … } is skipped; an unclosed one reads as before', () => {
+  assert.deepStrictEqual(stripHeredocBodies('cat <<EOF ${x\nbody\nEOF'), {
+    outer: 'cat <<EOF ${x\n',
+    bodies: [{ at: 4, text: 'body\n', shell: false }],
+  });
+  assert.deepStrictEqual(stripHeredocBodies('sh <<EOF ${x\n: > /M/zz\nEOF'), {
+    outer: 'sh <<EOF ${x\n',
+    bodies: [{ at: 3, text: ': > /M/zz\n', shell: true }],
+  });
+});
+
+// #4246: a heredoc opened inside an unquoted `$( … )` whose `)` closes on the opener line has no
+// body to bash 3.2 and zsh, which run the lines after it as commands; bash 5 reads them as the
+// body. bash 3.2 and zsh write /M/zz for each case, bash 5 writes nothing; the scan keeps the
+// would-be body and scans it as commands, so it reports the write. (`x=$(cat <<EOF)` and
+// `echo "$(cat <<EOF)"` already reported /M/zz before this rule.) The last two open the heredoc in
+// an unquoted `$( … )` inside a `"$( … )"` that stays open: the heredoc belongs to the innermost
+// frame, which closes on the opener line. bash 3.2 and zsh write zz, bash 5 writes nothing.
+test('#4246: a heredoc whose $( … ) closes on the opener line keeps its would-be body, scanned as commands', () => {
+  for (const command of [
+    'echo $(cat <<EOF)\n: > /M/zz\nEOF',
+    'echo $(cat <<EOF; echo x)\n: > /M/zz\nEOF',
+    'echo $(echo $(cat <<EOF))\n: > /M/zz\nEOF',
+    'x="$(cat $(cat <<EOF)\n: > /M/zz\nEOF\n)"',
+    'x="$(\necho $(cat <<EOF)\n: > /M/zz\nEOF\n)"',
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/M/zz') }], command);
+  }
+});
+
+// #4246 (deliberate fail-closed tradeoff): a line holding a same-line-closed `$(cat <<A)` keeps
+// every body on it, B's included. bash 3.2, bash 5 and zsh write nothing for either case (`: > /M/zz`
+// is A's or B's body under each reading). The first is a spurious deny base did not have (base
+// stripped both bodies); the second matches base (A has no `A` line, so the rest stays as written).
+test('#4246: a line holding a same-line-closed $(cat <<A) keeps every body (deliberate fail-closed tradeoff)', () => {
+  for (const command of ['cat $(cat <<A) <<B\nA\n: > /M/zz\nB', 'cat $(cat <<A) <<B\n: > /M/zz\nB']) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/M/zz') }], command);
+  }
+});
+
+// #4246: a kept would-be body is scanned from the opener's cwd as its own chunk, and the outer scan
+// resumes after the delimiter with the opener line's cwd, bash 5's reading. From /r, bash 5 writes
+// /r/zz and bash 3.2 and zsh write /M/zz (they run the `cd`): the scan reports /r/zz, the known gap
+// in policy-schema-coverage.md. From /main, bash 5 writes /main/zz, which the scan must keep
+// reporting (bash 3.2 and zsh write /wt/zz); dropping the body would report only /wt/zz.
+test('#4246: a `cd` in a kept would-be body does not move a write after the delimiter', () => {
+  assert.deepStrictEqual(fileWriteTargets('echo $(cat <<EOF)\ncd ../M\nEOF\n: > zz', '/r'), [
+    { action: 'write', file: path.resolve('/r/zz') },
+  ]);
+  assert.deepStrictEqual(fileWriteTargets('echo $(cat <<EOF)\ncd ../wt\nEOF\n: > zz', '/main'), [
+    { action: 'write', file: path.resolve('/main/zz') },
+  ]);
+});
+
+// #4246: a closed `${ … }` that holds a `$(` is read a character at a time, so a heredoc inside its
+// substitution is planned as any other. From /main, bash 5 writes /main/zz (`cd ../wt` is the body)
+// and bash 3.2 and zsh write /wt/zz; from /r, bash 5 writes /r/zz and bash 3.2 and zsh write /M/zz
+// (the known gap above). Skipping the span whole ran the `cd` as a command and reported only /wt/zz
+// and /M/zz, which let bash 5's /main/zz through.
+test('#4246: a heredoc inside a $( … ) inside a closed ${ … } is planned as any other', () => {
+  assert.deepStrictEqual(fileWriteTargets('echo ${x:-$(cat <<EOF)}\ncd ../wt\nEOF\n: > zz', '/main'), [
+    { action: 'write', file: path.resolve('/main/zz') },
+  ]);
+  assert.deepStrictEqual(fileWriteTargets('echo ${x:-$(cat <<EOF)}\ncd ../M\nEOF\n: > zz', '/r'), [
+    { action: 'write', file: path.resolve('/r/zz') },
+  ]);
+});
+
+// #4246 guard pin: a `<<` in the own text of a closed `${ … }` that holds a `$(` stays literal.
+// bash 3.2 and 5 write /main/zz (the `cd` runs); zsh writes nothing (it reads the `<<` as an opener).
+// Reading the span as base did made the `<<` an opener, cut `cd ../main` out as its body, and
+// reported only /wt/zz.
+test('#4246: a `<<` in the own text of a ${ … } that holds a $( is not an opener', () => {
+  assert.deepStrictEqual(fileWriteTargets('echo ${x:-$(true) <<EOF}\ncd ../main\nEOF}\n: > zz', '/wt'), [
+    { action: 'write', file: path.resolve('/main/zz') },
+  ]);
+});
+
+// #4246 guard pin: that literal reading ends at the span's closing `}`. bash 3.2, bash 5 and zsh
+// write /main/zz (`cd ../wt` is cat's body). Reading the later `<<` as the span's own text too would
+// run the `cd` as a command and report only /wt/zz.
+test('#4246: a `<<` after a closed ${ … } that holds a $( is an opener again', () => {
+  assert.deepStrictEqual(fileWriteTargets('echo ${x:-$(true)}; cat <<EOF\ncd ../wt\nEOF\n: > zz', '/main'), [
+    { action: 'write', file: path.resolve('/main/zz') },
+  ]);
+});
+
+// #4246 guard pin: an unquoted `$( … )` inside a `"$( … )"` plans its heredoc against the quoted
+// substitution's text, as before #4246. bash 3.2, bash 5 and zsh write /M/zz: echo joins the body
+// to one line and `sh -c` runs `cat <<X : > /M/zz X`. That text names no shell, so the kept body is
+// also walked with its own `cat <<X` body left in; planning against the whole line, which names `sh`,
+// would strip it and report nothing.
+test('#4246: a $( … ) inside a "$( … )" plans its heredoc against the quoted substitution', () => {
+  assert.deepStrictEqual(fileWriteTargets("sh -c \"$(echo $(cat <<'EOF'\ncat <<X\n: > /M/zz\nX\nEOF\n))\"", '/r'), [
+    { action: 'write', file: path.resolve('/M/zz') },
+  ]);
+});
+
+// #4246 guard pin: a `)` closing on the opener line marks only its own substitution's heredocs. bash
+// 3.2, bash 5 and zsh write nothing (each `: > /M/zz` is A's or B's body, both read by cat). Marking A
+// too, which no substitution holds, would keep both bodies and scan them as commands.
+test('#4246: a same-line `)` keeps only its own substitution\'s heredoc bodies', () => {
+  assert.deepStrictEqual(fileWriteTargets('cat <<A $(true) "$(cat <<B\n: > /M/zz\nA\n: > /M/zz\nB\n)"', '/r'), []);
+});
+
+// #4246: a `$(` inside an open `$(( … ))` or `(( … ))` opens no substitution frame, so its parens
+// count toward the arithmetic and the `<<` after them is still a shift. bash 3.2, bash 5 and zsh
+// write /main/zz for each of the first two. A frame there let its `)` close the arithmetic early,
+// so the `<<` read as an opener and `cd ../main` as its body. The `$[ … ]` case was never affected
+// (its depth counts brackets, not parens); all three shells write /main/zz for it too.
+test('#4246: a $( inside arithmetic keeps the arithmetic paren count', () => {
+  for (const command of [
+    'echo $(( $(echo 1) + $(echo 1) << y ))\ncd ../main\ny\n: > zz',
+    '(( $(echo 1) + $(echo 1) << y ))\ncd ../main\ny\n: > zz',
+    'echo $[ $(echo 1) + $(echo 1) << y ]\ncd ../main\ny\n: > zz',
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/wt'), [{ action: 'write', file: path.resolve('/main/zz') }], command);
+  }
+});
+
 // #4149 with #4210: a command nested past NEST_LEVEL_CAP re-reads flat, and the flat split cuts at
 // a `|` or `;` inside "$( … )"; the walk carries the nesting state across that cut, so the inner `>`
 // stays quoted. bash 3.2 and 5 write only out.js and z.
@@ -1026,6 +1189,122 @@ test('#4210 F2: an escaped character before a glued `>` still resolves its targe
   }
   for (const command of ['echo foo\\>x', 'echo "$(awk "{print \\$1>2}" f)"']) {
     assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], command);
+  }
+});
+
+// #4294 classes 1 and 2 are bash word values since #4281, so these are characterization pins of
+// #4281's tokenize, shown red against a scratch mutant of its unescaping lines. bash 3.2, bash 5 and
+// zsh write each target.
+const at4294 = (action, f) => [{ action, file: path.resolve(f) }];
+for (const [command, actual, expected] of [
+  ['mkdir a\\ b', mkdirTargets, at4294('mkdir', '/r/a b')],
+  ['mkdir -p /r/a\\ b/c', mkdirTargets, at4294('mkdir', '/r/a b/c')],
+  ['cp a my\\ file.js', fileWriteTargets, at4294('copy', '/r/my file.js')],
+  ['cd /r/a\\ b && git commit -m x', gitTargets, [{ action: 'commit', dir: path.resolve('/r/a b') }]],
+  ['echo x >/ma\\\nin/x', fileWriteTargets, at4294('write', '/main/x')],
+  ['mkdir -p \\\n/abs/dir', mkdirTargets, at4294('mkdir', '/abs/dir')],
+]) {
+  test(`AC1.1 #4294: ${JSON.stringify(command)} resolves bash's target (characterization of #4281)`, () => {
+    assert.deepStrictEqual(actual(command, '/r'), expected);
+  });
+}
+
+// #4294 AC2, #4212's carried-over expectations: an escaped quote is a literal path character, so
+// bash 3.2, bash 5 and zsh write under the cwd. `echo a\"b>c` writes c; `echo "a\" b>c "` and
+// `echo foo\>x` write nothing; `echo foo\\>x` writes x. `echo $M>x` writes x too, a known miss #4328
+// owns.
+const at4294Cwd = (f) => [{ action: 'write', file: path.resolve('/r', f) }];
+for (const [command, actual, expected] of [
+  ['echo "a\\" b>c "', fileWriteTargets, []],
+  ['echo foo>x', fileWriteTargets, at4294Cwd('x')],
+  ['echo foo\\\\>x', fileWriteTargets, at4294Cwd('x')],
+  ['echo foo\\>x', fileWriteTargets, []],
+  ['echo $M>x', fileWriteTargets, []],
+  ['echo a\\"b>c', fileWriteTargets, at4294Cwd('c')],
+  ["cd \\'/wt\\' && git commit -m x", gitTargets, [{ action: 'commit', dir: path.resolve('/r', "'/wt'") }]],
+  ["echo x > \\'/abs/f\\'", fileWriteTargets, at4294Cwd("'/abs/f'")],
+]) {
+  test(`AC2.1 #4294: ${JSON.stringify(command)} keeps #4212's carried-over redirect expectation`, () => {
+    assert.deepStrictEqual(actual(command, '/r'), expected);
+  });
+}
+
+// #4294 AC3: #4210's cases still resolve. bash 3.2, bash 5 and zsh write x and out.
+test('AC3.1 #4294: #4210\'s quoted-span and one-word-group redirects still resolve', () => {
+  assert.deepStrictEqual(fileWriteTargets('echo "hi">x', '/r'), [{ action: 'write', file: path.resolve('/r', 'x') }]);
+  assert.deepStrictEqual(fileWriteTargets('(ls)>out', '/r'), [{ action: 'write', file: path.resolve('/r', 'out') }]);
+});
+
+// #4294 class 3: an escaped blank ends a `$NAME`, `${ … }` or backtick word part, so a glued `>` after
+// it is a redirect. bash 3.2, bash 5 and zsh write x for each.
+for (const command of [
+  'echo $M\\ >x', 'echo ${M}\\ >x', 'echo `d`\\ >x', 'echo $M\\ bar>x', 'M=a; echo $M\\ >x', 'echo $1\\ >x',
+  'echo $M\\\t>x', 'echo $M\\ $N\\ >x', 'echo ${M}a\\ b>x', 'echo ${M:-${N}}\\ >x',
+  'echo a$M\\ >x', 'echo "q"$M\\ >x', 'echo $M\\ "q">x', "echo $M\\ 'q'>x",
+  'echo $M\\ >>x', 'echo $M\\ >|x', 'echo $M\\ &>x', 'A=$M\\ >x', 'cd $M\\ >x', 'echo $(d $M\\ >x)',
+  // A `}` with no `${` open is text, so it closes nothing.
+  'echo }$M\\ >x',
+  // An escaped or quoted `{`, `[`, backtick, `(` or `$` is text, so it opens nothing.
+  'echo $\\{M\\ >x', 'echo $\\[$M\\ >x', 'echo \\`$M\\ >x', 'echo \\($M\\ >x', 'echo $M\\ \\$N>x', 'echo $M\\ "$N">x', 'echo $M\\ \\(a>x',
+]) {
+  test(`AC1.1 #4294: ${JSON.stringify(command)} resolves its glued redirect after closed expansions and an escaped blank`, () => {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', 'x') }]);
+  });
+}
+
+// bash 3.2, bash 5 and zsh write nothing for each: a bad substitution, a syntax error, an unterminated
+// backtick or quote, an escaped `>`, a comparison, an fd dup or a sink.
+for (const command of [
+  'echo ${M\\ >x}', 'echo ${M:-${N}\\ >x}', 'echo }${M\\ >x}', 'echo a(b)\\ >x', 'echo $M\\ (a)>x', 'echo `d\\ >x', 'echo $M\\ "a>x', 'echo "a\\ >x',
+  'echo $M\\>x', 'echo $(($M\\ >1))', 'echo $[1\\ >x]', 'echo $[$M\\ >x]', '[[ $M\\ >x ]]', '(( $M\\ >1 ))', 'echo $M\\ >&2', 'echo $M\\ >/dev/null',
+]) {
+  test(`AC1.1 #4294: ${JSON.stringify(command)} resolves no target, an escaped blank inside an open expansion or before a non-operator \`>\``, () => {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), []);
+  });
+}
+
+// Known misses, all tracked in #4328 (its Absorbed table, and its bullet on a glued redirect after a word
+// holding a bare `$`, which covers `echo $M>x`, `echo $M\ $N>x`, `echo ${M}\ ${N}>x` and `echo $M\a>x`):
+// bash 3.2, bash 5 and zsh write x for each, and the scanner resolves no target. `echo $M>x` is the
+// documented gap, and a bare `$`, backtick or non-blank escape after the last escaped blank is the
+// same shape. A `>` in "$( … )" stays nested. A closed `$( )`, an arithmetic `$(( ))`,
+// a `$[ ]` or a backtick holding a blank before the escaped blank is not read as closed, and neither is a
+// `${ }` that closes after the blank. A `$VAR` target behind a second `$` or a backtick is one
+// substituteVars skips: those two write y/x.
+for (const command of [
+  'echo $M>x', 'echo $M\\ $N>x', 'echo ${M}\\ ${N}>x', 'echo $M\\ `d`>x', 'echo $M\\a>x',
+  'echo "$(a $M\\ >x)"', 'echo $(d)\\ >x', 'echo $((1))\\ >x', 'echo $[1]\\ >x', 'echo ${M:-\\ }>x', 'echo `d e`\\ >x', 'echo `$M\\ >x`',
+  'WT=y; echo $M\\ >$WT/x', 'WT=y; echo `d`\\ >$WT/x',
+]) {
+  test(`AC1.1 #4294: ${JSON.stringify(command)} stays a known miss without a target`, () => {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), []);
+  });
+}
+
+// Named false denies: bash 3.2, bash 5 and zsh write nothing, and the scanner names a fragment. One token
+// cannot see the expansion an earlier token opened. Base reads the plain word the same way
+// (`echo ${M:-a foo>x}` gives /r/x}, `echo $(( a b>1 ))` gives /r/1), and a deny is the safe side of it.
+// A `}` inside a backtick is counted too, so the `${` around it reads as closed. `echo $'\'\ >x'` is the
+// tokenizer's misreading of `$'\'`, not a prefix rule: it ends the ANSI-C string at the escaped quote, so the
+// blank and `>x'` read as bare words (the spaced `echo $'\' >x'` gives `x'` at base too). bash 3.2, bash 5 and
+// zsh write nothing; a fix belongs in `tokenize`, tracked in #4328.
+test('AC1.1 #4294: an expansion the prefix cannot see open, or a misread ANSI-C string, reads as a false deny, as the plain word does', () => {
+  assert.deepStrictEqual(fileWriteTargets("echo $'\\'\\ >x'", '/r'), [{ action: 'write', file: path.resolve('/r', "x'") }]);
+  assert.deepStrictEqual(fileWriteTargets('echo ${M:-a $N\\ >x}', '/r'), [{ action: 'write', file: path.resolve('/r', 'x}') }]);
+  assert.deepStrictEqual(fileWriteTargets('echo $(( $M\\ >1 ))', '/r'), [{ action: 'write', file: path.resolve('/r', '1') }]);
+  assert.deepStrictEqual(fileWriteTargets('echo ${M:-`d}`\\ >x}', '/r'), [{ action: 'write', file: path.resolve('/r', 'x}') }]);
+});
+
+// A chained glued redirect resolves one joined name, as the plain word does at base (`echo foo>x>y` gives
+// `x>y`): bash 3.2, bash 5 and zsh write both files, so a later protected target is missed. `echo $M\ >ok>/main/leak`
+// writes `ok` in the cwd and `/main/leak`, and the scanner names the one cwd file `ok>/main/leak`. This is a
+// fail-open gap, tracked in #4328, that the escaped-blank rule inherits and does not widen.
+test('AC1.1 #4294: a chained glued redirect resolves one joined name, a tracked gap (#4328)', () => {
+  for (const [command, name] of [
+    ['echo $M\\ >x>y', 'x>y'], ['echo foo>x>y', 'x>y'],
+    ['echo $M\\ >ok>/main/leak', 'ok>/main/leak'], ['echo foo>ok>/main/leak', 'ok>/main/leak'],
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', name) }], command);
   }
 });
 
@@ -1666,6 +1945,374 @@ test('#4303: the cd after an assignment word that never closes is not followed',
   }
 });
 
+// #4448: the write gate reads the command word bash runs behind the stripped prefixes (assignment
+// words, redirections, and STRIPPED_PREFIX_WORDS with their options). Every verdict below was taken
+// under bash 3.2, bash 5 and zsh from a worktree W with M the main checkout; "all" means the three
+// agree. sudo and doas cannot run in the oracle: their rows cite sudo(8)'s and doas(1)'s argv
+// contract (sudo reads options, value-taking short letters a C c D g h p R r T t U u, then VAR=value
+// words, then the command; doas reads -L -n -s and value-taking -a, -C and -u, then the command:
+// `doas [-Lns] [-a style] [-C config] [-u user] command`).
+{
+  const MAIN_B = path.resolve('/main/b');
+  const files = (cmd, cwd = '/r') => fileWriteTargets(cmd, cwd).map((x) => x.file);
+  const includesFor = (cmds, file) => {
+    for (const cmd of cmds) assert.ok(files(cmd).includes(file), `${cmd}: ${JSON.stringify(files(cmd))}`);
+  };
+  const copyMain = [{ action: 'copy', file: MAIN_F }];
+  const copyHere = [{ action: 'copy', file: path.resolve('/r/f.js') }];
+  const writeG = { action: 'write', file: path.resolve('/r/g') };
+
+  // all: M for each (`X=1 sed -i.bak s/a/b/ M/x` is the sed row's verdict); sudo per sudo(8).
+  test('AC1.1 #4448: a write shape behind a NAME=value or NAME+=value prefix resolves the main-checkout write', () => {
+    includesFor(['X=1 cp a /main/f.js', 'X=1 tee /main/f.js', 'x+=1 tee /main/f.js', 'X=1 sed -i s/a/b/ /main/f.js',
+      'x=$(echo a b) cp a /main/f.js', 'a=( 1 2 ) cp a /main/f.js', 'sudo cp a /main/f.js'], MAIN_F);
+  });
+
+  // all: M/b for each bare prefix and option row, except `time -p cp` (bash 3.2 and 5 write M/b,
+  // zsh runs `-p` and writes nothing: side with bash). `builtin cp x M/b` writes nothing in any
+  // shell (`builtin: cp: not a shell builtin`): reading cp is the accepted fail-closed tradeoff.
+  // `nice --adjustment=5` and `nice --adjustment 5` pin GNU nice's reading (macOS nice rejects
+  // them and writes nothing). sudo and doas rows per sudo(8) and doas(1); sudo reads every word with
+  // an `=` before the command as an environment assignment, so `sudo a.b=1 cp` runs cp.
+  test('AC1.2 #4448: a write shape behind each stripped prefix resolves the main-checkout write', () => {
+    includesFor(['! cp x /main/b', 'time cp x /main/b', 'command cp x /main/b', 'nohup cp x /main/b', 'nice cp x /main/b',
+      'doas cp x /main/b', 'exec cp x /main/b', 'builtin cp x /main/b',
+      'time -p cp x /main/b', 'command -p -- cp x /main/b', 'nohup -- cp x /main/b', 'nice -n 5 cp x /main/b',
+      'nice -n5 cp x /main/b', 'nice -5 cp x /main/b', 'nice --adjustment=5 cp x /main/b', 'nice --adjustment 5 cp x /main/b',
+      'exec -a foo cp x /main/b',
+      'exec -cl cp x /main/b', 'sudo -u bob cp x /main/b', 'sudo -E X=1 tee /main/b', 'sudo a.b=1 cp x /main/b', 'doas -u bob cp x /main/b',
+      'doas -n cp x /main/b', 'doas -a passwd cp x /main/b', 'doas -apasswd cp x /main/b'], MAIN_B);
+  });
+
+  // all: M/f.js, except `X=1 time cp` (zsh: parse error, nothing; side with bash) and `! ! cp`
+  // (bash 5 writes M/f.js, bash 3.2 and zsh refuse to parse it: side with bash 5). sudo per sudo(8).
+  test('#4448: stripped prefixes chain and combine with assignments', () => {
+    includesFor(['nice nohup env X=1 cp a /main/f.js', 'command nice cp a /main/f.js', 'time ! cp a /main/f.js',
+      '! time cp a /main/f.js', 'X=1 time cp a /main/f.js', 'X=1 command cp a /main/f.js', 'sudo env X=1 cp a /main/f.js',
+      'env sudo cp a /main/f.js', '! ! cp a /main/f.js'], MAIN_F);
+  });
+
+  // all: M/f.js for each (a quoted or path-qualified time is /usr/bin/time, which runs cp too).
+  test('#4448: a quoted, escaped or path-qualified prefix word still strips', () => {
+    includesFor(['\\time cp a /main/f.js', "'time' cp a /main/f.js", '"nice" cp a /main/f.js', 'co\\mmand cp a /main/f.js',
+      '/usr/bin/nice cp a /main/f.js', '/usr/bin/env cp a /main/f.js'], MAIN_F);
+  });
+
+  // all: nothing written (`!: command not found`, `X=1: command not found`, exit 127); zsh cannot
+  // parse `X=1 !`. The same holds where an external prefix runs the word as its program (`env !`,
+  // `nohup builtin`, `env exec`, `nohup x+=1`: `No such file or directory`, exit 127). Reading cp
+  // anyway is the accepted fail-closed tradeoff.
+  test('#4448: a prefix word bash runs as a command name strips anyway (deliberate fail-closed tradeoff)', () => {
+    includesFor(['X=1 ! cp a /main/f.js', '\\! cp a /main/f.js', 'command X=1 cp a /main/f.js', 'env ! cp a /main/f.js',
+      'nohup builtin cp a /main/f.js', 'env exec cp a /main/f.js', 'nohup x+=1 cp a /main/f.js'], MAIN_F);
+  });
+
+  // all: M/f.js for each (macOS env). `env --unset=X` and `env --unset X` pin GNU env's reading
+  // (macOS env rejects the first and runs `X` for the second).
+  test('#4448: an env prefix with its options resolves the main-checkout write', () => {
+    includesFor(['env cp a /main/f.js', 'env -i X=1 cp a /main/f.js', 'env -u X cp a /main/f.js', 'env -iuX cp a /main/f.js',
+      'env - cp a /main/f.js', 'env -- cp a /main/f.js', 'env a.b=1 cp a /main/f.js', 'env "x"=1 cp a /main/f.js',
+      'env --unset=X cp a /main/f.js', 'env --unset X cp a /main/f.js', 'X=1 env Y=2 tee /main/f.js'], MAIN_F);
+  });
+
+  // all: M/f.js for `env -C M cp a f.js` and `env -iC M cp a f.js`; `--chdir`/`--ch` pin GNU env's
+  // reading (macOS env rejects them); sudo -D/--chdir per sudo(8). An unresolvable -C value leaves
+  // a relative target unprovable, while an absolute one still resolves.
+  test('#4448: env -C and sudo -D move the cwd a relative write resolves in', () => {
+    for (const cmd of ['env -C /main cp a f.js', 'env --chdir=/main cp a f.js', 'env -iC /main cp a f.js', 'env --ch /main cp a f.js',
+      'sudo -D /main cp a f.js', 'sudo --chdir=/main cp a f.js']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), copyMain, cmd);
+    }
+    assert.deepStrictEqual(fileWriteTargets('env -C $X cp a f.js', '/r'), []);
+    assert.deepStrictEqual(fileWriteTargets('env -C $X cp a /main/f.js', '/r'), copyMain);
+  });
+
+  // all: M/f.js and W/g for each: bash reads a redirection anywhere among the prefix words and
+  // their options, and opens it in the shell's own cwd.
+  test('#4448: a redirect before or among the prefix words keeps its own cwd, and the command after it is read', () => {
+    for (const cmd of ['X=1 >g cp a /main/f.js', '>g X=1 cp a /main/f.js', 'env >g -u X cp a /main/f.js', 'env X=1 >g a.b=1 cp a /main/f.js']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [writeG, ...copyMain], cmd);
+    }
+    // all: M/b and W/g; `nice --adjustment >g 5` pins GNU nice's reading (macOS nice rejects it and
+    // writes W/g only).
+    for (const cmd of ['nice >g -n 5 cp x /main/b', 'nice -n >g 5 cp x /main/b', 'nice >g cp x /main/b', 'nice --adjustment >g 5 cp x /main/b']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [writeG, { action: 'copy', file: MAIN_B }], cmd);
+    }
+    // all: M/f.js. A heredoc operator glued to its delimiter is one word, so the word after it is read.
+    for (const cmd of ['<<EOF tee /main/f.js\nx\nEOF', 'nice <<EOF tee /main/f.js\nx\nEOF', 'tee <<EOF /main/f.js\nx\nEOF']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [{ action: 'write', file: MAIN_F }], JSON.stringify(cmd));
+    }
+  });
+
+  // all: nothing for each lookup and bare prefix; `exec >g` writes W/g.
+  test('AC2.1 #4448: a lookup or a bare prefix resolves no target', () => {
+    for (const cmd of ['command -v cp', 'command -V cp', 'command -pv cp', 'builtin', 'time', '!', 'nice', 'env', 'sudo']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], cmd);
+    }
+    assert.deepStrictEqual(fileWriteTargets('exec >g', '/r'), [writeG]);
+  });
+
+  // `env -S 'cp a M/f.js'` writes M/f.js (macOS env) and `env -P /nope cp …` nothing (exit 127);
+  // sudo and doas per sudo(8)/doas(1); `env --split-string x cp …` per GNU env, which splits `x`
+  // into the command it runs. `env -S x cp …` runs nothing (all: macOS env runs `x`, exit 127);
+  // `env --split-string=x` and the long sudo spellings per GNU env and sudo(8), where `--chroot`
+  // takes a value and the others none (macOS env rejects long options). No command word is read
+  // behind these options: base parity, a left-out shape owned by #4572.
+  test('#4448: an opaque prefix option resolves no target (base parity, owned by #4572)', () => {
+    for (const cmd of ["env -S 'cp a /main/f.js'", "env --split-string='cp a /main/f.js'", 'env --split-string x cp a /main/f.js',
+      'env -P /x cp a /main/f.js',
+      "env -iS 'cp a /main/f.js'", 'sudo -e /main/f.js', 'sudo --edit /main/f.js', 'sudo -R /x cp a /main/f.js',
+      'sudo -l cp a /main/f.js', 'sudo -v cp a /main/f.js', 'sudo -K cp a /main/f.js',
+      'doas -C /x cp a /main/f.js', 'doas -s', 'doas -L cp a /main/f.js',
+      'env -S x cp a /main/f.js', 'env --split-string=x cp a /main/f.js', 'sudo -e cp a /main/f.js', 'doas -s cp a /main/f.js',
+      'sudo --chroot /x cp a /main/f.js', 'sudo --chroot=/x cp a /main/f.js',
+      ...['edit', 'list', 'validate', 'remove-timestamp'].flatMap((o) => [`sudo --${o} cp a /main/f.js`, `sudo --${o}=x cp a /main/f.js`])]) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], cmd);
+    }
+  });
+
+  // all: nothing (`nohup -x` is a usage error; `! --` runs `--`, command not found). A dash word
+  // after nohup or `!` is no option, so no command word is read behind it.
+  test('#4448 (base parity): nohup and ! read no option before the command word', () => {
+    for (const cmd of ['nohup -x cp a /main/f.js', '! -- cp a /main/f.js']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], cmd);
+    }
+  });
+
+  // bash 3.2 and 5 write M/f.js for each moving row (zsh writes W/f.js for `builtin --`, `command`,
+  // `command -p -p` and `time -p` before cd: side with bash). All three write W/f.js for `nice cd` and
+  // `env cd` (an external cd), and nothing for `exec cd` (exit 127): the scanner reads on under the
+  // unmoved cwd there, a target in the shell's own cwd, never M.
+  test('#4448: builtin, command, ! and time before cd move the cwd; other prefixes do not', () => {
+    for (const cmd of ['builtin cd /main; cp a f.js', '\\builtin cd /main; cp a f.js', 'builtin -- cd /main; cp a f.js',
+      'command cd /main; cp a f.js', 'command -p cd /main; cp a f.js', 'command -p -p cd /main; cp a f.js', '! cd /main; cp a f.js',
+      'time cd /main; cp a f.js', 'time -p cd /main; cp a f.js', 'time ! cd /main; cp a f.js']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), copyMain, cmd);
+    }
+    assert.deepStrictEqual(fileWriteTargets('>g cd /main; cp a f.js', '/r'), [writeG, ...copyMain]);
+    for (const cmd of ['nice cd /main; cp a f.js', 'env cd /main; cp a f.js', 'exec cd /main; cp a f.js']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), copyHere, cmd);
+    }
+  });
+
+  // From M, `cd W`: all write M/f.js for each `builtin`/`command` row (`X=1: command not found`,
+  // `builtin: X=1: not a shell builtin`; the git row commits in M), since after those builtins an
+  // assignment word is the command name and the cd never runs. All write M/f.js for the `--`, chained
+  // (`command command`, `builtin command`, `time command`, `! command`) and quoted-name rows too;
+  // `command "x"=1` is no assignment word at all, so it pins only the reading base already had. Before them, and after `!` or
+  // `time`, it is an assignment: all write W/f.js for `time X=1 cd W` and `! X=1 cd W`, and bash 3.2
+  // and 5 for `X=1 command cd W` (zsh writes M/f.js, the #4455 gap).
+  test('#4448: an assignment word after builtin or command is the command name, so the cd after it is not followed', () => {
+    const copyAt = (dir) => [{ action: 'copy', file: path.resolve(dir, 'f.js') }];
+    for (const cmd of ['command X=1 cd /wt; cp a f.js', 'command -p X=1 cd /wt; cp a f.js', 'command -p x=$(echo a b) cd /wt; cp a f.js',
+      'command x+=1 cd /wt; cp a f.js', 'builtin X=1 cd /wt; cp a f.js', 'command -- X=1 cd /wt; cp a f.js',
+      'command command X=1 cd /wt; cp a f.js', 'builtin command X=1 cd /wt; cp a f.js', 'time command X=1 cd /wt; cp a f.js',
+      '! command X=1 cd /wt; cp a f.js', 'command "x"=1 cd /wt; cp a f.js']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/main'), copyAt('/main'), cmd);
+    }
+    assert.deepStrictEqual(fileWriteTargets('command >g X=1 cd /wt; cp a f.js', '/main'), [{ action: 'write', file: path.resolve('/main/g') }, ...copyAt('/main')]);
+    assert.deepStrictEqual(gitTargets('command X=1 cd /wt; git commit -m x', '/main'), [{ action: 'commit', dir: '/main' }]); // the cd never runs, so the base cwd comes back as given
+    for (const cmd of ['time X=1 cd /wt; cp a f.js', '! X=1 cd /wt; cp a f.js', 'X=1 command cd /wt; cp a f.js']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/main'), copyAt('/wt'), cmd);
+    }
+  });
+
+  // The bash versions split on whether these reach the cd, so the walk goes on under the cwd before it
+  // and after it, failing closed in both directions. From W, `cd M`: `! time cd` writes M/f.js
+  // under bash 5 and zsh and W/f.js under bash 3.2; `time -- cd` and `time -p -- cd` write M/f.js
+  // under bash 5 and W/f.js under bash 3.2 and zsh; `! ! cd` writes M/f.js under bash 5 (bash 3.2 and
+  // zsh cannot parse it). From M, `cd W`: `! time cd` writes M/f.js under bash 3.2 and W/f.js under
+  // bash 5 and zsh; `time -- cd` and `time -p -- cd` write M/f.js under bash 3.2 and zsh and W/f.js
+  // under bash 5; `! ! cd` writes W/f.js under bash 5 and nothing under bash 3.2 and zsh. A `time`
+  // after a `time` is reserved in bash 5 only: `time time cd`, `time -p time cd`, `time time -p cd`,
+  // `time time time cd` and `time time ! cd` write M/f.js under bash 5 and W/f.js under bash 3.2 and
+  // zsh from W, and W/f.js under bash 5 and M/f.js under bash 3.2 and zsh from M (they run
+  // /usr/bin/time cd), and so does each after `true;`. Following one cwd either way leaks a
+  // main-checkout write (`! ! cd` from M only adds a spurious deny).
+  test('#4448: a cd the bash versions split on is walked under both cwds', () => {
+    for (const shape of ['! time', 'time --', 'time -p --', '! !', 'time time', 'time -p time', 'time time -p', 'time time time',
+      'time time !', 'true; time time']) {
+      assert.deepStrictEqual(fileWriteTargets(`${shape} cd /main; cp a f.js`, '/r'), [...copyHere, ...copyMain], shape);
+      assert.deepStrictEqual(fileWriteTargets(`${shape} cd /wt; cp a f.js`, '/main'),
+        [...copyMain, { action: 'copy', file: path.resolve('/wt/f.js') }], shape);
+    }
+    // Each split cd adds a cwd, so five relative ones make 32, and the join at each `;` collapses the
+    // set at CWD_SET_CAP (16) to the lost cwd its consumers deny on: a timing-free pin that the split
+    // cwds go through the cap.
+    const many = [1, 2, 3, 4, 5].map((k) => `! time cd d${k}; `).join('') + 'cp a f.js';
+    assert.ok(fileWriteTargets(many, '/r').some((x) => x.lost), JSON.stringify(fileWriteTargets(many, '/r')));
+    // A walk that lost its cwd is walked again as base read it (BASE_VIEW), and base followed none of
+    // these cds, so that walk splits none: its readings stay within the cap instead of doubling at each
+    // split cd (2^16 of them for sixteen).
+    const sixteen = Array.from({ length: 16 }, (_, k) => `! time cd d${k}; `).join('') + 'cp a f.js';
+    const readings = fileWriteTargets(sixteen, '/r').filter((x) => x.reading);
+    assert.strictEqual(readings.length, 1, `${readings.length} readings`);
+  });
+
+  // From M, all three write M/f.js for each (`X=1 time`, `X=1 !` and `>g !`: zsh refuses to parse
+  // and writes nothing; `>g time cd`: zsh writes W/f.js; side with bash): a `time` or `!` that is
+  // quoted, escaped, path-qualified, or after an assignment, redirection or `command` is no
+  // reserved word, so its cd is the external one or a command name; `time` the keyword takes one
+  // `-p` only; `builtin -p`, `command -x` and `command --x` are usage errors (builtin reads `--`
+  // only, command `-p -v -V`); `/usr/bin/command` is a script. Following such a cd would resolve
+  // W/f.js: a leak.
+  // Base moved no cwd behind any prefix, so these pass there too: they hold commandWord's
+  // shell-only reading to the words bash runs in the current shell.
+  test('#4448 (pre-existing pin): a time or ! bash runs as a command name, and a path-qualified command, move no cwd before cd', () => {
+    for (const cmd of ['\\time cd /wt; cp a f.js', "'time' cd /wt; cp a f.js", '/usr/bin/time cd /wt; cp a f.js',
+      'X=1 time cd /wt; cp a f.js', '\\! cd /wt; cp a f.js', 'X=1 ! cd /wt; cp a f.js', 'command time cd /wt; cp a f.js',
+      '/usr/bin/command cd /wt; cp a f.js', 'time -l cd /wt; cp a f.js', 'time -p -p cd /wt; cp a f.js',
+      'builtin -p cd /wt; cp a f.js', 'command -x cd /wt; cp a f.js', 'command --x cd /wt; cp a f.js']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/main'), copyMain, cmd);
+    }
+    for (const cmd of ['>g time cd /wt; cp a f.js', '>g ! cd /wt; cp a f.js']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/main'), [{ action: 'write', file: path.resolve('/main/g') }, ...copyMain], cmd);
+    }
+  });
+
+  // all: nothing (`x=1: command not found`, exit 127).
+  test('#4448: a quoted or escaped assignment name is the command word, so no shape is read', () => {
+    for (const cmd of ['"x"=1 cp a /main/f.js', 'x\\=1 cp a /main/f.js']) assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], cmd);
+  });
+
+  // From M, all three write M/f.js: `"x"=1` is the command `x=1`, and the cd is its argument.
+  test('AC3.1 #4448 (pre-existing pin): a quoted-name assignment before cd changes no cwd', () => {
+    assert.deepStrictEqual(fileWriteTargets('"x"=1 cd /wt; cp a f.js', '/main'), copyMain);
+  });
+
+  // all: M/f.js for `\time -l` and `/usr/bin/time -p` (macOS /usr/bin/time); `X=1 time -a -o log`
+  // writes M/f.js and W/log under bash 3.2 and 5 (zsh: parse error; side with bash); `-f`,
+  // `--output=` and `--output log` pin GNU time's reading (macOS time rejects them). `\time -o M/log cp a b` writes
+  // M/log (time's own output file) and W/b in all three: that -o file is a left-out shape (#4572).
+  test('#4448: the external time program\'s options are read, and its -o file is a left-out shape (#4572)', () => {
+    includesFor(['\\time -l cp a /main/f.js', '/usr/bin/time -p cp a /main/f.js', 'X=1 time -a -o log cp a /main/f.js',
+      '\\time -f %e cp a /main/f.js', '\\time --output=log cp a /main/f.js', '\\time --output log cp a /main/f.js'], MAIN_F);
+    assert.ok(!files('\\time -o /main/log cp a b').includes(path.resolve('/main/log')), JSON.stringify(files('\\time -o /main/log cp a b')));
+  });
+
+  // all: `X=1 mkdir M/px` and `time mkdir M/px` create M/px; `env -C M mkdir px` creates M/px too
+  // (macOS env); sudo per sudo(8). `command -v mkdir` creates nothing.
+  test('#4448: mkdir behind a stripped prefix resolves its directory', () => {
+    const shadow = path.resolve('/main/.claude-tweaks/pipelines/x');
+    for (const cmd of ['X=1 mkdir /main/.claude-tweaks/pipelines/x', 'sudo mkdir -p /main/.claude-tweaks/pipelines/x',
+      'time mkdir /main/.claude-tweaks/pipelines/x', 'env -C /main mkdir .claude-tweaks/pipelines/x']) {
+      assert.ok(mkdirTargets(cmd, '/r').map((x) => x.file).includes(shadow), `${cmd}: ${JSON.stringify(mkdirTargets(cmd, '/r'))}`);
+    }
+    assert.deepStrictEqual(mkdirTargets('command -v mkdir', '/r'), []);
+  });
+
+  // all: git commit runs in M for each (and W/g for the two redirect rows); `x+=1 git`, `time git`,
+  // `command git`, `nohup git`, `! git`, the redirect rows, `nice -n 5 git -C M`, `exec git -C M`
+  // and `builtin cd M; git commit` are oracle verdicts. sudo, doas per sudo(8) and doas(1): `sudo -D
+  // M git commit` runs git in M, `sudo -u bob` and `doas` read their option, then the command.
+  test('AC1.1 #4448: a git commit behind an appending assignment or a stripped prefix resolves the main checkout', () => {
+    for (const cmd of ['cd /main; x+=1 git commit -m x', 'x+=1 git -C /main commit -m x', 'sudo git -C /main commit -m x',
+      'sudo -u bob git -C /main commit -m x', 'sudo -D /main git commit -m x', 'doas git -C /main commit -m x',
+      'time git -C /main commit -m x', 'command git -C /main commit -m x', 'nohup git -C /main commit -m x',
+      'nice -n 5 git -C /main commit -m x', '! git -C /main commit -m x', 'exec git -C /main commit -m x',
+      'builtin cd /main; git commit -m x', '>g git -C /main commit -m x',
+      'X=1 >g git -C /main commit -m x']) {
+      assert.ok(gitTargets(cmd, '/r').some((x) => x.dir === MAIN_ROOT), `${cmd}: ${JSON.stringify(gitTargets(cmd, '/r'))}`);
+    }
+  });
+
+  // all: git commit runs in M. #590's env loop already resolved this before #4448.
+  test('#4448 (pre-existing pin): env X=1 git -C main resolves the main checkout', () => {
+    assert.ok(gitTargets('env X=1 git -C /main commit -m x', '/r').some((x) => x.dir === MAIN_ROOT));
+  });
+
+  // all: nothing runs (`x=1: command not found`, exit 127), so no commit, and the same for
+  // `V=X=1; $V git -C M commit -m x` (`X=1: command not found`: bash reads assignment words before
+  // it expands `$V`). These move a base deny to allow: base read `"x"=1`, `x\=1` and the expanded
+  // `X=1` as an assignment and ran git.
+  test('#4448: a quoted, escaped or expanded assignment name before git runs no git', () => {
+    for (const cmd of ['"x"=1 git -C /main commit -m x', 'x\\=1 git -C /main commit -m x', 'V=X=1; $V git -C /main commit -m x']) {
+      assert.deepStrictEqual(gitTargets(cmd, '/r'), [], cmd);
+    }
+  });
+
+  // all: `command -v git -C M commit -m x` and the `-V` spelling look names up and run no git
+  // (exit 0, nothing wrote, no git call), and so does `command -v git commit -m x` (bash 3.2, 5 and
+  // zsh: exit 0, no commit). The rows carry a subcommand, since a bare `git` resolves no target on
+  // its own and would pin nothing.
+  test('#4448: command -v git and command -V git run no git', () => {
+    for (const cmd of ['command -v git -C /main commit -m x', 'command -V git -C /main commit -m x', 'command -v git commit -m x']) {
+      assert.deepStrictEqual(gitTargets(cmd, '/r'), [], cmd);
+    }
+  });
+
+  // `env -S word` and GNU's `--split-string word` split their string and run the first word with the
+  // rest of the line as its arguments (env(1)), so `env -S git commit -m x` commits: base skipped `-S`
+  // as a plain flag and denied it, so reading it again keeps base's coverage. A string that is not one
+  // plain word (a blank, a quote, `$X`) or one glued to its option stays opaque, owned by #4572. The
+  // worktree guard refused the oracle run of `env -S` in the review that added these rows: the
+  // verdicts are env(1)'s, the manual's, not a bash oracle's.
+  test('#4448: env -S with one plain word reads that word as the command, as base read git behind it', () => {
+    for (const cmd of ['env -S git -C /main commit -m x', 'env --split-string git -C /main commit -m x', 'env -iS git -C /main commit -m x',
+      'env -S nice git -C /main commit -m x']) {
+      assert.ok(gitTargets(cmd, '/r').some((x) => x.dir === MAIN_ROOT), `${cmd}: ${JSON.stringify(gitTargets(cmd, '/r'))}`);
+    }
+    includesFor(['env -S cp a /main/f.js', 'env --split-string cp a /main/f.js'], MAIN_F);
+    for (const cmd of ["env -S 'git -C /main commit -m x'", 'env -Sgit -C /main commit -m x', 'env -S $X git -C /main commit -m x',
+      'env -S -i git -C /main commit -m x']) {
+      assert.deepStrictEqual(gitTargets(cmd, '/r'), [], cmd);
+    }
+  });
+
+  // sudo(8): `-i` runs the command from the target user's home, so a relative target cannot be
+  // resolved (like an unresolvable `env -C`) while an absolute one still lands where it names.
+  test('#4448: sudo -i and --login resolve an absolute target only', () => {
+    for (const cmd of ['sudo -i cp a /main/f.js', 'sudo --login cp a /main/f.js', 'sudo -iu bob cp a /main/f.js']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), copyMain, cmd);
+    }
+    for (const cmd of ['sudo -i cp a f.js', 'sudo --login cp a f.js']) assert.deepStrictEqual(fileWriteTargets(cmd, '/r'), [], cmd);
+  });
+
+  // GNU env(1) and sudo(8) keep the last of repeated directory options and resolve it from the cwd
+  // the command started in, not from the earlier option's directory: from /r/w, `-C /tmp -C ..` runs
+  // in /r (the parent of /r/w), where a cumulative reading wrote /tmp's parent.
+  test('#4448: a repeated env -C or sudo -D keeps the last value, resolved from the starting cwd', () => {
+    const copyParent = [{ action: 'copy', file: path.resolve('/r/f') }];
+    for (const cmd of ['env -C /tmp -C .. cp a f', 'env -C /tmp --chdir=.. cp a f', 'sudo -D /tmp -D .. cp a f', 'sudo -D /tmp --chdir=.. cp a f']) {
+      assert.deepStrictEqual(fileWriteTargets(cmd, '/r/w'), copyParent, cmd);
+    }
+    assert.deepStrictEqual(fileWriteTargets('env -C $X -C /main cp a f.js', '/r'), copyMain);
+    assert.deepStrictEqual(fileWriteTargets('env -C /main -C $X cp a f.js', '/r'), []);
+  });
+
+  // bash 3.2 and 5 strip a subscripted assignment word and run the command after it (bash 5 prints
+  // `a[0]: not a valid identifier` first; `a[0]=1 cd /tmp` still changes into /tmp); zsh refuses the line.
+  test('#4448: a subscripted assignment word is stripped like any assignment word', () => {
+    includesFor(['a[0]=1 cp a /main/f.js', 'a[0]+=1 cp a /main/f.js', 'env a[0]=1 cp a /main/f.js'], MAIN_F);
+    assert.deepStrictEqual(fileWriteTargets('a[0]=1 cd /main; cp a f.js', '/r'), copyMain);
+  });
+
+  // bash 3.2 and 5 write M/f.js for each: `env` and `sudo` read a word with an `=` as an assignment, and one
+  // holding a command substitution that yields one word is a single argument, as for a bare prefix
+  // (`X=$(echo a) cp`). One that yields several words splits, and env runs the second as the command
+  // (nothing written): reading cp there is the same accepted fail-closed tradeoff as `builtin cp`.
+  test('#4448: an env or sudo assignment holding a command substitution spans its tokens', () => {
+    includesFor(['env X=$(echo a) cp a /main/f.js', 'sudo X=$(echo a) cp a /main/f.js', 'env -i X=`echo a` cp a /main/f.js',
+      'env X=$(echo a b) cp a /main/f.js'], MAIN_F);
+  });
+
+  // The record's body, "Scope under ADR 0028", lists the stripped prefixes: assignment words and
+  // these ten words. The exported set and reader are the one copy #4572 and #4244 reuse.
+  test('AC4.1 #4448: the exported stripped-prefix rule matches the record\'s list', () => {
+    assert.deepStrictEqual([...gitCommand.STRIPPED_PREFIX_WORDS].sort(),
+      ['!', 'builtin', 'command', 'doas', 'env', 'exec', 'nice', 'nohup', 'sudo', 'time']);
+    assert.ok(Object.isFrozen(gitCommand.STRIPPED_PREFIX_WORDS));
+    // With no quoting given, every word reads bare, and `split` is on every result.
+    for (const t of [['X=1', 'cp'], ['x+=1', 'cp']]) {
+      assert.deepStrictEqual(gitCommand.commandWord(t, null, '/r'), { index: 1, dir: '/r', unprovable: false, split: false }, t.join(' '));
+    }
+    for (const t of [['command', '-v', 'cp'], ['command', '-V', 'cp'], ['env', '-S', 'cp a b'], ['env', '-P', '/x', 'cp'], ['time'],
+      ['env', '--split-string=cp a b'], ['command', '-x', 'cp']]) {
+      assert.deepStrictEqual(gitCommand.commandWord(t, undefined, '/r'), { index: -1, dir: '/r', unprovable: false, split: false }, t.join(' '));
+    }
+  });
+}
+
 // #4149: the write walk cuts at an unquoted lone `&`, so the command after it is
 // read as a command; the backgrounded and-or list runs in a subshell, so its `cd` does not move the
 // cwd for what follows. `&&`, `&>`, `>&`, `<&`, `|&` and an `&` inside `$( )` are not cuts.
@@ -1873,27 +2520,30 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
 // the current shell and its cd reaches the commands after it, as base d9aa6b82d read it. Bash 3.2
 // and 5 (M = /main, start = /r) write the file each row names; bash 3.2 cannot parse `;&`, `;;&` or
 // an unparenthesized pattern inside `$( )`, and bash 5 writes M/f for each (the pins side with 5).
+// A case with no catch-all pattern, or an arm that starts where the case began and moves no cwd (`*) true`),
+// also ends where the case began, since the walk does not evaluate a literal subject against its patterns
+// (#4486): `./f` on those rows is that fail-closed superset; bash writes M/f only.
 {
   const here = path.resolve('/r/f.js');
   const files = (cmd) => fileWriteTargets(cmd, '/r').map((t) => t.file).sort();
   for (const [cmd, expected] of [
-    ['case x in a|x) cd /main;; esac; echo x > f.js', [MAIN_F]],                                // bash: M/f
+    ['case x in a|x) cd /main;; esac; echo x > f.js', [MAIN_F, here].sort()],                   // bash: M/f
     ['case x in x|y) cd /main; echo x > f.js;; esac', [MAIN_F]],                                // bash: M/f
     ['case x in *|x) cd /main;; esac; echo x > f.js', [MAIN_F]],                                // bash: M/f
-    ['case x in x|a) cd /main;; *) true;; esac; echo x > f.js', [MAIN_F]],                      // bash: M/f
-    ['for i in 1; do case x in a|x) cd /main;; esac; done; echo x > f.js', [MAIN_F]],           // bash: M/f
-    ['if true; then case x in a|x) cd /main;; esac; fi; echo x > f.js', [MAIN_F]],              // bash: M/f
+    ['case x in x|a) cd /main;; *) true;; esac; echo x > f.js', [MAIN_F, here].sort()],         // bash: M/f
+    ['for i in 1; do case x in a|x) cd /main;; esac; done; echo x > f.js', [MAIN_F, here].sort()], // bash: M/f
+    ['if true; then case x in a|x) cd /main;; esac; fi; echo x > f.js', [MAIN_F, here].sort()], // bash: M/f
     ['case x in a|x) cd /main && echo x > f.js;; esac', [MAIN_F]],                              // bash: M/f
-    ['case x in a|x) cd /main\n;; esac; echo x > f.js', [MAIN_F]],                              // bash: M/f
+    ['case x in a|x) cd /main\n;; esac; echo x > f.js', [MAIN_F, here].sort()],                 // bash: M/f
     ['case x in a|x) cd /main\n echo x > f.js;; esac', [MAIN_F]],                               // bash: M/f
-    ['case $(echo a | cat) in a|x) cd /main;; esac; echo x > f.js', [MAIN_F]],                  // bash: M/f
-    ['case x in a|x) case y in b|y) cd /main;; esac;; esac; echo x > f.js', [MAIN_F]],          // bash: M/f
-    ['( case x in a|x) cd /main;; esac; echo x > f.js )', [MAIN_F]],                            // bash: M/f
+    ['case $(echo a | cat) in a|x) cd /main;; esac; echo x > f.js', [MAIN_F, here].sort()],     // bash: M/f
+    ['case x in a|x) case y in b|y) cd /main;; esac;; esac; echo x > f.js', [MAIN_F, here].sort()], // bash: M/f
+    ['( case x in a|x) cd /main;; esac; echo x > f.js )', [MAIN_F, here].sort()],               // bash: M/f
     // A `;;`, `;&` or `;;&` opens the next arm's pattern list.
-    ['case x in a) true;; b|x) cd /main;; esac; echo x > f.js', [MAIN_F]],                      // bash: M/f
-    ['case x in a) true;& b|x) cd /main;; esac; echo x > f.js', [MAIN_F]],                      // bash 5: M/f
-    ['case x in a) true;;& b|x) cd /main;; esac; echo x > f.js', [MAIN_F]],                     // bash 5: M/f
-    ['x=$(case x in a|x) cd /main;; esac; echo x > f.js)', [MAIN_F]],                           // bash 5: M/f
+    ['case x in a) true;; b|x) cd /main;; esac; echo x > f.js', [MAIN_F, here].sort()],         // bash: M/f
+    ['case x in a) true;& b|x) cd /main;; esac; echo x > f.js', [MAIN_F, here].sort()],         // bash 5: M/f
+    ['case x in a) true;;& b|x) cd /main;; esac; echo x > f.js', [MAIN_F, here].sort()],        // bash 5: M/f
+    ['x=$(case x in a|x) cd /main;; esac; echo x > f.js)', [MAIN_F, here].sort()],              // bash 5: M/f
     // A pipe is still a pipe: in an arm, after `esac`, around the case, and where `case` is no
     // command word.
     ['cd /main | true; echo x > f.js', [here]],                                                 // bash: ./f
@@ -1909,7 +2559,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     ['g() { cd /main; }; g; echo x > f.js', [MAIN_F, here].sort()],
     ['function g { cd /main; }; g; echo x > f.js', [MAIN_F, here].sort()],
   ]) {
-    test(`#4303 case: \`${cmd}\` reads a pattern-list | as no pipe and resolves where bash writes`, () => {
+    test(`#4303 case: \`${cmd}\` reads a pattern-list | as no pipe and resolves the cwds bash writes under (plus the case's start, failing closed since #4486)`, () => {
       assert.deepStrictEqual(files(cmd), expected);
     });
   }
@@ -2235,7 +2885,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   });
   // #4481 characterization: the shapes the first-element and `a=()` fixes must leave as they are.
   for (const [cmd, expected] of [
-    ['case a in a) cd /wt;; esac; echo x > f', [path.resolve('/wt/f')]],                          // bash: /wt/f
+    ['case a in a) cd /wt;; esac; echo x > f', [path.resolve('/r/f'), path.resolve('/wt/f')].sort()], // bash: /wt/f; /r/f kept, failing closed (#4486)
     ['cat | case x in a) cd /wt;; esac; echo x > f', [path.resolve('/r/f'), path.resolve('/wt/f')].sort()], // bash: /r/f only; /wt/f kept, failing closed
     ['a=(); echo hi > f.js', [here]],                                                              // bash: ./f.js
     ['a=(x y); echo hi > f.js', [here]],                                                           // bash: ./f.js
@@ -2254,9 +2904,69 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     assert.deepStrictEqual(files('echo `case x in a|x) cd /main; echo x > f.js;; esac`'), [MAIN_F, here].sort());
     assert.ok(files('case `true; cd /main | echo x > f.js; true` in x) true;; esac').includes(here));
   });
-  // bash: git runs in M.
+  // bash: git runs in M; the walk keeps the case's start too (#4486).
   test('#4303 case: gitTargets reads a pattern-list | the same way', () => {
-    assert.deepStrictEqual(gitTargets('case x in a|x) cd /main;; esac; git commit -m x', '/r').map((t) => t.dir), [path.resolve('/main')]);
+    assert.deepStrictEqual(gitTargets('case x in a|x) cd /main;; esac; git commit -m x', '/r').map((t) => t.dir), [path.resolve('/main'), '/r']); // the cd target is resolved, the base cwd is not
+  });
+  // #4486: an arm runs only when its pattern matches, so every arm starts where the case began, and the
+  // commands after `esac` run under each arm's end and, unless a pattern of bare `*`s makes some arm run,
+  // under the case's start too. A quoted or escaped `*`, the subject and an extglob are no catch-all. Each
+  // row is [label, cmd, includes, excludes], with the files bash 3.2 and 5 write for each subject value
+  // (start = /r); a row bash 3.2 cannot parse (`;&`, `;;&`, an unparenthesized pattern inside `$( )`) is
+  // decided by bash 5, and zsh's `;|` rows by zsh.
+  test("AC1.1 #4486: fileWriteTargets('case $x in a) cd /wt;; esac; echo x > f', '/r') includes /r/f and /wt/f", () => {
+    const got = fileWriteTargets('case $x in a) cd /wt;; esac; echo x > f', '/r').map((t) => t.file);
+    for (const want of ['/r/f', '/wt/f']) assert.ok(got.includes(path.resolve(want)), `bash 3.2 and 5: ${want}`);
+  });
+  for (const [label, cmd, includes, excludes] of [
+    ['A', 'case $x in a) cd /wt;; esac; echo x > f', ['/r/f', '/wt/f'], []],                   // bash 3.2 and 5: x=a wt/f, x=b r/f
+    ['B', 'case $x in a) cd /wt;; *) cd /q;; esac; echo x > f', ['/wt/f', '/q/f'], ['/r/f']],  // bash 3.2 and 5: x=a wt/f, x=b q/f
+    ['C', 'case $x in a) cd /wt;; b) echo y > g;; esac', ['/r/g'], ['/wt/g']],                  // bash 3.2 and 5: x=a none, x=b r/g
+    ['D', 'case $x in a) cd /wt;; *) true;; esac; echo x > f', ['/r/f', '/wt/f'], []],          // bash 3.2 and 5: x=a wt/f, x=b r/f
+    ['E', 'case $x in a|*) cd /wt;; esac; echo x > f', ['/wt/f'], ['/r/f']],                    // bash 3.2 and 5: x=b wt/f
+    ['F', 'case $x in (*) cd /wt;; esac; echo x > f', ['/wt/f'], ['/r/f']],                     // bash 3.2 and 5: x=b wt/f
+    ['G', 'case $x in "*") cd /wt;; esac; echo x > f', ['/r/f'], []],                           // bash 3.2 and 5: x=b r/f
+    ['H', 'case $x in \\*) cd /wt;; esac; echo x > f', ['/r/f'], []],                           // bash 3.2 and 5: x=b r/f
+    ['I', 'case $x in a) cd /wt;; *) { cd /q; } esac; echo x > f', ['/wt/f', '/q/f'], []],      // bash 3.2 and 5: x=a wt/f, x=b q/f
+    ['J', '{ case $x in a) cd /wt;; esac }; echo x > f', ['/wt/f', '/r/f'], []],                // bash 3.2 and 5: x=a wt/f, x=b r/f
+    ['N', 'case $x in a) cd /wt;; b) cd /q;; esac; echo x > f', ['/wt/f', '/q/f', '/r/f'], []], // bash 3.2 and 5: x=a wt/f, x=b q/f, x=c r/f
+    ['O', 'case $x in\n  a) cd /wt ;;\n  *) cd /q ;;\nesac\necho x > f', ['/wt/f', '/q/f'], ['/r/f']], // bash 3.2 and 5: x=a wt/f, x=b q/f
+    ['Q', 'case $x in a) cd /wt;; esac && echo x > f', ['/r/f', '/wt/f'], []],                  // bash 3.2 and 5: x=a wt/f, x=b r/f
+    ['R', 'case $x in a) case $y in b) cd /q;; esac;; esac; echo x > f', ['/r/f', '/q/f'], []], // bash 3.2 and 5: x=a y=c r/f (y=b: q/f)
+    ['T', 'case $x in a) cd /wt;; *) true; esac; echo x > f', ['/r/f', '/wt/f'], []],           // bash 3.2 and 5: x=a wt/f, x=b r/f
+    ['U', 'case $x in a) cd wt;; *) cd q;; esac; echo x > f', ['/r/wt/f', '/r/q/f'], ['/r/wt/q/f', '/r/f']], // bash 3.2 and 5: x=a wt/f, x=b q/f
+    ['X', 'cd /m && case $x in a) cd /wt;; esac; echo x > f', ['/m/f', '/wt/f'], []],           // bash 3.2 and 5: x=a wt/f, x=b m/f (and r/f if the cd fails)
+    ['SUBJ', 'case * in a) cd /wt;; esac; echo x > f', ['/r/f'], []],                           // bash 3.2 and 5: r/f
+    ['SUBJNL', 'case *\nin a) cd /wt;; esac; echo x > f', ['/r/f'], []],                        // bash 3.2 and 5: r/f
+    ['EXTG', 'shopt -s extglob\ncase $x in *(a)) cd /wt;; esac; echo x > f', ['/r/f', '/wt/f'], []], // bash 3.2 and 5: x=a wt/f, x=b r/f
+    ['FALL', 'case $x in a) cd /wt;& b) echo y > g;; esac', ['/wt/g', '/r/g'], []],              // bash 5: x=a wt/g, x=b r/g (3.2 cannot parse `;&`)
+    ['FALL3', 'case $x in a) cd /wt;;& *) cd /q;; esac; echo x > f', ['/q/f'], ['/r/f']],       // bash 5: q/f for x=a and b
+    ['SUBST', 'echo $(case $x in a) cd /wt;; esac; echo x > f)', ['/r/f', '/wt/f'], []],        // bash 5: x=a wt/f, x=b r/f (3.2 cannot parse)
+    ['SUBC', 'echo $(case $x in a) cd /wt;; b) echo y > g;; esac)', ['/r/g'], []],              // bash 5: x=b r/g
+    ['SUBT', 'echo $(case $x in a) cd /wt;; *) true; esac; echo x > f)', ['/r/f', '/wt/f'], []], // bash 5: x=a wt/f, x=b r/f
+    ['SUBJ2', 'echo $({ case $x in a) cd /wt;; esac }; echo x > f)', ['/r/f', '/wt/f'], []],    // bash 5: x=a wt/f, x=b r/f
+    ['LOOKA', 'case $x in *a) cd /wt;; esac; echo x > f', ['/r/f', '/wt/f'], []],               // bash 3.2 and 5: x=a wt/f, x=b r/f (`*a` matches only a subject ending in a)
+    ['LOOKB', 'case $x in a*) cd /wt;; esac; echo x > f', ['/r/f', '/wt/f'], []],               // bash 3.2 and 5: x=a wt/f, x=b r/f
+    ['LOOKC', 'case $x in $*) cd /wt;; esac; echo x > f', ['/r/f'], []],                        // bash 3.2 and 5: r/f (`$*` is empty here; the walk also keeps wt/f, failing closed)
+    ['LOOKD', 'case $x in $p) cd /wt;; esac; echo x > f', ['/r/f'], []],                        // bash 3.2 and 5: r/f (p is unset; the walk also keeps wt/f, failing closed)
+    ['INNER', 'case $x in a) cd /w; case $y in *) cd /q;; esac;; esac; echo x > f', ['/r/f', '/q/f'], ['/w/f']], // bash 3.2 and 5: x=a q/f, x=b r/f (the inner `*` is the inner case's catch-all, never the outer's)
+    ['SEQ', 'case $x in a) cd /wt;; esac; case $y in b) cd /q;; esac; echo x > f', ['/r/f', '/wt/f', '/q/f'], []], // bash 3.2 and 5: x=a y=c wt/f, y=b q/f, x=b y=c r/f
+    ['CLOSEDA', 'case $x in $(echo a)*) cd /wt;; esac; echo x > f', ['/r/f', '/wt/f'], []],     // bash 3.2 and 5: x=a wt/f, x=b r/f (a `*` after a closed `$( )` is no catch-all)
+    ['CLOSEDB', 'shopt -s extglob\ncase $x in @(a)*) cd /wt;; esac; echo x > f', ['/r/f', '/wt/f'], []], // bash 3.2 and 5: x=a wt/f, x=b r/f
+    ['ORFAIL','case $x in a) cd /wt; false;; esac || echo x > f', ['/wt/f'], []],               // bash 3.2 and 5: x=a wt/f (the arm's last command fails, so the `||` runs under /wt)
+    ['ZSHBAR', 'case $x in a) cd /wt ;| b) echo y > g;; esac', ['/r/g'], []],                   // zsh 5: x=b r/g (`;|` keeps testing patterns; bash rejects it)
+    ['ZSHBAR2', 'case $x in a) cd /wt ;| a|b) echo y > g;; esac', ['/r/g', '/wt/g'], []],       // zsh 5: x=a wt/g, x=b r/g
+  ]) {
+    test(`#4486 case: \`${cmd}\` ends under every arm and the start without a catch-all`, () => {
+      const got = files(cmd);
+      for (const want of includes) assert.ok(got.includes(path.resolve(want)), `${label}: bash writes ${want}; got ${JSON.stringify(got)}`);
+      for (const not of excludes) assert.ok(!got.includes(path.resolve(not)), `${label}: bash never writes ${not}; got ${JSON.stringify(got)}`);
+    });
+  }
+  test('AC2.3 #4486: policy-schema-coverage.md no longer lists an unmatched case arm as a known gap', () => {
+    const text = readText(SCHEMA);
+    assert.ok(!text.includes('a case arm whose pattern does not match'), 'the known-gap clause is gone');
+    assert.ok(text.includes('a pattern of bare `*`s'), 'the coverage prose states the catch-all rule');
   });
 }
 
@@ -2945,12 +3655,13 @@ test('e2e #3080: bare redirection from a worktree-always main checkout is DENIED
   const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const os = require('os');
   const { execFileSync } = require('child_process');
-  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-3080-main-'));
+  const main = scratchDir('ct-3080-main-');
   execFileSync('git', ['-C', main, 'init', '-q']);
   fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
   const decisionFor = (command) => {
     const out = preToolUse.run({
+      env: process.env,
       input: { tool_name: 'Bash', tool_input: { command }, cwd: main },
       runDir: null, runState: null, ownedRun: {}, cwd: main,
     });
@@ -2972,7 +3683,7 @@ test('e2e #4149: a command past the cwd cap from a linked worktree is DENIED for
   const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const os = require('os');
   const { execFileSync } = require('child_process');
-  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4149-cap-')));
+  const tmp = fs.realpathSync(scratchDir('ct-4149-cap-'));
   const main = path.join(tmp, 'main');
   const wt = path.join(tmp, 'wt');
   fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
@@ -2984,6 +3695,7 @@ test('e2e #4149: a command past the cwd cap from a linked worktree is DENIED for
   git('worktree', 'add', '-q', wt);
   const decisionFor = (command) => {
     const out = preToolUse.run({
+      env: process.env,
       input: { tool_name: 'Bash', tool_input: { command }, cwd: wt },
       runDir: null, runState: null, ownedRun: {}, cwd: wt,
     });
@@ -3022,6 +3734,7 @@ function linkedWorktree4303({ nested = false, policy = true } = {}) {
   git('worktree', 'add', '-q', wt);
   const outputFor = (command, cwd = wt) => {
     const out = preToolUse.run({
+      env: process.env,
       input: { tool_name: 'Bash', tool_input: { command }, cwd },
       runDir: null, runState: null, ownedRun: {}, cwd,
     });
@@ -3058,6 +3771,36 @@ test('AC1.1 e2e #4303: every #4303 shape from a linked worktree into the main ch
   ];
   for (const [shape, command] of denied) assert.strictEqual(decisionFor(command), 'deny', `${shape}: ${command.slice(-60)}`);
   assert.notStrictEqual(decisionFor(`cd ${wt} && cp a f.js`), 'deny');
+});
+// #4448: a write or commit behind a stripped prefix, run from a linked worktree into the main
+// checkout. Bash 3.2, 5 and zsh, started in the worktree, write `main/f.js` (or `main/b`) for each cp and tee row and for
+// `X=1 sed -i.bak s/a/b/ M/x` (a suffix glued to `-i`: macOS BSD sed reads a separate `-i s/a/b/` as
+// the suffix and fails, so the row uses the glued spelling), and run `git commit` in main for the git rows (`x+=1 git -C M commit`, and `x+=1 git commit`
+// after `cd M`). The `!`, time, command, nohup, nice and exec rows write `main/b` in all three. `sudo`
+// and `doas` cannot run in the oracle; their rows follow sudo(8) and doas(1), which run the command
+// after their options. `X=1 cp a W/f.js` writes `wt/f.js`, so it stays allowed. Skipped on win32 for the
+// reason of the #4303 e2e above.
+test('AC1.1 e2e #4448: a write or commit behind a stripped prefix from a linked worktree into the main checkout is DENIED', {
+  skip: process.platform === 'win32' && 'win32: the commands splice a native temp path, whose backslashes the scanner reads as escapes',
+}, () => {
+  const { main, wt, decisionFor } = linkedWorktree4303();
+  const denied = [
+    `X=1 cp a ${main}/f.js`,
+    `sudo cp a ${main}/f.js`,
+    `X=1 tee ${main}/f.js`,
+    `X=1 sed -i.bak s/a/b/ ${main}/f.js`,
+    `cd ${main}; x+=1 git commit -m x`,
+    `x+=1 git -C ${main} commit -m x`,
+    `! cp x ${main}/b`,
+    `time cp x ${main}/b`,
+    `command cp x ${main}/b`,
+    `nohup cp x ${main}/b`,
+    `nice cp x ${main}/b`,
+    `doas cp x ${main}/b`,
+    `exec cp x ${main}/b`,
+  ];
+  for (const command of denied) assert.strictEqual(decisionFor(command), 'deny', command);
+  assert.notStrictEqual(decisionFor(`X=1 cp a ${wt}/f.js`), 'deny');
 });
 // #4303: a `|` between case patterns is no pipe, so the arm's cd into the main checkout reaches the
 // write after `esac`. Bash 3.2 and 5, started in the worktree, write `main/f.js` for each; base
@@ -3469,6 +4212,7 @@ test('e2e #4303: past the cwd cap with no policy file anywhere, a relative write
   const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const plain = tmpDir4303('ct-4303-plain-');
   const out = preToolUse.run({
+    env: process.env,
     input: { tool_name: 'Bash', tool_input: { command: `${groups4303(16)}echo x > out.txt` }, cwd: plain },
     runDir: null, runState: null, ownedRun: {}, cwd: plain,
   });
@@ -3559,12 +4303,13 @@ test('e2e #3989: a `>` in a heredoc body from a worktree-always main checkout is
   const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
   const os = require('os');
   const { execFileSync } = require('child_process');
-  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-3989-main-'));
+  const main = scratchDir('ct-3989-main-');
   execFileSync('git', ['-C', main, 'init', '-q']);
   fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
   const decisionFor = (command) => {
     const out = preToolUse.run({
+      env: process.env,
       input: { tool_name: 'Bash', tool_input: { command }, cwd: main },
       runDir: null, runState: null, ownedRun: {}, cwd: main,
     });

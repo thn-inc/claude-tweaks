@@ -10,12 +10,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 
 function tmpProject() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-declined-learning-'));
+  return scratchDir('ct-declined-learning-');
 }
 
 test('recordDecline serializes concurrent writers under an effectively-unbounded lock budget — no lost entries under real cross-process concurrency (finding regression)', async () => {

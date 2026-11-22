@@ -5,6 +5,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -96,8 +97,8 @@ test('the allocate command line from the sub-file is executable end-to-end', () 
   const sub = read('plugin/skills/init/bootstrap/step-06-5-port-isolation.md');
   extractAllocateLine(sub);
 
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-init-ports-home-'));
-  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-init-ports-checkout-'));
+  const home = scratchDir('ct-init-ports-home-');
+  const checkout = scratchDir('ct-init-ports-checkout-');
   const portsJs = path.resolve(__dirname, '..', 'plugin', 'bin', 'ports.js');
   const out = execFileSync('node', [portsJs, 'allocate', '--path', checkout, '--services', 'web,api,db'], {
     encoding: 'utf8',
@@ -125,7 +126,7 @@ test('auto-mode-contract.md names the Step 6.5 rewrite-diff gate in its HARD-GAT
 
 test('CRLF control (#3670): init-port-isolation-conformance extracts the same result after a CRLF round-trip through readText()', (t) => {
   const docPath = path.join(__dirname, '..', 'plugin', 'skills', 'init', 'bootstrap', 'step-06-5-port-isolation.md');
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'init-port-iso-crlf-'));
+  const tmp = scratchDir('init-port-iso-crlf-');
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   const lf = readText(docPath);
   const crlf = lf.replace(/\n/g, '\r\n');

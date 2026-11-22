@@ -3,13 +3,15 @@
 // tests/resolve-blockers-cli.test.js's deps-injection style. Covers the
 // factory's own parse/exit-code contract once (malformed list, --repo
 // missing value, unknown flag, gh absent, unresolvable repo, fetch throw,
-// --help) — the two concrete CLIs (resolve-blockers.js, resolve-linked-prs.js)
-// keep their own existing test files unmodified, since they just exercise
-// this same contract through a configured instance.
+// --help, non-positive and partly malformed lists, a trailing comma, --repo
+// followed by a flag). The concrete CLIs' files (resolve-blockers.js,
+// resolve-linked-prs.js) test only their own usage name, `gh` argv,
+// --hostname, output shapes and GraphQL failure.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { makeNumberListCli } = require('../../plugin/bin/lib/number-list-cli');
+const { captureGhTimeout } = require('../helpers/gh-timeout-probe');
 
 function buildCli(overrides = {}) {
   return makeNumberListCli({
@@ -103,7 +105,54 @@ test('no --repo and no resolvable origin remote — exit 2', () => {
   const deps = fakeDeps({ remoteUrl: () => { throw new Error('no remote'); } });
   const code = run(['720'], deps);
   assert.equal(code, 2);
-  assert.match(deps.calls.stderr.join(''), /could not resolve owner\/repo/);
+  assert.match(deps.calls.stderr.join(''), /could not resolve owner\/repo — pass --repo \[host\/\]owner\/name/);
+});
+
+test('#5552 AC5.1: non-positive <n> — exit 1', () => {
+  const { run } = buildCli();
+  const deps = fakeDeps();
+  const code = run(['0'], deps);
+  assert.equal(code, 1);
+  assert.match(deps.calls.stderr.join(''), /malformed <n>/);
+});
+
+test('#5552 AC5.1: a comma list with one malformed entry — exit 1, gh never probed', () => {
+  const { run } = buildCli();
+  const deps = fakeDeps({ ghAvailable: () => { throw new Error('should not be called'); } });
+  const code = run(['720,abc,730'], deps);
+  assert.equal(code, 1);
+  assert.match(deps.calls.stderr.join(''), /malformed <n>/);
+});
+
+test('#5552 AC5.1: a trailing comma (empty segment) — exit 1', () => {
+  const { run } = buildCli();
+  const deps = fakeDeps();
+  const code = run(['720,'], deps);
+  assert.equal(code, 1);
+  assert.match(deps.calls.stderr.join(''), /malformed <n>/);
+});
+
+test('#5552 AC5.1: --repo followed by another flag is a missing value, not the value — exit 1', () => {
+  const { run } = buildCli();
+  const deps = fakeDeps({
+    ghAvailable: () => { throw new Error('should not be called'); },
+    remoteUrl: () => { throw new Error('should not be called'); },
+  });
+  const code = run(['720', '--repo', '--help'], deps);
+  assert.equal(code, 1);
+  assert.match(deps.calls.stderr.join(''), /missing value for --repo/);
+});
+
+test('#5552 AC5.1: `gh` absent — remoteUrl is never called', () => {
+  const { run } = buildCli();
+  let remoteCalls = 0;
+  const deps = fakeDeps({
+    ghAvailable: () => false,
+    remoteUrl: () => { remoteCalls += 1; return null; },
+  });
+  const code = run(['720'], deps);
+  assert.equal(code, 2);
+  assert.strictEqual(remoteCalls, 0);
 });
 
 test('fetch throwing — exit 3, error message on stderr, nothing on stdout', () => {
@@ -142,7 +191,7 @@ test('success: --repo override is parsed and passed to fetch as owner/repo', () 
 test('#2240: a GitHub Enterprise Server origin remote passes host to fetch', () => {
   let seen = null;
   const { run } = buildCli({ fetch: (args) => { seen = args; return new Map([[720, 'x']]); } });
-  const deps = fakeDeps({ remoteUrl: () => 'https://ghe.example.com/acme/widgets.git' });
+  const deps = fakeDeps({ remoteUrl: () => 'https://ghe.example.com/acme/widgets.git', gateDeps: { env: { GH_HOST: 'ghe.example.com' } } });
   const code = run(['720'], deps);
   assert.equal(code, 0);
   assert.equal(seen.host, 'ghe.example.com');
@@ -183,4 +232,29 @@ test('#2425 review fix: a bare --repo owner/repo still resolves to host: "github
   assert.equal(seen.host, 'github.com');
   assert.equal(seen.owner, 'someone');
   assert.equal(seen.repo, 'else');
+});
+
+function runnerTimeoutFor(envValue) {
+  const cliPath = require.resolve('../../plugin/bin/lib/number-list-cli');
+  return captureGhTimeout({
+    envValue,
+    modulePaths: [cliPath],
+    reply: '',
+    exercise: (setEnv) => {
+      // number-list-cli destructures execFileSync at require time, so the helper's stub is installed first.
+      const { makeNumberListCli: freshMake } = require(cliPath);
+      const cli = freshMake({ name: 'x.js', usage: 'usage\n', fetch: () => new Map(), mapResult: () => null });
+      // Set only after the factory call: the timeout must be read per runner call, not at factory time.
+      setEnv();
+      cli.realDeps.runner(['api']);
+    },
+  });
+}
+
+test('#4815 AC1.1: realDeps.runner passes GH_BATCH_TIMEOUT_MS as its timeout, read at call time', () => {
+  assert.equal(runnerTimeoutFor('45000'), 45000);
+});
+
+test('#4815 AC1.1: a gh-timeout-ms below the floor leaves the batched runner at 30000', () => {
+  assert.equal(runnerTimeoutFor('10000'), 30000);
 });

@@ -43,6 +43,8 @@ A prefix covers a path when `prefix === ''` (the repo root), `p === prefix`, or 
 
 Every test file the map knows, present at HEAD, whose content differs between the map's commit and HEAD (`git diff --no-renames {commit} HEAD`) is selected too, as untraced, since its recorded reads may be stale. This is a tree diff, so it holds whether or not the map's commit is an ancestor of the base. Any map problem (missing, invalid, failing-suite, not-ancestor, stale) skips the drift read, and those already run the suite full; the map's commit need not be an ancestor of the base. With the map at the base, the drifted tests are the branch's own committed test edits, which are already changed tests, so the selection is unchanged and `driftTests` stays empty (a changed test is never counted as drift). Under merge-narrowing (a stamp-anchored run whose branch later merged the integration branch) the merged-in test edits are dropped from the changed set but still differ from the map's commit, so drift selects them; that is intended and conservative.
 
+When more than 50 test files are drift-selected and `impact.fetch` is declared, one fetch runs (#5947), at most once per 10 minutes per checkout (tracked by a `claude-tweaks-test-impact.refresh-attempt` marker in the git common dir, shared by every worktree, written before the fetch so a failed or timed-out attempt counts). The reloaded map is adopted only if it is usable and has no more drift; otherwise the current map stands. `maxAgeCommits` stays the hard limit.
+
 ## When the impact suite runs full
 
 `report.json`'s `scope.impact.fallback` names the reason:
@@ -74,11 +76,13 @@ Changed paths are diffed from the stamp's `fullSha`, as every scoped run is. Wit
 
 ## Report
 
-`scope.impact` holds `{suite, files, fallback, selected, changedTests, untracedTests, driftTests, driftSelected, superseded, mapPath, mapCommit, mapAgeCommits, mapDirty, fetch, listPath, selectedFiles}`. `driftTests` names the drift-selected tests and `driftSelected` their count (`null` when no selection ran). `fetch` is `{ran, exitCode, durationMs, timedOut, signal}` when a fetch ran, else `null`: `timedOut` is `true` when the 120 s timeout killed it, and `signal` names the signal that ended it (`null` for a normal exit). `listPath` and `selectedFiles` are set only when a subset ran. The map is read only when selection needs it, so a delta no impact rule matches (or that a full-suite rule already supersedes) never reads the map or runs `fetch`: `mapPath`, `mapCommit`, `mapAgeCommits`, `mapDirty` and `fetch` are then `null`. Under `Scope:`, stdout prints one of:
+`scope.impact` holds `{suite, files, fallback, selected, changedTests, untracedTests, driftTests, driftSelected, superseded, supersedingPaths, mapPath, mapCommit, mapAgeCommits, mapDirty, fetch, listPath, selectedFiles}`. `driftTests` names the drift-selected tests and `driftSelected` their count (`null` when no selection ran). `supersedingPaths` names the files that superseded the subset: unmatched paths and files a non-impact rule sends to the suite; `[]` otherwise. `fetch` is `{ran, exitCode, durationMs, timedOut, signal}` when a fetch ran, else `null`: `timedOut` is `true` when the 120 s timeout killed it, and `signal` names the signal that ended it (`null` for a normal exit). `listPath` and `selectedFiles` are set only when a subset ran. The map is read only when selection needs it, so a delta no impact rule matches (or that a full-suite rule already supersedes) never reads the map or runs `fetch`: `mapPath`, `mapCommit`, `mapAgeCommits`, `mapDirty` and `fetch` are then `null`. Under `Scope:`, stdout prints one of:
 
 - `Impact: {selected} of {n} test file(s) selected (map {commit9}, {age} commit(s) old)`, with `, {driftSelected} drift` inside the parentheses when any drift-selected test ran
 - `Impact: {selected} of the {suite} test file(s) selected — no impact-rule path changed, map not read`
 - `Impact: full {suite} — {fallback | superseded by a full-suite rule}`
+
+The `verify` event, and through it `timing.json`'s verify entry, carries `impact: {suite, fallback, superseded, selected, supersedingPaths}`, so the outcome outlives `report.json`, which each run overwrites.
 
 ## Refresh
 
@@ -93,8 +97,18 @@ The map is built outside the runner by a traced full-suite run: a read tracer pr
 
 ## Full mode
 
-`verification.md`'s "Standalone is always full" still governs. Build Common Step 5 is impact-selected only when it is scoped-eligible, meaning `$PIPELINE_RUN_DIR` is set or a parent passed `--source`, and the declaration declares `impact`. It then runs the scoped invocation from that file's Re-verify scoping, so the impact suite runs its selected subset. Otherwise it runs full, as does a standalone `/build`.
+`verification.md`'s Re-verify scoping decides the mode. Build Common Step 5 is a scoped site whenever the declaration exists, so the impact suite runs its selected subset, or takes CI's whole-suite verdict when the suite has a `ci` source. A standalone run (no `$PIPELINE_RUN_DIR`, no `--source`) runs full without `localRuns` and scoped under it.
 
 An impact-selected run writes a `scoped` stamp, never a full one. `--stamp-status` then reads `verifiedHead: true` and `match: false`.
 
-Standalone `/claude-tweaks:test` passes no `--scope` and is the explicit full mode: every suite runs its full command.
+The explicit full mode is `/claude-tweaks:test full`: `verify.js --local` with no `--scope`, every suite's full command on this machine. Without `localRuns`, a standalone `/claude-tweaks:test` with no argument is full too.
+
+## Whole suite on request
+
+This section applies under the declaration's `localRuns: "on-request"` (`ci-source.md`).
+
+- **The rule.** On a developer machine a CI-declared suite runs as the whole suite only when someone asks for it by name: `/claude-tweaks:test full`, `verify.js --local` with no `--scope`, or `/claude-tweaks:release`'s run before the version bump. Every pipeline verify takes it from the PR's CI job, and runs the impact subset here only when CI cannot answer. The one exception: when CI cannot answer after a push and one re-run, the `--local` re-run runs what selection chose, and that is the whole suite when selection cannot narrow (a missing or stale map, a full-suite rule in the declaration, a stale stamp anchor on a suite without `impact` rules, or, under `impact`, `no-anchor`: no usable anchor and no merge-base). It is rare, and the run's `AUTO` line names the fallback reason.
+- **What a miss is.** A test whose result a change affects but which selection leaves out. Its causes are reads the tracer cannot see (`#` imports, a package's self-reference, a native addon's content, a non-node child's reads, a wrapper such as `xargs` or `timeout`; Known limits above), reads that differ between CI's trace environment and this machine, and reads a test gained after the map was traced without the test file itself changing, since the map may trail HEAD by up to `maxAgeCommits` commits.
+- **How CI catches it.** When CI answers a pipeline's verify, CI ran the whole suite on that commit, so a miss cannot pass. When `--local` ran the subset, the miss passes on this machine and the declared CI job on the same head is red. The merge gate (`_shared/pr-first-merge.md` Step 2.5) reads the PR's check rollup and its head workflow runs, parks a red PR and waits on a pending one, so the change does not merge.
+- **What CI does not catch.** A failure that happens only on macOS, on Node 22 or on Windows and that the map also misses. The plugin's own CI runs ubuntu on Node 20, and Windows is checked after merge. The release's whole-suite run on the developer machine is the remaining check before a version ships.
+- **Who enforces the gate.** The merge gate is the plugin's. A merge made outside it is stopped only when the repository protects its integration branch with the declared CI job's check required.

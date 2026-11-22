@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // bin/repair-claim.js — repair or force-release an UNREADABLE claims-registry blob.
 //   node bin/repair-claim.js <issue> --run <run-dir> --mode <release|reclaim> --reason <reason> \
-//     [--link <url>] [--repo owner/name] [--section "/<skill>"] [--step <text>] [--help]
+//     [--link <url>] [--repo [host/]owner/name] [--section "/<skill>"] [--step <text>] [--help]
 // Mechanizes _shared/issue-claims.md's "Repairing an unreadable claim blob" steps 1-4:
 // read the blob and capture its sha (ordinary response metadata, available even when the
 // content doesn't parse), confirm the content classifies 'unreadable' on that same fresh
@@ -12,7 +12,8 @@
 // release-claim.js and the acquire path). Exit 0 repaired; 3 CAS rejection (sha changed
 // between read and write — re-read and reassess, never retried blind); 4 refused (blob
 // does not classify 'unreadable' on the fresh read); 1 failed — any other error;
-// 2 malformed invocation or `gh` absent — the MCP path in _shared/issue-claims.md's
+// 2 malformed invocation, an origin host that is not a known GitHub host (refused before
+// any gh call, #4933; an exported `GH_HOST` opts in), or `gh` absent — the MCP path in _shared/issue-claims.md's
 // subsection stays the documented fallback, deliberately not grown into this CLI.
 // The overwrite destroys content that may encode a real holder's identity, so the
 // override is logged (AUTO line in <run-dir>/decisions.md via resolveTarget — a
@@ -25,9 +26,11 @@ const path = require('path');
 const { repairClaim, defaultRunner: repairDefaultRunner } = require('./lib/repair-claim/repair');
 const { formatEntry, appendEntry, resolveTarget } = require('./lib/log-decision/append');
 const { defaultRunner: gitDefaultRunner } = require('./lib/issues/claims-git-cas');
-const { parseRepo, ghAvailable, remoteUrl } = require('./lib/repo-resolve');
+const {
+  parseRepo, ghAvailable, remoteUrl, pinExplicitRepoHost, gateOriginRepo,
+} = require('./lib/repo-resolve');
 
-const USAGE = 'usage: repair-claim.js <issue> --run <run-dir> --mode <release|reclaim> --reason <reason> [--link <url>] [--repo owner/name] [--section "/<skill>"] [--step <text>] [--help]\n';
+const USAGE = 'usage: repair-claim.js <issue> --run <run-dir> --mode <release|reclaim> --reason <reason> [--link <url>] [--repo [host/]owner/name] [--section "/<skill>"] [--step <text>] [--help]\n';
 const EXIT = { repaired: 0, 'cas-rejected': 3, refused: 4, failed: 1 };
 const MODES = ['release', 'reclaim'];
 
@@ -64,6 +67,9 @@ const realDeps = {
   gitRunner: gitDefaultRunner,
   ghAvailable,
   remoteUrl,
+  // #4505: an explicit --repo's host reaches the claim blob's contents-API
+  // calls, which thread no --hostname for github.com.
+  pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
   now: () => Date.now(),
   cwd: () => process.cwd(),
   mainRoot: undefined,
@@ -96,8 +102,15 @@ function run(argv, deps = realDeps) {
   }
   let remote = null;
   if (!o.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = o.repo ? parseRepo(o.repo.split('/').length >= 3 ? o.repo : `github.com/${o.repo}`) : parseRepo(remote);
-  if (!repoSpec) { deps.stderr('repair-claim.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+  let repoSpec;
+  if (o.repo) repoSpec = parseRepo(o.repo.split('/').length >= 3 ? o.repo : `github.com/${o.repo}`);
+  else {
+    const gated = gateOriginRepo(remote, deps.gateDeps);
+    if (gated.refusal) { deps.stderr(`repair-claim.js: ${gated.refusal}\n`); return 2; }
+    repoSpec = gated.spec;
+  }
+  if (!repoSpec) { deps.stderr('repair-claim.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return 2; }
+  if (o.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
   // #1443: parseRepo's regex accepts any non-'/' owner/repo segment, including '.'/'..'
   // (#1153 review finding). repair -> claim-store.js interpolates `${owner}/${repo}`
   // directly into a `gh api repos/{repoSlug}/contents/...` path, the same reachable
@@ -116,7 +129,9 @@ function run(argv, deps = realDeps) {
   try { target = resolveTarget({ runDir, cwd: deps.cwd(), mainRoot: deps.mainRoot }); } catch { target = { ok: false, reason: 'missing' }; }
   if (!target.ok) {
     if (target.reason === 'not-anchored') {
-      deps.stderr(`repair-claim.js: decisions.md not written — run dir is not anchored under the main checkout (a worktree-local shadow): ${runDir} — see _shared/pipeline-run-dir.md\n`);
+      deps.stderr(`repair-claim.js: decisions.md not written — run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow): ${runDir} — see _shared/pipeline-run-dir.md\n`);
+    } else if (target.reason === 'not-a-run-dir') {
+      deps.stderr(`repair-claim.js: decisions.md not written — run dir is not a pipeline run directory (it must sit under .claude-tweaks/pipelines): ${runDir}\n`);
     } else {
       deps.stderr(`repair-claim.js: decisions.md not written — run dir does not exist: ${runDir}\n`);
     }

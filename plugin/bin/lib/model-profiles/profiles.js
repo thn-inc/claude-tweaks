@@ -20,9 +20,9 @@ const PROFILES = {
 
 const EFFORT_SCALE = ['low', 'medium', 'high', 'xhigh', 'max'];
 
-// The four policy.yml keys the resolver reads. #219 pins policy-schema.js
+// The five policy keys the resolver reads (from policy.yml; the factory layer reaches them with #6007). #219 pins policy-schema.js
 // registration against this export — the names here are authoritative.
-const POLICY_KEYS_READ = ['model-profiles', 'model-stance', 'model-ceiling', 'frontier-run-cap'];
+const POLICY_KEYS_READ = ['model-profiles', 'model-stance', 'model-ceiling', 'frontier-run-cap', 'model-effort'];
 
 function effortLine(effort) {
   if (!effort) return '';
@@ -72,6 +72,8 @@ function resolve(profile, opts = {}) {
   const policy = opts.policy || {};
   const stance = opts.stance || policy['model-stance'] || 'default';
   if (!STANCES.includes(stance)) throw new Error(`unknown stance "${stance}"`);
+  const effortMode = policy['model-effort'] || 'inherit';
+  if (effortMode !== 'inherit' && effortMode !== 'profile') throw new Error(`unknown model-effort "${effortMode}"`);
 
   let model = PROFILES[profile].model;
   let effort = PROFILES[profile].effort;
@@ -179,7 +181,9 @@ function resolve(profile, opts = {}) {
     source = 'diff-ceiling';
   }
 
-  return { model, effort, source, effortLine: effortLine(effort) };
+  // #5941: `profile` binds the launched agent's effort to the final `effort`
+  // after every stage above; `inherit` (the default) leaves it unset (null).
+  return { model, effort, source, effortLine: effortLine(effort), launchEffort: effortMode === 'profile' ? effort : null };
 }
 
-module.exports = { PROFILES, EFFORT_SCALE, POLICY_KEYS_READ, effortLine, resolve };
+module.exports = { PROFILES, PROFILE_ORDER, EFFORT_SCALE, POLICY_KEYS_READ, effortLine, resolve };

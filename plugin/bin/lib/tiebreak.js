@@ -10,18 +10,32 @@
 // different claims get different ids. A non-object finding, or a lens, path or
 // claim that is not a string, throws a TypeError rather than hashing `undefined`.
 //
-// A finding is { lens, path, line, claim, reporterSeverity, kind, positions? }:
+// A finding is { lens, path, line, claim, reporterSeverity, kind, positions?, vacuity?, severityFloor? }:
 // kind is 'unconfirmed' | 'contested'; positions ([{ severity }], optional,
 // contested only) are the two sides' severities. A contested finding's reporter
 // severity is the higher known position severity; buildFindingsArtifact stores
-// it as reporterSeverity, since the artifact does not keep positions.
+// it as reporterSeverity, since the artifact does not keep positions. vacuity
+// (boolean, optional) marks a lens 3f "this test cannot fail" finding: only
+// resolveTiebreakChunk reads it (see its comment), the artifact does not keep it,
+// and a non-boolean value is refused rather than silently ignored. severityFloor
+// (a severity, optional) is the severity a Standard judge raised the finding to
+// (#5541): only resolveTiebreak reads it, and only where the Capable judge
+// settled no verdict (a finding field refused as bad-finding-field, could-not-parse,
+// a non-DONE status, can't-tell, no verified evidence, a finding with no line):
+// there it settles at the higher of what it computes and the floor, so a failed
+// re-judge still reaches the console at the raised severity. A confirm or refute
+// settles on its own verdict and ignores it. It is not part of the finding's id,
+// the artifact does not keep it, and an absent, null or unknown value changes
+// nothing.
 //
 // Reply grammar (parseTiebreakReply). Lines are trimmed; each field line is
 // `Field: value`, the field name matched case-insensitively:
 //   Verdict: confirmed | refuted | cant-tell        value lowercased
 //   Evidence: {path}:{line} {quote}                 the path:line token may sit in
 //       one backtick pair (`{path}`:{line} or `{path}:{line}`), which is
-//       stripped. quote = everything after the
+//       stripped. With a findingPath option (resolveTiebreak passes the finding's
+//       path), that exact path, even one holding whitespace, is also read as the
+//       literal prefix of the same three spellings. quote = everything after the
 //       first whitespace following path:line; one wrapping pair of double
 //       quotes, or a Markdown code span (any equal backtick run, padding
 //       spaces dropped), is stripped. An empty or whitespace-only quote, a line
@@ -93,9 +107,26 @@ function stripWrapper(s) {
   return s;
 }
 
-function parseEvidence(value) {
-  const w = WRAPPED_TOKEN_RE.exec(value);
-  const m = EVIDENCE_RE.exec(w ? (w[3] || w[1] + w[2]) + value.slice(w[0].length) : value);
+// The finding's own path, when it holds whitespace, cannot be read by
+// EVIDENCE_RE's \S+ path; so the three path:line spellings are matched as a
+// literal prefix (exact string comparison, no regex built from the path) and the
+// tail is read by the same line/quote rule. Null when no spelling matches.
+const LINE_TAIL_RE = /^(\d+)(?:\s+([\s\S]*))?$/;
+function findingPathTail(value, findingPath) {
+  if (value.startsWith(`${findingPath}:`)) return LINE_TAIL_RE.exec(value.slice(findingPath.length + 1));
+  if (value.startsWith(`\`${findingPath}\`:`)) return LINE_TAIL_RE.exec(value.slice(findingPath.length + 3));
+  if (value.startsWith(`\`${findingPath}:`)) return /^(\d+)`(?:\s+([\s\S]*))?$/.exec(value.slice(findingPath.length + 2));
+  return null;
+}
+
+function parseEvidence(value, findingPath) {
+  const known = typeof findingPath === 'string' && findingPath !== '' ? findingPathTail(value, findingPath) : null;
+  let m;
+  if (known) m = [null, findingPath, known[1], known[2]];
+  else {
+    const w = WRAPPED_TOKEN_RE.exec(value);
+    m = EVIDENCE_RE.exec(w ? (w[3] || w[1] + w[2]) + value.slice(w[0].length) : value);
+  }
   if (!m) return null;
   const line = Number(m[2]);
   const quote = stripWrapper((m[3] || '').trim());
@@ -113,7 +144,8 @@ function parseRecommendation(value) {
   return { recommendation: m[1].toLowerCase(), recommendationReason: sep[1].trim() || null };
 }
 
-function parseTiebreakReply(text) {
+function parseTiebreakReply(text, options) {
+  const { findingPath } = options || {};
   if (typeof text !== 'string') return unparsed();
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== '');
   if (lines.length === 0) return unparsed();
@@ -145,7 +177,7 @@ function parseTiebreakReply(text) {
   return {
     parse: 'ok',
     verdict: verdicts[0],
-    evidence: fields.evidence == null ? null : parseEvidence(fields.evidence),
+    evidence: fields.evidence == null ? null : parseEvidence(fields.evidence, findingPath),
     severity: SEVERITIES.includes(severity) ? severity : null,
     recommendation: rec.recommendation,
     recommendationReason: rec.recommendationReason,
@@ -171,6 +203,8 @@ function parseTiebreakReply(text) {
 // (MARKER_RE) is can't-tell with reason bad-finding-field, so a finding field
 // can never forge a second decisions.md line or echo another finding's marker;
 // the logLine is also whitespace-collapsed to one line.
+// Chunked replies (one agent, up to CHUNK_MAX findings) are split and resolved
+// by splitChunkReply / resolveTiebreakChunk below; the grammar is documented there.
 
 const LINE_BREAK_RE = /[\r\n\u2028\u2029]/;
 const MARKER_RE = /tiebreak:/i;
@@ -223,18 +257,26 @@ function firstLine(raw) {
 
 const squash = (s) => s.replace(/\s+/g, ' ').trim();
 
+function canonicalFindingPath(findingPath, evidencePath) {
+  if (findingPath.startsWith('plugin/')) return findingPath;
+  const skillPath = `plugin/skills/${findingPath}`;
+  return evidencePath === skillPath ? skillPath : findingPath;
+}
+
 // Returns null when the evidence checks out against the file, else the reason.
 // The cited line must sit within ±LINE_TOLERANCE_REPRODUCTION_WIDE of the
 // finding's line, and the quote must carry content (three or more consecutive
 // word characters), so `}` or `c` can never verify against a window.
+// A legacy skill-relative Location matches its `plugin/skills/` Evidence path and is read through that path.
 function evidenceProblem(evidence, finding, line, readFile) {
-  if (evidence.path !== finding.path) return 'evidence-path-mismatch';
+  const readPath = canonicalFindingPath(finding.path, evidence.path);
+  if (evidence.path !== readPath) return 'evidence-path-mismatch';
   const quote = squash(evidence.quote);
   if (!/[A-Za-z0-9_]{3,}/.test(quote)) return 'evidence-unverified';
   if (Math.abs(evidence.line - line) > LINE_TOLERANCE_REPRODUCTION_WIDE) return 'evidence-unverified';
   // One guard for both: an absent or non-function reader throws here too.
   let text;
-  try { text = readFile(finding.path); } catch { return 'evidence-unverified'; }
+  try { text = readFile(readPath); } catch { return 'evidence-unverified'; }
   if (typeof text !== 'string') return 'evidence-unverified';
   const lines = text.split(/\r?\n/);
   if (lines[lines.length - 1] === '') lines.pop();
@@ -259,8 +301,8 @@ function neutralize(text) {
 }
 
 function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
-  const parsed = parseTiebreakReply(replyText);
   const id = findingId(finding);
+  const parsed = parseTiebreakReply(replyText, { findingPath: finding.path });
   const t = stamp(now);
   const line = firstLine(finding.line);
   const shownLine = line !== null ? line : String(finding.line ?? 'unknown');
@@ -289,11 +331,14 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
   else reason = evidenceProblem(parsed.evidence, finding, line, readFile);
 
   if (reason) {
-    const outcome = severityRank(higherSev) >= severityRank('medium') ? 'console' : 'digest';
+    // An escalation re-judge carries the severity the Standard judge raised the finding to (#5541).
+    // The floor applies only here, where the Capable judge settled no verdict; a confirm or refute settles on its own.
+    const unsettledSev = higher(higherSev, knownSeverity(finding.severityFloor));
+    const outcome = severityRank(unsettledSev) >= severityRank('medium') ? 'console' : 'digest';
     const log = outcome === 'console'
-      ? entry('STAGED', tiebreakStep, neutralize(`${where} console: ${reason}. Severity: ${higherSev}. Recommendation: ${parsed.recommendation ?? 'none'}.`))
-      : entry('AUTO', tiebreakStep, neutralize(`${where} digested: ${reason}. Severity: ${higherSev}.`));
-    return result({ outcome, severity: higherSev, reason, ...log });
+      ? entry('STAGED', tiebreakStep, neutralize(`${where} console: ${reason}. Severity: ${unsettledSev}. Recommendation: ${parsed.recommendation ?? 'none'}.`))
+      : entry('AUTO', tiebreakStep, neutralize(`${where} digested: ${reason}. Severity: ${unsettledSev}.`));
+    return result({ outcome, severity: unsettledSev, reason, ...log });
   }
 
   const ev = parsed.evidence;
@@ -313,6 +358,157 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
   });
 }
 
+// ---- chunked replies (#5540) ----
+//
+// One judge agent settles up to CHUNK_MAX findings and answers once. Chunk reply
+// grammar (splitChunkReply): lines are trimmed; a block starts at a line
+// `Id: {12 hex}` (the id optionally in one backtick pair, name and id matched
+// case-insensitively) whose id is one of the chunk's ids, and runs to the next
+// line of that shape or to the end of the reply, excluding the reply's final
+// non-empty line when that line matches STATUS_RE. `status` is that final line
+// (verbatim, trimmed) or null. A block's text is its lines after the header
+// joined with `\n`, then `\n` + status when status is non-null, so it parses
+// exactly as a one-finding reply does. An id with no header is `missing`; an id
+// with two or more headers is `duplicate`; both carry text ''. Lines before the
+// first header, and any block under an id outside the chunk, belong to no finding.
+// resolveTiebreakChunk settles each finding whose block is present exactly once
+// through resolveTiebreak, so its verdict line is the one-finding call's line
+// for the same entry and block; every other finding is reported unsettled with
+// nothing resolved for it, and the caller re-dispatches it alone.
+//
+// Judge tiers (#5541): a finding's tier follows its severity. `info` is judged at
+// Standard, everything else — low, medium, high, critical, and a null, missing
+// or unknown severity — at Capable, because a cheaper judge is only trusted
+// where a wrong verdict costs least. A contested finding's unknown-position check
+// reads its raw `positions`, because positionSeverity (and the artifact's
+// reporterSeverity built from it) drops an unknown position: a contested finding
+// with any null or unknown position severity is Capable even when every known
+// position is info. The tier never reads severityFloor.
+// planChunks groups entries by tier (TIERS order, entry order within a tier,
+// CHUNK_MAX per chunk, a repeated finding id kept once at its first index), so
+// a chunk never mixes tiers. escalation is the guard on the cheap tier: a
+// Standard judge that raises a finding to medium or higher has not settled it,
+// and resolveTiebreakChunk reports it in `escalated` with no result so the
+// caller judges it again at Capable. Only a reply that parses ok with STATUS
+// DONE can escalate; an unparsed or non-DONE block resolves as can't-tell, as
+// at any tier. At 'capable' (the default) nothing escalates.
+// resolveTiebreakChunk returns { results, unsettled, escalated }; `escalated` is
+// the entries a Standard judge raised, always [] at Capable.
+
+const CHUNK_MAX = 8;
+const CHUNK_HEADER_RE = /^id\s*:\s*`?([0-9a-f]{12})`?$/i;
+const CONFIRMED_VERDICT_RE = /^verdict\s*:\s*confirmed\s*$/i;
+
+function splitChunkReply(replyText, ids) {
+  const wanted = new Set(ids.map((id) => id.toLowerCase()));
+  const lines = typeof replyText === 'string'
+    ? replyText.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== '')
+    : [];
+  let status = null;
+  if (lines.length > 0 && STATUS_RE.test(lines[lines.length - 1])) status = lines.pop();
+
+  const found = new Map(); // id -> [lines of each header's block]
+  let current = null;
+  for (const line of lines) {
+    const header = CHUNK_HEADER_RE.exec(line);
+    if (!header) {
+      if (current) current.push(line);
+      continue;
+    }
+    const id = header[1].toLowerCase();
+    if (!wanted.has(id)) {
+      current = null;
+      continue;
+    }
+    if (!found.has(id)) found.set(id, []);
+    current = [];
+    found.get(id).push(current);
+  }
+
+  const blocks = new Map();
+  for (const id of ids) {
+    const occurrences = found.get(id.toLowerCase()) || [];
+    if (occurrences.length === 0) {
+      blocks.set(id, { state: 'missing', text: '' });
+    } else if (occurrences.length > 1) {
+      blocks.set(id, { state: 'duplicate', text: '' });
+    } else {
+      blocks.set(id, { state: 'ok', text: [...occurrences[0], ...(status === null ? [] : [status])].join('\n') });
+    }
+  }
+  return { status, blocks };
+}
+
+const TIERS = ['capable', 'standard'];
+
+function judgeTier(finding) {
+  if (finding && finding.kind === 'contested' && Array.isArray(finding.positions) && finding.positions.length > 0) {
+    if (finding.positions.some((p) => knownSeverity(p && p.severity) === null)) return 'capable';
+  }
+  return reporterSeverityOf(finding) === 'info' ? 'standard' : 'capable';
+}
+
+function planChunks(findings) {
+  const ids = buildFindingsArtifact(findings).map((a) => a.id);
+  const seen = new Set();
+  const byTier = new Map(TIERS.map((tier) => [tier, []]));
+  findings.forEach((finding, index) => {
+    if (seen.has(ids[index])) return;
+    seen.add(ids[index]);
+    byTier.get(judgeTier(finding)).push(index);
+  });
+  const chunks = [];
+  for (const tier of TIERS) {
+    const indexes = byTier.get(tier);
+    for (let i = 0; i < indexes.length; i += CHUNK_MAX) chunks.push({ tier, indexes: indexes.slice(i, i + CHUNK_MAX) });
+  }
+  return chunks;
+}
+
+function escalation(finding, replyText, tier) {
+  if (tier !== 'standard') return null;
+  const parsed = parseTiebreakReply(replyText, { findingPath: finding.path });
+  if (parsed.parse !== 'ok' || parsed.status !== 'DONE' || parsed.severity === null) return null;
+  return severityRank(parsed.severity) >= severityRank('medium') ? { reason: 'raised', severity: parsed.severity } : null;
+}
+
+function resolveTiebreakChunk(findings, replyText, opts) {
+  if (!Array.isArray(findings)) throw new TypeError('resolveTiebreakChunk: findings must be an array');
+  const ids = findings.map((f) => findingId(f));
+  if (new Set(ids).size !== ids.length) throw new TypeError('resolveTiebreakChunk: two entries share a finding id');
+  const tier = opts && opts.tier !== undefined ? opts.tier : 'capable';
+  if (!TIERS.includes(tier)) throw new TypeError(`resolveTiebreakChunk: tier must be one of ${TIERS.join(', ')}`);
+  if (tier === 'standard' && findings.some((f) => judgeTier(f) === 'capable')) {
+    throw new TypeError('resolveTiebreakChunk: a Capable-tier finding cannot be judged at standard');
+  }
+  const { blocks } = splitChunkReply(replyText, ids);
+  const results = [];
+  const unsettled = [];
+  const escalated = [];
+  findings.forEach((finding, index) => {
+    const id = ids[index];
+    const block = blocks.get(id);
+    if (block.state !== 'ok') {
+      unsettled.push({ id, index, reason: block.state === 'missing' ? 'missing' : 'duplicated' });
+      return;
+    }
+    // Lens 3f's vacuity rule (step3-lens-dispatch.md): a claim that a test cannot fail needs an
+    // executed run, so reading code never confirms it. The one-finding form leaves that rewrite
+    // to the dispatcher's prose; the chunk form does it here because only code splits a chunk
+    // reply and the dispatcher never edits one (record #5540, Decision Q1).
+    const text = finding.vacuity === true
+      ? block.text.split('\n').map((l) => (CONFIRMED_VERDICT_RE.test(l) ? 'Verdict: cant-tell' : l)).join('\n')
+      : block.text;
+    const raised = escalation(finding, text, tier);
+    if (raised) {
+      escalated.push({ id, index, ...raised });
+      return;
+    }
+    results.push({ ...resolveTiebreak(finding, text, opts), id, index });
+  });
+  return { results, unsettled, escalated };
+}
+
 // ---- findings artifact and verdict coverage (#3945 Task 3) ----
 //
 // review-findings.json (a run-dir artifact, in run-artifact/write.js's
@@ -322,9 +518,10 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
 // each listed id" — matched on the verdict line's own shape (verdictLineRe:
 // the `Tiebreak tiebreak:{id}:` step, or the confirmed line's `confirmed by
 // tiebreak:{id}. Confirmed.`), never on the marker anywhere in a line, so a
-// marker quoted inside another line's text never counts. The #3772 matcher in
-// console/resolve.js (findingKey: lens + first path:line) is unchanged and
-// coarser than the id — two findings that differ only in claim share a key but
+// marker quoted inside another line's text never counts. The matcher in
+// console/resolve.js keys on lens + path:line — a verdict's whole path, a
+// STAGED line's longest candidate path a verdict names (#4632) — and is
+// coarser than the id: two findings that differ only in claim share a key but
 // need two verdict lines here.
 //
 // A present-but-bad artifact is never absent and never valid: readFindingsArtifact
@@ -354,6 +551,7 @@ function buildFindingsArtifact(findings) {
       if (typeof f[key] === 'string' && MARKER_RE.test(f[key])) throw new TypeError(`finding ${i} ${key} contains the tiebreak: marker`);
     }
     if (!FINDING_KINDS.includes(f.kind)) throw new TypeError(`finding ${i} kind must be one of ${FINDING_KINDS.join(', ')}`);
+    if (f.vacuity !== undefined && typeof f.vacuity !== 'boolean') throw new TypeError(`finding ${i} vacuity must be a boolean`);
     return {
       id: findingId(f), lens: f.lens, path: f.path, line: f.line, claim: f.claim,
       reporterSeverity: positionSeverity(f) ?? f.reporterSeverity ?? null, kind: f.kind,
@@ -385,11 +583,18 @@ function readFindingsArtifact(dir) {
   return wellFormed ? { present: true, valid: true, findings: parsed } : invalid;
 }
 
+// The resolver-written tail every verdict line ends on. console/resolve.js
+// anchors its verdict regexes on this same constant, so the archive coverage
+// gate and the console agree on what counts as a verdict line (#4632).
+const VERDICT_LINE_END = '(?: Mode: inline\\.)?(?: Reversibility: \\S+\\.)?\\s*$';
+
 // The decisions.md line log-decision.js writes for a resolveTiebreak verdict
 // (`- {AUTO|STAGED} {HH:MM:SS} — {step}: {text}`). `id` is 12-hex validated,
-// so it needs no escaping.
+// so it needs no escaping. The confirmed line is anchored on VERDICT_LINE_END,
+// as console/resolve.js's TIEBREAK_CONFIRMED_RE is, so text after `Confirmed.`
+// is not a verdict to either (#4632).
 function verdictLineRe(id) {
-  return new RegExp(`^- (?:AUTO|STAGED) \\d{2}:\\d{2}:\\d{2} — (?:Tiebreak tiebreak:${id}:|Reproduction: .* confirmed by tiebreak:${id}\\. Confirmed\\.)`);
+  return new RegExp(`^- (?:AUTO|STAGED) \\d{2}:\\d{2}:\\d{2} — (?:Tiebreak tiebreak:${id}:|Reproduction: .* confirmed by tiebreak:${id}\\. Confirmed\\.${VERDICT_LINE_END})`);
 }
 
 function checkTiebreakCoverage(dir) {
@@ -422,4 +627,6 @@ function checkRunTiebreakCoverage(runDir, specDirs) {
 module.exports = {
   findingId, parseTiebreakReply, resolveTiebreak, VERDICTS, SEVERITIES,
   FINDINGS_ARTIFACT, buildFindingsArtifact, readFindingsArtifact, checkTiebreakCoverage, checkRunTiebreakCoverage,
+  VERDICT_LINE_END, CHUNK_MAX, splitChunkReply, resolveTiebreakChunk,
+  TIERS, judgeTier, planChunks, escalation,
 };

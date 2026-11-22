@@ -12,6 +12,10 @@ Every record body opens with a short metadata block — plain body-metadata line
 
 `Ui-stack:` names the UI component library / styling approach a frontend build should use — e.g. `shadcn/ui + Tailwind`, or an explicit `none — no preference, defer to reference codebase` when the record's author genuinely has no opinion. `/claude-tweaks:specify`'s Step 2.5c2 (`design-pre-steps.md`, immediately after the Design-intent question) writes it, following the same auto-mode/`ui-stack` policy-key precedence Step 2.5c already uses for `Design-intent:`. Omitted for backend/infra/terminal records — the same frontend-only gate that already governs `Design-intent:`.
 
+`Risk-flags:` and `Risk-flags-unconfirmed:` are written only through `bin/risk-flags.js`: `/claude-tweaks:specify`'s Risk flags step settles them (`shaping-mode-stamping.md`'s `### Risk flags`), and `/claude-tweaks:backlog refine` confirms them with its `confirm` verb (`backlog/refine-risk-flags.md`); never hand-edit either line. The grammar is `Risk-flags: migrations, auth` (comma-separated lowercase slugs from the built-ins `migrations`, `auth`, `public-contract` and `irreversible-side-effect`, plus the policy `risk-categories`) or `Risk-flags: none` (classified, nothing flagged). No line means an unclassified legacy record, read as no flags; a line that is malformed or names an unknown slug reads as unknown, which is all four built-in categories flagged, never as no flags. `Risk-flags-unconfirmed: true` marks a set a headless run kept with no human to confirm it. Each kept flag needs a plan step carrying `Proof(<slug>): <text>`, at least 20 characters and more than the category's name (`/claude-tweaks:build`'s plan audit, Check G). A removal does not persist: a flag the classifier detects again on a later shaping is re-added and asked about again. These flags are not the `risk:low|medium|high` labels, the scoring axis (`## Facets`), which is a different axis. The `Risk-flags-added-by-tripwire: {slugs}` line is written only by the diff tripwire through `addTripwireRiskFlags` (`bin/lib/issues/record.js`), directly below `Risk-flags:`, carried forward by a re-shape's `settle`, and never composed into a body; `parseTripwireFlags` reads it, and an absent line means the tripwire has added nothing.
+
+`Acceptance-target:` is written only by `/claude-tweaks:specify`'s interactive path (`shaping-mode-stamping.md`'s `### Metadata block`), never under `--chained` or `next`. The grammar is exactly `Acceptance-target: local`, once, in the preamble. No line means no per-item override: the policy default applies. Any other form (a duplicate, a variant spelling, `dev`, another value) reads invalid and resolves to `local`. `parseAcceptanceTarget` is the one reader; it reports `dev` as well-formed, and `bin/lib/accept/target.js` rejects it as `invalid-input`.
+
 ````markdown
 Surface: {web | mobile | desktop | backend | infra | terminal}
 Design-intent: {one or more of bold | quiet | minimal | delightful | onboarding, comma-separated — or none alone}
@@ -19,6 +23,9 @@ Ui-stack: {free-form component-library/styling-approach string (e.g. "shadcn/ui 
 Design-seed: {the seed key from the surface brief's Impeccable direction contract, copied verbatim — NOT written by /specify; see below}
 Visual-reference: {path to an accepted shape-time scaffold file — omitted when /specify's Step 2.5b-ii variant-exploration step was skipped, declined, or not offered (non-frontend records)}
 Parent: {#N — decomposition-mode sub-issues under work-links: body-text only, and only when Step 2.6 kept a parent; omitted otherwise (a collapsed decomposition, native links, work-backend: local-files, and Shaping mode)}
+Risk-flags: {comma-separated slugs, or none — settled by /specify's Risk flags step, confirmed by /backlog refine}
+Risk-flags-unconfirmed: {true — headless-kept flags awaiting a human; omitted otherwise}
+Acceptance-target: {local — the human chose to accept this item locally; written by /specify's interactive path only, omitted otherwise}
 
 ## Overview
 
@@ -65,15 +72,15 @@ When a Deliverable adds a new Manifesto policy lever — a new `auto`-mode behav
 
 A criterion that counts something (rows, items, entries) states the count relative to this record's own change ("adds no rows", "adds exactly three items"), never as a file's absolute total, and the count must match what the record's body names. An absolute total breaks as soon as a Related record grows the same file: #2709's "the checklist still has 20 rows" was unsatisfiable once #2706 and #2707 landed beside it, and #2693's "all 20 items" named only 17.
 
-A criterion asserting that a search returns nothing (a grep that "returns nothing", "prints no lines" or "exits 1") names a command its author has run once against a tree that still contains the target and seen match; prefer `grep -F` for literal code text. A search that cannot match its target passes before and after the change, so the criterion can never fail: #3536's AC1.1 was a basic-regex grep whose escapes never matched the literal it named.
+A criterion asserting that a search returns nothing (a grep that "returns nothing", "prints no lines" or "exits 1") names a command its author has run once against a tree that still contains the target and seen match; prefer `grep -F` for literal code text. A search that cannot match its target passes before and after the change, so the criterion can never fail: #3536's AC1.1 was a basic-regex grep whose escapes never matched the literal it named. A returns-nothing search whose scope reaches `.claude-tweaks/pipelines`, `docs/superpowers/plans` or `docs/plans` (a `git grep` with no pathspec or a `.` pathspec, an any-depth glob such as `'*.md'`, or a recursive `grep`/`rg` over the root) excludes the build's own bookkeeping — `':!.claude-tweaks/pipelines'` (the materialized spec), `':!docs/superpowers/plans'` (the plan) and `':!docs/plans/*-ledger.md'` (the open-items ledger) appended to a `git grep` pathspec, or for `rg` the same paths as `-g '!<path>'` globs (`grep -r --exclude-dir` matches a directory's base name only, so use `git grep` instead) — because the build commits its spec, plan and ledger on the feature branch and each can quote the target, so the search matches its own bookkeeping (#4579); the control run applies to the excluded form. A search already scoped to named paths outside `.claude-tweaks/` needs no exclusion. A named path that reaches `docs/superpowers/plans` or `docs/plans` still takes the matching pathspec. Never exclude all of `.claude-tweaks/` (`policy.yml` is real config), all of `docs/`, or all of `docs/plans/` (it can hold real design diagrams); the ledger pathspec is the narrow one.
 
 When `## Current State` names the callers, gates, or user-visible outcome the change exists to fix, at least one criterion is phrased at one of those named consumers ("review Step 1.5 skips re-verification after a fully chunked pass"), not only at the new mechanism's own interface — or `## Gotchas` names the follow-up record that wires the consumers. Criteria that exercise only the mechanism can all pass while the motivating outcome never ships: #3002's Current State named three gates that should stop re-running a chunked suite, every criterion tested `verify.js --stamp-status --scope`, and all three gates still read bare `--stamp-status`.
 
 ## Release Note
 
-{One plain-language, verb-first sentence describing what this record delivers, written for someone reading the release notes — never a raw conventional-commit subject, an internal module name, a record number, or a file path. Required on every record, including one with no end-user-visible effect: describe what changed from the release-notes reader's perspective, even when that's "no user-visible change" phrased plainly (e.g. "Improved internal test coverage for the release composer") — never omitted.}
+{One plain-language, verb-first sentence describing what this record delivers, written for someone reading the release notes — never a raw conventional-commit subject, an internal module name, a record number, or a file path. Required on every record, including one with no end-user-visible effect: describe what changed from the release-notes reader's perspective, even when that's "no user-visible change" phrased plainly (e.g. "Improved internal test coverage for the release composer") — never omitted. The sentence claims no more than this record's Acceptance Criteria prove: use a universal word such as "always" or "every" only when an AC covers every path the claim names.}
 
-Example: "Added a visible warning when memory usage is critical" — verb-first, plain language, no record numbers or file paths. The `Release-Note:` trailer this section composes into at merge time is single-line by construction (`plugin/bin/lib/release/subject.js`'s `Release-Note:` paragraph) — write this section as one line even if drafting notes elsewhere run longer, since only the first line survives at merge time.
+Example: "Added a visible warning when memory usage is critical" — verb-first, plain language, no record numbers or file paths. The `Release-Note:` trailer this section composes into at merge time is single-line by construction (`plugin/bin/lib/release/subject.js`'s `Release-Note:` paragraph) — write this section as one line even if drafting notes elsewhere run longer, since a single-record note is read to its first line only, and a bundled note is joined onto one line.
 
 ## Technical Approach
 
@@ -190,6 +197,16 @@ When a spec's technical approach rests on an assumption about how an external sy
 ## Gate-Authoring Deliverables
 
 When a spec's plan adds a new gate — a PreToolUse/PostToolUse hook check, a permission rule, or a teardown/cleanup guard — read `gate-authoring-deliverables.md` in this skill's directory and write the plan-time caller trace it describes as a deliverable.
+
+## State-Classification Deliverables
+
+When a deliverable classifies inputs into named states — an eligibility verdict, a refusal ladder, a status classifier — write a **Closed rule** bullet beside the state list. It states three parts:
+
+- **Exhaustive** — the listed states are the complete set; no state outside the list is eligible or classified by implication.
+- **Refused with a named remedy** — an unlisted state is refused with one line naming the state and its remedy.
+- **Amendment, not escalation** — a plan review that finds another unlisted state applies this rule as a plan amendment (it adds that state's refusal line), never as a `needs-human` gap.
+
+Without it, every state the list leaves out is a gap whose settlement alters an observable contract, which `build/plan-review.md` classifies `needs-human` — so each review pass finds new ones and stops the build. #4588's eligibility verdict stopped four times on the `plan-review-needs-human` HARD-GATE until its spec added this rule; the next pass applied it to a newly found state and the build proceeded. The rule still matters on a record's first plan-review round; after one answered round, later rounds converge under `build/plan-review.md`'s convergence rule anyway, which treats a Closed rule as a recorded decision.
 
 ## Why Each Section Matters for `/superpowers:writing-plans`
 

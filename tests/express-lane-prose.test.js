@@ -49,6 +49,7 @@ const FACTS = [
   { section: PROC, re: /except a working-directory denial that repeats after the one `record-worktree` re-stamp, which is outcome `blocked`/, name: 'a repeated working-directory denial is blocked, not gate-denial' },
   { section: PROC, re: /A push the remote rejects[^\n]*never forced or retried with other flags: escalate with reason `express-error`/, name: 'a rejected push escalates as express-error, never forced' },
   { section: PROC, re: /carries the express merge-verification and the `integration-model` pin/, name: 'step 7 config.yml carries the integration-model pin' },
+  { section: PROC, re: /and the run's record as `spec: \{n\}`/, name: 'step 7 config.yml carries the run record as spec: {n}' },
   { section: PROC, re: /transient-looking \(5xx or timeout\) signature is retried once after a 15-second wait/, name: 'step 7 retries a transient gh pr create failure once' },
   { section: PROC, re: /A non-zero exit is outcome `pending-review` with no merge: the lane never merges without its summary entry/, name: 'step 8: a failed summary entry parks, never merges' },
   { section: PROC, re: /only when `git -C "\{wt\}" rev-parse HEAD` prints step 5's `head`; otherwise [^\n]*re-run steps 4–5/, name: 'M7: push only the HEAD check verified' },

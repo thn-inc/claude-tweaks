@@ -17,8 +17,9 @@ ordering impossible.
 **Phase 1 — evaluate every member, no side effects.** For each group member, read its live labels
 and comments fresh (`gh issue view {n} --json labels,comments`) and run `evaluateMaturation`;
 collect every member's `result` before acting on any of them. A member already carrying
-`auto:merge` still runs through this — `hasMergeLabel: true` resolves deterministically to
-`already-mature` regardless of any pending label (see the module's own check ordering). A member
+`auto:merge` still runs through this — when its live labels also carry `auto:build`,
+`hasMergeLabel: true` resolves deterministically to `already-mature` regardless of any pending
+label (see the module's own check ordering); without `auto:build` the result is `no-build-grant`. A member
 instead carrying `auto:merge-pending` (never both at once — see `_shared/work-record.md`'s Grant
 semantics) gets its real maturation check. This checkpoint is the "existing merge-consult step"
 `grant-veto-window-hours` binds to, per `docs/donts.md`'s `[IL-94]`; there is no separate
@@ -37,6 +38,7 @@ node -e "
   skippedUntrusted.forEach((note) => console.error(note));
   const pendingSince = extractPendingGrantedAt(bodies);
   const result = evaluateMaturation({
+    hasBuildLabel: labels.includes('auto:build'),
     hasPendingLabel: labels.includes('auto:merge-pending'),
     hasMergeLabel: labels.includes('auto:merge'),
     pendingSince,
@@ -55,7 +57,7 @@ Phase 2 runs at all:
 
 - **Every member's `result.state` is `already-mature` or `matured`** — the group clears
   Authorization. Proceed to Phase 2.
-- **Any member's `result.state` is `within-veto-window`, `not-pending`, or `unknown-age`** — the
+- **Any member's `result.state` is `within-veto-window`, `not-pending`, `unknown-age`, or `no-build-grant`** (a member with no live `auto:build`) — the
   group does NOT clear Authorization this firing. Per this section's own group-wide rule above,
   the **whole group** falls back to the normal pending-review path — apply **zero** promotions
   this firing, including for any other member whose own `result.state` was independently
@@ -63,7 +65,10 @@ Phase 2 runs at all:
   member already gets. Do not run Phase 2 at all. For each non-clearing member, log:
   `AUTO {time} — Auto-merge gate: #{n}'s auto:merge-pending has not matured ({result.reason}) —
   group falls back to pending-review. Reversibility: n/a (no label change). [lever:
-  grant-veto-window-hours={result.windowHours ?? GRANT_VETO_WINDOW_HOURS} (source)]`. A
+  grant-veto-window-hours={result.windowHours ?? GRANT_VETO_WINDOW_HOURS} (source)]`; for a
+  `no-build-grant` member, log instead: `AUTO {time} — Auto-merge gate: #{n} carries a merge grant
+  without a live auto:build ({result.reason}) — group falls back to pending-review. Reversibility:
+  n/a (no label change).`. A
   `not-pending` result with no `auto:merge` either is exactly a human veto — permanent, since
   nothing re-adds `auto:merge-pending` (`refine`'s headless posture's own candidate fetch already excludes
   any record carrying an existing `auto:build` grant, so a previously-granted-then-vetoed record

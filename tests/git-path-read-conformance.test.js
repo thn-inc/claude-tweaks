@@ -297,7 +297,7 @@ test('every plugin/bin runGit/runGitAsync call that passes -z also passes raw: t
 
 test('raw: true go-red: removing it from a real -z runGit caller is a violation', () => {
   assertRawGoesRed(path.join('lib', 'hooks', 'worktree-reap.js'), 'branch], repoRoot, { raw: true }', 'branch], repoRoot');
-  assertRawGoesRed(path.join('lib', 'reconcile', 'archive-merged.js'), "'ls-files', '-z', '--', runDir], root, { raw: true }", "'ls-files', '-z', '--', runDir], root");
+  assertRawGoesRed(path.join('lib', 'reconcile', 'archive-merged.js'), "'ls-files', '-z', '--', runDir], root, { raw: true, env }", "'ls-files', '-z', '--', runDir], root, { env }");
 });
 
 test('AC3.1: the _shared contract states the rule and names the reference implementations', () => {

@@ -71,7 +71,7 @@ const EXEC = readText(path.join(ROOT, 'plugin', 'skills', 'wrap-up', 'cleanup-pr
 function localMergeSection() {
   const localMergeStart = EXEC.indexOf('**`integration-model: local-merge`:**');
   assert.ok(localMergeStart > 0, 'the local-merge branch heading must exist');
-  const nextSectionStart = EXEC.indexOf('3.5.', localMergeStart);
+  const nextSectionStart = EXEC.indexOf('3.6.', localMergeStart);
   return EXEC.slice(localMergeStart, nextSectionStart > 0 ? nextSectionStart : undefined);
 }
 

@@ -3,13 +3,14 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync, spawnSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
 const CLI = path.join(__dirname, '..', '..', 'plugin', 'bin', 'code-health.js');
 
 function tmpRepo() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-cli-'));
+  const root = scratchDir('codehealth-cli-');
   fs.mkdirSync(path.join(root, '.claude-tweaks', 'code-health'), { recursive: true });
   return root;
 }
@@ -21,9 +22,9 @@ function tmpRepo() {
 // and commit runs.json directly onto a health-state branch — the same
 // technique tests/bin-lib/code-health/churn-v2.test.js uses.
 function seedDurableRuns(root, runs) {
-  const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-cli-bare-'));
+  const bareDir = scratchDir('codehealth-cli-bare-');
   execFileSync('git', ['init', '--bare', '-q', bareDir]);
-  const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-cli-seed-'));
+  const seedDir = scratchDir('codehealth-cli-seed-');
   execFileSync('git', ['init', '-q', seedDir]);
   execFileSync('git', ['-C', seedDir, 'checkout', '-q', '-b', 'health-state']);
   fs.mkdirSync(path.join(seedDir, 'code-health'), { recursive: true });

@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -10,7 +11,7 @@ const SEEDER = path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 
 const FIXTURES = path.join(__dirname, 'fixtures', 'compare-shell');
 
 function mkOut(name) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'compare-shell-'));
+  const dir = scratchDir('compare-shell-');
   return path.join(dir, name);
 }
 
@@ -30,7 +31,7 @@ function seedCli(args) {
 // an individual test can override — e.g. `outcome: undefined` to omit it
 // for a live-mode test (JSON.stringify drops undefined properties).
 function writeTweaksManifest(dirPrefix, overrides) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), dirPrefix));
+  const dir = scratchDir(dirPrefix);
   fs.writeFileSync(path.join(dir, 'a.html'), '<p>A</p>');
   const manifestPath = path.join(dir, 'manifest.json');
   fs.writeFileSync(manifestPath, JSON.stringify({
@@ -135,7 +136,7 @@ test('AC5: refusal cases exit non-zero naming the offending variant/field; a siz
 });
 
 test('AC5 (size warning): oversized output still writes, with a stderr warning', async () => {
-  const bigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'compare-shell-big-'));
+  const bigDir = scratchDir('compare-shell-big-');
   const bigFile = path.join(bigDir, 'big.html');
   fs.writeFileSync(bigFile, `<!doctype html><body>${'x'.repeat(3 * 1024 * 1024)}</body>`);
   const manifestPath = path.join(bigDir, 'manifest.json');
@@ -192,7 +193,7 @@ test('AC10: npm test picks up this suite (self-check — file lives under tests/
 });
 
 test('#1229: variant data containing $$, $&, $`, $\' round-trips intact through the seeded template (function replacer, not string replacer)', () => {
-  const dollarDir = fs.mkdtempSync(path.join(os.tmpdir(), 'compare-shell-dollar-'));
+  const dollarDir = scratchDir('compare-shell-dollar-');
   fs.writeFileSync(path.join(dollarDir, 'variant-a.html'), '<!doctype html><body>A</body>');
   const hostileName = 'Special pricing $$29 special $& deal $` and $\' too';
   fs.writeFileSync(path.join(dollarDir, 'manifest.json'), JSON.stringify({

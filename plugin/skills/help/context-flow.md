@@ -56,6 +56,7 @@ Where a row below reads or writes `specs/NN-*.md`, that means a work record mate
 | `/harness-health` | `.claude/skills/*.md`, `.claude/rules/*.md`, CLAUDE.md, `health-state` branch `harness-health/cursors.json` | A work record (`by:harness-health` label, or local file), `health-state` branch rotation cursor | — |
 | `/journey-health` | `docs/journeys/*.md`, journey-story coverage data, `health-state` branch `journey-health/cursors.json` | A work record (`by:journey-health` label, or local file), `health-state` branch rotation cursor | — |
 | `/docs-health` | `docs/**`, `health-state` branch `docs-health/cursors.json` | A work record (`by:docs-health` label, or local file), `health-state` branch rotation cursor | — |
+| `/ci-health` | Recent completed CI runs and the workflow files (via `bin/ci-audit.js gather`), the `ci-health-thresholds` policy key, the `by:ci-health` issue index | A work record (`by:ci-health` label) per finding, or a reopen of a closed one; session-scoped scratch files only — no cursor, cache or `health-state` write | — |
 | `/init` | `~/.claude/plugins/`, entire codebase, CLAUDE.md, config files, git state | `specs/`, `docs/plans/`, `docs/journeys/`, CLAUDE.md (incl. `work-backend` under `## Work records`), `.claude/skills/*.md`, `.claude/rules/`, `docs/journeys/*.md` | — |
 | `/intake` | A pasted dump or `--file` | Nothing of its own — delegates filings to `/capture`, upstream learnings to `/feedback`, memory writes to learning-routing D4; returns a report with a Carry-over block | — |
 | `/capture` | — | A backlog work record — GitHub issue (`by:capture` label, no stage label) or local `specs/{id}-{slug}.md` file, per `work-backend` | — |
@@ -84,9 +85,10 @@ Where a row below reads or writes `specs/NN-*.md`, that means a work record mate
 | `/stories` | Existing `stories/*.yaml`, `docs/journeys/*.md` (for journey-aware generation), site via `/browse`, component source files (for source analysis) | `stories/*.yaml` (with `source_files:` and `journey:` fields) | — |
 | `/review` | Code (via git diff), `specs/NN-*.md`, `docs/journeys/*.md`, `stories/*.yaml` (for journey-story coverage), `TEST_PASSED` from /test, ledger (including QA entries with phase `test/qa`), QA screenshots + page inventories (for UX analysis lens) | Review summary, ledger items. Invokes `/reflect` (hindsight mode), `/simplify`, and `/visual-review`. | — |
 | `/visual-review` | Running app (via browser), `docs/journeys/*.md` (journey mode), QA data (optional enrichment), source files (for reconnaissance) | Visual review report, journey file updates, `.claude-tweaks/artifacts/screenshots/` | — |
-| `/wrap-up` | `specs/NN-*.md`, review output, plan files, ledger, `.claude/skills/*.md` (relevant skills from ledger entries) | CLAUDE.md updates, skill updates, a new backlog or `parked` work record (GitHub issue or local file, per `work-backend`) for leftover work, `docs/decisions/*.md` (ADRs, from the Decision records curation row). Invokes `/reflect` (full mode). | Plan files, ledger. The build's materialized spec file stays committed as audit trail. |
+| `/wrap-up` | `specs/NN-*.md`, review output, plan files, ledger, `.claude/skills/*.md` (relevant skills from ledger entries) | CLAUDE.md updates, skill updates, a new backlog or `parked` work record (GitHub issue or local file, per `work-backend`) for leftover work, `docs/decisions/*.md` (ADRs, from the Decision records curation row). Invokes `/reflect` (full mode). | Plan files, ledger. The build's materialized spec file is archived on the branch before the merge (`.claude-tweaks/pipelines/archive/{run-id}/`). |
 | `/release` | `release-preflight.json`, `decisions.md` (review verdict), the integration branch's first-parent history | A merged release PR or a `chore(release)` commit + tag, `Shipped in v{version}` comments/closes (`shipped:` lines for local records), `staged/release-held.md` under `--train`, records filed (or digest entries) for the review's staged findings, and its own created run directory moved to `.claude-tweaks/pipelines/archive/` | — |
-| `/demo` | This session's own unrecorded work, or a specific `#N` record | A human verdict (approve / request changes); a follow-up backlog record on changes-requested | — |
+| `/accept` | This session's own unrecorded work, or a specific `#N` record and its acceptance packet | Automatic entry (from `/wrap-up`): the packet and `accept:pending`. On demand: the packet's refreshed fields in place, a human verdict (`accept:approved` / `accept:changes-requested`), and a follow-up backlog record on changes-requested | — |
+| `/demo` | Deprecated alias — forwards to `/accept` with the same arguments | — | — |
 | `/ledger` | `docs/plans/YYYY-MM-DD-{feature}-ledger.md` (or its run-dir-scoped alternate, `_shared/ledger-format.md`'s Location section) | Ledger entries (create/append/resolve operations) | The ledger file itself, once every item is resolved |
 | `/tidy` | All artifacts | Cleanup actions | Stale artifacts |
 | `/help` | All pipeline artifacts (specs, ledger, PRs, backlog state), `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` (installed version) — read-only status scan | — | — |
@@ -136,9 +138,9 @@ This is why every skill writes its output to files, not just to the conversation
 
 Every artifact that a skill produces must be consumed by a downstream skill or explicitly resolved:
 
-- A build's materialized spec file is kept by `/wrap-up` as committed audit trail
+- A build's materialized spec file is archived on the branch by `/wrap-up` before the merge (`.claude-tweaks/pipelines/archive/{run-id}/`)
 - Design docs are deleted by `/specify` after absorption into the surviving records
-- Plans are deleted by `/wrap-up` after the work is done
+- Plans are kept by default (`superpowers-plans-retention: keep-forever`) — deleted by `/wrap-up` only under `prune-after-wrapup`, and bulk-pruned by `/tidy` once enough accumulate
 - Ledger files are deleted by `/wrap-up` after all items are resolved (a multi-spec `auto`/`hybrid` run's shared ledger: by `/flow`'s Shared teardown, #3420)
 - Backlog work records are promoted, absorbed, or explicitly kept by `/tidy`
 - Parked records have triggers that re-activate (wake) them when conditions are met

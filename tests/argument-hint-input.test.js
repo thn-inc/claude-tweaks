@@ -38,7 +38,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const { listSkillDirs } = require('../plugin/bin/lib/skill-audit/skill-catalog');
-const { extractArgumentHint, inputSectionBody } = require('../plugin/bin/lib/skill-audit/argument-hint');
+const { extractArgumentHint, inputSectionBody } = require('./helpers/argument-hint');
 const { splitFrontmatterFence } = require('../plugin/bin/lib/health-core/frontmatter-list');
 const { readText } = require('./helpers/read-skill');
 
@@ -136,7 +136,7 @@ test('every skill declaring argument-hint has an ## Input section', () => {
 // double-quoted with a `\"` escape. extractArgumentHint strips the
 // surrounding quotes without unescaping, so a double-quoted-with-escape
 // hint leaks its literal backslashes into every consumer that extracts the
-// value verbatim (plugin/bin/lib/skill-audit/argument-hint.js's own
+// value verbatim (tests/helpers/argument-hint.js's own
 // extractArgumentHint, and therefore plugin/skills/help/reference-card.md's
 // `Takes` cell). Read the raw frontmatter line directly -- before
 // extractArgumentHint's quote-stripping -- so this check sees the same

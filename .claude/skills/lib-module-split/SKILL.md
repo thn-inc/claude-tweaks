@@ -1,6 +1,6 @@
 ---
 name: lib-module-split
-description: Use when splitting a shared `plugin/bin/lib/` module into sub-modules behind a re-export facade, or reviewing such a split. Covers when a facade beats migrating call sites, the three-check pure-move proof (export surface, verbatim declarations, require cycles), and the stale-location sweep that finds claims the split made false (code comments, pointers to non-exported internals, skill bullets, journey `files:` frontmatter), plus the `docs/plugin-structure.md` update. Keywords - facade, re-export, split, pure move, export surface, require cycle, stale location, journey files, plugin-structure, record.js, #2805, #2822.
+description: Use when splitting a shared `plugin/bin/lib/` module into sub-modules behind a re-export facade, or moving a module to a new home with a re-export left at its old path (a `tests/helpers/` module promoted into `plugin/bin/lib/`), or reviewing either. Covers when a facade beats migrating call sites, the three-check pure-move proof (export surface, verbatim declarations, require cycles), and the stale-location sweep that finds claims the split made false (code comments, pointers to non-exported internals, skill bullets, journey `files:` frontmatter), plus the `docs/plugin-structure.md` update. Keywords - facade, re-export, split, pure move, export surface, require cycle, stale location, journey files, plugin-structure, record.js, #2805, #2822.
 ---
 
 # Lib Module Split: prove the move was pure, then find the claims it made false
@@ -336,6 +336,61 @@ its own test: strip comments with the shared stripper, assert no `require(` rema
 export keys (`tests/bin-lib/run-liveness/owner-pid-probe.test.js`). Register that test as a
 stripper caller (`bin-source-scan-conformance`).
 
+A leaf can also exist to keep a caller off a heavy graph rather than to break a cycle, and then it
+may require things. #6053 moved `laneBounds` and `eligibilityOptions` out of
+`plugin/bin/lib/driver/steps.js` into `plugin/bin/lib/driver/lane-bounds.js` (it requires
+`../express/policy`), so `plugin/bin/lib/driver/plan-lane.js` reads them without loading the step
+table; `steps.js` re-exports `eligibilityOptions`. The requires-nothing scan does not fit that leaf,
+so pin the property the split is for: require the caller in a fresh `node -e` process, read
+`Object.keys(require.cache)`, and assert the leaf is in it and the heavy module is not, beside the
+re-export identity check (`tests/bin-lib/driver/plan-lane.test.js`'s "lane-bounds.js is the one
+eligibilityOptions" test). The leaf only protects callers that reach it; a module in another family
+that needs the caller still lazy-requires it inside the one function that uses it
+(`plugin/bin/lib/express/cli.js`'s `runPlanLane`, as `express/queue.js` does for the driver
+modules), or every verb loads the driver modules the caller requires. That lazy require has no
+test of its own today.
+
+## A whole-module move with a re-export at the old path
+
+Moving a module to a new home and leaving its old path as a one-line re-export is a split with one
+sub-module, and it owes the same checks. Pin the re-export with a test that the old path's
+`module.exports` is the very object the new file returns and that the old file keeps no second
+copy (#3903 AC2.1 in `tests/helpers-strip-comments.test.js`, as first written). When the old path
+also defines exports of its own, the object test cannot hold: pin each re-exported function's
+identity instead, and filter the old file's require list to relative paths before asserting it.
+That same test does both since #4648 moved `stripperVerdict` and its `node:vm` require out of
+`plugin/bin/lib/strip-comments.js` into the helper. Then run all four sweep shapes against
+the old path. Classify prose hits with the import-path test above, but treat journey `files:`
+entries as shape 4: keep the old path and add the new file, because edits now land there. #3903
+promoted `tests/helpers/strip-comments.js` into `plugin/bin/lib/strip-comments.js`; its plan
+classified every journey citing the helper as "no change", so the three journeys whose `files:`
+name the helper were left without the implementation path.
+
+## A neutral-home leaf with no shim at the old path
+
+A third shape drops the old path instead of keeping a facade or a re-export. #4645 moved the
+CommonMark fence and heading-section primitives out of `issues/record-payload.js` into
+`plugin/bin/lib/markdown-blocks.js`, because importers in `preflight-records/` and `issues/`
+reached through the payload builder for one fence rule. Nothing re-exports them from
+`record-payload.js`: every importer now requires the leaf, and of the moved symbols `record.js`
+re-exports only the three its own consumers use (`fenceFor`, `fencedBlock`, `extractSection`). It fits the
+"Migrate" row of the facade table above, and only when the old path's moved symbols are not
+required by skill prose or an installed build (grep `plugin/skills` for each moved name first).
+The checks it owes:
+
+- **Pin the leaf even with no cycle motive.** The requires-nothing test (strip comments, assert
+  no `require(`, assert the export keys, register the stripper caller) applies to any module
+  whose header or docs claim it requires nothing, not only the cycle-breaking leaf above. #4645's
+  plan pinned `markdown-blocks.js` with a grep until a task review cited this skill
+  (`tests/bin-lib/markdown-blocks.test.js` is the test that replaced it).
+- **Migrate every importer, found by symbol.** Grep each moved symbol name, not the old path, across
+  `plugin` and `tests`. The old path no longer names them, so a path grep misses a test that
+  reached them through a destructured require.
+- **Run the sweep over `.claude/skills` as well as `plugin/`.** #4645's final review caught
+  `.claude/skills/gh-api-module-pattern/batching-failure-posture.md` still describing the
+  builders the same record had just collapsed. A project skill is prose in the same repo and goes
+  stale the same way.
+
 ## Update `docs/plugin-structure.md`
 
 The `plugin/bin/lib/{family}/` line there is the single module-family entry (for #2805, the
@@ -356,5 +411,5 @@ found later, by the review. Treat this update as the easy part, not the whole sw
 2. Each of the four shape commands has been run against the head tree, and every hit is either
    repointed or classified as an import-path reference and kept.
 3. `docs/plugin-structure.md` names the facade and each sub-module.
-4. The full suite is green (`npm test`, redirected to a file), because conformance tests pin
+4. The full suite is green (`npm test -- --full`, redirected to a file), because conformance tests pin
    prose and a repointed sentence can trip one.

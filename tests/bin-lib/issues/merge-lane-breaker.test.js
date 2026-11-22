@@ -8,20 +8,35 @@ const {
   NAMESPACE, DEFAULT_BREAKER, readBreakerState, writeBreakerState, readWatched, writeWatched,
   classifyWatchedRecord,
 } = require('../../../plugin/bin/lib/issues/merge-lane-breaker.js');
+const { isCatFileBatch, answerCatFileBatch } = require('../../helpers/fake-cat-file-batch');
 
 // --- minimal fake git runner, same shape as durable-state.test.js's own
 // fakeRunner (kept independent rather than importing it, since this suite
 // only needs read/write wiring proof, not the full CAS-loop coverage
-// durable-state.test.js already owns). ---
+// durable-state.test.js already owns). A `git cat-file --batch` read no rule
+// matches is answered from the same rules, one synthetic `git show` per
+// object. ---
 
 function fakeRunner(script) {
-  function run(cmd, args, opts) {
+  function applyRules(cmd, args) {
     for (const rule of script) {
       if (rule.match(cmd, args)) {
         const throwsVal = typeof rule.throws === 'function' ? rule.throws(cmd, args) : rule.throws;
         if (throwsVal) throw new Error(throwsVal);
-        return typeof rule.returns === 'function' ? rule.returns(cmd, args) : rule.returns;
+        return { matched: true, value: typeof rule.returns === 'function' ? rule.returns(cmd, args) : rule.returns };
       }
+    }
+    return { matched: false };
+  }
+  function run(cmd, args, opts) {
+    const hit = applyRules(cmd, args);
+    if (hit.matched) return hit.value;
+    if (isCatFileBatch(cmd, args)) {
+      return answerCatFileBatch(args, opts, (showArgs) => {
+        const shown = applyRules('git', showArgs);
+        if (!shown.matched) throw new Error(`fakeRunner: no rule matched git ${JSON.stringify(showArgs)}`);
+        return shown.value;
+      });
     }
     throw new Error(`fakeRunner: no rule matched ${cmd} ${JSON.stringify(args)}`);
   }
@@ -153,6 +168,25 @@ test('demo:changes-requested is checked even on a closed record', () => {
   const entry = { number: 204, state: 'CLOSED', closedAt: '2026-08-01T00:00:00.000Z', labels: ['demo:changes-requested'] };
   const result = classifyWatchedRecord(entry, [], NOW, WINDOW_DAYS);
   assert.deepEqual(result, { action: 'trip', reason: 'demo:changes-requested' });
+});
+
+test('AC2.1: accept:changes-requested trips the breaker exactly as demo:changes-requested does', () => {
+  const entry = { number: 203, state: 'OPEN', labels: ['accept:changes-requested'] };
+  const result = classifyWatchedRecord(entry, [], NOW, WINDOW_DAYS);
+  assert.deepEqual(result, { action: 'trip', reason: 'accept:changes-requested' });
+  const closed = { number: 204, state: 'CLOSED', closedAt: '2026-08-01T00:00:00.000Z', labels: ['accept:changes-requested'] };
+  assert.deepEqual(classifyWatchedRecord(closed, [], NOW, WINDOW_DAYS), { action: 'trip', reason: 'accept:changes-requested' });
+});
+
+test('AC3.1: the breaker trips on a verdict that outranks a leftover pending label, and names the spelling the record carries', () => {
+  const trip = (labels) => classifyWatchedRecord({ number: 206, state: 'OPEN', labels }, [], NOW, WINDOW_DAYS);
+  assert.deepEqual(trip(['accept:pending', 'demo:changes-requested']), { action: 'trip', reason: 'demo:changes-requested' });
+  assert.deepEqual(trip(['demo:pending', 'accept:changes-requested']), { action: 'trip', reason: 'accept:changes-requested' });
+  // Both spellings of the verdict present: demo:* is preferred, so the existing reason pin holds.
+  assert.deepEqual(trip(['accept:changes-requested', 'demo:changes-requested']), { action: 'trip', reason: 'demo:changes-requested' });
+  // Orthogonal category: a record whose acceptance is merely pending or approved does not trip.
+  assert.deepEqual(trip(['accept:pending']), { action: 'update', newState: 'OPEN' });
+  assert.deepEqual(trip(['accept:approved', 'demo:approved']), { action: 'update', newState: 'OPEN' });
 });
 
 test('resolved-good: closed, unreverted, past the revert window prunes from watched.json', () => {

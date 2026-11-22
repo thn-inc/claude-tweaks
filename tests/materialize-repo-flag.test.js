@@ -88,6 +88,19 @@ test('#2444 fix: a host-qualified --repo slug resolves to its own host, not gith
   });
 });
 
+test('#5103: no --repo and an unreadable origin exits 2 with the [host/]owner/name hint', () => {
+  const repo = gitRepo();
+  withCwd(repo, () => {
+    const seen = [];
+    const deps = fakeDeps(seen);
+    deps.remoteUrl = () => { throw new Error('not a git repo'); };
+    const exitCode = run(['117', '--run-dir', runDirFor(repo)], deps);
+    assert.strictEqual(exitCode, 2);
+    assert.match(deps.calls.stderr.join(''), /could not resolve owner\/repo — pass --repo \[host\/\]owner\/name/);
+    assert.strictEqual(seen.length, 0);
+  });
+});
+
 test('#2444 fix: a bare --repo owner/repo still resolves to host: github.com (unchanged)', () => {
   const repo = gitRepo();
   withCwd(repo, () => {

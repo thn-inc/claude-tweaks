@@ -42,7 +42,7 @@ files:
 - **Action:**
   - Close-out pins `origin/{head}` to the PR's head sha and creates a detached `{main-checkout}/.worktrees/close-out-{number}`.
   - On `DIRTY` it merges `origin/{base}` and resolves conflicts, asking the maintainer when a resolution isn't clear-cut. On `BEHIND` it runs `gh pr update-branch` (never the rebase variant).
-  - It runs the full suite through `verify.js`, then pushes any commits the PR lacks with a plain push.
+  - It runs the full suite through `verify.js --local`, then pushes any commits the PR lacks with a plain push. `--local` is what lets that unscoped run go ahead under a declaration's `"localRuns": "on-request"`, which refuses an unscoped run naming a CI-declared suite without it.
 - **Should feel:** careful: the suite runs before anything is pushed on `DIRTY`, and a conflict that keeps both texts but drops one side's intent gets caught by the suite, not by luck.
 - **Should understand:**
   - Before anything lands on GitHub, close-out posts a `close-out-update` comment on the PR marking the update as pending. That happens before `gh pr update-branch` on `BEHIND` and before the push on `DIRTY`. The comment names the update method, the conflicted files and the resolution commit. If close-out cannot write the comment, or the comment isn't found again afterwards, it stops before landing anything (`stopped: update failed — marker not written`).
@@ -55,7 +55,7 @@ files:
   - Without `gh`, close-out stops before offering anything (`stopped: update failed — gh absent`), because the update path has no MCP form.
   - A resume does not pick up a worktree left mid-merge or holding uncommitted tracked changes. It stops with `stopped: update failed — conflict not resolved` and keeps the worktree, for the maintainer to finish the merge in it or remove it. A worktree whose history has diverged from the PR head stops with `stopped: update failed — head moved`.
   - Any other command that fails stops the candidate with `stopped: update failed — command failed`.
-- **Red flags:** a `git rebase` or a `--force` push; verification run from the main checkout instead of the update worktree; a worktree under `.claude/worktrees/`; a leftover `.worktrees/close-out-*` after a stop that should have torn it down.
+- **Red flags:** a `git rebase` or a `--force` push; verification run from the main checkout instead of the update worktree; a worktree under `.claude/worktrees/`; a leftover `.worktrees/close-out-*` after a stop that should have torn it down; `stopped: update failed — verification` on a repo whose declaration sets `localRuns`, because the verify ran without `--local` and exited 2 before any check.
 
 ### 4. CI is re-read on the new HEAD
 - **URL:** `close-out-update.md` step 6
@@ -90,6 +90,7 @@ files:
 - **Red flags:** reaching the merge question on a head with no full-suite `verify.js` stamp after an update; an update clause naming `none` when the earlier run resolved conflicts; the same verify-then-stop loop on every re-run.
 
 ## Origin
+- Updated during build of #5370 (step 3's verify passes `--local`, so a declaration's `"localRuns": "on-request"` no longer refuses the update's whole-suite run).
 - Updated during build of #4331 (marker parsing, validation and accumulation moved into `bin/close-out-marker.js` and `bin/lib/dispatch/close-out-marker.js`; conflicted paths passed by file; the prior pending body saved before each write for the nothing-landed restore).
 - Updated during build of #4317 (durable `close-out-update` resume marker on the PR, resume values from the marker, failed-command and base-fetch stops, gh-absent stop).
 - Created during build of #4273. Observed on 2026-10-25 closing out #4028 (PR #4205): close-out stopped on `DIRTY`, the maintainer had to ask for the update by hand, and a cleanly-resolved three-file merge still broke one test that only the full suite caught.

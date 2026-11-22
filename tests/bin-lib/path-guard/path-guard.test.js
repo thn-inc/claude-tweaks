@@ -12,7 +12,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  lstatType, canonicalRealpath, resolveLeaf, isAncestorOrSelf, resolveWithin,
+  lstatType, canonicalRealpath, resolveLeaf, resolveTarget, isAncestorOrSelf, resolveWithin,
 } = require('../../../plugin/bin/lib/path-guard');
 const { isPathContained } = require('../../../plugin/bin/lib/shared-primitives');
 const { caseInsensitiveFs } = require('../../helpers/case-insensitive-fs');
@@ -194,6 +194,20 @@ test('resolveWithin returns the resolved path for a real file inside the root, a
 
 test('resolveWithin is null when the root itself does not resolve', () => {
   assert.equal(resolveWithin(target, path.join(root, 'no-such-root')), null);
+});
+
+test('resolveTarget resolves an existing path, and re-appends the parts not yet created under the resolved ancestor', () => {
+  assert.deepEqual(resolveTarget(target), { state: 'resolved', path: fs.realpathSync.native(target) });
+  assert.deepEqual(resolveTarget(path.join(inDir, 'new', 'deeper')), { state: 'resolved', path: path.join(fs.realpathSync.native(inDir), 'new', 'deeper') });
+});
+
+test('resolveTarget follows a link in an existing part, and never steps over a part that will not resolve', () => {
+  assert.deepEqual(resolveTarget(path.join(link, 'x')), { state: 'resolved', path: path.join(realSecret, 'x') });
+  assert.deepEqual(resolveTarget(path.join(dangling, 'x')), { state: 'dangling' });
+  const realpathSync = (p) => { if (p === inDir) throw eioError(); return fs.realpathSync.native(p); };
+  realpathSync.native = realpathSync;
+  const fsImpl = { ...fs, realpathSync, lstatSync: (p) => { if (p === inDir) throw eioError(); return fs.lstatSync(p); } };
+  assert.deepEqual(resolveTarget(path.join(inDir, 'new'), { fsImpl }), { state: 'unreadable', code: 'EIO' });
 });
 
 test('isAncestorOrSelf lexical cases (posix)', () => {

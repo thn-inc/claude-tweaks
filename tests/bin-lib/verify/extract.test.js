@@ -7,7 +7,7 @@ const { readText } = require('../../helpers/read-skill');
 const {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
   MAX_REGION_LINES, GENERIC_TAIL_LINES, stripAnsi, extractFailingFiles, countUnmatchedFailures, unattributedFailureCount, fileLevelFailures, specEntryCount,
-  failingTestsByFile, cancelledCount, testTree, tapLines, summaryDialect,
+  failingTestsByFile, cancelledCount, testTree, tapLines, summaryDialect, timeoutEvidence,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'extract.js'));
 
 const TAP_FIXTURE = [
@@ -1086,4 +1086,65 @@ test('AC2.1: a # line ends a block, and a deeper ok N with no YAML is an ok poin
 test('AC2.1: CRLF lines classify exactly like LF lines', () => {
   const lf = ['not ok 1 - x', '  ---', '  error: boom', '  ...', 'ok 2 - y'];
   assert.deepStrictEqual(tapLines(lf.map((l) => `${l}\r`)), tapLines(lf));
+});
+
+// ---- timeoutEvidence (#5150) ----
+const specLog = (body, head = []) => [...head, 'ℹ tests 2', 'ℹ pass 1', 'ℹ fail 1', '✖ failing tests:', '', 'test at tests/a.test.js:1:1', '✖ a failing test (5ms)', ...body].join('\n');
+const tapLog = (yaml) => ['not ok 1 - a failing test', '  ---', ...yaml, '  ...', '# tests 2', '# pass 1', '# fail 1'].join('\n');
+
+test('AC3.2: timeoutEvidence names a cancelled count, an inconclusive marker and a declared pattern, each alone (#5150)', () => {
+  assert.strictEqual(timeoutEvidence('ℹ tests 2\nℹ cancelled 1', 'spec'), 'cancelled');
+  assert.strictEqual(timeoutEvidence('# tests 2\n# cancelled 3', 'tap'), 'cancelled');
+  assert.strictEqual(timeoutEvidence(specLog(['  test timed out after 100ms']), 'spec'), 'inconclusive-marker');
+  assert.strictEqual(timeoutEvidence(tapLog(["  failureType: 'testTimeoutFailure'"]), 'tap'), 'inconclusive-marker');
+  assert.strictEqual(timeoutEvidence(specLog(['  ran past its deadline']), 'spec', ['ran past its deadline']), 'timeout-pattern');
+  assert.strictEqual(timeoutEvidence(specLog(['  assertion failed']), 'spec'), null);
+  assert.strictEqual(timeoutEvidence(tapLog(["  failureType: 'testCodeFailure'"]), 'tap'), null);
+  assert.strictEqual(timeoutEvidence(specLog(['  ran past its deadline']), 'spec', []), null);
+  assert.strictEqual(timeoutEvidence('ℹ tests 2\nℹ cancelled 0', 'spec'), null);
+});
+
+test('timeoutEvidence checks in order — a cancelled count wins over a marker and a pattern (#5150)', () => {
+  const all = specLog(['  test timed out after 100ms', '  ran past its deadline', 'ℹ cancelled 1']);
+  assert.strictEqual(timeoutEvidence(all, 'spec', ['ran past its deadline']), 'cancelled');
+  const both = specLog(['  test timed out after 100ms', '  ran past its deadline']);
+  assert.strictEqual(timeoutEvidence(both, 'spec', ['ran past its deadline']), 'inconclusive-marker');
+});
+
+test('timeoutEvidence reads the failing region uncapped — a marker past MAX_REGION_LINES still counts (#5150)', () => {
+  const filler = Array.from({ length: MAX_REGION_LINES + 20 }, (_, i) => `  filler line ${i}`);
+  const log = specLog([...filler, '  test timed out after 100ms']);
+  assert.ok(!extractFailingRegion(log, 'spec').includes('test timed out after'));
+  assert.strictEqual(timeoutEvidence(log, 'spec'), 'inconclusive-marker');
+});
+
+test('RF5: timeoutPatterns match literally after ANSI stripping (#5150)', () => {
+  assert.strictEqual(timeoutEvidence(specLog(['  abc']), 'spec', ['a.c']), null);
+  assert.strictEqual(timeoutEvidence(specLog(['  \u001b[31ma.c\u001b[39m']), 'spec', ['a.c']), 'timeout-pattern');
+  assert.doesNotThrow(() => timeoutEvidence(specLog(['  abc']), 'spec', ['(?:']));
+  // An escape code INSIDE the pattern span: only the stripped text contains it.
+  assert.strictEqual(timeoutEvidence(specLog(['  a\u001b[1m.c\u001b[22m']), 'spec', ['a.c']), 'timeout-pattern');
+});
+
+test('timeoutEvidence strips ANSI before the marker check — a coloured log ignores an outside-region marker and finds an inside one (#5150)', () => {
+  const outside = specLog(['  assertion failed'], ['\u001b[32m✔ a passing test: test timed out after 100ms (1ms)\u001b[39m'])
+    .replace('✖ failing tests:', '\u001b[31m✖ failing tests:\u001b[39m');
+  assert.strictEqual(timeoutEvidence(outside, 'spec'), null);
+  const inside = specLog(['  \u001b[31mtest timed out after 100ms\u001b[39m']).replace('✖ failing tests:', '\u001b[31m✖ failing tests:\u001b[39m');
+  assert.strictEqual(timeoutEvidence(inside, 'spec'), 'inconclusive-marker');
+});
+
+test('timeoutEvidence on a spec log with no failing-tests header reads the whole text (#5150)', () => {
+  assert.strictEqual(timeoutEvidence('ℹ tests 2\nℹ fail 1\n  test timed out after 100ms', 'spec'), 'inconclusive-marker');
+  assert.strictEqual(timeoutEvidence('ℹ tests 2\nℹ fail 1\n  assertion failed', 'spec'), null);
+});
+
+test('timeoutEvidence ignores a marker outside the failing region (#5150)', () => {
+  const log = specLog(['  assertion failed'], ['✔ a passing test: test timed out after 100ms (1ms)']);
+  assert.strictEqual(timeoutEvidence(log, 'spec'), null);
+});
+
+test('timeoutEvidence on a family without a failing region reads the whole text (#5150)', () => {
+  assert.strictEqual(timeoutEvidence('boom\ntest timed out after 5s', 'generic'), 'inconclusive-marker');
+  assert.strictEqual(timeoutEvidence('boom', 'generic'), null);
 });

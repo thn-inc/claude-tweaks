@@ -1,0 +1,8 @@
+{
+  "dispatches": {
+    "items": [
+      { "agentId": "b-3a-a", "description": "Lens 3a convention agent A", "wallClockMs": 1000, "tokens": { "output": 50, "cacheRead": 500, "cacheCreate": 5 } },
+      { "agentId": "b-tb-1", "description": "Tiebreak 1: one", "wallClockMs": 3000, "tokens": { "output": 7, "cacheRead": 70, "cacheCreate": 700 } }
+    ]
+  }
+}

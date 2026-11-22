@@ -3,6 +3,7 @@ files:
   - plugin/skills/visual-review/SKILL.md
   - plugin/skills/review/review-summary-template.md
   - plugin/skills/flow/materialize.md
+  - plugin/skills/review/code-mode-steps.md
 ---
 
 # Get a Visual-Review Recommendation Only for a UI Surface
@@ -19,6 +20,7 @@ files:
 - **Action:** read what Step 6's recommendation-mode hand-off returned.
 - **Should feel:** precise, not noisy. Nothing suggests opening a browser for a journey whose entry point is a CLI invocation, yet the developer can still see which journeys the change touched.
 - **Should understand:** a journey whose `files:` overlap the diff is only *affected* when the run carries a frontend-surface signal. Step 0.5 reads `surface:` from the run's materialized header: `work/{n}-spec.md` in the checkout under review, the worktree's copy, which is not under `$RUN_ROOT`. A declared `backend`, `infra`, or `terminal` is no signal, and the file sniff does not run. The suppressed line names the reason (`Surface: infra`) and the overlapping journeys, and the summary records it as `Skipped — no UI changes`.
+  Since #5605, review Step 6 runs the skill-load gate (`_shared/skill-load-gate.md`) first. For an infra record with no UI file, the gate returns `skip` and `/claude-tweaks:visual-review` is never loaded. The summary then shows the same `Skipped — no UI changes` status, with the gate's `reason` verbatim and its `journeys` names. Step 0.5 stays the prose twin of the gate's rule.
 - **Red flags:** a `> Recommended follow-up: /claude-tweaks:visual-review journey:` line on an infra record. The status reads `Skipped — no UI changes` with no journey names, so the overlap silently disappears.
 
 ### 2. Review a web record whose backend change overlaps a journey — the review summary
@@ -37,4 +39,5 @@ files:
 
 ## Origin
 - Created during build of #2927. On #2769's review, `plugin/bin/lib/gif/palette.js`, a CLI and agent-only module listed in `walkthrough-gif-capture-2758.md`'s `files:`, produced a browser-walk recommendation for a journey with no page to open. Step 0.5 now gates "affected" on the run's surface. The review summary gained a bullet so the suppressed journeys still reach a human, because for a legacy no-`Surface:` consumer record that bullet is the main visible signal.
-- Related journeys: `keep-review-lenses-from-running-suites-3001.md` (the same review run's fan-out).
+- Related journeys: `keep-review-lenses-from-running-suites-3001.md` (the same review run's fan-out), `skip-a-skill-that-has-nothing-to-do-5605.md` (the gate in front of Step 6).
+- Updated during build of #5605: step 1 notes that the skill-load gate now makes the skip before visual-review loads.

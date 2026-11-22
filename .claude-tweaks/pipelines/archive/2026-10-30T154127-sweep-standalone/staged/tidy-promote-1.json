@@ -1,0 +1,9 @@
+[
+  {
+    "tag": "parked",
+    "record": 4437,
+    "title": "Revisit the 24-hour floor before reconcile asks",
+    "action": "Wake parked record #4437 and re-shape it with /specify",
+    "command": "/claude-tweaks:specify #4437"
+  }
+]

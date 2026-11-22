@@ -13,7 +13,7 @@
 // single-command escape hatch for the work-links: native blocked-by check
 // (#538). Zero runtime npm deps.
 //
-// Usage: resolve-blockers.js <n>[,<n2>,...] [--repo owner/name] [--help]
+// Usage: resolve-blockers.js <n>[,<n2>,...] [--repo [host/]owner/name] [--help]
 // A comma-joined list (no spaces, mirroring this codebase's existing
 // multi-spec-number convention — see flow/materialize.md's `#A,#B` form)
 // batches every number into the ONE aliased GraphQL call
@@ -22,7 +22,9 @@
 // passed (#1174).
 // Output: one JSON line, an object keyed by each requested number (as a
 // string, JSON's own key convention) to its {"blockedBy":[...],
-// "openBlocker":bool,"openBlockerIds":[...]} — the same per-record shape
+// "openBlocker":bool,"openBlockerIds":[...]} plus crossRepoBlockers:
+// [{number, repository, state}] when a blocker lives in another repository
+// (#4793) — the same per-record shape
 // fetchNativeDependencies' Map values already carry (and preflight-records.js's
 // buildRecords `dep` entries expose), not a new shape invented here. A
 // single-number invocation still returns a one-key object — no special-cased
@@ -30,7 +32,8 @@
 // how many numbers it asked for. Exit 0 on success; 1 on a malformed
 // invocation (missing/non-positive-integer number in the list, unknown
 // flag); 2 when `gh` is absent or owner/repo cannot be resolved (no
-// `--repo` and no readable `origin` remote); 3 when the GraphQL call itself
+// `--repo` and no readable `origin` remote, or an origin host with no GitHub
+// signal — refused before any gh call, #4933); 3 when the GraphQL call itself
 // throws (network/API failure, or fetchNativeDependencies' own
 // partial-result guard). Repo root comes from `git remote get-url origin`
 // at the process cwd — never from CLAUDE_PLUGIN_ROOT (unset in Bash tool
@@ -40,27 +43,36 @@
 
 const { fetchNativeDependencies } = require('./lib/issues/native-dependencies');
 const { makeNumberListCli } = require('./lib/number-list-cli');
+const { appendStationEvent } = require('./lib/station-events/emit');
+const { snapshotSinkOf } = require('./lib/station-events/blockers');
 
-const USAGE = 'usage: resolve-blockers.js <n>[,<n2>,...] [--repo owner/name] [--help]\n';
+const USAGE = 'usage: resolve-blockers.js <n>[,<n2>,...] [--repo [host/]owner/name] [--help]\n';
 
-const { run, parseArgs, parseNumbers, realDeps } = makeNumberListCli({
+const {
+  run: runNumberList, parseArgs, parseNumbers, realDeps: numberListDeps,
+} = makeNumberListCli({
   name: 'resolve-blockers.js',
   usage: USAGE,
-  // 30s bound: ONE GraphQL call for the whole aliased batch, whatever its
-  // size — matches fetch-sub-issues.js's precedent for its own 50-alias
-  // batch shape rather than #1154's 5s single-call default, since a
-  // comma-list here can legitimately span the full ~200-record queues
-  // unblocked-records.md/queue-pull-script.md build from `--limit 200`.
-  runnerTimeoutMs: 30000,
   ghRequiredNote: '(work-links: native)',
   fetch: ({
-    numbers, owner, repo, host, runner,
+    numbers, owner, repo, host, runner, onSnapshot,
   }) => fetchNativeDependencies({
-    numbers, owner, repo, host, runner,
+    numbers, owner, repo, host, runner, onSnapshot,
   }),
   mapResult: (n, byNumber) => byNumber.get(n),
 });
 
-module.exports = { run, parseArgs, parseNumbers, parseRepo: require('./lib/repo-resolve').parseRepo };
+// #5902: the station-event emitter; a caller that passes its own deps omits it (no emission).
+const realDeps = { ...numberListDeps, stationEvent: (e) => appendStationEvent(e) };
 
-if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
+// A `blockers` station event per fetched number: with no explicit `onSnapshot`, the
+// sink is built from `deps.stationEvent`; neither present = no emission.
+function run(argv, deps = realDeps) {
+  return runNumberList(argv, { ...deps, onSnapshot: snapshotSinkOf(deps) });
+}
+
+module.exports = { run, parseArgs, parseNumbers, realDeps, parseRepo: require('./lib/repo-resolve').parseRepo };
+
+if (require.main === module) {
+  process.exitCode = run(process.argv.slice(2));
+}

@@ -15,7 +15,10 @@
 // own matcher also split compound commands and stripped `NAME=value`
 // prefixes), takes path basenames (`/usr/bin/git`, `git.exe`), and resolves
 // anything it cannot read to "run". It deliberately does not parse quoting —
-// `echo "git"` running the full handler is an accepted false positive.
+// `echo "git"` running the full handler is an accepted false positive. The process-kill
+// family (`pkill`, `taskkill`, `Stop-Process`, …) alone matches case-insensitively, because
+// `taskkill` and PowerShell cmdlets are case-insensitive on Windows; the other families do
+// not (#4548).
 //
 // It reads every word and every assignment value, so `G=git; $G push` is
 // reached, and any command holding both an assignment and a `$NAME` reference
@@ -25,8 +28,9 @@
 // push`) is not reached, and the handler cannot resolve it either.
 //
 // Dependency-light by contract: fs, git-command.js (which requires only path)
-// and harness-refusal.js (which requires nothing), plus guard-rewrite.js (path
-// and ../path-guard), loaded only on a pre-tool-use skip. Adding a heavier require here
+// and harness-refusal.js (which requires nothing), plus guard-rewrite.js (path,
+// ../path-guard and ../shared-primitives, whose top level requires only path and
+// ./path-guard), loaded only on a pre-tool-use skip. Adding a heavier require here
 // moves cost onto EVERY Bash call. The same holds for user-prompt-submit: it fires
 // on every human prompt and Claude Code waits for it, so it is governed here too,
 // by a raw substring test on `claude-tweaks:` with no JSON parse.
@@ -44,6 +48,11 @@ const POST_TOOL_USE_WORDS = GUARDED_PROGRAM_WORDS.git;
 const WORDS_BY_EVENT = Object.freeze({
   'pre-tool-use': PRE_TOOL_USE_WORDS,
   'post-tool-use': POST_TOOL_USE_WORDS,
+});
+
+// #4548: the words matched case-insensitively, pre-tool-use only (the process-kill family).
+const CASE_INSENSITIVE_WORDS_BY_EVENT = Object.freeze({
+  'pre-tool-use': new Set(GUARDED_PROGRAM_WORDS.processKill),
 });
 
 // `=` is a separator so every assignment VALUE is a piece of its own:
@@ -116,9 +125,14 @@ function wordsFor(event) {
   return Object.prototype.hasOwnProperty.call(WORDS_BY_EVENT, event) ? WORDS_BY_EVENT[event] : null;
 }
 
+function caseInsensitiveWordsFor(event) {
+  return Object.prototype.hasOwnProperty.call(CASE_INSENSITIVE_WORDS_BY_EVENT, event) ? CASE_INSENSITIVE_WORDS_BY_EVENT[event] : null;
+}
+
 function shouldRunFull(event, input) {
   const covered = wordsFor(event);
   if (!covered) return true;
+  const folded = caseInsensitiveWordsFor(event);
   if (!input || typeof input !== 'object' || input.tool_name !== 'Bash') return true;
   const typed = input.tool_input && input.tool_input.command;
   if (typeof typed !== 'string') return true;
@@ -141,7 +155,7 @@ function shouldRunFull(event, input) {
   if (event === 'pre-tool-use' && hasFileRedirection(command)) return true;
   return readings.some((c) => {
     const present = commandWords(c);
-    return covered.some((word) => present.has(word));
+    return covered.some((word) => present.has(word)) || (folded !== null && [...present].some((word) => folded.has(word.toLowerCase())));
   });
 }
 

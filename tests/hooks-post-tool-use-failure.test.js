@@ -25,6 +25,7 @@ function failureCtx(wt, error, { sessionId = 'sess-ptuf-1', toolName = 'Bash' } 
   return {
     input: { hook_event_name: 'PostToolUseFailure', tool_name: toolName, tool_input: { command: 'd=.; sed -n 1,2p $d/README.md' }, error, session_id: sessionId, cwd: wt, is_interrupt: false },
     cwd: wt,
+    env: process.env,
     ownedRun: {},
   };
 }
@@ -71,7 +72,7 @@ test('hooks.json registers PostToolUseFailure for Bash, routed to the post-tool-
   const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
   const group = (cfg.hooks.PostToolUseFailure || []).find((g) => g.matcher === 'Bash');
   assert.ok(group, 'PostToolUseFailure has no Bash matcher group');
-  assert.match(group.hooks[0].command, /hooks\.js" post-tool-use-failure$/);
+  assert.match(group.hooks[0].command, /hooks\.sh" post-tool-use-failure$/);
 });
 
 test('dispatcher end-to-end: hooks.js post-tool-use-failure logs the refusal and exits 0', () => {

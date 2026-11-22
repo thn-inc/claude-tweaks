@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -25,7 +26,7 @@ const {
 const BUDGETS_SRC = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'skill-audit', 'budgets.js');
 
 function tmpRoot(slug) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), `budgets-${slug}-`));
+  return scratchDir(`budgets-${slug}-`);
 }
 
 // {root}/skills/{skill}/{rel} with `content`; returns root.

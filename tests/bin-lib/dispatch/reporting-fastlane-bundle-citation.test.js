@@ -12,7 +12,7 @@ const { readText } = require('../../helpers/read-skill');
 const PLUGIN = path.join(__dirname, '..', '..', '..', 'plugin');
 const REPORTING = path.join(PLUGIN, 'skills', 'dispatch', 'reporting.md');
 const SKILL = path.join(PLUGIN, 'skills', 'dispatch', 'SKILL.md');
-const QUEUE_PULL = path.join(PLUGIN, 'skills', 'dispatch', 'queue-pull-script.md');
+const { SESSION_FILES } = require('../../../plugin/bin/lib/dispatch/queue-pull');
 
 test('reporting.md names dispatch-fastlane-bundles.json as a read, keyed on set-equality', () => {
   const text = readText(REPORTING);
@@ -38,12 +38,9 @@ test("SKILL.md Step 4 selection log line carries the fast-lane bundle phrase", (
   );
 });
 
-test('both queue-pull-script.md and reporting.md mention dispatch-fastlane-bundles.json (grep -rln equivalent)', () => {
-  for (const file of [QUEUE_PULL, REPORTING]) {
-    const text = readText(file);
-    assert.ok(
-      text.includes('dispatch-fastlane-bundles.json'),
-      `${file} must reference dispatch-fastlane-bundles.json`,
-    );
-  }
+// #5230: the writer is the queue-pull module, which names the file among its session files (the
+// write itself is pinned in queue-pull.test.js's AC2.2 oversized test).
+test('the queue pull writes dispatch-fastlane-bundles.json and reporting.md reads it', () => {
+  assert.ok(SESSION_FILES.includes('dispatch-fastlane-bundles.json'), 'the queue pull must name dispatch-fastlane-bundles.json among its session files');
+  assert.ok(readText(REPORTING).includes('dispatch-fastlane-bundles.json'), 'reporting.md must reference dispatch-fastlane-bundles.json');
 });

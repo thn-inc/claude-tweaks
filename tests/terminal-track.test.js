@@ -52,12 +52,16 @@ test('terminal-routing.md exists and names the honest-skip outcomes', () => {
 });
 
 test('build Common Step 1.7 routes surface: terminal to design-wrapper pre-build', () => {
+  // Since #5605 the routing rule lives in the skill-load gate's pre-build rule, which Step 1.7 cites.
   const skill = read('plugin/skills/build/SKILL.md');
   assert.match(
     skill,
-    /Common Step 1\.7[\s\S]{0,400}`surface` ∈ `web \| mobile \| desktop \| terminal`/,
-    'Common Step 1.7 must route surface: terminal to /claude-tweaks:design-wrapper pre-build, not only web|mobile|desktop',
+    /Common Step 1\.7[^\n]*\n\nGate per `_shared\/skill-load-gate\.md`: `--skill design-wrapper --mode pre-build`, `--surface`/,
+    'Common Step 1.7 must gate pre-build on the skill-load gate with the record surface',
   );
+  const { decide } = require('../plugin/bin/lib/skill-gate');
+  const verdict = decide({ skill: 'design-wrapper', mode: 'pre-build', surface: 'terminal', designIntegration: 'enabled', files: { error: 'no diff' } });
+  assert.equal(verdict.decision, 'proceed', 'the pre-build gate must route surface: terminal to /claude-tweaks:design-wrapper pre-build');
 
   const prebuild = read('plugin/skills/build/design-prebuild.md');
   assert.match(

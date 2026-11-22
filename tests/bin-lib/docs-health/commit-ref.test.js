@@ -6,8 +6,11 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 const {
   verifyCommits, defaultGit, OUTCOMES, DEEPEN_LOCK_FILENAME, TIMEOUT_MARKER_FILENAME,
+  DEEPEN_TIMEOUT_MS, LOCK_WAIT_MARGIN_MS,
 } = require('../../../plugin/bin/lib/docs-health/commit-ref');
-const { git, tmpDir, makeOriginRepo, cloneOf, makeAmbiguousRepo } = require('./commit-fixtures');
+const {
+  git, tmpDir, makeOriginRepo, cloneOf, makeAmbiguousRepo, cleanGitEnv,
+} = require('./commit-fixtures');
 
 const outcomeOf = (result, input) => result.commits.find((c) => c.input === input).outcome;
 
@@ -282,22 +285,46 @@ test('the deepen lock is released even when the fetch throws, leaving the repo l
   releaseLock(held);
 });
 
-test('CLAUDE_TWEAKS_LOCK_WAIT_MS is restored after a deepen attempt, even on failure (#2988)', () => {
+test('AC3.1, AC3.2: the deepen lock is acquired with waitMs DEEPEN_TIMEOUT_MS + LOCK_WAIT_MARGIN_MS and process.env is never written', () => {
   const origin = makeOriginRepo();
   const dir = cloneOf(origin, { depth: 1 });
   const failingGit = (args, opts) => {
     if (args.includes('fetch')) { const err = new Error('network unreachable'); err.status = 1; throw err; }
     return defaultGit(args, opts);
   };
+  const calls = [];
+  // Records the env var as seen at call time: a write put back after the call
+  // (the old set-then-restore swap) is invisible to the post-call comparison.
+  const lock = (lockPath, opts) => {
+    calls.push({ lockPath, opts, envAtCall: process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS });
+    return null;
+  };
   const prev = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
   process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = '42';
   try {
-    verifyCommits({ root: dir, hashes: [origin.third], integrationBranch: 'main', git: failingGit });
-    assert.strictEqual(process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS, '42');
+    const before = { ...process.env };
+    verifyCommits({ root: dir, hashes: [origin.third], integrationBranch: 'main', git: failingGit, lock });
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(calls[0].opts.waitMs, DEEPEN_TIMEOUT_MS + LOCK_WAIT_MARGIN_MS);
+    assert.strictEqual(calls[0].envAtCall, '42');
+    assert.deepStrictEqual({ ...process.env }, before);
   } finally {
     if (prev === undefined) delete process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
     else process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = prev;
   }
+});
+
+test('verifyCommits runs git with the injected env', () => {
+  const root = tmpDir();
+  const origin = makeOriginRepo();
+  const head = git(origin.dir, ['rev-parse', 'HEAD']).trim();
+  const r = verifyCommits({
+    root,
+    hashes: [head],
+    integrationBranch: 'main',
+    env: { ...cleanGitEnv(process.env), GIT_DIR: path.join(origin.dir, '.git') },
+  });
+  assert.strictEqual(outcomeOf(r, head), 'reachable');
 });
 
 test('a non-timeout fetch failure does not poison the cache -- a later call still attempts a fresh fetch (#2988)', () => {

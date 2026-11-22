@@ -2,16 +2,19 @@
 // tests/bin-lib/wrap-up/verify-json-cli.test.js — `wrap-up-engine.js verify`
 // persists its per-check rows to {run-dir}/verify.json (#3783), into the dir
 // that was actually verified (the archived copy when the original path is
-// gone), never recreating the stale original. Spawns the CLI as a real child
-// process against a temp git repo, with a gh-absent PATH (a scratch dir of
-// symlinks to node and git only) so the result is machine-independent.
+// gone), never recreating the stale original. Calls the CLI's `run` in-process
+// against a temp git repo, with the cwd injected, a faked gh and a gh-absent
+// PATH (a scratch dir of symlinks to node and git only) so the result is
+// machine-independent.
 const { test, after } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { chmodDenialSkip } = require('../../helpers/root');
+const { runCliSync } = require('../../helpers/run-cli');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'wrap-up-engine.js');
 const { runVerify, resolveArchivedRunDir } = require('../../../plugin/bin/lib/wrap-up/engine-verify');
@@ -27,7 +30,7 @@ function tmpDir(prefix) {
   return d;
 }
 
-// Same shape as tests/integration-model.test.js's ghAbsentPath(), plus node:
+// Same shape as tests/helpers/integration-model.js's ghAbsentPath(), plus node:
 // `gh` is absent even where it sits beside git (Homebrew).
 function ghAbsentPath() {
   const binDir = tmpDir('ct-nogh-bin-');
@@ -39,9 +42,7 @@ function ghAbsentPath() {
 function makeRepo() {
   const repo = fs.realpathSync(tmpDir('verify-json-cli-'));
   const g = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8' }).trim();
-  g('init', '-q');
-  g('config', 'user.email', 'test@example.com');
-  g('config', 'user.name', 'Test');
+  initRepo(repo, { name: 'Test', email: 'test@example.com', cwd: repo, encoding: 'utf8' });
   fs.writeFileSync(path.join(repo, 'README.md'), '# fixture\n');
   g('add', '.');
   g('commit', '-q', '-m', 'base');
@@ -52,13 +53,15 @@ function pipelinesDir(repo) {
   return path.join(repo, '.claude-tweaks', 'pipelines');
 }
 
-function runCli(repo, runDir, binDir) {
-  const r = spawnSync(process.execPath, [CLI, 'verify', '--run-dir', runDir, '--base', 'HEAD'], {
+// In-process `run` with the cwd and a gh-absent PATH injected; the faked gh throws ENOENT, so no real gh
+// is reached whatever the machine has installed.
+function runVerifyCli(repo, runDir, binDir) {
+  const r = runCliSync(CLI, ['verify', '--run-dir', runDir, '--base', 'HEAD'], {
     cwd: repo,
-    encoding: 'utf8',
     env: { ...process.env, PATH: binDir },
+    deps: { gh: () => { const e = new Error('spawnSync gh ENOENT'); e.code = 'ENOENT'; throw e; } },
   });
-  return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
+  return { status: r.code, stdout: r.stdout, stderr: r.stderr };
 }
 
 // The table's rows, parsed: [{ check, resultCell }] in order.
@@ -89,7 +92,7 @@ test('AC1.1: verify-json writes one entry per check', () => {
   fs.mkdirSync(runDir, { recursive: true });
   const expectedExit = inProcessExitCode(repo, runDir);
 
-  const r = runCli(repo, runDir, ghAbsentPath());
+  const r = runVerifyCli(repo, runDir, ghAbsentPath());
   assert.strictEqual(r.status, expectedExit, r.stderr);
   assert.strictEqual(r.stderr, '', 'a successful write is silent on stderr');
 
@@ -109,7 +112,7 @@ test('verify-json lands in the archived copy', () => {
   const archived = path.join(pipelinesDir(repo), 'archive', RUN_ID);
   fs.mkdirSync(archived, { recursive: true });
 
-  const r = runCli(repo, runDir, ghAbsentPath());
+  const r = runVerifyCli(repo, runDir, ghAbsentPath());
   assert.ok(fs.existsSync(path.join(archived, 'verify.json')), `${r.stderr}${r.stdout}`);
   const written = JSON.parse(fs.readFileSync(path.join(archived, 'verify.json'), 'utf8'));
   assert.deepStrictEqual(written.checks.map((c) => c.check), tableRows(r.stdout).map((x) => x.check));
@@ -121,7 +124,7 @@ test('verify-json not written when run dir not found', () => {
   const repo = makeRepo();
   const runDir = path.join(pipelinesDir(repo), RUN_ID);
 
-  const r = runCli(repo, runDir, ghAbsentPath());
+  const r = runVerifyCli(repo, runDir, ghAbsentPath());
   assert.strictEqual(r.status, 3, r.stderr);
   assert.ok(!fs.existsSync(pipelinesDir(repo)) || !JSON.stringify(fs.readdirSync(pipelinesDir(repo), { recursive: true })).includes('verify.json'),
     'no verify.json anywhere under .claude-tweaks/pipelines/');
@@ -137,7 +140,7 @@ test('verify-json write failure leaves the verdict alone', unwritableSkip, () =>
   const expectedExit = inProcessExitCode(repo, runDir);
   fs.chmodSync(runDir, 0o555);
   try {
-    const r = runCli(repo, runDir, ghAbsentPath());
+    const r = runVerifyCli(repo, runDir, ghAbsentPath());
     assert.strictEqual(r.status, expectedExit);
     assert.match(r.stdout, /\| Check \| Result \| Detail \|/, 'the table is still printed');
     assert.match(r.stderr, /verify\.json/);

@@ -81,9 +81,9 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{parent}/spec-{N}" --sec
 
 ## Member prompt (Subagent Contract)
 
-This is a dispatch site under `_shared/subagent-output-contract.md`. Each member is a fresh agent, never `fork`. Resolve its model once per wave with `node "{plugin-root}/bin/resolve-profile.js" capable`, the profile `dispatch/task-prompt.md`'s first `build,test` call uses, and pass `model` explicitly on every `Agent` call.
+This is a dispatch site under `_shared/subagent-output-contract.md`. Each member is a fresh agent, never `fork`. Resolve its model once per wave with `node "{plugin-root}/bin/resolve-profile.js" capable`, the profile `dispatch/task-prompt.md`'s first `build,test` call uses, and pass `model` explicitly on every `Agent` call — and set the Agent tool's `effort` parameter to the returned `launchEffort` when it is not `null` (the contract's Dispatching paragraph).
 
-Inline the block below verbatim, substituting `{N}`, `{parent}`, `{shared-worktree}`, `{stories-step}` and `{context-pack}`. `{stories-step}` carries `SKILL.md`'s Automatic story generation into the member, which would otherwise skip it: with `no-stories` set it is empty; otherwise it is the line `If that build changed a UI file (the trigger list in frontend-detection.md, in the /claude-tweaks:design-wrapper skill's directory), run PIPELINE_RUN_DIR="{parent}/spec-{N}" MULTISPEC_SHARED_WORKTREE=1 MULTISPEC_PARALLEL_WAVE=1 /claude-tweaks:stories next.` `{parent}` is the parent run directory's absolute path, resolved under `$RUN_ROOT` (`_shared/pipeline-run-dir.md`): a relative path would resolve inside the member's own worktree `[IL-127]`. `{context-pack}` is `dispatch/task-prompt.md`'s Context pack items 1 (the literal plugin root), 6 (the worktree shell constraint) and 7 (async-wait discipline, with its `INTERIM_STATUS` rule), plus that file's `build,test` template's Foreground execution clause, all copied verbatim, with item 1 resolved to this session's own plugin root.
+Inline the block below verbatim, substituting `{N}`, `{parent}`, `{shared-worktree}`, `{stories-step}` and `{context-pack}`. `{stories-step}` carries `SKILL.md`'s Automatic story generation into the member, which would otherwise skip it: with `no-stories` set it is empty; otherwise it is the line `If that build changed a UI file (the trigger list in frontend-detection.md, in the /claude-tweaks:design-wrapper skill's directory), run PIPELINE_RUN_DIR="{parent}/spec-{N}" MULTISPEC_SHARED_WORKTREE=1 MULTISPEC_PARALLEL_WAVE=1 /claude-tweaks:stories next.` `{parent}` is the parent run directory's absolute path, resolved under `$RUN_ROOT` (`_shared/pipeline-run-dir.md`): a relative path would resolve inside the member's own worktree `[IL-127]`. `{context-pack}` is `dispatch/task-prompt.md`'s Context pack items 1 (the literal plugin root), 6 (the worktree shell constraint) and 7 (async-wait discipline, with its `INTERIM_STATUS` rule), all copied verbatim, with `{plugin-root}` resolved to this session's own plugin root wherever it appears in them (item 1, and item 7's `wait-for.js` line).
 
 ```
 Task scope: build and test record #{N} as one member of a /claude-tweaks:flow parallel
@@ -109,6 +109,11 @@ Never push, never open or edit a PR, never run `hooks.js record-worktree` or
 the worktree in place -- the orchestrator merges your branch and removes it. Write
 open-items ledger rows only to {parent}/spec-{N}/ledger.md. Before replying, run `ls` on that
 path and on the same path under your own toplevel; LEDGER names whichever exists.
+
+Never kill a process by image or name (`taskkill /IM`, `pkill`, `killall`, `Stop-Process -Name`,
+a `pgrep`-fed `kill`): the process table is shared machine-wide with sibling sessions. Kill only
+a PID you started or your own port's listener (`lsof -nP -iTCP:{port} -sTCP:LISTEN -t`; win32:
+`taskkill /PID {pid} /T /F`); otherwise leave the process running and report it.
 
 OUTPUT FORMAT (required) -- return ONLY these lines, no preamble:
 

@@ -2,6 +2,7 @@
 files:
   - plugin/bin/phase-exit.js
   - plugin/bin/lib/phase-exit/phase-exit.js
+  - plugin/bin/lib/hooks/pre-tool-use.js
   - plugin/bin/lib/log-decision/append.js
   - plugin/bin/log-decision.js
   - plugin/skills/_shared/git-discipline.md
@@ -28,8 +29,8 @@ files:
 - **URL:** `_shared/git-discipline.md`'s Phase exit section, the envelope routing list
 - **Action:** The agent reads `push.state`. If it is `pushed`, it routes `mergeState` per the Post-push merge-state check. If it is `skipped` with no recorded PR, it opens the draft PR and re-runs the CLI. If it is `failed` or `refused`, it continues: the CLI already logged it, and the next phase exit retries. A `logFailures` element is hand-logged with `log-decision.js`.
 - **Should feel:** Mechanical. Each state has one route, and every call site cites the same list.
-- **Should understand:** A push from the wrong worktree is refused (`--worktree … is not the run's worktree …`) and leaves a `wd-push-mismatch` event the Review Console shows. A push killed by the 10-minute push timeout (`CLAUDE_TWEAKS_GIT_PUSH_TIMEOUT_MS`) says `timed out after {n} ms`.
-- **Red flags:** A refused push "fixed" by pushing by hand from another directory. A `failed` push treated as a hard stop.
+- **Should understand:** A push from the wrong worktree is refused (`--worktree … is not the run's worktree …`) and leaves a `wd-push-mismatch` event the Review Console shows. A push killed by the 10-minute push timeout (`CLAUDE_TWEAKS_GIT_PUSH_TIMEOUT_MS`) says `timed out after {n} ms`. Since #4344 the `skipped` decision is the push gate's own rule (`prStampReleased`, shared with `checkBookkeepingStampsGate`), and its SKIP line names the condition that is missing. On a first publish it reads `no PR-early run lifecycle Step 1 line for {branch}`; a FAILED line or `prExempt` never releases a first publish. Otherwise, including when the upstream read throws, it reads `no recorded PR, prExempt or PR-early run lifecycle FAILED line for {branch}`.
+- **Red flags:** A refused push "fixed" by pushing by hand from another directory. A `failed` push treated as a hard stop. A first-publish skip "fixed" by hand-logging a FAILED line: that line does not release a first publish; run Step 1's reuse/reopen check and log its outcome instead.
 
 ### 3. A closed run is left closed
 - **URL:** `phase-exit.js --phase wrap-up --run "{archive path}"`
@@ -54,4 +55,5 @@ files:
 
 ## Origin
 - Created during `/claude-tweaks:build` of record #4026 (2026-10-25). `plugin/bin/phase-exit.js` replaces the per-step phase-exit prose at six call sites, and ten bin CLIs now log their own `decisions.md` entries.
+- Updated during `/claude-tweaks:build` of record #4344 (2026-11-03): phase exit's push release now calls the gate's exported `prStampReleased` (one rule, pinned by `tests/bin-lib/phase-exit/pr-stamp-release-parity.test.js`), and the SKIP line names the missing release condition. Step 2 updated.
 - Related: `docs/journeys/flip-a-pr-checklist-row-at-a-phase-exit-3263.md` (the checklist flip this call runs), `docs/journeys/notice-a-run-pr-gone-conflicting-at-phase-exit-2986.md` (the merge-state read it carries), `docs/journeys/recover-from-a-bookkeeping-stamp-deny.md` (the [IL-131] gate it mirrors)

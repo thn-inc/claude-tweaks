@@ -2,7 +2,7 @@
 
 Loaded by /flow Step 2 when performing pre-flight checks. Each substep returns OK / WARNING (continue with log entry) / BLOCKED (cannot proceed).
 
-Run substeps 2.5, 2.6, and 2.7 in order. Any hard fail or rejection stops the pipeline before the Config Manifesto runs.
+Run substeps 2.5, 2.6, 2.7, and 2.7b in order. Any hard fail or rejection stops the pipeline before the Config Manifesto runs.
 
 **Ledger-bound notes (#3036).** Under the `worktree` strategy the open-items ledger does not exist yet at this step — every "ops ledger entry" below is logged to `decisions.md` now and appended to the ledger as an `ops` row by whichever step creates it (`build/worktree-setup.md` Step 4.6, or `multi-spec.md`'s "Shared worktree" step 1 — the creation points `SKILL.md` Step 1 item 8 names). Under `current-branch`, Step 1 already created the ledger — write the entry directly.
 
@@ -71,3 +71,23 @@ Then /flow on the produced specs:
   /claude-tweaks:flow {N},{M},{P}                    — sequential execution
 ```
 Stop the pipeline with this message. **Do not** silently proceed — the design-mode escape hatch was the source of the wrong-granularity bug. Under `auto`, this rejection still fires (it's a hard validation failure, not a UX preference — see `_shared/auto-mode-card.md`).
+
+## 2.7b — Blocker landing (single-record)
+
+A closed prerequisite is not enough — its closing commit must have reached `origin/{integration-branch}`, or the run builds on code the integration branch never received (#4553). This substep covers a run invoked with one record target only; a run invoked with several — even one the merge-state gate splits down to a single record — gets the same verdicts from `multi-spec.md` Validation step 3's call and never runs 2.7b. It runs after 2.7, ahead of Step 2.8's claim, in this order:
+
+1. **`work-backend: local-files`** — skip the substep entirely, the way Step 2.8 skips itself: no `preflight-records.js` call and no log line. This is the first check, ahead of every `work-links` branch.
+2. **An unresolved topic name (no record number), or a step list with neither `build` nor `test`** — Step 2.8's own skip conditions (a `review,polish,wrap-up` resume, a `/claude-tweaks:dispatch` second call included, has already built): skip with no call and no log line.
+3. **Read `work-links`** (`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values work-links`). Under `body-text`, when Step 1 item 5's `materialize.js --check` envelope reported `bodyBlockedBy: []`, the substep is a no-op — no `preflight-records.js` call. Under `native` the call always runs: it is how native links are read.
+4. **Call.** Resolve `$INTEGRATION_BRANCH` per `_shared/integration-branch.md`, then run:
+   ```
+   node "${CLAUDE_PLUGIN_ROOT}/bin/preflight-records.js" {n} --blocker-landing --integration-branch "$INTEGRATION_BRANCH"
+   ```
+   With `gh` absent add `--records-json {file}` per `multispec-preflight-failure.md`'s Transport paragraph, then follow its `**Blocker landing.**` paragraph's `--blocker-states-json` re-run, so an open blocker still stops.
+5. **Exit code.** A non-zero exit is handled per `multispec-preflight-failure.md`'s Exit 1 and Exit 2 paragraphs: re-run once on exit 1, then a STOP before claiming quoting stderr; exit 2 is a STOP at once. Decide on the exit code and the `preflight-records.js:` line — `gh`'s own stderr can precede it, so never assume stderr is one line or empty. A non-zero exit is never read as "no blockers".
+6. **Read the envelope.** When the envelope carries `nativeLinksUnchecked: true` (native blocked-by links went unread under `--records-json`), hold one `SKIP` — it is never "no blockers":
+   ```
+   node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/flow" --status SKIP --step "Step 2 blocker landing (native links unchecked)" --text "condition: blocker landing ran under --records-json with work-links: native — native blocked-by links unread → fallback: only body-text blockers judged" --reversibility n/a
+   ```
+   Then apply `multispec-dependency-ordering.md`'s out-of-run verdict table to every entry of `records["{n}"].blockerLanding`, whether or not that flag is set (`blockerLanding: []` → no-op; the body-text blockers the CLI still judged can be `open`): `open` or `unlanded` is BLOCKED — a STOP before Step 2.8 claims (nothing to tear down; render that file's stop card for `unlanded`); `undetermined` proceeds, holding that file's per-blocker `SKIP`; every other verdict is as the table says.
+7. **Write the held `SKIP`s, exactly once.** Every `SKIP` this substep holds is written once the run directory carries more than Step 2.8's claim lines legitimately — on Step 2.9's express route (which never reaches Step 3), right after `express-entry.md`'s Bind step, and not again if an express-escalated run continues at Step 3; on every other route right after Step 3's Manifesto write or adoption (any case) — never before: Step 3's adoption tolerates only Step 2.8's claim lines in `decisions.md`. Under `interactive` mode no Manifesto runs (`mode-table.md`), so `decisions.md` never legitimately carries more than Step 2.8's claim lines; 2.7b writes none and instead states each `undetermined` verdict, and the native-links-unread note, in the conversation, one line each.

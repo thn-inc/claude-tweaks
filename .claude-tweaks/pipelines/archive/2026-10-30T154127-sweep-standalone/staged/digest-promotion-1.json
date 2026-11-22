@@ -1,0 +1,9 @@
+[
+  {
+    "tag": "digest",
+    "record": null,
+    "title": "Settle 5 below-floor digest findings in issues",
+    "action": "File backlog record absorbing 5 [issues] digest entries",
+    "command": "/claude-tweaks:capture (staged body) then mark 5 lines in #1426 → #{new}"
+  }
+]

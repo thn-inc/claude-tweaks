@@ -57,7 +57,9 @@ const TESTS_ROOT = path.join(ROOT, 'tests');
 // flagged raw reads the scan reports for the file; `reason` says why each must
 // stay raw. A drift either way fails, so a new raw read cannot hide behind an
 // existing entry.
-const ALLOWLIST = {};
+const ALLOWLIST = {
+  'tests/bin-lib/driver/worker.test.js': { count: 1, reason: "the opt-in AC7.1 (#5942) live probe reads a session transcript (.jsonl) under the home directory's .claude/projects, not a repo file; the scan taints it through the launcher envelope, which derives from the repo-rooted worker module" },
+};
 
 // Repo-rooted text reads the live scan sees (raw + readText) when this landed.
 // Fewer means the taint or the call matcher stopped matching, not that the

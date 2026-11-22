@@ -40,7 +40,10 @@ function assertRebind(text) {
   assert.match(t, /prior-attempt/);
   assert.match(t, /PR-early run lifecycle: rebound reopened PR #\{number\} to run \{run-id\}/);
   assert.match(t, /rebind it unconditionally/);
-  assert.match(t, /"Skipped when Step 1 found a reusable open PR" header does not apply to this compose/);
+  // Scoped to the #3887 paragraph: the #4580 paragraph carries the same clause.
+  const para = t.match(REBIND_SENTENCE);
+  assert.ok(para, 'the #3887 rebind paragraph is missing');
+  assert.match(para[0], /"Skipped when Step 1 found a reusable open PR" header does not apply to this compose/);
   assert.match(t, /Rebind a retry's body.*?mcp__github__update_pull_request.*?github-write-transport\.md.*?Exception: PR create\/update \(#929\)" section.*?Reversibility: high\./);
 }
 
@@ -79,6 +82,30 @@ function assertGhAbsentLimitation(text) {
   assert.match(t, /MCP-fed lookup is a tracked follow-up/);
 }
 
+// #4580: the same rebind for a reused OPEN PR (Step 1's OPEN bullet, and Resume's "Still open").
+const REUSED_REBIND_SENTENCE = /\*\*Rebind a reused body \(#4580\)\.\*\*.*?is left untouched\./s;
+const REUSED_AUTO_LINE = /`AUTO \{time\} — PR-early run lifecycle: rebound reused PR #\{number\} to run \{run-id\}\. Reversibility: high\.`/;
+
+function assertReusedRebind(text) {
+  const t = norm(text);
+  const match = t.match(REUSED_REBIND_SENTENCE);
+  assert.ok(match, 'the #4580 rebind paragraph is missing');
+  const para = match[0];
+  const start = match.index;
+  const step1 = t.indexOf('### Step 1:');
+  const step2 = t.indexOf('### Step 2: Push the branch');
+  assert.ok(step1 !== -1 && start > step1 && start < step2, 'the #4580 paragraph must sit inside Step 1, before Step 2');
+  assert.ok(para.includes('PR-early run lifecycle: rebound reused PR #{number} to run {run-id}. Reversibility: high.'), 'AUTO log line missing');
+  assert.ok(para.includes('rebind of reused PR #{number} failed ({error}); phase-checklist updates will exit 4 until its body names run {run-id}. Reversibility: n/a.'), 'SKIP log line missing');
+  assert.ok(para.includes("before Step 2's push"), 'the before-push ordering is missing');
+  assert.match(para, /"Skipped when Step 1 found a reusable open PR" header does not apply to this compose/);
+  assert.ok(para.includes('`mcp__github__update_pull_request`'), 'the gh-absent MCP rebind is missing');
+  assert.ok(t.slice(step1, step2).includes('--json number,url,state,isDraft,body'), "Step 1's gh pr list must request the body");
+  const resume = t.indexOf('## Resume: reconcile a recorded PR');
+  assert.ok(resume !== -1 && t.slice(resume).includes('--json state,isDraft,url,body'), "Resume's gh pr view must request the body");
+  assert.match(t.slice(resume), /\*\*Still open\*\*: when its body names another run, rebind it per Step 1's \*\*Rebind a reused body \(#4580\)\*\*/);
+}
+
 test('AC1.1: a reopened retry PR is rebound to this run before any checklist update', () => {
   assertRebind(PR_EARLY);
 });
@@ -88,6 +115,26 @@ test('the rebind sits inside Step 1, before Step 2\'s push', () => {
   const reopen = PR_EARLY.indexOf('**Reopen succeeds:**');
   const step2 = PR_EARLY.indexOf('### Step 2: Push the branch');
   assert.ok(reopen !== -1 && rebind > reopen && rebind < step2, 'rebind paragraph misplaced');
+});
+
+test('#4580: a reused open PR is rebound to this run before the push, and the body is requested', () => {
+  assertReusedRebind(PR_EARLY);
+});
+
+test('go-red: assertReusedRebind throws once the #4580 AUTO log line is removed', () => {
+  const stripped = norm(PR_EARLY).replace(REUSED_AUTO_LINE, '');
+  assert.notStrictEqual(stripped, norm(PR_EARLY), 'control did not remove anything');
+  assert.throws(() => assertReusedRebind(stripped));
+});
+
+test('go-red: assertReusedRebind throws once the MCP rebind or the Resume bullet is removed', () => {
+  const t = norm(PR_EARLY);
+  const noMcp = t.replace(/(Rebind a reused body \(#4580\)\.\*\*.*?)`mcp__github__update_pull_request`/s, '$1`gh`');
+  const noResume = t.replace("rebind it per Step 1's **Rebind a reused body (#4580)**", 'leave it');
+  for (const stripped of [noMcp, noResume]) {
+    assert.notStrictEqual(stripped, t, 'control did not remove anything');
+    assert.throws(() => assertReusedRebind(stripped));
+  }
 });
 
 test('AC3.1: the failure comment\'s plan-for-retry claim matches what the retry does', () => {

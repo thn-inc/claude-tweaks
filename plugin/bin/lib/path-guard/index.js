@@ -74,6 +74,26 @@ function resolveLeaf(p, { fsImpl = fs, realpath } = {}) {
   return { state: 'unreadable', code: (realpathError && realpathError.code) || 'EUNKNOWN' };
 }
 
+// The canonical form of an absolute path that may not exist yet: its nearest
+// existing ancestor resolved (resolveLeaf), with the missing parts re-appended
+// as given. `{ state: 'resolved', path }`, or the first ancestor's own failure
+// (`dangling` / `unreadable`, with its code) — a part that exists but will not
+// resolve is never stepped over. A path with no existing ancestor at all is
+// `missing`.
+function resolveTarget(p, { fsImpl = fs, realpath, pathImpl = path } = {}) {
+  const tail = [];
+  let current = p;
+  for (;;) {
+    const leaf = resolveLeaf(current, { fsImpl, realpath });
+    if (leaf.state === 'resolved') return { state: 'resolved', path: pathImpl.join(leaf.path, ...tail.reverse()) };
+    if (leaf.state !== 'missing') return leaf;
+    const parent = pathImpl.dirname(current);
+    if (parent === current) return leaf;
+    tail.push(pathImpl.basename(current));
+    current = parent;
+  }
+}
+
 // Pure and lexical, for already-canonical absolute paths.
 function isAncestorOrSelf(ancestor, candidate, { pathImpl = path } = {}) {
   const rel = pathImpl.relative(ancestor, candidate);
@@ -90,4 +110,4 @@ function resolveWithin(p, root, { fsImpl, realpath, pathImpl } = {}) {
   return isAncestorOrSelf(rootReal, leaf.path, { pathImpl }) ? leaf.path : null;
 }
 
-module.exports = { lstatType, canonicalRealpath, resolveLeaf, isAncestorOrSelf, resolveWithin };
+module.exports = { lstatType, canonicalRealpath, resolveLeaf, resolveTarget, isAncestorOrSelf, resolveWithin };

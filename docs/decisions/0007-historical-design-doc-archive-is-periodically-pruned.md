@@ -1,6 +1,7 @@
 # 0007. Historical design-doc archive is periodically pruned, not kept forever
 
 - **Status:** accepted
+- **Narrowed by:** [0034](0034-this-repository-deletes-each-runs-plan-at-wrap-up.md) — in this repository a plan is deleted by its own run at wrap-up; design docs are still kept until `/claude-tweaks:specify` consumes them.
 - **Date:** 2026-07-26
 - **Context:** Conversation-based repo-hygiene work ("clear up legacy/recon/memenu noise")
 

@@ -3,9 +3,12 @@
 // tests/materialize-run-dir-anchoring.test.js's deps-injection style (never
 // tests/resolve-policy-cli.test.js's spawnSync-a-real-process style, since
 // this CLI's whole point is a `gh api graphql` call that must never be live
-// in a test — a fake runner in deps.runner stands in for it). Covers
-// argument parsing and the number-keyed {blockedBy, openBlocker, openBlockerIds}
-// output shape; the GraphQL query-building logic itself
+// in a test — a fake runner in deps.runner stands in for it). Argument
+// parsing and repo resolution are tested once in
+// `tests/bin-lib/number-list-cli.test.js` (the shared `makeNumberListCli`
+// scaffold); this file keeps only this CLI's usage name, its `gh` argv
+// (`-f owner=`/`-f repo=`, `--hostname`), its output shapes and its GraphQL
+// failure. The GraphQL query-building logic itself
 // (buildNativeDependencyQuery) already has coverage in
 // tests/bin-lib/issues/record.test.js and is not re-verified here.
 'use strict';
@@ -45,68 +48,6 @@ test('missing <n> is a malformed invocation — exit 1, usage on stderr, gh neve
   assert.match(deps.calls.stderr.join(''), /usage: resolve-blockers\.js/);
 });
 
-test('non-integer <n> is malformed — exit 1', () => {
-  const deps = fakeDeps();
-  const code = run(['abc'], deps);
-  assert.equal(code, 1);
-  assert.match(deps.calls.stderr.join(''), /malformed <n>/);
-});
-
-test('non-positive <n> is malformed — exit 1', () => {
-  const deps = fakeDeps();
-  const code = run(['0'], deps);
-  assert.equal(code, 1);
-  assert.match(deps.calls.stderr.join(''), /malformed <n>/);
-});
-
-test('a comma list with one malformed entry is malformed — exit 1, no network call', () => {
-  const deps = fakeDeps({ ghAvailable: () => { throw new Error('should not be called'); } });
-  const code = run(['720,abc,730'], deps);
-  assert.equal(code, 1);
-  assert.match(deps.calls.stderr.join(''), /malformed <n>/);
-});
-
-test('an empty comma segment (trailing comma) is malformed — exit 1', () => {
-  const deps = fakeDeps();
-  const code = run(['720,'], deps);
-  assert.equal(code, 1);
-  assert.match(deps.calls.stderr.join(''), /malformed <n>/);
-});
-
-test('unknown flag is a malformed invocation — exit 1', () => {
-  const deps = fakeDeps();
-  const code = run(['720', '--bogus'], deps);
-  assert.equal(code, 1);
-  assert.match(deps.calls.stderr.join(''), /unknown argument: --bogus/);
-});
-
-test('trailing --repo with no value is malformed — exit 1, no network call', () => {
-  const deps = fakeDeps({
-    ghAvailable: () => { throw new Error('should not be called'); },
-    remoteUrl: () => { throw new Error('should not be called'); },
-  });
-  const code = run(['720', '--repo'], deps);
-  assert.equal(code, 1);
-  assert.match(deps.calls.stderr.join(''), /missing value for --repo/);
-  assert.deepStrictEqual(deps.calls.runner, []);
-});
-
-test('--repo followed by another flag is rejected as missing a value, not treated as the value', () => {
-  const deps = fakeDeps({
-    ghAvailable: () => { throw new Error('should not be called'); },
-    remoteUrl: () => { throw new Error('should not be called'); },
-  });
-  const code = run(['720', '--repo', '--help'], deps);
-  assert.equal(code, 1);
-  assert.match(deps.calls.stderr.join(''), /missing value for --repo/);
-});
-
-test('--repo owner/name (well-formed) is unaffected', () => {
-  const deps = fakeDeps();
-  const code = run(['720', '--repo', 'acme/widgets'], deps);
-  assert.equal(code, 0);
-});
-
 test('--help prints usage and exits 0 without touching gh/git', () => {
   const deps = fakeDeps({
     ghAvailable: () => { throw new Error('should not be called'); },
@@ -118,23 +59,6 @@ test('--help prints usage and exits 0 without touching gh/git', () => {
 });
 
 // --- gh / repo resolution ------------------------------------------------
-
-test('`gh` absent — exit 2, no attempt to resolve owner/repo', () => {
-  const deps = fakeDeps({
-    ghAvailable: () => false,
-    remoteUrl: () => { throw new Error('should not be called'); },
-  });
-  const code = run(['720'], deps);
-  assert.equal(code, 2);
-  assert.match(deps.calls.stderr.join(''), /`gh` is required/);
-});
-
-test('no --repo and no resolvable origin remote — exit 2', () => {
-  const deps = fakeDeps({ remoteUrl: () => { throw new Error('no remote'); } });
-  const code = run(['720'], deps);
-  assert.equal(code, 2);
-  assert.match(deps.calls.stderr.join(''), /could not resolve owner\/repo/);
-});
 
 test('--repo owner/name overrides the git remote', () => {
   const deps = fakeDeps({ remoteUrl: () => { throw new Error('should not be called'); } });
@@ -149,7 +73,7 @@ test('--repo owner/name overrides the git remote', () => {
 // github.com by this codebase's existing convention — only the auto-detected
 // remote can carry a non-github.com host).
 test('#2240: a GitHub Enterprise Server origin remote passes --hostname on the graphql call', () => {
-  const deps = fakeDeps({ remoteUrl: () => 'https://ghe.example.com/acme/widgets.git' });
+  const deps = fakeDeps({ remoteUrl: () => 'https://ghe.example.com/acme/widgets.git', gateDeps: { env: { GH_HOST: 'ghe.example.com' } } });
   const code = run(['720'], deps);
   assert.equal(code, 0);
   const q = deps.calls.runner[0];
@@ -223,4 +147,107 @@ test('a thrown GraphQL failure (missing data.repository) surfaces as exit 3, not
   assert.equal(code, 3);
   assert.match(deps.calls.stderr.join(''), /missing repository/);
   assert.equal(deps.calls.stdout.length, 0);
+});
+
+// --- blocker snapshot (#5902) ---------------------------------------------
+
+const { makeBlockerSnapshotSink } = require('../plugin/bin/lib/station-events/blockers');
+const { buildLine } = require('../plugin/bin/lib/station-events/emit');
+
+// #12 has a same-repository blocker plus one in another repository; #13 has none.
+const twelveThirteen = () => JSON.stringify({
+  data: {
+    repository: {
+      i12: { number: 12, repository: { nameWithOwner: 'acme/widgets' }, blockedBy: { nodes: [
+        { number: 5, state: 'OPEN', repository: { nameWithOwner: 'other/repo' } },
+        { number: 6, state: 'CLOSED', repository: { nameWithOwner: 'acme/widgets' } },
+      ] } },
+      i13: { number: 13, repository: { nameWithOwner: 'acme/widgets' }, blockedBy: { nodes: [] } },
+    },
+  },
+});
+
+function snapshotRecorder() {
+  const seen = [];
+  return { seen, onSnapshot: (n, entry, meta) => seen.push({ n, entry, meta }) };
+}
+
+test('#5902: onSnapshot sees 12 then 13, and stdout and exit code match the call without it', () => {
+  const plain = fakeDeps({ runner: twelveThirteen });
+  const plainCode = run(['12,13'], plain);
+  const { seen, onSnapshot } = snapshotRecorder();
+  const withSink = fakeDeps({ runner: twelveThirteen, onSnapshot });
+  const code = run(['12,13'], withSink);
+  assert.deepEqual(seen.map((s) => s.n), [12, 13]);
+  assert.equal(seen[0].meta.owner, 'acme');
+  assert.equal(seen[0].meta.repo, 'widgets');
+  assert.equal(code, plainCode);
+  assert.equal(code, 0);
+  assert.deepEqual(withSink.calls.stdout, plain.calls.stdout);
+  assert.deepEqual(withSink.calls.stderr, plain.calls.stderr);
+});
+
+test('#5902: a blocker in another repository reaches the snapshot entry\'s crossRepoBlockers', () => {
+  const { seen, onSnapshot } = snapshotRecorder();
+  run(['12,13'], fakeDeps({ runner: twelveThirteen, onSnapshot }));
+  assert.deepEqual(seen[0].entry.crossRepoBlockers, [{ number: 5, repository: 'other/repo', state: 'OPEN' }]);
+  assert.equal('crossRepoBlockers' in seen[1].entry, false);
+});
+
+test('#5902: a throwing onSnapshot leaves stdout and exit code unchanged', () => {
+  const plain = fakeDeps({ runner: twelveThirteen });
+  const plainCode = run(['12,13'], plain);
+  let thrown = 0;
+  const throwing = fakeDeps({ runner: twelveThirteen, onSnapshot: () => { thrown += 1; throw new Error('sink boom'); } });
+  const code = run(['12,13'], throwing);
+  assert.equal(code, plainCode);
+  assert.deepEqual(throwing.calls.stdout, plain.calls.stdout);
+  assert.deepEqual(throwing.calls.stderr, plain.calls.stderr);
+  assert.equal(thrown, 2, 'the sink was reached for both numbers');
+});
+
+test('#5902: a GraphQL failure (exit 3) records no snapshot, even for a number that did come back', () => {
+  const { seen, onSnapshot } = snapshotRecorder();
+  const partial = () => JSON.stringify({
+    data: { repository: { i12: { number: 12, blockedBy: { nodes: [] } } } },
+  });
+  const deps = fakeDeps({ runner: partial, onSnapshot });
+  assert.equal(run(['12,13'], deps), 3);
+  assert.deepEqual(seen, []);
+});
+
+test('#5902: makeBlockerSnapshotSink wired as onSnapshot yields two valid blockers events, 12 and 13', () => {
+  const events = [];
+  const onSnapshot = makeBlockerSnapshotSink({ stationEvent: (e) => events.push(e), sessionId: 's-1', runId: null });
+  assert.equal(run(['12,13'], fakeDeps({ runner: twelveThirteen, onSnapshot })), 0);
+  assert.deepEqual(events.map((e) => [e.kind, e.recordNumber]), [['blockers', 12], ['blockers', 13]]);
+  for (const e of events) {
+    const line = buildLine(e);
+    assert.notEqual(line, null);
+    assert.equal(line.kind, 'blockers');
+    assert.equal(line.repoName, 'acme/widgets');
+  }
+});
+
+test('#5902: realDeps wires a stationEvent emitter, so the real entry point emits', () => {
+  const { realDeps } = require('../plugin/bin/resolve-blockers');
+  assert.equal(typeof realDeps.stationEvent, 'function', 'stationEvent is wired');
+  assert.equal(typeof realDeps.runner, 'function', 'the number-list scaffold deps are still carried');
+});
+
+test('#5902: run builds the blocker sink from deps.stationEvent when no onSnapshot is passed', () => {
+  const events = [];
+  const deps = fakeDeps({ runner: twelveThirteen, stationEvent: (e) => events.push(e) });
+  assert.equal(run(['12,13'], deps), 0);
+  assert.deepEqual(events.map((e) => [e.kind, e.recordNumber, e.repoName]), [
+    ['blockers', 12, 'acme/widgets'], ['blockers', 13, 'acme/widgets'],
+  ]);
+});
+
+test('#5902: an explicit onSnapshot wins over deps.stationEvent', () => {
+  const events = [];
+  const { seen, onSnapshot } = snapshotRecorder();
+  assert.equal(run(['12,13'], fakeDeps({ runner: twelveThirteen, onSnapshot, stationEvent: (e) => events.push(e) })), 0);
+  assert.deepEqual(seen.map((s) => s.n), [12, 13]);
+  assert.deepEqual(events, []);
 });

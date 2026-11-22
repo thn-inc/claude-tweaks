@@ -15,18 +15,18 @@
 // mid-batch fs failure exits 3 having already durably written the earlier
 // entries; the stderr message on that path names which keys were already
 // written (see the write loop below) so a caller isn't left guessing.
-// Run pins (RUN_PINS, currently just integration-model) are accepted on the
-// same surface with the same enum validation, but are not Manifesto levers:
-// the FYI table never shows them; the auto-batch match admits them only
-// alongside all 13 levers.
+// Run pins (RUN_PINS: integration-model, and spec — a positive-integer record
+// number, #5347) are accepted on the same surface with the same validation
+// (enum or value pattern), but are not Manifesto levers: the FYI table never
+// shows them; the auto-batch match admits them only alongside all 13 levers.
 // Exit 0 on success (echoes, per lever, the config.yml path and the
 // previous -> new value, so escape-hatch logs are evidence-based); 2 on a
 // malformed invocation (missing/conflicting args, a `--set` entry not in
 // key=value form, a key repeated within one `--set` batch, a key outside the
 // canonical Manifesto lever set and the run-pin set, or a value outside that
 // key's enum — batch or single, nothing is written on this exit code); 3 when
-// the run dir is missing or not anchored under the main checkout (a
-// worktree-local shadow — _shared/pipeline-run-dir.md's Anchoring section,
+// the run dir is missing or not anchored under the main checkout's .claude-tweaks/pipelines (a
+// worktree-local shadow, or a directory outside pipelines/ — _shared/pipeline-run-dir.md's Anchoring section,
 // [IL-127]), or config.yml is unwritable. config.yml is the third of the
 // sanctioned-write family: bin/log-decision.js (decisions.md), bin/stage-item.js (staged/),
 // this (config.yml levers — the ceremony escape hatch's downgrade path, and
@@ -89,10 +89,16 @@ function isManifestoAutoBatch(results) {
   if (results.length < MANIFESTO_LEVERS.length) return false;
   const keys = new Set(results.map((r) => r.key));
   if (keys.size !== results.length) return false;
-  for (const lever of MANIFESTO_LEVERS) if (!keys.has(lever)) return false;
+  if (!hasEveryManifestoLever(results)) return false;
   for (const key of keys) if (!isConfigKey(key)) return false;
   const modeResult = results.find((r) => r.key === 'mode');
   return !!modeResult && modeResult.value === 'auto';
+}
+
+// True when the batch wrote every Manifesto lever, whatever the mode and whatever run pins ride along.
+function hasEveryManifestoLever(results) {
+  const keys = new Set(results.map((r) => r.key));
+  return MANIFESTO_LEVERS.every((lever) => keys.has(lever));
 }
 
 const USAGE = 'usage: set-config.js --run <run-dir> --key <lever> --value <value> [--help]\n' +
@@ -207,7 +213,7 @@ function run(argv, overrides = {}) {
   }
   if (!target.ok) {
     if (target.reason === 'missing') deps.stderr(`set-config.js: run dir does not exist: ${o.run}\n`);
-    else deps.stderr(`set-config.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+    else deps.stderr(`set-config.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
     return 3;
   }
 
@@ -220,6 +226,13 @@ function run(argv, overrides = {}) {
     const msg = `set-config.js: could not write config.yml (${err && err.message})${results.length ? ` — already written before the failure: ${results.map(r => r.key).join(', ')}` : ''}`;
     deps.stderr(`${msg}\n`);
     return 3;
+  }
+
+  // The run manifest (#5903): a batch carrying every Manifesto lever is the Manifesto's own write (any
+  // mode — confirm/hybrid and case-3 recovery write through this CLI), so the run is the standard lane.
+  // A partial batch (the ceremony downgrade, the express lane's configSet) never is. Best-effort.
+  if (batchMode && hasEveryManifestoLever(results)) {
+    try { require('./lib/run-manifest/write').fillRunManifest(target.dir, { lane: 'standard' }, { stderr: deps.stderr }); } catch { /* never changes the outcome */ }
   }
 
   for (const r of results) {

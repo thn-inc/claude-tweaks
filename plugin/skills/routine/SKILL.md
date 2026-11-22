@@ -106,7 +106,7 @@ For `fleet on`, `fleet.md`'s own Step 5 summary is the terminal output — and f
 
 ## Component-Skill Contract
 
-When invoked with `--source init` (used by `/claude-tweaks:init`'s Step 15, and by Update Mode's Routine Drift check for `status --all` and `update --defaults`), `/claude-tweaks:routine` is running as a component of `/init`'s bootstrap flow — omit the `## Next Actions` block, since `/init` owns the overall handoff. `/init` does not set `$PIPELINE_RUN_DIR` (it is not a `/flow`-style pipeline orchestrator), so `--source init` is the sole signal for this caller, not merely a fallback for a rare ambiguity — unlike most component-skill contracts in this plugin, `$PIPELINE_RUN_DIR` is not the primary signal here.
+When invoked with `--source init` (used by `/claude-tweaks:init`'s Step 15, and by Update Mode's Routine Drift check for `status --all` and `update --defaults`), `/claude-tweaks:routine` is running as a component of `/init`'s bootstrap flow — omit the `## Next Actions` block, since `/init` owns the overall handoff, and skip CREATE Step 7's declare-claude-tweaks notice (Step 15 already printed it). `/init` does not set `$PIPELINE_RUN_DIR` (it is not a `/flow`-style pipeline orchestrator), so `--source init` is the sole signal for this caller, not merely a fallback for a rare ambiguity — unlike most component-skill contracts in this plugin, `$PIPELINE_RUN_DIR` is not the primary signal here.
 
 Standalone invocation (no `--source` flag) is the common case and renders Next Actions as usual.
 

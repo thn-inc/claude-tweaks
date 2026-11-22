@@ -18,13 +18,15 @@
 'use strict';
 
 const { execFileSync } = require('child_process');
+const { ghOptions } = require('../repo-resolve');
+const sharedPrimitives = require('../shared-primitives');
 
-// 30s bound: shared by resolveDatabaseIds' aliased GraphQL batch (same
-// shape as fetch-sub-issues.js's 50-alias query) and the per-edge REST
-// POSTs below, which complete well under it (#1154 — gh-api-module-pattern's
-// "bound every remote-contacting call on the seam" rule).
+// Batched bound (shared-primitives' GH_BATCH_TIMEOUT_MS, read per call): shared by
+// resolveDatabaseIds' aliased GraphQL batch (same shape as fetch-sub-issues.js's
+// 50-alias query) and the per-edge REST POSTs below, which complete well under it
+// (#1154 — gh-api-module-pattern's "bound every remote-contacting call on the seam" rule).
 function defaultRunner(args) {
-  return execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000, windowsHide: true });
+  return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: sharedPrimitives.GH_BATCH_TIMEOUT_MS, windowsHide: true }));
 }
 
 function errorText(err) {

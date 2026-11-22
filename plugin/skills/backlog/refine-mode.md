@@ -17,20 +17,21 @@ leaves every population at its full whole-queue scope.
 
 *(Narration allowance: no "running"/"passed" line for this step — only the run's one opening line and any failure/degradation line, per `overview-mode.md`'s convention this file shares.)*
 
-Resolve the `autonomy` ceiling and `trust-revert-window-days` once, before any fetch below — the
+Resolve the `autonomy` ceiling and the three trust keys once, before any fetch below — the
 same canonical read the Trust signal section further down and Step 3.6's born-ready check both
 need, so resolving it here means neither has to run its own `resolve-policy.js` call:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values autonomy trust-revert-window-days
-# line 1: autonomy -> {resolved-ceiling}; line 2: trust-revert-window-days -> {resolved-window}
+node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values autonomy trust-revert-window-days trust-evaluation-window-days trust-follow-up-rate-max-percent
+# line 1: autonomy -> {resolved-ceiling}; line 2: trust-revert-window-days -> {resolved-window};
+# line 3: trust-evaluation-window-days -> {resolved-eval-window}; line 4: trust-follow-up-rate-max-percent -> {resolved-follow-up-rate}
 ```
 
-**Substitute the literal values** for `{resolved-ceiling}` and `{resolved-window}` everywhere
+**Substitute the literal values** for `{resolved-ceiling}`, `{resolved-window}`, `{resolved-eval-window}` and `{resolved-follow-up-rate}` everywhere
 below in this file. Do **not** `export` them in an earlier Bash call and read `process.env` in a
 later one: shell environment does not survive between Bash calls and never reaches a subagent, so
 that expansion always resolves empty and a later block would report `supervised` on a repo
-configured for `trusted`. Resolving `trust-revert-window-days` even when the Trust signal section's
+configured for `trusted`. Resolving the trust keys even when the Trust signal section's
 fetch ends up skipped (ceiling below `trusted` and no `--trust`) is accepted overhead — one
 canonical read is simpler than conditioning the resolve call itself on the value it exists to
 produce.
@@ -114,7 +115,7 @@ node -e "
 
 Under `work-backend: local-files`, the grant fetch above never ran (Preflight skips it), so `session-scoped backlog-refine-ready-faceted.json` doesn't exist; `readyRows` defaults to `[]` and the compute block still produces every priority-path field (`missingPriority`, `missingRiskSize`, `prioritySlice`) from `allRows` — the grant lanes (`fresh`/`blocked`/`inProgress`/`grantSlice`) are simply empty.
 
-**Decomposition parents are in the priority population, deliberately.** `refineWorklist`'s `missingPriority` and `missingRiskSize` are computed over `allRows` with no `facets.isParentIssue` filter, so an open decomposition parent reaches the Priority lane like any other unlabelled record. This is the one place `refine` and `overview` treat parents differently: `funnelBuckets` routes parents to their own mutually-exclusive `parents` bucket (`overview-mode.md`'s third annotation line), keeping them out of `captured`/`prioritized` and therefore out of the Prioritize and Specify paste blocks — a parent is never `ready` and never scored (`_shared/work-record.md`'s Decomposition rules: "Only sub-issue records get `ready` (+ scoring)"). Priority is not scoring: a parent legitimately carries a `priority:*` tier to rank the decomposition as a whole, so it stays in this lane. What must NOT happen here is a risk/size ask or a `flag back (needs scoring)` recommendation against a parent — those are sub-issue-only, and `missingRiskSize` counting parents is a count artifact, not a work item. Never emit a `/claude-tweaks:specify #{N}` grooming command for a parent from any lane; its close-out path is `wrap-up/verification-brief.md`'s Parent-Gate Procedure (backstopped by `/claude-tweaks:tidy`'s `Open parent gate`) or `/claude-tweaks:demo`.
+**Decomposition parents are in the priority population, deliberately.** `refineWorklist`'s `missingPriority` and `missingRiskSize` are computed over `allRows` with no `facets.isParentIssue` filter, so an open decomposition parent reaches the Priority lane like any other unlabelled record. This is the one place `refine` and `overview` treat parents differently: `funnelBuckets` routes parents to their own mutually-exclusive `parents` bucket (`overview-mode.md`'s third annotation line), keeping them out of `captured`/`prioritized` and therefore out of the Prioritize and Specify paste blocks — a parent is never `ready` and never scored (`_shared/work-record.md`'s Decomposition rules: "Only sub-issue records get `ready` (+ scoring)"). Priority is not scoring: a parent legitimately carries a `priority:*` tier to rank the decomposition as a whole, so it stays in this lane. What must NOT happen here is a risk/size ask or a `flag back (needs scoring)` recommendation against a parent — those are sub-issue-only, and `missingRiskSize` counting parents is a count artifact, not a work item. Never emit a `/claude-tweaks:specify #{N}` grooming command for a parent from any lane; its close-out path is `wrap-up/verification-brief.md`'s Parent-Gate Procedure (backstopped by `/claude-tweaks:tidy`'s `Open parent gate`) or `/claude-tweaks:accept`.
 
 (If the intended behavior is instead that parents leave the Priority lane entirely, that is a code change to `refineWorklist` and belongs in its own work record rather than in this note.)
 
@@ -320,6 +321,38 @@ label.
 At `supervised` — the default, and the state of any repo that has not opted in — no record is ever
 born-`ready` by this path and this step does nothing.
 
+## Step 3.7: Unconfirmed risk flags
+
+*(Narration allowance: no "running"/"passed" line for this step — only the run's one opening line and any failure/degradation line.)*
+
+Human-present only: when `SKILL.md`'s Input resolved the headless posture (`--source routine`/`sweep`, or the `grant` alias), skip this step and never read its sub-file. `refine-headless.md` never runs it: no human is reachable, and the fail direction is keep.
+
+**Population.** Every open record in Step 1's `allRows` snapshot (`session-scoped backlog-refine-faceted.json`), under both drivers and whatever its lane, `blocked` and `inProgress` included, narrowed by the `#N[,#M...]` filter when present. Only a body with a `Risk-flags-unconfirmed:` marker line, detected by `parseRiskFlags`'s own `MARKER_LINE_RE` (a bold, list or blockquoted spelling included), goes further: that pre-filter only narrows, and `classify`'s `entry` decides. This block writes each such body plus one newline to a session-tmp file and prints one JSON line per record (`key`, `number`, `path`, `snapshot`; a local record's `key` is `local-` plus its file stem, its `number` `null`):
+
+```bash
+ST_BACKLOG_REFINE_FACETED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-refine-faceted.json)"
+node -e "
+  const fs = require('fs');
+  const path = require('path');
+  const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
+  const { MARKER_LINE_RE } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-risk-flags.js');
+  for (const r of require(process.argv[1])) {
+    if (typeof r.body === 'string' && r.body.split(/\r\n?|\n/).some((line) => MARKER_LINE_RE.test(line))) {
+      const local = r.number === undefined || r.number === null;
+      const key = (local ? 'local-' + path.basename(String(r.path), '.md') : String(r.number)).replace(/[^A-Za-z0-9_-]/g, '_');
+      const name = 'backlog-refine-risk-snapshot-' + key + '.md';
+      const file = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, name) || path.join(require('os').tmpdir(), name);
+      fs.writeFileSync(file, r.body + '\n');
+      console.log(JSON.stringify({ key, number: local ? null : r.number, path: local ? r.path : null, snapshot: file.split(path.sep).join('/') }));
+    }
+  }
+" -- "$ST_BACKLOG_REFINE_FACETED"
+```
+
+A non-zero exit from the block is a failure, never an empty population: this step ends without the confirmation pass, reported with stderr verbatim in the run's closing summary.
+
+If the block printed no line, this step ends here. Otherwise read `refine-risk-flags.md` in this skill's directory and follow it.
+
 ## Step 4: Decision lanes
 
 *(Narration allowance: no "running"/"passed" line for this step — only the run's one opening line and any failure/degradation line.)*
@@ -417,7 +450,7 @@ Stripping `bot:blocked` in the same edit as the grant matters: without it, the r
 
 **Dependency-repair rows:**
 
-- Refine runs the detection itself — it does not consume overview's output. After Step 1's fetch (which already carries `,body`), and after performing the same `work-links: native` blocked-by attachment overview's Step 3 specifies (one aliased `buildNativeDependencyQuery` call over the fetched candidates; per-node failures attach nothing), run `findUnresolvedDependencyProse` via the same `{ flags }` output shape. Attaching native blockers first means already-natively-wired records resolve non-empty and are never flagged for re-wiring. The same per-node failure narration line applies here — when any alias in an otherwise-successful batch failed, render one failure-only narration line naming exactly those ids (e.g. `blocker data incomplete for #12, #40 — node fetch failed; they rank on body-text fallback this run`) — and probe unavailability or whole-fetch failure degrades to the body-text fallback with one failure-only narration line, never a hard stop (restated here at point of use rather than left to the cross-reference). Under `work-links: body-text`, no attachment is needed — the body fallback resolves canonical lines on its own. Offer the mode-aware repair as a new confirmable item type in the existing Step 4 lanes + confirm gate — surfaced and applied exactly like every other write in this step, never bypassing or altering when the gate fires or that it blocks until confirmed.
+- Refine runs the detection itself — it does not consume overview's output. After Step 1's fetch (which already carries `,body`), and after performing the same `work-links: native` blocked-by attachment overview's Step 3 specifies (one aliased `buildNativeDependencyQuery` call over the fetched candidates, attaching `openNativeBlockerRefs(node)` per candidate (a blocker from another repository attaches as `owner/name#N`, #4793; `owner/name#N (state unreadable)` when its state is unreadable); per-node failures attach nothing), run `findUnresolvedDependencyProse` via the same `{ flags }` output shape. Attaching native blockers first means already-natively-wired records resolve non-empty and are never flagged for re-wiring. Likewise a qualified `owner/name#N` line is a wired foreign blocker: `findUnresolvedDependencyProse` never flags a `Blocked by owner/name#N` line, nor reads a qualified mention as this repository's `#N`, so the repair below never takes a bare `#N` from a qualified `owner/name#N` mention (#4793). The same per-node failure narration line applies here — when any alias in an otherwise-successful batch failed, render one failure-only narration line naming exactly those ids (e.g. `blocker data incomplete for #12, #40 — node fetch failed; they rank on body-text fallback this run`) — and probe unavailability or whole-fetch failure degrades to the body-text fallback with one failure-only narration line, never a hard stop (restated here at point of use rather than left to the cross-reference). Under `work-links: body-text`, no attachment is needed — the body fallback resolves canonical lines on its own. Offer the mode-aware repair as a new confirmable item type in the existing Step 4 lanes + confirm gate — surfaced and applied exactly like every other write in this step, never bypassing or altering when the gate fires or that it blocks until confirmed.
 - **`work-links: native`**: wire the native blocked-by link via the same dependency API `/claude-tweaks:specify`'s Step 4 linking uses.
 - **`work-links: body-text`**: append a canonical line-start `Blocked by #N` line to the record body (`gh issue edit --body-file` under `github-issues`; `writeRecord` + `git add`/`git commit` under `local-files`, same as the Related-line path above). Run the body pre-write reverify above immediately before this write, the same as the Related-line path — a mismatch skips it. The `work-links: native` path above writes no body text, so it has nothing for this reverify to guard.
 - **Never write both representations for one edge.**

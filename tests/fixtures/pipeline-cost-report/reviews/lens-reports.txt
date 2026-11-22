@@ -1,0 +1,27 @@
+=== table (2026-11-19T073235-adhoc-standalone, a14c6815468a1c781) ===
+The table is below. Lens 3a found three convention issues, all in the new run-manifest code.
+
+| Severity | Path:Line | Finding | Evidence |
+|---|---|---|---|
+| medium | plugin/bin/lib/run-manifest/write.js:27 | `CEREMONY_PROFILES` re-declares the `['fast-lane','standard']` vocabulary a sixth time instead of importing one source. | Same literal at issues/record-vocabulary.js:17. |
+| low | plugin/bin/lib/run-manifest/write.js:36 | The model-stance list is inlined in the fill validator, duplicating a constant that already exists. | model-profiles/profiles.js:32 `STANCES`. |
+| low | plugin/bin/set-config.js:92 | `hasEveryManifestoLever` re-implements the every-Manifesto-lever loop already in the same file. | Line 92 in `isManifestoAutoBatch`. |
+
+STATUS: DONE
+=== no-findings (2026-11-19T073235-adhoc-standalone, ab10320041063da8c) ===
+No findings.
+
+STATUS: DONE
+=== no-findings-then-prose (2026-11-15T162121-spec-5304-5305-5306-5307-5309-5310-5311-5312-5313-5314-5315-5316-5317-5409, ad01fce4bebe28d91) ===
+No findings on the error-handling lens.
+
+- **Empty branch:** `queue-pull.js:777-793` resolves the branch from the policy key. Nothing is excluded by mistake, so the pass fails open, which the record asks for.
+- **Probe failures:** a failed `git cat-file` probe still counts as missing, but only when a branch exists.
+
+STATUS: DONE
+=== prose-then-no-findings (2026-11-17T181851-spec-5872, ae8846f082762753b) ===
+All namespaces and file names are string constants, so nothing untrusted reaches the batch stdin.
+
+No findings.
+
+STATUS: DONE

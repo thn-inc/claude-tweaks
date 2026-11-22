@@ -7,7 +7,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { runGit: runGitInherited, repoPinnedEnv, isIndeterminate } = require('../hooks/git-exec');
+const { runGit: runGitInherited, repoPinnedEnv, isIndeterminate, repoTargetOf } = require('../hooks/git-exec');
 const { withIndexLockRetry } = require('../git-retry');
 const { splitNul } = require('../git-z');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
@@ -20,27 +20,36 @@ const { ownEventRecency } = require('../run-liveness/probes');
 const { VERDICT_STEPS, verdictMarker } = require('../dispatch/merge-verdict');
 const { readWorkBackend } = require('../work-backend');
 const {
-  iterRunDirsWithState, writeRunState, readRunState, isAdHocRunDir,
+  iterRunDirsWithState, writeRunState, readRunState, isAdHocRunDir, isTrackedShellDir, priorWorktree,
 } = require('../hooks/context');
 const { resolvePrState, resolvePrStateByNumber, resolveIssueStateByNumber } = require('./pr-state');
 const {
   recordResidueSuccess, clearResidue, planClear, trackResidue, pruneResidueFailures, beginCacheBatch, commitCacheBatch,
 } = require('./cache');
-const { escalateResidue, resolveResidue } = require('./escalate-residue');
+const { escalateResidue, resolveResidue, residueRepoOf } = require('./escalate-residue');
 const { isWorktreeAlwaysOn } = require('../policy');
-const { repoSlugOf, prClosesIssue } = require('./release-merged');
+const { prClosesIssue } = require('./release-merged');
 const { closeRunState } = require('../hooks/close-run-state');
 const { checkRunIntegrity, fallbackBranch, worktreeListStdout, mergedEvidence } = require('../hooks/run-integrity');
 const { readManifest, readDeferredClosures, readSingleRecordDeferredClosure } = require('../flow/manifest');
 const { checkRunTiebreakCoverage } = require('../tiebreak');
-const { readRunResidue, FILING_PENDING_RESOLUTION, FILING_LOG_REMEDY, filingRerunCommand } = require('../console/residue');
+const {
+  readRunResidue, FILING_PENDING_RESOLUTION, FILING_LOG_REMEDY, consoleRerunCommand, DIGEST_PENDING_RESOLUTION, digestLogRemedy,
+} = require('../console/residue');
 
 // #4178: every call here addresses `root` via `-C`; an inherited GIT_DIR /
 // GIT_WORK_TREE / GIT_INDEX_FILE / GIT_COMMON_DIR would silently override that
 // and commit to whatever repo it names (e.g. a linked worktree's branch). Pin
 // the spawn env so `-C <root>` stays in charge.
 function runGit(args, cwd, opts = {}) {
-  return runGitInherited(args, cwd, { ...opts, env: repoPinnedEnv() });
+  return runGitInherited(args, cwd, { ...opts, env: repoPinnedEnv(opts.env) });
+}
+
+// #5375: runGit over a caller's own environment (a CLI's injected `deps.env`),
+// still pinned the same way, for helpers that take a runner rather than an
+// `env` — archive-run passes it to archiveCommitLine.
+function pinnedGit(env = process.env) {
+  return (args, cwd, opts = {}) => runGit(args, cwd, { ...opts, env });
 }
 
 // Orphan case introduced by the dispatch/flow run-identity unification:
@@ -55,11 +64,11 @@ function runGit(args, cwd, opts = {}) {
 const ORPHAN_MINT_TTL_MS = 24 * 60 * 60 * 1000;
 
 // #1734: the one stat-and-compare shared by every staleness predicate in this
-// file (isAdHocStandaloneSuperseded, isOrphanedMint, isStructurallyStuck all
-// carried byte-identical copies). Fail-closed toward "not stale" on any stat
-// failure (ENOENT, EACCES, …) — every caller relies on an unreadable directory
-// being left alone rather than swept. Strict `>` (not `>=`): exactly-at-TTL is
-// not yet stale.
+// file (the adhoc-superseded and orphaned-mint classifications and
+// isStructurallyStuck all carried byte-identical copies). Fail-closed toward
+// "not stale" on any stat failure (ENOENT, EACCES, …) — every caller relies on
+// an unreadable directory being left alone rather than swept. Strict `>` (not
+// `>=`): exactly-at-TTL is not yet stale.
 function isStaleDir(dir, ttlMs, now = Date.now()) {
   let mtimeMs;
   try {
@@ -80,18 +89,20 @@ function isStaleDir(dir, ttlMs, now = Date.now()) {
 // (#1117). Unlike a genuine orphaned mint (mkdir-only, no worktree, no
 // branch, no PR — see this file's top comment), an ad-hoc dir's
 // run-state.json always carries a real `worktree`, so its correct lifecycle
-// answer is the eventual-supersession path below (isAdHocStandaloneSuperseded),
-// not this blind mtime heuristic: exempt it here, permanently, rather than
-// giving it a longer TTL that just moves the same race further out.
+// answer is the eventual-supersession path below (the adhoc-superseded
+// classification), not this blind mtime heuristic: exempt it here,
+// permanently, rather than giving it a longer TTL that just moves the same
+// race further out.
 //
 // #1604: the suffix match alone is not sufficient corroboration — a
 // malformed or mkdir-only dir sharing the suffix would also fall through
-// isOrphanedMint (exempt) and decideArchive (no-worktree/no-branch skip),
-// leaking the same way a genuine ad-hoc mint used to before this fix.
+// the orphaned-mint classification (exempt) and the merged-PR path
+// (no-worktree/no-branch skip), leaking the same way a genuine ad-hoc mint
+// used to before this fix.
 // Require the invariant the comment above actually asserts: a real
 // run-state.json with a non-empty `worktree` field. A dir that merely
 // carries the suffix without that is NOT treated as ad-hoc here — it falls
-// through to the ordinary isOrphanedMint mtime sweep instead, same as any
+// through to the ordinary orphaned-mint mtime sweep instead, same as any
 // other malformed mint.
 function isAdHocStandaloneMint(dir) {
   return !!readAdHocState(dir);
@@ -191,12 +202,6 @@ function defaultRunVerdict(dir, now) {
 // before this backstop claims it, not to guard against a false positive.
 const ADHOC_SUPERSEDED_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-// #1732: thin wrapper — see isOrphanedMint's comment on the `kinds` scoping
-// pattern every one of these wrappers shares.
-function isAdHocStandaloneSuperseded(dir, state, worktrees, now = Date.now()) {
-  return classifyRunDir({ dir, state, worktrees, kinds: ['adhoc-superseded'] }, now).kind === 'adhoc-superseded';
-}
-
 // #2227: a state-less run dir can still hold git-tracked content — a
 // materialized work/{n}-spec.md whose run-state.json only ever existed in
 // the worktree copy (record #1594's shape; materialize.md commits work/ on
@@ -219,26 +224,12 @@ function hasTrackedContent(root, dir) {
   return (listed.stdout || '').length > 0;
 }
 
-// A minted run dir that never got adopted: no config.yml (flow's Manifesto
-// is what writes it), not an ad-hoc-standalone mint (see above — that check
-// now reads run-state.json for corroboration, #1604), and older than the
-// grace window. No I/O beyond what answering the question requires.
-// #1732: thin wrapper over classifyRunDir (defined below, once every TTL
-// constant it needs is in scope) — `kinds: ['orphaned-mint']` scopes the
-// classifier to exactly this one question, so a standalone call here behaves
-// identically to before the consolidation (unaffected by whether `dir` would
-// ALSO match a lower-precedence kind — that only matters to the main loop's
-// own full-precedence classify call).
-function isOrphanedMint(dir, now = Date.now()) {
-  return classifyRunDir({ dir, kinds: ['orphaned-mint'] }, now).kind === 'orphaned-mint';
-}
-
 // #1982: one constructor for every `{ ok: false, reason }` refusal this file
 // returns, so each carries a `hint` key (string or `null`) beside its
 // reason — co-locating the recovery story with the detector rather than
 // leaving it to a dispatcher-side `if (reason === '…')` string match that
 // drifts the moment a reason code is renamed. `hooks.js`'s `archive-run`
-// verb reads only `ok`/`reason`/`hint`/`movedEntries` off the result; it no
+// verb reads only `ok`/`reason`/`hint`/`movedEntries`/`commit` off the result; it no
 // longer special-cases any specific reason string.
 // Hints stay `null` for the codes whose one-line reason already says what
 // happened — writing prose for all fourteen-odd reason codes here would be
@@ -247,7 +238,7 @@ function isOrphanedMint(dir, now = Date.now()) {
 // `move-failed`/`git-mv-failed`/`git-mv-failed-partial-revert`/
 // `work-twin-resolve-failed`/`work-twin-resolve-failed-partial-revert`
 // refusals (hint set from `lastError` when present) carry one today.
-// Not used by `decideArchive`'s pure `{ action: 'skip', reason }` skip path
+// Not used by `decideArchiveCore`'s pure `{ action: 'skip', reason }` skip path
 // (`gh-absent`/`network-failure`/`console-unresolved`/`console-residue`/`console-never-rendered*`,
 // further down this file) — a different shape, consumed inside the
 // reconcile loop rather than by `hooks.js`'s `archive-run` verb; left alone
@@ -261,6 +252,68 @@ function refusal(reason, { hint = null, ...extra } = {}) {
 // PostToolUse hook holding the lock in the same shared main checkout) is
 // retried rather than surfacing as a hard `commit-failed` refusal.
 const commitGit = withIndexLockRetry(runGit);
+
+// #3721: the archive commit's subject, written once so the commit and
+// `readArchiveCommit`'s own-commit check cannot drift apart.
+function archiveCommitSubject(runId) {
+  return `[reconcile] archive run ${runId}`;
+}
+
+// #3721: what the archive commit landed as, read straight after it so
+// `archive-run` can say where it went. `null` in either field means that probe
+// went unanswered — never a stand-in value. `branch` is 'detached' only when
+// `symbolic-ref` answers exit 1 (HEAD is not a symbolic ref); a timeout or any
+// other exit code is an unanswered probe, not a detached HEAD.
+// The sha and subject come from one spawn; a subject that is not this run's own
+// archive commit means a sibling session committed in the window, so the sha is
+// not ours to report.
+function readArchiveCommit(root, runId, git = runGit) {
+  const head = git(['show', '-s', '--format=%h%n%s', 'HEAD'], root);
+  let sha = null;
+  if (!head.failure && head.stdout) {
+    const [short, subject] = head.stdout.split('\n');
+    if (short && subject === archiveCommitSubject(runId)) sha = short;
+  }
+  const ref = git(['symbolic-ref', '--quiet', 'HEAD'], root);
+  let branch = null;
+  if (!ref.failure && ref.stdout) branch = ref.stdout.replace(/^refs\/heads\//, '');
+  else if (ref.failure && ref.exitCode === 1) branch = 'detached';
+  return { sha, branch };
+}
+
+// #3721: the live HEAD's push state, for `archiveCommitLine`. Any unanswered probe is 'push state unknown'.
+function readPushState(root, git) {
+  const ref = git(['symbolic-ref', '--quiet', 'HEAD'], root);
+  if (ref.failure) return ref.exitCode === 1 ? 'no upstream configured' : 'push state unknown';
+  if (!ref.stdout) return 'push state unknown';
+
+  const upstream = git(['for-each-ref', '--format=%(upstream:short)', ref.stdout], root);
+  if (upstream.failure) return 'push state unknown';
+  if (!upstream.stdout) return 'no upstream configured';
+
+  const ahead = git(['rev-list', '--count', '@{upstream}..HEAD'], root);
+  // A zero count means something pushed between the commit and this probe: not "not pushed".
+  if (!ahead.failure && Number(ahead.stdout) > 0) return `not pushed — ${ahead.stdout} ahead of ${upstream.stdout}`;
+  return 'push state unknown';
+}
+
+// #3721: the one stdout line `archive-run` prints for the commit it made.
+// Informational — it never throws and never fails the verb. The push state is
+// re-derived from the live HEAD ref, not `commit.branch`, so a branch literally
+// named "detached" keeps its real upstream.
+function archiveCommitLine(root, commit, git = runGit) {
+  let state;
+  try {
+    state = readPushState(root, git);
+  } catch {
+    state = 'push state unknown';
+  }
+  const { sha, branch } = commit;
+  if (sha && branch) return `claude-tweaks: committed ${sha} on ${branch} (${state})`;
+  if (sha) return `claude-tweaks: committed ${sha} but could not read its branch (${state})`;
+  if (branch) return `claude-tweaks: committed the archive move on ${branch} but could not read its sha (${state})`;
+  return `claude-tweaks: committed the archive move but could not read its sha and branch (${state})`;
+}
 
 // An orphaned mint that reaches this function has nothing to git-mv and
 // nothing to finalize as terminal (no run-state.json, since record-worktree
@@ -316,62 +369,19 @@ function archiveOrphanedMint(root, dir) {
     /* best-effort — non-empty for an unexpected reason (a late write racing
        this pass, the same class context.js's own late-write guard exists
        for), or already gone; a genuinely non-empty leftover is picked up
-       again by the next pass's isOrphanedMint check. */
+       again by the next pass's orphaned-mint classification. */
   }
   return { ok: true };
 }
 
 // Same 24h window as ORPHAN_MINT_TTL_MS, and for the same reason — longer than
-// any plausible pause before a session resumes its own run, short enough that
-// a genuinely abandoned one is swept the next day. Deliberately not a second,
+// almost every pause before a run is resumed (#4437 measured one resume past 24h,
+// an undercount; docs/reconcile-checks.md has the counts), short enough that a
+// genuinely abandoned one is swept the next day. Deliberately not a second,
 // differently-tuned constant. Since #4421 it is the silence FLOOR below which no
 // run-liveness verdict is even asked, and the window a `dead` verdict must have
 // outlasted; an `unknown` verdict with no live positive waits LEGACY_DEAD_MS (72h).
 const STALE_INTERRUPTED_TTL_MS = ORPHAN_MINT_TTL_MS;
-
-// Thin wrapper kept exported for existing callers (this file's own tests
-// import it directly) — `ownEventRecency` (run-liveness/probes.js) is the one real reader now.
-function lastOwnEventMs(runDir) {
-  return ownEventRecency(runDir).lastOwnMs;
-}
-
-// The ownership half of the criterion, inverted from close-run-state.js's
-// `foreignOwner`: that check asks "does a DIFFERENT session own this?" to
-// refuse a close; here the same comparison answers "is this session's own
-// run?" — if it is, we are that session and the run is by definition alive, so
-// never auto-close it. A run owned by nobody, or by some other session, is a
-// candidate only if it ALSO clears the run-liveness verdict (#4421): silence past
-// the 24 h floor with a `dead` verdict, or past 72 h with an `unknown` verdict and
-// no live probe positive. Both halves must hold; neither alone is evidence.
-//
-// Honest scope of this ownership half: it only ever engages when BOTH
-// `state.sessionId` and `sessionId` are non-null. `sessionId` is reliably
-// present when this runs off the Bash-invoked `reconcile` subcommand (the
-// calling shell's own `CLAUDE_CODE_SESSION_ID` — see the module default
-// below), but is `null` in the path that actually matters most: the
-// SessionStart-triggered background pass (`reconcile-background`, a detached
-// child process spawned with no stdin), where no session id is ever threaded
-// in. There, this half of the criterion never fires — it is not "the"
-// protection, it is an ADDITIONAL guard that only engages when a session id
-// happens to be known. The substantive protection for every caller, known
-// session id or not, is the run-liveness verdict (`ctx.runVerdict`, #4421) plus
-// its silence floors — 24h (`STALE_INTERRUPTED_TTL_MS`) for `dead`, 72h
-// (`LEGACY_DEAD_MS`) for `unknown` with no live positive — and, at the call
-// site, the `shipped-unclosed` evidence gate from `checkRunIntegrity`.
-// #1732: thin wrapper — the ownership+recency comparison itself now lives
-// solely in classifyRunDir's 'abandoned-interrupted' branch (below); this
-// function only asks the scoped question. The `checkRunIntegrity`
-// shipped-unclosed companion gate deliberately stays OUT of both this
-// function and classifyRunDir — it is call-site-only (archiveMerged's main
-// loop applies it after reading this kind back) — see classifyRunDir's own
-// comment for why folding it in would misattribute the `explicit: true`
-// archival path's justification. `ctx` carries classifyRunDir's injectable
-// hooks (`runVerdict`); the wrapper's own keys win over it.
-function isAbandonedInterrupted(runDir, state, sessionId, now = Date.now(), ctx = {}) {
-  return classifyRunDir({
-    ...ctx, dir: runDir, state, sessionId, kinds: ['abandoned-interrupted'],
-  }, now).kind === 'abandoned-interrupted';
-}
 
 // The run's records that its merged PR does NOT close -> ascending record
 // numbers. Pure — no I/O. `undefined` when the verdict cannot be decided
@@ -386,17 +396,17 @@ function unclosedRecords(prState, records, repoSlug) {
 
 // A run's PR state + its console state -> what to do. Pure — no I/O.
 //   { action: 'archive' } | { action: 'skip', reason, unclosed? }
-// `recordCheck` (#3503) is `{ records, repoSlug }`: a merged PR archives only
+// `recordCheck` (#3503) is `{ records, repoSlug, repoRefusal }`: a merged PR archives only
 // when it closes every one of the run's records. Absent, or with no records,
 // it is ignored and the decision is byte-identical to the pre-#3503 table.
 // `unclosed` (ascending record numbers) rides on a `merged-partial` skip only.
 // That skip is the gate's first word, not the last: the callers settle it with
 // `settleMergedPartial` below (issue-state probe, empty-linkage fallback).
-// #1732: the actual decision logic — classifyRunDir's 'merged' branch calls
-// this directly (a `Core` suffix, not a class of its own, since it has no
-// TTL of its own to own — only the mtime/recency kinds do), and so does
-// archiveMergedRun (with real staged evidence, #3249); `decideArchive`
-// below is the thin 2-arg wrapper kept for its direct unit tests.
+// #1732: the merged-PR decision, called by archiveMergedRun (with real staged
+// evidence, #3249) and byNumberRecordSkip. It is never routed through
+// classifyRunDir: it has no TTL of its own to own — only the mtime/recency
+// kinds do. The `Core` suffix is a leftover from the removed wrapper, kept so
+// existing callers need no change.
 //
 // #3945: `coverage` (checkRunTiebreakCoverage's `{ artifactPresent,
 // artifactValid, missing }`) is evaluated only at the two points that would
@@ -409,6 +419,13 @@ function decideArchiveCore(prState, consoleState, hasStagedPending, recordCheck,
   if (prState === 'network-failure') return { action: 'skip', reason: 'network-failure' };
   if (prState === 'invalid-arguments') return { action: 'skip', reason: 'invalid-arguments' };
   if (prState === 'pr-not-found') return { action: 'skip', reason: 'pr-not-found' };
+  // #4794: pr-state's by-number lookup says 'unknown-host' when the primary call failed and the gate
+  // refuses origin. It never reaches the repoRefusal skip below (that needs a MERGED PR object), so it
+  // gets its own skip, with the refusal as the remedy `hint` when the caller's record check carries it.
+  if (prState === 'unknown-host') {
+    const refusal = recordCheck && recordCheck.repoRefusal;
+    return refusal ? { action: 'skip', reason: 'unknown-host', hint: refusal } : { action: 'skip', reason: 'unknown-host' };
+  }
   if (!prState) return { action: 'skip', reason: 'no-pr' };
   if (prState.state !== 'MERGED') {
     return { action: 'skip', reason: prState.state === 'OPEN' ? 'pr-open' : 'pr-closed-unmerged' };
@@ -442,6 +459,8 @@ function decideArchiveCore(prState, consoleState, hasStagedPending, recordCheck,
     return { action: 'skip', reason: 'console-never-rendered' };
   }
   if (!recordCheck || !recordCheck.records || recordCheck.records.length === 0) return archiveUnlessTiebreakGap(coverage);
+  // #4794: a refused origin is not an unresolved one — the refusal rides as the per-run remedy `hint`.
+  if (recordCheck.repoRefusal) return { action: 'skip', reason: 'unknown-host', hint: recordCheck.repoRefusal };
   if (!recordCheck.repoSlug) return { action: 'skip', reason: 'no-repo-slug' };
   const unclosed = unclosedRecords(prState, recordCheck.records, recordCheck.repoSlug);
   if (unclosed === undefined) return { action: 'skip', reason: 'closing-issues-unknown' };
@@ -456,7 +475,7 @@ const TIEBREAK_COVERAGE_HINT = "re-run the review step's findings writer for thi
 // #4171: an auto-merge path renders no console, so a can't-tell finding the run held is
 // lost at archive time unless it was filed. `coverage.unfiledCantTell` names the unfiled ones.
 // `{run-dir}` is a placeholder; archive-run substitutes the real run dir before printing.
-const CANT_TELL_UNFILED_HINT = "file the run's can't-tell findings — an auto-merge path (the wrap-up short-circuit or the dispatch bundle Auto-merge gate) rendered no console to file them — through wrap-up/review-console.md's Can't-tell filings (console-filings.js --run \"{run-dir}\"; a spec-N/-prefixed id is filed and logged with --run \"{run-dir}/spec-N\", its own decisions.md), logging each as '{item} filed as #{n} (work-fingerprint {fp})', or write a resolved console.json";
+const CANT_TELL_UNFILED_HINT = "file the run's can't-tell findings — an auto-merge path (the wrap-up short-circuit or the dispatch bundle Auto-merge gate) rendered no console to file them — through wrap-up/review-console.md's Can't-tell filings (console-filings.js --run \"{run-dir}\"; a spec-N/-prefixed id is filed and logged with --run \"{run-dir}/spec-N\", its own decisions.md), logging each as '{item} filed as #{n} (work-fingerprint {fp})', or, for a drop-recommended one, '{item} digested (work-fingerprint {fp})' once its digest entry is posted, or write a resolved console.json";
 
 // `{ action: 'archive' }` unless the run's findings artifact is present and
 // either unreadable/malformed or lists a finding with no verdict line, or (#4171)
@@ -508,12 +527,6 @@ function unfiledCantTellFindings(runDir) {
 // The run's coverage for a caller that holds a run dir; undefined without one.
 function runTiebreakCoverage(dir) {
   return dir ? { ...checkRunTiebreakCoverage(dir, listSpecDirs(dir)), unfiledCantTell: unfiledCantTellFindings(dir) } : undefined;
-}
-
-function decideArchive(prState, consoleState) {
-  const result = classifyRunDir({ prState, consoleState, kinds: ['merged'] });
-  if (result.kind === 'merged') return { action: 'archive' };
-  return { action: 'skip', reason: result.evidence.skipReason };
 }
 
 // 'unresolved' | 'resolved' | 'none' (no console.json rendered — #1130:
@@ -568,27 +581,59 @@ function consoleAckRemedy(runDir) {
   return `review them, then run console-residue.js --ack --run "${runDir}"`;
 }
 
-// #4170: the remedy for a planned can't-tell filing that has no record — the paste-ready
-// `console-filings.js --only` re-run, one per unacknowledged console holding a `filing-pending`
-// item. '' when no such item is open.
-function filingRerunRemedy(runDir) {
-  const { consoles } = readRunResidue(runDir);
-  const commands = consoles.filter((c) => !c.acknowledged).flatMap((c) => {
-    const ids = c.items.filter((i) => i.resolution === FILING_PENDING_RESOLUTION && typeof i.id === 'string').map((i) => i.id);
-    return ids.length > 0 ? [filingRerunCommand({ consoleDir: path.dirname(c.path), ids })] : [];
-  });
+// The dirs of the unacknowledged consoles holding an item of `resolution`. The re-run command depends on no item id
+// (residue.js's consoleRerunCommand), so an item with no usable id still gets its remedy.
+function pendingConsoleDirs(consoles, resolution) {
+  return consoles.filter((c) => !c.acknowledged && c.items.some((i) => i.resolution === resolution))
+    .map((c) => path.dirname(c.path));
+}
+
+function filingRemedyOf(consoles) {
+  const commands = pendingConsoleDirs(consoles, FILING_PENDING_RESOLUTION).map((consoleDir) => consoleRerunCommand({ consoleDir }));
   if (commands.length === 0) return '';
   return `re-run the planned filing(s): ${commands.join('; ')}, then ${FILING_LOG_REMEDY}`;
 }
 
+function digestRemedyOf(consoles, alsoRerun) {
+  const dirs = pendingConsoleDirs(consoles, DIGEST_PENDING_RESOLUTION);
+  if (dirs.length === 0) return '';
+  const commands = dirs.filter((d) => !alsoRerun.includes(d)).map((consoleDir) => consoleRerunCommand({ consoleDir }));
+  const logRemedy = digestLogRemedy({ consoleDir: dirs.length > 1 ? "{that console's dir}" : dirs[0] });
+  if (commands.length === 0) return `the same re-run also settles the planned digest entries, then ${logRemedy}`;
+  return `re-run the planned digest entries: ${commands.join('; ')}${commands.length < dirs.length ? ' (the re-run above also settles the others)' : ''}, then ${logRemedy}`;
+}
+
+// #4170: the remedy for a planned can't-tell filing that has no record — the paste-ready
+// `console-filings.js` re-run (default selection, no `--only`), one per unacknowledged console holding a
+// `filing-pending` item. '' when no such item is open.
+function filingRerunRemedy(runDir) {
+  return filingRemedyOf(readRunResidue(runDir).consoles);
+}
+
+// #4679: the digest twin — the same paste-ready `console-filings.js` re-run (it plans digest entries too), one per
+// unacknowledged console holding a `digest-pending` item, then the digest log remedy. '' when no such item is open.
+// `alsoRerun` is the dirs whose re-run the caller already names (a console holding both kinds): they are
+// pointed at, not repeated.
+function digestRerunRemedy(runDir, alsoRerun = []) {
+  return digestRemedyOf(readRunResidue(runDir).consoles, alsoRerun);
+}
+
+// The re-run remedies for a run's open console items, each console's one command named once: the digest remedy
+// leaves out the re-run of a console the filing remedy already names. One read of the run's consoles.
+function rerunRemedies(runDir) {
+  const { consoles } = readRunResidue(runDir);
+  return [filingRemedyOf(consoles), digestRemedyOf(consoles, pendingConsoleDirs(consoles, FILING_PENDING_RESOLUTION))].filter(Boolean);
+}
+
 // The recovery line for a console-residue skip: name the open items, the
-// unreadable console.json files to repair, or both when both block.
+// unreadable console.json files to repair, or both when both block. The re-run remedies are additions to each
+// other (a console can hold both kinds); only the ack is the alternative.
 function consoleResidueHint(runDir) {
   const { names, unreadable } = consoleResidue(runDir);
   const parts = [];
   if (names.length > 0) {
-    const rerun = filingRerunRemedy(runDir);
-    parts.push(`unresolved: ${names.join(', ')} — ${rerun ? `${rerun}; or ` : ''}${consoleAckRemedy(runDir)}`);
+    const reruns = rerunRemedies(runDir);
+    parts.push(`unresolved: ${names.join(', ')} — ${reruns.length ? `${reruns.join('; ')}; or ` : ''}${consoleAckRemedy(runDir)}`);
   }
   if (unreadable.length > 0) parts.push(`repair or remove ${unreadable.join(', ')}`);
   return parts.join('; ');
@@ -809,10 +854,10 @@ function listSpecDirs(runDir) {
 // supervising human). Returns true only when every pair ended back at its
 // original path in both index and disk; false means the tree is left partially
 // moved, which the caller reports as a distinct reason.
-function revertWorkMoves(root, workMoves) {
+function revertWorkMoves(root, workMoves, env) {
   let fullyReverted = true;
   for (const [src, dest] of workMoves) {
-    const reset = runGit(['reset', '--', src, dest], root);
+    const reset = runGit(['reset', '--', src, dest], root, { env });
     if (reset.failure) {
       // The index still matches what `git mv` staged (src removed, dest
       // added) — leave the file where `git mv` physically put it too, so
@@ -863,10 +908,10 @@ function revertPlainMoves(movedPairs) {
 // whole directory (the `topStaged` case below) needs "fully tracked," not
 // "partially tracked" — so a second check confirms no untracked file exists
 // anywhere under targetPath.
-function isTracked(root, targetPath) {
-  const check = runGit(['ls-files', '--error-unmatch', targetPath], root); // git-path-read: not a path list (exit code only)
+function isTracked(root, targetPath, env) {
+  const check = runGit(['ls-files', '--error-unmatch', targetPath], root, { env }); // git-path-read: not a path list (exit code only)
   if (check.failure) return false;
-  const untracked = runGit(['ls-files', '--others', '--exclude-standard', targetPath], root); // git-path-read: not a path list (emptiness only)
+  const untracked = runGit(['ls-files', '--others', '--exclude-standard', targetPath], root, { env }); // git-path-read: not a path list (emptiness only)
   return !untracked.failure && !untracked.stdout;
 }
 
@@ -885,7 +930,7 @@ function isTracked(root, targetPath) {
 // removes it (best-effort) and returns true so the caller treats it as
 // absent; otherwise leaves it alone and returns false — including for a
 // missing or unreadable directory (never throws).
-function removeIfEmptyUntrackedDir(root, dir) {
+function removeIfEmptyUntrackedDir(root, dir, env) {
   let entries;
   try {
     entries = fs.readdirSync(dir);
@@ -893,7 +938,7 @@ function removeIfEmptyUntrackedDir(root, dir) {
     return false;
   }
   if (entries.length !== 0) return false;
-  const tracked = runGit(['ls-files', dir], root); // git-path-read: not a path list (emptiness only)
+  const tracked = runGit(['ls-files', dir], root, { env }); // git-path-read: not a path list (emptiness only)
   if (tracked.failure || tracked.stdout) return false;
   try { fs.rmdirSync(dir); } catch { /* best-effort — already gone, or non-empty for an unexpected reason */ }
   return true;
@@ -934,8 +979,8 @@ function listFilesRecursive(dir) {
 // "genuinely diverged, refuse rather than guess" (the Technical Approach's
 // own choice of tool). Null on any failure (unreadable file, no git) — a
 // caller treats null as "not provably identical," never as a match.
-function fileHashObject(root, filePath) {
-  const r = runGit(['hash-object', filePath], root);
+function fileHashObject(root, filePath, env) {
+  const r = runGit(['hash-object', filePath], root, { env });
   if (r.failure) return null;
   const hash = (r.stdout || '').trim();
   return hash || null;
@@ -947,14 +992,14 @@ function fileHashObject(root, filePath) {
 // does a hash-object failure on either side (fail toward "not identical"
 // rather than silently treating an unreadable file as a safe dedupe).
 // -> { identical: boolean, differing: string[] } (relative paths).
-function compareWorkTwin(root, srcDir, destDir) {
+function compareWorkTwin(root, srcDir, destDir, env) {
   const differing = [];
   for (const rel of listFilesRecursive(srcDir)) {
     const srcFile = path.join(srcDir, rel);
     const destFile = path.join(destDir, rel);
     if (!fs.existsSync(destFile)) { differing.push(rel); continue; }
-    const srcHash = fileHashObject(root, srcFile);
-    const destHash = fileHashObject(root, destFile);
+    const srcHash = fileHashObject(root, srcFile, env);
+    const destHash = fileHashObject(root, destFile, env);
     if (!srcHash || !destHash || srcHash !== destHash) differing.push(rel);
   }
   return { identical: differing.length === 0, differing };
@@ -971,17 +1016,17 @@ function compareWorkTwin(root, srcDir, destDir) {
 // batch can be undone via `revertStagedOps` below.
 // -> { ok: true, resolved: [{kind, srcFile, destFile}] } |
 //    { ok: false, reason, lastError, resolved (partial) }
-function resolveIdenticalWorkTwin(root, srcDir, destDir) {
+function resolveIdenticalWorkTwin(root, srcDir, destDir, env) {
   const resolved = [];
   for (const rel of listFilesRecursive(srcDir)) {
     const srcFile = path.join(srcDir, rel);
     const destFile = path.join(destDir, rel);
-    if (isTracked(root, destFile)) {
-      const rm = runGit(['rm', '-q', '--', srcFile], root);
+    if (isTracked(root, destFile, env)) {
+      const rm = runGit(['rm', '-q', '--', srcFile], root, { env });
       if (rm.failure) return refusal('work-twin-resolve-failed', { lastError: rm.stderr, hint: rm.stderr || null, resolved });
       resolved.push({ kind: 'twin-rm', srcFile, destFile });
     } else {
-      const mv = runGit(['mv', '-f', srcFile, destFile], root);
+      const mv = runGit(['mv', '-f', srcFile, destFile], root, { env });
       if (mv.failure) return refusal('work-twin-resolve-failed', { lastError: mv.stderr, hint: mv.stderr || null, resolved });
       resolved.push({ kind: 'twin-mv', srcFile, destFile });
     }
@@ -997,18 +1042,18 @@ function resolveIdenticalWorkTwin(root, srcDir, destDir) {
 // as one LIFO unit, not just the sub-batch that happened to fail. Best-effort
 // and never throws, matching every other revert helper in this file; returns
 // whether every operation in `ops` ended back at its original state.
-function revertStagedOps(root, ops) {
+function revertStagedOps(root, ops, env) {
   let fullyReverted = true;
   for (const op of [...ops].reverse()) {
     if (op.kind === 'mv') {
-      if (!revertWorkMoves(root, [[op.src, op.dest]])) fullyReverted = false;
+      if (!revertWorkMoves(root, [[op.src, op.dest]], env)) fullyReverted = false;
     } else if (op.kind === 'twin-rm') {
       // `git rm` only staged the removal (nothing committed yet) — checking
       // out HEAD's copy restores both the index entry and the working file.
-      const co = runGit(['checkout', 'HEAD', '--', op.srcFile], root);
+      const co = runGit(['checkout', 'HEAD', '--', op.srcFile], root, { env });
       if (co.failure) fullyReverted = false;
     } else if (op.kind === 'twin-mv') {
-      const reset = runGit(['reset', '--', op.srcFile, op.destFile], root);
+      const reset = runGit(['reset', '--', op.srcFile, op.destFile], root, { env });
       if (reset.failure) { fullyReverted = false; continue; }
       try {
         // Pre-op, srcFile and destFile were two independent physical files
@@ -1033,36 +1078,17 @@ function revertStagedOps(root, ops) {
 // #1892 Deliverable 2: the split state itself — a run dir whose gitignored
 // half already archived (a prior pass, or a merged worktree PR that
 // completed that half) while its git-tracked `work/` headers are still live.
-// The ordinary decideArchive path never reaches this case: no run-state.json
+// The ordinary merged-PR decision never reaches this case: no run-state.json
 // survives at the live path once the gitignored half moved, so there is
 // nothing to resolve a branch/PR from. Detected whenever the archive twin
 // exists AND every entry still live under `dir` is a git-tracked `work/` (or
-// `spec-{n}/work/`) path — nothing gitignored remains. Sits beside
-// `isOrphanedMint` — same "answer a narrow structural question, no I/O
-// beyond what answering it requires" shape.
+// `spec-{n}/work/`) path — nothing gitignored remains. Sits beside the
+// orphaned-mint classification — same "answer a narrow structural question,
+// no I/O beyond what answering it requires" shape.
 function isArchivedPendingTrackedMove(root, dir) {
   const runId = path.basename(dir);
   const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
-  if (!fs.existsSync(archiveDir)) return false;
-  let entries;
-  try {
-    entries = fs.readdirSync(dir);
-  } catch {
-    return false;
-  }
-  if (entries.length === 0) return false;
-  const specDirs = listSpecDirs(dir);
-  return entries.every((name) => {
-    if (name === 'work') return true;
-    if (!specDirs.includes(name)) return false;
-    let subEntries;
-    try {
-      subEntries = fs.readdirSync(path.join(dir, name));
-    } catch {
-      return false;
-    }
-    return subEntries.length > 0 && subEntries.every((n) => n === 'work');
-  });
+  return fs.existsSync(archiveDir) && isTrackedShellDir(dir);
 }
 
 // The paste-ready command a human (or a worktree/PR-driven follow-up) runs
@@ -1073,8 +1099,29 @@ function isArchivedPendingTrackedMove(root, dir) {
 // supports running from inside a worktree whose tracked content has since
 // merged to the main checkout) — reused here rather than inventing a second
 // completion path.
-function archivedPendingTrackedMoveCommand(dir) {
+function archiveRunCommand(dir) {
   return `node "\${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run "${dir}"`;
+}
+
+// #3975: the completion for a clean-twin shell (a run whose archive twin already
+// holds a clean run-state, leaving only tracked work/ headers live). One command
+// for the whole batch: `archive-tracked-shells.js` enumerates every such shell
+// itself and lands them on one housekeeping branch/PR.
+function archivedPendingTrackedMoveCommand(root) {
+  return `node "\${CLAUDE_PLUGIN_ROOT}/bin/archive-tracked-shells.js" --root "${root}"`;
+}
+
+// #3975: true when the live dir's `work/` (and each `spec-*/work/`) differs from
+// its archive twin's — such a shell can never be archived in place (archiveRunDir
+// would refuse `work-twin-conflict`), so it must not take the pass's in-place slot.
+function shellWorkTwinDiffers(root, dir) {
+  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', path.basename(dir));
+  const pairs = [[path.join(dir, 'work'), path.join(archiveDir, 'work')]];
+  for (const specName of listSpecDirs(dir)) {
+    pairs.push([path.join(dir, specName, 'work'), path.join(archiveDir, specName, 'work')]);
+  }
+  const isDir = (p) => lstatType(p).type === 'directory';
+  return pairs.some(([src, dest]) => isDir(src) && isDir(dest) && !compareWorkTwin(root, src, dest).identical);
 }
 
 // #1811 Deliverable 3: a run dir shaped `{timestamp}-record-{n}[-{m}...]`
@@ -1256,7 +1303,8 @@ function findRefusingArchiveCollision(runDir, archiveDir, runStateDestIsRealPrio
   return null;
 }
 
-function archiveRunDir(root, runDir) {
+// opts.env: the environment every git child inherits (default process.env, as before).
+function archiveRunDir(root, runDir, { env } = {}) {
   const runId = path.basename(runDir);
   const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
   // #2816 follow-up: captured before mkdirSync below so `refuseAfterMarker`
@@ -1319,6 +1367,10 @@ function archiveRunDir(root, runDir) {
   // function's own enumeration swap (above) exists to eliminate.
   const movedEntries = [];
 
+  // #3721: set once the archive commit lands (see `readArchiveCommit`); a
+  // refusal after that point still carries it, because the commit is real.
+  let archiveCommit = null;
+
   // #2816: every refusal below this point runs after the `archiving`
   // marker (writeRunState above) already created `archiveDir` on disk — a
   // structural/content refusal (audit-untracked, tracked-entry, a
@@ -1348,8 +1400,13 @@ function archiveRunDir(root, runDir) {
     if (!archiveDirPreexisted && movedEntries.length === 0 && !GIT_TIMING_REFUSAL_REASONS.has(reason)) {
       try { fs.rmSync(archiveDir, { recursive: true, force: true }); } catch { /* best-effort */ }
     }
-    return refusal(reason, extra);
+    return archiveCommit ? { ...refusal(reason, extra), commit: archiveCommit } : refusal(reason, extra);
   }
+
+  // #5555: the run's state before the move — the status decides whether this
+  // close owes a timing.json (a run close-run already closed has one), and the
+  // worktree it names is kept as worktreeAtClose for the token pass.
+  const preMoveState = readRunState(runDir) || {};
 
   const specDirs = listSpecDirs(runDir);
 
@@ -1357,10 +1414,11 @@ function archiveRunDir(root, runDir) {
   // layout) and one per spec-{N}/ subdirectory (multi-spec parent layout,
   // #593) — moves via `git mv` in one batch, then one commit covers all of
   // them. `work/` is deliberately git-tracked (materialize.md, "committed
-  // as audit trail, never gitignored") while the archive path itself is
-  // gitignored, so a plain mv + git add would register as a deletion; a
-  // multi-spec parent whose spec-{N}/work/ subtrees were previously left
-  // out of this move is exactly the bug this fixes — they used to survive
+  // during the run and archived on the branch at wrap-up, never gitignored")
+  // while the archive path itself is gitignored, so a plain mv + git add
+  // would register as a deletion; a multi-spec parent whose spec-{N}/work/
+  // subtrees were previously left out of this move is exactly the bug this
+  // fixes — they used to survive
   // untouched at the pre-archive path and resurrect on the next checkout,
   // same mechanism as the top-level case the rest of this function already
   // handled.
@@ -1390,10 +1448,10 @@ function archiveRunDir(root, runDir) {
   // into `workMoves`/`twinPlan`. A non-empty untracked `work/` (#953) falls
   // through unchanged to the twin/workMoves classification below.
   const topWork = path.join(runDir, 'work');
-  if (fs.existsSync(topWork) && !removeIfEmptyUntrackedDir(root, topWork)) {
+  if (fs.existsSync(topWork) && !removeIfEmptyUntrackedDir(root, topWork, env)) {
     const topWorkDest = path.join(archiveDir, 'work');
     if (path.resolve(topWork) !== path.resolve(topWorkDest) && fs.existsSync(topWorkDest)) {
-      const twin = compareWorkTwin(root, topWork, topWorkDest);
+      const twin = compareWorkTwin(root, topWork, topWorkDest, env);
       if (!twin.identical) {
         return refuseAfterMarker('work-twin-conflict', {
           conflict: { src: topWork, dest: topWorkDest, differing: twin.differing },
@@ -1442,7 +1500,7 @@ function archiveRunDir(root, runDir) {
     for (const auditFile of ['decisions.md', 'report.md', 'staged']) {
       const src = path.join(runDir, auditFile);
       if (!fs.existsSync(src)) continue;
-      if (isTracked(root, src)) workMoves.push([src, path.join(archiveDir, auditFile)]);
+      if (isTracked(root, src, env)) workMoves.push([src, path.join(archiveDir, auditFile)]);
       else untrackedAuditFiles.push(auditFile);
     }
   }
@@ -1470,7 +1528,7 @@ function archiveRunDir(root, runDir) {
     // #2816: same empty-untracked-directory treatment as topWork above,
     // for the multi-spec-parent shape of the identical materialize
     // hard-gate-stop leftover.
-    if (removeIfEmptyUntrackedDir(root, specWork)) continue;
+    if (removeIfEmptyUntrackedDir(root, specWork, env)) continue;
     const specArchiveDir = path.join(archiveDir, specName);
     try {
       fs.mkdirSync(specArchiveDir, { recursive: true });
@@ -1480,7 +1538,7 @@ function archiveRunDir(root, runDir) {
     const specWorkDest = path.join(specArchiveDir, 'work');
     // #1323: same same-path guard as topWork above.
     if (path.resolve(specWork) !== path.resolve(specWorkDest) && fs.existsSync(specWorkDest)) {
-      const twin = compareWorkTwin(root, specWork, specWorkDest);
+      const twin = compareWorkTwin(root, specWork, specWorkDest, env);
       if (!twin.identical) {
         return refuseAfterMarker('work-twin-conflict', {
           conflict: { src: specWork, dest: specWorkDest, differing: twin.differing },
@@ -1499,10 +1557,10 @@ function archiveRunDir(root, runDir) {
     // just the sub-batch that happened to fail.
     const stagedOps = [];
     for (const [src, dest] of twinPlan) {
-      const result = resolveIdenticalWorkTwin(root, src, dest);
+      const result = resolveIdenticalWorkTwin(root, src, dest, env);
       stagedOps.push(...result.resolved);
       if (!result.ok) {
-        const fullyReverted = revertStagedOps(root, stagedOps);
+        const fullyReverted = revertStagedOps(root, stagedOps, env);
         return refuseAfterMarker(fullyReverted ? result.reason : 'work-twin-resolve-failed-partial-revert', {
           lastError: result.lastError,
           hint: result.lastError || null,
@@ -1524,9 +1582,9 @@ function archiveRunDir(root, runDir) {
     // reasoning as the commit-failure branch below, applied one loop
     // iteration earlier.
     for (const [src, dest] of workMoves) {
-      const mv = runGit(['mv', src, dest], root);
+      const mv = runGit(['mv', src, dest], root, { env });
       if (mv.failure) {
-        const fullyReverted = revertStagedOps(root, stagedOps);
+        const fullyReverted = revertStagedOps(root, stagedOps, env);
         const reason = fullyReverted ? 'git-mv-failed' : 'git-mv-failed-partial-revert';
         return refuseAfterMarker(reason, { lastError: mv.stderr, hint: mv.stderr || null });
       }
@@ -1543,8 +1601,17 @@ function archiveRunDir(root, runDir) {
     // pathspec, so `git commit` picks only those changes out of the index
     // rather than sweeping whatever else a human or sibling session happens
     // to have staged in this shared main checkout at the same moment.
-    const commitPaths = workMoves.flatMap(([src, dest]) => [src, dest]);
-    const commit = commitGit(['commit', '-m', `[reconcile] archive run ${runId}`, '--', ...commitPaths], root);
+    // #3975: a twin-only archival (workMoves empty) must still name the twin
+    // paths it staged — an empty pathspec after `--` commits the whole index.
+    const commitPaths = [
+      ...workMoves.flatMap(([src, dest]) => [src, dest]),
+      ...stagedOps.flatMap((op) => {
+        if (op.kind === 'twin-rm') return [op.srcFile];
+        if (op.kind === 'twin-mv') return [op.srcFile, op.destFile];
+        return [];
+      }),
+    ];
+    const commit = commitGit(['commit', '-m', archiveCommitSubject(runId), '--', ...commitPaths], root, { env });
     if (commit.failure) {
       // A partial revert (some ops' `git reset`/`git checkout` or disk move
       // failed) is a distinct outcome from a clean one: the retry guard
@@ -1553,9 +1620,10 @@ function archiveRunDir(root, runDir) {
       // `commit-failed-partial-revert` makes that distinction visible to
       // callers/logs rather than collapsing both into the same reason
       // string.
-      const fullyReverted = revertStagedOps(root, stagedOps);
+      const fullyReverted = revertStagedOps(root, stagedOps, env);
       return refuseAfterMarker(fullyReverted ? 'commit-failed' : 'commit-failed-partial-revert');
     }
+    archiveCommit = readArchiveCommit(root, runId, (args, cwd) => runGit(args, cwd, { env }));
   }
 
   // Tracked-entry guard: a git-tracked file in the run dir outside work/
@@ -1568,7 +1636,7 @@ function archiveRunDir(root, runDir) {
   // tracked file this function doesn't know how to move, on either a
   // tidy-standalone run or any other — still refuses exactly as before.
   if (fs.existsSync(runDir)) {
-    const lsFiles = runGit(['ls-files', '-z', '--', runDir], root, { raw: true });
+    const lsFiles = runGit(['ls-files', '-z', '--', runDir], root, { raw: true, env });
     if (lsFiles.failure) return refuseAfterMarker('ls-files-failed');
     const workDir = path.join(runDir, 'work');
     const trackedOutsideWork = splitNul(lsFiles.stdout)
@@ -1691,7 +1759,10 @@ function archiveRunDir(root, runDir) {
   // run-state.json moved above, so finalize the terminal state at its new
   // (archived) location, not the original runDir — writeRunState reads and
   // preserves whatever state already moved there.
-  const result = writeRunState(archiveDir, { status: 'clean', worktree: null });
+  const wtAtClose = priorWorktree(preMoveState);
+  const result = writeRunState(archiveDir, wtAtClose
+    ? { status: 'clean', worktree: null, worktreeAtClose: wtAtClose }
+    : { status: 'clean', worktree: null });
   if (!result) return refuseAfterMarker('close-failed');
 
   // Late-write guard (#990 — reproduced live during #893's own wrap-up even
@@ -1735,6 +1806,22 @@ function archiveRunDir(root, runDir) {
     }
   }
 
+  // #5555: phase rows inline (no transcript read), token totals in a detached
+  // pass. A run already clean was closed by close-run, which wrote its own.
+  // Runs after the straggler sweep so a late events.jsonl line is in the rows
+  // and a straggler timing.json never collides with this write.
+  if (preMoveState.status !== 'clean') {
+    try {
+      const timing = require('../timing/at-close');
+      timing.writePhaseTimingSync(archiveDir);
+      timing.spawnTokenPass(archiveDir, { env });
+    } catch (err) {
+      // The shared fallback writer needs only log-decision/append.js, so this catch
+      // does not depend on at-close having loaded.
+      try { require('../log-decision/timing-skip').logTimingFailure(archiveDir, 'timing at close failed', err); } catch { /* a failed trace line never fails the archive */ }
+    }
+  }
+
   // runDir is empty now (everything moved out) — remove it so a future
   // iterRunDirsWithState pass doesn't re-yield a directory with no
   // run-state.json to read (readRunState returns null there, which is NOT
@@ -1745,7 +1832,7 @@ function archiveRunDir(root, runDir) {
     /* best-effort — non-empty for an unexpected reason, or already gone */
   }
 
-  return { ok: true, movedEntries };
+  return { ok: true, movedEntries, ...(archiveCommit ? { commit: archiveCommit } : {}) };
 }
 
 // #1613: how long a run dir can sit in a "structurally stuck" skip reason
@@ -1764,8 +1851,8 @@ function archiveRunDir(root, runDir) {
 // has sat completely untouched for a full week is a much safer signal of
 // abandonment than a build-duration estimate would be. A week also gives
 // #1290's own archive-twin shape (still unbuilt as of this record — see
-// this file's `isOrphanedMint`, which has no twin check yet) ample margin
-// once that lands, without needing its own separate constant.
+// this file's orphaned-mint classification, which has no twin check yet)
+// ample margin once that lands, without needing its own separate constant.
 const STRUCTURALLY_STUCK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Skip reasons that might indicate a run dir stuck without external help,
@@ -1796,6 +1883,9 @@ const STRUCTURALLY_STUCK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 // With no repo slug the escalation issue itself cannot be filed (escalate-residue's
 // findOrCreateIssue returns 'escalation-failed'), so for this reason the tracking
 // only surfaces the run in the residue summary's stuck count.
+// 'unknown-host' (#4794) is tracked on the same grounds: it never self-resolves (the user must export
+// `GH_HOST` or fix the origin). Its escalation goes through the `{ refusal }` residue repo, which
+// files nothing and calls no gh, so the tracking only surfaces the run in the residue summary too.
 // 'pr-not-found' (#3543) is also tracked: a stamped pr.number that GitHub
 // confirms names no PR will never resolve without a human (fix or clear the
 // stamp), and the by-number lookup deliberately never falls back to the
@@ -1812,32 +1902,27 @@ const STRUCTURALLY_STUCK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const STRUCTURALLY_STUCK_REASONS = new Set([
   'no-worktree', 'no-branch', 'no-pr', 'console-never-rendered-pr-closed', 'console-never-rendered-staged-pending',
   'pr-not-found', 'merged-partial', 'no-repo-slug', 'tiebreak-coverage-missing', 'tiebreak-artifact-invalid',
-  'cant-tell-unfiled',
+  'cant-tell-unfiled', 'unknown-host',
 ]);
 
-// #1732: thin wrapper — see isOrphanedMint's comment on the `kinds` scoping
-// pattern. Pure except for the one mtime stat classifyRunDir performs.
+// #1732: scopes classifyRunDir to its one kind with `kinds: ['structurally-stuck']`.
+// Pure except for the one mtime stat classifyRunDir performs.
 function isStructurallyStuck(dir, reason, now = Date.now()) {
   return classifyRunDir({ dir, skipReason: reason, kinds: ['structurally-stuck'] }, now).kind === 'structurally-stuck';
 }
 
-// #1732: the single classifier every lifecycle-detection predicate above
-// delegates to. Consolidates the five bolted-on mechanisms this file used to
-// carry as independent early-return branches (isOrphanedMint,
-// isAbandonedInterrupted, isAdHocStandaloneSuperseded, decideArchive's
-// merged-PR path, isStructurallyStuck) into one first-match list, evaluated
-// in the exact precedence order the pre-consolidation main loop checked them
-// in: orphaned-mint -> abandoned-interrupted -> adhoc-superseded ->
-// adhoc-session-ended -> merged -> structurally-stuck -> none.
+// #1732: the single classifier for every mtime/recency lifecycle kind: the
+// four TTL kinds plus structurally-stuck, one first-match list evaluated in
+// CLASSIFY_ORDER: orphaned-mint -> abandoned-interrupted -> adhoc-superseded
+// -> adhoc-session-ended -> structurally-stuck -> none.
 //
-// `ctx.kinds` scopes evaluation to a subset (in the order given) — every
-// wrapper predicate above passes its own single kind, so a standalone call
-// (e.g. a unit test constructing a bare fixture dir with no config.yml)
-// answers exactly the question it always asked, unaffected by whether the
-// same dir would ALSO match some OTHER kind earlier in the full precedence
-// list. Only archiveMerged's own main loop passes the full, ordered kind set
-// (the module default below) to get precedence-respecting classification
-// across every kind at once.
+// `ctx.kinds` scopes evaluation to a subset (in the order given), and every
+// caller passes one: the main loop its four kinds, its companion re-classify
+// two, isStructurallyStuck one. A scoped call answers exactly the question it
+// asks, unaffected by whether the same dir would ALSO match some OTHER kind
+// earlier in CLASSIFY_ORDER. The merged-PR decision is decideArchiveCore's,
+// called by archiveMergedRun and byNumberRecordSkip, and is never routed
+// through the classifier.
 //
 // I/O-free apart from the one mtime stat (via isStaleDir) and the one
 // events.jsonl read (via ownEventRecency) that the mtime-based kinds and
@@ -1850,32 +1935,60 @@ function isStructurallyStuck(dir, reason, now = Date.now()) {
 // stamp, and the own-session guard when `state` is not passed), does a
 // realpath, and calls the injectable `liveness` function (which spawns `ps`
 // and reads events), evaluated LAST after every cheap gate. Every other
-// input (state, worktrees, sessionId, prState, consoleState, skipReason) is
-// pre-computed by the caller, per this file's own Gotchas: the merged-PR
-// path's prState/consoleState inputs, and — deliberately excluded from this
-// function entirely — the abandoned-interrupted kind's `checkRunIntegrity`
-// shipped-unclosed companion gate, which stays a call-site-only decision so
-// the `explicit: true` archival path's justification is never silently
-// folded into a kind this function alone decided.
+// input (state, worktrees, sessionId, skipReason) is pre-computed by the
+// caller, per this file's own Gotchas. The abandoned-interrupted kind's
+// `checkRunIntegrity` shipped-unclosed companion gate is deliberately excluded
+// from this function entirely: it stays a call-site-only decision so the
+// `explicit: true` archival path's justification is never silently folded into
+// a kind this function alone decided.
 //
 // -> { kind: 'orphaned-mint'|'abandoned-interrupted'|'adhoc-superseded'|
-//            'adhoc-session-ended'|'merged'|'structurally-stuck'|'none',
+//            'adhoc-session-ended'|'structurally-stuck'|'none',
 //      ttlMs: number|null, evidence: object }
-const CLASSIFY_ORDER = ['orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'adhoc-session-ended', 'merged', 'structurally-stuck'];
+const CLASSIFY_ORDER = ['orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'adhoc-session-ended', 'structurally-stuck'];
 
 function classifyRunDir(ctx, now = Date.now()) {
   const {
-    dir, state, worktrees, sessionId, prState, consoleState, skipReason, kinds, liveness = adHocSessionLiveness, runVerdict = defaultRunVerdict,
+    dir, state, worktrees, sessionId, skipReason, kinds, liveness = adHocSessionLiveness, runVerdict = defaultRunVerdict,
   } = ctx;
   const order = kinds || CLASSIFY_ORDER;
 
   for (const kind of order) {
     if (kind === 'orphaned-mint') {
+      // A minted run dir that never got adopted: no config.yml (flow's
+      // Manifesto is what writes it), not an ad-hoc-standalone mint (that
+      // check reads run-state.json for corroboration, #1604), and older than
+      // the grace window. No I/O beyond what answering the question requires.
       if (dir && !fs.existsSync(path.join(dir, 'config.yml')) && !isAdHocStandaloneMint(dir)
         && isStaleDir(dir, ORPHAN_MINT_TTL_MS, now)) {
         return { kind: 'orphaned-mint', ttlMs: ORPHAN_MINT_TTL_MS, evidence: {} };
       }
     } else if (kind === 'abandoned-interrupted') {
+      // The ownership half of the criterion, inverted from close-run-state.js's
+      // `foreignOwner`: that check asks "does a DIFFERENT session own this?" to
+      // refuse a close; here the same comparison answers "is this session's own
+      // run?" — if it is, we are that session and the run is by definition alive, so
+      // never auto-close it. A run owned by nobody, or by some other session, is a
+      // candidate only if it ALSO clears the run-liveness verdict (#4421): silence past
+      // the 24 h floor with a `dead` verdict, or past 72 h with an `unknown` verdict and
+      // no live probe positive. Both halves must hold; neither alone is evidence.
+      //
+      // Honest scope of this ownership half: it only ever engages when BOTH
+      // `state.sessionId` and `sessionId` are non-null. `sessionId` is reliably
+      // present when this runs off the Bash-invoked `reconcile` subcommand (the
+      // calling shell's own `CLAUDE_CODE_SESSION_ID` — see the module default
+      // below), but is `null` in the path that actually matters most: the
+      // SessionStart-triggered background pass (`reconcile-background`, a detached
+      // child process spawned with no stdin), where no session id is ever threaded
+      // in. There, this half of the criterion never fires — it is not "the"
+      // protection, it is an ADDITIONAL guard that only engages when a session id
+      // happens to be known. The substantive protection for every caller, known
+      // session id or not, is the run-liveness verdict (`ctx.runVerdict`, #4421) plus
+      // its silence floors — 24h (`STALE_INTERRUPTED_TTL_MS`) for `dead`, 72h
+      // (`LEGACY_DEAD_MS`) for `unknown` with no live positive — and, at the call
+      // site, the `shipped-unclosed` evidence gate from `checkRunIntegrity`, which
+      // stays call-site-only (see the header above). `ownEventRecency`
+      // (run-liveness/probes.js) is the one reader of the events log.
       if (state && state.status === 'interrupted') {
         const owner = typeof state.sessionId === 'string' && state.sessionId ? state.sessionId : null;
         const ownLive = !!(owner && sessionId && owner === sessionId); // our own live run
@@ -1934,20 +2047,6 @@ function classifyRunDir(ctx, now = Date.now()) {
           return { kind: 'adhoc-session-ended', ttlMs: ADHOC_SESSION_ENDED_GRACE_MS, evidence: { verdict: 'dead' } };
         }
       }
-    } else if (kind === 'merged') {
-      if (prState !== undefined) {
-        // #3249: staged evidence is only computable when the caller passed
-        // `dir`. decideArchive (the thin wrapper above) and the direct
-        // prState-only classifyRunDir unit tests pass none, so
-        // hasStagedPending stays undefined and the unconditional
-        // console-never-rendered skip holds for them. The production merged
-        // path (archiveMergedRun) does not route through here — it calls
-        // decideArchiveCore with hasStagedItems(dir) directly.
-        const hasStagedPending = dir ? hasStagedItems(dir) : undefined;
-        const decision = decideArchiveCore(prState, consoleState, hasStagedPending, undefined, runTiebreakCoverage(dir));
-        if (decision.action === 'archive') return { kind: 'merged', ttlMs: null, evidence: {} };
-        return { kind: 'none', ttlMs: null, evidence: { skipReason: decision.reason } };
-      }
     } else if (kind === 'structurally-stuck') {
       if (skipReason && STRUCTURALLY_STUCK_REASONS.has(skipReason) && !isAdHocIntrinsicSkip(dir, skipReason)
           && isStaleDir(dir, STRUCTURALLY_STUCK_TTL_MS, now)) {
@@ -1969,16 +2068,16 @@ function classifyRunDir(ctx, now = Date.now()) {
 // unchanged) or a `beginCacheBatch` handle (#1235 — batched across
 // `archiveMerged`'s item loops); see cache.js's own comment on the two
 // shapes.
-function trackStuckSkip(cacheTarget, repoSlug, dir, reason, { escalate = escalateResidue, resolve = resolveResidue, runner, dryRun = false } = {}) {
+function trackStuckSkip(cacheTarget, residueRepo, dir, reason, { escalate = escalateResidue, resolve = resolveResidue, runner, dryRun = false } = {}) {
   if (isAdHocIntrinsicSkip(dir, reason)) {
     // #2724: clearing resolves a real GitHub record, so it sits behind the same dry-run guard as pruneResidueFailures.
     // #4180: a dry run returns the plan it skipped instead of nothing.
     if (dryRun) return planClear(cacheTarget, 'structurally-stuck', dir);
-    clearResidue(cacheTarget, repoSlug, 'structurally-stuck', dir, { resolve, runner, why: ADHOC_EXEMPT_WHY });
+    clearResidue(cacheTarget, residueRepo, 'structurally-stuck', dir, { resolve, runner, why: ADHOC_EXEMPT_WHY });
     return;
   }
   if (!isStructurallyStuck(dir, reason)) return;
-  return trackResidue(cacheTarget, repoSlug, 'structurally-stuck', dir, { failed: true, lastError: `stuck at ${reason}` }, { escalate, runner, dryRun });
+  return trackResidue(cacheTarget, residueRepo, 'structurally-stuck', dir, { failed: true, lastError: `stuck at ${reason}` }, { escalate, runner, dryRun });
 }
 
 // #644 Deliverable 2 — every archive attempt's outcome, whichever of the two
@@ -2001,7 +2100,7 @@ function trackStuckSkip(cacheTarget, repoSlug, dir, reason, { escalate = escalat
 // #4180: `dryRun` is defensive — no current dry-run caller reaches here (finishArchiveAttempt and
 // archiveMergedRun return first). It forwards to trackResidue, turns the success-branch writes into
 // no-ops, and returns the plan.
-function trackArchiveResult(cacheTarget, repoSlug, dir, result, { escalate = escalateResidue, resolve = resolveResidue, runner, dryRun = false } = {}) {
+function trackArchiveResult(cacheTarget, residueRepo, dir, result, { escalate = escalateResidue, resolve = resolveResidue, runner, dryRun = false } = {}) {
   if (result.ok) {
     // The real success path below clears `structurally-stuck` (resolving an escalated record), so a
     // dry run returns that clear as its plan.
@@ -2013,7 +2112,7 @@ function trackArchiveResult(cacheTarget, repoSlug, dir, result, { escalate = esc
     // to guard) starts a fresh count rather than resuming a stale one.
     // #4202: an escalated entry resolves off the consolidated record rather
     // than being silently dropped; a failed resolve keeps it for the next pass.
-    clearResidue(cacheTarget, repoSlug, 'structurally-stuck', dir, { resolve, runner });
+    clearResidue(cacheTarget, residueRepo, 'structurally-stuck', dir, { resolve, runner });
     return;
   }
   // Archive-specific vocabulary — not part of the shared branching cache.js's
@@ -2035,7 +2134,7 @@ function trackArchiveResult(cacheTarget, repoSlug, dir, result, { escalate = esc
   // Mirrors reap-merged.js's trackReapResidue: forward the underlying error
   // (now captured at each move-failed catch site above) into the shared
   // residue-tracking/escalation choke point.
-  return trackResidue(cacheTarget, repoSlug, result.reason, dir, { failed: true, lastError: result.lastError }, { escalate, runner, dryRun });
+  return trackResidue(cacheTarget, residueRepo, result.reason, dir, { failed: true, lastError: result.lastError }, { escalate, runner, dryRun });
 }
 
 // #1544: `iterRunDirsWithState` (context.js) excludes every `status:
@@ -2078,10 +2177,10 @@ function iterCleanRunDirs(root) {
 // specific `produceResult` is ready to run. Pulled out only because the tail
 // itself was five byte-identical copies; every branch keeps its own
 // condition, comment, and `continue` at the call site.
-function finishArchiveAttempt(cacheTarget, repoSlug, dir, dryRun, runner, archived, skipped, produceResult) {
+function finishArchiveAttempt(cacheTarget, residueRepo, dir, dryRun, runner, archived, skipped, produceResult) {
   if (dryRun) { archived.push(dir); return; }
   const result = produceResult();
-  trackArchiveResult(cacheTarget, repoSlug, dir, result, { runner });
+  trackArchiveResult(cacheTarget, residueRepo, dir, result, { runner });
   if (!result.ok) { skipped.push({ runDir: dir, reason: result.reason }); return; }
   archived.push(dir);
 }
@@ -2135,10 +2234,10 @@ function skippedEntry(dir, { reason, unclosed, missing, unfiled, hint }) {
 // on both call sites, which are reached only once staged/ is clear or the
 // console is resolved), settled by settleMergedPartial. Returns the skip
 // decision, or null to proceed.
-function byNumberRecordSkip(root, dir, byNumber, consoleState, records, repoSlug) {
+function byNumberRecordSkip(root, dir, byNumber, consoleState, records, repoSlug, repoRefusal) {
   const coverage = runTiebreakCoverage(dir);
   const decision = settleMergedPartial(
-    root, dir, byNumber, decideArchiveCore(byNumber, consoleState, false, { records, repoSlug }, coverage), coverage,
+    root, dir, byNumber, decideArchiveCore(byNumber, consoleState, false, { records, repoSlug, repoRefusal }, coverage), coverage,
   );
   return decision.action === 'skip' ? decision : null;
 }
@@ -2175,16 +2274,15 @@ function resolveRunPrState(root, state, branch, prStates) {
 // runs (#3668, #3740), the two tiebreak reasons (#3945) and cant-tell-unfiled (#4171) — see
 // iterCleanRunDirs' comment for why that subset, and why the rest stay untracked.
 function archiveMergedRun({
-  root, repoSlug, dir, branch, state, dryRun, onSkip, runner, cacheTarget = root, integration, recordCheck, prStates,
+  root, residueRepo, dir, branch, state, dryRun, onSkip, runner, cacheTarget = root, integration, recordCheck, prStates, archive,
 }) {
   const prState = resolveRunPrState(root, state, branch, prStates);
   const consoleState = readConsoleState(dir);
-  // #3249: decideArchiveCore directly, not decideArchive — that thin wrapper
-  // routes through classifyRunDir without a `dir`, so the staged-items
-  // exception (hasStagedPending) could never fire on this, the ordinary
-  // production path pr-first-merge-post-merge.md Step 4.2's reconcile hits.
-  // #3503: `recordCheck` (the run's required records) is omitted by the clean
-  // sweep on purpose — see iterCleanRunDirs.
+  // #3249: the staged-items exception (hasStagedPending) fires on this, the
+  // ordinary production path pr-first-merge-post-merge.md Step 4.2's reconcile
+  // hits, because hasStagedItems(dir) is passed to decideArchiveCore directly.
+  // #3503: `recordCheck`'s `records` (the run's required records) is omitted by the clean
+  // sweep on purpose — see iterCleanRunDirs; it passes only `repoRefusal` (#4794).
   const coverage = runTiebreakCoverage(dir);
   const decision = settleMergedPartial(
     root, dir, prState, decideArchiveCore(prState, consoleState, hasStagedItems(dir), recordCheck, coverage), coverage,
@@ -2203,8 +2301,8 @@ function archiveMergedRun({
   }
   if (dryRun) return { outcome: 'archived' };
 
-  const result = archiveRunDir(root, dir);
-  trackArchiveResult(cacheTarget, repoSlug, dir, result, { runner });
+  const result = archive(root, dir);
+  trackArchiveResult(cacheTarget, residueRepo, dir, result, { runner });
   if (!result.ok) return { outcome: 'skipped', reason: result.reason };
   return { outcome: 'archived' };
 }
@@ -2292,15 +2390,35 @@ function countOwnerlessNonClean(root) {
   return count;
 }
 
+// #4599: `postMergeDeferred` lists the run dirs the same pass's post-merge check skipped for a
+// RETRYABLE reason (post-merge.js's `deferred`). Archived runs are never walked again, so archiving
+// one would turn "a later pass" into never. Each listed dir is skipped `post-merge-pending` in both
+// loops, ahead of every other per-run step, and is deliberately NOT fed to the stuck-skip tracker:
+// the skip is transient and must never escalate as residue. Paths are compared resolved.
 function archiveMerged({
   cwd, dryRun = false, sessionId = process.env.CLAUDE_CODE_SESSION_ID || null, runner, integration, prStates, cache, liveness, runVerdict,
+  postMergeDeferred = [], gateDeps,
 } = {}) {
   const archived = [];
   const skipped = [];
+  // #3721: the commit an archive attempt made, keyed by run dir — recorded whether the attempt then archived or refused.
+  const archiveCommits = {};
+  function archive(archiveRoot, runDir) {
+    const result = archiveRunDir(archiveRoot, runDir);
+    if (result.commit) archiveCommits[runDir] = result.commit;
+    return result;
+  }
+  const postMergePending = new Set((Array.isArray(postMergeDeferred) ? postMergeDeferred : []).map((d) => path.resolve(d)));
   const start = cwd || process.cwd();
   const root = mainCheckoutRoot(start);
-  if (!root) return { archived, skipped, residuePlan: dryRun ? [] : null, residueErrors: [] };
-  const repoSlug = repoSlugOf(root);
+  if (!root) return { archived, skipped, archiveCommits, residuePlan: dryRun ? [] : null, residueErrors: [] };
+  // #4794: one gated read of origin. The record check compares the bare slug against the PR's
+  // host-less closingIssuesReferences; residue escalation takes the --repo value for the one host
+  // (bare on gh's default host), or `{ refusal }` for a refused origin, which files nothing.
+  const target = repoTargetOf(root, gateDeps);
+  const repoRefusal = target && target.refusal ? target.refusal : null;
+  const repoSlug = target && !repoRefusal ? target.slug : null;
+  const residueRepo = residueRepoOf(target);
   // #3503: `work-backend: local-files` records are not GitHub issues, so a PR's
   // closingIssuesReferences can never attest them: the record check stays off.
   // Read once per pass; an absent file or line (unconfigured) keeps the check
@@ -2322,14 +2440,22 @@ function archiveMerged({
   // collect the non-`none` ones for the caller. `null` on a real run (nothing was planned).
   const residuePlan = dryRun ? [] : null;
   const track = (dir, reason) => {
-    const plan = trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner, dryRun });
+    const plan = trackStuckSkip(cacheBatch, residueRepo, dir, reason, { runner, dryRun });
     if (plan && plan.action !== 'none') residuePlan.push(plan);
   };
 
-  for (const { dir, state } of iterRunDirsWithState(root)) {
+  // #3975: without worktree-always, at most one clean-twin shell is archived in place per pass.
+  let shellSlotUsed = false;
+  for (const { dir, state } of iterRunDirsWithState(root, { includeTrackedShells: true })) {
+    // #4599: first, before any per-run work — see the header comment above archiveMerged.
+    if (postMergePending.has(path.resolve(dir))) {
+      skipped.push({ runDir: dir, reason: 'post-merge-pending' });
+      continue;
+    }
+
     // #1892 Deliverable 2: the split state — archive twin already exists,
     // live path holds only tracked `work/` headers — sits ahead of every
-    // other branch below, regardless of age: `isOrphanedMint`'s own
+    // other branch below, regardless of age: the orphaned-mint action's own
     // hasTrackedContent routing would eventually reach archiveRunDir's now-
     // idempotent twin-comparison fix (Deliverable 1) too, but only once the
     // dir is old enough AND config.yml is absent, and only by accident of
@@ -2342,15 +2468,36 @@ function archiveMerged({
     // (Deliverable 2's own AC). Without `worktree-always`, archive it
     // directly via archiveRunDir, same as any other archival.
     if (isArchivedPendingTrackedMove(root, dir)) {
+      const twinArchiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', path.basename(dir));
+      const twinState = readRunState(twinArchiveDir);
+      if (twinState && twinState.status === 'clean') {
+        // #3975: a clean-twin shell. The CLI is its completion; in place, only one per pass,
+        // and never one whose work/ differs from the twin's (archiveRunDir would refuse it).
+        const skipShell = () => skipped.push({
+          runDir: dir, reason: 'archived-pending-tracked-move', command: archivedPendingTrackedMoveCommand(root), shell: true,
+        });
+        if (isWorktreeAlwaysOn(root) || shellSlotUsed || shellWorkTwinDiffers(root, dir)) { skipShell(); continue; }
+        shellSlotUsed = true;
+        finishArchiveAttempt(cacheBatch, residueRepo, dir, dryRun, runner, archived, skipped, () => {
+          const result = archive(root, dir);
+          if (!result.ok) {
+            // archiveRunDir merged `archiving` into the clean twin's run-state; a refusal after that
+            // marker leaves it, which would hide the twin's clean status from the next pass. Best-effort.
+            try { writeRunState(twinArchiveDir, { status: 'clean' }); } catch { /* best-effort */ }
+          }
+          return result;
+        });
+        continue;
+      }
       if (isWorktreeAlwaysOn(root)) {
         skipped.push({
           runDir: dir,
           reason: 'archived-pending-tracked-move',
-          command: archivedPendingTrackedMoveCommand(dir),
+          command: archiveRunCommand(dir),
         });
         continue;
       }
-      finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
+      finishArchiveAttempt(cacheBatch, residueRepo, dir, dryRun, runner, archived, skipped, () => archive(root, dir));
       continue;
     }
 
@@ -2366,7 +2513,7 @@ function archiveMerged({
     // escalation on success (trackArchiveResult's own success branch clears
     // both).
     if (isClosedSlugStuck(root, dir, state)) {
-      finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
+      finishArchiveAttempt(cacheBatch, residueRepo, dir, dryRun, runner, archived, skipped, () => archive(root, dir));
       continue;
     }
 
@@ -2405,8 +2552,8 @@ function archiveMerged({
       // git mv + commit — same (root, dir) signature and {ok, reason} contract,
       // so the result handling below is shared. A bare mint with nothing
       // tracked keeps the fs-only move; see hasTrackedContent above.
-      finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => (
-        hasTrackedContent(root, dir) ? archiveRunDir(root, dir) : archiveOrphanedMint(root, dir)
+      finishArchiveAttempt(cacheBatch, residueRepo, dir, dryRun, runner, archived, skipped, () => (
+        hasTrackedContent(root, dir) ? archive(root, dir) : archiveOrphanedMint(root, dir)
       ));
       continue;
     }
@@ -2433,8 +2580,8 @@ function archiveMerged({
       // run non-terminal (still 'interrupted') and retryable next pass, which
       // is the whole point — and only close it once the move has actually
       // landed.
-      const archiveResult = archiveRunDir(root, dir);
-      trackArchiveResult(cacheBatch, repoSlug, dir, archiveResult, { runner });
+      const archiveResult = archive(root, dir);
+      trackArchiveResult(cacheBatch, residueRepo, dir, archiveResult, { runner });
       if (!archiveResult.ok) {
         // Non-'move-failed' reasons (mkdir-failed, git-mv-failed,
         // commit-failed, ls-files-failed, tracked-entry, readdir-failed) are
@@ -2489,7 +2636,7 @@ function archiveMerged({
 
     // #1604: a genuine ad-hoc-standalone dir whose worktree is definitively
     // gone (session over) is otherwise permanently stuck below — it never
-    // gets a console.json (decideArchive's console-never-rendered skip) and
+    // gets a console.json (decideArchiveCore's console-never-rendered skip) and
     // its worktree lookup fails the moment the ordinary reap sweep tears it
     // down (no-worktree/no-branch skip). Intercept it here, ahead of both,
     // once ADHOC_SUPERSEDED_TTL_MS has passed — #1117's own invariant (never
@@ -2513,7 +2660,7 @@ function archiveMerged({
       // orphaned-mint branch above makes the same choice per-dir via
       // hasTrackedContent (#2227) — this branch is unconditional because an
       // ad-hoc dir is always a real session, tracked spec or not.
-      finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
+      finishArchiveAttempt(cacheBatch, residueRepo, dir, dryRun, runner, archived, skipped, () => archive(root, dir));
       continue;
     }
 
@@ -2557,6 +2704,9 @@ function archiveMerged({
         // #3543: a stamped pr.number GitHub confirms names no PR is a stale
         // stamp, not an absent branch/worktree — report the real cause.
         if (byNumber === 'pr-not-found') skipReason = 'pr-not-found';
+        // #4794: the primary read failed and the gate refuses origin — the same reason the
+        // branch-joined path reports, so the refusal text reaches the skip as its hint.
+        if (byNumber === 'unknown-host') skipReason = 'unknown-host';
         if (byNumber && typeof byNumber === 'object' && (byNumber.state === 'CLOSED' || byNumber.state === 'MERGED')) {
           if (byNumber.state === 'MERGED') {
             const hasMerge = localHasMerge(root, byNumber.mergeCommit, integration, { dryRun });
@@ -2584,13 +2734,13 @@ function archiveMerged({
             // below unconditionally — there's no run left to converge
             // toward regardless of staged/'s contents.
             if (byNumber.state === 'MERGED' && !hasStagedItems(dir)) {
-              const guard = byNumberRecordSkip(root, dir, byNumber, consoleState, records, repoSlug);
+              const guard = byNumberRecordSkip(root, dir, byNumber, consoleState, records, repoSlug, repoRefusal);
               if (guard) {
                 skipped.push(skippedEntry(dir, guard));
                 track(dir, guard.reason);
                 continue;
               }
-              finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
+              finishArchiveAttempt(cacheBatch, residueRepo, dir, dryRun, runner, archived, skipped, () => archive(root, dir));
               continue;
             }
             // #2231: a CLOSED (never-merged) PR's console will never
@@ -2611,25 +2761,25 @@ function archiveMerged({
             continue;
           }
           if (byNumber.state === 'MERGED') {
-            const guard = byNumberRecordSkip(root, dir, byNumber, consoleState, records, repoSlug);
+            const guard = byNumberRecordSkip(root, dir, byNumber, consoleState, records, repoSlug, repoRefusal);
             if (guard) {
               skipped.push(skippedEntry(dir, guard));
               track(dir, guard.reason);
               continue;
             }
           }
-          finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
+          finishArchiveAttempt(cacheBatch, residueRepo, dir, dryRun, runner, archived, skipped, () => archive(root, dir));
           continue;
         }
       }
-      skipped.push({ runDir: dir, reason: skipReason });
+      skipped.push({ runDir: dir, reason: skipReason, ...(skipReason === 'unknown-host' && repoRefusal ? { hint: repoRefusal } : {}) });
       track(dir, skipReason);
       continue;
     }
 
     const runResult = archiveMergedRun({
-      root, repoSlug, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration,
-      recordCheck: { records, repoSlug }, prStates,
+      root, residueRepo, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration,
+      recordCheck: { records, repoSlug, repoRefusal }, prStates, archive,
       onSkip: (reason) => track(dir, reason),
     });
     if (runResult.outcome === 'archived') { archived.push(dir); continue; }
@@ -2650,11 +2800,18 @@ function archiveMerged({
   // no-console staged-pending runs stay untracked (typically in-terminal
   // consoles that retain staged/ by design).
   for (const { dir, state } of iterCleanRunDirs(root)) {
+    // #4599: a closed run is the usual armed-auto-merge shape, so the sweep honors the same guard.
+    if (postMergePending.has(path.resolve(dir))) {
+      skipped.push({ runDir: dir, reason: 'post-merge-pending' });
+      continue;
+    }
     const branch = fallbackBranch(root, dir, state);
     if (!branch) { skipped.push({ runDir: dir, reason: 'no-branch' }); continue; }
 
     const runResult = archiveMergedRun({
-      root, repoSlug, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration, prStates,
+      root, residueRepo, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration, prStates, archive,
+      // #4794: no `records` (the sweep's record check stays off), only the refusal, so an `unknown-host` skip carries its hint.
+      recordCheck: { repoRefusal },
       onSkip: (reason) => {
         if (reason === 'console-never-rendered-staged-pending' && consoleReplacedByAutoMerge(dir)) track(dir, reason);
         if (reason === 'tiebreak-coverage-missing' || reason === 'tiebreak-artifact-invalid' || reason === 'cant-tell-unfiled') track(dir, reason);
@@ -2680,22 +2837,22 @@ function archiveMerged({
   // GitHub write (closing an escalated record) belongs behind the same dry-run
   // guard every other outward write in this module already respects.
   // #4180: its resolve failures come back (the entry is dropped either way) for the caller to report.
-  const residueErrors = dryRun ? [] : pruneResidueFailures(root, repoSlug, { runner }).failures;
+  const residueErrors = dryRun ? [] : pruneResidueFailures(root, residueRepo, { runner }).failures;
 
   // #4421: counted after every archival above, so a dir this pass archived is not in it. Absent
   // (never 0) on a dry run — nothing moved, the count would overstate — and when the dir is unreadable.
   const ownerlessNonClean = dryRun ? null : countOwnerlessNonClean(root);
-  return { archived, skipped, residuePlan, residueErrors, ...(ownerlessNonClean === null ? {} : { ownerlessNonClean }) };
+  return { archived, skipped, archiveCommits, residuePlan, residueErrors, ...(ownerlessNonClean === null ? {} : { ownerlessNonClean }) };
 }
 
 module.exports = {
-  archiveMerged, countOwnerlessNonClean, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, consoleResidueHint, archiveRunDir, listSpecDirs,
+  archiveMerged, countOwnerlessNonClean, prefetchArchivePrStates, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, digestRerunRemedy, rerunRemedies, consoleResidueHint, archiveRunDir, readArchiveCommit, archiveCommitLine, pinnedGit, listSpecDirs,
   isStaleDir, classifyRunDir,
-  isOrphanedMint, isAdHocStandaloneMint, isAdHocIntrinsicSkip, ADHOC_INTRINSIC_STUCK_REASONS, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
-  localHasMerge, lastOwnEventMs, ownEventRecency, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,
-  isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS, ADHOC_SESSION_ENDED_GRACE_MS, isMainCheckoutAdHoc, recordedWorktreeIsMainCheckout, adHocSessionLiveness, defaultRunVerdict,
+  isAdHocStandaloneMint, isAdHocIntrinsicSkip, ADHOC_INTRINSIC_STUCK_REASONS, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
+  localHasMerge, ownEventRecency, STALE_INTERRUPTED_TTL_MS,
+  ADHOC_SUPERSEDED_TTL_MS, ADHOC_SESSION_ENDED_GRACE_MS, isMainCheckoutAdHoc, recordedWorktreeIsMainCheckout, adHocSessionLiveness, defaultRunVerdict,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, STRUCTURALLY_STUCK_REASONS,
-  isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand,
+  isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, archiveRunCommand,
   compareWorkTwin, resolveIdenticalWorkTwin, listFilesRecursive,
   isClosedSlugStuck, recordNumbersFromSlug, runRecordSet, inFlightRecords,
   listStagedItems, hasStagedItems, consoleReplacedByAutoMerge,

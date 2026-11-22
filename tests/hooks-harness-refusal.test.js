@@ -75,6 +75,7 @@ function ptufCtx(wt, error, cwd = wt) {
   return {
     input: { hook_event_name: 'PostToolUseFailure', tool_name: 'Bash', tool_input: { command: 'd=.; sed -n 1,2p $d/README.md' }, error, session_id: 'sess-refusal-1', cwd, is_interrupt: false },
     cwd,
+    env: process.env,
     ownedRun: {},
   };
 }

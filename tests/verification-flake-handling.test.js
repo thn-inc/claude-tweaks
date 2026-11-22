@@ -31,7 +31,7 @@ test('flake-handling.md: the isolate-and-rerun-once rule names two paths — nam
   assert.ok(text.includes('a `no-accounting-guard: {family}` reason (#3204'), 'the fourth retryDecision.reason value is documented and routed to the whole-suite re-run');
   assert.ok(text.includes('(retry: no-parse — whole-suite re-run applies)'), 'the stdout clause is documented');
   assert.ok(text.includes('One re-run, never more'), 'the whole-suite path states the single-re-run cap');
-  assert.ok(text.includes('node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --cmd tests="{command}"'), 'the whole-suite re-run command is documented');
+  assert.ok(text.includes('node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --default-suite-slots {slots} --cmd tests="{command}"'), 'the whole-suite re-run command is documented');
   const v = read('plugin/skills/test/verification.md');
   assert.ok(v.includes("`flake-handling.md`'s Whole-suite re-run path is the fallback for that"), 'the pre-existing-failures section cross-references the whole-suite path');
 });

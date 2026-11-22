@@ -8,6 +8,7 @@ const fs = require('fs');
 const { execFileSync } = require('child_process');
 const { resolvePolicyConfig } = require('../policy-schema');
 const { computeDerivedDefaults } = require('../policy-derived-defaults');
+const { modelProfilesEntry } = require('../model-profiles/policy-fragment');
 // Read through the module at call time: GIT_TIMEOUT_MS is a lazy getter (a policy read).
 const sharedPrimitives = require('../shared-primitives');
 
@@ -17,6 +18,17 @@ const sharedPrimitives = require('../shared-primitives');
 function sensitivePathsOf(entry) {
   const raw = entry && entry.value;
   return Array.isArray(raw) ? raw : String(raw || '').split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+// The express gate's record options from the resolved express-lane, integration-model and
+// merge-sensitive-paths entries: cli.js's gate verb and the plan-lane predicate
+// (driver/plan-lane.js) read the express bounds from here, so a new bound reaches both.
+function expressGateOptions(policy) {
+  return {
+    enabled: policy['express-lane'].value === true,
+    integrationModel: policy['integration-model'].value,
+    sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']),
+  };
 }
 
 function defaultGit(args, opts = {}) {
@@ -35,8 +47,11 @@ function defaultReadFile(p) {
 // integration-model costs a `git remote get-url` + `gh repo view` probe, so callers on a
 // hot path request only the keys they need).
 function defaultResolvePolicy(keys, { runDir = null } = {}) {
-  const { root, result } = resolvePolicyConfig({ git: defaultGit, readFile: defaultReadFile, runDir, keys });
-  return computeDerivedDefaults(result, keys, root);
+  const { root, policyRaw, runConfigRaw, factoryRaw, result } = resolvePolicyConfig({ git: defaultGit, readFile: defaultReadFile, runDir, keys });
+  const resolved = computeDerivedDefaults(result, keys, root, { runConfigRaw });
+  // model-profiles is a policy-only block the flat resolver cannot read (#5917).
+  if (keys.includes('model-profiles')) resolved['model-profiles'] = modelProfilesEntry(policyRaw, factoryRaw);
+  return resolved;
 }
 
-module.exports = { sensitivePathsOf, defaultGit, defaultReadFile, defaultResolvePolicy };
+module.exports = { sensitivePathsOf, expressGateOptions, defaultGit, defaultReadFile, defaultResolvePolicy };

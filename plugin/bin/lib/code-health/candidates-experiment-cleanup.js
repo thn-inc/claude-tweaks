@@ -42,6 +42,10 @@
 //     using any of those shapes will not trigger the block-based signals
 //     (accepted false-negative — the registry-terminal-state and
 //     dated-cleanup-comment signals are shape-independent and still apply).
+//   - Branch comparison is literal-aware (normalizeBranch keeps a `//` inside
+//     a string/template/regex literal), but the brace match that finds the
+//     branches (matchBrace) is not — a `}` inside a string can end a branch
+//     early.
 //   - Registry / dated-comment signals are text-window heuristics (a small
 //     forward window of characters from a call site) — not a structural
 //     parse of whatever registry format a repo actually uses.
@@ -59,6 +63,7 @@ const fs = require('fs');
 const path = require('path');
 const { registerGenerator } = require('./focus-generators');
 const { listTrackedSourceFiles } = require('./source-scan');
+const { stripComments } = require('../strip-comments');
 const { readListKey } = require('../policy');
 
 const DEFAULT_EXCLUDES = ['emergency', 'circuit', 'kill'];
@@ -87,15 +92,15 @@ function isExcluded(flag, excludes) {
   return excludes.some((ex) => lower.includes(String(ex).toLowerCase()));
 }
 
-// Strips // line comments and /* */ block comments, then collapses all
+// Blanks // line comments and /* */ block comments with the shared
+// literal-aware scanner (plugin/bin/lib/strip-comments.js — a `//` or `/*`
+// inside a string, template or regex literal stays code), then collapses all
 // whitespace runs to a single space and trims — used both to test a branch
 // body for emptiness after stripping a comment-only branch, and to compare
 // two branch bodies "token-identical, whitespace/comment-normalized, never
 // byte-exact" (this leaf's own Data/API Surface note).
 function normalizeBranch(text) {
-  return text
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\/\/[^\n]*/g, '')
+  return stripComments(text)
     .replace(/\s+/g, ' ')
     .trim();
 }

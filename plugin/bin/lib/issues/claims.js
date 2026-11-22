@@ -125,7 +125,38 @@ function classifyClaimBlob(content, now) {
   return { state: 'live', reclaimable: false };
 }
 
+// The release time a claim blob records (#4432): the tombstone's `releasedAt`,
+// as the ISO string `Date` re-serialises it. Never throws.
+//   { releasedAt: '<ISO>', unreadable: false } — a tombstone with a parseable releasedAt
+//   { releasedAt: null,    unreadable: false } — absent (null/undefined) or a live claim:
+//                                                no release to report
+//   { releasedAt: null,    unreadable: true }  — unparseable JSON, a non-object, or a
+//                                                tombstone whose releasedAt is missing or
+//                                                does not parse: the release happened but
+//                                                its time is unknown
+// A caller treats `unreadable` and "not released" alike for the verdict (no
+// downgrade) and uses the flag only to say so. There is one blob per issue,
+// so a later claim replaces the tombstone and the release time with it: a
+// re-claimed record reports no release (the prior behavior holds), which is
+// accepted because a record held by a live claim is in flight and not queued.
+function releaseTimeFromClaim(content) {
+  if (content === null || content === undefined) return { releasedAt: null, unreadable: false };
+  let parsed = null;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    /* stays null */
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { releasedAt: null, unreadable: true };
+  }
+  if (parsed.released !== true) return { releasedAt: null, unreadable: false };
+  const t = typeof parsed.releasedAt === 'string' ? Date.parse(parsed.releasedAt) : NaN;
+  if (Number.isNaN(t)) return { releasedAt: null, unreadable: true };
+  return { releasedAt: new Date(t).toISOString(), unreadable: false };
+}
+
 module.exports = {
   DEFAULT_TTL_HOURS, CLAIMS_BRANCH, claimFilePath, claimPayload, releasePayload,
-  isStale, classifyClaimBlob,
+  isStale, classifyClaimBlob, releaseTimeFromClaim,
 };

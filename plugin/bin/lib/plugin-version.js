@@ -1,16 +1,12 @@
 // bin/lib/plugin-version.js
-// Pure(ish) — one filesystem read, no network. #1837 review finding: this
-// exact "read CLAUDE_PLUGIN_ROOT/.claude-plugin/plugin.json, parse, extract
-// version, fail toward undefined" logic existed independently in
-// bin/lib/hooks/session-start.js's resolveBuildLine (pre-existing),
-// bin/harness-health.js's own resolvePluginVersion, and
-// bin/materialize.js's installedPluginVersion deps entry — CLAUDE.md's own
-// Structure section states bin/*.js should be thin wrappers over
-// bin/lib/** modules, not reimplement this per call site. Every caller
-// wants the bare version string; a caller wanting a formatted line (like
-// session-start.js's own "claude-tweaks v{version} @ {root}" diagnostic)
-// composes it from this function's return value rather than this module
-// owning any particular presentation.
+// Pure(ish) — one filesystem read, no network. Reads
+// CLAUDE_PLUGIN_ROOT/.claude-plugin/plugin.json, parses it, extracts the
+// version and fails toward undefined. Shared by bin/lib/hooks/session-start.js's
+// resolveBuildLine, bin/harness-health.js and bin/materialize.js (#1837), so no
+// bin/*.js reimplements the read. Every caller wants the bare version string; a
+// caller wanting a formatted line (like session-start.js's own "claude-tweaks
+// v{version} @ {root}" diagnostic) composes it from this function's return value
+// rather than this module owning any particular presentation.
 'use strict';
 
 const fs = require('fs');

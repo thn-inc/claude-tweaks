@@ -3,6 +3,7 @@ files:
   - plugin/skills/_shared/subagent-dispatch-core.md
   - plugin/skills/dispatch/task-prompt.md
   - plugin/skills/review/step3-lens-dispatch.md
+  - plugin/skills/review/step3-tier-variants.md
   - plugin/skills/_shared/subagent-output-contract.md
   - plugin/skills/review/review-summary-template.md
   - plugin/skills/review/code-mode-steps.md
@@ -19,7 +20,7 @@ files:
 
 ### 1. Fan out the lens pairs from inside the dispatched call
 - **URL:** the second Task call's `/claude-tweaks:review` Step 3 reproduction dispatch
-- **Action:** the dispatched reviewer launches each lens pair with the `Agent` tool. A launch normally returns launch metadata (an async ack), not the child's reply; a launch that instead returns the child's own reply (headless 2.1.302 and later) means that child has already reported. The reviewer then makes foreground `sleep 20` Bash calls, at most 60 per wave (20 minutes); a wait call the harness blocks is never retried in another form. Each wait iteration gets one line naming the lenses waited on, the iteration against the bound, and how many children are still pending. The reviewer stops as soon as every child's `<task-notification>` has arrived.
+- **Action:** the dispatched reviewer launches each lens pair with the `Agent` tool. A launch normally returns launch metadata (an async ack), not the child's reply; a launch that instead returns the child's own reply (headless 2.1.302 and later) means that child has already reported. The reviewer then makes foreground `wait-for.js agents --ids {ids} --max-seconds 150` calls, 20 minutes per wave; a wait call the harness blocks is never retried in another form, a `sleep` included. Each call's JSON output line is the wait's log line, naming the children still pending. The reviewer stops as soon as every child's `<task-notification>` has arrived.
 - **Should feel:** like ordinary progress. Each wait line shows the pending count falling, and the turn never goes quiet.
 - **Should understand:** a nested `Agent` call from a dispatched agent launches async unless it returns the child's own reply, and the agent cannot count on being re-woken once its turn ends. The child's notification reaches the reviewer only while its turn is still alive. A reply that ends without a tool call ends the turn, whatever is still in flight. The full rule is in `_shared/subagent-dispatch-core.md`'s Foreground Execution Discipline.
 - **Red flags:**
@@ -29,7 +30,7 @@ files:
   - a `run_in_background` wait.
 
 ### 2. Downgrade a lens that cannot be collected
-- **URL:** the same dispatch, when the environment has no `Agent` tool (a cloud routine sandbox) or a lens agent is still silent when the 60-wait bound expires
+- **URL:** the same dispatch, when the environment has no `Agent` tool (a cloud routine sandbox) or a lens agent is still silent when the 20-minute bound expires
 - **Action:** the reviewer judges that lens itself, applying the lens's own checklist as an adversarial self-review. It gives the lens the partner-died single-read treatment at whatever effort tier the review runs (`low` through `max`): its findings enter `unconfirmed`, it writes that paragraph's `Reproduction: lens "{lens}" {unavailable | timed out}; single-read coverage` line to `decisions.md`, and the review summary and the PR verdict comment each carry one **Coverage caveat:** line naming every affected lens and its reason. A silent child is now abandoned.
 - **Should feel:** visible and contained. One logged downgrade per affected lens, one caveat line a PR reader sees without opening `decisions.md`, and the rest of the review carries on. A clean review with a caveat still renders the compact PASS form.
 - **Should understand:** an abandoned child no longer counts as outstanding, so the reviewer's final reply still ends with `STATUS: {WORD}`. `INTERIM_STATUS:` is only for a turn that ends while a wait is still in progress. A child result that arrives after its lens was self-judged is ignored and never changes the verdict. An abandoned child cannot be stopped (`TaskStop` refuses a nested child), so it keeps running, and the harness may hold the reviewer's final result until it finishes: the bound caps the wait, not the delivery.

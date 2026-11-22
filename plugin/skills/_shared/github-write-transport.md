@@ -23,9 +23,13 @@ probe, not an environment classification — it holds regardless of *why* `gh` i
 | Create an issue | `gh issue create --title ... --body ...` | `issue_write` (create mode) |
 | Edit labels / body | `gh issue edit {n} --add-label/--remove-label/--body-file` | `issue_write` (update mode) |
 | Comment | `gh issue comment {n} --body-file` | `add_issue_comment` — a body that starts with a `<!-- … -->` marker follows **Marker comments on the MCP path** below |
-| Close | `gh issue close {n} --reason ...` | `issue_write` (update mode, state change) |
-| Get a single issue by number | `gh issue view {n} --json state,...` | `issue_read` (get mode) |
-| List an issue's comments | `gh api repos/{owner}/{repo}/issues/{n}/comments?per_page=100` | `issue_read` (get_comments mode) |
+| Close | `gh issue close {n} --reason ...` | `issue_write` (update mode, `state: closed` plus `state_reason` — `completed` for `--reason completed`, `not_planned` for `--reason "not planned"`; never pass `labels`, per **Full-replace hazard** below) |
+| Get a single issue by number | `gh issue view {n} --json state,...` | `issue_read` (get mode); its `state_reason`, `labels`, `title`, `body` and `closed_by_pull_requests` (`references[].number`, up to 5) fields stand in for `gh`'s `stateReason`, `labels`, `title`, `body` and `closedByPullRequestsReferences`; MCP spells state values lowercase |
+| List an issue's comments | `gh api repos/{owner}/{repo}/issues/{n}/comments?per_page=100` | `issue_read` (get_comments mode) — `perPage: 100`, then `page` 2, 3, … until a page returns fewer than 100 (the `gh` form is the single-page read the call sites run) |
+| List an issue's native sub-issues | `gh api --paginate "repos/{owner}/{repo}/issues/{n}/sub_issues"` | `issue_read` (`get_sub_issues` mode) — `perPage: 100`, then `page` 2, 3, … until a page returns fewer than 100 |
+| Get an issue's native parent | the sub-issue relationship read from the child's side | `issue_read` (`get_parent` mode) |
+| Read the current identity's login | `gh api user --jq .login` | `get_me` (its `login` field) |
+| Read the repo's default branch | `gh repo view --json defaultBranchRef -q .defaultBranchRef.name` | no MCP tool — read `git remote show origin`'s `HEAD branch:` line, `_shared/integration-branch.md` rank 5's own fallback, which needs neither transport; an empty or `(unknown)` branch counts as a failing read |
 
 ### Marker comments on the MCP path
 
@@ -79,14 +83,20 @@ read-immediately-before-write is required, since a concurrent label change betwe
 read and this write would otherwise be silently reverted by the stale array.
 
 **Pull requests are not covered by this mapping.** Every row above is an issue operation — there
-is no `list_pull_requests`/`pr_read`/`pr_write` row, and none is planned: PR review-thread reads
-(`gh api graphql`), CI-check reads (`gh pr checks`), and PR list/view reads (`gh pr list`/
-`gh pr view`) have no MCP equivalent today. A `gh`-absent consumer that needs a PR read degrades
-that read individually rather than treating the missing mapping as a reason to skip everything
-it does — `_shared/github-pr-scan.md`'s Transport section is the canonical example: issue-backed
-items in a scope route through this file's `list_issues` row, PR-backed items in the same scope
-degrade per-item with a narrower message instead. This resolves the gap deliberately (a
-documented per-item degrade) rather than leaving it implicit.
+is no `list_pull_requests`/`pr_read`/`pr_write` row, and none is planned here: PR review-thread
+reads (`gh api graphql`) and CI-check reads (`gh pr checks`) have no MCP equivalent today; PR
+list/view reads (`gh pr list`/`gh pr view`) have one only through the two exceptions below. A
+`gh`-absent consumer that needs a PR read degrades that read individually rather than treating
+the missing mapping as a reason to skip everything it does — `_shared/github-pr-scan.md`'s
+Transport section is the canonical example: issue-backed items in a scope route through this
+file's `list_issues` row, PR-backed items in the same scope degrade per-item with a narrower
+message instead. This resolves the gap deliberately (a documented per-item degrade) rather than
+leaving it implicit. Two PR reads are documented exceptions, made directly rather than through
+this table: `mcp__github__pull_request_read`
+(`get`), used by `_shared/issue-claims.md`'s "The lock" step 4 tombstone check, by
+`_shared/pr-checklist-refresh.md`, and by others; and `mcp__github__list_pull_requests`
+(open PRs, #4423), used by that step 4's stale check and by `tidy/scan-procedures.md`'s Step 4.7
+stale-claim audit.
 
 **Exception: PR create/update (#929).** Create and update *are* covered, just not by a table
 row — `gh pr create --body-file`/`gh pr edit --body-file` locally,

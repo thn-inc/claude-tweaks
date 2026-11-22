@@ -7,7 +7,6 @@
 'use strict';
 
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 
 const registry = require('./registry');
@@ -15,8 +14,8 @@ const { blockFree } = require('./probe');
 const { readManagedRegion, LEASE_KEY, writeEnvFiles } = require('./env-file');
 const { runGit } = require('../hooks/git-exec');
 
-function defaultResolveRoot(cwd) {
-  const { stdout, failure } = runGit(['rev-parse', '--show-toplevel'], cwd);
+function defaultResolveRoot(cwd, env) {
+  const { stdout, failure } = runGit(['rev-parse', '--show-toplevel'], cwd, { env });
   return failure ? null : stdout;
 }
 
@@ -51,17 +50,22 @@ function isRegionCurrent(checkoutRoot, base, leaseServices, policyServices) {
   return regionIsCurrent(readManagedRegion(text), base, leaseServices, policyServices);
 }
 
-// (cwd, { home, policyServices, probe, resolveRoot }) ->
+// (cwd, { home, env, policyServices, probe, resolveRoot }) ->
 //   Promise<{ active: false } | { active: true, base, ports, vars, reallocated: {from,to}|null, envWriteError, leaseLineAdded }>
+// Only SessionStart calls this, so `home` and `env` come from its hook context and have no fallback to
+// os.homedir() or the real process.env (#5377); a missing one is a programming error.
 async function ensure(cwd, {
-  home = os.homedir(),
+  home,
+  env,
   policyServices = [],
   probe = blockFree,
   resolveRoot = defaultResolveRoot,
 } = {}) {
+  if (typeof home !== 'string' || !home) throw new TypeError('ports ensure: home is required');
+  if (env === null || typeof env !== 'object') throw new TypeError('ports ensure: env is required');
   if (!policyServices.length) return { active: false };
 
-  const checkoutRoot = resolveRoot(cwd);
+  const checkoutRoot = resolveRoot(cwd, env);
   if (!checkoutRoot) return { active: false };
 
   // Staleness must be judged from the .env.local content and the registry
@@ -86,19 +90,19 @@ async function ensure(cwd, {
   let result;
 
   if (!existingEntry) {
-    result = await registry.allocate(checkoutRoot, { services: policyServices, home, probe });
+    result = await registry.allocate(checkoutRoot, { services: policyServices, home, probe, env });
   } else {
     const [baseStr, lease] = existingEntry;
     const base = Number(baseStr);
     const stillFree = await probe(base, { size: registry.BLOCK_SIZE });
     if (stillFree) {
-      result = await registry.allocate(checkoutRoot, { services: policyServices, home, probe });
+      result = await registry.allocate(checkoutRoot, { services: policyServices, home, probe, env });
     } else if (regionIsCurrent(regionBefore, base, lease.services, policyServices)) {
       // Bound, but the region is current — assume it's this checkout's own
       // already-running dev server, not a foreign takeover. Keep the lease.
-      result = await registry.allocate(checkoutRoot, { services: policyServices, home, probe });
+      result = await registry.allocate(checkoutRoot, { services: policyServices, home, probe, env });
     } else {
-      result = await registry.reallocate(checkoutRoot, { services: policyServices, home, probe });
+      result = await registry.reallocate(checkoutRoot, { services: policyServices, home, probe, env });
       reallocated = { from: base, to: result.base };
     }
   }

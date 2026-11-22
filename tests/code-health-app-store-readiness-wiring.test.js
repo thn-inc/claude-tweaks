@@ -71,8 +71,9 @@ test('review wires in Step 6.66 and consolidates it into Step 6.7 routing', () =
   assert.match(passes, /candidates-app-store-readiness\.js/);
   assert.match(passes, /getCriterion\('app-store-readiness'\)/);
 
-  const steps = read('plugin/skills/review/code-mode-steps.md');
-  assert.match(steps, /App Store Readiness`\s*\(from Step 6\.66\)/);
+  // Step 6.7's Category table lives in late-findings-routing.md (#4359).
+  const routing = read('plugin/skills/review/late-findings-routing.md');
+  assert.match(routing, /App Store Readiness`\s*\(from Step 6\.66\)/);
 });
 
 test('review-summary-template.md carries an App Store Readiness section', () => {

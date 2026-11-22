@@ -122,16 +122,26 @@ test('AC5.1: the appendix maps apply on an sdd-ruling-* item to ratify (ledger a
   assert.ok((APPENDIX.match(/sdd-ruling/g) || []).length >= 2, 'prefix list plus the Resolution-to-step bullet');
   // Wrap-tolerant pins: `\s+` wherever the hard-wrapped bullet may break a line, so a reflow
   // with no wording change stays green (review #3401, lens 3f).
-  assert.match(APPENDIX, ws('- `apply` on an `sdd-ruling-*` item — still step 1, but it executes no code change: it writes the item\'s `Ledger:` row back to `accepted`, Resolution `ratified at Review Console — {the ruling\'s own "— why" clause, or "no — why clause on the ruling line" when it carries none}`'));
+  assert.match(APPENDIX, ws('- `apply` on an `sdd-ruling-*` item — ratify. It executes no code change'));
+  assert.match(APPENDIX, ws('Still step 1: it writes the item\'s `Ledger:` row back to `accepted`, Resolution `ratified at Review Console — {the ruling\'s own "— why" clause, or "no — why clause on the ruling line" when it carries none}`'));
   assert.match(APPENDIX, ws('never an empty clause: `finish-console` rejects an `accepted` entry with no resolution text before writing anything'));
   assert.match(APPENDIX, ws('through `finish-console`\'s existing `ledger` array'));
   assert.match(APPENDIX, ws('composes a born-ready record proposal exactly as `_shared/ledger-format.md`\'s Phase 3 `Keep` does (`specShapedBody`'));
-  assert.match(APPENDIX, ws('`Origin: SDD ruling reversed at Review Console`; `Defer-reason: genuinely-larger`'));
+  // #4101: the reversal's Defer-reason is derived from the deferral gate, never a constant.
+  assert.match(APPENDIX, ws('`Origin: SDD ruling reversed at Review Console`; `Defer-reason:` derived, never a constant'));
+  // The derivation itself lives in the gate (review of v6.158.0); the appendix cites it and keeps
+  // only what makes a reversal one of its cases.
+  assert.match(APPENDIX, ws("run `_shared/deferral-gate.md`'s Fix-now criteria against the reversed ruling's finding and stamp per that file's Deriving the value from the criteria"));
+  assert.match(APPENDIX, ws("the closed fix wave is what makes a reversal whose criteria all hold that section's all-hold case"));
+  assert.match(APPENDIX, ws('a staged ruling with no finding text, or one that settled a design choice rather than a defect, carries too little to judge a criterion'));
+  assert.doesNotMatch(APPENDIX, ws('not localized → `genuinely-larger`'), 'the criterion-to-value mapping is the gate\'s, not restated here');
+  assert.doesNotMatch(APPENDIX, ws('the all-hold stamp is never a silent fallthrough'), 'the all-hold rule is the gate\'s, not restated here');
+  assert.doesNotMatch(APPENDIX, ws('`Defer-reason: genuinely-larger`'), 'the reversal Defer-reason is no longer a fixed value');
   assert.match(APPENDIX, ws('stages it as `staged/ledger-record-sdd-ruling-{N}.md`, routes it through step 7 in the same pass, and — once step 7 has created the record — writes the row back to `deferred`, Resolution `reversed → #{new record}`'));
   assert.match(APPENDIX, ws('when step 7 declines or fails to create it (`refused-proposals.md`, a `gh` failure), the row stays `open` with the cause logged'));
   assert.match(APPENDIX, ws('never `deferred` without a record number'));
-  assert.match(APPENDIX, ws('Outside Approve all, a ratify writes the row directly at step 1 per `_shared/staged-patch.md`\'s Write-back to the ledger'));
-  assert.match(APPENDIX, ws('a `reverse` on any path writes it at step 7, as above, never at step 1'));
+  assert.match(APPENDIX, ws('Outside Approve all, an `accept` ratify writes the row directly at step 1 per `_shared/staged-patch.md`\'s Write-back to the ledger'));
+  assert.match(APPENDIX, ws('a `file-record` ratify and a `reverse` on any path write it at step 7, as above, never at step 1'));
 });
 
 test('AC5.2: the interactive console names ratify/reverse as the Override vocabulary for a ruling row and refuses a bare skip', () => {
@@ -141,7 +151,7 @@ test('AC5.2: the interactive console names ratify/reverse as the Override vocabu
 });
 
 test('review-console.md step 1 points an sdd-ruling-* write-back at the appendix bullet', () => {
-  assert.match(CONSOLE, /an `sdd-ruling-\*` item's write-back follows `review-console-appendix\.md`'s `sdd-ruling-\*` bullet \(ratify → `accepted` here; reverse → `deferred` at step 7, once the reversal record exists\), not the patch table/);
+  assert.match(CONSOLE, /an `sdd-ruling-\*` item's write-back follows `review-console-appendix\.md`'s `sdd-ruling-\*` bullet \(an `accept` ratify → `accepted` here; a `file-record` ratify — a deferral — stages its record proposal here and writes `deferred`, `ratified → #\{n\}`, at step 7 once the record exists; a ruling with no ratify action files nothing — its row stays `open`; reverse → `deferred` at step 7, once the reversal record exists\), not the patch table/);
 });
 
 test('review #3401 → #3510: the CLI owns the failure branch; the hand-performed rewrite and ordering clauses are gone', () => {
@@ -175,8 +185,9 @@ test('AC1.1 #3513: console-execution.md — an unticked or --decline sdd-ruling-
   assert.match(CONSOLE_EXECUTION, ws('it routes to **reverse**, never to a plain decline'));
   assert.match(CONSOLE_EXECUTION, ws("per `wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet"));
   assert.match(CONSOLE_EXECUTION, ws('only once the record exists; when the record is refused or not created, log that cause instead'));
-  assert.match(CONSOLE_EXECUTION, ws('never `reversed` without a record number'));
-  assert.match(CONSOLE_EXECUTION, ws('Ticked, it is ratify (ledger row → `accepted`, per the same bullet)'));
+  assert.match(CONSOLE_EXECUTION, ws('never `reversed` or `ratified` without a record number'));
+  assert.match(CONSOLE_EXECUTION, ws('Ticked, it is ratify, per the same bullet'));
+  assert.match(CONSOLE_EXECUTION, ws('`accept` writes the ledger row → `accepted`'));
   assert.match(CONSOLE_EXECUTION, ws('(staged file `staged/sdd-ruling-{N}.md`, or `spec-{N}/staged/sdd-ruling-{N}.md` on a multi-spec bundle, #3401)'));
   assert.match(CONSOLE_EXECUTION, ws('`REFUSED` when `wrap-up/refused-proposals.md` refuses it, else `SKIP`'));
   assert.match(CONSOLE_EXECUTION, ws('a ruling the chat answer ratifies must be passed in `--approve` (an unticked ruling id in neither list is recorded `reversed`'));
@@ -206,7 +217,7 @@ test('#3636: console-on-pr.md documents the isRulingRow flag on sdd-ruling-* ite
 const MULTISPEC_CONSOLE = read('plugin', 'skills', 'flow', 'multispec-review-console.md');
 
 test('AC1.1 #3513: multispec-review-console.md — step 1 ratifies a ruling, Override offers ratify/reverse and refuses skip/modify/revert on one', () => {
-  assert.match(MULTISPEC_CONSOLE, ws("an `sdd-ruling-*` file is no patch — Approve all ratifies it: this step writes its `Ledger:` row to `accepted` directly (per `_shared/staged-patch.md`'s Write-back to the ledger, Resolution per `wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet — this console has no `finish-console` step); reverse is Override's `reverse {#}`"));
+  assert.match(MULTISPEC_CONSOLE, ws("an `sdd-ruling-*` file is no patch — Approve all ratifies it: this step writes its `Ledger:` row to `accepted` directly (per `_shared/staged-patch.md`'s Write-back to the ledger, Resolution per `wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet — this console has no `finish-console` step), except a deferral (`file-record`), whose record is staged as `reverse {#}`'s is and created at step 2, then `deferred`, `ratified → #{n}`; a ruling with no ratify action files nothing — its row stays `open`; reverse is Override's `reverse {#}`"));
   assert.match(MULTISPEC_CONSOLE, ws('ratify/reverse {#} for an SDD ruling row'));
   assert.match(MULTISPEC_CONSOLE, ws("an `sdd-ruling-*` row takes only `ratify {#}`/`reverse {#}` (the appendix bullet); `skip`/`modify`/`revert` on one is refused as `wrap-up/review-console-interactive.md` refuses it"));
   assert.match(MULTISPEC_CONSOLE, ws("`reverse {#}` stages its reversal record under that spec's `spec-{N}/staged/` and creates it at this console's step 2 (queue writes), not the appendix's step 7, then writes the row to `deferred` once the record exists"));
@@ -226,4 +237,26 @@ test('#3513: both Pending review headings name ratify/reverse for an sdd-ruling-
   const heading = '#### Pending review (staged — apply, skip, or modify per item; `ratify`/`reverse` an `sdd-ruling-*` row)';
   assert.ok(CONSOLE_TEMPLATE.includes(heading), 'console-template.md heading');
   assert.ok(MULTISPEC_TEMPLATE.includes(heading), 'multispec-console-template.md heading');
+});
+
+// #4101: the gate's Deriving the value from the criteria section (which the appendix's
+// reversal cites) maps each Fix-now criterion to a value in the criteria's own order; a
+// reordered or extended criteria list must turn this red so the mapping is revisited with it.
+test('#4101: the deferral gate derives a Defer-reason from its Fix-now criteria, in their order, with the all-hold rule', () => {
+  const gate = read('plugin', 'skills', '_shared', 'deferral-gate.md');
+  // The mapping runs in the criteria's own order, so scope expansion (the 5th) maps last.
+  assert.match(gate, ws('stamps the value of the first criterion that fails, in the list order above: not localized → `genuinely-larger`; needs functionality not yet built → `blocked-dependency`; needs a product/design decision → `needs-human-decision`; needs external state → `blocked-external`; materially expands scope → `genuinely-larger`'));
+  assert.match(gate, ws('The derivation never reaches `tangential` or `pre-existing-outside-diff`'));
+  assert.match(gate, ws('When every criterion holds — the item would have been fix-now, and only a closed fix wave stops it — stamp `needs-human-decision`'));
+  assert.match(gate, ws('When the item carries too little to judge a criterion, stamp `needs-human-decision` too, and say in the proposal\'s Current State that the criteria could not be evaluated: the all-hold stamp is never a silent fallthrough'));
+  const criteria = gate.slice(gate.indexOf('## Fix-now criteria'), gate.indexOf('If the item qualifies')).split('\n').filter((l) => l.startsWith('- '));
+  const expected = [
+    '- Change is localized',
+    '- Fix does not require functionality not yet built',
+    '- Fix does not require user product/design decisions',
+    '- Fix does not require external state',
+    '- Fix does not materially expand pipeline scope',
+  ];
+  assert.strictEqual(criteria.length, expected.length, criteria.join('\n'));
+  expected.forEach((prefix, i) => assert.ok(criteria[i].startsWith(prefix), `criterion ${i + 1}: ${criteria[i]}`));
 });

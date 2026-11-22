@@ -6,6 +6,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const cp = require('child_process');
+const { warmCallStartsNoGit } = require('./helpers/git-trace');
 
 const HELPER = require.resolve('./helpers/git-fixtures');
 
@@ -82,4 +83,64 @@ test('a fixture spawn failing for a non-timeout reason rethrows unchanged', () =
   withPatchedExec(() => { throw original; }, (helpers) => {
     assert.throws(() => helpers.fixtureGit(['-C', '/tmp', 'status']), (err) => err === original);
   });
+});
+
+test('a fixture spawn killed for printing past its maxBuffer reports the overflow, not a timeout (#5227)', () => {
+  // execFileSync kills a child that overflows maxBuffer with SIGTERM, so the timeout branch (which
+  // keys on that signal) used to read it as contention. A real 1 MiB blob through a 1 KiB buffer
+  // overflows while git is still writing, which is what sets the signal.
+  const fs = require('fs');
+  const { fixtureGit, gitRepo } = require('./helpers/git-fixtures');
+  const repo = gitRepo();
+  try {
+    const sha = fixtureGit(['-C', repo, 'hash-object', '-w', '--stdin'], { input: 'x'.repeat(1024 * 1024), encoding: 'utf8' }).trim();
+    assert.throws(
+      () => fixtureGit(['-C', repo, 'cat-file', '-p', sha], { maxBuffer: 1024 }),
+      (err) => err.code === 'ENOBUFS'
+        && err.message === `git-fixtures: \`git -C ${repo} cat-file -p ${sha}\` printed more than its maxBuffer (1024 bytes) and was killed. Pass a larger maxBuffer for a real-sized output.`
+        && err.cause.signal === 'SIGTERM',
+      'the overflow names itself and keeps the spawn error as its cause',
+    );
+    const whole = fixtureGit(['-C', repo, 'cat-file', '-p', sha], { maxBuffer: 2 * 1024 * 1024, encoding: 'utf8' });
+    assert.strictEqual(whole.length, 1024 * 1024, 'a large enough buffer reads it (control)');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('fixtureGit leaves a spawn-level ENOBUFS (no signal: not a maxBuffer overflow) unrelabeled', () => {
+  const { fixtureGit } = require('./helpers/git-fixtures');
+  const spawnFailure = Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' });
+  assert.throws(
+    () => fixtureGit(['status'], { execFileSync: () => { throw spawnFailure; } }),
+    (err) => err === spawnFailure && !/maxBuffer/.test(err.message),
+    'rethrown unchanged',
+  );
+});
+
+// The per-test repo builders sit on templates (#5297): after one warm-up call
+// (which may build), a further call starts no git process. #5846: these tests live
+// here, where the file's own tests build gitRepo().
+for (const [name, make] of [
+  ['git-fixtures gitRepo()', () => require('./helpers/git-fixtures').gitRepo()],
+  ['git-fixtures gitRepo({ branch })', () => require('./helpers/git-fixtures').gitRepo({ branch: 'trunk' })],
+]) {
+  test(`${name}: a second call starts no git process`, (t) => {
+    const fs = require('fs');
+    warmCallStartsNoGit(make, { track: (d) => t.after(() => fs.rmSync(d, { recursive: true, force: true })) });
+  });
+}
+
+test('git-fixtures gitRepo({ branch }) keeps the requested branch', (t) => {
+  const fs = require('fs');
+  const gitFixtures = require('./helpers/git-fixtures');
+  const { pinnedGit: git } = require('./helpers/pinned-git');
+  const dir = gitFixtures.gitRepo({ branch: 'trunk' });
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  assert.strictEqual(git(dir, ['symbolic-ref', '--short', 'HEAD']), 'trunk');
+});
+
+test('AC4.1: originWithTwoClones with a seed and no key throws', () => {
+  const gitFixtures = require('./helpers/git-fixtures');
+  assert.throws(() => gitFixtures.originWithTwoClones('ct-gt-otc-', { seed: () => {} }), /seed needs a key/);
 });

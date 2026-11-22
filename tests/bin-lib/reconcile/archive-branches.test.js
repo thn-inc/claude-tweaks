@@ -74,6 +74,13 @@ test('inScope: only build/*, worktree-*, demo/* namespaces', () => {
   assert.strictEqual(inScope('feature/z', []), false);
   assert.strictEqual(inScope('flow/spec-1-2', []), false);
 });
+// #5290 final review M3: wrap-up's learned-skills PR branches are plugin-owned too, so prune-remote
+// (which reuses inScope) can age them out of origin under the same evidence bar.
+test('inScope: learned-skills/{run-id} branches are plugin-owned', () => {
+  assert.strictEqual(inScope('learned-skills/2026-11-13T000000-spec-5290', []), true);
+  assert.strictEqual(inScope('learned-skills-other', []), false, 'the prefix is the namespace, slash included');
+  assert.strictEqual(inScope('x/learned-skills/y', []), false, 'anchored at the start');
+});
 test('inScope: branch attached to a worktree is out of scope', () => {
   const wts = [{ path: '/w/a', branch: 'build/x' }];
   assert.strictEqual(inScope('build/x', wts), false);
@@ -135,20 +142,21 @@ test('encodeArchiveTagSuffix: a branch with no "/" or "%" passes through unchang
 
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { archiveBranches } = require('../../../plugin/bin/lib/reconcile/archive-branches');
 const { reconcile, ALL_CHECKS } = require('../../../plugin/bin/lib/reconcile');
+const { gateOriginRepo } = require('../../../plugin/bin/lib/repo-resolve');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 function makeRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-branches-'));
-  git(dir, 'init', '-b', 'main');
-  git(dir, 'config', 'user.email', 't@t');
-  git(dir, 'config', 'user.name', 't');
+  const dir = scratchDir('archive-branches-');
+  initRepo(dir, { branch: 'main', name: 't', email: 't@t' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
   git(dir, 'add', 'a.txt');
   git(dir, 'commit', '-m', 'init');
@@ -158,7 +166,7 @@ function makeRepo() {
 // Screen-then-confirm (#1083): every pre-existing test below injects only
 // `resolvePr` (the confirm step). Without an injected screen, the default
 // resolvePrStatesBulk would run for real — same hazard prune-remote.test.js
-// documents (repoSlugOf happily parses a bogus 'owner/repo' out of the
+// documents (the origin read happily takes a bogus 'owner/repo' out of the
 // fixture's file-path origin URL, so the default screen would spawn a live
 // `gh api graphql`). Every branch here has no origin remote at all, but the
 // nullScreen fake keeps every candidate on the confirm-per-branch path
@@ -627,6 +635,77 @@ test('screen failure degrades to per-branch skips; tag-aging sweep still runs', 
   assert.strictEqual(absent.entries.find((e) => e.name === 'archive/old-tag2' && e.kind === 'tag').action, 'aged-out');
   assert.strictEqual(git(dir, 'tag', '--list', 'archive/old-tag2').trim(), '');
   assert.equal(confirmCalls, 0); // zero per-branch gh work across both passes
+});
+
+// #4794: the origin goes through the #4933 gate before the screen. A refused origin (an SSH alias)
+// skips every candidate unknown-host with the gate's text, screens nothing, and the gh-independent
+// tag-aging sweep still runs.
+const ALIAS_ORIGIN = 'git@github-work:acme/w.git';
+const NO_HOSTS_GATE_DEPS = { env: {}, readFile: () => { throw new Error('ENOENT'); } };
+
+function makeAliasFixture() {
+  const dir = makeRepo();
+  git(dir, 'remote', 'add', 'origin', ALIAS_ORIGIN);
+  for (const name of ['build/one', 'worktree-two']) {
+    git(dir, 'checkout', '-b', name);
+    fs.writeFileSync(path.join(dir, `${name.replace('/', '-')}.txt`), `${name}\n`);
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-m', name);
+    git(dir, 'checkout', 'main');
+  }
+  const ancient = new Date(Date.now() - 91 * DAY).toISOString();
+  execFileSync('git', ['tag', '-a', '-m', 'ancient', 'archive/old-tag'], {
+    cwd: dir, encoding: 'utf8',
+    env: { ...process.env, GIT_COMMITTER_DATE: ancient, GIT_AUTHOR_DATE: ancient },
+  });
+  return dir;
+}
+
+test('#4794: an SSH-alias origin skips every candidate unknown-host with the refusal, screens nothing, and still ages archive tags', () => {
+  const dir = makeAliasFixture();
+  const refusal = gateOriginRepo(ALIAS_ORIGIN, NO_HOSTS_GATE_DEPS).refusal;
+  const calls = [];
+  const r = archiveBranches({
+    cwd: dir, integration: 'main', dryRun: false, gateDeps: NO_HOSTS_GATE_DEPS,
+    resolvePrBulk: (...a) => { calls.push(['bulk', ...a]); return new Map(); },
+    resolvePr: (...a) => { calls.push(['confirm', ...a]); return null; },
+  });
+  assert.strictEqual(r.failure, null);
+  for (const name of ['build/one', 'worktree-two']) {
+    assert.deepEqual(r.entries.find((e) => e.name === name), { name, kind: 'branch', action: 'skip', reason: 'unknown-host', detail: refusal });
+    assert.match(git(dir, 'branch', '--list', name), new RegExp(name)); // nothing deleted
+  }
+  assert.deepEqual(calls, [], 'a refused origin screens and confirms nothing');
+  assert.strictEqual(r.entries.find((e) => e.name === 'archive/old-tag' && e.kind === 'tag').action, 'aged-out');
+  assert.strictEqual(git(dir, 'tag', '--list', 'archive/old-tag').trim(), '');
+});
+
+// The throw this task closes: the default screen returns the string 'unknown-host' for a refused
+// origin, which the Map branch read with `.get`. The pre-gate keeps it from the default screen, and a
+// screen that still answers 'unknown-host' degrades to per-branch skips like gh-absent does.
+test('#4794: a refused origin never reaches the default screen as a string, and a string screen is never read as a Map', () => {
+  const dir = makeAliasFixture();
+  const viaDefault = archiveBranches({ cwd: dir, integration: 'main', dryRun: true, gateDeps: NO_HOSTS_GATE_DEPS, resolvePr: () => null });
+  assert.strictEqual(viaDefault.failure, null);
+  assert.deepEqual(viaDefault.entries.filter((e) => e.kind === 'branch').map((e) => e.reason), ['unknown-host', 'unknown-host']);
+  git(dir, 'remote', 'set-url', 'origin', 'git@github.com:acme/w.git');
+  const viaString = archiveBranches({ cwd: dir, integration: 'main', dryRun: true, gateDeps: NO_HOSTS_GATE_DEPS, resolvePr: () => null, resolvePrBulk: () => 'unknown-host' });
+  assert.strictEqual(viaString.failure, null);
+  assert.deepEqual(viaString.entries.filter((e) => e.kind === 'branch').map((e) => e.reason), ['unknown-host', 'unknown-host']);
+});
+
+test('#4794: an admitted origin screens with the bare owner/name slug, never the host-qualified --repo form', () => {
+  const dir = makeAliasFixture();
+  for (const origin of ['git@github.com:acme/w.git', 'https://acme.ghe.com/acme/w.git']) {
+    git(dir, 'remote', 'set-url', 'origin', origin);
+    const seen = [];
+    const r = archiveBranches({
+      cwd: dir, integration: 'main', dryRun: true, gateDeps: NO_HOSTS_GATE_DEPS, resolvePr: () => null,
+      resolvePrBulk: (root, branches, opts) => { seen.push({ branches, opts }); return new Map(branches.map((b) => [b, null])); },
+    });
+    assert.strictEqual(r.failure, null);
+    assert.deepEqual(seen, [{ branches: ['build/one', 'worktree-two'], opts: { repoSlug: 'acme/w' } }]);
+  }
 });
 
 test('per-candidate confirm failure skips that branch (gh-absent/network-failure reason), pass completes', () => {

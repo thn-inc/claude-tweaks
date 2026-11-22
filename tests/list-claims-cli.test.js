@@ -63,7 +63,7 @@ test('no --repo and no readable origin remote -> exit 2', () => {
   const deps = fakeDeps({ remoteUrl: () => { throw new Error('no such remote'); } });
   const code = run([], deps);
   assert.equal(code, 2);
-  assert.match(deps.calls.stderr.join(''), /could not resolve owner\/repo/);
+  assert.match(deps.calls.stderr.join(''), /could not resolve owner\/repo — pass --repo \[host\/\]owner\/name/);
 });
 
 test('--format names (default): one filename per line, in listClaimEntries\' own order', () => {

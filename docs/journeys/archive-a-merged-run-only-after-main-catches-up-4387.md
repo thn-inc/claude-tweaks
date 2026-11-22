@@ -11,7 +11,7 @@ files:
 **Persona:** A maintainer of a `pr-first` claude-tweaks repo who merges several dispatched PRs in a row. Their main checkout sits on `main` while it is a few commits behind `origin/main`, because it is dirty or simply not fetched yet.
 **Goal:** Every merged run's directory gets archived whole. The gitignored half and the tracked `work/{n}-spec.md` move into `archive/{run-id}/` together, and no state-less directory holding only a spec is left behind once `main` fast-forwards.
 **Entry point:** Any reconcile pass that runs the `archive` check after a PR merges on GitHub: SessionStart's background reconcile, dispatch's drain-end `reconcile --checks mirror,release,archive,reap`, or a hand-run `node bin/hooks.js reconcile`.
-**Success state:** While `main` is behind, the run directory stays intact and the pass reports it as `local-behind-merge`. On the first pass after `main` fast-forwards, the run moves to `.claude-tweaks/pipelines/archive/{run-id}/` with its spec `git mv`'d in one `[reconcile] archive run {run-id}` commit. `git status --porcelain -- .claude-tweaks/pipelines` stays empty.
+**Success state:** While `main` is behind, the run directory stays intact and the pass reports it as `local-behind-merge`. On the first pass after `main` fast-forwards, the run moves to `.claude-tweaks/pipelines/archive/{run-id}/` with its spec `git mv`'d in one `[reconcile] archive run {run-id}` commit. A run whose wrap-up already moved its spec header to `archive/{run-id}/` on the branch (#3976) gets the spec there from the merge itself, so the pass moves only the gitignored half and makes no commit. `git status --porcelain -- .claude-tweaks/pipelines` stays empty.
 
 ## Steps
 
@@ -26,7 +26,7 @@ files:
 ### 2. Main fast-forwards and the same sweep archives the whole run
 - **Action:** Mirror fast-forwards local `main` to `origin/main`. It runs first in the same pass, when the main checkout is clean. The spec now exists in the main checkout's tree. The archive check sees the merge locally and runs `archiveRunDir`, which `git mv`s `work/` into `archive/{run-id}/work/` and commits it with the gitignored half in one `[reconcile] archive run {run-id}` commit.
 - **Should feel:** Invisible. The maintainer did nothing and the archive looks like any other.
-- **Should understand:** The archive waits on mirror's fast-forward, not just on the fetch. A dirty main (`mirror ff declined — dirty`) keeps every run on it waiting at `local-behind-merge` until the tree is clean.
+- **Should understand:** The archive waits on mirror's fast-forward, not just on the fetch. A dirty main (`mirror ff declined — dirty`) keeps every run on it waiting at `local-behind-merge` until the tree is clean. The `git mv` and its commit are the fallback for a run merged without wrap-up's pre-merge header move (an older release, or a move that refused). A moved run's spec reaches `main` already at `archive/{run-id}/work/{n}-spec.md`, and this pass moves only the gitignored half, with no `[reconcile] archive run` commit (`merge-a-run-with-its-spec-header-already-archived-3976.md`).
 - **Red flags:**
   - The archive commit renames the spec but leaves an untracked `archive/{run-id}/` copy.
   - A second commit is needed for `work/`.

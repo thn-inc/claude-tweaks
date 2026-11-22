@@ -51,7 +51,7 @@ Render this section only when `console-filings.js --run "{item-run-dir}" --list`
 
 > These findings were surfaced by exactly one reviewer agent (or downgraded by a debate that converged negative), and the tiebreak (`review/step3-tiebreak.md`) could not settle them. The signal is real but unreplicated; the user decides whether to file or drop each.
 
-`Item` is the console item id — the staged file, or `tiebreak:{id}` for a verdict no staged file carries — the value `review-console.md` step 7's `--only` takes. `Severity` and `Recommendation` are the tiebreak verdict's. **Approve all resolves each row to its recommendation:** `file`, or none, → `filed` (a backlog record, step 7); `drop` → `dropped` (nothing executes). A human choosing Approve all on a `drop` row is a human decision: `_shared/auto-mode-contract.md`'s `### Tiebreak-refuted drop (one-decision amendment)` governs autonomous resolution, which files every can't-tell item. A legacy row whose STAGED line carries no tiebreak verdict shows `—` and stays undecided (`keep-staged`) under Approve all — never resolved `dropped`.
+`Item` is the console item id — the staged file, or `tiebreak:{id}` for a verdict no staged file carries — the value `review-console.md` step 7's `--only` takes. `Severity` and `Recommendation` are the tiebreak verdict's. **Approve all resolves each row to its recommendation:** `file`, or none, → `filed` (a backlog record, step 7); `drop` → `dropped` (nothing executes). A human choosing Approve all on a `drop` row is a human decision: `_shared/auto-mode-contract.md`'s `### Tiebreak-refuted drop (one-decision amendment)` governs autonomous resolution, which files a `file`-recommended or recommendation-less can't-tell item as a verification task and digests a `drop`-recommended one. A legacy row whose STAGED line carries no tiebreak verdict shows `—` and stays undecided (`keep-staged`) under Approve all — never resolved `dropped`.
 
 #### Contested findings (debate inconclusive — Approve all files or drops each per its tiebreak recommendation)
 
@@ -200,7 +200,9 @@ resolves each row to filed when its staged draft carries a `**Causal:** systemic
 (`upstream-feedback.md`'s Step 2), same as `Q#`/`M#` resolve to their own `Apply` default —
 otherwise it resolves to declined, same as before (#2551). The `unattended`-only
 `consoleAutoResolve` path files every row unconditionally regardless of the tag; see
-`review-console.md`. Filing an untagged item still requires choosing Override, which runs
+`review-console.md`. Under control mode ownership replaces the tag default at every tier
+(`review-console.md`'s step 9), and the heading reads `Upstream feedback (control mode: Approve all
+files an owned row and holds the rest; Override files a checked owned row)`. Filing an untagged item still requires choosing Override, which runs
 through `_shared/upstream-feedback-batch.md`'s shared batch contract — one or more `multiSelect`
 `AskUserQuestion` calls, chunked per that file's own rule (unchecked by default; checking is the
 explicit approval) — instead of one call per item; see below for where this fires relative to the

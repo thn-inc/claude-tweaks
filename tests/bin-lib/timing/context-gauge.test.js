@@ -5,8 +5,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  CONTEXT_CAP_TOKENS, CALLER_TAIL_BYTES, findAgentTranscript, hasInFlightGaugeCall, gauge, resolveTargetRecords,
+  CONTEXT_CAP_TOKENS, CALLER_TAIL_BYTES, findAgentTranscript, hasInFlightGaugeCall, gauge, resolveTargetRecords, manifestRecords, settledRecords,
 } = require('../../../plugin/bin/lib/timing/context-gauge');
+const { manifestInit, transitionSpec } = require('../../../plugin/bin/lib/flow/manifest');
 const { slugForCwd } = require('../../../plugin/bin/lib/timing/transcript');
 const { run } = require('../../../plugin/bin/context-gauge');
 const { gitRepo, harnessWorktreeOf } = require('../../helpers/git-fixtures');
@@ -256,7 +257,7 @@ test('real-input probe: a trimmed real dispatched-call transcript measures the h
 // config.yml is the shape /flow's Manifesto writes (this run's own, 2026-10-25); mode: null omits it.
 const configYml = (mode) => `mode: ${mode}\nscope-creep: add-to-plan\noverlap: companion\nmerge-authorization: ask\nspec: 4027\ncreated: 2026-10-25T162129\n`;
 
-function runFixture({ spec = 'worktree', specDirs = [], worktree = true, mode = 'auto' } = {}) {
+function runFixture({ spec = 'worktree', specDirs = [], worktree = true, mode = 'auto', dispatched = false } = {}) {
   const root = gitRepo();
   created.push(root);
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', RUN_ID);
@@ -265,7 +266,7 @@ function runFixture({ spec = 'worktree', specDirs = [], worktree = true, mode = 
   let wt = null;
   if (worktree) {
     wt = harnessWorktreeOf(root);
-    fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ worktree: wt, status: 'active' }));
+    fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ worktree: wt, status: 'active', ...(dispatched ? { dispatched: true } : {}) }));
   }
   if (spec === 'worktree' && wt) {
     fs.mkdirSync(path.join(wt, '.claude-tweaks', 'pipelines', RUN_ID, 'work'), { recursive: true });
@@ -324,7 +325,7 @@ test('CLI: 150000 tokens is under the cap — over: false and no handoff.json', 
 });
 
 test('CLI: --cap overrides CONTEXT_CAP_TOKENS', async () => {
-  const fx = runFixture();
+  const fx = runFixture({ dispatched: true });
   const t = transcriptAt(tmp('ct-gauge-cli-'), 150000);
   const c = cli(fx);
   assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--cap', '100000', '--next-steps', 'review,polish,wrap-up'], c.deps), 0);
@@ -418,7 +419,7 @@ const { HANDOFF_BOUND } = require('../../../plugin/bin/lib/timing/context-gauge'
 const readHandoff = (runDir) => JSON.parse(fs.readFileSync(path.join(runDir, 'handoff.json'), 'utf8'));
 
 test('CLI: handoffCount increments from the existing handoff.json', async () => {
-  const fx = runFixture();
+  const fx = runFixture({ dispatched: true });
   const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
   fs.writeFileSync(path.join(fx.runDir, 'handoff.json'), JSON.stringify({ nextSteps: ['test'], handoffCount: 2 }));
   const c = cli(fx);
@@ -442,7 +443,7 @@ test('CLI: a missing, garbage, or count-less handoff.json counts as 0 handoffs',
 
 test('CLI: at the bound (3 earlier handoffs) nothing is written — over: true, handoff: null, continue in place', async () => {
   assert.strictEqual(HANDOFF_BOUND, 3);
-  const fx = runFixture();
+  const fx = runFixture({ dispatched: true });
   const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
   const prior = `${JSON.stringify({ nextSteps: ['wrap-up'], handoffCount: 3 })}\n`;
   fs.writeFileSync(path.join(fx.runDir, 'handoff.json'), prior);
@@ -481,6 +482,41 @@ test('CLI: a fallback-identified transcript over the cap writes no handoff — o
   }
 });
 
+// flow/context-handoff.md: a top-level run (run-state.json not dispatched: true) never hands off wrap-up.
+// The refusal is handoff: null with this reason, logged as a SKIP like every other reason.
+const TOP_LEVEL_WRAPUP_REASON = 'handoff.json not written: a top-level run (run-state.json not dispatched: true) never hands off wrap-up — flow/context-handoff.md: continue in place';
+
+test('CLI: a top-level run over the cap with wrap-up in --next-steps writes no handoff — over as measured, handoff: null, reason names the rule', async () => {
+  const fx = runFixture();
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--next-steps', 'review,polish,wrap-up'], c.deps), 0, c.err.join(''));
+  assert.deepStrictEqual(c.json(), { contextTokens: 250000, cap: 200000, over: true, transcript: t, handoff: null, reason: TOP_LEVEL_WRAPUP_REASON });
+  assert.ok(!fs.readdirSync(fx.runDir).includes('handoff.json'));
+  assert.ok(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8').includes(TOP_LEVEL_WRAPUP_REASON), 'the refusal is logged to decisions.md');
+});
+
+test('CLI: a dispatched run over the cap with wrap-up in --next-steps still writes handoff.json', async () => {
+  const fx = runFixture({ dispatched: true });
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--next-steps', 'review,polish,wrap-up'], c.deps), 0, c.err.join(''));
+  assert.deepStrictEqual(c.json(), { contextTokens: 250000, cap: 200000, over: true, transcript: t, handoff: path.join(fx.runDir, 'handoff.json'), reason: null });
+  assert.deepStrictEqual(readHandoff(fx.runDir).nextSteps, ['review', 'polish', 'wrap-up']);
+  assert.strictEqual(readHandoff(fx.runDir).handoffCount, 1);
+});
+
+test('CLI: a top-level run with --record-steps naming wrap-up writes no handoff', async () => {
+  const fx = multiRun();
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--record-steps', '#12:none;#34:build,test,wrap-up'], c.deps), 0, c.err.join(''));
+  assert.strictEqual(c.json().over, true);
+  assert.strictEqual(c.json().handoff, null);
+  assert.strictEqual(c.json().reason, TOP_LEVEL_WRAPUP_REASON);
+  assert.ok(!fs.readdirSync(fx.runDir).includes('handoff.json'));
+});
+
 test('CLI: target records — the run dir\'s work/ when no worktree is recorded; spec-{N}/ dirs for a multi-spec run; none found is reported', async () => {
   const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
   const own = runFixture({ spec: 'run-dir', worktree: false });
@@ -488,15 +524,15 @@ test('CLI: target records — the run dir\'s work/ when no worktree is recorded;
   assert.strictEqual(await run(['--run', own.runDir, '--transcript', t, '--next-steps', 'test,review'], c.deps), 0);
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(own.runDir, 'handoff.json'), 'utf8')).resume, RESUME(own.runDir, '#4027', 'test,review'));
 
-  // A multi-spec run's targets resolve in ascending order, but the gauge hands off a single record only
-  // (--next-steps names one record's remaining steps; multi-spec handoff is #4358).
+  // A multi-spec run's targets resolve in ascending order, but --next-steps hands off a single record only
+  // (it names one record's remaining steps; a multi-record handoff takes --record-steps, #4358).
   const multi = runFixture({ spec: 'none', specDirs: [3817, 3926, 945] });
   assert.deepStrictEqual(resolveTargetRecords({ runDir: multi.runDir }), ['#945', '#3817', '#3926']);
   c = cli(multi);
   assert.strictEqual(await run(['--run', multi.runDir, '--transcript', t, '--next-steps', 'test'], c.deps), 0);
   assert.strictEqual(c.json().over, true);
   assert.strictEqual(c.json().handoff, null);
-  assert.match(c.json().reason, /^handoff\.json not written: a multi-record run \(#945, #3817, #3926\) — handoff is single-record \(#4358\): continue in place$/);
+  assert.match(c.json().reason, /^handoff\.json not written: a multi-record run \(#945, #3817, #3926\) — a multi-record handoff needs --record-steps: continue in place$/);
   assert.ok(!fs.readdirSync(multi.runDir).includes('handoff.json'));
 
   const none = runFixture({ spec: 'none' });
@@ -514,7 +550,7 @@ test('CLI: resume carries the run\'s mode — auto/confirm/hybrid resume as auto
     ['auto', ' auto'], ['confirm', ' auto'], ['hybrid', ' auto'], ['interactive', ''], [null, ''],
   ];
   for (const [mode, token] of cases) {
-    const fx = runFixture({ mode });
+    const fx = runFixture({ mode, dispatched: true });
     const c = cli(fx);
     assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--next-steps', 'review,wrap-up'], c.deps), 0, c.err.join(''));
     const h = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'handoff.json'), 'utf8'));
@@ -531,7 +567,7 @@ test('CLI: a multi-spec run with manifest.yml orders its targets by the manifest
   const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
   const fx = runFixture({ spec: 'none', specDirs: [3817, 3926, 3945, 12, 7] });
   fs.writeFileSync(path.join(fx.runDir, 'manifest.yml'), MANIFEST(RUN_ID, [3926, 3817, 3945]));
-  // The order is the resolver's (the CLI refuses a multi-record handoff, see above).
+  // The order is the resolver's (the CLI refuses a flat multi-record handoff, see above).
   assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir }), ['#3926', '#3817', '#3945', '#7', '#12']);
   // A manifest entry with no spec dir is not a target.
   assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir, manifest: { multispec: { parent: 'x', specs: [{ id: 99 }, { id: 3945 }] } } }), ['#3945', '#7', '#12', '#3817', '#3926']);
@@ -544,6 +580,108 @@ test('resolveTargetRecords: worktree copy first, then the run dir; spec-{N}/ win
   fs.mkdirSync(path.join(fx.runDir, 'spec-12'));
   fs.writeFileSync(path.join(fx.runDir, 'spec-13'), 'a file, not a spec dir');
   assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir, worktree: fx.wt, gitRoot: fx.root }), ['#12']);
+});
+
+// A header at `work/{n}-spec.md` under `base`, or under `base/spec-{n}/work` when `nested`.
+function putHeader(base, n, { nested = false } = {}) {
+  const dir = nested ? path.join(base, `spec-${n}`, 'work') : path.join(base, 'work');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${n}-spec.md`), '# spec\n');
+}
+const archivedOf = (runDir) => path.join(path.dirname(runDir), 'archive', path.basename(runDir));
+
+test('AC1.1 resolveTargetRecords: archived-only work/ header gives the live answer', () => {
+  const live = runFixture({ spec: 'none', worktree: false });
+  putHeader(live.runDir, 4027);
+  const expected = resolveTargetRecords({ runDir: live.runDir });
+  assert.deepStrictEqual(expected, ['#4027']);
+
+  const arch = runFixture({ spec: 'none', worktree: false });
+  putHeader(archivedOf(arch.runDir), 4027);
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: arch.runDir }), expected);
+
+  const wtArch = runFixture({ spec: 'none' });
+  putHeader(archivedOf(path.join(wtArch.wt, '.claude-tweaks', 'pipelines', RUN_ID)), 4027);
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: wtArch.runDir, worktree: wtArch.wt, gitRoot: wtArch.root }), expected);
+});
+
+test('AC2.1 resolveTargetRecords: archived-only spec-{N} dirs give the live answer', () => {
+  const live = runFixture({ spec: 'none', worktree: false });
+  putHeader(live.runDir, 945, { nested: true });
+  putHeader(live.runDir, 3817, { nested: true });
+  const expected = resolveTargetRecords({ runDir: live.runDir });
+  assert.deepStrictEqual(expected, ['#945', '#3817']);
+
+  const arch = runFixture({ spec: 'none', worktree: false });
+  putHeader(archivedOf(arch.runDir), 945, { nested: true });
+  putHeader(archivedOf(arch.runDir), 3817, { nested: true });
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: arch.runDir }), expected);
+});
+
+test('AC7.1 resolveTargetRecords: a record live and archived is listed once', () => {
+  const fx = runFixture({ spec: 'none', worktree: false });
+  putHeader(fx.runDir, 7);
+  putHeader(archivedOf(fx.runDir), 7);
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir }), ['#7']);
+});
+
+test('resolveTargetRecords: live work/8 and archived work/7 in one root merge; across roots the first non-empty root wins', () => {
+  const fx = runFixture({ spec: 'none', worktree: false });
+  putHeader(fx.runDir, 8);
+  putHeader(archivedOf(fx.runDir), 7);
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir }), ['#7', '#8']);
+
+  const two = runFixture({ spec: 'none' });
+  putHeader(path.join(two.wt, '.claude-tweaks', 'pipelines', RUN_ID), 5);
+  putHeader(two.runDir, 6);
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: two.runDir, worktree: two.wt, gitRoot: two.root }), ['#5']);
+});
+
+test('guard: resolveTargetRecords — an unreadable archived base is absent', () => {
+  const fx = runFixture({ spec: 'none', worktree: false });
+  const archivedBase = path.dirname(archivedOf(fx.runDir));
+  putHeader(archivedOf(fx.runDir), 9);
+  const fsImpl = { ...fs, readdirSync: (d, ...rest) => {
+    if (String(d).startsWith(archivedBase)) throw new Error('EACCES');
+    return fs.readdirSync(d, ...rest);
+  } };
+  assert.strictEqual(resolveTargetRecords({ runDir: fx.runDir, fsImpl }), null);
+});
+
+test('AC9.4 resolveTargetRecords: an unreadable archived run-dir listing hides its spec-{N} dirs, the readable archived work/ still resolves', () => {
+  const fx = runFixture({ spec: 'none', worktree: false });
+  const archived = archivedOf(fx.runDir);
+  putHeader(archived, 9, { nested: true });
+  putHeader(archived, 8);
+  const fsImpl = { ...fs, readdirSync: (d, ...rest) => {
+    if (String(d) === archived) throw new Error('EACCES');
+    return fs.readdirSync(d, ...rest);
+  } };
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir, fsImpl }), ['#8']);
+});
+
+test('resolveTargetRecords: archived-only spec-{N} dirs follow a live manifest.yml\'s non-ascending order', () => {
+  const fx = runFixture({ spec: 'none', worktree: false });
+  fs.writeFileSync(path.join(fx.runDir, 'manifest.yml'), MANIFEST(RUN_ID, [3926, 3817, 945]));
+  for (const n of [945, 3817, 3926]) putHeader(archivedOf(fx.runDir), n, { nested: true });
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir }), ['#3926', '#3817', '#945']);
+});
+
+test('resolveTargetRecords: an archived-only header in the worktree copy wins over a live header in the run dir (root by root)', () => {
+  const fx = runFixture({ spec: 'none' });
+  putHeader(archivedOf(path.join(fx.wt, '.claude-tweaks', 'pipelines', RUN_ID)), 5);
+  putHeader(fx.runDir, 6);
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir, worktree: fx.wt, gitRoot: fx.root }), ['#5']);
+});
+
+test('AC8 context-gauge no-target message names no header path', async () => {
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const none = runFixture({ spec: 'none' });
+  const c = cli(none);
+  assert.strictEqual(await run(['--run', none.runDir, '--transcript', t, '--next-steps', 'test'], c.deps), 0);
+  const { reason } = c.json();
+  assert.match(reason, /no spec header for /);
+  assert.doesNotMatch(reason, /work\/\{?n\}?-spec\.md/);
 });
 
 test('CLI: malformed invocations exit 2 and write nothing', async () => {
@@ -567,6 +705,8 @@ test('CLI: malformed invocations exit 2 and write nothing', async () => {
     ['--run', fx.runDir, '--transcript'],
     ['--run', fx.runDir, '--bogus', 'x'],
     ['--run', fx.runDir, 'constructor'],
+    // With a value after it, only the own-property guard refuses an inherited key.
+    ['--run', fx.runDir, 'constructor', 'x'],
     ['--run', path.join(fx.runDir, 'nope')],
     ['--run', path.join(fx.root, '.claude-tweaks')],
   ];
@@ -579,6 +719,231 @@ test('CLI: malformed invocations exit 2 and write nothing', async () => {
   // a well-formed call on the same fixture still succeeds (the cases above are not all-red by accident)
   const ok = cli(fx);
   assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--next-steps', 'review-console'], ok.deps), 0);
+});
+
+// #4358: the flat form stays byte-identical, key order included, with no recordSteps key.
+test('CLI: a flat --next-steps handoff.json is byte-pinned — same keys, same order, no recordSteps', async () => {
+  const fx = runFixture();
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--next-steps', 'test,review'], c.deps), 0, c.err.join(''));
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'handoff.json'), 'utf8'), `${JSON.stringify({
+    nextSteps: ['test', 'review'], contextTokens: 250000, cap: 200000, mode: 'auto', handoffCount: 1, writtenAt: '2026-10-25T18:00:00.000Z',
+    resume: RESUME(fx.runDir, '#4027', 'test,review'),
+  }, null, 2)}\n`);
+});
+
+// #4358: --record-steps, a multi-spec run's per-record handoff. The record set is the manifest's,
+// not the spec-{N}/ dirs': a later spec has no dir yet when an earlier one hits the cap.
+const RECORD_STEPS = '#12:none;#34:build,test';
+
+function multiRun({ specs = [12, 34], specDirs = [12], mode = 'auto' } = {}) {
+  const fx = runFixture({ spec: 'none', specDirs, mode });
+  assert.strictEqual(manifestInit({ runDir: fx.runDir, specs }).ok, true);
+  return fx;
+}
+
+test('CLI: AC1.1 --record-steps over the cap writes recordSteps, the union, and a per-record resume; a spec with no dir yet still counts', async () => {
+  const fx = multiRun();
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--record-steps', RECORD_STEPS], c.deps), 0, c.err.join(''));
+  const handoffPath = path.join(fx.runDir, 'handoff.json');
+  assert.deepStrictEqual(c.json(), { contextTokens: 250000, cap: 200000, over: true, transcript: t, handoff: handoffPath, reason: null });
+  assert.deepStrictEqual(readHandoff(fx.runDir), {
+    nextSteps: ['build', 'test'], recordSteps: { '#12': [], '#34': ['build', 'test'] },
+    contextTokens: 250000, cap: 200000, mode: 'auto', handoffCount: 1, writtenAt: '2026-10-25T18:00:00.000Z',
+    resume: `PIPELINE_RUN_DIR="${fx.runDir}" /claude-tweaks:flow "#12,#34" record-steps=#12:none;#34:build,test auto`,
+  });
+});
+
+test('CLI: --record-steps keys follow the manifest when the flag lists them in another order', async () => {
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const fx = multiRun({ specs: [34, 12] });
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--record-steps', RECORD_STEPS], c.deps), 0, c.err.join(''));
+  const h = readHandoff(fx.runDir);
+  assert.deepStrictEqual(Object.keys(h.recordSteps), ['#34', '#12']);
+  assert.strictEqual(h.resume, `PIPELINE_RUN_DIR="${fx.runDir}" /claude-tweaks:flow "#34,#12" record-steps=#34:build,test;#12:none auto`);
+  // The CLI reads the set through its seam.
+  const seamed = runFixture({ spec: 'none' });
+  const s = cli(seamed, { manifestRecords: () => ['#34', '#12'] });
+  assert.strictEqual(await run(['--run', seamed.runDir, '--transcript', t, '--record-steps', RECORD_STEPS], s.deps), 0);
+  assert.deepStrictEqual(Object.keys(readHandoff(seamed.runDir).recordSteps), ['#34', '#12']);
+});
+
+test('CLI: --record-steps disagreeing with the manifest writes nothing — over: true, handoff: null', async () => {
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  for (const value of ['#34:build,test', '#12:none;#34:build,test;#56:test', '#12:none;#56:test']) {
+    const fx = multiRun();
+    const c = cli(fx);
+    assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--record-steps', value], c.deps), 0, value);
+    assert.strictEqual(c.json().over, true, value);
+    assert.strictEqual(c.json().handoff, null, value);
+    assert.match(c.json().reason, /^handoff\.json not written: --record-steps names /, value);
+    assert.ok(!fs.readdirSync(fx.runDir).includes('handoff.json'), value);
+  }
+});
+
+// A record whose manifest.yml status is complete, failed or not-run has no step left, so a value that
+// gives it one would re-run a completed step on resume (the #4358 AC1 guarantee): refused, fail-open.
+test('CLI: --record-steps giving a settled record a step writes nothing; pending and running records keep theirs', async () => {
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  for (const status of ['complete', 'failed', 'not-run']) {
+    const fx = multiRun();
+    assert.strictEqual(transitionSpec({ runDir: fx.runDir, specId: 12, status, phase: 'wrap-up' }).ok, true);
+    const c = cli(fx);
+    assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--record-steps', '#12:build;#34:test'], c.deps), 0, status);
+    assert.strictEqual(c.json().over, true, status);
+    assert.strictEqual(c.json().handoff, null, status);
+    assert.match(c.json().reason, /^handoff\.json not written: --record-steps gives steps to #12 but manifest\.yml marks it complete, failed or not-run \(write it as none\): continue in place$/, status);
+    assert.ok(!fs.readdirSync(fx.runDir).includes('handoff.json'), status);
+    // Written as none, the same settled record hands off.
+    const ok = cli(fx);
+    assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--record-steps', RECORD_STEPS], ok.deps), 0, status);
+    assert.strictEqual(ok.json().handoff, path.join(fx.runDir, 'handoff.json'), status);
+  }
+  // A running record (and a pending one) still takes steps.
+  const live = multiRun();
+  assert.strictEqual(transitionSpec({ runDir: live.runDir, specId: 12, status: 'running', phase: 'review' }).ok, true);
+  const c = cli(live);
+  assert.strictEqual(await run(['--run', live.runDir, '--transcript', t, '--record-steps', '#12:review,polish;#34:build,test'], c.deps), 0);
+  assert.strictEqual(c.json().handoff, path.join(live.runDir, 'handoff.json'));
+});
+
+test('settledRecords: the manifest\'s complete, failed and not-run records; [] when none; null when absent or listing none', () => {
+  const fx = runFixture({ spec: 'none' });
+  assert.strictEqual(settledRecords(fx.runDir), null, 'no manifest.yml');
+  const specs = [{ id: 1, status: 'complete' }, { id: 2, status: 'failed' }, { id: 3, status: 'not-run' }, { id: 4, status: 'pending' }, { id: 5, status: 'running' }];
+  assert.deepStrictEqual(settledRecords(fx.runDir, { manifest: { multispec: { parent: 'x', specs } } }), ['#1', '#2', '#3']);
+  assert.deepStrictEqual(settledRecords(fx.runDir, { manifest: { multispec: { parent: 'x', specs: specs.slice(3) } } }), []);
+  assert.strictEqual(settledRecords(fx.runDir, { manifest: null }), null);
+  assert.strictEqual(settledRecords(fx.runDir, { manifest: { multispec: { parent: 'x', specs: [] } } }), null);
+});
+
+test('CLI: --record-steps with no manifest writes nothing, even with every spec dir on disk', async () => {
+  const fx = runFixture({ spec: 'none', specDirs: [12, 34] });
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--record-steps', RECORD_STEPS], c.deps), 0);
+  assert.strictEqual(c.json().over, true);
+  assert.strictEqual(c.json().handoff, null);
+  assert.match(c.json().reason, /^handoff\.json not written: .*manifest\.yml/);
+  assert.ok(!fs.readdirSync(fx.runDir).includes('handoff.json'));
+});
+
+test('CLI: --record-steps at the bound writes nothing, with the bound reason', async () => {
+  const fx = multiRun();
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const prior = `${JSON.stringify({ nextSteps: ['test'], handoffCount: 3 })}\n`;
+  fs.writeFileSync(path.join(fx.runDir, 'handoff.json'), prior);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--record-steps', RECORD_STEPS], c.deps), 0);
+  assert.strictEqual(c.json().handoff, null);
+  assert.strictEqual(c.json().reason, 'handoff bound reached (3 handoffs this run): continue in place');
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'handoff.json'), 'utf8'), prior);
+});
+
+test('CLI: --record-steps from a fallback-identified caller writes nothing', async () => {
+  const s = store();
+  agent(s.subagents, 'anew', dispatchPrompt(RUN_ID), 2000, { input: 2, cacheRead: 249000, cacheCreate: 998 });
+  const fx = multiRun();
+  const c = cli(fx, { env: { CLAUDE_CODE_SESSION_ID: SID, CLAUDE_CONFIG_DIR: s.configDir } });
+  assert.strictEqual(await run(['--run', fx.runDir, '--record-steps', RECORD_STEPS], c.deps), 0, c.err.join(''));
+  assert.strictEqual(c.json().over, true);
+  assert.strictEqual(c.json().handoff, null);
+  assert.strictEqual(c.json().reason, `caller-not-identified: fell back to first-message match; ${NOT_IDENTIFIED_HANDOFF}`);
+  assert.ok(!fs.readdirSync(fx.runDir).includes('handoff.json'));
+});
+
+test('CLI: --record-steps under the cap writes nothing', async () => {
+  const fx = multiRun();
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 150000);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--record-steps', RECORD_STEPS], c.deps), 0);
+  assert.deepStrictEqual(c.json(), { contextTokens: 150000, cap: 200000, over: false, transcript: t, handoff: null, reason: null });
+  assert.ok(!fs.readdirSync(fx.runDir).includes('handoff.json'));
+});
+
+test('CLI: --keep-going puts its token before the mode token, with no mode token after it on an interactive run; without the flag it is absent', async () => {
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const cases = [
+    ['auto', ['--keep-going'], 'record-steps=#12:none;#34:build,test keep-going auto'],
+    ['auto', [], 'record-steps=#12:none;#34:build,test auto'],
+    ['interactive', ['--keep-going'], 'record-steps=#12:none;#34:build,test keep-going'],
+  ];
+  for (const [mode, flags, tail] of cases) {
+    const fx = multiRun({ mode });
+    const c = cli(fx);
+    assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, ...flags, '--record-steps', RECORD_STEPS], c.deps), 0, c.err.join(''));
+    assert.strictEqual(readHandoff(fx.runDir).resume, `PIPELINE_RUN_DIR="${fx.runDir}" /claude-tweaks:flow "#12,#34" ${tail}`);
+  }
+});
+
+test('CLI: --no-stories puts its token after keep-going and before the mode token, with no mode token after it on an interactive run', async () => {
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const cases = [
+    ['auto', ['--no-stories'], 'record-steps=#12:none;#34:build,test no-stories auto'],
+    ['auto', ['--no-stories', '--keep-going'], 'record-steps=#12:none;#34:build,test keep-going no-stories auto'],
+    ['interactive', ['--no-stories'], 'record-steps=#12:none;#34:build,test no-stories'],
+  ];
+  for (const [mode, flags, tail] of cases) {
+    const fx = multiRun({ mode });
+    const c = cli(fx);
+    assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, ...flags, '--record-steps', RECORD_STEPS], c.deps), 0, c.err.join(''));
+    assert.strictEqual(readHandoff(fx.runDir).resume, `PIPELINE_RUN_DIR="${fx.runDir}" /claude-tweaks:flow "#12,#34" ${tail}`);
+  }
+});
+
+test('CLI: a non-canonical --record-steps value resumes in canonical form', async () => {
+  const fx = multiRun();
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--record-steps', ' #12 : none ; #34: build '], c.deps), 0, c.err.join(''));
+  const h = readHandoff(fx.runDir);
+  assert.deepStrictEqual(h.recordSteps, { '#12': [], '#34': ['build'] });
+  assert.strictEqual(h.resume, `PIPELINE_RUN_DIR="${fx.runDir}" /claude-tweaks:flow "#12,#34" record-steps=#12:none;#34:build auto`);
+});
+
+test('CLI: malformed --record-steps, --keep-going and --no-stories invocations exit 2 and write nothing', async () => {
+  const fx = multiRun();
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const base = ['--run', fx.runDir, '--transcript', t];
+  const cases = [
+    [...base, '--record-steps', RECORD_STEPS, '--next-steps', 'test'],
+    [...base, '--record-steps'],
+    [...base, '--record-steps', ''],
+    [...base, '--record-steps', '--keep-going'],
+    [...base, '--record-steps', '#12:tset'],
+    [...base, '--record-steps', '#12:none;#34:none'],
+    [...base, '--record-steps', '#12:none;#34:review-console'],
+    [...base, '--keep-going'],
+    [...base, '--keep-going', '--next-steps', 'test'],
+    [...base, '--no-stories'],
+    [...base, '--no-stories', '--next-steps', 'test'],
+    [...base, '--record-steps', '--no-stories'],
+  ];
+  for (const argv of cases) {
+    const c = cli(fx);
+    assert.strictEqual(await run(argv, c.deps), 2, JSON.stringify(argv));
+    assert.strictEqual(c.out.join(''), '', JSON.stringify(argv));
+    assert.ok(!fs.readdirSync(fx.runDir).includes('handoff.json'), JSON.stringify(argv));
+  }
+  // The same fixture hands off once the value is right (the cases above are not all-red by accident).
+  const ok = cli(fx);
+  assert.strictEqual(await run([...base, '--record-steps', RECORD_STEPS], ok.deps), 0);
+  assert.strictEqual(ok.json().handoff, path.join(fx.runDir, 'handoff.json'));
+});
+
+test('manifestRecords: the manifest\'s spec ids as #N in manifest order; null when absent or listing none', () => {
+  const fx = runFixture({ spec: 'none' });
+  assert.strictEqual(manifestRecords(fx.runDir), null, 'no manifest.yml');
+  assert.strictEqual(manifestInit({ runDir: fx.runDir, specs: [34, 12] }).ok, true);
+  assert.deepStrictEqual(manifestRecords(fx.runDir), ['#34', '#12']);
+  assert.deepStrictEqual(manifestRecords(fx.runDir, { manifest: { multispec: { parent: 'x', specs: [{ id: 7 }, { id: 9 }] } } }), ['#7', '#9']);
+  assert.strictEqual(manifestRecords(fx.runDir, { manifest: null }), null);
+  assert.strictEqual(manifestRecords(fx.runDir, { manifest: { multispec: { parent: 'x', specs: [] } } }), null);
+  assert.deepStrictEqual(manifestRecords(fx.runDir, { manifest: { multispec: { parent: 'x', specs: [{ id: 7 }, { id: 9 }, { id: 7 }] } } }), ['#7', '#9'], 'a repeated id is one record');
 });
 
 test('CLI: --run is anchored strictly — outside every checkout and a worktree-local shadow both exit 2', async () => {
@@ -609,6 +974,17 @@ test('CLI: --run is anchored strictly — outside every checkout and a worktree-
   const ok = cli(fx, { cwd: () => fx.wt, mainRoot: undefined });
   assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--next-steps', 'test'], ok.deps), 0, ok.err.join(''));
   assert.strictEqual(ok.json().handoff, path.join(fx.runDir, 'handoff.json'));
+});
+
+test('CLI: a missing --run dir whose basename is a valid run id exits 2, named as missing', async () => {
+  const fx = runFixture();
+  const missing = path.join(fx.root, '.claude-tweaks', 'pipelines', '2026-10-25T162130-record-9999');
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', missing, '--transcript', t, '--next-steps', 'test'], c.deps), 2);
+  assert.match(c.err.join(''), /--run dir does not exist or is not a directory/);
+  assert.strictEqual(c.out.join(''), '');
+  assert.ok(!fs.existsSync(missing), 'nothing created');
 });
 
 test('CLI: a --run whose basename is not a run id exits 2', async () => {
@@ -675,6 +1051,26 @@ test('gauge: per message.id the tail takes each usage field\'s max — a streami
   ]));
   assert.deepStrictEqual(await gauge({ transcript: p }), { contextTokens: 124002 });
   assert.deepStrictEqual(await gauge({ transcript: p, tailBytes: 1 }), { contextTokens: 124002 });
+});
+
+test('#5967: gauge: the tail keeps a larger earlier line over a smaller later one of the same message.id, and id-less lines stay their own turns', async () => {
+  const dir = tmp('ct-gauge-t-');
+  const p = path.join(dir, 'shrink.jsonl');
+  const line = (id, usage) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-25T17:01:00.000Z', message: { ...(id ? { id } : {}), role: 'assistant', content: [], usage } });
+  fs.writeFileSync(p, transcriptText([
+    userLine('x'),
+    line('m9', { input_tokens: 2, cache_read_input_tokens: 120000, cache_creation_input_tokens: 4000, output_tokens: 400 }),
+    line('m9', { input_tokens: 1, cache_read_input_tokens: 1000, cache_creation_input_tokens: 0, output_tokens: 8 }),
+  ]));
+  assert.deepStrictEqual(await gauge({ transcript: p }), { contextTokens: 124002 });
+  fs.writeFileSync(p, transcriptText([
+    userLine('x'),
+    line('m1', { input_tokens: 9, cache_read_input_tokens: 500, cache_creation_input_tokens: 0 }),
+    line(null, { input_tokens: 5, cache_read_input_tokens: 70000, cache_creation_input_tokens: 0 }),
+    line(null, { input_tokens: 1, cache_read_input_tokens: 10, cache_creation_input_tokens: 0 }),
+    line('m1', { input_tokens: 2, cache_read_input_tokens: 400, cache_creation_input_tokens: 0 }),
+  ]));
+  assert.deepStrictEqual(await gauge({ transcript: p }), { contextTokens: 11 }, 'the last first-line is the second id-less line; the m1 straggler does not become the last turn');
 });
 
 test('gauge: a tail window with no assistant message falls back to the whole file', async () => {

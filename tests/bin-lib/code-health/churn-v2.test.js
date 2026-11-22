@@ -3,13 +3,14 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync, spawnSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
 const { computeChurn } = require('../../../plugin/bin/lib/code-health/cache');
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'code-health.js');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-churn-v2-')); }
+function tmp() { return scratchDir('codehealth-churn-v2-'); }
 
 // recordRun/readRuns (local-disk run-log persistence) were removed by the
 // health-state migration — run history now lives on the durable health-state
@@ -21,9 +22,9 @@ function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-churn-
 // with runs.json (no gh/network needed) — the same technique
 // tests/bin-lib/code-health/cli-nextslice.test.js uses for cursors.
 function seedDurableRuns(root, runs) {
-  const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-churn-bare-'));
+  const bareDir = scratchDir('codehealth-churn-bare-');
   execFileSync('git', ['init', '--bare', '-q', bareDir]);
-  const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-churn-seed-'));
+  const seedDir = scratchDir('codehealth-churn-seed-');
   execFileSync('git', ['init', '-q', seedDir]);
   execFileSync('git', ['-C', seedDir, 'checkout', '-q', '-b', 'health-state']);
   fs.mkdirSync(path.join(seedDir, 'code-health'), { recursive: true });

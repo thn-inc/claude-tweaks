@@ -17,13 +17,27 @@ const path = require('path');
 // counts as a valid session id (both fs/path/os-only, no network pulled in).
 const { resolveSessionId } = require('./issues/record-snapshot');
 
+// The temp directory resolved from `env` the way os.tmpdir() does: win32 reads TEMP, TMP, then
+// SystemRoot\temp and ignores TMPDIR; POSIX reads TMPDIR, TMP, TEMP, then /tmp. An absent `env`
+// (or one naming no directory) falls back to os.tmpdir().
+function envTmpdir(env, platform = process.platform) {
+  if (!env) return os.tmpdir();
+  const win = platform === 'win32';
+  const sysRoot = env.SystemRoot || env.windir;
+  let t = win ? env.TEMP || env.TMP || (sysRoot ? sysRoot + '\\temp' : '') : env.TMPDIR || env.TMP || env.TEMP || '/tmp';
+  if (!t) return os.tmpdir();
+  const sep = win ? '\\' : '/';
+  if (t.length > 1 && t.endsWith(sep) && !(win && t.endsWith(':' + sep))) t = t.slice(0, -1);
+  return t;
+}
+
 // sessionId -> this session's temp root directory, or null when no session
 // id is available. Mirrors record-snapshot.js's snapshotPath degrade rule:
 // callers fall through to an unscoped path rather than erroring.
-function sessionTmpRoot(sessionId) {
+function sessionTmpRoot(sessionId, { tmpdir = os.tmpdir() } = {}) {
   const id = resolveSessionId(sessionId);
   if (!id) return null;
-  return path.join(os.tmpdir(), `ct-session-${id}`);
+  return path.join(tmpdir, `ct-session-${id}`);
 }
 
 // sessionId, filename -> the full path for one purpose-suffixed file under
@@ -32,11 +46,11 @@ function sessionTmpRoot(sessionId) {
 // skill already uses today (e.g. 'specify-parent-body.md') -- the root
 // directory is what changes, not each call site's own per-purpose naming.
 // Never throws on a pre-existing root (mkdir recursive is idempotent).
-function sessionTmpPath(sessionId, filename) {
-  const root = sessionTmpRoot(sessionId);
+function sessionTmpPath(sessionId, filename, { tmpdir = os.tmpdir() } = {}) {
+  const root = sessionTmpRoot(sessionId, { tmpdir });
   if (!root) return null;
   fs.mkdirSync(root, { recursive: true });
   return path.join(root, filename);
 }
 
-module.exports = { resolveSessionId, sessionTmpRoot, sessionTmpPath };
+module.exports = { resolveSessionId, envTmpdir, sessionTmpRoot, sessionTmpPath };

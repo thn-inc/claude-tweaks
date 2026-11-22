@@ -21,8 +21,8 @@ const { readText } = require('./helpers/read-skill');
 //
 // #296 later split the single Task() prompt into two sequential calls (build,test then
 // review,polish,wrap-up) and extracted both templates out of SKILL.md into a sub-file,
-// task-prompt.md, that SKILL.md's Step 5 now only stubs and points to ("read it and
-// inline each call's content verbatim"). The anchoring assertions below moved with the
+// task-prompt.md, that SKILL.md's Step 5 now only stubs and points to (since #4589 it
+// renders each call's prompt from that file with dispatch-prompt.js). The anchoring assertions below moved with the
 // content they check — reading only SKILL.md after that extraction would silently stop
 // checking anything real, the same class of gap this file exists to prevent elsewhere.
 //

@@ -35,7 +35,7 @@ files:
   - There are ten classes: `edit`, `read`, `explore`, `procedure`, `bookkeeping`, `orientation`, `verify`, `guard-refusal`, `dispatch`, `other`. Every call lands in exactly one.
   - Ceremony share is `procedure + bookkeeping + orientation + guard-refusal` over all calls, rounded from the integer counts.
   - A `Read` of a skill file is `procedure`, not `read`. A refused call is `guard-refusal` whatever tool it was.
-  - Context per turn is input plus cache-read plus cache-create tokens on each turn-start row, nearest-rank p50/p90. `subagents` is the `dispatch` count.
+  - Context per turn is input plus cache-read plus cache-create tokens on each turn-start row, nearest-rank p50/p90. `subagents` counts agents: the `Agent` and `Task` calls in the span plus the workflow-script agents whose first transcript row falls in it (#5597). The `dispatch` turn class counts calls (`Agent`, `Task` and `Workflow`), so a run that starts agents through a workflow shows more `subagents` than `dispatch` calls; with no workflow agents the two match.
   - The summaries paste both lines verbatim, as `_shared/timing-render.md` says. A run whose transcript was not found prints neither.
 - **Red flags:**
   - A large `other` count: a common Bash shape the classifier does not recognize yet.
@@ -45,7 +45,7 @@ files:
 - **URL:** `{run-dir}/timing.json`, each phase's `turnClasses` and `context`
 - **Action:** Compare a phase's ceremony classes against its `edit`/`read` counts.
 - **Should feel:** The overhead has an address, such as "plan read 40 procedure files", not a run-wide average.
-- **Should understand:** Rows join phases the same way tokens do, to the innermost phase containing the timestamp. `totals.verifyMinutes` is the summed duration of the run's recorded verify runs, the value the verify-minutes budget reads.
+- **Should understand:** Rows join phases the same way tokens do, to the innermost phase containing the timestamp. `totals.verifyMinutes` is the summed duration of the run's recorded verify runs, less the time each spent queued for a suite slot (the event's `slotWaitedMs`, #5119), the value the verify-minutes budget reads.
 - **Red flags:** Every count on one phase and zeros elsewhere: the run's `events.jsonl` phase windows are missing or collapsed.
 
 ### 3. Let wrap-up check the budget
@@ -81,4 +81,4 @@ files:
 
 ## Origin
 
-Built by #4029 (run `2026-10-24T193455-record-4029`). It extends the per-phase token axis from `see-which-phase-spent-the-tokens-1929.md`.
+Built by #4029 (run `2026-10-24T193455-record-4029`). It extends the per-phase token axis from `see-which-phase-spent-the-tokens-1929.md`. #5597 (run `2026-11-16T003729-record-5597`) made `subagents` count workflow-script agents and classed a `Workflow` call as `dispatch`.

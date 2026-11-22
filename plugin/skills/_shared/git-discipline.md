@@ -84,8 +84,11 @@ marker instead (`flow/multispec-parallel-waves.md` runs the wave's build phase e
 merge-back).
 
 Ship at every phase exit, not batched — measured at ≥50× headroom against the GitHub API budget
-(spike #405; `git push` itself costs zero REST/GraphQL calls, so per-phase cadence is free
-regardless of phase count).
+(spike #405; `git push` itself costs zero REST/GraphQL calls, so the API cost of per-phase cadence
+is free regardless of phase count). Actions minutes are the cost that does scale: under `pr-first`
+every push to the draft PR runs the project's `pull_request` CI unless the project follows
+`_shared/ci-skips-drafts.md`'s convention. That convention is the mitigation; the cadence stays
+per-phase for durability and visibility.
 
 **Failure degrades per-attempt, never persists.** A failed phase-exit push (network, auth, a
 rejected non-fast-forward) logs a warning to the run's `decisions.md` and the phase continues —
@@ -155,6 +158,11 @@ check (no phase-exit push), and a run with no `pr` in `run-state.json` reads `no
 
 Like the push itself, this degrades per attempt and never persists — nothing is written to
 `run-state.json`, so the next phase exit's check runs regardless.
+
+At the build phase's exit this read normally prints `no-conflict`: a `pr-first` `/claude-tweaks:build`
+outside a multi-spec run already merged the integration branch in before its final verification
+(`_shared/pre-verification-catchup.md`), so a conflict found there is the residual case of a base
+that moved during that verification.
 
 **Catch-up (`auto`).** Merge the integration branch in; never rebase — the run branch is already
 public behind its PR, and a rebase would need the force push the Git Rules forbid. Merging into

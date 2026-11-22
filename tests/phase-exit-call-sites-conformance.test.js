@@ -159,10 +159,18 @@ const SELF_LOGGING_SOURCES = {
   'console-filings.js': ['plugin/bin/console-filings.js'],
   'reflect-apply.js': ['plugin/bin/reflect-apply.js', 'plugin/bin/lib/console/reflect-apply.js'],
   'review-coordination.js resolve-tiebreak': ['plugin/bin/review-coordination.js'],
+  'review-coordination.js categorise-reproduction --run': ['plugin/bin/review-coordination.js'],
+  'review-coordination.js log-reproduction-judgment': ['plugin/bin/review-coordination.js'],
+  'review-coordination.js settle-lens-replies --run': ['plugin/bin/review-coordination.js'],
   'hooks.js delete-ledger': ['plugin/bin/hooks.js'],
   'express-lane.js check': ['plugin/bin/express-lane.js', 'plugin/bin/lib/express/cli.js'],
   'express-lane.js escalate': ['plugin/bin/express-lane.js', 'plugin/bin/lib/express/cli.js'],
   'pre-review-catchup.js': ['plugin/bin/pre-review-catchup.js'],
+  'stash-guard.js compare': ['plugin/bin/stash-guard.js'],
+  // The CLI appends its marker and AUTO/SKIP lines from the lib module it drives.
+  'post-merge-run.js': ['plugin/bin/post-merge-run.js', 'plugin/bin/lib/reconcile/post-merge.js'],
+  'archive-run-header.js': ['plugin/bin/archive-run-header.js'],
+  'accept-park.js park': ['plugin/bin/accept-park.js'],
 };
 
 function listedSelfLoggers(text) {

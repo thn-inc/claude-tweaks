@@ -15,7 +15,10 @@
 // whitespace is refused (exit 2) rather than silently replaced; else the
 // GitHub default branch, rank 5's GitHub-default half of
 // _shared/integration-branch.md (a worktree's current
-// branch is a throwaway, never a base). --worktree defaults to run-state.json's
+// branch is a throwaway, never a base). That last fallback, taken from a linked
+// worktree (no policy.yml key in the worktree, the main checkout, or the run's
+// config.yml), prints one warning on stderr naming the base and the worktree;
+// stdout and the exit code are unchanged. --worktree defaults to run-state.json's
 // `worktree`, then the cwd. The summary is read from a file (written with the
 // Write tool), so record text never passes through a shell; one trailing
 // newline is stripped. The body goes to the session temp path
@@ -27,9 +30,11 @@
 //
 // Stdout: one JSON line, {outcome, number?, url?, reason?, reopenRejected?};
 // outcome is reused | reopened | opened | push-failed | create-failed.
-// reopenRejected (a CLOSED PR number) appears when a reopen was refused and
-// the run fell through to creation: the caller repoints an earlier attempt's
-// issue pointer comment at the new PR, per the spec's "Reopen fails" paragraph.
+// reopenRejected (a CLOSED PR number) appears when a reopen was refused or
+// unconfirmed (the PR did not read OPEN after it) and the run fell through to
+// creation: the caller repoints an earlier attempt's issue pointer comment at
+// the new PR, per the spec's "Reopen fails" paragraph. The number can equal
+// `number` when a landed reopen is adopted and rebound.
 // Exit 0 a PR is recorded (reused, reopened, opened).
 //      3 a logged degrade (push-failed, create-failed): decisions.md carries the
 //        FAILED line and the run proceeds local-only. A reused or reopened PR
@@ -37,7 +42,7 @@
 //        stale recorded PR (Resume found it closed or gone) is cleared to
 //        `pr: null` on a degrade, so nothing reads the closed PR as live.
 //      2 malformed invocation; a --run that is missing, not anchored under the
-//        main checkout (a worktree-local shadow, or outside every checkout), or
+//        main checkout (a worktree-local shadow, or a directory outside pipelines/, or outside every checkout), or
 //        whose basename is not a run id; an unreadable --summary-file; an
 //        integration-branch value holding whitespace; or gh absent — take the
 //        MCP path in pr-early-run-lifecycle.md's "gh absent" row.
@@ -59,10 +64,13 @@ const { openPrEarly } = require('./lib/flow/pr-early-open');
 const { appendEntry } = require('./lib/log-decision/append');
 const ctxLib = require('./lib/hooks/context');
 const { resolveTarget } = require('./lib/stage-item/write');
-const { resolvePolicyConfig } = require('./lib/policy-schema');
-const { ghAvailable, parseRepo, repoSlug } = require('./lib/repo-resolve');
+const { resolvePolicyConfig, POLICY_KEYS } = require('./lib/policy-schema');
+const { isLinkedWorktreeRoot } = require('./lib/policy-file');
+const { ghAvailable, parseRepo, repoSlug, ghOptions } = require('./lib/repo-resolve');
 const { sessionTmpPath } = require('./lib/session-tmp');
-const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
+const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, isTimeoutError } = require('./lib/shared-primitives');
+const { appendStationEvent, toRepoName } = require('./lib/station-events/emit');
+const { PR_OPENED_FACT, PR_OPENED_TRANSITION } = require('./lib/station-events/stations');
 
 const USAGE = 'usage: pr-early-open.js --run <run-dir> --target "#N[,#M]" --fixes N[,M] --title <text> --summary-file <path>\n'
   + '         [--worktree <path>] [--base <branch>] [--next-step build] [--help]\n'
@@ -101,15 +109,16 @@ function readFileSafe(p) {
 const realDeps = {
   cwd: () => process.cwd(),
   ghAvailable: () => ghAvailable(),
-  gh: (args, { cwd } = {}) => execFileSync('gh', args, {
+  gh: (args, { cwd } = {}) => execFileSync('gh', args, ghOptions(args, {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true,
-  }),
+  })),
   // GIT_TIMEOUT_MS bounds the one network call here, the push.
   git: (args, { cwd } = {}) => execFileSync('git', args, {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, windowsHide: true,
   }),
   sleep: (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
   now: () => Date.now(),
+  isLinkedWorktreeRoot,
   mainRoot: undefined, // resolveTarget derives the main-checkout anchor from cwd
   resolveTarget,
   readFile: (p) => fs.readFileSync(p, 'utf8'),
@@ -121,6 +130,9 @@ const realDeps = {
     fs.writeFileSync(p, text);
     return p;
   },
+  sessionId: process.env.CLAUDE_CODE_SESSION_ID || null,
+  // #5902: the station-event emitter; a caller that overrides it with undefined emits nothing.
+  stationEvent: (e) => appendStationEvent(e),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -155,7 +167,7 @@ async function run(argv, overrides = {}) {
   if (!target.ok) {
     return usageError(target.reason === 'missing'
       ? `--run dir does not exist or is not a directory: ${o.run}`
-      : `--run ${o.run} is not anchored under the main checkout (a worktree-local shadow, or outside every checkout) — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
+      : `--run ${o.run} is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/, or outside every checkout) — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
   }
   const runDir = target.dir;
   const runId = path.basename(runDir);
@@ -177,7 +189,16 @@ async function run(argv, overrides = {}) {
     let state = null;
     try { state = deps.readRunState(runDir); } catch { state = null; }
     const worktree = o.worktree || (state && typeof state.worktree === 'string' && state.worktree) || deps.cwd();
-    const gh = (args) => deps.gh(args, { cwd: worktree });
+    // A timed-out gh call is marked here, so the outer catch words the hint
+    // for gh alone — a git timeout on the same path keeps its bare error.
+    const gh = (args) => {
+      try {
+        return deps.gh(args, { cwd: worktree });
+      } catch (e) {
+        if (isTimeoutError(e)) e.ghTimedOut = true;
+        throw e;
+      }
+    };
     const git = (args, opts) => deps.git(args, { cwd: (opts && opts.cwd) || worktree });
 
     // The base: --base verbatim, else the configured key. The schema rejects
@@ -185,12 +206,14 @@ async function run(argv, overrides = {}) {
     // null; refuse it rather than quietly opening the PR against the GitHub
     // default instead. The raw value rides onInvalid, as in resolve-policy.js.
     let configured = null;
+    let policyRoot = null;
     if (!o.base) {
       let rejected = null;
-      const { result } = resolvePolicyConfig({
+      const { result, root } = resolvePolicyConfig({
         git: (args) => git(args), readFile: readFileSafe, runDir, keys: ['integration-branch'],
         onInvalid: (key, raw) => { rejected = raw; },
       });
+      policyRoot = root;
       const entry = result['integration-branch'];
       const raw = entry && entry.value;
       configured = typeof raw === 'string' && raw.trim() ? raw.trim() : null;
@@ -209,6 +232,9 @@ async function run(argv, overrides = {}) {
 
     const base = o.base || configured || (view && view.defaultBranchRef && view.defaultBranchRef.name) || null;
     if (!base) return internal('could not resolve the integration branch (no --base, no integration-branch key, no GitHub default branch)');
+    if (!o.base && !configured && policyRoot && deps.isLinkedWorktreeRoot(policyRoot)) {
+      deps.stderr(`pr-early-open.js: warning: no integration-branch found (this worktree's policy.yml, the main checkout's, or the run's config.yml) — the draft PR targets the GitHub default branch "${base}" from linked worktree ${policyRoot}\n`);
+    }
 
     const res = await openPrEarly({
       runDir, worktree, branch, repo, base, target: o.target, fixes, title: o.title, summary,
@@ -238,14 +264,34 @@ async function run(argv, overrides = {}) {
       writeBodyFile: deps.writeBodyFile,
       readFile: deps.readFile,
     });
+    // #5902: a PR this call opened or reopened is a build-station fact for every
+    // record it fixes (one event each); a reused PR or a degrade writes nothing.
+    // Optional dep (absent = none); each emission wrapped so a throwing emitter
+    // never skips another record or changes stdout or the exit code.
+    const repoName = toRepoName(repo);
+    if ((res.outcome === 'opened' || res.outcome === 'reopened') && typeof deps.stationEvent === 'function' && repoName) {
+      const payload = { fact: PR_OPENED_FACT, prNumber: res.number, prUrl: res.url, outcome: res.outcome };
+      for (const n of fixes) {
+        try {
+          deps.stationEvent({
+            ...PR_OPENED_TRANSITION, recordNumber: Number(n), repoName,
+            runId, sessionId: deps.sessionId || null, lane: 'unknown',
+            payload: { ...payload }, discriminator: `pr:${res.number}:${res.outcome}`,
+          });
+        } catch { /* best-effort: the PR stands */ }
+      }
+    }
     deps.stdout(`${JSON.stringify(res)}\n`);
     return OK_OUTCOMES.has(res.outcome) ? 0 : 3;
   } catch (e) {
+    if (e && e.ghTimedOut) {
+      return internal(`${errText(e)}\ngh timed out after ${GH_TIMEOUT_MS} ms — override via the gh-timeout-ms policy key or the CLAUDE_TWEAKS_GH_TIMEOUT_MS env var (max ${POLICY_KEYS.find((k) => k.key === 'gh-timeout-ms').max})`);
+    }
     return internal(errText(e));
   }
 }
 
-module.exports = { run, parseArgs };
+module.exports = { run, parseArgs, realDeps };
 
 if (require.main === module) {
   run(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (err) => {

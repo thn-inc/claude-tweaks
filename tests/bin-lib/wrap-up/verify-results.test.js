@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const {
@@ -9,7 +10,7 @@ const {
 } = require('../../../plugin/bin/lib/wrap-up/verify-results');
 
 function tmpRunDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'verify-results-'));
+  return scratchDir('verify-results-');
 }
 
 const ROWS = [

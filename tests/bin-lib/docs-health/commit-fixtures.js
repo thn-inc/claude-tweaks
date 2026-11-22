@@ -2,6 +2,7 @@
 // Real throwaway git repositories for the verify-commit tests (#2866).
 // Not a *.test.js file, so tools/run-tests.js never runs it on its own.
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -10,14 +11,18 @@ const { execFileSync } = require('child_process');
 // FIXTURE_TIMEOUT_MS rationale).
 const GIT_TIMEOUT_MS = 30000;
 
+// Re-exported below for this file's existing callers.
+const { cleanGitEnv } = require('../../helpers/git-fixtures');
+
 function git(cwd, args, input) {
   return execFileSync('git', args, {
     cwd, encoding: 'utf8', timeout: GIT_TIMEOUT_MS, stdio: 'pipe', input,
+    env: cleanGitEnv(process.env),
   });
 }
 
 function tmpDir(label) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), `docs-health-commit-ref-${label}-`));
+  return scratchDir(`docs-health-commit-ref-${label}-`);
 }
 
 // main: root -> second -> third; side branches off second with one commit
@@ -80,4 +85,6 @@ function makeAmbiguousRepo() {
   throw new Error('makeAmbiguousRepo: no shared 4-character commit prefix — fixture is broken');
 }
 
-module.exports = { git, tmpDir, makeOriginRepo, cloneOf, makeAmbiguousRepo };
+module.exports = {
+  git, tmpDir, makeOriginRepo, cloneOf, makeAmbiguousRepo, cleanGitEnv,
+};

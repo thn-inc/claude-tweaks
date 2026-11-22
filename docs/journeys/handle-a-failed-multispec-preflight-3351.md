@@ -28,14 +28,14 @@ files:
 
 ### 2. A `gh` hiccup gets one retry, then a stop
 - **URL:** `plugin/skills/flow/multispec-preflight-failure.md`, "Exit 1"
-- **Action:** On exit 1 (a record fetch or the native GraphQL call failed), `/flow` re-runs the identical call once. A second exit 1 is a **STOP before claiming**, quoting stderr. On a fetch failure, stderr names every failing record; a native GraphQL failure names none. Under `parallel`, the re-run without `--waves` is that one retry.
+- **Action:** On exit 1 (a record fetch or the native GraphQL call failed), `/flow` re-runs the identical call once. A second exit 1 is a **STOP before claiming**, quoting stderr. On a fetch failure, stderr names every failing record; a native GraphQL failure names none, unless `gh` reported a candidate NOT_FOUND, which stderr names as `missing dependency data for #n`. Under `parallel`, the re-run without `--waves` is that one retry.
 - **Should feel:** Forgiving of a blip, firm about a real outage. One retry, never a loop, never a third call.
 - **Should understand:** A missing record can't cause this, because step 1 (Parse) already stopped on any record that wouldn't resolve. Nothing needs tearing down, since no claim, worktree or run-dir write exists yet. Inside a `/claude-tweaks:dispatch` bundle, the STOP is that bundle's failed run.
 - **Red flags:** More than one retry. A STOP after a claim was made. A `parallel` run that retries twice (once with `--waves`, once without).
 
 ### 3. A malformed call or a dependency cycle stops at once
 - **URL:** `plugin/skills/flow/multispec-preflight-failure.md`, "Exit 2"
-- **Action:** On exit 2 (an invocation bug, an unresolvable owner/repo under `native`, a `--records-json` input problem, or a `--waves` dependency cycle), `/flow` STOPs before claiming, with no retry, quoting stderr.
+- **Action:** On exit 2 (an invocation bug, an unresolvable owner/repo under `native` or for a `--blocker-landing` blocker set, a `Blocked by #0` blocker number, a `--records-json` or `--blocker-states-json` input problem, or a `--waves` dependency cycle), `/flow` STOPs before claiming, with no retry, quoting stderr.
 - **Should feel:** Immediate — retrying can't fix a malformed call.
 - **Should understand:** A `--waves` cycle under `parallel` also STOPs, and never drops to a sequential run. Step 4 would hard-fail the same cycle anyway.
 - **Red flags:** An exit-2 run that retries, or that falls back to sequential.
@@ -56,4 +56,5 @@ files:
 
 ## Origin
 - Created during #3351's build (run 2026-10-17T095806-spec-3351): `preflight-records.js --records-json`, `issuesFromRecordsJson`, and `multispec-preflight-failure.md`.
+- Updated during wrap-up of #4792: step 2 names the `missing dependency data for #n` line a native call now prints for a candidate `gh` reports NOT_FOUND.
 - Related: `run-a-batch-whose-record-needs-a-merged-prerequisite-2733.md` (the merge-state gate that now defers to this ruling) and `run-independent-records-in-parallel-waves-2677.md` (the waves fallback, now exit 1 only).

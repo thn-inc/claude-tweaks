@@ -6,6 +6,7 @@ files:
   - plugin/bin/lib/console/resolve.js
   - plugin/bin/console-resolve.js
   - plugin/skills/review/step3-routing.md
+  - plugin/bin/review-routing-line.js
 ---
 
 # Stage a Patch That Conflicts With an Earlier One
@@ -35,8 +36,8 @@ files:
 - **URL:** the JSON `rederived` / `rederiveReason` fields, and the run's `decisions.md`
 - **Action:** When `rederived` is set, overwrite `staged/{slug}-{n}.patch` with that file (its `Target:`/`Invariant:` preamble kept verbatim), re-run only the stacked check, once, and write the `STAGED` line suffixed ` Re-derived onto staged/{earlier}.patch.` When it is null, re-anchor once if the edit admits another anchor, or keep the patch and log the `stacked check: staged/{a} does not apply on top of staged/{b}` line.
 - **Should feel:** Decided, not stalled — none of these branches stops an `auto` run.
-- **Should understand:** Re-derivation is a 3-way `git merge-file` onto the stacked state, verified to apply there before it is returned. Two insertions at the same anchor always conflict in a 3-way merge, so the motivating case (run 2026-10-16T181217-spec-2882) ends in the logged conflict or a manual re-anchor, never a silent guess. A patch with a mode change, rename, create, or delete is never re-derived.
-- **Red flags:** A re-derived patch written without its preamble. A re-derive attempted when the target was the earlier side. A second re-derive after the re-run.
+- **Should understand:** Re-derivation is a 3-way `git merge-file` onto the stacked state, verified to apply there before it is returned. Two insertions at the same anchor always conflict in a 3-way merge, so the motivating case (run 2026-10-16T181217-spec-2882) ends in the logged conflict or a manual re-anchor, never a silent guess. A patch with a mode change, rename, create, or delete is never re-derived. At `/review` Step 3 the `STAGED` line comes only from `review-routing-line.js` (`review/step3-routing.md`), so the site passes the outcome as flags on that call: `--rederived-onto`, `--conflict` and `--conflicts-with` with `--stack-stderr`, or `--stack-exit` with `--stack-stderr`. The composer writes the outcome's wording into the line and keeps its release-gate token and stage path.
+- **Red flags:** A re-derived patch written without its preamble. A re-derive attempted when the target was the earlier side. A second re-derive after the re-run. A hand-typed `Step 3 Routing:` line at `/review` carrying the suffix or the conflict pair — the composer owns that line.
 
 ### 4. See the console apply the stack
 - **URL:** the Review Console (`/claude-tweaks:wrap-up` Phase 4; `console-resolve.js` under `consoleAutoResolve`)

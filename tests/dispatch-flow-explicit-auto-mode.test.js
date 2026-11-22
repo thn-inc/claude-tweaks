@@ -77,13 +77,13 @@ test('SKILL.md: Singleton group and Bundle group lines each carry 2 flow forms, 
   }
 });
 
-test('task-prompt.md: rationale paragraph sits right after the Before-substituting paragraph, outside the fence', () => {
+test('task-prompt.md: rationale paragraph sits right after the Before-rendering paragraph, outside the fence', () => {
   const text = read(TASK_PROMPT);
   const a = text.indexOf(FIRST_HEADING);
   const prose = text.slice(a, text.indexOf('\n```\n', a));
   const paras = prose.split('\n\n');
-  const before = paras.findIndex((p) => p.startsWith('**Before substituting this template**'));
-  assert.ok(before !== -1, 'Before-substituting paragraph not found');
+  const before = paras.findIndex((p) => p.startsWith('**Before rendering this template**'));
+  assert.ok(before !== -1, 'Before-rendering paragraph not found');
   const rationale = paras[before + 1] || '';
   assert.match(rationale, /headless and cannot answer `interactive` prompts, so both calls pass `auto` explicitly/);
   assert.match(rationale, /an explicit mode argument outranks the project's `auto-mode` policy/);

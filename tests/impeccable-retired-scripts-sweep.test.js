@@ -29,8 +29,6 @@ const SWEPT_DIRS = ['plugin', '.claude/skills', 'docs', 'tests', 'tools'];
 
 // Exempt by exact path, unconditionally — whatever text remains in them.
 const EXEMPT_PATHS = new Set([
-  'plugin/skills/design-wrapper/claude-design-skill-comparison.md',
-  'plugin/skills/design-wrapper/third-party-design-skill-comparisons.md',
   'docs/incident-log.md',
   'tests/bin-lib/issues/fixtures/record-146-body.md',
   'tests/bin-lib/issues/fixtures/record-150-body.md',

@@ -52,6 +52,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const path = require('node:path');
 const os = require('node:os');
 const Module = require('node:module');
@@ -376,7 +377,7 @@ function findLockfiles(dir, out = []) {
 //    go-red guidance; the real corpus is swept separately below) ───────────
 
 function tmp() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'payload-boundary-'));
+  return scratchDir('payload-boundary-');
 }
 
 test('scanMarkdownReferences: flags a reference outside any fence', () => {

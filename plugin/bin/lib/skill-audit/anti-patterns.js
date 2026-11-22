@@ -14,7 +14,7 @@
 //      catches it outright.
 //   2. Every backticked identifier in a row survives somewhere in that row.
 //      Identifiers are the concrete anchors a rule hangs on (`TEST_PASSED=true`,
-//      `demo:pending`, `$PIPELINE_RUN_DIR`); prose around them may be tightened
+//      `acceptance: pending`, `$PIPELINE_RUN_DIR`); prose around them may be tightened
 //      freely, but losing one means the rule no longer names what it governs.
 //
 // Deliberately NOT checked: prose similarity. Compression is supposed to rewrite

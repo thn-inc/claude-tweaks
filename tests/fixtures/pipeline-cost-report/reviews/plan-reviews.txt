@@ -1,0 +1,19 @@
+=== rows-with-overflow (2026-11-16T100700-record-4621, a76000107c0607668) ===
+| Severity | Class | Resolution | Path:Line | Finding | Evidence | Suggested resolution |
+|---|---|---|---|---|---|---|
+| high | spec gap | needs-human | docs/superpowers/plans/2026-11-16-upstream-filing-ownership.md:32 | Cloud and Routine sandboxes use the proxy origin, so the plan reads it as `owner-unresolved`. | `repo-resolve.js:167` names this proxy shape as one that does not parse. | Reading A: keep AC7 as written. / Reading B: read the proxy's path as github.com `owner/repo`. |
+| high | cross-task contract | — | docs/superpowers/plans/2026-11-16-upstream-filing-ownership.md:178 | AC4 needs a `decisions.md` entry naming the issue created. Only `--filed {url}` (Task 4) writes that line. | Task 5 (plan:178) "below unattended". | Task 5's review-console.md edit: call `--filed {url}` after every owned filing. |
+| medium | missing-review-risk | — | docs/superpowers/plans/2026-11-16-upstream-filing-ownership.md:148 | Task 4 touches shared mutable state and decision logic without `Review risk: high`. | No `**Review risk:** high` line. | Add `**Review risk:** high` to Task 4. |
+| info | — | — | — | +2 more | — | — |
+
+STATUS: DONE
+=== undecided-behaviour (2026-11-19T073112-spec-5902, af08f158fffb59c29) ===
+| Severity | Class | Resolution | Path:Line | Finding | Evidence | Suggested resolution |
+|---|---|---|---|---|---|---|
+| medium | undecided behaviour | — | docs/superpowers/plans/2026-11-19-station-events.md:91 | The merge-station mapping produces an incoherent visit. | `merge.js` emits `merge-call` with status `ok` on non-merges. | Map `merge-call` by its outcome, not its status. |
+
+STATUS: DONE
+=== no-findings (2026-11-15T231106-spec-5550-5551, a7f7c2602ff84ba3d) ===
+No findings.
+
+STATUS: DONE

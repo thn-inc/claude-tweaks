@@ -3,6 +3,8 @@ files:
   - plugin/bin/lib/timing/transcript.js
   - plugin/bin/lib/timing/derive.js
   - plugin/bin/phase-timing.js
+  - plugin/bin/lib/timing/run-timing.js
+  - plugin/bin/lib/timing/at-close.js
   - plugin/skills/wrap-up/summary-template.md
   - plugin/skills/flow/summary-template.md
   - plugin/skills/flow/multispec-summary.md
@@ -36,6 +38,7 @@ files:
   - Neither column is comparable to the phase table's minutes, and the Dispatches tokens are never added to the phase table's main-session `Tokens` column.
   - Tier comes from the meta file's model alias when it names one. Otherwise it comes from the transcript's own `claude-…` id. A model matching no family shows as `unmapped (raw: …)` with its name, never guessed.
   - Role comes from the dispatch description. `unlabelled` growing between runs is the drift signal that a dispatch site renamed its descriptions.
+  - Agents a workflow script started (`{sessionId}/subagents/workflows/{runId}/`) count here like Task agents, with the label the script gave them as their description; in `timing.json` their items also carry `workflowRunId` and `workflowPhase`, which a Task agent's item omits (#5597).
 - **Red flags:**
   - A large `unlabelled` row on a run you know ran per-task SDD reviews: a description shape the patterns do not recognize yet.
   - `Elapsed (min)` times 60 well above `Agent-seconds`: the union rounding regressed.
@@ -47,12 +50,14 @@ files:
   - `dispatch agent-{id}: transcript not found ({code})` (`symlink` when the file is a symlink, which is never followed);
   - `dispatch agent-{id}: transcript has no usage rows`;
   - `dispatch agent-{id}: meta not found (description null)`, or `meta not readable ({code|malformed|symlink}) (description null)` for a meta file that exists but cannot be used;
-  - `dispatches: {n} outside the run window excluded`.
+  - `dispatches: {n} outside the run window excluded`;
+  - for a workflow run directory: `workflows/ directory …` or `workflow run directory is a symlink (not followed) at …` / `… not readable ({code}) at …`, `no agent-* transcripts in {run dir}`, and `workflow run {runId}: run file agentCount {n}, {m} agent(s) found in …` when the run's own agent count disagrees with the transcripts found (#5597).
 - **Should feel:** Every dispatch is either counted or named, with nothing quietly dropped.
 - **Should understand:**
   - The run window runs from the run's first to its last `events.jsonl` timestamp, not counting a `worktree-reaped` event (it fires hours after the session ends). Dispatches entirely outside it belong to other work in the same session and are excluded.
   - A run with no events reports the whole session and says `whole session — no run events`.
   - A not-found dispatch carries no numbers in any bucket. An orphan transcript (no meta) still counts, under `unlabelled`.
+  - A dispatched run's `timing.json` written at close (#5647) also reads the `subagents/` directories of its dispatching and resuming sessions. The Task calls whose prompt names the run are left out of these tables, because their tokens are already in `totals.tokens`, so they are not missing dispatches. From a directory reached only through those calls, only the agents they started are kept, so another record's agents in the same session are not counted. The run's own-slug directory keeps the window rule above, minus those Task calls.
 - **Red flags:** A dispatch that you know ran, appearing in neither a table nor a line.
 
 ### 4. Compare against the baseline
@@ -69,4 +74,6 @@ files:
 
 ## Origin
 
-Built by #3375 (multi-spec run `2026-10-17T144508-spec-3375-3380`) — part of the "Build dispatch cost shape" decomposition from #3229. #3413 (run `2026-10-19T044738-record-3413`) moved the Dispatches render rules out of the three summary templates into `_shared/timing-render.md`, which all three now cite; the rendered output is unchanged.
+Built by #3375 (multi-spec run `2026-10-17T144508-spec-3375-3380`) — part of the "Build dispatch cost shape" decomposition from #3229. #3413 (run `2026-10-19T044738-record-3413`) moved the Dispatches render rules out of the three summary templates into `_shared/timing-render.md`, which all three now cite; the rendered output is unchanged. #5597 (run `2026-11-16T003729-record-5597`) added agents started by a workflow script and their run-directory lines.
+
+#5647 (run `2026-11-21T181802-spec-5647`) scoped a dispatched run's at-close `dispatches` to the Task calls that ran it.

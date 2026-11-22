@@ -2,12 +2,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const {
-  recordPayload, TYPE_LABELS, CLASSIFICATION_SCORING, LABELS, DEFER_REASONS,
-  extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
-  buildNativeDependencyQuery, hasOpenNativeBlocker, parseSubIssues, buildNativeSubIssuesQuery,
+  recordPayload, ORIGINS, TYPE_LABELS, CLASSIFICATION_SCORING, LABELS, DEFER_REASONS,
+  extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, ownOriginLine, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
+  buildNativeDependencyQuery, hasOpenNativeBlocker, parseSubIssues, parseParent, buildNativeSubIssuesQuery,
   buildNativeParentQuery,
+  buildAuthorAssociationQuery,
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
   buildLinkedPRQuery, partitionByOpenLinkedPR, extractSection, isRepoRelativeKeyFilePath,
+  crossRepositoryBlockers, withoutCrossRepoBlockers, foreignBlockerBlocks, foreignBlockerRef, openBlockerRefs, openNativeBlockerRefs,
 } = require('../../../plugin/bin/lib/issues/record');
 
 test('recordPayload assembles labels for a born-ready health record', () => {
@@ -63,6 +65,32 @@ test('recordPayload accepts origin: docs-health', () => {
 test('recordPayload accepts origin: dispatch', () => {
   const payload = recordPayload({ title: 'x', body: 'y', type: 'task', origin: 'dispatch' });
   assert.ok(payload.labels.includes('by:dispatch'));
+});
+
+test('AC9.1: the by:ci-health origin is registered beside the six existing origins (expand-only)', () => {
+  const path = require('node:path');
+  const { readText } = require('../../helpers/read-skill');
+  const shared = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared');
+  assert.ok(ORIGINS.includes('ci-health'));
+  assert.deepStrictEqual(ORIGINS.slice(0, 6), ['code-health', 'harness-health', 'journey-health', 'docs-health', 'capture', 'dispatch']);
+  assert.strictEqual(parseRecordFacets(['by:ci-health', 'ready']).origin, 'ci-health');
+  assert.deepStrictEqual(
+    recordPayload({ title: 't', body: 'b', type: 'task', origin: 'ci-health', risk: 'low', size: 'low', ready: true }).labels,
+    ['by:ci-health', 'risk:low', 'size:low', 'ready'],
+  );
+  // The shared contracts carry every origin: label-bootstrap.md registers a by:* label for each,
+  // and work-record.md's Origin row states the matching count and lists each label.
+  const bootstrap = readText(path.join(shared, 'label-bootstrap.md'));
+  const rows = [...bootstrap.matchAll(/^\s*\["(by:[a-z-]+)",\s*"([^"]*)",\s*"([0-9A-F]{6})"\]/gm)].map((m) => ({ name: m[1], description: m[2], color: m[3] }));
+  for (const origin of ORIGINS) {
+    assert.ok(rows.some((r) => r.name === `by:${origin}`), `label-bootstrap.md LABELS_JSON must register by:${origin}`);
+  }
+  const ci = rows.find((r) => r.name === 'by:ci-health');
+  assert.deepStrictEqual(ci && [ci.description, ci.color], ['Origin: filed by the ci-health skill', 'BFD4F2']);
+  const originRow = readText(path.join(shared, 'work-record.md')).split('\n').find((l) => l.startsWith('| Origin ('));
+  assert.ok(originRow, 'work-record.md must carry the Origin family row');
+  assert.ok(originRow.startsWith(`| Origin (${ORIGINS.length}) |`), `Origin row count must equal ORIGINS.length (${ORIGINS.length})`);
+  for (const origin of ORIGINS) assert.ok(originRow.includes(`\`by:${origin}\``), `Origin row must list by:${origin}`);
 });
 
 test('recordPayload throws on unknown risk', () => {
@@ -402,6 +430,25 @@ test('parseRecordFacets: LABELS exposes the three demo:* acceptance label string
   assert.strictEqual(LABELS.DEMO_CHANGES_REQUESTED, 'demo:changes-requested');
 });
 
+test('parseRecordFacets: accept:* labels set acceptance, and LABELS exposes the three accept:* strings', () => {
+  assert.strictEqual(LABELS.ACCEPT_PENDING, 'accept:pending');
+  assert.strictEqual(LABELS.ACCEPT_APPROVED, 'accept:approved');
+  assert.strictEqual(LABELS.ACCEPT_CHANGES_REQUESTED, 'accept:changes-requested');
+  assert.strictEqual(parseRecordFacets(['accept:pending']).acceptance, 'pending');
+  assert.strictEqual(parseRecordFacets(['accept:approved']).acceptance, 'approved');
+  assert.strictEqual(parseRecordFacets(['accept:changes-requested']).acceptance, 'changes-requested');
+});
+
+test('acceptanceOf: changes-requested beats pending beats approved beats null, across both vocabularies', () => {
+  const { acceptanceOf } = require('../../../plugin/bin/lib/issues/record-vocabulary');
+  assert.strictEqual(acceptanceOf([]), null);
+  assert.strictEqual(acceptanceOf(['ready', 'accept:approved-batch']), null);
+  assert.strictEqual(acceptanceOf(['demo:approved', 'accept:pending']), 'pending');
+  assert.strictEqual(acceptanceOf(['accept:pending', 'demo:changes-requested', 'accept:approved']), 'changes-requested');
+  // Orthogonal category: an unrelated label alongside does not disturb the verdict.
+  assert.strictEqual(acceptanceOf(['ready', 'accept:approved', 'type:bug']), 'approved');
+});
+
 test('parseRecordFacets: ceremony:fast-lane sets facets.ceremony', () => {
   assert.strictEqual(parseRecordFacets(['ceremony:fast-lane']).ceremony, 'fast-lane');
 });
@@ -493,14 +540,14 @@ test('partitionByOpenBodyBlockers excludes a candidate with an open body-text bl
     { number: 12, body: 'Blocked by #40' },
     { number: 15, body: 'no deps' },
   ];
-  const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set([40]));
+  const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set([40]), new Map());
   assert.deepStrictEqual(eligible.map((c) => c.number), [15]);
   assert.deepStrictEqual(excluded, [{ number: 12, blockedBy: [40] }]);
 });
 
 test('partitionByOpenBodyBlockers keeps a candidate whose blocker is not in openNumbers (already closed)', () => {
   const candidates = [{ number: 12, body: 'Blocked by #40' }];
-  const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set());
+  const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set(), new Map());
   assert.deepStrictEqual(eligible.map((c) => c.number), [12]);
   assert.deepStrictEqual(excluded, []);
 });
@@ -512,7 +559,7 @@ test('partitionByOpenBodyBlockers reports a two-member dependency cycle as two e
     { number: 10, body: 'Blocked by #11' },
     { number: 11, body: 'Blocked by #10' },
   ];
-  const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set([10, 11]));
+  const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set([10, 11]), new Map());
   assert.deepStrictEqual(eligible, []);
   assert.deepStrictEqual(excluded, [
     { number: 10, blockedBy: [11] },
@@ -545,6 +592,26 @@ test('partitionByOpenNativeBlockers fails safe (never throws) when blockedBy.nod
   const { eligible, excluded } = partitionByOpenNativeBlockers(candidates, repoData);
   assert.deepStrictEqual(eligible.map((c) => c.number), [12]);
   assert.deepStrictEqual(excluded, []);
+});
+
+test('Plan Review Clarifications: partitionByOpenBodyBlockers excludes an open or unreadable body-declared foreign blocker, never a CLOSED one', () => {
+  const foreign = new Map([
+    [11, [{ number: 5, repository: 'other/repo', state: 'OPEN' }]],
+    [12, [{ number: 6, repository: 'other/repo', state: null }]],
+    [13, [{ number: 7, repository: 'other/repo', state: 'CLOSED' }]],
+  ]);
+  const candidates = [11, 12, 13, 14].map((number) => ({ number, body: number === 14 ? 'Blocked by #40' : '' }));
+  const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set([40]), foreign);
+  assert.deepStrictEqual(eligible.map((c) => c.number), [13]);
+  assert.deepStrictEqual(excluded, [
+    { number: 11, blockedBy: ['other/repo#5'] }, { number: 12, blockedBy: ['other/repo#6 (state unreadable)'] }, { number: 14, blockedBy: [40] },
+  ]);
+});
+
+test('partitionByOpenBodyBlockers requires its foreign map: a missing or non-Map third argument throws, because a default of no rule would fail open', () => {
+  const candidates = [{ number: 11, body: '' }];
+  assert.throws(() => partitionByOpenBodyBlockers(candidates, new Set()), { name: 'TypeError', message: /foreignByRecord must be a Map/ });
+  assert.throws(() => partitionByOpenBodyBlockers(candidates, new Set(), {}), { name: 'TypeError', message: /foreignByRecord must be a Map/ });
 });
 
 test('partitionByOpenLinkedPR excludes a candidate with an OPEN linked PR, naming the PR number', () => {
@@ -611,6 +678,12 @@ test('buildLinkedPRQuery also requests the cross-reference timeline, same-repo P
   assert.match(q, /\.\.\. on PullRequest \{ number title state createdAt merged mergedAt/);
 });
 
+test('#5722: buildLinkedPRQuery requests the aliased LABELED_EVENT timeline (last:100) with createdAt and label name', () => {
+  const q = buildLinkedPRQuery([5689]);
+  assert.match(q, /labelEvents:\s*timelineItems\(itemTypes:\[LABELED_EVENT\], last:100\)/);
+  assert.ok(q.includes('... on LabeledEvent { createdAt label { name } }'), q);
+});
+
 test('buildLinkedPRQuery returns null for an empty array', () => {
   assert.strictEqual(buildLinkedPRQuery([]), null);
 });
@@ -623,8 +696,7 @@ test('buildNativeDependencyQuery aliases each number and requests blockedBy stat
   const q = buildNativeDependencyQuery([39, 37]);
   assert.match(q, /i39: issue\(number:39\)/);
   assert.match(q, /i37: issue\(number:37\)/);
-  assert.match(q, /blockedBy\(first:25\)/);
-  assert.match(q, /state/);
+  assert.match(q, /i39: issue\(number:39\)\{ number repository\{ nameWithOwner \} blockedBy\(first:25\)\{ nodes\{ number state repository\{ nameWithOwner \} \} \} \}/);
   assert.match(q, /repository\(owner:\$owner,name:\$repo\)/);
 });
 
@@ -659,6 +731,19 @@ test('buildNativeParentQuery aliases each number and requests parent number/titl
 test('buildNativeParentQuery returns null for empty or non-array input', () => {
   assert.strictEqual(buildNativeParentQuery([]), null);
   assert.strictEqual(buildNativeParentQuery(null), null);
+});
+
+test('buildAuthorAssociationQuery aliases each number and requests authorAssociation', () => {
+  const q = buildAuthorAssociationQuery([42, 731]);
+  assert.match(q, /i42: issue\(number:42\)\{ authorAssociation \}/);
+  assert.match(q, /i731: issue\(number:731\)\{ authorAssociation \}/);
+  assert.match(q, /query\(\$owner:String!,\$repo:String!\)/);
+});
+
+test('buildAuthorAssociationQuery returns null for empty or non-array input', () => {
+  assert.strictEqual(buildAuthorAssociationQuery([]), null);
+  assert.strictEqual(buildAuthorAssociationQuery(null), null);
+  assert.strictEqual(buildAuthorAssociationQuery('42'), null);
 });
 
 // AC — dependency assumptions (cross-spec-promise-tracking)
@@ -785,6 +870,23 @@ test('parseSubIssues returns empty for absent or non-string bodies', () => {
   assert.deepEqual(parseSubIssues('no task list here'), []);
 });
 
+test('AC1.1: parseParent reads a line-anchored Parent line', () => {
+  assert.strictEqual(parseParent('Surface: backend\nParent: #12\n\n## Current State'), 12);
+  assert.strictEqual(parseParent('Parent: #12\r\nSurface: backend'), 12);
+  assert.strictEqual(parseParent('Parent: #12\nParent: #34\n'), 12);
+});
+
+test('AC1.2: parseParent ignores a mid-line mention and a body with no Parent line', () => {
+  assert.strictEqual(parseParent('see Parent: #12'), null);
+  assert.strictEqual(parseParent('Surface: backend\n\n## Current State'), null);
+});
+
+test('AC1.3: parseParent returns null for a null or empty body', () => {
+  assert.strictEqual(parseParent(null), null);
+  assert.strictEqual(parseParent(undefined), null);
+  assert.strictEqual(parseParent(''), null);
+});
+
 test('parseRecordFacets sets isParentIssue from the parent-issue label', () => {
   assert.strictEqual(parseRecordFacets([{ name: 'parent-issue' }]).isParentIssue, true);
 });
@@ -820,10 +922,10 @@ test('parseRecordFacets: shaped:headless alongside an unrelated third label fami
 
 // --- Defer-reason vocabulary (_shared/deferral-gate.md, #620) ---
 
-test('DEFER_REASONS is the frozen six-value closed vocabulary, in contract order', () => {
+test('DEFER_REASONS is the frozen seven-value closed vocabulary, in contract order', () => {
   assert.deepStrictEqual([...DEFER_REASONS], [
     'tangential', 'needs-human-decision', 'pre-existing-outside-diff',
-    'genuinely-larger', 'blocked-external', 'blocked-dependency',
+    'genuinely-larger', 'blocked-external', 'blocked-dependency', 'needs-verification',
   ]);
   assert.ok(Object.isFrozen(DEFER_REASONS));
 });
@@ -939,6 +1041,59 @@ test('specShapedBody: deferReason alone renders with no Origin line and no stray
   const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { deferReason: 'genuinely-larger' } });
   assert.ok(body.startsWith('H\n\nDefer-reason: genuinely-larger\n\n## Current State'));
   assert.ok(!body.includes('Origin:'));
+});
+
+test('#5933 characterization: a provenance without evidence composes byte-identically', () => {
+  const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { origin: 'o', deferReason: 'genuinely-larger' } });
+  assert.strictEqual(
+    body,
+    'H\n\nOrigin: o\n\nDefer-reason: genuinely-larger\n\n## Current State\n\nc\n\n## Deliverables\n\nd\n\n## Acceptance Criteria\n\na\n\n## Release Note\n\nr\n\n_Filed by `x`. Close to resolve; label `wontfix` to suppress future reports of this finding._',
+  );
+});
+
+test('#5933 AC9.1 provenance.evidence renders Evidence: ref:#1234 right after Defer-reason:', () => {
+  const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { deferReason: 'genuinely-larger', evidence: 'ref:#1234' } });
+  assert.ok(body.includes('Defer-reason: genuinely-larger\n\nEvidence: ref:#1234\n\n## Current State'));
+  assert.strictEqual((body.match(/^Evidence: /gm) || []).length, 1);
+});
+
+test('#5933 evidence with origin and no reason renders after Origin:', () => {
+  const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { origin: 'o', evidence: 'test:tests/a.test.js' } });
+  assert.ok(body.includes('Origin: o\n\nEvidence: test:tests/a.test.js\n\n## Current State'));
+  assert.ok(!body.includes('Defer-reason:'));
+});
+
+test('#5933 empty, null and undefined evidence render no line', () => {
+  for (const evidence of ['', null, undefined]) {
+    const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { deferReason: 'genuinely-larger', evidence } });
+    assert.ok(!body.includes('Evidence:'), String(evidence));
+  }
+});
+
+test('#5933 a multi-line or non-string evidence throws', () => {
+  const message = 'specShapedBody: provenance.evidence must be a single-line test:{path} or ref:{id}';
+  for (const evidence of ['ref:#1\nref:#2', 'ref:#1\r\nx', 'ref:#1 x', 'ref:#1\u0085x', 'ref:#1 x', 42, ['ref:#1'], { kind: 'ref' }, true]) {
+    assert.throws(
+      () => specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { evidence } }),
+      { message },
+      JSON.stringify(evidence),
+    );
+  }
+});
+
+test('#5933 a file-and-line pointer or another kind of evidence throws, never renders', () => {
+  const message = 'specShapedBody: provenance.evidence must be a single-line test:{path} or ref:{id}';
+  for (const evidence of ['src/x.js:10', 'note:x', 'TEST:tests/a.test.js']) {
+    assert.throws(
+      () => specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { evidence } }),
+      { message },
+      evidence,
+    );
+  }
+  for (const evidence of ['ref:#1', 'test:tests/a.test.js']) {
+    const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { evidence } });
+    assert.ok(body.includes(`Evidence: ${evidence}\n\n## Current State`), evidence);
+  }
 });
 
 test('specShapedBody: custom footer replaces the default; null omits it entirely', () => {
@@ -1243,6 +1398,60 @@ test('recordPayload (#4368): a Defer-reason: line quoted inside a fenced block i
   );
 });
 
+// --- ownOriginLine (#4502) ---
+test('ownOriginLine: top line read and trimmed; absent and non-string are null', () => {
+  assert.strictEqual(ownOriginLine('Origin: ledger resolve gate  \n\n## Current State'), 'ledger resolve gate');
+  assert.strictEqual(ownOriginLine('Origin:\n## Current State'), '');
+  assert.strictEqual(ownOriginLine('## Current State\nno line'), null);
+  assert.strictEqual(ownOriginLine(''), null);
+  assert.strictEqual(ownOriginLine(undefined), null);
+  assert.strictEqual(ownOriginLine('prose naming Origin: mid-line'), null);
+});
+
+test('AC1.1/AC8.1: ownOriginLine skips a line under an ## Absorbed: section', () => {
+  const body = ['## Current State', 'x', '## Absorbed: 2026-10-30 — x', 'Origin: demo changes-requested from #7'].join('\n');
+  assert.strictEqual(ownOriginLine(body), null);
+});
+
+test('AC2.1/AC8.1: ownOriginLine skips a fenced line (backtick and tilde)', () => {
+  for (const f of ['```', '~~~']) {
+    assert.strictEqual(ownOriginLine(['## Current State', f, 'Origin: quoted', f].join('\n')), null, f);
+  }
+});
+
+test('AC3.1: ownOriginLine reads a line under ## Original request', () => {
+  assert.strictEqual(ownOriginLine(['## Current State', 'x', '## Original request', 'Origin: ledger resolve gate'].join('\n')), 'ledger resolve gate');
+});
+
+test('AC4.1: ownOriginLine prefers the own top line over an absorbed one', () => {
+  const body = ['Origin: wrap-up leftover', '## Absorbed: 2026-10-30 — x', 'Origin: demo changes-requested from #7'].join('\n');
+  assert.strictEqual(ownOriginLine(body), 'wrap-up leftover');
+});
+
+test('AC5.1: a line after the absorbed section\'s next ## heading counts again', () => {
+  const body = ['## Absorbed: 2026-10-30 — x', 'Origin: absorbed', '## Original request', 'Origin: own'].join('\n');
+  assert.strictEqual(ownOriginLine(body), 'own');
+});
+
+test('ownOriginLine: ### sub-headings keep an Absorbed section open', () => {
+  assert.strictEqual(ownOriginLine(['## Absorbed: d — x', '### Notes', 'Origin: absorbed'].join('\n')), null);
+});
+
+test('ownOriginLine: a fenced ## line neither ends an Absorbed section nor opens one', () => {
+  assert.strictEqual(ownOriginLine(['## Absorbed: d — x', '```', '## Not a heading', '```', 'Origin: absorbed'].join('\n')), null);
+  assert.strictEqual(ownOriginLine(['```', '## Absorbed: quoted', '```', 'Origin: own'].join('\n')), 'own');
+});
+
+test('ownOriginLine: an unclosed fence hides every later line, ## Original request included (same rule as #4368)', () => {
+  assert.strictEqual(ownOriginLine(['## Current State', '```', 'quoted', '## Original request', 'Origin: own'].join('\n')), null);
+});
+
+test('AC7.1: CRLF and lone-CR bodies resolve the same as LF', () => {
+  const lines = ['## Absorbed: d — x', 'Origin: absorbed', '## Original request', 'Origin: own  '];
+  for (const eol of ['\n', '\r\n', '\r']) assert.strictEqual(ownOriginLine(lines.join(eol)), 'own', JSON.stringify(eol));
+  for (const eol of ['\r\n', '\r']) assert.strictEqual(ownOriginLine(['```', 'Origin: quoted', '```'].join(eol)), null, JSON.stringify(eol));
+});
+
 test('parseRecordFacets: breaking label sets facets.breaking to true (presence-only Compatibility axis, #2251)', () => {
   assert.strictEqual(parseRecordFacets(['breaking']).breaking, true);
   assert.strictEqual(parseRecordFacets([{ name: 'breaking' }]).breaking, true);
@@ -1425,7 +1634,7 @@ test('extractSection: a fence is closed only by its own character, at least as l
 });
 
 test('fencedLineMask marks exactly the lines inside fenced blocks, fence lines included (#4369)', () => {
-  const { fencedLineMask, fencedLineRanges } = require('../../../plugin/bin/lib/issues/record-payload');
+  const { fencedLineMask, fencedLineRanges } = require('../../../plugin/bin/lib/markdown-blocks');
   const lines = ['a', '```md', '## in', '```', 'b', '~~~', 'open-ended', 'c'];
   assert.deepStrictEqual(fencedLineMask(lines), [false, true, true, true, false, true, true, true]);
   assert.deepStrictEqual(fencedLineRanges(lines), [[1, 3], [5, 7]]);
@@ -1434,14 +1643,14 @@ test('fencedLineMask marks exactly the lines inside fenced blocks, fence lines i
 });
 
 test('fencedLineRanges: a backtick line whose info string holds a backtick is an inline span, not a fence (#4369)', () => {
-  const { fencedLineRanges } = require('../../../plugin/bin/lib/issues/record-payload');
+  const { fencedLineRanges } = require('../../../plugin/bin/lib/markdown-blocks');
   assert.deepStrictEqual(fencedLineRanges(['```a``` inline span', '## Current State']), []);
   assert.deepStrictEqual(fencedLineRanges(['```js', 'x', '```']), [[0, 2]]);
   assert.deepStrictEqual(fencedLineRanges(['~~~a`b', 'x', '~~~']), [[0, 2]]);
 });
 
 test('fencedLineMask unclosedAsText leaves only a trailing unclosed fence out of the mask (#4369)', () => {
-  const { fencedLineMask } = require('../../../plugin/bin/lib/issues/record-payload');
+  const { fencedLineMask } = require('../../../plugin/bin/lib/markdown-blocks');
   const unclosed = ['a', '```', '## h', 'b'];
   assert.deepStrictEqual(fencedLineMask(unclosed), [false, true, true, true]);
   assert.deepStrictEqual(fencedLineMask(unclosed, { unclosedAsText: true }), [false, false, false, false]);
@@ -1464,4 +1673,68 @@ test('extractSection: 1- to 3-space-indented fences hide a heading; a 4-space pa
   const four = extractSection(bodyFor('    '), 'Deliverables');
   assert.ok(four.length > 0);
   assert.ok(four.startsWith('quoted'));
+});
+
+const depNode = (home, blockers) => ({ number: 1, repository: home === null ? undefined : { nameWithOwner: home }, blockedBy: { nodes: blockers } });
+const blk = (number, repo, state = 'CLOSED') => ({ number, state, ...(repo === undefined ? {} : { repository: { nameWithOwner: repo } }) });
+
+test('AC1.1/AC1.2 (#4793): a native blocker in another repository is listed foreign with its state, so it is never read as this repository\'s same-numbered issue', () => {
+  assert.deepStrictEqual(crossRepositoryBlockers(depNode('acme/w', [blk(5, 'other/repo', 'OPEN'), blk(6, 'acme/w')])), [{ number: 5, repository: 'other/repo', state: 'OPEN' }]);
+});
+test('crossRepositoryBlockers treats a name differing only in case as the same repository', () => {
+  assert.deepStrictEqual(crossRepositoryBlockers(depNode('Acme/W', [blk(6, 'acme/w')])), []);
+});
+test('crossRepositoryBlockers calls nothing foreign when either name is unreadable', () => {
+  assert.deepStrictEqual(crossRepositoryBlockers(depNode(null, [blk(5, 'other/repo')])), []);
+  assert.deepStrictEqual(crossRepositoryBlockers(depNode('acme/w', [blk(5)])), []);
+  assert.deepStrictEqual(crossRepositoryBlockers(depNode('acme/w', [blk(5, '')])), []);
+  assert.deepStrictEqual(crossRepositoryBlockers(null), []);
+  assert.deepStrictEqual(crossRepositoryBlockers({ number: 1, repository: { nameWithOwner: 'acme/w' }, blockedBy: { nodes: 'x' } }), []);
+});
+test('crossRepositoryBlockers keeps a same-number pair apart and records a non-string state as null', () => {
+  assert.deepStrictEqual(crossRepositoryBlockers(depNode('acme/w', [blk(5, 'acme/w'), blk(5, 'other/repo', null)])), [{ number: 5, repository: 'other/repo', state: null }]);
+});
+test('withoutCrossRepoBlockers removes one occurrence per foreign entry, keeping order', () => {
+  assert.deepStrictEqual(withoutCrossRepoBlockers([5, 6, 5], [{ number: 5 }]), [6, 5]);
+  assert.deepStrictEqual(withoutCrossRepoBlockers([5, 6], undefined), [5, 6]);
+  assert.deepStrictEqual(withoutCrossRepoBlockers(undefined, [{ number: 5 }]), []);
+  assert.deepStrictEqual(withoutCrossRepoBlockers([6], [{ number: 5 }]), [6]);
+});
+test('Q5: foreignBlockerBlocks is false only for CLOSED; foreignBlockerRef names owner/name#N and marks an unreadable state', () => {
+  assert.equal(foreignBlockerBlocks({ number: 5, repository: 'o/r', state: 'CLOSED' }), false);
+  assert.equal(foreignBlockerBlocks({ number: 5, repository: 'o/r', state: 'OPEN' }), true);
+  assert.equal(foreignBlockerBlocks({ number: 5, repository: 'o/r', state: null }), true);
+  assert.equal(foreignBlockerBlocks({ number: 5, repository: 'o/r', state: 'WEIRD' }), true);
+  assert.equal(foreignBlockerBlocks({ number: 5, repository: 'o/r', state: 'closed' }), true);
+  assert.equal(foreignBlockerRef({ number: 5, repository: 'o/r', state: 'closed' }), 'o/r#5 (state unreadable)');
+  assert.equal(foreignBlockerRef({ number: 5, repository: 'o/r', state: 'OPEN' }), 'o/r#5');
+  assert.equal(foreignBlockerRef({ number: 5, repository: 'o/r', state: 'CLOSED' }), 'o/r#5');
+  assert.equal(foreignBlockerRef({ number: 5, repository: 'o/r', state: null }), 'o/r#5 (state unreadable)');
+  assert.equal(foreignBlockerRef({ number: 5, repository: 'o/r', state: 'WEIRD' }), 'o/r#5 (state unreadable)');
+});
+test('openBlockerRefs lists this repository\'s open numbers, then each still-blocking foreign blocker by its qualified name', () => {
+  const cross = [{ number: 5, repository: 'o/r', state: 'OPEN' }, { number: 7, repository: 'o/r', state: 'CLOSED' }, { number: 8, repository: 'o/r', state: null }];
+  assert.deepStrictEqual(openBlockerRefs({ openBlockerIds: [5, 4, 5, 4], crossRepoBlockers: cross }), [4, 5, 'o/r#5', 'o/r#8 (state unreadable)']);
+  assert.deepStrictEqual(openBlockerRefs({ openBlockerIds: [4] }), [4]);
+  assert.deepStrictEqual(openBlockerRefs({ crossRepoBlockers: [{ number: 8, repository: 'o/r', state: null }] }), ['o/r#8 (state unreadable)']);
+  assert.deepStrictEqual(openBlockerRefs({}), []);
+});
+test('openBlockerRefs skips non-object crossRepoBlockers entries instead of throwing', () => {
+  const cross = [null, undefined, 'x', { number: 5, repository: 'o/r', state: 'OPEN' }];
+  assert.deepStrictEqual(openBlockerRefs({ openBlockerIds: [4, 5], crossRepoBlockers: cross }), [4, 'o/r#5']);
+  assert.deepStrictEqual(openBlockerRefs({ openBlockerIds: [4], crossRepoBlockers: [null] }), [4]);
+});
+test('openNativeBlockerRefs reads a raw node: local OPEN numbers, foreign refs, legacy nodes unchanged', () => {
+  assert.deepStrictEqual(openNativeBlockerRefs(depNode('acme/w', [blk(4, 'acme/w', 'OPEN'), blk(5, 'other/repo', 'OPEN'), blk(6, 'other/repo'), blk(9, 'acme/w')])), [4, 'other/repo#5']);
+  assert.deepStrictEqual(openNativeBlockerRefs({ number: 1, blockedBy: { nodes: [{ number: 4, state: 'OPEN' }, { number: 9, state: 'CLOSED' }] } }), [4]);
+  assert.deepStrictEqual(openNativeBlockerRefs({ number: 1, blockedBy: { nodes: 'x' } }), []);
+});
+test('partitionByOpenNativeBlockers names a foreign open blocker by its qualified name (#4793)', () => {
+  const { excluded } = partitionByOpenNativeBlockers([{ number: 12 }], { i12: depNode('acme/w', [blk(5, 'other/repo', 'OPEN')]) });
+  assert.deepStrictEqual(excluded, [{ number: 12, blockedBy: ['other/repo#5'] }]);
+});
+test('#6052: record.js re-exports the Plan: line API', () => {
+  const record = require('../../../plugin/bin/lib/issues/record');
+  const planLine = require('../../../plugin/bin/lib/issues/plan-line');
+  for (const k of ['parsePlanLine', 'composePlanLine', 'specHash']) assert.strictEqual(record[k], planLine[k], k);
 });

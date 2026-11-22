@@ -1,17 +1,21 @@
 'use strict';
-const { test } = require('node:test');
+const { test, describe } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'flow', 'preflight');
 const { ADOPTION_NOTES, PR_CONFLICT_NOTE, computeAdoption, parseChecklist, gatherPreflight, LEVER_KEYS, defaultDeps } = require(MOD);
 const { execFileSync } = require('child_process');
+const { STUB_SKIP } = require('../../helpers/path-stub');
+const { fakeGh } = require('../../helpers/fake-gh');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 // A fake main checkout with one run dir under .claude-tweaks/pipelines/.
 function mainRoot() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-'));
+  const root = scratchDir('flow-preflight-');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-09-06T000000-record-7');
   fs.mkdirSync(runDir, { recursive: true });
   return { root, runDir };
@@ -109,11 +113,15 @@ test('case 4: a missing dir and an unanchored dir each render the case-4 literal
   const missing = path.join(fx.root, '.claude-tweaks', 'pipelines', 'nope');
   const a = computeAdoption({ runDir: missing, mainRoot: fx.root, cwd: fx.root, deps: deps(fx) });
   assert.strictEqual(a.case, 4);
-  assert.strictEqual(a.note, ADOPTION_NOTES[4].replace('{path}', missing).replace('{does not exist | is not anchored to the main checkout}', 'does not exist'));
-  const shadow = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-shadow-'));
+  assert.strictEqual(a.note, ADOPTION_NOTES[4].replace('{path}', missing).replace('{does not exist | is not anchored to the main checkout | is not a pipeline run directory}', 'does not exist'));
+  const shadow = scratchDir('flow-preflight-shadow-');
   const b = computeAdoption({ runDir: shadow, mainRoot: fx.root, cwd: fx.root, deps: deps(fx, { resolveTarget: () => ({ ok: false, reason: 'not-anchored' }) }) });
   assert.strictEqual(b.case, 4);
   assert.match(b.note, /is not anchored to the main checkout/);
+  const d = computeAdoption({ runDir: shadow, mainRoot: fx.root, cwd: fx.root, deps: deps(fx, { resolveTarget: () => ({ ok: false, reason: 'not-a-run-dir' }) }) });
+  assert.strictEqual(d.case, 4);
+  assert.match(d.note, /which is not a pipeline run directory — created/);
+  assert.doesNotMatch(d.note, /not anchored/);
   const c = computeAdoption({ runDir: null, mainRoot: fx.root, cwd: fx.root, deps: deps(fx) });
   assert.deepStrictEqual({ case: c.case, note: c.note }, { case: 5, note: null });
 });
@@ -159,6 +167,15 @@ test('a single lever failing to resolve degrades that entry only (#1931 Gotcha)'
   assert.strictEqual(pack.levers.ok, true);
   const bad = pack.levers.value.find((l) => l.key === 'model-stance');
   assert.deepStrictEqual(bad, { key: 'model-stance', value: null, source: null, error: 'unknown-key' });
+});
+
+test('a factory-sourced lever passes through the levers probe as source factory (#6006)', async () => {
+  const { resolvePolicyKeys } = require('../../../plugin/bin/lib/policy-schema');
+  const fx = mainRoot();
+  seedCase1(fx);
+  const d = deps(fx, { resolvePolicy: (keys) => resolvePolicyKeys(keys, { factoryRaw: 'model-stance: economy\n' }) });
+  const pack = await gatherPreflight({ runDir: fx.runDir, steps: ['review'], cwd: fx.root, mainRoot: fx.root, deps: d });
+  assert.deepStrictEqual(pack.levers.value.find((l) => l.key === 'model-stance'), { key: 'model-stance', value: 'economy', source: 'factory' });
 });
 
 test('one probe throwing degrades only its field, and the probes run concurrently (#1931)', async () => {
@@ -221,7 +238,7 @@ test('ADOPTION_NOTES carry the four prose literals with their placeholders (#193
   assert.strictEqual(ADOPTION_NOTES[1], 'Resuming existing run directory: {path}');
   assert.strictEqual(ADOPTION_NOTES[2], 'Adopting minted run directory: {path}');
   assert.strictEqual(ADOPTION_NOTES[3], 'Recovering inherited run directory: {path} (missing config.yml; backfilled {worktree registration | PR-early lifecycle | materialize commit} before proceeding).');
-  assert.strictEqual(ADOPTION_NOTES[4], 'PIPELINE_RUN_DIR was set to {path}, which {does not exist | is not anchored to the main checkout} — created a fresh run directory instead.');
+  assert.strictEqual(ADOPTION_NOTES[4], 'PIPELINE_RUN_DIR was set to {path}, which {does not exist | is not anchored to the main checkout | is not a pipeline run directory} — created a fresh run directory instead.');
 });
 
 test('case 3 with an empty backfill list renders `nothing` rather than an empty span (#1931 M2)', () => {
@@ -324,9 +341,9 @@ test('specOnBranch falls back to a recursive spec-{N}/work/ listing when {run-di
 });
 
 test('defaultDeps().resolvePolicy applies computeDerivedDefaults, so merge-verification resolves to a value with no policy.yml (#1931 I2)', () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-derived-')));
+  const root = fs.realpathSync(scratchDir('flow-preflight-derived-'));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't');
+  initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   git('commit', '-q', '--allow-empty', '-m', 'init');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-09-06T000000-record-7');
   fs.mkdirSync(runDir, { recursive: true });
@@ -334,6 +351,58 @@ test('defaultDeps().resolvePolicy applies computeDerivedDefaults, so merge-verif
   const resolved = defaultDeps(root).resolvePolicy(['merge-verification', 'integration-model'], runDir);
   assert.strictEqual(typeof resolved['merge-verification'].value, 'string', `merge-verification must be derived, got ${JSON.stringify(resolved['merge-verification'])}`);
   assert.strictEqual(typeof resolved['integration-model'].value, 'string', `integration-model must be derived, got ${JSON.stringify(resolved['integration-model'])}`);
+});
+
+test('defaultDeps().resolvePolicy hands the run config to computeDerivedDefaults: a merge-verification-only read under a run-pinned integration-model never spawns gh (#4578 AC13.1)', { skip: STUB_SKIP }, () => {
+  const root = fs.realpathSync(scratchDir('flow-preflight-runpin-'));
+  const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  git('commit', '-q', '--allow-empty', '-m', 'init');
+  git('remote', 'add', 'origin', 'https://github.com/o/n.git');
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-10-31T000000-record-7');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'integration-model: local-merge\n');
+  const KEY = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+  const savedEnv = process.env[KEY];
+  process.env[KEY] = '1000';
+  const gh = fakeGh({ first: 'hang' });
+  let calls;
+  let resolved;
+  try {
+    resolved = defaultDeps(root).resolvePolicy(['merge-verification'], runDir);
+    calls = gh.count();
+  } finally {
+    gh.restore();
+    if (savedEnv === undefined) delete process.env[KEY]; else process.env[KEY] = savedEnv;
+  }
+  assert.strictEqual(calls, 0, 'the run pin decides merge-verification before any forge detection');
+  assert.strictEqual(resolved['merge-verification'].value, 'off');
+});
+
+test('defaultDeps().resolvePolicy carries a degraded forge detection onto the integration-model entry (#4578 Q10 seam)', { skip: STUB_SKIP }, () => {
+  const root = fs.realpathSync(scratchDir('flow-preflight-degraded-'));
+  const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  git('commit', '-q', '--allow-empty', '-m', 'init');
+  git('remote', 'add', 'origin', 'https://github.com/o/n.git');
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-11-01T000000-record-7');
+  fs.mkdirSync(runDir, { recursive: true });
+  const KEY = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+  const savedEnv = process.env[KEY];
+  process.env[KEY] = '1000';
+  const gh = fakeGh({ first: 'hang' });
+  let resolved;
+  let calls;
+  try {
+    resolved = defaultDeps(root).resolvePolicy(['integration-model'], runDir);
+    calls = gh.count();
+  } finally {
+    gh.restore();
+    if (savedEnv === undefined) delete process.env[KEY]; else process.env[KEY] = savedEnv;
+  }
+  assert.strictEqual(calls, 2, 'a timeout is retried once, then the detection is degraded');
+  assert.strictEqual(resolved['integration-model'].value, 'local-merge');
+  assert.strictEqual(resolved['integration-model'].degraded, 'timeout', 'the Manifesto reads this field to avoid pinning a guess');
 });
 
 // #2861: /flow Step 2.8 logs its claim to decisions.md BEFORE Step 3 runs this
@@ -646,4 +715,223 @@ test('pr probe: a branch name carrying String.replace patterns renders literally
     const pack = await prPack(fx, conflicting, policyWithIntegrationBranch({ value: branch, source: 'policy' }));
     assert.strictEqual(pack.pr.value.conflictNote, `Run PR #1901 is CONFLICTING with ${branch} — CI will not run on it until the conflict is resolved.`, branch);
   }
+});
+
+// ---- Archived run-dir headers (#3974): specOnBranch and the spec probe resolve
+// the header at the live run dir or its archived sibling.
+const RUN_ID = '2026-09-06T000000-record-7';
+const ARCHIVE_REL = `.claude-tweaks/pipelines/archive/${RUN_ID}`;
+
+// mainRoot() on a realpath'd root: the pathspecs these tests pin are repo-relative,
+// so root and run dir must agree with the realpath specOnBranch receives.
+function realMainRoot() {
+  const fx = mainRoot();
+  return { root: fs.realpathSync(fx.root), runDir: fs.realpathSync(fx.runDir) };
+}
+
+function seedBranchState(runDir) {
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), 'x\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree', status: 'active', pr: { number: 1, branch: 'feat-branch' } }));
+}
+
+// A fake git whose ls-tree answers per pathspec; unlisted pathspecs list nothing.
+function lsTreeGit(answers, seen = []) {
+  return (args) => {
+    seen.push(args);
+    if (args[0] !== 'ls-tree') return 'feat-branch\n';
+    const spec = args[args.length - 1];
+    const a = answers[spec];
+    if (a instanceof Error) throw a;
+    return a === undefined ? '' : a;
+  };
+}
+
+test('AC1.1 specOnBranch finds an archived-only flat header', () => {
+  const fx = realMainRoot();
+  seedBranchState(fx.runDir);
+  const seen = [];
+  const d = deps(fx, { git: lsTreeGit({ [`${ARCHIVE_REL}/work/`]: `${ARCHIVE_REL}/work/7-spec.md\0` }, seen) });
+  const a = computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: d });
+  assert.strictEqual(a.specMaterialized, true);
+  const lsCalls = seen.filter((args) => args[0] === 'ls-tree');
+  assert.ok(lsCalls.some((args) => args[args.length - 1] === `${ARCHIVE_REL}/work/`), 'the archived work listing was probed');
+});
+
+test('AC2.1 specOnBranch finds an archived-only spec-{N} header', () => {
+  const fx = realMainRoot();
+  seedBranchState(fx.runDir);
+  const d = deps(fx, { git: lsTreeGit({ [`${ARCHIVE_REL}/`]: `${ARCHIVE_REL}/spec-9/work/9-spec.md\0` }) });
+  const a = computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: d });
+  assert.strictEqual(a.specMaterialized, true);
+});
+
+test('specOnBranch reports false when neither the live nor the archived listing holds a header', () => {
+  const fx = realMainRoot();
+  seedBranchState(fx.runDir);
+  const d = deps(fx, { git: lsTreeGit({}) });
+  assert.strictEqual(computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: d }).specMaterialized, false);
+});
+
+test('specOnBranch: per-spec run dir probes its own archived sibling', () => {
+  const fx = realMainRoot();
+  const perSpec = path.join(fx.runDir, 'spec-4');
+  seedBranchState(perSpec);
+  const seen = [];
+  const d = deps(fx, { git: lsTreeGit({}, seen) });
+  const a = computeAdoption({ runDir: perSpec, mainRoot: fx.root, cwd: fx.root, deps: d });
+  assert.strictEqual(a.specMaterialized, false);
+  const specs = seen.filter((args) => args[0] === 'ls-tree').map((args) => args[args.length - 1]);
+  assert.deepStrictEqual(specs, [
+    `.claude-tweaks/pipelines/${RUN_ID}/spec-4/work/`, `.claude-tweaks/pipelines/${RUN_ID}/spec-4/`,
+    `${ARCHIVE_REL}/spec-4/work/`, `${ARCHIVE_REL}/spec-4/`,
+  ]);
+});
+
+test('AC9.1/AC9.5 specOnBranch returns null when the archived listing throws after empty live listings', () => {
+  for (const failing of [`${ARCHIVE_REL}/work/`, `${ARCHIVE_REL}/`]) {
+    const fx = realMainRoot();
+    seedBranchState(fx.runDir);
+    const d = deps(fx, { git: lsTreeGit({ [failing]: new Error('git failed') }) });
+    assert.strictEqual(computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: d }).specMaterialized, null, failing);
+  }
+});
+
+test('AC9.1 specOnBranch returns null when a live listing throws', () => {
+  const fx = realMainRoot();
+  seedBranchState(fx.runDir);
+  const live = `.claude-tweaks/pipelines/${RUN_ID}/work/`;
+  const d = deps(fx, { git: lsTreeGit({ [live]: new Error('git failed'), [`${ARCHIVE_REL}/work/`]: `${ARCHIVE_REL}/work/7-spec.md\0` }) });
+  assert.strictEqual(computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: d }).specMaterialized, null);
+});
+
+test('AC3.1 specOnBranch on a real repo branch whose last commit git-mv\'d the header', () => {
+  const root = fs.realpathSync(scratchDir('flow-preflight-mv-'));
+  const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.invalid' };
+  const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env });
+  git('init', '-q', '-b', 'main');
+  git('commit', '-q', '--allow-empty', '-m', 'init');
+  git('checkout', '-q', '-b', 'feat-branch');
+  const liveRel = `.claude-tweaks/pipelines/${RUN_ID}`;
+  fs.mkdirSync(path.join(root, liveRel, 'work'), { recursive: true });
+  fs.writeFileSync(path.join(root, liveRel, 'work', '7-spec.md'), '---\nrecord: 7\n---\n');
+  git('add', '-A'); git('commit', '-q', '-m', 'materialize');
+  fs.mkdirSync(path.join(root, ARCHIVE_REL), { recursive: true });
+  git('mv', `${liveRel}/work`, `${ARCHIVE_REL}/work`);
+  git('commit', '-q', '-m', 'archive');
+  git('checkout', '-q', 'main');
+  const runDir = path.join(root, liveRel);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', pr: { number: 1, branch: 'feat-branch' } }));
+  const d = deps({ root, runDir }, { git: (args, opts = {}) => execFileSync('git', args, { cwd: opts.cwd || root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env }) });
+  assert.strictEqual(computeAdoption({ runDir, mainRoot: root, cwd: root, deps: d }).specMaterialized, true);
+});
+
+function probeSpec(fx, overrides = {}) {
+  fs.writeFileSync(path.join(fx.runDir, 'config.yml'), 'mode: auto\nceremony-profile: standard\n');
+  return gatherPreflight({ runDir: fx.runDir, steps: ['review'], cwd: fx.root, mainRoot: fx.root, deps: deps(fx, overrides) }).then((p) => p.spec.value);
+}
+function seedHeader(base, n, sub = null) {
+  const dir = sub ? path.join(base, sub, 'work') : path.join(base, 'work');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${n}-spec.md`), '---\n');
+}
+const archiveBase = (fx) => path.join(fx.root, '.claude-tweaks', 'pipelines', 'archive', RUN_ID);
+
+test('AC1.1 spec probe: archived-only flat header gives the live answer', async () => {
+  const live = realMainRoot();
+  seedHeader(live.runDir, 7);
+  const arch = realMainRoot();
+  seedHeader(archiveBase(arch), 7);
+  const want = { path: 'work/7-spec.md', present: true, record: 7, records: [7] };
+  assert.deepStrictEqual(await probeSpec(live), want);
+  assert.deepStrictEqual(await probeSpec(arch), want);
+});
+
+test('AC2.1 spec probe: archived-only spec-{N} headers give the live answer', async () => {
+  const live = realMainRoot();
+  const arch = realMainRoot();
+  for (const n of [9, 12]) { seedHeader(live.runDir, n, `spec-${n}`); seedHeader(archiveBase(arch), n, `spec-${n}`); }
+  const want = { path: null, present: true, record: null, records: [9, 12] };
+  assert.deepStrictEqual(await probeSpec(live), want);
+  assert.deepStrictEqual(await probeSpec(arch), want);
+});
+
+test('AC7.1 spec probe: the merged set\'s lowest name answers, a duplicate counts once', async () => {
+  const fx = realMainRoot();
+  seedHeader(fx.runDir, 8);
+  seedHeader(archiveBase(fx), 7);
+  assert.deepStrictEqual(await probeSpec(fx), { path: 'work/7-spec.md', present: true, record: 7, records: [7] });
+  const dup = realMainRoot();
+  seedHeader(dup.runDir, 7);
+  seedHeader(archiveBase(dup), 7);
+  assert.deepStrictEqual(await probeSpec(dup), { path: 'work/7-spec.md', present: true, record: 7, records: [7] });
+});
+
+test('spec probe: live and archived spec-{N} headers merge by record', async () => {
+  const fx = realMainRoot();
+  seedHeader(fx.runDir, 9, 'spec-9');
+  seedHeader(archiveBase(fx), 9, 'spec-9');
+  seedHeader(archiveBase(fx), 12, 'spec-12');
+  assert.deepStrictEqual(await probeSpec(fx), { path: null, present: true, record: null, records: [9, 12] });
+});
+
+test('guard: spec probe — an unreadable archived dir is absent', async () => {
+  const fx = realMainRoot();
+  const archived = archiveBase(fx);
+  seedHeader(archived, 7); // really on disk; only the injected readdir cannot see it
+  const readdir = (p) => { if (p.startsWith(archived)) return []; try { return fs.readdirSync(p); } catch { return []; } };
+  assert.deepStrictEqual(await probeSpec(fx, { readdir }), { path: null, present: false, record: null, records: [] });
+});
+
+test('AC9.4 spec probe: an unreadable archived work/ is absent, a readable archived spec-{N}/work/ still answers', async () => {
+  const fx = realMainRoot();
+  const archived = archiveBase(fx);
+  seedHeader(archived, 7); // really on disk; only the injected readdir cannot see it
+  seedHeader(archived, 8, 'spec-8');
+  const unreadable = path.join(archived, 'work');
+  const readdir = (p) => { if (p === unreadable) return []; try { return fs.readdirSync(p); } catch { return []; } };
+  assert.deepStrictEqual(await probeSpec(fx, { readdir }), { path: null, present: true, record: null, records: [8] });
+});
+
+describe('default exec bounds (#5050)', () => {
+  const { captureExecTimeouts } = require('../../helpers/gh-timeout-probe');
+  // Sync runner first, then async: each spawn is asserted by index so a regression in either shows.
+  // The async runner is started inside exercise (so it sees the stubs) and awaited after the probe returns.
+  const run = async (cmd, env) => {
+    const pending = [];
+    const seen = captureExecTimeouts({
+      env,
+      modulePaths: [MOD + '.js'],
+      exercise: (setEnv) => {
+        setEnv();
+        const deps = require(MOD).defaultDeps(process.cwd());
+        deps.execFile(cmd, ['--version']);
+        pending.push(deps.execFileAsync(cmd, ['--version']));
+      },
+    });
+    await Promise.all(pending);
+    return seen;
+  };
+
+  test('gh spawns (sync and async runner) follow CLAUDE_TWEAKS_GH_TIMEOUT_MS above the floor', async () => {
+    const { gh } = await run('gh', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '45000' });
+    assert.strictEqual(gh[0], 45000, 'sync execFile');
+    assert.strictEqual(gh[1], 45000, 'async execFileAsync');
+  });
+
+  test('gh spawns keep the 30000 default when the env is unset or below the floor', async () => {
+    const unset = await run('gh', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: undefined });
+    assert.strictEqual(unset.gh[0], 30000, 'sync execFile, unset');
+    assert.strictEqual(unset.gh[1], 30000, 'async execFileAsync, unset');
+    const low = await run('gh', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '10000' });
+    assert.strictEqual(low.gh[0], 30000, 'sync execFile, 10000');
+    assert.strictEqual(low.gh[1], 30000, 'async execFileAsync, 10000');
+  });
+
+  test('node verify.js spawns stay 30000 even with both bound env vars set high', async () => {
+    const { node } = await run('node', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '45000', CLAUDE_TWEAKS_GIT_TIMEOUT_MS: '90000' });
+    assert.strictEqual(node[0], 30000, 'sync execFile');
+    assert.strictEqual(node[1], 30000, 'async execFileAsync');
+  });
 });

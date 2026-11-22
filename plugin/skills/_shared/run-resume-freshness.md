@@ -60,7 +60,10 @@ A lock or last-commit probe that could not answer at step 4 or step 5 (while sta
 
 ## Branching on the result
 
-The command writes exactly one line to stdout, and always exits `0`:
+The command writes exactly one line to stdout and exits `0` on every verdict; an unexpected
+exception instead prints no line, exits 1 and writes `claude-tweaks: check-resume-freshness:
+{message}` on stderr (#4932). Treat that as blocked: no `OK` line means do not proceed — report the
+stderr line verbatim and stop.
 
 - Safe: `claude-tweaks: resume freshness OK for {run-id} ({verdict})` — proceed with the resume
   exactly as before this probe existed.
@@ -99,8 +102,10 @@ of the actual staged file, leaving `decisions.md` claiming a proposal exists tha
 written.
 
 **Never blocks the resume.** Unlike `check-resume-freshness`'s `OK`/`BLOCKED` verdict, this
-command always exits `0` and its result never stops a resume from proceeding — it only surfaces
-what it found:
+command exits `0` on every report and its result never stops a resume from proceeding — it only
+surfaces what it found. An unexpected exception instead prints no line, exits 1 and writes
+`claude-tweaks: check-staged-inventory: {message}` on stderr (#4932): report that line alongside
+the resume's normal outcome, the way a `MISMATCH` line is reported, and still proceed:
 
 - `claude-tweaks: staged inventory OK for {run-id} ({N} STAGED entries)` — every named `staged/`
   destination exists (or there are none). Proceed silently.

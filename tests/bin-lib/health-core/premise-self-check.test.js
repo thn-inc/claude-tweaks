@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const {
@@ -12,7 +13,7 @@ const { readText } = require('../../helpers/read-skill');
 
 // Temp dir name deliberately contains a space — the composed command
 // shQuotes the target path, and this proves the quoting survives a real shell.
-function tmpWithSpace() { return fs.mkdtempSync(path.join(os.tmpdir(), 'premise self-check-')); }
+function tmpWithSpace() { return scratchDir('premise self-check-'); }
 
 test('exit 0 reads as unresolved (keep the line)', () => {
   assert.strictEqual(premiseReadsUnresolved('cmd', { root: '/', runner: () => 0 }), true);
@@ -96,6 +97,20 @@ for (const [label, anchor] of QUOTING_ANCHORS) {
     assert.strictEqual(premiseReadsUnresolved(command, { root: dir }), false);
   });
 }
+
+test('premiseReadsUnresolved runs the command with the injected env', () => {
+  const dir = tmpWithSpace();
+  const command = 'test "$CT_MARK" = 1';
+  assert.strictEqual(premiseReadsUnresolved(command, { root: dir, env: { ...process.env, CT_MARK: '1' } }), true);
+  const { CT_MARK, ...without } = process.env;
+  assert.strictEqual(premiseReadsUnresolved(command, { root: dir, env: without }), false);
+});
+
+test('premiseReadsUnresolved hands the runner no env key when none was injected', () => {
+  const calls = [];
+  premiseReadsUnresolved('cmd', { root: '/r', runner: (c, o) => { calls.push(o); return 0; } });
+  assert.deepStrictEqual(calls, [{ cwd: '/r', timeoutMs: PREMISE_SELF_CHECK_TIMEOUT_MS }]);
+});
 
 test('defaultRunner returns the exit code of a command that ran', () => {
   assert.strictEqual(defaultRunner('exit 0', { cwd: os.tmpdir(), timeoutMs: 5000 }), 0);

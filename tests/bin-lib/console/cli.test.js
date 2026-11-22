@@ -2,20 +2,22 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'console-resolve.js');
 const PLUGIN_ROOT = path.resolve(__dirname, '..', '..', '..', 'plugin');
-const { run, ghReadGrants, checkPatchStack } = require(CLI);
+const { run, parseArgs, ghReadGrants, checkPatchStack } = require(CLI);
 const { gitEnv } = require('../../../plugin/bin/lib/staged-patch/stack-check');
 const { chmodDenialSkip } = require('../../helpers/root');
+const { initRepo, writeIdentity } = require('../../helpers/git-fixtures');
 
 function mainCheckoutWithRun({ autonomy = 'unattended', staged = {}, decisions = '', policyExtra = '', writePolicy = true, runConfig = null, consoleJson = null } = {}) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-cli-')));
+  const root = fs.realpathSync(scratchDir('console-resolve-cli-'));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't'); git('commit', '-q', '--allow-empty', '-m', 'init');
+  initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); git('commit', '-q', '--allow-empty', '-m', 'init');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   if (writePolicy) fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), `autonomy: ${autonomy}\n${policyExtra}`);
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-09-06T000000-record-7');
@@ -38,7 +40,7 @@ function fakeExec(calls, root) {
   return (cmd, args) => {
     calls.push([cmd, ...args]);
     if (cmd === 'git' && args[0] === 'rev-parse') return `${root}\n`;
-    if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ labels: [{ name: 'auto:merge' }], comments: [] });
+    if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ labels: [{ name: 'auto:build' }, { name: 'auto:merge' }], comments: [] });
     if (cmd === 'git' && args[0] === 'apply') return '';
     throw new Error(`unexpected exec: ${cmd} ${args.join(' ')}`);
   };
@@ -66,7 +68,7 @@ test('unattended: exit 0, one decisions block of items+1 lines, console.json res
   assert.strictEqual(cj.mode, 'auto-resolve');
   assert.strictEqual(cj.ceiling, 'unattended');
   assert.strictEqual(cj.items.length, 3);
-  assert.deepStrictEqual(cj.merge, { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' });
+  assert.deepStrictEqual(cj.merge, { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' });
   const rows = out().split('\n').filter((l) => /AUTO-RESOLVED/.test(l));
   assert.strictEqual(rows.length, 3 + 1, 'one row per item plus the cleanup row');
   // #1932 M2: the closed reversibility vocabulary, and the stage path on every
@@ -128,7 +130,7 @@ test('console.json and --json carry filings as {item, fingerprint, title} with n
   const { formatEntry } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'log-decision', 'append'));
   const tbNow = new Date(2026, 9, 24, 10, 0, 0);
   const finding = { lens: '3a', path: 'src/a.js', line: 9, claim: 'claim one', reporterSeverity: 'medium', kind: 'unconfirmed' };
-  const r = resolveTiebreak(finding, 'Verdict: cant-tell\nSeverity: medium\nRecommendation: drop\nSTATUS: DONE', { readFile: () => '', now: tbNow });
+  const r = resolveTiebreak(finding, 'Verdict: cant-tell\nSeverity: medium\nRecommendation: file\nSTATUS: DONE', { readFile: () => '', now: tbNow });
   const entry = formatEntry({ status: r.logStatus, now: tbNow, step: r.logStep, text: r.logText, reversibility: 'high' });
   const fx = mainCheckoutWithRun({ decisions: `${entry}\n` });
   const json = baseDeps(fx, []);
@@ -142,16 +144,42 @@ test('console.json and --json carry filings as {item, fingerprint, title} with n
   assert.ok(!json.out().includes('work-fingerprint'), 'no proposal text in --json');
   assert.ok(!JSON.stringify(cj).includes('work-fingerprint'), 'no proposal text in console.json');
   assert.deepStrictEqual(cj.items.map((i) => i.resolution), ['filed']);
+  assert.deepStrictEqual(cj.digests, [], 'a file recommendation plans no digest entry');
   const none = mainCheckoutWithRun({ staged: THREE });
   assert.strictEqual(await run(['--run', none.runDir, '--policy', 'console-auto'], baseDeps(none, []).d), 0);
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(none.runDir, 'console.json'), 'utf8')).filings, [], 'always written');
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(none.runDir, 'console.json'), 'utf8')).digests, [], 'always written');
+});
+
+test('a drop-recommended can\'t-tell item digests: console.json and --json carry digests as {item, fingerprint}, no filing, reversibility n/a (#4679)', async () => {
+  const { resolveTiebreak } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'tiebreak'));
+  const { formatEntry } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'log-decision', 'append'));
+  const tbNow = new Date(2026, 9, 24, 10, 0, 0);
+  const finding = { lens: '3a', path: 'src/a.js', line: 9, claim: 'claim one', reporterSeverity: 'medium', kind: 'unconfirmed' };
+  const r = resolveTiebreak(finding, 'Verdict: cant-tell\nSeverity: medium\nRecommendation: drop\nSTATUS: DONE', { readFile: () => '', now: tbNow });
+  const entry = formatEntry({ status: r.logStatus, now: tbNow, step: r.logStep, text: r.logText, reversibility: 'high' });
+  const fx = mainCheckoutWithRun({ decisions: `${entry}\n` });
+  const json = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto', '--json'], json.d), 0);
+  const cj = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'));
+  assert.deepStrictEqual(cj.items.map((i) => i.resolution), ['digested']);
+  assert.deepStrictEqual(cj.filings, []);
+  assert.strictEqual(cj.digests.length, 1);
+  assert.deepStrictEqual(Object.keys(cj.digests[0]).sort(), ['fingerprint', 'item']);
+  assert.strictEqual(cj.digests[0].item, `tiebreak:${r.id}`);
+  assert.match(cj.digests[0].fingerprint, /^consolefinding-[0-9a-f]{8}$/);
+  assert.deepStrictEqual(JSON.parse(json.out()).digests, cj.digests, '--json prints the same');
+  assert.ok(!json.out().includes('<!-- console-finding'), 'no digest line text in --json');
+  assert.ok(!JSON.stringify(cj).includes('<!-- console-finding'), 'no digest line text in console.json');
+  const decisions = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
+  assert.match(decisions, /Console item tiebreak:[0-9a-f]+ \(Low-confidence findings\): digested — .*Reversibility: n\/a\.$/m);
 });
 
 // grant-veto-window-hours only reaches evaluateMaturation if the CLI resolves
 // it: 30h-old pending grant, matured under the 24h default, still inside a 72h
 // window. Same fixture, two policies, opposite merge halves.
 const PENDING_30H = JSON.stringify({
-  labels: [{ name: 'auto:merge-pending' }],
+  labels: [{ name: 'auto:build' }, { name: 'auto:merge-pending' }],
   comments: [{ body: 'Grant recorded.\n<!-- grant-mode-audit: date=2026-09-05T06:00:00Z auto-merge=pending -->', authorAssociation: 'MEMBER' }],
 });
 
@@ -182,7 +210,7 @@ test('grant-veto-window-hours is resolved and passed to the maturation check, ne
 // the issue -- a backdated NONE-authored one must not mature a pending grant. The
 // comment is passed over (same path as "no marker"), so the grant reads unknown-age.
 const PLANTED_PENDING = (association) => JSON.stringify({
-  labels: [{ name: 'auto:merge-pending' }],
+  labels: [{ name: 'auto:build' }, { name: 'auto:merge-pending' }],
   comments: [{
     body: '<!-- grant-mode-audit: date=2020-01-01T00:00:00Z auto-merge=pending -->',
     url: 'https://x/issues/7#c1', author: { login: 'eve' }, authorAssociation: association,
@@ -206,7 +234,7 @@ test('a planted backdated pending-grant marker does not mature a grant (#3358)',
 
 test('ghReadGrants: an untrusted pending-grant marker leaves pendingSince null and is named in skippedUntrusted (#3358)', () => {
   const g = ghReadGrants(() => PLANTED_PENDING('NONE'), '/unused')([7])[7];
-  assert.deepStrictEqual(g.labels, ['auto:merge-pending']);
+  assert.deepStrictEqual(g.labels, ['auto:build', 'auto:merge-pending']);
   assert.strictEqual(g.pendingSince, null);
   assert.deepStrictEqual(g.skippedUntrusted, ['skipped marker comment https://x/issues/7#c1 by eve (NONE) — not an owner, member, or collaborator']);
 });
@@ -219,7 +247,7 @@ test('ghReadGrants: the same marker authored MEMBER is that date, with nothing s
 
 test('ghReadGrants: a trusted marker counts when a later untrusted one is passed over; a non-marker NONE comment is silent (#3358)', () => {
   const raw = JSON.stringify({
-    labels: ['auto:merge-pending'],
+    labels: ['auto:build', 'auto:merge-pending'],
     comments: [
       { body: '<!-- grant-mode-audit: date=2026-09-05T06:00:00Z auto-merge=pending -->', authorAssociation: 'OWNER' },
       { body: '<!-- grant-mode-audit: date=2026-09-06T06:00:00Z auto-merge=pending -->', url: 'https://x/c2', author: { login: 'eve' } },
@@ -394,7 +422,7 @@ test('malformed: a missing --run exits 2 (#1932 Gotcha)', async () => {
 
 test('a --run outside the main checkout exits 3 and writes nothing (#1932 AC5)', async () => {
   const fx = mainCheckoutWithRun();
-  const shadow = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-shadow-'));
+  const shadow = scratchDir('console-resolve-shadow-');
   fs.mkdirSync(path.join(shadow, 'staged'));
   fs.writeFileSync(path.join(shadow, 'decisions.md'), '');
   const { d, err } = baseDeps(fx, []);
@@ -582,10 +610,10 @@ const STACK_BASE = ['l1', 'l2', 'l3', 'l4', 'anchor', 'a1', 'a2', 'a3'].join('\n
 const STACK_ENV = gitEnv();
 
 function captureInsertAboveAnchor(tag) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-capture-'));
+  const dir = scratchDir('console-resolve-capture-');
   try {
     const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8', env: STACK_ENV, stdio: ['ignore', 'pipe', 'ignore'] });
-    git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't');
+    git('init', '-q'); writeIdentity(dir, { name: 't', email: 't@example.invalid' });
     fs.writeFileSync(path.join(dir, 'f.txt'), STACK_BASE);
     git('add', 'f.txt'); git('commit', '-q', '-m', 'base');
     fs.writeFileSync(path.join(dir, 'f.txt'), STACK_BASE.replace('anchor\n', `${tag}a\n${tag}b\nanchor\n`));
@@ -653,12 +681,12 @@ test('AC4.1: a successful Queue write keeps apply and leaves no residue (#4170)'
   assert.deepStrictEqual(readRunResidue(fx.runDir).consoles, []);
 });
 
-test('AC3.1: a console whose can\'t-tell filings never ran reports the planned filing, and the re-render names the --only re-run (#4170)', async () => {
+test('AC3.1: a console whose can\'t-tell filings never ran reports the planned filing, and the re-render names the default-selection re-run (#4170)', async () => {
   const { resolveTiebreak } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'tiebreak'));
   const { formatEntry, appendEntry } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'log-decision', 'append'));
   const tbNow = new Date(2026, 9, 24, 10, 0, 0);
   const finding = { lens: '3a', path: 'src/a.js', line: 9, claim: 'claim one', reporterSeverity: 'medium', kind: 'unconfirmed' };
-  const r = resolveTiebreak(finding, 'Verdict: cant-tell\nSeverity: medium\nRecommendation: drop\nSTATUS: DONE', { readFile: () => '', now: tbNow });
+  const r = resolveTiebreak(finding, 'Verdict: cant-tell\nSeverity: medium\nRecommendation: file\nSTATUS: DONE', { readFile: () => '', now: tbNow });
   const entry = formatEntry({ status: r.logStatus, now: tbNow, step: r.logStep, text: r.logText, reversibility: 'high' });
   const fx = mainCheckoutWithRun({ decisions: `${entry}\n` });
   const first = baseDeps(fx, []);
@@ -672,8 +700,22 @@ test('AC3.1: a console whose can\'t-tell filings never ran reports the planned f
   const second = baseDeps(fx, []);
   assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], second.d), 0);
   assert.match(second.out(), /Needs a human — 1 item\(s\)/);
-  assert.ok(second.out().includes(`--only 'tiebreak:${r.id}'`), second.out());
+  assert.ok(second.out().includes('--out-dir <dir> --digest-comments <comments.json>') && !second.out().includes('--only'), second.out());
   appendEntry({ runDir: fx.runDir, section: '/wrap-up', entry: formatEntry({ status: 'AUTO', now: tbNow, step: 'Review Console', text: `tiebreak:${r.id} filed as #501 (work-fingerprint ${cj.filings[0].fingerprint})`, reversibility: 'high' }) });
+  assert.deepStrictEqual(readRunResidue(fx.runDir).consoles, []);
+});
+
+test('AC3.1 (old shape): a previous-release console with a drop item in `filings` stays filing-pending, then clears on the digested line (#4679)', () => {
+  const { formatEntry, appendEntry } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'log-decision', 'append'));
+  const consoleJson = `${JSON.stringify({
+    resolved: true,
+    mode: 'auto-resolve',
+    items: [{ id: 'tiebreak:a1', section: 'Low-confidence findings', resolution: 'filed', reason: 'r', tiebreak: { recommendation: 'drop' } }],
+    filings: [{ item: 'tiebreak:a1', fingerprint: 'consolefinding-0123abcd', title: 't' }],
+  })}\n`;
+  const fx = mainCheckoutWithRun({ consoleJson });
+  assert.deepStrictEqual(readRunResidue(fx.runDir).consoles[0].items.map((i) => i.resolution), ['filing-pending']);
+  appendEntry({ runDir: fx.runDir, section: '/wrap-up', entry: formatEntry({ status: 'AUTO', now: new Date(2026, 9, 24, 10, 0, 0), step: 'Queue write', text: 'tiebreak:a1 digested (work-fingerprint consolefinding-0123abcd)', reversibility: 'n/a' }) });
   assert.deepStrictEqual(readRunResidue(fx.runDir).consoles, []);
 });
 
@@ -688,6 +730,31 @@ test('--set-item on an item already keep-staged says so, logs nothing, exits 0 (
   const { d, out } = baseDeps(fx, []);
   assert.strictEqual(await run(SET_ITEM(fx.runDir), d), 0);
   assert.match(out(), /already keep-staged — nothing rewritten/);
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), '');
+});
+
+const REF_ITEM = (over = {}) => `${JSON.stringify({ resolved: true, mode: 'auto-resolve', items: [{ id: 'wrap-up-reference-1.md', section: 'Reference repairs', resolution: 'approve', reason: 'stance', ...over }] })}\n`;
+const SET_PENDING = (runDir, id = 'wrap-up-reference-1.md') => ['--run', runDir, '--set-item', id, '--resolution', 'pending', '--reason', 'reference-repair-stale'];
+
+test('#4636: --set-item rewrites a Reference repairs approve to pending after its diff stopped applying, and logs it', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: REF_ITEM() });
+  const { d, out } = baseDeps(fx, []);
+  assert.strictEqual(await run(SET_PENDING(fx.runDir), d), 0);
+  assert.match(out(), /^console-resolve\.js: wrap-up-reference-1\.md rewritten approve → pending in .*console\.json$/m);
+  const item = readConsole(fx.runDir).items[0];
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'reference-repair-stale');
+  assert.strictEqual(item.rewrittenFrom, 'approve');
+  assert.match(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), /Console item wrap-up-reference-1\.md \(Reference repairs\): rewritten approve → pending after execution — reference-repair-stale\. Reversibility: n\/a\.$/m);
+});
+
+test('#4636: --set-item refuses pending for an approve item outside Reference repairs, exit 5, console.json untouched', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: REF_ITEM({ id: 'wrap-up-skill-1.md', section: 'Skill updates' }) });
+  const before = fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8');
+  const { d, err } = baseDeps(fx, []);
+  assert.strictEqual(await run(SET_PENDING(fx.runDir, 'wrap-up-skill-1.md'), d), 5);
+  assert.match(err(), /in section Skill updates, not rewritable to pending \(only a Reference repairs item\) — nothing written/);
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'), before);
   assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), '');
 });
 
@@ -755,7 +822,7 @@ test('--set-item malformed invocations exit 2 (#4170)', async () => {
 
 test('--set-item with a --run outside the main checkout exits 3 (#4170)', async () => {
   const fx = mainCheckoutWithRun();
-  const shadow = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-shadow-'));
+  const shadow = scratchDir('console-resolve-shadow-');
   fs.mkdirSync(path.join(shadow, 'staged'));
   fs.writeFileSync(path.join(shadow, 'decisions.md'), '');
   fs.writeFileSync(path.join(shadow, 'console.json'), `${JSON.stringify({ mode: 'auto-resolve', items: [{ id: 'leftover-1.md', resolution: 'apply' }] })}\n`);
@@ -763,4 +830,137 @@ test('--set-item with a --run outside the main checkout exits 3 (#4170)', async 
   assert.strictEqual(await run(SET_ITEM(shadow), d), 3);
   assert.match(err(), /not anchored|missing/);
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(shadow, 'console.json'), 'utf8')).items[0].resolution, 'apply');
+});
+
+test('AC1.1: an unattended needs-human-decision ruling lands in console.json as pending and appears in console-residue.js --run output (#4587)', async () => {
+  const ruling = 'Title: ruling\nKind: sdd-ruling\nRuling: Task 2: Ruling: wait on a human — cheaper — costs a re-read\nDefers: yes\nDefer-reason: needs-human-decision\nStaged-at: abc123\nLedger: docs/plans/x-ledger.md#5\n\nratify / reverse\n';
+  const fx = mainCheckoutWithRun({ staged: { 'sdd-ruling-1.md': ruling } });
+  const { d } = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
+  const cj = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'));
+  const item = cj.items.find((i) => i.id === 'sdd-ruling-1.md');
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'sdd-ruling-needs-human-decision');
+  let residueOut = '';
+  const residueCode = require(path.join(PLUGIN_ROOT, 'bin', 'console-residue.js')).run(['--run', fx.runDir], {
+    cwd: () => fx.root, mainRoot: fx.root, now: () => Date.parse('2026-09-06T12:00:00Z'), pluginRoot: '/plug',
+    stdout: (s) => { residueOut += s; }, stderr: () => {},
+  });
+  assert.strictEqual(residueCode, 0, residueOut);
+  assert.ok(residueOut.includes('  - sdd-ruling-1.md — Pending review: pending (sdd-ruling-needs-human-decision)'), residueOut);
+});
+
+test('#4636: console-resolve.js reads merge-sensitive-paths from policy and holds a repair the diff shows on one', async () => {
+  const text = 'Hold: no\n\ndiff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-old\n+new\n';
+  const outcome = async (policyExtra) => {
+    const fx = mainCheckoutWithRun({ staged: { 'wrap-up-reference-1.md': text }, policyExtra });
+    fs.writeFileSync(path.join(fx.runDir, 'engine-state.json'), JSON.stringify({ results: { references: { result: 'findings', findings: [{ targetPath: 'docs/a.md', action: 'staged', stagePath: path.join(fx.runDir, 'staged', 'wrap-up-reference-1.md'), hold: false }] } } }));
+    const { d } = baseDeps(fx, []);
+    assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
+    return JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8')).items.find((i) => i.id === 'wrap-up-reference-1.md');
+  };
+  assert.strictEqual((await outcome('')).resolution, 'approve');
+  assert.strictEqual((await outcome('merge-sensitive-paths: plugin/**\n')).resolution, 'approve');
+  const held = await outcome('merge-sensitive-paths: plugin/**,docs/**\n');
+  assert.strictEqual(held.resolution, 'pending');
+  assert.strictEqual(held.reason, 'reference-repair-held');
+});
+
+test('#4636: --check-repair runs the floor on a named file, writing nothing', async () => {
+  const fx = mainCheckoutWithRun({ staged: {}, policyExtra: 'merge-sensitive-paths: plugin/**\n' });
+  const file = (name, text) => { const p = path.join(fx.runDir, name); fs.writeFileSync(p, text); return p; };
+  const diff = (p) => `diff --git a/${p} b/${p}\n--- a/${p}\n+++ b/${p}\n@@ -1 +1 @@\n-old\n+new\n`;
+  const check = async (p) => { const { d, out } = baseDeps(fx, []); const code = await run(['--run', fx.runDir, '--check-repair', p], d); return { code, out: out() }; };
+  const clean = await check(file('clean.md', `Hold: no\n\n${diff('docs/a.md')}`));
+  assert.strictEqual(clean.code, 0);
+  assert.match(clean.out, /console-resolve\.js: .*clean\.md clear/);
+  const sensitive = await check(file('sensitive.md', diff('plugin/a.md')));
+  assert.strictEqual(sensitive.code, 5);
+  assert.match(sensitive.out, /reference-repair-held/);
+  assert.match(sensitive.out, /hit plugin\/a\.md \(merge-sensitive\)/, 'names the path and why');
+  const test_ = await check(file('test.md', diff('tests/a.test.js')));
+  assert.strictEqual(test_.code, 5);
+  assert.match(test_.out, /reference-repair-held/);
+  assert.match(test_.out, /hit tests\/a\.test\.js \(test file\)/, 'names the path and why');
+  const none = await check(file('none.md', 'no diff'));
+  assert.strictEqual(none.code, 5);
+  assert.match(none.out, /reference-repair-unclassified/);
+  assert.doesNotMatch(none.out, /\bhit /, 'an unclassified file names no hit');
+  const gone = await check(path.join(fx.runDir, 'absent.md'));
+  assert.strictEqual(gone.code, 5);
+  assert.match(gone.out, /reference-repair-unreadable/);
+  assert.ok(!fs.existsSync(path.join(fx.runDir, 'console.json')), 'writes no console');
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), '', 'logs nothing');
+});
+
+test('#4636: --check-repair needs no unattended ceiling', async () => {
+  const fx = mainCheckoutWithRun({ autonomy: 'supervised' });
+  const p = path.join(fx.runDir, 'clean.md');
+  fs.writeFileSync(p, 'diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-old\n+new\n');
+  assert.strictEqual(await run(['--run', fx.runDir, '--check-repair', p], baseDeps(fx, []).d), 0);
+});
+
+test('#4636: --check-repair holds a clean diff as unclassified when the policy read throws', async () => {
+  const fx = mainCheckoutWithRun({ staged: {} });
+  const p = path.join(fx.runDir, 'clean.md');
+  fs.writeFileSync(p, 'Hold: no\n\ndiff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-old\n+new\n');
+  const control = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--check-repair', p], control.d), 0, 'the same file is clear when the policy reads');
+  // run() reads the cwd dep once to anchor --run; the second read is the policy read's own.
+  let reads = 0;
+  const { d, out } = baseDeps(fx, [], { cwd: () => { reads += 1; if (reads > 1) throw new Error('simulated policy read failure'); return fx.root; } });
+  assert.strictEqual(await run(['--run', fx.runDir, '--check-repair', p], d), 5);
+  assert.ok(reads > 1, 'the policy read was reached');
+  assert.match(out(), /reference-repair-unclassified/);
+  assert.match(out(), /merge-sensitive-paths policy could not be read/, 'the unreadable policy is named, not left to look like a bad diff');
+  assert.doesNotMatch(control.out(), /could not be read/, 'a readable policy prints no such note');
+});
+
+test('#4636: --check-repair --full re-runs the whole hold rule on a staged file', async () => {
+  const fx = mainCheckoutWithRun({ staged: {}, policyExtra: '' });
+  const diff = 'diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-old\n+new\n';
+  const stagedPath = path.join(fx.runDir, 'staged', 'wrap-up-reference-1.md');
+  fs.mkdirSync(path.dirname(stagedPath), { recursive: true });
+  const state = (hold) => fs.writeFileSync(path.join(fx.runDir, 'engine-state.json'), JSON.stringify({ results: { references: { result: 'findings', findings: [{ targetPath: 'docs/a.md', action: 'staged', stagePath: stagedPath, hold }] } } }));
+  const check = async (args) => { const { d, out } = baseDeps(fx, []); const code = await run(['--run', fx.runDir, '--check-repair', ...args], d); return { code, out: out() }; };
+  state(false);
+  fs.writeFileSync(stagedPath, `Hold: no\n\n${diff}`);
+  assert.strictEqual((await check([stagedPath, '--full'])).code, 0, 'header, JSON and floor all clear');
+  fs.writeFileSync(stagedPath, `Hold: yes\nHeld: causal set\n\n${diff}`);
+  assert.strictEqual((await check([stagedPath])).code, 0, 'the floor alone reads a clean diff as clear');
+  const rewritten = await check([stagedPath, '--full']);
+  assert.strictEqual(rewritten.code, 5, 'a rewrite to Hold: yes over a clean diff is not clear');
+  assert.match(rewritten.out, /reference-repair-held/);
+  fs.writeFileSync(stagedPath, `Hold: no\n\n${diff}`);
+  state(true);
+  assert.strictEqual((await check([stagedPath, '--full'])).code, 5, 'a JSON hold of true holds');
+  fs.rmSync(path.join(fx.runDir, 'engine-state.json'));
+  const noState = await check([stagedPath, '--full']);
+  assert.strictEqual(noState.code, 5);
+  assert.match(noState.out, /reference-repair-unclassified/);
+  fs.writeFileSync(path.join(fx.runDir, 'engine-state.json'), '{not json');
+  const badState = await check([stagedPath, '--full']);
+  assert.strictEqual(badState.code, 5, 'an unparseable engine-state.json reads as absent');
+  assert.match(badState.out, /reference-repair-unclassified/);
+  const outside = path.join(fx.runDir, 'wrap-up-reference-1.md');
+  fs.writeFileSync(outside, `Hold: no\n\n${diff}`);
+  assert.strictEqual((await check([outside, '--full'])).code, 2, '--full reads only a file in the run\'s staged/');
+  assert.throws(() => parseArgs(['--run', 'd', '--full']), /--full/);
+});
+
+test('#4636: --check-repair refuses the other shapes\' flags', () => {
+  for (const extra of [['--policy', 'console-auto'], ['--dry-run'], ['--json'], ['--set-item', 'x'], ['--set-item', 'x', '--resolution', 'pending', '--reason', 'r'], ['--resolution', 'pending'], ['--reason', 'r']]) {
+    assert.throws(() => parseArgs(['--run', 'd', '--check-repair', 'f', ...extra]), /--check-repair/);
+  }
+  assert.throws(() => parseArgs(['--run', 'd', '--check-repair', '']), /--check-repair/);
+});
+
+test('#4636: --check-repair with a --run outside the main checkout exits 3', async () => {
+  const fx = mainCheckoutWithRun();
+  const shadow = scratchDir('console-resolve-shadow-');
+  const p = path.join(shadow, 'x.md');
+  fs.writeFileSync(p, 'diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-old\n+new\n');
+  const { d, out } = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', shadow, '--check-repair', p], d), 3);
+  assert.strictEqual(out(), '', 'a refused anchor never prints clear');
 });

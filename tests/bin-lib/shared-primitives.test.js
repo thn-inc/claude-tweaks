@@ -2,9 +2,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../helpers/tmp-dir');
 const os = require('os');
-const { runClassified, runClassifiedAsync, isPathContained, toPosix, relativeDisplayId } = require('../../plugin/bin/lib/shared-primitives');
+const { runClassified, runClassifiedAsync, isPathContained, toPosix, relativeDisplayId, ghTimeoutMsAt } = require('../../plugin/bin/lib/shared-primitives');
 const path = require('path');
+const { captureExecTimeouts, evictModules, isolateExecBounds } = require('../helpers/gh-timeout-probe');
 
 // A synthetic execFileSync/execFile timeout-kill error — the exact shape
 // bin/lib/hooks/git-exec.js's own tests already use to force this branch
@@ -248,7 +250,7 @@ function freshGhTimeoutMs() {
 }
 
 function withTempCwd(fn) {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-gh-timeout-'));
+  const dir = scratchDir('ct-gh-timeout-', { realpath: true });
   const originalCwd = process.cwd();
   process.chdir(dir);
   try {
@@ -362,6 +364,184 @@ test('GH_TIMEOUT_MS: an out-of-range env override with no policy set falls throu
       else process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = prior;
     }
   });
+});
+
+// ghTimeoutMsAt (#4856): the same ladder as the getter above, but root- and
+// env-parameterised and never memoized.
+test('ghTimeoutMsAt: policy 7000 with an empty env -> 7000; env override wins -> 12000', () => {
+  withTempCwd((dir) => {
+    writePolicyFile(dir, 'gh-timeout-ms: 7000\n');
+    assert.strictEqual(ghTimeoutMsAt(dir, { env: {} }), 7000);
+    assert.strictEqual(ghTimeoutMsAt(dir, { env: { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '12000' } }), 12000);
+  });
+});
+
+test('ghTimeoutMsAt: a policy-less root accepts scientific and padded env integers', () => {
+  withTempCwd((dir) => {
+    assert.strictEqual(ghTimeoutMsAt(dir, { env: { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '9e3' } }), 9000);
+    assert.strictEqual(ghTimeoutMsAt(dir, { env: { CLAUDE_TWEAKS_GH_TIMEOUT_MS: ' 9000' } }), 9000);
+  });
+});
+
+test('ghTimeoutMsAt: invalid env values fall through to the policy value', () => {
+  withTempCwd((dir) => {
+    writePolicyFile(dir, 'gh-timeout-ms: 7000\n');
+    for (const bad of ['abc', '0', '90000']) {
+      assert.strictEqual(ghTimeoutMsAt(dir, { env: { CLAUDE_TWEAKS_GH_TIMEOUT_MS: bad } }), 7000, bad);
+    }
+  });
+});
+
+test('ghTimeoutMsAt: a non-string repoRoot has no policy file and resolves env, then 5000', () => {
+  withTempCwd((dir) => {
+    // A cwd policy that must not be read: a non-string root never falls back to the cwd.
+    writePolicyFile(dir, 'gh-timeout-ms: 7000\n');
+    for (const root of [undefined, null, 42]) {
+      assert.strictEqual(ghTimeoutMsAt(root, { env: {} }), 5000, String(root));
+      assert.strictEqual(ghTimeoutMsAt(root, { env: { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '9000' } }), 9000, String(root));
+    }
+  });
+});
+
+test('ghTimeoutMsAt: an empty-string repoRoot has no policy file — it never reads the cwd policy', () => {
+  withTempCwd((dir) => {
+    writePolicyFile(dir, 'gh-timeout-ms: 7000\n');
+    assert.strictEqual(ghTimeoutMsAt('', { env: {} }), 5000);
+  });
+});
+
+test('ghTimeoutMsAt: an array opts.env is not an env — it reads process.env', () => {
+  const key = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+  const prior = process.env[key];
+  process.env[key] = '15000';
+  try {
+    withTempCwd((dir) => {
+      assert.strictEqual(ghTimeoutMsAt(dir, { env: [] }), 15000);
+    });
+  } finally {
+    if (prior === undefined) delete process.env[key];
+    else process.env[key] = prior;
+  }
+});
+
+test('ghTimeoutMsAt: does not memoize across alternating roots', () => {
+  withTempCwd((a) => {
+    withTempCwd((b) => {
+      writePolicyFile(a, 'gh-timeout-ms: 7000\n');
+      writePolicyFile(b, 'gh-timeout-ms: 8000\n');
+      assert.strictEqual(ghTimeoutMsAt(a, { env: {} }), 7000);
+      assert.strictEqual(ghTimeoutMsAt(b, { env: {} }), 8000);
+      assert.strictEqual(ghTimeoutMsAt(a, { env: {} }), 7000);
+    });
+  });
+});
+
+// #4492: the policy rung finds policy.yml through locatePolicyFile, so a linked
+// worktree with no policy.yml of its own reads the main checkout's value.
+test('ghTimeoutMsAt: a linked worktree with no policy.yml reads the main checkout\'s gh-timeout-ms', (t) => {
+  // eslint-disable-next-line global-require
+  const { gitRepo, linkedWorktreeOf } = require('../helpers/git-fixtures');
+  const main = gitRepo();
+  writePolicyFile(main, 'gh-timeout-ms: 7000\n');
+  const wt = linkedWorktreeOf(main);
+  t.after(() => {
+    fs.rmSync(path.dirname(wt), { recursive: true, force: true });
+    fs.rmSync(main, { recursive: true, force: true });
+  });
+  assert.strictEqual(fs.existsSync(path.join(wt, '.claude-tweaks', 'policy.yml')), false);
+  assert.strictEqual(ghTimeoutMsAt(wt, { env: {} }), 7000);
+});
+
+test('ghTimeoutMsAt: no opts argument reads process.env, and a null opts.env does too', () => {
+  const key = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+  const prior = process.env[key];
+  process.env[key] = '15000';
+  try {
+    withTempCwd(() => {
+      assert.strictEqual(ghTimeoutMsAt(process.cwd()), 15000);
+      assert.strictEqual(ghTimeoutMsAt(process.cwd(), { env: null }), 15000);
+    });
+  } finally {
+    if (prior === undefined) delete process.env[key];
+    else process.env[key] = prior;
+  }
+});
+
+test('GH_TIMEOUT_MS getter: a throwing process.cwd still resolves env, then 5000, and never throws', () => {
+  const realCwd = process.cwd;
+  const key = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+  const prior = process.env[key];
+  process.cwd = () => { throw new Error('ENOENT: deleted cwd'); };
+  try {
+    process.env[key] = '12000';
+    assert.strictEqual(freshGhTimeoutMs(), 12000);
+    delete process.env[key];
+    assert.strictEqual(freshGhTimeoutMs(), 5000);
+  } finally {
+    process.cwd = realCwd;
+    if (prior === undefined) delete process.env[key];
+    else process.env[key] = prior;
+  }
+});
+
+// GH_BATCH_TIMEOUT_MS (#4815): max(30000, GH_TIMEOUT_MS) — the bound for one
+// aliased GraphQL batch. A twin of freshGhTimeoutMs() reading the composed getter.
+function freshBatchTimeoutMs() {
+  delete require.cache[MODULE_PATH];
+  // eslint-disable-next-line global-require
+  return require('../../plugin/bin/lib/shared-primitives').GH_BATCH_TIMEOUT_MS;
+}
+
+// freshBatchTimeoutMs() with CLAUDE_TWEAKS_GH_TIMEOUT_MS set to `envValue` (unset when
+// undefined), the prior value restored afterwards.
+function freshBatchTimeoutMsWithEnv(envValue) {
+  const key = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+  const prior = process.env[key];
+  if (envValue === undefined) delete process.env[key];
+  else process.env[key] = envValue;
+  try {
+    return freshBatchTimeoutMs();
+  } finally {
+    if (prior === undefined) delete process.env[key];
+    else process.env[key] = prior;
+  }
+}
+
+test('AC1.1: GH_BATCH_TIMEOUT_MS: no override -> the 30000 floor', () => {
+  withTempCwd(() => {
+    assert.strictEqual(freshBatchTimeoutMsWithEnv(undefined), 30000);
+  });
+});
+
+test('AC1.1: GH_BATCH_TIMEOUT_MS: gh-timeout-ms above the floor wins', () => {
+  withTempCwd((dir) => {
+    writePolicyFile(dir, 'gh-timeout-ms: 45000\n');
+    assert.strictEqual(freshBatchTimeoutMsWithEnv(undefined), 45000);
+  });
+});
+
+test('AC1.1: GH_BATCH_TIMEOUT_MS: gh-timeout-ms below the floor keeps 30000', () => {
+  withTempCwd((dir) => {
+    writePolicyFile(dir, 'gh-timeout-ms: 8000\n');
+    assert.strictEqual(freshBatchTimeoutMsWithEnv(undefined), 30000);
+  });
+});
+
+test('AC1.1: GH_BATCH_TIMEOUT_MS: CLAUDE_TWEAKS_GH_TIMEOUT_MS above the floor wins', () => {
+  withTempCwd(() => {
+    assert.strictEqual(freshBatchTimeoutMsWithEnv('50000'), 50000);
+  });
+});
+
+test('AC1.1: GH_BATCH_TIMEOUT_MS: a malformed gh-timeout-ms falls back to the 30000 floor', () => {
+  withTempCwd((dir) => {
+    writePolicyFile(dir, 'gh-timeout-ms: 999999\n'); // over the schema's 60000 max
+    assert.strictEqual(freshBatchTimeoutMsWithEnv(undefined), 30000);
+  });
+});
+
+test('GH_BATCH_TIMEOUT_MS is an enumerable export', () => {
+  assert.ok(Object.keys(require('../../plugin/bin/lib/shared-primitives')).includes('GH_BATCH_TIMEOUT_MS'));
 });
 
 // GIT_TIMEOUT_MS resolution (#3051): same shape as GH_TIMEOUT_MS above —
@@ -519,4 +699,171 @@ test('AC1.1: relativeDisplayId joins a win32 relative path with forward slashes 
 
 test('relativeDisplayId is plain path.relative under path.posix (#3315)', () => {
   assert.strictEqual(relativeDisplayId('/repo', '/repo/a/b.md', path.posix), 'a/b.md');
+});
+
+// execTimeoutMsFor (#5050): the one command-to-bound map the four exec seams share —
+// gh -> GH_BATCH_TIMEOUT_MS, git -> GIT_TIMEOUT_MS, anything else -> a fixed 30000.
+// Each case loads shared-primitives fresh (the getters memoize per process) through
+// captureExecTimeouts, which clears both bound env vars and runs from an empty temp cwd,
+// so neither this checkout's policy.yml nor an ambient env value reaches it.
+function execBoundsWithEnv(env) {
+  let bounds;
+  captureExecTimeouts({
+    env,
+    exercise: (setEnv) => {
+      setEnv();
+      // eslint-disable-next-line global-require
+      const { execTimeoutMsFor } = require('../../plugin/bin/lib/shared-primitives');
+      bounds = { gh: execTimeoutMsFor('gh'), git: execTimeoutMsFor('git'), node: execTimeoutMsFor('node') };
+    },
+  });
+  return bounds;
+}
+
+test('AC7.1: execTimeoutMsFor: both keys unset -> gh, git and node all keep 30000', () => {
+  assert.deepStrictEqual(execBoundsWithEnv({}), { gh: 30000, git: 30000, node: 30000 });
+});
+
+test('execTimeoutMsFor: gh env above the floor raises only the gh bound', () => {
+  assert.deepStrictEqual(execBoundsWithEnv({ CLAUDE_TWEAKS_GH_TIMEOUT_MS: '45000' }), { gh: 45000, git: 30000, node: 30000 });
+});
+
+test('execTimeoutMsFor: gh env below the 30000 floor keeps gh at 30000', () => {
+  assert.strictEqual(execBoundsWithEnv({ CLAUDE_TWEAKS_GH_TIMEOUT_MS: '10000' }).gh, 30000);
+});
+
+test('execTimeoutMsFor: gh env outside gh-timeout-ms bounds (65000, 500) is ignored -> gh 30000', () => {
+  assert.strictEqual(execBoundsWithEnv({ CLAUDE_TWEAKS_GH_TIMEOUT_MS: '65000' }).gh, 30000);
+  assert.strictEqual(execBoundsWithEnv({ CLAUDE_TWEAKS_GH_TIMEOUT_MS: '500' }).gh, 30000);
+});
+
+test('execTimeoutMsFor: git env raises only the git bound', () => {
+  assert.deepStrictEqual(execBoundsWithEnv({ CLAUDE_TWEAKS_GIT_TIMEOUT_MS: '90000' }), { gh: 30000, git: 90000, node: 30000 });
+});
+
+test('execTimeoutMsFor: git env above the 120000 max is ignored -> git 30000', () => {
+  assert.strictEqual(execBoundsWithEnv({ CLAUDE_TWEAKS_GIT_TIMEOUT_MS: '200000' }).git, 30000);
+});
+
+test('execTimeoutMsFor: any other command stays fixed at 30000 even with both keys raised', () => {
+  const bounds = execBoundsWithEnv({ CLAUDE_TWEAKS_GH_TIMEOUT_MS: '55000', CLAUDE_TWEAKS_GIT_TIMEOUT_MS: '90000' });
+  assert.deepStrictEqual(bounds, { gh: 55000, git: 90000, node: 30000 });
+});
+
+// captureExecTimeouts (#5050): the per-command probe the four seams' tests share.
+test('captureExecTimeouts: records every timeout per command in spawn order; unspawned commands are []', () => {
+  const cp = require('node:child_process');
+  const seen = captureExecTimeouts({
+    exercise: () => {
+      cp.execFileSync('gh', ['api'], { timeout: 111 });
+      cp.execFileSync('git', ['status'], { timeout: 222 });
+      cp.execFileSync('gh', ['api'], { timeout: 333 });
+    },
+  });
+  assert.deepStrictEqual(seen, { gh: [111, 333], git: [222], node: [] });
+});
+
+test('captureExecTimeouts: stubs the callback and promisified execFile too', async () => {
+  const cp = require('node:child_process');
+  const { promisify } = require('node:util');
+  let cbOut;
+  let asyncOut;
+  const seen = captureExecTimeouts({
+    reply: 'R',
+    exercise: () => {
+      cp.execFile('git', ['x'], { timeout: 5 }, (err, stdout) => { cbOut = stdout; });
+      asyncOut = promisify(cp.execFile)('gh', ['y'], { timeout: 6 });
+    },
+  });
+  assert.deepStrictEqual(seen, { gh: [6], git: [5], node: [] });
+  assert.strictEqual(cbOut, 'R');
+  assert.deepStrictEqual(await asyncOut, { stdout: 'R', stderr: '' });
+});
+
+test('captureExecTimeouts: an env value of undefined deletes the variable, never the string "undefined"', () => {
+  const key = 'CT_5050_PROBE_VAR';
+  const prior = process.env[key];
+  process.env[key] = 'before';
+  let during;
+  try {
+    captureExecTimeouts({ env: { [key]: undefined }, exercise: (setEnv) => { setEnv(); during = process.env[key]; } });
+    assert.strictEqual(during, undefined);
+    assert.strictEqual(process.env[key], 'before', 'restored after the probe');
+  } finally {
+    if (prior === undefined) delete process.env[key]; else process.env[key] = prior;
+  }
+});
+
+test('captureExecTimeouts: an ambient git bound does not leak into a gh-only probe, and is restored', () => {
+  const gitKey = 'CLAUDE_TWEAKS_GIT_TIMEOUT_MS';
+  const ghKey = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+  const priorGit = process.env[gitKey];
+  const priorGh = process.env[ghKey];
+  process.env[gitKey] = '90000';
+  process.env[ghKey] = '40000';
+  let seenGitInside;
+  let ghBound;
+  try {
+    captureExecTimeouts({
+      env: { [ghKey]: '45000' },
+      exercise: (setEnv) => {
+        setEnv();
+        seenGitInside = process.env[gitKey];
+        // eslint-disable-next-line global-require
+        const { execTimeoutMsFor } = require('../../plugin/bin/lib/shared-primitives');
+        ghBound = { gh: execTimeoutMsFor('gh'), git: execTimeoutMsFor('git') };
+      },
+    });
+    assert.strictEqual(seenGitInside, undefined, 'the ambient git bound was cleared for the probe');
+    assert.deepStrictEqual(ghBound, { gh: 45000, git: 30000 });
+    assert.strictEqual(process.env[gitKey], '90000');
+    assert.strictEqual(process.env[ghKey], '40000');
+  } finally {
+    if (priorGit === undefined) delete process.env[gitKey]; else process.env[gitKey] = priorGit;
+    if (priorGh === undefined) delete process.env[ghKey]; else process.env[ghKey] = priorGh;
+  }
+});
+
+test('captureExecTimeouts: child_process is restored and shared-primitives is evicted from the require cache', () => {
+  const cp = require('node:child_process');
+  const { execFileSync, execFile } = cp;
+  captureExecTimeouts({ modulePaths: [], exercise: () => { require('../../plugin/bin/lib/shared-primitives'); } });
+  assert.strictEqual(cp.execFileSync, execFileSync);
+  assert.strictEqual(cp.execFile, execFile);
+  assert.strictEqual(require.cache[MODULE_PATH], undefined, 'shared-primitives was evicted after the probe');
+});
+
+test('isolateExecBounds: clears both bound keys and the cwd for the call, then restores them, for a sync throw and an async reject alike', async () => {
+  const ghKey = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+  const gitKey = 'CLAUDE_TWEAKS_GIT_TIMEOUT_MS';
+  const priorGh = process.env[ghKey];
+  const priorGit = process.env[gitKey];
+  const cwdBefore = process.cwd();
+  process.env[ghKey] = '40000';
+  process.env[gitKey] = '90000';
+  try {
+    let inside;
+    isolateExecBounds([], () => { inside = { gh: process.env[ghKey], git: process.env[gitKey], cwd: process.cwd() }; });
+    assert.deepStrictEqual({ gh: inside.gh, git: inside.git }, { gh: undefined, git: undefined });
+    assert.notStrictEqual(inside.cwd, cwdBefore, 'ran from an empty temp cwd');
+    assert.deepStrictEqual({ gh: process.env[ghKey], git: process.env[gitKey], cwd: process.cwd() }, { gh: '40000', git: '90000', cwd: cwdBefore });
+    assert.throws(() => isolateExecBounds([], () => { throw new Error('sync boom'); }), /sync boom/);
+    assert.strictEqual(process.env[ghKey], '40000', 'restored after a throw');
+    assert.strictEqual(process.cwd(), cwdBefore);
+    await assert.rejects(isolateExecBounds([], async () => { throw new Error('async boom'); }), /async boom/);
+    assert.strictEqual(process.env[gitKey], '90000', 'restored after a reject');
+    assert.strictEqual(process.cwd(), cwdBefore);
+  } finally {
+    if (priorGh === undefined) delete process.env[ghKey]; else process.env[ghKey] = priorGh;
+    if (priorGit === undefined) delete process.env[gitKey]; else process.env[gitKey] = priorGit;
+  }
+});
+
+test('evictModules: drops the named modules and shared-primitives from the require cache', () => {
+  // eslint-disable-next-line global-require
+  require('../../plugin/bin/lib/shared-primitives');
+  const probePath = require.resolve('../helpers/gh-timeout-probe');
+  evictModules([probePath]);
+  assert.strictEqual(require.cache[MODULE_PATH], undefined);
+  assert.strictEqual(require.cache[probePath], undefined);
 });

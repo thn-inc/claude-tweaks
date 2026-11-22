@@ -5,6 +5,7 @@ files:
   - plugin/bin/lib/harness-health/scope.js
   - plugin/bin/lib/health-core/premise-self-check.js
   - plugin/bin/lib/issues/record-payload.js
+  - plugin/bin/lib/markdown-blocks.js
   - plugin/bin/materialize.js
   - plugin/skills/harness-health/SKILL.md
 ---

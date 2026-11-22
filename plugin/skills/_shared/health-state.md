@@ -45,8 +45,10 @@ docs-health/declined.json        # same shape/consequence as harness-health's ab
 `bin/lib/health-core/durable-state.js`'s `createDurableState(skillName, { includeRemembered, includeDeclined } = {})`
 returns `{ readState(root), writeState(root, mutatorFn), writeStateLocal(root, mutatorFn), pushState(root) }`:
 
-- **`readState`** — `git fetch origin health-state`, then `git show origin/health-state:<path>`
-  per file. Degrades to `{}`/`[]` defaults if the branch or a file doesn't exist yet — never
+- **`readState`** — `git fetch origin health-state`, then one `git cat-file --batch` per read
+  round, fed one `origin/health-state:<path>` line per state file. `writeState` reads the same
+  way at the commit sha it resolved, and reads nothing at all when `origin/health-state` does
+  not resolve. Degrades to `{}`/`[]` defaults if the branch or a file doesn't exist yet — never
   throws.
 - **`writeState`** — builds a new commit entirely from plain git plumbing (`git hash-object`
   for each changed file's blob, `git ls-tree`/`git mktree` to splice those blobs into the

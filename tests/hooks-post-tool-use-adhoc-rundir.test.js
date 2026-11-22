@@ -12,6 +12,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir, isolateTmpdir } = require('./helpers/tmp-dir');
+isolateTmpdir('ct-iso-hooks-post-tool-use-adho-');
 const path = require('path');
 const cp = require('child_process');
 const post = require('../plugin/bin/lib/hooks/post-tool-use');
@@ -40,7 +42,7 @@ function enterWorktreeCtx(wt, { toolResponse, ownedRun, sessionId = 'sess-adhoc-
   const input = { tool_name: 'EnterWorktree', cwd: wt };
   if (toolResponse !== undefined) input.tool_response = toolResponse;
   if (sessionId !== undefined) input.session_id = sessionId;
-  return { input, cwd: wt, ownedRun };
+  return { input, cwd: wt, env: process.env, ownedRun };
 }
 
 function pipelinesDir(main) {
@@ -122,7 +124,7 @@ test('AC1.1/AC1.2: stampAdHocRunDir writes the owner block', () => {
 test('does not stamp when ctx.ownedRun.dir already resolves (a formal pipeline already claimed this worktree)', () => {
   const main = gitRepo();
   const wt = harnessWorktreeOf(main);
-  const existingRun = fs.mkdtempSync(path.join(fs.mkdtempSync(path.join(require('os').tmpdir(), 'ct-owned-')), 'run-'));
+  const existingRun = fs.mkdtempSync(path.join(scratchDir('ct-owned-'), 'run-'));
   post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt), ownedRun: { dir: existingRun } }));
   assert.deepStrictEqual(adhocDirs(main), []);
 });
@@ -137,7 +139,7 @@ test('does not stamp when the hook payload carries no session_id (nothing to sta
 test('does not fire for a tool other than EnterWorktree when cwd is the main checkout (not any worktree)', () => {
   cleanSessionTmp('sess-adhoc-mainonly');
   const main = gitRepo();
-  post.run({ input: { tool_name: 'ExitWorktree', cwd: main, session_id: 'sess-adhoc-mainonly' }, cwd: main });
+  post.run({ env: process.env, input: { tool_name: 'ExitWorktree', cwd: main, session_id: 'sess-adhoc-mainonly' }, cwd: main });
   assert.deepStrictEqual(adhocDirs(main), []);
 });
 
@@ -150,7 +152,7 @@ test('stamps via the widened trigger: a non-EnterWorktree tool call from cwd ins
   // No EnterWorktree call anywhere in this test — simulates a worktree
   // created by a tool other than claude-tweaks' own EnterWorktree (another
   // plugin's worktree-management skill, or a raw `git worktree add`).
-  post.run({ input: { tool_name: 'Write', cwd: wt, session_id: 'sess-adhoc-nonEW-1' }, cwd: wt });
+  post.run({ env: process.env, input: { tool_name: 'Write', cwd: wt, session_id: 'sess-adhoc-nonEW-1' }, cwd: wt });
   const dirs = adhocDirs(main);
   assert.strictEqual(dirs.length, 1);
   const state = ctxLib.readRunState(path.join(pipelinesDir(main), dirs[0]));
@@ -163,8 +165,9 @@ test('non-EnterWorktree trigger: does not stamp when this session already owns a
   cleanSessionTmp('sess-adhoc-nonEW-owned');
   const main = gitRepo();
   const wt = harnessWorktreeOf(main);
-  const existingRun = fs.mkdtempSync(path.join(fs.mkdtempSync(path.join(require('os').tmpdir(), 'ct-owned-')), 'run-'));
+  const existingRun = fs.mkdtempSync(path.join(scratchDir('ct-owned-'), 'run-'));
   post.run({
+    env: process.env,
     input: { tool_name: 'Write', cwd: wt, session_id: 'sess-adhoc-nonEW-owned' },
     cwd: wt,
     ownedRun: { dir: existingRun },
@@ -185,7 +188,7 @@ test('non-EnterWorktree trigger: git worktree list is not invoked on every ordin
     return realExecFileSync(cmd, args, opts);
   });
 
-  post.run({ input: { tool_name: 'Write', cwd: wt, session_id: 'sess-adhoc-ratelimit' }, cwd: wt });
+  post.run({ env: process.env, input: { tool_name: 'Write', cwd: wt, session_id: 'sess-adhoc-ratelimit' }, cwd: wt });
   const dirs = adhocDirs(main);
   assert.strictEqual(dirs.length, 1, 'first call should stamp once');
 
@@ -193,7 +196,7 @@ test('non-EnterWorktree trigger: git worktree list is not invoked on every ordin
   // dispatcher not yet having recomputed it), so without the rate-limit
   // marker this would run `git worktree list` — and, absent the ownedRun
   // guard, re-derive the same worktree path — a second time.
-  post.run({ input: { tool_name: 'Write', cwd: wt, session_id: 'sess-adhoc-ratelimit' }, cwd: wt });
+  post.run({ env: process.env, input: { tool_name: 'Write', cwd: wt, session_id: 'sess-adhoc-ratelimit' }, cwd: wt });
 
   assert.strictEqual(worktreeListCalls.length, 1, `expected exactly 1 'git worktree list' spawn across two calls, got ${worktreeListCalls.length}`);
   assert.strictEqual(adhocDirs(main).length, 1, 'second call must not mint a second ad-hoc dir');
@@ -213,11 +216,11 @@ test('non-EnterWorktree trigger: an ordinary tool call from a session already ch
 
   // First call from the main checkout rules this session out ("not a
   // worktree") and writes the marker.
-  post.run({ input: { tool_name: 'Write', cwd: main, session_id: 'sess-adhoc-checked-once' }, cwd: main });
+  post.run({ env: process.env, input: { tool_name: 'Write', cwd: main, session_id: 'sess-adhoc-checked-once' }, cwd: main });
   assert.strictEqual(worktreeListCalls.length, 1);
 
   // A second, later call in the same session must not re-run the check.
-  post.run({ input: { tool_name: 'Write', cwd: main, session_id: 'sess-adhoc-checked-once' }, cwd: main });
+  post.run({ env: process.env, input: { tool_name: 'Write', cwd: main, session_id: 'sess-adhoc-checked-once' }, cwd: main });
   assert.strictEqual(worktreeListCalls.length, 1, `expected the second call to skip the git call entirely, got ${worktreeListCalls.length} total calls`);
   assert.deepStrictEqual(adhocDirs(main), []);
 });
@@ -237,7 +240,7 @@ test('a second EnterWorktree in the same session does not mint a second ad-hoc d
 });
 
 test('never throws on an unresolvable worktree path — returns {} rather than crashing', () => {
-  const out = post.run({ input: { tool_name: 'EnterWorktree', cwd: '/this/path/does/not/exist/at/all', session_id: 'sess-x' } });
+  const out = post.run({ env: process.env, input: { tool_name: 'EnterWorktree', cwd: '/this/path/does/not/exist/at/all', session_id: 'sess-x' } });
   assert.deepStrictEqual(out, {});
 });
 
@@ -262,7 +265,7 @@ test('ExitWorktree(remove): does not write the rate-limit marker or mint a run d
     return realExecFileSync(cmd, args, opts);
   });
 
-  post.run({ input: { tool_name: 'ExitWorktree', cwd: wt, session_id: 'sess-adhoc-exitwt-gone' }, cwd: wt });
+  post.run({ env: process.env, input: { tool_name: 'ExitWorktree', cwd: wt, session_id: 'sess-adhoc-exitwt-gone' }, cwd: wt });
 
   assert.strictEqual(worktreeListCalls.length, 0, 'the porcelain lookup must never even be attempted against a gone directory');
   assert.deepStrictEqual(adhocDirs(main), []);
@@ -279,7 +282,7 @@ test('ExitWorktree(remove) followed by a raw `git worktree add` in the same sess
   // First: the ExitWorktree(remove) event against the now-deleted worktree —
   // must not permanently defeat the mechanism for this session (see the test
   // above for the marker-write assertion in isolation).
-  post.run({ input: { tool_name: 'ExitWorktree', cwd: goneWt, session_id: 'sess-adhoc-exitwt-then-add' }, cwd: goneWt });
+  post.run({ env: process.env, input: { tool_name: 'ExitWorktree', cwd: goneWt, session_id: 'sess-adhoc-exitwt-then-add' }, cwd: goneWt });
   assert.deepStrictEqual(adhocDirs(main), []);
 
   // Then: a later, genuinely new worktree created via a raw `git worktree
@@ -287,7 +290,7 @@ test('ExitWorktree(remove) followed by a raw `git worktree add` in the same sess
   // by stampAdHocRunDir's widened non-EnterWorktree trigger (#1333) — this is
   // exactly the failure scenario #1864's Deliverables call out.
   const newWt = harnessWorktreeOf(main);
-  post.run({ input: { tool_name: 'Write', cwd: newWt, session_id: 'sess-adhoc-exitwt-then-add' }, cwd: newWt });
+  post.run({ env: process.env, input: { tool_name: 'Write', cwd: newWt, session_id: 'sess-adhoc-exitwt-then-add' }, cwd: newWt });
 
   const dirs = adhocDirs(main);
   assert.strictEqual(dirs.length, 1, 'the later worktree must get stamped, not silently skipped');
@@ -300,7 +303,7 @@ test('ExitWorktree(remove) followed by a raw `git worktree add` in the same sess
 test('#2783: stamps even when ctx.ownedRun is only a fallback GUESS (an unrelated unowned run), not this session\'s own', () => {
   const main = gitRepo();
   const wt = harnessWorktreeOf(main);
-  const guess = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ct-guess-'));
+  const guess = scratchDir('ct-guess-');
   post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt), ownedRun: { dir: guess, attribution: 'fallback' }, sessionId: 'sess-2783-a' }));
   const dirs = adhocDirs(main);
   assert.strictEqual(dirs.length, 1);

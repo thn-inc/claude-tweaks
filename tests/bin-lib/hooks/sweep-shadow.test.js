@@ -12,6 +12,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { sweepShadow } = require('../../../plugin/bin/lib/hooks/sweep-shadow');
@@ -20,7 +21,7 @@ const { chmodDenialSkip } = require('../../helpers/root');
 const REL = path.join('.claude-tweaks', 'pipelines', 'testrun');
 
 function tmpDir(prefix) {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  return fs.realpathSync(scratchDir(prefix));
 }
 
 // Sets up a main-checkout root with an anchored run dir, and a separate

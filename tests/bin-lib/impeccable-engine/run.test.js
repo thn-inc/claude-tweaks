@@ -2,13 +2,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { run, defaultDeps } = require('../../../plugin/bin/lib/impeccable-engine');
 const cli = require('../../../plugin/bin/impeccable-engine.js');
 
 function tmp(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return scratchDir(prefix);
 }
 
 // Same shape as resolve.test.js's fakeDeps — a resolved install (user scope,

@@ -29,6 +29,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
@@ -272,7 +273,7 @@ test('reject: --run-dir has no git repo ancestor at all — distinct message, no
   // the ancestor chain) is a DIFFERENT failure than "exists, but resolves
   // outside a KNOWN main checkout" — a bare mkdtempSync dir with no git init
   // reproduces it without needing a git-repo fixture at all.
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-materialize-norepo-'));
+  const bare = scratchDir('ct-materialize-norepo-');
   const deps = fakeDeps();
   const abs = path.join(bare, '.claude-tweaks', 'pipelines', 'x');
   const code = withCwd(bare, () => run(['1', '--run-dir', abs], deps));

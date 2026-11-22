@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const path = require('path');
 const { iterRunDirsWithState } = require('../plugin/bin/lib/hooks/context');
 const { gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
@@ -40,7 +41,7 @@ test('iterRunDirsWithState: from the main checkout is unchanged', () => {
 });
 
 test('iterRunDirsWithState: outside any repo falls back to cwd-relative behavior', () => {
-  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ct-anchor-'));
+  const dir = scratchDir('ct-anchor-');
   seedRun(dir, '2026-08-07T150000-spec-3', { status: 'active' });
 
   const names = [...iterRunDirsWithState(dir)].map((e) => path.basename(e.dir));

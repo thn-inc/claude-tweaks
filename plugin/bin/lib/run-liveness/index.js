@@ -4,8 +4,12 @@
 // injectable probes. Consumers: reconcile/archive-merged.js's `adhoc-session-ended`
 // sweep, through `adHocSessionLiveness` (#4179), and its `abandoned-interrupted`
 // kind, through `defaultRunVerdict` (#4421), plus `blocksResume`'s two resume
-// callers (#4420). runIdMs and LIVE_PROBES are exported so reconcile's
-// abandoned-interrupted decision reuses them rather than copying (#4421).
+// callers (#4420), and teardown-run's `--merged` foreign-owner override (#5293: only a `dead`
+// verdict proceeds — the one consumer acting destructively on another session's run), and
+// review-lens/history.js's closed check (#5998: only `live` reads as not closed, for a run its file
+// test has not already ruled not closed; `unknown` and `dead` read alike as closed).
+// runIdMs and LIVE_PROBES are exported so reconcile's abandoned-interrupted decision reuses
+// them rather than copying (#4421).
 //
 // Shape: gatherEvidence() asks every probe once and records a tagged entry
 // ({ probe, result: positive | negative | error, detail }) plus the "death
@@ -22,7 +26,7 @@ const fs = require('fs');
 const path = require('path');
 const { lstatType } = require('../path-guard');
 const { runStartIso } = require('../hooks/run-integrity');
-const { DEFAULT_PROBES } = require('./probes');
+const { probesFor } = require('./probes');
 const { call, errorMessage, probeOwnerPid } = require('./owner-pid-probe');
 const { LIVE_WINDOW_MS, LEGACY_DEAD_MS } = require('./constants');
 
@@ -125,8 +129,8 @@ function probeOwnEvents(runDir, p, now, ownerSessionId) {
 
 // -> { evidence: [{ probe, result, detail }] (always all five, PROBE_ORDER),
 //      witnesses: ('pid' | 'session-end' | 'legacy')[] }
-function gatherEvidence(runDir, { now = Date.now(), probes = {} } = {}) {
-  const p = { pathType: (wt) => lstatType(wt), ...DEFAULT_PROBES, ...probes };
+function gatherEvidence(runDir, { now = Date.now(), probes = {}, env } = {}) {
+  const p = { pathType: (wt) => lstatType(wt), ...probesFor(env), ...probes };
   const read = readState(runDir);
   const state = read.state || {};
   const owner = isPlainObject(state.owner) ? state.owner : null;
@@ -158,6 +162,26 @@ function gatherEvidence(runDir, { now = Date.now(), probes = {} } = {}) {
 
   const witnesses = [];
   if (pid.witness) witnesses.push('pid');
+  // Each conjunct below is load-bearing (#3973's verdict table, precedence rules
+  // and Gotchas; the 2026-10-22 run-directory-cleanup design, Part A and Non-goals):
+  // - owner: a legacy run has no heartbeat, so "no heartbeat since the SessionEnd"
+  //   holds vacuously for it and any `interrupted` stamp would kill it.
+  // - pid.detail alive-no-start-time / no-pid: this route is the death witness only
+  //   for the case the PID row cannot judge; when it can (gone, reused, matching
+  //   start time) the PID row decides and this route adds nothing. Another host's
+  //   process is never judged here: `other-host` stays `unknown` (#3973's unknown row).
+  // - status interrupted + lastEvent session-end: the verdict-table row's own
+  //   condition — the session ended through SessionEnd.
+  // - lastSessionEndMs !== null: the status stamp must be backed by a `session-end`
+  //   event from the owner's own session (probeOwnEvents scopes it to
+  //   owner.sessionId); without one there is nothing to measure "since" from, so
+  //   the status stamp alone never counts as a death witness.
+  // - heartbeatAt before lastSessionEndMs: "no owner heartbeat since" the
+  //   SessionEnd. A nested `claude -p` (#3845) can stamp a false `interrupted`
+  //   while the owner keeps heartbeating; once the owner heartbeats after that
+  //   stamp, the comparison keeps the run out of `dead`. Accepted residual risk
+  //   (#3973 Gotchas): with a null `pidStartedAt` and an owner idle for more than
+  //   10 min, the run can still read `dead` until its next hook heartbeats.
   if (owner
     && (pid.detail === 'alive-no-start-time' || pid.detail === 'no-pid')
     && state.status === 'interrupted'
@@ -166,6 +190,15 @@ function gatherEvidence(runDir, { now = Date.now(), probes = {} } = {}) {
     && Date.parse(owner.heartbeatAt) < events.lastSessionEndMs) {
     witnesses.push('session-end');
   }
+  // Legacy route (#3973 verdict table, legacy row): only for a run with no owner
+  // block, e.g. every run minted before #3973, or one whose stamp degraded without
+  // the block (docs/hooks.md) — owner-block runs die through the pid or
+  // session-end witness. All three activity signals must be silent: no in-use
+  // lock, no commit for LEGACY_DEAD_MS (or no worktree/commits at all), and no
+  // owner-attributed event for LEGACY_DEAD_MS. The SessionEnd route alone is never
+  // enough here, so a false `interrupted` from #3845 cannot kill an idle but live
+  // legacy run. Removal condition: docs/reconcile-checks.md
+  // (`ownerlessNonCleanZeroSince`), tracked by #4436.
   if (!owner
     && lock.result === 'negative'
     && commit.result === 'negative' && commit.absentOrOld
@@ -185,13 +218,13 @@ function decideVerdict({ evidence, witnesses }) {
 // Never throws: any internal failure reads as `unknown` with every probe an error.
 function runLiveness(runDir, opts) {
   try {
-    const { now = Date.now(), probes = {} } = isPlainObject(opts) ? opts : {};
+    const { now = Date.now(), probes = {}, env } = isPlainObject(opts) ? opts : {};
     // Every age comparison goes false on a non-finite clock, which would read a
     // fresh heartbeat as stale — refuse to judge.
     if (!Number.isFinite(now)) {
       return { verdict: 'unknown', evidence: PROBE_ORDER.map((probe) => ({ probe, result: 'error', detail: 'invalid-now' })) };
     }
-    const gathered = gatherEvidence(runDir, { now, probes });
+    const gathered = gatherEvidence(runDir, { now, probes, env });
     return { verdict: decideVerdict(gathered), evidence: gathered.evidence };
   } catch (err) {
     const detail = errorMessage(err);

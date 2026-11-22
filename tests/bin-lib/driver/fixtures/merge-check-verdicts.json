@@ -1,0 +1,1770 @@
+{
+  "extractedAt": "2026-11-15T08:12:22.871Z",
+  "divergence": "record bodies and check state as of extractedAt; later edits are a named divergence",
+  "policy": {
+    "source": "resolved per entry by blast-radius.js at its mergeSha; see each blastRadius.config",
+    "keys": [
+      "merge-sensitive-paths",
+      "auto-merge-max-lines",
+      "auto-merge-max-files"
+    ]
+  },
+  "excluded": [
+    {
+      "record": 1712,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 1796,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 1869,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2280,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2281,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2283,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 2319,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2330,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 2337,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2338,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 2346,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 2444,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2476,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2480,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2499,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2500,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2516,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2695,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2725,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2726,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2739,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2742,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2744,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2746,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2772,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2773,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2779,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2802,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2811,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2812,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2841,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2844,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2854,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2863,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2908,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2918,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2934,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 2977,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 3023,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 3066,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 3113,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 3166,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3187,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3265,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3330,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 3367,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 3388,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3389,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3404,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3415,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3429,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 3440,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3442,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3459,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3461,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 3475,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 3479,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 3491,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3493,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3505,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3506,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3523,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3574,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 3575,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3641,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3679,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3686,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 3707,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3723,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 3742,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 3768,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3770,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3776,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 3797,
+      "reason": "no-review-summary"
+    },
+    {
+      "record": 3802,
+      "reason": "no-review-summary"
+    },
+    {
+      "record": 3820,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3843,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3857,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3870,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3871,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3886,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 3968,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 3982,
+      "reason": "no-review-summary"
+    },
+    {
+      "record": 4008,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 4014,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 4060,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 4135,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 4141,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 4154,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 4158,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 4159,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 4164,
+      "reason": "no-review-summary"
+    },
+    {
+      "record": 4183,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 4286,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 4287,
+      "reason": "no-review-summary"
+    },
+    {
+      "record": 4299,
+      "reason": "no-review-summary"
+    },
+    {
+      "record": 4301,
+      "reason": "no-review-summary"
+    },
+    {
+      "record": 4326,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 4360,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 4369,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 4464,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 4482,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 4483,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 4551,
+      "reason": "no-merge-gate-verdict"
+    },
+    {
+      "record": 4568,
+      "reason": "review-summary-ambiguous"
+    },
+    {
+      "record": 4827,
+      "reason": "review-summary-ambiguous"
+    }
+  ],
+  "entries": [
+    {
+      "record": 1841,
+      "verdict": "needs-human",
+      "mergeSha": "874eebcf16e98dc19cc16004d6dc277a023ca7c3",
+      "closingPr": 2382,
+      "title": "wrap-up verify: acceptance-labeling check fails on every record-mode run — `gh issue view --json parent` is not a valid field in gh 2.92.0",
+      "body": "Surface: infra\n\n## Current State\n\n`plugin/bin/lib/wrap-up/engine-verify.js`'s `resolveParent()` (line 392) resolves a record's decomposition parent with `gh issue view {n} --json parent`. On `gh` 2.92.0 (2026-04-28) that field is not in the command's JSON field list, the call throws `Unknown JSON field: \"parent\"`, and `resolveParent` returns `{ok: false}` — which the `acceptance-labeling` check folds into a `fail` row, so `wrap-up-engine.js verify` exits 3 and `/claude-tweaks:wrap-up`'s Verify step withholds the closure line (`execution-and-verification.md`'s exit-3 rule) on every record-mode run, even when the record's `demo:*` labeling is correct. On `gh` 2.96.0 (this checkout, 2026-09-09) the same command returns `{\"parent\": null}`, so the failure is version-dependent: any sandbox or machine still on 2.92.x hits it on every run.\n\nTwo things are wrong at once. The field choice is fragile — the plugin's other parent/sub-issue resolution (`bin/lib/issues/native-dependencies.js`, `fetchNativeSubIssues`) goes through GraphQL, which exposes `Issue.parent` on every `gh` version that can run GraphQL at all. And the failure class is misreported — every other gather failure in this file (`git status`, `git worktree list`, `git log`, `gh pr view`, lines 172–326) renders `result: 'unknown'`, which the closure line quotes without blocking, while `resolveParent`'s failure alone is rendered as `fail`, turning a tooling gap into a false labeling verdict.\n\n## Deliverables\n\n- Resolve the parent through GraphQL — `gh api graphql` with `repository(owner,name){ issue(number){ parent { number } } }` — through the same `deps.gh` seam the rest of the file uses, so the test double can drive it; keep the resolution in `resolveParent` (or a sibling in `native-dependencies.js` it delegates to) and drop the `--json parent` call.\n- When the parent gather itself fails (GraphQL error, unparseable response), render the `acceptance-labeling` row as `result: 'unknown'` with the gather error in `detail`, matching the file's other could-not-gather rows — never `fail`. A real labeling mismatch on a successfully resolved record stays `fail`.\n- Extend `tests/bin-lib/wrap-up/engine-verify.test.js`: a record whose `deps.gh` GraphQL call returns a parent redirects the labeling check to the parent; a null parent takes the non-parent path; a throwing gather renders `unknown` and does not set exit 3.\n\n## Acceptance Criteria\n\n- `resolveParent` no longer invokes `gh issue view … --json parent`; `grep -n \"'--json', 'parent'\" plugin/bin/lib/wrap-up/engine-verify.js` returns nothing.\n- With a `deps.gh` double that throws `Unknown JSON field: \"parent\"` (or any error) on the parent lookup, `verify` renders `| acceptance-labeling | unknown | … |` and exits 0 when every other check passes; the closure line quotes the unknown row per `execution-and-verification.md`.\n- With a double that returns a parent number, the check reads labels/comments from the parent record; with `parent: null`, from the record itself — both covered by tests.\n- `npm test` passes.\n\n## Technical Approach\n\nAdd a `parentOf(n)` GraphQL query beside `fetchNativeSubIssues` in `native-dependencies.js` (same `runner` seam, same `{owner, repo}` resolution) and have `resolveParent` call it via `deps.gh(['api', 'graphql', '-f', query, '-F', …])`. In the `acceptance-labeling` check (line ~463), branch on `resolved.ok`: false → return `{ result: 'unknown', detail: resolved.error }` before any label read. Keep the existing `{ok, error}` return shape so the check's other callers are untouched. Tests use the file's existing `deps` injection; no live `gh`.\n\n### Key Files\n\n- `plugin/bin/lib/wrap-up/engine-verify.js` — `resolveParent` (GraphQL via `deps.gh`), `acceptance-labeling` check's could-not-gather branch\n- `plugin/bin/lib/issues/native-dependencies.js` — optional `parentOf` helper sharing the GraphQL runner seam\n- `tests/bin-lib/wrap-up/engine-verify.test.js` — parent-redirect, null-parent, and gather-failure cases\n- `plugin/skills/wrap-up/execution-and-verification.md` — only if the `unknown` row's closure-line quoting needs the acceptance-labeling case named explicitly\n\n## Gotchas\n\n- Do not \"fix\" this by pinning a minimum `gh` version: the field works on 2.96 but the plugin runs in sandboxes that install whatever `gh` the image ships; GraphQL is the version-stable path the plugin already relies on elsewhere.\n- `unknown` must stay distinct from `skip` (the file's own comment at line 109); a gather failure is not a deliberately skipped check.\n- The `deps.gh` double in `engine-verify.test.js` matches on argv — the GraphQL call's argv shape must be stable enough for the existing matcher style, or add one helper the tests can stub by name.\n\n## Original request\n\nwrap-up verify: acceptance-labeling check fails on every record-mode run — `gh issue view --json parent` is not a valid field in gh 2.92.0\n\n**Summary:** `bin/lib/wrap-up/engine-verify.js`'s `resolveParent()` calls `gh issue view {n} --json parent`; `gh` 2.92.0 rejects `parent` as an unknown JSON field, so the `acceptance-labeling` row renders `fail` and `verify` exits 3 for any record-mode run, blocking the closure line even when labeling was correct.\n\n**Kind:** Defect\n\n**Affected component:** `bin/lib/wrap-up/engine-verify.js` (`resolveParent`, the `acceptance-labeling` check) — `/claude-tweaks:wrap-up`'s Verify execution step\n\n**Repro steps:**\n1. On a machine with `gh version 2.92.0 (2026-04-28)`, complete a record-mode `/claude-tweaks:wrap-up` whose `verify-expectations.json` resolves at least one issue number (materialized header or the `issues` key).\n2. Run `node bin/wrap-up-engine.js verify --run-dir <run> --base <base>`.\n\n**Expected vs. actual:**\nExpected: the `acceptance-labeling` row evaluates the record's parent linkage (null → non-parent path → checks the record's own `demo:*` state / oversight-floor exemption) and passes or fails on the labeling itself.\nActual: `| acceptance-labeling | fail | #{n}: gh issue view (parent) failed for #{n} (Command failed: gh issue view {n} --json parent Unknown JSON field: \"parent\" Available fields: assignees author body closed closedAt closedByPullRequestsReferences comments createdAt id isPinned labels milestone number projectCards projectItems reactionGroups state stateReason title updatedAt url ) |` and exit code 3 — a tooling failure reported as a labeling failure, and the closure line is withheld per `execution-and-verification.md`'s exit-3 rule.\n\n**Suggested remedy:** resolve the parent the way the plugin already does elsewhere — `bin/lib/issues/native-dependencies.js` / `bin/resolve-blockers.js` use the GraphQL `issue(number:){ parent { number } }` field, which works on this gh version — instead of the REST-backed `--json parent` field the `gh issue view` command does not expose. Also consider distinguishing could-not-gather from a real labeling failure in the row's Result (e.g. `unknown` rather than `fail`), per the skill's own could-not-gather vocabulary.\n\n**Definition:** Clear\n\n**Plugin version:** 6.114.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-0a41798f -->\n\n",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "09bcc469214e2819a4d6d68b2fa3c0b6f829d1c5",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 88,
+          "testLines": 128,
+          "implFiles": 5,
+          "testFiles": 1,
+          "pipelineArtifactLines": 78,
+          "pipelineArtifactFiles": 1,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 2271,
+      "verdict": "needs-human",
+      "mergeSha": "e9f1decb2d32e3e08513c935012b80cab714a33d",
+      "closingPr": 2388,
+      "title": "skills/flow, skills/review: skill guidance doesn't warn dispatched subagents that Monitor/background-task notifications never reach them",
+      "body": "Surface: infra\n\n## Current State\n\nPipeline skill guidance that instructs starting a background verification loop or subagent\ndispatch and then \"waiting for the notification\" reads naturally as correct for a top-level\ninteractive session (where Monitor and background-task completion notifications do arrive) but\ndoes not warn that a dispatched subagent (an `Agent`/`Task`-invoked session) never receives such\nnotifications the way a top-level session does — waiting there hangs indefinitely with no signal\nanything is wrong until an external caller intervenes.\n\nFiled via `/claude-tweaks:feedback` at plugin v6.118.0, citing a harness-level\n`contract-violation` event log recording 13+ occurrences of an agent narrating \"waiting for the\nbackground task/Monitor notification to arrive\" and stopping mid-turn across a single build\nphase (main session and multiple dispatched subagents), plus 2 more in a separate review/wrap-up\nsession for the same unit of work — corrected only when an external coordinator explicitly\nstated the limitation. `skills/review/step3-lens-dispatch.md`'s existing \"Hung or non-responsive\nsingle-read agent\" section (current build, ~line 50) already covers the adjacent but distinct\ncase of a *reviewing* agent waiting on a *dispatched* agent that goes silent; it does not cover\nthis record's scenario — a dispatched subagent itself instructed to background a verification\nloop and wait for a notification that will never arrive in its own context.\n\n## Deliverables\n\n- Grep this repo's skill directories fresh at build time for every place a skill instructs\n  starting a background verification loop, `Monitor`, or subagent dispatch and then \"waiting for\n  the notification/completion\" — this record's own citations (`skills/flow`, `skills/review`)\n  are a starting point, not a guaranteed-current file:line list, since guidance text shifts\n  between plugin versions (filed against v6.118.0; current build is newer).\n- At each such location, state the limitation once, explicitly, near wherever it first\n  introduces Monitor or background-task usage for a verification loop or subagent dispatch: a\n  dispatched subagent does not receive Monitor or background-task completion notifications the\n  way a top-level session does — run long verification loops in the foreground with a generous\n  timeout instead of backgrounding them and waiting for a notification, when running as (or\n  dispatching) a subagent.\n- Do not duplicate the warning at every call site if a shared `_shared/*.md` fragment already\n  covers dispatch mechanics for the affected skills (e.g. `_shared/subagent-dispatch-core.md`) —\n  add it there once and cite it, per this codebase's own shared-contract-extraction convention,\n  if that fragment is already the canonical home for dispatch-mechanics guidance the affected\n  skills already cite.\n\n## Acceptance Criteria\n\n- Every pipeline skill file that currently instructs backgrounding a verification loop or\n  subagent dispatch and waiting for a Monitor/background-task notification carries (directly, or\n  via a cited shared fragment) an explicit statement that this pattern does not work inside a\n  dispatched subagent's own context.\n- The added guidance names the correct alternative for a subagent context: run the verification\n  loop in the foreground with a generous timeout, not backgrounded.\n- A grep for the current call sites is run and cited in the PR description (or commit message)\n  as part of this fix, since this record's own file:line citations may be stale relative to the\n  build the fix lands on.\n\n## Technical Approach\n\n1. `grep -rln \"Monitor\\|background\" plugin/skills/flow/ plugin/skills/review/` (and any other\n   pipeline skill directory instructing background verification loops or subagent dispatch, per\n   the record's \"Affected component\" note) against the actual build this fix lands on — this\n   record's own investigation (at v6.123.0) found no literal \"Monitor\" or \"background\" hits in\n   `skills/flow/*.md`, and only dispatch-adjacent hits in `skills/review/*.md`\n   (`step3-lens-dispatch.md`, `code-mode-steps.md`, `step3-routing.md`,\n   `step3-debate-and-refutation.md`) — none of which currently state this specific limitation, so\n   the guidance gap this record describes is confirmed still open, just not necessarily at the\n   exact file:line the original filing cited.\n2. Check whether `_shared/subagent-dispatch-core.md` (the shared dispatch-mechanics fragment\n   `step3-lens-dispatch.md`'s own header already cites) is the right single home for this\n   warning — every pipeline skill dispatching subagents already reads it, so one addition there\n   would reach every call site without per-file duplication.\n3. Add the warning once, at that shared home (or, if no single shared fragment covers every\n   affected call site, at each site directly) — one short paragraph, not a multi-paragraph\n   digression.\n\n### Key Files\n\n- `plugin/skills/_shared/subagent-dispatch-core.md` — likely single home for the warning, if it\n  covers every affected call site\n- `plugin/skills/review/step3-lens-dispatch.md` — cites the shared fragment; verify coverage\n- `plugin/skills/flow/*.md` — re-grep at build time per Technical Approach step 1\n\n## Gotchas\n\n- Do not add this warning as a blanket disclaimer at the top of every pipeline skill — it only\n  applies where a skill actually instructs starting a background loop/dispatch and waiting for a\n  notification; a skill with no such instruction gets no warning.\n- The original filing's file:line citations are from plugin v6.118.0 — verify against the actual\n  build this fix lands on before assuming any specific location still matches (see Technical\n  Approach step 1).\n\n## Original request\n\n**Summary:** Pipeline skill guidance that instructs starting a background verification loop or subagent dispatch and then \"waiting for the notification\" does not warn that a dispatched subagent never receives such notifications the way a top-level session does.\n\n**Kind:** Gap\n\n**Affected component:** skills/flow, skills/review (and any other pipeline skill instructing background verification loops or subagent dispatch)\n\n**Use case:** Pipeline skills (e.g. `/claude-tweaks:flow`'s polish/re-verify guidance, `/claude-tweaks:review`'s Step 3 dispatch notes) instruct starting a long-running background command or subagent and then \"waiting for the notification\" -- phrasing that reads naturally as correct guidance for a top-level interactive session, where Monitor and background-task completion notifications do arrive. They do not arrive the same way for a dispatched subagent (an `Agent`/`Task`-invoked session): waiting on one there hangs indefinitely, with no signal that anything is wrong until an external caller intervenes.\n\nThis produced a real, repeated, systemic cost on one run I observed, in a private project: the harness's own contract-violation event log recorded 13+ instances of an agent narrating \"waiting for the background task/Monitor notification to arrive\" and stopping mid-turn across a single build phase (main session and multiple dispatched subagents, none self-corrected mid-run), plus two more in a separate review/wrap-up session for the same unit of work -- corrected only when an external coordinator explicitly stated the limitation. The pattern recurred independently across at least three different agent instances (a build session, its dispatched implementer/reviewer subagents, and a separate review session), all following the same skill-authored background-verification patterns.\n\n**Suggested resolution:** State the limitation once, explicitly, near wherever a pipeline skill first introduces Monitor or background-task usage for a verification loop or subagent dispatch: a dispatched subagent does not receive Monitor or background-task completion notifications the way a top-level session does -- run long verification loops in the foreground with a generous timeout instead of backgrounding them and waiting for a notification, when running as (or dispatching) a subagent.\n\n**Evidence:** A harness-level contract-violation event log recorded 13+ occurrences during a single build phase's own event log, plus 2 more in a separately-run review/wrap-up session against the same unit of work, before an external correction stopped the pattern. Cost: at minimum two full agent turns spent narrating an unresolvable wait before correction; the build-phase recurrence count suggests a materially larger cost there, uncorrected for the run's duration.\n\n**Definition:** Clear\n\n**Plugin version:** 6.118.0\n\n---\nFiled via /claude-tweaks:feedback.\n",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "7e70b76b5dd79b0c8535f64666fd7f08b9b4ca0a",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 40,
+          "testLines": 0,
+          "implFiles": 2,
+          "testFiles": 0,
+          "pipelineArtifactLines": 122,
+          "pipelineArtifactFiles": 1,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 2730,
+      "verdict": "needs-human",
+      "mergeSha": "6a5c7f270fbcdf42a5b52fca7f75f4fa85de5240",
+      "closingPr": 2915,
+      "title": "feedback session-evaluation: the self-assessment degradation path was excluded from #679's watermark fix, so a judge-dispatch failure still forces a full transcript re-judge on the next invocation",
+      "body": "Surface: infra\n\nOrigin: by:feedback (self-referential session evaluation, /claude-tweaks:feedback bare invocation)\n\n## Current State\n\n#679 (\"no evaluation watermark — a second bare /feedback re-judges the whole transcript\") shipped a full watermark mechanism (`bin/lib/transcript-judge/watermark.js`, the offset-clause prompt item, `--full`) for the dispatched-judge path. `_shared/transcript-judge.md`'s Degradation section explicitly states: \"The self-assessment path never reads or writes a watermark — there is no resolved transcript path to key one on\" — carving the self-assessment path out of #679's fix by design. In a session on 2026-09-20/21, the first /claude-tweaks:backlog + /claude-tweaks:feedback sequence's judge dispatch hard-errored on a Fable usage-limit (429) and degraded to self-assessment, which found and filed real findings but wrote no watermark. A second bare /claude-tweaks:feedback invocation later in the same session therefore had no watermark to read, dispatched a fresh judge (this time succeeding, on a resolver-degraded model) against the entire ~3.1MB transcript from byte zero — re-discovering much of the same ground the self-assessment pass had already covered and filed, relying entirely on Step 4's per-item dedup search to avoid re-filing duplicates.\n\n## Deliverables\n\n- Let the self-assessment path write a watermark too, using the same `bytesAtDispatch`/`evaluatedAt`/`filedRecords`/`issueUrls` shape #679 already defined, plus a `mode: \"self-assessment\"` field so a later consumer (or a human reading the watermark file) can tell it apart from a dispatched judgment — the stated rationale for the current exclusion (\"there is no resolved transcript path to key one on\") does not actually hold once a transcript did resolve and only the judge dispatch itself failed; that's exactly the scenario this session hit.\n- Update `_shared/transcript-judge.md`'s Degradation section and `session-evaluation.md`'s watermark-payload note to reflect the narrower true carve-out (no watermark only when no transcript path resolves at all) rather than the current blanket \"self-assessment never writes one.\"\n\n## Acceptance Criteria\n\n- A self-assessment run that resolves a real transcript path writes a watermark on completion, keyed the same way a dispatched judge's watermark is.\n- A subsequent bare /feedback invocation against the same transcript reads that self-assessment-written watermark and scopes its own dispatch via the offset clause, rather than re-judging from byte zero.\n- The one true no-watermark case (no transcript path resolves at all — e.g., a sandbox with no accessible transcript store) is still explicitly documented and exempted.\n\n## Release Note\n\nStopped a failed judge dispatch from forcing a full transcript re-evaluation on the next feedback run.\n\n## Technical Approach\n\nBoth `bin/lib/transcript-judge/watermark.js` (confirmed present) and `_shared/transcript-judge.md`'s Degradation section (confirmed carrying the current blanket exclusion at line ~170) already exist and are the two things this record edits — no new mechanism needed. In the self-assessment degradation branch (wherever `session-evaluation.md`'s flow currently checks \"judge dispatch failed → degrade to self-assessment\"), call the same watermark-write function #679's dispatched path already calls, passing the same `bytesAtDispatch`/`evaluatedAt`/`filedRecords`/`issueUrls` fields plus a new `mode: \"self-assessment\"` field, gated only on a transcript path having actually resolved (the one true exclusion case: no transcript path resolves at all). Narrow `_shared/transcript-judge.md`'s Degradation section wording from \"never reads or writes a watermark\" to state the actual, narrower condition, and update `session-evaluation.md`'s watermark-payload note to describe the new `mode` field.\n\n### Key Files\n\n- `plugin/bin/lib/transcript-judge/watermark.js` — the existing watermark read/write shape this record extends to a second caller, not replaces\n- `plugin/skills/_shared/transcript-judge.md` — Degradation section (line ~170) carrying the blanket exclusion to narrow\n- `plugin/skills/_shared/session-evaluation.md` — the self-assessment degradation flow that needs the new watermark-write call, and the watermark-payload note describing the new `mode` field\n\n## Gotchas\n\n- The `mode: \"self-assessment\"` field is additive to an existing, already-consumed watermark shape — a later reader (the offset-clause logic) must treat an absent `mode` field as the pre-existing dispatched-judge case, not as a new failure mode, so existing watermark files written before this change keep working unread-modified.\n- Confirm at build time whether any other consumer of the watermark file (besides the offset-clause read this record's AC exercises) branches on watermark *absence* as a signal that self-assessment happened — if so, that consumer's own logic needs updating in the same pass, since this record makes watermark-absence no longer synonymous with \"was self-assessment.\"\n\n## Original request\n\nfeedback session-evaluation: the self-assessment degradation path was excluded from #679's watermark fix, so a judge-dispatch failure still forces a full transcript re-judge on the next invocation\n\nOrigin: by:feedback (self-referential session evaluation, /claude-tweaks:feedback bare invocation)\n\n## Current State\n\n#679 (\"no evaluation watermark — a second bare /feedback re-judges the whole transcript\") shipped a full watermark mechanism (`bin/lib/transcript-judge/watermark.js`, the offset-clause prompt item, `--full`) for the dispatched-judge path. `_shared/transcript-judge.md`'s Degradation section explicitly states: \"The self-assessment path never reads or writes a watermark — there is no resolved transcript path to key one on\" — carving the self-assessment path out of #679's fix by design. In a session on 2026-09-20/21, the first /claude-tweaks:backlog + /claude-tweaks:feedback sequence's judge dispatch hard-errored on a Fable usage-limit (429) and degraded to self-assessment, which found and filed real findings but wrote no watermark. A second bare /claude-tweaks:feedback invocation later in the same session therefore had no watermark to read, dispatched a fresh judge (this time succeeding, on a resolver-degraded model) against the entire ~3.1MB transcript from byte zero — re-discovering much of the same ground the self-assessment pass had already covered and filed, relying entirely on Step 4's per-item dedup search to avoid re-filing duplicates.\n\n## Deliverables\n\n- Let the self-assessment path write a watermark too, using the same `bytesAtDispatch`/`evaluatedAt`/`filedRecords`/`issueUrls` shape #679 already defined, plus a `mode: \"self-assessment\"` field so a later consumer (or a human reading the watermark file) can tell it apart from a dispatched judgment — the stated rationale for the current exclusion (\"there is no resolved transcript path to key one on\") does not actually hold once a transcript did resolve and only the judge dispatch itself failed; that's exactly the scenario this session hit.\n- Update `_shared/transcript-judge.md`'s Degradation section and `session-evaluation.md`'s watermark-payload note to reflect the narrower true carve-out (no watermark only when no transcript path resolves at all) rather than the current blanket \"self-assessment never writes one.\"\n\n## Acceptance Criteria\n\n- A self-assessment run that resolves a real transcript path writes a watermark on completion, keyed the same way a dispatched judge's watermark is.\n- A subsequent bare /feedback invocation against the same transcript reads that self-assessment-written watermark and scopes its own dispatch via the offset clause, rather than re-judging from byte zero.\n- The one true no-watermark case (no transcript path resolves at all — e.g., a sandbox with no accessible transcript store) is still explicitly documented and exempted.\n\n## Original request\n\nSurfaced by /claude-tweaks:feedback's bare-invocation session evaluation (Recovery quality objective), judging this session's own two /claude-tweaks:feedback bare invocations. Evidence: the first invocation's judge dispatch hard-errored (Fable 429) and degraded to self-assessment, which filed #2718-#2722 but wrote no watermark (`_shared/transcript-judge.md`'s stated design); the second invocation's readWatermark call returned null, forcing a fresh ~3.1MB full-transcript judge dispatch that substantially re-covered the same ground.\n",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "5916b0eac2fe93b6eb71f9bfa7180c35721fe545",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 85,
+          "testLines": 50,
+          "implFiles": 7,
+          "testFiles": 2,
+          "pipelineArtifactLines": 148,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 2861,
+      "verdict": "needs-human",
+      "mergeSha": "a5f50c117d304a370fefd5d7af38b798f9f07de2",
+      "closingPr": 2971,
+      "title": "flow-preflight misclassifies a claim-log-only decisions.md as an adopted run (case 3)",
+      "body": "Origin: reflect full (multi-spec batch) from #2633/#2664\n\nDefer-reason: tangential\n\n## Current State\n\nAt the start of run 2026-09-30T190052-spec-2633-2664, `flow-preflight` classified the freshly minted run dir as adoption **case 3** (an adopted, already-running run), not case 2 (a fresh mint).\n\nThe cause was the issue-claim step, which had already appended its claim-log lines to `decisions.md`. The preflight treated a non-empty `decisions.md` as evidence of a prior run. The executor ruled case 2 by hand and logged the ruling.\n\nA case-3 misclassification would have triggered the case-3 adoption-recovery backfill (`flow/steps-and-gates.md`) on a run that had nothing to recover.\n\n## Deliverables\n\n1. The preflight's case classification ignores `decisions.md` entries written by the claim step, recognized by their claim-log section or line shape, when deciding fresh vs adopted.\n2. Add a regression test with a run dir whose `decisions.md` holds only claim-log lines.\n\n## Acceptance Criteria\n\n- A run dir with only claim-log lines in `decisions.md` classifies as case 2.\n- A run dir with any non-claim decision entry still classifies as it does today.\n\n## Release Note\n\nFreshly started /flow runs are no longer mistaken for resumed ones after claiming their records.\n\n_Filed by `reflect` via specShapedBody._\n",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "c20cf68c868dec24ab20f020f0689a5bcb7d9f34",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 120,
+          "testLines": 181,
+          "implFiles": 8,
+          "testFiles": 2,
+          "pipelineArtifactLines": 444,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": [
+        {
+          "severity": "High",
+          "text": "Step 3 Routing: Routing deviation, disclosed: finding (1) carried severity high from lens 3c and medium from lens 3b. The routing table keeps the higher severity on a cross-lens duplicate, and under r"
+        }
+      ]
+    },
+    {
+      "record": 3024,
+      "verdict": "auto-merge",
+      "mergeSha": "b67d789af9e2e68f80b16554acc04766c872f7fe",
+      "closingPr": 3567,
+      "title": "dispatch: queue-pull-script.md redirects to undeclared $DISPATCH_OPEN_PR_EXCLUDED (\": No such file or directory\" on every pull)",
+      "body": "Surface: infra\n\n## Current State\n\n`plugin/skills/dispatch/queue-pull-script.md:294` runs `echo '[]' > \"$DISPATCH_OPEN_PR_EXCLUDED\"` in the open-linked-PR pass (#1224 block). That variable is not in the script's opening session-tmp `files` map (`queue-pull-script.md:17` onward), which declares every other `DISPATCH_*` path. The redirect target therefore expands to an empty string, and bash prints `: No such file or directory` on every queue pull. The script has no `set -e`/`set -u`, so execution continues. The message is noise, but it reads as a failure in every `/claude-tweaks:dispatch` run (bare drain or `#N`).\n\n`git grep -n \"DISPATCH_OPEN_PR_EXCLUDED\\|open-pr-excluded\" -- plugin` returns only that one line. Nothing reads the file. #1752 moved per-reason exclusion files to the unified `dispatch-exclusions.json` (`plugin/bin/lib/dispatch/exclusions.js`). The open-PR pass now records exclusions via `appendExclusion(…, { reason: 'open-pr' })` into `$DISPATCH_EXCLUSIONS`, which `dispatch/SKILL.md`'s `#N`/`#N,#M` paths read. The line at `:294` is a leftover from that migration.\n\n## Deliverables\n\n1. Delete `echo '[]' > \"$DISPATCH_OPEN_PR_EXCLUDED\"` from `queue-pull-script.md:294`.\n2. Add a conformance test to `tests/bin-lib/dispatch/exclusions.test.js` asserting that every `$DISPATCH_*` variable the script references is either declared in its `files` map or assigned in the script. This guards against the same migration leftover recurring.\n\n## Acceptance Criteria\n\n- `queue-pull-script.md` contains no reference to `DISPATCH_OPEN_PR_EXCLUDED`.\n- The new test fails on the current file, naming `DISPATCH_OPEN_PR_EXCLUDED` (verify by running it before the deletion), and passes after it.\n- Existing `tests/bin-lib/dispatch/` suites, and any byte-pin or snippet-conformance test over `queue-pull-script.md`, pass. Update a byte pin only if one pins this exact fence, and name it in the PR.\n- `npm test` passes in full.\n\n## Release Note\n\nDispatch no longer prints a spurious \"No such file or directory\" error each time it pulls the queue.\n\n## Technical Approach\n\nA one-line deletion plus a referenced-vs-declared scan of the script. The original request's proposed diff (preserved below) is a reasonable starting point. Its declaration regex must match the `files` map's actual `KEY: 'file'` lines and any `KEY=` assignments, and the reference regex must cover both `$VAR` and `${VAR}`.\n\n### Key Files\n\n- `plugin/skills/dispatch/queue-pull-script.md` — delete the dead redirect (`:294`)\n- `tests/bin-lib/dispatch/exclusions.test.js` — referenced-vs-declared `$DISPATCH_*` conformance test\n\n## Gotchas\n\n- `queue-pull-script.md` is run verbatim by `/dispatch` Step 2, and some of its fences may be byte-pinned by snippet-conformance tests. Grep `tests/` for the file name before editing.\n- `node-eval-file.js` heredoc bodies inside the script reference shell variables through `process.env` or `$VAR` interpolation. Make sure the scan does not flag a variable that is assigned inside a heredoc-fed command as undeclared, or narrow the scan to shell-level references.\n\n## Original request\n\ndispatch: queue-pull-script.md redirects to undeclared $DISPATCH_OPEN_PR_EXCLUDED (\": No such file or directory\" on every pull)\n\n**Summary:** queue-pull-script.md writes to the never-declared $DISPATCH_OPEN_PR_EXCLUDED, so every queue pull prints \": No such file or directory\"\n\n**Kind:** Defect\n\n**Affected component:** dispatch (skills/dispatch/queue-pull-script.md)\n\n**Repro steps:**\n1. On any project, run `/claude-tweaks:dispatch` (bare drain or `#N`) so Step 2 runs `queue-pull-script.md` verbatim.\n2. Watch the open-linked-PR pass (#1224 block).\n\n**Expected vs. actual:**\nExpected: the open-PR pass runs silently; every `$DISPATCH_*` path the script writes is declared in its opening `files` map.\nActual: bash prints `: No such file or directory` on every queue pull. The script has no `set -e`/`set -u`, so execution continues and the error is only noise, but it reads as a failure.\n\n**Root cause:** `skills/dispatch/queue-pull-script.md:294` runs `echo '[]' > \"$DISPATCH_OPEN_PR_EXCLUDED\"`. The opening `files` map (`queue-pull-script.md:17-39`) declares every `DISPATCH_*` session-tmp path except this one; it was dropped in the #1752 move to the unified `dispatch-exclusions.json` (`bin/lib/dispatch/exclusions.js`), so the redirect target expands to an empty string. Nothing reads it any more: it is the only occurrence of `DISPATCH_OPEN_PR_EXCLUDED`/`open-pr-excluded` in the plugin, and the open-PR pass now records exclusions via `appendExclusion(..., { reason: 'open-pr' })` into `$DISPATCH_EXCLUSIONS`, which `SKILL.md`'s `#N`/`#N,#M` paths read. A mechanical referenced-vs-declared comparison found it is the only undeclared `DISPATCH_*` variable in the script. Deleting the line is the fix.\n\n**Proposed fix:**\n```diff\ndiff --git a/plugin/skills/dispatch/queue-pull-script.md b/plugin/skills/dispatch/queue-pull-script.md\n--- a/plugin/skills/dispatch/queue-pull-script.md\n+++ b/plugin/skills/dispatch/queue-pull-script.md\n@@ -291,7 +291,6 @@ DISPATCH_GROUP_NUMS=$(node \"${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js\" \"$DISPA\n NODE_EVAL_EOF\n )\n echo '{}' > \"$DISPATCH_LINKED_PRS\"\n-echo '[]' > \"$DISPATCH_OPEN_PR_EXCLUDED\"\n if [ -n \"$DISPATCH_GROUP_NUMS\" ]; then\n   if ! node \"${CLAUDE_PLUGIN_ROOT}/bin/resolve-linked-prs.js\" \"$DISPATCH_GROUP_NUMS\" \\\n     > \"$DISPATCH_LINKED_PRS\" 2>\"$DISPATCH_LINKED_PRS_ERR\"; then\ndiff --git a/tests/bin-lib/dispatch/exclusions.test.js b/tests/bin-lib/dispatch/exclusions.test.js\n--- a/tests/bin-lib/dispatch/exclusions.test.js\n+++ b/tests/bin-lib/dispatch/exclusions.test.js\n@@ -104,3 +104,20 @@ test('AC5: an unknown reason round-trips through readExclusions but is only matc\n   assert.equal(groupIsExcluded([{ number: 42 }], entries, ['oversized', 'firing']), false);\n   assert.equal(groupIsExcluded([{ number: 42 }], entries, ['future-reason']), true);\n });\n+\n+// #1752 left one write to a retired per-reason file behind in queue-pull-script.md's open-PR pass\n+// (`echo '[]' > \"$DISPATCH_OPEN_PR_EXCLUDED\"`) after its declaration left the session-tmp files map,\n+// so bash redirected to an empty path and printed `: No such file or directory` on every pull.\n+// Every $DISPATCH_* the script references must be declared in that map or assigned in the script.\n+test('queue-pull-script.md: every referenced $DISPATCH_* variable is declared or assigned', () => {\n+  const script = fs.readFileSync(\n+    path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'dispatch', 'queue-pull-script.md'), 'utf8',\n+  );\n+  const referenced = new Set([...script.matchAll(/\\$\\{?(DISPATCH_[A-Z0-9_]+)/g)].map((m) => m[1]));\n+  const declared = new Set([\n+    ...[...script.matchAll(/^\\s*(DISPATCH_[A-Z0-9_]+):\\s*'/gm)].map((m) => m[1]),\n+    ...[...script.matchAll(/\\b(DISPATCH_[A-Z0-9_]+)=/g)].map((m) => m[1]),\n+  ]);\n+  const undeclared = [...referenced].filter((v) => !declared.has(v));\n+  assert.deepStrictEqual(undeclared, [], `undeclared variables: ${undeclared.join(', ')}`);\n+});\n```\n\n**Test:** extend `tests/bin-lib/dispatch/exclusions.test.js` (in the diff): asserts every `$DISPATCH_*` the script references is declared in its `files` map or assigned in the script. Fails on current `main` naming `DISPATCH_OPEN_PR_EXCLUDED`; passes after the deletion, and guards future migration leftovers.\n\n**Related:** #1752 (closed; the migration that left this line behind).\n\n**Definition:** Clear\n\n**Plugin version:** 6.136.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-3d3af373 -->\n\n\n\n## Absorbed: 2026-10-18 — queue-pull-script.md writes to undefined DISPATCH_OPEN_PR_EXCLUDED (live sighting)\n\nObserved again live in `/claude-tweaks:dispatch #3405,#3397` on 2026-10-17 under plugin 6.144.0: every queue pull prints `queue-pull.sh: line 346: : No such file or directory` to stderr (line 346 of the extracted bash fence). The dead redirect has moved since this record was filed: it is now at `plugin/skills/dispatch/queue-pull-script.md:362` on `origin/main` (`:361` in the installed 6.144.0 copy), still the only occurrence of `DISPATCH_OPEN_PR_EXCLUDED` in the plugin. Deliverables and acceptance criteria above are unchanged; refresh the `:294` line citations when building.\n",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "e4d6b12bf9745a39f3c3e737a9f51ef89367f4f6",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 4,
+          "testLines": 19,
+          "implFiles": 2,
+          "testFiles": 1,
+          "pipelineArtifactLines": 152,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 3313,
+      "verdict": "needs-human",
+      "mergeSha": "ef35bd81aab6267b7ccbe3d40dd28e2994d669a0",
+      "closingPr": 3745,
+      "title": "Report \"N new, M fixed\" from verify baseline adjudication",
+      "body": "Origin: wrap-up leftover from #2767\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n#2767 Deliverable 3 asked for baseline adjudication to be mechanical. Most of it shipped after #2767 was filed:\n- #3129: a committed `preExisting` allowlist in `.claude-tweaks/verify-scope.json`, adjudicated by `plugin/bin/lib/verify/pre-existing.js`.\n- #3043: computed `--baseline <ref>` adjudication in `plugin/bin/lib/verify/baseline.js`.\n\nNeither reports which previously failing files now pass. A reader still cannot see \"N new, M fixed\" from `report.json` or the CLI table, so a shrinking baseline stays invisible and a stale allowlist entry is never prompted for removal.\n\n## Deliverables\n\n- [ ] `verify.js` reports, for a `preExisting`-adjudicated run, the allowlisted files that passed this run (\"fixed\") next to the failing files outside the allowlist (\"new\").\n- [ ] The same \"N new, M fixed\" pair appears for `--baseline` runs, where \"fixed\" means failing at base and passing at HEAD.\n- [ ] `report.json` carries both lists, and the summary table prints the two counts.\n\n## Acceptance Criteria\n\nA fixture run with one allowlisted file that now passes and one new failure prints `1 new, 1 fixed` and lists each file in `report.json`.\n\nA `--baseline` fixture where a base-failing file passes at HEAD reports it as fixed.\n\nExisting verify suites stay green.\n\n## Release Note\n\nVerification reports how many known-failing tests now pass, alongside new failures.\n\n_Filed by `wrap-up leftover routing` via specShapedBody._",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "fdbfc26eefec4b2a7e470e63c56c7108d24dd2ec",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 203,
+          "testLines": 341,
+          "implFiles": 11,
+          "testFiles": 5,
+          "pipelineArtifactLines": 177,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 3458,
+      "verdict": "auto-merge",
+      "mergeSha": "4f4c795ea43ee536f7e871ba0cc7e9f638cb24b6",
+      "closingPr": 3746,
+      "title": "phase-timing's locateTranscripts ignores CLAUDE_CONFIG_DIR and finds no transcripts under a non-default config dir",
+      "body": "Origin: #3309 build, Task 0 premise probe (ledger row 37)\n\nDefer-reason: out-of-scope\n\n## Current State\n\n`plugin/bin/lib/timing/transcript.js` `locateTranscripts({ cwd, sessionId, homeDir = os.homedir(), fsImpl })` always looks under `path.join(homeDir, '.claude', 'projects')`. `plugin/bin/phase-timing.js:159` calls it with only `{ cwd: worktree, sessionId }`.\n\nClaude Code writes transcripts to `$CLAUDE_CONFIG_DIR/projects/` when that variable is set. `plugin/bin/dream-scan.js:66` already resolves `process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')`, and so does #3309's `skill-load-report.js`. On a machine running Claude Code with `CLAUDE_CONFIG_DIR=~/.claude-accounts/<slug>`, `~/.claude/projects` holds none of the sessions, so `phase-timing.js` silently finds no transcript and reports no token or procedure-byte data.\n\n#3309 could not fix this: its spec lists `timing/transcript.js` as \"not modified\".\n\n## Deliverables\n\n- Resolve the projects root from `CLAUDE_CONFIG_DIR` (falling back to `~/.claude`) in `locateTranscripts`, or in its caller with an injectable config-dir parameter. Keep the existing `homeDir` seam working for tests.\n- Update `TRANSCRIPT_SLUG_RULE`'s header note to name the config-dir resolution.\n\n## Acceptance Criteria\n\n1. With `CLAUDE_CONFIG_DIR` set to a temp dir holding `projects/{slug}/{sid}.jsonl`, `locateTranscripts({ cwd, sessionId })` returns that file.\n2. With `CLAUDE_CONFIG_DIR` unset, behavior is unchanged (`tests/bin-lib/timing/transcript.test.js` passes).\n\n## Release Note\n\nPhase timing now finds session transcripts when Claude Code runs with a custom config directory.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "078002fbea6db079ed6081fc00c0ae97577ec135",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 28,
+          "testLines": 80,
+          "implFiles": 3,
+          "testFiles": 2,
+          "pipelineArtifactLines": 138,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 3517,
+      "verdict": "needs-human",
+      "mergeSha": "13019828d15e0efee90a0700bf1b8fcdcbe9ab58",
+      "closingPr": 3550,
+      "title": "Windows regression: 1 test file(s) newly failing after c65b3fdbb",
+      "body": "Surface: infra\n\n**Related:** #3392, #3429, #3440, #3505, #3506, #3507, #3509, #3518, #3523\n\n## Current State\n\nThe post-merge `windows-regression` workflow (run 39103544055, on `windows-latest`) flagged `tests/dispatch-neighbour-in-flight-mcp.test.js` as newly failing after PR #3441 merged as `c65b3fdbb` (#3392's MCP-transport branch for dispatch's neighbour-in-flight pass). That merge added the file, so it has no earlier Windows baseline. The run's `verify-report` artifact lists it as the only `attributable` file. The other 102 files failing at head were already failing at base `2514e406c`.\n\nThe issue excerpt quotes one failure. The run's `tests` log shows four of the file's six tests failing, all with the same assertion:\n\n- `AC1.1: the MCP claim-target snippet prints [9] …` (line 81): `heredoc #0 has no NODE_EVAL_EOF terminator`\n- `AC2.1: a stale label with no live claim …` (line 91): `heredoc #1 has no NODE_EVAL_EOF terminator`\n- `AC3.1: a failed MCP claim read prints the AUTO line …` (line 99): `heredoc #1 has no NODE_EVAL_EOF terminator`\n- `AC3.1: a failed MCP pool list is documented to write [] …` (line 109): `heredoc #0 has no NODE_EVAL_EOF terminator`\n\nThe two passing tests (lines 118 and 132) only call `includes` on single-line tokens.\n\nRoot cause, checked against the file at `origin/main` `7852fd8bf` (it has not changed since `c65b3fdbb`):\n\n- Lines 18-19 read `plugin/skills/dispatch/mcp-transport.md` and `plugin/skills/dispatch/queue-pull-script.md` with raw `fs.readFileSync(..., 'utf8')`. This repo's `.gitattributes` pins only `tools/upstream-drift/fixtures/**`. A Windows checkout with `core.autocrlf=true` therefore reads both files with `\\r\\n` line endings.\n- `snippet(index)` (lines 33-45) finds a heredoc's end with `text.indexOf('\\n' + END, found)`, where `END = 'NODE_EVAL_EOF\\n'` (line 23). On CRLF text the terminator line is `\\r\\nNODE_EVAL_EOF\\r\\n`, so the search returns -1 and line 43's `assert.notStrictEqual(close, -1, …)` throws. That is the reported error.\n- Reproduced on macOS from an `origin/main` tree export. The file passes 6/6 as checked out. After converting the two markdown inputs to CRLF it fails exactly the four tests above, with the same `heredoc #N` messages. Routing both reads through `readText()` makes it pass 6/6 again on the CRLF inputs. This was a CRLF simulation on a POSIX host, not a Windows run.\n- Normalizing at read time also matters past the extractor. The extracted snippet is run through `bash -c` (`run`, lines 70-77), and a heredoc carrying `\\r` would not match its own `NODE_EVAL_EOF` terminator in bash either.\n\nThe repo already has the house fix for this class: `tests/helpers/read-skill.js`'s `readText(absPath)`, which normalizes EOLs (#2763). `skill-prose-conformance-tests` requires every prose suite to read governed markdown through it. This file, added by #3392, does not use it. The production prose (`mcp-transport.md`'s two heredocs at lines 121-124 and 132-141) is correct.\n\n## Deliverables\n\n1. `tests/dispatch-neighbour-in-flight-mcp.test.js` reads `mcp-transport.md` and `queue-pull-script.md` through `readText()` from `./helpers/read-skill.js` instead of raw `fs.readFileSync`. The `fs` import stays, because the fixture helper uses it.\n2. The extractor itself tolerates CRLF input, not only the read. `section` and `snippet` take the source text as a parameter, defaulting to `MCP`. `snippet`'s terminator search accepts an optional `\\r` before each newline around `NODE_EVAL_EOF`, and the start-anchor and missing-terminator asserts are kept.\n3. A new CRLF test case. Build `crlf = MCP.replace(/\\n/g, '\\r\\n')`, then assert for heredocs 0 and 1 that `snippet(i, crlf).replace(/\\r\\n/g, '\\n')` strictly equals `snippet(i)` on the LF text.\n\n## Acceptance Criteria\n\n- [ ] `grep -n \"fs.readFileSync\" tests/dispatch-neighbour-in-flight-mcp.test.js` returns no match, and the file requires `readText` from `./helpers/read-skill.js`.\n- [ ] `node --test tests/dispatch-neighbour-in-flight-mcp.test.js` passes on macOS/Linux with 0 failures: the 6 existing tests plus the new CRLF case, with none skipped or removed.\n- [ ] Go-red check: temporarily reverting `snippet`'s terminator search to the bare `'\\n' + END` form makes the new CRLF case fail, and restoring it makes the case pass again. Do the revert and the restore in the same command.\n- [ ] The file passes on `windows-latest`. Prove it before merge by dispatching `gh workflow run windows-regression.yml --ref {branch}` and quoting the run's result for this file. A non-main ref never files an issue. If the dispatch cannot run, say so explicitly. Do not count a CRLF or `path.win32` simulation as a Windows run.\n- [ ] No file under `plugin/` changes. `mcp-transport.md` and `queue-pull-script.md` stay byte-identical.\n- [ ] `npm test` passes with no new failures compared to `origin/main`.\n\n## Release Note\n\nFixed a dispatch test that failed on Windows checkouts because of line-ending differences.\n\n## Technical Approach\n\nThis is a test-only change to one file. It follows `.claude/skills/windows-checkout-test-parity/SKILL.md` (\"Build CRLF inputs from the LF text\") and `.claude/skills/skill-prose-conformance-tests/SKILL.md` (\"Prose reads come from the shared helper\", plus the Anti-Patterns row on anchoring an extractor on a bare `\\n`). Replace the two raw reads with `readText(path.join(ROOT, 'plugin', 'skills', 'dispatch', …))`. Thread an optional `text` argument through `section`/`snippet`, and make the terminator search CRLF-tolerant with a regex or an equivalent pair of `indexOf` probes. Add one `test()` for the CRLF case. Keep `run`'s `bash -c` input LF: every snippet the suite executes comes from the `readText`-normalized `MCP`.\n\nAlternative rejected: a `.gitattributes` `eol=lf` rule for `*.md`. It would change checkout behavior for every Windows user of the repo, and the only `.gitattributes` rule today is a narrow fixture-hash carve-out. `readText()` is the convention that #2763 settled on and that sibling records #3429, #3440 and #3507 apply.\n\n### Key Files\n\n- `tests/dispatch-neighbour-in-flight-mcp.test.js` — use `readText()` for the two markdown reads, parameterize `section`/`snippet` on the source text with a CRLF-tolerant terminator, and add the CRLF case\n- `tests/helpers/read-skill.js` — unchanged; the existing `readText()` helper being consumed\n- `plugin/skills/dispatch/mcp-transport.md` — unchanged; read-only input (the `## Step 2 — neighbour-in-flight pool (#3278, #3392)` section's two heredocs)\n- `plugin/skills/dispatch/queue-pull-script.md` — unchanged; read-only input\n\n## Gotchas\n\n- Scope is this one file. Each sibling \"Windows regression: N test file(s) newly failing after …\" record (#3429, #3440, #3505, #3506, #3507, #3509, #3518, #3523) covers its own commit and files.\n- `tests/dispatch-named-target-exclusion-fixture.test.js` also extracts a `NODE_EVAL_EOF` heredoc. The same run shows it failing at both base and head, so it is a pre-existing Windows failure and not part of this record. `tests/dispatch-per-record-groups-prose.test.js` uses the same `'\\nNODE_EVAL_EOF\\n'` terminator shape and passed on this run. Leave both alone here.\n- Do not run CRLF text through `bash -c`. The CRLF case compares extractions only. A `\\r`-bearing heredoc fails in bash for a reason unrelated to the extractor, and that failure would be misread as a regression.\n- ubuntu CI cannot see this failure class. The CRLF case is the pin that runs on Linux. Without it, a later edit could reintroduce the raw read or the bare-`\\n` terminator and stay green on every PR.\n\n## Original request\n\nWindows regression: 1 test file(s) newly failing after c65b3fdbb\n\nThe post-merge Windows check failed on commit c65b3fdbb29eb298f26be628859b2f0d65d444e8 (compared against 2514e406c).\n\n**Merged PR:** #3441 (https://github.com/thn-inc/claude-tweaks/pull/3441)\n\n**Run:** https://github.com/thn-inc/claude-tweaks/actions/runs/39103544055\n\n### Newly failing test files\n- `tests/dispatch-neighbour-in-flight-mcp.test.js`\n\n### Failure excerpts\n\n#### `tests/dispatch-neighbour-in-flight-mcp.test.js`\n\n```\nnot ok 8436 - AC1.1: the MCP claim-target snippet prints [9] and the MCP exclusion snippet writes a neighbour-in-flight exclusion for a live MCP-read claim\n  ---\n  duration_ms: 7.6235\n  type: 'test'\n  location: 'D:\\\\a\\\\claude-tweaks\\\\claude-tweaks\\\\tests\\\\dispatch-neighbour-in-flight-mcp.test.js:81:1'\n  failureType: 'testCodeFailure'\n  error: 'heredoc #0 has no NODE_EVAL_EOF terminator'\n  code: 'ERR_ASSERTION'\n  name: 'AssertionError'\n  expected: -1\n  actual: -1\n  operator: 'notStrictEqual'\n```\n\n_Filed by .github/workflows/windows-regression.yml — failures were compared against the push's base commit (verify.js --baseline). Shape it with /claude-tweaks:specify before building._\n",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "229108c65c8ad1e24e8a2015481be70f9b10559c",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 3,
+          "testLines": 39,
+          "implFiles": 2,
+          "testFiles": 1,
+          "pipelineArtifactLines": 135,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 3518,
+      "verdict": "auto-merge",
+      "mergeSha": "e4d6b12bf9745a39f3c3e737a9f51ef89367f4f6",
+      "closingPr": 3558,
+      "title": "Windows regression: 2 test file(s) newly failing after f6e30ca84",
+      "body": "Surface: infra\n\n**Related:** #3393, #3429, #3440, #3505, #3506, #3507, #3509, #3517, #3523, #2767, #2713, #3024, #3187, #3396, #3500\n\n## Current State\n\nThe post-merge `windows-regression` workflow (run 39104307191, on `windows-latest`) flagged two test files after PR #3421 merged #3393 (the chained claim reader) as `f6e30ca84`. The run's `verify-report` artifact (`baselineAdjudicated`, base `8356f387f`) breaks it down per test:\n\n- `tests/dispatch-per-record-groups-prose.test.js`: 10/10 pass at base; 11/13 at head. Both new failures are tests that #3393 added: `AC2.1: the neighbour-in-flight heredoc runs offline …` and `AC1.1: the neighbour-in-flight heredoc reports a failed claim read …`.\n- `tests/specify-near-duplicate-prose.test.js`: 10/11 at base; 10/13 at head. The test quoted in this record's excerpt, `the shaping-mode.md refusal fence runs and refuses nothing … (#3141)`, **already failed at base** with the same `refusal fence anchors must exist` error. The new failures are #3393's two tests: `AC1.1: the shaping-mode refusal fence reads claims through createClaimReader …` and `AC1.1: an unreadable claim is reported on the output …`.\n\nThere are two root causes, both test-side. Verified against `origin/main` at `7852fd8bf`; the only commits since `f6e30ca84` that touch these files (#3366, #3405) changed neither cause.\n\n1. **CRLF anchors (near-duplicate suite).** `tests/specify-near-duplicate-prose.test.js:18` reads skill markdown with a raw `fs.readFileSync`. On a `core.autocrlf=true` checkout, `plugin/skills/specify/shaping-mode.md` arrives with `\\r\\n` endings, so the fence anchor `'node -e \"\\n'` (line 96, and again in `refusalFenceBody` at line 147) never matches `node -e \"\\r\\n`. That fails the #3141 test at line 93 and both #3393 tests at lines 155 and 167. The dispatch suite does not have this problem: it already reads through `tests/helpers/read-skill.js`'s `readText`, which turns `\\r\\n` into `\\n`.\n2. **Native path spliced into JS source (both suites).** The tests run a skill's embedded node snippet by replacing `${CLAUDE_PLUGIN_ROOT}` with `path.join(ROOT, 'plugin')`: `tests/dispatch-per-record-groups-prose.test.js:134` (`neighbourHeredocCode`), and `tests/specify-near-duplicate-prose.test.js:101` and `:170`. The placeholder sits inside a single-quoted JS string (`require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/in-flight-neighbours.js')`). A Windows path's backslashes therefore become JS escape sequences: `\\a` → `a`, `\\c` → `c`. The run shows `Cannot find module 'D:aclaude-tweaksclaude-tweaksplugin/bin/lib/dispatch/in-flight-neighbours.js'`. The near-duplicate tests at lines 93 and 167 have the same defect, currently masked because cause 1 stops them earlier.\n\nThe repo already has the fix for cause 2: `tests/auto-merge-short-circuit-verdict-backstop.test.js:28` builds `path.join(ROOT, 'plugin').split(path.sep).join('/')` before splicing it into source.\n\n## Deliverables\n\n1. `tests/specify-near-duplicate-prose.test.js`: route the `read` helper (line 18) through `readText` from `./helpers/read-skill`, so every skill read is LF-normalized.\n2. `tests/specify-near-duplicate-prose.test.js`: make the #3141 test at line 93 call `refusalFenceBody()` instead of its own inline copy of the anchor (lines 96-101). Give `refusalFenceBody` an optional text parameter, defaulting to `SHAPING_MODE`, and have it LF-normalize that text. Add one assertion that `refusalFenceBody(SHAPING_MODE.replace(/\\n/g, '\\r\\n'))` returns the same fence as the LF read. That is the CRLF extractor case `windows-checkout-test-parity` asks for, and it goes red on Linux if the normalization is removed.\n3. Both test files: splice a forward-slash plugin root into the snippet source instead of the native `path.join(ROOT, 'plugin')`. That means `tests/dispatch-per-record-groups-prose.test.js:134` and `tests/specify-near-duplicate-prose.test.js:101` and `:170`. Use one module-level constant per file, built the way `tests/auto-merge-short-circuit-verdict-backstop.test.js:28` builds its `PLUGIN_DIR`.\n4. Before opening the PR, grep the two files again for any other `${CLAUDE_PLUGIN_ROOT}` substitution or raw `fs.readFileSync` of a skill file, and fix any hit with the same move. Record the grep and its result in the PR body.\n\n## Acceptance Criteria\n\n- [ ] `node --test tests/specify-near-duplicate-prose.test.js tests/dispatch-per-record-groups-prose.test.js` passes on macOS/Linux, with no test skipped, removed or weakened.\n- [ ] Both files pass on `windows-latest`, including the #3141 test that was already failing at base. Prove it before merge: run `gh workflow run windows-regression.yml --ref {branch}` and quote that run's result for the two files (a non-main ref never files an issue). If the dispatch cannot run, say so explicitly. A `path.win32` simulation is not a Windows run.\n- [ ] The new CRLF case fails on Linux when the normalization inside `refusalFenceBody` is removed. Prove it by reverting the normalization temporarily and restoring it in the same command.\n- [ ] No file under `plugin/` changes. The skill snippets and `plugin/bin/lib/dispatch/in-flight-neighbours.js` are correct; only the tests' extraction and substitution are platform-dependent.\n- [ ] `npm test` passes.\n\n## Release Note\n\nFixed five dispatch and specify prose tests that failed only on Windows checkouts.\n\n## Technical Approach\n\nThe fix is test-side only, following `.claude/skills/windows-checkout-test-parity/SKILL.md`. Two of its rules apply:\n\n- \"A test extracts regions from live skill markdown → a CRLF input proving the extractor still finds the region\" covers cause 1.\n- Its native-path rule covers cause 2. The value spliced into JS source is a module specifier, not a filesystem path a human pastes into a shell. Forward slashes resolve on every platform, which `tests/auto-merge-short-circuit-verdict-backstop.test.js:28` already relies on.\n\nFolding the #3141 test's inline anchor into `refusalFenceBody` leaves one extractor to keep correct instead of two copies. The CRLF case is the only discriminating check available on Linux CI. The separator fix can only be proven red on a real Windows runner, which is why the workflow dispatch is an acceptance criterion.\n\n### Key Files\n\n- `tests/specify-near-duplicate-prose.test.js` — `read` routed through `readText`; the line-93 test reuses `refusalFenceBody`, which takes text and LF-normalizes it; new CRLF extractor case; forward-slash plugin root at lines 101 and 170\n- `tests/dispatch-per-record-groups-prose.test.js` — forward-slash plugin root in `neighbourHeredocCode` (line 134)\n- `tests/helpers/read-skill.js` — read-only reference: the `readText` helper this record adopts\n- `tests/auto-merge-short-circuit-verdict-backstop.test.js` — read-only reference: the existing forward-slash `PLUGIN_DIR` precedent (line 28)\n- `plugin/skills/specify/shaping-mode.md` — read-only reference: the refusal fence the near-duplicate suite extracts (lines 115-146)\n- `plugin/skills/dispatch/queue-pull-script.md` — read-only reference: the neighbour-in-flight heredoc the dispatch suite extracts (lines 622-623)\n\n## Gotchas\n\n- Keep the scope to the five tests above. `tests/dispatch-neighbour-in-flight-mcp.test.js` is #3517's (a missing `NODE_EVAL_EOF` terminator). Other suites splice `path.join(ROOT, 'plugin')` into code the same way, for example `tests/tidy-release-note-repair-conformance.test.js:83` and `tests/verify-expectations-writer-conformance.test.js:65`; they belong to the Windows baseline or to their own records, not this one.\n- Both #3393 `AC1.1` tests depend on `gh` and `git` being unreachable (`env: { ...process.env, PATH: dir }`). On Windows the inherited variable is usually spelled `Path`, and Node's handling of a `Path`/`PATH` pair in a spawned env can leave the original search path in force. If the Windows run shows these tests reaching `gh` (a resolved slug, or a network read), override every case variant of the path variable in the spawned env rather than loosening the assertion.\n- Don't fix this in the skill prose. The snippets run under a shell that substitutes `${CLAUDE_PLUGIN_ROOT}` itself; this record changes only how the tests emulate that substitution.\n- Line numbers above are as of `origin/main` `7852fd8bf`. Re-anchor on content if the files move.\n\n## Original request\n\nWindows regression: 2 test file(s) newly failing after f6e30ca84\n\nThe post-merge Windows check failed on commit f6e30ca842199444560ae9a497b3ed97d49eb1e6 (compared against 8356f387f).\n\n**Merged PR:** #3421 (https://github.com/thn-inc/claude-tweaks/pull/3421)\n\n**Run:** https://github.com/thn-inc/claude-tweaks/actions/runs/39104307191\n\n### Newly failing test files\n- `tests/dispatch-per-record-groups-prose.test.js`\n- `tests/specify-near-duplicate-prose.test.js`\n\n### Failure excerpts\n\n#### `tests/dispatch-per-record-groups-prose.test.js`\n\n```\nnot ok 8478 - AC2.1: the neighbour-in-flight heredoc runs offline and excludes nothing when no in-flight record neighbours a candidate (\\#3393)\n  ---\n  duration_ms: 63.0919\n  type: 'test'\n  location: 'D:\\\\a\\\\claude-tweaks\\\\claude-tweaks\\\\tests\\\\dispatch-per-record-groups-prose.test.js:158:1'\n  failureType: 'testCodeFailure'\n  error: |-\n    node:internal/modules/cjs/loader:1433\n      throw err;\n      ^\n    \n    Error: Cannot find module 'D:aclaude-tweaksclaude-tweaksplugin/bin/lib/dispatch/in-flight-neighbours.js'\n```\n\n#### `tests/specify-near-duplicate-prose.test.js`\n\n```\nnot ok 11619 - the shaping-mode.md refusal fence runs and refuses nothing when no hit is title-similar and ready (\\#3141)\n  ---\n  duration_ms: 1.0907\n  type: 'test'\n  location: 'D:\\\\a\\\\claude-tweaks\\\\claude-tweaks\\\\tests\\\\specify-near-duplicate-prose.test.js:93:1'\n  failureType: 'testCodeFailure'\n  error: 'refusal fence anchors must exist'\n  code: 'ERR_ASSERTION'\n  name: 'AssertionError'\n  expected: true\n  actual: false\n  operator: '=='\n```\n\n_Filed by .github/workflows/windows-regression.yml — failures were compared against the push's base commit (verify.js --baseline). Shape it with /claude-tweaks:specify before building._\n\n",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "9dc2c1df496df79bf9b22e3a21345458617efe62",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 0,
+          "testLines": 29,
+          "implFiles": 0,
+          "testFiles": 2,
+          "pipelineArtifactLines": 158,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 3670,
+      "verdict": "needs-human",
+      "mergeSha": "b07e3f7ee23f6d2b1ea4e4db0dfef80b528c577b",
+      "closingPr": 3825,
+      "title": "Windows CRLF: ten skill-prose tests read governed markdown raw before bare-\\n fence extraction",
+      "body": "Surface: infra\n\n**Related:** #3562, #3563, #3565, #3587, #3574\n\nOrigin: #3562 Deliverable 4 (run 2026-10-19T212245-record-3562) — sibling files with the same CRLF read-plus-extract shape, kept out of #3562 by its own Gotchas\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n#3562 fixed `tests/pipeline-run-dir-adoption-anchoring.test.js` for Windows checkouts: it read live skill markdown with a raw `fs.readFileSync(…, 'utf8')` and applied a bare-`\\n` fence regex, which matches nothing once `core.autocrlf=true` gives the doc `\\r\\n` endings. Its sibling grep (`git grep -lE '```(bash|sh|js|json|yaml|yml)?\\\\n' -- tests tools`), re-run on this record's build branch (base `4dbf60b8d`), finds ten more files with the same read-plus-extract shape that no open record claims (an open-issue search for each filename returns only #3562 itself, which names them as out of scope). Each reads governed markdown raw and extracts with a bare-`\\n` anchored regex:\n\n| File | Raw read | Extractor |\n|---|---|---|\n| `tests/bin-lib/issues/labels.test.js` | line 126 | line 127, `## Canonical LABELS_JSON[\\s\\S]*?```js\\n([\\s\\S]*?)\\n```` |\n| `tests/blast-radius-snippet.test.js` | line 17 | line 18, `is one CLI call[^\\n]*\\n[^\\n]*\\n\\n```bash\\n([^`]+)```` |\n| `tests/capture-native-branch-guard-shapes.test.js` | line 28 | line 25, ````bash\\n([\\s\\S]*?)```` |\n| `tests/harness-health-runaway-section.test.js` | line 13 | line 27, ````bash\\n\\s*node -e '…' ` |\n| `tests/init-port-isolation-conformance.test.js` | line 13 | line 90, an exact fenced `ports.js allocate` line |\n| `tests/plan-audit-check-e-prose.test.js` | line 17 | line 72, `## Invocation\\s+```bash\\n([^\\n]+)\\n```` |\n| `tests/tidy-release-note-repair-conformance.test.js` | line 10 | line 81, then runs it with `bash -c` (lines 85-86) |\n| `tests/dispatch-firing-exclusion.test.js` | line 24 | line 30, then runs it with `bash -c` (line 58) |\n| `tests/multispec-not-run-callsite.test.js` | line 22 | line 46, then runs it with `bash -c` (line 96) |\n| `tests/verify-expectations-writer-conformance.test.js` | line 16 | line 54, then runs it with `execFileSync('/bin/sh', …)` (line 66) |\n\nPer #3562's Current State, all ten fail on `windows-latest` with an extractor-not-found message. Four of them also run what they extract, so a second Windows layer can sit behind the CRLF one, as #3517, #3555, #3565 and #3587 found: `\\r` left in a captured snippet breaks `bash -c`; a native backslash `CLAUDE_PLUGIN_ROOT` interpolated into a heredoc turns into JS escapes; and a literal `/bin/sh` resolves to `<drive>:\\bin\\sh` on win32 and throws `ENOENT`. #3565's sweep records `verify-expectations-writer-conformance.test.js:66`'s `/bin/sh` spawn as masked behind the CRLF extraction failure, with no open record owning it.\n\n## Deliverables\n\n1. For each of the ten files above, read the governed markdown through `tests/helpers/read-skill.js`'s `readText()` instead of a raw `fs.readFileSync`. Leave every extraction regex as it is — `readText()` normalizes at the read, so an extracted snippet is LF and runnable on every checkout.\n2. For each file that runs what it extracts (`tidy-release-note-repair-conformance`, `dispatch-firing-exclusion`, `multispec-not-run-callsite`, `verify-expectations-writer-conformance`), check the second layer and fix it test-side: a forward-slash `CLAUDE_PLUGIN_ROOT` where one is interpolated into a script, and no literal `/bin/sh` spawn target (`verify-expectations-writer-conformance.test.js:66` — use `bash` from the inherited `PATH`, as the sibling `bash -c` suites that pass on `windows-latest` do).\n3. Add one CRLF control per extractor, built from the LF `readText()` value with `.replace(/\\n/g, '\\r\\n')` (assert `\\r\\n` present and no `\\r\\r\\n`), proving the read-plus-extract path returns the same result as for the LF text — the pattern #3562 added to `tests/pipeline-run-dir-adoption-anchoring.test.js`.\n4. Before opening the PR, re-run the sibling grep above and re-check open records; drop any file another record claims by then and record the grep output in the PR body.\n\n## Acceptance Criteria\n\n- [ ] Each of the ten files passes `node --test` on macOS/Linux with no test removed, skipped or weakened, plus its new CRLF control.\n- [ ] CRLF simulation on macOS/Linux: a scratch copy of `tests/` and `plugin/` with the governed docs converted to `\\r\\n` fails the pre-fix files with their extractor messages and passes the fixed files. Quote both runs' `# pass` / `# fail` lines in the PR body.\n- [ ] All ten files pass on `windows-latest`. Prove it before merge by dispatching `gh workflow run windows-regression.yml --ref {branch}` and quoting each file's per-test `ok` lines from the run's log, not the adjudication verdict alone (a dispatch baselines against `HEAD^1`, #3568). If the dispatch cannot run, say so explicitly.\n- [ ] Each new CRLF control discriminates: replacing its `readText(` with a raw `fs.readFileSync(…, 'utf8')` turns it red. Run each doctoring in the same command as its restore.\n- [ ] No file under `plugin/` changes.\n- [ ] `npm test` passes.\n\n## Release Note\n\nFixed ten skill-prose tests that failed only on Windows checkouts because of line endings.\n\n## Technical Approach\n\nTest-side only, following `.claude/skills/windows-checkout-test-parity/SKILL.md`'s \"Build CRLF inputs from the LF text\" pattern and its Anti-Patterns row \"Treating a CRLF fix as the whole Windows fix for a test that extracts and runs a skill's shell snippet\". `readText()` is the repo's single EOL-normalizing read for governed markdown; `skill-prose-conformance-tests` already requires it for every prose suite. Normalize at the read, not with a `\\r?\\n`-tolerant regex: a suite that runs its extracted snippet would still hand `bash -c` a snippet full of `\\r` (reproduced in #3562's scratch run).\n\n### Key Files\n\n- `tests/bin-lib/issues/labels.test.js`, `tests/blast-radius-snippet.test.js`, `tests/capture-native-branch-guard-shapes.test.js`, `tests/harness-health-runaway-section.test.js`, `tests/init-port-isolation-conformance.test.js`, `tests/plan-audit-check-e-prose.test.js` — read-only extract-and-compare suites: route the read through `readText()`, add a CRLF control\n- `tests/tidy-release-note-repair-conformance.test.js`, `tests/dispatch-firing-exclusion.test.js`, `tests/multispec-not-run-callsite.test.js`, `tests/verify-expectations-writer-conformance.test.js` — extract-and-run suites: `readText()` read, CRLF control, and the second Windows layer\n- `tests/helpers/read-skill.js` — read-only reference: `readText()`\n- `tests/pipeline-run-dir-adoption-anchoring.test.js` — read-only reference: #3562's CRLF control shape\n- `.claude/skills/windows-checkout-test-parity/SKILL.md` — read-only reference\n\n## Gotchas\n\n- Do not add a `.gitattributes` `eol=lf` rule for `tests/` or the skill files; the parity skill scopes it to the hashed upstream-drift fixtures on purpose.\n- Do not build a CRLF case from a raw read: on a Windows checkout that yields `\\r\\r\\n` (#3523). Build it from the `readText()` value.\n- The second-layer failures are inferred for most files, not observed: the CRLF extractor failure masks them on Windows today. Investigate whatever shape the dispatched Windows run shows; never add a win32 skip to turn a run green.\n- If this proves too large for one PR, split it along the read-only / extract-and-run line — the four extract-and-run files each need their own Windows proof.\n\n_Filed by `capture` via specShapedBody._",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "6afbad94a1f96988a7f179d9e5cc882772a41ec6",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 1,
+          "testLines": 248,
+          "implFiles": 1,
+          "testFiles": 10,
+          "pipelineArtifactLines": 223,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": [
+        {
+          "severity": "Low",
+          "text": "log-decision: Step 7: verdict PASS (1 low finding staged); verdict comment posted on PR #3825; phase exit: pushed af312d323, review row flipped. Reversibility: high. Reversibility: high."
+        }
+      ]
+    },
+    {
+      "record": 3705,
+      "verdict": "auto-merge",
+      "mergeSha": "44b59b5eaa651505e44c599c20875c6542d0012f",
+      "closingPr": 3787,
+      "title": "Structurally-stuck escalation record never names #3503's merged-partial reason",
+      "body": "Origin: found while resolving PR #3619's (#3503) merge conflict with #3297 in `archive-merged.js`\n\nDefer-reason: tangential\n\n**Related:** #3702\n\n## Current State\n\n`STRUCTURALLY_STUCK_REASONS` in `plugin/bin/lib/reconcile/archive-merged.js` now holds `no-worktree`, `no-branch`, `no-pr`, `console-never-rendered-pr-closed`, `console-never-rendered-staged-pending`, `pr-not-found`, `merged-partial` and `no-repo-slug`. #3503 added the last two.\n\n`structurallyStuckBody` in `plugin/bin/lib/reconcile/escalate-residue.js` (line 90 on main) writes the body of the shared `reconcile: structurally-stuck run directories` record. Its fixed text says \"The skip reasons that feed this record are `no-worktree`, `no-branch`, `no-pr`, `console-never-rendered-pr-closed`, `console-never-rendered-staged-pending`, and `pr-not-found`\". It never names `merged-partial` and has no remedy line for it. `docs/reconcile-checks.md` (around line 249) restates the same six-reason list.\n\nA run whose merged PR left a record unclosed (`merged-partial`, carrying `unclosed: number[]`) escalates after the 7-day TTL into a record that never says that reason can feed it, or what a human should do about it.\n\n`no-repo-slug` is a different case. With no repo slug, `findOrCreateIssue` returns `escalation-failed`, so that reason never reaches the record. It only shows up in the residue summary's stuck count. Its absence from the body is correct, but nothing says so.\n\nNothing pins the body text against `STRUCTURALLY_STUCK_REASONS`. That is how both #3297 and #3503 added a reason to the set while only #3297 updated the body.\n\n## Deliverables\n\n- Name `merged-partial` in `structurallyStuckBody`'s reason list. Add a remedy line for it: the run's merged PR left the listed records open, so ship them in a later PR or close/release them if they were abandoned, and the next reconcile archives the dir and drops it from this record.\n- Update `docs/reconcile-checks.md`'s matching passage the same way. Also say there that `no-repo-slug` is tracked but can never be filed into the record.\n- Add a test in `tests/bin-lib/reconcile/escalate-residue.test.js` that every member of `STRUCTURALLY_STUCK_REASONS` except `no-repo-slug` appears in `structurallyStuckBody([])`'s text. The exclusion should be an explicit, commented constant.\n\n## Acceptance Criteria\n\n- `structurallyStuckBody([])` contains `` `merged-partial` `` and a remedy sentence for it.\n- The new test fails when any reason other than `no-repo-slug` is removed from the body text, and when a new reason is added to `STRUCTURALLY_STUCK_REASONS` without updating the body. Demonstrate this by reverting.\n- `docs/reconcile-checks.md` names `merged-partial` in the reason list and explains why `no-repo-slug` is excluded.\n- `npm test` passes.\n\n## Release Note\n\nA run directory stuck because its merged PR left a record open is now named in reconcile's stuck-runs issue, with the step that clears it.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/reconcile/escalate-residue.js` — modify\n- `docs/reconcile-checks.md` — modify\n- `tests/bin-lib/reconcile/escalate-residue.test.js` — modify\n\n_Filed by `capture` via specShapedBody._",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "7d10a7117fc13895b0ab36fc6b1ea3f1c0bf1760",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 30,
+          "testLines": 23,
+          "implFiles": 3,
+          "testFiles": 1,
+          "pipelineArtifactLines": 80,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 3721,
+      "verdict": "auto-merge",
+      "mergeSha": "dc02e270013c9ce0bb5d7ac4bdb78272822dcaa1",
+      "closingPr": 4994,
+      "title": "archive-run: commits the archive move on the current branch without reporting the commit or that it is unpushed",
+      "body": "Surface: terminal\n\n## Current State\n\n`hooks.js archive-run --run <dir>` calls `archiveRunDir` (`plugin/bin/lib/reconcile/archive-merged.js`). When the run's `work/` is git-tracked, that function `git mv`s it into `.claude-tweaks/pipelines/archive/` and commits on the main checkout's current branch (`archive-merged.js:1302`, `[reconcile] archive run {runId}`, scoped to its own paths per #2241). The function returns only `{ ok: true, movedEntries }` (`archive-merged.js:1503`), so the CLI (`plugin/bin/hooks.js:1249-1252`) prints the `moved: …` lines and `claude-tweaks: archived {run-id}`. Nothing tells the caller that a commit landed, on which branch, or that it is unpushed.\n\nObserved twice:\n- In a consuming project (the original request below): the silent commit left local `master` ahead of origin, and a deploy script hard-stops on that.\n- In this repo on 2026-10-21: a `/claude-tweaks:sweep` run archived 69 run dirs via `archive-run`. Four of them carried tracked `work/` and produced four unreported `[reconcile] archive run` commits on local `main` (`d48c523e0`, `6cf4efb34`, `325facfe8`, `d447003fe`). They were only noticed through a manual `git log`.\n\n#3396 tracks the broader mechanism (unpushed reconcile archive commits on the main checkout). This record is the output gap only, which is separately fixable.\n\n## Deliverables\n\n1. `archiveRunDir` reports the commit it made: on success with a commit, its return value carries `commit: { sha, branch }` (short sha of the `[reconcile] archive run` commit, plus the checked-out branch name). `commit` is absent when no tracked content moved and no commit ran.\n2. `hooks.js archive-run` prints one line after `archived {run-id}` whenever `commit` is present: `claude-tweaks: committed {sha} on {branch} (not pushed — {n} ahead of {upstream})`. When the branch has no upstream, the parenthetical reads `(no upstream configured)`. When the ahead-count probe fails, it reads `(push state unknown)`. The line never fails the verb.\n3. The reconcile archival path that calls `archiveRunDir` surfaces the same `commit` field in its per-run result entry, so `hooks.js reconcile --json` consumers see it too.\n\n## Acceptance Criteria\n\n1. Archiving a fixture run with tracked `work/` returns `commit.sha` matching `git rev-parse --short HEAD` after the call, and `commit.branch` matching the checked-out branch. Archiving a fixture with no tracked content returns no `commit` field.\n2. `archive-run` stdout on a tracked-work fixture contains a line matching `/^claude-tweaks: committed [0-9a-f]{7,} on \\S+ \\((not pushed — \\d+ ahead of \\S+|no upstream configured|push state unknown)\\)$/m`. On an untracked-only fixture, stdout contains no `committed` line.\n3. The ahead count is correct: a fixture whose branch tracks an upstream at the pre-archive commit reports `1 ahead`.\n4. The reconcile `--json` run entry for an archived tracked-work run includes the `commit` object.\n5. Existing `tests/archive-run-verb.test.js` cases still pass unchanged, including the `moved:`-line cases.\n\n## Release Note\n\narchive-run now tells you when it commits the archive move, on which branch, and whether that commit is still unpushed.\n\n## Technical Approach\n\nCapture the commit's sha right after the successful `commitGit` call in `archiveRunDir`, using `git rev-parse --short HEAD` plus `git symbolic-ref --quiet --short HEAD` through the same `runGit` seam, and thread it into the success return. In `hooks.js`, compute the ahead count with `git rev-list --count @{upstream}..HEAD` (anchored `-C mainRoot`), degrading to the two fallback parentheticals. Reconcile's archive call site copies the field into its result entry. Pushing, or skipping the commit on the integration branch (the request's optional alternatives), is out of scope. Those are behavior changes that belong to #3396's mechanism decision.\n\n### Key Files\n\n- `plugin/bin/lib/reconcile/archive-merged.js` — `archiveRunDir` returns `commit: { sha, branch }` after a successful commit; the reconcile call site (around line 1870) carries it into the run entry\n- `plugin/bin/hooks.js` — `archive-run` prints the committed/ahead line\n- `tests/archive-run-verb.test.js` — new stdout assertions for the committed line\n- `tests/reconcile.test.js` — `archiveRunDir` return-shape assertion for `commit`\n\n## Gotchas\n\n- `archive-run`'s stdout is documented as informational human text that no caller parses (`hooks.js` comment above `archiveRunDir`), so adding a line is not a contract change. The `--json` run-entry field is additive.\n- Resolve the ahead count from `mainRoot`, not from `process.cwd()`. A worktree cwd has a different HEAD (`[IL-127]`-style shadowing).\n- An unborn or detached HEAD has no symbolic ref. Report the branch as `detached` rather than throwing.\n\n## Original request\n\narchive-run: commits the archive move on the current branch without reporting the commit or that it is unpushed\n\n**Summary:** `hooks.js archive-run` commits the archive move on the main checkout's current branch, but its output never mentions the commit or that it is unpushed.\n\n**Kind:** Gap\n\n**Affected component:** `bin/hooks.js archive-run` → `bin/lib/reconcile/archive-merged.js` (around line 1169)\n\n**Use case:**\nAfter `close-run`, `hooks.js archive-run --run <dir>` was run in the main checkout, which was on the integration branch (`master`). It `git mv`'d the run's `work/*-spec.md` files into `pipelines/archive/` and committed them as `[reconcile] archive run <run-id>`. The commit is correctly scoped to its own paths (#2241). The CLI output listed only `moved: …` lines and `archived <run-id>`. It never said that a commit was made, on which branch, or that the commit was not pushed.\n\nIn this project, local `master` being ahead of `origin/master` is a hard stop for the deploy script, which refuses to run until the commit is pushed. The remote host's nightly backup also commits and pushes without pulling, so a push made later, but not deployed, can leave that backup's push rejected. The commit was only noticed by chance (`git worktree list` showed `master` at a new SHA), and it took a push plus a deploy to clear.\n\nRepro:\n1. Main checkout on the integration branch, in sync with origin.\n2. `hooks.js close-run --run <run-dir>`, then `hooks.js archive-run --run <run-dir>` for a run whose `work/` holds tracked spec files.\n3. `git status -sb` now shows `ahead 1`, but nothing in the archive-run output said so.\n\nSuggested change: have `archive-run` (and the reconcile pass that calls the same code) report the commit in its output, for example `committed <short-sha> on <branch> (not pushed — <n> ahead of <upstream>)`. Optionally, offer a `--push` flag, or skip the commit when the checked-out branch is the integration branch and leave the moves staged with a note. At minimum, say that the commit exists.\n\nRelated: #3396 tracks the same symptom in this repo: unpushed `[reconcile] archive run` commits on the main checkout's local `main`. Its Deliverable 2 asks which mechanism leaves them there. This report is that mechanism seen from a consuming project, plus the output gap, which is fixable separately.\n\n**Definition:** Clear\n\n**Plugin version:** 6.145.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-07ce1823 -->\n\n## Plan Review Decisions\n\nDecided by the maintainer on 2026-11-02, who accepted these readings in session. Where a decision conflicts with the text above, the decision wins.\n\n- **A commit followed by a refusal: Reading B.** Declare `archiveCommit` before the commit, have `refuseAfterMarker` carry it, have `archive-run` print the committed line on refusal too, and have reconcile's `skipped` entries copy it. Add a test using the stray-file fixture. This extends Deliverable 1 beyond the success path.\n- **`commit` when a post-commit probe fails: Reading A.** AC2 stays as written, so no placeholder sha may reach the line. On a failed sha probe, retry or print a different line. Use `detached` only on `exitCode === 1`.\n",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "02f25d8c94c8428cc9a53331305400771c25a517",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 182,
+          "testLines": 329,
+          "implFiles": 5,
+          "testFiles": 2,
+          "pipelineArtifactLines": 350,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 3759,
+      "verdict": "auto-merge",
+      "mergeSha": "f7d397500c2143a203957ef419232a0a1ea9c515",
+      "closingPr": 4023,
+      "title": "ports registry test: bind-detection test collides with the machine lease pool on port 20003",
+      "body": "Origin: reflect full from #3713\n\nDefer-reason: tangential\n\n## Current State\n\n`tests/bin-lib/ports/registry.test.js` binds a real socket on `127.0.0.1:20003` (`POOL_BASE + 3`, line 59) to prove `allocate` skips a block whose port is taken. `20000+` is the machine-wide lease pool that dev servers and sibling test files also use, so under load the bind fails with `EADDRINUSE`. Evidence: on #3713's first full `npm test` run the suite reported `tests 14148, pass 14140, fail 1` with `registry.test.js` failing `EADDRINUSE 127.0.0.1:20003`; the file passed 10/10 in isolation and the second full run was green. Cost: one extra full-suite run (about 3 minutes) plus a manual isolate-and-rerun to tell load from regression. The file already routes its bookkeeping-only tests through an `alwaysFree` probe for this reason; the bind-detection tests still use the real pool range.\n\n## Deliverables\n\nMake the bind-detection test in `tests/bin-lib/ports/registry.test.js` independent of whether `POOL_BASE + 3` is free on the machine, for example by injecting the probe/bind seam or by choosing a free block at test time.\n\nKeep the assertion that `allocate` moves past a block with a taken port.\n\n## Acceptance Criteria\n\nWith another process already listening on `127.0.0.1:20003`, `node --test tests/bin-lib/ports/registry.test.js` passes.\n\nThe test still fails if `allocate` stops skipping a block with a taken port.\n\n`npm test` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/bin-lib/ports/registry.test.js` — stop depending on a free real port in the shared 20000+ pool\n\n_Filed by `reflect` via specShapedBody._\n",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "8d86e2e6c5a0063cc80abade1e53fdb21cc0d4cc",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 0,
+          "testLines": 15,
+          "implFiles": 0,
+          "testFiles": 1,
+          "pipelineArtifactLines": 70,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 3771,
+      "verdict": "needs-human",
+      "mergeSha": "c68d7dedede74ea9a6851ef6562dbc1c765fb3c8",
+      "closingPr": 3821,
+      "title": "/review Step 6.7's QA re-run omits --source review, so a standalone review gets a nested Next Actions block",
+      "body": "Verified-as-of: a7b41a727d09cac4d42b594b7c45fabc42aa70eb\n\nOrigin: Review Console residue audit 2026-10-20 — unconfirmed finding from run 2026-10-19 record-3047, bulk-acknowledged unread\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/review/code-mode-steps.md` Step 6.7, item 4 (\"Re-run the QA stories the fix wave touched (#3047)\") runs `/claude-tweaks:test qa affected` with no parent signal. `test/SKILL.md:227` treats `$PIPELINE_RUN_DIR` as the primary parent signal and `--source review` as the explicit fallback for exactly this no-run-dir case, and it names this Step 6.7 call as a sanctioned parent invocation. A standalone `/review` therefore gets `/test`'s own `## Next Actions` block rendered mid-review, which is the case Step 1.5's auto-trigger already avoids by passing `--source review` (`code-mode-steps.md:78`). Checked on origin/main a7b41a727.\n\n## Deliverables\n\n- [ ] Step 6.7 item 4 invokes `/claude-tweaks:test qa affected --source review`, matching Step 1.5's form.\n- [ ] Update a prose conformance pin, if one exists for that invocation, to the new form.\n\n## Acceptance Criteria\n\n- [ ] `code-mode-steps.md` Step 6.7's QA re-run command carries `--source review`.\n- [ ] Every `/claude-tweaks:test` invocation in `code-mode-steps.md` without a run dir passes `--source review`. A grep across the file finds no bare invocation in an actionable step.\n\n## Release Note\n\nA standalone /review no longer shows /test's own next-step suggestions in the middle of its report after re-running QA stories.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/review/code-mode-steps.md` — add --source review\n\n_Filed by `capture` via specShapedBody._",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "560ecb2690bc8da8f76be7b8d25b66a5cdc0e0d6",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 23,
+          "testLines": 17,
+          "implFiles": 4,
+          "testFiles": 1,
+          "pipelineArtifactLines": 68,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 3827,
+      "verdict": "needs-human",
+      "mergeSha": "13cabe92dd44bb3d777d11113c3083c504d2f926",
+      "closingPr": 3985,
+      "title": "Pin every standalone /test call in the review skill's step files to --source review with one file-wide sweep",
+      "body": "Origin: ledger resolve gate, run 2026-10-20T205632-record-3771 (refs #3771)\nDefer-reason: tangential\n\n## Current State\n\n#3771 made `plugin/skills/review/code-mode-steps.md` Step 4 and Step 6.7, and `step3-routing.md`'s re-verify sites, pass `--source review` on their `/claude-tweaks:test` calls. `tests/review-qa-rerun-after-fix-wave-conformance.test.js` enforces that with point pins on the exact edited phrases. A future mid-review `/test` call added to any `plugin/skills/review/*.md` file would not be caught, so the regression class #3771 fixed can recur silently. A bare file-wide grep cannot be the pin: Step 1.5's gate-table rows and STOP messages legitimately name `/claude-tweaks:test` without the flag.\n\n## Deliverables\n\n- [ ] A sweep test over `plugin/skills/review/*.md` that classifies each backticked `/claude-tweaks:test` span as an invocation or a descriptive mention, and requires `--source review` on every invocation.\n- [ ] The classification rule is written down in the test, with a go-red proof per the `skill-prose-conformance-tests` project skill.\n\n## Acceptance Criteria\n\n- [ ] Adding a bare `/claude-tweaks:test` invocation to a step file under `plugin/skills/review/` turns the sweep red.\n- [ ] The existing descriptive mentions in Step 1.5's gate table stay green with no allowlist of line numbers.\n\n## Release Note\n\nNone - internal conformance test only.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "15bc3a825b954eff9ed35535a30ed0ae90b7c50e",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 2,
+          "testLines": 236,
+          "implFiles": 1,
+          "testFiles": 1,
+          "pipelineArtifactLines": 126,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 3834,
+      "verdict": "auto-merge",
+      "mergeSha": "d7f5e525ad5a7f57116283d67c77821cf228c9a3",
+      "closingPr": 3960,
+      "title": "Stop flipLedgerRow dropping a duplicate-numbered ledger row on write-back",
+      "body": "Origin: ledger resolve gate (#3510 final whole-branch review, I3 follow-up)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n`plugin/bin/lib/wrap-up/ledger-write.js`'s `parseLedgerTable` keys rows by item number in a `Map`, so a ledger table holding two rows with the same number collapses them on parse. `serializeLedgerTable` then writes only the survivor back. `flipLedgerRow` (used by `finish-console` and `delete-ledger`) therefore silently drops a duplicate-numbered row the next time it flips any row in that ledger. #3510's `stage-item.js --ledger` refuses to append to such a ledger (`LEDGER_UNSAFE`), but the pre-existing write-back path still loses the row.\n\n## Deliverables\n\n- [ ] Make `parseLedgerTable`/`serializeLedgerTable` (or `flipLedgerRow`) preserve duplicate-numbered rows, or refuse the write-back with a logged degrade instead of dropping a row.\n- [ ] Add a test with a two-row `| 1 |` fixture proving no row is lost across a `flipLedgerRow` round-trip.\n\n## Acceptance Criteria\n\nA `flipLedgerRow` call on a ledger with two rows numbered `1` either keeps both rows byte-for-byte or fails loudly without writing; the new test fails when the fix is reverted.\n\n## Release Note\n\nFix: resolving a ledger item at the Review Console can no longer silently drop a second row that shares its number.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/wrap-up/ledger-write.js` — preserve or refuse duplicate-numbered rows on write-back\n\n_Filed by `ledger resolve gate` via specShapedBody._",
+      "checks": [
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        },
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "9c350cf48e2cbbd162b30bea2a4b56b3a924ccaf",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 25,
+          "testLines": 47,
+          "implFiles": 3,
+          "testFiles": 2,
+          "pipelineArtifactLines": 65,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 3890,
+      "verdict": "auto-merge",
+      "mergeSha": "b49538bff138d701742645c6eede0b5c79557455",
+      "closingPr": 3920,
+      "title": "Windows regression: 1 test file(s) newly failing after 259be0521",
+      "body": "Surface: infra\n\n## Current State\n\nThe post-merge Windows check on commit 259be0521 (merged PR #3833) reported `tests/routine-fleet-security-hardening.test.js` newly failing on \"AC1.1: composition table has a Vertical finder row whose focus override is security-hardening\", with `no \"## Fleet composition table\" heading`.\n\nRe-checked against current `main`, the failure is still live and reproduces on macOS under a CRLF-read simulation: 3 of the file's 6 tests fail (AC1.1, AC1.2, and the existing-rows cron pin), 3 pass. Root cause: the file's read helper (line 10) uses a raw `fs.readFileSync(path.join(ROOT, rel), 'utf8')`. On a Windows `core.autocrlf=true` checkout, the heading lookup and the table-row parsing downstream of it never match `\\r`-terminated lines. The Windows filer reported only the first failure.\n\n`tests/helpers/read-skill.js` exports `readText(absPath)` (#2763), the shared EOL-normalizing read for exactly this case.\n\n**Related:** #3702, #3703, #3742, #3751, #3776, #3797, #3802, #3857, #3871, #3886, #3894\n\n## Deliverables\n\n1. `tests/routine-fleet-security-hardening.test.js` — the read helper (line 10) returns `readText(path.join(ROOT, rel))` from `./helpers/read-skill` instead of a raw `fs.readFileSync`.\n\n## Acceptance Criteria\n\n1. No raw `fs.readFileSync` of a markdown file remains in `tests/routine-fleet-security-hardening.test.js`.\n2. Under the CRLF-read simulation, all 6 tests in the file pass. Before the fix, 3 fail.\n3. `node --test tests/routine-fleet-security-hardening.test.js` is green on Linux/macOS.\n4. The next post-merge Windows check (`.github/workflows/windows-regression.yml`) no longer lists this test file.\n\n## Release Note\n\nFix a Windows-only failure in the routine fleet security-hardening test caused by CRLF line endings.\n\n## Technical Approach\n\nA one-line swap in the file's single read helper. Every test reads through it, so all three failing tests are fixed at once with no assertion changes.\n\n### Key Files\n\n- `tests/routine-fleet-security-hardening.test.js` — read helper routed through `readText`\n- `tests/helpers/read-skill.js` — `readText` helper reused (read-only)\n\n## Gotchas\n\n- The filer reported one failing test, but the CRLF read breaks 3. AC2 pins all 6 passing.\n- CI runs on ubuntu only, so only the post-merge `windows-regression.yml` run proves this on Windows.\n\n## Original request\n\nWindows regression: 1 test file(s) newly failing after 259be0521\n\nThe post-merge Windows check failed on commit 259be052140a89cf43e735ed30887cb55245c25d (compared against 5e44ed0a5).\n\n**Merged PR:** #3833 (https://github.com/thn-inc/claude-tweaks/pull/3833)\n\n**Run:** https://github.com/thn-inc/claude-tweaks/actions/runs/39637047670\n\n### Newly failing test files\n- `tests/routine-fleet-security-hardening.test.js`\n\n### Failure excerpts\n\n#### `tests/routine-fleet-security-hardening.test.js`\n\n```\nnot ok 13222 - AC1.1: composition table has a Vertical finder row whose focus override is security-hardening\n  ---\n  duration_ms: 5.0615\n  type: 'test'\n  location: 'D:\\\\a\\\\claude-tweaks\\\\claude-tweaks\\\\tests\\\\routine-fleet-security-hardening.test.js:51:1'\n  failureType: 'testCodeFailure'\n  error: 'no \"## Fleet composition table\" heading'\n  code: 'ERR_ASSERTION'\n  name: 'AssertionError'\n  expected: -1\n  actual: -1\n  operator: 'notStrictEqual'\n```\n\n_Filed by .github/workflows/windows-regression.yml — failures were compared against the push's base commit (verify.js --baseline). Shape it with /claude-tweaks:specify before building._\n",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "100e11c1141b1d0a86c94eb0481db12405653354",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 0,
+          "testLines": 7,
+          "implFiles": 0,
+          "testFiles": 2,
+          "pipelineArtifactLines": 222,
+          "pipelineArtifactFiles": 4,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 3892,
+      "verdict": "needs-human",
+      "mergeSha": "9a00e85f96a657533cbe327c2715c225b1d7909c",
+      "closingPr": 3962,
+      "title": "Route sweep-shadow's run-dir containment check through isPathContained",
+      "body": "Origin: /review of #3642 (lens 3a, direct-verified by the reviewing agent)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n`plugin/bin/lib/hooks/sweep-shadow.js:113-119` decides whether `runDir` sits under the run root with a retyped `runDir.startsWith(rootWithSep)` (`rootWithSep` is `root + path.sep`) and then slices `rel` off by `rootWithSep.length`. That is the hand-rolled idiom `docs/donts.md` [IL-161] bans in favor of `shared-primitives.js`'s `isPathContained`. It is strict and correct on POSIX, but it lacks the win32 casing and drive semantics `isAncestorOrSelf` provides. #3498's conformance scan (`tests/path-containment-conformance.test.js`, `HAND_ROLLED`) only matches a `startsWith(...)` whose argument carries `path.sep` on the same line, so the copy built through the `rootWithSep` variable escapes it. #3642's diff does not touch this file.\n\n## Deliverables\n\n- [ ] Replace the `startsWith(rootWithSep)` guard with `isPathContained(runDir, root)`, deriving `rel` with `path.relative(root, runDir)`.\n- [ ] Widen `HAND_ROLLED` in `tests/path-containment-conformance.test.js` (or add a sibling scan) so a `startsWith(<variable built from path.sep>)` containment test is flagged.\n\n## Acceptance Criteria\n\n- [ ] `tests/bin-lib/hooks/sweep-shadow.test.js` passes unmodified.\n- [ ] The widened scan fails when the old `rootWithSep` guard is restored.\n\n## Release Note\n\nInternal hardening: the shadow-sweep run-dir check uses the shared path-containment helper.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/hooks/sweep-shadow.js` — modify\n- `tests/path-containment-conformance.test.js` — modify\n\n_Filed by `review` via specShapedBody._\n",
+      "checks": [
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        },
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "8f6e019e2ced0fe623439ae844b623d908714af7",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 29,
+          "testLines": 152,
+          "implFiles": 6,
+          "testFiles": 2,
+          "pipelineArtifactLines": 79,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 3894,
+      "verdict": "auto-merge",
+      "mergeSha": "8a5ee54bac7dec899bd4fc97fe5fad8a3550359b",
+      "closingPr": 3907,
+      "title": "Windows regression: 1 test file(s) newly failing after a865b2ffa",
+      "body": "Surface: infra\n\n## Current State\n\nThe post-merge Windows check on commit a865b2ffa (merged PR #3808) reported `tests/materiality-floor-conformance.test.js` newly failing on \"digest-sweep.md reads trusted comment objects with the Trusted-authors jq pasted verbatim (#3766)\". The failing assertion is `promotion.includes('never reduce\\nthem to bare bodies first')`.\n\nRe-checked against current `main`, the failure is still live and reproduces on macOS under a CRLF-read simulation: exactly this one test fails, 54 pass. Root cause: the file's `read` helper (line 16) uses a raw `fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8')`, and this assertion embeds a literal `\\n` across a line break. A Windows `core.autocrlf=true` checkout holds that break as `\\r\\n`. The file's other 54 assertions carry no newline-spanning literals, which is why only this one failed.\n\n`tests/helpers/read-skill.js` exports `readText(absPath)` (#2763), the shared EOL-normalizing read for this case.\n\n**Related:** #3702, #3703, #3742, #3751, #3776, #3797, #3802, #3857, #3871, #3886, #3890\n\n## Deliverables\n\n1. `tests/materiality-floor-conformance.test.js` — the `read` helper (line 16) returns `readText(path.join(REPO_ROOT, rel))` from `./helpers/read-skill` instead of a raw `fs.readFileSync`.\n\n## Acceptance Criteria\n\n1. No raw `fs.readFileSync` of a markdown file remains in `tests/materiality-floor-conformance.test.js`.\n2. Under the CRLF-read simulation, all 55 tests in the file pass. Before the fix, the #3766 test fails.\n3. `node --test tests/materiality-floor-conformance.test.js` is green on Linux/macOS.\n4. The next post-merge Windows check (`.github/workflows/windows-regression.yml`) no longer lists this test file.\n\n## Release Note\n\nFix a Windows-only failure in the materiality-floor conformance test caused by CRLF line endings.\n\n## Technical Approach\n\nA one-line swap in the file's single `read` helper. All tests read through it, so the newline-spanning literal matches on any checkout with no assertion change.\n\n### Key Files\n\n- `tests/materiality-floor-conformance.test.js` — `read` helper routed through `readText`\n- `tests/helpers/read-skill.js` — `readText` helper reused (read-only)\n\n## Gotchas\n\n- Do not rewrite the assertion to avoid the embedded `\\n`. Spanning the line break is deliberate: it pins that the wording wraps exactly there in the jq-pasting paragraph.\n- CI runs on ubuntu only, so only the post-merge `windows-regression.yml` run proves this on Windows.\n\n## Original request\n\nWindows regression: 1 test file(s) newly failing after a865b2ffa\n\nThe post-merge Windows check failed on commit a865b2ffab392860f6fe8d55aacb1c330291be47 (compared against a9a388bd8).\n\n**Merged PR:** #3808 (https://github.com/thn-inc/claude-tweaks/pull/3808)\n\n**Run:** https://github.com/thn-inc/claude-tweaks/actions/runs/39661570980\n\n### Newly failing test files\n- `tests/materiality-floor-conformance.test.js`\n\n### Failure excerpts\n\n#### `tests/materiality-floor-conformance.test.js`\n\n```\nnot ok 11914 - digest-sweep.md reads trusted comment objects with the Trusted-authors jq pasted verbatim (\\#3766)\n  ---\n  duration_ms: 9.6889\n  type: 'test'\n  location: 'D:\\\\a\\\\claude-tweaks\\\\claude-tweaks\\\\tests\\\\materiality-floor-conformance.test.js:288:1'\n  failureType: 'testCodeFailure'\n  error: |-\n    The expression evaluated to a falsy value:\n    \n      assert.ok(promotion.includes('never reduce\\nthem to bare bodies first'))\n    \n  code: 'ERR_ASSERTION'\n```\n\n_Filed by .github/workflows/windows-regression.yml — failures were compared against the push's base commit (verify.js --baseline). Shape it with /claude-tweaks:specify before building._\n",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "4d25f5610ee462f39eec3cf43cf636e5557944b9",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 25,
+          "testLines": 0,
+          "implFiles": 3,
+          "testFiles": 0,
+          "pipelineArtifactLines": 0,
+          "pipelineArtifactFiles": 0,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 3896,
+      "verdict": "auto-merge",
+      "mergeSha": "9c350cf48e2cbbd162b30bea2a4b56b3a924ccaf",
+      "closingPr": 3958,
+      "title": "Harden the ledger-reader conformance scan against sentence-level and glob-spelling escapes",
+      "body": "Origin: ledger resolve gate from #3687 (items 6 and 22)\nDefer-reason: genuinely-larger\n\n## Current State\n\n`tests/ledger-reader-ownership-conformance.test.js` (#3687) fails the suite when a this-run ledger lookup in an instruction step reintroduces the bare `docs/plans/*-ledger.md` glob. It scans one sentence at a time, and three escapes were found by the build's final review and the review lenses (3f pair, 3a): `ALLOWED_RE` exempts any sentence that merely contains \"fallback\", \"inherited\", \"unattributed\" or \"other run's\", so a reintroduced this-run glob in a sentence that also says \"fallback\" passes; `GLOB_RE` matches only the literal `docs/plans/*…-ledger.md` spelling, so `docs/plans/*ledger*.md`, the dated `docs/plans/YYYY-MM-DD-*-ledger.md` shape, or `find docs/plans -name \"*-ledger.md\"` pass; and the sentence splitter merges across a lowercase continuation, so a glob sentence can inherit an exempting word from its neighbour. Closing all three needs a different scan shape (a structural check of which steps are this-run lookups, rather than sentence-level word matching), so it was not fixed inside #3687. Evidence: ledger rows 6 and 22 of the #3687 run and the 3f/3a lens findings on `tests/ledger-reader-ownership-conformance.test.js`.\n\n## Deliverables\n\n- [ ] Replace the sentence-level `ALLOWED_RE` exemption with a check tied to the rule's own structure (the documented fallback sentence and the prose naming inherited ledgers are listed explicitly; any other glob mention in a ledger-reader step fails)\n- [ ] Widen the glob matcher to every spelling of a `docs/plans` ledger lookup (`*ledger*.md`, the dated template shape, `find`/`ls` forms)\n- [ ] Add go-red fixtures for each escape above, each failing before the change and passing after, with a message matcher on every `assert.throws`\n\n## Acceptance Criteria\n\n1. A this-run lookup sentence that contains the word \"fallback\" or \"inherited\" but is not the documented fallback sentence fails the scan.\n2. The `docs/plans/*ledger*.md`, dated-template and `find` spellings each fail the scan when they appear in a this-run lookup.\n3. The documented fallback sentence in `_shared/ledger-format.md` and the inherited-ledger prose in `ledger/SKILL.md` still pass.\n4. `npm test` passes.\n\n## Release Note\n\nThe ledger-reader conformance test now catches reintroduced ledger globs however they are spelled.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/ledger-reader-ownership-conformance.test.js` — the scan and its go-red fixtures\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "c5585347dcc6c9b45ac1c137be8977b621d6ecf9",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 52,
+          "testLines": 105,
+          "implFiles": 1,
+          "testFiles": 1,
+          "pipelineArtifactLines": 72,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 4021,
+      "verdict": "needs-human",
+      "mergeSha": "8c725c7b56f18fa5f5a1025d415e8a3ae11f126b",
+      "closingPr": 4207,
+      "title": "compose-pr-body.js: parseArgs accepts inherited object keys such as constructor as known flags",
+      "body": "Origin: wrap-up leftover from #3936\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nFound during #3936 (run 2026-10-24T063852-record-3936), in a file that run's diff does not touch. `plugin/bin/compose-pr-body.js` `parseArgs` (line 32) tests `if (!(a in FLAGS))`, and `in` walks the prototype chain, so a bare token such as `constructor` or `toString` passes as a known flag: `node plugin/bin/compose-pr-body.js constructor x` gets past the unknown-argument check (it fails later on `--run-id is required`, not on `unknown argument: constructor`). `plugin/bin/find-run-comment.js`, written beside it, looks flags up with `Object.hasOwn(FLAGS, a)` and rejects the same token with `unknown argument: constructor`.\n\n## Deliverables\n\nChange `parseArgs` in `plugin/bin/compose-pr-body.js` to look flags up with `Object.hasOwn(FLAGS, a)`. Add a case to `tests/compose-pr-body-cli.test.js` that passes `constructor` and `toString` as bare tokens and expects exit 2 with `unknown argument`.\n\n## Acceptance Criteria\n\n`node plugin/bin/compose-pr-body.js constructor x` exits 2 and prints `unknown argument: constructor`.\n\nThe new test fails when the lookup is changed back to `a in FLAGS`.\n\n`npm test` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/compose-pr-body.js` — look flags up with Object.hasOwn\n- `tests/compose-pr-body-cli.test.js` — add the inherited-key case\n\n_Filed by `wrap-up leftover routing` via specShapedBody._\n",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "04078e6240839551d0459bbdd32bff6e5a1f68ac",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 4,
+          "testLines": 8,
+          "implFiles": 2,
+          "testFiles": 1,
+          "pipelineArtifactLines": 68,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 4072,
+      "verdict": "auto-merge",
+      "mergeSha": "7070c0b8ac6ee6657ab43a997896caf18f90995d",
+      "closingPr": 4147,
+      "title": "verify.js --stamp-suite passes an undeclared 'stamp-suite' mode literal to newAndFixed, unpinned by the #4040 test",
+      "body": "**Related:** #4040, #4006\n\nOrigin: /claude-tweaks:release v6.152.0 release-gate review (staged/review-18.md, run 2026-10-21T194624-release-standalone)\n\nDefer-reason: tangential\n\n## Current State\n\n#4040's fix (`plugin/bin/verify.js:779`) passes `sel ? sel.mode : 'stamp-suite'` to `newAndFixed`. `'stamp-suite'` is outside `KNOWN_SCOPES` (`full`/`scoped`/`none`/`static-only`/`tool-scoped`), while the same function treats a null `sel` as `'full'` at :828 and :882. Behaviour is correct, because `pre-existing.js:58` only tests `mode !== 'full'` and yields `fixed: null` with `fixedReason: \"scope mode stamp-suite did not run every suite\"`, but the literal has no shared declaration.\n\nThe #4040 regression test (`tests/bin-lib/verify/cli.test.js:1521-1537`) never reads `report.json`'s `preExistingAdjudicated`, so a regression to `'full'` would claim `fixed` files for a partial chunk and still pass. Found by the v6.152.0 release-gate review (3a reproduction pair, both agents; 3f-B on the test gap) at 002884405.\n\n## Deliverables\n\n1. Declare the stamp-suite mode as a named constant next to the scope-mode vocabulary, and use it at :779.\n2. Extend the #4040 regression test to assert `preExistingAdjudicated.fixed === null` and the stamp-suite `fixedReason`.\n\n## Acceptance Criteria\n\n- verify.js has no bare `'stamp-suite'` mode literal at the newAndFixed call.\n- The extended test goes red when the mode is changed to `'full'`.\n- `npm test` passes.\n\n## Release Note\n\nMaintainer-facing: the chunked verification mode is a named constant and its pre-existing-failure report is pinned by a test.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/verify.js` — named stamp-suite mode constant\n- `tests/bin-lib/verify/cli.test.js` — assert preExistingAdjudicated.fixed/fixedReason\n\n_Filed by `capture` via specShapedBody._",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "f8be66a60d4e125bda059954abb33a4e52fef3d9",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 4,
+          "testLines": 3,
+          "implFiles": 1,
+          "testFiles": 1,
+          "pipelineArtifactLines": 70,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 4182,
+      "verdict": "auto-merge",
+      "mergeSha": "2c4d32e01f0fe1fb20b529a11b02f00716b2392d",
+      "closingPr": 4230,
+      "title": "Share one marker-fingerprint parser between health-core/digest.js and materiality-digest.js",
+      "body": "Verified-as-of: 52e6448cc77e857e4794f4ff57d745bbac29f799\n\nOrigin: #2724 triage row 38\n\nDefer-reason: tangential\n\n## Current State\n\n- `plugin/bin/lib/health-core/digest.js`'s `parseDigestFingerprints` and `materiality-digest.js`'s `parseMaterialityFingerprints` are the same `<!-- {prefix}: (\\S+?) -->` global exec loop; only the prefix differs.\n- Source: `.claude-tweaks/pipelines/2026-09-04T143635-record-1279/staged/reflect-1.md` in the main checkout (triaged by #2724, PR #4144; the file is cleared from `staged/` once this record exists).\n\n## Deliverables\n\n1. Add `parseMarkerFingerprints(text, prefix)` to `plugin/bin/lib/health-core/fingerprint.js`.\n2. Have both modules call it; keep their exported names as thin wrappers.\n\n## Acceptance Criteria\n\n- Both modules return the same fingerprints as before on the existing fixtures (existing suites pass).\n- A unit test pins `parseMarkerFingerprints` for both prefixes, including a body with no marker (returns []).\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/health-core/fingerprint.js` — modify\n- `plugin/bin/lib/health-core/digest.js` — modify\n- `plugin/bin/lib/health-core/materiality-digest.js` — modify\n\n_Filed by `capture` via specShapedBody._",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "853e54f958d576ae841179c3c45f9db141ae833e",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 31,
+          "testLines": 26,
+          "implFiles": 4,
+          "testFiles": 1,
+          "pipelineArtifactLines": 147,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 4459,
+      "verdict": "auto-merge",
+      "mergeSha": "9c2bf21a923625a26725190b22d77af732bc5ca6",
+      "closingPr": 4516,
+      "title": "Doc staleness: docs/decisions/0025-merge-subject-scope-is-repo-policy-resolved-in-the-composer.md — Consequences",
+      "body": "**Doc:** docs/decisions/0025-merge-subject-scope-is-repo-policy-resolved-in-the-composer.md | **Id:** decisions/0025-merge-subject-scope-is-repo-policy-resolved-in-the-composer | **Section:** Consequences | **Category:** staleness | **Misleads:** human engineer + coding agent | **Classification:** additive | **Confidence:** high\n\nVerified-as-of: 4439d1ff9b9027ca73f73a41e5663cb94dd3fea6\n\n## Current State\n\nThe doc states: \"tests/merge-subject-composer-conformance.test.js's COMPOSER_CALL regex pins this at all six call lines\" — but no identifier named (bare) COMPOSER_CALL exists in that file. It declares two separate regexes, LOCAL_COMPOSER_CALL (line 46, for local-merge fences) and PR_FIRST_COMPOSER_CALL (line 60, for pr-first fences), confirmed via grep against the live file. The six-call/five-file count itself is accurate (pr-first-merge.md:2, local-merge-auto-finish.md:1, auto-merge-short-circuit.md:1, settle-and-merge.md:1, worktree-merge.md:1), but naming a single regex implies one shared pinning mechanism when there are actually two, split along the same local-merge/pr-first line the rest of this ADR describes.\n\n## Deliverables\n\n**Current:**\n```\n- Every fence must name a diff source. `tests/merge-subject-composer-conformance.test.js`'s\n  `COMPOSER_CALL` regex pins this at all six call lines, so a fence added later without one fails\n  the suite.\n```\n\n**Proposed:**\n```\n- Every fence must name a diff source. `tests/merge-subject-composer-conformance.test.js`'s\n  `LOCAL_COMPOSER_CALL` and `PR_FIRST_COMPOSER_CALL` regexes pin this at all six call lines, so a\n  fence added later without one fails the suite.\n```\n\n## Acceptance Criteria\n\nFix the regex identifier the doc cites for the conformance test's call-site pinning to match the names actually declared in tests/merge-subject-composer-conformance.test.js.\n\n## Release Note\n\nNo user-visible change — documentation accuracy fix.\n\n## Technical Approach\n\n### Key Files\n\n- `docs/decisions/0025-merge-subject-scope-is-repo-policy-resolved-in-the-composer.md` — apply the proposed documentation edit\n\n_Filed by `/claude-tweaks:docs-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n\n<!-- work-fingerprint: docshealth-197c1ceb -->\nwork-fingerprint: docshealth-197c1ceb",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "fbffbd0e3c255a0fe74d996e87022cb9b84c5dfc",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 4,
+          "testLines": 0,
+          "implFiles": 1,
+          "testFiles": 0,
+          "pipelineArtifactLines": 91,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 4631,
+      "verdict": "needs-human",
+      "mergeSha": "94339d00caf4a5f29695c30c39074b0046c390a9",
+      "closingPr": 4691,
+      "title": "Console backfill records a truncated path for a finding at a path holding @ or [id]",
+      "body": "Origin: wrap-up leftover from #4582\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n`plugin/bin/lib/console/backfill.js` keeps the old path class in `LOCATION_RE` (line 27) and in the `loc` regex at line 337, after #4582 widened `findingKey`'s class in `console/resolve.js`. A backfilled finding at `app/[id]/page.tsx:9` records the path `/page.tsx`, and one at `packages/@scope/x.ts:4` records `scope/x.ts`, so a tiebreak reading that path fails its evidence check and any filed record names the wrong file. #4582 left this alone because `backfillItemId` hashes the finding key: widening the class re-ids a stored backfill item at such a path, and a re-run could file it twice.\n\n## Deliverables\n\n- [ ] Use `FINDING_PATH` (exported from `console/resolve.js`) in `LOCATION_RE` and the line 337 `loc` regex.\n- [ ] Keep a re-run of the backfill idempotent for an item stored under its old truncated-path id.\n\n## Acceptance Criteria\n\nA staged line for `app/[id]/page.tsx:9` backfills with `path` `app/[id]/page.tsx`.\n\nA backfill re-run over a run whose stored item carries the old truncated-path id files no second record.\n\n## Release Note\n\nBackfilled review findings in files whose paths contain characters such as `@` or brackets now name the right file.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/console/backfill.js` — adopt the shared finding-path class without re-iding stored items\n\n_Filed by `wrap-up leftover routing` via specShapedBody._",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "6a956920a9fd8e545e608a809cf1202c6064f092",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 48,
+          "testLines": 66,
+          "implFiles": 4,
+          "testFiles": 1,
+          "pipelineArtifactLines": 73,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 4649,
+      "verdict": "auto-merge",
+      "mergeSha": "8b7876a024e42e27aee618da10660b54565f4aee",
+      "closingPr": 4776,
+      "title": "Settle 2 below-floor digest findings in review",
+      "body": "Origin: tidy digest cluster promotion — digest #1426, run 2026-10-30T154127-sweep-standalone\n\nDefer-reason: tangential\n\n## Current State\n\n2 below-floor findings in the `review` area sit un-promoted in the rolling digest (#1426). Each was deferred on its own under the materiality floor; together they cross the 3-entry cluster threshold of tidy's digest sweep (Step 5.6), and run `2026-10-30T154127-sweep-standalone` proposed this record, approved via `/claude-tweaks:tidy --approve`.\n\nSource digest entries:\n- materiality-a741e6c1 — https://github.com/thn-inc/claude-tweaks/issues/1426#issuecomment-6476790372\n- materiality-067f68fa — https://github.com/thn-inc/claude-tweaks/issues/1426#issuecomment-6518866799\n\n## Deliverables\n\n- The rename-old-path test accepts either merged or conflict, so it does not pin the merge decision its name implies (tiebreak evidence unverified) — `tests/bin-lib/pre-review-catchup/cli.test.js:275`\n- a filed review-followup- proposal gets no open-items ledger write-back — `the console queue-write step has none, as for ledger-record-* (#4484 review, lens 3e)`\n\n## Acceptance Criteria\n\n- Each Deliverables bullet is either fixed (with a test where behaviour changes) or closed out with a one-line rationale in the PR body.\n- Every promoted digest line in #1426 carries `→ #{this record}`.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/bin-lib/pre-review-catchup/cli.test.js` — modify\n\n_Filed by `capture` via specShapedBody._\n\n## Plan Review Clarifications\n\nAnswered by the maintainer, 2026-10-31, in response to the plan-review question on this record:\n\n- **Q1 (scope of Deliverable 2): Reading A.** Deliverable 2 is settled by a PR-body close-out of the *filed* path, as written. The refused-path gap (`wrap-up/refused-proposals.md` reopens only `ledger-record-*` rows, so a refused `review-followup-*` row stays terminal `deferred` naming a staged file nothing will file) is out of scope here and is tracked as its own follow-up record, #4772.\n- **Q2:** not applicable under Q1 Reading A.\n- The PR-body close-out lines (filed-path rationale; AC 2 already holds, both digest lines on #1426 end `→ #4649`) need a plan step that writes them into the PR body.\n",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "b8b8f5614a4c018bad201605ad9965051bee5277",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 0,
+          "testLines": 5,
+          "implFiles": 0,
+          "testFiles": 1,
+          "pipelineArtifactLines": 80,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 4782,
+      "verdict": "auto-merge",
+      "mergeSha": "b0d7f6406bab568e1780d5c260a5c772a3b35796",
+      "closingPr": 4874,
+      "title": "Reject a malformed --run-id in pr-resume-line.js before it reaches resumeVerdict",
+      "body": "Verified-as-of: 339a67da5171232f778858511dcc5d75b14b9519\n\nOrigin: /claude-tweaks:release v6.159.0 release-gate review (run 2026-10-31T212421-release-standalone)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nmedium Architecture — The new CLI accepts an untrusted --run-id (sourced from a claim blob anyone with registry-branch push access can write) and checks only that it is non-empty (line 62), then passes it straight to resumeVerdict (line 71) — the run-id is the trust anchor the Resume check verifies against, yet its shape check lives only in two prose call sites, while the sibling caller stale-claim-pr.js --resume gets it in code via staleClaimRunId and RUN_ID_SHAPE is already exported from lib/issues/claim-store.js. No test covers a malformed --run-id.\n\nFound by the whole-branch release-gate review of already-merged history (staged as `staged/review-12.md` in run `2026-10-31T212421-release-standalone`), so no fix landed in the release itself.\n\n## Deliverables\n\npr-resume-line.js rejects a --run-id that does not match RUN_ID_SHAPE (non-zero exit, named reason) before calling resumeVerdict, and a CLI test pins the malformed-run-id case.\n\n## Acceptance Criteria\n\n- [ ] `plugin/bin/pr-resume-line.js` exits non-zero with a named reason when `--run-id` does not match `RUN_ID_SHAPE` from `plugin/bin/lib/issues/claim-store.js`.\n- [ ] `tests/pr-resume-line-cli.test.js` pins the malformed-run-id case.\n- [ ] `npm test` passes.\n\n## Release Note\n\npr-resume-line.js now rejects a malformed --run-id instead of passing it to the Resume check.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/pr-resume-line.js` — modify\n- `tests/pr-resume-line-cli.test.js` — modify\n\n_Filed by `release` via specShapedBody._",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "099285028d362c17644634a04cdf10110aee569b",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 13,
+          "testLines": 21,
+          "implFiles": 2,
+          "testFiles": 1,
+          "pipelineArtifactLines": 70,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 4783,
+      "verdict": "auto-merge",
+      "mergeSha": "e41456f21a3edaf55f610a65d3a09d4b4f499a0b",
+      "closingPr": 4901,
+      "title": "Pin github-pr-scan item 10's rule that the Resume run id never comes from the PR body",
+      "body": "Verified-as-of: 339a67da5171232f778858511dcc5d75b14b9519\n\nOrigin: /claude-tweaks:release v6.159.0 release-gate review (run 2026-10-31T212421-release-standalone)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nlow Test quality — Item 10's trust-anchor sentence (\"Never take {run-id} from the PR body's own marker here\") — the route's security invariant — is unpinned: tests/sweep-backstop.test.js:244-250 pins only the validate-before-command and report-only-on-resume sentences, so a prose regression that takes the run id from the PR body keeps the suite green.\n\nFound by the whole-branch release-gate review of already-merged history (staged as `staged/review-15.md` in run `2026-10-31T212421-release-standalone`), so no fix landed in the release itself.\n\n## Deliverables\n\nA sweep-backstop assertion pins item 10's rule that {run-id} comes from the claim blob's runId, never from the PR body's own marker.\n\n## Acceptance Criteria\n\n- [ ] `tests/sweep-backstop.test.js` asserts that item 10 of `plugin/skills/_shared/github-pr-scan.md` takes `{run-id}` from the claim blob's `runId`, never from the PR body's own marker.\n- [ ] Deleting that sentence from the skill file turns the new assertion red.\n- [ ] `npm test` passes.\n\n## Release Note\n\nInternal: a test now guards the sweep's rule against taking a resume run id from the PR body.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/sweep-backstop.test.js` — modify\n\n_Filed by `release` via specShapedBody._",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "e3b9e9753475e0021f7df919373abaf163acdd37",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 0,
+          "testLines": 5,
+          "implFiles": 0,
+          "testFiles": 1,
+          "pipelineArtifactLines": 69,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 4799,
+      "verdict": "auto-merge",
+      "mergeSha": "58ea08dd4a0d946c79eaba2a9011d2691ae2a462",
+      "closingPr": 4887,
+      "title": "Run below-floor-parent-close parent-level skip gates before the per-sibling reads",
+      "body": "Origin: /claude-tweaks:release v6.159.0 release-gate review (run 2026-10-31T203907-release-standalone)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n`closeBelowFloorParents` in `plugin/bin/lib/issues/below-floor-parent-close.js` (around line 157) enumerates every sibling sub-issue with one `gh issue view` each before the single parent-label read, so a parent that is then skipped by `not-parent-issue-labeled`, `needs-label` or `sibling-unsettled` still costs N+1 calls; those gates read no per-sibling data. The account exhausted its REST core limit on 2026-10-31, which stalled release-please on every main push for half an hour. Found by the v6.159.0 release-gate review (lens 3d pair, tiebreaks confirmed low).\n\n## Deliverables\n\n- [ ] Evaluate the parent-level skip gates before enumerating siblings, so a skipped parent costs no per-sibling reads.\n\n## Acceptance Criteria\n\nA test with a fake `gh` counts calls for a parent that fails the parent-label gate and asserts no sibling `issue view` ran.\n\n`npm test` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/issues/below-floor-parent-close.js` — modify\n- `tests/bin-lib/issues/below-floor-parent-close.test.js` — modify\n\n_Filed by `release` via specShapedBody._",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "cb2bb53a750afe0fcb7b08785398f708ac755fa9",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 109,
+          "testLines": 70,
+          "implFiles": 4,
+          "testFiles": 1,
+          "pipelineArtifactLines": 72,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 4800,
+      "verdict": "needs-human",
+      "mergeSha": "b7e78b62b566fad08663667f7e7252f10911c491",
+      "closingPr": 4943,
+      "title": "Pin the below-floor parent-close skip rules across the prose gate and its Node mirror",
+      "body": "Origin: /claude-tweaks:release v6.159.0 release-gate review (run 2026-10-31T203907-release-standalone)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nThe below-floor parent-close gate exists twice: as prose (`_shared/pr-first-merge-post-merge.md` Step 4.0b / `wrap-up/verification-brief-parent-gate.md`) and as the Node mirror `plugin/bin/lib/issues/below-floor-parent-close.js` (around line 163), with no CLI the prose calls. Each side's skip rules are pinned separately, so a skip rule added to one side alone leaves every suite green. Both sides agree today. Found by the v6.159.0 release-gate review (lens 3e, tiebreak confirmed low).\n\n## Deliverables\n\n- [ ] Add a conformance test that enumerates Step 4.0b's skip rules from the prose and asserts `closeBelowFloorParents` implements exactly that set.\n\n## Acceptance Criteria\n\nAdding a skip rule to only one side turns the new conformance test red (checked by a temporary edit).\n\n`npm test` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/issues/below-floor-parent-close.js` — modify\n- `tests/below-floor-parent-close-conformance.test.js` — modify\n\n_Filed by `release` via specShapedBody._",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "02335d0b32822ab048b39a9f7131076cb8fc9e8a",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 17,
+          "testLines": 240,
+          "implFiles": 4,
+          "testFiles": 2,
+          "pipelineArtifactLines": 106,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 4803,
+      "verdict": "auto-merge",
+      "mergeSha": "d5c6a1d709db116506edbdfa26e573a2e93f6081",
+      "closingPr": 4968,
+      "title": "tidy/SKILL.md: run plan-retention.js through CLAUDE_PLUGIN_ROOT in the prune re-verify step",
+      "body": "Origin: /claude-tweaks:release v6.159.0 release-gate review (run 2026-10-31T203907-release-standalone)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n`plugin/skills/tidy/SKILL.md` (line 130, the Prune-plan Execution column) tells the agent to re-run a bare `bin/plan-retention.js`, while `plugin/skills/tidy/scan-procedures.md:53` and `docs/skill-authoring.md:146` use `node \"${CLAUDE_PLUGIN_ROOT}/bin/plan-retention.js\"`. A consumer project root has no `bin/`, so the step fails there when taken literally. Found by the v6.159.0 release-gate review (lens 3a, tiebreak confirmed low).\n\n## Deliverables\n\n- [ ] Replace the bare path with `node \"${CLAUDE_PLUGIN_ROOT}/bin/plan-retention.js\"`.\n\n## Acceptance Criteria\n\n`grep -n \"bin/plan-retention.js\" plugin/skills/tidy/SKILL.md` shows only the `${CLAUDE_PLUGIN_ROOT}` form.\n\n`npm test` passes.\n\n## Release Note\n\nTidy's plan-pruning re-check now runs correctly in projects that use the plugin.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/tidy/SKILL.md` — modify\n\n_Filed by `release` via specShapedBody._",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "90395fb9199bf68a998d18a687996c6a78c4e9fa",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 2,
+          "testLines": 7,
+          "implFiles": 1,
+          "testFiles": 1,
+          "pipelineArtifactLines": 64,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 4806,
+      "verdict": "needs-human",
+      "mergeSha": "839ee7fa3257fc21e8505fabe4eda50a4cc0a734",
+      "closingPr": 4868,
+      "title": "Pass --hostname on fetch-sub-issues.js GraphQL calls for GitHub Enterprise remotes",
+      "body": "Origin: follow-up from #4603 (PR #4678) wrap-up\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/bin/fetch-sub-issues.js` resolves `{host, owner, repo}` from `--repo` or the origin remote, but only its `--resolve-retries` REST call adds `--hostname` (line 138). The `subIssues` schema probe (`probeSchemaStrict`) and the batched `fetchNativeSubIssues` GraphQL pages never pass the host, so on a GitHub Enterprise Server remote they query github.com. #4603's `plugin/bin/lib/issues/parent-gate.js` works around this for the parent gate; other callers of the fetcher inherit the gap.\n\nLedger row 40 of #4603's `docs/plans/2026-10-31-parent-gate-cli-ledger.md`.\n\n## Deliverables\n\n- [ ] The schema probe and every batched GraphQL page in `fetch-sub-issues.js` carry `--hostname {host}` right after `graphql` when the host is not github.com, per the `gh-api-module-pattern` skill's `--hostname` rule.\n- [ ] Once the fetcher passes the host itself, `lib/issues/parent-gate.js`'s workaround is removed or reduced to a call through the fetcher.\n\n## Acceptance Criteria\n\n- [ ] A fake-runner test asserts the exact argv for a GHE host (`--repo ghe.example.com/o/r`): the probe and each page include `--hostname ghe.example.com`, and a github.com run includes none.\n- [ ] The existing `fetch-sub-issues` tests pass unchanged for github.com.\n\n## Release Note\n\nSub-issue lookups now work on GitHub Enterprise Server repositories instead of silently querying github.com.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/fetch-sub-issues.js` — pass --hostname on GraphQL calls\n- `plugin/bin/lib/issues/parent-gate.js` — drop the hostname workaround\n\n_Filed by `capture` via specShapedBody._",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "cd250a7fa36ec05d9bd41b0b24cfef6886e961ed",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 53,
+          "testLines": 74,
+          "implFiles": 4,
+          "testFiles": 3,
+          "pipelineArtifactLines": 126,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    },
+    {
+      "record": 4816,
+      "verdict": "needs-human",
+      "mergeSha": "688c93e31340d00c25485d0e68e1d8c983c24000",
+      "closingPr": 4973,
+      "title": "Settle 3 digest findings in policy",
+      "body": "Origin: tidy run 2026-10-31T204035-sweep-standalone, digest #1426\n\nDefer-reason: tangential\n\n## Current State\n\n#1426 holds 3 active below-floor findings for area `policy`, enough to promote as one record.\n\n## Deliverables\n\n- [policy] three policy.yml block readers use three comment-stripping rules (risk-path-globs quote-aware, model-profiles indexOf, extractMapEntry regex) — plugin/bin/lib/risk-path-globs.js:55 — Defer-reason: pre-existing-outside-diff — 2026-10-31T142701-release-standalone\n- [policy] isControlModeOn is a one-line helper with only test callers (deliberate per #4609; revisit when the first consumer lands) — plugin/bin/lib/policy.js:102 — Defer-reason: pre-existing-outside-diff — 2026-10-31T142701-release-standalone\n- [policy] control-mode block comment names no consuming record (tracked via #4608 leaves); resolve-policy --all summary reads as present-tense behavior with no not-yet-wired marker — plugin/bin/lib/policy-schema.js:178 — Defer-reason: pre-existing-outside-diff — 2026-10-31T142701-release-standalone\n\n## Acceptance Criteria\n\n- Each deliverable is fixed, or closed out with its reason recorded on this record.\n- Each promoted entry line in #1426 carries this record's ref.\n\n## Release Note\n\nSettle 3 small deferred findings in policy.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/risk-path-globs.js` — modify\n- `plugin/bin/lib/policy.js` — modify\n- `plugin/bin/lib/policy-schema.js` — modify\n\n_Filed by `capture` via specShapedBody._",
+      "checks": [
+        {
+          "bucket": "pass",
+          "name": "label-fix-branch"
+        },
+        {
+          "bucket": "pass",
+          "name": "test"
+        },
+        {
+          "bucket": "skipping",
+          "name": "cleanup-fix-labels"
+        }
+      ],
+      "blastRadius": {
+        "mergeBase": "14b75326844902431fd53989b9a28f6d4a2946bd",
+        "config": {
+          "mergeSensitivePaths": [],
+          "autoMergeMaxLines": 40,
+          "autoMergeMaxFiles": 2
+        },
+        "summary": {
+          "implLines": 74,
+          "testLines": 37,
+          "implFiles": 8,
+          "testFiles": 3,
+          "pipelineArtifactLines": 248,
+          "pipelineArtifactFiles": 2,
+          "sensitiveFilesTouched": []
+        }
+      },
+      "reviewFindings": []
+    }
+  ]
+}

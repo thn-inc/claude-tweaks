@@ -6,6 +6,7 @@ const { execFileSync } = require('child_process');
 const { MAX_STALE_DAYS } = require('./score');
 const { selectByStaleThenChurn } = require('../health-core/rotation');
 const { relativeDisplayId } = require('../shared-primitives');
+const { DEFAULT_IO } = require('../health-core/io');
 
 const SKIP_DIRS = new Set([
   '.claude-tweaks', '.git', 'node_modules', 'dist', 'build', 'coverage', '.next', '.turbo',
@@ -34,8 +35,11 @@ const MAX_SLICE_BYTES = 30 * 1024;
 // no emitted slice is an unbounded whole-subtree read. Slice ids stay plain
 // repo-relative paths at every depth (`bin`, `bin/lib`, `bin/lib/issues`), so
 // cursor keys, `--area`, and `classify` keep exactly today's semantics.
-function listSlices(root) {
-  const slices = sourceFiles(root, { recursive: false }).length
+// opts: { env?, stderr? } (#5381) — env is the child environment for every
+// `find` this reaches (omitted = inherited); stderr receives the two scope
+// warnings (omitted = process.stderr).
+function listSlices(root, { env, stderr } = {}) {
+  const slices = sourceFiles(root, { recursive: false, env }).length
     ? [{ id: '.', path: root, recursive: false }]
     : [];
   // Read the workspace manifest exactly once and hand the parsed patterns to
@@ -43,7 +47,7 @@ function listSlices(root) {
   // each independently called readWorkspacePatterns(root) before, doubling
   // the package.json/pnpm-workspace.yaml read+parse on every listSlices call.
   const patterns = readWorkspacePatterns(root);
-  const workspaceSlices = listWorkspaceSlices(root, patterns);
+  const workspaceSlices = listWorkspaceSlices(root, patterns, { stderr });
   const coveredTopLevel = fullyCoveredTopLevelDirs(root, patterns);
   const candidates = [];
   let entries;
@@ -64,11 +68,11 @@ function listSlices(root) {
     // this check must not silently defeat that guarantee for the common
     // case. A dot-directory that DOES hold real source (a hypothetical
     // `.config/`) still passes through untouched.
-    if (entry.name.startsWith('.') && isEmptySourceDir(absPath)) continue;
+    if (entry.name.startsWith('.') && isEmptySourceDir(absPath, { env, stderr })) continue;
     candidates.push({ id: entry.name, path: absPath });
   }
   candidates.push(...workspaceSlices);
-  for (const candidate of candidates) splitOversized(candidate.id, candidate.path, slices);
+  for (const candidate of candidates) splitOversized(candidate.id, candidate.path, slices, { env });
   // fs.readdirSync order is not guaranteed by Node's API, so sort for a
   // stable emitted list across environments/checkouts of the identical repo
   // state. This is now presentation-order only, NOT the coverage mechanism:
@@ -107,8 +111,9 @@ function listSlices(root) {
 // built with the native pathImpl.join because they are opened later.
 // pathImpl / listFiles / sizeOf are test seams; listSlices passes none of them.
 function splitOversized(id, absDir, out, {
+  env,
   pathImpl = path,
-  listFiles = (dir) => sourceFiles(dir, { recursive: true }),
+  listFiles = (dir) => sourceFiles(dir, { recursive: true, env }),
   sizeOf = (f) => fs.statSync(f).size,
 } = {}) {
   const files = listFiles(absDir);
@@ -170,19 +175,19 @@ function splitOversized(id, absDir, out, {
   walk('', id);
 }
 
-// ─── contentHash ─────────────────────────────────────────────────────────────
-// Deterministic SHA-1 of all source-file contents under absDir, skipping SKIP_DIRS.
-// Falls back to hashing the directory listing string if find/read fails.
+// ─── source files and contentHash ────────────────────────────────────────────
+// sourceFilesRaw lists the source files (SOURCE_EXTS) under absDir, skipping
+// SKIP_DIRS, sorted.
 // recursive:false scans only direct file children of absDir (maxdepth 1) —
 // used for the '.' slice, which must NOT overlap every subdirectory/
-// workspace slice that already covers everything beneath root. Was
-// docs/superpowers/specs/2026-07-30-durable-state-git-native-write-design.md
-// — deleted (70849915).
+// workspace slice that already covers everything beneath root, and for the
+// own-files slice splitOversized emits for any oversized directory (see the
+// "Resolve from relDir" comment in gitChurn and sliceRecursive below).
 // Throws on a scan failure instead of swallowing it — sourceFiles below
 // catches this for its own degrade-to-[] contract; isEmptySourceDir below
 // instead needs to tell "genuinely zero files" apart from "the scan failed"
 // (review finding), so it calls this directly.
-function sourceFilesRaw(absDir, { recursive = true } = {}) {
+function sourceFilesRaw(absDir, { recursive = true, env } = {}) {
   const excludeArgs = [];
   for (const dir of SKIP_DIRS) {
     // `*/dir/*` (not `${dir}/*`) so a skip-directory is excluded wherever it
@@ -203,7 +208,9 @@ function sourceFilesRaw(absDir, { recursive = true } = {}) {
   const raw = execFileSync(
     'find',
     ['.', ...depthArgs, '-type', 'f', ...excludeArgs],
-    { cwd: absDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30000, windowsHide: true },
+    {
+      cwd: absDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30000, windowsHide: true, ...(env !== undefined ? { env } : {}),
+    },
   );
   return raw
     .split('\n')
@@ -231,11 +238,11 @@ function sourceFiles(absDir, opts) {
 // dot-directory that actually holds real source, with no error surfaced
 // anywhere (review finding). Fails safe — keep the directory in rotation —
 // and reports the failure to stderr instead.
-function isEmptySourceDir(absDir) {
+function isEmptySourceDir(absDir, { env, stderr } = {}) {
   try {
-    return sourceFilesRaw(absDir, { recursive: true }).length === 0;
+    return sourceFilesRaw(absDir, { recursive: true, env }).length === 0;
   } catch (e) {
-    process.stderr.write(
+    (stderr || DEFAULT_IO.stderr)(
       `[code-health] scope: dot-directory scan failed for ${absDir} — keeping it in rotation rather than silently excluding it (${e && e.message ? e.message : e})\n`,
     );
     return false;
@@ -305,12 +312,16 @@ function locFromFileData(fileData) {
 // cache: optional Map (see readSourceFileDataCached) — pass the same Map
 // across repeated calls for the same absDir within one CLI invocation to
 // avoid re-spawning `find` and re-reading every file.
+// opts: { recursive?, env? } — env is the child environment for the `find`.
+// Deterministic SHA-1 over each source file's path and bytes (an unreadable
+// file hashes as 'unreadable'; a directory with no source files, or a failed
+// scan that sourceFiles degrades to [], hashes 'empty:' + absDir).
 function contentHash(absDir, cache, opts) {
   return hashFromFileData(absDir, readSourceFileDataCached(absDir, cache, opts));
 }
 
 // ─── Hotspot signals (impure; degrade gracefully) ────────────────────────────
-function gitChurn(root, relDir, now, { recursive = true } = {}) {
+function gitChurn(root, relDir, now, { recursive = true, env } = {}) {
   try {
     // Full ISO 8601 datetime (with time-of-day and Z/UTC suffix), not a bare
     // YYYY-MM-DD date string — a bare date string is parsed by git as local
@@ -335,14 +346,16 @@ function gitChurn(root, relDir, now, { recursive = true } = {}) {
       // (e.g. 'bin/lib'), and scoping those to root-level files would report
       // the root's churn under that directory's id.
       const absDir = relDir === '.' ? root : path.resolve(root, relDir);
-      const files = sourceFiles(absDir, { recursive: false }).map((f) => path.relative(root, f));
+      const files = sourceFiles(absDir, { recursive: false, env }).map((f) => path.relative(root, f));
       if (files.length === 0) return 0;
       pathArgs = files;
     }
     const out = execFileSync(
       'git',
       ['-C', root, 'log', '--oneline', `--since=${since}`, '--', ...pathArgs],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30000, windowsHide: true },
+      {
+        encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30000, windowsHide: true, ...(env !== undefined ? { env } : {}),
+      },
     );
     return out.split('\n').filter(Boolean).length;
   } catch {
@@ -361,9 +374,9 @@ function gitChurn(root, relDir, now, { recursive = true } = {}) {
 // Pass `root` to get the real answer; without it this falls back to the
 // pre-split heuristic (only '.' is non-recursive), which is still correct for
 // a manual `--area` path that listSlices never emitted.
-function sliceRecursive(id, root) {
+function sliceRecursive(id, root, { env, stderr } = {}) {
   if (root) {
-    const match = listSlices(root).find((slice) => slice.id === id);
+    const match = listSlices(root, { env, stderr }).find((slice) => slice.id === id);
     if (match) return match.recursive;
   }
   return id !== '.';
@@ -405,7 +418,7 @@ function readWorkspacePatterns(root) {
   }
 }
 
-function expandWorkspacePattern(root, rawPattern) {
+function expandWorkspacePattern(root, rawPattern, { stderr } = {}) {
   const pattern = rawPattern.replace(/^\.\//, '').replace(/\/$/, '');
   const wildcardCount = (pattern.match(/\*/g) || []).length;
   const hasOtherSpecial = /[!{}?]/.test(pattern);
@@ -428,7 +441,7 @@ function expandWorkspacePattern(root, rawPattern) {
       .map((e) => ({ id: `${prefix}/${e.name}`, path: path.join(absPrefix, e.name) }));
   }
 
-  process.stderr.write(
+  (stderr || DEFAULT_IO.stderr)(
     `[code-health] scope: skipping unsupported workspace pattern "${pattern}" ` +
     '(only "<dir>/*" and literal paths are supported)\n',
   );
@@ -463,12 +476,12 @@ function fullyCoveredTopLevelDirs(root, patterns) {
 // Returns [] when no workspace manifest exists or none of its patterns resolve.
 // patterns: optional pre-read result of readWorkspacePatterns(root), so
 // callers that already have it (listSlices) don't re-read the manifest.
-function listWorkspaceSlices(root, patterns) {
+function listWorkspaceSlices(root, patterns, { stderr } = {}) {
   const pats = patterns || readWorkspacePatterns(root);
   const slices = [];
   const seen = new Set();
   for (const pattern of pats) {
-    for (const slice of expandWorkspacePattern(root, pattern)) {
+    for (const slice of expandWorkspacePattern(root, pattern, { stderr })) {
       if (seen.has(slice.id)) continue;
       seen.add(slice.id);
       slices.push(slice);
@@ -479,7 +492,7 @@ function listWorkspaceSlices(root, patterns) {
 
 // ─── selectSlice ─────────────────────────────────────────────────────────────
 // opts: { budget?: number, now?: number, signals?: { [id]: { churn, loc } },
-//         fileDataCache?: Map }
+//         fileDataCache?: Map, env?: object, stderr?: (text) => void }
 // Returns Slice & { why: 'stale' | 'hotspot' } or null. Phase mechanics
 // (force-pick past MAX_STALE_DAYS, else score-and-pick-highest) delegate to
 // health-core/rotation's shared selectByStaleThenChurn; this module keeps
@@ -497,7 +510,8 @@ function selectSlice(root, cursors, opts = {}) {
   const signals = opts.signals || null; // test injection hook
   const fileDataCache = opts.fileDataCache || null;
 
-  const candidates = listSlices(root);
+  const env = opts.env;
+  const candidates = listSlices(root, { env, stderr: opts.stderr });
 
   return selectByStaleThenChurn(candidates, cursors, {
     now,
@@ -514,11 +528,11 @@ function selectSlice(root, cursors, opts = {}) {
       // listSlices already resolved this per slice — reading it back off the
       // slice avoids re-deriving (and re-listing the whole repo) per candidate.
       const recursive = slice.recursive;
-      const fileData = readSourceFileDataCached(slice.path, fileDataCache, { recursive });
+      const fileData = readSourceFileDataCached(slice.path, fileDataCache, { recursive, env });
       const currentHash = hashFromFileData(slice.path, fileData);
       if (cursor.lastHash && cursor.lastHash === currentHash) return null;
       const sig = signals ? signals[slice.id] || { churn: 0, loc: 0 } : null;
-      const churn = sig ? sig.churn : gitChurn(root, slice.id, now, { recursive });
+      const churn = sig ? sig.churn : gitChurn(root, slice.id, now, { recursive, env });
       const loc = sig ? sig.loc : locFromFileData(fileData);
       return hotspotScore(churn, loc);
     },

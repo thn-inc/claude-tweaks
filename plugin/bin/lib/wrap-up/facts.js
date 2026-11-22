@@ -11,13 +11,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { listClaudeMd, listRules } = require('../harness-health/scope');
 const { splitNul, parseNameStatusZ } = require('../git-z');
+const { resolvePolicy: corePolicy, scalarValue, callerDeps } = require('../../resolve-policy');
 
 // `trim: false` for a `-z` path stream: trimming would eat a leading space off
 // the first path.
-function makeGitRunner(cwd) {
+// `env` is the caller's injected environment (#5379); absent, the child inherits the real one.
+function makeGitRunner(cwd, env) {
   return (args, { trim = true } = {}) => {
     try {
-      const out = execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+      const out = execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, ...(env ? { env } : {}) });
       return trim ? out.trim() : out;
     } catch {
       return null;
@@ -108,29 +110,28 @@ function computeClaudeMdCommandRenamed(git, cwd, base) {
 // harness-health-analysis.md Step 1 check 4's own `wc -l` invocation exactly,
 // so this fact and that check never disagree about what "over budget" means
 // for the same file.
-function lineCount(filePath) {
+function lineCount(filePath, env) {
   try {
-    const out = execFileSync('wc', ['-l', filePath], { encoding: 'utf8', windowsHide: true });
+    const out = execFileSync('wc', ['-l', filePath], { encoding: 'utf8', windowsHide: true, ...(env ? { env } : {}) });
     return Number(out.trim().split(/\s+/)[0]);
   } catch {
     return 0;
   }
 }
 
-// Re-resolves the same two policy keys harness-health-analysis.md's tiered
-// line-budget check reads, via the same CLI (bin/resolve-policy.js) — never a
-// second, hand-maintained budget constant. Falls back to the schema defaults
-// (bin/lib/policy-schema.js: 30 / 150) if resolution fails for any reason,
-// matching this file's existing fail-open shape for every other check.
-function resolveBudgets(cwd) {
+// Reads the same two policy keys harness-health-analysis.md's tiered
+// line-budget check reads, through resolve-policy.js's exported core in this
+// process — never a second, hand-maintained budget constant. Falls back to the
+// schema defaults (bin/lib/policy-schema.js: 30 / 150) if resolution throws,
+// matching this file's existing fail-open shape for every other check. The
+// root lookup is bounded by callerDeps' GIT_TIMEOUT_MS; nothing else on this
+// path is bounded (no forge key is read).
+function resolveBudgets(cwd, { env = process.env, resolvePolicy = corePolicy } = {}) {
   try {
-    const scriptPath = path.join(__dirname, '..', '..', 'resolve-policy.js');
-    const out = execFileSync(
-      process.execPath,
-      [scriptPath, '--values', 'harness-health-scoped-rule-budget', 'harness-health-always-loaded-budget'],
-      { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true },
-    );
-    const [scopedRuleBudget, alwaysLoadedBudget] = out.trim().split('\n').map(Number);
+    const keys = ['harness-health-scoped-rule-budget', 'harness-health-always-loaded-budget'];
+    // No code check: with no runDir the core never returns a non-zero code.
+    const { result } = resolvePolicy({ keys }, callerDeps({ cwd, env }));
+    const [scopedRuleBudget, alwaysLoadedBudget] = keys.map((k) => Number(scalarValue(result[k])));
     return { scopedRuleBudget, alwaysLoadedBudget };
   } catch {
     return { scopedRuleBudget: 30, alwaysLoadedBudget: 150 };
@@ -147,8 +148,8 @@ function resolveBudgets(cwd) {
 // registry.js's gate still read it) is derived from this same list rather
 // than computed separately, so the two can never disagree about which
 // target tripped it.
-function computeClaudeMdBudgetTargets(cwd) {
-  const { scopedRuleBudget, alwaysLoadedBudget } = resolveBudgets(cwd);
+function computeClaudeMdBudgetTargets(cwd, { env, resolvePolicy } = {}) {
+  const { scopedRuleBudget, alwaysLoadedBudget } = resolveBudgets(cwd, { env, resolvePolicy });
   const targets = [
     ...listClaudeMd(cwd).map((t) => ({ path: t.path, budget: alwaysLoadedBudget })),
     ...listRules(cwd).map((t) => ({
@@ -156,11 +157,11 @@ function computeClaudeMdBudgetTargets(cwd) {
       budget: t.pathGlobs.length > 0 ? scopedRuleBudget : alwaysLoadedBudget,
     })),
   ];
-  return targets.map((t) => ({ path: t.path, lines: lineCount(t.path), budget: t.budget }));
+  return targets.map((t) => ({ path: t.path, lines: lineCount(t.path, env), budget: t.budget }));
 }
 
-function gatherFacts({ cwd, base } = {}) {
-  const git = makeGitRunner(cwd);
+function gatherFacts({ cwd, base, env, resolvePolicy } = {}) {
+  const git = makeGitRunner(cwd, env);
   const isRepo = git(['rev-parse', '--is-inside-work-tree']) === 'true';
 
   let changedFiles = [];
@@ -181,7 +182,7 @@ function gatherFacts({ cwd, base } = {}) {
   const skillsLibraryExists = fs.existsSync(path.join(cwd, '.claude', 'skills'));
   const docsTreeNonEmpty = dirNonEmpty(path.join(cwd, 'docs'));
   const journeyFiles = listMarkdownFiles(path.join(cwd, 'docs', 'journeys'), 'docs/journeys');
-  const claudeMdBudgetTargets = computeClaudeMdBudgetTargets(cwd);
+  const claudeMdBudgetTargets = computeClaudeMdBudgetTargets(cwd, { env, resolvePolicy });
   const claudeMdOverBudget = claudeMdBudgetTargets.some((t) => t.lines > t.budget);
 
   return {

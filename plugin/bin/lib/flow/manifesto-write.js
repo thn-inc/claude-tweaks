@@ -36,6 +36,7 @@ const { withLock } = require('../file-lock');
 const { writeFileAtomic } = require('../atomic-write');
 const { lstatType } = require('../path-guard');
 const { LEVER_KEYS } = require('./preflight');
+const { FORGE_DEGRADE_REASONS } = require('../policy-schema');
 
 // confirm/hybrid gate the Manifesto on an approval (and may override levers),
 // so they keep manifesto.md's hand procedure; interactive runs no Manifesto.
@@ -52,11 +53,13 @@ const HEADER_RE = /^(?:# Auto-Decision Log\b|Pipeline config snapshot:)/m;
 // The keys resolved through preflight's resolvePolicy: preflight's LEVER_KEYS
 // minus ceremony-profile (folded from the records, source `header`) and
 // merge-authorization (always `ask` here — never a policy.yml value), plus
-// `autonomy` (the review-auto-apply-ceiling rule reads it) and the run pin.
+// `autonomy` (the review-auto-apply-ceiling rule reads it), the run pin, and
+// `auto-mode` (a `policy` mode source names the layer that set it, #6006).
 const POLICY_REQUEST_KEYS = Object.freeze([
   ...LEVER_KEYS.filter((k) => k !== 'ceremony-profile' && k !== 'merge-authorization'),
   'autonomy',
   'integration-model',
+  'auto-mode',
 ]);
 
 class ManifestoInputError extends Error {
@@ -86,7 +89,8 @@ function checkRecords(records) {
 
 // manifesto.md's Merge authorization row: the `pre-authorize-merge` token is
 // refused on a dispatch-bound run (run-state.json `dispatched: true` — a
-// dispatched record's merge authority is its `auto:merge` label) and on a
+// dispatched record's merge authority is its `auto:merge` label together with
+// a live `auto:build`) and on a
 // multi-record run (its consolidated console owns the merge decision).
 // -> null (no token, or the token applies) | 'dispatch-bound' | 'multi-record'.
 function mergeAuthorizationRefusal({ preAuthorizeMerge, dispatched, records }) {
@@ -94,6 +98,16 @@ function mergeAuthorizationRefusal({ preAuthorizeMerge, dispatched, records }) {
   if (dispatched === true) return 'dispatch-bound';
   if (Array.isArray(records) && records.length > 1) return 'multi-record';
   return null;
+}
+
+// The mode lever's Source: flow Step 1's rung, except that rung 3 (`policy`, read with
+// --values, which drops the source) names the layer auto-mode resolved from — `factory`
+// for a factory-only value (#6006). Any other entry keeps `policy`, the rung the caller named.
+const MODE_POLICY_LAYERS = Object.freeze(['policy', 'factory']);
+function modeSourceOf(modeSource, autoModeEntry) {
+  if (modeSource !== 'policy') return modeSource;
+  const layer = autoModeEntry && autoModeEntry.error === undefined ? autoModeEntry.source : null;
+  return MODE_POLICY_LAYERS.includes(layer) ? layer : 'policy';
 }
 
 // { mode, modeSource, records, resolved, preAuthorizeMerge?, dispatched? } ->
@@ -107,7 +121,7 @@ function computeLevers({ mode, modeSource, records, resolved, preAuthorizeMerge 
   const res = resolved || {};
   const autonomy = res.autonomy && res.autonomy.value;
   return MANIFESTO_LEVERS.map((key) => {
-    if (key === 'mode') return { key, value: mode, source: modeSource };
+    if (key === 'mode') return { key, value: mode, source: modeSourceOf(modeSource, res['auto-mode']) };
     if (key === 'ceremony-profile') {
       return { key, value: records.every((r) => r.ceremony === 'fast-lane') ? 'fast-lane' : 'standard', source: 'header' };
     }
@@ -121,7 +135,16 @@ function computeLevers({ mode, modeSource, records, resolved, preAuthorizeMerge 
     if (!entry || entry.error !== undefined || entry.value === null || entry.value === undefined) {
       throw new LeverError(`lever ${key} did not resolve${entry && entry.error ? ` (${entry.error})` : ''}`);
     }
+    // The resolver's source passes through to the Source column, `factory` (#6006) included; the two
+    // `=== 'default'` rules below leave a factory value as set, like a policy.yml one.
     const source = entry.source || 'default';
+    // A merge-verification derived from a degraded forge detection (#4578): its
+    // `off` came from the fallback local-merge, and pr-first-merge.md Step 2.5
+    // reads a run-level `off` as an explicit blind merge — so it is written as
+    // `wait` (an unresolved lever never becomes off). A policy value is untouched.
+    if (key === 'merge-verification' && source === 'default' && typeof entry.degraded === 'string') {
+      return { key, value: 'wait', source: 'degraded' };
+    }
     // Ceiling-conditional default (manifesto.md's Recommendation defaults):
     // an unattended run has nobody to answer a staged MED finding.
     if (key === 'review-auto-apply-ceiling' && source === 'default' && autonomy === 'unattended') {
@@ -193,18 +216,28 @@ function initDecisions(runDir, header) {
   });
 }
 
-// { runDir, records, levers, integrationModel?, mergeRefusal?, now } ->
-// { configPath, table }. `integrationModel` is the resolved run pin, or
-// null/'' when it resolved empty: the pair is then omitted (so the 13 levers
-// still write) and a SKIP is logged — the omit-on-empty rule of manifesto.md's
-// Write mechanism. `mergeRefusal` is mergeAuthorizationRefusal's answer; a
-// non-null one logs manifesto.md's merge-authorization SKIP line.
-function writeManifesto({ runDir, records, levers, integrationModel = null, mergeRefusal = null, now }, deps = {}) {
+// { runDir, records, levers, integrationModel?, integrationModelDegraded?,
+// mergeRefusal?, now } -> { configPath, table }. `integrationModel` is the
+// resolved run pin, or null/'' when it resolved empty: the pair is then omitted
+// (so the 13 levers still write) and a SKIP is logged — the omit-on-empty rule
+// of manifesto.md's Write mechanism. `integrationModelDegraded` is null or the
+// degraded forge detection's reason code (one of policy-schema.js's
+// FORGE_DEGRADE_REASONS, else ManifestoInputError): non-null forces no pin
+// whatever `integrationModel` holds (a degraded detection is never the run's
+// pin, #4578 Q10) and logs a distinct SKIP in place of the empty-value one. A
+// merge-verification lever whose source is `degraded` (computeLevers) logs the
+// AUTO line naming why it is written as wait. `mergeRefusal` is
+// mergeAuthorizationRefusal's answer; a non-null one logs manifesto.md's
+// merge-authorization SKIP line.
+function writeManifesto({ runDir, records, levers, integrationModel = null, integrationModelDegraded = null, mergeRefusal = null, now }, deps = {}) {
   const set = deps.setConfigLever || setConfigLever;
   const append = deps.appendEntry || appendEntry;
   const mkdir = deps.mkdir || fs.mkdirSync;
   if (mergeRefusal !== null && mergeRefusal !== 'dispatch-bound' && mergeRefusal !== 'multi-record') {
     throw new ManifestoInputError(`mergeRefusal must be null, dispatch-bound or multi-record, got ${mergeRefusal}`);
+  }
+  if (integrationModelDegraded !== null && !FORGE_DEGRADE_REASONS.includes(integrationModelDegraded)) {
+    throw new ManifestoInputError(`integrationModelDegraded must be null, ${FORGE_DEGRADE_REASONS.join(' or ')}, got ${integrationModelDegraded}`);
   }
   checkRecords(records);
   const created = runCreated(runDir);
@@ -214,8 +247,11 @@ function writeManifesto({ runDir, records, levers, integrationModel = null, merg
   if (!Array.isArray(levers) || levers.map((l) => l && l.key).join(',') !== MANIFESTO_LEVERS.join(',')) {
     throw new LeverError(`levers must be the 13 Manifesto levers in canonical order (${MANIFESTO_LEVERS.join(', ')})`);
   }
-  const pin = typeof integrationModel === 'string' && integrationModel.trim() ? integrationModel.trim() : null;
-  const pairs = [...levers.map((l) => ({ key: l.key, value: l.value })), ...(pin ? [{ key: 'integration-model', value: pin }] : [])];
+  const pin = integrationModelDegraded === null && typeof integrationModel === 'string' && integrationModel.trim() ? integrationModel.trim() : null;
+  // spec: is the run's record pin (RUN_PINS, #5347): the lowest record number,
+  // written through set-config like every other pin, after the levers.
+  const spec = String(Math.min(...records.map((r) => r.n)));
+  const pairs = [...levers.map((l) => ({ key: l.key, value: l.value })), ...(pin ? [{ key: 'integration-model', value: pin }] : []), { key: 'spec', value: spec }];
   const problems = pairs.map(({ key, value }) => ({ key, value, v: validateLever(key, value) })).filter((p) => !p.v.ok);
   if (problems.length) {
     throw new LeverError(problems.map((p) => `${p.key}=${p.value} is not valid${p.v.allowed ? ` (allowed: ${p.v.allowed.join(', ')})` : ''}`).join('; '));
@@ -229,16 +265,18 @@ function writeManifesto({ runDir, records, levers, integrationModel = null, merg
   }
   try {
     for (const { key, value } of pairs) set({ runDir, key, value });
-    // spec:/created: are run bookkeeping, not levers — set-config refuses
-    // them by design, so they are appended after the batch (Write mechanism).
-    const spec = Math.min(...records.map((r) => r.n));
-    fs.appendFileSync(configPath, `spec: ${spec}\ncreated: ${created}\n`);
+    // created: is run bookkeeping that set-config refuses by design, so it is
+    // the one line appended directly.
+    fs.appendFileSync(configPath, `created: ${created}\n`);
   } catch (err) {
     let removed = true;
     try { fs.rmSync(configPath, { force: true }); } catch { removed = false; }
     throw new Error(`could not write ${configPath} (${err && err.message ? err.message : err}) — `
       + (removed ? 'the partial config.yml was removed' : 'the partial config.yml could NOT be removed: delete it before re-running'), { cause: err });
   }
+  // The run manifest (#5903): a Manifesto-written run is the standard lane. ceremonyProfile already
+  // arrived through set-config's own fill. Best-effort — a failed fill changes nothing here.
+  try { require('../run-manifest/write').fillRunManifest(runDir, { lane: 'standard' }); } catch { /* never breaks the Manifesto write */ }
 
   const log = (status, step, text, reversibility = 'n/a') => append({ runDir, section: SECTION, entry: formatEntry({ status, now, step, text, reversibility }) });
   for (const r of records) {
@@ -248,8 +286,13 @@ function writeManifesto({ runDir, records, levers, integrationModel = null, merg
   if (mergeRefusal) {
     log('SKIP', 'Manifesto merge-authorization', `condition: pre-authorize-merge on a ${mergeRefusal} run → fallback: merge-authorization written as ask`);
   }
-  if (!pin) {
+  if (integrationModelDegraded !== null) {
+    log('SKIP', 'Manifesto', `condition: integration-model forge detection degraded (${integrationModelDegraded}) → fallback: config.yml written without the run pin; later --run reads detect again`);
+  } else if (!pin) {
     log('SKIP', 'Manifesto', 'condition: integration-model resolved empty (invalid or unresolvable in policy.yml) → fallback: config.yml written without the run pin; the run proceeds unpinned');
+  }
+  if (levers.find((l) => l.key === 'merge-verification').source === 'degraded') {
+    log('AUTO', 'Manifesto', 'merge-verification derived from a degraded forge detection → written as wait (an unresolved lever never becomes off, _shared/pr-first-merge.md Step 2.5)');
   }
   const critique = levers.find((l) => l.key === 'design-critique');
   log('AUTO', 'Manifesto', `design-critique resolved to ${critique.value} (source: ${critique.source})`, 'n/a (a policy read, not a code mutation)');

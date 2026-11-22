@@ -4,8 +4,8 @@ Referenced by `_shared/worktree-setup.md`'s Adopt-or-create gate — read only w
 
 **Dependency freshness check (adopt path only).** A fresh `EnterWorktree`/`git worktree add`
 creation installs dependencies as part of `/superpowers:using-git-worktrees` itself
-(`build/worktree-setup.md`'s Procedure Step 3 — "branch creation, dependency install, baseline
-test verification"). The adopt branch never calls that skill, so an adopted worktree with no
+(`build/worktree-setup.md`'s Procedure Step 3 — "branch creation, dependency install"). The
+adopt branch never calls that skill, so an adopted worktree with no
 local `node_modules` at all has no install step anywhere in its lifecycle — Node's module
 resolution then walks up to the main checkout's own `node_modules`, which can be stale relative
 to the adopted worktree's branch (missing a dependency that branch's own commits already added),

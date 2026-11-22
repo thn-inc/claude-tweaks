@@ -14,6 +14,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { readText } = require('./helpers/read-skill');
@@ -122,7 +123,7 @@ const PRE_1779_VERDICT_BODY = `    const fs = require("fs");
     console.log([installed, expected, drift ? "DRIFT" : "ok", (entry && entry.installPath) || "-"].join("\\t"));`;
 
 function tmpDir(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return scratchDir(prefix);
 }
 
 // Installs a fake `curl` on PATH that serves canned plugin.json bodies keyed by exact URL, so

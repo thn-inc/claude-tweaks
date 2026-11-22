@@ -47,13 +47,14 @@ If a spec number was provided, read the spec file and verify the implementation 
    outcome `partial` even when every criterion is `met` — it counts toward the Gate below like a
    partial deliverable. #3002 met every criterion while the three gates its Current State named
    still read bare `--stamp-status`.
+6. **PR-body deliverables** — a deliverable or criterion whose content must appear in the PR body (or PR description), such as "the PR body reports X", is judged against the live PR body, never the codebase, per `pr-body-deliverables.md` in this skill's directory; items 1 and 2 skip it. Mark it `missing` when the body lacks it, `partial` when it carries part; no PR or a failed read is `unverifiable`, which never blocks.
 
 ### Gate:
 
 | Result | Action |
 |--------|--------|
 | All deliverables done + all criteria met | Proceed to Step 1.5 |
-| Minor gaps (1-2 partial items) | Flag gaps, proceed — they may be addressed in Implementation Hindsight |
+| Minor gaps (1-2 partial items, or any `unverifiable` ones) | Flag gaps, proceed — they may be addressed in Implementation Hindsight |
 | Any risk marker `unresolved` after independent verification | **BLOCKED** — same tier as Significant gaps. Name the unverified marker(s) (file:line or table row) so the user knows exactly what still needs ground-truth confirmation |
 | Significant gaps (missing deliverables or criteria) | **BLOCKED** — the spec isn't fully built yet. List what's missing so the user can resume `/claude-tweaks:build` |
 
@@ -63,15 +64,15 @@ If blocked, skip the rest of the review. Present the gap analysis so the user kn
 
 ## Step 1.5: Test Gate
 
-Verify that `/claude-tweaks:test` has passed before proceeding to analytical review. Reviewing code quality on code that doesn't work is wasted effort.
+Verify that `/claude-tweaks:test` has passed before proceeding to analytical review.
 
 **Under a `base:{ref}` scope the tree this gate verifies must be `origin/{integration-branch}`** — the gate runs from a checkout already standing at that tip (the caller asserts it before invoking), never from a feature-branch worktree's HEAD, whose stamp would verify a tree the reviewed range does not contain.
 
-`PASS_WITH_CAVEATS` counts as passed — caveats are informational observations (e.g., minor UX roughness, non-blocking warnings) and do not block review. QA caveats are included in the findings table (Step 3 Routing) for visibility but have status `observation`, not `open`.
+`PASS_WITH_CAVEATS` counts as passed — caveats are informational observations and do not block review. QA caveats are included in the findings table (Step 3 Routing) for visibility but have status `observation`, not `open`.
 
 ### In `/claude-tweaks:flow` pipeline:
 
-Check for `TEST_PASSED=true` in pipeline context. If present, add one belt-and-braces read of the runner's own artifact (#1921) — `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status` (one plain command; prints `{present, sha, head, dirty, scope, fullSha, match, verifiedHead, baselineAdjudicated, preExistingAdjudicated, reportPath, legacy, suiteComposed, generatedExempt, liveGeneratedExempt, scopeError}`, exit 0 always). `verifiedHead: true` (a clean HEAD covered by a full pass — a baseline-adjudicated one included, `test/verification.md`'s Baseline adjudication — or by a passing scoped run anchored on a still-valid `fullSha` — `match` alone would re-trigger a scoped run forever, #1923 — or by complete per-suite records, `suiteComposed`, `test/stamp-composition.md`; a tree dirty only in declared `generated` paths, `liveGeneratedExempt`, still counts) → run `_shared/pr-check-gate.md`'s read (catches a check that went red after `/test` ran), then proceed to Step 2 unless it is `red`. `verifiedHead: false` with `TEST_PASSED=true` is reported, never silently accepted: "TEST_PASSED set but the runner stamp does not verify HEAD ({stamp-sha}, {scope} vs {head}) — re-running `/claude-tweaks:test`", then re-trigger `/claude-tweaks:test` once and re-check.
+Check for `TEST_PASSED=true` in pipeline context. If present, add one belt-and-braces read of the runner's own artifact (#1921) — `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status` (one plain command; prints `{present, sha, head, dirty, scope, fullSha, match, verifiedHead, baselineAdjudicated, preExistingAdjudicated, reportPath, suiteComposed, generatedExempt, liveGeneratedExempt, scopeError}`, exit 0 always). `verifiedHead: true` (a clean HEAD covered by a full pass — a baseline-adjudicated one included, `test/verification.md`'s Baseline adjudication — or by a passing scoped run anchored on a still-valid `fullSha` — `match` alone would re-trigger a scoped run forever, #1923 — or by complete per-suite records, `suiteComposed`, `test/stamp-composition.md`; a tree dirty only in declared `generated` paths, `liveGeneratedExempt`, still counts) → run `_shared/pr-check-gate.md`'s read, then proceed to Step 2 unless it is `red` and `merge-verification` is not an explicit `off` (Gate table below). `present: false` with no commands configured takes the zero-test row (Gate table below); any other `verifiedHead: false` with `TEST_PASSED=true` is reported, never silently accepted: "TEST_PASSED set but the runner stamp does not verify HEAD ({stamp-sha}, {scope} vs {head}) — re-running `/claude-tweaks:test`", then re-trigger `/claude-tweaks:test` once and re-check. An unparseable read is `verifiedHead: false`.
 
 ### Standalone (outside `/claude-tweaks:flow`):
 
@@ -82,7 +83,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status
 ```
 
 - **`verifiedHead: true`** (a clean HEAD covered by a full pass, a passing scoped run on a still-valid `fullSha`, complete per-suite records `suiteComposed` (`test/stamp-composition.md`), or a generated-only dirty tree `liveGeneratedExempt`) → a recent pass; proceed to Step 2. The stamp asserts verification only (types + lint + tests) — when QA stories exist, the QA Ledger Check below still runs as usual.
-- **`verifiedHead: false`** → no recent pass (fail-open; a stale stamp is never trusted): auto-trigger `/claude-tweaks:test --source review` (the explicit parent signal — scoped when a declaration exists, per `test/verification.md`'s table). If QA stories exist (`stories/*.yaml`), trigger `/claude-tweaks:test all --source review` (full suite + QA). Otherwise trigger `/claude-tweaks:test --source review` (standard suite only).
+- **`verifiedHead: false`** → no recent pass (fail-open; a stale stamp is never trusted): auto-trigger `/claude-tweaks:test --source review` (the explicit parent signal — scoped when a declaration exists, per `test/verification.md`'s table). If QA stories exist (`stories/*.yaml`), trigger `/claude-tweaks:test all --source review` (standard suite + QA). Otherwise trigger `/claude-tweaks:test --source review` (standard suite only).
 
 ### QA Ledger Check
 
@@ -106,13 +107,16 @@ After confirming `TEST_PASSED`, read this run's open items ledger (per `_shared/
 | Result | Action |
 |--------|--------|
 | `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: true` + `pr-checks.js` not `red` | Proceed to Step 2 |
-| `pr-checks.js` reports `red` (`_shared/pr-check-gate.md`) | **STOP** — name each failing check not flagged `inherited` (the attributable ones) and its URL; fix forward and re-run `/claude-tweaks:test` |
-| `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: false` | Report it (stamp sha/scope vs HEAD), re-trigger `/claude-tweaks:test`, re-check |
+| `pr-checks.js` reports `red` and `merge-verification` is not an explicit `off` (`_shared/pr-check-gate.md`'s `red` bullet) | **STOP** — name each failing check not flagged `inherited` (the attributable ones) and its URL; fix forward and re-run `/claude-tweaks:test` |
+| `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: true` + `pr-checks.js` reports `red` under an explicit `merge-verification: off` (same bullet) | Proceed to Step 2 — with the caveat naming the failing checks, logged as that bullet's `AUTO` line |
+| `TEST_PASSED=true` (pipeline) + stamp `present: false` + no verification commands (none in CLAUDE.md, stack manifests or `verify-scope.json` `checks`) + `scopeError` null | No re-trigger: log to `decisions.md` `AUTO {time} — review Step 1.5: no verification commands configured; zero-test pass accepted without a runner stamp. Reversibility: high.` via `log-decision.js --section "/review"`, run the `pr-checks.js` read, proceed as for `verifiedHead: true` |
+| `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: false` | Report it (stamp sha/scope vs HEAD), re-trigger `/claude-tweaks:test` once, re-check |
+| That re-check still reads `verifiedHead: false` | **STOP**, never a second re-trigger — name the cause: `dirty: true` with the dirty paths, a `scopeError`, `{sha} ({scope}) ≠ {head}`, `present: false` with commands configured, else the stamp as read (`sha`, `scope`, `fullSha`) |
 | Runner stamp `verifiedHead: true` (standalone) | Proceed to Step 2 |
-| `/claude-tweaks:test` triggered and passes | Proceed to Step 2 |
+| `/claude-tweaks:test` triggered (standalone) and passes | Proceed to Step 2 |
 | `/claude-tweaks:test` triggered and fails | **STOP** — present test failures. Fix before continuing. Run `/claude-tweaks:test` to re-verify. |
 
-> **Why this gates review:** Mechanical correctness is a prerequisite for analytical quality judgment. Code review on broken code wastes effort.
+> **Why this gates review:** Mechanical correctness is a prerequisite for analytical quality judgment.
 
 ## Step 1.6: Cross-Spec Promise Check (parent-linked records only)
 
@@ -127,24 +131,25 @@ read `cross-spec-promise-check.md` in this skill's directory.
 
 **Resolving `{base}`:** never trust a bare local branch name for `{base}` — a long-lived worktree's local tracking branch (commonly `main`) routinely drifts behind its remote. Resolve it via `git fetch origin {base}` then use `origin/{base}` in every command below, or otherwise confirm `git log -1 {base}` matches `git log -1 origin/{base}` before trusting the diff scope.
 
-On a `base:{ref}` scope, `{base}` is the given ref and `{branch}` is `origin/{integration-branch}`. **This paragraph overrides the `origin/{base}` rule above it**: a `base:{ref}` ref is a tag (`v6.48.0`) or a sha, neither of which has an `origin/` form, so it is used exactly as given — after `git fetch --tags origin`, so the tag resolves locally. Only `{branch}` takes the `origin/` prefix on this scope. The change set is `git log --first-parent {base}..{branch}` / `git diff {base}..{branch}` — the first-parent line of the integration branch, so each squash-merged PR is one commit and a `--no-ff` merge counts once.
+On a `base:{ref}` scope, `{base}` is the given ref and `{branch}` is `origin/{integration-branch}`. **This paragraph overrides the `origin/{base}` rule above it**: a `base:{ref}` ref is a tag (`v6.48.0`) or a sha, neither of which has an `origin/` form, so it is used exactly as given — after `git fetch --tags origin`, so the tag resolves locally. Only `{branch}` takes the `origin/` prefix on this scope. The change set is `git log --first-parent {base}..{branch}` / `git diff {base}...{branch}` — the first-parent line of the integration branch, so each squash-merged PR is one commit and a `--no-ff` merge counts once.
 
 ### Merge-Provenance Check
 
-Before analyzing the diff, detect whether the base branch was merged into this branch mid-history — content that arrived that way is not work this branch introduced and must not be reviewed as such. `{base}`/`{branch}` reuse whatever base-branch resolution the rest of this step already uses.
+Before analyzing the diff, detect whether the integration branch was merged into this branch mid-history — content that arrived that way is not work this branch introduced and must not be reviewed as such. `{base}`/`{branch}` reuse whatever base-branch resolution the rest of this step already uses.
 
 ```bash
 git log --merges {base}..{branch} --oneline # detect
 ```
 
+- **A `base:{ref}` scope** — skip the detect and count it as no merge commits detected, in every later step that asks: `{ref}` is a fixed point on the integration branch, so a merge in this range is how a PR shipped, never base content arriving. Every path in the diff stays in scope.
 - **No merge commits detected** (the common case) — this check is a no-op: no further computation, no new output section. The rest of Step 2 proceeds exactly as before, against the full diff.
 - **Merge commits detected** — read `merge-provenance-check.md` in this skill's directory: the own-work file-set computation, how to report the excluded files, and the own-work scope that replaces the raw `git diff` scope for Steps 3, 3.5, and 5.
 
-Not to be confused with "Reusing a Prior Whole-Branch Review" below — that handles a *later spec's* review citing an *earlier spec's already-completed* whole-branch review in a multi-spec batch; this check handles what's *in the diff at all* for a single review, independent of whether any prior review exists.
+Not to be confused with "Reusing a Prior Whole-Branch Review" below, which governs citing an earlier spec's completed review: this check governs what is in the diff at all.
 
 ### Cherry-Pick Provenance Check
 
-The Merge-Provenance Check above fires only on `git log --merges`. A cherry-pick, a manual port, or any other whole-hunk reuse of *another record's* branch leaves no merge commit at all, so that gate is a no-op and the reused content is reviewed as this branch's own work. On record (#1821): a build cherry-picked `1893db5b7` from `origin/worktree-record-1224`, whose still-open PR #1852 already carried a byte-identical, already-review-passed fix — two open PRs, one implementation. Step 3's lenses (3a-3f) all passed; none of them asks whether this work is already in flight elsewhere, so the duplication surfaced only through an off-lens manual cross-reference.
+A cherry-pick or manual port of *another record's* branch leaves no merge commit, so the Merge-Provenance Check above misses it and the reused content is reviewed as this branch's own work (#1821: two open PRs, one implementation, and no Step 3 lens asks whether the work is already in flight).
 
 Run alongside the merge detect above, unconditionally:
 
@@ -168,13 +173,13 @@ git diff {base}...{branch} --name-only   # bare path list, for path-pattern matc
 - Whether schema, API surface, or infrastructure changed
 - Whether new dependencies were introduced
 
-**Do not read the full diff in the main thread.** Measured on a 20-commit branch: `git diff` is ~89.5 KB against ~0.9 KB for `--stat` — a ~100x difference, and 30-commit branches are routine in this repo. Everything this step classifies, and everything Step 2.5's diff heuristic consumes, comes from the two commands above.
+**Do not read the full diff in the main thread.** The full diff runs about 100x the size of `--stat`. Everything this step classifies, and everything Step 2.5's diff heuristic consumes, comes from the two commands above.
 
 The one exception is the dependency question, which needs manifest *content* rather than just a filename: when `--name-only` shows a dependency manifest (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, or equivalent), read a **targeted** diff of just that file (`git diff {base}...{branch} -- package.json`). That is bounded by construction — it is not a licence to widen back to the full diff.
 
 Full diff *content* belongs to Step 3's dispatched lens agents, which have their own context windows. See Step 3's dispatch note. It lives in `step3-lens-dispatch.md`.
 
-If infrastructure or deployment changes are detected (Terraform, CDK, Docker, CI/CD, database migrations, new environment variables) that aren't already in the ledger as `ops` items, triage each for auto-executability first — most "outside the codebase" tasks have a CLI and get executed, not appended. Append only what survives triage, with phase `ops`, status `open`, and a `(reason-not-auto: {value})` qualifier embedded in the item description per `_shared/ledger-format.md`'s ops-item rule — an ops item without one is a classification error. This catches ops requirements introduced during review fixes that weren't present in the original build.
+If infrastructure or deployment changes are detected (Terraform, CDK, Docker, CI/CD, database migrations, new environment variables) that aren't already in the ledger as `ops` items, triage each for auto-executability first — most "outside the codebase" tasks have a CLI and get executed, not appended. Append only what survives triage (`hooks.js ledger-row`, `_shared/ledger-format.md`'s Writer section), with phase `ops`, status `open`, and a `(reason-not-auto: {value})` qualifier in the item description per the ops-item rule — an ops item without one is a classification error.
 
 This classification guides which review lenses to apply — a pure UI change doesn't need a database review.
 
@@ -220,7 +225,7 @@ The severity scale, category enum, per-lens floors, and the CALIBRATION filter a
 
 **3a skill-routed entries.** Lens 3a records a `review/skill` ledger entry rather than choosing a destination; `/claude-tweaks:wrap-up`'s Skills curation row classifies it via `skills/_shared/learning-routing.md`, where a finding about a claude-tweaks skill resolves to D5 (upstream) rather than a project skill update. Do not inline this note into the 3a agent prompt — that agent's job is to record, not to route.
 
-**Lens scope, the dispatch contract, the canonical agent prompt, and the 3a-3g lens definitions live in `step3-lens-dispatch.md`** in this skill's directory — read it before dispatching. It holds: which lenses each `review-effort` tier puts in scope (fewer at `low` and `medium`, every applicable lens at `high` and above), the low-tier single-read dispatch rule, and the `xhigh`/`max` reasoning nudge; the Working Directory Discipline rule for every `Task()` dispatch in Steps 3, 3.5, and 3.6; the `build-review-context.js` shared context bundle that keeps full diff content out of this thread; the reproduction-pair dispatch and its `review-coordination.js categorise-reproduction` call; per-lens model profiles; the canonical agent prompt to inline (its "Per-lens Calibration + Output template" section — Calibration block + OUTPUT FORMAT, moved there from `step3-routing.md` so that file loads only when findings exist); and the question list each of lenses 3a-3g reviews against.
+**Lens scope, the dispatch contract, the canonical agent prompt, and the 3a-3g lens definitions live in `step3-lens-dispatch.md`** in this skill's directory — read it before dispatching. With `$PIPELINE_RUN_DIR` set, compose it first: `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step review-lens-procedure "${CLAUDE_PLUGIN_ROOT}/skills/review/step3-lens-dispatch.md"`, then read `$PIPELINE_RUN_DIR/context/review-lens-procedure.md` once, whole, with one Read — re-read it whole only if your context was compacted since, and never open its source piecewise (sed, grep, cat). Standalone, with no `$PIPELINE_RUN_DIR`, read `step3-lens-dispatch.md` directly, the same way; if the compose command is unavailable or exits non-zero, read the named source files directly. It holds: which lenses each `review-effort` tier puts in scope (fewer at `low` and `medium`, every applicable lens at `high` and above) and its pointers to `step3-tier-variants.md` (low-tier single-read dispatch, the `xhigh`/`max` nudge, the partner-died and no-`Agent` degrades); the Working Directory Discipline rule for every `Task()` dispatch in Steps 3, 3.5, and 3.6; the `build-review-context.js` shared context bundle that keeps full diff content out of this thread; the reproduction-pair dispatch and its `review-coordination.js categorise-reproduction` call; per-lens model profiles; the canonical agent prompt to inline (its "Per-lens Calibration + Output template" section — Calibration block + OUTPUT FORMAT, moved there from `step3-routing.md` so that file loads only when findings exist); and the question list each of lenses 3a-3g reviews against.
 
 ### 3g-cov: Journey-Story Coverage (when journeys and stories exist)
 
@@ -279,7 +284,7 @@ Read `step3-tiebreak.md` in this skill's directory and run it after Step 3's rep
 
 Routing logic lives entirely in `step3-routing.md` in this skill's directory: severity-based auto routing (with the contract floors), the interactive batch table, recommendation rules, the deferral gate, the parallel-fix dispatch contract (3+ independent fixes via `/superpowers:dispatching-parallel-agents`, with its mandatory post-dispatch diff audit), and the auto-advance-on-zero-findings rule. `unconfirmed` and `contested` findings reach routing only through Step 3.7's `confirmed` outcome. The fix-now re-verify runs scoped per `test/verification.md`'s "Re-verify scoping" table (review-fix row).
 
-**QA after a Step 3 fix wave (#3598).** A Step 3 Routing fix that touches a story's `source_files` leaves QA as stale as a Step 6.7 fix does, so it gets Step 6.7 item 4's affected-story re-run too — once per review, not once per wave. Before Step 3 Routing applies its first fix (AUTO or Fix now, and before any parallel fix dispatch), capture `WAVE_BASE` exactly as Step 6.7's opening describes; Step 6.7 then keeps that SHA, and its item 4 covers both waves' files. When Step 6.7 does not run, run its item 4 on its own, right before Step 7, against the same `WAVE_BASE`. A Step 5 simplification edit made after that capture falls inside the same diff and counts the same way.
+**QA after a Step 3 fix wave (#3598).** A Step 3 Routing fix that touches a story's `source_files` leaves QA as stale as a Step 6.7 fix does, so it gets Step 6.7 item 4's affected-story re-run too — once per review, not once per wave. Before Step 3 Routing applies its first fix (AUTO or Fix now, and before any parallel fix dispatch), capture `WAVE_BASE` exactly as Step 6.7's opening (`late-findings-routing.md`) describes; Step 6.7 then keeps that SHA, and its item 4 covers both waves' files. When Step 6.7 does not run, run its item 4 on its own, right before Step 7, against the same `WAVE_BASE` — read that file whole, and follow only its `WAVE_BASE` paragraph and item 4. A Step 5 simplification edit made after that capture falls inside the same diff and counts the same way.
 
 ---
 
@@ -314,7 +319,9 @@ The simplify skill handles scope resolution, running the code-simplifier subagen
 
 ## Step 6: Visual Review
 
-**When this step runs:**
+**Gate (code and full mode):** per `_shared/skill-load-gate.md`, `--skill visual-review`, `--files` from Step 2's diff scope, `--surface`, and `--run "$PIPELINE_RUN_DIR" --section "/review" --step "Step 6"` with a run dir. On `skip`, do not invoke the skill: the Visual Review status is `Skipped — no UI changes`, with the gate's `reason` and `journeys`.
+
+**When this step runs (on `proceed`):**
 - **Code mode:** Delegate to `/claude-tweaks:visual-review --mode=recommendation` — it detects UI changes via `git diff` and identifies affected journeys, returning a structured recommendation without opening a browser (no `playwright-cli` dependency). Do not stop to ask; note any recommendation in the summary (Step 7). This is `recommendation` mode, not `discover` mode — `discover` actually opens a browser and walks the app, which would contradict this step's "recommendation only, non-blocking" design.
 - **Full mode:** Invoke `/claude-tweaks:visual-review` with the target URL/journey and QA data (if available). The visual review owns UI/journey detection and the procedure. Findings feed into the summary (Step 7) as the "UI / Visual" lens with their own severity classifications. When the diff has zero UI-file matches (the same trigger-extension check `/claude-tweaks:visual-review` already uses for its own detection), fall back to `--mode=recommendation` instead — same as code mode above — rather than opening a full browser mode on a diff with nothing to visually review.
 
@@ -330,18 +337,18 @@ Invocation:
 
 ## Step 6.5: Design Quality Pass (Impeccable)
 
-Invoke `/claude-tweaks:design-wrapper review <spec>` to run Impeccable's `critique` + `audit` commands on the changed UI files — and, when the relevant surface brief carries a direction contract, to dispatch Impeccable's own `impeccable-finish-reviewer` agent against it (the wrapper's Step 3.7; its findings arrive in the same `findings` list under `source: "finish-review"`). Findings are advisory in Phase 1 — they inform the verdict and surface in the review summary, but are not auto-applied.
+**Gate:** per `_shared/skill-load-gate.md`, `--skill design-wrapper --mode review`, Step 6's `--files` and `--surface`, and `--run "$PIPELINE_RUN_DIR" --section "/review" --step "Step 6.5"` with a run dir. On `skip`, do not invoke the wrapper: treat it as the `{skipped: ...}` row below and proceed to Step 6.6.
 
-**Invocation:**
+On `proceed`, invoke `/claude-tweaks:design-wrapper review <spec>` to run Impeccable's `critique` + `audit` commands on the changed UI files — and, when the relevant surface brief carries a direction contract, to dispatch Impeccable's own `impeccable-finish-reviewer` agent against it (the wrapper's Step 3.7; its findings arrive in the same `findings` list under `source: "finish-review"`). Findings are advisory in Phase 1 — they inform the verdict and surface in the review summary, but are not auto-applied.
 
-Before invoking the wrapper, run `_shared/design-wrapper-handling.md`'s "Caller-side pre-check" with `--mode review`, `--files` from the diff scope this run already resolved (Step 2's own-work file list when merge commits were detected, otherwise the full `git diff --name-only` set), and `--surface` from this record's materialized `surface:` header field — so a non-frontend record, or a project with the design kill-switch off, never pays for loading `design-wrapper/SKILL.md` plus `modes/review.md`. On `decision: "skip"`, treat exactly like the wrapper's own `{skipped: ...}` return in the Result handling table below and proceed to Step 6.6. On `decision: "proceed"`, pass the spec number (or paths) used for this review run — the wrapper resolves changed UI files via its own detection and runs `/impeccable:impeccable critique` + `/impeccable:impeccable audit`.
+**Invocation:** pass the spec number (or paths) used for this review run — the wrapper resolves changed UI files via its own detection and runs `/impeccable:impeccable critique` + `/impeccable:impeccable audit`.
 
 **Result handling:**
 
 | Wrapper return | Review behavior |
 |----------------|-----------------|
 | `{result: "advisory", findings: [...], score_trend?: {...}}` | Include findings in the summary as a "Design Quality" section (see Step 7's template). When `score_trend` is present, the section also renders a Design/Audit Health trend line above the findings table (current score vs. the last captured score, per `review-summary-template.md`). Findings are advisory — they inform the verdict, but no auto-fixes. A `decisions_staged` field (present when the wrapper staged `target: "decisions"` findings to `{run-dir}/staged/design-decision-*.md`) means those findings await the Review Console — render them under the section's **Decisions** sub-heading only when the field is absent (nothing was staged — standalone review, or no `decisions` findings this run). |
-| `{skipped: ...}` (from the wrapper, or from the pre-check's `decision: "skip"` above) | Omit the "Design Quality" section from the summary. Note the skip reason in the summary footer. |
+| `{skipped: ...}` (from the wrapper or the gate) | Omit the "Design Quality" section from the summary. Note the skip reason in the summary footer. |
 | `{deferred: ...}` (should not happen for `review` mode) | Treat as skip and omit the section. |
 
 See `_shared/design-wrapper-handling.md` for the canonical return-shape contract and the "why skips don't fail" rationale.
@@ -356,28 +363,13 @@ Read `focus-criterion-passes.md` in this skill's directory now and follow its th
 
 ## Step 6.7: Late Findings Routing (design + visual + security + agent-trust-scope + app-store-readiness, consolidated)
 
-Runs **at most once** per review, after Steps 6, 6.5, 6.6, 6.65, and 6.66 have all completed — and only when at least one of them produced actionable findings (Step 6 in full mode with actionable "UI / Visual" findings; Step 6.5 with `{result: "advisory", findings: [...]}`; Step 6.6, Step 6.65, or Step 6.66 with one or more judged findings) AND the user opts to action findings inline. This replaces what were two sequential passes (a design-findings pass and a visual-findings pass), each with its own batch table and its own `AskUserQuestion` — one stop now covers all five categories. Before item 1, capture `WAVE_BASE` — unless Step 3 Routing already captured it this review, in which case keep that earlier SHA so item 4 covers both waves. Run `git stash create` on its own: on a tree already dirty before the wave it prints a commit holding that pre-wave state (it writes no stash entry and leaves the tree alone), so pre-wave edits never count as wave edits; when it prints nothing (a clean tree), run `git rev-parse HEAD` instead. Item 4 diffs the fix wave against it. Shell state does not persist between Bash calls, so keep the printed SHA and paste that literal SHA wherever `{WAVE_BASE}` appears below and in `review-summary-template.md`; an empty `{WAVE_BASE}` silently diffs only the working tree.
+Runs **at most once** per review, after Steps 6, 6.5, 6.6, 6.65, and 6.66 have all completed — and only when at least one of them produced actionable findings (Step 6 in full mode with actionable "UI / Visual" findings; Step 6.5 with `{result: "advisory", findings: [...]}`; Step 6.6, Step 6.65, or Step 6.66 with one or more judged findings) AND the user opts to action findings inline.
 
-1. Render every actionable finding from all five sources as a row in **one** batch table with a Category column, recommended actions pre-filled:
-
-| Category | Severity source |
-|---|---|
-| `Design Quality` (from Step 6.5) | Wrapper output (`info` → low, `warning` → medium, `error` → high) |
-| `UI / Visual` (from Step 6) | `/claude-tweaks:visual-review`'s own report classification |
-| `Security Hardening` (from Step 6.6) | `criteria-security-hardening.md`'s Severity calibration section |
-| `Agent Trust Scope` (from Step 6.65) | `criteria-agent-trust-scope.md`'s Severity calibration section |
-| `App Store Readiness` (from Step 6.66) | `criteria-app-store-readiness.md`'s Severity calibration section |
-
-2. Apply the routing rules from `step3-routing.md` to the combined table — when a pipeline run directory exists, resolve `review-auto-apply-ceiling` exactly as Step 3 Routing's own "Auto mode" section does, and route each finding per that file's ceiling-keyed table (`none`/`low`/`medium` columns) under the resolved ceiling — never hardcode the `low`-ceiling mapping (low → AUTO, medium → STAGED, high → STAGED, critical → KEPT-PROMPT) as if it applied under every ceiling. Otherwise (no run directory), use the interactive batch-table flow (one `AskUserQuestion` for apply-all/override). The fix wave runs under that file's Fix-wave server coordination: step 1 stops the run's ephemeral server before the wave, and item 4's QA re-run starts a fresh one through its own `dev-url-detection.md` resolution.
-3. **Write the disposition back to the audit cache.** This is what makes review's routing authoritative over `design-wrapper polish`'s blind suggestion-driven dispatch of the same finding — without it, polish's Step 5 can re-derive and auto-apply a finding this step just staged for a human, bypassing the ceiling entirely. For each "Design Quality" finding whose source is `audit` (never a `craft-critic`-only entry — `craft-critic` findings have no suggestion-driven dispatch path in polish's Step 5 to guard against; see `design-wrapper/modes/polish.md`'s four-way consumption table), read the audit findings cache `design-wrapper/modes/review.md` Step 5 wrote (resolve the same Primary/Fallback path that file documents — never re-derive a separate rule), find the matching entry by `id`, and set `dispositionByReview: {status: "applied"|"staged"|"accepted"|"deferred"|"kept-prompt", at: "<ISO timestamp>"}` on that entry only — an in-place read-modify-write: read the existing JSON, set the field on the targeted entry, write the whole file back, never a blind overwrite that drops other entries' existing fields. Map this step's routing outcome to `status`: AUTO → `applied`, STAGED → `staged`, KEPT-PROMPT → `kept-prompt` (auto mode); Fix now → `applied`, Defer → `deferred`, Don't fix → `accepted` (interactive mode). If the cache file is absent (Step 6.5 was skipped this run, or the wrapper's own cache write failed), skip this write entirely — there is no cache entry for polish to guard against.
-4. **Re-run the QA stories the fix wave touched (#3047).** Once routing resolves, if any fix was applied in either wave (Step 3 Routing or this step) — auto-applied (AUTO) or interactive Fix now alike — intersect the files the fix wave touched, committed or not (`git diff --name-only {WAVE_BASE}`, plus the untracked new files `git ls-files --others --exclude-standard` lists, since an uncommitted Fix-now edit can create one; on a tree dirty before the wave that also counts its pre-wave untracked files, which only ever adds a re-run), with every QA story's `source_files` (`STORIES_DIR`, default `stories/`). No intersection — or no stories, or no applied fix — means no QA re-run: no added cost for a non-UI wave. Otherwise run `/claude-tweaks:test qa affected --source review` (it selects by `source_files` ∩ `verify.js --changed-files`, per `test/SKILL.md`'s `qa affected` row) — accepted (#3598): that set is wider than the wave, so the re-run can include stories the wave did not touch; that costs extra runs but never misses a touched story, since a touched story the re-run does not execute gets the qualifier below — and merge its results into `/test`'s pre-wave per-story results (re-run stories take their new result, the rest keep theirs), then recompute Step 7's QA Validation status over all stories (per `qa-reporting.md`'s Status determination). With no pre-wave per-story results (pre-wave status Skipped or Not run) there is nothing to merge into, and the QA line renders per `review-summary-template.md`'s never-run rule instead of this recompute. A re-run that reports PARTIAL FAILURE or ALL FAILED makes the verdict BLOCKED, as Step 1.5's test gate would. When an intersected story did not actually re-execute — the re-run self-skips with no dev server or browser, or errors, stops without running (`No QA stories affected by current changes.`, an unresolved base), or reports that story SKIPPED — render that line with `review-summary-template.md`'s stale-QA qualifier instead, never the pre-wave status unqualified — unless the never-run rule applies, since a status from stories that never ran has no earlier pass to call stale.
-5. After resolution, fold each finding back into its own Step 7 summary section ("Design Quality" / "Visual Review" / "Security Hardening" / "Agent Trust Scope" / "App Store Readiness"), noting its final status (fixed / deferred / accepted).
-
-This pass never replays Step 3.5 (each source's findings have no peers to debate against) and never re-dispatches reproduction pairs — every source's output is already filtered/classified before it reaches this routing. Step 3 Routing itself is untouched by this consolidation: code findings still resolve before Steps 4-5, because fixes must land before hindsight and simplification run.
+Read `late-findings-routing.md` in this skill's directory now and follow it; Step 3 Routing's item-4-alone case reads it whole too, and follows only its `WAVE_BASE` paragraph and item 4.
 
 ## Step 7: Present Review Summary
 
-Present a structured summary covering spec compliance, test results (from `/claude-tweaks:test`), code review findings, browser review (if run), implementation hindsight, tradeoffs, simplification, and a verdict (PASS or BLOCKED). The summary must include an Actions Performed table (when autonomous fixes were applied) and a Next Actions block (always). For the complete template, the context-signal rules, and the **compact clean-PASS form** (rendered instead of the full template when the verdict is PASS with zero findings, zero actions, and zero manual steps), read `review-summary-template.md` in this skill's directory.
+Present a structured summary covering spec compliance, test results (from `/claude-tweaks:test`), code review findings, browser review (if run), implementation hindsight, tradeoffs, simplification, and a verdict (PASS or BLOCKED). The summary must include an Actions Performed table (when autonomous fixes were applied) and a Next Actions block (always). For the complete template, the context-signal rules, and the **compact clean-PASS form** (rendered instead of the full template only when every condition that file lists holds, spec compliance and the Current-State outcome included), read `review-summary-template.md` in this skill's directory.
 
 **Not run by /build (#3767).** When `$PIPELINE_RUN_DIR` is set, collect the plan steps `/build` logged as not run from its `decisions.md` per `review-summary-template.md`'s "Not run by /build" section, before choosing the compact or full form.
 
@@ -388,7 +380,7 @@ multi-spec `/claude-tweaks:flow` run sharing one PR across specs — `flow/multi
 `<!-- run-comment: verdict:{spec} -->` where `{spec}` is this spec's record id (the numeric
 suffix of `basename($PIPELINE_RUN_DIR)`, which is this spec's own `spec-{N}/` subdirectory —
 `_shared/pr-run-comments.md`'s "Multi-spec verdict comments" section). Then the verdict, then
-the QA status exactly as the summary's QA Validation line renders it (stale-QA qualifier included — no separate wording), then the summary's **Coverage caveat:** line verbatim when it rendered, then the
+the QA status exactly as the summary's QA Validation line renders it (stale-QA qualifier included — no separate wording), then the summary's **Coverage caveat:** line verbatim when it rendered, then its **Independence: degraded** line verbatim when it rendered, then the
 top findings by severity (max 5), reusing `review-summary-template.md`'s own
 `Category | Finding | Severity | Action` findings-table shape — and post-or-update it on the PR
 per that file's canonical procedure, using the same marker as `{kind}` (`verdict` or

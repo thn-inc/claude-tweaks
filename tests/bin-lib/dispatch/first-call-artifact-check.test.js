@@ -2,18 +2,22 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { checkFirstCallArtifacts, checkFirstCallStamp } = require('../../../plugin/bin/lib/dispatch/first-call-artifact-check');
 const { claimFilePath } = require('../../../plugin/bin/lib/issues/claims');
+const { manifestInit } = require('../../../plugin/bin/lib/flow/manifest');
+const { run: runGauge } = require('../../../plugin/bin/context-gauge');
+const { gitRepo, initRepo } = require('../../helpers/git-fixtures');
 
 const REPO_SLUG = 'acme/widgets';
 const RUN_ID = '2026-09-29T154722-record-2806';
 const NOW = Date.parse('2026-09-29T16:00:00Z');
 
 function mkRunDir() {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-first-call-check-'));
+  const parent = scratchDir('ct-first-call-check-');
   return path.join(parent, RUN_ID);
 }
 
@@ -186,7 +190,7 @@ test('fails naming the one unmaterialized member of an otherwise-materialized gr
 });
 
 test('passes when headers exist only in the worktree mirror of the run dir (pr-first shape, #2775)', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-first-call-mirror-'));
+  const root = scratchDir('ct-first-call-mirror-');
   const runDir = path.join(root, 'main', '.claude-tweaks', 'pipelines', RUN_ID);
   const worktree = path.join(root, 'wt');
   const deps = localMergeGroup(runDir, [2806], { worktree });
@@ -197,7 +201,7 @@ test('passes when headers exist only in the worktree mirror of the run dir (pr-f
 });
 
 test('passes when the header lives under work/ (not spec-{n}/work/) in the worktree mirror -- the pr-first singleton shape (#2775)', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-first-call-mirror-singleton-'));
+  const root = scratchDir('ct-first-call-mirror-singleton-');
   const runDir = path.join(root, 'main', '.claude-tweaks', 'pipelines', RUN_ID);
   const worktree = path.join(root, 'wt');
   const deps = localMergeGroup(runDir, [2806], { worktree });
@@ -278,7 +282,7 @@ test('an earlier failure still wins over a missing claim line (#3577)', () => {
 // ---- #3226: `repairable` classification of a missing-config first call ----
 
 function repoRootWithPolicy(policyText) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-first-call-repo-'));
+  const root = scratchDir('ct-first-call-repo-');
   if (policyText !== null) {
     fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
     fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), policyText);
@@ -598,6 +602,128 @@ test('parseNextSteps with SECOND_CALL_STEPS: the second call\'s steps parse, a f
   }
 });
 
+// #4358 characterization: what a flat NEXT_STEPS returns with no targets. Passed before the
+// per-record form existed.
+test('parseNextSteps: a flat value returns exactly { ok, steps }; its refusals are unchanged', () => {
+  const flat = { ok: true, steps: ['test'] };
+  const reply = handoffReply('NEXT_STEPS: test');
+  assert.deepEqual(parseNextSteps(reply), flat);
+  assert.deepEqual(parseNextSteps(reply, FIRST_CALL_STEPS), flat);
+  assert.deepEqual(parseNextSteps('NEXT_STEPS: test\nNEXT_STEPS: build\n', FIRST_CALL_STEPS), flat, 'the first line wins');
+  for (const [line, reason] of [
+    [null, 'next-steps-missing'],
+    ['NEXT_STEPS:  ', 'next-steps-empty'],
+    ['NEXT_STEPS: test,', 'next-steps-invalid'],
+    ['NEXT_STEPS: test,test', 'next-steps-duplicate'],
+  ]) {
+    assert.equal(parseNextSteps(handoffReply(line), FIRST_CALL_STEPS).reason, reason, String(line));
+  }
+  assert.equal(resolveFirstCallGate({ reply, artifact: undefined }), 'handoff');
+});
+
+// ---- #4358: the per-record NEXT_STEPS form of a multi-spec handoff ----
+
+test('AC1.2: a real gauge handoff round-trips through the parse -- same steps per record, the same record-steps= token as its resume', async () => {
+  const root = gitRepo();
+  try {
+    const runDir = path.join(root, '.claude-tweaks', 'pipelines', RUN_ID);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'config.yml'), 'mode: auto\n');
+    assert.equal(manifestInit({ runDir, specs: [12, 34] }).ok, true);
+    const usage = { input_tokens: 2, cache_read_input_tokens: 249998, cache_creation_input_tokens: 0, output_tokens: 10 };
+    const transcript = path.join(root, 'agent-t.jsonl');
+    fs.writeFileSync(transcript, `${[
+      JSON.stringify({ type: 'user', timestamp: '2026-11-03T10:00:00.000Z', message: { role: 'user', content: 'dispatch prompt' } }),
+      JSON.stringify({ type: 'assistant', timestamp: '2026-11-03T10:01:00.000Z', message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage } }),
+    ].join('\n')}\n`);
+    const err = [];
+    const code = await runGauge(['--run', runDir, '--transcript', transcript, '--record-steps', '#12:none;#34:build,test'], {
+      cwd: () => root, mainRoot: root, env: {}, now: () => NOW, stdout: () => {}, stderr: (s) => err.push(s),
+    });
+    assert.equal(code, 0, err.join(''));
+    const handoff = JSON.parse(fs.readFileSync(path.join(runDir, 'handoff.json'), 'utf8'));
+    const token = /(?:^| )(record-steps=\S+)/.exec(handoff.resume)[1];
+
+    const parsed = parseNextSteps(handoffReply(`NEXT_STEPS: ${token.slice('record-steps='.length)}`), FIRST_CALL_STEPS, { targets: ['#12', '#34'] });
+    assert.deepEqual(parsed, {
+      ok: true,
+      steps: handoff.nextSteps,
+      recordSteps: { '#12': [], '#34': ['build', 'test'] },
+      stepArg: token,
+    });
+    assert.deepEqual(parsed.recordSteps, handoff.recordSteps);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('parseNextSteps: a second call\'s per-record value parses under SECOND_CALL_STEPS and fails next-steps-invalid-step under FIRST_CALL_STEPS', () => {
+  const { SECOND_CALL_STEPS } = require('../../../plugin/bin/lib/dispatch/first-call-artifact-check');
+  const reply = handoffReply('NEXT_STEPS: #12:none;#34:test,review,polish,wrap-up');
+  const targets = ['#12', '#34'];
+  assert.deepEqual(parseNextSteps(reply, SECOND_CALL_STEPS, { targets }), {
+    ok: true,
+    steps: ['test', 'review', 'polish', 'wrap-up'],
+    recordSteps: { '#12': [], '#34': ['test', 'review', 'polish', 'wrap-up'] },
+    stepArg: 'record-steps=#12:none;#34:test,review,polish,wrap-up',
+  });
+  const refused = parseNextSteps(reply, FIRST_CALL_STEPS, { targets });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.reason, 'next-steps-invalid-step');
+  assert.match(refused.message, /^handoff NEXT_STEPS: #34: unknown step "review"/);
+});
+
+test('parseNextSteps: stepArg is canonical however the reply spaced the value, and needs no targets', () => {
+  const parsed = parseNextSteps(handoffReply('NEXT_STEPS:  #12 : none ; #34 : build , test '), FIRST_CALL_STEPS);
+  assert.equal(parsed.stepArg, 'record-steps=#12:none;#34:build,test');
+  assert.deepEqual(parsed.recordSteps, { '#12': [], '#34': ['build', 'test'] });
+});
+
+test('parseNextSteps: a flat value under more than one target fails next-steps-flat-multi-record; one target stays flat', () => {
+  const targets = ['#12', '#34'];
+  for (const line of ['NEXT_STEPS: test', 'NEXT_STEPS: test,review', 'NEXT_STEPS: wrapup']) {
+    const refused = parseNextSteps(handoffReply(line), FIRST_CALL_STEPS, { targets });
+    assert.equal(refused.ok, false, line);
+    assert.equal(refused.reason, 'next-steps-flat-multi-record', line);
+    assert.match(refused.message, /#12, #34/, line);
+  }
+  assert.deepEqual(parseNextSteps(handoffReply('NEXT_STEPS: test'), FIRST_CALL_STEPS, { targets: ['#12'] }), { ok: true, steps: ['test'] });
+  assert.deepEqual(parseNextSteps(handoffReply('NEXT_STEPS: test'), FIRST_CALL_STEPS, { targets: null }), { ok: true, steps: ['test'] });
+  assert.equal(parseNextSteps(handoffReply('NEXT_STEPS: '), FIRST_CALL_STEPS, { targets }).reason, 'next-steps-empty', 'empty is still empty');
+});
+
+test('parseNextSteps: a flat value under one target keeps the flat refusals', () => {
+  const targets = ['#12'];
+  assert.equal(parseNextSteps(handoffReply('NEXT_STEPS: tset'), FIRST_CALL_STEPS, { targets }).reason, 'next-steps-invalid');
+  assert.equal(parseNextSteps(handoffReply('NEXT_STEPS: test,test'), FIRST_CALL_STEPS, { targets }).reason, 'next-steps-duplicate');
+});
+
+test('parseNextSteps: a per-record line that disagrees with the targets, or is malformed, fails with its grammar reason', () => {
+  const targets = ['#12', '#34'];
+  for (const [line, reason] of [
+    ['NEXT_STEPS: #34:test', 'next-steps-target-mismatch'],
+    ['NEXT_STEPS: #12:none;#34:test;#56:test', 'next-steps-target-mismatch'],
+    ['NEXT_STEPS: #12:none;#34:none', 'next-steps-nothing-left'],
+    ['NEXT_STEPS: #12:none;#34', 'next-steps-malformed-entry'],
+    ['NEXT_STEPS: #12:none;#34:test,build', 'next-steps-out-of-order'],
+  ]) {
+    const refused = parseNextSteps(handoffReply(line), FIRST_CALL_STEPS, { targets });
+    assert.equal(refused.ok, false, line);
+    assert.equal(refused.reason, reason, line);
+    assert.match(refused.message, /^handoff NEXT_STEPS: /, line);
+  }
+});
+
+test('resolveFirstCallGate forwards targets: flat under several blocks, a valid per-record line hands off, a missing target blocks', () => {
+  const targets = ['#12', '#34'];
+  const gate = (line, over = {}) => resolveFirstCallGate({ reply: handoffReply(line), artifact: UNREAD_ARTIFACT, targets, ...over });
+  assert.equal(gate('NEXT_STEPS: test'), 'blocked');
+  assert.equal(gate('NEXT_STEPS: #12:none;#34:build,test'), 'handoff');
+  assert.equal(gate('NEXT_STEPS: #34:build,test'), 'blocked');
+  assert.equal(gate('NEXT_STEPS: #12:none;#34:review'), 'blocked', 'a step outside the first call blocks');
+  assert.equal(gate('NEXT_STEPS: test', { targets: undefined }), 'handoff', 'absent targets behaves as before');
+});
+
 // ---- #3661: checkFirstCallStamp -- the first call's runner-written pass stamp at HEAD ----
 // Every case injects `stampStatus` / `exists` except the last two, which exercise the real
 // default report check and the real verify.js spawn (its worktree cwd) against temp fixtures.
@@ -686,7 +812,7 @@ test('a verifying stamp with no reportPath string is report-missing, never a pas
 });
 
 test('the default report check passes only a regular file -- a directory named report.json is report-missing', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-stamp-report-'));
+  const dir = scratchDir('ct-stamp-report-');
   const asFile = path.join(dir, 'file-report.json');
   fs.writeFileSync(asFile, '{}');
   const asDir = path.join(dir, 'dir-report.json');
@@ -702,7 +828,7 @@ test('the default report check passes only a regular file -- a directory named r
 
 test('the default stampStatus spawns verify.js with the recorded worktree as cwd, not the test process cwd', () => {
   const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8', windowsHide: true }).trim();
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-stamp-repo-'));
+  const repo = scratchDir('ct-stamp-repo-');
   git(['init', '-q'], repo);
   git(['-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '--allow-empty', '-m', 'init'], repo);
   const head = git(['rev-parse', 'HEAD'], repo);
@@ -755,11 +881,9 @@ test('a complete composition supersedes the single stamp\'s missing reportPath',
 // verify.js spawn — the only test where the guard sees the field names verify.js actually prints.
 test('a complete composition from real --stamp-suite chunks verifies through the default verify.js spawn', () => {
   const VERIFY = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-stamp-composed-')));
+  const repo = fs.realpathSync(scratchDir('ct-stamp-composed-'));
   const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', windowsHide: true }).trim();
-  git('init', '-q');
-  git('config', 'user.email', 'first-call-test@example.invalid');
-  git('config', 'user.name', 'first-call test');
+  initRepo(repo, { name: 'first-call test', email: 'first-call-test@example.invalid', cwd: repo, encoding: 'utf8', windowsHide: true });
   const decl = { checks: { tests: { unit: 'node -e 0', other: 'node -e 0' } }, rules: [{ match: 'src/**', suites: ['unit'], static: true }] };
   fs.mkdirSync(path.join(repo, '.claude-tweaks'));
   fs.writeFileSync(path.join(repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
@@ -788,4 +912,99 @@ test('only a complete composition stands in for the stamp — complete: false wi
     exists: () => true,
   });
   assert.deepEqual(result, { verified: false, reason: 'stamp-absent', status });
+});
+
+// #3974: hasMaterializedHeader reads the live header and, root by root, the archived one.
+const { hasMaterializedHeader } = require('../../../plugin/bin/lib/dispatch/first-call-artifact-check');
+
+const HDR_MAIN = path.join(path.sep, 'main');
+const HDR_RUN = path.join(HDR_MAIN, '.claude-tweaks', 'pipelines', RUN_ID);
+const HDR_ARCHIVE = path.join(HDR_MAIN, '.claude-tweaks', 'pipelines', 'archive', RUN_ID);
+const hdrServing = (files) => (p) => {
+  if (Object.hasOwn(files, p)) return files[p];
+  throw new Error(`ENOENT ${p}`);
+};
+
+test('hasMaterializedHeader characterization: a live flat or spec-{n} header counts, with or without a record: line', () => {
+  assert.equal(hasMaterializedHeader(hdrServing({ [path.join(HDR_RUN, 'work', '7-spec.md')]: '# spec\n' }), [HDR_RUN], 7), true);
+  assert.equal(hasMaterializedHeader(hdrServing({ [path.join(HDR_RUN, 'spec-7', 'work', '7-spec.md')]: 'record: 7\n' }), [HDR_RUN], 7), true);
+});
+
+test('hasMaterializedHeader characterization: a live header naming another record does not count', () => {
+  assert.equal(hasMaterializedHeader(hdrServing({ [path.join(HDR_RUN, 'work', '7-spec.md')]: 'record: 8\n' }), [HDR_RUN], 7), false);
+});
+
+test('hasMaterializedHeader characterization: an unreadable live header is absent', () => {
+  const throwing = () => { throw new Error('EACCES'); };
+  assert.equal(hasMaterializedHeader(throwing, [HDR_RUN], 7), false);
+});
+
+test('hasMaterializedHeader characterization: a second base (worktree mirror) is read after the first', () => {
+  const mirror = path.join(path.sep, 'wt', '.claude-tweaks', 'pipelines', RUN_ID);
+  const read = hdrServing({ [path.join(mirror, 'work', '7-spec.md')]: 'record: 7\n' });
+  assert.equal(hasMaterializedHeader(read, [HDR_RUN, mirror], 7), true);
+});
+
+test('hasMaterializedHeader characterization: a run dir outside a pipelines parent invents no archived candidate', () => {
+  const dir = path.join(path.sep, 'tmp', 'adhoc-run');
+  const reads = [];
+  hasMaterializedHeader((p) => { reads.push(p); throw new Error('ENOENT'); }, [dir], 7);
+  assert.deepEqual(reads, [path.join(dir, 'work', '7-spec.md'), path.join(dir, 'spec-7', 'work', '7-spec.md')]);
+});
+
+test('AC1.1 hasMaterializedHeader accepts an archived-only flat header', () => {
+  const read = hdrServing({ [path.join(HDR_ARCHIVE, 'work', '7-spec.md')]: 'record: 7\n' });
+  assert.equal(hasMaterializedHeader(read, [HDR_RUN], 7), true);
+});
+
+test('AC2.1 hasMaterializedHeader accepts an archived-only spec-{n} header', () => {
+  const read = hdrServing({ [path.join(HDR_ARCHIVE, 'spec-7', 'work', '7-spec.md')]: 'record: 7\n' });
+  assert.equal(hasMaterializedHeader(read, [HDR_RUN], 7), true);
+});
+
+test('AC7.1 hasMaterializedHeader: the live copy wins when both exist', () => {
+  const live = path.join(HDR_RUN, 'work', '7-spec.md');
+  const serve = hdrServing({ [live]: 'record: 7\n', [path.join(HDR_ARCHIVE, 'work', '7-spec.md')]: 'record: 8\n' });
+  const reads = [];
+  const read = (p) => { reads.push(p); return serve(p); };
+  assert.equal(hasMaterializedHeader(read, [HDR_RUN], 7), true);
+  assert.deepEqual(reads, [live], 'the archived copy is never read once the live one answers');
+});
+
+test('AC7.2 hasMaterializedHeader: a live copy naming another record falls through to the archived copy', () => {
+  const read = hdrServing({
+    [path.join(HDR_RUN, 'work', '7-spec.md')]: 'record: 8\n',
+    [path.join(HDR_ARCHIVE, 'work', '7-spec.md')]: 'record: 7\n',
+  });
+  assert.equal(hasMaterializedHeader(read, [HDR_RUN], 7), true);
+});
+
+test('AC7.3 hasMaterializedHeader: a live work/ lacking this record plus an archived header is true', () => {
+  const read = hdrServing({
+    [path.join(HDR_RUN, 'work', '9-spec.md')]: 'record: 9\n',
+    [path.join(HDR_ARCHIVE, 'work', '7-spec.md')]: 'record: 7\n',
+  });
+  assert.equal(hasMaterializedHeader(read, [HDR_RUN], 7), true);
+});
+
+test('hasMaterializedHeader: an archived header naming another record does not count', () => {
+  const flat = hdrServing({ [path.join(HDR_ARCHIVE, 'work', '7-spec.md')]: 'record: 8\n' });
+  assert.equal(hasMaterializedHeader(flat, [HDR_RUN], 7), false);
+  const nested = hdrServing({ [path.join(HDR_ARCHIVE, 'spec-7', 'work', '7-spec.md')]: 'record: 8\n' });
+  assert.equal(hasMaterializedHeader(nested, [HDR_RUN], 7), false);
+});
+
+test('AC9.4 hasMaterializedHeader: an unreadable archived header is absent, the next archived candidate still answers', () => {
+  const unreadable = path.join(HDR_ARCHIVE, 'work', '7-spec.md');
+  const serve = hdrServing({ [path.join(HDR_ARCHIVE, 'spec-7', 'work', '7-spec.md')]: 'record: 7\n' });
+  const reads = [];
+  const read = (p) => {
+    reads.push(p);
+    if (p === unreadable) throw new Error('EACCES');
+    return serve(p);
+  };
+  assert.equal(hasMaterializedHeader(read, [HDR_RUN], 7), true);
+  assert.ok(reads.includes(unreadable), 'the unreadable archived candidate was tried and skipped');
+  const throwing = () => { throw new Error('EACCES'); };
+  assert.equal(hasMaterializedHeader(throwing, [HDR_RUN], 7), false);
 });

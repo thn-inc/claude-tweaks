@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -22,7 +23,7 @@ const { listSkillDirs, KNOWN_SKILLS } = require('../../../plugin/bin/lib/skill-a
 const REPO = path.join(__dirname, '..', '..', '..', 'plugin');
 
 function tmpRoot(slug) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), `harness-cost-${slug}-`));
+  return scratchDir(`harness-cost-${slug}-`);
 }
 
 function makeSkill(root, name, frontmatterLines, body = 'body\n') {

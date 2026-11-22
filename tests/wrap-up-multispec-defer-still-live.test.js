@@ -11,7 +11,7 @@ const ENGINE = path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'wrap-up', 'en
 const PRE_CHANGE_PARAGRAPH = `**MULTISPEC_REVIEW_DEFER branch:** When \`$MULTISPEC_REVIEW_DEFER=1\` is set, this step SKIPS the state-changing cleanups marked deferred in \`cleanup-procedures.md\` (items 3 Design caches, 4 Git worktree, 6 Ephemeral dev server, 7 Issue claim release, 8 Pipeline run dir archival). Those defer to \`/flow\`'s consolidated multi-spec Review Console at end-of-run, which has authority to apply or override them across all specs in the run. This step still executes the idempotent cleanups (items 1 Execution plans, 2 Open items ledger, 5 Record/spec lifecycle) — those do not interact with parent-orchestrated cleanup.`;
 
 // The sentence appended to that paragraph by #3400's Step 3, verbatim.
-const SENTENCE = `In particular, the **Acceptance labeling** bullet below still runs for every spec (its Try it block, the oversight-floor gate, \`--oversight-exempt\`); \`_shared/pr-run-comments.md\`'s "Multi-spec brief and timing comments (#2970)" section keys each spec's brief to its own marker on the shared PR.`;
+const SENTENCE = `In particular, the **Acceptance labeling** bullet below still runs for every spec (its Try it block, the oversight-floor gate, \`--oversight-exempt\`); \`_shared/pr-run-comments.md\`'s "Multi-spec brief and timing comments (#2970)" section keys each spec's \`timing\` comment to its own marker on the shared PR, and each spec's packet lands on its own record.`;
 
 const CLAIMS = [
   { id: 'acceptance labeling', pattern: /\*\*Acceptance labeling\*\* bullet below still runs for every spec/ },

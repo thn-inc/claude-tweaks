@@ -79,13 +79,17 @@ function partitionGrantComments(comments) {
   return { bodies, skippedUntrusted };
 }
 
-// hasPendingLabel/hasMergeLabel: booleans from a fresh `gh issue view
-// --json labels` read. pendingSince: Date | null — normally
-// extractPendingGrantedAt's return value. vetoWindowHours: the resolved
-// grant-veto-window-hours policy value (DEFAULT_VETO_WINDOW_HOURS when absent
-// or invalid). now: Date | epoch-ms (injected clock for tests).
+// hasBuildLabel/hasPendingLabel/hasMergeLabel: booleans from a fresh
+// `gh issue view --json labels` read; hasBuildLabel must be exactly `true`,
+// an omitted or non-boolean value fails closed. pendingSince: Date | null —
+// normally extractPendingGrantedAt's return value. vetoWindowHours: the
+// resolved grant-veto-window-hours policy value (DEFAULT_VETO_WINDOW_HOURS
+// when absent or invalid). now: Date | epoch-ms (injected clock for tests).
 //
 // Returns { mature, state, reason, ageHours?, windowHours? }. `state` is one of:
+//   'no-build-grant'     — no auto:build label; a merge grant (auto:merge or
+//                          auto:merge-pending) counts only together with a live
+//                          auto:build, so nothing matures (fail closed).
 //   'already-mature'     — auto:merge is already present; nothing to do.
 //   'not-pending'        — no auto:merge-pending label (never granted, or a
 //                          human vetoed it — both read identically here).
@@ -95,7 +99,10 @@ function partitionGrantComments(comments) {
 //                          veto window.
 //   'matured'            — pending, timestamped, and past the veto window —
 //                          the caller should promote it now.
-function evaluateMaturation({ hasPendingLabel, hasMergeLabel, pendingSince, vetoWindowHours, now } = {}) {
+function evaluateMaturation({ hasBuildLabel, hasPendingLabel, hasMergeLabel, pendingSince, vetoWindowHours, now } = {}) {
+  if (hasBuildLabel !== true) {
+    return { mature: false, state: 'no-build-grant', reason: 'no auto:build label present — a merge grant counts only together with a live auto:build' };
+  }
   if (hasMergeLabel === true) {
     return { mature: true, state: 'already-mature', reason: 'auto:merge already present' };
   }
@@ -121,4 +128,16 @@ function evaluateMaturation({ hasPendingLabel, hasMergeLabel, pendingSince, veto
   return { mature: true, state: 'matured', reason: `pending grant is ${ageHours.toFixed(1)}h old, past the ${windowHours}h veto window`, ageHours, windowHours };
 }
 
-module.exports = { evaluateMaturation, extractPendingGrantedAt, partitionGrantComments, PENDING_GRANT_MARKER_RE };
+// mat: evaluateMaturation's result for a member that is not mature. labels: that
+// member's live label names. Returns { missing, detail }: which grant an operator
+// restores first ('build-grant' | 'merge-grant') and the text to show for it. A
+// member with no merge grant at all reads 'merge-grant' even when auto:build is
+// absent too: naming auto:build first would send the operator to a second withhold.
+function withheldGrant(mat, labels) {
+  if (mat.state !== 'no-build-grant') return { missing: 'merge-grant', detail: mat.reason };
+  const names = Array.isArray(labels) ? labels : [];
+  if (names.includes('auto:merge') || names.includes('auto:merge-pending')) return { missing: 'build-grant', detail: mat.reason };
+  return { missing: 'merge-grant', detail: 'no auto:merge or auto:merge-pending label present' };
+}
+
+module.exports = { evaluateMaturation, withheldGrant, extractPendingGrantedAt, partitionGrantComments, PENDING_GRANT_MARKER_RE };

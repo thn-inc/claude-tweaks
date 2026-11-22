@@ -322,6 +322,16 @@ test('writeRecord then readRecord round-trips the acceptance facet', (t) => {
   assert.strictEqual(record.facets.acceptance, 'pending');
 });
 
+test('AC6.1: the acceptance field round-trips pending, approved and changes-requested', (t) => {
+  const dir = tmp(t);
+  for (const [i, acceptance] of ['pending', 'approved', 'changes-requested'].entries()) {
+    const filePath = path.join(dir, `${20 + i}-verdict.md`);
+    writeRecord(filePath, { title: 'Verdict', body: 'b', facets: baseFacets({ acceptance }) });
+    assert.match(fs.readFileSync(filePath, 'utf8'), new RegExp(`^acceptance: ${acceptance}$`, 'm'));
+    assert.strictEqual(readRecord(filePath).facets.acceptance, acceptance);
+  }
+});
+
 test('writeRecord omits the acceptance line when null', (t) => {
   const dir = tmp(t);
   const filePath = path.join(dir, '10-none.md');

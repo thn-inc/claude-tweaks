@@ -13,20 +13,23 @@
 // changed). worktree-reap.js's own `reapWorktrees` already carries this
 // exact guard (`here === real || here.startsWith(...)`, "never our own
 // ground") — mirrored here rather than restated with different wording.
+// A third guard covers a live session in ANOTHER process: dispatch worktrees
+// are unlocked, so the session leaves a hold in the worktree's git admin dir
+// and `holdVerdict` reads it (#4960).
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { runGit } = require('../hooks/git-exec');
+const { runGit, repoTargetOf } = require('../hooks/git-exec');
 const { mainCheckoutRoot, safeReal } = require('../hooks/worktree-detect');
-const { parseWorktreeList, isWorktreeLocked, HARNESS_WORKTREE_DIR, QUIET_SKIP_REASONS } = require('../hooks/worktree-reap');
+const { parseWorktreeList, isWorktreeLocked, holdVerdict, HARNESS_WORKTREE_DIR, QUIET_SKIP_REASONS } = require('../hooks/worktree-reap');
 const { isPathContained } = require('../shared-primitives');
 const { resolvePrState } = require('./pr-state');
-const { findRunByWorktreePath, appendEvent } = require('../hooks/context');
+const { canonicalRealpath } = require('../path-guard');
+const { findRunByWorktreePath, worktreeMatches, iterRunDirsWithState, readRunState, isAdHocRunDir, priorWorktree, RUN_ID_RE, appendEvent } = require('../hooks/context');
 const { release: releasePortsDefault } = require('../ports/registry');
 const { trackResidue, beginCacheBatch, commitCacheBatch } = require('./cache');
-const { escalateResidue, capDirtyFiles } = require('./escalate-residue');
+const { escalateResidue, capDirtyFiles, residueRepoOf } = require('./escalate-residue');
 const { readPorcelainStatus } = require('../residue/probes/worktrees');
-const { repoSlugOf } = require('./release-merged');
 
 // Best-effort audit-trail write to the OWNING run's own events.jsonl, so
 // wrap-up/residue tooling that reads a run's events can see that the
@@ -35,11 +38,41 @@ const { repoSlugOf } = require('./release-merged');
 // had ownedRun context); moving it to the detached reconcile-background
 // subcommand (#820 D8) dropped that trail entirely (review finding). Never
 // blocks or fails the reap itself — a run this worktree can't be joined to
-// (archived run dir, no run-state.json) simply gets no event, same as
-// before this fix.
+// (no run-state.json, or no run recording this path) simply gets no event. A
+// closed or archived run is joined for the reap event only (#4960).
 function logReapEvent(runDir, type, data) {
   if (!runDir) return;
   try { appendEvent(runDir, type, data); } catch { /* best-effort */ }
+}
+
+// The closed and archived tiers compare through the same canonicalizer as the live tier
+// (context.js's worktreeMatches: path-guard's .native canonicalRealpath, #3769), so a case-only
+// mismatch on a case-insensitive volume joins on every tier.
+function recordedMatches(state, real, canonical, target) {
+  return worktreeMatches({ worktree: priorWorktree(state) }, target, real, canonical);
+}
+
+// One reap pass's reads of the closed and archived tiers, shared by every worktree's lookup:
+// each run's state is read at most once however many worktrees ask. Both tiers fill lazily, so
+// a lookup that stops early never pays for the rest.
+function createRunLookupMemo() {
+  return { cleanIter: null, cleanSeen: [], archiveNames: null, archiveStates: new Map() };
+}
+
+function* cleanRuns(root, memo) {
+  for (let i = 0; ; i++) {
+    if (i < memo.cleanSeen.length) { yield memo.cleanSeen[i]; continue; }
+    if (!memo.cleanIter) memo.cleanIter = iterRunDirsWithState(root, { status: 'clean' });
+    const next = memo.cleanIter.next();
+    if (next.done) return;
+    memo.cleanSeen.push(next.value);
+    yield next.value;
+  }
+}
+
+function archivedState(dir, memo) {
+  if (!memo.archiveStates.has(dir)) memo.archiveStates.set(dir, readRunState(dir));
+  return memo.archiveStates.get(dir);
 }
 
 // Resolves the owning run dir BEFORE any removal — findRunByWorktreePath
@@ -52,10 +85,44 @@ function logReapEvent(runDir, type, data) {
 // silently found nothing every time).
 // skipAdHoc (#2783): an `-adhoc-standalone` twin, minted after /flow's formal
 // run, sorts newer and would otherwise take the formal run's reap trail.
-function resolveOwningRunDir(root, real) {
+// #4960: `includeClosed` (the worktree-reaped call only) also searches closed
+// (clean) and archived runs — the same reconcile pass archives a merged run
+// before it reaps the worktree, so the owning run is usually already closed by
+// now. Worktree paths repeat per record, so the NEWEST run id across both
+// tiers wins. Skip events keep the live-only lookup: a closed run would
+// otherwise take an unbounded skip line per pass and every pass would scan the
+// whole archive.
+// `memo` (createRunLookupMemo) lets a reap pass share its closed/archived reads across lookups.
+function resolveOwningRunDir(root, real, { includeClosed = false, fsImpl, memo = createRunLookupMemo() } = {}) {
   try {
-    const found = findRunByWorktreePath(root, real, { skipAdHoc: true });
-    return found ? found.runDir : null;
+    const live = findRunByWorktreePath(root, real, { skipAdHoc: true, fsImpl });
+    if (live) return live.runDir;
+    if (!includeClosed) return null;
+    const canonical = (p) => canonicalRealpath(p, { fsImpl });
+    const target = canonical(real) || real;
+    let clean = null;
+    for (const { dir, state } of cleanRuns(root, memo)) {
+      if (isAdHocRunDir(dir)) continue;
+      if (recordedMatches(state, real, canonical, target)) { clean = dir; break; }
+    }
+    let archived = null;
+    const archiveBase = path.join(root, '.claude-tweaks', 'pipelines', 'archive');
+    if (!memo.archiveNames) {
+      let names = [];
+      try { names = fs.readdirSync(archiveBase); } catch { /* no archive dir */ }
+      memo.archiveNames = names.filter((n) => RUN_ID_RE.test(n)).sort().reverse();
+    }
+    for (const name of memo.archiveNames) {
+      // Newest first: once the clean tier matched, an archived name at or below its basename can
+      // never win the comparison below, so stop reading. Only the no-match full scan stays; it
+      // runs once per reap, in the background.
+      if (clean && name <= path.basename(clean)) break;
+      const dir = path.join(archiveBase, name);
+      if (isAdHocRunDir(dir)) continue;
+      if (recordedMatches(archivedState(dir, memo), real, canonical, target)) { archived = dir; break; }
+    }
+    if (clean && archived) return path.basename(clean) > path.basename(archived) ? clean : archived;
+    return clean || archived;
   } catch { return null; }
 }
 
@@ -80,8 +147,8 @@ function decideReap(prState) {
 // `gh`. `cacheTarget` is either a plain root string (single-call behavior,
 // unchanged) or a `beginCacheBatch` handle (#1235 — batched across
 // `reapMerged`'s item loop); see cache.js's own comment on the two shapes.
-function trackReapResidue(cacheTarget, repoSlug, real, { failed, lastError, dirtyFiles }, { escalate = escalateResidue, runner } = {}) {
-  trackResidue(cacheTarget, repoSlug, 'removal-failed', real, { failed, lastError, dirtyFiles }, { escalate, runner });
+function trackReapResidue(cacheTarget, residueRepo, real, { failed, lastError, dirtyFiles }, { escalate = escalateResidue, runner } = {}) {
+  trackResidue(cacheTarget, residueRepo, 'removal-failed', real, { failed, lastError, dirtyFiles }, { escalate, runner });
 }
 
 // #2566 — Windows's MAX_PATH limit frequently makes `git worktree remove`
@@ -196,7 +263,7 @@ async function prefetchReapPrStates(root, prStates) {
 }
 
 function reapMerged({
-  cwd, dryRun = false, releasePorts = releasePortsDefault, runner, fsRmSync, platform, prStates,
+  cwd, dryRun = false, releasePorts = releasePortsDefault, runner, fsRmSync, platform, prStates, gateDeps,
 } = {}) {
   const reaped = [];
   const skipped = [];
@@ -207,7 +274,9 @@ function reapMerged({
   const root = mainCheckoutRoot(start);
   if (!root) return { reaped, skipped, portsRelease };
   const here = safeReal(start);
-  const repoSlug = repoSlugOf(root);
+  // #4794: the residue repo is the --repo value for the origin's one host (bare on gh's default host),
+  // or `{ refusal }` for a refused origin, which files nothing and calls no gh.
+  const residueRepo = residueRepoOf(repoTargetOf(root, gateDeps));
 
   const list = runGit(['worktree', 'list', '--porcelain'], root);
   if (list.failure) return { reaped, skipped, portsRelease, failure: list.failure };
@@ -216,6 +285,7 @@ function reapMerged({
   // read-modify-write per reaped/failed candidate. See cache.js's
   // `beginCacheBatch` for the atomicity tradeoff this accepts.
   const cacheBatch = beginCacheBatch(root);
+  const runMemo = createRunLookupMemo();
   const domain = safeReal(path.join(root, HARNESS_WORKTREE_DIR)) || path.join(root, HARNESS_WORKTREE_DIR);
   for (const wt of parseWorktreeList(list.stdout)) {
     const real = safeReal(wt.path);
@@ -227,6 +297,15 @@ function reapMerged({
     // worktree the caller is standing in is never a reap candidate (#644).
     if (isOwnCwd(here, real)) { skipped.push({ path: real, reason: 'own-cwd' }); continue; }
     if (isWorktreeLocked(real, { cwd: root })) { skipped.push({ path: real, reason: 'in-use' }); continue; }
+    // A live session in another process, read from its hold (#4960). 'held' writes no event and, like 'in-use', stays off the SessionStart banner (QUIET_SKIP_REASONS);
+    // a hold that cannot be verified keeps the worktree and is logged, so a stuck one surfaces.
+    const held = holdVerdict(real);
+    if (held === 'held') { skipped.push({ path: real, reason: 'held' }); continue; }
+    if (held === 'unverifiable') {
+      skipped.push({ path: real, reason: 'held-unverifiable' });
+      if (!dryRun) logReapEvent(resolveOwningRunDir(root, real), 'worktree-reap-skipped', { reason: 'held-unverifiable' });
+      continue;
+    }
 
     const prState = prStates ? prStates.byBranch(wt.branch) : resolvePrState(root, wt.branch);
     const decision = decideReap(prState);
@@ -246,7 +325,7 @@ function reapMerged({
     if (dryRun) { reaped.push(real); continue; }
 
     // Resolved before removal — see resolveOwningRunDir's own header comment.
-    const owningRunDir = resolveOwningRunDir(root, real);
+    const owningRunDir = resolveOwningRunDir(root, real, { includeClosed: true, memo: runMemo });
     const rm = runGit(['worktree', 'remove', real], root);
     if (rm.failure) {
       // #2566 — before escalating, try the long-path fallback: it succeeds
@@ -256,7 +335,7 @@ function reapMerged({
       // (e.g. a genuine permissions error still falls through below).
       const fallback = attemptLongPathRemoval(real, root, { fsRmSync, platform });
       if (fallback.succeeded) {
-        trackReapResidue(cacheBatch, repoSlug, real, { failed: false }, { runner });
+        trackReapResidue(cacheBatch, residueRepo, real, { failed: false }, { runner });
         logReapEvent(owningRunDir, 'worktree-reaped', { prNumber: prState.number });
         reaped.push(real);
         try {
@@ -282,13 +361,13 @@ function reapMerged({
       // indeterminate timeout/spawn failure with nothing to say). The
       // long-path fallback's own lastError (above) takes precedence when it
       // ran and still failed — it is the more specific, more recent signal.
-      trackReapResidue(cacheBatch, repoSlug, real, { failed: true, lastError: fallback.lastError || rm.stderr || rm.failure, dirtyFiles }, { runner });
+      trackReapResidue(cacheBatch, residueRepo, real, { failed: true, lastError: fallback.lastError || rm.stderr || rm.failure, dirtyFiles }, { runner });
       continue;
     }
     // A path that just succeeded has no more residue to track (#644) — clear
     // any streak so a later failure on this same path (re-created worktree,
     // reused path) starts counting fresh rather than resuming a stale one.
-    trackReapResidue(cacheBatch, repoSlug, real, { failed: false }, { runner });
+    trackReapResidue(cacheBatch, residueRepo, real, { failed: false }, { runner });
     logReapEvent(owningRunDir, 'worktree-reaped', { prNumber: prState.number });
     reaped.push(real);
     try {
@@ -302,5 +381,5 @@ function reapMerged({
 }
 
 module.exports = {
-  reapMerged, prefetchReapPrStates, decideReap, isOwnCwd, trackReapResidue, attemptLongPathRemoval, longPathRemovalTarget, gitCommittedToRemoval,
+  reapMerged, resolveOwningRunDir, createRunLookupMemo, prefetchReapPrStates, decideReap, isOwnCwd, trackReapResidue, attemptLongPathRemoval, longPathRemovalTarget, gitCommittedToRemoval,
 };

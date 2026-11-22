@@ -10,6 +10,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { anchoredOrOutsideMessage } = require('../../plugin/bin/lib/run-dir-guard');
@@ -24,7 +25,7 @@ test('anchoredOrOutsideMessage: returns null for a --run-dir anchored under the 
 
 test('anchoredOrOutsideMessage: returns null for a path outside any git checkout', () => {
   const main = gitRepo();
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'rdg-outside-'));
+  const outside = scratchDir('rdg-outside-');
   assert.strictEqual(anchoredOrOutsideMessage(outside, main, '--run-dir'), null);
 });
 
@@ -46,7 +47,7 @@ test('anchoredOrOutsideMessage: a target inside a git repo other than the caller
   // resolves inside a DIFFERENT, unrelated repo — checkRunDirAnchoredOrOutside's
   // scanForGitAncestor finds one, but with no mainRoot to compare against it
   // falls to the 'no-repo-root' branch rather than 'foreign-checkout'.
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'rdg-bare-'));
+  const bare = scratchDir('rdg-bare-');
   const repo = gitRepo();
   const target = path.join(repo, 'run');
   fs.mkdirSync(target);
@@ -57,7 +58,7 @@ test('anchoredOrOutsideMessage: a target inside a git repo other than the caller
 });
 
 test('anchoredOrOutsideMessage: a target with no git ancestor anywhere is accepted (documented sandbox-use case), not rejected', () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'rdg-norepo-'));
+  const bare = scratchDir('rdg-norepo-');
   const target = path.join(bare, 'r1');
   assert.strictEqual(anchoredOrOutsideMessage(target, bare, '--run-dir'), null);
 });

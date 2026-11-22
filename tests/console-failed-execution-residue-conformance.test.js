@@ -18,6 +18,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 const { readText } = require('./helpers/read-skill');
+const { initRepo } = require('./helpers/git-fixtures');
 
 const ROOT = path.resolve(__dirname, '..');
 const read = (...p) => readText(path.join(ROOT, ...p));
@@ -116,7 +117,7 @@ test("prose-code twin: every flag the rewrite command passes appears in console-
 function fixture(staged) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'failed-exec-residue-')));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't'); git('commit', '-q', '--allow-empty', '-m', 'init');
+  initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); git('commit', '-q', '--allow-empty', '-m', 'init');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'autonomy: unattended\n');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-10-25T000000-record-7');
@@ -132,7 +133,7 @@ function fixture(staged) {
 function fakeExec(root) {
   return (cmd, args) => {
     if (cmd === 'git' && args[0] === 'rev-parse') return `${root}\n`;
-    if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ labels: [{ name: 'auto:merge' }], comments: [] });
+    if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ labels: [{ name: 'auto:build' }, { name: 'auto:merge' }], comments: [] });
     if (cmd === 'git' && args[0] === 'apply') return '';
     throw new Error(`unexpected exec: ${cmd} ${args.join(' ')}`);
   };

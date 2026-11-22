@@ -3,8 +3,8 @@
 // Pure: the shared "is this too risky/large for machine origination" predicate.
 // Compares a record's risk:*/size:* facets against a policy's risk-floor/size-floor
 // keys. Two consumers: grant-gate.js's gate 5 (replaces its old hardcoded
-// risk:high-only check) and /claude-tweaks:demo's binary gate (a companion
-// sub-issue). See #366.
+// risk:high-only check) and the acceptance gate (a companion sub-issue that
+// decides whether a record gets an acceptance state at all). See #366.
 
 const { TIERS } = require('./record.js');
 

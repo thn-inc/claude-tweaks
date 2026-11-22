@@ -37,7 +37,7 @@ files:
 ### 4. Backlog refine grants headlessly
 - **Action:** `/claude-tweaks:backlog refine --source sweep` runs the headless posture (`refine-headless.md`) — labeling lanes plus the grant chain, zero clicks. The record snapshot is invalidated once more first.
 - **Should feel:** The one step that can actually change what's authorized to build — and still runs with nobody watching.
-- **Should understand:** This is the one call in the whole codebase that a headless caller may legally make **because** sweep itself never claims, builds, or merges anything — that boundary is what makes sweep a legal parent of a grant-writing unit, and a dedicated eval pins it (`evals/scenarios/sweep-never-invokes-build-machinery.yaml`).
+- **Should understand:** This is the one call in the whole codebase that a headless caller may legally make **because** sweep itself never claims, builds, or merges anything — that boundary is what makes sweep a legal parent of a grant-writing unit, and `tests/sweep-orchestrator.test.js` pins the statement of that boundary in the skill.
 - **Red flags:** Sweep invoking `/claude-tweaks:dispatch`, `/claude-tweaks:flow`, or `/claude-tweaks:build` anywhere in its own steps — its legality rests on never doing so.
 
 ### 5. Read the close-out — terminal

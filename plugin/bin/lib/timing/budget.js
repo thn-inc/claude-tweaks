@@ -33,6 +33,7 @@ const { resolveTarget, writeStagedItem } = require('../stage-item/write');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('../log-decision/append');
 const { TURN_CLASSES } = require('./turn-class');
 const { canonicalRealpath, lstatType } = require('../path-guard');
+const { ghOptions, injectedGhDeps } = require('../repo-resolve');
 
 const PROFILES = ['fast-lane', 'standard'];
 const DEFER_REASON = 'needs-human-decision';
@@ -167,8 +168,9 @@ const metricList = (checks) => checks.map((c) => `${c.metric} ${c.value}/${c.cei
 
 // The real gh runner: an argv array, bounded, quiet (a failed lookup is
 // handled by the caller, so gh's own stderr is piped, never echoed).
-function defaultGh(args, { cwd, timeout }) {
-  return execFileSync('gh', args, { encoding: 'utf8', cwd, timeout, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+// env, stderr and homeDir (each optional) are the injected environment the gh host probe reads (#5374).
+function defaultGh(args, { cwd, timeout, env, stderr, homeDir }) {
+  return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', cwd, timeout, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env }, injectedGhDeps({ env, stderr, homeDir })));
 }
 
 const firstLine = (s) => String(s).split('\n').find((l) => l.trim()) || String(s);
@@ -179,10 +181,10 @@ const firstLine = (s) => String(s).split('\n').find((l) => l.trim()) || String(s
 // its body's marker (fingerprintMap / checkFingerprint), never by the hit alone.
 // No `--` separator: `gh issue list` takes no positional argument, and the one
 // computed value rides inside --search's own value and never begins with `-`.
-function findTrackingRecord({ fingerprint, repoRoot, gh }) {
+function findTrackingRecord({ fingerprint, repoRoot, gh, env, stderr, homeDir }) {
   let out;
   try {
-    out = gh(['issue', 'list', '--state', 'open', '--search', `${fingerprint} in:body`, '--json', 'number,body', '--limit', '50'], { cwd: repoRoot, timeout: readGhTimeoutMs(repoRoot) });
+    out = gh(['issue', 'list', '--state', 'open', '--search', `${fingerprint} in:body`, '--json', 'number,body', '--limit', '50'], { cwd: repoRoot, timeout: readGhTimeoutMs(repoRoot), env, stderr, homeDir });
   } catch (err) {
     return { error: `gh issue list failed: ${firstLine(message(err)).slice(0, 200)}` };
   }
@@ -238,7 +240,8 @@ function stageProposal({ runDir, cwd, runId, runLabel = runId, profile, checks, 
 // totals carries toolRoundTrips / procedureBytes only when a transcript was read;
 // unattributed is timing.json's bucket of the same name (the proposal's share line).
 // deps.cwd (default process.cwd()) anchors the staging and decision-log targets;
-// deps.gh (default: real gh) is the open-record lookup's runner.
+// deps.gh (default: real gh) is the open-record lookup's runner; deps.env, deps.stderr and
+// deps.homeDir (default: the inherited ones) ride on every gh call, which hands them to defaultGh.
 // Never throws: a staging failure becomes budget.staged = null + budget.stageError.
 // Each degrade the decision log can carry is written there as a SKIP line by
 // this function itself (Degrade-trace rule, _shared/auto-decision-log.md): a
@@ -271,7 +274,7 @@ function checkBudgets({ runDir, totals, unattributed, deps = {} }) {
     const multi = stageDir !== path.resolve(runDir);
     const runId = path.basename(stageDir);
     const runLabel = multi ? `${runId}/${path.basename(path.resolve(runDir))}` : runId;
-    const tracked = findTrackingRecord({ fingerprint: budgetFingerprint(profile), repoRoot, gh });
+    const tracked = findTrackingRecord({ fingerprint: budgetFingerprint(profile), repoRoot, gh, env: deps.env, stderr: deps.stderr, homeDir: deps.homeDir });
     if (tracked.error) {
       const note = `open-record fold skipped (${tracked.error}) — staged without it`;
       notes.push(note);
@@ -304,5 +307,5 @@ function checkBudgets({ runDir, totals, unattributed, deps = {} }) {
 }
 
 module.exports = {
-  evaluateBudgets, formatBudgetLine, budgetProposal, budgetFingerprint, repoRootOf, readCeremonyProfile, checkBudgets,
+  evaluateBudgets, formatBudgetLine, budgetProposal, budgetFingerprint, repoRootOf, readCeremonyProfile, checkBudgets, defaultGh,
 };

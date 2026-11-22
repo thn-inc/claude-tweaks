@@ -5,14 +5,21 @@
 // config.yml overlays (#329). A thin shell — argument parsing plus file
 // reads over two library calls: bin/lib/policy-schema.js#resolvePolicyKeys
 // (all precedence/alias/validation logic) and
-// bin/lib/model-profiles/policy-fragment.js#parsePolicyModelConfig (the one
-// nested-block key). No resolution logic lives here. Zero runtime npm deps.
+// bin/lib/model-profiles/policy-fragment.js#parsePolicyModelConfig (the
+// model-profiles nested-block key; risk-path-globs, the other, resolves inside
+// resolvePolicyKeys). No resolution logic lives here. Zero runtime npm deps.
+// Exports { resolvePolicy, run, realDeps, EXIT_OK, EXIT_INVOCATION, scalarValue,
+// warningLines, callerDeps }: resolvePolicy is the core and returns an object (it
+// prints nothing), run parses argv and prints, realDeps is the production deps map;
+// the rest are the in-process caller surface — the exit codes, the --values scalar
+// rule, the stderr warning lines run writes, and a bounded-git deps builder (#5384).
+// The entry contract is .claude/skills/gh-api-module-pattern/cli-wrapper-contract.md.
 //
 // Usage: resolve-policy.js [--values | --all] [--mcp-reachable] [--run <dir>] <key> [<key>…]
 // Output: one JSON object on stdout keyed by requested name — or, with
 // --values, one plain value per line in request order (scalar mode for shell
 // captures; empty line for unset-no-default and error entries; not valid for
-// model-profiles). --values also writes one stderr warning per requested key
+// model-profiles or risk-path-globs). --values also writes one stderr warning per requested key
 // holding a present-but-invalid value (`resolve-policy: warning: {key} has
 // invalid value "{raw}" — using default "{value}"`); stdout and the exit code
 // are unchanged, and JSON and --all modes write no warning. --all emits
@@ -22,8 +29,26 @@
 // (exit 0). Invocation failures — zero keys, a --run dir that does not exist,
 // or a --run path that resolves inside a checkout other than the main
 // checkout (#1065's anchored-or-outside guard) — exit 1 with a stderr message
-// and no JSON. Repo root comes from `git rev-parse --show-toplevel` at the
-// process cwd (cwd itself outside a git repo) — never from CLAUDE_PLUGIN_ROOT
+// and no JSON. A degraded forge detection (#4578 — `gh` timed out, then failed
+// its retry, so the 'local-merge' answer is a guess rather than a detection)
+// writes one stderr line per affected key, in every output mode (stdout and the
+// exit code unchanged): `resolve-policy: degraded — {key}: {reason text};
+// resolved local-merge — pin integration-model in .claude-tweaks/policy.yml or
+// raise gh-timeout-ms`. It applies to integration-model and to a merge-
+// verification request that runs its own detection (a merge-verification that
+// reuses a degraded integration-model from the same call carries the field
+// only — no second line); JSON entries gain the
+// additive `degraded: 'timeout' | 'timeout-then-exit'` reason code, and a
+// non-degraded entry keeps exactly { value, source }. merge-verification's
+// own detection honours a valid --run config.yml integration-model pin first.
+// A linked worktree whose own checkout has no policy.yml (a project that
+// gitignores .claude-tweaks/) reads the main checkout's file instead (#4492) and
+// writes one first stderr line, in every output mode (stdout and the exit code
+// unchanged): `resolve-policy: note — {root} has no .claude-tweaks/policy.yml;
+// read the main checkout's {policyPath}`.
+// Repo root comes from `git rev-parse --show-toplevel` at the
+// injected cwd (`deps.cwd()`, the process cwd when run as a script; that cwd
+// itself outside a git repo) — never from CLAUDE_PLUGIN_ROOT
 // (observed unset in Bash tool environments, #170) and never from a
 // positional path argument.
 // --mcp-reachable asserts the caller has already confirmed GitHub
@@ -32,21 +57,41 @@
 // succeeded; it forwards into detectIntegrationModel's mcpReachable override
 // for the integration-model key, and (via resolveIntegrationModel) for
 // merge-verification too whenever that key is derived in the same call.
+// The factory layer (#6006) — CLAUDE_TWEAKS_FACTORY_POLICY over ~/.claude-tweaks/factory-policy.yml,
+// resolving below policy.yml — writes stderr lines in every output mode (stdout and the exit
+// code unchanged; a factory-supplied entry only carries `source: 'factory'`), in this order after
+// the main-checkout note: the factory reader's warnings (an unreadable file, a variable block that
+// did not parse); one `resolve-policy: warning: {key} is not settable from the factory layer —
+// ignored` per requested refused key the resolver skipped; one `resolve-policy: warning: {key} has a
+// malformed block in the factory layer — ignored, using the repository's rows` per requested block key
+// whose factory block did not parse beside a usable repository block; and, when at least one requested key
+// resolved from it, `resolve-policy: note — factory layer ({origin}) supplied {keys}`. The origin
+// never appears on stdout. Under --values, an invalid value from the factory layer gets the
+// invalid-value warning with ` in the factory layer` after the quoted value.
 'use strict';
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { execFileSync } = require('child_process');
-const { POLICY_KEYS, resolvePolicyConfig } = require('./lib/policy-schema');
+const { POLICY_KEYS, resolvePolicyConfig, formatForgeDegrade } = require('./lib/policy-schema');
+const { FACTORY_REFUSED_KEYS } = require('./lib/policy-factory');
 const { computeDerivedDefaults } = require('./lib/policy-derived-defaults');
-const { parsePolicyModelConfig } = require('./lib/model-profiles/policy-fragment');
+const { pickInjected } = require('./lib/repo-resolve');
+const { modelProfilesEntry } = require('./lib/model-profiles/policy-fragment');
 const { anchoredOrOutsideMessage } = require('./lib/run-dir-guard');
+const sharedPrimitives = require('./lib/shared-primitives');
 
-function fail(msg) {
-  process.stderr.write(`resolve-policy: ${msg}\n`);
-  process.exitCode = 1;
-}
+const EXIT_OK = 0;
+const EXIT_INVOCATION = 1;
 
-function gitRoot(args) {
+// The nested-block keys: no scalar form under --values.
+const BLOCK_KEYS = POLICY_KEYS.filter((row) => row.type === 'map').map((row) => row.key);
+
+function gitRoot(args, { cwd, env, timeout } = {}) {
   return execFileSync('git', args, {
+    cwd,
+    env,
+    ...(timeout === undefined ? {} : { timeout }),
     stdio: ['ignore', 'pipe', 'ignore'],
     encoding: 'utf8',
     windowsHide: true,
@@ -61,8 +106,171 @@ function readFileSafe(filePath) {
   }
 }
 
-function main(argv) {
-  const args = argv.slice(2);
+// The core: resolves `keys` against policy.yml, the optional run config and forge
+// detection, and returns { code: 0, result, invalidRaw, degrades } or
+// { code: 1, message } (message is the text after `resolve-policy: `). It prints
+// nothing. deps: cwd(), env, git(args, { cwd, env }), readFile(path), and optional
+// stderr(text), homeDir() and factoryReadFile(path) (a throwing reader) that the library
+// lookups receive. The factory file is read through factoryReadFile, never readFile.
+function resolvePolicy({ keys, runDir = null, mcpReachable = false }, deps) {
+  const cwd = deps.cwd();
+  // #1065: anchored-or-outside guard — runs before the existence check and any
+  // config.yml read. The raw runDir string is kept for the "does not exist"
+  // message, which echoes the value as given; the reject message here names the
+  // realpath-resolved candidate instead.
+  let runDirPath = null;
+  if (runDir !== null) {
+    const message = anchoredOrOutsideMessage(runDir, cwd, '--run');
+    if (message) return { code: EXIT_INVOCATION, message };
+    runDirPath = path.resolve(cwd, runDir);
+    let isDirectory = false;
+    try {
+      isDirectory = fs.statSync(runDirPath).isDirectory();
+    } catch {}
+    if (!isDirectory) {
+      // A file path (e.g. the config.yml itself) must fail loud here, not
+      // degrade to a silent no-overlay with policy-source answers.
+      return { code: EXIT_INVOCATION, message: `--run dir does not exist or is not a directory: ${runDir}` };
+    }
+  }
+
+  // A run dir without a config.yml is not an error — the Manifesto may not
+  // have written one yet; readFileSafe's null simply means no overlay.
+  // #4141: the rejected raw value rides a side channel, so the entry shape
+  // stays exactly as the JSON output documents it.
+  // invalidFrom names the source each rejected raw came from (#6006), so the warning can name the factory layer.
+  const invalidRaw = new Map();
+  const invalidFrom = new Map();
+  // The resolver decides which keys the factory layer may not set; the CLI only reports that decision.
+  const refusedReported = new Set();
+  const onInvalid = (key, raw, sourceName) => {
+    invalidRaw.set(key, raw);
+    invalidFrom.set(key, sourceName);
+    if (sourceName === 'factory' && FACTORY_REFUSED_KEYS.includes(key)) refusedReported.add(key);
+  };
+  const { root, policyRaw, runConfigRaw, result, policyPath, policySource, factoryRaw, factoryOrigin, factoryWarnings } = resolvePolicyConfig({
+    git: (args) => deps.git(args, { cwd, env: deps.env }),
+    readFile: deps.readFile,
+    runDir: runDirPath,
+    keys,
+    onInvalid,
+    cwd,
+    env: deps.env,
+    homeDir: deps.homeDir,
+    ...(deps.factoryReadFile ? { factoryReadFile: deps.factoryReadFile } : {}),
+  });
+
+  // integration-model / merge-verification have no static schema default
+  // (skills/_shared/integration-model.md; #559) — an absent value (never a
+  // typo'd/invalid one; `invalid: true` stays visible as an error, never
+  // silently overwritten) is computed via forge detection / the four-branch
+  // derivation ladder instead of a literal, with merge-verification reusing
+  // this call's own integration-model result to avoid running forge
+  // detection twice per invocation. Extracted into bin/lib/policy-derived-
+  // defaults.js (#604) so the dedup is unit-testable via an injectable deps
+  // map — see that module for the full block. mcpReachable forwards through
+  // so both keys' forge detection can skip the `gh` probe within this call
+  // (--mcp-reachable, #1421). #4578: runConfigRaw lets merge-verification's own
+  // detection honour the run's integration-model pin first, and the degrade
+  // collector (a Map, so a key requested twice reports once) carries the full
+  // degrade object the entry's bare `degraded` reason code cannot.
+  const degrades = new Map();
+  computeDerivedDefaults(result, keys, root, {
+    mcpReachable,
+    runConfigRaw,
+    onDegrade: (key, degrade) => degrades.set(key, degrade),
+    ...pickInjected(deps),
+  });
+
+  // model-profiles is a block-style key — policy-only (the --run
+  // overlay never applies; run configs hold flat lever lines, not nested
+  // blocks; risk-path-globs is policy-only the same way). Overwrite the flat
+  // resolver's placeholder entry via the dedicated fragment reader: only the
+  // block is parsed (#5917), so a malformed sibling key never marks it invalid.
+  if (keys.includes('model-profiles')) {
+    result['model-profiles'] = modelProfilesEntry(policyRaw, factoryRaw, onInvalid);
+  }
+
+  // Requested keys the resolver ignored because a factory may not set them: say so once each.
+  const factoryRefused = FACTORY_REFUSED_KEYS.filter((key) => refusedReported.has(key));
+
+  return { code: EXIT_OK, result, invalidRaw, invalidFrom, degrades, root, policySource, policyPath, factoryOrigin, factoryWarnings, factoryRefused };
+}
+
+// The --values rule: an {error} entry and a null/undefined value (no-default key
+// unset) both read as an empty string — mirroring the empty string the retired
+// grep-pipeline idiom produced for an absent key.
+function scalarValue(entry) {
+  if (!entry || entry.error !== undefined || entry.value === null || entry.value === undefined) return '';
+  return String(entry.value);
+}
+
+// The stderr lines run writes for a successful core call, newline-terminated:
+// the factory lines and the degraded-forge lines in every mode, then (values only) one
+// invalid-value warning per requested key. out is { keys, result, invalidRaw, invalidFrom, degrades,
+// root, policySource, policyPath, factoryOrigin, factoryWarnings, factoryRefused }. When the
+// policy was read from the main checkout (#4492), the note line comes first, in every mode;
+// then the factory reader's warnings, the refused-key warnings and the factory note (#6006).
+// An invalid value the factory layer supplied says so (` in the factory layer` after the value);
+// every other source's line is unchanged.
+function warningLines({ keys, result, invalidRaw, invalidFrom = new Map(), degrades, root, policySource, policyPath, factoryOrigin = null, factoryWarnings = [], factoryRefused = [] }, { values }) {
+  const lines = [];
+  if (policySource === 'main-checkout') {
+    lines.push(`resolve-policy: note — ${root} has no .claude-tweaks/policy.yml; read the main checkout's ${policyPath}\n`);
+  }
+  lines.push(...factoryWarnings);
+  for (const key of factoryRefused) lines.push(`resolve-policy: warning: ${key} is not settable from the factory layer — ignored\n`);
+  // A malformed factory block beside a usable repository block changes nothing in the entry, so the entry carries no
+  // `invalid`; the key still gets one line.
+  for (const key of new Set(keys)) {
+    if (!BLOCK_KEYS.includes(key) || invalidFrom.get(key) !== 'factory' || (result[key] && result[key].invalid)) continue;
+    lines.push(`resolve-policy: warning: ${key} has a malformed block in the factory layer — ignored, using the repository's rows\n`);
+  }
+  const supplied = [...new Set(keys)].filter((key) => result[key] && result[key].source === 'factory');
+  if (supplied.length > 0) lines.push(`resolve-policy: note — factory layer (${factoryOrigin}) supplied ${supplied.join(', ')}\n`);
+  // One stderr line per degraded key, in every output mode; stdout is unchanged.
+  for (const key of ['integration-model', 'merge-verification']) {
+    if (!degrades.has(key)) continue;
+    lines.push(`resolve-policy: degraded — ${key}: ${formatForgeDegrade(degrades.get(key))}; resolved local-merge — pin integration-model in .claude-tweaks/policy.yml or raise gh-timeout-ms\n`);
+  }
+  if (values) {
+    // #4141: a rejected value still prints its schema default on stdout, so
+    // name each rejected key on stderr — the caller otherwise cannot tell a
+    // typo from an intentional default. Every `invalid` entry reaching here
+    // came through resolvePolicyKeys's invalid branch, so its raw value is
+    // recorded (the block keys are rejected before the core in --values mode).
+    for (const key of keys) {
+      const entry = result[key];
+      if (!entry || !entry.invalid) continue;
+      const shownDefault = entry.value ?? '(none)';
+      const where = invalidFrom.get(key) === 'factory' ? ' in the factory layer' : '';
+      lines.push(`resolve-policy: warning: ${key} has invalid value "${invalidRaw.get(key)}"${where} — using default "${shownDefault}"\n`);
+    }
+  }
+  return lines;
+}
+
+// Deps for an in-process caller of the core: the given cwd and env, a git bounded
+// at gitTimeoutMs (a hung git then falls back to cwd as the repo root instead of
+// hanging the caller), and no stdout — the core never prints. The default bound
+// is resolved lazily, once per process, from the process's own env and cwd (GIT_TIMEOUT_MS is a memoized getter).
+function callerDeps({ cwd, env = process.env, homeDir, stderr, gitTimeoutMs = sharedPrimitives.GIT_TIMEOUT_MS }) {
+  return {
+    cwd: () => cwd,
+    env,
+    git: (args, opts) => gitRoot(args, { ...opts, timeout: gitTimeoutMs }),
+    readFile: readFileSafe,
+    ...(homeDir === undefined ? {} : { homeDir }),
+    ...(stderr === undefined ? {} : { stderr }),
+  };
+}
+
+function run(argv, deps = realDeps) {
+  const fail = (msg) => {
+    deps.stderr(`resolve-policy: ${msg}\n`);
+    return EXIT_INVOCATION;
+  };
+  const args = [...argv];
   let runDir = null;
   let valuesMode = false;
   let allMode = false;
@@ -75,10 +283,9 @@ function main(argv) {
       // A blank or whitespace-only value (the shape an unset
       // $PIPELINE_RUN_DIR expands to in shell) is rejected the same as a
       // genuinely missing one — it must never reach the --run anchoring
-      // check below as a blank string (#1138).
+      // check as a blank string (#1138).
       if (value === undefined || value.startsWith('--') || value.trim() === '') {
-        fail('--run requires a value');
-        return;
+        return fail('--run requires a value');
       }
       runDir = value;
     } else if (arg === '--values') {
@@ -97,115 +304,32 @@ function main(argv) {
     }
   }
   if (allMode && valuesMode) {
-    fail('--all and --values are mutually exclusive — --all always emits the JSON object');
-    return;
+    return fail('--all and --values are mutually exclusive — --all always emits the JSON object');
   }
   if (allMode && keys.length > 0) {
-    fail('--all takes no key arguments — it already emits every schema key');
-    return;
+    return fail('--all takes no key arguments — it already emits every schema key');
   }
   if (allMode) keys.push(...POLICY_KEYS.map((row) => row.key));
   if (keys.length === 0) {
-    fail('usage: resolve-policy.js [--values | --all] [--mcp-reachable] [--run <dir>] <key> [<key>…]');
-    return;
+    return fail('usage: resolve-policy.js [--values | --all] [--mcp-reachable] [--run <dir>] <key> [<key>…]');
   }
-  if (valuesMode && keys.includes('model-profiles')) {
-    // The one nested-block key has no scalar form.
-    fail('--values does not support model-profiles (no scalar form) — use the JSON output');
-    return;
-  }
-  // #1065: anchored-or-outside guard — runs after the flag-conflict checks
-  // (their precedence is unchanged) and before the existence check and any
-  // config.yml read. The raw runDir string is kept downstream, so the
-  // pre-existing "does not exist" message echoes the value as given; the
-  // reject message here names the realpath-resolved candidate instead.
-  if (runDir !== null) {
-    const message = anchoredOrOutsideMessage(runDir, process.cwd(), '--run');
-    if (message) { fail(message); return; }
-  }
-  if (runDir !== null) {
-    let isDirectory = false;
-    try {
-      isDirectory = fs.statSync(runDir).isDirectory();
-    } catch {}
-    if (!isDirectory) {
-      // A file path (e.g. the config.yml itself) must fail loud here, not
-      // degrade to a silent no-overlay with policy-source answers.
-      fail(`--run dir does not exist or is not a directory: ${runDir}`);
-      return;
-    }
+  const blockKey = BLOCK_KEYS.find((key) => keys.includes(key));
+  if (valuesMode && blockKey) {
+    // A nested-block key has no scalar form.
+    return fail(`--values does not support ${blockKey} (no scalar form) — use the JSON output`);
   }
 
-  // A run dir without a config.yml is not an error — the Manifesto may not
-  // have written one yet; readFileSafe's null simply means no overlay.
-  // #4141: the rejected raw value rides a side channel, so the entry shape
-  // stays exactly as the JSON output documents it.
-  const invalidRaw = new Map();
-  const { root, policyRaw, result } = resolvePolicyConfig({
-    git: gitRoot,
-    readFile: readFileSafe,
-    runDir,
-    keys,
-    onInvalid: (key, raw) => invalidRaw.set(key, raw),
-  });
+  const out = resolvePolicy({ keys, runDir, mcpReachable }, deps);
+  if (out.code !== EXIT_OK) return fail(out.message);
+  const { result } = out;
 
-  // integration-model / merge-verification have no static schema default
-  // (skills/_shared/integration-model.md; #559) — an absent value (never a
-  // typo'd/invalid one; `invalid: true` stays visible as an error, never
-  // silently overwritten) is computed via forge detection / the four-branch
-  // derivation ladder instead of a literal, with merge-verification reusing
-  // this call's own integration-model result to avoid running forge
-  // detection twice per invocation. Extracted into bin/lib/policy-derived-
-  // defaults.js (#604) so the dedup is unit-testable via an injectable deps
-  // map — see that module for the full block. mcpReachable forwards through
-  // so both keys' forge detection can skip the `gh` probe within this call
-  // (--mcp-reachable, #1421).
-  computeDerivedDefaults(result, keys, root, { mcpReachable });
-
-  // model-profiles is the one block-style key — policy-only (the --run
-  // overlay never applies; run configs hold flat lever lines, not nested
-  // blocks). Overwrite the flat resolver's placeholder entry via the
-  // dedicated fragment reader.
-  if (keys.includes('model-profiles')) {
-    try {
-      const parsed = parsePolicyModelConfig(policyRaw);
-      result['model-profiles'] = Object.prototype.hasOwnProperty.call(parsed, 'model-profiles')
-        ? { value: parsed['model-profiles'], source: 'policy' }
-        : { value: null, source: 'default' };
-    } catch {
-      // Any fragment-reader throw lands here — a malformed block, but also a
-      // malformed sibling model key (e.g. frontier-run-cap), since the reader
-      // parses all four model keys and its throws aren't sub-classified. Same
-      // present-but-rejected carve-out as flat keys; the key has no schema
-      // default — null is the documented absent shape.
-      result['model-profiles'] = { value: null, source: 'default', invalid: true };
-    }
-  }
+  for (const line of warningLines({ keys, ...out }, { values: valuesMode })) deps.stderr(line);
 
   if (valuesMode) {
-    // #4141: a rejected value still prints its schema default on stdout, so
-    // name each rejected key on stderr — the caller otherwise cannot tell a
-    // typo from an intentional default. Every `invalid` entry reaching here
-    // came through resolvePolicyKeys's invalid branch, so its raw value is
-    // recorded (model-profiles, the only key set elsewhere, is rejected above
-    // in --values mode).
-    for (const key of keys) {
-      const entry = result[key];
-      if (!entry || !entry.invalid) continue;
-      const shownDefault = entry.value ?? '(none)';
-      process.stderr.write(`resolve-policy: warning: ${key} has invalid value "${invalidRaw.get(key)}" — using default "${shownDefault}"\n`);
-    }
     // Scalar mode for shell-variable capture at prose read sites: one value
-    // per line, request order. An {error} entry and a null value (no-default
-    // key unset) both print an empty line — mirroring the empty string the
-    // retired grep-pipeline idiom produced for an absent key.
-    const lines = keys.map((key) => {
-      const entry = result[key];
-      if (!entry || entry.error !== undefined || entry.value === null || entry.value === undefined) return '';
-      return String(entry.value);
-    });
-    process.stdout.write(`${lines.join('\n')}\n`);
-    return;
+    // per line, request order.
+    deps.stdout(`${keys.map((key) => scalarValue(result[key])).join('\n')}\n`);
+    return EXIT_OK;
   }
 
   if (allMode) {
@@ -220,11 +344,24 @@ function main(argv) {
         default: row.default ?? null,
       };
     }
-    process.stdout.write(`${JSON.stringify(decorated)}\n`);
-    return;
+    deps.stdout(`${JSON.stringify(decorated)}\n`);
+    return EXIT_OK;
   }
 
-  process.stdout.write(`${JSON.stringify(result)}\n`);
+  deps.stdout(`${JSON.stringify(result)}\n`);
+  return EXIT_OK;
 }
 
-main(process.argv);
+const realDeps = {
+  cwd: () => process.cwd(),
+  env: process.env,
+  homeDir: () => os.homedir(),
+  git: gitRoot,
+  readFile: readFileSafe,
+  stdout: (s) => process.stdout.write(s),
+  stderr: (s) => process.stderr.write(s),
+};
+
+module.exports = { resolvePolicy, run, realDeps, EXIT_OK, EXIT_INVOCATION, scalarValue, warningLines, callerDeps };
+
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

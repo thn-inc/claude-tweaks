@@ -1,0 +1,506 @@
+'use strict';
+// Worker roles for the driver's headless `claude -p` launcher: the per-role tool
+// list, the argument list the launcher composes, and the generated settings for
+// the one role that may run commands (the implementer). Pure data and builders;
+// nothing here spawns a process or touches the file system.
+//
+// What the rights rest on. These facts were probed on 2026-11-12 with Claude Code
+// CLI 2.1.322 on macOS (darwin), under a subscription login, launched from a
+// process with no TTY. Linux and Windows were not probed.
+//
+// - Rights leakage and the flag it changed. Under `--setting-sources project`, an
+//   allow rule in the working directory's own `.claude/settings.json` let a command
+//   that was absent from the generated allow list run, once that directory sat under
+//   a checkout the person had already trusted. In an untrusted temporary directory
+//   the same rule was ignored. The Read tool also read a file outside the working
+//   directory. Under `--restricted` both were refused, and the generated
+//   `--settings` file still applied. So every role launches with `--restricted`, and
+//   the implementer uses it in place of `--setting-sources project`. The probe that
+//   forced the change was the project-file allow rule.
+// - Unprobed residual. The user-level leakage probe (a broad allow rule in a scratch
+//   home directory) was not run, because a scratch configuration directory carries
+//   no subscription login. `--restricted` ignores user, project and local settings
+//   files by its documented contract, and that contract is what is relied on.
+// - Sandbox. With `sandbox.enabled: true`, `allowUnsandboxedCommands: false`,
+//   `network.allowedDomains: []` and `network.strictAllowlist: true`, a test file the
+//   worker ran with `node --test` could reach none of these: `curl` to an HTTPS host
+//   (exit 56), `gh api` ("host is not on the allow list"), `git ls-remote` over HTTPS
+//   (403 from the proxy), `git push` to a bare repository outside the working
+//   directory (rejected), a file write outside the working directory (`EPERM`). With
+//   the sandbox off all five succeeded. Writes are not confined to the working
+//   directory, though: a write to a directory under the system temporary directory
+//   failed, but a write under the CLI's own per-user scratch root in `/tmp` succeeded,
+//   so code the worker runs can write there. That is a stated residual.
+// - `sandbox.autoAllowBashIfSandboxed` defaults to true, and then lets any sandboxed
+//   Bash command run without an allow rule (`touch` ran). With it set to false,
+//   `touch` was denied while `node --test`, `git status --short` and
+//   `git log --oneline -1` ran. This module therefore sets it to false.
+// - The implementer's test rule (#5915). It is now the project's declared targeted
+//   runner (`impact.command` cut before ` {files}`), or none: `implementerSettings`
+//   adds `Bash(<testCommand> *)` and `toolchainReadPaths` derives read paths only when
+//   a `testCommand` is given, and an absent one (`undefined`) means no test rule and
+//   no toolchain read path. On this repository `Bash(node tools/run-tests.js --files-from *)`
+//   admits a strict subset of what `Bash(npm test *)` admitted (`npm test -- <args>`
+//   passed the same arguments to `tools/run-tests.js`), so it widens no right; its
+//   write/exec flags (`--test-reporter`, `--test-reporter-destination`, listed test
+//   files) run inside the same sandbox as before. Probed on 2026-11-19 with Claude
+//   Code CLI 2.1.325 on macOS (darwin), under a subscription login, launched from a
+//   process with no TTY, through the AC7 live smoke test in
+//   `tests/bin-lib/driver/worker.test.js`: with `testCommand` set to
+//   `node tools/run-tests.js --files-from`, the worker ran that command on a list file
+//   and the test file it named ran on the `node` that `PATH` names, while its read of a
+//   home-directory canary failed with `EPERM`. With `testCommand: 'npm test'` and the
+//   same prompt, the same command was denied and nothing ran. The no-`testCommand`
+//   launch is still unprobed live; the #5915 AC5 driver run is its planned probe. For another project the rule is that project's own
+//   declared `impact.command` runner, contained by the same sandbox and read block, with
+//   that runner's write and exec flags unprobed: a stated residual the #5915 spec accepts.
+// - `sandbox.failIfUnavailable: true` comes from the documentation and was not
+//   exercised, because the sandbox was available on the probe host. A launch the CLI
+//   refuses because the sandbox is unavailable is expected to surface as
+//   `launch-error`; that was not probed.
+//
+// The test-command allow rule, the git rules and the sandbox block exist only on the
+// platforms where the sandbox was probed (SANDBOX_PROBED_PLATFORMS). Elsewhere the
+// worker has no Bash at all: its tool list is Read, Write and Edit, and `toolsFor`
+// drops Bash from `--tools` as well. The reason is a probe on the same CLI and date,
+// on macOS, in a throwaway repository, launched with no TTY, through this module's
+// own launcher. An allowed `git log`, `git diff` or `git show` writes a file of the
+// worker's choosing through `--output=<path>`. With no sandbox (the settings
+// generated for a platform that is not sandbox-probed) no command was denied, and
+// every one of six writes landed: a file in the working directory, one under
+// `.git/info/`, one in a directory outside the working directory, and `.git/config`
+// itself was overwritten. An allowed `git status` would then run a program named in
+// that configuration (`core.fsmonitor`) with the user's full rights and network.
+// With the sandbox on (the settings generated for `darwin`), the same commands were
+// not denied by the permission rules but ran inside the sandbox: the writes into the
+// working directory and under `.git/info/` succeeded; the writes to `.git/config`
+// and to `.git/hooks/pre-commit` failed with `fatal: could not open '<path>' for
+// writing: Operation not permitted`; a write to a directory under the system
+// temporary directory failed the same way; a write under the CLI's own per-user
+// scratch root in `/tmp` succeeded. Wherever the git rules exist, `git diff
+// --no-index` also reads files outside the working directory, as far as the read
+// block described below allows. Off the probed platforms the worker can neither list
+// nor search files, so its prompt must name the files it is to work on.
+//
+// Grep and Glob were probed for the implementer on Claude Code CLI 2.1.322, on a macOS
+// (darwin) host, on 2026-11-12, under a claude.ai subscription (max) login, launched
+// with no TTY through this module's own launcher. The settings were those
+// `implementerSettings` generates for `linux` (`defaultMode: dontAsk`, allow `Read`,
+// `Edit`, `Write`, the deny list, no sandbox block), with `--restricted`, `--safe-mode`
+// and `Grep,Glob` added to `--tools`. In variant A `Grep` and `Glob` were also
+// appended to the allow list; in variant B they were not; B behaved the same as A.
+// In both variants both tools saw a file inside the working directory, and every
+// outside path argument or absolute pattern tried was refused with "<path> is outside
+// <cwd>; --restricted confines the file tools to the working directory." and
+// recorded in the result's permission denials: a path argument to a sibling
+// directory, an absolute Glob pattern there, and a non-temporary directory (this
+// checkout's own `plugin/bin/lib/driver`). Grep given the symlink to the sibling
+// directory as its path was refused too, with "resolves through a symlink to
+// <target>, which is outside <cwd>". Grep recursing from the working directory, and
+// Glob with `link/*.txt` and `**/*`, were not refused but returned nothing from the
+// symlink's target; the cause was not isolated, since it may be the search tools'
+// default of not following symbolic links rather than `--restricted`.
+// Not probed: `../` relative paths, Grep's `glob` and `type` parameters, a symlinked
+// file (as opposed to a directory), a hard link, and Linux and Windows hosts. Because
+// only a darwin host was probed, Grep and Glob stay off the implementer on Linux and
+// Windows; the tool list is unchanged.
+//
+// Under `--restricted`, with `defaultMode: dontAsk` and `--permission-prompts none`,
+// the worker's Write and Edit tools into `.git` were denied in a probe (Claude Code CLI
+// 2.1.322, macOS, 2026-11-12): an Edit of `.git/config`, a Write of a new file under
+// `.git/info/`, and, in a linked worktree, a Write over the one-line `.git` file,
+// although Read, Edit and Write are on the allow list. Each showed up as a permission
+// denial in the result. This was probed on macOS only and is not proven on other
+// platforms.
+//
+// The test command is project configuration supplied by the driver, never taken from
+// a record or a worker. The refusals in `assertTestCommand` catch obvious mistakes
+// only and are not a closed check: forms such as `node -pe` or `sh -xc` still pass.
+// Any test command executes code by design, which is why the rule exists only on the
+// platforms where the sandbox was probed.
+//
+// The residual, stated plainly: the driver's own test step runs worker-written code
+// with the driver's rights, as every other lane does today. Where Bash exists (the
+// probed platforms), the sandbox confines writes to the working directory and the
+// CLI's own scratch root and denies the network, and the read block below confines
+// the reads of code the worker runs to the working directory, the derived toolchain
+// roots and the CLI's own carve-outs (in the probes: `.gitconfig` with the `allowRead`
+// entry; the system temporary directory and the CLI's per-user scratch root under the
+// block alone). `git diff --no-index` reaches outside the working directory only as
+// far as that set does. With the network denied, the worker's own result text is the
+// remaining way out for what it read from that set. This is a stated residual. The
+// derived set has one of its own: when the first word or the shebang interpreter is a
+// real file directly in `<prefix>/bin`, the whole prefix is re-opened, e.g. `~/.cargo`
+// (which holds `credentials.toml`), `~/.local` (`share/`, `state/`), or `/usr/local`
+// under Intel Homebrew (`etc/`, `var/`). The driver's test command was `npm test` before
+// #5915, and it derived narrow roots under nvm, Homebrew, fnm and the official installer:
+// under nvm on the probe host it derived the one root `~/.nvm/versions/node/v22.23.2`,
+// since npm's package directory lies inside it and is dropped as covered. This
+// repository's declared runner now starts with `node`, which the same derivation maps to
+// that same Node root (derived, not probed). Narrowing the rule is tracked in #5320.
+//
+// The read block, and what it rests on. Probed on Claude Code CLI 2.1.322, macOS,
+// 2026-11-12, under a subscription login with no TTY, using a test file the worker
+// ran through the allowed test command with the sandbox on. With the settings as
+// generated before the block, that code read a canary file under the home directory,
+// listed the home directory, opened `.zshrc` and `.npmrc` there and listed `~/.ssh`;
+// the worker's own Read tool was already refused outside the working directory. It
+// also read a file in a directory under the system temporary directory and a file
+// under the CLI's per-user scratch root, and wrote under that scratch root, which is
+// also what the sandbox sets as the temporary directory for the commands it runs.
+// With `permissions.blockReadsOutsideWorkingDirectories: true` and
+// `sandbox.filesystem.allowRead` set to the Node toolchain's root, the canary read,
+// the home listing, `.zshrc`, `.npmrc` and the `~/.ssh` listing all failed with
+// EPERM; a `node` of the same version as the toolchain's still ran and the toolchain
+// stayed unwritable; `.gitconfig` stayed openable, apparently a carve-out in the CLI
+// so that `git` works. With the block alone and no `allowRead` entry (the earlier
+// #5217 probe, same CLI, host and date), the files under the system temporary
+// directory and the scratch root stayed readable, and a Node installation under the
+// home directory was no longer reachable, so a different `node` ran. So the block is
+// on for the implementer wherever the sandbox was probed, and the readable set is
+// derived at launch (`toolchainReadPaths`): the test command's toolchain root (the
+// directory above `bin/` of the binary's real path, else the binary's own directory)
+// plus the root of the interpreter its first word's shebang names, one level deep.
+// The shebang half exists because the driver's test command was `npm test` before #5915
+// (a declared runner may start with a script too): npm's
+// real path, `…/lib/node_modules/npm/bin/npm-cli.js`, starts `#!/usr/bin/env node`,
+// and that `node` (`…/bin/node`) lies outside npm's own root. An `env` shebang is
+// parsed fail-safe: only known options are skipped, and an unknown option, `-P` or
+// bundled flags yield no interpreter root. A root that would be `/`, the home directory
+// or an ancestor of it falls back to the binary's own directory, else to nothing, since
+// re-opening home would undo the block; home is both `HOME` and the account's passwd
+// home, so an unset or wrong `HOME` does not re-open it. The command and the
+// interpreter count only when their real path is an executable regular file, and a
+// root inside another derived root is dropped. The readable paths go through
+// `sandbox.filesystem.allowRead`, never `additionalDirectories` or `--add-dir`: the
+// CLI documentation says those directories also become writable by sandboxed
+// commands. The blocked `~/.npmrc` does not stop the test command: probed 2026-11-13
+// on the same host, `npm test` ran with an unreadable user config file (exit 0).
+// The settings this module generated, with the readable set derived at launch, were
+// run live on 2026-11-13 (their `allowRead` then also listed npm's package directory,
+// since dropped as covered by the Node root that holds it, so the readable set is the
+// same) with Claude Code CLI 2.1.322 on macOS, under a claude.ai
+// subscription (max) login, with the worker's standard streams piped (no TTY),
+// through the launcher's `AC7` live smoke test: the worker ran `npm test`, the test
+// file's read of a canary under the home directory failed with `EPERM`, and the
+// `node` it ran was the toolchain's own (its `process.execPath` resolved to the real
+// path of the `node` on PATH, v22.23.2).
+//
+// In the #5217 probe (Claude Code CLI 2.1.322, macOS, 2026-11-12), setting
+// `CLAUDE_CODE_TMPDIR` in the worker's environment did not move the sandbox's
+// writable temporary root.
+//
+// Permission denials are data for the driver's event line, never a reason to widen a
+// list: there is no path here that composes wider rights after a denial.
+
+const path = require('node:path');
+const { isAncestorOrSelf } = require('../path-guard');
+const { EFFORT_SCALE } = require('../model-profiles/profiles');
+
+function deepFreeze(value) {
+  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const key of Object.keys(value)) deepFreeze(value[key]);
+  }
+  return value;
+}
+
+// Every property is required, so `required` is the property names in order. (Written
+// out, the list would start with 'status', which tests/git-status-optional-locks.test.js
+// reads as a git argument list.)
+const RESULT_PROPERTIES = {
+  status: { type: 'string', enum: ['done', 'cannot-complete'] },
+  title: { type: 'string' },
+  summary: { type: 'string' },
+};
+const RESULT_SCHEMA = deepFreeze({
+  type: 'object',
+  properties: RESULT_PROPERTIES,
+  required: Object.keys(RESULT_PROPERTIES),
+  additionalProperties: false,
+});
+
+// The reviewer's result: one array, each element checked one by one in review.js (the
+// launcher's schema subset has no `items`). `required` is derived for the same reason.
+const REVIEW_PROPERTIES = {
+  findings: { type: 'array' },
+};
+const REVIEW_RESULT_SCHEMA = deepFreeze({
+  type: 'object',
+  properties: REVIEW_PROPERTIES,
+  required: Object.keys(REVIEW_PROPERTIES),
+  additionalProperties: false,
+});
+
+// The merge-check judgment worker's result: a verdict and its reason. Every property is
+// required, so `required` is derived from the names.
+const MERGE_CHECK_PROPERTIES = {
+  verdict: { type: 'string', enum: ['auto-merge', 'needs-human'] },
+  rationale: { type: 'string' },
+};
+const MERGE_CHECK_RESULT_SCHEMA = deepFreeze({
+  type: 'object',
+  properties: MERGE_CHECK_PROPERTIES,
+  required: Object.keys(MERGE_CHECK_PROPERTIES),
+  additionalProperties: false,
+});
+
+// The acceptance-brief worker's result. The launcher's schema subset accepts only
+// object|string|array and has no `items`, so the shapes inside each value are checked in
+// acceptance.js; a route that needs no observation plan, claims or parent brief has the
+// worker return {} or [] there.
+const ACCEPTANCE_PROPERTIES = {
+  tryIt: { type: 'array' },
+  observationPlan: { type: 'object' },
+  claims: { type: 'array' },
+  parentBrief: { type: 'object' },
+};
+const ACCEPTANCE_RESULT_SCHEMA = deepFreeze({
+  type: 'object',
+  properties: ACCEPTANCE_PROPERTIES,
+  required: Object.keys(ACCEPTANCE_PROPERTIES),
+  additionalProperties: false,
+});
+
+const SANDBOX_PROBED_PLATFORMS = deepFreeze(['darwin']);
+
+const ROLES = deepFreeze({
+  implementer: { tools: ['Read', 'Write', 'Edit', 'Bash'], settings: true },
+  reviewer: { tools: ['Read', 'Grep', 'Glob'], settings: false },
+  explorer: { tools: ['Read', 'Grep', 'Glob'], settings: false },
+  'merge-check': { tools: ['Read', 'Grep', 'Glob'], settings: false },
+  acceptance: { tools: ['Read', 'Grep', 'Glob'], settings: false },
+});
+
+// The work profile each role launches on unless policy `express-driver-models` overrides
+// it (#5917). That policy may set only the POLICY_DRIVER_ROLES; `explorer` keeps its
+// code-only row. `launch.js` resolves the profile through `profiles.js`. A new role in
+// ROLES needs a row here (AC6.1).
+const DRIVER_ROLE_PROFILES = deepFreeze({
+  implementer: 'standard',
+  reviewer: 'capable',
+  explorer: 'standard',
+  'merge-check': 'standard',
+  acceptance: 'standard',
+});
+const POLICY_DRIVER_ROLES = deepFreeze(['implementer', 'reviewer', 'merge-check', 'acceptance']);
+
+function specFor(role) {
+  if (!Object.prototype.hasOwnProperty.call(ROLES, role)) throw new Error('unknown role: ' + String(role));
+  return ROLES[role];
+}
+
+const TEST_COMMAND_PATTERN = /^[A-Za-z0-9 ._\/:=-]+$/;
+const CODE_FLAGS = ['-c', '-e', '--eval', '-p', '--print'];
+const BARE_INTERPRETERS = ['sh', 'bash', 'zsh', 'node', 'python', 'python3'];
+
+function assertTestCommand(testCommand) {
+  const reason =
+    typeof testCommand !== 'string' || !TEST_COMMAND_PATTERN.test(testCommand) ? 'must match ' + TEST_COMMAND_PATTERN
+    : /^ | $|  /.test(testCommand) ? 'must not have a leading, trailing or doubled space'
+    : testCommand.split(' ').some((t) => CODE_FLAGS.includes(t)) ? 'must not carry an inline-code flag'
+    : BARE_INTERPRETERS.includes(testCommand) ? 'must not be a bare interpreter'
+    : null;
+  if (reason) throw new TypeError('testCommand ' + reason + ', got ' + JSON.stringify(testCommand));
+}
+
+// A readPaths entry in an error message: JSON.stringify throws on a BigInt or a cycle.
+function describeEntry(entry) {
+  try {
+    const json = JSON.stringify(entry);
+    if (typeof json === 'string') return json;
+  } catch (e) { /* fall through to String */ }
+  try {
+    const text = String(entry);
+    if (text !== '') return text;
+  } catch (e) { /* fall through to the tag */ }
+  return Object.prototype.toString.call(entry);
+}
+
+// Every entry must be an absolute, already-normalized path that is not the filesystem
+// root: a root or a `..` that collapses to it would re-open every read the block closes.
+function assertReadPaths(readPaths, platform) {
+  if (!Array.isArray(readPaths)) throw new TypeError('readPaths must be an array, got ' + describeEntry(readPaths));
+  const pathModule = platform === 'win32' ? path.win32 : path.posix;
+  for (const entry of readPaths) {
+    const reason =
+      typeof entry !== 'string' || !pathModule.isAbsolute(entry) ? 'must be an absolute path string'
+      : pathModule.parse(entry).root === entry ? 'must not be the filesystem root'
+      : pathModule.normalize(entry) !== entry ? 'must already be normalized'
+      : null;
+    if (reason) throw new TypeError('readPaths entries ' + reason + ', got ' + describeEntry(entry));
+  }
+}
+
+function implementerSettings({ testCommand, platform, readPaths = [] } = {}) {
+  assertReadPaths(readPaths, platform);
+  if (testCommand !== undefined) assertTestCommand(testCommand);
+  const sandboxed = SANDBOX_PROBED_PLATFORMS.includes(platform);
+  const allow = ['Read', 'Edit', 'Write'];
+  if (sandboxed) {
+    if (testCommand !== undefined) allow.push('Bash(' + testCommand + ' *)');
+    allow.push('Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)');
+  }
+  // A second layer, not the only one: with `dontAsk`, a closed allow list and
+  // `autoAllowBashIfSandboxed: false`, these commands are already refused. The deny
+  // rules keep them refused if a later change widens the allow list or the sandbox.
+  const deny = ['Bash(gh *)', 'Bash(git push *)', 'Bash(git commit *)', 'Bash(git add *)', 'Bash(curl *)', 'Bash(wget *)'];
+  const settings = { permissions: { defaultMode: 'dontAsk', allow, deny } };
+  if (sandboxed) {
+    settings.permissions.blockReadsOutsideWorkingDirectories = true;
+    settings.sandbox = {
+      enabled: true,
+      autoAllowBashIfSandboxed: false,
+      allowUnsandboxedCommands: false,
+      failIfUnavailable: true,
+      network: { allowedDomains: [], strictAllowlist: true },
+      filesystem: { allowRead: readPaths.slice() },
+    };
+  }
+  return settings;
+}
+
+// The first word of a command as a real path: an absolute word is the path, a relative
+// one (it has a `/`) is refused, a bare name goes through the PATH lookup seam. The real
+// path must be an executable regular file (`isExecutable` answers `true`): any other file
+// would re-open its directory for nothing it runs. Any seam throw, a missing
+// `isExecutable`, and any non-absolute answer is a null, never an error: a missing
+// toolchain just re-opens nothing.
+function resolveCommandWord(command, deps) {
+  try {
+    if (typeof deps.isExecutable !== 'function') return null;
+    const word = command.split(' ')[0];
+    let found;
+    if (word.includes('/')) found = path.posix.isAbsolute(word) ? word : null;
+    else found = deps.lookup(word);
+    if (typeof found !== 'string' || found === '') return null;
+    const real = deps.realpath(found);
+    if (!(typeof real === 'string' && path.posix.isAbsolute(real) && path.posix.normalize(real) === real)) return null;
+    return deps.isExecutable(real) === true ? real : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// True when `candidate` is the filesystem root, a home in `deps.home` (one path or a list),
+// or an ancestor of one; each home is also compared in its `deps.realpath` form. The one
+// home rule for both sides: rootOfReal for a derived root, launchWorker for a caller's readPaths.
+function reopensHome(candidate, deps = {}) {
+  const homes = [];
+  for (const home of Array.isArray(deps.home) ? deps.home : [deps.home]) {
+    if (typeof home !== 'string' || home === '') continue;
+    homes.push(home);
+    try {
+      const realHome = deps.realpath(home);
+      if (typeof realHome === 'string' && realHome !== '') homes.push(realHome);
+    } catch (e) { /* the home as given still guards */ }
+  }
+  return candidate === '/' || homes.some((h) => isAncestorOrSelf(candidate, h, { pathImpl: path.posix }));
+}
+
+// The directory to re-open for a binary: the root above `bin/`, else the binary's own
+// directory. Never `/`, and never a home (`deps.home`, one path or a list of them) or an
+// ancestor of one, whether that home is taken as given or through its real path.
+function rootOfReal(real, deps) {
+  const tooWide = (candidate) => reopensHome(candidate, deps);
+  const dir = path.posix.dirname(real);
+  const root = path.posix.basename(dir) === 'bin' ? path.posix.dirname(dir) : dir;
+  if (!tooWide(root)) return root;
+  return tooWide(dir) ? null : dir;
+}
+
+function toolchainRoot(command, deps = {}) {
+  const real = resolveCommandWord(command, deps);
+  return real === null ? null : rootOfReal(real, deps);
+}
+
+// The interpreter a `#!` line names; for `env`, only what is positively understood is
+// skipped, and anything else means no interpreter (the command's own root still stands):
+// the no-argument flags, `-S` (separate or attached, the string's tokens follow),
+// options with an argument (`-u NAME`, `-C DIR`, `--unset NAME`, `--chdir DIR`, or the
+// attached `-uNAME`, `-C/dir`, `--unset=NAME`, `--chdir=DIR`), and `NAME=value`. Every other
+// token that starts with `-` (`-P` in any form, bundled flags, `-a`, `--argv0`, an
+// abbreviated long option) may carry an argument or move the lookup off PATH, so reading
+// the next word as the interpreter could re-open the wrong directory.
+const ENV_FLAGS = ['-i', '-0', '-v', '-', '--ignore-environment', '--null', '--debug'];
+const ENV_OPTIONS_WITH_ARGUMENT = ['-u', '-C', '--unset', '--chdir'];
+const ENV_ATTACHED_ARGUMENT = /^(-[uC].|--(unset|chdir)=)/;
+function shebangInterpreter(line) {
+  if (typeof line !== 'string' || !line.startsWith('#!')) return null;
+  const tokens = line.slice(2).split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return null;
+  if (path.posix.basename(tokens[0]) !== 'env') return tokens[0];
+  const args = tokens.slice(1);
+  for (let i = 0; i < args.length; i++) {
+    // An attached -S in option position (`-Snode`): its string is read as the next token. A
+    // token consumed as an option's argument (`-u -Sfoo`) never reaches here, so is never split.
+    const token = /^-S./.test(args[i]) ? args[i].slice(2) : args[i];
+    if (token === '-S' || ENV_FLAGS.includes(token) || ENV_ATTACHED_ARGUMENT.test(token)) continue;
+    if (ENV_OPTIONS_WITH_ARGUMENT.includes(token)) i++;
+    else if (token.startsWith('-')) return null;
+    else if (!token.includes('=')) return token;
+  }
+  return null;
+}
+
+function toolchainReadPaths(testCommand, deps = {}) {
+  if (testCommand === undefined) return [];
+  assertTestCommand(testCommand);
+  const real = resolveCommandWord(testCommand, deps);
+  if (real === null) return [];
+  const roots = [rootOfReal(real, deps)];
+  let interpreter = null;
+  try { interpreter = shebangInterpreter(deps.firstLine(real)); } catch (e) { /* adds nothing */ }
+  if (interpreter !== null) roots.push(toolchainRoot(interpreter, deps));
+  // A root inside another root (npm's package directory under the Node installation that
+  // holds its `node`) adds nothing; of two equal roots the first stays.
+  const found = roots.filter((r) => r !== null);
+  return found.filter((r, i) => !found.some((other, j) =>
+    (other === r ? j < i : isAncestorOrSelf(other, r, { pathImpl: path.posix }))));
+}
+
+// The one spend-ceiling rule, shared by composeArgs and the launcher: absent passes.
+function assertSpendCeiling(value) {
+  if (value !== undefined && !(typeof value === 'number' && Number.isFinite(value) && value > 0)) {
+    throw new RangeError('spendCeiling must be a finite number above zero, got ' + String(value));
+  }
+}
+
+// The one effort rule, shared by composeArgs and the launcher: absent (undefined or null)
+// passes; anything else must be a level of the model-profiles scale.
+function assertEffort(value) {
+  if (value !== undefined && value !== null && !EFFORT_SCALE.includes(value)) {
+    throw new RangeError('effort must be one of ' + EFFORT_SCALE.join(', ') + ', got ' + String(value));
+  }
+}
+
+// The tools a role launches with on a platform: Bash is dropped for a role that carries
+// generated settings when the platform is not sandbox-probed. A fresh array each call.
+function toolsFor(role, platform) {
+  const spec = specFor(role);
+  const sandboxed = SANDBOX_PROBED_PLATFORMS.includes(platform);
+  return spec.tools.filter((tool) => !(tool === 'Bash' && spec.settings && !sandboxed));
+}
+
+function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, effort, platform } = {}) {
+  const spec = specFor(role);
+  if (spec.settings && (typeof settingsFile !== 'string' || settingsFile === '')) {
+    throw new Error('settingsFile is required for role ' + role + ' and must be a non-empty string');
+  }
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) {
+    throw new Error('schema is required and must be an object');
+  }
+  assertSpendCeiling(spendCeiling);
+  assertEffort(effort);
+  if (typeof platform !== 'string' || platform === '') throw new TypeError('platform is required and must be a non-empty string');
+  const args = ['-p', '--safe-mode', '--restricted', '--tools', toolsFor(role, platform).join(','), '--disable-slash-commands', '--strict-mcp-config'];
+  if (spec.settings) args.push('--settings', settingsFile);
+  args.push('--permission-prompts', 'none', '--output-format', 'json', '--json-schema', JSON.stringify(schema));
+  if (appendPromptFile) args.push('--append-system-prompt-file', appendPromptFile);
+  if (spendCeiling !== undefined) args.push('--max-budget-usd', String(spendCeiling));
+  if (model) args.push('--model', model);
+  if (effort !== undefined && effort !== null) args.push('--effort', effort);
+  return args;
+}
+
+module.exports = { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, ROLES, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, assertEffort, assertTestCommand };

@@ -1,6 +1,6 @@
 # Flow — Failure Cards
 
-Loaded by `/claude-tweaks:flow` Step 4 (or Step 3's Manifesto ceremony-check) **only when a gate fails**. These templates are never rendered on the success path; `summary-template.md` handles successful completion.
+Loaded by `/claude-tweaks:flow` Step 4 (or Step 3's Manifesto ceremony-check, or Step 2's blocker-landing stop) **only when a gate fails**. These templates are never rendered on the success path; `summary-template.md` handles successful completion.
 
 Two templates live here. Pick by failure shape:
 
@@ -9,6 +9,7 @@ Two templates live here. Pick by failure shape:
 | Re-verify gate failed after polish modified code | "Polish broke verification" below |
 | Any other gate (build / stories / test / review / wrap-up) | "Generic gate failure" below |
 | Step 3 Manifesto ceremony-check returned no `CEREMONY:` verdict | "Generic gate failure" below, `Failed at: Manifesto ceremony-check`; resume by re-running `/claude-tweaks:flow #{n}` with the same step list (`ceremony-check` is not a step name) |
+| Step 2.7b blocker landing (or multi-spec Validation step 3) stopped on an `open` or `unlanded` out-of-run blocker — gate `blocker-landing` | No template: the stop message (`multispec-dependency-ordering.md`'s verdict table and its `unlanded` card) is the whole report; when the run already holds claims (a continuation re-running the pre-claim checks), the claims rules below still apply. Under `/claude-tweaks:dispatch` the call reports `OUTCOME: build-test-blocked`, one `ISSUE #{n}: failed:blocker-landing` line per target, and `STATUS: BLOCKED`; a second call's handoff continuation (its step list includes `test`) reports `OUTCOME: blocked` with the same `ISSUE` line. Settle treats it as a non-failing stop (`dispatch/settle-and-merge.md`'s Blocker-landing special case) |
 
 **Claims held by a record-mode run:** when the stopped run holds issue claims
 (`claims/issue-{issue}.json` on `claims-registry`, claimed at Step 2.8 by this run

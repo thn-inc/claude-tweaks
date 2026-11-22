@@ -1,6 +1,7 @@
 'use strict';
 // tests/review-polish-disposition-conformance.test.js — pins that
-// skills/review/code-mode-steps.md (#2281) documents Step 6.7's write-back of
+// skills/review/late-findings-routing.md (#2281; Step 6.7's body, moved out of
+// code-mode-steps.md in #4359) documents Step 6.7's write-back of
 // a `dispositionByReview` field onto the shared audit cache, and that
 // skills/design-wrapper/modes/polish.md documents the matching skip branch in
 // its consumption table and Step 5's per-finding loop, so review's
@@ -11,13 +12,13 @@ const assert = require('node:assert');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 
-const REVIEW_STEPS_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'review', 'code-mode-steps.md');
+const REVIEW_STEPS_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'review', 'late-findings-routing.md');
 const POLISH_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'modes', 'polish.md');
 const reviewSteps = readText(REVIEW_STEPS_PATH);
 const polish = readText(POLISH_PATH);
 
 test('Step 6.7 writes dispositionByReview with all five statuses onto the matching cache entry by id', () => {
-  assert.ok(reviewSteps.includes('dispositionByReview'), 'code-mode-steps.md must name the dispositionByReview field');
+  assert.ok(reviewSteps.includes('dispositionByReview'), 'late-findings-routing.md must name the dispositionByReview field');
   assert.ok(
     reviewSteps.includes('{status: "applied"|"staged"|"accepted"|"deferred"|"kept-prompt", at: "<ISO timestamp>"}'),
     'must document the exact dispositionByReview field shape with all five statuses'
@@ -91,7 +92,7 @@ test('polish.md\'s four-way table adds the skip row ahead of the suggestion-driv
 });
 
 test('STAGED-then-skipped: review stages a finding that polish skips, presence-only, so staged is covered', () => {
-  assert.ok(reviewSteps.includes('STAGED → `staged`'), 'code-mode-steps.md must map STAGED to dispositionByReview status staged');
+  assert.ok(reviewSteps.includes('STAGED → `staged`'), 'late-findings-routing.md must map STAGED to dispositionByReview status staged');
   assert.ok(
     /`source: "audit"` with a `dispositionByReview` field \(any value\)[^\n]*\*\*Skipped entirely\*\*/.test(polish),
     'polish.md must consume an audit entry carrying dispositionByReview (any value) as Skipped entirely'

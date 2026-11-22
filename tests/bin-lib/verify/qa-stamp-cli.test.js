@@ -9,6 +9,7 @@ const { execFileSync } = require('child_process');
 const {
   run, parseArgs, computeDirty,
 } = require('../../../plugin/bin/qa-stamp');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 const HEAD = 'c'.repeat(40);
 const created = [];
@@ -199,9 +200,7 @@ test('real git: --write is not blocked by an untracked file under .claude-tweaks
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-qa-stamp-realgit-'));
   created.push(root);
   const g = (args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' });
-  g(['init', '-q']);
-  g(['config', 'user.email', 'a@b.c']);
-  g(['config', 'user.name', 'T']);
+  initRepo(root, { name: 'T', email: 'a@b.c', cwd: root, encoding: 'utf8' });
   fs.mkdirSync(path.join(root, 'stories'));
   fs.writeFileSync(path.join(root, 'stories', 'app.yaml'), 'stories:\n  - id: login\n');
   g(['add', '.']);

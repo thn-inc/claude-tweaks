@@ -16,6 +16,10 @@
 //     lists only some workflows reads green while others are not yet registered;
 //     a run that has not completed (or has a failing conclusion) is what catches
 //     that.
+//   - `readyRunVerdict` (#5153) — the code twin of Step 2.5's ready-run bullet:
+//     a workflow the PR's ready transition must run is `awaiting` until a
+//     post-`readySince` PR-event run of it exists, so draft-time skipped jobs
+//     never read as green.
 // Any failing check is red: statusCheckRollup does not mark which checks are
 // required, and the merge gate already treats every failing check as red.
 // The base comparison (#3258) is an addition the merge gate does not have: it
@@ -42,7 +46,7 @@ function normalizeHeadRun(row) {
   const r = row && typeof row === 'object' ? row : {};
   return {
     name: r.workflowName || r.name || null,
-    url: r.url || null,
+    url: r.url || r.html_url || null,
     status: r.status ? String(r.status).toUpperCase() : null,
     conclusion: r.conclusion ? String(r.conclusion).toUpperCase() : null,
   };
@@ -52,12 +56,83 @@ function result(state, headRefOid, extra = {}) {
   return { state, failing: [], pending: [], headRefOid: headRefOid || null, ...extra };
 }
 
-function classifyRollup({ rollup, headRefOid, localHead, hasPrCi, headRuns } = {}) {
+const PR_EVENTS = Object.freeze(['pull_request', 'pull_request_target']);
+
+// Conclusions of a run that verified nothing: its jobs were skipped, it was
+// cancelled or left waiting for approval, or GitHub marked it stale.
+const UNVERIFIED_CONCLUSIONS = Object.freeze(['SKIPPED', 'CANCELLED', 'ACTION_REQUIRED', 'STALE']);
+
+// #5153 — the CI run `gh pr ready` starts. Only a REST `actions/runs` row (it
+// carries `path`) can count: a `gh run list` row has none, so a run present in
+// both shapes is counted once. A row counts for workflow W when runPathMatches,
+// its event is a PR event, it was created at or after `readySince`, and it did
+// not conclude in UNVERIFIED_CONCLUSIONS; an unparseable date counts for
+// nothing, which leaves the workflow awaiting (fail closed). An unverified
+// conclusion counts for nothing too, so a green gate always rests on a ready
+// run that ran — this also covers a `synchronize` run created after ready whose
+// payload still said draft, so its jobs skipped. A run not yet completed is
+// never excluded. The newest counted row alone decides W.
+// A run path is W, or W plus an `@ref` suffix (a file named `ci@v2.yml` still
+// matches its own runs). The suffix must hold a `/` with no `@` before it: a
+// ref (`refs/…`) does, while a sibling file `W@x.yml`, with or without its own
+// `@ref`, never does (a workflow file name has no `/`), so it never satisfies W.
+// A pathless or empty path, or an empty W, never matches.
+function runPathMatches(path, W) {
+  if (path === '' || W === '') return false;
+  if (path === W) return true;
+  if (!path.startsWith(`${W}@`)) return false;
+  const suffix = path.slice(W.length + 1);
+  const slash = suffix.indexOf('/');
+  return slash > 0 && !suffix.slice(0, slash).includes('@');
+}
+
+function readyRunVerdict({ readySince, readyWorkflows, headRuns } = {}) {
+  const verdict = { awaiting: [], pending: [], failing: [] };
+  const since = Date.parse(readySince);
+  const rows = Array.isArray(headRuns) ? headRuns : [];
+  const ids = (r) => (Number.isFinite(r.databaseId ?? r.id) ? r.databaseId ?? r.id : -Infinity);
+  for (const W of new Set(Array.isArray(readyWorkflows) ? readyWorkflows : [])) {
+    let newest = null;
+    let newestAt = -Infinity;
+    for (const row of rows) {
+      if (!row || typeof row !== 'object') continue;
+      const path = typeof row.path === 'string' ? row.path : '';
+      if (!runPathMatches(path, W) || !PR_EVENTS.includes(row.event)) continue;
+      const at = Date.parse(row.createdAt ?? row.created_at);
+      if (Number.isNaN(at) || Number.isNaN(since) || at < since) continue;
+      const concluded = String(row.status || '').toUpperCase() === 'COMPLETED';
+      if (concluded && UNVERIFIED_CONCLUSIONS.includes(String(row.conclusion || '').toUpperCase())) continue;
+      if (!newest || at > newestAt || (at === newestAt && ids(row) > ids(newest))) {
+        newest = row;
+        newestAt = at;
+      }
+    }
+    if (!newest) verdict.awaiting.push(W);
+    else if (String(newest.status || '').toUpperCase() !== 'COMPLETED') verdict.pending.push(W);
+    else if (FAILING_CONCLUSIONS.includes(String(newest.conclusion || '').toUpperCase())) {
+      verdict.failing.push({ name: newest.workflowName || newest.name || W, url: newest.html_url || newest.url || null });
+    }
+  }
+  return verdict;
+}
+
+function classifyRollup({ rollup, headRefOid, localHead, hasPrCi, headRuns, readySince, readyWorkflows } = {}) {
   if (!Array.isArray(rollup) || typeof headRefOid !== 'string' || !headRefOid) {
     return result('read-failed', headRefOid, { reason: 'malformed-rollup' });
   }
   if (headRuns !== undefined && !Array.isArray(headRuns)) {
     return result('read-failed', headRefOid, { reason: 'malformed-head-runs' });
+  }
+  if (readyWorkflows !== undefined && readyWorkflows !== null
+    && (!Array.isArray(readyWorkflows) || readyWorkflows.some((w) => typeof w !== 'string' || w === ''))) {
+    return result('read-failed', headRefOid, { reason: 'malformed-ready-workflows' });
+  }
+  if (readySince !== undefined && readySince !== null && typeof readySince !== 'string') {
+    return result('read-failed', headRefOid, { reason: 'malformed-ready-since' });
+  }
+  const readyActive = typeof readySince === 'string' && readySince !== '' && Array.isArray(readyWorkflows) && readyWorkflows.length > 0;
+  if (readyActive && Number.isNaN(Date.parse(readySince))) {
+    return result('read-failed', headRefOid, { reason: 'malformed-ready-since' });
   }
   if (typeof localHead !== 'string' || !localHead || headRefOid !== localHead) {
     return result('stale', headRefOid);
@@ -73,7 +148,10 @@ function classifyRollup({ rollup, headRefOid, localHead, hasPrCi, headRuns } = {
   }
   if (failing.length > 0) return result('red', headRefOid, { failing });
   const pending = [...new Set(checks.filter((e) => e.status !== 'COMPLETED').map((e) => e.name))];
-  if (pending.length > 0) return result('pending', headRefOid, { pending });
+  const awaiting = readyActive ? readyRunVerdict({ readySince, readyWorkflows, headRuns }).awaiting : [];
+  if (pending.length > 0 || awaiting.length > 0) {
+    return result('pending', headRefOid, awaiting.length > 0 ? { pending, awaitingReadyRun: awaiting } : { pending });
+  }
   if (entries.length === 0) return result(hasPrCi ? 'pending' : 'no-ci', headRefOid);
   return result('green', headRefOid);
 }
@@ -119,4 +197,4 @@ function applyBaseComparison(verdict, base) {
   return { ...verdict, state, failing, baseSha: base.sha };
 }
 
-module.exports = { FAILING_CONCLUSIONS, normalizeEntry, normalizeHeadRun, classifyRollup, failingNamesAt, applyBaseComparison };
+module.exports = { FAILING_CONCLUSIONS, PR_EVENTS, normalizeEntry, normalizeHeadRun, readyRunVerdict, classifyRollup, failingNamesAt, applyBaseComparison };

@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { resolvePluginVersion } = require('../../plugin/bin/lib/plugin-version');
@@ -14,7 +15,7 @@ const { resolvePluginVersion } = require('../../plugin/bin/lib/plugin-version');
 // implementation all three now delegate to.
 
 function tmpPluginRoot(pluginJsonContent) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'plugin-version-test-'));
+  const root = scratchDir('plugin-version-test-');
   fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
   if (pluginJsonContent !== undefined) {
     fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), pluginJsonContent);
@@ -32,7 +33,7 @@ test('resolvePluginVersion: undefined when CLAUDE_PLUGIN_ROOT is unset', () => {
 });
 
 test('resolvePluginVersion: undefined when plugin.json does not exist', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'plugin-version-test-'));
+  const root = scratchDir('plugin-version-test-');
   assert.equal(resolvePluginVersion({ CLAUDE_PLUGIN_ROOT: root }), undefined);
 });
 

@@ -9,6 +9,9 @@ fix to one skill's copy (a new `work-types` value, a tightened bundling conditio
 against the same canonical shape in the other three. Per this project's own self-contained-skill-
 file convention, each consumer still writes out its own version in full inline — this file is the
 reference the four copies are kept in sync against, not a replacement for any of them.
+`ci-health` carries a fifth copy of the type expression branch only (always `task`) and no
+bundling rule, since its checklist allows one finding per subject per check — check its copy too
+whenever the branch changes.
 
 ## Type expression branch
 

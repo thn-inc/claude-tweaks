@@ -11,6 +11,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
@@ -64,7 +65,7 @@ test('accept: --run is absolute and anchored under the main checkout', () => {
 });
 
 test('reject: --run has no git repo ancestor at all — distinct message', () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-apply-refine-norepo-'));
+  const bare = scratchDir('ct-apply-refine-norepo-');
   const deps = fakeDeps();
   const abs = path.join(bare, '.claude-tweaks', 'pipelines', 'x');
   const code = withCwd(bare, () => run(['actions.json', '--run', abs], deps));
