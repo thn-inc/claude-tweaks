@@ -68,7 +68,7 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
   `ledger-residue`, `plan-refs`, `reap` — write-only/janitorial, run in a detached `reconcile-background` child
   process) must **partition `ALL_CHECKS` exactly** — no overlap, nothing silently dropped. A new
   check has to join one list or the other.
-  The unscoped `hooks.js reconcile` CLI defers three of the seven to that same background pass
+  The unscoped `hooks.js reconcile` CLI defers four of the eight to that same background pass
   (`CLI_DEFERRED_CHECKS`, #4032 — see the Timing contract below; `post-merge` is not among them
   and runs inline beside `archive`); an explicit `--checks` call is never deferred.
 
