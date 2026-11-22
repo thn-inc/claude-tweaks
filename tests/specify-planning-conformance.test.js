@@ -89,10 +89,13 @@ test('Deliverable 8: a stored plan is reused only when plan-store.js check says 
 test('Plan Review Clarification: a held record re-reviews its reused plan before ready', () => {
   pinned(sectionOf(planning(), '## Which records are planned'), [
     f('**A held record re-reviews its reused plan.**'),
-    f('carries `Held-by: specify-planning`, a valid check still keeps the plan, but skips only steps 3-4'),
+    f('a valid check still keeps the plan, but skips only steps 3-4'),
     f('plan-store.js" read --record {n} --commit {commit} --out "{checkout}"'),
     f('then run steps 5-9 on it, so its questions are asked again, or held again when headless, before `ready` is stamped'),
     f('A failed read re-plans.'),
+    f('says it carries `needs:decision`, or says its newest unresolved decision comment from a trusted author carries `Held-by: specify-planning`'),
+    f('Either signal alone marks the record held'),
+    f('a hold cleared by removing the label by hand leaves the comment, and its held questions must still be folded in before `ready`'),
   ], 'held re-review');
 });
 
@@ -135,7 +138,8 @@ test('Review Focus 1: a body with no ## Overview gets one, because the spec hash
 
 test('Deliverable 5: the no-ref outcome keeps the decisions and writes no Plan: line', () => {
   pinned(sectionOf(planning(), '## Per-record step'), [
-    f('Exit 3 is the no-ref outcome: keep every decision line, write no `Plan:` line, and record why'),
+    f('Exit 3 is the no-ref outcome: keep every decision line, write no `Plan:` line (removing any `Plan:` line already in `{body}`), and record why'),
+    f('above its first `##` heading, replacing any `Plan:` line already in `{body}`'),
     f('`bin/plan-store.js` is the line\'s one writer, so never type or edit it'),
   ], 'no-ref');
 });
@@ -327,6 +331,7 @@ test('the reviewer is dispatched as plan-review.md dispatches it', () => {
     f('`resolve-profile.js capable`'),
     f('A table whose header lacks the Recommended reading column is unusable.'),
     f('fill the Audit residue line\'s placeholder from step 4\'s last audit JSON'),
+    f('and fill it with `none` on a held re-review, which skips step 4 and has no audit JSON'),
     f('a row whose Class is none of the five is logged only, like a `low` row'),
   ], 'reviewer dispatch');
 });
@@ -505,14 +510,16 @@ test('Deliverable 3 + 10: a batch defers writes, fans planners and reviewers out
     f('with the reviewers dispatched in one message'),
     f('one batch table and the chunked questions covering every record\'s asked rows together'),
     f('A hold is per record; the rest of the batch proceeds.'),
+    f('run the lane predicate per record, then the reuse check per record (`## Which records are planned`)'),
+    f('a record with a valid stored plan skips the planner fan-out, and a held one joins the reviewer fan-out'),
     f('`SKILL.md`\'s "a loop never a fan-out" still governs the record writes'),
   ], 'batches');
 });
 
 test('AC2.1 + AC5.1: read-back asserts the Plan: line or the hold, and the outcome words', () => {
   pinned(sectionOf(planning(), '## Read-back and outcome'), [
-    f('exactly one `Plan:` line, equal to the `line` `plan-store.js write` printed'),
-    f('The re-fetched body carries `## Overview` and `## Planning Decisions`, and exactly one `Plan:` line equal to the `line` `plan-store.js write` printed, except that it carries no `Plan:` line when `plan-store.js` took the no-ref outcome (exit 3 or any other non-zero exit, per step 8)'),
+    f('exactly one `Plan:` line, equal to the `line` `plan-store.js write` printed, or to the kept line when a valid stored plan was reused without a write; a record planned with the no-ref outcome (exit 3 or any other non-zero exit, per step 8) carries no `Plan:` line'),
+    f('The re-fetched body carries `## Overview` and `## Planning Decisions`, and exactly one `Plan:` line equal to the `line` `plan-store.js write` printed, or to the kept line when a valid stored plan was reused without a write, except that it carries no `Plan:` line when `plan-store.js` took the no-ref outcome (exit 3 or any other non-zero exit, per step 8)'),
     f('in place of that file\'s `ready`-present and no-`needs:*` assertions (its scoring-label assertions still apply)'),
     f('`held — needs:decision ({k} planning question(s))`'),
     f('the hold comment is posted before this read-back runs'),
@@ -662,6 +669,8 @@ test('Carry A: planning captures the hold state with its own call before the nee
     f('The held re-review above uses these captured facts, never a re-fetch after the resolve.'),
     f('A failed capture call counts as held for the reuse decision: a valid stored plan is still fetched and re-reviewed (steps 5-9) as the held re-review above says'),
     f('a record that was not actually held gets one extra review, and a failed `plan-store.js read` still re-plans.'),
+    f('Keep two facts from it, either of which alone marks the record held'),
+    f('or, when `gh` is absent, `issue_read` (`get` mode for the labels, `get_comments` mode for the comments, `perPage: 100`, per `_shared/github-write-transport.md`\'s mapping)'),
     f('When the record\'s captured hold state (below) says it carries `needs:decision`'),
   ], 'held read order');
 });
