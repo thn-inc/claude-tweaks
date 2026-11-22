@@ -9,6 +9,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { runCliSync, spawnCli } = require('../../helpers/run-cli');
@@ -25,7 +26,7 @@ function cli(args, opts = {}) {
 }
 
 function tmpRoot(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return scratchDir(prefix);
 }
 
 test('(a) single-package root, no --write: --json reports written:false, existed:false, checks.tests is the root test script', () => {

@@ -20,6 +20,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -67,7 +68,7 @@ for (const file of CONSOLE_FILES) {
 // manifest.yml). The run sits in a real git repo whose run-state.json names the
 // caller's session, so classifyOwnership answers 'mine'; the ceiling is injected.
 function denyReason({ multiSpec }) {
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-console-heading-')));
+  const repo = fs.realpathSync(scratchDir('ct-console-heading-'));
   execFileSync('git', ['-C', repo, 'init', '-q']);
   const dir = path.join(repo, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.mkdirSync(dir, { recursive: true });
@@ -77,6 +78,7 @@ function denyReason({ multiSpec }) {
     input: { tool_name: 'AskUserQuestion', tool_input: { questions: [{ header: REVIEW_CONSOLE_HEADER, question: 'q', options: [] }] }, session_id: 'sess-1', cwd: repo },
     ownedRun: { dir, attribution: 'session' },
     cwd: repo,
+    env: process.env,
   };
   const out = pre.checkReviewConsoleAskGate(ctx, { readConsoleCeiling: () => 'unattended' });
   return out.json.hookSpecificOutput.permissionDecisionReason;

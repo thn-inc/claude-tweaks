@@ -9,6 +9,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const path = require('path');
 const { REENTRY_REASONS } = require('../plugin/bin/lib/flow/consolidated-pass');
 const { toPosix } = require('../plugin/bin/lib/shared-primitives');
@@ -143,7 +144,7 @@ test('AC2.1 retired limit sentences are gone from every skill file', () => {
   assert.deepEqual(real.hits, []);
   // Control: the same walk flags a doctored nested skill file carrying a
   // retired phrase split across a line break.
-  const doctored = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ct-retired-'));
+  const doctored = scratchDir('ct-retired-');
   fs.mkdirSync(path.join(doctored, 'flow'));
   fs.writeFileSync(path.join(doctored, 'flow', 'x.md'), 'Note: no documented step\nre-runs the pass.\n');
   assert.deepEqual(walk(doctored).hits, ['flow/x.md: no documented step re-runs the pass']);

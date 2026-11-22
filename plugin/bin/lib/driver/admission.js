@@ -153,4 +153,4 @@ function evaluateAdmission(facts) {
   return { admitted: reasons.length === 0, reasons };
 }
 
-module.exports = { ADMISSION_REASONS, evaluateAdmission, reviewerGateReason };
+module.exports = { ADMISSION_REASONS, evaluateAdmission, reviewerGateReason, routingReason };

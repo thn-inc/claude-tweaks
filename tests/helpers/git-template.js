@@ -24,11 +24,19 @@
 // freshly built repo did, because some tests order worktrees by mtime. Git
 // rehashes copied files anyway, since their inode and ctime differ from the
 // ones recorded in the copied index.
+//
+// Where a builder's warm-call test belongs: in a test file that already builds
+// that template (calls the builder with arguments giving the same key), never in
+// tests/helpers-git-template.test.js. Templates are cached per process, so a
+// "second call starts no git process" test costs nothing where the template is
+// built anyway and costs a whole build in a file that would not otherwise build
+// it. The check itself is `warmCallStartsNoGit` in tests/helpers/git-trace.js.
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { gitFixtureConfigEnv } = require('../../tools/run-tests');
+const { gitFixtureConfigEnv, writeGitTemplateDir } = require('../../tools/run-tests');
+const { scratchDir } = require('./tmp-dir');
 
 // #5294: repoInfo remembers answers in a per-user store (~/.claude-tweaks/repo-info-cache.json).
 // tools/run-tests.js points CT_HOOKS_REPO_INFO_STORE into its run root before any suite loads;
@@ -41,6 +49,22 @@ if (!process.env.CT_HOOKS_REPO_INFO_STORE) {
   process.once('exit', () => {
     try { fs.rmSync(storeDir, { recursive: true, force: true }); } catch (_) { /* best effort */ }
   });
+}
+
+// #5771: tools/run-tests.js exports its git template (maintenance off, no sample hooks) to its child as
+// GIT_TEMPLATE_DIR. A bare `node --test` run has no runner, so a suite that loads this helper builds the
+// same template here (child processes inherit it), removed on exit. Only a runner child
+// (CT_TEST_SUITE_SLOT_HELD=1 with GIT_TEMPLATE_DIR set) keeps its own; any other inherited
+// GIT_TEMPLATE_DIR is carried into the new template, as the runner does. A failed build leaves env alone.
+if (!(process.env.CT_TEST_SUITE_SLOT_HELD === '1' && process.env.GIT_TEMPLATE_DIR)) {
+  const tplRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-git-tpl-dir-'));
+  process.once('exit', () => {
+    try { fs.rmSync(tplRoot, { recursive: true, force: true }); } catch (_) { /* best effort */ }
+  });
+  let why = 'unknown error';
+  const tpl = writeGitTemplateDir(path.join(tplRoot, 't'), process.env, { onError: (err) => { why = err.message; } });
+  if (tpl) process.env.GIT_TEMPLATE_DIR = tpl;
+  else console.error(`git-template.js: could not build the git template (${String(why).replace(/\s+/g, ' ')}) — repositories tests create keep git's own defaults`);
 }
 
 let templateRoot = null;
@@ -212,7 +236,9 @@ function fromTemplateSet(key, build, layout) {
   try {
     for (const n of names) {
       const { parent = os.tmpdir(), prefix, realpath = false } = layout[n];
-      let dir = fs.mkdtempSync(path.join(parent, prefix));
+      // scratchDir: the copy is removed when the test process exits, so a caller that never removes its
+      // fixture leaves nothing behind in the real tmpdir under a direct `node --test`.
+      let dir = scratchDir(prefix, { parent });
       out[n] = dir;
       fs.cpSync(tpl.dirs[n], dir, { recursive: true, preserveTimestamps: false, verbatimSymlinks: true });
       if (realpath) out[n] = dir = fs.realpathSync(dir);

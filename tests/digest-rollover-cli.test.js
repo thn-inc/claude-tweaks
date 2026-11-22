@@ -7,6 +7,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir, isolateTmpdir } = require('./helpers/tmp-dir');
+isolateTmpdir('ct-iso-digest-rollover-cli-');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
@@ -386,7 +388,7 @@ const GH_LINE = 'verdict --old {old} --candidates {n},{n}';
 const FILE_LINE = 'verdict --old-json ';
 
 const scratch = (t) => {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'digest-rollover-'));
+  const d = scratchDir('digest-rollover-');
   t.after(() => fs.rmSync(d, { recursive: true, force: true }));
   return d;
 };

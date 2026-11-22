@@ -7,9 +7,13 @@ const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const { formatEntry } = require(path.join(LIB, 'log-decision', 'append'));
 const { verdictText } = require(path.join(LIB, 'dispatch', 'merge-verdict'));
-const { MERGE_CHECK_RESULT_SCHEMA, composeArgs } = require(path.join(LIB, 'driver', 'roles.js'));
+const { MERGE_CHECK_RESULT_SCHEMA, composeArgs, DRIVER_ROLE_PROFILES } = require(path.join(LIB, 'driver', 'roles.js'));
 const { judgeMergeCheck, createJudgments } = require(path.join(LIB, 'driver', 'judgments.js'));
+const { launchJudge } = require(path.join(LIB, 'driver', 'judgment-io.js'));
 const { DIFF_PROMPT_MAX_BYTES } = require(path.join(LIB, 'driver', 'review.js'));
+const { MODEL_POLICY_KEYS, roleModel } = require(path.join(LIB, 'driver', 'launch.js'));
+const { PROFILES } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
+const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema.js'));
 
 const roots = [];
 after(() => { for (const r of roots) fs.rmSync(r, { recursive: true, force: true }); });
@@ -18,7 +22,12 @@ const POLICY = {
   'express-driver-wall-clock-minutes': { value: 30 },
   'express-driver-spend-ceiling-dollars': { value: 5 },
   'auto-merge-max-lines': { value: 200 },
+  ...resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: '' }),
 };
+const M = (profile) => PROFILES[profile].model;
+test('the fixture policy carries the model keys a launch needs (#5917)', () => {
+  assert.strictEqual(roleModel('merge-check', POLICY), PROFILES[DRIVER_ROLE_PROFILES['merge-check']].model);
+});
 const { OK_ENVELOPE, BAD_MERGE_CHECK_ENVELOPES } = require('../../helpers/merge-check-envelopes');
 
 // Fake deps recording every call; `node` routed by script basename; log-decision.js appends a real
@@ -148,6 +157,8 @@ describe('merge-check path', () => {
       assert.notStrictEqual(r.mergeCheck.verdict, 'auto-merge');
       assert.strictEqual(r.acceptance.completed, false);
       assert.ok(!h.decisionLines().some((l) => l.includes('verdict auto-merge')));
+      // The launch returned (an envelope came back), so every such stop names its model (#5917).
+      assert.strictEqual(h.events.find((e) => e.step === 'merge-check').extra.model, M('standard'));
     });
   }
 
@@ -230,6 +241,58 @@ describe('merge-check path', () => {
     assert.strictEqual(h.launches().length, 0);
   });
 
+  test('a refused merge-check launch names the code and carries no model (#5917)', async () => {
+    const h = harness({ policy: { ...POLICY, 'express-driver-models': { value: { reviewer: 'capable' }, source: 'policy' } } });
+    const r = await judgeMergeCheck(h.env, h.ctx);
+    assert.strictEqual(h.launches().length, 0);
+    assert.strictEqual(r.verdict, 'needs-human');
+    const ev = h.events.filter((e) => e.step === 'merge-check');
+    assert.strictEqual(ev.length, 1);
+    assert.strictEqual(ev[0].detail, 'merge-check launch failed (DRIVER_MODEL_REFUSED)');
+    assert.deepStrictEqual(ev[0].extra, { verdict: 'needs-human', floor: 'none' });
+  });
+
+  test('a launch that throws after the model resolved still names it on the merge-check line (#5917)', async () => {
+    const h = harness({ envelope: new Error('spawn') });
+    assert.strictEqual((await judgeMergeCheck(h.env, h.ctx)).verdict, 'needs-human');
+    const ev = h.events.filter((e) => e.step === 'merge-check');
+    assert.strictEqual(ev.length, 1);
+    assert.strictEqual(ev[0].detail, 'merge-check launch failed');
+    assert.strictEqual(ev[0].extra.model, M('standard'));
+  });
+
+  test('#5942: the merge-check line carries effort on the happy path and after a launcher throw that resolved', async () => {
+    const policy = { ...POLICY, ...resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: 'model-effort: profile\n' }) };
+    const ok = harness({ policy });
+    await judgeMergeCheck(ok.env, ok.ctx);
+    const okEvent = ok.events.find((e) => e.step === 'merge-check');
+    assert.strictEqual(okEvent.extra.effort, 'high');
+    assert.strictEqual(okEvent.extra.effort, ok.launches()[0].opts.effort);
+    const boom = harness({ policy, envelope: new Error('spawn') });
+    await judgeMergeCheck(boom.env, boom.ctx);
+    const boomEvent = boom.events.find((e) => e.step === 'merge-check');
+    assert.strictEqual(boomEvent.extra.model, M('standard'));
+    assert.strictEqual(boomEvent.extra.effort, 'high');
+    const unset = harness({ envelope: new Error('spawn') });
+    await judgeMergeCheck(unset.env, unset.ctx);
+    const unsetExtra = unset.events.find((e) => e.step === 'merge-check').extra;
+    assert.ok('effort' in unsetExtra && unsetExtra.effort === null);
+  });
+
+  test('launchJudge: a refusal stops with the code in the text, any other launch error stays fixed text, a launch returns the model', async () => {
+    const args = { role: 'merge-check', dir: 'merge-check', label: 'merge-check', prompt: 'p', schema: MERGE_CHECK_RESULT_SCHEMA };
+    const refused = harness({ policy: { ...POLICY, 'express-driver-models': { value: { reviewer: 'capable' }, source: 'policy' } } });
+    assert.deepStrictEqual(await launchJudge(refused.env, refused.ctx, args), { stop: 'merge-check launch failed (DRIVER_MODEL_REFUSED)' });
+    const boom = harness({ envelope: new Error('secret words') });
+    // A throw after the model resolved carries it, so the stop's line can still name it (#5917).
+    assert.deepStrictEqual(await launchJudge(boom.env, boom.ctx, args), { stop: 'merge-check launch failed', model: M('standard'), effort: null });
+    const fine = harness();
+    const launched = await launchJudge(fine.env, fine.ctx, args);
+    assert.strictEqual(launched.model, M('standard'));
+    assert.strictEqual(launched.effort, null);
+    assert.strictEqual(launched.envelope.status, 'ok');
+  });
+
   test('AC1: the launch is the read-only merge-check role with its schema and no --settings', async () => {
     const h = harness();
     await judgeMergeCheck(h.env, h.ctx);
@@ -249,7 +312,7 @@ describe('merge-check path', () => {
     const ev = h.events.filter((e) => e.step === 'merge-check');
     assert.strictEqual(ev.length, 1);
     assert.strictEqual(ev[0].status, 'stop');
-    assert.deepStrictEqual(ev[0].extra, { verdict: 'needs-human', floor: 'none' });
+    assert.deepStrictEqual(ev[0].extra, { verdict: 'needs-human', floor: 'none', model: M('standard'), effort: null });
     assert.ok(ev[0].detail.length <= 200);
     const h2 = harness();
     await judgeMergeCheck(h2.env, h2.ctx);

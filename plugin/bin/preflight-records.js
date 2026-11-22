@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // bin/preflight-records.js — record pre-flight JSON in one command.
-//   node bin/preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--merge-gate] [--waves] [--integration-branch <name>] [--records-json <path>] [--prefetched-json <path>] [--blocker-landing] [--blocker-states-json <path>] [--help]
+//   node bin/preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo [host/]owner/name] [--merge-gate] [--waves] [--integration-branch <name>] [--records-json <path>] [--prefetched-json <path>] [--blocker-landing] [--blocker-states-json <path>] [--help]
 // Fetches every record (`gh issue view`), derives facets/keyFiles/fingerprint
 // (bin/lib/issues/record.js, bin/lib/issues/grouping.js), resolves blockedBy
 // either from the body (work-links: body-text, no extra call) or one batched
@@ -109,8 +109,10 @@ const { locatePolicyFile } = require('./lib/policy-file');
 const {
   parseRepo, repoResolutionNote, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
+const { appendStationEvent } = require('./lib/station-events/emit');
+const { snapshotSinkOf } = require('./lib/station-events/blockers');
 
-const USAGE = 'usage: preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--merge-gate] [--waves] [--integration-branch <name>] [--records-json <path>] [--prefetched-json <path>] [--blocker-landing] [--blocker-states-json <path>] [--help]\n';
+const USAGE = 'usage: preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo [host/]owner/name] [--merge-gate] [--waves] [--integration-branch <name>] [--records-json <path>] [--prefetched-json <path>] [--blocker-landing] [--blocker-states-json <path>] [--help]\n';
 
 function parseArgs(argv) {
   const opts = {
@@ -193,6 +195,8 @@ const realDeps = {
     const policyRaw = readFileSafe(locatePolicyFile(repoRoot()).path);
     return resolvePolicyKeys(['work-links'], { policyRaw, runConfigRaw: null })['work-links'].value;
   },
+  // #5902: the station-event emitter; a caller that passes its own deps omits it (no emission).
+  stationEvent: (e) => appendStationEvent(e),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -275,10 +279,10 @@ function loadFromGh(opts, numbers, deps) {
 
   let dependencies = null;
   if (workLinks === 'native') {
-    if (!repoSpec) { deps.stderr('preflight-records.js: could not resolve owner/repo — pass --repo owner/name\n'); return { code: 2 }; }
+    if (!repoSpec) { deps.stderr('preflight-records.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return { code: 2 }; }
     try {
       dependencies = preflight.fetchNativeDependencies({
-        numbers, owner: repoSpec.owner, repo: repoSpec.repo, host: repoSpec.host, runner: nativeRecoveringRunner(deps.runner, numbers),
+        numbers, owner: repoSpec.owner, repo: repoSpec.repo, host: repoSpec.host, runner: nativeRecoveringRunner(deps.runner, numbers), onSnapshot: snapshotSinkOf(deps),
       });
     } catch (err) {
       deps.stderr(`preflight-records.js: ${preflight.errorText(err)}\n`);
@@ -409,7 +413,7 @@ function blockerLandingFromGh(opts, union, repoSpec, deps) {
     return { code: 2 };
   }
   if (!repoSpec) {
-    deps.stderr('preflight-records.js: could not resolve owner/repo for --blocker-landing — pass --repo owner/name\n');
+    deps.stderr('preflight-records.js: could not resolve owner/repo for --blocker-landing — pass --repo [host/]owner/name\n');
     return { code: 2 };
   }
   const { results, error, probeErrors } = fetchBlockerLanding({
@@ -537,6 +541,8 @@ function run(argv, deps = realDeps) {
   return 0;
 }
 
-module.exports = { run, parseArgs, parseRepo };
+module.exports = { run, parseArgs, parseRepo, realDeps };
 
-if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
+if (require.main === module) {
+  process.exitCode = run(process.argv.slice(2));
+}

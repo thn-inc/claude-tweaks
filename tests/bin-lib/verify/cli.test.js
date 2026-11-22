@@ -5,7 +5,13 @@ const path = require('path');
 const fs = require('fs');
 const { spawn, spawnSync } = require('child_process');
 const { readText } = require('../../helpers/read-skill');
+const { readGitCalls } = require('../../helpers/git-call-recorder');
 const { CLI, tmpDir, runCli, tmpGitRepo, nodeCmd, scopedRepo, stampOf, passStampFiles, commitFile, flakyRepo, anchoredRunDir } = require('./cli-helpers');
+const verifyHelpers = require('./cli-helpers');
+const { pinnedGit: git } = require('../../helpers/pinned-git');
+const { warmCallStartsNoGit } = require('../../helpers/git-trace');
+const { isolateTmpdir } = require('../../helpers/tmp-dir');
+isolateTmpdir('ct-iso-cli-');
 
 const STAMP = 'claude-tweaks-verify-pass.json';
 
@@ -1586,4 +1592,137 @@ test('#4177 AC4: nodeCmd refuses a script or argument whose meaning differs betw
     assert.throws(() => nodeCmd('0', bad), (e) => e.message.endsWith(`contains ${JSON.stringify(ch)}, which /bin/sh or cmd.exe interprets`), `argument ${bad} names ${ch}`);
   }
   assert.throws(() => nodeCmd('0', 'C:\\dir\\'), (e) => e.message.endsWith('contains a trailing backslash, which /bin/sh or cmd.exe interprets'));
+});
+
+// #5773: one verify.js invocation asks git each read-only question once, unless the answer may have changed.
+const RECORDER = path.join(__dirname, '..', '..', 'helpers', 'git-call-recorder.js');
+const COMBINED_REV_PARSE = ['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir', '--verify', '-q', 'HEAD'];
+const STATUS_PORCELAIN = ['--no-optional-locks', 'status', '--porcelain'];
+
+function spawnRecorded(cliArgs, cwd, traceDir) {
+  return spawnSync(process.execPath, ['--require', RECORDER, CLI, ...cliArgs], {
+    cwd,
+    env: { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1', CT_TEST_GIT_CALL_LOG: traceDir },
+    encoding: 'utf8',
+    timeout: 60000,
+    killSignal: 'SIGKILL',
+  });
+}
+
+function recordedGitCalls(traceDir) {
+  return readGitCalls(traceDir).flatMap((p) => p.events).filter((e) => e.kind === 'git');
+}
+
+test('AC2.1: a whole-suite run around a no-op suite makes exactly 4 git calls', () => {
+  const { repo } = tmpGitRepo();
+  const traceDir = tmpDir();
+  const result = spawnRecorded(['--cmd', 'tests=node -e 0', '--no-stamp'], repo, traceDir);
+  assert.strictEqual(result.status, 0, result.stderr);
+  const gitArgs = recordedGitCalls(traceDir).map((e) => e.args);
+  // Before #5773 the same run made 6: --git-dir, --show-toplevel, HEAD + status at the start, HEAD + status at the end.
+  assert.deepStrictEqual(gitArgs, [COMBINED_REV_PARSE, STATUS_PORCELAIN, COMBINED_REV_PARSE, STATUS_PORCELAIN]);
+  assert.strictEqual(gitArgs.length, 4);
+});
+
+test('freshness (#5773): a tree change made while the suites run is seen by the read after them', async () => {
+  // Run 1: the suite dirties the tree. The end read must see it, so the report is dirty and the stamp that is written never credits the tree.
+  const dirtied = tmpGitRepo();
+  const dirtyLog = tmpDir();
+  const dirtyRun = await runCli(['--log-dir', dirtyLog, '--cmd', `tests=${nodeCmd("require('fs').writeFileSync('made-by-suite.txt','x')")}`], { cwd: dirtied.repo });
+  assert.strictEqual(dirtyRun.code, 0, dirtyRun.stderr);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dirtyLog, 'report.json'), 'utf8')).dirty, true);
+  const dirtyStatus = await runCli(['--stamp-status'], { cwd: dirtied.repo });
+  const dirtyStamp = JSON.parse(dirtyStatus.stdout);
+  assert.strictEqual(dirtyStamp.dirty, true, 'the live tree is dirty');
+  assert.strictEqual(stampOf(dirtied.gitDir).dirty, true, 'the stamp the run wrote records the suite-made change');
+  assert.strictEqual(dirtyStamp.match, false, 'a run that dirtied its own tree never reads as verifying it');
+
+  // Run 2: the suite commits a file. The end read must see the moved HEAD: no pass stamp, and the report keeps the start sha.
+  const moved = tmpGitRepo();
+  const startSha = moved.git('rev-parse', 'HEAD').trim();
+  const movedLog = tmpDir();
+  const commitScript = "const{execFileSync:x}=require('child_process');require('fs').writeFileSync('c.txt','x');x('git',['add','c.txt'],{windowsHide:true});x('git',['commit','-q','-m','c'],{windowsHide:true})";
+  const movedRun = await runCli(['--log-dir', movedLog, '--cmd', `tests=${nodeCmd(commitScript)}`], { cwd: moved.repo });
+  assert.strictEqual(movedRun.code, 0, movedRun.stderr);
+  const movedStatus = await runCli(['--stamp-status'], { cwd: moved.repo });
+  assert.strictEqual(JSON.parse(movedStatus.stdout).present, false, 'a run that moved HEAD leaves no pass stamp');
+  assert.notStrictEqual(moved.git('rev-parse', 'HEAD').trim(), startSha, 'the suite really committed');
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(movedLog, 'report.json'), 'utf8')).sha, startSha);
+});
+
+test('a --scope run with a generated glob and a dirty tree reads the working tree for the changed files and the exemption once, then once more after the suites (#5773)', () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }], { generated: ['dist/**'] });
+  commitFile(r, 'dist/bundle.js', 'v1');
+  fs.writeFileSync(path.join(r.repo, 'dist', 'bundle.js'), 'v2-regenerated');
+  const traceDir = tmpDir();
+  const run = spawnRecorded(['--scope', r.declPath, '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], r.repo, traceDir);
+  assert.strictEqual(run.status, 0, run.stderr);
+  assert.deepStrictEqual(stampOf(r.gitDir).generatedExempt, ['dist/bundle.js'], 'the exemption still reads the dirty generated path');
+  const zStatus = recordedGitCalls(traceDir).filter((e) => e.args.includes('status') && e.args.includes('-z'));
+  // The changed-file read serves the start exemption too; the other read is the one after the suites.
+  assert.strictEqual(zStatus.length, 2, JSON.stringify(zStatus.map((e) => e.args)));
+});
+
+// #5324: the verify scenario builders sit on templates, keyed by their arguments.
+// #5846: the warm-call and builder-key tests live here, where this file's own tests build scopedRepo/tmpGitRepo/flakyRepo.
+const verifyRules = (glob) => [{ match: glob, suites: ['unit'] }];
+for (const [name, make] of [
+  ['verify scopedRepo', () => verifyHelpers.scopedRepo(verifyRules('src/**'))],
+  ['verify scopedRepo with generated', () => verifyHelpers.scopedRepo(verifyRules('src/**'), { generated: ['**'] })],
+]) {
+  test(`AC1.1 AC1.2: ${name}: a second call starts no git process`, (t) => {
+    warmCallStartsNoGit(make, { track: (r) => t.after(() => fs.rmSync(r.repo, { recursive: true, force: true })) });
+  });
+}
+test('verify builders: per-call values match git, and different arguments never share a template', (t) => {
+  const scratch = [];
+  t.after(() => { for (const d of scratch) fs.rmSync(d, { recursive: true, force: true }); });
+  const s = verifyHelpers.scopedRepo(verifyRules('src/**'));
+  const s2 = verifyHelpers.scopedRepo(verifyRules('lib/**'));
+  const b = verifyHelpers.baselineRepo();
+  const fDefault = verifyHelpers.flakyRepo();
+  const fExit1 = verifyHelpers.flakyRepo({ retryExit: 1 });
+  scratch.push(s.repo, s2.repo, b.repo, fDefault.repo, fExit1.repo);
+  assert.strictEqual(s.branch, git(s.repo, ['symbolic-ref', '--short', 'HEAD']));
+  assert.ok(s.marker.startsWith(s.gitDir), s.marker);
+  assert.ok(s.unitCmd.includes(s.marker), s.unitCmd);
+  const rulesOf = (r) => JSON.parse(fs.readFileSync(path.join(r.repo, r.declPath), 'utf8')).rules;
+  assert.deepStrictEqual(rulesOf(s), verifyRules('src/**'));
+  assert.deepStrictEqual(rulesOf(s2), verifyRules('lib/**'));
+  assert.strictEqual(b.baseSha, git(b.repo, ['rev-parse', 'HEAD']));
+  assert.strictEqual(fDefault.branch, git(fDefault.repo, ['symbolic-ref', '--short', 'HEAD']));
+  assert.ok(fExit1.marker.startsWith(fExit1.repo), fExit1.marker);
+  assert.ok(fExit1.retryLog(0).startsWith(fExit1.gitDir), fExit1.retryLog(0));
+  assert.ok(fs.readFileSync(path.join(fExit1.repo, 'retry.js'), 'utf8').includes('process.exit(1)'));
+  assert.ok(fs.readFileSync(path.join(fDefault.repo, 'retry.js'), 'utf8').includes('process.exit(0)'));
+  // A key that dropped `failingFile` or `extra` would hand a later call the first call's files.
+  const fReal = verifyHelpers.flakyRepo({ failingFile: 'tests/real.test.js' });
+  const sGenerated = verifyHelpers.scopedRepo(verifyRules('src/**'), { generated: ['**'] });
+  scratch.push(fReal.repo, sGenerated.repo);
+  const failJs = (r) => fs.readFileSync(path.join(r.repo, 'fail.js'), 'utf8');
+  assert.ok(failJs(fReal).includes('tests/real.test.js'), failJs(fReal));
+  assert.ok(!failJs(fDefault).includes('tests/real.test.js'), failJs(fDefault));
+  const declOf = (r) => JSON.parse(fs.readFileSync(path.join(r.repo, r.declPath), 'utf8'));
+  assert.deepStrictEqual(declOf(sGenerated).generated, ['**']);
+  assert.strictEqual(declOf(s).generated, undefined);
+});
+test('Absorbed AC (identity): the identity written into a template reaches its copies', (t) => {
+  const scratch = [];
+  t.after(() => { for (const d of scratch) fs.rmSync(d, { recursive: true, force: true }); });
+  // `--local` reads only the copy's own .git/config, so a CI-exported GIT_AUTHOR_* cannot stand in for it.
+  const plain = verifyHelpers.tmpGitRepo();
+  const scoped = verifyHelpers.scopedRepo(verifyRules('src/**'));
+  scratch.push(plain.repo, scoped.repo);
+  for (const r of [plain, scoped]) {
+    assert.strictEqual(git(r.repo, ['config', '--local', 'user.email']), 'verify-test@example.invalid');
+  }
+});
+
+test('tmpGitRepo: a second call starts no git process and carries the verify identity', (t) => {
+  const { traced: second } = warmCallStartsNoGit(tmpGitRepo, { track: (r) => t.after(() => fs.rmSync(r.repo, { recursive: true, force: true })) });
+  assert.strictEqual(second.git('config', 'user.email').trim(), 'verify-test@example.invalid');
+});
+
+test('AC1.1 AC1.2: verify flakyRepo({ retryExit: 1 }): a second call starts no git process', (t) => {
+  warmCallStartsNoGit(() => verifyHelpers.flakyRepo({ retryExit: 1 }), { track: (r) => t.after(() => fs.rmSync(r.repo, { recursive: true, force: true })) });
 });

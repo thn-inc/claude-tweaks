@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { runCliSync, spawnCli } = require('../../helpers/run-cli');
@@ -14,7 +15,7 @@ function cli(args, opts = {}) {
 }
 
 function writeFixture(name, value) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-coord-'));
+  const dir = scratchDir('review-coord-');
   const p = path.join(dir, name);
   fs.writeFileSync(p, JSON.stringify(value));
   return p;
@@ -39,7 +40,7 @@ test('categorise-reproduction matches the library result exactly', () => {
 test('a relative input file resolves against the injected cwd', () => {
   const a = writeFixture('a.json', FINDINGS_A);
   const b = writeFixture('b.json', FINDINGS_B);
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'review-coord-cwd-')));
+  const dir = fs.realpathSync(scratchDir('review-coord-cwd-'));
   fs.copyFileSync(a, path.join(dir, 'a.json'));
   fs.copyFileSync(b, path.join(dir, 'b.json'));
   assert.notStrictEqual(dir, process.cwd());
@@ -131,7 +132,7 @@ function fakeDeps(cwd, mainRoot) {
 }
 
 function tmpDir(t) {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'review-coord-tb-'));
+  const d = scratchDir('review-coord-tb-');
   t.after(() => fs.rmSync(d, { recursive: true, force: true }));
   return d;
 }
@@ -1657,4 +1658,591 @@ test('an append error whose message holds line breaks still gives one stderr lin
   assert.strictEqual(res.code, 0);
   assert.strictEqual(JSON.parse(res.out).logged, false);
   assert.strictEqual(res.err, 'review-coordination.js: could not append the decisions.md entries (first second third)\n');
+});
+
+// ---- #5598: settle-lens-replies settles the lens reviewers' reply texts ----
+
+const { parseLensReply } = require('../../../plugin/bin/lib/lens-reply');
+const { resolvePrinted, formatPrintedPath } = require('../../../plugin/bin/session-tmp-resolve');
+
+const SETTLE_HEADER = '| Severity | Path:Line | Finding | Evidence |\n|---|---|---|---|\n';
+const settleRow = (f) => `| ${f.severity} | ${f.path}:${f.line} | ${f.text} | evidence |\n`;
+const settleReply = (findings, tail = '\nSTATUS: DONE\n') => SETTLE_HEADER + findings.map(settleRow).join('') + tail;
+const REPLY_A = settleReply(REPRO_A);
+const REPLY_B = settleReply(REPRO_B);
+const parsedFindings = (reply) => parseLensReply(reply).findings;
+const reviewer = (lens, side, text, failed = false) => ({ lens, side, text, failed });
+const okPair = (lens) => [reviewer(lens, 'A', REPLY_A), reviewer(lens, 'B', REPLY_B)];
+const SETTLE_SESSION = 'settle-5598';
+
+// A settled pair lens (sec) and a one-reviewer lens (solo) whose usable reviewer owes a findings file.
+const settleBase = () => ({
+  lenses: [{ lens: 'sec', reviewers: 2 }, { lens: 'solo', reviewers: 1 }],
+  reviewers: [...okPair('sec'), reviewer('solo', 'A', REPLY_A)],
+});
+
+function settleInputs(t) {
+  const { main, runDir } = anchoredRunDir(t);
+  const d = tmpDir(t);
+  const tmp = path.join(d, 'tmp');
+  fs.mkdirSync(tmp);
+  return { main, runDir, d, tmp, env: { CLAUDE_CODE_SESSION_ID: SETTLE_SESSION, TMPDIR: tmp, TMP: tmp, TEMP: tmp } };
+}
+
+const settleRunArgs = (inp, only = 'confirmed') => ['--ctx-id', 'c1', '--run', inp.runDir, '--only', only];
+
+function settleRun(inp, result, extra, overrides = {}) {
+  const file = writeText(inp.d, 'result.json', typeof result === 'string' ? result : JSON.stringify(result));
+  const { deps, out, err } = tbDeps(inp.main, { env: inp.env, ...overrides });
+  const code = run(['settle-lens-replies', file, ...extra], deps);
+  return { code, out: out.join(''), err: err.join('') };
+}
+
+const settleFile = (inp, lens, side, ctx = 'c1') => resolvePrinted(`review-${ctx}-lens-${lens}-agent${side}.json`, { env: inp.env });
+const settleLines = (replyA, replyB, only, lens = 'sec') => {
+  const entries = rl.pairEntries(c.categoriseReproduction(parsedFindings(replyA), parsedFindings(replyB)), { lens, only }).entries;
+  return entries.map((e) => formatEntry({ ...e, now: TB_NOW }) + '\n').join('');
+};
+const untouched = (inp, why) => {
+  assert.ok(!fs.existsSync(path.join(inp.runDir, 'decisions.md')), `${why}: decisions.md written`);
+  assert.deepStrictEqual(fs.readdirSync(inp.tmp), [], `${why}: session temp root created`);
+};
+const oneLine = (err) => err.endsWith('\n') && err.split('\n').filter(Boolean).length === 1 && err.startsWith('review-coordination.js: ');
+const needsOf = (printed, lens) => printed.needsSession.find((n) => n.lens === lens);
+
+test('AC3.1: three lenses (ok pair, one failed, one unparseable) settle the first, log its lines, list the other two under needsSession, write the two usable findings files, exit 0', (t) => {
+  const inp = settleInputs(t);
+  const result = {
+    lenses: [{ lens: 'sec', reviewers: 2 }, { lens: 'perf', reviewers: 2 }, { lens: 'style', reviewers: 2 }],
+    reviewers: [
+      ...okPair('sec'),
+      reviewer('perf', 'A', REPLY_A, true), reviewer('perf', 'B', REPLY_B),
+      reviewer('style', 'A', 'I looked around but have no table to give.\n\nSTATUS: DONE'), reviewer('style', 'B', REPLY_B),
+    ],
+  };
+  const res = settleRun(inp, result, settleRunArgs(inp));
+  assert.strictEqual(res.code, 0, res.err);
+  assert.strictEqual(res.err, '');
+  const printed = JSON.parse(res.out);
+  assert.deepStrictEqual(printed.settled.map((s) => s.lens), ['sec']);
+  assert.strictEqual(printed.settled[0].logged, true);
+  assert.deepStrictEqual(printed.needsSession.map((n) => [n.lens, n.reason]), [['perf', 'reviewer-unusable'], ['style', 'reviewer-unusable']]);
+  assert.deepStrictEqual(printed.needsSession[0].reviewers.map((r) => [r.side, r.state]), [['A', 'failed'], ['B', 'ok']]);
+  assert.deepStrictEqual(printed.needsSession[1].reviewers.map((r) => [r.side, r.state]), [['A', 'unparseable'], ['B', 'ok']]);
+  assert.strictEqual(decisionsOf(inp.runDir), `## /review\n${settleLines(REPLY_A, REPLY_B, 'confirmed')}`);
+  assert.ok(settleLines(REPLY_A, REPLY_B, 'confirmed').length > 0);
+  const perfB = needsOf(printed, 'perf').reviewers[1];
+  const styleB = needsOf(printed, 'style').reviewers[1];
+  assert.strictEqual(perfB.findingsPath, settleFile(inp, 'perf', 'B'));
+  assert.strictEqual(styleB.findingsPath, settleFile(inp, 'style', 'B'));
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(perfB.findingsPath, 'utf8')), parsedFindings(REPLY_B));
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(styleB.findingsPath, 'utf8')), parsedFindings(REPLY_B));
+  for (const unusable of [needsOf(printed, 'perf').reviewers[0], needsOf(printed, 'style').reviewers[0]]) assert.ok(!('findingsPath' in unusable));
+  assert.strictEqual(fs.readdirSync(path.dirname(perfB.findingsPath)).length, 2, 'only the two usable files');
+});
+
+test('AC4.1: a text:null reviewer puts its lens under needsSession, never confirmed: []', (t) => {
+  const inp = settleInputs(t);
+  const result = { lenses: [{ lens: 'sec', reviewers: 2 }], reviewers: [reviewer('sec', 'A', null, true), reviewer('sec', 'B', 'No findings.\n\nSTATUS: DONE')] };
+  const res = settleRun(inp, result, settleRunArgs(inp));
+  assert.strictEqual(res.code, 0, res.err);
+  const printed = JSON.parse(res.out);
+  assert.deepStrictEqual(printed.settled, []);
+  assert.strictEqual(needsOf(printed, 'sec').reviewers[0].state, 'failed');
+  assert.ok(!fs.existsSync(path.join(inp.runDir, 'decisions.md')));
+});
+
+test('AC4.2: the test fails if a failed reviewer is treated as an empty table', (t) => {
+  const inp = settleInputs(t);
+  // A text:null reviewer (failed:false too) and a blank text: the partner's empty table must not settle the lens
+  for (const text of [null, '', '  \n ']) {
+    const result = { lenses: [{ lens: 'sec', reviewers: 2 }], reviewers: [reviewer('sec', 'A', text), reviewer('sec', 'B', 'No findings.\n\nSTATUS: DONE')] };
+    const printed = JSON.parse(settleRun(inp, result, ['--ctx-id', 'c1']).out);
+    assert.ok(!printed.settled.some((s) => s.lens === 'sec'), JSON.stringify(text));
+    assert.strictEqual(needsOf(printed, 'sec').reviewers[0].state, 'failed');
+  }
+  const both = { lenses: [{ lens: 'sec', reviewers: 2 }], reviewers: [reviewer('sec', 'A', 'No findings.\n\nSTATUS: DONE'), reviewer('sec', 'B', 'No findings.\n\nSTATUS: DONE')] };
+  const settledEmpty = JSON.parse(settleRun(inp, both, ['--ctx-id', 'c1']).out);
+  assert.deepStrictEqual(settledEmpty.settled, [{ lens: 'sec', confirmed: [], unconfirmed: [] }], 'two real empty tables do settle');
+});
+
+// One test per malformed input (AC5.1/AC5.2): exit 2, exactly one stderr line, decisions.md and the session temp root untouched.
+// The base is a valid roster whose settled lens and one-reviewer lens would append and write if validation came later.
+const SETTLE_REFUSALS = {
+  'no reviewers': [(r) => ({ ...r, reviewers: [] })],
+  'a lens named twice for one side': [(r) => ({ ...r, reviewers: [...r.reviewers, reviewer('sec', 'A', REPLY_A)] })],
+  'side C': [(r) => ({ ...r, reviewers: r.reviewers.map((x) => (x.lens === 'solo' ? { ...x, side: 'C' } : x)) })],
+  'not the shape (an array)': [() => []],
+  'no lenses': [(r) => ({ reviewers: r.reviewers })],
+  'an empty lenses array': [(r) => ({ ...r, lenses: [] })],
+  'a lens named twice in lenses': [(r) => ({ ...r, lenses: [...r.lenses, { lens: 'sec', reviewers: 2 }] })],
+  'reviewers: 3': [(r) => ({ ...r, lenses: [{ lens: 'sec', reviewers: 3 }, r.lenses[1]] })],
+  'a roster lens with no entry': [(r) => ({ ...r, lenses: [...r.lenses, { lens: 'ghost', reviewers: 2 }] })],
+  'a roster side with no entry': [(r) => ({ ...r, reviewers: r.reviewers.filter((x) => !(x.lens === 'sec' && x.side === 'B')) })],
+  'an entry the roster does not name': [(r) => ({ ...r, reviewers: [...r.reviewers, reviewer('ghost', 'A', REPLY_A)] })],
+  'text: 5': [(r) => ({ ...r, reviewers: r.reviewers.map((x) => (x.lens === 'solo' ? { ...x, text: 5 } : x)) })],
+  "failed: 'yes'": [(r) => ({ ...r, reviewers: r.reviewers.map((x) => (x.lens === 'solo' ? { ...x, failed: 'yes' } : x)) })],
+  'a missing failed': [(r) => ({ ...r, reviewers: r.reviewers.map(({ failed, ...x }) => x) })],
+  'a lens ../x': [(r) => ({ lenses: [{ lens: '../x', reviewers: 2 }, r.lenses[1]], reviewers: [...okPair('../x'), r.reviewers[2]] })],
+  'a lens with a slash in an entry only': [(r) => ({ ...r, reviewers: [...r.reviewers, reviewer('a/b', 'A', REPLY_A)] })],
+  'lenses beside result, reviewers inside it': [(r) => ({ lenses: r.lenses, result: { reviewers: r.reviewers } })],
+  'a trailing bare --ctx-id': [null, ['--ctx-id']],
+  'a duplicated --ctx-id': [null, ['--ctx-id', 'c1', '--ctx-id', 'c2']],
+  'a duplicated --only': [null, ['--ctx-id', 'c1', '--run', 'RUN', '--only', 'confirmed', '--only', 'confirmed']],
+  'a blank --run': [null, ['--ctx-id', 'c1', '--run', '', '--only', 'confirmed']],
+  '--ctx-id a/b': [null, ['--ctx-id', 'a/b']],
+  '--ctx-id a\\b': [null, ['--ctx-id', 'a\\b']],
+  '--ctx-id ..': [null, ['--ctx-id', '..']],
+  '--ctx-id with a line break': [null, ['--ctx-id', 'c\n1']],
+  'no --ctx-id': [null, []],
+  '--run without --only': [null, ['--ctx-id', 'c1', '--run', 'RUN']],
+  '--only without --run': [null, ['--ctx-id', 'c1', '--only', 'confirmed']],
+  '--only bogus': [null, ['--ctx-id', 'c1', '--run', 'RUN', '--only', 'bogus']],
+  '--hold with --only confirmed': [null, ['--ctx-id', 'c1', '--run', 'RUN', '--only', 'confirmed', '--hold', 'HOLD']],
+  'a hold entry matching nothing': [null, ['--ctx-id', 'c1', '--run', 'RUN', '--only', 'unconfirmed', '--hold', 'HOLD'], [{ lens: 'sec', source: 'A', path: 'nope.js', line: 1, text: 'x' }]],
+  'a hold entry naming a lens that is not settled': [null, ['--ctx-id', 'c1', '--run', 'RUN', '--only', 'unconfirmed', '--hold', 'HOLD'], [{ lens: 'solo', source: 'A', path: 'src/c.js', line: 30, text: 'stale cache entry never evicted' }]],
+  'a hold entry with no lens': [null, ['--ctx-id', 'c1', '--run', 'RUN', '--only', 'unconfirmed', '--hold', 'HOLD'], [{ source: 'A', path: 'src/c.js', line: 30, text: 'stale cache entry never evicted' }]],
+  'a hold file that is not an array': [null, ['--ctx-id', 'c1', '--run', 'RUN', '--only', 'unconfirmed', '--hold', 'HOLD'], { a: 1 }],
+};
+function assertRefused(t, name) {
+  const [mutate, args, holdContent] = SETTLE_REFUSALS[name];
+  const inp = settleInputs(t);
+  const result = mutate ? mutate(settleBase()) : settleBase();
+  const holdPath = writeText(inp.d, 'hold.json', JSON.stringify(holdContent === undefined ? [] : holdContent));
+  const extra = (args || settleRunArgs(inp)).map((a) => (a === 'RUN' ? inp.runDir : a === 'HOLD' ? holdPath : a));
+  const res = settleRun(inp, result, extra);
+  assert.strictEqual(res.code, 2, `${name}: ${res.err}`);
+  assert.strictEqual(res.out, '', name);
+  assert.ok(oneLine(res.err), `${name}: ${JSON.stringify(res.err)}`);
+  untouched(inp, name);
+}
+for (const name of Object.keys(SETTLE_REFUSALS)) test(`AC5: ${name} exits 2 with one stderr line and writes nothing`, (t) => assertRefused(t, name));
+
+test('AC5: an unreadable result file, invalid JSON and two result files exit 2 with one stderr line', (t) => {
+  const inp = settleInputs(t);
+  const bad = settleRun(inp, '{nope', settleRunArgs(inp));
+  assert.strictEqual(bad.code, 2);
+  assert.ok(oneLine(bad.err), bad.err);
+  const { deps, err } = tbDeps(inp.main, { env: inp.env });
+  assert.strictEqual(run(['settle-lens-replies', path.join(inp.d, 'gone.json'), ...settleRunArgs(inp)], deps), 2);
+  assert.ok(oneLine(err.join('')), err.join(''));
+  const two = settleRun(inp, settleBase(), [path.join(inp.d, 'result.json'), ...settleRunArgs(inp)]);
+  assert.strictEqual(two.code, 2);
+  assert.ok(oneLine(two.err), two.err);
+  untouched(inp, 'unreadable');
+});
+
+test('the valid base the AC5 cases mutate settles, logs and writes (so each refusal above is a real refusal)', (t) => {
+  const inp = settleInputs(t);
+  const res = settleRun(inp, settleBase(), settleRunArgs(inp));
+  assert.strictEqual(res.code, 0, res.err);
+  assert.ok(decisionsOf(inp.runDir).startsWith('## /review\n'));
+  assert.ok(fs.existsSync(settleFile(inp, 'solo', 'A')));
+});
+
+test('AC6.1: a status-misplaced reviewer is paired and listed under violations', (t) => {
+  const inp = settleInputs(t);
+  const misplaced = settleReply(REPRO_A, '\nSTATUS: DONE\n\nOne more note after the status line.\n');
+  const result = { lenses: [{ lens: 'sec', reviewers: 2 }], reviewers: [reviewer('sec', 'A', misplaced), reviewer('sec', 'B', REPLY_B)] };
+  const res = settleRun(inp, result, settleRunArgs(inp));
+  assert.strictEqual(res.code, 0, res.err);
+  const printed = JSON.parse(res.out);
+  assert.deepStrictEqual(printed.settled.map((s) => s.lens), ['sec']);
+  assert.deepStrictEqual(printed.needsSession, []);
+  assert.deepStrictEqual(printed.violations, [{ lens: 'sec', side: 'A', status: 'misplaced' }]);
+  assert.strictEqual(decisionsOf(inp.runDir), `## /review\n${settleLines(misplaced, REPLY_B, 'confirmed')}`);
+});
+
+test('AC6.2: a status-missing reviewer\'s lens is under needsSession and not paired', (t) => {
+  const inp = settleInputs(t);
+  const missing = settleReply(REPRO_A, '');
+  const result = { lenses: [{ lens: 'sec', reviewers: 2 }], reviewers: [reviewer('sec', 'A', missing), reviewer('sec', 'B', REPLY_B)] };
+  const res = settleRun(inp, result, settleRunArgs(inp));
+  assert.strictEqual(res.code, 0, res.err);
+  const printed = JSON.parse(res.out);
+  assert.deepStrictEqual(printed.settled, []);
+  assert.strictEqual(needsOf(printed, 'sec').reason, 'reviewer-unusable');
+  assert.deepStrictEqual(needsOf(printed, 'sec').reviewers.map((r) => [r.side, r.state]), [['A', 'status-missing'], ['B', 'ok']]);
+  assert.ok(!('findingsPath' in needsOf(printed, 'sec').reviewers[0]));
+  assert.ok('findingsPath' in needsOf(printed, 'sec').reviewers[1]);
+  assert.deepStrictEqual(printed.violations, [{ lens: 'sec', side: 'A', status: 'missing' }]);
+  assert.ok(!fs.existsSync(path.join(inp.runDir, 'decisions.md')));
+});
+
+test('AC7.1: settled confirmed lines are byte-identical to categorise-reproduction --run --lens for the same two arrays', (t) => {
+  const viaSettle = settleInputs(t);
+  assert.strictEqual(settleRun(viaSettle, { lenses: [{ lens: 'sec', reviewers: 2 }], reviewers: okPair('sec') }, settleRunArgs(viaSettle, 'confirmed')).code, 0);
+  const viaCat = reproInputs(t);
+  const a = writeText(viaCat.d, 'pa.json', JSON.stringify(parsedFindings(REPLY_A)));
+  const b = writeText(viaCat.d, 'pb.json', JSON.stringify(parsedFindings(REPLY_B)));
+  const { deps } = tbDeps(viaCat.main);
+  assert.strictEqual(run(['categorise-reproduction', a, b, '--lens', 'sec', '--run', viaCat.runDir, '--only', 'confirmed'], deps), 0);
+  assert.ok(decisionsOf(viaCat.runDir).split('\n').filter((l) => l.startsWith('- ')).length >= 2);
+  assert.strictEqual(decisionsOf(viaSettle.runDir), decisionsOf(viaCat.runDir));
+});
+
+test('AC7.2: settled unconfirmed lines (coincidence included) are byte-identical to categorise-reproduction, with and without a hold', (t) => {
+  const viaSettle = settleInputs(t);
+  const viaCat = reproInputs(t);
+  const a = writeText(viaCat.d, 'pa.json', JSON.stringify(parsedFindings(REPLY_A)));
+  const b = writeText(viaCat.d, 'pb.json', JSON.stringify(parsedFindings(REPLY_B)));
+  const roster = { lenses: [{ lens: 'sec', reviewers: 2 }], reviewers: okPair('sec') };
+  assert.strictEqual(settleRun(viaSettle, roster, settleRunArgs(viaSettle, 'unconfirmed')).code, 0);
+  assert.strictEqual(run(['categorise-reproduction', a, b, '--lens', 'sec', '--run', viaCat.runDir, '--only', 'unconfirmed'], tbDeps(viaCat.main).deps), 0);
+  assert.ok(decisionsOf(viaCat.runDir).includes('share a location'), 'the coincidence line is in the compared text');
+  assert.strictEqual(decisionsOf(viaSettle.runDir), decisionsOf(viaCat.runDir));
+  // one coincidence side held: both verbs agree, the hold entry being {lens, ...finding}
+  const heldSettle = settleInputs(t);
+  const heldCat = reproInputs(t);
+  const unconf = c.categoriseReproduction(parsedFindings(REPLY_A), parsedFindings(REPLY_B)).unconfirmed;
+  const holdEntries = [unconf[0], unconf[1]];
+  const holdSettle = writeText(heldSettle.d, 'hold.json', JSON.stringify(holdEntries.map((f) => ({ lens: 'sec', ...f }))));
+  const holdCat = writeText(heldCat.d, 'hold.json', JSON.stringify(holdEntries));
+  const ha = writeText(heldCat.d, 'ha.json', JSON.stringify(parsedFindings(REPLY_A)));
+  const hb = writeText(heldCat.d, 'hb.json', JSON.stringify(parsedFindings(REPLY_B)));
+  const hres = settleRun(heldSettle, roster, [...settleRunArgs(heldSettle, 'unconfirmed'), '--hold', holdSettle]);
+  assert.strictEqual(hres.code, 0, hres.err);
+  assert.strictEqual(run(['categorise-reproduction', ha, hb, '--lens', 'sec', '--run', heldCat.runDir, '--only', 'unconfirmed', '--hold', holdCat], tbDeps(heldCat.main).deps), 0);
+  assert.strictEqual(decisionsOf(heldSettle.runDir), decisionsOf(heldCat.runDir));
+  assert.notStrictEqual(decisionsOf(heldSettle.runDir), decisionsOf(viaSettle.runDir), 'the hold removed a line');
+});
+
+test('--run: a settled lens carries entries and logged, in lens order across two settled lenses, with one append', (t) => {
+  const inp = settleInputs(t);
+  const result = { lenses: [{ lens: 'one', reviewers: 2 }, { lens: 'two', reviewers: 2 }], reviewers: [...okPair('two'), ...okPair('one')] };
+  const appended = [];
+  const res = settleRun(inp, result, settleRunArgs(inp), { appendDecisions: (a) => { appended.push(a); return require('../../../plugin/bin/lib/log-decision/append').appendEntries(a); } });
+  assert.strictEqual(res.code, 0, res.err);
+  const printed = JSON.parse(res.out);
+  assert.strictEqual(appended.length, 1);
+  assert.deepStrictEqual(printed.settled.map((s) => s.lens), ['one', 'two']);
+  assert.ok(printed.settled.every((s) => s.logged === true && s.entries.length > 0 && s.entries.every((e) => e.section === '/review')));
+  assert.strictEqual(decisionsOf(inp.runDir), `## /review\n${settleLines(REPLY_A, REPLY_B, 'confirmed', 'one')}${settleLines(REPLY_A, REPLY_B, 'confirmed', 'two')}`);
+});
+
+test('without --run a settled lens prints confirmed and unconfirmed only, and nothing is appended', (t) => {
+  const inp = settleInputs(t);
+  const res = settleRun(inp, { lenses: [{ lens: 'sec', reviewers: 2 }], reviewers: okPair('sec') }, ['--ctx-id', 'c1']);
+  assert.strictEqual(res.code, 0, res.err);
+  const [settled] = JSON.parse(res.out).settled;
+  assert.deepStrictEqual(Object.keys(settled), ['lens', 'confirmed', 'unconfirmed']);
+  assert.deepStrictEqual({ confirmed: settled.confirmed, unconfirmed: settled.unconfirmed }, c.categoriseReproduction(parsedFindings(REPLY_A), parsedFindings(REPLY_B)));
+  assert.ok(!fs.existsSync(path.join(inp.runDir, 'decisions.md')));
+});
+
+test('AC10.1: a +3 more reviewer is paired and listed under overflow with hidden: 3', (t) => {
+  const inp = settleInputs(t);
+  const overflowing = settleReply(REPRO_A, '| +3 more |\n\nSTATUS: DONE\n');
+  const result = { lenses: [{ lens: 'sec', reviewers: 2 }], reviewers: [reviewer('sec', 'A', overflowing), reviewer('sec', 'B', REPLY_B)] };
+  const res = settleRun(inp, result, ['--ctx-id', 'c1']);
+  assert.strictEqual(res.code, 0, res.err);
+  const printed = JSON.parse(res.out);
+  assert.deepStrictEqual(printed.overflow, [{ lens: 'sec', side: 'A', hidden: 3 }]);
+  assert.deepStrictEqual(printed.settled.map((s) => s.lens), ['sec']);
+});
+
+test('AC11.1: a BLOCKED reply with no table is not-done, and carries its text', (t) => {
+  const inp = settleInputs(t);
+  const blocked = 'I could not read the files you named.\n\nSTATUS: BLOCKED';
+  const result = { lenses: [{ lens: 'sec', reviewers: 2 }], reviewers: [reviewer('sec', 'A', blocked), reviewer('sec', 'B', REPLY_B)] };
+  const printed = JSON.parse(settleRun(inp, result, ['--ctx-id', 'c1']).out);
+  assert.deepStrictEqual(printed.settled, []);
+  const [a] = needsOf(printed, 'sec').reviewers;
+  assert.deepStrictEqual(a, { side: 'A', state: 'not-done', statusWord: 'BLOCKED', text: blocked });
+});
+
+test('a NEEDS_CONTEXT reply with no table is not-done too', (t) => {
+  const inp = settleInputs(t);
+  const asking = 'Which branch do you mean?\n\nSTATUS: NEEDS_CONTEXT';
+  const result = { lenses: [{ lens: 'sec', reviewers: 2 }], reviewers: [reviewer('sec', 'A', REPLY_A), reviewer('sec', 'B', asking)] };
+  const printed = JSON.parse(settleRun(inp, result, ['--ctx-id', 'c1']).out);
+  assert.deepStrictEqual(printed.settled, []);
+  assert.deepStrictEqual(needsOf(printed, 'sec').reviewers[1], { side: 'B', state: 'not-done', statusWord: 'NEEDS_CONTEXT', text: asking });
+});
+
+test('entries are paired by side, A before B, whatever order the result lists them in', (t) => {
+  const inp = settleInputs(t);
+  const result = { lenses: [{ lens: 'sec', reviewers: 2 }], reviewers: [reviewer('sec', 'B', REPLY_B), reviewer('sec', 'A', REPLY_A)] };
+  const printed = JSON.parse(settleRun(inp, result, ['--ctx-id', 'c1']).out);
+  assert.deepStrictEqual(printed.settled[0].unconfirmed, c.categoriseReproduction(parsedFindings(REPLY_A), parsedFindings(REPLY_B)).unconfirmed);
+  const swapped = { lenses: [{ lens: 'sec', reviewers: 2 }], reviewers: [reviewer('sec', 'B', REPLY_B), reviewer('sec', 'A', 'x\n\nSTATUS: DONE')] };
+  assert.deepStrictEqual(JSON.parse(settleRun(inp, swapped, ['--ctx-id', 'c1']).out).needsSession[0].reviewers.map((r) => r.side), ['A', 'B']);
+});
+
+test('an overflow row in a reply that parsed no table is not listed under overflow (the reviewer is unparseable)', (t) => {
+  const inp = settleInputs(t);
+  const result = { lenses: [{ lens: 'sec', reviewers: 2 }], reviewers: [reviewer('sec', 'A', '| +3 more |\n\nSTATUS: DONE'), reviewer('sec', 'B', REPLY_B)] };
+  const printed = JSON.parse(settleRun(inp, result, ['--ctx-id', 'c1']).out);
+  assert.deepStrictEqual(printed.overflow, []);
+  assert.strictEqual(needsOf(printed, 'sec').reviewers[0].state, 'unparseable');
+});
+
+test('AC11.2: a BLOCKED on a misplaced status line is not-done', (t) => {
+  const inp = settleInputs(t);
+  const text = settleReply(REPRO_A, '\nSTATUS: BLOCKED\n\nSee the table above for what I did read.\n');
+  const result = { lenses: [{ lens: 'sec', reviewers: 2 }], reviewers: [reviewer('sec', 'A', text), reviewer('sec', 'B', REPLY_B)] };
+  const printed = JSON.parse(settleRun(inp, result, ['--ctx-id', 'c1']).out);
+  assert.deepStrictEqual(printed.settled, []);
+  const [a] = needsOf(printed, 'sec').reviewers;
+  assert.strictEqual(a.state, 'not-done');
+  assert.strictEqual(a.statusWord, 'BLOCKED');
+  assert.strictEqual(a.text, text);
+  assert.ok(!('findingsPath' in a));
+});
+
+test('AC11.3: failed: true with a full reply is failed', (t) => {
+  const inp = settleInputs(t);
+  const result = { lenses: [{ lens: 'sec', reviewers: 2 }], reviewers: [reviewer('sec', 'A', REPLY_A, true), reviewer('sec', 'B', REPLY_B)] };
+  const printed = JSON.parse(settleRun(inp, result, ['--ctx-id', 'c1']).out);
+  const [a] = needsOf(printed, 'sec').reviewers;
+  assert.strictEqual(a.state, 'failed');
+  assert.ok(!('text' in a) && !('findingsPath' in a));
+});
+
+test('AC11.4: a parsed table with no status line is status-missing', (t) => {
+  const inp = settleInputs(t);
+  const result = { lenses: [{ lens: 'sec', reviewers: 2 }], reviewers: [reviewer('sec', 'A', settleReply(REPRO_A, '')), reviewer('sec', 'B', REPLY_B)] };
+  const printed = JSON.parse(settleRun(inp, result, ['--ctx-id', 'c1']).out);
+  assert.strictEqual(needsOf(printed, 'sec').reviewers[0].state, 'status-missing');
+  assert.strictEqual(needsOf(printed, 'sec').reviewers[0].statusWord, null);
+});
+
+test('AC12.1: a roster lens or side with no entry, or an unnamed entry, exits 2 with one stderr line and nothing written', (t) => {
+  for (const name of ['a roster lens with no entry', 'a roster side with no entry', 'an entry the roster does not name']) assertRefused(t, name);
+});
+
+test('AC12.2: a reviewers: 1 lens is under needsSession with reason single-reviewer and its findings file is written', (t) => {
+  const inp = settleInputs(t);
+  const res = settleRun(inp, { lenses: [{ lens: 'solo', reviewers: 1 }], reviewers: [reviewer('solo', 'A', REPLY_A)] }, ['--ctx-id', 'c1']);
+  assert.strictEqual(res.code, 0, res.err);
+  const printed = JSON.parse(res.out);
+  assert.deepStrictEqual(printed.settled, []);
+  assert.deepStrictEqual(printed.needsSession, [{ lens: 'solo', reason: 'single-reviewer', reviewers: [{ side: 'A', state: 'ok', statusWord: 'DONE', findingsPath: settleFile(inp, 'solo', 'A') }] }]);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(settleFile(inp, 'solo', 'A'), 'utf8')), parsedFindings(REPLY_A));
+});
+
+test('a reviewers: 1 lens accepts its one entry on side B and names the file agentB', (t) => {
+  const inp = settleInputs(t);
+  const res = settleRun(inp, { lenses: [{ lens: 'solo', reviewers: 1 }], reviewers: [reviewer('solo', 'B', REPLY_B)] }, ['--ctx-id', 'c1']);
+  assert.strictEqual(res.code, 0, res.err);
+  const [r] = JSON.parse(res.out).needsSession[0].reviewers;
+  assert.strictEqual(r.side, 'B');
+  assert.strictEqual(r.findingsPath, settleFile(inp, 'solo', 'B'));
+  assert.ok(r.findingsPath.endsWith('review-c1-lens-solo-agentB.json'));
+  assert.ok(fs.existsSync(r.findingsPath));
+  assert.ok(!fs.existsSync(settleFile(inp, 'solo', 'A')));
+});
+
+test('a reviewers: 1 lens with entries on both sides exits 2', (t) => {
+  const inp = settleInputs(t);
+  const res = settleRun(inp, { lenses: [{ lens: 'solo', reviewers: 1 }], reviewers: okPair('solo') }, ['--ctx-id', 'c1']);
+  assert.strictEqual(res.code, 2);
+  assert.ok(oneLine(res.err), res.err);
+  untouched(inp, 'solo both sides');
+});
+
+test('a not-usable single reviewer is under needsSession single-reviewer with no file; a failed one carries no text', (t) => {
+  const inp = settleInputs(t);
+  const res = settleRun(inp, { lenses: [{ lens: 'solo', reviewers: 1 }], reviewers: [reviewer('solo', 'A', null, true)] }, ['--ctx-id', 'c1']);
+  assert.deepStrictEqual(JSON.parse(res.out).needsSession, [{ lens: 'solo', reason: 'single-reviewer', reviewers: [{ side: 'A', state: 'failed', statusWord: null }] }]);
+  assert.deepStrictEqual(fs.readdirSync(inp.tmp), []);
+});
+
+test('wrapped result shape reads like the bare one', (t) => {
+  const inp = settleInputs(t);
+  const bare = settleRun(inp, settleBase(), ['--ctx-id', 'c1']);
+  const wrapped = settleRun(inp, { result: settleBase() }, ['--ctx-id', 'c1']);
+  assert.strictEqual(bare.code, 0, bare.err);
+  assert.strictEqual(wrapped.out, bare.out);
+  assert.ok(JSON.parse(bare.out).settled.length === 1);
+});
+
+test('exit 3 for a missing run dir and for an unanchored one, nothing written', (t) => {
+  const inp = settleInputs(t);
+  const shadow = tmpDir(t);
+  for (const dir of [path.join(inp.runDir, 'gone'), shadow]) {
+    const res = settleRun(inp, settleBase(), ['--ctx-id', 'c1', '--run', dir, '--only', 'confirmed']);
+    assert.strictEqual(res.code, 3, dir);
+    assert.strictEqual(res.out, '', dir);
+    assert.ok(res.err.startsWith('review-coordination.js: '), dir);
+  }
+  assert.ok(!fs.existsSync(path.join(shadow, 'decisions.md')));
+  untouched(inp, 'exit 3');
+});
+
+test('violations, overflow and skipped list reviewers across settled and unsettled lenses alike', (t) => {
+  const inp = settleInputs(t);
+  const skippedRow = settleReply(REPRO_A, '| high |  | a finding with no location | x |\n\nSTATUS: DONE\n');
+  const result = {
+    lenses: [{ lens: 'sec', reviewers: 2 }, { lens: 'perf', reviewers: 2 }],
+    reviewers: [
+      reviewer('sec', 'A', skippedRow), reviewer('sec', 'B', REPLY_B),
+      reviewer('perf', 'A', settleReply(REPRO_A, '| +2 more |\n')), reviewer('perf', 'B', REPLY_B),
+    ],
+  };
+  const printed = JSON.parse(settleRun(inp, result, ['--ctx-id', 'c1']).out);
+  assert.deepStrictEqual(printed.skipped, [{ lens: 'sec', side: 'A', rows: 1 }]);
+  assert.deepStrictEqual(printed.violations, [{ lens: 'perf', side: 'A', status: 'missing' }]);
+  assert.deepStrictEqual(printed.overflow, [{ lens: 'perf', side: 'A', hidden: 2 }]);
+  assert.deepStrictEqual(printed.settled.map((s) => s.lens), ['sec']);
+});
+
+test('skipped lists a reviewer whose table had an empty-location row, and its lens still settles', (t) => {
+  const inp = settleInputs(t);
+  const text = settleReply(REPRO_A, '| high |  | a finding with no location | x |\n\nSTATUS: DONE\n');
+  const result = { lenses: [{ lens: 'sec', reviewers: 2 }], reviewers: [reviewer('sec', 'A', text), reviewer('sec', 'B', REPLY_B)] };
+  const printed = JSON.parse(settleRun(inp, result, ['--ctx-id', 'c1']).out);
+  assert.deepStrictEqual(printed.skipped, [{ lens: 'sec', side: 'A', rows: 1 }]);
+  assert.deepStrictEqual(printed.settled.map((s) => s.lens), ['sec']);
+  assert.deepStrictEqual(printed.needsSession, []);
+});
+
+test('logged: false with one stderr line when the append throws, exit 0, findings files still written', (t) => {
+  const inp = settleInputs(t);
+  const res = settleRun(inp, settleBase(), settleRunArgs(inp), { appendDecisions: () => { throw new Error('disk full'); } });
+  assert.strictEqual(res.code, 0);
+  const printed = JSON.parse(res.out);
+  assert.strictEqual(printed.settled[0].logged, false);
+  assert.ok(printed.settled[0].entries.length > 0);
+  assert.ok(oneLine(res.err), res.err);
+  assert.match(res.err, /^review-coordination\.js: could not append the decisions\.md entries \(.*disk full.*\)\n$/);
+  assert.ok(!fs.existsSync(path.join(inp.runDir, 'decisions.md')));
+  assert.ok(fs.existsSync(settleFile(inp, 'solo', 'A')));
+});
+
+test('a findings file that cannot be written reports findingsPath: null and one stderr line, exit 0, and the append still runs', (t) => {
+  const inp = settleInputs(t);
+  const blocker = writeText(inp.d, 'not-a-dir', 'x');
+  const env = { CLAUDE_CODE_SESSION_ID: SETTLE_SESSION, TMPDIR: blocker, TMP: blocker, TEMP: blocker };
+  const res = settleRun(inp, settleBase(), settleRunArgs(inp), { env });
+  assert.strictEqual(res.code, 0, res.err);
+  const printed = JSON.parse(res.out);
+  assert.strictEqual(printed.needsSession[0].reviewers[0].findingsPath, null);
+  assert.ok(oneLine(res.err), res.err);
+  assert.match(res.err, /could not write review-c1-lens-solo-agentA\.json/);
+  assert.strictEqual(decisionsOf(inp.runDir), `## /review\n${settleLines(REPLY_A, REPLY_B, 'confirmed')}`);
+});
+
+test('a row with an empty path or a control character in its path is skipped; its reviewer is listed under skipped, the lens settles and --run exits 0 logging the good findings', (t) => {
+  const inp = settleInputs(t);
+  const odd = settleReply(REPRO_A, '| high | :12 | no path | x |\n| high | src/x\ry.js:3 | stray carriage return | x |\n\nSTATUS: DONE\n');
+  const result = { lenses: [{ lens: 'sec', reviewers: 2 }], reviewers: [reviewer('sec', 'A', odd), reviewer('sec', 'B', REPLY_B)] };
+  const res = settleRun(inp, result, settleRunArgs(inp));
+  assert.strictEqual(res.code, 0, res.err);
+  assert.strictEqual(res.err, '');
+  const printed = JSON.parse(res.out);
+  assert.deepStrictEqual(printed.skipped, [{ lens: 'sec', side: 'A', rows: 2 }]);
+  assert.deepStrictEqual(printed.settled.map((s) => [s.lens, s.logged]), [['sec', true]]);
+  assert.ok(settleLines(REPLY_A, REPLY_B, 'confirmed').length > 0);
+  assert.strictEqual(decisionsOf(inp.runDir), `## /review\n${settleLines(REPLY_A, REPLY_B, 'confirmed')}`);
+});
+
+test('the session id and temp dir come from deps.env, never process.env', (t) => {
+  const inp = settleInputs(t);
+  const other = path.join(inp.d, 'other');
+  fs.mkdirSync(other);
+  const res = settleRun(inp, settleBase(), ['--ctx-id', 'c1'], { env: { CLAUDE_CODE_SESSION_ID: 'another-session', TMPDIR: other, TMP: other, TEMP: other } });
+  assert.strictEqual(res.code, 0, res.err);
+  assert.ok(JSON.parse(res.out).needsSession[0].reviewers[0].findingsPath.startsWith(formatPrintedPath(path.join(other, 'ct-session-another-session'))));
+  assert.deepStrictEqual(fs.readdirSync(inp.tmp), []);
+});
+
+test('--help names settle-lens-replies', () => {
+  const { deps, out } = fakeDeps(process.cwd());
+  assert.strictEqual(run(['--help'], deps), 0);
+  assert.ok(out.join('').includes('settle-lens-replies <result.json> --ctx-id <id> [--run <dir> --only confirmed|unconfirmed [--hold <file>]]'));
+});
+
+// ---- #5998: record-lens-dispatch writes lens-dispatch.json ----
+
+const LD_ARGS = ['--lens', '3d', '--reviewers', '2', '--path', 'workflow', '--status', 'completed', '--round', '2'];
+
+function recordLens(runDir, main, args, env) {
+  const { deps, out, err } = fakeDeps(main);
+  if (env) deps.env = env;
+  const code = run(['record-lens-dispatch', '--run', runDir, ...args], deps);
+  return { code, out: out.join(''), err: err.join('') };
+}
+
+test('record-lens-dispatch writes an entry into an anchored run dir and prints {path, entry, duplicate}', (t) => {
+  const { main, runDir } = anchoredRunDir(t);
+  const first = recordLens(runDir, main, LD_ARGS);
+  assert.strictEqual(first.code, 0, first.err);
+  const printed = JSON.parse(first.out);
+  assert.strictEqual(printed.path, path.join(fs.realpathSync(runDir), 'lens-dispatch.json'));
+  assert.deepStrictEqual(printed.entry, { lens: '3d', reviewers: 2, path: 'workflow', round: 2, status: 'completed' });
+  assert.strictEqual(printed.duplicate, false);
+  const second = recordLens(runDir, main, LD_ARGS);
+  assert.strictEqual(second.code, 0, second.err);
+  assert.strictEqual(JSON.parse(second.out).duplicate, true);
+});
+
+test('record-lens-dispatch defaults --round to 1', (t) => {
+  const { main, runDir } = anchoredRunDir(t);
+  const res = recordLens(runDir, main, ['--lens', '3a', '--reviewers', '1', '--path', 'task', '--status', 'blocked']);
+  assert.strictEqual(res.code, 0, res.err);
+  assert.strictEqual(JSON.parse(res.out).entry.round, 1);
+});
+
+test('record-lens-dispatch refuses malformed flags with exit 2 and writes nothing', (t) => {
+  const { main, runDir } = anchoredRunDir(t);
+  const ok = ['--lens', '3a', '--reviewers', '1', '--path', 'task', '--status', 'completed'];
+  const without = (flag) => { const i = ok.indexOf(flag); return [...ok.slice(0, i), ...ok.slice(i + 2)]; };
+  const over = (flag, value) => { const i = ok.indexOf(flag); return [...ok.slice(0, i + 1), value, ...ok.slice(i + 2)]; };
+  const lensMsg = 'lens must be one of 3a, 3b, 3c, 3d, 3e, 3f, 3g, 3h';
+  const cases = [
+    [without('--lens'), 'record-lens-dispatch needs --lens'],
+    [over('--lens', '3z'), lensMsg],
+    [over('--lens', '__proto__'), lensMsg],
+    [over('--reviewers', '3'), 'reviewers must be 1 or 2'],
+    [over('--path', 'agent'), 'path must be one of task, workflow'],
+    [over('--status', 'done'), 'status must be one of completed, failed, blocked'],
+    [[...ok, '--round', '0'], '--round must be a positive integer, got "0"'],
+    [[...ok, '--round', 'x'], '--round must be a positive integer, got "x"'],
+    [[...ok, '--lens', '3b'], '--lens given more than once'],
+    [[...ok, 'stray'], 'record-lens-dispatch takes no positional argument'],
+  ];
+  for (const [args, message] of cases) {
+    const res = recordLens(runDir, main, args);
+    assert.strictEqual(res.code, 2, args.join(' '));
+    assert.strictEqual(res.out, '', args.join(' '));
+    assert.strictEqual(res.err, `review-coordination.js: ${message}\n`, args.join(' '));
+    assert.ok(!fs.existsSync(path.join(runDir, 'lens-dispatch.json')), args.join(' '));
+  }
+});
+
+test('record-lens-dispatch exits 3 for an unanchored or missing run dir', (t) => {
+  const d = tmpDir(t);
+  const runDir = path.join(d, 'run');
+  fs.mkdirSync(runDir);
+  assert.strictEqual(recordLens(runDir, d, LD_ARGS).code, 3);
+  assert.ok(!fs.existsSync(path.join(runDir, 'lens-dispatch.json')));
+  assert.strictEqual(recordLens(path.join(d, 'nope'), d, LD_ARGS).code, 3);
+});
+
+test('record-lens-dispatch exits 3 when the existing file is malformed', (t) => {
+  const { main, runDir } = anchoredRunDir(t);
+  const file = path.join(runDir, 'lens-dispatch.json');
+  fs.writeFileSync(file, 'not json');
+  const res = recordLens(runDir, main, LD_ARGS);
+  assert.strictEqual(res.code, 3);
+  assert.match(res.err, /could not record lens-dispatch\.json/);
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), 'not json');
+});
+
+test('record-lens-dispatch exits 3 when the lock is held', (t) => {
+  const { main, runDir } = anchoredRunDir(t);
+  const lock = path.join(runDir, '.lens-dispatch.lock');
+  fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, '.owner'), String(process.pid));
+  const res = recordLens(runDir, main, LD_ARGS, { CLAUDE_TWEAKS_LOCK_WAIT_MS: '0' });
+  assert.strictEqual(res.code, 3);
+  assert.match(res.err, /could not record lens-dispatch\.json/);
+  assert.ok(!fs.existsSync(path.join(runDir, 'lens-dispatch.json')));
+});
+
+test('--help names record-lens-dispatch', () => {
+  const { deps, out } = fakeDeps(process.cwd());
+  assert.strictEqual(run(['--help'], deps), 0);
+  assert.ok(out.join('').includes('record-lens-dispatch --run <dir> --lens <3a..3h> --reviewers 1|2 --path task|workflow --status completed|failed|blocked [--round <n>]'));
 });

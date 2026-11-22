@@ -2,7 +2,8 @@
 // Executes bin/lib/issues/record.js's buildLinkedPRQuery — the pure batched,
 // aliased GraphQL query builder for the open-linked-PR exclusion (#1224) —
 // via an injectable runner, and parses the response into the
-// {openPR: number|null} shape bin/resolve-linked-prs.js's CLI and
+// {openPR, mentions, hasClosingPRReference, issueState, lastShapedAt}
+// shape bin/resolve-linked-prs.js's CLI and
 // dispatch/queue-pull-script.md's eligibility pipeline both need. Mirrors
 // native-dependencies.js's fetchNativeDependencies exactly (same
 // throw-on-partial-result posture, same injectable-runner seam) but for the
@@ -14,7 +15,8 @@
 const { buildLinkedPRQuery } = require('./record');
 
 // { numbers, owner, repo, runner } -> Map<number, { openPR: number|null,
-// mentions: {number, title, state, merged, mergedAt, createdAt}[] }>. ONE batched,
+// mentions: {number, title, state, merged, mergedAt, createdAt}[],
+// lastShapedAt: string|null }>. ONE batched,
 // aliased GraphQL call (buildLinkedPRQuery) resolving every candidate's
 // closedByPullRequestsReferences connection AND its cross-reference
 // timeline (#1984) at once. owner/repo are already-resolved String! values,
@@ -85,9 +87,30 @@ function fetchLinkedPRs({
     // batched response doesn't carry it (an older query shape, or a fixture
     // that predates #2934) — never coerced to a truthy-looking default.
     const issueState = node.state || null;
-    result.set(n, { openPR: openPR ? openPR.number : null, mentions, hasClosingPRReference: nodes.length > 0, issueState });
+    result.set(n, { openPR: openPR ? openPR.number : null, mentions, hasClosingPRReference: nodes.length > 0, issueState, lastShapedAt: latestShapingLabelAt(node) });
   }
   return result;
+}
+
+// #5722: the raw `createdAt` string of the latest-instant LabeledEvent whose
+// label is `ready` or `auto:build` (any actor), or null when none parses.
+// Compared by instant (`Date.getTime()`), never as a string, since GitHub may
+// hand back an offset form; an event with a null label or an unparseable
+// `createdAt` is skipped, so a missing time never moves the answer either way.
+function latestShapingLabelAt(node) {
+  const raw = node.labelEvents && node.labelEvents.nodes;
+  const events = Array.isArray(raw) ? raw : [];
+  let latest = null;
+  let latestMs = -Infinity;
+  for (const ev of events) {
+    const name = ev && ev.label && ev.label.name;
+    if (name !== 'ready' && name !== 'auto:build') continue;
+    const ms = new Date(ev.createdAt).getTime();
+    if (Number.isNaN(ms) || ms <= latestMs) continue;
+    latest = ev.createdAt;
+    latestMs = ms;
+  }
+  return latest;
 }
 
 module.exports = { fetchLinkedPRs };

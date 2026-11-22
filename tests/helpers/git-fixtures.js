@@ -24,6 +24,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 // Loading git-template.js also points a bare run's repoInfo store at a temp file (#5294).
 const { fromTemplate, disableReceiveAutoGc } = require('./git-template');
+const { scratchDir } = require('./tmp-dir');
 
 // Ceiling for a single fixture git spawn.
 //
@@ -70,6 +71,72 @@ function fixtureGit(args, { execFileSync: run = execFileSync, ...opts } = {}) {
   }
 }
 
+// A one-process `git init` (#5771). Fixtures ran `git init` then the config command's `user.name`
+// and `user.email` writes: an identity pair is two extra git processes per fixture repo, across
+// ~300 call sites. `initRepo` starts exactly one process (the init); `writeIdentity` appends the
+// `[user]` section to the config file directly and starts none.
+//
+// `opts` beyond name/email/branch/bare go to fixtureGit (env, cwd, stdio...). A relative `dir`
+// resolves against `opts.cwd` for the identity write, as git resolved it for the init.
+function initRepo(dir, { name, email, branch, bare, ...opts } = {}) {
+  fixtureGit(['init', '-q', ...(bare ? ['--bare'] : []), ...(branch ? ['-b', branch] : []), dir], opts);
+  if (name !== undefined || email !== undefined) {
+    writeIdentity(path.resolve(opts.cwd ?? '', dir), { name, email });
+  }
+  return dir;
+}
+
+// The config file `git config --local` writes for `repoDir`: a plain repo's `.git/config`, a
+// linked worktree's common config (through its `.git` pointer and the `commondir` file), or a
+// bare repo's own `config`.
+function localConfigPath(repoDir) {
+  const stat = (p) => { try { return fs.statSync(p); } catch { return null; } };
+  const dotGit = path.join(repoDir, '.git');
+  const s = stat(dotGit);
+  if (s && s.isDirectory()) return path.join(dotGit, 'config');
+  if (s && s.isFile()) {
+    const m = /^gitdir:\s*(.+?)\s*$/m.exec(fs.readFileSync(dotGit, 'utf8'));
+    if (!m) throw new Error(`writeIdentity: ${repoDir} is not a git repository (${dotGit} names no gitdir)`);
+    const gitDir = path.resolve(repoDir, m[1]);
+    const commondir = path.join(gitDir, 'commondir');
+    const common = stat(commondir) ? path.resolve(gitDir, fs.readFileSync(commondir, 'utf8').trim()) : gitDir;
+    return path.join(common, 'config');
+  }
+  const head = stat(path.join(repoDir, 'HEAD'));
+  const objects = stat(path.join(repoDir, 'objects'));
+  if (head && head.isFile() && objects && objects.isDirectory()) return path.join(repoDir, 'config');
+  throw new Error(`writeIdentity: ${repoDir} is not a git repository`);
+}
+
+// Spells a config value the way git's own config writer does (config.c write_pair, as of git 2.56), so
+// the file holds the bytes `git config` would leave: backslash, double quote, newline and tab always
+// escaped, a carriage return kept raw, and the whole value in double quotes only when it begins or ends
+// with a space or contains `;`, `#` or a carriage return (unquoted, git's reader drops a CR before the
+// line end). A reader that parses config text (the statusline's fast path defers on any quote) sees git's file.
+const CONFIG_ESCAPES = { '\\': '\\\\', '"': '\\"', '\n': '\\n', '\t': '\\t' };
+function quoteConfigValue(value) {
+  const needsQuotes = value.startsWith(' ') || value.endsWith(' ') || /[;#\r]/.test(value);
+  const quote = needsQuotes ? '"' : '';
+  return `${quote}${value.replace(/[\\"\n\t]/g, (c) => CONFIG_ESCAPES[c])}${quote}`;
+}
+
+// Appends `[user]` with the given name and/or email to `repoDir`'s local config — what the config
+// command's `user.email` then `user.name` writes leave, without starting a process (the swept call
+// sites wrote the email first, so `email` precedes `name`). Refuses a config that already has a
+// `[user]` section (any case): a second header would leave git reading the last value of each key,
+// silently.
+function writeIdentity(repoDir, { name, email } = {}) {
+  if (name === undefined && email === undefined) throw new TypeError('writeIdentity: pass name, email, or both');
+  const cfg = localConfigPath(repoDir);
+  let text = '';
+  try { text = fs.readFileSync(cfg, 'utf8'); } catch (err) { if (err.code !== 'ENOENT') throw err; }
+  if (/^[ \t]*\[user\]/im.test(text)) throw new Error(`writeIdentity: ${cfg} already has a [user] section`);
+  let section = text && !text.endsWith('\n') ? '\n[user]\n' : '[user]\n';
+  if (email !== undefined) section += `\temail = ${quoteConfigValue(email)}\n`;
+  if (name !== undefined) section += `\tname = ${quoteConfigValue(name)}\n`;
+  fs.appendFileSync(cfg, section);
+}
+
 // A git repo initialized with one empty commit, so it always has a HEAD.
 // Optional `{ parent, branch }`: the directory the repo's temp dir is created
 // in (default os.tmpdir()) and the initial branch name (default: git's own).
@@ -88,7 +155,7 @@ function gitRepo({ parent = os.tmpdir(), branch } = {}) {
 // `<main>/.claude/worktrees/`, so this is also the fixture for "a worktree the
 // reaper must refuse to touch."
 function linkedWorktreeOf(main) {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wtd-parent-'));
+  const parent = scratchDir('ct-wtd-parent-');
   const wt = path.join(parent, 'wt');
   fixtureGit(['-C', main, 'worktree', 'add', '-q', wt, '-b', `wt-branch-${path.basename(parent)}`]);
   return fs.realpathSync(wt);
@@ -187,7 +254,7 @@ function hookEnv(extra = {}) {
 // prefixes hold distinct commits): `{ dir, head, git }`. `git(...args)` runs in `dir` under cleanGitEnv()
 // with a fixed identity and returns trimmed stdout; the caller removes `dir`.
 function committedRepo({ prefix = 'ct-fx-', file = 'seed.txt', branch } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const dir = scratchDir(prefix);
   const env = cleanGitEnv();
   const git = (...args) => fixtureGit(['-c', 'user.name=T', '-c', 'user.email=t@example.com', ...args], { cwd: dir, env, encoding: 'utf8' }).trim();
   git('init', '-q', ...(branch ? ['-b', branch] : []));
@@ -197,4 +264,4 @@ function committedRepo({ prefix = 'ct-fx-', file = 'seed.txt', branch } = {}) {
   return { dir, head: git('rev-parse', 'HEAD'), git };
 }
 
-module.exports = { gitRepo, linkedWorktreeOf, harnessWorktreeOf, originWithTwoClones, fixtureGit, FIXTURE_TIMEOUT_MS, cleanGitEnv, hookEnv, committedRepo };
+module.exports = { gitRepo, linkedWorktreeOf, harnessWorktreeOf, originWithTwoClones, fixtureGit, FIXTURE_TIMEOUT_MS, cleanGitEnv, hookEnv, committedRepo, initRepo, writeIdentity };

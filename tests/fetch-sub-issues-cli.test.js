@@ -272,7 +272,7 @@ test('an origin whose owner is ".." is rejected after the host gate, before any 
 test('no --repo and no readable origin: exit 2 with the owner/repo message, no host refusal, no gh call', () => {
   const d = deps({ remoteUrl: () => { throw new Error('no remote'); }, runner: () => { throw new Error('should not be called'); } });
   assert.strictEqual(run(['5'], d), 2);
-  assert.match(d.err.join(''), /could not resolve owner\/repo/);
+  assert.match(d.err.join(''), /could not resolve owner\/repo — pass --repo \[host\/\]owner\/name/);
   assert.doesNotMatch(d.err.join(''), /is not a known GitHub host/);
   assert.deepStrictEqual(d.calls, []);
 });

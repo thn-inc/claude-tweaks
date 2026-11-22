@@ -2,7 +2,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { classifyShipped, predatesClaimRelease } = require('../../../plugin/bin/lib/issues/shipped-candidate');
+const { classifyShipped, predatesClaimRelease, downgradedAfterMerge } = require('../../../plugin/bin/lib/issues/shipped-candidate');
 
 function withKeyFiles(files) {
   return `## Current State\n\nn/a\n\n## Technical Approach\n\n### Key Files\n\n${files.map((f) => `- \`${f}\` — modify`).join('\n')}\n`;
@@ -390,4 +390,101 @@ test('#4432: predatesClaimRelease is true only for a result classifyShipped mark
   assert.strictEqual(predatesClaimRelease(classifyShipped(HALF_RECORD, [])), false);
   assert.strictEqual(predatesClaimRelease(null), false);
   assert.strictEqual(predatesClaimRelease({}), false);
+});
+
+// ── #5722: a merged PR that predates the record's shaping or grant ─────────
+const SHAPED_RECORD = {
+  number: 5689,
+  title: 'Windows path test fails on the remaining case',
+  createdAt: '2026-11-16T08:48:37Z',
+  body: withKeyFiles(['a.js']),
+};
+const SHAPED_MENTION = {
+  number: 5700,
+  title: 'Windows path test fails on the remaining case',
+  state: 'MERGED',
+  merged: true,
+  createdAt: '2026-11-16T09:49:23Z',
+  mergedAt: '2026-11-16T10:43:57Z',
+};
+const SHAPED_AFTER_MERGE = '2026-11-16T10:51:03Z';
+
+test('AC1.1: the #5689 shape (title match, shaped and granted after mergedAt) is not strong', () => {
+  const r = classifyShipped(SHAPED_RECORD, [SHAPED_MENTION], { lastShapedAt: SHAPED_AFTER_MERGE });
+  assert.strictEqual(r.tier, 'weak');
+  assert.strictEqual(r.pr, 5700);
+  assert.ok(r.signals.includes('predates-shaping'));
+  assert.ok(r.signals.includes('title-similarity'));
+  assert.strictEqual(downgradedAfterMerge(r), true);
+  assert.strictEqual(predatesClaimRelease(r), false);
+});
+
+test('AC1.1: key-files coverage with a shaping after the merge also classifies weak', () => {
+  const record = { ...SHAPED_RECORD, title: 'Completely different wording' };
+  const prFiles = new Map([[5700, ['a.js']]]);
+  const r = classifyShipped(record, [SHAPED_MENTION], { prFiles, lastShapedAt: SHAPED_AFTER_MERGE });
+  assert.strictEqual(r.tier, 'weak');
+  assert.ok(r.signals.includes('key-files-covered'));
+  assert.ok(r.signals.includes('predates-shaping'));
+});
+
+test('AC2.1: the same fixture with no shaping or grant after mergedAt is still strong', () => {
+  assert.strictEqual(classifyShipped(SHAPED_RECORD, [SHAPED_MENTION]).tier, 'strong');
+  assert.strictEqual(classifyShipped(SHAPED_RECORD, [SHAPED_MENTION], { lastShapedAt: null }).tier, 'strong');
+  const before = classifyShipped(SHAPED_RECORD, [SHAPED_MENTION], { lastShapedAt: '2026-11-16T10:00:00Z' });
+  assert.strictEqual(before.tier, 'strong');
+  assert.ok(!before.signals.includes('predates-shaping'));
+});
+
+test('AC3.1: a missing or unparseable shaping time never downgrades and never upgrades', () => {
+  assert.strictEqual(classifyShipped(SHAPED_RECORD, [SHAPED_MENTION], { lastShapedAt: 'not-a-date' }).tier, 'strong');
+  const plain = { ...SHAPED_MENTION, title: 'totally unrelated wording' };
+  const r = classifyShipped(SHAPED_RECORD, [plain], { lastShapedAt: 'not-a-date' });
+  assert.strictEqual(r.tier, 'weak');
+  assert.deepStrictEqual(r.signals, ['merged-pr-mention-after-created']);
+});
+
+test('AC3.1: a shaping time at the exact merge instant does not downgrade', () => {
+  assert.strictEqual(classifyShipped(SHAPED_RECORD, [SHAPED_MENTION], { lastShapedAt: '2026-11-16T10:43:57.000Z' }).tier, 'strong');
+});
+
+test('#5722: a mention with no mergedAt is not downgraded by a shaping time', () => {
+  const noMergedAt = { ...SHAPED_MENTION };
+  delete noMergedAt.mergedAt;
+  const r = classifyShipped(SHAPED_RECORD, [noMergedAt], { lastShapedAt: SHAPED_AFTER_MERGE });
+  assert.strictEqual(r.tier, 'strong');
+  assert.ok(!r.signals.includes('predates-shaping'));
+});
+
+test('#5722: release and shaping both after the merge carry both signals, weak', () => {
+  const r = classifyShipped(SHAPED_RECORD, [SHAPED_MENTION], {
+    lastReleasedAt: '2026-11-16T10:50:00Z',
+    lastShapedAt: SHAPED_AFTER_MERGE,
+  });
+  assert.strictEqual(r.tier, 'weak');
+  assert.ok(r.signals.includes('predates-claim-release'));
+  assert.ok(r.signals.includes('predates-shaping'));
+  assert.strictEqual(predatesClaimRelease(r), true);
+  assert.strictEqual(downgradedAfterMerge(r), true);
+});
+
+test('#5722: a plain weak mention merged after the shaping outranks a shaping-downgraded one, whatever the order', () => {
+  const later = { ...SHAPED_MENTION, number: 5701, title: 'totally unrelated wording', mergedAt: '2026-11-16T11:30:00Z' };
+  for (const mentions of [[SHAPED_MENTION, later], [later, SHAPED_MENTION]]) {
+    const r = classifyShipped(SHAPED_RECORD, mentions, { lastShapedAt: SHAPED_AFTER_MERGE });
+    assert.strictEqual(r.tier, 'weak');
+    assert.strictEqual(r.pr, 5701);
+    assert.ok(!r.signals.includes('predates-shaping'));
+  }
+});
+
+test('#5722: downgradedAfterMerge is true only for a downgraded result', () => {
+  const releaseOnly = classifyShipped(SHAPED_RECORD, [SHAPED_MENTION], { lastReleasedAt: SHAPED_AFTER_MERGE });
+  const shapingOnly = classifyShipped(SHAPED_RECORD, [SHAPED_MENTION], { lastShapedAt: SHAPED_AFTER_MERGE });
+  assert.strictEqual(downgradedAfterMerge(releaseOnly), true);
+  assert.strictEqual(downgradedAfterMerge(shapingOnly), true);
+  assert.strictEqual(downgradedAfterMerge(classifyShipped(SHAPED_RECORD, [SHAPED_MENTION])), false);
+  assert.strictEqual(downgradedAfterMerge(classifyShipped(SHAPED_RECORD, [])), false);
+  assert.strictEqual(downgradedAfterMerge(null), false);
+  assert.strictEqual(downgradedAfterMerge({}), false);
 });

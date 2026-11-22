@@ -6,9 +6,10 @@
 // `feat-branch` commit is dated after the run dir's own start prefix, and a
 // complete two-spec (11, 12) manifest in an auto-mode run dir.
 const fs = require('fs');
+const { scratchDir } = require('./tmp-dir');
 const os = require('os');
 const path = require('path');
-const { fixtureGit } = require('./git-fixtures');
+const { fixtureGit, initRepo } = require('./git-fixtures');
 
 const RUN_ID = '2026-08-01T090000-spec-11-12';
 const EV_BUILD = '{"skill":"claude-tweaks:build","ts":"2026-08-01T09:05:00.000Z","type":"skill_invoked"}';
@@ -28,10 +29,8 @@ function writeReentryManifest(runDir, statuses) {
 }
 
 function reentryFixture({ events = [EV_BUILD, EV_WRAPUP] } = {}) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-reentry-')));
-  fixtureGit(['init', '-q', '-b', 'trunk', root]);
-  reentryGit(root, 'config', 'user.email', 't@example.com');
-  reentryGit(root, 'config', 'user.name', 'T');
+  const root = fs.realpathSync(scratchDir('ct-reentry-'));
+  initRepo(root, { branch: 'trunk', name: 'T', email: 't@example.com' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
   reentryGit(root, 'add', 'a.txt');
   reentryGit(root, 'commit', '-q', '-m', 'base');

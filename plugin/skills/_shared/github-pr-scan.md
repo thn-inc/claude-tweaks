@@ -47,7 +47,7 @@ Emit `[pr]` rows per the Output Contract.
 
 ## Scope: `repo-wide` (consumed by /tidy Step 4.8)
 
-Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-labelled issues, `by:journey-health`-labelled issues, and `by:docs-health`-labelled issues. Backlog-record findings (stale, parked-trigger, unsynced, needs-scoring, `bot:blocked`, legacy-taxonomy, `bot:parked`) are `/tidy` Step 1's job now, not this scope's — `repo-wide` no longer queries the retired `backlog` label (see `tidy/step-1-records.md`).
+Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-labelled issues, `by:journey-health`-labelled issues, `by:docs-health`-labelled issues, and `by:ci-health`-labelled issues. Backlog-record findings (stale, parked-trigger, unsynced, needs-scoring, `bot:blocked`, legacy-taxonomy, `bot:parked`) are `/tidy` Step 1's job now, not this scope's — `repo-wide` no longer queries the retired `backlog` label (see `tidy/step-1-records.md`).
 
 **Transport split (see Transport above):** items 3, 5, 6, 7, and 8 are issue-backed (`gh issue list`) and run unchanged on either transport. Items 1, 2, 4, 9, 10, and 11 are PR-backed (`gh pr list`/`pr-checks.js --pr`/`gh api graphql`/`gh api repos/.../commits`) — on `gh`-absent, each degrades individually per the rule above rather than the whole scope skipping; item 10's claims-registry read (its first fetch) runs over git (`bin/read-claims.js`), not `gh`, and without git access to `claims-registry` it prints a registry `could-not-read` row and item 10 reports the registry unreadable, never empty, so only item 10's second (`bot:in-progress` list — issue-backed, routes via MCP too) and third (`gh pr list --state all`, PR-backed — degrades) fetches split the same way. Item 11 reuses item 9's already-fetched PR list for its own filter but its mergeability re-check (`resolvePrStateByNumber`, gh-CLI-only by design — see that function's own header comment) has no MCP fallback of its own, so it degrades the same way as every other PR-backed item here.
 
@@ -121,7 +121,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
 
 5. **Harness-health issues** — `gh issue list --label by:harness-health --state open --json number,title,labels,updatedAt,url --limit {resolved-limit}`.
 6. **Journey-health issues** — `gh issue list --label by:journey-health --state open --json number,title,updatedAt,url --limit {resolved-limit}`.
-7. **Docs-health issues** — `gh issue list --label by:docs-health --state open --json number,title,labels,updatedAt,url --limit {resolved-limit}`.
+7. **Docs-health and ci-health issues** — `gh issue list --label by:docs-health --state open --json number,title,labels,updatedAt,url --limit {resolved-limit}`, then the same call with `--label by:ci-health`.
 8. **Grant-queue counts** — one self-contained query feeds three maintenance-signal counts, per `_shared/work-record.md`'s record taxonomy. Not gated on `work-backend` — this scope only runs once the Detection Ladder already confirmed a reachable GitHub remote, regardless of which driver stores records:
 
    Resolve this item's session-scoped temp path first, per `_shared/session-tmp-root.md` (cited throughout this file rather than restated):
@@ -423,8 +423,8 @@ Findings and recommendations (tidy Action Vocabulary):
 | Merged/closed PR whose head branch or worktree still exists locally | Corroborates Step 4.5 `[git]` cleanup — dispatcher merges at assembly |
 | Unresolved review thread addressed by a later commit (evidence: commit touching the flagged lines) | Resolve thread |
 | Unresolved review thread not addressed | Capture to backlog or run `/claude-tweaks:review` — local action |
-| `by:{skill}` issue stale (>4 weeks, the flagged code/target/journey/doc has since changed or been removed) — `{skill}` is any of `code-health`/`harness-health`/`journey-health`/`docs-health` | Close (GitHub) — superseded |
-| `by:{skill}` issue still valid | Suggest `/claude-tweaks:backlog refine` or Capture to backlog — all four health skills are report-only and never apply patches directly (see each skill's own SKILL.md Anti-Patterns table), so a still-valid issue always needs a human-routed fix regardless of which skill filed it |
+| `by:{skill}` issue stale (>4 weeks, the flagged code/target/journey/doc has since changed or been removed) — `{skill}` is any of `code-health`/`harness-health`/`journey-health`/`docs-health`/`ci-health` | Close (GitHub) — superseded |
+| `by:{skill}` issue still valid | Suggest `/claude-tweaks:backlog refine` or Capture to backlog — every health skill is report-only and never applies patches directly (see each skill's own SKILL.md Anti-Patterns table), so a still-valid issue always needs a human-routed fix regardless of which skill filed it |
 | Unarmed ready PR, granted (item 9) | Arm `--auto` per `_shared/pr-first-merge.md` — local action, no new merge mechanics |
 | Unarmed ready PR, ungranted (item 9) | Grant `auto:build` and `auto:merge` on every linked record, or set `housekeeping-auto-merge` for a tidy PR — judgment call, never auto-granted by this sweep |
 | Unsettled run (item 10) | Resume via the reported command, or release the claim and let a fresh dispatch pick the record back up — judgment call |
@@ -466,10 +466,10 @@ issue-backed (`gh issue list`, `gh api .../sub_issues`), so on `gh`-absent they 
 
 ## Output Contract
 
-Two collection prefixes for PR/code-health/harness-health/journey-health/docs-health findings, one grant-queue-metrics prefix (`repo-wide` scope only, unconditional — the grant-queue counts exist regardless of which driver stores records), one un-dispositioned-closed-record prefix (`acceptance-gap` scope, and `parent-gate`'s hand-closed-parent branch), and one un-gated-parent prefix (`parent-gate` scope only) — all emitted as standard Template A rows (`_shared/subagent-dispatch-core.md`) so existing dispatchers consume them unchanged:
+Two collection prefixes for PR/code-health/harness-health/journey-health/docs-health/ci-health findings, one grant-queue-metrics prefix (`repo-wide` scope only, unconditional — the grant-queue counts exist regardless of which driver stores records), one un-dispositioned-closed-record prefix (`acceptance-gap` scope, and `parent-gate`'s hand-closed-parent branch), and one un-gated-parent prefix (`parent-gate` scope only) — all emitted as standard Template A rows (`_shared/subagent-dispatch-core.md`) so existing dispatchers consume them unchanged:
 
 - `[pr]` — pull-request findings: `[pr] PR #{n}: {title} — {issue} — {recommendation}`, or `repo-wide` item 4's capped-list row, verbatim as item 4 writes it
-- `[gh-issue]` — code-health/harness-health/journey-health/docs-health issue findings: `[gh-issue] #{n}: {title} — {issue} — {recommendation}`
+- `[gh-issue]` — code-health/harness-health/journey-health/docs-health/ci-health issue findings: `[gh-issue] #{n}: {title} — {issue} — {recommendation}`
 - `[queue]` — grant-queue metrics (item 8 above, `repo-wide` scope only, derived from the single `gh issue list --state open` query already fetched): `[queue] {N} pending authorization, {M} bot:blocked, {K} backlog` — each count rendered `{N}+` when item 8's block warned that the fetch hit its cap
 - `[acceptance-gap]` — closed records with no acceptance disposition (`acceptance-gap` scope above): `[acceptance-gap] #{n}: {title} — closed with no acceptance disposition — recommend /claude-tweaks:accept #{n}`
 - `[parent-gate]` — decomposition parents with every sub-issue closed and no acceptance disposition on the parent (`parent-gate` scope above): `[parent-gate] #{n}: {title} — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:accept #{n}`, or below the oversight floor: `[parent-gate] #{n}: {title} — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)`
@@ -489,8 +489,8 @@ Severity mapping (Template A Severity column):
 | Open PR superseded (related work already merged) | medium |
 | Merged/closed PR with local branch/worktree remnants | medium |
 | `pending-review` PR gone stale, `mergeStateStatus DIRTY` (item 11) | medium |
-| Code-health/harness-health/journey-health/docs-health issue stale/superseded | medium |
-| Code-health/harness-health/journey-health/docs-health issue still valid, awaiting `/claude-tweaks:backlog refine` | low |
+| Code-health/harness-health/journey-health/docs-health/ci-health issue stale/superseded | medium |
+| Code-health/harness-health/journey-health/docs-health/ci-health issue still valid, awaiting `/claude-tweaks:backlog refine` | low |
 | Open PR awaiting review (not draft, not yet `Stale`, 0 unresolved threads, CI clean) | info |
 | Closed record with no acceptance disposition (`acceptance-gap` scope) | info |
 | Decomposition parent complete with no acceptance disposition (`parent-gate` scope) | info |

@@ -2,6 +2,7 @@
 // Copies tests/fixtures/guard-refusals/store/ into a fresh temp directory and stamps every .jsonl with
 // STORE_MTIME, so a scan window can be chosen around it (a checkout gives every fixture file "now").
 const fs = require('node:fs');
+const { scratchDir } = require('./tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { ISOLATION_CLAUSE } = require('../../plugin/bin/lib/hooks/harness-refusal');
@@ -23,7 +24,7 @@ process.on('exit', () => {
 });
 
 function copyStore() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-refusals-store-'));
+  const dir = scratchDir('guard-refusals-store-');
   made.push(dir);
   fs.cpSync(FIXTURE_STORE, dir, { recursive: true });
   stamp(dir);
@@ -38,7 +39,7 @@ const HARNESS_FILE = `This session${ISOLATION_CLAUSE}/wt. Edit the worktree copy
 const WORKTREE_ALWAYS = 'PreToolUse:Bash hook error: claude-tweaks: this project requires an isolated worktree for this command.';
 
 function writeStore(entries) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-refusals-rows-'));
+  const dir = scratchDir('guard-refusals-rows-');
   made.push(dir);
   const slug = path.join(dir, '-Users-me-guards');
   fs.mkdirSync(slug, { recursive: true });

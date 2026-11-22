@@ -273,7 +273,7 @@ function anchoredRun(run, deps) {
   }
   if (target.ok) return target;
   if (target.reason === 'missing') deps.stderr(`acceptance-packet.js: run dir does not exist: ${run}\n`);
-  else deps.stderr(`acceptance-packet.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+  else deps.stderr(`acceptance-packet.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
   return null;
 }
 

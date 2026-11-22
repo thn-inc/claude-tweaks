@@ -25,6 +25,7 @@ function failureCtx(wt, error, { sessionId = 'sess-ptuf-1', toolName = 'Bash' } 
   return {
     input: { hook_event_name: 'PostToolUseFailure', tool_name: toolName, tool_input: { command: 'd=.; sed -n 1,2p $d/README.md' }, error, session_id: sessionId, cwd: wt, is_interrupt: false },
     cwd: wt,
+    env: process.env,
     ownedRun: {},
   };
 }

@@ -3,19 +3,20 @@
 // Not a test file (no .test.js suffix), so node --test never runs it.
 'use strict';
 const fs = require('fs');
+const { scratchDir } = require('./tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
 function gitRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-'));
+  const dir = scratchDir('ct-bsg-');
   execFileSync('git', ['-C', dir, 'init', '-q']);
   execFileSync('git', ['-C', dir, 'commit', '--allow-empty', '-m', 'init', '-q']);
   return fs.realpathSync(dir);
 }
 
 function linkedWorktreeOf(main) {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-wtparent-'));
+  const parent = scratchDir('ct-bsg-wtparent-');
   const wt = path.join(parent, 'wt');
   execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt, '-b', `wt-branch-${path.basename(parent)}`]);
   return fs.realpathSync(wt);
@@ -44,7 +45,7 @@ function commitMaterializedSpec(wt, tailPath, runId = RUN_ID) {
 // deliberately not the fixture git repo, so a test that anchors the run dir
 // outside the worktree it enforces in says so by passing `main` instead.
 function projectDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  return scratchDir('ct-bsg-proj-');
 }
 
 // appendEvent flattens `data` onto the event object (see context.js's
@@ -73,7 +74,7 @@ function degradeMemoFixture() {
   execFileSync('git', ['-C', main, 'remote', 'add', 'origin', 'https://github.com/o/n.git']);
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const project = scratchDir('ct-bsg-proj-');
   return { wt, project };
 }
 const readRunState = (run) => JSON.parse(fs.readFileSync(path.join(run, 'run-state.json'), 'utf8'));

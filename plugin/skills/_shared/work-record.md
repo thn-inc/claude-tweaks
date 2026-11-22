@@ -95,7 +95,7 @@ per-member), visually distinct from the graded dimensions above — see the Colo
 
 | Family | Labels | Color | Axis |
 |---|---|---|---|
-| Origin (6) | `by:code-health`, `by:harness-health`, `by:journey-health`, `by:docs-health`, `by:capture`, `by:dispatch` | `BFD4F2` | Origin |
+| Origin (7) | `by:code-health`, `by:harness-health`, `by:journey-health`, `by:docs-health`, `by:capture`, `by:dispatch`, `by:ci-health` | `BFD4F2` | Origin |
 | Risk (3) | `risk:low`, `risk:medium`, `risk:high` | `0E8A16` / `FBCA04` / `D93F0B` | Scoring |
 | Size (3) | `size:low`, `size:medium`, `size:high` | `D4C5F9` / `8B5CF6` / `5319E7` | Scoring |
 | Ceremony (2) | `ceremony:fast-lane`, `ceremony:standard` | `FEF2C0` | Ceremony depth — cross-cutting, not one of the axes; stamped by `/specify` alongside Scoring, always explicit (no unscored state) |
@@ -113,6 +113,7 @@ per-member), visually distinct from the graded dimensions above — see the Colo
 | Provenance (1) | `shaped:headless` | `CFD3D7` | Marks a record shaped by `/specify`'s headless `next` unit with no human review of the resulting spec body — absent means either a human shaped it, or it predates this feature. Writer: `/specify` `next` mode only, applied in the same call as `ready` — never on an interactively-shaped record. Readers: the grant gate (`evaluateGrantGate`, #969), `/backlog attention`, and `/assess-agent-autonomy`'s `grant-check.md` Step 2 Judge (weighs this provenance toward a conservative verdict, #969). Never blocks an interactive human grant. |
 | Priority (3, optional) | `priority:high`, `priority:medium`, `priority:low` | `B60205` / `FBCA04` / `C2E0C6` | dispatch ordering |
 | Container (1) | `digest` | `EEEEEE` | marks the rolling digest issue container for below-materiality-floor deferred findings, per `_shared/materiality-floor.md` |
+| Release gate (1) | `release-block` | `B4006E` | Presence-only: releases stop while any open record carries it (`_shared/release-block.md`). Set by `bin/release-block.js stamp` or a human; cleared by closing the record or removing the label |
 
 Retired names: `family:parent`, `framing:baked` (now `solution:unjustified`) — [IL-85] PERMANENT read-side support remains for adopter repos; removable only at a major version that drops pre-rename repo support.
 
@@ -348,7 +349,7 @@ prerequisite-check grep as the only backstop.
 ## Born-ready rule
 
 Health-skill records (`by:code-health`, `by:harness-health`, `by:journey-health`,
-`by:docs-health`) are
+`by:docs-health`, `by:ci-health`) are
 agent-sized and spec-shaped **by construction** — their builders emit Current State /
 Deliverables / Acceptance Criteria / Release Note bodies with scoring (`releaseNote` is a
 required `specShapedBody` parameter, #2660 — each producer passes a plain-language sentence,
@@ -435,14 +436,21 @@ idempotency:
 <!-- work-fingerprint: {fingerprint} -->
 ```
 
-Readers accept the legacy `<!-- code-health-fingerprint: {fingerprint} -->` marker during
-the migration window (read both, emit only `work-fingerprint`). `bin/lib/issues/record.js`'s
+Readers accept the legacy `<!-- code-health-fingerprint: {fingerprint} -->` marker (read both,
+emit only `work-fingerprint`). Removal condition: remove `FP_RE_LEGACY` and its branch in
+`extractFingerprint` once no issue, open or closed, carries a `code-health-fingerprint`,
+`harness-health-fingerprint` or `journey-health-fingerprint` marker; the check is
+`gh issue list --state all --limit 100000 --json number,body -q '[.[] | select(.body | test("(code|harness|journey)-health-fingerprint:"))] | length'`
+and a result of 0 means the condition is met. The command checks only the repository it runs
+in; a 0 is necessary but not sufficient, because the reader also serves consumer repos this
+check cannot see, so removal also needs a release note plus a sunset window (or a sweep step
+that rewrites old markers to `work-fingerprint`). `bin/lib/issues/record.js`'s
 `extractFingerprint` implements the dual read; when both markers are present, the new one wins.
 
 ## Freshness stamp
 
 Records filed by the four health-sweep skills also carry the commit the sweep actually read, as
-a plain body-metadata line:
+a plain body-metadata line (`/ci-health` files none):
 
 ```
 Verified-as-of: {git sha}
@@ -468,7 +476,11 @@ none}`, plus `Risk-flags-unconfirmed: true` when no human confirmed the set. `pa
 malformed line or an unknown slug reads all four built-in categories flagged, never "no flags".
 `bin/risk-flags.js` is the one writer path (`/claude-tweaks:specify` settles the set,
 `/claude-tweaks:backlog refine` confirms it); never hand-edit the lines. `local-files` carries
-them in the body, never in `facets`. They are not the `risk:*` scoring axis.
+them in the body, never in `facets`. They are not the `risk:*` scoring axis. A third line,
+`Risk-flags-added-by-tripwire: {slugs}` (#4619), names the flags the diff tripwire added beyond
+the declared set: `parseTripwireFlags` is its one reader and `addTripwireRiskFlags` its writer
+(both in `bin/lib/issues/record.js`; a re-shape's `settle` carries it forward), and
+`parseRiskFlags` ignores it.
 
 ## Acceptance-target line
 
@@ -501,7 +513,7 @@ dispatch/auto-merge/fetch/staleness/promise-register thresholds the Consumers be
 
 | Skill | Role against the record |
 |---|---|
-| `/code-health`, `/harness-health`, `/journey-health`, `/docs-health` | File born-`ready` records with origin + scoring + fingerprint |
+| `/code-health`, `/harness-health`, `/journey-health`, `/docs-health`, `/ci-health` | File born-`ready` records with origin + scoring + fingerprint |
 | `/capture` | Files raw backlog records (`by:capture`, Type only) |
 | `/specify` | Shapes records to spec shape; decomposes designs into `ready` sub-issue records (plus a parent when Step 2.6 keeps one); seeds `## Cross-Spec Promises` on the parent for decompositions of 4 or more sub-issues |
 | `/backlog` | `refine` mode is the human gate — grants `auto:build`/`auto:merge` over the `ready` queue, and suggests `priority:*`/`**Related:**` (human-confirmed); its headless posture (`--source routine\|sweep`, or the deprecated `grant` alias) is the one machine-grant path — see Grant semantics above and `backlog/refine-headless.md`. `overview` mode is read-only — distribution views plus a "what to build next" recommendation. |

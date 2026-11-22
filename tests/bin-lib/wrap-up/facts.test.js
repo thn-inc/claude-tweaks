@@ -13,7 +13,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { gatherFacts } = require('../../../plugin/bin/lib/wrap-up/facts');
-const { cleanGitEnv, committedRepo } = require('../../helpers/git-fixtures');
+const { cleanGitEnv, committedRepo, initRepo } = require('../../helpers/git-fixtures');
 
 let repoDir;
 let baseSha;
@@ -24,9 +24,7 @@ function git(args, cwd) {
 
 before(() => {
   repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-'));
-  git(['init', '-q'], repoDir);
-  git(['config', 'user.email', 'test@example.com'], repoDir);
-  git(['config', 'user.name', 'Test'], repoDir);
+  initRepo(repoDir, { name: 'Test', email: 'test@example.com' });
 
   fs.writeFileSync(
     path.join(repoDir, 'CLAUDE.md'),
@@ -112,9 +110,7 @@ test('AC1.1: gatherFacts reports a non-ASCII changed path unquoted', () => {
   // Own repo: the shared one's changed-file set is asserted on by sibling tests.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-z-'));
   try {
-    git(['init', '-q'], dir);
-    git(['config', 'user.email', 'test@example.com'], dir);
-    git(['config', 'user.name', 'Test'], dir);
+    initRepo(dir, { name: 'Test', email: 'test@example.com' });
     fs.mkdirSync(path.join(dir, 'docs'));
     fs.writeFileSync(path.join(dir, 'docs', 'ö.md'), '# Moves\n\nenough shared body text for rename detection to pair these\n');
     git(['add', '.'], dir);
@@ -162,9 +158,7 @@ test('gatherFacts headingRenamed is false when no modified md file changed a hea
 test('gatherFacts headingRenamed separates a modified heading from a deleted file', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-heading-'));
   try {
-    git(['init', '-q'], dir);
-    git(['config', 'user.email', 'test@example.com'], dir);
-    git(['config', 'user.name', 'Test'], dir);
+    initRepo(dir, { name: 'Test', email: 'test@example.com' });
     fs.writeFileSync(path.join(dir, 'a.md'), '# Alpha\n\nbody\n');
     fs.writeFileSync(path.join(dir, 'b.md'), '## Beta\n\nbody\n');
     git(['add', '.'], dir);
@@ -193,9 +187,7 @@ test('gatherFacts headingRenamed separates a modified heading from a deleted fil
 test('AC1.1: removing a heading from docs/café.md still sets headingRenamed (regression pin — the -U0 scan reads no path)', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-heading-z-'));
   try {
-    git(['init', '-q'], dir);
-    git(['config', 'user.email', 'test@example.com'], dir);
-    git(['config', 'user.name', 'Test'], dir);
+    initRepo(dir, { name: 'Test', email: 'test@example.com' });
     git(['config', 'core.quotepath', 'true'], dir);
     fs.mkdirSync(path.join(dir, 'docs'));
     fs.writeFileSync(path.join(dir, 'docs', 'café.md'), '# Title\n\nbody\n');
@@ -219,9 +211,7 @@ test('gatherFacts headingRenamed degrades to false outside a repo', () => {
 test('gatherFacts claudeMdCommandRenamed is false when CLAUDE.md is absent at base', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-nobase-'));
   try {
-    git(['init', '-q'], dir);
-    git(['config', 'user.email', 'test@example.com'], dir);
-    git(['config', 'user.name', 'Test'], dir);
+    initRepo(dir, { name: 'Test', email: 'test@example.com' });
     fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
     git(['add', '.'], dir);
     git(['commit', '-q', '-m', 'no claude md'], dir);
@@ -239,9 +229,7 @@ test('gatherFacts claudeMdCommandRenamed is false when CLAUDE.md is absent at ba
 test('gatherFacts claudeMdOverBudget is true when CLAUDE.md exceeds the always-loaded budget', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-budget-'));
   try {
-    git(['init', '-q'], dir);
-    git(['config', 'user.email', 'test@example.com'], dir);
-    git(['config', 'user.name', 'Test'], dir);
+    initRepo(dir, { name: 'Test', email: 'test@example.com' });
     // Default always-loaded-budget is 150 lines (bin/lib/policy-schema.js) —
     // no .claude-tweaks/policy.yml in this temp dir, so the schema default applies.
     fs.writeFileSync(path.join(dir, 'CLAUDE.md'), `${'line\n'.repeat(151)}`);
@@ -269,9 +257,7 @@ test('AC7 facts: gatherFacts claudeMdOverBudget honors a policy.yml budget — p
   // default can: 6 lines is under 150 but over 5.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-budget-policy-'));
   try {
-    git(['init', '-q'], dir);
-    git(['config', 'user.email', 'test@example.com'], dir);
-    git(['config', 'user.name', 'Test'], dir);
+    initRepo(dir, { name: 'Test', email: 'test@example.com' });
     fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
     fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'harness-health-always-loaded-budget: 5\n');
     fs.writeFileSync(path.join(dir, 'CLAUDE.md'), 'line\n'.repeat(6));
@@ -287,9 +273,7 @@ test('AC7 facts: gatherFacts claudeMdOverBudget honors a policy.yml budget — p
 
 function budgetFixture(prefix) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  git(['init', '-q'], dir);
-  git(['config', 'user.email', 'test@example.com'], dir);
-  git(['config', 'user.name', 'Test'], dir);
+  initRepo(dir, { name: 'Test', email: 'test@example.com' });
   fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'harness-health-always-loaded-budget: 5\n');
   fs.writeFileSync(path.join(dir, 'CLAUDE.md'), 'line\n'.repeat(6));
@@ -356,9 +340,7 @@ test('AC7 facts: the injected env reaches the core — GIT_DIR/GIT_WORK_TREE onl
 test('gatherFacts claudeMdOverBudget is false when CLAUDE.md is within budget and no rules exist', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-budget-ok-'));
   try {
-    git(['init', '-q'], dir);
-    git(['config', 'user.email', 'test@example.com'], dir);
-    git(['config', 'user.name', 'Test'], dir);
+    initRepo(dir, { name: 'Test', email: 'test@example.com' });
     fs.writeFileSync(path.join(dir, 'CLAUDE.md'), 'short\n');
     git(['add', '.'], dir);
     git(['commit', '-q', '-m', 'in budget'], dir);
@@ -377,9 +359,7 @@ test('gatherFacts claudeMdOverBudget is false when CLAUDE.md is within budget an
 test('gatherFacts claudeMdOverBudget is true when a scoped rule exceeds the scoped-rule budget', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-budget-rule-'));
   try {
-    git(['init', '-q'], dir);
-    git(['config', 'user.email', 'test@example.com'], dir);
-    git(['config', 'user.name', 'Test'], dir);
+    initRepo(dir, { name: 'Test', email: 'test@example.com' });
     fs.writeFileSync(path.join(dir, 'CLAUDE.md'), 'short\n');
     fs.mkdirSync(path.join(dir, '.claude', 'rules'), { recursive: true });
     // Default scoped-rule-budget is 30 lines. A `paths:` key makes this a

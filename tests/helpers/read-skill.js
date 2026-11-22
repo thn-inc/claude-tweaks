@@ -25,6 +25,7 @@
 // '\n\n' paragraph breaks proves readText() makes the search CRLF-safe (the
 // checkout is not what does).
 const fs = require('node:fs');
+const { scratchDir } = require('./tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -34,7 +35,7 @@ function readText(absPath) {
 
 function crlfCheckoutRead(absPath) {
   const raw = readText(absPath).replace(/\n/g, '\r\n');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-crlf-'));
+  const dir = scratchDir('ct-crlf-');
   try {
     const tmp = path.join(dir, path.basename(absPath));
     fs.writeFileSync(tmp, raw);

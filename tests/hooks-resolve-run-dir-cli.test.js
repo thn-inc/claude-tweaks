@@ -61,6 +61,17 @@ test('--create mints a run directory and prints its path, exit 0', async () => {
   assert.match(path.basename(printed), /-spec-77$/);
 });
 
+test('#5903: --create stdout is exactly the directory path with the manifest present, exit 0', async () => {
+  const main = gitRepo();
+  const out = await run(['--spec-slug', 'spec-78', '--create'], main, { PIPELINE_RUN_DIR: '' });
+  assert.strictEqual(out.code, 0);
+  const dir = out.stdout.trim();
+  assert.strictEqual(out.stdout, `${dir}\n`);
+  assert.ok(path.isAbsolute(dir));
+  assert.ok(fs.statSync(dir).isDirectory());
+  assert.ok(fs.existsSync(path.join(dir, 'manifest.json')));
+});
+
 // #5376 injected-value proof: fails when resolve-run-dir reads process.cwd() instead of the injected cwd
 test('--root-only prints the anchored main checkout root from inside a linked worktree', async () => {
   const main = gitRepo();

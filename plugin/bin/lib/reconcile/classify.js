@@ -31,12 +31,14 @@ const FETCH_TIMEOUT_MS = 5000;
 // opts.skipFetch: trust the caller already refreshed origin/* this pass
 // (reconcile()'s shared fetch, #820 D2) instead of fetching again here.
 function classifyMirror(repoRoot, integration, opts = {}) {
-  const status = runGit(['--no-optional-locks', 'status', '--porcelain'], repoRoot); // git-path-read: not a path list (emptiness only)
+  // opts.env (optional, a hook event's context, #5377): the environment every git child runs in; absent, the inherited one.
+  const envOpts = opts.env ? { env: opts.env } : undefined;
+  const status = runGit(['--no-optional-locks', 'status', '--porcelain'], repoRoot, envOpts); // git-path-read: not a path list (emptiness only)
   if (status.failure) return { state: null, failure: status.failure };
   if (status.stdout !== '') return { state: 'dirty', failure: null };
 
   if (!opts.skipFetch) {
-    const fetch = runGit(['fetch', 'origin', integration], repoRoot, { timeoutMs: FETCH_TIMEOUT_MS });
+    const fetch = runGit(['fetch', 'origin', integration], repoRoot, { timeoutMs: FETCH_TIMEOUT_MS, ...envOpts });
     if (fetch.failure) return { state: null, failure: fetch.failure };
   }
 
@@ -44,7 +46,7 @@ function classifyMirror(repoRoot, integration, opts = {}) {
   // commits only on origin's copy (behind) — see `git rev-list`'s
   // --left-right docs. Never `git status`/`git branch -vv` for this: those
   // report against whatever was fetched last, not this call's fresh fetch.
-  const counts = runGit(['rev-list', '--left-right', '--count', `${integration}...origin/${integration}`], repoRoot);
+  const counts = runGit(['rev-list', '--left-right', '--count', `${integration}...origin/${integration}`], repoRoot, envOpts);
   if (counts.failure) return { state: null, failure: counts.failure };
   const parts = counts.stdout.split(/\s+/).map(Number);
   const [ahead, behind] = parts;

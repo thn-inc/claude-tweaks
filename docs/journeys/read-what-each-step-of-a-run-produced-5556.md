@@ -14,7 +14,7 @@ files:
 **Persona:** the maintainer deciding whether `/claude-tweaks:review`'s paired reviewers earn their tokens, who until now answered that by writing a one-off grep over `decisions.md`. The dispatch scoreboard is a second reader: it reads the same file as a contract and must never see a guessed number.
 **Goal:** open one file per closed run that joins each step's cost (minutes, tokens, agents) with what the step produced (commits, verify runs, decision lines by status, questions and their wait, and review findings by pair outcome and tiebreak result). Then total the same numbers across the whole archive with one command.
 **Entry point:** a run directory that has been closed (`hooks.js close-run`, teardown, or archive), or a pipelines root holding many of them.
-**Success state:** `{run-dir}/step-yield.json` exists beside `timing.json`, and `steps[]` is in phase order. The review step carries per-lens `raised` / `both` / `one` and tiebreak counts. Every unrecognised line sits under `unparsed` with up to five samples. `node tools/step-yield-report.js <pipelines-root> [--json]` prints archive totals and the review-step unparsed share.
+**Success state:** `{run-dir}/step-yield.json` exists beside `timing.json`, and `steps[]` is in phase order. The review step carries per-lens `raised` / `both` / `one` and tiebreak counts. Every unrecognised line sits under `unparsed` with up to five samples. `node tools/step-yield-report.js <pipelines-root> [--json]` prints archive totals and the review-step unparsed share, and `--runs [--window N] [--lane-floor M]` adds per-run rows and per-lane step tables.
 
 ## Steps
 
@@ -59,6 +59,15 @@ files:
   - An unparsed share of 2% or more. AC7's bound is under 2%.
   - `runsFileStale` above zero after a release with no `schemaVersion` bump.
 
+### 6. Compare lanes over a window of recent closed runs
+- **URL:** `node tools/step-yield-report.js "<pipelines-root>" --runs --window 100 --lane-floor 20 --json`
+- **Action:** Run the report with `--runs`. Read the `runs` rows (run id, `startedAt`, lane, per-step cost and outcome), then `lanes[lane]` for each lane's window and its per-step table: runs the step ran in, confirmed findings, failed verifies, fix commits, and cost medians.
+- **Should feel:** The question "how often does this step change the outcome, per lane?" has a rate with its run count beside it, from one command.
+- **Should understand:** Runs are ordered by the start time in their run id, not by close time. The lane is `driver` when the run has `driver-events.jsonl`, `express` when a proceed entry has no later escalation of the same record, otherwise `config.yml`'s `ceremony-profile`, otherwise `none`. A lane with fewer than `--lane-floor` runs in the window widens to its own most recent runs. A lane with fewer than that in the whole archive is marked `belowFloor`. A cost with no source is `null`, never summed into `0`, and `driverUnparsed` counts malformed driver lines. Without `--runs`, `--window` or `--lane-floor` the output is exactly what step 5 prints.
+- **Red flags:**
+  - A token median of `0` read as "this step is free". It is `timing.json`'s per-phase attribution.
+  - A rate quoted for a `belowFloor` lane.
+
 ## Origin
 
-Record #5556 (step yield per closed run), PR #5684.
+Record #5556 (step yield per closed run), PR #5684. Step 6: record #5580 (standard-lane run graph design), PR #5834.
