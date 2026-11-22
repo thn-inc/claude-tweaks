@@ -1,7 +1,7 @@
 // bin/lib/model-profiles/policy-fragment.js
 //
-// Minimal hand-rolled reader for the resolver's four policy.yml keys
-// (POLICY_KEYS_READ in ./profiles.js). bin/lib/policy-schema.js's
+// Minimal hand-rolled reader for the resolver's four policy keys, from policy.yml
+// or factory-layer text (POLICY_KEYS_READ in ./profiles.js). bin/lib/policy-schema.js's
 // parseFlatLines is deliberately flat-only; the nested model-profiles map
 // needs this dedicated reader. No YAML library — the plugin ships zero
 // runtime npm deps.
