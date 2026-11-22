@@ -229,7 +229,7 @@ prose-code-twin-pin applies to the tier table (prose in `step3-lens-dispatch.md`
 - Modify: `plugin/skills/review/step3-tier-variants.md` (one sentence on the `low` no-executable-content paragraph: under `adaptive` the CLI's `executableContent` fact replaces it; unchanged under `tier`)
 - Modify: `docs/journeys/record-lens-dispatches-and-read-lens-history.md` (its "No caller of `readLensHistory` ships yet" sentence → names `review-lens-select.js`)
 - Create: `tests/review-lens-selection-conformance.test.js`
-- Waived `docs/superpowers/specs/2026-11-18-pipeline-economy-design.md`: names the key only in its Phase 10 record index (line 288); no change.
+- Waived `docs/superpowers/specs/2026-11-18-pipeline-economy-design.md`: names the key only in its Phase 10 record index (line 301 after the catch-up merge); no change.
 - Waived `plugin/skills/review/code-mode-steps.md`: read only — #5929 (open) owns the bookkeeping-only fan-out skip there; this task confirms the new sub-file does not restate it.
 
 **Interfaces:**
