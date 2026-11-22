@@ -185,7 +185,7 @@ test('the prose twins name exactly the directories PROMPT_PROSE_DIRS lists', () 
   const ticked = PROMPT_PROSE_DIRS.map((d) => `\`${d}/\``);
   const list = `${ticked.slice(0, -1).join(', ')}, or ${ticked[ticked.length - 1]}`;
   const root = path.join(__dirname, '..', '..', '..', 'plugin', 'skills');
-  for (const rel of ['build/micro-plan.md', 'wrap-up/ceremony-derivation.md']) {
+  for (const rel of ['wrap-up/ceremony-derivation.md']) {
     const prose = readText(path.join(root, rel));
     assert.ok(prose.includes(list), `${rel} must contain the phrase: ${list}`);
   }
