@@ -3,6 +3,7 @@
 const ctxLib = require('./context');
 
 function run(ctx) {
+  ctxLib.requireEnv(ctx);
   // Ownership-scoped, same as session-end.js — see bin/hooks.js (#62).
   const owned = ctx.ownedRun || {};
   if (!owned.dir) return {};
@@ -15,7 +16,7 @@ function run(ctx) {
   // Unlike session-end's `interrupted`, this stamp is not sticky — but it still
   // overwrites another session's `lastEvent` with an event that never happened
   // to it, so it is gated the same way.
-  if (owned.attribution !== 'fallback') ctxLib.writeRunState(owned.dir, { lastEvent: 'pre-compact' });
+  if (owned.attribution !== 'fallback') ctxLib.writeRunState(owned.dir, { lastEvent: 'pre-compact' }, { env: ctx.env });
   return {};
 }
 

@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const {
@@ -278,7 +279,7 @@ test('CLI: run-config value is pinned and wins over policy.yml (run-scoped stabi
   const dir = gitRepo();
   fs.mkdirSync(path.join(dir, '.claude-tweaks'));
   fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-model: local-merge\n');
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-intmodel-run-'));
+  const runDir = scratchDir('ct-intmodel-run-');
   fs.writeFileSync(path.join(runDir, 'config.yml'), 'integration-model: pr-first\n');
   const out = runResolvePolicy(['--values', '--run', runDir, 'integration-model'], { cwd: dir });
   assert.strictEqual(out.trim(), 'pr-first');

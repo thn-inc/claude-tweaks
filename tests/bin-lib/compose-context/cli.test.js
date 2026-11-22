@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('node:child_process');
@@ -13,7 +14,7 @@ const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'compose-con
 // with a `.git` DIRECTORY, an anchored run dir under it, and a worktree-local
 // shadow of that run dir (a `.git` FILE) for the anchoring rejection.
 function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'compose-cli-'));
+  const root = scratchDir('compose-cli-');
   const main = path.join(root, 'main');
   const runDir = path.join(main, '.claude-tweaks', 'pipelines', '2026-09-06T000000-spec-1');
   const shadow = path.join(main, '.claude', 'worktrees', 'flow-spec-1', '.claude-tweaks', 'pipelines', '2026-09-06T000000-spec-1');
@@ -242,7 +243,7 @@ test('--help exits 0 with usage and probes nothing (real binary)', () => {
 
 test('real binary: a --run dir outside any checkout is accepted (anchored-or-outside), exit 0 and a JSON line', () => {
   const f = fixture();
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'compose-outside-'));
+  const outside = scratchDir('compose-outside-');
   fs.writeFileSync(path.join(outside, 'config.yml'), 'mode: interactive\nintegration-model: local-merge\n');
   const result = spawnSync(process.execPath, [CLI, '--run', outside, '--step', 'step-1', f.b], { encoding: 'utf8', cwd: outside });
   assert.equal(result.status, 0, result.stderr);

@@ -5,6 +5,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures.js');
@@ -46,7 +47,7 @@ function bootstrapped(version) {
 // A bare repo wired up as `origin`, with `main` deliberately never pushed — the
 // shape a project has on its very first release into a fresh remote (#2254 F6).
 function bareOrigin(root) {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-origin-')));
+  const dir = fs.realpathSync(scratchDir('ct-origin-'));
   fixtureGit(['init', '--bare', '-q', dir]);
   fixtureGit(['-C', root, 'remote', 'add', 'origin', dir]);
   return dir;
@@ -190,7 +191,7 @@ test('a first-parent merge keeps branch commits out of the plan (design stance 3
 });
 
 test('--root naming a file is refused with exit 2', (t) => {
-  const fileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-rootfile-'));
+  const fileDir = scratchDir('ct-rootfile-');
   t.after(() => fs.rmSync(fileDir, { recursive: true, force: true }));
   const file = path.join(fileDir, 'f.txt');
   fs.writeFileSync(file, 'x');

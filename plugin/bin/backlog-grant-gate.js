@@ -15,7 +15,7 @@
 // continuous session pulling the whole issue set independently per skill
 // invocation doesn't burn a round-trip per call for identical data.
 //
-// Usage: backlog-grant-gate.js [--repo owner/name] [--limit N] [--help]
+// Usage: backlog-grant-gate.js [--repo [host/]owner/name] [--limit N] [--help]
 // Output: one JSON envelope on stdout —
 //   { ceiling, grantOriginationEnabled, shortcut, candidates, trustRows,
 //     phaseA, eligible, refused }
@@ -35,9 +35,9 @@
 'use strict';
 
 const fs = require('fs');
-const path = require('path');
 const { execFileSync } = require('child_process');
 const { resolvePolicyKeys } = require('./lib/policy-schema');
+const { locatePolicyFile } = require('./lib/policy-file');
 const {
   parseRepo, ghAvailable, remoteUrl, ghOptions, explicitRepoGhHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
@@ -45,7 +45,7 @@ const { computeOutlook } = require('./lib/backlog-grant-gate/backlog-grant-gate'
 const { LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 const { TRUST_POLICY_KEYS } = require('./lib/issues/trust');
 
-const USAGE = 'usage: backlog-grant-gate.js [--repo owner/name] [--limit N] [--help]\n';
+const USAGE = 'usage: backlog-grant-gate.js [--repo [host/]owner/name] [--limit N] [--help]\n';
 
 function parseArgs(argv) {
   const opts = { repo: null, limit: null, help: false };
@@ -115,7 +115,7 @@ const realDeps = {
   // maxBuffer widened for the same reason: fetchGitLog dumps every commit
   // message on the integration branch in one call.
   gitRunner: (args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true }),
-  readPolicyRaw: () => readFileSafe(path.join(repoRoot(), '.claude-tweaks', 'policy.yml')),
+  readPolicyRaw: () => readFileSafe(locatePolicyFile(repoRoot()).path),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -166,7 +166,7 @@ function run(argv, deps = realDeps) {
       if (gated.refusal) { deps.stderr(`backlog-grant-gate.js: ${gated.refusal}\n`); return 2; }
       repoSpec = gated.spec;
     }
-    if (!repoSpec) { deps.stderr('backlog-grant-gate.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+    if (!repoSpec) { deps.stderr('backlog-grant-gate.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return 2; }
     // #1443: parseRepo's regex accepts any non-'/' owner/repo segment, including '.'/'..'
     // (#1153 review finding). resolveSubIssueNumbers's REST fallback (lib/backlog-grant-gate/
     // backlog-grant-gate.js) builds a `repos/${owner}/${repo}/issues/.../sub_issues` path via

@@ -9,7 +9,7 @@
 //
 //   defineStep(name, stopClass, fn) -> { name, run }
 //     fn(ctx, deps) -> Promise<StepResult>, where
-//     StepResult = { status: 'ok'|'stop'|'fail', detail?, halt?, stopClass?, reason?, extra?, skip? }
+//     StepResult = { status: 'ok'|'stop'|'fail', detail?, halt?, stopClass?, reason?, extra?, skip?, noLine? }
 //   - `stop` means a gate said no; `fail` means a call failed.
 //   - `halt` defaults to `status !== 'ok'`; a step that must never end the record (a
 //     failed summary entry) returns `halt: false`.
@@ -18,6 +18,8 @@
 //     run.js's finalEvent maps a pre-push stop's reason through settle's toEscalationReason.
 //   - `extra` fields merge into the step's event line (never over its core fields).
 //   - `skip: true` (an ok result of a step that did not apply) emits no event line and does not halt.
+//   - `noLine: true` (a non-ok result of a step that started nothing, a launch-time model refusal) emits
+//     no event line but still halts and becomes the record's stop.
 //   - A throw from fn is `{ status: 'fail', detail: err.message }` with the step's class.
 //
 // The test step runs worker-authored code (the worker's test files) through verify.js. Containment
@@ -75,25 +77,30 @@
 // pr-checks envelope (headRunCount, trusted only when its headRefOid is that sha): a commit still
 // without one once the window has passed is recorded as `no-ci`, and an unreadable count is never `no-ci`.
 const path = require('node:path');
-const { STEP, STOP_CLASSES, neutralize, normalizeTitle, CLI_TIMEOUT_MS, firstLine, errorText } = require('./events');
+const { STEP, STOP_CLASSES, WORKER_TEST_MODES, neutralize, normalizeTitle, CLI_TIMEOUT_MS, firstLine, errorText } = require('./events');
 const { parseStatusPorcelainZ } = require('../git-z');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { gateOriginRepo, resolveRepoTarget } = require('../repo-resolve');
 const { isTimeoutError } = require('../shared-primitives');
 const { fenceFor } = require('../markdown-blocks');
 const { buildEnv } = require('./worker');
-const { WIN32_CLAUDE_BIN, readCeilings, launchTracked } = require('./launch');
+const { assertTestCommand, SANDBOX_PROBED_PLATFORMS } = require('./roles');
+const { WIN32_CLAUDE_BIN, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE, readCeilings, launchTracked, modelPolicyRefusal } = require('./launch');
 const { openBlockerRefs } = require('../issues/record-dependencies');
 const { hasDriverEscalationMarker } = require('./settle');
 const { merge } = require('./merge');
 const { sensitivePathsOf } = require('../express/policy');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
 const { reviewRecord, treeDelta } = require('./review');
-const { reviewerGateReason } = require('./admission');
+const { reviewerGateReason, ADMISSION_REASONS } = require('./admission');
 const { claimLogText, CLAIM_LOG_SECTION, CLAIM_LOG_STEP } = require('../log-decision/claim-log');
 const { readClaimExit } = require('./claim-exit');
+const buildAuthority = require('../issues/build-authority');
+const typedCommand = require('../issues/typed-command');
+const { envTmpdir } = require('../session-tmp');
 
-// The worker's test command and the full verify invocation's `--cmd tests=…` value.
+// The full verify invocation's `--cmd tests=…` value and the review step's evidence-run test command; the
+// worker's own test command is workerTestCommand's (#5915).
 const TEST_COMMAND = 'npm test';
 // The plugin's bin/ directory (steps.js lives in bin/lib/driver), where the CLIs the steps run live.
 const BIN_DIR = path.join(__dirname, '..', '..');
@@ -111,11 +118,15 @@ const CI_SETTLE_WINDOW_MS = 2 * 60 * 1000;
 // `auto-merge-max-lines` is the express diff bound check enforces when the driver passes no --max-lines;
 // the worker's prompt states whichever bound check applies.
 // The three express-driver-max-* keys are the driver lane's bounds (#5224, laneBounds and driverLineBound).
+// The last four, express-driver-models, model-profiles, model-ceiling and model-effort, are the model
+// and effort each worker launches with (#5917 and #5942, launch.js's roleLaunch); the policy step
+// refuses a run whose roles do not resolve.
 const POLICY_KEYS = Object.freeze([
   'express-driver', 'express-driver-wall-clock-minutes', 'express-driver-spend-ceiling-dollars',
   'merge-sensitive-paths', 'integration-model', 'integration-branch', 'verify-suite-slots',
   'auto-merge-max-lines', 'express-driver-review',
   'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-lines',
+  ...MODEL_POLICY_KEYS,
 ]);
 // The one record read: its JSON feeds eligibility, admission, the worker and check.
 const ISSUE_JSON_FIELDS = 'number,title,body,labels,state,comments';
@@ -147,6 +158,8 @@ function defineStep(name, stopClass, fn) {
       reason: result.reason || result.status,
       extra: result.extra || {},
       skip: result.skip === true && result.status === 'ok',
+      // A refused step that wrote nothing emits no event line (run.js); an ok result never can.
+      noLine: result.noLine === true && result.status !== 'ok',
     };
   }
   return Object.freeze({ name, run: runStep });
@@ -200,9 +213,14 @@ const policyStep = defineStep(STEP.policy, STOP_CLASSES.REFUSED, async (ctx, dep
     // value past 2^53 parses to an unsafe number): fatal here, before any record is claimed, whatever
     // the reviewer answer, so driverLineBound reads only a usable value.
     const lineBound = resolved['express-driver-max-lines'];
+    // `!== 'default'`: a factory value (#6006) is set explicitly, so it is checked like a policy.yml one.
     if (lineBound.source !== 'default' && !(Number.isSafeInteger(lineBound.value) && lineBound.value >= 1)) {
       return fatal(`driver diff bound not an integer of at least 1: express-driver-max-lines (${JSON.stringify(lineBound.value)})`);
     }
+    // Every driver role's model is resolved before the claim (#5917): a role that cannot get one
+    // refuses the run here, naming the role or the key, with nothing written.
+    const modelWhy = modelPolicyRefusal(resolved);
+    if (modelWhy) return fatal(modelWhy);
     const { ref, why } = resolveIntegrationRef(resolved, mainRoot, deps);
     if (!ref) return fatal(`integration branch unresolvable: ${why}`);
     // Under --run (#5232) adopt.js cannot see the integration branch, so the check lives here, before
@@ -253,6 +271,7 @@ function laneBounds(policy) {
 // the prompt and check never disagree.
 function driverLineBound(ctx) {
   const { value, source } = ctx.shared.policy['express-driver-max-lines'];
+  // A factory-sourced bound (#6006) is set, not derived, so it is passed like a policy.yml one.
   return source !== 'default' && ctx.reviewer && ctx.reviewer.on === true ? value : null;
 }
 
@@ -320,6 +339,20 @@ const admissionStep = defineStep(STEP.admission, STOP_CLASSES.REFUSED, async (ct
     const { openPR } = linkedEntry;
     openLinkedPRs = openPR === null || openPR === undefined ? [] : [openPR];
   }
+  // The build grant (#5584): `auto:build`, or a typed command that named this record. Only a record
+  // in drive.js's own arguments is named (ctx.named); under --budget it never is. A deps set without
+  // the three members (older fakes) gets the modules' own rule and check, and no terminal.
+  const env = deps.env || {};
+  const resolve = deps.resolveBuildAuthority || buildAuthority.resolveBuildAuthority;
+  const readTyped = deps.readTypedCommand || typedCommand.readTypedCommand;
+  const auth = resolve({
+    number: n,
+    labels: ctx.issue.labels,
+    named: ctx.named === true,
+    env,
+    typedCommand: () => readTyped({ number: n, env, now: deps.date(), tmpdir: envTmpdir(env) }),
+    stdinIsTTY: deps.stdinIsTTY === true,
+  });
   const verdict = deps.evaluateAdmission({
     number: n,
     state: ctx.issue.state,
@@ -331,14 +364,24 @@ const admissionStep = defineStep(STEP.admission, STOP_CLASSES.REFUSED, async (ct
     keyFiles: ctx.keyFiles,
     bounds: laneBounds(policy),
     reviewerOn: ctx.reviewer ? ctx.reviewer.on : undefined,
+    buildAuthority: auth.authority,
   });
+  const extra = { authority: auth.authority };
   const admissionReasons = verdict && Array.isArray(verdict.reasons) ? verdict.reasons : [];
   if (!verdict || verdict.admitted !== true) {
     ctx.admissionReasons = admissionReasons.length > 0 ? admissionReasons : ['not admitted'];
-    return { status: 'stop', detail: ctx.admissionReasons.join('; ') };
+    let detail = ctx.admissionReasons.join('; ');
+    // Joined as formatAuthorityLine joins them; an answer with no reason words adds nothing.
+    const words = Array.isArray(auth.reasons) ? auth.reasons : [];
+    if (auth.authority === 'none' && words.length > 0 && admissionReasons.includes(ADMISSION_REASONS.noBuildGrant)) {
+      // Kept on ctx too, so --check's printed reasons carry it after ctx.admissionReasons.
+      ctx.typedCommandNote = `typed command not accepted: ${words.join(', ')}`;
+      detail += `; ${ctx.typedCommandNote}`;
+    }
+    return { status: 'stop', detail, extra };
   }
   ctx.admissionReasons = admissionReasons;
-  return { status: 'ok' };
+  return { status: 'ok', extra };
 });
 
 // A plugin/bin CLI of this plugin, run under the driver's own Node via deps.node.
@@ -368,7 +411,7 @@ const claimStep = defineStep(STEP.claim, STOP_CLASSES.CLAIM, async (ctx, deps) =
   ctx.claimDate = deps.date();
   ctx.runId = adopted ? adopted.runId : `${formatTimestamp(ctx.claimDate)}-drive-${n}`;
   const r = deps.node(binScript('claim-targets.js'),
-    ['--run-id', ctx.runId, '--targets', String(n), '--steps', 'build,test'],
+    ['--run-id', ctx.runId, '--targets', String(n), '--steps', 'build,test', '--lane', 'driver'],
     { cwd: mainRoot, timeout: CLI_TIMEOUT_MS, env: deps.env });
   // A recorded fact, not a side effect: the budget loop reads it to tell a contested claim (3) from
   // other claim failures (4, 5, an exit 0 that claimed nothing, a killed claim with a null exit, a
@@ -541,7 +584,10 @@ const worktreeStep = defineStep(STEP.worktree, STOP_CLASSES.PRE_PUSH, async (ctx
 // The implementer's prompt. It goes to the worker's standard input, never its argv. The
 // record body comes last, fenced and labelled as data: the worker's narrow rights and
 // check's diff bounds are what contain it, so nothing here relies on the worker's trust.
-function workerPrompt(ctx, { minutes, dollars, maxLines }) {
+// `tests` is workerTestCommand's answer: the declared targeted command, or null, for which the line
+// says not to run tests. The list file sits under .claude-tweaks/pipelines/, which isRunArtifact keeps
+// out of the commit and the test step's tree check.
+function workerPrompt(ctx, { minutes, dollars, maxLines, tests }) {
   const { issue } = ctx;
   const title = String(issue.title || '').replace(/\s+/g, ' ').trim();
   const body = typeof issue.body === 'string' ? issue.body : '';
@@ -553,8 +599,10 @@ function workerPrompt(ctx, { minutes, dollars, maxLines }) {
     'Key Files:',
     ...keyFiles,
     '',
-    'Edit only the Key Files and test files.',
-    `Test command: ${TEST_COMMAND}`,
+    tests ? 'Edit only the Key Files and test files (the test list file below excepted).' : 'Edit only the Key Files and test files.',
+    tests
+      ? `Tests: run only the test files that cover what you changed, by explicit path — write their repo-relative paths, one per line, to ${WORKER_TEST_LIST} and run \`${tests.declared}\` with {files} as that path. Never run the whole suite; the driver runs the full check after you finish.`
+      : 'Tests: do not run tests — the driver runs the project\'s check after it commits your change.',
     `Limits: the change stays within ${maxLines} implementation lines (the diff bound check applies; deleted test lines count toward it); the launch ends at ${minutes} minutes of wall clock or $${dollars} of spend.`,
     'When you finish, report status done (or cannot-complete), a one-line commit title and a one-to-two-sentence summary.',
     '',
@@ -654,11 +702,44 @@ function newIndexFlagStop(ctx, deps) {
 // forward an interrupt to the worker's process group (headless-worker-launch, "What the
 // consumer owes").
 // The body is shared with the review step's fix round, which appends `extraPrompt` to the same prompt.
+// A model refusal (launch.js, #5917) returns a no-line `fail` at once: no process ran, so no HEAD or
+// flag re-read. Any other launcher throw keeps the HEAD/flag re-read and rethrow below.
 // HEAD is read on both sides of the launch, a launcher throw included: a moved or unreadable
 // HEAD is a `fail` naming only the shas. After an unmoved HEAD the index flags are checked, on the
-// throw path too.
-async function runImplementer(ctx, deps, { extraPrompt = '' } = {}) {
+// throw path too. Once those checks are done, the worker's test list file is removed (#5915).
+async function runImplementer(ctx, deps, opts = {}) {
+  const launch = { started: false, note: null, model: null, effort: null };
+  let result;
+  let threw = false;
+  let thrown;
+  try {
+    result = await launchImplementerAndCheck(ctx, deps, opts, launch);
+  } catch (err) {
+    threw = true;
+    thrown = err;
+  }
+  // On a launcher throw too; the throw then propagates as it was, carrying the note as `testListNote`
+  // for workerStep's catch to put on its line (an object error only).
+  if (launch.started) launch.note = removeWorkerTestList(ctx, deps);
+  if (threw) {
+    if (launch.note !== null && thrown !== null && typeof thrown === 'object') thrown.testListNote = launch.note;
+    throw thrown;
+  }
+  // Every result of a launch that resolved a model names it (#5917): no envelope and the HEAD and flag stops too.
+  // A refusal never sets it. A thrown launcher carries it on the error (see workerStep).
+  // `effort` rides with it (#5942): a level, or null when no flag was passed.
+  if (launch.model) result = { ...result, extra: { ...(result.extra || {}), model: launch.model, effort: launch.effort } };
+  if (launch.note === null) return result;
+  return { ...result, detail: result.detail ? `${result.detail}; ${launch.note}` : launch.note };
+}
+// runImplementer's launch and its checks; `launch.started` is set just before launchTracked is called.
+async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '' } = {}, launch) {
   const { shared } = ctx;
+  // Resolved first, so the HEAD read below stays the call immediately before the launch. Only where
+  // the implementer has Bash (#5915): elsewhere it cannot run a command, so nothing is read.
+  let tests = null;
+  if (SANDBOX_PROBED_PLATFORMS.includes(deps.platform)) tests = workerTestCommand(ctx, deps);
+  else ctx.workerTestMode = WORKER_TEST_MODES.UNSUPPORTED_PLATFORM;
   const ceilings = readCeilings(shared.policy);
   if (ceilings.bad) return { status: 'fail', detail: `worker ceiling not a positive number: ${ceilings.bad}` };
   const { minutes, dollars } = ceilings;
@@ -677,15 +758,31 @@ async function runImplementer(ctx, deps, { extraPrompt = '' } = {}) {
   const before = headOf(deps, ctx.wt);
   if (before === null) return { status: 'fail', detail: HEAD_BEFORE_UNREADABLE };
   let envelope;
+  launch.started = true;
   try {
-    envelope = await launchTracked(shared, deps, { minutes, dollars }, {
+    const launched = await launchTracked(shared, deps, { minutes, dollars }, {
       role: 'implementer',
       cwd: ctx.wt,
-      prompt: workerPrompt(ctx, { minutes, dollars, maxLines }) + extraPrompt,
-      testCommand: TEST_COMMAND,
+      prompt: workerPrompt(ctx, { minutes, dollars, maxLines, tests }) + extraPrompt,
+      ...(tests !== null ? { testCommand: tests.command } : {}),
       settingsDir,
     });
+    ({ envelope } = launched);
+    launch.model = launched.model;
+    launch.effort = launched.effort ?? null;
   } catch (err) {
+    // A model refusal (#5917) is thrown before any process starts: nothing ran, so nothing is swept
+    // or re-read, and the result carries noLine so the refusal writes no `worker` event line.
+    if (err && err.code === MODEL_REFUSED_CODE) {
+      launch.started = false;
+      // `code` is read only by fixRound's codeSuffix(launched); the worker step's own line ignores it.
+      return { status: 'fail', detail: err.message, code: err.code, noLine: true };
+    }
+    // A throw after the model resolved carries it (launchTracked): the stops below name it too.
+    if (err && typeof err.model === 'string') {
+      launch.model = err.model;
+      launch.effort = err.effort ?? null;
+    }
     // A launcher that throws may have moved HEAD: that is reported in place of the throw;
     // otherwise the throw is rethrown as it was.
     const headStop = headFail(before, headOf(deps, ctx.wt));
@@ -712,10 +809,15 @@ async function runImplementer(ctx, deps, { extraPrompt = '' } = {}) {
       denials,
       costUsd: orNull(envelope.costUsd),
       spendOverrun: envelope.spendOverrun === true,
+      sessionId: typeof envelope.sessionId === 'string' && envelope.sessionId !== '' ? envelope.sessionId : null,
     };
     // spendOverrun: an `ok` launch whose last turn crossed the spend ceiling (worker.js checks it
-    // between turns); present only when the envelope says so.
-    extra = { usage: ctx.worker.usage, turns: ctx.worker.turns, denials, ...(ctx.worker.spendOverrun ? { spendOverrun: true } : {}) };
+    // between turns); present only when the envelope says so. sessionId: present only when known.
+    extra = {
+      usage: ctx.worker.usage, turns: ctx.worker.turns, denials,
+      ...(ctx.worker.spendOverrun ? { spendOverrun: true } : {}),
+      ...(ctx.worker.sessionId !== null ? { sessionId: ctx.worker.sessionId } : {}),
+    };
   }
   const headStop = headFail(before, headOf(deps, ctx.wt), extra);
   if (headStop) return headStop;
@@ -739,12 +841,81 @@ async function runImplementer(ctx, deps, { extraPrompt = '' } = {}) {
   }
   return { status: 'ok', extra };
 }
-const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, (ctx, deps) => runImplementer(ctx, deps, {}));
+
+// The `fail` result for a launcher throw that carries the model it ran on, shared by workerStep and the
+// fix round's relaunch line so the two cannot drift; null for any other throw (the caller rethrows).
+function launchThrowFail(ctx, err) {
+  if (!err || typeof err.model !== 'string') return null;
+  const detail = err.message || String(err);
+  // The removal note runImplementer's normal path appends, kept for the throw path too (#5915).
+  const note = typeof err.testListNote === 'string' ? err.testListNote : null;
+  return { status: 'fail', detail: note === null ? detail : `${detail}; ${note}`, extra: { tests: ctx.workerTestMode, model: err.model, effort: err.effort ?? null } };
+}
+// The worker line also names which path the targeted test command took (`tests`, #5915).
+// A launcher throw that carries the model it ran on (launchTracked) is reported as defineStep's own catch
+// would, plus the line's `tests` and `model`; any other throw propagates unchanged (#5917).
+const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
+  let result;
+  try {
+    result = await runImplementer(ctx, deps, {});
+  } catch (err) {
+    const failed = launchThrowFail(ctx, err);
+    if (failed !== null) return failed;
+    throw err;
+  }
+  return { ...result, extra: { ...(result.extra || {}), tests: ctx.workerTestMode } };
+});
+
+// The review fix round's implementer relaunch (#5942): runs `run` (runImplementer; a test seam) and writes
+// the launch's own worker line through ctx.events.emit, so its `model` and `effort` are the launch's own
+// and sit before the review line. The line carries the worker step's keys plus `fix: true`. A refusal
+// (`noLine`) and a throw that resolved no model write none, as workerStep writes none; a throw that
+// carries `err.model` writes a `fail` line and rethrows unchanged. After an interrupt the signal handler
+// has already written the stop and final line, so no line is written. Returns the result unchanged.
+async function fixWorkerLaunch(ctx, deps, extraPrompt, run = runImplementer) {
+  const t0 = deps.now();
+  let result;
+  try {
+    result = await run(ctx, deps, { extraPrompt });
+  } catch (err) {
+    const failed = ctx.shared.interrupted ? null : launchThrowFail(ctx, err);
+    if (failed !== null) ctx.events.emit(STEP.worker, failed.status, deps.now() - t0, failed.detail, { ...failed.extra, fix: true });
+    throw err;
+  }
+  if (!ctx.shared.interrupted && result.noLine !== true) {
+    ctx.events.emit(STEP.worker, result.status, deps.now() - t0, result.detail, { ...(result.extra || {}), tests: ctx.workerTestMode, fix: true });
+  }
+  return result;
+}
 
 // Run artifacts the worktree may hold; never committed.
 const PIPELINES_DIR = '.claude-tweaks/pipelines';
 function isRunArtifact(p) {
   return p === PIPELINES_DIR || p.startsWith(`${PIPELINES_DIR}/`);
+}
+
+// The file the worker lists its test files in (#5915). It is untracked, so a leftover copy would make
+// merge.js's unforced `git worktree remove` fail where .gitignore does not cover the pipelines directory.
+const WORKER_TEST_LIST = `${PIPELINES_DIR}/worker-test-files.txt`;
+const WORKER_TEST_LIST_NOT_REMOVED = `the worker's test list file ${WORKER_TEST_LIST} could not be removed`;
+// Removes the list file after an implementer launch; null when it is gone or was never written, else the
+// note for the step's detail. Never throws. The worker can make either parent a symlink, so the file is
+// removed only when both are real directories: an unlink through a symlink would land outside the worktree.
+// A symlink leaf is safe to remove: unlink removes the link itself, never its target.
+function removeWorkerTestList(ctx, deps) {
+  try {
+    const abs = path.join(ctx.wt, ...WORKER_TEST_LIST.split('/'));
+    const leaf = deps.lstatType(abs).type;
+    if (leaf === 'missing') return null;
+    if (leaf !== 'file' && leaf !== 'symlink') return WORKER_TEST_LIST_NOT_REMOVED;
+    for (const dir of ['.claude-tweaks', PIPELINES_DIR]) {
+      if (deps.lstatType(path.join(ctx.wt, ...dir.split('/'))).type !== 'directory') return WORKER_TEST_LIST_NOT_REMOVED;
+    }
+    deps.rmFile(abs);
+    return null;
+  } catch (err) {
+    return err && err.code === 'ENOENT' ? null : WORKER_TEST_LIST_NOT_REMOVED;
+  }
 }
 
 // The fail detail when git status cannot be read after the test step: fixed text, never git's words.
@@ -830,6 +1001,42 @@ function scopeBaseBlob(deps, wt, ref, scopeRel) {
     throw new Error(`could not resolve origin/${ref}: ${errorText(err)}`);
   }
   return null;
+}
+
+// The worker's targeted test command (#5915): origin/{ref}'s verify-scope.json `impact.command`, which
+// must end in ` {files}`, as { declared, command } where `command` is the declaration cut before that
+// suffix and passes roles.js's assertTestCommand; null when there is no usable declaration, a git read
+// or the parse throws included. Read from the base blob by object id, never the worktree copy, so no
+// worker edit or index flag steers it. Resolved once per record and cached on ctx.workerTestCommand
+// (undefined until then), so the review fix round's relaunch gets the same answer. Which path it took
+// is set once beside it, on ctx.workerTestMode (events.js's WORKER_TEST_MODES), so a read that failed is
+// told apart from no declaration on the worker's event line.
+const FILES_SUFFIX = ' {files}';
+function workerTestCommand(ctx, deps) {
+  if (ctx.workerTestCommand !== undefined) return ctx.workerTestCommand;
+  let tests = null;
+  let mode = WORKER_TEST_MODES.NONE;
+  let parsed = null;
+  try {
+    const sha = scopeBaseBlob(deps, ctx.wt, ctx.shared.ref, '.claude-tweaks/verify-scope.json');
+    if (sha !== null) parsed = JSON.parse(String(gitIn(deps, ctx.wt, ['cat-file', 'blob', sha])));
+  } catch {
+    mode = WORKER_TEST_MODES.UNREADABLE;
+  }
+  const declared = parsed?.impact?.command;
+  if (typeof declared === 'string' && declared.endsWith(FILES_SUFFIX)) {
+    const command = declared.slice(0, -FILES_SUFFIX.length);
+    try {
+      assertTestCommand(command);
+      tests = { declared, command };
+      mode = WORKER_TEST_MODES.DECLARED;
+    } catch {
+      // An unusable command: the no-declaration path, mode `none`.
+    }
+  }
+  ctx.workerTestCommand = tests;
+  ctx.workerTestMode = mode;
+  return tests;
 }
 
 // The sha git would store for the worktree's bytes of the scope file; --no-filters so a clean
@@ -1275,7 +1482,7 @@ const reviewStep = defineStep(STEP.review, STOP_CLASSES.PRE_PUSH, (ctx, deps) =>
   commit: commitStep,
   test: testStep,
   check: checkStep,
-  launchImplementer: (c, d, extraPrompt) => runImplementer(c, d, { extraPrompt }),
+  launchImplementer: (c, d, extraPrompt) => fixWorkerLaunch(c, d, extraPrompt),
   testCommand: TEST_COMMAND,
   isRunArtifact,
   indexFlagCheck: newIndexFlagStop,
@@ -1336,5 +1543,5 @@ const CHECK_STEPS = Object.freeze([policyStep, fetchStep, eligibilityStep, admis
 module.exports = {
   STEPS, CHECK_STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
   VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop,
-  testTreeStop, TEST_TREE_UNREADABLE,
+  testTreeStop, TEST_TREE_UNREADABLE, fixWorkerLaunch,
 };

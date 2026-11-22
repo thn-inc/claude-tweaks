@@ -1,11 +1,14 @@
 # Health Sweep — Issue Index for Dedup
 
-Single source of truth for how the four health sweeps (`/claude-tweaks:code-health`,
+Single source of truth for how the five health sweeps (`/claude-tweaks:code-health`,
 `/claude-tweaks:harness-health`, `/claude-tweaks:journey-health`,
-`/claude-tweaks:docs-health`) build the `by:{skill}` issue index their
+`/claude-tweaks:docs-health`, `/claude-tweaks:ci-health`) build the `by:{skill}` issue index their
 `validate-findings` step dedups against. Each skill's own `gh issue list` command and
 fingerprint-parsing instructions stay in that skill's GATHER OPEN ISSUES step; this file
-owns transport selection and what each possible outcome means.
+owns transport selection and what each possible outcome means. `ci-health` keeps no durable
+state, so the degraded row and the `declined` fallback below are not its: with no readable
+index it files nothing (its own GATHER OPEN ISSUES step), and the "four skills" below are the
+other four.
 
 `{SKILL}` below is the calling skill's own name (`harness-health`, `docs-health`, …) and
 `{ISSUES_FILE}` its own parsed-index path.
@@ -58,7 +61,7 @@ unconditionally on every transport — the write path is unsanitized either way,
 costs nothing. `extractFingerprint` tries the HTML-comment marker first (both the current and
 legacy forms), then falls back to the plain-text companion — the one form an MCP-stripped body
 still carries. Every consumer that calls `extractFingerprint` on a fetched body (this file's own
-`gh`-absent projection step, `pullReconIssues` in `bin/lib/code-health/pull-issues.js`, and each
+`gh`-absent projection step and each
 health sweep's own GATHER OPEN ISSUES instructions) gets the fix automatically — there is no
 separate MCP-specific parsing path to maintain.
 

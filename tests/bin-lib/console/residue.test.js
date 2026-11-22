@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -30,7 +31,7 @@ const CONSOLE_2821 = {
 };
 
 function tmpRun() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'console-residue-'));
+  return scratchDir('console-residue-');
 }
 
 function pendingItems(n) {
@@ -57,7 +58,7 @@ test('UNRESOLVED_RESOLUTIONS is exactly pending and keep-staged', () => {
 // contested findings as `keep-staged`; they must keep counting as residue on both
 // the run-level reader and the session-start banner scan.
 test('AC3: a legacy console.json keep-staged item still counts in readRunResidue and scanUnresolvedConsoles', () => {
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'console-residue-legacy-'));
+  const project = scratchDir('console-residue-legacy-');
   const run = path.join(project, '.claude-tweaks', 'pipelines', 'archive', '2026-10-16T210949-spec-2821');
   fs.mkdirSync(path.join(run, 'staged'), { recursive: true });
   fs.writeFileSync(path.join(run, 'staged', 'review-debate-deviation.md'), 'x');
@@ -390,7 +391,7 @@ test('#4172: formatResidueLines names a filing-failed PR item with its note (#41
 });
 
 test('AC1.1: the SessionStart banner scan lists a clean run whose PR console holds a filing-failed item (#4172)', () => {
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'console-residue-pr-'));
+  const project = scratchDir('console-residue-pr-');
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-10-25T100000-spec-4172');
   fs.mkdirSync(run, { recursive: true });
   fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'clean' }));
@@ -500,7 +501,7 @@ test('consoleResidueItems on a console with no filings equals unresolvedItems (#
 });
 
 test('the SessionStart banner scan lists a clean run whose console holds a planned filing with no record (#4170)', () => {
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'console-residue-filing-'));
+  const project = scratchDir('console-residue-filing-');
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-10-25T100000-spec-4170');
   fs.mkdirSync(run, { recursive: true });
   fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'clean' }));

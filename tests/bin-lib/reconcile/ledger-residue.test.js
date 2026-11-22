@@ -3,10 +3,12 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { readText } = require('../../helpers/read-skill');
 const { chmodDenialSkip } = require('../../helpers/root');
+const { initRepo } = require('../../helpers/git-fixtures');
 const {
   LEDGER_RESIDUE_MARKER, QUIET_SKIP_REASONS, residueLedgerPaths, removalBranchName, ledgerFeatureSlug, runDirNamesNumber,
   attributedRunDir, classifyLedgerCandidate, partitionByRemovalPrs, decideLedgerResidue, defaultListRunDirs,
@@ -89,14 +91,14 @@ test('classifyLedgerCandidate: signature, open rows, unrecognized status, run-di
 
 test('defaultListRunDirs: a pipelines path that cannot be listed is a failed scan (null), never an empty one', () => {
   // ENOTDIR is not ENOENT: reading it as "no runs" would let a live run's ledger be proposed for removal.
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-residue-runs-fail-'));
+  const root = scratchDir('ledger-residue-runs-fail-');
   fs.mkdirSync(path.join(root, '.claude-tweaks'));
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'pipelines'), 'not a directory');
   assert.strictEqual(defaultListRunDirs(root), null);
 });
 
 test('defaultListRunDirs: directories directly under pipelines/, archive excluded; absent pipelines dir is no runs', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-residue-runs-'));
+  const root = scratchDir('ledger-residue-runs-');
   assert.deepStrictEqual(defaultListRunDirs(root), []);
   const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
   fs.mkdirSync(path.join(pipelines, 'archive', '2026-10-01T000000-record-1'), { recursive: true });
@@ -258,7 +260,7 @@ function throwTimeout() {
 }
 
 test('timeout policy: defaultListOpenRecords retries once when the gh call times out', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-residue-timeout-records-'));
+  const root = scratchDir('ledger-residue-timeout-records-');
   let calls = 0;
   const exec = () => { calls += 1; if (calls === 1) throwTimeout(); return '[]'; };
   assert.deepStrictEqual(defaultListOpenRecords(root, exec), []);
@@ -303,7 +305,7 @@ test('referencingRecords: namedTarget path, ledger filename, or feature slug in 
 });
 
 test('defaultListOpenRecords: gh issue list on the github-issues path; failures classified; a non-array is a network failure', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-residue-records-'));
+  const root = scratchDir('ledger-residue-records-');
   const calls = [];
   const exec = (bin, args, opts) => { calls.push({ bin, args, opts }); return JSON.stringify([{ number: 1, body: 'b', labels: [] }]); };
   assert.deepStrictEqual(defaultListOpenRecords(root, exec), [{ number: 1, body: 'b', labels: [] }]);
@@ -317,7 +319,7 @@ test('defaultListOpenRecords: gh issue list on the github-issues path; failures 
 });
 
 test('defaultListOpenRecords: work-backend local-files reads specs/ and never calls gh; a missing specs/ dir is no records', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-residue-local-'));
+  const root = scratchDir('ledger-residue-local-');
   fs.writeFileSync(path.join(root, 'CLAUDE.md'), 'work-backend: local-files\n');
   assert.deepStrictEqual(defaultListOpenRecords(root, mustNotCall('exec')), []);
   fs.mkdirSync(path.join(root, 'specs'));
@@ -327,7 +329,7 @@ test('defaultListOpenRecords: work-backend local-files reads specs/ and never ca
 
 test('defaultListOpenRecords: work-backend local-files fails closed (null) when a record file or the specs/ dir cannot be read',
   chmodDenialSkip('root ignores mode bits'), () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-residue-unreadable-'));
+    const root = scratchDir('ledger-residue-unreadable-');
     fs.writeFileSync(path.join(root, 'CLAUDE.md'), 'work-backend: local-files\n');
     const specs = path.join(root, 'specs');
     fs.mkdirSync(specs);
@@ -363,12 +365,10 @@ const LEDGER = 'docs/plans/2026-10-20-a b-ledger.md';
 // A clone wired to a real bare origin, with ledgers and an unrelated plan file
 // merged on main and pushed. `ledgers` maps a path under the clone to its text.
 function makeRepo({ ledgers = { [LEDGER]: ledgerText() } } = {}) {
-  const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-residue-origin-'));
+  const origin = scratchDir('ledger-residue-origin-');
   git(origin, 'init', '--bare', '-b', 'main');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-residue-'));
-  git(dir, 'init', '-b', 'main');
-  git(dir, 'config', 'user.email', 't@t');
-  git(dir, 'config', 'user.name', 't');
+  const dir = scratchDir('ledger-residue-');
+  initRepo(dir, { branch: 'main', name: 't', email: 't@t' });
   fs.mkdirSync(path.join(dir, 'docs', 'plans'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'docs', 'plans', 'keep.html'), '<p>keep</p>\n');
   for (const [p, text] of Object.entries(ledgers)) fs.writeFileSync(path.join(dir, p), text);

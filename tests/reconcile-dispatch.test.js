@@ -4,6 +4,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { formatSummary } = require('../plugin/bin/lib/reconcile/format-summary');
@@ -72,7 +73,7 @@ installReconcileGuard();
 // .claude-tweaks/pipelines/ from there write fixture events into REAL run
 // dirs (the #657 pollution incident). Calls that don't care about cwd get an
 // isolated, non-git sandbox instead.
-const HOOK_SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-sandbox-'));
+const HOOK_SANDBOX = scratchDir('ct-recon-sandbox-');
 
 // hookEnv (tests/helpers/git-fixtures.js) is the whole environment the verb sees (#5376). Its
 // `PIPELINE_RUN_DIR: ''` (#1130) keeps a call that passes no run dir from resolving against a real
@@ -411,7 +412,7 @@ test('reconcile verb: garbage stdin still exits 0 and prints valid JSON with --j
   // module's own fail-safe design (isWorktreeLocked, no-PR skip) made that
   // safe when it happened once during authoring, but a test must not rely
   // on that — it must never reach live state in the first place.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-garbage-'));
+  const dir = scratchDir('ct-recon-garbage-');
   const r = await runHook(['reconcile', '--json'], { input: '%%%not json%%%', cwd: dir });
   assert.strictEqual(r.code, 0);
   assert.doesNotThrow(() => JSON.parse(r.stdout));
@@ -593,7 +594,7 @@ test('AC1.3: reconcile --dry-run --json --checks archive lists a clean-twin shel
   git(['pull', '-q', 'origin', 'main'], mainDir);
   // The preflight probe (`gh api rate_limit`) is the only gh call this path makes.
   // In-process runCli (#5376): the stub rides in the call's own env, never process.env.PATH.
-  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-stub-'));
+  const stubDir = scratchDir('ct-stub-');
   fs.writeFileSync(path.join(stubDir, 'gh'), '#!/bin/sh\necho 5000\n', { mode: 0o755 });
   let r;
   try {
@@ -932,7 +933,7 @@ test('reconcile verb: a post-merge.js load fault still renders the reconcile-thr
   // A child process, so the fault is planted in its module loader only: the child preloads a script that makes any
   // require resolving to reconcile/post-merge.js throw. format-summary.js is required outside hooks.js's try, so a
   // module-level require of post-merge.js there would throw past the fallback and main's catch would exit 0 silently.
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-loadfault-'));
+  const scratch = scratchDir('ct-recon-loadfault-');
   const preload = path.join(scratch, 'fault.js');
   fs.writeFileSync(preload, [
     "const Module = require('module');",

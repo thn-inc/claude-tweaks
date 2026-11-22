@@ -2,6 +2,7 @@
 // Real throwaway git repositories for the verify-commit tests (#2866).
 // Not a *.test.js file, so tools/run-tests.js never runs it on its own.
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -21,7 +22,7 @@ function git(cwd, args, input) {
 }
 
 function tmpDir(label) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), `docs-health-commit-ref-${label}-`));
+  return scratchDir(`docs-health-commit-ref-${label}-`);
 }
 
 // main: root -> second -> third; side branches off second with one commit

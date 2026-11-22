@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // bin/repair-claim.js — repair or force-release an UNREADABLE claims-registry blob.
 //   node bin/repair-claim.js <issue> --run <run-dir> --mode <release|reclaim> --reason <reason> \
-//     [--link <url>] [--repo owner/name] [--section "/<skill>"] [--step <text>] [--help]
+//     [--link <url>] [--repo [host/]owner/name] [--section "/<skill>"] [--step <text>] [--help]
 // Mechanizes _shared/issue-claims.md's "Repairing an unreadable claim blob" steps 1-4:
 // read the blob and capture its sha (ordinary response metadata, available even when the
 // content doesn't parse), confirm the content classifies 'unreadable' on that same fresh
@@ -30,7 +30,7 @@ const {
   parseRepo, ghAvailable, remoteUrl, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 
-const USAGE = 'usage: repair-claim.js <issue> --run <run-dir> --mode <release|reclaim> --reason <reason> [--link <url>] [--repo owner/name] [--section "/<skill>"] [--step <text>] [--help]\n';
+const USAGE = 'usage: repair-claim.js <issue> --run <run-dir> --mode <release|reclaim> --reason <reason> [--link <url>] [--repo [host/]owner/name] [--section "/<skill>"] [--step <text>] [--help]\n';
 const EXIT = { repaired: 0, 'cas-rejected': 3, refused: 4, failed: 1 };
 const MODES = ['release', 'reclaim'];
 
@@ -109,7 +109,7 @@ function run(argv, deps = realDeps) {
     if (gated.refusal) { deps.stderr(`repair-claim.js: ${gated.refusal}\n`); return 2; }
     repoSpec = gated.spec;
   }
-  if (!repoSpec) { deps.stderr('repair-claim.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+  if (!repoSpec) { deps.stderr('repair-claim.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return 2; }
   if (o.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
   // #1443: parseRepo's regex accepts any non-'/' owner/repo segment, including '.'/'..'
   // (#1153 review finding). repair -> claim-store.js interpolates `${owner}/${repo}`
@@ -129,7 +129,9 @@ function run(argv, deps = realDeps) {
   try { target = resolveTarget({ runDir, cwd: deps.cwd(), mainRoot: deps.mainRoot }); } catch { target = { ok: false, reason: 'missing' }; }
   if (!target.ok) {
     if (target.reason === 'not-anchored') {
-      deps.stderr(`repair-claim.js: decisions.md not written — run dir is not anchored under the main checkout (a worktree-local shadow): ${runDir} — see _shared/pipeline-run-dir.md\n`);
+      deps.stderr(`repair-claim.js: decisions.md not written — run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow): ${runDir} — see _shared/pipeline-run-dir.md\n`);
+    } else if (target.reason === 'not-a-run-dir') {
+      deps.stderr(`repair-claim.js: decisions.md not written — run dir is not a pipeline run directory (it must sit under .claude-tweaks/pipelines): ${runDir}\n`);
     } else {
       deps.stderr(`repair-claim.js: decisions.md not written — run dir does not exist: ${runDir}\n`);
     }

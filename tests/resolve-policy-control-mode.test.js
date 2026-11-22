@@ -280,6 +280,18 @@ test('a policyOnly key ignores the --run overlay, and a sibling flat key still h
   );
 });
 
+// #5830: control-mode is the single human-in-control switch and a run's own agent writes its config.yml, so the overlay is closed in both directions.
+test('control-mode ignores the --run overlay both ways', () => {
+  assert.deepStrictEqual(
+    resolvePolicyKeys(['control-mode'], { policyRaw: 'control-mode: on\n', runConfigRaw: 'control-mode: off\n' })['control-mode'],
+    { value: 'on', source: 'policy' },
+  );
+  assert.deepStrictEqual(
+    resolvePolicyKeys(['control-mode'], { policyRaw: null, runConfigRaw: 'control-mode: on\n' })['control-mode'],
+    { value: 'off', source: 'default' },
+  );
+});
+
 test('risk-categories and risk-path-globs agree when a run config names a slug', () => {
   const policyRaw = 'risk-categories: pii\nrisk-path-globs:\n  pii: [a]\n';
   const out = resolvePolicyKeys(['risk-categories', 'risk-path-globs'], { policyRaw, runConfigRaw: 'risk-categories: other\n' });
@@ -294,12 +306,13 @@ test('AC4.8: isControlModeOn is true only for the exact string on', () => {
   }
 });
 
-// Control-mode keys no plugin code acts on yet; the #4608 leaves wire them
-// (policy-schema.js's Control mode comment names which). The record that wires
-// a key removes it from this list and drops "Not yet used" from its summary.
-const NOT_YET_USED = ['acceptance-target', 'deploy-reach', 'deploy-command', 'deploy-live-workflow', 'deploy-version-url', 'dev-base-url', 'dev-test-account', 'deploy-wait-seconds', 'deploy-poll-seconds', 'owned-owners', 'trusted-authors'];
+// Keys that land before their consumer: no plugin code acts on them yet, and the
+// record that wires a key (the #4608 leaves for the control-mode keys, #5997/#5999
+// for `implementer-tier`) removes it from this list and drops "Not yet used" from
+// its summary.
+const NOT_YET_USED = ['deploy-reach', 'deploy-command', 'deploy-live-workflow', 'deploy-version-url', 'dev-base-url', 'dev-test-account', 'deploy-wait-seconds', 'deploy-poll-seconds', 'trusted-authors', 'implementer-tier'];
 
-test('every control-mode key nothing consumes yet says so in its summary (#4816)', () => {
+test('every key that landed before its consumer says so in its summary (#4816)', () => {
   for (const key of NOT_YET_USED) {
     const row = POLICY_KEYS.find((r) => r.key === key);
     assert.ok(row, `${key} missing from POLICY_KEYS`);

@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { run } = require('../../../plugin/bin/set-verify-expectations');
@@ -17,7 +18,7 @@ const DEFERRED = 'design-caches,worktree,ephemeral-server,claim-release,run-dir-
 // session. Both real locations of the file are present: a single-spec run
 // dir and a multi-spec run's per-spec `spec-{n}/` subdirectory.
 function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vexpcli-'));
+  const root = scratchDir('vexpcli-');
   const main = path.join(root, 'main');
   const pipelines = path.join(main, '.claude-tweaks', 'pipelines');
   const singleDir = path.join(pipelines, '2026-08-20T090000-spec-12');

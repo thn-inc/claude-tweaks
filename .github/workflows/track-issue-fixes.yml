@@ -6,6 +6,7 @@ on:
       - '**'
       - '!claims-registry'
       - '!health-state'
+      - '!release-state'
 
 permissions:
   contents: read

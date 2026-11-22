@@ -1,20 +1,21 @@
 // tests/reconcile.test.js
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 require('./helpers/stub-token-pass').installTokenPassStub();
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { classifyMirror } = require('../plugin/bin/lib/reconcile/classify');
 const { mirrorFastForward } = require('../plugin/bin/lib/reconcile/mirror-ff');
 const { decideReap } = require('../plugin/bin/lib/reconcile/reap-merged');
 const { decideRelease } = require('../plugin/bin/lib/reconcile/release-merged');
-const { decideArchive, readConsoleState, localHasMerge } = require('../plugin/bin/lib/reconcile/archive-merged');
+const { decideArchiveCore, classifyRunDir, readConsoleState, localHasMerge } = require('../plugin/bin/lib/reconcile/archive-merged');
 const { isWorktreeLocked } = require('../plugin/bin/lib/hooks/worktree-reap');
 const { reconcile } = require('../plugin/bin/lib/reconcile');
-const { gitRepo } = require('./helpers/git-fixtures');
+const { gitRepo, writeIdentity } = require('./helpers/git-fixtures');
 const { chmodDenialSkip } = require('./helpers/root');
 const { STUB_SKIP, installStub } = require('./helpers/path-stub');
 const { toPosix } = require('../plugin/bin/lib/shared-primitives');
@@ -24,6 +25,8 @@ const {
   bareRepoRoot,
   mintEmptyRunDir,
 } = require('./helpers/reconcile-fixtures');
+const { pinnedGit } = require('./helpers/pinned-git');
+const { warmCallStartsNoGit } = require('./helpers/git-trace');
 
 // Every non-dry reconcile() pass prunes the declined-learning store (#1399). The prune now anchors at
 // the pass's own cwd (#5376), but before that it resolved from process.cwd() to the main checkout
@@ -221,7 +224,7 @@ test("git fetch origin {b}:{b} refuses a non-fast-forward local ref update (the 
   // never sees, via a throwaway worktree (so the checked-out branch is
   // untouched), while origin also advances independently.
   git(['checkout', '-q', '-b', 'someone-elses-work'], mainDir);
-  const scratchWorktree = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-scratch-'));
+  const scratchWorktree = scratchDir('ct-recon-scratch-');
   git(['worktree', 'add', '-q', scratchWorktree, 'main'], mainDir);
   fs.writeFileSync(path.join(scratchWorktree, 'c.txt'), 'local-only\n');
   git(['add', 'c.txt'], scratchWorktree);
@@ -250,7 +253,7 @@ test("git fetch origin {b}:{b} refuses a non-fast-forward local ref update (the 
 test('mirrorFastForward: fetch-based update not viable (branch checked out in another worktree) falls back to the original wrong-branch skip', () => {
   const { seedDir, mainDir } = pairedFixture();
   git(['checkout', '-q', '-b', 'someone-elses-work'], mainDir);
-  const otherWorktree = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-otherwt-'));
+  const otherWorktree = scratchDir('ct-recon-otherwt-');
   git(['worktree', 'add', '-q', otherWorktree, 'main'], mainDir);
 
   fs.writeFileSync(path.join(seedDir, 'b.txt'), 'two\n');
@@ -312,38 +315,38 @@ test('decideRelease: live claim + open PR -> skip, never released', () => {
 // run — not the empty-console fast path, which ends with close-run (status
 // clean) + the archive-run verb and never reaches this sweep. Archiving on
 // 'none' swept live runs with pending staged decisions (the #657 incident).
-test('decideArchive: merged + console never rendered -> skip, not archive', () => {
+test('decideArchiveCore: merged + console never rendered -> skip, not archive', () => {
   assert.deepStrictEqual(
-    decideArchive({ number: 3, state: 'MERGED' }, 'none'),
+    decideArchiveCore({ number: 3, state: 'MERGED' }, 'none'),
     { action: 'skip', reason: 'console-never-rendered' },
   );
 });
 
-test('decideArchive: merged + console resolved -> archive', () => {
-  assert.deepStrictEqual(decideArchive({ number: 3, state: 'MERGED' }, 'resolved'), { action: 'archive' });
+test('decideArchiveCore: merged + console resolved -> archive', () => {
+  assert.deepStrictEqual(decideArchiveCore({ number: 3, state: 'MERGED' }, 'resolved'), { action: 'archive' });
 });
 
-test('decideArchive: merged + console UNresolved -> never archived', () => {
-  assert.deepStrictEqual(decideArchive({ number: 3, state: 'MERGED' }, 'unresolved'), { action: 'skip', reason: 'console-unresolved' });
+test('decideArchiveCore: merged + console UNresolved -> never archived', () => {
+  assert.deepStrictEqual(decideArchiveCore({ number: 3, state: 'MERGED' }, 'unresolved'), { action: 'skip', reason: 'console-unresolved' });
 });
 
-test('decideArchive: PR not merged -> never archived regardless of console state', () => {
-  assert.strictEqual(decideArchive({ number: 3, state: 'OPEN' }, 'resolved').action, 'skip');
+test('decideArchiveCore: PR not merged -> never archived regardless of console state', () => {
+  assert.deepStrictEqual(decideArchiveCore({ number: 3, state: 'OPEN' }, 'resolved'), { action: 'skip', reason: 'pr-open' });
 });
 
 test('readConsoleState: absent file reads as none, not unresolved', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-console-'));
+  const dir = scratchDir('ct-recon-console-');
   assert.strictEqual(readConsoleState(dir), 'none');
 });
 
 test('readConsoleState: {resolved:true} reads as resolved', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-console-'));
+  const dir = scratchDir('ct-recon-console-');
   fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({ resolved: true }));
   assert.strictEqual(readConsoleState(dir), 'resolved');
 });
 
 test('readConsoleState: unparseable content fails closed to unresolved, never silently archived', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-console-'));
+  const dir = scratchDir('ct-recon-console-');
   fs.writeFileSync(path.join(dir, 'console.json'), '{not json');
   assert.strictEqual(readConsoleState(dir), 'unresolved');
 });
@@ -354,13 +357,13 @@ test('readConsoleState: unparseable content fails closed to unresolved, never si
 // every real console-carrying run. A non-empty `executedAt` is
 // console-execution's own completion stamp and must read as 'resolved' too.
 test('readConsoleState: {executedAt} with no resolved field reads as resolved', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-console-'));
+  const dir = scratchDir('ct-recon-console-');
   fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({ executedAt: '2026-08-20T10:00:00Z' }));
   assert.strictEqual(readConsoleState(dir), 'resolved');
 });
 
 test('readConsoleState: {} (neither resolved nor executedAt) reads as unresolved', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-console-'));
+  const dir = scratchDir('ct-recon-console-');
   fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({}));
   assert.strictEqual(readConsoleState(dir), 'unresolved');
 });
@@ -368,7 +371,7 @@ test('readConsoleState: {} (neither resolved nor executedAt) reads as unresolved
 // #1130 review: a whitespace-only executedAt is not a completion stamp — the
 // acceptance check trims before testing length, so it fails closed.
 test('readConsoleState: whitespace-only executedAt reads as unresolved', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-console-'));
+  const dir = scratchDir('ct-recon-console-');
   fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({ executedAt: '   ' }));
   assert.strictEqual(readConsoleState(dir), 'unresolved');
 });
@@ -542,10 +545,9 @@ test('localHasMerge: detached HEAD with local behind — still falls back to ori
 // --- archiveRunDir: real git fixture — the actual move/commit I/O, not just the pure decision table ---
 
 function runDirFixture() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-archive-')));
+  const root = fs.realpathSync(scratchDir('ct-recon-archive-'));
   git(['init', '-q', '--initial-branch=main'], root);
-  git(['config', 'user.email', 'test@example.com'], root);
-  git(['config', 'user.name', 'Test'], root);
+  writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], root);
   git(['commit', '-q', '-m', 'seed'], root);
@@ -869,28 +871,27 @@ test('archiveRunDir: an unreadable run dir returns reason readdir-failed instead
   }
 });
 
-// --- isOrphanedMint / archiveOrphanedMint: dispatch-minted dirs that never got adopted by flow ---
+// --- orphaned-mint classification / archiveOrphanedMint: dispatch-minted dirs that never got adopted by flow ---
 
-test('isOrphanedMint: false when config.yml exists, regardless of age', () => {
-  const { isOrphanedMint, ORPHAN_MINT_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
+test('classifyRunDir orphaned-mint: none when config.yml exists, regardless of age', () => {
+  const { ORPHAN_MINT_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
   const root = bareRepoRoot();
   const dir = mintEmptyRunDir(root, '2026-08-01T000000-record-999', { ageMs: ORPHAN_MINT_TTL_MS * 2 });
   fs.writeFileSync(path.join(dir, 'config.yml'), 'x: 1\n');
-  assert.strictEqual(isOrphanedMint(dir), false);
+  assert.strictEqual(classifyRunDir({ dir, kinds: ['orphaned-mint'] }).kind, 'none');
 });
 
-test('isOrphanedMint: false when empty but within the grace window', () => {
-  const { isOrphanedMint } = require('../plugin/bin/lib/reconcile/archive-merged');
+test('classifyRunDir orphaned-mint: none when empty but within the grace window', () => {
   const root = bareRepoRoot();
   const dir = mintEmptyRunDir(root, '2026-08-15T000000-record-999');
-  assert.strictEqual(isOrphanedMint(dir), false);
+  assert.strictEqual(classifyRunDir({ dir, kinds: ['orphaned-mint'] }).kind, 'none');
 });
 
-test('isOrphanedMint: true when empty (no config.yml) and older than the TTL', () => {
-  const { isOrphanedMint, ORPHAN_MINT_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
+test('classifyRunDir orphaned-mint: orphaned-mint when empty (no config.yml) and older than the TTL', () => {
+  const { ORPHAN_MINT_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
   const root = bareRepoRoot();
   const dir = mintEmptyRunDir(root, '2026-08-01T000000-record-999', { ageMs: ORPHAN_MINT_TTL_MS + 60000 });
-  assert.strictEqual(isOrphanedMint(dir), true);
+  assert.strictEqual(classifyRunDir({ dir, kinds: ['orphaned-mint'] }).kind, 'orphaned-mint');
 });
 
 test('archiveMerged: an orphaned mint older than the TTL is archived on the next sweep, not left in place', () => {
@@ -907,6 +908,24 @@ test('archiveMerged: an orphaned mint older than the TTL is archived on the next
   assert.ok(result.archived.includes(path.join(root, '.claude-tweaks', 'pipelines', runId)));
 });
 
+// #5903: the mint writes manifest.json, which is not adoption — a manifest-only dir is
+// still an orphaned mint. Writing the file bumps the dir mtime, so back-date after it.
+test('classifyRunDir orphaned-mint and archiveMerged: a mint holding only manifest.json is still orphaned past the TTL (#5903)', () => {
+  const { archiveMerged, ORPHAN_MINT_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const root = bareRepoRoot();
+  const runId = '2026-08-01T130000-record-999';
+  const dir = mintEmptyRunDir(root, runId);
+  fs.writeFileSync(path.join(dir, 'manifest.json'), '{}\n');
+  const backdated = new Date(Date.now() - ORPHAN_MINT_TTL_MS - 60000);
+  fs.utimesSync(dir, backdated, backdated);
+  assert.strictEqual(classifyRunDir({ dir, kinds: ['orphaned-mint'] }).kind, 'orphaned-mint');
+
+  archiveMerged({ cwd: root });
+
+  assert.ok(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId)), 'a manifest-only mint should be archived');
+  assert.ok(!fs.existsSync(dir), 'original mint dir should no longer exist');
+});
+
 test('archiveMerged: an orphaned mint within the TTL is left in place, not archived', () => {
   const { archiveMerged } = require('../plugin/bin/lib/reconcile/archive-merged');
   const root = bareRepoRoot();
@@ -919,23 +938,23 @@ test('archiveMerged: an orphaned mint within the TTL is left in place, not archi
 });
 
 // --- #1117: -adhoc-standalone mints (post-tool-use.js's stampAdHocRunDir)
-// are exempt from the blind isOrphanedMint mtime sweep — see
+// are exempt from the blind orphaned-mint mtime sweep — see
 // archive-merged.js's isAdHocStandaloneMint.
 
-test('isOrphanedMint: false for a genuine adhoc-standalone mint, regardless of age (#1117)', () => {
-  const { isOrphanedMint, ORPHAN_MINT_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
+test('classifyRunDir orphaned-mint: none for a genuine adhoc-standalone mint, regardless of age (#1117)', () => {
+  const { ORPHAN_MINT_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
   const { writeRunState } = require('../plugin/bin/lib/hooks/context');
   const root = bareRepoRoot();
   const dir = mintEmptyRunDir(root, '2026-08-01T000000-adhoc-standalone', { ageMs: ORPHAN_MINT_TTL_MS * 3 });
   writeRunState(dir, { worktree: path.join(root, 'some-worktree'), status: 'active', sessionId: 'sess-1' });
-  assert.strictEqual(isOrphanedMint(dir), false);
+  assert.strictEqual(classifyRunDir({ dir, kinds: ['orphaned-mint'] }).kind, 'none');
 });
 
 // #1604: the suffix alone is no longer sufficient — isAdHocStandaloneMint
 // now also requires a real run-state.json carrying a non-empty `worktree`,
 // closing the leak a malformed/mkdir-only dir sharing the suffix used to
-// slip through (both isOrphanedMint's exemption and decideArchive's
-// no-worktree/no-branch skip).
+// slip through (both the orphaned-mint classification's exemption and
+// the merged-PR path's no-worktree/no-branch skip).
 test('isAdHocStandaloneMint: requires the suffix AND a corroborating run-state.json worktree field (#1604)', () => {
   const { isAdHocStandaloneMint } = require('../plugin/bin/lib/reconcile/archive-merged');
   const { writeRunState } = require('../plugin/bin/lib/hooks/context');
@@ -998,7 +1017,7 @@ test('findRunsByWorktreePath still finds an adhoc-standalone dir after a reconci
   );
 });
 
-// --- #1604: isAdHocStandaloneSuperseded / archiveMerged's eventual-cleanup
+// --- #1604: adhoc-superseded classification / archiveMerged's eventual-cleanup
 // path for a genuinely superseded ad-hoc dir (worktree definitively gone) ---
 //
 // writeRunState() creates a file inside `dir`, which bumps the DIRECTORY's
@@ -1016,10 +1035,8 @@ function mintAdHocDir(root, runId, state, ageMs) {
   return dir;
 }
 
-test('isAdHocStandaloneSuperseded: false while the recorded worktree still resolves, regardless of age (#1117 invariant unchanged)', () => {
-  const {
-    isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
-  } = require('../plugin/bin/lib/reconcile/archive-merged');
+test('classifyRunDir adhoc-superseded: none while the recorded worktree still resolves, regardless of age (#1117 invariant unchanged)', () => {
+  const { ADHOC_SUPERSEDED_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
   const root = bareRepoRoot();
   // realpathSync(os.tmpdir()) — not the not-yet-created wtDir itself — since
   // macOS's /var is a symlink to /private/var and `git worktree list
@@ -1033,38 +1050,33 @@ test('isAdHocStandaloneSuperseded: false while the recorded worktree still resol
     const { parseWorktreeList } = require('../plugin/bin/lib/hooks/worktree-reap');
     const { runGit } = require('../plugin/bin/lib/hooks/git-exec');
     const worktrees = parseWorktreeList(runGit(['worktree', 'list', '--porcelain'], root).stdout);
-    assert.strictEqual(isAdHocStandaloneSuperseded(dir, state, worktrees), false);
+    assert.strictEqual(classifyRunDir({ dir, state, worktrees, kinds: ['adhoc-superseded'] }).kind, 'none');
   } finally {
     git(['worktree', 'remove', '--force', wtDir], root);
   }
 });
 
-test('isAdHocStandaloneSuperseded: false when the worktree is gone but younger than the TTL', () => {
-  const { isAdHocStandaloneSuperseded } = require('../plugin/bin/lib/reconcile/archive-merged');
+test('classifyRunDir adhoc-superseded: none when the worktree is gone but younger than the TTL', () => {
   const root = bareRepoRoot();
   const state = { worktree: path.join(root, 'long-gone-worktree'), status: 'active', sessionId: 'sess-1' };
   const dir = mintAdHocDir(root, '2026-08-01T150000-adhoc-standalone', state, 60 * 60 * 1000);
-  assert.strictEqual(isAdHocStandaloneSuperseded(dir, state, []), false);
+  assert.strictEqual(classifyRunDir({ dir, state, worktrees: [], kinds: ['adhoc-superseded'] }).kind, 'none');
 });
 
-test('isAdHocStandaloneSuperseded: true when the worktree is gone AND the TTL has elapsed', () => {
-  const {
-    isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
-  } = require('../plugin/bin/lib/reconcile/archive-merged');
+test('classifyRunDir adhoc-superseded: adhoc-superseded when the worktree is gone AND the TTL has elapsed', () => {
+  const { ADHOC_SUPERSEDED_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
   const root = bareRepoRoot();
   const state = { worktree: path.join(root, 'long-gone-worktree'), status: 'active', sessionId: 'sess-1' };
   const dir = mintAdHocDir(root, '2026-08-01T160000-adhoc-standalone', state, ADHOC_SUPERSEDED_TTL_MS * 2);
-  assert.strictEqual(isAdHocStandaloneSuperseded(dir, state, []), true);
+  assert.strictEqual(classifyRunDir({ dir, state, worktrees: [], kinds: ['adhoc-superseded'] }).kind, 'adhoc-superseded');
 });
 
-test('isAdHocStandaloneSuperseded: false for a non-ad-hoc dir even past the TTL with a gone worktree', () => {
-  const {
-    isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
-  } = require('../plugin/bin/lib/reconcile/archive-merged');
+test('classifyRunDir adhoc-superseded: none for a non-ad-hoc dir even past the TTL with a gone worktree', () => {
+  const { ADHOC_SUPERSEDED_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
   const root = bareRepoRoot();
   const state = { worktree: path.join(root, 'long-gone-worktree'), status: 'active', sessionId: 'sess-1' };
   const dir = mintAdHocDir(root, '2026-08-01T170000-record-42', state, ADHOC_SUPERSEDED_TTL_MS * 2);
-  assert.strictEqual(isAdHocStandaloneSuperseded(dir, state, []), false);
+  assert.strictEqual(classifyRunDir({ dir, state, worktrees: [], kinds: ['adhoc-superseded'] }).kind, 'none');
 });
 
 test('archiveMerged: a superseded ad-hoc-standalone dir is archived (moved out of the live pipelines dir), ending the SessionStart/probePipelineRuns nag (#1604)', () => {
@@ -1169,10 +1181,9 @@ test('isWorktreeLocked: a path not registered in git worktree list at all is not
 // --- reconcile() orchestrator: offline degradation and model gating ---
 
 test('reconcile: local-merge project falls back to the legacy ancestry reap, skips mirror/release/archive (AC4-adjacent)', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-lm-'));
+  const dir = scratchDir('ct-recon-lm-');
   git(['init', '-q', '--initial-branch=main'], dir);
-  git(['config', 'user.email', 'test@example.com'], dir);
-  git(['config', 'user.name', 'Test'], dir);
+  writeIdentity(dir, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], dir);
   git(['commit', '-q', '-m', 'seed'], dir);
@@ -1193,7 +1204,7 @@ test('reconcile: local-merge project falls back to the legacy ancestry reap, ski
 });
 
 test('reconcile: local-merge with no resolvable integration branch at all resolves no-remote, never crashes', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-lm-noib-'));
+  const dir = scratchDir('ct-recon-lm-noib-');
   git(['init', '-q'], dir);
   fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-model: local-merge\n');
@@ -1202,7 +1213,7 @@ test('reconcile: local-merge with no resolvable integration branch at all resolv
 });
 
 test('reconcile: no network / no remote resolves to no-remote, never crashes (AC4)', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-noremote-'));
+  const dir = scratchDir('ct-recon-noremote-');
   git(['init', '-q'], dir);
   fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
@@ -1215,10 +1226,9 @@ test('reconcile: no network / no remote resolves to no-remote, never crashes (AC
 // real reconcile() pass over a merged PR that leaves 3311 unclosed (its issue is
 // OPEN) must report the skip with the record list, not just the reason.
 test('reconcile: an archive merged-partial skip carries unclosed through to result.runs (#3503)', { skip: STUB_SKIP }, async () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-partial-')));
+  const root = fs.realpathSync(scratchDir('ct-recon-partial-'));
   git(['init', '-q', '--initial-branch=main'], root);
-  git(['config', 'user.email', 'test@example.com'], root);
-  git(['config', 'user.name', 'Test'], root);
+  writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], root);
   git(['commit', '-q', '-m', 'seed'], root);
@@ -1263,10 +1273,9 @@ test('reconcile: an archive merged-partial skip carries unclosed through to resu
 // #3945 F6: index.js hands a tiebreak coverage skip's `missing` ids and `hint`
 // through to result.runs the same way, so the refusal names what to fix.
 test('reconcile: an archive tiebreak-coverage-missing skip carries missing and hint through to result.runs (#3945)', { skip: STUB_SKIP }, async () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-tiebreak-')));
+  const root = fs.realpathSync(scratchDir('ct-recon-tiebreak-'));
   git(['init', '-q', '--initial-branch=main'], root);
-  git(['config', 'user.email', 'test@example.com'], root);
-  git(['config', 'user.name', 'Test'], root);
+  writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], root);
   git(['commit', '-q', '-m', 'seed'], root);
@@ -1310,13 +1319,13 @@ test('reconcile: an archive tiebreak-coverage-missing skip carries missing and h
 });
 
 test('reconcile: outside any repo resolves to no-repo, never crashes', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-norepo-'));
+  const dir = scratchDir('ct-recon-norepo-');
   const r = await reconcile({ cwd: dir });
   assert.deepStrictEqual(r.skipped, [{ check: 'all', reason: 'no-repo' }]);
 });
 
 test('reconcile: a non-canonical (dash-less) run-dir name is surfaced, never silently omitted (#848)', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-noncanon-'));
+  const dir = scratchDir('ct-recon-noncanon-');
   git(['init', '-q'], dir);
   fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
@@ -1332,7 +1341,7 @@ test('reconcile: a non-canonical (dash-less) run-dir name is surfaced, never sil
 });
 
 test('reconcile: checks filter excludes reap -> local-merge project runs nothing at all', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-checks-'));
+  const dir = scratchDir('ct-recon-checks-');
   git(['init', '-q', '--initial-branch=main'], dir);
   fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(
@@ -1344,4 +1353,39 @@ test('reconcile: checks filter excludes reap -> local-merge project runs nothing
   // 'mirror' was requested but has no local-merge equivalent — nothing runs.
   assert.strictEqual(r.worktrees, null);
   assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' }]);
+});
+
+// #5846: the pairedFixture and bareRepoRoot builders sit on templates (#5297) — a warm-up call may
+// build, a further call starts no git process — and a pairedFixture copy points at its own origin.
+// They live here because this file's own tests already build both templates.
+const movedFixtureDirs = [];
+after(() => {
+  for (const d of movedFixtureDirs) fs.rmSync(d, { recursive: true, force: true });
+});
+// This file's `git` takes (args, cwd), so the shared pinned-config runner is bound under its own name.
+function commit(cwd, name) {
+  fs.writeFileSync(path.join(cwd, name), name);
+  pinnedGit(cwd, ['add', name]);
+  pinnedGit(cwd, ['commit', '-q', '-m', name]);
+}
+for (const [name, make, dirsOf] of [
+  ['reconcile pairedFixture', () => pairedFixture(), (r) => Object.values(r)],
+  ['reconcile bareRepoRoot', () => bareRepoRoot(), (d) => [d]],
+]) {
+  test(`${name}: a second call starts no git process`, () => {
+    warmCallStartsNoGit(make, { track: (r) => movedFixtureDirs.push(...dirsOf(r)) });
+  });
+}
+
+test('pairedFixture copies point at their own origin and sync through it', () => {
+  const a = pairedFixture();
+  const b = pairedFixture();
+  movedFixtureDirs.push(...Object.values(a), ...Object.values(b));
+  assert.strictEqual(pinnedGit(a.mainDir, ['remote', 'get-url', 'origin']), a.originDir);
+  assert.strictEqual(pinnedGit(b.mainDir, ['remote', 'get-url', 'origin']), b.originDir);
+  commit(a.seedDir, 'next');
+  pinnedGit(a.seedDir, ['push', '-q', 'origin', 'main']);
+  pinnedGit(a.mainDir, ['fetch', '-q', 'origin']);
+  assert.strictEqual(pinnedGit(a.mainDir, ['rev-parse', 'origin/main']), pinnedGit(a.seedDir, ['rev-parse', 'HEAD']));
+  assert.notStrictEqual(pinnedGit(b.mainDir, ['rev-parse', 'origin/main']), pinnedGit(a.seedDir, ['rev-parse', 'HEAD']));
 });

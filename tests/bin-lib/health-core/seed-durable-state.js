@@ -1,6 +1,7 @@
 'use strict';
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -32,9 +33,9 @@ const GIT_OPTS = { env: cleanGitEnv(process.env) };
 // tmpPrefix namespaces the throwaway bare/seed directories per caller so
 // concurrent test files don't collide under os.tmpdir().
 function seedDurableState(root, subsystemDir, filename, data, tmpPrefix) {
-  const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), `${tmpPrefix}-bare-`));
+  const bareDir = scratchDir(`${tmpPrefix}-bare-`);
   execFileSync('git', ['init', '--bare', '-q', bareDir], GIT_OPTS);
-  const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), `${tmpPrefix}-seed-`));
+  const seedDir = scratchDir(`${tmpPrefix}-seed-`);
   execFileSync('git', ['init', '-q', seedDir], GIT_OPTS);
   execFileSync('git', ['-C', seedDir, 'checkout', '-q', '-b', 'health-state'], GIT_OPTS);
   fs.mkdirSync(path.join(seedDir, subsystemDir), { recursive: true });

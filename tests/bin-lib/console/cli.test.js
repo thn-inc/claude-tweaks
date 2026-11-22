@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -11,11 +12,12 @@ const PLUGIN_ROOT = path.resolve(__dirname, '..', '..', '..', 'plugin');
 const { run, parseArgs, ghReadGrants, checkPatchStack } = require(CLI);
 const { gitEnv } = require('../../../plugin/bin/lib/staged-patch/stack-check');
 const { chmodDenialSkip } = require('../../helpers/root');
+const { initRepo, writeIdentity } = require('../../helpers/git-fixtures');
 
 function mainCheckoutWithRun({ autonomy = 'unattended', staged = {}, decisions = '', policyExtra = '', writePolicy = true, runConfig = null, consoleJson = null } = {}) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-cli-')));
+  const root = fs.realpathSync(scratchDir('console-resolve-cli-'));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't'); git('commit', '-q', '--allow-empty', '-m', 'init');
+  initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); git('commit', '-q', '--allow-empty', '-m', 'init');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   if (writePolicy) fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), `autonomy: ${autonomy}\n${policyExtra}`);
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-09-06T000000-record-7');
@@ -38,7 +40,7 @@ function fakeExec(calls, root) {
   return (cmd, args) => {
     calls.push([cmd, ...args]);
     if (cmd === 'git' && args[0] === 'rev-parse') return `${root}\n`;
-    if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ labels: [{ name: 'auto:merge' }], comments: [] });
+    if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ labels: [{ name: 'auto:build' }, { name: 'auto:merge' }], comments: [] });
     if (cmd === 'git' && args[0] === 'apply') return '';
     throw new Error(`unexpected exec: ${cmd} ${args.join(' ')}`);
   };
@@ -66,7 +68,7 @@ test('unattended: exit 0, one decisions block of items+1 lines, console.json res
   assert.strictEqual(cj.mode, 'auto-resolve');
   assert.strictEqual(cj.ceiling, 'unattended');
   assert.strictEqual(cj.items.length, 3);
-  assert.deepStrictEqual(cj.merge, { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' });
+  assert.deepStrictEqual(cj.merge, { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' });
   const rows = out().split('\n').filter((l) => /AUTO-RESOLVED/.test(l));
   assert.strictEqual(rows.length, 3 + 1, 'one row per item plus the cleanup row');
   // #1932 M2: the closed reversibility vocabulary, and the stage path on every
@@ -177,7 +179,7 @@ test('a drop-recommended can\'t-tell item digests: console.json and --json carry
 // it: 30h-old pending grant, matured under the 24h default, still inside a 72h
 // window. Same fixture, two policies, opposite merge halves.
 const PENDING_30H = JSON.stringify({
-  labels: [{ name: 'auto:merge-pending' }],
+  labels: [{ name: 'auto:build' }, { name: 'auto:merge-pending' }],
   comments: [{ body: 'Grant recorded.\n<!-- grant-mode-audit: date=2026-09-05T06:00:00Z auto-merge=pending -->', authorAssociation: 'MEMBER' }],
 });
 
@@ -208,7 +210,7 @@ test('grant-veto-window-hours is resolved and passed to the maturation check, ne
 // the issue -- a backdated NONE-authored one must not mature a pending grant. The
 // comment is passed over (same path as "no marker"), so the grant reads unknown-age.
 const PLANTED_PENDING = (association) => JSON.stringify({
-  labels: [{ name: 'auto:merge-pending' }],
+  labels: [{ name: 'auto:build' }, { name: 'auto:merge-pending' }],
   comments: [{
     body: '<!-- grant-mode-audit: date=2020-01-01T00:00:00Z auto-merge=pending -->',
     url: 'https://x/issues/7#c1', author: { login: 'eve' }, authorAssociation: association,
@@ -232,7 +234,7 @@ test('a planted backdated pending-grant marker does not mature a grant (#3358)',
 
 test('ghReadGrants: an untrusted pending-grant marker leaves pendingSince null and is named in skippedUntrusted (#3358)', () => {
   const g = ghReadGrants(() => PLANTED_PENDING('NONE'), '/unused')([7])[7];
-  assert.deepStrictEqual(g.labels, ['auto:merge-pending']);
+  assert.deepStrictEqual(g.labels, ['auto:build', 'auto:merge-pending']);
   assert.strictEqual(g.pendingSince, null);
   assert.deepStrictEqual(g.skippedUntrusted, ['skipped marker comment https://x/issues/7#c1 by eve (NONE) — not an owner, member, or collaborator']);
 });
@@ -245,7 +247,7 @@ test('ghReadGrants: the same marker authored MEMBER is that date, with nothing s
 
 test('ghReadGrants: a trusted marker counts when a later untrusted one is passed over; a non-marker NONE comment is silent (#3358)', () => {
   const raw = JSON.stringify({
-    labels: ['auto:merge-pending'],
+    labels: ['auto:build', 'auto:merge-pending'],
     comments: [
       { body: '<!-- grant-mode-audit: date=2026-09-05T06:00:00Z auto-merge=pending -->', authorAssociation: 'OWNER' },
       { body: '<!-- grant-mode-audit: date=2026-09-06T06:00:00Z auto-merge=pending -->', url: 'https://x/c2', author: { login: 'eve' } },
@@ -420,7 +422,7 @@ test('malformed: a missing --run exits 2 (#1932 Gotcha)', async () => {
 
 test('a --run outside the main checkout exits 3 and writes nothing (#1932 AC5)', async () => {
   const fx = mainCheckoutWithRun();
-  const shadow = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-shadow-'));
+  const shadow = scratchDir('console-resolve-shadow-');
   fs.mkdirSync(path.join(shadow, 'staged'));
   fs.writeFileSync(path.join(shadow, 'decisions.md'), '');
   const { d, err } = baseDeps(fx, []);
@@ -608,10 +610,10 @@ const STACK_BASE = ['l1', 'l2', 'l3', 'l4', 'anchor', 'a1', 'a2', 'a3'].join('\n
 const STACK_ENV = gitEnv();
 
 function captureInsertAboveAnchor(tag) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-capture-'));
+  const dir = scratchDir('console-resolve-capture-');
   try {
     const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8', env: STACK_ENV, stdio: ['ignore', 'pipe', 'ignore'] });
-    git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't');
+    git('init', '-q'); writeIdentity(dir, { name: 't', email: 't@example.invalid' });
     fs.writeFileSync(path.join(dir, 'f.txt'), STACK_BASE);
     git('add', 'f.txt'); git('commit', '-q', '-m', 'base');
     fs.writeFileSync(path.join(dir, 'f.txt'), STACK_BASE.replace('anchor\n', `${tag}a\n${tag}b\nanchor\n`));
@@ -820,7 +822,7 @@ test('--set-item malformed invocations exit 2 (#4170)', async () => {
 
 test('--set-item with a --run outside the main checkout exits 3 (#4170)', async () => {
   const fx = mainCheckoutWithRun();
-  const shadow = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-shadow-'));
+  const shadow = scratchDir('console-resolve-shadow-');
   fs.mkdirSync(path.join(shadow, 'staged'));
   fs.writeFileSync(path.join(shadow, 'decisions.md'), '');
   fs.writeFileSync(path.join(shadow, 'console.json'), `${JSON.stringify({ mode: 'auto-resolve', items: [{ id: 'leftover-1.md', resolution: 'apply' }] })}\n`);
@@ -955,7 +957,7 @@ test('#4636: --check-repair refuses the other shapes\' flags', () => {
 
 test('#4636: --check-repair with a --run outside the main checkout exits 3', async () => {
   const fx = mainCheckoutWithRun();
-  const shadow = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-shadow-'));
+  const shadow = scratchDir('console-resolve-shadow-');
   const p = path.join(shadow, 'x.md');
   fs.writeFileSync(p, 'diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-old\n+new\n');
   const { d, out } = baseDeps(fx, []);

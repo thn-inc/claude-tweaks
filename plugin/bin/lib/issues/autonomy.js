@@ -86,6 +86,8 @@ function effectiveCeiling({ cliArg, autonomyEntry, controlModeEntry } = {}) {
   const controlMode = isControlModeOn(mode ? mode.value : undefined);
   if (isCeiling(cliArg)) return { ceiling: cliArg, controlMode, source: 'cli' };
   if (autonomy && autonomy.invalid === true) return { ceiling: 'supervised', controlMode, source: 'invalid-autonomy' };
+  // A factory autonomy (#6006) is explicit like a policy.yml one, so it outranks the control-mode
+  // implication; that implication is the top tier, so there a factory value can only lower the ceiling.
   const explicit = autonomy && autonomy.source !== 'default' && isCeiling(autonomy.value);
   if (explicit) return { ceiling: autonomy.value, controlMode, source: 'explicit' };
   if (controlMode) return { ceiling: resolveCeiling({ controlMode }), controlMode, source: 'control-mode' };
@@ -154,12 +156,11 @@ function permittedGrants(input) {
   // contradicts work-record.md's standing invariant that auto:* labels are only
   // ever added by an interactive human session. That invariant was written after
   // a real run treated a low-risk, well-scoped, `ready` record as license to run
-  // a full build-to-close lifecycle on its own judgment
-  // (evals/scenarios/backlog-refine-permission-matrix-compliance.yaml exists
-  // because of it, though what that scenario can actually assert is the
-  // local-files boundary — its own description says the grant path is untestable
-  // in the sandbox, so it is the incident and not the eval that carries the
-  // weight here). The tier is defined so the ceiling is complete; the grant path
+  // a full build-to-close lifecycle on its own judgment (an eval scenario was
+  // written because of it, though what that scenario could actually assert was
+  // the local-files boundary — the grant path was untestable in its sandbox, so
+  // it is the incident, not the since-deleted eval, that carries the weight
+  // here). The tier is defined so the ceiling is complete; the grant path
   // stays behind its own opt-in until that invariant is deliberately amended, and
   // reaching the top tier is never by itself that amendment.
   if (!atLeast(tier, 'unattended')) {
@@ -226,6 +227,8 @@ function clearsFloor(blockerReason) {
 // grants. `merge-authorization`
 // is deliberately not a key here and no ceiling sets it (#2734) -- see
 // skills/_shared/autonomy-ceiling.md's "Orthogonal to the ceiling" section for why.
+// Control mode alone grants `ownedUpstreamFiling` at any ceiling, and it authorizes
+// filing into an owned repo only (#4621).
 function bookkeepingPermissions(ceiling, { controlMode } = {}) {
   const absent = ceiling === undefined || ceiling === null;
   const tier = isCeiling(ceiling) ? ceiling : (controlMode === true && absent ? 'unattended' : 'supervised');
@@ -236,6 +239,7 @@ function bookkeepingPermissions(ceiling, { controlMode } = {}) {
     consoleAutoResolve: atLeast(tier, 'unattended'),
     refineAutoApply: atLeast(tier, 'unattended'),
     ledgerRouteRemainder: atLeast(tier, 'unattended'),
+    ownedUpstreamFiling: controlMode === true,
   };
 }
 

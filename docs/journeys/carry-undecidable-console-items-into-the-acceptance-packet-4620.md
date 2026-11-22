@@ -12,13 +12,15 @@ files:
   - plugin/skills/_shared/autonomy-ceiling.md
   - plugin/skills/_shared/ledger-format.md
   - plugin/skills/_shared/acceptance-packet.md
+  - plugin/bin/deferral-route.js
+  - plugin/skills/_shared/materiality-floor.md
 ---
 
 # Carry Undecidable Console Items Into the Acceptance Packet
 
 **Persona:** the claude-tweaks maintainer who turned on `control-mode: on` so they only decide at two points, intent and acceptance. They want a finished run to leave nothing behind: no `pending` console items, no `keep-staged` files, no `open` ledger rows. A second persona is the wrap-up agent running the Review Console and the ledger gate in that run.
 **Goal:** every item the console or the ledger could not settle by policy ends as a decision the maintainer sees in the acceptance packet, instead of residue they have to find later.
-**Entry point:** a `/claude-tweaks:flow` or `/claude-tweaks:dispatch` run whose run config or `.claude-tweaks/policy.yml` sets `control-mode: on`, reaching `/claude-tweaks:wrap-up`.
+**Entry point:** a `/claude-tweaks:flow` or `/claude-tweaks:dispatch` run whose `.claude-tweaks/policy.yml` sets `control-mode: on` (a run config cannot — the key is `policyOnly`, #5830), reaching `/claude-tweaks:wrap-up`.
 **Success state:** the acceptance packet's Decisions left for you lists one line per carried item, `console-residue.js --run` reports nothing for the run, and every ledger row is `fixed`, `accepted` (digested) or `deferred` naming a staged proposal or a `carried to the acceptance packet as {factId}` fact.
 
 ## Steps
@@ -29,7 +31,7 @@ files:
 - **Should feel:** one answer every later step reuses. The console, the ledger gate, the insights step and the memory writes all branch on the same two words.
 - **Should understand:**
   - Control mode applies when the line reads `control-mode on` and `consoleAutoResolve true`, whatever the `source`. An explicit `autonomy` value wins over control mode and reports `source explicit`; an explicit lower tier turns the carry route off.
-  - Control mode implies the `unattended` capability set and adds no capability of its own.
+  - Control mode implies the `unattended` capability set and adds exactly one capability, `ownedUpstreamFiling` (#4621), which holds at every ceiling.
   - An invalid `autonomy` value resolves `supervised` with `source invalid-autonomy`. An unreadable policy exits 3.
 - **Red flags:**
   - the ledger gate converging while the console renders a human prompt in the same run
@@ -55,6 +57,7 @@ files:
 - **Should understand:**
   - `--converge` and `--memory-write` hold the same gate as the resolve call in code: with control mode off or `consoleAutoResolve` not granted they exit 4 and write nothing.
   - The four terminal states are `resolved`, `filed`, `digested` and `carried`.
+  - `belowFloor` is `true` only when `node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" … --agent-raised`, run on the item's `deferReason`, prints `digest`, by any rule; it is `false` on `file`, `refused` or any other outcome, and an item with no `deferReason` gets no call and `false`. The agent never judges the floor from prose (#5931). A `digested` ledger row's `accepted` Resolution is the one `_shared/materiality-floor.md`'s digest-label table gives the printed `rule` (#5933).
   - An insight writes no ledger row; a carried insight needs nothing more.
   - A staged `filed` item that later fails to create takes `--set-item … carried --ledger`, never `--converge` again.
 - **Red flags:**
@@ -65,10 +68,13 @@ files:
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --memory-write "{file}" --memory-dir "{memory dir}" --content-file "{temp file}" --run "$PIPELINE_RUN_DIR"`
 - **Action:** each `M#` Apply writes the memory file, then `MEMORY.md` with the whole current index plus the new line.
 - **Should feel:** reversible. The `decisions.md` entry logs the path, the prior sha256 and a whole-file diff the maintainer can revert from.
-- **Should understand:** writes outside the memory directory, through a symlinked parent, or to a missing parent outside it are refused with exit 5 naming the path; exit 3 is an unreadable target or a failed write.
+- **Should understand:**
+  - writes outside the memory directory, through a symlinked parent, or to a missing parent outside it are refused with exit 5 naming the path; exit 3 is an unreadable target or a failed write.
+  - the entry tells the maintainer to strip the diff's indent into a patch file and run `git -c core.autocrlf=false apply -R --unidiff-zero {patch}` from the memory directory. The `-c core.autocrlf=false` matters on Windows: `git apply` honours `core.autocrlf` even outside a repository, and Git for Windows defaults it on, so without it the revert would restore CRLF bytes (#5694).
 - **Red flags:**
   - a `MEMORY.md` write holding only the one new line
   - a memory write with no logged prior hash
+  - a reverted memory file whose bytes differ from the prior content (CRLF line endings after a revert on Windows)
 
 ### 5. (Maintainer) Decide the carried items at acceptance
 - **URL:** the acceptance packet comment on the record (`acceptance-packet.js gather` reads `{run}/packet-facts/decisions.json` when no `--decision-items` is passed)
@@ -84,4 +90,6 @@ files:
 
 ## Origin
 - Created during the build of #4620 (run `2026-11-16T000749-record-4620`): `console-resolve.js --ceiling`, `--set-item … carried`, `--converge` and `--memory-write`, `lib/console/decision-facts.js`, `lib/console/residue-convergence.js`, `lib/console/memory-write.js`, and the control-mode branches in `wrap-up/review-console.md` and `_shared/ledger-format.md`.
+- Updated during the build of #5694 (run `2026-11-16T094458-record-5694`): Step 4 names the printed revert command, now read from `MEMORY_REVERT_COMMAND` in `lib/console/memory-write.js`, with `core.autocrlf` off.
+- Updated at the wrap-up of #5930-#5933: step 3 says how `belowFloor` is set (a `deferral-route.js` `digest` verdict, any rule) and that a digested row's Resolution follows the digest-label table; `files:` gains `plugin/bin/deferral-route.js` and `plugin/skills/_shared/materiality-floor.md`.
 - Related journeys: `recover-a-queue-write-the-unattended-console-could-not-file-4170.md` covers the non-control-mode `keep-staged` rewrite this route replaces. `accept-built-work-via-demo.md` covers the acceptance verdict itself.

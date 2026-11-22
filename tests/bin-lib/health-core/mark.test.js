@@ -60,7 +60,7 @@ test('writes a declined status to the cache and echoes it on stdout', () => {
 
 // #2053: cmdMark no longer calls process.exit() directly (a pending stderr
 // write right before process.exit() can truncate it for a piped consumer --
-// the caller's own main() applies the returned code to process.exitCode
+// the caller's own script entry applies the returned code to process.exitCode
 // instead). These two tests assert the returned value rather than mocking
 // process.exit.
 

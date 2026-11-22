@@ -16,6 +16,21 @@
 // whatever the caller's cwd) — verify.js's impact-selected subset (#4024). An empty list, a
 // missing file or a non-`*.test.js` entry exits 1, never handing `node --test` zero files.
 //
+// Test files named on the command line are the drop-in form of a direct `node --test <flags> <files>`
+// (#5547): `node tools/run-tests.js [<node test flags>] <file.test.js>...` runs exactly those files as a
+// subset (the same lane, slot and environment as `--files-from`), so a run never loses the safeguards
+// below. A file operand is resolved against the caller's cwd, absolute or relative, compared by canonical
+// path (a symlinked spelling of the checkout works), and must be an
+// existing `*.test.js` file inside this checkout with no glob character in its name; it does not combine
+// with directory roots, `--files-from`, `--shard`, `--record-durations` or `--full`. Node test flags
+// (`--test-*`, `--experimental-test-*`, e.g. `--test-reporter=tap`, `--test-name-pattern x`) are passed
+// through to `node --test`, a value flag typed in space form joined to `--flag=value`; they combine with
+// roots, `--files-from` and file operands. The child's working directory is the checkout root, so a
+// relative path inside a flag value (`--test-reporter-destination=out/r.tap`) is read from there.
+// `--test-concurrency=<n>` (a positive integer) replaces the computed concurrency for the run, over
+// CT_TEST_CONCURRENCY. A checkout from before this change reads none of this: there, write the files to
+// a list and run `node tools/run-tests.js --files-from <list>`.
+//
 // A bare local run (no arguments, `CI` unset or empty) selects by impact (#5319): it reads the
 // test-impact map for the changes since the integration base (the selection `bin/verify.js` makes
 // for a scoped run) and runs only the test files that read a changed path, printing one stderr line
@@ -37,8 +52,8 @@
 //
 // Elsewhere the explicit file list goes to `node --test`; on Windows (Node >= 22) the root globs
 // go instead, because ~780 paths overflow the 32,767-char command line (#3316). A `--files-from`
-// subset has no globs to fall back to, so on Windows one whose command line would overflow runs
-// the full suite instead, with a named reason on stderr (#4134).
+// subset, or test files named on the command line, has no globs to fall back to, so on Windows one
+// whose command line would overflow runs the full suite instead, with a named reason on stderr (#4134).
 //
 // The slot lock itself lives in plugin/bin/lib/suite-slot.js, shared with bin/verify.js.
 //
@@ -47,7 +62,10 @@
 // takes a cross-process slot, runs `node --test` with a bounded `--test-concurrency` and a private
 // TMPDIR under `<tmpdir>/ct-test-runs/` (removed on exit; roots orphaned by a killed run are swept
 // from that directory on the next one), and forwards SIGINT/SIGTERM/SIGHUP to the child so a
-// signalled runner frees its slot and root promptly instead of after the suite. Env knobs:
+// signalled runner frees its slot and root promptly instead of after the suite. Before it removes the root, it
+// counts what the suite left at the root's top level and prints one stderr warning naming the biggest name prefixes
+// (never a failure): the same entries a direct `node --test` run leaves in the real tmpdir, where they once piled
+// up to 597,912 (2026-11-18). tests/helpers/tmp-dir.js is how a test avoids leaving any. Env knobs:
 // CT_TEST_SUITE_SLOTS (simultaneous suites, default 1), CT_TEST_CONCURRENCY (files at once,
 // default half the cores, or cores - 1 when CI is set), CT_TEST_SUITE_SLOT_DIR (where the slot
 // locks live, default under the real tmpdir), CT_TEST_SUITE_SLOT_HELD (=1 set for the child so a
@@ -153,19 +171,127 @@ function resolveConcurrency(env, cpus) {
   return Math.max(1, Math.floor(cpus / 2));
 }
 
+// The node test flags that take a value (`node --help`, Node 26.13.1; Node 20's list is a subset).
+// A value flag typed as `--flag value` is joined to `--flag=value`, so its value is never read as a
+// file operand (#5547). Sorted.
+const NODE_TEST_VALUE_FLAGS = Object.freeze([
+  '--experimental-test-isolation', '--experimental-test-tag-filter', '--test-concurrency', '--test-coverage-branches',
+  '--test-coverage-exclude', '--test-coverage-functions', '--test-coverage-include', '--test-coverage-lines',
+  '--test-global-setup', '--test-isolation', '--test-name-pattern', '--test-random-seed', '--test-reporter',
+  '--test-reporter-destination', '--test-rerun-failures', '--test-shard', '--test-skip-pattern', '--test-timeout',
+]);
+
+// What a glob-aware `node --test` (Node 21+) would expand inside a file operand.
+const GLOB_CHARS = /[[\]{}()!+@*?]/;
+
+// The canonical form of `absPath` for comparing it with the checkout root: `realpathSync` of the deepest
+// ancestor that exists, joined with the segments below it, so a missing file under a symlinked directory
+// (`/tmp/x/missing.test.js`) keeps its canonical spelling and is reported missing, never outside. Never
+// throws. Pure apart from the injected `realpathSync`; OS path rules come from `pathImpl`.
+function canonicalPath(absPath, { realpathSync, pathImpl = path }) {
+  const below = [];
+  let current = absPath;
+  for (;;) {
+    try {
+      return pathImpl.join(realpathSync(current), ...below);
+    } catch (_) {
+      const parent = pathImpl.dirname(current);
+      if (parent === current) return absPath;
+      below.unshift(pathImpl.basename(current));
+      current = parent;
+    }
+  }
+}
+
+// Reads the arguments left after `extractRunFlags` (#5547): directory roots (as always), `--files-from
+// <list>`, test-file operands (`*.test.js`, resolved against `cwd`, returned repo-relative) and node
+// test flags (`--test-*`, `--experimental-test-*`, passed through; a value flag in space form is joined
+// to `--flag=value`). `--test-concurrency` is taken out of the flags and returned as a number. Every
+// refusal throws an Error whose message is the text after `run-tests.js: `. File operands refuse
+// to mix with roots or `--files-from`, to hold a glob character, to leave the checkout, or to be absent;
+// a non-test operand that is a file is refused (it would otherwise die in a directory walk).
+// A file operand is compared by canonical path: `realpath(absPath)` (default identity) maps a symlinked
+// spelling of the checkout to its real one, and the checks apply to that path, naming the operand as typed.
+// Pure apart from `isFile(absPath)` and `realpath`; OS path rules come from `pathImpl`.
+function parseRunnerOperands(rest, { cwd, repoRoot, isFile, realpath = (p) => p, pathImpl = path }) {
+  const FILES_FROM_USAGE = '--files-from <list> takes exactly one list file and no root arguments.';
+  const valueFlags = new Set(NODE_TEST_VALUE_FLAGS);
+  const roots = [];
+  const files = [];
+  const nodeFlags = [];
+  let filesFrom = null;
+  let concurrency = null;
+  let firstFile = null;
+  const setConcurrency = (value) => {
+    if (!POSITIVE_INT.test(String(value))) throw new Error('--test-concurrency needs a positive integer');
+    concurrency = Number(value);
+  };
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i];
+    if (arg === '--files-from') {
+      if (filesFrom !== null || i + 1 >= rest.length) throw new Error(FILES_FROM_USAGE);
+      filesFrom = rest[i + 1];
+      i += 1;
+    } else if (arg.startsWith('--test-') || arg.startsWith('--experimental-test-')) {
+      const eq = arg.indexOf('=');
+      if (eq !== -1) {
+        if (arg.slice(0, eq) === '--test-concurrency') setConcurrency(arg.slice(eq + 1));
+        else nodeFlags.push(arg);
+      } else if (valueFlags.has(arg)) {
+        const value = rest[i + 1];
+        if (value === undefined && arg !== '--test-concurrency') throw new Error(`${arg} needs a value`);
+        i += 1;
+        if (arg === '--test-concurrency') setConcurrency(value);
+        else nodeFlags.push(`${arg}=${value}`);
+      } else {
+        nodeFlags.push(arg);
+      }
+    } else if (arg.startsWith('-')) {
+      throw new Error(`unknown option ${arg}`);
+    } else if (arg.endsWith('.test.js')) {
+      const abs = realpath(pathImpl.resolve(cwd, arg));
+      const rel = pathImpl.relative(repoRoot, abs);
+      if (rel === '' || rel === '..' || rel.startsWith('..' + pathImpl.sep) || pathImpl.isAbsolute(rel)) {
+        throw new Error(`${arg} is outside the checkout`);
+      }
+      // The glob check reads `rel`, the path `node --test` receives, not the operand as typed: a cwd or
+      // symlink target holding a glob character would otherwise run a different file, and a checkout whose
+      // own path holds one is harmless. When the character comes from the cwd or a symlink target, the
+      // message names the path it resolves to.
+      if (GLOB_CHARS.test(rel)) {
+        const what = GLOB_CHARS.test(arg) ? `${arg} holds` : `${arg} resolves to ${rel}, which holds`;
+        throw new Error(`${what} a glob character (one of [ ] { } ( ) ! + @ * ?), which node --test would expand`);
+      }
+      if (!isFile(abs)) throw new Error(`${arg} does not exist or is not a file`);
+      if (firstFile === null) firstFile = arg;
+      if (!files.includes(rel)) files.push(rel);
+    } else if (isFile(pathImpl.resolve(cwd, arg)) || isFile(pathImpl.resolve(repoRoot, arg))) {
+      throw new Error(`${arg} is not a *.test.js file`);
+    } else {
+      roots.push(arg);
+    }
+  }
+  if (firstFile !== null && roots.length > 0) {
+    throw new Error(`${firstFile} cannot be combined with the directory root ${roots[0]}`);
+  }
+  if (firstFile !== null && filesFrom !== null) throw new Error(`${firstFile} cannot be combined with --files-from`);
+  return { roots, files, filesFrom, nodeFlags, concurrency };
+}
+
 // Returns the argv (after the node binary) for `node --test`. The explicit file list is the
 // default — `node --test` glob args don't work on Node 20 (#407). On win32 that list overflows
 // the 32,767-char command line (#3316), so there it passes the root globs, which needs Node >= 22.
-// `--test-concurrency=<n>` follows `--test` on both branches (#3969); `concurrency` must be a
-// positive integer, checked before the win32/Node<22 error so that error keeps its own message.
+// `--test-concurrency=<n>` follows `--test` on both branches (#3969), then `nodeFlags` (the caller's
+// node test flags, #5547); `concurrency` must be a positive integer, checked before the
+// win32/Node<22 error so that error keeps its own message.
 // `roots === null` is an explicit `--files-from` subset, which has no root globs to fall back to:
 // its file list is passed on every platform.
 // Pure: `platform`, `nodeMajor` and `concurrency` are parameters, never read from `process`.
-function buildTestArgs(files, roots, { platform, nodeMajor, concurrency }) {
+function buildTestArgs(files, roots, { platform, nodeMajor, concurrency, nodeFlags = [] }) {
   if (!Number.isInteger(concurrency) || concurrency < 1) {
     throw new Error(`buildTestArgs: concurrency must be a positive integer (got ${String(concurrency)}).`);
   }
-  const head = ['--test', `--test-concurrency=${concurrency}`];
+  const head = ['--test', `--test-concurrency=${concurrency}`, ...nodeFlags];
   if (platform !== 'win32' || roots === null) return [...head, ...files];
   if (nodeMajor < 22) {
     throw new Error(
@@ -185,19 +311,59 @@ const WIN32_COMMAND_LINE_MAX = 32767;
 // two quotes and a separator, and the last separator does not exist. That is an upper bound, not
 // the exact length: libuv quotes an argument only when it holds a space, tab or quote, so most
 // arguments cost two characters less. Keep the estimate pessimistic. `args` is `--test`,
-// `--test-concurrency=<n>` and then the files, so the file count is `args.length - 2`.
+// `--test-concurrency=<n>`, any node test flags and then the files, so the file count is the
+// arguments that do not start with `-`.
 // Pure: `platform` is a parameter, never read from `process`.
 function subsetFallbackReason(execPath, args, { platform }) {
   if (platform !== 'win32') return null;
   const len = [execPath, ...args].reduce((n, a) => n + a.length + 3, 0) - 1;
   if (len < WIN32_COMMAND_LINE_MAX) return null;
-  return `a ${args.length - 2}-file subset needs a ${len}-character command line, over the Windows limit of ${WIN32_COMMAND_LINE_MAX}`;
+  return `a ${args.filter((a) => !a.startsWith('-')).length}-file subset needs a ${len}-character command line, over the Windows limit of ${WIN32_COMMAND_LINE_MAX}`;
 }
 
 // The per-run temp root: a pid-tagged directory under `realTmp` that the suite's children use as
 // their TMPDIR, so one run's leaked temp dirs are removable together and attributable to a pid.
 function createRunRoot(realTmp, pid) {
   return fs.mkdtempSync(path.join(realTmp, 'ct-testrun-' + pid + '-'));
+}
+
+// What the runner itself puts at the top of a run root (the git template and the repo-info store); every other
+// top-level entry there was left by a test or by code a test ran. Sorted.
+const RUN_ROOT_OWN_ENTRIES = Object.freeze(['git-template', 'repo-info-cache.json']);
+
+// The top-level entries a finished run left in its TMPDIR `runRoot`, sorted: the same entries a direct
+// `node --test` run would leave in the real tmpdir, where they pile up (597,912 entries on one dev machine,
+// 2026-11-18). A missing or unreadable root has none to report.
+function leftoverEntries(runRoot, { readdirSync = fs.readdirSync } = {}) {
+  let names;
+  try {
+    names = readdirSync(runRoot);
+  } catch (_) {
+    return [];
+  }
+  return names.filter((n) => !RUN_ROOT_OWN_ENTRIES.includes(n)).sort();
+}
+
+// `names` grouped by name prefix, most entries first: `fs.mkdtemp` appends six random characters, so a name
+// of seven or more characters loses its last six, and anything shorter groups under its whole name. Returns
+// `[{ prefix, count }]`, ties in prefix order.
+function summarizeLeftovers(names) {
+  const counts = new Map();
+  for (const name of names) {
+    const prefix = name.length > 6 ? name.slice(0, -6) : name;
+    counts.set(prefix, (counts.get(prefix) || 0) + 1);
+  }
+  return [...counts].map(([prefix, count]) => ({ prefix, count })).sort((a, b) => b.count - a.count || (a.prefix < b.prefix ? -1 : 1));
+}
+
+// The one stderr line a run prints when it left entries behind, or null when it left none. `limit` caps the
+// prefixes named so one badly leaking suite stays a single readable line.
+function leftoverWarning(names, { limit = 12 } = {}) {
+  if (names.length === 0) return null;
+  const groups = summarizeLeftovers(names);
+  const shown = groups.slice(0, limit).map((g) => `${g.prefix}* x${g.count}`).join(', ');
+  const more = groups.length > limit ? `, and ${groups.length - limit} more prefixes` : '';
+  return `run-tests.js: warning: the run left ${names.length} top-level entries in its TMPDIR (removed now; a direct node --test run would leave them in the real tmpdir): ${shown}${more}`;
 }
 
 // Removes `ct-testrun-<pid>-*` roots in `dir` whose pid is no longer alive (a killed run never
@@ -287,6 +453,31 @@ function assignShards(files, durations, total) {
   }
   for (const s of shards) s.files.sort(byPath);
   return shards;
+}
+
+// The committed durations map's guards. A test file this big with no entry is weighed as the median
+// file and can sit unnoticed on one shard; an entry this slow is one the shards cannot balance around.
+const DURATIONS_SIZE_FLOOR_BYTES = 102400;
+const DURATIONS_CEILING_MS = 100000;
+
+// The files at or above the size floor that `durations` has no entry for, sorted. `sizeOf(file)` returns
+// a byte size, or null for a file that is gone (skipped). Looked up by posix path, like `assignShards`.
+// Pure.
+function durationsCoverageGaps(files, durations, sizeOf) {
+  return files
+    .filter((file) => {
+      const size = sizeOf(file);
+      return size !== null && size >= DURATIONS_SIZE_FLOOR_BYTES && !durations.has(posixKey(file));
+    })
+    .sort(byPath);
+}
+
+// The entries of `durations` slower than `ceilingMs`, sorted, each formatted "<path> <ms> ms". Pure.
+function durationsOverCeiling(durations, ceilingMs = DURATIONS_CEILING_MS) {
+  return [...durations]
+    .filter(([, ms]) => ms > ceilingMs)
+    .sort(([a], [b]) => byPath(a, b))
+    .map(([file, ms]) => `${file} ${ms} ms`);
 }
 
 // Where a `--record-durations <out>` run's reporter writes until the run ends: beside `out`, tagged
@@ -451,28 +642,130 @@ function applyDefaultSelection({ select, log, exit }) {
   return plan.action === 'subset' ? plan.files : null;
 }
 
-// Returns a new env with git's auto-maintenance switched off, via env-carried config (appended after
-// any inherited GIT_CONFIG_* so it never clobbers them). Never mutates `env`; a malformed inherited
-// GIT_CONFIG_COUNT is left alone rather than guessed at.
-function gitFixtureConfigEnv(env) {
+// Returns a new env with `pairs` ([key, value]...) appended as env-carried git config after any
+// inherited GIT_CONFIG_* entries, so it never clobbers them (#5768: a test that sets its own
+// GIT_CONFIG_COUNT uses this to keep the runner's entries). Never mutates `env`; a malformed
+// inherited GIT_CONFIG_COUNT is left alone rather than guessed at.
+function appendGitConfigEnv(env, pairs) {
   const out = { ...env };
   if (env.GIT_CONFIG_COUNT !== undefined && !/^\d+$/.test(env.GIT_CONFIG_COUNT)) return out;
   const n = env.GIT_CONFIG_COUNT === undefined ? 0 : Number(env.GIT_CONFIG_COUNT);
-  out.GIT_CONFIG_COUNT = String(n + 2);
-  out[`GIT_CONFIG_KEY_${n}`] = 'maintenance.auto';
-  out[`GIT_CONFIG_VALUE_${n}`] = 'false';
-  out[`GIT_CONFIG_KEY_${n + 1}`] = 'gc.auto';
-  out[`GIT_CONFIG_VALUE_${n + 1}`] = '0';
+  out.GIT_CONFIG_COUNT = String(n + pairs.length);
+  pairs.forEach(([key, value], i) => {
+    out[`GIT_CONFIG_KEY_${n + i}`] = key;
+    out[`GIT_CONFIG_VALUE_${n + i}`] = value;
+  });
   return out;
 }
 
+// Returns a new env with git's auto-maintenance switched off, via env-carried config.
+function gitFixtureConfigEnv(env) {
+  return appendGitConfigEnv(env, [['maintenance.auto', 'false'], ['gc.auto', '0']]);
+}
+
+// #5768: the repository-level half of the maintenance switch-off. Env-carried config
+// (gitFixtureConfigEnv) does not reach receive-pack on a local push, product code that scrubs env
+// config, or a test that overwrites the count; a template's `config` is copied into every repository
+// `git init`/`git clone` creates, so those repositories carry the keys themselves.
+const GIT_TEMPLATE_CONFIG = '[maintenance]\n\tauto = false\n[gc]\n\tauto = 0\n[receive]\n\tautogc = false\n';
+
+// True when `from` (a path fs.cpSync hands its filter) is a `*.sample` file directly inside `hooksDir`.
+// On win32, Node 20's cpSync passes a namespaced `src` (`\\?\C:\…\hooks\x.sample`), so both sides
+// are compared namespaced; toNamespacedPath is idempotent, and a no-op on POSIX.
+function isTemplateSampleHook(from, hooksDir, pathImpl = path) {
+  return from.endsWith('.sample') && pathImpl.toNamespacedPath(pathImpl.dirname(from)) === pathImpl.toNamespacedPath(hooksDir);
+}
+
+// Writes a git template directory at `dir` (git's built-in default template, or a usable inherited
+// GIT_TEMPLATE_DIR, plus GIT_TEMPLATE_CONFIG) and returns `dir`; null when any step throws.
+// `onError` is called with the caught error before null is returned.
+// #5771: no `hooks/*.sample` file is kept: git's default ships 14 of them and copies every one into
+// each repository a test creates. `hooks/` itself stays, empty from the default and with an
+// inherited template's other hooks; `info/` (with `exclude`) and `description` stay.
+function writeGitTemplateDir(dir, env, { git = (args, opts) => execFileSync('git', args, { ...opts, stdio: 'ignore', windowsHide: true }), onError = () => {} } = {}) {
+  const src = `${dir}-src`;
+  const emptyConfig = `${dir}-empty-gitconfig`;
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    let inherited = null;
+    try {
+      if (env.GIT_TEMPLATE_DIR && fs.statSync(env.GIT_TEMPLATE_DIR).isDirectory()) inherited = env.GIT_TEMPLATE_DIR;
+    } catch (_) { /* missing or unreadable: git's built-in default stands */ }
+    const initEnv = {};
+    for (const [k, v] of Object.entries(env)) if (!k.startsWith('GIT_')) initEnv[k] = v;
+    fs.writeFileSync(emptyConfig, '');
+    if (inherited) initEnv.GIT_TEMPLATE_DIR = inherited;
+    initEnv.GIT_CONFIG_NOSYSTEM = '1';
+    initEnv.GIT_CONFIG_GLOBAL = emptyConfig;
+    try {
+      git(['init', '-q', src], { env: initEnv });
+    } catch (err) {
+      // git refuses a template it cannot copy (e.g. an unreadable `config`): retry with its built-in
+      // default. Nothing from `src` is used once a template is inherited (its entries are copied from the
+      // inherited directory below); the retry only confirms that git itself runs.
+      if (!inherited) throw err;
+      fs.rmSync(src, { recursive: true, force: true });
+      delete initEnv.GIT_TEMPLATE_DIR;
+      git(['init', '-q', src], { env: initEnv });
+    }
+    // `config` is never copied as a file (it holds per-repository core.* keys; the template's own is
+    // rebuilt below). With an inherited template every entry of its own is copied wholesale from it, on
+    // both paths, so they stay identical; otherwise git's default template files come from the init.
+    fs.mkdirSync(path.join(dir, 'hooks'), { recursive: true });
+    if (inherited) {
+      const hooksDir = path.join(inherited, 'hooks');
+      const notSample = (from) => !isTemplateSampleHook(from, hooksDir);
+      for (const name of fs.readdirSync(inherited)) {
+        if (name === 'config') continue;
+        fs.cpSync(path.join(inherited, name), path.join(dir, name), { recursive: true, filter: notSample });
+      }
+    } else {
+      for (const name of ['info', 'description']) {
+        const from = path.join(src, '.git', name);
+        if (fs.existsSync(from)) fs.cpSync(from, path.join(dir, name), { recursive: true });
+      }
+    }
+    let base = '';
+    if (inherited) {
+      try {
+        base = fs.readFileSync(path.join(inherited, 'config'), 'utf8');
+        if (base && !base.endsWith('\n')) base += '\n';
+      } catch (_) { base = ''; }
+    }
+    // An outer runner's template already ends in GIT_TEMPLATE_CONFIG: appending it again would
+    // duplicate the keys and make `git config gc.auto 1` fail on a multi-valued key.
+    fs.writeFileSync(path.join(dir, 'config'), base.endsWith(GIT_TEMPLATE_CONFIG) ? base : base + GIT_TEMPLATE_CONFIG);
+    return dir;
+  } catch (err) {
+    onError(err);
+    return null;
+  } finally {
+    for (const p of [src, emptyConfig]) {
+      try { fs.rmSync(p, { recursive: true, force: true }); } catch (_) { /* best effort */ }
+    }
+  }
+}
+
+// The env the runner hands its `node --test` child: `env` with maintenance off, the run's template
+// (when one was built), TMPDIR/TMP/TEMP and the repo-info store inside `runRoot`, the slot-held mark, and the
+// factory policy file relocated to a path inside `runRoot` that is never created.
+function runnerChildEnv(env, { runRoot, templateDir }) {
+  // The factory layer (#6006) is the machine's own policy: a test run never inherits its variable, and
+  // CT_FACTORY_POLICY_FILE moves its file off ~/.claude-tweaks/factory-policy.yml, so a suite cannot pass or
+  // fail on the developer's own factory setup.
+  const { CLAUDE_TWEAKS_FACTORY_POLICY: _factory, ...inherited } = env;
+  return { ...gitFixtureConfigEnv(inherited), ...(templateDir ? { GIT_TEMPLATE_DIR: templateDir } : {}), TMPDIR: runRoot, TMP: runRoot, TEMP: runRoot, CT_TEST_SUITE_SLOT_HELD: '1', CT_HOOKS_REPO_INFO_STORE: path.join(runRoot, 'repo-info-cache.json'), CT_FACTORY_POLICY_FILE: path.join(runRoot, 'factory-policy.absent.yml') };
+}
+
 module.exports = {
-  gitFixtureConfigEnv,
+  gitFixtureConfigEnv, appendGitConfigEnv, writeGitTemplateDir, isTemplateSampleHook, GIT_TEMPLATE_CONFIG, runnerChildEnv,
   listTestFiles, buildTestArgs, resolveConcurrency, resolveSlots, subsetFallbackReason, WIN32_COMMAND_LINE_MAX,
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
+  leftoverEntries, summarizeLeftovers, leftoverWarning, RUN_ROOT_OWN_ENTRIES,
   parseShard, readDurations, assignShards, extractRunFlags, durationsPartialPath, finishRecording,
   resolveRunMode, selectChangedTests, realSelectionDeps, planDefaultRun, applyDefaultSelection,
-  DURATIONS_FILE, PER_FILE_OVERHEAD_MS, DEFAULT_FILE_MS,
+  DURATIONS_FILE, PER_FILE_OVERHEAD_MS, DEFAULT_FILE_MS, NODE_TEST_VALUE_FLAGS, parseRunnerOperands, canonicalPath,
+  DURATIONS_SIZE_FLOOR_BYTES, DURATIONS_CEILING_MS, durationsCoverageGaps, durationsOverCeiling,
 };
 
 if (require.main === module) {
@@ -480,16 +773,42 @@ if (require.main === module) {
   let shard = null;
   let recordDurations = null;
   let mode;
+  let parsed;
   try {
     const flags = extractRunFlags(process.argv.slice(2));
     argv = flags.rest;
     shard = flags.shard === null ? null : parseShard(flags.shard);
     recordDurations = flags.recordDurations;
     mode = resolveRunMode({ ...flags, env: process.env });
+    parsed = parseRunnerOperands(argv, {
+      cwd: process.cwd(),
+      repoRoot: REPO_ROOT,
+      realpath: (abs) => canonicalPath(abs, { realpathSync: fs.realpathSync }),
+      isFile: (abs) => {
+        try {
+          return fs.statSync(abs).isFile();
+        } catch (_) {
+          return false;
+        }
+      },
+    });
     // A partial run must never overwrite the committed durations, and a subset has no shards.
     if (shard && argv.includes('--files-from')) throw new Error('--shard cannot be combined with --files-from');
     if (recordDurations !== null && (shard || argv.includes('--files-from'))) {
       throw new Error('--record-durations needs the whole root set, so it cannot be combined with --shard or --files-from');
+    }
+    // --record-durations puts its own reporter pairs on the command line, so a typed one cannot ride along.
+    if (recordDurations !== null) {
+      for (const name of ['--test-reporter-destination', '--test-reporter']) {
+        if (parsed.nodeFlags.some((f) => f.startsWith(`${name}=`))) {
+          throw new Error(`${name} cannot be combined with --record-durations`);
+        }
+      }
+    }
+    // Named test files are a subset too: no shards, no recording, no whole-suite run.
+    if (parsed.files.length > 0) {
+      const clash = flags.full ? '--full' : shard ? '--shard' : recordDurations !== null ? '--record-durations' : null;
+      if (clash) throw new Error(`${clash} needs the whole root set, so it cannot be combined with test file operands`);
     }
   } catch (err) {
     console.error(`run-tests.js: ${err.message}`);
@@ -510,9 +829,9 @@ if (require.main === module) {
   if (impactSubset !== null) {
     roots = null;
     files = impactSubset;
-  } else if (argv.includes('--files-from')) {
+  } else if (parsed.filesFrom !== null) {
     // A subset plus roots would be ambiguous (which wins?), so the flag stands alone.
-    if (argv.length !== 2 || argv[0] !== '--files-from') {
+    if (parsed.roots.length > 0) {
       console.error('run-tests.js: --files-from <list> takes exactly one list file and no root arguments.');
       process.exit(1);
     }
@@ -524,15 +843,18 @@ if (require.main === module) {
           return false;
         }
       };
-      files = readFileList(fs.readFileSync(argv[1], 'utf8'), { exists: isFile })
+      files = readFileList(fs.readFileSync(parsed.filesFrom, 'utf8'), { exists: isFile })
         .map((entry) => path.relative(REPO_ROOT, path.resolve(REPO_ROOT, entry)));
     } catch (err) {
-      console.error(`run-tests.js: --files-from ${argv[1]}: ${err.message}`);
+      console.error(`run-tests.js: --files-from ${parsed.filesFrom}: ${err.message}`);
       process.exit(1);
     }
     roots = null;
+  } else if (parsed.files.length > 0) {
+    roots = null;
+    files = parsed.files;
   } else {
-    roots = argv.length ? argv : DEFAULT_ROOTS;
+    roots = parsed.roots.length ? parsed.roots : DEFAULT_ROOTS;
     files = listTestFiles(REPO_ROOT, roots).map((f) => path.relative(REPO_ROOT, f));
   }
 
@@ -577,7 +899,8 @@ if (require.main === module) {
     const argOptions = {
       platform: process.platform,
       nodeMajor: Number(process.versions.node.split('.')[0]),
-      concurrency: resolveConcurrency(process.env, os.availableParallelism()),
+      concurrency: parsed.concurrency === null ? resolveConcurrency(process.env, os.availableParallelism()) : parsed.concurrency,
+      nodeFlags: parsed.nodeFlags,
     };
     // A shard is an explicit file list on every platform: its root globs would select the whole set.
     testArgs = buildTestArgs(files, shard ? null : roots, argOptions);
@@ -603,7 +926,9 @@ if (require.main === module) {
     // full suite (and takes the full-suite slot lane below) rather than failing to spawn (#4134).
     const reason = roots === null ? subsetFallbackReason(process.execPath, testArgs, { platform: process.platform }) : null;
     if (reason) {
-      const what = impactSubset !== null ? 'the impact-selected subset' : `--files-from ${argv[1]}`;
+      const what = impactSubset !== null
+        ? 'the impact-selected subset'
+        : parsed.filesFrom !== null ? `--files-from ${parsed.filesFrom}` : `the ${files.length} named test files`;
       console.error(`run-tests.js: ${what}: ${reason} — running the full suite instead.`);
       roots = DEFAULT_ROOTS;
       files = listTestFiles(REPO_ROOT, roots).map((f) => path.relative(REPO_ROOT, f));
@@ -677,12 +1002,17 @@ if (require.main === module) {
 
   try {
     runRoot = createRunRoot(runsDir, process.pid);
+    let templateWhy = 'unknown error';
+    const templateDir = writeGitTemplateDir(path.join(runRoot, 'git-template'), process.env, { onError: (err) => { templateWhy = err.message; } });
+    if (!templateDir) console.error(`run-tests.js: could not build the git template (${oneLine(templateWhy)}) — repositories tests create keep git's own defaults`);
     child = spawn(process.execPath, testArgs, {
       cwd: REPO_ROOT,
       stdio: 'inherit',
       // Every fixture git commit/push started `git maintenance run --auto` (391 processes across six
-      // heavy test files, #5297); the env-carried config turns that off for the whole child tree.
-      env: { ...gitFixtureConfigEnv(process.env), TMPDIR: runRoot, TMP: runRoot, TEMP: runRoot, CT_TEST_SUITE_SLOT_HELD: '1', CT_HOOKS_REPO_INFO_STORE: path.join(runRoot, 'repo-info-cache.json') },
+      // heavy test files, #5297). Two layers switch it off: env-carried config reaches every git process
+      // that keeps its environment; the template's config lands in each repository a test creates, which
+      // reaches the processes that scrub or never inherit it (receive-pack, product code, #5768).
+      env: runnerChildEnv(process.env, { runRoot, templateDir }),
     });
   } catch (err) {
     cleanup();
@@ -696,6 +1026,10 @@ if (require.main === module) {
     throw err;
   });
   child.on('exit', (code, signal) => {
+    // Read the run root before cleanup removes it: what the suite left at its top level is the leak a direct run
+    // would put in the real tmpdir. A warning only, never a failure.
+    const leftWarning = runRoot ? leftoverWarning(leftoverEntries(runRoot)) : null;
+    if (leftWarning) console.error(leftWarning);
     cleanup();
     if (recordDurations !== null) {
       console.error(finishRecording(recordDurations, process.pid, { signalled: Boolean(forwarded || signal) }));

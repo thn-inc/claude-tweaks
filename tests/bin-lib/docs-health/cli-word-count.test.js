@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync, spawnSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -9,7 +10,7 @@ const { sweepCli } = require('../../helpers/health-sweep-cli');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'docs-health.js');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-word-count-')); }
+function tmp() { return scratchDir('docs-health-word-count-'); }
 
 // Real-process pin of the script entry (#5381): the success envelope's code, stdout and stderr are
 // byte-identical before and after the in-process entry conversion.

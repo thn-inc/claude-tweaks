@@ -7,7 +7,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { cleanGitEnv, fixtureGit } = require('./helpers/git-fixtures');
+const { cleanGitEnv, fixtureGit, writeIdentity } = require('./helpers/git-fixtures');
 const { runCli } = require('./helpers/run-cli');
 
 const ROOT = path.join(__dirname, '..');
@@ -33,8 +33,7 @@ const runHook = (args, { cwd, env } = {}) => runCli(HOOKS, args, { cwd, env: hoo
 async function fixture() {
   const root = tmp('ct-ledgerrow-carried-');
   git(['init', '-q', '--initial-branch=main'], root);
-  git(['config', 'user.email', 'test@example.com'], root);
-  git(['config', 'user.name', 'Test'], root);
+  writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], root);
   git(['commit', '-q', '-m', 'seed'], root);

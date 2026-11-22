@@ -22,7 +22,7 @@ const core = createCache('harness-health');
 // createDurable({ env, stderr }) builds the durable-state accessors with an
 // injected child-git environment and stderr sink (#5380) — an in-process caller
 // passes its own; the module-level exports below are bound to createDurable()
-// (inherited env, process.stderr), exactly as before.
+// (inherited env, process.stderr).
 function createDurable({ env, stderr } = {}) {
   const state = createDurableState('harness-health', {
     includeRemembered: true, includeDeclined: true, env, stderr,

@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -20,9 +21,9 @@ const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'harness-
 const SKILLS = ['skill-a', 'skill-b', 'skill-c'];
 
 function tmpRepoWithOrigin() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-health-push-cursor-'));
+  const root = scratchDir('harness-health-push-cursor-');
   execFileSync('git', ['init', '-q'], { cwd: root });
-  const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-health-push-cursor-bare-'));
+  const bareDir = scratchDir('harness-health-push-cursor-bare-');
   execFileSync('git', ['init', '--bare', '-q', bareDir]);
   execFileSync('git', ['remote', 'add', 'origin', bareDir], { cwd: root });
   return { root, bareDir };
@@ -103,7 +104,7 @@ test('push-cursor exits 1 with the push-failed line when the health-state push f
   const { root } = tmpRepoWithOrigin();
   const recorded = runValidateFindings(root, 'skill-a');
   assert.strictEqual(recorded.status, 0, `stderr: ${recorded.stderr}`);
-  const missing = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'harness-health-push-cursor-gone-')), 'no-such-repo');
+  const missing = path.join(scratchDir('harness-health-push-cursor-gone-'), 'no-such-repo');
   execFileSync('git', ['remote', 'set-url', 'origin', missing], { cwd: root });
 
   const result = runPushCursor(root);

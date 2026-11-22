@@ -215,6 +215,17 @@ test('a non-string source is carried as null, not passed through', () => {
   });
 });
 
+test('a factory-sourced bound passes through as source factory (#6006)', () => {
+  const { resolvePolicyKeys } = require('../../../plugin/bin/lib/policy-schema');
+  withFixture((fx) => {
+    const tip = originTip(fx);
+    pushUpstream(fx);
+    const bound = { code: 0, result: resolvePolicyKeys(['release-tip-moves'], { factoryRaw: 'release-tip-moves: 3\n' }) };
+    const { v } = check(fx, { decisionsText: decisions([step3Line(tip)]), bound });
+    assert.deepStrictEqual([v.verdict, v.bound, v.source], ['delta', 3, 'factory']);
+  });
+});
+
 test('no reviewed tip → failed, and no git call runs', () => {
   const git = () => { throw new Error('git must not run'); };
   const texts = [

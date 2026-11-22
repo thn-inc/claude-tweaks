@@ -22,7 +22,7 @@ const { gateOriginRepo, repoSlug, ghOptions, injectedGhDeps } = require('../repo
 const { readRunStateWithParent } = require('../hooks/context');
 const { ownedPlansFiles } = require('./ledger-ownership');
 const { ledgerRowCells } = require('./ledger-cells');
-const { isTimeoutError } = require('../shared-primitives');
+const { isTimeoutError, execTimeoutMsFor } = require('../shared-primitives');
 const { parseWorkBackend } = require('../work-backend');
 const { PIN_PATTERNS } = require('../set-config/write');
 const { listHeaderDirs } = require('../run-header');
@@ -30,12 +30,17 @@ const { listHeaderDirs } = require('../run-header');
 const PROBE_NAMES = ['residue', 'state', 'blastRadius', 'pr', 'recordLabels', 'claim', 'ledger', 'unblocked'];
 const BIN = path.join(__dirname, '..', '..');
 
-// Every subprocess this module spawns is bounded the same way: a 32 MB stdout
-// ceiling (a `gh issue list --limit 200` of long bodies overruns Node's 1 MB
-// default and comes back as a truncation error) and a 30 s wall clock, so one
-// hung `gh` can never hold the whole pack open.
+// Every async subprocess this module spawns through execBounded is bounded the
+// same way: a 32 MB stdout ceiling (a `gh issue list --limit 200` of long bodies
+// overruns Node's 1 MB default and comes back as a truncation error) and a
+// per-command wall clock (`execTimeoutMsFor(cmd)`: gh and git follow their policy
+// keys, node stays 30 s), so one hung async `gh` can never hold the whole pack
+// open. The wall clock is added at each call site, not held here, so the message
+// names the bound the call carried. The synchronous runners below (execSync,
+// defaultGit, defaultGhSync, defaultResolvePolicy's git) carry neither bound on
+// purpose: bounding them is #5870's decision, not #5050's.
 // Merged with `cwd` at each call site; never mutated.
-const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024, timeout: 30000, windowsHide: true };
+const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024, windowsHide: true };
 
 // The default `wrap` of execBounded and execSync: hands the options through unchanged.
 const keepOptions = (_args, opts) => opts;
@@ -47,18 +52,19 @@ const keepOptions = (_args, opts) => opts;
 // unchanged. `wrap` transforms the options per call: identity by default,
 // ghOptions (#4505's GH_HOST seam) for a gh spawn.
 async function execBounded(deps, cmd, args, cwd, wrap = keepOptions) {
+  const timeout = execTimeoutMsFor(cmd);
   try {
-    return await deps.execFile(cmd, args, wrap(args, { cwd, ...EXEC_OPTS }));
+    return await deps.execFile(cmd, args, wrap(args, { cwd, ...EXEC_OPTS, timeout }));
   } catch (err) {
     if (isTimeoutError(err)) {
       const target = cmd === 'node' ? path.basename(args[0]) : args[0];
-      throw new Error(`timeout after ${EXEC_OPTS.timeout}ms: ${cmd} ${target} (killed by ${err.signal || 'timeout'})`, { cause: err });
+      throw new Error(`timeout after ${timeout}ms: ${cmd} ${target} (killed by ${err.signal || 'timeout'})`, { cause: err });
     }
     throw err;
   }
 }
 
-// The per-probe outer bound, one level above EXEC_OPTS: a probe that makes no
+// The per-probe outer bound, one level above the per-spawn execTimeoutMsFor bound: a probe that makes no
 // subprocess call at all (a module probe spinning, an fs read on a dead mount)
 // is still bounded. Injectable via deps.probeTimeoutMs for tests.
 const PROBE_TIMEOUT_MS = 60000;
@@ -104,7 +110,7 @@ function defaultResolvePolicy(keys, cwd, env) {
   const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, ...(env ? { env } : {}) });
   const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
   try {
-    const { result } = resolvePolicyConfig({ git, readFile, keys, cwd });
+    const { result } = resolvePolicyConfig({ git, readFile, keys, cwd, ...(env ? { env } : {}) });
     for (const key of keys) {
       const entry = result[key];
       out[key] = !entry || entry.error !== undefined || entry.value === null || entry.value === undefined ? '' : String(entry.value);
@@ -116,9 +122,11 @@ function defaultResolvePolicy(keys, cwd, env) {
 }
 
 // `{ env }` is the caller's injected environment (#5379): it reaches `git`, `ghSync` and `resolvePolicy`'s
-// own git, each of which merges it into the options its caller passes. Absent, behavior is unchanged.
+// own git, each of which merges it into the options its caller passes, and the factory-layer read of both
+// policy reads (`resolvePolicy` and `computeBlastRadius`, #6006). Absent, behavior is unchanged.
 // `{ stderr }` is the sink for `ghSync`'s repo-resolution note; absent, the note goes to the real stderr.
 function defaultDeps(cwd, { env, stderr } = {}) {
+  const { computeBlastRadius } = require('../blast-radius-cli');
   return {
     now: () => Date.now(),
     git: env ? (args, opts) => defaultGit(args, { ...opts, env }) : defaultGit,
@@ -127,7 +135,7 @@ function defaultDeps(cwd, { env, stderr } = {}) {
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
     resolvePolicy: (keys, policyCwd) => defaultResolvePolicy(keys, policyCwd || cwd, env),
-    computeBlastRadius: require('../blast-radius-cli').computeBlastRadius,
+    computeBlastRadius: env ? (opts, d) => computeBlastRadius(opts, { ...d, env }) : computeBlastRadius,
     readClaimBlob: require('../issues/claim-store').readClaimBlob,
     classifyClaimBlob: require('../issues/claims').classifyClaimBlob,
     gitRunner: require('../issues/claims-git-cas').defaultRunner,
@@ -763,7 +771,7 @@ function buildProbes(inputs, deps) {
     // --no-suite: a fact pack never re-runs the project's test suite. Suite
     // state belongs to /claude-tweaks:test's verification stamp, which already
     // holds it by the time wrap-up runs; re-running it here costs minutes (on
-    // this repo residue.js's suite probe exceeds both EXEC_OPTS.timeout and
+    // this repo residue.js's suite probe exceeds both the node spawn's 30 s bound and
     // the per-probe race), so every pack-fed residue carries
     // `suite: {ran: false, reason: 'skipped via --no-suite'}` by construction
     // — residue-sweep.md's "Running the sweep" says where the sweep reads
@@ -792,7 +800,7 @@ function buildProbes(inputs, deps) {
       // console shows the PR head's own verdict.
       let ci;
       try {
-        const { stdout: out } = await deps.execFile('node', [path.join(BIN, 'pr-checks.js'), '--pr', String(inputs.pr)], { cwd: inputs.worktree || undefined, ...EXEC_OPTS });
+        const { stdout: out } = await deps.execFile('node', [path.join(BIN, 'pr-checks.js'), '--pr', String(inputs.pr)], { cwd: inputs.worktree || undefined, ...EXEC_OPTS, timeout: execTimeoutMsFor('node') });
         const lines = String(out).split('\n').map((l) => l.trim()).filter(Boolean);
         ci = JSON.parse(lines[lines.length - 1]);
         if (ci === null || typeof ci !== 'object') throw new Error('pr-checks.js output is not a JSON object');

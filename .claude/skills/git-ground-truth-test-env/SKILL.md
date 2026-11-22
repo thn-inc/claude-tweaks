@@ -5,19 +5,24 @@ description: Use when writing or reviewing a test that asks real git for an expe
 
 # Git ground truth test env
 
-A test that compares code against real git, or that leaves an `env` parameter at its `process.env` default, takes its git configuration from wherever it runs. Two places differ from a bare local `node --test`:
+A test that compares code against real git, or that leaves an `env` parameter at its `process.env` default, takes its git configuration from wherever it runs. Three places differ from a bare local `node --test`:
 
 - `tools/run-tests.js` exports `GIT_CONFIG_COUNT` with `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` to every test (`gitFixtureConfigEnv`, #5297). A reader that hands the question back to git whenever `GIT_CONFIG*` is set then defers in every test, so each "defers to git" test passes whatever the reader does.
+- The runner also exports `GIT_TEMPLATE_DIR` (#5768), so every repo a test creates gets `maintenance.auto`, `gc.auto` and `receive.autogc` set in its own config, and no `hooks/*.sample` files (#5771). This one is not runner-only: a bare `node --test` of a suite that loads `tests/helpers/git-template.js` (`tests/helpers/git-fixtures.js` loads it) builds the same template and sets it on `process.env`. A control that expects maintenance to run, a sample hook, git's default repo config or a developer's init template masks the same way under both: drop `GIT_TEMPLATE_DIR` from the env its git calls use.
 - GitHub's Ubuntu runner image carries `safe.directory = *` in its system git config. A git child that should refuse a repo for ownership opens it there, so a "git refuses this repo" expectation is false.
 
-Both hit #5266's status line tests. Under the runner, 10 of 210 tests failed and every origin "defers to git" test passed without proving anything (fixed in `4b3c66a3b`). On the branch's first Ubuntu CI run, two ownership tests failed in shard 2 of 4 (run 43404443208).
+The first and last hit #5266's status line tests. Under the runner, 10 of 210 tests failed and every origin "defers to git" test passed without proving anything (fixed in `4b3c66a3b`). On the branch's first Ubuntu CI run, two ownership tests failed in shard 2 of 4 (run 43404443208).
 
 ## Rules
 
 1. **A reader call in a test passes an explicit env.** Build it from `process.env` minus the variables the reader keys on. `READER_ENV` in `tests/statusline.test.js` drops every `GIT_CONFIG*` name; a test of the deferral then passes exactly the variable it is about (`assertFallbackOrigin(dir, { GIT_CONFIG_GLOBAL: '/dev/null' })`).
-2. **A git child that supplies ground truth about refusal or trust runs hermetic.** Set `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL` to the null device, as `DIFFERENT_OWNER_ENV` in `tests/statusline.test.js` does, so a host `safe.directory` entry cannot change the answer.
+2. **A git child that supplies ground truth about refusal or trust runs hermetic.** Set `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL` to the literal string `'/dev/null'` — never `os.devNull`, which is `\\.\nul` on Windows and fails there (`tests/git-config-null-device-conformance.test.js`, #5666) — as `DIFFERENT_OWNER_ENV` in `tests/statusline.test.js` does, so a host `safe.directory` entry cannot change the answer. When a hermetic child also needs its own config pairs (for example `core.excludesFile=/dev/null`, since `GIT_CONFIG_GLOBAL` does not stop git reading `$XDG_CONFIG_HOME/git/ignore`), add them with `appendGitConfigEnv` from `tools/run-tests.js`; a hand-written `GIT_CONFIG_COUNT` overwrites the runner's own pairs (#5768).
 3. **Prove both under the runner.** Run `node tools/run-tests.js --files-from <list>`, never only a bare `node --test`: the runner's env is part of the test's input. Reproduce the CI case locally with a `GIT_CONFIG_SYSTEM` file that trusts every directory.
 4. **Prove a fallback test with a mutation.** Remove the check its trigger depends on and see the test go red under the runner. A fallback test that stays green without its check was passing on the env.
+
+## A fixture sets its commit identity without a git process
+
+A fixture that needs a commit identity does not run `git config user.name` and `git config user.email` (two processes per repository, thousands per suite run, #5771). Use `initRepo(dir, { name, email })` or `writeIdentity(dir, { name, email })` from `tests/helpers/git-fixtures.js`: both write the `[user]` section with `fs`, in the bytes `git config` writes, and start no git process. An inline `-c user.name=... -c user.email=...` or `GIT_AUTHOR_*`/`GIT_COMMITTER_*` is also free. `tests/fixture-identity-config-scan.test.js` fails any test file that spawns the config pair outside its allowlist; a test whose subject is a `git config` read goes on that allowlist with a reason, never around the scan.
 
 ## Code that re-implements or caches git's answer starts from what git reads
 

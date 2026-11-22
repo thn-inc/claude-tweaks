@@ -6,6 +6,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const ctxLib = require('../plugin/bin/lib/hooks/context');
@@ -27,16 +28,16 @@ test('isTrustedOwnedRun: session/env attribution is trusted, fallback and empty 
 
 test('resolveDenialRunDir: a trusted owned run is returned as-is, nothing minted', () => {
   const main = gitRepo();
-  const owned = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-owned-'));
-  const r = ctxLib.resolveDenialRunDir({ input: { session_id: 'sess-drd-1' }, cwd: main, ownedRun: { dir: owned, attribution: 'session' } });
+  const owned = scratchDir('ct-owned-');
+  const r = ctxLib.resolveDenialRunDir({ env: process.env, input: { session_id: 'sess-drd-1' }, cwd: main, ownedRun: { dir: owned, attribution: 'session' } });
   assert.deepStrictEqual(r, { dir: owned, attribution: 'session' });
   assert.deepStrictEqual(adhocDirs(main), []);
 });
 
 test('resolveDenialRunDir: a fallback guess is NOT used when an ad-hoc dir can be minted', () => {
   const main = gitRepo();
-  const guess = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-guess-'));
-  const r = ctxLib.resolveDenialRunDir({ input: { session_id: 'sess-drd-2' }, cwd: main, ownedRun: { dir: guess, attribution: 'fallback' } });
+  const guess = scratchDir('ct-guess-');
+  const r = ctxLib.resolveDenialRunDir({ env: process.env, input: { session_id: 'sess-drd-2' }, cwd: main, ownedRun: { dir: guess, attribution: 'fallback' } });
   const dirs = adhocDirs(main);
   assert.strictEqual(dirs.length, 1);
   assert.strictEqual(fs.realpathSync(r.dir), fs.realpathSync(path.join(main, '.claude-tweaks', 'pipelines', dirs[0])));
@@ -45,23 +46,23 @@ test('resolveDenialRunDir: a fallback guess is NOT used when an ad-hoc dir can b
 });
 
 test('resolveDenialRunDir: falls back to the guess (attribution kept) only when minting is impossible', () => {
-  const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-notrepo-'));
-  const guess = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-guess-'));
-  const r = ctxLib.resolveDenialRunDir({ input: { session_id: 'sess-drd-3' }, cwd: notRepo, ownedRun: { dir: guess, attribution: 'fallback' } });
+  const notRepo = scratchDir('ct-notrepo-');
+  const guess = scratchDir('ct-guess-');
+  const r = ctxLib.resolveDenialRunDir({ env: process.env, input: { session_id: 'sess-drd-3' }, cwd: notRepo, ownedRun: { dir: guess, attribution: 'fallback' } });
   assert.deepStrictEqual(r, { dir: guess, attribution: 'fallback' });
 });
 
 test('stampAdHocRunDirForDenial: a fallback-attributed ownedRun no longer short-circuits the mint', () => {
   const main = gitRepo();
-  const guess = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-guess-'));
-  const stamped = ctxLib.stampAdHocRunDirForDenial({ input: { session_id: 'sess-drd-4' }, cwd: main, ownedRun: { dir: guess, attribution: 'fallback' } });
+  const guess = scratchDir('ct-guess-');
+  const stamped = ctxLib.stampAdHocRunDirForDenial({ env: process.env, input: { session_id: 'sess-drd-4' }, cwd: main, ownedRun: { dir: guess, attribution: 'fallback' } });
   assert.notStrictEqual(stamped, guess);
   assert.strictEqual(adhocDirs(main).length, 1);
 });
 
 test('#3811: stampAdHocRunDirForDenial matches its porcelain entry through the shared lookup (a cwd with a trailing separator still stamps)', () => {
   const main = gitRepo();
-  const stamped = ctxLib.stampAdHocRunDirForDenial({ input: { session_id: 'sess-drd-5' }, cwd: main + path.sep, ownedRun: {} });
+  const stamped = ctxLib.stampAdHocRunDirForDenial({ env: process.env, input: { session_id: 'sess-drd-5' }, cwd: main + path.sep, ownedRun: {} });
   assert.ok(stamped, 'a trailing separator must not defeat the porcelain match');
   assert.strictEqual(adhocDirs(main).length, 1);
 });
@@ -72,11 +73,11 @@ test('#3845: stampAdHocRunDirForDenial stamps ownerPid from CLAUDE_PID and omits
   const prior = process.env.CLAUDE_PID;
   try {
     process.env.CLAUDE_PID = '4242';
-    const stamped = ctxLib.stampAdHocRunDirForDenial({ input: { session_id: 'sess-3845-denial-a' }, cwd: gitRepo(), ownedRun: {} });
+    const stamped = ctxLib.stampAdHocRunDirForDenial({ env: process.env, input: { session_id: 'sess-3845-denial-a' }, cwd: gitRepo(), ownedRun: {} });
     assert.strictEqual(ctxLib.readRunState(stamped).ownerPid, 4242);
 
     delete process.env.CLAUDE_PID;
-    const unstamped = ctxLib.stampAdHocRunDirForDenial({ input: { session_id: 'sess-3845-denial-b' }, cwd: gitRepo(), ownedRun: {} });
+    const unstamped = ctxLib.stampAdHocRunDirForDenial({ env: process.env, input: { session_id: 'sess-3845-denial-b' }, cwd: gitRepo(), ownedRun: {} });
     assert.ok(!('ownerPid' in ctxLib.readRunState(unstamped)));
   } finally {
     if (prior === undefined) delete process.env.CLAUDE_PID;
@@ -88,7 +89,7 @@ test('AC1.1/AC1.2: stampAdHocRunDirForDenial writes the owner block', () => {
   const prior = process.env.CLAUDE_PID;
   try {
     process.env.CLAUDE_PID = String(process.pid);
-    const stamped = ctxLib.stampAdHocRunDirForDenial({ input: { session_id: 'sess-owner-block-denial-a' }, cwd: gitRepo(), ownedRun: {} });
+    const stamped = ctxLib.stampAdHocRunDirForDenial({ env: process.env, input: { session_id: 'sess-owner-block-denial-a' }, cwd: gitRepo(), ownedRun: {} });
     const { owner } = ctxLib.readRunState(stamped);
     assert.strictEqual(owner.sessionId, 'sess-owner-block-denial-a');
     assert.strictEqual(owner.host, os.hostname());
@@ -100,7 +101,7 @@ test('AC1.1/AC1.2: stampAdHocRunDirForDenial writes the owner block', () => {
     // A pid that is gone: a short child that has already exited.
     const dead = require('child_process').spawnSync(process.execPath, ['-e', ''], { windowsHide: true }).pid;
     process.env.CLAUDE_PID = String(dead);
-    const deadStamped = ctxLib.stampAdHocRunDirForDenial({ input: { session_id: 'sess-owner-block-denial-b' }, cwd: gitRepo(), ownedRun: {} });
+    const deadStamped = ctxLib.stampAdHocRunDirForDenial({ env: process.env, input: { session_id: 'sess-owner-block-denial-b' }, cwd: gitRepo(), ownedRun: {} });
     const deadOwner = ctxLib.readRunState(deadStamped).owner;
     assert.strictEqual(deadOwner.pid, dead);
     assert.strictEqual(deadOwner.pidStartedAt, null, 'a pid that is gone has no start time');

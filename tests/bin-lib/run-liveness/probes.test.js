@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -12,7 +13,7 @@ function git(args) {
   return execFileSync('git', args, { windowsHide: true, encoding: 'utf8', timeout: 30000 });
 }
 function tmp(prefix) {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  return fs.realpathSync(scratchDir(prefix));
 }
 function emptyRepo() {
   const dir = tmp('ct-probes-repo-');

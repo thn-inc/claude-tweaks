@@ -4,6 +4,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -16,7 +17,7 @@ const STAGED = '→ backlog, staged/ledger-record-1.md';
 const CARRIED = 'carried to the acceptance packet as decision:console:ledger-record-1.md';
 
 function fixture(status = 'deferred', resolution = STAGED) {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-carry-'));
+  const runDir = scratchDir('ledger-carry-');
   const ledgerPath = path.join(runDir, 'ledger.md');
   fs.writeFileSync(ledgerPath, HEAD);
   appendRow({ runDir, ledgerPath, phase: 'build', item: 'a finding', status, resolution });

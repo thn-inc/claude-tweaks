@@ -17,7 +17,8 @@ const ROOT = path.join(__dirname, '..');
 const {
   resolveConcurrency, resolveSlots, listTestFiles, buildTestArgs,
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
-  subsetFallbackReason, gitFixtureConfigEnv,
+  subsetFallbackReason, gitFixtureConfigEnv, appendGitConfigEnv, writeGitTemplateDir, GIT_TEMPLATE_CONFIG, NODE_TEST_VALUE_FLAGS, parseRunnerOperands, canonicalPath,
+  runnerChildEnv, isTemplateSampleHook, leftoverEntries, summarizeLeftovers, leftoverWarning, RUN_ROOT_OWN_ENTRIES,
 } = require(path.join(ROOT, 'tools', 'run-tests.js'));
 
 test('resolveConcurrency defaults to half the cores, at least 1', () => {
@@ -1273,9 +1274,766 @@ test('gitFixtureConfigEnv returns an unchanged copy when GIT_CONFIG_COUNT is not
   assert.deepStrictEqual(input, copy, 'the input env must not be mutated');
 });
 
+test('appendGitConfigEnv appends the given pairs after inherited entries', () => {
+  const input = {
+    GIT_CONFIG_COUNT: '2',
+    GIT_CONFIG_KEY_0: 'core.autocrlf', GIT_CONFIG_VALUE_0: 'true',
+    GIT_CONFIG_KEY_1: 'maintenance.auto', GIT_CONFIG_VALUE_1: 'false',
+  };
+  const copy = { ...input };
+  assert.deepStrictEqual(appendGitConfigEnv(input, [['branch.main.remote', 'origin']]), {
+    GIT_CONFIG_COUNT: '3',
+    GIT_CONFIG_KEY_0: 'core.autocrlf', GIT_CONFIG_VALUE_0: 'true',
+    GIT_CONFIG_KEY_1: 'maintenance.auto', GIT_CONFIG_VALUE_1: 'false',
+    GIT_CONFIG_KEY_2: 'branch.main.remote', GIT_CONFIG_VALUE_2: 'origin',
+  });
+  assert.deepStrictEqual(input, copy, 'the input env must not be mutated');
+});
+
 test('gitFixtureConfigEnv: real git reads maintenance.auto=false from the returned env', () => {
   const out = execFileSync('git', ['config', '--get', 'maintenance.auto'], {
     env: gitFixtureConfigEnv(process.env), encoding: 'utf8',
   }).trim();
   assert.strictEqual(out, 'false');
+});
+
+// #5547: `node tools/run-tests.js <flags> <files>` is a drop-in for a direct `node --test <flags> <files>`.
+// The parser is pure apart from its injected `isFile`, and its OS-dependent path handling takes
+// `pathImpl`, so each path case runs under path.posix and again under path.win32 on any host.
+const OPERAND_FLAVOURS = [
+  ['posix', path.posix, '/repo', '/other/x.test.js'],
+  ['win32', path.win32, 'C:\\repo', 'D:\\other\\x.test.js'],
+];
+const operandOptions = (pathImpl, root, { cwd = root, existing = [] } = {}) => {
+  const known = new Set(existing.map((p) => pathImpl.resolve(root, p)));
+  return { cwd, repoRoot: root, pathImpl, isFile: (abs) => known.has(abs) };
+};
+
+test('NODE_TEST_VALUE_FLAGS is the 18 value-taking node test flags', () => {
+  assert.ok(Object.isFrozen(NODE_TEST_VALUE_FLAGS));
+  assert.deepStrictEqual([...NODE_TEST_VALUE_FLAGS], [
+    '--experimental-test-tag-filter', '--experimental-test-isolation', '--test-concurrency', '--test-coverage-branches',
+    '--test-coverage-exclude', '--test-coverage-functions', '--test-coverage-include', '--test-coverage-lines',
+    '--test-global-setup', '--test-isolation', '--test-name-pattern', '--test-random-seed', '--test-reporter',
+    '--test-reporter-destination', '--test-rerun-failures', '--test-shard', '--test-skip-pattern', '--test-timeout',
+  ].sort());
+});
+
+test('AC1.1 AC1.2: file operands become a repo-relative subset, relative or absolute, from the root or a subdirectory', () => {
+  for (const [label, p, root] of OPERAND_FLAVOURS) {
+    const existing = ['tests/a.test.js', 'tests/b.test.js', '..cache/a.test.js'];
+    const fromRoot = parseRunnerOperands(['tests/a.test.js', p.join(root, 'tests', 'b.test.js')], operandOptions(p, root, { existing }));
+    assert.deepStrictEqual(fromRoot, {
+      roots: [], files: [p.join('tests', 'a.test.js'), p.join('tests', 'b.test.js')], filesFrom: null, nodeFlags: [], concurrency: null,
+    }, label);
+    const fromSub = parseRunnerOperands(['a.test.js'], operandOptions(p, root, { cwd: p.join(root, 'tests'), existing }));
+    assert.deepStrictEqual(fromSub.files, [p.join('tests', 'a.test.js')], label);
+    const bothSpellings = parseRunnerOperands(['tests/a.test.js', p.join(root, 'tests', 'a.test.js'), 'tests/b.test.js', 'tests/a.test.js'], operandOptions(p, root, { existing }));
+    assert.deepStrictEqual(bothSpellings.files, [p.join('tests', 'a.test.js'), p.join('tests', 'b.test.js')], label);
+    // A directory whose name merely starts with two dots is inside the checkout, not above it.
+    const dotted = parseRunnerOperands(['..cache/a.test.js'], operandOptions(p, root, { existing }));
+    assert.deepStrictEqual(dotted.files, [p.join('..cache', 'a.test.js')], label);
+  }
+});
+
+test('AC1.1: a file operand is compared by canonical path through the injected realpath', () => {
+  const p = path.posix;
+  const realpath = (abs) => (abs.startsWith('/link/') ? `/repo/${abs.slice('/link/'.length)}` : abs);
+  const withReal = { ...operandOptions(p, '/repo', { existing: ['tests/a.test.js'] }), realpath };
+  assert.deepStrictEqual(parseRunnerOperands(['/link/tests/a.test.js'], withReal).files, ['tests/a.test.js']);
+  assert.deepStrictEqual(parseRunnerOperands(['/link/tests/a.test.js', 'tests/a.test.js'], withReal).files, ['tests/a.test.js']);
+  assert.throws(() => parseRunnerOperands(['/link/tests/missing.test.js'], withReal), { message: '/link/tests/missing.test.js does not exist or is not a file' });
+  // The default realpath is identity: the symlinked spelling is then outside the checkout.
+  assert.throws(
+    () => parseRunnerOperands(['/link/tests/a.test.js'], operandOptions(p, '/repo', { existing: ['tests/a.test.js'] })),
+    { message: '/link/tests/a.test.js is outside the checkout' },
+  );
+  // A path inside the checkout whose canonical form leaves it is outside.
+  const escape = { ...operandOptions(p, '/repo', { existing: ['/other/x.test.js'] }), realpath: (abs) => (abs === '/repo/tests/ln.test.js' ? '/other/x.test.js' : abs) };
+  assert.throws(() => parseRunnerOperands(['tests/ln.test.js'], escape), { message: 'tests/ln.test.js is outside the checkout' });
+});
+
+test('canonicalPath: an existing file, a missing file under a symlinked directory, and a path no ancestor of which resolves', () => {
+  const realpathSync = (p) => {
+    if (p === '/link/tests/a.test.js') return '/repo/tests/a.test.js';
+    if (p === '/link/tests') return '/repo/tests';
+    throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+  };
+  assert.strictEqual(canonicalPath('/link/tests/a.test.js', { realpathSync, pathImpl: path.posix }), '/repo/tests/a.test.js');
+  assert.strictEqual(canonicalPath('/link/tests/missing.test.js', { realpathSync, pathImpl: path.posix }), '/repo/tests/missing.test.js');
+  assert.strictEqual(canonicalPath('/link/tests/sub/missing.test.js', { realpathSync, pathImpl: path.posix }), '/repo/tests/sub/missing.test.js');
+  assert.strictEqual(canonicalPath('/gone/x/y.test.js', { realpathSync, pathImpl: path.posix }), '/gone/x/y.test.js');
+  const winReal = (p) => {
+    if (p === 'C:\\link\\tests') return 'C:\\repo\\tests';
+    throw new Error('ENOENT');
+  };
+  assert.strictEqual(canonicalPath('C:\\link\\tests\\m.test.js', { realpathSync: winReal, pathImpl: path.win32 }), 'C:\\repo\\tests\\m.test.js');
+});
+
+test('AC2.2: a value flag in space form takes the next argument, never as an operand', () => {
+  for (const [label, p, root] of OPERAND_FLAVOURS) {
+    const out = parseRunnerOperands(['--test-name-pattern', 'x', 'tests/a.test.js'], operandOptions(p, root, { existing: ['tests/a.test.js'] }));
+    assert.deepStrictEqual(out.nodeFlags, ['--test-name-pattern=x'], label);
+    assert.deepStrictEqual(out.files, [p.join('tests', 'a.test.js')], label);
+    assert.deepStrictEqual(out.roots, [], label);
+  }
+});
+
+test('a value flag with no value after it is refused, naming the flag', () => {
+  const [, p, root] = OPERAND_FLAVOURS[0];
+  assert.throws(() => parseRunnerOperands(['--test-reporter'], operandOptions(p, root)), { message: '--test-reporter needs a value' });
+});
+
+test('passes node test flags through unchanged', () => {
+  const flags = ['--test-reporter=tap', '--test-reporter-destination=out/r.tap', '--test-only', '--experimental-test-coverage'];
+  for (const [label, p, root] of OPERAND_FLAVOURS) {
+    const out = parseRunnerOperands([...flags, 'tests/a.test.js'], operandOptions(p, root, { existing: ['tests/a.test.js'] }));
+    assert.deepStrictEqual(out.nodeFlags, flags, label);
+  }
+});
+
+test('AC5.1: --test-concurrency is taken out of the flags and returned as a number', () => {
+  const [, p, root] = OPERAND_FLAVOURS[0];
+  const opts = operandOptions(p, root, { existing: ['tests/a.test.js'] });
+  const joined = parseRunnerOperands(['--test-concurrency=3', 'tests/a.test.js'], opts);
+  assert.strictEqual(joined.concurrency, 3);
+  assert.deepStrictEqual(joined.nodeFlags, []);
+  const spaced = parseRunnerOperands(['--test-concurrency', '3'], opts);
+  assert.strictEqual(spaced.concurrency, 3);
+  assert.deepStrictEqual(spaced.nodeFlags, []);
+});
+
+test('--test-concurrency refuses a value that is not a positive integer', () => {
+  const [, p, root] = OPERAND_FLAVOURS[0];
+  for (const rest of [['--test-concurrency=0'], ['--test-concurrency=abc'], ['--test-concurrency=2.5'], ['--test-concurrency', '0']]) {
+    assert.throws(() => parseRunnerOperands(rest, operandOptions(p, root)), { message: '--test-concurrency needs a positive integer' }, rest.join(' '));
+  }
+});
+
+test('AC4.1 AC4.2 AC4.3 AC4.4 AC4.5 AC4.6: refuses a missing file, a file outside the checkout, an existing file that is not a test file, files mixed with a root or with --files-from, and an unknown option', () => {
+  for (const [label, p, root, otherDrive] of OPERAND_FLAVOURS) {
+    const opts = operandOptions(p, root, {
+      existing: ['tests/a.test.js', '../other/x.test.js', 'tests/helpers/util.js'],
+    });
+    const known = opts.isFile;
+    opts.isFile = (abs) => known(abs) || abs === otherDrive;
+    const refuse = (rest, message) => assert.throws(() => parseRunnerOperands(rest, opts), { message }, `${label}: ${rest.join(' ')}`);
+    refuse(['tests/missing.test.js'], 'tests/missing.test.js does not exist or is not a file');
+    // A directory named like a test file is not a regular file: `isFile` says false for it.
+    refuse(['tests/dir.test.js'], 'tests/dir.test.js does not exist or is not a file');
+    refuse(['../other/x.test.js'], '../other/x.test.js is outside the checkout');
+    refuse([otherDrive], `${otherDrive} is outside the checkout`);
+    refuse(['tests/helpers/util.js'], 'tests/helpers/util.js is not a *.test.js file');
+    refuse(['tests', 'tests/a.test.js'], 'tests/a.test.js cannot be combined with the directory root tests');
+    refuse(['--files-from', 'l.txt', 'tests/a.test.js'], 'tests/a.test.js cannot be combined with --files-from');
+    refuse(['--watch', 'tests/a.test.js'], 'unknown option --watch');
+  }
+});
+
+test('the glob check reads the path handed to node --test: a glob directory in cwd is refused, a glob in the checkout path is not', () => {
+  for (const [label, p, root] of OPERAND_FLAVOURS) {
+    // cwd inside a bracket directory: the repo-relative path `t/[a]/x.test.js` would run `t/a/x.test.js`.
+    // The typed operand holds no glob character, so the message names the path it resolves to.
+    const bracketCwd = p.join(root, 't', '[a]');
+    assert.throws(
+      () => parseRunnerOperands(['x.test.js'], operandOptions(p, root, { cwd: bracketCwd, existing: ['t/[a]/x.test.js'] })),
+      { message: `x.test.js resolves to ${p.join('t', '[a]', 'x.test.js')}, which holds a glob character (one of [ ] { } ( ) ! + @ * ?), which node --test would expand` },
+      label,
+    );
+    // A symlink target holding one: the same message, naming the canonical path.
+    const linked = { ...operandOptions(p, root, { existing: ['t/[a]/x.test.js'] }), realpath: (abs) => (abs === p.join(root, 'tests', 'ln.test.js') ? p.join(root, 't', '[a]', 'x.test.js') : abs) };
+    assert.throws(
+      () => parseRunnerOperands(['tests/ln.test.js'], linked),
+      { message: `tests/ln.test.js resolves to ${p.join('t', '[a]', 'x.test.js')}, which holds a glob character (one of [ ] { } ( ) ! + @ * ?), which node --test would expand` },
+      label,
+    );
+    // A checkout whose own path holds `(`: the repo-relative path `tests/a.test.js` is safe.
+    const oddRoot = p.join(p.dirname(root), 'proj (copy)');
+    const out = parseRunnerOperands([p.join(oddRoot, 'tests', 'a.test.js')], operandOptions(p, oddRoot, { existing: ['tests/a.test.js'] }));
+    assert.deepStrictEqual(out.files, [p.join('tests', 'a.test.js')], label);
+  }
+});
+
+test('refuses a file operand holding a glob metacharacter', () => {
+  for (const [label, p, root] of OPERAND_FLAVOURS) {
+    const operands = ['tests/[ab].test.js', ...[...'[]{}()!+@*?'].map((ch) => `tests/a${ch}b.test.js`)];
+    const opts = operandOptions(p, root, { existing: operands });
+    for (const operand of operands) {
+      assert.throws(
+        () => parseRunnerOperands([operand], opts),
+        { message: `${operand} holds a glob character (one of [ ] { } ( ) ! + @ * ?), which node --test would expand` },
+        `${label}: ${operand}`,
+      );
+    }
+  }
+});
+
+test('AC6.1: directory roots and --files-from parse as before', () => {
+  for (const [label, p, root] of OPERAND_FLAVOURS) {
+    const opts = operandOptions(p, root);
+    const expect = (rest, parts) => assert.deepStrictEqual(
+      parseRunnerOperands(rest, opts),
+      { roots: [], files: [], filesFrom: null, nodeFlags: [], concurrency: null, ...parts },
+      `${label}: ${rest.join(' ')}`,
+    );
+    expect([], {});
+    expect(['perf'], { roots: ['perf'] });
+    expect(['tests', 'tools/upstream-drift/tests'], { roots: ['tests', 'tools/upstream-drift/tests'] });
+    expect(['--files-from', 'l.txt'], { filesFrom: 'l.txt' });
+    expect(['perf', '--test-reporter=tap'], { roots: ['perf'], nodeFlags: ['--test-reporter=tap'] });
+  }
+});
+
+test('--files-from keeps its own refusals: no list, or a second list', () => {
+  const [, p, root] = OPERAND_FLAVOURS[0];
+  const text = '--files-from <list> takes exactly one list file and no root arguments.';
+  assert.throws(() => parseRunnerOperands(['--files-from'], operandOptions(p, root)), { message: text });
+  assert.throws(() => parseRunnerOperands(['--files-from', 'a.txt', '--files-from', 'b.txt'], operandOptions(p, root)), { message: text });
+});
+
+test('AC5.1: buildTestArgs places node flags after --test-concurrency and before the files', () => {
+  assert.deepStrictEqual(
+    buildTestArgs(['a.test.js'], null, { platform: 'linux', nodeMajor: 20, concurrency: 3, nodeFlags: ['--test-reporter=tap'] }),
+    ['--test', '--test-concurrency=3', '--test-reporter=tap', 'a.test.js'],
+  );
+  assert.deepStrictEqual(
+    buildTestArgs(['a.test.js'], null, { platform: 'linux', nodeMajor: 20, concurrency: 3 }),
+    ['--test', '--test-concurrency=3', 'a.test.js'],
+  );
+  assert.deepStrictEqual(
+    buildTestArgs(['a.test.js'], ['tests'], { platform: 'win32', nodeMajor: 22, concurrency: 3, nodeFlags: ['--test-only'] }),
+    ['--test', '--test-concurrency=3', '--test-only', 'tests/**/*.test.js'],
+  );
+});
+
+test('AC5.2: resolveConcurrency results are unchanged', () => {
+  assert.strictEqual(resolveConcurrency({}, 12), 6);
+  assert.strictEqual(resolveConcurrency({ CI: 'true' }, 12), 11);
+  assert.strictEqual(resolveConcurrency({ CT_TEST_CONCURRENCY: '3' }, 12), 3);
+});
+
+test('subsetFallbackReason counts files, not flags', () => {
+  const files = Array.from({ length: 400 }, (_, i) => `tests/${'a'.repeat(90)}${i}.test.js`);
+  const plain = subsetFallbackReason('C:\\node.exe', ['--test', '--test-concurrency=2', ...files], { platform: 'win32' });
+  assert.match(plain, /^a 400-file subset needs a \d+-character command line, over the Windows limit of 32767$/);
+  const flagged = subsetFallbackReason('C:\\node.exe', ['--test', '--test-concurrency=2', '--test-reporter=tap', ...files], { platform: 'win32' });
+  assert.match(flagged, /^a 400-file subset needs a \d+-character command line, over the Windows limit of 32767$/);
+});
+
+// A copied runner over a checkout-shaped layout: `<sandbox>/repo root/{tools,tests}`, two probe fixtures
+// (one.test.js, two.test.js) and a failing one (unlisted.test.js) that would turn any run of it red.
+function operandLayout(sb) {
+  const root = path.join(sb.suiteRoot, 'repo root');
+  fs.mkdirSync(path.join(root, 'tools'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'tests'));
+  copyRunner(root);
+  const fixtures = path.join(ROOT, 'tests', 'fixtures', 'run-tests');
+  fs.copyFileSync(path.join(fixtures, 'tmpdir-probe.fixture.js'), path.join(root, 'tests', 'one.test.js'));
+  fs.copyFileSync(path.join(fixtures, 'tmpdir-probe.fixture.js'), path.join(root, 'tests', 'two.test.js'));
+  fs.copyFileSync(path.join(fixtures, 'fail-probe.fixture.js'), path.join(root, 'tests', 'unlisted.test.js'));
+  return { root, runner: path.join(root, 'tools', 'run-tests.js') };
+}
+const runOperands = (sb, layout, args, { cwd = layout.root, env = sb.env, timeout = 60000 } = {}) =>
+  spawnSync(process.execPath, [layout.runner, ...args], { cwd, env, encoding: 'utf8', timeout, killSignal: 'SIGKILL' });
+const TESTS_RAN = (n) => new RegExp(`^(?:# |ℹ )tests ${n}$`, 'm');
+
+test('AC1.1 AC1.2 AC1.3 AC3.1: file operands run exactly those files on the subset lane with the runner\'s environment', async () => {
+  await withSandbox(...PROBE, (sb) => {
+    const layout = operandLayout(sb);
+    // A live holder (this process) owns the base lane's only slot: a subset must not queue behind it.
+    const lockText = JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), cwd: ROOT });
+    fs.writeFileSync(path.join(sb.slotDir, 'slot-0.lock'), lockText);
+    // The absolute spelling is the sandbox's own: on macOS the tmpdir is a symlinked spelling (/var ->
+    // /private/var) of the runner's real checkout root.
+    const result = runOperands(sb, layout, ['tests/one.test.js', path.join(layout.root, 'tests', 'two.test.js')], { timeout: 30000 });
+    assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, TESTS_RAN(2), result.stdout);
+    const recorded = JSON.parse(fs.readFileSync(sb.probeOut, 'utf8'));
+    assert.strictEqual(path.basename(path.dirname(recorded.tmpdir)), 'ct-test-runs');
+    assert.strictEqual(recorded.held, '1');
+    const pairs = Object.entries(recorded.git).filter(([k]) => k.startsWith('GIT_CONFIG_KEY_')).map(([k, key]) => [key, recorded.git[k.replace('KEY', 'VALUE')]]);
+    assert.ok(pairs.some(([key, value]) => key === 'maintenance.auto' && value === 'false'), JSON.stringify(recorded.git));
+    assert.ok(pairs.some(([key, value]) => key === 'gc.auto' && value === '0'), JSON.stringify(recorded.git));
+    assert.strictEqual(fs.readFileSync(path.join(sb.slotDir, 'slot-0.lock'), 'utf8'), lockText);
+    assert.deepStrictEqual(SLOT_LOCKS(path.join(sb.slotDir, 'subset')), []);
+
+    fs.rmSync(sb.probeOut);
+    const fromSub = runOperands(sb, layout, ['one.test.js', 'two.test.js'], { cwd: path.join(layout.root, 'tests'), timeout: 30000 });
+    assert.strictEqual(fromSub.status, 0, fromSub.stdout + fromSub.stderr);
+    assert.match(fromSub.stdout, TESTS_RAN(2), fromSub.stdout);
+    assert.ok(fs.existsSync(sb.probeOut), 'the probe ran');
+
+    // The run exits with the child's code: a failing file operand makes the runner exit 1.
+    const failing = runOperands(sb, layout, ['tests/unlisted.test.js'], { timeout: 30000 });
+    assert.strictEqual(failing.status, 1, failing.stdout + failing.stderr);
+    assert.match(failing.stdout, TESTS_RAN(1), failing.stdout);
+  });
+});
+
+test('a file operand typed through a symlinked spelling of the checkout runs; a symlink inside it that leaves it is refused', {
+  skip: process.platform === 'win32' && 'win32: creating a symlink needs extra privileges',
+}, async () => {
+  await withSandbox(...PROBE, (sb) => {
+    const layout = operandLayout(sb);
+    const link = path.join(sb.suiteRoot, 'checkout-link');
+    fs.symlinkSync(layout.root, link, 'dir');
+    const ran = runOperands(sb, layout, [path.join(link, 'tests', 'one.test.js')], { timeout: 30000 });
+    assert.strictEqual(ran.status, 0, ran.stdout + ran.stderr);
+    assert.match(ran.stdout, TESTS_RAN(1), ran.stdout);
+    const missing = runOperands(sb, layout, [path.join(link, 'tests', 'missing.test.js')], { timeout: 30000 });
+    assert.strictEqual(missing.status, 1, missing.stdout + missing.stderr);
+    assert.match(missing.stderr, /missing\.test\.js does not exist or is not a file/, missing.stderr);
+    const outside = path.join(sb.suiteRoot, 'outside.test.js');
+    fs.writeFileSync(outside, '');
+    fs.symlinkSync(outside, path.join(layout.root, 'tests', 'escape.test.js'));
+    const escaped = runOperands(sb, layout, ['tests/escape.test.js'], { timeout: 30000 });
+    assert.strictEqual(escaped.status, 1, escaped.stdout + escaped.stderr);
+    assert.match(escaped.stderr, /tests\/escape\.test\.js is outside the checkout/, escaped.stderr);
+  });
+});
+
+test('AC2.1: --test-reporter=tap puts node\'s TAP on stdout with no runner line in it', async () => {
+  await withSandbox(...PROBE, (sb) => {
+    const layout = operandLayout(sb);
+    const result = runOperands(sb, layout, ['--test-reporter=tap', 'tests/one.test.js']);
+    assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+    assert.ok(result.stdout.startsWith('TAP version 13'), result.stdout);
+    assert.match(result.stdout, /^# pass 1$/m, result.stdout);
+    assert.ok(!result.stdout.split('\n').some((l) => l.startsWith('run-tests.js:')), result.stdout);
+  });
+});
+
+test('AC4.1 AC4.2 AC4.3 AC4.4 AC4.5 AC4.6: argument errors exit 1 with one run-tests.js line and start no test run', async () => {
+  await withSandbox(...PROBE, (sb) => {
+    const layout = operandLayout(sb);
+    fs.writeFileSync(path.join(layout.root, 'tests', 'helper.js'), '');
+    fs.mkdirSync(path.join(layout.root, 'tests', 'dir.test.js'));
+    fs.writeFileSync(path.join(sb.suiteRoot, 'outside.test.js'), '');
+    const list = path.join(sb.suiteRoot, 'list.txt');
+    fs.writeFileSync(list, 'tests/one.test.js\n');
+    for (const args of [
+      ['tests/missing.test.js'],
+      ['../outside.test.js'],
+      ['tests/helper.js'],
+      ['tests/one.test.js', 'tests'],
+      ['tests/one.test.js', '--files-from', list],
+      ['tests/one.test.js', '--shard', '1/2'],
+      ['tests/one.test.js', '--record-durations', 'out.json'],
+      ['tests/one.test.js', '--full'],
+      ['--watch', 'tests/one.test.js'],
+      ['tests/dir.test.js'],
+      // --record-durations adds its own reporter pairs, so a typed reporter flag cannot ride along.
+      ['tests', '--record-durations', 'out.json', '--test-reporter=tap'],
+      ['tests', '--record-durations', 'out.json', '--test-reporter-destination', 'r.tap'],
+    ]) {
+      const r = runOperands(sb, layout, args, { timeout: 30000 });
+      assert.strictEqual(r.status, 1, `${args.join(' ')}: ${r.stdout}${r.stderr}`);
+      const lines = r.stderr.split('\n').filter((l) => l !== '');
+      assert.strictEqual(lines.length, 1, `${args.join(' ')}: ${r.stderr}`);
+      assert.match(lines[0], /^run-tests\.js: /, args.join(' '));
+      assert.doesNotMatch(r.stdout, /tests \d/, `${args.join(' ')}: no test run started`);
+    }
+    assert.ok(!fs.existsSync(sb.probeOut), 'no probe ran');
+    for (const [args, line] of [
+      [['tests/dir.test.js'], 'run-tests.js: tests/dir.test.js does not exist or is not a file'],
+      [['tests', '--record-durations', 'out.json', '--test-reporter=tap'], 'run-tests.js: --test-reporter cannot be combined with --record-durations'],
+      [['tests', '--record-durations', 'out.json', '--test-reporter-destination', 'r.tap'], 'run-tests.js: --test-reporter-destination cannot be combined with --record-durations'],
+    ]) {
+      assert.strictEqual(runOperands(sb, layout, args, { timeout: 30000 }).stderr.trim(), line);
+    }
+  });
+});
+
+test('AC5.1: --test-concurrency=3 reaches the child and wins over CT_TEST_CONCURRENCY', async () => {
+  await withSandbox(...PROBE, (sb) => {
+    const layout = operandLayout(sb);
+    const result = runOperands(sb, layout, ['--test-concurrency=3', 'tests/one.test.js'], { env: { ...sb.env, CT_TEST_CONCURRENCY: '5' } });
+    assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+    const { execArgv } = JSON.parse(fs.readFileSync(sb.probeOut, 'utf8'));
+    assert.deepStrictEqual(execArgv.filter((a) => a.startsWith('--test-concurrency')), ['--test-concurrency=3'], JSON.stringify(execArgv));
+  });
+});
+
+test('AC6.1 AC6.2: a directory root, --files-from, --full and --shard still run as before', async () => {
+  await withSandbox(...PROBE, (sb) => {
+    const layout = operandLayout(sb);
+    const list = path.join(sb.suiteRoot, 'list.txt');
+    fs.writeFileSync(list, 'tests/one.test.js\n\ntests/two.test.js\n');
+    const root = runOperands(sb, layout, ['tests'], { timeout: 120000 });
+    assert.strictEqual(root.status, 1, root.stdout + root.stderr);
+    assert.match(root.stdout, TESTS_RAN(3), root.stdout);
+    const listed = runOperands(sb, layout, ['--files-from', list], { timeout: 120000 });
+    assert.strictEqual(listed.status, 0, listed.stdout + listed.stderr);
+    assert.match(listed.stdout, TESTS_RAN(2), listed.stdout);
+    // The copied layout has no verify modules, so --full and a one-shard run take the whole-suite path.
+    for (const args of [['--full'], ['--shard', '1/1']]) {
+      const whole = runOperands(sb, layout, args, { timeout: 120000 });
+      assert.strictEqual(whole.status, 1, `${args.join(' ')}: ${whole.stdout}${whole.stderr}`);
+      assert.match(whole.stdout, TESTS_RAN(3), `${args.join(' ')}: ${whole.stdout}`);
+    }
+    assert.deepStrictEqual(SLOT_LOCKS(sb.slotDir), []);
+  });
+});
+
+// ---- #5768: the runner writes a git template directory whose config turns maintenance off, so every
+// repository a test creates carries the settings in its own config (env-carried config does not reach
+// receive-pack on a local push, product code that scrubs env config, or a test that overwrites the count).
+const gitOut = (args, env) => spawnSync('git', args, { env, encoding: 'utf8', windowsHide: true });
+const gitSucceeds = (args, env) => {
+  const r = gitOut(args, env);
+  assert.strictEqual(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+  return r.stdout.trim();
+};
+// process.env minus every template / env-config key, so the helper's own settings are the only source.
+function envWithoutGitConfig() {
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) if (k === 'GIT_TEMPLATE_DIR' || k.startsWith('GIT_CONFIG_')) delete env[k];
+  return env;
+}
+function withGitTemp(fn) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'run-tests-git-template-'));
+  try {
+    return fn(tmp);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+// A real empty file, never os.devNull: Git for Windows rejects that as a config path.
+function emptyGlobalConfig(tmp) {
+  const p = path.join(tmp, 'empty-gitconfig');
+  fs.writeFileSync(p, '');
+  return p;
+}
+const cfgOf = (dir, key) => {
+  const r = gitOut(['config', '--file', path.join(dir, 'config'), '--get', key], envWithoutGitConfig());
+  return r.status === 0 ? r.stdout.trim() : null;
+};
+
+test('AC1.1: writeGitTemplateDir writes the maintenance-off keys and keeps git\'s default template files', () => {
+  withGitTemp((tmp) => {
+    const dir = path.join(tmp, 'tpl');
+    assert.strictEqual(writeGitTemplateDir(dir, envWithoutGitConfig()), dir);
+    assert.strictEqual(cfgOf(dir, 'maintenance.auto'), 'false');
+    assert.strictEqual(cfgOf(dir, 'gc.auto'), '0');
+    assert.strictEqual(cfgOf(dir, 'receive.autogc'), 'false');
+    assert.strictEqual(cfgOf(dir, 'core.bare'), null);
+    assert.ok(fs.statSync(path.join(dir, 'info')).isDirectory());
+    assert.ok(fs.statSync(path.join(dir, 'hooks')).isDirectory());
+    assert.ok(!fs.existsSync(`${dir}-src`) && !fs.existsSync(`${dir}-empty-gitconfig`), 'scratch paths are removed');
+  });
+});
+
+test('AC1.1: a repo initialized from the template carries the keys, bare and non-bare', () => {
+  withGitTemp((tmp) => {
+    const dir = path.join(tmp, 'tpl');
+    assert.strictEqual(writeGitTemplateDir(dir, envWithoutGitConfig()), dir);
+    const env = { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: dir, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: emptyGlobalConfig(tmp) };
+    for (const [name, flags, bare] of [['plain', [], 'false'], ['bare', ['--bare'], 'true']]) {
+      const repo = path.join(tmp, name);
+      gitSucceeds(['init', '-q', ...flags, repo], env);
+      assert.strictEqual(gitSucceeds(['-C', repo, 'config', '--local', '--get', 'maintenance.auto'], env), 'false', name);
+      assert.strictEqual(gitSucceeds(['-C', repo, 'config', '--local', '--get', 'core.bare'], env), bare, name);
+    }
+  });
+});
+
+test('writeGitTemplateDir keeps an inherited GIT_TEMPLATE_DIR\'s files and config ahead of its own keys', () => {
+  withGitTemp((tmp) => {
+    const inherited = path.join(tmp, 'inherited');
+    fs.mkdirSync(path.join(inherited, 'info'), { recursive: true });
+    fs.writeFileSync(path.join(inherited, 'config'), '[core]\n\tct-probe = yes');
+    fs.writeFileSync(path.join(inherited, 'info', 'marker'), 'm');
+    fs.writeFileSync(path.join(inherited, 'stray'), 's'); // an inherited entry outside hooks/info/description
+    const dir = path.join(tmp, 'tpl');
+    assert.strictEqual(writeGitTemplateDir(dir, { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: inherited }), dir);
+    assert.ok(fs.existsSync(path.join(dir, 'info', 'marker')));
+    assert.ok(fs.existsSync(path.join(dir, 'stray')));
+    assert.strictEqual(cfgOf(dir, 'core.ct-probe'), 'yes');
+    assert.strictEqual(cfgOf(dir, 'maintenance.auto'), 'false');
+  });
+});
+
+test('writeGitTemplateDir ignores an inherited GIT_DIR and object-store variables', () => {
+  withGitTemp((tmp) => {
+    const other = path.join(tmp, 'other');
+    gitSucceeds(['init', '-q', other], { ...envWithoutGitConfig(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: emptyGlobalConfig(tmp) });
+    const gitDir = path.join(other, '.git');
+    const third = path.join(tmp, 'third');
+    fs.mkdirSync(third);
+    const listing = () => fs.readdirSync(path.join(gitDir, 'objects'), { recursive: true }).map(String).sort();
+    const configBefore = fs.readFileSync(path.join(gitDir, 'config'));
+    const listingBefore = listing();
+    const env = { ...envWithoutGitConfig(), GIT_DIR: gitDir, GIT_OBJECT_DIRECTORY: path.join(gitDir, 'objects'), GIT_ALTERNATE_OBJECT_DIRECTORIES: third };
+    const dir = path.join(tmp, 'tpl');
+    assert.strictEqual(writeGitTemplateDir(dir, env), dir);
+    assert.ok(fs.readFileSync(path.join(gitDir, 'config')).equals(configBefore), 'the other repo\'s config is untouched');
+    assert.deepStrictEqual(listing(), listingBefore);
+    assert.deepStrictEqual(fs.readdirSync(third), []);
+    // With the GIT_* drop reverted, git reinitializes the other repo and dir keeps only `config`.
+    assert.ok(fs.existsSync(path.join(dir, 'info', 'exclude')));
+    assert.ok(fs.statSync(path.join(dir, 'hooks')).isDirectory());
+  });
+});
+
+test('writeGitTemplateDir falls back to git\'s default when the inherited GIT_TEMPLATE_DIR is missing or its config is unreadable', () => {
+  withGitTemp((tmp) => {
+    const missing = path.join(tmp, 'tpl-missing');
+    assert.strictEqual(writeGitTemplateDir(missing, { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: path.join(tmp, 'nope') }), missing);
+    assert.ok(fs.existsSync(path.join(missing, 'info', 'exclude')));
+    assert.strictEqual(cfgOf(missing, 'maintenance.auto'), 'false');
+
+    // `config` as a directory: a read that throws on every platform; the template's files must survive.
+    const inherited = path.join(tmp, 'inherited');
+    fs.mkdirSync(path.join(inherited, 'config'), { recursive: true });
+    fs.mkdirSync(path.join(inherited, 'info'));
+    fs.writeFileSync(path.join(inherited, 'info', 'marker'), 'm');
+    fs.writeFileSync(path.join(inherited, 'stray'), 's'); // an inherited entry outside hooks/info/description
+    const dir = path.join(tmp, 'tpl-unreadable');
+    assert.strictEqual(writeGitTemplateDir(dir, { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: inherited }), dir);
+    assert.ok(fs.existsSync(path.join(dir, 'info', 'marker')));
+    assert.ok(fs.existsSync(path.join(dir, 'stray')), 'every inherited entry is copied, on the init-failure path too');
+    assert.ok(fs.statSync(path.join(dir, 'config')).isFile(), 'the unreadable config directory is not copied: config is rebuilt as a file');
+    assert.strictEqual(cfgOf(dir, 'maintenance.auto'), 'false');
+  });
+});
+
+test('writeGitTemplateDir ignores the developer\'s init.templateDir', () => {
+  withGitTemp((tmp) => {
+    const devTpl = path.join(tmp, 'dev-template');
+    fs.mkdirSync(path.join(devTpl, 'info'), { recursive: true });
+    fs.writeFileSync(path.join(devTpl, 'info', 'dev-marker'), 'd');
+    // Forward slashes: git config values treat a backslash as an escape.
+    const devPath = devTpl.split(path.sep).join('/');
+    const globalCfg = path.join(tmp, 'dev-gitconfig');
+    fs.writeFileSync(globalCfg, `[init]\n\ttemplateDir = ${devPath}\n`);
+    const env = {
+      ...envWithoutGitConfig(),
+      GIT_CONFIG_GLOBAL: globalCfg,
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'init.templateDir',
+      GIT_CONFIG_VALUE_0: devPath,
+    };
+    const control = path.join(tmp, 'control');
+    gitSucceeds(['init', '-q', control], env);
+    assert.ok(fs.existsSync(path.join(control, '.git', 'info', 'dev-marker')), 'the fixture really sets a template');
+    const dir = path.join(tmp, 'tpl');
+    assert.strictEqual(writeGitTemplateDir(dir, env), dir);
+    assert.ok(!fs.existsSync(path.join(dir, 'info', 'dev-marker')));
+    assert.ok(fs.existsSync(path.join(dir, 'info', 'exclude')), 'git\'s built-in default template');
+  });
+});
+
+test('writeGitTemplateDir ignores an init.templateDir set in the developer\'s own ~/.gitconfig', () => {
+  withGitTemp((tmp) => {
+    const devTpl = path.join(tmp, 'dev-template');
+    fs.mkdirSync(path.join(devTpl, 'info'), { recursive: true });
+    fs.writeFileSync(path.join(devTpl, 'info', 'dev-marker'), 'd');
+    const home = path.join(tmp, 'home');
+    fs.mkdirSync(home);
+    fs.writeFileSync(path.join(home, '.gitconfig'), `[init]\n\ttemplateDir = ${devTpl.split(path.sep).join('/')}\n`);
+    // No GIT_CONFIG_GLOBAL / GIT_CONFIG_COUNT: the template reaches git only through the home directory.
+    const env = { ...envWithoutGitConfig(), HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config') };
+    const control = path.join(tmp, 'control');
+    gitSucceeds(['init', '-q', control], env);
+    assert.ok(fs.existsSync(path.join(control, '.git', 'info', 'dev-marker')), 'the fixture really sets a template through ~/.gitconfig');
+    const dir = path.join(tmp, 'tpl');
+    assert.strictEqual(writeGitTemplateDir(dir, env), dir);
+    assert.ok(!fs.existsSync(path.join(dir, 'info', 'dev-marker')));
+    assert.ok(fs.existsSync(path.join(dir, 'info', 'exclude')), 'git\'s built-in default template');
+  });
+});
+
+test('writeGitTemplateDir does not append its keys twice to a nested runner\'s template config', () => {
+  withGitTemp((tmp) => {
+    const outer = path.join(tmp, 'outer');
+    assert.strictEqual(writeGitTemplateDir(outer, envWithoutGitConfig()), outer);
+    const dir = path.join(tmp, 'tpl');
+    assert.strictEqual(writeGitTemplateDir(dir, { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: outer }), dir);
+    for (const [key, value] of [['maintenance.auto', 'false'], ['gc.auto', '0'], ['receive.autogc', 'false']]) {
+      const r = gitOut(['config', '--file', path.join(dir, 'config'), '--get-all', key], envWithoutGitConfig());
+      assert.strictEqual(r.stdout.trim(), value, `${key} is set exactly once to ${value}: ${r.stdout}`);
+    }
+    const repo = path.join(tmp, 'repo');
+    const env = { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: dir, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: emptyGlobalConfig(tmp) };
+    gitSucceeds(['init', '-q', repo], env);
+    gitSucceeds(['-C', repo, 'config', 'gc.auto', '1'], env);
+  });
+});
+
+test('AC2.1: writeGitTemplateDir ships empty hooks/ and an info/ dir, and drops an inherited template\'s sample hooks', () => {
+  withGitTemp((tmp) => {
+    const dir = path.join(tmp, 'tpl');
+    assert.strictEqual(writeGitTemplateDir(dir, envWithoutGitConfig()), dir);
+    assert.ok(fs.statSync(path.join(dir, 'hooks')).isDirectory());
+    const hooks = fs.readdirSync(path.join(dir, 'hooks'));
+    assert.deepStrictEqual(hooks.filter((n) => n.endsWith('.sample')), [], `no sample hook: ${hooks.join(', ')}`);
+    assert.ok(fs.statSync(path.join(dir, 'info')).isDirectory());
+    assert.ok(fs.existsSync(path.join(dir, 'info', 'exclude')));
+
+    const inherited = path.join(tmp, 'inherited');
+    fs.mkdirSync(path.join(inherited, 'hooks'), { recursive: true });
+    fs.writeFileSync(path.join(inherited, 'hooks', 'pre-commit.sample'), '#!/bin/sh\n');
+    fs.writeFileSync(path.join(inherited, 'hooks', 'post-checkout'), '#!/bin/sh\n');
+    const fromInherited = path.join(tmp, 'tpl-inherited');
+    assert.strictEqual(writeGitTemplateDir(fromInherited, { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: inherited }), fromInherited);
+    assert.deepStrictEqual(fs.readdirSync(path.join(fromInherited, 'hooks')), ['post-checkout']);
+  });
+});
+
+test('writeGitTemplateDir ships an empty hooks/ even when the inherited template has none', () => {
+  withGitTemp((tmp) => {
+    const inherited = path.join(tmp, 'inherited');
+    fs.mkdirSync(path.join(inherited, 'info'), { recursive: true });
+    const dir = path.join(tmp, 'tpl-inherited');
+    assert.strictEqual(writeGitTemplateDir(dir, { ...envWithoutGitConfig(), GIT_TEMPLATE_DIR: inherited }), dir);
+    assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'hooks')), []);
+    assert.ok(fs.statSync(path.join(dir, 'info')).isDirectory());
+  });
+});
+
+// Node 20's fs.cpSync hands its filter a namespaced `src` on win32, so a plain dirname compare
+// against the inherited template's hooks dir never matched there and its samples were kept.
+test('isTemplateSampleHook matches a sample hook given as a namespaced win32 path', () => {
+  const hooksDir = 'C:\\ci\\tpl\\hooks';
+  const ns = (leaf) => `\\\\?\\C:\\ci\\tpl\\hooks\\${leaf}`;
+  assert.strictEqual(isTemplateSampleHook(ns('pre-commit.sample'), hooksDir, path.win32), true);
+  assert.strictEqual(isTemplateSampleHook('C:\\ci\\tpl\\hooks\\pre-commit.sample', hooksDir, path.win32), true);
+  assert.strictEqual(isTemplateSampleHook(ns('pre-commit.sample'), `\\\\?\\${hooksDir}`, path.win32), true);
+  assert.strictEqual(isTemplateSampleHook(ns('post-checkout'), hooksDir, path.win32), false);
+  assert.strictEqual(isTemplateSampleHook(`\\\\?\\C:\\ci\\tpl\\hooks\\sub\\x.sample`, hooksDir, path.win32), false);
+  assert.strictEqual(isTemplateSampleHook(`\\\\?\\C:\\ci\\tpl\\info\\x.sample`, hooksDir, path.win32), false);
+  assert.strictEqual(isTemplateSampleHook('/t/hooks/pre-commit.sample', '/t/hooks', path.posix), true);
+  assert.strictEqual(isTemplateSampleHook('/t/hooks/post-checkout', '/t/hooks', path.posix), false);
+  assert.strictEqual(isTemplateSampleHook('/t/info/x.sample', '/t/hooks', path.posix), false);
+});
+
+test('runnerChildEnv returns the runner\'s child env', () => {
+  const env = { PATH: '/bin', TMPDIR: '/old', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'a.b', GIT_CONFIG_VALUE_0: 'c', GIT_TEMPLATE_DIR: '/outer-tpl' };
+  const before = { ...env };
+  const runRoot = path.join('/runs', 'r1');
+  const common = {
+    PATH: '/bin',
+    GIT_CONFIG_COUNT: '3',
+    GIT_CONFIG_KEY_0: 'a.b', GIT_CONFIG_VALUE_0: 'c',
+    GIT_CONFIG_KEY_1: 'maintenance.auto', GIT_CONFIG_VALUE_1: 'false',
+    GIT_CONFIG_KEY_2: 'gc.auto', GIT_CONFIG_VALUE_2: '0',
+    TMPDIR: runRoot, TMP: runRoot, TEMP: runRoot,
+    CT_TEST_SUITE_SLOT_HELD: '1',
+    CT_HOOKS_REPO_INFO_STORE: path.join(runRoot, 'repo-info-cache.json'),
+    CT_FACTORY_POLICY_FILE: path.join(runRoot, 'factory-policy.absent.yml'),
+  };
+  assert.deepStrictEqual(runnerChildEnv(env, { runRoot, templateDir: '/tpl' }), { ...common, GIT_TEMPLATE_DIR: '/tpl' });
+  // No template: the inherited GIT_TEMPLATE_DIR passes through untouched, as the runner always did.
+  assert.deepStrictEqual(runnerChildEnv(env, { runRoot, templateDir: null }), { ...common, GIT_TEMPLATE_DIR: '/outer-tpl' });
+  const noTpl = { ...env };
+  delete noTpl.GIT_TEMPLATE_DIR;
+  const got = runnerChildEnv(noTpl, { runRoot, templateDir: null });
+  assert.ok(!('GIT_TEMPLATE_DIR' in got), Object.keys(got).join(', '));
+  assert.deepStrictEqual(env, before, 'env is not mutated');
+});
+
+test('runnerChildEnv drops CLAUDE_TWEAKS_FACTORY_POLICY', () => {
+  const env = { PATH: '/bin', CLAUDE_TWEAKS_FACTORY_POLICY: 'model-stance: economy\n' };
+  const got = runnerChildEnv(env, { runRoot: path.join('/runs', 'r1'), templateDir: null });
+  assert.ok(!('CLAUDE_TWEAKS_FACTORY_POLICY' in got), Object.keys(got).join(', '));
+  assert.equal(got.PATH, '/bin');
+  assert.equal(env.CLAUDE_TWEAKS_FACTORY_POLICY, 'model-stance: economy\n', 'env is not mutated');
+});
+
+// #6006 final review: the factory file under HOME is the machine's own policy too. The runner relocates it to a
+// path inside the run root that never exists (an inherited value is replaced), so readFactoryPolicy reads no file.
+test('runnerChildEnv points CT_FACTORY_POLICY_FILE at a missing path in the run root, so the home factory file is never read', () => {
+  const { readFactoryPolicy, FACTORY_POLICY_FILE_ENV } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'policy-factory.js'));
+  withGitTemp((tmp) => {
+    const home = path.join(tmp, 'home');
+    fs.mkdirSync(path.join(home, '.claude-tweaks'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude-tweaks', 'factory-policy.yml'), 'model-stance: economy\n');
+    const runRoot = path.join(tmp, 'run');
+    fs.mkdirSync(runRoot);
+    assert.strictEqual(readFactoryPolicy({ env: { HOME: home } }).origin, 'file', 'control: the home file is readable');
+    const got = runnerChildEnv({ PATH: '/bin', HOME: home, [FACTORY_POLICY_FILE_ENV]: path.join(tmp, 'elsewhere.yml') }, { runRoot, templateDir: null });
+    const file = got[FACTORY_POLICY_FILE_ENV];
+    assert.strictEqual(path.dirname(file), runRoot, file);
+    assert.strictEqual(fs.existsSync(file), false, file);
+    assert.deepStrictEqual(readFactoryPolicy({ env: got }), { raw: null, origin: null, warnings: [] });
+  });
+});
+
+test('writeGitTemplateDir returns null when git fails', () => {
+  withGitTemp((tmp) => {
+    const git = () => { throw new Error('git is gone'); };
+    assert.strictEqual(writeGitTemplateDir(path.join(tmp, 'tpl'), envWithoutGitConfig(), { git }), null);
+    const seen = [];
+    assert.strictEqual(writeGitTemplateDir(path.join(tmp, 'tpl2'), envWithoutGitConfig(), { git, onError: (err) => seen.push(err.message) }), null);
+    assert.deepStrictEqual(seen, ['git is gone']);
+  });
+});
+
+test('run-tests.js gives the suite a GIT_TEMPLATE_DIR inside its run root whose config turns maintenance off', async () => {
+  await withSandbox(...PROBE, (sb) => {
+    const env = { ...sb.env };
+    delete env.GIT_TEMPLATE_DIR;
+    const result = runRunner(sb, { env, timeout: 120000 });
+    assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+    const recorded = JSON.parse(fs.readFileSync(sb.probeOut, 'utf8'));
+    assert.strictEqual(typeof recorded.gitTemplateDir, 'string');
+    assert.strictEqual(path.dirname(recorded.gitTemplateDir), recorded.tmpdir);
+    assert.strictEqual(typeof recorded.gitTemplateConfig, 'string');
+    assert.ok(recorded.gitTemplateConfig.endsWith(GIT_TEMPLATE_CONFIG), recorded.gitTemplateConfig);
+  });
+});
+
+// The post-run census: what a suite leaves at the top of its TMPDIR is what a direct `node --test` run would
+// leave in the real tmpdir (597,912 entries on one dev machine, 2026-11-18), so the runner names it.
+test('leftoverEntries lists the top-level entries a run left, minus the ones the runner itself made', () => {
+  const names = [...RUN_ROOT_OWN_ENTRIES, 'zeta-AbCdEf', 'alpha-123456'];
+  assert.deepStrictEqual(leftoverEntries('/run/root', { readdirSync: () => names }), ['alpha-123456', 'zeta-AbCdEf']);
+  assert.deepStrictEqual(leftoverEntries('/run/root', { readdirSync: () => [...RUN_ROOT_OWN_ENTRIES] }), []);
+});
+
+test('leftoverEntries reports nothing for a missing or unreadable run root, never throwing', () => {
+  const boom = () => { throw Object.assign(new Error('gone'), { code: 'ENOENT' }); };
+  assert.deepStrictEqual(leftoverEntries('/run/root', { readdirSync: boom }), []);
+});
+
+test('summarizeLeftovers groups by the name minus its six random characters, most entries first', () => {
+  const names = ['ct-wtd-aaaaaa', 'ct-wtd-bbbbbb', 'ct-wtd-cccccc', 'console-resolve-dddddd', 'console-resolve-eeeeee', 'short', 'ab-xxxxxx'];
+  assert.deepStrictEqual(summarizeLeftovers(names), [
+    { prefix: 'ct-wtd-', count: 3 },
+    { prefix: 'console-resolve-', count: 2 },
+    { prefix: 'ab-', count: 1 },
+    { prefix: 'short', count: 1 },
+  ]);
+});
+
+test('leftoverWarning is null for a clean run and otherwise one line with the count and the biggest prefixes', () => {
+  assert.strictEqual(leftoverWarning([]), null);
+  const line = leftoverWarning(['a-111111', 'a-222222', 'b-333333']);
+  assert.ok(!line.includes('\n'));
+  assert.match(line, /^run-tests\.js: warning: the run left 3 top-level entries in its TMPDIR/);
+  assert.ok(line.endsWith(': a-* x2, b-* x1'), line);
+});
+
+test('leftoverWarning caps the prefixes it names and says how many it left out', () => {
+  const names = Array.from({ length: 5 }, (_, i) => `p${i}-abcdef`);
+  const line = leftoverWarning(names, { limit: 2 });
+  assert.ok(line.endsWith('p0-* x1, p1-* x1, and 3 more prefixes'), line);
+});
+
+test('run-tests.js warns on stderr, without failing, when a suite leaves entries in its TMPDIR', async () => {
+  await withSandbox('leak-probe.fixture.js', 'leak.test.js', (sb) => {
+    const result = runRunner(sb, { timeout: 120000 });
+    assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stderr, /run-tests\.js: warning: the run left 3 top-level entries in its TMPDIR/);
+    assert.match(result.stderr, /leaky-a-\* x2, leaky-b-\* x1/);
+    assert.deepStrictEqual(fs.readdirSync(path.join(sb.childTmp, 'ct-test-runs')), [], 'the run root is still removed');
+  });
+});
+
+test('run-tests.js prints no leftover warning for a suite that leaves nothing', async () => {
+  await withSandbox(...PROBE, (sb) => {
+    const result = runRunner(sb, { timeout: 120000 });
+    assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+    assert.ok(!result.stderr.includes('top-level entries in its TMPDIR'), result.stderr);
+  });
 });
