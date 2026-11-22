@@ -21,3 +21,9 @@ Append-only, git-tracked record of every `/claude-tweaks:specify` decomposition 
 - `ceremony:standard` sub-issues (13): #5374, #5375, #5376, #5377, #5378, #5379, #5380, #5381, #5382, #5383, #5384, #5385, #5386
 - Transcript pointer (this session): sessionId 051b3b3e-3c33-460f-b4ed-730fa84d0a52, host Thomass-MacBook-Pro-3376.local, cwd /Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/flow-spec-5374
 - Parent #5373. The tally step did not run when the batch was created; this entry was written by hand in #5374's build branch, timestamped with the last sub-issue's creation time
+
+### 2026-11-22T10:53:35.074Z
+
+- Sub-issues in this batch: 9
+- `ceremony:standard` sub-issues (8): #6051, #6052, #6053, #6055, #6056, #6057, #6059, #6060
+- Transcript pointer (this session): sessionId 832cc791-665f-4db2-8463-efc5bfccf2cf, host Thomass-MacBook-Pro-3376.local, cwd /Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/plan-with-spec-design
