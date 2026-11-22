@@ -2,7 +2,9 @@
 // bin/plan-store.js — store a reviewed plan on a hidden ref and check it is still valid (#6052).
 //   node bin/plan-store.js write --record <n> --plan-file <f> --base <sha> --spec-file <f>
 //   node bin/plan-store.js read  --record <n> --commit <sha> --out <dir>
-//   node bin/plan-store.js check --line <Plan: line> --spec-file <f> --base <sha> [--repo-root <dir>]
+//   node bin/plan-store.js check (--line <Plan: line> | --line-file <f>) --spec-file <f> --base <sha> [--repo-root <dir>]
+// --line-file reads the line from a file (one trailing newline dropped), so a line copied from an
+// editable record body never reaches a shell command line (#6056).
 // A plan lives on `refs/claude-tweaks/plans/{n}` (ref.js owns the name; this file re-exports it for
 // #6055). The CLI is a thin shell over plugin/bin/lib/plan-store/ (store.js write/read, check.js) and
 // plugin/bin/lib/issues/plan-line.js (the `Plan:` line and the spec hash).
@@ -37,7 +39,7 @@ const NAME = 'plan-store.js';
 const USAGE = [
   `usage: ${NAME} write --record <n> --plan-file <f> --base <sha> --spec-file <f>`,
   `       ${NAME} read  --record <n> --commit <sha> --out <dir>`,
-  `       ${NAME} check --line <Plan: line> --spec-file <f> --base <sha> [--repo-root <dir>]`,
+  `       ${NAME} check (--line <Plan: line> | --line-file <f>) --spec-file <f> --base <sha> [--repo-root <dir>]`,
   `       ${NAME} --help`,
   `The plan lives on ${PLAN_REF_PREFIX}{n}. stdout is one JSON line: write {ref, commit, specHash, line};`,
   'read {path}; check {valid, failed} (failed is one of ref, hash, base, files, or null).',
@@ -53,16 +55,18 @@ const USAGE = [
 const FLAGS = {
   write: { '--record': 'record', '--plan-file': 'planFile', '--base': 'base', '--spec-file': 'specFile' },
   read: { '--record': 'record', '--commit': 'commit', '--out': 'out' },
-  check: { '--line': 'line', '--spec-file': 'specFile', '--base': 'base', '--repo-root': 'repoRoot' },
+  check: { '--line': 'line', '--line-file': 'lineFile', '--spec-file': 'specFile', '--base': 'base', '--repo-root': 'repoRoot' },
 };
+// check also needs exactly one of --line and --line-file (parseArgs).
 const REQUIRED = {
   write: ['record', 'planFile', 'base', 'specFile'],
   read: ['record', 'commit', 'out'],
-  check: ['line', 'specFile', 'base'],
+  check: ['specFile', 'base'],
 };
-// The check each check flag feeds, for an exit-2 verdict: the --line is the ref's input, the spec the
-// hash's, the base the base's. Anything else (an unknown flag, --repo-root) prevents every check.
-const CHECK_OF = { line: 'ref', specFile: 'hash', base: 'base', repoRoot: 'ref' };
+// The check each check flag feeds, for an exit-2 verdict: the --line (or --line-file) is the ref's
+// input, the spec the hash's, the base the base's. Anything else (an unknown flag, --repo-root)
+// prevents every check.
+const CHECK_OF = { line: 'ref', lineFile: 'ref', specFile: 'hash', base: 'base', repoRoot: 'ref' };
 const RECORD_RE = /^[1-9]\d*$/;
 
 // Errors are {msg, check}; `check` names the first-failing check a malformed check invocation prevents.
@@ -90,6 +94,11 @@ function parseArgs(argv) {
       const flag = Object.keys(table).find((f) => table[f] === key);
       err(`${flag} is required`, CHECK_OF[key]);
     }
+  }
+  if (o.verb === 'check') {
+    const given = ['line', 'lineFile'].filter((k) => Object.hasOwn(o.values, k) || flagged.has(k));
+    if (given.length === 0) err('--line or --line-file is required', 'ref');
+    if (given.length === 2) err('--line and --line-file are mutually exclusive', 'ref');
   }
   const { record, commit } = o.values;
   if (record !== undefined && !RECORD_RE.test(record)) err(`--record must be a positive integer, got: ${record}`);
@@ -180,6 +189,13 @@ function run(argv, deps = realDeps) {
   const o = parseArgs(argv);
   if (o.help) { deps.stdout(USAGE); return 0; }
   let parsedLine = null;
+  if (o.verb === 'check' && !o.errors.length && Object.hasOwn(o.values, 'lineFile')) {
+    try {
+      o.values.line = fs.readFileSync(fsPath(deps, o.values.lineFile), 'utf8').replace(/\r?\n$/, '');
+    } catch (err) {
+      o.errors.push({ msg: `could not read --line-file ${o.values.lineFile}: ${detail(err)}`, check: 'ref' });
+    }
+  }
   if (o.verb === 'check' && Object.hasOwn(o.values, 'line')) {
     parsedLine = parsePlanLine(o.values.line);
     if (!parsedLine.ok) o.errors.push({ msg: `--line is not a Plan: line (${parsedLine.reason})`, check: 'ref' });
