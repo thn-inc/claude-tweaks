@@ -478,7 +478,10 @@ function defaultScript(over, fx) {
     [on('node', /pr-checks\.js$/), { code: 0, stderr: '', stdout: JSON.stringify({ state: 'green', headRefOid: HEAD_SHA, headRunCount: 1 }) }],
     [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, k === 'express-driver-max-lines' && policy[k] === undefined
       ? { value: policy['auto-merge-max-lines'], source: 'default' }
-      : { value: policy[k], source: 'policy' }]))],
+      // #6018: a policy of undefined is the key unset, which the resolver answers as its default.
+      : k === 'express-driver-max-risk' && policy[k] === undefined
+        ? { value: 'low', source: 'default' }
+        : { value: policy[k], source: 'policy' }]))],
     [on('gh', 'issue', 'view'), (c) => JSON.stringify(issueFor(Number(c.args.at(-1))))],
     [on('git', 'symbolic-ref'), 'origin/main\n'],
     [on('eligibility'), (c) => ({ number: c.args[0].number, eligible: true, reasons: [], keyFiles: ['a.js'], ...pick(over.eligibility, c) })],
@@ -6550,11 +6553,20 @@ test('AC10.1 (#6018): a malformed express-driver-max-risk value (Medium) falls b
       : { value: { ...POLICY, 'express-driver-review': 'on' }[k], source: 'policy' }]))];
   const labels = ['risk:medium', 'ceremony:fast-lane', ...WIDEN_LABELS];
   const bad = await widenCheck({}, labels, { script: [malformed, widenIssue(labels), ...REAL_GATES] });
-  const unset = await widenCheck({ 'express-driver-review': 'on' }, labels);
+  const unset = await widenCheck({ 'express-driver-review': 'on', 'express-driver-max-risk': undefined }, labels);
   assert.deepStrictEqual(bad.verdict, unset.verdict);
   assert.equal(bad.verdict.admitted, false);
   assert.ok(bad.verdict.reasons.includes('risk is not low'));
   assert.deepStrictEqual(bad.verdict.widenedBy, []);
+});
+
+test('(#6018) ctx.widenedBy reaches reviewRequired with its real value: a widened record inside the express bounds is admitted under beyond-express, and ceremony:standard under on', async () => {
+  const risk = await widenCheck({ 'express-driver-max-risk': 'medium', 'express-driver-review': 'beyond-express' }, ['risk:medium', 'ceremony:fast-lane', ...WIDEN_LABELS]);
+  assert.deepStrictEqual(risk.verdict, { record: 7, admitted: true, reasons: [], widenedBy: ['risk'] });
+  assert.deepStrictEqual(risk.h.reviewerCalls.map((o) => o.widenedBy), [['risk']]);
+  const ceremony = await widenCheck({ 'express-driver-review': 'on' }, ['risk:low', 'ceremony:standard', ...WIDEN_LABELS]);
+  assert.deepStrictEqual(ceremony.verdict, { record: 7, admitted: true, reasons: [], widenedBy: ['ceremony'] });
+  assert.deepStrictEqual(ceremony.h.reviewerCalls.map((o) => o.widenedBy), [['ceremony']]);
 });
 
 test('AC7.1 (#6018): the --check verdict line carries widenedBy and an unwidened record prints widenedBy []', async () => {
