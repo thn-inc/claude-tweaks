@@ -136,8 +136,52 @@ Route every parsed row by its Class and Resolution, never on Severity:
 - **`low` and `info` rows** of the four amendment classes amend nothing; they are counted in the Detail and logged. That rule governs amendments only: a needs-human row is routed below at any severity, `low` and `info` included.
 - **Undecided behaviour, cross-task contract, missing-review-risk and mischaracterized-role rows** become plan amendments for step 7.
 - **An intent-resolvable spec-gap row** whose Evidence sentence appears verbatim in `{body}` adds one line under `## Planning Decisions` quoting that sentence, as `build/plan-review.md`'s intent-resolvable sequence writes its clarification line.
-- **Every needs-human row**, the reviewer's or one promoted, is classified against `_shared/planning-decisions.md`'s `## Asked classes` and `## Doubt rule`. The kept flags are `{body}`'s `Risk-flags:` line; the declared categories are read as `build/plan-review-asked-classes.md`'s Routing step 1 reads them. A row a recorded decision already answers takes `## Line forms`' answered-round rule: a `Decided by the user at planning:` line, never asked; it is handled as `build/plan-review-asked-classes.md`'s Routing step 2 handles it, with that step's definition of a recorded decision and `Decided by the user at planning:` lines in place of its plan-review ones, including the `risk-flags.js add` and `Proof({slug}):` amendment when the answered row is class (b) and its category is not yet flagged. A row outside the asked classes takes `## Settled path`: a `Settled at planning:` line, never asked, in every posture. A class (b) row whose category `{body}` does not flag first gets `node "${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" add --body-file "{body}" --add {slug}` and a `Proof({slug}):` amendment for step 7; a non-zero exit still asks the row. A row whose two readings cannot be written from its Suggested resolution and `{body}` is unclassifiable: it is asked, or held when headless.
+- **Every needs-human row**, the reviewer's or one promoted, is classified against `_shared/planning-decisions.md`'s `## Asked classes` and `## Doubt rule`. The kept flags are `{body}`'s `Risk-flags:` line; the declared categories are read as `build/plan-review-asked-classes.md`'s Routing step 1 reads them. A row a recorded decision already answers takes `## Line forms`' answered-round rule: a `Decided by the user at planning:` line, never asked; it is handled as `build/plan-review-asked-classes.md`'s Routing step 2 handles it, with that step's definition of a recorded decision, under which `Decided by the user at plan review:` lines, `Decided by the user at planning:` lines, `**Decision**` paragraphs and Closed rules all count as recorded decisions; the substitution applies only to the line this step writes (`Decided by the user at planning:`) and to its log entries (this file's, never `/build`'s), including the `risk-flags.js add` and `Proof({slug}):` amendment when the answered row is class (b) and its category is not yet flagged. A row outside the asked classes takes `## Settled path`: a `Settled at planning:` line, never asked, in every posture. An unanswered class (b) row whose category `{body}` does not flag first gets `node "${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" add --body-file "{body}" --add {slug}` and a `Proof({slug}):` amendment for step 7; a non-zero exit still asks that row (a failed `add` on an answered row asks nothing). A row whose two readings cannot be written from its Suggested resolution and `{body}` is unclassifiable: it is asked, or held when headless.
 
 **Asking.** Headless means no human is reachable, as `shaping-mode-stamping.md`'s `### Risk flags` step 2 defines it: a headless run asks nothing and takes `## Hold` for every asked row. `auto` alone does not make a run headless: that step's "`auto` takes step 4" sentence governs only its own stop, and a run in `auto` with a reachable human still asks, because these questions are build's plan-review needs-human gate moved to specify time. Otherwise render one batch table with columns `Record`, `Finding`, `Class`, `Recommended reading`, then ask per `_shared/planning-decisions.md`'s `## Asking`: one `AskUserQuestion` per question set, at most four questions per call, one call per message, each question's options the recommended reading first, labelled `(Recommended)`, then the other reading, then `Leave for later`. The recommended reading is the one `## Asking` names; the reviewer's Recommended reading cell is its input, never the verdict. Each question is asked once. An answer is written `Decided by the user at planning: {finding} — chose {reading}; not {other reading}`. `Leave for later` on any question, or a call that errors, times out or is auto-answered, takes `## Hold` for every question of that record not yet answered.
 
 **Writing the lines.** Every `Settled at planning:`, `Decided by the user at planning:` and intent-resolvable line goes under one `## Planning Decisions` section of `{body}`, placed as step 1 says; the section never edits an existing criterion's line. A planned record always carries the section: with no line to write, it holds the one line `No planning questions arose.`
+
+## Hold
+
+A held record is written the same way, with its settled lines, its decided lines and its plan stored (steps 7-8 run on what was settled), and is left without `ready`. In Compose-then-write-once's call: omit `--add-label ready`, add `--remove-label ready` when the record carries it, add `--add-label "needs:decision"` (bootstrap it per `_shared/label-bootstrap.md`), and omit `--remove-label "needs:decision"`; older decision comments are still resolved first, as that file's `needs:*` bullet says. Once the edit lands, post the comment below through `_shared/github-write-transport.md`: write it with the Write tool to the path `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-hold-{n}.md` prints, then run `gh issue comment {n} --body-file "{path}"`, or post it with `add_issue_comment` when `gh` is absent. A failed post renders the record's row `failed — hold comment not posted ({reason})`. The comment is `_shared/work-record.md`'s canonical decision comment, `{unit}` = `specify`:
+
+```
+<!-- needs-decision: specify -->
+## Decision needed
+**Proposed:** {Q1: recommended reading; Q2: recommended reading; …}
+**Why:** planning at /claude-tweaks:specify held {k} question(s) that need a human
+**Command:** `/claude-tweaks:specify #{n}`
+Held-by: specify-planning
+<!-- held-questions:start -->
+- Question: {question text}
+  Option: {recommended reading}
+  Option: {other reading}
+  Recommended: {recommended reading}
+<!-- held-questions:end -->
+```
+
+### Held-questions schema
+
+The block is the contract a later reader parses (#6059); `tests/specify-planning-conformance.test.js` pins the template above and these rules to the same strings.
+
+- `Held-by: specify-planning` sits on the line directly above the block and marks the comment as this step's hold.
+- The block opens with `<!-- held-questions:start -->` and closes with `<!-- held-questions:end -->`, each on its own line.
+- Each held question is one `- Question: ` line followed by exactly two `  Option: ` lines, the recommended reading first, and one `  Recommended: ` line, in the order the questions would have been asked.
+- Every value is one line: a newline inside reviewer text becomes a space. Values quote the body, the plan and the finding with repo-relative paths, never a local absolute path.
+
+**Re-running.** `/claude-tweaks:specify #{n}` re-shapes a held record: `shaping-mode-stamping.md`'s `needs:*` bullet resolves the hold comment and removes the label, and the held questions are asked again unless a `**Decision**` paragraph on the body now answers them (`_shared/planning-decisions.md`'s `## Line forms` answered round).
+
+## Batches
+
+A comma list or range defers every record's write: the per-record loop runs each record through Compose-then-write-once up to the point `## Per-record step` names, copies `{body}` to the path `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-plan-body-{n}.md` prints, and moves on; that copy is the record's `{body}` from then on. Once every record is there, run the lane predicate per record, then steps 1-3 for every planned record with the planners dispatched in one message (one `Agent` call each), step 4 per record, step 5 with the reviewers dispatched in one message, and step 6 with one batch table and the chunked questions covering every record's asked rows together. A hold is per record; the rest of the batch proceeds. Each record then finishes steps 7-9 and its read-back, in list order. These dispatches are shaping mode's one fan-out, each under `_shared/subagent-output-contract.md`; `SKILL.md`'s "a loop never a fan-out" still governs the record writes.
+
+## Read-back and outcome
+
+Read from `shaping-mode-readback.md`'s `plan-at-specify` block, per record:
+
+- **Planned:** the re-fetched body carries exactly one `Plan:` line, equal to the `line` `plan-store.js write` printed, plus `## Overview` and `## Planning Decisions`.
+- **Held:** the hold comment is posted before this read-back runs, and a held record is re-fetched with `gh issue view {n} --json labels,body,comments` in place of that file's `labels,body` fetch. `ready` is absent and `needs:decision` present, in place of that file's `ready` and no-`needs:*` assertions, and the newest unresolved decision comment from a trusted author (filtered as `shaping-mode-stamping.md`'s `needs:*` bullet filters them) carries `Held-by: specify-planning`.
+- **Not planned:** no `Plan:` line was written this pass.
+
+In Actions Performed, a planned or not-planned record keeps the `shaped` outcome, its Detail adding `planned (Plan: {short commit})`, `planned, no Plan: line: …` or `not planned: …`; a held record's outcome is `held — needs:decision ({k} planning question(s))`. A held record is never in a `/claude-tweaks:flow` command `SKILL.md`'s Next Actions renders; when every record is held, the recommended line is `/claude-tweaks:specify #{n}` for the first held record. Under `--chained` and bare drain the held outcome is the returned or reported outcome, and bare drain's Release reason stays `shaped: #{n}`.

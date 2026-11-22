@@ -338,7 +338,7 @@ test('fix round 1: routing never drops a low needs-human row, answers like build
     f('`auto` alone does not make a run headless'),
     f('a run in `auto` with a reachable human still asks, because these questions are build\'s plan-review needs-human gate moved to specify time'),
     f('handled as `build/plan-review-asked-classes.md`\'s Routing step 2 handles it'),
-    f('`Decided by the user at planning:` lines in place of its plan-review ones'),
+    f('definition of a recorded decision, under which `Decided by the user at plan review:` lines'),
     f('the `risk-flags.js add` and `Proof({slug}):` amendment when the answered row is class (b) and its category is not yet flagged'),
   ], 'routing fixes');
   pinned(sectionOf(planning(), '## Per-record step'), [
@@ -388,4 +388,145 @@ test('Review finding B: step 7 fails planning on a failing check or an audit wit
     f('a failing check, or an audit that prints no JSON line, here means planning failed'),
     f('residual `checkE.uncovered` or `checkF.unlisted` items join the Actions Performed Detail'),
   ], 'step 7 audit rule');
+});
+
+// The held-questions contract #6059 reads: the hold comment's writer (planning.md) and this reader share these strings.
+const HELD_QUESTIONS = {
+  heldBy: 'Held-by: specify-planning',
+  start: '<!-- held-questions:start -->',
+  end: '<!-- held-questions:end -->',
+  question: '- Question: ',
+  option: '  Option: ',
+  recommended: '  Recommended: ',
+};
+
+function parseHeldQuestions(comment) {
+  const lines = comment.split('\n');
+  const s = lines.indexOf(HELD_QUESTIONS.start);
+  const e = lines.indexOf(HELD_QUESTIONS.end);
+  const bad = () => new Error('held-questions block malformed');
+  if (s === -1 || e === -1 || e < s) throw bad();
+  const heldBy = s > 0 && lines[s - 1] === HELD_QUESTIONS.heldBy;
+  const questions = [];
+  let cur = null;
+  const close = () => {
+    if (!cur) return;
+    if (cur.options.length !== 2 || cur.recommended === null) throw bad();
+    questions.push(cur);
+  };
+  for (const line of lines.slice(s + 1, e)) {
+    if (line.startsWith(HELD_QUESTIONS.question)) {
+      close();
+      cur = { text: line.slice(HELD_QUESTIONS.question.length), options: [], recommended: null };
+    } else if (cur && line.startsWith(HELD_QUESTIONS.option)) cur.options.push(line.slice(HELD_QUESTIONS.option.length));
+    else if (cur && line.startsWith(HELD_QUESTIONS.recommended)) {
+      if (cur.recommended !== null) throw bad();
+      cur.recommended = line.slice(HELD_QUESTIONS.recommended.length);
+    } else throw bad();
+  }
+  close();
+  return { heldBy, questions };
+}
+
+const filledHold = () => fenceAfter(planning(), '## Hold')
+  .replace('{question text}', 'Which file carries the pointer')
+  .replace(/\{recommended reading\}/g, 'docs/hooks.md')
+  .replace('{other reading}', 'plugin/skills/dispatch/task-prompt.md')
+  .replace(/\{n\}/g, '42').replace(/\{k\}/g, '1');
+
+test('Deliverable 8: the hold template and the schema carry the same contract strings (writer and reader)', () => {
+  const template = fenceAfter(planning(), '## Hold');
+  const text = planning();
+  const from = text.indexOf('\n### Held-questions schema\n');
+  assert.notEqual(from, -1, 'schema heading not found');
+  const next = text.indexOf('\n## ', from + 1);
+  const schema = text.slice(from, next === -1 ? undefined : next);
+  for (const value of Object.values(HELD_QUESTIONS)) {
+    assert.ok(template.includes(value), `template lacks ${JSON.stringify(value)}`);
+    assert.ok(schema.includes('`' + value + '`'), `schema lacks \`${value}\``);
+  }
+  assert.deepEqual(parseHeldQuestions(filledHold()), {
+    heldBy: true,
+    questions: [{
+      text: 'Which file carries the pointer',
+      options: ['docs/hooks.md', 'plugin/skills/dispatch/task-prompt.md'],
+      recommended: 'docs/hooks.md',
+    }],
+  });
+});
+
+test('Deliverable 8: the hold comment is the canonical decision comment, unit specify, Command re-shapes the record', () => {
+  pinned(fenceAfter(planning(), '## Hold'), [
+    f('<!-- needs-decision: specify -->'),
+    f('## Decision needed'),
+    f('**Proposed:**'),
+    f('**Why:**'),
+    f('**Command:** `/claude-tweaks:specify #{n}`'),
+  ], 'hold template');
+});
+
+test('go-red: a template without the Held-by line is read as no hold', () => {
+  const filled = filledHold();
+  const noHeld = filled.replace('Held-by: specify-planning\n', '');
+  assert.notEqual(noHeld, filled);
+  assert.equal(parseHeldQuestions(noHeld).heldBy, false);
+  const noOption = filled.replace('  Option: plugin/skills/dispatch/task-prompt.md\n', '');
+  assert.notEqual(noOption, filled);
+  assert.throws(() => parseHeldQuestions(noOption), /held-questions block malformed/);
+  assert.throws(() => parseHeldQuestions(filled.replace(HELD_QUESTIONS.end, '')), /held-questions block malformed/);
+});
+
+test('AC3.2 + AC4.1 + Deliverable 4: a hold writes the body and plan, drops ready and adds needs:decision without removing it in the same call', () => {
+  // sectionOf would stop at the template's own "## Decision needed" line, so slice to the next real section.
+  const text = planning();
+  const hold = text.slice(text.indexOf('\n## Hold\n'), text.indexOf('\n## Batches\n'));
+  pinned(hold, [
+    f('is left without `ready`'),
+    f('omit `--add-label ready`, add `--remove-label ready` when the record carries it, add `--add-label "needs:decision"`'),
+    f('omit `--remove-label "needs:decision"`'),
+    f('with its settled lines, its decided lines and its plan stored'),
+    f('Every value is one line: a newline inside reviewer text becomes a space.'),
+  ], 'hold');
+});
+
+test('Deliverable 3 + 10: a batch defers writes, fans planners and reviewers out, asks once, and holds per record', () => {
+  pinned(sectionOf(planning(), '## Batches'), [
+    f('defers every record\'s write'),
+    f('with the planners dispatched in one message'),
+    f('with the reviewers dispatched in one message'),
+    f('one batch table and the chunked questions covering every record\'s asked rows together'),
+    f('A hold is per record; the rest of the batch proceeds.'),
+    f('`SKILL.md`\'s "a loop never a fan-out" still governs the record writes'),
+  ], 'batches');
+});
+
+test('AC2.1 + AC5.1: read-back asserts the Plan: line or the hold, and the outcome words', () => {
+  pinned(sectionOf(planning(), '## Read-back and outcome'), [
+    f('exactly one `Plan:` line, equal to the `line` `plan-store.js write` printed'),
+    f('in place of that file\'s `ready` and no-`needs:*` assertions'),
+    f('`held — needs:decision ({k} planning question(s))`'),
+    f('the hold comment is posted before this read-back runs'),
+    f('`gh issue view {n} --json labels,body,comments`'),
+    f('A held record is never in a `/claude-tweaks:flow` command'),
+    f('bare drain\'s Release reason stays `shaped: #{n}`'),
+    f('**Not planned:** no `Plan:` line was written this pass.'),
+  ], 'read-back');
+});
+
+test('planning.md headings appear in order', () => {
+  const text = planning();
+  const heads = ['## Which records are planned', '## Per-record step', '## Planner prompt', '## Reviewer dispatch',
+    '## Routing', '## Hold', '## Batches', '## Read-back and outcome'];
+  const at = heads.map((h) => text.indexOf(`\n${h}\n`));
+  assert.ok(at.every((i) => i !== -1), `missing heading: ${heads.filter((h, i) => at[i] === -1)}`);
+  assert.deepEqual([...at].sort((a, b) => a - b), at);
+});
+
+test('Ruling A + B: Routing keeps the plan-review answered forms, limits the substitution, and scopes the failed add to unanswered rows', () => {
+  pinned(sectionOf(planning(), '## Routing'), [
+    f('`Decided by the user at plan review:` lines, `Decided by the user at planning:` lines, `**Decision**` paragraphs and Closed rules all count as recorded decisions'),
+    f('the substitution applies only to the line this step writes (`Decided by the user at planning:`) and to its log entries (this file\'s, never `/build`\'s)'),
+    f('An unanswered class (b) row whose category `{body}` does not flag first gets'),
+    f('a failed `add` on an answered row asks nothing'),
+  ], 'routing rulings');
 });
