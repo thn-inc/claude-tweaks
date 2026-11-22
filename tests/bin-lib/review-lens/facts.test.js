@@ -60,6 +60,11 @@ test('AC10.1: low-tier executable-content fact matches step3-tier-variants.md', 
     ['a deleted git line', { 'docs/a.md': lines('# T', 'git status', 'end') }, { 'docs/a.md': lines('# T', 'end') }, true],
     ['a list-nested fenced line that is not itself a command', { 'docs/a.md': lines('- step', '    ```bash', '    ls', '    ```') },
       { 'docs/a.md': lines('- step', '    ```bash', '    ls -la', '    ```') }, true],
+    ['a column-0 fence holding an indented fence line stays open', { 'docs/a.md': lines('# T', '```', '    ```bash', '    x', '    ```', 'plain', '```', 'tail') },
+      { 'docs/a.md': lines('# T', '```', '    ```bash', '    x', '    ```', 'plain edit', '```', 'tail') }, true],
+    ['a closer indented 2 spaces still closes a column-0 fence', { 'docs/a.md': lines('# T', '```', 'code', '  ```', 'plain') },
+      { 'docs/a.md': lines('# T', '```', 'code', '  ```', 'plain edit') }, false],
+    ['a pwsh command', { 'docs/a.md': lines('# T') }, { 'docs/a.md': lines('# T', 'pwsh -File x.ps1') }, true],
     ['a node script command', { 'docs/a.md': lines('# T') }, { 'docs/a.md': lines('# T', 'Run `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --local` first') }, true],
     ['a leading node command', { 'docs/a.md': lines('# T') }, { 'docs/a.md': lines('# T', 'node bin/x.js --y') }, true],
     ['a python3 command', { 'docs/a.md': lines('# T') }, { 'docs/a.md': lines('# T', 'Use `python3 x.py` here') }, true],
@@ -168,6 +173,7 @@ test('a missing riskPolicy fails riskPathTouched', () => {
 test('a rename out of a protected path counts through its old path', () => {
   const f = factsOf({ 'plugin/skills/_shared/x.md': lines('a', 'b', 'c', 'd') }, {}, { renames: [['plugin/skills/_shared/x.md', 'docs/x.md']] });
   assert.strictEqual(f.paths[0].path, 'docs/x.md');
+  assert.strictEqual(f.paths[0].status, 'R');
   assert.strictEqual(f.riskPathTouched, true);
 });
 
@@ -185,6 +191,7 @@ test('a regex .exec( is not a spawn; bare exec(, cp.exec( and child_process.exec
   assert.strictEqual(spawn("cp.exec('ls');"), true);
   assert.strictEqual(spawn("child_process.exec('ls');"), true);
   assert.strictEqual(spawn("cp.execFileSync('ls');"), true);
+  assert.strictEqual(spawn("cp.execFile('ls', cb);"), true);
 });
 
 test('newFiles/newModules', () => {

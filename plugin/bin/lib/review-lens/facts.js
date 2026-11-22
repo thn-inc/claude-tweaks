@@ -95,23 +95,26 @@ function handlesInput(l) {
   return false;
 }
 
+const indentOf = (l) => l.length - l.trimStart().length;
+
 // Line numbers inside a fenced code block (markers included), CommonMark-style: a run of 3+ backticks or tildes opens,
-// a run of the same char at least as long with nothing after it closes (indentation ignored on both). An unclosed fence runs to the end.
+// a run of the same char at least as long with nothing after it closes (an opener takes any indentation; a closer at most 3 more than its opener's, else it is content). An unclosed fence runs to the end.
 // Any leading indentation is accepted: this repo's skill prose nests fences inside list items (4+ spaces).
 const FENCE_OPEN_RE = /^[ \t]*(`{3,}|~{3,})(.*)$/;
 function fencedLineNumbers(text) {
   const inside = new Set();
   let open = null;
+  let openIndent = 0;
   text.split('\n').forEach((line, i) => {
     const n = i + 1;
     if (open === null) {
       const m = FENCE_OPEN_RE.exec(line);
-      if (m && !(m[1][0] === '`' && m[2].includes('`'))) { open = m[1]; inside.add(n); }
+      if (m && !(m[1][0] === '`' && m[2].includes('`'))) { open = m[1]; openIndent = indentOf(line); inside.add(n); }
       return;
     }
     inside.add(n);
     const m = FENCE_OPEN_RE.exec(line);
-    if (m && m[1][0] === open[0] && m[1].length >= open.length && m[2].trim() === '') open = null;
+    if (m && m[1][0] === open[0] && m[1].length >= open.length && m[2].trim() === '' && indentOf(line) <= openIndent + 3) open = null;
   });
   return inside;
 }
@@ -151,7 +154,6 @@ function defaultGit(cwd) {
   });
 }
 
-const indentOf = (l) => l.length - l.trimStart().length;
 
 // A spawn line with an enclosing loop header (walking the indentation ancestors upward, within the lookback), at least
 // one of the two on an added line.
