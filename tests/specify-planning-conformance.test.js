@@ -577,7 +577,7 @@ test('Deliverable 8: work-record.md names specify as a decision-comment writer a
 test('planning.md headings appear in order', () => {
   const text = planning();
   const heads = ['## Which records are planned', '## Per-record step', '## Planner prompt', '## Reviewer dispatch',
-    '## Routing', '## Hold', '## Batches', '## Read-back and outcome'];
+    '## Routing', '## Hold', '## Batches', '## Decomposition', '## Read-back and outcome'];
   const at = heads.map((h) => text.indexOf(`\n${h}\n`));
   assert.ok(at.every((i) => i !== -1), `missing heading: ${heads.filter((h, i) => at[i] === -1)}`);
   assert.deepEqual([...at].sort((a, b) => a - b), at);
@@ -719,4 +719,59 @@ test('Fix 2: the readback block replaces only the ready-present and no-needs:* a
   pinned(blockOf('plugin/skills/specify/shaping-mode-readback.md'), [
     f('for a held record its assertions replace only the `ready`-present assertion in the first bullet below and the no-`needs:*` bullet (the first bullet\'s scoring-label and `shaped:headless` assertions still apply)'),
   ], 'readback block');
+});
+
+const decomposition = () => sectionOf(planning(), '## Decomposition');
+
+test('Deliverable 6: the decomposition entry takes N sub-issues, never a parent, and returns one outcome each', () => {
+  pinned(decomposition(), [
+    f('Called by `decomposition-mode-closeout.md`\'s `plan-at-specify` paragraph, in specify\'s own session'),
+    f('never inside `mechanical-handoff.md`\'s subagent'),
+    f('every non-parent sub-issue Step 3 created this run'),
+    f('A sub-issue Step 3 resumed rather than created is not planned this pass'),
+    f('A sub-issue Step 5 left with a staged finding is planned too'),
+    f('A record carrying the `parent-issue` label is never planned and gets no outcome row'),
+    f('`planned`'), f('`held`'), f('`skipped`'), f('`no-ref`'),
+  ], 'decomposition entry');
+});
+
+test('AC3.1 + Deliverable 7: each body is re-fetched from the forge after Step 6, so red-team edits are what the reviewer reads', () => {
+  pinned(decomposition(), [
+    f('re-fetch each sub-issue\'s body and labels from the forge'),
+    f('after Step 6, or after the handoff returns'),
+    f('so Step 5\'s red-team edits are in the body the planner and reviewer read'),
+  ], 'decomposition body');
+});
+
+test('Deliverable 1: planners and reviewers fan out per ## Batches, with one question batch for every sub-issue', () => {
+  pinned(decomposition(), [
+    f('as `## Batches` runs them'),
+    f('one batch table and one set of chunked questions covering every sub-issue'),
+  ], 'decomposition fan-out');
+});
+
+test('Deliverable 2: one more body write, then the hold label edit as a separate call; a held sibling holds no dependent; ready is never added', () => {
+  pinned(decomposition(), [
+    f('one more body write per sub-issue'),
+    f('`gh issue edit {n} --body-file "{body}"`'),
+    f('then, as a separate call after it lands'),
+    f('`--remove-label ready --add-label "needs:decision"`'),
+    f('A held sibling does not hold the sub-issues that depend on it'),
+    f('Planning never adds `ready`'),
+  ], 'decomposition write');
+});
+
+test('Deliverable 9: headless decomposition asks nothing and holds', () => {
+  pinned(decomposition(), [
+    f('With no human reachable (`/sweep`\'s specify drain, a Routine)'),
+    f('the question batch is not asked'),
+  ], 'decomposition headless');
+});
+
+test('AC2.1 + Deliverable 4: the outcomes map to Step 9\'s ### Planning table', () => {
+  pinned(decomposition(), [
+    f('`### Planning`'),
+    f('| Record | Outcome | Detail |'),
+    f('A planning failure is `skipped`'),
+  ], 'decomposition outcomes');
 });

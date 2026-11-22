@@ -178,6 +178,24 @@ The block is the contract a later reader parses (#6059); `tests/specify-planning
 
 A comma list or range defers every record's write: the per-record loop runs each record through Compose-then-write-once up to the point `## Per-record step` names, copies `{body}` to the path `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-plan-body-{n}.md` prints, and moves on; that copy is the record's `{body}` from then on. Once every record is there, run the lane predicate per record, then the reuse check per record (`## Which records are planned`): a record with a valid stored plan skips the planner fan-out, and a held one has its stored plan fetched (`## Which records are planned`) and joins the reviewer fan-out. Then run steps 1-3 for every record still to be planned, with the planners dispatched in one message (one `Agent` call each), step 4 per record, step 5 with the reviewers dispatched in one message, and step 6 with one batch table and the chunked questions covering every record's asked rows together. A hold is per record; the rest of the batch proceeds. Each record then finishes steps 7-9 and its read-back, in list order. These dispatches are shaping mode's one fan-out, each under `_shared/subagent-output-contract.md`; `SKILL.md`'s "a loop never a fan-out" still governs the record writes.
 
+## Decomposition
+
+Called by `decomposition-mode-closeout.md`'s `plan-at-specify` paragraph, in specify's own session, never inside `mechanical-handoff.md`'s subagent: planning dispatches agents and may ask a human. Its input is every non-parent sub-issue Step 3 created this run, told apart by the re-fetched labels: A record carrying the `parent-issue` label is never planned and gets no outcome row. A sub-issue Step 3 resumed rather than created is not planned this pass: it gets no outcome row, and `/claude-tweaks:specify #{n}` re-shapes and plans it, because decomposition mode has no `needs:*` resolve for an earlier hold. A sub-issue Step 5 left with a staged finding is planned too: its `ready` stays cleared, and resolving the finding later changes the body, so `plan-store.js check`'s spec hash makes the next shape or build re-plan rather than reuse the stale plan.
+
+1. **Body.** Planning reads what the forge holds: re-fetch each sub-issue's body and labels from the forge (`gh issue view {n} --json body,labels`, or `issue_read` when `gh` is absent) after Step 6, or after the handoff returns, so Step 5's red-team edits are in the body the planner and reviewer read. Write the body with the Write tool to the path `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-plan-body-{n}.md` prints; that file is the record's `{body}`. The lane file's labels are the re-fetched labels as they stand, since Step 3 already stamped them.
+2. **Run.** Then run, as `## Batches` runs them, the hold-state capture, the lane predicate and the reuse check (`## Which records are planned`), then `## Per-record step`'s steps 1-8 for each sub-issue still to be planned, with one batch table and one set of chunked questions covering every sub-issue. `## Routing`'s Asking governs the questions. With no human reachable (`/sweep`'s specify drain, a Routine), the question batch is not asked: Asking's headless rule sends every asked row to `## Hold`.
+3. **Write.** In place of step 9 and Compose-then-write-once's write, make one more body write per sub-issue, `gh issue edit {n} --body-file "{body}"`, or `issue_write` (update mode) when `gh` is absent, per `_shared/github-write-transport.md`. A held sub-issue then, as a separate call after it lands, gets `gh issue edit {n}` with `--remove-label ready --add-label "needs:decision"` (bootstrap `needs:decision` per `_shared/label-bootstrap.md`; drop `--remove-label ready` when the sub-issue does not carry it), then `## Hold`'s comment. A held sibling does not hold the sub-issues that depend on it: each is written on its own outcome. Planning never adds `ready`: a sub-issue Step 5 left without it stays without it.
+4. **Read-back** per `## Read-back and outcome`'s Planned and Held bullets. Logging (above) applies unchanged.
+
+One outcome per sub-issue planned or not:
+
+- `planned` — a `Plan:` line was stored, or a valid stored one kept.
+- `held` — an asked-class question is unanswered, `## Per-record step`'s held planning failure included.
+- A planning failure is `skipped`, Detail `planning failed: {reason}`; so is a sub-issue a plan-less lane took, Detail `{lane} lane ({reason})`.
+- `no-ref` — `plan-store.js write` exited non-zero.
+
+Step 9 renders them as a `### Planning` section, `| Record | Outcome | Detail |`, one row per sub-issue.
+
 ## Read-back and outcome
 
 Read from `shaping-mode-readback.md`'s `plan-at-specify` block, per record:
