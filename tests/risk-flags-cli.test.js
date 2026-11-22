@@ -972,10 +972,33 @@ test('AC4.2: add runs no classifier floor — prose naming auth adds nothing bey
 });
 
 test('AC4.2: add on a slug the body already carries is a no-op for the flag line', () => {
-  const r = addVerb('# t\n\nSurface: infra\nRisk-flags: auth\n\n## Overview\n', ['--add', 'auth']);
+  const input = '# t\n\nSurface: infra\nRisk-flags: auth\n\n## Overview\n';
+  const r = addVerb(input, ['--add', 'auth']);
   assert.equal(r.code, 0);
   assert.deepEqual(r.out.flags, ['auth']);
   assert.deepEqual(r.out.added, []);
+  assert.equal(r.out.unconfirmed, false);
+  assert.equal(r.body, input, 'the body is byte-unchanged');
+  assert.match(r.body, /^Risk-flags: auth$/m);
+  assert.doesNotMatch(r.body, /Risk-flags-unconfirmed/);
+});
+
+test('add with control mode on puts a policy extra on the line', () => {
+  const body = '# t\n\nSurface: infra\nRisk-flags: migrations\n\n## Overview\n';
+  const on = repoWithPolicy(`control-mode: on\n${POLICY_BODY}`);
+  const onRun = addVerb(body, ['--add', 'pii', '--repo-root', on]);
+  assert.equal(onRun.code, 0);
+  assert.deepEqual(onRun.out.added, ['pii']);
+  assert.match(onRun.body, /^Risk-flags: migrations, pii$/m);
+});
+
+test('add with control mode off refuses a policy extra: exit 2, body byte-unchanged', () => {
+  const body = '# t\n\nSurface: infra\nRisk-flags: migrations\n\n## Overview\n';
+  const off = repoWithPolicy(POLICY_BODY);
+  const offRun = addVerb(body, ['--add', 'pii', '--repo-root', off]);
+  assert.equal(offRun.code, 2);
+  assert.match(offRun.stderr, /not a known category/);
+  assert.equal(offRun.body, body);
 });
 
 test('add on an unreadable flag line widens it and still only adds', () => {
@@ -984,6 +1007,8 @@ test('add on an unreadable flag line widens it and still only adds', () => {
   for (const slug of ['migrations', 'auth', 'public-contract', 'irreversible-side-effect']) assert.ok(r.out.flags.includes(slug), slug);
   assert.deepEqual(r.out.added, []);
   assert.equal(r.out.status, 'unknown');
+  assert.match(r.body, /^Risk-flags: migrations, auth, public-contract, irreversible-side-effect$/m, 'the widened line is still written');
+  assert.match(r.body, /^Risk-flags-unconfirmed: true$/m);
 });
 
 test('add refuses an unknown slug and a missing --add', () => {

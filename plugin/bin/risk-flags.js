@@ -31,14 +31,16 @@
 //           addRiskFlags (unconfirmed marker written; an unreadable line is widened, as the writer
 //           does) and rewrites the file in place. It runs no classifier floor and never removes a
 //           flag, so prose naming a category adds nothing beyond --add (`settle --add` re-runs the
-//           floor). /build's plan review is its caller (build/plan-review-asked-classes.md). Prints
+//           floor). /build's plan review is its caller (build/plan-review-asked-classes.md). When
+//           a readable line already carries every --add slug, nothing is rewritten: the body stays
+//           byte-unchanged and `unconfirmed` is the marker as read. Prints
 //           { flags, added, unconfirmed, status }: `flags` after the write, `added` the --add slugs
 //           the body did not already carry, `status` the entry status of the body as read.
-// Both writing verbs print { flags, removed, unconfirmed, status, refused }. `status` is the
+// settle and confirm print { flags, removed, unconfirmed, status, refused }. `status` is the
 // entry status (`unknown` when the body's line, or for `settle` the prior body's, is
 // unreadable). Reading A: on an `unknown` entry no answer is applied, the widened set
 // stays, the marker is kept or written, and `refused` is { reason, raw, answered }; the
-// fail direction is keep, so it still exits 0. Neither writing verb logs: its body file is
+// fail direction is keep, so it still exits 0. Neither settle nor confirm logs: its body file is
 // only a temp copy, so a removal is logged by `log-removals` once the record write landed.
 // log-removals  Writes nothing to a record. Appends one decisions.md line per --removed slug
 //           as KEPT-PROMPT (a human answered it inline), the text `Risk flag {slug} removed
@@ -560,13 +562,15 @@ function run(argv, overrides = {}) {
 
   if (o.verb === 'add') {
     const own = record.parseRiskFlags(body, { extraCategories });
-    const next = record.addRiskFlags(body, o.add, { unconfirmed: true, extraCategories });
+    const added = o.add.filter((slug) => !own.flags.includes(slug));
+    // Nothing to add on a readable line: no rewrite, so a confirmed line stays confirmed.
+    const next = added.length === 0 && own.status !== 'unknown' ? body : record.addRiskFlags(body, o.add, { unconfirmed: true, extraCategories });
     if (next !== body) {
       try { deps.writeFile(at(deps, o.bodyFile), next); } catch (err) { return fail(3, `body-unwritable: ${o.bodyFile} (${errMsg(err)})`); }
     }
     const final = record.parseRiskFlags(next, { extraCategories });
     return emit({
-      flags: final.flags, added: o.add.filter((slug) => !own.flags.includes(slug)), unconfirmed: final.unconfirmed, status: own.status,
+      flags: final.flags, added, unconfirmed: final.unconfirmed, status: own.status,
     });
   }
 
