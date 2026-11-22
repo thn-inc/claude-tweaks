@@ -8,7 +8,7 @@ const { execFileSync } = require('child_process');
 const { repoPinnedEnv } = require('../hooks/git-exec');
 const shared = require('../shared-primitives');
 const { parseNameStatusZ, splitNul } = require('../git-z');
-const { PLAN_DIR } = require('./ref');
+const { PLAN_DIR, isPlanBasename } = require('./ref');
 
 // The two shared-primitives values are read lazily, so a test override still reaches them.
 function defaultGit(args, { cwd, env, input, encoding = 'utf8' } = {}) {
@@ -99,7 +99,7 @@ function planCommitFile(g, commit) {
   const [{ status, paths }] = entries;
   const p = paths[0];
   if (status !== 'A' && status !== 'M') return { ok: false, reason: `plan commit ${commit} has status ${status}, expected A or M` };
-  if (!p || !p.startsWith(`${PLAN_DIR}/`) || p.slice(PLAN_DIR.length + 1).includes('/')) {
+  if (!p || !p.startsWith(`${PLAN_DIR}/`) || !isPlanBasename(p.slice(PLAN_DIR.length + 1))) {
     return { ok: false, reason: `plan commit ${commit} file ${p} is not directly under ${PLAN_DIR}/` };
   }
   try {

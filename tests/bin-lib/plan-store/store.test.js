@@ -269,3 +269,27 @@ test('readPlan refuses a ref that names another commit, and a missing ref', (t) 
   assert.strictEqual(readPlan({ g, record: 99, commit: r.commit }).ok, false);
   assert.strictEqual(readPlan({ g, record: 7, commit: r.commit }).ok, true);
 });
+
+test('write refuses a plan the base already holds byte-for-byte (the commit would change 0 files)', (t) => {
+  const { fx, write } = setup(t);
+  const file = path.join(fx.work, 'docs', 'superpowers', 'plans', BASENAME);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, PLAN);
+  fx.run(fx.work, ['add', '--', `docs/superpowers/plans/${BASENAME}`]);
+  fx.run(fx.work, ['commit', '-q', '-m', 'plan already on base']);
+  const r = write();
+  assert.strictEqual(r.ok, false, JSON.stringify(r));
+  assert.strictEqual(r.kind, 'invalid');
+  assert.match(r.reason, /byte-for-byte/);
+  assert.strictEqual(remoteRef(fx), '');
+  assert.strictEqual(fx.run(fx.work, ['for-each-ref', REF]).trim(), '');
+});
+
+test('write turns ".", ".." and backslash basenames into invalid results, not git failures', (t) => {
+  const { write } = setup(t);
+  for (const basename of ['.', '..', 'a\\b.md']) {
+    const r = write({ basename });
+    assert.strictEqual(r.ok, false, basename);
+    assert.strictEqual(r.kind, 'invalid', basename);
+  }
+});

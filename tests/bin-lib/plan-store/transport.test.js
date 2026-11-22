@@ -126,6 +126,22 @@ test('planCommitFile reads a one-file plan commit', (t) => {
   assert.strictEqual(planCommitFile(g, nested).ok, false);
 });
 
+test('planCommitFile refuses a backslash basename that would escape --out on win32', { skip: process.platform === 'win32' && 'git on win32 refuses to index a backslash path' }, (t) => {
+  const { fx, g } = setup(t);
+  const blob = String(defaultGit(['hash-object', '-w', '--stdin'], { cwd: fx.work, env: cleanGitEnv(fx.env), input: 'x' })).trim();
+  const idx = path.join(fx.root, 'scratch-index');
+  const env = { ...fx.env, GIT_INDEX_FILE: idx };
+  const run = (args) => defaultGit(args, { cwd: fx.work, env: cleanGitEnv(env) });
+  run(['read-tree', 'HEAD']);
+  run(['update-index', '--add', '--cacheinfo', `100644,${blob},docs/superpowers/plans/..\\..\\evil.md`]);
+  const tree = String(run(['write-tree'])).trim();
+  const head = fx.run(fx.work, ['rev-parse', 'HEAD']).trim();
+  const bad = String(run(['commit-tree', tree, '-p', head, '-m', 'evil'])).trim();
+  const r = planCommitFile(g, bad);
+  assert.strictEqual(r.ok, false, JSON.stringify(r));
+  assert.match(r.reason, /not directly under/);
+});
+
 test('changedPaths uses --no-renames', (t) => {
   const { fx, g, calls } = setup(t);
   fx.commit(fx.work, 'a.txt');

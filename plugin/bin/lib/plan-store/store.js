@@ -8,7 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { planRefName, PLAN_DIR, DEFAULT_REMOTE } = require('./ref');
+const { planRefName, isPlanBasename, PLAN_DIR, DEFAULT_REMOTE } = require('./ref');
 const { resolveCommit, localRef, lsRemoteRef, fetchRef, planCommitFile, absoluteGitDir } = require('./git');
 
 function reasonOf(err) {
@@ -23,7 +23,7 @@ function writePlan({ g, remote = DEFAULT_REMOTE, push, record, basename, planByt
   } catch (err) {
     return { ok: false, kind: 'invalid', reason: err.message };
   }
-  if (typeof basename !== 'string' || !basename || basename.includes('/') || basename.includes('\\') || basename.includes('\0') || basename.startsWith('-')) {
+  if (!isPlanBasename(basename)) {
     return { ok: false, kind: 'invalid', reason: `invalid plan basename: ${String(basename)}` };
   }
   if (!Buffer.isBuffer(planBytes)) return { ok: false, kind: 'invalid', reason: 'planBytes must be a Buffer' };
@@ -48,6 +48,11 @@ function writePlan({ g, remote = DEFAULT_REMOTE, push, record, basename, planByt
     const blob = String(g(['hash-object', '-w', '--no-filters', '--stdin'], { extraEnv, input: planBytes })).trim();
     g(['update-index', '--add', '--cacheinfo', `100644,${blob},${PLAN_DIR}/${basename}`], { extraEnv });
     const tree = String(g(['write-tree'], { extraEnv })).trim();
+    // A tree equal to the base's means the base already holds this plan byte-for-byte: the commit would
+    // change 0 files, which read and check always reject (AC2), so refuse instead of reporting success.
+    if (tree === String(g(['rev-parse', '--verify', '--end-of-options', `${baseSha}^{tree}`])).trim()) {
+      return { ok: false, kind: 'invalid', reason: 'base already holds this plan file byte-for-byte' };
+    }
     commit = String(g(['commit-tree', tree, '-p', baseSha, '-m', `Plan for #${record}`], { extraEnv })).trim();
   } catch (err) {
     return { ok: false, kind: 'no-ref', reason: reasonOf(err) };

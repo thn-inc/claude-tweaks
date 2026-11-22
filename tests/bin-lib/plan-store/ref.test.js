@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const { planRefName, parsePlanRefName, PLAN_REF_PREFIX, PLAN_DIR, DEFAULT_REMOTE } = require('../../../plugin/bin/lib/plan-store/ref');
+const { planRefName, parsePlanRefName, isPlanBasename, PLAN_REF_PREFIX, PLAN_DIR, DEFAULT_REMOTE } = require('../../../plugin/bin/lib/plan-store/ref');
 
 test('planRefName composes the one ref name', () => {
   assert.strictEqual(planRefName(7), 'refs/claude-tweaks/plans/7');
@@ -20,4 +20,11 @@ test('constants are the contract values', () => {
   assert.strictEqual(PLAN_REF_PREFIX, 'refs/claude-tweaks/plans/');
   assert.strictEqual(PLAN_DIR, 'docs/superpowers/plans');
   assert.strictEqual(DEFAULT_REMOTE, 'origin');
+});
+
+test('isPlanBasename accepts a plain file name and refuses every path-escaping shape', () => {
+  for (const ok of ['2026-11-22-plan-7.md', 'a.md', '.hidden', '...']) assert.strictEqual(isPlanBasename(ok), true, ok);
+  for (const bad of ['', '.', '..', 'a/b.md', '..\\..\\evil.md', 'a\\b.md', 'a\0b.md', '-flag.md', 7, null, undefined]) {
+    assert.strictEqual(isPlanBasename(bad), false, String(bad));
+  }
 });

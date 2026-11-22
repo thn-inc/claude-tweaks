@@ -195,6 +195,20 @@ test('write with an unresolvable base exits 1', (t) => {
   assert.strictEqual(r.stdout, '');
 });
 
+test('write of a plan the base already holds exits 1 with no Plan: line and no ref on origin', (t) => {
+  const { fx, write, remote } = setup(t);
+  const file = path.join(fx.work, 'docs', 'superpowers', 'plans', BASENAME);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.copyFileSync(path.join(fx.work, 'p', BASENAME), file);
+  fx.run(fx.work, ['add', '--', `docs/superpowers/plans/${BASENAME}`]);
+  fx.run(fx.work, ['commit', '-q', '-m', 'plan already on base']);
+  const r = write();
+  assert.strictEqual(r.code, 1, r.stderr);
+  assert.strictEqual(r.stdout, '');
+  assert.match(r.stderr, /byte-for-byte/);
+  assert.strictEqual(remote(), '');
+});
+
 function checkArgv(line, over = {}) {
   const o = { base: 'HEAD', spec: 'spec.md', ...over };
   return ['check', '--line', line, '--spec-file', o.spec, '--base', o.base, ...(o.root ? ['--repo-root', o.root] : [])];

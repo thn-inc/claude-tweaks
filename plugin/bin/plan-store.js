@@ -43,7 +43,7 @@ const USAGE = [
   'read {path}; check {valid, failed} (failed is one of ref, hash, base, files, or null).',
   'exit codes:',
   '  0  success (check: valid)',
-  '  1  well-formed invocation, inputs do not hold (unreadable file, spec with no Overview, unresolvable base,',
+  '  1  well-formed invocation, inputs do not hold (unreadable file, spec with no Overview, unresolvable base, plan already on the base,',
   '     ref missing or naming another commit on read, invalid check verdict)',
   '  2  malformed invocation (check still prints valid: false)',
   '  3  no-ref (write only): the ref could not be created or pushed, or the lease was lost; no Plan: line is printed',

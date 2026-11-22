@@ -26,4 +26,11 @@ function parsePlanRefName(ref) {
   return Number.isSafeInteger(n) ? n : null;
 }
 
-module.exports = { PLAN_REF_PREFIX, PLAN_DIR, DEFAULT_REMOTE, planRefName, parsePlanRefName };
+// isPlanBasename(name): true for a plain file name a plan may carry directly under PLAN_DIR. The one
+// rule for write and read: no `/` or `\` (a win32 path separator), no NUL, no leading `-`, not `.` or `..`.
+function isPlanBasename(name) {
+  return typeof name === 'string' && name !== '' && name !== '.' && name !== '..'
+    && !/[/\\\0]/.test(name) && !name.startsWith('-');
+}
+
+module.exports = { PLAN_REF_PREFIX, PLAN_DIR, DEFAULT_REMOTE, planRefName, parsePlanRefName, isPlanBasename };
