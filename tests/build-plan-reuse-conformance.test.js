@@ -60,14 +60,14 @@ function probeOf(t, content, { specDir = '', shell } = {}) {
 const withLine = fileWith(metaBody([LINE], SPEC));
 
 test('AC1.1: the probe reports absent for a spec with no Plan: line, or one only below the first ## heading', (t) => {
-  const none = probeOf(t, fileWith(metaBody([], SPEC)));
-  assert.strictEqual(none.r.status, 0, none.r.stderr);
-  assert.strictEqual(none.out, '{"plan":"absent"}');
-  assert.ok(!fs.existsSync(none.lineFile), 'line file must not be created');
-  const quoted = probeOf(t, fileWith(metaBody([], `## Current State\n${LINE}\n\n${SPEC}`)));
-  assert.strictEqual(quoted.r.status, 0, quoted.r.stderr);
-  assert.strictEqual(quoted.out, '{"plan":"absent"}');
-  assert.ok(!fs.existsSync(quoted.lineFile), 'line file must not be created');
+  const assertAbsent = (content) => {
+    const p = probeOf(t, content);
+    assert.strictEqual(p.r.status, 0, p.r.stderr);
+    assert.strictEqual(p.out, '{"plan":"absent"}');
+    assert.ok(!fs.existsSync(p.lineFile), 'line file must not be created');
+  };
+  assertAbsent(fileWith(metaBody([], SPEC)));
+  assertAbsent(fileWith(metaBody([], `## Current State\n${LINE}\n\n${SPEC}`)));
 });
 
 test('AC2.1: the probe writes the Plan: line to the line file and prints its record and commit', (t) => {
