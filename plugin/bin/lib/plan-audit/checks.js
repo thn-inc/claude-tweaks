@@ -1,7 +1,8 @@
 // plugin/bin/lib/plan-audit/checks.js — Checks A/B/C/D, the headroom check,
 // the warn-only Checks E (#3099) and F (#3602), the gating Check G (#4618, a
 // kept risk flag needs a Proof line), and the warn-only per-task
-// marker check (checkTaskMarkers, #3378) for bin/plan-audit.js (#903).
+// marker check (checkTaskMarkers, #3378), and surfaceDiff (#6059, the read-only
+// --surface-diff verb's before/after comparison) for bin/plan-audit.js (#903).
 // Mechanizes plan-audit.md's prose checks; policy handling (scope-creep, scope-keywords-required) stays at the skill
 // layer — this module only reports facts.
 'use strict';
