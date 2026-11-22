@@ -29,7 +29,12 @@ function assertMicroPlanCitesCode(text) {
   const lines = gate.split('\n');
   starts.forEach((s, i) => {
     const item = lines.slice(s, starts[i + 1] ?? lines.length).join(' ').replace(/\s+/g, ' ');
-    assert.ok(item.includes(`(\`${MICRO_PLAN_CONDITIONS[i]}\`)`), `item ${i + 1} must carry (\`${MICRO_PLAN_CONDITIONS[i]}\`)`);
+    // Each item carries its own id and none of the others': a swap or a stray id fails here.
+    MICRO_PLAN_CONDITIONS.forEach((id, j) => {
+      const carries = item.includes(`(\`${id}\`)`);
+      if (j === i) assert.ok(carries, `item ${i + 1} must carry (\`${id}\`)`);
+      else assert.ok(!carries, `item ${i + 1} must not carry item ${j + 1}'s (\`${id}\`)`);
+    });
   });
   const flat = gate.replace(/\s+/g, ' ');
   for (const name of ['bin/lib/issues/micro-plan-gate.js', 'MAX_IMPLEMENTATION_FILES', 'countImplementationFiles', 'evaluateMicroPlanGate', '`ceremony`', '`size`']) {
@@ -49,4 +54,13 @@ test('AC4.1 go-red: a restated count, a dropped id, a dropped citation and a dro
   assert.throws(() => assertMicroPlanCitesCode(MICRO_PLAN.replace('(`implementation-file-limit`)', '')));
   assert.throws(() => assertMicroPlanCitesCode(MICRO_PLAN.replaceAll('countImplementationFiles', 'countFiles')));
   assert.throws(() => assertMicroPlanCitesCode(MICRO_PLAN.replace(/\n4\. The spec body[\s\S]*?(?=\n\*\*Any other)/, '')));
+});
+
+test('AC4.1 go-red: two ids swapped between items, or one item carrying another item\'s id, each fail', () => {
+  const swapped = MICRO_PLAN.replace('(`low-size`)', '(`SWAP`)').replace('(`no-risk-flag`)', '(`low-size`)').replace('(`SWAP`)', '(`no-risk-flag`)');
+  assert.notEqual(swapped, MICRO_PLAN, 'the swap control changed the text');
+  assert.throws(() => assertMicroPlanCitesCode(swapped), /item 2 must/);
+  const stray = MICRO_PLAN.replace('(`low-size`)', '(`low-size`) (`no-risk-flag`)');
+  assert.notEqual(stray, MICRO_PLAN, 'the stray-id control changed the text');
+  assert.throws(() => assertMicroPlanCitesCode(stray), /item 2 must not carry item 4's/);
 });
