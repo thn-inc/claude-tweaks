@@ -17,9 +17,10 @@
 //                                not a bound; `off` means the driver lane never matches
 //
 // The driver bounds are read through the helpers the driver's own eligibility and admission steps
-// use (steps.js's eligibilityOptions, evaluateRecordEligibility, reviewRequired, evaluateAdmission),
-// never re-derived, so a change to admission's bounds is followed here. reviewRequired and
-// admission get the eligibility verdict's own Key File paths, as steps.js's eligibility step does.
+// use (lane-bounds.js's eligibilityOptions, evaluateRecordEligibility, reviewRequired,
+// evaluateAdmission), never re-derived, so a change to admission's bounds is followed here.
+// reviewRequired and admission get the eligibility verdict's own Key File paths, as steps.js's
+// eligibility step does. lane-bounds.js is a leaf module, so this file never loads steps.js.
 //
 // Precedence: driver, then express, then micro-plan. Fail closed: every input is validated before
 // any lane is tried, so a missing, unreadable or malformed input returns lane null with its own
@@ -34,7 +35,7 @@ const { evaluateRecordEligibility, isReadableSizeCeiling, isReadableKeyFileLimit
 const { sensitivePathsOf } = require('../express/policy');
 const { evaluateAdmission } = require('./admission');
 const { reviewRequired } = require('./review');
-const { eligibilityOptions } = require('./steps');
+const { eligibilityOptions } = require('./lane-bounds');
 
 const POLICY_KEYS = Object.freeze([
   'express-driver', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-review',
@@ -59,6 +60,10 @@ const DRIVER_ROUTINGS = ['off', 'split', 'on'];
 const REVIEW_VALUES = ['off', 'on', 'beyond-express'];
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+// sensitivePathsOf reads any other value as no sensitive paths, so it is refused here first.
+const isReadableSensitivePaths = (v) => typeof v === 'string' || (Array.isArray(v) && v.every((p) => typeof p === 'string'));
+// extractKeyFileEntries's element shape; anything else cannot be counted.
+const isKeyFileEntry = (e) => isObject(e) && typeof e.path === 'string';
 
 function policyReadable(policy) {
   if (!isObject(policy)) return false;
@@ -74,7 +79,8 @@ function policyReadable(policy) {
     && isReadableSizeCeiling(value('express-driver-max-size'))
     && isReadableKeyFileLimit(value('express-driver-max-key-files'))
     && typeof value('express-lane') === 'boolean'
-    && typeof value('integration-model') === 'string' && value('integration-model') !== '';
+    && typeof value('integration-model') === 'string' && value('integration-model') !== ''
+    && isReadableSensitivePaths(value('merge-sensitive-paths'));
 }
 
 // -> null when every input reads, else the reason it does not.
@@ -82,7 +88,8 @@ function unreadableReason({ labels, keyFiles, body, policy }) {
   if (!Array.isArray(labels)) return R.labelsUnreadable;
   if (typeof body !== 'string') return R.bodyUnreadable;
   if (keyFiles === null) return R.keyFilesMissing;
-  if (!isObject(keyFiles) || !Array.isArray(keyFiles.entries) || !Number.isSafeInteger(keyFiles.unparsed) || keyFiles.unparsed !== 0) {
+  if (!isObject(keyFiles) || !Array.isArray(keyFiles.entries) || !keyFiles.entries.every(isKeyFileEntry)
+    || !Number.isSafeInteger(keyFiles.unparsed) || keyFiles.unparsed !== 0) {
     return R.keyFilesUnreadable;
   }
   if (!policyReadable(policy)) return R.policyUnreadable;

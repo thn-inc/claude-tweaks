@@ -2,13 +2,15 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
-const { POLICY_KEYS, PLAN_LANE_REASONS: R, needsNoPlan } = require('../../../plugin/bin/lib/driver/plan-lane');
+const { POLICY_KEYS, PLAN_LANE_REASONS: R, needsNoPlan } = require(path.join(LIB, 'driver', 'plan-lane.js'));
 const { extractKeyFileEntries } = require(path.join(LIB, 'issues', 'grouping.js'));
 const { evaluateRecordEligibility } = require(path.join(LIB, 'express', 'eligibility.js'));
 const { evaluateAdmission } = require(path.join(LIB, 'driver', 'admission.js'));
 const { reviewRequired } = require(path.join(LIB, 'driver', 'review.js'));
-const { eligibilityOptions } = require(path.join(LIB, 'driver', 'steps.js'));
+const { eligibilityOptions } = require(path.join(LIB, 'driver', 'lane-bounds.js'));
+const { STEPS } = require(path.join(LIB, 'driver', 'steps.js'));
 
 const backendFiles = (n) => Array.from({ length: n }, (_, i) => `plugin/bin/lib/plan-lane-fixture/m${i}.js`);
 
@@ -215,34 +217,36 @@ test('AC6.1: labels given as {name} objects read the same as strings', () => {
   assert.deepStrictEqual(v, { lane: 'driver', reason: 'inside-driver-bounds' });
 });
 
+// The parity matrix: records on both sides of the driver bounds.
+const NOISE = ['auto:merge-pending', 'parked', 'bot:blocked'];
+const PARITY_RECORDS = [
+  { name: 'low fast-lane 1 KF', labels: ['risk:low', 'size:low', 'ceremony:fast-lane', 'type:task'], files: backendFiles(1) },
+  { name: 'low no-ceremony 1 KF', labels: ['risk:low', 'size:low', 'type:task'], files: backendFiles(1) },
+  { name: 'medium no-ceremony 4 KF', labels: ['risk:low', 'size:medium', 'type:feature'], files: backendFiles(4) },
+  { name: 'medium fast-lane 1 KF', labels: ['risk:low', 'size:medium', 'ceremony:fast-lane', 'type:bug'], files: backendFiles(1) },
+  { name: 'low no-ceremony 4 KF', labels: ['risk:low', 'size:low', 'type:task'], files: backendFiles(4) },
+  { name: 'medium 6 KF', labels: ['risk:low', 'size:medium', 'type:feature'], files: backendFiles(6) },
+  { name: 'size high', labels: ['risk:low', 'size:high', 'type:feature'], files: backendFiles(1) },
+  { name: 'ceremony standard', labels: ['risk:low', 'size:low', 'ceremony:standard', 'type:task'], files: backendFiles(1) },
+  { name: 'risk high', labels: ['risk:high', 'size:low', 'ceremony:fast-lane', 'type:task'], files: backendFiles(1) },
+  { name: 'protected path', labels: ['risk:low', 'size:low', 'type:task'], files: ['plugin/skills/_shared/x.md'] },
+  { name: 'frontend surface', labels: ['risk:low', 'size:low', 'type:task'], files: backendFiles(1), opts: { surface: 'web' } },
+  { name: 'no type label', labels: ['risk:low', 'size:low', 'ceremony:fast-lane'], files: backendFiles(1) },
+  { name: 'kept risk flag', labels: ['risk:low', 'size:low', 'type:task'], files: backendFiles(1), opts: { riskFlags: 'Risk-flags: schema' } },
+  { name: 'medium no-ceremony 4 KF with noise', labels: ['risk:low', 'size:medium', 'type:feature', ...NOISE], files: backendFiles(4) },
+];
+
 // Spec Deliverable 5: with grants, blockers and PRs neutralised, the predicate's driver verdict equals
 // the bounds portion of eligibility + admission for the same record and policy, computed here from
 // the real modules.
 test('AC1.1 parity: the driver verdict equals eligibility + admission with grants, blockers and PRs neutralised', () => {
-  const NOISE = ['auto:merge-pending', 'parked', 'bot:blocked'];
-  const records = [
-    { name: 'low fast-lane 1 KF', labels: ['risk:low', 'size:low', 'ceremony:fast-lane', 'type:task'], files: backendFiles(1) },
-    { name: 'low no-ceremony 1 KF', labels: ['risk:low', 'size:low', 'type:task'], files: backendFiles(1) },
-    { name: 'medium no-ceremony 4 KF', labels: ['risk:low', 'size:medium', 'type:feature'], files: backendFiles(4) },
-    { name: 'medium fast-lane 1 KF', labels: ['risk:low', 'size:medium', 'ceremony:fast-lane', 'type:bug'], files: backendFiles(1) },
-    { name: 'low no-ceremony 4 KF', labels: ['risk:low', 'size:low', 'type:task'], files: backendFiles(4) },
-    { name: 'medium 6 KF', labels: ['risk:low', 'size:medium', 'type:feature'], files: backendFiles(6) },
-    { name: 'size high', labels: ['risk:low', 'size:high', 'type:feature'], files: backendFiles(1) },
-    { name: 'ceremony standard', labels: ['risk:low', 'size:low', 'ceremony:standard', 'type:task'], files: backendFiles(1) },
-    { name: 'risk high', labels: ['risk:high', 'size:low', 'ceremony:fast-lane', 'type:task'], files: backendFiles(1) },
-    { name: 'protected path', labels: ['risk:low', 'size:low', 'type:task'], files: ['plugin/skills/_shared/x.md'] },
-    { name: 'frontend surface', labels: ['risk:low', 'size:low', 'type:task'], files: backendFiles(1), opts: { surface: 'web' } },
-    { name: 'no type label', labels: ['risk:low', 'size:low', 'ceremony:fast-lane'], files: backendFiles(1) },
-    { name: 'kept risk flag', labels: ['risk:low', 'size:low', 'type:task'], files: backendFiles(1), opts: { riskFlags: 'Risk-flags: schema' } },
-    { name: 'medium no-ceremony 4 KF with noise', labels: ['risk:low', 'size:medium', 'type:feature', ...NOISE], files: backendFiles(4) },
-  ];
   const policies = {
     'review beyond-express': policy(),
     'review off': policy({ 'express-driver-review': 'off' }),
     'review on, split, low ceiling, 3 KF': policy({ 'express-driver-review': 'on', 'express-driver': 'split', 'express-driver-max-size': 'low', 'express-driver-max-key-files': 3 }),
   };
   const sides = { driver: 0, notDriver: 0 };
-  for (const rec of records) {
+  for (const rec of PARITY_RECORDS) {
     for (const [polName, pol] of Object.entries(policies)) {
       const b = body(rec.files, rec.opts);
       const neutral = rec.labels.filter((l) => !/^(auto|bot):/.test(l) && l !== 'parked');
@@ -268,4 +272,85 @@ test('AC1.1 parity: the reviewer rule is load-bearing — beyond-express records
   const pol = policy({ 'express-driver-review': 'off' });
   assert.notStrictEqual(verdictFor({ labels: DRIVER_LABELS, keyFiles: DRIVER_FILES, pol }).lane, 'driver');
   assert.strictEqual(verdictFor({ labels: EXPRESS_LABELS, keyFiles: MICRO_FILES, pol }).lane, 'driver');
+});
+
+// The driver's real eligibility and admission steps, run with fake deps that neutralise only what the
+// predicate neutralises (grants via a typed build authority, no blockers, no linked PR, OPEN, no
+// escalation marker, express-driver on). A change in how a step calls the helpers (an option passed
+// outside eligibilityOptions, say) moves only the step side, so this check goes red where the
+// helper-composition parity above would not.
+test('AC1.1 parity: the driver verdict equals the real eligibility and admission steps run on neutral facts', async () => {
+  const step = (name) => STEPS.find((s) => s.name === name);
+  const eligibility = step('eligibility');
+  const admission = step('admission');
+  assert.ok(eligibility && admission, 'STEPS names eligibility and admission');
+  const deps = {
+    evaluateRecordEligibility, reviewRequired, evaluateAdmission,
+    ghBatch: () => { throw new Error('no forge read in this test'); },
+    fetchNativeDependencies: ({ numbers }) => new Map(numbers.map((n) => [n, { blockedBy: [], openBlocker: false, openBlockerIds: [] }])),
+    fetchLinkedPRs: ({ numbers }) => new Map(numbers.map((n) => [n, { openPR: null, mentions: [] }])),
+    resolveBuildAuthority: () => ({ authority: 'typed', reasons: [] }),
+    readTypedCommand: () => null,
+    env: {},
+    date: () => new Date(0),
+    stdinIsTTY: false,
+  };
+  const policies = {
+    'review beyond-express': policy(),
+    'review off': policy({ 'express-driver-review': 'off' }),
+    'review on, low ceiling, 3 KF': policy({ 'express-driver-review': 'on', 'express-driver-max-size': 'low', 'express-driver-max-key-files': 3 }),
+  };
+  const sides = { driver: 0, notDriver: 0 };
+  for (const rec of PARITY_RECORDS) {
+    for (const [polName, pol] of Object.entries(policies)) {
+      const b = body(rec.files, rec.opts);
+      const neutral = rec.labels.filter((l) => !/^(auto|bot):/.test(l) && l !== 'parked').map((name) => ({ name }));
+      const ctx = {
+        record: 7, named: false,
+        issue: { number: 7, title: rec.name, body: b, labels: neutral, state: 'OPEN', comments: [] },
+        shared: { policy: pol, repo: { host: 'github.com', owner: 'acme', repo: 'widgets' } },
+      };
+      const elig = await eligibility.run(ctx, deps);
+      const adm = elig.status === 'ok' ? await admission.run(ctx, deps) : null;
+      assert.notStrictEqual(elig.status, 'fail', `${rec.name} / ${polName}: eligibility step failed: ${elig.detail}`);
+      if (adm) assert.notStrictEqual(adm.status, 'fail', `${rec.name} / ${polName}: admission step failed: ${adm.detail}`);
+      const expected = elig.status === 'ok' && adm.status === 'ok';
+      const got = needsNoPlan({ labels: rec.labels, keyFiles: extractKeyFileEntries(b), body: b, policy: pol });
+      assert.strictEqual(got.lane === 'driver', expected, `${rec.name} / ${polName}: ${JSON.stringify(got)} vs steps ${elig.detail || 'ok'} / ${adm ? adm.detail || 'ok' : '-'}`);
+      sides[expected ? 'driver' : 'notDriver'] += 1;
+    }
+  }
+  assert.ok(sides.driver > 0 && sides.notDriver > 0, JSON.stringify(sides));
+});
+
+test('lane-bounds.js is the one eligibilityOptions: steps.js re-exports it, and plan-lane.js never loads steps.js', () => {
+  assert.strictEqual(require(path.join(LIB, 'driver', 'steps.js')).eligibilityOptions, eligibilityOptions);
+  const planLane = require.resolve(path.join(LIB, 'driver', 'plan-lane.js'));
+  // A fresh process starts with an empty require cache, so whatever it holds after the require is what plan-lane.js loads.
+  const loaded = JSON.parse(execFileSync(process.execPath, ['-e', `require(${JSON.stringify(planLane)}); process.stdout.write(JSON.stringify(Object.keys(require.cache)))`], { encoding: 'utf8', windowsHide: true }));
+  assert.ok(loaded.includes(require.resolve(path.join(LIB, 'driver', 'lane-bounds.js'))), 'plan-lane.js loads lane-bounds.js');
+  assert.ok(!loaded.includes(require.resolve(path.join(LIB, 'driver', 'steps.js'))), 'plan-lane.js must not load driver/steps.js');
+});
+
+test('a merge-sensitive-paths value that is neither a string nor a list of strings reads policy-unreadable', async (t) => {
+  const run = (value) => verdictFor({ labels: EXPRESS_LABELS, keyFiles: EXPRESS_FILES, pol: policy({ 'merge-sensitive-paths': value }) });
+  // Controls: a list, an empty string and a comma-separated string all read.
+  assert.deepStrictEqual(run([]), { lane: 'driver', reason: 'inside-driver-bounds' });
+  assert.deepStrictEqual(run(''), { lane: 'driver', reason: 'inside-driver-bounds' });
+  assert.deepStrictEqual(run('docs/**, plugin/bin/lib/plan-lane-fixture/**'), { lane: null, reason: 'outside-every-lane' });
+  for (const [name, value] of Object.entries({ null: null, number: 5, object: { a: 1 }, boolean: true, 'list with a number': [1], 'list with null': ['docs/**', null] })) {
+    await t.test(name, () => assert.deepStrictEqual(run(value), { lane: null, reason: 'policy-unreadable' }));
+  }
+});
+
+test('a Key Files entry that is not an object with a string path reads key-files-unreadable, never a throw', async (t) => {
+  const b = body(MICRO_FILES);
+  const pols = { 'all lanes on': policy(), 'micro-plan only': policy({ 'express-driver': 'off', 'express-lane': false }) };
+  for (const [name, entries] of Object.entries({ null: [null], string: ['a.js'], 'numeric path': [{ path: 5 }], 'no path': [{ note: 'x' }], array: [['a.js']] })) {
+    for (const [polName, pol] of Object.entries(pols)) {
+      await t.test(`${name} / ${polName}`, () => {
+        assert.deepStrictEqual(needsNoPlan({ labels: EXPRESS_LABELS, keyFiles: { entries, unparsed: 0 }, body: b, policy: pol }), { lane: null, reason: 'key-files-unreadable' });
+      });
+    }
+  }
 });

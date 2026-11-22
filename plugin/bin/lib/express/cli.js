@@ -44,7 +44,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification } = require('./eligibility');
 const { selectReviewSamples, isReviewed, fixesRecords, isExpressPr, EXPRESS_MARKER_KEY } = require('./sampling');
-const { extractKeyFiles } = require('../issues/grouping');
+const { extractKeyFiles, extractKeyFileEntries } = require('../issues/grouping');
 const { gatherDiffFiles, resolveBlastRadiusConfig } = require('../blast-radius-cli');
 const { checkFirstCallStamp } = require('../dispatch/first-call-artifact-check');
 const { formatEntry, appendEntry, parseEntry, resolveTarget } = require('../log-decision/append');
@@ -52,6 +52,8 @@ const { hasCanonicalClaimLogFor } = require('../log-decision/claim-log');
 const { sensitivePathsOf, defaultGit, defaultReadFile, defaultResolvePolicy } = require('./policy');
 const { ghAvailable, ghOptions } = require('../repo-resolve');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
+// plan-lane.js reads the driver bounds from the leaf lane-bounds.js, never driver/steps.js (which loads this file).
+const { needsNoPlan, POLICY_KEYS: PLAN_LANE_POLICY_KEYS } = require('../driver/plan-lane');
 // Read through the module at call time: GH_TIMEOUT_MS is a lazy getter (a policy read).
 const sharedPrimitives = require('../shared-primitives');
 
@@ -482,9 +484,6 @@ function runSamples(deps, flags) {
 
 // The plan-lane verdict (#6053) for one record: advisory, exit 0 whatever the lane.
 function runPlanLane(deps, flags) {
-  // Required here, not at the top: driver/steps.js, which plan-lane.js loads, loads this file.
-  const { needsNoPlan, POLICY_KEYS } = require('../driver/plan-lane');
-  const { extractKeyFileEntries } = require('../issues/grouping');
   let rec;
   if (flags['--record-json'] !== undefined) {
     rec = readJsonFile(deps, '--record-json', flags['--record-json']);
@@ -499,7 +498,7 @@ function runPlanLane(deps, flags) {
     }
   }
   let policy;
-  try { policy = deps.resolvePolicy([...POLICY_KEYS], { runDir: null }); } catch (err) {
+  try { policy = deps.resolvePolicy([...PLAN_LANE_POLICY_KEYS], { runDir: null }); } catch (err) {
     deps.stderr(`express-lane.js: could not read policy: ${err && err.message}\n`);
     return 1;
   }
