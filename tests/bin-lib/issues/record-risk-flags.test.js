@@ -111,6 +111,14 @@ test('a policy slug is known only when passed', () => {
   assert.strictEqual(parseRiskFlags('Risk-flags: pii\n').status, 'unknown');
 });
 
+test('parseRiskFlagsValue reads a bare value by the line\'s rules: none, two flags, malformed, a policy slug', () => {
+  const { parseRiskFlagsValue } = require('../../../plugin/bin/lib/issues/record-risk-flags');
+  assert.deepStrictEqual([parseRiskFlagsValue('none').status, parseRiskFlagsValue('none').flags], ['ok', []]);
+  assert.deepStrictEqual(parseRiskFlagsValue('public-contract, auth').flags, ['auth', 'public-contract']);
+  assert.deepStrictEqual([parseRiskFlagsValue('Auth').reason, parseRiskFlagsValue('Auth').flags], ['malformed', ALL]);
+  assert.strictEqual(parseRiskFlagsValue('pii', { extraCategories: ['pii'] }).status, 'ok');
+});
+
 test('materialized spec shape: frontmatter and H1 ahead of the metadata lines', () => {
   const r = parseRiskFlags('---\nrecord: 1\n---\n# 1: t\n\nSurface: infra\nRisk-flags: migrations\n\n## Overview\n');
   assert.deepStrictEqual([r.status, r.flags], ['ok', ['migrations']]);

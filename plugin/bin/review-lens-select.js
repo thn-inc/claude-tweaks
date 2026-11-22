@@ -11,7 +11,7 @@
 // sooner: the safe direction), never SKIP lines with no record. Nothing is printed unless both writes succeeded.
 //
 // --risk-flags takes the record's `Risk-flags:` value (`auth, public-contract`, or `none`) and reads it with that line's
-// own reader (issues/record-risk-flags.js's parseRiskFlags, with control mode's `risk-categories`): `none`, an empty
+// own reader (issues/record-risk-flags.js's parseRiskFlagsValue, with control mode's `risk-categories`): `none`, an empty
 // value or an absent flag is no flags; a malformed value or an unknown slug reads as flagged (all four built-ins).
 //
 // Exit codes: 0 printed; 1 a write or log failed (nothing printed); 2 malformed invocation (a bad or missing flag, an
@@ -38,7 +38,7 @@ const path = require('node:path');
 const { resolve: resolveRoot } = require('./lib/hooks/run-dir-resolve');
 const { safeReal } = require('./lib/hooks/worktree-detect');
 const { readRiskPolicy } = require('./lib/policy');
-const { parseRiskFlags } = require('./lib/issues/record-risk-flags');
+const { parseRiskFlagsValue } = require('./lib/issues/record-risk-flags');
 const { resolveTarget, appendEntries, formatEntry } = require('./lib/log-decision/append');
 const { computeFacts } = require('./lib/review-lens/facts');
 const { readLensHistory } = require('./lib/review-lens/history');
@@ -66,7 +66,7 @@ const messageOf = (err) => (err && err.message) || String(err);
 function riskFlagsOf(value, riskPolicy) {
   if (value === null || value.trim() === '') return [];
   const extraCategories = riskPolicy && Array.isArray(riskPolicy.extraCategories) ? riskPolicy.extraCategories : [];
-  return parseRiskFlags(`Risk-flags: ${value.trim()}`, { extraCategories }).flags;
+  return parseRiskFlagsValue(value.trim(), { extraCategories }).flags;
 }
 
 // The run's identity under the pipelines root: `{id}`, or `{id}/spec-{N}` for a multi-spec member.
