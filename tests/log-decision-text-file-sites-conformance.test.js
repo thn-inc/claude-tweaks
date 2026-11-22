@@ -48,6 +48,7 @@ const SITES = [
   { id: 'E1', file: 'plugin/skills/_shared/pr-early-run-lifecycle.md', content: 'holding that one line' },
   { id: 'Q1', file: 'plugin/skills/build/plan-authoring-checks.md', content: 'holding one line carrying the criterion it covers' },
   { id: 'R3', file: 'plugin/skills/build/plan-review.md', content: 'settled after an answered round: {finding} — chose {reading taken}; not {reading not taken}' },
+  { id: 'R4', file: 'plugin/skills/build/plan-review-asked-classes.md', content: 'Settled at planning: {finding} — chose {reading}; not {other reading}' },
 ];
 
 const collapse = (text) => text.replace(/\s+/g, ' ');

@@ -1,0 +1,31 @@
+# Common Step 1.6 — Asked-Classes Routing (#6051)
+
+Read by `plan-review.md`'s planning-decisions pointer only when `planning-decisions` resolves `asked-classes`; under the default `ask-all` this file is never read. It applies `_shared/planning-decisions.md` to plan review. That file states the asked classes, the settled path, the doubt rule, the line forms and the asking rule; this file cites them by section name and only says where each lands in plan review's routing.
+
+## Scope
+
+This file applies after `plan-review.md`'s Reading the reply, to every needs-human row: the reviewer's, and every row Reading the reply promoted. Under `asked-classes`, `plan-review.md`'s `### Converged round (#4958)` does not apply and its `Settled by plan review after an answered round:` lines are not written. Every amendment line goes in a `## Planning Decisions` section of the worktree's `work/{n}-spec.md` instead of `## Plan Review Clarifications`, and wherever `plan-review.md` names that section as the trail, read `## Planning Decisions`. Everything else in `plan-review.md` (dispatch, prompt, Reading the reply, the intent-resolvable sequence, the HARD-GATE branches) applies as written.
+
+## Routing
+
+1. **Classify.** Classify each needs-human row against `_shared/planning-decisions.md`'s `## Asked classes` and `## Doubt rule`. Read the kept flags from the worktree spec's `Risk-flags:` line. The declared categories are the ones `## Doubt rule` names; read the policy extras with `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values risk-categories` (a read only; plan review runs no classifier, so no record is reclassified here).
+
+2. **Answered round.** A row that a recorded decision already answers (a `Decided by the user at planning:` or `Decided by the user at plan review:` line, a `**Decision**` paragraph, or a Closed rule) is settled by `_shared/planning-decisions.md`'s `## Line forms` answered-round rule, with a `Decided by the user at planning:` line quoting that decision, and is never asked again.
+
+3. **Class (b), unflagged category.** When a row plainly falls in a declared category the spec's `Risk-flags:` line does not keep, run `node "${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" add --body-file "{worktree spec}" --add {slug} --repo-root "{worktree root}"` before the question is asked, add a `Proof({slug}):` line to the plan, and commit both with the other amendments. Add, never drop: no other `risk-flags.js` verb runs here. A non-zero exit still asks the question and logs one `SKIP` under this step's `/build` section and step, with `--text-file` holding `condition: risk-flags.js add exited {code} ({stderr line}) → fallback: question asked without the flag` (written with the Write tool to the path `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value decision-text-{run-id}-planning-flag-{k}.md` prints).
+
+4. **Settled rows** (outside (a), (b) and (c)). Pick the reading by `_shared/planning-decisions.md`'s `## Settled path` and apply it through `plan-review.md`'s intent-resolvable sequence: one commit, one record comment and one re-audit, shared with every other amendment from this reply. In that sequence's step 1, the settled line stands in for the Evidence quote, and the criterion check there judges only the chosen reading, which keeps every Acceptance Criterion by construction, so a settled row never returns to needs-human. Log one `AUTO` per settled row:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO \
+     --section "/build" --step "Common Step 1.6 (plan review)" \
+     --text-file "{text-file}" --reversibility high
+   ```
+
+   having first written `{text-file}` with the Write tool, holding the one line `Settled at planning: {finding} — chose {reading}; not {other reading}` (path from `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value decision-text-{run-id}-planning-settled-{k}.md`, `{k}` numbering this reply's settled rows from 1; `_shared/auto-decision-log.md`'s Text from git or a user rule). Write that same line under `## Planning Decisions`; the record comment carries that line verbatim. A settled row produces no `AskUserQuestion`, no question comment and no `failed: plan-review-needs-human`. This holds in every mode — `auto`, `confirm`, `interactive` and `hybrid` — and in a dispatched call or `parallel`-wave member: when every needs-human row settles, the build continues to Common Step 1.7.
+
+5. **Mixed reply** (some rows settle, at least one is asked). The settled rows are applied, logged and commented in the one intent-resolvable commit before the HARD-GATE branch runs, in every branch — present human, dispatched call and `parallel`-wave member alike — so a blocked call still leaves its settled lines committed. This replaces `plan-review.md`'s rule that a blocking call applies nothing, for settled rows only. The question set and the question comment list only the asked rows.
+
+6. **Asked rows** ((a), (b) and (c)). They reach `plan-review.md`'s `### Spec gap — needs-human` HARD-GATE exactly as today, in every posture, as one question set, except that each question's options are the recommended reading first, labelled `(Recommended)`, then the other reading, then `Stop the build` (`_shared/planning-decisions.md`'s `## Asking`; the question comment lists them in the same order). An answer is recorded as `Decided by the user at planning: {finding} — chose {reading}; not {other reading}`.
+
+7. **Standalone `/build`** (no run dir). Settled rows are listed in the handoff's `### Plan review amendments (standalone build, if any)` section, as `plan-review.md` already does for its amendments.

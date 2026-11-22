@@ -291,3 +291,132 @@ test('go-red: the example count fails with a single example', () => {
   const block = dispatchBlock(readText(REVIEW_PATH));
   assert.deepStrictEqual(boundaryProblems(block.replace('example:', 'removed')), ['two example: occurrences']);
 });
+
+// --- #6051: planning-decisions pointer and the asked-classes sub-file ---
+// Under the default `ask-all`, plan-review.md must stay the base bytes: the frozen fixture is
+// plan-review.md at 483adc1d58 (before the pointer landed), so stripping the marker-delimited
+// pointer from the live file must give it back byte for byte.
+
+const { missingFactsOf, assertEachPatternGoesRed } = require('./helpers/conformance-asserts');
+const { classStatementSites } = require('./helpers/planning-decisions-clauses');
+
+const FIXTURE = path.join(ROOT, 'tests', 'fixtures', 'plan-review-ask-all-6051.txt');
+const SUB_REL = 'plugin/skills/build/plan-review-asked-classes.md';
+const SUB_PATH = path.join(ROOT, SUB_REL);
+const POINTER_START = '<!-- planning-decisions:start -->';
+const POINTER_END = '<!-- planning-decisions:end -->\n\n';
+
+function pointerBounds(text) {
+  const start = text.indexOf(POINTER_START);
+  const end = text.indexOf(POINTER_END);
+  if (start === -1 || end === -1 || end < start) throw new Error('pointer markers missing');
+  return [start, end + POINTER_END.length];
+}
+
+// Removes the pointer from its start marker through the end marker and the blank line after it.
+function stripPointer(text) {
+  const [start, end] = pointerBounds(text);
+  return text.slice(0, start) + text.slice(end);
+}
+
+const pointerBlock = (text) => text.slice(...pointerBounds(text));
+
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const factsOf = (literals) => literals.map((l) => [new RegExp(escapeRe(l)), l]);
+
+// Every fact holds on the live text, and stripping one fact's match reports exactly that fact
+// (so each literal also matches exactly once in the region).
+function assertFacts(text, literals) {
+  const facts = factsOf(literals);
+  const missing = missingFactsOf(facts);
+  assert.deepStrictEqual(missing(text), []);
+  assertEachPatternGoesRed(text, facts, missing);
+}
+
+const subText = () => norm(readText(SUB_PATH));
+
+test('AC1.1/AC9.1: with the pointer removed, plan-review.md is byte-identical to the frozen ask-all fixture', () => {
+  const live = readText(REVIEW_PATH);
+  const fixture = readText(FIXTURE);
+  assert.strictEqual(stripPointer(live), fixture);
+  // Control: one character changed inside the `## Dispatch prompt` block breaks the identity.
+  const at = live.indexOf('spec gap', live.indexOf('\n## Dispatch prompt'));
+  assert.notStrictEqual(at, -1, 'control anchor missing from the Dispatch prompt block');
+  const doctored = live.slice(0, at) + 'S' + live.slice(at + 1);
+  assert.notStrictEqual(doctored, live);
+  assert.notStrictEqual(stripPointer(doctored), fixture);
+});
+
+test('stripPointer throws when a marker is absent or the two are out of order', () => {
+  const live = readText(REVIEW_PATH);
+  const noStart = live.replace(POINTER_START, '');
+  const noEnd = live.replace(POINTER_END, '');
+  assert.notStrictEqual(noStart, live);
+  assert.notStrictEqual(noEnd, live);
+  assert.throws(() => stripPointer(noStart), { message: 'pointer markers missing' });
+  assert.throws(() => stripPointer(noEnd), { message: 'pointer markers missing' });
+  assert.throws(() => stripPointer(`${POINTER_END}x${POINTER_START}`), { message: 'pointer markers missing' });
+});
+
+test('AC5.2: the pointer cites _shared/planning-decisions.md and the sub-file and resolves planning-decisions once', () => {
+  assertFacts(pointerBlock(readText(REVIEW_PATH)), [
+    '--values planning-decisions',
+    'plan-review-asked-classes.md',
+    '_shared/planning-decisions.md',
+    'Any other output, or a failed call, leaves this file as written.',
+  ]);
+});
+
+test('AC2.1: under asked-classes a settled row writes Settled at planning, an AUTO line and a record comment, and asks nothing', () => {
+  assertFacts(subText(), [
+    'Settled at planning: {finding} — chose {reading}; not {other reading}',
+    'under `## Planning Decisions`',
+    '--step "Common Step 1.6 (plan review)"',
+    'the record comment carries that line verbatim',
+    'no `AskUserQuestion`, no question comment and no `failed: plan-review-needs-human`',
+    'the settled line stands in for the Evidence quote',
+    'judges only the chosen reading',
+    'so a blocked call still leaves its settled lines committed',
+    'list only the asked rows',
+  ]);
+});
+
+test('AC7.1: settling holds in every mode and in a dispatched call', () => {
+  assertFacts(subText(), [
+    'in every mode — `auto`, `confirm`, `interactive` and `hybrid`',
+    'when every needs-human row settles, the build continues to Common Step 1.7',
+  ]);
+});
+
+test('AC3.1: an asked row reaches the needs-human HARD-GATE exactly as today, recommended reading first', () => {
+  assertFacts(subText(), [
+    '`### Spec gap — needs-human` HARD-GATE exactly as today',
+    'the recommended reading first, labelled `(Recommended)`, then the other reading, then `Stop the build`',
+  ]);
+});
+
+test('AC4.1: an unflagged category adds the flag through risk-flags.js add before asking, add never drop', () => {
+  assertFacts(subText(), [
+    'node "${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" add --body-file "{worktree spec}" --add {slug} --repo-root "{worktree root}"',
+    'before the question is asked',
+    'Add, never drop',
+    'A non-zero exit still asks the question',
+  ]);
+});
+
+test('asked-classes retires the converged round and the Plan Review Clarifications heading only under asked-classes', () => {
+  assertFacts(subText(), [
+    '`### Converged round (#4958)` does not apply',
+    'instead of `## Plan Review Clarifications`',
+    'never asked again',
+  ]);
+});
+
+test('AC5.1: the sub-file cites the shared rule rather than restating the classes', () => {
+  const text = readText(SUB_PATH);
+  assert.ok(text.includes('_shared/planning-decisions.md'), 'the sub-file must cite _shared/planning-decisions.md');
+  assert.deepStrictEqual(classStatementSites(new Map([[SUB_REL, text]])), []);
+  // Control: the same sweep finds a class clause restated in the sub-file.
+  const restated = `${text}\nNo reading keeps every Acceptance Criterion and recorded decision intact.\n`;
+  assert.deepStrictEqual(classStatementSites(new Map([[SUB_REL, restated]])), [SUB_REL]);
+});
