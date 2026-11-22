@@ -330,3 +330,25 @@ test('readRiskPolicy with a non-string repoRoot throws a TypeError before callin
   assert.throws(() => readRiskPolicy(null, { readFile: () => { called = true; return ''; } }), TypeError);
   assert.strictEqual(called, false);
 });
+
+test('planning-decisions is policyOnly, defaults to ask-all and offers exactly ask-all and asked-classes (#6051)', () => {
+  const row = require('../plugin/bin/lib/policy-schema').POLICY_KEYS.find((k) => k.key === 'planning-decisions');
+  assert.ok(row, 'planning-decisions row exists');
+  assert.strictEqual(row.policyOnly, true);
+  assert.strictEqual(row.default, 'ask-all');
+  assert.deepStrictEqual(row.values, ['ask-all', 'asked-classes']);
+  assert.ok(!row.summary.startsWith('Not yet used'));
+  assert.ok(!row.policySourceExcluded);
+});
+
+test('planning-decisions resolves ask-all when unset and when invalid (#6051)', () => {
+  const { resolvePolicyKeys } = require('../plugin/bin/lib/policy-schema');
+  const resolve = (policyRaw) => resolvePolicyKeys(['planning-decisions'], { policyRaw, runConfigRaw: null })['planning-decisions'];
+  assert.deepStrictEqual(resolve(''), { value: 'ask-all', source: 'default' });
+  const bad = resolve('planning-decisions: ask-some\n');
+  assert.strictEqual(bad.value, 'ask-all');
+  assert.strictEqual(bad.invalid, true);
+  const good = resolve('planning-decisions: asked-classes\n');
+  assert.strictEqual(good.value, 'asked-classes');
+  assert.strictEqual(good.source, 'policy');
+});
