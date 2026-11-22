@@ -93,7 +93,13 @@ against reality than trusting it in the abstract; do that for whichever check yo
    `BACKGROUND_CHECKS`, pinned by `tests/bin-lib/hooks/reconcile-background.test.js`); a deferred
    check is then absent from the unscoped CLI's inline set. `plugin/skills/tidy/scan-procedures.md`'s
    Reconcile-first call lists every check explicitly for that reason, and
-   `tests/reconcile-dispatch.test.js` pins that list to `ALL_CHECKS`.
+   `tests/reconcile-dispatch.test.js` pins that list to `ALL_CHECKS`. A check that joins
+   `CLI_DEFERRED_CHECKS` also joins the prose lists of the background-pass hand-off, which no test
+   pins: `plugin/skills/routine-kickoff/SKILL.md`'s Reconcile step (also its `local-merge` clause,
+   when the check runs there), `plugin/skills/dispatch/SKILL.md`'s second reconcile call, and
+   `plugin/skills/_shared/pr-first-merge-post-merge.md`'s background-pass list (#6055's review found
+   all three stale). A check that pushes a write to origin also takes a reconcile-converged row in
+   `plugin/skills/tidy/step-6-auto.md`'s Step 6 table.
 4. **`bin/hooks.js`'s `reconcile-threw` fallback** — a **hand-maintained duplicate** of
    `reconcile()`'s result shape (`{ mirror, redTip, worktrees, claims, postMerge, runs, branches,
    remoteBranches, ledgerResidue, console, residuePlan, residueErrors, skipped, timings }`), substituted only when `reconcile()` itself
