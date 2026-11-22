@@ -2152,3 +2152,56 @@ test('unpinnedRepoWithOrigin copies carry the GitHub-shaped origin and one commi
   assert.strictEqual(git(repo, ['remote', 'get-url', 'origin']), 'https://github.com/o/n.git');
   assert.strictEqual(git(repo, ['rev-list', '--count', 'HEAD']), '1');
 });
+
+// --- #6006: the factory layer reaches the two policy reads through the event's own env ---
+
+test('readConsoleCeiling reads the factory layer from the passed env, not the process env', () => {
+  const repo = gitRepo();
+  const run = path.join(repo, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  fs.mkdirSync(run, { recursive: true });
+  const base = { ...BASE_ENV, HOME: scratchDir('ct-fac-home-'), USERPROFILE: '' };
+  delete base.CLAUDE_TWEAKS_FACTORY_POLICY;
+  assert.notStrictEqual(pre.readConsoleCeiling(run, repo, { env: base }), 'unattended');
+  assert.strictEqual(pre.readConsoleCeiling(run, repo, { env: { ...base, CLAUDE_TWEAKS_FACTORY_POLICY: 'autonomy: unattended\n' } }), 'unattended');
+});
+
+// #6006 final review Minor 3: the factory file is located through the context's homeDir, as the other hook read
+// does (resolveRunPinnedIntegrationModel), never through env.HOME.
+test('readConsoleCeiling reads the factory file under opts.homeDir, not env.HOME; the Review Console gate passes ctx.homeDir', () => {
+  const repo = gitRepo();
+  const run = path.join(repo, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  fs.mkdirSync(run, { recursive: true });
+  const base = { ...BASE_ENV, HOME: scratchDir('ct-fac-home-'), USERPROFILE: '' };
+  delete base.CLAUDE_TWEAKS_FACTORY_POLICY;
+  delete base.CT_FACTORY_POLICY_FILE;
+  const fileHome = scratchDir('ct-fac-filehome-');
+  fs.mkdirSync(path.join(fileHome, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(fileHome, '.claude-tweaks', 'factory-policy.yml'), 'autonomy: unattended\n');
+  assert.strictEqual(pre.readConsoleCeiling(run, repo, { env: base, homeDir: () => fileHome }), 'unattended');
+
+  const dir = consoleRun('supervised');
+  const ctx = consoleCtx(dir, CONSOLE_Q);
+  const homeDir = () => fileHome;
+  ctx.homeDir = homeDir;
+  const seen = [];
+  pre.run(ctx, { readConsoleCeiling: (runDir, cwd, opts) => { seen.push(opts); return 'supervised'; } });
+  assert.strictEqual(seen.length, 1);
+  assert.strictEqual(seen[0].homeDir, homeDir);
+  assert.strictEqual(seen[0].env, ctx.env);
+});
+
+test('resolveRunPinnedIntegrationModel honours a factory integration-model pin from opts.env, and a factory file under opts.homeDir', () => {
+  const repo = gitRepo();
+  const run = path.join(repo, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  fs.mkdirSync(run, { recursive: true });
+  const home = scratchDir('ct-fac-home-');
+  const base = { ...BASE_ENV, HOME: home, USERPROFILE: '' };
+  delete base.CLAUDE_TWEAKS_FACTORY_POLICY;
+  delete base.CT_FACTORY_POLICY_FILE; // the runner's relocation would hide the file under opts.homeDir
+  assert.strictEqual(pre.resolveRunPinnedIntegrationModel(repo, run, { env: { ...base, CLAUDE_TWEAKS_FACTORY_POLICY: 'integration-model: pr-first\n' } }), 'pr-first');
+  assert.strictEqual(pre.resolveRunPinnedIntegrationModel(repo, run, { env: { ...base, CLAUDE_TWEAKS_FACTORY_POLICY: 'integration-model: local-merge\n' } }), 'local-merge');
+  const fileHome = scratchDir('ct-fac-filehome-');
+  fs.mkdirSync(path.join(fileHome, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(fileHome, '.claude-tweaks', 'factory-policy.yml'), 'integration-model: pr-first\n');
+  assert.strictEqual(pre.resolveRunPinnedIntegrationModel(repo, run, { env: base, homeDir: () => fileHome }), 'pr-first');
+});

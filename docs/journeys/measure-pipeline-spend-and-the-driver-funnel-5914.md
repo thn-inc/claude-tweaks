@@ -5,6 +5,7 @@ files:
   - tools/pipeline-cost-report/funnel.js
   - tools/pipeline-cost-report/records.js
   - tools/pipeline-cost-report/runs.js
+  - plugin/bin/lib/timing/transcript.js
   - docs/superpowers/specs/2026-11-18-pipeline-economy-baseline.md
 ---
 

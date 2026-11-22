@@ -33,7 +33,14 @@
 //   beyond the express bounds and the reviewer on      admitted by this rule
 //   beyond the express bounds and the reviewer not on  refused, reviewerOff
 //   inside the express bounds                          the rule does not apply
-// A record beyond the driver's bounds adds nothing here: eligibility owns that refusal. A
+// A widened record (#6018) is one the caller admitted above low risk or a non-fast-lane ceremony;
+// `widenedBy` is eligibility.js's widenings() answer, computed by the caller (absent reads as none):
+//   widened and the reviewer on                        admitted by this rule
+//   widened and the reviewer not on                    refused, reviewerOffWidened
+//   `widenedBy` not an array of strings                refused, widenedUnreadable
+// The widened rule checks no bounds. isReadableWidenedBy is its one readability test, shared with
+// review.js's reviewRequired; widenedReviewerReason is the rule alone, for queue.js's driver half.
+// A record beyond the driver's bounds adds nothing to this express-bounds rule: eligibility owns that refusal. A
 // `reviewerOn` that is not a boolean, unreadable bounds (not an object, a ceiling that is not a
 // SIZE_CEILINGS key, a limit that is not a safe integer of at least 1) and a `keyFiles` that is
 // not an array each refuse with their own reason, never read as "off" or "none".
@@ -64,7 +71,9 @@ const ADMISSION_REASONS = Object.freeze({
   commentsUnreadable: 'record comments unreadable',
   routingUnknown: (value) => `express-driver value not recognised: ${value}`,
   reviewerOff: 'record is beyond the express bounds and the reviewer step is off for it',
+  reviewerOffWidened: 'record is admitted beyond low risk or fast-lane ceremony and the reviewer step is off for it',
   reviewerUnreadable: 'reviewer-on answer unreadable',
+  widenedUnreadable: 'record widening facts unreadable',
   boundsUnreadable: 'lane bounds unreadable',
   keyFilesUnreadable: 'record Key Files unreadable',
 });
@@ -76,7 +85,7 @@ const R = ADMISSION_REASONS;
 // and a missing or non-integer one is unreadable. `split` exists to compare the
 // driver with the standard path on similar records: the odd half stays on the
 // other paths. It is temporary, dropped for `on` or `off` once each arm has 20
-// merged records (#5216; the `express-driver` row of _shared/policy-schema.md).
+// merged records (#5216; the `express-driver` row of _shared/policy-schema-express-driver.md).
 function routingReason(routing, number) {
   if (routing === 'on') return null;
   if (routing === 'off') return R.routingOff;
@@ -104,14 +113,27 @@ function reviewerGateReason(facts) {
   return beyond && inside && reviewerOn === false ? R.reviewerOff : null;
 }
 
+// widenedBy as the caller passes it: absent reads as none (a caller from before #6018); otherwise an
+// array whose elements are all strings.
+function isReadableWidenedBy(widenedBy) {
+  return widenedBy === undefined || (Array.isArray(widenedBy) && widenedBy.every((w) => typeof w === 'string'));
+}
+
+// { widenedBy, reviewerOn } -> R.widenedUnreadable, R.reviewerOffWidened, or null.
+function widenedReviewerReason(facts) {
+  const { widenedBy, reviewerOn } = (facts && typeof facts === 'object') ? facts : {};
+  if (!isReadableWidenedBy(widenedBy)) return R.widenedUnreadable;
+  return widenedBy !== undefined && widenedBy.length > 0 && reviewerOn === false ? R.reviewerOffWidened : null;
+}
+
 // { number, state, labels, openBlockerRefs, openLinkedPRs, routing, driverEscalated, keyFiles,
-//   bounds: { sizeCeiling, maxKeyFiles }, reviewerOn, buildAuthority } -> { admitted, reasons }.
+//   bounds: { sizeCeiling, maxKeyFiles }, reviewerOn, buildAuthority, widenedBy } -> { admitted, reasons }.
 // `buildAuthority` is build-authority.js's resolveBuildAuthority answer (#5584): exactly 'typed'
 // lifts the grant gate alone, so a record named by a typed command needs no `auto:build`; any
 // other value, or none, leaves the gate as it was. Every other gate still runs.
 function evaluateAdmission(facts) {
   // A null or non-object argument reads as no facts at all: every unreadable reason fires.
-  const { number, state, labels, openBlockerRefs, openLinkedPRs, routing, driverEscalated, keyFiles, bounds, reviewerOn, buildAuthority } =
+  const { number, state, labels, openBlockerRefs, openLinkedPRs, routing, driverEscalated, keyFiles, bounds, reviewerOn, buildAuthority, widenedBy } =
     (facts && typeof facts === 'object') ? facts : {};
   const reasons = [];
 
@@ -149,8 +171,10 @@ function evaluateAdmission(facts) {
   if (!Array.isArray(keyFiles)) reasons.push(R.keyFilesUnreadable);
   const reviewer = reviewerGateReason({ labels, keyFiles, bounds, reviewerOn });
   if (reviewer) reasons.push(reviewer);
+  const widenedReason = widenedReviewerReason({ widenedBy, reviewerOn });
+  if (widenedReason) reasons.push(widenedReason);
 
   return { admitted: reasons.length === 0, reasons };
 }
 
-module.exports = { ADMISSION_REASONS, evaluateAdmission, reviewerGateReason };
+module.exports = { ADMISSION_REASONS, evaluateAdmission, reviewerGateReason, routingReason, isReadableWidenedBy, widenedReviewerReason };

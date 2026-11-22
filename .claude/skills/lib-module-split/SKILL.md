@@ -336,6 +336,20 @@ its own test: strip comments with the shared stripper, assert no `require(` rema
 export keys (`tests/bin-lib/run-liveness/owner-pid-probe.test.js`). Register that test as a
 stripper caller (`bin-source-scan-conformance`).
 
+A leaf can also exist to keep a caller off a heavy graph rather than to break a cycle, and then it
+may require things. #6053 moved `laneBounds` and `eligibilityOptions` out of
+`plugin/bin/lib/driver/steps.js` into `plugin/bin/lib/driver/lane-bounds.js` (it requires
+`../express/policy`), so `plugin/bin/lib/driver/plan-lane.js` reads them without loading the step
+table; `steps.js` re-exports `eligibilityOptions`. The requires-nothing scan does not fit that leaf,
+so pin the property the split is for: require the caller in a fresh `node -e` process, read
+`Object.keys(require.cache)`, and assert the leaf is in it and the heavy module is not, beside the
+re-export identity check (`tests/bin-lib/driver/plan-lane.test.js`'s "lane-bounds.js is the one
+eligibilityOptions" test). The leaf only protects callers that reach it; a module in another family
+that needs the caller still lazy-requires it inside the one function that uses it
+(`plugin/bin/lib/express/cli.js`'s `runPlanLane`, as `express/queue.js` does for the driver
+modules), or every verb loads the driver modules the caller requires. That lazy require has no
+test of its own today.
+
 ## A whole-module move with a re-export at the old path
 
 Moving a module to a new home and leaving its old path as a one-line re-export is a split with one

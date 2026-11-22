@@ -40,6 +40,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { parseFlatLines } = require('../plugin/bin/lib/policy-schema');
 const { buildTiming, EVENTS_UNREADABLE } = require('../plugin/bin/phase-timing');
+const { isAgentTranscriptPath } = require('../plugin/bin/lib/timing/transcript');
 
 const USAGE = 'usage: node tools/efficiency-report.js [--archive <dir>] [--json] [--recount] [--since <YYYY-MM-DD>]';
 const NO_PROFILE = 'none';
@@ -317,9 +318,12 @@ async function recountRuns(archiveDir, { fsImpl, since, cwd, buildTiming }) {
     if (!paths.length) { skipped += 1; continue; }
     const state = readJson(path.join(dir, 'run-state.json'), fsImpl);
     const worktree = state && typeof state.worktree === 'string' && state.worktree ? state.worktree : null;
+    // A dispatched run's listed Task-call agent files ({sid}/subagents/agent-*.jsonl, #5647) scope its
+    // dispatches as at close; a run listing none is rebuilt unscoped.
+    const scopeDispatchesTo = paths.filter(isAgentTranscriptPath);
     let timing;
     try {
-      timing = await buildTiming({ runDir: dir, paths, cwd, worktree });
+      timing = await buildTiming({ runDir: dir, paths, cwd, worktree, ...(scopeDispatchesTo.length ? { scopeDispatchesTo } : {}) });
     } catch (e) {
       failed.push({ run: entry, error: errText(e), eventsUnreadable: Boolean(e && e.code === EVENTS_UNREADABLE) });
       continue;

@@ -73,7 +73,8 @@ function scoreReviews(opts, deps) {
     return 2;
   }
 
-  const { slots, unidentified, costs, efforts, unidentifiedCost } = replaySlots(fsImpl, opts.transcripts, manifest.arms);
+  const { mergeUsage } = require(path.join(deps.pluginRoot, 'bin', 'lib', 'timing', 'transcript.js'));
+  const { slots, unidentified, costs, efforts, unidentifiedCost } = replaySlots(fsImpl, opts.transcripts, manifest.arms, mergeUsage);
   const arms = {};
   // Per arm, per prompt name: its lens and the rows of each scored repeat, for vsReference.
   const rowsByArm = {};

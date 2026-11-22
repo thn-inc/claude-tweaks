@@ -20,7 +20,7 @@ const PROFILES = {
 
 const EFFORT_SCALE = ['low', 'medium', 'high', 'xhigh', 'max'];
 
-// The five policy.yml keys the resolver reads. #219 pins policy-schema.js
+// The five policy keys the resolver reads (from policy.yml; the factory layer reaches them with #6007). #219 pins policy-schema.js
 // registration against this export — the names here are authoritative.
 const POLICY_KEYS_READ = ['model-profiles', 'model-stance', 'model-ceiling', 'frontier-run-cap', 'model-effort'];
 
@@ -186,4 +186,4 @@ function resolve(profile, opts = {}) {
   return { model, effort, source, effortLine: effortLine(effort), launchEffort: effortMode === 'profile' ? effort : null };
 }
 
-module.exports = { PROFILES, EFFORT_SCALE, POLICY_KEYS_READ, effortLine, resolve };
+module.exports = { PROFILES, PROFILE_ORDER, EFFORT_SCALE, POLICY_KEYS_READ, effortLine, resolve };
